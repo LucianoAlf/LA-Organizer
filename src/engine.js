@@ -135,7 +135,16 @@ function isValidISODate(s) {
   return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s);
 }
 
-async function persistProject(creatorId, p) {
+async function persistProject(collaborator, p) {
+  const allowedRoles = ['coordinator', 'director'];
+  if (!allowedRoles.includes(collaborator.role)) {
+    console.log(`[Project] BLOCKED: ${collaborator.full_name} (role=${collaborator.role}) tried to create project. Server gate.`);
+    return {
+      error: true,
+      userFacingReply: '_Eu te ajudo a anotar a ideia, mas só coordenador ou diretor pode criar projeto direto._ Quer que eu repasse pra alguém?'
+    };
+  }
+  const creatorId = collaborator.id;
   const category = VALID_PROJECT_CATEGORIES.includes(p.category) ? p.category : 'operational';
   // projects.start_date / end_date são NOT NULL no schema. Fallback: hoje (SP) e +90 dias se "a definir".
   const today = todaySaoPaulo();
@@ -264,12 +273,16 @@ async function processMessage(phone, text, raw = {}) {
       reply = parsedProj.cleanText || reply;
     } else if (parsedProj) {
       try {
-        const created = await persistProject(collab.id, parsedProj.project);
-        console.log(`[Project] criado por ${String(collab.phone).slice(-4)}: ${created.name} (id=${created.id})`);
-        const base = parsedProj.cleanText || '';
-        // Sem ID, sem UUID — Claude já confirmou em texto natural antes do marcador.
-        // Anexa apenas uma linha discreta com a assinatura, em itálico.
-        reply = (base ? base + '\n\n' : '') + `_Projeto registrado._ 🎼`;
+        const created = await persistProject(collab, parsedProj.project);
+        if (created && created.error) {
+          reply = created.userFacingReply;
+        } else {
+          console.log(`[Project] criado por ${String(collab.phone).slice(-4)}: ${created.name} (id=${created.id})`);
+          const base = parsedProj.cleanText || '';
+          // Sem ID, sem UUID — Claude já confirmou em texto natural antes do marcador.
+          // Anexa apenas uma linha discreta com a assinatura, em itálico.
+          reply = (base ? base + '\n\n' : '') + `_Projeto registrado._ 🎼`;
+        }
       } catch (err) {
         console.error('[Project] Falha ao criar:', err.message);
         const base = parsedProj.cleanText || '';
