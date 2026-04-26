@@ -377,15 +377,12 @@ async function processMessage(phone, text, raw = {}) {
   console.log('[Engine] Mensagem de', collab.full_name);
   await logConversation(collab.id, 'inbound', text);
 
-  // Constrói o system prompt completo: SOUL.md + AGENTS.md + perfil + memória + preferências + tarefas + notificações.
-  let { systemPrompt, ctx } = await buildSystemPrompt(collab);
+  // Constrói o system prompt 4-block (regras → identidade → contexto → skill ativa).
+  let { systemPrompt, ctx } = await buildSystemPrompt(collab, { lastUserMessage: text });
   console.log(`[Engine] system prompt size: ${systemPrompt.length} chars (memories=${ctx.memories.length}, tasks=${ctx.todayTasks.length}, notifs=${ctx.notifications.length})`);
 
   const onboardingActive = collab.onboarding_completed === false;
-  if (onboardingActive) {
-    console.log('[Onboarding] Ativo — anexando skill ao system prompt');
-    systemPrompt = appendOnboardingSection(systemPrompt);
-  }
+  // Onboarding skill is now loaded conditionally inside buildSystemPrompt via pickSkill.
 
   const msgs = formatMessages(ctx.recentMessages, text);
   const response = await ai.chat(systemPrompt, msgs);
@@ -492,8 +489,12 @@ async function sendRitual(collaboratorId, ritualType) {
     .eq('id', collaboratorId).single();
   if (!collab?.is_active) return;
 
+  // Tag collaborator with _ritualType so pickSkill loads rituais-diarios.
+  const ritualKey = ritualType === 'daily_briefing' ? 'briefing_trabalho'
+    : ritualType === 'daily_closing' ? 'fechamento'
+    : ritualType;
+  collab._ritualType = ritualKey;
   let { systemPrompt } = await buildSystemPrompt(collab);
-  systemPrompt = appendRitualSection(systemPrompt);
   console.log(`[Engine] ritual=${ritualType} system prompt size: ${systemPrompt.length} chars`);
 
   const directive = ritualToDirective(ritualType);

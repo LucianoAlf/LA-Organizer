@@ -1,85 +1,185 @@
-// src/prompts/system.js — Carrega SOUL.md + AGENTS.md + contexto Supabase
-// Constrói o system prompt rico do TOM antes de cada chamada ao Claude.
+// src/prompts/system.js — 4-block architecture
+// REGRAS (top) → IDENTIDADE → CONTEXTO → SKILL ATIVA (1 only).
+// Total target: < 8KB. History limited to 5 msgs, memory to 10.
 const fs = require('fs');
 const path = require('path');
 const supabase = require('../supabase/client');
 
-const SOUL_DIR = path.join(__dirname, '..', '..', 'soul');
+const SKILLS_DIR = path.join(__dirname, '..', '..', 'skills');
 
-// Cache de arquivos do disco — invalidado por restart do PM2.
-let _soul = null;
-let _agents = null;
-let _skillMemory = null;
-let _skillProject = null;
+// ---------- BLOCK 1 — REGRAS INVIOLÁVEIS (hardcoded, top of prompt) ----------
+const BLOCK_RULES = `# 🚨 REGRAS INVIOLÁVEIS — PRIORIDADE MÁXIMA
 
-function loadSoul() {
-  if (_soul === null) {
-    _soul = fs.readFileSync(path.join(SOUL_DIR, 'SOUL.md'), 'utf-8');
-  }
-  return _soul;
-}
+1. Você é TOM 👽 — organizador WhatsApp da LA Music.
+2. Trate o usuário pelo apelido. Se full_name="Luciano Alf" → "Alf". Sem apelido → primeiro nome.
+3. 👽 SÓ no início da primeira mensagem de uma interação fresca (sem conversa nas últimas ~60min). Nunca repetir, nunca no meio.
+4. Direto, informal brasileiro: "pô", "beleza", "show", "bora". Sem corporativês.
+5. Máximo 3-4 linhas por mensagem. Uma pergunta por vez.
+6. ZERO leaks: nada de IDs, UUIDs, markers <<...>>, "5W2H", "Eisenhower", "quadrante", nomes de tabelas.
+7. Bullets com \`•\` (nunca \`-\` ou \`*\`). Negrito \`*assim*\`. Itálico \`_assim_\`.
+8. Emoji ANTES do texto, nunca no meio. Cada emoji tem significado fixo (ver mapa).
+9. NUNCA 🎵.
+10. Se contexto disser ONBOARDING ATIVO, ignore qualquer histórico e comece o fluxo de onboarding (5 perguntas, uma por vez). Não invente briefing.
+`;
 
-function loadAgents() {
-  if (_agents === null) {
-    const p = path.join(SOUL_DIR, 'AGENTS.md');
-    _agents = fs.existsSync(p) ? fs.readFileSync(p, 'utf-8') : '';
-  }
-  return _agents;
-}
+// ---------- BLOCK 2 — IDENTIDADE & EMOJIS (hardcoded, ~1KB) ----------
+const BLOCK_IDENTITY = `# 👽 IDENTIDADE
 
-let _skillChecklist = null;
-let _skillRespostas = null;
+TOM é um ET — homenagem ao ALF dos anos 80. O dono se chama Alf — vocês formam dupla improvável (ET organizador + humano teimoso). Esse é o tom. Sem trocadilho.
 
-function loadAlwaysOnSkills() {
-  if (_skillMemory === null) {
-    const p = path.join(__dirname, '..', '..', 'skills', 'gestao-memoria.md');
-    _skillMemory = fs.existsSync(p) ? fs.readFileSync(p, 'utf-8') : '';
-  }
-  if (_skillProject === null) {
-    const p = path.join(__dirname, '..', '..', 'skills', 'cadastro-projeto-5w2h.md');
-    _skillProject = fs.existsSync(p) ? fs.readFileSync(p, 'utf-8') : '';
-  }
-  if (_skillChecklist === null) {
-    const p = path.join(__dirname, '..', '..', 'skills', 'checklist-tarefas.md');
-    _skillChecklist = fs.existsSync(p) ? fs.readFileSync(p, 'utf-8') : '';
-  }
-  if (_skillRespostas === null) {
-    const p = path.join(__dirname, '..', '..', 'skills', 'respostas-canonicas.md');
-    _skillRespostas = fs.existsSync(p) ? fs.readFileSync(p, 'utf-8') : '';
-  }
-  return { memory: _skillMemory, project: _skillProject, checklist: _skillChecklist, respostas: _skillRespostas };
-}
+## Personalidade
+Direto, empático, sem frescura. Cobra com leveza, reconhece antes de cobrar. Adapta intensidade pela preferência da pessoa (light/normal/hard).
 
+## Mapa de emojis (use só com propósito, máx 2-3 por mensagem)
+
+| Emoji | Quando |
+|---|---|
+| 👽 | Assinatura, primeira msg de interação nova |
+| 📋 | Lista de tarefas / título de checklist |
+| 🎯 | Prioridade / meta do dia |
+| 🔴 | Tarefa atrasada |
+| ✅ | Feito / confirmação |
+| 👀 | Cobrança leve "fez?" |
+| 🧐 | Cobrança direta "tá lá ainda" |
+| ⏳ | Tempo acabando |
+| 🏃 | Corre que ainda dá |
+| 🤩 🥳 | Parabéns / celebração |
+| 👻 | Sumiu, "responde aí" |
+| 😬 ☠️ | Atraso pesado / crítico |
+| 🏆 🔥 | Meta alcançada / mandando bem |
+| ☕ | Bom dia (8h+) |
+| 😴 | Bom dia (antes 7h) |
+| 🏋️ | Academia |
+| 💪 | Hábito pessoal |
+| 🗓️ | Data |
+| ⏰ | Horário |
+| 📍 | Local |
+| 📚 | Pedagógico |
+| 🗂️ | Projeto |
+| 🧠 | Memória/registro |
+| ⚠️ | Alerta |
+| 💰 | Dinheiro |
+
+## Regras de hierarquia
+Diretor > Gerente > Coordenador > Líder-de-projeto > Colaborador. Pessoal é privado.
+`;
+
+// ---------- skill cache ----------
+const _skillCache = {};
 function loadSkill(name) {
   if (!name) return null;
-  const p = path.join(__dirname, '..', '..', 'skills', name + '.md');
-  return fs.existsSync(p) ? fs.readFileSync(p, 'utf-8') : null;
+  if (_skillCache[name] === undefined) {
+    const p = path.join(SKILLS_DIR, name + '.md');
+    try {
+      _skillCache[name] = fs.readFileSync(p, 'utf-8');
+    } catch (e) {
+      console.log(`[Prompt] WARN: skill ${name} not found at ${p}`);
+      _skillCache[name] = '';
+    }
+  }
+  // Truncate to 2KB if oversize.
+  return _skillCache[name].slice(0, 2048);
 }
 
-// "Hoje" em America/Sao_Paulo — formato YYYY-MM-DD.
+// ---------- helpers ----------
 function todaySaoPaulo() {
-  const now = new Date();
   const fmt = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/Sao_Paulo',
     year: 'numeric', month: '2-digit', day: '2-digit',
   });
-  return fmt.format(now); // en-CA já entrega YYYY-MM-DD
+  return fmt.format(new Date());
 }
 
 function fmtTime(t) {
   if (!t) return '—';
-  // time vem como "HH:MM:SS" — corta os segundos.
   return String(t).slice(0, 5);
 }
 
-function nonEmpty(s) {
-  return s !== null && s !== undefined && String(s).trim() !== '';
+function nameFor(collab) {
+  if (!collab) return 'amigo';
+  // Special case: full_name "Luciano Alf" → "Alf" (until we add a nickname column).
+  if (collab.full_name === 'Luciano Alf') return 'Alf';
+  return (collab.full_name || '').split(' ')[0] || 'amigo';
 }
 
-/**
- * Busca o contexto completo do colaborador no Supabase.
- * Retorna um objeto com profile, memories, prefs, tasks, projects, notifications, recentMessages.
- */
+// ---------- BLOCK 3 — CONTEXTO (dynamic, ~1KB) ----------
+function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge) {
+  const nickname = nameFor(collab);
+  const lines = ['# 📌 CONTEXTO DESTA INTERAÇÃO', ''];
+  const fn = collab.function_title ? ', ' + collab.function_title : '';
+  lines.push(`**Pessoa:** ${nickname} (${collab.full_name}) — ${collab.role || '—'}${fn}`);
+  lines.push(`**Onboarding:** ${collab.onboarding_completed ? 'COMPLETO' : '⚠️ ONBOARDING ATIVO — fluxo de 5 perguntas'}`);
+
+  if (lastMsgAge !== null && lastMsgAge !== undefined) {
+    if (lastMsgAge < 60) lines.push(`**Interação:** continuação (última msg há ${lastMsgAge} min — NÃO use 👽)`);
+    else lines.push(`**Interação:** NOVA (sem mensagens há ${lastMsgAge}+ min — use 👽 no início)`);
+  } else {
+    lines.push('**Interação:** PRIMEIRA — use 👽 no início');
+  }
+
+  if (prefs) {
+    lines.push('', '**Preferências:**');
+    lines.push(`• Briefing: ${fmtTime(prefs.briefing_time)} | Fechamento: ${fmtTime(prefs.closing_time)} | Cobrança: ${prefs.coaching_intensity || 'normal'}`);
+  }
+
+  if (memories && memories.length) {
+    lines.push('', '**Memória (top 10):**');
+    memories.slice(0, 10).forEach(m => lines.push(`• [${m.memory_type}] ${m.content}`));
+  }
+
+  if (tasks && tasks.length) {
+    const today = todaySaoPaulo();
+    lines.push('', '**Tarefas hoje:**');
+    tasks.slice(0, 5).forEach((t, i) => {
+      const overdue = t.due_date && t.due_date < today ? '🔴 ' : '';
+      const sid = String(t.id || '').slice(0, 8);
+      lines.push(`${i + 1}. [id=${sid}] ${overdue}${t.title}`);
+    });
+  }
+
+  if (projects && projects.length) {
+    lines.push('', '**Projetos ativos:**');
+    projects.slice(0, 5).forEach(p => lines.push(`• ${p.name} (${p.progress_percent || 0}%)`));
+  }
+
+  return lines.join('\n');
+}
+
+// ---------- BLOCK 4 — SKILL ATIVA (conditional, max 1) ----------
+function pickSkill(collab, lastUserMessage, recentHistory) {
+  // Priority 1: onboarding active.
+  if (collab && collab.onboarding_completed === false) {
+    return { name: 'onboarding', body: loadSkill('onboarding') };
+  }
+
+  // Priority 2: in middle of 5W2H flow (detect from history).
+  const recentText = (recentHistory || []).map(m => m.content || '').join(' ').toLowerCase();
+  const inProjectFlow =
+    /qual a janela|metodologia|horas por semana|quem vai participar/.test(recentText) &&
+    !/✅.*criado|cancelar|esquece/i.test(recentText.slice(-500));
+  if (inProjectFlow) return { name: 'cadastro-projeto-5w2h', body: loadSkill('cadastro-projeto-5w2h') };
+
+  // Priority 3: explicit project creation intent.
+  if (/\b(criar|novo|cadastrar)\s+projeto|quero\s+criar/i.test(lastUserMessage || '')) {
+    return { name: 'cadastro-projeto-5w2h', body: loadSkill('cadastro-projeto-5w2h') };
+  }
+
+  // Priority 4: ritual context — engine sets _ritualType for cron-fired briefings/closings.
+  const rt = collab && collab._ritualType;
+  if (rt === 'briefing_trabalho' || rt === 'briefing_pessoal' || rt === 'fechamento' ||
+      rt === 'daily_briefing' || rt === 'daily_closing') {
+    return { name: 'rituais-diarios', body: loadSkill('rituais-diarios') };
+  }
+
+  // Priority 5: task management intent.
+  if (/\b(fiz|terminei|feito|reagenda|adia|delega|surgiu|anota)/i.test(lastUserMessage || '')) {
+    return { name: 'checklist-tarefas', body: loadSkill('checklist-tarefas') };
+  }
+
+  return null;
+}
+
+// ---------- DB fetch ----------
 async function fetchCollaboratorContext(collaborator) {
   const id = collaborator.id;
   const today = todaySaoPaulo();
@@ -97,7 +197,7 @@ async function fetchCollaboratorContext(collaborator) {
     supabase.from('collaborator_memory')
       .select('memory_type, content, importance, created_at')
       .eq('collaborator_id', id).eq('is_active', true)
-      .order('created_at', { ascending: false }).limit(20),
+      .order('created_at', { ascending: false }).limit(10),
     supabase.from('user_preferences').select('*').eq('collaborator_id', id).maybeSingle(),
     supabase.from('tasks')
       .select('id, title, status, priority, eisenhower_quadrant, due_date, project_id, projects(name)')
@@ -107,14 +207,13 @@ async function fetchCollaboratorContext(collaborator) {
     supabase.from('notifications')
       .select('notification_type, title, body, created_at')
       .eq('collaborator_id', id).eq('status', 'pending')
-      .order('created_at', { ascending: false }).limit(10),
+      .order('created_at', { ascending: false }).limit(5),
     supabase.from('conversation_history')
       .select('direction, content, created_at')
       .eq('collaborator_id', id)
-      .order('created_at', { ascending: false }).limit(20),
+      .order('created_at', { ascending: false }).limit(5),
   ]);
 
-  // Resolver projetos ativos
   let activeProjects = [];
   const memberRows = projectsRes.data || [];
   if (memberRows.length) {
@@ -137,139 +236,61 @@ async function fetchCollaboratorContext(collaborator) {
   };
 }
 
-/**
- * Compose the full system prompt: SOUL + AGENTS + contexto da pessoa.
- */
-function composeSystemPrompt(collaborator, ctx) {
-  const parts = [];
-  parts.push(loadSoul());
-  const agents = loadAgents();
-  if (agents) {
-    parts.push('\n\n---\n\n');
-    parts.push(agents);
-  }
+// ---------- main builder ----------
+async function buildSystemPrompt(collaborator, opts = {}) {
+  const lastUserMessage = opts.lastUserMessage || '';
+  const ctx = await fetchCollaboratorContext(collaborator);
 
-  const skills = loadAlwaysOnSkills();
-  if (skills.memory) {
-    parts.push('\n\n---\n\n### 🧠 SKILL ATIVA: gestao-memoria (sempre ligada)\n');
-    parts.push(skills.memory);
-  }
-  if (skills.project) {
-    parts.push('\n\n---\n\n### 📁 SKILL ATIVA: cadastro-projeto-5w2h (use quando o gatilho aparecer)\n');
-    parts.push(skills.project);
-  }
-  if (skills.checklist) {
-    parts.push('\n\n---\n\n### 📋 SKILL ATIVA: checklist-tarefas (use quando o usuário fechar/reagendar/criar tarefa)\n');
-    parts.push(skills.checklist);
-  }
-  if (skills.respostas) {
-    parts.push('\n\n---\n\n### 💬 SKILL ATIVA: respostas-canonicas (formatos canônicos de resposta)\n');
-    parts.push(skills.respostas);
-  }
-
-  parts.push('\n\n---\n\n## Contexto da pessoa que está falando com você AGORA\n');
-  parts.push(`Nome: ${collaborator.full_name}\n`);
-  parts.push(`Phone: ${collaborator.phone}\n`);
-  const role = collaborator.role || '—';
-  const fn = collaborator.function_title ? ` (${collaborator.function_title})` : '';
-  parts.push(`Role: ${role}${fn}\n`);
-  if (collaborator.unit) parts.push(`Unidade: ${collaborator.unit}\n`);
-
-  // Perfil aprendido
-  const p = ctx.profile;
-  if (p) {
-    const fields = [
-      ['Estilo de comunicação', p.communication_style],
-      ['Padrão de resposta', p.response_pattern],
-      ['Melhor abordagem de coaching', p.best_coaching_approach],
-      ['Pontos fortes', p.strengths],
-      ['Áreas de desenvolvimento', p.growth_areas],
-      ['Contexto pessoal', p.personal_context],
-      ['Vocabulário', p.vocabulary_notes],
-      ['Maturidade', p.maturity_level],
-      ['Notas adicionais', p.profile_notes],
-    ].filter(([, v]) => nonEmpty(v));
-    if (fields.length) {
-      parts.push('\n### Perfil aprendido\n');
-      for (const [k, v] of fields) parts.push(`- **${k}:** ${v}\n`);
-      if (p.total_interactions != null) parts.push(`- Total de interações: ${p.total_interactions}\n`);
-      if (p.completion_rate_30d != null) parts.push(`- Taxa de conclusão (30d): ${p.completion_rate_30d}\n`);
+  // Last message age in minutes (most recent inbound or outbound).
+  let lastMsgAge = null;
+  const hist = ctx.recentMessages || [];
+  if (hist.length > 0) {
+    const last = hist[hist.length - 1];
+    if (last && last.created_at) {
+      lastMsgAge = Math.floor((Date.now() - new Date(last.created_at).getTime()) / 60000);
     }
   }
 
-  // Memória
-  parts.push('\n### Memória relevante (top 20, mais recente primeiro)\n');
-  if (!ctx.memories.length) {
-    parts.push('Nenhuma memória registrada ainda.\n');
-  } else {
-    for (const m of ctx.memories) {
-      parts.push(`- [${m.memory_type || 'geral'}] ${m.content} (importance: ${m.importance || '—'})\n`);
-    }
-  }
+  const skill = pickSkill(collaborator, lastUserMessage, hist);
+  const skillBlock = (skill && skill.body)
+    ? `# 🎯 SKILL ATIVA: ${skill.name}\n\n${skill.body}`
+    : '';
 
-  // Preferências
-  const pr = ctx.prefs;
-  parts.push('\n### Preferências\n');
-  if (!pr) {
-    parts.push('Sem preferências configuradas — usar defaults.\n');
-  } else {
-    parts.push(`- Briefing pessoal: ${fmtTime(pr.personal_briefing_time)}\n`);
-    parts.push(`- Briefing trabalho: ${fmtTime(pr.briefing_time)}\n`);
-    parts.push(`- Fechamento: ${fmtTime(pr.closing_time)}\n`);
-    parts.push(`- Intensidade da cobrança: ${pr.coaching_intensity || 'normal'}\n`);
-    parts.push(`- Máx tarefas por dia: ${pr.max_daily_tasks || 3}\n`);
-    parts.push(`- Timezone: ${pr.timezone || 'America/Sao_Paulo'}\n`);
-  }
+  const blocks = [
+    BLOCK_RULES,
+    BLOCK_IDENTITY,
+    buildContext(collaborator, ctx.memories, ctx.prefs, ctx.todayTasks, ctx.activeProjects, lastMsgAge),
+    skillBlock,
+  ].filter(Boolean);
 
-  // Tarefas do dia (com short-id de 8 chars — Claude usa SÓ pra emitir markers,
-  // NUNCA expõe ao usuário. O engine resolve o prefixo pra UUID completo).
-  parts.push(`\n### Tarefas do dia (${ctx.todayTasks.length})\n`);
-  if (!ctx.todayTasks.length) {
-    parts.push('Sem tarefas pra hoje.\n');
-  } else {
-    let i = 1;
-    for (const t of ctx.todayTasks) {
-      const proj = t.projects?.name || 'Sem projeto';
-      const prio = t.priority || (t.eisenhower_quadrant ? `Q${t.eisenhower_quadrant}` : '—');
-      const shortId = (t.id || '').slice(0, 8);
-      parts.push(`${i}. [id=${shortId}] [${prio}] ${t.title} — ${proj} (status: ${t.status})\n`);
-      i++;
-    }
-    parts.push('\n_Os `[id=...]` acima são internos — use-os SOMENTE em markers `<<TASK_UPDATE>>`. NUNCA mostre IDs ao usuário._\n');
-  }
+  const systemPrompt = blocks.join('\n\n---\n\n');
 
-  // Projetos ativos
-  if (ctx.activeProjects.length) {
-    parts.push('\n### Projetos ativos\n');
-    for (const pj of ctx.activeProjects) {
-      parts.push(`- ${pj.name} — ${pj.progress_percent ?? 0}% (prazo: ${pj.end_date || '—'})\n`);
-    }
-  }
+  console.log(`[Prompt] size: ${systemPrompt.length} chars (skill: ${skill ? skill.name : 'none'}, history: ${hist.length}, memories: ${ctx.memories.length}, tasks: ${ctx.todayTasks.length})`);
 
-  // Notificações
-  parts.push('\n### Notificações pendentes\n');
-  if (!ctx.notifications.length) {
-    parts.push('Nenhuma.\n');
-  } else {
-    for (const n of ctx.notifications) {
-      parts.push(`- [${n.notification_type || 'geral'}] ${n.title}${n.body ? ' — ' + n.body : ''}\n`);
-    }
-  }
-
-  parts.push('\n---\n\n');
-  parts.push(`Agora responda à mensagem do(a) ${collaborator.full_name} seguindo as regras do AGENTS.md e a personalidade do SOUL.md. Se for primeira mensagem ou onboarding incompleto, segue o fluxo de onboarding. Responda SEMPRE em português brasileiro informal, curto, com no máximo 3 parágrafos e uma pergunta por vez.\n`);
-
-  return parts.join('');
+  // Compatibility: engine.js destructures { systemPrompt, ctx } and reads ctx.memories,
+  // ctx.todayTasks, ctx.notifications, ctx.recentMessages.
+  return { systemPrompt, ctx };
 }
 
-/**
- * Função pública: constrói o system prompt completo a partir do collaborator.
- * Faz as queries no Supabase e retorna { systemPrompt, ctx }.
- */
-async function buildSystemPrompt(collaborator) {
-  const ctx = await fetchCollaboratorContext(collaborator);
-  const systemPrompt = composeSystemPrompt(collaborator, ctx);
-  return { systemPrompt, ctx };
+// Backward-compat: synchronous compose using already-fetched ctx.
+function composeSystemPrompt(collaborator, ctx) {
+  let lastMsgAge = null;
+  const hist = (ctx && ctx.recentMessages) || [];
+  if (hist.length > 0) {
+    const last = hist[hist.length - 1];
+    if (last && last.created_at) {
+      lastMsgAge = Math.floor((Date.now() - new Date(last.created_at).getTime()) / 60000);
+    }
+  }
+  const skill = pickSkill(collaborator, '', hist);
+  const skillBlock = (skill && skill.body) ? `# 🎯 SKILL ATIVA: ${skill.name}\n\n${skill.body}` : '';
+  const blocks = [
+    BLOCK_RULES,
+    BLOCK_IDENTITY,
+    buildContext(collaborator, ctx.memories || [], ctx.prefs, ctx.todayTasks || [], ctx.activeProjects || [], lastMsgAge),
+    skillBlock,
+  ].filter(Boolean);
+  return blocks.join('\n\n---\n\n');
 }
 
 /**
@@ -284,4 +305,4 @@ function formatMessages(recent, currentText) {
   return msgs;
 }
 
-module.exports = { buildSystemPrompt, formatMessages, composeSystemPrompt, fetchCollaboratorContext };
+module.exports = { buildSystemPrompt, formatMessages, composeSystemPrompt, fetchCollaboratorContext, nameFor, todaySaoPaulo };
