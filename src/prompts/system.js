@@ -77,8 +77,8 @@ function loadSkill(name) {
       _skillCache[name] = '';
     }
   }
-  // Truncate to 2KB if oversize.
-  return _skillCache[name].slice(0, 2048);
+  // Truncate to 4KB if oversize.
+  return _skillCache[name].slice(0, 4096);
 }
 
 // ---------- helpers ----------
