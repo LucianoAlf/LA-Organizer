@@ -92,9 +92,11 @@ function isAudioMessage(webhookData) {
  * e formato antigo (event + data).
  */
 function getData(body) {
-  // Formato novo UAZAPI: { EventType, chat, messages: [{sender, text, fromMe, ...}] }
-  if (body?.EventType && body?.messages?.[0]) return body.messages[0];
-  // Formato antigo: { event, data: {...} }
+  // New format: array (enriched lean payload from curl tests)
+  if (body?.EventType && body?.messages?.length > 0) return body.messages[0];
+  // New format: singular message object (real UAZAPI delivery)
+  if (body?.EventType && body?.message) return body.message;
+  // Old format
   if (body?.data) return body.data;
   return body;
 }
@@ -103,33 +105,19 @@ function getData(body) {
  * Extrai texto de um webhook UAZAPI
  * Suporta formato novo (messages[0].text) e antigo (data.text)
  */
-function extractText(webhookBody) {
-  const data = getData(webhookBody);
-
-  // Campo principal de texto na UAZAPI
-  if (data?.text) return data.text;
-
-  // Resposta de botão/menu
-  if (data?.convertOptions) return data.convertOptions;
-
-  // Voto em enquete
-  if (data?.vote) return data.vote;
-
-  return null;
+function extractText(body) {
+  const data = getData(body);
+  return data?.content || data?.text || data?.body || data?.caption || null;
 }
 
 /**
  * Extrai número do remetente de um webhook UAZAPI
  * chatid/sender vem como "5521999999999@s.whatsapp.net"
  */
-function extractPhone(webhookBody) {
-  const data = getData(webhookBody);
-
-  // UAZAPI usa 'sender' ou 'chatid' ou 'from'
-  const raw = data?.sender || data?.chatid || data?.from || '';
-
-  // Remove @s.whatsapp.net e qualquer sufixo
-  return raw.replace(/@.*/, '').replace(/[\s\-\+]/g, '');
+function extractPhone(body) {
+  const data = getData(body);
+  const raw = data?.sender || data?.chatid || "";
+  return raw.split("@")[0] || null;
 }
 
 /**
@@ -143,35 +131,13 @@ function extractName(webhookBody) {
 /**
  * Verifica se a mensagem deve ser ignorada
  */
-function isIgnorable(webhookBody) {
-  // Formato novo UAZAPI
-  if (webhookBody?.EventType) {
-    if (webhookBody.EventType !== 'messages') return true;
-    const msg = webhookBody?.messages?.[0];
-    if (!msg) return true;
-    if (msg?.fromMe === true) return true;
-    if (msg?.isGroup === true) return true;
-    if (webhookBody?.chat?.id?.includes('@g.us')) return true;
-    return false;
-  }
-
-  // Formato antigo
-  if (webhookBody?.event && webhookBody.event !== 'message') return true;
-
-  const data = webhookBody?.data || webhookBody;
-
-  // Sem dados
-  if (!data) return true;
-
-  // Mensagem enviada pelo próprio bot
-  if (data?.fromMe === true) return true;
-
-  // Mensagem de grupo
-  if (data?.isGroup === true) return true;
-
-  // Status updates (Sent, Delivered, Read)
-  if (data?.status && !data?.text) return true;
-
+function isIgnorable(body) {
+  if (!body) return true;
+  if (body.EventType && body.EventType !== "messages") return true;
+  const msg = getData(body);
+  if (!msg) return true;
+  if (msg.fromMe === true) return true;
+  if (msg.isGroup === true) return true;
   return false;
 }
 
