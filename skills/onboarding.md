@@ -38,6 +38,7 @@ SELECT id, full_name, onboarding_completed FROM collaborators WHERE phone = $pho
 **Resposta canônica (seguir EXATAMENTE este formato):**
 ```
 👽 Fala, [nome]! Sou o TOM — organizador da LA Music.
+
 Vou te ajudar a planejar sua semana, lembrar suas tarefas e não deixar nada passar batido.
 
 São 5 perguntas rápidas pra configurar tudo do seu jeito. Bora?
