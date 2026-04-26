@@ -19,34 +19,40 @@ description: Skill que conduz o primeiro contato com um colaborador. Dispara qua
 ## Fluxo das 5 perguntas (na ordem)
 
 ### 1. Briefing
-> "Que horas você quer receber o briefing do dia?"
+> "*Que horas você quer receber o briefing do dia?*"
 
 - Aceite formatos como "8h", "08:00", "às 8 da manhã", "sete e meia".
 - Salve em `user_preferences.briefing_time` no formato `HH:MM`.
 - **Default:** `08:00`.
 
 ### 2. Fechamento
-> "Que horas você costuma fechar o dia?"
+> "*Que horas você costuma fechar o dia?*"
 
 - `user_preferences.closing_time` no formato `HH:MM`.
 - **Default:** `19:00`.
 
 ### 3. Dia de planejamento
-> "Você prefere planejar a semana no domingo ou na segunda?"
+> "*Você prefere planejar a semana no domingo ou na segunda?*"
 
 - `user_preferences.planning_day`: `0` = domingo, `1` = segunda.
 - **Default:** `0` (domingo).
 
 ### 4. Intensidade da cobrança
-> "Como gosta da minha cobrança: leve, normal ou dura?"
+> "*Como gosta da minha cobrança: leve, normal ou dura?*"
 
 - `user_preferences.coaching_intensity`: `'light'` | `'normal'` | `'hard'`.
 - Mapeamento: leve→light, normal→normal, dura/duro/duro→hard.
 - **Default:** `'normal'`.
 
 ### 5. Confirmação
-Recapitule as 4 configurações de forma curta e pergunte:
-> "Briefing às HH:MM, fechamento às HH:MM, planejamento [domingo|segunda], cobrança [leve|normal|dura]. Tá bom assim?"
+Recapitule as 4 configurações em **bullet list** (`•`) e pergunte em **negrito**:
+> "_Beleza, anotei:_
+> • Briefing às HH:MM
+> • Fechamento às HH:MM
+> • Planejamento no [domingo|segunda]
+> • Cobrança [leve|normal|dura]
+>
+> *Tá bom assim?*"
 
 - Se confirmar ("sim", "tá", "fechou", "bora", "show"): emita o marcador final (ver abaixo).
 - Se pedir alteração: ajuste e confirme de novo antes de fechar.
@@ -65,7 +71,18 @@ Quando o colaborador confirmar a recapitulação, sua resposta deve terminar EXA
 - `briefing_time` e `closing_time`: strings `HH:MM`.
 - `planning_day`: número inteiro `0` ou `1`.
 - `coaching_intensity`: string `light` | `normal` | `hard`.
-- Antes do marcador, escreva uma frase curta de fechamento ("Fechou! Bora trabalhar 🎵").
+- Antes do marcador, escreva uma confirmação NESTE FORMATO EXATO (substitua valores):
+  ```
+  _Beleza, anotado:_
+  • Briefing às HH:MM
+  • Fechamento às HH:MM
+  • Planejamento no [domingo|segunda]
+  • Cobrança [leve|normal|dura]
+
+  Fechou! Bora trabalhar 🎼
+  ```
+- 🎼 NO FINAL — uma única vez. Sem outros emojis.
+- Sem qualquer menção ao marcador, a "salvando", ou IDs.
 - O engine remove o bloco antes de enviar pro WhatsApp — o colaborador NUNCA verá os marcadores.
 
 ## Veto

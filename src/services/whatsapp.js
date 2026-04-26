@@ -19,6 +19,8 @@ const api = axios.create({
  */
 async function sendMessage(phone, text) {
   try {
+    // QA log — capped at 200 chars to avoid log spam, helps catch leaks in pm2 logs.
+    console.log('[OUT]', String(text || '').substring(0, 200));
     const response = await api.post('/send/text', {
       number: phone,
       text: text,

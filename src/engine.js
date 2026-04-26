@@ -247,7 +247,7 @@ async function processMessage(phone, text, raw = {}) {
     } else if (parsed) {
       try {
         await persistOnboarding(collab.id, parsed.prefs);
-        reply = parsed.cleanText || 'Configurado! Bora 🎵';
+        reply = parsed.cleanText || 'Fechou! Bora trabalhar 🎼';
       } catch (err) {
         console.error('[Onboarding] Falha ao persistir:', err.message);
         // segue enviando o texto limpo, conversa continua
@@ -265,14 +265,15 @@ async function processMessage(phone, text, raw = {}) {
     } else if (parsedProj) {
       try {
         const created = await persistProject(collab.id, parsedProj.project);
-        const shortId = String(created.id).slice(0, 8);
         console.log(`[Project] criado por ${String(collab.phone).slice(-4)}: ${created.name} (id=${created.id})`);
         const base = parsedProj.cleanText || '';
-        reply = (base ? base + '\n\n' : '') + `✅ Projeto criado (ID: ${shortId}). Bora distribuir tarefas?`;
+        // Sem ID, sem UUID — Claude já confirmou em texto natural antes do marcador.
+        // Anexa apenas uma linha discreta com a assinatura, em itálico.
+        reply = (base ? base + '\n\n' : '') + `_Projeto registrado._ 🎼`;
       } catch (err) {
         console.error('[Project] Falha ao criar:', err.message);
         const base = parsedProj.cleanText || '';
-        reply = (base ? base + '\n\n' : '') + `⚠️ Falha ao criar projeto: ${err.message}. Tenta de novo daqui a pouco?`;
+        reply = (base ? base + '\n\n' : '') + `⚠️ Não rolou criar agora. Tenta de novo daqui a pouco?`;
       }
     }
   }
@@ -288,6 +289,20 @@ async function processMessage(phone, text, raw = {}) {
       console.log(`[Memory] saved ${saved} facts for ${String(collab.phone).slice(-4)}`);
       reply = parsedMem.cleanText || reply;
     }
+  }
+
+  // Safety nets: detect leaks before sending (don't crash, just warn).
+  try {
+    if (typeof reply === 'string') {
+      if (reply.includes('<<') || reply.includes('>>')) {
+        console.warn('[Engine] WARN: marker fragment leaked into reply');
+      }
+      if (/[a-f0-9]{8}-[a-f0-9]/i.test(reply)) {
+        console.warn('[Engine] WARN: possible UUID leak in reply');
+      }
+    }
+  } catch (e) {
+    // ignore guard errors
   }
 
   await whatsapp.sendMessage(phone, reply);
