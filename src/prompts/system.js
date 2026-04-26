@@ -28,6 +28,7 @@ function loadAgents() {
 }
 
 let _skillChecklist = null;
+let _skillRespostas = null;
 
 function loadAlwaysOnSkills() {
   if (_skillMemory === null) {
@@ -42,7 +43,11 @@ function loadAlwaysOnSkills() {
     const p = path.join(__dirname, '..', '..', 'skills', 'checklist-tarefas.md');
     _skillChecklist = fs.existsSync(p) ? fs.readFileSync(p, 'utf-8') : '';
   }
-  return { memory: _skillMemory, project: _skillProject, checklist: _skillChecklist };
+  if (_skillRespostas === null) {
+    const p = path.join(__dirname, '..', '..', 'skills', 'respostas-canonicas.md');
+    _skillRespostas = fs.existsSync(p) ? fs.readFileSync(p, 'utf-8') : '';
+  }
+  return { memory: _skillMemory, project: _skillProject, checklist: _skillChecklist, respostas: _skillRespostas };
 }
 
 function loadSkill(name) {
@@ -156,6 +161,10 @@ function composeSystemPrompt(collaborator, ctx) {
   if (skills.checklist) {
     parts.push('\n\n---\n\n### 📋 SKILL ATIVA: checklist-tarefas (use quando o usuário fechar/reagendar/criar tarefa)\n');
     parts.push(skills.checklist);
+  }
+  if (skills.respostas) {
+    parts.push('\n\n---\n\n### 💬 SKILL ATIVA: respostas-canonicas (formatos canônicos de resposta)\n');
+    parts.push(skills.respostas);
   }
 
   parts.push('\n\n---\n\n## Contexto da pessoa que está falando com você AGORA\n');
