@@ -184,8 +184,8 @@ function pickSkill(collab, lastUserMessage, recentHistory) {
     return { name: 'rituais-diarios', body: loadSkill('rituais-diarios') };
   }
 
-  // Priority 5: task management intent.
-  if (/\b(fiz|terminei|feito|reagenda|adia|delega|surgiu|anota)/i.test(lastUserMessage || '')) {
+  // Priority 5: task management intent. Includes create/remind/reschedule/complete signals.
+  if (/\b(fiz|terminei|feito|completei|fechei|reagenda|adia|adiar|delega|surgiu|anota|me\s+lembra|lembra(?:r|nça)|lembrete|me\s+chama|daqui\s+a?\s*\d|em\s+\d+\s*(min|hora|h)|p[oó]e\s+na\s+lista|adiciona|marca\s+(?:reuni|m[eé]dico|consulta|hor[áa]rio)|muda\s+(?:a|o|pra)|deixa\s+pra)/i.test(lastUserMessage || '')) {
     return { name: 'checklist-tarefas', body: loadSkill('checklist-tarefas') };
   }
 

@@ -395,7 +395,9 @@ async function processMessage(phone, text, raw = {}) {
 
   // Constrói o system prompt 4-block (regras → identidade → contexto → skill ativa).
   let { systemPrompt, ctx } = await buildSystemPrompt(collab, { lastUserMessage: text });
-  console.log(`[Engine] system prompt size: ${systemPrompt.length} chars (memories=${ctx.memories.length}, tasks=${ctx.todayTasks.length}, notifs=${ctx.notifications.length})`);
+  const _tt = ctx.todayTasks || {};
+  const _tCount = (_tt.personal?.length || 0) + (_tt.work?.length || 0);
+  console.log(`[Engine] system prompt size: ${systemPrompt.length} chars (memories=${ctx.memories.length}, tasks=${_tCount}, notifs=${ctx.notifications.length})`);
 
   const onboardingActive = collab.onboarding_completed === false;
   // Onboarding skill is now loaded conditionally inside buildSystemPrompt via pickSkill.
