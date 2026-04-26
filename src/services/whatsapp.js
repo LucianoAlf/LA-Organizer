@@ -116,7 +116,8 @@ function extractText(body) {
  */
 function extractPhone(body) {
   const data = getData(body);
-  const raw = data?.sender || data?.chatid || "";
+  let raw = data?.chatid || data?.sender || "";
+  if (raw.includes("@lid")) raw = body?.chat?.wa_chatid || raw;
   return raw.split("@")[0] || null;
 }
 
