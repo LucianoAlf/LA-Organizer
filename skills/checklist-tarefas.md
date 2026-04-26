@@ -6,50 +6,43 @@ description: Permite que o colaborador feche, reagende ou crie tarefas via Whats
 # Checklist de Tarefas via WhatsApp
 
 ## Quando ativar
+Depois do ritual de fechamento, ou quando o colaborador menciona tarefa de forma acionável.
 
-Esta skill é sempre relevante depois do ritual de fechamento, ou quando o colaborador menciona tarefa de forma acionável em conversa livre.
+## Intenções
 
-### Intenções a reconhecer
-
-**task_complete** — "fechar" tarefa(s)
-- Sinais: "fiz", "terminei", "fechei", "feito", "completei", "1 e 2", "fiz tudo", "fiz a primeira", "só a 2", "pronto", "consegui"
-- "fiz tudo" / "tudo feito" → marca TODAS as tarefas do dia listadas no contexto
-- "1 e 2" → marca tarefas 1 e 2 (pelo número de posição na lista)
-- "só a 1" / "só a primeira" → marca apenas a 1
-- "fiz a do piano" / nome livre → match por similaridade no título
+**task_complete** — fechar tarefa(s)
+- Sinais: "fiz", "terminei", "fechei", "feito", "completei", "1 e 2", "fiz tudo", "só a 1", "pronto"
+- "fiz tudo" → marca TODAS as tarefas do dia
+- "1 e 2" → posições 1 e 2 da lista
+- "fiz a do piano" → match por similaridade no título
 
 **task_reschedule** — adiar
-- Sinais: "não deu", "deixa pra amanhã", "reagenda 3 pra quinta", "passa pra terça", "fica pra semana que vem", "reagenda"
-- Se a data não for explícita, peça UMA confirmação curta ("pra quando?")
-- Resolva data relativa: "amanhã"/"depois de amanhã"/"segunda" → ISO YYYY-MM-DD usando America/Sao_Paulo como referência
-- "semana que vem" → próxima segunda-feira
+- Sinais: "não deu", "deixa pra amanhã", "reagenda", "passa pra terça", "fica pra semana que vem"
+- Sem data explícita: pergunte UMA vez ("pra quando?")
+- Resolva relativa: "amanhã"/"segunda" → ISO em America/Sao_Paulo
+- "semana que vem" → próxima segunda
 
-**task_create** — criar nova tarefa
-- Sinais: "anota aí", "lembra de X", "põe na lista", "adiciona X pra amanhã", "marca de fazer Y na sexta"
-- Tente extrair: título (curto), data (ISO), prioridade ("urgente"/"importante" → high; default medium)
-- Se faltar data, default = hoje
+**task_create** — criar nova
+- Sinais: "anota aí", "lembra de X", "põe na lista", "adiciona X pra amanhã"
+- Extrair: título curto, data (ISO), prioridade ("urgente"/"importante" → high; default medium)
+- Sem data → hoje
 
-## Resolução de tarefas pelo contexto
-
-O system prompt lista as tarefas do dia como:
+## Resolução pelo contexto
+Tarefas no system prompt:
 ```
-1. [id=ab12cd34] [...] Resolver pai aluno Y — ...
-2. [id=ef56gh78] [...] Entrevista professor piano — ...
-3. [id=ij90kl12] [...] Revisar material teatro — ...
+1. [id=ab12cd34] Resolver pai aluno Y — ...
+2. [id=ef56gh78] Entrevista professor piano — ...
 ```
 
-- Quando o usuário usa **número** (1, 2, 3) → mapeia pra posição na lista.
-- Quando o usuário usa **nome** ou parte do título → escolhe pelo título mais próximo.
-- O `id=ab12cd34` é o **prefixo de 8 chars do UUID** — use ele no marker, NUNCA mostre ao usuário.
+- **Número** → posição na lista.
+- **Nome/parte do título** → match por similaridade.
+- `id=ab12cd34` é prefixo 8 chars do UUID — use no marker, NUNCA mostre ao usuário.
 
-## Confirmação antes de emitir o marker
+## Confirmação antes do marker
+- Inequívoca ("fiz a 1 e a 2"): confirme em texto natural na MESMA mensagem.
+- Ambígua ("uns problemas com a do piano"): UMA pergunta antes do marker.
 
-- Se a fala é **inequívoca** (ex: "fiz a 1 e a 2", "reagenda a 3 pra quinta"), confirme em texto natural na MESMA mensagem que tem o marker. Não pergunte de novo.
-- Se há **ambiguidade** (ex: "ah, deu uns problemas com a do piano", sem dizer se fez ou não) → faça UMA pergunta curta antes de qualquer marker.
-
-## Formato do marcador
-
-Coloque NO FINAL da resposta. O engine remove o bloco antes de enviar pro WhatsApp.
+## Formato do marcador (final da resposta)
 
 ```
 <<TASK_UPDATE>>
@@ -61,28 +54,23 @@ Coloque NO FINAL da resposta. O engine remove o bloco antes de enviar pro WhatsA
 <<END>>
 ```
 
-Múltiplas ações no mesmo marker são permitidas — batch.
+Múltiplas ações no mesmo marker = batch.
 
 ### Campos por action
-
 - `complete`: `{"action":"complete","id":"<8-char>"}`
 - `reschedule`: `{"action":"reschedule","id":"<8-char>","new_due_date":"YYYY-MM-DD"}`
 - `create`: `{"action":"create","title":"<curto>","due_date":"YYYY-MM-DD","priority":"low|medium|high"}`
 
-## Padrão de resposta ao usuário (sem o marker)
+## Resposta visível (sem o marker)
 
-A mensagem visível ao colaborador é natural, curta, sem IDs:
-
-- Conclusão parcial: `✅ 2 de 3 fechado. Material teatro vai pra quando?`
-- Conclusão total: `✅ Tudo fechado. Bora descansar.`
-- Reagendamento: `✅ Reagendado pra quinta.`
+- Parcial: `✅ 2 de 3 fechado. Material teatro vai pra quando?`
+- Total: `✅ Tudo fechado. Bora descansar.`
+- Reagenda: `✅ Reagendado pra quinta.`
 - Criação: `📋 Anotado: Revisar material teatro. Pra amanhã.`
-- Falha: o engine adiciona uma nota (`_não consegui atualizar...`) — você não precisa cobrir.
 
 ## Veto
-
-- NUNCA exiba IDs / UUIDs / `[id=...]` na mensagem.
-- NUNCA invente uma tarefa que não está no contexto, exceto em `create`.
-- NUNCA emita `complete` para tarefa que o usuário não confirmou ter feito.
-- NUNCA reagende sem data — pergunta antes.
-- NUNCA misture o marker com texto solto na mesma linha — sempre em bloco no fim.
+- NUNCA exiba IDs / UUIDs / `[id=...]`.
+- NUNCA invente tarefa fora do contexto, exceto em `create`.
+- NUNCA emita `complete` sem o usuário confirmar.
+- NUNCA reagende sem data.
+- NUNCA misture o marker com texto solto — sempre em bloco no fim.

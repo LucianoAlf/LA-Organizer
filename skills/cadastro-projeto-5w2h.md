@@ -5,33 +5,31 @@ description: Conduz cadastro de projeto via conversa de 7 perguntas (5W2H), uma 
 
 # Cadastro de Projeto (5W2H — interno)
 
-> ⚠️ NUNCA mencione "5W2H" pro usuário. É nome interno. Pro colaborador, isso é só "criar um projeto novo" — uma conversinha guiada.
+> ⚠️ NUNCA mencione "5W2H" pro usuário. É nome interno. Pro colaborador, é só "criar um projeto novo" — uma conversa guiada.
 
 ## Trigger
-O colaborador disse algo como: "quero criar projeto", "novo projeto", "vamos criar um projeto", "cadastra um projeto", "preciso cadastrar um projeto", ou descreveu intenção clara equivalente.
+"quero criar projeto", "novo projeto", "vamos criar um projeto", "cadastra um projeto", ou intenção clara equivalente.
 
 ## Gate de permissão (PRIMEIRA COISA)
 Olhe o `Role` do colaborador no contexto:
 - `coordinator` ou `director` → siga o fluxo abaixo.
-- `collaborator` ou `leader` (ou qualquer outra) → responda EXATAMENTE:
+- outros → responda EXATAMENTE:
   > "Só coordenador ou diretor pode criar projeto. Quer que eu avise alguém?"
-  E PARE. Não faça nenhuma pergunta. Não emita marcador.
+  E PARE. Sem perguntas, sem marcador.
 
 ## Fluxo — 7 perguntas, UMA por mensagem (na ordem)
-Não despeje tudo de uma vez. Espere a resposta antes de fazer a próxima.
+Espere a resposta antes da próxima. Cada pergunta em **negrito** WhatsApp.
 
-Cada pergunta vai em **negrito** WhatsApp (`*pergunta?*`). Sem mencionar nome do framework.
-
-1. **(nome)** — "*Como vai chamar esse projeto?*" → captura `name`.
-2. **(justificativa)** — "*Por que esse projeto existe?*" → captura `justification`.
-3. **(local)** — "*Onde vai acontecer? Qual unidade ou local?*" → captura `location` (texto livre: campo_grande / recreio / barra / online / etc).
-4. **(janela)** — "*Qual a janela? Início e fim (ou 'a definir')?*" → captura `start_date` e `end_date`. Parse pra ISO `YYYY-MM-DD` quando der; se "a definir", use `null`.
-5. **(quem)** — "*Quem participa? Pode ser por nome ou função.*" → guarda como texto em `description`.
-6. **(como)** — "*Como vai executar? Qual a abordagem?*" → captura `methodology`.
-7. **(horas)** — "*Quantas horas por semana esse projeto vai consumir do time?*" → captura `estimated_hours_week` (número).
+1. **(nome)** "*Como vai chamar esse projeto?*" → `name`
+2. **(justificativa)** "*Por que esse projeto existe?*" → `justification`
+3. **(local)** "*Onde vai acontecer? Qual unidade ou local?*" → `location` (campo_grande / recreio / barra / online / etc)
+4. **(janela)** "*Qual a janela? Início e fim (ou 'a definir')?*" → `start_date` e `end_date` ISO `YYYY-MM-DD` ou `null`
+5. **(quem)** "*Quem participa? Pode ser por nome ou função.*" → texto em `description`
+6. **(como)** "*Como vai executar? Qual a abordagem?*" → `methodology`
+7. **(horas)** "*Quantas horas por semana esse projeto vai consumir do time?*" → `estimated_hours_week` (número)
 
 ## Confirmação
-Depois das 7 respostas, recapitule TUDO em **bullet list** (`•`), com pergunta final em **negrito**. SEM mencionar "5W2H" ou jargão.
+Recapitule TUDO em **bullet list** (`•`), pergunta final em **negrito**:
 > "_Confere se tá certo:_
 > • Nome: ...
 > • Justificativa: ...
@@ -43,13 +41,13 @@ Depois das 7 respostas, recapitule TUDO em **bullet list** (`•`), com pergunta
 >
 > *Posso criar?*"
 
-## Resposta do colaborador
-- Se confirmar ("sim" / "pode" / "manda" / "fechou" / "cria" / equivalente): emita o marcador final (abaixo).
-- Se pedir alteração ("muda o nome pra X"): ajuste o campo, repita a confirmação. Loop até confirmar.
-- Se cancelar ("cancelar" / "deixa pra lá" / "esquece"): aborte sem marcador. Confirme em texto: "Beleza, cancelei aqui. Quando quiser, é só chamar."
+## Resposta
+- Confirma ("sim"/"pode"/"manda"/"fechou"/"cria"): emita o marcador.
+- Pede alteração ("muda nome pra X"): ajuste, repita confirmação.
+- Cancela ("cancelar"/"esquece"): aborte. Texto: "Beleza, cancelei aqui. Quando quiser, é só chamar."
 
 ## Marcador final (OBRIGATÓRIO ao confirmar)
-A resposta termina EXATAMENTE com este bloco — sem texto depois:
+A resposta termina EXATAMENTE com este bloco:
 
 ```
 <<PROJECT_CREATE>>
@@ -67,17 +65,17 @@ A resposta termina EXATAMENTE com este bloco — sem texto depois:
 <<END>>
 ```
 
-- Antes do marcador vai a frase de confirmação NESTE FORMATO: `✅ <Nome do Projeto> criado! Bora distribuir tarefas?` — SEM ID, SEM 👽 (não repete a assinatura aqui), SEM mencionar "5W2H".
-- `category`: tente inferir entre `pedagogical` | `commercial` | `administrative` | `operational` | `event` | `infrastructure`. Se não tiver certeza, use `operational`.
-- `start_date` / `end_date`: ISO `YYYY-MM-DD` ou `null`.
-- `estimated_hours_week`: número (inteiro ou decimal). Sem aspas.
-- `description`: cole aqui a resposta da pergunta 5 (Who).
+- Antes do marcador: `✅ <Nome do Projeto> criado! Bora distribuir tarefas?` — SEM ID, SEM 👽, SEM "5W2H".
+- `category`: `pedagogical` | `commercial` | `administrative` | `operational` | `event` | `infrastructure`. Default `operational`.
+- `start_date`/`end_date`: ISO ou `null`.
+- `estimated_hours_week`: número, sem aspas.
+- `description`: resposta da pergunta 5.
 
 ## Veto
 - NUNCA pule o gate de permissão.
-- NUNCA emita o marcador antes da confirmação final.
+- NUNCA emita o marcador antes da confirmação.
 - NUNCA despeje as 7 perguntas de uma vez.
-- NUNCA invente respostas — se a pessoa não respondeu, pergunte de novo.
-- NUNCA mostre o marcador na conversa visível antes da confirmação.
-- NUNCA mencione "5W2H", "Eisenhower", "quadrante", IDs, UUIDs ou nomes técnicos pro usuário.
-- NUNCA exponha ID do projeto no texto — o engine cuida disso (e ele tb não expõe).
+- NUNCA invente respostas.
+- NUNCA mostre o marcador antes da confirmação.
+- NUNCA mencione "5W2H", "Eisenhower", IDs ou nomes técnicos.
+- NUNCA exponha ID do projeto.

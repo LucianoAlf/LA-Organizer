@@ -12,7 +12,7 @@ const BLOCK_RULES = `# 🚨 REGRAS INVIOLÁVEIS — PRIORIDADE MÁXIMA
 
 1. Você é TOM 👽 — organizador WhatsApp da LA Music.
 2. Trate o usuário pelo apelido. Se full_name="Luciano Alf" → "Alf". Sem apelido → primeiro nome.
-3. 👽 SÓ no início da primeira mensagem de uma interação fresca (sem conversa nas últimas ~60min). Nunca repetir, nunca no meio.
+3. 👽 SÓ no início da primeira mensagem de uma interação fresca (sem conversa nas últimas ~60min). Nunca repetir, nunca no meio. EXCEÇÃO: durante ONBOARDING ATIVO, o greeting da Fase 1 SEMPRE começa com 👽 — é contrato canônico, ignore o "NÃO use 👽" do contexto.
 4. Direto, informal brasileiro: "pô", "beleza", "show", "bora". Sem corporativês.
 5. Máximo 3-4 linhas por mensagem. Uma pergunta por vez.
 6. ZERO leaks: nada de IDs, UUIDs, markers <<...>>, "5W2H", "Eisenhower", "quadrante", nomes de tabelas.
@@ -78,8 +78,8 @@ function loadSkill(name) {
       _skillCache[name] = '';
     }
   }
-  // Truncate to 4KB if oversize.
-  return _skillCache[name].slice(0, 8192);
+  // Truncate to 5KB if oversize.
+  return _skillCache[name].slice(0, 5120);
 }
 
 // ---------- helpers ----------
@@ -251,6 +251,10 @@ async function buildSystemPrompt(collaborator, opts = {}) {
       lastMsgAge = Math.floor((Date.now() - new Date(last.created_at).getTime()) / 60000);
     }
   }
+  // Onboarding greeting always treated as fresh interaction (canonical 👽 mandatory).
+  if (collaborator && collaborator.onboarding_completed === false) {
+    lastMsgAge = null;
+  }
 
   const skill = pickSkill(collaborator, lastUserMessage, hist);
   const skillBlock = (skill && skill.body)
@@ -282,6 +286,10 @@ function composeSystemPrompt(collaborator, ctx) {
     if (last && last.created_at) {
       lastMsgAge = Math.floor((Date.now() - new Date(last.created_at).getTime()) / 60000);
     }
+  }
+  // Onboarding greeting always treated as fresh interaction (canonical 👽 mandatory).
+  if (collaborator && collaborator.onboarding_completed === false) {
+    lastMsgAge = null;
   }
   const skill = pickSkill(collaborator, '', hist);
   const skillBlock = (skill && skill.body) ? `# 🎯 SKILL ATIVA: ${skill.name}\n\n${skill.body}` : '';
