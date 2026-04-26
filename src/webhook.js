@@ -6,7 +6,7 @@ const router = express.Router();
 router.post('/webhook', async (req, res) => {
   res.status(200).json({ status: 'received' });
   try {
-    const body = req.body;
+    const body = req.body; console.log("[DEBUG] Body:", JSON.stringify(body).substring(0, 300));
     if (whatsapp.isIgnorable(body)) return;
     const phone = whatsapp.extractPhone(body);
     const text = whatsapp.extractText(body);

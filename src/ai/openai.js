@@ -1,24 +1,19 @@
 const { spawn } = require('child_process');
 async function chat(systemPrompt, messages, maxTokens = 2048) {
-  const parts = ['System: ' + systemPrompt];
-  for (const msg of messages) {
-    if (msg.role === 'user') parts.push('\nUser: ' + msg.content);
-    else if (msg.role === 'assistant') parts.push('\nAssistant: ' + msg.content);
-  }
-  const prompt = parts.join('\n');
+  const lastUser = messages.filter(m => m.role === 'user').pop()?.content || '';
+  const prompt = 'System: ' + systemPrompt + '\n\nUser: ' + lastUser;
   return new Promise((resolve, reject) => {
-    const proc = spawn('codex', ['-q', '--model', 'gpt-5.4', '--full-context'], { env: { ...process.env }, timeout: 60000 });
+    const proc = spawn('codex', ['exec', '--model', 'gpt-5.4', prompt], { env: process.env, timeout: 120000 });
     let out = '', err = '';
-    proc.stdout.on('data', d => out += d.toString());
-    proc.stderr.on('data', d => err += d.toString());
+    proc.stdout.on('data', d => out += d);
+    proc.stderr.on('data', d => err += d);
     proc.on('close', code => {
-      if (code !== 0) return reject(new Error('Codex falhou: ' + err));
+      if (code !== 0) return reject(new Error('Codex falhou: ' + err.substring(0, 200)));
       const text = out.trim();
-      if (!text) return reject(new Error('Codex retornou vazio'));
-      resolve({ text, usage: { input: 0, output: 0 }, provider: 'openai' });
+      if (!text) return reject(new Error('Vazio'));
+      resolve({ text, provider: 'openai' });
     });
-    proc.on('error', e => reject(new Error('Codex nao encontrado: ' + e.message)));
-    proc.stdin.write(prompt); proc.stdin.end();
+    proc.on('error', e => reject(e));
   });
 }
 module.exports = { chat };
