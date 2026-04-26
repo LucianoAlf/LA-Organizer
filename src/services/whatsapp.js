@@ -82,6 +82,22 @@ async function sendList(phone, text, items, buttonText = 'Ver opções') {
 }
 
 /**
+ * Envia indicador de "digitando..." pro chat — UX feels instant.
+ * Fire-and-forget: nunca lança erro pra cima.
+ * UAZAPI: POST /message/presence { number, presence: "composing" }
+ */
+async function setTyping(chatid) {
+  try {
+    const number = String(chatid || '').split('@')[0];
+    if (!number) return;
+    await api.post('/message/presence', { number, presence: 'composing' }, { timeout: 5000 });
+    console.log(`[WhatsApp] setTyping pra ${number.slice(-4)}`);
+  } catch (err) {
+    console.log('[WhatsApp] setTyping err (silent):', err?.message || err);
+  }
+}
+
+/**
  * Verifica se uma mensagem é áudio
  */
 function isAudioMessage(webhookData) {
@@ -144,4 +160,4 @@ function isIgnorable(body) {
   return false;
 }
 
-module.exports = { sendMessage, sendButtons, sendList, isAudioMessage, extractText, extractPhone, extractName, isIgnorable };
+module.exports = { sendMessage, sendButtons, sendList, setTyping, isAudioMessage, extractText, extractPhone, extractName, isIgnorable };

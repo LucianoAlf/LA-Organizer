@@ -40,6 +40,10 @@ router.post('/webhook', async (req, res) => {
 
     console.log(`[Webhook] Mensagem de ${phone.slice(-4)}: ${text.substring(0, 50)}`);
 
+    // UX: dispara "digitando..." imediatamente, em paralelo ao engine (Claude leva 6-30s).
+    // Fire-and-forget — nunca bloqueia o fluxo principal.
+    whatsapp.setTyping(`${phone}@s.whatsapp.net`).catch(() => {});
+
     // Processar mensagem (async, não bloqueia o webhook)
     await processMessage(phone, text, body);
 
