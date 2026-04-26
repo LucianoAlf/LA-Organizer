@@ -75,7 +75,11 @@ Ontem você completou 1 de 3. Hoje precisa melhorar. Faz a primeira agora.
 ```
 
 ### Sem tarefas
-`*Sem tarefa marcada hoje. Quer planejar agora?*`
+```
+☕ Bom dia, [nome]!
+
+📭 Sem tarefa marcada hoje. Quer planejar agora e já definir as 3 prioridades do dia?
+```
 
 ---
 
