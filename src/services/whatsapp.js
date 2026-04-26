@@ -24,7 +24,6 @@ async function sendMessage(phone, text) {
     const response = await api.post('/send/text', {
       number: phone,
       text: text,
-      delay: 2000, // 2s delay → mostra "Digitando..." (mais natural)
       readchat: true,
     });
     console.log(`[WhatsApp] Mensagem enviada pra ${phone.slice(-4)}`);

@@ -41,6 +41,7 @@ Default: `08:00`
 ### Confirmação 1 + Pergunta 2 — Fechamento
 ```
 ☕ Anotei: briefing às *8h*. ✅
+
 ⏰ *Que horas você costuma fechar o dia?*
 ```
 Default: `19:00`
@@ -48,6 +49,7 @@ Default: `19:00`
 ### Confirmação 2 + Pergunta 3 — Planejamento
 ```
 ✅ Fechamento às *19h*.
+
 🗓️ *Prefere planejar a semana no domingo ou na segunda?*
 ```
 Default: domingo (`0`)
@@ -55,6 +57,7 @@ Default: domingo (`0`)
 ### Confirmação 3 + Pergunta 4 — Horário do planejamento
 ```
 ✅ Planejamento no *domingo*.
+
 ⏰ *Que horas no domingo?*
 ```
 Default: `19:00`
@@ -62,6 +65,7 @@ Default: `19:00`
 ### Confirmação 4 + Pergunta 5 — Intensidade
 ```
 ✅ Domingo às *19h*.
+
 🎯 Última: quer que eu te cobre *leve*, *normal* ou *duro*?
 
 • Leve = te lembro sem pressão
@@ -154,3 +158,4 @@ O engine remove o bloco antes de enviar pro WhatsApp — o colaborador NUNCA ver
 - NUNCA exponha IDs, markers, internals
 - NUNCA junte os 3 parágrafos do greeting numa linha só
 - NUNCA use emojis fora do mapa semântico
+- SEMPRE linha em branco entre confirmação (✅) e a próxima pergunta — nunca colado
