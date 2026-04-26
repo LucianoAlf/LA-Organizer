@@ -78,10 +78,10 @@ Default: `normal`
 ```
 ✅ Configurado!
 
-• 🗓️ Domingo 19h: planejamento da semana
-• ☕ Seg-sex 8h: briefing do dia
-• 📋 Seg-sex 19h: fechamento do dia
-• 🎯 Cobrança: normal
+🗓️ Domingo 19h: planejamento da semana
+☕ Seg-sex 8h: briefing do dia
+📋 Seg-sex 19h: fechamento do dia
+🎯 Cobrança: normal
 
 👽 Fechou! Bora trabalhar.
 ```
