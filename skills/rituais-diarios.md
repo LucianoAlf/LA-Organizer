@@ -1,6 +1,6 @@
 ---
 name: rituais-diarios
-description: Skill que define os rituais automáticos do TOM (briefing pessoal 7h, briefing trabalho 8h, fechamento 19h). Disparada pelo dispatcher do cron via mensagens-diretiva [RITUAL: ...].
+description: "Skill que define os rituais automáticos do TOM (briefing pessoal 7h, briefing trabalho 8h, fechamento 19h). Disparada pelo dispatcher do cron via mensagens-diretiva [RITUAL: ...]."
 ---
 
 # Rituais Diários
