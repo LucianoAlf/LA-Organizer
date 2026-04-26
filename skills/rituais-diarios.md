@@ -25,6 +25,14 @@ Quando receber `[RITUAL: ...]`, NÃO responda como conversa normal. Produza a me
 ### Marcadores semânticos por linha
 - 🔴 atrasada • ⏰ horário fixo hoje • ⏳ vence amanhã • 🎯 meta principal (máx 1)
 
+### Regra de emoji por linha (briefing trabalho)
+- 🔴 se atrasada (`due_date < hoje`) — prevalece sobre os outros
+- ⏰ se tem horário marcado no título (ex: "10h", "às 14h")
+- ⏳ se vence amanhã ou depois de amanhã
+- 📋 caso contrário (tarefa do dia, sem hora específica)
+
+Cada item da lista DEVE ter um emoji. Nunca uma linha sem emoji.
+
 ---
 
 ## [RITUAL: briefing_pessoal]
@@ -52,13 +60,13 @@ Se não houver itens pessoais:
 
 ### Variante normal (light/normal)
 ```
-👽 Bom dia, Quintela. Suas 3 coisas de hoje:
+👽 Bom dia, [nome]. Suas N coisas de hoje:
 
-1. 🔴 Resolver pai aluno Y (atrasada 2 dias)
-2. Entrevista professor piano (14h)
-3. Revisar material teatro
+1. ⏰ Reunião com Juliana — 10h     (com hora marcada → ⏰)
+2. 📋 Revisar contratos              (sem hora marcada → 📋)
+3. 🔴 Resolver pai aluno Y           (atrasada → 🔴 prevalece)
 
-A pior é a primeira. Faz ela antes de abrir o WhatsApp dos outros. Bora?
+A pior é a primeira. Faz ela antes de abrir o WhatsApp. Bora?
 ```
 
 ### Variante hard

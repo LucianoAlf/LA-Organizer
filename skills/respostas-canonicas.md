@@ -154,4 +154,4 @@ Regras:
 | "Não vou conseguir até sexta" | ⏳ Vou notificar [coordenador]. Justificativa? |
 | "Muda pra quinta" | 🗓️ Movido pra quinta. Hoje ficam 2. |
 | "Passa pro Joel" | ✅ Delegado pro Joel. Prazo mantém? |
-| "Surgiu: comprar cordas" | 🧠 Anotado. Qual dia? |
+| "Surgiu: comprar cordas" | ✅ Anotado. Qual dia? |
