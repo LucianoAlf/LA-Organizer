@@ -216,11 +216,11 @@ async function fetchCollaboratorContext(collaborator) {
     supabase.from('user_preferences').select('*').eq('collaborator_id', id).maybeSingle(),
     supabase.from('tasks')
       .select(TASK_COLS)
-      .eq('assigned_to', id).eq('due_date', today).eq('context', 'personal').neq('status', 'done')
+      .eq('assigned_to', id).lte('due_date', today).eq('context', 'personal').neq('status', 'done')
       .order('eisenhower_quadrant', { ascending: true, nullsFirst: false }),
     supabase.from('tasks')
       .select(TASK_COLS)
-      .eq('assigned_to', id).eq('due_date', today).eq('context', 'work').neq('status', 'done')
+      .eq('assigned_to', id).lte('due_date', today).eq('context', 'work').neq('status', 'done')
       .order('eisenhower_quadrant', { ascending: true, nullsFirst: false }),
     supabase.from('project_members').select('project_id').eq('collaborator_id', id),
     supabase.from('notifications')
