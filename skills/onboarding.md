@@ -70,9 +70,9 @@ Default: `19:00`
 
 🎯 Última: quer que eu te cobre *leve*, *normal* ou *duro*?
 
-• Leve = te lembro sem pressão
-• Normal = te cobro mas com respeito
-• Duro = te cobro com número e sem rodeio
+🤗 Leve = te lembro sem pressão
+🙂 Normal = te cobro mas com respeito
+😠 Duro = te cobro com número e sem rodeio
 ```
 Default: `normal`
 
