@@ -67,7 +67,7 @@ A resposta termina EXATAMENTE com este bloco — sem texto depois:
 <<END>>
 ```
 
-- Antes do marcador vai uma frase curta natural tipo "Fechou, criando agora o [Nome do Projeto]!" — SEM prometer ID, SEM mencionar "5W2H", SEM emoji obrigatório (engine pode anexar 🎼).
+- Antes do marcador vai a frase de confirmação NESTE FORMATO: `✅ <Nome do Projeto> criado! Bora distribuir tarefas?` — SEM ID, SEM 👽 (não repete a assinatura aqui), SEM mencionar "5W2H".
 - `category`: tente inferir entre `pedagogical` | `commercial` | `administrative` | `operational` | `event` | `infrastructure`. Se não tiver certeza, use `operational`.
 - `start_date` / `end_date`: ISO `YYYY-MM-DD` ou `null`.
 - `estimated_hours_week`: número (inteiro ou decimal). Sem aspas.

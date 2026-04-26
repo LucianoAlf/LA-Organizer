@@ -65,7 +65,7 @@ router.get('/health', (req, res) => {
  */
 router.get('/', (req, res) => {
   res.json({
-    agent: '🎵 TOM — LA Organizer',
+    agent: '👽 TOM — LA Organizer',
     status: 'running',
     docs: 'https://github.com/LucianoAlf/LA-Organizer',
   });

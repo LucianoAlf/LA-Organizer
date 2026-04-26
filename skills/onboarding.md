@@ -79,9 +79,9 @@ Quando o colaborador confirmar a recapitulação, sua resposta deve terminar EXA
   • Planejamento no [domingo|segunda]
   • Cobrança [leve|normal|dura]
 
-  Fechou! Bora trabalhar 🎼
+  👽 Fechou! Bora trabalhar.
   ```
-- 🎼 NO FINAL — uma única vez. Sem outros emojis.
+- 👽 NO INÍCIO da linha de fechamento — uma única vez. Sem outros emojis.
 - Sem qualquer menção ao marcador, a "salvando", ou IDs.
 - O engine remove o bloco antes de enviar pro WhatsApp — o colaborador NUNCA verá os marcadores.
 

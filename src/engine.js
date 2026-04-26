@@ -256,7 +256,7 @@ async function processMessage(phone, text, raw = {}) {
     } else if (parsed) {
       try {
         await persistOnboarding(collab.id, parsed.prefs);
-        reply = parsed.cleanText || 'Fechou! Bora trabalhar 🎼';
+        reply = parsed.cleanText || '👽 Fechou! Bora trabalhar.';
       } catch (err) {
         console.error('[Onboarding] Falha ao persistir:', err.message);
         // segue enviando o texto limpo, conversa continua
@@ -280,8 +280,8 @@ async function processMessage(phone, text, raw = {}) {
           console.log(`[Project] criado por ${String(collab.phone).slice(-4)}: ${created.name} (id=${created.id})`);
           const base = parsedProj.cleanText || '';
           // Sem ID, sem UUID — Claude já confirmou em texto natural antes do marcador.
-          // Anexa apenas uma linha discreta com a assinatura, em itálico.
-          reply = (base ? base + '\n\n' : '') + `_Projeto registrado._ 🎼`;
+          // Se Claude não emitiu confirmação, usa fallback semântico padrão (✅ + nome).
+          reply = base ? base : `✅ ${created.name} criado! Bora distribuir tarefas?`;
         }
       } catch (err) {
         console.error('[Project] Falha ao criar:', err.message);

@@ -9,7 +9,7 @@ app.use(webhook);
 
 app.listen(config.port, () => {
   console.log('');
-  console.log('🎵 TOM Engine — LA Organizer');
+  console.log('👽 TOM Engine — LA Organizer');
   console.log('   Porta:', config.port);
   console.log('   AI: Claude Code CLI + Codex fallback');
   console.log('');
