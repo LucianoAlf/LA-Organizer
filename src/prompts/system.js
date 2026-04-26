@@ -27,6 +27,8 @@ function loadAgents() {
   return _agents;
 }
 
+let _skillChecklist = null;
+
 function loadAlwaysOnSkills() {
   if (_skillMemory === null) {
     const p = path.join(__dirname, '..', '..', 'skills', 'gestao-memoria.md');
@@ -36,7 +38,11 @@ function loadAlwaysOnSkills() {
     const p = path.join(__dirname, '..', '..', 'skills', 'cadastro-projeto-5w2h.md');
     _skillProject = fs.existsSync(p) ? fs.readFileSync(p, 'utf-8') : '';
   }
-  return { memory: _skillMemory, project: _skillProject };
+  if (_skillChecklist === null) {
+    const p = path.join(__dirname, '..', '..', 'skills', 'checklist-tarefas.md');
+    _skillChecklist = fs.existsSync(p) ? fs.readFileSync(p, 'utf-8') : '';
+  }
+  return { memory: _skillMemory, project: _skillProject, checklist: _skillChecklist };
 }
 
 function loadSkill(name) {
@@ -89,7 +95,7 @@ async function fetchCollaboratorContext(collaborator) {
       .order('created_at', { ascending: false }).limit(20),
     supabase.from('user_preferences').select('*').eq('collaborator_id', id).maybeSingle(),
     supabase.from('tasks')
-      .select('title, status, priority, eisenhower_quadrant, due_date, project_id, projects(name)')
+      .select('id, title, status, priority, eisenhower_quadrant, due_date, project_id, projects(name)')
       .eq('assigned_to', id).eq('due_date', today).neq('status', 'done')
       .order('eisenhower_quadrant', { ascending: true, nullsFirst: false }),
     supabase.from('project_members').select('project_id').eq('collaborator_id', id),
@@ -147,6 +153,10 @@ function composeSystemPrompt(collaborator, ctx) {
     parts.push('\n\n---\n\n### 📁 SKILL ATIVA: cadastro-projeto-5w2h (use quando o gatilho aparecer)\n');
     parts.push(skills.project);
   }
+  if (skills.checklist) {
+    parts.push('\n\n---\n\n### 📋 SKILL ATIVA: checklist-tarefas (use quando o usuário fechar/reagendar/criar tarefa)\n');
+    parts.push(skills.checklist);
+  }
 
   parts.push('\n\n---\n\n## Contexto da pessoa que está falando com você AGORA\n');
   parts.push(`Nome: ${collaborator.full_name}\n`);
@@ -202,16 +212,21 @@ function composeSystemPrompt(collaborator, ctx) {
     parts.push(`- Timezone: ${pr.timezone || 'America/Sao_Paulo'}\n`);
   }
 
-  // Tarefas do dia
+  // Tarefas do dia (com short-id de 8 chars — Claude usa SÓ pra emitir markers,
+  // NUNCA expõe ao usuário. O engine resolve o prefixo pra UUID completo).
   parts.push(`\n### Tarefas do dia (${ctx.todayTasks.length})\n`);
   if (!ctx.todayTasks.length) {
     parts.push('Sem tarefas pra hoje.\n');
   } else {
+    let i = 1;
     for (const t of ctx.todayTasks) {
       const proj = t.projects?.name || 'Sem projeto';
       const prio = t.priority || (t.eisenhower_quadrant ? `Q${t.eisenhower_quadrant}` : '—');
-      parts.push(`- [${prio}] ${t.title} — ${proj} (status: ${t.status})\n`);
+      const shortId = (t.id || '').slice(0, 8);
+      parts.push(`${i}. [id=${shortId}] [${prio}] ${t.title} — ${proj} (status: ${t.status})\n`);
+      i++;
     }
+    parts.push('\n_Os `[id=...]` acima são internos — use-os SOMENTE em markers `<<TASK_UPDATE>>`. NUNCA mostre IDs ao usuário._\n');
   }
 
   // Projetos ativos

@@ -99,6 +99,152 @@ function parseProjectMarker(text) {
   return { project, cleanText, malformed: false };
 }
 
+// Parse <<TASK_UPDATE>>[...]<<END>> — array de ações. Retorna { actions, cleanText } ou null.
+function parseTaskUpdateMarker(text) {
+  if (!text) return null;
+  const re = /<<TASK_UPDATE>>\s*([\s\S]*?)\s*<<END>>/i;
+  const m = text.match(re);
+  if (!m) return null;
+  let parsed = null;
+  try {
+    parsed = JSON.parse(m[1].trim());
+  } catch (err) {
+    return { malformed: true, cleanText: text.replace(re, '').trim() };
+  }
+  const actions = Array.isArray(parsed) ? parsed : [parsed];
+  const cleanText = text.replace(re, '').trim();
+  return { actions, cleanText, malformed: false };
+}
+
+const VALID_PRIORITIES = ['low', 'medium', 'high'];
+const SHORT_ID_RE = /^[a-f0-9]{4,12}$/i;
+
+// Resolve o prefixo de 8 chars (ou similar) pra UUID completo, RESTRITO ao colaborador.
+// Defesa-em-profundidade: marker injetado nunca consegue tocar tarefa de outro user.
+async function resolveTaskByShortId(collaboratorId, shortId) {
+  if (!shortId || !SHORT_ID_RE.test(String(shortId))) return null;
+  // uuid não suporta LIKE — fetch todas as tarefas do colab (last 60 dias) e filtra em JS.
+  // Ainda é defense-in-depth: assigned_to é restrito ao colaborador, então cross-user é impossível.
+  const prefix = String(shortId).toLowerCase();
+  const sinceIso = new Date(Date.now() - 60 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+  const { data, error } = await supabase
+    .from('tasks')
+    .select('id, title, status, due_date, assigned_to')
+    .eq('assigned_to', collaboratorId)
+    .gte('due_date', sinceIso)
+    .limit(500);
+  if (error) {
+    console.error('[Task] resolveTaskByShortId err:', error.message);
+    return null;
+  }
+  if (!data || data.length === 0) return null;
+  const matches = data.filter(t => String(t.id).toLowerCase().startsWith(prefix));
+  if (matches.length === 0) return null;
+  if (matches.length > 1) {
+    console.warn(`[Task] short_id ambíguo ${shortId} (${matches.length} matches) — rejeitando`);
+    return null;
+  }
+  return matches[0];
+}
+
+async function applyTaskActions(collaborator, actions) {
+  let okCount = 0;
+  let failCount = 0;
+  const last4 = String(collaborator.phone || '').slice(-4);
+  for (const a of actions) {
+    if (!a || typeof a.action !== 'string') {
+      failCount++;
+      continue;
+    }
+    try {
+      if (a.action === 'complete') {
+        const t = await resolveTaskByShortId(collaborator.id, a.id);
+        if (!t) {
+          console.warn(`[Task] complete REJECTED id=${a.id} (not owned by ${last4} or not found)`);
+          failCount++;
+          continue;
+        }
+        const { error } = await supabase
+          .from('tasks')
+          .update({
+            status: 'done',
+            completed_at: new Date().toISOString(),
+            completed_by: collaborator.id,
+          })
+          .eq('id', t.id)
+          .eq('assigned_to', collaborator.id);
+        if (error) {
+          console.error('[Task] complete err:', error.message);
+          failCount++;
+        } else {
+          console.log(`[Task] complete ${a.id} by ${last4}`);
+          okCount++;
+        }
+      } else if (a.action === 'reschedule') {
+        const t = await resolveTaskByShortId(collaborator.id, a.id);
+        if (!t) {
+          console.warn(`[Task] reschedule REJECTED id=${a.id} (not owned by ${last4} or not found)`);
+          failCount++;
+          continue;
+        }
+        if (!isValidISODate(a.new_due_date)) {
+          console.warn(`[Task] reschedule REJECTED — bad date ${a.new_due_date}`);
+          failCount++;
+          continue;
+        }
+        const update = { due_date: a.new_due_date };
+        if (t.status === 'overdue') update.status = 'pending';
+        const { error } = await supabase
+          .from('tasks')
+          .update(update)
+          .eq('id', t.id)
+          .eq('assigned_to', collaborator.id);
+        if (error) {
+          console.error('[Task] reschedule err:', error.message);
+          failCount++;
+        } else {
+          console.log(`[Task] reschedule ${a.id} to ${a.new_due_date}`);
+          okCount++;
+        }
+      } else if (a.action === 'create') {
+        if (!a.title || typeof a.title !== 'string' || !a.title.trim()) {
+          failCount++;
+          continue;
+        }
+        const due = isValidISODate(a.due_date) ? a.due_date : todaySaoPaulo();
+        const priority = VALID_PRIORITIES.includes(a.priority) ? a.priority : 'medium';
+        const { data, error } = await supabase
+          .from('tasks')
+          .insert({
+            title: a.title.trim().slice(0, 200),
+            assigned_to: collaborator.id,
+            created_by: collaborator.id,
+            due_date: due,
+            priority,
+            source: 'agent_closing',
+            status: 'pending',
+          })
+          .select('id')
+          .single();
+        if (error) {
+          console.error('[Task] create err:', error.message);
+          failCount++;
+        } else {
+          console.log(`[Task] create "${a.title.trim().slice(0, 60)}" due ${due} (id=${(data?.id || '').slice(0, 8)})`);
+          okCount++;
+        }
+      } else {
+        console.warn(`[Task] unknown action: ${a.action}`);
+        failCount++;
+      }
+    } catch (err) {
+      console.error('[Task] exception:', err.message);
+      failCount++;
+    }
+  }
+  return { okCount, failCount };
+}
+
 const MEMORY_TYPES = ['fact', 'decision', 'lesson', 'preference', 'context'];
 const IMPORTANCE_LEVELS = ['critical', 'high', 'normal', 'low'];
 
@@ -291,6 +437,23 @@ async function processMessage(phone, text, raw = {}) {
     }
   }
 
+  // 2.5) Task update (complete / reschedule / create) — defense-in-depth na resolução de IDs.
+  {
+    const parsedTask = parseTaskUpdateMarker(reply);
+    if (parsedTask && parsedTask.malformed) {
+      console.warn('[Task] WARN: malformed marker, dropping block');
+      reply = parsedTask.cleanText || reply;
+    } else if (parsedTask) {
+      const { okCount, failCount } = await applyTaskActions(collab, parsedTask.actions);
+      console.log(`[Task] batch done: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
+      let base = parsedTask.cleanText || '';
+      if (failCount > 0) {
+        base = (base ? base + '\n\n' : '') + '_não consegui atualizar uma das tarefas, te aviso depois_';
+      }
+      reply = base || reply;
+    }
+  }
+
   // 3) Memory save (sempre por último — o conteúdo do bloco NUNCA deve vazar)
   {
     const parsedMem = parseMemoryMarker(reply);
@@ -374,4 +537,4 @@ async function logConversation(collaboratorId, direction, content) {
   });
 }
 
-module.exports = { processMessage, sendRitual, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, persistMemoryRows, persistProject };
+module.exports = { processMessage, sendRitual, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, persistMemoryRows, persistProject, applyTaskActions, resolveTaskByShortId };
