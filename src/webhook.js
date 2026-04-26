@@ -33,8 +33,8 @@ router.post('/webhook', async (req, res) => {
       console.log('[Webhook] SKIP: no phone extracted', JSON.stringify(body).substring(0, 500));
       return;
     }
-    if (!text) {
-      console.log('[Webhook] SKIP: no text extracted', JSON.stringify(body).substring(0, 500));
+    if (!text || typeof text !== 'string') {
+      console.log('[Webhook] SKIP: no text or non-string text', JSON.stringify(body).substring(0, 500));
       return;
     }
 
