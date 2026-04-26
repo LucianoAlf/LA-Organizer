@@ -1,13 +1,12 @@
+// src/ai/claude.js — Spawn do CLI `claude` em modo headless (-p), passando
+// o system prompt rico via --append-system-prompt.
 const { spawn } = require('child_process');
 
-// Resolve PM2-stripped env once. PM2 spawns under root, but we still
-// pin HOME and PATH explicitly so the child claude CLI can find
-// /root/.claude/.credentials.json (OAuth) regardless of how PM2 was started.
 const CLAUDE_BIN = process.env.CLAUDE_BIN || '/usr/bin/claude';
 const CLAUDE_HOME = process.env.CLAUDE_HOME || '/root/.claude';
 const CLAUDE_USER_HOME = process.env.HOME || '/root';
 const CLAUDE_PATH = process.env.PATH || '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
-const CLAUDE_TIMEOUT_MS = Number(process.env.CLAUDE_TIMEOUT_MS) || 30000;
+const CLAUDE_TIMEOUT_MS = Number(process.env.CLAUDE_TIMEOUT_MS) || 60000;
 
 function buildEnv() {
   const env = {
@@ -16,22 +15,37 @@ function buildEnv() {
     CLAUDE_HOME,
     LANG: process.env.LANG || 'C.UTF-8',
   };
-  // Forward auth env if explicitly set (preferred for headless deploys);
-  // otherwise the CLI falls back to OAuth at $HOME/.claude/.credentials.json.
   if (process.env.ANTHROPIC_API_KEY) env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
   if (process.env.CLAUDE_CODE_OAUTH_TOKEN) env.CLAUDE_CODE_OAUTH_TOKEN = process.env.CLAUDE_CODE_OAUTH_TOKEN;
   return env;
 }
 
+/**
+ * @param {string} systemPrompt - Conteúdo SOUL+AGENTS+contexto. Pode ter dezenas de KB.
+ * @param {Array<{role:string,content:string}>} messages - Histórico + mensagem atual.
+ * @returns {Promise<{text:string, provider:string}>}
+ */
 async function chat(systemPrompt, messages /*, maxTokens */) {
   const lastUser = messages.filter(m => m.role === 'user').pop()?.content || '';
-  const fullPrompt = systemPrompt + '\n\nHuman: ' + lastUser + '\nAssistant:';
+
+  // Histórico recente como contexto na mensagem do usuário (para Claude ver o turno anterior).
+  const history = messages
+    .slice(0, -1)
+    .map(m => (m.role === 'user' ? 'Usuário: ' : 'TOM: ') + m.content)
+    .join('\n');
+  const userPrompt = history
+    ? `Conversa recente:\n${history}\n\nMensagem atual do usuário:\n${lastUser}`
+    : lastUser;
 
   return new Promise((resolve, reject) => {
-    // stdio: 'ignore' for stdin is the critical bit — without it the CLI waits
-    // ~3s for stdin and then prints a warning + exits with empty stdout, which
-    // bubbled up as "Vazio" under PM2.
-    const child = spawn(CLAUDE_BIN, ['-p', fullPrompt], {
+    // --append-system-prompt mantém o system prompt separado do user prompt,
+    // permitindo que o Claude trate identidade/contexto como instrução de sistema.
+    const args = [
+      '-p', userPrompt,
+      '--append-system-prompt', systemPrompt,
+    ];
+
+    const child = spawn(CLAUDE_BIN, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: buildEnv(),
       cwd: '/opt/LA-Organizer',
