@@ -128,14 +128,26 @@ function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge) {
     memories.slice(0, 10).forEach(m => lines.push(`• [${m.memory_type}] ${m.content}`));
   }
 
-  if (tasks && tasks.length) {
-    const today = todaySaoPaulo();
-    lines.push('', '**Tarefas hoje:**');
-    tasks.slice(0, 5).forEach((t, i) => {
+  // Render personal × work separately. Falls back to legacy mixed list if split not provided.
+  const today = todaySaoPaulo();
+  const renderTaskList = (arr) => {
+    arr.slice(0, 8).forEach((t, i) => {
       const overdue = t.due_date && t.due_date < today ? '🔴 ' : '';
       const sid = String(t.id || '').slice(0, 8);
       lines.push(`${i + 1}. [id=${sid}] ${overdue}${t.title}`);
     });
+  };
+
+  if (tasks && (tasks.personal || tasks.work)) {
+    const personal = tasks.personal || [];
+    const work = tasks.work || [];
+    lines.push('', `**Tarefas pessoais hoje (${personal.length}):**`);
+    if (personal.length) renderTaskList(personal); else lines.push('_nenhuma_');
+    lines.push('', `**Tarefas trabalho hoje (${work.length}):**`);
+    if (work.length) renderTaskList(work); else lines.push('_nenhuma_');
+  } else if (tasks && tasks.length) {
+    lines.push('', '**Tarefas hoje:**');
+    renderTaskList(tasks);
   }
 
   if (projects && projects.length) {
@@ -184,12 +196,14 @@ function pickSkill(collab, lastUserMessage, recentHistory) {
 async function fetchCollaboratorContext(collaborator) {
   const id = collaborator.id;
   const today = todaySaoPaulo();
+  const TASK_COLS = 'id, title, status, priority, eisenhower_quadrant, due_date, context, remind_at, project_id, projects(name)';
 
   const [
     profileRes,
     memoriesRes,
     prefsRes,
-    tasksRes,
+    personalRes,
+    workRes,
     projectsRes,
     notificationsRes,
     historyRes,
@@ -201,8 +215,12 @@ async function fetchCollaboratorContext(collaborator) {
       .order('created_at', { ascending: false }).limit(10),
     supabase.from('user_preferences').select('*').eq('collaborator_id', id).maybeSingle(),
     supabase.from('tasks')
-      .select('id, title, status, priority, eisenhower_quadrant, due_date, project_id, projects(name)')
-      .eq('assigned_to', id).eq('due_date', today).neq('status', 'done')
+      .select(TASK_COLS)
+      .eq('assigned_to', id).eq('due_date', today).eq('context', 'personal').neq('status', 'done')
+      .order('eisenhower_quadrant', { ascending: true, nullsFirst: false }),
+    supabase.from('tasks')
+      .select(TASK_COLS)
+      .eq('assigned_to', id).eq('due_date', today).eq('context', 'work').neq('status', 'done')
       .order('eisenhower_quadrant', { ascending: true, nullsFirst: false }),
     supabase.from('project_members').select('project_id').eq('collaborator_id', id),
     supabase.from('notifications')
@@ -225,11 +243,16 @@ async function fetchCollaboratorContext(collaborator) {
     activeProjects = data || [];
   }
 
+  const personalTasks = personalRes.data || [];
+  const workTasks = workRes.data || [];
+
   return {
     profile: profileRes.data || null,
     memories: memoriesRes.data || [],
     prefs: prefsRes.data || null,
-    todayTasks: tasksRes.data || [],
+    todayTasks: { personal: personalTasks, work: workTasks },
+    personalTasks,
+    workTasks,
     activeProjects,
     notifications: notificationsRes.data || [],
     recentMessages: (historyRes.data || []).reverse(),
@@ -257,16 +280,27 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     ? `# 🎯 SKILL ATIVA: ${skill.name}\n\n${skill.body}`
     : '';
 
+  // Ritual-aware task filtering: briefing_pessoal → only personal, briefing_trabalho/fechamento → only work.
+  const rt = collaborator && collaborator._ritualType;
+  let tasksForCtx = ctx.todayTasks;
+  if (rt === 'briefing_pessoal') {
+    tasksForCtx = { personal: ctx.personalTasks, work: [] };
+  } else if (rt === 'briefing_trabalho' || rt === 'fechamento' ||
+             rt === 'daily_briefing' || rt === 'daily_closing') {
+    tasksForCtx = { personal: [], work: ctx.workTasks };
+  }
+
   const blocks = [
     BLOCK_RULES,
     BLOCK_IDENTITY,
-    buildContext(collaborator, ctx.memories, ctx.prefs, ctx.todayTasks, ctx.activeProjects, lastMsgAge),
+    buildContext(collaborator, ctx.memories, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge),
     skillBlock,
   ].filter(Boolean);
 
   const systemPrompt = blocks.join('\n\n---\n\n');
 
-  console.log(`[Prompt] size: ${systemPrompt.length} chars (skill: ${skill ? skill.name : 'none'}, history: ${hist.length}, memories: ${ctx.memories.length}, tasks: ${ctx.todayTasks.length})`);
+  const totalTasks = (ctx.personalTasks?.length || 0) + (ctx.workTasks?.length || 0);
+  console.log(`[Prompt] size: ${systemPrompt.length} chars (skill: ${skill ? skill.name : 'none'}, history: ${hist.length}, memories: ${ctx.memories.length}, tasks: ${totalTasks}/p${ctx.personalTasks?.length || 0}/w${ctx.workTasks?.length || 0}, ritual: ${rt || '-'})`);
 
   // Compatibility: engine.js destructures { systemPrompt, ctx } and reads ctx.memories,
   // ctx.todayTasks, ctx.notifications, ctx.recentMessages.

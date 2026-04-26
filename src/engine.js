@@ -211,26 +211,34 @@ async function applyTaskActions(collaborator, actions) {
           failCount++;
           continue;
         }
-        const due = isValidISODate(a.due_date) ? a.due_date : todaySaoPaulo();
+        const context = a.context === 'personal' ? 'personal' : 'work';
         const priority = VALID_PRIORITIES.includes(a.priority) ? a.priority : 'medium';
+        const insertRow = {
+          title: a.title.trim().slice(0, 200),
+          assigned_to: collaborator.id,
+          created_by: collaborator.id,
+          source: 'manual',
+          status: 'pending',
+          context,
+          priority,
+        };
+        if (a.remind_at && isValidRemindAt(a.remind_at)) {
+          // One-shot reminder: due_date = today (SP), remind_at = exact ts.
+          insertRow.remind_at = a.remind_at;
+          insertRow.due_date = todaySaoPaulo();
+        } else {
+          insertRow.due_date = isValidISODate(a.due_date) ? a.due_date : todaySaoPaulo();
+        }
         const { data, error } = await supabase
           .from('tasks')
-          .insert({
-            title: a.title.trim().slice(0, 200),
-            assigned_to: collaborator.id,
-            created_by: collaborator.id,
-            due_date: due,
-            priority,
-            source: 'agent_closing',
-            status: 'pending',
-          })
+          .insert(insertRow)
           .select('id')
           .single();
         if (error) {
           console.error('[Task] create err:', error.message);
           failCount++;
         } else {
-          console.log(`[Task] create "${a.title.trim().slice(0, 60)}" due ${due} (id=${(data?.id || '').slice(0, 8)})`);
+          console.log(`[Task] create "${a.title.trim().slice(0, 60)}" ctx=${context}${a.remind_at ? ` remind_at=${a.remind_at}` : ` due=${insertRow.due_date}`} (id=${(data?.id || '').slice(0, 8)})`);
           okCount++;
         }
       } else {
@@ -279,6 +287,14 @@ const VALID_PROJECT_CATEGORIES = ['pedagogical', 'commercial', 'administrative',
 
 function isValidISODate(s) {
   return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s);
+}
+
+// Validates ISO 8601 timestamp with timezone (Z or ±HH:MM). Sanity-check parses.
+function isValidRemindAt(s) {
+  if (typeof s !== 'string') return false;
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})$/.test(s)) return false;
+  const t = Date.parse(s);
+  return !Number.isNaN(t);
 }
 
 async function persistProject(collaborator, p) {
@@ -489,9 +505,10 @@ async function sendRitual(collaboratorId, ritualType) {
     .eq('id', collaboratorId).single();
   if (!collab?.is_active) return;
 
-  // Tag collaborator with _ritualType so pickSkill loads rituais-diarios.
+  // Tag collaborator with _ritualType so pickSkill loads rituais-diarios + system.js filters tasks.
   const ritualKey = ritualType === 'daily_briefing' ? 'briefing_trabalho'
     : ritualType === 'daily_closing' ? 'fechamento'
+    : ritualType === 'personal_briefing' ? 'briefing_pessoal'
     : ritualType;
   collab._ritualType = ritualKey;
   let { systemPrompt } = await buildSystemPrompt(collab);
@@ -517,6 +534,7 @@ async function sendRitual(collaboratorId, ritualType) {
 function ritualToDirective(type) {
   if (type === 'daily_briefing') return '[RITUAL: briefing_trabalho]';
   if (type === 'daily_closing') return '[RITUAL: fechamento]';
+  if (type === 'personal_briefing') return '[RITUAL: briefing_pessoal]';
   if (type === 'weekly_planning') return '[RITUAL: planejamento_semanal]';
   return `[RITUAL: ${type}]`;
 }

@@ -20,9 +20,13 @@ const supabase = require('../supabase/client');
 const { sendRitual } = require('../engine');
 
 const RITUAL_BY_DIRECTIVE = {
+  briefing_pessoal: 'personal_briefing',
   briefing_trabalho: 'daily_briefing',
   fechamento: 'daily_closing',
 };
+
+// Default time for briefing_pessoal (until user_preferences gains a personal_briefing_time column).
+const PERSONAL_BRIEFING_DEFAULT = '07:00';
 
 function loadDotEnv(file) {
   try {
@@ -160,6 +164,12 @@ async function run(opts = {}) {
   for (const c of collabs) {
     const p = c.user_preferences;
     try {
+      // Briefing pessoal — todo dia (7h ou personal_briefing_time se existir)
+      const personalTime = p.personal_briefing_time || PERSONAL_BRIEFING_DEFAULT;
+      const pbSlot = timeToSlot(personalTime);
+      if (pbSlot !== null && pbSlot === slotNow) {
+        await fireRitual(c, 'personal_briefing', now.ymd);
+      }
       // Briefing de trabalho — dias úteis
       if (!isWeekend) {
         const bSlot = timeToSlot(p.briefing_time);
@@ -176,6 +186,70 @@ async function run(opts = {}) {
       }
     } catch (err) {
       console.error(`[Dispatcher] Erro processando ${c.full_name}:`, err.message);
+    }
+  }
+
+  // Reminder dispatcher — every tick, fires pending one-shot reminders.
+  try {
+    await checkReminders();
+  } catch (err) {
+    console.error('[Dispatcher] checkReminders erro:', err.message);
+  }
+}
+
+// Pending reminders: tasks where remind_at <= now AND status not done/cancelled.
+// Sends "⏰ Lembrete: <title>" to the assignee, then marks task as done (one-shot).
+async function checkReminders() {
+  const nowIso = new Date().toISOString();
+  const { data: due, error } = await supabase
+    .from('tasks')
+    .select('id, title, assigned_to, remind_at, status')
+    .not('remind_at', 'is', null)
+    .lte('remind_at', nowIso)
+    .not('status', 'in', '(done,cancelled)')
+    .limit(50);
+  if (error) {
+    console.error('[Reminders] query err:', error.message);
+    return;
+  }
+  if (!due || !due.length) return;
+  console.log(`[Reminders] ${due.length} pending reminder(s) to fire`);
+
+  // Resolve phones in batch.
+  const ids = [...new Set(due.map(t => t.assigned_to).filter(Boolean))];
+  const { data: collabs } = await supabase
+    .from('collaborators').select('id, phone, full_name, is_active').in('id', ids);
+  const byId = new Map((collabs || []).map(c => [c.id, c]));
+
+  const whatsapp = require('../services/whatsapp');
+  for (const t of due) {
+    const collab = byId.get(t.assigned_to);
+    if (!collab || !collab.is_active || !collab.phone) {
+      console.warn(`[Reminders] task ${String(t.id).slice(0,8)} skipped — no active collaborator/phone`);
+      continue;
+    }
+    const text = `⏰ Lembrete: ${t.title}`;
+    try {
+      await whatsapp.sendMessage(collab.phone, text);
+      const { error: upErr } = await supabase.from('tasks').update({
+        status: 'done',
+        completed_at: new Date().toISOString(),
+        completed_by: collab.id,
+      }).eq('id', t.id);
+      if (upErr) {
+        console.error(`[Reminders] mark-done err for ${String(t.id).slice(0,8)}:`, upErr.message);
+      } else {
+        console.log(`[Reminders] fired ${String(t.id).slice(0,8)} "${t.title.slice(0,40)}" → ${collab.phone.slice(-4)}`);
+      }
+      // Log to conversation_history (outbound).
+      await supabase.from('conversation_history').insert({
+        collaborator_id: collab.id,
+        direction: 'outbound',
+        message_type: 'text',
+        content: text,
+      });
+    } catch (err) {
+      console.error(`[Reminders] send err for ${String(t.id).slice(0,8)}:`, err.message);
     }
   }
 }
