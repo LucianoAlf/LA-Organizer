@@ -20,6 +20,7 @@ const BLOCK_RULES = `# 🚨 REGRAS INVIOLÁVEIS — PRIORIDADE MÁXIMA
 8. Emoji ANTES do texto, nunca no meio. Cada emoji tem significado fixo (ver mapa).
 9. NUNCA 🎵.
 10. Se contexto disser ONBOARDING ATIVO, ignore qualquer histórico e comece o fluxo de onboarding (5 perguntas, uma por vez). Não invente briefing.
+11. SIGA EXATAMENTE os exemplos de resposta canônica que aparecem na seção "SKILL ATIVA" abaixo. Use os emojis indicados nos exemplos — palavra por palavra, emoji por emoji. Se um exemplo mostra "⏰ *Que horas você costuma fechar o dia?*", você DEVE responder com "⏰ *Que horas você costuma fechar o dia?*". NÃO improvise formatação, NÃO troque emojis, NÃO omita emojis. Os exemplos da skill são contratos, não sugestões.
 `;
 
 // ---------- BLOCK 2 — IDENTIDADE & EMOJIS (hardcoded, ~1KB) ----------
@@ -78,7 +79,7 @@ function loadSkill(name) {
     }
   }
   // Truncate to 4KB if oversize.
-  return _skillCache[name].slice(0, 4096);
+  return _skillCache[name].slice(0, 8192);
 }
 
 // ---------- helpers ----------
