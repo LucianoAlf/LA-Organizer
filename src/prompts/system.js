@@ -9,6 +9,8 @@ const SOUL_DIR = path.join(__dirname, '..', '..', 'soul');
 // Cache de arquivos do disco — invalidado por restart do PM2.
 let _soul = null;
 let _agents = null;
+let _skillMemory = null;
+let _skillProject = null;
 
 function loadSoul() {
   if (_soul === null) {
@@ -23,6 +25,18 @@ function loadAgents() {
     _agents = fs.existsSync(p) ? fs.readFileSync(p, 'utf-8') : '';
   }
   return _agents;
+}
+
+function loadAlwaysOnSkills() {
+  if (_skillMemory === null) {
+    const p = path.join(__dirname, '..', '..', 'skills', 'gestao-memoria.md');
+    _skillMemory = fs.existsSync(p) ? fs.readFileSync(p, 'utf-8') : '';
+  }
+  if (_skillProject === null) {
+    const p = path.join(__dirname, '..', '..', 'skills', 'cadastro-projeto-5w2h.md');
+    _skillProject = fs.existsSync(p) ? fs.readFileSync(p, 'utf-8') : '';
+  }
+  return { memory: _skillMemory, project: _skillProject };
 }
 
 function loadSkill(name) {
@@ -122,6 +136,16 @@ function composeSystemPrompt(collaborator, ctx) {
   if (agents) {
     parts.push('\n\n---\n\n');
     parts.push(agents);
+  }
+
+  const skills = loadAlwaysOnSkills();
+  if (skills.memory) {
+    parts.push('\n\n---\n\n### 🧠 SKILL ATIVA: gestao-memoria (sempre ligada)\n');
+    parts.push(skills.memory);
+  }
+  if (skills.project) {
+    parts.push('\n\n---\n\n### 📁 SKILL ATIVA: cadastro-projeto-5w2h (use quando o gatilho aparecer)\n');
+    parts.push(skills.project);
   }
 
   parts.push('\n\n---\n\n## Contexto da pessoa que está falando com você AGORA\n');

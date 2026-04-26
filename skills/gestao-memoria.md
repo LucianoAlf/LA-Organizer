@@ -1,142 +1,51 @@
 ---
 name: gestao-memoria
-description: Skill para consolidar, buscar, criar e expirar memórias do TOM sobre cada colaborador. Use no cron semanal de consolidação (domingo 22h), quando o colaborador mencionar fato pessoal/profissional, ou quando o TOM identificar padrão recorrente.
+description: Extração ativa de memória durante a conversa. Após CADA resposta em que o colaborador revelou algo digno de lembrar, anexe um marcador <<MEMORY_SAVE>> no FINAL da mensagem. O engine remove o bloco antes de enviar — o colaborador NUNCA verá.
 ---
 
-# Gestão de Memória
+# Gestão de Memória (extração ativa)
 
-## Entrada
-| Campo | Tipo | Origem | Obrigatório |
-|-------|------|--------|-------------|
-| collaborator_id | uuid | Contexto da interação ou cron | Sim |
-| action | enum (consolidate, create, search, expire) | Sistema ou observação | Sim |
-| content | text | Fato, padrão ou lição observada | Pra create |
-| search_query | text | Termo de busca | Pra search |
+## Quando salvar
+Quando, na mensagem atual ou na conversa recente, o colaborador revelou um fato durável, decisão tomada, lição aprendida, preferência clara, ou contexto pessoal/profissional relevante. Pense: "Daqui a 2 meses isso ainda importa?" Se sim, salve.
 
-## Saída
-| Campo | Tipo | Destino |
-|-------|------|---------|
-| collaborator_memory | record | Supabase (criada ou atualizada) |
-| collaborator_profiles | record | Supabase (campos atualizados) |
-| search_results | record[] | Prompt do TOM (contexto enriquecido) |
+## Quando NÃO salvar
+- Bate-papo, saudação, "tá bom", "fechou", emoji solto.
+- Coisas óbvias do perfil/role já registrado.
+- Estado momentâneo ("tô cansado hoje" — só vira memória se virar padrão).
+- Qualquer coisa já presente na lista de "Memória relevante" do system prompt (evite duplicata).
 
-## Fases de Execução
-
-### Criação explícita de memória
-Quando o colaborador diz algo que o TOM deve lembrar:
-
-> "TOM, eu dou aula particular em casa terça e quinta à noite"
-
-```sql
-INSERT INTO collaborator_memory (collaborator_id, memory_type, content, source, importance)
-VALUES ($1, 'fact', 'Dá aula particular em casa terça e quinta à noite', 'explicit', 'normal');
-```
-
-Confirmar: "Anotado. Vou levar isso em conta no planejamento."
-
-### Criação por observação
-Quando o TOM percebe um padrão após múltiplas interações:
-
-Exemplo: após 4 semanas, Joel não responde fechamento nas sextas.
-
-```sql
-INSERT INTO collaborator_memory (collaborator_id, memory_type, content, source, importance)
-VALUES ($joel_id, 'lesson', 
-  'Joel não responde fechamento nas sextas — provavelmente já saiu da escola. Considerar enviar às 17h nas sextas.',
-  'observation', 'normal');
-```
-
-### Busca de memórias (a cada interação)
-Antes de responder, o TOM busca as memórias mais relevantes:
-
-```sql
--- Top 10 por importância e recência
-SELECT content, memory_type, importance, updated_at
-FROM collaborator_memory
-WHERE collaborator_id = $1 AND is_active = true
-ORDER BY
-  CASE importance WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'normal' THEN 3 WHEN 'low' THEN 4 END,
-  updated_at DESC
-LIMIT 10;
-```
-
-Pra busca por tema específico (FTS5):
-```sql
-SELECT content, memory_type, ts_rank(to_tsvector('portuguese', content), query) as rank
-FROM collaborator_memory, plainto_tsquery('portuguese', $search_query) query
-WHERE collaborator_id = $1 AND is_active = true
-  AND to_tsvector('portuguese', content) @@ query
-ORDER BY rank DESC
-LIMIT 5;
-```
-
-### Consolidação semanal (cron domingo 22h)
-
-Para cada colaborador ativo:
+## Formato do marcador (OBRIGATÓRIO no final)
+Quando houver algo a salvar, sua resposta termina EXATAMENTE com este bloco — depois dele NADA:
 
 ```
-1. Puxar conversation_history dos últimos 7 dias
-2. Montar prompt de consolidação:
-
-   "Analise estas conversas entre o TOM e [nome].
-    Extraia:
-    - Fatos novos (coisas que a pessoa mencionou sobre si, horários, preferências)
-    - Padrões comportamentais (quando responde, quando ignora, como reage a cobrança)
-    - Decisões tomadas (mudanças de preferência, reagendamentos recorrentes)
-    - Contexto temporal (eventos, projetos, prazos mencionados)
-    
-    Retorne em JSON:
-    [
-      {type: 'fact|lesson|preference|context', content: '...', importance: 'critical|high|normal|low', decay_at: null|'YYYY-MM-DD'}
-    ]"
-
-3. Pra cada item retornado:
-   - Verificar se já existe (busca por similaridade no content)
-   - Se novo → INSERT
-   - Se similar mas com info atualizada → UPDATE
-   - Se conflita com memória existente → UPDATE (mais recente ganha)
-
-4. Atualizar collaborator_profiles:
-   - communication_style (baseado em padrões de resposta)
-   - response_pattern (baseado em ritual_logs)
-   - best_coaching_approach (baseado no que gerou mais conclusão)
-   - avg_response_time_min (cálculo direto dos ritual_logs)
-   - completion_rate_30d (cálculo direto dos daily_plans)
-   - maturity_level (avaliação baseada em métricas acumuladas)
-
-5. Expirar memórias:
-   UPDATE collaborator_memory SET is_active = false
-   WHERE decay_at IS NOT NULL AND decay_at < CURRENT_DATE;
+<<MEMORY_SAVE>>
+[
+  {"memory_type":"fact","content":"<fato curto, neutro, terceira pessoa>","importance":"normal"},
+  {"memory_type":"preference","content":"<preferência clara>","importance":"normal"}
+]
+<<END>>
 ```
 
-### Tipos de memória e exemplos
+- `memory_type` DEVE ser um destes: `fact` | `decision` | `lesson` | `preference` | `context`.
+- `importance` DEVE ser um destes: `critical` | `high` | `normal` | `low`.
+- `content`: 1 frase curta, escrita em terceira pessoa, neutra. Ex.: "Luciano está gravando disco de bossa nova com previsão para junho/2026."
+- Pode incluir 1 ou vários itens no array. Mínimo 1.
 
-| Tipo | Exemplo | Expira? |
-|---|---|---|
-| fact | "Mora em Campo Grande, leva 1h pra chegar no Recreio" | Não |
-| decision | "Decidiu que planejamento semanal é segunda 7h30, não domingo" | Não |
-| lesson | "Quando fala 'tô vendo', geralmente não faz. Melhor sugerir data concreta" | Não |
-| preference | "Prefere receber lembrete Emusys por texto, não por lista" | Não |
-| context | "Organizando o Sarau de Violinos até junho 2026" | Sim (01/07/2026) |
+## Regras de ouro
+- O marcador é SEMPRE a última coisa da resposta. Nada de texto depois do `<<END>>`.
+- Antes do marcador vai a resposta normal pro colaborador (que NÃO menciona o marcador).
+- Se NÃO há nada digno de salvar, OMITA o bloco inteiro. Não emita marcador vazio.
+- Não duplique memória já listada no contexto.
+- Pode salvar em paralelo com `<<ONBOARDING_DONE>>` ou `<<PROJECT_CREATE>>` na mesma resposta — ordem não importa para os parsers, mas mantenha cada bloco íntegro.
 
-## Veto Conditions — NUNCA
-- NUNCA expor memórias do TOM pro colaborador ("eu sei que você não responde nas sextas")
-- NUNCA compartilhar memória de uma pessoa com outra
-- NUNCA fabricar memória — só registrar o que foi observado ou dito explicitamente
-- NUNCA deletar memória sem marcar como is_active=false primeiro (soft delete)
-- NUNCA carregar mais de 10 memórias no prompt (performance)
-- NUNCA usar memórias pessoais pra julgar performance de trabalho
+## Mapeamento de tipos
+- `fact`: realidade objetiva ("toca violão há 20 anos", "mora no Recreio").
+- `decision`: decisão tomada ("decidiu pausar projeto X até agosto").
+- `lesson`: aprendizado ("evitar agendar reunião na sexta após 17h — produtividade cai").
+- `preference`: gosto, estilo, conforto ("prefere reuniões curtas de 15min").
+- `context`: situação temporária mas relevante ("filha nasceu em março/2026, está dormindo pouco").
 
-## Checklist de Conclusão
-- [ ] Memórias explícitas registradas quando colaborador menciona fatos
-- [ ] Padrões observados registrados como 'lesson' após confirmação interna
-- [ ] Consolidação semanal rodando no cron domingo 22h
-- [ ] Perfis atualizados com métricas e padrões
-- [ ] Memórias expiradas marcadas como is_active=false
-- [ ] Busca FTS5 funcionando pra consultas por tema
-- [ ] Top 10 memórias carregadas em cada interação
-
-## Integrações
-- **Supabase** — collaborator_memory, collaborator_profiles, conversation_history, ritual_logs, daily_plans
-- **Claude Sonnet 4.6** — prompt de consolidação (extração de fatos e padrões)
-- **pg_cron** — fn_consolidate_memory() domingo 22h
+## Veto
+- NUNCA mostre o marcador na conversa visível antes do `<<MEMORY_SAVE>>`.
+- NUNCA invente fato. Se a inferência exige adivinhar, não salve.
+- NUNCA salve fofoca/julgamento sobre terceiros.

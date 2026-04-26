@@ -66,6 +66,112 @@ function parseOnboardingMarker(text) {
   return { prefs, cleanText, malformed: false };
 }
 
+// Parse <<MEMORY_SAVE>>[...]<<END>> — array de objetos. Retorna { rows, cleanText } ou null.
+function parseMemoryMarker(text) {
+  if (!text) return null;
+  const re = /<<MEMORY_SAVE>>\s*([\s\S]*?)\s*<<END>>/i;
+  const m = text.match(re);
+  if (!m) return null;
+  let parsed = null;
+  try {
+    parsed = JSON.parse(m[1].trim());
+  } catch (err) {
+    return { malformed: true, cleanText: text.replace(re, '').trim() };
+  }
+  const rows = Array.isArray(parsed) ? parsed : [parsed];
+  const cleanText = text.replace(re, '').trim();
+  return { rows, cleanText, malformed: false };
+}
+
+// Parse <<PROJECT_CREATE>>{...}<<END>> — objeto único. Retorna { project, cleanText } ou null.
+function parseProjectMarker(text) {
+  if (!text) return null;
+  const re = /<<PROJECT_CREATE>>\s*([\s\S]*?)\s*<<END>>/i;
+  const m = text.match(re);
+  if (!m) return null;
+  let project = null;
+  try {
+    project = JSON.parse(m[1].trim());
+  } catch (err) {
+    return { malformed: true, cleanText: text.replace(re, '').trim() };
+  }
+  const cleanText = text.replace(re, '').trim();
+  return { project, cleanText, malformed: false };
+}
+
+const MEMORY_TYPES = ['fact', 'decision', 'lesson', 'preference', 'context'];
+const IMPORTANCE_LEVELS = ['critical', 'high', 'normal', 'low'];
+
+async function persistMemoryRows(collaboratorId, rows) {
+  let saved = 0;
+  for (const r of rows) {
+    if (!r || typeof r.content !== 'string' || !r.content.trim()) continue;
+    const memory_type = MEMORY_TYPES.includes(r.memory_type) ? r.memory_type : 'fact';
+    const importance = IMPORTANCE_LEVELS.includes(r.importance) ? r.importance : 'normal';
+    try {
+      const { error } = await supabase.from('collaborator_memory').insert({
+        collaborator_id: collaboratorId,
+        memory_type,
+        content: r.content.trim(),
+        importance,
+        source: 'conversation',
+        is_active: true,
+      });
+      if (error) {
+        console.error('[Memory] insert err:', error.message, '| row:', r.content);
+      } else {
+        saved++;
+      }
+    } catch (err) {
+      console.error('[Memory] exception:', err.message);
+    }
+  }
+  return saved;
+}
+
+const VALID_PROJECT_CATEGORIES = ['pedagogical', 'commercial', 'administrative', 'operational', 'event', 'infrastructure'];
+
+function isValidISODate(s) {
+  return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s);
+}
+
+async function persistProject(creatorId, p) {
+  const category = VALID_PROJECT_CATEGORIES.includes(p.category) ? p.category : 'operational';
+  // projects.start_date / end_date são NOT NULL no schema. Fallback: hoje (SP) e +90 dias se "a definir".
+  const today = todaySaoPaulo();
+  const fallbackEnd = (() => {
+    const d = new Date(today + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() + 90);
+    return d.toISOString().slice(0, 10);
+  })();
+  const insertRow = {
+    name: p.name,
+    description: p.description || null,
+    justification: p.justification || null,
+    location: p.location || null,
+    start_date: isValidISODate(p.start_date) ? p.start_date : today,
+    end_date: isValidISODate(p.end_date) ? p.end_date : fallbackEnd,
+    methodology: p.methodology || null,
+    estimated_hours_week: typeof p.estimated_hours_week === 'number' ? p.estimated_hours_week : null,
+    category,
+    created_by: creatorId,
+    status: 'planning',
+  };
+  const { data, error } = await supabase.from('projects').insert(insertRow).select('id, name').single();
+  if (error) throw error;
+  const projectId = data.id;
+  const { error: memErr } = await supabase.from('project_members').insert({
+    project_id: projectId,
+    collaborator_id: creatorId,
+    role_in_project: 'owner',
+  });
+  if (memErr) {
+    console.error('[Project] project_members insert err:', memErr.message);
+    // não derruba a criação — projeto já existe
+  }
+  return { id: projectId, name: data.name };
+}
+
 function normalizeTime(t) {
   if (!t) return null;
   const s = String(t).trim();
@@ -130,7 +236,9 @@ async function processMessage(phone, text, raw = {}) {
   const response = await ai.chat(systemPrompt, msgs);
   let reply = response.text;
 
-  // Se onboarding ativo, tenta consumir o marcador
+  // Ordem de strip: ONBOARDING → PROJECT → MEMORY (memória por último — não deve aparecer pro user em hipótese alguma).
+
+  // 1) Onboarding (apenas quando ativo)
   if (onboardingActive) {
     const parsed = parseOnboardingMarker(reply);
     if (parsed && parsed.malformed) {
@@ -145,6 +253,40 @@ async function processMessage(phone, text, raw = {}) {
         // segue enviando o texto limpo, conversa continua
         reply = parsed.cleanText || reply;
       }
+    }
+  }
+
+  // 2) Project create
+  {
+    const parsedProj = parseProjectMarker(reply);
+    if (parsedProj && parsedProj.malformed) {
+      console.warn('[Project] WARN: malformed marker');
+      reply = parsedProj.cleanText || reply;
+    } else if (parsedProj) {
+      try {
+        const created = await persistProject(collab.id, parsedProj.project);
+        const shortId = String(created.id).slice(0, 8);
+        console.log(`[Project] criado por ${String(collab.phone).slice(-4)}: ${created.name} (id=${created.id})`);
+        const base = parsedProj.cleanText || '';
+        reply = (base ? base + '\n\n' : '') + `✅ Projeto criado (ID: ${shortId}). Bora distribuir tarefas?`;
+      } catch (err) {
+        console.error('[Project] Falha ao criar:', err.message);
+        const base = parsedProj.cleanText || '';
+        reply = (base ? base + '\n\n' : '') + `⚠️ Falha ao criar projeto: ${err.message}. Tenta de novo daqui a pouco?`;
+      }
+    }
+  }
+
+  // 3) Memory save (sempre por último — o conteúdo do bloco NUNCA deve vazar)
+  {
+    const parsedMem = parseMemoryMarker(reply);
+    if (parsedMem && parsedMem.malformed) {
+      console.warn('[Memory] WARN: malformed marker, dropping block');
+      reply = parsedMem.cleanText || reply;
+    } else if (parsedMem) {
+      const saved = await persistMemoryRows(collab.id, parsedMem.rows);
+      console.log(`[Memory] saved ${saved} facts for ${String(collab.phone).slice(-4)}`);
+      reply = parsedMem.cleanText || reply;
     }
   }
 
@@ -204,4 +346,4 @@ async function logConversation(collaboratorId, direction, content) {
   });
 }
 
-module.exports = { processMessage, sendRitual, parseOnboardingMarker, persistOnboarding };
+module.exports = { processMessage, sendRitual, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, persistMemoryRows, persistProject };
