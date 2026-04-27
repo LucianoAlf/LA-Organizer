@@ -1541,6 +1541,163 @@ async function logConversation(collaboratorId, direction, content) {
   });
 }
 
+// ==================== WEEKLY MEMORY CONSOLIDATION ====================
+// Sunday 22h: read last 7 days of inbound history for each active collaborator,
+// extract durable facts/decisions/preferences/lessons/contexts via Claude,
+// dedupe against existing memories, insert. Also decays expired memories.
+
+const MEM_VALID_TYPES = ['fact', 'decision', 'lesson', 'preference', 'context'];
+
+// Simple word-set overlap dedupe. Returns true if `a` looks like `b`.
+function looksLikeMemory(a, b, threshold = 0.6) {
+  const norm = s => String(s || '').toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/)
+    .filter(w => w.length >= 4);
+  const wa = new Set(norm(a));
+  const wb = new Set(norm(b));
+  if (!wa.size || !wb.size) return false;
+  let inter = 0;
+  for (const w of wa) if (wb.has(w)) inter++;
+  const union = wa.size + wb.size - inter;
+  return union > 0 && inter / union >= threshold;
+}
+
+async function _consolidateExtract(collab, historyText, existingTexts) {
+  const sysPrompt = `Você é um extrator de memória durável.
+Receberá o histórico inbound dos últimos 7 dias de um colaborador no WhatsApp + lista de memórias já salvas.
+Sua tarefa: identificar até 5 NOVOS itens dignos de memória futura (que ainda NÃO estão na lista existente).
+
+Tipos válidos (use exatamente um): fact | decision | lesson | preference | context
+- fact: dado concreto duradouro (mora em X, toca instrumento Y)
+- decision: decisão consciente (vai pausar projeto Z até agosto)
+- lesson: padrão aprendido (evitar reunião sexta após 17h)
+- preference: gosto/forma de trabalhar (prefere reuniões curtas)
+- context: situação temporária (filha nasceu em mar/2026 — sempre defina decay_at)
+
+Importance: critical | high | normal | low
+
+Saída OBRIGATÓRIA: array JSON puro, sem texto antes/depois. Vazio se nada digno:
+[
+  {"memory_type":"fact","content":"...","importance":"normal"},
+  {"memory_type":"context","content":"...","importance":"normal","decay_at":"2026-08-01"}
+]
+
+REGRAS:
+- 1 memória boa > 4 banais. Se nada novo, retorne [].
+- Conteúdo: 1 frase curta, terceira pessoa, neutra
+- NÃO duplique algo que já está nas memórias existentes
+- NÃO salve fofoca/julgamento de terceiros
+- NÃO salve estado momentâneo (cansaço de hoje) — só padrão
+- decay_at obrigatório se memory_type='context'`;
+
+  const userPrompt = `Memórias existentes (NÃO duplicar):
+${(existingTexts || []).map(t => '- ' + t).join('\n') || '(nenhuma)'}
+
+Histórico dos últimos 7 dias (inbound):
+${historyText}
+
+Extraia até 5 itens novos. Apenas JSON.`;
+
+  const r = await ai.chat(sysPrompt, [{ role: 'user', content: userPrompt }]);
+  const raw = String(r.text || '').trim();
+  // Be lenient: strip any leading/trailing prose around the JSON array.
+  const m = raw.match(/\[[\s\S]*\]/);
+  if (!m) {
+    console.warn(`[MemConsolidate] no JSON array in extractor output for ${collab.full_name}`);
+    return [];
+  }
+  let parsed;
+  try { parsed = JSON.parse(m[0]); }
+  catch (err) {
+    console.warn(`[MemConsolidate] JSON parse err for ${collab.full_name}:`, err.message);
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .filter(x => x && typeof x === 'object' && typeof x.content === 'string' && x.content.trim())
+    .filter(x => MEM_VALID_TYPES.includes(x.memory_type))
+    .map(x => ({
+      memory_type: x.memory_type,
+      content: x.content.trim().slice(0, 600),
+      importance: ['critical', 'high', 'normal', 'low'].includes(x.importance) ? x.importance : 'normal',
+      decay_at: typeof x.decay_at === 'string' && /^\d{4}-\d{2}-\d{2}/.test(x.decay_at) ? x.decay_at : null,
+    }))
+    .slice(0, 5);
+}
+
+async function consolidateMemoryFor(collab) {
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
+  const { data: msgs } = await supabase
+    .from('conversation_history')
+    .select('content, created_at')
+    .eq('collaborator_id', collab.id)
+    .eq('direction', 'inbound')
+    .gte('created_at', sevenDaysAgo)
+    .order('created_at', { ascending: true })
+    .limit(200);
+  const historyText = (msgs || [])
+    .map(m => String(m.content || '').slice(0, 500))
+    .join('\n')
+    .slice(0, 12000);
+  if (historyText.length < 50) {
+    return { collab: collab.full_name, saved: 0, skipped: 'too_thin' };
+  }
+
+  const { data: existing } = await supabase
+    .from('collaborator_memory')
+    .select('content')
+    .eq('collaborator_id', collab.id)
+    .eq('is_active', true)
+    .limit(100);
+  const existingTexts = (existing || []).map(e => e.content);
+
+  let candidates;
+  try {
+    candidates = await _consolidateExtract(collab, historyText, existingTexts);
+  } catch (err) {
+    console.error(`[MemConsolidate] extract err for ${collab.full_name}:`, err.message);
+    return { collab: collab.full_name, saved: 0, skipped: 'extract_error', error: err.message };
+  }
+
+  let saved = 0, dedup = 0;
+  for (const c of candidates) {
+    const dup = existingTexts.some(t => looksLikeMemory(c.content, t));
+    if (dup) { dedup++; continue; }
+    const { error } = await supabase.from('collaborator_memory').insert({
+      collaborator_id: collab.id,
+      memory_type: c.memory_type,
+      content: c.content,
+      importance: c.importance,
+      decay_at: c.decay_at,
+      source: 'observation', // weekly consolidation = observação periódica
+      is_active: true,
+    });
+    if (error) console.error('[MemConsolidate] insert err:', error.message);
+    else { saved++; existingTexts.push(c.content); /* prevent intra-batch dup */ }
+  }
+  console.log(`[MemConsolidate] ${collab.full_name}: candidates=${candidates.length} saved=${saved} dedup=${dedup}`);
+  return { collab: collab.full_name, candidates: candidates.length, saved, dedup };
+}
+
+// Decays expired memories: is_active flips to false. Returns count.
+async function decayExpiredMemories() {
+  const nowIso = new Date().toISOString();
+  const { data, error } = await supabase
+    .from('collaborator_memory')
+    .update({ is_active: false })
+    .lt('decay_at', nowIso)
+    .eq('is_active', true)
+    .select('id');
+  if (error) {
+    console.error('[MemDecay] err:', error.message);
+    return 0;
+  }
+  const n = (data || []).length;
+  if (n) console.log(`[MemDecay] ${n} memory rows decayed`);
+  return n;
+}
+
 // ==================== COORDINATOR REPORTS ====================
 // Deterministic, template-based summaries that DO NOT call the AI provider.
 // Privacy contract: only WORK-context data is queried. Habits, personal tasks,
@@ -1814,4 +1971,4 @@ async function sendCoordinatorReport(collaboratorId, type, ymdRef) {
   return true;
 }
 
-module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamSummary, buildWeeklyRetrospective, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseWeeklyPlanMarker, parseHabitMarker, parseDndMarker, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, applyHabitActions, applyDnd, getDndState, resolveTaskByShortId };
+module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamSummary, buildWeeklyRetrospective, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseWeeklyPlanMarker, parseHabitMarker, parseDndMarker, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, applyHabitActions, applyDnd, getDndState, consolidateMemoryFor, decayExpiredMemories, looksLikeMemory, resolveTaskByShortId };

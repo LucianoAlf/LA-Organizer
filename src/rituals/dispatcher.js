@@ -17,7 +17,7 @@ process.chdir(path.join(__dirname, '..', '..'));
 loadDotEnv(path.join(process.cwd(), '.env'));
 
 const supabase = require('../supabase/client');
-const { sendRitual, sendCoordinatorReport, getDndState } = require('../engine');
+const { sendRitual, sendCoordinatorReport, getDndState, consolidateMemoryFor, decayExpiredMemories } = require('../engine');
 
 const RITUAL_BY_DIRECTIVE = {
   briefing_pessoal: 'personal_briefing',
@@ -41,6 +41,7 @@ const CANONICAL_BY_RITUAL = {
 // Coordinator report defaults — slot-aligned (15-min increments).
 const TEAM_SUMMARY_DEFAULT_TIME = '19:30';      // weekdays only
 const WEEKLY_RETRO_DEFAULT_TIME = '18:00';      // Sunday only
+const MEMORY_CONSOLIDATION_TIME = '22:00';      // Sunday only
 const COORDINATOR_ROLES = ['coordinator', 'director'];
 
 // Default time for briefing_pessoal (until user_preferences gains a personal_briefing_time column).
@@ -312,6 +313,22 @@ async function run(opts = {}) {
     }
   } catch (err) {
     console.error('[Dispatcher] coordinator-reports erro:', err.message);
+  }
+
+  // Weekly memory consolidation — Sunday 22:00. Decays first (cheap), then
+  // runs LLM-driven extraction per active+onboarded collaborator.
+  if (opts.force === 'consolidacao_memoria' || (now.dow === 0 && timeToSlot(MEMORY_CONSOLIDATION_TIME) === slotNow)) {
+    try {
+      const decayed = await decayExpiredMemories();
+      console.log(`[MemDecay] ${decayed} memory rows decayed`);
+      const all = await listCollaborators(opts.phone);
+      for (const c of all) {
+        try { await consolidateMemoryFor(c); }
+        catch (err) { console.error(`[MemConsolidate] err for ${c.full_name}:`, err.message); }
+      }
+    } catch (err) {
+      console.error('[Dispatcher] memory-consolidation erro:', err.message);
+    }
   }
 
   // Reminder dispatcher — every tick, fires pending one-shot reminders.
