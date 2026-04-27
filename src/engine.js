@@ -287,6 +287,150 @@ async function applyTaskActions(collaborator, actions) {
           console.log(`[Task] create "${a.title.trim().slice(0, 60)}" ctx=${context}${a.remind_at ? ` remind_at=${a.remind_at}` : ` due=${insertRow.due_date}`} (id=${(data?.id || '').slice(0, 8)})`);
           okCount++;
         }
+      } else if (a.action === 'extension_request') {
+        const t = await resolveTaskByShortId(collaborator.id, a.id);
+        if (!t) {
+          console.warn(`[Task] extension_request REJECTED id=${a.id} (not owned by ${last4})`);
+          failCount++;
+          continue;
+        }
+        const reason = (typeof a.reason === 'string' && a.reason.trim()) ? a.reason.trim().slice(0, 500) : null;
+        // Resolve supervisor via collaborators.supervisor_id, fallback to any active coordinator/director.
+        let supervisor = null;
+        if (collaborator.supervisor_id) {
+          const { data } = await supabase
+            .from('collaborators')
+            .select('id, full_name, phone, is_active')
+            .eq('id', collaborator.supervisor_id).maybeSingle();
+          if (data && data.is_active) supervisor = data;
+        }
+        if (!supervisor) {
+          const { data } = await supabase
+            .from('collaborators')
+            .select('id, full_name, phone, is_active, role')
+            .in('role', ['coordinator', 'director'])
+            .eq('is_active', true).neq('id', collaborator.id).limit(1);
+          if (data && data.length) supervisor = data[0];
+        }
+        if (!supervisor) {
+          console.warn('[Task] extension_request REJECTED — no supervisor available');
+          failCount++;
+          continue;
+        }
+        // Insert task_comment with the reason (audit trail).
+        if (reason) {
+          await supabase.from('task_comments').insert({
+            task_id: t.id,
+            content: `[extensão pedida] ${reason}`,
+            comment_type: 'manual',
+            created_by: collaborator.id,
+          });
+        }
+        // Insert notification for supervisor (status=sent — we send right away).
+        const requesterName = nameForCollab(collaborator);
+        const dueLabel = t.due_date ? formatBRDate(t.due_date) : 'sem prazo';
+        const askText = a.new_due_date && isValidISODate(a.new_due_date)
+          ? ` Pediu até ${formatBRDate(a.new_due_date)}.`
+          : '';
+        const notifBody = `⚠️ ${requesterName} pediu mais prazo na tarefa *${t.title}* (prazo atual: ${dueLabel}).${askText}${reason ? ` Motivo: ${reason}.` : ''}\n\nResponde *aprovar até DD/MM* ou *negar*.`;
+        await supabase.from('notifications').insert({
+          collaborator_id: supervisor.id,
+          notification_type: 'deadline_extension_request',
+          title: `${requesterName} pediu mais prazo`,
+          body: notifBody,
+          reference_type: 'task',
+          reference_id: t.id,
+          channel: 'whatsapp',
+          status: 'sent',
+          sent_at: new Date().toISOString(),
+        });
+        try {
+          await whatsapp.sendMessage(supervisor.phone, notifBody);
+          await supabase.from('conversation_history').insert({
+            collaborator_id: supervisor.id,
+            direction: 'outbound',
+            message_type: 'text',
+            content: notifBody,
+          });
+          console.log(`[Task] extension_request ${a.id} ${last4} → supervisor ${String(supervisor.phone).slice(-4)}`);
+          okCount++;
+        } catch (err) {
+          console.error('[Task] extension_request notify err:', err.message);
+          okCount++;
+        }
+      } else if (a.action === 'extension_decision') {
+        // Coordinator deciding on a pending extension request. Approve→update task.due_date.
+        const approved = a.approved === true || a.approved === 'true';
+        // Recipient is the requester — find the task via id (any task, not necessarily owned by deciding user).
+        const shortId = a.id;
+        if (!shortId || !SHORT_ID_RE.test(String(shortId))) {
+          failCount++;
+          continue;
+        }
+        const sinceIso = new Date(Date.now() - 60 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+        // Find the task by prefix — but ANY assigned_to (since we're deciding, not editing our own).
+        // Restrict by matching a recent extension_request notification to this collaborator.
+        const { data: tasksMatching } = await supabase
+          .from('tasks')
+          .select('id, title, due_date, assigned_to, projects(name)')
+          .gte('due_date', sinceIso)
+          .limit(500);
+        const prefix = String(shortId).toLowerCase();
+        const candidate = (tasksMatching || []).find(t => String(t.id).toLowerCase().startsWith(prefix));
+        if (!candidate) {
+          console.warn(`[Task] extension_decision REJECTED — task ${shortId} not found`);
+          failCount++;
+          continue;
+        }
+        // Verify the deciding user actually has a pending extension_request notification for this task.
+        const { data: notifs } = await supabase
+          .from('notifications')
+          .select('id, created_at')
+          .eq('collaborator_id', collaborator.id)
+          .eq('notification_type', 'deadline_extension_request')
+          .eq('reference_id', candidate.id)
+          .order('created_at', { ascending: false }).limit(1);
+        if (!notifs || !notifs.length) {
+          console.warn(`[Task] extension_decision REJECTED — no pending request for ${last4} on task ${shortId}`);
+          failCount++;
+          continue;
+        }
+        // If approved, must include new_due_date.
+        if (approved && (!a.new_due_date || !isValidISODate(a.new_due_date))) {
+          console.warn('[Task] extension_decision approved but bad new_due_date');
+          failCount++;
+          continue;
+        }
+        if (approved) {
+          const update = { due_date: a.new_due_date };
+          // If task was overdue, reset status to pending.
+          await supabase.from('tasks').update(update).eq('id', candidate.id);
+        }
+        // Mark notification as read so it doesn't re-trigger.
+        await supabase.from('notifications').update({ status: 'read', read_at: new Date().toISOString() }).eq('id', notifs[0].id);
+        // Notify requester.
+        const { data: reqColl } = await supabase
+          .from('collaborators')
+          .select('id, phone, full_name').eq('id', candidate.assigned_to).maybeSingle();
+        if (reqColl && reqColl.phone) {
+          const decidedBy = nameForCollab(collaborator);
+          const replyToReq = approved
+            ? `✅ ${decidedBy} aprovou seu prazo: *${candidate.title}* fica pra ${formatBRDate(a.new_due_date)}.`
+            : `🚫 ${decidedBy} não aprovou o prazo extra na tarefa *${candidate.title}*.${a.reason ? ` Motivo: ${a.reason}.` : ''} Bora resolver hoje?`;
+          try {
+            await whatsapp.sendMessage(reqColl.phone, replyToReq);
+            await supabase.from('conversation_history').insert({
+              collaborator_id: reqColl.id,
+              direction: 'outbound',
+              message_type: 'text',
+              content: replyToReq,
+            });
+          } catch (err) {
+            console.error('[Task] extension_decision notify-requester err:', err.message);
+          }
+        }
+        console.log(`[Task] extension_decision ${shortId} ${approved ? 'APPROVED→' + a.new_due_date : 'DENIED'} by ${last4}`);
+        okCount++;
       } else if (a.action === 'delegate') {
         const t = await resolveTaskByShortId(collaborator.id, a.id);
         if (!t) {

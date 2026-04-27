@@ -158,6 +158,22 @@ function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge) {
   return lines.join('\n');
 }
 
+// Render pending coordinator decisions (extension requests waiting for approve/deny).
+function renderPendingDecisions(notifications) {
+  if (!notifications || !notifications.length) return '';
+  const pending = notifications.filter(n =>
+    n.notification_type === 'deadline_extension_request' && n.reference_id
+  );
+  if (!pending.length) return '';
+  const lines = ['', '**📥 Pedidos de prazo aguardando sua decisão:**'];
+  pending.slice(0, 5).forEach(n => {
+    const sid = String(n.reference_id || '').slice(0, 8);
+    lines.push(`• [id=${sid}] ${n.title}`);
+    if (n.body) lines.push(`  ${n.body.split('\n')[0].slice(0, 200)}`);
+  });
+  return lines.join('\n');
+}
+
 // ---------- BLOCK 4 — SKILL ATIVA (conditional, max 1) ----------
 function pickSkill(collab, lastUserMessage, recentHistory) {
   // Priority 1: onboarding active.
@@ -184,8 +200,8 @@ function pickSkill(collab, lastUserMessage, recentHistory) {
     return { name: 'rituais-diarios', body: loadSkill('rituais-diarios') };
   }
 
-  // Priority 5: task management intent. Includes create/remind/reschedule/complete signals.
-  if (/\b(fiz|terminei|feito|completei|fechei|reagenda|adia|adiar|delega|surgiu|anota|me\s+lembra|lembra(?:r|nça)|lembrete|me\s+chama|daqui\s+a?\s*\d|em\s+\d+\s*(min|hora|h)|p[oó]e\s+na\s+lista|adiciona|marca\s+(?:reuni|m[eé]dico|consulta|hor[áa]rio)|muda\s+(?:a|o|pra)|deixa\s+pra)/i.test(lastUserMessage || '')) {
+  // Priority 5: task management intent. Includes create/remind/reschedule/complete/delegate/extension signals.
+  if (/\b(fiz|terminei|feito|completei|fechei|reagenda|adia|adiar|delega|surgiu|anota|me\s+lembra|lembra(?:r|nça)|lembrete|me\s+chama|daqui\s+a?\s*\d|em\s+\d+\s*(min|hora|h)|p[oó]e\s+na\s+lista|adiciona|marca\s+(?:reuni|m[eé]dico|consulta|hor[áa]rio)|muda\s+(?:a|o|pra)|deixa\s+pra|n[aã]o\s+vou\s+conseguir|preciso\s+de\s+mais\s+prazo|n[aã]o\s+(?:dá|vai\s+dar)\s+at[eé]|estender\s+(?:o\s+)?prazo|aprov[ao]r|negar|nego\s+a)/i.test(lastUserMessage || '')) {
     return { name: 'checklist-tarefas', body: loadSkill('checklist-tarefas') };
   }
 
@@ -224,9 +240,10 @@ async function fetchCollaboratorContext(collaborator) {
       .order('eisenhower_quadrant', { ascending: true, nullsFirst: false }),
     supabase.from('project_members').select('project_id').eq('collaborator_id', id),
     supabase.from('notifications')
-      .select('notification_type, title, body, created_at')
-      .eq('collaborator_id', id).eq('status', 'pending')
-      .order('created_at', { ascending: false }).limit(5),
+      .select('notification_type, title, body, reference_id, reference_type, created_at, status')
+      .eq('collaborator_id', id)
+      .in('status', ['pending', 'sent'])
+      .order('created_at', { ascending: false }).limit(8),
     supabase.from('conversation_history')
       .select('direction, content, created_at')
       .eq('collaborator_id', id)
@@ -290,10 +307,15 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     tasksForCtx = { personal: [], work: ctx.workTasks };
   }
 
+  // Append pending decisions (extension requests) to the context block when present.
+  const baseCtx = buildContext(collaborator, ctx.memories, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge);
+  const pending = renderPendingDecisions(ctx.notifications);
+  const ctxBlock = pending ? baseCtx + '\n' + pending : baseCtx;
+
   const blocks = [
     BLOCK_RULES,
     BLOCK_IDENTITY,
-    buildContext(collaborator, ctx.memories, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge),
+    ctxBlock,
     skillBlock,
   ].filter(Boolean);
 
