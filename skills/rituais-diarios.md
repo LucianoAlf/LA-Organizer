@@ -1,6 +1,6 @@
 ---
 name: rituais-diarios
-description: Skill que define os rituais automáticos do TOM — briefing pessoal, briefing de trabalho e fechamento do dia. Use quando o dispatcher enviar uma diretiva `[RITUAL: ...]`.
+description: "Skill que define os rituais automáticos do TOM — briefing pessoal, briefing de trabalho e fechamento do dia. Use quando o dispatcher enviar uma diretiva [RITUAL: ...]."
 ---
 
 # Rituais Diários
