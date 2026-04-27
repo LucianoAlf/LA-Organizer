@@ -52,17 +52,21 @@ Capacidades futuras, hipóteses de skill ou mecanismos ainda não consolidados.
 ## 2. Checklist de tarefas
 **Arquivo:** `skills/checklist-tarefas.md`
 
-**Função:** concluir, reagendar, criar, delegar e tratar pedidos ligados a tarefas.
+**Função:** concluir, reagendar, criar, delegar e tratar pedidos ligados a tarefas. Inclui criação de tarefa **pra outro colaborador** (apenas coordinator/director).
 
 **Ativa quando:**
 - colaborador responde ao fechamento
 - colaborador pede ação sobre tarefa
 - colaborador pede lembrete ou cria item novo
+- **uma demanda nova surge na conversa** ("surgiu uma demanda do pai do aluno X", "preciso falar com Juliana sobre Y", "tem que resolver Z") — vira task, não memória.
+- coordinator/director pede pra criar/delegar tarefa pra outro colaborador
 
 **Entrega principal:**
 - interpreta intenção
-- confirma quando necessário
-- emite `<<TASK_UPDATE>>`
+- confirma quando necessário (nome ambíguo, prazo faltando)
+- emite `<<TASK_UPDATE>>` com action correta
+
+**Actions suportadas:** `complete`, `reschedule`, `create`, `create` com `to_name`/`to_phone` (coord-only), `delegate` (coord-only), `extension_request`, `extension_decision` (coord-only).
 
 ---
 
@@ -172,11 +176,17 @@ Capacidades futuras, hipóteses de skill ou mecanismos ainda não consolidados.
 **Função:** salvar fatos, decisões, preferências, lições e contexto relevante durante a conversa.
 
 **Ativa quando:**
-- o colaborador revelou algo com valor futuro
+- o colaborador revelou algo com valor futuro durável
+- e a informação **NÃO** é uma demanda acionável (essa precedência é explícita: demanda acionável → `checklist-tarefas`, não memória)
+
+**Não ativa quando:**
+- a mensagem é uma demanda nova ("surgiu...", "preciso falar com X", "tem que resolver...") — usa `checklist-tarefas` com `<<TASK_UPDATE>> create`
+- estado momentâneo / desabafo sem padrão recorrente
 
 **Entrega principal:**
-- emite `<<MEMORY_SAVE>>`
+- emite `<<MEMORY_SAVE>>` apenas quando há valor futuro real
 - registra memória sem expor isso ao usuário
+- pode coexistir com `<<TASK_UPDATE>>` em casos mistos (ex.: "surgiu reunião com pai do aluno X — ele tá pra trocar de professor" → task + memória do contexto)
 
 ---
 
@@ -213,6 +223,8 @@ Capacidades futuras, hipóteses de skill ou mecanismos ainda não consolidados.
 |---|---|
 | primeiro contato / onboarding | `onboarding` |
 | concluir / reagendar / criar tarefa | `checklist-tarefas` |
+| **demanda nova surgindo** ("surgiu X", "preciso falar com Y", "tem que resolver Z") | `checklist-tarefas` (cria task — NÃO memória) |
+| coordinator/director cria ou delega tarefa pra outro | `checklist-tarefas` (com `to_name`) |
 | enviar mensagem coletiva | `broadcast` |
 | briefing / fechamento / rotina diária | `rituais-diarios` |
 | criar ou marcar hábito | `habitos-pessoais` |
