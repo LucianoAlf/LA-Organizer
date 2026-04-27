@@ -30,6 +30,13 @@ Depois do ritual de fechamento, ou quando o colaborador menciona tarefa de forma
 - Extrair: título curto, data (ISO), prioridade ("urgente"/"importante" → high; default medium)
 - Sem data → hoje
 
+**task_delegate** — passar tarefa pra outro colaborador
+- Sinais: "passa pro <nome>", "delega pro <nome>", "manda pro <nome> fazer", "que isso fique com <nome>", "não precisa ser eu, passa pro <nome>"
+- Resolva o nome contra colaboradores cadastrados (primeiro nome basta)
+- Se o nome estiver claro: emita o marker direto (sem perguntar)
+- Se ambíguo ("delega isso pra alguém"): pergunte UMA vez ("Pra quem? Joel ou Quintela?")
+- NUNCA delegue pra si mesmo
+
 **task_remind** — lembrete avulso (one-shot, dispara via `remind_at`)
 - Sinais: "me lembra em 30 min", "daqui 2 horas me chama", "às 15h me lembra", "lembrete pra 14h"
 - Diferente de `task_create`: aqui o usuário quer um disparo no horário X, não uma tarefa do dia.
@@ -70,6 +77,7 @@ Múltiplas ações no mesmo marker = batch.
 - `reschedule`: `{"action":"reschedule","id":"<8-char>","new_due_date":"YYYY-MM-DD"}`
 - `create`: `{"action":"create","title":"<curto>","context":"personal|work","due_date":"YYYY-MM-DD","priority":"low|medium|high"}`
 - `create` com lembrete (one-shot): `{"action":"create","title":"<curto>","context":"personal","remind_at":"YYYY-MM-DDTHH:MM:SS-03:00"}`
+- `delegate`: `{"action":"delegate","id":"<8-char>","to_name":"<primeiro nome>"}`
 
 ---
 
@@ -147,6 +155,31 @@ TOM: ✅ Anotado: *Pegar a Mariana*. ⏰ Em 2h.
 <<END>>
 ```
 
+### Delegar tarefa
+User: "passa a entrevista pro Joel"
+TOM:
+```
+✅ Delegado pra Joel: *Entrevista professor*.
+Vou avisar ele.
+```
+
+→ Marker:
+```
+<<TASK_UPDATE>>
+[{"action":"delegate","id":"abc12345","to_name":"Joel"}]
+<<END>>
+```
+
+User: "delega o material teatro pra Quintela"
+TOM: ✅ Delegado pra Quintela: *Material teatro*. Vou avisar.
+
+→ Marker:
+```
+<<TASK_UPDATE>>
+[{"action":"delegate","id":"def67890","to_name":"Quintela"}]
+<<END>>
+```
+
 ### Reagendar tarefa
 User: "muda a reunião pra quinta"
 TOM: 🗓️ Movido: *Reunião com Juliana* — pra quinta (30/04).
@@ -196,6 +229,7 @@ TOM: ✅ Fechado: *Reunião com Juliana*.
 - Criar (sem hora): `✅ Anotado!\n\n🗓️ <dia> te lembro de <ação>.`
 - Lembrete: `✅ Anotado: *<título>*. ⏰ Em <duração>.`
 - Reagenda: `🗓️ Movido: *<título>* — pra <dia>.`
+- Delega: `✅ Delegado pra <nome>: *<título>*. Vou avisar.`
 - Fecha (parcial): `✅ 2 de 3 fechado. <título restante> vai pra quando?`
 - Fecha (total): `✅ Tudo fechado. Bora descansar.`
 - Fecha (uma): `✅ Fechado: *<título>*.`

@@ -116,8 +116,54 @@ function parseTaskUpdateMarker(text) {
   return { actions, cleanText, malformed: false };
 }
 
-const VALID_PRIORITIES = ['low', 'medium', 'high'];
+const VALID_PRIORITIES = ['critical', 'high', 'medium', 'low'];
 const SHORT_ID_RE = /^[a-f0-9]{4,12}$/i;
+
+// Friendly name (matches prompts/system.js nameFor — duplicated to avoid circular dep).
+function nameForCollab(collab) {
+  if (!collab) return 'amigo';
+  if (collab.full_name === 'Luciano Alf') return 'Alf';
+  return (collab.full_name || '').split(' ')[0] || 'amigo';
+}
+
+// Returns "DD/MM" from "YYYY-MM-DD".
+function formatBRDate(iso) {
+  if (!iso) return '';
+  const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return iso;
+  return `${m[3]}/${m[2]}`;
+}
+
+// Resolve a collaborator by best-effort name match (active only). Returns single
+// match or null (rejects when ambiguous).
+async function findCollaboratorByName(name) {
+  const norm = String(name || '').trim().toLowerCase();
+  if (!norm) return null;
+  const { data } = await supabase
+    .from('collaborators')
+    .select('id, full_name, phone, is_active, role')
+    .eq('is_active', true);
+  if (!data || !data.length) return null;
+  const first = norm.split(/\s+/)[0];
+  // Try exact match on first name (case-insensitive), then prefix.
+  const exact = data.filter(c => (c.full_name || '').toLowerCase().split(' ')[0] === first);
+  if (exact.length === 1) return exact[0];
+  if (exact.length > 1) return null;
+  const prefix = data.filter(c => (c.full_name || '').toLowerCase().startsWith(first));
+  if (prefix.length === 1) return prefix[0];
+  return null;
+}
+
+async function findCollaboratorByPhone(phone) {
+  const cleaned = String(phone || '').replace(/\D/g, '');
+  if (!cleaned) return null;
+  const { data } = await supabase
+    .from('collaborators')
+    .select('id, full_name, phone, is_active, role')
+    .eq('phone', cleaned)
+    .maybeSingle();
+  return data;
+}
 
 // Resolve o prefixo de 8 chars (ou similar) pra UUID completo, RESTRITO ao colaborador.
 // Defesa-em-profundidade: marker injetado nunca consegue tocar tarefa de outro user.
@@ -239,6 +285,71 @@ async function applyTaskActions(collaborator, actions) {
           failCount++;
         } else {
           console.log(`[Task] create "${a.title.trim().slice(0, 60)}" ctx=${context}${a.remind_at ? ` remind_at=${a.remind_at}` : ` due=${insertRow.due_date}`} (id=${(data?.id || '').slice(0, 8)})`);
+          okCount++;
+        }
+      } else if (a.action === 'delegate') {
+        const t = await resolveTaskByShortId(collaborator.id, a.id);
+        if (!t) {
+          console.warn(`[Task] delegate REJECTED id=${a.id} (not owned by ${last4} or not found)`);
+          failCount++;
+          continue;
+        }
+        let recipient = null;
+        if (a.to_phone) recipient = await findCollaboratorByPhone(a.to_phone);
+        else if (a.to_name) recipient = await findCollaboratorByName(a.to_name);
+        if (!recipient || !recipient.is_active) {
+          console.warn(`[Task] delegate REJECTED — recipient not found: ${a.to_phone || a.to_name}`);
+          failCount++;
+          continue;
+        }
+        if (recipient.id === collaborator.id) {
+          console.warn('[Task] delegate REJECTED — self-delegation');
+          failCount++;
+          continue;
+        }
+        const { error } = await supabase
+          .from('tasks')
+          .update({
+            assigned_to: recipient.id,
+            delegated_to: recipient.id,
+            delegated_at: new Date().toISOString(),
+            status: 'delegated',
+          })
+          .eq('id', t.id)
+          .eq('assigned_to', collaborator.id);
+        if (error) {
+          console.error('[Task] delegate err:', error.message);
+          failCount++;
+          continue;
+        }
+        // Notify recipient via WhatsApp (best-effort — DB transition already committed).
+        const delegatorName = nameForCollab(collaborator);
+        const dueLabel = t.due_date ? ` (prazo ${formatBRDate(t.due_date)})` : '';
+        const notifText = `📋 ${delegatorName} delegou pra você: *${t.title}*${dueLabel}. Prazo mantém?`;
+        try {
+          await whatsapp.sendMessage(recipient.phone, notifText);
+          await supabase.from('conversation_history').insert({
+            collaborator_id: recipient.id,
+            direction: 'outbound',
+            message_type: 'text',
+            content: notifText,
+          });
+          await supabase.from('notifications').insert({
+            collaborator_id: recipient.id,
+            notification_type: 'delegation_notice',
+            title: `Tarefa delegada por ${delegatorName}`,
+            body: notifText,
+            reference_type: 'task',
+            reference_id: t.id,
+            channel: 'whatsapp',
+            status: 'sent',
+            sent_at: new Date().toISOString(),
+          });
+          console.log(`[Task] delegate ${a.id} ${last4} → ${String(recipient.phone).slice(-4)} (${recipient.full_name})`);
+          okCount++;
+        } catch (err) {
+          console.error('[Task] delegate notification err:', err.message);
+          // task already updated in DB; still count ok so user sees confirmation
           okCount++;
         }
       } else {
