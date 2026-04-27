@@ -195,6 +195,176 @@ async function run(opts = {}) {
   } catch (err) {
     console.error('[Dispatcher] checkReminders erro:', err.message);
   }
+
+  // Deadline + overdue alerts — fire at most once per task per day, gated by
+  // hour window so we don't spam at 3am. Window: 8h-19h, América/Sao_Paulo.
+  // Override with --force-alerts for tests/manual triggers.
+  if (opts['force-alerts'] || (now.hour >= 8 && now.hour < 19)) {
+    try {
+      await checkDeadlineAlerts(now.ymd);
+    } catch (err) {
+      console.error('[Dispatcher] checkDeadlineAlerts erro:', err.message);
+    }
+    try {
+      await checkOverdueAlerts(now.ymd);
+    } catch (err) {
+      console.error('[Dispatcher] checkOverdueAlerts erro:', err.message);
+    }
+  }
+}
+
+// Compute YMD for "today + N days" in America/Sao_Paulo.
+function ymdOffset(ymdToday, days) {
+  const [y, m, d] = ymdToday.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  const yy = dt.getUTCFullYear();
+  const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getUTCDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
+}
+
+// Returns true if a notification of `type` was already created today for this task+user.
+async function alreadyNotifiedToday(collaboratorId, taskId, type, ymdToday) {
+  const since = ymdToday + 'T00:00:00-03:00';
+  const { data } = await supabase
+    .from('notifications')
+    .select('id')
+    .eq('collaborator_id', collaboratorId)
+    .eq('reference_id', taskId)
+    .eq('notification_type', type)
+    .gte('created_at', since)
+    .limit(1);
+  return Boolean(data && data.length);
+}
+
+// Deadline alert: tasks due tomorrow (status != done/cancelled).
+async function checkDeadlineAlerts(ymdToday) {
+  const tomorrow = ymdOffset(ymdToday, 1);
+  const { data: tasks, error } = await supabase
+    .from('tasks')
+    .select('id, title, assigned_to, due_date, status')
+    .eq('due_date', tomorrow)
+    .not('status', 'in', '(done,cancelled)')
+    .limit(200);
+  if (error) {
+    console.error('[DeadlineAlert] query err:', error.message);
+    return;
+  }
+  if (!tasks || !tasks.length) return;
+
+  // Resolve collaborators in batch + their preferences.
+  const ids = [...new Set(tasks.map(t => t.assigned_to).filter(Boolean))];
+  if (!ids.length) return;
+  const { data: collabs } = await supabase
+    .from('collaborators')
+    .select('id, phone, full_name, is_active, user_preferences(notify_deadline_alerts)')
+    .in('id', ids).eq('is_active', true);
+  const byId = new Map((collabs || []).map(c => [c.id, c]));
+
+  const whatsapp = require('../services/whatsapp');
+  let sent = 0;
+  for (const t of tasks) {
+    const collab = byId.get(t.assigned_to);
+    if (!collab || !collab.phone) continue;
+    const pref = collab.user_preferences && collab.user_preferences.notify_deadline_alerts;
+    if (pref === false) continue; // user opted out
+    if (await alreadyNotifiedToday(collab.id, t.id, 'deadline_alert', ymdToday)) continue;
+    const nick = collab.full_name === 'Luciano Alf' ? 'Alf' : (collab.full_name || '').split(' ')[0] || 'amigo';
+    const text = `⏳ ${nick}, lembrete: *${t.title}* vence amanhã. Tá encaminhado?`;
+    try {
+      await whatsapp.sendMessage(collab.phone, text);
+      await supabase.from('notifications').insert({
+        collaborator_id: collab.id,
+        notification_type: 'deadline_alert',
+        title: `${t.title} vence amanhã`,
+        body: text,
+        reference_type: 'task',
+        reference_id: t.id,
+        channel: 'whatsapp',
+        status: 'sent',
+        sent_at: new Date().toISOString(),
+      });
+      await supabase.from('conversation_history').insert({
+        collaborator_id: collab.id,
+        direction: 'outbound',
+        message_type: 'text',
+        content: text,
+      });
+      sent++;
+    } catch (err) {
+      console.error(`[DeadlineAlert] send err for ${String(t.id).slice(0,8)}:`, err.message);
+    }
+  }
+  if (sent) console.log(`[DeadlineAlert] fired ${sent} deadline alert(s) for ${tomorrow}`);
+}
+
+// Overdue alert: tasks due before today (status != done/cancelled).
+async function checkOverdueAlerts(ymdToday) {
+  const { data: tasks, error } = await supabase
+    .from('tasks')
+    .select('id, title, assigned_to, due_date, status')
+    .lt('due_date', ymdToday)
+    .not('status', 'in', '(done,cancelled)')
+    .limit(200);
+  if (error) {
+    console.error('[OverdueAlert] query err:', error.message);
+    return;
+  }
+  if (!tasks || !tasks.length) return;
+
+  const ids = [...new Set(tasks.map(t => t.assigned_to).filter(Boolean))];
+  if (!ids.length) return;
+  const { data: collabs } = await supabase
+    .from('collaborators')
+    .select('id, phone, full_name, is_active, user_preferences(notify_overdue_alerts)')
+    .in('id', ids).eq('is_active', true);
+  const byId = new Map((collabs || []).map(c => [c.id, c]));
+
+  // Compute days late in JS using ymdToday as anchor.
+  function daysLate(dueYmd) {
+    const [y1, m1, d1] = ymdToday.split('-').map(Number);
+    const [y2, m2, d2] = dueYmd.split('-').map(Number);
+    const a = Date.UTC(y1, m1 - 1, d1);
+    const b = Date.UTC(y2, m2 - 1, d2);
+    return Math.max(1, Math.round((a - b) / 86400000));
+  }
+
+  const whatsapp = require('../services/whatsapp');
+  let sent = 0;
+  for (const t of tasks) {
+    const collab = byId.get(t.assigned_to);
+    if (!collab || !collab.phone) continue;
+    const pref = collab.user_preferences && collab.user_preferences.notify_overdue_alerts;
+    if (pref === false) continue;
+    if (await alreadyNotifiedToday(collab.id, t.id, 'overdue_alert', ymdToday)) continue;
+    const n = daysLate(t.due_date);
+    const text = `🔴 *${t.title}* tá atrasada ${n} dia${n > 1 ? 's' : ''}. Resolve hoje ou reagenda?`;
+    try {
+      await whatsapp.sendMessage(collab.phone, text);
+      await supabase.from('notifications').insert({
+        collaborator_id: collab.id,
+        notification_type: 'overdue_alert',
+        title: `${t.title} atrasada ${n}d`,
+        body: text,
+        reference_type: 'task',
+        reference_id: t.id,
+        channel: 'whatsapp',
+        status: 'sent',
+        sent_at: new Date().toISOString(),
+      });
+      await supabase.from('conversation_history').insert({
+        collaborator_id: collab.id,
+        direction: 'outbound',
+        message_type: 'text',
+        content: text,
+      });
+      sent++;
+    } catch (err) {
+      console.error(`[OverdueAlert] send err for ${String(t.id).slice(0,8)}:`, err.message);
+    }
+  }
+  if (sent) console.log(`[OverdueAlert] fired ${sent} overdue alert(s) (today=${ymdToday})`);
 }
 
 // Pending reminders: tasks where remind_at <= now AND status not done/cancelled.
