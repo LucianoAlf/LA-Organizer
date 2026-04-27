@@ -197,6 +197,45 @@ function parseTaskUpdateMarker(text) {
   return { actions: valid, cleanText, malformed: false };
 }
 
+// Parse <<WEEKLY_PLAN>>{...}<<END>> — weekly planning marker.
+function parseWeeklyPlanMarker(text) {
+  if (!text) return null;
+  const re = /<<WEEKLY_PLAN>>\s*([\s\S]*?)\s*<<END>>/i;
+  const m = text.match(re);
+  if (!m) return null;
+  const cleanText = text.replace(re, '').trim();
+  let plan = null;
+  try {
+    plan = JSON.parse(m[1].trim());
+  } catch (err) {
+    logSchemaErr('WEEKLY_PLAN', ['invalid_json: ' + err.message], m[1]);
+    return { malformed: true, cleanText };
+  }
+  if (!plan || typeof plan !== 'object' || Array.isArray(plan)) {
+    logSchemaErr('WEEKLY_PLAN', ['not_object'], plan);
+    return { malformed: true, cleanText };
+  }
+  const errors = [];
+  if (typeof plan.week_start !== 'string' || !ISO_DATE_RE.test(plan.week_start)) errors.push('week_start:invalid');
+  if (!Array.isArray(plan.goals) || !plan.goals.length || plan.goals.length > 5) errors.push('goals:invalid_length');
+  if (Array.isArray(plan.goals) && plan.goals.some(g => typeof g !== 'string' || !g.trim())) errors.push('goals:has_empty');
+  if (!Array.isArray(plan.distribution) || !plan.distribution.length) errors.push('distribution:missing');
+  if (Array.isArray(plan.distribution)) {
+    for (let i = 0; i < plan.distribution.length; i++) {
+      const d = plan.distribution[i];
+      if (!d || typeof d !== 'object') { errors.push(`distribution[${i}]:not_object`); continue; }
+      if (typeof d.day !== 'string' || !ISO_DATE_RE.test(d.day)) errors.push(`distribution[${i}]:bad_day`);
+      if (!Array.isArray(d.items) || !d.items.length) errors.push(`distribution[${i}]:no_items`);
+      if (Array.isArray(d.items) && d.items.some(it => typeof it !== 'string' || !it.trim())) errors.push(`distribution[${i}]:has_empty_item`);
+    }
+  }
+  if (errors.length) {
+    logSchemaErr('WEEKLY_PLAN', errors, plan);
+    return { malformed: true, cleanText };
+  }
+  return { plan, cleanText, malformed: false };
+}
+
 // Returns null if valid, else a string code describing why the action was rejected.
 function validateTaskAction(a) {
   if (!a || typeof a !== 'object' || Array.isArray(a)) return 'not_object';
@@ -709,6 +748,107 @@ async function persistProject(collaborator, p) {
   return { id: projectId, name: data.name };
 }
 
+// Persist a weekly plan: weekly_plans + daily_plans + daily_plan_items + tasks.
+// Idempotent on (collaborator_id, week_start) — re-running for the same week
+// updates the row. daily_plans uses (collaborator_id, plan_date) as upsert key.
+async function applyWeeklyPlan(collaborator, plan) {
+  const collId = collaborator.id;
+  // Upsert weekly_plans by manual SELECT/UPDATE/INSERT (no unique constraint guarantee).
+  const { data: existingWp } = await supabase
+    .from('weekly_plans')
+    .select('id')
+    .eq('collaborator_id', collId).eq('week_start', plan.week_start)
+    .maybeSingle();
+  let weeklyPlanId;
+  if (existingWp) {
+    weeklyPlanId = existingWp.id;
+    await supabase.from('weekly_plans').update({
+      goals: plan.goals,
+      tasks_planned: plan.distribution.reduce((a, d) => a + (d.items?.length || 0), 0),
+      status: 'active',
+    }).eq('id', weeklyPlanId);
+  } else {
+    const { data: newWp, error } = await supabase
+      .from('weekly_plans')
+      .insert({
+        collaborator_id: collId,
+        week_start: plan.week_start,
+        goals: plan.goals,
+        status: 'active',
+        tasks_planned: plan.distribution.reduce((a, d) => a + (d.items?.length || 0), 0),
+      })
+      .select('id').single();
+    if (error) throw error;
+    weeklyPlanId = newWp.id;
+  }
+
+  let createdItems = 0, createdTasks = 0;
+  for (const d of plan.distribution) {
+    // daily_plan upsert
+    const { data: existingDp } = await supabase
+      .from('daily_plans')
+      .select('id').eq('collaborator_id', collId).eq('plan_date', d.day).maybeSingle();
+    let dailyPlanId;
+    if (existingDp) {
+      dailyPlanId = existingDp.id;
+      await supabase.from('daily_plans').update({
+        weekly_plan_id: weeklyPlanId,
+        items_planned: d.items.length,
+      }).eq('id', dailyPlanId);
+    } else {
+      const { data: newDp, error: dpErr } = await supabase
+        .from('daily_plans').insert({
+          collaborator_id: collId,
+          plan_date: d.day,
+          weekly_plan_id: weeklyPlanId,
+          status: 'active',
+          items_planned: d.items.length,
+        }).select('id').single();
+      if (dpErr) {
+        console.error('[WeeklyPlan] daily_plan err:', dpErr.message);
+        continue;
+      }
+      dailyPlanId = newDp.id;
+    }
+
+    // For each item: create a task + a daily_plan_item linked to it.
+    for (let i = 0; i < d.items.length; i++) {
+      const title = d.items[i].slice(0, 200);
+      const { data: newTask, error: taskErr } = await supabase
+        .from('tasks').insert({
+          title,
+          assigned_to: collId,
+          created_by: collId,
+          status: 'pending',
+          due_date: d.day,
+          scheduled_date: d.day,
+          context: 'work',
+          priority: 'medium',
+          source: 'manual',
+        }).select('id').single();
+      if (taskErr) {
+        console.error('[WeeklyPlan] task err:', taskErr.message);
+        continue;
+      }
+      createdTasks++;
+      const { error: itemErr } = await supabase.from('daily_plan_items').insert({
+        daily_plan_id: dailyPlanId,
+        task_id: newTask.id,
+        description: title,
+        sort_order: i,
+        is_completed: false,
+      });
+      if (itemErr) {
+        console.error('[WeeklyPlan] item err:', itemErr.message);
+        continue;
+      }
+      createdItems++;
+    }
+  }
+  console.log(`[WeeklyPlan] saved week=${plan.week_start} for ${String(collaborator.phone).slice(-4)} — goals=${plan.goals.length} items=${createdItems} tasks=${createdTasks}`);
+  return { weeklyPlanId, createdItems, createdTasks };
+}
+
 function normalizeTime(t) {
   if (!t) return null;
   const s = String(t).trim();
@@ -835,6 +975,24 @@ async function processMessage(phone, text, raw = {}) {
     }
   }
 
+  // 2.7) Weekly plan
+  {
+    const parsedPlan = parseWeeklyPlanMarker(reply);
+    if (parsedPlan && parsedPlan.malformed) {
+      console.warn('[WeeklyPlan] WARN: malformed marker, dropping block');
+      reply = parsedPlan.cleanText || reply;
+    } else if (parsedPlan) {
+      try {
+        await applyWeeklyPlan(collab, parsedPlan.plan);
+        reply = parsedPlan.cleanText || reply;
+      } catch (err) {
+        console.error('[WeeklyPlan] persist err:', err.message);
+        const base = parsedPlan.cleanText || '';
+        reply = (base ? base + '\n\n' : '') + '_não rolou salvar agora, mas seu plano tá registrado em conversa. Tenta de novo daqui a pouco?_';
+      }
+    }
+  }
+
   // 3) Memory save (sempre por último — o conteúdo do bloco NUNCA deve vazar)
   {
     const parsedMem = parseMemoryMarker(reply);
@@ -924,4 +1082,4 @@ async function logConversation(collaboratorId, direction, content) {
   });
 }
 
-module.exports = { processMessage, sendRitual, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, persistMemoryRows, persistProject, applyTaskActions, resolveTaskByShortId };
+module.exports = { processMessage, sendRitual, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseWeeklyPlanMarker, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, resolveTaskByShortId };

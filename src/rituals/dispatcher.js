@@ -23,6 +23,7 @@ const RITUAL_BY_DIRECTIVE = {
   briefing_pessoal: 'personal_briefing',
   briefing_trabalho: 'daily_briefing',
   fechamento: 'daily_closing',
+  planejamento_semanal: 'weekly_planning',
 };
 
 // Default time for briefing_pessoal (until user_preferences gains a personal_briefing_time column).
@@ -182,6 +183,13 @@ async function run(opts = {}) {
         const cSlot = timeToSlot(p.closing_time);
         if (cSlot !== null && cSlot === slotNow) {
           await fireRitual(c, 'daily_closing', now.ymd);
+        }
+      }
+      // Planejamento semanal — só no dia configurado (default domingo=0) no horário configurado.
+      if (Number.isInteger(p.planning_day) && p.planning_day === now.dow) {
+        const wpSlot = timeToSlot(p.planning_time);
+        if (wpSlot !== null && wpSlot === slotNow) {
+          await fireRitual(c, 'weekly_planning', now.ymd);
         }
       }
     } catch (err) {

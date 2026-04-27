@@ -195,9 +195,23 @@ function pickSkill(collab, lastUserMessage, recentHistory) {
 
   // Priority 4: ritual context — engine sets _ritualType for cron-fired briefings/closings.
   const rt = collab && collab._ritualType;
+  if (rt === 'planejamento_semanal' || rt === 'weekly_planning') {
+    return { name: 'planejamento-semanal', body: loadSkill('planejamento-semanal') };
+  }
   if (rt === 'briefing_trabalho' || rt === 'briefing_pessoal' || rt === 'fechamento' ||
       rt === 'daily_briefing' || rt === 'daily_closing') {
     return { name: 'rituais-diarios', body: loadSkill('rituais-diarios') };
+  }
+
+  // Priority 4.5: manual trigger for weekly planning.
+  if (/\b(planej(?:ar|amento)\s+(?:da\s+|a\s+)?semana|planejar\s+a\s+semana|planejamento\s+semanal)\b/i.test(lastUserMessage || '')) {
+    return { name: 'planejamento-semanal', body: loadSkill('planejamento-semanal') };
+  }
+  // Mid-flow detection: TOM asked for goals/distribuição recently.
+  const recentTextWp = (recentHistory || []).map(m => m.content || '').join(' ').toLowerCase();
+  if (/quais suas 5 entregas|plano da semana|tá bom assim ou quer trocar|hora de planejar a semana/i.test(recentTextWp) &&
+      !/✅\s*plano salvo|cancela|deixa pra/i.test(recentTextWp.slice(-500))) {
+    return { name: 'planejamento-semanal', body: loadSkill('planejamento-semanal') };
   }
 
   // Priority 5: task management intent. Includes create/remind/reschedule/complete/delegate/extension signals.
