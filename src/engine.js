@@ -38,86 +38,197 @@ function appendRitualSection(systemPrompt) {
     skill + '\n';
 }
 
+// ---------- Guard 3: marker schema validation helpers ----------
+// Cada parser valida o JSON contra um contrato mínimo. Em caso de falha:
+// - Loga erro estruturado (`[Schema] <MARKER> REJECTED ...`)
+// - Marca como malformed (cleanText preserva o texto da resposta sem o marker)
+// - Engine NÃO executa side effect (persistência/notificação)
+
+const TIME_RE = /^([01]?\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const SHORT_ID_RE = /^[a-f0-9]{4,12}$/i;
+const VALID_TASK_ACTIONS = new Set([
+  'complete', 'reschedule', 'create', 'delegate',
+  'extension_request', 'extension_decision',
+]);
+const VALID_COACHING = ['light', 'normal', 'hard'];
+
+function logSchemaErr(marker, errors, raw) {
+  try {
+    const compact = typeof raw === 'string' ? raw.slice(0, 200) : JSON.stringify(raw).slice(0, 200);
+    console.warn(`[Schema] ${marker} REJECTED — errors=${JSON.stringify(errors)} raw=${compact}`);
+  } catch (_) {
+    console.warn(`[Schema] ${marker} REJECTED — errors=${JSON.stringify(errors)}`);
+  }
+}
+
 // Procura o marcador <<ONBOARDING_DONE>>{json}<<END>> na resposta do modelo.
-// Retorna { prefs, cleanText } ou null.
+// Retorna { prefs, cleanText } se válido, { malformed:true, cleanText } se não.
 function parseOnboardingMarker(text) {
   if (!text) return null;
   const re = /<<ONBOARDING_DONE>>\s*([\s\S]*?)\s*<<END>>/i;
   const m = text.match(re);
   if (!m) return null;
+  const cleanText = text.replace(re, '').trim();
   let json = null;
   try {
     json = JSON.parse(m[1].trim());
   } catch (err) {
-    return { malformed: true, cleanText: text.replace(re, '').trim() };
+    logSchemaErr('ONBOARDING_DONE', ['invalid_json: ' + err.message], m[1]);
+    return { malformed: true, cleanText };
+  }
+  const errors = [];
+  // briefing_time / closing_time: HH:MM ou HH:MM:SS obrigatórios
+  if (typeof json.briefing_time !== 'string' || !TIME_RE.test(json.briefing_time)) {
+    errors.push('briefing_time:invalid');
+  }
+  if (typeof json.closing_time !== 'string' || !TIME_RE.test(json.closing_time)) {
+    errors.push('closing_time:invalid');
+  }
+  // planning_day: int 0-6 — manter compat (default se faltar/ inválido), mas logar
+  let planningDay = ONBOARDING_DEFAULTS.planning_day;
+  if (Number.isInteger(json.planning_day) && json.planning_day >= 0 && json.planning_day <= 6) {
+    planningDay = json.planning_day;
+  } else if (json.planning_day !== undefined) {
+    errors.push('planning_day:out_of_range');
+  }
+  // coaching_intensity: light|normal|hard estrito
+  if (!VALID_COACHING.includes(json.coaching_intensity)) {
+    errors.push('coaching_intensity:invalid');
+  }
+  // Erro fatal só pra fields obrigatórios (briefing/closing/coaching). planning_day cai no default.
+  const fatal = errors.filter(e => !e.startsWith('planning_day'));
+  if (fatal.length) {
+    logSchemaErr('ONBOARDING_DONE', errors, json);
+    return { malformed: true, cleanText };
   }
   const prefs = {
-    briefing_time: typeof json.briefing_time === 'string' ? json.briefing_time : ONBOARDING_DEFAULTS.briefing_time,
-    closing_time: typeof json.closing_time === 'string' ? json.closing_time : ONBOARDING_DEFAULTS.closing_time,
-    planning_day: Number.isInteger(json.planning_day) ? json.planning_day : ONBOARDING_DEFAULTS.planning_day,
-    coaching_intensity: ['light', 'normal', 'hard'].includes(json.coaching_intensity)
-      ? json.coaching_intensity
-      : ONBOARDING_DEFAULTS.coaching_intensity,
+    briefing_time: normalizeTime(json.briefing_time),
+    closing_time: normalizeTime(json.closing_time),
+    planning_day: planningDay,
+    coaching_intensity: json.coaching_intensity,
   };
-  // Normaliza HH:MM → HH:MM:SS para coluna time
-  prefs.briefing_time = normalizeTime(prefs.briefing_time);
-  prefs.closing_time = normalizeTime(prefs.closing_time);
-  const cleanText = text.replace(re, '').trim();
   return { prefs, cleanText, malformed: false };
 }
 
-// Parse <<MEMORY_SAVE>>[...]<<END>> — array de objetos. Retorna { rows, cleanText } ou null.
+// Parse <<MEMORY_SAVE>>[...]<<END>> — filtra rows sem content válido.
 function parseMemoryMarker(text) {
   if (!text) return null;
   const re = /<<MEMORY_SAVE>>\s*([\s\S]*?)\s*<<END>>/i;
   const m = text.match(re);
   if (!m) return null;
+  const cleanText = text.replace(re, '').trim();
   let parsed = null;
   try {
     parsed = JSON.parse(m[1].trim());
   } catch (err) {
-    return { malformed: true, cleanText: text.replace(re, '').trim() };
+    logSchemaErr('MEMORY_SAVE', ['invalid_json: ' + err.message], m[1]);
+    return { malformed: true, cleanText };
   }
-  const rows = Array.isArray(parsed) ? parsed : [parsed];
-  const cleanText = text.replace(re, '').trim();
-  return { rows, cleanText, malformed: false };
+  const rawRows = Array.isArray(parsed) ? parsed : [parsed];
+  const validRows = [];
+  const dropped = [];
+  for (let i = 0; i < rawRows.length; i++) {
+    const r = rawRows[i];
+    if (!r || typeof r.content !== 'string' || !r.content.trim()) {
+      dropped.push(`row[${i}]:missing_content`);
+      continue;
+    }
+    validRows.push(r);
+  }
+  if (dropped.length) logSchemaErr('MEMORY_SAVE', dropped, parsed);
+  if (!validRows.length) return { malformed: true, cleanText };
+  return { rows: validRows, cleanText, malformed: false };
 }
 
-// Parse <<PROJECT_CREATE>>{...}<<END>> — objeto único. Retorna { project, cleanText } ou null.
+// Parse <<PROJECT_CREATE>>{...}<<END>> — name obrigatório não-vazio.
 function parseProjectMarker(text) {
   if (!text) return null;
   const re = /<<PROJECT_CREATE>>\s*([\s\S]*?)\s*<<END>>/i;
   const m = text.match(re);
   if (!m) return null;
+  const cleanText = text.replace(re, '').trim();
   let project = null;
   try {
     project = JSON.parse(m[1].trim());
   } catch (err) {
-    return { malformed: true, cleanText: text.replace(re, '').trim() };
+    logSchemaErr('PROJECT_CREATE', ['invalid_json: ' + err.message], m[1]);
+    return { malformed: true, cleanText };
   }
-  const cleanText = text.replace(re, '').trim();
+  if (!project || typeof project !== 'object' || Array.isArray(project)) {
+    logSchemaErr('PROJECT_CREATE', ['not_object'], project);
+    return { malformed: true, cleanText };
+  }
+  if (typeof project.name !== 'string' || !project.name.trim()) {
+    logSchemaErr('PROJECT_CREATE', ['name:missing_or_empty'], project);
+    return { malformed: true, cleanText };
+  }
   return { project, cleanText, malformed: false };
 }
 
-// Parse <<TASK_UPDATE>>[...]<<END>> — array de ações. Retorna { actions, cleanText } ou null.
+// Parse <<TASK_UPDATE>>[...]<<END>> — filtra ações inválidas, mantém o resto.
 function parseTaskUpdateMarker(text) {
   if (!text) return null;
   const re = /<<TASK_UPDATE>>\s*([\s\S]*?)\s*<<END>>/i;
   const m = text.match(re);
   if (!m) return null;
+  const cleanText = text.replace(re, '').trim();
   let parsed = null;
   try {
     parsed = JSON.parse(m[1].trim());
   } catch (err) {
-    return { malformed: true, cleanText: text.replace(re, '').trim() };
+    logSchemaErr('TASK_UPDATE', ['invalid_json: ' + err.message], m[1]);
+    return { malformed: true, cleanText };
   }
-  const actions = Array.isArray(parsed) ? parsed : [parsed];
-  const cleanText = text.replace(re, '').trim();
-  return { actions, cleanText, malformed: false };
+  const rawActions = Array.isArray(parsed) ? parsed : [parsed];
+  const valid = [];
+  const dropped = [];
+  for (let i = 0; i < rawActions.length; i++) {
+    const a = rawActions[i];
+    const why = validateTaskAction(a);
+    if (why) {
+      dropped.push(`action[${i}]:${why}`);
+      continue;
+    }
+    valid.push(a);
+  }
+  if (dropped.length) logSchemaErr('TASK_UPDATE', dropped, parsed);
+  if (!valid.length) return { malformed: true, cleanText };
+  return { actions: valid, cleanText, malformed: false };
+}
+
+// Returns null if valid, else a string code describing why the action was rejected.
+function validateTaskAction(a) {
+  if (!a || typeof a !== 'object' || Array.isArray(a)) return 'not_object';
+  if (typeof a.action !== 'string' || !VALID_TASK_ACTIONS.has(a.action)) return 'unknown_action';
+  if (a.action === 'complete') {
+    if (typeof a.id !== 'string' || !SHORT_ID_RE.test(a.id)) return 'bad_id';
+  } else if (a.action === 'reschedule') {
+    if (typeof a.id !== 'string' || !SHORT_ID_RE.test(a.id)) return 'bad_id';
+    if (typeof a.new_due_date !== 'string' || !ISO_DATE_RE.test(a.new_due_date)) return 'bad_new_due_date';
+  } else if (a.action === 'create') {
+    if (typeof a.title !== 'string' || !a.title.trim()) return 'title_missing';
+    // remind_at e due_date são opcionais — applyTaskActions trata defaults.
+  } else if (a.action === 'delegate') {
+    if (typeof a.id !== 'string' || !SHORT_ID_RE.test(a.id)) return 'bad_id';
+    const hasName = typeof a.to_name === 'string' && a.to_name.trim();
+    const hasPhone = typeof a.to_phone === 'string' && a.to_phone.trim();
+    if (!hasName && !hasPhone) return 'recipient_missing';
+  } else if (a.action === 'extension_request') {
+    if (typeof a.id !== 'string' || !SHORT_ID_RE.test(a.id)) return 'bad_id';
+    if (typeof a.reason !== 'string' || !a.reason.trim()) return 'reason_missing';
+    if (a.new_due_date !== undefined && !ISO_DATE_RE.test(String(a.new_due_date))) return 'bad_new_due_date';
+  } else if (a.action === 'extension_decision') {
+    if (typeof a.id !== 'string' || !SHORT_ID_RE.test(a.id)) return 'bad_id';
+    if (typeof a.approved !== 'boolean' && a.approved !== 'true' && a.approved !== 'false') return 'approved_not_bool';
+    const isApproved = a.approved === true || a.approved === 'true';
+    if (isApproved && (typeof a.new_due_date !== 'string' || !ISO_DATE_RE.test(a.new_due_date))) return 'approved_needs_date';
+  }
+  return null;
 }
 
 const VALID_PRIORITIES = ['critical', 'high', 'medium', 'low'];
-const SHORT_ID_RE = /^[a-f0-9]{4,12}$/i;
+// SHORT_ID_RE is defined above near the schema validators.
 
 // Friendly name (matches prompts/system.js nameFor — duplicated to avoid circular dep).
 function nameForCollab(collab) {
