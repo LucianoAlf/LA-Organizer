@@ -4,6 +4,7 @@
 const express = require('express');
 const { processMessage } = require('./engine');
 const whatsapp = require('./services/whatsapp');
+const queue = require('./services/per-user-queue');
 
 const router = express.Router();
 
@@ -44,8 +45,10 @@ router.post('/webhook', async (req, res) => {
     // Fire-and-forget — nunca bloqueia o fluxo principal.
     whatsapp.setTyping(`${phone}@s.whatsapp.net`).catch(() => {});
 
-    // Processar mensagem (async, não bloqueia o webhook)
-    await processMessage(phone, text, body);
+    // Guard 1: serializa por phone — duas mensagens do mesmo usuário NÃO rodam em
+    // paralelo (evita corrida no Supabase, no histórico, e na detecção de skill).
+    // Usuários diferentes continuam em paralelo. Não bloqueia o webhook (já respondemos 200 acima).
+    queue.enqueue(phone, () => processMessage(phone, text, body));
 
   } catch (err) {
     console.error(`[Webhook] Erro ao processar: ${err.message}`);
