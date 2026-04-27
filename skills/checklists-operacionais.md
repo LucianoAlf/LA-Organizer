@@ -1,133 +1,243 @@
 ---
 name: checklists-operacionais
-description: Skill para enviar, acompanhar e medir aderência de checklists operacionais por função e turno. Use quando o cron disparar envio de checklist, quando o colaborador reportar itens feitos, ou quando coordenador+ pedir status de aderência.
+description: "Skill para enviar, acompanhar e registrar checklists operacionais por função e turno. Use quando o cron disparar um checklist, quando o colaborador responder itens feitos ou quando coordenador pedir status de aderência."
 ---
 
 # Checklists Operacionais
 
-## Entrada
-| Campo | Tipo | Origem | Obrigatório |
-|-------|------|--------|-------------|
-| collaborator_id | uuid | Identificado pelo phone ou cron | Sim |
-| function_role | text | collaborators.function_title mapeado | Sim |
-| shift | text | Determinado pelo horário atual | Sim |
-| unit | text | collaborators.unit | Sim |
+## Quando ativar
+Ative esta skill quando:
+- o sistema disparar um checklist operacional para um colaborador
+- o colaborador responder ao checklist com itens feitos
+- o colaborador reportar problema observado durante o checklist
+- o sistema precisar lembrar checklist não preenchido
+- um coordenador pedir status de aderência
 
-## Saída
-| Campo | Tipo | Destino |
-|-------|------|---------|
-| mensagem checklist | WhatsApp | Colaborador via UAZAPI |
-| op_checklist_completion | record | Supabase |
-| op_checklist_item_completions | record[] | Supabase |
-| alerta não preenchido | WhatsApp | Colaborador (20h) |
-| relatório aderência | record | Coordenador (semanal) |
+Se a conversa não tiver relação com checklist operacional, NÃO use esta skill.
 
-## Fases de Execução
+---
 
-### Fase 1 — Identificar checklist aplicável
-```sql
-SELECT oc.id, oc.name, oci.id as item_id, oci.description, oci.sort_order
-FROM op_checklists oc
-JOIN op_checklist_items oci ON oci.checklist_id = oc.id
-WHERE oc.function_role = $function_role
-  AND oc.shift = $shift
-  AND (oc.unit = $unit OR oc.unit = 'all')
-  AND oc.is_active = true
-ORDER BY oci.sort_order;
-```
+## Regra central
+Checklist operacional não é conversa genérica. É execução registrada.
 
-### Fase 2 — Enviar via WhatsApp
-```
-Bom dia, [nome]. Checklist de [nome do checklist]:
+O TOM deve:
+1. enviar o checklist certo
+2. registrar o que foi feito
+3. captar problema observado
+4. lembrar pendência
+5. reportar aderência só para liderança
+
+---
+
+## Subfluxos
+
+### 1. Enviar checklist
+
+Use quando o cron identificar que aquele colaborador deve receber um checklist naquele turno.
+
+```text
+Bom dia, [nome]. Checklist de *[nome do checklist]*:
 
 1. [item 1]
 2. [item 2]
 3. [item 3]
 4. [item 4]
-5. [item 5]
-6. [item 6]
 
-Me avisa quando terminar tudo ou vai ticando: "fiz 1, 2, 3"
+Me avisa quando terminar tudo ou vai marcando assim: "fiz 1, 2 e 3".
 ```
 
-Criar op_checklist_completion com started_at = null (preenchido quando primeiro item for marcado).
+**Regras:**
+- envie só o checklist aplicável à função + turno + unidade
+- mantenha a mensagem escaneável
+- se houver muitos itens, mantenha numerado
+- não misture checklist com outra cobrança
 
-### Fase 3 — Processar respostas
+---
 
-| Resposta do colaborador | Ação |
-|---|---|
-| "fiz tudo" / "pronto" / "completo" | Marcar todos os itens como is_checked = true, completed_at = now() |
-| "fiz 1, 2, 3" / "1 até 4" | Marcar itens específicos |
-| "fiz tudo, mas [observação]" | Marcar tudo + registrar notes no último item |
-| "sala 3 com problema" | Registrar notes + sugerir criação de tarefa |
+### 2. Marcar itens parcialmente
 
-```sql
--- Marcar item
-UPDATE op_checklist_item_completions
-SET is_checked = true, checked_at = NOW(), notes = $notes
-WHERE completion_id = $completion_id AND item_id = $item_id;
+**Sinais comuns:**
+- "fiz 1, 2 e 3", "1 até 4", "fiz 2 e 5"
 
--- Verificar se todos foram marcados
-UPDATE op_checklist_completions
-SET completed_at = NOW()
-WHERE id = $completion_id
-  AND NOT EXISTS (
-    SELECT 1 FROM op_checklist_item_completions
-    WHERE completion_id = $completion_id AND is_checked = false
-  );
+**Regras:**
+- se os números estiverem claros, marque direto
+- se a referência estiver ambígua, pergunte **uma vez**
+- nunca chute item
+
+```text
+✅ Marquei os itens 1, 2 e 3.
+
+Faltam os outros. Quando terminar, me avisa.
 ```
 
-### Fase 4 — Observações que viram tarefas
-Se o colaborador reporta problema:
-```
-Registrei: "[observação]". Quer que eu crie uma tarefa pra manutenção?
-```
-Se sim → criar task com category='operational', source='system'.
-
-### Fase 5 — Alerta de não preenchimento (cron 20h)
-```sql
--- Checklists esperados hoje que não foram completados
-SELECT c.full_name, oc.name
-FROM op_checklists oc
-CROSS JOIN collaborators c
-LEFT JOIN op_checklist_completions occ 
-  ON occ.checklist_id = oc.id AND occ.collaborator_id = c.id AND occ.reference_date = CURRENT_DATE
-WHERE oc.function_role = c.function_title_mapped
-  AND oc.is_active = true
-  AND c.is_active = true
-  AND occ.id IS NULL;
+**Marker:**
+```text
+<<CHECKLIST_ACTION>>
+{"action":"check_items","items":[1,2,3]}
+<<END>>
 ```
 
-Enviar: "[nome], o checklist '[nome]' de hoje não foi preenchido. Já fez e esqueceu de marcar?"
+---
 
-### Fase 6 — Cálculo de aderência (cron semanal sexta 18h)
+### 3. Marcar checklist completo
+
+**Sinais comuns:**
+- "fiz tudo", "pronto", "completei", "terminei tudo"
+
+```text
+✅ Fechado. Checklist concluído.
 ```
-Aderência = checklists completados (completed_at NOT NULL) / checklists esperados × 100
+
+**Marker:**
+```text
+<<CHECKLIST_ACTION>>
+{"action":"check_all"}
+<<END>>
 ```
 
-Incluir no resumo do coordenador com código de cor:
-- 🟢 ≥ 90%
-- 🟡 70-89%
-- 🔴 < 70%
+**Regra:** só use `check_all` quando a intenção estiver inequívoca. Se vier junto com observação, registre a observação também.
 
-## Veto Conditions — NUNCA
-- NUNCA pular envio de checklist no horário programado
-- NUNCA aceitar "fiz tudo" sem registrar todos os itens como marcados
-- NUNCA ignorar observação com problema reportado
-- NUNCA expor aderência individual publicamente (só pro coordenador)
-- NUNCA enviar checklist fora do turno configurado
-- NUNCA criar checklist template sem aprovação do coordenador+
+---
 
-## Checklist de Conclusão
-- [ ] Checklist correto identificado (função + turno + unidade)
-- [ ] Mensagem enviada com todos os itens
-- [ ] Respostas processadas (itens marcados no banco)
-- [ ] Observações registradas como notes
-- [ ] Tarefas de manutenção criadas quando necessário
-- [ ] Alerta de não preenchimento enviado às 20h
-- [ ] Aderência calculada semanalmente
+### 4. Registrar observação ou problema
 
-## Integrações
-- **Supabase** — op_checklists, op_checklist_items, op_checklist_completions, op_checklist_item_completions, tasks
-- **UAZAPI** — envio de checklists e alertas
-- **pg_cron** — dispatch_op_checklists (15 min), check_op_checklists_pending (20h), calculate_op_adherence (sexta 18h)
+**Sinais comuns:**
+- "sala 3 com problema", "faltou cabo", "ar-condicionado não ligou"
+- "fiz tudo, mas a porta da sala 2 travou"
+
+```text
+⚠️ Registrei a observação:
+
+"porta da sala 2 travou"
+
+Quer que eu crie uma tarefa pra manutenção?
+```
+
+**Marker:**
+```text
+<<CHECKLIST_ACTION>>
+{"action":"add_note","note":"porta da sala 2 travou"}
+<<END>>
+```
+
+**Regras:**
+- registrar observação mesmo se não virar tarefa
+- se houver problema concreto, oferecer criação de tarefa
+- não ignorar problema reportado
+
+---
+
+### 5. Criar tarefa a partir do checklist
+
+Use quando o colaborador confirmar que quer transformar a observação em ação.
+
+```text
+✅ Beleza. Vou abrir uma tarefa pra manutenção.
+```
+
+**Marker:**
+```text
+<<CHECKLIST_ACTION>>
+{"action":"create_task","title":"Verificar porta da sala 2","context":"work"}
+<<END>>
+```
+
+**Regras:**
+- só crie tarefa se o colaborador confirmar
+- título da tarefa deve ser curto e objetivo
+- tratar como contexto de trabalho
+
+---
+
+### 6. Lembrar checklist não preenchido
+
+Use quando o sistema detectar que o checklist esperado do dia ainda não foi preenchido.
+
+```text
+[nome], o checklist *[nome do checklist]* de hoje ainda não foi preenchido.
+
+Já fez e esqueceu de marcar?
+```
+
+**Regras:**
+- lembrar sem agressividade
+- não mandar vários lembretes colados
+- não tratar como falha antes de confirmar
+
+---
+
+### 7. Reportar aderência para coordenador
+
+Use quando coordenador ou diretor pedir status de aderência.
+
+```text
+📋 Aderência da semana:
+
+🟢 Joel — 100%
+🟡 Eric — 75%
+🔴 Caio — 50%
+
+Quer ver o detalhe de alguém?
+```
+
+**Regras:**
+- mostrar aderência individual só para liderança
+- código de cor:
+  - 🟢 ≥ 90%
+  - 🟡 70–89%
+  - 🔴 < 70%
+- nunca expor aderência em contexto público ou para colaboradores comuns
+
+---
+
+## Regras de ambiguidade
+
+Se o colaborador responder algo como:
+- "acho que fiz tudo", "fiz umas 3", "depois eu marco", "teve um problema lá"
+
+Então:
+- não chute
+- faça uma pergunta curta
+- espere confirmação antes do marker
+
+```text
+Não ficou claro pra mim. Quais itens você fez?
+```
+
+---
+
+## Formato do marcador
+
+```text
+<<CHECKLIST_ACTION>>
+{"action":"..."}
+<<END>>
+```
+
+O bloco deve ficar no final da resposta. Não escreva nada depois de `<<END>>`.
+
+### Actions desta skill
+- `check_items` → marcar itens específicos: `{"action":"check_items","items":[1,2,3]}`
+- `check_all` → concluir checklist inteiro: `{"action":"check_all"}`
+- `add_note` → registrar observação: `{"action":"add_note","note":"<texto>"}`
+- `create_task` → abrir tarefa derivada: `{"action":"create_task","title":"<texto>","context":"work"}`
+
+---
+
+## Regras de linguagem
+- tom direto, curto e funcional
+- sem corporativês
+- sem bronca desnecessária
+- checklist é execução, não discurso
+
+---
+
+## Veto — nunca
+- nunca pular envio do checklist programado
+- nunca aceitar "fiz tudo" sem registrar corretamente
+- nunca ignorar problema reportado
+- nunca expor aderência individual para quem não é liderança
+- nunca enviar checklist fora do turno configurado
+- nunca criar template novo sem aprovação da coordenação
+- nunca chutar item ou observação ambígua
+- nunca fazer mais de uma pergunta por vez em caso de ambiguidade
