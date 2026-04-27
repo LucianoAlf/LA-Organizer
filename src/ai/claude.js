@@ -55,11 +55,18 @@ async function chat(systemPrompt, messages /*, maxTokens */) {
     let stderr = '';
     let settled = false;
 
+    const reject_ = (kind, msg) => {
+      const e = new Error(msg);
+      e.kind = kind;
+      e.provider = 'claude';
+      reject(e);
+    };
+
     const killTimer = setTimeout(() => {
       if (settled) return;
       settled = true;
       try { child.kill('SIGKILL'); } catch (_) {}
-      reject(new Error(`Claude timeout após ${CLAUDE_TIMEOUT_MS}ms. stderr: ${stderr.slice(0, 300)}`));
+      reject_('timeout', `Claude timeout após ${CLAUDE_TIMEOUT_MS}ms. stderr: ${stderr.slice(0, 300)}`);
     }, CLAUDE_TIMEOUT_MS);
 
     child.stdout.on('data', d => { stdout += d.toString(); });
@@ -69,7 +76,7 @@ async function chat(systemPrompt, messages /*, maxTokens */) {
       if (settled) return;
       settled = true;
       clearTimeout(killTimer);
-      reject(new Error('Claude spawn falhou: ' + err.message));
+      reject_('spawn', 'Claude spawn falhou: ' + err.message);
     });
 
     child.on('close', code => {
@@ -78,10 +85,10 @@ async function chat(systemPrompt, messages /*, maxTokens */) {
       clearTimeout(killTimer);
       const text = stdout.trim();
       if (code !== 0) {
-        return reject(new Error(`Claude saiu com código ${code}. stderr: ${stderr.trim().slice(0, 500) || '(vazio)'}`));
+        return reject_('exit', `Claude saiu com código ${code}. stderr: ${stderr.trim().slice(0, 500) || '(vazio)'}`);
       }
       if (!text) {
-        return reject(new Error(`Claude retornou vazio. stderr: ${stderr.trim().slice(0, 500) || '(vazio)'}`));
+        return reject_('empty', `Claude retornou vazio. stderr: ${stderr.trim().slice(0, 500) || '(vazio)'}`);
       }
       resolve({ text, provider: 'claude' });
     });

@@ -1151,7 +1151,26 @@ async function processMessage(phone, text, raw = {}) {
   // Onboarding skill is now loaded conditionally inside buildSystemPrompt via pickSkill.
 
   const msgs = formatMessages(ctx.recentMessages, text);
-  const response = await ai.chat(systemPrompt, msgs);
+  let response;
+  try {
+    response = await ai.chat(systemPrompt, msgs);
+  } catch (err) {
+    // all_providers_failed (or unexpected throw). No marker side effects executed
+    // because we never got a response. Log structured event for audit, then rethrow
+    // so the queue handler logs and the user retries naturally.
+    const kind = err.kind || 'unknown';
+    const errs = err.errors ? JSON.stringify(err.errors).slice(0, 280) : err.message?.slice(0, 280);
+    console.error(`[AI] FATAL all-providers-failed for ${_phoneTail}: ${errs}`);
+    await logMarker(collab.id, 'PROVIDER', 'rejected', `all_failed: ${errs}`, null);
+    console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (provider_failed)`);
+    throw err;
+  }
+  if (response.fallbackFrom) {
+    // Codex answered after Claude failed. Markers in the reply will still be parsed,
+    // but we record provenance for audit (different model = different marker quality).
+    const reason = `fallback_from=${response.fallbackFrom} kind=${response.primaryError?.kind || 'unknown'}`;
+    await logMarker(collab.id, 'PROVIDER', 'fallback', reason, null);
+  }
   let reply = response.text;
 
   // Ordem de strip: ONBOARDING → PROJECT → MEMORY (memória por último — não deve aparecer pro user em hipótese alguma).
