@@ -119,3 +119,48 @@ gh repo edit LucianoAlf/LA-Organizer --visibility private --accept-visibility-ch
 For **piloto controlado interno** (you + a few testers): the exposed secrets are a known risk; mitigated by VPS-only hardening (chmod 600). Acceptable if the user accepts the public-history exposure consciously.
 
 For **produção plena**: A1 (rotation) is **mandatory**. Without it, anyone reading the public repo can write to your DB or send WA on your behalf.
+
+---
+
+## 2026-04-27 update — Sprint A1 outcome
+
+**Decision**: rotation **deferred**; repo made private instead.
+
+### What was applied
+- ✅ Repo `LucianoAlf/LA-Organizer` set to **private** at 2026-04-27 ~22:30 UTC.
+  Verified: `curl -I https://api.github.com/repos/LucianoAlf/LA-Organizer` → HTTP 404 anonymous (was 200 before).
+- ✅ chmod 600 .env (from Bloco 2 of resilience sprint).
+
+### What was NOT applied
+- ⏳ `SUPABASE_SERVICE_ROLE_KEY` rotation — same value as in commit `3ad52f5`.
+- ⏳ `UAZAPI_TOKEN` rotation — same value as in commit `3ad52f5`.
+
+### Residual risk (explicit acceptance)
+The keys committed to history remain valid. Going private stops *future* anonymous reads, but does not undo:
+- Anyone who cloned/forked the repo before 2026-04-27 still has the values
+- GitHub-archive scrapers (gharchive.org, etc.) may have indexed the public commit
+- Automated secret scanners (truffleHog, gitleaks) may have already collected them
+
+The user explicitly accepted this residual risk on the basis that:
+- TOM is in development; no real customer data flows yet
+- Only one active user (the project owner)
+- No paying users / no compliance obligation
+
+### Revocation conditions for "Accepted Risk"
+This acceptance is **automatically revoked** the moment ANY of the following becomes true:
+1. A second non-owner user is added to TOM
+2. TOM starts processing data for paying clients of LA Music
+3. TOM is announced/marketed publicly
+4. The repo is made public again
+5. Any evidence of unauthorized DB write or WA send appears in logs
+
+If any of (1-5) happens, rotate immediately using `docs/secret-rotation.md` runbook.
+
+### Pre-rotation snapshot (for future "is it still the same key?" check)
+
+```
+SUPABASE_SERVICE_ROLE_KEY  sha256-12 = 9449de095236
+UAZAPI_TOKEN               sha256-12 = 8f75f8571b1f
+```
+
+If after some time the hashes still match these, no rotation has occurred yet.
