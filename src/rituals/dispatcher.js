@@ -17,13 +17,15 @@ process.chdir(path.join(__dirname, '..', '..'));
 loadDotEnv(path.join(process.cwd(), '.env'));
 
 const supabase = require('../supabase/client');
-const { sendRitual } = require('../engine');
+const { sendRitual, sendCoordinatorReport } = require('../engine');
 
 const RITUAL_BY_DIRECTIVE = {
   briefing_pessoal: 'personal_briefing',
   briefing_trabalho: 'daily_briefing',
   fechamento: 'daily_closing',
   planejamento_semanal: 'weekly_planning',
+  resumo_time: 'team_summary',
+  retrospectiva_semanal: 'weekly_retrospective',
 };
 
 // Canonical names for observability logs (user-facing).
@@ -32,7 +34,14 @@ const CANONICAL_BY_RITUAL = {
   personal_briefing: 'briefing_pessoal',
   daily_closing: 'fechamento',
   weekly_planning: 'planejamento_semanal',
+  team_summary: 'resumo_time',
+  weekly_retrospective: 'retrospectiva_semanal',
 };
+
+// Coordinator report defaults — slot-aligned (15-min increments).
+const TEAM_SUMMARY_DEFAULT_TIME = '19:30';      // weekdays only
+const WEEKLY_RETRO_DEFAULT_TIME = '18:00';      // Sunday only
+const COORDINATOR_ROLES = ['coordinator', 'director'];
 
 // Default time for briefing_pessoal (until user_preferences gains a personal_briefing_time column).
 const PERSONAL_BRIEFING_DEFAULT = '07:00';
@@ -122,6 +131,51 @@ async function alreadySent(collaboratorId, ritualType, ymd) {
   return Boolean(data && data.length);
 }
 
+// Coordinator-report variant of fireRitual. Uses sendCoordinatorReport instead
+// of sendRitual (no AI call; deterministic builder).
+async function fireCoordinatorReport(collab, ritualType, ymdRef) {
+  const canonical = CANONICAL_BY_RITUAL[ritualType] || ritualType;
+  if (await alreadySent(collab.id, ritualType, ymdRef)) {
+    console.log(`[CoordReport] ${ritualType} already sent for ${collab.phone.slice(-4)} on ${ymdRef}, skipping`);
+    await logRitualEvent(collab.id, canonical, 'skipped', 'ja_enviado_hoje', ymdRef);
+    return false;
+  }
+  try {
+    const ok = await sendCoordinatorReport(collab.id, ritualType, ymdRef);
+    if (!ok) {
+      await logRitualEvent(collab.id, canonical, 'skipped', 'role_denied_or_build_empty', ymdRef);
+      return false;
+    }
+    // Persist ritual_logs row for idempotency (same shape engine writes for normal rituals).
+    await supabase.from('ritual_logs').insert({
+      collaborator_id: collab.id,
+      ritual_type: ritualType,
+      reference_date: ymdRef,
+      status: 'sent',
+      sent_at: new Date().toISOString(),
+    });
+    await logRitualEvent(collab.id, canonical, 'sent', null, ymdRef);
+    return true;
+  } catch (err) {
+    console.error(`[CoordReport] err ${ritualType}:`, err.message);
+    await logRitualEvent(collab.id, canonical, 'error', err.message, ymdRef);
+    return false;
+  }
+}
+
+async function listCoordinators(filterPhone) {
+  let q = supabase
+    .from('collaborators')
+    .select('id, full_name, phone, role, is_active, onboarding_completed')
+    .eq('is_active', true)
+    .eq('onboarding_completed', true)
+    .in('role', COORDINATOR_ROLES);
+  if (filterPhone) q = q.eq('phone', filterPhone);
+  const { data, error } = await q;
+  if (error) throw error;
+  return data || [];
+}
+
 async function fireRitual(collab, ritualType, ymd) {
   const canonical = CANONICAL_BY_RITUAL[ritualType] || ritualType;
   if (await alreadySent(collab.id, ritualType, ymd)) {
@@ -175,6 +229,14 @@ async function run(opts = {}) {
       console.error(`[Dispatcher] force inválido: ${opts.force}`);
       return;
     }
+    // Coordinator reports go through a different path (role-gated, no AI).
+    if (ritualType === 'team_summary' || ritualType === 'weekly_retrospective') {
+      const coords = await listCoordinators(opts.phone);
+      for (const c of coords) {
+        await fireCoordinatorReport(c, ritualType, now.ymd);
+      }
+      return;
+    }
     for (const c of collabs) {
       await fireRitual(c, ritualType, now.ymd);
     }
@@ -217,6 +279,24 @@ async function run(opts = {}) {
     } catch (err) {
       console.error(`[Dispatcher] Erro processando ${c.full_name}:`, err.message);
     }
+  }
+
+  // Coordinator reports (role-gated, no AI). Slot-aligned 15-min increments.
+  // - team_summary: weekdays at 19:30 (Mon-Fri).
+  // - weekly_retrospective: Sundays at 18:00.
+  try {
+    const tsSlot = timeToSlot(TEAM_SUMMARY_DEFAULT_TIME);
+    const wrSlot = timeToSlot(WEEKLY_RETRO_DEFAULT_TIME);
+    if (!isWeekend && tsSlot !== null && tsSlot === slotNow) {
+      const coords = await listCoordinators();
+      for (const c of coords) await fireCoordinatorReport(c, 'team_summary', now.ymd);
+    }
+    if (now.dow === 0 && wrSlot !== null && wrSlot === slotNow) {
+      const coords = await listCoordinators();
+      for (const c of coords) await fireCoordinatorReport(c, 'weekly_retrospective', now.ymd);
+    }
+  } catch (err) {
+    console.error('[Dispatcher] coordinator-reports erro:', err.message);
   }
 
   // Reminder dispatcher — every tick, fires pending one-shot reminders.

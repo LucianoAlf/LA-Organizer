@@ -1448,4 +1448,277 @@ async function logConversation(collaboratorId, direction, content) {
   });
 }
 
-module.exports = { processMessage, sendRitual, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseWeeklyPlanMarker, parseHabitMarker, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, applyHabitActions, resolveTaskByShortId };
+// ==================== COORDINATOR REPORTS ====================
+// Deterministic, template-based summaries that DO NOT call the AI provider.
+// Privacy contract: only WORK-context data is queried. Habits, personal tasks,
+// collaborator_memory, and conversation_history.content are NEVER read here.
+
+const COORDINATOR_ROLES = ['coordinator', 'director'];
+
+function ymdAddDays(ymd, days) {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
+}
+function brShort(ymd) {
+  if (!ymd) return '';
+  const m = String(ymd).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[3]}/${m[2]}` : ymd;
+}
+function dowShort(ymd) {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d, 12)); // noon UTC ≈ same day in BR
+  return ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'][dt.getUTCDay()];
+}
+function firstName(full) { return String(full || '').split(' ')[0]; }
+
+// Build the team summary text for the END OF DAY (~19:30, Mon-Fri).
+// Returns string. Never throws — on partial data, sections gracefully omit.
+async function buildTeamSummary(coord, ymdToday) {
+  const dayBR = brShort(ymdToday);
+  const dow = dowShort(ymdToday);
+
+  // 1) Active team (excluding the coordinator viewing it).
+  const { data: team } = await supabase
+    .from('collaborators')
+    .select('id, full_name, role')
+    .eq('is_active', true)
+    .eq('onboarding_completed', true);
+  const peers = (team || []).filter(c => c.id !== coord.id);
+
+  // 2) Daily briefing response status (presence of any inbound message
+  //    AFTER briefing.sent_at counts as "responded").
+  const { data: briefings } = await supabase
+    .from('ritual_logs')
+    .select('collaborator_id, sent_at')
+    .eq('reference_date', ymdToday)
+    .eq('ritual_type', 'daily_briefing')
+    .eq('status', 'sent');
+  const responded = [];
+  const noResponse = [];
+  for (const c of peers) {
+    const b = (briefings || []).find(x => x.collaborator_id === c.id);
+    if (!b) continue; // briefing not sent → don't classify
+    const { count } = await supabase
+      .from('conversation_history')
+      .select('id', { head: true, count: 'exact' })
+      .eq('collaborator_id', c.id)
+      .eq('direction', 'inbound')
+      .gte('created_at', b.sent_at);
+    if ((count || 0) > 0) responded.push(c); else noResponse.push(c);
+  }
+
+  // 3) Work tasks today (PRIVACY: context='work' only).
+  const todayStart = ymdToday + 'T00:00:00-03:00';
+  const todayEnd = ymdToday + 'T23:59:59-03:00';
+  const { count: completedCount } = await supabase
+    .from('tasks').select('id', { head: true, count: 'exact' })
+    .eq('context', 'work').eq('status', 'done')
+    .gte('completed_at', todayStart).lte('completed_at', todayEnd);
+  const { count: dueTodayCount } = await supabase
+    .from('tasks').select('id', { head: true, count: 'exact' })
+    .eq('context', 'work').eq('due_date', ymdToday);
+  const { count: pendingTodayCount } = await supabase
+    .from('tasks').select('id', { head: true, count: 'exact' })
+    .eq('context', 'work').eq('due_date', ymdToday)
+    .in('status', ['pending', 'in_progress']);
+  const { data: overdue } = await supabase
+    .from('tasks').select('id, title, due_date, assigned_to')
+    .eq('context', 'work').lt('due_date', ymdToday)
+    .not('status', 'in', '(done,cancelled)').limit(50);
+
+  // Aggregate overdue by assignee (top 3) — names from team list.
+  const overdueByPerson = new Map();
+  for (const t of (overdue || [])) {
+    const c = peers.find(p => p.id === t.assigned_to);
+    if (!c) continue;
+    overdueByPerson.set(c.full_name, (overdueByPerson.get(c.full_name) || 0) + 1);
+  }
+  const overdueSummary = [...overdueByPerson.entries()]
+    .sort((a, b) => b[1] - a[1]).slice(0, 3)
+    .map(([name, n]) => `${firstName(name)}:${n}`).join(', ');
+
+  // ----- Build text -----
+  const lines = [`🧭 *Resumo do time* — ${dayBR} (${dow})`];
+
+  if (responded.length || noResponse.length) {
+    lines.push('');
+    if (responded.length) lines.push(`✅ Respondeu briefing: ${responded.map(c => firstName(c.full_name)).join(', ')}`);
+    if (noResponse.length) lines.push(`🤐 Sem resposta: ${noResponse.map(c => firstName(c.full_name)).join(', ')}`);
+  }
+
+  lines.push('');
+  lines.push('📋 *Tarefas (work)*');
+  lines.push(`• Concluídas hoje: ${completedCount || 0}${dueTodayCount ? ` de ${dueTodayCount} pra hoje` : ''}`);
+  if (pendingTodayCount) lines.push(`• Pendentes pra hoje: ${pendingTodayCount}`);
+  if ((overdue || []).length) {
+    lines.push(`• Atrasadas: ${overdue.length}${overdueSummary ? ` (${overdueSummary})` : ''}`);
+  }
+
+  // Atenção (only when there's signal).
+  const atencao = [];
+  if (peers.length && noResponse.length >= Math.ceil(peers.length / 2)) {
+    atencao.push(`Mais da metade do time sem responder hoje`);
+  }
+  if ((overdue || []).length >= 5) atencao.push(`${overdue.length} tarefas atrasadas no time`);
+  if (atencao.length) {
+    lines.push('');
+    lines.push('⚠️ *Atenção*');
+    for (const a of atencao) lines.push(`• ${a}`);
+  }
+
+  return lines.join('\n');
+}
+
+// Build the weekly retrospective text. ymdEnd = Sunday (or any reference).
+async function buildWeeklyRetrospective(coord, ymdEnd) {
+  const ymdStart = ymdAddDays(ymdEnd, -6);
+  const tsStart = ymdStart + 'T00:00:00-03:00';
+  const tsEnd = ymdEnd + 'T23:59:59-03:00';
+
+  const { data: team } = await supabase
+    .from('collaborators').select('id, full_name, role')
+    .eq('is_active', true).eq('onboarding_completed', true);
+  const peers = (team || []).filter(c => c.id !== coord.id);
+
+  // Ritual response rates (briefing_trabalho + fechamento; sent rows in window).
+  async function rateFor(ritualType) {
+    const { data: rows } = await supabase
+      .from('ritual_logs').select('collaborator_id, sent_at')
+      .eq('ritual_type', ritualType).eq('status', 'sent')
+      .gte('reference_date', ymdStart).lte('reference_date', ymdEnd);
+    let responded = 0;
+    for (const r of (rows || [])) {
+      const { count } = await supabase
+        .from('conversation_history').select('id', { head: true, count: 'exact' })
+        .eq('collaborator_id', r.collaborator_id)
+        .eq('direction', 'inbound')
+        .gte('created_at', r.sent_at);
+      if ((count || 0) > 0) responded++;
+    }
+    return { sent: (rows || []).length, responded };
+  }
+  const briefingRate = await rateFor('daily_briefing');
+  const closingRate = await rateFor('daily_closing');
+
+  // Tasks (work only) created/completed in window.
+  const { count: createdCount } = await supabase
+    .from('tasks').select('id', { head: true, count: 'exact' })
+    .eq('context', 'work')
+    .gte('created_at', tsStart).lte('created_at', tsEnd);
+  const { count: completedCount } = await supabase
+    .from('tasks').select('id', { head: true, count: 'exact' })
+    .eq('context', 'work').eq('status', 'done')
+    .gte('completed_at', tsStart).lte('completed_at', tsEnd);
+  const { data: openOverdue } = await supabase
+    .from('tasks').select('id, assigned_to')
+    .eq('context', 'work').lt('due_date', ymdAddDays(ymdEnd, 1))
+    .not('status', 'in', '(done,cancelled)').limit(200);
+  const overdueByPerson = new Map();
+  for (const t of (openOverdue || [])) {
+    const c = peers.find(p => p.id === t.assigned_to);
+    if (c) overdueByPerson.set(c.full_name, (overdueByPerson.get(c.full_name) || 0) + 1);
+  }
+
+  // Per-collaborator: created vs completed (work only).
+  const perCollab = [];
+  for (const c of peers) {
+    const { count: cCreated } = await supabase
+      .from('tasks').select('id', { head: true, count: 'exact' })
+      .eq('context', 'work').eq('assigned_to', c.id)
+      .gte('created_at', tsStart).lte('created_at', tsEnd);
+    const { count: cDone } = await supabase
+      .from('tasks').select('id', { head: true, count: 'exact' })
+      .eq('context', 'work').eq('assigned_to', c.id).eq('status', 'done')
+      .gte('completed_at', tsStart).lte('completed_at', tsEnd);
+    const ovd = overdueByPerson.get(c.full_name) || 0;
+    perCollab.push({ name: c.full_name, created: cCreated || 0, done: cDone || 0, overdue: ovd });
+  }
+
+  // ----- Build text -----
+  const lines = [`📊 *Retrospectiva semanal* — ${brShort(ymdStart)} a ${brShort(ymdEnd)}`];
+
+  lines.push('');
+  lines.push('🎯 *Rituais*');
+  if (briefingRate.sent) {
+    const pct = Math.round(100 * briefingRate.responded / briefingRate.sent);
+    lines.push(`• Briefing: ${briefingRate.responded}/${briefingRate.sent} (${pct}%)`);
+  } else lines.push(`• Briefing: nenhum disparado`);
+  if (closingRate.sent) {
+    const pct = Math.round(100 * closingRate.responded / closingRate.sent);
+    lines.push(`• Fechamento: ${closingRate.responded}/${closingRate.sent} (${pct}%)`);
+  } else lines.push(`• Fechamento: nenhum disparado`);
+
+  lines.push('');
+  lines.push('📋 *Tarefas (work)*');
+  lines.push(`• Criadas: ${createdCount || 0}`);
+  const compRate = createdCount ? Math.round(100 * (completedCount || 0) / createdCount) : 0;
+  lines.push(`• Concluídas: ${completedCount || 0}${createdCount ? ` (${compRate}% das criadas)` : ''}`);
+  lines.push(`• Atrasadas (em aberto): ${(openOverdue || []).length}`);
+
+  if (perCollab.some(x => x.created || x.done || x.overdue)) {
+    lines.push('');
+    lines.push('🏆 *Por colaborador*');
+    perCollab
+      .sort((a, b) => b.done - a.done)
+      .forEach(p => {
+        const ov = p.overdue ? ` / ${p.overdue} atraso${p.overdue > 1 ? 's' : ''}` : '';
+        lines.push(`• ${firstName(p.name)} — ${p.created} criadas, ${p.done} done${ov}`);
+      });
+  }
+
+  // Sinais — minimal heuristics (only flag obvious patterns).
+  const sinais = [];
+  if (briefingRate.sent && briefingRate.responded / briefingRate.sent < 0.5) {
+    sinais.push(`Resposta de briefing abaixo de 50%`);
+  }
+  if (closingRate.sent && closingRate.responded / closingRate.sent < 0.5) {
+    sinais.push(`Resposta de fechamento abaixo de 50%`);
+  }
+  if ((openOverdue || []).length >= 10) sinais.push(`Acúmulo de atrasos: ${openOverdue.length}`);
+  if (sinais.length) {
+    lines.push('');
+    lines.push('⚠️ *Sinais*');
+    for (const s of sinais) lines.push(`• ${s}`);
+  }
+
+  return lines.join('\n');
+}
+
+// Send a coordinator report. Role-gated: only coordinator/director receive it.
+// Returns true on success, false on skip/error. Caller logs ritual_logs separately.
+async function sendCoordinatorReport(collaboratorId, type, ymdRef) {
+  const { data: collab } = await supabase
+    .from('collaborators')
+    .select('id, full_name, phone, role, is_active')
+    .eq('id', collaboratorId).single();
+  if (!collab || !collab.is_active) {
+    console.warn(`[CoordReport] skipped ${type} — collaborator inactive/missing`);
+    return false;
+  }
+  if (!COORDINATOR_ROLES.includes(collab.role)) {
+    console.warn(`[CoordReport] DENIED ${type} for ${collab.full_name} — role=${collab.role || 'collaborator'}`);
+    return false;
+  }
+  let text;
+  try {
+    if (type === 'team_summary') text = await buildTeamSummary(collab, ymdRef);
+    else if (type === 'weekly_retrospective') text = await buildWeeklyRetrospective(collab, ymdRef);
+    else { console.warn(`[CoordReport] unknown type ${type}`); return false; }
+  } catch (err) {
+    console.error(`[CoordReport] build err ${type}:`, err.message);
+    return false;
+  }
+  try {
+    await whatsapp.sendMessage(collab.phone, text);
+    await logConversation(collab.id, 'outbound', text);
+  } catch (err) {
+    console.error(`[CoordReport] send err ${type} to ${String(collab.phone).slice(-4)}:`, err.message);
+    return false;
+  }
+  console.log(`[CoordReport] ${type} sent to ${String(collab.phone).slice(-4)} (${collab.full_name}) — ${text.length} chars`);
+  return true;
+}
+
+module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamSummary, buildWeeklyRetrospective, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseWeeklyPlanMarker, parseHabitMarker, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, applyHabitActions, resolveTaskByShortId };
