@@ -1,168 +1,184 @@
 ---
 name: tratamento-audio
-description: Skill para receber, transcrever, interpretar e agir sobre mensagens de voz do colaborador. Use sempre que o colaborador enviar áudio via WhatsApp — o TOM transcreve, extrai a intenção, confirma o entendimento e executa a ação correspondente.
+description: Skill para interpretar mensagens de voz do colaborador, confirmar entendimento e só então encaminhar a ação correta. Use quando o colaborador enviar áudio via WhatsApp.
 ---
 
 # Tratamento de Áudio
 
-## Entrada
-| Campo | Tipo | Origem | Obrigatório |
-|-------|------|--------|-------------|
-| collaborator_id | uuid | Identificado pelo phone | Sim |
-| audio_file | binary | UAZAPI (mensagem de voz recebida) | Sim |
-| audio_duration | int | UAZAPI (duração em segundos) | Não |
-| context | text | Contexto atual (briefing, closing, free_chat) | Sim |
+## Quando ativar
+Ative esta skill quando o colaborador enviar uma mensagem de voz via WhatsApp.
 
-## Saída
-| Campo | Tipo | Destino |
-|-------|------|---------|
-| transcription | text | conversation_history (content) |
-| extracted_intent | text | NLU → skill correspondente |
-| extracted_data | jsonb | Dados extraídos (tarefas, nomes, datas) |
-| confirmation_message | WhatsApp | Colaborador via UAZAPI |
-| action_result | variável | Depende da intenção identificada |
+Se a entrada não for áudio, NÃO use esta skill.
 
-## Fases de Execução
+---
 
-### Fase 1 — Receber áudio da UAZAPI
-A UAZAPI recebe a mensagem de voz e envia pro motor do TOM:
-- URL do arquivo de áudio
-- Duração
-- Número do remetente
+## Regra central
+Áudio nunca vira ação automática direto.
 
-### Fase 2 — Transcrever
-Enviar pra serviço de STT (Speech-to-Text):
-- **Opção 1:** OpenAI Whisper API
-- **Opção 2:** Google Speech-to-Text
-- **Opção 3:** Whisper local na VPS (se performance permitir)
+O fluxo correto é:
+1. transcrever
+2. interpretar
+3. resumir o entendimento
+4. confirmar com o colaborador
+5. só depois executar a ação correspondente
 
-Configuração:
-- Idioma: pt-BR
-- Modelo: whisper-large-v3 (ou equivalente)
-- Formato de saída: texto limpo sem timestamps
+---
 
-### Fase 3 — Registrar transcrição
-```sql
-INSERT INTO conversation_history (collaborator_id, direction, message_type, content, context)
-VALUES ($1, 'inbound', 'audio', $transcription, $context);
+## Sobre markers
+Esta skill **normalmente não emite marker próprio**.
+
+Ela interpreta e confirma. A action final — `complete`, `reschedule`, `create`, etc. — deve ser emitida pelo fluxo correspondente (`checklist-tarefas`) após a confirmação do colaborador.
+
+---
+
+## Subfluxos
+
+### 1. Áudio simples com uma ação clara
+
+**Exemplos comuns:**
+- "fiz a entrevista do professor"
+- "marca reunião com Juliana amanhã"
+- "me lembra de pagar a conta"
+
+```text
+Entendi: *Entrevista do professor* — feito ✅.
+
+Certo?
 ```
 
-### Fase 4 — Extrair intenção e dados
-Usar o modelo (Sonnet 4.6) pra interpretar a transcrição:
+**Regra:** se houver uma ação clara e única, confirme de forma curta. Não execute antes do "sim" do colaborador.
 
-```
-Prompt interno (não mostrar pro colaborador):
+---
 
-"O colaborador enviou um áudio. Transcrição:
-[transcrição]
+### 2. Áudio com múltiplas ações
 
-Contexto atual: [briefing/closing/free_chat]
-Tarefas do dia: [lista]
+**Exemplo:** colaborador conclui uma coisa, reagenda outra e dá contexto adicional no mesmo áudio.
 
-Extraia:
-1. Intenção principal (task_complete, task_reschedule, status_check, etc.)
-2. Dados específicos (quais tarefas foram mencionadas, datas, nomes)
-3. Se há mais de uma ação, liste todas na ordem
-
-Retorne em JSON:
-{
-  'intents': [
-    {'intent': '...', 'data': {...}},
-    {'intent': '...', 'data': {...}}
-  ],
-  'summary': 'Resumo em 1-2 frases do que o colaborador disse'
-}"
-```
-
-### Fase 5 — Confirmar entendimento
-SEMPRE confirmar antes de agir. O colaborador precisa validar.
-
-```
+```text
 Entendi do áudio:
-- ✅ [ação 1 interpretada]
-- ❌ [ação 2 interpretada]
-- 📝 [informação registrada]
+
+• ✅ Entrevista do professor — feita
+• 🗓️ Material teatro — pra quinta
+• 📝 Reunião com pai de aluno tomou a tarde
 
 Tá certo isso?
 ```
 
-Exemplos de confirmação:
+**Regras:**
+- listar na ordem em que o colaborador falou
+- separar ação de contexto
+- não exagerar no tamanho
 
-**Áudio simples:**
-> "Fiz a entrevista do professor"
-```
-Entendi: Entrevista professor — feito ✅. Certo?
-```
+---
 
-**Áudio com múltiplas ações:**
-> "Fala cara, hoje eu fiz a entrevista do professor, o cara é bom, acho que vai dar certo. O material do teatro eu não consegui porque pintou uma reunião com pai de aluno que tomou minha tarde. Vou ter que deixar pra quinta."
-```
-Entendi do áudio:
-- ✅ Entrevista professor — feito
-- ❌ Material teatro — reagendado pra quinta
-- 📝 Reunião com pai de aluno tomou a tarde (resolvida)
+### 3. Áudio ambíguo
 
-Tá certo?
-```
+**Exemplos comuns:**
+- "tô vendo aquela parada lá do Renan"
+- "acho que foi aquilo mesmo"
+- "depois eu resolvo isso"
 
-**Áudio ambíguo:**
-> "Tô vendo aquela parada lá do Renan"
-```
-Não ficou claro pra mim — qual tarefa? Ligar pro Renan ou revisar material do Renan?
+```text
+Não ficou claro pra mim.
+
+Você tá falando de *ligar pro Renan* ou *revisar o material do Renan*?
 ```
 
-### Fase 6 — Executar após confirmação
-Se o colaborador confirma ("isso", "certo", "sim", "isso mesmo"):
-- Processar cada intenção na ordem
-- Chamar a skill correspondente (rituais-diarios pra ticar tarefa, etc.)
-- Registrar tudo no banco
+**Regras:**
+- fazer uma pergunta curta
+- nunca chutar a intenção
+- não emitir action enquanto houver ambiguidade
 
-Se o colaborador corrige ("não, a entrevista foi ontem, não hoje"):
-- Ajustar os dados
-- Confirmar novamente
-- Executar
+---
 
-### Fase 7 — Registrar resposta
-```sql
-INSERT INTO conversation_history (collaborator_id, direction, message_type, content, context)
-VALUES ($1, 'outbound', 'text', $response, $context);
+### 4. Áudio com transcrição ruim ou incompleta
+
+```text
+Não consegui entender bem esse áudio.
+
+Se puder, me manda de novo — pode ser em texto também.
 ```
 
-## Erros Comuns de Transcrição (aceitar como natural)
+**Regras:**
+- não fingir entendimento
+- oferecer saída simples
+- não constranger o colaborador
 
-| Transcrição errada | O que provavelmente é |
+---
+
+### 5. Áudio que traz só contexto, sem ação
+
+**Exemplos:** desabafo breve, explicação do dia, justificativa sem pedido objetivo.
+
+```text
+Entendi.
+
+Valeu por me contextualizar.
+```
+
+**Regra:** se não houver ação, não invente uma. Contexto pode servir para a próxima resposta, mas não deve virar execução automática.
+
+---
+
+## Confirmação antes de agir
+
+Só execute algo depois de sinais como:
+- "sim", "isso", "certo", "isso mesmo", "é isso"
+
+Se o colaborador corrigir, ajuste o entendimento e confirme de novo:
+
+```text
+Entendi então assim:
+
+• ✅ Entrevista do professor — feita ontem
+• 🗓️ Material teatro — ficou pra quinta
+
+Agora sim tá certo?
+```
+
+---
+
+## Handoff para outras skills
+
+Depois da confirmação, a execução segue o fluxo apropriado:
+
+- tarefa concluída → `checklist-tarefas` (`complete`)
+- reagendamento → `checklist-tarefas` (`reschedule`)
+- criação de tarefa → `checklist-tarefas` (`create`)
+- contexto relevante → memória, se fizer sentido
+
+---
+
+## Tolerância a erro de transcrição
+
+Aceite como natural erros como:
+
+| O que o sistema transcreveu | O que o colaborador quis dizer |
 |---|---|
 | "Open Claw" | OpenClaw |
 | "clã de ferro" | Claude Code |
 | "L.A." | LA Music |
 | "é o muses" / "e-muses" | Emusys |
-| "tom" (minúsculo) | TOM (o agente) |
-| "cinco de b" | 5W2H |
-| "ai sem hall" | Eisenhower |
-| "WIP" / "Wipp" | VIP |
+| "tom" | TOM |
 
-O TOM deve ser tolerante com erros de transcrição e usar contexto pra interpretar.
+Use o contexto da conversa para interpretar melhor.
 
-## Veto Conditions — NUNCA
-- NUNCA presumir que entendeu 100% — sempre confirmar
-- NUNCA agir com base em áudio sem confirmação do colaborador
-- NUNCA guardar o arquivo de áudio original — só a transcrição em texto
-- NUNCA transcrever e mostrar a transcrição bruta pro colaborador (pode ter erros constrangedores) — mostrar a interpretação resumida
-- NUNCA ignorar áudio — sempre processar, mesmo que curto
+---
 
-## Checklist de Conclusão
-- [ ] Áudio recebido da UAZAPI
-- [ ] Transcrição gerada com sucesso (pt-BR)
-- [ ] Transcrição registrada em conversation_history
-- [ ] Intenções e dados extraídos pelo modelo
-- [ ] Confirmação enviada pro colaborador
-- [ ] Confirmação recebida antes de executar
-- [ ] Ações executadas corretamente
-- [ ] Resultado registrado no banco
+## Regras de linguagem
+- tom curto, leve e natural
+- sem mostrar a transcrição bruta
+- sem parecer robô de transcrição
+- confirmar entendimento em linguagem humana
+- se errar, corrigir sem drama
 
-## Integrações
-- **UAZAPI** — recebimento de áudio
-- **Whisper/STT** — transcrição
-- **Claude Sonnet 4.6** — interpretação e extração de intenções
-- **Supabase** — conversation_history
-- **Skills correspondentes** — rituais-diarios, broadcast, etc. (chamadas após confirmação)
+---
+
+## Veto — nunca
+- nunca presumir que entendeu 100%
+- nunca agir com base em áudio sem confirmação
+- nunca mostrar a transcrição bruta pro colaborador
+- nunca guardar o arquivo de áudio como memória de longo prazo
+- nunca inventar intenção quando o áudio estiver ambíguo
+- nunca ignorar um áudio — se não entender, pedir repetição
+- nunca emitir marker de ação antes da confirmação do colaborador
