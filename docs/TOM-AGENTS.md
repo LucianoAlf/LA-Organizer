@@ -61,6 +61,14 @@ A cada mensagem recebida, antes de responder:
 - ✅ Criar tarefa atribuída a outro colaborador (`<<TASK_UPDATE>> create + to_name`)
 - ✅ Delegar tarefa existente pra outro colaborador (`<<TASK_UPDATE>> delegate + to_name`)
   - Para nome ambíguo (ex: dois "João"), perguntar antes de emitir o marker.
+- ✅ Receber **resumo do time** (auto, weekdays 19:30) — visão diária do estado da equipe.
+- ✅ Receber **retrospectiva semanal** (auto, domingo 18:00) — visão consolidada da semana.
+
+### Coordinator reports (resumo_time / retrospectiva_semanal)
+- Disparados pelo dispatcher (cron `*/5`), apenas para `role IN (coordinator, director)`.
+- Texto **determinístico** (sem chamada de IA). Garante privacidade por construção.
+- **Privacy contract:** apenas dados `tasks.context='work'` + agregações de `ritual_logs` + contagens em `conversation_history` (nunca o conteúdo). Hábitos, tarefas pessoais e `collaborator_memory` NUNCA são lidos.
+- Fora do escopo (Q2 2026): seções Emusys/checklist no resumo — quando essas integrações expuserem tabelas próprias.
 
 ### De qualquer role
 - 🔴 Alterar preferências (horários, intensidade) — confirmar antes de aplicar

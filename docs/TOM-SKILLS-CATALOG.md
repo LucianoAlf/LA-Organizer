@@ -170,6 +170,26 @@ Capacidades futuras, hipóteses de skill ou mecanismos ainda não consolidados.
 
 ---
 
+## 8.5 Coordinator reports (resumo do time + retrospectiva semanal)
+**Mecanismo:** dispatcher cron + builders deterministícos (`buildTeamSummary`, `buildWeeklyRetrospective` em `src/engine.js`). **Não passa pelo Claude.**
+
+**Função:** dar a coordenador/diretor visibilidade operacional do time, sem expor dado pessoal.
+
+**Ativa quando:**
+- `team_summary`: weekday (Mon-Fri) às 19:30 (slot-aligned)
+- `weekly_retrospective`: domingo às 18:00 (slot-aligned)
+- ou via CLI: `node src/rituals/dispatcher.js --force=resumo_time` / `--force=retrospectiva_semanal`
+
+**Entrega:** texto curto via WhatsApp pra cada colaborador com `role IN (coordinator, director)`. Idempotência via `ritual_logs` (alreadySent).
+
+**Privacy contract (enforced):**
+- Apenas `tasks.context='work'` é consultada
+- `conversation_history` é usada apenas para detecção (count de mensagens inbound após sent_at do briefing); o conteúdo NUNCA é lido
+- `habits`, `habit_logs`, `collaborator_memory` NUNCA são tocados
+- Output em terceira pessoa, nomes próprios apenas (work-context permitido entre coordinators)
+
+---
+
 ## 9. Gestão de memória
 **Arquivo:** `skills/gestao-memoria.md`
 
@@ -227,6 +247,8 @@ Capacidades futuras, hipóteses de skill ou mecanismos ainda não consolidados.
 | coordinator/director cria ou delega tarefa pra outro | `checklist-tarefas` (com `to_name`) |
 | enviar mensagem coletiva | `broadcast` |
 | briefing / fechamento / rotina diária | `rituais-diarios` |
+| **resumo do time (coordenador, 19:30 weekdays)** | `coordinator reports` (deterministic; sem AI) |
+| **retrospectiva semanal (coordenador, domingo 18:00)** | `coordinator reports` (deterministic; sem AI) |
 | criar ou marcar hábito | `habitos-pessoais` |
 | checklist operacional | `checklists-operacionais` |
 | pendência Emusys | `integracao-emusys` |
