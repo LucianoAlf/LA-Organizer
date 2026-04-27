@@ -1,28 +1,28 @@
 # TOM-MEMORY-ARCHITECTURE — Sistema de Memória
 
-**Documento:** TOM-MEMORY-ARCHITECTURE  
-**Versão:** 1.0  
-**Data:** 25 de abril de 2026  
+**Documento:** TOM-MEMORY-ARCHITECTURE
+**Versão:** 1.1
+**Data:** 27 de abril de 2026
 **Função:** Define como o TOM lembra, aprende, busca e esquece
 
 ---
 
 ## Visão geral
 
-O TOM tem 3 camadas de memória, do mais efêmero ao mais permanente:
+O TOM trabalha com 3 camadas de memória, da mais efêmera à mais estável:
 
-```
+```text
 ┌─────────────────────────────────────────┐
-│  Camada 3: SOUL + AGENTS (imutável)     │
-│  Quem o TOM é. Nunca muda.             │
+│ Camada 3: SOUL + AGENTS (estável)      │
+│ Quem o TOM é e como opera.             │
 ├─────────────────────────────────────────┤
-│  Camada 2: MEMÓRIA DE LONGO PRAZO       │
-│  collaborator_memory + profiles         │
-│  Fatos, padrões, lições. Dura meses.   │
+│ Camada 2: MEMÓRIA DE LONGO PRAZO       │
+│ collaborator_memory + profiles         │
+│ Fatos, padrões, lições e preferências. │
 ├─────────────────────────────────────────┤
-│  Camada 1: MEMÓRIA DE CURTO PRAZO       │
-│  conversation_history                   │
-│  Últimas mensagens. Dura 30 dias.      │
+│ Camada 1: MEMÓRIA DE CURTO PRAZO       │
+│ conversation_history                   │
+│ Continuidade conversacional recente.   │
 └─────────────────────────────────────────┘
 ```
 
@@ -32,20 +32,28 @@ O TOM tem 3 camadas de memória, do mais efêmero ao mais permanente:
 
 ### Tabela: `conversation_history`
 
-Registro de todas as mensagens trocadas entre o TOM e cada colaborador.
+Registro das mensagens trocadas entre o TOM e cada colaborador.
 
-**Função:** dar continuidade à conversa. Quando o colaborador manda "fiz a 2", o TOM precisa saber qual é "a 2" — isso vem do histórico recente.
+### Função
+Dar continuidade à conversa.
 
-**Carregamento:** últimas 20 mensagens da pessoa são injetadas no prompt a cada interação.
+Exemplo: se o colaborador manda "fiz a 2", o TOM precisa saber qual era a tarefa 2 no contexto recente.
 
-**Retenção:** máximo 500 mensagens por pessoa. Cron mensal arquiva as mais antigas.
+### Carregamento
+- últimas mensagens relevantes da pessoa
+- suficiente para manter continuidade sem inchar o prompt
 
-**Uso:**
-- Continuidade conversacional (saber do que estavam falando)
-- Input pra consolidação semanal (extrair fatos → memória de longo prazo)
-- Cálculo de métricas (tempo de resposta, padrão de comportamento)
+### Retenção
+- retenção limitada por pessoa
+- limpeza periódica via cron
 
-**Privacidade:** 100% privado. Só o service_role (TOM) lê. Coordenador vê métricas derivadas, nunca o conteúdo.
+### Uso
+- continuidade conversacional
+- insumo para consolidação semanal
+- apoio a métricas como tempo de resposta e padrão de interação
+
+### Privacidade
+100% privado. Coordenador e diretor não veem o conteúdo bruto — no máximo métricas derivadas.
 
 ---
 
@@ -53,183 +61,171 @@ Registro de todas as mensagens trocadas entre o TOM e cada colaborador.
 
 ### Tabela: `collaborator_memory`
 
-Fatos, decisões, lições e contexto que o TOM aprendeu sobre cada pessoa ao longo do tempo.
+Guarda fatos, decisões, lições, preferências e contexto relevante aprendidos sobre cada colaborador.
 
-**Função:** dar profundidade. Quando o TOM sabe que "Quintela ignora fechamento quando tá na escola à tarde", ele pode ajustar o horário ou mudar a abordagem — sem o Quintela ter que repetir isso toda semana.
+### Função
+Dar profundidade e continuidade real.
 
-**Carregamento:** top 10 memórias mais relevantes (por importance + recência) injetadas no prompt a cada interação.
+Exemplo: se o TOM aprende que uma pessoa ignora fechamento em certo horário ou responde melhor de manhã, pode adaptar a abordagem sem que a pessoa precise repetir isso toda semana.
 
-### Tipos de memória
-
-| Tipo | O que é | Exemplo | Decai? |
-|---|---|---|---|
-| `fact` | Fato concreto aprendido | "Joel dá aula de violino terça e quinta no Recreio" | Não |
-| `decision` | Decisão registrada pelo colaborador ou coordenador | "Juliana decidiu que planejamento semanal é segunda 7h30" | Não |
-| `lesson` | Padrão comportamental observado pelo TOM | "Quando Joel fala 'depois vejo', nunca faz. Melhor sugerir data concreta." | Não |
-| `preference` | Preferência descoberta | "Eric prefere receber lembrete Emusys por texto, não por áudio" | Não |
-| `context` | Contexto temporário | "Jordão tá organizando o Sarau até junho" | Sim (decay_at = data do evento) |
-
-### Relevância e busca
-
-Quando o TOM precisa montar o contexto pra uma interação, ele busca memórias assim:
-
-```sql
--- Top 10 memórias mais relevantes pra essa pessoa
-SELECT content, memory_type, importance
-FROM collaborator_memory
-WHERE collaborator_id = $1
-  AND is_active = true
-ORDER BY
-  CASE importance
-    WHEN 'critical' THEN 1
-    WHEN 'high' THEN 2
-    WHEN 'normal' THEN 3
-    WHEN 'low' THEN 4
-  END,
-  updated_at DESC
-LIMIT 10;
-```
-
-Pra buscas por tema, usa FTS5 (Full-Text Search):
-
-```sql
--- Buscar memórias sobre um tema específico
-SELECT content, memory_type
-FROM collaborator_memory
-WHERE collaborator_id = $1
-  AND is_active = true
-  AND to_tsvector('portuguese', content) @@ plainto_tsquery('portuguese', $2)
-ORDER BY ts_rank(to_tsvector('portuguese', content), plainto_tsquery('portuguese', $2)) DESC
-LIMIT 5;
-```
-
-### Criação de memórias
-
-Memórias são criadas de 3 formas:
-
-**1. Explícita — o colaborador diz algo que o TOM deve lembrar:**
-> "TOM, eu dou aula particular em casa terça e quinta à noite"
-
-→ TOM cria memória: type='fact', content='Dá aula particular em casa terça e quinta à noite', importance='normal', source='explicit'
-
-**2. Observação — o TOM percebe um padrão:**
-Após 4 semanas observando que o Joel não responde fechamento nas sextas:
-
-→ TOM cria memória: type='lesson', content='Joel não responde fechamento nas sextas — provavelmente já saiu da escola. Considerar enviar às 17h em vez de 19h nas sextas.', importance='normal', source='observation'
-
-**3. Consolidação — cron semanal extrai fatos do conversation_history:**
-O cron de domingo 22h varre as conversas da semana e extrai:
-- Fatos novos mencionados
-- Decisões tomadas
-- Padrões repetidos
-- Contexto que vale guardar
-
-→ TOM cria memórias com source='conversation'
-
-### Decay (expiração)
-
-Memórias com `decay_at` são temporárias. Quando a data passa, o cron marca `is_active = false`.
-
-Exemplo: "Jordão tá organizando o Sarau até junho" → decay_at = 2026-07-01. Após julho, essa memória desaparece do contexto.
-
-Memórias sem decay_at são permanentes (facts, decisions, preferences). Podem ser desativadas manualmente se ficarem obsoletas.
+### Carregamento
+- top memórias mais relevantes por pessoa
+- relevância combinando importância, atualidade e contexto
 
 ---
 
-## Camada 3: Identidade (imutável)
+## Tipos de memória
+
+| Tipo | O que é | Exemplo | Expira? |
+|---|---|---|---|
+| `fact` | Fato concreto | "Joel dá aula de violino terça e quinta no Recreio" | Não |
+| `decision` | Decisão tomada | "Juliana decidiu planejar a semana na segunda 7h30" | Não |
+| `lesson` | Padrão observado | "Quando Joel fala 'depois vejo', é melhor pedir data concreta" | Não |
+| `preference` | Preferência descoberta | "Eric prefere lembrete Emusys por texto" | Não |
+| `context` | Contexto temporário | "Jordão está organizando o Sarau até junho" | Sim — é o tipo que mais expira |
+
+### Regra prática
+- `fact`, `decision`, `lesson` e `preference` tendem a durar
+- `context` é o tipo mais propenso a expirar — sempre definir `decay_at`
+
+---
+
+## Busca e relevância
+
+Quando o TOM monta o contexto de uma interação, ele não puxa toda a memória. Ele traz só o que é mais útil naquele momento.
+
+### Critérios principais
+- importância
+- recência
+- aderência ao tema da interação
+- status ativo
+
+### Busca textual
+Quando precisa buscar memórias por tema, o sistema usa a busca textual nativa do PostgreSQL sobre memórias ativas da pessoa.
+
+---
+
+## Como memórias são criadas
+
+Memórias surgem de 3 formas:
+
+### 1. Explícita
+A própria pessoa diz algo que vale lembrar.
+
+Exemplo:
+> "Dou aula particular em casa terça e quinta à noite."
+
+### 2. Observação
+O TOM percebe um padrão ao longo do tempo.
+
+Exemplo:
+> Depois de várias semanas, o TOM percebe que a pessoa não responde fechamento em certo horário e ajusta a abordagem.
+
+### 3. Consolidação
+O cron semanal revisa conversas recentes e extrai:
+- fatos novos
+- decisões
+- padrões
+- preferências
+- contexto temporário relevante
+
+---
+
+## Decay (expiração)
+
+Memórias temporárias podem ter `decay_at`.
+
+Quando esse prazo passa:
+- a memória não precisa ser apagada fisicamente
+- ela deixa de ser considerada ativa para o contexto
+
+Exemplo:
+> "Jordão está organizando o Sarau até junho."
+
+Depois do evento, isso perde relevância operacional.
+
+---
+
+## Camada 3: Identidade estável
 
 ### SOUL.md + AGENTS.md
 
-Carregados em toda interação. Não mudam com o uso — só mudam se o Alf autorizar.
+Esses arquivos definem:
+- quem o TOM é
+- como fala
+- quais princípios segue
+- quais limites não cruza
 
-**SOUL.md:** quem o TOM é, como fala, princípios, anti-patterns.
-
-**AGENTS.md:** o que pode fazer, permissões por role, protocolos, red lines.
-
-Esses arquivos ficam na VPS, não no banco. São lidos do filesystem a cada startup de interação.
+### Importante
+Eles não mudam com uso normal.
+Só devem mudar por decisão explícita do Alf.
 
 ---
 
 ## Consolidação semanal
 
-### Cron: domingo 22h — `fn_consolidate_memory()`
+### Cron semanal
+A consolidação periódica deve:
+1. revisar conversas recentes por colaborador
+2. extrair fatos, preferências, decisões e padrões
+3. evitar duplicata
+4. atualizar perfis quando houver padrão consistente
+5. desativar memórias temporárias expiradas
 
-**Pra cada colaborador ativo:**
-
-```
-1. Ler conversation_history dos últimos 7 dias
-2. Chamar Sonnet 4.6 com prompt de consolidação:
-   "Analise estas conversas e extraia:
-    - Fatos novos sobre esta pessoa
-    - Padrões comportamentais observados
-    - Decisões tomadas
-    - Preferências descobertas
-    - Contexto temporal relevante
-    Retorne em JSON."
-3. Pra cada item extraído:
-   - Verificar se já existe em collaborator_memory (evitar duplicata)
-   - Se novo, criar registro com type, importance, source='conversation'
-   - Se já existe mas com informação atualizada, fazer UPDATE
-4. Atualizar collaborator_profiles com padrões observados
-5. Marcar memórias com decay_at expirado como is_active = false
-6. Calcular maturity_level com base em métricas acumuladas
-```
-
-### Custo estimado
-
-- ~40 colaboradores × ~50 mensagens/semana = ~2.000 mensagens pra processar
-- Cada consolidação = ~1 chamada ao Sonnet 4.6 por pessoa (com contexto reduzido)
-- ~40 chamadas por semana = custo mínimo dentro da assinatura Max
+### Objetivo
+Transformar histórico bruto em memória útil.
 
 ---
 
-## Fluxo completo de memória em uma interação
+## Fluxo de memória em uma interação
 
-```
-Quintela manda: "Fiz a entrevista do professor, o cara é bom"
+Exemplo:
 
-1. TOM recebe a mensagem via UAZAPI
-2. Identifica: Quintela (pelo phone)
-3. Carrega SOUL.md + AGENTS.md (VPS)
-4. Carrega collaborator_profiles do Quintela (Supabase)
-5. Carrega top 10 collaborator_memory do Quintela (Supabase)
-6. Carrega últimas 20 conversation_history do Quintela (Supabase)
-7. Carrega contexto: tarefas do dia, projetos, checkpoints
-8. Monta o prompt completo e chama Sonnet 4.6
-9. Modelo responde: "Show, Quintela. Entrevista feita ✅. Faltam 2 pro dia."
-10. Registra a mensagem do Quintela em conversation_history (inbound)
-11. Registra a resposta do TOM em conversation_history (outbound)
-12. Marca a tarefa "Entrevista professor" como done
-13. Atualiza daily_plan_items
-14. Incrementa total_interactions no collaborator_profiles
-```
+> Quintela manda: "Fiz a entrevista do professor, o cara é bom."
 
-Tudo isso em < 3 segundos.
+Fluxo:
+1. o TOM identifica a pessoa
+2. carrega identidade estável
+3. carrega perfil, memória relevante e histórico curto
+4. carrega tarefas e contexto operacional
+5. interpreta a mensagem
+6. responde
+7. registra a interação
+8. atualiza o que precisa ser atualizado
+
+O objetivo operacional é que isso aconteça rápido o suficiente para a conversa parecer natural.
 
 ---
 
-## Volume e performance
+## Volume e retenção
 
-| Tabela | Registros por mês (40 pessoas) | Crescimento | Retenção |
-|---|---|---|---|
-| conversation_history | 4.000-8.000 | Alto | Max 500/pessoa. Cron mensal limpa |
-| collaborator_memory | 200-400 novos | Médio | Sem limite. Decay marca is_active=false |
-| collaborator_profiles | 40 (atualizações, não novos) | Nenhum | Permanente |
+A memória do TOM deve crescer com controle.
 
-**PostgreSQL lida com isso sem suar.** A tabela mais pesada (conversation_history) é limitada por retenção. As buscas FTS5 são nativas do PostgreSQL e não precisam de serviço externo.
+### Princípios
+- `conversation_history` cresce mais rápido e precisa de retenção
+- `collaborator_memory` cresce devagar, mas com mais valor
+- `collaborator_profiles` não cresce em volume; só amadurece
+
+### Regra prática
+Manter histórico bruto sob controle e investir em memória consolidada.
 
 ---
 
-## O que diferencia de um chatbot
+## O que diferencia o TOM de um chatbot genérico
 
 | Chatbot genérico | TOM com memória |
 |---|---|
-| "Olá! Como posso ajudar?" | "E aí, Quintela. Ontem fez 2 de 3. Falta o material do teatro — quer manter pra hoje?" |
-| Não sabe quem é a pessoa | Sabe o nome, o role, o estilo, os padrões |
-| Toda conversa começa do zero | Continuidade total — lembra do que foi falado ontem, semana passada, mês passado |
-| Responde igual pra todo mundo | Adapta tom, intensidade e abordagem por pessoa |
-| Não aprende | Aprende com cada interação e melhora com o tempo |
+| Começa quase do zero | Continua de onde a relação parou |
+| Responde igual para todo mundo | Ajusta tom e abordagem por pessoa |
+| Não aprende com padrão | Aprende com repetição e comportamento |
+| Depende da pessoa repetir tudo | Leva contexto útil para a próxima interação |
 
 ---
 
-_Memória é o que transforma interação em relacionamento. Sem ela, o TOM é só um bot. Com ela, o TOM é um copiloto que te conhece._
+## Princípio final
+
+Memória não existe para acumular dado.
+Memória existe para melhorar continuidade, contexto, adaptação e relação.
+
+Sem memória, o TOM responde.
+Com memória, o TOM acompanha.
