@@ -1,162 +1,224 @@
 ---
 name: broadcast
-description: Skill para enviar comunicações em massa via WhatsApp com follow-up automático, rastreamento de confirmações e geração de relatório. Use quando coordenador+ pedir para avisar, comunicar ou notificar um grupo de pessoas com ou sem confirmação.
+description: Permite que coordenador, gerente ou diretor envie comunicações em massa via WhatsApp, com confirmação prévia, follow-up opcional e relatório final. Use quando liderança pedir para avisar, comunicar ou notificar um grupo de pessoas.
 ---
 
 # Broadcast
 
-## Entrada
-| Campo | Tipo | Origem | Obrigatório |
-|-------|------|--------|-------------|
-| sent_by | uuid | Coordenador+ identificado pelo phone | Sim |
-| target_group | text | Coordenador define ("assistentes", "professores", "todos", "time do Recreio") | Sim |
-| message_content | text | Coordenador define | Sim |
-| requires_confirmation | boolean | Coordenador define (default: false) | Não |
-| follow_up_interval_min | int | Coordenador define (default: 60) | Não |
-| timeout_hours | int | Coordenador define (default: 24) | Não |
+## Quando ativar
+Ative esta skill quando:
+- um `coordinator`, `manager` ou `director` pedir para avisar várias pessoas
+- houver intenção clara de comunicar um grupo, equipe, unidade ou lista de nomes
 
-## Saída
-| Campo | Tipo | Destino |
-|-------|------|---------|
-| broadcast_messages | record | Supabase |
-| broadcast_responses | record[] | Supabase (1 por destinatário) |
-| mensagens enviadas | WhatsApp | Cada destinatário via UAZAPI |
-| relatório | WhatsApp | Remetente via UAZAPI (após timeout) |
+Se a mensagem não for de liderança ou não envolver envio em massa, NÃO use esta skill.
 
-## Fases de Execução
+---
 
-### Fase 1 — Verificar permissão
-Se role NOT IN ('coordinator', 'manager', 'director') → rejeitar:
-"Broadcast é função de coordenação. Quer que eu passe o pedido pro [supervisor]?"
+## Regra central
+Broadcast só pode acontecer com:
+1. permissão válida
+2. grupo-alvo resolvido
+3. confirmação explícita do remetente
 
-### Fase 2 — Resolver grupo-alvo
-Mapear target_group pra collaborator IDs:
+Sem esses 3 itens, **não envie nada**.
 
-| Grupo | Query |
-|-------|-------|
-| "assistentes" ou "assistentes pedagógicos" | WHERE function_title ILIKE '%assistente%' AND is_active |
-| "professores" | WHERE role = 'collaborator' AND function_title ILIKE '%professor%' AND is_active |
-| "coordenadores" | WHERE role = 'coordinator' AND is_active |
-| "todos" | WHERE is_active AND id != sent_by |
-| "time do [unidade]" | WHERE unit = '[unidade]' AND is_active |
-| "equipe do projeto [X]" | JOIN project_members WHERE project_id = X |
-| Lista explícita ("Joel, Eric, Jordão") | WHERE full_name IN (...) |
+---
 
-### Fase 3 — Confirmar com o remetente
+## Fluxos
+
+### 1. Verificar permissão
+Se o role não for `coordinator`, `manager` ou `director`, responda:
+
+```text
+Broadcast é função de coordenação. Quer que eu passe o pedido pro seu supervisor?
 ```
-Vou mandar pra [N] pessoas ([lista de nomes]):
 
-"[message_content]"
+Pare aí. Não continue o fluxo.
 
-Confirmação obrigatória: [sim/não]
-Cobrança: a cada [interval] min por [timeout]h
+---
+
+### 2. Resolver grupo-alvo
+Converta o grupo pedido em destinatários reais.
+
+**Exemplos de grupo:**
+- `assistentes`, `professores`, `coordenadores`, `todos`
+- `time do Recreio`, `equipe do projeto X`
+- lista explícita: `Joel, Eric, Jordão`
+
+**Regras:**
+- se o grupo estiver claro e resolvível, siga
+- se houver ambiguidade, pergunte **UMA vez** antes de continuar
+- nunca inclua o remetente no broadcast `todos`, salvo se ele pedir
+- nunca assuma nomes ou grupos que não baterem no banco
+
+---
+
+### 3. Confirmar com o remetente
+
+Antes de disparar, confirme sempre. Use este formato canônico:
+
+**User:** `avisa os professores que amanhã tem reunião pedagógica às 14h`
+
+**TOM:**
+```text
+📢 Vou mandar pra 8 professores:
+
+• Grupo: professores (Campo Grande)
+• Mensagem: "Reunião pedagógica amanhã às 14h"
+• Confirmação obrigatória: não
 
 Confirma o envio?
 ```
 
-Só prosseguir após "sim", "confirma", "manda", "bora".
+**Com confirmação obrigatória:**
 
-### Fase 4 — Criar registros e enviar
-```sql
--- 1. Criar broadcast
-INSERT INTO broadcast_messages (sent_by, target_group, target_ids, message_content, 
-  requires_confirmation, follow_up_interval_min, timeout_hours, status)
-VALUES ($1, $2, $3, $4, $5, $6, $7, 'active')
-RETURNING id;
+**User:** `avisa todo mundo do Recreio que sábado tem evento. preciso que confirmem`
 
--- 2. Criar response pra cada destinatário
-INSERT INTO broadcast_responses (broadcast_id, collaborator_id, status)
-SELECT $broadcast_id, unnest($target_ids), 'pending';
+**TOM:**
+```text
+📢 Vou mandar pra 12 pessoas:
+
+• Grupo: equipe Recreio
+• Mensagem: "Evento no sábado — confirmar presença"
+• Confirmação obrigatória: sim
+• Cobrança: a cada 60 min por 4h
+
+Confirma o envio?
 ```
 
-Enviar mensagem pra cada destinatário via UAZAPI:
-```
-[Nome], aviso de [nome do remetente]: [message_content]
-[Se requires_confirmation]: Por favor confirme sua presença.
-```
+**Regras:**
+- só prossiga se o remetente disser `sim`, `confirma`, `manda`, `bora`
+- se ajustar texto, grupo ou regra, atualize e reconfirme
+- nunca envie sem confirmação explícita
 
-### Fase 5 — Monitorar confirmações (cron a cada 15 min)
-```sql
--- Verificar broadcasts ativos que precisam de follow-up
-SELECT bm.id, br.collaborator_id, br.last_reminder_at, bm.follow_up_interval_min
-FROM broadcast_messages bm
-JOIN broadcast_responses br ON br.broadcast_id = bm.id
-WHERE bm.status = 'active'
-  AND bm.requires_confirmation = true
-  AND br.status = 'pending'
-  AND (br.last_reminder_at IS NULL 
-       OR br.last_reminder_at < NOW() - (bm.follow_up_interval_min || ' minutes')::interval);
+---
+
+### 4. Enviar broadcast
+
+**Texto que chega pro destinatário (sem confirmação):**
+```text
+Joel, aviso da Juliana:
+
+Reunião pedagógica amanhã às 14h. Presença obrigatória.
 ```
 
-Pra cada pendente: enviar lembrete e atualizar last_reminder_at e reminders_sent.
+**Texto que chega pro destinatário (com confirmação):**
+```text
+Joel, aviso da Juliana:
 
-```
-[Nome], ainda preciso da sua confirmação sobre: [resumo do broadcast]. Confirma pra mim?
-```
+Evento no sábado — confirmar presença.
 
-### Fase 6 — Processar confirmação do destinatário
-Quando destinatário responde "confirmado", "sim", "vou", "ok":
-```sql
-UPDATE broadcast_responses
-SET status = 'confirmed', responded_at = NOW(), response_text = $response
-WHERE broadcast_id = $1 AND collaborator_id = $2;
+Me confirma por aqui, por favor.
 ```
 
-Se responde "não posso", "não vou":
-```sql
-UPDATE broadcast_responses
-SET status = 'declined', responded_at = NOW(), response_text = $response
-WHERE broadcast_id = $1 AND collaborator_id = $2;
+**Regras:**
+- sempre identificar o remetente humano pelo nome
+- nunca enviar como se a mensagem fosse do TOM
+- nunca incluir dado pessoal irrelevante
+
+---
+
+### 5. Follow-up de confirmação
+
+Só faça follow-up se `requires_confirmation = true`.
+
+**Texto de cobrança:**
+```text
+Joel, ainda preciso da sua confirmação sobre:
+
+Evento no sábado — confirmar presença.
+
+Confirma pra mim?
 ```
 
-### Fase 7 — Gerar relatório (após timeout)
-Quando NOW() > created_at + timeout_hours:
+**Regras:**
+- no máximo 1 cobrança por intervalo configurado
+- nunca cobrar quem já respondeu
+- nunca bombardear
+- se o destinatário recusou, pare de cobrar
 
-```sql
-UPDATE broadcast_responses
-SET status = 'no_response'
-WHERE broadcast_id = $1 AND status = 'pending';
+---
 
-UPDATE broadcast_messages
-SET status = 'completed', report_sent = true, report_sent_at = NOW()
-WHERE id = $1;
-```
+### 6. Processar resposta do destinatário
 
-Enviar relatório pro remetente:
-```
-Relatório do broadcast — [resumo]:
+**Confirmou** (sinais: "sim", "confirmado", "ok", "vou"):
+→ registrar como `confirmed`
 
-✅ Confirmados ([N]): [nomes]
-❌ Recusaram ([N]): [nomes]
-⏳ Sem resposta ([N]): [nomes]
+**Recusou** (sinais: "não vou", "não posso", "não consigo"):
+→ registrar como `declined`
+
+**Regras:**
+- resposta curta vale se inequívoca
+- se ambígua, não invente status
+
+---
+
+### 7. Relatório final
+
+Quando o tempo do broadcast acabar, enviar relatório ao remetente:
+
+**TOM:**
+```text
+📊 Relatório do broadcast — "Evento no sábado":
+
+✅ Confirmados (8): Joel, Eric, Jordão, Ana, Pedro, Marcos, Luísa, Carol
+❌ Recusaram (2): Ricardo, Fernanda
+⏳ Sem resposta (2): Gustavo, Helena
 
 Quer que eu continue cobrando os que não responderam?
 ```
 
-Se remetente diz sim → resetar timeout, continuar follow-up.
-Se não → manter status 'completed'.
+**Regras:**
+- se o remetente disser sim, continue follow-up
+- se disser não, encerre
+- não inclua detalhes pessoais desnecessários
 
-## Veto Conditions — NUNCA
-- NUNCA enviar broadcast sem confirmação do remetente
-- NUNCA incluir dados pessoais de destinatários na mensagem
-- NUNCA cobrar mais de 1x por intervalo configurado
-- NUNCA enviar broadcast como se fosse do TOM — sempre identificar o remetente humano
-- NUNCA permitir que collaborator (sem role) envie broadcast
-- NUNCA bombardear: se o cara já respondeu, não mandar mais lembrete
+---
 
-## Checklist de Conclusão
-- [ ] Permissão verificada (coordinator+)
-- [ ] Grupo-alvo resolvido corretamente (IDs)
-- [ ] Confirmação do remetente recebida
-- [ ] broadcast_messages criado no Supabase
-- [ ] broadcast_responses criados (1 por destinatário)
-- [ ] Mensagens enviadas via UAZAPI pra todos os destinatários
-- [ ] Follow-up funcionando no intervalo correto
-- [ ] Confirmações registradas em tempo real
-- [ ] Relatório gerado e enviado após timeout
-- [ ] Status atualizado pra 'completed'
+## Marcador
 
-## Integrações
-- **Supabase** — broadcast_messages, broadcast_responses, collaborators
-- **UAZAPI** — envio de mensagens e lembretes
-- **pg_cron** — fn_follow_up_broadcasts() a cada 15 min
+```text
+<<BROADCAST>>
+{
+  "message": "Reunião pedagógica amanhã às 14h",
+  "target_group": "professores",
+  "target_unit": "campo_grande",
+  "requires_confirmation": false,
+  "reminder_interval_min": 60,
+  "reminder_timeout_hours": 4
+}
+<<END>>
+```
+
+O bloco deve ficar no final da resposta, após a confirmação do remetente.
+Não escreva nada depois de `<<END>>`.
+
+### Campos
+- `message` → texto da mensagem (string)
+- `target_group` → grupo-alvo resolvido (string)
+- `target_unit` → unidade se aplicável, ou `"all"` (string)
+- `requires_confirmation` → `true` | `false`
+- `reminder_interval_min` → intervalo entre cobranças em minutos (number, só se confirmation = true)
+- `reminder_timeout_hours` → duração total do follow-up em horas (number, só se confirmation = true)
+
+---
+
+## Regras de linguagem
+- tom curto, claro e direto
+- sem linguagem corporativa pesada
+- listas com `•`
+- no máximo 4–6 blocos curtos por mensagem
+- 📢 no início da confirmação de envio
+- 📊 no início do relatório final
+
+---
+
+## Veto — nunca
+- nunca enviar broadcast sem confirmação do remetente
+- nunca permitir broadcast vindo de `collaborator`
+- nunca incluir dados pessoais desnecessários de destinatários
+- nunca cobrar mais de 1 vez por intervalo configurado
+- nunca continuar cobrando quem já respondeu ou recusou
+- nunca fingir que o TOM é o autor da mensagem
+- nunca resolver grupo ambíguo no chute
+- nunca emitir marker sem os 3 pré-requisitos (permissão + grupo + confirmação)
