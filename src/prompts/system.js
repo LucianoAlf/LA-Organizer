@@ -236,8 +236,17 @@ function pickSkill(collab, lastUserMessage, recentHistory) {
     return { name: 'habitos-pessoais', body: loadSkill('habitos-pessoais') };
   }
 
-  // Priority 5: task management intent. Includes create/remind/reschedule/complete/delegate/extension signals.
-  if (/\b(fiz|terminei|feito|completei|fechei|reagenda|adia|adiar|delega|surgiu|anota|me\s+lembra|lembra(?:r|nça)|lembrete|me\s+chama|daqui\s+a?\s*\d|em\s+\d+\s*(min|hora|h)|p[oó]e\s+na\s+lista|adiciona|marca\s+(?:reuni|m[eé]dico|consulta|hor[áa]rio)|muda\s+(?:a|o|pra)|deixa\s+pra|n[aã]o\s+vou\s+conseguir|preciso\s+de\s+mais\s+prazo|n[aã]o\s+(?:dá|vai\s+dar)\s+at[eé]|estender\s+(?:o\s+)?prazo|aprov[ao]r|negar|nego\s+a)/i.test(lastUserMessage || '')) {
+  // Priority 5: task management intent. Includes create/remind/reschedule/complete/delegate/extension signals,
+  // PLUS new-demand signals (surgiu, preciso falar, tem que resolver, fala com, etc).
+  if (/\b(fiz|terminei|feito|completei|fechei|reagenda|adia|adiar|delega|surgiu|anota|me\s+lembra|lembra(?:r|nça)|lembra\s+(?:de|do|da)\s+\w|lembrete|me\s+chama|daqui\s+a?\s*\d|em\s+\d+\s*(min|hora|h)|p[oó]e\s+na\s+lista|adiciona|marca\s+(?:reuni|m[eé]dico|consulta|hor[áa]rio)|muda\s+(?:a|o|pra)|deixa\s+pra|n[aã]o\s+vou\s+conseguir|preciso\s+de\s+mais\s+prazo|n[aã]o\s+(?:dá|vai\s+dar)\s+at[eé]|estender\s+(?:o\s+)?prazo|aprov[ao]r|negar|nego\s+a)/i.test(lastUserMessage || '')) {
+    return { name: 'checklist-tarefas', body: loadSkill('checklist-tarefas') };
+  }
+  // Priority 5.1: new-demand emergence patterns (must trigger checklist-tarefas, not gestao-memoria).
+  // "preciso falar/resolver/ver/ligar/conversar/verificar" — actionable demands.
+  // "tem que falar/resolver/ver" — same intent, different phrasing.
+  // "fala com X (sobre Y)" — assignment to someone.
+  // "apareceu / abriu um caso / tem um caso" — emergent issue.
+  if (/\b(preciso\s+(?:falar|resolver|ver|verificar|ligar|conversar|entrar\s+em\s+contato|cobrar|cuidar)|tem\s+que\s+(?:falar|resolver|ver|cuidar)|fala\s+com\s+\w|apareceu\s+(?:uma\s+|um\s+)?(?:demanda|caso|problema|pendência)|abriu\s+um\s+caso|cria(?:r)?\s+(?:uma\s+)?(?:tarefa|task|demanda)\s+(?:pra|para|pro)\s+\w|passa\s+(?:pra|para|pro)\s+\w|abre\s+(?:uma\s+)?(?:tarefa|task)\s+(?:pra|para|pro))/i.test(lastUserMessage || '')) {
     return { name: 'checklist-tarefas', body: loadSkill('checklist-tarefas') };
   }
 

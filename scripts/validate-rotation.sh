@@ -65,7 +65,7 @@ const supabase = require('./src/supabase/client');
   const { data, error } = await supabase.from('marker_logs').insert({
     collaborator_id: '0576f4b6-183d-4cf1-980e-5c8d5da0177f',
     marker_type: 'PROVIDER',
-    result: 'rotation_probe',
+    result: 'executed',
     reason: probeReason,
   }).select('id').single();
   if (error) { console.error('    INSERT err:', error.message); process.exit(1); }

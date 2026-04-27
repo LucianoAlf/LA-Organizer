@@ -10,8 +10,26 @@ Ative esta skill quando:
 - o colaborador responder ao ritual de fechamento
 - o colaborador mencionar uma tarefa de forma acionável
 - o colaborador pedir para criar, concluir, reagendar, delegar ou lembrar algo
+- **uma demanda nova surge na conversa** — algo que precisa virar ação futura
 
 Se a mensagem não tiver ação clara, NÃO use esta skill.
+
+## Demanda nova → task, NUNCA memória
+
+Quando o colaborador relata uma demanda emergente, o caminho é `create` em `<<TASK_UPDATE>>`. NÃO use `<<MEMORY_SAVE>>` para isso (ver veto em `gestao-memoria.md`).
+
+**Sinais de demanda nova:**
+- "surgiu uma demanda...", "surgiu um problema com...", "apareceu...", "tem um caso de..."
+- "preciso falar com X sobre Y", "preciso resolver Z", "preciso ver/verificar/ligar..."
+- "tem que falar com X", "tem que resolver Y", "tem que ver Z"
+- "fala com X sobre Y" (se for o próprio colaborador como executor)
+- "lembra de ver/verificar/falar/resolver..."
+
+**Heurística:** se há ação futura implícita pra alguém, é task. Se é só estado/preferência/contexto durável sem ação, é memória.
+
+**Quando NÃO é task (e também não é memória automática):**
+- "tô sobrecarregado essa semana" → desabafo. Sem ação clara. Não criar task. Pode virar memória só se for padrão recorrente confirmado.
+- "tá puxado" / "tô cansado hoje" → estado momentâneo. Nem task nem memória.
 
 ---
 
