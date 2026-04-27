@@ -254,6 +254,54 @@ function parseWeeklyPlanMarker(text) {
   return { plan, cleanText, malformed: false };
 }
 
+// Parse <<DND_SET>>{...}<<END>> — pause notifications for a window.
+// Schema: { until: ISO 8601 timestamp with timezone, reason?: string }.
+// On clear / wake-up, Claude can emit { until: null } or { clear: true }.
+function parseDndMarker(text) {
+  if (!text) return null;
+  const re = /<<DND_SET>>\s*([\s\S]*?)\s*<<END>>/i;
+  const m = text.match(re);
+  if (!m) return null;
+  const cleanText = text.replace(re, '').trim();
+  let payload = null;
+  try { payload = JSON.parse(m[1].trim()); }
+  catch (err) {
+    logSchemaErr('DND_SET', ['invalid_json: ' + err.message], m[1]);
+    return { malformed: true, cleanText };
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    logSchemaErr('DND_SET', ['not_object'], payload);
+    return { malformed: true, cleanText };
+  }
+  // CLEAR variant: explicit clear or null until
+  if (payload.clear === true || payload.until === null) {
+    return { clear: true, cleanText, malformed: false };
+  }
+  // SET variant: until must be a valid future ISO timestamp
+  if (typeof payload.until !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(payload.until)) {
+    logSchemaErr('DND_SET', ['until:bad_iso'], payload);
+    return { malformed: true, cleanText };
+  }
+  const untilMs = Date.parse(payload.until);
+  if (Number.isNaN(untilMs)) {
+    logSchemaErr('DND_SET', ['until:unparseable'], payload);
+    return { malformed: true, cleanText };
+  }
+  if (untilMs <= Date.now() + 60_000) {
+    logSchemaErr('DND_SET', ['until:not_future'], payload);
+    return { malformed: true, cleanText };
+  }
+  // Cap at 24h to prevent accidental indefinite silence
+  const MAX_MS = 24 * 60 * 60 * 1000;
+  let untilFinal = payload.until;
+  if (untilMs - Date.now() > MAX_MS) {
+    untilFinal = new Date(Date.now() + MAX_MS).toISOString();
+    logSchemaErr('DND_SET', ['until:capped_to_24h'], payload);
+  }
+  const reason = typeof payload.reason === 'string' ? payload.reason.trim().slice(0, 80) : null;
+  return { until: untilFinal, reason, cleanText, malformed: false };
+}
+
 // Returns null if valid, else a string code describing why the action was rejected.
 function validateTaskAction(a) {
   if (!a || typeof a !== 'object' || Array.isArray(a)) return 'not_object';
@@ -1051,6 +1099,38 @@ async function applyHabitActions(collaborator, actions) {
   return { okCount, failCount, created, logged };
 }
 
+// Apply DND marker — persists do_not_disturb_until + reason on user_preferences.
+// `parsed` shape: either { until, reason } (set) or { clear: true } (clear).
+async function applyDnd(collaborator, parsed) {
+  const update = parsed.clear
+    ? { do_not_disturb_until: null, do_not_disturb_reason: null }
+    : { do_not_disturb_until: parsed.until, do_not_disturb_reason: parsed.reason };
+  const { error } = await supabase
+    .from('user_preferences')
+    .update(update)
+    .eq('collaborator_id', collaborator.id);
+  if (error) {
+    console.error('[DND] persist err:', error.message);
+    return false;
+  }
+  if (parsed.clear) console.log(`[DND] cleared for ${String(collaborator.phone).slice(-4)}`);
+  else console.log(`[DND] set ${parsed.until} for ${String(collaborator.phone).slice(-4)}${parsed.reason ? ' (' + parsed.reason + ')' : ''}`);
+  return true;
+}
+
+// Returns { active, until, reason } — used by dispatcher to gate outbound.
+async function getDndState(collaboratorId) {
+  const { data } = await supabase
+    .from('user_preferences')
+    .select('do_not_disturb_until, do_not_disturb_reason')
+    .eq('collaborator_id', collaboratorId)
+    .maybeSingle();
+  if (!data || !data.do_not_disturb_until) return { active: false };
+  const untilMs = Date.parse(data.do_not_disturb_until);
+  if (Number.isNaN(untilMs) || untilMs <= Date.now()) return { active: false };
+  return { active: true, until: data.do_not_disturb_until, reason: data.do_not_disturb_reason };
+}
+
 // Persist a weekly plan: weekly_plans + daily_plans + daily_plan_items + tasks.
 // Idempotent on (collaborator_id, week_start) — re-running for the same week
 // updates the row. daily_plans uses (collaborator_id, plan_date) as upsert key.
@@ -1351,6 +1431,19 @@ async function processMessage(phone, text, raw = {}) {
         const base = parsedPlan.cleanText || '';
         reply = (base ? base + '\n\n' : '') + '_não rolou salvar agora, mas seu plano tá registrado em conversa. Tenta de novo daqui a pouco?_';
       }
+    }
+
+    // 2.8) DND set/clear (do_not_disturb)
+    const parsedDnd = parseDndMarker(reply);
+    if (parsedDnd && parsedDnd.malformed) {
+      console.warn('[DND] WARN: malformed marker, dropping block');
+      await logMarker(collab.id, 'DND_SET', 'rejected', 'schema_invalid', reply);
+      reply = parsedDnd.cleanText || reply;
+    } else if (parsedDnd) {
+      const ok = await applyDnd(collab, parsedDnd);
+      const detail = parsedDnd.clear ? 'clear' : `until=${parsedDnd.until}${parsedDnd.reason ? ' reason=' + parsedDnd.reason : ''}`;
+      await logMarker(collab.id, 'DND_SET', ok ? 'executed' : 'rejected', ok ? detail : 'persist_error', null);
+      reply = parsedDnd.cleanText || reply;
     }
   }
 
@@ -1721,4 +1814,4 @@ async function sendCoordinatorReport(collaboratorId, type, ymdRef) {
   return true;
 }
 
-module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamSummary, buildWeeklyRetrospective, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseWeeklyPlanMarker, parseHabitMarker, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, applyHabitActions, resolveTaskByShortId };
+module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamSummary, buildWeeklyRetrospective, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseWeeklyPlanMarker, parseHabitMarker, parseDndMarker, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, applyHabitActions, applyDnd, getDndState, resolveTaskByShortId };

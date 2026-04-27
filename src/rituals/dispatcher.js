@@ -17,7 +17,7 @@ process.chdir(path.join(__dirname, '..', '..'));
 loadDotEnv(path.join(process.cwd(), '.env'));
 
 const supabase = require('../supabase/client');
-const { sendRitual, sendCoordinatorReport } = require('../engine');
+const { sendRitual, sendCoordinatorReport, getDndState } = require('../engine');
 
 const RITUAL_BY_DIRECTIVE = {
   briefing_pessoal: 'personal_briefing',
@@ -135,6 +135,12 @@ async function alreadySent(collaboratorId, ritualType, ymd) {
 // of sendRitual (no AI call; deterministic builder).
 async function fireCoordinatorReport(collab, ritualType, ymdRef) {
   const canonical = CANONICAL_BY_RITUAL[ritualType] || ritualType;
+  const dnd = await getDndState(collab.id);
+  if (dnd.active) {
+    console.log(`[CoordReport] ${ritualType} skipped — DND active until ${dnd.until}`);
+    await logRitualEvent(collab.id, canonical, 'skipped', `dnd_active until=${dnd.until}`, ymdRef);
+    return false;
+  }
   if (await alreadySent(collab.id, ritualType, ymdRef)) {
     console.log(`[CoordReport] ${ritualType} already sent for ${collab.phone.slice(-4)} on ${ymdRef}, skipping`);
     await logRitualEvent(collab.id, canonical, 'skipped', 'ja_enviado_hoje', ymdRef);
@@ -178,6 +184,15 @@ async function listCoordinators(filterPhone) {
 
 async function fireRitual(collab, ritualType, ymd) {
   const canonical = CANONICAL_BY_RITUAL[ritualType] || ritualType;
+  // DND gate: skip outbound rituals while user is paused. Briefing for the
+  // current day is "missed" if window covers it — by design (pendência continua
+  // no banco; user vê no dia seguinte ou ao perguntar).
+  const dnd = await getDndState(collab.id);
+  if (dnd.active) {
+    console.log(`[Ritual] ${ritualType} skipped — DND active until ${dnd.until}${dnd.reason ? ' (' + dnd.reason + ')' : ''}`);
+    await logRitualEvent(collab.id, canonical, 'skipped', `dnd_active until=${dnd.until}`, ymd);
+    return false;
+  }
   if (await alreadySent(collab.id, ritualType, ymd)) {
     console.log(`[Ritual] ${ritualType} already sent today for ${collab.phone.slice(-4)}, skipping`);
     await logRitualEvent(collab.id, canonical, 'skipped', 'ja_enviado_hoje', ymd);
@@ -387,6 +402,11 @@ async function checkDeadlineAlerts(ymdToday) {
     if (!collab || !collab.phone) continue;
     const pref = collab.user_preferences && collab.user_preferences.notify_deadline_alerts;
     if (pref === false) continue; // user opted out
+    const dnd = await getDndState(collab.id);
+    if (dnd.active) {
+      await logRitualEvent(collab.id, 'alerta_prazo', 'skipped', `dnd_active until=${dnd.until}`, ymdToday);
+      continue;
+    }
     if (await alreadyNotifiedToday(collab.id, t.id, 'deadline_alert', ymdToday)) {
       await logRitualEvent(collab.id, 'alerta_prazo', 'skipped', `ja_notificado:${String(t.id).slice(0,8)}`, ymdToday);
       continue;
@@ -460,6 +480,11 @@ async function checkOverdueAlerts(ymdToday) {
     if (!collab || !collab.phone) continue;
     const pref = collab.user_preferences && collab.user_preferences.notify_overdue_alerts;
     if (pref === false) continue;
+    const dnd = await getDndState(collab.id);
+    if (dnd.active) {
+      await logRitualEvent(collab.id, 'alerta_atraso', 'skipped', `dnd_active until=${dnd.until}`, ymdToday);
+      continue;
+    }
     if (await alreadyNotifiedToday(collab.id, t.id, 'overdue_alert', ymdToday)) {
       await logRitualEvent(collab.id, 'alerta_atraso', 'skipped', `ja_notificado:${String(t.id).slice(0,8)}`, ymdToday);
       continue;
@@ -532,6 +557,12 @@ async function checkTaskReminders() {
       await supabase.from('task_reminders').update({ sent_at: new Date().toISOString() }).eq('id', r.id);
       continue;
     }
+    const dnd = await getDndState(collab.id);
+    if (dnd.active) {
+      // Não consome o reminder — sent_at fica null, vai retry no próximo tick após DND.
+      console.log(`[TaskReminders] defer ${String(r.id).slice(0,8)} — DND until ${dnd.until}`);
+      continue;
+    }
     const labelStr = r.label ? `${r.label}: ` : 'Lembrete: ';
     const text = `⏰ ${labelStr}*${t.title}*`;
     try {
@@ -583,6 +614,11 @@ async function checkReminders() {
     if (!collab || !collab.is_active || !collab.phone) {
       console.warn(`[Reminders] task ${String(t.id).slice(0,8)} skipped — no active collaborator/phone`);
       continue;
+    }
+    const dnd = await getDndState(collab.id);
+    if (dnd.active) {
+      console.log(`[Reminders] defer ${String(t.id).slice(0,8)} — DND until ${dnd.until}`);
+      continue; // don't mark task done; will fire on next tick after DND
     }
     const text = `⏰ Lembrete: ${t.title}`;
     try {

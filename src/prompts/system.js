@@ -191,6 +191,13 @@ function pickSkill(collab, lastUserMessage, recentHistory) {
     return { name: 'onboarding', body: loadSkill('onboarding') };
   }
 
+  // Priority 1.5: do_not_disturb intent — preempts everything else.
+  // Catches: "agora não", "não me incomoda", "tô em aula/reunião/dirigindo",
+  // "me chama em N h/min", "depois", "mais tarde", "pode falar" (clear).
+  if (/\b(agora\s+n[aã]o|n[aã]o\s+(?:posso|d[aá])\s+(?:falar|atender)|n[aã]o\s+me\s+(?:incomoda|atrapalha|chama)|t[oô]\s+(?:em\s+)?(?:aula|reuni[aã]o|dirigindo|ocupad[oa]\s+agora|no\s+m[eé]dico)|me\s+(?:chama|lembra|liga)\s+(?:em|daqui)\s+\d+\s*(?:h|horas?|min|minutos?)|(?:s[oó]\s+)?(?:depois|mais\s+tarde)\s*$|pode\s+falar\s+agora|voltei|liberad[oa]\s+agora)/i.test(lastUserMessage || '')) {
+    return { name: 'pausa-temporaria', body: loadSkill('pausa-temporaria') };
+  }
+
   // Priority 2: in middle of 5W2H flow (detect from history).
   const recentText = (recentHistory || []).map(m => m.content || '').join(' ').toLowerCase();
   const inProjectFlow =
