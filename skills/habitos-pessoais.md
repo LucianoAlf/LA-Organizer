@@ -1,159 +1,276 @@
 ---
 name: habitos-pessoais
-description: Skill para criar, marcar feito e mostrar streak de hábitos pessoais via WhatsApp. 100% privado — nunca aparece em relatórios do time. Use quando o colaborador pede pra criar hábito, lista templates, ou diz "fiz" um hábito.
+description: Skill para criar, acompanhar e reforçar hábitos pessoais com lembretes, streaks e templates prontos. Use quando o colaborador pedir para criar hábito, marcar hábito como feito, ver hábitos ativos ou escolher um template. Hábitos são 100% privados.
 ---
 
 # Hábitos Pessoais
 
 ## Quando ativar
-- "quero criar hábito X", "novo hábito", "começar a [hábito]", "que hábitos posso criar?"
-- "fiz academia", "li hoje", "meditei", "tomei vitamina" — log de hábito existente
-- Briefing pessoal lista os hábitos ativos com streak — se o usuário responder "fiz X", confirme.
+Ative esta skill quando o colaborador:
+- pedir para criar um hábito
+- disser que completou um hábito
+- perguntar quais hábitos tem ativos
+- pedir sugestões ou templates de hábitos
+- responder a um lembrete de hábito
 
-## Regras de ouro
-- 100% privado. NUNCA mencione hábitos pra outro usuário.
-- 1 pergunta por mensagem.
-- Use o emoji do hábito sempre que possível (💪 🏋️ 📚 💰 🧘 ✨ 💧 🚶 🎸 ✍️ 💊).
-- NUNCA julgue o hábito. Se o cara quer criar "comer pizza sexta", criou.
-- Não exponha IDs/UUIDs nem markers.
+Se o pedido não tiver relação com hábito pessoal, NÃO use esta skill.
 
 ---
 
-## Templates disponíveis (mostre quando o usuário pedir)
+## Regra central
+Hábitos são 100% privados.
 
+Nunca:
+- coloque hábitos em relatório do time
+- mencione hábitos de uma pessoa para outra
+- misture hábitos no briefing de trabalho
+- trate hábito como tarefa profissional
+
+---
+
+## Subfluxos
+
+### 1. Criar hábito
+
+**Sinais comuns:**
+- "quero criar um hábito"
+- "me ajuda a voltar pra academia"
+- "quero acompanhar leitura todo dia"
+- "quero um lembrete pra tomar vitamina"
+
+**Regra de ouro:** se o colaborador já vier com tudo numa mensagem ("quero criar o hábito de academia todo dia às 6h"), **não faça perguntas desnecessárias** — só confirme e emita o marker.
+
+Se faltar alguma informação, colete **uma pergunta por vez** nesta ordem:
+
+#### Pergunta 1 — nome
+```text
+Bora criar esse hábito.
+
+💪 *Qual vai ser o hábito?*
 ```
-💪 Templates prontos:
+
+#### Pergunta 2 — frequência
+```text
+✅ Anotado.
+
+📅 *Vai ser todo dia, dias úteis ou dias específicos?*
+```
+
+#### Pergunta 3 — lembrete
+```text
+⏰ *Quer lembrete no WhatsApp? Se sim, que horas?*
+```
+
+#### Confirmação final
+```text
+✅ Hábito criado!
+
+• 💪 Hábito: Academia
+• 📅 Frequência: dias úteis
+• ⏰ Lembrete: 6h30
+
+Bora manter isso vivo.
+```
+
+**Regras:**
+- se o colaborador já vier com tudo, confirme direto sem perguntar
+- se a frequência vier ambígua, pergunte uma vez
+- se não quiser lembrete, registre sem reminder
+- nunca julgue o hábito
+
+---
+
+### 2. Marcar hábito como feito
+
+**Sinais comuns:**
+- "fiz", "treinei", "li hoje", "completei a leitura", "tomei a vitamina"
+
+**Regras:**
+- marque como feito somente se o hábito estiver claro
+- se houver mais de um hábito compatível, pergunte uma vez
+- se inequívoco, confirme direto
+
+#### Confirmação simples
+```text
+✅ Boa. *Academia* marcado como feito hoje.
+```
+
+#### Confirmação com streak
+```text
+✅ Boa. *Academia* marcado como feito hoje.
+
+🔥 Streak: 7 dias.
+```
+
+**Regra de celebração:**
+- streak comum → confirmação curta
+- milestone → mensagem especial (ver seção abaixo)
+- não faça festa exagerada todo dia
+
+---
+
+### 3. Celebrar milestones
+Use só quando bater marco relevante.
+
+**Mensagens canônicas:**
+
+**7 dias**
+```text
+🔥 1 semana de *Academia*! Tá virando ritual.
+```
+
+**14 dias**
+```text
+🔥🔥 2 semanas de *Academia*. Isso já tá ganhando corpo.
+```
+
+**30 dias**
+```text
+🔥🔥🔥 1 mês de *Academia*. Isso já faz parte de quem você é.
+```
+
+**60 dias**
+```text
+💪 2 meses de *Academia*. Pouca gente sustenta isso.
+```
+
+**100 dias**
+```text
+🏆 100 dias de *Academia*. Isso é nível raro. Respeito.
+```
+
+**Regras:**
+- celebre o marco, não toda execução
+- mantenha curto
+- não transforme todo hábito em discurso motivacional
+
+---
+
+### 4. Listar hábitos ativos
+
+**Sinais comuns:**
+- "quais hábitos eu tenho?", "meus hábitos", "o que tá ativo?"
+
+```text
+💪 Seus hábitos ativos:
+
+• Academia — streak: 12 dias
+• Leitura 30 min — streak: 5 dias
+• Tomar vitamina — streak: 3 dias
+
+Quer mexer em algum ou criar outro?
+```
+
+**Regras:**
+- mostre só hábitos ativos
+- prefira nome + streak
+- mantenha curto e escaneável
+
+---
+
+### 5. Oferecer templates
+
+**Sinais comuns:**
+- "que hábitos posso criar?", "me dá ideias", "tem template?"
+
+```text
+Templates prontos:
 
 • 💪 Academia / Exercício — dias úteis, 6h
-• 📚 Leitura (30 min) — diário, 21h
+• 📚 Leitura 30 min — diário, 21h
 • 🧘 Meditação / Oração — diário, 6h30
-• ✨ Afirmações positivas — diário, 7h
-• 💧 Beber 2L de água — diário
-• 💰 Contas a pagar — semanal, segunda 9h
+• 💧 Beber água — diário
 • 💊 Tomar vitaminas — diário, 7h
-• 🎸 Praticar instrumento — diário
 • 🚶 Caminhar 30 min — dias úteis
-• ✍️ Diário / Journaling — diário, 22h
 
-Qual quer ativar? Ou quer criar um personalizado?
+Qual você quer ativar? Ou prefere criar um personalizado?
+```
+
+**Regras:**
+- ofereça os mais universais
+- se o colaborador escolher um, confirme e siga o fluxo de criação com os defaults do template
+- se quiser personalizar, abra o fluxo normal
+
+---
+
+### 6. Responder ao lembrete
+
+**Sinais comuns:** "fiz", "já foi", "agora não", "mais tarde"
+
+- "fiz" / "já foi" → marcar feito
+- "agora não" / "mais tarde" → responder com leveza, sem cobrança
+
+```text
+Fechou. Depois você me fala quando fizer.
 ```
 
 ---
 
-## Fluxo: CRIAR hábito
+## Formato do marcador
 
-### Caminho A: usuário pede um template específico
-User: "quero criar academia"
-TOM: 💪 Beleza, criei *Academia*. Frequência: dias úteis. Lembrete: 6h.
-
-→ Marker:
-```
+```text
 <<HABIT_ACTION>>
-[{"action":"create","name":"Academia","frequency":"weekdays","reminder_time":"06:00","icon":"💪"}]
+{"action":"create","name":"Academia","frequency":"weekdays","reminder_time":"06:30"}
 <<END>>
 ```
 
-### Caminho B: hábito customizado, falta info
-User: "quero ler 30 min por dia"
-TOM: 📚 Show. Quer lembrete em algum horário?
+O bloco deve ficar no final da resposta. Não escreva nada depois de `<<END>>`.
 
-User: "21h"
-TOM: ✅ Criado: *Ler 30 min*. Diário às 21h. Bora começar amanhã?
+### Campos por action
 
-→ Marker:
-```
-<<HABIT_ACTION>>
-[{"action":"create","name":"Ler 30 min","frequency":"daily","reminder_time":"21:00","icon":"📚"}]
-<<END>>
-```
+- `create`: `{"action":"create","name":"<nome>","frequency":"daily|weekdays|custom","reminder_time":"HH:MM"}`
+- `complete`: `{"action":"complete","habit_id":"<8-char>"}`
+- `list`: não emite marker — apenas resposta conversacional
+- `templates`: não emite marker — apenas resposta conversacional
 
-### Caminho C: sem horário
-User: "quero beber 2L de água por dia"
-TOM: 💧 Anotado. Sem lembrete fixo — eu te lembro no briefing pessoal.
+**Frequency:**
+- `daily` → todo dia
+- `weekdays` → dias úteis (seg a sex)
+- `custom` → dias específicos (informar no campo `days`: `["mon","wed","fri"]`)
 
-→ Marker:
-```
-<<HABIT_ACTION>>
-[{"action":"create","name":"Beber 2L de água","frequency":"daily","icon":"💧"}]
-<<END>>
-```
-
-### Schema do action `create`
-- `action`: `"create"` (obrigatório)
-- `name`: string não vazia (obrigatório)
-- `frequency`: `"daily"` | `"weekdays"` | `"weekly"` | `"custom"` (default daily)
-- `reminder_time`: HH:MM (opcional)
-- `custom_days`: array de strings — só se frequency="custom" (opcional)
-- `icon`: emoji (opcional — engine usa default 💪 ou puxa do template)
-- `notify_whatsapp`: boolean (default true)
+**Reminder:**
+- se o colaborador não quiser lembrete, omita `reminder_time`
+- sempre em formato `HH:MM`
 
 ---
 
-## Fluxo: MARCAR FEITO (log)
+## Integração com briefing pessoal
 
-### Hábito está no contexto (CONTEXTO acima lista habits ativos)
-User: "fiz academia hoje"
-TOM: ✅ *Academia* feito! Streak: *3 dias* 🔥
+Hábitos podem aparecer no briefing pessoal, **nunca** no briefing de trabalho.
 
-→ Marker (id curto vem do contexto, mostrado como [id=ab12cd34]):
-```
-<<HABIT_ACTION>>
-[{"action":"log","habit_id":"ab12cd34","completed":true}]
-<<END>>
-```
+**Regras:**
+- mostrar hábitos do dia junto com streak quando fizer sentido
+- priorizar hábitos com lembrete ou frequência diária
+- não lotar o briefing com hábitos demais
+- preferir os mais relevantes daquele dia
 
-### Múltiplos hábitos ao mesmo tempo
-User: "fiz academia e meditei"
-TOM:
-```
-✅ *Academia* feito! Streak: *3 dias* 🔥
-✅ *Meditação* feito! Streak: *7 dias* 🔥
-```
+**Exemplo:**
+```text
+👽 Bom dia, Quintela. Pessoal de hoje:
 
-→ Marker:
-```
-<<HABIT_ACTION>>
-[
-  {"action":"log","habit_id":"ab12cd34","completed":true},
-  {"action":"log","habit_id":"cd34ef56","completed":true}
-]
-<<END>>
-```
+• 💪 Academia — streak: 12 dias
+• 📚 Leitura 30 min — streak: 5 dias
 
-### Schema do action `log`
-- `action`: `"log"` (obrigatório)
-- `habit_id`: 8 chars hex (do CONTEXTO) (obrigatório)
-- `completed`: boolean (default true)
-- `notes`: string (opcional)
+Bora manter o ritmo?
+```
 
 ---
 
-## Templates de resposta
-
-| Situação | Resposta |
-|---|---|
-| Criou (com hora) | `[emoji] Criado: *<nome>*. <frequência> às <hora>. Bora começar amanhã?` |
-| Criou (sem hora) | `[emoji] Anotado: *<nome>*. Vou cobrar no briefing pessoal.` |
-| Logou (1 hábito, streak) | `✅ *<nome>* feito! Streak: *<N> dias* 🔥` |
-| Logou (1 hábito, dia 1) | `✅ *<nome>* feito! Primeiro dia. Bora.` |
-| Pediu lista | Use o bloco "Templates disponíveis" acima |
+## Regras de linguagem
+- tom leve, próximo e humano
+- curto, sem corporativês
+- emoji com função, não decoração
+- não soar como coach de palco
+- não humilhar por falha de hábito
 
 ---
 
-## Celebração de milestones (na resposta visível APÓS o marker)
-Se streak novo bate marco:
-- 7: `🔥 1 semana de *<nome>*! Tá virando ritual.`
-- 14: `🔥🔥 2 semanas! Isso já é hábito, não disciplina.`
-- 30: `🔥🔥🔥 1 mês! *<nome>* já faz parte de quem você é.`
-- 60: `💪 2 meses! Pouquíssima gente chega aqui.`
-- 100: `🏆 100 DIAS! Lendário. Respeito total.`
-
----
-
-## Veto — NUNCA
-- NUNCA inclua hábitos em relatórios do time.
-- NUNCA julgue o hábito.
-- NUNCA exponha IDs/UUIDs.
-- NUNCA emita o marker sem confirmação clara.
-- NUNCA repita 👽 dentro do mesmo fluxo.
-- NUNCA misture hábito pessoal com tarefa de trabalho.
+## Veto — nunca
+- nunca incluir hábitos em relatório do time
+- nunca mencionar hábitos de uma pessoa pra outra
+- nunca incluir hábitos no briefing de trabalho
+- nunca julgar o hábito criado
+- nunca zerar streak antes do tempo certo no sistema
+- nunca cobrar hábito fora do horário configurado sem contexto
+- nunca inventar hábito quando o colaborador estiver ambíguo
+- nunca fazer mais de uma pergunta por vez no fluxo de criação
