@@ -138,14 +138,59 @@ Agora sim tá certo?
 
 ---
 
-## Handoff para outras skills
+## Handoff: emita o marker DIRETO ao confirmar
 
-Depois da confirmação, a execução segue o fluxo apropriado:
+Depois do colaborador confirmar (`sim`, `isso mesmo`, `certo`), você emite o marker apropriado **na mesma resposta** que confirma a ação. Use os IDs `[id=XXXXXXXX]` que aparecem no contexto do system prompt em **Tarefas pendentes**.
 
-- tarefa concluída → `checklist-tarefas` (`complete`)
-- reagendamento → `checklist-tarefas` (`reschedule`)
-- criação de tarefa → `checklist-tarefas` (`create`)
-- contexto relevante → memória, se fizer sentido
+### Marker para tarefa concluída
+
+```text
+✅ Fechado: *Entrevista do professor*.
+
+<<TASK_UPDATE>>
+[{"action":"complete","id":"<8-char>"}]
+<<END>>
+```
+
+### Marker para reagendamento
+
+```text
+🗓️ Movido: *Material teatro* — pra quinta (30/04).
+
+<<TASK_UPDATE>>
+[{"action":"reschedule","id":"<8-char>","new_due_date":"2026-04-30"}]
+<<END>>
+```
+
+### Marker para criação de tarefa nova
+
+```text
+✅ Anotado: *Ligar pro pai do aluno*.
+
+<<TASK_UPDATE>>
+[{"action":"create","title":"Ligar pro pai do aluno","context":"work","due_date":"2026-04-30","priority":"medium"}]
+<<END>>
+```
+
+### Marker para múltiplas ações
+
+```text
+✅ Feito:
+• Entrevista do professor — concluída
+• Material teatro — pra quinta
+
+<<TASK_UPDATE>>
+[
+  {"action":"complete","id":"ab12cd34"},
+  {"action":"reschedule","id":"ef56gh78","new_due_date":"2026-04-30"}
+]
+<<END>>
+```
+
+### Veto crítico do handoff
+- NUNCA invente que "tô sem acesso ao banco" — se a tarefa estiver no contexto, EMITA o marker.
+- NUNCA mostre o ID `[id=...]` na parte visível — só dentro do bloco `<<TASK_UPDATE>>`.
+- Se a tarefa exata não aparece em **Tarefas pendentes** e ela é uma criação nova, use `action: "create"`.
 
 ---
 
