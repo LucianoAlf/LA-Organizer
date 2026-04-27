@@ -104,7 +104,7 @@ function nameFor(collab) {
 }
 
 // ---------- BLOCK 3 — CONTEXTO (dynamic, ~1KB) ----------
-function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge) {
+function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habits) {
   const nickname = nameFor(collab);
   const lines = ['# 📌 CONTEXTO DESTA INTERAÇÃO', ''];
   const fn = collab.function_title ? ', ' + collab.function_title : '';
@@ -155,6 +155,16 @@ function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge) {
     projects.slice(0, 5).forEach(p => lines.push(`• ${p.name} (${p.progress_percent || 0}%)`));
   }
 
+  if (habits && habits.length) {
+    lines.push('', `**Hábitos ativos (${habits.length}):**`);
+    habits.slice(0, 10).forEach(h => {
+      const sid = String(h.id || '').slice(0, 8);
+      const streak = h.current_streak ? ` — streak ${h.current_streak}d` : '';
+      const time = h.reminder_time ? ` (${String(h.reminder_time).slice(0,5)})` : '';
+      lines.push(`• [id=${sid}] ${h.icon || '💪'} ${h.name}${streak}${time}`);
+    });
+  }
+
   return lines.join('\n');
 }
 
@@ -188,8 +198,8 @@ function pickSkill(collab, lastUserMessage, recentHistory) {
     !/✅.*criado|cancelar|esquece/i.test(recentText.slice(-500));
   if (inProjectFlow) return { name: 'cadastro-projeto-5w2h', body: loadSkill('cadastro-projeto-5w2h') };
 
-  // Priority 3: explicit project creation intent.
-  if (/\b(criar|novo|cadastrar)\s+projeto|quero\s+criar/i.test(lastUserMessage || '')) {
+  // Priority 3: explicit project creation intent — exige a palavra "projeto".
+  if (/\b(criar|novo|cadastrar)\s+(?:um\s+|o\s+|outro\s+)?projeto/i.test(lastUserMessage || '')) {
     return { name: 'cadastro-projeto-5w2h', body: loadSkill('cadastro-projeto-5w2h') };
   }
 
@@ -212,6 +222,18 @@ function pickSkill(collab, lastUserMessage, recentHistory) {
   if (/quais suas 5 entregas|plano da semana|tá bom assim ou quer trocar|hora de planejar a semana/i.test(recentTextWp) &&
       !/✅\s*plano salvo|cancela|deixa pra/i.test(recentTextWp.slice(-500))) {
     return { name: 'planejamento-semanal', body: loadSkill('planejamento-semanal') };
+  }
+
+  // Priority 4.7: habits — triggers explícitos + criar/novo + palavra de hábito.
+  const HABIT_KW = '(?:academia|exerc[ií]cio|treino|musculação|musculacao|cardio|caminhada|caminhar|leitura|ler|medita[çc][ãa]o|meditar|orar|ora[çc][ãa]o|afirma[çc][õo]es|[áa]gua|conta(?:s\\s+a\\s+pagar)?|vitamin[ao]s?|rem[eé]dios?|instrumento|viol[ãa]o|piano|guitarra|bateria|journaling|di[áa]rio|caminhar\\s+\\d+\\s*min|h[áa]bito)';
+  const habitCreateRe = new RegExp('\\b(?:criar|novo|come[çc]ar|quero|comece[ai])\\s+(?:um\\s+|uma\\s+|o\\s+|a\\s+)?' + HABIT_KW + '\\b', 'i');
+  if (habitCreateRe.test(lastUserMessage || '') ||
+      /\b(que\s+h[áa]bitos|h[áa]bitos\s+posso|listar\s+h[áa]bitos|templates?\s+de\s+h[áa]bito)/i.test(lastUserMessage || '')) {
+    return { name: 'habitos-pessoais', body: loadSkill('habitos-pessoais') };
+  }
+  // Common habit-log triggers — only if briefing_pessoal ritual context OR clear "fiz <hábito>" intent.
+  if (/\b(fiz\s+(?:academia|exerc[ií]cio|treino|cardio|musculação|musculacao|caminhada|yoga|aula)|li\s+(?:hoje|antes|os\s+30)|meditei|orei|tomei\s+(?:vitaminas?|rem[eé]dios?|todos?\s+os)|bebi\s+\d|pratiquei\s+(?:violão|violao|piano|guitarra|bateria))/i.test(lastUserMessage || '')) {
+    return { name: 'habitos-pessoais', body: loadSkill('habitos-pessoais') };
   }
 
   // Priority 5: task management intent. Includes create/remind/reschedule/complete/delegate/extension signals.
@@ -237,6 +259,7 @@ async function fetchCollaboratorContext(collaborator) {
     projectsRes,
     notificationsRes,
     historyRes,
+    habitsRes,
   ] = await Promise.all([
     supabase.from('collaborator_profiles').select('*').eq('collaborator_id', id).maybeSingle(),
     supabase.from('collaborator_memory')
@@ -262,6 +285,10 @@ async function fetchCollaboratorContext(collaborator) {
       .select('direction, content, created_at')
       .eq('collaborator_id', id)
       .order('created_at', { ascending: false }).limit(5),
+    supabase.from('habits')
+      .select('id, name, icon, current_streak, frequency, reminder_time')
+      .eq('collaborator_id', id).eq('is_active', true)
+      .order('created_at', { ascending: true }).limit(20),
   ]);
 
   let activeProjects = [];
@@ -287,6 +314,7 @@ async function fetchCollaboratorContext(collaborator) {
     activeProjects,
     notifications: notificationsRes.data || [],
     recentMessages: (historyRes.data || []).reverse(),
+    habits: habitsRes.data || [],
     todayDate: today,
   };
 }
@@ -322,7 +350,12 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   }
 
   // Append pending decisions (extension requests) to the context block when present.
-  const baseCtx = buildContext(collaborator, ctx.memories, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge);
+  // Habits only included for personal-context interactions (briefing pessoal OR if the
+  // user message looks like a habit log/manage). Avoids leaking habit list into work briefings.
+  const showHabits = (rt === 'briefing_pessoal' || rt === 'personal_briefing') ||
+    (skill && skill.name === 'habitos-pessoais');
+  const habitsForCtx = showHabits ? (ctx.habits || []) : [];
+  const baseCtx = buildContext(collaborator, ctx.memories, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx);
   const pending = renderPendingDecisions(ctx.notifications);
   const ctxBlock = pending ? baseCtx + '\n' + pending : baseCtx;
 
@@ -358,7 +391,7 @@ function composeSystemPrompt(collaborator, ctx) {
   const blocks = [
     BLOCK_RULES,
     BLOCK_IDENTITY,
-    buildContext(collaborator, ctx.memories || [], ctx.prefs, ctx.todayTasks || [], ctx.activeProjects || [], lastMsgAge),
+    buildContext(collaborator, ctx.memories || [], ctx.prefs, ctx.todayTasks || [], ctx.activeProjects || [], lastMsgAge, ctx.habits || []),
     skillBlock,
   ].filter(Boolean);
   return blocks.join('\n\n---\n\n');

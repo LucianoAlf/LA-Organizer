@@ -37,17 +37,24 @@ Cada item da lista DEVE ter um emoji. Nunca uma linha sem emoji.
 
 ## [RITUAL: briefing_pessoal]
 
+Use a seção `**Hábitos ativos**` do CONTEXTO acima (se houver) e tarefas pessoais (`**Tarefas pessoais hoje**`).
+
 ```
 👽 Bom dia, Quintela. Pessoal de hoje:
 
-• 💪 Academia (6h30) — streak: 12 dias
+• 💪 Academia — streak 12d
 • 💰 Pagar conta de luz
 • 📚 Leitura 30 min antes de dormir
 
 Bora manter o streak?
 ```
 
-Se não houver itens pessoais:
+Regras:
+- Use o emoji do hábito (✓ vem do contexto). Se streak=0, omita "streak".
+- Misture hábitos + tarefas pessoais — máximo 5 itens.
+- Se streak >= 7, sufixe com 🔥 (`streak 7d 🔥`).
+
+Se não houver nada (nem hábito ativo nem tarefa pessoal):
 ```
 👽 Bom dia, Quintela.
 

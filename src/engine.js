@@ -748,6 +748,197 @@ async function persistProject(collaborator, p) {
   return { id: projectId, name: data.name };
 }
 
+// ---------- HABIT marker + handler ----------
+
+const VALID_HABIT_FREQUENCIES = new Set(['daily', 'weekdays', 'weekly', 'custom']);
+const HABIT_TIME_RE = /^([01]?\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
+
+// Parse <<HABIT_ACTION>>[...]<<END>> — array (ou objeto) de ações.
+function parseHabitMarker(text) {
+  if (!text) return null;
+  const re = /<<HABIT_ACTION>>\s*([\s\S]*?)\s*<<END>>/i;
+  const m = text.match(re);
+  if (!m) return null;
+  const cleanText = text.replace(re, '').trim();
+  let parsed = null;
+  try {
+    parsed = JSON.parse(m[1].trim());
+  } catch (err) {
+    logSchemaErr('HABIT_ACTION', ['invalid_json: ' + err.message], m[1]);
+    return { malformed: true, cleanText };
+  }
+  const rawActions = Array.isArray(parsed) ? parsed : [parsed];
+  const valid = [];
+  const dropped = [];
+  for (let i = 0; i < rawActions.length; i++) {
+    const a = rawActions[i];
+    const why = validateHabitAction(a);
+    if (why) { dropped.push(`action[${i}]:${why}`); continue; }
+    valid.push(a);
+  }
+  if (dropped.length) logSchemaErr('HABIT_ACTION', dropped, parsed);
+  if (!valid.length) return { malformed: true, cleanText };
+  return { actions: valid, cleanText, malformed: false };
+}
+
+function validateHabitAction(a) {
+  if (!a || typeof a !== 'object' || Array.isArray(a)) return 'not_object';
+  if (a.action === 'create') {
+    if (typeof a.name !== 'string' || !a.name.trim()) return 'name_missing';
+    if (a.frequency !== undefined && !VALID_HABIT_FREQUENCIES.has(a.frequency)) return 'bad_frequency';
+    if (a.reminder_time !== undefined && a.reminder_time !== null
+        && (typeof a.reminder_time !== 'string' || !HABIT_TIME_RE.test(a.reminder_time))) return 'bad_reminder_time';
+    if (a.custom_days !== undefined && !Array.isArray(a.custom_days)) return 'bad_custom_days';
+  } else if (a.action === 'log') {
+    if (typeof a.habit_id !== 'string' || !SHORT_ID_RE.test(a.habit_id)) return 'bad_habit_id';
+    if (a.completed !== undefined && typeof a.completed !== 'boolean') return 'completed_not_bool';
+  } else {
+    return 'unknown_action';
+  }
+  return null;
+}
+
+// Resolve habit by 8-char prefix, restricted to collaborator (defense in depth).
+async function resolveHabitByShortId(collaboratorId, shortId) {
+  if (!shortId || !SHORT_ID_RE.test(String(shortId))) return null;
+  const prefix = String(shortId).toLowerCase();
+  const { data } = await supabase
+    .from('habits').select('id, name, icon, current_streak, best_streak, is_active')
+    .eq('collaborator_id', collaboratorId).eq('is_active', true).limit(200);
+  if (!data || !data.length) return null;
+  const matches = data.filter(h => String(h.id).toLowerCase().startsWith(prefix));
+  if (matches.length !== 1) return null;
+  return matches[0];
+}
+
+// Compute current streak for a habit (consecutive days with is_completed=true,
+// counted backwards from todayYmd in America/Sao_Paulo).
+async function calcHabitStreak(habitId, todayYmd) {
+  const since = todayOffsetSP(todayYmd, -370);
+  const { data } = await supabase
+    .from('habit_logs')
+    .select('log_date, is_completed')
+    .eq('habit_id', habitId)
+    .gte('log_date', since)
+    .lte('log_date', todayYmd)
+    .order('log_date', { ascending: false });
+  if (!data || !data.length) return 0;
+  const done = new Set(data.filter(l => l.is_completed).map(l => l.log_date));
+  let streak = 0;
+  let cursor = todayYmd;
+  while (done.has(cursor)) {
+    streak++;
+    cursor = todayOffsetSP(cursor, -1);
+  }
+  return streak;
+}
+
+function todayOffsetSP(ymd, days) {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  const yy = dt.getUTCFullYear();
+  const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getUTCDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
+}
+
+async function applyHabitActions(collaborator, actions) {
+  const today = todaySaoPaulo();
+  let okCount = 0, failCount = 0;
+  const last4 = String(collaborator.phone || '').slice(-4);
+  // We collect created/logged habits so caller can append a friendly footer if needed.
+  const created = [], logged = [];
+  for (const a of actions) {
+    try {
+      if (a.action === 'create') {
+        // Try to enrich from a matching template (icon/color) if name corresponds.
+        let icon = a.icon;
+        let color = a.color;
+        let templateId = null;
+        if (!icon || !color) {
+          const { data: tmpl } = await supabase
+            .from('habit_templates').select('id, icon, color')
+            .ilike('name', a.name.trim()).limit(1);
+          if (tmpl && tmpl.length) {
+            templateId = tmpl[0].id;
+            if (!icon) icon = tmpl[0].icon;
+            if (!color) color = tmpl[0].color;
+          }
+        }
+        const insertRow = {
+          collaborator_id: collaborator.id,
+          template_id: templateId,
+          name: a.name.trim().slice(0, 200),
+          icon: icon || '💪',
+          color: color || '#3B82F6',
+          frequency: VALID_HABIT_FREQUENCIES.has(a.frequency) ? a.frequency : 'daily',
+          custom_days: Array.isArray(a.custom_days) ? a.custom_days : null,
+          reminder_time: (a.reminder_time && HABIT_TIME_RE.test(a.reminder_time))
+            ? (a.reminder_time.length === 5 ? a.reminder_time + ':00' : a.reminder_time)
+            : null,
+          notify_whatsapp: a.notify_whatsapp !== false,
+          is_active: true,
+          current_streak: 0,
+          best_streak: 0,
+        };
+        const { data, error } = await supabase
+          .from('habits').insert(insertRow).select('id, name, icon').single();
+        if (error) {
+          console.error('[Habit] create err:', error.message);
+          failCount++;
+          continue;
+        }
+        console.log(`[Habit] create "${insertRow.name}" freq=${insertRow.frequency} id=${String(data.id).slice(0,8)} by ${last4}`);
+        created.push(data);
+        okCount++;
+      } else if (a.action === 'log') {
+        const completed = a.completed !== false; // default true
+        const h = await resolveHabitByShortId(collaborator.id, a.habit_id);
+        if (!h) {
+          console.warn(`[Habit] log REJECTED — habit ${a.habit_id} not owned by ${last4}`);
+          failCount++;
+          continue;
+        }
+        // Upsert habit_logs (habit_id, log_date) — manual SELECT/UPDATE/INSERT.
+        const { data: existing } = await supabase
+          .from('habit_logs').select('id')
+          .eq('habit_id', h.id).eq('log_date', today).maybeSingle();
+        if (existing) {
+          await supabase.from('habit_logs').update({
+            is_completed: completed,
+            completed_at: completed ? new Date().toISOString() : null,
+            notes: a.notes || null,
+          }).eq('id', existing.id);
+        } else {
+          await supabase.from('habit_logs').insert({
+            habit_id: h.id,
+            collaborator_id: collaborator.id,
+            log_date: today,
+            is_completed: completed,
+            completed_at: completed ? new Date().toISOString() : null,
+            notes: a.notes || null,
+          });
+        }
+        // Recompute streak.
+        const newStreak = await calcHabitStreak(h.id, today);
+        const newBest = Math.max(newStreak, h.best_streak || 0);
+        await supabase.from('habits').update({
+          current_streak: newStreak,
+          best_streak: newBest,
+        }).eq('id', h.id);
+        console.log(`[Habit] log "${h.name}" completed=${completed} streak=${newStreak} (best=${newBest})`);
+        logged.push({ habit: h, streak: newStreak, completed });
+        okCount++;
+      }
+    } catch (err) {
+      console.error('[Habit] exception:', err.message);
+      failCount++;
+    }
+  }
+  return { okCount, failCount, created, logged };
+}
+
 // Persist a weekly plan: weekly_plans + daily_plans + daily_plan_items + tasks.
 // Idempotent on (collaborator_id, week_start) — re-running for the same week
 // updates the row. daily_plans uses (collaborator_id, plan_date) as upsert key.
@@ -975,6 +1166,23 @@ async function processMessage(phone, text, raw = {}) {
     }
   }
 
+  // 2.6) Habit action (create / log)
+  {
+    const parsedHab = parseHabitMarker(reply);
+    if (parsedHab && parsedHab.malformed) {
+      console.warn('[Habit] WARN: malformed marker, dropping block');
+      reply = parsedHab.cleanText || reply;
+    } else if (parsedHab) {
+      const { okCount, failCount } = await applyHabitActions(collab, parsedHab.actions);
+      console.log(`[Habit] batch done: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
+      let base = parsedHab.cleanText || '';
+      if (failCount > 0 && okCount === 0) {
+        base = (base ? base + '\n\n' : '') + '_não consegui registrar agora, te aviso depois_';
+      }
+      reply = base || reply;
+    }
+  }
+
   // 2.7) Weekly plan
   {
     const parsedPlan = parseWeeklyPlanMarker(reply);
@@ -1082,4 +1290,4 @@ async function logConversation(collaboratorId, direction, content) {
   });
 }
 
-module.exports = { processMessage, sendRitual, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseWeeklyPlanMarker, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, resolveTaskByShortId };
+module.exports = { processMessage, sendRitual, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseWeeklyPlanMarker, parseHabitMarker, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, applyHabitActions, resolveTaskByShortId };
