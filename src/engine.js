@@ -271,6 +271,10 @@ function validateTaskAction(a) {
       if (!Array.isArray(a.reminders_at)) return 'reminders_at_not_array';
       if (a.reminders_at.length > 10) return 'reminders_at_too_many';
     }
+    // to_name / to_phone: opcionais — quando presentes, cria task PARA outro
+    // colaborador. Permissão validada em applyTaskActions (coordinator/director).
+    if (a.to_name !== undefined && (typeof a.to_name !== 'string' || !a.to_name.trim())) return 'bad_to_name';
+    if (a.to_phone !== undefined && (typeof a.to_phone !== 'string' || !a.to_phone.trim())) return 'bad_to_phone';
   } else if (a.action === 'delegate') {
     if (typeof a.id !== 'string' || !SHORT_ID_RE.test(a.id)) return 'bad_id';
     const hasName = typeof a.to_name === 'string' && a.to_name.trim();
@@ -430,11 +434,36 @@ async function applyTaskActions(collaborator, actions) {
           failCount++;
           continue;
         }
+        // ---- create-for-other: opt-in via to_name/to_phone, gated by role ----
+        const wantsForOther = (typeof a.to_name === 'string' && a.to_name.trim()) ||
+                              (typeof a.to_phone === 'string' && a.to_phone.trim());
+        let assignedTo = collaborator.id;
+        let recipient = null;
+        if (wantsForOther) {
+          if (collaborator.role !== 'coordinator' && collaborator.role !== 'director') {
+            console.warn(`[Task] create-for-other REJECTED — role=${collaborator.role || 'collaborator'} cannot create task for others`);
+            failCount++;
+            continue;
+          }
+          if (a.to_phone) recipient = await findCollaboratorByPhone(a.to_phone);
+          else recipient = await findCollaboratorByName(a.to_name);
+          if (!recipient || !recipient.is_active) {
+            console.warn(`[Task] create-for-other REJECTED — recipient not found/inactive: ${a.to_phone || a.to_name}`);
+            failCount++;
+            continue;
+          }
+          // Self-assignment via to_name → silently fall back to normal create
+          if (recipient.id !== collaborator.id) {
+            assignedTo = recipient.id;
+          } else {
+            recipient = null; // treat as normal self-create
+          }
+        }
         const context = a.context === 'personal' ? 'personal' : 'work';
         const priority = VALID_PRIORITIES.includes(a.priority) ? a.priority : 'medium';
         const insertRow = {
           title: a.title.trim().slice(0, 200),
-          assigned_to: collaborator.id,
+          assigned_to: assignedTo,
           created_by: collaborator.id,
           source: 'manual',
           status: 'pending',
@@ -482,7 +511,37 @@ async function applyTaskActions(collaborator, actions) {
         const sufx = insertRow.remind_at ? ` remind_at=${insertRow.remind_at}`
           : reminders.length ? ` due=${insertRow.due_date} reminders=${attachedReminders}`
           : ` due=${insertRow.due_date}`;
-        console.log(`[Task] create "${a.title.trim().slice(0, 60)}" ctx=${context}${sufx} (id=${String(taskId || '').slice(0, 8)})`);
+        const forSuf = recipient ? ` for=${String(recipient.phone).slice(-4)}(${recipient.full_name})` : '';
+        console.log(`[Task] create "${a.title.trim().slice(0, 60)}" ctx=${context}${sufx}${forSuf} (id=${String(taskId || '').slice(0, 8)})`);
+        // Notify recipient when created-for-other (best-effort).
+        if (recipient && taskId) {
+          const creatorName = nameForCollab(collaborator);
+          const dueLabel = insertRow.due_date ? ` (prazo ${formatBRDate(insertRow.due_date)})` : '';
+          const notifText = `📋 ${creatorName} abriu uma tarefa pra você: *${a.title.trim()}*${dueLabel}.`;
+          try {
+            await whatsapp.sendMessage(recipient.phone, notifText);
+            await supabase.from('conversation_history').insert({
+              collaborator_id: recipient.id,
+              direction: 'outbound',
+              message_type: 'text',
+              content: notifText,
+            });
+            await supabase.from('notifications').insert({
+              collaborator_id: recipient.id,
+              notification_type: 'task_assigned_by_other',
+              title: `Tarefa atribuída por ${creatorName}`,
+              body: notifText,
+              reference_type: 'task',
+              reference_id: taskId,
+              channel: 'whatsapp',
+              status: 'sent',
+              sent_at: new Date().toISOString(),
+            });
+          } catch (err) {
+            console.error('[Task] create-for-other notification err:', err.message);
+            // task created in DB; notification failure does not flip okCount
+          }
+        }
         okCount++;
       } else if (a.action === 'extension_request') {
         const t = await resolveTaskByShortId(collaborator.id, a.id);
@@ -629,6 +688,12 @@ async function applyTaskActions(collaborator, actions) {
         console.log(`[Task] extension_decision ${shortId} ${approved ? 'APPROVED→' + a.new_due_date : 'DENIED'} by ${last4}`);
         okCount++;
       } else if (a.action === 'delegate') {
+        // Role gate: only coordinator/director can delegate to others.
+        if (collaborator.role !== 'coordinator' && collaborator.role !== 'director') {
+          console.warn(`[Task] delegate REJECTED — role=${collaborator.role || 'collaborator'} cannot delegate to others`);
+          failCount++;
+          continue;
+        }
         const t = await resolveTaskByShortId(collaborator.id, a.id);
         if (!t) {
           console.warn(`[Task] delegate REJECTED id=${a.id} (not owned by ${last4} or not found)`);

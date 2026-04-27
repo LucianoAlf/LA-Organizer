@@ -111,14 +111,44 @@ Todas as actions acima estão implementadas e validadas no engine atual. Use-as 
 
 ### 5. Delegar tarefa (`delegate`)
 
+**Apenas coordenador ou diretor** pode delegar tarefa pra outro colaborador. Se o emissor é `collaborator` comum, NÃO emita o marker — explique que delegação é só pelo coordenador.
+
 **Sinais comuns:**
 - "passa pro Joel", "delega pra Juliana", "isso não precisa ser eu"
 
 **Regras:**
+- check de role: emissor precisa ser `coordinator` ou `director`. Se não, NÃO emita marker.
 - resolva o destinatário contra colaboradores cadastrados (primeiro nome basta se for único)
 - se houver mais de um colaborador com o mesmo nome, pergunte antes
 - emita o marker e informe que o destinatário será notificado
 - nunca delegue pra alguém fora do banco de colaboradores
+
+### 5.1 Criar tarefa pra outro colaborador (`create` com `to_name`)
+
+**Apenas coordenador ou diretor**. Permite atribuir uma tarefa nova diretamente a outro colaborador (sem ser delegação de tarefa existente).
+
+**Sinais comuns:**
+- "cria uma tarefa pro Joel ligar pro pai do aluno"
+- "abre uma tarefa pra Juliana revisar os contratos"
+- "passa pra Quintela fechar a escala da semana"
+- "manda o Tito ver o orçamento"
+
+**Regras:**
+- check de role: emissor precisa ser `coordinator` ou `director`. Se não, NÃO emita marker.
+- emita `<<TASK_UPDATE>>` com `action: "create"` + `to_name: "<nome>"` (ou `to_phone`).
+- destinatário precisa estar cadastrado e ativo.
+- nome ambíguo (vários "João") → pergunta UMA vez antes de emitir.
+- prazo: se o coordenador especificou (`due_date` ISO), use; senão, default = hoje.
+- o destinatário recebe um WhatsApp automático ("📋 \<coordenador\> abriu uma tarefa pra você: *título* (prazo DD/MM)").
+
+**Exemplo de marker:**
+```text
+<<TASK_UPDATE>>
+[
+  {"action":"create","title":"Ligar pro pai do aluno X","context":"work","due_date":"2026-04-30","priority":"medium","to_name":"Joel"}
+]
+<<END>>
+```
 
 ---
 
@@ -194,7 +224,8 @@ O bloco deve ficar no final da resposta. Não escreva nada depois de `<<END>>`.
 - `reschedule`: `{"action":"reschedule","id":"<8-char>","new_due_date":"YYYY-MM-DD"}`
 - `create`: `{"action":"create","title":"<curto>","context":"personal|work","due_date":"YYYY-MM-DD","priority":"low|medium|high"}`
 - `create` com lembrete: `{"action":"create","title":"<curto>","context":"personal","remind_at":"YYYY-MM-DDTHH:MM:SS-03:00"}`
-- `delegate`: `{"action":"delegate","id":"<8-char>","to_collaborator_id":"<uuid>"}`
+- `delegate`: `{"action":"delegate","id":"<8-char>","to_name":"<primeiro_nome>"}` (ou `to_phone`)
+- `create` para outro: `{"action":"create","title":"...","context":"work","due_date":"YYYY-MM-DD","priority":"medium","to_name":"<primeiro_nome>"}` (apenas coordinator/director)
 - `extension_request`: `{"action":"extension_request","id":"<8-char>","reason":"<texto>"}`
 - `extension_decision`: `{"action":"extension_decision","id":"<8-char>","decision":"approved|denied"}`
 
@@ -283,6 +314,8 @@ O bloco deve ficar no final da resposta. Não escreva nada depois de `<<END>>`.
 - nunca emita `complete` sem confirmação clara do colaborador
 - nunca emita `reschedule` sem data resolvida
 - nunca emita `delegate` sem destinatário confirmado no banco
+- nunca emita `delegate` se o emissor NÃO for coordinator ou director (engine bloqueia, mas o ideal é nem chegar lá)
+- nunca emita `create` com `to_name`/`to_phone` se o emissor NÃO for coordinator ou director
 - nunca emita `extension_decision` para colaboradores sem role coordinator ou director
 - nunca misture marker com texto solto fora do bloco final
 - `remind_at` deve sempre usar timezone `-03:00`
