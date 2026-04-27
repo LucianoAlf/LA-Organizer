@@ -170,6 +170,19 @@ Capacidades futuras, hipóteses de skill ou mecanismos ainda não consolidados.
 
 ---
 
+## 8.4 Pausa temporária (do_not_disturb)
+**Arquivo:** `skills/pausa-temporaria.md`
+
+**Função:** permitir que o colaborador represe rituais/alertas/lembretes por uma janela curta ("agora não", "tô em aula", "me chama em 2h"). Mensagens dele pra TOM continuam fluindo.
+
+**Ativa quando:** intent regex em `pickSkill` (priority 1.5) — frases comuns de pausa.
+
+**Entrega principal:** marker `<<DND_SET>>{until, reason}` ou `{clear:true}`. Engine cap 24h.
+
+**Privacy:** `user_preferences.do_not_disturb_until` é privado por colaborador (nada vaza).
+
+---
+
 ## 8.5 Coordinator reports (resumo do time + retrospectiva semanal)
 **Mecanismo:** dispatcher cron + builders deterministícos (`buildTeamSummary`, `buildWeeklyRetrospective` em `src/engine.js`). **Não passa pelo Claude.**
 
@@ -245,6 +258,9 @@ Capacidades futuras, hipóteses de skill ou mecanismos ainda não consolidados.
 | concluir / reagendar / criar tarefa | `checklist-tarefas` |
 | **demanda nova surgindo** ("surgiu X", "preciso falar com Y", "tem que resolver Z") | `checklist-tarefas` (cria task — NÃO memória) |
 | coordinator/director cria ou delega tarefa pra outro | `checklist-tarefas` (com `to_name`) |
+| **pedido de pausa** ("agora não", "tô em aula", "me chama em 2h") | `pausa-temporaria` |
+| **mensagem de áudio** | `tratamento-audio` (após transcrição via Whisper, exige confirmação) |
+| **consolidação semanal de memória** (domingo 22:00) | dispatcher cron + extrator Claude |
 | enviar mensagem coletiva | `broadcast` |
 | briefing / fechamento / rotina diária | `rituais-diarios` |
 | **resumo do time (coordenador, 19:30 weekdays)** | `coordinator reports` (deterministic; sem AI) |

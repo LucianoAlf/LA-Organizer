@@ -70,6 +70,32 @@ A cada mensagem recebida, antes de responder:
 - **Privacy contract:** apenas dados `tasks.context='work'` + agregações de `ritual_logs` + contagens em `conversation_history` (nunca o conteúdo). Hábitos, tarefas pessoais e `collaborator_memory` NUNCA são lidos.
 - Fora do escopo (Q2 2026): seções Emusys/checklist no resumo — quando essas integrações expuserem tabelas próprias.
 
+### Pausa temporária (do_not_disturb)
+- Qualquer colaborador pode pedir pausa pra si: "agora não", "tô em aula", "me chama em 2h"
+- Skill `pausa-temporaria` ativa via `pickSkill` (priority 1.5)
+- Marker `<<DND_SET>>{until, reason}` ou `{clear:true}`
+- Persiste em `user_preferences.do_not_disturb_until` + `do_not_disturb_reason`
+- Cap de 24h (engine corta) — nunca silêncio indefinido
+- Dispatcher gates: rituais/alertas/lembretes/coord-reports todos respeitam DND
+- Mensagens iniciadas pelo próprio colaborador continuam fluindo normalmente
+- Pendências (task_reminders) NÃO somem — ficam represadas até DND expirar
+
+### Consolidação semanal de memória
+- Cron domingo 22:00, para cada colaborador ativo+onboarded
+- Lê últimos 7 dias de `conversation_history` inbound
+- Claude (extrator dedicado) emite até 5 NOVOS itens duráveis
+- Dedupe por word-set overlap (Jaccard ≥ 0.6) contra memórias já existentes
+- `decay_at` obrigatório se `memory_type='context'`
+- Decay global automático antes da consolidação (`is_active=false` para `decay_at < now()`)
+- `collaborator_profiles` auto-update: deferido (manual por enquanto)
+
+### Áudio em runtime
+- Detecção em `whatsapp.isAudioMessage` (já existia)
+- Transcrição via Whisper-1 (`src/services/audio.js`) — requer `OPENAI_API_KEY` no .env
+- Sem provider: TOM responde graciosamente "manda em texto, por favor" — nunca finge
+- Com provider: prefixo `[áudio transcrito]` carrega skill `tratamento-audio`
+- **Veto crítico:** ação só executa após "sim" explícito; transcrição bruta nunca é mostrada
+
 ### De qualquer role
 - 🔴 Alterar preferências (horários, intensidade) — confirmar antes de aplicar
 - 🔴 Conectar/desconectar Google Calendar — confirmar ação
