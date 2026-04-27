@@ -248,6 +248,11 @@ function validateTaskAction(a) {
   } else if (a.action === 'create') {
     if (typeof a.title !== 'string' || !a.title.trim()) return 'title_missing';
     // remind_at e due_date são opcionais — applyTaskActions trata defaults.
+    // reminders_at: array de ISO 8601 com timezone, opcional.
+    if (a.reminders_at !== undefined) {
+      if (!Array.isArray(a.reminders_at)) return 'reminders_at_not_array';
+      if (a.reminders_at.length > 10) return 'reminders_at_too_many';
+    }
   } else if (a.action === 'delegate') {
     if (typeof a.id !== 'string' || !SHORT_ID_RE.test(a.id)) return 'bad_id';
     const hasName = typeof a.to_name === 'string' && a.to_name.trim();
@@ -418,8 +423,16 @@ async function applyTaskActions(collaborator, actions) {
           context,
           priority,
         };
-        if (a.remind_at && isValidRemindAt(a.remind_at)) {
-          // One-shot reminder: due_date = today (SP), remind_at = exact ts.
+        // remind_at = ONE-SHOT (e.g. "me lembra de tomar remédio em 30 min").
+        //             Dispatcher fires WA AND marks task done. Use só quando a tarefa
+        //             é o lembrete em si (sem reunião associada).
+        // reminders_at = MULTIPLE alertas pra uma tarefa real (reunião). Cada um
+        //                vira uma linha em task_reminders, dispara WA mas NÃO mexe
+        //                no status da tarefa. Tarefa permanece pendente.
+        const reminders = Array.isArray(a.reminders_at)
+          ? a.reminders_at.filter(r => typeof r === 'string' && isValidRemindAt(r))
+          : [];
+        if (reminders.length === 0 && a.remind_at && isValidRemindAt(a.remind_at)) {
           insertRow.remind_at = a.remind_at;
           insertRow.due_date = todaySaoPaulo();
         } else {
@@ -433,10 +446,26 @@ async function applyTaskActions(collaborator, actions) {
         if (error) {
           console.error('[Task] create err:', error.message);
           failCount++;
-        } else {
-          console.log(`[Task] create "${a.title.trim().slice(0, 60)}" ctx=${context}${a.remind_at ? ` remind_at=${a.remind_at}` : ` due=${insertRow.due_date}`} (id=${(data?.id || '').slice(0, 8)})`);
-          okCount++;
+          continue;
         }
+        const taskId = data?.id;
+        let attachedReminders = 0;
+        if (reminders.length && taskId) {
+          const labels = Array.isArray(a.reminders_labels) ? a.reminders_labels : [];
+          const rows = reminders.map((iso, i) => ({
+            task_id: taskId,
+            remind_at: iso,
+            label: typeof labels[i] === 'string' ? labels[i].slice(0, 40) : null,
+          }));
+          const { error: rErr } = await supabase.from('task_reminders').insert(rows);
+          if (rErr) console.error('[Task] reminders insert err:', rErr.message);
+          else attachedReminders = rows.length;
+        }
+        const sufx = insertRow.remind_at ? ` remind_at=${insertRow.remind_at}`
+          : reminders.length ? ` due=${insertRow.due_date} reminders=${attachedReminders}`
+          : ` due=${insertRow.due_date}`;
+        console.log(`[Task] create "${a.title.trim().slice(0, 60)}" ctx=${context}${sufx} (id=${String(taskId || '').slice(0, 8)})`);
+        okCount++;
       } else if (a.action === 'extension_request') {
         const t = await resolveTaskByShortId(collaborator.id, a.id);
         if (!t) {

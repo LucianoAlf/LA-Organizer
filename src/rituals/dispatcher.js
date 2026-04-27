@@ -204,6 +204,14 @@ async function run(opts = {}) {
     console.error('[Dispatcher] checkReminders erro:', err.message);
   }
 
+  // Multi-reminder dispatcher — alertas pré-evento (1h antes, 15min antes, etc).
+  // Fonte: tabela task_reminders. Não mexe no status da tarefa.
+  try {
+    await checkTaskReminders();
+  } catch (err) {
+    console.error('[Dispatcher] checkTaskReminders erro:', err.message);
+  }
+
   // Deadline + overdue alerts — fire at most once per task per day, gated by
   // hour window so we don't spam at 3am. Window: 8h-19h, América/Sao_Paulo.
   // Override with --force-alerts for tests/manual triggers.
@@ -373,6 +381,62 @@ async function checkOverdueAlerts(ymdToday) {
     }
   }
   if (sent) console.log(`[OverdueAlert] fired ${sent} overdue alert(s) (today=${ymdToday})`);
+}
+
+// Multi-reminder: dispara linhas de task_reminders pendentes (sent_at IS NULL,
+// remind_at <= now). Cada linha vira um WA "⏰ <label>: *<task title>*". A tarefa
+// fica intacta (status, due_date) — esses são alertas pré-evento, não one-shots.
+async function checkTaskReminders() {
+  const nowIso = new Date().toISOString();
+  const { data: due, error } = await supabase
+    .from('task_reminders')
+    .select('id, task_id, remind_at, label, tasks(id, title, assigned_to, status)')
+    .is('sent_at', null)
+    .lte('remind_at', nowIso)
+    .limit(50);
+  if (error) {
+    console.error('[TaskReminders] query err:', error.message);
+    return;
+  }
+  if (!due || !due.length) return;
+  const ids = [...new Set(due.map(r => r.tasks?.assigned_to).filter(Boolean))];
+  if (!ids.length) return;
+  const { data: collabs } = await supabase
+    .from('collaborators').select('id, phone, full_name, is_active').in('id', ids);
+  const byId = new Map((collabs || []).map(c => [c.id, c]));
+  const whatsapp = require('../services/whatsapp');
+  let fired = 0;
+  for (const r of due) {
+    const t = r.tasks;
+    const collab = t && byId.get(t.assigned_to);
+    if (!collab || !collab.is_active || !collab.phone) {
+      console.warn(`[TaskReminders] skip ${String(r.id).slice(0,8)} — no active collaborator`);
+      // Mark as sent anyway so it doesn't loop forever.
+      await supabase.from('task_reminders').update({ sent_at: new Date().toISOString() }).eq('id', r.id);
+      continue;
+    }
+    if (t.status === 'done' || t.status === 'cancelled') {
+      // Tarefa já concluída — não envia mais alerta. Marca como sent.
+      await supabase.from('task_reminders').update({ sent_at: new Date().toISOString() }).eq('id', r.id);
+      continue;
+    }
+    const labelStr = r.label ? `${r.label}: ` : 'Lembrete: ';
+    const text = `⏰ ${labelStr}*${t.title}*`;
+    try {
+      await whatsapp.sendMessage(collab.phone, text);
+      await supabase.from('task_reminders').update({ sent_at: new Date().toISOString() }).eq('id', r.id);
+      await supabase.from('conversation_history').insert({
+        collaborator_id: collab.id,
+        direction: 'outbound',
+        message_type: 'text',
+        content: text,
+      });
+      fired++;
+    } catch (err) {
+      console.error(`[TaskReminders] send err for ${String(r.id).slice(0,8)}:`, err.message);
+    }
+  }
+  if (fired) console.log(`[TaskReminders] fired ${fired} pre-event alert(s)`);
 }
 
 // Pending reminders: tasks where remind_at <= now AND status not done/cancelled.

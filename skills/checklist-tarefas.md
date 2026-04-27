@@ -52,9 +52,18 @@ Depois do ritual de fechamento, ou quando o colaborador menciona tarefa de forma
 
 **task_remind** — lembrete avulso (one-shot, dispara via `remind_at`)
 - Sinais: "me lembra em 30 min", "daqui 2 horas me chama", "às 15h me lembra", "lembrete pra 14h"
-- Diferente de `task_create`: aqui o usuário quer um disparo no horário X, não uma tarefa do dia.
+- A tarefa É o lembrete: dispara WA na hora E é marcada como concluída automaticamente.
 - Sempre `context: "personal"` por padrão (lembrete é pessoal).
 - Calcule o `remind_at` como ISO 8601 com timezone `-03:00` (America/Sao_Paulo).
+
+**task_meeting** — reunião com horário + alertas antes do evento
+- Sinais: "reunião 14h", "tenho call com X às 10h", "marca alinhamento 15h30"
+- Quando o usuário pede "me lembra Xmin/Yh antes": NÃO crie tarefas separadas. Crie UMA tarefa pra reunião e use `reminders_at`.
+- Coloque o horário no TÍTULO entre parênteses: `Reunião com Quintela (14h)` — assim o briefing mostra ⏰.
+- `due_date` = dia da reunião. `context` = "work" (reunião profissional) ou "personal" (médico, dentista).
+- `reminders_at`: array de ISO 8601 com timezone `-03:00`, calculados como `meeting_time - offset`.
+- `reminders_labels` (opcional, mesmo length): rótulos como "1h antes" / "15min antes".
+- Cada item de `reminders_at` vira UM alerta WA pré-evento. A tarefa permanece pendente até o usuário ticar.
 
 ## Resolução pelo contexto
 Tarefas no system prompt:
@@ -90,6 +99,7 @@ Múltiplas ações no mesmo marker = batch.
 - `reschedule`: `{"action":"reschedule","id":"<8-char>","new_due_date":"YYYY-MM-DD"}`
 - `create`: `{"action":"create","title":"<curto>","context":"personal|work","due_date":"YYYY-MM-DD","priority":"low|medium|high"}`
 - `create` com lembrete (one-shot): `{"action":"create","title":"<curto>","context":"personal","remind_at":"YYYY-MM-DDTHH:MM:SS-03:00"}`
+- `create` reunião com alertas pré-evento: `{"action":"create","title":"Reunião com X (14h)","context":"work","due_date":"YYYY-MM-DD","reminders_at":["YYYY-MM-DDTHH:MM:SS-03:00", ...],"reminders_labels":["1h antes","15min antes"]}`
 - `delegate`: `{"action":"delegate","id":"<8-char>","to_name":"<primeiro nome>"}`
 - `extension_request`: `{"action":"extension_request","id":"<8-char>","reason":"<motivo curto>","new_due_date":"YYYY-MM-DD"(opcional)}`
 - `extension_decision`: `{"action":"extension_decision","id":"<8-char>","approved":true,"new_due_date":"YYYY-MM-DD"}` ou `{"action":"extension_decision","id":"<8-char>","approved":false,"reason":"<motivo opcional>"}`
@@ -146,6 +156,35 @@ TOM:
 ```
 <<TASK_UPDATE>>
 [{"action":"create","title":"Reunião com Juliana","context":"work","due_date":"2026-04-29"}]
+<<END>>
+```
+
+### Criar reuniões com alertas pré-evento (PADRÃO PRA REUNIÕES)
+User: "tenho 3 reuniões hoje: Quintela 14h, Juliana 14h45, Juliana e Quintela 15h30. Me lembra 1h antes e 15min antes"
+
+⚠️ NUNCA crie 6 tarefas (3 + 3 lembretes). Crie 3 tarefas com `reminders_at` cheio.
+
+TOM:
+```
+✅ Anotado!
+
+📋 Reuniões de alinhamento — hoje (27/04):
+
+• ⏰ Quintela (14h)
+• ⏰ Juliana (14h45)
+• ⏰ Juliana e Quintela (15h30)
+
+Vou alertar 1h antes e 15min antes de cada uma.
+```
+
+→ Marker (3 actions, cada uma com `reminders_at` de 2 timestamps):
+```
+<<TASK_UPDATE>>
+[
+  {"action":"create","title":"Reunião alinhamento — Quintela (14h)","context":"work","due_date":"2026-04-27","reminders_at":["2026-04-27T13:00:00-03:00","2026-04-27T13:45:00-03:00"],"reminders_labels":["1h antes","15min antes"]},
+  {"action":"create","title":"Reunião alinhamento — Juliana (14h45)","context":"work","due_date":"2026-04-27","reminders_at":["2026-04-27T13:45:00-03:00","2026-04-27T14:30:00-03:00"],"reminders_labels":["1h antes","15min antes"]},
+  {"action":"create","title":"Reunião alinhamento — Juliana e Quintela (15h30)","context":"work","due_date":"2026-04-27","reminders_at":["2026-04-27T14:30:00-03:00","2026-04-27T15:15:00-03:00"],"reminders_labels":["1h antes","15min antes"]}
+]
 <<END>>
 ```
 
@@ -307,3 +346,5 @@ TOM: ✅ Fechado: *Reunião com Juliana*.
 - NUNCA reagende sem data.
 - NUNCA misture o marker com texto solto — sempre em bloco no fim.
 - `remind_at` SEMPRE com timezone `-03:00`.
+- NUNCA crie tarefas separadas pra cada lembrete pré-evento. Use `reminders_at` na mesma tarefa.
+- NUNCA exponha o usuário a fragmentos como "(15min)" — coloque o horário REAL da reunião no título: `Reunião com Quintela (14h)`.
