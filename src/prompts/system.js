@@ -191,6 +191,12 @@ function pickSkill(collab, lastUserMessage, recentHistory) {
     return { name: 'onboarding', body: loadSkill('onboarding') };
   }
 
+  // Priority 1.4: audio transcription — wraps the actual intent in a
+  // confirmation flow before any action marker is emitted.
+  if (/^\[áudio transcrito\]/i.test(lastUserMessage || '')) {
+    return { name: 'tratamento-audio', body: loadSkill('tratamento-audio') };
+  }
+
   // Priority 1.5: do_not_disturb intent — preempts everything else.
   // Catches: "agora não", "não me incomoda", "tô em aula/reunião/dirigindo",
   // "me chama em N h/min", "depois", "mais tarde", "pode falar" (clear).

@@ -6,6 +6,7 @@ const { processMessage } = require('./engine');
 const whatsapp = require('./services/whatsapp');
 const queue = require('./services/per-user-queue');
 const dedupe = require('./services/dedupe');
+const audio = require('./services/audio');
 
 const router = express.Router();
 
@@ -36,12 +37,37 @@ router.post('/webhook', async (req, res) => {
 
     // Extrair phone e texto
     const phone = whatsapp.extractPhone(body);
-    const text = whatsapp.extractText(body);
+    let text = whatsapp.extractText(body);
 
     if (!phone) {
       console.log('[Webhook] SKIP: no phone extracted', JSON.stringify(body).substring(0, 500));
       return;
     }
+
+    // ---- Audio handling: try transcription, fall back gracefully ----
+    if ((!text || typeof text !== 'string') && whatsapp.isAudioMessage(body)) {
+      console.log(`[Webhook] audio detected from ${phone.slice(-4)} — attempting transcription`);
+      const r = await audio.transcribeAudio(body);
+      if (r.ok && r.text) {
+        // Prefix signals downstream pickSkill + Claude that the input came
+        // from audio — `tratamento-audio` skill is loaded, which mandates
+        // confirmation before any action marker is emitted.
+        text = `[áudio transcrito] ${r.text}`;
+        console.log(`[Webhook] audio transcribed (${r.text.length} chars): ${r.text.slice(0, 80)}`);
+      } else {
+        const reasons = {
+          no_provider: 'recebi seu áudio. Por enquanto eu não tô processando áudio aqui — me manda o mesmo recado em texto, por favor?',
+          no_audio_url: 'recebi seu áudio mas não consegui baixar o arquivo. Tenta de novo, ou me manda em texto?',
+          empty_audio: 'o áudio veio vazio. Manda de novo?',
+          transcription_empty: 'não consegui entender o áudio. Pode mandar de novo, ou em texto?',
+          transcription_error: 'tive um erro tentando entender o áudio. Pode mandar em texto?',
+        };
+        const fallback = reasons[r.reason] || 'recebi seu áudio mas não consegui processar. Manda em texto?';
+        whatsapp.sendMessage(phone, fallback).catch(e => console.error('[Webhook] audio-fallback send err:', e.message));
+        return;
+      }
+    }
+
     if (!text || typeof text !== 'string') {
       console.log('[Webhook] SKIP: no text or non-string text', JSON.stringify(body).substring(0, 500));
       return;
