@@ -25,9 +25,9 @@ O fluxo correto é:
 ---
 
 ## Sobre markers
-Esta skill **normalmente não emite marker próprio**.
+Esta skill normalmente não emite marker próprio.
 
-Ela interpreta e confirma. A action final — `complete`, `reschedule`, `create`, etc. — deve ser emitida pelo fluxo correspondente (`checklist-tarefas`) após a confirmação do colaborador.
+Ela interpreta e confirma. Depois da confirmação, a resposta final deve seguir o fluxo da skill correspondente — normalmente `checklist-tarefas` — e emitir o marker adequado (`<<TASK_UPDATE>>`) quando houver ação de tarefa.
 
 ---
 
@@ -138,65 +138,74 @@ Agora sim tá certo?
 
 ---
 
-## Handoff: emita o marker DIRETO ao confirmar
+## Execução após confirmação
 
-Depois do colaborador confirmar (`sim`, `isso mesmo`, `certo`), você emite o marker apropriado **na mesma resposta** que confirma a ação. Use os IDs `[id=XXXXXXXX]` que aparecem no contexto do system prompt em **Tarefas pendentes**.
+Depois que o colaborador confirmar o entendimento, a resposta final deve seguir o fluxo correspondente e emitir o marker de tarefa quando aplicável.
 
-### Marker para tarefa concluída
+### Exemplo 1 — concluir tarefa
+Se o áudio foi:
+> "fiz a entrevista do professor"
+
+Depois do "sim", responder:
 
 ```text
 ✅ Fechado: *Entrevista do professor*.
 
 <<TASK_UPDATE>>
-[{"action":"complete","id":"<8-char>"}]
+[{"action":"complete","id":"abc12345"}]
 <<END>>
 ```
 
-### Marker para reagendamento
+### Exemplo 2 — reagendar tarefa
+Se o áudio foi:
+> "o material do teatro fica pra quinta"
+
+Depois do "sim", responder:
 
 ```text
-🗓️ Movido: *Material teatro* — pra quinta (30/04).
+🗓️ Movido: *Material teatro* — pra quinta.
 
 <<TASK_UPDATE>>
-[{"action":"reschedule","id":"<8-char>","new_due_date":"2026-04-30"}]
+[{"action":"reschedule","id":"def67890","new_due_date":"2026-05-01"}]
 <<END>>
 ```
 
-### Marker para criação de tarefa nova
+### Exemplo 3 — criar tarefa
+Se o áudio foi:
+> "me lembra de pagar a conta amanhã"
+
+Depois do "sim", responder:
 
 ```text
-✅ Anotado: *Ligar pro pai do aluno*.
+✅ Anotado!
+
+🗓️ Amanhã te lembro de pagar a conta.
 
 <<TASK_UPDATE>>
-[{"action":"create","title":"Ligar pro pai do aluno","context":"work","due_date":"2026-04-30","priority":"medium"}]
+[{"action":"create","title":"Pagar conta","context":"personal","due_date":"2026-04-28","priority":"medium"}]
 <<END>>
 ```
 
-### Marker para múltiplas ações
+### Regra
+- confirmação primeiro
+- marker depois
+- nunca emitir marker estrutural antes da validação do colaborador
+- quando a ação for tarefa, seguir o contrato da `checklist-tarefas`
 
-```text
-✅ Feito:
-• Entrevista do professor — concluída
-• Material teatro — pra quinta
+---
 
-<<TASK_UPDATE>>
-[
-  {"action":"complete","id":"ab12cd34"},
-  {"action":"reschedule","id":"ef56gh78","new_due_date":"2026-04-30"}
-]
-<<END>>
-```
+## Handoff para outras skills
 
-### Veto crítico do handoff
-- NUNCA invente que "tô sem acesso ao banco" — se a tarefa estiver no contexto, EMITA o marker.
-- NUNCA mostre o ID `[id=...]` na parte visível — só dentro do bloco `<<TASK_UPDATE>>`.
-- Se a tarefa exata não aparece em **Tarefas pendentes** e ela é uma criação nova, use `action: "create"`.
+Depois da confirmação, a execução segue o fluxo apropriado:
+
+- tarefa concluída → `checklist-tarefas` (`complete`)
+- reagendamento → `checklist-tarefas` (`reschedule`)
+- criação de tarefa → `checklist-tarefas` (`create`)
+- contexto relevante → memória, se fizer sentido
 
 ---
 
 ## Tolerância a erro de transcrição
-
-Aceite como natural erros como:
 
 | O que o sistema transcreveu | O que o colaborador quis dizer |
 |---|---|
@@ -205,8 +214,6 @@ Aceite como natural erros como:
 | "L.A." | LA Music |
 | "é o muses" / "e-muses" | Emusys |
 | "tom" | TOM |
-
-Use o contexto da conversa para interpretar melhor.
 
 ---
 
