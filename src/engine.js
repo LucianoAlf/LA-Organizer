@@ -1129,9 +1129,13 @@ async function persistOnboarding(collaboratorId, prefs) {
 }
 
 async function processMessage(phone, text, raw = {}) {
+  const _t0 = Date.now();
+  const _phoneTail = String(phone).slice(-4);
+  console.log(`[Engine] processMessage START phone=${_phoneTail} text="${String(text).slice(0, 60).replace(/\n/g, ' ')}"`);
   const collab = await collaboratorService.findByPhone(phone);
   if (!collab) {
     await whatsapp.sendMessage(phone, 'Nao te encontrei no sistema. Fala com seu coordenador pra te cadastrar.');
+    console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (unknown_collab)`);
     return;
   }
   console.log('[Engine] Mensagem de', collab.full_name);
@@ -1297,6 +1301,7 @@ async function processMessage(phone, text, raw = {}) {
 
   await whatsapp.sendMessage(phone, reply);
   await logConversation(collab.id, 'outbound', reply);
+  console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms`);
 }
 
 async function sendRitual(collaboratorId, ritualType) {

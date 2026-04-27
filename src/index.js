@@ -8,8 +8,10 @@ app.use(express.json({ limit: '5mb' }));
 app.use(webhook);
 
 app.listen(config.port, () => {
+  const pkg = (() => { try { return require('../package.json'); } catch (_) { return { version: 'unknown' }; } })();
   console.log('');
   console.log('👽 TOM Engine — LA Organizer');
+  console.log(`[TOM] PROCESS START pid=${process.pid} version=${pkg.version} node=${process.version} at=${new Date().toISOString()}`);
   console.log('   Porta:', config.port);
   console.log('   AI: Claude Code CLI + Codex fallback');
   console.log('');
