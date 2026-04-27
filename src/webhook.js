@@ -5,6 +5,7 @@ const express = require('express');
 const { processMessage } = require('./engine');
 const whatsapp = require('./services/whatsapp');
 const queue = require('./services/per-user-queue');
+const dedupe = require('./services/dedupe');
 
 const router = express.Router();
 
@@ -19,6 +20,13 @@ router.post('/webhook', async (req, res) => {
     const body = req.body;
 
     console.log('[DEBUG] Body:', JSON.stringify(body).substring(0, 2000));
+
+    // Guard 2: dedupe — descarta reentrega do MESMO evento (UAZAPI retry ou curl duplicado).
+    // Chave preferencial é o id da mensagem; fallback é hash(phone+content+minuto+event).
+    if (dedupe.isDuplicate(body)) {
+      console.log(`[Webhook] SKIP duplicate event key=${dedupe.eventKey(body)}`);
+      return;
+    }
 
     // Ignorar mensagens de status, grupo, e do próprio bot
     if (whatsapp.isIgnorable(body)) {
