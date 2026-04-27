@@ -62,6 +62,24 @@ function logSchemaErr(marker, errors, raw) {
   }
 }
 
+// Insere uma linha em marker_logs (observabilidade). Falha de log NUNCA derruba o pipeline.
+async function logMarker(collaboratorId, markerType, result, reason = null, raw = null) {
+  try {
+    let excerpt = null;
+    if (raw) excerpt = typeof raw === 'string' ? raw.slice(0, 500) : JSON.stringify(raw).slice(0, 500);
+    const { error } = await supabase.from('marker_logs').insert({
+      collaborator_id: collaboratorId,
+      marker_type: markerType,
+      result,
+      reason: reason ? String(reason).slice(0, 300) : null,
+      raw_excerpt: excerpt,
+    });
+    if (error) console.error(`[marker_logs] insert err type=${markerType} result=${result}:`, error.message);
+  } catch (err) {
+    console.error('[marker_logs] throw err:', err.message);
+  }
+}
+
 // Procura o marcador <<ONBOARDING_DONE>>{json}<<END>> na resposta do modelo.
 // Retorna { prefs, cleanText } se válido, { malformed:true, cleanText } se não.
 function parseOnboardingMarker(text) {
@@ -1139,13 +1157,16 @@ async function processMessage(phone, text, raw = {}) {
     const parsed = parseOnboardingMarker(reply);
     if (parsed && parsed.malformed) {
       console.warn('[Onboarding] WARN: malformed marker, asking again');
+      await logMarker(collab.id, 'ONBOARDING_DONE', 'rejected', 'schema_invalid', reply);
       reply = parsed.cleanText || reply;
     } else if (parsed) {
       try {
         await persistOnboarding(collab.id, parsed.prefs);
+        await logMarker(collab.id, 'ONBOARDING_DONE', 'executed', null, null);
         reply = parsed.cleanText || '👽 Fechou! Bora trabalhar.';
       } catch (err) {
         console.error('[Onboarding] Falha ao persistir:', err.message);
+        await logMarker(collab.id, 'ONBOARDING_DONE', 'rejected', `persist_error:${err.message}`, null);
         // segue enviando o texto limpo, conversa continua
         reply = parsed.cleanText || reply;
       }
@@ -1157,14 +1178,17 @@ async function processMessage(phone, text, raw = {}) {
     const parsedProj = parseProjectMarker(reply);
     if (parsedProj && parsedProj.malformed) {
       console.warn('[Project] WARN: malformed marker');
+      await logMarker(collab.id, 'PROJECT_CREATE', 'rejected', 'schema_invalid', reply);
       reply = parsedProj.cleanText || reply;
     } else if (parsedProj) {
       try {
         const created = await persistProject(collab, parsedProj.project);
         if (created && created.error) {
+          await logMarker(collab.id, 'PROJECT_CREATE', 'rejected', `persist_error:${created.error}`, parsedProj.project);
           reply = created.userFacingReply;
         } else {
           console.log(`[Project] criado por ${String(collab.phone).slice(-4)}: ${created.name} (id=${created.id})`);
+          await logMarker(collab.id, 'PROJECT_CREATE', 'executed', `name:${created.name}`, null);
           const base = parsedProj.cleanText || '';
           // Sem ID, sem UUID — Claude já confirmou em texto natural antes do marcador.
           // Se Claude não emitiu confirmação, usa fallback semântico padrão (✅ + nome).
@@ -1172,6 +1196,7 @@ async function processMessage(phone, text, raw = {}) {
         }
       } catch (err) {
         console.error('[Project] Falha ao criar:', err.message);
+        await logMarker(collab.id, 'PROJECT_CREATE', 'rejected', `persist_error:${err.message}`, null);
         const base = parsedProj.cleanText || '';
         reply = (base ? base + '\n\n' : '') + `⚠️ Não rolou criar agora. Tenta de novo daqui a pouco?`;
       }
@@ -1183,10 +1208,14 @@ async function processMessage(phone, text, raw = {}) {
     const parsedTask = parseTaskUpdateMarker(reply);
     if (parsedTask && parsedTask.malformed) {
       console.warn('[Task] WARN: malformed marker, dropping block');
+      await logMarker(collab.id, 'TASK_UPDATE', 'rejected', 'schema_invalid', reply);
       reply = parsedTask.cleanText || reply;
     } else if (parsedTask) {
       const { okCount, failCount } = await applyTaskActions(collab, parsedTask.actions);
       console.log(`[Task] batch done: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
+      const result = okCount > 0 ? 'executed' : 'rejected';
+      const reason = okCount > 0 ? `ok=${okCount} fail=${failCount}` : `all_failed:${failCount}`;
+      await logMarker(collab.id, 'TASK_UPDATE', result, reason, null);
       let base = parsedTask.cleanText || '';
       if (failCount > 0) {
         base = (base ? base + '\n\n' : '') + '_não consegui atualizar uma das tarefas, te aviso depois_';
@@ -1200,10 +1229,14 @@ async function processMessage(phone, text, raw = {}) {
     const parsedHab = parseHabitMarker(reply);
     if (parsedHab && parsedHab.malformed) {
       console.warn('[Habit] WARN: malformed marker, dropping block');
+      await logMarker(collab.id, 'HABIT_ACTION', 'rejected', 'schema_invalid', reply);
       reply = parsedHab.cleanText || reply;
     } else if (parsedHab) {
       const { okCount, failCount } = await applyHabitActions(collab, parsedHab.actions);
       console.log(`[Habit] batch done: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
+      const result = okCount > 0 ? 'executed' : 'rejected';
+      const reason = okCount > 0 ? `ok=${okCount} fail=${failCount}` : `all_failed:${failCount}`;
+      await logMarker(collab.id, 'HABIT_ACTION', result, reason, null);
       let base = parsedHab.cleanText || '';
       if (failCount > 0 && okCount === 0) {
         base = (base ? base + '\n\n' : '') + '_não consegui registrar agora, te aviso depois_';
@@ -1217,13 +1250,16 @@ async function processMessage(phone, text, raw = {}) {
     const parsedPlan = parseWeeklyPlanMarker(reply);
     if (parsedPlan && parsedPlan.malformed) {
       console.warn('[WeeklyPlan] WARN: malformed marker, dropping block');
+      await logMarker(collab.id, 'WEEKLY_PLAN', 'rejected', 'schema_invalid', reply);
       reply = parsedPlan.cleanText || reply;
     } else if (parsedPlan) {
       try {
         await applyWeeklyPlan(collab, parsedPlan.plan);
+        await logMarker(collab.id, 'WEEKLY_PLAN', 'executed', `week_start:${parsedPlan.plan?.week_start || ''}`, null);
         reply = parsedPlan.cleanText || reply;
       } catch (err) {
         console.error('[WeeklyPlan] persist err:', err.message);
+        await logMarker(collab.id, 'WEEKLY_PLAN', 'rejected', `persist_error:${err.message}`, null);
         const base = parsedPlan.cleanText || '';
         reply = (base ? base + '\n\n' : '') + '_não rolou salvar agora, mas seu plano tá registrado em conversa. Tenta de novo daqui a pouco?_';
       }
@@ -1235,10 +1271,12 @@ async function processMessage(phone, text, raw = {}) {
     const parsedMem = parseMemoryMarker(reply);
     if (parsedMem && parsedMem.malformed) {
       console.warn('[Memory] WARN: malformed marker, dropping block');
+      await logMarker(collab.id, 'MEMORY_SAVE', 'rejected', 'schema_invalid', reply);
       reply = parsedMem.cleanText || reply;
     } else if (parsedMem) {
       const saved = await persistMemoryRows(collab.id, parsedMem.rows);
       console.log(`[Memory] saved ${saved} facts for ${String(collab.phone).slice(-4)}`);
+      await logMarker(collab.id, 'MEMORY_SAVE', 'executed', `saved=${saved}`, null);
       reply = parsedMem.cleanText || reply;
     }
   }
@@ -1283,13 +1321,15 @@ async function sendRitual(collaboratorId, ritualType) {
   await logConversation(collab.id, 'outbound', response.text);
 
   const today = todaySaoPaulo();
-  await supabase.from('ritual_logs').upsert({
+  // Insert (was upsert) — idempotency enforced at dispatcher.alreadySent(); UNIQUE
+  // constraint dropped to allow per-event observability rows (alerts, reminders).
+  await supabase.from('ritual_logs').insert({
     collaborator_id: collaboratorId,
     ritual_type: ritualType,
     reference_date: today,
     status: 'sent',
     sent_at: new Date().toISOString(),
-  }, { onConflict: 'collaborator_id,ritual_type,reference_date' });
+  });
   console.log(`[Ritual] ${ritualType} enviado pra ${collab.phone.slice(-4)}`);
   return response.text;
 }

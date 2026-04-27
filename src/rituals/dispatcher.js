@@ -26,8 +26,34 @@ const RITUAL_BY_DIRECTIVE = {
   planejamento_semanal: 'weekly_planning',
 };
 
+// Canonical names for observability logs (user-facing).
+const CANONICAL_BY_RITUAL = {
+  daily_briefing: 'briefing_trabalho',
+  personal_briefing: 'briefing_pessoal',
+  daily_closing: 'fechamento',
+  weekly_planning: 'planejamento_semanal',
+};
+
 // Default time for briefing_pessoal (until user_preferences gains a personal_briefing_time column).
 const PERSONAL_BRIEFING_DEFAULT = '07:00';
+
+// Insere um evento estruturado em ritual_logs. Falhas de log nunca derrubam o tick.
+async function logRitualEvent(collaboratorId, type, status, detail = null, refDate = null) {
+  try {
+    const ymd = refDate || nowSaoPaulo().ymd;
+    const { error } = await supabase.from('ritual_logs').insert({
+      collaborator_id: collaboratorId,
+      ritual_type: type,
+      reference_date: ymd,
+      status,
+      detail: detail ? String(detail).slice(0, 500) : null,
+      sent_at: status === 'sent' ? new Date().toISOString() : null,
+    });
+    if (error) console.error(`[ritual_logs] insert err type=${type} status=${status}:`, error.message);
+  } catch (err) {
+    console.error('[ritual_logs] throw err:', err.message);
+  }
+}
 
 function loadDotEnv(file) {
   try {
@@ -97,23 +123,19 @@ async function alreadySent(collaboratorId, ritualType, ymd) {
 }
 
 async function fireRitual(collab, ritualType, ymd) {
+  const canonical = CANONICAL_BY_RITUAL[ritualType] || ritualType;
   if (await alreadySent(collab.id, ritualType, ymd)) {
     console.log(`[Ritual] ${ritualType} already sent today for ${collab.phone.slice(-4)}, skipping`);
+    await logRitualEvent(collab.id, canonical, 'skipped', 'ja_enviado_hoje', ymd);
     return false;
   }
   try {
     await sendRitual(collab.id, ritualType);
+    await logRitualEvent(collab.id, canonical, 'sent', null, ymd);
     return true;
   } catch (err) {
     console.error(`[Ritual] Falha ao enviar ${ritualType} pra ${collab.full_name}:`, err.message);
-    try {
-      await supabase.from('ritual_logs').insert({
-        collaborator_id: collab.id,
-        ritual_type: ritualType,
-        reference_date: ymd,
-        status: 'ignored',
-      });
-    } catch (_) {}
+    await logRitualEvent(collab.id, canonical, 'error', err.message, ymd);
     return false;
   }
 }
@@ -285,7 +307,10 @@ async function checkDeadlineAlerts(ymdToday) {
     if (!collab || !collab.phone) continue;
     const pref = collab.user_preferences && collab.user_preferences.notify_deadline_alerts;
     if (pref === false) continue; // user opted out
-    if (await alreadyNotifiedToday(collab.id, t.id, 'deadline_alert', ymdToday)) continue;
+    if (await alreadyNotifiedToday(collab.id, t.id, 'deadline_alert', ymdToday)) {
+      await logRitualEvent(collab.id, 'alerta_prazo', 'skipped', `ja_notificado:${String(t.id).slice(0,8)}`, ymdToday);
+      continue;
+    }
     const nick = collab.full_name === 'Luciano Alf' ? 'Alf' : (collab.full_name || '').split(' ')[0] || 'amigo';
     const text = `⏳ ${nick}, lembrete: *${t.title}* vence amanhã. Tá encaminhado?`;
     try {
@@ -307,9 +332,11 @@ async function checkDeadlineAlerts(ymdToday) {
         message_type: 'text',
         content: text,
       });
+      await logRitualEvent(collab.id, 'alerta_prazo', 'sent', `task:${String(t.id).slice(0,8)}`, ymdToday);
       sent++;
     } catch (err) {
       console.error(`[DeadlineAlert] send err for ${String(t.id).slice(0,8)}:`, err.message);
+      await logRitualEvent(collab.id, 'alerta_prazo', 'error', `${String(t.id).slice(0,8)}:${err.message}`, ymdToday);
     }
   }
   if (sent) console.log(`[DeadlineAlert] fired ${sent} deadline alert(s) for ${tomorrow}`);
@@ -353,7 +380,10 @@ async function checkOverdueAlerts(ymdToday) {
     if (!collab || !collab.phone) continue;
     const pref = collab.user_preferences && collab.user_preferences.notify_overdue_alerts;
     if (pref === false) continue;
-    if (await alreadyNotifiedToday(collab.id, t.id, 'overdue_alert', ymdToday)) continue;
+    if (await alreadyNotifiedToday(collab.id, t.id, 'overdue_alert', ymdToday)) {
+      await logRitualEvent(collab.id, 'alerta_atraso', 'skipped', `ja_notificado:${String(t.id).slice(0,8)}`, ymdToday);
+      continue;
+    }
     const n = daysLate(t.due_date);
     const text = `🔴 *${t.title}* tá atrasada ${n} dia${n > 1 ? 's' : ''}. Resolve hoje ou reagenda?`;
     try {
@@ -375,9 +405,11 @@ async function checkOverdueAlerts(ymdToday) {
         message_type: 'text',
         content: text,
       });
+      await logRitualEvent(collab.id, 'alerta_atraso', 'sent', `task:${String(t.id).slice(0,8)} late=${n}d`, ymdToday);
       sent++;
     } catch (err) {
       console.error(`[OverdueAlert] send err for ${String(t.id).slice(0,8)}:`, err.message);
+      await logRitualEvent(collab.id, 'alerta_atraso', 'error', `${String(t.id).slice(0,8)}:${err.message}`, ymdToday);
     }
   }
   if (sent) console.log(`[OverdueAlert] fired ${sent} overdue alert(s) (today=${ymdToday})`);
@@ -431,9 +463,11 @@ async function checkTaskReminders() {
         message_type: 'text',
         content: text,
       });
+      await logRitualEvent(collab.id, 'lembrete', 'sent', `reminder:${String(r.id).slice(0,8)} task:${String(t.id).slice(0,8)}`);
       fired++;
     } catch (err) {
       console.error(`[TaskReminders] send err for ${String(r.id).slice(0,8)}:`, err.message);
+      await logRitualEvent(collab.id, 'lembrete', 'error', `${String(r.id).slice(0,8)}:${err.message}`);
     }
   }
   if (fired) console.log(`[TaskReminders] fired ${fired} pre-event alert(s)`);
