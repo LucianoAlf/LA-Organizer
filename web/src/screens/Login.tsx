@@ -148,20 +148,20 @@ export function Login() {
                 <p className="text-body-md text-ink-1000">
                   {firstName ? `${firstName}, ` : ''}código enviado pra <span className="tabular-nums">{maskedPhone}</span>.
                 </p>
-                <label htmlFor="code" className="text-label uppercase tracking-wide text-ink-500">Código (6 dígitos)</label>
+                <label htmlFor="code" className="text-label uppercase tracking-wide text-ink-500">Código</label>
                 <input
                   id="code"
                   type="text"
                   inputMode="numeric"
                   autoComplete="one-time-code"
                   pattern="[0-9]*"
-                  maxLength={6}
+                  maxLength={10}
                   required
                   autoFocus
                   value={code}
-                  onChange={e => setCode(e.target.value.replace(/\D/g, ''))}
+                  onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, 10))}
                   className="w-full h-12 px-3 rounded-sm bg-ink-100 border border-ink-200 text-ink-1000 placeholder:text-ink-400 focus-ring tabular-nums tracking-widest text-xl text-center"
-                  placeholder="••••••"
+                  placeholder="••••••••"
                 />
               </div>
               {error && <p role="alert" className="text-body-sm text-danger">{error}</p>}
