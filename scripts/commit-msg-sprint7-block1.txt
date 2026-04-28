@@ -1,0 +1,67 @@
+feat(sprint7-block1): bugs do engine — MCP off, anti-leak guard, follow-up de horário
+
+Quatro fixes encadeados que destravam o caso "9h" capturado em produção em
+28/04/2026 (TOM respondeu "preciso de permissão pra acessar o Supabase"
+quando user respondeu só com horário a uma task pendente).
+
+1.4 — MCP off no Claude CLI (src/ai/claude.js)
+  Spawn ganha 3 flags novas:
+    --strict-mcp-config
+    --mcp-config {"mcpServers":{}}
+    --tools ""
+  Desabilita TODOS os MCP servers que vinham de CLAUDE_HOME (root) e o
+  conjunto built-in de ferramentas. TOM produz só texto + marker; tool
+  calls externos quebravam o contrato e estouravam latência.
+  Smoke direto no CLI: latência cai de 58s → 4s.
+  Smoke via webhook: 58318ms → 8271ms (7x mais rápido).
+
+1.3 — Anti-leak guard (src/engine.js)
+  Antes de whatsapp.sendMessage, regex de bloqueio:
+    \b(supabase|postgres|banco\s+de\s+dados|mcp|
+       permiss[ãa]o.+(acess|aprovar|liberar)|
+       tabela\s+[a-z_]|sql)\b/i
+  Hit → reply substituído por mensagem genérica + linha em marker_logs
+  como LEAK_BLOCKED. Defesa em profundidade: se 1.4 falhar OU futuro
+  modelo improvisar texto que viole "ZERO leaks" do system prompt, é
+  cortado antes do WhatsApp.
+  Validação isolada: 8/8 cenários (3 leaks bloqueados, 5 mensagens
+  legítimas passam, sem falso-positivo em "sopa supa" ou "sql" como
+  prefixo de palavra maior).
+
+1.2 — pickSkill priority 4.85 (src/prompts/system.js)
+  Detecta padrão "última outbound do TOM perguntou hora E user
+  respondeu só com hora isolada". Trigger:
+    user message: ^(?:[àa]s\s+)?\d{1,2}(?::\d{2})?\s*h?(?:oras?)?\.?$
+    last bot:    contém "que horas?", "sabe que horas?", "qual horário",
+                 "que hr", etc.
+  Match → ativa criar-compromisso. Antes era skill: none, e Claude
+  improvisava (causa raiz do bug).
+
+1.1 — Skill criar-compromisso ganha seção "Follow-up de horário"
+  (skills/criar-compromisso.md)
+  Instrui Claude a:
+   * olhar pendência do contexto via [id=...]
+   * promover task → event quando título indica reunião/aula/etc:
+     TASK_UPDATE.complete + EVENT_CREATE no mesmo turno (única
+     exceção legítima a "uma operação por marker")
+   * ou EVENT_UPDATE.reschedule se já é event
+   * veto explícito a citar "banco", "supabase", "tabela",
+     "permissão pra acessar" — instrução interna de não-leak
+
+Smoke E2E real (reproduz o caso da imagem):
+  setup: task work pendente "Reunião com Henrique Musiartes" + 3
+         conversation_history (TOM perguntou que horas)
+  POST   /webhook { text: "9h" }
+  log:
+    [Prompt] size: 11563 chars (skill: criar-compromisso, ...)
+    [Task] complete ae3d537c by 8047
+    [Event] create cat=la_music mod=presencial ctx=work (id=fc329019)
+    [OUT] ✅ Marcado!
+    [Engine] processMessage DONE phone=8047 in=8271ms
+  Estado de prod restaurado pós-smoke (task reaberta, event apagado,
+  fixtures limpos).
+
+Bloco 2 da Sprint 7 (rotação Supabase + HMAC strict) virá em commit
+separado conforme plano de risco da sprint.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>

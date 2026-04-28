@@ -263,6 +263,28 @@ function pickSkill(collab, lastUserMessage, recentHistory) {
     return { name: 'habitos-pessoais', body: loadSkill('habitos-pessoais') };
   }
 
+  // Priority 4.85 (Sprint 7): follow-up de horário.
+  // Padrão alvo: TOM acabou de perguntar "que hora" sobre uma pendência sem
+  // horário, e o usuário respondeu SOMENTE com hora ("9h", "às 14:30", "14:00").
+  // Sem essa regra, pickSkill volta `none` e o Claude improvisa (vide bug
+  // capturado em 28/04/2026 — image "9h" → leak de stack).
+  // Resolução vai pra criar-compromisso, que tem seção dedicada "Follow-up de
+  // horário" instruindo TASK_UPDATE complete + EVENT_CREATE no mesmo turno.
+  {
+    const lm = (lastUserMessage || '').trim();
+    // User digita só hora: "9h", "9:30", "9:30h", "às 9", "às 09:00", "14:00"
+    const isolatedTimeRe = /^(?:[àa]s\s+)?\d{1,2}(?::\d{2})?\s*h?(?:oras?)?\.?$/i;
+    if (isolatedTimeRe.test(lm)) {
+      // Última outbound (TOM) — perguntou hora?
+      const recent = (recentHistory || []).filter(m => m.direction === 'outbound');
+      const lastBot = recent.length ? String(recent[recent.length - 1].content || '') : '';
+      const askedTimeRe = /\b(que\s+horas?|sabe\s+que\s+horas?|qual\s+(?:o\s+)?hor[áa]rio|que\s+hr|qual\s+hr|hor[áa]rio\s+(?:da|do)\s+\w)\b/i;
+      if (askedTimeRe.test(lastBot)) {
+        return { name: 'criar-compromisso', body: loadSkill('criar-compromisso') };
+      }
+    }
+  }
+
   // Priority 4.9: compromisso (evento com horário). Cobre create + update.
   // Create: termo de evento + horário, OR range "das X às Y", OR agendar + horário + (termo|modalidade).
   // Update: verbo update (remarca|cancela|fechei) + termo de evento.

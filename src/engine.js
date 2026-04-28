@@ -1703,7 +1703,19 @@ async function processMessage(phone, text, raw = {}) {
     }
   }
 
-  // Safety nets: detect leaks before sending (don't crash, just warn).
+  // Safety nets: detect leaks before sending.
+  //
+  // Sprint 7 anti-leak guard (1.3): se o reply mencionar stack interno
+  // (supabase, postgres, banco de dados, mcp, "permissão pra acessar X",
+  // "tabela <nome>", sql), substitui por mensagem genérica e loga em
+  // marker_logs como LEAK_BLOCKED. Defesa em profundidade — mesmo com
+  // MCP desabilitado (1.4), o modelo ainda pode improvisar texto que
+  // viola o contrato ZERO leaks do system prompt.
+  //
+  // Os warnings de marker fragment / UUID leak continuam não bloqueantes
+  // (são guardrails históricos para detectar marker mal-fechado e raros).
+  const STACK_LEAK_RE = /\b(supabase|postgres|banco\s+de\s+dados|mcp|permiss[ãa]o.+(acess|aprovar|liberar)|tabela\s+[a-z_]|sql)\b/i;
+  const GENERIC_LEAK_REPLY = '_tive um problema interno aqui, tenta de novo daqui a pouco_';
   try {
     if (typeof reply === 'string') {
       if (reply.includes('<<') || reply.includes('>>')) {
@@ -1712,9 +1724,15 @@ async function processMessage(phone, text, raw = {}) {
       if (/[a-f0-9]{8}-[a-f0-9]/i.test(reply)) {
         console.warn('[Engine] WARN: possible UUID leak in reply');
       }
+      const leakMatch = reply.match(STACK_LEAK_RE);
+      if (leakMatch) {
+        console.warn(`[Engine] LEAK_BLOCKED — match="${leakMatch[0]}" reply="${reply.slice(0, 200)}"`);
+        await logMarker(collab.id, 'LEAK_BLOCKED', 'rejected', `match:${leakMatch[0]}`, reply);
+        reply = GENERIC_LEAK_REPLY;
+      }
     }
   } catch (e) {
-    // ignore guard errors
+    // ignore guard errors — never crash pipeline on a guard
   }
 
   await whatsapp.sendMessage(phone, reply);

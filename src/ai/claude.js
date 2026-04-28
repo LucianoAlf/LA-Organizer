@@ -40,9 +40,23 @@ async function chat(systemPrompt, messages /*, maxTokens */) {
   return new Promise((resolve, reject) => {
     // --append-system-prompt mantém o system prompt separado do user prompt,
     // permitindo que o Claude trate identidade/contexto como instrução de sistema.
+    //
+    // Sprint 7 — isolamento do TOM:
+    //   --strict-mcp-config + --mcp-config '{"mcpServers":{}}' — desliga TODOS
+    //     os MCP servers que poderiam vir do CLAUDE_HOME do user root. TOM só
+    //     produz texto + marker; tool calls externos quebram contrato.
+    //   --tools "" — desabilita o conjunto built-in (Bash, Edit, Read, etc).
+    //
+    // Causa-raiz documentada em docs/TOM-AGENTS.md (anti-leak guard):
+    // sem essa restrição, Claude CLI improvisava tool calls quando a skill
+    // não dava direção suficiente, vazando "preciso de permissão pra Supabase"
+    // ao usuário e estourando latência (58s vs 4s típico).
     const args = [
       '-p', userPrompt,
       '--append-system-prompt', systemPrompt,
+      '--strict-mcp-config',
+      '--mcp-config', '{"mcpServers":{}}',
+      '--tools', '',
     ];
 
     const child = spawn(CLAUDE_BIN, args, {

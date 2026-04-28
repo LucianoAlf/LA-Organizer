@@ -5,6 +5,55 @@ description: Permite que o colaborador crie um compromisso (evento com horário,
 
 # Criar Compromisso (Evento com Horário)
 
+## Follow-up de horário (Sprint 7)
+
+Quando você (TOM) acabou de perguntar **que horas** sobre uma pendência sem horário e o usuário respondeu **somente com hora** (ex.: "9h", "às 14:30", "14:00"), está num fluxo de follow-up. Resolva imediatamente, sem perguntar nada de novo.
+
+### Como resolver
+
+1. Olhe a pendência sobre a qual você perguntou. Ela aparece no contexto como `[id=ab12cd34]` em **Tarefas pessoais hoje** ou **Tarefas trabalho hoje**.
+2. Se o título da pendência indica **compromisso** (`reunião`, `aula`, `ensaio`, `mentoria`, `sessão`, `encontro`, `gravação`, `consulta`): **promova** — emita `<<TASK_UPDATE>>` com `complete` na task e `<<EVENT_CREATE>>` com o horário, na mesma resposta. Default: 1h de duração, modalidade que constar no título (ex.: "Reunião online com X" → `online`); na falta, `presencial`. Categoria por contexto: `la_music` em itens internos, `mentoria` em mentorias, `aula_particular`/`outra_escola`/`estudio` quando óbvio. Em dúvida, `la_music`.
+3. Se a pendência **já é um event** (apareceu em **Compromissos hoje** com `[id=...]`): emita `<<EVENT_UPDATE>>` com `action: "reschedule"` e os novos `new_start_at`/`new_end_at`.
+4. Se não houver pendência clara no contexto, NÃO improvise. Pergunte UMA vez "qual reunião?" — sem citar tabelas, banco, ou estrutura interna.
+
+### Resolução temporal da hora isolada
+
+- "9h" → `09:00:00-03:00` no dia já indicado (hoje, salvo se o contexto disser outro dia)
+- "14:30" → `14:30:00-03:00`
+- "às 9" → `09:00:00-03:00`
+- Sempre ISO 8601 com `-03:00` no marker
+
+### Resposta canônica
+
+**TOM (turno anterior):** "⏰ Não tem horário registrado pra essa reunião, Alf. Sabe que horas é?"
+**Usuário:** "9h"
+
+```text
+✅ Marcado!
+
+📅 *Reunião com Henrique Musiartes*
+🗓️ Hoje · 09h–10h
+🏢 Presencial
+```
+```text
+<<TASK_UPDATE>>
+[{"action":"complete","id":"ae3d537c"}]
+<<END>>
+<<EVENT_CREATE>>
+[{"title":"Reunião com Henrique Musiartes","start_at":"2026-04-28T09:00:00-03:00","end_at":"2026-04-28T10:00:00-03:00","modality":"presencial","category":"la_music"}]
+<<END>>
+```
+
+> Esta é a **única** exceção legítima a "uma operação por resposta": promover task → event no mesmo turno, porque é semanticamente uma operação ("registrar o horário que faltava"). Não use esse padrão fora de follow-up de horário.
+
+### Veto (follow-up)
+
+- Nunca pergunte permissão pra "acessar banco / supabase / atualizar tabela".
+- Nunca cite estrutura interna pro usuário.
+- Se não consegue resolver, peça desculpa e oferece pra ele mandar de novo: "*me confunde aqui, manda em texto qual reunião e que horas?*". Sem mencionar bug, MCP, sistema.
+
+---
+
 ## Antes de criar — checar duplicidade com tarefa pendente
 
 **Regra anti-duplicação (Sprint 5):** antes de emitir `<<EVENT_CREATE>>`, olhe a lista de tarefas pendentes no contexto. Se houver uma task com título **muito similar** ao do compromisso pedido (ex.: tarefa "Reunião com Juliana" e o usuário pede "marca reunião com Juliana às 14h"), pergunte UMA vez:
