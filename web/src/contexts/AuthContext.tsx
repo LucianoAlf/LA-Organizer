@@ -3,11 +3,26 @@ import { Session } from '@supabase/supabase-js';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import type { Collaborator, Role } from '../types';
 
+interface SendMagicLinkResult {
+  ok: boolean;
+  email?: string;             // collaborator.email — needed by verifyMagicCode
+  masked_phone?: string;
+  first_name?: string | null;
+  unknown?: boolean;          // server says phone not found / inactive (vague)
+  error?: string;
+  retry_after_min?: number;
+}
+
 interface AuthContextType {
   session: Session | null;
   collaborator: Collaborator | null;
   role: Role | null;
   loading: boolean;
+  /** Magic link via WhatsApp (canonical, PRD §5.2). */
+  sendMagicLink: (phone: string) => Promise<SendMagicLinkResult>;
+  /** Verify the 6-digit OTP returned by the magic link. Sets session on success. */
+  verifyMagicCode: (email: string, code: string) => Promise<{ error: Error | null }>;
+  /** Email/password fallback (Sprint 0+1 default; remains until magic link is stable). */
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
 }
@@ -67,6 +82,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { error: error ?? null };
   }
 
+  async function sendMagicLink(phone: string): Promise<SendMagicLinkResult> {
+    const cleaned = String(phone || '').replace(/\D/g, '');
+    if (!cleaned) return { ok: false, error: 'phone_required' };
+    try {
+      const { data, error } = await supabase.functions.invoke('send-magic-link', {
+        body: { phone: cleaned },
+      });
+      if (error) {
+        // Edge Function returns non-2xx → supabase-js wraps as FunctionsHttpError;
+        // try to extract the original payload via the context if available.
+        const payload = (error as { context?: Response })?.context;
+        if (payload && typeof payload === 'object' && 'json' in payload) {
+          try {
+            const body = await (payload as Response).json();
+            return { ok: false, error: body?.error ?? 'unknown_error', retry_after_min: body?.retry_after_min };
+          } catch (_) { /* fall through */ }
+        }
+        return { ok: false, error: error.message || 'unknown_error' };
+      }
+      return data as SendMagicLinkResult;
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
+  }
+
+  async function verifyMagicCode(email: string, code: string) {
+    const token = String(code || '').replace(/\D/g, '').trim();
+    if (!email || !token) return { error: new Error('email_and_code_required') };
+    // admin.generateLink(type:'magiclink') yields email_otp; verify with type='email'
+    // (the OTP-based path; type='magiclink' is for hashed_token from clicked links).
+    const { error } = await supabase.auth.verifyOtp({ email, token, type: 'email' });
+    return { error: error ?? null };
+  }
+
   async function signOut() {
     await supabase.auth.signOut();
     setCollaborator(null);
@@ -79,6 +128,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         collaborator,
         role: collaborator?.role ?? null,
         loading,
+        sendMagicLink,
+        verifyMagicCode,
         signIn,
         signOut,
       }}

@@ -4,31 +4,84 @@ import { useAuth } from '../contexts/AuthContext';
 import { Button } from '../components/Button';
 import { LogoMark } from '../components/LogoMark';
 
+type Step = 'phone' | 'code';
+type Mode = 'magic' | 'password';
+
 export function Login() {
-  const { session, signIn, loading } = useAuth();
+  const { session, sendMagicLink, verifyMagicCode, signIn, loading } = useAuth();
   const location = useLocation() as { state?: { from?: { pathname?: string } } };
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+
+  const [mode, setMode] = useState<Mode>('magic');
+  const [step, setStep] = useState<Step>('phone');
+  const [phone, setPhone] = useState('');
+  const [code, setCode] = useState('');
+  const [pendingEmail, setPendingEmail] = useState('');
+  const [maskedPhone, setMaskedPhone] = useState('');
+  const [firstName, setFirstName] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Fallback (email/password)
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
 
   if (!loading && session) {
     const dest = location.state?.from?.pathname || '/hoje';
     return <Navigate to={dest} replace />;
   }
 
-  async function onSubmit(e: FormEvent) {
+  async function onSubmitPhone(e: FormEvent) {
     e.preventDefault();
     setError(null);
     setSubmitting(true);
-    const { error } = await signIn(email.trim().toLowerCase(), password);
+    const r = await sendMagicLink(phone);
     setSubmitting(false);
-    if (error) setError('Não consegui entrar. Confere o e-mail e a senha.');
+    if (!r.ok) {
+      const msg =
+        r.error === 'rate_limited'
+          ? `muitas tentativas. tenta de novo em ${r.retry_after_min ?? 5} min.`
+          : r.error === 'phone_invalid'
+          ? 'número inválido — use só dígitos com DDD (ex: 5521981278047)'
+          : r.error === 'uazapi_not_configured'
+          ? 'serviço de WhatsApp temporariamente indisponível'
+          : 'não consegui enviar o código. tenta de novo daqui a pouco?';
+      setError(msg);
+      return;
+    }
+    if (r.unknown || !r.email) {
+      // Vague response — phone not in collaborators or inactive. Don't reveal.
+      setError('se esse número está cadastrado, o código chegou no WhatsApp.');
+      return;
+    }
+    setPendingEmail(r.email);
+    setMaskedPhone(r.masked_phone || '');
+    setFirstName(r.first_name ?? null);
+    setStep('code');
+  }
+
+  async function onSubmitCode(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSubmitting(true);
+    const r = await verifyMagicCode(pendingEmail, code);
+    setSubmitting(false);
+    if (r.error) {
+      setError('código inválido ou expirado. confere no WhatsApp e tenta de novo.');
+    }
+  }
+
+  async function onSubmitPassword(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSubmitting(true);
+    const r = await signIn(email.trim().toLowerCase(), password);
+    setSubmitting(false);
+    if (r.error) setError('não consegui entrar. confere email e senha.');
   }
 
   return (
     <div className="min-h-screen flex flex-col bg-ink-0 text-ink-1000">
-      {/* Hero half — brand-strong, halftone subtle, watermark "LA" */}
+      {/* Hero */}
       <section className="relative flex-1 flex items-end overflow-hidden">
         <div className="absolute inset-0 halftone-soft" aria-hidden />
         <div
@@ -48,7 +101,6 @@ export function Login() {
         </div>
         <div className="relative z-10 px-md pb-2xl w-full max-w-content mx-auto">
           <div className="flex items-end gap-md mb-md">
-            {/* Login bg is fixed dark — force the dark variant of the wordmark. */}
             <LogoMark variant="completa" size={36} forceTheme="dark" />
             <div className="text-card-title leading-none pb-1">Organizer</div>
           </div>
@@ -62,45 +114,101 @@ export function Login() {
         </div>
       </section>
 
-      {/* Form half — clean, operational */}
+      {/* Form */}
       <section className="bg-ink-50 border-t border-ink-200 px-md pt-xl pb-xl">
-        <form onSubmit={onSubmit} className="w-full max-w-content mx-auto space-y-md">
-          <div className="space-y-1">
-            <label htmlFor="email" className="text-label uppercase tracking-wide text-ink-500">E-mail</label>
-            <input
-              id="email"
-              type="email"
-              autoComplete="email"
-              required
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              className="w-full h-12 px-3 rounded-sm bg-ink-100 border border-ink-200 text-ink-1000 placeholder:text-ink-400 focus-ring"
-              placeholder="voce@lamusic.com.br"
-            />
-          </div>
-          <div className="space-y-1">
-            <label htmlFor="password" className="text-label uppercase tracking-wide text-ink-500">Senha</label>
-            <input
-              id="password"
-              type="password"
-              autoComplete="current-password"
-              required
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              className="w-full h-12 px-3 rounded-sm bg-ink-100 border border-ink-200 text-ink-1000 placeholder:text-ink-400 focus-ring"
-              placeholder="••••••••"
-            />
-          </div>
-          {error && (
-            <p role="alert" className="text-body-sm text-danger">{error}</p>
+        <div className="w-full max-w-content mx-auto">
+          {mode === 'magic' && step === 'phone' && (
+            <form onSubmit={onSubmitPhone} className="space-y-md">
+              <div className="space-y-1">
+                <label htmlFor="phone" className="text-label uppercase tracking-wide text-ink-500">WhatsApp</label>
+                <input
+                  id="phone"
+                  type="tel"
+                  inputMode="numeric"
+                  autoComplete="tel"
+                  required
+                  value={phone}
+                  onChange={e => setPhone(e.target.value)}
+                  className="w-full h-12 px-3 rounded-sm bg-ink-100 border border-ink-200 text-ink-1000 placeholder:text-ink-400 focus-ring tabular-nums"
+                  placeholder="5521981278047"
+                />
+                <p className="text-body-sm text-ink-500">só dígitos com DDD. te mando um código no WhatsApp.</p>
+              </div>
+              {error && <p role="alert" className="text-body-sm text-danger">{error}</p>}
+              <Button type="submit" size="lg" fullWidth loading={submitting}>Enviar código</Button>
+              <p className="text-body-sm text-ink-500 text-center">
+                Sem WhatsApp? <button type="button" onClick={() => { setMode('password'); setError(null); }} className="text-brand underline focus-ring">Entrar com e-mail</button>
+              </p>
+            </form>
           )}
-          <Button type="submit" size="lg" fullWidth loading={submitting}>
-            Entrar
-          </Button>
-          <p className="text-body-sm text-ink-500 text-center">
-            Magic link via WhatsApp chega em uma próxima sprint.
-          </p>
-        </form>
+
+          {mode === 'magic' && step === 'code' && (
+            <form onSubmit={onSubmitCode} className="space-y-md">
+              <div className="space-y-1">
+                <p className="text-body-md text-ink-1000">
+                  {firstName ? `${firstName}, ` : ''}código enviado pra <span className="tabular-nums">{maskedPhone}</span>.
+                </p>
+                <label htmlFor="code" className="text-label uppercase tracking-wide text-ink-500">Código (6 dígitos)</label>
+                <input
+                  id="code"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  pattern="[0-9]*"
+                  maxLength={6}
+                  required
+                  autoFocus
+                  value={code}
+                  onChange={e => setCode(e.target.value.replace(/\D/g, ''))}
+                  className="w-full h-12 px-3 rounded-sm bg-ink-100 border border-ink-200 text-ink-1000 placeholder:text-ink-400 focus-ring tabular-nums tracking-widest text-xl text-center"
+                  placeholder="••••••"
+                />
+              </div>
+              {error && <p role="alert" className="text-body-sm text-danger">{error}</p>}
+              <Button type="submit" size="lg" fullWidth loading={submitting}>Entrar</Button>
+              <div className="flex items-center justify-between text-body-sm text-ink-500">
+                <button type="button" onClick={() => { setStep('phone'); setCode(''); setError(null); }} className="text-brand focus-ring">← outro número</button>
+                <button type="button" onClick={onSubmitPhone as unknown as () => void} className="text-ink-500 hover:text-ink-1000 focus-ring">Reenviar código</button>
+              </div>
+            </form>
+          )}
+
+          {mode === 'password' && (
+            <form onSubmit={onSubmitPassword} className="space-y-md">
+              <div className="space-y-1">
+                <label htmlFor="email" className="text-label uppercase tracking-wide text-ink-500">E-mail</label>
+                <input
+                  id="email"
+                  type="email"
+                  autoComplete="email"
+                  required
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  className="w-full h-12 px-3 rounded-sm bg-ink-100 border border-ink-200 text-ink-1000 placeholder:text-ink-400 focus-ring"
+                  placeholder="voce@lamusic.com.br"
+                />
+              </div>
+              <div className="space-y-1">
+                <label htmlFor="password" className="text-label uppercase tracking-wide text-ink-500">Senha</label>
+                <input
+                  id="password"
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  className="w-full h-12 px-3 rounded-sm bg-ink-100 border border-ink-200 text-ink-1000 placeholder:text-ink-400 focus-ring"
+                  placeholder="••••••••"
+                />
+              </div>
+              {error && <p role="alert" className="text-body-sm text-danger">{error}</p>}
+              <Button type="submit" size="lg" fullWidth loading={submitting}>Entrar</Button>
+              <p className="text-body-sm text-ink-500 text-center">
+                <button type="button" onClick={() => { setMode('magic'); setError(null); }} className="text-brand underline focus-ring">Voltar pro WhatsApp</button>
+              </p>
+            </form>
+          )}
+        </div>
       </section>
     </div>
   );
