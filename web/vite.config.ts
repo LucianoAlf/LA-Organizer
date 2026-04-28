@@ -42,12 +42,15 @@ export default defineConfig({
   ],
   server: { port: 5173, host: true },
   // `vite preview` blocks unknown hosts by default. Whitelist:
-  //  - `.trycloudflare.com` for ephemeral Cloudflare quick tunnels (Sprint 2 piloto)
-  //  - explicit production domain when defined
+  //  - `.vercel.app` for production deploys (la-organizer.vercel.app + previews)
+  //  - `localhost` for local preview / IDE workflows
+  // Cloudflare quick tunnel (`.trycloudflare.com`) usado nas Sprints 2–6 foi
+  // descontinuado quando a Vercel virou hosting oficial (Sprint 6 hot-fix +
+  // produção em 28/04/2026).
   preview: {
     port: 4173,
     host: true,
-    allowedHosts: ['.trycloudflare.com', '.vercel.app', 'localhost'],
+    allowedHosts: ['.vercel.app', 'localhost'],
   },
   build: { sourcemap: false, target: 'es2020' },
 });

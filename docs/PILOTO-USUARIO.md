@@ -4,8 +4,8 @@ Esse é o app que mostra suas tarefas, projetos e o que o TOM combinou com você
 
 ## Como entrar
 
-> 🔗 **URL atual do piloto:** `https://further-sale-coupon-literary.trycloudflare.com`
-> *(URL provisória de Sprint 2 — vai mudar quando definirmos domínio próprio)*
+> 🔗 **URL oficial:** `https://la-organizer.vercel.app`
+> *(Hosting estável em Vercel — substitui o tunnel Cloudflare provisório usado nos pilotos das Sprints 2–6.)*
 
 1. Abre o link acima **no seu celular**, no Chrome (Android) ou Safari (iOS)
 2. **Adiciona à tela inicial** quando o navegador perguntar — vira um app de verdade, sem barra de browser
@@ -74,5 +74,5 @@ Se o magic link via WhatsApp não funcionar, na tela de login toca em **Entrar c
 
 ---
 
-Versão deste guia: Sprint 2 — abril/2026  
+Versão deste guia: Sprint 6 (pós hot-fix) — abril/2026  
 Em caso de bug, reporta com print + descrição curta do que você fez.

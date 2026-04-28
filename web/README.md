@@ -238,7 +238,7 @@ Por design, no PWA:
 | `eisenhower_quadrant` fica `null` em criações via PWA | Engine recalcula no próximo briefing/closing cycle; trigger novo seria over-engineering | Quando aparecer queixa real de prioridade ruim em Sprint 1+ tasks |
 | `source='manual'` em criações via PWA | CHECK constraint não aceita `'pwa'`; `'manual'` é semanticamente correto (criação humana direta) | Permanente |
 | `collaborators.email` placeholders `<nome>.<sobrenome>@lamusic.local` para Anne/Juliana/Quintela | Auth real só para Alf hoje | Substituir quando outros usuários forem cadastrados no Supabase Auth |
-| Hosting de produção | Build estático em `dist/` pronto; aguarda decisão Vercel/Netlify/nginx | Sprint 2 |
+| ~~Hosting de produção~~ | **Resolvido na Sprint 6 (28/04/2026):** deploy em Vercel — `https://la-organizer.vercel.app`. CI a partir de `main`. | — |
 | `Avata-Tom.png` (645KB) catalogado mas não carregado | Nenhuma tela atual justifica os bytes em main path | Quando vier onboarding visual / empty state de histórico / 404 |
 
 ---
@@ -261,15 +261,24 @@ npm run build && du -h dist/assets/*
 
 ---
 
-## Deploy (a definir em Sprint 2)
+## Deploy (Vercel — produção)
 
-Build estático em `dist/`. Candidatos:
+**URL oficial:** [`https://la-organizer.vercel.app`](https://la-organizer.vercel.app)
 
-- **Vercel** / Netlify / Cloudflare Pages — CDN + previews + integração GH (recomendado para PWA)
-- Supabase Storage + Edge Functions — concentra na stack já em uso
-- Nginx no próprio VPS — mesmo host do TOM backend; sem CDN global
+- **Hosting:** Vercel, plano free.
+- **Branch de deploy:** `main` (push → build automático → produção).
+- **Build:** `npm run build` em `web/`, output `dist/`. `vite-plugin-pwa` em `generateSW` mode produz service worker + manifest no precache.
+- **Domínio assignado:** `la-organizer.vercel.app`. Domínio próprio fica para quando houver demanda; Vercel deixa adicionar a qualquer momento sem recriar projeto.
+- **Supabase Auth — Site URL e Redirect URLs:** atualizadas para `https://la-organizer.vercel.app`. Magic link via WhatsApp e fallback email/password redirecionam para a URL definitiva.
+- **`vite.config.ts preview.allowedHosts`:** `['.vercel.app', 'localhost']`. Tunnel Cloudflare das Sprints 2–6 (`*.trycloudflare.com`) foi descontinuado.
 
-Service worker + manifest são gerados automaticamente pelo `vite-plugin-pwa` (`generateSW` mode, precache 9 arquivos / ~497 KB).
+### Histórico de hosting
+
+| Período | Solução | Status |
+|---|---|---|
+| Sprints 0–1 | `vite preview` local + IDE preview | dev only |
+| Sprints 2–5 | Cloudflare quick tunnel (`*.trycloudflare.com`) | provisório, URL volátil |
+| Sprint 6 hot-fix em diante | **Vercel — `la-organizer.vercel.app`** | oficial, estável, HTTPS |
 
 ---
 

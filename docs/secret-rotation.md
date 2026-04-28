@@ -12,7 +12,7 @@ Procedimento para rotacionar `SUPABASE_SERVICE_ROLE_KEY` e `UAZAPI_TOKEN` quando
 - `UAZAPI_TOKEN` rotacionado de fato (sha256 mudou de `8f75f8571b1f` → `d947e27efce0`). Webhook UAZAPI re-emparelhado, TOM autentica em `HTTP 200`. Validado em recebimento de WA real.
 - `SUPABASE_SERVICE_ROLE_KEY` permanece em sha256 `9449de095236` (não rotacionada — confirmado em fingerprint pós-sprint). Ainda autentica em `HTTP 200` no Supabase.
 - HMAC do webhook **implementado mas inativo** — `WEBHOOK_SECRET` segue vazio no `.env`, então middleware opera em `mode=disabled`. Smoke real validou os 3 modos (disabled/permissive/strict) em isolamento.
-- URL pública continua via Cloudflare quick tunnel (`*.trycloudflare.com`), provisória.
+- ~~URL pública continua via Cloudflare quick tunnel~~ → **substituído por Vercel em 28/04/2026**: `https://la-organizer.vercel.app` (hosting estável, HTTPS, CI a partir de `main`). Trigger original ("URL volátil bloqueia expansão") fechado.
 
 **Trigger para reabrir o Bloco A:**
 Antes de qualquer expansão de piloto além do círculo atual (Alf + Anne + coordenadores) ou de exposição pública do `/webhook`, executar nesta ordem:
