@@ -99,9 +99,19 @@ async function setTyping(chatid) {
 /**
  * Verifica se uma mensagem é áudio
  */
-function isAudioMessage(webhookData) {
-  const messageType = webhookData?.messageType || '';
-  return ['audio', 'ptt', 'myaudio'].includes(messageType);
+// Sprint 9 hotfix-3 (28/04/2026): UAZAPI mudou formato do payload em algum
+// update — áudio agora identificado em message.mediaType OU
+// chat.wa_lastMessageType ("AudioMessage"). Detector defensivo: casa qualquer
+// das 4 posições conhecidas, case-insensitive.
+function isAudioMessage(body) {
+  if (!body) return false;
+  const candidates = [
+    body.messageType,
+    body.message?.messageType,
+    body.message?.mediaType,
+    body.chat?.wa_lastMessageType,
+  ].filter(Boolean).map(String);
+  return candidates.some(c => /^(audio|ptt|myaudio|audiomessage)$/i.test(c));
 }
 
 /**
