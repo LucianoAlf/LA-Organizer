@@ -1,0 +1,111 @@
+feat(sprint4): RLS hardening multiusuário + TOM aprende events + docs congeladas
+
+🛡 RLS hardening (prioridade 1)
+
+Auditoria completa: 30 tabelas, 41 policies em pg_policies. Encontrados 5
+leaks pré-existentes (silenciosos desde Sprint 0–2) + 2 gaps funcionais.
+
+Migration sprint4_rls_hardening_leaks corrige:
+- collaborators.auth_read_collaborators: qual=true vazava PII de TODOS
+  os collaborators para qualquer authenticated → restrito a self por
+  email OR coord/director.
+- project_checkpoints.auth_read_project_checkpoints: qual=true vazava
+  todos os checkpoints → filtra por project_id IN (projetos visíveis ao
+  user via owner/membership/coord).
+- project_members.auth_read_project_members: qual=true vazava grafo
+  organizacional → self OR projetos visíveis OR coord/director.
+- marker_logs: RLS estava DESABILITADO → habilitado + service_role-only
+  (TOM-internal telemetry).
+- task_reminders: RLS estava DESABILITADO → habilitado + service_role-
+  only (TOM-internal scheduling).
+
+Gaps funcionais cobertos:
+- ritual_logs ganha auth_read_own_ritual_logs (collaborator_id=self).
+  PWA Histórico depende disso.
+- user_preferences ganha auth_insert_own_prefs (self-onboarding futuro).
+
+Harness automatizado em scripts/rls-test.js (Node CommonJS):
+- Cria 4 test users (alice, bob, coord, dir) via auth.admin
+- Popula 8 fixtures (work + personal × tasks + events para alice e bob)
+- Faz signInWithPassword como cada user e valida 16 invariantes:
+  • collab nunca vê tasks/events de outro collab (qualquer context)
+  • coord vê work do time, NÃO vê personal
+  • director: mesma regra
+  • tabelas TOM-only (conversation_history, collaborator_memory,
+    notifications, marker_logs, task_reminders, auth_magic_codes)
+    bloqueadas para authenticated
+  • collaborators só lista self ou todo o time (se coord)
+  • project_checkpoints sem leak
+- Cleanup integral mesmo se asserts falham
+- Resultado pós-fix: 16 pass, 0 fail
+- Rodar: ssh tom 'cd /opt/LA-Organizer && SUPABASE_ANON_KEY=... \
+                  node scripts/rls-test.js'
+
+docs/RLS-MATRIX.md (novo): contrato vigente CONGELADO. Princípios,
+roles, helpers (current_collab_id, current_collab_role), tabela final
+de SELECT/INSERT/UPDATE/DELETE por papel, lista de invariantes que
+viram asserções no harness. Política: zero policies "FOR ALL TO public
+USING (true)" (regressão Sprint 3 era exatamente esse padrão).
+
+🤖 TOM aprende a criar events (prioridade 2)
+
+skills/criar-compromisso.md (novo) — skill ativada por padrões em
+pickSkill priority 4.9 (antes de checklist-tarefas):
+- termo de evento (reunião|aula|ensaio|mentoria|sessão|encontro|
+  gravação|masterclass|consulta|compromisso) + horário, OU
+- range explícito "das 10 às 11", OU
+- verbo agendar + horário + (termo de evento OU modalidade).
+
+Em dúvida, fallback para checklist-tarefas (cria task com remind_at).
+Aceitável durante o bridge.
+
+src/engine.js:
+- VALID_EVENT_MODALITIES + VALID_EVENT_CATEGORIES + ISO_DATETIME_RE
+- parseEventCreateMarker → valida title, ISO -03:00, end>start,
+  modality enum, category enum, meeting_url só online/hibrido.
+- applyEventActions → insert em events com source='tom',
+  context default por categoria (pessoal→personal, demais→work).
+- Bloco 2.65 no main loop (entre Habit e WeeklyPlan), com logMarker
+  EVENT_CREATE, fallback "_não consegui salvar o compromisso_" se
+  todos falharem.
+
+src/prompts/system.js:
+- fetchCollaboratorContext fetcha events do dia (start_at no
+  range America/Sao_Paulo, neq cancelled, ordem start_at).
+- buildContext renderiza bloco "Compromissos hoje" entre Tarefas e
+  Projetos: "• [id=...] HH:MM–HH:MM 💻/🔀/🏢 título · category · local".
+- Filtro por ritual: briefing_pessoal só personal; briefing_trabalho/
+  fechamento só work; demais → todos.
+- log line ganha campo events: N.
+
+🔑 Secrets rotation (operacional)
+
+docs/secret-rotation.md ganha header "Estado em 28/04/2026":
+- Veredicto: runbook fechado e operacional.
+- Snapshot fingerprints atuais (sha256 truncado) das chaves em uso:
+  SUPABASE_SERVICE_ROLE_KEY 9449de095236, UAZAPI_TOKEN 8f75f8571b1f,
+  OPENAI_API_KEY 35a73055ccf7. ANTHROPIC e WEBHOOK_SECRET vazios
+  por design / pendência fora da sprint.
+- Validações pós-Sprint 4: .env perms 600, validate-rotation.sh
+  presente, 16/16 RLS verdes, 0 policies leaky.
+- Próxima rotação só quando hygiene 90d, suspeita de leak, ou ativação
+  de WEBHOOK_SECRET.
+
+📚 Docs
+
+- docs/RLS-MATRIX.md (novo) — contrato vigente CONGELADO
+- docs/TOM-AGENTS.md — bloco "Compromissos (events) — Sprint 4"
+- docs/TOM-SKILLS-CATALOG.md — section 2.5 "Criar compromisso (event)"
+- docs/MODELO-EVENTS-VS-TASKS.md — FAQ "TOM cria reuniões como task"
+  marcado como resolvido + heurística de pickSkill documentada
+- docs/secret-rotation.md — snapshot Sprint 4
+- web/README.md — Sprint 4 section completa com leaks, harness, TOM events
+- scripts/rls-test.js (novo) — harness automatizado
+- scripts/commit-msg-sprint4.txt (este)
+
+✅ Smoke E2E
+
+- 16/16 invariantes RLS passam (regressão pós-deploy)
+- TOM PM2 reload limpo, sem erros novos
+- Schema events aceita source='tom' (constraint check)
+- node --check engine.js + system.js: SYNTAX_OK

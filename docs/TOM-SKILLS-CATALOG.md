@@ -70,6 +70,30 @@ Capacidades futuras, hipóteses de skill ou mecanismos ainda não consolidados.
 
 ---
 
+## 2.5 Criar compromisso (event)
+**Arquivo:** `skills/criar-compromisso.md`
+
+**Função:** criar compromisso (evento com horário) — distinto de tarefa. Adicionada na Sprint 4 quando TOM passou a aprender a emitir `<<EVENT_CREATE>>`.
+
+**Ativa quando** (em `pickSkill` priority 4.9, **antes** de `checklist-tarefas`):
+- termo de evento (reunião, aula, ensaio, mentoria, sessão, encontro, gravação, masterclass, consulta, compromisso) **+ horário**
+- range explícito ("das 10 às 11")
+- verbo agendar + horário + (termo de evento OU modalidade)
+
+Em dúvida, fallback para `checklist-tarefas` (cria task com `remind_at` se for o caso).
+
+**Entrega principal:**
+- valida `start_at`, `end_at` (ISO -03:00, end > start)
+- valida `modality` ∈ {presencial, online, hibrido}
+- valida `category` ∈ {la_music, mentoria, aula_particular, outra_escola, estudio, pessoal}
+- emite `<<EVENT_CREATE>>` com schema completo
+
+**Privacidade:** `category=pessoal` → engine grava `context=personal` automaticamente. Demais → `context=work`. Mesma regra do PWA.
+
+**Veto:** nunca emite `meeting_url` em compromisso `presencial`. Nunca emite `<<EVENT_CREATE>>` e `<<TASK_UPDATE>>` na mesma resposta — escolhe um.
+
+---
+
 ## 3. Broadcast
 **Arquivo:** `skills/broadcast.md`
 

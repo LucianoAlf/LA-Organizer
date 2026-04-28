@@ -104,7 +104,7 @@ function nameFor(collab) {
 }
 
 // ---------- BLOCK 3 — CONTEXTO (dynamic, ~1KB) ----------
-function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habits) {
+function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habits, events) {
   const nickname = nameFor(collab);
   const lines = ['# 📌 CONTEXTO DESTA INTERAÇÃO', ''];
   const fn = collab.function_title ? ', ' + collab.function_title : '';
@@ -148,6 +148,20 @@ function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habi
   } else if (tasks && tasks.length) {
     lines.push('', '**Tarefas hoje:**');
     renderTaskList(tasks);
+  }
+
+  // Compromissos hoje (events com horário). Ordenados por start_at.
+  if (events && events.length) {
+    lines.push('', `**Compromissos hoje (${events.length}):**`);
+    events.slice(0, 8).forEach(e => {
+      const sid = String(e.id || '').slice(0, 8);
+      const start = String(e.start_at || '').slice(11, 16);
+      const end = String(e.end_at || '').slice(11, 16);
+      const mod = e.modality === 'online' ? '💻' : e.modality === 'hibrido' ? '🔀' : '🏢';
+      const cat = e.category ? ` · ${e.category}` : '';
+      const where = e.location_text ? ` · ${e.location_text}` : '';
+      lines.push(`• [id=${sid}] ${start}–${end} ${mod} ${e.title}${cat}${where}`);
+    });
   }
 
   if (projects && projects.length) {
@@ -249,6 +263,24 @@ function pickSkill(collab, lastUserMessage, recentHistory) {
     return { name: 'habitos-pessoais', body: loadSkill('habitos-pessoais') };
   }
 
+  // Priority 4.9: compromisso (evento com horário). Antes de tasks porque "marca reunião 14h" é event, não task.
+  // Sinais: termo de evento (reunião|aula|ensaio|mentoria|sessão|encontro|gravação|masterclass) + horário,
+  //         OU range explícito ("das 10 às 11"),
+  //         OU verbo agendar + horário + (termo de evento|modalidade).
+  {
+    const eventTermRe = /\b(reuni[ãa]o|aula|ensaio|mentoria|sess[ãa]o|encontro|grava[çc][ãa]o|masterclass|apresenta[çc][ãa]o|consulta|compromisso)\b/i;
+    const hourRe = /\b\d{1,2}(?::\d{2})?\s*h(?:oras?)?\b|\b[àa]s\s+\d{1,2}\b/i;
+    const rangeRe = /\bdas?\s+\d{1,2}h?(?::\d{2})?\s+(?:[àa]s|at[eé])\s+\d{1,2}h?(?::\d{2})?\b/i;
+    const modalityRe = /\b(online|presencial|h[ií]brido|google\s*meet|zoom|teams|jitsi)\b/i;
+    const scheduleVerbRe = /\b(marca|marcar|agend[ao]r?)\b/i;
+    const lm = lastUserMessage || '';
+    if (rangeRe.test(lm) ||
+        (eventTermRe.test(lm) && hourRe.test(lm)) ||
+        (scheduleVerbRe.test(lm) && hourRe.test(lm) && (eventTermRe.test(lm) || modalityRe.test(lm)))) {
+      return { name: 'criar-compromisso', body: loadSkill('criar-compromisso') };
+    }
+  }
+
   // Priority 5: task management intent. Includes create/remind/reschedule/complete/delegate/extension signals,
   // PLUS new-demand signals (surgiu, preciso falar, tem que resolver, fala com, etc).
   if (/\b(fiz|terminei|feito|completei|fechei|reagenda|adia|adiar|delega|surgiu|anota|me\s+lembra|lembra(?:r|nça)|lembra\s+(?:de|do|da)\s+\w|lembrete|me\s+chama|daqui\s+a?\s*\d|em\s+\d+\s*(min|hora|h)|p[oó]e\s+na\s+lista|adiciona|marca\s+(?:reuni|m[eé]dico|consulta|hor[áa]rio)|muda\s+(?:a|o|pra)|deixa\s+pra|n[aã]o\s+vou\s+conseguir|preciso\s+de\s+mais\s+prazo|n[aã]o\s+(?:dá|vai\s+dar)\s+at[eé]|estender\s+(?:o\s+)?prazo|aprov[ao]r|negar|nego\s+a)/i.test(lastUserMessage || '')) {
@@ -282,6 +314,7 @@ async function fetchCollaboratorContext(collaborator) {
     notificationsRes,
     historyRes,
     habitsRes,
+    eventsRes,
   ] = await Promise.all([
     supabase.from('collaborator_profiles').select('*').eq('collaborator_id', id).maybeSingle(),
     supabase.from('collaborator_memory')
@@ -311,6 +344,14 @@ async function fetchCollaboratorContext(collaborator) {
       .select('id, name, icon, current_streak, frequency, reminder_time')
       .eq('collaborator_id', id).eq('is_active', true)
       .order('created_at', { ascending: true }).limit(20),
+    // Compromissos de HOJE em America/Sao_Paulo (-03:00). Inclui scheduled e done.
+    supabase.from('events')
+      .select('id, title, start_at, end_at, modality, category, context, location_text, meeting_url, status')
+      .eq('collaborator_id', id)
+      .gte('start_at', `${today}T00:00:00-03:00`)
+      .lte('start_at', `${today}T23:59:59-03:00`)
+      .neq('status', 'cancelled')
+      .order('start_at', { ascending: true }).limit(20),
   ]);
 
   let activeProjects = [];
@@ -337,6 +378,7 @@ async function fetchCollaboratorContext(collaborator) {
     notifications: notificationsRes.data || [],
     recentMessages: (historyRes.data || []).reverse(),
     habits: habitsRes.data || [],
+    todayEvents: eventsRes.data || [],
     todayDate: today,
   };
 }
@@ -377,7 +419,13 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   const showHabits = (rt === 'briefing_pessoal' || rt === 'personal_briefing') ||
     (skill && skill.name === 'habitos-pessoais');
   const habitsForCtx = showHabits ? (ctx.habits || []) : [];
-  const baseCtx = buildContext(collaborator, ctx.memories, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx);
+  // Events split por ritual: briefing_pessoal → só personal; briefing_trabalho/fechamento → só work; demais → todos.
+  let eventsForCtx = ctx.todayEvents || [];
+  if (rt === 'briefing_pessoal') eventsForCtx = eventsForCtx.filter(e => e.context === 'personal');
+  else if (rt === 'briefing_trabalho' || rt === 'fechamento' || rt === 'daily_briefing' || rt === 'daily_closing') {
+    eventsForCtx = eventsForCtx.filter(e => e.context === 'work');
+  }
+  const baseCtx = buildContext(collaborator, ctx.memories, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx);
   const pending = renderPendingDecisions(ctx.notifications);
   const ctxBlock = pending ? baseCtx + '\n' + pending : baseCtx;
 
@@ -391,7 +439,8 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   const systemPrompt = blocks.join('\n\n---\n\n');
 
   const totalTasks = (ctx.personalTasks?.length || 0) + (ctx.workTasks?.length || 0);
-  console.log(`[Prompt] size: ${systemPrompt.length} chars (skill: ${skill ? skill.name : 'none'}, history: ${hist.length}, memories: ${ctx.memories.length}, tasks: ${totalTasks}/p${ctx.personalTasks?.length || 0}/w${ctx.workTasks?.length || 0}, ritual: ${rt || '-'})`);
+  const evCount = (ctx.todayEvents || []).length;
+  console.log(`[Prompt] size: ${systemPrompt.length} chars (skill: ${skill ? skill.name : 'none'}, history: ${hist.length}, memories: ${ctx.memories.length}, tasks: ${totalTasks}/p${ctx.personalTasks?.length || 0}/w${ctx.workTasks?.length || 0}, events: ${evCount}, ritual: ${rt || '-'})`);
 
   // Compatibility: engine.js destructures { systemPrompt, ctx } and reads ctx.memories,
   // ctx.todayTasks, ctx.notifications, ctx.recentMessages.
@@ -413,7 +462,7 @@ function composeSystemPrompt(collaborator, ctx) {
   const blocks = [
     BLOCK_RULES,
     BLOCK_IDENTITY,
-    buildContext(collaborator, ctx.memories || [], ctx.prefs, ctx.todayTasks || [], ctx.activeProjects || [], lastMsgAge, ctx.habits || []),
+    buildContext(collaborator, ctx.memories || [], ctx.prefs, ctx.todayTasks || [], ctx.activeProjects || [], lastMsgAge, ctx.habits || [], ctx.todayEvents || []),
     skillBlock,
   ].filter(Boolean);
   return blocks.join('\n\n---\n\n');

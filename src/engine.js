@@ -52,6 +52,9 @@ const VALID_TASK_ACTIONS = new Set([
   'extension_request', 'extension_decision',
 ]);
 const VALID_COACHING = ['light', 'normal', 'hard'];
+const VALID_EVENT_MODALITIES = new Set(['online', 'presencial', 'hibrido']);
+const VALID_EVENT_CATEGORIES = new Set(['la_music', 'mentoria', 'aula_particular', 'outra_escola', 'estudio', 'pessoal']);
+const ISO_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})$/;
 
 function logSchemaErr(marker, errors, raw) {
   try {
@@ -213,6 +216,92 @@ function parseTaskUpdateMarker(text) {
   if (dropped.length) logSchemaErr('TASK_UPDATE', dropped, parsed);
   if (!valid.length) return { malformed: true, cleanText };
   return { actions: valid, cleanText, malformed: false };
+}
+
+// Parse <<EVENT_CREATE>>[...]<<END>> — TOM emite evento (compromisso com horário).
+// Schema mínimo por item:
+//   title, start_at (ISO -03:00), end_at (ISO -03:00), modality, category
+//   opcionais: context, location_text, meeting_url, description, project_id
+// `category=pessoal` força `context=personal` por default (regra UX consistente com PWA).
+function validateEventItem(e) {
+  if (!e || typeof e !== 'object') return 'not_object';
+  if (typeof e.title !== 'string' || !e.title.trim()) return 'title:missing';
+  if (typeof e.start_at !== 'string' || !ISO_DATETIME_RE.test(e.start_at)) return 'start_at:invalid';
+  if (typeof e.end_at !== 'string' || !ISO_DATETIME_RE.test(e.end_at)) return 'end_at:invalid';
+  if (new Date(e.end_at).getTime() <= new Date(e.start_at).getTime()) return 'end_before_start';
+  if (typeof e.modality !== 'string' || !VALID_EVENT_MODALITIES.has(e.modality)) return 'modality:invalid';
+  if (typeof e.category !== 'string' || !VALID_EVENT_CATEGORIES.has(e.category)) return 'category:invalid';
+  if (e.modality === 'presencial' && e.meeting_url) return 'presencial_with_meeting_url';
+  if (e.context !== undefined && e.context !== 'work' && e.context !== 'personal') return 'context:invalid';
+  return null;
+}
+
+function parseEventCreateMarker(text) {
+  if (!text) return null;
+  const re = /<<EVENT_CREATE>>\s*([\s\S]*?)\s*<<END>>/i;
+  const m = text.match(re);
+  if (!m) return null;
+  const cleanText = text.replace(re, '').trim();
+  let parsed;
+  try {
+    parsed = JSON.parse(m[1].trim());
+  } catch (err) {
+    logSchemaErr('EVENT_CREATE', ['invalid_json: ' + err.message], m[1]);
+    return { malformed: true, cleanText };
+  }
+  const items = Array.isArray(parsed) ? parsed : [parsed];
+  const valid = [];
+  const dropped = [];
+  for (let i = 0; i < items.length; i++) {
+    const why = validateEventItem(items[i]);
+    if (why) dropped.push(`item[${i}]:${why}`);
+    else valid.push(items[i]);
+  }
+  if (dropped.length) logSchemaErr('EVENT_CREATE', dropped, parsed);
+  if (!valid.length) return { malformed: true, cleanText };
+  return { events: valid, cleanText, malformed: false };
+}
+
+async function applyEventActions(collaborator, events) {
+  let okCount = 0, failCount = 0;
+  const last4 = String(collaborator.phone || '').slice(-4);
+  for (const e of events) {
+    try {
+      const ctx = e.context || (e.category === 'pessoal' ? 'personal' : 'work');
+      const row = {
+        title: e.title.trim().slice(0, 200),
+        description: typeof e.description === 'string' ? e.description.slice(0, 1000) : null,
+        collaborator_id: collaborator.id,
+        created_by: collaborator.id,
+        context: ctx,
+        category: e.category,
+        start_at: e.start_at,
+        end_at: e.end_at,
+        modality: e.modality,
+        location_text: typeof e.location_text === 'string' ? e.location_text.slice(0, 200) : null,
+        meeting_url: typeof e.meeting_url === 'string' ? e.meeting_url.slice(0, 500) : null,
+        project_id: typeof e.project_id === 'string' ? e.project_id : null,
+        status: 'scheduled',
+        source: 'tom',
+      };
+      const { data, error } = await supabase
+        .from('events')
+        .insert(row)
+        .select('id')
+        .single();
+      if (error) {
+        console.error('[Event] create err:', error.message);
+        failCount++;
+        continue;
+      }
+      console.log(`[Event] create "${row.title.slice(0, 60)}" cat=${row.category} mod=${row.modality} ctx=${ctx} by ${last4} (id=${String(data?.id || '').slice(0, 8)})`);
+      okCount++;
+    } catch (err) {
+      console.error('[Event] throw err:', err.message);
+      failCount++;
+    }
+  }
+  return { okCount, failCount };
 }
 
 // Parse <<WEEKLY_PLAN>>{...}<<END>> — weekly planning marker.
@@ -1408,6 +1497,27 @@ async function processMessage(phone, text, raw = {}) {
       let base = parsedHab.cleanText || '';
       if (failCount > 0 && okCount === 0) {
         base = (base ? base + '\n\n' : '') + '_não consegui registrar agora, te aviso depois_';
+      }
+      reply = base || reply;
+    }
+  }
+
+  // 2.65) Event create — compromissos com horário (Sprint 4+).
+  {
+    const parsedEv = parseEventCreateMarker(reply);
+    if (parsedEv && parsedEv.malformed) {
+      console.warn('[Event] WARN: malformed marker, dropping block');
+      await logMarker(collab.id, 'EVENT_CREATE', 'rejected', 'schema_invalid', reply);
+      reply = parsedEv.cleanText || reply;
+    } else if (parsedEv) {
+      const { okCount, failCount } = await applyEventActions(collab, parsedEv.events);
+      console.log(`[Event] batch done: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
+      const result = okCount > 0 ? 'executed' : 'rejected';
+      const reason = okCount > 0 ? `ok=${okCount} fail=${failCount}` : `all_failed:${failCount}`;
+      await logMarker(collab.id, 'EVENT_CREATE', result, reason, null);
+      let base = parsedEv.cleanText || '';
+      if (failCount > 0 && okCount === 0) {
+        base = (base ? base + '\n\n' : '') + '_não consegui salvar o compromisso, te aviso depois_';
       }
       reply = base || reply;
     }

@@ -2,6 +2,32 @@
 
 Procedimento para rotacionar `SUPABASE_SERVICE_ROLE_KEY` e `UAZAPI_TOKEN` quando vazaram (ou periodicamente, como hygiene).
 
+---
+
+## Estado em 28/04/2026 (Sprint 4)
+
+**Veredicto:** runbook **fechado e operacional**. Nenhuma ação pendente do lado do agente. Próxima rotação só precisa ser executada manualmente quando: (a) hygiene de 90 dias bater, (b) suspeita de novo vazamento, ou (c) `WEBHOOK_SECRET` for ativado (fora desta sprint).
+
+**Snapshot atual (linha de base para a próxima execução):**
+
+| Variável | sha256 (12) | length | Estado |
+|---|---|---|---|
+| `SUPABASE_SERVICE_ROLE_KEY` | `9449de095236` | 219 | rotacionado anteriormente |
+| `UAZAPI_TOKEN` | `8f75f8571b1f` | 36 | rotacionado anteriormente |
+| `OPENAI_API_KEY` | `35a73055ccf7` | 164 | em uso (Whisper) |
+| `ANTHROPIC_API_KEY` | — | 0 | vazio (TOM usa Claude CLI — OK por design) |
+| `WEBHOOK_SECRET` | — | 0 | vazio (HMAC do webhook UAZAPI ainda não ativado) |
+
+**Validações automáticas confirmadas hoje:**
+- `/opt/LA-Organizer/.env` perms = 600 ✅
+- `scripts/validate-rotation.sh` presente na VPS ✅
+- 16/16 invariantes RLS verdes em `scripts/rls-test.js` ✅
+- 0 policies leaky (`pg_policies WHERE qual='true' AND public=ANY(roles)`) ✅
+
+**Por que o agente não executou rotação:** exige acesso a dashboard Supabase + painel UAZAPI (operação humana fora do shell). O runbook abaixo é canônico — nada a automatizar sem manipular segredos.
+
+---
+
 ## Quando aplicar
 
 - Suspeita ou evidência de vazamento (commit acidental, log, screenshot público)

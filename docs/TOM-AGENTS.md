@@ -61,6 +61,14 @@ A cada mensagem recebida, antes de responder:
 - ✅ Criar tarefa atribuída a outro colaborador (`<<TASK_UPDATE>> create + to_name`)
 - ✅ Delegar tarefa existente pra outro colaborador (`<<TASK_UPDATE>> delegate + to_name`)
   - Para nome ambíguo (ex: dois "João"), perguntar antes de emitir o marker.
+
+### Compromissos (events) — Sprint 4
+- ✅ Criar compromisso pelo TOM via skill `criar-compromisso` → marker `<<EVENT_CREATE>>`.
+- Disparada quando: termo de evento (reunião|aula|ensaio|mentoria|sessão|encontro|gravação|masterclass|consulta) **+ horário**, OU range "das X às Y", OU verbo agendar + horário + (termo de evento OU modalidade).
+- Schema validado pelo engine: `title`, `start_at`/`end_at` ISO `-03:00` (end > start), `modality` ∈ {presencial, online, hibrido}, `category` ∈ {la_music, mentoria, aula_particular, outra_escola, estudio, pessoal}, opcionais `location_text`, `meeting_url` (apenas online/hibrido), `description`, `project_id`, `context`.
+- Privacidade: `category=pessoal` → `context=personal` (default); demais → `context=work`. Mesmo contrato do PWA.
+- Briefings agora exibem **Compromissos hoje** entre tarefas e projetos, ordenados por horário, com filtro por ritual (briefing_pessoal só personal; briefing_trabalho/fechamento só work).
+- TOM escreve `events.source='tom'`. PWA escreve `events.source='manual'`. Distinção preservada para auditoria.
 - ✅ Receber **resumo do time** (auto, weekdays 19:30) — visão diária do estado da equipe.
 - ✅ Receber **retrospectiva semanal** (auto, domingo 18:00) — visão consolidada da semana.
 

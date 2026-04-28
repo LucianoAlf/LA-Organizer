@@ -10,7 +10,7 @@ Frontend mobile-first do TOM. **Espelho visual do banco** — não duplica regra
 - **Sprint 1** — Configurações, Histórico, criar tarefa rápida, reagendar, privacy hardening ✅
 - **Sprint 2** — Magic link via WhatsApp (canônico), URL pública via Cloudflare tunnel, fallback email/password, piloto multiusuário real ✅
 - **Sprint 3** — Modelo `events` separado de `tasks` + criação unificada (Tarefa | Compromisso) + categorias + RLS hardening crítico ✅
-- Próximo: Sprint 4 (a planejar)
+- **Sprint 4** — Auditoria + hardening RLS multiusuário (5 leaks fechados, 16 invariantes verdes em `scripts/rls-test.js`), `docs/RLS-MATRIX.md` congelada. TOM aprende a criar compromissos via marker `<<EVENT_CREATE>>` (skill `criar-compromisso`); briefings exibem **Compromissos hoje** com horário/modalidade ✅
 
 ---
 
@@ -143,6 +143,20 @@ Fluxo:
 - **Projeto detalhe** — header com progresso + 4 tabs (Resumo / Checkpoints / Tarefas / Time)
 - **Dashboard do time** (`/time`, coord+ only) — stat cards + listas respondeu/sem-resposta + atrasos por pessoa. Privacy contract enforçado.
 - **Mais** (`/mais`) — entry point para itens P1+, toggle tema, sair
+
+### Sprint 4
+
+- **Auditoria RLS completa** — 30 tabelas / 41 policies mapeadas. `docs/RLS-MATRIX.md` é o contrato vigente, congelado, com matriz de SELECT/INSERT/UPDATE/DELETE por papel.
+- **Harness automatizado** — `scripts/rls-test.js` cria 4 test users (alice, bob, coord, dir) + 8 fixtures e valida 16 invariantes de privacidade (collab×collab, coord×personal, tabelas TOM-only, regressão Sprint 3). Rodar: `ssh tom 'cd /opt/LA-Organizer && SUPABASE_ANON_KEY=... node scripts/rls-test.js'`. Cleanup integral mesmo se falha.
+- **5 leaks fechados** (migration `sprint4_rls_hardening_leaks`):
+  - `collaborators` — `qual=true` vazava PII de todos → restrito a self por email OR coord/director.
+  - `project_checkpoints` — vazava todos → filtra por projetos visíveis.
+  - `project_members` — vazava grafo → self OR projetos visíveis OR coord/director.
+  - `marker_logs` — RLS desligado → habilitado, service_role-only.
+  - `task_reminders` — RLS desligado → habilitado, service_role-only.
+- **2 gaps funcionais cobertos** — `auth_read_own_ritual_logs` (PWA Histórico precisa) + `auth_insert_own_prefs` (self-onboarding futuro).
+- **TOM cria compromissos** — nova skill `criar-compromisso` ativada por padrões em `pickSkill` priority 4.9 (termo de evento+horário, range "das X às Y", verbo agendar+horário+modalidade). Engine valida schema (`title`, ISO -03:00 com end>start, `modality` enum, `category` enum, `meeting_url` só online/hibrido) e insere com `source='tom'`.
+- **Briefings reconhecem events** — `fetchCollaboratorContext` adiciona `todayEvents`. `buildContext` renderiza bloco "Compromissos hoje" entre Tarefas e Projetos, ordenado por horário, com filtro por ritual (briefing_pessoal só personal; trabalho/fechamento só work).
 
 ### Sprint 3
 

@@ -176,4 +176,11 @@ A: Evento `presencial` com `meeting_url` é semanticamente errado — preserva a
 A: Coord vê. Risco aceito Sprint 3. Sprint 4+ pode introduzir lembrete UI ou toggle explícito.
 
 **Q: TOM cria reuniões como task. Quando isso muda?**
-A: Sprint 4+ ou quando engine refactor for prioridade. Bridge documentado.
+A: ~~Sprint 4+ ou quando engine refactor for prioridade. Bridge documentado.~~ **Resolvido na Sprint 4** — TOM agora emite `<<EVENT_CREATE>>` via skill `criar-compromisso`. Bridge encerrado para criação. Migração das tasks com `reminders_at[]` antigas em events permanece fora do escopo (são raras e o usuário pode reagendar manualmente).
+
+**Q: Como o engine reconhece compromisso vs tarefa?**
+A: Pickskill detecta padrões em `priority 4.9`:
+- termo de evento (reunião|aula|ensaio|mentoria|sessão|encontro|gravação|masterclass|consulta) + horário, OU
+- range explícito "das X às Y", OU
+- verbo agendar + horário + (termo de evento ou modalidade).
+Se nenhum match, fallback é `checklist-tarefas` (`<<TASK_UPDATE>>`). Em dúvida, prefere tarefa — minimiza falso-positivo de criar event sem horário válido.
