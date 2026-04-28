@@ -102,7 +102,25 @@ async function seedFixtures(U) {
     const { error } = await admin.from(f.table).insert(f.row);
     if (error) throw new Error(`seed ${f.table}: ${error.message}`);
   }
-  console.log(`  + ${fixtures.length} fixtures`);
+
+  // Project + project_member (closes Sprint 4 RLS coverage gap that allowed
+  // the project_members policy to ship with self-referencing subquery).
+  const todayDate = today;
+  const { data: proj, error: pErr } = await admin.from('projects').insert({
+    name: `${TAG} project`,
+    start_date: todayDate, end_date: todayDate,
+    category: 'operational', status: 'active', progress_percent: 0,
+    color: '#E91451', created_by: U.alice.collab_id,
+  }).select('id').single();
+  if (pErr) throw new Error(`seed projects: ${pErr.message}`);
+  const projectId = proj.id;
+  const { error: pmErr } = await admin.from('project_members').insert({
+    project_id: projectId, collaborator_id: U.alice.collab_id, role_in_project: 'leader',
+  });
+  if (pmErr) throw new Error(`seed project_members: ${pmErr.message}`);
+  // Stash for cleanup + checks.
+  U._projectId = projectId;
+  console.log(`  + ${fixtures.length} fixtures + 1 project + 1 membership`);
 }
 
 async function clientFor(email) {
@@ -187,6 +205,19 @@ async function runChecks(U) {
     check('coord lê ritual_logs do time (>=2)', (data || []).length >= 2, `viu ${(data||[]).length}`);
   }
 
+  console.log('\n[invariantes] project_members (anti-recursion — Sprint 6 hot-fix)');
+  {
+    // Reproduzir o caminho que provocava "infinite recursion detected in policy
+    // for relation project_members": query em tasks com join em projects, como
+    // PWA faz no /hoje. Antes do hot-fix, retornava error; depois deve OK.
+    const { data, error } = await alice.from('tasks').select('id, title, projects(name)').limit(5);
+    check('alice query tasks JOIN projects sem recursion', !error, error ? error.message : `viu ${(data||[]).length}`);
+  }
+  {
+    const { data, error } = await alice.from('project_members').select('project_id, collaborator_id, role_in_project');
+    check('alice lê project_members próprios sem recursion', !error, error ? error.message : `viu ${(data||[]).length}`);
+  }
+
   console.log('\n[invariantes] project_checkpoints (não-leak)');
   {
     // se houver checkpoints em projetos onde alice não é membro, alice não deve ver
@@ -216,6 +247,10 @@ async function runChecks(U) {
 
 async function cleanup(U) {
   console.log('\n[cleanup] removendo fixtures + users...');
+  if (U && U._projectId) {
+    await admin.from('project_members').delete().eq('project_id', U._projectId);
+    await admin.from('projects').delete().eq('id', U._projectId);
+  }
   await admin.from('ritual_logs').delete().like('detail', `${TAG}%`);
   await admin.from('events').delete().like('title', `${TAG}%`);
   await admin.from('tasks').delete().like('title', `${TAG}%`);
