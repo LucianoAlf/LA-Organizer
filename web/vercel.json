@@ -7,6 +7,10 @@
   "devCommand": "npm run dev",
   "rewrites": [
     {
+      "source": "/internal/:path*",
+      "destination": "http://89.116.73.186/internal/:path*"
+    },
+    {
       "source": "/((?!.*\\.).*)",
       "destination": "/index.html"
     }

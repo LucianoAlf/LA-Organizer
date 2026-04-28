@@ -5,6 +5,7 @@ import { Login } from './screens/Login';
 import { Hoje } from './screens/Hoje';
 import { Semana } from './screens/Semana';
 import { Projetos } from './screens/Projetos';
+import { NovoProjeto } from './screens/NovoProjeto';
 import { ProjetoDetalhe } from './screens/ProjetoDetalhe';
 import { Mais } from './screens/Mais';
 import { DashboardTime } from './screens/DashboardTime';
@@ -23,6 +24,7 @@ export default function App() {
           <Route path="hoje" element={<Hoje />} />
           <Route path="semana" element={<Semana />} />
           <Route path="projetos" element={<Projetos />} />
+          <Route path="projetos/novo" element={<NovoProjeto />} />
           <Route path="projetos/:id" element={<ProjetoDetalhe />} />
           <Route path="mais" element={<Mais />} />
           <Route path="configuracoes" element={<Configuracoes />} />

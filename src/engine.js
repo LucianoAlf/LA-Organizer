@@ -348,6 +348,151 @@ function parseEventUpdateMarker(text) {
   return { actions: valid, cleanText, malformed: false };
 }
 
+// ---------- Sprint 8: aprovação/rejeição de projeto pendente ----------
+// Skill `aprovar-projeto` emite o token literal que o usuário digitou
+// (APROVA SARAU). Engine resolve token → projeto pendente único.
+const APPROVAL_STOPWORDS = new Set([
+  'LA','DA','DE','DO','DOS','DAS','O','A','OS','AS','UM','UMA',
+  'NO','NA','EM','COM','PARA','POR','E','OU','SEM','SOB','PELO','PELA',
+]);
+function extractApprovalToken(name) {
+  const upper = String(name || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase();
+  const words = upper.split(/\s+/).filter(Boolean);
+  for (const w of words) {
+    const cleaned = w.replace(/[^A-Z0-9]/g, '');
+    if (cleaned.length >= 3 && !APPROVAL_STOPWORDS.has(cleaned)) return cleaned;
+  }
+  return (words[0] || '').replace(/[^A-Z0-9]/g, '') || 'PROJETO';
+}
+
+function parseProjectApproveMarker(text) {
+  if (typeof text !== 'string') return null;
+  const re = /<<PROJECT_APPROVE>>\s*([\s\S]*?)\s*<<END>>/i;
+  const m = text.match(re);
+  if (!m) return null;
+  const cleanText = text.replace(re, '').trim();
+  let parsed;
+  try { parsed = JSON.parse(m[1].trim()); } catch (err) {
+    logSchemaErr('PROJECT_APPROVE', ['invalid_json: ' + err.message], m[1]);
+    return { malformed: true, cleanText };
+  }
+  const token = parsed && typeof parsed.token === 'string' ? parsed.token.trim().toUpperCase() : null;
+  if (!token) {
+    logSchemaErr('PROJECT_APPROVE', ['token:missing_or_invalid'], parsed);
+    return { malformed: true, cleanText };
+  }
+  return { token, cleanText, malformed: false };
+}
+
+function parseProjectRejectMarker(text) {
+  if (typeof text !== 'string') return null;
+  const re = /<<PROJECT_REJECT>>\s*([\s\S]*?)\s*<<END>>/i;
+  const m = text.match(re);
+  if (!m) return null;
+  const cleanText = text.replace(re, '').trim();
+  let parsed;
+  try { parsed = JSON.parse(m[1].trim()); } catch (err) {
+    logSchemaErr('PROJECT_REJECT', ['invalid_json: ' + err.message], m[1]);
+    return { malformed: true, cleanText };
+  }
+  const token = parsed && typeof parsed.token === 'string' ? parsed.token.trim().toUpperCase() : null;
+  const reason = parsed && typeof parsed.reason === 'string' ? parsed.reason.trim() : null;
+  if (!token) {
+    logSchemaErr('PROJECT_REJECT', ['token:missing_or_invalid'], parsed);
+    return { malformed: true, cleanText };
+  }
+  if (!reason) {
+    logSchemaErr('PROJECT_REJECT', ['reason:missing'], parsed);
+    return { malformed: true, cleanText };
+  }
+  return { token, reason, cleanText, malformed: false };
+}
+
+// Resolve token contra projetos pending_approval.
+// Retorna { match, ambiguous, none, projects } onde:
+//   match: o único projeto que casa, ou null
+//   ambiguous: true se 2+ projetos casam
+//   none: true se nenhum projeto casa
+async function resolveApprovalToken(token) {
+  const { data: pendings, error } = await supabase
+    .from('projects')
+    .select('id, name, justification, location, start_date, end_date, category, created_by')
+    .eq('status', 'pending_approval');
+  if (error) {
+    console.error('[Project] resolveApprovalToken err:', error.message);
+    return { match: null, ambiguous: false, none: false, error: error.message };
+  }
+  const matches = (pendings || []).filter(p => extractApprovalToken(p.name) === token);
+  if (matches.length === 0) return { match: null, ambiguous: false, none: true };
+  if (matches.length > 1) return { match: null, ambiguous: true, none: false, candidates: matches };
+  return { match: matches[0], ambiguous: false, none: false };
+}
+
+async function applyProjectApprove(collab, body) {
+  if (collab.role !== 'coordinator' && collab.role !== 'director') {
+    return { ok: false, reason: 'role_not_authorized', userMsg: '_aprovar projeto é só pra coord/diretor_' };
+  }
+  const r = await resolveApprovalToken(body.token);
+  if (r.error) return { ok: false, reason: `db_error:${r.error}`, userMsg: '_não consegui consultar agora, tenta de novo daqui a pouco_' };
+  if (r.none) return { ok: false, reason: `token_not_found:${body.token}`, userMsg: `_não tenho projeto pendente com nome \"${body.token}\". tem certeza?_` };
+  if (r.ambiguous) {
+    const names = (r.candidates || []).map(p => `*${p.name}*`).join(', ');
+    return { ok: false, reason: `ambiguous_token:${body.token}`, userMsg: `_tenho mais de um projeto começando com ${body.token}: ${names}. pode reescrever o nome inteiro?_` };
+  }
+  const project = r.match;
+  const { error: upErr } = await supabase
+    .from('projects')
+    .update({
+      status: 'planning',
+      requires_approval: false,
+      approved_by: collab.id,
+      approved_at: new Date().toISOString(),
+    })
+    .eq('id', project.id);
+  if (upErr) return { ok: false, reason: `update_error:${upErr.message}`, userMsg: '_não consegui salvar a aprovação, tenta de novo_' };
+
+  // Notifica criador
+  const { data: creator } = await supabase
+    .from('collaborators').select('phone, full_name').eq('id', project.created_by).single();
+  if (creator?.phone) {
+    const msg = `🎉 *${project.name}* foi aprovado por *${collab.full_name}*!\n\nO TOM já vai começar a estruturar e distribuir as tarefas.`;
+    whatsapp.sendMessage(creator.phone, msg).catch(e => console.error(`[Project] APPROVE WA creator err: ${e.message}`));
+  }
+  return { ok: true, project };
+}
+
+async function applyProjectReject(collab, body) {
+  if (collab.role !== 'coordinator' && collab.role !== 'director') {
+    return { ok: false, reason: 'role_not_authorized', userMsg: '_rejeitar projeto é só pra coord/diretor_' };
+  }
+  const r = await resolveApprovalToken(body.token);
+  if (r.error) return { ok: false, reason: `db_error:${r.error}`, userMsg: '_não consegui consultar agora, tenta de novo daqui a pouco_' };
+  if (r.none) return { ok: false, reason: `token_not_found:${body.token}`, userMsg: `_não tenho projeto pendente com nome \"${body.token}\". tem certeza?_` };
+  if (r.ambiguous) {
+    const names = (r.candidates || []).map(p => `*${p.name}*`).join(', ');
+    return { ok: false, reason: `ambiguous_token:${body.token}`, userMsg: `_tenho mais de um projeto começando com ${body.token}: ${names}. pode reescrever o nome inteiro?_` };
+  }
+  const project = r.match;
+  const reason = String(body.reason || '').slice(0, 1000);
+  const { error: upErr } = await supabase
+    .from('projects')
+    .update({
+      status: 'cancelled',
+      requires_approval: false,
+      rejection_reason: reason,
+    })
+    .eq('id', project.id);
+  if (upErr) return { ok: false, reason: `update_error:${upErr.message}`, userMsg: '_não consegui salvar a rejeição, tenta de novo_' };
+
+  const { data: creator } = await supabase
+    .from('collaborators').select('phone, full_name').eq('id', project.created_by).single();
+  if (creator?.phone) {
+    const msg = `❌ Seu projeto *${project.name}* foi rejeitado por *${collab.full_name}*.\n\n_Motivo:_ ${reason}\n\nSe quiser ajustar e tentar de novo, é só me chamar.`;
+    whatsapp.sendMessage(creator.phone, msg).catch(e => console.error(`[Project] REJECT WA creator err: ${e.message}`));
+  }
+  return { ok: true, project };
+}
+
 // Defesa-em-profundidade na resolução de short_id: filtra eventos do colaborador.
 async function resolveEventByShortId(collaboratorId, shortId) {
   if (!shortId || !SHORT_ID_RE.test(String(shortId))) return null;
@@ -1566,6 +1711,48 @@ async function processMessage(phone, text, raw = {}) {
         await logMarker(collab.id, 'PROJECT_CREATE', 'rejected', `persist_error:${err.message}`, null);
         const base = parsedProj.cleanText || '';
         reply = (base ? base + '\n\n' : '') + `⚠️ Não rolou criar agora. Tenta de novo daqui a pouco?`;
+      }
+    }
+  }
+
+  // 2.1) Project approve (Sprint 8). Skill aprovar-projeto emite token literal.
+  {
+    const parsedAp = parseProjectApproveMarker(reply);
+    if (parsedAp && parsedAp.malformed) {
+      console.warn('[Project] WARN: malformed PROJECT_APPROVE marker');
+      await logMarker(collab.id, 'PROJECT_APPROVE', 'rejected', 'schema_invalid', reply);
+      reply = parsedAp.cleanText || reply;
+    } else if (parsedAp) {
+      const r = await applyProjectApprove(collab, parsedAp);
+      if (!r.ok) {
+        await logMarker(collab.id, 'PROJECT_APPROVE', 'rejected', r.reason, null);
+        const base = parsedAp.cleanText || '';
+        reply = (base ? base + '\n\n' : '') + (r.userMsg || '_não consegui aprovar agora_');
+      } else {
+        await logMarker(collab.id, 'PROJECT_APPROVE', 'executed', `name:${r.project.name}`, null);
+        const base = parsedAp.cleanText || '';
+        reply = base || `✅ *${r.project.name}* aprovado. Avisei quem criou.`;
+      }
+    }
+  }
+
+  // 2.2) Project reject (Sprint 8).
+  {
+    const parsedRj = parseProjectRejectMarker(reply);
+    if (parsedRj && parsedRj.malformed) {
+      console.warn('[Project] WARN: malformed PROJECT_REJECT marker');
+      await logMarker(collab.id, 'PROJECT_REJECT', 'rejected', 'schema_invalid', reply);
+      reply = parsedRj.cleanText || reply;
+    } else if (parsedRj) {
+      const r = await applyProjectReject(collab, parsedRj);
+      if (!r.ok) {
+        await logMarker(collab.id, 'PROJECT_REJECT', 'rejected', r.reason, null);
+        const base = parsedRj.cleanText || '';
+        reply = (base ? base + '\n\n' : '') + (r.userMsg || '_não consegui rejeitar agora_');
+      } else {
+        await logMarker(collab.id, 'PROJECT_REJECT', 'executed', `name:${r.project.name}`, null);
+        const base = parsedRj.cleanText || '';
+        reply = base || `❌ *${r.project.name}* rejeitado. Avisei quem criou.`;
       }
     }
   }

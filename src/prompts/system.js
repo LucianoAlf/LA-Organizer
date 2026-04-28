@@ -218,6 +218,17 @@ function pickSkill(collab, lastUserMessage, recentHistory) {
     return { name: 'pausa-temporaria', body: loadSkill('pausa-temporaria') };
   }
 
+  // Priority 1.6 (Sprint 8): aprovação/rejeição de projeto pendente.
+  // Trigger forte: APROVA <NOME> ou REJEITA <NOME> motivo (case-insensitive).
+  // Trigger fraco: "aprovo"/"rejeito" solto — skill orienta a pedir identificador.
+  // Gate por role acontece dentro da skill também (defense in depth).
+  if (collab && (collab.role === 'coordinator' || collab.role === 'director')) {
+    const lm = (lastUserMessage || '').trim();
+    if (/^(APROVA|REJEITA)\b/i.test(lm) || /^(aprov[oa]|rejeit[oa])\s*$/i.test(lm)) {
+      return { name: 'aprovar-projeto', body: loadSkill('aprovar-projeto') };
+    }
+  }
+
   // Priority 2: in middle of 5W2H flow (detect from history).
   const recentText = (recentHistory || []).map(m => m.content || '').join(' ').toLowerCase();
   const inProjectFlow =

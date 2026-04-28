@@ -94,16 +94,48 @@ export const MODALITY_LABELS: Record<EventModality, string> = {
   hibrido: 'Híbrido',
 };
 
+// Sprint 8: alinhado ao CHECK do banco. 'done' nunca existiu nesta tabela
+// (CHECK desde sempre usou 'completed'); 'pending_approval' adicionado em
+// migration sprint8_project_wizard_approval.
+export type ProjectStatus =
+  | 'pending_approval'
+  | 'planning'
+  | 'active'
+  | 'paused'
+  | 'completed'
+  | 'cancelled';
+
+export type ProjectCategory =
+  | 'pedagogical'
+  | 'commercial'
+  | 'administrative'
+  | 'operational'
+  | 'event'
+  | 'infrastructure';
+
+// Enum frontend do wizard. DB armazena como text; validação é frontend.
+export type ProjectLocation = 'campo_grande' | 'recreio' | 'barra' | 'online' | 'outro';
+
 export interface Project {
   id: string;
   name: string;
   description: string | null;
-  category: 'pedagogical' | 'commercial' | 'administrative' | 'operational' | 'event' | 'infrastructure';
-  status: 'active' | 'paused' | 'done' | 'cancelled';
+  category: ProjectCategory;
+  status: ProjectStatus;
   progress_percent: number;
   start_date: string | null;
   end_date: string | null;
   created_by: string | null;
+  // Sprint 8 — campos 5W2H do wizard (colunas já existiam no DB):
+  justification: string | null;
+  methodology: string | null;
+  location: string | null;
+  estimated_hours_week: number | null;
+  // Sprint 8 — auditoria de aprovação (novas colunas):
+  requires_approval: boolean;
+  approved_by: string | null;
+  approved_at: string | null;
+  rejection_reason: string | null;
 }
 
 export interface Checkpoint {

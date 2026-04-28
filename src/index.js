@@ -1,6 +1,7 @@
 const express = require('express');
 const config = require('./config');
 const webhook = require('./webhook');
+const internalApi = require('./internal-api');
 const { startCrons } = require('./services/ritual');
 
 const app = express();
@@ -11,6 +12,7 @@ app.use(express.json({
   verify: (req, _res, buf) => { req.rawBody = buf; },
 }));
 app.use(webhook);
+app.use(internalApi);
 
 app.listen(config.port, '127.0.0.1', () => {
   const pkg = (() => { try { return require('../package.json'); } catch (_) { return { version: 'unknown' }; } })();

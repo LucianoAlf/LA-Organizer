@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { Badge } from './Badge';
+import { PROJECT_CATEGORY_LABELS, PROJECT_STATUS_LABELS } from '../lib/projectLabels';
 import type { Project } from '../types';
 
 const categoryTone: Record<Project['category'], 'brand' | 'info' | 'project' | 'warning' | 'success' | 'neutral'> = {
@@ -11,13 +12,15 @@ const categoryTone: Record<Project['category'], 'brand' | 'info' | 'project' | '
   infrastructure: 'neutral',
 };
 
-const categoryLabel: Record<Project['category'], string> = {
-  pedagogical: 'Pedagógico',
-  commercial: 'Comercial',
-  administrative: 'Administrativo',
-  operational: 'Operacional',
-  event: 'Evento',
-  infrastructure: 'Infraestrutura',
+// Statuses que não são "execução normal" merecem chip explícito.
+// 'active' é o default visual (sem chip = em andamento).
+const STATUS_NEEDS_CHIP: Record<Project['status'], boolean> = {
+  pending_approval: true,
+  planning: true,
+  paused: true,
+  cancelled: true,
+  completed: true,
+  active: false,
 };
 
 interface Props {
@@ -35,11 +38,16 @@ export function ProjectCard({ project, nextCheckpoint }: Props) {
       <div className="flex items-start gap-md justify-between">
         <div className="min-w-0">
           <div className="text-card-title truncate">{project.name}</div>
+          {STATUS_NEEDS_CHIP[project.status] && (
+            <span className="inline-block text-body-xs text-fg-muted bg-bg-elevated rounded-full px-2 py-0.5 mt-1 border border-border">
+              {PROJECT_STATUS_LABELS[project.status]}
+            </span>
+          )}
           {project.description && (
             <p className="text-body-sm text-fg-muted line-clamp-2 mt-1">{project.description}</p>
           )}
         </div>
-        <Badge tone={categoryTone[project.category]}>{categoryLabel[project.category]}</Badge>
+        <Badge tone={categoryTone[project.category]}>{PROJECT_CATEGORY_LABELS[project.category]}</Badge>
       </div>
 
       {/* progress bar */}

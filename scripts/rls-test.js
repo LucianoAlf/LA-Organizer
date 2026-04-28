@@ -226,6 +226,61 @@ async function runChecks(U) {
     check('alice vê 0 ou apenas próprios project_checkpoints', count === 0 || count == null, `count=${count}`);
   }
 
+  console.log('\n[invariantes] auth_insert_own_projects (Sprint 8)');
+  {
+    // 1. alice (collaborator) consegue INSERT projeto com created_by = self.
+    // Sem isso o wizard PWA não funciona pra collaborator comum.
+    const today = new Date().toISOString().slice(0, 10);
+    const { data, error } = await alice.from('projects').insert({
+      name: `${TAG} alice insert own`,
+      start_date: today, end_date: today,
+      category: 'operational', status: 'planning', progress_percent: 0,
+      color: '#E91451', created_by: U.alice.collab_id,
+    }).select('id').single();
+    check('alice INSERT projeto com created_by=self → OK', !error && !!data?.id, error ? error.message : 'inserido');
+    if (data?.id) await admin.from('projects').delete().eq('id', data.id);
+  }
+  {
+    // 2. alice NÃO consegue INSERT com created_by = bob (spoof de autoria).
+    // RLS deve rejeitar com row-level violation.
+    const today = new Date().toISOString().slice(0, 10);
+    const { data, error } = await alice.from('projects').insert({
+      name: `${TAG} alice spoof bob`,
+      start_date: today, end_date: today,
+      category: 'operational', status: 'planning', progress_percent: 0,
+      color: '#E91451', created_by: U.bob.collab_id,
+    }).select('id');
+    const blocked = !!error || !data || data.length === 0;
+    check('alice INSERT projeto com created_by=bob → BLOCKED', blocked, error ? error.message : `inseridos=${(data||[]).length}`);
+    // Se vazou (não deve), limpa.
+    if (data && data[0]?.id) await admin.from('projects').delete().eq('id', data[0].id);
+  }
+  {
+    // 3. alice NÃO consegue UPDATE de approved_by/approved_at em projeto alheio.
+    // Aprovação é fluxo do engine (service_role). Authenticated nunca deve mexer
+    // nos campos de auditoria — não há policy de UPDATE pra authenticated.
+    const today = new Date().toISOString().slice(0, 10);
+    const { data: bobProj, error: bpErr } = await admin.from('projects').insert({
+      name: `${TAG} bob own project`,
+      start_date: today, end_date: today,
+      category: 'operational', status: 'pending_approval', progress_percent: 0,
+      color: '#E91451', created_by: U.bob.collab_id, requires_approval: true,
+    }).select('id').single();
+    if (bpErr) {
+      check('alice NÃO UPDATE approved_by/at em projeto alheio', false, `seed bob proj: ${bpErr.message}`);
+    } else {
+      await alice.from('projects').update({
+        approved_by: U.alice.collab_id,
+        approved_at: new Date().toISOString(),
+      }).eq('id', bobProj.id);
+      // Reconfirma estado real via admin: campos devem continuar null.
+      const { data: post } = await admin.from('projects').select('approved_by, approved_at').eq('id', bobProj.id).single();
+      const untouched = post && post.approved_by == null && post.approved_at == null;
+      check('alice NÃO UPDATE approved_by/at em projeto alheio', untouched, `pos=${JSON.stringify(post)}`);
+      await admin.from('projects').delete().eq('id', bobProj.id);
+    }
+  }
+
   console.log('\n[invariantes] regressão Sprint 3 — sem policy ALL TO public USING(true)');
   {
     const { data } = await admin.from('pg_policies').select('*');

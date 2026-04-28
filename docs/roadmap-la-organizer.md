@@ -196,3 +196,45 @@
 
 *Fase 1: 10 de 41 funcionalidades implementadas (24%)*
 *Próxima sprint foca em fechar o ciclo básico de tarefas — pessoal + trabalho + lembretes.*
+
+---
+
+## Sprint 9+ parking lot — débitos pós-Sprint 8
+
+Itens descobertos durante Sprint 8 que ficaram fora de escopo:
+
+- **Member picker no wizard** — selecionar collaborators cadastrados em vez de texto livre. Ao confirmar, popula `project_members` automaticamente e o engine notifica cada membro no WhatsApp na hora da criação. Hoje "Quem participa" é texto solto que TOM precisa interpretar; com picker, é vínculo de banco direto. Aumenta o valor do projeto criado pelo PWA.
+- **Hierarquia tipográfica do wizard** — labels (🎯 Por que existe, 👥 Quem participa) estão com peso/tamanho próximos demais dos valores, gera ruído visual. Não bloqueou Sprint 8 mas precisa de uma passada de design tokens. Aplicar nas telas: passo 4 (resumo) e tela final do wizard.
+
+---
+
+## Sprint 9 — visão proativa do TOM (insight pós-Etapa 5)
+
+Insight crítico capturado durante a Sprint 8 (28/04/2026) durante teste do APROVA/REJEITA. O Alf identificou um gap conceitual da Sprint 8: o TOM precisa ser proativo, não reativo a comandos.
+
+**Premissa**: a maioria dos colaboradores LA Music **não conhece** roadmap, 5W2H, Matriz de Eisenhower, ciclos de checkpoint. Se o TOM só esperar comando explícito, eles vão ficar perdidos. Precisa **conduzir**.
+
+**Disparadores onde o TOM deve sugerir, não esperar**:
+
+1. **Pós PROJECT_CREATE / PROJECT_APPROVE** — em vez de criar 1 checkpoint genérico "Definir primeiros passos", o TOM deve analisar nome+justificativa+janela+metodologia e propor 4-6 etapas sugeridas. Ex:
+   - Workshop de Bateria → ["Definir convidado", "Divulgação", "Confirmação de inscritos", "Material/local", "Realização", "Follow-up"]
+   - Festa de 15 anos da filha (pessoal!) → ["Lista de convidados", "Salão", "Buffet (3 cotações)", "Banda/DJ", "Decoração", "Fotógrafo"]
+   - Mensagem WA: "Pensei nessas etapas pra `<projeto>`: 1, 2, 3, 4. Quer ajustar?"
+   - Usuário responde com edição em texto → TOM atualiza checkpoints
+
+2. **Projetos pessoais tem peso igual ao trabalho** — não é só pra coordenação. Aniversários, viagens, reformas, eventos da família. Mesmo formato de roadmap sugerido.
+
+3. **Acompanhamento ativo** — uma vez criado, TOM deve ir checando: "Faltam 2 semanas pro recital, como tá o ensaio coletivo?" "O salão da festa já fechou?". Sem precisar pedir.
+
+4. **Generoso com sugestões, leve com julgamento** — o TOM sugere, oferece exemplos, mas respeita a decisão do usuário. Não impõe template, libera para reescrever.
+
+**Skills a evoluir / criar**:
+- `cadastro-projeto-5w2h.md` — passar a sugerir etapas no fim do fluxo (em vez de só persistir)
+- `aprovar-projeto.md` — após APROVA, sugerir checkpoints na próxima resposta
+- Nova skill `acompanhar-projeto` — cron periódico que olha projetos ativos e dispara nudges contextuais
+- Nova skill `sugerir-checkpoints` — chamada interna pelo engine para gerar lista a partir de meta + janela
+
+**Outras pendências da Sprint 8**:
+- Member picker no wizard (popular project_members + notificar membros)
+- Hierarquia tipográfica do PWA (debt visual)
+- Resposta da skill de aprovação ainda saindo com artefato "text" — investigar se é template engessado vs liberdade do agente (Hermes/OpenCloud)
