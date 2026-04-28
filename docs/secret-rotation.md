@@ -218,3 +218,31 @@ Em logs, docs, mensagens de chat, ou commits:
 - ✅ Sempre máscara: `eyJ123...XYZ4 (len=N, sha256=12chars)`
 - ✅ Hash sha256 truncado é seguro pra evidência de "valor mudou"
 - ✅ HTTP code é seguro pra evidência de "credencial autentica"
+
+---
+
+## Sprint 7 Bloco 2 — snapshot da rotação (28/04/2026)
+
+### Etapa 2.2 — Supabase service_role
+
+- Pré-rotação fingerprint: `sha256=9449de095236 len=219`
+- Reveal no Supabase Dashboard → Tab "Legacy anon, service_role API keys"
+- Pós-reveal fingerprint: `sha256=9449de095236 len=219`
+- **Resultado:** chave atual já estava correta no `.env`. A rotação da JWT Signing Key (HS256→ECC) que o usuário fez 4 dias atrás NÃO regenerou o `service_role` JWT — Supabase manteve o JWT existente válido até o usuário desabilitar JWT-based keys.
+- Validação: harness RLS 21/21 ✓ + curl health 200 ✓
+- **Ação:** nenhuma — `.env` já em sync com Supabase. Apenas evidência registrada.
+
+### Etapa 2.1 — Hardening do webhook
+
+- **Bind localhost:** `src/index.js` agora escuta em `127.0.0.1:3100` (antes `*:3100`). Externamente a porta 3100 é inacessível — todo tráfego passa por nginx (porta 80).
+- **WEBHOOK_SECRET:** gerado, testado em modo permissive, depois limpo (`disabled` mode) porque UAZAPI **não suporta** signed webhooks (confirmado na OpenAPI spec — sem campo de secret/signature).
+- **Código HMAC:** já estava implementado em `src/webhook.js` desde Sprint 5 (modos disabled/permissive/strict via `WEBHOOK_HMAC_ENFORCE`). Pronto pra ativar quando UAZAPI suportar.
+- **UAZAPI URL:** trocada de `http://89.116.73.186:3100/webhook` para `http://89.116.73.186/webhook` (via nginx).
+- **IP da UAZAPI capturado:** `49.12.82.97` (Hetzner DE, User-Agent `uazapiGO-Webhook/1.0`). Allowlist nginx é opção futura se IP for estável.
+- Validação E2E: WhatsApp real "Oi" → TOM "Fala, Alf!" via nginx → 200 OK no log.
+
+### O que continua pendente
+
+- HMAC strict só dá pra ativar se UAZAPI introduzir webhook signing
+- nginx IP allowlist (`allow 49.12.82.97; deny all;`) — só faz sentido depois de confirmar se UAZAPI tem pool de IPs ou IP fixo
+- `.env` git history hygiene (commit `3ad52f5` ainda existe — chaves invalidadas mas presentes)

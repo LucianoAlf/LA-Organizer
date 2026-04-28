@@ -12,7 +12,7 @@ app.use(express.json({
 }));
 app.use(webhook);
 
-app.listen(config.port, () => {
+app.listen(config.port, '127.0.0.1', () => {
   const pkg = (() => { try { return require('../package.json'); } catch (_) { return { version: 'unknown' }; } })();
   console.log('');
   console.log('👽 TOM Engine — LA Organizer');
