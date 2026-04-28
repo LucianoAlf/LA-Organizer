@@ -69,6 +69,12 @@ A cada mensagem recebida, antes de responder:
 - Privacidade: `category=pessoal` → `context=personal` (default); demais → `context=work`. Mesmo contrato do PWA.
 - Briefings agora exibem **Compromissos hoje** entre tarefas e projetos, ordenados por horário, com filtro por ritual (briefing_pessoal só personal; briefing_trabalho/fechamento só work).
 - TOM escreve `events.source='tom'`. PWA escreve `events.source='manual'`. Distinção preservada para auditoria.
+
+### Compromissos — atualização (Sprint 5)
+- ✅ TOM atualiza compromisso existente via marker `<<EVENT_UPDATE>>` (actions: `reschedule`, `cancel`, `complete`).
+- Schema validado pelo Guard 3: `id` (short_id 4–12 hex), e para `reschedule` também `new_start_at`/`new_end_at` ISO `-03:00` com `end > start`.
+- Resolução do event por short_id restrita ao `collaborator_id` do emissor (defesa-em-profundidade — RLS já bloqueia cross-user).
+- Skill `criar-compromisso` cobre create + update no mesmo arquivo. `pickSkill` priority 4.9 detecta verbos de update (`remarca|reagenda|cancela|fechei a reunião|saiu a mentoria`) sobre termos de evento.
 - ✅ Receber **resumo do time** (auto, weekdays 19:30) — visão diária do estado da equipe.
 - ✅ Receber **retrospectiva semanal** (auto, domingo 18:00) — visão consolidada da semana.
 

@@ -263,20 +263,25 @@ function pickSkill(collab, lastUserMessage, recentHistory) {
     return { name: 'habitos-pessoais', body: loadSkill('habitos-pessoais') };
   }
 
-  // Priority 4.9: compromisso (evento com horário). Antes de tasks porque "marca reunião 14h" é event, não task.
-  // Sinais: termo de evento (reunião|aula|ensaio|mentoria|sessão|encontro|gravação|masterclass) + horário,
-  //         OU range explícito ("das 10 às 11"),
-  //         OU verbo agendar + horário + (termo de evento|modalidade).
+  // Priority 4.9: compromisso (evento com horário). Cobre create + update.
+  // Create: termo de evento + horário, OR range "das X às Y", OR agendar + horário + (termo|modalidade).
+  // Update: verbo update (remarca|cancela|fechei) + termo de evento.
   {
     const eventTermRe = /\b(reuni[ãa]o|aula|ensaio|mentoria|sess[ãa]o|encontro|grava[çc][ãa]o|masterclass|apresenta[çc][ãa]o|consulta|compromisso)\b/i;
     const hourRe = /\b\d{1,2}(?::\d{2})?\s*h(?:oras?)?\b|\b[àa]s\s+\d{1,2}\b/i;
     const rangeRe = /\bdas?\s+\d{1,2}h?(?::\d{2})?\s+(?:[àa]s|at[eé])\s+\d{1,2}h?(?::\d{2})?\b/i;
     const modalityRe = /\b(online|presencial|h[ií]brido|google\s*meet|zoom|teams|jitsi)\b/i;
     const scheduleVerbRe = /\b(marca|marcar|agend[ao]r?)\b/i;
+    // Update verbs específicos para events:
+    //   reschedule: remarca|remarcar|reagenda(?!r)|muda|mudar (com termo evento OU horário no contexto)
+    //   cancel:     cancela|cancelar
+    //   complete:   fechei|fiz (specific to event nouns), saiu, rolou
+    const eventUpdateRe = /\b(remarca|remarcar|reagenda|reagendar|cancel[ao]r?|fechei\s+(?:a\s+|o\s+)?(?:reuni[ãa]o|aula|ensaio|mentoria|sess[ãa]o|grava[çc][ãa]o|masterclass|consulta)|saiu\s+(?:a\s+|o\s+)?(?:reuni[ãa]o|mentoria))\b/i;
     const lm = lastUserMessage || '';
     if (rangeRe.test(lm) ||
         (eventTermRe.test(lm) && hourRe.test(lm)) ||
-        (scheduleVerbRe.test(lm) && hourRe.test(lm) && (eventTermRe.test(lm) || modalityRe.test(lm)))) {
+        (scheduleVerbRe.test(lm) && hourRe.test(lm) && (eventTermRe.test(lm) || modalityRe.test(lm))) ||
+        (eventUpdateRe.test(lm) && eventTermRe.test(lm))) {
       return { name: 'criar-compromisso', body: loadSkill('criar-compromisso') };
     }
   }

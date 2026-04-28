@@ -1,6 +1,7 @@
 // src/webhook.js — Handler do webhook da UAZAPI
 // Formato: { event: "message", instance: "uuid", data: { chatid, sender, text, fromMe, isGroup, messageType, ... } }
 
+const crypto = require('crypto');
 const express = require('express');
 const { processMessage } = require('./engine');
 const whatsapp = require('./services/whatsapp');
@@ -10,12 +11,62 @@ const audio = require('./services/audio');
 
 const router = express.Router();
 
+// ---------- HMAC do webhook ----------
+// Modos:
+//   - disabled:   WEBHOOK_SECRET vazio → não valida (estado pré-Sprint 5).
+//   - permissive: WEBHOOK_SECRET set + WEBHOOK_HMAC_ENFORCE != 'true' → valida e
+//                 loga warning se inválido, mas continua processando. Janela de
+//                 transição enquanto UAZAPI ainda não está assinando.
+//   - strict:     WEBHOOK_SECRET set + WEBHOOK_HMAC_ENFORCE='true' → rejeita 401
+//                 quando assinatura ausente ou inválida.
+// Header: configurável via WEBHOOK_SIG_HEADER (default 'x-webhook-signature').
+// Aceita formato 'sha256=<hex>' OU '<hex>' direto.
+function verifyWebhookSignature(req) {
+  const secret = process.env.WEBHOOK_SECRET || '';
+  const headerName = (process.env.WEBHOOK_SIG_HEADER || 'x-webhook-signature').toLowerCase();
+  const enforce = String(process.env.WEBHOOK_HMAC_ENFORCE || '').toLowerCase() === 'true';
+
+  if (!secret) return { mode: 'disabled', ok: true };
+
+  const provided = req.headers[headerName];
+  if (!provided || typeof provided !== 'string') {
+    return { mode: enforce ? 'strict' : 'permissive', ok: false, reason: 'missing_header' };
+  }
+  const sigHex = provided.startsWith('sha256=') ? provided.slice(7) : provided;
+  if (!/^[a-f0-9]{64}$/i.test(sigHex)) {
+    return { mode: enforce ? 'strict' : 'permissive', ok: false, reason: 'malformed' };
+  }
+  const raw = req.rawBody;
+  if (!Buffer.isBuffer(raw) || raw.length === 0) {
+    return { mode: enforce ? 'strict' : 'permissive', ok: false, reason: 'no_raw_body' };
+  }
+  const expected = crypto.createHmac('sha256', secret).update(raw).digest('hex');
+  let match = false;
+  try {
+    match = crypto.timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(sigHex.toLowerCase(), 'hex'));
+  } catch (_) {
+    match = false;
+  }
+  return { mode: enforce ? 'strict' : 'permissive', ok: match, reason: match ? null : 'mismatch' };
+}
+
 /**
  * POST /webhook — Recebe mensagens da UAZAPI
  */
 router.post('/webhook', async (req, res) => {
+  // 0) HMAC. Em strict mode rejeita ANTES do 200 — UAZAPI deve reenviar até autenticar.
+  const sig = verifyWebhookSignature(req);
+  if (sig.mode === 'strict' && !sig.ok) {
+    console.warn(`[Webhook] REJECT 401 — hmac ${sig.reason}`);
+    return res.status(401).json({ error: 'invalid_signature' });
+  }
   // Responder 200 imediatamente pra UAZAPI não reenviar
   res.status(200).json({ status: 'received' });
+  if (sig.mode === 'permissive' && !sig.ok) {
+    console.warn(`[Webhook] HMAC permissive — ${sig.reason} (would-401 in strict mode)`);
+  } else if (sig.mode !== 'disabled') {
+    console.log(`[Webhook] HMAC ok (mode=${sig.mode})`);
+  }
 
   try {
     const body = req.body;

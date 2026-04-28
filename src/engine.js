@@ -54,6 +54,7 @@ const VALID_TASK_ACTIONS = new Set([
 const VALID_COACHING = ['light', 'normal', 'hard'];
 const VALID_EVENT_MODALITIES = new Set(['online', 'presencial', 'hibrido']);
 const VALID_EVENT_CATEGORIES = new Set(['la_music', 'mentoria', 'aula_particular', 'outra_escola', 'estudio', 'pessoal']);
+const VALID_EVENT_UPDATE_ACTIONS = new Set(['reschedule', 'cancel', 'complete']);
 const ISO_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})$/;
 
 function logSchemaErr(marker, errors, raw) {
@@ -298,6 +299,115 @@ async function applyEventActions(collaborator, events) {
       okCount++;
     } catch (err) {
       console.error('[Event] throw err:', err.message);
+      failCount++;
+    }
+  }
+  return { okCount, failCount };
+}
+
+// Parse <<EVENT_UPDATE>>[...]<<END>> — reagendar / cancelar / completar event existente.
+// Schema:
+//   { "action": "reschedule", "id": "<8-char>", "new_start_at": ISO, "new_end_at": ISO }
+//   { "action": "cancel",     "id": "<8-char>" }
+//   { "action": "complete",   "id": "<8-char>" }
+function validateEventUpdateAction(a) {
+  if (!a || typeof a !== 'object') return 'not_object';
+  if (!VALID_EVENT_UPDATE_ACTIONS.has(a.action)) return 'action:invalid';
+  if (typeof a.id !== 'string' || !SHORT_ID_RE.test(a.id)) return 'id:invalid';
+  if (a.action === 'reschedule') {
+    if (typeof a.new_start_at !== 'string' || !ISO_DATETIME_RE.test(a.new_start_at)) return 'new_start_at:invalid';
+    if (typeof a.new_end_at !== 'string' || !ISO_DATETIME_RE.test(a.new_end_at)) return 'new_end_at:invalid';
+    if (new Date(a.new_end_at).getTime() <= new Date(a.new_start_at).getTime()) return 'end_before_start';
+  }
+  return null;
+}
+
+function parseEventUpdateMarker(text) {
+  if (!text) return null;
+  const re = /<<EVENT_UPDATE>>\s*([\s\S]*?)\s*<<END>>/i;
+  const m = text.match(re);
+  if (!m) return null;
+  const cleanText = text.replace(re, '').trim();
+  let parsed;
+  try {
+    parsed = JSON.parse(m[1].trim());
+  } catch (err) {
+    logSchemaErr('EVENT_UPDATE', ['invalid_json: ' + err.message], m[1]);
+    return { malformed: true, cleanText };
+  }
+  const items = Array.isArray(parsed) ? parsed : [parsed];
+  const valid = [];
+  const dropped = [];
+  for (let i = 0; i < items.length; i++) {
+    const why = validateEventUpdateAction(items[i]);
+    if (why) dropped.push(`item[${i}]:${why}`);
+    else valid.push(items[i]);
+  }
+  if (dropped.length) logSchemaErr('EVENT_UPDATE', dropped, parsed);
+  if (!valid.length) return { malformed: true, cleanText };
+  return { actions: valid, cleanText, malformed: false };
+}
+
+// Defesa-em-profundidade na resolução de short_id: filtra eventos do colaborador.
+async function resolveEventByShortId(collaboratorId, shortId) {
+  if (!shortId || !SHORT_ID_RE.test(String(shortId))) return null;
+  const prefix = String(shortId).toLowerCase();
+  // Janela ampla — eventos cancelados ou já feitos podem precisar ser referenciados.
+  const sinceIso = new Date(Date.now() - 60 * 24 * 3600 * 1000).toISOString();
+  const { data, error } = await supabase
+    .from('events')
+    .select('id, title, status, start_at, end_at, collaborator_id')
+    .eq('collaborator_id', collaboratorId)
+    .gte('start_at', sinceIso)
+    .limit(500);
+  if (error) {
+    console.error('[Event] resolveEventByShortId err:', error.message);
+    return null;
+  }
+  if (!data || data.length === 0) return null;
+  const matches = data.filter(e => String(e.id).toLowerCase().startsWith(prefix));
+  if (matches.length === 0) return null;
+  if (matches.length > 1) {
+    console.warn(`[Event] short_id ambíguo ${shortId} (${matches.length} matches) — rejeitando`);
+    return null;
+  }
+  return matches[0];
+}
+
+async function applyEventUpdates(collaborator, actions) {
+  let okCount = 0, failCount = 0;
+  const last4 = String(collaborator.phone || '').slice(-4);
+  for (const a of actions) {
+    try {
+      const ev = await resolveEventByShortId(collaborator.id, a.id);
+      if (!ev) {
+        console.warn(`[Event] ${a.action} REJECTED id=${a.id} (not owned by ${last4} or not found)`);
+        failCount++;
+        continue;
+      }
+      let patch = {};
+      if (a.action === 'reschedule') {
+        patch = { start_at: a.new_start_at, end_at: a.new_end_at };
+        if (ev.status === 'cancelled') patch.status = 'scheduled';
+      } else if (a.action === 'cancel') {
+        patch = { status: 'cancelled' };
+      } else if (a.action === 'complete') {
+        patch = { status: 'done' };
+      }
+      const { error } = await supabase
+        .from('events')
+        .update(patch)
+        .eq('id', ev.id)
+        .eq('collaborator_id', collaborator.id);
+      if (error) {
+        console.error(`[Event] ${a.action} err:`, error.message);
+        failCount++;
+        continue;
+      }
+      console.log(`[Event] ${a.action} ${a.id} by ${last4}${a.action === 'reschedule' ? ` to ${a.new_start_at.slice(0, 16)}` : ''}`);
+      okCount++;
+    } catch (err) {
+      console.error('[Event] update throw err:', err.message);
       failCount++;
     }
   }
@@ -1518,6 +1628,27 @@ async function processMessage(phone, text, raw = {}) {
       let base = parsedEv.cleanText || '';
       if (failCount > 0 && okCount === 0) {
         base = (base ? base + '\n\n' : '') + '_não consegui salvar o compromisso, te aviso depois_';
+      }
+      reply = base || reply;
+    }
+  }
+
+  // 2.66) Event update (Sprint 5) — reschedule / cancel / complete.
+  {
+    const parsedEU = parseEventUpdateMarker(reply);
+    if (parsedEU && parsedEU.malformed) {
+      console.warn('[Event] WARN: malformed EVENT_UPDATE marker, dropping block');
+      await logMarker(collab.id, 'EVENT_UPDATE', 'rejected', 'schema_invalid', reply);
+      reply = parsedEU.cleanText || reply;
+    } else if (parsedEU) {
+      const { okCount, failCount } = await applyEventUpdates(collab, parsedEU.actions);
+      console.log(`[Event] update batch: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
+      const result = okCount > 0 ? 'executed' : 'rejected';
+      const reason = okCount > 0 ? `ok=${okCount} fail=${failCount}` : `all_failed:${failCount}`;
+      await logMarker(collab.id, 'EVENT_UPDATE', result, reason, null);
+      let base = parsedEU.cleanText || '';
+      if (failCount > 0 && okCount === 0) {
+        base = (base ? base + '\n\n' : '') + '_não consegui atualizar o compromisso, te aviso depois_';
       }
       reply = base || reply;
     }

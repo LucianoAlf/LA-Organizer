@@ -11,6 +11,7 @@ Frontend mobile-first do TOM. **Espelho visual do banco** — não duplica regra
 - **Sprint 2** — Magic link via WhatsApp (canônico), URL pública via Cloudflare tunnel, fallback email/password, piloto multiusuário real ✅
 - **Sprint 3** — Modelo `events` separado de `tasks` + criação unificada (Tarefa | Compromisso) + categorias + RLS hardening crítico ✅
 - **Sprint 4** — Auditoria + hardening RLS multiusuário (5 leaks fechados, 16 invariantes verdes em `scripts/rls-test.js`), `docs/RLS-MATRIX.md` congelada. TOM aprende a criar compromissos via marker `<<EVENT_CREATE>>` (skill `criar-compromisso`); briefings exibem **Compromissos hoje** com horário/modalidade ✅
+- **Sprint 5** — Maturidade do modelo events: `EditEventSheet` no PWA (tap em event → editar título, horário, local, link, status), TOM aprende `<<EVENT_UPDATE>>` (reschedule/cancel/complete) via skill estendida, convivência task↔event mínima (skill pergunta antes de duplicar), webhook ganha middleware HMAC com 3 modos (disabled/permissive/strict). Hardening operacional final (rotação Supabase + URL estável) **diferido** para janela pré-prod ✅ (parcial)
 
 ---
 
@@ -143,6 +144,14 @@ Fluxo:
 - **Projeto detalhe** — header com progresso + 4 tabs (Resumo / Checkpoints / Tarefas / Time)
 - **Dashboard do time** (`/time`, coord+ only) — stat cards + listas respondeu/sem-resposta + atrasos por pessoa. Privacy contract enforçado.
 - **Mais** (`/mais`) — entry point para itens P1+, toggle tema, sair
+
+### Sprint 5
+
+- **EditEventSheet** (`src/components/EditEventSheet.tsx`) — bottom sheet acionado por tap em `EventRow` (em `/hoje` e `/semana`). Edita `title`, `start_at`, `end_at`, `location_text`, `meeting_url`. Botões "Concluir" (status=done) e "Cancelar evento" (status=cancelled). RLS `auth_update_own_events` cobre.
+- **TOM aprende `<<EVENT_UPDATE>>`** — parser + Guard 3 + applier em `src/engine.js`; skill `skills/criar-compromisso.md` ensina actions `reschedule`, `cancel`, `complete`. `pickSkill` priority 4.9 detecta verbos de update sobre termos de evento. Smoke E2E real validou os 3 caminhos.
+- **Convivência task↔event** — skill orientada a perguntar UMA vez antes de criar event quando há task pendente com título muito similar. Sem refactor de engine.
+- **Middleware HMAC do webhook** (`src/webhook.js`) — 3 modos via env: `disabled` (default; sem `WEBHOOK_SECRET`), `permissive` (loga warning, processa) e `strict` (rejeita 401). `index.js` captura raw body via `verify` callback. 8 cenários validados em isolamento + smoke real permissive.
+- **Diferido para pré-prod**: rotação real de `SUPABASE_SERVICE_ROLE_KEY`, URL estável (Cloudflare nomeado/Vercel), ativação de `WEBHOOK_HMAC_ENFORCE=true`. Em dev seguimos com Cloudflare quick tunnel + key Sprint 4.
 
 ### Sprint 4
 

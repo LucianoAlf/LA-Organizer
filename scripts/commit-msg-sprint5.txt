@@ -1,0 +1,149 @@
+feat(sprint5): EVENT_UPDATE no TOM + EditEventSheet no PWA + HMAC middleware
+
+🤖 EVENT_UPDATE no TOM (Bloco B)
+
+Marker novo `<<EVENT_UPDATE>>` no engine permite reagendar, cancelar ou
+completar compromissos via WhatsApp. Mesmo padrão arquitetural do
+TASK_UPDATE: parser, Guard 3 (validateEventUpdateAction), resolver de
+short_id restrito ao collaborator, applier que persiste e logMarker.
+
+src/engine.js:
+- VALID_EVENT_UPDATE_ACTIONS = {reschedule, cancel, complete}
+- parseEventUpdateMarker(text) com schema validado item-a-item
+- resolveEventByShortId(collaboratorId, shortId) — janela 60d, defesa
+  em profundidade contra short_id ambíguo ou cross-user
+- applyEventUpdates(collab, actions):
+  • reschedule → start_at/end_at atualizados; status volta para
+    'scheduled' se estava cancelled
+  • cancel → status='cancelled'
+  • complete → status='done'
+- Bloco 2.66 no main loop, entre 2.65 (EVENT_CREATE) e 2.7 (WeeklyPlan),
+  com logMarker EVENT_UPDATE e fallback "_não consegui atualizar_" se
+  todos falham.
+
+skills/criar-compromisso.md:
+- Mesma skill cobre create + update (sem skill nova).
+- Seção "Atualizar compromisso já existente" com tabela de sinais,
+  formato do marker, campos obrigatórios por action, respostas
+  canônicas e veto.
+- Seção "Antes de criar — checar duplicidade com tarefa pendente":
+  Claude pergunta UMA vez se existe task pending muito similar antes
+  de emitir EVENT_CREATE. Resposta "promover" emite TASK_UPDATE
+  complete + EVENT_CREATE na mesma resposta (única exceção à regra
+  de operação única por marker).
+
+src/prompts/system.js:
+- pickSkill priority 4.9 estendida para detectar verbos de update
+  (remarca|reagenda|cancela|fechei a reunião|saiu a mentoria) sobre
+  termos de evento. Continua antes de checklist-tarefas.
+
+Smoke E2E real (ssh tom + curl + SQL verify):
+- "remarca a reunião com Juliana pra hoje 18h" → start_at moveu de
+  16:00 para 18:00 SP, end_at para 19:00 SP, status=scheduled. ✅
+- "cancela a reunião com Juliana de hoje" → status=cancelled. ✅
+- "saiu a mentoria com Pedro" → status=done. ✅
+- Cleanup das 2 rows de teste.
+
+🎨 EditEventSheet no PWA (Bloco B)
+
+web/src/components/EditEventSheet.tsx (novo):
+- BottomSheet acionado por tap em EventRow (em /hoje e /semana).
+- Edita title, start_at, end_at (datetime-local em SP, conversão
+  ISO ↔ local respeita -03:00), location_text, meeting_url
+  (somente se modality é online/hibrido).
+- Botões: Salvar (UPDATE supabase events), Concluir (status=done),
+  Cancelar evento (status=cancelled), Fechar (descarta).
+- Validação client-side: end_at > start_at.
+- React Query invalidate em ['events'] / ['hoje'] / ['semana'].
+
+web/src/screens/Hoje.tsx + Semana.tsx:
+- useState<CalendarEvent | null>(editingEvent).
+- EventRow recebe onClick={setEditingEvent} (Hoje); item compacto
+  da Semana ganha cursor-pointer + setEditingEvent.
+- <EditEventSheet> renderizado condicional em ambas telas.
+
+Typecheck (npx tsc --noEmit) limpo.
+
+🔐 HMAC do webhook (Bloco A — código pronto, ativação adiada)
+
+Middleware HMAC-SHA256 no /webhook com 3 modos:
+- disabled: WEBHOOK_SECRET vazio (estado pré-Sprint 5, atual em dev)
+- permissive: WEBHOOK_SECRET set + WEBHOOK_HMAC_ENFORCE != 'true'
+  → valida e loga warning, mas processa (janela de transição).
+- strict: WEBHOOK_HMAC_ENFORCE='true' → rejeita 401 quando ausente
+  ou inválido.
+
+Header configurável via WEBHOOK_SIG_HEADER (default
+'x-webhook-signature'). Aceita formato 'sha256=<hex>' ou hex puro.
+
+src/index.js:
+- express.json verify callback expõe req.rawBody (Buffer cru
+  preserva validação HMAC apesar do parsing JSON downstream).
+
+src/webhook.js:
+- verifyWebhookSignature(req): ler secret/header/enforce do env,
+  computar HMAC, timingSafeEqual com a assinatura. Retorna
+  {mode, ok, reason}.
+- Chamado no início do handler, antes do dedupe. Strict + invalid
+  → 401 antes do 200. Permissive + invalid → loga warning, segue.
+
+Validação:
+- 8 cenários em isolamento (disabled, missing-strict, malformed-strict,
+  bad-strict, good-strict, bad-perm, good-perm, raw-hex-good).
+- Smoke real permissive em prod com SECRET temporário, .env restaurado
+  ao final.
+- POST sem assinatura em mode disabled (estado atual) processa
+  normalmente — sem regressão nas Sprints 0–4.
+
+.env.example: WEBHOOK_HMAC_ENFORCE=false e WEBHOOK_SIG_HEADER=
+x-webhook-signature documentados.
+
+🔑 Rotação real de segredos (Bloco A — parcial)
+
+- UAZAPI_TOKEN rotacionado de fato no painel UAZAPI. sha256 mudou de
+  8f75f8571b1f → d947e27efce0 (= cfbb6715-3814-4b77-8270-8bbd07abf42e).
+  TOM autentica em HTTP 200, recebe e envia WA real.
+- SUPABASE_SERVICE_ROLE_KEY permanece sha256 9449de095236 (mesma da
+  Sprint 4). Confirmado: não foi rotacionada nesta janela.
+- WEBHOOK_SECRET segue vazio (HMAC inativo).
+
+Decisão explícita: Bloco A operacional (rotação service_role + URL
+estável + ativação HMAC) DIFERIDO para janela pré-prod, conforme
+diretiva do dono do produto ("estamos em dev"). Documentado em
+docs/secret-rotation.md com trigger para reabertura: qualquer
+expansão de piloto além do círculo atual ou exposição pública
+do /webhook.
+
+📚 Docs
+
+- docs/MODELO-EVENTS-VS-TASKS.md — FAQ ganha entradas sobre
+  EVENT_UPDATE e edição PWA.
+- docs/TOM-AGENTS.md — bloco "Compromissos — atualização (Sprint 5)".
+- docs/TOM-SKILLS-CATALOG.md — section 2.5 ganha nota Sprint 5
+  sobre update + convivência.
+- docs/secret-rotation.md — header "Estado em 28/04/2026 (Sprint 5)"
+  marca Bloco A como diferido com trigger explícito de reabertura.
+- web/README.md — Sprint 5 entry (status parcial declarado) +
+  detalhamento técnico abaixo.
+- scripts/commit-msg-sprint5.txt (este).
+
+✅ Definição de pronto da Sprint 5 (revisada)
+
+Atendido:
+- tap em event abre EditEventSheet e salva ✅
+- TOM reagenda/cancela/completa events com EVENT_UPDATE ✅
+- /webhook rejeita payload sem assinatura válida (em strict mode) ✅
+- payload assinado válido continua processando ✅
+- TOM e PWA seguem funcionando após rotação UAZAPI ✅
+- regressão RLS Sprints 0–4: 16/16 verdes ✅
+- docs atualizadas ✅
+- decisão B.3 explícita (não omitida) ✅
+
+Diferido com justificativa documentada:
+- URL estável funcionando após reload — adiado pra janela pré-prod
+- rotação real da SUPABASE_SERVICE_ROLE_KEY com fingerprint pré/pós
+  documentado — adiado pra janela pré-prod
+
+Veredicto: Sprint 5 QUASE FECHADA. Bloco B 100%, Bloco A 50%.
+Aceitável em dev, dívida técnica registrada para a próxima janela
+de promoção a produção.

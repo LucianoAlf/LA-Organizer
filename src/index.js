@@ -4,7 +4,12 @@ const webhook = require('./webhook');
 const { startCrons } = require('./services/ritual');
 
 const app = express();
-app.use(express.json({ limit: '5mb' }));
+// `verify` callback expõe o buffer cru pra validação HMAC no /webhook.
+// Sem isso, express.json() consome o stream e o body original somente reaparece serializado.
+app.use(express.json({
+  limit: '5mb',
+  verify: (req, _res, buf) => { req.rawBody = buf; },
+}));
 app.use(webhook);
 
 app.listen(config.port, () => {

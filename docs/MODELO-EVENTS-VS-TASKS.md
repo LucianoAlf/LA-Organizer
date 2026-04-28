@@ -178,6 +178,12 @@ A: Coord vê. Risco aceito Sprint 3. Sprint 4+ pode introduzir lembrete UI ou to
 **Q: TOM cria reuniões como task. Quando isso muda?**
 A: ~~Sprint 4+ ou quando engine refactor for prioridade. Bridge documentado.~~ **Resolvido na Sprint 4** — TOM agora emite `<<EVENT_CREATE>>` via skill `criar-compromisso`. Bridge encerrado para criação. Migração das tasks com `reminders_at[]` antigas em events permanece fora do escopo (são raras e o usuário pode reagendar manualmente).
 
+**Q: Como o TOM atualiza um event existente? (Sprint 5)**
+A: Marker `<<EVENT_UPDATE>>` com `action: reschedule | cancel | complete`. Schema validado pelo Guard 3 em `src/engine.js` (mesmo padrão do `TASK_UPDATE`). Resolução de short_id é restrita ao `collaborator_id` do emissor — defesa em profundidade contra marker injetado.
+
+**Q: PWA edita events?**
+A: Sim, na Sprint 5. Tap em `EventRow` (em `/hoje` e `/semana`) abre `EditEventSheet`, que edita `title`, `start_at`, `end_at`, `location_text`, `meeting_url`. Botões "Concluir" e "Cancelar evento" alteram `status`. RLS `auth_update_own_events` garante que o usuário só edita os próprios.
+
 **Q: Como o engine reconhece compromisso vs tarefa?**
 A: Pickskill detecta padrões em `priority 4.9`:
 - termo de evento (reunião|aula|ensaio|mentoria|sessão|encontro|gravação|masterclass|consulta) + horário, OU

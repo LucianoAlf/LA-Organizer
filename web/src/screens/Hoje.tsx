@@ -14,6 +14,7 @@ import { EmptyState } from '../components/EmptyState';
 import { Button } from '../components/Button';
 import { Fab } from '../components/Fab';
 import { QuickCreateSheet } from '../components/QuickCreateSheet';
+import { EditEventSheet } from '../components/EditEventSheet';
 import type { Task, TaskContext, CalendarEvent } from '../types';
 
 async function fetchTasksToday(collabId: string): Promise<Task[]> {
@@ -34,6 +35,7 @@ export function Hoje() {
   const qc = useQueryClient();
   const [tab, setTab] = useState<TaskContext>('work');
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
 
   const today = todaySP();
 
@@ -101,7 +103,7 @@ export function Hoje() {
             <CalendarClock size={14} /> Compromissos
           </div>
           {todayEvents.map(e => (
-            <EventRow key={e.id} event={e} />
+            <EventRow key={e.id} event={e} onClick={setEditingEvent} />
           ))}
         </section>
       )}
@@ -150,6 +152,7 @@ export function Hoje() {
 
       <Fab onClick={() => setSheetOpen(true)} label="Novo" ariaLabel="Criar novo item" />
       <QuickCreateSheet open={sheetOpen} onClose={() => setSheetOpen(false)} defaultDueDate={today} />
+      <EditEventSheet open={Boolean(editingEvent)} event={editingEvent} onClose={() => setEditingEvent(null)} />
     </div>
   );
 }

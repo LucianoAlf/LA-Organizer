@@ -10,6 +10,7 @@ import { EmptyState } from '../components/EmptyState';
 import { Fab } from '../components/Fab';
 import { QuickCreateSheet } from '../components/QuickCreateSheet';
 import { RescheduleSheet } from '../components/RescheduleSheet';
+import { EditEventSheet } from '../components/EditEventSheet';
 import type { Task, CalendarEvent } from '../types';
 
 async function fetchWeekTasks(collabId: string, start: string, end: string): Promise<Task[]> {
@@ -41,6 +42,7 @@ export function Semana() {
   const end = days[days.length - 1];
   const [createOpen, setCreateOpen] = useState(false);
   const [rescheduleTask, setRescheduleTask] = useState<Task | null>(null);
+  const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
 
   const { data: tasks = [], isLoading: tLoading, error } = useQuery({
     queryKey: ['tasks', 'semana', collaborator?.id, start, end],
@@ -164,10 +166,13 @@ export function Semana() {
                       const range = formatEventTimeRange(e.start_at, e.end_at);
                       const cancelled = e.status === 'cancelled';
                       return (
-                        <li key={e.id} className={[
-                          'text-body-sm flex items-baseline gap-2',
-                          cancelled ? 'line-through text-fg-muted' : 'text-fg-secondary',
-                        ].join(' ')}>
+                        <li
+                          key={e.id}
+                          onClick={() => setEditingEvent(e)}
+                          className={[
+                            'text-body-sm flex items-baseline gap-2 cursor-pointer hover:bg-bg-elevated rounded-sm -mx-1 px-1',
+                            cancelled ? 'line-through text-fg-muted' : 'text-fg-secondary',
+                          ].join(' ')}>
                           <span className="text-brand font-semibold tabular-nums shrink-0">{range.split('–')[0]}</span>
                           <span className="truncate">{e.title}</span>
                         </li>
@@ -228,6 +233,7 @@ export function Semana() {
       <Fab onClick={() => setCreateOpen(true)} label="Novo" ariaLabel="Criar novo item" />
       <QuickCreateSheet open={createOpen} onClose={() => setCreateOpen(false)} defaultDueDate={today} />
       <RescheduleSheet open={Boolean(rescheduleTask)} task={rescheduleTask} onClose={() => setRescheduleTask(null)} />
+      <EditEventSheet open={Boolean(editingEvent)} event={editingEvent} onClose={() => setEditingEvent(null)} />
     </div>
   );
 }

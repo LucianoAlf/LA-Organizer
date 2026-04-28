@@ -92,6 +92,11 @@ Em dúvida, fallback para `checklist-tarefas` (cria task com `remind_at` se for 
 
 **Veto:** nunca emite `meeting_url` em compromisso `presencial`. Nunca emite `<<EVENT_CREATE>>` e `<<TASK_UPDATE>>` na mesma resposta — escolhe um.
 
+**Sprint 5 — atualização e convivência:**
+- Skill estendida com `<<EVENT_UPDATE>>` (`reschedule`, `cancel`, `complete`). Mesma skill, sem skill nova.
+- `pickSkill` priority 4.9 cobre verbos de update sobre termos de evento (`remarca a reunião`, `cancela o ensaio`, `fechei a mentoria`).
+- Convivência task↔event: a skill instrui Claude a perguntar UMA vez quando há task pendente muito similar antes de emitir `<<EVENT_CREATE>>` — evita duplicação. Resposta "promover" emite `<<TASK_UPDATE complete>>` + `<<EVENT_CREATE>>` na mesma resposta (única exceção à regra de operação única).
+
 ---
 
 ## 3. Broadcast

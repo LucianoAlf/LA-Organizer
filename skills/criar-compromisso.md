@@ -5,6 +5,20 @@ description: Permite que o colaborador crie um compromisso (evento com horário,
 
 # Criar Compromisso (Evento com Horário)
 
+## Antes de criar — checar duplicidade com tarefa pendente
+
+**Regra anti-duplicação (Sprint 5):** antes de emitir `<<EVENT_CREATE>>`, olhe a lista de tarefas pendentes no contexto. Se houver uma task com título **muito similar** ao do compromisso pedido (ex.: tarefa "Reunião com Juliana" e o usuário pede "marca reunião com Juliana às 14h"), pergunte UMA vez:
+
+> *Tem uma tarefa "Reunião com Juliana" aberta. Quer promover ela pra compromisso ou criar um novo?*
+
+Se o usuário disser "promover" / "essa mesma" → emita `<<TASK_UPDATE>>` com `complete` na task (id curto do contexto) **E** `<<EVENT_CREATE>>` na mesma resposta. É a única exceção à regra "uma operação por resposta" (a "promoção" é semanticamente uma operação).
+
+Se disser "novo" / "outra" / "ignora" → emita `<<EVENT_CREATE>>` normalmente, sem mexer na task.
+
+**Critério de "muito similar"**: título da task contém o substantivo principal do pedido (ex.: "reunião com Juliana", "mentoria com Pedro", "ensaio sábado") com 2+ palavras coincidentes. Em dúvida, **não** pergunte — apenas crie o event. Não inventar match.
+
+---
+
 ## Quando ativar
 Ative esta skill quando o colaborador descrever algo que:
 - tem **horário de início** explícito ("às 14h", "14:00", "das 10 às 11")
@@ -146,3 +160,57 @@ Se o usuário só disser horário de início, **assuma 1 hora de duração** (`e
 - nunca exiba o marker / horários internos / IDs ao usuário
 - nunca misture `<<EVENT_CREATE>>` com `<<TASK_UPDATE>>` na mesma resposta — escolha um
 - nunca emita evento de outro colaborador (a skill não tem create-for-other; isso fica em `checklist-tarefas`)
+
+---
+
+## Atualizar compromisso já existente (Sprint 5+)
+
+A skill também cobre **reagendar / cancelar / concluir** compromisso já existente. Use o marker `<<EVENT_UPDATE>>`.
+
+### Sinais
+| Intenção | Frases típicas | Action |
+|---|---|---|
+| reagendar | "remarca a reunião pra quinta 15h", "muda o ensaio pra sexta", "passa pra outra hora" | `reschedule` |
+| cancelar | "cancela o compromisso", "cancela a reunião com Juliana", "não vai rolar" | `cancel` |
+| concluir | "fechei o ensaio", "fiz a aula", "saiu a mentoria" | `complete` |
+
+### Resolução do compromisso
+Os compromissos do dia/da semana aparecem no contexto com `[id=ab12cd34]`. Use esse id curto no marker. Em ambiguidade, pergunte UMA vez antes de emitir.
+
+### Formato do marker
+
+```text
+<<EVENT_UPDATE>>
+[
+  {"action":"reschedule","id":"ab12cd34","new_start_at":"2026-04-30T15:00:00-03:00","new_end_at":"2026-04-30T16:00:00-03:00"}
+]
+<<END>>
+```
+
+| action | campos |
+|---|---|
+| `reschedule` | `id`, `new_start_at` (ISO -03:00), `new_end_at` (ISO -03:00, > new_start_at) |
+| `cancel` | `id` |
+| `complete` | `id` |
+
+### Respostas canônicas
+
+**User:** `remarca a reunião com Juliana pra quinta 15h`
+```text
+🗓️ Movido: *Reunião com Juliana* — quinta (30/04) · 15h–16h.
+```
+
+**User:** `cancela o ensaio de hoje`
+```text
+❌ Cancelado: *Ensaio*.
+```
+
+**User:** `fechei a mentoria`
+```text
+✅ Fechado: *Mentoria com Pedro*.
+```
+
+### Veto — update
+- nunca emita `<<EVENT_UPDATE>>` sem `id`
+- `reschedule` exige `new_start_at` E `new_end_at`. Se o usuário só disser "muda pra 15h" sem dizer duração, mantenha a mesma duração que o evento original tem.
+- nunca misture `<<EVENT_CREATE>>` e `<<EVENT_UPDATE>>` na mesma resposta — uma operação por vez.
