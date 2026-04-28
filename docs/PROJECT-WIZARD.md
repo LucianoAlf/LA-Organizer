@@ -440,3 +440,90 @@ Sprint 8 fecha quando:
 - PRD: `docs/06-prd-la-organizer-v3.md` (seção 6)
 - RLS: `docs/RLS-MATRIX.md`
 - Treinamento de coordenação: `treinamento-coordenacao.html`
+
+---
+
+## Sprint 9 — Project Guidance Layer (28/04/2026)
+
+Camada que vem **depois** da criação. O wizard fechou o "criar"; Sprint 9 entrega "conduzir".
+
+### Etapas geradas por LLM (não mais hardcoded)
+
+`/internal/project-created` agora chama Claude inline pra produzir 3-6 etapas contextuais com prazos distribuídos na janela. Substituiu o `Definir primeiros passos` genérico do Sprint 8.
+
+**Prompt resumido (em `src/internal-api.js#generateCheckpointsViaLLM`):**
+- System: schema rígido (array JSON, sem markdown), regras de janela (3-6 itens, last = end_date), veto a jargão técnico no nome das etapas
+- User: nome, justificativa, categoria, janela, metodologia, descrição
+- Timeout: 10s (ai.chat com Promise.race)
+- max_tokens: 800
+
+**Validação local antes de inserir:**
+- Array 3-6 itens
+- `name` string 3-80 chars
+- `due_date` ISO YYYY-MM-DD dentro de [start_date, end_date]
+- Última due_date forçada = end_date
+
+**Fallback determinístico por categoria** (se LLM timeout/inválido):
+| Categoria | Etapas |
+|---|---|
+| event | Repertório e formato · Logística e local · Comunicação · Ensaio geral · Dia do evento |
+| pedagogical | Planejamento · Preparação de material · Execução · Avaliação |
+| commercial | Prospecção · Proposta · Negociação · Fechamento |
+| administrative | Alinhamento · Execução · Revisão e entrega |
+| operational | Planejamento · Implementação · Verificação · Conclusão |
+| infrastructure | Levantamento · Execução · Testes · Entrega |
+
+Distribuição de datas: `start + (i/N) * (end-start)` com último = `end`.
+
+**Observabilidade:** log `[Checkpoints] llm` ou `[Checkpoints] fallback` com contagem.
+
+**Smoke validado:** projeto "Festival de Cordas 2026" (event, 45 dias) gerou 6 etapas contextuais 100% específicas (Definir repertório de cada turma → Reservar local → Montar escala de ensaios → Divulgar → Ensaio geral → Realizar Festival) em 9.1s.
+
+### Member picker no passo 3 do wizard
+
+O campo "Quem participa" deixou de ser texto livre. Virou:
+- Multi-select de collaborators ativos (componente `MemberPicker` inline em `NovoProjeto.tsx`)
+- Busca por nome
+- Chips removíveis no topo
+- Campo livre opcional "Alguém de fora do time?" pra não-cadastrados
+
+**Composição da `description` no submit (decisão temporária):**
+```
+description = nomes_selecionados.join(", ") + (extras ? " + " + extras : "")
+```
+Solução pragmática enquanto member picker estiver maduro. Quando o picker for adotado em mais lugares (edição de projeto, etc), `description` ganha outra função (ex.: notas livres).
+
+### Engine: `member_ids[]` no body do webhook
+
+`POST /internal/project-created` aceita `{ project_id, member_ids: [uuid] }`. Para cada UUID:
+- Idempotente (skip se já é membro)
+- INSERT em `project_members` com `role_in_project=member`
+- WhatsApp: `Você foi adicionado ao projeto *{nome}* por *{criador}*. Acompanhe pelo app.`
+- WA pra membros **só dispara se `requires_approval=false`** (evita ruído de pending que pode ser rejeitado)
+
+Criador continua sendo inserido como `owner`.
+
+### RLS: `auth_insert_project_members`
+
+Defense in depth. Engine usa service_role hoje, mas habilitamos authenticated:
+```sql
+CREATE POLICY auth_insert_project_members ON project_members
+FOR INSERT TO authenticated
+WITH CHECK (project_id IN (SELECT id FROM projects WHERE created_by = current_collab_id()));
+```
+
+Harness valida em 2 invariantes (alice insere em projeto próprio → OK; em alheio → BLOCKED). 26/26 pass.
+
+### Auditoria de jargão
+
+Removido de mensagens user-facing:
+- `internal-api.js`: "começar a montar os checkpoints" → "já mapeei as etapas iniciais"
+- `aprovar-projeto.md`: ampliada lista de jargão vetado (checkpoint/milestone/roadmap/sprint/5W2H/Eisenhower)
+- `habitos-pessoais.md`: `## Celebração de milestones` → `## Celebração de marcos`
+
+### Pendências Sprint 10+
+
+- Pessoa-Detalhe expandida com aba do projeto
+- Hierarquia tipográfica (debt visual)
+- Member picker em mais telas (edição de projeto)
+- Cron retry pra projetos sem `PROJECT_BOOTSTRAPPED`

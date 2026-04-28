@@ -30,8 +30,12 @@ type WizardData = {
   location: ProjectLocation | '';
   start_date: string; // YYYY-MM-DD
   end_date: string;
-  description: string; // QUEM vai participar — TOM pergunta "Quem?"
-  methodology: string; // COMO executar
+  // Sprint 9: "Quem participa" agora é multi-select de collaborators (member_ids)
+  // + texto livre opcional pra pessoas de fora do sistema. description (no banco)
+  // é composto na hora do submit como "Nome1, Nome2 + extras".
+  member_ids: string[];
+  extra_members: string;
+  methodology: string;
   estimated_hours_week: string;
   category: ProjectCategory;
 };
@@ -42,11 +46,14 @@ const initial: WizardData = {
   location: '',
   start_date: '',
   end_date: '',
-  description: '',
+  member_ids: [],
+  extra_members: '',
   methodology: '',
   estimated_hours_week: '',
   category: 'operational',
 };
+
+type CollabLite = { id: string; full_name: string; role: string };
 
 type Step = 1 | 2 | 3 | 4;
 const TOTAL_STEPS = 4;
@@ -74,7 +81,10 @@ function validateStep(step: Step, d: WizardData): string | null {
     return null;
   }
   if (step === 3) {
-    if (d.description.trim().length < 10) return 'Conta quem vai participar — pelo menos 10 caracteres.';
+    // Sprint 9: pelo menos 1 membro selecionado OU pelo menos 10 chars em "outros"
+    const hasMembers = d.member_ids.length > 0;
+    const hasExtras = d.extra_members.trim().length >= 10;
+    if (!hasMembers && !hasExtras) return 'Marca pelo menos 1 pessoa do time, ou descreve quem mais vai participar.';
     if (d.methodology.trim().length < 10) return 'Conta a abordagem — pelo menos 10 caracteres.';
     if (d.estimated_hours_week.trim()) {
       const n = Number(d.estimated_hours_week);
@@ -132,6 +142,99 @@ function formatBR(iso: string): string {
   return `${d}/${m}/${y}`;
 }
 
+// Sprint 9: multi-select inline de collaborators ativos.
+// Tap pra selecionar/deselecionar. Lista vira chips.
+function MemberPicker({
+  collabs,
+  selected,
+  onToggle,
+}: {
+  collabs: CollabLite[];
+  selected: string[];
+  onToggle: (id: string) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const filtered = query.trim()
+    ? collabs.filter((c) =>
+        c.full_name.toLowerCase().includes(query.trim().toLowerCase()),
+      )
+    : collabs;
+
+  const selectedSet = new Set(selected);
+  const selectedNames = collabs.filter((c) => selectedSet.has(c.id));
+
+  return (
+    <div className="space-y-sm">
+      {selectedNames.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {selectedNames.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              onClick={() => onToggle(c.id)}
+              className="inline-flex items-center gap-1 text-body-sm bg-brand/15 text-fg rounded-full pl-3 pr-2 py-1 border border-brand/40 focus-ring"
+              aria-label={`Remover ${c.full_name}`}
+            >
+              <span>{c.full_name}</span>
+              <span className="text-fg-muted text-body-md leading-none">×</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <input
+        type="text"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Buscar pelo nome…"
+        className={inputClass}
+      />
+
+      <div className="max-h-64 overflow-y-auto rounded-md border border-border bg-bg-surface">
+        {filtered.length === 0 ? (
+          <div className="px-md py-sm text-body-sm text-fg-muted">
+            Ninguém com esse nome.
+          </div>
+        ) : (
+          <ul className="divide-y divide-border">
+            {filtered.map((c) => {
+              const isSel = selectedSet.has(c.id);
+              return (
+                <li key={c.id}>
+                  <button
+                    type="button"
+                    onClick={() => onToggle(c.id)}
+                    className={[
+                      'w-full text-left px-md py-2 flex items-center gap-md focus-ring',
+                      isSel ? 'bg-brand/10' : 'hover:bg-bg-elevated',
+                    ].join(' ')}
+                  >
+                    <span
+                      className={[
+                        'h-5 w-5 rounded-md border flex items-center justify-center shrink-0',
+                        isSel ? 'bg-brand border-brand' : 'bg-bg border-border',
+                      ].join(' ')}
+                      aria-hidden
+                    >
+                      {isSel && (
+                        <span className="text-white text-body-xs font-bold">✓</span>
+                      )}
+                    </span>
+                    <span className="text-body-md text-fg flex-1 truncate">
+                      {c.full_name}
+                    </span>
+                    <span className="text-body-xs text-fg-muted">{c.role}</span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function formatBRShort(iso: string): string {
   if (!iso) return '—';
   const [, m, d] = iso.split('-');
@@ -154,6 +257,23 @@ export function NovoProjeto() {
     supervisorName: string | null;
     projectId: string;
   } | null>(null);
+
+  // Sprint 9: lista de collaborators ativos pra member picker (passo 3).
+  // Exclui o próprio criador — engine adiciona como owner automaticamente.
+  const { data: collabsAvailable = [] } = useQuery<CollabLite[]>({
+    queryKey: ['novo-projeto-collabs', collaborator?.id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('collaborators')
+        .select('id, full_name, role')
+        .eq('is_active', true)
+        .order('full_name', { ascending: true });
+      if (error) return [];
+      return ((data || []) as CollabLite[]).filter(c => c.id !== collaborator?.id);
+    },
+    enabled: !!collaborator?.id,
+    staleTime: 5 * 60_000,
+  });
 
   const { data: supervisorName } = useQuery({
     queryKey: ['novo-projeto-supervisor'],
@@ -209,13 +329,24 @@ export function NovoProjeto() {
     const status: ProjectStatus = isCoordOrDir ? 'planning' : 'pending_approval';
     const hours = data.estimated_hours_week.trim() ? Number(data.estimated_hours_week) : null;
 
+    // Sprint 9: compõe description a partir dos nomes selecionados + extras.
+    // Solução temporária — quando member picker maduro, description ganha
+    // outra função (ex.: notas livres do projeto).
+    const memberNames = data.member_ids
+      .map((id) => collabsAvailable.find((c) => c.id === id)?.full_name)
+      .filter(Boolean) as string[];
+    const composedDescription = [
+      memberNames.join(', '),
+      data.extra_members.trim() ? `+ ${data.extra_members.trim()}` : '',
+    ].filter(Boolean).join(' ').trim();
+
     const insertPayload = {
       name: data.name.trim(),
       justification: data.justification.trim(),
       location: data.location || null,
       start_date: data.start_date,
       end_date: data.end_date,
-      description: data.description.trim(),
+      description: composedDescription,
       methodology: data.methodology.trim(),
       estimated_hours_week: hours,
       category: data.category,
@@ -251,7 +382,8 @@ export function NovoProjeto() {
 
     // Notifica engine TOM (fire-ish: aguarda mas não bloqueia em caso de falha).
     // Endpoint é idempotente por project_id — retry futuro é seguro.
-    const ack = await notifyProjectCreated(inserted.id as string);
+    // Sprint 9: passa member_ids pra engine inserir project_members + WA por membro.
+    const ack = await notifyProjectCreated(inserted.id as string, data.member_ids);
     if (!ack.ok) {
       console.warn('[NovoProjeto] engine notify falhou:', ack.reason);
       // Projeto está salvo no DB; só a notificação automática falhou.
@@ -499,13 +631,30 @@ export function NovoProjeto() {
             </header>
             <Field
               label="👥 Quem vai participar?"
-              sub="Pode ser por nome, função, ou o time todo."
+              sub="Marca quem do time vai junto. Cada um recebe um aviso pelo WhatsApp quando o projeto começar."
+            >
+              <MemberPicker
+                collabs={collabsAvailable}
+                selected={data.member_ids}
+                onToggle={(id) => {
+                  update(
+                    'member_ids',
+                    data.member_ids.includes(id)
+                      ? data.member_ids.filter((x) => x !== id)
+                      : [...data.member_ids, id],
+                  );
+                }}
+              />
+            </Field>
+            <Field
+              label="Alguém de fora do time?"
+              sub="Opcional. Texto livre — quem não está cadastrado aqui."
             >
               <textarea
-                value={data.description}
-                onChange={(e) => update('description', e.target.value)}
-                placeholder="Ex: Jordão lidera; equipe pedagógica do Recreio"
-                rows={3}
+                value={data.extra_members}
+                onChange={(e) => update('extra_members', e.target.value)}
+                placeholder="Ex: pais dos alunos, professor convidado da escola X"
+                rows={2}
                 className={textareaClass}
               />
             </Field>
@@ -580,7 +729,33 @@ export function NovoProjeto() {
                   {formatBR(data.start_date)} → {formatBR(data.end_date)}
                 </SummaryInline>
                 <SummaryBlock label="👥 Quem participa">
-                  {data.description || '—'}
+                  {(() => {
+                    const names = data.member_ids
+                      .map((id) => collabsAvailable.find((c) => c.id === id)?.full_name)
+                      .filter(Boolean) as string[];
+                    if (names.length === 0 && !data.extra_members.trim()) return '—';
+                    return (
+                      <div className="space-y-1">
+                        {names.length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            {names.map((n) => (
+                              <span
+                                key={n}
+                                className="inline-block text-body-xs bg-bg-elevated rounded-full px-2 py-0.5 border border-border"
+                              >
+                                {n}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {data.extra_members.trim() && (
+                          <div className="text-body-sm text-fg-secondary italic">
+                            + {data.extra_members.trim()}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </SummaryBlock>
                 <SummaryBlock label="🛠️ Como executar">
                   {data.methodology || '—'}

@@ -281,6 +281,54 @@ async function runChecks(U) {
     }
   }
 
+  console.log('\n[invariantes] auth_insert_project_members (Sprint 9)');
+  {
+    // 1. alice consegue INSERT project_members no projeto que ela criou (fixture).
+    // Engine usa service_role pra fazer isso, mas RLS WITH CHECK habilita
+    // authenticated também — defense in depth + futuro PWA "adicionar membro".
+    // Cleanup: deleta a row inserida pra fixture continuar limpa.
+    const { error } = await alice.from('project_members').insert({
+      project_id: U._projectId,
+      collaborator_id: U.bob.collab_id,
+      role_in_project: 'member',
+    });
+    check('alice INSERT project_members em projeto próprio → OK', !error, error ? error.message : 'inserido');
+    if (!error) {
+      await admin.from('project_members')
+        .delete()
+        .eq('project_id', U._projectId)
+        .eq('collaborator_id', U.bob.collab_id);
+    }
+  }
+  {
+    // 2. alice NÃO consegue INSERT project_members em projeto alheio (bob's).
+    const today = new Date().toISOString().slice(0, 10);
+    const { data: bobProj, error: bpErr } = await admin.from('projects').insert({
+      name: `${TAG} bob proj for member rls`,
+      start_date: today, end_date: today,
+      category: 'operational', status: 'planning', progress_percent: 0,
+      color: '#E91451', created_by: U.bob.collab_id,
+    }).select('id').single();
+    if (bpErr) {
+      check('alice INSERT project_members em projeto alheio → BLOCKED', false, `seed bob proj: ${bpErr.message}`);
+    } else {
+      const { error } = await alice.from('project_members').insert({
+        project_id: bobProj.id,
+        collaborator_id: U.alice.collab_id,
+        role_in_project: 'member',
+      });
+      // RLS WITH CHECK rejeita; alguns setups retornam erro, outros 0 rows.
+      const { data: postCheck } = await admin.from('project_members')
+        .select('id')
+        .eq('project_id', bobProj.id)
+        .eq('collaborator_id', U.alice.collab_id);
+      const blocked = !!error || (postCheck || []).length === 0;
+      check('alice INSERT project_members em projeto alheio → BLOCKED', blocked, error ? error.message : `rows=${(postCheck||[]).length}`);
+      await admin.from('project_members').delete().eq('project_id', bobProj.id);
+      await admin.from('projects').delete().eq('id', bobProj.id);
+    }
+  }
+
   console.log('\n[invariantes] regressão Sprint 3 — sem policy ALL TO public USING(true)');
   {
     const { data } = await admin.from('pg_policies').select('*');

@@ -1,8 +1,9 @@
-// src/internal-api.js — Sprint 8 Etapa 4
+// src/internal-api.js — Sprint 8 Etapa 4 + Sprint 9 Etapa 1
 // Endpoint interno chamado pelo PWA imediatamente após INSERT em projects.
 // Faz bootstrap operacional do projeto:
 //   1. Vincula criador como owner em project_members (idempotente)
-//   2. Cria 1 checkpoint inicial "Definir primeiros passos" se nenhum existe
+//   2. Sprint 9: gera 3-6 etapas contextuais via Claude. Fallback determinístico
+//      por categoria se LLM falhar/timeout/output inválido.
 //   3. Manda WhatsApp pro criador (mensagem varia por requires_approval)
 //   4. Se requires_approval=true: WhatsApp pro supervisor com identificador
 //      explícito (APROVA / REJEITA <TOKEN>) — skill aprovar-projeto consome.
@@ -13,6 +14,7 @@
 const express = require('express');
 const supabase = require('./supabase/client');
 const whatsapp = require('./services/whatsapp');
+const ai = require('./ai/provider');
 
 const router = express.Router();
 
@@ -56,6 +58,135 @@ function ddmmyyyy(iso) {
   return `${d}/${m}/${y}`;
 }
 
+// ---------- Sprint 9: geração de etapas (checkpoints) ----------
+// Templates fallback por categoria. Acionados se LLM timeout/inválido.
+const FALLBACK_TEMPLATES = {
+  event: ['Repertório e formato', 'Logística e local', 'Comunicação', 'Ensaio geral', 'Dia do evento'],
+  pedagogical: ['Planejamento', 'Preparação de material', 'Execução', 'Avaliação'],
+  commercial: ['Prospecção', 'Proposta', 'Negociação', 'Fechamento'],
+  administrative: ['Alinhamento', 'Execução', 'Revisão e entrega'],
+  operational: ['Planejamento', 'Implementação', 'Verificação', 'Conclusão'],
+  infrastructure: ['Levantamento', 'Execução', 'Testes', 'Entrega'],
+};
+
+// Distribui N datas proporcionalmente entre start e end (inclusivo no end).
+function distributeDates(startISO, endISO, n) {
+  const startMs = new Date(startISO + 'T12:00:00Z').getTime();
+  const endMs = new Date(endISO + 'T12:00:00Z').getTime();
+  if (endMs < startMs || n < 1) return [endISO];
+  const dates = [];
+  for (let i = 1; i <= n; i++) {
+    const t = startMs + Math.round((i / n) * (endMs - startMs));
+    dates.push(new Date(t).toISOString().slice(0, 10));
+  }
+  // Garante que último é exatamente endISO.
+  dates[dates.length - 1] = endISO;
+  return dates;
+}
+
+function targetCheckpointCount(startISO, endISO) {
+  const startMs = new Date(startISO + 'T12:00:00Z').getTime();
+  const endMs = new Date(endISO + 'T12:00:00Z').getTime();
+  const days = Math.max(0, Math.round((endMs - startMs) / 86400000));
+  if (days < 7) return 3;
+  if (days <= 30) return 5;
+  return 6;
+}
+
+function fallbackCheckpoints(project) {
+  const template = FALLBACK_TEMPLATES[project.category] || FALLBACK_TEMPLATES.operational;
+  const dates = distributeDates(project.start_date, project.end_date, template.length);
+  return template.map((name, i) => ({ name, due_date: dates[i] }));
+}
+
+function isValidCheckpointArray(arr, project) {
+  if (!Array.isArray(arr) || arr.length < 3 || arr.length > 6) return false;
+  const startMs = new Date(project.start_date + 'T00:00:00Z').getTime();
+  const endMs = new Date(project.end_date + 'T23:59:59Z').getTime();
+  for (const c of arr) {
+    if (!c || typeof c !== 'object') return false;
+    if (typeof c.name !== 'string') return false;
+    const n = c.name.trim();
+    if (n.length < 3 || n.length > 80) return false;
+    if (typeof c.due_date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(c.due_date)) return false;
+    const t = new Date(c.due_date + 'T12:00:00Z').getTime();
+    if (Number.isNaN(t) || t < startMs || t > endMs) return false;
+  }
+  return true;
+}
+
+// Tenta gerar checkpoints via Claude. Retorna array válido ou null.
+async function generateCheckpointsViaLLM(project) {
+  const targetN = targetCheckpointCount(project.start_date, project.end_date);
+  const systemPrompt = [
+    'Você gera etapas iniciais para um projeto. Sua resposta é APENAS um JSON array, sem texto antes ou depois, sem markdown, sem explicação.',
+    '',
+    'Formato exato:',
+    '[',
+    '  {"name": "Nome curto da etapa", "due_date": "YYYY-MM-DD"},',
+    '  ...',
+    ']',
+    '',
+    'Regras inflexíveis:',
+    `- Quantidade: ${targetN} etapas (entre 3 e 6, baseado na janela do projeto).`,
+    '- Linguagem humana, simples, do dia-a-dia. Sem jargão técnico (nada de "milestone", "sprint", "framework", "roadmap", "5W2H").',
+    '- Cada nome: 3 a 80 caracteres. Descritivo e acionável.',
+    `- Toda due_date entre ${project.start_date} e ${project.end_date} (formato ISO YYYY-MM-DD).`,
+    `- Última etapa SEMPRE com due_date = ${project.end_date}.`,
+    '- Distribua as etapas proporcionalmente na janela. Não bote todas no mesmo dia.',
+    '- Etapas devem fazer sentido pelo nome do projeto e categoria, não ser genéricas.',
+    '- Pra projetos pessoais (festa, viagem, aniversário, casa), adapte: lista de convidados, fornecedores, confirmações, dia final, etc.',
+    '',
+    'Não saia desse formato. Não adicione campos extras. Sem comentários no JSON.',
+  ].join('\n');
+
+  const userMsg = [
+    'Contexto do projeto:',
+    `- Nome: ${project.name}`,
+    `- Por que existe: ${project.justification || '—'}`,
+    `- Categoria: ${project.category}`,
+    `- Janela: ${project.start_date} → ${project.end_date}`,
+    `- Como executar: ${project.methodology || '—'}`,
+    `- Quem participa: ${project.description || '—'}`,
+    '',
+    `Gere ${targetN} etapas.`,
+  ].join('\n');
+
+  const TIMEOUT_MS = 10000;
+  const aiPromise = ai.chat(systemPrompt, [{ role: 'user', content: userMsg }], 800);
+  const timeoutPromise = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error('llm_timeout_10s')), TIMEOUT_MS),
+  );
+
+  let raw;
+  try {
+    const r = await Promise.race([aiPromise, timeoutPromise]);
+    raw = (r && r.text ? r.text : '').trim();
+  } catch (err) {
+    console.warn(`[Checkpoints] LLM falhou: ${err.message?.slice(0, 200)}`);
+    return null;
+  }
+
+  // Tenta extrair o JSON array. Claude às vezes envolve em markdown.
+  const m = raw.match(/\[\s*\{[\s\S]*\}\s*\]/);
+  if (!m) {
+    console.warn(`[Checkpoints] LLM output sem JSON array: ${raw.slice(0, 200)}`);
+    return null;
+  }
+  let parsed;
+  try { parsed = JSON.parse(m[0]); } catch (err) {
+    console.warn(`[Checkpoints] LLM JSON inválido: ${err.message}`);
+    return null;
+  }
+  if (!isValidCheckpointArray(parsed, project)) {
+    console.warn(`[Checkpoints] LLM array fora do schema: ${JSON.stringify(parsed).slice(0, 300)}`);
+    return null;
+  }
+  // Garante último = end_date (LLM pode ter dado dia anterior).
+  parsed[parsed.length - 1].due_date = project.end_date;
+  return parsed;
+}
+
 async function logBootstrap(collabId, projectId, result, reason = null) {
   try {
     await supabase.from('marker_logs').insert({
@@ -88,6 +219,10 @@ router.post('/internal/project-created', requireInternalSecret, async (req, res)
   const t0 = Date.now();
   const projectId = String(req.body?.project_id || '').trim();
   if (!projectId) return res.status(400).json({ error: 'missing_project_id' });
+  // Sprint 9: member_ids opcional do PWA. Engine insere project_members + manda WA.
+  const memberIds = Array.isArray(req.body?.member_ids)
+    ? req.body.member_ids.filter(x => typeof x === 'string' && /^[0-9a-f-]{36}$/i.test(x))
+    : [];
 
   // Idempotência: PROJECT_BOOTSTRAPPED com raw=project_id e result='executed'
   const { data: prior } = await supabase
@@ -138,25 +273,76 @@ router.post('/internal/project-created', requireInternalSecret, async (req, res)
       collaborator_id: creator.id,
       role_in_project: 'owner',
     });
-    if (mErr) console.error(`[InternalAPI] project_members insert err: ${mErr.message}`);
+    if (mErr) console.error(`[InternalAPI] project_members owner insert err: ${mErr.message}`);
   }
 
-  // 2) project_checkpoints: cria 1 inicial se nenhum existe
+  // 1.5) Sprint 9: project_members adicionais (member_ids[] do PWA).
+  // Insere cada membro distinto do criador, idempotente, depois manda WA.
+  const membersToAdd = memberIds.filter(id => id !== creator.id);
+  const addedMembers = []; // pra disparar WA depois sem segurar idempotência
+  if (membersToAdd.length > 0) {
+    // Filtra os que já existem
+    const { data: alreadyMembers } = await supabase
+      .from('project_members')
+      .select('collaborator_id')
+      .eq('project_id', project.id)
+      .in('collaborator_id', membersToAdd);
+    const alreadySet = new Set((alreadyMembers || []).map(r => r.collaborator_id));
+    const fresh = membersToAdd.filter(id => !alreadySet.has(id));
+    if (fresh.length > 0) {
+      const rows = fresh.map(cid => ({
+        project_id: project.id,
+        collaborator_id: cid,
+        role_in_project: 'member',
+      }));
+      const { error: addErr } = await supabase.from('project_members').insert(rows);
+      if (addErr) {
+        console.error(`[InternalAPI] project_members member insert err: ${addErr.message}`);
+      } else {
+        addedMembers.push(...fresh);
+        console.log(`[InternalAPI] +${fresh.length} membros em ${project.id}`);
+      }
+    }
+  }
+
+  // 2) project_checkpoints: gera etapas contextuais (Sprint 9). Se nenhum existe.
   const { data: existingCk } = await supabase
     .from('project_checkpoints')
     .select('id')
     .eq('project_id', project.id)
     .limit(1);
   if (!existingCk || existingCk.length === 0) {
-    const { error: ckErr } = await supabase.from('project_checkpoints').insert({
+    let checkpoints = null;
+    let source = 'llm';
+    try {
+      checkpoints = await generateCheckpointsViaLLM(project);
+    } catch (err) {
+      console.warn(`[Checkpoints] generateCheckpointsViaLLM threw: ${err.message}`);
+    }
+    if (!checkpoints) {
+      checkpoints = fallbackCheckpoints(project);
+      source = 'fallback';
+    }
+    console.log(`[Checkpoints] ${source}: ${checkpoints.length} etapas pra projeto ${project.id} (${project.name})`);
+    const rows = checkpoints.map((c, i) => ({
       project_id: project.id,
-      name: 'Definir primeiros passos',
-      description: 'Mapear tarefas iniciais e responsáveis pra começar a execução.',
-      due_date: project.start_date,
+      name: c.name.trim(),
+      due_date: c.due_date,
       status: 'pending',
-      sort_order: 0,
-    });
-    if (ckErr) console.error(`[InternalAPI] project_checkpoints insert err: ${ckErr.message}`);
+      sort_order: i,
+    }));
+    const { error: ckErr } = await supabase.from('project_checkpoints').insert(rows);
+    if (ckErr) {
+      console.error(`[InternalAPI] project_checkpoints insert err: ${ckErr.message}`);
+      // Última linha de defesa: se até o insert do fallback falhou, tenta 1 generic.
+      await supabase.from('project_checkpoints').insert({
+        project_id: project.id,
+        name: 'Primeira etapa do projeto',
+        due_date: project.end_date,
+        status: 'pending',
+        sort_order: 0,
+      });
+    }
   }
 
   // Helpers de mensagem
@@ -175,7 +361,7 @@ router.post('/internal/project-created', requireInternalSecret, async (req, res)
       creatorMsg =
         `✅ *${project.name}* criado!\n\n` +
         `📍 ${local}\n🗓️ ${periodo}\n🏷️ ${cat}\n\n` +
-        `Bora estruturar — vou começar a montar os checkpoints.`;
+        `Bora estruturar — já mapeei as etapas iniciais.`;
     }
     whatsapp.sendMessage(creator.phone, creatorMsg).catch(e =>
       console.error(`[InternalAPI] WA criador falhou: ${e.message}`));
@@ -206,6 +392,23 @@ router.post('/internal/project-created', requireInternalSecret, async (req, res)
         console.error(`[InternalAPI] WA supervisor falhou: ${e.message}`));
     } else {
       console.warn(`[InternalAPI] supervisor não encontrado pra projeto ${projectId}`);
+    }
+  }
+
+  // 4.5) Sprint 9: WhatsApp pra membros adicionados (só quando projeto já está
+  // ativo — não notifica membros de pending_approval pra evitar ruído se for
+  // rejeitado depois).
+  if (!project.requires_approval && addedMembers.length > 0) {
+    const { data: memberRecords } = await supabase
+      .from('collaborators')
+      .select('id, full_name, phone')
+      .in('id', addedMembers);
+    const memberMsg = `Você foi adicionado ao projeto *${project.name}* por *${creator.full_name}*.\n\nAcompanhe pelo app.`;
+    for (const m of (memberRecords || [])) {
+      if (m.phone) {
+        whatsapp.sendMessage(m.phone, memberMsg).catch(e =>
+          console.error(`[InternalAPI] WA membro ${m.id} falhou: ${e.message}`));
+      }
     }
   }
 
