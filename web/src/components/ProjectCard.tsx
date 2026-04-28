@@ -22,7 +22,7 @@ const categoryLabel: Record<Project['category'], string> = {
 
 interface Props {
   project: Project;
-  nextCheckpoint?: { title: string; due_date: string | null } | null;
+  nextCheckpoint?: { name: string; due_date: string | null } | null;
 }
 
 export function ProjectCard({ project, nextCheckpoint }: Props) {
@@ -30,7 +30,7 @@ export function ProjectCard({ project, nextCheckpoint }: Props) {
   return (
     <Link
       to={`/projetos/${project.id}`}
-      className="block rounded-md border border-border bg-bg-surface p-md hover:bg-bg-elevated transition-colors focus-ring"
+      className="block surface p-md hover:bg-bg-elevated transition-colors focus-ring"
     >
       <div className="flex items-start gap-md justify-between">
         <div className="min-w-0">
@@ -55,7 +55,7 @@ export function ProjectCard({ project, nextCheckpoint }: Props) {
 
       {nextCheckpoint && (
         <div className="mt-md text-body-sm text-fg-muted">
-          <span className="text-fg-secondary">Próximo:</span> {nextCheckpoint.title}
+          <span className="text-fg-secondary">Próximo:</span> {nextCheckpoint.name}
           {nextCheckpoint.due_date && (
             <span className="tabular-nums"> · {nextCheckpoint.due_date.slice(8, 10)}/{nextCheckpoint.due_date.slice(5, 7)}</span>
           )}

@@ -34,7 +34,7 @@ export function Mais() {
         </p>
       </header>
 
-      <ul className="rounded-md border border-border bg-bg-surface divide-y divide-border">
+      <ul className="surface divide-y divide-border">
         {visible.map(it => (
           <li key={it.label}>
             {it.status === 'soon' ? (
@@ -58,7 +58,7 @@ export function Mais() {
         ))}
       </ul>
 
-      <section className="rounded-md border border-border bg-bg-surface p-md space-y-md">
+      <section className="surface p-md space-y-md">
         <div className="flex items-center justify-between">
           <div>
             <div className="text-body-md">Tema</div>

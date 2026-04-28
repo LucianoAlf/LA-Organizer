@@ -117,7 +117,7 @@ export function DashboardTime() {
       </div>
 
       <section className="grid grid-cols-1 md:grid-cols-2 gap-md">
-        <div className="rounded-md border border-border bg-bg-surface p-md">
+        <div className="surface p-md">
           <div className="flex items-center gap-2 text-label uppercase tracking-wide text-fg-muted">
             <CheckCircle2 size={14} /> Respondeu briefing
           </div>
@@ -132,7 +132,7 @@ export function DashboardTime() {
           )}
         </div>
 
-        <div className="rounded-md border border-border bg-bg-surface p-md">
+        <div className="surface p-md">
           <div className="flex items-center gap-2 text-label uppercase tracking-wide text-fg-muted">
             <AlertTriangle size={14} /> Sem resposta
           </div>
@@ -149,7 +149,7 @@ export function DashboardTime() {
       </section>
 
       {overdue.length > 0 && (
-        <section className="rounded-md border border-border bg-bg-surface p-md">
+        <section className="surface p-md">
           <div className="flex items-center gap-2 text-label uppercase tracking-wide text-fg-muted">
             <AlertTriangle size={14} /> Atrasos por pessoa
           </div>

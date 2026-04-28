@@ -22,6 +22,13 @@ async function fetchWeekTasks(collabId: string, start: string, end: string): Pro
   return (data ?? []) as unknown as Task[];
 }
 
+function dayCounts(items: Task[], today: string) {
+  const total = items.length;
+  const done = items.filter(t => t.status === 'done').length;
+  const overdue = items.filter(t => t.status === 'overdue' || (t.due_date && t.due_date < today && t.status !== 'done' && t.status !== 'cancelled')).length;
+  return { total, done, overdue };
+}
+
 export function Semana() {
   const { collaborator } = useAuth();
   const today = todaySP();
@@ -44,62 +51,110 @@ export function Semana() {
     return map;
   }, [tasks, days]);
 
+  const totalWeek = tasks.length;
+  const doneWeek = tasks.filter(t => t.status === 'done').length;
+  const pct = totalWeek ? Math.round((doneWeek / totalWeek) * 100) : 0;
+
   return (
-    <div className="space-y-lg">
+    <div className="space-y-md">
+      {/* Header — denser, includes week progress */}
       <header>
-        <h2 className="text-section-title">Semana de {brShort(start)} a {brShort(end)}</h2>
-        <p className="text-body-sm text-fg-muted mt-1">Trabalho · seg a sex</p>
+        <div className="flex items-baseline justify-between gap-md">
+          <div>
+            <h2 className="text-section-title">
+              <span className="tabular-nums">{brShort(start)}</span>
+              <span className="text-fg-muted"> – </span>
+              <span className="tabular-nums">{brShort(end)}</span>
+            </h2>
+            <p className="text-body-sm text-fg-muted mt-0.5">Trabalho · seg a sex</p>
+          </div>
+          <div className="text-right">
+            <div className="text-card-title tabular-nums">
+              <span className={pct >= 70 ? 'text-success' : pct >= 40 ? 'text-warning' : 'text-fg'}>
+                {doneWeek}
+              </span>
+              <span className="text-fg-muted">/{totalWeek}</span>
+            </div>
+            <div className="text-label uppercase text-fg-muted tracking-wide">Da semana</div>
+          </div>
+        </div>
+        {/* progress strip — soft, single line */}
+        <div className="mt-md h-1 w-full bg-bg-elevated rounded-full overflow-hidden">
+          <div className="h-full bg-brand transition-[width]" style={{ width: `${pct}%` }} />
+        </div>
       </header>
 
       {!supabaseConfigured ? (
         <EmptyState icon={<CalendarDays size={32} />} title="Configure Supabase" description="Defina VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY." />
       ) : isLoading ? (
-        <LoadingState rows={5} />
+        <LoadingState rows={3} />
       ) : error ? (
         <EmptyState title="Erro" description={(error as Error).message} />
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-md">
+        <div className="surface overflow-hidden md:grid md:grid-cols-5 md:divide-x md:divide-y-0 divide-y divide-border">
           {days.map(d => {
             const items = byDay.get(d) ?? [];
             const isToday = d === today;
-            const overdue = items.filter(t => t.status === 'overdue' || (t.due_date && t.due_date < today && t.status !== 'done')).length;
-            const done = items.filter(t => t.status === 'done').length;
+            const isPast = d < today;
+            const { total, done, overdue } = dayCounts(items, today);
+
             return (
               <section
                 key={d}
                 aria-label={`${dowShort(d)} ${brShort(d)}`}
                 className={[
-                  'rounded-md border bg-bg-surface p-md min-h-[120px]',
-                  isToday ? 'border-brand' : 'border-border',
+                  'relative flex flex-col gap-2 p-md md:p-md md:min-h-[180px]',
+                  isToday ? 'bg-brand/5' : '',
                 ].join(' ')}
               >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className={['text-label uppercase tracking-wide', isToday ? 'text-brand' : 'text-fg-muted'].join(' ')}>
+                {/* Today accent bar (left edge) */}
+                {isToday && <span aria-hidden className="absolute left-0 top-0 bottom-0 w-[3px] bg-brand md:hidden" />}
+                {isToday && <span aria-hidden className="hidden md:block absolute left-0 right-0 top-0 h-[3px] bg-brand" />}
+
+                {/* Row header — single line on mobile */}
+                <div className="flex items-baseline justify-between gap-md">
+                  <div className="flex items-baseline gap-2">
+                    <span className={['text-label uppercase tracking-wide', isToday ? 'text-brand' : isPast ? 'text-fg-muted' : 'text-fg-secondary'].join(' ')}>
                       {dowShort(d)}
-                    </div>
-                    <div className="text-card-title tabular-nums">{brShort(d)}</div>
+                    </span>
+                    <span className={['text-card-title tabular-nums', isToday ? '' : isPast ? 'text-fg-muted' : ''].join(' ')}>
+                      {brShort(d)}
+                    </span>
+                    {isToday && <span className="text-label uppercase tracking-wide text-brand">hoje</span>}
                   </div>
-                  <div className="text-body-sm text-fg-muted tabular-nums">
-                    {items.length === 0 ? '—' : `${done}/${items.length}`}
-                    {overdue > 0 && <span className="ml-2 text-danger">⚠ {overdue}</span>}
+                  <div className="text-body-sm tabular-nums">
+                    {total === 0 ? (
+                      <span className="text-fg-muted">—</span>
+                    ) : (
+                      <>
+                        <span className={done === total ? 'text-success' : ''}>{done}</span>
+                        <span className="text-fg-muted">/{total}</span>
+                        {overdue > 0 && <span className="ml-2 text-danger">⚠ {overdue}</span>}
+                      </>
+                    )}
                   </div>
                 </div>
-                {items.length > 0 && (
-                  <ul className="mt-md space-y-2">
-                    {items.slice(0, 5).map(t => (
+
+                {/* Items — compact bullet list, max 3 visible (today shows up to 5) */}
+                {total > 0 && (
+                  <ul className="space-y-1">
+                    {items.slice(0, isToday ? 5 : 3).map(t => (
                       <li
                         key={t.id}
                         className={[
-                          'text-body-sm truncate',
+                          'text-body-sm truncate flex items-center gap-2',
                           t.status === 'done' ? 'line-through text-fg-muted' : 'text-fg-secondary',
                         ].join(' ')}
                       >
-                        • {t.title}
+                        <span aria-hidden className={[
+                          'inline-block h-1.5 w-1.5 rounded-full shrink-0',
+                          t.status === 'done' ? 'bg-success' : t.status === 'overdue' ? 'bg-danger' : 'bg-fg-muted',
+                        ].join(' ')} />
+                        {t.title}
                       </li>
                     ))}
-                    {items.length > 5 && (
-                      <li className="text-body-sm text-fg-muted">+ {items.length - 5} mais</li>
+                    {items.length > (isToday ? 5 : 3) && (
+                      <li className="text-body-sm text-fg-muted pl-3.5">+ {items.length - (isToday ? 5 : 3)}</li>
                     )}
                   </ul>
                 )}

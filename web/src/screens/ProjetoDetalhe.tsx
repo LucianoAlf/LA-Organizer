@@ -15,7 +15,7 @@ type TabId = 'resumo' | 'checkpoints' | 'tarefas' | 'time';
 async function fetchProject(id: string): Promise<Project | null> {
   const { data, error } = await supabase
     .from('projects')
-    .select('id, name, description, category, status, progress_percent, start_date, target_end_date, leader_id')
+    .select('id, name, description, category, status, progress_percent, start_date, end_date, created_by')
     .eq('id', id).maybeSingle();
   if (error) throw error;
   return data as Project | null;
@@ -24,8 +24,9 @@ async function fetchProject(id: string): Promise<Project | null> {
 async function fetchCheckpoints(projectId: string): Promise<Checkpoint[]> {
   const { data, error } = await supabase
     .from('project_checkpoints')
-    .select('id, project_id, title, due_date, status, completed_at')
+    .select('id, project_id, name, due_date, status, completed_at, sort_order')
     .eq('project_id', projectId)
+    .order('sort_order', { ascending: true, nullsFirst: false })
     .order('due_date', { ascending: true });
   if (error) throw error;
   return (data ?? []) as Checkpoint[];
@@ -120,11 +121,11 @@ export function ProjetoDetalhe() {
 
       {tab === 'resumo' && (
         <section className="space-y-md">
-          <div className="rounded-md border border-border bg-bg-surface p-md">
+          <div className="surface p-md">
             <div className="text-label text-fg-muted uppercase tracking-wide">Próximo passo</div>
             {next ? (
               <div className="mt-1.5">
-                <div className="text-card-title">{next.title}</div>
+                <div className="text-card-title">{next.name}</div>
                 {next.due_date && (
                   <div className="text-body-sm text-fg-muted mt-1">Prazo: <span className="tabular-nums">{brShort(next.due_date)}</span></div>
                 )}
@@ -137,7 +138,7 @@ export function ProjetoDetalhe() {
       )}
 
       {tab === 'checkpoints' && (
-        <section className="rounded-md border border-border bg-bg-surface">
+        <section className="surface">
           {checkpoints.length === 0 ? (
             <EmptyState title="Sem checkpoints ainda" />
           ) : (
@@ -145,7 +146,7 @@ export function ProjetoDetalhe() {
               {checkpoints.map(c => (
                 <li key={c.id} className="p-md flex items-center justify-between gap-md">
                   <div className="min-w-0">
-                    <div className="text-body-md">{c.title}</div>
+                    <div className="text-body-md">{c.name}</div>
                     {c.due_date && <div className="text-body-sm text-fg-muted tabular-nums">{brShort(c.due_date)}</div>}
                   </div>
                   <Badge tone={
@@ -161,7 +162,7 @@ export function ProjetoDetalhe() {
       )}
 
       {tab === 'tarefas' && (
-        <section className="rounded-md border border-border bg-bg-surface">
+        <section className="surface">
           {tasks.length === 0 ? (
             <EmptyState title="Sem tarefas vinculadas" />
           ) : (
@@ -181,7 +182,7 @@ export function ProjetoDetalhe() {
       )}
 
       {tab === 'time' && (
-        <section className="rounded-md border border-border bg-bg-surface">
+        <section className="surface">
           {members.length === 0 ? (
             <EmptyState title="Sem membros cadastrados" />
           ) : (

@@ -79,7 +79,7 @@ export function Hoje() {
       />
 
       {/* List */}
-      <section className="rounded-md border border-border bg-bg-surface px-md">
+      <section className="surface px-md">
         {!supabaseConfigured ? (
           <EmptyState
             icon={<ListTodo size={32} />}

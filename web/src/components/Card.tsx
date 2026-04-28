@@ -9,7 +9,7 @@ interface Props extends HTMLAttributes<HTMLDivElement> {
 const variants: Record<NonNullable<Props['variant']>, string> = {
   plain: 'bg-bg-surface',
   elevated: 'bg-bg-elevated shadow-soft',
-  outline: 'bg-bg-surface border border-border',
+  outline: 'bg-bg-surface border border-border shadow-card dark:shadow-none',
   // BRAND container — usar pontualmente (CTA / hero / highlight). NÃO padrão.
   brand: 'bg-brand text-white shadow-offset-brand',
 };

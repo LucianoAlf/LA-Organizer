@@ -86,6 +86,8 @@ export default {
       boxShadow: {
         soft: '0 6px 20px rgba(0,0,0,0.22)',
         'offset-brand': '8px 8px 0 rgba(0,0,0,0.28)',
+        // Light-mode card depth — soft, neutral. Pair with `dark:shadow-none`.
+        card: '0 1px 2px rgba(15,15,15,0.04), 0 2px 6px rgba(15,15,15,0.06)',
       },
       maxWidth: {
         screen: '480px',

@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LA Organizer · Dev Frame</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Prompt:wght@400;500;600;700&display=swap" />
+    <style>
+      :root {
+        --bg: #0a0a0a;
+        --panel: #141414;
+        --border: #2a2a2a;
+        --fg: #ffffff;
+        --muted: #9e9e9e;
+        --brand: #e91451;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; }
+      body {
+        font-family: 'Prompt', system-ui, sans-serif;
+        background: radial-gradient(ellipse at top, #1a1a1a 0%, #0a0a0a 60%);
+        color: var(--fg);
+        min-height: 100vh;
+        display: grid;
+        grid-template-rows: auto 1fr;
+      }
+
+      /* Top bar */
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 20px;
+        gap: 16px;
+        border-bottom: 1px solid var(--border);
+        background: rgba(20,20,20,0.7);
+        backdrop-filter: blur(8px);
+      }
+      .brand-mark {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 700;
+      }
+      .brand-mark .dot {
+        width: 22px; height: 22px;
+        background: var(--brand); border-radius: 6px;
+        display: grid; place-items: center;
+        color: #fff; font-weight: 900; font-size: 11px; letter-spacing: -1px;
+      }
+      .controls {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .controls label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+      .controls select, .controls input[type="text"] {
+        background: var(--panel);
+        color: var(--fg);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 6px 10px;
+        font: inherit;
+        font-size: 13px;
+      }
+      .controls input[type="text"] { width: 220px; }
+      .controls button {
+        background: var(--brand);
+        color: #fff;
+        border: none;
+        border-radius: 8px;
+        padding: 6px 12px;
+        font-weight: 600;
+        cursor: pointer;
+        font: inherit;
+      }
+      .controls button.ghost {
+        background: transparent;
+        border: 1px solid var(--border);
+        color: var(--fg);
+      }
+
+      /* Stage */
+      main {
+        display: grid;
+        place-items: center;
+        padding: 32px 16px;
+        overflow: auto;
+      }
+
+      /* ---------- Phone ---------- */
+      .phone {
+        --w: 390;
+        --h: 844;
+        --bezel: 16px;
+        --radius: 56px;
+        position: relative;
+        width: calc(var(--w) * 1px + var(--bezel) * 2);
+        height: calc(var(--h) * 1px + var(--bezel) * 2);
+        background: #0d0d0d;
+        border-radius: calc(var(--radius) + var(--bezel));
+        padding: var(--bezel);
+        box-shadow:
+          0 0 0 1px #2a2a2a inset,
+          0 0 0 2px #000,
+          0 30px 80px rgba(0,0,0,0.45),
+          0 8px 24px rgba(0,0,0,0.35);
+      }
+      .phone .screen {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        border-radius: var(--radius);
+        overflow: hidden;
+        background: #000;
+        isolation: isolate;
+      }
+      /* Dynamic island */
+      .phone .island {
+        position: absolute;
+        top: 10px; left: 50%;
+        transform: translateX(-50%);
+        width: 124px; height: 32px;
+        background: #000;
+        border-radius: 999px;
+        z-index: 3;
+        pointer-events: none;
+      }
+      /* Side buttons */
+      .phone .btn {
+        position: absolute;
+        background: #1a1a1a;
+        box-shadow: 0 0 0 1px #000;
+      }
+      .phone .btn.power { right: -2px; top: 180px; width: 4px; height: 92px; border-radius: 2px; }
+      .phone .btn.vol-up { left: -2px; top: 140px; width: 4px; height: 60px; border-radius: 2px; }
+      .phone .btn.vol-down { left: -2px; top: 212px; width: 4px; height: 60px; border-radius: 2px; }
+      .phone .btn.silent { left: -2px; top: 96px; width: 4px; height: 28px; border-radius: 2px; }
+
+      /* Pixel-like (Android) variant */
+      .phone.android { --radius: 36px; }
+      .phone.android .island { top: 14px; width: 12px; height: 12px; border-radius: 50%; }
+
+      /* Tablet */
+      .phone.tablet { --w: 820; --h: 1180; --radius: 28px; --bezel: 20px; }
+      .phone.tablet .island { display: none; }
+
+      iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+        background: #000;
+      }
+
+      footer {
+        text-align: center;
+        color: var(--muted);
+        font-size: 12px;
+        padding: 12px;
+        opacity: 0.7;
+      }
+
+      /* On small screens (devtools), shrink */
+      @media (max-width: 920px) {
+        .controls input[type="text"] { width: 140px; }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="brand-mark">
+        <span class="dot">LA</span>
+        Organizer · Dev Frame
+      </div>
+      <div class="controls">
+        <label for="device">Device</label>
+        <select id="device">
+          <option value="iphone-14-pro">iPhone 14 Pro · 393×852</option>
+          <option value="iphone-se">iPhone SE · 375×667</option>
+          <option value="iphone-pro-max">iPhone 14 Pro Max · 430×932</option>
+          <option value="pixel-7">Pixel 7 · 412×915</option>
+          <option value="galaxy-s20">Galaxy S20 · 360×800</option>
+          <option value="ipad-mini">iPad mini · 820×1180</option>
+        </select>
+
+        <label for="path">Rota</label>
+        <input id="path" type="text" value="/login" placeholder="/hoje" />
+
+        <button class="ghost" id="reload" title="Recarregar iframe">↻</button>
+        <button id="open" title="Abrir em janela nova">↗</button>
+      </div>
+    </header>
+
+    <main>
+      <div class="phone" id="phone" data-device="iphone-14-pro">
+        <span class="island" aria-hidden="true"></span>
+        <span class="btn silent" aria-hidden="true"></span>
+        <span class="btn vol-up" aria-hidden="true"></span>
+        <span class="btn vol-down" aria-hidden="true"></span>
+        <span class="btn power" aria-hidden="true"></span>
+        <div class="screen">
+          <iframe id="frame" src="/login" allow="clipboard-read; clipboard-write" loading="eager"></iframe>
+        </div>
+      </div>
+    </main>
+
+    <footer>
+      Visualização · iframe live do app em <code>http://localhost:5173</code>. Eventos touch e media queries são honrados pelo viewport definido.
+    </footer>
+
+    <script type="module">
+      const DEVICES = {
+        'iphone-14-pro':  { w: 393, h: 852, type: 'iphone',  radius: 56, bezel: 16 },
+        'iphone-se':      { w: 375, h: 667, type: 'iphone',  radius: 38, bezel: 14 },
+        'iphone-pro-max': { w: 430, h: 932, type: 'iphone',  radius: 60, bezel: 18 },
+        'pixel-7':        { w: 412, h: 915, type: 'android', radius: 40, bezel: 14 },
+        'galaxy-s20':     { w: 360, h: 800, type: 'android', radius: 36, bezel: 12 },
+        'ipad-mini':      { w: 820, h: 1180, type: 'tablet', radius: 28, bezel: 20 },
+      };
+
+      const phone = document.getElementById('phone');
+      const select = document.getElementById('device');
+      const pathInput = document.getElementById('path');
+      const frame = document.getElementById('frame');
+      const reloadBtn = document.getElementById('reload');
+      const openBtn = document.getElementById('open');
+
+      function applyDevice(id) {
+        const d = DEVICES[id]; if (!d) return;
+        phone.style.setProperty('--w', d.w);
+        phone.style.setProperty('--h', d.h);
+        phone.style.setProperty('--radius', d.radius + 'px');
+        phone.style.setProperty('--bezel', d.bezel + 'px');
+        phone.classList.toggle('android', d.type === 'android');
+        phone.classList.toggle('tablet', d.type === 'tablet');
+        phone.dataset.device = id;
+        try { localStorage.setItem('la-frame-device', id); } catch (_) {}
+      }
+      function applyPath(p) {
+        const clean = (p || '/').trim();
+        const url = clean.startsWith('/') ? clean : '/' + clean;
+        if (frame.getAttribute('src') !== url) frame.setAttribute('src', url);
+        try { localStorage.setItem('la-frame-path', url); } catch (_) {}
+      }
+
+      // Restore last selection
+      try {
+        const lastDevice = localStorage.getItem('la-frame-device');
+        if (lastDevice && DEVICES[lastDevice]) {
+          select.value = lastDevice;
+          applyDevice(lastDevice);
+        } else applyDevice(select.value);
+        const lastPath = localStorage.getItem('la-frame-path');
+        if (lastPath) {
+          pathInput.value = lastPath;
+          applyPath(lastPath);
+        }
+      } catch (_) { applyDevice(select.value); }
+
+      select.addEventListener('change', () => applyDevice(select.value));
+      pathInput.addEventListener('change', () => applyPath(pathInput.value));
+      pathInput.addEventListener('keydown', e => { if (e.key === 'Enter') applyPath(pathInput.value); });
+      reloadBtn.addEventListener('click', () => {
+        const src = frame.getAttribute('src');
+        frame.setAttribute('src', 'about:blank');
+        setTimeout(() => frame.setAttribute('src', src), 30);
+      });
+      openBtn.addEventListener('click', () => {
+        const url = new URL(frame.src, location.origin).href;
+        window.open(url, '_blank');
+      });
+    </script>
+  </body>
+</html>

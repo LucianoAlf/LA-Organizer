@@ -46,15 +46,17 @@ export interface Project {
   status: 'active' | 'paused' | 'done' | 'cancelled';
   progress_percent: number;
   start_date: string | null;
-  target_end_date: string | null;
-  leader_id: string | null;
+  end_date: string | null;
+  created_by: string | null;
 }
 
 export interface Checkpoint {
   id: string;
   project_id: string;
-  title: string;
+  name: string;
+  description?: string | null;
   due_date: string | null;
   status: 'pending' | 'in_progress' | 'done' | 'cancelled';
   completed_at: string | null;
+  sort_order?: number | null;
 }
