@@ -1,12 +1,12 @@
 # PRD — LA Organizer
 
 **Documento:** 06 — PRD Completo
-**Versão:** 3.0
-**Data:** 27 de abril de 2026
+**Versão:** 3.1
+**Data:** 28 de abril de 2026
 **Autor:** Luciano Alf (produto) + Claude + OpenClaw (arquitetura)
 **Stakeholder:** Luciano Alf (CEO LA Music)
 **Agente:** TOM
-**Status:** Fase 1 funcionalmente concluída — Fase 2 (PWA) iniciando
+**Status:** Fase 1 funcionalmente concluída — Fase 2 (PWA) em produção · Sprints 0→7 fechadas
 
 ---
 
@@ -43,13 +43,17 @@ O ritual vai até onde o colaborador já vive: o WhatsApp. O TOM conduz rituais 
 ## 2. Personas
 
 ### 2.1 Colaborador
-Professor, assistente pedagógico, mentor. Vive no WhatsApp. Responde bem a cobranças diretas e curtas.
+Professor, assistente pedagógico, mentor. Vive no WhatsApp. Responde bem a cobranças diretas e curtas. **Cria projetos pessoais e de trabalho** via PWA ou WhatsApp — habilidade desenvolvida no treinamento de coordenação.
 
 ### 2.2 Coordenador
 Juliana, Quintela. Criam projetos, distribuem tarefas, acompanham execução. Fazem gestão pelo celular.
 
 ### 2.3 Diretor
 Luciano Alf. Usa o Alfredo (OpenClaw) como interface principal. Acessa PWA quando precisa de visão detalhada.
+
+### 2.4 Princípio formativo
+
+A LA HQ tem um propósito: **transformar vidas**. O sistema não serve só ao trabalho — serve à vida do colaborador como um todo. Aprender a fazer projeto com início, meio, fim, checklist, lembretes e entregas é uma skill pessoal. Quem desenvolve essa habilidade no trabalho passa a aplicá-la na vida pessoal, e vice-versa. Por isso a criação de projetos não é privilégio de coordenador — é capacidade que **todo o time** desenvolve via treinamento e usa via PWA/TOM.
 
 ---
 
@@ -61,11 +65,11 @@ Luciano Alf. Usa o Alfredo (OpenClaw) como interface principal. Acessa PWA quand
 |---|---|---|
 | Agente conversacional | TOM via WhatsApp (UAZAPI) | ✅ Fase 1 concluída |
 | Backend | Node.js + Supabase (PostgreSQL) | ✅ Em produção |
-| Skills e docs | 9 skills ativas + referências internas | ✅ Revisadas pelo OpenClaw |
-| Proteção | 3 guards (serialização, dedupe, validação de markers) | ✅ Em produção |
+| Skills e docs | 10+ skills ativas + referências internas | ✅ Revisadas pelo OpenClaw |
+| Proteção | 4 guards (serialização, dedupe, validação de markers, anti-leak) | ✅ Em produção |
 | Observabilidade | ritual_logs + marker_logs + v_recent_events | ✅ Em produção |
 | Resiliência | restart behavior + fallback provider + segredos | ✅ Em produção |
-| Espelho visual | PWA React mobile-first | 🔄 Fase 2 — iniciando |
+| Espelho visual | PWA React mobile-first | ✅ Em produção (Vercel) |
 | Integração executiva | Alfredo (OpenClaw) | 📌 Fase 4 |
 
 ### 3.2 Privacidade por design
@@ -74,6 +78,7 @@ Luciano Alf. Usa o Alfredo (OpenClaw) como interface principal. Acessa PWA quand
 - Hábitos: 100% privados — nem coordenador, nem diretor
 - Memória e perfil: privados por padrão
 - Coordenador vê dados de trabalho, nunca pessoal
+- **Anti-leak guard:** TOM nunca expõe nomes de stack (Supabase, banco, MCP, tabelas) ao usuário — bloqueado por regex no engine, registrado em `marker_logs` como `LEAK_BLOCKED`
 
 ---
 
@@ -94,7 +99,9 @@ Luciano Alf. Usa o Alfredo (OpenClaw) como interface principal. Acessa PWA quand
 | Pedir prazo + aprovação coordenador | ✅ |
 | Demanda nova vira task (não memória) | ✅ |
 | Coordenador cria e delega tarefa | ✅ |
-| Criar projeto 5W2H (7 perguntas) | ✅ |
+| Criar projeto 5W2H via WhatsApp (7 perguntas) | ✅ |
+| Criar/atualizar/cancelar/concluir compromisso (event) via WhatsApp | ✅ |
+| Briefing inclui compromissos do dia | ✅ |
 | Separação pessoal × trabalho | ✅ |
 | Hábitos pessoais (criar, marcar, streak) | ✅ |
 | Checklists operacionais | ✅ |
@@ -103,16 +110,15 @@ Luciano Alf. Usa o Alfredo (OpenClaw) como interface principal. Acessa PWA quand
 | Do not disturb (janela por colaborador) | ✅ |
 | Consolidação de memória (cron domingo 22h) | ✅ |
 | Tratamento de áudio (Whisper) | ✅ |
-| 3 guards de proteção | ✅ |
+| 4 guards de proteção | ✅ |
 | Observabilidade (ritual_logs + marker_logs) | ✅ |
 | Resiliência (restart, fallback, segredos) | ✅ |
-| 4 colaboradores cadastrados | ✅ |
 
 ### 4.2 Deferred (documentado)
 
 | Item | Motivo |
 |---|---|
-| Rotação de segredos (service_role, UAZAPI) | Aguarda saída do dev solo — repo privatizado, risco aceito |
+| WEBHOOK_SECRET HMAC strict mode | Aguarda UAZAPI suportar assinatura — porta 3100 já fechada via nginx |
 | collaborator_profiles auto-update qualitativo | Precisa de uso real com múltiplos usuários antes |
 | Emusys/checklist nas seções do resumo | Aguarda tabelas completas das integrações |
 | Hermes (evolução autônoma de skills) | Metacapacidade — entra após validação com usuários reais |
@@ -122,7 +128,7 @@ Luciano Alf. Usa o Alfredo (OpenClaw) como interface principal. Acessa PWA quand
 ## 5. Fase 2 — PWA
 
 ### 5.1 Objetivo
-Criar o espelho visual do TOM — um PWA mobile-first que permite ao colaborador ver e interagir com suas tarefas, projetos e hábitos. Para coordenadores, visão do time. Para o diretor, panorama executivo.
+Criar o espelho visual do TOM — um PWA mobile-first que permite ao colaborador ver e interagir com suas tarefas, projetos, compromissos e hábitos. Para coordenadores, visão do time. Para o diretor, panorama executivo.
 
 ### 5.2 Princípios do PWA
 
@@ -131,51 +137,91 @@ Criar o espelho visual do TOM — um PWA mobile-first que permite ao colaborador
 - Login via magic link por WhatsApp
 - Role gating visual (colaborador ≠ coordenador ≠ diretor)
 - Privacidade por design (pessoal não vaza para coordenador)
+- **Ações estruturadas que disparam markers do TOM** quando aplicável (ex.: criação de projeto via wizard dispara `<<PROJECT_CREATE>>` no engine)
 
-### 5.3 MVP do PWA — recorte Sprint 0
+### 5.3 Telas em produção (Sprints 0→7)
 
-**Entram no MVP:**
-
-| Tela | Role | Prioridade |
+| Tela | Role | Sprint |
 |---|---|---|
-| Login (magic link WhatsApp) | Todos | P0 |
-| Hoje | Todos | P0 |
-| Semana | Todos | P0 |
-| Projetos (lista) | Todos | P0 |
-| Projeto detalhe | Todos | P0 |
-| Configurações | Todos | P1 |
-| Histórico | Todos | P1 |
-| Dashboard do time | Coordenador+ | P0 |
+| Login (magic link WhatsApp) | Todos | Sprint 2 |
+| Hoje | Todos | Sprint 0 |
+| Semana | Todos | Sprint 0 |
+| Projetos (lista) | Todos | Sprint 0 |
+| Projeto detalhe | Todos | Sprint 0 |
+| Dashboard do time | Coordenador+ | Sprint 0 |
+| Configurações | Todos | Sprint 1 |
+| Histórico | Todos | Sprint 1 |
+| Pessoa-Detalhe `/time/:id` | Coordenador+ | Sprint 6 |
 
-**Ficam para depois do MVP:**
+### 5.4 Telas planejadas
 
-- Dashboard executivo completo
-- Gestão de checklists completa
-- Broadcast no PWA
-- Aderência geral detalhada
-- Pessoa detalhe profunda
-- Agenda Emusys ultra rica
-- Modais sofisticados
-
-### 5.4 Sprint 0 do PWA
-
-**Objetivo:** fundação técnica + 4-5 telas núcleo funcionando com dados reais do Supabase.
-
-1. Setup: React + TypeScript + PWA + auth via magic link
-2. Layout base: bottom nav, header, role gating
-3. Tela Hoje: tarefas do dia + checkbox interativo
-4. Tela Projetos: lista de projetos com status
-5. Dashboard do time: resumo coordenador (dados já existem no banco)
+| Tela | Role | Sprint planejada |
+|---|---|---|
+| **Project Wizard `/projetos/novo`** | **Todos (com gate)** | **Sprint 8** |
+| Hábitos pessoais | Todos | Sprint 8+ |
+| Checklists operacionais | Todos | Sprint 8+ |
+| Broadcast no PWA | Coordenador+ | Sprint 8+ |
+| Aderência geral | Coordenador+ | Fase 3 |
+| Dashboard executivo | Diretor | Fase 3 |
+| Agenda Emusys | Professor | Fase 5 |
 
 ---
 
-## 6. Roadmap geral
+## 6. Project Wizard (Sprint 8)
+
+### 6.1 Por que existe
+
+Hoje a criação de projeto é exclusivamente via TOM no WhatsApp — um fluxo conversacional de 7 perguntas (skill `cadastro-projeto-5w2h`). Funciona, mas tem dois problemas:
+
+1. **Limita quem cria.** A skill tem gate de permissão para coord/director, mas a metodologia 5W2H é uma habilidade que **todo o time precisa desenvolver** — é parte do treinamento de coordenação que se estende a colaboradores. O propósito formativo da LA HQ exige que essa skill esteja acessível.
+2. **WhatsApp-first não é mobile-first visual.** Para uma habilidade que se está ensinando, ter feedback visual (progresso, campos preenchidos, confirmação visual) acelera o aprendizado.
+
+### 6.2 O que é
+
+Wizard multi-step no PWA que replica o fluxo 5W2H do TOM em telas guiadas. Acessível a todos os colaboradores, com gate diferenciado:
+
+- **Coordenador / Diretor:** wizard completo, projeto entra em produção imediato
+- **Colaborador comum:** wizard completo, projeto entra como `status='planning'` aguardando aprovação do coordenador supervisor
+
+### 6.3 Fluxo (4 passos)
+
+| Passo | Campos | Validação |
+|---|---|---|
+| 1 — Identidade | `name` (O quê) · `justification` (Por quê) | Ambos obrigatórios |
+| 2 — Tempo e local | `location` (Onde) · `start_date` · `end_date` (Quando) | end_date > start_date |
+| 3 — Pessoas e método | `description` (Quem) · `methodology` (Como) · `estimated_hours_week` (Quanto) | Description e methodology obrigatórios |
+| 4 — Confirmação | Resumo de tudo + escolha de `category` | category obrigatório |
+
+Cada passo tem barra de progresso visual (1/4, 2/4, 3/4, 4/4). Tela final: "✅ Projeto criado! O TOM já foi notificado." e redirect para `/projetos/:id`.
+
+### 6.4 Integração com o engine
+
+O PWA não duplica lógica de criação. Após confirmação do passo 4:
+
+1. PWA insere row em `projects` via Supabase (RLS valida gate)
+2. PWA dispara webhook ao engine TOM com payload equivalente a `<<PROJECT_CREATE>>`
+3. Engine processa: cria checkpoints iniciais, registra membros, envia mensagem WhatsApp ao criador confirmando, opcionalmente notifica supervisor
+
+### 6.5 Schema
+
+**Sem nova tabela.** A tabela `projects` existente já cobre todos os 7 campos do 5W2H. Mudança necessária:
+
+- Adicionar RLS policy `auth_insert_own_projects` permitindo INSERT a qualquer authenticated com `created_by = current_collab_id()`
+- Adicionar coluna `requires_approval boolean DEFAULT false` em `projects` para diferenciar projetos criados por colaborador comum (true) vs coord/director (false)
+
+### 6.6 Documentação completa
+
+Ver `docs/PROJECT-WIZARD.md` para decisões arquiteturais detalhadas, mapeamento step→campo, integração com engine, e UX por role.
+
+---
+
+## 7. Roadmap geral
 
 | Fase | Conteúdo | Status |
 |---|---|---|
 | Fase 0 | Infraestrutura (VPS, banco, webhook) | ✅ Concluída |
 | Fase 1 | TOM WhatsApp (agente completo) | ✅ Funcionalmente concluída |
-| Fase 2 | PWA espelho visual | 🔄 Iniciando |
+| Fase 2 | PWA espelho visual + Project Wizard | 🔄 Em andamento (Sprints 0→7 fechadas, 8 planejada) |
 | Fase 3 | Dashboard gerencial avançado + check-in RH | 📌 Planejado |
 | Fase 4 | Integração Alfredo (OpenClaw) | 📌 Planejado |
 | Fase 5 | Checklists operacionais avançados + Emusys completo + Google Calendar | 📌 Planejado |
@@ -183,18 +229,35 @@ Criar o espelho visual do TOM — um PWA mobile-first que permite ao colaborador
 
 ---
 
-## 7. Estratégia de rollout
+## 8. Estratégia de rollout
 
-1. **Agora:** Alf testa sozinho por ~1 semana
-2. **Depois:** Anne Susan entra (collaborator, Campo Grande)
-3. **Depois:** Juliana e Quintela (coordenadores)
-4. **Produção:** time completo (~40 pessoas) — só após PWA estável
+1. **Concluído:** Alf testou sozinho (Sprints 0→4)
+2. **Concluído:** Anne Susan entrou (collaborator, Campo Grande) na Sprint 2
+3. **Próximo:** Juliana e Quintela (coordenadores) — pré-requisito: Sprint 8 (Project Wizard) entregue
+4. **Produção:** time completo (~40 pessoas) — após estabilização do Project Wizard com 4-5 usuários
 
 ---
 
-## 8. Decisões de arquitetura relevantes
+## 9. Decisões de arquitetura relevantes
 
 - **Markers vs structured output:** markers (`<<ACTION>>...<<END>>`) funcionam no MVP com guard de validação. Migração para structured output considerada para Onda 1 de arquitetura.
 - **engine.js:** atualmente god object — refactor planejado para Sprint de Arquitetura (Onda 1) quando Fase 2 estiver estável.
-- **Segredos:** repo privatizado, rotação pendente conforme condições documentadas em `docs/secrets-audit.md`.
+- **Segredos:** repo privatizado, rotação Supabase concluída na Sprint 7, UAZAPI rotacionado na Sprint 5.
 - **Áudio:** Whisper (OpenAI) ativo — ~$1.80/mês no volume atual.
+- **Anti-leak guard:** Sprint 7 adicionou regex no engine bloqueando vazamento de termos de stack ao usuário (Supabase, banco, MCP, tabela, sql, permissão de acesso).
+- **MCP tools desligadas no TOM:** Sprint 7 desabilitou ferramentas externas no Claude CLI do engine — TOM só consome texto + marker, nunca tenta tool calls.
+- **Project Wizard cria via PWA, executa via engine:** wizard é UI; criação efetiva e distribuição de tarefas é responsabilidade do engine TOM (princípio "PWA é espelho").
+
+---
+
+## 10. Mudanças v3.0 → v3.1
+
+| Item | v3.0 | v3.1 |
+|---|---|---|
+| Status Fase 2 | Iniciando | Sprints 0→7 em produção, Sprint 8 planejada |
+| Project Wizard | Não previsto | Documentado como Sprint 8 (seção 6) |
+| Persona Colaborador | Apenas executa | **Cria projetos** (treinamento de coordenação estende skill ao time) |
+| Anti-leak guard | Não existia | Documentado em 3.2 e 9 |
+| Telas em produção | Lista P0/P1 | Lista por sprint entregue |
+| Privatização repo | Pendente | Concluído |
+| Rotação segredos | Pendente | Concluída (Supabase Sprint 7, UAZAPI Sprint 5) |
