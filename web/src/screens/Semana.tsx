@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { CalendarDays } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
@@ -6,6 +6,9 @@ import { supabase, supabaseConfigured } from '../lib/supabase';
 import { todaySP, workWeekDays, dowShort, brShort } from '../utils/date';
 import { LoadingState } from '../components/LoadingState';
 import { EmptyState } from '../components/EmptyState';
+import { Fab } from '../components/Fab';
+import { QuickTaskSheet } from '../components/QuickTaskSheet';
+import { RescheduleSheet } from '../components/RescheduleSheet';
 import type { Task } from '../types';
 
 async function fetchWeekTasks(collabId: string, start: string, end: string): Promise<Task[]> {
@@ -33,6 +36,8 @@ export function Semana() {
   const { collaborator } = useAuth();
   const today = todaySP();
   const days = useMemo(() => workWeekDays(today), [today]);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [rescheduleTask, setRescheduleTask] = useState<Task | null>(null);
   const start = days[0];
   const end = days[days.length - 1];
 
@@ -135,24 +140,42 @@ export function Semana() {
                   </div>
                 </div>
 
-                {/* Items — compact bullet list, max 3 visible (today shows up to 5) */}
+                {/* Items — compact bullet list, max 3 visible (today shows up to 5).
+                    Tap an item to open reschedule sheet. Done items not tappable. */}
                 {total > 0 && (
                   <ul className="space-y-1">
-                    {items.slice(0, isToday ? 5 : 3).map(t => (
-                      <li
-                        key={t.id}
-                        className={[
-                          'text-body-sm truncate flex items-center gap-2',
-                          t.status === 'done' ? 'line-through text-fg-muted' : 'text-fg-secondary',
-                        ].join(' ')}
-                      >
-                        <span aria-hidden className={[
-                          'inline-block h-1.5 w-1.5 rounded-full shrink-0',
-                          t.status === 'done' ? 'bg-success' : t.status === 'overdue' ? 'bg-danger' : 'bg-fg-muted',
-                        ].join(' ')} />
-                        {t.title}
-                      </li>
-                    ))}
+                    {items.slice(0, isToday ? 5 : 3).map(t => {
+                      const tappable = t.status !== 'done' && t.status !== 'cancelled';
+                      const inner = (
+                        <>
+                          <span aria-hidden className={[
+                            'inline-block h-1.5 w-1.5 rounded-full shrink-0',
+                            t.status === 'done' ? 'bg-success' : t.status === 'overdue' ? 'bg-danger' : 'bg-fg-muted',
+                          ].join(' ')} />
+                          <span className="truncate">{t.title}</span>
+                        </>
+                      );
+                      const cls = [
+                        'text-body-sm truncate flex items-center gap-2 w-full text-left',
+                        t.status === 'done' ? 'line-through text-fg-muted' : 'text-fg-secondary',
+                      ].join(' ');
+                      return (
+                        <li key={t.id}>
+                          {tappable ? (
+                            <button
+                              type="button"
+                              onClick={() => setRescheduleTask(t)}
+                              className={cls + ' hover:text-fg focus-ring rounded-sm'}
+                              title="Reagendar"
+                            >
+                              {inner}
+                            </button>
+                          ) : (
+                            <span className={cls}>{inner}</span>
+                          )}
+                        </li>
+                      );
+                    })}
                     {items.length > (isToday ? 5 : 3) && (
                       <li className="text-body-sm text-fg-muted pl-3.5">+ {items.length - (isToday ? 5 : 3)}</li>
                     )}
@@ -163,6 +186,10 @@ export function Semana() {
           })}
         </div>
       )}
+
+      <Fab onClick={() => setCreateOpen(true)} label="Nova" ariaLabel="Criar nova tarefa" />
+      <QuickTaskSheet open={createOpen} onClose={() => setCreateOpen(false)} defaultDueDate={today} />
+      <RescheduleSheet open={Boolean(rescheduleTask)} task={rescheduleTask} onClose={() => setRescheduleTask(null)} />
     </div>
   );
 }

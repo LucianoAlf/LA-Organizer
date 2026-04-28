@@ -8,6 +8,8 @@ import { Projetos } from './screens/Projetos';
 import { ProjetoDetalhe } from './screens/ProjetoDetalhe';
 import { Mais } from './screens/Mais';
 import { DashboardTime } from './screens/DashboardTime';
+import { Configuracoes } from './screens/Configuracoes';
+import { Historico } from './screens/Historico';
 
 export default function App() {
   return (
@@ -22,6 +24,8 @@ export default function App() {
           <Route path="projetos" element={<Projetos />} />
           <Route path="projetos/:id" element={<ProjetoDetalhe />} />
           <Route path="mais" element={<Mais />} />
+          <Route path="configuracoes" element={<Configuracoes />} />
+          <Route path="historico" element={<Historico />} />
 
           <Route element={<ProtectedRoute requireRoles={['coordinator', 'director']} />}>
             <Route path="time" element={<DashboardTime />} />

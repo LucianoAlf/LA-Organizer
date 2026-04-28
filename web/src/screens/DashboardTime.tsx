@@ -34,18 +34,22 @@ async function fetchTeamSnapshot(myId: string): Promise<TeamSnapshot> {
     .eq('ritual_type', 'daily_briefing')
     .eq('status', 'sent');
 
+  // Privacy hardening: count is read via SECURITY DEFINER fn so coord/dir
+  // never gain SELECT access to conversation_history.content. RLS on the
+  // table no longer permits coord/dir SELECT — only this fn does.
   const responded: string[] = [];
   const noResponse: string[] = [];
   for (const c of team) {
     const b = (briefings ?? []).find(x => x.collaborator_id === c.id);
-    if (!b) continue; // briefing not sent → don't classify
-    const { count } = await supabase
-      .from('conversation_history')
-      .select('id', { count: 'exact', head: true })
-      .eq('collaborator_id', c.id)
-      .eq('direction', 'inbound')
-      .gte('created_at', b.sent_at);
-    if ((count ?? 0) > 0) responded.push(c.id);
+    if (!b) continue;
+    const { data: countResult, error: rpcErr } = await supabase
+      .rpc('briefing_response_count', { collab_id: c.id, since: b.sent_at });
+    if (rpcErr) {
+      console.warn('briefing_response_count err', rpcErr.message);
+      continue;
+    }
+    const n = (countResult as number | null) ?? 0;
+    if (n > 0) responded.push(c.id);
     else noResponse.push(c.id);
   }
 

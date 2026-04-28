@@ -10,6 +10,8 @@ import { Tabs } from '../components/Tabs';
 import { LoadingState } from '../components/LoadingState';
 import { EmptyState } from '../components/EmptyState';
 import { Button } from '../components/Button';
+import { Fab } from '../components/Fab';
+import { QuickTaskSheet } from '../components/QuickTaskSheet';
 import type { Task, TaskContext } from '../types';
 
 async function fetchTasksToday(collabId: string): Promise<Task[]> {
@@ -30,6 +32,7 @@ export function Hoje() {
   const { collaborator } = useAuth();
   const qc = useQueryClient();
   const [tab, setTab] = useState<TaskContext>('work');
+  const [sheetOpen, setSheetOpen] = useState(false);
 
   const { data: tasks = [], isLoading, error } = useQuery({
     queryKey: ['tasks', 'hoje', collaborator?.id],
@@ -110,6 +113,9 @@ export function Hoje() {
           ))
         )}
       </section>
+
+      <Fab onClick={() => setSheetOpen(true)} label="Nova" ariaLabel="Criar nova tarefa" />
+      <QuickTaskSheet open={sheetOpen} onClose={() => setSheetOpen(false)} />
     </div>
   );
 }

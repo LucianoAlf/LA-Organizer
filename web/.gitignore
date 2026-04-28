@@ -9,3 +9,5 @@ dist-ssr
 .vite
 public/icon-192.png
 public/icon-512.png
+vite.config.d.ts
+vite.config.js
