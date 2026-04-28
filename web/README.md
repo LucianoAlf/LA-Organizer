@@ -8,7 +8,9 @@ Frontend mobile-first do TOM. **Espelho visual do banco** — não duplica regra
 
 - **Sprint 0** — Fundação técnica + 6 telas P0 + auth ✅
 - **Sprint 1** — Configurações, Histórico, criar tarefa rápida, reagendar, privacy hardening ✅
-- Próximo: Sprint 2 (a planejar)
+- **Sprint 2** — Magic link via WhatsApp (canônico), URL pública via Cloudflare tunnel, fallback email/password, piloto multiusuário real ✅
+- **Sprint 3** — Modelo `events` separado de `tasks` + criação unificada (Tarefa | Compromisso) + categorias + RLS hardening crítico ✅
+- Próximo: Sprint 4 (a planejar)
 
 ---
 
@@ -142,6 +144,17 @@ Fluxo:
 - **Dashboard do time** (`/time`, coord+ only) — stat cards + listas respondeu/sem-resposta + atrasos por pessoa. Privacy contract enforçado.
 - **Mais** (`/mais`) — entry point para itens P1+, toggle tema, sair
 
+### Sprint 3
+
+- **Modelo `events` separado** — compromissos/eventos com `start_at`, `end_at`, `modality`, `location_text`, `meeting_url`, `category`. Não é "task com hora"; é entidade própria. Decisão arquitetural detalhada em `docs/MODELO-EVENTS-VS-TASKS.md`.
+- **`tasks.category`** opcional adicionada (mesmo enum de events, informacional, NÃO impacta RLS).
+- **Criação unificada** — `QuickCreateSheet` substitui `QuickTaskSheet`. Seletor inicial Tarefa | Compromisso, forms divergentes (tarefa: title+context+due_date; compromisso: title+category+start/end+modality+location/meeting_url).
+- **`/hoje` feed unificado** — bloco "Compromissos" com horário (HH:MM–HH:MM, modality icon, link "entrar" se online) sobre "Tarefas".
+- **`/semana`** — eventos com horário em destaque (pink) + tasks como bullets.
+- **`/historico`** — KPIs separados Tarefas (X/Y, %) + Compromissos (count) + Dias ativos.
+- **Categorias enum fechado**: `la_music`, `mentoria`, `aula_particular`, `outra_escola`, `estudio`, `pessoal`. Visual: badges semânticos reutilizando paleta existente.
+- **🚨 Fix RLS crítico (regressão Sprints 0-2):** policies "Service role full access" estavam `TO public USING (true)`, vazando todas as linhas para qualquer authenticated. Re-escopo `TO service_role` aplicado em todas as tabelas. Service_role bypassa RLS via privilege próprio.
+
 ### Sprint 1
 
 - **Configurações** (`/configuracoes`) — edição de `user_preferences` em 3 sections:
@@ -166,6 +179,9 @@ Por design, no PWA:
 |---|---|
 | `tasks WHERE context='personal'` | Apenas o próprio (RLS) |
 | `tasks WHERE context='work'` | Próprio + coord/director |
+| `events WHERE context='personal'` | Apenas o próprio (RLS) |
+| `events WHERE context='work'` | Próprio + coord/director |
+| `events.category` | Informacional, NÃO entra em RLS |
 | `collaborator_memory` | Apenas service_role (PWA nunca lê) |
 | `habits`, `habit_logs` | Apenas service_role (PWA nunca lê) |
 | `conversation_history` | Service_role; coord/director só via `briefing_response_count(...)` (count, nunca content) |

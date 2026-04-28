@@ -20,10 +20,19 @@ Sem cadastro. Sem senha. Seu WhatsApp é seu login.
 ## O que tem dentro
 
 ### Hoje
-Suas tarefas do dia. Toca o círculo pra concluir, ou usa o botão `+` (canto inferior direito) pra criar uma tarefa rápida.
+Suas **tarefas e compromissos** do dia. O botão `+` (canto inferior direito) abre um menu com 2 opções:
 
-- **Trabalho**: tarefas que coordenador ou você cadastrou no contexto profissional
-- **Pessoal**: tarefas que SÓ você vê. Coordenador nunca acessa
+- **📋 Tarefa** — algo a fazer até uma data. Toca o círculo pra concluir.
+- **📅 Compromisso** — algo com horário (reunião, aula, ensaio). Aparece com 09:00–10:00, modalidade (online/presencial), local ou link.
+
+Filtros:
+- **Trabalho**: itens profissionais. Coordenador enxerga, se for `work`.
+- **Pessoal**: SÓ você vê. Coord nunca acessa.
+
+Categorias (em compromissos):
+- LA Music · Mentoria · Aula particular · Outra escola · Estúdio · Pessoal
+
+Quando categoria é `Pessoal`, o compromisso fica privado por padrão.
 
 ### Semana
 Visão de segunda a sexta. Hoje fica destacado em pink. Toca em qualquer tarefa pendente pra reagendar pra outro dia da semana.

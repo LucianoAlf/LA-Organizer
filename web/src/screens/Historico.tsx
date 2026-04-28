@@ -11,15 +11,19 @@ import type { Task } from '../types';
 
 interface DayStats {
   ymd: string;
+  // tasks (work only)
   total: number;
   done: number;
+  // events (work only)
+  events_total: number;
+  events_done: number;
   hadBriefing: boolean;
 }
 
 const RANGE_DAYS = 30;
 
 async function fetchHistorico(collabId: string, startYmd: string, endYmd: string) {
-  // Tasks within window where the user was assignee.
+  // Tasks (work only).
   const { data: tasksData, error: tErr } = await supabase
     .from('tasks')
     .select('id, status, due_date, completed_at, context, assigned_to')
@@ -29,7 +33,17 @@ async function fetchHistorico(collabId: string, startYmd: string, endYmd: string
     .lte('due_date', endYmd);
   if (tErr) throw tErr;
 
-  // Briefings sent (any) for this user in the window.
+  // Events (work only) — start_at falls in the window.
+  const { data: eventsData, error: eErr } = await supabase
+    .from('events')
+    .select('id, status, start_at, end_at, context, collaborator_id')
+    .eq('collaborator_id', collabId)
+    .eq('context', 'work')
+    .gte('start_at', `${startYmd}T00:00:00-03:00`)
+    .lte('start_at', `${endYmd}T23:59:59-03:00`);
+  if (eErr) throw eErr;
+
+  // Briefings.
   const { data: briefData, error: bErr } = await supabase
     .from('ritual_logs')
     .select('reference_date, ritual_type, status')
@@ -39,7 +53,11 @@ async function fetchHistorico(collabId: string, startYmd: string, endYmd: string
     .lte('reference_date', endYmd);
   if (bErr) throw bErr;
 
-  return { tasks: (tasksData ?? []) as unknown as Task[], briefings: briefData ?? [] };
+  return {
+    tasks: (tasksData ?? []) as unknown as Task[],
+    events: eventsData ?? [],
+    briefings: briefData ?? [],
+  };
 }
 
 export function Historico() {
@@ -58,13 +76,20 @@ export function Historico() {
     const map = new Map<string, DayStats>();
     for (let i = 0; i < RANGE_DAYS; i++) {
       const d = ymdAddDays(start, i);
-      map.set(d, { ymd: d, total: 0, done: 0, hadBriefing: false });
+      map.set(d, { ymd: d, total: 0, done: 0, events_total: 0, events_done: 0, hadBriefing: false });
     }
     for (const t of data.tasks) {
       if (!t.due_date) continue;
       const s = map.get(t.due_date); if (!s) continue;
       s.total++;
       if (t.status === 'done') s.done++;
+    }
+    for (const e of (data.events ?? [])) {
+      if (!e.start_at) continue;
+      const ymd = String(e.start_at).slice(0, 10); // ISO with -03:00 → YYYY-MM-DD
+      const s = map.get(ymd); if (!s) continue;
+      s.events_total++;
+      if (e.status === 'done') s.events_done++;
     }
     for (const b of data.briefings) {
       const s = map.get(b.reference_date); if (!s) continue;
@@ -73,23 +98,24 @@ export function Historico() {
     return [...map.values()].reverse(); // most recent first
   }, [data, start]);
 
-  // Filter: only weekdays AND days that had any activity (had briefing or had tasks).
-  // Empty weekend days clutter the list with no signal.
+  // Filter: only weekdays AND days that had any activity. Empty weekend days clutter.
   const visible = useMemo(() => {
     return days.filter(d => {
       const [y, m, dd] = d.ymd.split('-').map(Number);
       const dow = new Date(Date.UTC(y, m - 1, dd, 12)).getUTCDay();
       const isWeekend = dow === 0 || dow === 6;
-      const hasSignal = d.total > 0 || d.hadBriefing;
+      const hasSignal = d.total > 0 || d.events_total > 0 || d.hadBriefing;
       return !isWeekend || hasSignal;
     });
   }, [days]);
 
-  // KPIs (whole window, work tasks only)
+  // KPIs (whole window, work only) — separate tasks vs compromissos.
   const totalTasks = days.reduce((a, d) => a + d.total, 0);
-  const totalDone = days.reduce((a, d) => a + d.done, 0);
-  const completionPct = totalTasks ? Math.round((totalDone / totalTasks) * 100) : 0;
-  const daysActive = days.filter(d => d.total > 0 || d.hadBriefing).length;
+  const totalTasksDone = days.reduce((a, d) => a + d.done, 0);
+  const taskPct = totalTasks ? Math.round((totalTasksDone / totalTasks) * 100) : 0;
+  const totalEvents = days.reduce((a, d) => a + d.events_total, 0);
+  const totalEventsDone = days.reduce((a, d) => a + d.events_done, 0);
+  const daysActive = days.filter(d => d.total > 0 || d.events_total > 0 || d.hadBriefing).length;
 
   return (
     <div className="space-y-lg">
@@ -107,18 +133,10 @@ export function Historico() {
       ) : !data ? null : (
         <>
           <div className="grid grid-cols-3 gap-sm">
-            <StatCard label="Concluídas" value={totalDone} tone={totalDone ? 'success' : 'neutral'} />
-            <StatCard label="Total" value={totalTasks} />
-            <StatCard
-              label="Aderência"
-              value={`${completionPct}%`}
-              tone={completionPct >= 70 ? 'success' : completionPct >= 40 ? 'warning' : 'danger'}
-            />
+            <StatCard label="Tarefas" value={`${totalTasksDone}/${totalTasks}`} tone={taskPct >= 70 ? 'success' : taskPct >= 40 ? 'warning' : 'neutral'} hint={`${taskPct}%`} />
+            <StatCard label="Compromissos" value={totalEvents} tone={totalEvents ? 'brand' : 'neutral'} hint={totalEventsDone ? `${totalEventsDone} cumpridos` : undefined} />
+            <StatCard label="Dias ativos" value={daysActive} tone="neutral" hint={`de ${RANGE_DAYS}`} />
           </div>
-
-          <p className="text-body-sm text-fg-muted">
-            <span className="tabular-nums">{daysActive}</span> de {RANGE_DAYS} dias com atividade.
-          </p>
 
           <section className="surface overflow-hidden divide-y divide-border">
             {visible.length === 0 ? (
@@ -140,9 +158,13 @@ export function Historico() {
 function DayRow({ d, today }: { d: DayStats; today: string }) {
   const isToday = d.ymd === today;
   const pct = d.total ? Math.round((d.done / d.total) * 100) : null;
+  const hasAnything = d.total > 0 || d.events_total > 0;
+
+  // Tone reflects task completion when there are tasks; if only events, treat as "briefed"-equivalent.
   const tone =
-    d.total === 0 && !d.hadBriefing ? 'idle' :
-    pct === null ? 'briefed' :
+    !hasAnything && !d.hadBriefing ? 'idle' :
+    !hasAnything ? 'briefed' :
+    pct === null ? (d.hadBriefing ? 'briefed' : 'idle') :
     pct >= 80 ? 'good' :
     pct >= 50 ? 'mid' : 'low';
 
@@ -155,15 +177,19 @@ function DayRow({ d, today }: { d: DayStats; today: string }) {
   }[tone];
 
   const right =
-    tone === 'idle' ? <span className="text-fg-muted">—</span> :
-    tone === 'briefed' ? <span className="text-fg-muted">briefing</span> :
-    <>
-      <span className={pct! >= 80 ? 'text-success' : pct! >= 50 ? 'text-warning' : 'text-danger'}>
-        {d.done}
-      </span>
-      <span className="text-fg-muted">/{d.total}</span>
-      <span className="text-fg-muted ml-2 tabular-nums">{pct}%</span>
-    </>;
+    !hasAnything && tone === 'idle' ? <span className="text-fg-muted">—</span> :
+    !hasAnything && tone === 'briefed' ? <span className="text-fg-muted">briefing</span> :
+    <span className="inline-flex items-baseline gap-2">
+      {d.total > 0 && (
+        <>
+          <span className={pct! >= 80 ? 'text-success' : pct! >= 50 ? 'text-warning' : 'text-danger'}>{d.done}</span>
+          <span className="text-fg-muted">/{d.total}</span>
+        </>
+      )}
+      {d.events_total > 0 && (
+        <span className="text-fg-muted">📅 {d.events_done}/{d.events_total}</span>
+      )}
+    </span>;
 
   return (
     <div className="flex items-center gap-md p-md">

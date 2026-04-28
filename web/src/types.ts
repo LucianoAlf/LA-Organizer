@@ -21,12 +21,38 @@ export type TaskContext = 'personal' | 'work';
 export type TaskPriority = 'critical' | 'high' | 'medium' | 'low';
 export type Quadrant = 'q1' | 'q2' | 'q3' | 'q4' | null;
 
+// Sprint 3 — informational categorization shared by tasks + events.
+// NOT a security axis. Privacy lives in `context`. See docs/MODELO-EVENTS-VS-TASKS.md.
+export type Category =
+  | 'la_music'
+  | 'mentoria'
+  | 'aula_particular'
+  | 'outra_escola'
+  | 'estudio'
+  | 'pessoal';
+
+export const CATEGORY_LABELS: Record<Category, string> = {
+  la_music: 'LA Music',
+  mentoria: 'Mentoria',
+  aula_particular: 'Aula particular',
+  outra_escola: 'Outra escola',
+  estudio: 'Estúdio',
+  pessoal: 'Pessoal',
+};
+
+// Default mapping at creation: pessoal → personal; demais → work.
+// User can override only via UI (Sprint 4+ feature). Sprint 3 keeps simple.
+export function defaultContextForCategory(c: Category): TaskContext {
+  return c === 'pessoal' ? 'personal' : 'work';
+}
+
 export interface Task {
   id: string;
   title: string;
   status: TaskStatus;
   context: TaskContext;
   priority: TaskPriority;
+  category?: Category | null;
   due_date: string | null;
   scheduled_date?: string | null;
   remind_at: string | null;
@@ -37,6 +63,36 @@ export interface Task {
   completed_at?: string | null;
   projects?: { name: string } | null;
 }
+
+export type EventStatus = 'scheduled' | 'done' | 'cancelled';
+export type EventModality = 'online' | 'presencial' | 'hibrido';
+
+export interface CalendarEvent {
+  id: string;
+  collaborator_id: string;
+  title: string;
+  description: string | null;
+  context: TaskContext;
+  category: Category;
+  start_at: string;       // ISO with TZ
+  end_at: string;
+  modality: EventModality;
+  location_text: string | null;
+  meeting_url: string | null;
+  project_id: string | null;
+  status: EventStatus;
+  created_by: string | null;
+  source: 'manual' | 'tom' | 'imported';
+  created_at: string;
+  updated_at: string;
+  projects?: { name: string } | null;
+}
+
+export const MODALITY_LABELS: Record<EventModality, string> = {
+  online: 'Online',
+  presencial: 'Presencial',
+  hibrido: 'Híbrido',
+};
 
 export interface Project {
   id: string;

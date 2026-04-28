@@ -1,25 +1,26 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ListTodo } from 'lucide-react';
+import { ListTodo, CalendarClock } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { todaySP } from '../utils/date';
+import { fetchEventsForDay } from '../lib/events';
 import { TaskRow } from '../components/TaskRow';
+import { EventRow } from '../components/EventRow';
 import { StatCard } from '../components/StatCard';
 import { Tabs } from '../components/Tabs';
 import { LoadingState } from '../components/LoadingState';
 import { EmptyState } from '../components/EmptyState';
 import { Button } from '../components/Button';
 import { Fab } from '../components/Fab';
-import { QuickTaskSheet } from '../components/QuickTaskSheet';
-import type { Task, TaskContext } from '../types';
+import { QuickCreateSheet } from '../components/QuickCreateSheet';
+import type { Task, TaskContext, CalendarEvent } from '../types';
 
 async function fetchTasksToday(collabId: string): Promise<Task[]> {
   const today = todaySP();
-  // PRD §5.2: PWA é espelho — não faz JOIN de regra de negócio. Lê tasks por user.
   const { data, error } = await supabase
     .from('tasks')
-    .select('id, title, status, context, priority, due_date, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, completed_at, projects(name)')
+    .select('id, title, status, context, priority, category, due_date, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, completed_at, projects(name)')
     .eq('assigned_to', collabId)
     .or(`due_date.eq.${today},and(due_date.lt.${today},status.not.in.(done,cancelled))`)
     .order('eisenhower_quadrant', { ascending: true, nullsFirst: false })
@@ -34,9 +35,17 @@ export function Hoje() {
   const [tab, setTab] = useState<TaskContext>('work');
   const [sheetOpen, setSheetOpen] = useState(false);
 
-  const { data: tasks = [], isLoading, error } = useQuery({
+  const today = todaySP();
+
+  const { data: tasks = [], isLoading: tLoading, error: tError } = useQuery({
     queryKey: ['tasks', 'hoje', collaborator?.id],
     queryFn: () => collaborator ? fetchTasksToday(collaborator.id) : Promise.resolve([]),
+    enabled: Boolean(collaborator?.id && supabaseConfigured),
+  });
+
+  const { data: events = [], isLoading: eLoading } = useQuery({
+    queryKey: ['events', 'hoje', collaborator?.id, today],
+    queryFn: () => collaborator ? fetchEventsForDay(collaborator.id, today) : Promise.resolve([]),
     enabled: Boolean(collaborator?.id && supabaseConfigured),
   });
 
@@ -56,17 +65,21 @@ export function Hoje() {
 
   const work = tasks.filter(t => t.context === 'work');
   const personal = tasks.filter(t => t.context === 'personal');
-  const today = todaySP();
   const todayList = (tab === 'work' ? work : personal);
+  const todayEvents = events.filter(e => e.context === tab);
+
   const dueToday = todayList.filter(t => t.due_date === today);
   const overdue = todayList.filter(t => t.status === 'overdue' || (t.due_date && t.due_date < today && t.status !== 'done' && t.status !== 'cancelled'));
   const done = todayList.filter(t => t.status === 'done');
+
+  const isLoading = tLoading || eLoading;
+  const hasNothing = todayList.length === 0 && todayEvents.length === 0;
 
   return (
     <div className="space-y-lg">
       {/* Stats */}
       <div className="grid grid-cols-3 gap-sm">
-        <StatCard label="Pra hoje" value={dueToday.length} tone="brand" />
+        <StatCard label="Pra hoje" value={dueToday.length + todayEvents.filter(e => e.status === 'scheduled').length} tone="brand" />
         <StatCard label="Atrasadas" value={overdue.length} tone={overdue.length ? 'danger' : 'neutral'} />
         <StatCard label="Concluídas" value={done.length} tone={done.length ? 'success' : 'neutral'} />
       </div>
@@ -74,15 +87,32 @@ export function Hoje() {
       {/* Tabs */}
       <Tabs
         tabs={[
-          { id: 'work', label: 'Trabalho', badge: work.length },
-          { id: 'personal', label: 'Pessoal', badge: personal.length },
+          { id: 'work', label: 'Trabalho', badge: work.length + events.filter(e => e.context === 'work').length },
+          { id: 'personal', label: 'Pessoal', badge: personal.length + events.filter(e => e.context === 'personal').length },
         ]}
         active={tab}
         onChange={setTab}
       />
 
-      {/* List */}
+      {/* Events block (with time) */}
+      {todayEvents.length > 0 && (
+        <section className="surface px-md">
+          <div className="flex items-center gap-2 py-3 border-b border-border text-label uppercase tracking-wide text-fg-muted">
+            <CalendarClock size={14} /> Compromissos
+          </div>
+          {todayEvents.map(e => (
+            <EventRow key={e.id} event={e} />
+          ))}
+        </section>
+      )}
+
+      {/* Tasks block */}
       <section className="surface px-md">
+        {todayEvents.length > 0 && (
+          <div className="flex items-center gap-2 py-3 border-b border-border text-label uppercase tracking-wide text-fg-muted">
+            <ListTodo size={14} /> Tarefas
+          </div>
+        )}
         {!supabaseConfigured ? (
           <EmptyState
             icon={<ListTodo size={32} />}
@@ -91,18 +121,22 @@ export function Hoje() {
           />
         ) : isLoading ? (
           <div className="py-md"><LoadingState rows={3} /></div>
-        ) : error ? (
+        ) : tError ? (
           <EmptyState
             title="Não consegui carregar suas tarefas"
-            description={(error as Error).message}
+            description={(tError as Error).message}
             action={<Button variant="secondary" onClick={() => qc.invalidateQueries({ queryKey: ['tasks'] })}>Tentar de novo</Button>}
           />
         ) : todayList.length === 0 ? (
-          <EmptyState
-            icon={<ListTodo size={32} />}
-            title="Sem tarefas hoje."
-            description={tab === 'work' ? 'Bora planejar a semana?' : 'Sem itens pessoais pra hoje.'}
-          />
+          hasNothing ? (
+            <EmptyState
+              icon={<ListTodo size={32} />}
+              title="Sem nada hoje."
+              description={tab === 'work' ? 'Bora planejar a semana? Toca no + pra criar.' : 'Sem itens pessoais pra hoje.'}
+            />
+          ) : (
+            <div className="py-3 text-body-sm text-fg-muted">Sem tarefas — só compromissos hoje.</div>
+          )
         ) : (
           todayList.map(t => (
             <TaskRow
@@ -114,8 +148,8 @@ export function Hoje() {
         )}
       </section>
 
-      <Fab onClick={() => setSheetOpen(true)} label="Nova" ariaLabel="Criar nova tarefa" />
-      <QuickTaskSheet open={sheetOpen} onClose={() => setSheetOpen(false)} />
+      <Fab onClick={() => setSheetOpen(true)} label="Novo" ariaLabel="Criar novo item" />
+      <QuickCreateSheet open={sheetOpen} onClose={() => setSheetOpen(false)} defaultDueDate={today} />
     </div>
   );
 }
