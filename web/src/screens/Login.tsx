@@ -47,12 +47,10 @@ export function Login() {
           LA
         </div>
         <div className="relative z-10 px-md pb-2xl w-full max-w-content mx-auto">
-          <div className="flex items-center gap-md mb-md">
-            <LogoMark size={48} />
-            <div>
-              <div className="text-label uppercase tracking-widest text-ink-500">LA Music School</div>
-              <div className="text-card-title">Organizer</div>
-            </div>
+          <div className="flex items-end gap-md mb-md">
+            {/* Login bg is fixed dark — force the dark variant of the wordmark. */}
+            <LogoMark variant="completa" size={36} forceTheme="dark" />
+            <div className="text-card-title leading-none pb-1">Organizer</div>
           </div>
           <h1 className="text-h1-brand leading-[0.95] max-w-[10ch]">
             <span className="text-brand">Bom</span> dia<br/>

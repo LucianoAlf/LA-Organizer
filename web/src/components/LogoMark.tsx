@@ -1,39 +1,44 @@
+import { useTheme } from '../contexts/ThemeContext';
+
 interface Props {
   size?: number;
-  variant?: 'pink' | 'mono';
+  /** "completa" includes wordmark; "solo" is just the symbol. */
+  variant?: 'solo' | 'completa';
+  /** "outlined" picks the *-vazada (hollow) version. Default is solid. */
+  outlined?: boolean;
   className?: string;
+  /** Force a theme variant regardless of current theme. Useful for fixed-bg contexts. */
+  forceTheme?: 'dark' | 'light';
 }
 
 /**
- * Inline logo mark — geometric "LA" wordmark with brand sentinel block.
- * Replace with the official SVG from branding when available.
- * Uses tokens from LA-Organizer-UI-SYSTEM (§5.1, §8).
+ * Official LA Music wordmark/symbol.
+ * Naming convention in /public:
+ *   logo-la-music-{theme}-{variant}{-vazada}?.svg
+ * where:
+ *   theme   = "dark" (use on dark bg, has white fills) | "light" (use on light bg, has #373435)
+ *   variant = "solo" | "completa"
+ *   vazada  = optional outlined version
+ *
+ * Per LA-Organizer-UI-SYSTEM.md §8: never recreate the logo, always use the SVGs.
  */
-export function LogoMark({ size = 40, variant = 'pink', className = '' }: Props) {
-  const fill = variant === 'pink' ? '#E91451' : 'currentColor';
+export function LogoMark({ size, variant = 'solo', outlined, className = '', forceTheme }: Props) {
+  const { theme } = useTheme();
+  const t = forceTheme ?? theme;
+  const file = `/logo-la-music-${t}-${variant}${outlined ? '-vazada' : ''}.svg`;
+
+  // Default heights chosen for visual parity at common usage sizes.
+  // solo defaults to 40 (avatar-ish), completa defaults to 36 (wordmark height).
+  const h = size ?? (variant === 'solo' ? 40 : 36);
+
   return (
-    <svg
-      viewBox="0 0 64 64"
-      width={size}
-      height={size}
-      role="img"
-      aria-label="LA Organizer"
+    <img
+      src={file}
+      alt="LA Music"
+      height={h}
+      style={{ height: h, width: 'auto', display: 'inline-block' }}
       className={className}
-    >
-      <rect x="2" y="2" width="60" height="60" rx="10" fill={fill} />
-      <text
-        x="50%"
-        y="55%"
-        textAnchor="middle"
-        dominantBaseline="middle"
-        fill="#FFFFFF"
-        fontFamily="Prompt, sans-serif"
-        fontWeight="900"
-        fontSize="30"
-        letterSpacing="-2"
-      >
-        LA
-      </text>
-    </svg>
+      draggable={false}
+    />
   );
 }
