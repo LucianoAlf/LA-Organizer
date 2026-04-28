@@ -1901,21 +1901,61 @@ async function processMessage(phone, text, raw = {}) {
   //
   // Os warnings de marker fragment / UUID leak continuam não bloqueantes
   // (são guardrails históricos para detectar marker mal-fechado e raros).
-  const STACK_LEAK_RE = /\b(supabase|postgres|banco\s+de\s+dados|mcp|permiss[ãa]o.+(acess|aprovar|liberar)|tabela\s+[a-z_]|sql)\b/i;
+  // Sprint 9 hot-fix (28/04/2026): Claude CLI ocasionalmente emite blocos
+  // <tool_call>...</tool_call> como TEXTO no reply, mesmo com --tools "" e
+  // --strict-mcp-config (Sprint 7). A flag desabilita execução, não geração.
+  // Estratégia em 3 camadas:
+  //   1. Strip de blocos <tool_call> e narração de fluxo de tool ("Now let me",
+  //      "Let me update", etc) ANTES da regex.
+  //   2. Regex expandida pega tool_call avulso + paths de filesystem +
+  //      arquivos de memória + nomes de skill/diretório interno.
+  //   3. Se ainda casar, substitui por mensagem genérica.
+  const STACK_LEAK_RE = new RegExp(
+    [
+      String.raw`\b(supabase|postgres|banco\s+de\s+dados|mcp|sql)\b`,
+      String.raw`\bpermiss[ãa]o.+(acess|aprovar|liberar)`,
+      String.raw`\btabela\s+[a-z_]`,
+      String.raw`<\/?tool_call`,                  // <tool_call>, </tool_call>
+      String.raw`\/root\/\.claude`,               // /root/.claude paths
+      String.raw`\.claude\/projects`,             // .claude/projects/...
+      String.raw`memory\/[\w-]+\.md`,             // memory/<file>.md
+      String.raw`MEMORY\.md`,                     // MEMORY.md index
+      String.raw`-opt-LA-Organizer`,              // claude project dir
+    ].join('|'),
+    'i',
+  );
   const GENERIC_LEAK_REPLY = '_tive um problema interno aqui, tenta de novo daqui a pouco_';
   try {
     if (typeof reply === 'string') {
+      // 1) Strip de blocos tool_call + narração de fluxo (camada 1).
+      const before = reply;
+      reply = reply
+        .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '')
+        .replace(/^(Now let me .*|Let me (?:update|read|write|check) .*|I'll .*|I need to .*)$/gim, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+      if (before !== reply) {
+        console.warn(`[Engine] tool_call/narration stripped (${before.length}→${reply.length} chars)`);
+        await logMarker(collab.id, 'TOOL_CALL_STRIPPED', 'cleaned', `delta:${before.length - reply.length}`, before.slice(0, 500));
+      }
+
       if (reply.includes('<<') || reply.includes('>>')) {
         console.warn('[Engine] WARN: marker fragment leaked into reply');
       }
-      if (/[a-f0-9]{8}-[a-f0-9]/i.test(reply)) {
+      if (/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}/i.test(reply)) {
         console.warn('[Engine] WARN: possible UUID leak in reply');
       }
+      // 2) Regex check (camada 2).
       const leakMatch = reply.match(STACK_LEAK_RE);
       if (leakMatch) {
         console.warn(`[Engine] LEAK_BLOCKED — match="${leakMatch[0]}" reply="${reply.slice(0, 200)}"`);
         await logMarker(collab.id, 'LEAK_BLOCKED', 'rejected', `match:${leakMatch[0]}`, reply);
         reply = GENERIC_LEAK_REPLY;
+      }
+      // 3) Se reply ficou vazio depois da limpeza, fallback genérico.
+      if (!reply.trim()) {
+        console.warn('[Engine] reply ficou vazio após strip — usando fallback');
+        reply = '_recebi sua mensagem, mas tive um problema pra responder. Tenta de novo?_';
       }
     }
   } catch (e) {
