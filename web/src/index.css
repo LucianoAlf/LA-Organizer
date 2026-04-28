@@ -1,0 +1,99 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ----------------------------------------------------------------------
+ * LA Organizer — Design Tokens (LA-Organizer-UI-SYSTEM.md §5)
+ * Dark mode is the default. [data-theme="light"] overrides.
+ * ----------------------------------------------------------------------*/
+
+:root,
+[data-theme='dark'] {
+  /* surfaces */
+  --bg-app: 10 10 10;            /* #0A0A0A */
+  --bg-surface: 20 20 20;         /* #141414 */
+  --bg-elevated: 26 26 26;        /* #1A1A1A */
+  --bg-subtle: 30 30 30;          /* slight elevation */
+
+  /* text */
+  --fg-primary: 255 255 255;
+  --fg-secondary: 207 207 207;
+  --fg-muted: 158 158 158;
+
+  /* border */
+  --border: 42 42 42;             /* #2A2A2A */
+
+  color-scheme: dark;
+}
+
+[data-theme='light'] {
+  --bg-app: 244 244 244;          /* #F4F4F4 */
+  --bg-surface: 255 255 255;
+  --bg-elevated: 255 255 255;
+  --bg-subtle: 232 232 232;       /* #E8E8E8 */
+
+  --fg-primary: 17 17 17;
+  --fg-secondary: 66 66 66;
+  --fg-muted: 122 122 122;
+
+  --border: 224 224 224;          /* #E0E0E0 */
+
+  color-scheme: light;
+}
+
+/* ----------------------------------------------------------------------
+ * Base
+ * ----------------------------------------------------------------------*/
+@layer base {
+  html, body, #root {
+    height: 100%;
+  }
+
+  body {
+    font-family: 'Prompt', system-ui, sans-serif;
+    background-color: rgb(var(--bg-app));
+    color: rgb(var(--fg-primary));
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    /* mobile safe area */
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* Numeric tabular when reading lists/stats */
+  .tabular-nums { font-variant-numeric: tabular-nums; }
+
+  /* Inputs honor theme */
+  input, textarea, select, button { font: inherit; color: inherit; }
+}
+
+/* ----------------------------------------------------------------------
+ * Brand utilities (used disciplinarily — never as page wallpaper)
+ * ----------------------------------------------------------------------*/
+@layer utilities {
+  /* Halftone dots — subtle, brand asset for hero/login only */
+  .halftone-soft {
+    background-image: radial-gradient(rgba(233, 20, 81, 0.20) 1px, transparent 1.2px);
+    background-size: 14px 14px;
+    background-position: 0 0;
+  }
+  .halftone-strong {
+    background-image: radial-gradient(rgba(233, 20, 81, 0.45) 1.2px, transparent 1.5px);
+    background-size: 10px 10px;
+  }
+
+  /* Watermark "LA" outline — for hero blocks. Use w/ aria-hidden. */
+  .la-watermark {
+    background-image: linear-gradient(135deg, rgba(233, 20, 81, 0.06), rgba(233, 20, 81, 0));
+  }
+
+  /* Brand container with offset shadow §5.5 */
+  .brand-offset {
+    box-shadow: 8px 8px 0 rgba(0, 0, 0, 0.28);
+  }
+
+  /* Smooth focus ring */
+  .focus-ring {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-bg-app;
+  }
+}

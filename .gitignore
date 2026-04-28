@@ -3,3 +3,6 @@ node_modules/
 logs/
 *.log
 .env.save
+web/node_modules
+web/dist
+web/.env

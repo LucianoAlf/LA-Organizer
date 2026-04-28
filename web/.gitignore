@@ -1,0 +1,11 @@
+node_modules
+dist
+dist-ssr
+.env
+.env.local
+.env.*.local
+.DS_Store
+*.log
+.vite
+public/icon-192.png
+public/icon-512.png
