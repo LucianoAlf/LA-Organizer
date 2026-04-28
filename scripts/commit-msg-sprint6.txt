@@ -1,0 +1,96 @@
+feat(sprint6): coord enxerga events do time + Pessoa-Detalhe (PWA)
+
+🎯 DashboardTime — eventos do time
+
+Coordenadores/diretores ganham visão dos compromissos do time no
+existente /time:
+- Bloco novo "Compromissos hoje" entre stats e os blocos de briefing,
+  com lista compacta dos próximos 5 (horário · primeiro nome · título),
+  total no título, ordem por start_at.
+- 5o StatCard "Compromissos" no grid superior.
+- Badges de "Respondeu briefing", "Sem resposta" e "Atrasos por pessoa"
+  agora são <Link to="/time/:id"> e exibem contagem de eventos do dia
+  ao lado do nome quando >0 (ex.: "Anne · 2📅").
+
+🎯 Pessoa-Detalhe — /time/:id (coord/director)
+
+Nova rota dentro do guard `<ProtectedRoute requireRoles=
+['coordinator','director']>`. Collaborator comum acessando por URL
+direta é bloqueado pelo guard; RLS faz defesa em profundidade.
+
+Conteúdo da tela:
+- Header: avatar/inicial, nome, role, function_title, telefone
+  mascarado (•••• + últimos 4 dígitos).
+- 3 KPIs:
+  • Tarefas abertas (work pending/in_progress/overdue)
+  • Compromissos hoje (events work com start_at=hoje SP)
+  • Rituais enviados (7d) — métrica operacional do TOM (entregue),
+    NÃO confundir com aderência real do colaborador. Subtítulo
+    explícito na UI ("entregues pelo TOM"). Documentado.
+- Bloco Tarefas em aberto · trabalho — TaskRow readOnly (limit 20).
+- Bloco Próximos 7 dias · compromissos — EventRow sem onClick
+  (read-only por design) (limit 10).
+- Bloco Rituais enviados · 7d — grid 7 dots: verde (sent), neutro
+  (weekend), warning (dia útil sem envio).
+
+🔧 Helpers centralizados em src/lib/events.ts
+
+Risco real de divergência entre DashboardTime e Pessoa-Detalhe se
+cada call-site montasse seus próprios filtros. Centralizado:
+- fetchEventsForTeamDay(ymd, ctx='work'): RLS é única autoridade
+  (coord vê work do time via auth_read_work_events_coord; collab
+  comum só os próprios via auth_read_own_events). Sem filtro
+  por collaborator no call-site.
+- fetchEventsForCollabRange(collabId, start, end, ctx='work'):
+  events de UM colaborador num período. Usado pela Pessoa-Detalhe.
+
+Ambos excluem status='cancelled' e ordenam por start_at.
+
+🛡 Privacidade — ritual_logs
+
+Query do PessoaDetalhe seleciona EXPLICITAMENTE apenas
+`reference_date, ritual_type, status`. Coluna `detail` (potencial
+PII de resposta) nunca chega ao cliente, apesar de
+auth_read_ritual_logs_coord permitir coord ler tudo. Proteção via
+call-site, com comentário inline e nota em docs/05-mapa-telas.
+
+🛠 TaskRow.tsx ganha prop opcional `readOnly`
+
+Quando true, esconde o checkbox e bloqueia interação. Default
+mantém comportamento atual (com checkbox). EventRow já era
+read-only quando `onClick` ausente (sem alteração).
+
+🧪 Harness scripts/rls-test.js — 3 invariantes novas
+
+Fixtures ganham 1 ritual_log work por test user (alice/bob).
+Cleanup também apaga ritual_logs por TAG.
+
+Invariantes adicionadas:
+- alice lê próprios ritual_logs (>=1)            ← valida auth_read_own_ritual_logs (Sprint 4)
+- alice NÃO lê ritual_logs de bob                ← isolamento collab×collab
+- coord lê ritual_logs do time (>=2)             ← valida auth_read_ritual_logs_coord
+
+Resultado: 19/19 verdes (16 anteriores + 3 novas).
+
+📚 Docs
+
+- web/README.md — Sprint 6 entry no topo + detalhamento abaixo
+- docs/05-mapa-telas-pwa-v3.md — Tela 8 (Pessoa-Detalhe) descrita
+  com privacidade e fora-de-escopo explícitos
+- scripts/commit-msg-sprint6.txt (este)
+
+✅ Definição de pronto da Sprint 6
+
+Atendido:
+- DashboardTime mostra bloco "Compromissos hoje" agregado ✅
+- Card de cada colab exibe contagem de events ✅
+- Tap em qualquer badge navega para /time/:id ✅
+- /time/:id renderiza header + 3 KPIs + tasks read-only +
+  events 7d + faixa visual rituais ✅
+- Collaborator comum em /time/:id é bloqueado (guard + RLS) ✅
+- Harness 19/19 verdes, com 3 invariantes ritual_logs novas ✅
+- Sem regressão (npx tsc --noEmit limpo) ✅
+- web/README e mapa-telas atualizados ✅
+- Métrica "Rituais enviados" não rotulada como "aderência" ✅
+
+Veredicto: Sprint 6 FECHADA.

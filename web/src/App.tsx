@@ -8,6 +8,7 @@ import { Projetos } from './screens/Projetos';
 import { ProjetoDetalhe } from './screens/ProjetoDetalhe';
 import { Mais } from './screens/Mais';
 import { DashboardTime } from './screens/DashboardTime';
+import { PessoaDetalhe } from './screens/PessoaDetalhe';
 import { Configuracoes } from './screens/Configuracoes';
 import { Historico } from './screens/Historico';
 
@@ -29,6 +30,7 @@ export default function App() {
 
           <Route element={<ProtectedRoute requireRoles={['coordinator', 'director']} />}>
             <Route path="time" element={<DashboardTime />} />
+            <Route path="time/:id" element={<PessoaDetalhe />} />
           </Route>
         </Route>
       </Route>

@@ -50,6 +50,51 @@ export function formatEventTimeRange(startIso: string, endIso: string): string {
   return `${fmt.format(new Date(startIso))}–${fmt.format(new Date(endIso))}`;
 }
 
+/**
+ * Events do TIME inteiro num dia (SP). Sem filtro explícito por collaborator —
+ * RLS é a única autoridade: coord/director recebe `context='work'` de qualquer
+ * colaborador via `auth_read_work_events_coord`; collaborator comum só recebe
+ * os próprios via `auth_read_own_events`.
+ *
+ * Uso: DashboardTime (coord-only) — resultado já vem agregado e filtrado.
+ */
+export async function fetchEventsForTeamDay(ymd: string, ctx: 'work' | 'personal' = 'work'): Promise<CalendarEvent[]> {
+  const { data, error } = await supabase
+    .from('events')
+    .select(SELECT_COLS)
+    .eq('context', ctx)
+    .gte('start_at', `${ymd}T00:00:00-03:00`)
+    .lte('start_at', `${ymd}T23:59:59-03:00`)
+    .neq('status', 'cancelled')
+    .order('start_at', { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as unknown as CalendarEvent[];
+}
+
+/**
+ * Events de UM colaborador num período. Usado pela Pessoa-Detalhe (coord
+ * olhando o detalhe de um membro do time). RLS garante que só o próprio ou
+ * coord/director consegue ver — call-site não precisa repetir o check.
+ */
+export async function fetchEventsForCollabRange(
+  collabId: string,
+  ymdStart: string,
+  ymdEnd: string,
+  ctx: 'work' | 'personal' = 'work',
+): Promise<CalendarEvent[]> {
+  const { data, error } = await supabase
+    .from('events')
+    .select(SELECT_COLS)
+    .eq('collaborator_id', collabId)
+    .eq('context', ctx)
+    .gte('start_at', `${ymdStart}T00:00:00-03:00`)
+    .lte('start_at', `${ymdEnd}T23:59:59-03:00`)
+    .neq('status', 'cancelled')
+    .order('start_at', { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as unknown as CalendarEvent[];
+}
+
 /** YYYY-MM-DD em SP a partir de um ISO timestamp. */
 export function eventLocalYmd(iso: string): string {
   const fmt = new Intl.DateTimeFormat('en-CA', {

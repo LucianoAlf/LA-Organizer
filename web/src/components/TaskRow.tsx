@@ -5,6 +5,8 @@ import type { Task } from '../types';
 interface Props {
   task: Task;
   onToggle?: (task: Task) => void;
+  /** Quando true, esconde o checkbox e bloqueia interação. Para visões coord/director em PessoaDetalhe. */
+  readOnly?: boolean;
 }
 
 function fmtDayMonth(iso: string | null) {
@@ -24,7 +26,7 @@ function statusOf(task: Task): { tone: 'success' | 'warning' | 'danger' | 'neutr
   return { tone: 'neutral', label: null };
 }
 
-export function TaskRow({ task, onToggle }: Props) {
+export function TaskRow({ task, onToggle, readOnly }: Props) {
   const { tone, label } = statusOf(task);
   const isDone = task.status === 'done';
   return (
@@ -34,19 +36,21 @@ export function TaskRow({ task, onToggle }: Props) {
         isDone ? 'opacity-60' : '',
       ].join(' ')}
     >
-      <button
-        type="button"
-        onClick={() => onToggle?.(task)}
-        aria-label={isDone ? 'Reabrir tarefa' : 'Concluir tarefa'}
-        className={[
-          'mt-0.5 h-6 w-6 shrink-0 rounded-md border grid place-items-center transition-colors focus-ring',
-          isDone
-            ? 'bg-success border-success text-white'
-            : 'border-border hover:border-brand text-transparent hover:text-brand',
-        ].join(' ')}
-      >
-        <Check size={14} strokeWidth={3} />
-      </button>
+      {!readOnly && (
+        <button
+          type="button"
+          onClick={() => onToggle?.(task)}
+          aria-label={isDone ? 'Reabrir tarefa' : 'Concluir tarefa'}
+          className={[
+            'mt-0.5 h-6 w-6 shrink-0 rounded-md border grid place-items-center transition-colors focus-ring',
+            isDone
+              ? 'bg-success border-success text-white'
+              : 'border-border hover:border-brand text-transparent hover:text-brand',
+          ].join(' ')}
+        >
+          <Check size={14} strokeWidth={3} />
+        </button>
+      )}
 
       <div className="min-w-0 flex-1">
         <div className={['text-body-md', isDone ? 'line-through' : ''].join(' ')}>

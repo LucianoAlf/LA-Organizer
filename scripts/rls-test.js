@@ -95,6 +95,7 @@ async function seedFixtures(U) {
       { table: 'tasks',  row: { title: `${TAG} ${k} personal task`, assigned_to: c, created_by: c, context: 'personal', due_date: today, status: 'pending', source: 'manual' } },
       { table: 'events', row: { title: `${TAG} ${k} work event`,     collaborator_id: c, created_by: c, context: 'work',     start_at: startWork.toISOString(), end_at: endWork.toISOString(),   modality: 'presencial', category: 'la_music', status: 'scheduled', source: 'manual' } },
       { table: 'events', row: { title: `${TAG} ${k} personal event`, collaborator_id: c, created_by: c, context: 'personal', start_at: startPers.toISOString(), end_at: endPers.toISOString(),   modality: 'presencial', category: 'pessoal',  status: 'scheduled', source: 'manual' } },
+      { table: 'ritual_logs', row: { collaborator_id: c, ritual_type: 'briefing_trabalho', reference_date: today, status: 'sent', sent_at: new Date().toISOString(), detail: `${TAG} ${k} sample detail` } },
     );
   }
   for (const f of fixtures) {
@@ -172,6 +173,20 @@ async function runChecks(U) {
     check('coord vê collaborators (>=3 dos test)', visible >= 3, `viu ${visible}`);
   }
 
+  console.log('\n[invariantes] ritual_logs (Sprint 6)');
+  {
+    const { data } = await alice.from('ritual_logs').select('id, collaborator_id, ritual_type, reference_date, status').eq('collaborator_id', U.alice.collab_id);
+    check('alice lê próprios ritual_logs (>=1)', (data || []).length >= 1, `viu ${(data||[]).length}`);
+  }
+  {
+    const { data } = await alice.from('ritual_logs').select('id, collaborator_id').eq('collaborator_id', U.bob.collab_id);
+    check('alice NÃO lê ritual_logs de bob', (data || []).length === 0, `viu ${(data||[]).length}`);
+  }
+  {
+    const { data } = await coord.from('ritual_logs').select('id, collaborator_id, ritual_type, reference_date, status').in('collaborator_id', [U.alice.collab_id, U.bob.collab_id]);
+    check('coord lê ritual_logs do time (>=2)', (data || []).length >= 2, `viu ${(data||[]).length}`);
+  }
+
   console.log('\n[invariantes] project_checkpoints (não-leak)');
   {
     // se houver checkpoints em projetos onde alice não é membro, alice não deve ver
@@ -201,6 +216,7 @@ async function runChecks(U) {
 
 async function cleanup(U) {
   console.log('\n[cleanup] removendo fixtures + users...');
+  await admin.from('ritual_logs').delete().like('detail', `${TAG}%`);
   await admin.from('events').delete().like('title', `${TAG}%`);
   await admin.from('tasks').delete().like('title', `${TAG}%`);
   if (U) {

@@ -226,6 +226,37 @@ ORDER BY scheduled_date, eisenhower_quadrant;
 
 ---
 
+### Tela 8 — Pessoa-Detalhe (P1 — Coordenador/Diretor) — Sprint 6
+
+**Rota:** `/time/:id`
+**Role:** apenas `coordinator` e `director` (guard via `<ProtectedRoute requireRoles>`); RLS faz a defesa em profundidade.
+
+**Acesso:** tap em qualquer badge de colaborador no DashboardTime ou no bloco "Compromissos hoje".
+
+**Conteúdo:**
+- **Header**: avatar/inicial, nome completo, role (capitalizado), `function_title`, telefone mascarado (`••••XXXX`). Botão "voltar" pra `/time`.
+- **3 KPIs em row**:
+  - Tarefas abertas (count de tasks `work` `not in (done, cancelled)`)
+  - Compromissos hoje (count de events `work` cujo `start_at` é hoje SP)
+  - Rituais enviados 7d (count de `ritual_logs.status='sent'` últimos 7 dias)
+- **Bloco "Tarefas em aberto · trabalho"** — `TaskRow` em modo `readOnly` (sem checkbox, sem reschedule). Limit 20.
+- **Bloco "Próximos 7 dias · compromissos"** — `EventRow` sem `onClick` (já é read-only por design). Limit 10.
+- **Bloco "Rituais enviados · últimos 7 dias"** — faixa visual de 7 dots: verde se houve `sent`, neutro se fim de semana, warning se dia útil sem envio. Subtítulo deixa explícito que é métrica de envio do TOM, não de aderência real.
+
+**Privacidade explícita:**
+A métrica "Rituais enviados (7d)" mede operação do TOM (entregue/não entregue), não comportamento do colaborador. **Aderência real** (responder o briefing) exige outra métrica (contagem em `conversation_history` ou flag em `ritual_logs.responded_at`/`response_text`) e fica para sprint futura.
+
+A query usada na tela seleciona apenas `reference_date, ritual_type, status` de `ritual_logs`. Conteúdo de resposta (`detail` ou similar) **nunca** é exposto ao cliente, mesmo que `auth_read_ritual_logs_coord` permita coord ler tudo. Proteção via call-site.
+
+**Fora desta tela (deferido):**
+- Editar tasks/events de outro colaborador
+- Mensagem direta ou broadcast para o colaborador
+- Conteúdo de `conversation_history` ou `collaborator_memory`
+- Métricas de aderência real (resposta ao briefing)
+- Histórico estendido (>7d) ou filtros avançados
+
+---
+
 ## Auth — Magic Link via WhatsApp
 
 **Fluxo:**

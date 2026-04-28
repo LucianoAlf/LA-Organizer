@@ -1,19 +1,24 @@
 import { useQuery } from '@tanstack/react-query';
-import { Users, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Users, AlertTriangle, CheckCircle2, CalendarClock } from 'lucide-react';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { todaySP } from '../utils/date';
 import { StatCard } from '../components/StatCard';
 import { Badge } from '../components/Badge';
 import { LoadingState } from '../components/LoadingState';
 import { EmptyState } from '../components/EmptyState';
+import { fetchEventsForTeamDay, formatEventTimeRange } from '../lib/events';
+import type { CalendarEvent } from '../types';
 
 interface TeamSnapshot {
   team: { id: string; full_name: string; role: string }[];
-  responded: string[]; // collaborator_ids
+  responded: string[];
   noResponse: string[];
   completedToday: number;
   dueToday: number;
   overdue: { id: string; title: string; assigned_to: string; due_date: string }[];
+  events: CalendarEvent[];
+  eventsByCollab: Record<string, number>;
 }
 
 async function fetchTeamSnapshot(myId: string): Promise<TeamSnapshot> {
@@ -72,6 +77,14 @@ async function fetchTeamSnapshot(myId: string): Promise<TeamSnapshot> {
     .not('status', 'in', '(done,cancelled)')
     .limit(50);
 
+  // Events do time hoje — RLS filtra para coord/director apenas work.
+  const events = await fetchEventsForTeamDay(today, 'work');
+  const eventsByCollab: Record<string, number> = {};
+  for (const e of events) {
+    if (!e.collaborator_id) continue;
+    eventsByCollab[e.collaborator_id] = (eventsByCollab[e.collaborator_id] ?? 0) + 1;
+  }
+
   return {
     team,
     responded,
@@ -79,6 +92,8 @@ async function fetchTeamSnapshot(myId: string): Promise<TeamSnapshot> {
     completedToday: completedToday ?? 0,
     dueToday: dueToday ?? 0,
     overdue: overdueRaw ?? [],
+    events,
+    eventsByCollab,
   };
 }
 
@@ -100,11 +115,12 @@ export function DashboardTime() {
   if (error) return <EmptyState title="Erro" description={(error as Error).message} />;
   if (!data) return null;
 
-  const { team, responded, noResponse, completedToday, dueToday, overdue } = data;
+  const { team, responded, noResponse, completedToday, dueToday, overdue, events, eventsByCollab } = data;
   const overdueByPerson = new Map<string, number>();
   for (const t of overdue) overdueByPerson.set(t.assigned_to, (overdueByPerson.get(t.assigned_to) ?? 0) + 1);
 
   const nameOf = (id: string) => team.find(t => t.id === id)?.full_name?.split(' ')[0] ?? id.slice(0, 6);
+  const evCount = (id: string) => eventsByCollab[id] ?? 0;
 
   return (
     <div className="space-y-lg">
@@ -113,12 +129,35 @@ export function DashboardTime() {
         <p className="text-body-sm text-fg-muted mt-1">Visão de coordenação · só dados de trabalho</p>
       </header>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-sm">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-sm">
         <StatCard label="No time" value={team.length} />
         <StatCard label="Concluídas hoje" value={completedToday} tone={completedToday ? 'success' : 'neutral'} />
         <StatCard label="Pra hoje" value={dueToday} tone="brand" />
         <StatCard label="Atrasadas" value={overdue.length} tone={overdue.length ? 'danger' : 'neutral'} />
+        <StatCard label="Compromissos" value={events.length} tone={events.length ? 'brand' : 'neutral'} />
       </div>
+
+      {events.length > 0 && (
+        <section className="surface p-md">
+          <div className="flex items-center gap-2 text-label uppercase tracking-wide text-fg-muted">
+            <CalendarClock size={14} /> Compromissos hoje · {events.length}
+          </div>
+          <ul className="mt-md divide-y divide-border">
+            {events.slice(0, 5).map(e => (
+              <li key={e.id} className="py-2 flex items-baseline gap-md text-body-sm">
+                <span className="text-brand font-semibold tabular-nums shrink-0">{formatEventTimeRange(e.start_at, e.end_at).split('–')[0]}</span>
+                <Link to={`/time/${e.collaborator_id}`} className="text-fg-secondary hover:text-fg shrink-0">
+                  {nameOf(e.collaborator_id || '')}
+                </Link>
+                <span className="text-fg truncate">{e.title}</span>
+              </li>
+            ))}
+            {events.length > 5 && (
+              <li className="py-2 text-body-sm text-fg-muted">+ {events.length - 5} compromisso(s)</li>
+            )}
+          </ul>
+        </section>
+      )}
 
       <section className="grid grid-cols-1 md:grid-cols-2 gap-md">
         <div className="surface p-md">
@@ -130,7 +169,13 @@ export function DashboardTime() {
           ) : (
             <ul className="mt-md flex flex-wrap gap-2">
               {responded.map(id => (
-                <li key={id}><Badge tone="success">{nameOf(id)}</Badge></li>
+                <li key={id}>
+                  <Link to={`/time/${id}`} className="inline-block">
+                    <Badge tone="success">
+                      {nameOf(id)}{evCount(id) > 0 ? ` · ${evCount(id)}📅` : ''}
+                    </Badge>
+                  </Link>
+                </li>
               ))}
             </ul>
           )}
@@ -145,7 +190,13 @@ export function DashboardTime() {
           ) : (
             <ul className="mt-md flex flex-wrap gap-2">
               {noResponse.map(id => (
-                <li key={id}><Badge tone="warning">{nameOf(id)}</Badge></li>
+                <li key={id}>
+                  <Link to={`/time/${id}`} className="inline-block">
+                    <Badge tone="warning">
+                      {nameOf(id)}{evCount(id) > 0 ? ` · ${evCount(id)}📅` : ''}
+                    </Badge>
+                  </Link>
+                </li>
               ))}
             </ul>
           )}
@@ -159,7 +210,11 @@ export function DashboardTime() {
           </div>
           <ul className="mt-md flex flex-wrap gap-2">
             {[...overdueByPerson.entries()].sort((a, b) => b[1] - a[1]).map(([id, n]) => (
-              <li key={id}><Badge tone="danger">{nameOf(id)}: {n}</Badge></li>
+              <li key={id}>
+                <Link to={`/time/${id}`} className="inline-block">
+                  <Badge tone="danger">{nameOf(id)}: {n}</Badge>
+                </Link>
+              </li>
             ))}
           </ul>
         </section>

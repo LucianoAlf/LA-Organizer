@@ -12,6 +12,7 @@ Frontend mobile-first do TOM. **Espelho visual do banco** — não duplica regra
 - **Sprint 3** — Modelo `events` separado de `tasks` + criação unificada (Tarefa | Compromisso) + categorias + RLS hardening crítico ✅
 - **Sprint 4** — Auditoria + hardening RLS multiusuário (5 leaks fechados, 16 invariantes verdes em `scripts/rls-test.js`), `docs/RLS-MATRIX.md` congelada. TOM aprende a criar compromissos via marker `<<EVENT_CREATE>>` (skill `criar-compromisso`); briefings exibem **Compromissos hoje** com horário/modalidade ✅
 - **Sprint 5** — Maturidade do modelo events: `EditEventSheet` no PWA (tap em event → editar título, horário, local, link, status), TOM aprende `<<EVENT_UPDATE>>` (reschedule/cancel/complete) via skill estendida, convivência task↔event mínima (skill pergunta antes de duplicar), webhook ganha middleware HMAC com 3 modos (disabled/permissive/strict). Hardening operacional final (rotação Supabase + URL estável) **diferido** para janela pré-prod ✅ (parcial)
+- **Sprint 6** — Coordenação enxerga events do time + Pessoa-Detalhe. `DashboardTime` ganha bloco "Compromissos hoje" agregado e contagem de events nos badges; `/time/:id` (PessoaDetalhe, guard coord/director) mostra header com PII básica mascarada, 3 KPIs (Tarefas abertas / Compromissos hoje / Rituais enviados 7d), tasks pendentes work read-only, events próximos 7d, faixa visual de rituais 7d. Helpers de events centralizados em `src/lib/events.ts` (`fetchEventsForTeamDay`, `fetchEventsForCollabRange`). Harness ganha 3 invariantes ritual_logs (19/19 verdes) ✅
 
 ---
 
@@ -144,6 +145,22 @@ Fluxo:
 - **Projeto detalhe** — header com progresso + 4 tabs (Resumo / Checkpoints / Tarefas / Time)
 - **Dashboard do time** (`/time`, coord+ only) — stat cards + listas respondeu/sem-resposta + atrasos por pessoa. Privacy contract enforçado.
 - **Mais** (`/mais`) — entry point para itens P1+, toggle tema, sair
+
+### Sprint 6
+
+- **DashboardTime** (`src/screens/DashboardTime.tsx`) ganha bloco "Compromissos hoje" agregado: total + lista compacta dos próximos 5 (horário · primeiro nome do colab · título), ordem por `start_at`. Contagem de events do dia aparece nos badges existentes (`Anne · 2📅`). Badges agora são `<Link to={/time/:id}>`.
+- **Helpers centralizados** em `src/lib/events.ts`:
+  - `fetchEventsForTeamDay(ymd, ctx='work')` — RLS é a única autoridade (coord/director recebe `work` do time, collab comum só os próprios). Sem filtro por collaborator no call-site.
+  - `fetchEventsForCollabRange(collabId, start, end, ctx='work')` — events de um colaborador num período. Usado pela PessoaDetalhe.
+- **Rota** `/time/:id` em `src/App.tsx`, dentro do guard `<ProtectedRoute requireRoles={['coordinator','director']}>`. Collab comum acessando por URL é redirecionado.
+- **PessoaDetalhe** (`src/screens/PessoaDetalhe.tsx`):
+  - Header: avatar/inicial, nome, role, function_title, telefone mascarado (`••••XXXX`).
+  - 3 StatCards: **Tarefas abertas** (`tasks` work pending), **Compromissos hoje** (events work do dia), **Rituais enviados (7d)** (count `ritual_logs.status='sent'`). Subtítulo do KPI ritual deixa explícito que é métrica de envio do TOM, não aderência real do colaborador.
+  - Bloco "Tarefas em aberto · trabalho" — `TaskRow` com prop nova `readOnly` que esconde checkbox.
+  - Bloco "Próximos 7 dias · compromissos" — `EventRow` sem `onClick` (já era read-only por design).
+  - Bloco "Rituais enviados · últimos 7 dias" — grid de 7 dots: verde quando há ritual `sent`, fim de semana neutro, dia útil sem envio em warning.
+- **PRIVACY** — query do PessoaDetalhe seleciona apenas `reference_date, ritual_type, status` de `ritual_logs`; `detail` (potencial PII de resposta) nunca chega ao cliente, apesar de `auth_read_ritual_logs_coord` permitir.
+- **Harness `scripts/rls-test.js`** ganha 3 invariantes ritual_logs (Sprint 6): `alice lê próprios`, `alice NÃO lê de bob`, `coord lê do time`. 19/19 verdes pós-deploy.
 
 ### Sprint 5
 
