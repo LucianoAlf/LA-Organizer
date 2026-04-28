@@ -4,8 +4,10 @@ Esse é o app que mostra suas tarefas, projetos e o que o TOM combinou com você
 
 ## Como entrar
 
-1. Abre no seu celular o link que o coordenador te mandou
-   *(ex.: https://la-organizer.vercel.app)*
+> 🔗 **URL atual do piloto:** `https://further-sale-coupon-literary.trycloudflare.com`
+> *(URL provisória de Sprint 2 — vai mudar quando definirmos domínio próprio)*
+
+1. Abre o link acima **no seu celular**, no Chrome (Android) ou Safari (iOS)
 2. **Adiciona à tela inicial** quando o navegador perguntar — vira um app de verdade, sem barra de browser
 3. Clica em **WhatsApp**, digita seu número com DDD (ex: `5521981278047`)
 4. Toca **Enviar código**

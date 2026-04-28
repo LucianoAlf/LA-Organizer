@@ -41,5 +41,13 @@ export default defineConfig({
     }),
   ],
   server: { port: 5173, host: true },
+  // `vite preview` blocks unknown hosts by default. Whitelist:
+  //  - `.trycloudflare.com` for ephemeral Cloudflare quick tunnels (Sprint 2 piloto)
+  //  - explicit production domain when defined
+  preview: {
+    port: 4173,
+    host: true,
+    allowedHosts: ['.trycloudflare.com', '.vercel.app', 'localhost'],
+  },
   build: { sourcemap: false, target: 'es2020' },
 });
