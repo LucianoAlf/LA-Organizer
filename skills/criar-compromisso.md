@@ -72,9 +72,34 @@ Se disser "novo" / "outra" / "ignora" → emita `<<EVENT_CREATE>>` normalmente, 
 Ative esta skill quando o colaborador descrever algo que:
 - tem **horário de início** explícito ("às 14h", "14:00", "das 10 às 11")
 - tem **modalidade** óbvia ou inferível (presencial, online, google meet, zoom, sala, no estúdio, na escola)
-- envolve termos de evento: reunião, aula, ensaio, mentoria, sessão, encontro, gravação, masterclass, apresentação
+- envolve termos de evento PEQUENO: reunião, aula, ensaio, mentoria, sessão, encontro, gravação, masterclass, apresentação, consulta
 
 Se a mensagem só pede "lembra" sem horário com duração → use `checklist-tarefas` (cria tarefa com `remind_at`).
+
+## ⚠️ Eventos de GRANDE PORTE NÃO são compromissos (Sprint 11.5b)
+
+Quando o user descreve um **evento de grande porte da LA** — workshop, show, recital, captação, festival, sarau, dia das mães, dia dos pais, formatura, lançamento, especial, festa de fim de ano, temporada, aula aberta, apresentação do coro — **NÃO ative esta skill**. Esses eventos exigem:
+- envolvidos / responsáveis (perg. 5 do 5W2H)
+- como vai executar / método (perg. 6)
+- horas/semana de dedicação do time (perg. 7)
+- justificativa (perg. 2)
+
+A skill **`cadastro-projeto-5w2h`** cobre isso completamente — pergunta os 7 itens, persiste como projeto, e o PWA reflete na aba Projetos.
+
+**Distinção rápida:**
+| Caso | Skill |
+|------|-------|
+| "Marca reunião com Henrique 14h online" | criar-compromisso |
+| "Aula de piano com Maria amanhã 10h" | criar-compromisso |
+| "Mentoria com Quintela quinta 15h" | criar-compromisso |
+| **"Cria evento Dia das Mães com a Turminha"** | **cadastro-projeto-5w2h** |
+| **"Workshop de improvisação com Moreira"** | **cadastro-projeto-5w2h** |
+| **"Show de fim de ano dos alunos"** | **cadastro-projeto-5w2h** |
+| **"Captação de novos professores"** | **cadastro-projeto-5w2h** |
+
+**Heurística:** o evento envolve preparação + múltiplas pessoas + execução planejada → projeto. É só compromisso pontual no calendário (1 horário, 1-2 pessoas, sem prep) → compromisso.
+
+**Em dúvida:** roteie pra `cadastro-projeto-5w2h`. Pior caso, vira projeto pequeno. Não trate evento institucional como compromisso de calendário — vai perder envolvidos/responsáveis/método.
 
 ## Tarefa vs Compromisso (regra clara)
 

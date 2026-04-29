@@ -349,16 +349,27 @@ function pickSkill(collab, lastUserMessage, recentHistory) {
     return { name: 'cadastro-projeto-5w2h', body: loadSkill('cadastro-projeto-5w2h') };
   }
 
-  // Sprint 11.5 hotfix — Mid-flow EVENT detection. Bug observado (29/04 13:48):
-  // User disse "Evento" como resposta a "é evento ou projeto?", e TOM começou a
-  // perguntar nome/data/local SEM ativar criar-compromisso. skill: none → não
-  // tinha schema EVENT_CREATE no prompt → "✅ Evento criado" sem marker = nada
-  // foi persistido. Detectar fluxo de evento por padrões nas perguntas do TOM.
-  const inEventFlow =
-    /me fala o nome do evento|qual a data e hor[áa]rio do evento|qual o local do evento|tem alguma descri[çc][ãa]o.*evento|evento ou (?:um )?projeto|nome desse evento/i.test(recentText) &&
-    !/✅.*evento\s+criado|cancelar|esquece/i.test(recentText.slice(-500));
-  if (inEventFlow) {
-    return { name: 'criar-compromisso', body: loadSkill('criar-compromisso') };
+  // Sprint 11.5b hotfix-2 — Eventos de GRANDE PORTE da LA (workshop, show, recital,
+  // captação, festival, dia das mães, formatura, especial X) são PROJETOS, não
+  // simples compromissos de calendário. Bug observado (29/04 13:48): user pediu
+  // pra criar evento "Especial Dia das Mães com a Turminha LA Music Kids" e TOM
+  // tratou como compromisso simples → não perguntou envolvidos/responsáveis/método
+  // (que estão na skill cadastro-projeto-5w2h, perguntas 5/6/7).
+  //
+  // Distinção:
+  //   - criar-compromisso: reunião 14h, aula, mentoria, sessão, encontro, consulta
+  //                        (datas pontuais, sem time/coordenação)
+  //   - cadastro-projeto-5w2h: workshop, show, recital, captação, festival, dia
+  //                            das mães, formatura, evento especial, lançamento
+  //                            (escopo amplo, envolve múltiplas pessoas, prep)
+  const lmFull = (lastUserMessage || '').toLowerCase();
+  const largeEventTermRe = /\b(workshop|show|recital|capta[çc][ãa]o|festival|dia\s+das\s+m[aã]es|dia\s+dos\s+pais|formatura|lan[çc]amento|sarau|especial(?:\s+(?:dia|de|do))?|aula\s+aberta|masterclass|apresenta[çc][ãa]o\s+(?:do\s+)?coro|festa\s+(?:de\s+)?fim\s+de\s+ano|temporada)\b/i;
+  const inLargeEventFlow =
+    /\b(workshop|show|recital|capta[çc][ãa]o|festival|dia\s+das\s+m[aã]es|formatura|sarau|especial)\b/i.test(recentText) &&
+    /me\s+fala\s+o\s+nome|qual\s+a\s+data|qual\s+o\s+local|tem\s+alguma\s+descri[çc][ãa]o|quem\s+vai\s+participar|como\s+vai\s+executar/i.test(recentText) &&
+    !/✅.*criado|cancelar|esquece/i.test(recentText.slice(-500));
+  if (largeEventTermRe.test(lmFull) || inLargeEventFlow) {
+    return { name: 'cadastro-projeto-5w2h', body: loadSkill('cadastro-projeto-5w2h') };
   }
 
   // Priority 1.4: audio transcription — wraps the actual intent in a
