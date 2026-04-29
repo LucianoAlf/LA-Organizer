@@ -431,7 +431,7 @@ router.get('/internal/metrics', requireInternalSecret, async (req, res) => {
   for (const [label, since] of Object.entries(ranges)) {
     const { data: rows, error } = await supabase
       .from('tom_metrics')
-      .select('latency_ms, provider_used, fallback_from, leak_blocked, sanitized_chars, error_kind, message_kind, input_tokens, output_tokens')
+      .select('latency_ms, provider_used, fallback_from, leak_blocked, sanitized_chars, error_kind, message_kind, input_tokens, output_tokens, actionable_intent, marker_emitted')
       .gte('ts', since);
     if (error) {
       out.windows[label] = { error: error.message };
@@ -449,6 +449,8 @@ router.get('/internal/metrics', requireInternalSecret, async (req, res) => {
     }, {});
     const sum = (key) => r.reduce((a, x) => a + (Number(x[key]) || 0), 0);
 
+    const actionable = r.filter(x => x.actionable_intent);
+    const actionableNoMarker = actionable.filter(x => !x.marker_emitted);
     out.windows[label] = {
       total: r.length,
       latency: { median_ms: median, p95_ms: p95, p99_ms: p99 },
@@ -460,6 +462,10 @@ router.get('/internal/metrics', requireInternalSecret, async (req, res) => {
       error_count: r.filter(x => x.error_kind).length,
       kind: breakdown('message_kind'),
       tokens: { input_total: sum('input_tokens'), output_total: sum('output_tokens') },
+      // Sprint 10.1: regressão silenciosa — user pediu ação, marker não saiu
+      actionable_intent_count: actionable.length,
+      actionable_no_marker_count: actionableNoMarker.length,
+      actionable_no_marker_rate: actionable.length ? (actionableNoMarker.length / actionable.length) : null,
     };
   }
 

@@ -15,7 +15,13 @@ const BLOCK_RULES = `# 🚨 REGRAS INVIOLÁVEIS — PRIORIDADE MÁXIMA
 3. 👽 SÓ no início da primeira mensagem de uma interação fresca (sem conversa nas últimas ~60min). Nunca repetir, nunca no meio.
 4. Direto, informal brasileiro: "pô", "beleza", "show", "bora". Sem corporativês.
 5. Máximo 3-4 linhas por mensagem. Uma pergunta por vez.
-6. ZERO leaks: nada de IDs, UUIDs, markers <<...>> visíveis ao usuário, "5W2H", "Eisenhower", "quadrante", nomes de tabelas, paths de filesystem, "engine", "API", "banco". Você NÃO tem ferramentas neste contexto — NUNCA emita \`<tool_call>\`, \`<tool_use>\`, \`<function_call>\`, \`<tool_name>\`, \`<parameters>\`, ou qualquer marcação de invocação de tool. Sua resposta é APENAS texto natural + markers oficiais documentados (\`<<TASK_UPDATE>>\`, \`<<EVENT_CREATE>>\`, \`<<PROJECT_CREATE>>\`, etc). Se você se ver "tentando" usar uma ferramenta, pare — o ambiente é text-only.
+6. ZERO leaks: nada de IDs, UUIDs, markers <<...>> visíveis ao usuário, "5W2H", "Eisenhower", "quadrante", nomes de tabelas, paths de filesystem, "engine", "API", "banco". Você NÃO tem ferramentas neste contexto — NUNCA emita \`<tool_call>\`, \`<tool_use>\`, \`<function_call>\`, \`<tool_name>\`, \`<parameters>\`, ou qualquer marcação de invocação de tool. Sua resposta é APENAS texto natural + markers oficiais documentados.
+
+**MARKERS VÁLIDOS (lista canônica — Sprint 10.1):**
+\`<<TASK_UPDATE>>\` (com action: create/complete/reschedule/delegate/extension_request/approve/deny) · \`<<EVENT_CREATE>>\` · \`<<EVENT_UPDATE>>\` · \`<<PROJECT_CREATE>>\` · \`<<PROJECT_APPROVE>>\` · \`<<PROJECT_REJECT>>\` · \`<<HABIT_ACTION>>\` · \`<<MEMORY_SAVE>>\` · \`<<DND_UPDATE>>\` · \`<<ONBOARDING_DONE>>\` · \`<<WEEKLY_PLAN>>\`. Final SEMPRE \`<<END>>\`.
+
+**MARKERS HALLUCINATED (NUNCA emita — não existem):**
+\`<<TASK_CREATE>>\` ❌ → use \`<<TASK_UPDATE>>\` action="create" · \`<<TASK_DONE>>\` ❌ → action="complete" · \`<<TASK_DELETE>>\` ❌ → action="cancel" · \`<<TASK_REMIND>>\` ❌ → action="create" + remind_at · \`<<TASK_NEW>>\`/\`<<TASK_ADD>>\`/\`<<TASK_LIST>>\` ❌ · \`<<EVENT_NEW>>\`/\`<<EVENT_DONE>>\`/\`<<EVENT_CANCEL>>\` ❌ → use \`<<EVENT_UPDATE>>\` action correta · \`<<HABIT_LOG>>\`/\`<<HABIT_DONE>>\` ❌ → use \`<<HABIT_ACTION>>\` action="log" · \`<<MEMORY_WRITE>>\`/\`<<MEMORY_UPDATE>>\` ❌ → \`<<MEMORY_SAVE>>\`. Se você "achou" um nome de marker que não está na lista válida acima, ele NÃO existe. NÃO invente.
 7. Bullets com \`•\` (nunca \`-\` ou \`*\`). Negrito \`*assim*\`. Itálico \`_assim_\`.
 8. Emoji ANTES do texto, nunca no meio. Cada emoji tem significado fixo (ver mapa).
 9. NUNCA 🎵.
@@ -108,6 +114,30 @@ function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habi
   const nickname = nameFor(collab);
   const lines = ['# 📌 CONTEXTO DESTA INTERAÇÃO', ''];
   const fn = collab.function_title ? ', ' + collab.function_title : '';
+
+  // Sprint 10.1: âncora temporal explícita. Sem isto Claude calculava
+  // "amanhã" errado e gravava remind_at +1 dia adiantado em produção.
+  // Sempre America/Sao_Paulo (-03:00) — o engine + UI assumem este TZ.
+  const tzFmt = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+  const parts = tzFmt.formatToParts(new Date());
+  const lookup = (k) => (parts.find(p => p.type === k) || {}).value;
+  const todayISO = `${lookup('year')}-${lookup('month')}-${lookup('day')}`;
+  const nowHHMM = `${lookup('hour')}:${lookup('minute')}`;
+  // Calcula amanhã ISO em BRT (sem depender da timezone do servidor).
+  const tomorrow = new Date(todayISO + 'T03:00:00.000Z'); // 00h BRT
+  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+  const tomorrowISO = tomorrow.toISOString().slice(0, 10);
+  const weekdays = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+  const todayWD = weekdays[new Date(todayISO + 'T15:00:00.000Z').getUTCDay()];
+  lines.push(`**Data/hora agora (BRT):** ${todayISO} ${nowHHMM} (${todayWD})`);
+  lines.push(`**Amanhã (BRT):** ${tomorrowISO}`);
+  lines.push(`**Timezone para markers:** America/Sao_Paulo. Sempre use ISO -03:00 em remind_at, start_at, end_at, etc. Ex: "amanhã 11h" → "${tomorrowISO}T11:00:00-03:00".`);
+  lines.push('');
+
   lines.push(`**Pessoa:** ${nickname} (${collab.full_name}) — ${collab.role || '—'}${fn}`);
   lines.push(`**Onboarding:** ${collab.onboarding_completed ? 'COMPLETO' : '⚠️ ONBOARDING ATIVO — fluxo de 5 perguntas'}`);
 
@@ -314,22 +344,29 @@ function pickSkill(collab, lastUserMessage, recentHistory) {
   // Priority 4.9: compromisso (evento com horário). Cobre create + update.
   // Create: termo de evento + horário, OR range "das X às Y", OR agendar + horário + (termo|modalidade).
   // Update: verbo update (remarca|cancela|fechei) + termo de evento.
+  //
+  // Sprint 10.1 — guard de reminder intent:
+  // Se a mensagem tem "anota|me lembra|lembra de|lembrete|me chama" mesmo
+  // mencionando "reunião 9h", o intent real é LEMBRETE (task com remind_at),
+  // não criar evento. Ex: "anota: amanhã 9h te lembra de falar pra marcar
+  // reunião" — usuário não quer marcar reunião, quer ser lembrado de falar
+  // com alguém pra marcar. Cai pra priority 5 (checklist-tarefas).
   {
     const eventTermRe = /\b(reuni[ãa]o|aula|ensaio|mentoria|sess[ãa]o|encontro|grava[çc][ãa]o|masterclass|apresenta[çc][ãa]o|consulta|compromisso)\b/i;
     const hourRe = /\b\d{1,2}(?::\d{2})?\s*h(?:oras?)?\b|\b[àa]s\s+\d{1,2}\b/i;
     const rangeRe = /\bdas?\s+\d{1,2}h?(?::\d{2})?\s+(?:[àa]s|at[eé])\s+\d{1,2}h?(?::\d{2})?\b/i;
     const modalityRe = /\b(online|presencial|h[ií]brido|google\s*meet|zoom|teams|jitsi)\b/i;
     const scheduleVerbRe = /\b(marca|marcar|agend[ao]r?)\b/i;
-    // Update verbs específicos para events:
-    //   reschedule: remarca|remarcar|reagenda(?!r)|muda|mudar (com termo evento OU horário no contexto)
-    //   cancel:     cancela|cancelar
-    //   complete:   fechei|fiz (specific to event nouns), saiu, rolou
+    const reminderIntentRe = /\b(anota|me\s+lembra|lembra\s+de|lembrete|me\s+chama|p[oó]e\s+na\s+lista|adiciona\s+(?:na\s+lista|tarefa))\b/i;
     const eventUpdateRe = /\b(remarca|remarcar|reagenda|reagendar|cancel[ao]r?|fechei\s+(?:a\s+|o\s+)?(?:reuni[ãa]o|aula|ensaio|mentoria|sess[ãa]o|grava[çc][ãa]o|masterclass|consulta)|saiu\s+(?:a\s+|o\s+)?(?:reuni[ãa]o|mentoria))\b/i;
     const lm = lastUserMessage || '';
-    if (rangeRe.test(lm) ||
+    const hasReminderIntent = reminderIntentRe.test(lm);
+    if (!hasReminderIntent && (
+        rangeRe.test(lm) ||
         (eventTermRe.test(lm) && hourRe.test(lm)) ||
         (scheduleVerbRe.test(lm) && hourRe.test(lm) && (eventTermRe.test(lm) || modalityRe.test(lm))) ||
-        (eventUpdateRe.test(lm) && eventTermRe.test(lm))) {
+        (eventUpdateRe.test(lm) && eventTermRe.test(lm))
+       )) {
       return { name: 'criar-compromisso', body: loadSkill('criar-compromisso') };
     }
   }

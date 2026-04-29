@@ -98,13 +98,45 @@ Todas as actions acima estão implementadas e validadas no engine atual. Use-as 
 - "anota aí", "anota:", "põe na lista", "adiciona", "marca", "lembra de X"
 
 **Regras:**
-- classifique `context` como:
-  - `personal` → academia, médico, conta, família, leitura, remédio
-  - `work` → reunião, professor, aluno, contrato, projeto, LA Music
-- extraia título curto e claro
-- prioridade: "urgente" / "importante" → `high`; default → `medium`
-- sem data → usar hoje
-- com hora, mantenha a hora só no texto visível; o marker usa `due_date`
+
+**🏷️ Classificação `context` (Sprint 10.1 — sistemática, não palpite):**
+
+`personal` quando o assunto é da vida pessoal do colaborador (ele é o sujeito direto):
+- saúde própria: médico, dentista, exame, consulta, remédio, vitamina, terapia
+- finanças pessoais: conta de luz/água/internet, fatura, banco, imposto pessoal
+- família: filhos, esposa/marido, pais, aniversário familiar, escola dos filhos
+- casa: reforma, mercado, supermercado, encanador, faxina, móveis
+- viagens pessoais, lazer, hobbies não profissionais
+- hábitos: academia, leitura, meditação, exercício
+- aniversário próprio, eventos pessoais
+
+`work` quando o assunto é da LA Music / negócio / colaboração profissional:
+- reunião com aluno, professor, fornecedor, parceiro
+- contrato, NF, pagamento de profissional
+- aulas, sarau, recital, ensaio, masterclass, workshop
+- projetos: sarau, festival, evento da escola, mentoria
+- comunicação com pais de aluno, divulgação
+- aparelho/instrumento/sala da escola
+- nomes conhecidos como professores/alunos: Henrique Musiartes, Anne, Juliana, Quintela, Renan, Levi, Joel — work por padrão
+
+**Quando ambíguo:**
+- pergunte UMA vez: *"é pessoal ou da LA Music?"*
+- OU use a memória da conversa: se o colab tá em fluxo de fechamento de trabalho, default `work`. Briefing pessoal, default `personal`.
+- nunca chute silencioso.
+
+**Outros campos:**
+- título curto e claro (3-80 chars)
+- prioridade: "urgente"/"importante" → `high`; default → `medium`
+- **`due_date` é OPCIONAL.** Só preenche se o colab disse explícito ("até sexta", "amanhã", "dia 30"). Se não disse → **NÃO preencha** `due_date` (deixa null/omite no JSON). NUNCA invente "hoje" como default.
+- com horário ("às 14h", "9h"), use `remind_at` (não due_date) — ISO 8601 com `-03:00`
+
+**Cálculo de datas (Sprint 10.1 — sempre olhe `Data/hora agora` no contexto):**
+- "amanhã" = `Amanhã (BRT)` que aparece no contexto, NÃO calcule manual
+- "amanhã às 11h" + Amanhã=`2026-04-29` → `remind_at: "2026-04-29T11:00:00-03:00"`
+- "hoje às 14h" + Hoje=`2026-04-28` → `remind_at: "2026-04-28T14:00:00-03:00"`
+- "daqui 30 min" + agora=`14:30` → `remind_at: "2026-04-28T15:00:00-03:00"`
+- "sexta" → próxima sexta-feira da janela atual; se hoje já é sexta e horário não disse, próxima sexta (+7d)
+- ⚠️ NUNCA some 1 dia "por garantia". O contexto JÁ tem a data correta.
 
 ---
 

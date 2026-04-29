@@ -2025,6 +2025,33 @@ async function processMessage(phone, text, raw = {}) {
     // ignore guard errors — never crash pipeline on a guard
   }
 
+  // Sprint 10.1: detecta regressão silenciosa — user pediu ação mas
+  // nenhum marker foi emitido (TOM disse "Anotado!" mas DB ficou vazio).
+  // Query marker_logs por ações 'executed' deste user desde o início desta msg.
+  try {
+    const ACTIONABLE_RE = /\b(anota|me\s+lembra|lembra\s+(?:de|do|da)\b|lembrete|me\s+chama|preciso|surgiu|p[oó]e\s+na\s+lista|adiciona|paguei|fiz|terminei|fechei|completei|delega|marca\s+(?:reuni|m[eé]dico|consulta|ensaio|encontro|aula))/i;
+    if (ACTIONABLE_RE.test(String(text || ''))) {
+      _metrics.actionable_intent = true;
+      const sinceIso = new Date(_t0 - 1000).toISOString();
+      const { data: recentMarkers } = await supabase
+        .from('marker_logs')
+        .select('marker_type')
+        .eq('collaborator_id', collab.id)
+        .eq('result', 'executed')
+        .gte('created_at', sinceIso);
+      const fired = (recentMarkers || []).map(r => r.marker_type).filter(t =>
+        t && !['LEAK_BLOCKED','UNKNOWN_MARKER_STRIPPED','TOOL_CALL_STRIPPED','PROVIDER'].includes(t));
+      if (fired.length === 0) {
+        console.warn(`[Engine] ACTIONABLE_NO_MARKER — text="${String(text).slice(0,80)}" reply="${String(reply).slice(0,100)}"`);
+        await logMarker(collab.id, 'ACTIONABLE_NO_MARKER', 'rejected',
+          `text:${String(text).slice(0,200)}`, String(reply).slice(0,500));
+      } else {
+        _metrics.marker_emitted = fired.join(',').slice(0, 100);
+        _metrics.marker_result = 'executed';
+      }
+    }
+  } catch (e) { /* metric never breaks main flow */ }
+
   await whatsapp.sendMessage(phone, reply);
   await logConversation(collab.id, 'outbound', reply);
   // Sprint 10: grava telemetria. Fire-and-forget — falha de metric não quebra fluxo.
