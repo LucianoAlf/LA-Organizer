@@ -142,6 +142,16 @@ async function chat(systemPrompt, messages /*, maxTokens */) {
         .replace(/<\/?function_call\b[^>]*>/gi, '')
         .replace(/<parameters?[\s\S]*?<\/parameters?>/gi, '')
         .replace(/<\/?parameters?\b[^>]*>/gi, '')
+        // Sprint 11.5 hotfix — bloquear <details>/<summary> que Claude usa
+        // pra exibir "feedback memory" ou meta-estrutura interna. Caso real
+        // 29/04 13:55: TOM emitiu literal `<details><summary>feedback memory
+        // </summary>Vou salvar esse feedback...</details>` no WhatsApp.
+        .replace(/<details[\s\S]*?<\/details>/gi, '')
+        .replace(/<\/?details\b[^>]*>/gi, '')
+        .replace(/<summary[\s\S]*?<\/summary>/gi, '')
+        .replace(/<\/?summary\b[^>]*>/gi, '')
+        // Linhas residuais de "feedback memory" / "memory hint" (caso textual)
+        .replace(/^.*\b(?:feedback\s+memory|memory\s+hint|saving\s+feedback)\b.*$/gim, '')
         // 2) Linhas de narração em inglês (Claude é treinado em EN; quando tenta
         // usar tool, narra em EN mesmo se contexto é PT). Matar a linha inteira.
         .replace(/^.*\b(Based on|Now let me|Let me (?:update|read|write|check|create|save|run|verify|now)|I.ll (?:update|read|write|check|create|save|run|now)|I need to (?:update|read|write|check|create|save|run))\b.*$/gim, '')

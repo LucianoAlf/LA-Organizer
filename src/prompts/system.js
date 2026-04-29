@@ -349,6 +349,18 @@ function pickSkill(collab, lastUserMessage, recentHistory) {
     return { name: 'cadastro-projeto-5w2h', body: loadSkill('cadastro-projeto-5w2h') };
   }
 
+  // Sprint 11.5 hotfix — Mid-flow EVENT detection. Bug observado (29/04 13:48):
+  // User disse "Evento" como resposta a "é evento ou projeto?", e TOM começou a
+  // perguntar nome/data/local SEM ativar criar-compromisso. skill: none → não
+  // tinha schema EVENT_CREATE no prompt → "✅ Evento criado" sem marker = nada
+  // foi persistido. Detectar fluxo de evento por padrões nas perguntas do TOM.
+  const inEventFlow =
+    /me fala o nome do evento|qual a data e hor[áa]rio do evento|qual o local do evento|tem alguma descri[çc][ãa]o.*evento|evento ou (?:um )?projeto|nome desse evento/i.test(recentText) &&
+    !/✅.*evento\s+criado|cancelar|esquece/i.test(recentText.slice(-500));
+  if (inEventFlow) {
+    return { name: 'criar-compromisso', body: loadSkill('criar-compromisso') };
+  }
+
   // Priority 1.4: audio transcription — wraps the actual intent in a
   // confirmation flow before any action marker is emitted.
   // ATENÇÃO: vem DEPOIS de inProjectFlow pra não sequestrar turno em mid-flow.
