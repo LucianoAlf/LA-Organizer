@@ -15,10 +15,15 @@ interface Props<T extends string> {
 
 export function Tabs<T extends string>({ tabs, active, onChange, className = '' }: Props<T>) {
   return (
+    // Sprint 11.4 hotfix — Tabs sem scroll horizontal.
+    // Antes: `overflow-x-auto` + `whitespace-nowrap` → scroll lateral em mobile.
+    // Depois: `flex-wrap` deixa pílulas quebrarem pra próxima linha quando não cabem.
+    // Padding e font reduzidos pra caber 4 pills em telas estreitas (~360px).
+    // Aplicado globalmente — afeta Hoje (2 tabs) e ProjetoDetalhe (4 tabs).
     <div
       role="tablist"
       className={[
-        'flex gap-2 overflow-x-auto -mx-md px-md no-scrollbar',
+        'flex flex-wrap gap-1.5',
         className,
       ].join(' ')}
     >
@@ -32,7 +37,7 @@ export function Tabs<T extends string>({ tabs, active, onChange, className = '' 
             aria-selected={isActive}
             onClick={() => onChange(t.id)}
             className={[
-              'h-9 px-3 rounded-md inline-flex items-center gap-2 whitespace-nowrap focus-ring transition-colors',
+              'h-9 px-3 rounded-md inline-flex items-center gap-1.5 focus-ring transition-colors',
               isActive
                 ? 'bg-brand text-white shadow-card dark:shadow-none'
                 : 'bg-bg-subtle text-fg-muted border border-border hover:text-fg',

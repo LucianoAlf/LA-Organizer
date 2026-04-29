@@ -116,7 +116,13 @@ export function ProjetoDetalhe() {
   if (!project) return <EmptyState title="Projeto não encontrado" action={<Link to="/projetos" className="text-brand">Voltar</Link>} />;
 
   const next = checkpoints.find(c => c.status !== 'done' && c.status !== 'cancelled');
-  const pct = Math.max(0, Math.min(100, project.progress_percent ?? 0));
+  // Sprint 11.4 hotfix — calcula progresso em runtime baseado em itens done.
+  // Antes usava só project.progress_percent (campo estático). Agora reflete os
+  // toggles do user imediatamente (visual fica vivo).
+  const checklistTotal = checkpoints.length;
+  const checklistDone = checkpoints.filter(c => c.status === 'done').length;
+  const pctRuntime = checklistTotal > 0 ? Math.round((checklistDone / checklistTotal) * 100) : 0;
+  const pct = checklistTotal > 0 ? pctRuntime : Math.max(0, Math.min(100, project.progress_percent ?? 0));
 
   return (
     <div className="space-y-lg">
@@ -175,7 +181,7 @@ export function ProjetoDetalhe() {
       {tab === 'checkpoints' && (
         <section className="surface">
           {checkpoints.length === 0 ? (
-            <EmptyState title="Sem checkpoints ainda" />
+            <EmptyState title="Sem checkpoints ainda" description="Marcos do projeto. O TOM cria pelo WhatsApp quando você pede pra estruturar o projeto." />
           ) : (
             <ul className="divide-y divide-border">
               {checkpoints.map(c => {
