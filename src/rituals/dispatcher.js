@@ -481,12 +481,16 @@ async function checkDeadlineAlerts(ymdToday) {
   if (sent) console.log(`[DeadlineAlert] fired ${sent} deadline alert(s) for ${tomorrow}`);
 }
 
-// Overdue alert: tasks due before today (status != done/cancelled).
+// Overdue alert: tasks que viraram atrasadas EXATAMENTE 1 dia (vencimento ontem,
+// status != done/cancelled). Sprint 11.2: limitado a 1 dia pra evitar spam — tasks
+// com 2+ dias de atraso ficam só no nudge agregado das 19h (checkAdherenceNudge).
+// Resultado: máx 1 alerta individual por task + 1 agregado/dia se ainda parado.
 async function checkOverdueAlerts(ymdToday) {
+  const yesterday = ymdOffset(ymdToday, -1);
   const { data: tasks, error } = await supabase
     .from('tasks')
     .select('id, title, assigned_to, due_date, status')
-    .lt('due_date', ymdToday)
+    .eq('due_date', yesterday)
     .not('status', 'in', '(done,cancelled)')
     .limit(200);
   if (error) {
