@@ -89,6 +89,57 @@ function loadSkill(name) {
 }
 
 // ---------- helpers ----------
+// Sprint 10.1 hotfix-2 (Plano C): pré-resolução determinística de datas
+// relativas. Engine resolve "amanhã 11h" / "hoje 14h" / "às 8h30 amanhã" no
+// momento em que recebe a mensagem do user e injeta o ISO já calculado no
+// system prompt. Claude apenas COPIA. Combate history poisoning (TOM repetiu
+// "Amanhã (30/04)" antes da âncora estar deployada e isso virou fato pra
+// turnos seguintes).
+function resolveTemporalRef(userMsg, todayISO, tomorrowISO) {
+  if (!userMsg || typeof userMsg !== 'string') return null;
+  const lc = userMsg.toLowerCase();
+  let targetDay = null;
+  let dayWord = null;
+  // JS regex \b é ASCII-only; ã/é/etc são tratados como non-word, então
+  // \bamanh[ãa]\b NÃO casa "amanhã". Usamos lookarounds explícitos com
+  // separadores naturais (início, espaço, pontuação).
+  const SEP = '(?:^|[\\s.,!?;:¡¿\\(\\)])';
+  const SEP_END = '(?:$|[\\s.,!?;:¡¿\\(\\)])';
+  if (new RegExp(SEP + 'amanh(?:ã|a)' + SEP_END, 'i').test(lc)) {
+    targetDay = tomorrowISO; dayWord = 'amanhã';
+  } else if (new RegExp(SEP + 'hoje' + SEP_END, 'i').test(lc)) {
+    targetDay = todayISO; dayWord = 'hoje';
+  }
+  if (!targetDay) return null;
+  // Detecta horário em vários formatos: "11h", "11:30h", "às 11h", "11:30",
+  // "às 8h30" (8h30 ↔ 8:30).
+  const tm = lc.match(/\b(?:[àa]s\s+)?(\d{1,2})(?::(\d{2})|h(\d{2})|h)\b|\b(\d{1,2})(?::(\d{2}))?\b\s*h(?:oras?)?/);
+  let hour = null, minute = null;
+  if (tm) {
+    const h = parseInt(tm[1] || tm[4] || '', 10);
+    const m = parseInt(tm[2] || tm[3] || tm[5] || '0', 10);
+    if (Number.isFinite(h) && h >= 0 && h <= 23 && Number.isFinite(m) && m >= 0 && m <= 59) {
+      hour = String(h).padStart(2, '0');
+      minute = String(m).padStart(2, '0');
+    }
+  }
+  const iso = (hour && minute) ? `${targetDay}T${hour}:${minute}:00-03:00` : null;
+  return { dayWord, targetDay, hour, minute, iso };
+}
+
+// Sprint 10.1 hotfix-2 (Plano B): sanitização de history para evitar
+// poisoning. Remove "(DD/MM)" parentético próximo a palavras temporais nos
+// turnos passados do TOM. Mantém a frase legível mas tira a "data canonizada"
+// que o modelo achava ser fato. Aplicado só em mensagens outbound (do TOM).
+function sanitizeAssistantContent(s) {
+  if (typeof s !== 'string') return s;
+  return s
+    // "amanhã (30/04)" → "amanhã"
+    .replace(/\b(amanh[ãa]|hoje|ontem|segunda(?:-feira)?|terça(?:-feira)?|quarta(?:-feira)?|quinta(?:-feira)?|sexta(?:-feira)?|sábado|domingo)\s*\(\s*\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\s*\)/gi, '$1')
+    // Date isolada em parênteses logo após texto temporal-like: "(30/04)"
+    .replace(/\(\s*\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\s*\)/g, '');
+}
+
 function todaySaoPaulo() {
   const fmt = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/Sao_Paulo',
@@ -517,7 +568,30 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   }
   const baseCtx = buildContext(collaborator, ctx.memories, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx);
   const pending = renderPendingDecisions(ctx.notifications);
-  const ctxBlock = pending ? baseCtx + '\n' + pending : baseCtx;
+
+  // Sprint 10.1 hotfix-2 (Plano C): resolve temporal de "amanhã"/"hoje" + horário
+  // do user.msg ANTES do Claude. Injeta ISO já calculado.
+  const tzFmt2 = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  });
+  const todayISO_main = tzFmt2.format(new Date());
+  const tmrwDate = new Date(todayISO_main + 'T03:00:00.000Z');
+  tmrwDate.setUTCDate(tmrwDate.getUTCDate() + 1);
+  const tomorrowISO_main = tmrwDate.toISOString().slice(0, 10);
+  const resolved = resolveTemporalRef(lastUserMessage, todayISO_main, tomorrowISO_main);
+  let resolutionBlock = '';
+  if (resolved) {
+    const lines = ['', '**🎯 Resolução temporal desta mensagem (USE EXATAMENTE este ISO se for emitir marker):**'];
+    lines.push(`- "${resolved.dayWord}" no contexto desta mensagem = **${resolved.targetDay}**`);
+    if (resolved.iso) {
+      lines.push(`- Horário detectado: ${resolved.hour}:${resolved.minute}`);
+      lines.push(`- ISO 8601 completo (cole literal no marker): \`${resolved.iso}\``);
+    }
+    lines.push(`- ❌ Não recalcule. Não some 1 dia "por garantia". Engine valida e auto-corrige se errar — mas evite o roundtrip.`);
+    resolutionBlock = '\n' + lines.join('\n');
+  }
+  const ctxBlock = (pending ? baseCtx + '\n' + pending : baseCtx) + resolutionBlock;
 
   const blocks = [
     BLOCK_RULES,
@@ -562,9 +636,14 @@ function composeSystemPrompt(collaborator, ctx) {
  * Formata o histórico recente + mensagem atual como messages[] estilo OpenAI.
  */
 function formatMessages(recent, currentText) {
+  // Sprint 10.1 hotfix-2 (Plano B): sanitiza mensagens passadas do TOM
+  // (outbound) removendo "(DD/MM)" parentético próximo a palavras temporais.
+  // Combate history poisoning: se TOM canonizou data errada num turno
+  // anterior ("Amanhã (30/04)..."), aquilo NÃO chega como fato pra Claude
+  // no próximo turno.
   const msgs = (recent || []).map(m => ({
     role: m.direction === 'inbound' ? 'user' : 'assistant',
-    content: m.content,
+    content: m.direction === 'outbound' ? sanitizeAssistantContent(m.content) : m.content,
   }));
   msgs.push({ role: 'user', content: currentText });
   return msgs;
