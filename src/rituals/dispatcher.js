@@ -47,6 +47,16 @@ const COORDINATOR_ROLES = ['coordinator', 'director'];
 // Default time for briefing_pessoal (until user_preferences gains a personal_briefing_time column).
 const PERSONAL_BRIEFING_DEFAULT = '07:00';
 
+// Sprint 11.1 Bloco D — Aderência diária. Roda 19h em dias úteis. Detecta sinais
+// de "vida travando" (tasks atrasadas + projetos parados há 48h+) e cutuca UMA vez
+// no fim do dia. Mensagem determinística (sem LLM). Threshold p/ disparar:
+// >=2 tarefas atrasadas OU >=1 projeto parado. Senão, fica em silêncio.
+const ADHERENCE_NUDGE_TIME = '19:00';
+const ADHERENCE_PAUSE_HOURS = 48;
+const ADHERENCE_MIN_OVERDUE = 2;
+const ADHERENCE_MAX_OVERDUE_LIST = 5;
+const ADHERENCE_MAX_PROJECTS_LIST = 5;
+
 // Insere um evento estruturado em ritual_logs. Falhas de log nunca derrubam o tick.
 async function logRitualEvent(collaboratorId, type, status, detail = null, refDate = null) {
   try {
@@ -239,7 +249,9 @@ async function run(opts = {}) {
   }
 
   // Modo forçado: ignora time check e dispara o ritual pedido pra cada collab filtrado.
-  if (opts.force) {
+  // Exceções: 'aderencia'/'aderencia_diaria' são determinísticos (sem LLM/sendRitual);
+  // caem no gancho condicional adiante e são tratados por checkAdherenceNudge.
+  if (opts.force && opts.force !== 'aderencia' && opts.force !== 'aderencia_diaria') {
     const ritualType = RITUAL_BY_DIRECTIVE[opts.force];
     if (!ritualType) {
       console.error(`[Dispatcher] force inválido: ${opts.force}`);
@@ -356,6 +368,19 @@ async function run(opts = {}) {
       await checkOverdueAlerts(now.ymd);
     } catch (err) {
       console.error('[Dispatcher] checkOverdueAlerts erro:', err.message);
+    }
+  }
+
+  // Sprint 11.1 Bloco D — Adherence nudge. Weekdays at 19:00. Mensagem determinística
+  // (sem LLM) que cutuca UMA vez quando há sinais de "vida travando" (atrasadas + projetos
+  // parados). Threshold conservador pra não virar alarme ambulante.
+  const adhSlot = timeToSlot(ADHERENCE_NUDGE_TIME);
+  const forceAdh = opts.force === 'aderencia' || opts.force === 'aderencia_diaria';
+  if (forceAdh || (!isWeekend && adhSlot !== null && adhSlot === slotNow)) {
+    try {
+      await checkAdherenceNudge(now.ymd, opts.phone, { dry: Boolean(opts.dry) });
+    } catch (err) {
+      console.error('[Dispatcher] checkAdherenceNudge erro:', err.message);
     }
   }
 }
@@ -662,6 +687,196 @@ async function checkReminders() {
     } catch (err) {
       console.error(`[Reminders] send err for ${String(t.id).slice(0,8)}:`, err.message);
     }
+  }
+}
+
+// ===== Sprint 11.1 Bloco D — Adherence nudge =====
+// Days between two YMD strings (YYYY-MM-DD), absolute, ignores timezone.
+function ymdDaysBetween(ymd1, ymd2) {
+  const [y1, m1, d1] = ymd1.split('-').map(Number);
+  const [y2, m2, d2] = ymd2.split('-').map(Number);
+  const a = Date.UTC(y1, m1 - 1, d1);
+  const b = Date.UTC(y2, m2 - 1, d2);
+  return Math.abs(Math.round((a - b) / 86400000));
+}
+
+// Coleta sinais de aderência fraca pra um collab. Retorna { overdueTasks, pausedProjects }.
+// pausedProjects: projetos active onde a última task atualizada do collab é > ADHERENCE_PAUSE_HOURS atrás.
+async function gatherAdherenceSignals(collabId, ymdToday) {
+  const cutoffIso = new Date(Date.now() - ADHERENCE_PAUSE_HOURS * 3600 * 1000).toISOString();
+
+  // Atrasadas: due_date < hoje AND não concluídas/canceladas. Ordem cronológica reversa
+  // (mais antigas primeiro — sinaliza acúmulo).
+  const { data: overdueTasks, error: oErr } = await supabase
+    .from('tasks')
+    .select('id, title, due_date, context')
+    .eq('assigned_to', collabId)
+    .lt('due_date', ymdToday)
+    .not('status', 'in', '(done,cancelled)')
+    .order('due_date', { ascending: true })
+    .limit(20);
+  if (oErr) console.error('[AdherenceNudge] overdue query err:', oErr.message);
+
+  // Projetos active no banco. RLS: assumindo todos visíveis ao service_role.
+  const { data: activeProjects, error: pErr } = await supabase
+    .from('projects')
+    .select('id, name, status')
+    .eq('status', 'active')
+    .limit(50);
+  if (pErr) console.error('[AdherenceNudge] projects query err:', pErr.message);
+
+  let pausedProjects = [];
+  if (activeProjects && activeProjects.length) {
+    const projIds = activeProjects.map(p => p.id);
+    // Pega última atualização de task do collab por projeto.
+    const { data: collabTasks } = await supabase
+      .from('tasks')
+      .select('project_id, updated_at')
+      .eq('assigned_to', collabId)
+      .in('project_id', projIds);
+    const lastByProj = new Map();
+    for (const t of (collabTasks || [])) {
+      const cur = lastByProj.get(t.project_id);
+      if (!cur || cur < t.updated_at) lastByProj.set(t.project_id, t.updated_at);
+    }
+    for (const p of activeProjects) {
+      const last = lastByProj.get(p.id);
+      if (!last) continue; // collab não tem task nesse projeto — ignora
+      if (last < cutoffIso) {
+        const lastYmd = String(last).slice(0, 10);
+        const daysSince = ymdDaysBetween(ymdToday, lastYmd);
+        pausedProjects.push({ id: p.id, name: p.name, last_update: last, days_since: daysSince });
+      }
+    }
+    // Mais parado primeiro.
+    pausedProjects.sort((a, b) => b.days_since - a.days_since);
+  }
+
+  return { overdueTasks: overdueTasks || [], pausedProjects };
+}
+
+// Build deterministic adherence text. Returns null if no signal worth sending.
+function buildAdherenceText(collab, signals, ymdToday) {
+  const { overdueTasks, pausedProjects } = signals;
+  const hasSignal = overdueTasks.length >= ADHERENCE_MIN_OVERDUE || pausedProjects.length >= 1;
+  if (!hasSignal) return null;
+
+  const nick = collab.full_name === 'Luciano Alf' ? 'Alf' : (collab.full_name || '').split(' ')[0] || 'amigo';
+  const lines = [`${nick}, balanço de aderência... 🌒`, ''];
+
+  if (overdueTasks.length) {
+    lines.push('⏰ *Atrasadas:*');
+    for (const t of overdueTasks.slice(0, ADHERENCE_MAX_OVERDUE_LIST)) {
+      const days = ymdDaysBetween(ymdToday, t.due_date);
+      const lateLabel = days === 0 ? 'vencia hoje'
+        : days === 1 ? 'vencia ontem'
+        : `vencia há ${days}d`;
+      lines.push(`• *${t.title}* (${lateLabel})`);
+    }
+    if (overdueTasks.length > ADHERENCE_MAX_OVERDUE_LIST) {
+      lines.push(`_...e mais ${overdueTasks.length - ADHERENCE_MAX_OVERDUE_LIST}_`);
+    }
+    lines.push('');
+  }
+
+  if (pausedProjects.length) {
+    lines.push('📁 *Projetos parados:*');
+    for (const p of pausedProjects.slice(0, ADHERENCE_MAX_PROJECTS_LIST)) {
+      lines.push(`• *${p.name}* — sem mexer há ${p.days_since}d`);
+    }
+    lines.push('');
+  }
+
+  lines.push('Reagenda? Cancela? Me diz o que rolou.');
+  return lines.join('\n');
+}
+
+// Adherence nudge — runs at 19:00 weekdays. Determinístico, idempotente, opt-out via
+// notify_overdue_alerts=false. Threshold conservador pra não virar alarme ambulante.
+async function checkAdherenceNudge(ymdToday, filterPhone, { dry = false } = {}) {
+  let q = supabase
+    .from('collaborators')
+    .select('id, full_name, phone, is_active, onboarding_completed, user_preferences(notify_overdue_alerts)')
+    .eq('is_active', true)
+    .eq('onboarding_completed', true);
+  if (filterPhone) q = q.eq('phone', filterPhone);
+  const { data: collabs, error } = await q;
+  if (error) {
+    console.error('[AdherenceNudge] collabs query err:', error.message);
+    return;
+  }
+  if (!collabs || !collabs.length) return;
+
+  const whatsapp = require('../services/whatsapp');
+  let sent = 0, skipped = 0, errs = 0;
+
+  for (const c of collabs) {
+    try {
+      // Opt-out
+      if (c.user_preferences && c.user_preferences.notify_overdue_alerts === false) {
+        skipped++;
+        await logRitualEvent(c.id, 'aderencia_diaria', 'skipped', 'opt_out', ymdToday);
+        continue;
+      }
+      if (!c.phone) {
+        skipped++;
+        continue;
+      }
+      // DND
+      const dnd = await getDndState(c.id);
+      if (dnd.active) {
+        await logRitualEvent(c.id, 'aderencia_diaria', 'skipped', `dnd_active until=${dnd.until}`, ymdToday);
+        skipped++;
+        continue;
+      }
+      // Idempotency
+      if (await alreadySent(c.id, 'aderencia_diaria', ymdToday)) {
+        skipped++;
+        continue;
+      }
+      // Gather signals
+      const signals = await gatherAdherenceSignals(c.id, ymdToday);
+      const text = buildAdherenceText(c, signals, ymdToday);
+      if (!text) {
+        // No signal worth sending — log silently, don't spam
+        await logRitualEvent(c.id, 'aderencia_diaria', 'skipped', `no_signal overdue=${signals.overdueTasks.length} paused=${signals.pausedProjects.length}`, ymdToday);
+        skipped++;
+        continue;
+      }
+      // Dry-run: só loga, não envia, não persiste. Útil pra dev/debug.
+      if (dry) {
+        console.log(`[AdherenceNudge] DRY → ${c.phone.slice(-4)} overdue=${signals.overdueTasks.length} paused=${signals.pausedProjects.length}`);
+        console.log('--- BEGIN MESSAGE ---');
+        console.log(text);
+        console.log('--- END MESSAGE ---');
+        sent++;
+        continue;
+      }
+      // Send
+      await whatsapp.sendMessage(c.phone, text);
+      await supabase.from('conversation_history').insert({
+        collaborator_id: c.id,
+        direction: 'outbound',
+        message_type: 'text',
+        content: text,
+      });
+      await logRitualEvent(
+        c.id, 'aderencia_diaria', 'sent',
+        `overdue=${signals.overdueTasks.length} paused=${signals.pausedProjects.length}`,
+        ymdToday,
+      );
+      sent++;
+      console.log(`[AdherenceNudge] sent → ${c.phone.slice(-4)} (overdue=${signals.overdueTasks.length} paused=${signals.pausedProjects.length})`);
+    } catch (err) {
+      errs++;
+      console.error(`[AdherenceNudge] err for ${c.full_name || c.id.slice(0,8)}:`, err.message);
+      try {
+        await logRitualEvent(c.id, 'aderencia_diaria', 'error', err.message, ymdToday);
+      } catch { /* ignore */ }
+    }
+  }
+  if (sent || errs) {
+    console.log(`[AdherenceNudge] done sent=${sent} skipped=${skipped} errs=${errs}`);
   }
 }
 
