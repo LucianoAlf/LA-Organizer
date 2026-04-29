@@ -1776,6 +1776,52 @@ async function processMessage(phone, text, raw = {}) {
       await logMarker(collab.id, 'TASK_UPDATE', 'rejected', 'schema_invalid', reply);
       reply = parsedTask.cleanText || reply;
     } else if (parsedTask) {
+      // Sprint 10.1 hotfix: alignment de datas. A âncora temporal no system
+      // prompt não basta — Claude erra "amanhã" em frases complexas
+      // ("Amanhã preciso pagar X pode me lembrar 8h30?" → gravou 30/04
+      // em vez de 29/04). Engine valida texto do user e força a data certa
+      // antes de persistir. Defesa de modelo.
+      try {
+        const userTextLC = String(text || '').toLowerCase();
+        const wantsTomorrow = /\b(amanh[ãa])\b/.test(userTextLC);
+        const wantsToday = /\b(hoje)\b/.test(userTextLC) && !wantsTomorrow;
+        if (wantsTomorrow || wantsToday) {
+          const fmt = new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'America/Sao_Paulo',
+            year: 'numeric', month: '2-digit', day: '2-digit',
+          });
+          const todayBRT = fmt.format(new Date());
+          const tmrw = new Date(todayBRT + 'T03:00:00.000Z');
+          tmrw.setUTCDate(tmrw.getUTCDate() + 1);
+          const tomorrowBRT = tmrw.toISOString().slice(0, 10);
+          const targetDay = wantsTomorrow ? tomorrowBRT : todayBRT;
+          let alignedCount = 0;
+          for (const a of (parsedTask.actions || [])) {
+            if (a.action !== 'create' && a.action !== 'reschedule') continue;
+            for (const field of ['remind_at', 'new_remind_at']) {
+              if (typeof a[field] === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(a[field]) && a[field].slice(0, 10) !== targetDay) {
+                const orig = a[field];
+                a[field] = targetDay + orig.slice(10);
+                alignedCount++;
+                console.warn(`[Task] auto-aligned ${field}: ${orig} → ${a[field]} (user said "${wantsTomorrow ? 'amanhã' : 'hoje'}")`);
+              }
+            }
+            for (const field of ['due_date', 'new_due_date']) {
+              if (typeof a[field] === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(a[field]) && a[field] !== targetDay) {
+                const orig = a[field];
+                a[field] = targetDay;
+                alignedCount++;
+                console.warn(`[Task] auto-aligned ${field}: ${orig} → ${a[field]}`);
+              }
+            }
+          }
+          if (alignedCount > 0) {
+            await logMarker(collab.id, 'TASK_DATE_AUTO_ALIGNED', 'executed', `count=${alignedCount} target=${targetDay}`, null);
+          }
+        }
+      } catch (e) {
+        console.error('[Task] date alignment err (non-fatal):', e.message);
+      }
       const { okCount, failCount } = await applyTaskActions(collab, parsedTask.actions);
       console.log(`[Task] batch done: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
       const result = okCount > 0 ? 'executed' : 'rejected';
