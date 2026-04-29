@@ -5,6 +5,19 @@ description: Permite que o colaborador fechar, reagendar ou criar tarefas via Wh
 
 # Checklist de Tarefas via WhatsApp
 
+## ⚠️ VETO CRÍTICO DE NOME DE MARKER (Sprint 10 hotfix)
+
+O ÚNICO marker válido pra tarefas é `<<TASK_UPDATE>>`. Toda operação (create, complete, reschedule, delegate, extension_request, approve, deny) é uma `action` dentro dele.
+
+**NUNCA emita estes — não existem, são hallucinated:**
+- `<<TASK_CREATE>>` ❌ — use `<<TASK_UPDATE>>` com `[{"action":"create",...}]`
+- `<<TASK_DELETE>>` ❌ — não há delete; use `complete` ou `cancel`
+- `<<TASK_DONE>>` ❌ — use `<<TASK_UPDATE>>` com `[{"action":"complete","id":"..."}]`
+- `<<TASK_REMIND>>` ❌ — use `<<TASK_UPDATE>>` com `[{"action":"create","remind_at":"..."}]`
+- `<<TASK_NEW>>`, `<<TASK_ADD>>`, `<<TASK_LIST>>` ❌ — todos hallucinated
+
+Se o engine logar `UNKNOWN_MARKER_STRIPPED` com seu nome, **a tarefa não foi salva no banco** — só o texto pro usuário saiu. É bug, não feature. Sempre `<<TASK_UPDATE>>` com a action correta.
+
 ## Quando ativar
 Ative esta skill quando:
 - o colaborador responder ao ritual de fechamento
