@@ -24,8 +24,9 @@ async function fetchTasksToday(collabId: string): Promise<Task[]> {
     .select('id, title, status, context, priority, category, due_date, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, completed_at, projects(name)')
     .eq('assigned_to', collabId)
     .or(`due_date.eq.${today},and(due_date.lt.${today},status.not.in.(done,cancelled))`)
-    .order('eisenhower_quadrant', { ascending: true, nullsFirst: false })
-    .order('due_date', { ascending: true });
+    .order('remind_at', { ascending: true, nullsFirst: false })
+    .order('due_date', { ascending: true })
+    .order('eisenhower_quadrant', { ascending: true, nullsFirst: false });
   if (error) throw error;
   return (data ?? []) as unknown as Task[];
 }

@@ -211,11 +211,43 @@ function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habi
 
   // Render personal × work separately. Falls back to legacy mixed list if split not provided.
   const today = todaySaoPaulo();
+  // Sprint 11 Bloco B.3: TOM precisa VER as tasks com horário pra ordenar a
+  // resposta cronologicamente. Antes só via título; agora vê "⏰ 08h30 (amanhã)".
+  const fmtTimeForCtx = (iso) => {
+    if (!iso) return '';
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', hour12: false,
+    }).formatToParts(new Date(iso));
+    const hh = parts.find(p => p.type === 'hour')?.value || '00';
+    const mm = parts.find(p => p.type === 'minute')?.value || '00';
+    return mm === '00' ? `${parseInt(hh, 10)}h` : `${parseInt(hh, 10)}h${mm}`;
+  };
+  const dayFromAny = (iso) => {
+    if (!iso) return '';
+    if (!iso.includes('T')) return iso.slice(0, 10);
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date(iso));
+  };
+  const tomorrowOf = (iso) => {
+    const d = new Date(iso + 'T03:00:00.000Z'); d.setUTCDate(d.getUTCDate() + 1);
+    return d.toISOString().slice(0, 10);
+  };
   const renderTaskList = (arr) => {
     arr.slice(0, 8).forEach((t, i) => {
-      const overdue = t.due_date && t.due_date < today ? '🔴 ' : '';
       const sid = String(t.id || '').slice(0, 8);
-      lines.push(`${i + 1}. [id=${sid}] ${overdue}${t.title}`);
+      let timeBit = '';
+      if (t.remind_at) {
+        const day = dayFromAny(t.remind_at);
+        const time = fmtTimeForCtx(t.remind_at);
+        const rel = day === today ? 'hoje' : day === tomorrowOf(today) ? 'amanhã' : day;
+        timeBit = ` ⏰ ${time} (${rel})`;
+      } else if (t.due_date) {
+        const rel = t.due_date === today ? 'hoje' : t.due_date === tomorrowOf(today) ? 'amanhã' : t.due_date;
+        timeBit = ` 📅 ${rel}`;
+      }
+      const overdue = (t.remind_at ? dayFromAny(t.remind_at) : t.due_date) < today ? '🔴 ' : '';
+      lines.push(`${i + 1}. [id=${sid}] ${overdue}${t.title}${timeBit}`);
     });
   };
 
@@ -440,6 +472,24 @@ function pickSkill(collab, lastUserMessage, recentHistory) {
     return { name: 'checklist-tarefas', body: loadSkill('checklist-tarefas') };
   }
 
+  // Sprint 11 Bloco A.1 — fallback acionável.
+  // Caso real (28/04 22:59): "Amanhã às 10h me lembre de ligar para Ana..."
+  // não bateu em nenhum priority anterior. Resultado: skill: none, sem
+  // template de marker, Claude improvisou em YAML, parser dropou, "Anotado"
+  // virou mentira (DB vazio). Para evitar essa classe de regressão:
+  // se a mensagem tem (referência temporal OU verbo de ação clara) JUNTO
+  // com um termo de pedido/intenção, defaultamos a checklist-tarefas em vez
+  // de none. Conservador: só dispara se MÚLTIPLOS sinais coincidirem,
+  // pra não bater em chitchat.
+  {
+    const lm = (lastUserMessage || '').toLowerCase();
+    const hasTimeRef = /\b(amanh[ãa]|hoje|agora|sexta|segunda|terça|quarta|quinta|s[áa]bado|domingo|daqui\s+a|em\s+\d+\s*(?:min|h|hora)|às\s+\d|\d{1,2}h(?:\d{2})?|\d{1,2}:\d{2})\b/i.test(lm);
+    const hasIntent = /\b(lembr|anota|agenda|marca|p[oó]e|adiciona|cria|preciso|tenho\s+que|vou\s+ter\s+que|n[aã]o\s+(?:posso|vou)\s+esquecer|sem\s+esquecer)/i.test(lm);
+    if (hasTimeRef && hasIntent) {
+      return { name: 'checklist-tarefas', body: loadSkill('checklist-tarefas') };
+    }
+  }
+
   return null;
 }
 
@@ -470,10 +520,14 @@ async function fetchCollaboratorContext(collaborator) {
     supabase.from('tasks')
       .select(TASK_COLS)
       .eq('assigned_to', id).lte('due_date', today).eq('context', 'personal').neq('status', 'done')
+      .order('remind_at', { ascending: true, nullsFirst: false })
+      .order('due_date', { ascending: true })
       .order('eisenhower_quadrant', { ascending: true, nullsFirst: false }),
     supabase.from('tasks')
       .select(TASK_COLS)
       .eq('assigned_to', id).lte('due_date', today).eq('context', 'work').neq('status', 'done')
+      .order('remind_at', { ascending: true, nullsFirst: false })
+      .order('due_date', { ascending: true })
       .order('eisenhower_quadrant', { ascending: true, nullsFirst: false }),
     supabase.from('project_members').select('project_id').eq('collaborator_id', id),
     supabase.from('notifications')

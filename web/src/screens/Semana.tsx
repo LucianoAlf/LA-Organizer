@@ -21,6 +21,7 @@ async function fetchWeekTasks(collabId: string, start: string, end: string): Pro
     .eq('context', 'work')
     .gte('due_date', start)
     .lte('due_date', end)
+    .order('remind_at', { ascending: true, nullsFirst: false })
     .order('due_date', { ascending: true })
     .order('eisenhower_quadrant', { ascending: true, nullsFirst: false });
   if (error) throw error;

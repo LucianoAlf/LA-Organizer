@@ -16,7 +16,7 @@ const items: Item[] = [
   { to: '/time', label: 'Dashboard do time', hint: 'Coordenação · trabalho', requireRoles: ['coordinator', 'director'] },
   { to: '/configuracoes', label: 'Configurações', hint: 'Horários e intensidade do TOM' },
   { to: '/historico', label: 'Histórico', hint: 'Aderência dos últimos 30 dias' },
-  { to: '#', label: 'Hábitos', hint: 'Privado · você só', status: 'soon' },
+  { to: '/habitos', label: 'Hábitos', hint: 'Privado · você só' },
   { to: '#', label: 'Checklists operacionais', hint: 'Por função e turno', status: 'soon' },
 ];
 

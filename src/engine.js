@@ -189,6 +189,33 @@ function parseProjectMarker(text) {
   return { project, cleanText, malformed: false };
 }
 
+// Sprint 11 Bloco A.2: parser YAML-ish para recuperar markers que Claude emite
+// em formato "key: value" em vez de JSON (caso real 28/04 22:59 onde
+// "action: create / title: ... / remind_at: ..." virou regression silenciosa).
+// Retorna objeto único (caller faz wrap em array se preciso) ou null.
+function parseYamlIshObject(text) {
+  if (!text || typeof text !== 'string') return null;
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  if (lines.length === 0) return null;
+  const obj = {};
+  for (const line of lines) {
+    // Aceita "key: value", "key:value", "  key: value  ". Não aceita multiline.
+    const km = line.match(/^([a-zA-Z_][\w-]*)\s*:\s*(.*)$/);
+    if (!km) return null; // linha não é "key: value" — aborta (provavelmente JSON corrompido, não YAML)
+    let [, key, val] = km;
+    val = val.trim();
+    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+      val = val.slice(1, -1);
+    }
+    if (val === 'true') obj[key] = true;
+    else if (val === 'false') obj[key] = false;
+    else if (val === 'null' || val === '') obj[key] = null;
+    else if (/^-?\d+(?:\.\d+)?$/.test(val)) obj[key] = Number(val);
+    else obj[key] = val;
+  }
+  return Object.keys(obj).length > 0 ? obj : null;
+}
+
 // Parse <<TASK_UPDATE>>[...]<<END>> — filtra ações inválidas, mantém o resto.
 function parseTaskUpdateMarker(text) {
   if (!text) return null;
@@ -197,11 +224,21 @@ function parseTaskUpdateMarker(text) {
   if (!m) return null;
   const cleanText = text.replace(re, '').trim();
   let parsed = null;
+  let recoveredVia = null;
   try {
     parsed = JSON.parse(m[1].trim());
   } catch (err) {
-    logSchemaErr('TASK_UPDATE', ['invalid_json: ' + err.message], m[1]);
-    return { malformed: true, cleanText };
+    // Sprint 11 Bloco A.2: YAML-ish fallback. Se Claude improvisou
+    // "action: create\ntitle: ..." em vez de JSON, recuperamos.
+    const yamlObj = parseYamlIshObject(m[1].trim());
+    if (yamlObj) {
+      parsed = yamlObj;
+      recoveredVia = 'yaml';
+      console.warn(`[TASK_UPDATE] recovered via YAML-ish parser (json_err=${err.message.slice(0, 80)})`);
+    } else {
+      logSchemaErr('TASK_UPDATE', ['invalid_json: ' + err.message], m[1]);
+      return { malformed: true, cleanText };
+    }
   }
   const rawActions = Array.isArray(parsed) ? parsed : [parsed];
   const valid = [];

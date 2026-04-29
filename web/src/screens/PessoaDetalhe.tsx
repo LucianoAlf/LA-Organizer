@@ -49,10 +49,11 @@ async function fetchPersonDetail(id: string) {
       .maybeSingle(),
     supabase
       .from('tasks')
-      .select('id, title, status, context, priority, due_date, project_id, assigned_to, created_by, completed_at, projects(name)')
+      .select('id, title, status, context, priority, due_date, remind_at, project_id, assigned_to, created_by, completed_at, projects(name)')
       .eq('assigned_to', id)
       .eq('context', 'work')
       .not('status', 'in', '(done,cancelled)')
+      .order('remind_at', { ascending: true, nullsFirst: false })
       .order('due_date', { ascending: true })
       .limit(20),
     fetchEventsForCollabRange(id, today, today, 'work'),
