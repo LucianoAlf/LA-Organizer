@@ -583,6 +583,138 @@ async function fetchCollaboratorContext(collaborator) {
   };
 }
 
+// Sprint 11.3 hotfix — Active Thread Binding (anti context-bleed).
+// Bug observado: TOM confundiu task do Moreira (criada há 1min) com task do Renan
+// (criada há 30min) quando user disse "me lembra por favor". TOM puxou pelo
+// horário/saliência em vez do assunto corrente. Fix: injetar HINT explícito de
+// qual task é o "objeto ativo" da conversa, derivado de:
+//   1. Última task criada/atualizada pelo TOM nas últimas N msgs (mais forte)
+//   2. Nomes próprios no histórico recente que casem com title de task
+// O LLM passa a ter âncora textual pra resolver pronomes ("a ligação", "ele",
+// "me lembra") sem chutar.
+async function inferActiveThread(recentMessages, allTasks, collaboratorId) {
+  if (!Array.isArray(recentMessages) || !recentMessages.length) return null;
+
+  // Sprint 11.3 hotfix-2 — Pool expandido. allTasks vem do contexto de hoje, mas
+  // o "assunto corrente" pode ser uma task criada AGORA com due_date amanhã (caso
+  // real Moreira: user pediu "me lembra" sobre task de amanhã, hint não disparou).
+  // Solução: union de allTasks + tasks criadas/atualizadas nas últimas 24h, mesmo
+  // se due_date futuro. 1 query extra por turno — custo aceitável pra resolver bug.
+  let pool = Array.isArray(allTasks) ? [...allTasks] : [];
+  if (collaboratorId) {
+    try {
+      const cutoff24h = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+      const { data: recent } = await supabase
+        .from('tasks')
+        .select('id, title, status, due_date, remind_at, context, created_at, updated_at')
+        .eq('assigned_to', collaboratorId)
+        .or(`created_at.gte.${cutoff24h},updated_at.gte.${cutoff24h}`)
+        .not('status', 'in', '(done,cancelled)')
+        .order('created_at', { ascending: false })
+        .limit(20);
+      // Dedupe por id
+      const seen = new Set(pool.map(t => t.id));
+      for (const t of (recent || [])) {
+        if (!seen.has(t.id)) { pool.push(t); seen.add(t.id); }
+      }
+    } catch (err) {
+      console.warn('[ActiveThread] recent tasks query err (non-fatal):', err.message);
+    }
+  }
+  if (!pool.length) return null;
+
+  // Janela curta: últimas 6 mensagens (3 turnos user/assistant).
+  const recent = recentMessages.slice(-6);
+  const recentText = recent.map(m => String(m.content || '')).join(' ').toLowerCase();
+  const recentInbound = recent
+    .filter(m => m.direction === 'inbound')
+    .map(m => String(m.content || ''));
+
+  // Heurística 1: nomes próprios mencionados no histórico (palavras CapitalizadasNoMeio).
+  // Pega palavras com letra maiúscula (PT-BR aceita Á-Ú e ã/ç). Filtra stop-words.
+  const STOP = new Set(['Alf','Tom','Vou','Ola','Show','Beleza','Bora','Sim','Não','Quero','Manda']);
+  const names = new Set();
+  for (const text of recent.map(m => String(m.content || ''))) {
+    const matches = text.match(/\b([A-ZÁ-Ú][a-zá-úãõç]{2,})(?:\s+([A-ZÁ-Ú][a-zá-úãõç]{2,}))?/g) || [];
+    for (const m of matches) {
+      const trimmed = m.trim();
+      if (trimmed.length >= 3 && !STOP.has(trimmed)) names.add(trimmed);
+    }
+  }
+
+  // Score cada task: nome próprio match (peso 3) + recência da criação (peso 2).
+  const now = Date.now();
+  const scored = pool.map(t => {
+    let score = 0;
+    const titleLower = String(t.title || '').toLowerCase();
+    // 1. Nome próprio match
+    for (const n of names) {
+      if (titleLower.includes(n.toLowerCase())) {
+        score += 3;
+        break;
+      }
+    }
+    // 2. Título mencionado em substring no histórico
+    const titleWords = titleLower.split(/[\s—\-,()]+/).filter(w => w.length >= 4);
+    let wordHits = 0;
+    for (const w of titleWords) if (recentText.includes(w)) wordHits++;
+    if (wordHits >= 2) score += 2;
+    else if (wordHits === 1) score += 1;
+    // 3. Bonus se task foi mencionada em mensagem inbound recente (mais forte)
+    for (const text of recentInbound) {
+      const tLower = text.toLowerCase();
+      for (const n of names) {
+        if (tLower.includes(n.toLowerCase()) && titleLower.includes(n.toLowerCase())) {
+          score += 2; break;
+        }
+      }
+    }
+    // 4. Recência: tasks criadas há < 5min ganham boost
+    const createdMs = t.created_at ? new Date(t.created_at).getTime() : 0;
+    const ageMin = createdMs ? Math.floor((now - createdMs) / 60000) : Infinity;
+    if (ageMin <= 5) score += 2;
+    else if (ageMin <= 30) score += 1;
+    return { task: t, score, ageMin };
+  }).filter(x => x.score >= 2);
+
+  if (!scored.length) return null;
+  scored.sort((a, b) => b.score - a.score);
+  const top = scored[0];
+  // Empate alto entre 2+ tasks → ambíguo; melhor não dar hint do que dar errado.
+  if (scored.length >= 2 && scored[1].score === top.score) {
+    return { ambiguous: true, candidates: scored.slice(0, 3).map(s => s.task) };
+  }
+  return { ambiguous: false, task: top.task, score: top.score, ageMin: top.ageMin };
+}
+
+function renderActiveThreadHint(thread) {
+  if (!thread) return '';
+  if (thread.ambiguous) {
+    const list = thread.candidates.map(t => `  - "${String(t.title).slice(0, 70)}"`).join('\n');
+    return [
+      '',
+      '**🧵 ASSUNTO CORRENTE — AMBÍGUO**',
+      'Há 2+ tasks parecidas no contexto recente. Se o user usar pronome ("a ligação", "ele", "isso", "me lembra"), NÃO chute — PERGUNTE qual:',
+      list,
+      'Pergunta sugerida: "Você diz a do {nome1} ou a do {nome2}?"',
+    ].join('\n');
+  }
+  const t = thread.task;
+  const ageLabel = thread.ageMin <= 1 ? 'agora há pouco'
+    : thread.ageMin <= 5 ? `${thread.ageMin}min atrás`
+    : thread.ageMin <= 30 ? 'recente'
+    : 'no histórico';
+  return [
+    '',
+    '**🧵 ASSUNTO CORRENTE da conversa (Active Thread):**',
+    `- Task ativa: "${String(t.title).slice(0, 90)}" (${ageLabel})`,
+    t.remind_at ? `- Lembrete: ${t.remind_at}` : '',
+    t.due_date ? `- Prazo: ${t.due_date}` : '',
+    '',
+    '**REGRA**: Se o user usar pronome ou referência genérica ("a ligação", "ele", "isso", "me lembra", "agenda"), ASSOCIE essa intenção à task ativa acima — NÃO ao mais saliente do contexto geral. Se houver dúvida real, PERGUNTE qual task antes de agir. NUNCA puxe outra task só porque tem horário próximo ou aparece em destaque.',
+  ].filter(Boolean).join('\n');
+}
+
 // ---------- main builder ----------
 async function buildSystemPrompt(collaborator, opts = {}) {
   const lastUserMessage = opts.lastUserMessage || '';
@@ -672,7 +804,14 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     lines.push(`- ❌ Não recalcule. Não some 1 dia "por garantia". Engine valida e auto-corrige se errar — mas evite o roundtrip.`);
     resolutionBlock = '\n' + lines.join('\n');
   }
-  const ctxBlock = (pending ? baseCtx + '\n' + pending : baseCtx) + resolutionBlock;
+  // Sprint 11.3 hotfix — Active Thread Binding. Calcula objeto corrente da
+  // conversa (task ativa) e injeta hint explícito pra LLM resolver pronomes
+  // ("a ligação", "ele", "me lembra") sem chutar pelo mais saliente.
+  const allTasks = [...(ctx.personalTasks || []), ...(ctx.workTasks || [])];
+  const activeThread = await inferActiveThread(hist, allTasks, collaborator?.id);
+  const activeThreadBlock = renderActiveThreadHint(activeThread);
+
+  const ctxBlock = (pending ? baseCtx + '\n' + pending : baseCtx) + resolutionBlock + activeThreadBlock;
 
   const blocks = [
     BLOCK_RULES,
