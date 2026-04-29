@@ -1901,6 +1901,51 @@ async function processMessage(phone, text, raw = {}) {
     }
   }
 
+  // ════════════════════════════════════════════════════════════════════════
+  // SPRINT 10 HOTFIX-CRÍTICO (29/04/2026): catch-all marker strip.
+  // ════════════════════════════════════════════════════════════════════════
+  // Caso real capturado: TOM disse "Boa, Alf!" e mais texto humano OK, mas
+  // emitiu <<TASK_CREATE>>...<<END>> dentro da resposta. <<TASK_CREATE>> NÃO
+  // é um marker válido (real é <<TASK_UPDATE>> com action="create"). Como
+  // os parsers (parseTaskUpdateMarker, parseEventCreateMarker, etc) só
+  // reconhecem nomes específicos, o marker hallucinated sobrou no reply e
+  // foi enviado cru pro usuário.
+  //
+  // Estratégia: depois de TODOS os parsers conhecidos rodarem (cada um
+  // extraiu seu marker legítimo via cleanText), qualquer <<UPPER>>...<<END>>
+  // sobrando É leak por definição. Stripa + loga UNKNOWN_MARKER_STRIPPED.
+  // Não envia ao usuário. Sinal explícito de regressão pra investigar:
+  //   - skill com nome de marker errado
+  //   - parser não plumbed
+  //   - modelo inventando marker que não existe
+  try {
+    if (typeof reply === 'string') {
+      const ALL_MARKER_RE = /<<[A-Z_][A-Z0-9_]*>>[\s\S]*?<<END>>/g;
+      const STANDALONE_MARKER_RE = /<<[A-Z_][A-Z0-9_]{2,}>>|<<END>>/g;
+      const fullMatches = reply.match(ALL_MARKER_RE) || [];
+      const standaloneMatches = reply.match(STANDALONE_MARKER_RE) || [];
+      if (fullMatches.length > 0 || standaloneMatches.length > 0) {
+        const before = reply;
+        reply = reply
+          .replace(ALL_MARKER_RE, '')
+          .replace(STANDALONE_MARKER_RE, '')
+          .replace(/\n{3,}/g, '\n\n')
+          .trim();
+        const sample = (fullMatches[0] || standaloneMatches[0] || '').slice(0, 120);
+        const matchNames = [...fullMatches, ...standaloneMatches]
+          .map(m => (m.match(/^<<([A-Z_][A-Z0-9_]*)>>/) || [])[1])
+          .filter(Boolean);
+        console.warn(`[Engine] UNKNOWN_MARKER_STRIPPED — names=[${matchNames.join(',')}] sample="${sample}"`);
+        await logMarker(collab.id, 'UNKNOWN_MARKER_STRIPPED', 'rejected',
+          `names:${matchNames.slice(0, 5).join(',')} delta:${before.length - reply.length}`, before);
+        // Se reply ficou vazio, fallback genérico (modelo só emitiu marker errado).
+        if (!reply) reply = '_recebi sua mensagem mas tive um problema pra responder. Tenta de novo?_';
+      }
+    }
+  } catch (e) {
+    // ignore — guard nunca pode quebrar fluxo principal
+  }
+
   // Safety nets: detect leaks before sending.
   //
   // Sprint 7 anti-leak guard (1.3): se o reply mencionar stack interno
