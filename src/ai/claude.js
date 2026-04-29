@@ -1,10 +1,23 @@
 // src/ai/claude.js — Spawn do CLI `claude` em modo headless (-p), passando
 // o system prompt rico via --append-system-prompt.
+//
+// Sprint 10 hardening:
+//   • HOME isolado (TOM_CLAUDE_HOME, default /opt/LA-Organizer/.claude-tom)
+//     pra evitar herança de skills/memory/projects de /root/.claude. Era a
+//     causa-raiz do leak de tool_call (CLI puxava arquivos de
+//     /root/.claude/projects/-opt-LA-Organizer/memory/* e mostrava como
+//     "tool_use" no output).
+//   • --output-format json: o CLI devolve {type, result, ...}; lemos só o
+//     campo `result` (texto final do assistant). Tool_use blocks ficam fora
+//     antes de chegar no engine. Defesa em camada de provider.
+//   • --strict-mcp-config + --mcp-config '{"mcpServers":{}}' + --tools ""
+//     continuam (Sprint 7) pra desabilitar execução de tools.
 const { spawn } = require('child_process');
 
 const CLAUDE_BIN = process.env.CLAUDE_BIN || '/usr/bin/claude';
-const CLAUDE_HOME = process.env.CLAUDE_HOME || '/root/.claude';
-const CLAUDE_USER_HOME = process.env.HOME || '/root';
+const TOM_CLAUDE_HOME = process.env.TOM_CLAUDE_HOME || '/opt/LA-Organizer/.claude-tom';
+const CLAUDE_HOME = process.env.CLAUDE_HOME || `${TOM_CLAUDE_HOME}/.claude`;
+const CLAUDE_USER_HOME = process.env.TOM_CLAUDE_HOME || TOM_CLAUDE_HOME;
 const CLAUDE_PATH = process.env.PATH || '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 const CLAUDE_TIMEOUT_MS = Number(process.env.CLAUDE_TIMEOUT_MS) || 60000;
 
@@ -54,6 +67,7 @@ async function chat(systemPrompt, messages /*, maxTokens */) {
     const args = [
       '-p', userPrompt,
       '--append-system-prompt', systemPrompt,
+      '--output-format', 'json',
       '--strict-mcp-config',
       '--mcp-config', '{"mcpServers":{}}',
       '--tools', '',
@@ -97,14 +111,67 @@ async function chat(systemPrompt, messages /*, maxTokens */) {
       if (settled) return;
       settled = true;
       clearTimeout(killTimer);
-      const text = stdout.trim();
+      const raw = stdout.trim();
       if (code !== 0) {
         return reject_('exit', `Claude saiu com código ${code}. stderr: ${stderr.trim().slice(0, 500) || '(vazio)'}`);
       }
-      if (!text) {
+      if (!raw) {
         return reject_('empty', `Claude retornou vazio. stderr: ${stderr.trim().slice(0, 500) || '(vazio)'}`);
       }
-      resolve({ text, provider: 'claude' });
+      // Sprint 10: --output-format json devolve {type, result, is_error, ...}.
+      // Só lemos result (texto final). Tool_use/narração interna ficam fora.
+      let parsed;
+      try {
+        parsed = JSON.parse(raw);
+      } catch (err) {
+        return reject_('bad_json', `Claude JSON inválido (output-format): ${err.message}. raw[0..200]: ${raw.slice(0, 200)}`);
+      }
+      if (parsed.is_error) {
+        return reject_('cli_error', `Claude is_error=true subtype=${parsed.subtype} result=${String(parsed.result || '').slice(0, 200)}`);
+      }
+      const rawResult = typeof parsed.result === 'string' ? parsed.result : '';
+      // Sprint 10 sanitizer: o modelo ainda tenta embutir tags de tool_use
+      // dentro de `result` (ex.: <parameter ...>...</parameter>, <tool_result>)
+      // mesmo com --tools "" e diretiva de prompt. Strip agressivo no provider
+      // — antes de chegar no engine. Não cresce regex do anti-leak no engine.
+      const sanitized = rawResult
+        // 1) Tags XML/HTML de tool_use que o modelo embute mesmo com --tools ""
+        .replace(/<tool_(call|use|name|result)[\s\S]*?<\/tool_\1>/gi, '')
+        .replace(/<\/?tool_(call|use|name|result)\b[^>]*>/gi, '')
+        .replace(/<function_call[\s\S]*?<\/function_call>/gi, '')
+        .replace(/<\/?function_call\b[^>]*>/gi, '')
+        .replace(/<parameters?[\s\S]*?<\/parameters?>/gi, '')
+        .replace(/<\/?parameters?\b[^>]*>/gi, '')
+        // 2) Linhas de narração em inglês (Claude é treinado em EN; quando tenta
+        // usar tool, narra em EN mesmo se contexto é PT). Matar a linha inteira.
+        .replace(/^.*\b(Based on|Now let me|Let me (?:update|read|write|check|create|save|run|verify|now)|I.ll (?:update|read|write|check|create|save|run|now)|I need to (?:update|read|write|check|create|save|run))\b.*$/gim, '')
+        // 3) Linhas que referenciam filesystem do Claude CLI (memória, projects, paths)
+        .replace(/^.*\b(MEMORY\.md|memory\/[\w-]+\.md|\/root\/\.claude|\.claude\/projects|\/opt\/LA-Organizer\/(?!docs\b))\b.*$/gim, '')
+        // 4) "Vou salvar isso na memória" / "Saving to memory" — promessa falsa de tool
+        .replace(/^.*\b(?:vou\s+salvar\s+isso\s+na\s+mem[óo]ria|salvando\s+na\s+mem[óo]ria|saving\s+to\s+memory)\b.*$/gim, '')
+        // 5) Limpa linhas em branco múltiplas resultantes
+        .replace(/\n{3,}/g, '\n\n');
+      const text = sanitized.trim();
+      const sanitizedDelta = rawResult.length - text.length;
+      if (sanitizedDelta > 0) {
+        console.warn(`[Claude] sanitizer stripped ${sanitizedDelta} chars (tool tags/narração) — raw result had tool_use embed`);
+      }
+      if (!text) {
+        return reject_('empty', `Claude result vazio. parsed.subtype=${parsed.subtype} stop_reason=${parsed.stop_reason}`);
+      }
+      resolve({
+        text,
+        provider: 'claude',
+        meta: {
+          duration_ms: parsed.duration_ms,
+          duration_api_ms: parsed.duration_api_ms,
+          num_turns: parsed.num_turns,
+          stop_reason: parsed.stop_reason,
+          input_tokens: parsed.usage?.input_tokens,
+          output_tokens: parsed.usage?.output_tokens,
+          sanitized_chars: sanitizedDelta,
+        },
+      });
     });
   });
 }

@@ -15,7 +15,7 @@ const BLOCK_RULES = `# 🚨 REGRAS INVIOLÁVEIS — PRIORIDADE MÁXIMA
 3. 👽 SÓ no início da primeira mensagem de uma interação fresca (sem conversa nas últimas ~60min). Nunca repetir, nunca no meio.
 4. Direto, informal brasileiro: "pô", "beleza", "show", "bora". Sem corporativês.
 5. Máximo 3-4 linhas por mensagem. Uma pergunta por vez.
-6. ZERO leaks: nada de IDs, UUIDs, markers <<...>>, "5W2H", "Eisenhower", "quadrante", nomes de tabelas.
+6. ZERO leaks: nada de IDs, UUIDs, markers <<...>> visíveis ao usuário, "5W2H", "Eisenhower", "quadrante", nomes de tabelas, paths de filesystem, "engine", "API", "banco". Você NÃO tem ferramentas neste contexto — NUNCA emita \`<tool_call>\`, \`<tool_use>\`, \`<function_call>\`, \`<tool_name>\`, \`<parameters>\`, ou qualquer marcação de invocação de tool. Sua resposta é APENAS texto natural + markers oficiais documentados (\`<<TASK_UPDATE>>\`, \`<<EVENT_CREATE>>\`, \`<<PROJECT_CREATE>>\`, etc). Se você se ver "tentando" usar uma ferramenta, pare — o ambiente é text-only.
 7. Bullets com \`•\` (nunca \`-\` ou \`*\`). Negrito \`*assim*\`. Itálico \`_assim_\`.
 8. Emoji ANTES do texto, nunca no meio. Cada emoji tem significado fixo (ver mapa).
 9. NUNCA 🎵.
@@ -151,12 +151,27 @@ function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habi
   }
 
   // Compromissos hoje (events com horário). Ordenados por start_at.
+  // Sprint 10 fix: horário em America/Sao_Paulo (-03:00). DB armazena ISO com
+  // timezone (e.g. "2026-04-28 12:00:00+00" = 09:00 BRT). slice(11,16) cru
+  // mostrava UTC pro Claude → resposta com horário errado.
   if (events && events.length) {
     lines.push('', `**Compromissos hoje (${events.length}):**`);
+    const fmtSP = (iso) => {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return '—';
+      // Intl com timeZone garante conversão correta independente do TZ do servidor.
+      return new Intl.DateTimeFormat('pt-BR', {
+        timeZone: 'America/Sao_Paulo',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      }).format(d);
+    };
     events.slice(0, 8).forEach(e => {
       const sid = String(e.id || '').slice(0, 8);
-      const start = String(e.start_at || '').slice(11, 16);
-      const end = String(e.end_at || '').slice(11, 16);
+      const start = fmtSP(e.start_at);
+      const end = fmtSP(e.end_at);
       const mod = e.modality === 'online' ? '💻' : e.modality === 'hibrido' ? '🔀' : '🏢';
       const cat = e.category ? ` · ${e.category}` : '';
       const where = e.location_text ? ` · ${e.location_text}` : '';

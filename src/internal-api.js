@@ -419,4 +419,62 @@ router.post('/internal/project-created', requireInternalSecret, async (req, res)
   return res.json({ status: 'ok', project_id: projectId });
 });
 
+// Sprint 10: telemetria operacional do TOM. Auth via x-internal-secret (mesma
+// porta /internal/, sem novo secret). Sem dashboard nesta sprint — só JSON.
+router.get('/internal/metrics', requireInternalSecret, async (req, res) => {
+  const ranges = {
+    '24h': new Date(Date.now() - 24 * 3600 * 1000).toISOString(),
+    '7d': new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString(),
+  };
+  const out = { generated_at: new Date().toISOString(), windows: {} };
+
+  for (const [label, since] of Object.entries(ranges)) {
+    const { data: rows, error } = await supabase
+      .from('tom_metrics')
+      .select('latency_ms, provider_used, fallback_from, leak_blocked, sanitized_chars, error_kind, message_kind, input_tokens, output_tokens')
+      .gte('ts', since);
+    if (error) {
+      out.windows[label] = { error: error.message };
+      continue;
+    }
+    const r = rows || [];
+    const lat = r.map(x => x.latency_ms).filter(x => Number.isFinite(x)).sort((a, b) => a - b);
+    const median = lat.length ? lat[Math.floor(lat.length / 2)] : null;
+    const p95 = lat.length ? lat[Math.min(lat.length - 1, Math.floor(lat.length * 0.95))] : null;
+    const p99 = lat.length ? lat[Math.min(lat.length - 1, Math.floor(lat.length * 0.99))] : null;
+    const breakdown = (key) => r.reduce((a, x) => {
+      const k = x[key] || '(none)';
+      a[k] = (a[k] || 0) + 1;
+      return a;
+    }, {});
+    const sum = (key) => r.reduce((a, x) => a + (Number(x[key]) || 0), 0);
+
+    out.windows[label] = {
+      total: r.length,
+      latency: { median_ms: median, p95_ms: p95, p99_ms: p99 },
+      provider: breakdown('provider_used'),
+      fallback_count: r.filter(x => x.fallback_from).length,
+      leak_blocked_count: r.filter(x => x.leak_blocked).length,
+      sanitized_chars_total: sum('sanitized_chars'),
+      sanitized_messages_count: r.filter(x => (x.sanitized_chars || 0) > 0).length,
+      error_count: r.filter(x => x.error_kind).length,
+      kind: breakdown('message_kind'),
+      tokens: { input_total: sum('input_tokens'), output_total: sum('output_tokens') },
+    };
+  }
+
+  // Markers do período mais curto via marker_logs (auditoria adicional).
+  const { data: markers } = await supabase
+    .from('marker_logs')
+    .select('marker_type, result')
+    .gte('created_at', ranges['24h']);
+  out.markers_24h = (markers || []).reduce((a, m) => {
+    const k = `${m.marker_type}.${m.result}`;
+    a[k] = (a[k] || 0) + 1;
+    return a;
+  }, {});
+
+  res.json(out);
+});
+
 module.exports = router;

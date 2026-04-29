@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const collaboratorService = require('./services/collaborator');
 const whatsapp = require('./services/whatsapp');
+const metricsService = require('./services/metrics');
 const ai = require('./ai/provider');
 const { buildSystemPrompt, formatMessages } = require('./prompts/system');
 const supabase = require('./supabase/client');
@@ -1621,12 +1622,18 @@ async function processMessage(phone, text, raw = {}) {
   const _t0 = Date.now();
   const _phoneTail = String(phone).slice(-4);
   console.log(`[Engine] processMessage START phone=${_phoneTail} text="${String(text).slice(0, 60).replace(/\n/g, ' ')}"`);
+  // Sprint 10: telemetria operacional. Acumulada durante o pipeline e gravada
+  // em tom_metrics no fim. Falha silenciosa via metricsService.
+  const _metrics = {
+    message_kind: /^\[áudio transcrito\]/i.test(String(text || '')) ? 'audio' : 'text',
+  };
   const collab = await collaboratorService.findByPhone(phone);
   if (!collab) {
     await whatsapp.sendMessage(phone, 'Nao te encontrei no sistema. Fala com seu coordenador pra te cadastrar.');
     console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (unknown_collab)`);
     return;
   }
+  _metrics.collaborator_id = collab.id;
   console.log('[Engine] Mensagem de', collab.full_name);
   await logConversation(collab.id, 'inbound', text);
 
@@ -1644,19 +1651,23 @@ async function processMessage(phone, text, raw = {}) {
   try {
     response = await ai.chat(systemPrompt, msgs);
   } catch (err) {
-    // all_providers_failed (or unexpected throw). No marker side effects executed
-    // because we never got a response. Log structured event for audit, then rethrow
-    // so the queue handler logs and the user retries naturally.
     const kind = err.kind || 'unknown';
     const errs = err.errors ? JSON.stringify(err.errors).slice(0, 280) : err.message?.slice(0, 280);
     console.error(`[AI] FATAL all-providers-failed for ${_phoneTail}: ${errs}`);
     await logMarker(collab.id, 'PROVIDER', 'rejected', `all_failed: ${errs}`, null);
+    _metrics.error_kind = `all_providers_failed:${kind}`;
+    _metrics.latency_ms = Date.now() - _t0;
+    metricsService.recordMessage(_metrics).catch(() => {});
     console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (provider_failed)`);
     throw err;
   }
+  // Sprint 10: capturar métricas do provider call.
+  _metrics.provider_used = response.provider || null;
+  _metrics.fallback_from = response.fallbackFrom || null;
+  _metrics.input_tokens = response.meta?.input_tokens ?? null;
+  _metrics.output_tokens = response.meta?.output_tokens ?? null;
+  _metrics.sanitized_chars = response.meta?.sanitized_chars || 0;
   if (response.fallbackFrom) {
-    // Codex answered after Claude failed. Markers in the reply will still be parsed,
-    // but we record provenance for audit (different model = different marker quality).
     const reason = `fallback_from=${response.fallbackFrom} kind=${response.primaryError?.kind || 'unknown'}`;
     await logMarker(collab.id, 'PROVIDER', 'fallback', reason, null);
   }
@@ -1901,15 +1912,20 @@ async function processMessage(phone, text, raw = {}) {
   //
   // Os warnings de marker fragment / UUID leak continuam não bloqueantes
   // (são guardrails históricos para detectar marker mal-fechado e raros).
-  // Sprint 9 hot-fix (28/04/2026): Claude CLI ocasionalmente emite blocos
-  // <tool_call>...</tool_call> como TEXTO no reply, mesmo com --tools "" e
-  // --strict-mcp-config (Sprint 7). A flag desabilita execução, não geração.
-  // Estratégia em 3 camadas:
-  //   1. Strip de blocos <tool_call> e narração de fluxo de tool ("Now let me",
-  //      "Let me update", etc) ANTES da regex.
-  //   2. Regex expandida pega tool_call avulso + paths de filesystem +
-  //      arquivos de memória + nomes de skill/diretório interno.
-  //   3. Se ainda casar, substitui por mensagem genérica.
+  // ⚠️ SEGUNDA LINHA DE DEFESA (Sprint 10).
+  // A primeira linha agora é o sanitizer no provider (src/ai/claude.js):
+  // HOME isolado + --output-format json + strip de tags XML + strip de
+  // narração inglesa + diretiva "no tools" no system prompt.
+  // Após Sprint 10, o sanitizer no provider deveria capturar 100% dos casos
+  // documentados em smoke (10/10 limpo). Esta regex permanece como
+  // CONTENÇÃO DE REGRESSÃO — se um leak passar daqui, é sinal de regressão
+  // arquitetural na primeira linha, não desculpa pra estender esta regex.
+  //
+  // Histórico do guard (mantido pra documentação):
+  //   1. Strip de blocos <tool_call> e narração ANTES da regex.
+  //   2. Regex pega tool_call avulso + paths internos + memória + diretórios.
+  //   3. Se casar, substitui por mensagem genérica + log LEAK_BLOCKED.
+  // NÃO crescer esta regex. Leak novo = investigar primeira linha.
   const STACK_LEAK_RE = new RegExp(
     [
       String.raw`\b(supabase|postgres|banco\s+de\s+dados|mcp|sql)\b`,
@@ -1951,6 +1967,8 @@ async function processMessage(phone, text, raw = {}) {
         console.warn(`[Engine] LEAK_BLOCKED — match="${leakMatch[0]}" reply="${reply.slice(0, 200)}"`);
         await logMarker(collab.id, 'LEAK_BLOCKED', 'rejected', `match:${leakMatch[0]}`, reply);
         reply = GENERIC_LEAK_REPLY;
+        _metrics.leak_blocked = true;
+        _metrics.leak_match = String(leakMatch[0]).slice(0, 100);
       }
       // 3) Se reply ficou vazio depois da limpeza, fallback genérico.
       if (!reply.trim()) {
@@ -1964,7 +1982,10 @@ async function processMessage(phone, text, raw = {}) {
 
   await whatsapp.sendMessage(phone, reply);
   await logConversation(collab.id, 'outbound', reply);
-  console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms`);
+  // Sprint 10: grava telemetria. Fire-and-forget — falha de metric não quebra fluxo.
+  _metrics.latency_ms = Date.now() - _t0;
+  metricsService.recordMessage(_metrics).catch(() => {});
+  console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${_metrics.latency_ms}ms`);
 }
 
 async function sendRitual(collaboratorId, ritualType) {

@@ -239,3 +239,33 @@ A cada mensagem recebida, antes de responder:
 - Alterar SOUL.md sem autorização do Alf
 - Compartilhar conteúdo de conversa de um colaborador com outro
 - Competir com o Alfredo ou tentar substituí-lo
+
+---
+
+## Sprint 10 — Runtime Hardening (29/04/2026)
+
+Documenta a estratégia de provider em 4 camadas que substitui regex pós-filtro como defesa principal.
+
+### Camada 1 — `CLAUDE_HOME` isolado
+
+`/opt/LA-Organizer/.claude-tom/.claude/` (vazio, dedicado ao TOM). Antes herdava skills/memory/projects de `/root/.claude/` — vetor que produziu o leak `<tool_call>{"path":"/root/.claude/projects/-opt-LA-Organizer/memory/..."}` documentado no caso real do Alf em 28/04. Spawn passa `HOME` apontando pra esse dir; `.credentials.json` foi copiado pra preservar OAuth.
+
+### Camada 2 — `--output-format json`
+
+CLI 2.1.107 devolve `{type, result, is_error, duration_ms, usage, ...}`. Engine lê apenas `parsed.result`, descartando o resto. Tool_use blocks que o modelo eventualmente gera dentro de `iterations` não chegam ao engine.
+
+### Camada 3 — Sanitizer no provider (`src/ai/claude.js`)
+
+Mesmo com camadas 1+2, o modelo ainda embute tags `<parameter>`, `<tool_result>`, `<function_call>` e narração inglesa ("Based on the results, let me update MEMORY.md") dentro de `result`. Sanitizer agressivo no provider strip antes de devolver ao engine. Loga `sanitized_chars` em `meta` para observabilidade.
+
+### Camada 4 — Diretiva no system prompt
+
+Rule #6 do prompt foi expandida para vetar explicitamente `<tool_call>`, `<tool_use>`, `<function_call>`, `<tool_name>`, `<parameters>` e qualquer marcação de tool. Defesa em camada de modelo.
+
+### Anti-leak regex em `engine.js` — agora segunda linha
+
+A regex anti-leak da Sprint 7-9 permanece, mas REBAIXADA a contenção de regressão. Se um leak passar daqui, é sinal de regressão na primeira linha (camadas 1-4) — não justificativa pra estender a regex. Comentário no código documenta a regra.
+
+### Smoke 10/10 (28/04/2026)
+
+10 cenários cobrindo todas as skills (chitchat, task work/personal, event create/reschedule, habit log, feedback, projeto novo, pausa, info query). Sanitizer stripou 1323 chars no caso 2 e 1992 no caso 7 (feedback retroativo — mesmo padrão do leak original). Resultado final: zero `tool_call`/path/narração nas 10 respostas.

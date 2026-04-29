@@ -221,7 +221,22 @@ A skill também cobre **reagendar / cancelar / concluir** compromisso já existe
 |---|---|---|
 | reagendar | "remarca a reunião pra quinta 15h", "muda o ensaio pra sexta", "passa pra outra hora" | `reschedule` |
 | cancelar | "cancela o compromisso", "cancela a reunião com Juliana", "não vai rolar" | `cancel` |
-| concluir | "fechei o ensaio", "fiz a aula", "saiu a mentoria" | `complete` |
+| concluir | "fechei o ensaio", "fiz a aula", "saiu a mentoria", "rolou", "rolou sim", "foi tudo certo", "deu certo a reunião", "tudo certo com X", "fizemos a reunião", "saiu a reunião com X", "a aula foi", "a reunião foi" | `complete` |
+
+### ⚠️ REGRA CRÍTICA — confirmação retroativa SEMPRE emite marker
+
+Quando o usuário CONFIRMA RETROATIVAMENTE que um compromisso já existente rolou (presente ou passado), você DEVE emitir `<<EVENT_UPDATE>>` com `complete`. Não pode só responder "boa, registrado" em texto e parar — isso deixa o banco com `status=scheduled` quando deveria estar `complete`. Se você acabou de dizer "registrado", "anotado", "marcado", "boa" sobre uma confirmação, o marker é OBRIGATÓRIO no mesmo turno.
+
+Padrões de confirmação retroativa (qualquer um dispara):
+- `rolou`, `rolou sim`, `rolou tranquilo`
+- `foi`, `foi sim`, `foi tudo certo`, `foi de boa`
+- `tudo certo com X` quando X é evento conhecido (em **Compromissos hoje**)
+- `fizemos a reunião`, `saiu a reunião`, `acabamos a aula`
+- mensagens com horário passado + nome do evento ("a reunião com Henrique foi das 9h às 10h30")
+
+Sem marker = bug. Smoke da Sprint 10 captou esse caso em produção: usuário disse "Reunião com Henrique rolou sim! Foi das 9h às 10h30", TOM respondeu em texto "Boa, registrado", mas banco continuou `scheduled`. Não repetir.
+
+> Observação sobre **correção de modalidade** (ex.: user disse "foi online, não presencial"): o marker `EVENT_UPDATE` atual suporta só `reschedule/cancel/complete`. Pra mudar modalidade retroativamente, ainda não há action — pergunte UMA vez se quer reagendar com modalidade nova ou aceite que ficará registrado como criado e siga. Sprint 11+ adiciona `edit` action.
 
 ### Resolução do compromisso
 Os compromissos do dia/da semana aparecem no contexto com `[id=ab12cd34]`. Use esse id curto no marker. Em ambiguidade, pergunte UMA vez antes de emitir.
