@@ -375,6 +375,7 @@ function pickSkill(collab, lastUserMessage, recentHistory) {
     return { name: 'planejamento-semanal', body: loadSkill('planejamento-semanal') };
   }
   if (rt === 'briefing_trabalho' || rt === 'briefing_pessoal' || rt === 'fechamento' ||
+      rt === 'briefing_diario' ||
       rt === 'daily_briefing' || rt === 'daily_closing') {
     return { name: 'rituais-diarios', body: loadSkill('rituais-diarios') };
   }
@@ -602,28 +603,40 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     ? `# 🎯 SKILL ATIVA: ${skill.name}\n\n${skill.body}`
     : '';
 
-  // Ritual-aware task filtering: briefing_pessoal → only personal, briefing_trabalho/fechamento → only work.
+  // Ritual-aware task filtering:
+  // - briefing_pessoal → only personal (fallback manual)
+  // - briefing_trabalho / fechamento → only work (fallback manual)
+  // - briefing_diario (Sprint 11.1) → BOTH personal + work, em seções separadas no template
   const rt = collaborator && collaborator._ritualType;
   let tasksForCtx = ctx.todayTasks;
   if (rt === 'briefing_pessoal') {
     tasksForCtx = { personal: ctx.personalTasks, work: [] };
   } else if (rt === 'briefing_trabalho' || rt === 'fechamento' ||
-             rt === 'daily_briefing' || rt === 'daily_closing') {
+             rt === 'daily_closing') {
     tasksForCtx = { personal: [], work: ctx.workTasks };
+  } else if (rt === 'briefing_diario' || rt === 'daily_briefing') {
+    // Unificado: passa AMBAS as listas; a skill renderiza seções *PESSOAL* e *TRABALHO*.
+    tasksForCtx = { personal: ctx.personalTasks, work: ctx.workTasks };
   }
 
   // Append pending decisions (extension requests) to the context block when present.
-  // Habits only included for personal-context interactions (briefing pessoal OR if the
-  // user message looks like a habit log/manage). Avoids leaking habit list into work briefings.
-  const showHabits = (rt === 'briefing_pessoal' || rt === 'personal_briefing') ||
+  // Habits only included for personal-context interactions: briefing pessoal OR briefing_diario
+  // (que tem seção pessoal) OR mensagem de log de hábito.
+  const showHabits = (rt === 'briefing_pessoal' || rt === 'personal_briefing' ||
+                      rt === 'briefing_diario' || rt === 'daily_briefing') ||
     (skill && skill.name === 'habitos-pessoais');
   const habitsForCtx = showHabits ? (ctx.habits || []) : [];
-  // Events split por ritual: briefing_pessoal → só personal; briefing_trabalho/fechamento → só work; demais → todos.
+  // Events split por ritual:
+  // - briefing_pessoal → só personal
+  // - briefing_trabalho/fechamento → só work
+  // - briefing_diario → AMBOS (template separa em seções)
   let eventsForCtx = ctx.todayEvents || [];
-  if (rt === 'briefing_pessoal') eventsForCtx = eventsForCtx.filter(e => e.context === 'personal');
-  else if (rt === 'briefing_trabalho' || rt === 'fechamento' || rt === 'daily_briefing' || rt === 'daily_closing') {
+  if (rt === 'briefing_pessoal') {
+    eventsForCtx = eventsForCtx.filter(e => e.context === 'personal');
+  } else if (rt === 'briefing_trabalho' || rt === 'fechamento' || rt === 'daily_closing') {
     eventsForCtx = eventsForCtx.filter(e => e.context === 'work');
   }
+  // briefing_diario / daily_briefing: mantém todos os events (sem filtro).
   const baseCtx = buildContext(collaborator, ctx.memories, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx);
   const pending = renderPendingDecisions(ctx.notifications);
 

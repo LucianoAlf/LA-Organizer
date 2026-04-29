@@ -2151,7 +2151,9 @@ async function sendRitual(collaboratorId, ritualType) {
   if (!collab?.is_active) return;
 
   // Tag collaborator with _ritualType so pickSkill loads rituais-diarios + system.js filters tasks.
-  const ritualKey = ritualType === 'daily_briefing' ? 'briefing_trabalho'
+  // Sprint 11.1: daily_briefing agora é UNIFICADO (pessoal + trabalho na mesma msg).
+  // briefing_pessoal e briefing_trabalho ficam como fallback manual.
+  const ritualKey = ritualType === 'daily_briefing' ? 'briefing_diario'
     : ritualType === 'daily_closing' ? 'fechamento'
     : ritualType === 'personal_briefing' ? 'briefing_pessoal'
     : ritualType;
@@ -2179,7 +2181,8 @@ async function sendRitual(collaboratorId, ritualType) {
 }
 
 function ritualToDirective(type) {
-  if (type === 'daily_briefing') return '[RITUAL: briefing_trabalho]';
+  // Sprint 11.1: daily_briefing → briefing_diario (unificado pessoal + trabalho).
+  if (type === 'daily_briefing') return '[RITUAL: briefing_diario]';
   if (type === 'daily_closing') return '[RITUAL: fechamento]';
   if (type === 'personal_briefing') return '[RITUAL: briefing_pessoal]';
   if (type === 'weekly_planning') return '[RITUAL: planejamento_semanal]';

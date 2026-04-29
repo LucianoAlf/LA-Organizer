@@ -265,18 +265,15 @@ async function run(opts = {}) {
   for (const c of collabs) {
     const p = c.user_preferences;
     try {
-      // Briefing pessoal — todo dia (7h ou personal_briefing_time se existir)
-      const personalTime = p.personal_briefing_time || PERSONAL_BRIEFING_DEFAULT;
-      const pbSlot = timeToSlot(personalTime);
-      if (pbSlot !== null && pbSlot === slotNow) {
-        await fireRitual(c, 'personal_briefing', now.ymd);
-      }
-      // Briefing de trabalho — dias úteis
-      if (!isWeekend) {
-        const bSlot = timeToSlot(p.briefing_time);
-        if (bSlot !== null && bSlot === slotNow) {
-          await fireRitual(c, 'daily_briefing', now.ymd);
-        }
+      // Sprint 11.1: briefing_diario UNIFICADO substitui personal_briefing + daily_briefing
+      // separados. Dispara UMA mensagem com seções *PESSOAL* e *TRABALHO* no horário do
+      // briefing_time (default: PERSONAL_BRIEFING_DEFAULT=07:00). Roda TODO DIA — fim de
+      // semana mostra "📭 Nada marcado" na seção trabalho, mas mantém pessoal.
+      // - personal_briefing automático: DESATIVADO. Use --force=briefing_pessoal pra fallback manual.
+      const briefingTime = p.briefing_time || p.personal_briefing_time || PERSONAL_BRIEFING_DEFAULT;
+      const bSlot = timeToSlot(briefingTime);
+      if (bSlot !== null && bSlot === slotNow) {
+        await fireRitual(c, 'daily_briefing', now.ymd);
       }
       // Fechamento — dias úteis
       if (!isWeekend) {
@@ -602,12 +599,14 @@ async function checkTaskReminders() {
 }
 
 // Pending reminders: tasks where remind_at <= now AND status not done/cancelled.
-// Sends "⏰ Lembrete: <title>" to the assignee, then marks task as done (one-shot).
+// Sprint 11.1: emoji semântico por context (👉 personal / 🔔 work) + título em *negrito*.
+// Sem ⏰: o cron já dispara na hora certa, repetir o horário no texto é redundante.
+// Format: "👉 *Lembrete:* {title}" (personal) | "🔔 *Lembrete:* {title}" (work)
 async function checkReminders() {
   const nowIso = new Date().toISOString();
   const { data: due, error } = await supabase
     .from('tasks')
-    .select('id, title, assigned_to, remind_at, status')
+    .select('id, title, assigned_to, remind_at, status, context')
     .not('remind_at', 'is', null)
     .lte('remind_at', nowIso)
     .not('status', 'in', '(done,cancelled)')
@@ -637,7 +636,10 @@ async function checkReminders() {
       console.log(`[Reminders] defer ${String(t.id).slice(0,8)} — DND until ${dnd.until}`);
       continue; // don't mark task done; will fire on next tick after DND
     }
-    const text = `⏰ Lembrete: ${t.title}`;
+    // Emoji por contexto: personal=👉 (pessoal/cuidado), work=🔔 (trabalho/sino).
+    // Fallback work se context for null/desconhecido (mais comum em tasks legadas).
+    const reminderEmoji = t.context === 'personal' ? '👉' : '🔔';
+    const text = `${reminderEmoji} *Lembrete:* ${t.title}`;
     try {
       await whatsapp.sendMessage(collab.phone, text);
       const { error: upErr } = await supabase.from('tasks').update({
