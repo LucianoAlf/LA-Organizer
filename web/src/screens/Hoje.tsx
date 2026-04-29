@@ -15,13 +15,14 @@ import { Button } from '../components/Button';
 import { Fab } from '../components/Fab';
 import { QuickCreateSheet } from '../components/QuickCreateSheet';
 import { EditEventSheet } from '../components/EditEventSheet';
-import type { Task, TaskContext, CalendarEvent } from '../types';
+import type { Task, TaskContext, CalendarEvent, ActionType } from '../types';
+import { ACTION_TYPE_LABELS, ACTION_TYPE_VISUAL } from '../types';
 
 async function fetchTasksToday(collabId: string): Promise<Task[]> {
   const today = todaySP();
   const { data, error } = await supabase
     .from('tasks')
-    .select('id, title, status, context, priority, category, due_date, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, completed_at, projects(name)')
+    .select('id, title, status, context, priority, category, action_type, due_date, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, completed_at, projects(name)')
     .eq('assigned_to', collabId)
     .or(`due_date.eq.${today},and(due_date.lt.${today},status.not.in.(done,cancelled))`)
     .order('remind_at', { ascending: true, nullsFirst: false })
@@ -35,6 +36,8 @@ export function Hoje() {
   const { collaborator } = useAuth();
   const qc = useQueryClient();
   const [tab, setTab] = useState<TaskContext>('work');
+  // Sprint 12 Bloco D: filtro opcional por categoria de execução. null = todas.
+  const [actionFilter, setActionFilter] = useState<ActionType | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
 
@@ -68,7 +71,14 @@ export function Hoje() {
 
   const work = tasks.filter(t => t.context === 'work');
   const personal = tasks.filter(t => t.context === 'personal');
-  const todayList = (tab === 'work' ? work : personal);
+  const tabList = (tab === 'work' ? work : personal);
+  // Sprint 12 Bloco D: chips só aparecem para categorias presentes na aba atual.
+  const presentActionTypes = Array.from(
+    new Set(tabList.map(t => t.action_type).filter((x): x is ActionType => Boolean(x))),
+  );
+  const todayList = actionFilter
+    ? tabList.filter(t => t.action_type === actionFilter)
+    : tabList;
   const todayEvents = events.filter(e => e.context === tab);
 
   const dueToday = todayList.filter(t => t.due_date === today);
@@ -94,8 +104,48 @@ export function Hoje() {
           { id: 'personal', label: 'Pessoal', badge: personal.length + events.filter(e => e.context === 'personal').length },
         ]}
         active={tab}
-        onChange={setTab}
+        onChange={(t) => { setTab(t); setActionFilter(null); }}
       />
+
+      {/* Sprint 12 Bloco D: filtro de chips por categoria de execução.
+          Aparece só se TOM já classificou ≥1 task da aba atual. */}
+      {presentActionTypes.length > 0 && (
+        <div className="flex flex-wrap gap-2 -mt-sm">
+          <button
+            type="button"
+            onClick={() => setActionFilter(null)}
+            className={[
+              'px-3 py-1 rounded-full text-body-sm border transition-colors focus-ring',
+              actionFilter === null
+                ? 'bg-brand text-white border-brand'
+                : 'bg-bg-elevated text-fg-muted border-border hover:text-fg',
+            ].join(' ')}
+          >
+            Todas
+          </button>
+          {presentActionTypes.map(at => {
+            const visual = ACTION_TYPE_VISUAL[at];
+            const active = actionFilter === at;
+            return (
+              <button
+                key={at}
+                type="button"
+                onClick={() => setActionFilter(active ? null : at)}
+                className={[
+                  'px-3 py-1 rounded-full text-body-sm border transition-colors focus-ring',
+                  active
+                    ? 'bg-brand text-white border-brand'
+                    : 'bg-bg-elevated text-fg-muted border-border hover:text-fg',
+                ].join(' ')}
+                aria-pressed={active}
+              >
+                <span className="mr-1" aria-hidden>{visual.icon}</span>
+                {ACTION_TYPE_LABELS[at]}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Events block (with time) */}
       {todayEvents.length > 0 && (

@@ -414,3 +414,45 @@ Depois desta skill, o TOM deve parecer mais inteligente em organização porque:
 
 O usuário não precisa ver a teoria.
 Ele precisa sentir que o TOM **tem critério**.
+
+---
+
+## Saída técnica para o engine — campo `action_type` (Sprint 12 Bloco D)
+
+Sempre que esta skill culminar na **criação de uma tarefa** (delegar pra `checklist-tarefas`), o marker `<<TASK_CREATE>>` ou `<<TASK_UPDATE>>` deve incluir o campo `action_type` com o valor mapeado da decisão interna.
+
+**Mapeamento das 7 saídas da skill → 6 valores válidos:**
+
+| Decisão interna | `action_type` |
+|----------------|---------------|
+| Resolver agora (até 5 min) | `now` |
+| Criar tarefa (execução individual) | `task` |
+| Agendar ligação | `call` |
+| Marcar reunião | `meeting` |
+| Delegar / follow-up | `delegate` |
+| Estruturar como projeto / 5W2H | `project` |
+| Tirar do foco por enquanto | _(não cria task)_ |
+
+**Quando "tirar do foco":** não emite TASK_CREATE. Responde só em texto ("isso não merece ocupar a frente agora") sem persistir nada.
+
+**Exemplo de marker correto:**
+```
+<<TASK_CREATE>>
+{
+  "title": "Ligar pra Ana sobre estagiário Eduardo",
+  "due_date": "2026-04-29",
+  "remind_at": "2026-04-29T10:00:00-03:00",
+  "scope": "work",
+  "priority": "medium",
+  "action_type": "call"
+}
+<<END>>
+```
+
+**Regras finais sobre `action_type`:**
+- Sempre que possível, emitir o valor mais específico (`call` antes de `task`, `project` antes de `task`).
+- Quando em dúvida entre `task` e categoria mais específica → use `task` (default conservador).
+- `now` é raro como TASK_CREATE — geralmente "resolve agora" não vira tarefa, vira ação imediata. Use só quando o usuário explicitamente pediu pra registrar mesmo sendo de 5 min.
+- NUNCA invente um valor fora dos 6 permitidos — o engine rejeita o marker.
+
+**Linguagem na resposta ao usuário** (independente do `action_type`): mantenha humana. NUNCA escreva `action_type=call` no texto que vai pro WhatsApp. O campo é só pro app/engine.

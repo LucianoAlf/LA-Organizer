@@ -705,6 +705,12 @@ function validateTaskAction(a) {
     // colaborador. Permissão validada em applyTaskActions (coordinator/director).
     if (a.to_name !== undefined && (typeof a.to_name !== 'string' || !a.to_name.trim())) return 'bad_to_name';
     if (a.to_phone !== undefined && (typeof a.to_phone !== 'string' || !a.to_phone.trim())) return 'bad_to_phone';
+    // Sprint 12 Bloco D — action_type opcional, mas se presente DEVE estar no enum.
+    if (a.action_type !== undefined && a.action_type !== null) {
+      if (typeof a.action_type !== 'string' || !VALID_ACTION_TYPES.includes(a.action_type)) {
+        return 'bad_action_type';
+      }
+    }
   } else if (a.action === 'delegate') {
     if (typeof a.id !== 'string' || !SHORT_ID_RE.test(a.id)) return 'bad_id';
     const hasName = typeof a.to_name === 'string' && a.to_name.trim();
@@ -724,6 +730,9 @@ function validateTaskAction(a) {
 }
 
 const VALID_PRIORITIES = ['critical', 'high', 'medium', 'low'];
+// Sprint 12 Bloco D — categoria de execução decidida pela skill priorizacao-inteligente.
+// NULL é permitido (legacy / manual / sem classificação). Schema DB tem CHECK matching.
+const VALID_ACTION_TYPES = ['now', 'task', 'call', 'meeting', 'delegate', 'project'];
 // SHORT_ID_RE is defined above near the schema validators.
 
 // Friendly name (matches prompts/system.js nameFor — duplicated to avoid circular dep).
@@ -891,6 +900,11 @@ async function applyTaskActions(collaborator, actions) {
         }
         const context = a.context === 'personal' ? 'personal' : 'work';
         const priority = VALID_PRIORITIES.includes(a.priority) ? a.priority : 'medium';
+        // Sprint 12 Bloco D — action_type vem da skill priorizacao-inteligente.
+        // Quando ausente/inválido fica NULL (TaskRow no PWA mostra sem badge).
+        const actionType = (typeof a.action_type === 'string' && VALID_ACTION_TYPES.includes(a.action_type))
+          ? a.action_type
+          : null;
         const insertRow = {
           title: a.title.trim().slice(0, 200),
           assigned_to: assignedTo,
@@ -899,6 +913,7 @@ async function applyTaskActions(collaborator, actions) {
           status: 'pending',
           context,
           priority,
+          action_type: actionType,
         };
         // remind_at = ONE-SHOT (e.g. "me lembra de tomar remédio em 30 min").
         //             Dispatcher fires WA AND marks task done. Use só quando a tarefa

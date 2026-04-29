@@ -46,6 +46,30 @@ export function defaultContextForCategory(c: Category): TaskContext {
   return c === 'pessoal' ? 'personal' : 'work';
 }
 
+// Sprint 12 Bloco D — Categoria de execução decidida pelo motor de priorização (TOM skill priorizacao-inteligente).
+// NULL = task legada / criada antes do feature OU fluxo manual sem classificação.
+export type ActionType = 'now' | 'task' | 'call' | 'meeting' | 'delegate' | 'project';
+
+export const ACTION_TYPE_LABELS: Record<ActionType, string> = {
+  now: 'Resolve agora',
+  task: 'Tarefa',
+  call: 'Ligação',
+  meeting: 'Reunião',
+  delegate: 'Delegar',
+  project: 'Projeto',
+};
+
+// Emoji + cor por categoria. Cor vai pro Tailwind (text-/bg-/border-).
+// Sem emoji "redundante" com ⏰/🔴 — esses são marcadores de URGÊNCIA, action_type é CATEGORIA.
+export const ACTION_TYPE_VISUAL: Record<ActionType, { icon: string; tone: 'brand' | 'success' | 'warning' | 'danger' | 'neutral' }> = {
+  now:      { icon: '⚡', tone: 'danger' },     // urgência alta
+  task:     { icon: '📋', tone: 'neutral' },    // padrão
+  call:     { icon: '📞', tone: 'brand' },      // ligação destacada
+  meeting:  { icon: '🤝', tone: 'warning' },    // reunião pede preparo
+  delegate: { icon: '🫱', tone: 'success' },    // delegado / fora da mão
+  project:  { icon: '🗂️', tone: 'brand' },      // projeto
+};
+
 export interface Task {
   id: string;
   title: string;
@@ -53,6 +77,7 @@ export interface Task {
   context: TaskContext;
   priority: TaskPriority;
   category?: Category | null;
+  action_type?: ActionType | null;
   due_date: string | null;
   scheduled_date?: string | null;
   remind_at: string | null;

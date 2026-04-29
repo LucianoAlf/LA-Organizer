@@ -1,5 +1,6 @@
 import { Check } from 'lucide-react';
 import { Badge } from './Badge';
+import { ActionTypeBadge } from './ActionTypeBadge';
 import type { Task } from '../types';
 
 interface Props {
@@ -120,6 +121,8 @@ export function TaskRow({ task, onToggle, readOnly }: Props) {
           </div>
         )}
         <div className="mt-1 flex flex-wrap items-center gap-2 text-body-sm text-fg-muted">
+          {/* Sprint 12 Bloco D: badge da categoria de execução decidida pelo TOM. */}
+          <ActionTypeBadge type={task.action_type} />
           {task.projects?.name && <span>• {task.projects.name}</span>}
           {task.context === 'personal' && <span>• pessoal</span>}
         </div>

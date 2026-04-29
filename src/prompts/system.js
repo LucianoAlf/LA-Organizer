@@ -599,8 +599,18 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   }
 
   const skill = pickSkill(collaborator, lastUserMessage, hist);
+  // Sprint 12 Bloco D: skill priorizacao-inteligente é ANEXADA quando o fluxo
+  // principal é checklist-tarefas, criar-compromisso ou cadastro-projeto-5w2h.
+  // Ela é "skill auxiliar" — não substitui, completa: pra cada criação, o motor
+  // 5min+Eisenhower decide o action_type (now/task/call/meeting/delegate/project)
+  // que é refletido no badge do PWA.
+  const SKILLS_WITH_PRIORITY_AUX = ['checklist-tarefas', 'criar-compromisso', 'cadastro-projeto-5w2h'];
+  const auxPriorityBody = (skill && SKILLS_WITH_PRIORITY_AUX.includes(skill.name))
+    ? loadSkill('priorizacao-inteligente')
+    : '';
   const skillBlock = (skill && skill.body)
-    ? `# 🎯 SKILL ATIVA: ${skill.name}\n\n${skill.body}`
+    ? (`# 🎯 SKILL ATIVA: ${skill.name}\n\n${skill.body}` +
+       (auxPriorityBody ? `\n\n---\n\n# 🧭 SKILL AUXILIAR: priorizacao-inteligente\n\n${auxPriorityBody}` : ''))
     : '';
 
   // Ritual-aware task filtering:
