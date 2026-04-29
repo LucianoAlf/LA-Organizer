@@ -688,6 +688,20 @@ function parseDndMarker(text) {
 function validateTaskAction(a) {
   if (!a || typeof a !== 'object' || Array.isArray(a)) return 'not_object';
   if (typeof a.action !== 'string' || !VALID_TASK_ACTIONS.has(a.action)) return 'unknown_action';
+  // Sprint 11.2 hotfix — Tolerância a aliases comuns que o Claude tende a inventar.
+  // Bug observado (29/04 14:43): TOM emitiu reschedule com `task_id`+`due_date`+`remind_at`
+  // em vez de `id`+`new_due_date`+`new_remind_at`. Engine rejeitou por bad_id e a task
+  // ficou em data/hora antiga (criação inicial chutada). Normalização defensiva aqui
+  // sem precisar refinar prompt — se o Claude variar o naming, a gente acolhe.
+  if (a && typeof a === 'object') {
+    if (typeof a.task_id === 'string' && !a.id) a.id = a.task_id;
+    if (typeof a.due_date === 'string' && !a.new_due_date && a.action === 'reschedule') {
+      a.new_due_date = a.due_date;
+    }
+    if (typeof a.remind_at === 'string' && !a.new_remind_at && a.action === 'reschedule') {
+      a.new_remind_at = a.remind_at;
+    }
+  }
   if (a.action === 'complete') {
     if (typeof a.id !== 'string' || !SHORT_ID_RE.test(a.id)) return 'bad_id';
   } else if (a.action === 'reschedule') {
@@ -855,6 +869,12 @@ async function applyTaskActions(collaborator, actions) {
           continue;
         }
         const update = { due_date: a.new_due_date };
+        // Sprint 11.2 hotfix — reschedule também aplica new_remind_at quando presente.
+        // Bug observado: TOM disse "amanhã 12h" mas só due_date era atualizado, mantendo
+        // remind_at antigo (criação inicial). Resultado: PWA mostrava horário velho.
+        if (typeof a.new_remind_at === 'string' && isValidRemindAt(a.new_remind_at)) {
+          update.remind_at = a.new_remind_at;
+        }
         if (t.status === 'overdue') update.status = 'pending';
         const { error } = await supabase
           .from('tasks')
@@ -865,7 +885,8 @@ async function applyTaskActions(collaborator, actions) {
           console.error('[Task] reschedule err:', error.message);
           failCount++;
         } else {
-          console.log(`[Task] reschedule ${a.id} to ${a.new_due_date}`);
+          const sufx = update.remind_at ? ` remind_at=${update.remind_at}` : '';
+          console.log(`[Task] reschedule ${a.id} to ${a.new_due_date}${sufx}`);
           okCount++;
         }
       } else if (a.action === 'create') {
