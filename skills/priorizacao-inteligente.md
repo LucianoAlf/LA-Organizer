@@ -454,6 +454,68 @@ NUNCA emita TASK_CREATE no mesmo turno em que você está perguntando "tá bom?"
 
 ---
 
+## Quando produzir checklist de execução estruturado (Sprint 11.4)
+
+Se o user pedir ajuda pra **organizar/estruturar/montar checklist** de algo que já é um **projeto cadastrado** (workshop, evento, captação, lançamento, etc), e a resposta natural é uma lista de etapas em sequência, vc tem 2 caminhos:
+
+### Caminho A — Lista solta na conversa (apenas)
+Use quando:
+- Não há projeto cadastrado ainda
+- O user só quer pensar em voz alta
+- A lista é curta (2-3 itens)
+- O user não pediu pra "salvar" / "guardar" / "registrar"
+
+Apenas escreva a lista numerada na conversa. Não emite marker.
+
+### Caminho B — Checkpoint batch (persiste no projeto)
+Use quando **TODAS** as condições abaixo se cumprem:
+1. Existe **projeto cadastrado** identificável (você consegue achar pelo nome OU já está mencionado no contexto da conversa)
+2. A lista tem **4 ou mais itens** de etapas reais
+3. O user pediu explicitamente pra "salvar", "guardar", "criar", "registrar", OU é evidente que ele quer estruturar o projeto pra ação posterior
+
+Quando emitir, anuncie o checklist no texto, depois cole o marker:
+
+```
+<<CHECKPOINT_BATCH>>
+{
+  "project_name": "Workshop de Improvisação",
+  "items": [
+    { "name": "Definir tema e formato com Moreira" },
+    { "name": "Fechar local e data" },
+    { "name": "Levantar custos (cachê, espaço, equipamento, divulgação)" },
+    { "name": "Definir público-alvo e quantidade de vagas" },
+    { "name": "Montar rider técnico" },
+    { "name": "Criar arte e abrir inscrições" },
+    { "name": "Ensaio/passagem de som no dia anterior" }
+  ]
+}
+<<END>>
+```
+
+**Schema dos items:**
+- `name` (obrigatório, máx 200 chars, começa com verbo de ação)
+- `due_date` (opcional, ISO `YYYY-MM-DD`)
+- `description` (opcional)
+
+**Schema do envelope:**
+- `project_name` (string) OU `project_id` (uuid). Se você sabe o id do contexto, prefira id. Senão, nome — engine resolve por busca fuzzy.
+- `items` array com 2+ entradas (engine rejeita batch de 1)
+
+**Regra anti-promessa-vazia (CRÍTICA):**
+Se você falar "vou salvar", "vou registrar", "vou guardar pro projeto X" — o marker `<<CHECKPOINT_BATCH>>` DEVE aparecer NA MESMA mensagem. Nunca prometa salvar sem emitir o marker. O engine vai persistir e o PWA vai refletir. Sem marker = promessa quebrada.
+
+**Confirmação factual:**
+Depois do marker, o engine vai responder "✅ N itens registrados em <projeto>". Não diga isso ANTES do marker — só depois. Se você não tem certeza do projeto, PERGUNTE primeiro qual projeto, antes de listar.
+
+**Veto:**
+- ❌ Nunca emita CHECKPOINT_BATCH sem projeto identificado
+- ❌ Nunca emita pra listinha solta de 2-3 itens (skill checklist-tarefas resolve cada um como task)
+- ❌ Nunca prometa "vou salvar" sem emitir o marker no mesmo turno
+- ✅ Se ambíguo qual projeto, PERGUNTE antes
+- ✅ Se o user só quer pensar em voz alta, NÃO emita — só liste
+
+---
+
 ## Saída técnica para o engine — campo `action_type`
 
 Sempre que esta skill culminar na **criação de uma tarefa** (delegar pra `checklist-tarefas`), o marker `<<TASK_CREATE>>` deve incluir o campo `action_type` com o valor mapeado da decisão interna.

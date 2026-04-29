@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, Rocket } from 'lucide-react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { ArrowLeft, Rocket, Check } from 'lucide-react';
 import { supabase, supabaseConfigured } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
 import { Tabs } from '../components/Tabs';
 import { Badge } from '../components/Badge';
 import { LoadingState } from '../components/LoadingState';
@@ -54,6 +55,8 @@ async function fetchMembers(projectId: string) {
 export function ProjetoDetalhe() {
   const { id = '' } = useParams();
   const [tab, setTab] = useState<TabId>('resumo');
+  const { collaborator } = useAuth();
+  const qc = useQueryClient();
 
   const { data: project, isLoading: pLoading } = useQuery({
     queryKey: ['project', id],
@@ -64,6 +67,38 @@ export function ProjetoDetalhe() {
     queryKey: ['project', id, 'checkpoints'],
     queryFn: () => fetchCheckpoints(id),
     enabled: Boolean(id && supabaseConfigured),
+  });
+
+  // Sprint 11.4 — toggle status do checkpoint (pending ↔ done) com optimistic update.
+  const toggleCheckpoint = useMutation({
+    mutationFn: async (cp: Checkpoint) => {
+      if (!collaborator) throw new Error('no_auth');
+      const isDone = cp.status === 'done';
+      const update = isDone
+        ? { status: 'pending', completed_at: null, completed_by: null }
+        : { status: 'done', completed_at: new Date().toISOString(), completed_by: collaborator.id };
+      const { error } = await supabase
+        .from('project_checkpoints')
+        .update(update)
+        .eq('id', cp.id);
+      if (error) throw error;
+    },
+    onMutate: async (cp) => {
+      await qc.cancelQueries({ queryKey: ['project', id, 'checkpoints'] });
+      const prev = qc.getQueryData<Checkpoint[]>(['project', id, 'checkpoints']);
+      qc.setQueryData<Checkpoint[]>(['project', id, 'checkpoints'], (old) =>
+        (old || []).map(x => x.id === cp.id
+          ? { ...x, status: x.status === 'done' ? 'pending' : 'done' }
+          : x),
+      );
+      return { prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['project', id, 'checkpoints'], ctx.prev);
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['project', id, 'checkpoints'] });
+    },
   });
   const { data: tasks = [] } = useQuery({
     queryKey: ['project', id, 'tasks'],
@@ -143,19 +178,43 @@ export function ProjetoDetalhe() {
             <EmptyState title="Sem checkpoints ainda" />
           ) : (
             <ul className="divide-y divide-border">
-              {checkpoints.map(c => (
-                <li key={c.id} className="p-md flex items-center justify-between gap-md">
-                  <div className="min-w-0">
-                    <div className="text-body-md">{c.name}</div>
-                    {c.due_date && <div className="text-body-sm text-fg-muted tabular-nums">{brShort(c.due_date)}</div>}
-                  </div>
-                  <Badge tone={
-                    c.status === 'done' ? 'success' :
-                    c.status === 'in_progress' ? 'warning' :
-                    c.status === 'cancelled' ? 'neutral' : 'info'
-                  }>{c.status}</Badge>
-                </li>
-              ))}
+              {checkpoints.map(c => {
+                const isDone = c.status === 'done';
+                return (
+                  <li key={c.id}>
+                    <button
+                      type="button"
+                      onClick={() => toggleCheckpoint.mutate(c)}
+                      disabled={toggleCheckpoint.isPending}
+                      className="w-full p-md flex items-center gap-md hover:bg-bg-elevated focus-ring text-left"
+                      aria-label={isDone ? 'Reabrir checkpoint' : 'Marcar como feito'}
+                    >
+                      <span
+                        className={[
+                          'h-6 w-6 shrink-0 rounded-md border grid place-items-center transition-colors',
+                          isDone
+                            ? 'bg-success border-success text-white'
+                            : 'border-border text-transparent',
+                        ].join(' ')}
+                        aria-hidden
+                      >
+                        <Check size={14} strokeWidth={3} />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className={['text-body-md', isDone ? 'line-through text-fg-muted' : ''].join(' ')}>
+                          {c.name}
+                        </div>
+                        {c.due_date && (
+                          <div className="text-body-sm text-fg-muted tabular-nums mt-0.5">
+                            {brShort(c.due_date)}
+                          </div>
+                        )}
+                      </div>
+                      {c.status === 'in_progress' && <Badge tone="warning">em curso</Badge>}
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </section>

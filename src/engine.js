@@ -257,6 +257,189 @@ function parseTaskUpdateMarker(text) {
   return { actions: valid, cleanText, malformed: false };
 }
 
+// Sprint 11.4 — Marker novo <<CHECKPOINT_BATCH>>. TOM emite quando produz checklist
+// estruturado (4+ itens) ligado a um projeto existente. Persiste como project_checkpoints
+// pra deixar o checklist como dado de primeira classe (não fumaça em conversation_history).
+//
+// Schema esperado:
+// {
+//   "project_id": "uuid",      // ou "project_name": "Workshop de Improvisação" (resolução fuzzy)
+//   "items": [
+//     { "name": "Definir tema com Moreira", "due_date": "2026-04-30" },
+//     { "name": "Fechar local e data" },
+//     ...
+//   ]
+// }
+function validateCheckpointItem(item) {
+  if (!item || typeof item !== 'object') return 'not_object';
+  if (typeof item.name !== 'string' || !item.name.trim()) return 'name:missing';
+  if (item.name.length > 200) return 'name:too_long';
+  if (item.due_date !== undefined && item.due_date !== null) {
+    if (typeof item.due_date !== 'string' || !ISO_DATE_RE.test(item.due_date)) return 'due_date:invalid';
+  }
+  if (item.description !== undefined && item.description !== null && typeof item.description !== 'string') {
+    return 'description:invalid';
+  }
+  return null;
+}
+
+function parseCheckpointBatchMarker(text) {
+  if (!text) return null;
+  const re = /<<CHECKPOINT_BATCH>>\s*([\s\S]*?)\s*<<END>>/i;
+  const m = text.match(re);
+  if (!m) return null;
+  const cleanText = text.replace(re, '').trim();
+  let parsed;
+  try {
+    parsed = JSON.parse(m[1].trim());
+  } catch (err) {
+    logSchemaErr('CHECKPOINT_BATCH', ['invalid_json: ' + err.message], m[1]);
+    return { malformed: true, cleanText };
+  }
+  if (!parsed || typeof parsed !== 'object') {
+    return { malformed: true, cleanText };
+  }
+  const project_id = typeof parsed.project_id === 'string' ? parsed.project_id : null;
+  const project_name = typeof parsed.project_name === 'string' ? parsed.project_name : null;
+  if (!project_id && !project_name) {
+    logSchemaErr('CHECKPOINT_BATCH', ['project_id_or_name:missing'], parsed);
+    return { malformed: true, cleanText };
+  }
+  if (!Array.isArray(parsed.items) || parsed.items.length === 0) {
+    logSchemaErr('CHECKPOINT_BATCH', ['items:empty_or_not_array'], parsed);
+    return { malformed: true, cleanText };
+  }
+  // Threshold mínimo: 2 items (regra de "não vira batch pra listinha trivial").
+  // Skill orienta 4+ mas engine aceita 2+ pra flexibilidade.
+  if (parsed.items.length < 2) {
+    logSchemaErr('CHECKPOINT_BATCH', ['items:below_threshold_2'], parsed);
+    return { malformed: true, cleanText };
+  }
+  const valid = [];
+  const dropped = [];
+  for (let i = 0; i < parsed.items.length; i++) {
+    const why = validateCheckpointItem(parsed.items[i]);
+    if (why) dropped.push(`item[${i}]:${why}`);
+    else valid.push(parsed.items[i]);
+  }
+  if (dropped.length) logSchemaErr('CHECKPOINT_BATCH', dropped, parsed);
+  if (!valid.length) return { malformed: true, cleanText };
+  return { project_id, project_name, items: valid, cleanText, malformed: false };
+}
+
+// Resolve project_id por nome quando o TOM só passou project_name. Match fuzzy
+// (case-insensitive, ignora acentos) na lista de projetos do collab.
+async function resolveProjectByName(collaboratorId, projectName) {
+  if (!projectName || typeof projectName !== 'string') return null;
+  const norm = (s) => String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+  const target = norm(projectName);
+  // Pega projetos do user (membro OU criador) status active/planning.
+  const { data: created } = await supabase
+    .from('projects')
+    .select('id, name, status, created_by')
+    .eq('created_by', collaboratorId)
+    .in('status', ['active', 'planning', 'pending_approval']);
+  const { data: memberRows } = await supabase
+    .from('project_members')
+    .select('project_id, projects(id, name, status)')
+    .eq('collaborator_id', collaboratorId);
+  const fromMembership = (memberRows || [])
+    .map(r => r.projects)
+    .filter(p => p && ['active', 'planning', 'pending_approval'].includes(p.status));
+  const all = [...(created || []), ...fromMembership];
+  // Dedupe by id
+  const seen = new Set();
+  const projects = [];
+  for (const p of all) {
+    if (!p || seen.has(p.id)) continue;
+    seen.add(p.id);
+    projects.push(p);
+  }
+  // Match: substring exata primeiro, depois starts-with, depois contém
+  const exact = projects.find(p => norm(p.name) === target);
+  if (exact) return exact;
+  const startsWith = projects.find(p => norm(p.name).startsWith(target));
+  if (startsWith) return startsWith;
+  const contains = projects.find(p => norm(p.name).includes(target));
+  return contains || null;
+}
+
+async function applyCheckpointBatch(collaborator, parsed) {
+  const last4 = String(collaborator.phone || '').slice(-4);
+  // 1) Resolve project_id (preferir id direto; fallback fuzzy por nome)
+  let projectId = parsed.project_id;
+  let projectName = parsed.project_name;
+  if (!projectId && projectName) {
+    const proj = await resolveProjectByName(collaborator.id, projectName);
+    if (proj) {
+      projectId = proj.id;
+      projectName = proj.name;
+    }
+  }
+  if (!projectId) {
+    console.warn(`[CheckpointBatch] project not resolved (name="${projectName}") collab=${last4}`);
+    return { okCount: 0, failCount: parsed.items.length, projectId: null, projectName, reason: 'project_not_found' };
+  }
+
+  // 2) Confirma membership / authorship pra evitar inserir em projeto alheio.
+  const { data: proj } = await supabase
+    .from('projects')
+    .select('id, name, created_by')
+    .eq('id', projectId).maybeSingle();
+  if (!proj) {
+    return { okCount: 0, failCount: parsed.items.length, projectId, projectName, reason: 'project_not_exists' };
+  }
+  projectName = proj.name;
+  let isMember = proj.created_by === collaborator.id;
+  if (!isMember) {
+    const { data: mb } = await supabase
+      .from('project_members')
+      .select('id').eq('project_id', projectId).eq('collaborator_id', collaborator.id).maybeSingle();
+    isMember = Boolean(mb);
+  }
+  if (!isMember && !['coordinator', 'director'].includes(collaborator.role)) {
+    console.warn(`[CheckpointBatch] blocked — collab ${last4} not member/owner of ${projectId.slice(0,8)} and not coord/dir`);
+    return { okCount: 0, failCount: parsed.items.length, projectId, projectName, reason: 'permission_denied' };
+  }
+
+  // 3) Calcula sort_order base (após o maior atual).
+  const { data: existing } = await supabase
+    .from('project_checkpoints')
+    .select('sort_order')
+    .eq('project_id', projectId)
+    .order('sort_order', { ascending: false })
+    .limit(1);
+  let nextSort = (existing && existing[0]?.sort_order != null ? existing[0].sort_order : -1) + 1;
+
+  // 4) Insere todos. Falha individual não derruba o batch.
+  let okCount = 0, failCount = 0;
+  const insertedIds = [];
+  for (const it of parsed.items) {
+    const row = {
+      project_id: projectId,
+      name: it.name.trim().slice(0, 200),
+      description: typeof it.description === 'string' ? it.description.slice(0, 1000) : null,
+      due_date: typeof it.due_date === 'string' ? it.due_date : null,
+      status: 'pending',
+      sort_order: nextSort++,
+    };
+    const { data, error } = await supabase
+      .from('project_checkpoints')
+      .insert(row)
+      .select('id')
+      .single();
+    if (error) {
+      console.error('[CheckpointBatch] insert err:', error.message);
+      failCount++;
+    } else {
+      okCount++;
+      if (data?.id) insertedIds.push(data.id);
+    }
+  }
+  console.log(`[CheckpointBatch] project=${projectName?.slice(0,40)} ${okCount} ok, ${failCount} fail (collab ${last4})`);
+  return { okCount, failCount, projectId, projectName, insertedIds, reason: null };
+}
+
 // Parse <<EVENT_CREATE>>[...]<<END>> — TOM emite evento (compromisso com horário).
 // Schema mínimo por item:
 //   title, start_at (ISO -03:00), end_at (ISO -03:00), modality, category
@@ -1996,6 +2179,36 @@ async function processMessage(phone, text, raw = {}) {
       let base = parsedEU.cleanText || '';
       if (failCount > 0 && okCount === 0) {
         base = (base ? base + '\n\n' : '') + '_não consegui atualizar o compromisso, te aviso depois_';
+      }
+      reply = base || reply;
+    }
+  }
+
+  // 2.67) Sprint 11.4 — Checkpoint batch. TOM emite quando produz checklist
+  // estruturado (4+ itens) ligado a um projeto. Persiste como project_checkpoints.
+  // Garante que checklist deixa de "virar fumaça em conversation_history" e vira
+  // dado de primeira classe — refletido no PWA (ProjetoDetalhe → aba checkpoints).
+  {
+    const parsedCB = parseCheckpointBatchMarker(reply);
+    if (parsedCB && parsedCB.malformed) {
+      console.warn('[CheckpointBatch] WARN: malformed marker, dropping block');
+      await logMarker(collab.id, 'CHECKPOINT_BATCH', 'rejected', 'schema_invalid', reply);
+      reply = parsedCB.cleanText || reply;
+    } else if (parsedCB) {
+      const result = await applyCheckpointBatch(collab, parsedCB);
+      const tagSlice = (s) => String(s || '').slice(0, 8);
+      const ok = result.okCount > 0;
+      const reason = ok
+        ? `ok=${result.okCount} fail=${result.failCount} project=${tagSlice(result.projectId)}`
+        : `none_inserted:${result.reason || 'unknown'}`;
+      await logMarker(collab.id, 'CHECKPOINT_BATCH', ok ? 'executed' : 'rejected', reason, null);
+      let base = parsedCB.cleanText || '';
+      if (!ok) {
+        const why = result.reason === 'project_not_found' ? 'não achei o projeto'
+          : result.reason === 'project_not_exists' ? 'projeto não existe'
+          : result.reason === 'permission_denied' ? 'sem permissão nesse projeto'
+          : 'erro ao salvar';
+        base = (base ? base + '\n\n' : '') + `_não consegui salvar o checklist (${why})_`;
       }
       reply = base || reply;
     }
