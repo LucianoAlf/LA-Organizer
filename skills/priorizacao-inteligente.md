@@ -1,6 +1,6 @@
 ---
 name: priorizacao-inteligente
-description: Motor interno de decisão para classificar demandas em resolver agora, tarefa, ligação, reunião, delegar ou projeto. Ativa quando chega demanda acionável mal definida, misturada ou com dúvida de prioridade implícita. Usa regra dos 5 minutos, natureza da ação e urgência/importância por baixo do capô — sem expor teoria ao usuário.
+description: Classifica demandas acionáveis em resolver agora, tarefa, ligação, reunião, delegar ou projeto. Ativa quando a demanda chega mal definida, misturada ou com prioridade implícita.
 ---
 
 # Priorização Inteligente
