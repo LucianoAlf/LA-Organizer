@@ -100,6 +100,9 @@ const inputClass =
 const textareaClass =
   'w-full min-h-[88px] rounded-md border border-border bg-bg-surface px-3 py-2 text-body-md text-fg focus-ring placeholder:text-fg-muted resize-y disabled:opacity-60';
 
+// Sprint 11 F2+ / Sessão B — Hierarquia tipográfica do wizard 5W2H corrigida.
+// Antes: label e valor com pesos/tamanhos próximos demais → poluição visual.
+// Depois: 3 níveis claros — eyebrow (rótulo), value (texto principal), help (sub).
 function Field({
   label,
   sub,
@@ -110,9 +113,9 @@ function Field({
   children: ReactNode;
 }) {
   return (
-    <div className="space-y-1">
-      <label className="text-body-sm font-semibold text-fg block">{label}</label>
-      {sub && <div className="text-body-xs text-fg-muted leading-snug">{sub}</div>}
+    <div className="space-y-2">
+      <label className="text-body-md font-semibold text-fg block leading-snug">{label}</label>
+      {sub && <div className="text-body-sm text-fg-muted leading-snug">{sub}</div>}
       {children}
     </div>
   );
@@ -120,18 +123,24 @@ function Field({
 
 function SummaryInline({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="flex justify-between gap-md text-body-sm">
-      <span className="text-fg-muted shrink-0">{label}</span>
-      <span className="font-medium text-right break-words">{children}</span>
+    <div className="flex justify-between items-start gap-md">
+      <span className="text-label uppercase tracking-wide text-fg-muted shrink-0 pt-1">
+        {label}
+      </span>
+      <span className="text-body-md font-semibold text-fg text-right break-words">
+        {children}
+      </span>
     </div>
   );
 }
 
 function SummaryBlock({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="space-y-1">
-      <div className="text-body-xs text-fg-muted">{label}</div>
-      <div className="text-body-sm text-fg whitespace-pre-wrap break-words">{children}</div>
+    <div className="space-y-1.5">
+      <div className="text-label uppercase tracking-wide text-fg-muted">{label}</div>
+      <div className="text-body-md text-fg whitespace-pre-wrap break-words leading-snug">
+        {children}
+      </div>
     </div>
   );
 }
@@ -529,8 +538,8 @@ export function NovoProjeto() {
             <ChevronLeft size={18} />
             {step === 1 ? 'Cancelar' : 'Voltar'}
           </button>
-          <span className="text-body-xs text-fg-muted font-semibold tracking-wide">
-            {step}/{TOTAL_STEPS}
+          <span className="text-label uppercase tracking-wide text-brand font-bold tabular-nums">
+            Passo {step} de {TOTAL_STEPS}
           </span>
         </div>
         <div className="h-1.5 bg-bg-surface rounded-full overflow-hidden">
@@ -717,7 +726,7 @@ export function NovoProjeto() {
             </Field>
 
             <Card padded variant="outline">
-              <div className="space-y-md">
+              <div className="space-y-lg">
                 <SummaryInline label="Nome">{data.name || '—'}</SummaryInline>
                 <SummaryBlock label="🎯 Por que existe">
                   {data.justification || '—'}
