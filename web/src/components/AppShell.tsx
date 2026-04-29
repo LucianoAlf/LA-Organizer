@@ -1,6 +1,7 @@
 import { Outlet, useLocation } from 'react-router-dom';
 import { Header } from './Header';
 import { BottomNav } from './BottomNav';
+import { PWAUpdatePrompt } from './PWAUpdatePrompt';
 
 // Sprint 8: rotas de fluxo focado (wizard, etc) escondem o BottomNav e cedem
 // o rodapé pro componente da rota controlar (ex: NovoProjeto tem própria nav).
@@ -27,6 +28,7 @@ export function AppShell() {
         <Outlet />
       </main>
       {!focused && <BottomNav />}
+      <PWAUpdatePrompt />
     </div>
   );
 }

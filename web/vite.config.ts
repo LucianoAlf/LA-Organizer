@@ -26,6 +26,12 @@ export default defineConfig({
       },
       workbox: {
         cleanupOutdatedCaches: true,
+        // Sprint 11.2 hotfix — força novo SW a ativar imediatamente sem aguardar
+        // todas as abas fecharem. Casado com PWAUpdatePrompt que avisa o user e
+        // chama updateServiceWorker(true) pra recarregar com bundle novo.
+        // Sem isso, o user fica em bundle ANTIGO mesmo após `autoUpdate` instalar.
+        skipWaiting: true,
+        clientsClaim: true,
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/fonts\.(?:googleapis|gstatic)\.com\/.*/i,

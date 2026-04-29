@@ -930,6 +930,36 @@ async function applyTaskActions(collaborator, actions) {
         } else {
           insertRow.due_date = isValidISODate(a.due_date) ? a.due_date : todaySaoPaulo();
         }
+        // Sprint 11.2 hotfix — Dedupe defensivo. Bug observado: TOM emite TASK_CREATE
+        // num turno exploratório ("vou criar pra 14h, ok?") e RECRIA no turno de
+        // confirmação ("Ta bom" → cria de novo). Evidência: 2 rows idênticas criadas
+        // em 30s (ids 9da2c73e + 6ab10e44, 14:04:02 e 14:04:32). Defesa: se title +
+        // assigned_to + (remind_at|due_date) match em janela de 60s, skip silencioso.
+        // Conta como okCount pra não confundir resposta do TOM. A skill atualizada
+        // (priorizacao-inteligente § Regra de criação prematura) ataca a causa-raiz;
+        // este dedupe é o cinto de segurança.
+        try {
+          const dedupeCutoff = new Date(Date.now() - 60_000).toISOString();
+          const { data: dupes } = await supabase
+            .from('tasks')
+            .select('id, created_at, remind_at, due_date')
+            .eq('assigned_to', assignedTo)
+            .eq('title', insertRow.title)
+            .gte('created_at', dedupeCutoff)
+            .limit(3);
+          const dup = (dupes || []).find(d =>
+            (d.remind_at || null) === (insertRow.remind_at || null) &&
+            (d.due_date || null) === (insertRow.due_date || null)
+          );
+          if (dup) {
+            console.warn(`[Task] DEDUPE_SKIP existing=${String(dup.id).slice(0,8)} title="${insertRow.title.slice(0,40)}" (recent <60s)`);
+            okCount++;
+            continue;
+          }
+        } catch (dErr) {
+          // Non-fatal: dedupe failure não pode bloquear criação. Loga e segue.
+          console.error('[Task] dedupe check err (non-fatal):', dErr.message);
+        }
         const { data, error } = await supabase
           .from('tasks')
           .insert(insertRow)
