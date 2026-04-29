@@ -408,7 +408,11 @@ function pickSkill(collab, lastUserMessage, recentHistory) {
     const rangeRe = /\bdas?\s+\d{1,2}h?(?::\d{2})?\s+(?:[àa]s|at[eé])\s+\d{1,2}h?(?::\d{2})?\b/i;
     const modalityRe = /\b(online|presencial|h[ií]brido|google\s*meet|zoom|teams|jitsi)\b/i;
     const scheduleVerbRe = /\b(marca|marcar|agend[ao]r?)\b/i;
-    const reminderIntentRe = /\b(anota|me\s+lembra|lembra\s+de|lembrete|me\s+chama|p[oó]e\s+na\s+lista|adiciona\s+(?:na\s+lista|tarefa))\b/i;
+    // Sprint 10.1 hotfix-3: cobrir conjugações de "lembrar" — "me lembra"
+    // (presente), "me lembre" (imperativo educado/subjuntivo), "me lembrar".
+    // Regex antiga só pegava "lembra" e perdia "lembre"/"lembrar" → caiu pra
+    // skill: none, Claude improvisou marker em YAML, parser rejeitou.
+    const reminderIntentRe = /\b(anota|me\s+lembr[aeo]|lembr(?:a|e|ar)\s+(?:de|do|da)|lembrete|me\s+chama|p[oó]e\s+na\s+lista|adiciona\s+(?:na\s+lista|tarefa))\b/i;
     const eventUpdateRe = /\b(remarca|remarcar|reagenda|reagendar|cancel[ao]r?|fechei\s+(?:a\s+|o\s+)?(?:reuni[ãa]o|aula|ensaio|mentoria|sess[ãa]o|grava[çc][ãa]o|masterclass|consulta)|saiu\s+(?:a\s+|o\s+)?(?:reuni[ãa]o|mentoria))\b/i;
     const lm = lastUserMessage || '';
     const hasReminderIntent = reminderIntentRe.test(lm);
@@ -424,7 +428,7 @@ function pickSkill(collab, lastUserMessage, recentHistory) {
 
   // Priority 5: task management intent. Includes create/remind/reschedule/complete/delegate/extension signals,
   // PLUS new-demand signals (surgiu, preciso falar, tem que resolver, fala com, etc).
-  if (/\b(fiz|terminei|feito|completei|fechei|reagenda|adia|adiar|delega|surgiu|anota|me\s+lembra|lembra(?:r|nça)|lembra\s+(?:de|do|da)\s+\w|lembrete|me\s+chama|daqui\s+a?\s*\d|em\s+\d+\s*(min|hora|h)|p[oó]e\s+na\s+lista|adiciona|marca\s+(?:reuni|m[eé]dico|consulta|hor[áa]rio)|muda\s+(?:a|o|pra)|deixa\s+pra|n[aã]o\s+vou\s+conseguir|preciso\s+de\s+mais\s+prazo|n[aã]o\s+(?:dá|vai\s+dar)\s+at[eé]|estender\s+(?:o\s+)?prazo|aprov[ao]r|negar|nego\s+a)/i.test(lastUserMessage || '')) {
+  if (/\b(fiz|terminei|feito|completei|fechei|reagenda|adia|adiar|delega|surgiu|anota|me\s+lembr[aeo]|lembr(?:a|e|ar|nça)|lembr(?:a|e)\s+(?:de|do|da)\s+\w|lembrete|me\s+chama|daqui\s+a?\s*\d|em\s+\d+\s*(min|hora|h)|p[oó]e\s+na\s+lista|adiciona|marca\s+(?:reuni|m[eé]dico|consulta|hor[áa]rio)|muda\s+(?:a|o|pra)|deixa\s+pra|n[aã]o\s+vou\s+conseguir|preciso\s+de\s+mais\s+prazo|n[aã]o\s+(?:dá|vai\s+dar)\s+at[eé]|estender\s+(?:o\s+)?prazo|aprov[ao]r|negar|nego\s+a)/i.test(lastUserMessage || '')) {
     return { name: 'checklist-tarefas', body: loadSkill('checklist-tarefas') };
   }
   // Priority 5.1: new-demand emergence patterns (must trigger checklist-tarefas, not gestao-memoria).
