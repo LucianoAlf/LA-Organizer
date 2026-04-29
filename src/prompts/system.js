@@ -335,8 +335,23 @@ function pickSkill(collab, lastUserMessage, recentHistory) {
     return { name: 'onboarding', body: loadSkill('onboarding') };
   }
 
+  // Sprint 11.4 hotfix — Mid-flow project detection ANTES de tratamento-audio.
+  // Bug observado (29/04 13:30): user mandou áudio durante cadastro de evento Dia
+  // das Mães. tratamento-audio sequestrou o turno → cadastro-projeto-5w2h perdeu
+  // estado → re-perguntou data já fornecida. Fix: se estamos no meio de um fluxo
+  // 5W2H, manter a skill mesmo se input é áudio transcrito.
+  // Regex expandido pra cobrir TODAS as perguntas do fluxo, não só as finais.
+  const recentText = (recentHistory || []).map(m => m.content || '').join(' ').toLowerCase();
+  const inProjectFlow =
+    /qual a janela|metodologia|horas por semana|quem vai participar|como vai chamar|por que esse projeto|onde vai acontecer|como vai executar|qual o p[uú]blico|qual a data do (?:workshop|projeto|evento)|que horas come[çc]a|j[aá] tem local|tem local definido|nome (?:do|desse) projeto/.test(recentText) &&
+    !/✅.*criado|cancelar|esquece|deixa pra depois/i.test(recentText.slice(-500));
+  if (inProjectFlow) {
+    return { name: 'cadastro-projeto-5w2h', body: loadSkill('cadastro-projeto-5w2h') };
+  }
+
   // Priority 1.4: audio transcription — wraps the actual intent in a
   // confirmation flow before any action marker is emitted.
+  // ATENÇÃO: vem DEPOIS de inProjectFlow pra não sequestrar turno em mid-flow.
   if (/^\[áudio transcrito\]/i.test(lastUserMessage || '')) {
     return { name: 'tratamento-audio', body: loadSkill('tratamento-audio') };
   }
@@ -358,13 +373,6 @@ function pickSkill(collab, lastUserMessage, recentHistory) {
       return { name: 'aprovar-projeto', body: loadSkill('aprovar-projeto') };
     }
   }
-
-  // Priority 2: in middle of 5W2H flow (detect from history).
-  const recentText = (recentHistory || []).map(m => m.content || '').join(' ').toLowerCase();
-  const inProjectFlow =
-    /qual a janela|metodologia|horas por semana|quem vai participar/.test(recentText) &&
-    !/✅.*criado|cancelar|esquece/i.test(recentText.slice(-500));
-  if (inProjectFlow) return { name: 'cadastro-projeto-5w2h', body: loadSkill('cadastro-projeto-5w2h') };
 
   // Priority 3: explicit project creation intent — exige a palavra "projeto".
   if (/\b(criar|novo|cadastrar)\s+(?:um\s+|o\s+|outro\s+)?projeto/i.test(lastUserMessage || '')) {
@@ -682,6 +690,11 @@ async function inferActiveThread(recentMessages, allTasks, collaboratorId) {
   if (!scored.length) return null;
   scored.sort((a, b) => b.score - a.score);
   const top = scored[0];
+  // Sprint 11.4 hotfix — threshold mais alto. Bug observado: TOM cruzou "Workshop
+  // de Improvisação" (existente) com "Dia das Mães" (novo) só porque palavra
+  // "workshop" aparecia em alguma mensagem anterior. Score < 4 = match fraco
+  // (não dispara hint). Só >= 4 = sinal forte. Reduz falso-positivo de cross-bleed.
+  if (top.score < 4) return null;
   // Empate alto entre 2+ tasks → ambíguo; melhor não dar hint do que dar errado.
   if (scored.length >= 2 && scored[1].score === top.score) {
     return { ambiguous: true, candidates: scored.slice(0, 3).map(s => s.task) };
