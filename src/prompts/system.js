@@ -18,7 +18,7 @@ const BLOCK_RULES = `# 🚨 REGRAS INVIOLÁVEIS — PRIORIDADE MÁXIMA
 6. ZERO leaks: nada de IDs, UUIDs, markers <<...>> visíveis ao usuário, "5W2H", "Eisenhower", "quadrante", nomes de tabelas, paths de filesystem, "engine", "API", "banco". Você NÃO tem ferramentas neste contexto — NUNCA emita \`<tool_call>\`, \`<tool_use>\`, \`<function_call>\`, \`<tool_name>\`, \`<parameters>\`, ou qualquer marcação de invocação de tool. Sua resposta é APENAS texto natural + markers oficiais documentados.
 
 **MARKERS VÁLIDOS (lista canônica — Sprint 10.1+):**
-\`<<TASK_UPDATE>>\` (com action: create/complete/reschedule/delegate/extension_request/approve/deny) · \`<<EVENT_CREATE>>\` · \`<<EVENT_UPDATE>>\` · \`<<PROJECT_CREATE>>\` · \`<<PROJECT_APPROVE>>\` · \`<<PROJECT_REJECT>>\` · \`<<HABIT_ACTION>>\` · \`<<MEMORY_SAVE>>\` · \`<<DND_UPDATE>>\` · \`<<ONBOARDING_DONE>>\` · \`<<WEEKLY_PLAN>>\` · \`<<CHECKPOINT_BATCH>>\` (Sprint 11.4). Final SEMPRE \`<<END>>\`.
+\`<<TASK_UPDATE>>\` (com action: create/complete/reschedule/delegate/extension_request/approve/deny) · \`<<EVENT_CREATE>>\` · \`<<EVENT_UPDATE>>\` · \`<<PROJECT_CREATE>>\` · \`<<PROJECT_APPROVE>>\` · \`<<PROJECT_REJECT>>\` · \`<<HABIT_ACTION>>\` · \`<<MEMORY_SAVE>>\` · \`<<DND_UPDATE>>\` · \`<<ONBOARDING_DONE>>\` · \`<<WEEKLY_PLAN>>\` · \`<<CHECKPOINT_BATCH>>\` (Sprint 11.4) · \`<<CHECKLIST_ACTION>>\` (Sprint 12) · \`<<ANNOUNCEMENT_ACTION>>\` (Sprint 13) · \`<<SCHOOL_EVENT_ACTION>>\` (Sprint 13) · \`<<ANNOUNCEMENT_APPROVAL>>\` (Sprint 13). Final SEMPRE \`<<END>>\`.
 
 **MARKERS HALLUCINATED (NUNCA emita — não existem):**
 \`<<TASK_CREATE>>\` ❌ → use \`<<TASK_UPDATE>>\` action="create" · \`<<TASK_DONE>>\` ❌ → action="complete" · \`<<TASK_DELETE>>\` ❌ → action="cancel" · \`<<TASK_REMIND>>\` ❌ → action="create" + remind_at · \`<<TASK_NEW>>\`/\`<<TASK_ADD>>\`/\`<<TASK_LIST>>\` ❌ · \`<<EVENT_NEW>>\`/\`<<EVENT_DONE>>\`/\`<<EVENT_CANCEL>>\` ❌ → use \`<<EVENT_UPDATE>>\` action correta · \`<<HABIT_LOG>>\`/\`<<HABIT_DONE>>\` ❌ → use \`<<HABIT_ACTION>>\` action="log" · \`<<MEMORY_WRITE>>\`/\`<<MEMORY_UPDATE>>\` ❌ → \`<<MEMORY_SAVE>>\`. Se você "achou" um nome de marker que não está na lista válida acima, ele NÃO existe. NÃO invente.
@@ -725,6 +725,58 @@ async function inferActiveThread(recentMessages, allTasks, collaboratorId) {
   return { ambiguous: false, task: top.task, score: top.score, ageMin: top.ageMin };
 }
 
+/**
+ * Retorna hint de checklist operacional ativo para injetar no system prompt.
+ * Apenas se houver op_checklist_completions pendente hoje dentro da janela de 6h.
+ */
+async function getActiveChecklistHint(collaboratorId) {
+  const today = new Date().toISOString().slice(0, 10);
+  const { data } = await supabase
+    .from('op_checklist_completions')
+    .select(`
+      id, dispatched_at,
+      op_checklists (
+        name, completion_threshold,
+        op_checklist_items ( id, description, sort_order, is_active )
+      )
+    `)
+    .eq('collaborator_id', collaboratorId)
+    .eq('reference_date', today)
+    .is('completed_at', null)
+    .order('dispatched_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!data) return '';
+
+  const template = data.op_checklists;
+  if (!template) return '';
+
+  // Verifica janela de 6h
+  const now = new Date();
+  const dispatchedAt = data.dispatched_at ? new Date(data.dispatched_at) : null;
+  if (dispatchedAt) {
+    const windowEnd = new Date(dispatchedAt.getTime() + 6 * 60 * 60 * 1000);
+    if (now > windowEnd) return ''; // janela encerrada
+  }
+
+  const items = (template.op_checklist_items || [])
+    .filter(i => i.is_active !== false)
+    .sort((a, b) => a.sort_order - b.sort_order)
+    .map((item, i) => `${i + 1}. [item_id:${item.id}] ${item.description}`)
+    .join('\n');
+
+  return (
+    `\n\n---\n` +
+    `🗒️ **CHECKLIST OPERACIONAL ATIVO**\n` +
+    `Template: ${template.name} (threshold: ${template.completion_threshold}%)\n` +
+    `completion_id: ${data.id}\n` +
+    `Itens:\n${items}\n\n` +
+    `Se o colaborador está respondendo a este checklist, emita:\n` +
+    `<<CHECKLIST_ACTION>>\n{"completion_id":"${data.id}","items":[{"item_id":"<uuid>","done":true}],"channel":"whatsapp"}\n<<END>>`
+  );
+}
+
 function renderActiveThreadHint(thread) {
   if (!thread) return '';
   if (thread.ambiguous) {
@@ -858,7 +910,53 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     skillBlock,
   ].filter(Boolean);
 
-  const systemPrompt = blocks.join('\n\n---\n\n');
+  let systemPrompt = blocks.join('\n\n---\n\n');
+
+  // Checklist operacional ativo (se houver dispatch pendente hoje dentro da janela)
+  const checklistHint = await getActiveChecklistHint(collaborator.id);
+  if (checklistHint) {
+    systemPrompt += checklistHint;
+  }
+
+  // Comunicados internos — disponível apenas para director/coordinator
+  if (collaborator && (collaborator.role === 'director' || collaborator.role === 'coordinator')) {
+    const comunicadosPath = path.join(SKILLS_DIR, 'comunicados.md');
+    if (fs.existsSync(comunicadosPath)) {
+      const comunicadosSkill = fs.readFileSync(comunicadosPath, 'utf-8');
+      systemPrompt += '\n\n---\n\n' + comunicadosSkill;
+    }
+  }
+
+  // Eventos institucionais — disponível apenas para director/coordinator
+  if (collaborator && (collaborator.role === 'director' || collaborator.role === 'coordinator')) {
+    const eventosPath = path.join(SKILLS_DIR, 'eventos-institucionais.md');
+    if (fs.existsSync(eventosPath)) {
+      const eventosSkill = fs.readFileSync(eventosPath, 'utf-8');
+      systemPrompt += '\n\n---\n\n' + eventosSkill;
+    }
+  }
+
+  // Aprovação de comunicados — disponível apenas para director/coordinator
+  if (collaborator && (collaborator.role === 'director' || collaborator.role === 'coordinator')) {
+    const aprovacaoPath = path.join(SKILLS_DIR, 'aprovacao-comunicados.md');
+    if (fs.existsSync(aprovacaoPath)) {
+      const aprovacaoSkill = fs.readFileSync(aprovacaoPath, 'utf-8');
+      systemPrompt += '\n\n---\n\n' + aprovacaoSkill;
+    }
+  }
+
+  // Sprint 15 — Operações Técnicas (camada operacional replicável)
+  // Disponível para TODOS os roles: qualquer colaborador pode reportar
+  // incidente/falta/manutenção. Triagem e classificação acontecem dentro da skill.
+  // O engine cuida do resto — esta skill só ensina TOM a classificar e emitir
+  // <<TASK_UPDATE>> com department_id + request_type_id corretos.
+  if (collaborator) {
+    const operacoesPath = path.join(SKILLS_DIR, 'operacoes-tecnicas.md');
+    if (fs.existsSync(operacoesPath)) {
+      const operacoesSkill = fs.readFileSync(operacoesPath, 'utf-8');
+      systemPrompt += '\n\n---\n\n' + operacoesSkill;
+    }
+  }
 
   const totalTasks = (ctx.personalTasks?.length || 0) + (ctx.workTasks?.length || 0);
   const evCount = (ctx.todayEvents || []).length;

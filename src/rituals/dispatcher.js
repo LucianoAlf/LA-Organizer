@@ -232,6 +232,622 @@ async function listCollaborators(filterPhone) {
   return (data || []).filter(c => c.user_preferences);
 }
 
+// Sprint 11 F2+ — Checklists Operacionais.
+// Roda a cada tick do dispatcher. Detecta templates cujo dispatch_time
+// caiu na janela [now-5min, now]. Cria op_checklist_completions e envia WhatsApp.
+// dry=true: retorna lista de would_dispatch sem persistir nem enviar.
+async function dispatchChecklists(now = new Date(), { dry = false, filterPhone = null } = {}) {
+  const brStr = now.toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' });
+  const brNow = new Date(brStr);
+  const dow = brNow.getDay() === 0 ? 7 : brNow.getDay(); // 1=seg…6=sab,7=dom
+
+  const pad = n => String(n).padStart(2, '0');
+  const timeNow = `${pad(brNow.getHours())}:${pad(brNow.getMinutes())}`;
+  const brMinus5 = new Date(brNow.getTime() - 5 * 60 * 1000);
+  const timeMinus5 = `${pad(brMinus5.getHours())}:${pad(brMinus5.getMinutes())}`;
+  const today = brNow.toISOString().slice(0, 10);
+
+  // Templates cujo dispatch_time caiu na janela
+  const { data: templates, error: tErr } = await supabase
+    .from('op_checklists')
+    .select('*, op_checklist_items(id, description, sort_order, is_active)')
+    .contains('days_of_week', [dow])
+    .gte('dispatch_time', timeMinus5)
+    .lte('dispatch_time', timeNow);
+
+  if (tErr) { console.error('[dispatchChecklists] query templates:', tErr.message); return []; }
+  if (!templates || templates.length === 0) return [];
+
+  const whatsapp = require('../services/whatsapp');
+  const results = [];
+
+  for (const template of templates) {
+    // Filter out soft-deleted items (is_active=false added in Sprint 2)
+    template.op_checklist_items = (template.op_checklist_items || [])
+      .filter(i => i.is_active !== false);
+
+    let collabQuery = supabase
+      .from('collaborators')
+      .select('id, full_name, phone, unit, shift, function_role')
+      .eq('function_role', template.function_role)
+      .eq('shift', template.shift);
+    if (filterPhone) collabQuery = collabQuery.eq('phone', filterPhone);
+
+    const { data: collabs } = await collabQuery;
+    if (!collabs || collabs.length === 0) {
+      results.push({ template_id: template.id, reason: 'no_collaborators', would_dispatch: false });
+      continue;
+    }
+
+    // Unidades com template específico (prioridade unit > 'all')
+    let specificUnits = [];
+    if (template.unit === 'all') {
+      const { data: specifics } = await supabase
+        .from('op_checklists')
+        .select('unit')
+        .eq('function_role', template.function_role)
+        .eq('shift', template.shift)
+        .neq('unit', 'all')
+        .contains('days_of_week', [dow])
+        .gte('dispatch_time', timeMinus5)
+        .lte('dispatch_time', timeNow);
+      specificUnits = (specifics || []).map(s => s.unit);
+    }
+
+    for (const collab of collabs) {
+      if (template.unit === 'all' && specificUnits.includes(collab.unit)) {
+        results.push({ collab_id: collab.id, template_id: template.id, reason: 'has_specific_template', would_dispatch: false });
+        continue;
+      }
+
+      // Idempotência: já dispatched hoje?
+      // NOTE: real columns are checklist_id and reference_date
+      const { data: existing } = await supabase
+        .from('op_checklist_completions')
+        .select('id')
+        .eq('collaborator_id', collab.id)
+        .eq('checklist_id', template.id)
+        .eq('reference_date', today)
+        .maybeSingle();
+
+      if (existing) {
+        results.push({ collab_id: collab.id, template_id: template.id, reason: 'already_dispatched', would_dispatch: false });
+        continue;
+      }
+
+      if (dry) {
+        results.push({ collab_id: collab.id, collab_name: collab.full_name, template_id: template.id, template_name: template.name, reason: 'ok', would_dispatch: true });
+        continue;
+      }
+
+      // Criar completion record
+      // NOTE: real columns are checklist_id and reference_date
+      const { data: completion, error: insErr } = await supabase
+        .from('op_checklist_completions')
+        .insert({
+          collaborator_id: collab.id,
+          checklist_id: template.id,
+          reference_date: today,
+          dispatched_at: now.toISOString(),
+        })
+        .select('id')
+        .single();
+
+      if (insErr) {
+        console.warn(`[dispatchChecklists] insert collab=${collab.id} template=${template.id}:`, insErr.message);
+        results.push({ collab_id: collab.id, template_id: template.id, reason: 'insert_failed', would_dispatch: false });
+        continue;
+      }
+
+      // Montar mensagem WhatsApp com itens numerados
+      const sortedItems = (template.op_checklist_items || [])
+        .sort((a, b) => a.sort_order - b.sort_order)
+        .map((item, i) => `${i + 1}. ${item.description}`)
+        .join('\n');
+
+      const msg =
+        `📋 *Checklist: ${template.name}*\n` +
+        `Marque os itens concluídos:\n${sortedItems}\n\n` +
+        `Responda com os números (ex: *1 3 5*) ou *feito tudo*.`;
+
+      try {
+        await whatsapp.sendMessage(collab.phone, msg);
+        await supabase.from('conversation_history').insert({
+          collaborator_id: collab.id,
+          direction: 'outbound',
+          content: msg,
+        });
+        results.push({ collab_id: collab.id, collab_name: collab.full_name, template_id: template.id, template_name: template.name, completion_id: completion.id, reason: 'dispatched', would_dispatch: true });
+      } catch (sendErr) {
+        console.error(`[dispatchChecklists] sendMessage collab=${collab.id}:`, sendErr.message);
+        results.push({ collab_id: collab.id, template_id: template.id, reason: 'send_failed', would_dispatch: false });
+      }
+    }
+  }
+
+  if (results.length) console.log('[dispatchChecklists]', JSON.stringify(results));
+  return results;
+}
+
+// Sprint 13 F3 — Audience-to-jobs helper. Mirrors Fatia 1 audience query logic.
+async function createJobsFromAudience(announcementId, audience) {
+  let q = supabase.from('collaborators').select('id, phone').not('phone', 'is', null);
+  const aud = audience || {};
+  if (aud.all !== true) {
+    if (Array.isArray(aud.function_role) && aud.function_role.length) q = q.in('role', aud.function_role);
+    if (Array.isArray(aud.unidade) && aud.unidade.length) q = q.in('unit', aud.unidade);
+    if (Array.isArray(aud.turno) && aud.turno.length) q = q.in('shift', aud.turno);
+  }
+  const { data: recipients, error } = await q;
+  if (error) {
+    console.error('[createJobsFromAudience] erro buscando recipients:', error.message);
+    return 0;
+  }
+  if (!recipients || recipients.length === 0) return 0;
+  const jobs = recipients.map(r => ({
+    announcement_id: announcementId,
+    recipient_id: r.id,
+    phone: r.phone,
+    status: 'pending',
+    retry_count: 0,
+  }));
+  const { error: jobErr } = await supabase.from('announcement_jobs').insert(jobs);
+  if (jobErr) {
+    console.error('[createJobsFromAudience] erro INSERT jobs:', jobErr.message);
+    return 0;
+  }
+  return jobs.length;
+}
+
+// Sprint 13 F3 — Notifica coordenadores sobre aprovação/rejeição pelo diretor (via PWA).
+// Chamado a cada tick antes de dispatchAnnouncements para garantir que jobs existam quando
+// o broadcaster os pegar.
+async function notifyCoordinators() {
+  const whatsapp = require('../services/whatsapp');
+
+  const { data: rows, error } = await supabase
+    .from('announcements')
+    .select(`
+      id, status, audience, created_by, reviewed_by, rejection_reason,
+      author:collaborators!created_by(id, full_name, phone),
+      reviewer:collaborators!reviewed_by(id, full_name)
+    `)
+    .in('status', ['scheduled', 'rejected'])
+    .not('reviewed_by', 'is', null)
+    .is('coordinator_notified_at', null)
+    .limit(20);
+
+  if (error) {
+    console.error('[notifyCoordinators] erro buscando:', error.message);
+    return;
+  }
+  if (!rows || rows.length === 0) return;
+
+  for (const ann of rows) {
+    const author = ann.author;
+    const reviewer = ann.reviewer;
+
+    // Para anúncios aprovados (scheduled): garantir que jobs existam antes do broadcaster
+    if (ann.status === 'scheduled') {
+      const { data: existingJobs, error: jobCheckErr } = await supabase
+        .from('announcement_jobs')
+        .select('id')
+        .eq('announcement_id', ann.id)
+        .limit(1);
+
+      if (!jobCheckErr && (!existingJobs || existingJobs.length === 0)) {
+        const created = await createJobsFromAudience(ann.id, ann.audience);
+        if (created === 0 && (ann.audience?.all === true || Object.keys(ann.audience || {}).length > 0)) {
+          console.warn(`[notifyCoordinators] nenhum recipient para announcement ${ann.id} — broadcaster vai marcar como sent`);
+        }
+      }
+    }
+
+    if (!author?.phone) {
+      // Sem phone — só marca como notificado para não tentar de novo
+      await supabase
+        .from('announcements')
+        .update({ coordinator_notified_at: new Date().toISOString() })
+        .eq('id', ann.id);
+      continue;
+    }
+
+    let msg;
+    if (ann.status === 'scheduled') {
+      msg = `✅ Seu comunicado foi aprovado${reviewer?.full_name ? ' por ' + reviewer.full_name : ''} e será enviado em breve.`;
+    } else {
+      const motivoStr = ann.rejection_reason ? `Motivo: "${ann.rejection_reason}"` : 'Sem motivo informado.';
+      msg = `❌ Seu comunicado foi rejeitado${reviewer?.full_name ? ' por ' + reviewer.full_name : ''}. ${motivoStr}`;
+    }
+
+    try {
+      await whatsapp.sendMessage(author.phone, msg);
+      await supabase
+        .from('announcements')
+        .update({ coordinator_notified_at: new Date().toISOString() })
+        .eq('id', ann.id);
+    } catch (err) {
+      console.error(`[notifyCoordinators] falha enviando para ${author.phone}:`, err.message);
+      // Não marca como notificado — tenta de novo no próximo tick
+    }
+  }
+}
+
+// Sprint 13 F1 — Cancel + retraction handler.
+// Chamado a cada tick: (a) cancela jobs pending de anúncios cancelados,
+// (b) envia mensagem de retratação para quem já recebeu.
+async function handleCancellations(whatsapp) {
+  const { data: cancelled, error } = await supabase
+    .from('announcements')
+    .select('id')
+    .eq('status', 'cancelled')
+    .eq('cancel_retraction_sent', false);
+  if (error) { console.error('[dispatchAnnouncements] cancel query err:', error.message); return; }
+  if (!cancelled || cancelled.length === 0) return;
+
+  for (const ann of cancelled) {
+    // Para jobs pendentes
+    await supabase.from('announcement_jobs')
+      .update({ status: 'cancelled' })
+      .eq('announcement_id', ann.id)
+      .eq('status', 'pending');
+
+    // Retratação para jobs já enviados
+    const { data: sentJobs } = await supabase
+      .from('announcement_jobs')
+      .select('phone')
+      .eq('announcement_id', ann.id)
+      .eq('status', 'sent');
+
+    for (const job of (sentJobs || [])) {
+      try {
+        await whatsapp.sendMessage(job.phone, '[LA Music] — O comunicado anterior foi cancelado. Por favor, desconsidere.');
+      } catch (err) {
+        console.error('[dispatchAnnouncements] retraction send err:', err.message);
+      }
+    }
+
+    await supabase.from('announcements')
+      .update({ cancel_retraction_sent: true })
+      .eq('id', ann.id);
+
+    console.log(`[dispatchAnnouncements] cancellation handled for announcement=${ann.id.slice(0,8)}`);
+  }
+}
+
+// Sprint 14 Fatia 2 — lembretes T-1 para tasks de evento
+async function remindEventTasks(now = new Date()) {
+  const whatsapp = require('../services/whatsapp');
+  const nowIso = now.toISOString();
+
+  const { data: tasks, error } = await supabase
+    .from('tasks')
+    .select(`
+      id, title, assigned_to, school_event_id,
+      collaborator:assigned_to ( phone, full_name ),
+      event:school_event_id ( title )
+    `)
+    .not('school_event_id', 'is', null)
+    .in('status', ['pending', 'in_progress'])
+    .lte('remind_at', nowIso)
+    .is('reminded_at', null);
+
+  if (error) {
+    console.error('[remindEventTasks] query err:', error.message);
+    return;
+  }
+  if (!tasks || tasks.length === 0) return;
+
+  for (const task of tasks) {
+    const phone = task.collaborator?.phone;
+    if (!phone) {
+      // Marca como notificado mesmo sem phone — evita reprocessamento infinito
+      await supabase.from('tasks').update({ reminded_at: nowIso }).eq('id', task.id);
+      continue;
+    }
+    const firstName = (task.collaborator?.full_name || '').split(' ')[0];
+    const eventTitle = task.event?.title || 'evento';
+    const greeting = firstName ? `${firstName}, ` : '';
+    const msg = `⏰ ${greeting}lembrete: *${task.title}* (evento *${eventTitle}*) é amanhã. Tudo certo da sua parte?`;
+
+    try {
+      await whatsapp.sendMessage(phone, msg);
+      await supabase.from('tasks').update({ reminded_at: nowIso }).eq('id', task.id);
+      console.log(`[remindEventTasks] sent task=${task.id.slice(0, 8)} → ${phone.slice(-4)}`);
+    } catch (err) {
+      console.error(`[remindEventTasks] send err task=${task.id.slice(0, 8)}:`, err.message);
+      // Não marca reminded_at — tenta novamente no próximo tick
+    }
+  }
+}
+
+// Sprint 15 F4 — Checklist com consequência: itens flagged como não-feito que tenham
+// generates_request_type_id viram tasks operacionais automáticas.
+// Roda a cada tick. Idempotência via lookup em tasks.notes (contém completion_id + item_id).
+async function checkChecklistConsequences(now = new Date()) {
+  // Olhar completions dos últimos 30 minutos (cobrindo possíveis falhas de tick anterior)
+  const cutoff = new Date(now.getTime() - 30 * 60 * 1000).toISOString();
+
+  const { data: itemCompletions, error } = await supabase
+    .from('op_checklist_item_completions')
+    .select(`
+      id, item_id, completion_id, is_checked, created_at,
+      item:op_checklist_items!op_checklist_item_completions_item_id_fkey(
+        id, description, generates_request_type_id, checklist_id
+      ),
+      completion:op_checklist_completions!op_checklist_item_completions_completion_id_fkey(
+        id, collaborator_id, reference_date,
+        op_checklists!op_checklist_completions_checklist_id_fkey(name)
+      )
+    `)
+    .eq('is_checked', false)
+    .gte('created_at', cutoff);
+  if (error) {
+    console.error('[checkChecklistConsequences] query err:', error.message);
+    return;
+  }
+  if (!itemCompletions || itemCompletions.length === 0) return;
+
+  for (const ic of itemCompletions) {
+    if (!ic.item?.generates_request_type_id) continue;
+
+    // Idempotência: existe task com notes contendo este completion_id+item_id?
+    const sentinel = `cic:${ic.id}`;
+    const { data: existingTask } = await supabase
+      .from('tasks')
+      .select('id')
+      .ilike('notes', `%${sentinel}%`)
+      .limit(1)
+      .maybeSingle();
+    if (existingTask) {
+      continue; // Já gerada
+    }
+
+    // Buscar request_type
+    const { data: rtype } = await supabase
+      .from('department_request_types')
+      .select('id, department_id, label, default_priority, generates_task, is_active')
+      .eq('id', ic.item.generates_request_type_id)
+      .maybeSingle();
+    if (!rtype || !rtype.is_active || !rtype.generates_task) continue;
+
+    // Buscar default responsible do departamento
+    const { data: dept } = await supabase
+      .from('departments')
+      .select('id, default_responsible_id, is_active')
+      .eq('id', rtype.department_id)
+      .maybeSingle();
+    if (!dept || !dept.is_active) continue;
+    const assignedTo = dept.default_responsible_id || ic.completion?.collaborator_id;
+    if (!assignedTo) continue;
+
+    // Criar task
+    const checklistName = ic.completion?.op_checklists?.name || 'Checklist';
+    const itemDescription = ic.item.description || 'Item flagged';
+    const todayBrt = new Date(now.getTime() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+    const taskRow = {
+      title: `[Auto] ${itemDescription.slice(0, 100)}`,
+      description: `Gerado automaticamente por checklist "${checklistName}". Item flagged como não-concluído.`,
+      assigned_to: assignedTo,
+      created_by: ic.completion?.collaborator_id || assignedTo,
+      due_date: todayBrt,
+      status: 'pending',
+      source: 'system',
+      context: 'work',
+      priority: rtype.default_priority || 'medium',
+      department_id: rtype.department_id,
+      request_type_id: rtype.id,
+      notes: `cic:${ic.id} | item:${ic.item.id} | completion:${ic.completion?.id || '-'} | reference_date:${ic.completion?.reference_date || '-'}`,
+    };
+
+    const { data: created, error: insErr } = await supabase
+      .from('tasks')
+      .insert(taskRow)
+      .select('id')
+      .single();
+    if (insErr) {
+      console.error(`[checkChecklistConsequences] task create err item=${ic.item_id?.slice(0,8)}:`, insErr.message);
+      continue;
+    }
+    console.log(`[checkChecklistConsequences] task created from checklist item=${ic.item_id?.slice(0,8)} → task=${created?.id?.slice(0,8)} dept=${rtype.department_id?.slice(0,8)} rt=${rtype.label}`);
+  }
+}
+
+// Sprint 15 F4 — Briefing operacional semanal por departamento
+// Roda toda segunda-feira 07:30 BRT, dispara WhatsApp ao default_responsible_id de cada
+// departamento ativo com fila aberta (pending/in_progress/awaiting_confirmation).
+// Idempotente via ritual_logs (ritual_type='dept_operational_briefing', reference_date=hoje).
+async function checkDepartmentOperational(now = new Date()) {
+  const whatsapp = require('../services/whatsapp');
+
+  // Janela: segunda-feira BRT entre 07:25 e 07:35
+  // BRT = UTC-3 → janela em UTC: 10:25-10:35 (segunda-feira BRT)
+  // Se segunda BRT começa às 03:00 UTC e termina às 02:59 UTC do dia seguinte,
+  // mas para 07:30 BRT, o UTC é 10:30, sempre na mesma data UTC. Janela em UTC:
+  const utcHour = now.getUTCHours();
+  const utcMinute = now.getUTCMinutes();
+  // BRT day-of-week:
+  const brtMs = now.getTime() - 3 * 60 * 60 * 1000;
+  const brtDate = new Date(brtMs);
+  const brtDow = brtDate.getUTCDay(); // 0 Sun..1 Mon..6 Sat
+  const inWindow = (utcHour === 10 && utcMinute >= 25 && utcMinute <= 35);
+  if (brtDow !== 1 || !inWindow) return; // Só segunda 07:25-07:35 BRT
+
+  const todayBrt = brtDate.toISOString().slice(0, 10);
+
+  // Listar departamentos ativos com responsável padrão
+  const { data: depts, error: dErr } = await supabase
+    .from('departments')
+    .select('id, slug, name, default_responsible_id')
+    .eq('is_active', true)
+    .not('default_responsible_id', 'is', null);
+  if (dErr) {
+    console.error('[checkDepartmentOperational] depts query err:', dErr.message);
+    return;
+  }
+  if (!depts || depts.length === 0) return;
+
+  for (const dept of depts) {
+    // Idempotência: já mandou hoje pra esse responsável?
+    const { data: existing } = await supabase
+      .from('ritual_logs')
+      .select('id')
+      .eq('collaborator_id', dept.default_responsible_id)
+      .eq('ritual_type', 'dept_operational_briefing')
+      .eq('reference_date', todayBrt)
+      .limit(1)
+      .maybeSingle();
+    if (existing) {
+      continue;
+    }
+
+    // Buscar fila aberta do departamento
+    const { data: tasks, error: tErr } = await supabase
+      .from('tasks')
+      .select('id, title, priority, status, request_type_id')
+      .eq('department_id', dept.id)
+      .in('status', ['pending', 'in_progress', 'awaiting_confirmation']);
+    if (tErr) {
+      console.error(`[checkDepartmentOperational] tasks query err (dept=${dept.slug}):`, tErr.message);
+      continue;
+    }
+    const queue = tasks || [];
+
+    // Buscar dados do responsável (phone, full_name)
+    const { data: resp } = await supabase
+      .from('collaborators')
+      .select('id, full_name, phone, is_active')
+      .eq('id', dept.default_responsible_id)
+      .maybeSingle();
+    if (!resp || !resp.is_active || !resp.phone) {
+      console.warn(`[checkDepartmentOperational] dept=${dept.slug} responsible inactive or no phone — skip`);
+      continue;
+    }
+
+    // Contadores por prioridade
+    const counts = { critical: 0, high: 0, medium: 0, low: 0 };
+    for (const t of queue) {
+      if (counts[t.priority] !== undefined) counts[t.priority]++;
+    }
+
+    const firstName = (resp.full_name || '').split(' ')[0];
+    const greeting = firstName ? `Bom dia, ${firstName}!` : 'Bom dia!';
+
+    let body;
+    if (queue.length === 0) {
+      body = `🔧 *${dept.name} — Briefing da semana*\n${greeting}\n\nFila vazia: nenhuma demanda aberta. Boa semana!`;
+    } else {
+      const lines = [
+        `🔧 *${dept.name} — Briefing da semana*`,
+        greeting,
+        '',
+        `Você tem *${queue.length}* demanda${queue.length === 1 ? '' : 's'} aberta${queue.length === 1 ? '' : 's'}:`,
+      ];
+      if (counts.critical > 0) lines.push(`🔴 ${counts.critical} crítica${counts.critical === 1 ? '' : 's'}`);
+      if (counts.high > 0) lines.push(`🟠 ${counts.high} alta${counts.high === 1 ? '' : 's'}`);
+      if (counts.medium > 0) lines.push(`🟡 ${counts.medium} média${counts.medium === 1 ? '' : 's'}`);
+      if (counts.low > 0) lines.push(`🟢 ${counts.low} baixa${counts.low === 1 ? '' : 's'}`);
+      lines.push('', 'Acesse o app para ver detalhes: https://la-organizer.vercel.app/mais/operacoes');
+      body = lines.join('\n');
+    }
+
+    try {
+      await whatsapp.sendMessage(resp.phone, body);
+      const detail = JSON.stringify({
+        department_slug: dept.slug,
+        queue_count: queue.length,
+        counts,
+        task_ids: queue.map(t => t.id),
+      });
+      await supabase.from('ritual_logs').insert({
+        collaborator_id: resp.id,
+        ritual_type: 'dept_operational_briefing',
+        reference_date: todayBrt,
+        status: 'sent',
+        detail,
+      });
+      console.log(`[checkDepartmentOperational] sent dept=${dept.slug} → ${resp.phone.slice(-4)} (${queue.length} tasks)`);
+    } catch (err) {
+      console.error(`[checkDepartmentOperational] send err dept=${dept.slug}:`, err.message);
+    }
+  }
+}
+
+// Sprint 13 F1 — Broadcast dispatcher. Chamado a cada tick do cron.
+// Processa 1 job por tick (rate = 1 msg/min, anti-ban Meta).
+// Ordem FIFO por created_at.
+async function dispatchAnnouncements(now = new Date()) {
+  const whatsapp = require('../services/whatsapp');
+  const nowIso = now instanceof Date ? now.toISOString() : new Date().toISOString();
+
+  // 1. Anúncios prontos para enviar
+  const { data: ready, error: rErr } = await supabase
+    .from('announcements')
+    .select('id, body, status')
+    .in('status', ['scheduled', 'sending'])
+    .or(`scheduled_at.is.null,scheduled_at.lte.${nowIso}`);
+  if (rErr) { console.error('[dispatchAnnouncements] ready query err:', rErr.message); }
+
+  if (ready && ready.length > 0) {
+    const annIds = ready.map(a => a.id);
+    const byId = new Map(ready.map(a => [a.id, a]));
+
+    // 2. Pegar 1 job pending (FIFO)
+    const { data: job, error: jErr } = await supabase
+      .from('announcement_jobs')
+      .select('id, announcement_id, phone, retry_count')
+      .eq('status', 'pending')
+      .in('announcement_id', annIds)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (jErr) console.error('[dispatchAnnouncements] job query err:', jErr.message);
+
+    if (job) {
+      const ann = byId.get(job.announcement_id);
+      try {
+        await whatsapp.sendMessage(job.phone, ann.body);
+        await supabase.from('announcement_jobs')
+          .update({ status: 'sent', sent_at: nowIso })
+          .eq('id', job.id);
+
+        // Primeiro job do anúncio: scheduled → sending
+        if (ann.status === 'scheduled') {
+          await supabase.from('announcements')
+            .update({ status: 'sending', updated_at: nowIso })
+            .eq('id', ann.id);
+        }
+
+        // Verificar se é o último job pendente
+        const { count } = await supabase
+          .from('announcement_jobs')
+          .select('id', { count: 'exact', head: true })
+          .eq('announcement_id', ann.id)
+          .eq('status', 'pending');
+        if (count === 0) {
+          await supabase.from('announcements')
+            .update({ status: 'sent', updated_at: nowIso })
+            .eq('id', ann.id);
+          console.log(`[dispatchAnnouncements] announcement=${ann.id.slice(0,8)} fully sent`);
+        }
+
+        console.log(`[dispatchAnnouncements] sent job=${job.id.slice(0,8)} → ${job.phone.slice(-4)}`);
+      } catch (err) {
+        const newRetry = (job.retry_count || 0) + 1;
+        const updates = newRetry >= 3
+          ? { status: 'failed', error: err.message.slice(0, 200), retry_count: newRetry }
+          : { retry_count: newRetry, error: err.message.slice(0, 200) };
+        await supabase.from('announcement_jobs').update(updates).eq('id', job.id);
+        console.error(`[dispatchAnnouncements] send err job=${job.id.slice(0,8)}:`, err.message);
+      }
+    }
+  }
+
+  // 3. Tratar cancelamentos (todo tick)
+  await handleCancellations(whatsapp);
+}
+
 /**
  * Executa o dispatcher.
  * @param {object} opts
@@ -382,6 +998,48 @@ async function run(opts = {}) {
     } catch (err) {
       console.error('[Dispatcher] checkAdherenceNudge erro:', err.message);
     }
+  }
+
+  // Sprint 11 F2+ — checklists operacionais diários
+  try {
+    await dispatchChecklists(new Date(), { filterPhone: opts.phone || null });
+  } catch (err) {
+    console.error('[Dispatcher] dispatchChecklists erro:', err.message);
+  }
+
+  // Sprint 13 F3 — notifica coordenadores sobre aprovação/rejeição (via PWA) e cria jobs
+  try {
+    await notifyCoordinators();
+  } catch (err) {
+    console.error('[Dispatcher] notifyCoordinators erro:', err.message);
+  }
+
+  // Sprint 14 F2 — lembretes T-1 de tasks de evento
+  try {
+    await remindEventTasks(new Date());
+  } catch (err) {
+    console.error('[Dispatcher] remindEventTasks erro:', err.message);
+  }
+
+  // Sprint 15 F4 — Checklist com consequência (gera tasks automáticas)
+  try {
+    await checkChecklistConsequences(new Date());
+  } catch (err) {
+    console.error('[Dispatcher] checkChecklistConsequences erro:', err.message);
+  }
+
+  // Sprint 15 F4 — Briefing operacional semanal por departamento (segunda 07:30 BRT)
+  try {
+    await checkDepartmentOperational(new Date());
+  } catch (err) {
+    console.error('[Dispatcher] checkDepartmentOperational erro:', err.message);
+  }
+
+  // Sprint 13 F1 — comunicados internos (broadcast queue)
+  try {
+    await dispatchAnnouncements(new Date());
+  } catch (err) {
+    console.error('[Dispatcher] dispatchAnnouncements erro:', err.message);
   }
 }
 
@@ -904,4 +1562,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { run, parseOnboardingMarker: undefined };
+module.exports = { run, dispatchChecklists, dispatchAnnouncements, notifyCoordinators, remindEventTasks, checkDepartmentOperational, checkChecklistConsequences, parseOnboardingMarker: undefined };

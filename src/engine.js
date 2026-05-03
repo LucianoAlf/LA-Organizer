@@ -12,6 +12,23 @@ const supabase = require('./supabase/client');
 
 const SKILLS_DIR = path.join(__dirname, '..', 'skills');
 
+// Sprint 13 F3 T3 — Helper: converte objeto audience em string legível para humanos.
+function describeAudience(audience) {
+  if (!audience) return 'sem público';
+  if (audience.all === true) return 'Escola toda';
+  const parts = [];
+  if (Array.isArray(audience.function_role) && audience.function_role.length) {
+    parts.push(`função: ${audience.function_role.join(', ')}`);
+  }
+  if (Array.isArray(audience.unidade) && audience.unidade.length) {
+    parts.push(`unidade: ${audience.unidade.join(', ')}`);
+  }
+  if (Array.isArray(audience.turno) && audience.turno.length) {
+    parts.push(`turno: ${audience.turno.join(', ')}`);
+  }
+  return parts.length ? parts.join(' | ') : 'público customizado';
+}
+
 const ONBOARDING_DEFAULTS = {
   briefing_time: '08:00',
   closing_time: '19:00',
@@ -325,6 +342,735 @@ function parseCheckpointBatchMarker(text) {
   if (dropped.length) logSchemaErr('CHECKPOINT_BATCH', dropped, parsed);
   if (!valid.length) return { malformed: true, cleanText };
   return { project_id, project_name, items: valid, cleanText, malformed: false };
+}
+
+// Sprint 11 F2+ — Marker <<CHECKLIST_ACTION>>. TOM emite quando colaborador
+// responde a checklist operacional enviado pelo cron. Persiste em
+// op_checklist_item_completions com canal 'whatsapp'. Valida completion_id
+// (uuid) e array items com { item_id, done }.
+function parseChecklistActionMarker(text) {
+  if (!text) return null;
+  const re = /<<CHECKLIST_ACTION>>\s*([\s\S]*?)\s*<<END>>/i;
+  const m = text.match(re);
+  if (!m) return null;
+  const cleanText = text.replace(re, '').trim();
+  let parsed;
+  try {
+    parsed = JSON.parse(m[1].trim());
+  } catch (err) {
+    logSchemaErr('CHECKLIST_ACTION', ['invalid_json: ' + err.message], m[1]);
+    return { malformed: true, cleanText };
+  }
+  if (!parsed || typeof parsed !== 'object') return { malformed: true, cleanText };
+
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  if (!parsed.completion_id || !UUID_RE.test(parsed.completion_id)) {
+    logSchemaErr('CHECKLIST_ACTION', ['completion_id:missing_or_invalid'], parsed);
+    return { malformed: true, cleanText };
+  }
+  if (!Array.isArray(parsed.items) || parsed.items.length === 0) {
+    logSchemaErr('CHECKLIST_ACTION', ['items:empty_or_not_array'], parsed);
+    return { malformed: true, cleanText };
+  }
+  const valid = [];
+  const dropped = [];
+  for (let i = 0; i < parsed.items.length; i++) {
+    const item = parsed.items[i];
+    if (!item.item_id || !UUID_RE.test(item.item_id)) {
+      dropped.push(`item[${i}]:item_id_invalid`);
+    } else if (typeof item.done !== 'boolean') {
+      dropped.push(`item[${i}]:done_not_boolean`);
+    } else {
+      valid.push(item);
+    }
+  }
+  if (dropped.length) logSchemaErr('CHECKLIST_ACTION', dropped, parsed);
+  if (!valid.length) return { malformed: true, cleanText };
+
+  return {
+    completion_id: parsed.completion_id,
+    items: valid,
+    channel: ['pwa', 'whatsapp'].includes(parsed.channel) ? parsed.channel : 'whatsapp',
+    cleanText,
+    malformed: false,
+  };
+}
+
+async function applyChecklistAction(collaborator, parsed) {
+  const { completion_id, items, channel } = parsed;
+
+  // 1. Busca completion + checklist (threshold)
+  // NOTE: real column is 'checklist_id', not 'template_id'
+  const { data: completion, error: fetchErr } = await supabase
+    .from('op_checklist_completions')
+    .select('id, dispatched_at, completed_at, checklist_id, op_checklists(completion_threshold)')
+    .eq('id', completion_id)
+    .eq('collaborator_id', collaborator.id)
+    .single();
+
+  if (fetchErr || !completion) {
+    console.warn(`[ChecklistAction] completion ${completion_id} not found for collab ${collaborator.id}`);
+    return { ok: false, reason: 'completion_not_found' };
+  }
+
+  // 2. Janela 6h
+  const now = new Date();
+  if (!completion.dispatched_at) {
+    console.warn(`[ChecklistAction] completion ${completion_id} has no dispatched_at — treating window as open`);
+  }
+  const dispatchedAt = completion.dispatched_at ? new Date(completion.dispatched_at) : now;
+  const windowEnd = new Date(dispatchedAt.getTime() + 6 * 60 * 60 * 1000);
+  const isLate = now > windowEnd;
+
+  // 3. UPSERT cada item
+  for (const item of items) {
+    const { error } = await supabase
+      .from('op_checklist_item_completions')
+      .upsert(
+        {
+          completion_id,
+          item_id: item.item_id,
+          is_checked: item.done,
+          channel: channel || 'whatsapp',
+          late: isLate,
+        },
+        { onConflict: 'completion_id,item_id' }
+      );
+    if (error) console.warn(`[ChecklistAction] upsert item ${item.item_id}:`, error.message);
+  }
+
+  // 4. Recalcular progresso
+  // NOTE: real column is 'checklist_id', not 'template_id'
+  const { count: totalCount } = await supabase
+    .from('op_checklist_items')
+    .select('id', { count: 'exact', head: true })
+    .eq('checklist_id', completion.checklist_id);
+
+  const { count: doneCount } = await supabase
+    .from('op_checklist_item_completions')
+    .select('id', { count: 'exact', head: true })
+    .eq('completion_id', completion_id)
+    .eq('is_checked', true);
+
+  const threshold = completion.op_checklists?.completion_threshold ?? 80;
+  const pct = totalCount > 0 ? Math.round(((doneCount ?? 0) / totalCount) * 100) : 0;
+
+  // 5. Marcar completed_at se threshold atingido
+  if (pct >= threshold && !completion.completed_at) {
+    await supabase
+      .from('op_checklist_completions')
+      .update({ completed_at: now.toISOString() })
+      .eq('id', completion_id);
+  }
+
+  return { ok: true, pct, doneCount: doneCount ?? 0, totalCount: totalCount ?? 0, isLate, threshold };
+}
+
+// Sprint 13 F1 — Marker <<ANNOUNCEMENT_ACTION>>. TOM emite quando director/coordinator
+// confirma criação ou cancelamento de comunicado interno. Persiste em announcements
+// e announcement_jobs (create) ou seta status=cancelled (cancel).
+function parseAnnouncementActionMarker(text) {
+  if (!text) return null;
+  const re = /<<ANNOUNCEMENT_ACTION>>\s*([\s\S]*?)\s*<<END>>/i;
+  const m = text.match(re);
+  if (!m) return null;
+  const cleanText = text.replace(re, '').trim();
+  let parsed;
+  try {
+    parsed = JSON.parse(m[1].trim());
+  } catch (err) {
+    logSchemaErr('ANNOUNCEMENT_ACTION', ['invalid_json: ' + err.message], m[1]);
+    return { malformed: true, cleanText };
+  }
+  if (!parsed || typeof parsed !== 'object') return { malformed: true, cleanText };
+  if (!['create', 'cancel'].includes(parsed.action)) {
+    logSchemaErr('ANNOUNCEMENT_ACTION', ['action:invalid'], parsed);
+    return { malformed: true, cleanText };
+  }
+  if (parsed.action === 'create') {
+    if (!parsed.body || typeof parsed.body !== 'string' || !parsed.body.trim()) {
+      logSchemaErr('ANNOUNCEMENT_ACTION', ['body:missing_or_empty'], parsed);
+      return { malformed: true, cleanText };
+    }
+  }
+  return { ...parsed, cleanText, malformed: false };
+}
+
+// Sprint 13 F3 T4 — Marker <<ANNOUNCEMENT_APPROVAL>>. TOM emite quando director aprova/rejeita comunicado pendente.
+function parseAnnouncementApprovalMarker(text) {
+  if (!text || typeof text !== 'string') return null;
+  const m = text.match(/<<ANNOUNCEMENT_APPROVAL>>\s*([\s\S]*?)\s*<<END>>/i);
+  if (!m) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(m[1]);
+  } catch (err) {
+    console.warn('[parseAnnouncementApprovalMarker] JSON inválido:', err.message);
+    return null;
+  }
+  if (!['approve', 'reject'].includes(parsed.action)) return null;
+  if (typeof parsed.announcement_id !== 'string' || !parsed.announcement_id.trim()) return null;
+  if (parsed.reason !== undefined && parsed.reason !== null && typeof parsed.reason !== 'string') {
+    parsed.reason = null;
+  }
+  return {
+    action: parsed.action,
+    announcement_id: parsed.announcement_id.trim(),
+    reason: parsed.reason ?? null,
+  };
+}
+
+async function createAnnouncementJobs(ann) {
+  let q = supabase.from('collaborators').select('id, phone').not('phone', 'is', null);
+  const aud = ann.audience || {};
+  if (aud.all !== true) {
+    if (Array.isArray(aud.function_role) && aud.function_role.length) q = q.in('role', aud.function_role);
+    if (Array.isArray(aud.unidade) && aud.unidade.length) q = q.in('unit', aud.unidade);
+    if (Array.isArray(aud.turno) && aud.turno.length) q = q.in('shift', aud.turno);
+  }
+  const { data: recipients, error: recErr } = await q;
+  if (recErr) return { count: 0, error: recErr.message };
+  if (!recipients || recipients.length === 0) return { count: 0, error: null };
+  const jobs = recipients.map(r => ({
+    announcement_id: ann.id,
+    recipient_id: r.id,
+    phone: r.phone,
+    status: 'pending',
+    retry_count: 0,
+  }));
+  const { error: jobErr } = await supabase.from('announcement_jobs').insert(jobs);
+  if (jobErr) return { count: 0, error: jobErr.message };
+  return { count: jobs.length, error: null };
+}
+
+async function notifyCoordinatorOfDecision(ann, director, action, reason) {
+  const { data: coord, error } = await supabase
+    .from('collaborators')
+    .select('phone, full_name')
+    .eq('id', ann.created_by)
+    .single();
+  if (error || !coord || !coord.phone) {
+    console.warn('[notifyCoordinatorOfDecision] coordinator sem phone, pulando notificação');
+    return;
+  }
+  let msg;
+  if (action === 'approve') {
+    msg = `✅ Seu comunicado foi aprovado por ${director.full_name} e será enviado em breve.`;
+  } else {
+    const motivoStr = reason ? `Motivo: "${reason}"` : 'Sem motivo informado.';
+    msg = `❌ Seu comunicado foi rejeitado por ${director.full_name}. ${motivoStr}`;
+  }
+  try {
+    await whatsapp.sendMessage(coord.phone, msg);
+    await supabase
+      .from('announcements')
+      .update({ coordinator_notified_at: new Date().toISOString() })
+      .eq('id', ann.id);
+  } catch (err) {
+    console.error('[notifyCoordinatorOfDecision] erro enviando WhatsApp:', err.message);
+  }
+}
+
+async function applyAnnouncementApproval(collaborator, parsed) {
+  if (collaborator.role !== 'director') {
+    return { ok: false, reason: 'Apenas diretores podem aprovar ou rejeitar comunicados.' };
+  }
+
+  const idValue = parsed.announcement_id;
+  let query = supabase.from('announcements').select('*');
+  if (idValue.length === 4) {
+    query = query.filter('id::text', 'ilike', `${idValue}%`);
+  } else {
+    query = query.eq('id', idValue);
+  }
+
+  const { data: rows, error: queryErr } = await query
+    .eq('status', 'pending_approval')
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  if (queryErr) {
+    console.error('[applyAnnouncementApproval] erro buscando announcement:', queryErr.message);
+    return { ok: false, reason: 'Erro ao buscar o comunicado. Tenta de novo.' };
+  }
+  if (!rows || rows.length === 0) {
+    return { ok: false, reason: `Comunicado \`${idValue}\` não encontrado ou já foi aprovado/rejeitado.` };
+  }
+
+  const ann = rows[0];
+
+  if (ann.created_by === collaborator.id) {
+    return { ok: false, reason: 'Você não pode aprovar seu próprio comunicado.' };
+  }
+
+  if (parsed.action === 'approve') {
+    const { error: updErr } = await supabase
+      .from('announcements')
+      .update({
+        status: 'scheduled',
+        reviewed_by: collaborator.id,
+      })
+      .eq('id', ann.id);
+    if (updErr) {
+      console.error('[applyAnnouncementApproval] erro UPDATE approve:', updErr.message);
+      return { ok: false, reason: 'Erro ao aprovar o comunicado.' };
+    }
+
+    const jobsResult = await createAnnouncementJobs(ann);
+    if (jobsResult.error) {
+      console.error('[applyAnnouncementApproval] erro criando jobs após aprovação:', jobsResult.error);
+    }
+
+    await notifyCoordinatorOfDecision(ann, collaborator, 'approve', null);
+
+    return { ok: true, action: 'approved', announcement_id: ann.id, recipient_count: jobsResult.count, jobs_error: jobsResult.error ?? null };
+  }
+
+  if (parsed.action === 'reject') {
+    const reason = parsed.reason || null;
+    const { error: updErr } = await supabase
+      .from('announcements')
+      .update({
+        status: 'rejected',
+        reviewed_by: collaborator.id,
+        rejection_reason: reason,
+      })
+      .eq('id', ann.id);
+    if (updErr) {
+      console.error('[applyAnnouncementApproval] erro UPDATE reject:', updErr.message);
+      return { ok: false, reason: 'Erro ao rejeitar o comunicado.' };
+    }
+
+    await notifyCoordinatorOfDecision(ann, collaborator, 'reject', reason);
+
+    return { ok: true, action: 'rejected', announcement_id: ann.id };
+  }
+
+  return { ok: false, reason: 'Ação inválida.' };
+}
+
+async function applyAnnouncementAction(collaborator, parsed) {
+  const { action, body, audience, scheduled_at, announcement_id } = parsed;
+
+  if (action === 'cancel') {
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    let annId = (announcement_id && announcement_id !== 'latest' && UUID_RE.test(announcement_id))
+      ? announcement_id
+      : null;
+    if (!annId) {
+      const { data } = await supabase
+        .from('announcements')
+        .select('id')
+        .eq('created_by', collaborator.id)
+        .in('status', ['scheduled', 'sending'])
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (!data) return { ok: false, reason: 'no_active_announcement' };
+      annId = data.id;
+    }
+    const { error } = await supabase
+      .from('announcements')
+      .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+      .eq('id', annId);
+    if (error) return { ok: false, reason: error.message };
+    return { ok: true, action: 'cancelled', announcement_id: annId };
+  }
+
+  if (action === 'create') {
+    // Sprint 13 F3 T3 — Coordinators go to pending_approval; directors go straight to scheduled.
+    const isCoordinator = collaborator.role === 'coordinator';
+
+    const { data: ann, error: annErr } = await supabase
+      .from('announcements')
+      .insert({
+        created_by: collaborator.id,
+        body: body.trim(),
+        audience: audience || { all: true },
+        status: isCoordinator ? 'pending_approval' : 'scheduled',
+        scheduled_at: scheduled_at || null,
+      })
+      .select('id')
+      .single();
+    if (annErr) return { ok: false, reason: annErr.message };
+
+    if (isCoordinator) {
+      // Buscar directors com phone
+      const { data: directors, error: dirErr } = await supabase
+        .from('collaborators')
+        .select('id, full_name, phone')
+        .eq('role', 'director')
+        .not('phone', 'is', null);
+
+      if (dirErr) {
+        console.error('[applyAnnouncementAction] Falha ao buscar directors:', dirErr.message);
+        // Don't compensating-delete the announcement — it's still valid in pending_approval and director can approve via PWA later.
+        return { ok: false, reason: dirErr.message, announcement_id: ann.id };
+      }
+
+      const shortId = ann.id.slice(0, 4);
+      const audienceStr = describeAudience(parsed.audience);
+      const bodyPreview = parsed.body.length > 80
+        ? parsed.body.slice(0, 80) + '...'
+        : parsed.body;
+
+      if (!directors || directors.length === 0) {
+        console.warn('[applyAnnouncementAction] Nenhum director com phone — comunicado fica em pending_approval para aprovação manual via PWA');
+        return { ok: true, action: 'pending_approval', announcement_id: ann.id, recipient_count: 0 };
+      }
+
+      for (const director of directors) {
+        try {
+          await whatsapp.sendMessage(director.phone, [
+            '📋 *Comunicado pendente de aprovação*',
+            `De: ${collaborator.full_name} (coordinator)`,
+            `Para: ${audienceStr}`,
+            `Mensagem: "${bodyPreview}"`,
+            `ID: \`${shortId}\``,
+            `Responda: APROVAR ${shortId} ou REJEITAR ${shortId} [motivo opcional]`,
+          ].join('\n'));
+        } catch (err) {
+          console.error(`[applyAnnouncementAction] Falha ao notificar director ${director.id}:`, err.message);
+        }
+      }
+
+      return { ok: true, action: 'pending_approval', announcement_id: ann.id, recipient_count: directors.length };
+    }
+
+    // Caso director (fluxo já existente) — buscar recipients e inserir jobs
+    let q = supabase
+      .from('collaborators')
+      .select('id, phone')
+      .eq('is_active', true)
+      .not('phone', 'is', null);
+
+    if (audience && !audience.all) {
+      if (audience.function_role?.length) q = q.in('function_role', audience.function_role);
+      if (audience.unidade?.length) q = q.in('unit', audience.unidade);
+      if (audience.turno?.length) q = q.in('shift', audience.turno);
+    }
+
+    const { data: recipients, error: rErr } = await q;
+    if (rErr) return { ok: false, reason: rErr.message };
+    if (!recipients || recipients.length === 0) return { ok: false, reason: 'no_recipients' };
+
+    const jobs = recipients.map(r => ({
+      announcement_id: ann.id,
+      recipient_id: r.id,
+      phone: r.phone,
+    }));
+    const { error: jobErr } = await supabase.from('announcement_jobs').insert(jobs);
+    if (jobErr) {
+      // compensate: remove the orphaned announcement row
+      await supabase.from('announcements').delete().eq('id', ann.id);
+      return { ok: false, reason: jobErr.message };
+    }
+
+    return { ok: true, action: 'created', announcement_id: ann.id, recipient_count: recipients.length };
+  }
+
+  return { ok: false, reason: 'unknown_action' };
+}
+
+// Sprint 13 F2 — Helper: gera specs de anúncio para cada etapa ativa do evento.
+// Recebe o registro school_events e a data/hora atual.
+// Retorna array de { body, audience, scheduled_at } para cada etapa habilitada.
+// scheduled_at null = envio imediato (broadcaster processa no próximo tick).
+// Timezone: BRT = UTC-3. T-3 às 09:00 BRT = UTC 12:00 do dia (event_date - 3d).
+function buildEventAnnouncementsNode(ev, now) {
+  const [y, m, d] = ev.event_date.split('-').map(Number);
+  const timeStr = ev.start_time ? ` às ${ev.start_time.slice(0, 5)}` : '';
+  const locStr = ev.location ? `, ${ev.location}` : '';
+  const dateBR = `${String(d).padStart(2,'0')}/${String(m).padStart(2,'0')}/${y}`;
+  // 09:00 BRT = 12:00 UTC (UTC-3)
+  const t3 = new Date(Date.UTC(y, m - 1, d - 3, 12, 0, 0));
+  const t1 = new Date(Date.UTC(y, m - 1, d - 1, 12, 0, 0));
+  const specs = [];
+  if (ev.notify_leadership) {
+    specs.push({
+      body: `📅 Novo evento: *${ev.title}* — ${dateBR}${timeStr}${locStr}`,
+      audience: { function_role: ['director', 'coordinator'] },
+      scheduled_at: null,
+    });
+  }
+  if (ev.notify_school) {
+    specs.push({
+      body: `📅 Em 3 dias: *${ev.title}* — ${dateBR}${timeStr}${locStr}`,
+      audience: { all: true },
+      scheduled_at: t3 > now ? t3.toISOString() : null,
+    });
+  }
+  if (ev.notify_unit) {
+    specs.push({
+      body: `📅 Amanhã: *${ev.title}* — ${dateBR}${timeStr}${locStr}`,
+      audience: ev.unit ? { unidade: [ev.unit] } : { all: true },
+      scheduled_at: t1 > now ? t1.toISOString() : null,
+    });
+  }
+  if (ev.notify_day_of) {
+    const t0 = new Date(Date.UTC(y, m - 1, d, 12, 0, 0)); // 09h BRT = 12h UTC
+    specs.push({
+      body: `📅 Hoje: *${ev.title}* — ${dateBR}${timeStr}${locStr}`,
+      audience: ev.unit ? { unidade: [ev.unit] } : { all: true },
+      scheduled_at: t0 > now ? t0.toISOString() : null,
+    });
+  }
+  return specs;
+}
+
+// ─── Sprint 14 Fatia 2 — Kits de tasks de evento ─────────────────────────────
+
+const TYPE_TO_FAMILY = {
+  show: 'performance', recital: 'performance',
+  workshop: 'aprendizagem', treinamento: 'aprendizagem', oficinas: 'aprendizagem',
+  reuniao: 'reuniao',
+  formatura: 'formatura',
+  evento: 'evento',
+};
+
+const EVENT_TASK_KITS = {
+  performance: [
+    { title: 'Confirmar local e montagem do espaço',          sector: 'logistica'   },
+    { title: 'Organizar lista de presença e convites',        sector: 'logistica'   },
+    { title: 'Testar equipamentos de som e iluminação',       sector: 'tecnica'     },
+    { title: 'Preparar roteiro técnico do evento',            sector: 'tecnica'     },
+    { title: 'Realizar ensaio geral com alunos',              sector: 'pedagogico'  },
+    { title: 'Confirmar repertório e ordem de apresentação',  sector: 'pedagogico'  },
+    { title: 'Divulgar evento (redes sociais e WhatsApp)',    sector: 'comunicacao' },
+    { title: 'Enviar convites para responsáveis',             sector: 'comunicacao' },
+    { title: 'Decoração e ambientação do espaço',             sector: 'producao'    },
+  ],
+  aprendizagem: [
+    { title: 'Confirmar sala e número de vagas',              sector: 'logistica'   },
+    { title: 'Preparar materiais e impressões',               sector: 'logistica'   },
+    { title: 'Verificar equipamentos audiovisuais',           sector: 'tecnica'     },
+    { title: 'Finalizar conteúdo e apostilas',                sector: 'pedagogico'  },
+    { title: 'Preparar dinâmica e exercícios práticos',       sector: 'pedagogico'  },
+    { title: 'Confirmar inscrições e presenças',              sector: 'comunicacao' },
+  ],
+  reuniao: [
+    { title: 'Confirmar sala e presença dos participantes',   sector: 'logistica'   },
+    { title: 'Preparar pauta da reunião',                     sector: 'pedagogico'  },
+    { title: 'Registrar ata durante a reunião',               sector: 'pedagogico'  },
+    { title: 'Convocar participantes com antecedência',       sector: 'comunicacao' },
+  ],
+  formatura: [
+    { title: 'Confirmar local e estrutura do espaço',         sector: 'logistica'   },
+    { title: 'Organizar lista de convidados e ingressos',     sector: 'logistica'   },
+    { title: 'Testar som, filmagem e fotografia',             sector: 'tecnica'     },
+    { title: 'Realizar ensaio da cerimônia com formandos',    sector: 'pedagogico'  },
+    { title: 'Preparar diplomas e certificados',              sector: 'pedagogico'  },
+    { title: 'Enviar convites e confirmar presenças',         sector: 'comunicacao' },
+    { title: 'Decoração e montagem do espaço',                sector: 'producao'    },
+    { title: 'Organizar homenagens e momentos especiais',     sector: 'producao'    },
+  ],
+  evento: [
+    { title: 'Confirmar local e estrutura',                   sector: 'logistica'   },
+    { title: 'Verificar equipamentos necessários',            sector: 'tecnica'     },
+    { title: 'Preparar conteúdo e programação',               sector: 'pedagogico'  },
+    { title: 'Divulgar e confirmar participantes',            sector: 'comunicacao' },
+    { title: 'Preparar ambientação do espaço',                sector: 'producao'    },
+  ],
+};
+
+const VALID_EVENT_TYPES = Object.keys(TYPE_TO_FAMILY);
+
+async function buildEventTaskKit(eventId, eventDate, eventType, unit, createdBy) {
+  const family = TYPE_TO_FAMILY[eventType];
+  if (!family) return { ok: true, count: 0 };
+
+  const kit = EVENT_TASK_KITS[family];
+  if (!kit || !kit.length) return { ok: true, count: 0 };
+
+  // Buscar mapa de equipe da unidade (vazio se evento for "escola toda" sem unit)
+  const teamMap = {};
+  if (unit) {
+    const { data: mapRows } = await supabase
+      .from('event_team_map')
+      .select('sector, collaborator_id')
+      .eq('unit', unit);
+    for (const row of mapRows || []) {
+      teamMap[row.sector] = row.collaborator_id;
+    }
+  }
+
+  // remind_at = event_date às 09h BRT do dia ANTERIOR (T-1)
+  // event_date é YYYY-MM-DD; 09h BRT = 12h UTC; subtrair 24h = dia anterior 12h UTC
+  const eventDayUtc = new Date(eventDate + 'T12:00:00Z').getTime();
+  const remindAtIso = new Date(eventDayUtc - 24 * 60 * 60 * 1000).toISOString();
+
+  const tasks = kit.map(item => ({
+    title: item.title,
+    assigned_to: teamMap[item.sector] || createdBy,
+    created_by: createdBy,
+    due_date: eventDate,
+    remind_at: remindAtIso,
+    status: 'pending',
+    source: 'system',
+    context: 'work',
+    priority: 'medium',
+    school_event_id: eventId,
+    event_sector: item.sector,
+  }));
+
+  const { error } = await supabase.from('tasks').insert(tasks);
+  if (error) return { ok: false, error: error.message, count: 0 };
+  return { ok: true, count: tasks.length };
+}
+
+// Sprint 13 F2 — Marker <<SCHOOL_EVENT_ACTION>>.
+function parseSchoolEventActionMarker(text) {
+  if (!text) return null;
+  const re = /<<SCHOOL_EVENT_ACTION>>\s*([\s\S]*?)\s*<<END>>/i;
+  const m = text.match(re);
+  if (!m) return null;
+  const cleanText = text.replace(re, '').trim();
+  let parsed;
+  try {
+    parsed = JSON.parse(m[1].trim());
+  } catch (err) {
+    logSchemaErr('SCHOOL_EVENT_ACTION', ['invalid_json: ' + err.message], m[1]);
+    return { malformed: true, cleanText };
+  }
+  if (!parsed || typeof parsed !== 'object') return { malformed: true, cleanText };
+  if (!['create', 'cancel'].includes(parsed.action)) {
+    logSchemaErr('SCHOOL_EVENT_ACTION', ['action:invalid'], parsed);
+    return { malformed: true, cleanText };
+  }
+  if (parsed.action === 'create') {
+    if (!parsed.title || typeof parsed.title !== 'string' || !parsed.title.trim()) {
+      logSchemaErr('SCHOOL_EVENT_ACTION', ['title:missing'], parsed);
+      return { malformed: true, cleanText };
+    }
+    if (!parsed.event_date || !/^\d{4}-\d{2}-\d{2}$/.test(parsed.event_date)) {
+      logSchemaErr('SCHOOL_EVENT_ACTION', ['event_date:invalid'], parsed);
+      return { malformed: true, cleanText };
+    }
+    if (parsed.event_type !== undefined && parsed.event_type !== null) {
+      if (!VALID_EVENT_TYPES.includes(parsed.event_type)) {
+        logSchemaErr('SCHOOL_EVENT_ACTION', ['event_type:invalid'], parsed);
+        return { malformed: true, cleanText };
+      }
+    }
+  }
+  return { ...parsed, cleanText, malformed: false };
+}
+
+async function applySchoolEventAction(collaborator, parsed) {
+  const { action, event_id } = parsed;
+
+  if (action === 'cancel') {
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    let evId = (event_id && event_id !== 'latest' && UUID_RE.test(event_id)) ? event_id : null;
+    if (!evId) {
+      const { data } = await supabase
+        .from('school_events')
+        .select('id')
+        .eq('created_by', collaborator.id)
+        .eq('status', 'active')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (!data) return { ok: false, reason: 'no_active_event' };
+      evId = data.id;
+    }
+    const { error: evErr } = await supabase
+      .from('school_events')
+      .update({ status: 'cancelled' })
+      .eq('id', evId);
+    if (evErr) return { ok: false, reason: evErr.message };
+    // Cancel linked announcements — broadcaster will send retractions
+    await supabase
+      .from('announcements')
+      .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+      .eq('source_event_id', evId)
+      .in('status', ['scheduled', 'sending']);
+    return { ok: true, action: 'cancelled', event_id: evId };
+  }
+
+  if (action === 'create') {
+    const { title, event_date, start_time, unit, location,
+            notify_leadership, notify_school, notify_unit } = parsed;
+    const { data: ev, error: evErr } = await supabase
+      .from('school_events')
+      .insert({
+        title: title.trim(),
+        event_date,
+        start_time: start_time || null,
+        unit: unit || null,
+        location: location ? location.trim() : null,
+        created_by: collaborator.id,
+        notify_leadership: notify_leadership !== false,
+        notify_school: notify_school !== false,
+        notify_unit: notify_unit !== false,
+        notify_day_of: parsed.notify_day_of ?? true,
+        event_type: parsed.event_type || null,
+      })
+      .select('id, title, event_date, start_time, unit, location, notify_leadership, notify_school, notify_unit, event_type')
+      .single();
+    if (evErr) return { ok: false, reason: evErr.message };
+
+    // Sprint 14 Fatia 2 — auto-gerar kit de tasks
+    let kitCount = 0;
+    if (parsed.event_type) {
+      const kitResult = await buildEventTaskKit(
+        ev.id,
+        ev.event_date,
+        parsed.event_type,
+        ev.unit,
+        collaborator.id
+      );
+      if (!kitResult.ok) {
+        console.error('[applySchoolEventAction] kit error:', kitResult.error);
+        // best-effort — continua para criar announcements
+      } else {
+        kitCount = kitResult.count;
+      }
+    }
+
+    const specs = buildEventAnnouncementsNode(ev, new Date());
+    let annCount = 0;
+    for (const spec of specs) {
+      const { data: ann, error: annErr } = await supabase
+        .from('announcements')
+        .insert({
+          created_by: collaborator.id,
+          body: spec.body,
+          audience: spec.audience,
+          status: 'scheduled',
+          scheduled_at: spec.scheduled_at,
+          source_event_id: ev.id,
+        })
+        .select('id')
+        .single();
+      if (annErr) {
+        console.error('[SchoolEventAction] ann insert err:', annErr.message);
+        continue;
+      }
+      let q = supabase.from('collaborators').select('id, phone').eq('is_active', true).not('phone', 'is', null);
+      if (!spec.audience.all) {
+        if (spec.audience.function_role?.length) q = q.in('function_role', spec.audience.function_role);
+        if (spec.audience.unidade?.length) q = q.in('unit', spec.audience.unidade);
+        if (spec.audience.turno?.length) q = q.in('shift', spec.audience.turno);
+      }
+      const { data: recipients } = await q;
+      if (recipients?.length) {
+        const jobs = recipients.map(r => ({ announcement_id: ann.id, recipient_id: r.id, phone: r.phone }));
+        const { error: jobErr } = await supabase.from('announcement_jobs').insert(jobs);
+        if (jobErr) {
+          // compensating delete: remove orphan announcement so broadcaster doesn't pick it up
+          await supabase.from('announcements').delete().eq('id', ann.id);
+          console.error('[SchoolEventAction] job insert err — compensated:', jobErr.message);
+          continue;
+        }
+      }
+      annCount++;
+    }
+    return { ok: true, action: 'created', event_id: ev.id, announcement_count: annCount, task_count: kitCount };
+  }
+
+  return { ok: false, reason: 'unknown_action' };
 }
 
 // Resolve project_id por nome quando o TOM só passou project_name. Match fuzzy
@@ -1102,6 +1848,37 @@ async function applyTaskActions(collaborator, actions) {
             recipient = null; // treat as normal self-create
           }
         }
+        // Sprint 15 F2 — operational layer fields (department_id, request_type_id)
+        const UUID_RE_TASK = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        let departmentId = (typeof a.department_id === 'string' && UUID_RE_TASK.test(a.department_id))
+          ? a.department_id
+          : null;
+        const requestTypeId = (typeof a.request_type_id === 'string' && UUID_RE_TASK.test(a.request_type_id))
+          ? a.request_type_id
+          : null;
+        let initialStatus = 'pending';
+
+        // If request_type provided: validate it exists, derive department_id if absent, check requires_approval
+        if (requestTypeId) {
+          const { data: rt } = await supabase
+            .from('department_request_types')
+            .select('department_id, requires_approval, is_active')
+            .eq('id', requestTypeId)
+            .maybeSingle();
+          if (!rt || !rt.is_active) {
+            console.warn(`[Task] create REJECTED — invalid request_type_id=${requestTypeId.slice(0,8)}`);
+            failCount++;
+            continue;
+          }
+          if (departmentId && rt.department_id !== departmentId) {
+            console.warn(`[Task] create REJECTED — request_type_id does not belong to provided department_id`);
+            failCount++;
+            continue;
+          }
+          if (!departmentId) departmentId = rt.department_id;
+          if (rt.requires_approval) initialStatus = 'awaiting_confirmation';
+        }
+
         const context = a.context === 'personal' ? 'personal' : 'work';
         const priority = VALID_PRIORITIES.includes(a.priority) ? a.priority : 'medium';
         // Sprint 12 Bloco D — action_type vem da skill priorizacao-inteligente.
@@ -1114,11 +1891,20 @@ async function applyTaskActions(collaborator, actions) {
           assigned_to: assignedTo,
           created_by: collaborator.id,
           source: 'manual',
-          status: 'pending',
+          status: initialStatus,
           context,
           priority,
           action_type: actionType,
         };
+        // Sprint 15 F2 — optional operational layer fields
+        if (typeof a.description === 'string' && a.description.trim()) {
+          insertRow.description = a.description.trim().slice(0, 2000);
+        }
+        if (typeof a.notes === 'string' && a.notes.trim()) {
+          insertRow.notes = a.notes.trim().slice(0, 2000);
+        }
+        if (departmentId) insertRow.department_id = departmentId;
+        if (requestTypeId) insertRow.request_type_id = requestTypeId;
         // remind_at = ONE-SHOT (e.g. "me lembra de tomar remédio em 30 min").
         //             Dispatcher fires WA AND marks task done. Use só quando a tarefa
         //             é o lembrete em si (sem reunião associada).
@@ -1191,7 +1977,9 @@ async function applyTaskActions(collaborator, actions) {
           : reminders.length ? ` due=${insertRow.due_date} reminders=${attachedReminders}`
           : ` due=${insertRow.due_date}`;
         const forSuf = recipient ? ` for=${String(recipient.phone).slice(-4)}(${recipient.full_name})` : '';
-        console.log(`[Task] create "${a.title.trim().slice(0, 60)}" ctx=${context}${sufx}${forSuf} (id=${String(taskId || '').slice(0, 8)})`);
+        const deptSuf = departmentId ? ` dept=${departmentId.slice(0,8)}${requestTypeId ? `/rt=${requestTypeId.slice(0,8)}` : ''}` : '';
+        const apprSuf = initialStatus === 'awaiting_confirmation' ? ' AWAIT_APPROVAL' : '';
+        console.log(`[Task] create "${a.title.trim().slice(0, 60)}" ctx=${context}${sufx}${forSuf}${deptSuf}${apprSuf} (id=${String(taskId || '').slice(0, 8)})`);
         // Notify recipient when created-for-other (best-effort).
         if (recipient && taskId) {
           const creatorName = nameForCollab(collaborator);
@@ -2184,6 +2972,141 @@ async function processMessage(phone, text, raw = {}) {
     }
   }
 
+  // Sprint 11 F2+ — <<CHECKLIST_ACTION>> — resposta do colaborador a checklist diário.
+  {
+    const parsedCA = parseChecklistActionMarker(reply);
+    if (parsedCA && parsedCA.malformed) {
+      console.warn('[ChecklistAction] WARN: malformed marker, dropping block');
+      await logMarker(collab.id, 'CHECKLIST_ACTION', 'rejected', 'schema_invalid', null);
+      reply = parsedCA.cleanText || reply;
+    } else if (parsedCA) {
+      const result = await applyChecklistAction(collab, parsedCA);
+      await logMarker(
+        collab.id,
+        'CHECKLIST_ACTION',
+        result.ok ? 'executed' : 'rejected',
+        result.ok
+          ? `pct=${result.pct} done=${result.doneCount}/${result.totalCount} late=${result.isLate}`
+          : result.reason,
+        null
+      );
+      let base = parsedCA.cleanText || '';
+      if (result.ok && !base) {
+        const lateNote = result.isLate ? ' _(fora do prazo — não conta no KPI)_' : '';
+        base = result.pct >= result.threshold
+          ? `✅ Checklist registrado — ${result.doneCount}/${result.totalCount} itens (${result.pct}%).${lateNote}`
+          : `⚠️ ${result.doneCount}/${result.totalCount} itens (${result.pct}%) — abaixo do mínimo (${result.threshold}%). Registrado como parcial.${lateNote}`;
+      }
+      reply = base || reply;
+    }
+  }
+
+  // Sprint 13 F1 — <<ANNOUNCEMENT_ACTION>> — criar/cancelar comunicado interno.
+  {
+    const parsedAnn = parseAnnouncementActionMarker(reply);
+    if (parsedAnn && parsedAnn.malformed) {
+      console.warn('[AnnouncementAction] WARN: malformed marker, dropping block');
+      await logMarker(collab.id, 'ANNOUNCEMENT_ACTION', 'rejected', 'schema_invalid', null);
+      reply = parsedAnn.cleanText || reply;
+    } else if (parsedAnn) {
+      const result = await applyAnnouncementAction(collab, parsedAnn);
+      await logMarker(
+        collab.id,
+        'ANNOUNCEMENT_ACTION',
+        result.ok ? 'executed' : 'rejected',
+        result.ok
+          ? `action=${result.action} count=${result.recipient_count ?? 0}`
+          : result.reason,
+        null
+      );
+      let base = parsedAnn.cleanText || '';
+      if (result.ok && !base) {
+        if (result.action === 'created') {
+          base = `Comunicado criado para ${result.recipient_count} pessoa${result.recipient_count !== 1 ? 's' : ''}. ✓`;
+        } else if (result.action === 'cancelled') {
+          base = 'Comunicado cancelado. Retratação será enviada para quem já recebeu. ✓';
+        }
+      } else if (!result.ok && !base) {
+        if (result.reason === 'no_recipients') {
+          base = 'Nenhum colaborador encontrado para esse público. Verifica os filtros?';
+        } else if (result.reason === 'no_active_announcement') {
+          base = 'Não encontrei nenhum comunicado ativo para cancelar.';
+        } else {
+          base = 'Tive um erro ao criar o comunicado. Tenta de novo?';
+        }
+      }
+      reply = base || reply;
+    }
+  }
+
+  // Sprint 13 F3 T4 — <<ANNOUNCEMENT_APPROVAL>> — director aprova ou rejeita comunicado pendente.
+  {
+    const approvalMarker = parseAnnouncementApprovalMarker(reply);
+    if (approvalMarker) {
+      const approvalResult = await applyAnnouncementApproval(collab, approvalMarker);
+      await logMarker(
+        collab.id,
+        'ANNOUNCEMENT_APPROVAL',
+        approvalResult.ok ? 'executed' : 'rejected',
+        approvalResult.ok
+          ? `action=${approvalResult.action} count=${approvalResult.recipient_count ?? 0}`
+          : approvalResult.reason,
+        null
+      );
+      let base = '';
+      if (approvalResult.ok) {
+        const shortId = approvalResult.announcement_id.slice(0, 4);
+        if (approvalResult.action === 'approved') {
+          base = `Comunicado \`${shortId}\` aprovado. ${approvalResult.recipient_count} mensagem(ns) na fila de envio.`;
+          if (approvalResult.jobs_error) {
+            base += ` ⚠️ Erro ao enfileirar: ${approvalResult.jobs_error}. Broadcaster pode não enviar — verifique no PWA.`;
+          }
+        } else if (approvalResult.action === 'rejected') {
+          base = `Comunicado \`${shortId}\` rejeitado. Coordinator foi notificado.`;
+        }
+      } else {
+        base = approvalResult.reason || 'Tive um erro ao processar a aprovação. Tenta de novo?';
+      }
+      reply = base || reply;
+    }
+  }
+
+  // Sprint 13 F2 — <<SCHOOL_EVENT_ACTION>> — criar/cancelar evento institucional.
+  {
+    const parsedEv = parseSchoolEventActionMarker(reply);
+    if (parsedEv && parsedEv.malformed) {
+      console.warn('[SchoolEventAction] WARN: malformed marker, dropping block');
+      await logMarker(collab.id, 'SCHOOL_EVENT_ACTION', 'rejected', 'schema_invalid', null);
+      reply = parsedEv.cleanText || reply;
+    } else if (parsedEv) {
+      const result = await applySchoolEventAction(collab, parsedEv);
+      await logMarker(
+        collab.id,
+        'SCHOOL_EVENT_ACTION',
+        result.ok ? 'executed' : 'rejected',
+        result.ok
+          ? `action=${result.action} ann_count=${result.announcement_count ?? 0}`
+          : result.reason,
+        null
+      );
+      let base = parsedEv.cleanText || '';
+      if (result.ok && !base) {
+        if (result.action === 'created') {
+          base = `Evento criado. ${result.announcement_count} notificaç${result.announcement_count !== 1 ? 'ões' : 'ão'} agendada${result.announcement_count !== 1 ? 's' : ''}. ✓`;
+        } else if (result.action === 'cancelled') {
+          base = 'Evento cancelado. Notificações pendentes serão removidas. ✓';
+        }
+      } else if (!result.ok && !base) {
+        if (result.reason === 'no_active_event') {
+          base = 'Não encontrei nenhum evento ativo para cancelar.';
+        } else {
+          base = 'Tive um erro ao processar o evento. Tenta de novo?';
+        }
+      }
+      reply = base || reply;
+    }
+  }
+
   // 2.67) Sprint 11.4 — Checkpoint batch. TOM emite quando produz checklist
   // estruturado (4+ itens) ligado a um projeto. Persiste como project_checkpoints.
   // Garante que checklist deixa de "virar fumaça em conversation_history" e vira
@@ -2915,4 +3838,4 @@ async function sendCoordinatorReport(collaboratorId, type, ymdRef) {
   return true;
 }
 
-module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamSummary, buildWeeklyRetrospective, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseWeeklyPlanMarker, parseHabitMarker, parseDndMarker, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, applyHabitActions, applyDnd, getDndState, consolidateMemoryFor, decayExpiredMemories, looksLikeMemory, resolveTaskByShortId };
+module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamSummary, buildWeeklyRetrospective, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseWeeklyPlanMarker, parseHabitMarker, parseDndMarker, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, applyHabitActions, applyDnd, getDndState, consolidateMemoryFor, decayExpiredMemories, looksLikeMemory, resolveTaskByShortId, applyAnnouncementAction, parseAnnouncementApprovalMarker, applyAnnouncementApproval };
