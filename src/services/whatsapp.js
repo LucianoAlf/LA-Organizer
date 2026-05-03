@@ -134,7 +134,14 @@ function getData(body) {
  */
 function extractText(body) {
   const data = getData(body);
-  return data?.content || data?.text || data?.body || data?.caption || null;
+  let raw = data?.content || data?.text || data?.body || data?.caption || null;
+  // Sprint 16 fix: ExtendedTextMessage (reply/quote) tem content como
+  // { text: "...", previewType: 0, contextInfo: {...} }, não string.
+  // Extrair o .text do objeto pra que webhook não descarte como "non-string".
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    raw = raw.text || raw.body || raw.caption || null;
+  }
+  return raw;
 }
 
 /**
