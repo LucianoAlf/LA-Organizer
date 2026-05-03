@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
@@ -30,43 +30,52 @@ export function OperacoesFilaTecnica() {
   const [typeFilter, setTypeFilter] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [responsibleFilter, setResponsibleFilter] = useState<string>('');
+  const [selectedDeptId, setSelectedDeptId] = useState<string>('');
 
-  // Q1 — department
-  const { data: dept } = useQuery({
-    queryKey: ['operacoes-tecnicas-dept'],
+  // Q1 — all active departments
+  const { data: depts = [] } = useQuery({
+    queryKey: ['operational-departments'],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('departments')
         .select('id, slug, name, is_active, unit_scope_enabled')
-        .eq('slug', 'operacoes-tecnicas')
-        .maybeSingle();
+        .eq('is_active', true)
+        .order('name');
       if (error) throw error;
-      return data as Department | null;
+      return (data ?? []) as Department[];
     },
   });
 
-  // Q1b — request types for filter options
+  useEffect(() => {
+    if (!selectedDeptId && depts.length > 0) {
+      setSelectedDeptId(depts[0].id);
+    }
+  }, [depts, selectedDeptId]);
+
+  const dept = depts.find(d => d.id === selectedDeptId) ?? null;
+
+  // Q1b — request types for selected dept
   const { data: requestTypes = [] } = useQuery({
-    queryKey: ['operacoes-tecnicas-types', dept?.id],
+    queryKey: ['operational-types', selectedDeptId],
     queryFn: async () => {
-      if (!dept) return [];
+      if (!selectedDeptId) return [];
       const { data, error } = await supabase
         .from('department_request_types')
         .select('id, department_id, slug, label, default_priority, requires_approval, generates_task, is_active, sort_order')
-        .eq('department_id', dept.id)
+        .eq('department_id', selectedDeptId)
         .eq('is_active', true)
         .order('sort_order');
       if (error) throw error;
       return (data ?? []) as DepartmentRequestType[];
     },
-    enabled: !!dept,
+    enabled: !!selectedDeptId,
   });
 
-  // Q2 — task queue
+  // Q2 — task queue for selected dept
   const { data: tasks = [], isLoading } = useQuery({
-    queryKey: ['operacoes-tecnicas-tasks', dept?.id],
+    queryKey: ['operational-tasks', selectedDeptId],
     queryFn: async () => {
-      if (!dept) return [];
+      if (!selectedDeptId) return [];
       const { data, error } = await supabase
         .from('tasks')
         .select(`
@@ -77,14 +86,14 @@ export function OperacoesFilaTecnica() {
           department:departments!tasks_department_id_fkey(id, slug, name),
           collaborator:collaborators!tasks_assigned_to_fkey(id, full_name, unit)
         `)
-        .eq('department_id', dept.id)
+        .eq('department_id', selectedDeptId)
         .in('status', ['pending', 'in_progress', 'awaiting_confirmation'])
         .order('priority', { ascending: false })
         .order('due_date', { ascending: true });
       if (error) throw error;
       return (data ?? []) as unknown as OperationalTask[];
     },
-    enabled: !!dept,
+    enabled: !!selectedDeptId,
   });
 
   // Build unique responsibles from results
@@ -121,13 +130,35 @@ export function OperacoesFilaTecnica() {
 
   return (
     <div className="space-y-lg">
-      <header>
-        <h2 className="text-section-title">Operações Técnicas</h2>
-        <p className="text-body-sm text-fg-muted mt-1">Fila de demandas operacionais</p>
-        <p className="text-caption text-fg-muted mt-1 italic">
-          Demandas são criadas via TOM (WhatsApp) ou por checklist flagged.
-        </p>
+      <header className="space-y-1">
+        <h2 className="text-title text-fg">Operações</h2>
+        <p className="text-body-sm text-fg-muted">Fila de demandas operacionais por departamento</p>
       </header>
+
+      {/* Department tabs */}
+      <div className="flex gap-2 border-b border-border overflow-x-auto">
+        {depts.map(d => (
+          <button
+            key={d.id}
+            type="button"
+            onClick={() => {
+              setSelectedDeptId(d.id);
+              setUnitFilter('');
+              setTypeFilter('');
+              setStatusFilter('');
+              setResponsibleFilter('');
+            }}
+            className={[
+              'px-3 py-2 text-body focus-ring whitespace-nowrap',
+              d.id === selectedDeptId
+                ? 'border-b-2 border-brand text-fg font-medium'
+                : 'text-fg-muted hover:text-fg',
+            ].join(' ')}
+          >
+            {d.name}
+          </button>
+        ))}
+      </div>
 
       {/* Filter bar */}
       <section className="bg-bg-surface rounded-xl border border-border p-4">
@@ -192,7 +223,7 @@ export function OperacoesFilaTecnica() {
       {isLoading ? (
         <p className="text-body-sm text-fg-muted">Carregando fila operacional...</p>
       ) : filteredTasks.length === 0 ? (
-        <p className="text-body-sm text-fg-muted">Nenhuma demanda operacional ativa.</p>
+        <p className="text-body-sm text-fg-muted">Nenhuma demanda operacional ativa em {dept?.name ?? 'este departamento'}.</p>
       ) : (
         <div className="space-y-6">
           {PRIORITY_ORDER.map(priority => {

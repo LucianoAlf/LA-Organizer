@@ -958,6 +958,18 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     }
   }
 
+  // Sprint 15 — Piloto Marketing (replicabilidade da camada operacional)
+  // Mesmo padrão de Operações Técnicas: registra demandas de comunicação externa
+  // como tasks com department_id=marketing + request_type_id correto.
+  // Disponível para todos os roles.
+  if (collaborator) {
+    const marketingPath = path.join(SKILLS_DIR, 'marketing.md');
+    if (fs.existsSync(marketingPath)) {
+      const marketingSkill = fs.readFileSync(marketingPath, 'utf-8');
+      systemPrompt += '\n\n---\n\n' + marketingSkill;
+    }
+  }
+
   const totalTasks = (ctx.personalTasks?.length || 0) + (ctx.workTasks?.length || 0);
   const evCount = (ctx.todayEvents || []).length;
   console.log(`[Prompt] size: ${systemPrompt.length} chars (skill: ${skill ? skill.name : 'none'}, history: ${hist.length}, memories: ${ctx.memories.length}, tasks: ${totalTasks}/p${ctx.personalTasks?.length || 0}/w${ctx.workTasks?.length || 0}, events: ${evCount}, ritual: ${rt || '-'})`);
