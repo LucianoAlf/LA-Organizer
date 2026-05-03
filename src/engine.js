@@ -1292,6 +1292,27 @@ async function applyCoordinationRequestAction(collab, parsed) {
     };
   }
 
+  // Sprint 17 F4 — Defense-in-depth: strip de cabeçalho de origem duplicado.
+  // A skill já é instruída a não incluir prefixo (Sprint 16 484d708), mas
+  // se TOM falhar, este strip remove para evitar duplicação ao recipient.
+  // ATENÇÃO: regex pode morder texto legítimo — logar toda execução que remova chars.
+  {
+    const STRIP_PATTERNS = [
+      /^\s*(O\s+)?[A-ZÁÉÍÓÚÂÊÔÃÕÜ][\w\s\(\)\/\.]{0,40}(pediu|me pediu|disse|mandou)[^\n]{0,40}:\s*/i,
+      /^\s*Alf\s+pediu[^\n]{0,30}:\s*/i,
+    ];
+    const bodyOriginal = parsed.message_body;
+    let bodyClean = bodyOriginal;
+    for (const p of STRIP_PATTERNS) {
+      bodyClean = bodyClean.replace(p, '');
+    }
+    bodyClean = bodyClean.trim();
+    if (bodyClean !== bodyOriginal) {
+      console.warn(`[CoordinationRequest] HEADER_STRIP applied: "${bodyOriginal.slice(0, 60)}..." → "${bodyClean.slice(0, 60)}..."`);
+      parsed.message_body = bodyClean;
+    }
+  }
+
   // 5. Calcular response_deadline
   let response_deadline = null;
   if (parsed.expects_response && parsed.response_deadline_hours) {
@@ -1322,8 +1343,33 @@ async function applyCoordinationRequestAction(collab, parsed) {
   }
 
   // 7. Enviar WhatsApp ao recipient (UX §6)
+
+  // Sprint 17 — defense-in-depth: strip de prefixo de origem no message_body.
+  // Garante que o engine não dobre o cabeçalho mesmo que a skill falhe na REGRA CRÍTICA.
+  const STRIP_HEADER_PATTERNS = [
+    /^\s*o\s+[\wÀ-ú]+(?:\s+[\wÀ-ú]+)?\s*(?:\([^)]{0,40}\))?\s*(?:pediu|me pediu|disse|mandou|pediu pra mim).{0,40}:\s*/i,
+    /^\s*alf(?:redo)?\s+pediu.{0,40}:\s*/i,
+    /^\s*(?:o\s+)?requester\s+pediu.{0,40}:\s*/i,
+  ];
+  let _sanitizedBody = parsed.message_body;
+  let _stripped = false;
+  for (const pattern of STRIP_HEADER_PATTERNS) {
+    const _before = _sanitizedBody;
+    _sanitizedBody = _sanitizedBody.replace(pattern, '').trim();
+    if (_sanitizedBody !== _before) {
+      _stripped = true;
+      console.warn(`[CoordinationRequest] strip cabeçalho duplicado detectado em req ${inserted?.id?.slice(0, 8) ?? 'unknown'}`);
+    }
+  }
+  // Se strip ocorreu mas body ficou vazio (edge case: body era só o cabeçalho), preservar original
+  if (_stripped && _sanitizedBody.length === 0) {
+    console.error(`[CoordinationRequest] strip resultou em body vazio — mantendo original`);
+    _stripped = false;
+  }
+  const finalBody = _stripped ? _sanitizedBody : parsed.message_body;
+
   const requesterDisplayName = _requesterDisplayName(collab);
-  const recipientMsg = _buildRecipientMessage(requesterDisplayName, parsed.mode, parsed.message_body);
+  const recipientMsg = _buildRecipientMessage(requesterDisplayName, parsed.mode, finalBody);
 
   try {
     await whatsapp.sendMessage(recipient.phone, recipientMsg);
@@ -2969,6 +3015,295 @@ async function persistOnboarding(collaboratorId, prefs) {
   console.log(`[Onboarding] Concluído pra ${collaboratorId}: ${JSON.stringify(prefs)}`);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Sprint 17 — Active Coordination Context (ACC)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Retorna os primeiros N chars com "…" se truncado. */
+function _accTrunc(str, n) {
+  if (!str) return '';
+  return str.length > n ? str.slice(0, n) + '…' : str;
+}
+
+/** Retorna primeiros 8 chars de um UUID. */
+function _accShort(id) {
+  return id ? id.slice(0, 8) : '????????';
+}
+
+/** Minutos desde uma data ISO. */
+function _accMinutesAgo(isoStr) {
+  if (!isoStr) return null;
+  return Math.floor((Date.now() - new Date(isoStr).getTime()) / 60000);
+}
+
+/** Primeiro nome a partir de full_name. */
+function _accFirstName(fullName) {
+  if (!fullName) return '?';
+  return fullName.split(' ')[0];
+}
+
+/** Q1 — último request criado pelo collab (últimos 7 dias, qualquer status). */
+async function _accQ1(collabId) {
+  const { data, error } = await supabase
+    .from('coordination_requests')
+    .select(`
+      id, recipient_id, mode, message_body, status, created_at,
+      recipient:collaborators!coordination_requests_recipient_id_fkey(full_name)
+    `)
+    .eq('requester_id', collabId)
+    .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) { console.warn('[ACC] Q1 error:', error.message); return null; }
+  if (!data) return null;
+  return { ...data, recipient_name: data.recipient?.full_name ?? null };
+}
+
+/** Q2 — último request onde collab é recipient (últimas 24h, status aberto). */
+async function _accQ2(collabId) {
+  const { data, error } = await supabase
+    .from('coordination_requests')
+    .select(`
+      id, requester_id, mode, message_body, status, created_at,
+      requester:collaborators!coordination_requests_requester_id_fkey(full_name)
+    `)
+    .eq('recipient_id', collabId)
+    .in('status', ['pending', 'sent', 'responded'])
+    .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) { console.warn('[ACC] Q2 error:', error.message); return null; }
+  if (!data) return null;
+  return { ...data, requester_name: data.requester?.full_name ?? null };
+}
+
+/** Q3 — última resposta recebida pelo collab como requester (últimos 7 dias). */
+async function _accQ3(collabId) {
+  const { data, error } = await supabase
+    .from('coordination_requests')
+    .select(`
+      id, recipient_id, mode, response_summary, responded_at,
+      responder:collaborators!coordination_requests_recipient_id_fkey(full_name)
+    `)
+    .eq('requester_id', collabId)
+    .eq('status', 'responded')
+    .gte('responded_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
+    .order('responded_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) { console.warn('[ACC] Q3 error:', error.message); return null; }
+  if (!data) return null;
+  return { ...data, responder_name: data.responder?.full_name ?? null };
+}
+
+/** Q4 — requests abertos envolvendo collab em qualquer lado (últimas 48h, máx 5). */
+async function _accQ4(collabId) {
+  const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+  const { data, error } = await supabase
+    .from('coordination_requests')
+    .select(`
+      id, requester_id, recipient_id, mode, message_body, status, created_at,
+      requester:collaborators!coordination_requests_requester_id_fkey(full_name),
+      recipient:collaborators!coordination_requests_recipient_id_fkey(full_name)
+    `)
+    .or(`requester_id.eq.${collabId},recipient_id.eq.${collabId}`)
+    .in('status', ['pending', 'sent'])
+    .gte('created_at', cutoff)
+    .order('created_at', { ascending: false })
+    .limit(5);
+  if (error) { console.warn('[ACC] Q4 error:', error.message); return []; }
+  return (data || []).map(r => ({
+    ...r,
+    requester_name: r.requester?.full_name ?? null,
+    recipient_name: r.recipient?.full_name ?? null,
+  }));
+}
+
+/**
+ * Heurística de seleção de FOCUS_CANDIDATE.
+ * Avalia em ordem de prioridade decrescente (spec §2.1.2).
+ * Retorna { focusCandidate, focusConfidence }.
+ */
+function _accScoreFocus(collabId, q1, q2, q3, q4) {
+  const now = Date.now();
+  const min30 = 30 * 60 * 1000;
+  const min120 = 120 * 60 * 1000;
+
+  // P1: Q3 com resposta < 30min
+  if (q3 && q3.responded_at) {
+    const age = now - new Date(q3.responded_at).getTime();
+    if (age < min30) {
+      return {
+        focusCandidate: {
+          actorName: _accFirstName(q3.responder_name),
+          requestId: q3.id,
+          role: 'requester',
+          reason: 'última resposta recebida',
+        },
+        focusConfidence: 'high',
+      };
+    }
+  }
+
+  // P2: Q1 com created_at < 30min e status='sent'
+  if (q1 && q1.status === 'sent' && q1.created_at) {
+    const age = now - new Date(q1.created_at).getTime();
+    if (age < min30) {
+      return {
+        focusCandidate: {
+          actorName: _accFirstName(q1.recipient_name),
+          requestId: q1.id,
+          role: 'requester',
+          reason: 'request recém-criado',
+        },
+        focusConfidence: 'high',
+      };
+    }
+  }
+
+  // P3: Q4 com exatamente 1 request aberto
+  if (q4 && q4.length === 1) {
+    const r = q4[0];
+    const otherName = r.requester_id === collabId ? r.recipient_name : r.requester_name;
+    const role = r.requester_id === collabId ? 'requester' : 'recipient';
+    return {
+      focusCandidate: {
+        actorName: _accFirstName(otherName),
+        requestId: r.id,
+        role,
+        reason: 'único request aberto',
+      },
+      focusConfidence: 'high',
+    };
+  }
+
+  // P4: Q4 com 2+ requests todos com o mesmo ator (clustering)
+  if (q4 && q4.length > 1) {
+    const actorIds = q4.map(r => r.requester_id === collabId ? r.recipient_id : r.requester_id);
+    const allSame = actorIds.every(id => id === actorIds[0]);
+    if (allSame) {
+      const r = q4[0];
+      const otherName = r.requester_id === collabId ? r.recipient_name : r.requester_name;
+      const role = r.requester_id === collabId ? 'requester' : 'recipient';
+      return {
+        focusCandidate: {
+          actorName: _accFirstName(otherName),
+          requestId: r.id,
+          role,
+          reason: 'múltiplos requests com mesmo ator',
+        },
+        focusConfidence: 'medium',
+      };
+    }
+  }
+
+  // P5: Q3 com resposta entre 30-120min
+  if (q3 && q3.responded_at) {
+    const age = now - new Date(q3.responded_at).getTime();
+    if (age >= min30 && age < min120) {
+      return {
+        focusCandidate: {
+          actorName: _accFirstName(q3.responder_name),
+          requestId: q3.id,
+          role: 'requester',
+          reason: 'resposta recente (> 30min)',
+        },
+        focusConfidence: 'medium',
+      };
+    }
+  }
+
+  // P6: Q4 com 2+ requests com atores distintos → low
+  if (q4 && q4.length > 1) {
+    return { focusCandidate: null, focusConfidence: 'low' };
+  }
+
+  // P7: tudo vazio
+  return { focusCandidate: null, focusConfidence: 'none' };
+}
+
+/**
+ * Monta o bloco [ACTIVE_COORDINATION_CONTEXT].
+ * Limite duro de 500 chars (spec §2.1.4 + Decisão 5.2).
+ * Fallback: se block > 500 chars, reconstrói com max 3 requests abertos.
+ */
+function _accBuildBlock(collabId, q1, q2, q3, q4, focusCandidate, focusConfidence) {
+  function buildLines(openRequests) {
+    const lines = ['[ACTIVE_COORDINATION_CONTEXT]'];
+    if (q1) {
+      const min = _accMinutesAgo(q1.created_at);
+      lines.push(`- Último request criado por você: ${_accShort(q1.id)} | recipient=${_accFirstName(q1.recipient_name)} | "${_accTrunc(q1.message_body, 60)}" | há ${min}min`);
+    }
+    if (q2) {
+      const min = _accMinutesAgo(q2.created_at);
+      lines.push(`- Último request onde você é recipient: ${_accShort(q2.id)} | from=${_accFirstName(q2.requester_name)} | "${_accTrunc(q2.message_body, 60)}" | há ${min}min`);
+    }
+    if (q3) {
+      const min = _accMinutesAgo(q3.responded_at);
+      lines.push(`- Última resposta recebida: ${_accShort(q3.id)} | de=${_accFirstName(q3.responder_name)} | "${_accTrunc(q3.response_summary, 60)}" | há ${min}min`);
+    }
+    if (openRequests && openRequests.length > 0) {
+      lines.push('- Requests abertos:');
+      for (const r of openRequests) {
+        const other = r.requester_id === collabId ? _accFirstName(r.recipient_name) : _accFirstName(r.requester_name);
+        lines.push(`  • ${_accShort(r.id)} ↔ ${other} | mode=${r.mode} | "${_accTrunc(r.message_body, 40)}"`);
+      }
+    }
+    lines.push('');
+    if (focusCandidate) {
+      lines.push(`FOCUS_CANDIDATE: ${focusCandidate.actorName} (req ${_accShort(focusCandidate.requestId)}, você=${focusCandidate.role}, reason=${focusCandidate.reason})`);
+      lines.push(`FOCUS_CONFIDENCE: ${focusConfidence}`);
+    } else {
+      lines.push(`FOCUS_CONFIDENCE: ${focusConfidence} — sem requests ativos`);
+    }
+    lines.push('');
+    lines.push('Use isso para resolver pronomes/elipsis. Se confidence=low, pergunte citando candidatos pelo nome.');
+    return lines.join('\n');
+  }
+
+  // Primeira tentativa: até 5 requests abertos
+  let block = buildLines(q4 ? q4.slice(0, 5) : []);
+
+  // Fallback: se > 500 chars, truncar para 3 requests abertos (Decisão 5.2)
+  if (block.length > 500) {
+    block = buildLines(q4 ? q4.slice(0, 3) : []);
+  }
+
+  return block;
+}
+
+/**
+ * Sprint 17 — Constrói o Active Coordination Context para o collab.
+ * 4 queries paralelas + scoring + bloco de até 500 chars.
+ * Retorna { block, focusCandidate, focusConfidence }.
+ * block é null se collab não tem nenhum request relevante.
+ */
+async function buildActiveCoordinationContext(collab) {
+  try {
+    const [q1, q2, q3, q4] = await Promise.all([
+      _accQ1(collab.id),
+      _accQ2(collab.id),
+      _accQ3(collab.id),
+      _accQ4(collab.id),
+    ]);
+
+    // Se tudo vazio, retorna null block
+    if (!q1 && !q2 && !q3 && (!q4 || q4.length === 0)) {
+      return { block: null, focusCandidate: null, focusConfidence: 'none' };
+    }
+
+    const { focusCandidate, focusConfidence } = _accScoreFocus(collab.id, q1, q2, q3, q4);
+    const block = _accBuildBlock(collab.id, q1, q2, q3, q4, focusCandidate, focusConfidence);
+
+    return { block, focusCandidate, focusConfidence };
+  } catch (err) {
+    console.error('[ACC] buildActiveCoordinationContext error:', err.message);
+    return { block: null, focusCandidate: null, focusConfidence: 'none' };
+  }
+}
+
 async function processMessage(phone, text, raw = {}) {
   const _t0 = Date.now();
   const _phoneTail = String(phone).slice(-4);
@@ -3021,8 +3356,19 @@ async function processMessage(phone, text, raw = {}) {
     }
   }
 
+  // Sprint 17 — ACC: contexto ativo de coordenação (foco dominante + pronomes)
+  // COORD_HINT (Sprint 16) permanece inalterado acima — COORD_HINT e ACC convivem (Decisão 5.3)
+  let coordContext = null;
+  {
+    const acc = await buildActiveCoordinationContext(collab);
+    if (acc.block) {
+      coordContext = acc.block;
+      console.log(`[ACC] focusConfidence=${acc.focusConfidence} focusCandidate=${acc.focusCandidate?.actorName ?? 'none'}`);
+    }
+  }
+
   // Constrói o system prompt 4-block (regras → identidade → contexto → skill ativa).
-  let { systemPrompt, ctx } = await buildSystemPrompt(collab, { lastUserMessage: text, coordHint });
+  let { systemPrompt, ctx } = await buildSystemPrompt(collab, { lastUserMessage: text, coordHint, coordContext });
   const _tt = ctx.todayTasks || {};
   const _tCount = (_tt.personal?.length || 0) + (_tt.work?.length || 0);
   console.log(`[Engine] system prompt size: ${systemPrompt.length} chars (memories=${ctx.memories.length}, tasks=${_tCount}, notifs=${ctx.notifications.length})`);

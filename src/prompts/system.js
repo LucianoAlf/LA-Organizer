@@ -189,6 +189,24 @@ function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habi
   const tomorrowWD = weekdays[new Date(tomorrowISO + 'T15:00:00.000Z').getUTCDay()];
   lines.push(`**Data/hora agora (BRT):** ${todayISO} ${nowHHMM} (${todayWD})`);
   lines.push(`**Amanhã (BRT):** ${tomorrowISO} (${tomorrowWD})`);
+
+  // Sprint 17 — âncora semanal explícita (spec §2.6)
+  {
+    const todayDate = new Date(todayISO + 'T15:00:00.000Z'); // meio-dia BRT
+    const todayDOW = todayDate.getUTCDay(); // 0=dom, 1=seg, ..., 6=sáb
+    const diffToMonday = (todayDOW === 0 ? -6 : 1 - todayDOW);
+    const monday = new Date(todayDate);
+    monday.setUTCDate(monday.getUTCDate() + diffToMonday);
+    const _fmtDate = (d) => `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+    const _weekDays = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+    const weekDates = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(monday);
+      d.setUTCDate(d.getUTCDate() + i);
+      return `${_weekDays[d.getUTCDay()]} ${_fmtDate(d)}`;
+    });
+    lines.push(`**Esta semana (BRT):** ${weekDates.join(' · ')}`);
+  }
+
   lines.push(`**Timezone para markers:** America/Sao_Paulo. Sempre use ISO -03:00 em remind_at, start_at, end_at, etc. Ex: "amanhã 11h" → "${tomorrowISO}T11:00:00-03:00".`);
   lines.push('');
 
@@ -811,6 +829,7 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   const lastUserMessage = opts.lastUserMessage || '';
   const ctx = await fetchCollaboratorContext(collaborator);
   if (opts.coordHint) ctx.coordHint = opts.coordHint;
+  if (opts.coordContext) ctx.coordContext = opts.coordContext;   // Sprint 17 ACC
 
   // Last message age in minutes (most recent inbound or outbound).
   let lastMsgAge = null;
@@ -988,6 +1007,11 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     systemPrompt += '\n\n' + ctx.coordHint;
   }
 
+  // Sprint 17 — ACC injection (contexto ativo de coordenação; convive com COORD_HINT — Decisão 5.3)
+  if (ctx && ctx.coordContext) {
+    systemPrompt += '\n\n' + ctx.coordContext;
+  }
+
   const totalTasks = (ctx.personalTasks?.length || 0) + (ctx.workTasks?.length || 0);
   const evCount = (ctx.todayEvents || []).length;
   console.log(`[Prompt] size: ${systemPrompt.length} chars (skill: ${skill ? skill.name : 'none'}, history: ${hist.length}, memories: ${ctx.memories.length}, tasks: ${totalTasks}/p${ctx.personalTasks?.length || 0}/w${ctx.workTasks?.length || 0}, events: ${evCount}, ritual: ${rt || '-'})`);
@@ -1019,6 +1043,10 @@ function composeSystemPrompt(collaborator, ctx) {
   // Sprint 16 — COORD_HINT injection (só presente quando recipient tem recados abertos)
   if (ctx && ctx.coordHint) {
     syncPrompt += '\n\n' + ctx.coordHint;
+  }
+  // Sprint 17 — ACC injection
+  if (ctx && ctx.coordContext) {
+    syncPrompt += '\n\n' + ctx.coordContext;
   }
   return syncPrompt;
 }
