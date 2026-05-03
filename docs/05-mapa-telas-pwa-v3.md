@@ -1,11 +1,11 @@
 # Mapa de Telas do PWA — LA Organizer
 
 **Documento:** 05
-**Versão:** 3.1
-**Data:** 28 de abril de 2026
-**Plataforma:** PWA mobile-first (React/TypeScript) — Vercel
+**Versão:** 3.2
+**Data:** 3 de maio de 2026
+**Plataforma:** PWA mobile-first (React/TypeScript) — VPS (nginx + PM2)
 **Design:** Dark mode padrão, opção light mode
-**Status:** Sprints 0→7 em produção · Sprint 8 (Project Wizard) planejada
+**Status:** Sprints 0→14 em produção
 
 ---
 
@@ -29,17 +29,19 @@
 | Semana | ✓ | ✓ | ✓ | ✅ Sprint 0 |
 | Projetos (lista) | ✓ | ✓ | ✓ | ✅ Sprint 0 |
 | Projeto detalhe | ✓ | ✓ | ✓ | ✅ Sprint 0 |
-| Dashboard do time | — | ✓ | ✓ | ✅ Sprint 0 |
+| Dashboard do time `/time` | — | ✓ | ✓ | ✅ Sprint 0 |
 | Configurações | ✓ | ✓ | ✓ | ✅ Sprint 1 |
 | Histórico | ✓ | ✓ | ✓ | ✅ Sprint 1 |
 | Pessoa-Detalhe `/time/:id` | — | ✓ | ✓ | ✅ Sprint 6 |
-| **Project Wizard `/projetos/novo`** | **✓** | **✓** | **✓** | **🔄 Sprint 8** |
-| Hábitos pessoais | ✓ | ✓ | ✓ | 📌 Sprint 8+ |
-| Checklists operacionais | ✓ | ✓ | ✓ | 📌 Sprint 8+ |
-| Broadcast | — | ✓ | ✓ | 📌 Sprint 8+ |
-| Aderência geral | — | ✓ | ✓ | 📌 Fase 3 |
-| Dashboard executivo | — | — | ✓ | 📌 Fase 3 |
-| Agenda Emusys | ✓ (professor) | — | — | 📌 Fase 5 |
+| Project Wizard `/projetos/novo` | ✓ | ✓ | ✓ | ✅ Sprint 8 |
+| Hábitos pessoais `/habitos` | ✓ | ✓ | ✓ | ✅ Sprint 11 |
+| Checklists operacionais `/checklists` | ✓ | ✓ | ✓ | ✅ Sprint 11 F2+ |
+| Checklists Templates `/mais/checklists-templates` | — | ✓ | ✓ | ✅ Sprint 11 F2+ |
+| Comunicados `/mais/comunicados` | — | ✓ | ✓ | ✅ Sprint 13 F1 |
+| Agenda Escolar `/mais/agenda-escolar` | — | ✓ | ✓ | ✅ Sprint 13 F2 |
+| Observabilidade `/mais/observabilidade` | — | ✓ | ✓ | ✅ Sprint 13 F3 |
+| Evento Detalhe `/mais/eventos/:id` | — | ✓ | ✓ | ✅ Sprint 14 F1 |
+| Configurar Equipe `/mais/agenda-escolar/equipe` | — | ✓ | ✓ | ✅ Sprint 14 F2 |
 
 ---
 
@@ -74,13 +76,15 @@ Header com saudação + data. Bloco "📅 Compromissos hoje" (events) sobre bloc
 
 **Sprint 5 ampliou:** EditEventSheet acessível por tap em event row.
 
+**Sprint 12 Bloco D ampliou:** filtro opcional por `action_type` (categoria de execução) — filtra a lista de tarefas sem sair da tela.
+
 ---
 
 ### Tela 2 — Semana
 
 **Role:** Todos · **Sprint:** 0
 
-Cards verticais por dia (seg–sex), events com horário em destaque pink, tasks como bullets compactos. FAB para criação rápida. Reagendar via tap → bottom sheet com date picker.
+Cards verticais por dia (seg–sex), events com horário em destaque pink, tasks como bullets compactos. FAB para criação rápida. Reagendar via tap → bottom sheet com date picker. RescheduleSheet e EditEventSheet disponíveis.
 
 ---
 
@@ -88,13 +92,13 @@ Cards verticais por dia (seg–sex), events com horário em destaque pink, tasks
 
 **Role:** Todos (cada um vê os seus) · **Sprint:** 0
 
-Lista de projetos ativos com: nome, badge de categoria colorida, progress bar, próximo checkpoint, status. Coord/Director vê todos os projetos que supervisiona.
+Lista de projetos ativos com: nome, badge de categoria colorida, progress bar, próximo checkpoint, status. Coord/Director vê todos os projetos. Statuses visíveis: `active`, `planning`, `pending_approval`, `paused`.
 
-**A partir da Sprint 8:** botão "+ Novo projeto" no header navega para `/projetos/novo` (Project Wizard).
+**Sprint 8:** botão "+ Novo projeto" no header navega para `/projetos/novo` (Project Wizard).
 
 ---
 
-### Tela 4 — Projeto Detalhe
+### Tela 4 — Projeto Detalhe `/projetos/:id`
 
 **Role:** Todos (com visibilidade por role) · **Sprint:** 0
 
@@ -102,31 +106,33 @@ Header com nome, categoria, status, progresso. 4 abas: Resumo, Checkpoints, Tare
 
 ---
 
-### Tela 5 — Dashboard do Time
+### Tela 5 — Dashboard do Time `/time`
 
 **Role:** Coordenador, Diretor · **Sprint:** 0 (ampliada Sprint 6)
+
+**Restrição de rota:** `<ProtectedRoute requireRoles={['coordinator', 'director']} />`
 
 **Sprint 0:** taxa de conclusão por pessoa, alertas de atraso, quem respondeu rituais.
 
 **Sprint 6 ampliou:** bloco "📅 Compromissos hoje" agregado no topo (top 5 events do team), card de cada colaborador exibe contagens de tasks E events do dia, tap em card navega para `/time/:id` (Pessoa-Detalhe).
 
-**Privacidade:** apenas `tasks.context='work'` e `events.context='work'`. Hábitos, conversation_history e collaborator_memory nunca expostos.
+**Privacidade:** apenas `tasks.context='work'` e `events.context='work'`. Respostas de briefing lidas via RPC `briefing_response_count` (SECURITY DEFINER) — `conversation_history.content` nunca exposto.
 
 ---
 
-### Tela 6 — Configurações
+### Tela 6 — Configurações `/configuracoes`
 
 **Role:** Todos · **Sprint:** 1
 
-7 campos editáveis: briefing_time, personal_briefing_time, closing_time, planning_day, coaching_intensity, notify_deadline_alerts, notify_overdue_alerts. Form simples com toggle switches e radio cards.
+7 campos editáveis: `briefing_time`, `personal_briefing_time`, `closing_time`, `planning_day`, `coaching_intensity` (light/normal/hard), `notify_deadline_alerts`, `notify_overdue_alerts`. Form simples com toggle switches e radio cards.
 
 ---
 
-### Tela 7 — Histórico
+### Tela 7 — Histórico `/historico`
 
 **Role:** Todos · **Sprint:** 1 (ampliada Sprint 3)
 
-Últimos 30 dias do colaborador. **3 KPIs:** Tarefas (X/Y%), Compromissos (N), Dias ativos (N/30). Lista de dias com dot semântico de aderência (idle/briefed/low/mid/good).
+Últimos 30 dias do colaborador. **3 KPIs:** Tarefas (X/Y%), Compromissos (N), Dias ativos (N/30). Lista de dias com dot semântico de aderência. Agrega tarefas E eventos de work context.
 
 ---
 
@@ -134,20 +140,21 @@ Header com nome, categoria, status, progresso. 4 abas: Resumo, Checkpoints, Tare
 
 **Role:** Coordenador, Diretor · **Sprint:** 6
 
-Header: avatar, nome, role, function_title, telefone mascarado. **3 KPIs:** Tarefas abertas, Compromissos hoje, Rituais enviados 7d. Bloco Tarefas pendentes (read-only), bloco Compromissos próximos 7 dias (read-only), faixa visual de aderência ritual (7 dots por dia).
+**Restrição de rota:** `<ProtectedRoute requireRoles={['coordinator', 'director']} />`
 
-**Privacidade:** query de `ritual_logs` seleciona apenas `reference_date, ritual_type, status` — nunca `response_text`. Collaborator comum acessando por URL direta é redirecionado.
+Header: avatar, nome, role, `function_title`, telefone mascarado (`••••{últimos 4}`). **3 KPIs:** Tarefas abertas, Compromissos hoje, Rituais enviados 7d. Bloco Tarefas pendentes (read-only, work context, limit 20), bloco Compromissos próximos 7 dias (read-only), faixa visual de aderência ritual (7 dots por dia).
+
+**Privacidade:** query de `ritual_logs` seleciona apenas `reference_date, ritual_type, status` — nunca `response_text`. Colaborador comum acessando por URL direta é redirecionado.
 
 ---
 
-## Tela 9 — Project Wizard `/projetos/novo` (Sprint 8 — planejada)
+### Tela 9 — Project Wizard `/projetos/novo`
 
-**Role:** Todos (com gate de aprovação para colaborador comum)
+**Role:** Todos (com gate de aprovação para colaborador comum) · **Sprint:** 8
 
-**Conceito:** wizard multi-step que replica o fluxo 5W2H do TOM no PWA, transformando cada pergunta da skill `cadastro-projeto-5w2h.md` em uma tela visual com progresso.
+Wizard multi-step que replica o fluxo 5W2H do TOM no PWA.
 
-### Estrutura
-
+**Estrutura:**
 ```
 ┌─────────────────────────────────────────┐
 │  ← Novo projeto             1/4         │
@@ -155,97 +162,99 @@ Header: avatar, nome, role, function_title, telefone mascarado. **3 KPIs:** Tare
 └─────────────────────────────────────────┘
 ```
 
-### Passo 1 — Identidade (1/4)
+**Passo 1 — Identidade (1/4):** `name` (obrigatório, 3-100 chars), `justification` (obrigatório, 10+ chars).
 
-| Campo | Tipo | Validação |
-|---|---|---|
-| Nome do projeto (`name`) | text input | obrigatório, 3-100 chars |
-| Por que esse projeto existe? (`justification`) | textarea | obrigatório, 10+ chars |
+**Passo 2 — Tempo e local (2/4):** `location` (select: campo_grande/recreio/barra/online/outro), `start_date`, `end_date`.
 
-CTA: **Continuar →**
+**Passo 3 — Pessoas e método (3/4):** `description`, `methodology`, `estimated_hours_week` (opcional).
 
-### Passo 2 — Tempo e local (2/4)
+**Passo 4 — Confirmação (4/4):** resumo + escolha de categoria (pedagogical/commercial/administrative/operational/event/infrastructure). CTA: "Criar projeto".
 
-| Campo | Tipo | Validação |
-|---|---|---|
-| Onde vai acontecer? (`location`) | select (campo_grande / recreio / barra / online / outro) | obrigatório |
-| Início (`start_date`) | date picker | obrigatório, ≥ hoje |
-| Fim previsto (`end_date`) | date picker | obrigatório, > start_date |
+**Gate de permissão:**
+- Coordinator/Director → `requires_approval=false`, status `planning`
+- Collaborator comum → `requires_approval=true`, status `planning` → supervisor notificado via WhatsApp
 
-CTA: **← Voltar** | **Continuar →**
+---
 
-### Passo 3 — Pessoas e método (3/4)
+### Tela 10 — Hábitos pessoais `/habitos` *(novo Sprint 11)*
 
-| Campo | Tipo | Validação |
-|---|---|---|
-| Quem vai participar? (`description`) | textarea | obrigatório |
-| Como vai executar? (`methodology`) | textarea | obrigatório |
-| Horas por semana (`estimated_hours_week`) | number input | opcional, 0-80 |
+**Route:** `<ProtectedRoute />` (any logged user)
 
-CTA: **← Voltar** | **Continuar →**
+**Role:** Todos · **Sprint:** 11 Bloco C / F2+
 
-### Passo 4 — Confirmação (4/4)
+Lista de hábitos do colaborador com check diário, StreakRing por hábito (sequência atual e melhor sequência), HabitsHeatmap agregado dos últimos 30 dias.
 
-Resumo visual de todos os campos preenchidos + escolha de categoria:
+**Privacidade:** RLS por `collaborator_id` — hábitos pessoais nunca visíveis para coordenador/diretor.
 
-| Categoria | Quando usar |
-|---|---|
-| `pedagogical` | Aulas, currículo, formação |
-| `commercial` | Vendas, marketing, captação |
-| `administrative` | Processos internos, RH |
-| `operational` | Operação diária da escola |
-| `event` | Sarau, masterclass, apresentação |
-| `infrastructure` | Reforma, equipamento, sistema |
+---
 
-CTA: **← Voltar** | **Criar projeto** (verde)
+### Tela 11 — Checklists operacionais `/checklists` *(novo Sprint 11 F2+)*
 
-### Tela final
+**Route:** `<ProtectedRoute />` (any logged user)
 
-```
-┌─────────────────────────────────────────┐
-│              ✅                         │
-│     Projeto criado!                     │
-│                                          │
-│  Sarau de Violinos                      │
-│  📅 01/jun → 30/jul/2026                │
-│  📍 Recreio · 5h/sem                    │
-│                                          │
-│  O TOM já foi notificado e vai          │
-│  começar a distribuir as tarefas.       │
-│                                          │
-│  [Ver projeto]  [Criar outro]           │
-└─────────────────────────────────────────┘
-```
+**Role:** Todos · **Sprint:** 11 F2+
 
-### Gate de permissão
+Exibe os checklists operacionais despachados para o colaborador logado no dia corrente. Cada checklist renderizado via `ChecklistCard`. Atualização em tempo real via Supabase Realtime (canal `checklist-item-realtime`, inscrição em `op_checklist_item_completions` e `op_checklist_completions`). Polling a cada 30s como fallback.
 
-- **Coordinator / Director:** projeto entra com `requires_approval=false`, status `planning` → engine inicia distribuição de tarefas
-- **Collaborator comum:** projeto entra com `requires_approval=true`, status `planning` → engine notifica supervisor (`supervisor_id`) via WhatsApp para aprovação
+---
 
-### Integração com engine
+### Tela 12 — Checklists Templates `/mais/checklists-templates` *(novo Sprint 11 F2+)*
 
-Após INSERT bem-sucedido em `projects`:
-1. PWA dispara POST para webhook do engine: `/internal/project-created` com `{ project_id, created_by }`
-2. Engine processa equivalente a `<<PROJECT_CREATE>>`: cria checkpoints iniciais, envia mensagem WhatsApp ao criador, notifica supervisor se `requires_approval=true`
+**Route:** `<ProtectedRoute />` — visível no menu Mais apenas para `requireRoles: ['director', 'coordinator']`
 
-### Schema
+**Role:** Coordenador, Diretor · **Sprint:** 11 F2+
 
-Tabela `projects` já cobre os 7 campos do 5W2H. Mudanças:
+Gerenciamento de templates de checklists operacionais. CRUD via `TemplateSheet`. Suporte a arquivamento/desarquivamento (`Archive`/`ArchiveRestore`). Histórico de última auditoria por template.
 
-- Adicionar coluna `requires_approval boolean DEFAULT false`
-- Adicionar RLS policy `auth_insert_own_projects` permitindo INSERT a qualquer authenticated com `created_by = current_collab_id()`
+---
 
-### Privacidade
+### Tela 13 — Comunicados `/mais/comunicados` *(novo Sprint 13 F1)*
 
-- Wizard só permite criar projeto para si mesmo (`created_by = self`)
-- Collaborator comum não pode atribuir projeto a outro
-- Coord/director pode adicionar membros depois via tela de Projeto Detalhe (mantém comportamento existente)
+**Route:** `<ProtectedRoute />` — visível no menu Mais apenas para `requireRoles: ['director', 'coordinator']`
 
-### Referências
+**Role:** Coordenador, Diretor · **Sprint:** 13 F1
 
-- Skill backend: `skills/cadastro-projeto-5w2h.md`
-- Documentação arquitetural: `docs/PROJECT-WIZARD.md`
-- Schema: `docs/03-esquema-banco-dados-la-organizer.md` (tabela `projects`)
+Lista de comunicados (announcements) ordenados por data de criação (últimos 30). Status: draft, scheduled, sending (com progresso de jobs), sent, cancelled. Criação via `ComunicadoSheet` (FAB). Cancelamento de comunicados pendentes. Polling de jobs em andamento.
+
+---
+
+### Tela 14 — Agenda Escolar `/mais/agenda-escolar` *(novo Sprint 13 F2)*
+
+**Route:** `<ProtectedRoute />` — visível no menu Mais apenas para `requireRoles: ['director', 'coordinator']`
+
+**Role:** Coordenador, Diretor · **Sprint:** 13 F2
+
+Lista de eventos escolares ativos ordenados por data. Criação via `EventoSheet` (FAB). Cancelamento de evento (propaga `cancelled` para announcements vinculados). Chips de status por etapa de comunicação (leadership/school/unit/dayOf) com indicador `scheduled_at`. Link para `EventoDetalhe` por tap no evento.
+
+---
+
+### Tela 15 — Observabilidade `/mais/observabilidade` *(novo Sprint 13 F3)*
+
+**Route:** `<ProtectedRoute />` — visível no menu Mais apenas para `requireRoles: ['director', 'coordinator']`
+
+**Role:** Coordenador, Diretor · **Sprint:** 13 F3
+
+Dashboard de aprovações e métricas de envio de announcements (últimos 30 dias). Métricas por comunicado: jobs_total, jobs_sent, jobs_failed, jobs_pending, jobs_cancelled. Diretor pode aprovar/rejeitar comunicados em status `pending_approval` via `AprovacaoSheet`. Polling automático a cada 15s. Detecção de duplicatas via `detectDuplicates`.
+
+---
+
+### Tela 16 — Evento Detalhe `/mais/eventos/:id` *(novo Sprint 14 F1)*
+
+**Route:** `<ProtectedRoute />` (any logged user com acesso via Agenda Escolar)
+
+**Role:** Coordenador, Diretor · **Sprint:** 14 F1
+
+Detalhe de um evento escolar com tarefas organizadas por setor (`logistica`, `tecnica`, `pedagogico`, `comunicacao`, `producao`). CRUD de tarefas de evento via `EventTaskSheet`. Toggle de status de tarefa inline. Exclusão com confirmação. Setores colapsáveis. Criação de nova tarefa com setor pré-selecionado.
+
+---
+
+### Tela 17 — Configurar Equipe `/mais/agenda-escolar/equipe` *(novo Sprint 14 F2)*
+
+**Route:** `<ProtectedRoute />` (any logged user com acesso via Agenda Escolar)
+
+**Role:** Coordenador, Diretor · **Sprint:** 14 F2
+
+Configuração do mapeamento setor × responsável por unidade (barra/recreio/campo_grande). Seletor de unidade + selects de colaborador por setor (`event_team_map`). Salva/atualiza via upsert. Feedback inline de confirmação.
 
 ---
 
@@ -283,19 +292,26 @@ Tabela `projects` já cobre os 7 campos do 5W2H. Mudanças:
 | Estado | TanStack Query + Context |
 | Backend | Supabase (em produção) |
 | Auth | Supabase Auth + magic link WhatsApp |
-| Deploy | **Vercel** (`la-organizer.vercel.app`) |
+| Deploy | VPS (89.116.73.186, nginx + PM2) |
 | Hosting backend TOM | VPS (89.116.73.186, nginx + PM2) |
 
 ---
 
-## O que muda v3.0 → v3.1
+## O que muda v3.1 → v3.2
 
-| Item | v3.0 | v3.1 |
+| Item | v3.1 | v3.2 |
 |---|---|---|
-| Total de telas | 16 (priorizadas) | 9 em produção + Project Wizard planejada |
-| Status | Sprint 0 sendo planejada | Sprints 0→7 em produção |
-| Project Wizard | Não previsto | **Tela 9 — `/projetos/novo` (Sprint 8)** |
-| Persona criadora de projeto | Apenas coord/director | **Todos (com gate de aprovação)** |
-| Hosting | A decidir | Vercel decidido (`la-organizer.vercel.app`) |
-| Pessoa-Detalhe | Fase 2+ | Entregue Sprint 6 |
-| EditEventSheet | Não previsto | Entregue Sprint 5 |
+| Total de telas | 9 em produção + Project Wizard planejada | 17 em produção |
+| Status geral | Sprints 0→7 em produção | Sprints 0→14 em produção |
+| Project Wizard | Sprint 8 planejada | ✅ Entregue Sprint 8 |
+| Hábitos | Sprint 8+ planejada | ✅ Entregue Sprint 11 |
+| Checklists operacionais (colaborador) | Sprint 8+ planejada | ✅ Entregue Sprint 11 F2+ |
+| Checklists Templates (coord/dir) | Sprint 8+ planejada | ✅ Entregue Sprint 11 F2+ |
+| Comunicados | Sprint 8+ planejada ("Broadcast") | ✅ Entregue Sprint 13 F1 |
+| Agenda Escolar | Não previsto | ✅ Entregue Sprint 13 F2 |
+| Observabilidade | Não previsto | ✅ Entregue Sprint 13 F3 |
+| Evento Detalhe | Não previsto | ✅ Entregue Sprint 14 F1 |
+| Configurar Equipe | Não previsto | ✅ Entregue Sprint 14 F2 |
+| Hoje — filtro action_type | Não previsto | ✅ Entregue Sprint 12 Bloco D |
+| Histórico — agrega events | Apenas tasks | ✅ Inclui tasks + events (work) |
+| Hosting PWA | Vercel (decidido) | VPS (nginx + PM2) |

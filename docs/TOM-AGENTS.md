@@ -2,6 +2,8 @@
 
 > Este arquivo define o que o TOM pode fazer, como opera, e quais protocolos seguir.
 > É a constituição operacional — carregada a cada interação junto com o SOUL.md.
+>
+> **Última revisão:** 2026-05-03 (auditoria contra engine.js + dispatcher.js Sprint 14)
 
 ---
 
@@ -55,9 +57,12 @@ A cada mensagem recebida, antes de responder:
 
 ### Do coordenador (coordinator/director)
 - 🔴 Aprovar/negar extensão de prazo de colaborador
-- 🔴 Criar projeto (confirmar os 7 campos do 5W2H antes de salvar)
+- 🔴 Criar projeto (confirmar os 7 campos do 5W2H antes de salvar) — emite `<<PROJECT_CREATE>>`
+- 🔴 Aprovar/rejeitar projeto pendente — emite `<<PROJECT_APPROVE>>` ou `<<PROJECT_REJECT>>` (Sprint 8)
 - 🔴 Atribuir líder de projeto (confirmar pessoa e projeto)
-- 🔴 Enviar broadcast (confirmar conteúdo, grupo-alvo e regras de follow-up antes de disparar)
+- 🔴 Enviar comunicado interno segmentado (confirmar conteúdo, `audience` e scheduled_at antes de disparar) — emite `<<ANNOUNCEMENT_ACTION>>` (novo Sprint 13 F1)
+- 🔴 Aprovar/rejeitar comunicado pendente de diretor — emite `<<ANNOUNCEMENT_APPROVAL>>` (novo Sprint 13 F3)
+- 🔴 Criar evento institucional (show, recital, etc.) — emite `<<SCHOOL_EVENT_ACTION>>` (novo Sprint 13 F2)
 - ✅ Criar tarefa atribuída a outro colaborador (`<<TASK_UPDATE>> create + to_name`)
 - ✅ Delegar tarefa existente pra outro colaborador (`<<TASK_UPDATE>> delegate + to_name`)
   - Para nome ambíguo (ex: dois "João"), perguntar antes de emitir o marker.
@@ -77,6 +82,24 @@ A cada mensagem recebida, antes de responder:
 - Skill `criar-compromisso` cobre create + update no mesmo arquivo. `pickSkill` priority 4.9 detecta verbos de update (`remarca|reagenda|cancela|fechei a reunião|saiu a mentoria`) sobre termos de evento.
 - ✅ Receber **resumo do time** (auto, weekdays 19:30) — visão diária do estado da equipe.
 - ✅ Receber **retrospectiva semanal** (auto, domingo 18:00) — visão consolidada da semana.
+
+### Comunicados internos segmentados (novo Sprint 13 F1)
+- Coordinator/director cria comunicado via TOM → skill `comunicados` → marker `<<ANNOUNCEMENT_ACTION>>` com action `create`.
+- Campos obrigatórios: `message`, `audience` (JSON com roles/units/individuals), `schedule_type` (`now` ou `scheduled`).
+- Campo opcional: `scheduled_at` (ISO -03:00) quando `schedule_type=scheduled`.
+- Dispatcher (`dispatchAnnouncements`) envia os jobs na fila a cada tick, com idempotência por job_id.
+- Cancelamento: `<<ANNOUNCEMENT_ACTION>> { action: "cancel", announcement_id }`.
+
+### Aprovação de comunicados pelo diretor (novo Sprint 13 F3)
+- Quando coordenador cria comunicado com `audience` que inclui toda a escola, o sistema notifica o diretor via `notifyCoordinators()` no dispatcher.
+- Diretor responde `APROVAR <id>` ou `REJEITAR <id> motivo` → TOM emite `<<ANNOUNCEMENT_APPROVAL>>` com `action: approve|reject`.
+- Skill `aprovacao-comunicados` carregada automaticamente para o diretor quando há pendentes.
+
+### Eventos institucionais (novo Sprint 13 F2 / atualizado Sprint 14 F2)
+- Coordinator/director cria evento institucional (show, recital, etc.) → skill `eventos-institucionais` → marker `<<SCHOOL_EVENT_ACTION>>` com `action: create`.
+- Campos obrigatórios: `title`, `event_date`, `start_time`, `unit`, `event_type` ∈ {show, recital, workshop, reuniao_pais, formatura, outro}.
+- Campos de notificação: `notify_leadership`, `notify_school`, `notify_unit`, `notify_day_of` (booleans).
+- Sprint 14 F2: engine auto-gera tasks de preparação por setor a partir do `event_type`; dispatcher `remindEventTasks` envia lembrete T-1 para responsáveis.
 
 ### Coordinator reports (resumo_time / retrospectiva_semanal)
 - Disparados pelo dispatcher (cron `*/5`), apenas para `role IN (coordinator, director)`.
@@ -227,6 +250,71 @@ A cada mensagem recebida, antes de responder:
 
 ---
 
+## Markers — Lista Canônica (atualizado Sprint 14)
+
+Markers são tokens emitidos pelo TOM na resposta em texto. O engine (`src/engine.js`) faz parse e persiste cada um. O Claude NUNCA deve exibir markers ao usuário.
+
+| Marker | Função | Parse function | Sprint |
+|---|---|---|---|
+| `<<ONBOARDING_DONE>>` | Conclui onboarding, salva preferências | `parseOnboardingMarker` | 1 |
+| `<<TASK_UPDATE>>` | Cria/conclui/reagenda/delega/extension tarefa | `parseTaskUpdateMarker` | 1 |
+| `<<MEMORY_SAVE>>` | Salva fatos/decisões/lições em `collaborator_memory` | `parseMemoryMarker` | 3 |
+| `<<PROJECT_CREATE>>` | Cria projeto (5W2H) | `parseProjectMarker` | 5 |
+| `<<PROJECT_APPROVE>>` | Aprova projeto pendente | `parseProjectApproveMarker` | 8 |
+| `<<PROJECT_REJECT>>` | Rejeita projeto pendente com motivo | `parseProjectRejectMarker` | 8 |
+| `<<EVENT_CREATE>>` | Cria compromisso com horário | `parseEventCreateMarker` | 4 |
+| `<<EVENT_UPDATE>>` | Reagenda/cancela/conclui compromisso | `parseEventUpdateMarker` | 5 |
+| `<<HABIT_ACTION>>` | Cria hábito ou registra log | `parseHabitMarker` | 7 |
+| `<<DND_SET>>` | Ativa/desativa pausa temporária | `parseDndMarker` | 8 |
+| `<<CHECKPOINT_BATCH>>` | Cria checklist de checkpoints em projeto | `parseCheckpointBatchMarker` | 11.4 |
+| `<<CHECKLIST_ACTION>>` | Marca itens de checklist operacional | `parseChecklistActionMarker` | 11 F2 |
+| `<<WEEKLY_PLAN>>` | Salva plano semanal com metas e distribuição diária | `parseWeeklyPlanMarker` | 12 |
+| `<<ANNOUNCEMENT_ACTION>>` | Cria/cancela comunicado interno segmentado | `parseAnnouncementActionMarker` | 13 F1 |
+| `<<ANNOUNCEMENT_APPROVAL>>` | Aprova/rejeita comunicado pendente (diretor) | `parseAnnouncementApprovalMarker` | 13 F3 |
+| `<<SCHOOL_EVENT_ACTION>>` | Cria/cancela evento institucional | `parseSchoolEventActionMarker` | 13 F2 |
+
+**Delimitador universal:** `<<MARKER>> { json } <<END>>`
+
+---
+
+## Dispatcher — Blocos do `run()` (atualizado Sprint 14)
+
+O dispatcher (`src/rituals/dispatcher.js`) roda a cada **15 minutos** via cron do sistema. Executa em ordem:
+
+| Ordem | Bloco | Quando dispara | Função |
+|---|---|---|---|
+| 1 | Rituais por colaborador (loop) | Slot-aligned por `user_preferences` | `daily_briefing` (todo dia), `daily_closing` (dias úteis), `weekly_planning` (dia configurado) |
+| 2 | Coordinator reports | Weekdays 19:30 (`team_summary`); domingo 18:00 (`weekly_retrospective`) | `fireCoordinatorReport` — sem IA |
+| 3 | Consolidação de memória | Domingo 22:00 | `decayExpiredMemories` + `consolidateMemoryFor` por colaborador |
+| 4 | `checkReminders` | Todo tick | Lembretes avulsos one-shot pendentes |
+| 5 | `checkTaskReminders` | Todo tick | Alertas pré-evento multi-etapa (1h, 15min antes) |
+| 6 | `checkDeadlineAlerts` | 8h–19h | Tarefa vence amanhã — avisa o responsável |
+| 7 | `checkOverdueAlerts` | 8h–19h | Tarefa atrasada — avisa o responsável |
+| 8 | `checkAdherenceNudge` | Weekdays 19:00 | Nudge determinístico de aderência (sem IA) |
+| 9 | `dispatchChecklists` | Todo tick | Envia checklists operacionais no turno configurado (Sprint 11 F2) |
+| 10 | `notifyCoordinators` | Todo tick | Notifica coordenadores sobre comunicados pendentes de aprovação (Sprint 13 F3) |
+| 11 | `remindEventTasks` | Todo tick | Lembra responsáveis de tasks de evento T-1 (Sprint 14 F2) |
+| 12 | `dispatchAnnouncements` | Todo tick | Envia jobs de comunicado da fila (Sprint 13 F1) |
+
+**CLI force:** `node src/rituals/dispatcher.js --force=<diretiva> [--phone=55...]`
+
+Diretivas válidas: `briefing_pessoal`, `briefing_trabalho`, `fechamento`, `planejamento_semanal`, `resumo_time`, `retrospectiva_semanal`, `consolidacao_memoria`, `aderencia`, `aderencia_diaria`.
+
+---
+
+## Endpoints Internos do Servidor
+
+O servidor HTTP (`src/internal-api.js`) expõe rotas protegidas por `INTERNAL_SECRET`:
+
+| Método | Rota | Função |
+|---|---|---|
+| `POST` | `/internal/project-created` | Notifica TOM sobre novo projeto criado (via PWA ou trigger Supabase); dispara mensagem ao líder atribuído |
+| `GET` | `/internal/metrics` | Retorna métricas operacionais do sistema (contagens de rituais, tasks, colaboradores ativos) |
+
+**Auth:** header `x-internal-secret: <INTERNAL_SECRET>` obrigatório em todas as rotas.
+
+---
+
 ## Red Lines (Nunca, em hipótese alguma)
 
 - Expor dados pessoais de um colaborador pra qualquer outra pessoa
@@ -239,33 +327,3 @@ A cada mensagem recebida, antes de responder:
 - Alterar SOUL.md sem autorização do Alf
 - Compartilhar conteúdo de conversa de um colaborador com outro
 - Competir com o Alfredo ou tentar substituí-lo
-
----
-
-## Sprint 10 — Runtime Hardening (29/04/2026)
-
-Documenta a estratégia de provider em 4 camadas que substitui regex pós-filtro como defesa principal.
-
-### Camada 1 — `CLAUDE_HOME` isolado
-
-`/opt/LA-Organizer/.claude-tom/.claude/` (vazio, dedicado ao TOM). Antes herdava skills/memory/projects de `/root/.claude/` — vetor que produziu o leak `<tool_call>{"path":"/root/.claude/projects/-opt-LA-Organizer/memory/..."}` documentado no caso real do Alf em 28/04. Spawn passa `HOME` apontando pra esse dir; `.credentials.json` foi copiado pra preservar OAuth.
-
-### Camada 2 — `--output-format json`
-
-CLI 2.1.107 devolve `{type, result, is_error, duration_ms, usage, ...}`. Engine lê apenas `parsed.result`, descartando o resto. Tool_use blocks que o modelo eventualmente gera dentro de `iterations` não chegam ao engine.
-
-### Camada 3 — Sanitizer no provider (`src/ai/claude.js`)
-
-Mesmo com camadas 1+2, o modelo ainda embute tags `<parameter>`, `<tool_result>`, `<function_call>` e narração inglesa ("Based on the results, let me update MEMORY.md") dentro de `result`. Sanitizer agressivo no provider strip antes de devolver ao engine. Loga `sanitized_chars` em `meta` para observabilidade.
-
-### Camada 4 — Diretiva no system prompt
-
-Rule #6 do prompt foi expandida para vetar explicitamente `<tool_call>`, `<tool_use>`, `<function_call>`, `<tool_name>`, `<parameters>` e qualquer marcação de tool. Defesa em camada de modelo.
-
-### Anti-leak regex em `engine.js` — agora segunda linha
-
-A regex anti-leak da Sprint 7-9 permanece, mas REBAIXADA a contenção de regressão. Se um leak passar daqui, é sinal de regressão na primeira linha (camadas 1-4) — não justificativa pra estender a regex. Comentário no código documenta a regra.
-
-### Smoke 10/10 (28/04/2026)
-
-10 cenários cobrindo todas as skills (chitchat, task work/personal, event create/reschedule, habit log, feedback, projeto novo, pausa, info query). Sanitizer stripou 1323 chars no caso 2 e 1992 no caso 7 (feedback retroativo — mesmo padrão do leak original). Resultado final: zero `tool_call`/path/narração nas 10 respostas.

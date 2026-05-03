@@ -1,12 +1,12 @@
 # PRD — LA Organizer
 
 **Documento:** 06 — PRD Completo
-**Versão:** 3.1
-**Data:** 28 de abril de 2026
+**Versão:** 3.2
+**Data:** 2026-05-03 (atualizado Sprint 14)
 **Autor:** Luciano Alf (produto) + Claude + OpenClaw (arquitetura)
 **Stakeholder:** Luciano Alf (CEO LA Music)
 **Agente:** TOM
-**Status:** Fase 1 funcionalmente concluída — Fase 2 (PWA) em produção · Sprints 0→7 fechadas
+**Status:** Fase 1 funcionalmente concluída — Fase 2 (PWA) em produção · Sprints 0→14 fechadas
 
 ---
 
@@ -65,11 +65,11 @@ A LA HQ tem um propósito: **transformar vidas**. O sistema não serve só ao tr
 |---|---|---|
 | Agente conversacional | TOM via WhatsApp (UAZAPI) | ✅ Fase 1 concluída |
 | Backend | Node.js + Supabase (PostgreSQL) | ✅ Em produção |
-| Skills e docs | 10+ skills ativas + referências internas | ✅ Revisadas pelo OpenClaw |
+| Skills e docs | 16 skills ativas + referências internas (atualizado Sprint 14) | ✅ Revisadas pelo OpenClaw |
 | Proteção | 4 guards (serialização, dedupe, validação de markers, anti-leak) | ✅ Em produção |
-| Observabilidade | ritual_logs + marker_logs + v_recent_events | ✅ Em produção |
+| Observabilidade | ritual_logs + marker_logs + tela PWA Observabilidade (atualizado Sprint 13 F3) | ✅ Em produção |
 | Resiliência | restart behavior + fallback provider + segredos | ✅ Em produção |
-| Espelho visual | PWA React mobile-first | ✅ Em produção (Vercel) |
+| Espelho visual | PWA React mobile-first | ✅ Em produção (VPS) |
 | Integração executiva | Alfredo (OpenClaw) | 📌 Fase 4 |
 
 ### 3.2 Privacidade por design
@@ -86,33 +86,43 @@ A LA HQ tem um propósito: **transformar vidas**. O sistema não serve só ao tr
 
 ### 4.1 O que está em produção hoje
 
-| Funcionalidade | Status |
-|---|---|
-| Onboarding (5 perguntas) | ✅ |
-| Briefing trabalho (8h) | ✅ |
-| Briefing pessoal (7h) | ✅ |
-| Fechamento do dia (19h) | ✅ |
-| Planejamento semanal (domingo) | ✅ |
-| Alertas de prazo e atraso | ✅ |
-| Criar tarefa pessoal / trabalho / lembrete | ✅ |
-| Ticar, reagendar, delegar tarefa | ✅ |
-| Pedir prazo + aprovação coordenador | ✅ |
-| Demanda nova vira task (não memória) | ✅ |
-| Coordenador cria e delega tarefa | ✅ |
-| Criar projeto 5W2H via WhatsApp (7 perguntas) | ✅ |
-| Criar/atualizar/cancelar/concluir compromisso (event) via WhatsApp | ✅ |
-| Briefing inclui compromissos do dia | ✅ |
-| Separação pessoal × trabalho | ✅ |
-| Hábitos pessoais (criar, marcar, streak) | ✅ |
-| Checklists operacionais | ✅ |
-| Resumo do time (coordenador, 19h30) | ✅ |
-| Retrospectiva semanal (coordenador, domingo) | ✅ |
-| Do not disturb (janela por colaborador) | ✅ |
-| Consolidação de memória (cron domingo 22h) | ✅ |
-| Tratamento de áudio (Whisper) | ✅ |
-| 4 guards de proteção | ✅ |
-| Observabilidade (ritual_logs + marker_logs) | ✅ |
-| Resiliência (restart, fallback, segredos) | ✅ |
+| Funcionalidade | Status | Sprint |
+|---|---|---|
+| Onboarding (5 perguntas) | ✅ | Fase 1 |
+| Briefing trabalho (8h) | ✅ | Fase 1 |
+| Briefing pessoal (7h) | ✅ | Fase 1 |
+| Fechamento do dia (19h) | ✅ | Fase 1 |
+| Planejamento semanal (domingo) | ✅ | Fase 1 |
+| Alertas de prazo e atraso | ✅ | Fase 1 |
+| Criar tarefa pessoal / trabalho / lembrete | ✅ | Fase 1 |
+| Ticar, reagendar, delegar tarefa | ✅ | Fase 1 |
+| Pedir prazo + aprovação coordenador | ✅ | Fase 1 |
+| Demanda nova vira task (não memória) | ✅ | Fase 1 |
+| Coordenador cria e delega tarefa | ✅ | Fase 1 |
+| Criar projeto 5W2H via WhatsApp (7 perguntas) | ✅ | Fase 1 |
+| Criar/atualizar/cancelar/concluir compromisso (event) via WhatsApp | ✅ | Fase 1 |
+| Briefing inclui compromissos do dia | ✅ | Fase 1 |
+| Separação pessoal × trabalho | ✅ | Fase 1 |
+| Hábitos pessoais (criar, marcar, streak) | ✅ | Fase 1 |
+| Checklists operacionais (dispatch + WhatsApp + PWA) | ✅ | Sprint 11 F2+ |
+| CRUD de templates de checklists (PWA, coord+) | ✅ | Sprint 11 F2+ |
+| Comunicados segmentados com fila e aprovação 2-stage | ✅ | Sprint 13 F1+F3 |
+| Eventos institucionais com plano de comunicação automático (T-3/T-1/T0) | ✅ | Sprint 13 F2+T0 |
+| Dashboard Observabilidade PWA (fila aprovações, métricas, anti-spam) | ✅ | Sprint 13 F3 |
+| Tarefas de eventos por setor (PWA `/mais/eventos/:id`) | ✅ | Sprint 14 F1 |
+| Auto-geração de kit de tasks ao criar evento via TOM (5 famílias, 32 tasks) | ✅ | Sprint 14 F2 |
+| Mapa de equipe por unidade e setor (`event_team_map`) | ✅ | Sprint 14 F2 |
+| Tela "Configurar Equipe" (`/mais/agenda-escolar/equipe`) | ✅ | Sprint 14 F2 |
+| Lembretes WhatsApp T-1 para tasks de evento pendentes | ✅ | Sprint 14 F2 |
+| Resumo do time (coordenador, 19h30) | ✅ | Fase 1 |
+| Retrospectiva semanal (coordenador, domingo) | ✅ | Fase 1 |
+| Do not disturb (janela por colaborador) | ✅ | Fase 1 |
+| Consolidação de memória (cron domingo 22h) | ✅ | Fase 1 |
+| Nudge de aderência (19h, cond: ≥2 atrasadas) | ✅ | Fase 1 |
+| Tratamento de áudio (Whisper) | ✅ | Fase 1 |
+| 4 guards de proteção | ✅ | Fase 1 |
+| Observabilidade (ritual_logs + marker_logs) | ✅ | Fase 1 |
+| Resiliência (restart, fallback, segredos) | ✅ | Fase 1 |
 
 ### 4.2 Deferred (documentado)
 
@@ -122,6 +132,9 @@ A LA HQ tem um propósito: **transformar vidas**. O sistema não serve só ao tr
 | collaborator_profiles auto-update qualitativo | Precisa de uso real com múltiplos usuários antes |
 | Emusys/checklist nas seções do resumo | Aguarda tabelas completas das integrações |
 | Hermes (evolução autônoma de skills) | Metacapacidade — entra após validação com usuários reais |
+| Override de equipe por evento | Diferido Sprint 14 — aguarda uso real da feature base |
+| Lembretes múltiplos T-3 + T-1 para tasks de evento | Diferido Sprint 14 — risco de spam; aguarda feedback |
+| Aprovação para eventos institucionais | Fora de escopo Sprint 13 F3 — futura |
 
 ---
 
@@ -139,7 +152,7 @@ Criar o espelho visual do TOM — um PWA mobile-first que permite ao colaborador
 - Privacidade por design (pessoal não vaza para coordenador)
 - **Ações estruturadas que disparam markers do TOM** quando aplicável (ex.: criação de projeto via wizard dispara `<<PROJECT_CREATE>>` no engine)
 
-### 5.3 Telas em produção (Sprints 0→7)
+### 5.3 Telas em produção (Sprints 0→14)
 
 | Tela | Role | Sprint |
 |---|---|---|
@@ -148,19 +161,24 @@ Criar o espelho visual do TOM — um PWA mobile-first que permite ao colaborador
 | Semana | Todos | Sprint 0 |
 | Projetos (lista) | Todos | Sprint 0 |
 | Projeto detalhe | Todos | Sprint 0 |
-| Dashboard do time | Coordenador+ | Sprint 0 |
+| Dashboard do time `/time` | Coordenador+ | Sprint 0 |
 | Configurações | Todos | Sprint 1 |
 | Histórico | Todos | Sprint 1 |
 | Pessoa-Detalhe `/time/:id` | Coordenador+ | Sprint 6 |
+| Hábitos `/habitos` | Todos | Sprint 8+ |
+| Project Wizard `/projetos/novo` | Todos (com gate) | Sprint 8 |
+| Checklists `/checklists` | Todos | Sprint 11 F2+ |
+| Templates de Checklists `/mais/checklists-templates` | Coord+ | Sprint 11 F2+ |
+| Comunicados `/mais/comunicados` | Coord+ | Sprint 13 F1 |
+| Agenda Escolar `/mais/agenda-escolar` | Coord+ | Sprint 13 F2 |
+| Observabilidade `/mais/observabilidade` | Coord+ | Sprint 13 F3 |
+| Evento Detalhe `/mais/eventos/:id` | Coord+ | Sprint 14 F1 |
+| Configurar Equipe `/mais/agenda-escolar/equipe` | Coord+ | Sprint 14 F2 |
 
-### 5.4 Telas planejadas
+### 5.4 Telas planejadas (futuro)
 
 | Tela | Role | Sprint planejada |
 |---|---|---|
-| **Project Wizard `/projetos/novo`** | **Todos (com gate)** | **Sprint 8** |
-| Hábitos pessoais | Todos | Sprint 8+ |
-| Checklists operacionais | Todos | Sprint 8+ |
-| Broadcast no PWA | Coordenador+ | Sprint 8+ |
 | Aderência geral | Coordenador+ | Fase 3 |
 | Dashboard executivo | Diretor | Fase 3 |
 | Agenda Emusys | Professor | Fase 5 |
@@ -221,11 +239,13 @@ Ver `docs/PROJECT-WIZARD.md` para decisões arquiteturais detalhadas, mapeamento
 |---|---|---|
 | Fase 0 | Infraestrutura (VPS, banco, webhook) | ✅ Concluída |
 | Fase 1 | TOM WhatsApp (agente completo) | ✅ Funcionalmente concluída |
-| Fase 2 | PWA espelho visual + Project Wizard | 🔄 Em andamento (Sprints 0→7 fechadas, 8 planejada) |
+| Fase 2 | PWA espelho visual + Project Wizard + Coordenação operacional | ✅ Sprints 0→14 entregues (atualizado Sprint 14) |
 | Fase 3 | Dashboard gerencial avançado + check-in RH | 📌 Planejado |
 | Fase 4 | Integração Alfredo (OpenClaw) | 📌 Planejado |
-| Fase 5 | Checklists operacionais avançados + Emusys completo + Google Calendar | 📌 Planejado |
+| Fase 5 | Emusys completo + Google Calendar | 📌 Planejado |
 | Fase 1E | Hermes (evolução autônoma de skills) | 📌 Após validação com usuários |
+
+> Para histórico detalhado sprint a sprint, ver `docs/roadmap-la-organizer.md`.
 
 ---
 
@@ -233,8 +253,9 @@ Ver `docs/PROJECT-WIZARD.md` para decisões arquiteturais detalhadas, mapeamento
 
 1. **Concluído:** Alf testou sozinho (Sprints 0→4)
 2. **Concluído:** Anne Susan entrou (collaborator, Campo Grande) na Sprint 2
-3. **Próximo:** Juliana e Quintela (coordenadores) — pré-requisito: Sprint 8 (Project Wizard) entregue
-4. **Produção:** time completo (~40 pessoas) — após estabilização do Project Wizard com 4-5 usuários
+3. **Concluído (atualizado Sprint 14):** Project Wizard entregue; Juliana e Quintela (coordenadores) podem onboardar
+4. **Próximo:** validar Sprint 14 F2 em uso real (1–2 semanas) antes de expandir features de eventos para mais usuários
+5. **Produção plena:** time completo (~40 pessoas) — após estabilização com 4-5 usuários coordenadores
 
 ---
 
@@ -247,10 +268,16 @@ Ver `docs/PROJECT-WIZARD.md` para decisões arquiteturais detalhadas, mapeamento
 - **Anti-leak guard:** Sprint 7 adicionou regex no engine bloqueando vazamento de termos de stack ao usuário (Supabase, banco, MCP, tabela, sql, permissão de acesso).
 - **MCP tools desligadas no TOM:** Sprint 7 desabilitou ferramentas externas no Claude CLI do engine — TOM só consome texto + marker, nunca tenta tool calls.
 - **Project Wizard cria via PWA, executa via engine:** wizard é UI; criação efetiva e distribuição de tarefas é responsabilidade do engine TOM (princípio "PWA é espelho").
+- **Kit de tasks hardcoded em engine.js (Sprint 14):** 5 famílias × 8 tipos de evento — decisão deliberada de YAGNI; editável via código enquanto o produto não tem multi-dev.
+- **Kits de tasks por evento_type, não por evento individual:** mapa de equipe é por unidade × setor, não por evento específico — simplifica gestão, override diferido para uso real.
+- **Deploy via scp sem CI/CD (atualizado Sprint 14):** aceitável single-dev; tsc clean exigido antes de cada deploy. Histórico mantido no GitHub.
+- **Bundle PWA 633KB (dívida Sprint 14):** code-splitting diferido — só prioridade se carregamento incomodar usuários.
 
 ---
 
-## 10. Mudanças v3.0 → v3.1
+## 10. Histórico de versões
+
+### v3.0 → v3.1 (2026-04-28)
 
 | Item | v3.0 | v3.1 |
 |---|---|---|
@@ -261,3 +288,19 @@ Ver `docs/PROJECT-WIZARD.md` para decisões arquiteturais detalhadas, mapeamento
 | Telas em produção | Lista P0/P1 | Lista por sprint entregue |
 | Privatização repo | Pendente | Concluído |
 | Rotação segredos | Pendente | Concluída (Supabase Sprint 7, UAZAPI Sprint 5) |
+
+### v3.1 → v3.2 (2026-05-03) — pós-Sprint 14
+
+| Item | v3.1 | v3.2 |
+|---|---|---|
+| Status Fase 2 | Sprints 0→7 fechadas, Sprint 8 planejada | Sprints 0→14 entregues |
+| Telas em produção | 9 telas | 18 telas (+ Hábitos, Wizard, Checklists, Comunicados, Agenda, Observabilidade, EventoDetalhe, ConfigEquipe) |
+| Coordenação operacional | Não previsto | Checklists, Comunicados+Aprovação, Eventos Institucionais (Sprints 11+13) |
+| Tarefas de eventos | Não previsto | CRUD por setor + auto-kit + mapa de equipe + lembretes T-1 (Sprint 14) |
+| Skills TOM | 10+ | 16 skills (aprovacao-comunicados, comunicados, eventos-institucionais, checklists-operacionais, aprovar-projeto) |
+| Engine markers | PROJECT_CREATE, TASK_UPDATE, MEMORY_SAVE, ONBOARDING_DONE | + CHECKLIST_ACTION, CHECKPOINT_BATCH, ANNOUNCEMENT_ACTION, ANNOUNCEMENT_APPROVAL, SCHOOL_EVENT_ACTION, EVENT_CREATE, PROJECT_REJECT |
+| Deploy infra | Vercel (PWA) | VPS única (3 processos pm2: tom, web, tunnel) |
+| Backup | Não documentado | Backup diário às 03h → `/opt/LA-Organizer/backups/` (60d) |
+| Roadmap geral | Fase 2 em andamento | Fase 2 concluída; Fase 3+ planejadas |
+| Fase 5 — escopo | Checklists avançados + Emusys + Google Calendar | Emusys + Google Calendar (checklists já entregues na Fase 2) |
+| Dívidas técnicas conhecidas | Não listadas | Bundle 633KB, categoria tasks, due_date NOT NULL, sem testes automatizados |

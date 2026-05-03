@@ -1,240 +1,284 @@
-# 🗺️ Roadmap LA Organizer — TOM
+# Roadmap LA Organizer — Histórico Sprint 0→14
 
-**Baseado em:** PRD v2.0, Docs 01-06, TOM-SOUL, TOM-AGENTS, TOM-MEMORY, TOM-SKILLS
-**Atualizado:** 26 de abril de 2026
-**Estado:** Fase 1 em andamento
-
----
-
-## FASE 0 — Infraestrutura ✅ CONCLUÍDA
-
-| Item | Status |
-|------|--------|
-| VPS KVM4 + PM2 + Nginx | ✅ |
-| Webhook UAZAPI end-to-end | ✅ |
-| Claude CLI via spawn (stdin fechado) | ✅ |
-| Supabase 27 tabelas + 9 domínios | ✅ |
-| GitHub sincronizado | ✅ |
-| SSH sem senha (`ssh tom`) | ✅ |
-| ecosystem.config.js | ✅ |
-| SOUL.md + AGENTS.md no prompt | ✅ |
-| Arquitetura de prompt (3-8KB, 1 skill por vez) | ✅ |
-| Linguagem visual 👽 + emojis semânticos | ✅ |
-| Typing indicator ("TOM está digitando...") | ✅ |
-| Memória ativa (extração automática) | ✅ |
+> Histórico cronológico das sprints. Para o estado atual do produto, ver PRD (`docs/06-prd-la-organizer-v3.md`). Para schema do banco, ver `docs/03-esquema-banco-dados-la-organizer.md`.
+>
+> **Nota sobre sprints 0–10:** não há specs ou reports granulares para este período. O histórico foi reconstruído a partir do PRD v3.1 (escrito em 2026-04-28 com estado Sprints 0→7 em produção) e dos comentários inline do engine.js. Sprints 8–10 foram inferidas pelos artefatos entregues (telas no App.tsx, markers no engine).
 
 ---
 
-## FASE 1 — TOM WhatsApp 🔄 EM ANDAMENTO
+## Fase 0 — Infraestrutura base
 
-### 1A. Rituais automáticos (TOM inicia)
+**Status:** entregue
+**Período:** anterior a Sprint 0 PWA
 
-| Funcionalidade | Status | Observação |
-|----------------|--------|------------|
-| Onboarding (5 perguntas) | ✅ | Formatado com emojis |
-| Briefing trabalho (8h) | ✅ | Cron funcionando |
-| Fechamento do dia (19h) | ✅ | Cron funcionando |
-| Briefing pessoal (7h) | ⚠️ | Cron existe mas hábitos/tarefas pessoais não implementadas |
-| Planejamento semanal (domingo) | ⚠️ | Cron existe mas NUNCA testado de verdade |
-| Alerta de prazo (vence em 1-2 dias) | ❌ | |
-| Alerta de atraso (task overdue) | ❌ | |
-| Resumo do time (coordenador, 19h30) | ❌ | |
-| Retrospectiva semanal (coordenador, domingo) | ❌ | |
-
-### 1B. Ações sob demanda (colaborador inicia)
-
-| Funcionalidade | Status | Observação |
-|----------------|--------|------------|
-| Ticar tarefa ("fiz", "terminei") | ✅ | |
-| Criar projeto 5W2H (7 perguntas) | ✅ | Com emojis semânticos |
-| Ver status do dia | ✅ | |
-| Ver status de projeto | ✅ | |
-| Registrar demanda nova ("surgiu X") | ⚠️ | Parcial — salva como memória, não como task |
-| Reagendar tarefa ("muda pra quinta") | ❌ | |
-| Delegar tarefa ("passa pro Joel") | ❌ | |
-| Pedir mais prazo ("não vou conseguir") | ❌ | Fluxo com notificação ao coordenador |
-| Criar tarefa pessoal ("me lembra de pagar conta") | ❌ | context='personal', 100% privado |
-| Criar lembrete avulso ("me lembra em 30 min") | ❌ | delayed notification |
-| Criar tarefa de trabalho ("anota: reunião quarta") | ❌ | |
-
-### 1C. Hábitos pessoais
-
-| Funcionalidade | Status | Observação |
-|----------------|--------|------------|
-| Criar hábito ("quero ler 30 min/dia") | ❌ | Banco tem tabelas, templates seedados |
-| Ver templates de hábitos | ❌ | 10 templates já no banco |
-| Marcar hábito feito ("fiz academia") | ❌ | |
-| Streak (dias consecutivos) | ❌ | |
-| Hábitos no briefing pessoal | ❌ | Depende de tudo acima |
-
-### 1D. Hierarquia e permissões
-
-| Funcionalidade | Status | Observação |
-|----------------|--------|------------|
-| Trava server-side criar projeto (só coord+) | ✅ | |
-| Eisenhower trigger no banco | ✅ | |
-| Separação pessoal × trabalho (context) | ❌ | Tasks não separam contexto ainda |
-| Notificação ao coordenador (pedido de prazo) | ❌ | |
-| Coordenador cria tarefa e delega | ❌ | |
-| Coordenador aprova/nega extensão | ❌ | |
-
-### 1E. Separação de contextos (IMPORTANTE — PRD define isso)
-
-| Contexto | Emoji | Exemplos | Status |
-|----------|-------|----------|--------|
-| Pessoal | 💪 💰 🏋️ | Academia, contas, médico, leitura | ❌ |
-| Trabalho | 📋 📚 🗂️ | Tarefas profissionais, projetos, reuniões | ✅ |
-| Financeiro | 💰 | Contas a pagar (pessoal) | ❌ |
-| Projeto | 🗂️ | Vinculado a projeto específico | ✅ |
-
-### 1F. Outros
-
-| Funcionalidade | Status | Observação |
-|----------------|--------|------------|
-| Cadastrar mais colaboradores | ❌ | Só Alf no banco |
-| Broadcast com follow-up | ❌ | Skill existe, engine não |
-| Tratamento de áudio | ❌ | Skill existe, engine não |
-| "Não me incomoda agora" (do_not_disturb) | ❌ | |
-| Consolidação de memória (cron domingo 22h) | ❌ | Skill existe, cron não |
-| Evolução autônoma de skills (Hermes) | ❌ | Documentado, não implementado |
+**Entregas:**
+- VPS configurada (Ubuntu)
+- Supabase Postgres com schema inicial
+- Webhook UAZAPI → Node.js
+- TOM engine (engine.js) com pipeline processMessage
+- pm2 para gestão de processos
+- Integração WhatsApp ↔ Claude API
 
 ---
 
-## FASE 2 — PWA Espelho ❌ NÃO INICIADA
+## Fase 1 — TOM WhatsApp (agente completo)
 
-| Tela | Descrição |
-|------|-----------|
-| Hoje | 3 tarefas do dia + checkbox + pendências de ontem |
-| Semana | 7 dias com entregas distribuídas |
-| Projetos | Roadmap visual + checkpoints |
-| Configurações | Horários, intensidade, Google Calendar |
-| Hábitos | Streak, templates, tracking visual |
-| Checklist operacional | Ticar itens da função |
-| Histórico | Dias anteriores, taxa de conclusão |
+**Status:** funcionalmente concluída
+**Período:** anterior a Sprint 0 PWA
 
----
+> Histórico não documentado em detalhes — ver PRD seção 4.1 para lista completa de capacidades.
 
-## FASE 3 — Dashboard Gerencial ❌ NÃO INICIADA
+**Entregas principais:**
+- Onboarding conversacional (5 perguntas)
+- Rituais: briefing trabalho (8h), briefing pessoal (7h), fechamento (19h), planejamento semanal (domingo), retrospectiva semanal (coordenador), resumo do time (coordenador, 19h30)
+- Nudge de aderência (19h, condicional: ≥2 tasks atrasadas ou ≥1 projeto parado)
+- Criação, ticar, reagendar, delegar tasks
+- Pedir prazo + aprovação coordenador
+- Criação de projeto 5W2H via conversa (7 perguntas)
+- Compromissos (criar/atualizar/cancelar/concluir via WhatsApp)
+- Separação pessoal × trabalho
+- Hábitos pessoais (criar, marcar, streak)
+- Do not disturb por colaborador
+- Consolidação de memória (cron domingo 22h)
+- Tratamento de áudio (Whisper/OpenAI)
+- 4 guards: serialização de fila, dedupe, validação de markers, anti-leak
+- Observabilidade: `ritual_logs`, `marker_logs`
+- Resiliência: restart behavior, fallback provider, segredos rotacionados
+- Skills: `rituais-diarios`, `gestao-memoria`, `cadastro-projeto-5w2h`, `priorizacao-inteligente`, `planejamento-semanal`, `criar-compromisso`, `habitos-pessoais`, `pausa-temporaria`, `tratamento-audio`, `checklist-tarefas`
 
-| Funcionalidade | Descrição |
-|----------------|-----------|
-| Dashboard do time | Ranking de conclusão, alertas |
-| Pessoa detalhe | Tarefas, rituais, checklists por pessoa |
-| Aderência geral | Rituais + checklists + Emusys |
-| Gestão de checklists | Criar/editar templates operacionais |
-| Check-in de presença em unidade | Pedido Ana Paula RH |
-| Dashboard executivo (Alf) | Métricas consolidadas |
-
----
-
-## FASE 4 — Integração Alfredo ❌ NÃO INICIADA
-
-| Funcionalidade | Descrição |
-|----------------|-----------|
-| "Como tá a Juliana?" | Diagnóstico com dados reais |
-| "Quem não tá usando?" | Lista de inativos |
-| "Como tá o Projeto X?" | Roadmap + atrasos + equipe |
+**Markers implementados:** `<<ONBOARDING_DONE>>`, `<<MEMORY_SAVE>>`, `<<PROJECT_CREATE>>`, `<<TASK_UPDATE>>`, `<<CHECKPOINT_BATCH>>`, `<<EVENT_CREATE>>`
 
 ---
 
-## FASE 5 — Checklists Operacionais + Emusys + Google Calendar ❌ NÃO INICIADA
+## Sprint 0 — PWA base
 
-| Funcionalidade | Descrição |
-|----------------|-----------|
-| Checklist abertura escola | Secretária, início do turno |
-| Fiscalização de salas | Assistente pedagógico |
-| Lembrete Emusys pós-aula | Professor |
-| Google Calendar sync | Bidirecional |
+**Status:** entregue
+**Período:** início Fase 2
 
----
+> Histórico não documentado em detalhes — reconstruído a partir do PRD.
 
-## 📊 Resumo numérico da Fase 1
-
-| Categoria | Total PRD | Implementado | Falta |
-|-----------|-----------|-------------|-------|
-| Rituais automáticos | 9 | 3 | 6 |
-| Ações sob demanda | 11 | 4 | 7 |
-| Hábitos pessoais | 5 | 0 | 5 |
-| Hierarquia/permissões | 6 | 2 | 4 |
-| Contextos (pessoal/trabalho) | 4 | 1 | 3 |
-| Outros (broadcast, áudio, etc) | 6 | 0 | 6 |
-| **TOTAL FASE 1** | **41** | **10** | **31** |
+**Entregas:**
+- PWA React mobile-first (Vite + TypeScript)
+- Autenticação (base para magic link)
+- Telas: Hoje, Semana, Projetos (lista), Projeto Detalhe
+- Dashboard do time (`/time`) — Coordenador+
+- AppShell com navegação bottom tab
 
 ---
 
-## 🎯 Prioridade sugerida para próximas sprints
+## Sprint 1 — Configurações e Histórico
 
-### Sprint 1 (próxima): Fechar o ciclo básico
-1. Criar tarefa pessoal ("me lembra de pagar conta sexta")
-2. Criar tarefa de trabalho ("anota: reunião quarta")
-3. Criar lembrete avulso ("me lembra em 30 min")
-4. Reagendar tarefa ("muda pra quinta")
-5. Separação pessoal × trabalho (context field)
-6. Cadastrar Juliana + Quintela no banco
+**Status:** entregue
 
-### Sprint 2: Planejamento completo
-1. Planejamento semanal testado de verdade (domingo 19h)
-2. Delegar tarefa ("passa pro Joel")
-3. Pedir mais prazo + notificação ao coordenador
-4. Alertas de prazo e atraso
-5. Hábitos pessoais (criar, marcar, streak)
+> Histórico não documentado em detalhes — reconstruído a partir do PRD.
 
-### Sprint 3: Coordenação
-1. Resumo do time diário (19h30)
-2. Retrospectiva semanal (domingo)
-3. Coordenador cria e distribui tarefas
-4. Broadcast com follow-up
-5. "Não me incomoda agora"
-
-### Sprint 4: Inteligência
-1. Consolidação de memória (cron domingo 22h)
-2. Evolução autônoma de skills (Hermes)
-3. Tratamento de áudio
-4. Otimização de latência do Claude CLI
+**Entregas:**
+- Tela Configurações (`/configuracoes`) — horários, intensidade do TOM
+- Tela Histórico (`/historico`) — aderência dos últimos 30 dias
 
 ---
 
-*Fase 1: 10 de 41 funcionalidades implementadas (24%)*
-*Próxima sprint foca em fechar o ciclo básico de tarefas — pessoal + trabalho + lembretes.*
+## Sprint 2 — Login magic link
+
+**Status:** entregue
+
+> Histórico não documentado em detalhes — reconstruído a partir do PRD.
+
+**Entregas:**
+- Login via magic link por WhatsApp (`/login`)
+- Anne Susan entra como segunda usuária (collaborator, Campo Grande)
 
 ---
 
-## Sprint 9+ parking lot — débitos pós-Sprint 8
+## Sprints 3–5 — Estabilização e segurança
 
-Itens descobertos durante Sprint 8 que ficaram fora de escopo:
+**Status:** entregue
 
-- **Member picker no wizard** — selecionar collaborators cadastrados em vez de texto livre. Ao confirmar, popula `project_members` automaticamente e o engine notifica cada membro no WhatsApp na hora da criação. Hoje "Quem participa" é texto solto que TOM precisa interpretar; com picker, é vínculo de banco direto. Aumenta o valor do projeto criado pelo PWA.
-- **Hierarquia tipográfica do wizard** — labels (🎯 Por que existe, 👥 Quem participa) estão com peso/tamanho próximos demais dos valores, gera ruído visual. Não bloqueou Sprint 8 mas precisa de uma passada de design tokens. Aplicar nas telas: passo 4 (resumo) e tela final do wizard.
+> Histórico não documentado em detalhes.
+
+**Entregas (inferidas do PRD):**
+- Rotação de segredos UAZAPI (Sprint 5)
+- Anti-leak guard no engine (regex bloqueando termos de stack)
+- MCP tools desligadas no TOM
+- Privacidade por design: hábitos 100% privados, `context='personal'` isolado
 
 ---
 
-## Sprint 9 — visão proativa do TOM (insight pós-Etapa 5)
+## Sprint 6 — Pessoa Detalhe
 
-Insight crítico capturado durante a Sprint 8 (28/04/2026) durante teste do APROVA/REJEITA. O Alf identificou um gap conceitual da Sprint 8: o TOM precisa ser proativo, não reativo a comandos.
+**Status:** entregue
 
-**Premissa**: a maioria dos colaboradores LA Music **não conhece** roadmap, 5W2H, Matriz de Eisenhower, ciclos de checkpoint. Se o TOM só esperar comando explícito, eles vão ficar perdidos. Precisa **conduzir**.
+> Histórico não documentado em detalhes — reconstruído a partir do PRD.
 
-**Disparadores onde o TOM deve sugerir, não esperar**:
+**Entregas:**
+- Tela Pessoa Detalhe (`/time/:id`) — Coordenador+
 
-1. **Pós PROJECT_CREATE / PROJECT_APPROVE** — em vez de criar 1 checkpoint genérico "Definir primeiros passos", o TOM deve analisar nome+justificativa+janela+metodologia e propor 4-6 etapas sugeridas. Ex:
-   - Workshop de Bateria → ["Definir convidado", "Divulgação", "Confirmação de inscritos", "Material/local", "Realização", "Follow-up"]
-   - Festa de 15 anos da filha (pessoal!) → ["Lista de convidados", "Salão", "Buffet (3 cotações)", "Banda/DJ", "Decoração", "Fotógrafo"]
-   - Mensagem WA: "Pensei nessas etapas pra `<projeto>`: 1, 2, 3, 4. Quer ajustar?"
-   - Usuário responde com edição em texto → TOM atualiza checkpoints
+---
 
-2. **Projetos pessoais tem peso igual ao trabalho** — não é só pra coordenação. Aniversários, viagens, reformas, eventos da família. Mesmo formato de roadmap sugerido.
+## Sprint 7 — Segurança e resiliência
 
-3. **Acompanhamento ativo** — uma vez criado, TOM deve ir checando: "Faltam 2 semanas pro recital, como tá o ensaio coletivo?" "O salão da festa já fechou?". Sem precisar pedir.
+**Status:** entregue
 
-4. **Generoso com sugestões, leve com julgamento** — o TOM sugere, oferece exemplos, mas respeita a decisão do usuário. Não impõe template, libera para reescrever.
+> Histórico não documentado em detalhes — reconstruído a partir do PRD.
 
-**Skills a evoluir / criar**:
-- `cadastro-projeto-5w2h.md` — passar a sugerir etapas no fim do fluxo (em vez de só persistir)
-- `aprovar-projeto.md` — após APROVA, sugerir checkpoints na próxima resposta
-- Nova skill `acompanhar-projeto` — cron periódico que olha projetos ativos e dispara nudges contextuais
-- Nova skill `sugerir-checkpoints` — chamada interna pelo engine para gerar lista a partir de meta + janela
+**Entregas:**
+- Rotação de segredos Supabase
+- Privatização do repositório
+- Anti-leak guard documentado na seção 3.2 e 9 do PRD
+- MCP tools desligadas no Claude CLI do engine
 
-**Outras pendências da Sprint 8**:
-- Member picker no wizard (popular project_members + notificar membros)
-- Hierarquia tipográfica do PWA (debt visual)
-- Resposta da skill de aprovação ainda saindo com artefato "text" — investigar se é template engessado vs liberdade do agente (Hermes/OpenCloud)
+---
+
+## Sprint 8 — Project Wizard + Hábitos PWA
+
+**Status:** entregue
+
+> Histórico não documentado em detalhes — Sprint 8 estava "planejada" no PRD v3.1, portanto entregue antes do período com specs.
+
+**Entregas:**
+- Project Wizard (`/projetos/novo`) — wizard 4-passos replicando fluxo 5W2H
+  - Colaborador cria → `status='planning'` aguarda aprovação
+  - Coordenador/Diretor cria → entra em produção imediato
+  - Dispara `<<PROJECT_CREATE>>` no engine
+- Skill `aprovar-projeto.md` (gate de aprovação de projetos de colaborador)
+- Tela Hábitos (`/habitos`) — privado por design
+- Hábitos integrados ao PWA (criar, marcar, streak)
+
+---
+
+## Sprints 9–10 — Iterações PWA
+
+**Status:** entregue
+
+> Histórico não documentado em detalhes. Sprints inferidas pela numeração; sem specs disponíveis.
+
+**Provável conteúdo:** iterações de UX nas telas existentes, estabilização, correções.
+
+---
+
+## Sprint 11 F2+ — Checklists Operacionais
+
+**Status:** entregue
+**Data:** 2026-04-29
+**Spec:** `docs/superpowers/specs/2026-04-29-checklists-operacionais-design.md`
+**Spec CRUD:** `docs/superpowers/specs/2026-04-29-checklists-crud-templates-design.md`
+
+> Nota: nomeada "Sprint 11 F2+" nos artefatos — indica que Sprint 11 teve pelo menos uma fatia anterior não documentada em spec.
+
+**Entregas:**
+- DB: tabelas `checklist_templates` e `checklist_instances` com RLS; 4 templates seed (abertura manhã, fechamento noite, show/evento, reunião mensal)
+- Dispatch: cron dispara instâncias por função e turno conforme templates ativos
+- WhatsApp: TOM recebe respostas de checklist, parser `parseChecklistActionMarker`, marker `<<CHECKLIST_ACTION>>`; `applyChecklistAction()` no engine
+- PWA: tela `/checklists` (visualizar e ticar itens, realtime Supabase), tela `/mais/checklists-templates` (CRUD de templates — Coord+)
+- Skill TOM: `checklists-operacionais.md`
+- Marker novo: `<<CHECKLIST_ACTION>>`
+
+---
+
+## Sprint 12 — (não documentado)
+
+**Status:** inferido como entregue (numeração entre Sprint 11 e Sprint 13)
+
+> Sem spec ou plan disponível. Conteúdo desconhecido.
+
+---
+
+## Sprint 13 — Coordenação operacional + comunicação interna
+
+**Status:** entregue (4 fatias)
+
+### Fatia 1 — Comunicados segmentados (2026-04-29)
+**Spec:** `docs/superpowers/specs/2026-04-29-sprint13-fatia1-comunicados-design.md`
+
+**Entregas:**
+- DB: tabela `announcements` com campos de audiência (unit, role, individual), estado (`draft`/`pending_approval`/`scheduled`/`sending`/`sent`/`cancelled`/`rejected`), fila com retry/anti-spam
+- TOM skill: `comunicados.md` — coordinator/director cria comunicado via chat, marker `<<ANNOUNCEMENT_ACTION>>`; `applyAnnouncementAction()` no engine
+- Broadcaster: função `dispatchAnnouncements(now)` no dispatcher com fila ativa e retry
+- PWA: tela `/mais/comunicados` (Coord+) — lista e sheet de criação
+
+### Fatia 2 — Eventos institucionais (2026-04-29)
+**Spec:** `docs/superpowers/specs/2026-04-29-sprint13-fatia2-eventos-design.md`
+
+**Entregas:**
+- DB: tabela `school_events` com campos de data, local, unidade, audiência, plano de comunicação (`cancel_retraction_sent`, `coordinator_notified_at`)
+- Auto-geração de anúncios: lógica por etapa (T-3 escola toda, T-1 unidade, imediato liderança)
+- TOM skill: `eventos-institucionais.md` — criar/cancelar evento via chat, marker `<<SCHOOL_EVENT_ACTION>>`
+- PWA: tela `/mais/agenda-escolar` (Coord+) — lista de eventos com `AgendaEscolar.tsx` e `EventoSheet.tsx`
+
+### Fatia 2 T0 — Lembrete no dia do evento (2026-04-30)
+**Spec:** `docs/superpowers/specs/2026-04-30-sprint13-fatia2-t0-lembrete-dia.md`
+
+**Entregas:**
+- DB migration: campo `reminded_t0_at` em `school_events`
+- Engine: `buildEventAnnouncements` inclui etapa T0 (lembrete no dia às 09h)
+- PWA: `EventoSheet.tsx` e `AgendaEscolar.tsx` atualizados para exibir badge T0 configurado
+- TOM skill: `eventos-institucionais.md` atualizada com campo `reminder_day_of`
+
+### Fatia 3 — Aprovação + Observabilidade (2026-04-30)
+**Spec:** `docs/superpowers/specs/2026-04-30-sprint13-fatia3-aprovacao-observabilidade-design.md`
+
+**Entregas:**
+- DB: coluna `status` em `announcements` ampliada para máquina de estados (`pending_approval` → `scheduled`/`rejected`); RLS por role; colunas de auditoria
+- Fluxo TOM: coordinator cria → director recebe notificação → aprova/rejeita via `APROVAR <id>` / `REJEITAR <id> [motivo]`
+- Marker `<<ANNOUNCEMENT_APPROVAL>>`; `applyAnnouncementApproval()` no engine
+- Skill TOM: `aprovacao-comunicados.md` (carregada para director e coordinator)
+- PWA: tela `/mais/observabilidade` (Coord+) — fila de aprovações pendentes, fila ao vivo, histórico, contadores (`jobs_total`, `jobs_sent`, `jobs_failed`, `jobs_cancelled`, `jobs_pending`), alerta de duplicidade; `AprovacaoSheet.tsx`
+
+---
+
+## Sprint 14 — Tarefas de Eventos
+
+**Status:** entregue (2 fatias)
+**Data:** 2026-05-01
+**Report:** `docs/superpowers/reports/2026-05-01-sprint14-executive-summary.md`
+
+### Fatia 1 — CRUD de Tasks de Evento (PWA) (2026-05-01)
+**Spec:** `docs/superpowers/specs/2026-05-01-sprint14-fatia1-event-tasks-design.md`
+
+**Entregas:**
+- DB: `tasks` ganhou `school_event_id`, `event_sector`, `notes`, `support_team`, status `awaiting_confirmation` + índice composto
+- Tela `/mais/eventos/:id` com 5 acordeões por setor: Logística, Técnica, Pedagógico, Comunicação, Produção
+- Setores com tasks abertas expandidos por padrão; vazios colapsados
+- TaskSheet (bottom sheet): responsável principal, equipe de apoio, notas, prazo, status
+- Toggle de conclusão inline, edição e exclusão com confirmação
+- Acesso via card na Agenda Escolar (`AgendaEscolar.tsx` atualizado)
+
+### Fatia 2 — TOM Kit + Mapa de Equipe + Lembretes (2026-05-01)
+**Spec:** `docs/superpowers/specs/2026-05-01-sprint14-fatia2-tom-kit-equipe-design.md`
+
+**Entregas:**
+- DB: `school_events.event_type` (8 valores: show, recital, workshop, treinamento, oficinas, reunião, formatura, genérico), tabela `event_team_map` (unit × sector → collaborator) com RLS, `tasks.reminded_at`
+- Engine: 5 famílias de kit hardcoded (32 tasks total):
+  - show/recital → 9 tasks
+  - workshop/treinamento/oficinas → 6 tasks
+  - reunião → 4 tasks
+  - formatura → 8 tasks
+  - evento genérico → 5 tasks
+- `applySchoolEventAction` (create path): lê mapa de equipe da unidade, gera kit atribuindo tasks por setor; fallback ao criador quando não há mapa
+- Dispatcher: bloco `remindEventTasks` — envia WhatsApp T-1 às 09h BRT para tasks `school_event_id IS NOT NULL` pendentes; dedup via `reminded_at`
+- TOM skill `eventos-institucionais.md`: campo `event_type` no marker, regras de inferência, novo resumo de confirmação (5ª linha)
+- PWA: tela `/mais/agenda-escolar/equipe` (`ConfigurarEquipe.tsx`) com tabs por unidade × 5 selects de setor (upsert no `event_team_map`)
+
+---
+
+## Backlog descartado
+
+| Item | Decisão | Motivo |
+|---|---|---|
+| Backup Backblaze B2 | Descartado definitivamente | Supabase backup diário + GitHub já cobrem; over-engineering para single-tenant |
+| Override de equipe por evento específico | Diferido | Aguarda uso real da feature base (`event_team_map` por unidade) |
+| Lembretes múltiplos T-3 + T-1 para tasks de evento | Diferido | Risco de spam; aguarda feedback do T-1 único |
+| Aprovação para eventos institucionais | Diferido | Fora de escopo Sprint 13 F3; futura Sprint |
+| Edição de conteúdo dos kits pela interface | Diferido | Hardcoded suficiente enquanto single-dev; YAGNI |
+| Geração retroativa de tasks para eventos existentes | Descartado | Só eventos novos geram kit automaticamente |
+
+---
+
+## Próximos passos
+
+1. **Validar Sprint 14 F2 em uso real** (1–2 semanas) — confirmar se kits estão corretos, se mapa de equipe funciona na prática, se lembrete T-1 ajuda ou incomoda
+2. **Reavaliar override de equipe e múltiplos lembretes** após validação acima
+3. **Onboardar coordenadores (Juliana e Quintela)** — pré-requisito atendido (Project Wizard + features de coordenação estáveis)
+4. **Code-splitting PWA** — bundle em 633KB; só prioridade se carregamento lento começar a incomodar usuários
+5. **Testes automatizados** — só vale o esforço com mais de 1 dev no projeto
+6. **Fase 3** — Dashboard gerencial avançado + check-in RH (escopo a definir)

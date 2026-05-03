@@ -1,902 +1,1217 @@
-# Esquema de Banco de Dados — LA Organizer
+# 03 — Esquema do Banco de Dados — LA Organizer
 
-**Documento:** 03  
-**Versão:** 2.0  
-**Data:** 25 de abril de 2026  
-**Referência:** Documento de Conceito v2.0 + Mapa de Funcionalidades v2.0  
-**Banco:** Supabase PostgreSQL  
-**Projeto Supabase:** a definir (novo projeto dedicado)
+> **Fonte de verdade:** Supabase Postgres, schema `public`.
+> **Última revisão:** 2026-05-03
+> **Tabelas base:** 36 | **Views:** 1 (`v_recent_events`)
 
 ---
 
-## Visão geral
+## 1. Visão Geral
 
-27 tabelas organizadas em 9 domínios:
+O banco suporta duas superfícies: **TOM** (agente LLM via WhatsApp) e **PWA** (interface React). O acesso é feito via Supabase client com **service role** no engine (bypass RLS) e com **anon/authenticated key + set_config** no PWA (respeita RLS).
 
-| Domínio | Tabelas | Função |
+### Áreas funcionais
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  CORE                                                       │
+│  collaborators · user_preferences · collaborator_profiles   │
+│  collaborator_memory · conversation_history · auth_magic_codes │
+│  marker_logs · tom_metrics · ritual_logs                    │
+├─────────────────────────────────────────────────────────────┤
+│  TASKS & PROJETOS                                           │
+│  tasks · projects · project_checkpoints · project_members   │
+│  task_comments · task_reminders · notifications             │
+│  daily_plans · daily_plan_items · weekly_plans              │
+├─────────────────────────────────────────────────────────────┤
+│  EVENTOS                                                    │
+│  events (calendário pessoal) · school_events · event_team_map │
+│  google_calendar_sync · emusys_classes                      │
+├─────────────────────────────────────────────────────────────┤
+│  COMUNICAÇÃO                                                │
+│  announcements · announcement_jobs                          │
+│  broadcast_messages · broadcast_responses                   │
+├─────────────────────────────────────────────────────────────┤
+│  HÁBITOS & CHECKLISTS                                       │
+│  habits · habit_logs · habit_templates                      │
+│  op_checklists · op_checklist_items                         │
+│  op_checklist_completions · op_checklist_item_completions   │
+│  op_checklists_audit                                        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 2. Tabelas Core
+
+### `collaborators`
+Cadastro central de todos os usuários do sistema. Identificados no WhatsApp pelo `phone`.
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| full_name | text | NO | — | |
+| phone | text | NO | — | Identificador WhatsApp |
+| email | text | YES | — | |
+| role | text | NO | 'collaborator' | CHECK ∈ {director, manager, coordinator, collaborator} |
+| function_title | text | YES | — | Cargo descritivo |
+| unit | text | YES | — | CHECK ∈ {campo_grande, recreio, barra, all} ou NULL |
+| supervisor_id | uuid | YES | — | FK → collaborators(id) (autorreferência) |
+| is_active | boolean | NO | true | |
+| onboarding_completed | boolean | NO | false | |
+| created_at | timestamptz | NO | now() | |
+| updated_at | timestamptz | NO | now() | |
+
+**Constraints:**
+- role CHECK: director, manager, coordinator, collaborator
+- unit CHECK: campo_grande, recreio, barra, all, ou NULL
+
+**Relacionamentos:**
+- supervisor_id → collaborators(id)
+
+**RLS:**
+- `Service role full access`: ALL (true)
+- `auth_read_collaborators`: SELECT — próprio email (via JWT) OU role ∈ {coordinator, director}
+
+---
+
+### `user_preferences`
+Preferências de ritmo e notificação por colaborador. Uma linha por colaborador (UNIQUE).
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| collaborator_id | uuid | NO | — | FK → collaborators(id) ON DELETE CASCADE, UNIQUE |
+| briefing_time | time | NO | '08:00' | Hora do briefing de trabalho |
+| personal_briefing_time | time | NO | '07:00' | Hora do briefing pessoal |
+| closing_time | time | NO | '19:00' | Hora do fechamento |
+| planning_day | integer | NO | 0 | CHECK ∈ {0, 1} (0=domingo, 1=segunda) |
+| planning_time | time | NO | '19:00' | Hora do planejamento semanal |
+| max_daily_tasks | integer | NO | 3 | CHECK 1–7 |
+| coaching_intensity | text | NO | 'normal' | CHECK ∈ {light, normal, hard} |
+| notify_deadline_alerts | boolean | NO | true | |
+| notify_overdue_alerts | boolean | NO | true | |
+| notify_team_summary | boolean | NO | true | |
+| google_calendar_connected | boolean | NO | false | |
+| google_calendar_token | jsonb | YES | — | OAuth token |
+| google_calendar_id | text | YES | — | |
+| timezone | text | NO | 'America/Sao_Paulo' | |
+| do_not_disturb_until | timestamptz | YES | — | Snooze temporário |
+| do_not_disturb_reason | text | YES | — | |
+| created_at | timestamptz | NO | now() | |
+| updated_at | timestamptz | NO | now() | |
+
+**Constraints:**
+- coaching_intensity CHECK: light, normal, hard
+- max_daily_tasks CHECK: 1–7
+- planning_day CHECK: 0 ou 1
+
+**Relacionamentos:**
+- collaborator_id → collaborators(id) ON DELETE CASCADE
+
+**RLS:**
+- `Service role full access`: ALL
+- `auth_read_own_prefs`: SELECT — collaborator_id = current_collab_id()
+- `auth_update_own_prefs`: UPDATE — collaborator_id = current_collab_id()
+- `auth_insert_own_prefs`: INSERT
+
+---
+
+### `collaborator_profiles`
+Perfil comportamental e métricas de engajamento. Atualizado pelo TOM a cada ~20 interações. Uma linha por colaborador (UNIQUE).
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| collaborator_id | uuid | NO | — | FK → collaborators(id) ON DELETE CASCADE, UNIQUE |
+| communication_style | text | YES | — | Descritivo livre |
+| response_pattern | text | YES | — | |
+| best_coaching_approach | text | YES | — | |
+| strengths | text | YES | — | |
+| growth_areas | text | YES | — | |
+| personal_context | text | YES | — | |
+| vocabulary_notes | text | YES | — | |
+| maturity_level | text | NO | 'beginner' | CHECK ∈ {beginner, developing, proficient, advanced} |
+| total_interactions | integer | NO | 0 | |
+| avg_response_time_min | numeric | YES | — | |
+| completion_rate_30d | numeric | YES | — | |
+| last_profile_update | timestamptz | YES | — | |
+| profile_notes | text | YES | — | |
+| created_at | timestamptz | NO | now() | |
+| updated_at | timestamptz | NO | now() | |
+
+**Constraints:**
+- maturity_level CHECK: beginner, developing, proficient, advanced
+
+**Relacionamentos:**
+- collaborator_id → collaborators(id) ON DELETE CASCADE
+
+**RLS:**
+- `Service role full access`: ALL
+
+---
+
+### `collaborator_memory`
+Memória semântica de longo prazo do TOM por colaborador. Fatos, decisões, lições e preferências aprendidas em conversa.
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| collaborator_id | uuid | NO | — | FK → collaborators(id) ON DELETE CASCADE |
+| memory_type | text | NO | — | CHECK ∈ {fact, decision, lesson, preference, context} |
+| content | text | NO | — | Texto livre da memória |
+| source | text | NO | 'conversation' | CHECK ∈ {conversation, ritual, observation, explicit} |
+| importance | text | NO | 'normal' | CHECK ∈ {critical, high, normal, low} |
+| decay_at | timestamptz | YES | — | Expiração automática opcional |
+| is_active | boolean | NO | true | |
+| created_at | timestamptz | NO | now() | |
+| updated_at | timestamptz | NO | now() | |
+
+**Constraints:**
+- memory_type CHECK: fact, decision, lesson, preference, context
+- source CHECK: conversation, ritual, observation, explicit
+- importance CHECK: critical, high, normal, low
+
+**Relacionamentos:**
+- collaborator_id → collaborators(id) ON DELETE CASCADE
+
+**RLS:**
+- `Service role full access`: ALL
+
+---
+
+### `conversation_history`
+Histórico de mensagens trocadas entre TOM e cada colaborador. Últimas ~500 mensagens por pessoa (limpeza mensal via cron).
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| collaborator_id | uuid | NO | — | FK → collaborators(id) ON DELETE CASCADE |
+| direction | text | NO | — | CHECK ∈ {inbound, outbound} |
+| message_type | text | NO | 'text' | CHECK ∈ {text, audio, image} |
+| content | text | NO | — | |
+| context | text | YES | — | CHECK ∈ {briefing, personal_briefing, closing, planning, project_creation, broadcast, checklist, emusys, onboarding, free_chat} ou NULL |
+| whatsapp_message_id | text | YES | — | ID externo UAZAPI |
+| created_at | timestamptz | NO | now() | |
+
+**Constraints:**
+- direction CHECK: inbound, outbound
+- message_type CHECK: text, audio, image
+- context CHECK: ver lista acima ou NULL
+
+**Relacionamentos:**
+- collaborator_id → collaborators(id) ON DELETE CASCADE
+
+**RLS:**
+- `Service role full access`: ALL
+
+---
+
+### `marker_logs`
+Log de observabilidade para cada marker emitido pelo TOM (ex.: `<<TASK_CREATED>>`). Falha de log nunca derruba o pipeline.
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| marker_type | text | NO | — | Nome do marker (ex.: TASK_CREATED) |
+| collaborator_id | uuid | YES | — | FK → collaborators(id) |
+| result | text | NO | — | CHECK ∈ {executed, rejected} |
+| reason | text | YES | — | Motivo de rejeição (máx 300 chars) |
+| raw_excerpt | text | YES | — | Trecho bruto do marker (máx 500 chars) |
+| created_at | timestamptz | YES | now() | |
+
+**Constraints:**
+- result CHECK: executed, rejected
+
+**Relacionamentos:**
+- collaborator_id → collaborators(id)
+
+**RLS:**
+- `service_role_all_marker_logs`: ALL
+
+---
+
+### `tom_metrics`
+Métricas por chamada ao LLM: latência, tokens, provider, leak detection, marker emitido.
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| ts | timestamptz | NO | now() | Timestamp da chamada |
+| collaborator_id | uuid | YES | — | FK → collaborators(id) |
+| message_kind | text | NO | — | CHECK ∈ {text, audio, ritual, internal} |
+| provider_used | text | YES | — | CHECK ∈ {claude, openai, none} |
+| fallback_from | text | YES | — | Provider original se houve fallback |
+| latency_ms | integer | YES | — | |
+| input_tokens | integer | YES | — | |
+| output_tokens | integer | YES | — | |
+| sanitized_chars | integer | YES | 0 | Chars removidos por sanitização |
+| leak_blocked | boolean | YES | false | Leak de dados pessoais detectado |
+| leak_match | text | YES | — | Padrão que disparou o bloqueio |
+| marker_emitted | text | YES | — | Marker principal emitido na resposta |
+| marker_result | text | YES | — | CHECK ∈ {executed, rejected, none} ou NULL |
+| error_kind | text | YES | — | Tipo do erro se falhou |
+| skill_active | text | YES | — | Skill ativa durante a chamada |
+| actionable_intent | boolean | YES | false | Intenção acionável detectada |
+
+**Constraints:**
+- message_kind CHECK: text, audio, ritual, internal
+- provider_used CHECK: claude, openai, none
+- marker_result CHECK: executed, rejected, none, ou NULL
+
+**Relacionamentos:**
+- collaborator_id → collaborators(id)
+
+**RLS:**
+- `service_role_full_access`: ALL
+
+---
+
+### `ritual_logs`
+Registro de cada ritual enviado/respondido (briefing, closing, planning). Um registro por ritual por data.
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| collaborator_id | uuid | NO | — | FK → collaborators(id) ON DELETE CASCADE |
+| ritual_type | text | NO | — | Ex.: daily_briefing, personal_briefing, daily_closing, weekly_planning |
+| reference_date | date | NO | — | Data de referência do ritual |
+| status | text | NO | 'sent' | Ex.: sent, responded, ignored |
+| sent_at | timestamptz | YES | now() | |
+| responded_at | timestamptz | YES | — | |
+| response_time_minutes | integer | YES | — | |
+| detail | text | YES | — | Notas adicionais |
+| created_at | timestamptz | NO | now() | |
+
+**Relacionamentos:**
+- collaborator_id → collaborators(id) ON DELETE CASCADE
+
+**RLS:**
+- `Service role full access`: ALL
+- `auth_read_own_ritual_logs`: SELECT — collaborator_id = current_collab_id()
+- `auth_read_ritual_logs_coord`: SELECT — role ∈ {coordinator, director}
+
+---
+
+### `auth_magic_codes`
+Códigos de autenticação magic-link enviados via WhatsApp para login no PWA.
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| phone | text | NO | — | Telefone do solicitante |
+| collaborator_id | uuid | YES | — | FK → collaborators(id) |
+| email | text | YES | — | |
+| ip_hint | text | YES | — | |
+| user_agent | text | YES | — | |
+| status | text | NO | 'sent' | CHECK ∈ {sent, verified, failed, expired} |
+| created_at | timestamptz | NO | now() | |
+| expires_at | timestamptz | YES | — | |
+| used_at | timestamptz | YES | — | |
+
+**Constraints:**
+- status CHECK: sent, verified, failed, expired
+
+**Relacionamentos:**
+- collaborator_id → collaborators(id)
+
+**RLS:**
+- `service_role_all_amc`: ALL
+
+---
+
+## 3. Tasks & Projetos
+
+### `tasks`
+Tarefas individuais ou vinculadas a projeto/checkpoint/evento escolar. Centro do produto.
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| title | text | NO | — | |
+| description | text | YES | — | |
+| assigned_to | uuid | NO | — | FK → collaborators(id) |
+| project_id | uuid | YES | — | FK → projects(id) ON DELETE SET NULL |
+| checkpoint_id | uuid | YES | — | FK → project_checkpoints(id) ON DELETE SET NULL |
+| category | text | NO | 'operational' | CHECK ∈ {pedagogical, commercial, administrative, financial, operational} |
+| context | text | NO | 'work' | CHECK ∈ {work, personal} |
+| priority | text | NO | 'medium' | CHECK ∈ {critical, high, medium, low} |
+| eisenhower_quadrant | integer | YES | — | CHECK 1–4; calculado por trigger |
+| status | text | NO | 'pending' | CHECK — ver abaixo |
+| due_date | date | NO | — | |
+| scheduled_date | date | YES | — | Dia planejado no briefing |
+| delegated_to | uuid | YES | — | FK → collaborators(id) |
+| delegated_at | timestamptz | YES | — | |
+| source | text | NO | 'manual' | CHECK ∈ {manual, agent_briefing, agent_closing, checkpoint_decomposition, coordinator_assignment, system} |
+| completed_at | timestamptz | YES | — | |
+| completed_by | uuid | YES | — | FK → collaborators(id) |
+| created_by | uuid | NO | — | FK → collaborators(id) |
+| remind_at | timestamptz | YES | — | Lembrete único agendado |
+| action_type | text | YES | — | CHECK ∈ {now, task, call, meeting, delegate, project} ou NULL |
+| school_event_id | uuid | YES | — | FK → school_events(id) ON DELETE SET NULL (Sprint 14 F1) |
+| event_sector | text | YES | — | CHECK ∈ {logistica, tecnica, pedagogico, comunicacao, producao} (Sprint 14 F1) |
+| notes | text | YES | — | Notas internas (Sprint 14 F1) |
+| support_team | text[] | YES | — | IDs ou nomes do time de apoio (Sprint 14 F1) |
+| reminded_at | timestamptz | YES | — | Timestamp do lembrete T-1 enviado (Sprint 14 F2) |
+| created_at | timestamptz | NO | now() | |
+| updated_at | timestamptz | NO | now() | |
+
+**Constraints:**
+- status CHECK: pending, in_progress, done, overdue, delegated, cancelled, awaiting_confirmation *(awaiting_confirmation: Sprint 14 F1)*
+- source CHECK: manual, agent_briefing, agent_closing, checkpoint_decomposition, coordinator_assignment, system
+- category CHECK: pedagogical, commercial, administrative, financial, operational
+- context CHECK: work, personal
+- priority CHECK: critical, high, medium, low
+- eisenhower_quadrant CHECK: 1–4
+- action_type CHECK: now, task, call, meeting, delegate, project (ou NULL)
+- event_sector CHECK: logistica, tecnica, pedagogico, comunicacao, producao
+
+**Relacionamentos:**
+- assigned_to → collaborators(id)
+- project_id → projects(id) ON DELETE SET NULL
+- checkpoint_id → project_checkpoints(id) ON DELETE SET NULL
+- delegated_to → collaborators(id)
+- completed_by → collaborators(id)
+- created_by → collaborators(id)
+- school_event_id → school_events(id) ON DELETE SET NULL
+
+**RLS:**
+- `Service role full access`: ALL
+- `auth_insert_own_tasks`: INSERT
+- `auth_read_own_tasks`: SELECT — assigned_to = current_collab_id()
+- `auth_read_work_tasks_coord`: SELECT — context='work' AND role ∈ {coordinator, director}
+- `auth_update_own_tasks`: UPDATE — assigned_to = current_collab_id()
+
+---
+
+### `projects`
+Projetos com ciclo de vida (aprovação → planejamento → ativo → concluído). Vinculam tarefas e checkpoints.
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| name | text | NO | — | |
+| description | text | YES | — | |
+| justification | text | YES | — | "Por quê" |
+| location | text | YES | — | "Onde" |
+| start_date | date | NO | — | |
+| end_date | date | NO | — | |
+| methodology | text | YES | — | "Como" |
+| estimated_hours_week | numeric | YES | — | |
+| category | text | NO | 'operational' | CHECK ∈ {pedagogical, commercial, administrative, operational, event, infrastructure} |
+| status | text | NO | 'planning' | CHECK ∈ {pending_approval, planning, active, paused, completed, cancelled} |
+| progress_percent | integer | NO | 0 | CHECK 0–100; calculado automaticamente |
+| color | text | NO | '#3B82F6' | Hex color |
+| created_by | uuid | NO | — | FK → collaborators(id) |
+| requires_approval | boolean | NO | false | |
+| approved_by | uuid | YES | — | FK → collaborators(id) |
+| approved_at | timestamptz | YES | — | |
+| rejection_reason | text | YES | — | |
+| created_at | timestamptz | NO | now() | |
+| updated_at | timestamptz | NO | now() | |
+
+**Constraints:**
+- status CHECK: pending_approval, planning, active, paused, completed, cancelled
+- category CHECK: pedagogical, commercial, administrative, operational, event, infrastructure
+- progress_percent CHECK: 0–100
+
+**Relacionamentos:**
+- created_by → collaborators(id)
+- approved_by → collaborators(id)
+
+**RLS:**
+- `Service role full access`: ALL
+- `auth_insert_own_projects`: INSERT
+- `auth_read_projects`: SELECT — created_by = current_collab_id() OU membro OU role ∈ {coordinator, director}
+
+---
+
+### `project_checkpoints`
+Marcos de entrega de um projeto. Podem ser decompostos em tasks pelo TOM.
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| project_id | uuid | NO | — | FK → projects(id) ON DELETE CASCADE |
+| name | text | NO | — | |
+| description | text | YES | — | |
+| due_date | date | YES | — | |
+| assigned_to | uuid | YES | — | FK → collaborators(id) |
+| status | text | NO | 'pending' | CHECK ∈ {pending, in_progress, done, overdue} |
+| sort_order | integer | NO | 0 | |
+| completed_at | timestamptz | YES | — | |
+| completed_by | uuid | YES | — | FK → collaborators(id) |
+| created_at | timestamptz | NO | now() | |
+| updated_at | timestamptz | NO | now() | |
+
+**Constraints:**
+- status CHECK: pending, in_progress, done, overdue
+
+**Relacionamentos:**
+- project_id → projects(id) ON DELETE CASCADE
+- assigned_to → collaborators(id)
+- completed_by → collaborators(id)
+
+**RLS:**
+- `Service role full access`: ALL
+- `auth_insert_project_checkpoints`: INSERT
+- `auth_read_project_checkpoints`: SELECT — projetos do colaborador ou role ∈ {coordinator, director}
+- `auth_update_project_checkpoints`: UPDATE — mesma regra
+
+---
+
+### `project_members`
+Membros de cada projeto com papel (owner/leader/member). UNIQUE (project_id, collaborator_id).
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| project_id | uuid | NO | — | FK → projects(id) ON DELETE CASCADE |
+| collaborator_id | uuid | NO | — | FK → collaborators(id) ON DELETE CASCADE |
+| role_in_project | text | NO | 'member' | CHECK ∈ {owner, leader, member} |
+| created_at | timestamptz | NO | now() | |
+
+**Constraints:**
+- role_in_project CHECK: owner, leader, member
+- UNIQUE (project_id, collaborator_id)
+
+**Relacionamentos:**
+- project_id → projects(id) ON DELETE CASCADE
+- collaborator_id → collaborators(id) ON DELETE CASCADE
+
+**RLS:**
+- `Service role full access`: ALL
+- `auth_insert_project_members`: INSERT
+- `auth_read_project_members`: SELECT — collaborator_id = current_collab_id() OU role ∈ {coordinator, director}
+
+---
+
+### `task_comments`
+Comentários e notas de auditoria em tarefas (manual ou gerado pelo agente).
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| task_id | uuid | NO | — | FK → tasks(id) ON DELETE CASCADE |
+| content | text | NO | — | |
+| comment_type | text | NO | 'manual' | CHECK ∈ {manual, agent_note, status_change, delegation, deadline_extension} |
+| created_by | uuid | YES | — | FK → collaborators(id) |
+| created_at | timestamptz | NO | now() | |
+
+**Constraints:**
+- comment_type CHECK: manual, agent_note, status_change, delegation, deadline_extension
+
+**Relacionamentos:**
+- task_id → tasks(id) ON DELETE CASCADE
+- created_by → collaborators(id)
+
+**RLS:**
+- `Service role full access`: ALL
+
+---
+
+### `task_reminders`
+Lembretes pontuais agendados para tarefas (além do `remind_at` inline na task).
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| task_id | uuid | NO | — | FK → tasks(id) ON DELETE CASCADE |
+| remind_at | timestamptz | NO | — | Quando disparar |
+| sent_at | timestamptz | YES | — | |
+| label | text | YES | — | Descrição do lembrete |
+| created_at | timestamptz | NO | now() | |
+
+**Relacionamentos:**
+- task_id → tasks(id) ON DELETE CASCADE
+
+**RLS:**
+- `service_role_all_task_reminders`: ALL
+
+---
+
+### `daily_plans`
+Plano diário de tarefas de um colaborador. UNIQUE (collaborator_id, plan_date).
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| collaborator_id | uuid | NO | — | FK → collaborators(id) ON DELETE CASCADE |
+| plan_date | date | NO | — | |
+| weekly_plan_id | uuid | YES | — | FK → weekly_plans(id) ON DELETE SET NULL |
+| status | text | NO | 'active' | CHECK ∈ {active, closed} |
+| items_planned | integer | NO | 0 | |
+| items_completed | integer | NO | 0 | |
+| completion_rate | numeric | NO | 0 | |
+| new_demands | text | YES | — | Demandas surgidas no dia |
+| closing_notes | text | YES | — | Notas do fechamento |
+| closed_at | timestamptz | YES | — | |
+| created_at | timestamptz | NO | now() | |
+| updated_at | timestamptz | NO | now() | |
+
+**Constraints:**
+- status CHECK: active, closed
+- UNIQUE (collaborator_id, plan_date)
+
+**Relacionamentos:**
+- collaborator_id → collaborators(id) ON DELETE CASCADE
+- weekly_plan_id → weekly_plans(id) ON DELETE SET NULL
+
+**RLS:**
+- `Service role full access`: ALL
+
+---
+
+### `daily_plan_items`
+Itens individuais dentro de um daily_plan (podem ser vinculados ou não a uma task).
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| daily_plan_id | uuid | NO | — | FK → daily_plans(id) ON DELETE CASCADE |
+| task_id | uuid | YES | — | FK → tasks(id) ON DELETE SET NULL |
+| description | text | NO | — | |
+| sort_order | integer | NO | 0 | |
+| is_completed | boolean | NO | false | |
+| completed_at | timestamptz | YES | — | |
+| rescheduled_to | date | YES | — | Se adiado para outra data |
+| created_at | timestamptz | NO | now() | |
+
+**Relacionamentos:**
+- daily_plan_id → daily_plans(id) ON DELETE CASCADE
+- task_id → tasks(id) ON DELETE SET NULL
+
+**RLS:**
+- `Service role full access`: ALL
+
+---
+
+### `weekly_plans`
+Plano semanal com metas e retrospectiva. UNIQUE (collaborator_id, week_start).
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| collaborator_id | uuid | NO | — | FK → collaborators(id) ON DELETE CASCADE |
+| week_start | date | NO | — | Segunda-feira da semana |
+| goals | text[] | YES | '{}' | Array de metas textuais |
+| status | text | NO | 'active' | CHECK ∈ {active, completed, skipped} |
+| tasks_planned | integer | NO | 0 | |
+| tasks_completed | integer | NO | 0 | |
+| completion_rate | numeric | NO | 0 | |
+| retrospective_notes | text | YES | — | |
+| created_at | timestamptz | NO | now() | |
+| updated_at | timestamptz | NO | now() | |
+
+**Constraints:**
+- status CHECK: active, completed, skipped
+- UNIQUE (collaborator_id, week_start)
+
+**Relacionamentos:**
+- collaborator_id → collaborators(id) ON DELETE CASCADE
+
+**RLS:**
+- `Service role full access`: ALL
+
+---
+
+### `notifications`
+Fila de notificações enviadas via WhatsApp ou PWA push.
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| collaborator_id | uuid | NO | — | FK → collaborators(id) ON DELETE CASCADE |
+| notification_type | text | NO | — | CHECK — ver abaixo |
+| title | text | NO | — | |
+| body | text | NO | — | |
+| reference_type | text | YES | — | CHECK ∈ {task, project, checkpoint, collaborator, broadcast, checklist, emusys_class} ou NULL |
+| reference_id | uuid | YES | — | ID do objeto referenciado |
+| channel | text | NO | 'whatsapp' | CHECK ∈ {whatsapp, pwa_push, both} |
+| status | text | NO | 'pending' | CHECK ∈ {pending, sent, delivered, read, failed} |
+| sent_at | timestamptz | YES | — | |
+| read_at | timestamptz | YES | — | |
+| created_at | timestamptz | NO | now() | |
+
+**Constraints:**
+- notification_type CHECK: deadline_alert, overdue_alert, deadline_extension_request, team_inactivity, project_at_risk, checkpoint_reminder, delegation_notice, emusys_reminder, checklist_reminder, broadcast_reminder
+- reference_type CHECK: task, project, checkpoint, collaborator, broadcast, checklist, emusys_class (ou NULL)
+- channel CHECK: whatsapp, pwa_push, both
+- status CHECK: pending, sent, delivered, read, failed
+
+**Relacionamentos:**
+- collaborator_id → collaborators(id) ON DELETE CASCADE
+
+**RLS:**
+- `Service role full access`: ALL
+
+---
+
+## 4. Eventos
+
+### `events`
+Eventos do calendário pessoal/trabalho de cada colaborador (criados pelo TOM ou manualmente).
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| collaborator_id | uuid | NO | — | FK → collaborators(id) ON DELETE CASCADE |
+| title | text | NO | — | |
+| description | text | YES | — | |
+| context | text | NO | 'work' | CHECK ∈ {work, personal} |
+| category | text | NO | — | CHECK ∈ {la_music, mentoria, aula_particular, outra_escola, estudio, pessoal} |
+| start_at | timestamptz | NO | — | |
+| end_at | timestamptz | NO | — | CHECK end_at > start_at |
+| modality | text | NO | 'presencial' | CHECK ∈ {online, presencial, hibrido} |
+| location_text | text | YES | — | |
+| meeting_url | text | YES | — | CHECK só presente se modality ∈ {online, hibrido} |
+| project_id | uuid | YES | — | FK → projects(id) ON DELETE SET NULL |
+| status | text | NO | 'scheduled' | CHECK ∈ {scheduled, done, cancelled} |
+| source | text | NO | 'manual' | CHECK ∈ {manual, tom, imported} |
+| created_by | uuid | YES | — | FK → collaborators(id) |
+| created_at | timestamptz | NO | now() | |
+| updated_at | timestamptz | NO | now() | |
+
+**Constraints:**
+- context CHECK: work, personal
+- category CHECK: la_music, mentoria, aula_particular, outra_escola, estudio, pessoal
+- modality CHECK: online, presencial, hibrido
+- status CHECK: scheduled, done, cancelled
+- source CHECK: manual, tom, imported
+- end_at > start_at (check)
+- meeting_url só permitida se modality ∈ {online, hibrido}
+
+**Relacionamentos:**
+- collaborator_id → collaborators(id) ON DELETE CASCADE
+- project_id → projects(id) ON DELETE SET NULL
+- created_by → collaborators(id)
+
+**RLS:**
+- `service_role_all_events`: ALL
+- `auth_insert_own_events`: INSERT
+- `auth_read_own_events`: SELECT — collaborator_id = current_collab_id()
+- `auth_read_work_events_coord`: SELECT — context='work' AND role ∈ {coordinator, director}
+- `auth_update_own_events`: UPDATE — collaborator_id = current_collab_id()
+- `auth_delete_own_events`: DELETE — collaborator_id = current_collab_id()
+
+---
+
+### `school_events` *(Sprint 13/14)*
+Eventos institucionais da escola (shows, recitais, formatura, etc.). Geram tasks automáticas por setor.
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| title | text | NO | — | |
+| event_date | date | NO | — | |
+| start_time | time | YES | — | |
+| location | text | YES | — | |
+| unit | text | YES | — | CHECK ∈ {barra, recreio, campo_grande} |
+| status | text | NO | 'active' | CHECK ∈ {active, cancelled} |
+| notify_leadership | boolean | NO | true | Notificar liderança |
+| notify_school | boolean | NO | true | Notificar escola toda |
+| notify_unit | boolean | NO | true | Notificar unidade |
+| notify_day_of | boolean | NO | true | Lembrete no dia (Sprint 13 — T0 lembrete) |
+| event_type | text | YES | — | CHECK ∈ {show, recital, workshop, treinamento, oficinas, reuniao, formatura, evento} (Sprint 14 F2) |
+| created_by | uuid | YES | — | FK → collaborators(id) |
+| created_at | timestamptz | NO | now() | |
+
+**Constraints:**
+- unit CHECK: barra, recreio, campo_grande
+- status CHECK: active, cancelled
+- event_type CHECK: show, recital, workshop, treinamento, oficinas, reuniao, formatura, evento
+
+**Relacionamentos:**
+- created_by → collaborators(id)
+
+**RLS:**
+- `school_events_select`: SELECT — true (todos leem)
+- `school_events_write`: ALL — role ∈ {director, coordinator}
+
+---
+
+### `event_team_map` *(Sprint 14 F2)*
+Mapeia o responsável por setor×unidade para eventos escolares. UNIQUE (unit, sector).
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| unit | text | NO | — | CHECK ∈ {barra, recreio, campo_grande} |
+| sector | text | NO | — | CHECK ∈ {logistica, tecnica, pedagogico, comunicacao, producao} |
+| collaborator_id | uuid | NO | — | FK → collaborators(id) ON DELETE CASCADE |
+| created_at | timestamptz | NO | now() | |
+| updated_at | timestamptz | NO | now() | |
+
+**Constraints:**
+- unit CHECK: barra, recreio, campo_grande
+- sector CHECK: logistica, tecnica, pedagogico, comunicacao, producao
+- UNIQUE (unit, sector)
+
+**Relacionamentos:**
+- collaborator_id → collaborators(id) ON DELETE CASCADE
+
+**RLS:**
+- `event_team_map_read`: SELECT — role ∈ {coordinator, director}
+- `event_team_map_write`: ALL — role ∈ {coordinator, director}
+
+---
+
+### `google_calendar_sync`
+Mapeamento entre objetos internos (task/checkpoint/meeting) e eventos do Google Calendar. UNIQUE (collaborator_id, source_type, source_id).
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| collaborator_id | uuid | NO | — | FK → collaborators(id) ON DELETE CASCADE |
+| source_type | text | NO | — | CHECK ∈ {task, checkpoint, meeting} |
+| source_id | uuid | NO | — | ID do objeto interno |
+| google_event_id | text | NO | — | ID do evento no Google |
+| last_synced_at | timestamptz | NO | now() | |
+| sync_status | text | NO | 'synced' | CHECK ∈ {synced, pending, error} |
+| created_at | timestamptz | NO | now() | |
+| updated_at | timestamptz | NO | now() | |
+
+**Constraints:**
+- source_type CHECK: task, checkpoint, meeting
+- sync_status CHECK: synced, pending, error
+- UNIQUE (collaborator_id, source_type, source_id)
+
+**Relacionamentos:**
+- collaborator_id → collaborators(id) ON DELETE CASCADE
+
+**RLS:**
+- `Service role full access`: ALL
+
+---
+
+### `emusys_classes`
+Aulas importadas do sistema Emusys (polling periódico). Rastreia presença e conteúdo registrados.
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| collaborator_id | uuid | NO | — | FK → collaborators(id) ON DELETE CASCADE |
+| emusys_class_id | text | NO | — | ID externo no Emusys |
+| student_name | text | NO | — | |
+| class_date | date | NO | — | |
+| class_time | time | NO | — | |
+| class_end_time | time | YES | — | |
+| unit | text | NO | — | CHECK ∈ {campo_grande, recreio, barra} |
+| attendance_registered | boolean | NO | false | |
+| content_registered | boolean | NO | false | |
+| reminder_sent | boolean | NO | false | |
+| reminder_sent_at | timestamptz | YES | — | |
+| last_synced_at | timestamptz | NO | now() | |
+| created_at | timestamptz | NO | now() | |
+| updated_at | timestamptz | NO | now() | |
+
+**Constraints:**
+- unit CHECK: campo_grande, recreio, barra
+
+**Relacionamentos:**
+- collaborator_id → collaborators(id) ON DELETE CASCADE
+
+**RLS:**
+- `Service role full access`: ALL
+
+---
+
+### `v_recent_events` (view)
+View que agrega eventos recentes. Definição a confirmar via DDL.
+
+---
+
+## 5. Comunicação
+
+### `announcements` *(Sprint 13/14)*
+Comunicados criados pelo TOM ou coordenadores. Passam por fluxo de aprovação se criados por não-diretores.
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| created_by | uuid | YES | — | FK → collaborators(id) |
+| body | text | NO | — | Texto do comunicado |
+| audience | jsonb | NO | '{}' | Segmentação de audiência |
+| status | text | NO | 'scheduled' | CHECK — ver abaixo |
+| scheduled_at | timestamptz | YES | — | Horário de envio agendado |
+| cancel_retraction_sent | boolean | NO | false | Se retratação foi enviada no cancelamento |
+| source_event_id | uuid | YES | — | FK → school_events(id) (origem no evento escolar) |
+| reviewed_by | uuid | YES | — | FK → collaborators(id) (Sprint 13 F3) |
+| rejection_reason | text | YES | — | Motivo de rejeição (Sprint 13 F3) |
+| coordinator_notified_at | timestamptz | YES | — | Quando coordenador foi notificado (Sprint 13 F3) |
+| created_at | timestamptz | NO | now() | |
+| updated_at | timestamptz | NO | now() | |
+
+**Constraints:**
+- status CHECK: pending_approval *(Sprint 13 F3)*, scheduled, sending, sent, cancelled, rejected *(Sprint 13 F3)*
+
+**Relacionamentos:**
+- created_by → collaborators(id)
+- reviewed_by → collaborators(id)
+- source_event_id → school_events(id)
+
+**RLS:**
+- `announcements_write` (cmd=w): UPDATE — role = director
+- `announcements_select`: SELECT — role ∈ {director, coordinator}
+- `announcements_write` (cmd=*): ALL (sem cláusula — provavelmente service role ou insert aberto)
+
+---
+
+### `announcement_jobs` *(Sprint 13/14)*
+Fila de disparo individual por destinatário de um comunicado.
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| announcement_id | uuid | NO | — | FK → announcements(id) ON DELETE CASCADE |
+| recipient_id | uuid | YES | — | FK → collaborators(id) |
+| phone | text | NO | — | Número de destino |
+| status | text | NO | 'pending' | CHECK ∈ {pending, sent, failed, cancelled} |
+| retry_count | integer | NO | 0 | |
+| sent_at | timestamptz | YES | — | |
+| error | text | YES | — | Mensagem de erro se falhou |
+| created_at | timestamptz | NO | now() | |
+
+**Constraints:**
+- status CHECK: pending, sent, failed, cancelled
+
+**Relacionamentos:**
+- announcement_id → announcements(id) ON DELETE CASCADE
+- recipient_id → collaborators(id)
+
+**RLS:**
+- `announcement_jobs_select`: SELECT — role ∈ {director, coordinator}
+
+---
+
+### `broadcast_messages`
+Mensagens broadcast enviadas pelo TOM a grupos de colaboradores, com rastreamento de confirmação.
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| sent_by | uuid | NO | — | FK → collaborators(id) |
+| target_group | text | NO | — | Nome do grupo alvo |
+| target_ids | text[] | NO | — | Array de IDs dos destinatários |
+| message_content | text | NO | — | |
+| requires_confirmation | boolean | NO | false | Se exige resposta de confirmação |
+| follow_up_interval_min | integer | YES | 60 | Intervalo de follow-up em minutos |
+| timeout_hours | integer | YES | 24 | Timeout para respostas |
+| status | text | NO | 'active' | CHECK ∈ {active, completed, cancelled} |
+| report_sent | boolean | NO | false | |
+| report_sent_at | timestamptz | YES | — | |
+| created_at | timestamptz | NO | now() | |
+| updated_at | timestamptz | NO | now() | |
+
+**Constraints:**
+- status CHECK: active, completed, cancelled
+
+**Relacionamentos:**
+- sent_by → collaborators(id)
+
+**RLS:**
+- `Service role full access`: ALL
+
+---
+
+### `broadcast_responses`
+Resposta individual de cada destinatário a um broadcast. UNIQUE (broadcast_id, collaborator_id).
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| broadcast_id | uuid | NO | — | FK → broadcast_messages(id) ON DELETE CASCADE |
+| collaborator_id | uuid | NO | — | FK → collaborators(id) ON DELETE CASCADE |
+| status | text | NO | 'pending' | CHECK ∈ {pending, confirmed, declined, no_response} |
+| response_text | text | YES | — | |
+| reminders_sent | integer | NO | 0 | |
+| last_reminder_at | timestamptz | YES | — | |
+| responded_at | timestamptz | YES | — | |
+| created_at | timestamptz | NO | now() | |
+
+**Constraints:**
+- status CHECK: pending, confirmed, declined, no_response
+- UNIQUE (broadcast_id, collaborator_id)
+
+**Relacionamentos:**
+- broadcast_id → broadcast_messages(id) ON DELETE CASCADE
+- collaborator_id → collaborators(id) ON DELETE CASCADE
+
+**RLS:**
+- `Service role full access`: ALL
+
+---
+
+## 6. Hábitos & Checklists
+
+### `habit_templates`
+Templates pré-definidos de hábitos (biblioteca do sistema).
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| name | text | NO | — | |
+| description | text | YES | — | |
+| icon | text | NO | '📌' | |
+| color | text | NO | '#3B82F6' | |
+| default_frequency | text | NO | 'daily' | CHECK ∈ {daily, weekdays, weekly, custom} |
+| default_reminder_time | time | YES | — | |
+| category | text | NO | 'health' | CHECK ∈ {health, learning, finance, mindset, social, other} |
+| is_system | boolean | NO | true | |
+| created_at | timestamptz | NO | now() | |
+
+**Constraints:**
+- default_frequency CHECK: daily, weekdays, weekly, custom
+- category CHECK: health, learning, finance, mindset, social, other
+
+**RLS:**
+- `Service role full access`: ALL
+
+---
+
+### `habits`
+Hábitos ativos de cada colaborador (criados a partir de template ou do zero).
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| collaborator_id | uuid | NO | — | FK → collaborators(id) ON DELETE CASCADE |
+| template_id | uuid | YES | — | FK → habit_templates(id) |
+| name | text | NO | — | |
+| icon | text | NO | '📌' | |
+| color | text | NO | '#3B82F6' | |
+| frequency | text | NO | 'daily' | CHECK ∈ {daily, weekdays, weekly, custom} |
+| custom_days | integer[] | YES | — | Array de dias da semana (0=dom) para frequency=custom |
+| reminder_time | time | YES | — | |
+| notify_whatsapp | boolean | NO | true | |
+| is_active | boolean | NO | true | |
+| current_streak | integer | NO | 0 | |
+| best_streak | integer | NO | 0 | |
+| created_at | timestamptz | NO | now() | |
+| updated_at | timestamptz | NO | now() | |
+
+**Constraints:**
+- frequency CHECK: daily, weekdays, weekly, custom
+
+**Relacionamentos:**
+- collaborator_id → collaborators(id) ON DELETE CASCADE
+- template_id → habit_templates(id)
+
+**RLS:**
+- `Service role full access`: ALL
+
+---
+
+### `habit_logs`
+Registro diário de execução de cada hábito. UNIQUE (habit_id, log_date).
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| habit_id | uuid | NO | — | FK → habits(id) ON DELETE CASCADE |
+| collaborator_id | uuid | NO | — | FK → collaborators(id) ON DELETE CASCADE |
+| log_date | date | NO | — | |
+| is_completed | boolean | NO | false | |
+| completed_at | timestamptz | YES | — | |
+| notes | text | YES | — | |
+| created_at | timestamptz | NO | now() | |
+
+**Constraints:**
+- UNIQUE (habit_id, log_date)
+
+**Relacionamentos:**
+- habit_id → habits(id) ON DELETE CASCADE
+- collaborator_id → collaborators(id) ON DELETE CASCADE
+
+**RLS:**
+- `Service role full access`: ALL
+
+---
+
+### `op_checklists` *(Sprint 11 F2+)*
+Templates de checklists operacionais (diários ou semanais) por função, turno e unidade.
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| name | text | NO | — | |
+| function_role | text | NO | — | Função/cargo alvo |
+| checklist_type | text | NO | 'daily' | CHECK ∈ {daily, weekly} |
+| shift | text | YES | — | CHECK ∈ {morning, afternoon, evening, full} ou NULL |
+| unit | text | YES | 'all' | CHECK ∈ {campo_grande, recreio, barra, all} ou NULL |
+| is_active | boolean | NO | true | |
+| completion_threshold | integer | NO | 80 | % mínimo para considerar completo |
+| dispatch_time | time | NO | '08:00' | Horário de disparo via WhatsApp |
+| days_of_week | integer[] | NO | [1,2,3,4,5] | Dias de disparo (0=dom) |
+| created_by | uuid | NO | — | FK → collaborators(id) |
+| updated_by | uuid | YES | — | FK → collaborators(id) |
+| created_at | timestamptz | NO | now() | |
+| updated_at | timestamptz | NO | now() | |
+
+**Constraints:**
+- checklist_type CHECK: daily, weekly
+- shift CHECK: morning, afternoon, evening, full (ou NULL)
+- unit CHECK: campo_grande, recreio, barra, all (ou NULL)
+
+**Relacionamentos:**
+- created_by → collaborators(id)
+- updated_by → collaborators(id)
+
+**RLS:**
+- `Service role full access`: ALL
+- `op_checklists_select_auth`: SELECT — true (todos leem)
+- `op_checklists_write_mgmt`: ALL — role ∈ {director, coordinator}
+
+---
+
+### `op_checklist_items` *(Sprint 11 F2+)*
+Itens individuais de um template de checklist operacional.
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| checklist_id | uuid | NO | — | FK → op_checklists(id) ON DELETE CASCADE |
+| description | text | NO | — | |
+| sort_order | integer | NO | 0 | |
+| is_active | boolean | NO | true | |
+| updated_by | uuid | YES | — | FK → collaborators(id) |
+| created_at | timestamptz | NO | now() | |
+| updated_at | timestamptz | YES | now() | |
+
+**Relacionamentos:**
+- checklist_id → op_checklists(id) ON DELETE CASCADE
+- updated_by → collaborators(id)
+
+**RLS:**
+- `Service role full access`: ALL
+- `op_checklist_items_select_auth`: SELECT — true
+- `op_checklist_items_write_mgmt`: ALL — role ∈ {director, coordinator}
+
+---
+
+### `op_checklist_completions` *(Sprint 11 F2+)*
+Instância de preenchimento de um checklist por colaborador/data. UNIQUE (checklist_id, collaborator_id, reference_date).
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| checklist_id | uuid | NO | — | FK → op_checklists(id) ON DELETE CASCADE |
+| collaborator_id | uuid | NO | — | FK → collaborators(id) ON DELETE CASCADE |
+| reference_date | date | NO | — | |
+| started_at | timestamptz | YES | — | |
+| completed_at | timestamptz | YES | — | |
+| channel | text | NO | 'pwa' | CHECK ∈ {pwa, whatsapp} |
+| dispatched_at | timestamptz | YES | — | Quando foi enviado via WhatsApp |
+| created_at | timestamptz | NO | now() | |
+
+**Constraints:**
+- channel CHECK: pwa, whatsapp
+- UNIQUE (checklist_id, collaborator_id, reference_date)
+
+**Relacionamentos:**
+- checklist_id → op_checklists(id) ON DELETE CASCADE
+- collaborator_id → collaborators(id) ON DELETE CASCADE
+
+**RLS:**
+- `Service role full access`: ALL
+
+---
+
+### `op_checklist_item_completions` *(Sprint 11 F2+)*
+Estado de cada item dentro de uma completion. UNIQUE (completion_id, item_id).
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| completion_id | uuid | NO | — | FK → op_checklist_completions(id) ON DELETE CASCADE |
+| item_id | uuid | NO | — | FK → op_checklist_items(id) ON DELETE CASCADE |
+| is_checked | boolean | NO | false | |
+| checked_at | timestamptz | YES | — | |
+| notes | text | YES | — | |
+| late | boolean | NO | false | Marcado após horário limite |
+| channel | text | NO | 'whatsapp' | CHECK ∈ {pwa, whatsapp} |
+
+**Constraints:**
+- channel CHECK: pwa, whatsapp
+- UNIQUE (completion_id, item_id)
+
+**Relacionamentos:**
+- completion_id → op_checklist_completions(id) ON DELETE CASCADE
+- item_id → op_checklist_items(id) ON DELETE CASCADE
+
+**RLS:**
+- `Service role full access`: ALL
+
+---
+
+### `op_checklists_audit` *(Sprint 11 F2+)*
+Trilha de auditoria para criação, atualização e desativação de templates de checklist.
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| template_id | uuid | NO | — | FK → op_checklists(id) ON DELETE CASCADE |
+| action | text | NO | — | CHECK ∈ {created, updated, deactivated, activated, item_added, item_removed, item_updated, reordered} |
+| changed_by | uuid | YES | — | FK → collaborators(id) |
+| changed_at | timestamptz | NO | now() | |
+| details | jsonb | YES | — | Detalhes da mudança |
+
+**Constraints:**
+- action CHECK: created, updated, deactivated, activated, item_added, item_removed, item_updated, reordered
+
+**Relacionamentos:**
+- template_id → op_checklists(id) ON DELETE CASCADE
+- changed_by → collaborators(id)
+
+**RLS:**
+- `op_checklists_audit_select_mgmt`: SELECT — role ∈ {director, coordinator}
+
+---
+
+## 7. RLS & Helpers
+
+### Funções helper
+
+| Função | Retorno | Descrição |
 |---|---|---|
-| **Pessoas** | collaborators, user_preferences, collaborator_profiles | Quem usa o sistema, como quer usar, e como o TOM os conhece |
-| **Projetos** | projects, project_members, project_checkpoints | Roadmap com timeline, marcos e hierarquia dinâmica por projeto |
-| **Tarefas** | tasks, task_comments | Execução do dia a dia (pessoal + trabalho) |
-| **Rituais** | daily_plans, daily_plan_items, weekly_plans, ritual_logs | Planejamento pessoal e acompanhamento |
-| **Checklists Operacionais** | op_checklists, op_checklist_items, op_checklist_completions, op_checklist_item_completions | Rotinas padronizadas por departamento/função |
-| **Hábitos Pessoais** | habit_templates, habits, habit_logs | Hábitos e rotinas pessoais (100% privado) |
-| **Broadcast** | broadcast_messages, broadcast_responses | Comunicações em massa com follow-up e rastreamento |
-| **Emusys** | emusys_classes | Agenda de aulas, presença e conteúdo puxados do Emusys |
-| **Sistema** | conversation_history, collaborator_memory, notifications, google_calendar_sync | Motor do TOM, memória evolutiva, alertas e integrações |
+| `current_collab_id()` | uuid | Lê `current_setting('app.current_user_id', true)` — retorna o UUID do colaborador autenticado |
+| `current_collab_role()` | text | Consulta `collaborators.role` para o ID retornado por `current_collab_id()` |
 
----
+### Padrão de uso no PWA
 
-## Domínio 1: Pessoas
+Antes de qualquer mutação via Supabase client (anon key), o PWA executa:
 
-### Tabela: `collaborators`
-
-Todos os usuários do sistema. A hierarquia é definida por `role` e `supervisor_id`.
-
-| Campo | Tipo | Obrigatório | Default | Descrição |
-|---|---|---|---|---|
-| id | uuid | sim | gen_random_uuid() | PK |
-| full_name | text | sim | — | Nome completo |
-| phone | text | sim | — | Número WhatsApp (formato internacional: 5521999999999) |
-| email | text | não | null | Email (usado pra Google Calendar OAuth) |
-| role | text | sim | 'collaborator' | 'director', 'manager', 'coordinator', 'collaborator' |
-| function_title | text | não | null | Cargo descritivo: 'Professor de Piano', 'Assistente Pedagógico', 'Coordenador Pedagógico' |
-| unit | text | não | null | 'campo_grande', 'recreio', 'barra', 'all' |
-| supervisor_id | uuid | não | null | FK → collaborators (quem é o líder direto) |
-| is_active | boolean | sim | true | Se está ativo no sistema |
-| onboarding_completed | boolean | sim | false | Se completou o onboarding com o TOM |
-| created_at | timestamptz | sim | now() | |
-| updated_at | timestamptz | sim | now() | |
-
-**Índices:** phone (unique), role, supervisor_id, unit, is_active
-
-**Hierarquia RLS:**
-```
-director (Alf)
-  └── manager (gerentes)
-       └── coordinator (Juliana, Quintela)
-            └── collaborator (professores, assistentes)
+```js
+await supabase.rpc('set_config', {
+  key: 'app.current_user_id',
+  value: collaborator.id
+})
 ```
 
-**Regra de visibilidade:** cada pessoa vê os dados de quem está abaixo dela na árvore de `supervisor_id`. Recursivo — se Alf é supervisor dos coordenadores e os coordenadores são supervisores dos professores, Alf vê todo mundo.
+Isso popula o GUC `app.current_user_id` na sessão Postgres, que as funções `current_collab_id()` e `current_collab_role()` consomem nas policies RLS.
+
+O **engine** (TOM backend) usa a **service role key**, que bypassa todas as policies RLS.
+
+### Resumo das policies por tabela
+
+| Tabela | Políticas notáveis |
+|---|---|
+| collaborators | Leitura: próprio email OU coordinator/director |
+| tasks | Leitura/edição própria; coordinator/director vê todas work |
+| events | CRUD próprio; coordinator/director lê work events |
+| projects | Leitura: criador OU membro OU coordinator/director |
+| project_checkpoints | Leitura/edição vinculada ao projeto |
+| project_members | Leitura própria OU coordinator/director |
+| ritual_logs | Leitura própria + coordinator/director |
+| user_preferences | CRUD próprio apenas |
+| school_events | SELECT aberto a todos; escrita apenas coordinator/director |
+| event_team_map | Leitura e escrita: coordinator/director |
+| op_checklists / items | SELECT aberto; escrita coordinator/director |
+| op_checklists_audit | Leitura: coordinator/director |
+| announcements | SELECT coordinator/director; UPDATE (aprovação) director |
+| announcement_jobs | SELECT coordinator/director |
+| Demais tabelas | Service role full access (engine only) |
 
 ---
 
-### Tabela: `user_preferences`
-
-Preferências configuráveis por colaborador. 1:1 com collaborators.
-
-| Campo | Tipo | Obrigatório | Default | Descrição |
-|---|---|---|---|---|
-| id | uuid | sim | gen_random_uuid() | PK |
-| collaborator_id | uuid | sim | — | FK → collaborators (unique) |
-| briefing_time | time | sim | '08:00' | Horário do briefing de trabalho |
-| personal_briefing_time | time | sim | '07:00' | Horário do briefing pessoal |
-| closing_time | time | sim | '19:00' | Horário do fechamento diário |
-| planning_day | int | sim | 0 | Dia do planejamento semanal: 0=Domingo, 1=Segunda |
-| planning_time | time | sim | '19:00' | Horário do planejamento semanal |
-| coaching_intensity | text | sim | 'normal' | 'light', 'normal', 'hard' |
-| notify_deadline_alerts | boolean | sim | true | Receber alertas de prazo |
-| notify_overdue_alerts | boolean | sim | true | Receber alertas de atraso |
-| notify_team_summary | boolean | sim | true | Receber resumo do time (só coordenadores+) |
-| google_calendar_connected | boolean | sim | false | Se Google Calendar está integrado |
-| google_calendar_token | jsonb | não | null | Token OAuth do Google Calendar (access_token, refresh_token, expiry) |
-| google_calendar_id | text | não | null | ID do calendário Google sincronizado |
-| timezone | text | sim | 'America/Sao_Paulo' | Fuso horário do colaborador |
-| created_at | timestamptz | sim | now() | |
-| updated_at | timestamptz | sim | now() | |
-
-**Índices:** collaborator_id (unique)
-
----
-
-### Tabela: `collaborator_profiles`
-
-Perfil evolutivo de cada colaborador construído pelo TOM ao longo do tempo (equivalente ao USER.md do OpenClaw, mas multi-pessoa no banco). O TOM monta esse perfil no prompt antes de cada interação pra personalizar a resposta.
-
-| Campo | Tipo | Obrigatório | Default | Descrição |
-|---|---|---|---|---|
-| id | uuid | sim | gen_random_uuid() | PK |
-| collaborator_id | uuid | sim | — | FK → collaborators (unique) |
-| communication_style | text | não | null | Como a pessoa se comunica: 'direto', 'detalhista', 'informal', 'tímido' |
-| response_pattern | text | não | null | Padrões observados: 'responde rápido de manhã', 'ignora à noite', 'prefere áudio' |
-| best_coaching_approach | text | não | null | O que funciona melhor: 'cobrança direta', 'incentivo positivo', 'dados e números' |
-| strengths | text | não | null | Pontos fortes observados pelo TOM |
-| growth_areas | text | não | null | Áreas de desenvolvimento observadas |
-| personal_context | text | não | null | Contexto pessoal relevante (tem filhos, mora longe, toca em banda à noite) — 100% privado |
-| vocabulary_notes | text | não | null | Palavras/expressões que a pessoa usa e que o TOM deve reconhecer |
-| maturity_level | text | sim | 'beginner' | 'beginner', 'developing', 'proficient', 'advanced' — maturidade no uso do sistema |
-| total_interactions | int | sim | 0 | Contador de interações totais |
-| avg_response_time_min | numeric(6,1) | não | null | Tempo médio de resposta em minutos |
-| completion_rate_30d | numeric(5,2) | não | null | Taxa de conclusão dos últimos 30 dias |
-| last_profile_update | timestamptz | não | null | Última vez que o TOM atualizou este perfil |
-| profile_notes | text | não | null | Notas livres do TOM sobre a pessoa |
-| created_at | timestamptz | sim | now() | |
-| updated_at | timestamptz | sim | now() | |
-
-**Índices:** collaborator_id (unique)
-
-**Atualização:** o TOM atualiza este perfil periodicamente (a cada 20 interações ou semanalmente) com base nas observações acumuladas na conversation_history e ritual_logs.
-
-**RLS:** 100% privado — só o próprio colaborador e o sistema (service_role) veem. Coordenador e diretor NUNCA acessam. São as "notas do TOM" sobre a pessoa.
-
----
-
-### Tabela: `collaborator_memory`
-
-Memória de longo prazo do TOM sobre cada pessoa. Fatos aprendidos, decisões registradas, lições. Equivalente ao MEMORY.md do OpenClaw mas por pessoa no banco.
-
-| Campo | Tipo | Obrigatório | Default | Descrição |
-|---|---|---|---|---|
-| id | uuid | sim | gen_random_uuid() | PK |
-| collaborator_id | uuid | sim | — | FK → collaborators |
-| memory_type | text | sim | — | 'fact' (fato aprendido), 'decision' (decisão registrada), 'lesson' (lição/padrão), 'preference' (preferência descoberta), 'context' (contexto importante) |
-| content | text | sim | — | O conteúdo da memória |
-| source | text | sim | 'conversation' | 'conversation', 'ritual', 'observation', 'explicit' (pessoa disse diretamente) |
-| importance | text | sim | 'normal' | 'critical', 'high', 'normal', 'low' |
-| decay_at | timestamptz | não | null | Quando essa memória pode ser descartada (null = nunca expira) |
-| is_active | boolean | sim | true | Se ainda é relevante |
-| created_at | timestamptz | sim | now() | |
-| updated_at | timestamptz | sim | now() | |
-
-**Índices:** collaborator_id + memory_type, collaborator_id + is_active, importance
-
-**Busca semântica:** FTS5 no campo content pra buscas por significado. O TOM puxa as memórias mais relevantes antes de cada interação.
-
-**Consolidação:** periodicamente (semanalmente), o TOM revisa conversation_history, extrai fatos novos, e grava em collaborator_memory. Memórias com decay_at expirado são marcadas como is_active = false.
-
-**RLS:** 100% privado — só sistema (service_role). Nem o próprio colaborador vê as memórias do TOM sobre ele.
-
----
-
-## Domínio 2: Projetos
-
-### Tabela: `projects`
-
-Projetos com campos estruturados pelo 5W2H (sem expor o nome do framework).
-
-| Campo | Tipo | Obrigatório | Default | Descrição |
-|---|---|---|---|---|
-| id | uuid | sim | gen_random_uuid() | PK |
-| name | text | sim | — | Nome do projeto (What — O quê) |
-| description | text | não | null | Descrição detalhada do projeto |
-| justification | text | não | null | Por que é importante (Why — Por quê) |
-| location | text | não | null | Onde vai acontecer (Where — Onde) |
-| start_date | date | sim | — | Data de início (When — Quando) |
-| end_date | date | sim | — | Data de fim prevista (When — Quando) |
-| methodology | text | não | null | Como vai ser feito (How — Como) |
-| estimated_hours_week | numeric(5,1) | não | null | Horas estimadas por semana (How much — Quanto) |
-| category | text | sim | 'operational' | 'pedagogical', 'commercial', 'administrative', 'operational', 'event', 'infrastructure' |
-| status | text | sim | 'planning' | 'planning', 'active', 'paused', 'completed', 'cancelled' |
-| progress_percent | int | sim | 0 | Progresso 0–100 (calculado automaticamente pelos checkpoints) |
-| color | text | sim | '#3B82F6' | Cor da barra no roadmap visual |
-| created_by | uuid | sim | — | FK → collaborators (quem criou) |
-| created_at | timestamptz | sim | now() | |
-| updated_at | timestamptz | sim | now() | |
-
-**Índices:** status, category, start_date, end_date, created_by
-
-### Tabela: `project_members`
-
-Relação N:N entre projetos e colaboradores envolvidos.
-
-| Campo | Tipo | Obrigatório | Default | Descrição |
-|---|---|---|---|---|
-| id | uuid | sim | gen_random_uuid() | PK |
-| project_id | uuid | sim | — | FK → projects |
-| collaborator_id | uuid | sim | — | FK → collaborators |
-| role_in_project | text | sim | 'member' | 'owner' (criou o projeto), 'leader' (lidera frente/equipe dentro do projeto), 'member' (executa tarefas) |
-| created_at | timestamptz | sim | now() | |
-
-**Unique constraint:** project_id + collaborator_id
-
----
-
-### Tabela: `project_checkpoints`
-
-Marcos dentro de um projeto. São os pontos de controle do roadmap.
-
-| Campo | Tipo | Obrigatório | Default | Descrição |
-|---|---|---|---|---|
-| id | uuid | sim | gen_random_uuid() | PK |
-| project_id | uuid | sim | — | FK → projects |
-| name | text | sim | — | Nome do checkpoint (ex: "Roteiros prontos") |
-| description | text | não | null | Descrição detalhada |
-| due_date | date | sim | — | Data limite |
-| assigned_to | uuid | não | null | FK → collaborators (responsável principal) |
-| status | text | sim | 'pending' | 'pending', 'in_progress', 'done', 'overdue' |
-| sort_order | int | sim | 0 | Ordem no projeto |
-| completed_at | timestamptz | não | null | Quando foi concluído |
-| completed_by | uuid | não | null | FK → collaborators |
-| created_at | timestamptz | sim | now() | |
-| updated_at | timestamptz | sim | now() | |
-
-**Índices:** project_id, assigned_to, status, due_date
-
-**Trigger:** quando `now()::date > due_date` e status IN ('pending', 'in_progress') → status = 'overdue'
-
-**Cálculo de progresso do projeto:**
-```sql
-progress_percent = (checkpoints com status 'done' / total de checkpoints) × 100
-```
-Atualizado via trigger em project_checkpoints após INSERT/UPDATE de status.
-
----
-
-## Domínio 3: Tarefas
-
-### Tabela: `tasks`
-
-Tarefas concretas do dia a dia. Podem estar vinculadas a um checkpoint ou ser avulsas.
-
-| Campo | Tipo | Obrigatório | Default | Descrição |
-|---|---|---|---|---|
-| id | uuid | sim | gen_random_uuid() | PK |
-| title | text | sim | — | Título da tarefa |
-| description | text | não | null | Descrição detalhada |
-| assigned_to | uuid | sim | — | FK → collaborators (responsável) |
-| project_id | uuid | não | null | FK → projects (se vinculada a projeto) |
-| checkpoint_id | uuid | não | null | FK → project_checkpoints (se vinculada a checkpoint) |
-| category | text | sim | 'operational' | 'pedagogical', 'commercial', 'administrative', 'financial', 'operational' |
-| context | text | sim | 'work' | 'work', 'personal' — pessoal é 100% privado (RLS bloqueia pra coordenador/diretor) |
-| priority | text | sim | 'medium' | 'critical', 'high', 'medium', 'low' |
-| eisenhower_quadrant | int | não | null | Calculado automaticamente: 1=fazer, 2=agendar, 3=delegar, 4=eliminar |
-| status | text | sim | 'pending' | 'pending', 'in_progress', 'done', 'overdue', 'delegated', 'cancelled' |
-| due_date | date | sim | — | Prazo |
-| scheduled_date | date | não | null | Dia planejado para execução (pode ser diferente do prazo) |
-| delegated_to | uuid | não | null | FK → collaborators (se foi delegada pra outra pessoa) |
-| delegated_at | timestamptz | não | null | Quando foi delegada |
-| source | text | sim | 'manual' | 'manual', 'agent_briefing', 'agent_closing', 'checkpoint_decomposition', 'coordinator_assignment', 'system' |
-| completed_at | timestamptz | não | null | Quando foi concluída |
-| completed_by | uuid | não | null | FK → collaborators |
-| created_by | uuid | sim | — | FK → collaborators |
-| created_at | timestamptz | sim | now() | |
-| updated_at | timestamptz | sim | now() | |
-
-**Índices:** assigned_to + status, assigned_to + due_date, assigned_to + scheduled_date, project_id, checkpoint_id, eisenhower_quadrant
-
-**Trigger de overdue:** quando `now()::date > due_date` e status IN ('pending', 'in_progress') → status = 'overdue'
-
-**Cálculo automático do Eisenhower (via function):**
-
-```sql
--- Executado ao criar/atualizar tarefa
-eisenhower_quadrant = CASE
-  -- Urgente + Importante (prazo ≤ 2 dias E vinculada a projeto OU prioridade critical/high)
-  WHEN (due_date - now()::date <= 2 OR status = 'overdue')
-       AND (project_id IS NOT NULL OR priority IN ('critical', 'high'))
-  THEN 1
-
-  -- Não urgente + Importante (prazo > 2 dias E vinculada a projeto OU prioridade critical/high)
-  WHEN (due_date - now()::date > 2)
-       AND (project_id IS NOT NULL OR priority IN ('critical', 'high'))
-  THEN 2
-
-  -- Urgente + Não importante (prazo ≤ 2 dias E não vinculada a projeto E prioridade medium/low)
-  WHEN (due_date - now()::date <= 2 OR status = 'overdue')
-       AND (project_id IS NULL AND priority IN ('medium', 'low'))
-  THEN 3
-
-  -- Não urgente + Não importante
-  ELSE 4
-END
-```
-
----
-
-### Tabela: `task_comments`
-
-Comentários e atualizações em tarefas (incluindo registros automáticos do TOM).
-
-| Campo | Tipo | Obrigatório | Default | Descrição |
-|---|---|---|---|---|
-| id | uuid | sim | gen_random_uuid() | PK |
-| task_id | uuid | sim | — | FK → tasks |
-| content | text | sim | — | Texto do comentário |
-| comment_type | text | sim | 'manual' | 'manual', 'agent_note', 'status_change', 'delegation', 'deadline_extension' |
-| created_by | uuid | sim | — | FK → collaborators (ou null se do sistema) |
-| created_at | timestamptz | sim | now() | |
-
-**Índices:** task_id, created_at
-
----
-
-## Domínio 4: Rituais
-
-### Tabela: `weekly_plans`
-
-Planejamento semanal de cada colaborador. Criado no ritual de domingo (ou segunda).
-
-| Campo | Tipo | Obrigatório | Default | Descrição |
-|---|---|---|---|---|
-| id | uuid | sim | gen_random_uuid() | PK |
-| collaborator_id | uuid | sim | — | FK → collaborators |
-| week_start | date | sim | — | Data da segunda-feira da semana (referência) |
-| goals | text[] | não | '{}' | Até 5 entregas da semana (texto livre) |
-| status | text | sim | 'active' | 'active', 'completed', 'skipped' |
-| tasks_planned | int | sim | 0 | Total de tarefas planejadas na semana |
-| tasks_completed | int | sim | 0 | Total de tarefas concluídas na semana |
-| completion_rate | numeric(5,2) | sim | 0 | Taxa de conclusão (%) — calculado |
-| retrospective_notes | text | não | null | Notas da retrospectiva de domingo |
-| created_at | timestamptz | sim | now() | |
-| updated_at | timestamptz | sim | now() | |
-
-**Unique constraint:** collaborator_id + week_start
-
-**Índices:** collaborator_id, week_start
-
----
-
-### Tabela: `daily_plans`
-
-Plano do dia de cada colaborador. Criado pelo briefing das 8h.
-
-| Campo | Tipo | Obrigatório | Default | Descrição |
-|---|---|---|---|---|
-| id | uuid | sim | gen_random_uuid() | PK |
-| collaborator_id | uuid | sim | — | FK → collaborators |
-| plan_date | date | sim | — | Data do dia |
-| weekly_plan_id | uuid | não | null | FK → weekly_plans (vinculação com a semana) |
-| status | text | sim | 'active' | 'active', 'closed' |
-| items_planned | int | sim | 0 | Total de itens planejados |
-| items_completed | int | sim | 0 | Total concluídos |
-| completion_rate | numeric(5,2) | sim | 0 | Taxa de conclusão do dia (%) |
-| new_demands | text | não | null | Demandas novas que surgiram (registrado no fechamento) |
-| closing_notes | text | não | null | Notas do fechamento |
-| closed_at | timestamptz | não | null | Quando o fechamento foi feito |
-| created_at | timestamptz | sim | now() | |
-| updated_at | timestamptz | sim | now() | |
-
-**Unique constraint:** collaborator_id + plan_date
-
-**Índices:** collaborator_id + plan_date, status
-
----
-
-### Tabela: `daily_plan_items`
-
-As "3 coisas do dia" — link entre o plano diário e as tarefas.
-
-| Campo | Tipo | Obrigatório | Default | Descrição |
-|---|---|---|---|---|
-| id | uuid | sim | gen_random_uuid() | PK |
-| daily_plan_id | uuid | sim | — | FK → daily_plans |
-| task_id | uuid | não | null | FK → tasks (se vinculado a tarefa existente) |
-| description | text | sim | — | Descrição do item (pode ser tarefa avulsa sem task_id) |
-| sort_order | int | sim | 0 | Ordem de prioridade (1 = pior primeiro) |
-| is_completed | boolean | sim | false | Se foi concluído |
-| completed_at | timestamptz | não | null | Quando foi concluído |
-| rescheduled_to | date | não | null | Se não foi feito, pra qual dia foi reagendado |
-| created_at | timestamptz | sim | now() | |
-
-**Índices:** daily_plan_id, task_id
-
----
-
-### Tabela: `ritual_logs`
-
-Registro de cada ritual executado (ou não). Serve pra medir aderência.
-
-| Campo | Tipo | Obrigatório | Default | Descrição |
-|---|---|---|---|---|
-| id | uuid | sim | gen_random_uuid() | PK |
-| collaborator_id | uuid | sim | — | FK → collaborators |
-| ritual_type | text | sim | — | 'weekly_planning', 'daily_briefing', 'daily_closing', 'team_summary', 'weekly_retrospective' |
-| reference_date | date | sim | — | Data de referência |
-| status | text | sim | 'sent' | 'sent', 'responded', 'ignored', 'partial' |
-| sent_at | timestamptz | sim | now() | Quando foi enviado |
-| responded_at | timestamptz | não | null | Quando o colaborador respondeu |
-| response_time_minutes | int | não | null | Tempo de resposta em minutos |
-| created_at | timestamptz | sim | now() | |
-
-**Unique constraint:** collaborator_id + ritual_type + reference_date
-
-**Índices:** collaborator_id + reference_date, ritual_type, status
-
----
-
-## Domínio 5: Checklists Operacionais
-
-### Tabela: `op_checklists`
-
-Templates de checklists operacionais por função/departamento. Configurados pelo coordenador ou diretor.
-
-| Campo | Tipo | Obrigatório | Default | Descrição |
-|---|---|---|---|---|
-| id | uuid | sim | gen_random_uuid() | PK |
-| name | text | sim | — | Nome do checklist (ex: "Abertura da Escola", "Fiscalização de Salas") |
-| function_role | text | sim | — | 'secretary_morning', 'secretary_evening', 'pedagogical_assistant', 'coordinator', 'teacher', 'cleaning' |
-| checklist_type | text | sim | 'daily' | 'daily', 'weekly' |
-| shift | text | não | null | 'morning', 'afternoon', 'evening', 'full' (se daily) |
-| unit | text | não | 'all' | 'campo_grande', 'recreio', 'barra', 'all' |
-| is_active | boolean | sim | true | Se está ativo |
-| created_by | uuid | sim | — | FK → collaborators |
-| created_at | timestamptz | sim | now() | |
-| updated_at | timestamptz | sim | now() | |
-
-**Índices:** function_role, checklist_type, unit, is_active
-
----
-
-### Tabela: `op_checklist_items`
-
-Itens de cada template de checklist.
-
-| Campo | Tipo | Obrigatório | Default | Descrição |
-|---|---|---|---|---|
-| id | uuid | sim | gen_random_uuid() | PK |
-| checklist_id | uuid | sim | — | FK → op_checklists |
-| description | text | sim | — | Texto do item (ex: "Ligar ar-condicionado e luzes") |
-| sort_order | int | sim | 0 | Ordem de exibição |
-| created_at | timestamptz | sim | now() | |
-
-**Índices:** checklist_id
-
----
-
-### Tabela: `op_checklist_completions`
-
-Registro de cada preenchimento de checklist (um por dia/pessoa).
-
-| Campo | Tipo | Obrigatório | Default | Descrição |
-|---|---|---|---|---|
-| id | uuid | sim | gen_random_uuid() | PK |
-| checklist_id | uuid | sim | — | FK → op_checklists |
-| collaborator_id | uuid | sim | — | FK → collaborators |
-| reference_date | date | sim | — | Data de referência |
-| started_at | timestamptz | não | null | Quando começou a preencher |
-| completed_at | timestamptz | não | null | Quando finalizou (todos os itens marcados) |
-| channel | text | sim | 'pwa' | 'pwa', 'whatsapp' (de onde preencheu) |
-| created_at | timestamptz | sim | now() | |
-
-**Unique constraint:** checklist_id + collaborator_id + reference_date
-
-**Índices:** collaborator_id + reference_date, checklist_id
-
----
-
-### Tabela: `op_checklist_item_completions`
-
-Itens marcados em cada preenchimento.
-
-| Campo | Tipo | Obrigatório | Default | Descrição |
-|---|---|---|---|---|
-| id | uuid | sim | gen_random_uuid() | PK |
-| completion_id | uuid | sim | — | FK → op_checklist_completions |
-| item_id | uuid | sim | — | FK → op_checklist_items |
-| is_checked | boolean | sim | false | Marcado ou não |
-| checked_at | timestamptz | não | null | Quando foi marcado |
-| notes | text | não | null | Observação (ex: "Ar da sala 3 não tá funcionando") |
-
-**Unique constraint:** completion_id + item_id
-
-**Cálculo de aderência:**
-```sql
-aderência_diária = checklists_preenchidos_completos / checklists_esperados × 100
--- Preenchimento parcial (completed_at IS NULL) NÃO conta como aderência
-```
-
----
-
-## Domínio 6: Hábitos Pessoais
-
-### Tabela: `habit_templates`
-
-Templates prontos de hábitos que o colaborador pode ativar. Pré-configurados pelo sistema.
-
-| Campo | Tipo | Obrigatório | Default | Descrição |
-|---|---|---|---|---|
-| id | uuid | sim | gen_random_uuid() | PK |
-| name | text | sim | — | Nome do hábito (ex: "Academia", "Leitura diária") |
-| description | text | não | null | Descrição motivacional |
-| icon | text | sim | '📌' | Emoji ícone |
-| color | text | sim | '#3B82F6' | Cor do hábito no app |
-| default_frequency | text | sim | 'daily' | 'daily', 'weekdays', 'weekly', 'custom' |
-| default_reminder_time | time | não | null | Horário sugerido do lembrete |
-| category | text | sim | 'health' | 'health', 'learning', 'finance', 'mindset', 'social', 'other' |
-| is_system | boolean | sim | true | Se é template do sistema (não pode deletar) |
-| created_at | timestamptz | sim | now() | |
-
-**Seed data (templates iniciais):**
-
-| Nome | Categoria | Ícone | Frequência | Horário |
-|---|---|---|---|---|
-| Academia / Exercício | health | 💪 | weekdays | 06:00 |
-| Leitura (30 min) | learning | 📚 | daily | 21:00 |
-| Meditação / Oração | mindset | 🧘 | daily | 06:30 |
-| Afirmações positivas | mindset | ✨ | daily | 07:00 |
-| Beber 2L de água | health | 💧 | daily | — |
-| Contas a pagar | finance | 💰 | weekly | 09:00 |
-| Tomar vitaminas | health | 💊 | daily | 07:00 |
-| Praticar instrumento | learning | 🎸 | daily | — |
-| Caminhar 30 min | health | 🚶 | weekdays | — |
-| Diário / Journaling | mindset | ✍️ | daily | 22:00 |
-
----
-
-### Tabela: `habits`
-
-Hábitos ativos de cada colaborador. 100% privado — RLS bloqueia pra todo mundo exceto o próprio.
-
-| Campo | Tipo | Obrigatório | Default | Descrição |
-|---|---|---|---|---|
-| id | uuid | sim | gen_random_uuid() | PK |
-| collaborator_id | uuid | sim | — | FK → collaborators |
-| template_id | uuid | não | null | FK → habit_templates (null se criado do zero) |
-| name | text | sim | — | Nome do hábito |
-| icon | text | sim | '📌' | Emoji ícone |
-| color | text | sim | '#3B82F6' | Cor |
-| frequency | text | sim | 'daily' | 'daily', 'weekdays', 'weekly', 'custom' |
-| custom_days | int[] | não | null | Dias da semana se frequency='custom' (1=Seg a 7=Dom) |
-| reminder_time | time | não | null | Horário do lembrete |
-| notify_whatsapp | boolean | sim | true | Se envia lembrete via WhatsApp |
-| is_active | boolean | sim | true | Se está ativo |
-| current_streak | int | sim | 0 | Dias consecutivos completados |
-| best_streak | int | sim | 0 | Melhor streak já alcançado |
-| created_at | timestamptz | sim | now() | |
-| updated_at | timestamptz | sim | now() | |
-
-**Índices:** collaborator_id + is_active
-
----
-
-### Tabela: `habit_logs`
-
-Registro diário de conclusão de hábitos.
-
-| Campo | Tipo | Obrigatório | Default | Descrição |
-|---|---|---|---|---|
-| id | uuid | sim | gen_random_uuid() | PK |
-| habit_id | uuid | sim | — | FK → habits |
-| collaborator_id | uuid | sim | — | FK → collaborators |
-| log_date | date | sim | — | Data |
-| is_completed | boolean | sim | false | Se completou nesse dia |
-| completed_at | timestamptz | não | null | Quando completou |
-| notes | text | não | null | Observação opcional |
-| created_at | timestamptz | sim | now() | |
-
-**Unique constraint:** habit_id + log_date
-
-**Cálculo de streak:** trigger em habit_logs → ao marcar is_completed=true, incrementa current_streak do habit. Se log_date anterior não tem registro, reseta streak pra 1.
-
----
-
-## Domínio 7: Broadcast
-
-### Tabela: `broadcast_messages`
-
-Mensagens de broadcast enviadas por coordenadores/líderes via TOM.
-
-| Campo | Tipo | Obrigatório | Default | Descrição |
-|---|---|---|---|---|
-| id | uuid | sim | gen_random_uuid() | PK |
-| sent_by | uuid | sim | — | FK → collaborators (quem pediu o broadcast) |
-| target_group | text | sim | — | 'all', 'coordinators', 'teachers', 'assistants', 'unit_campo_grande', etc. |
-| target_ids | uuid[] | sim | — | Array de collaborator_ids que receberam (resolvido pelo TOM no momento do envio) |
-| message_content | text | sim | — | Conteúdo da mensagem enviada |
-| requires_confirmation | boolean | sim | false | Se precisa de confirmação dos destinatários |
-| follow_up_interval_min | int | não | 60 | Intervalo de cobrança em minutos (default: 1h) |
-| timeout_hours | int | não | 24 | Após quanto tempo parar de cobrar e gerar relatório |
-| status | text | sim | 'active' | 'active', 'completed', 'cancelled' |
-| report_sent | boolean | sim | false | Se o relatório final foi enviado ao remetente |
-| report_sent_at | timestamptz | não | null | Quando o relatório foi enviado |
-| created_at | timestamptz | sim | now() | |
-| updated_at | timestamptz | sim | now() | |
-
-**Índices:** sent_by, status, created_at
-
----
-
-### Tabela: `broadcast_responses`
-
-Respostas individuais de cada destinatário a um broadcast.
-
-| Campo | Tipo | Obrigatório | Default | Descrição |
-|---|---|---|---|---|
-| id | uuid | sim | gen_random_uuid() | PK |
-| broadcast_id | uuid | sim | — | FK → broadcast_messages |
-| collaborator_id | uuid | sim | — | FK → collaborators (destinatário) |
-| status | text | sim | 'pending' | 'pending', 'confirmed', 'declined', 'no_response' |
-| response_text | text | não | null | Texto da resposta (se houver) |
-| reminders_sent | int | sim | 0 | Quantas cobranças foram enviadas |
-| last_reminder_at | timestamptz | não | null | Quando foi a última cobrança |
-| responded_at | timestamptz | não | null | Quando respondeu |
-| created_at | timestamptz | sim | now() | |
-
-**Unique constraint:** broadcast_id + collaborator_id
-
-**Índices:** broadcast_id + status, collaborator_id
-
-**Cron de follow-up:** a cada 15 min, verifica broadcasts ativos com requires_confirmation=true. Pra cada destinatário com status='pending', verifica se já passou follow_up_interval_min desde last_reminder_at. Se sim, envia novo lembrete. Se timeout_hours expirou, marca como 'no_response' e gera relatório pro remetente.
-
----
-
-## Domínio 8: Emusys
-
-### Tabela: `emusys_classes`
-
-Agenda de aulas puxada do endpoint do Emusys. Atualizada periodicamente via cron.
-
-| Campo | Tipo | Obrigatório | Default | Descrição |
-|---|---|---|---|---|
-| id | uuid | sim | gen_random_uuid() | PK |
-| collaborator_id | uuid | sim | — | FK → collaborators (professor) |
-| emusys_class_id | text | sim | — | ID da aula no Emusys (pra evitar duplicação) |
-| student_name | text | sim | — | Nome do aluno |
-| class_date | date | sim | — | Data da aula |
-| class_time | time | sim | — | Horário da aula |
-| class_end_time | time | não | null | Horário de término |
-| unit | text | sim | — | 'campo_grande', 'recreio', 'barra' |
-| attendance_registered | boolean | sim | false | Se a presença foi lançada no Emusys |
-| content_registered | boolean | sim | false | Se o conteúdo foi registrado no Emusys |
-| reminder_sent | boolean | sim | false | Se o lembrete pós-aula foi enviado |
-| reminder_sent_at | timestamptz | não | null | Quando o lembrete foi enviado |
-| last_synced_at | timestamptz | sim | now() | Última sincronização com Emusys |
-| created_at | timestamptz | sim | now() | |
-| updated_at | timestamptz | sim | now() | |
-
-**Unique constraint:** emusys_class_id
-
-**Índices:** collaborator_id + class_date, attendance_registered, content_registered, reminder_sent
-
-**Cron de sincronização:**
-- A cada 30 min: puxa agenda do dia do Emusys, atualiza attendance_registered e content_registered
-- Após cada aula (class_end_time + 10 min): se attendance_registered = false, dispara lembrete via WhatsApp
-
----
-
-## Domínio 9: Sistema
-
-### Tabela: `conversation_history`
-
-Histórico de conversas com o TOM WhatsApp. Usado para contexto do modelo.
-
-| Campo | Tipo | Obrigatório | Default | Descrição |
-|---|---|---|---|---|
-| id | uuid | sim | gen_random_uuid() | PK |
-| collaborator_id | uuid | sim | — | FK → collaborators |
-| direction | text | sim | — | 'inbound' (colaborador → TOM), 'outbound' (TOM → colaborador) |
-| message_type | text | sim | 'text' | 'text', 'audio', 'image' |
-| content | text | sim | — | Conteúdo da mensagem (texto ou transcrição de áudio) |
-| context | text | não | null | Contexto do momento: 'briefing', 'closing', 'planning', 'project_creation', 'free_chat' |
-| whatsapp_message_id | text | não | null | ID da mensagem no WhatsApp (UAZAPI) |
-| created_at | timestamptz | sim | now() | |
-
-**Índices:** collaborator_id + created_at DESC, context
-
-**Retenção:** manter últimas 500 mensagens por colaborador. Mensagens mais antigas são arquivadas ou deletadas via cron mensal.
-
----
-
-### Tabela: `notifications`
-
-Fila de notificações a serem enviadas ou já enviadas.
-
-| Campo | Tipo | Obrigatório | Default | Descrição |
-|---|---|---|---|---|
-| id | uuid | sim | gen_random_uuid() | PK |
-| collaborator_id | uuid | sim | — | FK → collaborators (destinatário) |
-| notification_type | text | sim | — | 'deadline_alert', 'overdue_alert', 'deadline_extension_request', 'team_inactivity', 'project_at_risk', 'checkpoint_reminder', 'delegation_notice' |
-| title | text | sim | — | Título curto |
-| body | text | sim | — | Corpo da mensagem |
-| reference_type | text | não | null | 'task', 'project', 'checkpoint', 'collaborator' |
-| reference_id | uuid | não | null | ID da entidade referenciada |
-| channel | text | sim | 'whatsapp' | 'whatsapp', 'pwa_push', 'both' |
-| status | text | sim | 'pending' | 'pending', 'sent', 'delivered', 'read', 'failed' |
-| sent_at | timestamptz | não | null | Quando foi enviado |
-| read_at | timestamptz | não | null | Quando foi lido |
-| created_at | timestamptz | sim | now() | |
-
-**Índices:** collaborator_id + status, notification_type, status, created_at
-
----
-
-### Tabela: `google_calendar_sync`
-
-Controle de sincronização de itens com o Google Calendar.
-
-| Campo | Tipo | Obrigatório | Default | Descrição |
-|---|---|---|---|---|
-| id | uuid | sim | gen_random_uuid() | PK |
-| collaborator_id | uuid | sim | — | FK → collaborators |
-| source_type | text | sim | — | 'task', 'checkpoint', 'meeting' |
-| source_id | uuid | sim | — | ID da tarefa, checkpoint ou reunião |
-| google_event_id | text | sim | — | ID do evento no Google Calendar |
-| last_synced_at | timestamptz | sim | now() | Última sincronização |
-| sync_status | text | sim | 'synced' | 'synced', 'pending', 'error' |
-| created_at | timestamptz | sim | now() | |
-| updated_at | timestamptz | sim | now() | |
-
-**Unique constraint:** collaborator_id + source_type + source_id
-
-**Índices:** collaborator_id, source_type + source_id, sync_status
-
----
-
-## Políticas de RLS
-
-### Regra geral de hierarquia
-
-Função auxiliar para resolver a árvore de supervisão:
-
-```sql
-CREATE OR REPLACE FUNCTION get_supervised_ids(user_id uuid)
-RETURNS uuid[] AS $$
-  WITH RECURSIVE tree AS (
-    SELECT id FROM collaborators WHERE supervisor_id = user_id
-    UNION ALL
-    SELECT c.id FROM collaborators c
-    INNER JOIN tree t ON c.supervisor_id = t.id
-  )
-  SELECT array_agg(id) FROM tree;
-$$ LANGUAGE sql SECURITY DEFINER STABLE;
-```
-
-### Políticas por tabela
-
-| Tabela | Colaborador | Coordenador | Diretor |
-|---|---|---|---|
-| collaborators | Vê só o próprio perfil | Vê supervisionados + próprio | Vê todos |
-| user_preferences | Vê/edita só o próprio | Vê supervisionados, edita só o próprio | Vê todos, edita só o próprio |
-| projects | Vê projetos em que é member | Vê todos os projetos | Vê todos |
-| project_checkpoints | Vê checkpoints dos seus projetos | Vê todos | Vê todos |
-| project_members | Vê memberships dos seus projetos | Vê todas | Vê todas |
-| tasks | Vê só as atribuídas a ele (assigned_to). Pessoal (context='personal'): só o próprio, SEMPRE | Vê tasks de trabalho de supervisionados + próprias. NUNCA vê pessoal de outros | Vê tasks de trabalho de todos. NUNCA vê pessoal de outros |
-| task_comments | Vê comentários das suas tasks | Vê comentários de tasks de trabalho visíveis | Vê de trabalho. Nunca pessoal |
-| daily_plans | Vê só os próprios | Vê de supervisionados + próprios | Vê todos |
-| daily_plan_items | Vê só os próprios | Vê de supervisionados + próprios | Vê todos |
-| weekly_plans | Vê só os próprios | Vê de supervisionados + próprios | Vê todos |
-| ritual_logs | Vê só os próprios | Vê de supervisionados + próprios | Vê todos |
-| op_checklists | Vê checklists da sua função | Vê todos + cria/edita | Vê todos + cria/edita |
-| op_checklist_items | Vê itens da sua função | Vê todos | Vê todos |
-| op_checklist_completions | Vê só os próprios | Vê de supervisionados + próprios | Vê todos |
-| op_checklist_item_completions | Vê só os próprios | Vê de supervisionados + próprios | Vê todos |
-| emusys_classes | Vê só as próprias aulas | Vê aulas de supervisionados + próprias | Vê todas |
-| habit_templates | Vê todos (são templates globais) | Vê todos | Vê todos + cria novos |
-| habits | Vê só os próprios — 100% privado | Nunca vê de outros | Nunca vê de outros |
-| habit_logs | Vê só os próprios — 100% privado | Nunca vê de outros | Nunca vê de outros |
-| conversation_history | Vê só as próprias | Não vê conversas de outros (privacidade) | Não vê conversas (só métricas agregadas) |
-| notifications | Vê só as próprias | Vê só as próprias | Vê só as próprias |
-| google_calendar_sync | Vê só os próprios | Vê só os próprios | Vê só os próprios |
-
-**Nota sobre privacidade:** conversas com o TOM são privadas. Coordenadores e diretor veem métricas (taxa de resposta, tempo de resposta) mas NÃO o conteúdo das conversas.
-
----
-
-## Diagrama de relações
-
-```
-collaborators (1) ──── (1) user_preferences
-      │
-      ├──── (N) projects ──── (N) project_checkpoints
-      │           │                      │
-      │           └── (N) project_members │
-      │                                   │
-      ├──── (N) tasks ────────────────────┘
-      │           │
-      │           └── (N) task_comments
-      │
-      ├──── (N) weekly_plans
-      │           │
-      │           └── (N) daily_plans
-      │                      │
-      │                      └── (N) daily_plan_items ── (0..1) tasks
-      │
-      ├──── (N) ritual_logs
-      │
-      ├──── (N) op_checklist_completions ── (N) op_checklist_item_completions
-      │           │
-      │           └── FK → op_checklists ── (N) op_checklist_items
-      │
-      ├──── (N) emusys_classes
-      │
-      ├──── (N) conversation_history
-      ├──── (N) notifications
-      └──── (N) google_calendar_sync
-```
-
----
-
-## Triggers e functions automáticas
-
-| Trigger | Tabela | Evento | Ação |
-|---|---|---|---|
-| mark_overdue_tasks | tasks | Cron diário 6h | Marca status = 'overdue' onde due_date < hoje e status IN ('pending', 'in_progress') |
-| mark_overdue_checkpoints | project_checkpoints | Cron diário 6h | Marca status = 'overdue' onde due_date < hoje e status IN ('pending', 'in_progress') |
-| calculate_eisenhower | tasks | INSERT/UPDATE | Recalcula eisenhower_quadrant baseado em prazo, prioridade e vínculo com projeto |
-| update_project_progress | project_checkpoints | UPDATE de status | Recalcula progress_percent do projeto pai |
-| update_daily_completion | daily_plan_items | UPDATE de is_completed | Recalcula items_completed e completion_rate do daily_plan pai |
-| update_weekly_completion | tasks | UPDATE de status | Recalcula tasks_completed e completion_rate do weekly_plan da semana |
-| auto_updated_at | todas | UPDATE | Atualiza campo updated_at automaticamente |
-
----
-
-## Crons programados (pg_cron)
-
-| Cron | Frequência | Function | Descrição |
-|---|---|---|---|
-| dispatch_rituals | A cada 15 min | fn_dispatch_rituals() | Consulta user_preferences, identifica quem está no horário, dispara Edge Function via pg_net |
-| mark_overdue | Diário 6h | fn_mark_overdue() | Marca tasks e checkpoints atrasados |
-| send_deadline_alerts | Diário 7h | fn_send_deadline_alerts() | Cria notifications para tarefas vencendo hoje/amanhã |
-| sync_google_calendar | A cada 15 min | fn_sync_google_calendar() | Sincroniza itens pendentes com Google Calendar |
-| sync_emusys_classes | A cada 30 min | fn_sync_emusys_classes() | Puxa agenda do Emusys, atualiza status de presença e conteúdo |
-| check_emusys_pending | A cada 15 min | fn_check_emusys_pending() | Verifica aulas finalizadas sem presença/conteúdo → dispara lembrete WhatsApp |
-| dispatch_op_checklists | A cada 15 min | fn_dispatch_op_checklists() | Envia checklists operacionais no início do turno configurado |
-| check_op_checklists_pending | Diário 20h | fn_check_op_checklists_pending() | Verifica checklists não preenchidos no dia → alerta ao colaborador |
-| calculate_op_adherence | Semanal sexta 18h | fn_calculate_op_adherence() | Calcula aderência semanal de checklists operacionais por função/pessoa |
-| cleanup_conversations | Mensal | fn_cleanup_conversations() | Arquiva conversas com mais de 500 mensagens por colaborador |
-| calculate_weekly_metrics | Domingo 23h | fn_calculate_weekly_metrics() | Consolida métricas semanais de todos os colaboradores |
-| follow_up_broadcasts | A cada 15 min | fn_follow_up_broadcasts() | Verifica broadcasts ativos, envia cobranças, gera relatório após timeout |
-| consolidate_memory | Semanal domingo 22h | fn_consolidate_memory() | Revisa conversation_history, extrai fatos, atualiza collaborator_memory e collaborator_profiles |
-
----
-
-## Dados iniciais (seed)
-
-### Collaborators (time inicial)
-
-```sql
--- Diretor
-INSERT INTO collaborators (full_name, phone, role, function_title, unit)
-VALUES ('Luciano Alf', '5521XXXXXXXXX', 'director', 'CEO / Fundador', 'all');
-
--- Coordenadores
-INSERT INTO collaborators (full_name, phone, role, function_title, unit, supervisor_id)
-VALUES 
-  ('Juliana Baltazar', '5521XXXXXXXXX', 'coordinator', 'Coordenadora Pedagógica', 'all', (SELECT id FROM collaborators WHERE full_name = 'Luciano Alf')),
-  ('Marcos Quintela', '5521XXXXXXXXX', 'coordinator', 'Coordenador Pedagógico', 'all', (SELECT id FROM collaborators WHERE full_name = 'Luciano Alf'));
-
--- Exemplo: professor
-INSERT INTO collaborators (full_name, phone, role, function_title, unit, supervisor_id)
-VALUES ('Jordan', '5521XXXXXXXXX', 'collaborator', 'Assistente Pedagógico', 'campo_grande', (SELECT id FROM collaborators WHERE full_name = 'Juliana Baltazar'));
-```
-
-### User preferences (defaults criados automaticamente)
-
-```sql
--- Trigger: ao inserir collaborator, cria user_preferences com defaults
-CREATE OR REPLACE FUNCTION fn_create_default_preferences()
-RETURNS TRIGGER AS $$
-BEGIN
-  INSERT INTO user_preferences (collaborator_id)
-  VALUES (NEW.id);
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER trg_create_preferences
-AFTER INSERT ON collaborators
-FOR EACH ROW EXECUTE FUNCTION fn_create_default_preferences();
-```
-
----
-
-## Estimativa de volume
-
-| Tabela | Registros/mês (40 colaboradores) | Crescimento |
-|---|---|---|
-| collaborators | 40 (estável) | Baixo |
-| user_preferences | 40 (estável) | Baixo |
-| projects | 5-10 novos | Baixo |
-| project_checkpoints | 20-50 novos | Baixo |
-| project_members | 30-60 | Baixo |
-| tasks | 400-800 | Médio |
-| task_comments | 200-400 | Médio |
-| daily_plans | 800 (40 × 20 dias úteis) | Linear |
-| daily_plan_items | 2.400 (800 × 3 itens) | Linear |
-| weekly_plans | 160 (40 × 4 semanas) | Linear |
-| ritual_logs | 3.200 (40 × 80 rituais/mês) | Linear |
-| op_checklists | 10-20 templates (estável) | Baixo |
-| op_checklist_items | 60-120 itens (estável) | Baixo |
-| op_checklist_completions | 600-800 (30 funções × 20 dias) | Linear |
-| op_checklist_item_completions | 3.000-5.000 | Linear |
-| emusys_classes | 2.000-4.000 (dependendo de professores e alunos) | Linear |
-| conversation_history | 4.000-8.000 | Alto (com retenção) |
-| notifications | 1.000-2.000 | Médio |
-| google_calendar_sync | 500-1.000 | Médio |
-
-**Conclusão:** volume baixo pra PostgreSQL. Sem necessidade de particionamento ou otimizações especiais. A tabela de maior volume (conversation_history) tem política de retenção de 500 mensagens por colaborador.
-
----
-
-**Próximo passo:** Documento 04 — Fluxos conversacionais do TOM.
+*Documento gerado a partir do DDL real (information_schema + pg_constraint + pg_policies) em 2026-05-03.*

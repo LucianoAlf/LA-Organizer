@@ -1,8 +1,8 @@
 # TOM-SKILLS-CATALOG — Catálogo Consolidado de Skills
 
 **Documento:** TOM-SKILLS-CATALOG
-**Versão:** 3.0
-**Data:** 27 de abril de 2026
+**Versão:** 4.0
+**Data:** 2026-05-03 (auditoria Sprint 14 — adicionadas skills 10, 10.3, 10.5, 10.6, 10.7, 10.8, 10.9; corrigida entrada 3)
 **Função:** Catálogo consolidado das skills e referências internas do TOM
 
 ---
@@ -99,19 +99,35 @@ Em dúvida, fallback para `checklist-tarefas` (cria task com `remind_at` se for 
 
 ---
 
-## 3. Broadcast
-**Arquivo:** `skills/broadcast.md`
+## 3. Comunicados internos segmentados (atualizado Sprint 13 F1)
+**Arquivo:** `skills/comunicados.md`
 
-**Função:** enviar comunicação em massa com confirmação prévia, follow-up opcional e relatório final.
+**Função:** criar e cancelar comunicados internos segmentados por role, unidade ou pessoa. Substitui o mecanismo genérico de broadcast — o arquivo `skills/broadcast.md` não existe mais.
 
-**Ativa quando:**
-- coordenador, gerente ou diretor pede envio coletivo
+**Ativa quando** (coordinator/director):
+- pede envio coletivo ("avisa todo mundo", "manda pra coordenação", "comunica o time da Barra")
+- menciona comunicado, aviso, anúncio, informativo
 
 **Entrega principal:**
-- resolve grupo-alvo
-- confirma com remetente
-- dispara broadcast
-- acompanha resposta quando aplicável
+- coleta `message`, `audience` JSON e `schedule_type`
+- confirma antes de disparar
+- emite `<<ANNOUNCEMENT_ACTION>>` com `action: create`
+- cancelamento via `<<ANNOUNCEMENT_ACTION>>` com `action: cancel`
+
+---
+
+## 3.3 Aprovação de comunicados (novo Sprint 13 F3)
+**Arquivo:** `skills/aprovacao-comunicados.md`
+
+**Função:** permitir que o diretor aprove ou rejeite comunicados criados por coordenadores que atingem toda a escola.
+
+**Ativa quando** (apenas director):
+- dispatcher/notifyCoordinators envia alerta de comunicado pendente
+- diretor digita `APROVAR <id>` ou `REJEITAR <id> motivo`
+
+**Entrega principal:**
+- emite `<<ANNOUNCEMENT_APPROVAL>>` com `action: approve` ou `action: reject`
+- listagem de pendentes quando diretor pede "ver comunicados pendentes"
 
 ---
 
@@ -252,6 +268,94 @@ Em dúvida, fallback para `checklist-tarefas` (cria task com `remind_at` se for 
 
 ---
 
+## 10. Planejamento semanal (novo Sprint 12)
+**Arquivo:** `skills/planejamento-semanal.md`
+
+**Função:** conduzir o planejamento semanal em 3 turnos via WhatsApp. Cria metas, distribui tarefas por dia e salva o plano no banco.
+
+**Ativa quando:**
+- dispatcher envia diretiva `[RITUAL: weekly_planning]` (cron no `planning_day`/`planning_time` do colaborador)
+- colaborador diz "quero planejar a semana" ou equivalente
+
+**Entrega principal:**
+- Turno 1: abertura, solicita objetivos da semana
+- Turno 2: proposta de distribuição por dia
+- Turno 3: confirmação + emissão de `<<WEEKLY_PLAN>>` com `week_start`, `goals`, `distribution[]`
+- Engine cria `weekly_plans` + `daily_plans` + `daily_plan_items` + tasks
+
+---
+
+## 10.3 Eventos institucionais (novo Sprint 13 F2 / atualizado Sprint 14 F2)
+**Arquivo:** `skills/eventos-institucionais.md`
+
+**Função:** criar e cancelar eventos institucionais (shows, recitais, workshops, reuniões de pais, formaturas).
+
+**Ativa quando** (coordinator/director):
+- menciona show, recital, workshop, formatura, reunião de pais, evento institucional
+- com data e unidade
+
+**Entrega principal:**
+- coleta `title`, `event_date`, `start_time`, `unit`, `event_type`, `location`, flags de notificação
+- confirma antes de criar
+- emite `<<SCHOOL_EVENT_ACTION>>` com `action: create`
+- Sprint 14 F2: engine auto-gera tasks de preparação por setor baseado em `event_type`; dispatcher `remindEventTasks` envia lembrete T-1 para os responsáveis
+
+---
+
+## 10.6 Cadastro de projeto 5W2H (novo Sprint 5)
+**Arquivo:** `skills/cadastro-projeto-5w2h.md`
+
+**Função:** guiar o coordinator/director através das 7 perguntas do 5W2H para criar um projeto formal.
+
+**Ativa quando** (coordinator/director):
+- "quero criar projeto", "novo projeto", "vamos criar um projeto", intenção clara equivalente
+
+**Gate de permissão:** se role não é coordinator/director, TOM recusa cordialmente.
+
+**Entrega principal:**
+- UMA pergunta por mensagem (7 ao total: O quê, Por quê, Quem, Onde, Quando, Como, Quanto)
+- nunca re-pergunta campo já preenchido (Sprint 11.5 hotfix)
+- confirmação antes de emitir
+- emite `<<PROJECT_CREATE>>` com schema completo
+
+---
+
+## 10.7 Aprovar/rejeitar projeto (novo Sprint 8)
+**Arquivo:** `skills/aprovar-projeto.md`
+
+**Função:** permitir que o supervisor aprove ou rejeite projeto pendente enviado por coordenador subordinado.
+
+**Ativa quando** (supervisor recebe notificação ou digita):
+- `APROVA <TOKEN>` → emite `<<PROJECT_APPROVE>>`
+- `REJEITA <TOKEN> motivo` → emite `<<PROJECT_REJECT>>`
+- sem token: TOM pergunta qual projeto
+
+**Gate de permissão:** role deve ser coordinator ou director.
+
+**Entrega principal:**
+- Caso A: usuário disse "aprovo" sem token → TOM pede token
+- Caso B: `APROVA <TOKEN>` → emite `<<PROJECT_APPROVE>>`
+- Caso C: `REJEITA <TOKEN> motivo` → emite `<<PROJECT_REJECT>>`
+- Caso D: engine não encontrou / achou múltiplos → TOM informa e pede clarificação
+
+---
+
+## 10.9 Priorização inteligente (novo Sprint 12 Bloco D)
+**Arquivo:** `skills/priorizacao-inteligente.md`
+
+**Função:** classificar demandas mal definidas em resolver agora, tarefa, ligação, reunião, delegar ou projeto.
+
+**Ativa quando:**
+- demanda chega ambígua, misturada ou com prioridade implícita
+- colaborador descreve situação sem ação clara
+
+**Entrega principal:**
+- classifica a demanda
+- propõe encaminhamento (tarefa imediata, projeto, delegação etc.)
+- faz handoff para a skill correspondente
+
+---
+
 # 2. Referências internas aprovadas
 
 ## 1. Priorização Eisenhower
@@ -290,14 +394,19 @@ Em dúvida, fallback para `checklist-tarefas` (cria task com `remind_at` se for 
 | **pedido de pausa** ("agora não", "tô em aula", "me chama em 2h") | `pausa-temporaria` |
 | **mensagem de áudio** | `tratamento-audio` (após transcrição via Whisper, exige confirmação) |
 | **consolidação semanal de memória** (domingo 22:00) | dispatcher cron + extrator Claude |
-| enviar mensagem coletiva | `broadcast` |
+| enviar comunicado interno segmentado (novo Sprint 13 F1) | `comunicados` |
+| aprovar/rejeitar comunicado pendente — director (novo Sprint 13 F3) | `aprovacao-comunicados` |
+| criar evento institucional (show, recital, etc.) (novo Sprint 13 F2) | `eventos-institucionais` |
 | briefing / fechamento / rotina diária | `rituais-diarios` |
+| **planejamento semanal** (novo Sprint 12) | `planejamento-semanal` |
 | **resumo do time (coordenador, 19:30 weekdays)** | `coordinator reports` (deterministic; sem AI) |
 | **retrospectiva semanal (coordenador, domingo 18:00)** | `coordinator reports` (deterministic; sem AI) |
 | criar ou marcar hábito | `habitos-pessoais` |
 | checklist operacional | `checklists-operacionais` |
 | pendência Emusys | `integracao-emusys` |
-| mensagem de voz | `tratamento-audio` |
+| criar projeto (5W2H) | `cadastro-projeto-5w2h` |
+| aprovar/rejeitar projeto pendente | `aprovar-projeto` |
+| demanda ambígua / prioridade implícita | `priorizacao-inteligente` |
 | algo digno de memória | `gestao-memoria` |
 
 ## Quando não precisa de skill específica
@@ -317,6 +426,7 @@ Estes itens não devem mais ocupar o prompt como skill ativa principal:
 
 - `priorizacao-eisenhower` → virou referência interna (`docs/`)
 - `respostas-canonicas` → virou referência interna (`docs/`)
+- `broadcast.md` → **arquivo removido** (atualizado Sprint 13 F1); substituído por `skills/comunicados.md` com segmentação de audience e fila de envio
 
 ---
 
