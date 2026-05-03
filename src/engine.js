@@ -1073,6 +1073,283 @@ async function applySchoolEventAction(collaborator, parsed) {
   return { ok: false, reason: 'unknown_action' };
 }
 
+// Sprint 16 — Marker <<COORDINATION_REQUEST>>.
+function parseCoordinationRequestMarker(text) {
+  if (!text) return null;
+  const re = /<<COORDINATION_REQUEST>>\s*([\s\S]*?)\s*<<END>>/i;
+  const m = text.match(re);
+  if (!m) return null;
+  const cleanText = text.replace(re, '').trim();
+  let parsed;
+  try {
+    parsed = JSON.parse(m[1].trim());
+  } catch (err) {
+    logSchemaErr('COORDINATION_REQUEST', ['invalid_json: ' + err.message], m[1]);
+    return { malformed: true, cleanText };
+  }
+  if (!parsed || typeof parsed !== 'object') return { malformed: true, cleanText };
+  if (!parsed.recipient_name || typeof parsed.recipient_name !== 'string') {
+    logSchemaErr('COORDINATION_REQUEST', ['recipient_name:missing'], parsed);
+    return { malformed: true, cleanText };
+  }
+  if (!['relay_literal', 'relay_assisted', 'followup'].includes(parsed.mode)) {
+    logSchemaErr('COORDINATION_REQUEST', ['mode:invalid'], parsed);
+    return { malformed: true, cleanText };
+  }
+  if (!parsed.message_body || typeof parsed.message_body !== 'string') {
+    logSchemaErr('COORDINATION_REQUEST', ['message_body:missing'], parsed);
+    return { malformed: true, cleanText };
+  }
+  return {
+    recipient_name:           String(parsed.recipient_name).trim(),
+    mode:                     parsed.mode,
+    message_body:             String(parsed.message_body).trim(),
+    message_original:         parsed.message_original ? String(parsed.message_original).trim() : null,
+    expects_response:         Boolean(parsed.expects_response),
+    response_deadline_hours:  parsed.response_deadline_hours ? Number(parsed.response_deadline_hours) : null,
+    cleanText,
+  };
+}
+
+// Sprint 16 — Marker <<COORDINATION_RESPONSE>>.
+function parseCoordinationResponseMarker(text) {
+  if (!text) return null;
+  const re = /<<COORDINATION_RESPONSE>>\s*([\s\S]*?)\s*<<END>>/i;
+  const m = text.match(re);
+  if (!m) return null;
+  const cleanText = text.replace(re, '').trim();
+  let parsed;
+  try {
+    parsed = JSON.parse(m[1].trim());
+  } catch (err) {
+    logSchemaErr('COORDINATION_RESPONSE', ['invalid_json: ' + err.message], m[1]);
+    return { malformed: true, cleanText };
+  }
+  if (!parsed || typeof parsed !== 'object') return { malformed: true, cleanText };
+  if (!parsed.request_id || typeof parsed.request_id !== 'string' ||
+      !/^[0-9a-f-]{36}$/.test(parsed.request_id.trim())) {
+    logSchemaErr('COORDINATION_RESPONSE', ['request_id:invalid_uuid'], parsed);
+    return { malformed: true, cleanText };
+  }
+  if (!parsed.response_summary || typeof parsed.response_summary !== 'string') {
+    logSchemaErr('COORDINATION_RESPONSE', ['response_summary:missing'], parsed);
+    return { malformed: true, cleanText };
+  }
+  return {
+    request_id:       parsed.request_id.trim(),
+    response_summary: String(parsed.response_summary).trim(),
+    cleanText,
+  };
+}
+
+// Sprint 16 — Processa resposta: UPDATE status='responded', notifica requester.
+async function applyCoordinationResponseAction(collab, parsed) {
+  const { data: req, error: fetchErr } = await supabase
+    .from('coordination_requests')
+    .select('id, requester_id, recipient_id, mode, message_body, status')
+    .eq('id', parsed.request_id)
+    .eq('recipient_id', collab.id)
+    .eq('status', 'sent')
+    .maybeSingle();
+
+  if (fetchErr || !req) {
+    console.warn('[CoordinationResponse] request not found or not sent:', parsed.request_id.slice(0, 8));
+    return { ok: false, reason: 'request_not_found' };
+  }
+
+  const { error: updErr } = await supabase
+    .from('coordination_requests')
+    .update({
+      status:           'responded',
+      responded_at:     new Date().toISOString(),
+      response_summary: parsed.response_summary,
+    })
+    .eq('id', req.id);
+
+  if (updErr) {
+    console.error('[CoordinationResponse] update err:', updErr.message);
+    return { ok: false, reason: 'db_update_error' };
+  }
+
+  const { data: requester } = await supabase
+    .from('collaborators')
+    .select('id, full_name, phone')
+    .eq('id', req.requester_id)
+    .maybeSingle();
+
+  const recipientFirstName = (collab.full_name || '').split(' ')[0] || 'alguém';
+
+  if (requester?.phone) {
+    const msg = `Boa! O ${recipientFirstName} respondeu o que você pediu:\n\n"${parsed.response_summary}"`;
+    try {
+      await whatsapp.sendMessage(requester.phone, msg);
+    } catch (sendErr) {
+      console.error('[CoordinationResponse] notify requester err:', sendErr.message);
+    }
+  }
+
+  console.log(`[CoordinationResponse] req=${req.id.slice(0, 8)} responded by ${String(collab.phone).slice(-4)}`);
+  return { ok: true, reason: `req=${req.id.slice(0, 8)}` };
+}
+
+// Sprint 16 UX §6 — templates obrigatórios para mensagem ao recipient.
+// NUNCA enviar mensagem sem cabeçalho de origem + indicação de modo.
+function _buildRecipientMessage(requesterDisplayName, mode, messageBody) {
+  switch (mode) {
+    case 'relay_literal':
+      return `O ${requesterDisplayName} pediu pra eu te repassar (literalmente):\n\n"${messageBody}"`;
+    case 'relay_assisted':
+      return `O ${requesterDisplayName} me pediu pra te avisar:\n\n${messageBody}`;
+    case 'followup':
+      return `O ${requesterDisplayName} me pediu pra te perguntar (e estou acompanhando tua resposta pra devolver pra ele/ela):\n\n${messageBody}`;
+    default:
+      return `O ${requesterDisplayName} me pediu pra te avisar:\n\n${messageBody}`;
+  }
+}
+
+// Sprint 16 UX §6 — display name do requester com fallback de homônimo via function_title.
+function _requesterDisplayName(requester) {
+  const firstName = (requester.full_name || '').split(' ')[0];
+  if (requester.function_title) {
+    return `${firstName} (${requester.function_title})`;
+  }
+  return firstName || 'Alguém';
+}
+
+// Sprint 16 — Executa coordination request: gating de autorização, INSERT, WhatsApp.
+//
+// REGRA DE INSERÇÃO (Alf 2026-05-03):
+//   NÃO inserir row em coordination_requests quando:
+//     - recipient não encontrado
+//     - recipient inativo
+//     - self-relay
+//   Auditoria fica em marker_logs.
+//
+//   INSERIR row com status='rejected_by_tom' quando:
+//     - recipient existe E é ativo E é diferente do requester
+//     - alçada bloqueou (role_insufficient, cannot_followup_director)
+async function applyCoordinationRequestAction(collab, parsed) {
+  // 1. Lookup recipient — sem row se falhar
+  const recipient = await findCollaboratorByName(parsed.recipient_name);
+  if (!recipient || !recipient.is_active) {
+    return {
+      ok: false,
+      reason: 'recipient_not_found',
+      replyText: `Não encontrei ninguém com o nome "${parsed.recipient_name}" ativo no sistema.`,
+    };
+  }
+
+  // 2. Self-relay — sem row
+  if (recipient.id === collab.id) {
+    return {
+      ok: false,
+      reason: 'self_relay',
+      replyText: 'Você quer mandar uma mensagem pra si mesmo? Isso não faz sentido — fala diretamente 😄',
+    };
+  }
+
+  const recipientFirstName = (recipient.full_name || '').split(' ')[0];
+
+  // 3. Followup bloqueado para collaborator (PRD §8.3)
+  if (parsed.mode === 'followup' && collab.role === 'collaborator') {
+    await supabase.from('coordination_requests').insert({
+      requester_id: collab.id,
+      recipient_id: recipient.id,
+      mode: parsed.mode,
+      message_body: parsed.message_body,
+      message_original: parsed.message_original,
+      status: 'rejected_by_tom',
+      expects_response: parsed.expects_response,
+      cancelled_reason: 'role_insufficient',
+    });
+    return {
+      ok: false,
+      reason: 'role_insufficient',
+      replyText: `Não vou cobrar o ${recipientFirstName} por você. Esse tipo de cobrança precisa vir do coordenador ou diretor. Quer que eu te ajude a formular para mandar pro teu coordenador?`,
+    };
+  }
+
+  // 4. Followup bloqueado coord/manager → director
+  if (
+    parsed.mode === 'followup' &&
+    ['coordinator', 'manager'].includes(collab.role) &&
+    recipient.role === 'director'
+  ) {
+    await supabase.from('coordination_requests').insert({
+      requester_id: collab.id,
+      recipient_id: recipient.id,
+      mode: parsed.mode,
+      message_body: parsed.message_body,
+      message_original: parsed.message_original,
+      status: 'rejected_by_tom',
+      expects_response: parsed.expects_response,
+      cancelled_reason: 'cannot_followup_director',
+    });
+    return {
+      ok: false,
+      reason: 'cannot_followup_director',
+      replyText: `Não é minha função cobrar o ${recipientFirstName} por você — ele/ela é diretor/a. Você pode falar diretamente ou me pedir pra repassar um recado (relay).`,
+    };
+  }
+
+  // 5. Calcular response_deadline
+  let response_deadline = null;
+  if (parsed.expects_response && parsed.response_deadline_hours) {
+    response_deadline = new Date(
+      Date.now() + parsed.response_deadline_hours * 60 * 60 * 1000
+    ).toISOString();
+  }
+
+  // 6. INSERT pending
+  const { data: inserted, error: insErr } = await supabase
+    .from('coordination_requests')
+    .insert({
+      requester_id:           collab.id,
+      recipient_id:           recipient.id,
+      mode:                   parsed.mode,
+      message_body:           parsed.message_body,
+      message_original:       parsed.message_original,
+      status:                 'pending',
+      expects_response:       parsed.expects_response,
+      response_deadline,
+    })
+    .select('id')
+    .single();
+
+  if (insErr) {
+    console.error('[CoordinationRequest] insert err:', insErr.message);
+    return { ok: false, reason: 'db_insert_error', replyText: 'Tive um erro ao registrar o recado. Tenta de novo?' };
+  }
+
+  // 7. Enviar WhatsApp ao recipient (UX §6)
+  const requesterDisplayName = _requesterDisplayName(collab);
+  const recipientMsg = _buildRecipientMessage(requesterDisplayName, parsed.mode, parsed.message_body);
+
+  try {
+    await whatsapp.sendMessage(recipient.phone, recipientMsg);
+  } catch (sendErr) {
+    console.error('[CoordinationRequest] sendMessage err:', sendErr.message);
+    await supabase.from('coordination_requests')
+      .update({ status: 'cancelled', cancelled_reason: 'send_failed', cancelled_at: new Date().toISOString() })
+      .eq('id', inserted.id);
+    return { ok: false, reason: 'send_failed', replyText: 'Não consegui enviar a mensagem pro WhatsApp do destinatário. Tenta de novo?' };
+  }
+
+  // 8. UPDATE → sent
+  await supabase.from('coordination_requests')
+    .update({ status: 'sent', sent_at: new Date().toISOString() })
+    .eq('id', inserted.id);
+
+  // 9. Reply ao requester
+  const shortId = inserted.id.slice(0, 4);
+  const expectsNote = parsed.expects_response ? ' Te aviso quando ele/ela responder.' : '';
+  return {
+    ok: true,
+    reason: `sent=${shortId} recipient=${recipientFirstName}`,
+    replyText: `✓ Avisei o ${recipientFirstName}. [ID: ${shortId}]${expectsNote}`,
+  };
+}
+
 // Resolve project_id por nome quando o TOM só passou project_name. Match fuzzy
 // (case-insensitive, ignora acentos) na lista de projetos do collab.
 async function resolveProjectByName(collaboratorId, projectName) {
@@ -2711,8 +2988,41 @@ async function processMessage(phone, text, raw = {}) {
   console.log('[Engine] Mensagem de', collab.full_name);
   await logConversation(collab.id, 'inbound', text);
 
+  // Sprint 16 — COORD_HINT: verifica recados abertos onde collab é recipient
+  let coordHint = null;
+  {
+    const cutoff24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data: openRequests } = await supabase
+      .from('coordination_requests')
+      .select('id, requester_id, message_body, created_at')
+      .eq('recipient_id', collab.id)
+      .eq('status', 'sent')
+      .gte('created_at', cutoff24h)
+      .order('created_at', { ascending: false })
+      .limit(3);
+
+    if (openRequests && openRequests.length > 0) {
+      const requesterIds = [...new Set(openRequests.map(r => r.requester_id))];
+      const { data: requesters } = await supabase
+        .from('collaborators')
+        .select('id, full_name')
+        .in('id', requesterIds);
+      const requesterMap = Object.fromEntries((requesters || []).map(r => [r.id, r]));
+
+      const lines = openRequests.map(r => {
+        const req = requesterMap[r.requester_id];
+        const reqName = req ? ((req.full_name || '').split(' ')[0] || 'alguém') : 'alguém';
+        const preview = r.message_body.slice(0, 60) + (r.message_body.length > 60 ? '...' : '');
+        const ago = Math.round((Date.now() - new Date(r.created_at).getTime()) / 60000);
+        const agoStr = ago < 60 ? `${ago}min atrás` : `${Math.round(ago / 60)}h atrás`;
+        return `- De: ${reqName} | ID: ${r.id} | "${preview}" | ${agoStr}`;
+      });
+      coordHint = `[COORD_HINT] Há ${openRequests.length} recado(s) aguardando resposta sua:\n${lines.join('\n')}\nSe a mensagem atual parecer resposta a um desses, emita <<COORDINATION_RESPONSE>>.`;
+    }
+  }
+
   // Constrói o system prompt 4-block (regras → identidade → contexto → skill ativa).
-  let { systemPrompt, ctx } = await buildSystemPrompt(collab, { lastUserMessage: text });
+  let { systemPrompt, ctx } = await buildSystemPrompt(collab, { lastUserMessage: text, coordHint });
   const _tt = ctx.todayTasks || {};
   const _tCount = (_tt.personal?.length || 0) + (_tt.work?.length || 0);
   console.log(`[Engine] system prompt size: ${systemPrompt.length} chars (memories=${ctx.memories.length}, tasks=${_tCount}, notifs=${ctx.notifications.length})`);
@@ -3107,6 +3417,26 @@ async function processMessage(phone, text, raw = {}) {
     }
   }
 
+  // Sprint 16 — <<COORDINATION_REQUEST>> — repassar mensagem / cobrar / avisar outro colaborador.
+  {
+    const parsedCoord = parseCoordinationRequestMarker(reply);
+    if (parsedCoord && parsedCoord.malformed) {
+      console.warn('[CoordinationRequest] WARN: malformed marker, dropping block');
+      await logMarker(collab.id, 'COORDINATION_REQUEST', 'rejected', 'schema_invalid', null);
+      reply = parsedCoord.cleanText || reply;
+    } else if (parsedCoord) {
+      const result = await applyCoordinationRequestAction(collab, parsedCoord);
+      await logMarker(
+        collab.id,
+        'COORDINATION_REQUEST',
+        result.ok ? 'executed' : 'rejected',
+        result.reason,
+        null
+      );
+      reply = parsedCoord.cleanText || result.replyText || reply;
+    }
+  }
+
   // 2.67) Sprint 11.4 — Checkpoint batch. TOM emite quando produz checklist
   // estruturado (4+ itens) ligado a um projeto. Persiste como project_checkpoints.
   // Garante que checklist deixa de "virar fumaça em conversation_history" e vira
@@ -3168,6 +3498,26 @@ async function processMessage(phone, text, raw = {}) {
       const detail = parsedDnd.clear ? 'clear' : `until=${parsedDnd.until}${parsedDnd.reason ? ' reason=' + parsedDnd.reason : ''}`;
       await logMarker(collab.id, 'DND_SET', ok ? 'executed' : 'rejected', ok ? detail : 'persist_error', null);
       reply = parsedDnd.cleanText || reply;
+    }
+  }
+
+  // Sprint 16 — <<COORDINATION_RESPONSE>> — recipient respondeu a um recado aberto.
+  {
+    const parsedCoordResp = parseCoordinationResponseMarker(reply);
+    if (parsedCoordResp && parsedCoordResp.malformed) {
+      console.warn('[CoordinationResponse] WARN: malformed marker, dropping block');
+      await logMarker(collab.id, 'COORDINATION_RESPONSE', 'rejected', 'schema_invalid', null);
+      reply = parsedCoordResp.cleanText || reply;
+    } else if (parsedCoordResp) {
+      const result = await applyCoordinationResponseAction(collab, parsedCoordResp);
+      await logMarker(
+        collab.id,
+        'COORDINATION_RESPONSE',
+        result.ok ? 'executed' : 'rejected',
+        result.reason,
+        null
+      );
+      reply = parsedCoordResp.cleanText || reply;
     }
   }
 
@@ -3838,4 +4188,4 @@ async function sendCoordinatorReport(collaboratorId, type, ymdRef) {
   return true;
 }
 
-module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamSummary, buildWeeklyRetrospective, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseWeeklyPlanMarker, parseHabitMarker, parseDndMarker, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, applyHabitActions, applyDnd, getDndState, consolidateMemoryFor, decayExpiredMemories, looksLikeMemory, resolveTaskByShortId, applyAnnouncementAction, parseAnnouncementApprovalMarker, applyAnnouncementApproval };
+module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamSummary, buildWeeklyRetrospective, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseWeeklyPlanMarker, parseHabitMarker, parseDndMarker, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, applyHabitActions, applyDnd, getDndState, consolidateMemoryFor, decayExpiredMemories, looksLikeMemory, resolveTaskByShortId, applyAnnouncementAction, parseAnnouncementApprovalMarker, applyAnnouncementApproval, applyCoordinationRequestAction, parseCoordinationResponseMarker, applyCoordinationResponseAction };

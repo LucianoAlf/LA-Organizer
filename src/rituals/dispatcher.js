@@ -774,6 +774,64 @@ async function checkDepartmentOperational(now = new Date()) {
   }
 }
 
+// Sprint 16 — Verifica coordination_requests com response_deadline expirado.
+// Transita 'sent' → 'timeout' e notifica o requester.
+// Gating por horário: 8h–20h BRT (evita mensagem de madrugada).
+async function checkCoordinationTimeouts(now = new Date()) {
+  const whatsapp = require('../services/whatsapp');
+  const hourBRT = Number(new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo', hour: 'numeric', hour12: false,
+  }).format(now));
+  if (hourBRT < 8 || hourBRT >= 20) return;
+
+  const { data: expired, error } = await supabase
+    .from('coordination_requests')
+    .select('id, requester_id, recipient_id, message_body, response_deadline')
+    .eq('expects_response', true)
+    .eq('status', 'sent')
+    .lt('response_deadline', now.toISOString())
+    .limit(10);
+
+  if (error) {
+    console.error('[checkCoordinationTimeouts] query err:', error.message);
+    return;
+  }
+
+  for (const req of (expired || [])) {
+    const { error: updErr } = await supabase
+      .from('coordination_requests')
+      .update({ status: 'timeout', updated_at: now.toISOString() })
+      .eq('id', req.id);
+
+    if (updErr) {
+      console.error(`[checkCoordinationTimeouts] update err req=${req.id.slice(0, 8)}:`, updErr.message);
+      continue;
+    }
+
+    const { data: people } = await supabase
+      .from('collaborators')
+      .select('id, full_name, phone')
+      .in('id', [req.requester_id, req.recipient_id]);
+
+    const requester = (people || []).find(p => p.id === req.requester_id);
+    const recipient = (people || []).find(p => p.id === req.recipient_id);
+
+    if (requester?.phone) {
+      const recipientName = recipient
+        ? ((recipient.full_name || '').split(' ')[0] || 'o destinatário')
+        : 'o destinatário';
+      const preview = req.message_body.slice(0, 80) + (req.message_body.length > 80 ? '...' : '');
+      const msg = `⏳ Heads up: pedi pro ${recipientName} responder ao seu recado, mas até agora não respondeu.\nMensagem: "${preview}"\nQuer que eu insista ou prefere falar direto?`;
+      try {
+        await whatsapp.sendMessage(requester.phone, msg);
+        console.log(`[checkCoordinationTimeouts] timeout notified req=${req.id.slice(0, 8)} → requester=${requester.phone.slice(-4)}`);
+      } catch (sendErr) {
+        console.error(`[checkCoordinationTimeouts] notify err req=${req.id.slice(0, 8)}:`, sendErr.message);
+      }
+    }
+  }
+}
+
 // Sprint 13 F1 — Broadcast dispatcher. Chamado a cada tick do cron.
 // Processa 1 job por tick (rate = 1 msg/min, anti-ban Meta).
 // Ordem FIFO por created_at.
@@ -1033,6 +1091,13 @@ async function run(opts = {}) {
     await checkDepartmentOperational(new Date());
   } catch (err) {
     console.error('[Dispatcher] checkDepartmentOperational erro:', err.message);
+  }
+
+  // Sprint 16 — Alertas de timeout para coordination_requests sem resposta
+  try {
+    await checkCoordinationTimeouts(new Date());
+  } catch (err) {
+    console.error('[Dispatcher] checkCoordinationTimeouts erro:', err.message);
   }
 
   // Sprint 13 F1 — comunicados internos (broadcast queue)
@@ -1562,4 +1627,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { run, dispatchChecklists, dispatchAnnouncements, notifyCoordinators, remindEventTasks, checkDepartmentOperational, checkChecklistConsequences, parseOnboardingMarker: undefined };
+module.exports = { run, dispatchChecklists, dispatchAnnouncements, notifyCoordinators, remindEventTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined };

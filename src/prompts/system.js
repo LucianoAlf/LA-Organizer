@@ -809,6 +809,7 @@ function renderActiveThreadHint(thread) {
 async function buildSystemPrompt(collaborator, opts = {}) {
   const lastUserMessage = opts.lastUserMessage || '';
   const ctx = await fetchCollaboratorContext(collaborator);
+  if (opts.coordHint) ctx.coordHint = opts.coordHint;
 
   // Last message age in minutes (most recent inbound or outbound).
   let lastMsgAge = null;
@@ -970,6 +971,22 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     }
   }
 
+  // Sprint 16 — Coordenação Conversacional (intermediação de mensagens via TOM)
+  // Disponível para TODOS os roles: qualquer colaborador pode pedir relay/followup,
+  // mas a skill ensina TOM a recusar followup fora de alçada antes de emitir marker.
+  if (collaborator) {
+    const coordPath = path.join(SKILLS_DIR, 'coordenacao-conversacional.md');
+    if (fs.existsSync(coordPath)) {
+      const coordSkill = fs.readFileSync(coordPath, 'utf-8');
+      systemPrompt += '\n\n---\n\n' + coordSkill;
+    }
+  }
+
+  // Sprint 16 — COORD_HINT injection (só presente quando recipient tem recados abertos)
+  if (ctx && ctx.coordHint) {
+    systemPrompt += '\n\n' + ctx.coordHint;
+  }
+
   const totalTasks = (ctx.personalTasks?.length || 0) + (ctx.workTasks?.length || 0);
   const evCount = (ctx.todayEvents || []).length;
   console.log(`[Prompt] size: ${systemPrompt.length} chars (skill: ${skill ? skill.name : 'none'}, history: ${hist.length}, memories: ${ctx.memories.length}, tasks: ${totalTasks}/p${ctx.personalTasks?.length || 0}/w${ctx.workTasks?.length || 0}, events: ${evCount}, ritual: ${rt || '-'})`);
@@ -997,7 +1014,12 @@ function composeSystemPrompt(collaborator, ctx) {
     buildContext(collaborator, ctx.memories || [], ctx.prefs, ctx.todayTasks || [], ctx.activeProjects || [], lastMsgAge, ctx.habits || [], ctx.todayEvents || []),
     skillBlock,
   ].filter(Boolean);
-  return blocks.join('\n\n---\n\n');
+  let syncPrompt = blocks.join('\n\n---\n\n');
+  // Sprint 16 — COORD_HINT injection (só presente quando recipient tem recados abertos)
+  if (ctx && ctx.coordHint) {
+    syncPrompt += '\n\n' + ctx.coordHint;
+  }
+  return syncPrompt;
 }
 
 /**
