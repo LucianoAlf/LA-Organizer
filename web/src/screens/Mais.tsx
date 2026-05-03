@@ -21,6 +21,7 @@ const items: Item[] = [
   { to: '/mais/comunicados', label: 'Comunicados', hint: 'Anúncios para a equipe', requireRoles: ['director', 'coordinator'] },
   { to: '/mais/agenda-escolar', label: 'Agenda Escolar', hint: 'Eventos e comunicações', requireRoles: ['director', 'coordinator'] },
   { to: '/mais/observabilidade', label: 'Observabilidade', hint: 'Aprovações e métricas de envio', requireRoles: ['director', 'coordinator'] },
+  { to: '/mais/operacoes', label: 'Operações Técnicas', hint: 'Fila de demandas operacionais', requireRoles: ['director', 'coordinator'] },
 ];
 
 export function Mais() {

@@ -470,6 +470,55 @@ export function computeStepScheduledAt(eventDate: string, daysBefore: number): s
   return target > new Date() ? target.toISOString() : null;
 }
 
+// ─── Sprint 15 — Camada Operacional Replicável ──────────────────────────────
+
+export interface Department {
+  id: string;
+  slug: string;
+  name: string;
+  is_active: boolean;
+  unit_scope_enabled: boolean;
+}
+
+export interface DepartmentRequestType {
+  id: string;
+  department_id: string;
+  slug: string;
+  label: string;
+  default_priority: TaskPriority;
+  requires_approval: boolean;
+  generates_task: boolean;
+  is_active: boolean;
+  sort_order: number;
+}
+
+export interface OperationalTask extends Task {
+  department_id: string | null;
+  request_type_id: string | null;
+  description: string | null;
+  notes: string | null;
+  request_type?: { id: string; slug: string; label: string } | null;
+  department?: { id: string; slug: string; name: string } | null;
+  collaborator?: { id: string; full_name: string; unit: string | null } | null;
+}
+
+export const STATUS_LABEL_OPERATIONAL: Record<string, string> = {
+  pending: 'Pendente',
+  in_progress: 'Em andamento',
+  awaiting_confirmation: 'Aguardando aprovação',
+  done: 'Concluída',
+  cancelled: 'Cancelada',
+  overdue: 'Atrasada',
+  delegated: 'Delegada',
+};
+
+export const PRIORITY_INDICATOR: Record<TaskPriority, { emoji: string; tone: string }> = {
+  critical: { emoji: '🔴', tone: 'text-danger' },
+  high:     { emoji: '🟠', tone: 'text-warning' },
+  medium:   { emoji: '🟡', tone: 'text-fg' },
+  low:      { emoji: '🟢', tone: 'text-success' },
+};
+
 // Generates announcement specs for each active notification step.
 export function buildEventAnnouncements(ev: {
   title: string;
