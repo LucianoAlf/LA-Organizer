@@ -49,32 +49,44 @@ Aguardar confirmação ("bora", "sim", "ok", "vamos").
 Default: `08:00`
 
 ### Confirmação 1 + Pergunta 2 — fechamento
+
+**REGRA CRÍTICA:** o horário a ser confirmado é **EXATAMENTE o que o colaborador respondeu na pergunta 1**. Se ele disse "10h", confirme "10h". Se "08:30", confirme "8h30". Os exemplos abaixo usam `{briefing_time_dito}` como placeholder — substitua pela resposta real.
+
 ```text
-☕ Anotei: briefing às *8h*. ✅
+☕ Anotei: briefing às *{briefing_time_dito}*. ✅
 
 ⏰ *Que horas você costuma fechar o dia?*
 ```
-Default: `19:00`
+Default: `08:00` (use SOMENTE se a resposta foi ambígua/ausente, e diga "Vou colocar *8h*").
 
 ### Confirmação 2 + Pergunta 3 — dia do planejamento
+
+**REGRA CRÍTICA:** o horário a ser confirmado é **EXATAMENTE o que o colaborador respondeu na pergunta 2**.
+
 ```text
-✅ Fechamento às *19h*.
+✅ Fechamento às *{closing_time_dito}*.
 
 🗓️ *Prefere planejar a semana no domingo ou na segunda?*
 ```
-Default: domingo (`0`)
+Default: `19:00` (use SOMENTE se ambíguo/ausente).
 
 ### Confirmação 3 + Pergunta 4 — horário do planejamento
-```text
-✅ Planejamento no *domingo*.
 
-⏰ *Que horas no domingo?*
+**REGRA CRÍTICA:** o dia confirmado é **EXATAMENTE o que o colaborador escolheu** (domingo OU segunda).
+
+```text
+✅ Planejamento na *{dia_dito}*.
+
+⏰ *Que horas na {dia_dito}?*
 ```
-Default: `19:00`
+Default: domingo (`0`) — use SOMENTE se ambíguo/ausente.
 
 ### Confirmação 4 + Pergunta 5 — intensidade
+
+**REGRA CRÍTICA:** o dia + horário confirmados refletem **EXATAMENTE o que o colaborador escolheu nas perguntas 3+4**.
+
 ```text
-✅ Domingo às *19h*.
+✅ {dia_dito} às *{planning_time_dito}*.
 
 🎯 Última: quer que eu te cobre *leve*, *normal* ou *duro*?
 
@@ -82,32 +94,48 @@ Default: `19:00`
 • Normal = te cobro mas com respeito
 • Duro = te cobro com número e sem rodeio
 ```
-Default: `normal`
+Default: `19:00` para o horário (use SOMENTE se ambíguo/ausente).
 
 ### Confirmação final
+
+**REGRA CRÍTICA:** todos os valores no card final + no marker JSON devem refletir **EXATAMENTE o que foi capturado nas 5 perguntas**. Substitua os placeholders `{...}` pelos valores reais coletados na conversa. NUNCA use os valores default se o colaborador respondeu algo diferente.
+
 ```text
 ✅ Configurado!
 
-• 🗓️ Domingo 19h: planejamento da semana
-• ☕ Seg-sex 8h: briefing do dia
-• 📋 Seg-sex 19h: fechamento do dia
-• 🎯 Cobrança: normal
+• 🗓️ {dia_dito} {planning_time_dito}: planejamento da semana
+• ☕ Seg-sex {briefing_time_dito}: briefing do dia
+• 📋 Seg-sex {closing_time_dito}: fechamento do dia
+• 🎯 Cobrança: {coaching_intensity_dito}
 
 👽 Fechou! Bora trabalhar.
 
 <<ONBOARDING_DONE>>
-{"briefing_time":"08:00","closing_time":"19:00","planning_day":0,"planning_time":"19:00","coaching_intensity":"normal"}
+{"briefing_time":"<HH:MM coletado na pergunta 1>","closing_time":"<HH:MM coletado na pergunta 2>","planning_day":<0 se domingo, 1 se segunda — coletado na pergunta 3>,"planning_time":"<HH:MM coletado na pergunta 4>","coaching_intensity":"<light|normal|hard coletado na pergunta 5>"}
 <<END>>
+```
+
+**Exemplo concreto** (não copie literalmente — é só pra ilustrar a substituição):
+
+Se o colaborador respondeu "10h", "20h", "segunda", "10h", "normal", o JSON final será:
+```json
+{"briefing_time":"10:00","closing_time":"20:00","planning_day":1,"planning_time":"10:00","coaching_intensity":"normal"}
+```
+
+Se respondeu "8h", "19h", "domingo", "19h", "normal" (todos defaults), o JSON será:
+```json
+{"briefing_time":"08:00","closing_time":"19:00","planning_day":0,"planning_time":"19:00","coaching_intensity":"normal"}
 ```
 
 ---
 
 ## Regra crítica do marcador final
-Ao final do onboarding, a resposta deve terminar com o bloco:
+Ao final do onboarding, a resposta deve terminar com o bloco `<<ONBOARDING_DONE>>...<<END>>` com JSON dos valores **coletados nas 5 perguntas** — nunca os defaults se o colaborador disse outra coisa.
 
+### Estrutura (substitua os placeholders pelos valores reais):
 ```text
 <<ONBOARDING_DONE>>
-{"briefing_time":"08:00","closing_time":"19:00","planning_day":0,"planning_time":"19:00","coaching_intensity":"normal"}
+{"briefing_time":"<HH:MM da P1>","closing_time":"<HH:MM da P2>","planning_day":<0|1 da P3>,"planning_time":"<HH:MM da P4>","coaching_intensity":"<light|normal|hard da P5>"}
 <<END>>
 ```
 
@@ -118,13 +146,21 @@ Ao final do onboarding, a resposta deve terminar com o bloco:
 - O colaborador nunca verá esse bloco; ele será removido pelo engine.
 
 ### Campos obrigatórios
-- `briefing_time` → `HH:MM`
-- `closing_time` → `HH:MM`
-- `planning_day` → `0` para domingo ou `1` para segunda
-- `planning_time` → `HH:MM` (horário do planejamento semanal)
-- `coaching_intensity` → `light` | `normal` | `hard`
+- `briefing_time` → `HH:MM` (da pergunta 1)
+- `closing_time` → `HH:MM` (da pergunta 2)
+- `planning_day` → `0` para domingo ou `1` para segunda (da pergunta 3)
+- `planning_time` → `HH:MM` (da pergunta 4)
+- `coaching_intensity` → `light` | `normal` | `hard` (da pergunta 5)
 
-Todos os valores devem refletir **exatamente** o que o colaborador respondeu. Se respondeu "8h", use `"08:00"`. Se respondeu "19h", use `"19:00"`. Nunca substitua um valor por outro.
+**Mapeamento literal — use exatamente o que o colaborador disse:**
+- "8h" → `"08:00"`
+- "10h" → `"10:00"`
+- "10h30" / "10:30" → `"10:30"`
+- "20h" / "8 da noite" → `"20:00"`
+- "domingo" → `0`
+- "segunda" → `1`
+
+**NUNCA** substitua um valor capturado por outro. **NUNCA** copie cegamente o exemplo da skill. **NUNCA** use o default se o colaborador respondeu algo concreto.
 
 ---
 
