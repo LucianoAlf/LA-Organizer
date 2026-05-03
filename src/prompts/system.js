@@ -186,8 +186,9 @@ function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habi
   const tomorrowISO = tomorrow.toISOString().slice(0, 10);
   const weekdays = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
   const todayWD = weekdays[new Date(todayISO + 'T15:00:00.000Z').getUTCDay()];
+  const tomorrowWD = weekdays[new Date(tomorrowISO + 'T15:00:00.000Z').getUTCDay()];
   lines.push(`**Data/hora agora (BRT):** ${todayISO} ${nowHHMM} (${todayWD})`);
-  lines.push(`**Amanhã (BRT):** ${tomorrowISO}`);
+  lines.push(`**Amanhã (BRT):** ${tomorrowISO} (${tomorrowWD})`);
   lines.push(`**Timezone para markers:** America/Sao_Paulo. Sempre use ISO -03:00 em remind_at, start_at, end_at, etc. Ex: "amanhã 11h" → "${tomorrowISO}T11:00:00-03:00".`);
   lines.push('');
 

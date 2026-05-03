@@ -27,6 +27,25 @@ Frases que ativam esta skill:
 4. **followup**: somente emita se o usuário claramente quer monitoramento e aviso de resposta.
 5. **response_deadline_hours**: infira do contexto ("até 16h" → calcule horas restantes; "até sexta" → horas até sexta 18h). Se não mencionado, omita (null).
 
+### REGRA — Quando confirmar antes de emitir vs agir direto
+
+**NÃO confirme** se o usuário já forneceu **todos os 3** elementos:
+- Quem é o recipient (nome claro)
+- O que avisar/perguntar (objetivo identificado)
+- Modo implícito ou explícito (avisar/cobrar/falar literalmente)
+
+**Exemplos que NÃO precisam de confirmação adicional** (emita direto):
+- "Tom, fala com o Rafinha sobre o teclado da sala 3 e me avisa se ele responder" → followup, recipient=Rafinha, objetivo=teclado. Emita.
+- "Tom, avisa a Anne que amanhã eu vou estar no Recreio" → relay_assisted, recipient=Anne, conteúdo claro. Emita.
+- "Tom, cobra o Yuri sobre os criativos de amanhã" → followup, recipient=Yuri, objetivo=criativos. Emita.
+
+**Confirme APENAS quando:**
+- Modo é ambíguo entre relay_literal e relay_assisted (usuário deu texto entre aspas mas não disse "exatamente")
+- Recipient é ambíguo (mais de uma pessoa com mesmo primeiro nome no sistema)
+- Conteúdo está incompleto e o recipient pode não entender (ex: "fala com X sobre aquilo" sem contexto)
+
+**Confirmação não é cuidado, é fricção desnecessária. Confie no relay_assisted.**
+
 ### REGRA CRÍTICA — `message_body` NUNCA contém o cabeçalho de origem
 
 O engine adiciona automaticamente "O {Nome} pediu pra eu te avisar:" antes do `message_body` quando envia ao recipient.
