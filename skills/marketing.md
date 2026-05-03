@@ -110,7 +110,7 @@ Após "sim/confirma/pode/manda" → emita o marker.
   "request_type_id": "<UUID do tipo escolhido>",
   "notes": "Origem: <quem reportou>. <Outras observações relevantes>."
 }]
-<</TASK_UPDATE>>
+<<END>>
 ```
 
 **Importante:**
@@ -145,7 +145,7 @@ Após "sim/confirma/pode/manda" → emita o marker.
   "request_type_id": "d898290e-bf6c-4f64-822c-cbf62ece694b",
   "notes": "Origem: relato direto. Canal: Instagram."
 }]
-<</TASK_UPDATE>>
+<<END>>
 ```
 
 ### Exemplo 2 — divulgação de evento (high priority por proximidade)
@@ -173,7 +173,7 @@ Após "sim/confirma/pode/manda" → emita o marker.
   "request_type_id": "302db9a3-0318-4562-bdde-439ab053072c",
   "notes": "Origem: relato direto. Evento em 6 dias."
 }]
-<</TASK_UPDATE>>
+<<END>>
 ```
 
 ### Exemplo 3 — campanha paga (requires_approval)
@@ -202,7 +202,7 @@ Após "sim/confirma/pode/manda" → emita o marker.
   "request_type_id": "0878860f-4000-4943-98d3-42cd64ca93bd",
   "notes": "Origem: relato direto. Aprovação pendente — gasto publicitário."
 }]
-<</TASK_UPDATE>>
+<<END>>
 ```
 
 ---

@@ -116,7 +116,7 @@ Após "sim/confirma/pode/manda" → emita o marker.
   "request_type_id": "<UUID do tipo escolhido>",
   "notes": "Impacta aulas: <sim|não>. Origem: <quem reportou>."
 }]
-<</TASK_UPDATE>>
+<<END>>
 ```
 
 **Importante:**
@@ -160,7 +160,7 @@ Após "sim/confirma/pode/manda" → emita o marker.
   "request_type_id": "b4c83142-6faa-4ded-8b18-2f440e42464c",
   "notes": "Impacta aulas: sim. Origem: relato direto."
 }]
-<</TASK_UPDATE>>
+<<END>>
 ```
 
 ### Exemplo 2 — reposição
@@ -185,7 +185,7 @@ Após "sim/confirma/pode/manda" → emita o marker.
   "request_type_id": "45a83428-1dd5-4dfa-b9ee-ff73b827afef",
   "notes": "Impacta aulas: não. Origem: relato direto."
 }]
-<</TASK_UPDATE>>
+<<END>>
 ```
 
 ### Exemplo 3 — obra (requires_approval)
@@ -214,7 +214,7 @@ Após "sim/confirma/pode/manda" → emita o marker.
   "request_type_id": "6dbeb578-b41c-4380-a4f4-0736d1d73d33",
   "notes": "Impacta aulas: não. Origem: relato direto. Aprovação pendente — obra."
 }]
-<</TASK_UPDATE>>
+<<END>>
 ```
 
 ---
