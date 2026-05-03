@@ -830,6 +830,7 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   const ctx = await fetchCollaboratorContext(collaborator);
   if (opts.coordHint) ctx.coordHint = opts.coordHint;
   if (opts.coordContext) ctx.coordContext = opts.coordContext;   // Sprint 17 ACC
+  if (opts.integrityHygiene) ctx.integrityHygiene = opts.integrityHygiene; // Sprint 18 hygiene
 
   // Last message age in minutes (most recent inbound or outbound).
   let lastMsgAge = null;
@@ -854,6 +855,11 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   const skillBlock = (skill && skill.body)
     ? (`# 🎯 SKILL ATIVA: ${skill.name}\n\n${skill.body}` +
        (auxPriorityBody ? `\n\n---\n\n# 🧭 SKILL AUXILIAR: priorizacao-inteligente\n\n${auxPriorityBody}` : ''))
+    : '';
+  // Sprint 18 — integridade-agenda: injetada como skill auxiliar para todos os roles
+  const integritySkillBody = loadSkill('integridade-agenda.md');
+  const integritySkillBlock = integritySkillBody
+    ? `\n\n---\n\n# 🛡️ SKILL AUXILIAR: integridade-agenda\n\n${integritySkillBody}`
     : '';
 
   // Ritual-aware task filtering:
@@ -1010,6 +1016,16 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   // Sprint 17 — ACC injection (contexto ativo de coordenação; convive com COORD_HINT — Decisão 5.3)
   if (ctx && ctx.coordContext) {
     systemPrompt += '\n\n' + ctx.coordContext;
+  }
+
+  // Sprint 18 — integridade-agenda skill auxiliar (sempre carregada para todos os roles)
+  if (integritySkillBlock) {
+    systemPrompt += integritySkillBlock;
+  }
+
+  // Sprint 18 — hygiene context injection (briefing matinal com findings de higiene)
+  if (ctx && ctx.integrityHygiene) {
+    systemPrompt += '\n\n[INTEGRITY_HYGIENE_CONTEXT]\n' + ctx.integrityHygiene;
   }
 
   const totalTasks = (ctx.personalTasks?.length || 0) + (ctx.workTasks?.length || 0);

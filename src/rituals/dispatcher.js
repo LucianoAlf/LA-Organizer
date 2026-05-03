@@ -906,6 +906,113 @@ async function dispatchAnnouncements(now = new Date()) {
   await handleCancellations(whatsapp);
 }
 
+// Sprint 18 — Higiene de execução: tasks zumbi (stale)
+// Dispara segunda-feira às 09:00 BRT. Max 5 tasks. Idempotência via ritual_logs.
+async function detectStaleTasks(now = new Date()) {
+  const sp = nowSaoPaulo();
+  if (sp.dow !== 1 || currentSlot(sp) !== timeToSlot('09:00')) return; // segunda 09:00
+
+  const whatsapp = require('../services/whatsapp');
+  const STALE_DAYS = 14;
+  const MAX_ALERTS = 5;
+  const staleCutoff = new Date(now.getTime() - STALE_DAYS * 24 * 3600_000).toISOString();
+  const ymdRef = sp.ymd;
+
+  const collabs = await listCollaborators();
+  for (const collab of collabs) {
+    if (await alreadySent(collab.id, 'hygiene_stale_tasks', ymdRef)) continue;
+
+    const { data: staleTasks, error } = await supabase
+      .from('tasks')
+      .select('id, title, due_date, updated_at, status')
+      .eq('assigned_to', collab.id)
+      .not('status', 'in', '("done","cancelled")')
+      .lt('updated_at', staleCutoff)
+      .order('updated_at', { ascending: true })
+      .limit(MAX_ALERTS);
+
+    if (error) {
+      console.error('[detectStaleTasks] query err:', error.message);
+      await logRitualEvent(collab.id, 'hygiene_stale_tasks', 'error', error.message, ymdRef);
+      continue;
+    }
+    if (!staleTasks || staleTasks.length === 0) {
+      await logRitualEvent(collab.id, 'hygiene_stale_tasks', 'skipped', 'no_stale_tasks', ymdRef);
+      continue;
+    }
+
+    const count = staleTasks.length;
+    const listText = staleTasks
+      .slice(0, 3)
+      .map(t => `• _${String(t.title).slice(0, 60)}_`)
+      .join('\n');
+    const msg = `👻 *Higiene de tarefas*\n\nEncontrei *${count}* tarefa${count > 1 ? 's' : ''} aberta${count > 1 ? 's' : ''} há mais de ${STALE_DAYS} dias sem atualização:\n${listText}${count > 3 ? `\n_...e mais ${count - 3}_` : ''}\n\nQuer revisar agora? Só dizer "abre minhas tarefas paradas".`;
+
+    try {
+      await whatsapp.sendMessage(collab.phone, msg);
+      await logRitualEvent(collab.id, 'hygiene_stale_tasks', 'sent', `count=${count}`, ymdRef);
+    } catch (err) {
+      console.error(`[detectStaleTasks] send err ${String(collab.phone).slice(-4)}:`, err.message);
+      await logRitualEvent(collab.id, 'hygiene_stale_tasks', 'error', err.message, ymdRef);
+    }
+  }
+}
+
+// Sprint 18 — Higiene de execução: eventos passados sem fechamento
+// Dispara todos os dias às 09:30 BRT. Max 3 eventos. Idempotência via ritual_logs.
+async function detectUnclosedPastEvents(now = new Date()) {
+  const sp = nowSaoPaulo();
+  if (currentSlot(sp) !== timeToSlot('09:30')) return; // 09:30 (qualquer dia)
+
+  const whatsapp = require('../services/whatsapp');
+  const MAX_ALERTS = 3;
+  const cutoff24h = new Date(now.getTime() - 24 * 3600_000).toISOString();
+  const ymdRef = sp.ymd;
+
+  const collabs = await listCollaborators();
+  for (const collab of collabs) {
+    if (await alreadySent(collab.id, 'hygiene_unclosed_events', ymdRef)) continue;
+
+    const { data: unclosed, error } = await supabase
+      .from('events')
+      .select('id, title, start_at, end_at, category')
+      .eq('collaborator_id', collab.id)
+      .not('status', 'in', '("done","cancelled")')
+      .lt('end_at', cutoff24h)
+      .order('end_at', { ascending: false })
+      .limit(MAX_ALERTS);
+
+    if (error) {
+      console.error('[detectUnclosedPastEvents] query err:', error.message);
+      await logRitualEvent(collab.id, 'hygiene_unclosed_events', 'error', error.message, ymdRef);
+      continue;
+    }
+    if (!unclosed || unclosed.length === 0) {
+      await logRitualEvent(collab.id, 'hygiene_unclosed_events', 'skipped', 'none_found', ymdRef);
+      continue;
+    }
+
+    const count = unclosed.length;
+    const listText = unclosed
+      .map(e => {
+        const dateStr = new Date(e.end_at).toLocaleDateString('pt-BR', {
+          timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit',
+        });
+        return `• _${String(e.title).slice(0, 60)}_ (${dateStr})`;
+      })
+      .join('\n');
+    const msg = `📌 *Compromissos sem fechamento*\n\nTinha *${count}* compromisso${count > 1 ? 's' : ''} que já aconteceu${count > 1 ? 'ram' : ''} e ainda está${count > 1 ? 'o' : ''} em aberto:\n${listText}\n\nQuer fechar agora? Só responder "fecha" ou me dizer o que aconteceu.`;
+
+    try {
+      await whatsapp.sendMessage(collab.phone, msg);
+      await logRitualEvent(collab.id, 'hygiene_unclosed_events', 'sent', `count=${count}`, ymdRef);
+    } catch (err) {
+      console.error(`[detectUnclosedPastEvents] send err ${String(collab.phone).slice(-4)}:`, err.message);
+      await logRitualEvent(collab.id, 'hygiene_unclosed_events', 'error', err.message, ymdRef);
+    }
+  }
+}
+
 /**
  * Executa o dispatcher.
  * @param {object} opts
@@ -1098,6 +1205,19 @@ async function run(opts = {}) {
     await checkCoordinationTimeouts(new Date());
   } catch (err) {
     console.error('[Dispatcher] checkCoordinationTimeouts erro:', err.message);
+  }
+
+  // Sprint 18 — Higiene de execução (stale tasks + unclosed events)
+  try {
+    await detectStaleTasks(new Date());
+  } catch (err) {
+    console.error('[Dispatcher] detectStaleTasks erro:', err.message);
+  }
+
+  try {
+    await detectUnclosedPastEvents(new Date());
+  } catch (err) {
+    console.error('[Dispatcher] detectUnclosedPastEvents erro:', err.message);
   }
 
   // Sprint 13 F1 — comunicados internos (broadcast queue)

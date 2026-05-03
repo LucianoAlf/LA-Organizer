@@ -1555,9 +1555,67 @@ function parseEventCreateMarker(text) {
 
 async function applyEventActions(collaborator, events) {
   let okCount = 0, failCount = 0;
+  let integrityPayload = null;
   const last4 = String(collaborator.phone || '').slice(-4);
   for (const e of events) {
     try {
+      // Sprint 18 — pre-check de integridade (fail-open: erros nos detectores não bloqueiam)
+      let temporalResult = { hardConflicts: [], softConflicts: [] };
+      let dupResult      = { probable: [], possible: [] };
+      try {
+        [temporalResult, dupResult] = await Promise.all([
+          detectTemporalConflict(collaborator, e),
+          detectDuplicateSemanticEvent(collaborator, e),
+        ]);
+      } catch (detErr) {
+        console.warn('[IntegrityCheck] event detectors err (non-fatal):', detErr.message);
+      }
+
+      // HARD conflict (A2: bloqueia até confirmação explícita, 1 rodada)
+      if (temporalResult.hardConflicts.length > 0) {
+        const c = temporalResult.hardConflicts[0];
+        const startStr = new Date(c.start_at).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' });
+        const endStr   = new Date(c.end_at).toLocaleTimeString('pt-BR',   { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' });
+        console.warn(`[IntegrityCheck] HARD temporal conflict for "${String(e.title).slice(0,40)}" — overlaps "${String(c.title).slice(0,40)}" ${startStr}–${endStr} (${c.reason})`);
+        integrityPayload = {
+          severity: 'hard',
+          type: 'temporal_hard',
+          conflicts: temporalResult.hardConflicts.slice(0, 2).map(x => ({ id: x.id, title: x.title, start_at: x.start_at, end_at: x.end_at, overlapMin: x.overlapMin, reason: x.reason })),
+          candidateTitle: e.title,
+        };
+        failCount++;
+        continue;
+      }
+
+      // A1: DUP semântico provável — NUNCA bloqueia auto; retorna suspect-payload para skill decidir
+      if (dupResult.probable.length > 0) {
+        const d = dupResult.probable[0];
+        console.warn(`[IntegrityCheck] DUP_EVENT score=${d._score.toFixed(2)} "${String(e.title).slice(0,40)}" ~ "${String(d.title).slice(0,40)}"`);
+        integrityPayload = {
+          severity: 'soft',
+          type: 'dup_event',
+          conflicts: dupResult.probable.slice(0, 3).map(x => ({ id: x.id, title: x.title, start_at: x.start_at, end_at: x.end_at, _score: x._score })),
+          candidateTitle: e.title,
+        };
+        failCount++;
+        continue;
+      }
+
+      // A2: SOFT temporal — NÃO cria silenciosamente; microconfirm via skill
+      if (temporalResult.softConflicts.length > 0) {
+        const c = temporalResult.softConflicts[0];
+        console.log(`[IntegrityCheck] SOFT temporal conflict "${String(e.title).slice(0,40)}" ~ "${String(c.title).slice(0,40)}" overlap=${c.overlapMin}min (${c.reason})`);
+        integrityPayload = {
+          severity: 'soft',
+          type: 'temporal_soft',
+          conflicts: temporalResult.softConflicts.slice(0, 2).map(x => ({ id: x.id, title: x.title, start_at: x.start_at, end_at: x.end_at, overlapMin: x.overlapMin, reason: x.reason })),
+          candidateTitle: e.title,
+        };
+        failCount++;
+        continue;
+      }
+
+      // Sem findings: INSERT normal
       const ctx = e.context || (e.category === 'pessoal' ? 'personal' : 'work');
       const row = {
         title: e.title.trim().slice(0, 200),
@@ -1592,7 +1650,7 @@ async function applyEventActions(collaborator, events) {
       failCount++;
     }
   }
-  return { okCount, failCount };
+  return { okCount, failCount, integrityPayload };
 }
 
 // Parse <<EVENT_UPDATE>>[...]<<END>> — reagendar / cancelar / completar event existente.
@@ -2243,6 +2301,37 @@ async function applyTaskActions(collaborator, actions) {
         } else {
           insertRow.due_date = isValidISODate(a.due_date) ? a.due_date : todaySaoPaulo();
         }
+        // Sprint 18 — pre-check de duplicidade semântica (A1: nunca bloqueia auto)
+        // Ocorre APÓS validações de role/requestTypeId, ANTES do dedupe defensivo de 60s.
+        let _taskIntegrityPayload = null;
+        try {
+          const _taskDupResult = await detectDuplicateSemanticTask(collaborator, {
+            title: a.title,
+            description: typeof a.description === 'string' ? a.description : undefined,
+            assigned_to: assignedTo,
+            department_id: departmentId || undefined,
+            request_type_id: requestTypeId || undefined,
+          });
+          if (_taskDupResult.probable.length > 0) {
+            const _d = _taskDupResult.probable[0];
+            console.warn(`[IntegrityCheck] DUP_TASK score=${_d._score.toFixed(2)} "${a.title.trim().slice(0,40)}" ~ "${String(_d.title).slice(0,40)}" (${_d.status})`);
+            // A1: retornar suspect-payload. INSERT NÃO ocorre. Skill processa no novo turno.
+            _taskIntegrityPayload = {
+              severity: 'soft',
+              type: 'dup_task',
+              conflicts: _taskDupResult.probable.slice(0, 3).map(x => ({ id: x.id, title: x.title, status: x.status, due_date: x.due_date, _score: x._score })),
+              candidateTitle: a.title.trim(),
+            };
+          }
+        } catch (_detErr) {
+          console.warn('[IntegrityCheck] task dup detector err (non-fatal):', _detErr.message);
+        }
+        if (_taskIntegrityPayload) {
+          // Não insere. Sinaliza para applyTaskActions retornar payload.
+          // Usa mecanismo de objeto retornado — ver return abaixo.
+          return { okCount, failCount: failCount + 1, integrityPayload: _taskIntegrityPayload };
+        }
+
         // Sprint 11.2 hotfix — Dedupe defensivo. Bug observado: TOM emite TASK_CREATE
         // num turno exploratório ("vou criar pra 14h, ok?") e RECRIA no turno de
         // confirmação ("Ta bom" → cria de novo). Evidência: 2 rows idênticas criadas
@@ -2557,7 +2646,7 @@ async function applyTaskActions(collaborator, actions) {
       failCount++;
     }
   }
-  return { okCount, failCount };
+  return { okCount, failCount, integrityPayload: null };
 }
 
 const MEMORY_TYPES = ['fact', 'decision', 'lesson', 'preference', 'context'];
@@ -3304,6 +3393,209 @@ async function buildActiveCoordinationContext(collab) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Sprint 18 — Integridade de Agenda e Execução
+// Helpers puros de detecção. Fail-open: exceptions são capturadas pelos callers.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Jaro-Winkler similarity — retorna 0..1.
+ * Implementação pura, sem dependência npm. Ideal para títulos curtos.
+ */
+function jaroWinkler(s1, s2) {
+  if (s1 === s2) return 1.0;
+  const len1 = s1.length, len2 = s2.length;
+  if (!len1 || !len2) return 0.0;
+  const matchDist = Math.max(Math.floor(Math.max(len1, len2) / 2) - 1, 0);
+  const s1Matches = new Array(len1).fill(false);
+  const s2Matches = new Array(len2).fill(false);
+  let matches = 0, transpositions = 0;
+  for (let i = 0; i < len1; i++) {
+    const lo = Math.max(0, i - matchDist);
+    const hi = Math.min(i + matchDist + 1, len2);
+    for (let j = lo; j < hi; j++) {
+      if (s2Matches[j] || s1[i] !== s2[j]) continue;
+      s1Matches[i] = s2Matches[j] = true;
+      matches++;
+      break;
+    }
+  }
+  if (!matches) return 0.0;
+  let k = 0;
+  for (let i = 0; i < len1; i++) {
+    if (!s1Matches[i]) continue;
+    while (!s2Matches[k]) k++;
+    if (s1[i] !== s2[k]) transpositions++;
+    k++;
+  }
+  const jaro = (matches / len1 + matches / len2 + (matches - transpositions / 2) / matches) / 3;
+  let prefix = 0;
+  for (let i = 0; i < Math.min(4, Math.min(len1, len2)); i++) {
+    if (s1[i] === s2[i]) prefix++; else break;
+  }
+  return jaro + prefix * 0.1 * (1 - jaro);
+}
+
+/** Normaliza string para comparação: lowercase, remove pontuação, trim. */
+function normalizeForSim(s) {
+  return String(s || '').toLowerCase().replace(/[^a-záàãâéêíóôõúüç\s]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Sprint 18 — detecta conflitos temporais antes de criar evento.
+ * Fail-open: exceptions retornam { hardConflicts: [], softConflicts: [] }.
+ * @param {object} collab — row de collaborators
+ * @param {object} candidate — { start_at: ISO, end_at: ISO, modality, location_text }
+ * @returns {{ hardConflicts: object[], softConflicts: object[] }}
+ */
+async function detectTemporalConflict(collab, candidate) {
+  try {
+    if (!candidate.start_at || !candidate.end_at) return { hardConflicts: [], softConflicts: [] };
+    const { data: overlaps, error } = await supabase
+      .from('events')
+      .select('id, title, start_at, end_at, modality, location_text, category, status')
+      .eq('collaborator_id', collab.id)
+      .neq('status', 'cancelled')
+      .lt('start_at', candidate.end_at)
+      .gt('end_at', candidate.start_at)
+      .limit(20);
+    if (error) {
+      console.error('[detectTemporalConflict] query err:', error.message);
+      return { hardConflicts: [], softConflicts: [] };
+    }
+    const hardConflicts = [], softConflicts = [];
+    const candStart = new Date(candidate.start_at).getTime();
+    const candEnd   = new Date(candidate.end_at).getTime();
+    const candDur   = candEnd - candStart;
+    for (const ev of (overlaps || [])) {
+      const evStart = new Date(ev.start_at).getTime();
+      const evEnd   = new Date(ev.end_at).getTime();
+      // Diferença < 1min → possível duplicidade; delegado para detectDuplicateSemanticEvent
+      if (Math.abs(evStart - candStart) < 60_000) continue;
+      const overlapMs    = Math.min(candEnd, evEnd) - Math.max(candStart, evStart);
+      const overlapRatio = overlapMs / candDur;
+      const bothPresencial = (ev.modality === 'presencial' || ev.modality === 'hibrido')
+                          && (candidate.modality === 'presencial' || candidate.modality === 'hibrido');
+      const bothOnline  = ev.modality === 'online' && candidate.modality === 'online';
+      // HARD: overlap ≥50% + presencial + AMBOS location_text preenchidos e distintos (decisão 5.4)
+      const diffLocation = ev.location_text && candidate.location_text
+                        && ev.location_text.toLowerCase().trim() !== candidate.location_text.toLowerCase().trim();
+      const overlapMin = Math.round(overlapMs / 60_000);
+      if (overlapRatio >= 0.5 && bothPresencial && diffLocation) {
+        hardConflicts.push({ ...ev, overlapRatio, overlapMin, reason: 'presencial_diff_location' });
+      } else if (overlapRatio >= 0.5 && bothPresencial) {
+        softConflicts.push({ ...ev, overlapRatio, overlapMin, reason: 'presencial_same_location' });
+      } else if (overlapRatio >= 0.5 && bothOnline) {
+        softConflicts.push({ ...ev, overlapRatio, overlapMin, reason: 'online_simultaneous' });
+      } else if (overlapRatio >= 0.5) {
+        softConflicts.push({ ...ev, overlapRatio, overlapMin, reason: 'online_presencial_mixed' });
+      } else if (overlapRatio > 0) {
+        softConflicts.push({ ...ev, overlapRatio, overlapMin, reason: 'partial_overlap' });
+      }
+    }
+    return { hardConflicts, softConflicts };
+  } catch (err) {
+    console.error('[IntegrityCheck] detectTemporalConflict err (non-fatal):', err.message);
+    return { hardConflicts: [], softConflicts: [] };
+  }
+}
+
+/**
+ * Sprint 18 — detecta duplicidade semântica antes de criar evento.
+ * Janela: ±48h em torno de candidate.start_at.
+ * Fail-open: exceptions retornam { probable: [], possible: [] }.
+ * @returns {{ probable: object[], possible: object[] }}
+ *   probable: score > 0.7  (duplicado provável — A1: NUNCA bloqueia auto)
+ *   possible: 0.5 < score ≤ 0.7 (alerta leve)
+ */
+async function detectDuplicateSemanticEvent(collab, candidate) {
+  try {
+    if (!candidate.title) return { probable: [], possible: [] };
+    const candDate = candidate.start_at ? candidate.start_at.slice(0, 10) : null;
+    const windowStart = candDate
+      ? new Date(new Date(candDate).getTime() - 48 * 3600_000).toISOString() : null;
+    const windowEnd = candDate
+      ? new Date(new Date(candDate).getTime() + 48 * 3600_000).toISOString() : null;
+    let query = supabase
+      .from('events')
+      .select('id, title, start_at, end_at, category, location_text, status, created_at')
+      .eq('collaborator_id', collab.id)
+      .neq('status', 'cancelled');
+    if (windowStart && windowEnd) query = query.gte('start_at', windowStart).lte('start_at', windowEnd);
+    const { data: candidates, error } = await query.limit(30);
+    if (error) {
+      console.error('[detectDuplicateSemanticEvent] query err:', error.message);
+      return { probable: [], possible: [] };
+    }
+    const candTitleNorm = normalizeForSim(candidate.title);
+    const probable = [], possible = [];
+    for (const ev of (candidates || [])) {
+      let score = jaroWinkler(candTitleNorm, normalizeForSim(ev.title));
+      const evDate = ev.start_at ? ev.start_at.slice(0, 10) : null;
+      if (candDate && evDate && candDate === evDate) score = Math.min(score + 0.3, 1.0);
+      if (candidate.category && ev.category === candidate.category) score = Math.min(score + 0.1, 1.0);
+      if (candidate.location_text && ev.location_text &&
+          normalizeForSim(candidate.location_text) === normalizeForSim(ev.location_text)) {
+        score = Math.min(score + 0.1, 1.0);
+      }
+      if (score > 0.7) probable.push({ ...ev, _score: score });
+      else if (score > 0.5) possible.push({ ...ev, _score: score });
+    }
+    probable.sort((a, b) => b._score - a._score);
+    possible.sort((a, b) => b._score - a._score);
+    return { probable: probable.slice(0, 3), possible: possible.slice(0, 3) };
+  } catch (err) {
+    console.error('[IntegrityCheck] detectDuplicateSemanticEvent err (non-fatal):', err.message);
+    return { probable: [], possible: [] };
+  }
+}
+
+/**
+ * Sprint 18 — detecta task similar já aberta antes de criar.
+ * Janela: tasks abertas dos últimos 30 dias.
+ * Fail-open: exceptions retornam { probable: [], possible: [] }.
+ * @param {object} collab
+ * @param {object} candidate — { title, description, assigned_to, department_id, request_type_id }
+ * @returns {{ probable: object[], possible: object[] }}
+ */
+async function detectDuplicateSemanticTask(collab, candidate) {
+  try {
+    if (!candidate.title) return { probable: [], possible: [] };
+    const cutoff = new Date(Date.now() - 30 * 24 * 3600_000).toISOString();
+    const { data: openTasks, error } = await supabase
+      .from('tasks')
+      .select('id, title, description, assigned_to, department_id, request_type_id, status, created_at, due_date')
+      .eq('assigned_to', candidate.assigned_to || collab.id)
+      .not('status', 'in', '("done","cancelled")')
+      .gte('created_at', cutoff)
+      .limit(50);
+    if (error) {
+      console.error('[detectDuplicateSemanticTask] query err:', error.message);
+      return { probable: [], possible: [] };
+    }
+    const candTitleNorm = normalizeForSim(candidate.title);
+    const probable = [], possible = [];
+    for (const task of (openTasks || [])) {
+      let score = jaroWinkler(candTitleNorm, normalizeForSim(task.title));
+      if (candidate.department_id && task.department_id === candidate.department_id) score = Math.min(score + 0.2, 1.0);
+      if (candidate.request_type_id && task.request_type_id === candidate.request_type_id) score = Math.min(score + 0.2, 1.0);
+      // Keywords: nomes próprios (token ≥4 chars começando maiúscula no título original)
+      const candKeywords = (candidate.title || '').match(/\b[A-ZÁÀÃÂÉÊÍÓÔÕÚ][a-záàãâéêíóôõúç]{3,}\b/g) || [];
+      const taskKeywords = (task.title || '').match(/\b[A-ZÁÀÃÂÉÊÍÓÔÕÚ][a-záàãâéêíóôõúç]{3,}\b/g) || [];
+      const shared = candKeywords.filter(k => taskKeywords.includes(k));
+      if (shared.length > 0) score = Math.min(score + 0.1 * Math.min(shared.length, 2), 1.0);
+      if (score > 0.7) probable.push({ ...task, _score: score });
+      else if (score > 0.5) possible.push({ ...task, _score: score });
+    }
+    probable.sort((a, b) => b._score - a._score);
+    possible.sort((a, b) => b._score - a._score);
+    return { probable: probable.slice(0, 3), possible: possible.slice(0, 3) };
+  } catch (err) {
+    console.error('[IntegrityCheck] detectDuplicateSemanticTask err (non-fatal):', err.message);
+    return { probable: [], possible: [] };
+  }
+}
+
 async function processMessage(phone, text, raw = {}) {
   const _t0 = Date.now();
   const _phoneTail = String(phone).slice(-4);
@@ -3552,16 +3844,24 @@ async function processMessage(phone, text, raw = {}) {
       } catch (e) {
         console.error('[Task] date alignment err (non-fatal):', e.message);
       }
-      const { okCount, failCount } = await applyTaskActions(collab, parsedTask.actions);
+      const { okCount, failCount, integrityPayload } = await applyTaskActions(collab, parsedTask.actions);
       console.log(`[Task] batch done: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
-      const result = okCount > 0 ? 'executed' : 'rejected';
-      const reason = okCount > 0 ? `ok=${okCount} fail=${failCount}` : `all_failed:${failCount}`;
-      await logMarker(collab.id, 'TASK_UPDATE', result, reason, null);
-      let base = parsedTask.cleanText || '';
-      if (failCount > 0) {
-        base = (base ? base + '\n\n' : '') + '_não consegui atualizar uma das tarefas, te aviso depois_';
+      if (integrityPayload) {
+        const iType = integrityPayload.type;
+        const logReason = `integrity_${iType}:candidate="${String(integrityPayload.candidateTitle).slice(0,40)}"`;
+        await logMarker(collab.id, 'TASK_UPDATE', 'rejected', logReason, null);
+        console.warn(`[IntegrityCheck] TASK_UPDATE blocked by ${iType} — "${String(integrityPayload.candidateTitle).slice(0,40)}"`);
+        reply = parsedTask.cleanText || reply;
+      } else {
+        const result = okCount > 0 ? 'executed' : 'rejected';
+        const reason = okCount > 0 ? `ok=${okCount} fail=${failCount}` : `all_failed:${failCount}`;
+        await logMarker(collab.id, 'TASK_UPDATE', result, reason, null);
+        let base = parsedTask.cleanText || '';
+        if (failCount > 0 && okCount === 0) {
+          base = (base ? base + '\n\n' : '') + '_não consegui registrar agora, te aviso depois_';
+        }
+        reply = base || reply;
       }
-      reply = base || reply;
     }
   }
 
@@ -3594,16 +3894,28 @@ async function processMessage(phone, text, raw = {}) {
       await logMarker(collab.id, 'EVENT_CREATE', 'rejected', 'schema_invalid', reply);
       reply = parsedEv.cleanText || reply;
     } else if (parsedEv) {
-      const { okCount, failCount } = await applyEventActions(collab, parsedEv.events);
+      const { okCount, failCount, integrityPayload } = await applyEventActions(collab, parsedEv.events);
       console.log(`[Event] batch done: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
-      const result = okCount > 0 ? 'executed' : 'rejected';
-      const reason = okCount > 0 ? `ok=${okCount} fail=${failCount}` : `all_failed:${failCount}`;
-      await logMarker(collab.id, 'EVENT_CREATE', result, reason, null);
-      let base = parsedEv.cleanText || '';
-      if (failCount > 0 && okCount === 0) {
-        base = (base ? base + '\n\n' : '') + '_não consegui salvar o compromisso, te aviso depois_';
+      if (integrityPayload) {
+        // Sprint 18: integrity finding — NÃO persiste; skill apresenta ao user e aguarda confirmação
+        const iSeverity = integrityPayload.severity;
+        const iType     = integrityPayload.type;
+        const logReason = `integrity_${iType}:severity=${iSeverity}:candidate="${String(integrityPayload.candidateTitle).slice(0,40)}"`;
+        await logMarker(collab.id, 'EVENT_CREATE', 'rejected', logReason, null);
+        console.warn(`[IntegrityCheck] EVENT_CREATE blocked by ${iType} (${iSeverity}) — "${String(integrityPayload.candidateTitle).slice(0,40)}"`);
+        // reply já foi construído pelo Claude com o texto de alerta (skill integridade-agenda.md).
+        // Apenas garantir que marker <<EVENT_CREATE>> seja removido do reply.
+        reply = parsedEv.cleanText || reply;
+      } else {
+        const result = okCount > 0 ? 'executed' : 'rejected';
+        const reason = okCount > 0 ? `ok=${okCount} fail=${failCount}` : `all_failed:${failCount}`;
+        await logMarker(collab.id, 'EVENT_CREATE', result, reason, null);
+        let base = parsedEv.cleanText || '';
+        if (failCount > 0 && okCount === 0) {
+          base = (base ? base + '\n\n' : '') + '_não consegui salvar o compromisso, te aviso depois_';
+        }
+        reply = base || reply;
       }
-      reply = base || reply;
     }
   }
 
