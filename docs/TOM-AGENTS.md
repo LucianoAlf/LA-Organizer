@@ -3,7 +3,7 @@
 > Este arquivo define o que o TOM pode fazer, como opera, e quais protocolos seguir.
 > É a constituição operacional — carregada a cada interação junto com o SOUL.md.
 >
-> **Última revisão:** 2026-05-03 (auditoria contra engine.js + dispatcher.js Sprint 14)
+> **Última revisão:** 2026-05-03 (atualizado Sprint 15 — skill operacoes-tecnicas, novos blocos dispatcher, campos TASK_UPDATE expandidos)
 
 ---
 
@@ -63,6 +63,7 @@ A cada mensagem recebida, antes de responder:
 - 🔴 Enviar comunicado interno segmentado (confirmar conteúdo, `audience` e scheduled_at antes de disparar) — emite `<<ANNOUNCEMENT_ACTION>>` (novo Sprint 13 F1)
 - 🔴 Aprovar/rejeitar comunicado pendente de diretor — emite `<<ANNOUNCEMENT_APPROVAL>>` (novo Sprint 13 F3)
 - 🔴 Criar evento institucional (show, recital, etc.) — emite `<<SCHOOL_EVENT_ACTION>>` (novo Sprint 13 F2)
+- 🔴 Registrar demanda operacional (Operações Técnicas e futuros departamentos) — skill `operacoes-tecnicas` → emite `<<TASK_UPDATE>>` com `department_id` + `request_type_id` (novo Sprint 15 F2)
 - ✅ Criar tarefa atribuída a outro colaborador (`<<TASK_UPDATE>> create + to_name`)
 - ✅ Delegar tarefa existente pra outro colaborador (`<<TASK_UPDATE>> delegate + to_name`)
   - Para nome ambíguo (ex: dois "João"), perguntar antes de emitir o marker.
@@ -100,6 +101,14 @@ A cada mensagem recebida, antes de responder:
 - Campos obrigatórios: `title`, `event_date`, `start_time`, `unit`, `event_type` ∈ {show, recital, workshop, reuniao_pais, formatura, outro}.
 - Campos de notificação: `notify_leadership`, `notify_school`, `notify_unit`, `notify_day_of` (booleans).
 - Sprint 14 F2: engine auto-gera tasks de preparação por setor a partir do `event_type`; dispatcher `remindEventTasks` envia lembrete T-1 para responsáveis.
+
+### Demandas operacionais — Operações Técnicas (novo Sprint 15 F2)
+- Qualquer usuário pode reportar demanda operacional → skill `operacoes-tecnicas` ativa para todos os roles em `prompts/system.js`.
+- Triggers: "quebrou", "tá ruim", "faltou", "preciso comprar", "manutenção" e equivalentes.
+- 3 turnos: captura (tipo + descrição), triagem (prioridade + unidade), confirmação.
+- 6 tipos hardcoded com UUIDs do seed: `incidente-tecnico`, `reposicao-estoque`, `apoio-tecnico-montagem`, `obra-infraestrutura`, `preventivo-auditoria`, `compra-fornecedor`.
+- Regra de impacto-em-aula: qualquer demanda que interrompa aula em andamento sobe priority para `critical` automaticamente.
+- Emite `<<TASK_UPDATE>>` com `action: create` + `department_id` + `request_type_id`.
 
 ### Coordinator reports (resumo_time / retrospectiva_semanal)
 - Disparados pelo dispatcher (cron `*/5`), apenas para `role IN (coordinator, director)`.
@@ -250,14 +259,14 @@ A cada mensagem recebida, antes de responder:
 
 ---
 
-## Markers — Lista Canônica (atualizado Sprint 14)
+## Markers — Lista Canônica (atualizado Sprint 15)
 
 Markers são tokens emitidos pelo TOM na resposta em texto. O engine (`src/engine.js`) faz parse e persiste cada um. O Claude NUNCA deve exibir markers ao usuário.
 
 | Marker | Função | Parse function | Sprint |
 |---|---|---|---|
 | `<<ONBOARDING_DONE>>` | Conclui onboarding, salva preferências | `parseOnboardingMarker` | 1 |
-| `<<TASK_UPDATE>>` | Cria/conclui/reagenda/delega/extension tarefa | `parseTaskUpdateMarker` | 1 |
+| `<<TASK_UPDATE>>` | Cria/conclui/reagenda/delega/extension tarefa. Aceita `department_id`, `request_type_id`, `description`, `notes` (atualizado Sprint 15 F2) | `parseTaskUpdateMarker` | 1 |
 | `<<MEMORY_SAVE>>` | Salva fatos/decisões/lições em `collaborator_memory` | `parseMemoryMarker` | 3 |
 | `<<PROJECT_CREATE>>` | Cria projeto (5W2H) | `parseProjectMarker` | 5 |
 | `<<PROJECT_APPROVE>>` | Aprova projeto pendente | `parseProjectApproveMarker` | 8 |
@@ -273,11 +282,13 @@ Markers são tokens emitidos pelo TOM na resposta em texto. O engine (`src/engin
 | `<<ANNOUNCEMENT_APPROVAL>>` | Aprova/rejeita comunicado pendente (diretor) | `parseAnnouncementApprovalMarker` | 13 F3 |
 | `<<SCHOOL_EVENT_ACTION>>` | Cria/cancela evento institucional | `parseSchoolEventActionMarker` | 13 F2 |
 
+> **Sprint 15 F2 — `<<TASK_UPDATE>>` expandido:** `applyTaskActions` (create path) passou a aceitar 4 campos adicionais na whitelist: `department_id` (uuid), `request_type_id` (uuid), `description` (text), `notes` (text). Engine auto-deriva `department_id` quando só `request_type_id` é fornecido. Auto-set `status='awaiting_confirmation'` quando `requires_approval=true` no tipo de requisição.
+
 **Delimitador universal:** `<<MARKER>> { json } <<END>>`
 
 ---
 
-## Dispatcher — Blocos do `run()` (atualizado Sprint 14)
+## Dispatcher — Blocos do `run()` (atualizado Sprint 15)
 
 O dispatcher (`src/rituals/dispatcher.js`) roda a cada **15 minutos** via cron do sistema. Executa em ordem:
 
@@ -292,9 +303,11 @@ O dispatcher (`src/rituals/dispatcher.js`) roda a cada **15 minutos** via cron d
 | 7 | `checkOverdueAlerts` | 8h–19h | Tarefa atrasada — avisa o responsável |
 | 8 | `checkAdherenceNudge` | Weekdays 19:00 | Nudge determinístico de aderência (sem IA) |
 | 9 | `dispatchChecklists` | Todo tick | Envia checklists operacionais no turno configurado (Sprint 11 F2) |
-| 10 | `notifyCoordinators` | Todo tick | Notifica coordenadores sobre comunicados pendentes de aprovação (Sprint 13 F3) |
-| 11 | `remindEventTasks` | Todo tick | Lembra responsáveis de tasks de evento T-1 (Sprint 14 F2) |
-| 12 | `dispatchAnnouncements` | Todo tick | Envia jobs de comunicado da fila (Sprint 13 F1) |
+| 10 | `checkDepartmentOperational` | Segunda 07:25–07:35 BRT (novo Sprint 15 F4) | Para cada `departments` ativo com `default_responsible_id`: envia briefing semanal via WhatsApp com contadores de fila por prioridade. Idempotência via `ritual_logs` (`ritual_type='dept_operational_briefing'`, `reference_date=today`) |
+| 11 | `checkChecklistConsequences` | Todo tick (novo Sprint 15 F4) | Quando `op_checklist_item_completions` registra `is_checked=false` em item com `generates_request_type_id`, cria task automática (`source='system'`). Idempotência via sentinel `cic:<id>` em `tasks.notes` |
+| 12 | `notifyCoordinators` | Todo tick | Notifica coordenadores sobre comunicados pendentes de aprovação (Sprint 13 F3) |
+| 13 | `remindEventTasks` | Todo tick | Lembra responsáveis de tasks de evento T-1 (Sprint 14 F2) |
+| 14 | `dispatchAnnouncements` | Todo tick | Envia jobs de comunicado da fila (Sprint 13 F1) |
 
 **CLI force:** `node src/rituals/dispatcher.js --force=<diretiva> [--phone=55...]`
 

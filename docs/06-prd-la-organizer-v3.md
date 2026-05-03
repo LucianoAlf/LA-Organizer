@@ -1,12 +1,12 @@
 # PRD — LA Organizer
 
 **Documento:** 06 — PRD Completo
-**Versão:** 3.2
-**Data:** 2026-05-03 (atualizado Sprint 14)
+**Versão:** 3.3
+**Data:** 2026-05-03 (atualizado Sprint 15)
 **Autor:** Luciano Alf (produto) + Claude + OpenClaw (arquitetura)
 **Stakeholder:** Luciano Alf (CEO LA Music)
 **Agente:** TOM
-**Status:** Fase 1 funcionalmente concluída — Fase 2 (PWA) em produção · Sprints 0→14 fechadas
+**Status:** Fase 1 funcionalmente concluída — Fase 2 (PWA) em produção · Sprints 0→15 fechadas
 
 ---
 
@@ -65,7 +65,7 @@ A LA HQ tem um propósito: **transformar vidas**. O sistema não serve só ao tr
 |---|---|---|
 | Agente conversacional | TOM via WhatsApp (UAZAPI) | ✅ Fase 1 concluída |
 | Backend | Node.js + Supabase (PostgreSQL) | ✅ Em produção |
-| Skills e docs | 16 skills ativas + referências internas (atualizado Sprint 14) | ✅ Revisadas pelo OpenClaw |
+| Skills e docs | 17 skills ativas + referências internas (atualizado Sprint 15) | ✅ Revisadas pelo OpenClaw |
 | Proteção | 4 guards (serialização, dedupe, validação de markers, anti-leak) | ✅ Em produção |
 | Observabilidade | ritual_logs + marker_logs + tela PWA Observabilidade (atualizado Sprint 13 F3) | ✅ Em produção |
 | Resiliência | restart behavior + fallback provider + segredos | ✅ Em produção |
@@ -114,6 +114,13 @@ A LA HQ tem um propósito: **transformar vidas**. O sistema não serve só ao tr
 | Mapa de equipe por unidade e setor (`event_team_map`) | ✅ | Sprint 14 F2 |
 | Tela "Configurar Equipe" (`/mais/agenda-escolar/equipe`) | ✅ | Sprint 14 F2 |
 | Lembretes WhatsApp T-1 para tasks de evento pendentes | ✅ | Sprint 14 F2 |
+| Camada operacional replicável — tabelas `departments` + `department_request_types` | ✅ | Sprint 15 F1 |
+| Seed Operações Técnicas (6 tipos de requisição) + Rafinha como responsável padrão | ✅ | Sprint 15 F1 |
+| Skill TOM `operacoes-tecnicas` — triagem de demandas via WhatsApp (3 turnos) | ✅ | Sprint 15 F2 |
+| Engine: `applyTaskActions` aceita `department_id`, `request_type_id`, `description`, `notes`; auto-derive department; auto-status `awaiting_confirmation` | ✅ | Sprint 15 F2 |
+| Dispatcher: `checkDepartmentOperational` — briefing semanal segunda 07:30 BRT por departamento | ✅ | Sprint 15 F4 |
+| Dispatcher: `checkChecklistConsequences` — cria task automática quando item com `generates_request_type_id` é marcado false | ✅ | Sprint 15 F4 |
+| PWA: tela Operações Técnicas `/mais/operacoes` — fila por prioridade, 4 filtros, sem criação direta | ✅ | Sprint 15 F3 |
 | Resumo do time (coordenador, 19h30) | ✅ | Fase 1 |
 | Retrospectiva semanal (coordenador, domingo) | ✅ | Fase 1 |
 | Do not disturb (janela por colaborador) | ✅ | Fase 1 |
@@ -152,7 +159,7 @@ Criar o espelho visual do TOM — um PWA mobile-first que permite ao colaborador
 - Privacidade por design (pessoal não vaza para coordenador)
 - **Ações estruturadas que disparam markers do TOM** quando aplicável (ex.: criação de projeto via wizard dispara `<<PROJECT_CREATE>>` no engine)
 
-### 5.3 Telas em produção (Sprints 0→14)
+### 5.3 Telas em produção (Sprints 0→15)
 
 | Tela | Role | Sprint |
 |---|---|---|
@@ -174,6 +181,7 @@ Criar o espelho visual do TOM — um PWA mobile-first que permite ao colaborador
 | Observabilidade `/mais/observabilidade` | Coord+ | Sprint 13 F3 |
 | Evento Detalhe `/mais/eventos/:id` | Coord+ | Sprint 14 F1 |
 | Configurar Equipe `/mais/agenda-escolar/equipe` | Coord+ | Sprint 14 F2 |
+| Operações Técnicas `/mais/operacoes` | Coord+ | Sprint 15 F3 |
 
 ### 5.4 Telas planejadas (futuro)
 
@@ -239,7 +247,7 @@ Ver `docs/PROJECT-WIZARD.md` para decisões arquiteturais detalhadas, mapeamento
 |---|---|---|
 | Fase 0 | Infraestrutura (VPS, banco, webhook) | ✅ Concluída |
 | Fase 1 | TOM WhatsApp (agente completo) | ✅ Funcionalmente concluída |
-| Fase 2 | PWA espelho visual + Project Wizard + Coordenação operacional | ✅ Sprints 0→14 entregues (atualizado Sprint 14) |
+| Fase 2 | PWA espelho visual + Project Wizard + Coordenação operacional | ✅ Sprints 0→15 entregues (atualizado Sprint 15) |
 | Fase 3 | Dashboard gerencial avançado + check-in RH | 📌 Planejado |
 | Fase 4 | Integração Alfredo (OpenClaw) | 📌 Planejado |
 | Fase 5 | Emusys completo + Google Calendar | 📌 Planejado |
@@ -254,7 +262,8 @@ Ver `docs/PROJECT-WIZARD.md` para decisões arquiteturais detalhadas, mapeamento
 1. **Concluído:** Alf testou sozinho (Sprints 0→4)
 2. **Concluído:** Anne Susan entrou (collaborator, Campo Grande) na Sprint 2
 3. **Concluído (atualizado Sprint 14):** Project Wizard entregue; Juliana e Quintela (coordenadores) podem onboardar
-4. **Próximo:** validar Sprint 14 F2 em uso real (1–2 semanas) antes de expandir features de eventos para mais usuários
+4. **Concluído (atualizado Sprint 15):** Camada operacional replicável entregue; Rafinha cadastrado como responsável padrão de Operações Técnicas
+5. **Próximo:** validar Sprint 15 em uso real — confirmar se briefing semanal segunda 07:30 BRT funciona na prática, se checklist consequences geram tasks corretas
 5. **Produção plena:** time completo (~40 pessoas) — após estabilização com 4-5 usuários coordenadores
 
 ---
@@ -272,6 +281,8 @@ Ver `docs/PROJECT-WIZARD.md` para decisões arquiteturais detalhadas, mapeamento
 - **Kits de tasks por evento_type, não por evento individual:** mapa de equipe é por unidade × setor, não por evento específico — simplifica gestão, override diferido para uso real.
 - **Deploy via scp sem CI/CD (atualizado Sprint 14):** aceitável single-dev; tsc clean exigido antes de cada deploy. Histórico mantido no GitHub.
 - **Bundle PWA 633KB (dívida Sprint 14):** code-splitting diferido — só prioridade se carregamento incomodar usuários.
+- **Briefing semanal segunda 07:30 BRT (Sprint 15):** timing de ação escolhido sobre sexta 17h — coerência com briefing matinal pessoal e pareamento com daily_plans.
+- **Camada operacional replicável (Sprint 15):** `departments` + `department_request_types` projetados para suportar múltiplos departamentos; Operações Técnicas é o primeiro.
 
 ---
 
@@ -288,6 +299,20 @@ Ver `docs/PROJECT-WIZARD.md` para decisões arquiteturais detalhadas, mapeamento
 | Telas em produção | Lista P0/P1 | Lista por sprint entregue |
 | Privatização repo | Pendente | Concluído |
 | Rotação segredos | Pendente | Concluída (Supabase Sprint 7, UAZAPI Sprint 5) |
+
+### v3.2 → v3.3 (2026-05-03) — pós-Sprint 15
+
+| Item | v3.2 | v3.3 |
+|---|---|---|
+| Status Fase 2 | Sprints 0→14 entregues | Sprints 0→15 entregues |
+| Telas em produção | 17 telas | 18 telas (+ Operações Técnicas) |
+| DB tabelas | 36 | 38 (+ departments, department_request_types) |
+| Skills TOM | 16 skills | 17 skills (+ operacoes-tecnicas) |
+| Dispatcher blocos | 12 | 14 (+ checkDepartmentOperational, checkChecklistConsequences) |
+| Engine markers | + SCHOOL_EVENT_ACTION | `<<TASK_UPDATE>>` aceita novos campos: department_id, request_type_id, description, notes |
+| Colaboradores | Alf + Anne Susan (+ coords) | + Rafinha (id c9e72a40, role collaborator, unit all) |
+| Briefing semanal | Não existia | Segunda 07:30 BRT por departamento ativo |
+| Checklist consequences | Não existia | Item não cumprido → task automática (source='system') |
 
 ### v3.1 → v3.2 (2026-05-03) — pós-Sprint 14
 

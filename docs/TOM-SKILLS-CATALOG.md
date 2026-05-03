@@ -1,8 +1,8 @@
 # TOM-SKILLS-CATALOG — Catálogo Consolidado de Skills
 
 **Documento:** TOM-SKILLS-CATALOG
-**Versão:** 4.0
-**Data:** 2026-05-03 (auditoria Sprint 14 — adicionadas skills 10, 10.3, 10.5, 10.6, 10.7, 10.8, 10.9; corrigida entrada 3)
+**Versão:** 4.1
+**Data:** 2026-05-03 (atualizado Sprint 15 — adicionada skill 10.5 operacoes-tecnicas)
 **Função:** Catálogo consolidado das skills e referências internas do TOM
 
 ---
@@ -302,6 +302,36 @@ Em dúvida, fallback para `checklist-tarefas` (cria task com `remind_at` se for 
 
 ---
 
+## 10.5 Operações Técnicas (novo Sprint 15 F2)
+**Arquivo:** `skills/operacoes-tecnicas.md`
+
+**Função:** capturar, triar e confirmar demandas operacionais do departamento Operações Técnicas (e futuros departamentos replicáveis).
+
+**Ativa quando** (todos os roles — carregada globalmente em `prompts/system.js`):
+- "quebrou", "tá ruim", "faltou", "preciso comprar", "manutenção", "não funciona", "sem estoque" e equivalentes
+- qualquer menção a problema físico/técnico na escola
+
+**Fluxo (3 turnos):**
+1. **Captura:** identifica tipo de demanda e coleta descrição
+2. **Triagem:** confirma prioridade e unidade; aplica regra de impacto-em-aula (priority → `critical`)
+3. **Confirmação:** resumo + emite `<<TASK_UPDATE>>`
+
+**Tipos suportados (hardcoded com UUIDs do seed):**
+- `incidente-tecnico` (high) — equipamento quebrado ou falha imediata
+- `reposicao-estoque` (medium) — material esgotado
+- `apoio-tecnico-montagem` (medium) — suporte para evento/show
+- `obra-infraestrutura` (low, requires_approval) — reforma ou melhoria permanente
+- `preventivo-auditoria` (low) — manutenção programada
+- `compra-fornecedor` (medium, requires_approval) — aquisição com terceiros
+
+**Entrega principal:**
+- emite `<<TASK_UPDATE>>` com `action: create`, `department_id`, `request_type_id`, `description`, `notes`
+- engine auto-set `status='awaiting_confirmation'` para tipos com `requires_approval=true`
+
+**Responsável padrão:** Rafinha (id c9e72a40) — `departments.default_responsible_id`
+
+---
+
 ## 10.6 Cadastro de projeto 5W2H (novo Sprint 5)
 **Arquivo:** `skills/cadastro-projeto-5w2h.md`
 
@@ -397,6 +427,7 @@ Em dúvida, fallback para `checklist-tarefas` (cria task com `remind_at` se for 
 | enviar comunicado interno segmentado (novo Sprint 13 F1) | `comunicados` |
 | aprovar/rejeitar comunicado pendente — director (novo Sprint 13 F3) | `aprovacao-comunicados` |
 | criar evento institucional (show, recital, etc.) (novo Sprint 13 F2) | `eventos-institucionais` |
+| **demanda operacional** ("quebrou", "faltou", "preciso comprar", problema técnico) (novo Sprint 15 F2) | `operacoes-tecnicas` |
 | briefing / fechamento / rotina diária | `rituais-diarios` |
 | **planejamento semanal** (novo Sprint 12) | `planejamento-semanal` |
 | **resumo do time (coordenador, 19:30 weekdays)** | `coordinator reports` (deterministic; sem AI) |

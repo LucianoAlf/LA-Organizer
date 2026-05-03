@@ -1,8 +1,10 @@
-# Roadmap LA Organizer — Histórico Sprint 0→14
+# Roadmap LA Organizer — Histórico Sprint 0→15
 
 > Histórico cronológico das sprints. Para o estado atual do produto, ver PRD (`docs/06-prd-la-organizer-v3.md`). Para schema do banco, ver `docs/03-esquema-banco-dados-la-organizer.md`.
 >
 > **Nota sobre sprints 0–10:** não há specs ou reports granulares para este período. O histórico foi reconstruído a partir do PRD v3.1 (escrito em 2026-04-28 com estado Sprints 0→7 em produção) e dos comentários inline do engine.js. Sprints 8–10 foram inferidas pelos artefatos entregues (telas no App.tsx, markers no engine).
+>
+> **Atualizado Sprint 15:** adicionada seção Sprint 15 — Camada Operacional Replicável. Próximos passos revisados.
 
 ---
 
@@ -261,6 +263,48 @@
 
 ---
 
+## Sprint 15 — Camada Operacional Replicável
+
+**Status:** entregue (4 fatias)
+**Data:** 2026-05-03
+
+### Fatia 1 — DB + Seed Operações Técnicas (Sprint 15 F1)
+
+**Entregas:**
+- DB: tabela `departments` (id, slug UNIQUE, name, description, is_active, unit_scope_enabled, default_responsible_id FK collaborators) com RLS (select: todos; write: coord/director)
+- DB: tabela `department_request_types` (id, department_id FK ON DELETE CASCADE, slug, label, description, default_priority CHECK, requires_approval, generates_task, is_active, sort_order) com RLS (select: todos; write: coord/director); UNIQUE (department_id, slug)
+- DB: `tasks` ganhou `department_id` (FK departments ON DELETE SET NULL) e `request_type_id` (FK department_request_types ON DELETE SET NULL) — ambos nullable com índices parciais
+- DB: `op_checklist_items` ganhou `generates_request_type_id` (FK department_request_types ON DELETE SET NULL) — índice parcial
+- Seed: departamento `operacoes-tecnicas` + 6 tipos de requisição; `default_responsible_id` = Rafinha (id c9e72a40, phone 5521973008639)
+
+### Fatia 2 — Engine + Skill TOM (Sprint 15 F2)
+
+**Entregas:**
+- Engine (`applyTaskActions`, create path): whitelist expandida aceita `department_id`, `request_type_id`, `description`, `notes`; validação UUID; lookup do request_type; auto-deriva `department_id` quando só `request_type_id` fornecido; auto-set `status='awaiting_confirmation'` quando `requires_approval=true`
+- Skill TOM `skills/operacoes-tecnicas.md`: 3 turnos (captura/triagem/confirmação), 6 tipos hardcoded com UUIDs do seed, regra de impacto-em-aula (bumpa priority para critical), carregada para TODOS os roles em `prompts/system.js`
+
+### Fatia 3 — PWA Fila Operacional (Sprint 15 F3)
+
+**Entregas:**
+- Tela `OperacoesFilaTecnica.tsx` em `/mais/operacoes` — fila do departamento Operações Técnicas
+- 4 filtros: unidade, tipo de requisição, status, responsável
+- Cards agrupados por prioridade (🔴 critical / 🟠 high / 🟡 medium / 🟢 low)
+- Sem botão "+ Nova" — TOM é o canal de criação
+- `Mais.tsx` atualizado: item "Operações Técnicas" visível para coordinator/director
+- `types.ts` atualizado: `Department`, `DepartmentRequestType`, `OperationalTask`, `STATUS_LABEL_OPERATIONAL`, `PRIORITY_INDICATOR`
+
+### Fatia 4 — Dispatcher (Sprint 15 F4)
+
+**Entregas:**
+- Bloco novo `checkDepartmentOperational`: segunda 07:25–07:35 BRT; para cada `departments` ativo com `default_responsible_id`, envia briefing semanal via WhatsApp com contadores de fila por prioridade; idempotência via `ritual_logs` (`ritual_type='dept_operational_briefing'`, `reference_date=today`)
+- Bloco novo `checkChecklistConsequences`: todo tick; quando `op_checklist_item_completions` registra `is_checked=false` em item com `generates_request_type_id`, cria task automática (`source='system'`); idempotência via sentinel `cic:<id>` em `tasks.notes`
+- Wired em `run()` entre `dispatchChecklists` e `notifyCoordinators`
+
+**Decisão de produto:**
+- Briefing semanal: segunda 07:30 BRT (não sexta 17h) — timing de ação, coerência com briefing matinal pessoal, pareamento com `daily_plans`
+
+---
+
 ## Backlog descartado
 
 | Item | Decisão | Motivo |
@@ -276,9 +320,10 @@
 
 ## Próximos passos
 
-1. **Validar Sprint 14 F2 em uso real** (1–2 semanas) — confirmar se kits estão corretos, se mapa de equipe funciona na prática, se lembrete T-1 ajuda ou incomoda
-2. **Reavaliar override de equipe e múltiplos lembretes** após validação acima
-3. **Onboardar coordenadores (Juliana e Quintela)** — pré-requisito atendido (Project Wizard + features de coordenação estáveis)
-4. **Code-splitting PWA** — bundle em 633KB; só prioridade se carregamento lento começar a incomodar usuários
-5. **Testes automatizados** — só vale o esforço com mais de 1 dev no projeto
-6. **Fase 3** — Dashboard gerencial avançado + check-in RH (escopo a definir)
+1. **Validar Sprint 15 em uso real** — confirmar se briefing semanal segunda 07:30 BRT funciona na prática, se checklist consequences geram tasks corretas, se Rafinha consegue operar a fila pelo PWA
+2. **Expandir para segundo departamento** (ex.: Pedagógico ou Administrativo) com base na estrutura `departments` + `department_request_types`
+3. **Onboardar coordenadores (Juliana e Quintela)** — pré-requisito atendido (Sprint 14 + Sprint 15 estáveis)
+4. **Validar override de equipe e múltiplos lembretes** (diferido Sprint 14) após validação do fluxo base
+5. **Code-splitting PWA** — bundle em 633KB; só prioridade se carregamento lento começar a incomodar usuários
+6. **Testes automatizados** — só vale o esforço com mais de 1 dev no projeto
+7. **Fase 3** — Dashboard gerencial avançado + check-in RH (escopo a definir)

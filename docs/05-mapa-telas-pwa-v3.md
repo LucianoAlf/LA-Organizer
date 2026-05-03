@@ -1,11 +1,11 @@
 # Mapa de Telas do PWA — LA Organizer
 
 **Documento:** 05
-**Versão:** 3.2
-**Data:** 3 de maio de 2026
+**Versão:** 3.3
+**Data:** 3 de maio de 2026 (atualizado Sprint 15)
 **Plataforma:** PWA mobile-first (React/TypeScript) — VPS (nginx + PM2)
 **Design:** Dark mode padrão, opção light mode
-**Status:** Sprints 0→14 em produção
+**Status:** Sprints 0→15 em produção
 
 ---
 
@@ -42,6 +42,7 @@
 | Observabilidade `/mais/observabilidade` | — | ✓ | ✓ | ✅ Sprint 13 F3 |
 | Evento Detalhe `/mais/eventos/:id` | — | ✓ | ✓ | ✅ Sprint 14 F1 |
 | Configurar Equipe `/mais/agenda-escolar/equipe` | — | ✓ | ✓ | ✅ Sprint 14 F2 |
+| Operações Técnicas `/mais/operacoes` | — | ✓ | ✓ | ✅ Sprint 15 F3 |
 
 ---
 
@@ -258,6 +259,18 @@ Configuração do mapeamento setor × responsável por unidade (barra/recreio/ca
 
 ---
 
+### Tela 18 — Operações Técnicas `/mais/operacoes` *(novo Sprint 15 F3)*
+
+**Route:** `<ProtectedRoute />` — visível no menu Mais apenas para `requireRoles: ['director', 'coordinator']`
+
+**Role:** Coordenador, Diretor · **Sprint:** 15 F3
+
+Fila operacional do departamento Operações Técnicas. 4 filtros: unidade, tipo de requisição (`request_type_id`), status, responsável. Cards agrupados por prioridade (🔴 critical / 🟠 high / 🟡 medium / 🟢 low). Sem botão "+ Nova" — o canal de criação é exclusivamente o TOM (skill `operacoes-tecnicas`). Dados vinculados a `tasks` com `department_id` + `request_type_id`. Tipos de tarefa e constantes exportados de `types.ts`: `Department`, `DepartmentRequestType`, `OperationalTask`, `STATUS_LABEL_OPERATIONAL`, `PRIORITY_INDICATOR`.
+
+**Mais.tsx:** item "Operações Técnicas" adicionado — label "Fila de demandas operacionais".
+
+---
+
 ## Auth — Magic Link via WhatsApp
 
 **Fluxo:**
@@ -315,3 +328,13 @@ Configuração do mapeamento setor × responsável por unidade (barra/recreio/ca
 | Hoje — filtro action_type | Não previsto | ✅ Entregue Sprint 12 Bloco D |
 | Histórico — agrega events | Apenas tasks | ✅ Inclui tasks + events (work) |
 | Hosting PWA | Vercel (decidido) | VPS (nginx + PM2) |
+
+## O que muda v3.2 → v3.3 *(Sprint 15)*
+
+| Item | v3.2 | v3.3 |
+|---|---|---|
+| Total de telas | 17 em produção | 18 em produção |
+| Status geral | Sprints 0→14 em produção | Sprints 0→15 em produção |
+| Operações Técnicas | Não previsto | ✅ Entregue Sprint 15 F3 (`/mais/operacoes`) |
+| types.ts novos | — | `Department`, `DepartmentRequestType`, `OperationalTask`, `STATUS_LABEL_OPERATIONAL`, `PRIORITY_INDICATOR` |
+| Canal de criação operacional | — | Exclusivamente via TOM (sem FAB na tela) |

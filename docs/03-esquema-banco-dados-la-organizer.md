@@ -1,8 +1,8 @@
 # 03 — Esquema do Banco de Dados — LA Organizer
 
 > **Fonte de verdade:** Supabase Postgres, schema `public`.
-> **Última revisão:** 2026-05-03
-> **Tabelas base:** 36 | **Views:** 1 (`v_recent_events`)
+> **Última revisão:** 2026-05-03 (atualizado Sprint 15)
+> **Tabelas base:** 38 | **Views:** 1 (`v_recent_events`)
 
 ---
 
@@ -37,6 +37,9 @@ O banco suporta duas superfícies: **TOM** (agente LLM via WhatsApp) e **PWA** (
 │  op_checklists · op_checklist_items                         │
 │  op_checklist_completions · op_checklist_item_completions   │
 │  op_checklists_audit                                        │
+├─────────────────────────────────────────────────────────────┤
+│  OPERAÇÕES (novo Sprint 15)                                 │
+│  departments · department_request_types                     │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -353,6 +356,8 @@ Tarefas individuais ou vinculadas a projeto/checkpoint/evento escolar. Centro do
 | notes | text | YES | — | Notas internas (Sprint 14 F1) |
 | support_team | text[] | YES | — | IDs ou nomes do time de apoio (Sprint 14 F1) |
 | reminded_at | timestamptz | YES | — | Timestamp do lembrete T-1 enviado (Sprint 14 F2) |
+| department_id | uuid | YES | — | FK → departments(id) ON DELETE SET NULL (novo Sprint 15) |
+| request_type_id | uuid | YES | — | FK → department_request_types(id) ON DELETE SET NULL (novo Sprint 15) |
 | created_at | timestamptz | NO | now() | |
 | updated_at | timestamptz | NO | now() | |
 
@@ -374,6 +379,8 @@ Tarefas individuais ou vinculadas a projeto/checkpoint/evento escolar. Centro do
 - completed_by → collaborators(id)
 - created_by → collaborators(id)
 - school_event_id → school_events(id) ON DELETE SET NULL
+- department_id → departments(id) ON DELETE SET NULL *(novo Sprint 15)*
+- request_type_id → department_request_types(id) ON DELETE SET NULL *(novo Sprint 15)*
 
 **RLS:**
 - `Service role full access`: ALL
@@ -1075,12 +1082,14 @@ Itens individuais de um template de checklist operacional.
 | sort_order | integer | NO | 0 | |
 | is_active | boolean | NO | true | |
 | updated_by | uuid | YES | — | FK → collaborators(id) |
+| generates_request_type_id | uuid | YES | — | FK → department_request_types(id) ON DELETE SET NULL (novo Sprint 15) — quando is_checked=false gera task automática |
 | created_at | timestamptz | NO | now() | |
 | updated_at | timestamptz | YES | now() | |
 
 **Relacionamentos:**
 - checklist_id → op_checklists(id) ON DELETE CASCADE
 - updated_by → collaborators(id)
+- generates_request_type_id → department_request_types(id) ON DELETE SET NULL *(novo Sprint 15)*
 
 **RLS:**
 - `Service role full access`: ALL
@@ -1168,7 +1177,79 @@ Trilha de auditoria para criação, atualização e desativação de templates d
 
 ---
 
-## 7. RLS & Helpers
+## 7. Operações *(novo Sprint 15)*
+
+### `departments` *(novo Sprint 15)*
+Departamentos operacionais da escola. Cada departamento pode ter tipos de requisição próprios e um responsável padrão.
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| slug | text | NO | — | UNIQUE — identificador URL-safe |
+| name | text | NO | — | |
+| description | text | YES | — | |
+| is_active | boolean | NO | true | |
+| unit_scope_enabled | boolean | NO | false | Se filtra por unidade |
+| default_responsible_id | uuid | YES | — | FK → collaborators(id) ON DELETE SET NULL (Sprint 15 F4) |
+| created_at | timestamptz | NO | now() | |
+| updated_at | timestamptz | NO | now() | |
+
+**Constraints:**
+- UNIQUE (slug)
+
+**Relacionamentos:**
+- default_responsible_id → collaborators(id) ON DELETE SET NULL
+
+**Seed Sprint 15 F1:** `operacoes-tecnicas` (Operações Técnicas) — default_responsible_id = Rafinha (id c9e72a40).
+
+**RLS:**
+- `Service role full access`: ALL
+- `departments_select_auth`: SELECT — true (todos leem)
+- `departments_write_mgmt`: ALL — role ∈ {director, coordinator}
+
+---
+
+### `department_request_types` *(novo Sprint 15)*
+Tipos de requisição de um departamento operacional. Governam prioridade, aprovação e geração automática de tasks.
+
+| Coluna | Tipo | Nullable | Default | Notas |
+|---|---|---|---|---|
+| id | uuid | NO | gen_random_uuid() | PK |
+| department_id | uuid | NO | — | FK → departments(id) ON DELETE CASCADE |
+| slug | text | NO | — | Identificador dentro do departamento |
+| label | text | NO | — | Nome legível |
+| description | text | YES | — | |
+| default_priority | text | NO | 'medium' | CHECK ∈ {critical, high, medium, low} |
+| requires_approval | boolean | NO | false | |
+| generates_task | boolean | NO | true | |
+| is_active | boolean | NO | true | |
+| sort_order | integer | NO | 0 | |
+
+**Constraints:**
+- default_priority CHECK: critical, high, medium, low
+- UNIQUE (department_id, slug)
+
+**Relacionamentos:**
+- department_id → departments(id) ON DELETE CASCADE
+
+**Seed Sprint 15 F1 (departamento operacoes-tecnicas):**
+| slug | label | default_priority | requires_approval |
+|---|---|---|---|
+| incidente-tecnico | Incidente Técnico | high | false |
+| reposicao-estoque | Reposição de Estoque | medium | false |
+| apoio-tecnico-montagem | Apoio Técnico / Montagem | medium | false |
+| obra-infraestrutura | Obra / Infraestrutura | low | true |
+| preventivo-auditoria | Preventivo / Auditoria | low | false |
+| compra-fornecedor | Compra com Fornecedor | medium | true |
+
+**RLS:**
+- `Service role full access`: ALL
+- `dept_request_types_select_auth`: SELECT — true (todos leem)
+- `dept_request_types_write_mgmt`: ALL — role ∈ {director, coordinator}
+
+---
+
+## 8. RLS & Helpers
 
 ### Funções helper
 
@@ -1210,8 +1291,10 @@ O **engine** (TOM backend) usa a **service role key**, que bypassa todas as poli
 | op_checklists_audit | Leitura: coordinator/director |
 | announcements | SELECT coordinator/director; UPDATE (aprovação) director |
 | announcement_jobs | SELECT coordinator/director |
+| departments | SELECT aberto a todos; escrita coordinator/director *(novo Sprint 15)* |
+| department_request_types | SELECT aberto a todos; escrita coordinator/director *(novo Sprint 15)* |
 | Demais tabelas | Service role full access (engine only) |
 
 ---
 
-*Documento gerado a partir do DDL real (information_schema + pg_constraint + pg_policies) em 2026-05-03.*
+*Documento gerado a partir do DDL real (information_schema + pg_constraint + pg_policies) em 2026-05-03. Atualizado Sprint 15 em 2026-05-03.*
