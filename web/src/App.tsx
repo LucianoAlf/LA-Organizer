@@ -13,6 +13,13 @@ import { PessoaDetalhe } from './screens/PessoaDetalhe';
 import { Configuracoes } from './screens/Configuracoes';
 import { Historico } from './screens/Historico';
 import { Habitos } from './screens/Habitos';
+import { Checklists } from './screens/Checklists';
+import { ChecklistsTemplates } from './screens/ChecklistsTemplates';
+import { Comunicados } from './screens/Comunicados';
+import { AgendaEscolar } from './screens/AgendaEscolar';
+import { ConfigurarEquipe } from './screens/ConfigurarEquipe';
+import { EventoDetalhe } from './screens/EventoDetalhe';
+import { Observabilidade } from './screens/Observabilidade';
 
 export default function App() {
   return (
@@ -31,6 +38,13 @@ export default function App() {
           <Route path="configuracoes" element={<Configuracoes />} />
           <Route path="historico" element={<Historico />} />
           <Route path="habitos" element={<Habitos />} />
+          <Route path="checklists" element={<Checklists />} />
+          <Route path="mais/checklists-templates" element={<ChecklistsTemplates />} />
+          <Route path="mais/comunicados" element={<Comunicados />} />
+          <Route path="mais/agenda-escolar" element={<AgendaEscolar />} />
+          <Route path="mais/observabilidade" element={<Observabilidade />} />
+          <Route path="mais/eventos/:id" element={<EventoDetalhe />} />
+          <Route path="mais/agenda-escolar/equipe" element={<ConfigurarEquipe />} />
 
           <Route element={<ProtectedRoute requireRoles={['coordinator', 'director']} />}>
             <Route path="time" element={<DashboardTime />} />

@@ -1,0 +1,175 @@
+import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
+import { SECTORS, SECTOR_LABELS } from '../types';
+import type { EventSector } from '../types';
+
+type Unit = 'barra' | 'recreio' | 'campo_grande';
+
+const UNITS: Unit[] = ['barra', 'recreio', 'campo_grande'];
+const UNIT_LABELS: Record<Unit, string> = {
+  barra: 'Barra',
+  recreio: 'Recreio',
+  campo_grande: 'Campo Grande',
+};
+
+interface CollabOption {
+  id: string;
+  full_name: string;
+}
+
+export function ConfigurarEquipe() {
+  const { collaborator } = useAuth();
+  const queryClient = useQueryClient();
+  const [unit, setUnit] = useState<Unit>('barra');
+  const [draft, setDraft] = useState<Record<EventSector, string>>({
+    logistica: '', tecnica: '', pedagogico: '', comunicacao: '', producao: '',
+  });
+  const [feedback, setFeedback] = useState<string>('');
+
+  const { data: collabs = [] } = useQuery({
+    queryKey: ['collaborators-active'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('collaborators')
+        .select('id, full_name')
+        .eq('is_active', true)
+        .order('full_name', { ascending: true });
+      if (error) throw error;
+      return (data ?? []) as CollabOption[];
+    },
+  });
+
+  const { data: mapRows = [], isLoading } = useQuery({
+    queryKey: ['event-team-map', unit],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('event_team_map')
+        .select('sector, collaborator_id')
+        .eq('unit', unit);
+      if (error) throw error;
+      return (data ?? []) as { sector: EventSector; collaborator_id: string }[];
+    },
+  });
+
+  // Sync draft when unit changes or query loads
+  useEffect(() => {
+    const next: Record<EventSector, string> = {
+      logistica: '', tecnica: '', pedagogico: '', comunicacao: '', producao: '',
+    };
+    for (const row of mapRows) {
+      next[row.sector] = row.collaborator_id;
+    }
+    setDraft(next);
+    setFeedback('');
+  }, [unit, mapRows]);
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      setFeedback('');
+      await supabase.rpc('set_config', {
+        key: 'app.current_user_id',
+        value: collaborator!.id,
+      });
+
+      const toDelete = SECTORS.filter(s => !draft[s]);
+      const toUpsert = SECTORS.filter(s => draft[s]).map(s => ({
+        unit,
+        sector: s,
+        collaborator_id: draft[s],
+      }));
+
+      if (toDelete.length) {
+        const { error: delErr } = await supabase
+          .from('event_team_map')
+          .delete()
+          .eq('unit', unit)
+          .in('sector', toDelete);
+        if (delErr) throw delErr;
+      }
+      if (toUpsert.length) {
+        const { error: upErr } = await supabase
+          .from('event_team_map')
+          .upsert(toUpsert, { onConflict: 'unit,sector' });
+        if (upErr) throw upErr;
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['event-team-map', unit] });
+      setFeedback('Salvo com sucesso.');
+    },
+    onError: (err: Error) => setFeedback('Erro: ' + err.message),
+  });
+
+  return (
+    <div className="space-y-4">
+      <header className="space-y-1">
+        <Link to="/mais/agenda-escolar" className="text-caption text-fg-muted underline">
+          ← Voltar
+        </Link>
+        <h2 className="text-title text-fg">Equipe por Setor</h2>
+        <p className="text-body-sm text-fg-muted">
+          Define o responsável padrão por setor em cada unidade. Tasks de eventos são atribuídas
+          automaticamente a esses responsáveis no momento da criação.
+        </p>
+      </header>
+
+      <div className="flex gap-2 border-b border-border">
+        {UNITS.map(u => (
+          <button
+            key={u}
+            type="button"
+            onClick={() => setUnit(u)}
+            className={[
+              'px-3 py-2 text-body focus-ring',
+              u === unit
+                ? 'border-b-2 border-brand text-fg font-medium'
+                : 'text-fg-muted hover:text-fg',
+            ].join(' ')}
+          >
+            {UNIT_LABELS[u]}
+          </button>
+        ))}
+      </div>
+
+      {isLoading && <p className="text-body-sm text-fg-muted">Carregando...</p>}
+
+      {!isLoading && (
+        <div className="bg-bg-surface rounded-xl border border-border p-4 space-y-3">
+          {SECTORS.map(sector => (
+            <div key={sector} className="flex items-center gap-3">
+              <label className="text-body w-32 shrink-0">{SECTOR_LABELS[sector]}</label>
+              <select
+                className="flex-1 rounded-lg border border-border bg-bg-surface px-3 py-2 text-body text-fg focus:outline-none focus:border-brand"
+                value={draft[sector]}
+                onChange={e => setDraft(prev => ({ ...prev, [sector]: e.target.value }))}
+              >
+                <option value="">Sem responsável fixo</option>
+                {collabs.map(c => (
+                  <option key={c.id} value={c.id}>{c.full_name}</option>
+                ))}
+              </select>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {feedback && (
+        <p className={`text-body-sm ${feedback.startsWith('Erro') ? 'text-danger' : 'text-success'}`}>
+          {feedback}
+        </p>
+      )}
+
+      <button
+        type="button"
+        onClick={() => saveMutation.mutate()}
+        disabled={saveMutation.isPending || isLoading}
+        className="w-full py-3 bg-brand text-white rounded-xl font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
+      >
+        {saveMutation.isPending ? 'Salvando...' : `Salvar equipe da ${UNIT_LABELS[unit]}`}
+      </button>
+    </div>
+  );
+}

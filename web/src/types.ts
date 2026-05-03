@@ -16,7 +16,30 @@ export interface Collaborator {
   onboarding_completed: boolean;
 }
 
-export type TaskStatus = 'pending' | 'in_progress' | 'done' | 'cancelled' | 'overdue' | 'delegated';
+export type TaskStatus = 'pending' | 'in_progress' | 'done' | 'cancelled' | 'overdue' | 'delegated' | 'awaiting_confirmation';
+
+export type EventSector = 'logistica' | 'tecnica' | 'pedagogico' | 'comunicacao' | 'producao';
+
+export const SECTOR_LABELS: Record<EventSector, string> = {
+  logistica: 'Logística',
+  tecnica: 'Técnica',
+  pedagogico: 'Pedagógico',
+  comunicacao: 'Comunicação',
+  producao: 'Produção',
+};
+
+export const SECTORS: EventSector[] = ['logistica', 'tecnica', 'pedagogico', 'comunicacao', 'producao'];
+
+export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
+  pending: 'Pendente',
+  in_progress: 'Em andamento',
+  done: 'Concluída',
+  cancelled: 'Cancelada',
+  overdue: 'Atrasada',
+  delegated: 'Delegada',
+  awaiting_confirmation: 'Aguardando confirmação',
+};
+
 export type TaskContext = 'personal' | 'work';
 export type TaskPriority = 'critical' | 'high' | 'medium' | 'low';
 export type Quadrant = 'q1' | 'q2' | 'q3' | 'q4' | null;
@@ -87,6 +110,11 @@ export interface Task {
   created_by: string;
   completed_at?: string | null;
   projects?: { name: string } | null;
+  // Sprint 14 Fatia 1 — campos de tasks de evento (todos opcionais)
+  school_event_id?: string | null;
+  event_sector?: EventSector | null;
+  notes?: string | null;
+  support_team?: string[] | null;
 }
 
 export type EventStatus = 'scheduled' | 'done' | 'cancelled';
@@ -172,4 +200,322 @@ export interface Checkpoint {
   status: 'pending' | 'in_progress' | 'done' | 'cancelled';
   completed_at: string | null;
   sort_order?: number | null;
+}
+
+// ── Checklists Operacionais ──────────────────────────────────────────────────
+
+export interface OpChecklistTemplate {
+  id: string
+  name: string
+  function_role: string
+  unit: string
+  shift: string
+  days_of_week: number[]
+  dispatch_time: string        // "HH:MM"
+  completion_threshold: number  // 0–100
+  is_active: boolean
+  created_by: string | null
+  updated_by: string | null
+  created_at?: string
+  updated_at?: string
+}
+
+export interface OpChecklistItem {
+  id: string
+  checklist_id: string
+  description: string
+  sort_order: number
+  is_active: boolean
+  updated_by: string | null
+}
+
+export interface OpChecklistItemCompletion {
+  id: string
+  completion_id: string
+  item_id: string
+  is_checked: boolean
+  channel: 'pwa' | 'whatsapp'
+  late: boolean
+}
+
+export interface OpChecklistCompletion {
+  id: string
+  collaborator_id: string
+  checklist_id: string
+  reference_date: string       // "YYYY-MM-DD"
+  dispatched_at: string | null
+  completed_at: string | null
+  // joins
+  op_checklists: OpChecklistTemplate & {
+    op_checklist_items: OpChecklistItem[]
+  }
+  op_checklist_item_completions: OpChecklistItemCompletion[]
+}
+
+/** Returns true if the checklist window (dispatched_at + 6h) has closed */
+export function isChecklistWindowClosed(dispatchedAt: string | null): boolean {
+  if (!dispatchedAt) return false
+  const end = new Date(new Date(dispatchedAt).getTime() + 6 * 60 * 60 * 1000)
+  return new Date() > end
+}
+
+export interface OpChecklistAudit {
+  id: string
+  template_id: string
+  action:
+    | 'created' | 'updated' | 'deactivated' | 'activated'
+    | 'item_added' | 'item_removed' | 'item_updated' | 'reordered'
+  changed_by: string | null
+  changed_at: string
+  details: Record<string, unknown> | null
+  collaborator?: { full_name: string }
+}
+
+/** Draft item in the template edit sheet — before DB commit */
+export interface OpChecklistItemDraft {
+  id?: string           // undefined = new item not yet in DB
+  description: string
+  sort_order: number
+  is_active: boolean    // false = marked for removal
+}
+
+// ─── Sprint 13 F1 — Comunicados Internos ────────────────────────────────────
+
+export interface AnnouncementAudience {
+  all?: boolean;
+  function_role?: string[];
+  unidade?: string[];
+  turno?: string[];
+}
+
+export interface Announcement {
+  id: string;
+  created_by: string;
+  body: string;
+  audience: AnnouncementAudience;
+  status: 'pending_approval' | 'scheduled' | 'sending' | 'sent' | 'cancelled' | 'rejected';
+  scheduled_at: string | null;
+  cancel_retraction_sent: boolean;
+  reviewed_by: string | null;
+  rejection_reason: string | null;
+  coordinator_notified_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AnnouncementJob {
+  id: string;
+  announcement_id: string;
+  recipient_id: string | null;
+  phone: string;
+  status: 'pending' | 'sent' | 'failed' | 'cancelled';
+  retry_count: number;
+  sent_at: string | null;
+  error: string | null;
+  created_at: string;
+}
+
+export function audienceLabel(audience: AnnouncementAudience): string {
+  if (!audience || audience.all) return 'Todos';
+  const parts: string[] = [];
+  const roleMap: Record<string, string> = {
+    secretary_morning: 'Secretaria manhã',
+    secretary_evening: 'Secretaria tarde',
+    pedagogical_assistant: 'Pedagógico',
+    cleaning: 'Limpeza',
+    coordinator: 'Coordenação',
+    director: 'Diretoria',
+  };
+  const unitMap: Record<string, string> = {
+    barra: 'Barra', recreio: 'Recreio', campo_grande: 'Campo Grande',
+  };
+  const turnoMap: Record<string, string> = {
+    morning: 'Manhã', afternoon: 'Tarde', evening: 'Noite', full: 'Integral',
+  };
+  if (audience.function_role?.length) {
+    parts.push(audience.function_role.map(r => roleMap[r] ?? r).join(', '));
+  }
+  if (audience.unidade?.length) {
+    parts.push(audience.unidade.map(u => unitMap[u] ?? u).join(', '));
+  }
+  if (audience.turno?.length) {
+    parts.push(audience.turno.map(t => turnoMap[t] ?? t).join(', '));
+  }
+  return parts.join(' · ') || 'Todos';
+}
+
+// ─── Sprint 13 F3 — Observabilidade types & helpers ─────────────────────────
+
+export interface AnnouncementWithMetrics extends Announcement {
+  author_name: string | null;
+  reviewer_name: string | null;
+  jobs_total: number;
+  jobs_sent: number;
+  jobs_failed: number;
+  jobs_cancelled: number;
+  jobs_pending: number;
+}
+
+export type ApprovalAction = 'approve' | 'reject';
+
+/**
+ * Detect duplicate-risk announcements: returns the IDs of announcements that share
+ * audience-overlap with another active announcement created on the same calendar day.
+ */
+export function detectDuplicates(items: Announcement[]): Set<string> {
+  const dupSet = new Set<string>();
+  const active = items.filter(a => ['pending_approval', 'scheduled', 'sending'].includes(a.status));
+  for (let i = 0; i < active.length; i++) {
+    for (let j = i + 1; j < active.length; j++) {
+      const a = active[i], b = active[j];
+      const sameDay = a.created_at.slice(0, 10) === b.created_at.slice(0, 10);
+      if (!sameDay) continue;
+      if (audienceOverlap(a.audience, b.audience)) {
+        dupSet.add(a.id);
+        dupSet.add(b.id);
+      }
+    }
+  }
+  return dupSet;
+}
+
+function audienceOverlap(x: AnnouncementAudience, y: AnnouncementAudience): boolean {
+  if (x.all === true || y.all === true) return true;
+  const inter = (a?: string[], b?: string[]) =>
+    !!(a && b && a.some(v => b.includes(v)));
+  if (inter(x.function_role, y.function_role)) return true;
+  if (inter(x.unidade, y.unidade)) return true;
+  if (inter(x.turno, y.turno)) return true;
+  return false;
+}
+
+/**
+ * Format "há X min/h/d" relative to now.
+ */
+export function timeAgo(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const min = Math.floor(diffMs / 60000);
+  if (min < 1) return 'agora mesmo';
+  if (min < 60) return `há ${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `há ${h}h`;
+  const d = Math.floor(h / 24);
+  return `há ${d}d`;
+}
+
+/**
+ * Format announcement status for display.
+ */
+export function statusLabel(s: Announcement['status']): string {
+  const map: Record<Announcement['status'], string> = {
+    pending_approval: 'Aguardando aprovação',
+    scheduled: 'Agendado',
+    sending: 'Enviando',
+    sent: 'Enviado',
+    cancelled: 'Cancelado',
+    rejected: 'Rejeitado',
+  };
+  return map[s];
+}
+
+// ─── Sprint 13 F2 — Eventos Institucionais ──────────────────────────────────
+
+export interface SchoolEvent {
+  id: string;
+  title: string;
+  event_date: string;          // 'YYYY-MM-DD'
+  start_time: string | null;   // 'HH:MM:SS' or null
+  location: string | null;
+  unit: 'barra' | 'recreio' | 'campo_grande' | null;
+  created_by: string;
+  status: 'active' | 'cancelled';
+  notify_leadership: boolean;
+  notify_school: boolean;
+  notify_unit: boolean;
+  notify_day_of: boolean;
+  created_at: string;
+}
+
+export interface EventAnnouncement {
+  id: string;
+  body: string;
+  status: 'draft' | 'scheduled' | 'sending' | 'sent' | 'cancelled';
+  scheduled_at: string | null;
+  source_event_id: string;
+}
+
+export interface SchoolEventWithAnnouncements extends SchoolEvent {
+  announcements: EventAnnouncement[];
+}
+
+export function unitLabel(unit: string | null): string {
+  if (!unit) return 'Escola toda';
+  const map: Record<string, string> = { barra: 'Barra', recreio: 'Recreio', campo_grande: 'Campo Grande' };
+  return map[unit] ?? unit;
+}
+
+export function formatEventDate(eventDate: string, startTime: string | null): string {
+  const [y, m, d] = eventDate.split('-');
+  const date = `${d}/${m}/${y}`;
+  const time = startTime ? ` às ${startTime.slice(0, 5)}` : '';
+  return `${date}${time}`;
+}
+
+// Computes scheduled_at for event notification steps (browser-side).
+// T-N days at 09:00 BRT (UTC-3 = UTC+12:00 for 09:00 BRT = 12:00 UTC).
+// Returns null if the target time is already past (catch-up = immediate dispatch).
+export function computeStepScheduledAt(eventDate: string, daysBefore: number): string | null {
+  const [y, m, d] = eventDate.split('-').map(Number);
+  const target = new Date(Date.UTC(y, m - 1, d - daysBefore, 12, 0, 0)); // 09:00 BRT
+  return target > new Date() ? target.toISOString() : null;
+}
+
+// Generates announcement specs for each active notification step.
+export function buildEventAnnouncements(ev: {
+  title: string;
+  event_date: string;
+  start_time: string | null;
+  unit: string | null;
+  location: string | null;
+  notify_leadership: boolean;
+  notify_school: boolean;
+  notify_unit: boolean;
+  notify_day_of: boolean;
+}): Array<{ body: string; audience: AnnouncementAudience; scheduled_at: string | null }> {
+  const [y, m, d] = ev.event_date.split('-');
+  const timeStr = ev.start_time ? ` às ${ev.start_time.slice(0, 5)}` : '';
+  const locStr = ev.location ? `, ${ev.location}` : '';
+  const dateBR = `${d}/${m}/${y}`;
+  const specs: Array<{ body: string; audience: AnnouncementAudience; scheduled_at: string | null }> = [];
+  if (ev.notify_leadership) {
+    specs.push({
+      body: `📅 Novo evento: *${ev.title}* — ${dateBR}${timeStr}${locStr}`,
+      audience: { function_role: ['director', 'coordinator'] },
+      scheduled_at: null,
+    });
+  }
+  if (ev.notify_school) {
+    specs.push({
+      body: `📅 Em 3 dias: *${ev.title}* — ${dateBR}${timeStr}${locStr}`,
+      audience: { all: true },
+      scheduled_at: computeStepScheduledAt(ev.event_date, 3),
+    });
+  }
+  if (ev.notify_unit) {
+    specs.push({
+      body: `📅 Amanhã: *${ev.title}* — ${dateBR}${timeStr}${locStr}`,
+      audience: ev.unit ? { unidade: [ev.unit] } : { all: true },
+      scheduled_at: computeStepScheduledAt(ev.event_date, 1),
+    });
+  }
+  if (ev.notify_day_of) {
+    const [yn, mn, dn] = ev.event_date.split('-').map(Number);
+    const T0 = new Date(Date.UTC(yn, mn - 1, dn, 12, 0, 0));
+    specs.push({
+      body: `📅 Hoje: *${ev.title}* — ${dateBR}${timeStr}${locStr}`,
+      audience: ev.unit ? { unidade: [ev.unit] } : { all: true },
+      scheduled_at: T0 > new Date() ? T0.toISOString() : null,
+    });
+  }
+  return specs;
 }

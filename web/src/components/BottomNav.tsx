@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { Circle, CalendarDays, Rocket, Menu } from 'lucide-react';
+import { Circle, CalendarDays, Rocket, ClipboardCheck, Menu } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 interface NavItem {
@@ -12,6 +12,7 @@ const items: NavItem[] = [
   { to: '/hoje', label: 'Hoje', Icon: Circle },
   { to: '/semana', label: 'Semana', Icon: CalendarDays },
   { to: '/projetos', label: 'Projetos', Icon: Rocket },
+  { to: '/checklists', label: 'Checklists', Icon: ClipboardCheck },
   { to: '/mais', label: 'Mais', Icon: Menu },
 ];
 
@@ -26,7 +27,7 @@ export function BottomNav() {
       className="fixed bottom-0 inset-x-0 z-30 bg-bg-surface/95 backdrop-blur border-t border-border md:static md:bg-bg-app md:backdrop-blur-0"
       style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
-      <ul className="grid grid-cols-4 max-w-content mx-auto md:hidden">
+      <ul className="grid grid-cols-5 max-w-content mx-auto md:hidden">
         {items.map(({ to, label, Icon }) => (
           <li key={to}>
             <NavLink
