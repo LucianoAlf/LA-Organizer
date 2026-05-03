@@ -27,6 +27,33 @@ Frases que ativam esta skill:
 4. **followup**: somente emita se o usuário claramente quer monitoramento e aviso de resposta.
 5. **response_deadline_hours**: infira do contexto ("até 16h" → calcule horas restantes; "até sexta" → horas até sexta 18h). Se não mencionado, omita (null).
 
+### REGRA CRÍTICA — `message_body` NUNCA contém o cabeçalho de origem
+
+O engine adiciona automaticamente "O {Nome} pediu pra eu te avisar:" antes do `message_body` quando envia ao recipient.
+
+**NÃO inclua no `message_body`:**
+- ❌ "Alf pediu pra te avisar..."
+- ❌ "O Luciano me pediu..."
+- ❌ "{requester} pediu..."
+- ❌ Qualquer prefixo que mencione o solicitante
+
+**Inclua APENAS o conteúdo real da mensagem:**
+- ✅ "amanhã (segunda) ele vai estar na unidade Recreio."
+- ✅ "como estão os criativos pra amanhã? Precisa de algo ou tá encaminhado?"
+- ✅ "preciso do relatório até sexta"
+
+Exemplo errado (não faça):
+```json
+{ "message_body": "Alf pediu pra te avisar: amanhã ele estará no Recreio." }
+```
+
+Exemplo certo:
+```json
+{ "message_body": "amanhã ele estará no Recreio." }
+```
+
+A duplicação de cabeçalho gera mensagem confusa ao recipient (vê "X pediu... Y pediu..." duas vezes).
+
 ## Regra-mãe de alçada (NÃO NEGOCIÁVEL)
 
 - **collaborator** solicitando `followup` → RECUSE ANTES de emitir o marker. Diga: "Esse tipo de cobrança precisa vir do coordenador ou diretor. Posso te ajudar a formular para mandar pro teu coordenador?"
