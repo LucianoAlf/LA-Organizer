@@ -109,6 +109,7 @@ export interface Task {
   assigned_to: string;
   created_by: string;
   completed_at?: string | null;
+  created_at?: string;
   projects?: { name: string } | null;
   // Sprint 14 Fatia 1 — campos de tasks de evento (todos opcionais)
   school_event_id?: string | null;

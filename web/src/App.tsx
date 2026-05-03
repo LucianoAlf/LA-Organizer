@@ -21,6 +21,7 @@ import { ConfigurarEquipe } from './screens/ConfigurarEquipe';
 import { EventoDetalhe } from './screens/EventoDetalhe';
 import { Observabilidade } from './screens/Observabilidade';
 import { OperacoesFilaTecnica } from './screens/OperacoesFilaTecnica';
+import { OperacaoDetalhe } from './screens/OperacaoDetalhe';
 
 export default function App() {
   return (
@@ -47,6 +48,7 @@ export default function App() {
           <Route path="mais/eventos/:id" element={<EventoDetalhe />} />
           <Route path="mais/agenda-escolar/equipe" element={<ConfigurarEquipe />} />
           <Route path="mais/operacoes" element={<OperacoesFilaTecnica />} />
+          <Route path="mais/operacoes/:id" element={<OperacaoDetalhe />} />
 
           <Route element={<ProtectedRoute requireRoles={['coordinator', 'director']} />}>
             <Route path="time" element={<DashboardTime />} />

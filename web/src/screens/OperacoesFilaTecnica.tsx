@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { unitLabel } from '../types';
@@ -212,10 +213,10 @@ export function OperacoesFilaTecnica() {
                 </h3>
                 <div className="space-y-3">
                   {bucket.map(t => (
-                    <div
+                    <Link
                       key={t.id}
-                      className="bg-bg-surface rounded-xl border border-border p-4 space-y-1 cursor-pointer hover:bg-bg-elevated transition-colors"
-                      onClick={() => console.log('task', t.id)}
+                      to={`/mais/operacoes/${t.id}`}
+                      className="block bg-bg-surface rounded-xl border border-border p-4 space-y-1 cursor-pointer hover:bg-bg-elevated transition-colors"
                     >
                       <div className="flex items-center gap-2">
                         <span className="text-lg">{PRIORITY_INDICATOR[t.priority].emoji}</span>
@@ -234,7 +235,7 @@ export function OperacoesFilaTecnica() {
                       {t.notes && (
                         <p className="text-caption text-fg-muted italic line-clamp-1">{t.notes}</p>
                       )}
-                    </div>
+                    </Link>
                   ))}
                 </div>
               </section>
