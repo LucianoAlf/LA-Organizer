@@ -3676,8 +3676,10 @@ async function detectDuplicateSemanticTask(collab, candidate) {
     const probable = [], possible = [];
     for (const task of (openTasks || [])) {
       let score = jaroWinkler(candTitleNorm, normalizeForSim(task.title));
-      if (candidate.department_id && task.department_id === candidate.department_id) score = Math.min(score + 0.2, 1.0);
-      if (candidate.request_type_id && task.request_type_id === candidate.request_type_id) score = Math.min(score + 0.2, 1.0);
+      // Sprint 19 hotfix: boosts +0.2/+0.2 causavam falsos positivos sistemáticos
+      // (titulos diferentes em mesmo dept+type batiam 0.82). Reduzido para +0.05 cada.
+      if (candidate.department_id && task.department_id === candidate.department_id) score = Math.min(score + 0.05, 1.0);
+      if (candidate.request_type_id && task.request_type_id === candidate.request_type_id) score = Math.min(score + 0.05, 1.0);
       // Keywords: nomes próprios (token ≥4 chars começando maiúscula no título original)
       const candKeywords = (candidate.title || '').match(/\b[A-ZÁÀÃÂÉÊÍÓÔÕÚ][a-záàãâéêíóôõúç]{3,}\b/g) || [];
       const taskKeywords = (task.title || '').match(/\b[A-ZÁÀÃÂÉÊÍÓÔÕÚ][a-záàãâéêíóôõúç]{3,}\b/g) || [];
