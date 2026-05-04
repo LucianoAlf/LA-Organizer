@@ -3750,7 +3750,7 @@ async function processMessage(phone, text, raw = {}) {
         const agoStr = ago < 60 ? `${ago}min atrás` : `${Math.round(ago / 60)}h atrás`;
         return `- De: ${reqName} | ID: ${r.id} | "${preview}" | ${agoStr}`;
       });
-      coordHint = `[COORD_HINT] Há ${openRequests.length} recado(s) aguardando resposta sua:\n${lines.join('\n')}\nSe a mensagem atual parecer resposta a um desses, emita <<COORDINATION_RESPONSE>>.`;
+      coordHint = `[COORD_HINT] Há ${openRequests.length} recado(s) aguardando resposta sua:\n${lines.join('\n')}\n\nINSTRUÇÃO CRÍTICA:\n1. Esses recados JÁ FORAM ENTREGUES por WhatsApp ao recipient. NÃO os mencione proativamente ("tem um recado", "chegou um recado", "dele"). O recipient já leu.\n2. Use este hint APENAS para detectar se a mensagem atual É uma resposta a um desses recados. Se for, emita <<COORDINATION_RESPONSE>> com o request_id correspondente.\n3. Se a mensagem atual NÃO é resposta a nenhum deles, IGNORE este hint e responda à mensagem normalmente, sem citar os recados.`;
     }
   }
 
