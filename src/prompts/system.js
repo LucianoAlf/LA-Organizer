@@ -857,12 +857,12 @@ async function buildSystemPrompt(collaborator, opts = {}) {
        (auxPriorityBody ? `\n\n---\n\n# 🧭 SKILL AUXILIAR: priorizacao-inteligente\n\n${auxPriorityBody}` : ''))
     : '';
   // Sprint 18 — integridade-agenda: injetada como skill auxiliar para todos os roles
-  const integritySkillBody = loadSkill('integridade-agenda.md');
+  const integritySkillBody = loadSkill('integridade-agenda');
   const integritySkillBlock = integritySkillBody
     ? `\n\n---\n\n# 🛡️ SKILL AUXILIAR: integridade-agenda\n\n${integritySkillBody}`
     : '';
   // Sprint 19 — pedagogico: injetada como skill auxiliar para todos os roles
-  const pedagogicoSkillBody = loadSkill('pedagogico.md');
+  const pedagogicoSkillBody = loadSkill('pedagogico');
   const pedagogicoSkillBlock = pedagogicoSkillBody
     ? `\n\n---\n\n# 🎓 SKILL AUXILIAR: pedagogico\n\n${pedagogicoSkillBody}`
     : '';
@@ -1047,7 +1047,15 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   return { systemPrompt, ctx };
 }
 
-// Backward-compat: synchronous compose using already-fetched ctx.
+// DEPRECATED (Sprint 19 cleanup — 2026-05-03): dead code.
+// Nenhum call site em _remote/ importa esta função (verificado via grep em engine.js,
+// scripts/, e todo _remote/). Foi mantida como "backward-compat" quando buildSystemPrompt
+// virou async, mas o builder async foi reescrito para fazer tudo inline e nunca mais
+// delegou para cá. Diverge intencionalmente de buildSystemPrompt: NÃO carrega as skills
+// auxiliares globais (pedagogico, coordenacao-conversacional, integridade-agenda) nem
+// os blocks novos (rituals, projects-ranking, habits-overview). Se algum caller futuro
+// precisar de prompt sync, recriar a partir do buildSystemPrompt em vez de reanimar isto.
+// TODO: remover em Sprint 20 após confirmar zero uso externo.
 function composeSystemPrompt(collaborator, ctx) {
   let lastMsgAge = null;
   const hist = (ctx && ctx.recentMessages) || [];
