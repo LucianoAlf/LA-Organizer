@@ -3672,17 +3672,22 @@ async function detectDuplicateSemanticTask(collab, candidate) {
       console.error('[detectDuplicateSemanticTask] query err:', error.message);
       return { probable: [], possible: [] };
     }
-    const candTitleNorm = normalizeForSim(candidate.title);
+    // Sprint 19 hotfix: strip do suffix "— UNIDADE/SALA" antes de comparar.
+    // jaroWinkler estava dominado pelo suffix de localização: "Palhetas — Recreio Sala 3"
+    // vs "Teclado — Recreio Sala 3" batia 0.72 só pelo suffix compartilhado.
+    const stripSuffix = s => String(s || '').split(/\s*[—–]\s+/)[0].trim();
+    const candStripped = stripSuffix(candidate.title);
+    const candTitleNorm = normalizeForSim(candStripped);
     const probable = [], possible = [];
     for (const task of (openTasks || [])) {
-      let score = jaroWinkler(candTitleNorm, normalizeForSim(task.title));
-      // Sprint 19 hotfix: boosts +0.2/+0.2 causavam falsos positivos sistemáticos
-      // (titulos diferentes em mesmo dept+type batiam 0.82). Reduzido para +0.05 cada.
+      const taskStripped = stripSuffix(task.title);
+      let score = jaroWinkler(candTitleNorm, normalizeForSim(taskStripped));
+      // Boosts suaves (eram +0.2/+0.2, causavam falsos positivos sistemáticos)
       if (candidate.department_id && task.department_id === candidate.department_id) score = Math.min(score + 0.05, 1.0);
       if (candidate.request_type_id && task.request_type_id === candidate.request_type_id) score = Math.min(score + 0.05, 1.0);
-      // Keywords: nomes próprios (token ≥4 chars começando maiúscula no título original)
-      const candKeywords = (candidate.title || '').match(/\b[A-ZÁÀÃÂÉÊÍÓÔÕÚ][a-záàãâéêíóôõúç]{3,}\b/g) || [];
-      const taskKeywords = (task.title || '').match(/\b[A-ZÁÀÃÂÉÊÍÓÔÕÚ][a-záàãâéêíóôõúç]{3,}\b/g) || [];
+      // Keywords extraídas do título STRIPPED (sem suffix de unidade)
+      const candKeywords = candStripped.match(/\b[A-ZÁÀÃÂÉÊÍÓÔÕÚ][a-záàãâéêíóôõúç]{3,}\b/g) || [];
+      const taskKeywords = taskStripped.match(/\b[A-ZÁÀÃÂÉÊÍÓÔÕÚ][a-záàãâéêíóôõúç]{3,}\b/g) || [];
       const shared = candKeywords.filter(k => taskKeywords.includes(k));
       if (shared.length > 0) score = Math.min(score + 0.1 * Math.min(shared.length, 2), 1.0);
       if (score > 0.7) probable.push({ ...task, _score: score });
