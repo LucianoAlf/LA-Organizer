@@ -861,6 +861,11 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   const integritySkillBlock = integritySkillBody
     ? `\n\n---\n\n# 🛡️ SKILL AUXILIAR: integridade-agenda\n\n${integritySkillBody}`
     : '';
+  // Sprint 19 — pedagogico: injetada como skill auxiliar para todos os roles
+  const pedagogicoSkillBody = loadSkill('pedagogico.md');
+  const pedagogicoSkillBlock = pedagogicoSkillBody
+    ? `\n\n---\n\n# 🎓 SKILL AUXILIAR: pedagogico\n\n${pedagogicoSkillBody}`
+    : '';
 
   // Ritual-aware task filtering:
   // - briefing_pessoal → only personal (fallback manual)
@@ -1021,6 +1026,11 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   // Sprint 18 — integridade-agenda skill auxiliar (sempre carregada para todos os roles)
   if (integritySkillBlock) {
     systemPrompt += integritySkillBlock;
+  }
+
+  // Sprint 19 — pedagogico skill auxiliar (sempre carregada para todos os roles)
+  if (pedagogicoSkillBlock) {
+    systemPrompt += pedagogicoSkillBlock;
   }
 
   // Sprint 18 — hygiene context injection (briefing matinal com findings de higiene)

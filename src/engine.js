@@ -1250,6 +1250,33 @@ async function applyCoordinationRequestAction(collab, parsed) {
 
   const recipientFirstName = (recipient.full_name || '').split(' ')[0];
 
+  // Sprint 19 — Gate pedagógico tem PRECEDÊNCIA sobre o gate genérico Sprint 16.
+  // DENY pedagógico = DENY final. Gate genérico não pode reautorizar acima dele.
+  // Reusa `recipient` resolvido em (1) acima.
+  if (parsed.mode === 'followup') {
+    const isPedContext = !!getPedagogicalRole(collab) || !!getPedagogicalRole(recipient);
+    if (isPedContext) {
+      const ok = await canDelegatePedagogical(collab, recipient);
+      if (!ok) {
+        await supabase.from('coordination_requests').insert({
+          requester_id: collab.id,
+          recipient_id: recipient.id,
+          mode: parsed.mode,
+          message_body: parsed.message_body,
+          message_original: parsed.message_original,
+          status: 'rejected_by_tom',
+          expects_response: parsed.expects_response,
+          cancelled_reason: 'pedagogical_authority_denied',
+        });
+        return {
+          ok: false,
+          reason: 'pedagogical_authority_denied',
+          replyText: 'Esse tipo de cobrança precisa vir de quem tem alçada pedagógica para isso. Posso te ajudar a formular para mandar pra Juliana ou Quintela?',
+        };
+      }
+    }
+  }
+
   // 3. Followup bloqueado para collaborator (PRD §8.3)
   if (parsed.mode === 'followup' && collab.role === 'collaborator') {
     await supabase.from('coordination_requests').insert({
@@ -2133,6 +2160,69 @@ async function resolveTaskByShortId(collaboratorId, shortId) {
   return matches[0];
 }
 
+// ============================================================
+// Sprint 19 — Camada Pedagógica: helpers de papel e alçada
+// ============================================================
+
+function getPedagogicalRole(collab) {
+  return collab && collab.pedagogical_role ? collab.pedagogical_role : null;
+}
+
+// Helper de APOIO/LOOKUP — não automação opaca.
+// A skill resolve assigned_to por nome quando possível; este helper só entra
+// quando a skill marca apenas {subdomain|unit|specialty} sem assignee, ou
+// para validação interna de escopo.
+async function findPedagogicalAssignee({ subdomain, unit, specialty }) {
+  const filters = [];
+  if (subdomain) filters.push({ type: 'subdomain', value: subdomain });
+  if (specialty) filters.push({ type: 'specialty', value: specialty });
+  if (unit)      filters.push({ type: 'unit',      value: unit });
+  for (const f of filters) {
+    const { data } = await supabase
+      .from('pedagogical_assignments')
+      .select('collaborator_id')
+      .eq('scope_type', f.type)
+      .eq('scope_value', f.value)
+      .limit(1);
+    if (data && data.length) {
+      const { data: c } = await supabase
+        .from('collaborators').select('*').eq('id', data[0].collaborator_id).single();
+      if (c) return c;
+    }
+  }
+  return null;
+}
+
+async function scopeOverlap(idA, idB) {
+  const { data: aSc } = await supabase
+    .from('pedagogical_assignments')
+    .select('scope_type, scope_value').eq('collaborator_id', idA);
+  const { data: bSc } = await supabase
+    .from('pedagogical_assignments')
+    .select('scope_type, scope_value').eq('collaborator_id', idB);
+  if (!aSc || !aSc.length || !bSc || !bSc.length) return false;
+  return aSc.some(x => bSc.some(y => x.scope_type === y.scope_type && x.scope_value === y.scope_value));
+}
+
+// REGRA DE PRECEDÊNCIA: se este helper retornar false em contexto pedagógico,
+// o gate genérico (Sprint 16) NÃO pode autorizar acima dele. DENY = final.
+async function canDelegatePedagogical(requester, target) {
+  if (!requester || !target) return false;
+  const rRole = requester.role;
+  const rPed  = getPedagogicalRole(requester);
+  const tPed  = getPedagogicalRole(target);
+
+  if (rRole === 'director' || rRole === 'coordinator') return true;
+  if (rPed === 'mentor') return false;
+  if (rPed === 'lead')   return true;
+  if (rPed === 'assistant') {
+    if (!tPed) return false;
+    if (tPed === 'lead' || tPed === 'mentor') return false;
+    if (tPed === 'assistant') return await scopeOverlap(requester.id, target.id);
+  }
+  return false;
+}
+
 async function applyTaskActions(collaborator, actions) {
   let okCount = 0;
   let failCount = 0;
@@ -2286,6 +2376,15 @@ async function applyTaskActions(collaborator, actions) {
         }
         if (departmentId) insertRow.department_id = departmentId;
         if (requestTypeId) insertRow.request_type_id = requestTypeId;
+        // Sprint 19 — subdomain pedagógico (school/kids)
+        if (a.subdomain !== undefined) {
+          if (a.subdomain !== null && !['school','kids'].includes(a.subdomain)) {
+            console.warn(`[Task] create REJECTED — invalid subdomain=${a.subdomain}`);
+            failCount++;
+            continue;
+          }
+          insertRow.subdomain = a.subdomain;
+        }
         // remind_at = ONE-SHOT (e.g. "me lembra de tomar remédio em 30 min").
         //             Dispatcher fires WA AND marks task done. Use só quando a tarefa
         //             é o lembrete em si (sem reunião associada).
