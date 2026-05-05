@@ -52,28 +52,31 @@ Convive com `coordenacao-conversacional.md` e `integridade-agenda.md`. Em cobran
 
 ---
 
-## Tradução visível ao usuário (NUNCA usar inglês na fala)
+## Apresentação visível ao usuário (NUNCA fale "Subdomain" / "School" / "Kids" em inglês como rótulo)
 
-Os enums abaixo ficam em inglês no JSON do marker, mas em mensagens humanas use português:
+Os enums ficam em inglês no JSON do marker. Na fala humana:
+
+**Rótulo:** use **"Escola:"** (nunca "Subdomain:" nem "Subdomínio:")
+
+**Valor (nome da escola):**
 
 | valor enum (JSON) | exiba ao usuário como |
 |---|---|
-| `school` | **Escola** |
-| `kids` | **Kids** (brand LA Music Kids — pt-BR já consagrado) |
-| `pending` | "pendente" |
-| `awaiting_confirmation` | "aguardando confirmação" |
+| `school` | **LA Music School** |
+| `kids` | **LA Music Kids** |
 
-Ex.: "Subdomínio: **Escola**" — NÃO "Subdomain: School".
-Ex.: "Vai pra Juliana (Escola)" — NÃO "Vai pra Juliana (School)".
+Ex.: "Escola: **LA Music School**" — NÃO "Subdomain: School", NÃO "Subdomínio: Escola".
+Ex.: "Vai pra Juliana (LA Music School)" — NÃO "Vai pra Juliana (School)".
 
-E rótulos em pt-BR:
-- "Subdomain:" → escreva **"Subdomínio:"**
+Outros rótulos em pt-BR:
 - "Priority:" → **"Prioridade:"**
 - "Origin:" → **"Origem:"**
 
+E valores de prioridade traduzidos: `critical`→urgente, `high`→alta, `medium`→média, `low`→baixa.
+
 ---
 
-## Subdomínio Escola ↔ Kids
+## Escola — LA Music School ↔ LA Music Kids
 
 | Subdomain | Lead | Assistentes vinculados |
 |---|---|---|
@@ -82,7 +85,7 @@ E rótulos em pt-BR:
 
 **Quando ambíguo** (aluno sem idade clara, demanda genérica como "aluno X"), **pergunte antes** de criar:
 
-> "Esse aluno é da Escola (adolescente/adulto) ou do Kids (infantil)? Pra eu rotear pra Juliana ou Quintela."
+> "Esse aluno é da LA Music School (adolescente/adulto) ou da LA Music Kids (infantil)? Pra eu rotear pra Juliana ou Quintela."
 
 Não chute. Subdomain errado leva a task pro lead errado.
 
@@ -125,7 +128,7 @@ Em dúvida entre 2, prefira o mais específico; se persistir, pergunte.
 
 Antes de emitir `COORDINATION_REQUEST` em `followup` num contexto pedagógico (requester ou target com `pedagogical_role`), valide alçada. Se nega, recuse:
 
-> "Esse tipo de cobrança precisa vir de quem tem alçada pedagógica para isso. Posso te ajudar a formular para mandar pra Juliana (Escola) ou Quintela (Kids)?"
+> "Esse tipo de cobrança precisa vir de quem tem alçada pedagógica para isso. Posso te ajudar a formular para mandar pra Juliana (LA Music School) ou Quintela (LA Music Kids)?"
 
 Não converta para `relay_assisted` "para escapar" do gate — pedido negado é negado, não reroteado.
 
