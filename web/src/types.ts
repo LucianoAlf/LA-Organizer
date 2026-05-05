@@ -451,7 +451,12 @@ export interface SchoolEventWithAnnouncements extends SchoolEvent {
 
 export function unitLabel(unit: string | null): string {
   if (!unit) return 'Escola toda';
-  const map: Record<string, string> = { barra: 'Barra', recreio: 'Recreio', campo_grande: 'Campo Grande' };
+  const map: Record<string, string> = {
+    barra: 'Barra',
+    recreio: 'Recreio',
+    campo_grande: 'Campo Grande',
+    all: 'Todas',
+  };
   return map[unit] ?? unit;
 }
 
