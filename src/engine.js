@@ -2149,7 +2149,10 @@ async function findCollaboratorByName(name) {
   if (!norm) return null;
   const { data } = await supabase
     .from('collaborators')
-    .select('id, full_name, phone, is_active, role')
+    // Hotfix pós-Sprint20: incluir onboarding_completed + unit + pedagogical_role
+    // para que helpers downstream (buildSelfIntroPrefix, gates, findAssistantByUnit)
+    // possam ler esses campos sem precisar fazer query adicional.
+    .select('id, full_name, phone, is_active, role, unit, onboarding_completed, pedagogical_role')
     .eq('is_active', true);
   if (!data || !data.length) return null;
   const first = norm.split(/\s+/)[0];
@@ -2167,7 +2170,8 @@ async function findCollaboratorByPhone(phone) {
   if (!cleaned) return null;
   const { data } = await supabase
     .from('collaborators')
-    .select('id, full_name, phone, is_active, role')
+    // Hotfix pós-Sprint20: idem findCollaboratorByName — campos completos.
+    .select('id, full_name, phone, is_active, role, unit, onboarding_completed, pedagogical_role')
     .eq('phone', cleaned)
     .maybeSingle();
   return data;
