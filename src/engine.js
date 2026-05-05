@@ -1433,14 +1433,11 @@ async function applyCoordinationRequestAction(collab, parsed) {
   const requesterDisplayName = _requesterDisplayName(collab);
   let recipientMsg = _buildRecipientMessage(requesterDisplayName, parsed.mode, finalBody);
 
-  // Radar pós-Sprint19 — TOM se apresenta na 1ª vez com cada collaborator.
-  // Heurística: se onboarding_completed=false, ainda não houve contato direto.
-  // Prepend curto e leve. Não repetir nas próximas mensagens.
-  if (recipient.onboarding_completed === false) {
-    const recipFirst = (recipient.full_name || '').split(' ')[0] || 'oi';
-    const intro = `Oi, ${recipFirst}! Aqui é o TOM, organizador da LA Music. Vou te passar um recado:\n\n`;
-    recipientMsg = intro + recipientMsg;
-  }
+  // Hotfix pós-Sprint20 — Self-introduction unificada via helper.
+  // Antes: duplicado aqui e ausente em applyTaskActions delegate (Krissya recebeu spam).
+  // Agora: helper único usado em TODOS os outbounds do TOM ao recipient.
+  const introPrefix = buildSelfIntroPrefix(recipient);
+  if (introPrefix) recipientMsg = introPrefix + recipientMsg;
 
   try {
     await whatsapp.sendMessage(recipient.phone, recipientMsg);
@@ -2250,6 +2247,112 @@ const UNIT_DB_TO_PEDAG_SCOPE = {
   'barra':        'Barra',
 };
 
+// Hotfix pós-Sprint20 — Self-introduction unificada.
+// Sprint 19 R3 aplicou self-intro só em relay (applyCoordinationRequestAction).
+// Bug observado: Krissya recebeu task delegate sem apresentação, mensagem seca.
+// Helper unificado para qualquer outbound do TOM ao recipient.
+//
+// Decisão D2 (PO 2026-05-05): manter onboarding_completed=false até o recipient
+// passar pelo onboarding completo (5 perguntas). A self-intro repete por algumas
+// mensagens, o que reforça quem é o TOM até a pessoa se acostumar.
+function buildSelfIntroPrefix(recipient) {
+  if (!recipient || recipient.onboarding_completed !== false) return '';
+  const firstName = (recipient.full_name || '').split(' ')[0] || 'oi';
+  return `Oi, ${firstName}! Aqui é o *TOM*, organizador da LA Music. Vou te ajudar a manter o time alinhado pelo WhatsApp — é só me chamar quando precisar atualizar tarefa, pedir pra encaminhar recado, ou abrir nova demanda.\n\n`;
+}
+
+// Hotfix pós-Sprint20 — Sugestões de próximos passos por request_type slug.
+// Decisão D1 (PO 2026-05-05): hardcoded primeiro. Se piloto comprovar, vira coluna em Sprint 22.
+// Inclui pedagogico + gerencia + operacoes-tecnicas + um fallback genérico.
+const SUGGESTED_NEXT_STEPS = {
+  // Gerência (Sprint 20)
+  'risco-de-evasao': [
+    'Conversar diretamente com o aluno e a família',
+    'Alinhar com o assistente pedagógico da unidade sobre acompanhamento',
+    'Se for caso pedagógico misto, eu encaminho via recado para Juliana/Quintela',
+  ],
+  'recuperacao-de-aluno': [
+    'Mapear a última interação que o aluno teve',
+    'Definir abordagem (telefone, presencial, e-mail)',
+    'Se precisar apoio pedagógico, peça pra eu encaminhar',
+  ],
+  'alinhamento-com-responsavel': [
+    'Decidir o canal (telefone, presencial)',
+    'Preparar tópicos a abordar com o responsável',
+    'Registrar o resultado do contato comigo depois',
+  ],
+  'problema-de-atendimento': [
+    'Ouvir a parte envolvida e entender o problema',
+    'Articular com recepção/secretaria se precisar',
+    'Devolver pro Alf se virar tema estratégico',
+  ],
+  'experiencia-da-unidade': [
+    'Conversar com o aluno/responsável sobre a percepção',
+    'Verificar se há ajustes operacionais necessários',
+    'Articular com pedagógico se for tema de aprendizado',
+  ],
+  'negociacao-relacional': [
+    'Estruturar a conversa antes (objetivo, alternativas, limite)',
+    'Considerar opções como congelamento ou condição especial',
+    'Registrar o desfecho comigo',
+  ],
+  'pendencia-gerencial': [
+    'Avaliar se cabe um tipo mais específico (risco-evasao, atendimento, articulação)',
+    'Definir responsável e prazo',
+  ],
+  'articulacao-interna': [
+    'Listar as áreas envolvidas e o que cada uma precisa fazer',
+    'Eu posso encaminhar recados para cada área via relay',
+    'Acompanhar até todas darem retorno',
+  ],
+  // Pedagógico (Sprint 19)
+  'acompanhamento-professor': [
+    'Conversar com o professor sobre o ponto observado',
+    'Definir plano de melhoria (próxima visita à aula, mentoring)',
+    'Registrar evolução comigo',
+  ],
+  'apoio-ao-aluno': [
+    'Avaliar dificuldade pedagógica do aluno',
+    'Alinhar com professor sobre adaptações de trilha',
+    'Conversar com responsável se necessário',
+  ],
+  'alinhamento-de-turma': [
+    'Mapear opções de encaixe',
+    'Falar com professor envolvido',
+    'Confirmar com responsável e operacionalizar troca',
+  ],
+  'evento-pedagogico': [
+    'Definir cronograma e responsáveis',
+    'Alinhar com unidade(s) envolvida(s)',
+    'Comunicar pais/alunos no momento certo',
+  ],
+  'pendencia-pedagogica': [
+    'Avaliar se cabe tipo mais específico',
+    'Definir responsável e prazo',
+  ],
+  'suporte-ao-professor': [
+    'Verificar disponibilidade do material/recurso',
+    'Operacionalizar via Rafinha se for material físico',
+    'Confirmar com o professor quando resolver',
+  ],
+  // Operações Técnicas (Sprint 15)
+  'incidente-tecnico': [
+    'Avaliar urgência (impacta aula agora?)',
+    'Mobilizar Rafinha ou técnico responsável',
+    'Comunicar professor/coordenação se afetar aulas',
+  ],
+  'reposicao-estoque': [
+    'Verificar saldo atual',
+    'Pedir orçamento e aprovação se valor relevante',
+    'Confirmar entrega e dar baixa',
+  ],
+};
+
+function getSuggestedNextSteps(requestTypeSlug) {
+  if (!requestTypeSlug) return null;
+  return SUGGESTED_NEXT_STEPS[requestTypeSlug] || null;
+}
+
 // Resolve o assistente pedagógico da unidade do gerente.
 // Usado quando o gate pedagógico nega followup de manager — TOM oferece relay
 // para o assistente da unidade do gerente (em vez de cobrança).
@@ -2570,7 +2673,32 @@ async function applyTaskActions(collaborator, actions) {
         if (recipient && taskId) {
           const creatorName = nameForCollab(collaborator);
           const dueLabel = insertRow.due_date ? ` (prazo ${formatBRDate(insertRow.due_date)})` : '';
-          const notifText = `📋 ${creatorName} abriu uma tarefa pra você: *${a.title.trim()}*${dueLabel}.`;
+
+          // Hotfix pós-Sprint20: mensagem enriquecida (não mais seca).
+          // Inclui: self-intro 1ª vez + descrição + sugestões de próximos passos.
+          const introPrefix = buildSelfIntroPrefix(recipient);
+          const description = (typeof a.description === 'string' && a.description.trim()) ? a.description.trim() : null;
+          // Lookup request_type slug se task tem request_type_id setado
+          let suggestionLines = null;
+          if (requestTypeId) {
+            try {
+              const { data: rtRow } = await supabase
+                .from('department_request_types')
+                .select('slug').eq('id', requestTypeId).single();
+              const steps = getSuggestedNextSteps(rtRow?.slug);
+              if (steps && steps.length) {
+                suggestionLines = steps.map(s => `• ${s}`).join('\n');
+              }
+            } catch (_e) { /* fallback silencioso */ }
+          }
+          let notifText = `${introPrefix}📋 O ${creatorName} abriu uma tarefa pra você:\n*${a.title.trim()}*${dueLabel}`;
+          if (description) {
+            notifText += `\n\n🧭 *Contexto:* ${description}`;
+          }
+          if (suggestionLines) {
+            notifText += `\n\n💡 *Próximos passos sugeridos:*\n${suggestionLines}`;
+          }
+          notifText += `\n\nPode me chamar a qualquer hora pra atualizar status, pedir encaminhamento de recado, ou abrir nova demanda.`;
           try {
             await whatsapp.sendMessage(recipient.phone, notifText);
             await supabase.from('conversation_history').insert({

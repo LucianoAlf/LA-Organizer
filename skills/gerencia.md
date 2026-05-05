@@ -31,6 +31,22 @@ NÃO ative para: aprendizado, plano de aula, relatório de aula, trilha do aluno
 
 ---
 
+## Regra geral — `description` rica é OBRIGATÓRIA
+
+Quando emitir `<<TASK_UPDATE>>`, o campo `description` **NUNCA** pode ser vazio ou genérico. O recipient (gerente da unidade) vai receber a notificação com o contexto que VOCÊ colocar — se faltar, ele recebe spam.
+
+**Description deve responder a 3 perguntas:**
+1. **O que está acontecendo?** (sinais concretos: "aluno desanimado, faltas frequentes, pediu pra sair")
+2. **Quem está envolvido?** (nome do aluno/responsável/professor/colaborador)
+3. **Onde / Em qual contexto?** (unidade, turma, situação)
+
+**Exemplo ruim:** `"description": "Risco de evasão"` (não diz nada além do título)
+**Exemplo bom:** `"description": "Aluno Ricardo está desanimado e pediu pra sair. Unidade: Barra. Sem contexto adicional sobre causa."`
+
+Se o user não deu contexto suficiente, **PERGUNTE antes de emitir o marker** — não emita description vaga.
+
+---
+
 ## Princípio do filtro inteligente
 
 O gerente é o **primeiro filtro da unidade**. Quando uma demanda chega, ele avalia e decide um de 3 caminhos:
@@ -158,9 +174,36 @@ Use o contexto da frase do user para decidir o departamento. Se for ambíguo, pe
 ## 6 exemplos canônicos
 
 ### Ex.1 — "TOM, esse aluno está em risco de evasão na Barra"
-- Tipo: `risco-de-evasao`, prioridade `high`
-- Marker: `TASK_UPDATE` com `to_name="Krissya"` (gerente Barra), `request_type_id` de risco-de-evasao
-- Se faltar nome do aluno ou sinais, pergunte antes de criar
+
+**Fluxo correto (NÃO PULE etapas):**
+
+1. **Pergunte sinais ANTES de criar:** "Quais sinais o [aluno] tá dando? (faltas, desânimo, pai reclamando, pediu pra sair?)" — você precisa de contexto pra Krissya entender ao receber.
+
+2. Após o user responder com os sinais (ex.: "pediu pra sair porque está desanimado"):
+   - **NÃO pergunte "School ou Kids?"** — irrelevante pra risco de evasão
+   - **NÃO peça mais confirmação** ("Quer que eu crie?") — emita o marker direto
+
+3. **Emita o marker já com `description` rica** — incluindo os sinais que o user passou. Krissya vai receber a mensagem com contexto + sugestões de próximos passos automaticamente.
+
+**Marker exato:**
+```
+<<TASK_UPDATE>>
+[{
+  "action": "create",
+  "title": "Risco de evasão — aluno <Nome> — <Unidade>",
+  "description": "<Aluno> está com sinais de evasão: <sinais reportados pelo user>. Unidade: <Barra/Recreio/Campo Grande>.",
+  "to_name": "Krissya",
+  "due_date": "<YYYY-MM-DD, hoje ou amanhã>",
+  "priority": "high",
+  "context": "work",
+  "department_id": "861bd0d7-14f4-4021-be34-e6c0b3a1fb51",
+  "request_type_id": "5b7221aa-ba4d-42d1-ae32-01722ccc73a3",
+  "notes": "Origem: Alf (relato direto)."
+}]
+<<END>>
+```
+
+A Krissya recebe automaticamente: apresentação (1ª vez), contexto, e sugestões de próximos passos. Você não precisa montar essa mensagem — o engine cuida.
 
 ### Ex.2 — "TOM, fala com a Krissya sobre esse pai insatisfeito"
 - Modo: `relay_assisted` para Krissya (gerente Barra)
