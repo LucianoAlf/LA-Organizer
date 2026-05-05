@@ -511,6 +511,18 @@ function pickSkill(collab, lastUserMessage, recentHistory) {
     }
   }
 
+  // Sprint 19 — Priority 4.7: contexto PEDAGÓGICO (vence checklist-tarefas e operacoes-tecnicas).
+  // Gatilhos: aluno/professor/turma/recital/banda/kids/school + nomes da equipe pedagógica.
+  // Quando dispara, TOM usa skill pedagogico.md como PRIMARY → emite TASK_UPDATE com department_id pedagogico.
+  if (/(\b(aluno[as]?|professor[a]?(?:es)?|turma[s]?|recital(?:is)?|banda[s]?|coordena[çc][ãa]o\s+pedag|assistent[ea]\s+pedag|mentor[ea]?\s+pedag|kids|school|infantil|musicaliza[çc][ãa]o|aula(?:s)?\s+(?:do|da|de))\b|\b(juliana|quintela|peterson|kinho|renan|matheus\s+felipe|jordan|leo|ramon|dai|rodrigo)\b)/i.test(lastUserMessage || '')) {
+    return { name: 'pedagogico', body: loadSkill('pedagogico') };
+  }
+  // Sprint 19 — Priority 4.8: contexto OPERAÇÕES TÉCNICAS (infra/equipamento/material).
+  // Vence apenas se NÃO for pedagógico. Garante department_id=operacoes-tecnicas no marker.
+  if (/\b(sala\s+\d|ar.condicion|l[âa]mpada|equipamento[s]?|inst[ru]mento[s]?|infra(?:estrutura)?|manuten[çc][ãa]o|reposi[çc][ãa]o|estoque|teclado|amplificador|microfone|cabo[s]?|caixa\s+de\s+som|t[ée]cnico|incidente|baqueta[s]?|palheta[s]?|corda[s]?\s+(?:de|do|para|pra)|tinta|caneta|impressora|computador|wifi|internet)\b/i.test(lastUserMessage || '')) {
+    return { name: 'operacoes-tecnicas', body: loadSkill('operacoes-tecnicas') };
+  }
+
   // Priority 5: task management intent. Includes create/remind/reschedule/complete/delegate/extension signals,
   // PLUS new-demand signals (surgiu, preciso falar, tem que resolver, fala com, etc).
   if (/\b(fiz|terminei|feito|completei|fechei|reagenda|adia|adiar|delega|surgiu|anota|me\s+lembr[aeo]|lembr(?:a|e|ar|nça)|lembr(?:a|e)\s+(?:de|do|da)\s+\w|lembrete|me\s+chama|daqui\s+a?\s*\d|em\s+\d+\s*(min|hora|h)|p[oó]e\s+na\s+lista|adiciona|marca\s+(?:reuni|m[eé]dico|consulta|hor[áa]rio)|muda\s+(?:a|o|pra)|deixa\s+pra|n[aã]o\s+vou\s+conseguir|preciso\s+de\s+mais\s+prazo|n[aã]o\s+(?:dá|vai\s+dar)\s+at[eé]|estender\s+(?:o\s+)?prazo|aprov[ao]r|negar|nego\s+a)/i.test(lastUserMessage || '')) {
@@ -862,7 +874,8 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     ? `\n\n---\n\n# 🛡️ SKILL AUXILIAR: integridade-agenda\n\n${integritySkillBody}`
     : '';
   // Sprint 19 — pedagogico: injetada como skill auxiliar para todos os roles
-  const pedagogicoSkillBody = loadSkill('pedagogico');
+  // EXCEÇÃO: se pedagogico já for PRIMARY (pickSkill retornou pedagogico), não duplica.
+  const pedagogicoSkillBody = (skill && skill.name === 'pedagogico') ? '' : loadSkill('pedagogico');
   const pedagogicoSkillBlock = pedagogicoSkillBody
     ? `\n\n---\n\n# 🎓 SKILL AUXILIAR: pedagogico\n\n${pedagogicoSkillBody}`
     : '';
