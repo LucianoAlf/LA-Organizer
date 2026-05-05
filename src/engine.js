@@ -1383,6 +1383,45 @@ async function applyCoordinationRequestAction(collab, parsed) {
     ).toISOString();
   }
 
+  // 5.5. Dedup defensivo (hotfix pós-Sprint20).
+  // Bug observado: Rafinha mandou "Tom pergunta ao Alf...", TOM emitiu relay.
+  // Rafinha respondeu "Ok" (confirmando) e TOM emitiu SEGUNDO relay com o
+  // mesmo conteúdo — Alf recebeu duplicado. Skill ensina não re-emitir mas
+  // engine reforça: se há coord_request similar nos últimos 90s
+  // (mesmo requester+recipient+mode, body similar via jaroWinkler), rejeita.
+  try {
+    const dedupCutoff = new Date(Date.now() - 90 * 1000).toISOString();
+    const { data: recent } = await supabase
+      .from('coordination_requests')
+      .select('id, message_body, status, created_at')
+      .eq('requester_id', collab.id)
+      .eq('recipient_id', recipient.id)
+      .eq('mode', parsed.mode)
+      .gte('created_at', dedupCutoff)
+      .in('status', ['pending', 'sent', 'responded'])
+      .order('created_at', { ascending: false })
+      .limit(3);
+    if (recent && recent.length) {
+      // Threshold conservador: 0.75 jaroWinkler em normalizeForSim já indica
+      // mesma demanda parafraseada. Title strip do suffix não se aplica aqui
+      // (não há separador de unidade típico em message_body de relay).
+      const candNorm = normalizeForSim(parsed.message_body || '');
+      for (const prev of recent) {
+        const score = jaroWinkler(candNorm, normalizeForSim(prev.message_body || ''));
+        if (score >= 0.75) {
+          console.warn(`[CoordinationRequest] DEDUP_BLOCK score=${score.toFixed(2)} prev=${prev.id.slice(0,8)} (${prev.status}) — skipping duplicate from ${String(collab.phone).slice(-4)}→${String(recipient.phone).slice(-4)}`);
+          return {
+            ok: true, // não é falha do user — é proteção silenciosa
+            reason: 'dedup_recent_relay',
+            replyText: 'Combinado! Já mandei pro destinatário há pouco — vou esperar a resposta antes de mandar de novo.',
+          };
+        }
+      }
+    }
+  } catch (dedupErr) {
+    console.warn('[CoordinationRequest] dedup check err (non-fatal):', dedupErr.message);
+  }
+
   // 6. INSERT pending
   const { data: inserted, error: insErr } = await supabase
     .from('coordination_requests')
