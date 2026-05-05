@@ -1,8 +1,10 @@
 # 03 — Esquema do Banco de Dados — LA Organizer
 
 > **Fonte de verdade:** Supabase Postgres, schema `public`.
-> **Última revisão:** 2026-05-05 (atualizado Sprint 19 — pedagogical_role, subdomain, pedagogical_assignments)
+> **Última revisão:** 2026-05-05 (atualizado Sprint 20 — sem schema novo, convenção de manager+unit para gerência)
 > **Tabelas base:** 39 | **Views:** 1 (`v_recent_events`)
+>
+> **Sprint 20 — convenção de manager:** `role='manager'` + `unit` específica (`campo_grande`/`recreio`/`barra`) = gerente de unidade. `role='manager'` + `unit='all'` = líder de departamento (ex: Yuri/Marketing). Sem schema novo.
 
 ---
 

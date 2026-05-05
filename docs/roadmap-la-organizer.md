@@ -1,10 +1,10 @@
-# Roadmap LA Organizer — Histórico Sprint 0→19
+# Roadmap LA Organizer — Histórico Sprint 0→20
 
-> Histórico cronológico das sprints. Para o estado atual do produto, ver PRD (`docs/06-prd-la-organizer-v3.md`). Para schema do banco, ver `docs/03-esquema-banco-dados-la-organizer.md`.
+> Histórico cronológico das sprints. Para o estado atual do produto, ver PRD (`docs/06-prd-la-organizer-v3.md`). Para schema do banco, ver `docs/03-esquema-banco-dados-la-organizer.md`. Para limites de papel do TOM, ver `docs/TOM-LIMITES.md`.
 >
-> **Nota sobre sprints 0–10:** não há specs ou reports granulares para este período. O histórico foi reconstruído a partir do PRD v3.1 (escrito em 2026-04-28 com estado Sprints 0→7 em produção) e dos comentários inline do engine.js. Sprints 8–10 foram inferidas pelos artefatos entregues (telas no App.tsx, markers no engine).
+> **Nota sobre sprints 0–10:** não há specs ou reports granulares para este período. O histórico foi reconstruído a partir do PRD v3.1 (escrito em 2026-04-28) e dos comentários inline do engine.js.
 >
-> **Atualizado Sprint 19 (2026-05-05):** adicionadas seções Sprint 16 (Coordenação Conversacional), Sprint 17 (ACC), Sprint 18 (Integridade), Sprint 19 (Pedagógico). Próximos passos revisados.
+> **Atualizado Sprint 20 (2026-05-05):** adicionada seção Sprint 20 (Gerência) + radar pós-sprint com 11 hotfixes. Decisão estratégica do PO: **fechar fase de expansão de departamentos**. Próxima fase é governança da liderança.
 
 ---
 
@@ -438,6 +438,79 @@ Pedagógico é **configuração + skill + alçada** — não é módulo. Reusa S
 
 ---
 
+## Sprint 20 — Camada de Gerência + Radar pós-sprint (2026-05-05)
+
+**Status:** ENCERRADA + decisão estratégica de fechar fase de departamentos
+**Spec:** `docs/superpowers/specs/2026-05-05-sprint20-gerencia-design.md`
+**Plan:** `docs/superpowers/plans/2026-05-05-sprint20-gerencia.md`
+**Closure report:** `docs/superpowers/reports/2026-05-05-sprint20-closure.md`
+**Limites doc:** `docs/TOM-LIMITES.md`
+**Commits:** `920d5c7` (feat) + 11 hotfixes radar (`dd7930c` → `1daf538`)
+
+### Princípio
+Gerência é **filtro inteligente da unidade** — gerente articula, avalia e roteia. Não resolve tudo sozinho.
+Sem schema novo: reuso de `role='manager'` + coluna `unit` (Sprint 15).
+
+### F1 — Seed (zero migrations)
+- Department `gerencia` + 8 request types (risco-de-evasao, recuperacao-de-aluno, alinhamento-com-responsavel, problema-de-atendimento, experiencia-da-unidade, negociacao-relacional, pendencia-gerencial, articulacao-interna)
+- 3 gerentes: Jereh (`campo_grande`), Clayton (`recreio`), Krissya (`barra`)
+- Diferenciação manager+unit específica vs `unit='all'` (Yuri/Marketing)
+
+### F2 — Engine
+- Helper `findAssistantByUnit` com mapeamento snake_case ↔ Title Case
+- Mensagem custom no gate pedagógico para manager: sugere relay como alternativa + oferece assistente da unidade
+- Gate `canDelegatePedagogical` **intacto**
+
+### F3 — Skill `gerencia.md` (~13KB após hotfixes)
+- Primary apenas (não auxiliar global)
+- 6 exemplos canônicos PRD §6
+- UUIDs reais embutidos
+- Fronteira com Pedagógico não-negociável (relay, nunca followup)
+
+### F4 — pickSkill Priority 4.65
+- Antes de pedagogico (4.7) com gatilhos restritos: nomes gerentes, risco-evasao, retenção, atendimento, recepção, articulação
+
+### F5 — PWA filtro Responsável
+- Aba Gerência: manager + coordinator + director ativos
+
+### Validações E2E
+- ✅ P1 risco evasão (Felipe/Krissya) — task gerência criada com self-intro
+- ✅ P2 relay sobre pai insatisfeito — followup detectado, cumprimento curto
+- ✅ P4 problema atendimento (Gustavo/Jereh) — Eisenhower funcionando
+- ❌ P3 Carlos Henrique — bug unidade arrastada, corrigido `1daf538`
+- ⏸️ P5/P6/N1/N2 — não rodados (decisão estratégica de fechamento)
+
+### Radar pós-sprint (11 hotfixes — UX + governança)
+1. `dd7930c` — risco-de-evasao não vira pedagógico/apoio-ao-aluno
+2. `2b7997e` — findCollaboratorBy* incluir onboarding_completed (self-intro funcional)
+3. `87ab68e` — microconfirmação numerada (1/2/3) substitui pergunta livre
+4. `f851f5e` — Q2 cadência self-intro (full / half / short por tempo)
+5. `e5d3b71` — pergunta de tratamento Eisenhower + diretiva pt-BR
+6. `48ed7f6` — problema-de-atendimento ≠ incidente-tecnico
+7. `4bc3071` — skill gerência exige UUIDs no marker
+8. `d6bfd96` — cooldown 6h deadline/overdue + skill pergunta horário
+9. `192c631` — COORD_HINT como contexto natural (não só gatilho de RESPONSE)
+10. `9d2e68d` — dedup defensivo coord_request 90s + skill confirmação curta
+11. `1daf538` — unidade da task vem do aluno, não do assignee
+
+---
+
+## ⚓ Decisão estratégica (2026-05-05) — Fechar fase de departamentos
+
+Após Sprint 20 e 11 hotfixes pós-sprint, PO sinalizou (corretamente):
+- TOM corria risco de virar "menino de recado" — relay infinito, contexto arrastando
+- Skills inflando com regra-por-bug em vez de princípios
+- Risco operacional: WhatsApp pode banir TOM por padrão de spam
+
+**Direção pós-Sprint 20:**
+- ✅ Os 4 departamentos cobrem a operação atual (Marketing + Operações Técnicas + Pedagógico + Gerência)
+- ❌ NÃO criar mais departamentos
+- 🎯 Próxima frente: **governança e organização pessoal da liderança** (Alf, Anne, coord)
+
+Limites formalizados em `docs/TOM-LIMITES.md`.
+
+---
+
 ## Backlog descartado
 
 | Item | Decisão | Motivo |
@@ -459,10 +532,16 @@ Pedagógico é **configuração + skill + alçada** — não é módulo. Reusa S
 3. Validar fluxo pedagógico end-to-end com Juliana e Quintela operando direto (ainda em validação interna pelo Alf)
 4. Confirmar primeira interação de novos collaborators com TOM ativando self-introduction (Radar 3 ainda sem teste E2E)
 
-### Possíveis Sprints 20–22
-- **Sprint 20 (sugerida):** módulo de Eventos como motor próprio (separar `evento-pedagogico` task de event entity de fato), governança fina de subdomínio (Anne só Kids, etc.)
-- **Sprint 21 (sugerida):** professor como collaborator (resolve gap §6 do PRD pedagógico — professor abrir demanda direto), expansão da camada replicável para Financeiro e Comercial
-- **Sprint 22 (sugerida):** dashboard analítico cross-departamento, observabilidade pedagógica (frequência aluno × performance professor), retros automatizadas
+### Possíveis Sprints 21+
+- **Sprint 21 — Governança da liderança:** rituais avançados (planejamento mensal, OKRs leves), checklists pessoais por papel (CEO, coordenador, gerente), histórico/decisões importantes em memória estruturada
+- **Sprint 22 — Active Thread Stack:** TOM mantém N threads ativas em vez de 1 — quando user muda de assunto, TOM resgata contexto correto. Resolve bug de "perdeu o foco quando Anne entrou no meio da conversa de Krissya"
+- **Sprint 23 — Revisão de skills:** consolidar regras inflada em princípios; cortar redundâncias após uso real do piloto. Reduzir prompt size de ~65KB para ~45KB sem perda de capacidade
+
+### Fora de escopo (decisão 2026-05-05)
+- Mais departamentos operacionais (financeiro, comercial, etc.) — só se houver demanda explícita
+- Auditoria/analytics avançado
+- TOM em grupos de WhatsApp como participante ativo (risco de banimento)
+- Professor como collaborator (manter via assistente/coord)
 
 ### Cleanup arquitetural pendente
 - Investigar `composeSystemPrompt` (sync builder) — confirmar dead code ou alinhar com `buildSystemPrompt`

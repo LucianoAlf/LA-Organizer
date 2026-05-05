@@ -1,8 +1,8 @@
 # TOM-SKILLS-CATALOG — Catálogo Consolidado de Skills
 
 **Documento:** TOM-SKILLS-CATALOG
-**Versão:** 4.4
-**Data:** 2026-05-05 (atualizado Sprint 19 — adicionadas skills 10.10 coordenacao-conversacional, 10.11 integridade-agenda, 10.12 pedagogico)
+**Versão:** 4.5
+**Data:** 2026-05-05 (atualizado Sprint 20 — adicionada skill 10.13 gerencia)
 **Função:** Catálogo consolidado das skills e referências internas do TOM
 
 ---
@@ -456,6 +456,44 @@ Em dúvida, fallback para `checklist-tarefas` (cria task com `remind_at` se for 
 **Regra de precedência (não negociável):** se o gate pedagógico (`canDelegatePedagogical`) negar, o gate genérico Sprint 16 NÃO autoriza acima dele. DENY pedagógico = DENY final.
 
 **Não-objetivos:** `evento-pedagogico` é só task (não toca `events`); professor não vira collaborator no MVP; sem dashboard analítico nem auditoria.
+
+---
+
+## 10.13 Gerência (novo Sprint 20)
+**Arquivo:** `skills/gerencia.md`
+**Tipo:** primária via pickSkill (Priority 4.65, antes de pedagogico)
+
+**Função:** filtro inteligente da unidade. Captura demandas relacionais (retenção, experiência, atendimento, articulação interna), articula com áreas adjacentes, encaminha pedagógico via relay.
+
+**Hierarquia (3 gerentes + 1 líder dept):**
+| Gerente | Unidade | role | unit (DB) |
+|---|---|---|---|
+| Jereh | Campo Grande | manager | campo_grande |
+| Clayton | Recreio (interino) | manager | recreio |
+| Krissya | Barra | manager | barra |
+| Yuri | Marketing (líder dept) | manager | all |
+
+**Distinção crítica:** Yuri é manager+all — NÃO é gerente de unidade.
+
+**8 request types:**
+risco-de-evasao, recuperacao-de-aluno, alinhamento-com-responsavel (Gerência), problema-de-atendimento, experiencia-da-unidade, negociacao-relacional, pendencia-gerencial, articulacao-interna.
+
+**Fronteira com Pedagógico (NÃO NEGOCIÁVEL):**
+- Gerente NUNCA emite `followup` para alguém com `pedagogical_role` (gate Sprint 19 bloqueia automaticamente)
+- Gerente sempre usa `relay_assisted` para encaminhar pedagógico
+- Engine tem mensagem custom para manager quando gate bloqueia: oferece relay para assistente da unidade ou coord
+
+**Diferenciação `alinhamento-com-responsavel` (existe nos 2 deptos):**
+- Gerência → experiência/retenção/insatisfação relacional
+- Pedagógico → devolutiva sobre aprendizado/trilha do aluno
+
+**Regras críticas (consolidadas após hotfixes):**
+- Risco de evasão é gerência, NUNCA pedagógico (mesmo se aluno mencionado)
+- Problema de atendimento HUMANO (telefone, recepção) é gerência, NUNCA incidente-tecnico
+- Unidade da task vem do **aluno**, não do assignee (Quintela/Juliana são lead globais)
+- UUIDs do dept são OBRIGATÓRIOS no marker (sem isso, task vira NULL/NULL)
+
+**Não-objetivos:** TOM não vira "menino de recado" (ver `docs/TOM-LIMITES.md`); manager continua sem alçada para followup pedagógico; sem CRM gigante.
 
 ---
 
