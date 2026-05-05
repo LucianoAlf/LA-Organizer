@@ -1295,10 +1295,18 @@ async function applyCoordinationRequestAction(collab, parsed) {
           expects_response: parsed.expects_response,
           cancelled_reason: 'pedagogical_authority_denied',
         });
+        // Sprint 20 — mensagem custom para manager (gerente) sugerindo relay como alternativa.
+        // PRD §13: critério de fracasso é gerente bloqueado SEM ORIENTAÇÃO. Damos a saída clara.
+        let replyText = 'Esse tipo de cobrança precisa vir de quem tem alçada pedagógica para isso. Posso te ajudar a formular para mandar pra Juliana ou Quintela?';
+        if (collab.role === 'manager') {
+          const assistente = await findAssistantByUnit(collab.unit);
+          const assistName = assistente ? (assistente.full_name || '').split(' ')[0] : 'o assistente da unidade';
+          replyText = `Como gerente, você não cobra (followup) o pedagógico — você encaminha (relay).\n\nQuer que eu mande como recado para *${assistName}* (assistente pedagógico da sua unidade) ou direto para *Juliana* (LA Music School) ou *Quintela* (LA Music Kids)?`;
+        }
         return {
           ok: false,
           reason: 'pedagogical_authority_denied',
-          replyText: 'Esse tipo de cobrança precisa vir de quem tem alçada pedagógica para isso. Posso te ajudar a formular para mandar pra Juliana ou Quintela?',
+          replyText,
         };
       }
     }
@@ -2227,6 +2235,37 @@ async function findPedagogicalAssignee({ subdomain, unit, specialty }) {
     }
   }
   return null;
+}
+
+// ============================================================
+// Sprint 20 — Camada de Gerência: helper de unidade
+// ============================================================
+
+// Mapeamento collaborators.unit (snake_case lowercase) → pedagogical_assignments.scope_value (Title Case).
+// Necessário porque Sprint 19 usou Title Case em pedagogical_assignments mas a coluna `unit`
+// no banco é snake_case lowercased (CHECK constraint).
+const UNIT_DB_TO_PEDAG_SCOPE = {
+  'campo_grande': 'Campo Grande',
+  'recreio':      'Recreio',
+  'barra':        'Barra',
+};
+
+// Resolve o assistente pedagógico da unidade do gerente.
+// Usado quando o gate pedagógico nega followup de manager — TOM oferece relay
+// para o assistente da unidade do gerente (em vez de cobrança).
+async function findAssistantByUnit(unitDb) {
+  const scope = UNIT_DB_TO_PEDAG_SCOPE[unitDb];
+  if (!scope) return null;
+  const { data } = await supabase
+    .from('pedagogical_assignments')
+    .select('collaborator_id')
+    .eq('scope_type', 'unit')
+    .eq('scope_value', scope)
+    .limit(1);
+  if (!data || !data.length) return null;
+  const { data: c } = await supabase
+    .from('collaborators').select('*').eq('id', data[0].collaborator_id).single();
+  return c || null;
 }
 
 async function scopeOverlap(idA, idB) {

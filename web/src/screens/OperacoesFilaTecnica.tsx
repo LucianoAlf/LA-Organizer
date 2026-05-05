@@ -112,6 +112,17 @@ export function OperacoesFilaTecnica() {
         if (error) throw error;
         return (data ?? []) as Array<{ id: string; full_name: string }>;
       }
+      // Sprint 20 — gerencia: manager + coordinator + director (Decisão D5)
+      if (dept.slug === 'gerencia') {
+        const { data, error } = await supabase
+          .from('collaborators')
+          .select('id, full_name, role, unit')
+          .in('role', ['manager', 'coordinator', 'director'])
+          .eq('is_active', true)
+          .order('full_name');
+        if (error) throw error;
+        return (data ?? []) as Array<{ id: string; full_name: string }>;
+      }
       return [];
     },
     enabled: !!dept,

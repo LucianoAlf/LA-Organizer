@@ -511,6 +511,14 @@ function pickSkill(collab, lastUserMessage, recentHistory) {
     }
   }
 
+  // Sprint 20 — Priority 4.65: contexto GERENCIAL EXPLÍCITO (vence pedagogico em 4.7).
+  // Gatilhos restritos: nomes dos gerentes + termos gerenciais explícitos (risco evasão,
+  // retenção, atendimento, recepção, secretaria, articulação interna).
+  // Frases com "aluno"/"responsável" SEM qualificador gerencial caem em pedagogico abaixo.
+  if (/(\brisco\s+de\s+evas|\bevas[ãa]o\b|\bretenç[ãa]o\b|\brecuperaç[ãa]o\s+(?:de\s+)?aluno|\bexperi[êe]ncia\s+da\s+unidade|\bproblema\s+de\s+atendimento|\barticul(?:ar|ação)\s+(?:recepç|secretari|coord)|\bgerente\b|\bger[êe]ncia\b|\bjereh\b|\bclayton\b|\bkrissya\b|\bnegoci(?:ar|ação)\s+(?:permanência|sa[ií]da|condiç)|\bpai\s+(?:insatisfeito|querendo\s+sair|reclamando\s+do\s+atendimento)|\baciona\s+(?:a\s+)?ger[êe]ncia|\brecepç[ãa]o\b|\bsecretari[ao]\b|\bpr[ée][\s-]?atendimento)/i.test(lastUserMessage || '')) {
+    return { name: 'gerencia', body: loadSkill('gerencia') };
+  }
+
   // Sprint 19 — Priority 4.7: contexto PEDAGÓGICO (vence checklist-tarefas e operacoes-tecnicas).
   // Gatilhos: aluno/professor/turma/recital/banda/kids/school + nomes da equipe pedagógica.
   // Quando dispara, TOM usa skill pedagogico.md como PRIMARY → emite TASK_UPDATE com department_id pedagogico.
