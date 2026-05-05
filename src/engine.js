@@ -1435,8 +1435,8 @@ async function applyCoordinationRequestAction(collab, parsed) {
 
   // Hotfix pós-Sprint20 — Self-introduction unificada via helper.
   // Antes: duplicado aqui e ausente em applyTaskActions delegate (Krissya recebeu spam).
-  // Agora: helper único usado em TODOS os outbounds do TOM ao recipient.
-  const introPrefix = buildSelfIntroPrefix(recipient);
+  // Agora: helper único com cadência (full/half/short) — Q2.
+  const introPrefix = await buildSelfIntroPrefix(recipient);
   if (introPrefix) recipientMsg = introPrefix + recipientMsg;
 
   try {
@@ -2251,18 +2251,61 @@ const UNIT_DB_TO_PEDAG_SCOPE = {
   'barra':        'Barra',
 };
 
-// Hotfix pós-Sprint20 — Self-introduction unificada.
-// Sprint 19 R3 aplicou self-intro só em relay (applyCoordinationRequestAction).
-// Bug observado: Krissya recebeu task delegate sem apresentação, mensagem seca.
-// Helper unificado para qualquer outbound do TOM ao recipient.
+// Hotfix pós-Sprint20 — Self-introduction unificada com 4 níveis de cadência (Q2).
+// Sprint 19 R3 aplicou self-intro só em relay. Hotfix ef72a20 unificou em todo outbound.
+// Q2 (2026-05-05): cadência refinada para não soar repetitivo nem brutal.
 //
-// Decisão D2 (PO 2026-05-05): manter onboarding_completed=false até o recipient
-// passar pelo onboarding completo (5 perguntas). A self-intro repete por algumas
-// mensagens, o que reforça quem é o TOM até a pessoa se acostumar.
-function buildSelfIntroPrefix(recipient) {
-  if (!recipient || recipient.onboarding_completed !== false) return '';
+// Lógica de cadência (computada via conversation_history em runtime, sem migration):
+//   - Nunca recebeu mensagem do TOM (ou onboarding_completed=false E sem outbound) → FULL INTRO
+//   - Última outbound 30+ dias → FULL INTRO (re-apresentação)
+//   - Última outbound 7+ dias → MEIO INTRO ("Oi X! TOM aqui de novo.")
+//   - Última outbound mesmo dia BRT → CUMPRIMENTO CURTO ("Oi X 👋")
+//   - Última outbound 1-6 dias → CUMPRIMENTO CURTO
+//
+// Decisão D2 (PO ratificado): onboarding_completed=false continua sendo gatilho da intro
+// completa enquanto recipient não passou pelo fluxo de 5 perguntas. Quando passar, cai na
+// cadência refinada (mesmo dia → curto, 7+ dias → meio).
+async function buildSelfIntroPrefix(recipient) {
+  if (!recipient) return '';
   const firstName = (recipient.full_name || '').split(' ')[0] || 'oi';
-  return `Oi, ${firstName}! Aqui é o *TOM*, organizador da LA Music. Vou te ajudar a manter o time alinhado pelo WhatsApp — é só me chamar quando precisar atualizar tarefa, pedir pra encaminhar recado, ou abrir nova demanda.\n\n`;
+
+  const FULL = `Oi, ${firstName}! Aqui é o *TOM*, organizador da LA Music. Vou te ajudar a manter o time alinhado pelo WhatsApp — é só me chamar quando precisar atualizar tarefa, pedir pra encaminhar recado, ou abrir nova demanda.\n\n`;
+  const HALF = `Oi, ${firstName}! TOM aqui de novo (organizador da LA Music). Faz um tempo a gente não falou — qualquer coisa, é só chamar.\n\n`;
+  const SHORT = `Oi, ${firstName} 👋\n\n`;
+
+  // Busca última outbound em conversation_history.
+  let lastOutboundAt = null;
+  try {
+    const { data } = await supabase
+      .from('conversation_history')
+      .select('created_at')
+      .eq('collaborator_id', recipient.id)
+      .eq('direction', 'outbound')
+      .order('created_at', { ascending: false })
+      .limit(1);
+    if (data && data.length) lastOutboundAt = new Date(data[0].created_at);
+  } catch (_e) { /* fallback silencioso */ }
+
+  // Caso 1: nunca recebeu nada do TOM.
+  if (!lastOutboundAt) return FULL;
+
+  const now = Date.now();
+  const ageMs = now - lastOutboundAt.getTime();
+  const day = 24 * 3600 * 1000;
+  const ageDays = ageMs / day;
+
+  // Caso 2: 30+ dias → re-apresentação completa.
+  if (ageDays >= 30) return FULL;
+
+  // Caso 3: onboarding ainda incompleto + última outbound foi há mais de 7 dias → re-apresentação.
+  // (D2: enquanto onboarding_completed=false, mantém intro robusta.)
+  if (recipient.onboarding_completed === false && ageDays >= 7) return FULL;
+
+  // Caso 4: 7-29 dias → meio-cumprimento.
+  if (ageDays >= 7) return HALF;
+
+  // Caso 5: 1-6 dias OU mesmo dia → cumprimento curto.
+  return SHORT;
 }
 
 // Hotfix pós-Sprint20 — Sugestões de próximos passos por request_type slug.
@@ -2679,8 +2722,8 @@ async function applyTaskActions(collaborator, actions) {
           const dueLabel = insertRow.due_date ? ` (prazo ${formatBRDate(insertRow.due_date)})` : '';
 
           // Hotfix pós-Sprint20: mensagem enriquecida (não mais seca).
-          // Inclui: self-intro 1ª vez + descrição + sugestões de próximos passos.
-          const introPrefix = buildSelfIntroPrefix(recipient);
+          // Inclui: self-intro com cadência (Q2) + descrição + sugestões de próximos passos.
+          const introPrefix = await buildSelfIntroPrefix(recipient);
           const description = (typeof a.description === 'string' && a.description.trim()) ? a.description.trim() : null;
           // Lookup request_type slug se task tem request_type_id setado
           let suggestionLines = null;
