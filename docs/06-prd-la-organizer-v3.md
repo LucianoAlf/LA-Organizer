@@ -1,12 +1,14 @@
 # PRD — LA Organizer
 
 **Documento:** 06 — PRD Completo
-**Versão:** 3.3
-**Data:** 2026-05-03 (atualizado Sprint 15)
+**Versão:** 3.7
+**Data:** 2026-05-05 (atualizado Sprint 20 — fase de expansão de departamentos encerrada)
 **Autor:** Luciano Alf (produto) + Claude + OpenClaw (arquitetura)
 **Stakeholder:** Luciano Alf (CEO LA Music)
 **Agente:** TOM
-**Status:** Fase 1 funcionalmente concluída — Fase 2 (PWA) em produção · Sprints 0→15 fechadas
+**Status:** Sprints 0→20 fechadas. 4 departamentos operacionais maduros. Próxima fase: governança da liderança.
+
+> **Limites de papel do TOM:** ver `docs/TOM-LIMITES.md` (formalizado 2026-05-05). TOM é organizador de governança e organização pessoal da liderança — não é canal permanente de comunicação interpessoal entre toda a equipe.
 
 ---
 
@@ -299,6 +301,25 @@ Ver `docs/PROJECT-WIZARD.md` para decisões arquiteturais detalhadas, mapeamento
 | Telas em produção | Lista P0/P1 | Lista por sprint entregue |
 | Privatização repo | Pendente | Concluído |
 | Rotação segredos | Pendente | Concluída (Supabase Sprint 7, UAZAPI Sprint 5) |
+
+### v3.3 → v3.7 (2026-05-05) — pós-Sprint 16/17/18/19/20 + radar
+
+| Item | v3.3 | v3.7 |
+|---|---|---|
+| Status | Sprints 0→15 | Sprints 0→20 |
+| Departamentos operacionais | 1 (Operações Técnicas) | **4** (+ Marketing, Pedagógico, Gerência) |
+| Tabelas DB | 38 | 39 (+ pedagogical_assignments, Sprint 19) |
+| Colunas novas | — | tasks.subdomain, collaborators.pedagogical_role (Sprint 19) |
+| Skills TOM | 17 | **19** (+ pedagogico, gerencia) + 3 auxiliares globais (coordenacao-conversacional Sprint 16, integridade-agenda Sprint 18, pedagogico Sprint 19) |
+| Coordenação conversacional | — | Sprint 16: relay/relay_assisted/followup, COORD_HINT, alçada |
+| ACC | — | Sprint 17: FOCUS_CANDIDATE com confidence high/medium/low/none |
+| Integridade de agenda | — | Sprint 18: detectores de conflito + dup semântica + hygiene de tasks |
+| Camada pedagógica | — | Sprint 19: hierarquia (lead/assistant/mentor), subdomain (LA Music School/Kids), gate de alçada DENY > ALLOW |
+| Camada gerencial | — | Sprint 20: 3 gerentes de unidade + filtro inteligente + fronteira pedagógico |
+| Colaboradores | + Rafinha | **16 ativos** (+ Juliana/Quintela/6 assistentes/3 mentores/3 gerentes/Yuri) |
+| TOM-LIMITES.md | — | NOVO — formaliza papel do TOM (não vira "menino de recado") |
+| Hotfixes UX (radar Sprint 20) | — | 11: cadência self-intro, microconfirmação numerada, Eisenhower, dedup defensivo, cooldown deadline, COORD_HINT contexto, etc. |
+| Decisão estratégica | — | **Encerrada fase de expansão de departamentos** (2026-05-05). Próxima frente: governança da liderança |
 
 ### v3.2 → v3.3 (2026-05-03) — pós-Sprint 15
 
