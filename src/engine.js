@@ -1227,9 +1227,9 @@ function _buildIntegrityConfirmText(payload) {
   const existing = String(first.title || '').slice(0, 80);
   switch (payload.type) {
     case 'dup_task':
-      return `Achei algo bem parecido já aberto: _"${existing}"_.\n\nÉ a mesma demanda ou é outra? (Se for outra, manda **outra** e eu crio. Se for a mesma, posso só atualizar a existente.)`;
+      return `Achei algo bem parecido já aberto:\n_"${existing}"_\n\nQual o caso? Responde com o **número**:\n\n1️⃣ É a *mesma situação* — atualizo a existente\n2️⃣ É *outro caso* (pessoa/contexto diferente, demanda parecida) — crio nova com o nome novo\n3️⃣ Cancela, vou reformular`;
     case 'dup_event':
-      return `Achei um compromisso parecido já criado: _"${existing}"_.\n\nÉ o mesmo ou é outro? (Se for outro, manda **outro** e eu crio.)`;
+      return `Achei um compromisso parecido já criado:\n_"${existing}"_\n\nQual o caso? Responde com o **número**:\n\n1️⃣ É o *mesmo compromisso* — atualizo o existente\n2️⃣ É *outro compromisso* — crio novo\n3️⃣ Cancela, vou reformular`;
     case 'temporal_hard': {
       const overlap = first.overlapMin ? ` (sobrepõe ${first.overlapMin}min)` : '';
       return `Tem um conflito de horário/local com _"${existing}"_${overlap}. Não dá pra criar como está.\n\nQuer ajustar horário ou local de "${cand}"? Ou cancelar o existente?`;
