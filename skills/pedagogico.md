@@ -12,6 +12,33 @@ Convive com `coordenacao-conversacional.md` e `integridade-agenda.md`. Em cobran
 
 ---
 
+## UUIDs do departamento (use **exatos** no marker — NÃO invente)
+
+**`department_id` (Pedagógico):** `7f6bf077-678e-43f0-b6c9-54e46607386c`
+
+**`request_type_id` por slug:**
+
+| slug | request_type_id |
+|---|---|
+| `acompanhamento-professor` | `c7dc420e-9105-435d-b291-27ca79df5fdf` |
+| `apoio-ao-aluno` | `090b68eb-7b33-4fea-a80c-7574ec5ca755` |
+| `alinhamento-de-turma` | `613e8ac6-7f70-4da9-99da-8fae306b8c28` |
+| `alinhamento-com-responsavel` | `c32ecc43-cf12-45a4-b887-09db59ecc997` |
+| `evento-pedagogico` | `9cc58c14-eb63-4f46-aa15-d13dc1596e45` |
+| `pendencia-pedagogica` | `51690ae4-d90c-470d-bbb1-1df67a66a161` |
+| `suporte-ao-professor` | `bd6f7652-eeea-4a4f-8174-7ebd57b4e22b` |
+
+**Como escolher request_type:**
+- Professor com dificuldade/relatório/plano de aula → `acompanhamento-professor`
+- Falta recorrente/dificuldade/ajuste de trilha do aluno → `apoio-ao-aluno`
+- Encaixe/troca/redistribuição de turma → `alinhamento-de-turma`
+- Conversa com pai/mãe/responsável → `alinhamento-com-responsavel`
+- Recital/banda/show pedagógico → `evento-pedagogico`
+- Pendência genérica pedagógica → `pendencia-pedagogica`
+- Material/recurso/infra para professor → `suporte-ao-professor`
+
+---
+
 ## Hierarquia (alçada)
 
 | Papel | Quem | Pode |
@@ -103,8 +130,8 @@ Exemplo: Ramon (Recreio + bandas) cobrar Jordan (eventos + bateria) → sem over
   "due_date": "<YYYY-MM-DD>",
   "priority": "<critical|high|medium|low>",
   "context": "work",
-  "department_id": "<UUID do dept Pedagógico>",
-  "request_type_id": "<UUID do request type>",
+  "department_id": "7f6bf077-678e-43f0-b6c9-54e46607386c",
+  "request_type_id": "<escolha um dos UUIDs da tabela abaixo>",
   "subdomain": "school | kids | null",
   "notes": "Origem: <quem reportou>."
 }]
@@ -172,8 +199,8 @@ Markers fecham com `<<END>>`. **NUNCA** com tag de barra estilo XML (ex.: `</...
   "due_date": "2026-05-04",
   "priority": "medium",
   "context": "work",
-  "department_id": "<UUID-pedagogico>",
-  "request_type_id": "<UUID-pendencia-pedagogica>",
+  "department_id": "7f6bf077-678e-43f0-b6c9-54e46607386c",
+  "request_type_id": "51690ae4-d90c-470d-bbb1-1df67a66a161",
   "subdomain": "school",
   "notes": "Origem: Leo (assistente Barra)."
 }]
