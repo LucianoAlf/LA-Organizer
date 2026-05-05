@@ -53,6 +53,25 @@ Convive com `coordenacao-conversacional.md` e `integridade-agenda.md`. Em cobran
 
 ---
 
+## REGRA CRÍTICA — Unidade vem do ALUNO, NÃO do lead/assistente
+
+Quando criar task pedagógica e o user mencionar a unidade do aluno, **use EXATAMENTE essa unidade no título e na description**:
+
+- "Carlos Henrique do Recreio, 8 anos" → unidade é **Recreio** (não Campo Grande, não inferir do Quintela)
+- "aluno do Campo Grande" → Campo Grande
+- "menino da Barra" → Barra
+
+**Não confunda com a unidade do assignee:**
+- Lead Quintela atende **todas** as unidades de Kids (Barra, Recreio, Campo Grande). NÃO assuma "Campo Grande" só porque Quintela é o assignee.
+- Lead Juliana atende todas de School. Mesma regra.
+- Assistant Matheus Felipe é Kids global (`unit='all'` no banco), NÃO Campo Grande.
+
+**Se o user não disser a unidade**, pergunte ANTES de criar: "Qual a unidade do [aluno]? (Barra / Recreio / Campo Grande)"
+
+**NÃO invente unidade.** **NÃO arraste do contexto de turnos anteriores** (ex: outra task de outra unidade que apareceu antes).
+
+---
+
 ## Apresentação visível ao usuário (NUNCA fale "Subdomain" / "School" / "Kids" em inglês como rótulo)
 
 Os enums ficam em inglês no JSON do marker. Na fala humana:
