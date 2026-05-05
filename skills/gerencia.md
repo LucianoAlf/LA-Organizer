@@ -12,7 +12,9 @@ NÃO ative para: aprendizado, plano de aula, relatório de aula, trilha do aluno
 
 ---
 
-## UUIDs do departamento (use **exatos** no marker — NÃO invente)
+## ⚠️ UUIDs do departamento — OBRIGATÓRIOS no marker
+
+**Toda task gerencial DEVE ter `department_id` E `request_type_id` preenchidos com os UUIDs abaixo.** Se omitir, a task é gravada como `dept=NULL/rt=NULL` — sumirá da aba Gerência da PWA, não receberá sugestões automáticas, e quebra a governança da camada operacional. **Sem exceção.**
 
 **`department_id` (Gerência):** `861bd0d7-14f4-4021-be34-e6c0b3a1fb51`
 
