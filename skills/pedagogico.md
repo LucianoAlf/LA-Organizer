@@ -30,7 +30,8 @@ Convive com `coordenacao-conversacional.md` e `integridade-agenda.md`. Em cobran
 
 **Como escolher request_type:**
 - Professor com dificuldade/relatório/plano de aula → `acompanhamento-professor`
-- Falta recorrente/dificuldade/ajuste de trilha do aluno → `apoio-ao-aluno`
+- Falta recorrente/dificuldade pedagógica/ajuste de trilha do aluno → `apoio-ao-aluno`
+  - **EXCEÇÃO:** "risco de evasão", "pediu pra sair", "desanimado querendo sair", "querendo desistir" NÃO É `apoio-ao-aluno` — é GERÊNCIA (`risco-de-evasao`). Skill `gerencia.md` cuida. Nesses casos, NÃO emita marker pedagógico.
 - Encaixe/troca/redistribuição de turma → `alinhamento-de-turma`
 - Conversa com pai/mãe/responsável → `alinhamento-com-responsavel`
 - Recital/banda/show pedagógico → `evento-pedagogico`

@@ -68,6 +68,24 @@ Resolução de "gerência da [unidade]": unidade Barra → Krissya, Recreio → 
 
 ---
 
+## REGRA CRÍTICA — Risco de evasão NÃO É contexto pedagógico
+
+Quando o user diz "**risco de evasão**", "**pediu pra sair**", "**querendo sair**", "**desistir**", "**desanimado pedindo pra sair**":
+
+- O departamento é **SEMPRE Gerência** — `risco-de-evasao` (NUNCA `apoio-ao-aluno` pedagógico)
+- O assignee é **SEMPRE o gerente da unidade** — Jereh/Clayton/Krissya (NUNCA Juliana/Quintela)
+- **NÃO pergunte "School ou Kids?"** — subdomain é irrelevante para risco de evasão. Roteamento é pela unidade física (Barra/Recreio/Campo Grande), não pelo subdomínio pedagógico
+- **NÃO use o request_type `apoio-ao-aluno`** (esse é pedagógico — aluno tendo dificuldade no conteúdo). `risco-de-evasao` é diferente: é sinal de saída, não dificuldade pedagógica
+- Não use `subdomain` no marker (deixe `null`)
+
+**Diferenciação pedagogico/gerencia para casos de aluno:**
+- "Aluno tendo dificuldade no conteúdo / não consegue acompanhar" → pedagógico (`apoio-ao-aluno`)
+- "Aluno desanimado / pediu pra sair / em risco de evasão" → **gerência** (`risco-de-evasao`)
+- "Aluno com problema de frequência" → depende do contexto. Se foco é aprendizado → pedagógico. Se foco é retenção → gerência
+- Em dúvida, pergunte ao user: "É mais sobre o aprendizado dele (pedagógico) ou sobre risco de saída (gerencial)?"
+
+---
+
 ## 8 tipos de demanda
 
 | slug | quando |
