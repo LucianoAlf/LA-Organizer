@@ -4411,7 +4411,11 @@ async function processMessage(phone, text, raw = {}) {
     [
       String.raw`\b(supabase|postgres|banco\s+de\s+dados|mcp|sql)\b`,
       String.raw`\bpermiss[ãa]o.+(acess|aprovar|liberar)`,
-      String.raw`\btabela\s+[a-z_]`,
+      // Sprint 19 hotfix: pattern original `\btabela\s+[a-z_]` pegava "tabela promocional",
+      // "tabela de preços" e outras frases legítimas em pt-BR. Causou TOM a responder
+      // "_tive um problema interno aqui_" repetidamente (regressão grave de UX).
+      // Apertado para snake_case com underscore (convenção DB) que é o real tell de leak.
+      String.raw`\btabela\s+\w+_\w+`,
       String.raw`<\/?tool_call`,                  // <tool_call>, </tool_call>
       String.raw`\/root\/\.claude`,               // /root/.claude paths
       String.raw`\.claude\/projects`,             // .claude/projects/...
