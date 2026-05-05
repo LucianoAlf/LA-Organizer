@@ -96,16 +96,40 @@ export function OperacoesFilaTecnica() {
     enabled: !!selectedDeptId,
   });
 
-  // Build unique responsibles from results
+  // Q3 — Sprint 19: candidatos a responsável por departamento
+  // pedagogico → todos com pedagogical_role IS NOT NULL (lead/assistant/mentor)
+  // outros → vazio aqui; fallback é o build dinâmico de tasks
+  const { data: deptAssignees = [] } = useQuery({
+    queryKey: ['dept-assignees', dept?.slug ?? ''],
+    queryFn: async () => {
+      if (!dept) return [] as Array<{ id: string; full_name: string }>;
+      if (dept.slug === 'pedagogico') {
+        const { data, error } = await supabase
+          .from('collaborators')
+          .select('id, full_name, pedagogical_role')
+          .not('pedagogical_role', 'is', null)
+          .order('full_name');
+        if (error) throw error;
+        return (data ?? []) as Array<{ id: string; full_name: string }>;
+      }
+      return [];
+    },
+    enabled: !!dept,
+  });
+
+  // Build responsibles: union de candidatos do dept + colabs já presentes em tasks atuais
   const responsibles = useMemo(() => {
     const m = new Map<string, string>();
+    for (const c of deptAssignees) {
+      if (c?.id && c.full_name) m.set(c.id, c.full_name);
+    }
     for (const t of tasks) {
       if (t.collaborator?.id && t.collaborator.full_name) {
         m.set(t.collaborator.id, t.collaborator.full_name);
       }
     }
     return Array.from(m.entries()).sort((a, b) => a[1].localeCompare(b[1]));
-  }, [tasks]);
+  }, [tasks, deptAssignees]);
 
   const filteredTasks = useMemo(() => {
     return tasks.filter(t => {
