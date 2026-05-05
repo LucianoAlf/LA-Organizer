@@ -1254,13 +1254,19 @@ async function alreadyNotifiedToday(collaboratorId, taskId, type, ymdToday) {
 }
 
 // Deadline alert: tasks due tomorrow (status != done/cancelled).
+// Hotfix pós-Sprint20: cooldown de 6h — não disparar lembrete se a task foi
+// criada/reagendada recentemente. Bug observado: Jereh reagendou pra amanhã
+// às 16:32, dispatcher rodou às 16:35 e mandou lembrete "vence amanhã" em loop.
+// Cooldown garante que TOM não cobre o que ele acabou de avisar.
 async function checkDeadlineAlerts(ymdToday) {
   const tomorrow = ymdOffset(ymdToday, 1);
+  const cooldownCutoff = new Date(Date.now() - 6 * 3600 * 1000).toISOString();
   const { data: tasks, error } = await supabase
     .from('tasks')
-    .select('id, title, assigned_to, due_date, status')
+    .select('id, title, assigned_to, due_date, status, updated_at')
     .eq('due_date', tomorrow)
     .not('status', 'in', '(done,cancelled)')
+    .lt('updated_at', cooldownCutoff)
     .limit(200);
   if (error) {
     console.error('[DeadlineAlert] query err:', error.message);
@@ -1330,11 +1336,15 @@ async function checkDeadlineAlerts(ymdToday) {
 // Resultado: máx 1 alerta individual por task + 1 agregado/dia se ainda parado.
 async function checkOverdueAlerts(ymdToday) {
   const yesterday = ymdOffset(ymdToday, -1);
+  // Hotfix pós-Sprint20: mesmo cooldown que checkDeadlineAlerts (6h).
+  // Evita loop quando user pede pra reagendar e dispatcher dispara overdue logo após.
+  const cooldownCutoff = new Date(Date.now() - 6 * 3600 * 1000).toISOString();
   const { data: tasks, error } = await supabase
     .from('tasks')
-    .select('id, title, assigned_to, due_date, status')
+    .select('id, title, assigned_to, due_date, status, updated_at')
     .eq('due_date', yesterday)
     .not('status', 'in', '(done,cancelled)')
+    .lt('updated_at', cooldownCutoff)
     .limit(200);
   if (error) {
     console.error('[OverdueAlert] query err:', error.message);

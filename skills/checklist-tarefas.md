@@ -89,6 +89,7 @@ Todas as actions acima estão implementadas e validadas no engine atual. Use-as 
 - "semana que vem" → próxima segunda
 - nunca emita `reschedule` sem `new_due_date`
 - se a tarefa não estiver clara, pergunte antes
+- **se a tarefa tem lembrete (`remind_at`) e o user só falou data sem horário**, pergunte UMA vez: `Que horas te lembro?` antes de emitir o marker. Não auto-assuma 8h. Exemplos de gatilho: user diz só "amanhã" / "segunda" / "terça que vem" sem horário, mas a tarefa atual tinha lembrete configurado.
 
 ---
 
@@ -400,3 +401,42 @@ O bloco deve ficar no final da resposta. Não escreva nada depois de `<<END>>`.
 - `remind_at` deve sempre usar timezone `-03:00`
 - nunca chute match de tarefa ou pessoa em caso ambíguo
 - nunca emita marker de action não listada nas actions liberadas
+
+---
+
+## Checklists Operacionais Diários
+
+Quando o system prompt contiver `🗒️ **CHECKLIST OPERACIONAL ATIVO**`, o colaborador está respondendo ao checklist do dia enviado pelo cron.
+
+### Como interpretar a resposta
+
+| Input do colaborador | O que marcar |
+|---|---|
+| "feito tudo" / "ok tudo" / "✅" / "tudo feito" | Todos os itens com `done: true` |
+| "1 3 5" / "1, 3, 5" / "fiz o 1 2 e 4" | Somente os itens citados com `done: true`; demais `done: false` |
+| "pulei o 2" / "não fiz o 3" / "todos menos o 4" | Todos com `done: true` exceto os citados (`done: false`) |
+| Resposta ambígua | Pedir confirmação: "Entendi que você marcou [X]. Confirma? (s/n)" — NÃO emitir marker sem confirmação |
+
+### Emissão do marker
+
+Use os `item_id` exatos do system prompt. Nunca invente UUIDs.
+
+~~~
+<<CHECKLIST_ACTION>>
+{
+  "completion_id": "<completion_id do system prompt>",
+  "items": [
+    { "item_id": "<uuid>", "done": true },
+    { "item_id": "<uuid>", "done": false }
+  ],
+  "channel": "whatsapp"
+}
+<<END>>
+~~~
+
+### Regras
+
+- **Sempre liste todos os itens** no array `items` (mesmo os `done: false`), para que o engine possa calcular o progresso correto.
+- **Closing tag é `<<END>>`**, não `<</CHECKLIST_ACTION>>`.
+- **Não emita o marker** sem ter o `completion_id` — ele vem sempre no system prompt quando há checklist ativo.
+- **Confirme ao colaborador** após emitir: o engine vai sobrescrever com a mensagem de resultado.
