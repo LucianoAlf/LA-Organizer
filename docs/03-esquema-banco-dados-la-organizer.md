@@ -1,8 +1,8 @@
 # 03 — Esquema do Banco de Dados — LA Organizer
 
 > **Fonte de verdade:** Supabase Postgres, schema `public`.
-> **Última revisão:** 2026-05-03 (atualizado Sprint 15)
-> **Tabelas base:** 38 | **Views:** 1 (`v_recent_events`)
+> **Última revisão:** 2026-05-05 (atualizado Sprint 19 — pedagogical_role, subdomain, pedagogical_assignments)
+> **Tabelas base:** 39 | **Views:** 1 (`v_recent_events`)
 
 ---
 
@@ -62,12 +62,14 @@ Cadastro central de todos os usuários do sistema. Identificados no WhatsApp pel
 | supervisor_id | uuid | YES | — | FK → collaborators(id) (autorreferência) |
 | is_active | boolean | NO | true | |
 | onboarding_completed | boolean | NO | false | |
+| pedagogical_role | text | YES | NULL | CHECK ∈ {lead, assistant, mentor} ou NULL (novo Sprint 19) |
 | created_at | timestamptz | NO | now() | |
 | updated_at | timestamptz | NO | now() | |
 
 **Constraints:**
 - role CHECK: director, manager, coordinator, collaborator
 - unit CHECK: campo_grande, recreio, barra, all, ou NULL
+- pedagogical_role CHECK: lead, assistant, mentor, ou NULL *(novo Sprint 19)*
 
 **Relacionamentos:**
 - supervisor_id → collaborators(id)
@@ -358,6 +360,7 @@ Tarefas individuais ou vinculadas a projeto/checkpoint/evento escolar. Centro do
 | reminded_at | timestamptz | YES | — | Timestamp do lembrete T-1 enviado (Sprint 14 F2) |
 | department_id | uuid | YES | — | FK → departments(id) ON DELETE SET NULL (novo Sprint 15) |
 | request_type_id | uuid | YES | — | FK → department_request_types(id) ON DELETE SET NULL (novo Sprint 15) |
+| subdomain | text | YES | NULL | CHECK ∈ {school, kids} ou NULL (novo Sprint 19 — pedagógico) |
 | created_at | timestamptz | NO | now() | |
 | updated_at | timestamptz | NO | now() | |
 
@@ -370,6 +373,7 @@ Tarefas individuais ou vinculadas a projeto/checkpoint/evento escolar. Centro do
 - eisenhower_quadrant CHECK: 1–4
 - action_type CHECK: now, task, call, meeting, delegate, project (ou NULL)
 - event_sector CHECK: logistica, tecnica, pedagogico, comunicacao, producao
+- subdomain CHECK: school, kids, ou NULL *(novo Sprint 19)*
 
 **Relacionamentos:**
 - assigned_to → collaborators(id)
@@ -1246,6 +1250,47 @@ Tipos de requisição de um departamento operacional. Governam prioridade, aprov
 - `Service role full access`: ALL
 - `dept_request_types_select_auth`: SELECT — true (todos leem)
 - `dept_request_types_write_mgmt`: ALL — role ∈ {director, coordinator}
+
+---
+
+### `pedagogical_assignments` *(novo Sprint 19)*
+
+Mapeia colaboradores pedagógicos a escopos de atuação. Suporta o roteamento "assistente da Barra", "assistente de cordas", "lead Kids".
+
+| Coluna | Tipo | NULL | Default | Notas |
+|---|---|---|---|---|
+| collaborator_id | uuid | NO | — | FK → collaborators(id) ON DELETE CASCADE |
+| scope_type | text | NO | — | CHECK ∈ {unit, specialty, subdomain} |
+| scope_value | text | NO | — | Valor livre — ex: 'Barra', 'cordas', 'school' |
+| created_at | timestamptz | NO | now() | |
+
+**Chave primária:** `(collaborator_id, scope_type, scope_value)` — composta.
+
+**Índice secundário:** `idx_ped_assignments_scope (scope_type, scope_value)` — usado por `findPedagogicalAssignee` para resolver "assistente da X" via lookup direto.
+
+**Constraints:**
+- scope_type CHECK: unit, specialty, subdomain
+
+**Relacionamentos:**
+- collaborator_id → collaborators(id) ON DELETE CASCADE
+
+**RLS:**
+- `Service role full access`: ALL
+- `ped_assignments_read`: SELECT — authenticated (todos leem)
+- `ped_assignments_write`: ALL — role ∈ {director, coordinator}
+
+**Seed inicial (11 atribuições):**
+- subdomain school: Juliana
+- subdomain kids: Quintela, Matheus Felipe
+- unit Barra: Leo
+- unit Recreio: Ramon
+- unit Campo Grande: Dai
+- specialty bandas: Ramon
+- specialty eventos: Jordan
+- specialty bateria: Jordan
+- specialty cordas: Rodrigo
+
+Mentores (Peterson, Kinho, Renan) **não** entram em `pedagogical_assignments` — orientam, não recebem demanda automática por escopo.
 
 ---
 

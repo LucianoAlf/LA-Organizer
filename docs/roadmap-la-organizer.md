@@ -1,10 +1,10 @@
-# Roadmap LA Organizer — Histórico Sprint 0→15
+# Roadmap LA Organizer — Histórico Sprint 0→19
 
 > Histórico cronológico das sprints. Para o estado atual do produto, ver PRD (`docs/06-prd-la-organizer-v3.md`). Para schema do banco, ver `docs/03-esquema-banco-dados-la-organizer.md`.
 >
 > **Nota sobre sprints 0–10:** não há specs ou reports granulares para este período. O histórico foi reconstruído a partir do PRD v3.1 (escrito em 2026-04-28 com estado Sprints 0→7 em produção) e dos comentários inline do engine.js. Sprints 8–10 foram inferidas pelos artefatos entregues (telas no App.tsx, markers no engine).
 >
-> **Atualizado Sprint 15:** adicionada seção Sprint 15 — Camada Operacional Replicável. Próximos passos revisados.
+> **Atualizado Sprint 19 (2026-05-05):** adicionadas seções Sprint 16 (Coordenação Conversacional), Sprint 17 (ACC), Sprint 18 (Integridade), Sprint 19 (Pedagógico). Próximos passos revisados.
 
 ---
 
@@ -305,6 +305,139 @@
 
 ---
 
+---
+
+## Sprint 16 — Coordenação Conversacional via TOM (2026-05-03)
+
+**Status:** entregue + bugs cognitivos diagnosticados (input para Sprint 17)
+**Spec:** `docs/superpowers/specs/2026-05-03-sprint16-coordenacao-conversacional-design.md`
+**Plan:** `docs/superpowers/plans/2026-05-03-sprint16-coordenacao-conversacional.md`
+**Reports:** `docs/superpowers/reports/2026-05-03-sprint16-bugs-cognitivos.md`
+**Commits principais:** `5a02562`, `027d660`, `484d708`, `7614997`
+
+### Entregas
+
+- Tabela `coordination_requests` (mode, status, message_body, response_summary, deadline, cancelled_reason)
+- Marker `<<COORDINATION_REQUEST>>` (relay_literal, relay_assisted, followup) + `<<COORDINATION_RESPONSE>>`
+- Skill `coordenacao-conversacional.md` (auxiliar global) — relay/followup, regras de alçada (collaborator não emite followup, coord/manager não cobra director)
+- COORD_HINT injetado no prompt quando recipient tem recados pendentes
+- Engine: `applyCoordinationRequestAction` com gating, INSERT, sendMessage, UPDATE
+- Detecção de resposta automática (LLM emite COORDINATION_RESPONSE quando recipient responde)
+- Dispatcher: `checkCoordinationTimeouts` envia alerta quando `response_deadline_hours` expira
+
+### Bugs cognitivos identificados (input Sprint 17)
+- Perda de referente anafórico ("agradece a ele" sem ator ativo)
+- Mistura de threads paralelas
+- Deadline implícita ignorada
+- Microconfirmação faltante
+- Confusão de papel quando user é simultaneamente requester e recipient
+
+---
+
+## Sprint 17 — Active Coordination Context (ACC) (2026-05-03)
+
+**Status:** entregue + validado E2E
+**Spec:** `docs/superpowers/specs/2026-05-03-sprint17-acc-design.md`
+**Plan:** `docs/superpowers/plans/2026-05-03-sprint17-acc.md`
+**Commit:** `986049c`
+
+### Entregas
+
+- `buildActiveCoordinationContext(collab)` injeta bloco `[ACTIVE_COORDINATION_CONTEXT]` com FOCUS_CANDIDATE + FOCUS_CONFIDENCE (high/medium/low/none)
+- 4 queries de seleção de contexto ativo + 7 prioridades de heurística (resposta recente <30min → high; request recém-criado <30min → high; clustering por ator → medium etc.)
+- Skill `coordenacao-conversacional.md` atualizada com tabela de heurísticas e política por confidence
+- Convive com COORD_HINT (Sprint 16) — funções complementares
+
+### Validação
+
+- "Agradece a ele" resolvido automaticamente para Rafinha sem perguntar
+- Microconfirmação em medium ("Vou avisar o Yuri — pode?")
+- "Diz que está autorizado" resolvido para o request mais recente em que TOM era recipient
+
+---
+
+## Sprint 18 — Integridade de Agenda e Execução (2026-05-03→05)
+
+**Status:** entregue (ativada de fato em 2026-05-05 com fix do `loadSkill` durante Sprint 19)
+**Spec:** `docs/superpowers/specs/2026-05-03-sprint18-integridade-design.md`
+**Plan:** `docs/superpowers/plans/2026-05-03-sprint18-integridade.md`
+**Commits:** `5834130` (feat) + `637e697` (loadSkill fix) + `14b2e35` + `837f461` (jaroWinkler hotfixes)
+
+### Princípio mãe
+"alertar > sugerir > confirmar > criar" — bloqueio só em impossibilidade física confirmada.
+
+### Entregas
+
+- 3 helpers detectores em `engine.js`:
+  - `detectTemporalConflict` (HARD se mesma sala/local confirmado, SOFT caso contrário; via PostgreSQL `tsrange &&`)
+  - `detectDuplicateSemanticEvent` (Jaro-Winkler com strip de suffix)
+  - `detectDuplicateSemanticTask` (mesmo, threshold 0.7, boosts +0.05 dept/+0.05 type)
+- Pre-check hooks em `applyEventActions` create + `applyTaskActions` create
+- A1: DUP nunca auto-bloqueia (retorna soft payload; skill apresenta microconfirmação)
+- A2: SOFT pede microconfirmação; só insere em novo turno após confirmação
+- A3: dia carregado é alerta complementar, não bloqueia
+- Skill `integridade-agenda.md` (auxiliar global)
+- Dispatcher: `detectStaleTasks` (segunda 09h, 14d, max 5) + `detectUnclosedPastEvents` (diário 09:30, max 3)
+
+### Bugs descobertos durante uso (corrigidos durante Sprint 19)
+- `loadSkill('integridade-agenda.md')` chamado com `.md` duplicado → skill nunca carregava em produção
+- Boost +0.2 dept + +0.2 type em jaroWinkler causava falsos positivos sistemáticos
+- Strip do suffix "— UNIDADE/SALA" antes do jaroWinkler era necessário (suffix dominava match)
+
+---
+
+## Sprint 19 — Camada Pedagógica (2026-05-04→05)
+
+**Status:** ENCERRADA + validada E2E em produção
+**Spec:** `docs/superpowers/specs/2026-05-03-sprint19-pedagogico-design.md`
+**Plan:** `docs/superpowers/plans/2026-05-03-sprint19-pedagogico.md`
+**Closure report:** `docs/superpowers/reports/2026-05-05-sprint19-closure.md`
+**Commits:** `8d6be1a` (feat) + 12 hotfixes/radar (`637e697` → `49fa159`)
+
+### Princípio
+Pedagógico é **configuração + skill + alçada** — não é módulo. Reusa Sprint 15/16/17 sem novo motor.
+
+### F1 — Schema + Seed
+- `tasks.subdomain` (text CHECK ∈ {'school','kids'})
+- `collaborators.pedagogical_role` (text CHECK ∈ {'lead','assistant','mentor'})
+- Tabela `pedagogical_assignments(collaborator_id, scope_type, scope_value)` com PK composta + RLS
+- Seed: department `pedagogico` + 7 request types (acompanhamento-professor, apoio-ao-aluno, alinhamento-de-turma, alinhamento-com-responsavel, evento-pedagogico, pendencia-pedagogica, suporte-ao-professor)
+- 11 colaboradores criados/atualizados com `pedagogical_role`: lead (Juliana, Quintela), assistant (Leo, Ramon, Dai, Matheus Felipe, Jordan, Rodrigo), mentor (Peterson, Kinho, Renan)
+- 10 atribuições de escopo
+
+### F2 — Engine helpers + handlers
+- 4 helpers novos: `getPedagogicalRole`, `findPedagogicalAssignee`, `scopeOverlap`, `canDelegatePedagogical`
+- Gate pedagógico tem **PRECEDÊNCIA** sobre gate genérico Sprint 16 (DENY pedagógico = DENY final)
+- Regra de match de escopo: 1 match (unit OR specialty OR subdomain) já autoriza assistant
+- `applyTaskActions` create aceita `subdomain`
+
+### F3 — Skill `pedagogico.md`
+- Auxiliar global (carrega para todos os roles)
+- Hierarquia, mapa de escopo, 7 request types, regra de precedência, regra de match de escopo, 6 exemplos verbatim do PRD §7
+- UUIDs reais embutidos (departamento + 7 request types)
+
+### F4 — Loader em `system.js` + pickSkill
+- `loadSkill('pedagogico')` injetado como auxiliar global em `buildSystemPrompt`
+- pickSkill ganhou 2 branches novos: pedagogico (gatilhos: aluno/professor/turma/recital/banda/kids/school + nomes da equipe) e operacoes-tecnicas (sala/ar-condic/lâmpada/equipamento/instrumento/material)
+
+### Validação E2E em produção
+- ✅ Task pedagógica criada: *"Alinhamento com responsável — frequência baixa aluna Marina (canto)"* → dept=pedagogico, req_type=alinhamento-com-responsavel, subdomain=school, assignee=Juliana
+- ✅ Task operacional criada: *"Ar-condicionado parou — Recreio Sala 5"* → dept=operacoes-tecnicas, req_type=incidente-tecnico, priority=critical
+- ✅ TOM identificou subdomain inferido pelo contexto ("violão iniciante 7 anos" → kids → Quintela)
+
+### Radar pós-Sprint 19 (4 ajustes UX entregues no mesmo dia)
+- **R1:** PWA traduz `Crítico` → "Urgente" + concordância de gênero (Alta/Média/Baixa); `unitLabel('all')` → "Todas"
+- **R2:** Cabeçalho relay enxuto — só primeiro nome ("O Luciano me pediu" sem `(CEO/Fundador)`)
+- **R3:** TOM se apresenta na 1ª vez com cada novo collaborator
+- **R4:** Bug B2 — alucinação `"✅ Registrado!"` substituída por microconfirmação determinística no engine (`_buildIntegrityConfirmText`) cobrindo dup_task/dup_event/temporal_hard/temporal_soft
+
+### Não-objetivos afirmados
+- ❌ Não cria módulo Eventos. `evento-pedagogico` = task com nota.
+- ❌ Professor não vira collaborator no MVP.
+- ❌ Sem dashboard pedagógico analítico, sem timeline custom de caso.
+
+---
+
 ## Backlog descartado
 
 | Item | Decisão | Motivo |
@@ -320,10 +453,24 @@
 
 ## Próximos passos
 
-1. **Validar Sprint 15 em uso real** — confirmar se briefing semanal segunda 07:30 BRT funciona na prática, se checklist consequences geram tasks corretas, se Rafinha consegue operar a fila pelo PWA
-2. **Expandir para segundo departamento** (ex.: Pedagógico ou Administrativo) com base na estrutura `departments` + `department_request_types`
-3. **Onboardar coordenadores (Juliana e Quintela)** — pré-requisito atendido (Sprint 14 + Sprint 15 estáveis)
-4. **Validar override de equipe e múltiplos lembretes** (diferido Sprint 14) após validação do fluxo base
-5. **Code-splitting PWA** — bundle em 633KB; só prioridade se carregamento lento começar a incomodar usuários
-6. **Testes automatizados** — só vale o esforço com mais de 1 dev no projeto
+### Validações em uso real (Sprint 16–19)
+1. Validar workflow de coordenação conversacional com 4+ threads paralelos (testar mistura de contextos)
+2. Validar microconfirmações da Sprint 18 + Sprint 19 (Bug B2 fix) — confirmar que conflitos legítimos viram pergunta clara em vez de rejeição silenciosa
+3. Validar fluxo pedagógico end-to-end com Juliana e Quintela operando direto (ainda em validação interna pelo Alf)
+4. Confirmar primeira interação de novos collaborators com TOM ativando self-introduction (Radar 3 ainda sem teste E2E)
+
+### Possíveis Sprints 20–22
+- **Sprint 20 (sugerida):** módulo de Eventos como motor próprio (separar `evento-pedagogico` task de event entity de fato), governança fina de subdomínio (Anne só Kids, etc.)
+- **Sprint 21 (sugerida):** professor como collaborator (resolve gap §6 do PRD pedagógico — professor abrir demanda direto), expansão da camada replicável para Financeiro e Comercial
+- **Sprint 22 (sugerida):** dashboard analítico cross-departamento, observabilidade pedagógica (frequência aluno × performance professor), retros automatizadas
+
+### Cleanup arquitetural pendente
+- Investigar `composeSystemPrompt` (sync builder) — confirmar dead code ou alinhar com `buildSystemPrompt`
+- Workflow de dev local: localhost:4173 não atualiza automaticamente após push — investigar fluxo pull/build/preview
+- PWA aba Operações Técnicas — popular dropdown Responsável com candidatos formais (mesma lógica que aba Pedagógico)
+
+### Pendências históricas (continuam válidas)
+1. **Override de equipe e múltiplos lembretes** (diferido Sprint 14) — aguarda uso real do fluxo base
+2. **Code-splitting PWA** — bundle em ~633KB; só prioridade se carregamento lento começar a incomodar
+3. **Testes automatizados** — só vale o esforço com mais de 1 dev no projeto
 7. **Fase 3** — Dashboard gerencial avançado + check-in RH (escopo a definir)

@@ -1,8 +1,8 @@
 # TOM-SKILLS-CATALOG — Catálogo Consolidado de Skills
 
 **Documento:** TOM-SKILLS-CATALOG
-**Versão:** 4.1
-**Data:** 2026-05-03 (atualizado Sprint 15 — adicionada skill 10.5 operacoes-tecnicas)
+**Versão:** 4.4
+**Data:** 2026-05-05 (atualizado Sprint 19 — adicionadas skills 10.10 coordenacao-conversacional, 10.11 integridade-agenda, 10.12 pedagogico)
 **Função:** Catálogo consolidado das skills e referências internas do TOM
 
 ---
@@ -383,6 +383,79 @@ Em dúvida, fallback para `checklist-tarefas` (cria task com `remind_at` se for 
 - classifica a demanda
 - propõe encaminhamento (tarefa imediata, projeto, delegação etc.)
 - faz handoff para a skill correspondente
+
+---
+
+## 10.10 Coordenação conversacional (novo Sprint 16)
+**Arquivo:** `skills/coordenacao-conversacional.md`
+**Tipo:** auxiliar global (sempre carregada para todos os roles)
+
+**Função:** TOM intermedia comunicação entre colaboradores via WhatsApp — repassar recados, avisar alguém ou cobrar resposta — sem precisar que o solicitante tenha o número da outra pessoa.
+
+**3 modos de operação:**
+- `relay_literal` — texto verbatim ("manda exatamente isso pra X")
+- `relay_assisted` — parafraseia profissionalmente, preserva intenção
+- `followup` — cobrança + monitoramento de resposta com deadline
+
+**Regras de alçada (gate genérico):**
+- collaborator sem `pedagogical_role` não emite `followup` (recusa)
+- coordinator/manager não cobra director (relay-only)
+- mentor pedagógico nunca cobra (gate pedagógico tem precedência — ver 10.12)
+
+**Marker:** `<<COORDINATION_REQUEST>>` + `<<COORDINATION_RESPONSE>>` (fecham com `<<END>>`).
+**Atualizado Sprint 17:** convive com ACC (`[ACTIVE_COORDINATION_CONTEXT]`) para resolver pronomes anafóricos com confidence high/medium/low.
+**Atualizado Sprint 19 radar:** cabeçalho de relay usa apenas primeiro nome (sem `(CEO/Fundador)`); TOM se apresenta na 1ª vez quando `recipient.onboarding_completed=false`.
+
+---
+
+## 10.11 Integridade de agenda (novo Sprint 18)
+**Arquivo:** `skills/integridade-agenda.md`
+**Tipo:** auxiliar global (sempre carregada para todos os roles)
+
+**Função:** apresentar findings de IntegrityCheck (conflitos temporais, duplicidade semântica, dia carregado) ao usuário e conduzir microconfirmação antes de criar/atualizar.
+
+**Princípio mãe:** "alertar > sugerir > confirmar > criar" — bloqueio só em impossibilidade física confirmada.
+
+**Tipos de finding tratados:**
+- `dup_task` (Jaro-Winkler ≥0.7 com strip de suffix) — pergunta "é a mesma demanda ou outra?"
+- `dup_event` (similar, com janela ±48h)
+- `temporal_hard` — mesma sala/local/horário confirmados → bloqueia até confirmação explícita
+- `temporal_soft` — overlap leve → microconfirmação leve
+
+**Bug B2 fix (Sprint 19 radar 4):** quando IntegrityCheck bloqueia, engine substitui qualquer texto otimista do LLM (ex.: "✅ Registrado!") por microconfirmação determinística construída no helper `_buildIntegrityConfirmText`.
+
+---
+
+## 10.12 Pedagógico (novo Sprint 19)
+**Arquivo:** `skills/pedagogico.md`
+**Tipo:** primária via pickSkill (gatilhos pedagógicos) E auxiliar global (carregada também quando outra skill é primary)
+
+**Função:** captura demandas pedagógicas (alunos, professores, turmas, recitais, bandas) e roteia por hierarquia, subdomínio (LA Music School ↔ LA Music Kids) e escopo. Emite `<<TASK_UPDATE>>` (criação) com `department_id`/`request_type_id`/`subdomain` e `<<COORDINATION_REQUEST>>` (relay/cobrança).
+
+**Hierarquia (4 papéis):**
+- `lead` (Juliana=school, Quintela=kids) — autoridade total no subdomínio
+- `assistant` (Leo, Ramon, Dai, Matheus Felipe, Jordan, Rodrigo) — abre demanda; cobra professor **só dentro do escopo** (1 match: unit OR specialty OR subdomain)
+- `mentor` (Peterson, Kinho, Renan) — orienta; **nunca** cobra
+- `teacher` (não-collaborator no MVP) — abre demanda via assistente/coord
+
+**Subdomínio:**
+- `school` → exibido como "LA Music School" (Juliana)
+- `kids` → exibido como "LA Music Kids" (Quintela, Matheus Felipe)
+
+**Mapa de escopo dos assistentes** (em `pedagogical_assignments`):
+- Leo: unidade Barra
+- Ramon: unidade Recreio + bandas
+- Dai: unidade Campo Grande
+- Matheus Felipe: subdomain Kids
+- Jordan: eventos + bateria
+- Rodrigo: cordas
+
+**7 request types iniciais:**
+`acompanhamento-professor`, `apoio-ao-aluno`, `alinhamento-de-turma`, `alinhamento-com-responsavel`, `evento-pedagogico`, `pendencia-pedagogica`, `suporte-ao-professor`.
+
+**Regra de precedência (não negociável):** se o gate pedagógico (`canDelegatePedagogical`) negar, o gate genérico Sprint 16 NÃO autoriza acima dele. DENY pedagógico = DENY final.
+
+**Não-objetivos:** `evento-pedagogico` é só task (não toca `events`); professor não vira collaborator no MVP; sem dashboard analítico nem auditoria.
 
 ---
 
