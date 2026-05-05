@@ -18,10 +18,10 @@ const COMMENT_TYPE_LABEL: Record<string, string> = {
 };
 
 const PRIORITY_LABEL: Record<TaskPriority, string> = {
-  critical: 'Crítico',
-  high: 'Alto',
-  medium: 'Médio',
-  low: 'Baixo',
+  critical: 'Urgente',
+  high: 'Alta',
+  medium: 'Média',
+  low: 'Baixa',
 };
 
 function formatDate(iso: string | null | undefined): string {

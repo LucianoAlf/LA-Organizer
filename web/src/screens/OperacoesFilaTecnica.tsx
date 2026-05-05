@@ -259,10 +259,10 @@ export function OperacoesFilaTecnica() {
                 <h3 className="text-body-sm font-semibold text-fg-muted uppercase mb-2 flex items-center gap-1">
                   <span>{emoji}</span>
                   <span>
-                    {priority === 'critical' && 'Crítico'}
-                    {priority === 'high' && 'Alto'}
-                    {priority === 'medium' && 'Médio'}
-                    {priority === 'low' && 'Baixo'}
+                    {priority === 'critical' && 'Urgente'}
+                    {priority === 'high' && 'Alta'}
+                    {priority === 'medium' && 'Média'}
+                    {priority === 'low' && 'Baixa'}
                   </span>
                   <span className="ml-1 text-caption">({bucket.length})</span>
                 </h3>

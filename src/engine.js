@@ -1208,12 +1208,39 @@ function _buildRecipientMessage(requesterDisplayName, mode, messageBody) {
 }
 
 // Sprint 16 UX §6 — display name do requester com fallback de homônimo via function_title.
+// Radar pós-Sprint19: usar APENAS o primeiro nome — sem '(CEO / Fundador)' etc.
+// Tom mais leve no relay. Se houver homônimos no futuro, resolver via contexto/ACC,
+// não via title em parêntese.
 function _requesterDisplayName(requester) {
   const firstName = (requester.full_name || '').split(' ')[0];
-  if (requester.function_title) {
-    return `${firstName} (${requester.function_title})`;
-  }
   return firstName || 'Alguém';
+}
+
+// Bug B2 fix (Radar pós-Sprint19): quando IntegrityCheck bloqueia criação,
+// substitui qualquer texto otimista que o LLM possa ter gerado ("✅ Registrado!")
+// por uma microconfirmação clara. Determinístico no engine, não confia no Claude.
+function _buildIntegrityConfirmText(payload) {
+  if (!payload) return '_não consegui registrar agora, te aviso depois_';
+  const cand = String(payload.candidateTitle || '').slice(0, 80);
+  const conflicts = Array.isArray(payload.conflicts) ? payload.conflicts : [];
+  const first = conflicts[0] || {};
+  const existing = String(first.title || '').slice(0, 80);
+  switch (payload.type) {
+    case 'dup_task':
+      return `Achei algo bem parecido já aberto: _"${existing}"_.\n\nÉ a mesma demanda ou é outra? (Se for outra, manda **outra** e eu crio. Se for a mesma, posso só atualizar a existente.)`;
+    case 'dup_event':
+      return `Achei um compromisso parecido já criado: _"${existing}"_.\n\nÉ o mesmo ou é outro? (Se for outro, manda **outro** e eu crio.)`;
+    case 'temporal_hard': {
+      const overlap = first.overlapMin ? ` (sobrepõe ${first.overlapMin}min)` : '';
+      return `Tem um conflito de horário/local com _"${existing}"_${overlap}. Não dá pra criar como está.\n\nQuer ajustar horário ou local de "${cand}"? Ou cancelar o existente?`;
+    }
+    case 'temporal_soft': {
+      const overlap = first.overlapMin ? ` (~${first.overlapMin}min)` : '';
+      return `Tem um cruzamento leve com _"${existing}"_${overlap}. Crio assim mesmo, ou prefere ajustar?`;
+    }
+    default:
+      return `Encontrei algo que pode conflitar com _"${cand}"_. Quer que eu siga ou prefere revisar?`;
+  }
 }
 
 // Sprint 16 — Executa coordination request: gating de autorização, INSERT, WhatsApp.
@@ -1396,7 +1423,16 @@ async function applyCoordinationRequestAction(collab, parsed) {
   const finalBody = _stripped ? _sanitizedBody : parsed.message_body;
 
   const requesterDisplayName = _requesterDisplayName(collab);
-  const recipientMsg = _buildRecipientMessage(requesterDisplayName, parsed.mode, finalBody);
+  let recipientMsg = _buildRecipientMessage(requesterDisplayName, parsed.mode, finalBody);
+
+  // Radar pós-Sprint19 — TOM se apresenta na 1ª vez com cada collaborator.
+  // Heurística: se onboarding_completed=false, ainda não houve contato direto.
+  // Prepend curto e leve. Não repetir nas próximas mensagens.
+  if (recipient.onboarding_completed === false) {
+    const recipFirst = (recipient.full_name || '').split(' ')[0] || 'oi';
+    const intro = `Oi, ${recipFirst}! Aqui é o TOM, organizador da LA Music. Vou te passar um recado:\n\n`;
+    recipientMsg = intro + recipientMsg;
+  }
 
   try {
     await whatsapp.sendMessage(recipient.phone, recipientMsg);
@@ -3957,7 +3993,9 @@ async function processMessage(phone, text, raw = {}) {
         const logReason = `integrity_${iType}:candidate="${String(integrityPayload.candidateTitle).slice(0,40)}"`;
         await logMarker(collab.id, 'TASK_UPDATE', 'rejected', logReason, null);
         console.warn(`[IntegrityCheck] TASK_UPDATE blocked by ${iType} — "${String(integrityPayload.candidateTitle).slice(0,40)}"`);
-        reply = parsedTask.cleanText || reply;
+        // Bug B2 fix (Radar pós-Sprint19): TOM não pode dizer "Registrado!" quando integrity bloqueia.
+        // Sobrescreve o cleanText (que pode conter "✅ Registrado!" alucinado) por microconfirmação.
+        reply = _buildIntegrityConfirmText(integrityPayload);
       } else {
         const result = okCount > 0 ? 'executed' : 'rejected';
         const reason = okCount > 0 ? `ok=${okCount} fail=${failCount}` : `all_failed:${failCount}`;
@@ -4009,9 +4047,8 @@ async function processMessage(phone, text, raw = {}) {
         const logReason = `integrity_${iType}:severity=${iSeverity}:candidate="${String(integrityPayload.candidateTitle).slice(0,40)}"`;
         await logMarker(collab.id, 'EVENT_CREATE', 'rejected', logReason, null);
         console.warn(`[IntegrityCheck] EVENT_CREATE blocked by ${iType} (${iSeverity}) — "${String(integrityPayload.candidateTitle).slice(0,40)}"`);
-        // reply já foi construído pelo Claude com o texto de alerta (skill integridade-agenda.md).
-        // Apenas garantir que marker <<EVENT_CREATE>> seja removido do reply.
-        reply = parsedEv.cleanText || reply;
+        // Bug B2 fix: força microconfirmação em vez de aceitar texto que TOM gerou.
+        reply = _buildIntegrityConfirmText(integrityPayload);
       } else {
         const result = okCount > 0 ? 'executed' : 'rejected';
         const reason = okCount > 0 ? `ok=${okCount} fail=${failCount}` : `all_failed:${failCount}`;
