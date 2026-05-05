@@ -2745,7 +2745,10 @@ async function applyTaskActions(collaborator, actions) {
           if (suggestionLines) {
             notifText += `\n\n💡 *Próximos passos sugeridos:*\n${suggestionLines}`;
           }
-          notifText += `\n\nPode me chamar a qualquer hora pra atualizar status, pedir encaminhamento de recado, ou abrir nova demanda.`;
+          // Hotfix pós-Sprint20: pergunta de TRATAMENTO (mini-Eisenhower) no fim da notificação.
+          // Sem isso, recipient vira passivo — TOM perde a governança e vira "menino de recado".
+          // Com isso, TOM CONDUZ a decisão (resolve agora? agenda? delega? precisa apoio?).
+          notifText += `\n\n❓ *Como você quer tratar?*\n1️⃣ *Resolvo agora* — vou cuidar disso hoje\n2️⃣ *Agendo* — vou tratar nos próximos dias\n3️⃣ *Delego* — passa pra outra pessoa da equipe\n4️⃣ *Preciso de apoio* — me ajuda a destravar\n\n_Responde com o número, ou me chama pra atualizar de outro jeito (ex.: "concluí", "marquei reunião com a família amanhã", "encaminha pro Leo")._`;
           try {
             await whatsapp.sendMessage(recipient.phone, notifText);
             await supabase.from('conversation_history').insert({

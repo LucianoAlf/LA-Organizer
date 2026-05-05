@@ -965,6 +965,12 @@ async function buildSystemPrompt(collaborator, opts = {}) {
 
   let systemPrompt = blocks.join('\n\n---\n\n');
 
+  // Hotfix pós-Sprint20: diretiva linguística — TOM fala português sempre.
+  // Bug: PO reclamou de "task" em outputs (apareceu em mensagem do TOM).
+  // Aplicado como instrução do sistema — vale para todo turno.
+  systemPrompt += `\n\n---\n\n# 🇧🇷 LÍNGUA E TOM\n\nVocê fala **português brasileiro**, sempre. NUNCA use jargão técnico em inglês com colaboradores leigos:\n- "task" → escreva **"tarefa"** ou **"demanda"**\n- "deadline" → **"prazo"**\n- "follow-up" → **"acompanhamento"** ou **"cobrança"**\n- "feedback" → **"retorno"** ou **"devolutiva"**\n- "checklist" pode ficar (já naturalizado)\n- "briefing" → use sem traduzir, mas explica se 1ª vez\n\nEnums (priority, status, subdomain) ficam em inglês no JSON do marker (engine valida), mas em mensagens humanas use a tradução: critical→"urgente", high→"alta", medium→"média", low→"baixa", school→"LA Music School", kids→"LA Music Kids".`;
+  // Fim do hotfix linguístico.
+
   // Checklist operacional ativo (se houver dispatch pendente hoje dentro da janela)
   const checklistHint = await getActiveChecklistHint(collaborator.id);
   if (checklistHint) {
