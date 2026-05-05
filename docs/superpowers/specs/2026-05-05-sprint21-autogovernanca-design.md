@@ -82,9 +82,17 @@ ALTER TABLE user_preferences
 
 ### 3.4 `ritual_logs.status` — NÃO MEXER (ajuste 1)
 
-`ritual_logs.status` é **texto livre** no banco (sem CHECK constraint). Valores em uso atual: `sent`, `skipped`, `error`, `ignored`.
+`ritual_logs.status` é **texto livre** no banco (sem CHECK constraint, verificado via query). Valores em uso atual: `sent`, `skipped`, `error`, `ignored`.
 
 **Decisão:** preservar todos os statuses existentes. Adicionar `intro_shown` como novo valor possível **sem migration** (basta usar). Não redefinir lista no escuro. Documentar valores conhecidos no schema doc após implementação.
+
+**Semântica para rituais com instrução (planejamento mensal, fechamento mensal):**
+- `intro_shown` — preâmbulo entregue, aguardando aceite
+- `sent` — ritual completo executado (implica aceite — explícito ou implícito por já ter rodado antes)
+- `skipped` — user explicitamente pulou ou ignorou o preâmbulo
+- `error` — falha técnica
+
+**Detecção de "já instruído"** depende apenas de existir um `sent` no histórico (ver `getRitualIntroDecision` em §5.3). `skipped` ou `intro_shown` isolados não significam aceite.
 
 ---
 
@@ -139,10 +147,31 @@ Confirmado no runtime: `<<TASK_UPDATE>>`, `<<EVENT_CREATE>>`, `<<MEMORY_SAVE>>`,
 ### 5.3 Helpers novos no engine
 
 ```js
-async function shouldShowRitualIntro(collabId, ritualType) {
-  // Query ritual_logs: existe registro com status IN ('sent','intro_shown')?
-  // false → primeira vez → dispatcher envia preâmbulo
-  // true  → já apresentado → dispatcher envia ritual completo
+// Retorna decisão sobre o ritual baseada no histórico de ritual_logs.
+// Substitui shouldShowRitualIntro com 3 estados distintos (resolve ambiguidade
+// onde "false" significaria coisas diferentes — já aceitou vs saturado).
+async function getRitualIntroDecision(collabId, ritualType) {
+  // Retorna uma de 3 strings:
+  //   'show_intro'    — mostra preâmbulo (1ª vez OU reoferta após skip)
+  //   'send_ritual'   — dispara ritual completo direto (já instruído + aceitou no passado)
+  //   'skip_saturated'— não envia nada (3 skipped/intro_shown consecutivos sem aceite)
+  const { data } = await supabase
+    .from('ritual_logs')
+    .select('status, created_at')
+    .eq('collaborator_id', collabId)
+    .eq('ritual_type', ritualType)
+    .order('created_at', { ascending: false })
+    .limit(5);
+  if (!data || data.length === 0) return 'show_intro';
+  // Já instruído: ritual completo rodou ao menos uma vez (sent)
+  const wasInstructed = data.some(r => r.status === 'sent');
+  if (wasInstructed) return 'send_ritual';
+  // Saturação: últimos 3 todos sem aceite
+  const recent = data.slice(0, 3);
+  if (recent.length === 3 && recent.every(r => ['intro_shown','skipped'].includes(r.status))) {
+    return 'skip_saturated';
+  }
+  return 'show_intro';
 }
 
 async function countRecentRelaysToRecipient(requesterId, recipientId, refDate) {
@@ -310,15 +339,20 @@ async function checkMonthlyPlanning(now) {
     const matchesTime = currentSlot(now) === timeToSlot(c.user_preferences?.monthly_planning_time || '07:00');
     if (!matchesTime) continue;
     if (await alreadySent(c.id, 'monthly_planning', ymdToday)) continue;
-    // 1ª vez? (Q5)
-    const isFirstTime = await shouldShowRitualIntro(c.id, 'monthly_planning');
-    if (isFirstTime) {
-      await sendRitual(c, 'monthly_planning_intro');                    // só preâmbulo
+    const decision = await getRitualIntroDecision(c.id, 'monthly_planning');
+    if (decision === 'show_intro') {
+      await sendRitual(c, 'monthly_planning_intro');                       // só preâmbulo
       await logRitualEvent(c.id, 'monthly_planning', 'intro_shown', null, ymdToday);
-      // ritual completo NÃO dispara nesta mesma execução — separado por design
-    } else {
-      await sendRitual(c, 'monthly_planning');                          // ritual completo
+      // ritual completo NÃO dispara nesta execução — separado por design
+      // próxima janela (próximo mês) reavalia: se user aceitou nesse meio tempo
+      // e ritual rodou, decision='send_ritual'; se não respondeu, 'show_intro' de novo
+    } else if (decision === 'send_ritual') {
+      await sendRitual(c, 'monthly_planning');                             // ritual completo
       await logRitualEvent(c.id, 'monthly_planning', 'sent', null, ymdToday);
+    } else { // 'skip_saturated'
+      // 3 skipped/intro_shown consecutivos — para de reoferecer automaticamente
+      await logRitualEvent(c.id, 'monthly_planning', 'skipped', 'saturated', ymdToday);
+      // re-oferta só se user pedir explicitamente OU após 6+ meses sem registro
     }
   }
 }
@@ -345,7 +379,18 @@ async function listLeadership() {
 }
 ```
 
-Filtro inicial = `role IN ('director','coordinator','manager')` ativos. No deploy atual, esse filtro retorna 8 pessoas (Alf, Anne, Juliana, Quintela, Jereh, Clayton, Krissya, Yuri). Yuri é incluído porque é líder de departamento (Marketing) — justifica ritual mensal próprio. Se PO quiser ajustar (ex: excluir Yuri), edita o filtro sem mexer no spec.
+Filtro inicial = `role IN ('director','coordinator','manager')` ativos. No deploy atual (verificado pré-implementação), esse filtro retorna **8 pessoas**:
+
+- **Alf** (director, all)
+- **Anne Susan** (director, all) — atualizada para director conforme dado fornecido pelo PO
+- **Juliana** (coordinator, lead pedagógico School)
+- **Quintela** (coordinator, lead pedagógico Kids)
+- **Jereh** (manager, gerente Campo Grande)
+- **Clayton** (manager, gerente Recreio)
+- **Krissya** (manager, gerente Barra)
+- **Yuri** (manager+all, líder Marketing)
+
+Yuri é incluído por ser líder de departamento (Marketing) — justifica ritual mensal próprio. Se PO quiser ajustar (ex: excluir Yuri ou expandir para outros papéis), edita o filtro em runtime sem mexer no spec.
 
 ### 9.4 Helpers de calendário
 
@@ -375,12 +420,16 @@ Ambos os blocos vão em `run()` de `dispatcher.js`, entre `checkChecklistConsequ
 
 1. **Conteúdo embutido** em cada skill nova (`lista-mental.md`, `planejamento-mensal.md`, `fechamento-mensal.md`) — seção "Pra que serve" curta. LLM lê quando skill ativa, usa para preâmbulo de 1ª vez OU para responder dúvidas espontâneas ("como funciona?", "pra que isso?").
 
-2. **Helper `shouldShowRitualIntro`** + status `intro_shown` em `ritual_logs` para detectar 1ª vez.
+2. **Helper `getRitualIntroDecision`** + status `intro_shown`/`sent`/`skipped` em `ritual_logs` para 3 estados (1ª vez / já aceitou / saturado).
 
-3. **Cadência separada** (ajuste do user em Q5):
-   - 1ª vez: preâmbulo + convite/aceite → mensagem isolada, registra `intro_shown`
-   - Próximas execuções: ritual completo direto
-   - Se user pular ("não, depois"): registra como `skipped`. NÃO trata como veto permanente. TOM pode reoferecer em N dias se contexto justificar (regra: se ≥30 dias de skipped consecutivos, oferecer de novo)
+3. **Cadência separada e regra de aceite explícito** (apertada em ajuste pós-spec):
+   - **1ª execução em janela cron** (1ª segunda do mês para planejamento, última sexta para fechamento): preâmbulo + convite ("quer ativar agora?") → registra `intro_shown`
+   - **Se user aceitar** (responde "sim", "manda", "vamos", "pode"): ritual completo dispara (mesmo turno se cabível, ou na próxima janela) → registra `sent`
+   - **Se user pular ou ignorar** ("não, depois", "agora não", "deixa pra próxima") OU não responder: registra `skipped`. TOM **reoferece** o preâmbulo na próxima janela cron (próximo mês). **NÃO assume aceite implícito** automático na execução seguinte.
+   - **"Já instruído"** (não mostra preâmbulo de novo, dispara ritual completo direto) requer apenas:
+     - existe registro `status='sent'` no histórico daquele `ritual_type` para aquele `collab_id` (significa que pelo menos uma vez o ritual completo rodou — implica que user já passou pelo aceite)
+   - **`skipped` ou `intro_shown` isolados NÃO bastam** para considerar "já instruído"
+   - **Saturação de desinteresse:** se os 3 registros mais recentes daquele ritual forem todos `intro_shown` ou `skipped` (nenhum `sent`), TOM para de reoferecer automaticamente. Re-oferta só se user explicitamente pedir ("ativa o planejamento mensal") ou após 6+ meses sem registro
 
 4. **Comportamento ad-hoc** (não cron): user pergunta "como funciona X?" ou "pra que isso?" → LLM responde com base no conteúdo da skill ativa.
 
