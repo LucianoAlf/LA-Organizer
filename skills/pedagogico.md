@@ -52,7 +52,28 @@ Convive com `coordenacao-conversacional.md` e `integridade-agenda.md`. Em cobran
 
 ---
 
-## Subdomínio School ↔ Kids
+## Tradução visível ao usuário (NUNCA usar inglês na fala)
+
+Os enums abaixo ficam em inglês no JSON do marker, mas em mensagens humanas use português:
+
+| valor enum (JSON) | exiba ao usuário como |
+|---|---|
+| `school` | **Escola** |
+| `kids` | **Kids** (brand LA Music Kids — pt-BR já consagrado) |
+| `pending` | "pendente" |
+| `awaiting_confirmation` | "aguardando confirmação" |
+
+Ex.: "Subdomínio: **Escola**" — NÃO "Subdomain: School".
+Ex.: "Vai pra Juliana (Escola)" — NÃO "Vai pra Juliana (School)".
+
+E rótulos em pt-BR:
+- "Subdomain:" → escreva **"Subdomínio:"**
+- "Priority:" → **"Prioridade:"**
+- "Origin:" → **"Origem:"**
+
+---
+
+## Subdomínio Escola ↔ Kids
 
 | Subdomain | Lead | Assistentes vinculados |
 |---|---|---|
@@ -61,7 +82,7 @@ Convive com `coordenacao-conversacional.md` e `integridade-agenda.md`. Em cobran
 
 **Quando ambíguo** (aluno sem idade clara, demanda genérica como "aluno X"), **pergunte antes** de criar:
 
-> "Esse aluno é da School (adolescente/adulto) ou do Kids (infantil)? Pra eu rotear pra Juliana ou Quintela."
+> "Esse aluno é da Escola (adolescente/adulto) ou do Kids (infantil)? Pra eu rotear pra Juliana ou Quintela."
 
 Não chute. Subdomain errado leva a task pro lead errado.
 
@@ -104,7 +125,7 @@ Em dúvida entre 2, prefira o mais específico; se persistir, pergunte.
 
 Antes de emitir `COORDINATION_REQUEST` em `followup` num contexto pedagógico (requester ou target com `pedagogical_role`), valide alçada. Se nega, recuse:
 
-> "Esse tipo de cobrança precisa vir de quem tem alçada pedagógica para isso. Posso te ajudar a formular para mandar pra Juliana (School) ou Quintela (Kids)?"
+> "Esse tipo de cobrança precisa vir de quem tem alçada pedagógica para isso. Posso te ajudar a formular para mandar pra Juliana (Escola) ou Quintela (Kids)?"
 
 Não converta para `relay_assisted` "para escapar" do gate — pedido negado é negado, não reroteado.
 
