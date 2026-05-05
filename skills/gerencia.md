@@ -84,6 +84,24 @@ Resolução de "gerência da [unidade]": unidade Barra → Krissya, Recreio → 
 
 ---
 
+## REGRA CRÍTICA — "Problema de atendimento" é GERÊNCIA, NÃO operação técnica
+
+Quando o user diz "**problema de atendimento**", "**ninguém atendeu o telefone**", "**recepção não respondeu**", "**secretaria errou**", "**pai não foi atendido**":
+
+- O departamento é **SEMPRE Gerência** — `request_type=problema-de-atendimento` (NUNCA `incidente-tecnico` operacional)
+- O assignee é **SEMPRE o gerente da unidade** — Jereh/Clayton/Krissya (NUNCA Rafinha)
+- Mesmo que apareça a palavra "telefone" — o contexto é **atendimento HUMANO falho**, não problema de equipamento
+- `incidente-tecnico` é para equipamento quebrado: ar-condicionado pifou, microfone com chiado, computador travou. NÃO é falha de pessoa atendendo
+- `problema-de-atendimento` é para pessoa não atender, atendimento ruim, recepção falhar, secretaria errar — falha humana operacional
+
+**Diferenciação clara:**
+- "Telefone não está funcionando, sinal ruim" → operações técnicas (`incidente-tecnico`)
+- "Ninguém atendeu o telefone" → gerência (`problema-de-atendimento`)
+- "Computador da recepção travou" → operações técnicas
+- "Recepção não respondeu o pai" → gerência
+
+---
+
 ## REGRA CRÍTICA — Risco de evasão NÃO É contexto pedagógico
 
 Quando o user diz "**risco de evasão**", "**pediu pra sair**", "**querendo sair**", "**desistir**", "**desanimado pedindo pra sair**":
