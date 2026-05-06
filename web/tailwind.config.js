@@ -18,12 +18,13 @@ export default {
         },
         // ---- TOM (identidade primária do agente — Sprint 22.8) ----
         // Verde do mascote ETzinho. CTAs, FAB, tabs ativos, agent touchpoints.
+        // Sprint 22.9 — escurecido (era #3FD66B, muito brilhante).
         tom: {
-          DEFAULT: '#3FD66B',
-          shade: '#28B855',
-          deep: '#1A8841',
-          light: '#7FE89B',
-          tint: '#E8FAEE',
+          DEFAULT: '#1F9D4D',
+          shade: '#187B3D',
+          deep: '#0F5A2C',
+          light: '#4FBE6D',
+          tint: '#E0F5E8',
         },
         // ---- Neutrals ----
         ink: {

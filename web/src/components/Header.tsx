@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 
 function greeting(): string {
@@ -41,23 +42,32 @@ function todayTagline(): string {
   return TOM_TAGLINES[dayOfYear % TOM_TAGLINES.length];
 }
 
-// Sprint 22.8 — TOM como identidade primária no header. Cara do agente à esquerda
-// (placeholder 👽 verde até PNG oficial entrar via /tom-avatar.png), avatar do user
-// à direita menor. Tagline rotativa do TOM dá sensação de presença.
+// Sprint 22.8 — TOM como identidade primária no header.
+// Sprint 22.9 — usa /tom-avatar.png quando arquivo existe; fallback 👽 se 404.
 export function Header() {
   const { collaborator, role } = useAuth();
+  const [avatarFailed, setAvatarFailed] = useState(false);
   const firstName = collaborator?.full_name?.split(' ')[0] ?? '';
 
   return (
     <header className="w-full max-w-content mx-auto px-md pt-md">
       <div className="flex items-center gap-md">
-        {/* Avatar TOM — placeholder até PNG entrar */}
+        {/* Avatar TOM */}
         <div
-          className="h-12 w-12 shrink-0 grid place-items-center rounded-full bg-tom text-2xl shadow-card"
+          className="h-12 w-12 shrink-0 grid place-items-center rounded-full bg-tom overflow-hidden shadow-card"
           aria-label="TOM, seu agente"
           title="TOM"
         >
-          <span aria-hidden>👽</span>
+          {avatarFailed ? (
+            <span className="text-2xl" aria-hidden>👽</span>
+          ) : (
+            <img
+              src="/tom-avatar.png"
+              alt="TOM"
+              className="h-full w-full object-cover"
+              onError={() => setAvatarFailed(true)}
+            />
+          )}
         </div>
 
         <div className="min-w-0 flex-1">
