@@ -4063,6 +4063,14 @@ async function processMessage(phone, text, raw = {}) {
   const _tCount = (_tt.personal?.length || 0) + (_tt.work?.length || 0);
   console.log(`[Engine] system prompt size: ${systemPrompt.length} chars (memories=${ctx.memories.length}, tasks=${_tCount}, notifs=${ctx.notifications.length})`);
 
+  // Sprint 21 — limite suave anti-relay (avisa, não bloqueia)
+  try {
+    const relayHint = await buildRelayLimitHint(collab.id);
+    if (relayHint) systemPrompt += '\n\n' + relayHint;
+  } catch (err) {
+    console.warn('[RELAY_LIMIT_HINT] failed:', err.message);
+  }
+
   const onboardingActive = collab.onboarding_completed === false;
   // Onboarding skill is now loaded conditionally inside buildSystemPrompt via pickSkill.
 
@@ -4541,6 +4549,25 @@ async function processMessage(phone, text, raw = {}) {
         await logMarker(collab.id, 'WEEKLY_PLAN', 'rejected', `persist_error:${err.message}`, null);
         const base = parsedPlan.cleanText || '';
         reply = (base ? base + '\n\n' : '') + '_não rolou salvar agora, mas seu plano tá registrado em conversa. Tenta de novo daqui a pouco?_';
+      }
+    }
+
+    // 2.7b) Monthly plan
+    const parsedMonthly = parseMonthlyPlanMarker(reply);
+    if (parsedMonthly && parsedMonthly.malformed) {
+      console.warn('[MonthlyPlan] WARN: malformed marker, dropping block');
+      await logMarker(collab.id, 'MONTHLY_PLAN', 'rejected', 'schema_invalid', reply);
+      reply = parsedMonthly.cleanText || reply;
+    } else if (parsedMonthly) {
+      try {
+        const r = await applyMonthlyPlan(collab, parsedMonthly.plan);
+        await logMarker(collab.id, 'MONTHLY_PLAN', 'executed', `${r.action}:${parsedMonthly.plan.action}:${parsedMonthly.plan.month_start}`, null);
+        reply = parsedMonthly.cleanText || reply;
+      } catch (err) {
+        console.error('[MonthlyPlan] persist err:', err.message);
+        await logMarker(collab.id, 'MONTHLY_PLAN', 'rejected', `persist_error:${err.message}`, null);
+        const base = parsedMonthly.cleanText || '';
+        reply = (base ? base + '\n\n' : '') + '_não rolou salvar agora, mas seu plano mensal tá registrado em conversa. Tenta de novo daqui a pouco?_';
       }
     }
 
@@ -5249,4 +5276,173 @@ async function sendCoordinatorReport(collaboratorId, type, ymdRef) {
   return true;
 }
 
-module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamSummary, buildWeeklyRetrospective, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseWeeklyPlanMarker, parseHabitMarker, parseDndMarker, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, applyHabitActions, applyDnd, getDndState, consolidateMemoryFor, decayExpiredMemories, looksLikeMemory, resolveTaskByShortId, applyAnnouncementAction, parseAnnouncementApprovalMarker, applyAnnouncementApproval, applyCoordinationRequestAction, parseCoordinationResponseMarker, applyCoordinationResponseAction };
+async function computeProgress(scope, collabId, refDateOrProjectId, opts = {}) {
+  const context = opts.context || 'all';
+  let start, end, isProject = false;
+  if (scope === 'project') {
+    isProject = true;
+  } else {
+    const ref = new Date(refDateOrProjectId + 'T12:00:00');
+    if (scope === 'day') {
+      start = end = refDateOrProjectId;
+    } else if (scope === 'week') {
+      const dow = ref.getDay();
+      const monOffset = dow === 0 ? -6 : 1 - dow;
+      const mon = new Date(ref); mon.setDate(ref.getDate() + monOffset);
+      const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+      start = mon.toISOString().slice(0,10);
+      end   = sun.toISOString().slice(0,10);
+    } else if (scope === 'month') {
+      const y = ref.getFullYear(), m = ref.getMonth();
+      start = new Date(y, m, 1).toISOString().slice(0,10);
+      end   = new Date(y, m+1, 0).toISOString().slice(0,10);
+    } else {
+      throw new Error(`computeProgress: scope inválido ${scope}`);
+    }
+  }
+  let q = supabase.from('tasks').select('status, context', { count: 'exact' })
+    .eq('assigned_to', collabId).neq('status','cancelled');
+  if (isProject) {
+    q = q.eq('project_id', refDateOrProjectId);
+  } else {
+    q = q.gte('due_date', start).lte('due_date', end);
+  }
+  if (context !== 'all') q = q.eq('context', context);
+  const { data, count } = await q;
+  const total = count || 0;
+  if (total === 0) {
+    return { pct: null, done: 0, total: 0, scope, period: isProject ? null : { start, end }, empty: true };
+  }
+  const done = (data || []).filter(t => t.status === 'done').length;
+  return { pct: Math.round((done/total)*100), done, total, scope,
+           period: isProject ? null : { start, end }, empty: false };
+}
+
+async function getRitualIntroDecision(collabId, ritualType) {
+  const { data } = await supabase
+    .from('ritual_logs')
+    .select('status, created_at')
+    .eq('collaborator_id', collabId)
+    .eq('ritual_type', ritualType)
+    .order('created_at', { ascending: false })
+    .limit(5);
+  if (!data || data.length === 0) return 'show_intro';
+  const wasInstructed = data.some(r => r.status === 'sent');
+  if (wasInstructed) return 'send_ritual';
+  const recent = data.slice(0, 3);
+  if (recent.length === 3 && recent.every(r => ['intro_shown','skipped'].includes(r.status))) {
+    return 'skip_saturated';
+  }
+  return 'show_intro';
+}
+
+async function countRecentRelaysToRecipient(requesterId, recipientId, refDate) {
+  const start = new Date(refDate); start.setHours(0,0,0,0);
+  const end   = new Date(refDate); end.setHours(23,59,59,999);
+  const { count } = await supabase
+    .from('coordination_requests')
+    .select('id', { count: 'exact', head: true })
+    .eq('requester_id', requesterId)
+    .eq('recipient_id', recipientId)
+    .in('status', ['sent','responded'])
+    .gte('created_at', start.toISOString())
+    .lte('created_at', end.toISOString());
+  return count || 0;
+}
+
+async function buildRelayLimitHint(requesterId) {
+  const start = new Date(); start.setHours(0,0,0,0);
+  const end   = new Date(); end.setHours(23,59,59,999);
+  const { data } = await supabase
+    .from('coordination_requests')
+    .select('recipient_id, recipient:collaborators!coordination_requests_recipient_id_fkey(full_name)')
+    .eq('requester_id', requesterId)
+    .in('status', ['sent','responded'])
+    .gte('created_at', start.toISOString())
+    .lte('created_at', end.toISOString());
+  if (!data?.length) return null;
+  const counts = new Map();
+  const names  = new Map();
+  for (const row of data) {
+    counts.set(row.recipient_id, (counts.get(row.recipient_id) || 0) + 1);
+    if (row.recipient?.full_name) names.set(row.recipient_id, row.recipient.full_name.split(' ')[0]);
+  }
+  const heavy = [...counts.entries()]
+    .filter(([_, n]) => n >= 5)
+    .map(([id, n]) => `- ${names.get(id) || 'destinatário'}: ${n} relays hoje`);
+  if (!heavy.length) return null;
+  return `[RELAY_LIMIT_HINT]\nCanal saturado com:\n${heavy.join('\n')}\n\nAntes de emitir novo relay para esses destinatários específicos, sugira ao usuário falar direto. Não bloqueie — avise: "Você já usou o TOM N vezes com [nome] hoje. Posso mandar esse, mas talvez valha falar direto com ele/ela depois dessa." Para destinatários não listados acima, opere normalmente.`;
+}
+
+// Parse <<MONTHLY_PLAN>>{...}<<END>> — monthly planning marker.
+// action='plan' (default) creates/updates the monthly plan; action='close' closes it with wins + retrospective.
+function parseMonthlyPlanMarker(text) {
+  if (!text) return null;
+  const re = /<<MONTHLY_PLAN>>\s*([\s\S]*?)\s*<<END>>/i;
+  const m = text.match(re);
+  if (!m) return null;
+  const cleanText = text.replace(re, '').trim();
+  let plan = null;
+  try {
+    plan = JSON.parse(m[1].trim());
+  } catch (err) {
+    logSchemaErr('MONTHLY_PLAN', ['invalid_json: ' + err.message], m[1]);
+    return { malformed: true, cleanText };
+  }
+  if (!plan || typeof plan !== 'object' || Array.isArray(plan)) {
+    logSchemaErr('MONTHLY_PLAN', ['not_object'], plan);
+    return { malformed: true, cleanText };
+  }
+  if (!plan.month_start || typeof plan.month_start !== 'string') {
+    logSchemaErr('MONTHLY_PLAN', ['month_start:missing_or_invalid'], plan);
+    return { malformed: true, cleanText };
+  }
+  return {
+    plan: {
+      month_start: plan.month_start,
+      goals: Array.isArray(plan.goals) ? plan.goals : [],
+      carry_over_notes: plan.carry_over_notes || null,
+      wins: Array.isArray(plan.wins) ? plan.wins : [],
+      retrospective_notes: plan.retrospective_notes || null,
+      action: plan.action === 'close' ? 'close' : 'plan'
+    },
+    cleanText,
+    malformed: false
+  };
+}
+
+// Persist a monthly plan: monthly_plans table.
+// Idempotent on (collaborator_id, month_start) — re-running for the same month updates the row.
+// action='close' additionally sets status='completed', wins, and retrospective_notes.
+async function applyMonthlyPlan(collaborator, plan) {
+  const collId = collaborator.id;
+  const { data: existing } = await supabase
+    .from('monthly_plans')
+    .select('id')
+    .eq('collaborator_id', collId)
+    .eq('month_start', plan.month_start)
+    .maybeSingle();
+  const payload = {
+    collaborator_id: collId,
+    month_start: plan.month_start,
+    goals: plan.goals,
+    carry_over_notes: plan.carry_over_notes,
+    updated_at: new Date().toISOString()
+  };
+  if (plan.action === 'close') {
+    payload.status = 'completed';
+    payload.wins = plan.wins;
+    payload.retrospective_notes = plan.retrospective_notes;
+  }
+  if (existing) {
+    const { error } = await supabase.from('monthly_plans').update(payload).eq('id', existing.id);
+    if (error) throw new Error(error.message);
+    return { id: existing.id, action: 'updated' };
+  }
+  const { data: created, error } = await supabase
+    .from('monthly_plans').insert(payload).select('id').single();
+  if (error) throw new Error(error.message);
+  return { id: created?.id, action: 'created' };
+}
+
+module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamSummary, buildWeeklyRetrospective, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseWeeklyPlanMarker, parseHabitMarker, parseDndMarker, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, applyHabitActions, applyDnd, getDndState, consolidateMemoryFor, decayExpiredMemories, looksLikeMemory, resolveTaskByShortId, applyAnnouncementAction, parseAnnouncementApprovalMarker, applyAnnouncementApproval, applyCoordinationRequestAction, parseCoordinationResponseMarker, applyCoordinationResponseAction, computeProgress, getRitualIntroDecision, countRecentRelaysToRecipient, buildRelayLimitHint, parseMonthlyPlanMarker, applyMonthlyPlan };

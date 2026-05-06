@@ -17,7 +17,7 @@ process.chdir(path.join(__dirname, '..', '..'));
 loadDotEnv(path.join(process.cwd(), '.env'));
 
 const supabase = require('../supabase/client');
-const { sendRitual, sendCoordinatorReport, getDndState, consolidateMemoryFor, decayExpiredMemories } = require('../engine');
+const { sendRitual, sendCoordinatorReport, getDndState, consolidateMemoryFor, decayExpiredMemories, getRitualIntroDecision } = require('../engine');
 
 const RITUAL_BY_DIRECTIVE = {
   briefing_pessoal: 'personal_briefing',
@@ -127,6 +127,17 @@ function currentSlot(now) {
   return now.hour * 60 + slotMin;
 }
 
+// Sprint 21 — calendário para rituais mensais (America/Sao_Paulo via nowSaoPaulo)
+function isFirstMondayOfMonth(date) {
+  if (date.getDay() !== 1) return false; // 1 = segunda
+  return date.getDate() <= 7;
+}
+function isLastFridayOfMonth(date) {
+  if (date.getDay() !== 5) return false; // 5 = sexta
+  const next = new Date(date); next.setDate(date.getDate() + 7);
+  return next.getMonth() !== date.getMonth();
+}
+
 async function alreadySent(collaboratorId, ritualType, ymd) {
   const { data, error } = await supabase
     .from('ritual_logs')
@@ -191,6 +202,74 @@ async function listCoordinators(filterPhone) {
   const { data, error } = await q;
   if (error) throw error;
   return data || [];
+}
+
+// Sprint 21 — liderança = director + coordinator + manager (ativos com user_preferences)
+async function listLeadership() {
+  const { data, error } = await supabase
+    .from('collaborators')
+    .select('id, full_name, phone, role, unit, is_active, onboarding_completed, user_preferences(*)')
+    .in('role', ['director', 'coordinator', 'manager'])
+    .eq('is_active', true);
+  if (error) {
+    console.error('[listLeadership] failed:', error.message);
+    return [];
+  }
+  return (data || []).filter(c => c.user_preferences);
+}
+
+// Sprint 21 — Planejamento Mensal (primeira segunda do mês)
+async function checkMonthlyPlanning(now) {
+  const dateForCal = (now && now.date) ? now.date : new Date(`${now.ymd}T${String(now.hour).padStart(2,'0')}:${String(now.minute).padStart(2,'0')}:00-03:00`);
+  if (!isFirstMondayOfMonth(dateForCal)) return;
+  const collabs = await listLeadership();
+  const ymdToday = now.ymd || nowSaoPaulo().ymd;
+  for (const c of collabs) {
+    const time = c.user_preferences?.monthly_planning_time || '07:00';
+    if (currentSlot(now) !== timeToSlot(time)) continue;
+    if (await alreadySent(c.id, 'monthly_planning', ymdToday)) continue;
+    try {
+      const decision = await getRitualIntroDecision(c.id, 'monthly_planning');
+      if (decision === 'show_intro') {
+        await sendRitual(c.id, 'monthly_planning_intro');
+        await logRitualEvent(c.id, 'monthly_planning', 'intro_shown', null, ymdToday);
+      } else if (decision === 'send_ritual') {
+        await sendRitual(c.id, 'monthly_planning');
+        await logRitualEvent(c.id, 'monthly_planning', 'sent', null, ymdToday);
+      } else { // 'skip_saturated'
+        await logRitualEvent(c.id, 'monthly_planning', 'skipped', 'saturated', ymdToday);
+      }
+    } catch (err) {
+      console.error('[checkMonthlyPlanning]', c.full_name, err.message);
+    }
+  }
+}
+
+// Sprint 21 — Fechamento Mensal (última sexta do mês)
+async function checkMonthlyClosing(now) {
+  const dateForCal = (now && now.date) ? now.date : new Date(`${now.ymd}T${String(now.hour).padStart(2,'0')}:${String(now.minute).padStart(2,'0')}:00-03:00`);
+  if (!isLastFridayOfMonth(dateForCal)) return;
+  const collabs = await listLeadership();
+  const ymdToday = now.ymd || nowSaoPaulo().ymd;
+  for (const c of collabs) {
+    const time = c.user_preferences?.monthly_closing_time || '18:00';
+    if (currentSlot(now) !== timeToSlot(time)) continue;
+    if (await alreadySent(c.id, 'monthly_closing', ymdToday)) continue;
+    try {
+      const decision = await getRitualIntroDecision(c.id, 'monthly_closing');
+      if (decision === 'show_intro') {
+        await sendRitual(c.id, 'monthly_closing_intro');
+        await logRitualEvent(c.id, 'monthly_closing', 'intro_shown', null, ymdToday);
+      } else if (decision === 'send_ritual') {
+        await sendRitual(c.id, 'monthly_closing');
+        await logRitualEvent(c.id, 'monthly_closing', 'sent', null, ymdToday);
+      } else { // 'skip_saturated'
+        await logRitualEvent(c.id, 'monthly_closing', 'skipped', 'saturated', ymdToday);
+      }
+    } catch (err) {
+      console.error('[checkMonthlyClosing]', c.full_name, err.message);
+    }
+  }
 }
 
 async function fireRitual(collab, ritualType, ymd) {
@@ -1193,6 +1272,10 @@ async function run(opts = {}) {
     console.error('[Dispatcher] checkChecklistConsequences erro:', err.message);
   }
 
+  // Sprint 21 — Planejamento e Fechamento Mensal (liderança)
+  try { await checkMonthlyPlanning(now); } catch (e) { console.error('[run] monthlyPlanning', e); }
+  try { await checkMonthlyClosing(now);  } catch (e) { console.error('[run] monthlyClosing', e); }
+
   // Sprint 15 F4 — Briefing operacional semanal por departamento (segunda 07:30 BRT)
   try {
     await checkDepartmentOperational(new Date());
@@ -1757,4 +1840,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { run, dispatchChecklists, dispatchAnnouncements, notifyCoordinators, remindEventTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined };
+module.exports = { run, dispatchChecklists, dispatchAnnouncements, notifyCoordinators, remindEventTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined, isFirstMondayOfMonth, isLastFridayOfMonth, listLeadership, checkMonthlyPlanning, checkMonthlyClosing };
