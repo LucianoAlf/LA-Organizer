@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ListTodo, CalendarClock } from 'lucide-react';
+import { ListTodo, CalendarClock, Check, Flame } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { todaySP } from '../utils/date';
@@ -17,6 +17,48 @@ import { QuickCreateSheet } from '../components/QuickCreateSheet';
 import { EditEventSheet } from '../components/EditEventSheet';
 import type { Task, TaskContext, CalendarEvent, ActionType } from '../types';
 import { ACTION_TYPE_LABELS, ACTION_TYPE_VISUAL } from '../types';
+
+// Sprint 22.5 — hábitos privados aparecem na aba Pessoal de Hoje (linha rápida).
+type HabitToday = {
+  id: string;
+  name: string;
+  icon: string | null;
+  current_streak: number | null;
+  done_today: boolean;
+  log_id: string | null;
+};
+
+async function fetchHabitsToday(collabId: string): Promise<HabitToday[]> {
+  const today = todaySP();
+  const { data: habits, error } = await supabase
+    .from('habits')
+    .select('id, name, icon, current_streak')
+    .eq('collaborator_id', collabId)
+    .eq('is_active', true)
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  const list = habits ?? [];
+  if (list.length === 0) return [];
+  const ids = list.map(h => h.id);
+  const { data: logs } = await supabase
+    .from('habit_logs')
+    .select('id, habit_id, is_completed')
+    .in('habit_id', ids)
+    .eq('log_date', today);
+  const logByHabit = new Map<string, { id: string; is_completed: boolean }>();
+  for (const l of logs ?? []) logByHabit.set(l.habit_id, { id: l.id, is_completed: l.is_completed });
+  return list.map(h => {
+    const log = logByHabit.get(h.id);
+    return {
+      id: h.id,
+      name: h.name,
+      icon: h.icon,
+      current_streak: h.current_streak,
+      done_today: Boolean(log?.is_completed),
+      log_id: log?.id ?? null,
+    };
+  });
+}
 
 async function fetchTasksToday(collabId: string): Promise<Task[]> {
   const today = todaySP();
@@ -70,6 +112,52 @@ export function Hoje() {
     queryKey: ['tasks', 'delegated', collaborator?.id],
     queryFn: () => collaborator ? fetchDelegatedTasks(collaborator.id) : Promise.resolve([]),
     enabled: Boolean(collaborator?.id && supabaseConfigured),
+  });
+
+  // Sprint 22.5 — hábitos do dia (aba Pessoal).
+  const { data: habits = [] } = useQuery({
+    queryKey: ['habits', 'hoje', collaborator?.id],
+    queryFn: () => collaborator ? fetchHabitsToday(collaborator.id) : Promise.resolve([] as HabitToday[]),
+    enabled: Boolean(collaborator?.id && supabaseConfigured),
+  });
+
+  const toggleHabit = useMutation({
+    mutationFn: async (h: HabitToday) => {
+      const newDone = !h.done_today;
+      const todayDate = todaySP();
+      if (h.log_id) {
+        const { error } = await supabase
+          .from('habit_logs')
+          .update({ is_completed: newDone, completed_at: newDone ? new Date().toISOString() : null })
+          .eq('id', h.log_id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from('habit_logs')
+          .insert({
+            habit_id: h.id,
+            collaborator_id: collaborator!.id,
+            log_date: todayDate,
+            is_completed: newDone,
+            completed_at: newDone ? new Date().toISOString() : null,
+          });
+        if (error) throw error;
+      }
+    },
+    onMutate: async (h) => {
+      await qc.cancelQueries({ queryKey: ['habits', 'hoje', collaborator?.id] });
+      const prev = qc.getQueryData<HabitToday[]>(['habits', 'hoje', collaborator?.id]);
+      qc.setQueryData<HabitToday[]>(['habits', 'hoje', collaborator?.id], (old) =>
+        (old ?? []).map(x => x.id === h.id ? { ...x, done_today: !x.done_today } : x)
+      );
+      return { prev };
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['habits', 'hoje', collaborator?.id], ctx.prev);
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['habits'] });
+    },
   });
 
   const { data: events = [], isLoading: eLoading } = useQuery({
@@ -184,6 +272,47 @@ export function Hoje() {
             );
           })}
         </div>
+      )}
+
+      {/* Sprint 22.5 — Hábitos só na aba Pessoal */}
+      {tab === 'personal' && habits.length > 0 && (
+        <section className="surface px-md">
+          <div className="flex items-center gap-2 py-3 border-b border-border text-label uppercase tracking-wide text-fg-muted">
+            <Flame size={14} className="text-warning" /> Hábitos hoje
+          </div>
+          <ul className="divide-y divide-border">
+            {habits.map(h => (
+              <li key={h.id}>
+                <button
+                  type="button"
+                  onClick={() => toggleHabit.mutate(h)}
+                  disabled={toggleHabit.isPending}
+                  className="w-full flex items-center gap-md py-3 hover:bg-bg-elevated focus-ring text-left transition-colors"
+                >
+                  <span
+                    className={[
+                      'h-6 w-6 shrink-0 rounded-full border grid place-items-center transition-colors',
+                      h.done_today
+                        ? 'bg-success border-success text-white'
+                        : 'border-border text-transparent hover:border-brand hover:text-brand',
+                    ].join(' ')}
+                    aria-label={h.done_today ? 'concluído hoje' : 'marcar feito'}
+                  >
+                    <Check size={14} strokeWidth={3} />
+                  </span>
+                  <span className={['flex-1 min-w-0 text-body-md', h.done_today ? 'line-through text-fg-muted' : ''].join(' ')}>
+                    {h.icon ? `${h.icon} ` : ''}{h.name}
+                  </span>
+                  {(h.current_streak ?? 0) > 0 && (
+                    <span className="shrink-0 text-body-sm text-fg-muted tabular-nums">
+                      🔥 {h.current_streak}
+                    </span>
+                  )}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
 
       {/* Events block (with time) */}
