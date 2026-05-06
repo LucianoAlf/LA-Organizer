@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Camera, Lock, Settings, LogOut, User } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 function greeting(): string {
@@ -26,45 +28,39 @@ function initials(name: string | null | undefined) {
   return (first + last).toUpperCase();
 }
 
-// Sprint 22.8 — microcopy do TOM rotaciona por dia (estável intra-dia).
-const TOM_TAGLINES = [
-  'Vamos arrasar hoje?',
-  'Tô aqui pra te ajudar.',
-  'Bora pro próximo?',
-  'Tá tudo sob controle.',
-  'Manda ver, parceiro.',
-  'O que vamos resolver hoje?',
-  'Tô de olho no seu dia.',
-];
-function todayTagline(): string {
-  const today = new Date();
-  const dayOfYear = Math.floor((today.getTime() - new Date(today.getFullYear(), 0, 0).getTime()) / 86400000);
-  return TOM_TAGLINES[dayOfYear % TOM_TAGLINES.length];
-}
-
-// Sprint 22.8 — TOM como identidade primária no header.
-// Sprint 22.9 — usa /tom-avatar.png quando arquivo existe; fallback 👽 se 404.
+// Sprint 22.10 — TOM flutuante (sem fundo) + avatar do user maior, clicável,
+// abre menu de perfil (foto, senha, config, sair). Tagline removida.
 export function Header() {
-  const { collaborator, role } = useAuth();
+  const { collaborator, role, signOut } = useAuth();
   const [avatarFailed, setAvatarFailed] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
   const firstName = collaborator?.full_name?.split(' ')[0] ?? '';
+
+  // Fecha o menu ao clicar fora.
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onClickOutside(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', onClickOutside);
+    return () => document.removeEventListener('mousedown', onClickOutside);
+  }, [menuOpen]);
 
   return (
     <header className="w-full max-w-content mx-auto px-md pt-md">
       <div className="flex items-center gap-md">
-        {/* Avatar TOM */}
-        <div
-          className="h-12 w-12 shrink-0 grid place-items-center rounded-full bg-tom overflow-hidden shadow-card"
-          aria-label="TOM, seu agente"
-          title="TOM"
-        >
+        {/* Avatar TOM — flutuante, sem fundo */}
+        <div className="h-14 w-14 shrink-0 grid place-items-center" aria-label="TOM, seu agente" title="TOM">
           {avatarFailed ? (
-            <span className="text-2xl" aria-hidden>👽</span>
+            <span className="text-3xl" aria-hidden>👽</span>
           ) : (
             <img
               src="/tom-avatar.png"
               alt="TOM"
-              className="h-full w-full object-cover"
+              className="h-full w-full object-contain"
               onError={() => setAvatarFailed(true)}
             />
           )}
@@ -74,18 +70,68 @@ export function Header() {
           <h1 className="text-screen-title leading-tight">
             {greeting()}{firstName ? `, ${firstName}` : ''}
           </h1>
-          <p className="text-body-sm text-fg-muted mt-0.5">
-            {dateLong()} <span className="text-tom">· {todayTagline()}</span>
-          </p>
+          <p className="text-body-sm text-fg-muted mt-0.5">{dateLong()}</p>
         </div>
 
-        {/* Avatar do user — menor, direita */}
-        <div
-          className="h-8 w-8 grid place-items-center rounded-full bg-bg-elevated border border-border text-body-sm font-semibold text-fg shrink-0"
-          aria-label={collaborator?.full_name ?? 'avatar'}
-          title={role ? `${collaborator?.full_name} (${role})` : collaborator?.full_name ?? ''}
-        >
-          {initials(collaborator?.full_name)}
+        {/* Avatar do user — clicável, abre menu de perfil */}
+        <div ref={menuRef} className="relative shrink-0">
+          <button
+            type="button"
+            onClick={() => setMenuOpen(o => !o)}
+            aria-label="Abrir menu de perfil"
+            aria-expanded={menuOpen}
+            title={role ? `${collaborator?.full_name} (${role})` : collaborator?.full_name ?? ''}
+            className="h-11 w-11 grid place-items-center rounded-full bg-bg-elevated border border-border text-body-md font-bold text-fg focus-ring transition-colors hover:bg-bg-subtle"
+          >
+            {initials(collaborator?.full_name)}
+          </button>
+
+          {menuOpen && (
+            <div
+              role="menu"
+              className="absolute right-0 top-full mt-2 w-56 rounded-md bg-bg-surface border border-border shadow-soft py-1 z-30"
+            >
+              <div className="px-3 py-2 border-b border-border">
+                <div className="text-body-sm font-semibold truncate">{collaborator?.full_name ?? 'Sem nome'}</div>
+                <div className="text-body-sm text-fg-muted truncate">{role ?? '—'}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setMenuOpen(false); alert('Trocar foto: em breve.'); }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-body-sm hover:bg-bg-elevated focus-ring"
+              >
+                <Camera size={16} className="text-fg-muted" /> Trocar foto
+              </button>
+              <button
+                type="button"
+                onClick={() => { setMenuOpen(false); alert('Mudar senha: em breve.'); }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-body-sm hover:bg-bg-elevated focus-ring"
+              >
+                <Lock size={16} className="text-fg-muted" /> Mudar senha
+              </button>
+              <Link
+                to="/mais"
+                onClick={() => setMenuOpen(false)}
+                className="flex items-center gap-2 px-3 py-2 text-body-sm hover:bg-bg-elevated focus-ring"
+              >
+                <User size={16} className="text-fg-muted" /> Perfil
+              </Link>
+              <Link
+                to="/configuracoes"
+                onClick={() => setMenuOpen(false)}
+                className="flex items-center gap-2 px-3 py-2 text-body-sm hover:bg-bg-elevated focus-ring"
+              >
+                <Settings size={16} className="text-fg-muted" /> Configurações
+              </Link>
+              <button
+                type="button"
+                onClick={() => { setMenuOpen(false); signOut(); }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-body-sm text-danger hover:bg-danger/10 focus-ring border-t border-border mt-1 pt-2"
+              >
+                <LogOut size={16} /> Sair
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </header>
