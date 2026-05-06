@@ -4338,7 +4338,15 @@ async function processMessage(phone, text, raw = {}) {
     if (parsedEv && parsedEv.malformed) {
       console.warn('[Event] WARN: malformed marker, dropping block');
       await logMarker(collab.id, 'EVENT_CREATE', 'rejected', 'schema_invalid', reply);
-      reply = parsedEv.cleanText || reply;
+      // Sprint 21.5.1 — anti-mentira para EVENT_CREATE (mesma proteção do TASK_UPDATE).
+      // Bug observado: LLM emitiu 4 markers EVENT_CREATE separados (parser espera 1 com array),
+      // tudo rejeitado, mas TOM disse "vou criar os eventos agora" no chat — mentira.
+      let baseEv = parsedEv.cleanText || reply;
+      const optimisticEvPattern = /\b(criad|registrad|agendad|marqu(ei|amos)|salvei|salvo|guardad|reagendad|atualizad|registrando|criando|agendando|marcando|feito[!.]?\s|pronto[!.]?\s|bora[!.]?$)/i;
+      if (optimisticEvPattern.test(baseEv)) {
+        baseEv += '\n\n_⚠️ Tive um problema técnico ao gravar o(s) compromisso(s). Não confirmei nada no banco — me passa de novo?_';
+      }
+      reply = baseEv;
     } else if (parsedEv) {
       const { okCount, failCount, integrityPayload } = await applyEventActions(collab, parsedEv.events);
       console.log(`[Event] batch done: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
@@ -4358,6 +4366,9 @@ async function processMessage(phone, text, raw = {}) {
         let base = parsedEv.cleanText || '';
         if (failCount > 0 && okCount === 0) {
           base = (base ? base + '\n\n' : '') + '_não consegui salvar o compromisso, te aviso depois_';
+        } else if (failCount > 0 && okCount > 0) {
+          // Sprint 21.5.1 — confirmação parcial honesta também em EVENT_CREATE.
+          base = (base ? base + '\n\n' : '') + `_⚠️ Salvei ${okCount} de ${okCount + failCount} compromissos. Algum falhou — me chama se algo ficar faltando._`;
         }
         reply = base || reply;
       }
@@ -4370,7 +4381,13 @@ async function processMessage(phone, text, raw = {}) {
     if (parsedEU && parsedEU.malformed) {
       console.warn('[Event] WARN: malformed EVENT_UPDATE marker, dropping block');
       await logMarker(collab.id, 'EVENT_UPDATE', 'rejected', 'schema_invalid', reply);
-      reply = parsedEU.cleanText || reply;
+      // Sprint 21.5.1 — anti-mentira em EVENT_UPDATE também.
+      let baseEU = parsedEU.cleanText || reply;
+      const optimisticEUPattern = /\b(reagendad|atualizad|movid|cancelad|conclu[ií]d|registrad|salvei|feito[!.]?\s|pronto[!.]?\s)/i;
+      if (optimisticEUPattern.test(baseEU)) {
+        baseEU += '\n\n_⚠️ Tive um problema técnico ao alterar o compromisso. Nada mudou no banco — me confirma o que você quer?_';
+      }
+      reply = baseEU;
     } else if (parsedEU) {
       const { okCount, failCount } = await applyEventUpdates(collab, parsedEU.actions);
       console.log(`[Event] update batch: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
