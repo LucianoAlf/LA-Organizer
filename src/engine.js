@@ -3554,7 +3554,7 @@ async function _accQ2(collabId) {
       requester:collaborators!coordination_requests_requester_id_fkey(full_name)
     `)
     .eq('recipient_id', collabId)
-    .in('status', ['pending', 'sent', 'responded'])
+    .in('status', ['pending', 'sent'])
     .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
     .order('created_at', { ascending: false })
     .limit(1)
