@@ -130,6 +130,7 @@ async function toggleHabit(habit: HabitWithLog, collabId: string) {
       .eq('id', existing.id);
     if (error) throw error;
   } else {
+    // Sprint 21.8.1 — habit_logs não tem coluna `source` no schema. Remover do INSERT.
     const { error } = await supabase
       .from('habit_logs')
       .insert({
@@ -138,7 +139,6 @@ async function toggleHabit(habit: HabitWithLog, collabId: string) {
         log_date: today,
         is_completed: newDone,
         completed_at: newDone ? new Date().toISOString() : null,
-        source: 'manual',
       });
     if (error) throw error;
   }
