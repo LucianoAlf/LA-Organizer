@@ -3960,11 +3960,14 @@ async function detectDuplicateSemanticEvent(collab, candidate) {
 // piorava removendo o conteúdo distinguidor ("guitarras + baterias Recreio").
 // Fix: strip de prefixos verbais genéricos ANTES do JW + filtro de stopwords no
 // keyword boost + pré-filtro de contexto (personal ≠ work).
-const VERB_PREFIX_RE = /^(ligar\s+pr[ao]\s+|falar\s+com\s+|reuni[aã]o\s+com\s+|enviar\s+pra?\s+|enviar\s+para\s+|mandar\s+pra?\s+|mandar\s+para\s+|verificar\s+|checar\s+|comprar\s+|buscar\s+|organizar\s+|resolver\s+|fazer\s+|pedir\s+pra?\s+|pedir\s+para\s+|contatar\s+|chamar\s+|marcar\s+|agendar\s+|combinar\s+com\s+)/i;
+// Sprint 22.3 — adicionados verbos "Re-" pra evitar falso positivo via prefix bonus
+// do jaroWinkler (ex: "Revisar contrato" matchava "Reajustar mentoria" por causa do "Re").
+const VERB_PREFIX_RE = /^(ligar\s+pr[ao]\s+|falar\s+com\s+|reuni[aã]o\s+com\s+|enviar\s+pra?\s+|enviar\s+para\s+|mandar\s+pra?\s+|mandar\s+para\s+|verificar\s+|checar\s+|comprar\s+|buscar\s+|organizar\s+|resolver\s+|fazer\s+|pedir\s+pra?\s+|pedir\s+para\s+|contatar\s+|chamar\s+|marcar\s+|agendar\s+|combinar\s+com\s+|revisar\s+|reajustar\s+|rever\s+|ajustar\s+|atualizar\s+|reformular\s+)/i;
 const KEYWORD_STOPWORDS = new Set([
   'ligar','falar','fazer','pedir','mandar','enviar','comprar','buscar','verificar','checar',
   'organizar','resolver','criar','contatar','chamar','marcar','agendar','combinar',
-  'reuniao','reunião','outro','mesmo','para','pelo','pela','sobre','depois','antes'
+  'reuniao','reunião','outro','mesmo','para','pelo','pela','sobre','depois','antes',
+  'revisar','reajustar','rever','ajustar','atualizar','reformular'
 ]);
 const stripVerbPrefix = s => {
   const stripped = String(s || '').replace(VERB_PREFIX_RE, '').trim();
@@ -4010,7 +4013,10 @@ async function detectDuplicateSemanticTask(collab, candidate) {
         .filter(k => !KEYWORD_STOPWORDS.has(k.toLowerCase()));
       const shared = candKeywords.filter(k => taskKeywords.includes(k));
       if (shared.length > 0) score = Math.min(score + 0.1 * Math.min(shared.length, 2), 1.0);
-      if (score > 0.7) probable.push({ ...task, _score: score });
+      // Sprint 22.3 — exigir keyword overlap real pra bloquear (probable). Sem keyword
+      // compartilhada, prefix bonus do jaroWinkler ("Re-", "Co-") gera falsos positivos.
+      // Score alto sem semântica vira só "possible" (avisa, não bloqueia).
+      if (score > 0.7 && shared.length > 0) probable.push({ ...task, _score: score });
       else if (score > 0.5) possible.push({ ...task, _score: score });
     }
     probable.sort((a, b) => b._score - a._score);
