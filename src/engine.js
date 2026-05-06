@@ -4228,7 +4228,15 @@ async function processMessage(phone, text, raw = {}) {
     if (parsedTask && parsedTask.malformed) {
       console.warn('[Task] WARN: malformed marker, dropping block');
       await logMarker(collab.id, 'TASK_UPDATE', 'rejected', 'schema_invalid', reply);
-      reply = parsedTask.cleanText || reply;
+      // Sprint 21.5 — anti-mentira: se cleanText tem confirmação otimista mas o marker
+      // foi rejeitado, o LLM "prometeu" sem persistir. Sobrescreve com aviso honesto.
+      // Princípio: TOM nunca confirma sucesso de ação persistente se engine rejeitou o marker.
+      let base = parsedTask.cleanText || reply;
+      const optimisticPattern = /\b(registrad|agendad|reagendad|atualizad|salvei|salvo|guardad|marqu(ei|amos)|criad|reagendando|agendando|registrando|feito[!.]?\s|pronto[!.]?\s|bora[!.]?$)/i;
+      if (optimisticPattern.test(base)) {
+        base += '\n\n_⚠️ Tive um problema técnico ao gravar isso. Não confirmei nada no banco — me passa de novo o que você quer registrar?_';
+      }
+      reply = base;
     } else if (parsedTask) {
       // Sprint 10.1 hotfix: alignment de datas. A âncora temporal no system
       // prompt não basta — Claude erra "amanhã" em frases complexas
@@ -4293,6 +4301,10 @@ async function processMessage(phone, text, raw = {}) {
         let base = parsedTask.cleanText || '';
         if (failCount > 0 && okCount === 0) {
           base = (base ? base + '\n\n' : '') + '_não consegui registrar agora, te aviso depois_';
+        } else if (failCount > 0 && okCount > 0) {
+          // Sprint 21.5 — confirmação parcial honesta. Engine não pode deixar TOM dizer
+          // "tudo certo" quando parte falhou. Princípio: fala = persistência.
+          base = (base ? base + '\n\n' : '') + `_⚠️ Registrei ${okCount} de ${okCount + failCount}. Algumas falharam — me chama se algo ficar faltando._`;
         }
         reply = base || reply;
       }

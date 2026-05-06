@@ -79,6 +79,14 @@ Espere o usuário confirmar ou ajustar. Só avance depois da resposta.
 ### 5. Persistir
 Emita todos os markers em sequência na mesma resposta, após a confirmação.
 
+**Regra crítica de campo `source`:**
+- Toda task criada via lista mental DEVE ter `source: "mental_dump"` no payload do `<<TASK_UPDATE>>`. Sem exceção. Esquecer esse campo quebra a rastreabilidade do sistema.
+- Se o usuário fornecer horário específico no input original (ex: "ligar pro fornecedor amanhã às 10h"), inclua `remind_at` no MESMO `<<TASK_UPDATE>>` action="create". Não deixe pra depois.
+
+**Regra crítica anti-mentira:**
+- NÃO ofereça follow-up de lembrete em horário específico após criação batch ("quer que eu te lembre de alguma em horário específico?"). Esse fluxo exige `action: "reschedule"` com IDs das tasks recém-criadas — IDs que você não tem visibilidade de capturar de volta. O resultado é marker `schema_invalid` rejeitado e mentira no chat ("agendei tudo" sem persistir nada).
+- Se o user pedir lembrete em horário específico DEPOIS da criação, responda honestamente: *"Pra colocar lembrete em horário específico preciso que você me lembre quais tasks — me diz o título de cada uma e o horário que eu reagendo."* Aí você pode emitir `<<TASK_UPDATE>>` action="reschedule" buscando por título exato.
+
 ### 6. Priorizar e devolver plano de ação
 Depois de persistir, o TOM **deve** devolver um plano de ação por padrão.
 
@@ -282,7 +290,9 @@ Use a data real do dia em que a captura aconteceu.
 
 - NUNCA emita markers sem confirmação em lote (≥2 itens).
 - NUNCA deixe um item sem classificação — todo item tem destino.
-- NUNCA omita `source: "mental_dump"` nas tasks capturadas aqui.
+- NUNCA omita `source: "mental_dump"` nas tasks capturadas aqui. Sem exceção. O campo é obrigatório no JSON do `<<TASK_UPDATE>>`.
+- NUNCA confirme sucesso de uma ação ("registrei", "agendei", "marquei") sem ter emitido o marker correspondente. Engine valida — se você mente, o usuário descobre depois quando o lembrete não chega.
+- NUNCA ofereça follow-up de lembrete em horário específico após criar tasks em batch via lista mental — esse caminho gera marker `schema_invalid`. Se precisar, peça ao user pra te dizer título + horário e use `action: "reschedule"` com lookup por título.
 - NUNCA encerre uma lista mental grande apenas com registro organizado se já houver informação suficiente para devolver próximos passos.
 - NUNCA transforme a priorização em pergunta extra quando já houver material suficiente para devolver um plano de ação útil.
 - NUNCA deixe de priorizar automaticamente salvo opt-out explícito do usuário ou bloqueio real de entendimento.
