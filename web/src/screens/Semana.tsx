@@ -19,6 +19,7 @@ async function fetchWeekTasks(collabId: string, start: string, end: string): Pro
     .select('id, title, status, context, priority, category, due_date, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, projects(name)')
     .eq('assigned_to', collabId)
     .eq('context', 'work')
+    .neq('status', 'cancelled')
     .gte('due_date', start)
     .lte('due_date', end)
     .order('remind_at', { ascending: true, nullsFirst: false })
@@ -29,9 +30,10 @@ async function fetchWeekTasks(collabId: string, start: string, end: string): Pro
 }
 
 function dayCounts(tasks: Task[], events: CalendarEvent[], today: string) {
-  const total = tasks.length + events.length;
-  const done = tasks.filter(t => t.status === 'done').length + events.filter(e => e.status === 'done').length;
-  const overdue = tasks.filter(t => t.status === 'overdue' || (t.due_date && t.due_date < today && t.status !== 'done' && t.status !== 'cancelled')).length;
+  const activeEvents = events.filter(e => e.status !== 'cancelled');
+  const total = tasks.length + activeEvents.length;
+  const done = tasks.filter(t => t.status === 'done').length + activeEvents.filter(e => e.status === 'done').length;
+  const overdue = tasks.filter(t => t.status === 'overdue' || (t.due_date && t.due_date < today && t.status !== 'done')).length;
   return { total, done, overdue };
 }
 
@@ -78,8 +80,9 @@ export function Semana() {
     return map;
   }, [events, days]);
 
-  const totalWeek = tasks.length + events.filter(e => e.context === 'work').length;
-  const doneWeek = tasks.filter(t => t.status === 'done').length + events.filter(e => e.status === 'done' && e.context === 'work').length;
+  const workEvents = events.filter(e => e.context === 'work' && e.status !== 'cancelled');
+  const totalWeek = tasks.length + workEvents.length;
+  const doneWeek = tasks.filter(t => t.status === 'done').length + workEvents.filter(e => e.status === 'done').length;
   const pct = totalWeek ? Math.round((doneWeek / totalWeek) * 100) : 0;
   const isLoading = tLoading || eLoading;
 
@@ -106,7 +109,7 @@ export function Semana() {
           </div>
         </div>
         <div className="mt-md h-1 w-full bg-bg-elevated rounded-full overflow-hidden">
-          <div className="h-full bg-brand transition-[width]" style={{ width: `${pct}%` }} />
+          <div className="h-full bg-tom transition-[width]" style={{ width: `${pct}%` }} />
         </div>
       </header>
 
