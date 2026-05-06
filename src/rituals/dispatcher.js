@@ -865,7 +865,7 @@ async function checkCoordinationTimeouts(now = new Date()) {
 
   const { data: expired, error } = await supabase
     .from('coordination_requests')
-    .select('id, requester_id, recipient_id, message_body, response_deadline')
+    .select('id, requester_id, recipient_id, message_body, response_deadline, sent_at')
     .eq('expects_response', true)
     .eq('status', 'sent')
     .lt('response_deadline', now.toISOString())
@@ -884,6 +884,21 @@ async function checkCoordinationTimeouts(now = new Date()) {
 
     if (updErr) {
       console.error(`[checkCoordinationTimeouts] update err req=${req.id.slice(0, 8)}:`, updErr.message);
+      continue;
+    }
+
+    // Sprint 22.4 — antes de cobrar via Heads up, checar se o recipient teve
+    // qualquer atividade conversacional após o sent_at. Se sim, ele viu/respondeu
+    // (mesmo que não tenha disparado <<COORDINATION_RESPONSE>>). Suprime o nag.
+    const { data: recentActivity } = await supabase
+      .from('conversation_history')
+      .select('id')
+      .eq('collaborator_id', req.recipient_id)
+      .gte('created_at', req.sent_at || req.response_deadline)
+      .limit(1);
+    const recipientWasActive = Array.isArray(recentActivity) && recentActivity.length > 0;
+    if (recipientWasActive) {
+      console.log(`[checkCoordinationTimeouts] req=${req.id.slice(0, 8)} recipient ativo após sent_at — suprimindo heads-up`);
       continue;
     }
 
