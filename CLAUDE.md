@@ -13,13 +13,12 @@
    - Copiar arquivos modificados de `_remote` para o clone
    - `git add` + `git commit` + `git push origin main`
    - Deletar clone: `rm -rf /tmp/deploy-<sprint>`
-4. O Alf faz o pull na VPS manualmente:
+4. Deploy na VPS (após push para origin/main):
 ```bash
-   cd /opt/LA-Organizer && git pull origin main && pm2 restart tom
+ssh tom "cd /opt/LA-Organizer && git pull origin main && pm2 restart tom"
 ```
-5. **NUNCA** tentar `ssh tom` (DNS não resolve)
-6. **NUNCA** fazer `scp` direto
-7. **NUNCA** fazer `git init` em `_remote`
+5. **NUNCA** fazer `scp` direto
+6. **NUNCA** fazer `git init` em `_remote`
 
 ## Supabase
 - **Project ID:** cesnbnrynvxvgdhfmaua
@@ -35,20 +34,19 @@
 
 ## Deploy na VPS (SSH direto)
 
-### Setup (uma vez por sessão)
+### Setup da chave (uma vez por sessão — paths WSL)
 ```bash
-bash scripts/setup-vps-key.sh
+bash /mnt/d/la-organizer/_remote/scripts/setup-vps-key.sh
 ```
 
-### Deploy (após push para origin/main)
+### Deploy em 1 linha (após push para origin/main)
 ```bash
-bash scripts/deploy.sh
+ssh tom "cd /opt/LA-Organizer && git pull origin main && pm2 restart tom"
 ```
-
-A chave é restrita: só executa `git pull origin main && pm2 restart tom`. Nada mais.
 
 ### VPS
 - IP: 89.116.73.186
+- Alias: `tom` (resolve via ~/.ssh/config ou /etc/hosts)
 - User: root
 - Path: /opt/LA-Organizer
 
