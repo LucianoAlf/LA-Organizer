@@ -22,7 +22,7 @@ async function fetchTasksToday(collabId: string): Promise<Task[]> {
   const today = todaySP();
   const { data, error } = await supabase
     .from('tasks')
-    .select('id, title, status, context, priority, category, action_type, due_date, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, completed_at, projects(name)')
+    .select('id, title, status, context, priority, category, action_type, source, due_date, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, completed_at, projects(name), assignee:collaborators!tasks_assigned_to_fkey(full_name)')
     .eq('assigned_to', collabId)
     .or(`due_date.eq.${today},and(due_date.lt.${today},status.not.in.(done,cancelled))`)
     .order('remind_at', { ascending: true, nullsFirst: false })
@@ -32,10 +32,26 @@ async function fetchTasksToday(collabId: string): Promise<Task[]> {
   return (data ?? []) as unknown as Task[];
 }
 
+// Sprint 22.5 — tasks que o collab criou pra outras pessoas (delegações).
+async function fetchDelegatedTasks(collabId: string): Promise<Task[]> {
+  const today = todaySP();
+  const { data, error } = await supabase
+    .from('tasks')
+    .select('id, title, status, context, priority, category, action_type, source, due_date, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, completed_at, projects(name), assignee:collaborators!tasks_assigned_to_fkey(full_name)')
+    .eq('created_by', collabId)
+    .neq('assigned_to', collabId)
+    .or(`due_date.eq.${today},and(due_date.lt.${today},status.not.in.(done,cancelled))`)
+    .order('due_date', { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as unknown as Task[];
+}
+
+type TabKey = TaskContext | 'delegated';
+
 export function Hoje() {
   const { collaborator } = useAuth();
   const qc = useQueryClient();
-  const [tab, setTab] = useState<TaskContext>('work');
+  const [tab, setTab] = useState<TabKey>('work');
   // Sprint 12 Bloco D: filtro opcional por categoria de execução. null = todas.
   const [actionFilter, setActionFilter] = useState<ActionType | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -46,6 +62,13 @@ export function Hoje() {
   const { data: tasks = [], isLoading: tLoading, error: tError } = useQuery({
     queryKey: ['tasks', 'hoje', collaborator?.id],
     queryFn: () => collaborator ? fetchTasksToday(collaborator.id) : Promise.resolve([]),
+    enabled: Boolean(collaborator?.id && supabaseConfigured),
+  });
+
+  // Sprint 22.5 — delegadas (criadas pra outros).
+  const { data: delegated = [], isLoading: dLoading } = useQuery({
+    queryKey: ['tasks', 'delegated', collaborator?.id],
+    queryFn: () => collaborator ? fetchDelegatedTasks(collaborator.id) : Promise.resolve([]),
     enabled: Boolean(collaborator?.id && supabaseConfigured),
   });
 
@@ -71,7 +94,7 @@ export function Hoje() {
 
   const work = tasks.filter(t => t.context === 'work');
   const personal = tasks.filter(t => t.context === 'personal');
-  const tabList = (tab === 'work' ? work : personal);
+  const tabList: Task[] = tab === 'work' ? work : tab === 'personal' ? personal : delegated;
   // Sprint 12 Bloco D: chips só aparecem para categorias presentes na aba atual.
   const presentActionTypes = Array.from(
     new Set(tabList.map(t => t.action_type).filter((x): x is ActionType => Boolean(x))),
@@ -79,17 +102,32 @@ export function Hoje() {
   const todayList = actionFilter
     ? tabList.filter(t => t.action_type === actionFilter)
     : tabList;
-  const todayEvents = events.filter(e => e.context === tab);
+  // Eventos só nas abas work/personal (delegadas é só task).
+  const todayEvents = tab === 'delegated' ? [] : events.filter(e => e.context === tab);
 
-  const dueToday = todayList.filter(t => t.due_date === today);
+  const dueToday = todayList.filter(t => t.due_date === today && t.status !== 'done' && t.status !== 'cancelled');
   const overdue = todayList.filter(t => t.status === 'overdue' || (t.due_date && t.due_date < today && t.status !== 'done' && t.status !== 'cancelled'));
   const done = todayList.filter(t => t.status === 'done');
 
-  const isLoading = tLoading || eLoading;
+  const isLoading = tLoading || eLoading || dLoading;
   const hasNothing = todayList.length === 0 && todayEvents.length === 0;
+
+  // Sprint 22.5 — totais globais pra subheader (somam tudo: work + personal + events).
+  const totalDueToday = tasks.filter(t => t.due_date === today && t.status !== 'done' && t.status !== 'cancelled').length
+    + events.filter(e => e.status === 'scheduled').length;
+  const totalOverdue = tasks.filter(t => t.due_date && t.due_date < today && t.status !== 'done' && t.status !== 'cancelled').length;
 
   return (
     <div className="space-y-lg">
+      {/* Subheader — quick context line */}
+      {!isLoading && (totalDueToday > 0 || totalOverdue > 0) && (
+        <p className="text-body-sm text-fg-muted -mt-sm">
+          {totalDueToday > 0 && <span><span className="text-fg font-medium">{totalDueToday}</span> pra hoje</span>}
+          {totalDueToday > 0 && totalOverdue > 0 && <span className="text-fg-muted"> · </span>}
+          {totalOverdue > 0 && <span className="text-danger"><span className="font-medium">{totalOverdue}</span> atrasada{totalOverdue > 1 ? 's' : ''}</span>}
+        </p>
+      )}
+
       {/* Stats */}
       <div className="grid grid-cols-3 gap-sm">
         <StatCard label="Pra hoje" value={dueToday.length + todayEvents.filter(e => e.status === 'scheduled').length} tone="brand" />
@@ -102,9 +140,10 @@ export function Hoje() {
         tabs={[
           { id: 'work', label: 'Trabalho', badge: work.length + events.filter(e => e.context === 'work').length },
           { id: 'personal', label: 'Pessoal', badge: personal.length + events.filter(e => e.context === 'personal').length },
+          { id: 'delegated', label: 'Delegadas', badge: delegated.length },
         ]}
         active={tab}
-        onChange={(t) => { setTab(t); setActionFilter(null); }}
+        onChange={(t) => { setTab(t as TabKey); setActionFilter(null); }}
       />
 
       {/* Sprint 12 Bloco D: filtro de chips por categoria de execução.
@@ -184,20 +223,71 @@ export function Hoje() {
           hasNothing ? (
             <EmptyState
               icon={<ListTodo size={32} />}
-              title="Sem nada hoje."
-              description={tab === 'work' ? 'Bora planejar a semana? Toca no + pra criar.' : 'Sem itens pessoais pra hoje.'}
+              title={tab === 'delegated' ? 'Sem delegações pra hoje' : 'Tá leve hoje.'}
+              description={
+                tab === 'delegated'
+                  ? 'Nada que você pediu pra outro fica vencendo hoje.'
+                  : tab === 'work'
+                    ? 'Manda um zap pro TOM no WhatsApp tipo "anota: ligar pro contador hoje" pra criar de lá. Ou usa o + abaixo.'
+                    : 'Sem nada pessoal pra hoje. Aproveita.'
+              }
             />
           ) : (
             <div className="py-3 text-body-sm text-fg-muted">Sem tarefas — só compromissos hoje.</div>
           )
         ) : (
-          todayList.map(t => (
-            <TaskRow
-              key={t.id}
-              task={t}
-              onToggle={(task) => toggleTask.mutate(task)}
-            />
-          ))
+          <>
+            {/* Sprint 22.5 — agrupamento visual: Atrasadas → Pra hoje → Concluídas */}
+            {overdue.length > 0 && (
+              <div>
+                <div className="py-2 text-label uppercase tracking-wide text-danger">
+                  🔴 Atrasadas ({overdue.length})
+                </div>
+                {overdue.map(t => (
+                  <TaskRow
+                    key={t.id}
+                    task={t}
+                    onToggle={tab === 'delegated' ? undefined : (task) => toggleTask.mutate(task)}
+                    readOnly={tab === 'delegated'}
+                  />
+                ))}
+              </div>
+            )}
+            {dueToday.length > 0 && (
+              <div>
+                {overdue.length > 0 && (
+                  <div className="py-2 text-label uppercase tracking-wide text-fg-muted">
+                    Pra hoje ({dueToday.length})
+                  </div>
+                )}
+                {dueToday.map(t => (
+                  <TaskRow
+                    key={t.id}
+                    task={t}
+                    onToggle={tab === 'delegated' ? undefined : (task) => toggleTask.mutate(task)}
+                    readOnly={tab === 'delegated'}
+                  />
+                ))}
+              </div>
+            )}
+            {done.length > 0 && (
+              <details className="group">
+                <summary className="py-2 text-label uppercase tracking-wide text-success cursor-pointer list-none flex items-center gap-2 select-none">
+                  <span>✅ Concluídas ({done.length})</span>
+                  <span className="text-fg-muted text-body-sm normal-case tracking-normal group-open:hidden">expandir</span>
+                  <span className="text-fg-muted text-body-sm normal-case tracking-normal hidden group-open:inline">recolher</span>
+                </summary>
+                {done.map(t => (
+                  <TaskRow
+                    key={t.id}
+                    task={t}
+                    onToggle={tab === 'delegated' ? undefined : (task) => toggleTask.mutate(task)}
+                    readOnly={tab === 'delegated'}
+                  />
+                ))}
+              </details>
+            )}
+          </>
         )}
       </section>
 

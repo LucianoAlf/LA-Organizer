@@ -116,6 +116,9 @@ export interface Task {
   event_sector?: EventSector | null;
   notes?: string | null;
   support_team?: string[] | null;
+  // Sprint 22.5 — origem da task (mostra ícone se ≠ manual) + nome do assignee (delegadas)
+  source?: string | null;
+  assignee?: { full_name: string } | null;
 }
 
 export type EventStatus = 'scheduled' | 'done' | 'cancelled';

@@ -1,4 +1,4 @@
-import { Check } from 'lucide-react';
+import { Check, Bot } from 'lucide-react';
 import { Badge } from './Badge';
 import { ActionTypeBadge } from './ActionTypeBadge';
 import type { Task } from '../types';
@@ -8,6 +8,21 @@ interface Props {
   onToggle?: (task: Task) => void;
   /** Quando true, esconde o checkbox e bloqueia interação. Para visões coord/director em PessoaDetalhe. */
   readOnly?: boolean;
+}
+
+// Sprint 22.5 — dot colorido por quadrante Eisenhower.
+// Q1 = urgente+importante (vermelho), Q2 = importante (âmbar), Q3 = urgente (azul), Q4 = nada (cinza).
+const QUADRANT_DOT: Record<string, string> = {
+  '1': 'bg-danger',
+  '2': 'bg-warning',
+  '3': 'bg-info',
+  '4': 'bg-fg-muted/40',
+};
+
+// Sprint 22.5 — fonte que NÃO seja manual indica que veio do TOM (mental_dump, agent_*, coordinator_assignment).
+function fromTom(source?: string | null): boolean {
+  if (!source) return false;
+  return source !== 'manual';
 }
 
 // Sprint 11 Bloco B: formatadores de horário e data relativa em America/Sao_Paulo.
@@ -56,27 +71,43 @@ function fmtRelDate(iso: string | null): string {
   return m ? `${m[3]}/${m[2]}` : '';
 }
 
+// Sprint 22.5 — só mantém badge pra "atrasada desde X" (info útil). "Hoje"/"Concluída"
+// viraram redundantes com o agrupamento visual + line-through em done.
 function statusOf(task: Task): { tone: 'success' | 'warning' | 'danger' | 'neutral'; label: string | null } {
-  if (task.status === 'done') return { tone: 'success', label: 'Concluída' };
-  if (task.status === 'overdue') return { tone: 'danger', label: 'Atrasada' };
+  if (task.status === 'done') return { tone: 'success', label: null };
   const today = todaySaoPauloISO();
-  // Prioriza remind_at se houver
   const refDay = task.remind_at ? dayISOFromAny(task.remind_at) : task.due_date;
-  if (refDay) {
-    if (refDay < today) return { tone: 'danger', label: 'Atrasada desde ' + fmtRelDate(refDay) };
-    if (refDay === today) return { tone: 'warning', label: 'Hoje' };
+  if (refDay && refDay < today) {
+    return { tone: 'danger', label: 'atrasada ' + fmtRelDate(refDay) };
   }
+  if (task.status === 'overdue') return { tone: 'danger', label: 'atrasada' };
   return { tone: 'neutral', label: null };
+}
+
+// Sprint 22.5 — mostra "(DD/MM)" só quando a data NÃO é hoje/amanhã/ontem
+// (data relativa já cobre o curto prazo, suffix vira ruído).
+const RELATIVE_DATES = new Set(['hoje', 'amanhã', 'ontem']);
+function fmtSuffix(rel: string, dayIso: string): string {
+  if (RELATIVE_DATES.has(rel)) return '';
+  return ` (${dayIso.slice(8, 10)}/${dayIso.slice(5, 7)})`;
 }
 
 export function TaskRow({ task, onToggle, readOnly }: Props) {
   const { tone, label } = statusOf(task);
   const isDone = task.status === 'done';
+  const quadrantKey = task.eisenhower_quadrant ? String(task.eisenhower_quadrant) : null;
+  const dotClass = quadrantKey && QUADRANT_DOT[quadrantKey] ? QUADRANT_DOT[quadrantKey] : null;
+  const remindDay = task.remind_at ? dayISOFromAny(task.remind_at) : '';
+  const dueDay = task.due_date || '';
+  const remindRel = task.remind_at ? fmtRelDate(task.remind_at) : '';
+  const dueRel = task.due_date ? fmtRelDate(task.due_date) : '';
+  const showAssignee = readOnly && task.assignee?.full_name;
+
   return (
     <div
       className={[
-        'flex items-start gap-md py-3 border-b border-border last:border-0',
-        isDone ? 'opacity-60' : '',
+        'flex items-start gap-md py-3 border-b border-border last:border-0 transition-opacity',
+        isDone ? 'opacity-50' : '',
       ].join(' ')}
     >
       {!readOnly && (
@@ -96,11 +127,25 @@ export function TaskRow({ task, onToggle, readOnly }: Props) {
       )}
 
       <div className="min-w-0 flex-1">
-        <div className={['text-body-md', isDone ? 'line-through' : ''].join(' ')}>
-          {task.title}
+        <div className={['flex items-start gap-2 text-body-md', isDone ? 'line-through' : ''].join(' ')}>
+          {/* Quadrant dot — Eisenhower (Q1=urg+imp, Q2=imp, Q3=urg, Q4=nada) */}
+          {dotClass && !isDone && (
+            <span
+              className={['mt-1.5 h-2 w-2 shrink-0 rounded-full', dotClass].join(' ')}
+              aria-label={`Quadrante ${quadrantKey}`}
+              title={`Eisenhower Q${quadrantKey}`}
+            />
+          )}
+          <span className="min-w-0 flex-1 break-words">
+            {task.title}
+          </span>
+          {fromTom(task.source) && (
+            <span className="mt-1 shrink-0 text-fg-muted" title="Criada via TOM" aria-label="Criada via TOM">
+              <Bot size={14} />
+            </span>
+          )}
         </div>
-        {/* Sprint 11 Bloco B: linha de horário/data prominente — visível em
-            todos os contextos (lista, detalhe, semana). Coerente com WA TOM. */}
+        {/* Linha de horário/data — coerente com WA TOM. Sufixo (DD/MM) só pra datas longe. */}
         {(task.remind_at || task.due_date) && (
           <div className="mt-1 flex items-baseline gap-1.5 text-body-sm text-fg">
             {task.remind_at ? (
@@ -108,14 +153,12 @@ export function TaskRow({ task, onToggle, readOnly }: Props) {
                 <span aria-hidden>⏰</span>
                 <span className="font-semibold tabular-nums">{fmtTimeBR(task.remind_at)}</span>
                 <span className="text-fg-muted">·</span>
-                <span className="text-fg-muted">{fmtRelDate(task.remind_at)}</span>
-                <span className="text-fg-muted tabular-nums">({dayISOFromAny(task.remind_at).slice(8, 10)}/{dayISOFromAny(task.remind_at).slice(5, 7)})</span>
+                <span className="text-fg-muted">{remindRel}{fmtSuffix(remindRel, remindDay)}</span>
               </>
             ) : (
               <>
                 <span aria-hidden>📅</span>
-                <span className="text-fg-muted">{fmtRelDate(task.due_date)}</span>
-                <span className="text-fg-muted tabular-nums">({task.due_date!.slice(8, 10)}/{task.due_date!.slice(5, 7)})</span>
+                <span className="text-fg-muted">{dueRel}{fmtSuffix(dueRel, dueDay)}</span>
               </>
             )}
           </div>
@@ -125,6 +168,9 @@ export function TaskRow({ task, onToggle, readOnly }: Props) {
           <ActionTypeBadge type={task.action_type} />
           {task.projects?.name && <span>• {task.projects.name}</span>}
           {task.context === 'personal' && <span>• pessoal</span>}
+          {showAssignee && (
+            <span className="text-brand">→ {task.assignee!.full_name.split(' ')[0]}</span>
+          )}
         </div>
       </div>
 
