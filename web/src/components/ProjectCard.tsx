@@ -39,7 +39,7 @@ export function ProjectCard({ project, nextCheckpoint }: Props) {
         <div className="min-w-0">
           <div className="text-card-title truncate">{project.name}</div>
           {STATUS_NEEDS_CHIP[project.status] && (
-            <span className="inline-block text-body-xs text-fg-muted bg-bg-elevated rounded-full px-2 py-0.5 mt-1 border border-border">
+            <span className="inline-block text-label text-fg-muted bg-bg-elevated rounded-full px-2 py-0.5 mt-1 border border-border">
               {PROJECT_STATUS_LABELS[project.status]}
             </span>
           )}
@@ -57,7 +57,7 @@ export function ProjectCard({ project, nextCheckpoint }: Props) {
           <span>{pct}%</span>
         </div>
         <div className="h-1.5 w-full bg-bg-elevated rounded-full overflow-hidden">
-          <div className="h-full bg-brand transition-[width]" style={{ width: `${pct}%` }} />
+          <div className="h-full bg-tom transition-[width]" style={{ width: `${pct}%` }} />
         </div>
       </div>
 

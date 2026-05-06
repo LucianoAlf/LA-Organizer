@@ -29,7 +29,7 @@ export function ChecklistCard({ completion }: Props) {
     : windowClosed
     ? { label: '⏰ Encerrado', cls: 'text-fg-muted' }
     : doneCount > 0
-    ? { label: '🔄 Em andamento', cls: 'text-brand' }
+    ? { label: '🔄 Em andamento', cls: 'text-tom' }
     : { label: '⏳ Pendente', cls: 'text-fg-muted' }
 
   const toggleMutation = useMutation({
@@ -72,7 +72,7 @@ export function ChecklistCard({ completion }: Props) {
     <div className="bg-bg-surface rounded-xl shadow-sm border border-border p-4">
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
-        <h2 className="text-body font-semibold text-fg">{template.name}</h2>
+        <h2 className="text-body-md font-semibold text-fg">{template.name}</h2>
         <span className={['text-body-sm font-medium', badge.cls].join(' ')}>
           {badge.label}
         </span>
@@ -85,7 +85,7 @@ export function ChecklistCard({ completion }: Props) {
           style={{ width: `${pct}%` }}
         />
       </div>
-      <p className="text-caption text-fg-muted mb-3">
+      <p className="text-label text-fg-muted mb-3">
         {doneCount}/{totalCount} itens ({pct}%)
       </p>
 

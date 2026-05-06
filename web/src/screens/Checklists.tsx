@@ -81,7 +81,7 @@ export function Checklists() {
     return (
       <div className="flex flex-col items-center justify-center min-h-[50vh] gap-2 text-fg-muted p-4">
         <span className="text-3xl">✅</span>
-        <p className="text-body font-medium">Nenhum checklist para hoje</p>
+        <p className="text-body-md font-medium">Nenhum checklist para hoje</p>
         <p className="text-body-sm text-center">Os checklists do dia aparecerão aqui quando forem enviados.</p>
       </div>
     )
@@ -89,7 +89,7 @@ export function Checklists() {
 
   return (
     <div className="p-4 space-y-4 max-w-content mx-auto pb-24">
-      <h1 className="text-heading-sm font-bold text-fg">Checklists de Hoje</h1>
+      <h1 className="text-section-title">Checklists de Hoje</h1>
       {completions.map(completion => (
         <ChecklistCard key={completion.id} completion={completion} />
       ))}
