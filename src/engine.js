@@ -4327,6 +4327,30 @@ async function processMessage(phone, text, raw = {}) {
       let base = parsedHab.cleanText || '';
       if (failCount > 0 && okCount === 0) {
         base = (base ? base + '\n\n' : '') + '_não consegui registrar agora, te aviso depois_';
+      } else if (okCount > 0) {
+        // Sprint 21.7 — anti-omissão (Classe C). Se TOM verbalizou horário/dia como
+        // fato operacional no texto, mas o marker omitiu reminder_time/custom_days,
+        // a persistência ficou incompleta. Engine compara texto vs payload e avisa.
+        // Princípio: o que TOM afirma operacionalmente DEVE existir no banco — ou
+        // o sistema avisa que não salvou.
+        try {
+          const creates = (parsedHab.actions || []).filter(a => a.action === 'create');
+          if (creates.length > 0) {
+            const timeMentions = (base.match(/\b\d{1,2}h\d{0,2}\b|\b\d{1,2}:\d{2}\b/g) || []).length;
+            const withReminder = creates.filter(a => a.reminder_time || a.target_time).length;
+            const dayMentions = /\b(segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo|seg|ter|qua|qui|sex|sab|dom)\b/i.test(base);
+            const weeklyWithoutDays = creates.some(a => a.frequency === 'weekly' && !(Array.isArray(a.custom_days) && a.custom_days.length));
+            const gaps = [];
+            if (timeMentions > withReminder) gaps.push('horário(s)');
+            if (dayMentions && weeklyWithoutDays) gaps.push('dias específicos');
+            if (gaps.length) {
+              base += `\n\n_⚠️ Hábitos criados, mas ${gaps.join(' e ')} que mencionei no texto não foram salvos no banco. Me confirma esses detalhes que eu ajusto?_`;
+              await logMarker(collab.id, 'HABIT_FIELDS_GAP', 'rejected', `gaps:${gaps.join(',')}`, null);
+            }
+          }
+        } catch (gapErr) {
+          console.error('[Habit] field-gap check err (non-fatal):', gapErr.message);
+        }
       }
       reply = base || reply;
     }

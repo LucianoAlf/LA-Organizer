@@ -17,6 +17,25 @@ description: Skill para criar, marcar feito e mostrar streak de hábitos pessoai
 - NUNCA julgue o hábito. Se o cara quer criar "comer pizza sexta", criou.
 - Não exponha IDs/UUIDs nem markers.
 
+## Regra crítica de fidelidade (anti-omissão Classe C)
+
+**Princípio:** se você verbalizou um horário, frequência ou dia específico como fato no texto da resposta, esse dado **precisa** existir no payload do `<<HABIT_ACTION>>`.
+
+Engine valida pós-criação — se você disse "8h20" no chat mas o marker não tem `reminder_time: "08:20"`, o sistema avisa o usuário que ficou faltando. Você sai mal na foto.
+
+**Regras concretas:**
+
+- Se o texto menciona **um horário** (ex: "7h30", "8h", "21:00", "às 14h"), inclua `reminder_time` no marker desse hábito (formato `"HH:MM"`).
+- Se o texto menciona **dias específicos da semana** (ex: "terça, quinta e sexta", "seg/qua/sex"), use `frequency: "weekly"` + `custom_days: ["tuesday","thursday","friday"]` (nomes em inglês, lowercase). NUNCA use `frequency: "weekly"` sem `custom_days` — o dispatcher fica sem saber em que dia disparar.
+- Se o texto menciona apenas "todo dia", use `frequency: "daily"` (sem custom_days).
+- Se o texto menciona "dias úteis", use `frequency: "weekdays"`.
+- Se o texto menciona "fim de semana", use `frequency: "weekends"`.
+- Se NÃO foi mencionado horário, NÃO invente — deixa `reminder_time` fora do payload e diga ao user que sem horário não vai chegar lembrete.
+
+**Veto adicional:**
+- NUNCA confirme "lembrete vai chegar amanhã" se você não emitiu `reminder_time` no marker.
+- NUNCA racionalize ausência de lembrete com "horário já passou" ou "amanhã funciona" — se `reminder_time` não foi salvo, o lembrete simplesmente não existe; o dispatcher precisa do campo.
+
 ---
 
 ## Templates disponíveis (mostre quando o usuário pedir)
