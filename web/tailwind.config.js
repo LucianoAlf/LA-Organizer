@@ -8,13 +8,22 @@ export default {
     },
     extend: {
       colors: {
-        // ---- Brand (LA-Organizer-UI-SYSTEM §5.1) ----
+        // ---- Brand LA (cor-mãe; secundária no produto TOM) ----
         brand: {
           DEFAULT: '#E91451',
           shade: '#B01545',
           deep: '#740A28',
           light: '#F06292',
           dark: '#373435',
+        },
+        // ---- TOM (identidade primária do agente — Sprint 22.8) ----
+        // Verde do mascote ETzinho. CTAs, FAB, tabs ativos, agent touchpoints.
+        tom: {
+          DEFAULT: '#3FD66B',
+          shade: '#28B855',
+          deep: '#1A8841',
+          light: '#7FE89B',
+          tint: '#E8FAEE',
         },
         // ---- Neutrals ----
         ink: {

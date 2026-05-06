@@ -35,7 +35,7 @@ export function BottomNav() {
               className={({ isActive }) =>
                 [
                   'flex flex-col items-center justify-center gap-1 py-2.5 focus-ring',
-                  isActive ? 'text-brand' : 'text-fg-muted',
+                  isActive ? 'text-tom' : 'text-fg-muted',
                 ].join(' ')
               }
             >
@@ -59,7 +59,7 @@ export function BottomNav() {
               className={({ isActive }) =>
                 [
                   'inline-flex items-center gap-2 px-3 py-2 rounded-md focus-ring',
-                  isActive ? 'bg-bg-surface text-brand' : 'text-fg-muted hover:text-fg',
+                  isActive ? 'bg-bg-surface text-tom' : 'text-fg-muted hover:text-fg',
                 ].join(' ')
               }
             >
@@ -75,7 +75,7 @@ export function BottomNav() {
               className={({ isActive }) =>
                 [
                   'inline-flex items-center gap-2 px-3 py-2 rounded-md focus-ring',
-                  isActive ? 'bg-bg-surface text-brand' : 'text-fg-muted hover:text-fg',
+                  isActive ? 'bg-bg-surface text-tom' : 'text-fg-muted hover:text-fg',
                 ].join(' ')
               }
             >

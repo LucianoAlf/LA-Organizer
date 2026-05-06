@@ -127,7 +127,7 @@ export function TaskRow({ task, onToggle, readOnly }: Props) {
             'mt-0.5 h-6 w-6 shrink-0 rounded-md border grid place-items-center transition-colors focus-ring',
             isDone
               ? 'bg-success border-success text-white'
-              : 'border-border hover:border-brand text-transparent hover:text-brand',
+              : 'border-border hover:border-tom text-transparent hover:text-tom',
           ].join(' ')}
         >
           <Check size={14} strokeWidth={3} />
@@ -140,7 +140,7 @@ export function TaskRow({ task, onToggle, readOnly }: Props) {
             {task.title}
           </span>
           {fromTom(task.source) && (
-            <span className="mt-1 shrink-0 text-fg-muted" title="Criada via TOM" aria-label="Criada via TOM">
+            <span className="mt-1 shrink-0 text-tom" title="Criada via TOM" aria-label="Criada via TOM">
               <Bot size={14} />
             </span>
           )}

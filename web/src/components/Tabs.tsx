@@ -39,7 +39,7 @@ export function Tabs<T extends string>({ tabs, active, onChange, className = '' 
             className={[
               'h-9 px-3 rounded-md inline-flex items-center gap-1.5 focus-ring transition-colors',
               isActive
-                ? 'bg-brand text-white shadow-card dark:shadow-none'
+                ? 'bg-tom text-white shadow-card dark:shadow-none'
                 : 'bg-bg-subtle text-fg-muted border border-border hover:text-fg',
             ].join(' ')}
           >

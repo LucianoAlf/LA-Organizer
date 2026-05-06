@@ -248,7 +248,7 @@ export function Hoje() {
             className={[
               'px-3 py-1 rounded-full text-body-sm border transition-colors focus-ring',
               actionFilter === null
-                ? 'bg-brand text-white border-brand'
+                ? 'bg-tom text-white border-tom'
                 : 'bg-bg-elevated text-fg-muted border-border hover:text-fg',
             ].join(' ')}
           >
@@ -265,7 +265,7 @@ export function Hoje() {
                 className={[
                   'px-3 py-1 rounded-full text-body-sm border transition-colors focus-ring',
                   active
-                    ? 'bg-brand text-white border-brand'
+                    ? 'bg-tom text-white border-tom'
                     : 'bg-bg-elevated text-fg-muted border-border hover:text-fg',
                 ].join(' ')}
                 aria-pressed={active}
@@ -298,7 +298,7 @@ export function Hoje() {
                       'h-6 w-6 shrink-0 rounded-full border grid place-items-center transition-colors',
                       h.done_today
                         ? 'bg-success border-success text-white'
-                        : 'border-border text-transparent hover:border-brand hover:text-brand',
+                        : 'border-border text-transparent hover:border-tom hover:text-tom',
                     ].join(' ')}
                     aria-label={h.done_today ? 'concluído hoje' : 'marcar feito'}
                   >

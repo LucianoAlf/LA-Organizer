@@ -25,23 +25,53 @@ function initials(name: string | null | undefined) {
   return (first + last).toUpperCase();
 }
 
-// Sprint 22.5 — header limpo: removidos toggle de tema e botão Sair (redundantes
-// com a tela Mais). Mantém só identidade (saudação + data + avatar).
+// Sprint 22.8 — microcopy do TOM rotaciona por dia (estável intra-dia).
+const TOM_TAGLINES = [
+  'Vamos arrasar hoje?',
+  'Tô aqui pra te ajudar.',
+  'Bora pro próximo?',
+  'Tá tudo sob controle.',
+  'Manda ver, parceiro.',
+  'O que vamos resolver hoje?',
+  'Tô de olho no seu dia.',
+];
+function todayTagline(): string {
+  const today = new Date();
+  const dayOfYear = Math.floor((today.getTime() - new Date(today.getFullYear(), 0, 0).getTime()) / 86400000);
+  return TOM_TAGLINES[dayOfYear % TOM_TAGLINES.length];
+}
+
+// Sprint 22.8 — TOM como identidade primária no header. Cara do agente à esquerda
+// (placeholder 👽 verde até PNG oficial entrar via /tom-avatar.png), avatar do user
+// à direita menor. Tagline rotativa do TOM dá sensação de presença.
 export function Header() {
   const { collaborator, role } = useAuth();
   const firstName = collaborator?.full_name?.split(' ')[0] ?? '';
 
   return (
     <header className="w-full max-w-content mx-auto px-md pt-md">
-      <div className="flex items-center justify-between gap-md">
-        <div className="min-w-0">
+      <div className="flex items-center gap-md">
+        {/* Avatar TOM — placeholder até PNG entrar */}
+        <div
+          className="h-12 w-12 shrink-0 grid place-items-center rounded-full bg-tom text-2xl shadow-card"
+          aria-label="TOM, seu agente"
+          title="TOM"
+        >
+          <span aria-hidden>👽</span>
+        </div>
+
+        <div className="min-w-0 flex-1">
           <h1 className="text-screen-title leading-tight">
             {greeting()}{firstName ? `, ${firstName}` : ''}
           </h1>
-          <p className="text-body-sm text-fg-muted mt-1">{dateLong()}</p>
+          <p className="text-body-sm text-fg-muted mt-0.5">
+            {dateLong()} <span className="text-tom">· {todayTagline()}</span>
+          </p>
         </div>
+
+        {/* Avatar do user — menor, direita */}
         <div
-          className="h-10 w-10 grid place-items-center rounded-full bg-brand text-white text-label tracking-wide shrink-0"
+          className="h-8 w-8 grid place-items-center rounded-full bg-bg-elevated border border-border text-body-sm font-semibold text-fg shrink-0"
           aria-label={collaborator?.full_name ?? 'avatar'}
           title={role ? `${collaborator?.full_name} (${role})` : collaborator?.full_name ?? ''}
         >
