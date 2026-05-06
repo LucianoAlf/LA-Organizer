@@ -3952,13 +3952,30 @@ async function detectDuplicateSemanticEvent(collab, candidate) {
  * @param {object} candidate — { title, description, assigned_to, department_id, request_type_id }
  * @returns {{ probable: object[], possible: object[] }}
  */
+// Sprint 21.4 hotfix — fix de falso positivo no match semântico.
+// Bug observado: "Ligar pro Norton" matchava "Ligar pro Flávio" com score ~0.85
+// porque o prefixo "ligar pro " (10 chars) dominava o jaroWinkler. O stripSuffix
+// piorava removendo o conteúdo distinguidor ("guitarras + baterias Recreio").
+// Fix: strip de prefixos verbais genéricos ANTES do JW + filtro de stopwords no
+// keyword boost + pré-filtro de contexto (personal ≠ work).
+const VERB_PREFIX_RE = /^(ligar\s+pr[ao]\s+|falar\s+com\s+|reuni[aã]o\s+com\s+|enviar\s+pra?\s+|enviar\s+para\s+|mandar\s+pra?\s+|mandar\s+para\s+|verificar\s+|checar\s+|comprar\s+|buscar\s+|organizar\s+|resolver\s+|fazer\s+|pedir\s+pra?\s+|pedir\s+para\s+|contatar\s+|chamar\s+|marcar\s+|agendar\s+|combinar\s+com\s+)/i;
+const KEYWORD_STOPWORDS = new Set([
+  'ligar','falar','fazer','pedir','mandar','enviar','comprar','buscar','verificar','checar',
+  'organizar','resolver','criar','contatar','chamar','marcar','agendar','combinar',
+  'reuniao','reunião','outro','mesmo','para','pelo','pela','sobre','depois','antes'
+]);
+const stripVerbPrefix = s => {
+  const stripped = String(s || '').replace(VERB_PREFIX_RE, '').trim();
+  return stripped || String(s || '').trim(); // fallback se sobrou vazio
+};
+
 async function detectDuplicateSemanticTask(collab, candidate) {
   try {
     if (!candidate.title) return { probable: [], possible: [] };
     const cutoff = new Date(Date.now() - 30 * 24 * 3600_000).toISOString();
     const { data: openTasks, error } = await supabase
       .from('tasks')
-      .select('id, title, description, assigned_to, department_id, request_type_id, status, created_at, due_date')
+      .select('id, title, description, assigned_to, department_id, request_type_id, context, status, created_at, due_date')
       .eq('assigned_to', candidate.assigned_to || collab.id)
       .not('status', 'in', '("done","cancelled")')
       .gte('created_at', cutoff)
@@ -3968,21 +3985,27 @@ async function detectDuplicateSemanticTask(collab, candidate) {
       return { probable: [], possible: [] };
     }
     // Sprint 19 hotfix: strip do suffix "— UNIDADE/SALA" antes de comparar.
-    // jaroWinkler estava dominado pelo suffix de localização: "Palhetas — Recreio Sala 3"
-    // vs "Teclado — Recreio Sala 3" batia 0.72 só pelo suffix compartilhado.
+    // Sprint 21.4: strip também do prefixo verbal antes do JW.
     const stripSuffix = s => String(s || '').split(/\s*[—–]\s+/)[0].trim();
     const candStripped = stripSuffix(candidate.title);
-    const candTitleNorm = normalizeForSim(candStripped);
+    const candCore = stripVerbPrefix(candStripped);             // núcleo nominal
+    const candTitleNorm = normalizeForSim(candCore);
     const probable = [], possible = [];
     for (const task of (openTasks || [])) {
+      // Pré-filtro: personal vs work são domínios distintos. Não compara.
+      if (candidate.context && task.context && candidate.context !== task.context) continue;
       const taskStripped = stripSuffix(task.title);
-      let score = jaroWinkler(candTitleNorm, normalizeForSim(taskStripped));
+      const taskCore = stripVerbPrefix(taskStripped);
+      let score = jaroWinkler(candTitleNorm, normalizeForSim(taskCore));
       // Boosts suaves (eram +0.2/+0.2, causavam falsos positivos sistemáticos)
       if (candidate.department_id && task.department_id === candidate.department_id) score = Math.min(score + 0.05, 1.0);
       if (candidate.request_type_id && task.request_type_id === candidate.request_type_id) score = Math.min(score + 0.05, 1.0);
-      // Keywords extraídas do título STRIPPED (sem suffix de unidade)
-      const candKeywords = candStripped.match(/\b[A-ZÁÀÃÂÉÊÍÓÔÕÚ][a-záàãâéêíóôõúç]{3,}\b/g) || [];
-      const taskKeywords = taskStripped.match(/\b[A-ZÁÀÃÂÉÊÍÓÔÕÚ][a-záàãâéêíóôõúç]{3,}\b/g) || [];
+      // Keywords extraídas do núcleo nominal (sem prefixo verbal, sem suffix de unidade).
+      // Stopwords filtram verbos comuns que enviesavam o boost ("Ligar" vs "Ligar" → +0.1 burro).
+      const candKeywords = (candCore.match(/\b[A-ZÁÀÃÂÉÊÍÓÔÕÚ][a-záàãâéêíóôõúç]{3,}\b/g) || [])
+        .filter(k => !KEYWORD_STOPWORDS.has(k.toLowerCase()));
+      const taskKeywords = (taskCore.match(/\b[A-ZÁÀÃÂÉÊÍÓÔÕÚ][a-záàãâéêíóôõúç]{3,}\b/g) || [])
+        .filter(k => !KEYWORD_STOPWORDS.has(k.toLowerCase()));
       const shared = candKeywords.filter(k => taskKeywords.includes(k));
       if (shared.length > 0) score = Math.min(score + 0.1 * Math.min(shared.length, 2), 1.0);
       if (score > 0.7) probable.push({ ...task, _score: score });
