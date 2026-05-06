@@ -33,6 +33,25 @@
 - `web/` — PWA React (Vite + TypeScript) — deploy via Vercel auto-deploy
 - `docs/` — documentação do produto (PRDs, specs, plans, reports)
 
+## Deploy na VPS (SSH direto)
+
+### Setup (uma vez por sessão)
+```bash
+bash scripts/setup-vps-key.sh
+```
+
+### Deploy (após push para origin/main)
+```bash
+bash scripts/deploy.sh
+```
+
+A chave é restrita: só executa `git pull origin main && pm2 restart tom`. Nada mais.
+
+### VPS
+- IP: 89.116.73.186
+- User: root
+- Path: /opt/LA-Organizer
+
 ## Commits NÃO intermediários
 - NÃO commitar entre tasks. Trabalha tudo local em `_remote`.
 - 1 commit bundle por sprint na task de deploy final.

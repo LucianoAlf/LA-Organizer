@@ -1,9 +1,2 @@
-node_modules/
-.env
-logs/
-*.log
-.env.save
-web/node_modules
-web/dist
-web/.env
-.claude-tom/
+.ssh/
+scripts/setup-vps-key.sh
