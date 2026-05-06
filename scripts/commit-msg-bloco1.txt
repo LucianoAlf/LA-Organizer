@@ -1,0 +1,38 @@
+feat(fechamento-1): audio runtime ENABLED + T1-T7 validated end-to-end
+
+Bloco 1 of Sprint Fechamento Fase 1.
+
+Provider: OPENAI_API_KEY provisioned (Whisper-1 + TTS-1, sk-proj scoped).
+Validated independently via GET /v1/models (HTTP 200, 143 models).
+
+Skill enhancement (skills/tratamento-audio.md):
+- New 'Handoff: emita o marker DIRETO ao confirmar' section.
+  Old version said 'handoff to checklist-tarefas' but didn't include
+  marker schemas — Claude on turn-2 was hallucinating 'tô sem acesso
+  ao banco' instead of emitting TASK_UPDATE.
+- New section embeds the 4 marker variants (complete, reschedule, create,
+  multi) with concrete examples + IDs from system prompt context.
+- New veto: 'NUNCA invente sem acesso ao banco' — if task is in context,
+  EMIT the marker.
+
+Test fixtures (scripts/test-audio-e2e.js, scripts/test-audio-flow.js):
+- Generate audios via OpenAI TTS (~$0.015 each, 5 fixtures), serve via
+  local HTTP, inject as webhookBody.audioUrl, run through real audio service.
+- Full Whisper round-trip validated.
+
+Tests passing (real OpenAI calls; 13/13 + 7/7 = 20/20 total):
+- test-audio-e2e.js (13/13): T1-T5 transcription + verbs/refs preserved,
+  T6-T7 skill routing, privacy guarantees, provider config sanity.
+- test-audio-flow.js (7/7) full Claude integration:
+  T6.0 Whisper transcribed
+  T6.1 skill loaded in 8693-char prompt
+  T6.2 turn1 asks 'Certo?' (gated)
+  T6.3 turn1 NO marker emitted
+  T6.4 turn2 'sim' -> TASK_UPDATE complete marker emitted
+  T7.1 correction acknowledged ('violão, não piano')
+  T7.2 no premature marker on correction
+
+Privacy verified:
+- Audio bytes discarded post-Whisper (no memory leak)
+- Transcription not surfaced to user (only Claude's interpretation)
+- Action gated on explicit 'sim' (skill enforces, engine schema validates)

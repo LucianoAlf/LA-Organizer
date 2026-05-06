@@ -1,0 +1,89 @@
+feat(web): Sprint 0 PWA — fundação técnica + 6 telas P0
+
+Sprint 0 do PWA conforme docs/06-prd-la-organizer-v3.md §5.4 e
+docs/05-mapa-telas-pwa-v3.md. Mobile-first, dark default, light suportado.
+Tokens 100% derivados de docs/LA-Organizer-UI-SYSTEM.md.
+
+Stack:
+- React 18 + TypeScript + Vite (SWC)
+- Tailwind CSS com tokens em CSS vars (rgb-channel para alpha)
+- TanStack Query para server state
+- Supabase JS para auth + reads
+- vite-plugin-pwa (workbox autoUpdate, manifest, runtime cache fonts)
+- lucide-react ícones, Prompt via Google Fonts
+
+Estrutura web/:
+- public/ (favicon.svg, icon-192/512.png gerados via sharp)
+- src/components/ (13): AppShell, Header, BottomNav, Button, Card,
+  TaskRow, ProjectCard, StatCard, Badge, Tabs, EmptyState, LoadingState,
+  ProtectedRoute, LogoMark
+- src/contexts/: AuthContext (Supabase + collaborator resolve por email),
+  ThemeContext (dark default, persist localStorage, sincroniza
+  data-theme + meta theme-color)
+- src/screens/ (7): Login, Hoje, Semana, Projetos, ProjetoDetalhe,
+  DashboardTime, Mais
+- src/lib/: supabase, queryClient
+- src/utils/date.ts (todaySP, dowShort, brShort, workWeekDays)
+
+Tokens (LA-Organizer-UI-SYSTEM):
+- brand: #E91451 + shade/deep/light/dark
+- ink scale 0..1000 (#0A0A0A → #FFFFFF)
+- semantic: success/warning/danger/info/project (NUNCA substituídos por brand)
+- typography: Prompt 300/400/500/600/700/900
+- escala operacional + escala derivada da marca (hero, h1-brand, h2-brand)
+- spacing/radius/shadow conforme §5.4-5.5
+- halftone-soft/strong, brand-offset (sombra offset) como utilities
+
+Auth Sprint 0:
+- email/password via supabase.auth.signInWithPassword
+- AuthContext resolve collaborators.email → role/permissions
+- ProtectedRoute wraps app + RoleGuard variant para /time
+- Magic link via WhatsApp diferido para Sprint 1+ (documentado)
+
+Telas P0 entregues (todas com queries reais Supabase + estados de loading,
+error, empty, sem dados):
+- /login: hero brand-strong (halftone + watermark "LA" outline + h1-brand
+  com "Bom" em pink), formulário em superfície ink-50 separada
+- /hoje: 3 stat cards (pra hoje, atrasadas, concluídas) + tabs work|personal +
+  TaskRow interativa com toggle complete via mutation
+- /semana: 5 colunas seg-sex, hoje destacado em brand, contador
+  done/total + alertas de atraso por dia
+- /projetos: lista com role gating (lead/membro vs todos para coord+),
+  ProjectCard com progress bar pink + categoria badge
+- /projetos/:id: header com progress + 4 tabs (resumo/checkpoints/tarefas/time)
+- /time: stat cards, listas respondeu/sem resposta com badges, atrasos
+  por pessoa. Privacy contract: só context=work, nunca habits/personal/memory.
+- /mais: links para itens P1/Fase 2+ (com badge \"em breve\" disabilitado),
+  toggle de tema, signout
+
+UX:
+- mobile-first 375px (max-w-content 720 desktop)
+- bottom nav fixa mobile com safe-area-inset; barra horizontal no md+
+- tabular-nums em métricas/datas
+- focus-ring brand consistente
+- badges semânticos (success/warning/danger/info/project) — pink só destaque
+- container brand + sombra offset usadas pontualmente (login)
+
+Privacidade por design:
+- /time só lê tasks.context='work'
+- conversation_history só count + created_at (conteúdo nunca lido pelo PWA)
+- habits/collaborator_memory NUNCA tocados
+- personal tasks visíveis só na tab pessoal do próprio user
+
+Build:
+- 1686 módulos, 4.08s
+- dist/index.html 1.24kB, JS 452kB (130kB gzip), CSS 19kB (4.5kB gzip)
+- service worker precache 8 arquivos (462KB)
+- manifest standalone, theme #0A0A0A, ícones 192/512 + maskable
+
+Próximos passos (fora desta sprint):
+- VITE_SUPABASE_ANON_KEY no .env de prod (só anon, NÃO service_role)
+- Configurar redirect/CORS no Supabase Auth
+- Deploy: Vercel/Netlify (recomendado) ou nginx no VPS
+- Sprint 1+: criar tarefa rápida modal, drag/drop reschedule semana,
+  magic-link WhatsApp via Edge Function, hábitos visuais
+
+Conflito v3 vs decisão do usuário:
+- v3 PRD §5.2 cita 'magic link via WhatsApp'; usuário aprovou
+  email/password Sprint 0 para velocidade. Documentado em
+  web/README.md e nos comentários do AuthContext.

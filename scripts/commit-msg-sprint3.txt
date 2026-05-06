@@ -1,0 +1,59 @@
+feat(sprint3): events separados de tasks + criação unificada + RLS hardening crítico
+
+Modelo (docs/MODELO-EVENTS-VS-TASKS.md — novo):
+- Tabela events nova, distinta de tasks. Schema completo com:
+  start_at/end_at, modality (online|presencial|hibrido), location_text,
+  meeting_url, category (la_music|mentoria|aula_particular|outra_escola|
+  estudio|pessoal), context (work|personal), status (scheduled|done|
+  cancelled), source (manual|tom|imported), project_id, created_by.
+- Constraints: end_at > start_at, meeting_url só para online/hibrido.
+- Indexes: (collaborator_id, start_at), (start_at), (collab, context, start).
+- Trigger updated_at auto.
+- tasks ganha coluna category opcional (mesmo enum, informacional only).
+
+Privacidade:
+- context é eixo de segurança (mesma regra de tasks).
+- category é informacional — NUNCA entra em RLS.
+- Default UI: category=pessoal → context=personal; demais → work.
+
+PWA:
+- src/lib/events.ts: helpers fetchEventsForDay/Range, formatEventTimeRange,
+  eventLocalYmd (timezone SP).
+- src/types.ts: CalendarEvent, Category, EventStatus, EventModality,
+  CATEGORY_LABELS, MODALITY_LABELS, defaultContextForCategory.
+- src/components/QuickCreateSheet.tsx: substitui QuickTaskSheet. Seletor
+  Tarefa | Compromisso, forms divergentes. Auto-extend end_at se start_at
+  passar do end. Erro UX: "fim precisa ser depois do início".
+- src/components/EventRow.tsx: linha visual com horário, badge categoria,
+  ícone modalidade, link "entrar" para online.
+- /hoje: feed unificado em 2 blocos (Compromissos com horário, Tarefas com
+  checkbox). Stats refletem total task+event.
+- /semana: events com horário em destaque pink + tasks como bullets. Header
+  ratio considera ambos.
+- /historico: 3 KPIs (Tarefas X/Y%, Compromissos N, Dias ativos N/30).
+  DayRow mostra ambos com ícone 📅 distinto.
+
+🚨 Fix RLS crítico (regressão Sprints 0-2):
+- Bug: policies "Service role full access" criadas com `FOR ALL TO public
+  USING (true)`. Postgres trata `public` como qualquer role, incluindo
+  authenticated → vazava TODAS as linhas para QUALQUER usuário logado.
+- Encontrado em smoke test multiuser (Alf vs Anne): Alf (director)
+  conseguia SELECT de tasks/events context='personal' da Anne.
+- Fix: re-escopo `TO service_role` em todas as policies que matchavam o
+  pattern. service_role bypassa RLS via BYPASSRLS attribute, policy é
+  redundante mas garante que authenticated NÃO casa.
+- Validação pós-fix: Alf sees only Anne's work events (1), 0 personal.
+
+Smoke tests E2E:
+- Login → /hoje OK
+- FAB → QuickCreateSheet → seletor Compromisso → fill TEST_S3 → submit
+- Event aparece em /hoje no bloco compromissos com horário
+- Mesmo evento aparece em /semana TER 28/04 com horário pink
+- /historico mostra Tarefas 4/5 80% + Compromissos 1 + Dias ativos
+- RLS multiuser: Alf vê Anne work event (1), não vê personal event/task ✅
+- Cleanup test rows.
+
+Docs atualizadas:
+- docs/MODELO-EVENTS-VS-TASKS.md (novo) — decisão arquitetural completa
+- web/README.md — Sprint 3 documentada, privacy contract atualizado
+- docs/PILOTO-USUARIO.md — instruções de criar compromisso

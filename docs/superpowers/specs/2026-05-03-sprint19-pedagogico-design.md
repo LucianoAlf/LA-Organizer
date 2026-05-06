@@ -128,6 +128,10 @@ function getPedagogicalRole(collab) {
 // Resolve o melhor assignee pedagógico dado um escopo
 // args = { subdomain?, unit?, specialty? } — pelo menos 1
 // Prioridade: subdomain (lead) > specialty > unit. Retorna primeiro match.
+// Helper de APOIO/LOOKUP — não automação opaca.
+// A skill resolve assigned_to por nome quando possível; este helper só entra
+// quando a skill marca apenas {subdomain|unit|specialty} sem assignee, ou
+// para validação interna de escopo.
 async function findPedagogicalAssignee({ subdomain, unit, specialty }) {
   const filters = [];
   if (subdomain) filters.push({ type: 'subdomain', value: subdomain });

@@ -1,0 +1,35 @@
+feat(sprint2): magic-link via WhatsApp infra (backend + PWA login refactor)
+
+Backend:
+- Migration: auth_magic_codes table (audit + rate limit) com RLS service-only
+- Edge Function send-magic-link (verify_jwt=false, 0 dependências):
+  * valida fone (10-15 dígitos, só números)
+  * lookup collaborators (vague reply em not-found pra evitar enumeration)
+  * rate limit: max 3 disparos/5min/fone
+  * idempotent: cria auth user via admin.createUser se não existir
+  * gera OTP via admin.generateLink(type=magiclink) → email_otp
+  * envia via UAZAPI POST /send/text com header token
+  * grava audit em auth_magic_codes
+  * retorna ok, email, masked_phone, first_name
+
+PWA:
+- AuthContext extends: sendMagicLink(phone), verifyMagicCode(email, code)
+  + signIn (email/password) mantido como fallback
+- Login.tsx refeito: 2-step flow (phone → code) com email/password fallback
+  acessível via link "Sem WhatsApp? Entrar com e-mail"
+- Visual: hero brand-strong inalterado; form troca dinamica entre 3 estados
+  (phone | code | password)
+- input code: 6 dígitos, autoComplete=one-time-code, mascarado tabular center
+- error states curtos e claros (rate_limited, phone_invalid, etc)
+
+Deploy:
+- vercel.json com SPA rewrites + cache headers (sw.js no-cache, assets immutable)
+
+Docs:
+- docs/PILOTO-USUARIO.md: guia 1-pagina pra Anne entrar sem ajuda tecnica
+
+Pendencias (esperando acao externa):
+- UAZAPI_URL + UAZAPI_TOKEN como secrets da Edge Function (dashboard Supabase)
+- Decisao de hosting + deploy
+- Walk-through real com Anne
+- Secrets rotation (final da sprint)

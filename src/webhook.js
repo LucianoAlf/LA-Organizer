@@ -11,16 +11,21 @@ const audio = require('./services/audio');
 
 const router = express.Router();
 
-// ---------- HMAC do webhook ----------
-// Modos:
-//   - disabled:   WEBHOOK_SECRET vazio → não valida (estado pré-Sprint 5).
+// ---------- Autenticação do webhook ----------
+// Modos (controlados por env):
+//   - disabled:   WEBHOOK_SECRET vazio → não valida (estado pré-Sprint 4).
 //   - permissive: WEBHOOK_SECRET set + WEBHOOK_HMAC_ENFORCE != 'true' → valida e
 //                 loga warning se inválido, mas continua processando. Janela de
-//                 transição enquanto UAZAPI ainda não está assinando.
+//                 transição.
 //   - strict:     WEBHOOK_SECRET set + WEBHOOK_HMAC_ENFORCE='true' → rejeita 401
-//                 quando assinatura ausente ou inválida.
-// Header: configurável via WEBHOOK_SIG_HEADER (default 'x-webhook-signature').
-// Aceita formato 'sha256=<hex>' OU '<hex>' direto.
+//                 quando autenticação ausente ou inválida.
+//
+// Métodos de autenticação aceitos (em ordem):
+//   1) URL token: POST /webhook/<token> — token = WEBHOOK_SECRET no path.
+//      Usado pela UAZAPI que não envia headers customizados.
+//   2) Static header: WEBHOOK_SIG_HEADER == WEBHOOK_SECRET (constant-time).
+//   3) HMAC SHA256: WEBHOOK_SIG_HEADER = 'sha256=<hex>' OU '<hex>' direto,
+//      computado sobre o raw body com o secret.
 function verifyWebhookSignature(req) {
   const secret = process.env.WEBHOOK_SECRET || '';
   const headerName = (process.env.WEBHOOK_SIG_HEADER || 'x-webhook-signature').toLowerCase();
@@ -28,10 +33,39 @@ function verifyWebhookSignature(req) {
 
   if (!secret) return { mode: 'disabled', ok: true };
 
+  // 1) URL path token (`/webhook/:token`) — usado pela UAZAPI que não envia headers
+  //    customizados. Token vai na URL configurada no painel UAZAPI.
+  //    Constant-time comparison contra o secret.
+  const urlToken = req.params && typeof req.params.token === 'string' ? req.params.token : '';
+  if (urlToken) {
+    try {
+      const secretBuf = Buffer.from(secret);
+      const tokenBuf = Buffer.from(urlToken);
+      if (secretBuf.length === tokenBuf.length &&
+          crypto.timingSafeEqual(secretBuf, tokenBuf)) {
+        return { mode: enforce ? 'strict' : 'permissive', ok: true, method: 'url_token' };
+      }
+    } catch (_) {}
+    return { mode: enforce ? 'strict' : 'permissive', ok: false, reason: 'url_token_mismatch' };
+  }
+
+  // 2) Header-based validation (futuro: se UAZAPI ou outro provider passar a enviar)
   const provided = req.headers[headerName];
   if (!provided || typeof provided !== 'string') {
     return { mode: enforce ? 'strict' : 'permissive', ok: false, reason: 'missing_header' };
   }
+
+  // 2a) Static token no header (constant-time)
+  try {
+    const secretBuf = Buffer.from(secret);
+    const providedBuf = Buffer.from(provided);
+    if (secretBuf.length === providedBuf.length &&
+        crypto.timingSafeEqual(secretBuf, providedBuf)) {
+      return { mode: enforce ? 'strict' : 'permissive', ok: true, method: 'static_header' };
+    }
+  } catch (_) {}
+
+  // HMAC-SHA256 (formato 'sha256=<hex>' ou '<hex>' direto — compatível com GitHub/Stripe style).
   const sigHex = provided.startsWith('sha256=') ? provided.slice(7) : provided;
   if (!/^[a-f0-9]{64}$/i.test(sigHex)) {
     return { mode: enforce ? 'strict' : 'permissive', ok: false, reason: 'malformed' };
@@ -47,25 +81,31 @@ function verifyWebhookSignature(req) {
   } catch (_) {
     match = false;
   }
-  return { mode: enforce ? 'strict' : 'permissive', ok: match, reason: match ? null : 'mismatch' };
+  return { mode: enforce ? 'strict' : 'permissive', ok: match, method: 'hmac', reason: match ? null : 'mismatch' };
 }
 
 /**
- * POST /webhook — Recebe mensagens da UAZAPI
+ * POST /webhook (ou /webhook/:token) — Recebe mensagens da UAZAPI.
+ *
+ * Dois métodos de autenticação suportados:
+ *   1. URL token (UAZAPI atual): /webhook/<WEBHOOK_SECRET>
+ *      → token vai no path, validado em verifyWebhookSignature.
+ *   2. Header HMAC (futuro): X-Webhook-Signature: sha256=<hex>
+ *      → suportado para providers que computam HMAC do body.
  */
-router.post('/webhook', async (req, res) => {
+router.post(['/webhook', '/webhook/:token'], async (req, res) => {
   // 0) HMAC. Em strict mode rejeita ANTES do 200 — UAZAPI deve reenviar até autenticar.
   const sig = verifyWebhookSignature(req);
   if (sig.mode === 'strict' && !sig.ok) {
-    console.warn(`[Webhook] REJECT 401 — hmac ${sig.reason}`);
+    console.warn(`[Webhook] REJECT 401 — auth ${sig.reason}`);
     return res.status(401).json({ error: 'invalid_signature' });
   }
   // Responder 200 imediatamente pra UAZAPI não reenviar
   res.status(200).json({ status: 'received' });
   if (sig.mode === 'permissive' && !sig.ok) {
-    console.warn(`[Webhook] HMAC permissive — ${sig.reason} (would-401 in strict mode)`);
+    console.warn(`[Webhook] auth permissive — ${sig.reason} (would-401 in strict mode)`);
   } else if (sig.mode !== 'disabled') {
-    console.log(`[Webhook] HMAC ok (mode=${sig.mode})`);
+    console.log(`[Webhook] auth ok (mode=${sig.mode}, method=${sig.method || '?'})`);
   }
 
   try {

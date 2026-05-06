@@ -4,7 +4,7 @@
 
 **Goal:** Implementar o departamento Pedagógico dentro da camada operacional replicável (Sprint 15) com hierarquia, subdomínio School/Kids e gate de alçada — sem novo módulo nem novo marker.
 
-**Architecture:** 3 mudanças mínimas de schema, 3 helpers + 2 extensões de handler no engine, 1 skill nova carregada como auxiliar global, seed de 11 pessoas + 13 atribuições.
+**Architecture:** 3 mudanças mínimas de schema, 3 helpers + 2 extensões de handler no engine, 1 skill nova carregada como auxiliar global, seed de 11 pessoas + 10 atribuições.
 
 **Tech Stack:** Supabase (Postgres + RLS), Node.js engine, skills `.md` injected in system prompt.
 
@@ -61,10 +61,12 @@ CREATE POLICY ped_assignments_write ON pedagogical_assignments
 
 Verificar: `\d tasks`, `\d collaborators`, `\d pedagogical_assignments`.
 
-- [ ] **Step 1.2 — Validar pré-condição: 11 colaboradores existem**
+- [ ] **Step 1.2 — Validar pré-condição + criar faltantes (descoberto: só Juliana e Quintela existem)**
+
+**OBSERVAÇÃO IMPORTANTE:** coluna é `full_name`, NÃO `name`.
 
 ```sql
-SELECT name, phone, role, pedagogical_role
+SELECT full_name, phone, role, pedagogical_role
 FROM collaborators
 WHERE phone IN (
   '5521981708609','5521971751320','5521992053152','5521999715997',
@@ -73,7 +75,32 @@ WHERE phone IN (
 );
 ```
 
-Se algum faltar → criar via INSERT antes (`role='collaborator'`, telefone, nome). **NÃO PROSSEGUIR sem os 11 ativos.**
+Estado conhecido: apenas Juliana (5521981708609) e Quintela (5521971751320) presentes. Os 9 restantes **DEVEM** ser inseridos antes de qualquer UPDATE de `pedagogical_role` ou INSERT em `pedagogical_assignments`:
+
+```sql
+INSERT INTO collaborators (full_name, phone, role, is_active)
+VALUES
+  ('Leo',             '5521992053152', 'collaborator', true),
+  ('Ramon',           '5521999715997', 'collaborator', true),
+  ('Dai',             '5521986409985', 'collaborator', true),
+  ('Matheus Felipe',  '5521978755351', 'collaborator', true),
+  ('Jordan',          '5521981450588', 'collaborator', true),
+  ('Rodrigo',         '5521997548859', 'collaborator', true),
+  ('Peterson',        '5521989366076', 'collaborator', true),
+  ('Kinho',           '5521987375854', 'collaborator', true),
+  ('Renan',           '5521965736779', 'collaborator', true)
+ON CONFLICT (phone) DO NOTHING;
+```
+
+Validar (esperado: 11 linhas):
+```sql
+SELECT count(*) FROM collaborators
+WHERE phone IN ('5521981708609','5521971751320','5521992053152','5521999715997',
+'5521986409985','5521978755351','5521981450588','5521997548859',
+'5521989366076','5521987375854','5521965736779');
+```
+
+**SÓ APÓS 11/11 OK, prosseguir para Step 1.3.**
 
 - [ ] **Step 1.3 — Seed: department `pedagogico` + 7 request types**
 
@@ -188,6 +215,12 @@ function getPedagogicalRole(collab) {
   return collab && collab.pedagogical_role ? collab.pedagogical_role : null;
 }
 
+// NOTA DE USO: helper de APOIO/LOOKUP, não automação opaca.
+// A skill pedagogico.md tipicamente já resolve `assigned_to` por nome
+// (ex.: "fala com o assistente da Barra" → Leo). Este helper só entra quando:
+//   (a) a skill emite explicitamente um marker com {subdomain|unit|specialty} mas sem assigned_to, OU
+//   (b) lookup interno do engine precisa validar/resolver um escopo.
+// Não é chamado para "adivinhar" assignee em criação onde a skill já decidiu.
 async function findPedagogicalAssignee({ subdomain, unit, specialty }) {
   const filters = [];
   if (subdomain) filters.push({ type: 'subdomain', value: subdomain });

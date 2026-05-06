@@ -1,0 +1,82 @@
+feat(web): Sprint 1 — fechar ciclo do colaborador (settings, create, reschedule, history) + privacy hardening
+
+Sprint 1 do PWA. Foco: transformar de visualização → uso operacional real.
+
+Migrations (1 commit DDL aplicado):
+- briefing_response_count(collab_id uuid, since timestamptz) → integer
+  SECURITY DEFINER, role gate inline (coord/director only). Substitui leitura
+  direta de conversation_history para detecção de resposta a briefing.
+- DROP POLICY auth_read_conversation_history_coord — coord/dir não lê mais
+  o content; só conta via fn. Privacy gap fechado.
+- INSERT policy para authenticated em tasks (own only, com WITH CHECK em
+  assigned_to + created_by).
+- UPDATE policy para authenticated em user_preferences (own only).
+
+PWA — telas novas:
+- /configuracoes: editor de user_preferences (briefing_time,
+  personal_briefing_time, closing_time, planning_day, coaching_intensity,
+  notify_deadline_alerts, notify_overdue_alerts). Form com 3 sections
+  (Horários, Intensidade, Notificações). Toggle switch + radio cards +
+  date/select inputs. Sem campos de perfil/avatar/integrações.
+- /historico: 30 dias por colaborador. KPIs (Concluídas/Total/Aderência%).
+  Lista de dias com dot semântico (idle/briefed/low/mid/good) + ratio + %.
+  Filtra fim de semana sem atividade pra remover ruído. Sem charts/BI.
+
+PWA — interações novas:
+- BottomSheet component: backdrop blur + slide-up no mobile, fade no desktop;
+  Esc + click backdrop fecham; body scroll lock; safe-area-inset.
+- QuickTaskSheet: 3 campos (title, context, due_date). Open via Fab em
+  /hoje e /semana. INSERT direto em tasks; React Query invalidate refresca lista.
+  Sem projeto/recurring/priority/remind_at — minimal por design.
+- RescheduleSheet: tap em tarefa pendente em /semana → bottom sheet com
+  date picker. Detecta "mesma data" e desabilita botão. Flips status
+  overdue→pending automaticamente ao reagendar.
+- Fab component: bottom-right acima do bottom nav, brand pink, label
+  oculto em mobile pequeno.
+
+PWA — refactor privacy:
+- DashboardTime: substituiu SELECT count em conversation_history por
+  supabase.rpc('briefing_response_count', { collab_id, since }). Coord/dir
+  nunca mais lê content via RLS direto.
+
+Nav:
+- /configuracoes e /historico adicionados ao App.tsx (rotas)
+- /mais: items "Configurações" e "Histórico" agora apontam pra rotas reais
+  (eram "EM BREVE")
+
+Decisões temporárias documentadas:
+- eisenhower_quadrant fica null em criações via PWA. Engine reprocessa
+  no próximo briefing/closing cycle se necessário. Sem trigger novo.
+- source='manual' nas tarefas criadas pelo PWA (CHECK constraint só aceita
+  manual|agent_*|checkpoint_*|coordinator_*|system; 'pwa' não passa).
+  'manual' é semanticamente correto (criação humana direta).
+
+Tech debt limpo:
+- Removido .gitignore.tmp do tree
+- Removido vite.config.d.ts e vite.config.js (artifacts do tsc -b)
+- Adicionado padrão deles a web/.gitignore
+
+Build:
+- 1690 módulos, 5.07s
+- JS 474 kB (134.9 kB gzip), CSS 23.5 kB (5.29 kB gzip)
+- PWA precache 9 arquivos (497 KB)
+
+Smoke tests funcionais (Playwright via Simple Browser):
+- FAB → QuickTaskSheet renderiza, fill title + submit → tarefa aparece
+  na lista (PRA HOJE: 4→5, Trabalho: 4→5).
+- Tap em item /semana → RescheduleSheet com data atual + botão "Mesma data"
+  desabilitado quando date input não mudou.
+- Mudou pra 2026-04-29, submit → tarefa moveu de SEG pra QUA na lista.
+
+Privacy verification (SQL direto):
+- briefing_response_count fn: existe, SECURITY DEFINER, gate inline funcional
+  (raise unauthorized para non-coord/dir).
+- conversation_history: 0 policies SELECT para coord/dir restantes (gap fechado).
+- tasks INSERT para authenticated: 1 policy ativa.
+- user_preferences UPDATE para authenticated: 1 policy ativa.
+
+Não entrou (mantido fora conforme escopo):
+- Magic link via WhatsApp (Sprint 2+)
+- Hábitos visuais, Checklists ops, Pessoa detalhe (Fase 2+)
+- Push notifications, drag&drop nativo, edição completa de tarefa
+- Hosting/deploy formal (decisão pode entrar em sprint dedicada)

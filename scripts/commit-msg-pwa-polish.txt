@@ -1,0 +1,64 @@
+polish(web): Sprint 0 acabamento — Semana density, light depth, stat tone
+
+Pass de acabamento final da Sprint 0. Sem novo escopo, sem feature.
+
+Semana — redesign denso (issue #1: "blocos vazios"):
+- Antes: 5 cards separados, min-h-120px, dias vazios desperdiçavam ~600px verticais
+- Agora: container único com divisores horizontais; today=expanded com bg
+  brand/5 sutil + barra accent à esquerda; outros dias=row compacto single-line
+  ("TER 28/04 — —")
+- Header denso: range "27/04 – 01/05" + ratio "3/4 DA SEMANA" + barra de
+  progresso pink (0-100% da semana). Cor do contador troca: success >=70%,
+  warning >=40%, fg padrão abaixo
+- Lista de tarefas com bullets coloridos (success/danger/muted) substitui
+  marcadores genéricos "•"
+- Today mostra até 5 itens; demais até 3 + "+N"
+
+Hoje — equilíbrio mobile:
+- StatCard: valor 28px no mobile, 40px no desktop (era 40px sempre — pesava)
+- Padding tighter (px-3 py-3 mobile, px-md py-md desktop)
+- Label 11px mobile, 12px desktop
+- font-black aplicado consistentemente
+
+StatCard — tone neutral aliviado:
+- Antes: text-fg-secondary (#424242 light) — "0" virava mancha pesada
+- Agora: text-fg-muted — "ATRASADAS 0" fica visualmente quiet, deixando
+  brand pink (PRA HOJE 4) e success (CONCLUÍDAS 3) destacarem corretamente
+
+Light mode — depth sem virar app branco genérico:
+- Nova utility .surface (em index.css @layer components) combina
+  rounded-md + border + bg-bg-surface + shadow leve (0 1px 2px + 0 2px 6px
+  rgba(15,15,15,0.04-0.06))
+- Dark mode override: [data-theme='dark'] .surface { box-shadow: none }
+- Mantém identidade — pink continua dominante, neutros respiram com sombra
+  soft mas sem efeitos exagerados
+- Aplicado em: Hoje (lista), Semana (container dias), Mais (lista + tema),
+  ProjetoDetalhe (todas as sections), DashboardTime (todos os cards),
+  ProjectCard (cada item da lista), Card component (variant outline)
+
+Tabs — contraste light mode:
+- Antes: inactive bg-bg-surface (= white) sobre superfície branca = invisível
+- Agora: inactive bg-bg-subtle (#E8E8E8) — contraste claro sem pesar
+- Active mantém shadow-card no light pra dar profundidade
+
+Tailwind config:
+- Novo shadow.card (0 1px 2px + 0 2px 6px) — soft, neutral
+
+Dev frame (tooling, não user-facing):
+- public/dev-frame.html: iPhone CSS wrapper para visualização durante dev
+- Seletor de device (iPhone 14 Pro/SE/Pro Max, Pixel 7, Galaxy S20, iPad mini)
+- Input de rota + reload + open-in-new-tab
+- localStorage persiste seleção
+
+Não mexido (decisão consciente):
+- Cores brand: zero alteração (E91451 + shade/deep/light/dark intactos)
+- Tipografia: Prompt mantida, sem novos pesos
+- Login screen: hero brand-strong já está no nível certo (halftone +
+  watermark + h1 "Bom dia de produção"). Acabamento iria empobrecer
+- ProjetoDetalhe: layout de tabs já está limpo, mais polish viraria gold-plate
+- Bottom nav: mobile + desktop já consistente, ícones touch-target adequado
+
+Build:
+- 1686 → 1687 módulos, 4.28s
+- JS 454 kB / 130 kB gzip; CSS 20.7 kB / 4.85 kB gzip
+- PWA precache 9 arquivos (475 KB) — dev-frame entrou no precache
