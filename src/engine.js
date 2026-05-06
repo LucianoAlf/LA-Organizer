@@ -1183,6 +1183,7 @@ async function applyCoordinationResponseAction(collab, parsed) {
     const msg = `Boa! O ${recipientFirstName} respondeu o que você pediu:\n\n"${parsed.response_summary}"`;
     try {
       await whatsapp.sendMessage(requester.phone, msg);
+      await logConversation(requester.id, 'outbound', msg);
     } catch (sendErr) {
       console.error('[CoordinationResponse] notify requester err:', sendErr.message);
     }
@@ -1483,6 +1484,7 @@ async function applyCoordinationRequestAction(collab, parsed) {
 
   try {
     await whatsapp.sendMessage(recipient.phone, recipientMsg);
+    await logConversation(recipient.id, 'outbound', recipientMsg);
   } catch (sendErr) {
     console.error('[CoordinationRequest] sendMessage err:', sendErr.message);
     await supabase.from('coordination_requests')
