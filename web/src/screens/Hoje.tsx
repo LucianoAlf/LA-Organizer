@@ -60,12 +60,15 @@ async function fetchHabitsToday(collabId: string): Promise<HabitToday[]> {
   });
 }
 
+// Sprint 22.7 — exclui 'cancelled' da view de Hoje. Cancelladas só interessam em
+// histórico, não no daily focus.
 async function fetchTasksToday(collabId: string): Promise<Task[]> {
   const today = todaySP();
   const { data, error } = await supabase
     .from('tasks')
     .select('id, title, status, context, priority, category, action_type, source, due_date, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, completed_at, projects(name), assignee:collaborators!tasks_assigned_to_fkey(full_name)')
     .eq('assigned_to', collabId)
+    .neq('status', 'cancelled')
     .or(`due_date.eq.${today},and(due_date.lt.${today},status.not.in.(done,cancelled))`)
     .order('remind_at', { ascending: true, nullsFirst: false })
     .order('due_date', { ascending: true })
@@ -74,7 +77,6 @@ async function fetchTasksToday(collabId: string): Promise<Task[]> {
   return (data ?? []) as unknown as Task[];
 }
 
-// Sprint 22.5 — tasks que o collab criou pra outras pessoas (delegações).
 async function fetchDelegatedTasks(collabId: string): Promise<Task[]> {
   const today = todaySP();
   const { data, error } = await supabase
@@ -82,6 +84,7 @@ async function fetchDelegatedTasks(collabId: string): Promise<Task[]> {
     .select('id, title, status, context, priority, category, action_type, source, due_date, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, completed_at, projects(name), assignee:collaborators!tasks_assigned_to_fkey(full_name)')
     .eq('created_by', collabId)
     .neq('assigned_to', collabId)
+    .neq('status', 'cancelled')
     .or(`due_date.eq.${today},and(due_date.lt.${today},status.not.in.(done,cancelled))`)
     .order('due_date', { ascending: true });
   if (error) throw error;
@@ -98,6 +101,7 @@ export function Hoje() {
   const [actionFilter, setActionFilter] = useState<ActionType | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
+  const [doneOpen, setDoneOpen] = useState(false);
 
   const today = todaySP();
 
@@ -400,13 +404,19 @@ export function Hoje() {
               </div>
             )}
             {done.length > 0 && (
-              <details className="group">
-                <summary className="py-2 text-label uppercase tracking-wide text-success cursor-pointer list-none flex items-center gap-2 select-none">
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setDoneOpen(o => !o)}
+                  className="w-full py-2 flex items-center gap-2 text-label uppercase tracking-wide text-success focus-ring rounded-sm select-none cursor-pointer"
+                  aria-expanded={doneOpen}
+                >
                   <span>✅ Concluídas ({done.length})</span>
-                  <span className="text-fg-muted text-body-sm normal-case tracking-normal group-open:hidden">expandir</span>
-                  <span className="text-fg-muted text-body-sm normal-case tracking-normal hidden group-open:inline">recolher</span>
-                </summary>
-                {done.map(t => (
+                  <span className="text-fg-muted text-body-sm normal-case tracking-normal">
+                    {doneOpen ? 'recolher' : 'expandir'}
+                  </span>
+                </button>
+                {doneOpen && done.map(t => (
                   <TaskRow
                     key={t.id}
                     task={t}
@@ -414,11 +424,20 @@ export function Hoje() {
                     readOnly={tab === 'delegated'}
                   />
                 ))}
-              </details>
+              </div>
             )}
           </>
         )}
       </section>
+
+      {/* Sprint 22.7 — legenda Eisenhower discreta no rodapé, decifra as barras coloridas */}
+      {todayList.some(t => t.eisenhower_quadrant) && (
+        <p className="text-body-sm text-fg-muted flex items-center gap-3 flex-wrap pt-sm">
+          <span className="flex items-center gap-1.5"><span className="inline-block w-[3px] h-3 rounded-full bg-danger" /> urgente + importante</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block w-[3px] h-3 rounded-full bg-warning" /> importante</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block w-[3px] h-3 rounded-full bg-info" /> urgente</span>
+        </p>
+      )}
 
       <Fab onClick={() => setSheetOpen(true)} label="Novo" ariaLabel="Criar novo item" />
       <QuickCreateSheet open={sheetOpen} onClose={() => setSheetOpen(false)} defaultDueDate={today} />

@@ -10,13 +10,12 @@ interface Props {
   readOnly?: boolean;
 }
 
-// Sprint 22.5 — dot colorido por quadrante Eisenhower.
-// Q1 = urgente+importante (vermelho), Q2 = importante (âmbar), Q3 = urgente (azul), Q4 = nada (cinza).
-const QUADRANT_DOT: Record<string, string> = {
+// Sprint 22.7 — barra vertical à esquerda, conceito Eisenhower visível.
+// Q1 = urgente+importante (vermelho), Q2 = importante (âmbar), Q3 = urgente (azul), Q4 = sem barra.
+const QUADRANT_BAR: Record<string, string> = {
   '1': 'bg-danger',
   '2': 'bg-warning',
   '3': 'bg-info',
-  '4': 'bg-fg-muted/40',
 };
 
 // Sprint 22.5 — fonte que NÃO seja manual indica que veio do TOM (mental_dump, agent_*, coordinator_assignment).
@@ -96,7 +95,7 @@ export function TaskRow({ task, onToggle, readOnly }: Props) {
   const { tone, label } = statusOf(task);
   const isDone = task.status === 'done';
   const quadrantKey = task.eisenhower_quadrant ? String(task.eisenhower_quadrant) : null;
-  const dotClass = quadrantKey && QUADRANT_DOT[quadrantKey] ? QUADRANT_DOT[quadrantKey] : null;
+  const barClass = quadrantKey && QUADRANT_BAR[quadrantKey] ? QUADRANT_BAR[quadrantKey] : null;
   const remindDay = task.remind_at ? dayISOFromAny(task.remind_at) : '';
   const dueDay = task.due_date || '';
   const remindRel = task.remind_at ? fmtRelDate(task.remind_at) : '';
@@ -106,10 +105,19 @@ export function TaskRow({ task, onToggle, readOnly }: Props) {
   return (
     <div
       className={[
-        'flex items-start gap-md py-3 border-b border-border last:border-0 transition-opacity',
+        'relative flex items-start gap-md py-3 pl-2 border-b border-border last:border-0 transition-opacity',
         isDone ? 'opacity-50' : '',
       ].join(' ')}
     >
+      {/* Sprint 22.7 — barra Eisenhower vertical. Não aparece pra concluídas (line-through já cobre). */}
+      {barClass && !isDone && (
+        <span
+          className={['absolute left-0 top-3 bottom-3 w-[3px] rounded-full', barClass].join(' ')}
+          aria-label={`Eisenhower Q${quadrantKey}`}
+          title={`Q${quadrantKey}`}
+        />
+      )}
+
       {!readOnly && (
         <button
           type="button"
@@ -128,14 +136,6 @@ export function TaskRow({ task, onToggle, readOnly }: Props) {
 
       <div className="min-w-0 flex-1">
         <div className={['flex items-start gap-2 text-body-md', isDone ? 'line-through' : ''].join(' ')}>
-          {/* Quadrant dot — Eisenhower (Q1=urg+imp, Q2=imp, Q3=urg, Q4=nada) */}
-          {dotClass && !isDone && (
-            <span
-              className={['mt-1.5 h-2 w-2 shrink-0 rounded-full', dotClass].join(' ')}
-              aria-label={`Quadrante ${quadrantKey}`}
-              title={`Eisenhower Q${quadrantKey}`}
-            />
-          )}
           <span className="min-w-0 flex-1 break-words">
             {task.title}
           </span>
@@ -145,7 +145,6 @@ export function TaskRow({ task, onToggle, readOnly }: Props) {
             </span>
           )}
         </div>
-        {/* Linha de horário/data — coerente com WA TOM. Sufixo (DD/MM) só pra datas longe. */}
         {(task.remind_at || task.due_date) && (
           <div className="mt-1 flex items-baseline gap-1.5 text-body-sm text-fg">
             {task.remind_at ? (
@@ -164,12 +163,11 @@ export function TaskRow({ task, onToggle, readOnly }: Props) {
           </div>
         )}
         <div className="mt-1 flex flex-wrap items-center gap-2 text-body-sm text-fg-muted">
-          {/* Sprint 12 Bloco D: badge da categoria de execução decidida pelo TOM. */}
           <ActionTypeBadge type={task.action_type} />
           {task.projects?.name && <span>• {task.projects.name}</span>}
           {task.context === 'personal' && <span>• pessoal</span>}
           {showAssignee && (
-            <span className="text-brand">→ {task.assignee!.full_name.split(' ')[0]}</span>
+            <span>→ <span className="text-fg">{task.assignee!.full_name.split(' ')[0]}</span></span>
           )}
         </div>
       </div>
