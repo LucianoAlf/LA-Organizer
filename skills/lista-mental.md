@@ -1,6 +1,6 @@
 ---
 name: lista-mental
-description: Skill para esvaziar a cabeça do usuário em lote. Ativa quando há ≥3 itens distintos, ou frases como "tô com várias coisas na cabeça", "lista mental", "descarrega essa lista", "anota tudo isso", "tô confuso, vamos organizar". Classifica cada item em task/event/project/memory/resolve_now e persiste com os markers existentes.
+description: Skill para esvaziar a cabeça do usuário em lote. Ativa quando há ≥3 itens distintos, ou frases como "tô com várias coisas na cabeça", "lista mental", "descarrega essa lista", "anota tudo isso", "tô confuso, vamos organizar". Classifica cada item em task/event/project/memory/resolve_now, persiste com os markers existentes e fecha com oferta de priorização Eisenhower.
 ---
 
 # Lista Mental
@@ -56,6 +56,21 @@ Espere o usuário confirmar ou ajustar. Só avance depois da resposta.
 
 ### 5. Persistir
 Emita todos os markers em sequência na mesma resposta, após a confirmação.
+
+### 6. Priorizar (oferta de fechamento)
+Depois de persistir, **ofereça** a passada de prioridade Eisenhower em uma única pergunta. Não execute sem aceite.
+
+Phrasing recomendado:
+
+> "Organizei e registrei tudo. Quer que eu já passe isso por prioridade e te devolva em 4 blocos: resolve agora, agenda, delega e pode esperar?"
+
+Variação curta aceitável: *"Quer que eu já transforme isso em plano de ação?"*
+
+- **Se o usuário aceitar** ("sim", "vai", "manda", "bora") → ative a skill `priorizacao-inteligente` sobre os itens recém-capturados. Filtre pelos itens persistidos nesta interação (tasks com `source='mental_dump'` criadas nos últimos minutos + os events do mesmo lote). Devolva os 4 blocos: **resolve agora · agenda · delega · pode esperar**.
+- **Se o usuário recusar** ("não", "depois", "deixa") → encerre a interação. Não insista. Não pergunte de novo na próxima mensagem.
+- **Se o usuário já pediu priorização no input original** (ex: "anota e prioriza", "organiza e me diz o que faço primeiro") → pule a pergunta e execute direto a etapa 6 após persistir.
+
+A etapa 6 é parte do pipeline sagrado. Capturar sem fechar com decisão quebra o ciclo cognitivo — o usuário fica com a sensação de "salvou mas não resolveu nada". A oferta é mandatória; o aceite é livre.
 
 ---
 
@@ -172,6 +187,8 @@ Use a data real do dia em que a captura aconteceu.
 - NUNCA emita markers sem confirmação em lote (≥2 itens).
 - NUNCA deixe um item sem classificação — todo item tem destino.
 - NUNCA omita `source: "mental_dump"` nas tasks capturadas aqui.
+- NUNCA pule a oferta de priorização da etapa 6 — capturar sem fechar com decisão quebra o ciclo cognitivo.
+- NUNCA execute a priorização sem aceite explícito (exceto se o input original já pediu).
 - NUNCA use 🎵.
 - NUNCA repita 👽 dentro do mesmo fluxo (só na primeira mensagem da interação, se for o caso).
 - NUNCA prometa "vou salvar" sem emitir o marker na mesma mensagem.
