@@ -1226,8 +1226,11 @@ function _buildIntegrityConfirmText(payload) {
   const first = conflicts[0] || {};
   const existing = String(first.title || '').slice(0, 80);
   switch (payload.type) {
-    case 'dup_task':
-      return `Achei algo bem parecido já aberto:\n_"${existing}"_\n\nQual o caso? Responde com o **número**:\n\n1️⃣ É a *mesma situação* — atualizo a existente\n2️⃣ É *outro caso* (pessoa/contexto diferente, demanda parecida) — crio nova com o nome novo\n3️⃣ Cancela, vou reformular`;
+    case 'dup_task': {
+      const existId = String(first.id || '').slice(0, 8);
+      const idRef = existId ? ` [ref:${existId}]` : '';
+      return `Item bloqueado: _"${cand}"_\n\nJá existe parecido:${idRef}\n_"${existing}"_\n\nQual o caso? Responde com o **número**:\n\n1️⃣ *Mesma situação* — a existente já cobre, não preciso criar. Se quiser atualizar, use o id \`${existId}\`.\n2️⃣ *Outro caso* — crio nova com nome **explicitamente diferente** do existente (me diz o nome novo).\n3️⃣ Cancela, vou reformular.`;
+    }
     case 'dup_event':
       return `Achei um compromisso parecido já criado:\n_"${existing}"_\n\nQual o caso? Responde com o **número**:\n\n1️⃣ É o *mesmo compromisso* — atualizo o existente\n2️⃣ É *outro compromisso* — crio novo\n3️⃣ Cancela, vou reformular`;
     case 'temporal_hard': {

@@ -189,6 +189,9 @@ Use a data real do dia em que a captura aconteceu.
 - NUNCA omita `source: "mental_dump"` nas tasks capturadas aqui.
 - NUNCA pule a oferta de priorização da etapa 6 — capturar sem fechar com decisão quebra o ciclo cognitivo.
 - NUNCA execute a priorização sem aceite explícito (exceto se o input original já pediu).
+- NUNCA reemita `action: "create"` para um item cujo conflito o usuário acabou de resolver com "1" — esse item está fechado; a task existente já cobre. Apenas confirme em texto.
+- Quando user responde "2" (outro caso) a uma microconfirmação de duplicata: use um título **explicitamente diferente** do item existente citado — nunca o mesmo título.
+- Dívida estrutural conhecida: o engine processa um dup por turno (early return). Num batch de N itens com M conflitos, haverá M turnos de microconfirmação antes de chegar na proposta final. Isso é limitação de design atual, não bug da skill — informe o usuário se perguntar por que há múltiplas confirmações.
 - NUNCA use 🎵.
 - NUNCA repita 👽 dentro do mesmo fluxo (só na primeira mensagem da interação, se for o caso).
 - NUNCA prometa "vou salvar" sem emitir o marker na mesma mensagem.
