@@ -204,22 +204,8 @@ export function Hoje() {
   const isLoading = tLoading || eLoading || dLoading;
   const hasNothing = todayList.length === 0 && todayEvents.length === 0;
 
-  // Sprint 22.5 — totais globais pra subheader (somam tudo: work + personal + events).
-  const totalDueToday = tasks.filter(t => t.due_date === today && t.status !== 'done' && t.status !== 'cancelled').length
-    + events.filter(e => e.status === 'scheduled').length;
-  const totalOverdue = tasks.filter(t => t.due_date && t.due_date < today && t.status !== 'done' && t.status !== 'cancelled').length;
-
   return (
     <div className="space-y-lg">
-      {/* Subheader — quick context line */}
-      {!isLoading && (totalDueToday > 0 || totalOverdue > 0) && (
-        <p className="text-body-sm text-fg-muted -mt-sm">
-          {totalDueToday > 0 && <span><span className="text-fg font-medium">{totalDueToday}</span> pra hoje</span>}
-          {totalDueToday > 0 && totalOverdue > 0 && <span className="text-fg-muted"> · </span>}
-          {totalOverdue > 0 && <span className="text-danger"><span className="font-medium">{totalOverdue}</span> atrasada{totalOverdue > 1 ? 's' : ''}</span>}
-        </p>
-      )}
-
       {/* Stats */}
       <div className="grid grid-cols-3 gap-sm">
         <StatCard label="Pra hoje" value={dueToday.length + todayEvents.filter(e => e.status === 'scheduled').length} tone="brand" />
