@@ -887,18 +887,33 @@ async function checkCoordinationTimeouts(now = new Date()) {
       continue;
     }
 
-    // Sprint 22.4 — antes de cobrar via Heads up, checar se o recipient teve
-    // qualquer atividade conversacional após o sent_at. Se sim, ele viu/respondeu
-    // (mesmo que não tenha disparado <<COORDINATION_RESPONSE>>). Suprime o nag.
-    const { data: recentActivity } = await supabase
+    // Sprint 22.4 — antes de cobrar via Heads up, checar atividade do recipient.
+    // Suprime o nag em DOIS casos:
+    //   (a) recipient teve qualquer mensagem (inbound OU outbound) após sent_at
+    //       → ele viu/respondeu mesmo sem <<COORDINATION_RESPONSE>>
+    //   (b) recipient NUNCA mandou inbound nos últimos 30d → não engaja via TOM,
+    //       cobrar é inútil; resposta vai vir por canal direto se vier.
+    const since30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: postSent } = await supabase
       .from('conversation_history')
       .select('id')
       .eq('collaborator_id', req.recipient_id)
       .gte('created_at', req.sent_at || req.response_deadline)
       .limit(1);
-    const recipientWasActive = Array.isArray(recentActivity) && recentActivity.length > 0;
-    if (recipientWasActive) {
+    if (Array.isArray(postSent) && postSent.length > 0) {
       console.log(`[checkCoordinationTimeouts] req=${req.id.slice(0, 8)} recipient ativo após sent_at — suprimindo heads-up`);
+      continue;
+    }
+    const { data: recentInbound } = await supabase
+      .from('conversation_history')
+      .select('id')
+      .eq('collaborator_id', req.recipient_id)
+      .eq('direction', 'inbound')
+      .gte('created_at', since30d)
+      .limit(1);
+    const recipientEngagesTom = Array.isArray(recentInbound) && recentInbound.length > 0;
+    if (!recipientEngagesTom) {
+      console.log(`[checkCoordinationTimeouts] req=${req.id.slice(0, 8)} recipient sem inbound nos últimos 30d — suprimindo heads-up (não engaja via TOM)`);
       continue;
     }
 
