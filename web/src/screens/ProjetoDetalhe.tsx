@@ -639,6 +639,10 @@ function TaskListItem({
   isDragging?: boolean;
 }) {
   const isDone = task.status === 'done';
+  // Sprint 22.22i — atrasada quando due_date < hoje SP e nao concluida.
+  const todaySP = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }))
+    .toISOString().slice(0, 10);
+  const isOverdue = !isDone && !!task.due_date && task.due_date < todaySP;
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(task.title);
 
@@ -669,7 +673,9 @@ function TaskListItem({
           'mt-0.5 h-5 w-5 shrink-0 rounded-full border-2 grid place-items-center transition-colors focus-ring',
           isDone
             ? 'bg-tom border-tom text-white'
-            : 'border-fg-muted text-transparent hover:border-tom',
+            : isOverdue
+              ? 'border-danger text-transparent hover:border-danger animate-pulse'
+              : 'border-fg-muted text-transparent hover:border-tom',
         ].join(' ')}
       >
         {isDone && <Check size={12} strokeWidth={3} />}
@@ -698,8 +704,14 @@ function TaskListItem({
           </div>
         )}
         {task.due_date && !editing && (
-          <div className="text-body-sm text-fg-muted tabular-nums mt-0.5">
-            {brShort(task.due_date)}
+          <div className={['text-body-sm tabular-nums mt-0.5 inline-flex items-center gap-1', isOverdue ? 'text-danger font-medium' : 'text-fg-muted'].join(' ')}>
+            {isOverdue && <span aria-hidden>⚠️</span>}
+            <span>{brShort(task.due_date)}</span>
+            {isOverdue && (
+              <span className="ml-1">
+                · atrasada {daysOverdue(task.due_date)}d
+              </span>
+            )}
           </div>
         )}
       </div>
@@ -1702,6 +1714,17 @@ function CreateCheckpointInline({ onCreate }: { onCreate: (name: string) => void
       </div>
     </form>
   );
+}
+
+// Helper Sprint 22.22i — quantos dias atras venceu (timezone SP).
+function daysOverdue(dueDateYmd: string): number {
+  try {
+    const today = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+    const [y, m, d] = dueDateYmd.split('-').map(Number);
+    const due = new Date(y, m - 1, d);
+    const diffMs = today.setHours(0, 0, 0, 0) - due.setHours(0, 0, 0, 0);
+    return Math.max(0, Math.floor(diffMs / 86400000));
+  } catch { return 0; }
 }
 
 // ---- PeopleGroupedTasks — visao "Por pessoa" (so canSeeAll usa) ------------
