@@ -552,17 +552,15 @@ function TaskListItem({
   }
 
   return (
-    <li className="py-2 flex items-start gap-2 group">
+    <li
+      className="py-2 flex items-start gap-2 group touch-none"
+      {...(dragHandleAttributes ?? {})}
+      {...(dragHandleListeners ?? {})}
+    >
       {dragHandleListeners && (
-        <button
-          type="button"
-          {...dragHandleAttributes}
-          {...dragHandleListeners}
-          aria-label="Arrastar tarefa"
-          className="mt-1 text-fg-muted/40 hover:text-fg-muted cursor-grab active:cursor-grabbing touch-none focus-ring rounded-sm"
-        >
+        <span aria-hidden className="mt-1 text-fg-muted/40 cursor-grab">
           <GripVertical size={14} />
-        </button>
+        </span>
       )}
       <button
         type="button"
@@ -663,19 +661,20 @@ function CheckpointCard({
   }
 
   return (
-    <article className="surface">
+    <article
+      className="surface touch-none"
+      {...(dragHandleAttributes ?? {})}
+      {...(dragHandleListeners ?? {})}
+    >
       {/* Header — visual de "marco/container". Padding maior, fundo do surface, checkbox quadrado grande. */}
       <div className="p-md flex items-start gap-md">
         {dragHandleListeners && (
-          <button
-            type="button"
-            {...dragHandleAttributes}
-            {...dragHandleListeners}
-            aria-label="Arrastar checkpoint"
-            className="mt-1 text-fg-muted hover:text-fg cursor-grab active:cursor-grabbing touch-none focus-ring rounded-sm"
+          <span
+            aria-hidden
+            className="mt-1 text-fg-muted/40 cursor-grab"
           >
             <GripVertical size={16} />
-          </button>
+          </span>
         )}
         <button
           type="button"
@@ -923,7 +922,7 @@ function RowMenu({ items }: { items: MenuItem[] }) {
         <MoreVertical size={16} />
       </button>
       {open && (
-        <div className="absolute right-0 top-full mt-1 z-20 min-w-[180px] rounded-md border border-border bg-bg-surface shadow-card overflow-hidden">
+        <div className="absolute right-0 top-full mt-1 z-50 min-w-[180px] rounded-md border border-border bg-bg-surface shadow-soft overflow-hidden">
           {items.map((item, i) => {
             const isConfirming = confirmIdx === i;
             if (isConfirming && item.confirm) {
