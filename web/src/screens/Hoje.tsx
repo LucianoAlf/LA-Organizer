@@ -317,29 +317,31 @@ export function Hoje() {
         </section>
       )}
 
-      {/* Tasks block */}
-      <section className="surface px-md">
-        {todayEvents.length > 0 && (
-          <div className="flex items-center gap-2 py-3 border-b border-border text-label uppercase tracking-wide text-fg-muted">
-            <ListTodo size={14} /> Tarefas
-          </div>
-        )}
-        {!supabaseConfigured ? (
+      {/* Sprint 22.15 — Tasks em múltiplos cards (Atrasadas, Pra hoje, Concluídas)
+          com gap entre eles, mesma linguagem visual da Semana. */}
+      {!supabaseConfigured ? (
+        <section className="surface p-md">
           <EmptyState
             icon={<ListTodo size={32} />}
             title="Configure Supabase"
             description="Defina VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY no .env e reinicie."
           />
-        ) : isLoading ? (
-          <div className="py-md"><LoadingState rows={3} /></div>
-        ) : tError ? (
+        </section>
+      ) : isLoading ? (
+        <section className="surface p-md">
+          <LoadingState rows={3} />
+        </section>
+      ) : tError ? (
+        <section className="surface p-md">
           <EmptyState
             title="Não consegui carregar suas tarefas"
             description={(tError as Error).message}
             action={<Button variant="secondary" onClick={() => qc.invalidateQueries({ queryKey: ['tasks'] })}>Tentar de novo</Button>}
           />
-        ) : todayList.length === 0 ? (
-          hasNothing ? (
+        </section>
+      ) : todayList.length === 0 ? (
+        <section className="surface p-md">
+          {hasNothing ? (
             <EmptyState
               icon={<ListTodo size={32} />}
               title={tab === 'delegated' ? 'Sem delegações pra hoje' : 'Tá leve hoje.'}
@@ -352,16 +354,17 @@ export function Hoje() {
               }
             />
           ) : (
-            <div className="py-3 text-body-sm text-fg-muted">Sem tarefas — só compromissos hoje.</div>
-          )
-        ) : (
-          <>
-            {/* Sprint 22.5 — agrupamento visual: Atrasadas → Pra hoje → Concluídas */}
-            {overdue.length > 0 && (
-              <div>
-                <div className="py-2 text-label uppercase tracking-wide text-danger">
-                  🔴 Atrasadas ({overdue.length})
-                </div>
+            <div className="text-body-sm text-fg-muted">Sem tarefas — só compromissos hoje.</div>
+          )}
+        </section>
+      ) : (
+        <div className="space-y-md">
+          {overdue.length > 0 && (
+            <section className="surface p-md">
+              <div className="pb-2 text-label uppercase tracking-wide text-danger">
+                🔴 Atrasadas ({overdue.length})
+              </div>
+              <div className="divide-y divide-border">
                 {overdue.map(t => (
                   <TaskRow
                     key={t.id}
@@ -371,14 +374,14 @@ export function Hoje() {
                   />
                 ))}
               </div>
-            )}
-            {dueToday.length > 0 && (
-              <div>
-                {overdue.length > 0 && (
-                  <div className="py-2 text-label uppercase tracking-wide text-fg-muted">
-                    Pra hoje ({dueToday.length})
-                  </div>
-                )}
+            </section>
+          )}
+          {dueToday.length > 0 && (
+            <section className="surface p-md">
+              <div className="pb-2 text-label uppercase tracking-wide text-fg-muted">
+                Pra hoje ({dueToday.length})
+              </div>
+              <div className="divide-y divide-border">
                 {dueToday.map(t => (
                   <TaskRow
                     key={t.id}
@@ -388,33 +391,37 @@ export function Hoje() {
                   />
                 ))}
               </div>
-            )}
-            {done.length > 0 && (
-              <div>
-                <button
-                  type="button"
-                  onClick={() => setDoneOpen(o => !o)}
-                  className="w-full py-2 flex items-center gap-2 text-label uppercase tracking-wide text-success focus-ring rounded-sm select-none cursor-pointer"
-                  aria-expanded={doneOpen}
-                >
-                  <span>✅ Concluídas ({done.length})</span>
-                  <span className="text-fg-muted text-body-sm normal-case tracking-normal">
-                    {doneOpen ? 'recolher' : 'expandir'}
-                  </span>
-                </button>
-                {doneOpen && done.map(t => (
-                  <TaskRow
-                    key={t.id}
-                    task={t}
-                    onToggle={tab === 'delegated' ? undefined : (task) => toggleTask.mutate(task)}
-                    readOnly={tab === 'delegated'}
-                  />
-                ))}
-              </div>
-            )}
-          </>
-        )}
-      </section>
+            </section>
+          )}
+          {done.length > 0 && (
+            <section className="surface p-md">
+              <button
+                type="button"
+                onClick={() => setDoneOpen(o => !o)}
+                className="w-full flex items-center gap-2 text-label uppercase tracking-wide text-success focus-ring rounded-sm select-none cursor-pointer"
+                aria-expanded={doneOpen}
+              >
+                <span>✅ Concluídas ({done.length})</span>
+                <span className="text-fg-muted text-body-sm normal-case tracking-normal">
+                  {doneOpen ? 'recolher' : 'expandir'}
+                </span>
+              </button>
+              {doneOpen && (
+                <div className="mt-2 divide-y divide-border">
+                  {done.map(t => (
+                    <TaskRow
+                      key={t.id}
+                      task={t}
+                      onToggle={tab === 'delegated' ? undefined : (task) => toggleTask.mutate(task)}
+                      readOnly={tab === 'delegated'}
+                    />
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
+        </div>
+      )}
 
       {/* Sprint 22.7 — legenda Eisenhower discreta no rodapé, decifra as barras coloridas */}
       {todayList.some(t => t.eisenhower_quadrant) && (
