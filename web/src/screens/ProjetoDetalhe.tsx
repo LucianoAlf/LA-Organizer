@@ -785,7 +785,7 @@ function CreateTaskInline({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-wrap items-center gap-2">
+    <form onSubmit={handleSubmit} className="space-y-2">
       <input
         type="text"
         autoFocus
@@ -794,9 +794,9 @@ function CreateTaskInline({
         onChange={e => setTitle(e.target.value)}
         onKeyDown={handleKeyDown}
         placeholder="O que precisa fazer..."
-        className="flex-1 min-w-0 basis-full h-9 px-3 rounded-md bg-bg-elevated border border-border text-body-md text-fg placeholder:text-fg-muted focus-ring"
+        className="w-full h-9 px-3 rounded-md bg-bg-elevated border border-border text-body-md text-fg placeholder:text-fg-muted focus-ring"
       />
-      <div className="flex items-center gap-2 ml-auto">
+      <div className="flex items-center justify-end gap-2">
         <button
           type="button"
           onClick={() => { setOpen(false); setTitle(''); }}
@@ -812,6 +812,11 @@ function CreateTaskInline({
           Salvar
         </button>
       </div>
+      {createTask.error && (
+        <p className="text-body-sm text-danger" role="alert">
+          Não consegui salvar: {(createTask.error as Error).message}
+        </p>
+      )}
     </form>
   );
 }
