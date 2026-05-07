@@ -862,6 +862,161 @@ function renderActiveThreadHint(thread) {
 }
 
 // ---------- main builder ----------
+// Sprint 22.22 — Carrega contexto detalhado dos projetos relevantes pra
+// pergunta. TOM nao tem SQL tool, entao injetamos dados crus no system prompt.
+// Filtra por permissao manualmente (RLS so vale com JWT, aqui usamos service_role).
+async function buildProjectStatusContext(collaborator, lastUserMessage) {
+  try {
+    const collabId = collaborator.id;
+    const isGlobalLead = collaborator.role === 'coordinator' || collaborator.role === 'director';
+
+    // 1. Pega projetos relevantes: por nome (ILIKE) + projetos onde o collab eh membro.
+    const term = (lastUserMessage || '').slice(0, 200);
+    const significantWords = (term.match(/[a-zA-ZáéíóúãõâêîôûçÁÉÍÓÚÃÕÂÊÎÔÛÇ]{4,}/g) || [])
+      .map(w => w.toLowerCase())
+      .filter(w => !['como','esta','está','tava','status','minha','parte','sobre','nosso','quais','envolvido','envolvida','projeto','projetos','tarefa','tarefas','agora'].includes(w))
+      .slice(0, 4);
+
+    // Busca por nome se tiver palavras significativas
+    let nameMatched = [];
+    if (significantWords.length > 0) {
+      const orFilter = significantWords.map(w => `name.ilike.%${w}%`).join(',');
+      const { data } = await supabase.from('projects')
+        .select('id, name, category, status, progress_percent, event_date, description, created_by')
+        .in('status', ['active','planning','pending_approval','paused'])
+        .or(orFilter)
+        .limit(3);
+      nameMatched = data || [];
+    }
+
+    // Busca projetos onde eh membro
+    const { data: memberRows } = await supabase.from('project_members')
+      .select('project_id, role_in_project')
+      .eq('collaborator_id', collabId);
+    const myProjectIds = (memberRows || []).map(r => r.project_id);
+    const myRolesByProject = new Map((memberRows || []).map(r => [r.project_id, r.role_in_project]));
+
+    let myProjects = [];
+    if (myProjectIds.length > 0) {
+      const { data } = await supabase.from('projects')
+        .select('id, name, category, status, progress_percent, event_date, description, created_by')
+        .in('id', myProjectIds)
+        .in('status', ['active','planning','pending_approval','paused'])
+        .limit(10);
+      myProjects = data || [];
+    }
+
+    // Merge sem duplicar
+    const projectsMap = new Map();
+    for (const p of [...nameMatched, ...myProjects]) projectsMap.set(p.id, p);
+    const projects = [...projectsMap.values()].slice(0, 5);
+
+    if (projects.length === 0) {
+      return '# 📊 PROJETOS DISPONIVEIS PRA RESPONDER\n\n_Nenhum projeto ativo encontrado pra essa pessoa._';
+    }
+
+    // 2. Pra cada projeto, carregar checkpoints + tasks + members
+    const lines = ['# 📊 PROJETOS DISPONIVEIS PRA RESPONDER', ''];
+    lines.push('Use SOMENTE os dados abaixo pra responder sobre status de projeto.');
+    lines.push('NUNCA diga "tá zerado" ou "sem time" se houver dados aqui.');
+    lines.push('');
+
+    for (const p of projects) {
+      const myProjectRole = myRolesByProject.get(p.id) || null;
+      const isOwnerOfProject = p.created_by === collabId;
+      const canSeeAll = isGlobalLead || isOwnerOfProject || myProjectRole === 'owner' || myProjectRole === 'coordinator';
+
+      const [cpsRes, tasksRes, membersRes] = await Promise.all([
+        supabase.from('project_checkpoints')
+          .select('id, name, due_date, status')
+          .eq('project_id', p.id)
+          .order('sort_order', { ascending: true }),
+        supabase.from('tasks')
+          .select('id, title, status, due_date, assigned_to, checkpoint_id, context')
+          .eq('project_id', p.id)
+          .eq('context', 'work'),
+        supabase.from('project_members')
+          .select('collaborator_id, role_in_project, guest_name, guest_role, collaborators(full_name)')
+          .eq('project_id', p.id),
+      ]);
+
+      const cps = cpsRes.data || [];
+      let tasks = tasksRes.data || [];
+      const members = membersRes.data || [];
+
+      // Filtra tasks: se nao ve tudo, so as proprias
+      if (!canSeeAll) tasks = tasks.filter(t => t.assigned_to === collabId);
+
+      // Mapa collab_id -> nome
+      const nameById = new Map();
+      for (const m of members) {
+        if (m.collaborator_id && m.collaborators) {
+          const coll = Array.isArray(m.collaborators) ? m.collaborators[0] : m.collaborators;
+          if (coll && coll.full_name) nameById.set(m.collaborator_id, coll.full_name);
+        }
+      }
+
+      // Header do projeto
+      lines.push(`## ${p.name} ${p.event_date ? `(evento ${p.event_date})` : ''}`);
+      lines.push(`Categoria: ${p.category || '—'} · Status: ${p.status} · Progresso: ${p.progress_percent || 0}%`);
+      if (p.description) lines.push(`Descrição: ${p.description.slice(0, 200)}`);
+
+      // Time
+      if (members.length > 0) {
+        lines.push(`\n**Time (${members.length}):**`);
+        for (const m of members) {
+          if (m.collaborator_id) {
+            const coll = Array.isArray(m.collaborators) ? m.collaborators[0] : m.collaborators;
+            lines.push(`- ${coll?.full_name || '—'} (${m.role_in_project})`);
+          } else {
+            lines.push(`- ${m.guest_name} (externo · ${m.guest_role || '—'})`);
+          }
+        }
+      } else {
+        lines.push(`\n**Time:** ainda sem membros cadastrados.`);
+      }
+
+      // Checkpoints + tasks dentro de cada
+      if (cps.length > 0) {
+        lines.push(`\n**Checkpoints (${cps.length}):**`);
+        for (const cp of cps) {
+          const cpTasks = tasks.filter(t => t.checkpoint_id === cp.id);
+          const done = cpTasks.filter(t => t.status === 'done').length;
+          const status = cp.status === 'done' ? '✅' : cp.status === 'in_progress' ? '🟡' : '⏳';
+          lines.push(`- ${status} ${cp.name}${cp.due_date ? ` (${cp.due_date})` : ''} — ${done}/${cpTasks.length} tarefas`);
+          for (const t of cpTasks) {
+            const assignee = t.assigned_to ? (nameById.get(t.assigned_to) || 'desconhecido') : 'sem atribuição';
+            const tStatus = t.status === 'done' ? '✓' : '·';
+            lines.push(`    ${tStatus} ${t.title} (${assignee}${t.due_date ? `, vence ${t.due_date}` : ''})`);
+          }
+        }
+      } else {
+        lines.push(`\n**Checkpoints:** nenhum cadastrado ainda.`);
+      }
+
+      // Tasks orphan (fora de checkpoint)
+      const orphan = tasks.filter(t => !t.checkpoint_id);
+      if (orphan.length > 0) {
+        lines.push(`\n**Tarefas sem checkpoint (${orphan.length}):**`);
+        for (const t of orphan) {
+          const assignee = t.assigned_to ? (nameById.get(t.assigned_to) || 'desconhecido') : 'sem atribuição';
+          const tStatus = t.status === 'done' ? '✓' : '·';
+          lines.push(`- ${tStatus} ${t.title} (${assignee}${t.due_date ? `, vence ${t.due_date}` : ''})`);
+        }
+      }
+
+      lines.push('');
+      lines.push(`_Permissão: ${canSeeAll ? 'vê tudo do projeto' : 'só as próprias tarefas (RLS aplicado)'}_`);
+      lines.push('');
+    }
+
+    return lines.join('\n');
+  } catch (err) {
+    console.log(`[Prompt] WARN buildProjectStatusContext: ${err.message}`);
+    return '';
+  }
+}
+
 async function buildSystemPrompt(collaborator, opts = {}) {
   const lastUserMessage = opts.lastUserMessage || '';
   const ctx = await fetchCollaboratorContext(collaborator);
@@ -893,6 +1048,13 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     ? (`# 🎯 SKILL ATIVA: ${skill.name}\n\n${skill.body}` +
        (auxPriorityBody ? `\n\n---\n\n# 🧭 SKILL AUXILIAR: priorizacao-inteligente\n\n${auxPriorityBody}` : ''))
     : '';
+
+  // Sprint 22.22 — quando skill === consultar-projeto, injetar dados reais
+  // dos projetos relevantes (TOM nao tem ferramenta SQL, precisa de contexto).
+  let projectStatusContextBlock = '';
+  if (skill && skill.name === 'consultar-projeto' && collaborator) {
+    projectStatusContextBlock = await buildProjectStatusContext(collaborator, lastUserMessage);
+  }
   // Sprint 18 — integridade-agenda: injetada como skill auxiliar para todos os roles
   const integritySkillBody = loadSkill('integridade-agenda');
   const integritySkillBlock = integritySkillBody
@@ -978,6 +1140,7 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     BLOCK_IDENTITY,
     ctxBlock,
     skillBlock,
+    projectStatusContextBlock,
   ].filter(Boolean);
 
   let systemPrompt = blocks.join('\n\n---\n\n');
