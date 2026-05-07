@@ -195,6 +195,28 @@ export interface Project {
   rejection_reason: string | null;
 }
 
+// Sprint 22.22 — Time do Projeto. Membro pode ser interno (collaborator)
+// OU externo (guest, prestador de servico). RLS no banco filtra o que cada um ve.
+export type ProjectMemberRole = 'owner' | 'coordinator' | 'member';
+
+export const PROJECT_MEMBER_ROLE_LABELS: Record<ProjectMemberRole, string> = {
+  owner: 'Owner',
+  coordinator: 'Coordenador',
+  member: 'Membro',
+};
+
+export interface ProjectMember {
+  id: string;
+  project_id: string;
+  collaborator_id: string | null;
+  role_in_project: ProjectMemberRole;
+  guest_name: string | null;
+  guest_role: string | null;
+  created_at: string;
+  // Join opcional com collaborators (preenchido via select)
+  collaborator?: { id: string; full_name: string; function_title: string | null } | null;
+}
+
 export interface Checkpoint {
   id: string;
   project_id: string;

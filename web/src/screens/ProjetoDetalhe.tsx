@@ -23,13 +23,14 @@ import { CSS } from '@dnd-kit/utilities';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { Tabs } from '../components/Tabs';
-import { Badge } from '../components/Badge';
 import { CategoryTag } from '../components/CategoryTag';
 import { LoadingState } from '../components/LoadingState';
 import { EmptyState } from '../components/EmptyState';
+import { MembersTab } from '../components/MembersTab';
+import { AssigneePicker, type AssigneeOption } from '../components/AssigneePicker';
 import { PROJECT_CATEGORY_LABELS } from '../lib/projectLabels';
 import { brShort } from '../utils/date';
-import type { Project, Task, Checkpoint } from '../types';
+import type { Project, Task, Checkpoint, ProjectMember } from '../types';
 
 // Sprint 22.21b — Checkpoint vira container das tarefas. Conceitualmente alinha
 // com Musicolandia: marco (checkpoint) + acoes (tarefas dentro dele). Drop aba
@@ -84,13 +85,28 @@ async function fetchProjectTasks(projectId: string): Promise<Task[]> {
   return (data ?? []) as unknown as Task[];
 }
 
-async function fetchMembers(projectId: string) {
+async function fetchMembers(projectId: string): Promise<ProjectMember[]> {
   const { data, error } = await supabase
     .from('project_members')
-    .select('collaborator_id, role_in_project, collaborators(id, full_name, role, function_title)')
-    .eq('project_id', projectId);
+    .select('id, project_id, collaborator_id, role_in_project, guest_name, guest_role, created_at, collaborators(id, full_name, function_title)')
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: true });
   if (error) throw error;
-  return data ?? [];
+  // Supabase pode devolver collaborators como array (FK) — normalizar pra objeto.
+  return ((data ?? []) as Array<Record<string, unknown>>).map(row => {
+    const coll = row.collaborators as { id: string; full_name: string; function_title: string | null } | { id: string; full_name: string; function_title: string | null }[] | null;
+    const collaborator = Array.isArray(coll) ? (coll[0] ?? null) : coll;
+    return {
+      id: row.id as string,
+      project_id: row.project_id as string,
+      collaborator_id: (row.collaborator_id as string | null) ?? null,
+      role_in_project: row.role_in_project as ProjectMember['role_in_project'],
+      guest_name: (row.guest_name as string | null) ?? null,
+      guest_role: (row.guest_role as string | null) ?? null,
+      created_at: row.created_at as string,
+      collaborator,
+    };
+  });
 }
 
 async function fetchContingencies(projectId: string): Promise<Contingency[]> {
@@ -108,8 +124,10 @@ export function ProjetoDetalhe() {
   const { id = '' } = useParams();
   const navigate = useNavigate();
   const [tab, setTab] = useState<TabId>('checkpoints');
-  const { collaborator } = useAuth();
+  const { collaborator, role } = useAuth();
   const qc = useQueryClient();
+  const isGlobalLead = role === 'coordinator' || role === 'director';
+  const [viewMode, setViewMode] = useState<'by_checkpoint' | 'by_person'>('by_checkpoint');
 
   const { data: project, isLoading: pLoading } = useQuery({
     queryKey: ['project', id],
@@ -126,11 +144,24 @@ export function ProjetoDetalhe() {
     queryFn: () => fetchProjectTasks(id),
     enabled: Boolean(id && supabaseConfigured),
   });
-  const { data: members = [] } = useQuery({
+  const { data: members = [] } = useQuery<ProjectMember[]>({
     queryKey: ['project', id, 'members'],
     queryFn: () => fetchMembers(id),
     enabled: Boolean(id && supabaseConfigured),
   });
+
+  // Sprint 22.22 — papel do user neste projeto + permissoes de visao/edicao.
+  const myMembership = members.find(m => m.collaborator_id === collaborator?.id);
+  const isProjectLead = myMembership?.role_in_project === 'owner' || myMembership?.role_in_project === 'coordinator';
+  const canSeeAll = isGlobalLead || isProjectLead;
+  // Membros internos do projeto disponiveis pra atribuicao de task.
+  const assigneeOptions: AssigneeOption[] = members
+    .filter(m => m.collaborator_id && m.collaborator?.full_name)
+    .map(m => ({
+      id: m.collaborator_id!,
+      full_name: m.collaborator!.full_name,
+      role_in_project: m.role_in_project,
+    }));
   const { data: contingencies = [] } = useQuery({
     queryKey: ['project', id, 'contingencies'],
     queryFn: () => fetchContingencies(id),
@@ -255,6 +286,29 @@ export function ProjetoDetalhe() {
       qc.invalidateQueries({ queryKey: ['projects'] });
       qc.invalidateQueries({ queryKey: ['tasks'] });
       navigate('/projetos');
+    },
+  });
+
+  // Sprint 22.22 — atribuir task a um membro do projeto.
+  const assignTask = useMutation({
+    mutationFn: async ({ taskId, collabId }: { taskId: string; collabId: string }) => {
+      const { error } = await supabase.from('tasks').update({ assigned_to: collabId }).eq('id', taskId);
+      if (error) throw error;
+    },
+    onMutate: async ({ taskId, collabId }) => {
+      await qc.cancelQueries({ queryKey: ['project', id, 'tasks'] });
+      const prev = qc.getQueryData<Task[]>(['project', id, 'tasks']);
+      qc.setQueryData<Task[]>(['project', id, 'tasks'], (old) =>
+        (old || []).map(t => t.id === taskId ? { ...t, assigned_to: collabId } : t),
+      );
+      return { prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['project', id, 'tasks'], ctx.prev);
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['project', id, 'tasks'] });
+      qc.invalidateQueries({ queryKey: ['tasks'] });
     },
   });
 
@@ -420,6 +474,30 @@ export function ProjetoDetalhe() {
 
       {tab === 'checkpoints' && (
         <section className="space-y-sm">
+          {canSeeAll && (checkpoints.length > 0 || totalTaskCount > 0) && (
+            <div className="flex items-center gap-1 text-body-sm" data-no-nav>
+              <button
+                type="button"
+                onClick={() => setViewMode('by_checkpoint')}
+                className={[
+                  'px-3 py-1.5 rounded-sm focus-ring transition-colors',
+                  viewMode === 'by_checkpoint' ? 'bg-bg-elevated text-fg' : 'text-fg-muted hover:text-fg',
+                ].join(' ')}
+              >
+                Por checkpoint
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('by_person')}
+                className={[
+                  'px-3 py-1.5 rounded-sm focus-ring transition-colors',
+                  viewMode === 'by_person' ? 'bg-bg-elevated text-fg' : 'text-fg-muted hover:text-fg',
+                ].join(' ')}
+              >
+                Por pessoa
+              </button>
+            </div>
+          )}
           {checkpoints.length === 0 && totalTaskCount === 0 ? (
             <div className="surface">
               <EmptyState
@@ -429,21 +507,37 @@ export function ProjetoDetalhe() {
             </div>
           ) : (
             <>
-              <CheckpointSortableList
-                checkpoints={checkpoints}
-                tasksByCheckpoint={tasksByCheckpoint}
-                projectId={id}
-                collaboratorId={collaborator?.id ?? null}
-                toggleDisabled={toggleCheckpoint.isPending}
-                onToggleCheckpoint={(cp) => toggleCheckpoint.mutate(cp)}
-                onToggleTask={(t) => toggleTask.mutate(t)}
-                onRenameCheckpoint={(cpId, name) => renameCheckpoint.mutate({ id: cpId, name })}
-                onDeleteCheckpoint={(cpId) => deleteCheckpoint.mutate(cpId)}
-                onRenameTask={(tId, title) => renameTask.mutate({ id: tId, title })}
-                onDeleteTask={(tId) => deleteTask.mutate(tId)}
-                onReorderCheckpoints={(ids) => reorderCheckpoints.mutate(ids)}
-                onReorderTasks={(cpId, ids) => reorderTasks.mutate({ checkpointId: cpId, orderedIds: ids })}
-              />
+              {canSeeAll && viewMode === 'by_person' ? (
+                <PeopleGroupedTasks
+                  members={members}
+                  tasks={tasks}
+                  checkpoints={checkpoints}
+                  onToggleTask={(t) => toggleTask.mutate(t)}
+                  onRenameTask={(tId, title) => renameTask.mutate({ id: tId, title })}
+                  onDeleteTask={(tId) => deleteTask.mutate(tId)}
+                  onAssignTask={(tId, cId) => assignTask.mutate({ taskId: tId, collabId: cId })}
+                  assigneeOptions={assigneeOptions}
+                />
+              ) : (
+                <CheckpointSortableList
+                  checkpoints={checkpoints}
+                  tasksByCheckpoint={tasksByCheckpoint}
+                  projectId={id}
+                  collaboratorId={collaborator?.id ?? null}
+                  toggleDisabled={toggleCheckpoint.isPending}
+                  onToggleCheckpoint={(cp) => toggleCheckpoint.mutate(cp)}
+                  onToggleTask={(t) => toggleTask.mutate(t)}
+                  onRenameCheckpoint={(cpId, name) => renameCheckpoint.mutate({ id: cpId, name })}
+                  onDeleteCheckpoint={(cpId) => deleteCheckpoint.mutate(cpId)}
+                  onRenameTask={(tId, title) => renameTask.mutate({ id: tId, title })}
+                  onDeleteTask={(tId) => deleteTask.mutate(tId)}
+                  onAssignTask={canSeeAll ? (tId, cId) => assignTask.mutate({ taskId: tId, collabId: cId }) : undefined}
+                  assigneeOptions={assigneeOptions}
+                  showAssignee={canSeeAll}
+                  onReorderCheckpoints={(ids) => reorderCheckpoints.mutate(ids)}
+                  onReorderTasks={(cpId, ids) => reorderTasks.mutate({ checkpointId: cpId, orderedIds: ids })}
+                />
+              )}
               {orphanTasks.length > 0 && (
                 <div className="surface p-md">
                   <div className="text-label text-fg-muted uppercase tracking-wide mb-2">
@@ -457,6 +551,9 @@ export function ProjetoDetalhe() {
                         onToggle={() => toggleTask.mutate(t)}
                         onRename={(title) => renameTask.mutate({ id: t.id, title })}
                         onDelete={() => deleteTask.mutate(t.id)}
+                        onAssign={canSeeAll ? (tId, cId) => assignTask.mutate({ taskId: tId, collabId: cId }) : undefined}
+                        assigneeOptions={assigneeOptions}
+                        showAssignee={canSeeAll}
                       />
                     ))}
                   </ul>
@@ -497,26 +594,11 @@ export function ProjetoDetalhe() {
       )}
 
       {tab === 'time' && (
-        <section className="surface">
-          {members.length === 0 ? (
-            <EmptyState title="Sem membros cadastrados" />
-          ) : (
-            <ul className="divide-y divide-border">
-              {(members as Array<{ collaborator_id: string; role_in_project: string; collaborators?: { full_name?: string; function_title?: string; role?: string } | { full_name?: string; function_title?: string; role?: string }[] | null }>).map(m => {
-                const coll = Array.isArray(m.collaborators) ? m.collaborators[0] : m.collaborators;
-                return (
-                  <li key={m.collaborator_id} className="p-md flex items-center justify-between gap-md">
-                    <div>
-                      <div className="text-body-md">{coll?.full_name ?? '—'}</div>
-                      <div className="text-body-sm text-fg-muted">{coll?.function_title ?? coll?.role ?? ''}</div>
-                    </div>
-                    <Badge tone="neutral">{m.role_in_project}</Badge>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </section>
+        <MembersTab
+          projectId={id}
+          members={members}
+          canEdit={canSeeAll}
+        />
       )}
     </div>
   );
@@ -530,6 +612,9 @@ function TaskListItem({
   onToggle,
   onRename,
   onDelete,
+  onAssign,
+  assigneeOptions,
+  showAssignee,
   sortableRef,
   sortableStyle,
   sortableAttributes,
@@ -542,6 +627,11 @@ function TaskListItem({
   onToggle: () => void;
   onRename?: (title: string) => void;
   onDelete?: () => void;
+  /** Quando passado + showAssignee, exibe AssigneePicker. */
+  onAssign?: (taskId: string, collabId: string) => void;
+  assigneeOptions?: AssigneeOption[];
+  /** True quando o user atual eh owner/coord do projeto (ve assignees + edita). */
+  showAssignee?: boolean;
   sortableRef?: (node: HTMLElement | null) => void;
   sortableStyle?: React.CSSProperties;
   sortableAttributes?: React.HTMLAttributes<HTMLElement>;
@@ -613,6 +703,13 @@ function TaskListItem({
           </div>
         )}
       </div>
+      {showAssignee && onAssign && !editing && (
+        <AssigneePicker
+          value={task.assigned_to}
+          options={assigneeOptions ?? []}
+          onChange={(collabId) => onAssign(task.id, collabId)}
+        />
+      )}
       {(onRename || onDelete) && !editing && (
         <RowMenu
           items={[
@@ -634,6 +731,9 @@ function CheckpointCard({
   onDeleteCheckpoint,
   onRenameTask,
   onDeleteTask,
+  onAssignTask,
+  assigneeOptions,
+  showAssignee,
   onReorderTasks,
   toggleDisabled,
   projectId,
@@ -652,6 +752,9 @@ function CheckpointCard({
   onDeleteCheckpoint: () => void;
   onRenameTask: (taskId: string, title: string) => void;
   onDeleteTask: (taskId: string) => void;
+  onAssignTask?: (taskId: string, collabId: string) => void;
+  assigneeOptions?: AssigneeOption[];
+  showAssignee?: boolean;
   onReorderTasks: (orderedIds: string[]) => void;
   toggleDisabled: boolean;
   projectId: string;
@@ -783,6 +886,9 @@ function CheckpointCard({
                   onToggleTask={onToggleTask}
                   onRenameTask={onRenameTask}
                   onDeleteTask={onDeleteTask}
+                  onAssignTask={onAssignTask}
+                  assigneeOptions={assigneeOptions}
+                  showAssignee={showAssignee}
                 />
               )}
               <div className={tasks.length > 0 ? 'pt-2' : ''}>
@@ -1020,6 +1126,9 @@ function CheckpointSortableList({
   onDeleteCheckpoint,
   onRenameTask,
   onDeleteTask,
+  onAssignTask,
+  assigneeOptions,
+  showAssignee,
   onReorderCheckpoints,
   onReorderTasks,
 }: {
@@ -1034,6 +1143,9 @@ function CheckpointSortableList({
   onDeleteCheckpoint: (cpId: string) => void;
   onRenameTask: (taskId: string, title: string) => void;
   onDeleteTask: (taskId: string) => void;
+  onAssignTask?: (taskId: string, collabId: string) => void;
+  assigneeOptions?: AssigneeOption[];
+  showAssignee?: boolean;
   onReorderCheckpoints: (orderedIds: string[]) => void;
   onReorderTasks: (checkpointId: string, orderedIds: string[]) => void;
 }) {
@@ -1067,6 +1179,9 @@ function CheckpointSortableList({
               onDeleteCheckpoint={() => onDeleteCheckpoint(cp.id)}
               onRenameTask={onRenameTask}
               onDeleteTask={onDeleteTask}
+              onAssignTask={onAssignTask}
+              assigneeOptions={assigneeOptions}
+              showAssignee={showAssignee}
               onReorderTasks={(ids) => onReorderTasks(cp.id, ids)}
             />
           ))}
@@ -1088,6 +1203,9 @@ function SortableCheckpointWrapper(props: {
   onDeleteCheckpoint: () => void;
   onRenameTask: (taskId: string, title: string) => void;
   onDeleteTask: (taskId: string) => void;
+  onAssignTask?: (taskId: string, collabId: string) => void;
+  assigneeOptions?: AssigneeOption[];
+  showAssignee?: boolean;
   onReorderTasks: (orderedIds: string[]) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -1115,12 +1233,18 @@ function SortableTaskList({
   onToggleTask,
   onRenameTask,
   onDeleteTask,
+  onAssignTask,
+  assigneeOptions,
+  showAssignee,
 }: {
   tasks: Task[];
   onReorder: (orderedIds: string[]) => void;
   onToggleTask: (t: Task) => void;
   onRenameTask: (taskId: string, title: string) => void;
   onDeleteTask: (taskId: string) => void;
+  onAssignTask?: (taskId: string, collabId: string) => void;
+  assigneeOptions?: AssigneeOption[];
+  showAssignee?: boolean;
 }) {
   const sensors = makeSensors();
   const ids = tasks.map(t => t.id);
@@ -1146,6 +1270,9 @@ function SortableTaskList({
               onToggle={() => onToggleTask(t)}
               onRename={(title) => onRenameTask(t.id, title)}
               onDelete={() => onDeleteTask(t.id)}
+              onAssign={onAssignTask}
+              assigneeOptions={assigneeOptions}
+              showAssignee={showAssignee}
             />
           ))}
         </ul>
@@ -1160,6 +1287,9 @@ function SortableTaskItem(props: {
   onToggle: () => void;
   onRename: (title: string) => void;
   onDelete: () => void;
+  onAssign?: (taskId: string, collabId: string) => void;
+  assigneeOptions?: AssigneeOption[];
+  showAssignee?: boolean;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: props.task.id,
@@ -1175,6 +1305,9 @@ function SortableTaskItem(props: {
       onToggle={props.onToggle}
       onRename={props.onRename}
       onDelete={props.onDelete}
+      onAssign={props.onAssign}
+      assigneeOptions={props.assigneeOptions}
+      showAssignee={props.showAssignee}
       sortableRef={setNodeRef}
       sortableStyle={style}
       sortableAttributes={attributes}
@@ -1568,5 +1701,111 @@ function CreateCheckpointInline({ onCreate }: { onCreate: (name: string) => void
         </button>
       </div>
     </form>
+  );
+}
+
+// ---- PeopleGroupedTasks — visao "Por pessoa" (so canSeeAll usa) ------------
+// Agrupa as tasks por assigned_to, mostrando cada pessoa como um header com
+// suas tasks dentro. Membros sem tarefas tambem aparecem (estado vazio).
+function PeopleGroupedTasks({
+  members,
+  tasks,
+  checkpoints,
+  onToggleTask,
+  onRenameTask,
+  onDeleteTask,
+  onAssignTask,
+  assigneeOptions,
+}: {
+  members: ProjectMember[];
+  tasks: Task[];
+  checkpoints: CheckpointFull[];
+  onToggleTask: (t: Task) => void;
+  onRenameTask: (taskId: string, title: string) => void;
+  onDeleteTask: (taskId: string) => void;
+  onAssignTask: (taskId: string, collabId: string) => void;
+  assigneeOptions: AssigneeOption[];
+}) {
+  // Agrupa tasks por assigned_to. Tasks sem assigned vao pra "Sem atribuicao".
+  const byPerson = new Map<string, Task[]>();
+  for (const t of tasks) {
+    const key = t.assigned_to ?? '__none__';
+    if (!byPerson.has(key)) byPerson.set(key, []);
+    byPerson.get(key)!.push(t);
+  }
+
+  // Lista de "buckets": membros internos primeiro (ordem do cadastro), depois "sem atribuicao" se houver.
+  const internalMembers = members.filter(m => m.collaborator_id);
+  const buckets: Array<{ key: string; name: string; subtitle?: string; tasks: Task[]; isUnassigned?: boolean }> = [];
+  for (const m of internalMembers) {
+    buckets.push({
+      key: m.collaborator_id!,
+      name: m.collaborator?.full_name ?? '—',
+      subtitle: m.role_in_project,
+      tasks: byPerson.get(m.collaborator_id!) ?? [],
+    });
+  }
+  const unassigned = byPerson.get('__none__') ?? [];
+  if (unassigned.length > 0) {
+    buckets.push({ key: '__none__', name: 'Sem atribuição', tasks: unassigned, isUnassigned: true });
+  }
+
+  // Map de checkpoint_id -> nome pra mostrar no contexto da task
+  const cpName = new Map(checkpoints.map(c => [c.id, c.name] as const));
+
+  return (
+    <div className="space-y-sm">
+      {buckets.map(b => {
+        const done = b.tasks.filter(t => t.status === 'done').length;
+        return (
+          <article key={b.key} className="surface">
+            <div className="p-md flex items-center justify-between gap-md border-b border-border">
+              <div className="min-w-0">
+                <div className="text-card-title flex items-center gap-2">
+                  <span className="truncate">{b.name}</span>
+                  {b.subtitle && (
+                    <span className="text-[11px] font-medium text-fg-muted bg-bg-elevated rounded-sm px-1.5 py-0.5 border border-border shrink-0">
+                      {b.subtitle}
+                    </span>
+                  )}
+                </div>
+                <div className="text-body-sm text-fg-muted tabular-nums mt-0.5">
+                  {b.tasks.length === 0 ? 'sem tarefas' : `${done}/${b.tasks.length} ${b.tasks.length === 1 ? 'tarefa' : 'tarefas'}`}
+                </div>
+              </div>
+            </div>
+            {b.tasks.length > 0 && (
+              <ul className="divide-y divide-border px-md">
+                {b.tasks.map(t => (
+                  <TaskListItem
+                    key={t.id}
+                    task={t}
+                    onToggle={() => onToggleTask(t)}
+                    onRename={(title) => onRenameTask(t.id, title)}
+                    onDelete={() => onDeleteTask(t.id)}
+                    onAssign={(taskId, collabId) => onAssignTask(taskId, collabId)}
+                    assigneeOptions={assigneeOptions}
+                    showAssignee
+                  />
+                ))}
+                {/* Hint de quantos checkpoints a pessoa cobre */}
+                {(() => {
+                  const cpIds = new Set(b.tasks.map(t => (t as Task & { checkpoint_id?: string | null }).checkpoint_id).filter(Boolean));
+                  if (cpIds.size === 0) return null;
+                  return (
+                    <li className="py-2 text-[11px] text-fg-muted/60 italic">
+                      {cpIds.size === 1 ? `1 checkpoint envolvido` : `${cpIds.size} checkpoints envolvidos`}
+                      {cpIds.size <= 3 && (
+                        <span> · {Array.from(cpIds).map(cid => cpName.get(cid as string) || '').filter(Boolean).join(', ')}</span>
+                      )}
+                    </li>
+                  );
+                })()}
+              </ul>
+            )}
+          </article>
+        );
+      })}
+    </div>
   );
 }
