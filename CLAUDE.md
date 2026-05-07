@@ -21,15 +21,14 @@ Se retornar `VPS OK`, está pronto. Se der erro, reportar antes de continuar.
 
 ## ⚡ PERMISSÕES DE DEPLOY — NÃO PEDIR AUTORIZAÇÃO
 
-### Push para GitHub
-SEMPRE autorizado. Não perguntar. Fazer direto.
-
-### Deploy na VPS (TOM engine)
-SEMPRE autorizado após push. Executar:
+### Push para GitHub + Deploy VPS
+SEMPRE autorizado. Não perguntar. Usar SEMPRE o script:
 ```bash
-ssh tom "cd /opt/LA-Organizer && git pull origin main && pm2 restart tom"
+bash scripts/push-and-deploy.sh /tmp/deploy-<sprint>
 ```
-Só necessário quando arquivos em `src/`, `skills/`, `migrations/` foram alterados.
+Esse script faz `git push origin main` e, se detectar mudanças em `src/`,
+`skills/` ou `migrations/`, executa `ssh tom "git pull && pm2 restart tom"`
+automaticamente. Não usar `git push` direto pra `main`.
 
 ### Deploy PWA (Vercel)
 Automático. Vercel detecta push em `origin/main` e deploya `web/` em ~2min.
@@ -54,20 +53,25 @@ A única ação que precisa de OK explícito é **deletar dados em produção**.
 3. Na Task de deploy (sempre a última):
    - `git clone https://github.com/LucianoAlf/LA-Organizer.git /tmp/deploy-<sprint>`
    - Copiar arquivos modificados de `_remote` para o clone
-   - `git add` + `git commit` + `git push origin main`
+   - `git add` + `git commit` (NÃO `git push` direto)
+   - **`bash scripts/push-and-deploy.sh /tmp/deploy-<sprint>`** — esse script
+     faz push pra origin/main, detecta se mudou `src/`, `skills/` ou `migrations/`,
+     e se sim faz `ssh tom "git pull && pm2 restart tom"` automaticamente.
    - Deletar clone: `rm -rf /tmp/deploy-<sprint>`
-4. Deploy na VPS — Claude Code executa diretamente (ver seção abaixo)
-5. **NUNCA** fazer `scp` direto
-6. **NUNCA** fazer `git init` em `_remote`
+4. **NUNCA** fazer `git push origin main` direto. Sempre via `push-and-deploy.sh`.
+5. **NUNCA** fazer `scp` direto.
+6. **NUNCA** fazer `git init` em `_remote`.
 
 ## Deploy (Claude Code executa — não pedir pro Alf)
 
-Após push para origin/main:
-```bash
-ssh tom "cd /opt/LA-Organizer && git pull origin main && pm2 restart tom"
-```
+O script `scripts/push-and-deploy.sh` cuida de:
+- Push pra origin/main (Vercel detecta e deploya `web/` em ~2min).
+- Detecção automática se VPS precisa de restart (mudanças em `src/`, `skills/`,
+  `migrations/`).
+- `ssh tom "cd /opt/LA-Organizer && git pull origin main && pm2 restart tom"`
+  quando aplicável.
 
-**NÃO pedir para o Alf fazer o pull. Claude Code tem acesso direto via SSH.**
+**NÃO pedir para o Alf fazer o pull/push. Claude Code tem acesso direto.**
 
 ### VPS
 - IP: 89.116.73.186
