@@ -1,7 +1,7 @@
 import { useState, FormEvent, KeyboardEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Rocket, Check, AlertTriangle, Plus } from 'lucide-react';
+import { ArrowLeft, Rocket, Check, AlertTriangle, Plus, ChevronDown, ChevronRight } from 'lucide-react';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { Tabs } from '../components/Tabs';
@@ -13,14 +13,11 @@ import { PROJECT_CATEGORY_LABELS } from '../lib/projectLabels';
 import { brShort } from '../utils/date';
 import type { Project, Task, Checkpoint } from '../types';
 
-// Sprint 22.21 — refactor de Projetos.
-// - Drop aba "Resumo": Próximo passo vira card fixo abaixo do header.
-// - 4 abas: Checkpoints / Tarefas / Contingências / Time (cabe em 1 linha).
-// - Aba Tarefas agrupada por checkpoint (com `<details>`), + inline pra criar
-//   tarefa direto sem precisar do TOM. checkpoint_id já existe em tasks.
-// - CRUD completo (tap-to-edit, swipe, delete) vem na próxima fatia (22.21b).
+// Sprint 22.21b — Checkpoint vira container das tarefas. Conceitualmente alinha
+// com Musicolandia: marco (checkpoint) + acoes (tarefas dentro dele). Drop aba
+// "Tarefas" — fica 3 abas: Checkpoints / Contingencias / Time.
 
-type TabId = 'checkpoints' | 'tarefas' | 'contingencias' | 'time';
+type TabId = 'checkpoints' | 'contingencias' | 'time';
 
 interface ProjectFull extends Project {
   event_date?: string | null;
@@ -181,6 +178,7 @@ export function ProjetoDetalhe() {
     tasksByCheckpoint.get(k)!.push(t);
   }
   const orphanTasks = tasksByCheckpoint.get(null) ?? [];
+  const totalTaskCount = tasks.length;
 
   return (
     <div className="space-y-md">
@@ -213,7 +211,7 @@ export function ProjetoDetalhe() {
         </div>
       </header>
 
-      {/* Próximo passo — sempre visível, independente da aba (era a aba Resumo). */}
+      {/* Próximo passo — sempre visível, independente da aba. */}
       {next && (
         <div className="surface p-md">
           <div className="text-label text-fg-muted uppercase tracking-wide">Próximo passo</div>
@@ -237,7 +235,6 @@ export function ProjetoDetalhe() {
       <Tabs<TabId>
         tabs={[
           { id: 'checkpoints', label: 'Checkpoints', badge: checkpoints.length },
-          { id: 'tarefas', label: 'Tarefas', badge: tasks.length },
           { id: 'contingencias', label: 'Contingências', badge: contingencies.length },
           { id: 'time', label: 'Time', badge: members.length },
         ]}
@@ -246,86 +243,32 @@ export function ProjetoDetalhe() {
       />
 
       {tab === 'checkpoints' && (
-        <section className="surface">
-          {checkpoints.length === 0 ? (
-            <EmptyState title="Sem checkpoints ainda" description="Marcos do projeto. Peça pro TOM estruturar pelo WhatsApp ou crie manualmente quando o CRUD inline subir." />
-          ) : (
-            <ul className="divide-y divide-border">
-              {checkpoints.map(c => {
-                const isDone = c.status === 'done';
-                const cpTaskCount = (tasksByCheckpoint.get(c.id) ?? []).length;
-                return (
-                  <li key={c.id}>
-                    <button
-                      type="button"
-                      onClick={() => toggleCheckpoint.mutate(c)}
-                      disabled={toggleCheckpoint.isPending}
-                      className="w-full p-md flex items-start gap-md hover:bg-bg-elevated focus-ring text-left"
-                      aria-label={isDone ? 'Reabrir checkpoint' : 'Marcar como feito'}
-                    >
-                      <span
-                        className={[
-                          'mt-0.5 h-6 w-6 shrink-0 rounded-md border-2 grid place-items-center transition-colors',
-                          isDone
-                            ? 'bg-tom border-tom text-white'
-                            : 'border-fg-muted text-transparent',
-                        ].join(' ')}
-                        aria-hidden
-                      >
-                        <Check size={14} strokeWidth={3} />
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <div className={['text-body-md', isDone ? 'line-through text-fg-muted' : ''].join(' ')}>
-                          {c.name}
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2 mt-0.5 text-body-sm text-fg-muted">
-                          {c.due_date && <span className="tabular-nums">{brShort(c.due_date)}</span>}
-                          {cpTaskCount > 0 && (
-                            <span>· <span className="tabular-nums">{cpTaskCount}</span> {cpTaskCount === 1 ? 'tarefa' : 'tarefas'}</span>
-                          )}
-                        </div>
-                        {c.rationale && !isDone && (
-                          <div className="mt-2 bg-tom/5 border-l-2 border-tom rounded-sm p-md text-body-sm text-fg-secondary">
-                            <div className="text-label text-tom mb-1">💡 POR QUE ESSE CHECKPOINT</div>
-                            <p className="whitespace-pre-line">{c.rationale}</p>
-                          </div>
-                        )}
-                      </div>
-                      {c.status === 'in_progress' && <Badge tone="warning">em curso</Badge>}
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </section>
-      )}
-
-      {tab === 'tarefas' && (
         <section className="space-y-sm">
-          {checkpoints.length === 0 && tasks.length === 0 ? (
+          {checkpoints.length === 0 && totalTaskCount === 0 ? (
             <div className="surface">
-              <EmptyState title="Sem tarefas vinculadas" description="Crie checkpoints primeiro pra agrupar as tarefas." />
+              <EmptyState
+                title="Sem checkpoints ainda"
+                description="Marcos do projeto. Peça pro TOM estruturar pelo WhatsApp ou crie manualmente quando o CRUD inline subir."
+              />
             </div>
           ) : (
             <>
-              {checkpoints.map(cp => {
-                const cpTasks = tasksByCheckpoint.get(cp.id) ?? [];
-                return (
-                  <CheckpointTasksGroup
-                    key={cp.id}
-                    checkpoint={cp}
-                    tasks={cpTasks}
-                    onToggleTask={(t) => toggleTask.mutate(t)}
-                    projectId={id}
-                    collaboratorId={collaborator?.id ?? null}
-                  />
-                );
-              })}
+              {checkpoints.map(cp => (
+                <CheckpointCard
+                  key={cp.id}
+                  checkpoint={cp}
+                  tasks={tasksByCheckpoint.get(cp.id) ?? []}
+                  onToggleCheckpoint={() => toggleCheckpoint.mutate(cp)}
+                  onToggleTask={(t) => toggleTask.mutate(t)}
+                  toggleDisabled={toggleCheckpoint.isPending}
+                  projectId={id}
+                  collaboratorId={collaborator?.id ?? null}
+                />
+              ))}
               {orphanTasks.length > 0 && (
                 <div className="surface p-md">
                   <div className="text-label text-fg-muted uppercase tracking-wide mb-2">
-                    Sem checkpoint
+                    Tarefas sem checkpoint
                   </div>
                   <ul className="divide-y divide-border">
                     {orphanTasks.map(t => (
@@ -426,44 +369,80 @@ function TaskListItem({ task, onToggle }: { task: Task; onToggle: () => void }) 
   );
 }
 
-function CheckpointTasksGroup({
+function CheckpointCard({
   checkpoint,
   tasks,
+  onToggleCheckpoint,
   onToggleTask,
+  toggleDisabled,
   projectId,
   collaboratorId,
 }: {
   checkpoint: CheckpointFull;
   tasks: Task[];
+  onToggleCheckpoint: () => void;
   onToggleTask: (t: Task) => void;
+  toggleDisabled: boolean;
   projectId: string;
   collaboratorId: string | null;
 }) {
-  const [expanded, setExpanded] = useState(checkpoint.status !== 'done');
   const isDone = checkpoint.status === 'done';
+  // Default: aberto se ainda nao concluido.
+  const [expanded, setExpanded] = useState(!isDone);
   const total = tasks.length;
   const done = tasks.filter(t => t.status === 'done').length;
+
   return (
-    <div className="surface">
-      <button
-        type="button"
-        onClick={() => setExpanded(v => !v)}
-        className="w-full p-md flex items-center justify-between gap-md hover:bg-bg-elevated focus-ring text-left"
-        aria-expanded={expanded}
-      >
-        <div className="min-w-0 flex-1">
-          <div className={['text-body-md font-semibold', isDone ? 'line-through text-fg-muted' : ''].join(' ')}>
-            {checkpoint.name}
+    <article className="surface">
+      <div className="p-md flex items-start gap-md">
+        {/* Checkbox: toggle done. NAO faz parte do botao expand pra nao colidir o click. */}
+        <button
+          type="button"
+          onClick={onToggleCheckpoint}
+          disabled={toggleDisabled}
+          aria-label={isDone ? 'Reabrir checkpoint' : 'Marcar como feito'}
+          className={[
+            'mt-0.5 h-6 w-6 shrink-0 rounded-md border-2 grid place-items-center transition-colors focus-ring',
+            isDone
+              ? 'bg-tom border-tom text-white hover:bg-tom-shade'
+              : 'border-fg-muted text-transparent hover:border-tom',
+          ].join(' ')}
+        >
+          {isDone && <Check size={14} strokeWidth={3} />}
+        </button>
+
+        {/* Resto: clica pra expandir/recolher. */}
+        <button
+          type="button"
+          onClick={() => setExpanded(v => !v)}
+          aria-expanded={expanded}
+          className="min-w-0 flex-1 text-left focus-ring rounded-sm"
+        >
+          <div className="flex items-start justify-between gap-md">
+            <div className="min-w-0 flex-1">
+              <div className={['text-body-md font-semibold', isDone ? 'line-through text-fg-muted' : ''].join(' ')}>
+                {checkpoint.name}
+              </div>
+              <div className="flex flex-wrap items-center gap-2 mt-0.5 text-body-sm text-fg-muted tabular-nums">
+                {checkpoint.due_date && <span>{brShort(checkpoint.due_date)}</span>}
+                {total > 0 && <span>· {done}/{total} {total === 1 ? 'tarefa' : 'tarefas'}</span>}
+              </div>
+            </div>
+            <span className="text-fg-muted shrink-0 mt-1" aria-hidden>
+              {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+            </span>
           </div>
-          <div className="text-body-sm text-fg-muted tabular-nums mt-0.5">
-            {total === 0 ? 'sem tarefas' : `${done}/${total}`}
-            {checkpoint.due_date && <> · {brShort(checkpoint.due_date)}</>}
-          </div>
-        </div>
-        <span className="text-fg-muted text-body-sm shrink-0" aria-hidden>{expanded ? '▾' : '▸'}</span>
-      </button>
+        </button>
+      </div>
+
       {expanded && (
-        <div className="px-md pb-md">
+        <div className="px-md pb-md space-y-2">
+          {checkpoint.rationale && (
+            <div className="bg-tom/5 border-l-2 border-tom rounded-sm p-md text-body-sm text-fg-secondary">
+              <div className="text-label text-tom mb-1">💡 POR QUE ESSE CHECKPOINT</div>
+              <p className="whitespace-pre-line">{checkpoint.rationale}</p>
+            </div>
+          )}
           {tasks.length > 0 && (
             <ul className="divide-y divide-border">
               {tasks.map(t => (
@@ -478,7 +457,7 @@ function CheckpointTasksGroup({
           />
         </div>
       )}
-    </div>
+    </article>
   );
 }
 
@@ -538,7 +517,7 @@ function CreateTaskInline({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="mt-2 inline-flex items-center gap-2 text-body-sm text-fg-muted hover:text-tom focus-ring rounded-sm px-1 py-0.5"
+        className="inline-flex items-center gap-2 text-body-sm text-fg-muted hover:text-tom focus-ring rounded-sm px-1 py-0.5"
       >
         <Plus size={14} /> Tarefa
       </button>
@@ -546,7 +525,7 @@ function CreateTaskInline({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="mt-2 flex items-center gap-2">
+    <form onSubmit={handleSubmit} className="flex items-center gap-2">
       <input
         type="text"
         autoFocus
