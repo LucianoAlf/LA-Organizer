@@ -531,7 +531,7 @@ function CreateTaskInline({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex items-center gap-2">
+    <form onSubmit={handleSubmit} className="flex flex-wrap items-center gap-2">
       <input
         type="text"
         autoFocus
@@ -540,22 +540,24 @@ function CreateTaskInline({
         onChange={e => setTitle(e.target.value)}
         onKeyDown={handleKeyDown}
         placeholder="O que precisa fazer..."
-        className="flex-1 h-9 px-3 rounded-md bg-bg-elevated border border-border text-body-md text-fg placeholder:text-fg-muted focus-ring"
+        className="flex-1 min-w-0 basis-full h-9 px-3 rounded-md bg-bg-elevated border border-border text-body-md text-fg placeholder:text-fg-muted focus-ring"
       />
-      <button
-        type="submit"
-        disabled={!title.trim() || createTask.isPending}
-        className="h-9 px-3 rounded-md bg-tom text-white text-body-sm font-semibold disabled:opacity-50 focus-ring"
-      >
-        Salvar
-      </button>
-      <button
-        type="button"
-        onClick={() => { setOpen(false); setTitle(''); }}
-        className="h-9 px-2 rounded-md text-body-sm text-fg-muted hover:text-fg focus-ring"
-      >
-        Cancelar
-      </button>
+      <div className="flex items-center gap-2 ml-auto">
+        <button
+          type="button"
+          onClick={() => { setOpen(false); setTitle(''); }}
+          className="h-9 px-3 rounded-md text-body-sm text-fg-muted hover:text-fg focus-ring"
+        >
+          Cancelar
+        </button>
+        <button
+          type="submit"
+          disabled={!title.trim() || createTask.isPending}
+          className="h-9 px-3 rounded-md bg-tom text-white text-body-sm font-semibold disabled:opacity-50 focus-ring"
+        >
+          Salvar
+        </button>
+      </div>
     </form>
   );
 }
