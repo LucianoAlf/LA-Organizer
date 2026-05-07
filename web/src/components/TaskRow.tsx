@@ -133,10 +133,10 @@ export function TaskRow({ task, onToggle, readOnly }: Props) {
           onClick={() => onToggle?.(task)}
           aria-label={isDone ? 'Reabrir tarefa' : 'Concluir tarefa'}
           className={[
-            'mt-0.5 h-6 w-6 shrink-0 rounded-md border grid place-items-center transition-colors focus-ring',
+            'mt-0.5 h-6 w-6 shrink-0 rounded-full border-2 grid place-items-center transition-colors focus-ring',
             isDone
-              ? 'bg-success border-success text-white'
-              : 'border-border hover:border-tom text-transparent hover:text-tom',
+              ? 'bg-tom border-tom text-white'
+              : 'border-fg-muted hover:border-tom text-transparent hover:text-tom',
           ].join(' ')}
         >
           <Check size={14} strokeWidth={3} />

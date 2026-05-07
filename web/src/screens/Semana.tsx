@@ -8,7 +8,6 @@ import { fetchEventsForRange, formatEventTimeRange, eventLocalYmd } from '../lib
 import { LoadingState } from '../components/LoadingState';
 import { EmptyState } from '../components/EmptyState';
 import { Fab } from '../components/Fab';
-import { AgendaTabs } from '../components/AgendaTabs';
 import { QuickCreateSheet } from '../components/QuickCreateSheet';
 import { RescheduleSheet } from '../components/RescheduleSheet';
 import { EditEventSheet } from '../components/EditEventSheet';
@@ -116,8 +115,6 @@ export function Semana() {
 
   return (
     <div className="space-y-md">
-      <AgendaTabs />
-
       <header className="space-y-2">
         <div className="flex items-baseline justify-between gap-md">
           <div>
