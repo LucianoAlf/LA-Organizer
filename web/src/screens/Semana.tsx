@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { CalendarDays } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase, supabaseConfigured } from '../lib/supabase';
@@ -71,8 +71,18 @@ function dayCounts(tasks: WeekTask[], events: CalendarEvent[], today: string) {
   return { total, done, overdue };
 }
 
+async function toggleTaskStatus(task: WeekTask): Promise<void> {
+  const next = task.status === 'done' ? 'pending' : 'done';
+  const { error } = await supabase
+    .from('tasks')
+    .update({ status: next, completed_at: next === 'done' ? new Date().toISOString() : null })
+    .eq('id', task.id);
+  if (error) throw error;
+}
+
 export function Semana() {
   const { collaborator } = useAuth();
+  const qc = useQueryClient();
   const today = todaySP();
   const days = useMemo(() => weekDaysMonSat(today), [today]);
   const start = days[0];
@@ -118,6 +128,13 @@ export function Semana() {
   const doneWeek = tasks.filter(t => t.status === 'done').length + workEvents.filter(e => e.status === 'done').length;
   const pct = totalWeek ? Math.round((doneWeek / totalWeek) * 100) : 0;
   const isLoading = tLoading || eLoading;
+
+  const toggleTask = useMutation({
+    mutationFn: toggleTaskStatus,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tasks'] });
+    },
+  });
 
   return (
     <div className="space-y-md">
@@ -226,48 +243,60 @@ export function Semana() {
                     {dayTasks.length > 0 && (
                       <ul className="space-y-2">
                         {dayTasks.map(t => {
-                          const tappable = t.status !== 'done' && t.status !== 'cancelled';
                           const isDone = t.status === 'done';
-                          const inner = (
-                            <div className="flex items-start gap-2 w-full">
-                              <span aria-hidden className={[
-                                'mt-1 inline-block h-4 w-4 shrink-0 rounded-full grid place-items-center transition-colors',
-                                isDone ? 'bg-tom text-white' : t.status === 'overdue' ? 'border-2 border-danger' : 'border-2 border-fg-muted',
-                              ].join(' ')}>
+                          const isCancelled = t.status === 'cancelled';
+                          const isOverdue = t.status === 'overdue' || (!isDone && !isCancelled && t.due_date && t.due_date < today);
+                          const qk = t.eisenhower_quadrant ? String(t.eisenhower_quadrant) : null;
+                          const qcCls = qk && QUADRANT_DOT[qk] ? QUADRANT_DOT[qk] : null;
+                          return (
+                            <li key={t.id} className="flex items-start gap-2 -mx-1 px-1 py-0.5">
+                              {/* Círculo: toggle done. Sempre clicável (exceto cancelled). */}
+                              <button
+                                type="button"
+                                onClick={() => !isCancelled && toggleTask.mutate(t)}
+                                disabled={isCancelled || toggleTask.isPending}
+                                aria-label={isDone ? 'Reabrir tarefa' : 'Concluir tarefa'}
+                                title={isDone ? 'Reabrir' : 'Concluir'}
+                                className={[
+                                  'mt-1 h-4 w-4 shrink-0 rounded-full grid place-items-center transition-colors focus-ring',
+                                  isDone
+                                    ? 'bg-tom text-white hover:bg-tom-shade'
+                                    : isOverdue
+                                      ? 'border-2 border-danger hover:bg-tom/10'
+                                      : 'border-2 border-fg-muted hover:border-tom hover:bg-tom/10',
+                                ].join(' ')}
+                              >
                                 {isDone && (
                                   <svg viewBox="0 0 12 12" className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M2 6 L5 9 L10 3" /></svg>
                                 )}
-                              </span>
-                              <div className="min-w-0 flex-1">
-                                <div className={['text-body-sm', isDone ? 'line-through text-fg-muted' : 'text-fg'].join(' ')}>
-                                  {(() => {
-                                    const qk = t.eisenhower_quadrant ? String(t.eisenhower_quadrant) : null;
-                                    const qc = qk && QUADRANT_DOT[qk] ? QUADRANT_DOT[qk] : null;
-                                    return qc && !isDone ? (
-                                      <span aria-hidden title={`Q${qk}`} className={['inline-block h-1.5 w-1.5 rounded-full mr-1.5 align-middle', qc].join(' ')} />
-                                    ) : null;
-                                  })()}
-                                  {t.title}
-                                </div>
-                                <div className="mt-1">
-                                  <CategoryTag task={t} />
-                                </div>
-                              </div>
-                            </div>
-                          );
-                          return (
-                            <li key={t.id}>
-                              {tappable ? (
+                              </button>
+                              {/* Corpo: clica pra reagendar. */}
+                              {!isDone && !isCancelled ? (
                                 <button
                                   type="button"
                                   onClick={() => setRescheduleTask(t)}
-                                  className="w-full text-left hover:bg-bg-elevated rounded-sm -mx-1 px-1 py-0.5 focus-ring"
+                                  className="flex-1 min-w-0 text-left rounded-sm hover:bg-bg-elevated px-1 -mx-1 focus-ring"
                                   title="Reagendar"
                                 >
-                                  {inner}
+                                  <div className="text-body-sm text-fg">
+                                    {qcCls && (
+                                      <span aria-hidden title={`Q${qk}`} className={['inline-block h-1.5 w-1.5 rounded-full mr-1.5 align-middle', qcCls].join(' ')} />
+                                    )}
+                                    {t.title}
+                                  </div>
+                                  <div className="mt-1">
+                                    <CategoryTag task={t} />
+                                  </div>
                                 </button>
                               ) : (
-                                <div className="-mx-1 px-1 py-0.5">{inner}</div>
+                                <div className="flex-1 min-w-0">
+                                  <div className={['text-body-sm', isDone ? 'line-through text-fg-muted' : 'text-fg'].join(' ')}>
+                                    {t.title}
+                                  </div>
+                                  <div className="mt-1">
+                                    <CategoryTag task={t} />
+                                  </div>
+                                </div>
                               )}
                             </li>
                           );
