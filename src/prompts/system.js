@@ -421,21 +421,18 @@ function pickSkill(collab, lastUserMessage, recentHistory) {
     }
   }
 
-  // Priority 2.5 (Sprint 22.22): consultar status de projeto.
-  // Triggers cobrem: status, time, atribuicoes, progresso, atrasos, "quem".
-  // RLS no banco filtra o que cada papel pode ver — skill orienta o tom da resposta.
-  if (lastUserMessage) {
-    const lm = lastUserMessage.toLowerCase();
-    const askStatus = /\b(como\s+(?:t[áa]|est[áa]|anda|vai)|status\s+(?:do|da)|o\s+que\s+falta|minha\s+parte|t[ôo]\s+envolvid|em\s+quais\s+projetos|envolvid[oa]s|quem\s+(?:s[ãa]o|[ée]|t[áa]|est[áa]|entra|fica|cuida|toca|coordena|trabalha|faz|fazendo)|time\s+(?:do|da|de)|equipe\s+(?:do|da|de)|membros\s+(?:do|da|de)|atribuíd|atrasad|prazo|tarefas\s+(?:do|da)|progresso\s+(?:do|da))\b/.test(lm);
-    const mentionsProject = /\bprojeto\b|\bfestival\b|\bsemana\s+de\b|\bworkshop\b|\bsarau\b|\brecital\b|\bshow\b|\bcapta[çc][ãa]o\b|\bevento\b/i.test(lm);
-    if (askStatus && mentionsProject) {
-      return { name: 'consultar-projeto', body: loadSkill('consultar-projeto') };
-    }
-  }
-
   // Priority 3: explicit project creation intent — exige a palavra "projeto".
+  // (Vai antes de consultar-projeto pra "criar projeto novo" nao virar consulta.)
   if (/\b(criar|novo|cadastrar)\s+(?:um\s+|o\s+|outro\s+)?projeto/i.test(lastUserMessage || '')) {
     return { name: 'cadastro-projeto-5w2h', body: loadSkill('cadastro-projeto-5w2h') };
+  }
+
+  // Sprint 22.22 — Priority 2.5: consulta de projeto.
+  // Filosofia: regex so detecta MENCAO de projeto. NAO tenta classificar intent
+  // ("como ta?" / "quem sao?" / "qual o prazo?"). O LLM interpreta com os dados
+  // injetados no contexto. Mantem isto largo + simples.
+  if (lastUserMessage && /\bprojeto\b|\bfestival\b|\bsemana\s+de\b|\bworkshop\b|\bsarau\b|\brecital\b|\bshow\b|\bcapta[çc][ãa]o\b/i.test(lastUserMessage)) {
+    return { name: 'consultar-projeto', body: loadSkill('consultar-projeto') };
   }
 
   // Priority 4: ritual context — engine sets _ritualType for cron-fired briefings/closings.
