@@ -31,6 +31,7 @@ import { AssigneePicker, type AssigneeOption } from '../components/AssigneePicke
 import { PROJECT_CATEGORY_LABELS } from '../lib/projectLabels';
 import { brShort } from '../utils/date';
 import { celebrateTask, celebrateCheckpoint, celebrateProject } from '../utils/celebrate';
+import { notifyCelebration } from '../lib/tomEngine';
 import type { Project, Task, Checkpoint, ProjectMember } from '../types';
 
 // Sprint 22.21b — Checkpoint vira container das tarefas. Conceitualmente alinha
@@ -300,9 +301,11 @@ export function ProjetoDetalhe() {
     toggleCheckpoint.mutate(cp);
     if (!wasDone) {
       celebrateCheckpoint();
+      notifyCelebration('checkpoint', id, cp.id);
       const allOthersDone = checkpoints.filter(c => c.id !== cp.id).every(c => c.status === 'done');
       if (allOthersDone && checkpoints.length > 0) {
         setTimeout(() => celebrateProject(), 900);
+        notifyCelebration('project', id);
       }
     }
   }
@@ -321,6 +324,7 @@ export function ProjetoDetalhe() {
         const allOthersDone = cpTasks.filter(x => x.id !== t.id).every(x => x.status === 'done');
         if (allOthersDone && cpTasks.length > 1) {
           setTimeout(() => celebrateCheckpoint(), 600);
+          notifyCelebration('checkpoint', id, cpId);
         }
       }
     }

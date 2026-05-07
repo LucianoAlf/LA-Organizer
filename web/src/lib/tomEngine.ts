@@ -56,3 +56,27 @@ export async function notifyProjectCreated(
     return { ok: false, reason: msg.includes('aborted') ? 'timeout' : msg };
   }
 }
+
+// Sprint 22.22p — notifica TOM pra mandar mensagem de celebracao no WhatsApp
+// (checkpoint fechado: owner + coord; projeto 100%: time todo).
+export async function notifyCelebration(
+  type: 'checkpoint' | 'project',
+  projectId: string,
+  checkpointId?: string,
+): Promise<void> {
+  if (!INTERNAL_SECRET) return;
+  try {
+    await fetch(`${TOM_BASE}/internal/celebration`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-internal-secret': INTERNAL_SECRET,
+      },
+      body: JSON.stringify({ type, project_id: projectId, checkpoint_id: checkpointId ?? null }),
+    });
+  } catch (e) {
+    // Fire-and-forget. Falha silenciosa pra nao bloquear UX da festa.
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn(`[tomEngine] celebration notify falhou: ${msg}`);
+  }
+}

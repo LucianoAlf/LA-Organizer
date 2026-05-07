@@ -419,6 +419,93 @@ router.post('/internal/project-created', requireInternalSecret, async (req, res)
   return res.json({ status: 'ok', project_id: projectId });
 });
 
+// Sprint 22.22p — celebracao no TOM (WhatsApp) quando checkpoint ou projeto
+// fecha. Body: { type: 'checkpoint'|'project', project_id, checkpoint_id?, actor_id }
+// Idempotente via marker_logs (raw_excerpt = type:project:checkpoint).
+router.post('/internal/celebration', requireInternalSecret, async (req, res) => {
+  const type = String(req.body?.type || '').trim();
+  const projectId = String(req.body?.project_id || '').trim();
+  const checkpointId = req.body?.checkpoint_id ? String(req.body.checkpoint_id).trim() : null;
+  if (!['checkpoint', 'project'].includes(type)) return res.status(400).json({ error: 'invalid_type' });
+  if (!projectId) return res.status(400).json({ error: 'missing_project_id' });
+
+  // Idempotencia: nao manda 2x pra mesma celebracao
+  const dedupeKey = `${type}:${projectId}:${checkpointId || 'none'}`;
+  const { data: prior } = await supabase
+    .from('marker_logs')
+    .select('id')
+    .eq('marker_type', 'CELEBRATION')
+    .eq('raw_excerpt', dedupeKey)
+    .limit(1);
+  if (prior && prior.length > 0) {
+    return res.json({ status: 'already_celebrated', key: dedupeKey });
+  }
+
+  // Carrega projeto
+  const { data: project } = await supabase
+    .from('projects')
+    .select('id, name, progress_percent')
+    .eq('id', projectId)
+    .single();
+  if (!project) return res.status(404).json({ error: 'project_not_found' });
+
+  // Carrega members internos com phone
+  const { data: members } = await supabase
+    .from('project_members')
+    .select('collaborator_id, role_in_project, function_in_project, collaborators(id, full_name, phone, is_active)')
+    .eq('project_id', projectId);
+  const internal = (members || [])
+    .map(m => {
+      const c = Array.isArray(m.collaborators) ? m.collaborators[0] : m.collaborators;
+      return c && c.phone && c.is_active
+        ? { id: c.id, name: c.full_name, phone: c.phone, role: m.role_in_project, fn: m.function_in_project }
+        : null;
+    })
+    .filter(Boolean);
+
+  let recipients = [];
+  let body = '';
+
+  if (type === 'checkpoint' && checkpointId) {
+    const { data: cp } = await supabase
+      .from('project_checkpoints')
+      .select('id, name')
+      .eq('id', checkpointId)
+      .single();
+    if (!cp) return res.status(404).json({ error: 'checkpoint_not_found' });
+    // Owner + coordinators recebem
+    recipients = internal.filter(m => m.role === 'owner' || m.role === 'coordinator');
+    body = `🎉 *Checkpoint fechado!*\n\n*${cp.name}* — ${project.name}\n\nTime bateu. Progresso geral: *${project.progress_percent || 0}%*.`;
+  } else if (type === 'project') {
+    // Todo mundo
+    recipients = internal;
+    const namesList = internal.map(m => `• ${m.name}${m.fn ? ` (${m.fn})` : ''}`).join('\n');
+    body = `🏆 *Projeto fechado, 100%!*\n\n*${project.name}*\n\nParabéns ao time:\n${namesList}\n\nMissão cumprida.`;
+  }
+
+  if (recipients.length === 0) {
+    await supabase.from('marker_logs').insert({
+      marker_type: 'CELEBRATION', result: 'skipped', reason: 'no_recipients', raw_excerpt: dedupeKey,
+    });
+    return res.json({ status: 'no_recipients', key: dedupeKey });
+  }
+
+  // Dispara em paralelo, nao espera (fire-and-forget)
+  for (const r of recipients) {
+    whatsapp.sendMessage(r.phone, body).catch(e =>
+      console.error(`[InternalAPI] celebration WA send err pra ${r.id}: ${e.message}`),
+    );
+  }
+
+  await supabase.from('marker_logs').insert({
+    marker_type: 'CELEBRATION', result: 'executed',
+    reason: `${type} sent to ${recipients.length}`, raw_excerpt: dedupeKey,
+  });
+
+  console.log(`[InternalAPI] celebration ${type} for ${projectId} → ${recipients.length} msgs`);
+  return res.json({ status: 'ok', sent: recipients.length, key: dedupeKey });
+});
+
 // Sprint 10: telemetria operacional do TOM. Auth via x-internal-secret (mesma
 // porta /internal/, sem novo secret). Sem dashboard nesta sprint — só JSON.
 router.get('/internal/metrics', requireInternalSecret, async (req, res) => {
