@@ -531,37 +531,45 @@ export function ProjetoDetalhe() {
         </div>
       )}
 
-      <div className="flex items-center gap-2">
-        <div className="min-w-0 flex-1">
-          <Tabs<TabId>
-            tabs={[
-              { id: 'checkpoints', label: 'Checkpoints', badge: checkpoints.length },
-              { id: 'contingencias', label: 'Contingências', badge: contingencies.length },
-              { id: 'time', label: 'Time', badge: members.length },
-            ]}
-            active={tab}
-            onChange={setTab}
-          />
-        </div>
-        {project?.category === 'event' && (
-          <button
-            type="button"
-            onClick={() => setTab('dia_d')}
-            aria-label="Dia D — roteiro do evento"
-            className={[
-              'shrink-0 inline-flex items-center gap-1.5 h-9 px-3 rounded-full border transition-all focus-ring',
-              'text-[12px] font-bold uppercase tracking-wider',
-              tab === 'dia_d'
-                ? 'bg-amber-400 text-bg-base border-amber-400 shadow-[0_0_0_3px_rgba(251,191,36,0.25)]'
-                : 'bg-amber-400/10 text-amber-300 border-amber-400/40 hover:bg-amber-400/20 hover:border-amber-400/60',
-            ].join(' ')}
-            title="Roteiro do dia do evento"
-          >
-            <span aria-hidden>🎯</span>
-            <span>Dia D</span>
-          </button>
-        )}
-      </div>
+      {project?.category === 'event' && (
+        <button
+          type="button"
+          onClick={() => setTab('dia_d')}
+          aria-label="Dia D — roteiro do evento"
+          className={[
+            'w-full inline-flex items-center justify-between gap-2 px-4 py-3 rounded-md border transition-all focus-ring text-left',
+            tab === 'dia_d'
+              ? 'bg-gradient-to-r from-amber-500/30 to-amber-400/20 border-amber-400 shadow-[0_0_0_3px_rgba(251,191,36,0.15)]'
+              : 'bg-gradient-to-r from-amber-500/10 to-amber-400/5 border-amber-400/30 hover:from-amber-500/20 hover:to-amber-400/10 hover:border-amber-400/60',
+          ].join(' ')}
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <span aria-hidden className="text-xl shrink-0">🎯</span>
+            <div className="min-w-0">
+              <div className="text-[10px] uppercase tracking-wider font-bold text-amber-300/80">Roteiro do evento</div>
+              <div className="text-card-title text-amber-100">
+                Dia D
+                {project?.event_date && (
+                  <span className="text-amber-200/70 font-normal ml-2 text-body-md tabular-nums">
+                    · {project.event_date.slice(8, 10)}/{project.event_date.slice(5, 7)}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+          <ChevronRight size={18} className="text-amber-300/60 shrink-0" />
+        </button>
+      )}
+
+      <Tabs<TabId>
+        tabs={[
+          { id: 'checkpoints', label: 'Checkpoints', badge: checkpoints.length },
+          { id: 'contingencias', label: 'Contingências', badge: contingencies.length },
+          { id: 'time', label: 'Time', badge: members.length },
+        ]}
+        active={tab}
+        onChange={setTab}
+      />
 
       {tab === 'checkpoints' && (
         <section className="space-y-sm">
