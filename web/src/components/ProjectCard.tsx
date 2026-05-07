@@ -2,14 +2,14 @@ import { Link } from 'react-router-dom';
 import { PROJECT_CATEGORY_LABELS, PROJECT_STATUS_LABELS } from '../lib/projectLabels';
 import type { Project } from '../types';
 
-// Sprint 22.16 — paleta distinta dos tokens semânticos (status, Eisenhower).
+// Sprint 22.19 — paleta com texto suave e sem uppercase pra evitar ruído visual.
 const CATEGORY_TAG: Record<Project['category'], string> = {
-  pedagogical:    'bg-[#8B5CF6]/15 text-[#A78BFA]',  // violet
-  commercial:     'bg-[#D946EF]/15 text-[#E879F9]',  // fuchsia
-  administrative: 'bg-[#06B6D4]/15 text-[#22D3EE]',  // cyan
-  operational:    'bg-[#14B8A6]/15 text-[#5EEAD4]',  // teal
-  event:          'bg-[#F43F5E]/15 text-[#FB7185]',  // rose
-  infrastructure: 'bg-[#64748B]/20 text-[#CBD5E1]',  // slate
+  pedagogical:    'bg-[#8B5CF6]/15 text-[#C4B5FD]',  // violet light
+  commercial:     'bg-[#D946EF]/15 text-[#F0ABFC]',  // fuchsia light
+  administrative: 'bg-[#06B6D4]/15 text-[#A5F3FC]',  // cyan light
+  operational:    'bg-[#14B8A6]/15 text-[#99F6E4]',  // teal light
+  event:          'bg-[#F43F5E]/15 text-[#FECDD3]',  // rose light
+  infrastructure: 'bg-[#64748B]/20 text-[#CBD5E1]',  // slate light
 };
 
 // Statuses que não são "execução normal" merecem chip explícito.
@@ -47,7 +47,7 @@ export function ProjectCard({ project, nextCheckpoint }: Props) {
             <p className="text-body-sm text-fg-muted line-clamp-2 mt-1">{project.description}</p>
           )}
         </div>
-        <span className={['inline-block text-label uppercase tracking-wide rounded-sm px-1.5 py-0.5 shrink-0', CATEGORY_TAG[project.category]].join(' ')}>
+        <span className={['inline-block text-[11px] font-medium rounded-sm px-1.5 py-0.5 shrink-0', CATEGORY_TAG[project.category]].join(' ')}>
           {PROJECT_CATEGORY_LABELS[project.category]}
         </span>
       </div>
