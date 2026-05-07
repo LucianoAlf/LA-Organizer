@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, FormEvent, KeyboardEvent } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Rocket, Check, AlertTriangle, Plus, ChevronDown, ChevronRight, MoreVertical } from 'lucide-react';
 import { supabase, supabaseConfigured } from '../lib/supabase';
@@ -87,6 +87,7 @@ async function fetchContingencies(projectId: string): Promise<Contingency[]> {
 
 export function ProjetoDetalhe() {
   const { id = '' } = useParams();
+  const navigate = useNavigate();
   const [tab, setTab] = useState<TabId>('checkpoints');
   const { collaborator } = useAuth();
   const qc = useQueryClient();
@@ -215,6 +216,61 @@ export function ProjetoDetalhe() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['project', id, 'checkpoints'] }),
   });
 
+  const updateProject = useMutation({
+    mutationFn: async (patch: Partial<ProjectFull>) => {
+      const { error } = await supabase.from('projects').update(patch).eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['project', id] }),
+  });
+
+  const deleteProject = useMutation({
+    mutationFn: async () => {
+      // Tasks vinculadas viram orfas. Checkpoints e contingencias caem em CASCADE
+      // (FK ON DELETE CASCADE). project_members tambem.
+      await supabase.from('tasks').update({ project_id: null, checkpoint_id: null }).eq('project_id', id);
+      const { error } = await supabase.from('projects').delete().eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['projects'] });
+      qc.invalidateQueries({ queryKey: ['tasks'] });
+      navigate('/projetos');
+    },
+  });
+
+  const createContingency = useMutation({
+    mutationFn: async ({ scenario, protocol }: { scenario: string; protocol: string }) => {
+      const maxPos = contingencies.reduce((m, c) => Math.max(m, c.position ?? 0), -1);
+      const { error } = await supabase.from('project_contingencies').insert({
+        project_id: id,
+        scenario: scenario.slice(0, 500),
+        protocol: protocol.slice(0, 2000),
+        position: maxPos + 1,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['project', id, 'contingencies'] }),
+  });
+
+  const updateContingency = useMutation({
+    mutationFn: async ({ id: ctId, scenario, protocol }: { id: string; scenario: string; protocol: string }) => {
+      const { error } = await supabase.from('project_contingencies')
+        .update({ scenario: scenario.slice(0, 500), protocol: protocol.slice(0, 2000) })
+        .eq('id', ctId);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['project', id, 'contingencies'] }),
+  });
+
+  const deleteContingency = useMutation({
+    mutationFn: async (ctId: string) => {
+      const { error } = await supabase.from('project_contingencies').delete().eq('id', ctId);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['project', id, 'contingencies'] }),
+  });
+
   if (!supabaseConfigured) return <EmptyState icon={<Rocket size={32} />} title="Configure Supabase" />;
   if (pLoading) return <LoadingState rows={4} />;
   if (!project) return <EmptyState title="Projeto não encontrado" action={<Link to="/projetos" className="text-tom">Voltar</Link>} />;
@@ -237,34 +293,14 @@ export function ProjetoDetalhe() {
 
   return (
     <div className="space-y-md">
-      <header>
-        <Link to="/projetos" className="inline-flex items-center gap-2 text-body-sm text-fg-muted hover:text-fg focus-ring">
-          <ArrowLeft size={16} /> Projetos
-        </Link>
-        <div className="mt-md flex items-start gap-md justify-between flex-wrap">
-          <div className="min-w-0">
-            <h2 className="text-screen-title">{project.name}</h2>
-            {project.description && <p className="text-body-md text-fg-muted mt-1 max-w-prose">{project.description}</p>}
-            {project.event_date && (
-              <p className="text-body-sm text-fg-muted mt-1">
-                <span aria-hidden>🎯</span>{' '}
-                Evento: <span className="text-fg tabular-nums">{brShort(project.event_date)}</span>
-              </p>
-            )}
-          </div>
-          <CategoryTag project={project} label={PROJECT_CATEGORY_LABELS[project.category]} className="shrink-0" />
-        </div>
-
-        <div className="mt-md">
-          <div className="flex items-center justify-between text-body-sm text-fg-muted mb-1.5 tabular-nums">
-            <span>Progresso</span>
-            <span>{pct}%</span>
-          </div>
-          <div className="h-2 w-full bg-bg-elevated rounded-full overflow-hidden">
-            <div className="h-full bg-tom transition-[width]" style={{ width: `${pct}%` }} />
-          </div>
-        </div>
-      </header>
+      <ProjectHeader
+        project={project}
+        pct={pct}
+        onRename={(name) => updateProject.mutate({ name })}
+        onUpdateDescription={(description) => updateProject.mutate({ description: description || null })}
+        onUpdateEventDate={(event_date) => updateProject.mutate({ event_date: event_date || null })}
+        onDelete={() => deleteProject.mutate()}
+      />
 
       {/* Próximo passo — sempre visível, independente da aba. */}
       {next && (
@@ -361,18 +397,18 @@ export function ProjetoDetalhe() {
           ) : (
             <ul className="space-y-sm">
               {contingencies.map(ct => (
-                <li key={ct.id} className="surface p-md">
-                  <div className="flex items-start gap-md">
-                    <span className="mt-0.5 shrink-0 text-warning" aria-hidden>🚨</span>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-body-md font-semibold">{ct.scenario}</div>
-                      <p className="mt-1 text-body-sm text-fg-muted whitespace-pre-line">{ct.protocol}</p>
-                    </div>
-                  </div>
-                </li>
+                <ContingencyCard
+                  key={ct.id}
+                  contingency={ct}
+                  onUpdate={(scenario, protocol) => updateContingency.mutate({ id: ct.id, scenario, protocol })}
+                  onDelete={() => deleteContingency.mutate(ct.id)}
+                />
               ))}
             </ul>
           )}
+          <CreateContingencyInline
+            onCreate={(scenario, protocol) => createContingency.mutate({ scenario, protocol })}
+          />
         </section>
       )}
 
@@ -813,6 +849,328 @@ function RowMenu({ items }: { items: MenuItem[] }) {
         </div>
       )}
     </div>
+  );
+}
+
+// ---- ProjectHeader — header com tap-to-edit nome/descricao/event_date e menu (...).
+function ProjectHeader({
+  project,
+  pct,
+  onRename,
+  onUpdateDescription,
+  onUpdateEventDate,
+  onDelete,
+}: {
+  project: ProjectFull;
+  pct: number;
+  onRename: (name: string) => void;
+  onUpdateDescription: (description: string) => void;
+  onUpdateEventDate: (eventDate: string) => void;
+  onDelete: () => void;
+}) {
+  const [editName, setEditName] = useState(false);
+  const [nameVal, setNameVal] = useState(project.name);
+  const [editDesc, setEditDesc] = useState(false);
+  const [descVal, setDescVal] = useState(project.description ?? '');
+  const [editDate, setEditDate] = useState(false);
+  const [dateVal, setDateVal] = useState(project.event_date ?? '');
+
+  function commitName() {
+    const v = nameVal.trim();
+    if (v && v !== project.name) onRename(v.slice(0, 200));
+    setEditName(false);
+  }
+  function commitDesc() {
+    const v = descVal.trim();
+    if (v !== (project.description ?? '')) onUpdateDescription(v.slice(0, 1000));
+    setEditDesc(false);
+  }
+  function commitDate() {
+    if (dateVal !== (project.event_date ?? '')) onUpdateEventDate(dateVal);
+    setEditDate(false);
+  }
+
+  return (
+    <header>
+      <Link to="/projetos" className="inline-flex items-center gap-2 text-body-sm text-fg-muted hover:text-fg focus-ring">
+        <ArrowLeft size={16} /> Projetos
+      </Link>
+      <div className="mt-md flex items-start gap-md justify-between flex-wrap">
+        <div className="min-w-0 flex-1">
+          {editName ? (
+            <input
+              type="text"
+              autoFocus
+              value={nameVal}
+              maxLength={200}
+              onChange={e => setNameVal(e.target.value)}
+              onBlur={commitName}
+              onKeyDown={e => {
+                if (e.key === 'Enter') { e.preventDefault(); commitName(); }
+                if (e.key === 'Escape') { setNameVal(project.name); setEditName(false); }
+              }}
+              className="w-full h-12 px-2 -ml-2 rounded-md bg-bg-elevated border border-border text-screen-title text-fg focus-ring"
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => { setNameVal(project.name); setEditName(true); }}
+              className="text-screen-title text-left hover:text-tom transition-colors focus-ring rounded-sm"
+            >
+              {project.name}
+            </button>
+          )}
+
+          {editDesc ? (
+            <textarea
+              autoFocus
+              value={descVal}
+              maxLength={1000}
+              onChange={e => setDescVal(e.target.value)}
+              onBlur={commitDesc}
+              onKeyDown={e => {
+                if (e.key === 'Escape') { setDescVal(project.description ?? ''); setEditDesc(false); }
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); commitDesc(); }
+              }}
+              rows={3}
+              className="w-full mt-1 px-2 py-1.5 -ml-2 rounded-md bg-bg-elevated border border-border text-body-md text-fg focus-ring resize-none"
+              placeholder="Descrição do projeto"
+            />
+          ) : project.description ? (
+            <button
+              type="button"
+              onClick={() => { setDescVal(project.description ?? ''); setEditDesc(true); }}
+              className="text-body-md text-fg-muted mt-1 max-w-prose text-left hover:text-fg transition-colors focus-ring rounded-sm"
+            >
+              {project.description}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => { setDescVal(''); setEditDesc(true); }}
+              className="text-body-sm text-fg-muted/60 mt-1 italic hover:text-fg-muted transition-colors focus-ring rounded-sm"
+            >
+              + descrição
+            </button>
+          )}
+
+          {editDate ? (
+            <input
+              type="date"
+              autoFocus
+              value={dateVal}
+              onChange={e => setDateVal(e.target.value)}
+              onBlur={commitDate}
+              onKeyDown={e => {
+                if (e.key === 'Enter') { e.preventDefault(); commitDate(); }
+                if (e.key === 'Escape') { setDateVal(project.event_date ?? ''); setEditDate(false); }
+              }}
+              className="mt-1 h-9 px-2 rounded-md bg-bg-elevated border border-border text-body-sm text-fg focus-ring tabular-nums"
+            />
+          ) : project.event_date ? (
+            <button
+              type="button"
+              onClick={() => { setDateVal(project.event_date ?? ''); setEditDate(true); }}
+              className="text-body-sm text-fg-muted mt-1 hover:text-fg transition-colors focus-ring rounded-sm"
+            >
+              <span aria-hidden>🎯</span>{' '}
+              Evento: <span className="text-fg tabular-nums">{brShort(project.event_date)}</span>
+            </button>
+          ) : project.category === 'event' ? (
+            <button
+              type="button"
+              onClick={() => { setDateVal(''); setEditDate(true); }}
+              className="block text-body-sm text-fg-muted/60 mt-1 italic hover:text-fg-muted transition-colors focus-ring rounded-sm"
+            >
+              + data do evento
+            </button>
+          ) : null}
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <CategoryTag project={project} label={PROJECT_CATEGORY_LABELS[project.category]} />
+          <RowMenu
+            items={[
+              {
+                label: 'Excluir projeto',
+                danger: true,
+                confirm: 'Excluir esse projeto? Tarefas viram orfas. Essa acao nao pode ser desfeita.',
+                onClick: onDelete,
+              },
+            ]}
+          />
+        </div>
+      </div>
+
+      <div className="mt-md">
+        <div className="flex items-center justify-between text-body-sm text-fg-muted mb-1.5 tabular-nums">
+          <span>Progresso</span>
+          <span>{pct}%</span>
+        </div>
+        <div className="h-2 w-full bg-bg-elevated rounded-full overflow-hidden">
+          <div className="h-full bg-tom transition-[width]" style={{ width: `${pct}%` }} />
+        </div>
+      </div>
+    </header>
+  );
+}
+
+// ---- ContingencyCard — card editavel com menu (...).
+function ContingencyCard({
+  contingency,
+  onUpdate,
+  onDelete,
+}: {
+  contingency: Contingency;
+  onUpdate: (scenario: string, protocol: string) => void;
+  onDelete: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [scenarioVal, setScenarioVal] = useState(contingency.scenario);
+  const [protocolVal, setProtocolVal] = useState(contingency.protocol);
+
+  function commit() {
+    const s = scenarioVal.trim();
+    const p = protocolVal.trim();
+    if (!s || !p) { setEditing(false); return; }
+    if (s !== contingency.scenario || p !== contingency.protocol) onUpdate(s, p);
+    setEditing(false);
+  }
+
+  if (editing) {
+    return (
+      <li className="surface p-md space-y-2">
+        <div className="text-label text-fg-muted uppercase tracking-wide">Editar cenário</div>
+        <input
+          type="text"
+          autoFocus
+          value={scenarioVal}
+          maxLength={500}
+          onChange={e => setScenarioVal(e.target.value)}
+          placeholder='Ex: "Se chuva cancelar"'
+          className="w-full h-10 px-3 rounded-md bg-bg-elevated border border-border text-body-md text-fg focus-ring"
+        />
+        <textarea
+          value={protocolVal}
+          maxLength={2000}
+          onChange={e => setProtocolVal(e.target.value)}
+          rows={3}
+          placeholder="Protocolo: o que fazer"
+          className="w-full px-3 py-2 rounded-md bg-bg-elevated border border-border text-body-md text-fg focus-ring resize-none"
+        />
+        <div className="flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setScenarioVal(contingency.scenario);
+              setProtocolVal(contingency.protocol);
+              setEditing(false);
+            }}
+            className="h-9 px-3 rounded-md text-body-sm text-fg-muted hover:text-fg focus-ring"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={commit}
+            disabled={!scenarioVal.trim() || !protocolVal.trim()}
+            className="h-9 px-3 rounded-md bg-tom text-white text-body-sm font-semibold disabled:opacity-50 focus-ring"
+          >
+            Salvar
+          </button>
+        </div>
+      </li>
+    );
+  }
+
+  return (
+    <li className="surface p-md">
+      <div className="flex items-start gap-md">
+        <span className="mt-0.5 shrink-0 text-warning" aria-hidden>🚨</span>
+        <div className="min-w-0 flex-1">
+          <div className="text-body-md font-semibold">{contingency.scenario}</div>
+          <p className="mt-1 text-body-sm text-fg-muted whitespace-pre-line">{contingency.protocol}</p>
+        </div>
+        <RowMenu
+          items={[
+            { label: 'Editar', onClick: () => setEditing(true) },
+            { label: 'Excluir', danger: true, confirm: 'Excluir esse cenário?', onClick: onDelete },
+          ]}
+        />
+      </div>
+    </li>
+  );
+}
+
+// ---- CreateContingencyInline — botao + form inline pra criar contingencia.
+function CreateContingencyInline({
+  onCreate,
+}: {
+  onCreate: (scenario: string, protocol: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [scenario, setScenario] = useState('');
+  const [protocol, setProtocol] = useState('');
+
+  function commit(e: FormEvent) {
+    e.preventDefault();
+    const s = scenario.trim();
+    const p = protocol.trim();
+    if (!s || !p) return;
+    onCreate(s, p);
+    setScenario('');
+    setProtocol('');
+    setOpen(false);
+  }
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="surface w-full p-md flex items-center gap-2 text-body-md text-fg-muted hover:text-tom hover:border-tom/40 transition-colors focus-ring"
+      >
+        <Plus size={16} /> Adicionar contingência
+      </button>
+    );
+  }
+
+  return (
+    <form onSubmit={commit} className="surface p-md space-y-2">
+      <div className="text-label text-fg-muted uppercase tracking-wide">Novo cenário</div>
+      <input
+        type="text"
+        autoFocus
+        value={scenario}
+        maxLength={500}
+        onChange={e => setScenario(e.target.value)}
+        placeholder='Ex: "Se chuva cancelar"'
+        className="w-full h-10 px-3 rounded-md bg-bg-elevated border border-border text-body-md text-fg placeholder:text-fg-muted focus-ring"
+      />
+      <textarea
+        value={protocol}
+        maxLength={2000}
+        onChange={e => setProtocol(e.target.value)}
+        rows={3}
+        placeholder="Protocolo: o que fazer se acontecer"
+        className="w-full px-3 py-2 rounded-md bg-bg-elevated border border-border text-body-md text-fg placeholder:text-fg-muted focus-ring resize-none"
+      />
+      <div className="flex items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={() => { setOpen(false); setScenario(''); setProtocol(''); }}
+          className="h-9 px-3 rounded-md text-body-sm text-fg-muted hover:text-fg focus-ring"
+        >
+          Cancelar
+        </button>
+        <button
+          type="submit"
+          disabled={!scenario.trim() || !protocol.trim()}
+          className="h-9 px-3 rounded-md bg-tom text-white text-body-sm font-semibold disabled:opacity-50 focus-ring"
+        >
+          Criar
+        </button>
+      </div>
+    </form>
   );
 }
 
