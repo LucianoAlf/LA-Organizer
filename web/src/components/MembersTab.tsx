@@ -492,6 +492,7 @@ function AddInternalForm({
         placeholder="— Escolher pessoa —"
         options={collabOptions}
         onChange={setCollabId}
+        prefer="up"
       />
       <input
         type="text"
@@ -505,6 +506,7 @@ function AddInternalForm({
         value={role}
         options={roleOptions}
         onChange={(v) => setRole(v as ProjectMemberRole)}
+        prefer="up"
       />
       <div className="flex gap-2">
         <button
@@ -533,28 +535,31 @@ function CustomSelect({
   options,
   onChange,
   placeholder,
+  prefer = 'auto',
 }: {
   value: string;
   options: Array<{ value: string; label: string; sublabel?: string }>;
   onChange: (value: string) => void;
   placeholder?: string;
+  /** 'up' fixa pra cima, 'down' pra baixo, 'auto' decide pelo espaco. */
+  prefer?: 'up' | 'down' | 'auto';
 }) {
   const [open, setOpen] = useState(false);
-  const [openUpward, setOpenUpward] = useState(false);
+  const [openUpward, setOpenUpward] = useState(prefer === 'up');
   const triggerRef = useRef<HTMLButtonElement>(null);
   const current = options.find(o => o.value === value);
 
-  // Sprint 22.22l — quando abre, mede espaco disponivel abaixo. Se menor que
-  // o necessario, abre pra cima.
+  // Sprint 22.22l — quando abre, mede espaco. Sprint 22.22n — respeita prefer.
   useLayoutEffect(() => {
     if (!open || !triggerRef.current) return;
+    if (prefer === 'up') { setOpenUpward(true); return; }
+    if (prefer === 'down') { setOpenUpward(false); return; }
     const rect = triggerRef.current.getBoundingClientRect();
     const spaceBelow = window.innerHeight - rect.bottom;
     const spaceAbove = rect.top;
-    // Estimativa: ~280px (max-h-60 = 240 + padding). Se nao cabe embaixo mas cabe em cima → abre pra cima.
     const need = 280;
     setOpenUpward(spaceBelow < need && spaceAbove > spaceBelow);
-  }, [open, options.length]);
+  }, [open, options.length, prefer]);
 
   function handleBlur(e: React.FocusEvent<HTMLDivElement>) {
     if (!e.currentTarget.contains(e.relatedTarget)) {

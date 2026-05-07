@@ -854,6 +854,15 @@ function CheckpointCard({
                 {checkpoint.due_date && <span>{brShort(checkpoint.due_date)}</span>}
                 {total > 0 && <span>· {done}/{total} {total === 1 ? 'tarefa' : 'tarefas'}</span>}
               </div>
+              {/* Sprint 22.22n — barra de progresso interna do checkpoint */}
+              {total > 0 && (
+                <div className="mt-2 h-1 w-full bg-bg-elevated rounded-full overflow-hidden">
+                  <div
+                    className={['h-full transition-[width]', isDone ? 'bg-tom' : 'bg-tom/70'].join(' ')}
+                    style={{ width: `${Math.round((done / total) * 100)}%` }}
+                  />
+                </div>
+              )}
             </button>
           )}
         </div>
