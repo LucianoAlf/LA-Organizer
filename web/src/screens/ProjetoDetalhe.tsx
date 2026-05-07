@@ -1,7 +1,7 @@
-import { useState, FormEvent, KeyboardEvent } from 'react';
+import { useState, useEffect, useRef, FormEvent, KeyboardEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Rocket, Check, AlertTriangle, Plus, ChevronDown, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Rocket, Check, AlertTriangle, Plus, ChevronDown, ChevronRight, MoreVertical } from 'lucide-react';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { Tabs } from '../components/Tabs';
@@ -160,6 +160,61 @@ export function ProjetoDetalhe() {
     },
   });
 
+  const renameCheckpoint = useMutation({
+    mutationFn: async ({ id: cpId, name }: { id: string; name: string }) => {
+      const { error } = await supabase.from('project_checkpoints').update({ name }).eq('id', cpId);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['project', id, 'checkpoints'] }),
+  });
+
+  const deleteCheckpoint = useMutation({
+    mutationFn: async (cpId: string) => {
+      // Tasks vinculadas viram orfas (checkpoint_id = NULL) — nao queremos deletar tasks junto.
+      await supabase.from('tasks').update({ checkpoint_id: null }).eq('checkpoint_id', cpId);
+      const { error } = await supabase.from('project_checkpoints').delete().eq('id', cpId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['project', id, 'checkpoints'] });
+      qc.invalidateQueries({ queryKey: ['project', id, 'tasks'] });
+    },
+  });
+
+  const renameTask = useMutation({
+    mutationFn: async ({ id: tId, title }: { id: string; title: string }) => {
+      const { error } = await supabase.from('tasks').update({ title }).eq('id', tId);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['project', id, 'tasks'] }),
+  });
+
+  const deleteTask = useMutation({
+    mutationFn: async (tId: string) => {
+      const { error } = await supabase.from('tasks').delete().eq('id', tId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['project', id, 'tasks'] });
+      qc.invalidateQueries({ queryKey: ['tasks'] });
+    },
+  });
+
+  const createCheckpoint = useMutation({
+    mutationFn: async (name: string) => {
+      if (!collaborator) throw new Error('no_auth');
+      const maxOrder = checkpoints.reduce((m, c) => Math.max(m, c.sort_order ?? 0), -1);
+      const { error } = await supabase.from('project_checkpoints').insert({
+        project_id: id,
+        name: name.slice(0, 200),
+        status: 'pending',
+        sort_order: maxOrder + 1,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['project', id, 'checkpoints'] }),
+  });
+
   if (!supabaseConfigured) return <EmptyState icon={<Rocket size={32} />} title="Configure Supabase" />;
   if (pLoading) return <LoadingState rows={4} />;
   if (!project) return <EmptyState title="Projeto não encontrado" action={<Link to="/projetos" className="text-tom">Voltar</Link>} />;
@@ -260,6 +315,10 @@ export function ProjetoDetalhe() {
                   tasks={tasksByCheckpoint.get(cp.id) ?? []}
                   onToggleCheckpoint={() => toggleCheckpoint.mutate(cp)}
                   onToggleTask={(t) => toggleTask.mutate(t)}
+                  onRenameCheckpoint={(name) => renameCheckpoint.mutate({ id: cp.id, name })}
+                  onDeleteCheckpoint={() => deleteCheckpoint.mutate(cp.id)}
+                  onRenameTask={(tId, title) => renameTask.mutate({ id: tId, title })}
+                  onDeleteTask={(tId) => deleteTask.mutate(tId)}
                   toggleDisabled={toggleCheckpoint.isPending}
                   projectId={id}
                   collaboratorId={collaborator?.id ?? null}
@@ -272,11 +331,18 @@ export function ProjetoDetalhe() {
                   </div>
                   <ul className="divide-y divide-border">
                     {orphanTasks.map(t => (
-                      <TaskListItem key={t.id} task={t} onToggle={() => toggleTask.mutate(t)} />
+                      <TaskListItem
+                        key={t.id}
+                        task={t}
+                        onToggle={() => toggleTask.mutate(t)}
+                        onRename={(title) => renameTask.mutate({ id: t.id, title })}
+                        onDelete={() => deleteTask.mutate(t.id)}
+                      />
                     ))}
                   </ul>
                 </div>
               )}
+              <CreateCheckpointInline onCreate={(name) => createCheckpoint.mutate(name)} />
             </>
           )}
         </section>
@@ -338,10 +404,29 @@ export function ProjetoDetalhe() {
 
 // ---- Subcomponentes ----------------------------------------------------------
 
-function TaskListItem({ task, onToggle }: { task: Task; onToggle: () => void }) {
+function TaskListItem({
+  task,
+  onToggle,
+  onRename,
+  onDelete,
+}: {
+  task: Task;
+  onToggle: () => void;
+  onRename?: (title: string) => void;
+  onDelete?: () => void;
+}) {
   const isDone = task.status === 'done';
+  const [editing, setEditing] = useState(false);
+  const [editValue, setEditValue] = useState(task.title);
+
+  function commitEdit() {
+    const v = editValue.trim();
+    if (v && v !== task.title && onRename) onRename(v.slice(0, 200));
+    setEditing(false);
+  }
+
   return (
-    <li className="py-2 flex items-start gap-md">
+    <li className="py-2 flex items-start gap-md group">
       <button
         type="button"
         onClick={onToggle}
@@ -356,15 +441,39 @@ function TaskListItem({ task, onToggle }: { task: Task; onToggle: () => void }) 
         {isDone && <Check size={12} strokeWidth={3} />}
       </button>
       <div className="min-w-0 flex-1">
-        <div className={['text-body-md', isDone ? 'line-through text-fg-muted' : ''].join(' ')}>
-          {task.title}
-        </div>
-        {task.due_date && (
+        {editing ? (
+          <input
+            type="text"
+            autoFocus
+            value={editValue}
+            maxLength={200}
+            onChange={e => setEditValue(e.target.value)}
+            onBlur={commitEdit}
+            onKeyDown={e => {
+              if (e.key === 'Enter') { e.preventDefault(); commitEdit(); }
+              if (e.key === 'Escape') { setEditValue(task.title); setEditing(false); }
+            }}
+            className="w-full h-8 px-2 -ml-2 rounded-sm bg-bg-elevated border border-border text-body-md text-fg focus-ring"
+          />
+        ) : (
+          <div className={['text-body-md', isDone ? 'line-through text-fg-muted' : ''].join(' ')}>
+            {task.title}
+          </div>
+        )}
+        {task.due_date && !editing && (
           <div className="text-body-sm text-fg-muted tabular-nums mt-0.5">
             {brShort(task.due_date)}
           </div>
         )}
       </div>
+      {(onRename || onDelete) && !editing && (
+        <RowMenu
+          items={[
+            ...(onRename ? [{ label: 'Editar', onClick: () => { setEditValue(task.title); setEditing(true); } }] : []),
+            ...(onDelete ? [{ label: 'Excluir tarefa', danger: true, confirm: 'Excluir essa tarefa?', onClick: () => onDelete() }] : []),
+          ]}
+        />
+      )}
     </li>
   );
 }
@@ -374,6 +483,10 @@ function CheckpointCard({
   tasks,
   onToggleCheckpoint,
   onToggleTask,
+  onRenameCheckpoint,
+  onDeleteCheckpoint,
+  onRenameTask,
+  onDeleteTask,
   toggleDisabled,
   projectId,
   collaboratorId,
@@ -382,14 +495,26 @@ function CheckpointCard({
   tasks: Task[];
   onToggleCheckpoint: () => void;
   onToggleTask: (t: Task) => void;
+  onRenameCheckpoint: (name: string) => void;
+  onDeleteCheckpoint: () => void;
+  onRenameTask: (taskId: string, title: string) => void;
+  onDeleteTask: (taskId: string) => void;
   toggleDisabled: boolean;
   projectId: string;
   collaboratorId: string | null;
 }) {
   const isDone = checkpoint.status === 'done';
   const [expanded, setExpanded] = useState(!isDone);
+  const [editing, setEditing] = useState(false);
+  const [editValue, setEditValue] = useState(checkpoint.name);
   const total = tasks.length;
   const done = tasks.filter(t => t.status === 'done').length;
+
+  function commitEdit() {
+    const v = editValue.trim();
+    if (v && v !== checkpoint.name) onRenameCheckpoint(v.slice(0, 200));
+    setEditing(false);
+  }
 
   return (
     <article className="surface overflow-hidden">
@@ -410,14 +535,28 @@ function CheckpointCard({
           {isDone && <Check size={16} strokeWidth={3} />}
         </button>
 
-        <button
-          type="button"
-          onClick={() => setExpanded(v => !v)}
-          aria-expanded={expanded}
-          className="min-w-0 flex-1 text-left focus-ring rounded-sm"
-        >
-          <div className="flex items-start justify-between gap-md">
-            <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1">
+          {editing ? (
+            <input
+              type="text"
+              autoFocus
+              value={editValue}
+              maxLength={200}
+              onChange={e => setEditValue(e.target.value)}
+              onBlur={commitEdit}
+              onKeyDown={e => {
+                if (e.key === 'Enter') { e.preventDefault(); commitEdit(); }
+                if (e.key === 'Escape') { setEditValue(checkpoint.name); setEditing(false); }
+              }}
+              className="w-full h-9 px-2 -ml-2 rounded-md bg-bg-elevated border border-border text-card-title text-fg focus-ring"
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => setExpanded(v => !v)}
+              aria-expanded={expanded}
+              className="w-full text-left focus-ring rounded-sm"
+            >
               <div className={['text-card-title', isDone ? 'line-through text-fg-muted' : ''].join(' ')}>
                 {checkpoint.name}
               </div>
@@ -425,12 +564,31 @@ function CheckpointCard({
                 {checkpoint.due_date && <span>{brShort(checkpoint.due_date)}</span>}
                 {total > 0 && <span>· {done}/{total} {total === 1 ? 'tarefa' : 'tarefas'}</span>}
               </div>
-            </div>
-            <span className="text-fg-muted shrink-0 mt-1" aria-hidden>
-              {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-            </span>
-          </div>
-        </button>
+            </button>
+          )}
+        </div>
+
+        <div className="shrink-0 flex items-center gap-1">
+          <RowMenu
+            items={[
+              { label: 'Editar nome', onClick: () => { setEditValue(checkpoint.name); setEditing(true); } },
+              {
+                label: 'Excluir checkpoint',
+                danger: true,
+                confirm: 'Excluir? Tarefas viram sem checkpoint.',
+                onClick: () => onDeleteCheckpoint(),
+              },
+            ]}
+          />
+          <button
+            type="button"
+            onClick={() => setExpanded(v => !v)}
+            aria-label={expanded ? 'Recolher' : 'Expandir'}
+            className="text-fg-muted hover:text-fg p-1 focus-ring rounded-sm"
+          >
+            {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+          </button>
+        </div>
       </div>
 
       {/* Corpo — fundo levemente diferente + border-top pra dar separacao visual de container. */}
@@ -448,7 +606,13 @@ function CheckpointCard({
               {tasks.length > 0 && (
                 <ul className="divide-y divide-border">
                   {tasks.map(t => (
-                    <TaskListItem key={t.id} task={t} onToggle={() => onToggleTask(t)} />
+                    <TaskListItem
+                      key={t.id}
+                      task={t}
+                      onToggle={() => onToggleTask(t)}
+                      onRename={(title) => onRenameTask(t.id, title)}
+                      onDelete={() => onDeleteTask(t.id)}
+                    />
                   ))}
                 </ul>
               )}
@@ -556,6 +720,155 @@ function CreateTaskInline({
           className="h-9 px-3 rounded-md bg-tom text-white text-body-sm font-semibold disabled:opacity-50 focus-ring"
         >
           Salvar
+        </button>
+      </div>
+    </form>
+  );
+}
+
+// ---- RowMenu — ⋯ acionador com dropdown e confirmação inline pra acoes destrutivas.
+type MenuItem = {
+  label: string;
+  onClick: () => void;
+  danger?: boolean;
+  /** Quando presente, click no item nao executa direto — exibe confirm inline. */
+  confirm?: string;
+};
+
+function RowMenu({ items }: { items: MenuItem[] }) {
+  const [open, setOpen] = useState(false);
+  const [confirmIdx, setConfirmIdx] = useState<number | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handle(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+        setConfirmIdx(null);
+      }
+    }
+    document.addEventListener('mousedown', handle);
+    return () => document.removeEventListener('mousedown', handle);
+  }, [open]);
+
+  if (items.length === 0) return null;
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setOpen(v => !v); setConfirmIdx(null); }}
+        aria-label="Mais ações"
+        className="text-fg-muted hover:text-fg p-1 focus-ring rounded-sm"
+      >
+        <MoreVertical size={16} />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-20 min-w-[180px] rounded-md border border-border bg-bg-surface shadow-card overflow-hidden">
+          {items.map((item, i) => {
+            const isConfirming = confirmIdx === i;
+            if (isConfirming && item.confirm) {
+              return (
+                <div key={i} className="px-3 py-2 border-b border-border last:border-b-0 bg-danger/5">
+                  <div className="text-body-sm text-fg mb-2">{item.confirm}</div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); setConfirmIdx(null); }}
+                      className="flex-1 h-7 px-2 rounded-sm text-body-sm text-fg-muted hover:text-fg border border-border focus-ring"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); item.onClick(); setOpen(false); setConfirmIdx(null); }}
+                      className="flex-1 h-7 px-2 rounded-sm text-body-sm font-semibold bg-danger text-white focus-ring"
+                    >
+                      Confirmar
+                    </button>
+                  </div>
+                </div>
+              );
+            }
+            return (
+              <button
+                key={i}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (item.confirm) { setConfirmIdx(i); return; }
+                  item.onClick();
+                  setOpen(false);
+                }}
+                className={[
+                  'w-full px-3 py-2 text-left text-body-sm hover:bg-bg-elevated transition-colors',
+                  item.danger ? 'text-danger' : 'text-fg',
+                ].join(' ')}
+              >
+                {item.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---- CreateCheckpointInline — botao + form inline pra criar checkpoint.
+function CreateCheckpointInline({ onCreate }: { onCreate: (name: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState('');
+
+  function commit(e: FormEvent) {
+    e.preventDefault();
+    const v = name.trim();
+    if (!v) return;
+    onCreate(v);
+    setName('');
+    setOpen(false);
+  }
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="surface w-full p-md flex items-center gap-2 text-body-md text-fg-muted hover:text-tom hover:border-tom/40 transition-colors focus-ring"
+      >
+        <Plus size={16} /> Adicionar checkpoint
+      </button>
+    );
+  }
+
+  return (
+    <form onSubmit={commit} className="surface p-md space-y-2">
+      <div className="text-label text-fg-muted uppercase tracking-wide">Novo checkpoint</div>
+      <input
+        type="text"
+        autoFocus
+        value={name}
+        maxLength={200}
+        onChange={e => setName(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Escape') { setOpen(false); setName(''); } }}
+        placeholder="Ex: Reservar local"
+        className="w-full h-10 px-3 rounded-md bg-bg-elevated border border-border text-body-md text-fg placeholder:text-fg-muted focus-ring"
+      />
+      <div className="flex items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={() => { setOpen(false); setName(''); }}
+          className="h-9 px-3 rounded-md text-body-sm text-fg-muted hover:text-fg focus-ring"
+        >
+          Cancelar
+        </button>
+        <button
+          type="submit"
+          disabled={!name.trim()}
+          className="h-9 px-3 rounded-md bg-tom text-white text-body-sm font-semibold disabled:opacity-50 focus-ring"
+        >
+          Criar
         </button>
       </div>
     </form>
