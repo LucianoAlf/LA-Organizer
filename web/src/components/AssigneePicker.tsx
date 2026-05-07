@@ -46,20 +46,24 @@ export function AssigneePicker({ value, options, onChange, onClear, emptyLabel =
         type="button"
         onClick={(e) => { e.stopPropagation(); setOpen(v => !v); }}
         className={[
-          'inline-flex items-center gap-1.5 text-[11px] font-medium rounded-sm px-1.5 py-0.5',
-          'bg-bg-elevated text-fg-muted hover:text-fg border border-border',
-          'cursor-pointer focus-ring',
+          'inline-flex items-center gap-1.5 text-[11px] font-medium rounded-sm px-2 py-1',
+          current
+            ? 'bg-tom/10 text-tom border border-tom/30 hover:bg-tom/15'
+            : 'bg-transparent text-fg-muted border border-dashed border-fg-muted/40 hover:text-tom hover:border-tom/60',
+          'cursor-pointer focus-ring transition-colors',
         ].join(' ')}
-        title={current ? `Atribuído a ${current.full_name}` : 'Atribuir'}
+        title={current ? `Atribuído a ${current.full_name}` : 'Atribuir tarefa a alguém do time'}
       >
         {initials ? (
-          <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-tom/20 text-tom text-[9px] font-semibold">
+          <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-tom/30 text-tom text-[9px] font-semibold">
             {initials}
           </span>
         ) : (
           <User size={11} />
         )}
-        <span className="truncate max-w-[100px]">{label}</span>
+        <span className="truncate max-w-[100px]">
+          {current ? label : '+ Atribuir'}
+        </span>
       </button>
       {open && (
         <div
