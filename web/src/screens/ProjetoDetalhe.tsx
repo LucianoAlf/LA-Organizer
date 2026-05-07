@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, FormEvent, KeyboardEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Rocket, Check, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Rocket, Check, AlertTriangle, Plus } from 'lucide-react';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { Tabs } from '../components/Tabs';
@@ -13,10 +13,14 @@ import { PROJECT_CATEGORY_LABELS } from '../lib/projectLabels';
 import { brShort } from '../utils/date';
 import type { Project, Task, Checkpoint } from '../types';
 
-// Sprint 22 Phase A — refactor design system + primitivos rationale + contingências.
-// docs/design-system.md §5.5/§5.6.
+// Sprint 22.21 — refactor de Projetos.
+// - Drop aba "Resumo": Próximo passo vira card fixo abaixo do header.
+// - 4 abas: Checkpoints / Tarefas / Contingências / Time (cabe em 1 linha).
+// - Aba Tarefas agrupada por checkpoint (com `<details>`), + inline pra criar
+//   tarefa direto sem precisar do TOM. checkpoint_id já existe em tasks.
+// - CRUD completo (tap-to-edit, swipe, delete) vem na próxima fatia (22.21b).
 
-type TabId = 'resumo' | 'checkpoints' | 'tarefas' | 'contingencias' | 'time';
+type TabId = 'checkpoints' | 'tarefas' | 'contingencias' | 'time';
 
 interface ProjectFull extends Project {
   event_date?: string | null;
@@ -57,9 +61,9 @@ async function fetchCheckpoints(projectId: string): Promise<CheckpointFull[]> {
 async function fetchProjectTasks(projectId: string): Promise<Task[]> {
   const { data, error } = await supabase
     .from('tasks')
-    .select('id, title, status, context, priority, due_date, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, completed_at, projects(name)')
+    .select('id, title, status, context, priority, due_date, scheduled_date, remind_at, eisenhower_quadrant, project_id, checkpoint_id, assigned_to, created_by, completed_at, action_type, source')
     .eq('project_id', projectId)
-    .order('due_date', { ascending: true });
+    .order('due_date', { ascending: true, nullsFirst: false });
   if (error) throw error;
   return (data ?? []) as unknown as Task[];
 }
@@ -86,7 +90,7 @@ async function fetchContingencies(projectId: string): Promise<Contingency[]> {
 
 export function ProjetoDetalhe() {
   const { id = '' } = useParams();
-  const [tab, setTab] = useState<TabId>('resumo');
+  const [tab, setTab] = useState<TabId>('checkpoints');
   const { collaborator } = useAuth();
   const qc = useQueryClient();
 
@@ -100,8 +104,22 @@ export function ProjetoDetalhe() {
     queryFn: () => fetchCheckpoints(id),
     enabled: Boolean(id && supabaseConfigured),
   });
+  const { data: tasks = [] } = useQuery({
+    queryKey: ['project', id, 'tasks'],
+    queryFn: () => fetchProjectTasks(id),
+    enabled: Boolean(id && supabaseConfigured),
+  });
+  const { data: members = [] } = useQuery({
+    queryKey: ['project', id, 'members'],
+    queryFn: () => fetchMembers(id),
+    enabled: Boolean(id && supabaseConfigured),
+  });
+  const { data: contingencies = [] } = useQuery({
+    queryKey: ['project', id, 'contingencies'],
+    queryFn: () => fetchContingencies(id),
+    enabled: Boolean(id && supabaseConfigured),
+  });
 
-  // Sprint 11.4 — toggle status do checkpoint (pending ↔ done) com optimistic update.
   const toggleCheckpoint = useMutation({
     mutationFn: async (cp: CheckpointFull) => {
       if (!collaborator) throw new Error('no_auth');
@@ -109,10 +127,7 @@ export function ProjetoDetalhe() {
       const update = isDone
         ? { status: 'pending', completed_at: null, completed_by: null }
         : { status: 'done', completed_at: new Date().toISOString(), completed_by: collaborator.id };
-      const { error } = await supabase
-        .from('project_checkpoints')
-        .update(update)
-        .eq('id', cp.id);
+      const { error } = await supabase.from('project_checkpoints').update(update).eq('id', cp.id);
       if (error) throw error;
     },
     onMutate: async (cp) => {
@@ -132,20 +147,20 @@ export function ProjetoDetalhe() {
       qc.invalidateQueries({ queryKey: ['project', id, 'checkpoints'] });
     },
   });
-  const { data: tasks = [] } = useQuery({
-    queryKey: ['project', id, 'tasks'],
-    queryFn: () => fetchProjectTasks(id),
-    enabled: Boolean(id && supabaseConfigured),
-  });
-  const { data: members = [] } = useQuery({
-    queryKey: ['project', id, 'members'],
-    queryFn: () => fetchMembers(id),
-    enabled: Boolean(id && supabaseConfigured),
-  });
-  const { data: contingencies = [] } = useQuery({
-    queryKey: ['project', id, 'contingencies'],
-    queryFn: () => fetchContingencies(id),
-    enabled: Boolean(id && supabaseConfigured),
+
+  const toggleTask = useMutation({
+    mutationFn: async (task: Task) => {
+      const next = task.status === 'done' ? 'pending' : 'done';
+      const { error } = await supabase
+        .from('tasks')
+        .update({ status: next, completed_at: next === 'done' ? new Date().toISOString() : null })
+        .eq('id', task.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['project', id, 'tasks'] });
+      qc.invalidateQueries({ queryKey: ['tasks'] });
+    },
   });
 
   if (!supabaseConfigured) return <EmptyState icon={<Rocket size={32} />} title="Configure Supabase" />;
@@ -153,14 +168,22 @@ export function ProjetoDetalhe() {
   if (!project) return <EmptyState title="Projeto não encontrado" action={<Link to="/projetos" className="text-tom">Voltar</Link>} />;
 
   const next = checkpoints.find(c => c.status !== 'done' && c.status !== 'cancelled');
-  // Sprint 11.4 hotfix — calcula progresso em runtime baseado em itens done.
   const checklistTotal = checkpoints.length;
   const checklistDone = checkpoints.filter(c => c.status === 'done').length;
   const pctRuntime = checklistTotal > 0 ? Math.round((checklistDone / checklistTotal) * 100) : 0;
   const pct = checklistTotal > 0 ? pctRuntime : Math.max(0, Math.min(100, project.progress_percent ?? 0));
 
+  // Agrupa tasks por checkpoint_id. Tasks sem checkpoint vão pra um grupo "soltas".
+  const tasksByCheckpoint = new Map<string | null, Task[]>();
+  for (const t of tasks) {
+    const k = (t as Task & { checkpoint_id?: string | null }).checkpoint_id ?? null;
+    if (!tasksByCheckpoint.has(k)) tasksByCheckpoint.set(k, []);
+    tasksByCheckpoint.get(k)!.push(t);
+  }
+  const orphanTasks = tasksByCheckpoint.get(null) ?? [];
+
   return (
-    <div className="space-y-lg">
+    <div className="space-y-md">
       <header>
         <Link to="/projetos" className="inline-flex items-center gap-2 text-body-sm text-fg-muted hover:text-fg focus-ring">
           <ArrowLeft size={16} /> Projetos
@@ -190,9 +213,29 @@ export function ProjetoDetalhe() {
         </div>
       </header>
 
+      {/* Próximo passo — sempre visível, independente da aba (era a aba Resumo). */}
+      {next && (
+        <div className="surface p-md">
+          <div className="text-label text-fg-muted uppercase tracking-wide">Próximo passo</div>
+          <div className="mt-1.5">
+            <div className="text-card-title">{next.name}</div>
+            {next.due_date && (
+              <div className="text-body-sm text-fg-muted mt-1">
+                Prazo: <span className="tabular-nums">{brShort(next.due_date)}</span>
+              </div>
+            )}
+            {next.rationale && (
+              <div className="mt-2 bg-tom/5 border-l-2 border-tom rounded-sm p-md text-body-sm text-fg-secondary">
+                <div className="text-label text-tom mb-1">💡 POR QUE ESSE CHECKPOINT</div>
+                <p className="whitespace-pre-line">{next.rationale}</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       <Tabs<TabId>
         tabs={[
-          { id: 'resumo', label: 'Resumo' },
           { id: 'checkpoints', label: 'Checkpoints', badge: checkpoints.length },
           { id: 'tarefas', label: 'Tarefas', badge: tasks.length },
           { id: 'contingencias', label: 'Contingências', badge: contingencies.length },
@@ -202,38 +245,15 @@ export function ProjetoDetalhe() {
         onChange={setTab}
       />
 
-      {tab === 'resumo' && (
-        <section className="space-y-md">
-          <div className="surface p-md">
-            <div className="text-label text-fg-muted uppercase tracking-wide">Próximo passo</div>
-            {next ? (
-              <div className="mt-1.5">
-                <div className="text-card-title">{next.name}</div>
-                {next.due_date && (
-                  <div className="text-body-sm text-fg-muted mt-1">Prazo: <span className="tabular-nums">{brShort(next.due_date)}</span></div>
-                )}
-                {next.rationale && (
-                  <div className="mt-2 bg-tom/5 border-l-2 border-tom rounded-sm p-md text-body-sm text-fg-secondary">
-                    <div className="text-label text-tom mb-1">💡 POR QUE ESSE CHECKPOINT</div>
-                    <p className="whitespace-pre-line">{next.rationale}</p>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="mt-1.5 text-body-md text-fg-muted">Sem checkpoints pendentes.</div>
-            )}
-          </div>
-        </section>
-      )}
-
       {tab === 'checkpoints' && (
         <section className="surface">
           {checkpoints.length === 0 ? (
-            <EmptyState title="Sem checkpoints ainda" description="Marcos do projeto. O TOM cria pelo WhatsApp quando você pede pra estruturar o projeto." />
+            <EmptyState title="Sem checkpoints ainda" description="Marcos do projeto. Peça pro TOM estruturar pelo WhatsApp ou crie manualmente quando o CRUD inline subir." />
           ) : (
             <ul className="divide-y divide-border">
               {checkpoints.map(c => {
                 const isDone = c.status === 'done';
+                const cpTaskCount = (tasksByCheckpoint.get(c.id) ?? []).length;
                 return (
                   <li key={c.id}>
                     <button
@@ -258,11 +278,12 @@ export function ProjetoDetalhe() {
                         <div className={['text-body-md', isDone ? 'line-through text-fg-muted' : ''].join(' ')}>
                           {c.name}
                         </div>
-                        {c.due_date && (
-                          <div className="text-body-sm text-fg-muted tabular-nums mt-0.5">
-                            {brShort(c.due_date)}
-                          </div>
-                        )}
+                        <div className="flex flex-wrap items-center gap-2 mt-0.5 text-body-sm text-fg-muted">
+                          {c.due_date && <span className="tabular-nums">{brShort(c.due_date)}</span>}
+                          {cpTaskCount > 0 && (
+                            <span>· <span className="tabular-nums">{cpTaskCount}</span> {cpTaskCount === 1 ? 'tarefa' : 'tarefas'}</span>
+                          )}
+                        </div>
                         {c.rationale && !isDone && (
                           <div className="mt-2 bg-tom/5 border-l-2 border-tom rounded-sm p-md text-body-sm text-fg-secondary">
                             <div className="text-label text-tom mb-1">💡 POR QUE ESSE CHECKPOINT</div>
@@ -281,21 +302,39 @@ export function ProjetoDetalhe() {
       )}
 
       {tab === 'tarefas' && (
-        <section className="surface">
-          {tasks.length === 0 ? (
-            <EmptyState title="Sem tarefas vinculadas" />
+        <section className="space-y-sm">
+          {checkpoints.length === 0 && tasks.length === 0 ? (
+            <div className="surface">
+              <EmptyState title="Sem tarefas vinculadas" description="Crie checkpoints primeiro pra agrupar as tarefas." />
+            </div>
           ) : (
-            <ul className="divide-y divide-border">
-              {tasks.map(t => (
-                <li key={t.id} className="p-md flex items-center justify-between gap-md">
-                  <div className="min-w-0">
-                    <div className={['text-body-md', t.status === 'done' ? 'line-through text-fg-muted' : ''].join(' ')}>{t.title}</div>
-                    <div className="text-body-sm text-fg-muted">{t.due_date ? brShort(t.due_date) : '—'}</div>
+            <>
+              {checkpoints.map(cp => {
+                const cpTasks = tasksByCheckpoint.get(cp.id) ?? [];
+                return (
+                  <CheckpointTasksGroup
+                    key={cp.id}
+                    checkpoint={cp}
+                    tasks={cpTasks}
+                    onToggleTask={(t) => toggleTask.mutate(t)}
+                    projectId={id}
+                    collaboratorId={collaborator?.id ?? null}
+                  />
+                );
+              })}
+              {orphanTasks.length > 0 && (
+                <div className="surface p-md">
+                  <div className="text-label text-fg-muted uppercase tracking-wide mb-2">
+                    Sem checkpoint
                   </div>
-                  <Badge tone={t.status === 'done' ? 'success' : t.status === 'overdue' ? 'danger' : 'neutral'}>{t.status}</Badge>
-                </li>
-              ))}
-            </ul>
+                  <ul className="divide-y divide-border">
+                    {orphanTasks.map(t => (
+                      <TaskListItem key={t.id} task={t} onToggle={() => toggleTask.mutate(t)} />
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </>
           )}
         </section>
       )}
@@ -351,5 +390,187 @@ export function ProjetoDetalhe() {
         </section>
       )}
     </div>
+  );
+}
+
+// ---- Subcomponentes ----------------------------------------------------------
+
+function TaskListItem({ task, onToggle }: { task: Task; onToggle: () => void }) {
+  const isDone = task.status === 'done';
+  return (
+    <li className="py-2 flex items-start gap-md">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-label={isDone ? 'Reabrir tarefa' : 'Concluir tarefa'}
+        className={[
+          'mt-0.5 h-5 w-5 shrink-0 rounded-full border-2 grid place-items-center transition-colors focus-ring',
+          isDone
+            ? 'bg-tom border-tom text-white'
+            : 'border-fg-muted text-transparent hover:border-tom',
+        ].join(' ')}
+      >
+        {isDone && <Check size={12} strokeWidth={3} />}
+      </button>
+      <div className="min-w-0 flex-1">
+        <div className={['text-body-md', isDone ? 'line-through text-fg-muted' : ''].join(' ')}>
+          {task.title}
+        </div>
+        {task.due_date && (
+          <div className="text-body-sm text-fg-muted tabular-nums mt-0.5">
+            {brShort(task.due_date)}
+          </div>
+        )}
+      </div>
+    </li>
+  );
+}
+
+function CheckpointTasksGroup({
+  checkpoint,
+  tasks,
+  onToggleTask,
+  projectId,
+  collaboratorId,
+}: {
+  checkpoint: CheckpointFull;
+  tasks: Task[];
+  onToggleTask: (t: Task) => void;
+  projectId: string;
+  collaboratorId: string | null;
+}) {
+  const [expanded, setExpanded] = useState(checkpoint.status !== 'done');
+  const isDone = checkpoint.status === 'done';
+  const total = tasks.length;
+  const done = tasks.filter(t => t.status === 'done').length;
+  return (
+    <div className="surface">
+      <button
+        type="button"
+        onClick={() => setExpanded(v => !v)}
+        className="w-full p-md flex items-center justify-between gap-md hover:bg-bg-elevated focus-ring text-left"
+        aria-expanded={expanded}
+      >
+        <div className="min-w-0 flex-1">
+          <div className={['text-body-md font-semibold', isDone ? 'line-through text-fg-muted' : ''].join(' ')}>
+            {checkpoint.name}
+          </div>
+          <div className="text-body-sm text-fg-muted tabular-nums mt-0.5">
+            {total === 0 ? 'sem tarefas' : `${done}/${total}`}
+            {checkpoint.due_date && <> · {brShort(checkpoint.due_date)}</>}
+          </div>
+        </div>
+        <span className="text-fg-muted text-body-sm shrink-0" aria-hidden>{expanded ? '▾' : '▸'}</span>
+      </button>
+      {expanded && (
+        <div className="px-md pb-md">
+          {tasks.length > 0 && (
+            <ul className="divide-y divide-border">
+              {tasks.map(t => (
+                <TaskListItem key={t.id} task={t} onToggle={() => onToggleTask(t)} />
+              ))}
+            </ul>
+          )}
+          <CreateTaskInline
+            projectId={projectId}
+            checkpointId={checkpoint.id}
+            collaboratorId={collaboratorId}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CreateTaskInline({
+  projectId,
+  checkpointId,
+  collaboratorId,
+}: {
+  projectId: string;
+  checkpointId: string;
+  collaboratorId: string | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const [title, setTitle] = useState('');
+  const qc = useQueryClient();
+  const createTask = useMutation({
+    mutationFn: async () => {
+      if (!collaboratorId) throw new Error('no_auth');
+      const t = title.trim();
+      if (!t) return;
+      const { error } = await supabase.from('tasks').insert({
+        title: t.slice(0, 200),
+        project_id: projectId,
+        checkpoint_id: checkpointId,
+        assigned_to: collaboratorId,
+        created_by: collaboratorId,
+        source: 'manual',
+        status: 'pending',
+        context: 'work',
+        priority: 'medium',
+        action_type: 'task',
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      setTitle('');
+      setOpen(false);
+      qc.invalidateQueries({ queryKey: ['project', projectId, 'tasks'] });
+      qc.invalidateQueries({ queryKey: ['tasks'] });
+    },
+  });
+
+  function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (title.trim()) createTask.mutate();
+  }
+
+  function handleKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Escape') {
+      setOpen(false);
+      setTitle('');
+    }
+  }
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="mt-2 inline-flex items-center gap-2 text-body-sm text-fg-muted hover:text-tom focus-ring rounded-sm px-1 py-0.5"
+      >
+        <Plus size={14} /> Tarefa
+      </button>
+    );
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="mt-2 flex items-center gap-2">
+      <input
+        type="text"
+        autoFocus
+        value={title}
+        maxLength={200}
+        onChange={e => setTitle(e.target.value)}
+        onKeyDown={handleKeyDown}
+        placeholder="O que precisa fazer..."
+        className="flex-1 h-9 px-3 rounded-md bg-bg-elevated border border-border text-body-md text-fg placeholder:text-fg-muted focus-ring"
+      />
+      <button
+        type="submit"
+        disabled={!title.trim() || createTask.isPending}
+        className="h-9 px-3 rounded-md bg-tom text-white text-body-sm font-semibold disabled:opacity-50 focus-ring"
+      >
+        Salvar
+      </button>
+      <button
+        type="button"
+        onClick={() => { setOpen(false); setTitle(''); }}
+        className="h-9 px-2 rounded-md text-body-sm text-fg-muted hover:text-fg focus-ring"
+      >
+        Cancelar
+      </button>
+    </form>
   );
 }
