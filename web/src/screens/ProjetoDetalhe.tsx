@@ -1,7 +1,25 @@
 import { useState, useEffect, useRef, FormEvent, KeyboardEvent } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Rocket, Check, AlertTriangle, Plus, ChevronDown, ChevronRight, MoreVertical } from 'lucide-react';
+import { ArrowLeft, Rocket, Check, AlertTriangle, Plus, ChevronDown, ChevronRight, MoreVertical, GripVertical } from 'lucide-react';
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  TouchSensor,
+  KeyboardSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+  useSortable,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { Tabs } from '../components/Tabs';
@@ -272,30 +290,69 @@ export function ProjetoDetalhe() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['project', id, 'contingencies'] }),
   });
 
-  // Swap-based reorder. Bom suficiente pra movimentos pontuais no mobile.
-  const swapCheckpointOrder = useMutation({
-    mutationFn: async ({ a, b }: { a: CheckpointFull; b: CheckpointFull }) => {
-      const aOrder = a.sort_order ?? 0;
-      const bOrder = b.sort_order ?? 0;
-      // Update em duas chamadas separadas — Supabase nao tem batch update facil.
-      const { error: e1 } = await supabase.from('project_checkpoints').update({ sort_order: bOrder }).eq('id', a.id);
-      if (e1) throw e1;
-      const { error: e2 } = await supabase.from('project_checkpoints').update({ sort_order: aOrder }).eq('id', b.id);
-      if (e2) throw e2;
+  // Bulk reorder com optimistic update — drag-and-drop precisa de feedback imediato.
+  const reorderCheckpoints = useMutation({
+    mutationFn: async (orderedIds: string[]) => {
+      // Atualiza sort_order de cada CP pra match do indice.
+      await Promise.all(
+        orderedIds.map((cpId, idx) =>
+          supabase.from('project_checkpoints').update({ sort_order: idx }).eq('id', cpId).then(({ error }) => {
+            if (error) throw error;
+          }),
+        ),
+      );
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['project', id, 'checkpoints'] }),
+    onMutate: async (orderedIds) => {
+      await qc.cancelQueries({ queryKey: ['project', id, 'checkpoints'] });
+      const prev = qc.getQueryData<CheckpointFull[]>(['project', id, 'checkpoints']);
+      qc.setQueryData<CheckpointFull[]>(['project', id, 'checkpoints'], (old) => {
+        if (!old) return old;
+        const map = new Map(old.map(c => [c.id, c]));
+        return orderedIds.map((cpId, idx) => ({ ...(map.get(cpId)!), sort_order: idx }));
+      });
+      return { prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['project', id, 'checkpoints'], ctx.prev);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['project', id, 'checkpoints'] }),
   });
 
-  const swapTaskOrder = useMutation({
-    mutationFn: async ({ a, b }: { a: Task & { sort_position?: number | null }; b: Task & { sort_position?: number | null } }) => {
-      const aPos = a.sort_position ?? 0;
-      const bPos = b.sort_position ?? 0;
-      const { error: e1 } = await supabase.from('tasks').update({ sort_position: bPos }).eq('id', a.id);
-      if (e1) throw e1;
-      const { error: e2 } = await supabase.from('tasks').update({ sort_position: aPos }).eq('id', b.id);
-      if (e2) throw e2;
+  const reorderTasks = useMutation({
+    mutationFn: async ({ checkpointId: _cpId, orderedIds }: { checkpointId: string | null; orderedIds: string[] }) => {
+      await Promise.all(
+        orderedIds.map((taskId, idx) =>
+          supabase.from('tasks').update({ sort_position: idx }).eq('id', taskId).then(({ error }) => {
+            if (error) throw error;
+          }),
+        ),
+      );
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['project', id, 'tasks'] }),
+    onMutate: async ({ checkpointId, orderedIds }) => {
+      await qc.cancelQueries({ queryKey: ['project', id, 'tasks'] });
+      const prev = qc.getQueryData<Task[]>(['project', id, 'tasks']);
+      qc.setQueryData<Task[]>(['project', id, 'tasks'], (old) => {
+        if (!old) return old;
+        // Atualiza sort_position dos itens reordenados; outros ficam intactos.
+        const positionMap = new Map(orderedIds.map((tId, idx) => [tId, idx]));
+        return old.map(t => {
+          const k = (t as Task & { checkpoint_id?: string | null }).checkpoint_id ?? null;
+          if (k !== checkpointId) return t;
+          const newPos = positionMap.get(t.id);
+          if (newPos == null) return t;
+          return { ...t, sort_position: newPos } as Task;
+        }).sort((a, b) => {
+          const pa = (a as Task & { sort_position?: number | null }).sort_position ?? 0;
+          const pb = (b as Task & { sort_position?: number | null }).sort_position ?? 0;
+          return pa - pb;
+        });
+      });
+      return { prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['project', id, 'tasks'], ctx.prev);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['project', id, 'tasks'] }),
   });
 
   if (!supabaseConfigured) return <EmptyState icon={<Rocket size={32} />} title="Configure Supabase" />;
@@ -371,29 +428,21 @@ export function ProjetoDetalhe() {
             </div>
           ) : (
             <>
-              {checkpoints.map((cp, idx) => {
-                const prev = idx > 0 ? checkpoints[idx - 1] : null;
-                const nextCp = idx < checkpoints.length - 1 ? checkpoints[idx + 1] : null;
-                return (
-                  <CheckpointCard
-                    key={cp.id}
-                    checkpoint={cp}
-                    tasks={tasksByCheckpoint.get(cp.id) ?? []}
-                    onToggleCheckpoint={() => toggleCheckpoint.mutate(cp)}
-                    onToggleTask={(t) => toggleTask.mutate(t)}
-                    onRenameCheckpoint={(name) => renameCheckpoint.mutate({ id: cp.id, name })}
-                    onDeleteCheckpoint={() => deleteCheckpoint.mutate(cp.id)}
-                    onRenameTask={(tId, title) => renameTask.mutate({ id: tId, title })}
-                    onDeleteTask={(tId) => deleteTask.mutate(tId)}
-                    onSwapTaskOrder={(a, b) => swapTaskOrder.mutate({ a, b })}
-                    onMoveUp={prev ? () => swapCheckpointOrder.mutate({ a: cp, b: prev }) : null}
-                    onMoveDown={nextCp ? () => swapCheckpointOrder.mutate({ a: cp, b: nextCp }) : null}
-                    toggleDisabled={toggleCheckpoint.isPending}
-                    projectId={id}
-                    collaboratorId={collaborator?.id ?? null}
-                  />
-                );
-              })}
+              <CheckpointSortableList
+                checkpoints={checkpoints}
+                tasksByCheckpoint={tasksByCheckpoint}
+                projectId={id}
+                collaboratorId={collaborator?.id ?? null}
+                toggleDisabled={toggleCheckpoint.isPending}
+                onToggleCheckpoint={(cp) => toggleCheckpoint.mutate(cp)}
+                onToggleTask={(t) => toggleTask.mutate(t)}
+                onRenameCheckpoint={(cpId, name) => renameCheckpoint.mutate({ id: cpId, name })}
+                onDeleteCheckpoint={(cpId) => deleteCheckpoint.mutate(cpId)}
+                onRenameTask={(tId, title) => renameTask.mutate({ id: tId, title })}
+                onDeleteTask={(tId) => deleteTask.mutate(tId)}
+                onReorderCheckpoints={(ids) => reorderCheckpoints.mutate(ids)}
+                onReorderTasks={(cpId, ids) => reorderTasks.mutate({ checkpointId: cpId, orderedIds: ids })}
+              />
               {orphanTasks.length > 0 && (
                 <div className="surface p-md">
                   <div className="text-label text-fg-muted uppercase tracking-wide mb-2">
@@ -476,18 +525,21 @@ export function ProjetoDetalhe() {
 
 function TaskListItem({
   task,
+  index,
   onToggle,
   onRename,
   onDelete,
-  onMoveUp,
-  onMoveDown,
+  dragHandleAttributes,
+  dragHandleListeners,
 }: {
   task: Task;
+  /** Posicao na lista (0-based). Mostrado como "{index+1}." na frente do titulo. */
+  index?: number;
   onToggle: () => void;
   onRename?: (title: string) => void;
   onDelete?: () => void;
-  onMoveUp?: (() => void) | null;
-  onMoveDown?: (() => void) | null;
+  dragHandleAttributes?: React.HTMLAttributes<HTMLElement>;
+  dragHandleListeners?: React.DOMAttributes<HTMLElement>;
 }) {
   const isDone = task.status === 'done';
   const [editing, setEditing] = useState(false);
@@ -500,7 +552,18 @@ function TaskListItem({
   }
 
   return (
-    <li className="py-2 flex items-start gap-md group">
+    <li className="py-2 flex items-start gap-2 group">
+      {dragHandleListeners && (
+        <button
+          type="button"
+          {...dragHandleAttributes}
+          {...dragHandleListeners}
+          aria-label="Arrastar tarefa"
+          className="mt-1 text-fg-muted/40 hover:text-fg-muted cursor-grab active:cursor-grabbing touch-none focus-ring rounded-sm"
+        >
+          <GripVertical size={14} />
+        </button>
+      )}
       <button
         type="button"
         onClick={onToggle}
@@ -531,6 +594,9 @@ function TaskListItem({
           />
         ) : (
           <div className={['text-body-md', isDone ? 'line-through text-fg-muted' : ''].join(' ')}>
+            {typeof index === 'number' && (
+              <span className="text-fg-muted tabular-nums mr-1.5">{index + 1}.</span>
+            )}
             {task.title}
           </div>
         )}
@@ -540,12 +606,10 @@ function TaskListItem({
           </div>
         )}
       </div>
-      {(onRename || onDelete || onMoveUp || onMoveDown) && !editing && (
+      {(onRename || onDelete) && !editing && (
         <RowMenu
           items={[
             ...(onRename ? [{ label: 'Editar', onClick: () => { setEditValue(task.title); setEditing(true); } }] : []),
-            ...(onMoveUp ? [{ label: '↑ Mover pra cima', onClick: onMoveUp }] : []),
-            ...(onMoveDown ? [{ label: '↓ Mover pra baixo', onClick: onMoveDown }] : []),
             ...(onDelete ? [{ label: 'Excluir tarefa', danger: true, confirm: 'Excluir essa tarefa?', onClick: () => onDelete() }] : []),
           ]}
         />
@@ -563,12 +627,12 @@ function CheckpointCard({
   onDeleteCheckpoint,
   onRenameTask,
   onDeleteTask,
-  onSwapTaskOrder,
-  onMoveUp,
-  onMoveDown,
+  onReorderTasks,
   toggleDisabled,
   projectId,
   collaboratorId,
+  dragHandleAttributes,
+  dragHandleListeners,
 }: {
   checkpoint: CheckpointFull;
   tasks: Task[];
@@ -578,12 +642,12 @@ function CheckpointCard({
   onDeleteCheckpoint: () => void;
   onRenameTask: (taskId: string, title: string) => void;
   onDeleteTask: (taskId: string) => void;
-  onSwapTaskOrder: (a: Task, b: Task) => void;
-  onMoveUp: (() => void) | null;
-  onMoveDown: (() => void) | null;
+  onReorderTasks: (orderedIds: string[]) => void;
   toggleDisabled: boolean;
   projectId: string;
   collaboratorId: string | null;
+  dragHandleAttributes?: React.HTMLAttributes<HTMLElement>;
+  dragHandleListeners?: React.DOMAttributes<HTMLElement>;
 }) {
   const isDone = checkpoint.status === 'done';
   const [expanded, setExpanded] = useState(!isDone);
@@ -602,6 +666,17 @@ function CheckpointCard({
     <article className="surface">
       {/* Header — visual de "marco/container". Padding maior, fundo do surface, checkbox quadrado grande. */}
       <div className="p-md flex items-start gap-md">
+        {dragHandleListeners && (
+          <button
+            type="button"
+            {...dragHandleAttributes}
+            {...dragHandleListeners}
+            aria-label="Arrastar checkpoint"
+            className="mt-1 text-fg-muted hover:text-fg cursor-grab active:cursor-grabbing touch-none focus-ring rounded-sm"
+          >
+            <GripVertical size={16} />
+          </button>
+        )}
         <button
           type="button"
           onClick={onToggleCheckpoint}
@@ -654,8 +729,6 @@ function CheckpointCard({
           <RowMenu
             items={[
               { label: 'Editar nome', onClick: () => { setEditValue(checkpoint.name); setEditing(true); } },
-              ...(onMoveUp ? [{ label: '↑ Mover pra cima', onClick: onMoveUp }] : []),
-              ...(onMoveDown ? [{ label: '↓ Mover pra baixo', onClick: onMoveDown }] : []),
               {
                 label: 'Excluir checkpoint',
                 danger: true,
@@ -685,26 +758,16 @@ function CheckpointCard({
             </div>
           )}
           <div>
-            <div className="text-label text-fg-muted uppercase tracking-wide mb-1">Checklist</div>
+            <div className="text-label text-fg-muted uppercase tracking-wide mb-1">Tarefas</div>
             <div className="border-l-2 border-border pl-md">
               {tasks.length > 0 && (
-                <ul className="divide-y divide-border">
-                  {tasks.map((t, i) => {
-                    const prev = i > 0 ? tasks[i - 1] : null;
-                    const nextT = i < tasks.length - 1 ? tasks[i + 1] : null;
-                    return (
-                      <TaskListItem
-                        key={t.id}
-                        task={t}
-                        onToggle={() => onToggleTask(t)}
-                        onRename={(title) => onRenameTask(t.id, title)}
-                        onDelete={() => onDeleteTask(t.id)}
-                        onMoveUp={prev ? () => onSwapTaskOrder(t, prev) : null}
-                        onMoveDown={nextT ? () => onSwapTaskOrder(t, nextT) : null}
-                      />
-                    );
-                  })}
-                </ul>
+                <SortableTaskList
+                  tasks={tasks}
+                  onReorder={onReorderTasks}
+                  onToggleTask={onToggleTask}
+                  onRenameTask={onRenameTask}
+                  onDeleteTask={onDeleteTask}
+                />
               )}
               <div className={tasks.length > 0 ? 'pt-2' : ''}>
                 <CreateTaskInline
@@ -907,6 +970,202 @@ function RowMenu({ items }: { items: MenuItem[] }) {
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+// ---- Sortable wrappers (drag-and-drop via @dnd-kit). Sensors com delay
+// de 200ms pra nao conflitar com tap (toggle/expand/click no menu).
+
+function makeSensors() {
+  // Hooks chamados em ordem fixa — wrapper usado dentro de componentes que sao
+  // sortable hosts (CheckpointSortableList e SortableTaskList).
+  const pointerSensor = useSensor(PointerSensor, {
+    activationConstraint: { delay: 200, tolerance: 5 },
+  });
+  const touchSensor = useSensor(TouchSensor, {
+    activationConstraint: { delay: 200, tolerance: 5 },
+  });
+  const keyboardSensor = useSensor(KeyboardSensor, {
+    coordinateGetter: sortableKeyboardCoordinates,
+  });
+  return useSensors(pointerSensor, touchSensor, keyboardSensor);
+}
+
+function CheckpointSortableList({
+  checkpoints,
+  tasksByCheckpoint,
+  projectId,
+  collaboratorId,
+  toggleDisabled,
+  onToggleCheckpoint,
+  onToggleTask,
+  onRenameCheckpoint,
+  onDeleteCheckpoint,
+  onRenameTask,
+  onDeleteTask,
+  onReorderCheckpoints,
+  onReorderTasks,
+}: {
+  checkpoints: CheckpointFull[];
+  tasksByCheckpoint: Map<string | null, Task[]>;
+  projectId: string;
+  collaboratorId: string | null;
+  toggleDisabled: boolean;
+  onToggleCheckpoint: (cp: CheckpointFull) => void;
+  onToggleTask: (t: Task) => void;
+  onRenameCheckpoint: (cpId: string, name: string) => void;
+  onDeleteCheckpoint: (cpId: string) => void;
+  onRenameTask: (taskId: string, title: string) => void;
+  onDeleteTask: (taskId: string) => void;
+  onReorderCheckpoints: (orderedIds: string[]) => void;
+  onReorderTasks: (checkpointId: string, orderedIds: string[]) => void;
+}) {
+  const sensors = makeSensors();
+  const ids = checkpoints.map(c => c.id);
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = ids.indexOf(String(active.id));
+    const newIndex = ids.indexOf(String(over.id));
+    if (oldIndex < 0 || newIndex < 0) return;
+    onReorderCheckpoints(arrayMove(ids, oldIndex, newIndex));
+  }
+
+  return (
+    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <SortableContext items={ids} strategy={verticalListSortingStrategy}>
+        <div className="space-y-sm">
+          {checkpoints.map(cp => (
+            <SortableCheckpointWrapper
+              key={cp.id}
+              checkpoint={cp}
+              tasks={tasksByCheckpoint.get(cp.id) ?? []}
+              projectId={projectId}
+              collaboratorId={collaboratorId}
+              toggleDisabled={toggleDisabled}
+              onToggleCheckpoint={() => onToggleCheckpoint(cp)}
+              onToggleTask={onToggleTask}
+              onRenameCheckpoint={(name) => onRenameCheckpoint(cp.id, name)}
+              onDeleteCheckpoint={() => onDeleteCheckpoint(cp.id)}
+              onRenameTask={onRenameTask}
+              onDeleteTask={onDeleteTask}
+              onReorderTasks={(ids) => onReorderTasks(cp.id, ids)}
+            />
+          ))}
+        </div>
+      </SortableContext>
+    </DndContext>
+  );
+}
+
+function SortableCheckpointWrapper(props: {
+  checkpoint: CheckpointFull;
+  tasks: Task[];
+  projectId: string;
+  collaboratorId: string | null;
+  toggleDisabled: boolean;
+  onToggleCheckpoint: () => void;
+  onToggleTask: (t: Task) => void;
+  onRenameCheckpoint: (name: string) => void;
+  onDeleteCheckpoint: () => void;
+  onRenameTask: (taskId: string, title: string) => void;
+  onDeleteTask: (taskId: string) => void;
+  onReorderTasks: (orderedIds: string[]) => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: props.checkpoint.id,
+  });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.6 : undefined,
+    zIndex: isDragging ? 10 : undefined,
+  };
+  return (
+    <div ref={setNodeRef} style={style}>
+      <CheckpointCard
+        {...props}
+        dragHandleAttributes={attributes}
+        dragHandleListeners={listeners}
+      />
+    </div>
+  );
+}
+
+function SortableTaskList({
+  tasks,
+  onReorder,
+  onToggleTask,
+  onRenameTask,
+  onDeleteTask,
+}: {
+  tasks: Task[];
+  onReorder: (orderedIds: string[]) => void;
+  onToggleTask: (t: Task) => void;
+  onRenameTask: (taskId: string, title: string) => void;
+  onDeleteTask: (taskId: string) => void;
+}) {
+  const sensors = makeSensors();
+  const ids = tasks.map(t => t.id);
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = ids.indexOf(String(active.id));
+    const newIndex = ids.indexOf(String(over.id));
+    if (oldIndex < 0 || newIndex < 0) return;
+    onReorder(arrayMove(ids, oldIndex, newIndex));
+  }
+
+  return (
+    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <SortableContext items={ids} strategy={verticalListSortingStrategy}>
+        <ul className="divide-y divide-border">
+          {tasks.map((t, i) => (
+            <SortableTaskItem
+              key={t.id}
+              task={t}
+              index={i}
+              onToggle={() => onToggleTask(t)}
+              onRename={(title) => onRenameTask(t.id, title)}
+              onDelete={() => onDeleteTask(t.id)}
+            />
+          ))}
+        </ul>
+      </SortableContext>
+    </DndContext>
+  );
+}
+
+function SortableTaskItem(props: {
+  task: Task;
+  index: number;
+  onToggle: () => void;
+  onRename: (title: string) => void;
+  onDelete: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: props.task.id,
+  });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.6 : undefined,
+    zIndex: isDragging ? 10 : undefined,
+  };
+  return (
+    <div ref={setNodeRef} style={style}>
+      <TaskListItem
+        task={props.task}
+        index={props.index}
+        onToggle={props.onToggle}
+        onRename={props.onRename}
+        onDelete={props.onDelete}
+        dragHandleAttributes={attributes}
+        dragHandleListeners={listeners}
+      />
     </div>
   );
 }
