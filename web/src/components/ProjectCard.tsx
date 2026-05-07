@@ -25,6 +25,8 @@ interface Props {
   onRename?: (name: string) => void;
   /** Quando passado, menu (...) inclui Excluir projeto. */
   onDelete?: () => void;
+  /** Quando passado, CategoryTag vira clicavel com dropdown de categorias. */
+  onUpdateCategory?: (category: Project['category']) => void;
   /** Sortable wiring vindo do useSortable. */
   sortableRef?: (node: HTMLElement | null) => void;
   sortableStyle?: React.CSSProperties;
@@ -38,6 +40,7 @@ export function ProjectCard({
   nextCheckpoint,
   onRename,
   onDelete,
+  onUpdateCategory,
   sortableRef,
   sortableStyle,
   sortableAttributes,
@@ -115,7 +118,11 @@ export function ProjectCard({
           </div>
         </div>
         <div className="flex items-start gap-1 shrink-0" data-no-nav>
-          <CategoryTag project={project} label={PROJECT_CATEGORY_LABELS[project.category]} />
+          <CategoryTag
+            project={project}
+            label={PROJECT_CATEGORY_LABELS[project.category]}
+            onChange={onUpdateCategory}
+          />
           {(onRename || onDelete) && !editing && (
             <ProjectRowMenu
               onEdit={onRename ? () => { setEditValue(project.name); setEditing(true); } : undefined}

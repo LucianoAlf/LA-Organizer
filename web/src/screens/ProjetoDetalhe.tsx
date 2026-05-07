@@ -383,6 +383,7 @@ export function ProjetoDetalhe() {
         onRename={(name) => updateProject.mutate({ name })}
         onUpdateDescription={(description) => updateProject.mutate({ description: description || null })}
         onUpdateEventDate={(event_date) => updateProject.mutate({ event_date: event_date || null })}
+        onUpdateCategory={(category) => updateProject.mutate({ category })}
         onDelete={() => deleteProject.mutate()}
       />
 
@@ -1190,6 +1191,7 @@ function ProjectHeader({
   onRename,
   onUpdateDescription,
   onUpdateEventDate,
+  onUpdateCategory,
   onDelete,
 }: {
   project: ProjectFull;
@@ -1197,6 +1199,7 @@ function ProjectHeader({
   onRename: (name: string) => void;
   onUpdateDescription: (description: string) => void;
   onUpdateEventDate: (eventDate: string) => void;
+  onUpdateCategory: (category: ProjectFull['category']) => void;
   onDelete: () => void;
 }) {
   const [editName, setEditName] = useState(false);
@@ -1318,7 +1321,11 @@ function ProjectHeader({
           ) : null}
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <CategoryTag project={project} label={PROJECT_CATEGORY_LABELS[project.category]} />
+          <CategoryTag
+            project={project}
+            label={PROJECT_CATEGORY_LABELS[project.category]}
+            onChange={onUpdateCategory}
+          />
           <RowMenu
             items={[
               {

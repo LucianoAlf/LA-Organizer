@@ -88,6 +88,23 @@ export function Projetos() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }),
   });
 
+  const updateCategory = useMutation({
+    mutationFn: async ({ id, category }: { id: string; category: Project['category'] }) => {
+      const { error } = await supabase.from('projects').update({ category }).eq('id', id);
+      if (error) throw error;
+    },
+    onMutate: async ({ id, category }) => {
+      await qc.cancelQueries({ queryKey });
+      const prev = qc.getQueryData<Project[]>(queryKey);
+      qc.setQueryData<Project[]>(queryKey, (old) => old?.map(p => p.id === id ? { ...p, category } : p));
+      return { prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) qc.setQueryData(queryKey, ctx.prev);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['projects'] }),
+  });
+
   const deleteProject = useMutation({
     mutationFn: async (id: string) => {
       // Tasks viram orfas; checkpoints/contingencies/members caem em CASCADE.
@@ -168,6 +185,7 @@ export function Projetos() {
           onRename={(id, name) => renameProject.mutate({ id, name })}
           onDelete={(id) => deleteProject.mutate(id)}
           onReorder={(ids) => reorderProjects.mutate(ids)}
+          onUpdateCategory={(id, category) => updateCategory.mutate({ id, category })}
         />
       )}
     </div>
@@ -181,11 +199,13 @@ function SortableProjectList({
   onRename,
   onDelete,
   onReorder,
+  onUpdateCategory,
 }: {
   projects: Project[];
   onRename: (id: string, name: string) => void;
   onDelete: (id: string) => void;
   onReorder: (orderedIds: string[]) => void;
+  onUpdateCategory: (id: string, category: Project['category']) => void;
 }) {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
@@ -213,6 +233,7 @@ function SortableProjectList({
               project={p}
               onRename={(name) => onRename(p.id, name)}
               onDelete={() => onDelete(p.id)}
+              onUpdateCategory={(category) => onUpdateCategory(p.id, category)}
             />
           ))}
         </div>
@@ -225,10 +246,12 @@ function SortableProjectCard({
   project,
   onRename,
   onDelete,
+  onUpdateCategory,
 }: {
   project: Project;
   onRename: (name: string) => void;
   onDelete: () => void;
+  onUpdateCategory: (category: Project['category']) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: project.id,
@@ -242,6 +265,7 @@ function SortableProjectCard({
       project={project}
       onRename={onRename}
       onDelete={onDelete}
+      onUpdateCategory={onUpdateCategory}
       sortableRef={setNodeRef}
       sortableStyle={style}
       sortableAttributes={attributes}
