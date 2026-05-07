@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, X, UserPlus, ExternalLink } from 'lucide-react';
+import { Plus, X, UserPlus, ExternalLink, ChevronDown } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { Button } from './Button';
 import { EmptyState } from './EmptyState';
@@ -293,29 +293,31 @@ function AddInternalForm({
     onSubmit(collabId, role);
   }
 
+  const collabOptions = available.map(c => ({
+    value: c.id,
+    label: c.full_name,
+    sublabel: c.function_title ?? undefined,
+  }));
+
+  const roleOptions: Array<{ value: ProjectMemberRole; label: string; sublabel: string }> = [
+    { value: 'member', label: 'Membro', sublabel: 'executa' },
+    { value: 'coordinator', label: 'Coordenador', sublabel: 'vê tudo do projeto' },
+    { value: 'owner', label: 'Owner', sublabel: 'criador / lidera' },
+  ];
+
   return (
     <div className="surface p-md space-y-2">
-      <select
+      <CustomSelect
         value={collabId}
-        onChange={e => setCollabId(e.target.value)}
-        className="w-full h-9 px-2 rounded-md bg-bg-elevated border border-border text-body-sm text-fg focus-ring"
-      >
-        <option value="">— Escolher pessoa —</option>
-        {available.map(c => (
-          <option key={c.id} value={c.id}>
-            {c.full_name} {c.function_title ? `(${c.function_title})` : ''}
-          </option>
-        ))}
-      </select>
-      <select
+        placeholder="— Escolher pessoa —"
+        options={collabOptions}
+        onChange={setCollabId}
+      />
+      <CustomSelect
         value={role}
-        onChange={e => setRole(e.target.value as ProjectMemberRole)}
-        className="w-full h-9 px-2 rounded-md bg-bg-elevated border border-border text-body-sm text-fg focus-ring"
-      >
-        <option value="member">Membro (executa)</option>
-        <option value="coordinator">Coordenador (vê tudo do projeto)</option>
-        <option value="owner">Owner (criador / lidera)</option>
-      </select>
+        options={roleOptions}
+        onChange={(v) => setRole(v as ProjectMemberRole)}
+      />
       <div className="flex gap-2">
         <button
           type="button"
@@ -333,6 +335,91 @@ function AddInternalForm({
           Adicionar
         </button>
       </div>
+    </div>
+  );
+}
+
+// ---- CustomSelect — dropdown padrao design system (substitui <select> nativo)
+function CustomSelect({
+  value,
+  options,
+  onChange,
+  placeholder,
+}: {
+  value: string;
+  options: Array<{ value: string; label: string; sublabel?: string }>;
+  onChange: (value: string) => void;
+  placeholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const current = options.find(o => o.value === value);
+
+  function handleBlur(e: React.FocusEvent<HTMLDivElement>) {
+    if (!e.currentTarget.contains(e.relatedTarget)) {
+      setTimeout(() => setOpen(false), 150);
+    }
+  }
+
+  function pick(v: string) {
+    onChange(v);
+    setOpen(false);
+  }
+
+  return (
+    <div className="relative" onBlur={handleBlur}>
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        className={[
+          'w-full h-9 px-3 rounded-md bg-bg-elevated border border-border focus-ring',
+          'flex items-center justify-between gap-2 text-body-sm',
+          current ? 'text-fg' : 'text-fg-muted',
+        ].join(' ')}
+      >
+        <span className="truncate">
+          {current ? (
+            <>
+              {current.label}
+              {current.sublabel && (
+                <span className="text-fg-muted ml-1">({current.sublabel})</span>
+              )}
+            </>
+          ) : (
+            placeholder ?? 'Selecionar'
+          )}
+        </span>
+        <ChevronDown size={14} className={['shrink-0 text-fg-muted transition-transform', open ? 'rotate-180' : ''].join(' ')} />
+      </button>
+      {open && (
+        <div className="absolute left-0 right-0 top-full mt-1 z-50 max-h-60 overflow-y-auto rounded-md border border-border bg-bg-surface shadow-soft">
+          {options.length === 0 ? (
+            <div className="px-3 py-2 text-body-sm text-fg-muted">Nenhuma opção</div>
+          ) : (
+            options.map(opt => {
+              const selected = opt.value === value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => pick(opt.value)}
+                  className={[
+                    'w-full px-3 py-2 text-left text-body-sm flex items-center justify-between gap-2',
+                    selected ? 'bg-bg-elevated text-fg' : 'text-fg hover:bg-bg-elevated',
+                  ].join(' ')}
+                >
+                  <span className="min-w-0 truncate">
+                    {opt.label}
+                    {opt.sublabel && (
+                      <span className="text-fg-muted ml-1.5 text-[11px]">({opt.sublabel})</span>
+                    )}
+                  </span>
+                  {selected && <span className="text-tom shrink-0">✓</span>}
+                </button>
+              );
+            })
+          )}
+        </div>
+      )}
     </div>
   );
 }
