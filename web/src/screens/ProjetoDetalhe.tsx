@@ -88,8 +88,9 @@ async function fetchProjectTasks(projectId: string): Promise<Task[]> {
 async function fetchMembers(projectId: string): Promise<ProjectMember[]> {
   const { data, error } = await supabase
     .from('project_members')
-    .select('id, project_id, collaborator_id, role_in_project, function_in_project, guest_name, guest_role, created_at, collaborators(id, full_name, function_title)')
+    .select('id, project_id, collaborator_id, role_in_project, function_in_project, guest_name, guest_role, sort_position, created_at, collaborators(id, full_name, function_title)')
     .eq('project_id', projectId)
+    .order('sort_position', { ascending: true, nullsFirst: false })
     .order('created_at', { ascending: true });
   if (error) throw error;
   // Supabase pode devolver collaborators como array (FK) — normalizar pra objeto.

@@ -1,6 +1,24 @@
 import { useState, useMemo, useRef, useLayoutEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, X, UserPlus, ExternalLink, ChevronDown } from 'lucide-react';
+import { Plus, X, UserPlus, ExternalLink, ChevronDown, GripVertical } from 'lucide-react';
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  TouchSensor,
+  KeyboardSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+  useSortable,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { supabase } from '../lib/supabase';
 import { Button } from './Button';
 import { EmptyState } from './EmptyState';
@@ -103,6 +121,49 @@ export function MembersTab({ projectId, members, canEdit }: Props) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['project', projectId, 'members'] }),
   });
 
+  // Sprint 22.22m — reorder com optimistic update (mesmo padrao de projetos/checkpoints)
+  const reorderMembers = useMutation({
+    mutationFn: async (orderedIds: string[]) => {
+      await Promise.all(
+        orderedIds.map((mid, idx) =>
+          supabase.from('project_members').update({ sort_position: idx }).eq('id', mid).then(({ error }) => {
+            if (error) throw error;
+          }),
+        ),
+      );
+    },
+    onMutate: async (orderedIds) => {
+      await qc.cancelQueries({ queryKey: ['project', projectId, 'members'] });
+      const prev = qc.getQueryData<ProjectMember[]>(['project', projectId, 'members']);
+      qc.setQueryData<ProjectMember[]>(['project', projectId, 'members'], (old) => {
+        if (!old) return old;
+        const map = new Map(old.map(m => [m.id, m]));
+        return orderedIds.map((mid, idx) => ({ ...(map.get(mid)!), sort_position: idx } as ProjectMember));
+      });
+      return { prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['project', projectId, 'members'], ctx.prev);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['project', projectId, 'members'] }),
+  });
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const ids = members.map(m => m.id);
+    const oldIndex = ids.indexOf(String(active.id));
+    const newIndex = ids.indexOf(String(over.id));
+    if (oldIndex < 0 || newIndex < 0) return;
+    reorderMembers.mutate(arrayMove(ids, oldIndex, newIndex));
+  }
+
   return (
     <section className="space-y-sm">
       {members.length === 0 ? (
@@ -113,18 +174,22 @@ export function MembersTab({ projectId, members, canEdit }: Props) {
           />
         </div>
       ) : (
-        <ul className="space-y-2">
-          {members.map(m => (
-            <MemberRow
-              key={m.id}
-              member={m}
-              canEdit={canEdit}
-              onUpdateRole={(role) => updateRole.mutate({ memberId: m.id, role })}
-              onUpdateFunction={(fn) => updateFunction.mutate({ memberId: m.id, fn })}
-              onRemove={() => removeMember.mutate(m.id)}
-            />
-          ))}
-        </ul>
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <SortableContext items={members.map(m => m.id)} strategy={verticalListSortingStrategy}>
+            <ul className="space-y-2">
+              {members.map(m => (
+                <SortableMemberRow
+                  key={m.id}
+                  member={m}
+                  canEdit={canEdit}
+                  onUpdateRole={(role) => updateRole.mutate({ memberId: m.id, role })}
+                  onUpdateFunction={(fn) => updateFunction.mutate({ memberId: m.id, fn })}
+                  onRemove={() => removeMember.mutate(m.id)}
+                />
+              ))}
+            </ul>
+          </SortableContext>
+        </DndContext>
       )}
 
       {canEdit && (
@@ -170,6 +235,33 @@ export function MembersTab({ projectId, members, canEdit }: Props) {
   );
 }
 
+// ---- SortableMemberRow — wrapper drag-and-drop -----------------------------
+function SortableMemberRow(props: {
+  member: ProjectMember;
+  canEdit: boolean;
+  onUpdateRole: (role: ProjectMemberRole) => void;
+  onUpdateFunction: (fn: string) => void;
+  onRemove: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: props.member.id,
+  });
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+  return (
+    <MemberRow
+      {...props}
+      sortableRef={setNodeRef}
+      sortableStyle={style}
+      sortableAttributes={attributes}
+      sortableListeners={props.canEdit ? listeners : undefined}
+      isDragging={isDragging}
+    />
+  );
+}
+
 // ---- MemberRow — linha de um membro com badge de role + acoes -------------
 
 function MemberRow({
@@ -178,12 +270,22 @@ function MemberRow({
   onUpdateRole,
   onUpdateFunction,
   onRemove,
+  sortableRef,
+  sortableStyle,
+  sortableAttributes,
+  sortableListeners,
+  isDragging,
 }: {
   member: ProjectMember;
   canEdit: boolean;
   onUpdateRole: (role: ProjectMemberRole) => void;
   onUpdateFunction: (fn: string) => void;
   onRemove: () => void;
+  sortableRef?: (node: HTMLElement | null) => void;
+  sortableStyle?: React.CSSProperties;
+  sortableAttributes?: React.HTMLAttributes<HTMLElement>;
+  sortableListeners?: React.DOMAttributes<HTMLElement>;
+  isDragging?: boolean;
 }) {
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [editingFn, setEditingFn] = useState(false);
@@ -213,7 +315,18 @@ function MemberRow({
         : 'border-l-border';
 
   return (
-    <li className={['surface p-md flex items-center justify-between gap-md border-l-4', accentClass].join(' ')}>
+    <li
+      ref={sortableRef as ((node: HTMLLIElement | null) => void) | undefined}
+      style={{ ...sortableStyle, opacity: isDragging ? 0.5 : undefined, zIndex: isDragging ? 20 : undefined }}
+      className={['surface p-md flex items-center justify-between gap-md border-l-4 touch-none', accentClass].join(' ')}
+      {...(sortableAttributes ?? {})}
+      {...(sortableListeners ?? {})}
+    >
+      {sortableListeners && (
+        <span aria-hidden className="text-fg-muted/40 cursor-grab shrink-0">
+          <GripVertical size={14} />
+        </span>
+      )}
       <div className="min-w-0 flex-1">
         <div className="text-body-md flex items-center gap-2">
           <span className="truncate">{displayName}</span>
