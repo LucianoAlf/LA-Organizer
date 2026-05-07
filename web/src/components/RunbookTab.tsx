@@ -402,31 +402,101 @@ function StartTimeRow({
   onChange: (time: string | null) => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const [val, setVal] = useState(time?.slice(0, 5) ?? '');
+  const [hh, setHh] = useState(time?.slice(0, 2) ?? '');
+  const [mm, setMm] = useState(time?.slice(3, 5) ?? '');
 
   function commit() {
-    const v = val.trim();
-    if (!v) onChange(null);
-    else onChange(`${v}:00`);
+    const h = hh.padStart(2, '0').slice(0, 2);
+    const m = mm.padStart(2, '0').slice(0, 2);
+    const hN = parseInt(h, 10);
+    const mN = parseInt(m, 10);
+    if (isNaN(hN) || isNaN(mN) || hN < 0 || hN > 23 || mN < 0 || mN > 59) {
+      // Invalido → reverte sem mudar
+      setHh(time?.slice(0, 2) ?? '');
+      setMm(time?.slice(3, 5) ?? '');
+      setEditing(false);
+      return;
+    }
+    if (!h || !m) {
+      onChange(null);
+    } else {
+      onChange(`${h}:${m}:00`);
+    }
     setEditing(false);
+  }
+
+  function handleBlur(e: React.FocusEvent<HTMLDivElement>) {
+    if (!e.currentTarget.contains(e.relatedTarget)) {
+      setTimeout(commit, 100);
+    }
   }
 
   if (editing && canEdit) {
     return (
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2" onBlur={handleBlur}>
         <Clock size={14} className="text-fg-muted shrink-0" />
-        <input
-          type="time"
-          autoFocus
-          value={val}
-          onChange={e => setVal(e.target.value)}
-          onBlur={commit}
-          onKeyDown={e => {
-            if (e.key === 'Enter') { e.preventDefault(); commit(); }
-            if (e.key === 'Escape') { setVal(time?.slice(0, 5) ?? ''); setEditing(false); }
-          }}
-          className="h-8 px-2 rounded-sm bg-bg-elevated border border-border text-body-sm text-fg focus-ring tabular-nums"
-        />
+        <span className="text-body-sm text-fg-muted">Abertura</span>
+        <div className="inline-flex items-center gap-1 h-9 px-2 rounded-md bg-bg-elevated border border-border focus-within:border-tom focus-within:ring-2 focus-within:ring-tom/30">
+          <input
+            type="text"
+            inputMode="numeric"
+            autoFocus
+            value={hh}
+            onChange={e => {
+              const v = e.target.value.replace(/\D/g, '').slice(0, 2);
+              setHh(v);
+              if (v.length === 2) {
+                // Pula automatico pro campo de minutos
+                const next = e.currentTarget.parentElement?.querySelector<HTMLInputElement>('input[data-mm]');
+                next?.focus();
+              }
+            }}
+            onKeyDown={e => {
+              if (e.key === 'Enter') { e.preventDefault(); commit(); }
+              if (e.key === 'Escape') { setHh(time?.slice(0, 2) ?? ''); setMm(time?.slice(3, 5) ?? ''); setEditing(false); }
+            }}
+            placeholder="HH"
+            maxLength={2}
+            className="w-7 text-center bg-transparent text-body-sm text-fg tabular-nums outline-none"
+          />
+          <span className="text-fg-muted">:</span>
+          <input
+            type="text"
+            inputMode="numeric"
+            data-mm
+            value={mm}
+            onChange={e => setMm(e.target.value.replace(/\D/g, '').slice(0, 2))}
+            onKeyDown={e => {
+              if (e.key === 'Enter') { e.preventDefault(); commit(); }
+              if (e.key === 'Escape') { setHh(time?.slice(0, 2) ?? ''); setMm(time?.slice(3, 5) ?? ''); setEditing(false); }
+              if (e.key === 'Backspace' && mm === '') {
+                const prev = e.currentTarget.parentElement?.querySelector<HTMLInputElement>('input:not([data-mm])');
+                prev?.focus();
+              }
+            }}
+            placeholder="MM"
+            maxLength={2}
+            className="w-7 text-center bg-transparent text-body-sm text-fg tabular-nums outline-none"
+          />
+        </div>
+        <button
+          type="button"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={commit}
+          className="h-8 px-3 rounded-md bg-tom text-white text-body-sm font-semibold focus-ring"
+        >
+          Salvar
+        </button>
+        {time && (
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => { setHh(''); setMm(''); onChange(null); setEditing(false); }}
+            className="h-8 px-2 text-body-sm text-fg-muted hover:text-danger focus-ring rounded-sm"
+          >
+            Limpar
+          </button>
+        )}
       </div>
     );
   }
@@ -436,7 +506,7 @@ function StartTimeRow({
     return (
       <button
         type="button"
-        onClick={() => { setVal(''); setEditing(true); }}
+        onClick={() => { setHh(''); setMm(''); setEditing(true); }}
         className="flex items-center gap-2 text-body-sm text-fg-muted/70 italic hover:text-fg-muted focus-ring rounded-sm"
       >
         <Clock size={14} />
@@ -449,7 +519,7 @@ function StartTimeRow({
     <button
       type="button"
       disabled={!canEdit}
-      onClick={() => { setVal(time.slice(0, 5)); setEditing(true); }}
+      onClick={() => { setHh(time.slice(0, 2)); setMm(time.slice(3, 5)); setEditing(true); }}
       className={['flex items-center gap-2 text-body-sm text-fg', canEdit ? 'hover:text-fg cursor-pointer focus-ring rounded-sm' : 'cursor-default'].join(' ')}
     >
       <Clock size={14} className="text-fg-muted" />
