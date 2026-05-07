@@ -1616,12 +1616,17 @@ function ContingencyCard({
   }
 
   return (
-    <li className="surface p-md">
+    <li className="surface p-md border-l-4 border-l-danger/70">
       <div className="flex items-start gap-md">
-        <span className="mt-0.5 shrink-0 text-warning" aria-hidden>🚨</span>
-        <div className="min-w-0 flex-1">
-          <div className="text-body-md font-semibold">{contingency.scenario}</div>
-          <p className="mt-1 text-body-sm text-fg-muted whitespace-pre-line">{contingency.protocol}</p>
+        <div className="min-w-0 flex-1 space-y-2">
+          <div>
+            <div className="text-label text-danger uppercase tracking-wide mb-1">⚠️ Cenário</div>
+            <div className="text-body-md font-semibold text-fg">{contingency.scenario}</div>
+          </div>
+          <div className="pt-2 border-t border-border/50">
+            <div className="text-label text-fg-muted uppercase tracking-wide mb-1">Plano B</div>
+            <p className="text-body-sm text-fg-secondary whitespace-pre-line">{contingency.protocol}</p>
+          </div>
         </div>
         <RowMenu
           items={[

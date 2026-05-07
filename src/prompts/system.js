@@ -953,7 +953,7 @@ async function buildProjectStatusContext(collaborator, lastUserMessage) {
       const isOwnerOfProject = p.created_by === collabId;
       const canSeeAll = isGlobalLead || isOwnerOfProject || myProjectRole === 'owner' || myProjectRole === 'coordinator';
 
-      const [cpsRes, tasksRes, membersRes] = await Promise.all([
+      const [cpsRes, tasksRes, membersRes, contRes] = await Promise.all([
         supabase.from('project_checkpoints')
           .select('id, name, due_date, status')
           .eq('project_id', p.id)
@@ -965,11 +965,16 @@ async function buildProjectStatusContext(collaborator, lastUserMessage) {
         supabase.from('project_members')
           .select('collaborator_id, role_in_project, function_in_project, guest_name, guest_role, collaborators(full_name)')
           .eq('project_id', p.id),
+        supabase.from('project_contingencies')
+          .select('id, scenario, protocol, position')
+          .eq('project_id', p.id)
+          .order('position', { ascending: true }),
       ]);
 
       const cps = cpsRes.data || [];
       let tasks = tasksRes.data || [];
       const members = membersRes.data || [];
+      const contingencies = contRes.data || [];
 
       // Filtra tasks: se nao ve tudo, so as proprias
       if (!canSeeAll) tasks = tasks.filter(t => t.assigned_to === collabId);
@@ -1031,6 +1036,17 @@ async function buildProjectStatusContext(collaborator, lastUserMessage) {
           const tStatus = t.status === 'done' ? '✓' : '·';
           lines.push(`- ${tStatus} ${t.title} (${assignee}${t.due_date ? `, vence ${t.due_date}` : ''})`);
         }
+      }
+
+      // Contingências
+      if (contingencies.length > 0) {
+        lines.push(`\n**Contingências mapeadas (${contingencies.length}):**`);
+        for (const c of contingencies) {
+          lines.push(`- ⚠️ *Cenário:* ${c.scenario}`);
+          lines.push(`  *Plano B:* ${c.protocol}`);
+        }
+      } else {
+        lines.push(`\n**Contingências:** nenhuma mapeada ainda.`);
       }
 
       lines.push('');
