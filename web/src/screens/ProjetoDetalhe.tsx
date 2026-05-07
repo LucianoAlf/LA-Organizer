@@ -30,6 +30,7 @@ import { MembersTab } from '../components/MembersTab';
 import { AssigneePicker, type AssigneeOption } from '../components/AssigneePicker';
 import { PROJECT_CATEGORY_LABELS } from '../lib/projectLabels';
 import { brShort } from '../utils/date';
+import { celebrateTask, celebrateCheckpoint, celebrateProject } from '../utils/celebrate';
 import type { Project, Task, Checkpoint, ProjectMember } from '../types';
 
 // Sprint 22.21b — Checkpoint vira container das tarefas. Conceitualmente alinha
@@ -291,6 +292,40 @@ export function ProjetoDetalhe() {
     },
   });
 
+  // Sprint 22.22o — wrappers de toggle com celebracao quando vira 'done'.
+  // Detecta se foi a ultima task do checkpoint (festa de checkpoint) e
+  // se foi o ultimo checkpoint do projeto (festa de projeto).
+  function handleToggleCheckpoint(cp: CheckpointFull) {
+    const wasDone = cp.status === 'done';
+    toggleCheckpoint.mutate(cp);
+    if (!wasDone) {
+      celebrateCheckpoint();
+      const allOthersDone = checkpoints.filter(c => c.id !== cp.id).every(c => c.status === 'done');
+      if (allOthersDone && checkpoints.length > 0) {
+        setTimeout(() => celebrateProject(), 900);
+      }
+    }
+  }
+
+  function handleToggleTask(t: Task) {
+    const wasDone = t.status === 'done';
+    toggleTask.mutate(t);
+    if (!wasDone) {
+      celebrateTask();
+      // Se foi a ultima task de um checkpoint pendente → festa de checkpoint
+      const cpId = (t as Task & { checkpoint_id?: string | null }).checkpoint_id;
+      if (cpId) {
+        const cpTasks = tasks.filter(x =>
+          (x as Task & { checkpoint_id?: string | null }).checkpoint_id === cpId,
+        );
+        const allOthersDone = cpTasks.filter(x => x.id !== t.id).every(x => x.status === 'done');
+        if (allOthersDone && cpTasks.length > 1) {
+          setTimeout(() => celebrateCheckpoint(), 600);
+        }
+      }
+    }
+  }
+
   // Sprint 22.22 — atribuir task a um membro do projeto.
   const assignTask = useMutation({
     mutationFn: async ({ taskId, collabId }: { taskId: string; collabId: string }) => {
@@ -514,7 +549,7 @@ export function ProjetoDetalhe() {
                   members={members}
                   tasks={tasks}
                   checkpoints={checkpoints}
-                  onToggleTask={(t) => toggleTask.mutate(t)}
+                  onToggleTask={(t) => handleToggleTask(t)}
                   onRenameTask={(tId, title) => renameTask.mutate({ id: tId, title })}
                   onDeleteTask={(tId) => deleteTask.mutate(tId)}
                   onAssignTask={(tId, cId) => assignTask.mutate({ taskId: tId, collabId: cId })}
@@ -527,8 +562,8 @@ export function ProjetoDetalhe() {
                   projectId={id}
                   collaboratorId={collaborator?.id ?? null}
                   toggleDisabled={toggleCheckpoint.isPending}
-                  onToggleCheckpoint={(cp) => toggleCheckpoint.mutate(cp)}
-                  onToggleTask={(t) => toggleTask.mutate(t)}
+                  onToggleCheckpoint={(cp) => handleToggleCheckpoint(cp)}
+                  onToggleTask={(t) => handleToggleTask(t)}
                   onRenameCheckpoint={(cpId, name) => renameCheckpoint.mutate({ id: cpId, name })}
                   onDeleteCheckpoint={(cpId) => deleteCheckpoint.mutate(cpId)}
                   onRenameTask={(tId, title) => renameTask.mutate({ id: tId, title })}
@@ -550,7 +585,7 @@ export function ProjetoDetalhe() {
                       <TaskListItem
                         key={t.id}
                         task={t}
-                        onToggle={() => toggleTask.mutate(t)}
+                        onToggle={() => handleToggleTask(t)}
                         onRename={(title) => renameTask.mutate({ id: t.id, title })}
                         onDelete={() => deleteTask.mutate(t.id)}
                         onAssign={canSeeAll ? (tId, cId) => assignTask.mutate({ taskId: tId, collabId: cId }) : undefined}
