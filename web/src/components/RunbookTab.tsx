@@ -599,7 +599,8 @@ function RunbookBlockCard({
 }) {
   const [expanded, setExpanded] = useState(true);
   const [addingItem, setAddingItem] = useState(false);
-  const [editing, setEditing] = useState(false);
+  const [editingOffset, setEditingOffset] = useState(false);
+  const [editingLabel, setEditingLabel] = useState(false);
   const [labelVal, setLabelVal] = useState(block.label);
   const [offsetVal, setOffsetVal] = useState(String(block.offset_minutes));
 
@@ -612,14 +613,17 @@ function RunbookBlockCard({
   const isLate = !!expected && !allDone && now > expected;
   const delayMin = isLate && expected ? Math.floor((now.getTime() - expected.getTime()) / 60000) : 0;
 
-  function commitEdit() {
-    const lbl = labelVal.trim();
+  function commitOffset() {
     const offs = parseInt(offsetVal, 10);
-    if (!lbl || isNaN(offs)) { setEditing(false); return; }
-    if (lbl !== block.label || offs !== block.offset_minutes) {
-      onUpdate({ label: lbl.slice(0, 200), offset_minutes: offs });
-    }
-    setEditing(false);
+    if (isNaN(offs)) { setOffsetVal(String(block.offset_minutes)); setEditingOffset(false); return; }
+    if (offs !== block.offset_minutes) onUpdate({ offset_minutes: offs });
+    setEditingOffset(false);
+  }
+  function commitLabel() {
+    const lbl = labelVal.trim();
+    if (!lbl) { setLabelVal(block.label); setEditingLabel(false); return; }
+    if (lbl !== block.label) onUpdate({ label: lbl.slice(0, 200) });
+    setEditingLabel(false);
   }
 
   return (
@@ -640,99 +644,109 @@ function RunbookBlockCard({
           </span>
         )}
         <div className="min-w-0 flex-1">
-          {editing ? (
-            <div className="space-y-2">
-              <input
-                type="text"
-                autoFocus
-                value={labelVal}
-                onChange={e => setLabelVal(e.target.value)}
-                placeholder="Label (ex: Chegada e Estrutura)"
-                maxLength={200}
-                className="w-full h-9 px-3 rounded-md bg-bg-elevated border border-border text-body-md text-fg focus-ring"
-              />
-              <input
-                type="number"
-                value={offsetVal}
-                onChange={e => setOffsetVal(e.target.value)}
-                placeholder="Offset em minutos"
-                className="w-full h-9 px-3 rounded-md bg-bg-elevated border border-border text-body-sm text-fg focus-ring tabular-nums"
-              />
-              <div className="text-[11px] text-fg-muted/60">
-                Negativo = antes · 0 = abertura · Positivo = depois.
-              </div>
-              <div className="flex gap-2 justify-end">
-                <button type="button" onClick={() => { setLabelVal(block.label); setOffsetVal(String(block.offset_minutes)); setEditing(false); }} className="h-8 px-3 rounded-md text-body-sm text-fg-muted hover:text-fg focus-ring">
-                  Cancelar
-                </button>
-                <button type="button" onClick={commitEdit} className="h-8 px-3 rounded-md bg-tom text-white text-body-sm font-semibold focus-ring">
-                  Salvar
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div>
-              {/* Chips/badges fora do botao de expand pra permitir clique no offset */}
-              <div className="flex items-center gap-2 flex-wrap mb-1">
-                <button
-                  type="button"
-                  disabled={!canEdit}
-                  onClick={(e) => {
-                    if (!canEdit) return;
-                    e.stopPropagation();
-                    setLabelVal(block.label);
-                    setOffsetVal(String(block.offset_minutes));
-                    setEditing(true);
+          {/* Chips/badges fora do botao de expand pra permitir clique no offset */}
+          <div className="flex items-center gap-2 flex-wrap mb-1">
+            {editingOffset ? (
+              <div className="inline-flex items-center gap-1 h-7 px-2 rounded-sm bg-bg-elevated border border-tom focus-within:ring-2 focus-within:ring-tom/30">
+                <input
+                  type="number"
+                  autoFocus
+                  value={offsetVal}
+                  onChange={e => setOffsetVal(e.target.value)}
+                  onBlur={commitOffset}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') { e.preventDefault(); commitOffset(); }
+                    if (e.key === 'Escape') { setOffsetVal(String(block.offset_minutes)); setEditingOffset(false); }
                   }}
-                  className={[
-                    'text-[10px] uppercase tracking-wide font-semibold rounded-sm px-1.5 py-0.5 border tabular-nums',
-                    canEdit ? 'cursor-pointer hover:opacity-80 focus-ring' : 'cursor-default',
-                    isLate ? 'text-danger bg-danger/10 border-danger/30'
-                          : allDone ? 'text-tom bg-tom/15 border-tom/30'
-                          : 'text-tom bg-tom/15 border-tom/30',
-                  ].join(' ')}
-                  title={canEdit ? 'Tap pra editar' : ''}
-                >
-                  {formatOffset(block.offset_minutes)}
-                </button>
-                {expected && (
-                  <span className="text-[11px] text-fg-muted tabular-nums">
-                    {fmtTimeBR(expected)}
-                  </span>
-                )}
-                {isLate && (
-                  <span className="text-[11px] font-semibold text-danger tabular-nums flex items-center gap-1">
-                    <AlertTriangle size={11} /> atrasado {delayMin}min
-                  </span>
-                )}
-                {allDone && <span className="text-[11px] text-tom font-semibold">✓ feito</span>}
+                  className="w-16 bg-transparent text-[11px] text-fg tabular-nums outline-none"
+                  placeholder="min"
+                />
+                <span className="text-[10px] text-fg-muted">min</span>
               </div>
-              {/* Botao de expand: titulo + progresso */}
+            ) : (
               <button
                 type="button"
-                onClick={() => setExpanded(v => !v)}
-                className="w-full text-left focus-ring rounded-sm"
+                disabled={!canEdit}
+                onClick={(e) => {
+                  if (!canEdit) return;
+                  e.stopPropagation();
+                  setOffsetVal(String(block.offset_minutes));
+                  setEditingOffset(true);
+                }}
+                className={[
+                  'text-[10px] uppercase tracking-wide font-semibold rounded-sm px-1.5 py-0.5 border tabular-nums',
+                  canEdit ? 'cursor-pointer hover:opacity-80 focus-ring' : 'cursor-default',
+                  isLate ? 'text-danger bg-danger/10 border-danger/30'
+                        : allDone ? 'text-tom bg-tom/15 border-tom/30'
+                        : 'text-tom bg-tom/15 border-tom/30',
+                ].join(' ')}
+                title={canEdit ? 'Tap pra editar offset' : ''}
               >
-                <div className="text-card-title">{block.label}</div>
-                {total > 0 && (
-                  <div className="mt-2 flex items-center gap-2 text-body-sm text-fg-muted tabular-nums">
-                    <div className="flex-1 h-1 bg-bg-elevated rounded-full overflow-hidden">
-                      <div className={['h-full transition-[width]', isLate ? 'bg-danger/70' : 'bg-tom'].join(' ')} style={{ width: `${pct}%` }} />
-                    </div>
-                    <span>{done}/{total}</span>
-                  </div>
-                )}
+                {formatOffset(block.offset_minutes)}
               </button>
-            </div>
+            )}
+            {expected && !editingOffset && (
+              <span className="text-[11px] text-fg-muted tabular-nums">
+                {fmtTimeBR(expected)}
+              </span>
+            )}
+            {isLate && !editingOffset && (
+              <span className="text-[11px] font-semibold text-danger tabular-nums flex items-center gap-1">
+                <AlertTriangle size={11} /> atrasado {delayMin}min
+              </span>
+            )}
+            {allDone && !editingOffset && <span className="text-[11px] text-tom font-semibold">✓ feito</span>}
+          </div>
+
+          {/* Titulo: tap-to-edit. Quando nao editando, age como toggle de expand. */}
+          {editingLabel ? (
+            <input
+              type="text"
+              autoFocus
+              value={labelVal}
+              onChange={e => setLabelVal(e.target.value)}
+              onBlur={commitLabel}
+              onKeyDown={e => {
+                if (e.key === 'Enter') { e.preventDefault(); commitLabel(); }
+                if (e.key === 'Escape') { setLabelVal(block.label); setEditingLabel(false); }
+              }}
+              maxLength={200}
+              className="w-full h-9 px-2 -ml-2 rounded-md bg-bg-elevated border border-tom text-card-title text-fg focus-ring"
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => setExpanded(v => !v)}
+              onDoubleClick={(e) => {
+                if (!canEdit) return;
+                e.preventDefault();
+                e.stopPropagation();
+                setLabelVal(block.label);
+                setEditingLabel(true);
+              }}
+              className="w-full text-left focus-ring rounded-sm"
+              title={canEdit ? 'Toque pra expandir/recolher · Toque duplo pra editar nome' : ''}
+            >
+              <div className="text-card-title">{block.label}</div>
+              {total > 0 && (
+                <div className="mt-2 flex items-center gap-2 text-body-sm text-fg-muted tabular-nums">
+                  <div className="flex-1 h-1 bg-bg-elevated rounded-full overflow-hidden">
+                    <div className={['h-full transition-[width]', isLate ? 'bg-danger/70' : 'bg-tom'].join(' ')} style={{ width: `${pct}%` }} />
+                  </div>
+                  <span>{done}/{total}</span>
+                </div>
+              )}
+            </button>
           )}
         </div>
 
-        {!editing && (
+        {!editingLabel && !editingOffset && (
           <div className="shrink-0 flex items-center gap-1">
             {canEdit && (
               <RowMenu
                 items={[
-                  { label: 'Editar bloco', onClick: () => setEditing(true) },
+                  { label: 'Editar nome', onClick: () => { setLabelVal(block.label); setEditingLabel(true); } },
+                  { label: 'Editar offset', onClick: () => { setOffsetVal(String(block.offset_minutes)); setEditingOffset(true); } },
                   { label: 'Excluir bloco', danger: true, confirm: 'Excluir esse bloco e todos os itens?', onClick: onDelete },
                 ]}
               />
@@ -749,7 +763,7 @@ function RunbookBlockCard({
         )}
       </div>
 
-      {expanded && !editing && (
+      {expanded && !editingLabel && !editingOffset && (
         <div className="border-t border-border px-md py-2 space-y-1">
           {items.map(it => (
             <RunbookItemRow
