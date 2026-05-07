@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useLayoutEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, X, UserPlus, ExternalLink, ChevronDown } from 'lucide-react';
 import { supabase } from '../lib/supabase';
@@ -414,7 +414,7 @@ function AddInternalForm({
   );
 }
 
-// ---- CustomSelect — dropdown padrao design system (substitui <select> nativo)
+// ---- CustomSelect — dropdown padrao design system com posicionamento inteligente
 function CustomSelect({
   value,
   options,
@@ -427,7 +427,21 @@ function CustomSelect({
   placeholder?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [openUpward, setOpenUpward] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const current = options.find(o => o.value === value);
+
+  // Sprint 22.22l — quando abre, mede espaco disponivel abaixo. Se menor que
+  // o necessario, abre pra cima.
+  useLayoutEffect(() => {
+    if (!open || !triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    // Estimativa: ~280px (max-h-60 = 240 + padding). Se nao cabe embaixo mas cabe em cima → abre pra cima.
+    const need = 280;
+    setOpenUpward(spaceBelow < need && spaceAbove > spaceBelow);
+  }, [open, options.length]);
 
   function handleBlur(e: React.FocusEvent<HTMLDivElement>) {
     if (!e.currentTarget.contains(e.relatedTarget)) {
@@ -443,6 +457,7 @@ function CustomSelect({
   return (
     <div className="relative" onBlur={handleBlur}>
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen(v => !v)}
         className={[
@@ -466,7 +481,12 @@ function CustomSelect({
         <ChevronDown size={14} className={['shrink-0 text-fg-muted transition-transform', open ? 'rotate-180' : ''].join(' ')} />
       </button>
       {open && (
-        <div className="absolute left-0 right-0 top-full mt-1 z-50 max-h-60 overflow-y-auto rounded-md border border-border bg-bg-surface shadow-soft">
+        <div
+          className={[
+            'absolute left-0 right-0 z-50 max-h-60 overflow-y-auto rounded-md border border-border bg-bg-surface shadow-soft',
+            openUpward ? 'bottom-full mb-1' : 'top-full mt-1',
+          ].join(' ')}
+        >
           {options.length === 0 ? (
             <div className="px-3 py-2 text-body-sm text-fg-muted">Nenhuma opção</div>
           ) : (
