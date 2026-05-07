@@ -112,14 +112,3 @@
   }
 }
 
-/* Agenda slide transitions (Dia ↔ Semana) */
-@keyframes slide-from-right {
-  from { opacity: 0; transform: translateX(32px); }
-  to   { opacity: 1; transform: translateX(0); }
-}
-@keyframes slide-from-left {
-  from { opacity: 0; transform: translateX(-32px); }
-  to   { opacity: 1; transform: translateX(0); }
-}
-.agenda-slide-right { animation: slide-from-right 0.22s ease-out both; }
-.agenda-slide-left  { animation: slide-from-left  0.22s ease-out both; }
