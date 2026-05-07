@@ -1038,12 +1038,18 @@ async function buildProjectStatusContext(collaborator, lastUserMessage) {
         }
       }
 
-      // Sprint 22.22r — Runbook T-minus (so pra projetos category=event)
+      // Sprint 22.22r-s — Runbook T-minus (so pra projetos category=event)
       if (p.category === 'event') {
+        const { data: pTimes } = await supabase
+          .from('projects')
+          .select('event_date, event_start_time')
+          .eq('id', p.id)
+          .single();
         const { data: runbookBlocks } = await supabase
           .from('event_runbook_blocks')
-          .select('id, label, offset_minutes')
+          .select('id, label, offset_minutes, position')
           .eq('project_id', p.id)
+          .order('position', { ascending: true })
           .order('offset_minutes', { ascending: true });
         if (runbookBlocks && runbookBlocks.length > 0) {
           const blockIds = runbookBlocks.map(b => b.id);
@@ -1056,7 +1062,21 @@ async function buildProjectStatusContext(collaborator, lastUserMessage) {
             if (!itemsByBlock.has(it.block_id)) itemsByBlock.set(it.block_id, []);
             itemsByBlock.get(it.block_id).push(it);
           }
+          // Helper pra computar hora esperada
+          function expectedTime(offsetMin) {
+            if (!pTimes?.event_date || !pTimes?.event_start_time) return null;
+            const [y, m, d] = pTimes.event_date.split('-').map(Number);
+            const [hh, mm] = pTimes.event_start_time.split(':').map(Number);
+            const base = new Date(y, m - 1, d, hh || 0, mm || 0, 0, 0);
+            base.setMinutes(base.getMinutes() + offsetMin);
+            const h = String(base.getHours()).padStart(2, '0');
+            const mi = String(base.getMinutes()).padStart(2, '0');
+            return `${h}:${mi}`;
+          }
           lines.push(`\n**Runbook do Dia (${runbookBlocks.length} blocos):**`);
+          if (pTimes?.event_start_time) {
+            lines.push(`Abertura: ${pTimes.event_start_time.slice(0, 5)}${pTimes.event_date ? ` em ${pTimes.event_date}` : ''}`);
+          }
           for (const b of runbookBlocks) {
             const its = itemsByBlock.get(b.id) || [];
             const doneCount = its.filter(i => i.done).length;
@@ -1065,9 +1085,11 @@ async function buildProjectStatusContext(collaborator, lastUserMessage) {
               : b.offset_minutes < 0
                 ? `${Math.abs(b.offset_minutes)}min antes`
                 : `${b.offset_minutes}min depois`;
-            lines.push(`- [${offsetLabel}] ${b.label} — ${doneCount}/${its.length} itens`);
+            const expected = expectedTime(b.offset_minutes);
+            const timeBit = expected ? ` · ${expected}` : '';
+            lines.push(`- [${offsetLabel}${timeBit}] ${b.label} — ${doneCount}/${its.length} itens`);
             for (const it of its) {
-              lines.push(`    ${it.done ? '✓' : '·'} ${it.text}`);
+              lines.push(`    ${it.done ? '✓' : '☐'} ${it.text}`);
             }
           }
         }

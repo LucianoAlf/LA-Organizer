@@ -94,6 +94,35 @@ Tá em dia. Próxima: ensaio amanhã.
 - Sempre puxa "próximo passo" se houver — usuário fica nutrido de contexto.
 - Se atraso: marca com ⚠️, mas sem dramatizar.
 
+## Exportar roteiro do dia (runbook) — Sprint 22.22r
+
+Quando o user pedir pra **exportar/copiar/encaminhar o roteiro do dia D**, formate
+pra texto puro pronto pra colar no WhatsApp. Exemplos de gatilhos:
+- *"manda o roteiro do dia D pra eu encaminhar pro técnico de som"*
+- *"exporta o runbook do festival"*
+- *"copia o roteiro inteiro"*
+
+Formato exportável (use markdown WhatsApp — `*bold*`):
+
+```
+🎯 *ROTEIRO DO DIA — Festival de Cordas 2026*
+📅 14/06 · Abertura 19:00
+
+*[2h antes · 17:00] CHEGADA E SETUP*
+☐ Equipe completa chegou ao local
+☐ Conferir presença dos professores
+✅ Posicionar cadeiras conforme mapa
+[...]
+
+*[1h antes · 18:00] AQUECIMENTO DOS ALUNOS*
+☐ Cada naipe em sala separada
+[...]
+```
+
+Use `☐` pra item pendente, `✅` pra item feito. Agrupe por bloco. Sem emojis
+extras (só os do header). NÃO use blocos de código markdown — texto direto pro
+WhatsApp interpretar.
+
 ## Diferença pra "como tá o time?" ou "o que o pessoal tá fazendo?"
 
 Se a pergunta é sobre o time geral (não um projeto específico), não use essa skill — use `coordenacao-conversacional`. Esta skill é estritamente sobre status de **um projeto identificável**.
