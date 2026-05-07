@@ -529,8 +529,11 @@ function TaskListItem({
   onToggle,
   onRename,
   onDelete,
-  dragHandleAttributes,
-  dragHandleListeners,
+  sortableRef,
+  sortableStyle,
+  sortableAttributes,
+  sortableListeners,
+  isDragging,
 }: {
   task: Task;
   /** Posicao na lista (0-based). Mostrado como "{index+1}." na frente do titulo. */
@@ -538,8 +541,11 @@ function TaskListItem({
   onToggle: () => void;
   onRename?: (title: string) => void;
   onDelete?: () => void;
-  dragHandleAttributes?: React.HTMLAttributes<HTMLElement>;
-  dragHandleListeners?: React.DOMAttributes<HTMLElement>;
+  sortableRef?: (node: HTMLElement | null) => void;
+  sortableStyle?: React.CSSProperties;
+  sortableAttributes?: React.HTMLAttributes<HTMLElement>;
+  sortableListeners?: React.DOMAttributes<HTMLElement>;
+  isDragging?: boolean;
 }) {
   const isDone = task.status === 'done';
   const [editing, setEditing] = useState(false);
@@ -553,11 +559,13 @@ function TaskListItem({
 
   return (
     <li
+      ref={sortableRef as ((node: HTMLLIElement | null) => void) | undefined}
+      style={{ ...sortableStyle, opacity: isDragging ? 0.5 : undefined, zIndex: isDragging ? 20 : undefined }}
       className="py-2 flex items-start gap-2 group touch-none"
-      {...(dragHandleAttributes ?? {})}
-      {...(dragHandleListeners ?? {})}
+      {...(sortableAttributes ?? {})}
+      {...(sortableListeners ?? {})}
     >
-      {dragHandleListeners && (
+      {sortableListeners && (
         <span aria-hidden className="mt-1 text-fg-muted/40 cursor-grab">
           <GripVertical size={14} />
         </span>
@@ -629,8 +637,11 @@ function CheckpointCard({
   toggleDisabled,
   projectId,
   collaboratorId,
-  dragHandleAttributes,
-  dragHandleListeners,
+  sortableRef,
+  sortableStyle,
+  sortableAttributes,
+  sortableListeners,
+  isDragging,
 }: {
   checkpoint: CheckpointFull;
   tasks: Task[];
@@ -644,8 +655,11 @@ function CheckpointCard({
   toggleDisabled: boolean;
   projectId: string;
   collaboratorId: string | null;
-  dragHandleAttributes?: React.HTMLAttributes<HTMLElement>;
-  dragHandleListeners?: React.DOMAttributes<HTMLElement>;
+  sortableRef?: (node: HTMLElement | null) => void;
+  sortableStyle?: React.CSSProperties;
+  sortableAttributes?: React.HTMLAttributes<HTMLElement>;
+  sortableListeners?: React.DOMAttributes<HTMLElement>;
+  isDragging?: boolean;
 }) {
   const isDone = checkpoint.status === 'done';
   const [expanded, setExpanded] = useState(!isDone);
@@ -662,13 +676,15 @@ function CheckpointCard({
 
   return (
     <article
+      ref={sortableRef}
+      style={{ ...sortableStyle, opacity: isDragging ? 0.5 : undefined, zIndex: isDragging ? 20 : undefined }}
       className="surface touch-none"
-      {...(dragHandleAttributes ?? {})}
-      {...(dragHandleListeners ?? {})}
+      {...(sortableAttributes ?? {})}
+      {...(sortableListeners ?? {})}
     >
       {/* Header — visual de "marco/container". Padding maior, fundo do surface, checkbox quadrado grande. */}
       <div className="p-md flex items-start gap-md">
-        {dragHandleListeners && (
+        {sortableListeners && (
           <span
             aria-hidden
             className="mt-1 text-fg-muted/40 cursor-grab"
@@ -1076,20 +1092,19 @@ function SortableCheckpointWrapper(props: {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: props.checkpoint.id,
   });
-  const style = {
+  const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
-    opacity: isDragging ? 0.6 : undefined,
-    zIndex: isDragging ? 10 : undefined,
   };
   return (
-    <div ref={setNodeRef} style={style}>
-      <CheckpointCard
-        {...props}
-        dragHandleAttributes={attributes}
-        dragHandleListeners={listeners}
-      />
-    </div>
+    <CheckpointCard
+      {...props}
+      sortableRef={setNodeRef}
+      sortableStyle={style}
+      sortableAttributes={attributes}
+      sortableListeners={listeners}
+      isDragging={isDragging}
+    />
   );
 }
 
@@ -1148,24 +1163,23 @@ function SortableTaskItem(props: {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: props.task.id,
   });
-  const style = {
+  const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
-    opacity: isDragging ? 0.6 : undefined,
-    zIndex: isDragging ? 10 : undefined,
   };
   return (
-    <div ref={setNodeRef} style={style}>
-      <TaskListItem
-        task={props.task}
-        index={props.index}
-        onToggle={props.onToggle}
-        onRename={props.onRename}
-        onDelete={props.onDelete}
-        dragHandleAttributes={attributes}
-        dragHandleListeners={listeners}
-      />
-    </div>
+    <TaskListItem
+      task={props.task}
+      index={props.index}
+      onToggle={props.onToggle}
+      onRename={props.onRename}
+      onDelete={props.onDelete}
+      sortableRef={setNodeRef}
+      sortableStyle={style}
+      sortableAttributes={attributes}
+      sortableListeners={listeners}
+      isDragging={isDragging}
+    />
   );
 }
 
