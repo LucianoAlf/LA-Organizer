@@ -7,6 +7,9 @@ import { todaySP, weekDaysMonSat, dowShort, brShort } from '../utils/date';
 import { fetchEventsForRange, formatEventTimeRange, eventLocalYmd } from '../lib/events';
 import { LoadingState } from '../components/LoadingState';
 import { EmptyState } from '../components/EmptyState';
+import { EmptyDay } from '../components/EmptyDay';
+import { CategoryTag } from '../components/CategoryTag';
+import { TaskCheckbox } from '../components/TaskCheckbox';
 import { Fab } from '../components/Fab';
 import { QuickCreateSheet } from '../components/QuickCreateSheet';
 import { RescheduleSheet } from '../components/RescheduleSheet';
@@ -34,33 +37,13 @@ async function fetchWeekTasks(collabId: string, start: string, end: string): Pro
   return (data ?? []) as unknown as WeekTask[];
 }
 
-// Sprint 22.19 — paleta de categoria com texto suave e sem uppercase.
-const CATEGORY_TAG: Record<string, string> = {
-  pedagogical:    'bg-[#8B5CF6]/15 text-[#C4B5FD]',  // violet light
-  commercial:     'bg-[#D946EF]/15 text-[#F0ABFC]',  // fuchsia light
-  administrative: 'bg-[#06B6D4]/15 text-[#A5F3FC]',  // cyan light
-  operational:    'bg-[#14B8A6]/15 text-[#99F6E4]',  // teal light
-  event:          'bg-[#F43F5E]/15 text-[#FECDD3]',  // rose light
-  infrastructure: 'bg-[#64748B]/20 text-[#CBD5E1]',  // slate light
-};
+// Sprint 22 Phase A — palette + checkbox + empty day migrados (docs/design-system.md).
 
 const QUADRANT_DOT: Record<string, string> = {
   '1': 'bg-danger',
   '2': 'bg-warning',
   '3': 'bg-info',
 };
-
-function CategoryTag({ task }: { task: WeekTask }) {
-  const proj = task.projects;
-  if (!proj?.name) return null;
-  const cat = proj.category;
-  const cls = (cat && CATEGORY_TAG[cat]) ?? 'bg-bg-elevated text-fg-muted border border-border';
-  return (
-    <span className={['inline-block text-[11px] font-medium rounded-sm px-1.5 py-0.5', cls].join(' ')}>
-      {proj.name}
-    </span>
-  );
-}
 
 function dayCounts(tasks: WeekTask[], events: CalendarEvent[], today: string) {
   const activeEvents = events.filter(e => e.status !== 'cancelled');
@@ -215,7 +198,7 @@ export function Semana() {
                 </div>
 
                 {isEmpty ? (
-                  <p className="mt-2 text-body-sm text-fg-muted italic">Nenhuma tarefa</p>
+                  <EmptyDay />
                 ) : (
                   <div className="mt-3 space-y-2">
                     {dayEvents.length > 0 && (
@@ -249,26 +232,13 @@ export function Semana() {
                           const qcCls = qk && QUADRANT_DOT[qk] ? QUADRANT_DOT[qk] : null;
                           return (
                             <li key={t.id} className="flex items-start gap-2 -mx-1 px-1 py-0.5">
-                              {/* Círculo: toggle done. Sempre clicável (exceto cancelled). */}
-                              <button
-                                type="button"
-                                onClick={() => !isCancelled && toggleTask.mutate(t)}
+                              <TaskCheckbox
+                                done={isDone}
+                                overdue={Boolean(isOverdue)}
+                                size="sm"
                                 disabled={isCancelled || toggleTask.isPending}
-                                aria-label={isDone ? 'Reabrir tarefa' : 'Concluir tarefa'}
-                                title={isDone ? 'Reabrir' : 'Concluir'}
-                                className={[
-                                  'mt-1 h-4 w-4 shrink-0 rounded-full grid place-items-center transition-colors focus-ring',
-                                  isDone
-                                    ? 'bg-tom text-white hover:bg-tom-shade'
-                                    : isOverdue
-                                      ? 'border-2 border-danger hover:bg-tom/10'
-                                      : 'border-2 border-fg-muted hover:border-tom hover:bg-tom/10',
-                                ].join(' ')}
-                              >
-                                {isDone && (
-                                  <svg viewBox="0 0 12 12" className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M2 6 L5 9 L10 3" /></svg>
-                                )}
-                              </button>
+                                onClick={() => !isCancelled && toggleTask.mutate(t)}
+                              />
                               {/* Corpo: clica pra reagendar. */}
                               {!isDone && !isCancelled ? (
                                 <button
@@ -284,7 +254,7 @@ export function Semana() {
                                     {t.title}
                                   </div>
                                   <div className="mt-1">
-                                    <CategoryTag task={t} />
+                                    <CategoryTag project={t.projects} />
                                   </div>
                                 </button>
                               ) : (
@@ -293,7 +263,7 @@ export function Semana() {
                                     {t.title}
                                   </div>
                                   <div className="mt-1">
-                                    <CategoryTag task={t} />
+                                    <CategoryTag project={t.projects} />
                                   </div>
                                 </div>
                               )}

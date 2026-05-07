@@ -1,18 +1,11 @@
-import { Check, Bot } from 'lucide-react';
+import { Bot } from 'lucide-react';
 import { Badge } from './Badge';
 import { ActionTypeBadge } from './ActionTypeBadge';
+import { CategoryTag } from './CategoryTag';
+import { TaskCheckbox } from './TaskCheckbox';
 import type { Task } from '../types';
 
-// Sprint 22.19 — paleta de categoria com texto SUAVE (não saturado) e sem uppercase.
-// Background mantém ~15% opacidade pra dar dica visual sem gritar.
-const CATEGORY_TAG: Record<string, string> = {
-  pedagogical:    'bg-[#8B5CF6]/15 text-[#C4B5FD]',  // violet light
-  commercial:     'bg-[#D946EF]/15 text-[#F0ABFC]',  // fuchsia light
-  administrative: 'bg-[#06B6D4]/15 text-[#A5F3FC]',  // cyan light
-  operational:    'bg-[#14B8A6]/15 text-[#99F6E4]',  // teal light
-  event:          'bg-[#F43F5E]/15 text-[#FECDD3]',  // rose light
-  infrastructure: 'bg-[#64748B]/20 text-[#CBD5E1]',  // slate light
-};
+// Sprint 22 Phase A — palette + checkbox migrados (docs/design-system.md §1.2/§4.2).
 
 // Eisenhower como dot inline. Q1 vermelho, Q2 âmbar, Q3 azul, Q4 sem dot.
 const QUADRANT_DOT: Record<string, string> = {
@@ -111,6 +104,7 @@ export function TaskRow({ task, onToggle, readOnly }: Props) {
   const remindRel = task.remind_at ? fmtRelDate(task.remind_at) : '';
   const dueRel = task.due_date ? fmtRelDate(task.due_date) : '';
   const showAssignee = readOnly && task.assignee?.full_name;
+  const isOverdue = tone === 'danger';
 
   return (
     <div
@@ -120,19 +114,12 @@ export function TaskRow({ task, onToggle, readOnly }: Props) {
       ].join(' ')}
     >
       {!readOnly && (
-        <button
-          type="button"
+        <TaskCheckbox
+          done={isDone}
+          overdue={isOverdue}
+          size="md"
           onClick={() => onToggle?.(task)}
-          aria-label={isDone ? 'Reabrir tarefa' : 'Concluir tarefa'}
-          className={[
-            'mt-0.5 h-6 w-6 shrink-0 rounded-full border-2 grid place-items-center transition-colors focus-ring',
-            isDone
-              ? 'bg-tom border-tom text-white'
-              : 'border-fg-muted hover:border-tom text-transparent hover:text-tom',
-          ].join(' ')}
-        >
-          <Check size={14} strokeWidth={3} />
-        </button>
+        />
       )}
 
       <div className="min-w-0 flex-1">
@@ -172,15 +159,7 @@ export function TaskRow({ task, onToggle, readOnly }: Props) {
         )}
         <div className="mt-1 flex flex-wrap items-center gap-2 text-body-sm text-fg-muted">
           <ActionTypeBadge type={task.action_type} />
-          {task.projects?.name && (() => {
-            const cat = (task.projects as { name: string; category?: string }).category;
-            const cls = (cat && CATEGORY_TAG[cat]) ?? 'bg-bg-elevated text-fg-muted';
-            return (
-              <span className={['inline-block text-[11px] font-medium rounded-sm px-1.5 py-0.5', cls].join(' ')}>
-                {task.projects.name}
-              </span>
-            );
-          })()}
+          <CategoryTag project={task.projects as { name: string; category?: string } | null | undefined} />
           {task.context === 'personal' && <span>• pessoal</span>}
           {showAssignee && (
             <span>→ <span className="text-fg">{task.assignee!.full_name.split(' ')[0]}</span></span>

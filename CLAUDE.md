@@ -19,6 +19,30 @@ Se retornar `VPS OK`, está pronto. Se der erro, reportar antes de continuar.
 
 ---
 
+## ⚡ PERMISSÕES DE DEPLOY — NÃO PEDIR AUTORIZAÇÃO
+
+### Push para GitHub
+SEMPRE autorizado. Não perguntar. Fazer direto.
+
+### Deploy na VPS (TOM engine)
+SEMPRE autorizado após push. Executar:
+```bash
+ssh tom "cd /opt/LA-Organizer && git pull origin main && pm2 restart tom"
+```
+Só necessário quando arquivos em `src/`, `skills/`, `migrations/` foram alterados.
+
+### Deploy PWA (Vercel)
+Automático. Vercel detecta push em `origin/main` e deploya `web/` em ~2min.
+Não precisa de SSH nem de ação manual.
+
+### Regra geral
+**NÃO pedir autorização para push, deploy VPS ou deploy Vercel.**
+**NÃO pedir confirmação para aplicar migrations no Supabase.**
+Essas ações são parte do workflow normal. Fazer e reportar o resultado.
+A única ação que precisa de OK explícito é **deletar dados em produção**.
+
+---
+
 ## Repositório
 - **GitHub:** https://github.com/LucianoAlf/LA-Organizer.git
 - **Branch principal:** main (fonte de verdade)

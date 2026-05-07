@@ -1,16 +1,10 @@
 import { Link } from 'react-router-dom';
 import { PROJECT_CATEGORY_LABELS, PROJECT_STATUS_LABELS } from '../lib/projectLabels';
+import { CategoryTag } from './CategoryTag';
 import type { Project } from '../types';
 
-// Sprint 22.19 — paleta com texto suave e sem uppercase pra evitar ruído visual.
-const CATEGORY_TAG: Record<Project['category'], string> = {
-  pedagogical:    'bg-[#8B5CF6]/15 text-[#C4B5FD]',  // violet light
-  commercial:     'bg-[#D946EF]/15 text-[#F0ABFC]',  // fuchsia light
-  administrative: 'bg-[#06B6D4]/15 text-[#A5F3FC]',  // cyan light
-  operational:    'bg-[#14B8A6]/15 text-[#99F6E4]',  // teal light
-  event:          'bg-[#F43F5E]/15 text-[#FECDD3]',  // rose light
-  infrastructure: 'bg-[#64748B]/20 text-[#CBD5E1]',  // slate light
-};
+// Sprint 22 Phase A — palette migrada pra <CategoryTag /> (docs/design-system.md §1.2).
+// Aqui o chip mostra o LABEL DA CATEGORIA (não o nome do projeto, diferente de TaskRow).
 
 // Statuses que não são "execução normal" merecem chip explícito.
 // 'active' é o default visual (sem chip = em andamento).
@@ -47,9 +41,7 @@ export function ProjectCard({ project, nextCheckpoint }: Props) {
             <p className="text-body-sm text-fg-muted line-clamp-2 mt-1">{project.description}</p>
           )}
         </div>
-        <span className={['inline-block text-[11px] font-medium rounded-sm px-1.5 py-0.5 shrink-0', CATEGORY_TAG[project.category]].join(' ')}>
-          {PROJECT_CATEGORY_LABELS[project.category]}
-        </span>
+        <CategoryTag project={project} label={PROJECT_CATEGORY_LABELS[project.category]} className="shrink-0" />
       </div>
 
       {/* progress bar */}

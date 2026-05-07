@@ -1,9 +1,15 @@
 // web/src/screens/Checklists.tsx
+// Sprint 22 Phase A — refactor design system. Checklists aqui são OPERACIONAIS
+// (op_checklist_completions enviados pelo TOM), não checkpoints de projeto. Por isso
+// rationale (do Sprint 22.3) NÃO entra aqui — vive em ProjetoDetalhe.
 import { useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { ClipboardCheck } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { ChecklistCard } from '../components/ChecklistCard'
+import { EmptyState } from '../components/EmptyState'
+import { LoadingState } from '../components/LoadingState'
 import type { OpChecklistCompletion } from '../types'
 
 export function Checklists() {
@@ -68,31 +74,27 @@ export function Checklists() {
   }, [completions.length, collaborator?.id])
 
   if (isLoading) {
-    return (
-      <div className="p-4 space-y-3">
-        {[1, 2].map(i => (
-          <div key={i} className="bg-bg-surface rounded-xl h-32 animate-pulse" />
-        ))}
-      </div>
-    )
+    return <LoadingState rows={2} />
   }
 
   if (!completions.length) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[50vh] gap-2 text-fg-muted p-4">
-        <span className="text-3xl">✅</span>
-        <p className="text-body-md font-medium">Nenhum checklist para hoje</p>
-        <p className="text-body-sm text-center">Os checklists do dia aparecerão aqui quando forem enviados.</p>
-      </div>
+      <EmptyState
+        icon={<ClipboardCheck size={32} />}
+        title="Nenhum checklist para hoje"
+        description="Os checklists do dia aparecerão aqui quando o TOM enviar."
+      />
     )
   }
 
   return (
-    <div className="p-4 space-y-4 max-w-content mx-auto pb-24">
-      <h1 className="text-section-title">Checklists de Hoje</h1>
-      {completions.map(completion => (
-        <ChecklistCard key={completion.id} completion={completion} />
-      ))}
+    <div className="space-y-md">
+      <h2 className="text-section-title">Checklists de hoje</h2>
+      <div className="space-y-sm">
+        {completions.map(completion => (
+          <ChecklistCard key={completion.id} completion={completion} />
+        ))}
+      </div>
     </div>
   )
 }
