@@ -1,0 +1,3 @@
+-- Sprint 22.22r — Runbook T-minus pra projetos category=event
+-- (CREATE TABLE event_runbook_blocks + event_runbook_items + RLS)
+-- Aplicada via Supabase MCP em 2026-05-07.

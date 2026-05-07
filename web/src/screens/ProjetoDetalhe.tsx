@@ -27,6 +27,7 @@ import { CategoryTag } from '../components/CategoryTag';
 import { LoadingState } from '../components/LoadingState';
 import { EmptyState } from '../components/EmptyState';
 import { MembersTab } from '../components/MembersTab';
+import { RunbookTab } from '../components/RunbookTab';
 import { AssigneePicker, type AssigneeOption } from '../components/AssigneePicker';
 import { PROJECT_CATEGORY_LABELS } from '../lib/projectLabels';
 import { brShort } from '../utils/date';
@@ -38,7 +39,7 @@ import type { Project, Task, Checkpoint, ProjectMember } from '../types';
 // com Musicolandia: marco (checkpoint) + acoes (tarefas dentro dele). Drop aba
 // "Tarefas" — fica 3 abas: Checkpoints / Contingencias / Time.
 
-type TabId = 'checkpoints' | 'contingencias' | 'time';
+type TabId = 'checkpoints' | 'contingencias' | 'time' | 'dia_d';
 
 interface ProjectFull extends Project {
   event_date?: string | null;
@@ -385,6 +386,33 @@ export function ProjetoDetalhe() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['project', id, 'contingencies'] }),
   });
 
+  // Sprint 22.22r — reorder de contingencias (mesmo padrao otimista)
+  const reorderContingencies = useMutation({
+    mutationFn: async (orderedIds: string[]) => {
+      await Promise.all(
+        orderedIds.map((ctId, idx) =>
+          supabase.from('project_contingencies').update({ position: idx }).eq('id', ctId).then(({ error }) => {
+            if (error) throw error;
+          }),
+        ),
+      );
+    },
+    onMutate: async (orderedIds) => {
+      await qc.cancelQueries({ queryKey: ['project', id, 'contingencies'] });
+      const prev = qc.getQueryData<Contingency[]>(['project', id, 'contingencies']);
+      qc.setQueryData<Contingency[]>(['project', id, 'contingencies'], (old) => {
+        if (!old) return old;
+        const map = new Map(old.map(c => [c.id, c]));
+        return orderedIds.map((cId, idx) => ({ ...(map.get(cId)!), position: idx } as Contingency));
+      });
+      return { prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['project', id, 'contingencies'], ctx.prev);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['project', id, 'contingencies'] }),
+  });
+
   // Bulk reorder com optimistic update — drag-and-drop precisa de feedback imediato.
   const reorderCheckpoints = useMutation({
     mutationFn: async (orderedIds: string[]) => {
@@ -508,6 +536,7 @@ export function ProjetoDetalhe() {
           { id: 'checkpoints', label: 'Checkpoints', badge: checkpoints.length },
           { id: 'contingencias', label: 'Contingências', badge: contingencies.length },
           { id: 'time', label: 'Time', badge: members.length },
+          ...(project?.category === 'event' ? [{ id: 'dia_d' as const, label: 'Dia D' }] : []),
         ]}
         active={tab}
         onChange={setTab}
@@ -617,16 +646,12 @@ export function ProjetoDetalhe() {
               />
             </div>
           ) : (
-            <ul className="space-y-sm">
-              {contingencies.map(ct => (
-                <ContingencyCard
-                  key={ct.id}
-                  contingency={ct}
-                  onUpdate={(scenario, protocol) => updateContingency.mutate({ id: ct.id, scenario, protocol })}
-                  onDelete={() => deleteContingency.mutate(ct.id)}
-                />
-              ))}
-            </ul>
+            <SortableContingencyList
+              contingencies={contingencies}
+              onReorder={(ids) => reorderContingencies.mutate(ids)}
+              onUpdate={(ctId, scenario, protocol) => updateContingency.mutate({ id: ctId, scenario, protocol })}
+              onDelete={(ctId) => deleteContingency.mutate(ctId)}
+            />
           )}
           <CreateContingencyInline
             onCreate={(scenario, protocol) => createContingency.mutate({ scenario, protocol })}
@@ -640,6 +665,10 @@ export function ProjetoDetalhe() {
           members={members}
           canEdit={canSeeAll}
         />
+      )}
+
+      {tab === 'dia_d' && project?.category === 'event' && (
+        <RunbookTab projectId={id} canEdit={canSeeAll} />
       )}
     </div>
   );
@@ -1547,15 +1576,95 @@ function ProjectHeader({
   );
 }
 
+// ---- SortableContingencyList — lista DnD de contingencias
+function SortableContingencyList({
+  contingencies,
+  onReorder,
+  onUpdate,
+  onDelete,
+}: {
+  contingencies: Contingency[];
+  onReorder: (orderedIds: string[]) => void;
+  onUpdate: (ctId: string, scenario: string, protocol: string) => void;
+  onDelete: (ctId: string) => void;
+}) {
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+  const ids = contingencies.map(c => c.id);
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = ids.indexOf(String(active.id));
+    const newIndex = ids.indexOf(String(over.id));
+    if (oldIndex < 0 || newIndex < 0) return;
+    onReorder(arrayMove(ids, oldIndex, newIndex));
+  }
+
+  return (
+    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <SortableContext items={ids} strategy={verticalListSortingStrategy}>
+        <ul className="space-y-sm">
+          {contingencies.map(ct => (
+            <SortableContingencyCard
+              key={ct.id}
+              contingency={ct}
+              onUpdate={(scenario, protocol) => onUpdate(ct.id, scenario, protocol)}
+              onDelete={() => onDelete(ct.id)}
+            />
+          ))}
+        </ul>
+      </SortableContext>
+    </DndContext>
+  );
+}
+
+function SortableContingencyCard(props: {
+  contingency: Contingency;
+  onUpdate: (scenario: string, protocol: string) => void;
+  onDelete: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: props.contingency.id,
+  });
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+  return (
+    <ContingencyCard
+      {...props}
+      sortableRef={setNodeRef}
+      sortableStyle={style}
+      sortableAttributes={attributes}
+      sortableListeners={listeners}
+      isDragging={isDragging}
+    />
+  );
+}
+
 // ---- ContingencyCard — card editavel com menu (...).
 function ContingencyCard({
   contingency,
   onUpdate,
   onDelete,
+  sortableRef,
+  sortableStyle,
+  sortableAttributes,
+  sortableListeners,
+  isDragging,
 }: {
   contingency: Contingency;
   onUpdate: (scenario: string, protocol: string) => void;
   onDelete: () => void;
+  sortableRef?: (node: HTMLElement | null) => void;
+  sortableStyle?: React.CSSProperties;
+  sortableAttributes?: React.HTMLAttributes<HTMLElement>;
+  sortableListeners?: React.DOMAttributes<HTMLElement>;
+  isDragging?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [scenarioVal, setScenarioVal] = useState(contingency.scenario);
@@ -1616,8 +1725,19 @@ function ContingencyCard({
   }
 
   return (
-    <li className="surface p-md border-l-4 border-l-danger/70">
-      <div className="flex items-start gap-md">
+    <li
+      ref={sortableRef as ((node: HTMLLIElement | null) => void) | undefined}
+      style={{ ...sortableStyle, opacity: isDragging ? 0.5 : undefined, zIndex: isDragging ? 20 : undefined }}
+      className="surface p-md border-l-4 border-l-danger/70 touch-none"
+      {...(sortableAttributes ?? {})}
+      {...(sortableListeners ?? {})}
+    >
+      <div className="flex items-start gap-2">
+        {sortableListeners && (
+          <span aria-hidden className="mt-1 text-fg-muted/40 cursor-grab shrink-0">
+            <GripVertical size={14} />
+          </span>
+        )}
         <div className="min-w-0 flex-1 space-y-2">
           <div>
             <div className="text-label text-danger uppercase tracking-wide mb-1">⚠️ Cenário</div>

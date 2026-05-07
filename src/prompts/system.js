@@ -1038,6 +1038,41 @@ async function buildProjectStatusContext(collaborator, lastUserMessage) {
         }
       }
 
+      // Sprint 22.22r — Runbook T-minus (so pra projetos category=event)
+      if (p.category === 'event') {
+        const { data: runbookBlocks } = await supabase
+          .from('event_runbook_blocks')
+          .select('id, label, offset_minutes')
+          .eq('project_id', p.id)
+          .order('offset_minutes', { ascending: true });
+        if (runbookBlocks && runbookBlocks.length > 0) {
+          const blockIds = runbookBlocks.map(b => b.id);
+          const { data: runbookItems } = await supabase
+            .from('event_runbook_items')
+            .select('block_id, text, done')
+            .in('block_id', blockIds);
+          const itemsByBlock = new Map();
+          for (const it of runbookItems || []) {
+            if (!itemsByBlock.has(it.block_id)) itemsByBlock.set(it.block_id, []);
+            itemsByBlock.get(it.block_id).push(it);
+          }
+          lines.push(`\n**Runbook do Dia (${runbookBlocks.length} blocos):**`);
+          for (const b of runbookBlocks) {
+            const its = itemsByBlock.get(b.id) || [];
+            const doneCount = its.filter(i => i.done).length;
+            const offsetLabel = b.offset_minutes === 0
+              ? 'ABERTURA'
+              : b.offset_minutes < 0
+                ? `${Math.abs(b.offset_minutes)}min antes`
+                : `${b.offset_minutes}min depois`;
+            lines.push(`- [${offsetLabel}] ${b.label} — ${doneCount}/${its.length} itens`);
+            for (const it of its) {
+              lines.push(`    ${it.done ? '✓' : '·'} ${it.text}`);
+            }
+          }
+        }
+      }
+
       // Contingências
       if (contingencies.length > 0) {
         lines.push(`\n**Contingências mapeadas (${contingencies.length}):**`);
