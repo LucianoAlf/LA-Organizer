@@ -58,8 +58,9 @@ async function fetchCheckpoints(projectId: string): Promise<CheckpointFull[]> {
 async function fetchProjectTasks(projectId: string): Promise<Task[]> {
   const { data, error } = await supabase
     .from('tasks')
-    .select('id, title, status, context, priority, due_date, scheduled_date, remind_at, eisenhower_quadrant, project_id, checkpoint_id, assigned_to, created_by, completed_at, action_type, source')
+    .select('id, title, status, context, priority, due_date, scheduled_date, remind_at, eisenhower_quadrant, project_id, checkpoint_id, sort_position, assigned_to, created_by, completed_at, action_type, source')
     .eq('project_id', projectId)
+    .order('sort_position', { ascending: true, nullsFirst: false })
     .order('due_date', { ascending: true, nullsFirst: false });
   if (error) throw error;
   return (data ?? []) as unknown as Task[];
@@ -271,6 +272,32 @@ export function ProjetoDetalhe() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['project', id, 'contingencies'] }),
   });
 
+  // Swap-based reorder. Bom suficiente pra movimentos pontuais no mobile.
+  const swapCheckpointOrder = useMutation({
+    mutationFn: async ({ a, b }: { a: CheckpointFull; b: CheckpointFull }) => {
+      const aOrder = a.sort_order ?? 0;
+      const bOrder = b.sort_order ?? 0;
+      // Update em duas chamadas separadas — Supabase nao tem batch update facil.
+      const { error: e1 } = await supabase.from('project_checkpoints').update({ sort_order: bOrder }).eq('id', a.id);
+      if (e1) throw e1;
+      const { error: e2 } = await supabase.from('project_checkpoints').update({ sort_order: aOrder }).eq('id', b.id);
+      if (e2) throw e2;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['project', id, 'checkpoints'] }),
+  });
+
+  const swapTaskOrder = useMutation({
+    mutationFn: async ({ a, b }: { a: Task & { sort_position?: number | null }; b: Task & { sort_position?: number | null } }) => {
+      const aPos = a.sort_position ?? 0;
+      const bPos = b.sort_position ?? 0;
+      const { error: e1 } = await supabase.from('tasks').update({ sort_position: bPos }).eq('id', a.id);
+      if (e1) throw e1;
+      const { error: e2 } = await supabase.from('tasks').update({ sort_position: aPos }).eq('id', b.id);
+      if (e2) throw e2;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['project', id, 'tasks'] }),
+  });
+
   if (!supabaseConfigured) return <EmptyState icon={<Rocket size={32} />} title="Configure Supabase" />;
   if (pLoading) return <LoadingState rows={4} />;
   if (!project) return <EmptyState title="Projeto não encontrado" action={<Link to="/projetos" className="text-tom">Voltar</Link>} />;
@@ -344,22 +371,29 @@ export function ProjetoDetalhe() {
             </div>
           ) : (
             <>
-              {checkpoints.map(cp => (
-                <CheckpointCard
-                  key={cp.id}
-                  checkpoint={cp}
-                  tasks={tasksByCheckpoint.get(cp.id) ?? []}
-                  onToggleCheckpoint={() => toggleCheckpoint.mutate(cp)}
-                  onToggleTask={(t) => toggleTask.mutate(t)}
-                  onRenameCheckpoint={(name) => renameCheckpoint.mutate({ id: cp.id, name })}
-                  onDeleteCheckpoint={() => deleteCheckpoint.mutate(cp.id)}
-                  onRenameTask={(tId, title) => renameTask.mutate({ id: tId, title })}
-                  onDeleteTask={(tId) => deleteTask.mutate(tId)}
-                  toggleDisabled={toggleCheckpoint.isPending}
-                  projectId={id}
-                  collaboratorId={collaborator?.id ?? null}
-                />
-              ))}
+              {checkpoints.map((cp, idx) => {
+                const prev = idx > 0 ? checkpoints[idx - 1] : null;
+                const nextCp = idx < checkpoints.length - 1 ? checkpoints[idx + 1] : null;
+                return (
+                  <CheckpointCard
+                    key={cp.id}
+                    checkpoint={cp}
+                    tasks={tasksByCheckpoint.get(cp.id) ?? []}
+                    onToggleCheckpoint={() => toggleCheckpoint.mutate(cp)}
+                    onToggleTask={(t) => toggleTask.mutate(t)}
+                    onRenameCheckpoint={(name) => renameCheckpoint.mutate({ id: cp.id, name })}
+                    onDeleteCheckpoint={() => deleteCheckpoint.mutate(cp.id)}
+                    onRenameTask={(tId, title) => renameTask.mutate({ id: tId, title })}
+                    onDeleteTask={(tId) => deleteTask.mutate(tId)}
+                    onSwapTaskOrder={(a, b) => swapTaskOrder.mutate({ a, b })}
+                    onMoveUp={prev ? () => swapCheckpointOrder.mutate({ a: cp, b: prev }) : null}
+                    onMoveDown={nextCp ? () => swapCheckpointOrder.mutate({ a: cp, b: nextCp }) : null}
+                    toggleDisabled={toggleCheckpoint.isPending}
+                    projectId={id}
+                    collaboratorId={collaborator?.id ?? null}
+                  />
+                );
+              })}
               {orphanTasks.length > 0 && (
                 <div className="surface p-md">
                   <div className="text-label text-fg-muted uppercase tracking-wide mb-2">
@@ -445,11 +479,15 @@ function TaskListItem({
   onToggle,
   onRename,
   onDelete,
+  onMoveUp,
+  onMoveDown,
 }: {
   task: Task;
   onToggle: () => void;
   onRename?: (title: string) => void;
   onDelete?: () => void;
+  onMoveUp?: (() => void) | null;
+  onMoveDown?: (() => void) | null;
 }) {
   const isDone = task.status === 'done';
   const [editing, setEditing] = useState(false);
@@ -502,10 +540,12 @@ function TaskListItem({
           </div>
         )}
       </div>
-      {(onRename || onDelete) && !editing && (
+      {(onRename || onDelete || onMoveUp || onMoveDown) && !editing && (
         <RowMenu
           items={[
             ...(onRename ? [{ label: 'Editar', onClick: () => { setEditValue(task.title); setEditing(true); } }] : []),
+            ...(onMoveUp ? [{ label: '↑ Mover pra cima', onClick: onMoveUp }] : []),
+            ...(onMoveDown ? [{ label: '↓ Mover pra baixo', onClick: onMoveDown }] : []),
             ...(onDelete ? [{ label: 'Excluir tarefa', danger: true, confirm: 'Excluir essa tarefa?', onClick: () => onDelete() }] : []),
           ]}
         />
@@ -523,6 +563,9 @@ function CheckpointCard({
   onDeleteCheckpoint,
   onRenameTask,
   onDeleteTask,
+  onSwapTaskOrder,
+  onMoveUp,
+  onMoveDown,
   toggleDisabled,
   projectId,
   collaboratorId,
@@ -535,6 +578,9 @@ function CheckpointCard({
   onDeleteCheckpoint: () => void;
   onRenameTask: (taskId: string, title: string) => void;
   onDeleteTask: (taskId: string) => void;
+  onSwapTaskOrder: (a: Task, b: Task) => void;
+  onMoveUp: (() => void) | null;
+  onMoveDown: (() => void) | null;
   toggleDisabled: boolean;
   projectId: string;
   collaboratorId: string | null;
@@ -553,7 +599,7 @@ function CheckpointCard({
   }
 
   return (
-    <article className="surface overflow-hidden">
+    <article className="surface">
       {/* Header — visual de "marco/container". Padding maior, fundo do surface, checkbox quadrado grande. */}
       <div className="p-md flex items-start gap-md">
         <button
@@ -608,6 +654,8 @@ function CheckpointCard({
           <RowMenu
             items={[
               { label: 'Editar nome', onClick: () => { setEditValue(checkpoint.name); setEditing(true); } },
+              ...(onMoveUp ? [{ label: '↑ Mover pra cima', onClick: onMoveUp }] : []),
+              ...(onMoveDown ? [{ label: '↓ Mover pra baixo', onClick: onMoveDown }] : []),
               {
                 label: 'Excluir checkpoint',
                 danger: true,
@@ -629,7 +677,7 @@ function CheckpointCard({
 
       {/* Corpo — fundo levemente diferente + border-top pra dar separacao visual de container. */}
       {expanded && (
-        <div className="space-y-3 bg-bg-subtle border-t border-border px-md pt-3 pb-md">
+        <div className="space-y-3 bg-bg-subtle border-t border-border px-md pt-3 pb-md rounded-b-md">
           {checkpoint.rationale && (
             <div className="bg-tom/5 border-l-2 border-tom rounded-sm p-md text-body-sm text-fg-secondary">
               <div className="text-label text-tom mb-1">💡 POR QUE ESSE CHECKPOINT</div>
@@ -641,15 +689,21 @@ function CheckpointCard({
             <div className="border-l-2 border-border pl-md">
               {tasks.length > 0 && (
                 <ul className="divide-y divide-border">
-                  {tasks.map(t => (
-                    <TaskListItem
-                      key={t.id}
-                      task={t}
-                      onToggle={() => onToggleTask(t)}
-                      onRename={(title) => onRenameTask(t.id, title)}
-                      onDelete={() => onDeleteTask(t.id)}
-                    />
-                  ))}
+                  {tasks.map((t, i) => {
+                    const prev = i > 0 ? tasks[i - 1] : null;
+                    const nextT = i < tasks.length - 1 ? tasks[i + 1] : null;
+                    return (
+                      <TaskListItem
+                        key={t.id}
+                        task={t}
+                        onToggle={() => onToggleTask(t)}
+                        onRename={(title) => onRenameTask(t.id, title)}
+                        onDelete={() => onDeleteTask(t.id)}
+                        onMoveUp={prev ? () => onSwapTaskOrder(t, prev) : null}
+                        onMoveDown={nextT ? () => onSwapTaskOrder(t, nextT) : null}
+                      />
+                    );
+                  })}
                 </ul>
               )}
               <div className={tasks.length > 0 ? 'pt-2' : ''}>
