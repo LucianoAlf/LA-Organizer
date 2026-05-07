@@ -392,9 +392,17 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
     /\b(workshop|show|recital|capta[çc][ãa]o|festival|dia\s+das\s+m[aã]es|formatura|sarau|especial)\b/i.test(recentText) &&
     /me\s+fala\s+o\s+nome|qual\s+a\s+data|qual\s+o\s+local|tem\s+alguma\s+descri[çc][ãa]o|quem\s+vai\s+participar|como\s+vai\s+executar/i.test(recentText) &&
     !/✅.*criado|cancelar|esquece/i.test(recentText.slice(-500));
+  // Sprint 22.22 — context-aware: detecta se conversa atual eh sobre consulta
+  // de projeto existente. Olha a ultima mensagem do TOM tambem (follow-ups).
+  const lastBotMsg = (recentHistory || [])
+    .slice(-4)
+    .filter(m => m && m.direction === 'outbound')
+    .map(m => (m.content || '').toLowerCase())
+    .join(' ');
+  const recentMentionsProjectStatus = /festival|workshop|sarau|recital|projeto.*\b(0%|\d+%)|checkpoint|membros do projeto|owner|coordinator|atribu/i.test(lastBotMsg);
+
   if (largeEventTermRe.test(lmFull) || inLargeEventFlow) {
-    // Sprint 22.22 — antes de assumir cadastro, checar se ja existe projeto
-    // com nome similar. Se existe, eh consulta de status, nao criacao.
+    // Antes de assumir cadastro, checar se ja existe projeto com nome similar.
     const m = lmFull.match(largeEventTermRe);
     if (m && m[0] && !/\b(criar|novo|cadastrar|montar|fazer|quero\s+(?:criar|fazer))\b/i.test(lmFull)) {
       try {
@@ -409,6 +417,13 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
       } catch { /* fallback pro cadastro abaixo */ }
     }
     return { name: 'cadastro-projeto-5w2h', body: loadSkill('cadastro-projeto-5w2h') };
+  }
+
+  // Follow-up: TOM acabou de falar sobre projeto, user respondeu curto
+  // ("quero", "sim", "manda", "mostra"). Mantem contexto consultar-projeto.
+  if (recentMentionsProjectStatus && lastUserMessage && lastUserMessage.length < 60 &&
+      !/\b(criar|novo|cadastrar)\b/i.test(lastUserMessage)) {
+    return { name: 'consultar-projeto', body: loadSkill('consultar-projeto') };
   }
 
   // Priority 1.4: audio transcription — wraps the actual intent in a
