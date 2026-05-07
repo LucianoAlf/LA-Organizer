@@ -963,7 +963,7 @@ async function buildProjectStatusContext(collaborator, lastUserMessage) {
           .eq('project_id', p.id)
           .eq('context', 'work'),
         supabase.from('project_members')
-          .select('collaborator_id, role_in_project, guest_name, guest_role, collaborators(full_name)')
+          .select('collaborator_id, role_in_project, function_in_project, guest_name, guest_role, collaborators(full_name)')
           .eq('project_id', p.id),
       ]);
 
@@ -994,7 +994,8 @@ async function buildProjectStatusContext(collaborator, lastUserMessage) {
         for (const m of members) {
           if (m.collaborator_id) {
             const coll = Array.isArray(m.collaborators) ? m.collaborators[0] : m.collaborators;
-            lines.push(`- ${coll?.full_name || '—'} (${m.role_in_project})`);
+            const fn = m.function_in_project ? ` — ${m.function_in_project}` : '';
+            lines.push(`- ${coll?.full_name || '—'}${fn} [${m.role_in_project}]`);
           } else {
             lines.push(`- ${m.guest_name} (externo · ${m.guest_role || '—'})`);
           }

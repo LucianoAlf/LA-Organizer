@@ -41,11 +41,12 @@ export function MembersTab({ projectId, members, canEdit }: Props) {
   const availableColls = allColls.filter(c => !memberCollIds.has(c.id));
 
   const addInternal = useMutation({
-    mutationFn: async ({ collabId, role }: { collabId: string; role: ProjectMemberRole }) => {
+    mutationFn: async ({ collabId, role, fn }: { collabId: string; role: ProjectMemberRole; fn: string }) => {
       const { error } = await supabase.from('project_members').insert({
         project_id: projectId,
         collaborator_id: collabId,
         role_in_project: role,
+        function_in_project: fn || null,
       });
       if (error) throw error;
     },
@@ -53,6 +54,17 @@ export function MembersTab({ projectId, members, canEdit }: Props) {
       qc.invalidateQueries({ queryKey: ['project', projectId, 'members'] });
       setAdding(null);
     },
+  });
+
+  const updateFunction = useMutation({
+    mutationFn: async ({ memberId, fn }: { memberId: string; fn: string }) => {
+      const { error } = await supabase
+        .from('project_members')
+        .update({ function_in_project: fn || null })
+        .eq('id', memberId);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['project', projectId, 'members'] }),
   });
 
   const addExternal = useMutation({
@@ -108,6 +120,7 @@ export function MembersTab({ projectId, members, canEdit }: Props) {
               member={m}
               canEdit={canEdit}
               onUpdateRole={(role) => updateRole.mutate({ memberId: m.id, role })}
+              onUpdateFunction={(fn) => updateFunction.mutate({ memberId: m.id, fn })}
               onRemove={() => removeMember.mutate(m.id)}
             />
           ))}
@@ -141,7 +154,7 @@ export function MembersTab({ projectId, members, canEdit }: Props) {
             <AddInternalForm
               available={availableColls}
               onCancel={() => setAdding(null)}
-              onSubmit={(collabId, role) => addInternal.mutate({ collabId, role })}
+              onSubmit={(collabId, role, fn) => addInternal.mutate({ collabId, role, fn })}
             />
           )}
 
@@ -163,21 +176,32 @@ function MemberRow({
   member,
   canEdit,
   onUpdateRole,
+  onUpdateFunction,
   onRemove,
 }: {
   member: ProjectMember;
   canEdit: boolean;
   onUpdateRole: (role: ProjectMemberRole) => void;
+  onUpdateFunction: (fn: string) => void;
   onRemove: () => void;
 }) {
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [editingFn, setEditingFn] = useState(false);
+  const [fnVal, setFnVal] = useState(member.function_in_project ?? '');
   const isExternal = !member.collaborator_id;
   const displayName = isExternal
     ? member.guest_name
     : member.collaborator?.full_name ?? '—';
-  const displaySubtitle = isExternal
-    ? member.guest_role
-    : member.collaborator?.function_title;
+  // Sprint 22.22j — funcao no projeto eh prioridade. Fallback pra cargo do
+  // collaborator (function_title) ou guest_role.
+  const displayFunction = member.function_in_project
+    ?? (isExternal ? member.guest_role : member.collaborator?.function_title);
+
+  function commitFn() {
+    const v = fnVal.trim().slice(0, 100);
+    if (v !== (member.function_in_project ?? '')) onUpdateFunction(v);
+    setEditingFn(false);
+  }
 
   return (
     <li className="p-md flex items-center justify-between gap-md">
@@ -190,9 +214,42 @@ function MemberRow({
             </span>
           )}
         </div>
-        {displaySubtitle && (
-          <div className="text-body-sm text-fg-muted truncate">{displaySubtitle}</div>
-        )}
+        {editingFn && canEdit && !isExternal ? (
+          <input
+            type="text"
+            autoFocus
+            value={fnVal}
+            maxLength={100}
+            onChange={e => setFnVal(e.target.value)}
+            onBlur={commitFn}
+            onKeyDown={e => {
+              if (e.key === 'Enter') { e.preventDefault(); commitFn(); }
+              if (e.key === 'Escape') { setFnVal(member.function_in_project ?? ''); setEditingFn(false); }
+            }}
+            placeholder="Função no projeto (ex: Repertório, Logística)"
+            className="mt-1 w-full h-8 px-2 rounded-sm bg-bg-elevated border border-border text-body-sm text-fg focus-ring"
+          />
+        ) : displayFunction ? (
+          <button
+            type="button"
+            disabled={!canEdit || isExternal}
+            onClick={() => { setFnVal(member.function_in_project ?? ''); setEditingFn(true); }}
+            className={[
+              'text-body-sm text-fg-muted truncate text-left',
+              canEdit && !isExternal ? 'hover:text-fg cursor-pointer focus-ring rounded-sm' : 'cursor-default',
+            ].join(' ')}
+          >
+            {displayFunction}
+          </button>
+        ) : canEdit && !isExternal ? (
+          <button
+            type="button"
+            onClick={() => { setFnVal(''); setEditingFn(true); }}
+            className="text-body-sm text-fg-muted/60 italic hover:text-fg-muted focus-ring rounded-sm"
+          >
+            + função no projeto
+          </button>
+        ) : null}
       </div>
 
       <div className="flex items-center gap-2 shrink-0">
@@ -283,14 +340,15 @@ function AddInternalForm({
 }: {
   available: Collaborator[];
   onCancel: () => void;
-  onSubmit: (collabId: string, role: ProjectMemberRole) => void;
+  onSubmit: (collabId: string, role: ProjectMemberRole, fn: string) => void;
 }) {
   const [collabId, setCollabId] = useState('');
   const [role, setRole] = useState<ProjectMemberRole>('member');
+  const [fn, setFn] = useState('');
 
   function submit() {
     if (!collabId) return;
-    onSubmit(collabId, role);
+    onSubmit(collabId, role, fn.trim().slice(0, 100));
   }
 
   const collabOptions = available.map(c => ({
@@ -312,6 +370,14 @@ function AddInternalForm({
         placeholder="— Escolher pessoa —"
         options={collabOptions}
         onChange={setCollabId}
+      />
+      <input
+        type="text"
+        value={fn}
+        onChange={e => setFn(e.target.value)}
+        placeholder="Função no projeto (ex: Repertório, Técnico de som)"
+        maxLength={100}
+        className="w-full h-9 px-3 rounded-md bg-bg-elevated border border-border text-body-sm text-fg focus-ring"
       />
       <CustomSelect
         value={role}

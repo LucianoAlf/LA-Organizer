@@ -88,7 +88,7 @@ async function fetchProjectTasks(projectId: string): Promise<Task[]> {
 async function fetchMembers(projectId: string): Promise<ProjectMember[]> {
   const { data, error } = await supabase
     .from('project_members')
-    .select('id, project_id, collaborator_id, role_in_project, guest_name, guest_role, created_at, collaborators(id, full_name, function_title)')
+    .select('id, project_id, collaborator_id, role_in_project, function_in_project, guest_name, guest_role, created_at, collaborators(id, full_name, function_title)')
     .eq('project_id', projectId)
     .order('created_at', { ascending: true });
   if (error) throw error;
@@ -101,6 +101,7 @@ async function fetchMembers(projectId: string): Promise<ProjectMember[]> {
       project_id: row.project_id as string,
       collaborator_id: (row.collaborator_id as string | null) ?? null,
       role_in_project: row.role_in_project as ProjectMember['role_in_project'],
+      function_in_project: (row.function_in_project as string | null) ?? null,
       guest_name: (row.guest_name as string | null) ?? null,
       guest_role: (row.guest_role as string | null) ?? null,
       created_at: row.created_at as string,

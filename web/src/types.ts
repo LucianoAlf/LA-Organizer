@@ -210,6 +210,8 @@ export interface ProjectMember {
   project_id: string;
   collaborator_id: string | null;
   role_in_project: ProjectMemberRole;
+  /** Sprint 22.22j — funcao do membro NESTE projeto (texto livre). */
+  function_in_project: string | null;
   guest_name: string | null;
   guest_role: string | null;
   created_at: string;
