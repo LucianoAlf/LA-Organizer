@@ -34,15 +34,21 @@ async function fetchWeekTasks(collabId: string, start: string, end: string): Pro
   return (data ?? []) as unknown as WeekTask[];
 }
 
-// Mapeia categoria do projeto para Tailwind classes (bg + text). Mesmas cores
-// usadas no ProjectCard pra consistência visual.
+// Sprint 22.16 — paleta distinta dos tokens semânticos (status, Eisenhower).
+// Verde reservado pra "concluído", vermelho/âmbar/azul pra Eisenhower.
 const CATEGORY_TAG: Record<string, string> = {
-  pedagogical: 'bg-project/15 text-project',
-  commercial: 'bg-brand/15 text-brand',
-  administrative: 'bg-info/15 text-info',
-  operational: 'bg-success/15 text-success',
-  event: 'bg-warning/15 text-warning',
-  infrastructure: 'bg-bg-elevated text-fg-muted border border-border',
+  pedagogical:    'bg-[#8B5CF6]/15 text-[#A78BFA]',  // violet
+  commercial:     'bg-[#D946EF]/15 text-[#E879F9]',  // fuchsia
+  administrative: 'bg-[#06B6D4]/15 text-[#22D3EE]',  // cyan
+  operational:    'bg-[#14B8A6]/15 text-[#5EEAD4]',  // teal
+  event:          'bg-[#F43F5E]/15 text-[#FB7185]',  // rose
+  infrastructure: 'bg-[#64748B]/20 text-[#CBD5E1]',  // slate
+};
+
+const QUADRANT_DOT: Record<string, string> = {
+  '1': 'bg-danger',
+  '2': 'bg-warning',
+  '3': 'bg-info',
 };
 
 function CategoryTag({ task }: { task: WeekTask }) {
@@ -234,6 +240,13 @@ export function Semana() {
                               </span>
                               <div className="min-w-0 flex-1">
                                 <div className={['text-body-sm', isDone ? 'line-through text-fg-muted' : 'text-fg'].join(' ')}>
+                                  {(() => {
+                                    const qk = t.eisenhower_quadrant ? String(t.eisenhower_quadrant) : null;
+                                    const qc = qk && QUADRANT_DOT[qk] ? QUADRANT_DOT[qk] : null;
+                                    return qc && !isDone ? (
+                                      <span aria-hidden title={`Q${qk}`} className={['inline-block h-1.5 w-1.5 rounded-full mr-1.5 align-middle', qc].join(' ')} />
+                                    ) : null;
+                                  })()}
                                   {t.title}
                                 </div>
                                 <div className="mt-1">

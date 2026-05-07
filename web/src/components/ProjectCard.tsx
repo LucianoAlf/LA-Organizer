@@ -1,15 +1,15 @@
 import { Link } from 'react-router-dom';
-import { Badge } from './Badge';
 import { PROJECT_CATEGORY_LABELS, PROJECT_STATUS_LABELS } from '../lib/projectLabels';
 import type { Project } from '../types';
 
-const categoryTone: Record<Project['category'], 'brand' | 'info' | 'project' | 'warning' | 'success' | 'neutral'> = {
-  pedagogical: 'project',
-  commercial: 'brand',
-  administrative: 'info',
-  operational: 'success',
-  event: 'warning',
-  infrastructure: 'neutral',
+// Sprint 22.16 — paleta distinta dos tokens semânticos (status, Eisenhower).
+const CATEGORY_TAG: Record<Project['category'], string> = {
+  pedagogical:    'bg-[#8B5CF6]/15 text-[#A78BFA]',  // violet
+  commercial:     'bg-[#D946EF]/15 text-[#E879F9]',  // fuchsia
+  administrative: 'bg-[#06B6D4]/15 text-[#22D3EE]',  // cyan
+  operational:    'bg-[#14B8A6]/15 text-[#5EEAD4]',  // teal
+  event:          'bg-[#F43F5E]/15 text-[#FB7185]',  // rose
+  infrastructure: 'bg-[#64748B]/20 text-[#CBD5E1]',  // slate
 };
 
 // Statuses que não são "execução normal" merecem chip explícito.
@@ -47,7 +47,9 @@ export function ProjectCard({ project, nextCheckpoint }: Props) {
             <p className="text-body-sm text-fg-muted line-clamp-2 mt-1">{project.description}</p>
           )}
         </div>
-        <Badge tone={categoryTone[project.category]}>{PROJECT_CATEGORY_LABELS[project.category]}</Badge>
+        <span className={['inline-block text-label uppercase tracking-wide rounded-sm px-1.5 py-0.5 shrink-0', CATEGORY_TAG[project.category]].join(' ')}>
+          {PROJECT_CATEGORY_LABELS[project.category]}
+        </span>
       </div>
 
       {/* progress bar */}

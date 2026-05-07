@@ -423,12 +423,12 @@ export function Hoje() {
         </div>
       )}
 
-      {/* Sprint 22.7 — legenda Eisenhower discreta no rodapé, decifra as barras coloridas */}
+      {/* Sprint 22.16 — legenda Eisenhower como dots (igual ao display inline). */}
       {todayList.some(t => t.eisenhower_quadrant) && (
         <p className="text-body-sm text-fg-muted flex items-center gap-3 flex-wrap pt-sm">
-          <span className="flex items-center gap-1.5"><span className="inline-block w-[3px] h-3 rounded-full bg-danger" /> urgente + importante</span>
-          <span className="flex items-center gap-1.5"><span className="inline-block w-[3px] h-3 rounded-full bg-warning" /> importante</span>
-          <span className="flex items-center gap-1.5"><span className="inline-block w-[3px] h-3 rounded-full bg-info" /> urgente</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-1.5 w-1.5 rounded-full bg-danger" /> urgente + importante</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-1.5 w-1.5 rounded-full bg-warning" /> importante</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-1.5 w-1.5 rounded-full bg-info" /> urgente</span>
         </p>
       )}
 

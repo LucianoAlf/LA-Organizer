@@ -3,13 +3,23 @@ import { Badge } from './Badge';
 import { ActionTypeBadge } from './ActionTypeBadge';
 import type { Task } from '../types';
 
+// Sprint 22.16 — paleta de categoria distinta dos tokens semânticos (status,
+// Eisenhower) para evitar colisão visual. Verde fica reservado pra "concluído",
+// vermelho/âmbar/azul pra Eisenhower e overdue.
 const CATEGORY_TAG: Record<string, string> = {
-  pedagogical:    'bg-project/15 text-project',
-  commercial:     'bg-brand/15 text-brand',
-  administrative: 'bg-info/15 text-info',
-  operational:    'bg-success/15 text-success',
-  event:          'bg-warning/15 text-warning',
-  infrastructure: 'bg-bg-elevated text-fg-muted border border-border',
+  pedagogical:    'bg-[#8B5CF6]/15 text-[#A78BFA]',  // violet
+  commercial:     'bg-[#D946EF]/15 text-[#E879F9]',  // fuchsia
+  administrative: 'bg-[#06B6D4]/15 text-[#22D3EE]',  // cyan
+  operational:    'bg-[#14B8A6]/15 text-[#5EEAD4]',  // teal — antes era green (colidia com done)
+  event:          'bg-[#F43F5E]/15 text-[#FB7185]',  // rose
+  infrastructure: 'bg-[#64748B]/20 text-[#CBD5E1]',  // slate
+};
+
+// Eisenhower como dot inline. Q1 vermelho, Q2 âmbar, Q3 azul, Q4 sem dot.
+const QUADRANT_DOT: Record<string, string> = {
+  '1': 'bg-danger',
+  '2': 'bg-warning',
+  '3': 'bg-info',
 };
 
 interface Props {
@@ -18,14 +28,6 @@ interface Props {
   /** Quando true, esconde o checkbox e bloqueia interação. Para visões coord/director em PessoaDetalhe. */
   readOnly?: boolean;
 }
-
-// Sprint 22.7 — barra vertical à esquerda, conceito Eisenhower visível.
-// Q1 = urgente+importante (vermelho), Q2 = importante (âmbar), Q3 = urgente (azul), Q4 = sem barra.
-const QUADRANT_BAR: Record<string, string> = {
-  '1': 'bg-danger',
-  '2': 'bg-warning',
-  '3': 'bg-info',
-};
 
 // Sprint 22.5 — fonte que NÃO seja manual indica que veio do TOM (mental_dump, agent_*, coordinator_assignment).
 function fromTom(source?: string | null): boolean {
@@ -104,7 +106,7 @@ export function TaskRow({ task, onToggle, readOnly }: Props) {
   const { tone, label } = statusOf(task);
   const isDone = task.status === 'done';
   const quadrantKey = task.eisenhower_quadrant ? String(task.eisenhower_quadrant) : null;
-  const barClass = quadrantKey && QUADRANT_BAR[quadrantKey] ? QUADRANT_BAR[quadrantKey] : null;
+  const dotClass = quadrantKey && QUADRANT_DOT[quadrantKey] ? QUADRANT_DOT[quadrantKey] : null;
   const remindDay = task.remind_at ? dayISOFromAny(task.remind_at) : '';
   const dueDay = task.due_date || '';
   const remindRel = task.remind_at ? fmtRelDate(task.remind_at) : '';
@@ -114,19 +116,10 @@ export function TaskRow({ task, onToggle, readOnly }: Props) {
   return (
     <div
       className={[
-        'relative flex items-start gap-md py-3 pl-2 border-b border-border last:border-0 transition-opacity',
+        'flex items-start gap-md py-3 transition-opacity',
         isDone ? 'opacity-50' : '',
       ].join(' ')}
     >
-      {/* Sprint 22.7 — barra Eisenhower vertical. Não aparece pra concluídas (line-through já cobre). */}
-      {barClass && !isDone && (
-        <span
-          className={['absolute left-0 top-3 bottom-3 w-[3px] rounded-full', barClass].join(' ')}
-          aria-label={`Eisenhower Q${quadrantKey}`}
-          title={`Q${quadrantKey}`}
-        />
-      )}
-
       {!readOnly && (
         <button
           type="button"
@@ -146,6 +139,13 @@ export function TaskRow({ task, onToggle, readOnly }: Props) {
       <div className="min-w-0 flex-1">
         <div className={['flex items-start gap-2 text-body-md', isDone ? 'line-through' : ''].join(' ')}>
           <span className="min-w-0 flex-1 break-words">
+            {dotClass && !isDone && (
+              <span
+                aria-label={`Eisenhower Q${quadrantKey}`}
+                title={`Q${quadrantKey}`}
+                className={['inline-block h-1.5 w-1.5 rounded-full mr-1.5 align-middle', dotClass].join(' ')}
+              />
+            )}
             {task.title}
           </span>
           {fromTom(task.source) && (
