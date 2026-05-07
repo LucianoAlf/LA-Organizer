@@ -113,7 +113,7 @@ export function MembersTab({ projectId, members, canEdit }: Props) {
           />
         </div>
       ) : (
-        <ul className="surface divide-y divide-border">
+        <ul className="space-y-2">
           {members.map(m => (
             <MemberRow
               key={m.id}
@@ -203,8 +203,17 @@ function MemberRow({
     setEditingFn(false);
   }
 
+  // Sprint 22.22k — borda lateral colorida por papel (hierarquia visual)
+  const accentClass = isExternal
+    ? 'border-l-fg-muted/30 border-dashed'
+    : member.role_in_project === 'owner'
+      ? 'border-l-tom'
+      : member.role_in_project === 'coordinator'
+        ? 'border-l-warning'
+        : 'border-l-border';
+
   return (
-    <li className="p-md flex items-center justify-between gap-md">
+    <li className={['surface p-md flex items-center justify-between gap-md border-l-4', accentClass].join(' ')}>
       <div className="min-w-0 flex-1">
         <div className="text-body-md flex items-center gap-2">
           <span className="truncate">{displayName}</span>

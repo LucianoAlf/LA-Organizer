@@ -27,7 +27,6 @@ export function AssigneePicker({ value, options, onChange, onClear, emptyLabel =
   const [open, setOpen] = useState(false);
   const current = options.find(o => o.id === value);
   const label = current?.full_name ?? emptyLabel;
-  const initials = current ? initialsOf(current.full_name) : null;
 
   function handleBlur(e: React.FocusEvent<HTMLDivElement>) {
     if (!e.currentTarget.contains(e.relatedTarget)) {
@@ -54,14 +53,8 @@ export function AssigneePicker({ value, options, onChange, onClear, emptyLabel =
         ].join(' ')}
         title={current ? `Atribuído a ${current.full_name}` : 'Atribuir tarefa a alguém do time'}
       >
-        {initials ? (
-          <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-tom/30 text-tom text-[9px] font-semibold">
-            {initials}
-          </span>
-        ) : (
-          <User size={11} />
-        )}
-        <span className="truncate max-w-[100px]">
+        {!current && <User size={11} />}
+        <span className="truncate max-w-[120px]">
           {current ? label : '+ Atribuir'}
         </span>
       </button>
@@ -85,9 +78,6 @@ export function AssigneePicker({ value, options, onChange, onClear, emptyLabel =
                     selected ? 'bg-bg-elevated' : 'hover:bg-bg-elevated',
                   ].join(' ')}
                 >
-                  <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-tom/20 text-tom text-[10px] font-semibold shrink-0">
-                    {initialsOf(opt.full_name)}
-                  </span>
                   <span className="flex-1 truncate">{opt.full_name}</span>
                   {opt.role_in_project && (
                     <span className="text-[10px] text-fg-muted/60">{opt.role_in_project}</span>
@@ -112,9 +102,3 @@ export function AssigneePicker({ value, options, onChange, onClear, emptyLabel =
   );
 }
 
-function initialsOf(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  if (parts.length === 0) return '?';
-  if (parts.length === 1) return parts[0]!.slice(0, 2).toUpperCase();
-  return (parts[0]![0]! + parts[parts.length - 1]![0]!).toUpperCase();
-}
