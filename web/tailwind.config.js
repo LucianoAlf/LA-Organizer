@@ -20,11 +20,11 @@ export default {
         // Verde do mascote ETzinho. CTAs, FAB, tabs ativos, agent touchpoints.
         // Sprint 22.9 — escurecido (era #3FD66B, muito brilhante).
         tom: {
-          DEFAULT: '#1F9D4D',
-          shade: '#187B3D',
-          deep: '#0F5A2C',
-          light: '#4FBE6D',
-          tint: '#E0F5E8',
+          DEFAULT: '#A3BE50',
+          shade: '#8BA244',
+          deep: '#728538',
+          light: '#BAD179',
+          tint: '#E8F0CF',
         },
         // ---- Neutrals ----
         ink: {

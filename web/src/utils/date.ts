@@ -47,3 +47,9 @@ export function workWeekDays(ymd: string): string[] {
   const start = startOfWeekMonday(ymd);
   return [0, 1, 2, 3, 4].map(i => ymdAddDays(start, i));
 }
+
+/** [Mon, Tue, Wed, Thu, Fri, Sat] of the week containing `ymd`. Escola opera sábado. */
+export function weekDaysMonSat(ymd: string): string[] {
+  const start = startOfWeekMonday(ymd);
+  return [0, 1, 2, 3, 4, 5].map(i => ymdAddDays(start, i));
+}

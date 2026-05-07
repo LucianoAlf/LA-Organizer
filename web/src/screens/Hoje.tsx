@@ -13,6 +13,7 @@ import { LoadingState } from '../components/LoadingState';
 import { EmptyState } from '../components/EmptyState';
 import { Button } from '../components/Button';
 import { Fab } from '../components/Fab';
+import { AgendaTabs } from '../components/AgendaTabs';
 import { QuickCreateSheet } from '../components/QuickCreateSheet';
 import { EditEventSheet } from '../components/EditEventSheet';
 import type { Task, TaskContext, CalendarEvent, ActionType } from '../types';
@@ -206,6 +207,8 @@ export function Hoje() {
 
   return (
     <div className="space-y-lg">
+      <AgendaTabs />
+
       {/* Stats */}
       <div className="grid grid-cols-3 gap-sm">
         <StatCard label="Pra hoje" value={dueToday.length + todayEvents.filter(e => e.status === 'scheduled').length} tone="brand" />

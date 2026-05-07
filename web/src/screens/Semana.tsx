@@ -3,20 +3,26 @@ import { useQuery } from '@tanstack/react-query';
 import { CalendarDays } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase, supabaseConfigured } from '../lib/supabase';
-import { todaySP, workWeekDays, dowShort, brShort } from '../utils/date';
+import { todaySP, weekDaysMonSat, dowShort, brShort } from '../utils/date';
 import { fetchEventsForRange, formatEventTimeRange, eventLocalYmd } from '../lib/events';
 import { LoadingState } from '../components/LoadingState';
 import { EmptyState } from '../components/EmptyState';
 import { Fab } from '../components/Fab';
+import { AgendaTabs } from '../components/AgendaTabs';
 import { QuickCreateSheet } from '../components/QuickCreateSheet';
 import { RescheduleSheet } from '../components/RescheduleSheet';
 import { EditEventSheet } from '../components/EditEventSheet';
-import type { Task, CalendarEvent } from '../types';
+import type { Task, CalendarEvent, Project } from '../types';
 
-async function fetchWeekTasks(collabId: string, start: string, end: string): Promise<Task[]> {
+// Sprint 22.11 — Semana refatorada: cards individuais por dia, inclui sábado,
+// tags de categoria do projeto, empty state limpo. Hoje destaca por borda olive sutil.
+
+type WeekTask = Task & { projects?: { name: string; category?: Project['category'] } | null };
+
+async function fetchWeekTasks(collabId: string, start: string, end: string): Promise<WeekTask[]> {
   const { data, error } = await supabase
     .from('tasks')
-    .select('id, title, status, context, priority, category, due_date, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, projects(name)')
+    .select('id, title, status, context, priority, category, due_date, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, projects(name, category)')
     .eq('assigned_to', collabId)
     .eq('context', 'work')
     .neq('status', 'cancelled')
@@ -26,10 +32,33 @@ async function fetchWeekTasks(collabId: string, start: string, end: string): Pro
     .order('due_date', { ascending: true })
     .order('eisenhower_quadrant', { ascending: true, nullsFirst: false });
   if (error) throw error;
-  return (data ?? []) as unknown as Task[];
+  return (data ?? []) as unknown as WeekTask[];
 }
 
-function dayCounts(tasks: Task[], events: CalendarEvent[], today: string) {
+// Mapeia categoria do projeto para Tailwind classes (bg + text). Mesmas cores
+// usadas no ProjectCard pra consistência visual.
+const CATEGORY_TAG: Record<string, string> = {
+  pedagogical: 'bg-project/15 text-project',
+  commercial: 'bg-brand/15 text-brand',
+  administrative: 'bg-info/15 text-info',
+  operational: 'bg-success/15 text-success',
+  event: 'bg-warning/15 text-warning',
+  infrastructure: 'bg-bg-elevated text-fg-muted border border-border',
+};
+
+function CategoryTag({ task }: { task: WeekTask }) {
+  const proj = task.projects;
+  if (!proj?.name) return null;
+  const cat = proj.category;
+  const cls = (cat && CATEGORY_TAG[cat]) ?? 'bg-bg-elevated text-fg-muted border border-border';
+  return (
+    <span className={['inline-block text-label uppercase tracking-wide rounded-sm px-1.5 py-0.5', cls].join(' ')}>
+      {proj.name}
+    </span>
+  );
+}
+
+function dayCounts(tasks: WeekTask[], events: CalendarEvent[], today: string) {
   const activeEvents = events.filter(e => e.status !== 'cancelled');
   const total = tasks.length + activeEvents.length;
   const done = tasks.filter(t => t.status === 'done').length + activeEvents.filter(e => e.status === 'done').length;
@@ -40,7 +69,7 @@ function dayCounts(tasks: Task[], events: CalendarEvent[], today: string) {
 export function Semana() {
   const { collaborator } = useAuth();
   const today = todaySP();
-  const days = useMemo(() => workWeekDays(today), [today]);
+  const days = useMemo(() => weekDaysMonSat(today), [today]);
   const start = days[0];
   const end = days[days.length - 1];
   const [createOpen, setCreateOpen] = useState(false);
@@ -60,7 +89,7 @@ export function Semana() {
   });
 
   const tasksByDay = useMemo(() => {
-    const map = new Map<string, Task[]>();
+    const map = new Map<string, WeekTask[]>();
     for (const d of days) map.set(d, []);
     for (const t of tasks) {
       if (t.due_date && map.has(t.due_date)) map.get(t.due_date)!.push(t);
@@ -72,7 +101,6 @@ export function Semana() {
     const map = new Map<string, CalendarEvent[]>();
     for (const d of days) map.set(d, []);
     for (const e of events) {
-      // Show only work events on the week summary; personal events are private to the day-level only.
       if (e.context !== 'work') continue;
       const ymd = eventLocalYmd(e.start_at);
       if (map.has(ymd)) map.get(ymd)!.push(e);
@@ -88,15 +116,18 @@ export function Semana() {
 
   return (
     <div className="space-y-md">
-      <header>
+      <AgendaTabs />
+
+      <header className="space-y-2">
         <div className="flex items-baseline justify-between gap-md">
           <div>
-            <h2 className="text-section-title">
+            <h2 className="text-section-title">Progresso da semana</h2>
+            <p className="text-body-sm text-fg-muted mt-0.5">
               <span className="tabular-nums">{brShort(start)}</span>
               <span className="text-fg-muted"> – </span>
               <span className="tabular-nums">{brShort(end)}</span>
-            </h2>
-            <p className="text-body-sm text-fg-muted mt-0.5">Trabalho · seg a sex</p>
+              <span className="text-fg-muted"> · seg a sáb</span>
+            </p>
           </div>
           <div className="text-right">
             <div className="text-card-title tabular-nums">
@@ -105,10 +136,9 @@ export function Semana() {
               </span>
               <span className="text-fg-muted">/{totalWeek}</span>
             </div>
-            <div className="text-label uppercase text-fg-muted tracking-wide">Da semana</div>
           </div>
         </div>
-        <div className="mt-md h-1 w-full bg-bg-elevated rounded-full overflow-hidden">
+        <div className="h-1 w-full bg-bg-elevated rounded-full overflow-hidden">
           <div className="h-full bg-tom transition-[width]" style={{ width: `${pct}%` }} />
         </div>
       </header>
@@ -120,35 +150,37 @@ export function Semana() {
       ) : error ? (
         <EmptyState title="Erro" description={(error as Error).message} />
       ) : (
-        <div className="surface overflow-hidden md:grid md:grid-cols-5 md:divide-x md:divide-y-0 divide-y divide-border">
+        <div className="space-y-sm">
           {days.map(d => {
             const dayTasks = tasksByDay.get(d) ?? [];
             const dayEvents = eventsByDay.get(d) ?? [];
             const isToday = d === today;
             const isPast = d < today;
             const { total, done, overdue } = dayCounts(dayTasks, dayEvents, today);
+            const isEmpty = dayEvents.length === 0 && dayTasks.length === 0;
 
             return (
               <section
                 key={d}
                 aria-label={`${dowShort(d)} ${brShort(d)}`}
                 className={[
-                  'relative flex flex-col gap-2 p-md md:p-md md:min-h-[180px]',
-                  isToday ? 'bg-brand/5' : '',
+                  'surface p-md',
+                  isToday ? 'border-tom/40 bg-tom/5' : '',
                 ].join(' ')}
               >
-                {isToday && <span aria-hidden className="absolute left-0 top-0 bottom-0 w-[3px] bg-brand md:hidden" />}
-                {isToday && <span aria-hidden className="hidden md:block absolute left-0 right-0 top-0 h-[3px] bg-brand" />}
-
                 <div className="flex items-baseline justify-between gap-md">
                   <div className="flex items-baseline gap-2">
-                    <span className={['text-label uppercase tracking-wide', isToday ? 'text-brand' : isPast ? 'text-fg-muted' : 'text-fg-secondary'].join(' ')}>
+                    <span className={['text-label uppercase tracking-wide', isToday ? 'text-tom' : isPast ? 'text-fg-muted' : 'text-fg-secondary'].join(' ')}>
                       {dowShort(d)}
                     </span>
-                    <span className={['text-card-title tabular-nums', isToday ? '' : isPast ? 'text-fg-muted' : ''].join(' ')}>
+                    <span className={['text-card-title tabular-nums', isPast && !isToday ? 'text-fg-muted' : ''].join(' ')}>
                       {brShort(d)}
                     </span>
-                    {isToday && <span className="text-label uppercase tracking-wide text-brand">hoje</span>}
+                    {isToday && (
+                      <span className="inline-block text-label uppercase tracking-wide bg-tom text-white rounded-sm px-1.5 py-0.5">
+                        hoje
+                      </span>
+                    )}
                   </div>
                   <div className="text-body-sm tabular-nums">
                     {total === 0 ? (
@@ -163,70 +195,76 @@ export function Semana() {
                   </div>
                 </div>
 
-                {/* Compromissos primeiro (com horário) */}
-                {dayEvents.length > 0 && (
-                  <ul className="space-y-1">
-                    {dayEvents.slice(0, isToday ? 4 : 2).map(e => {
-                      const range = formatEventTimeRange(e.start_at, e.end_at);
-                      const cancelled = e.status === 'cancelled';
-                      return (
-                        <li
-                          key={e.id}
-                          onClick={() => setEditingEvent(e)}
-                          className={[
-                            'text-body-sm flex items-baseline gap-2 cursor-pointer hover:bg-bg-elevated rounded-sm -mx-1 px-1',
-                            cancelled ? 'line-through text-fg-muted' : 'text-fg-secondary',
-                          ].join(' ')}>
-                          <span className="text-brand font-semibold tabular-nums shrink-0">{range.split('–')[0]}</span>
-                          <span className="truncate">{e.title}</span>
-                        </li>
-                      );
-                    })}
-                    {dayEvents.length > (isToday ? 4 : 2) && (
-                      <li className="text-body-sm text-fg-muted pl-12">+ {dayEvents.length - (isToday ? 4 : 2)} compromisso(s)</li>
+                {isEmpty ? (
+                  <p className="mt-2 text-body-sm text-fg-muted italic">Nenhuma tarefa</p>
+                ) : (
+                  <div className="mt-3 space-y-2">
+                    {dayEvents.length > 0 && (
+                      <ul className="space-y-1.5">
+                        {dayEvents.map(e => {
+                          const range = formatEventTimeRange(e.start_at, e.end_at);
+                          const cancelled = e.status === 'cancelled';
+                          return (
+                            <li
+                              key={e.id}
+                              onClick={() => setEditingEvent(e)}
+                              className={[
+                                'text-body-sm flex items-baseline gap-2 cursor-pointer hover:bg-bg-elevated rounded-sm -mx-1 px-1 py-0.5',
+                                cancelled ? 'line-through text-fg-muted' : 'text-fg-secondary',
+                              ].join(' ')}>
+                              <span className="text-fg font-semibold tabular-nums shrink-0">{range.split('–')[0]}</span>
+                              <span className="truncate">{e.title}</span>
+                            </li>
+                          );
+                        })}
+                      </ul>
                     )}
-                  </ul>
-                )}
 
-                {/* Tarefas — bullet list */}
-                {dayTasks.length > 0 && (
-                  <ul className="space-y-1">
-                    {dayTasks.slice(0, isToday ? 4 : 3).map(t => {
-                      const tappable = t.status !== 'done' && t.status !== 'cancelled';
-                      const inner = (
-                        <>
-                          <span aria-hidden className={[
-                            'inline-block h-1.5 w-1.5 rounded-full shrink-0',
-                            t.status === 'done' ? 'bg-success' : t.status === 'overdue' ? 'bg-danger' : 'bg-fg-muted',
-                          ].join(' ')} />
-                          <span className="truncate">{t.title}</span>
-                        </>
-                      );
-                      const cls = [
-                        'text-body-sm truncate flex items-center gap-2 w-full text-left',
-                        t.status === 'done' ? 'line-through text-fg-muted' : 'text-fg-secondary',
-                      ].join(' ');
-                      return (
-                        <li key={t.id}>
-                          {tappable ? (
-                            <button
-                              type="button"
-                              onClick={() => setRescheduleTask(t)}
-                              className={cls + ' hover:text-fg focus-ring rounded-sm'}
-                              title="Reagendar"
-                            >
-                              {inner}
-                            </button>
-                          ) : (
-                            <span className={cls}>{inner}</span>
-                          )}
-                        </li>
-                      );
-                    })}
-                    {dayTasks.length > (isToday ? 4 : 3) && (
-                      <li className="text-body-sm text-fg-muted pl-3.5">+ {dayTasks.length - (isToday ? 4 : 3)}</li>
+                    {dayTasks.length > 0 && (
+                      <ul className="space-y-2">
+                        {dayTasks.map(t => {
+                          const tappable = t.status !== 'done' && t.status !== 'cancelled';
+                          const isDone = t.status === 'done';
+                          const inner = (
+                            <div className="flex items-start gap-2 w-full">
+                              <span aria-hidden className={[
+                                'mt-1 inline-block h-4 w-4 shrink-0 rounded-full grid place-items-center transition-colors',
+                                isDone ? 'bg-tom text-white' : t.status === 'overdue' ? 'border-2 border-danger' : 'border-2 border-fg-muted',
+                              ].join(' ')}>
+                                {isDone && (
+                                  <svg viewBox="0 0 12 12" className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M2 6 L5 9 L10 3" /></svg>
+                                )}
+                              </span>
+                              <div className="min-w-0 flex-1">
+                                <div className={['text-body-sm', isDone ? 'line-through text-fg-muted' : 'text-fg'].join(' ')}>
+                                  {t.title}
+                                </div>
+                                <div className="mt-1">
+                                  <CategoryTag task={t} />
+                                </div>
+                              </div>
+                            </div>
+                          );
+                          return (
+                            <li key={t.id}>
+                              {tappable ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setRescheduleTask(t)}
+                                  className="w-full text-left hover:bg-bg-elevated rounded-sm -mx-1 px-1 py-0.5 focus-ring"
+                                  title="Reagendar"
+                                >
+                                  {inner}
+                                </button>
+                              ) : (
+                                <div className="-mx-1 px-1 py-0.5">{inner}</div>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
                     )}
-                  </ul>
+                  </div>
                 )}
               </section>
             );
