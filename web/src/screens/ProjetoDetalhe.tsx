@@ -387,31 +387,29 @@ function CheckpointCard({
   collaboratorId: string | null;
 }) {
   const isDone = checkpoint.status === 'done';
-  // Default: aberto se ainda nao concluido.
   const [expanded, setExpanded] = useState(!isDone);
   const total = tasks.length;
   const done = tasks.filter(t => t.status === 'done').length;
 
   return (
-    <article className="surface">
+    <article className="surface overflow-hidden">
+      {/* Header — visual de "marco/container". Padding maior, fundo do surface, checkbox quadrado grande. */}
       <div className="p-md flex items-start gap-md">
-        {/* Checkbox: toggle done. NAO faz parte do botao expand pra nao colidir o click. */}
         <button
           type="button"
           onClick={onToggleCheckpoint}
           disabled={toggleDisabled}
           aria-label={isDone ? 'Reabrir checkpoint' : 'Marcar como feito'}
           className={[
-            'mt-0.5 h-6 w-6 shrink-0 rounded-md border-2 grid place-items-center transition-colors focus-ring',
+            'mt-0.5 h-7 w-7 shrink-0 rounded-md border-2 grid place-items-center transition-colors focus-ring',
             isDone
               ? 'bg-tom border-tom text-white hover:bg-tom-shade'
-              : 'border-fg-muted text-transparent hover:border-tom',
+              : 'bg-tom/10 border-tom/40 text-transparent hover:border-tom hover:bg-tom/20',
           ].join(' ')}
         >
-          {isDone && <Check size={14} strokeWidth={3} />}
+          {isDone && <Check size={16} strokeWidth={3} />}
         </button>
 
-        {/* Resto: clica pra expandir/recolher. */}
         <button
           type="button"
           onClick={() => setExpanded(v => !v)}
@@ -420,7 +418,7 @@ function CheckpointCard({
         >
           <div className="flex items-start justify-between gap-md">
             <div className="min-w-0 flex-1">
-              <div className={['text-body-md font-semibold', isDone ? 'line-through text-fg-muted' : ''].join(' ')}>
+              <div className={['text-card-title', isDone ? 'line-through text-fg-muted' : ''].join(' ')}>
                 {checkpoint.name}
               </div>
               <div className="flex flex-wrap items-center gap-2 mt-0.5 text-body-sm text-fg-muted tabular-nums">
@@ -435,26 +433,34 @@ function CheckpointCard({
         </button>
       </div>
 
+      {/* Corpo — fundo levemente diferente + border-top pra dar separacao visual de container. */}
       {expanded && (
-        <div className="px-md pb-md space-y-2">
+        <div className="space-y-3 bg-bg-subtle border-t border-border px-md pt-3 pb-md">
           {checkpoint.rationale && (
             <div className="bg-tom/5 border-l-2 border-tom rounded-sm p-md text-body-sm text-fg-secondary">
               <div className="text-label text-tom mb-1">💡 POR QUE ESSE CHECKPOINT</div>
               <p className="whitespace-pre-line">{checkpoint.rationale}</p>
             </div>
           )}
-          {tasks.length > 0 && (
-            <ul className="divide-y divide-border">
-              {tasks.map(t => (
-                <TaskListItem key={t.id} task={t} onToggle={() => onToggleTask(t)} />
-              ))}
-            </ul>
-          )}
-          <CreateTaskInline
-            projectId={projectId}
-            checkpointId={checkpoint.id}
-            collaboratorId={collaboratorId}
-          />
+          <div>
+            <div className="text-label text-fg-muted uppercase tracking-wide mb-1">Checklist</div>
+            <div className="border-l-2 border-border pl-md">
+              {tasks.length > 0 && (
+                <ul className="divide-y divide-border">
+                  {tasks.map(t => (
+                    <TaskListItem key={t.id} task={t} onToggle={() => onToggleTask(t)} />
+                  ))}
+                </ul>
+              )}
+              <div className={tasks.length > 0 ? 'pt-2' : ''}>
+                <CreateTaskInline
+                  projectId={projectId}
+                  checkpointId={checkpoint.id}
+                  collaboratorId={collaboratorId}
+                />
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </article>
