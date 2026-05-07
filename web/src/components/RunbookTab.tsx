@@ -273,6 +273,44 @@ export function RunbookTab({ projectId, canEdit }: Props) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['project', projectId, 'runbook-items'] }),
   });
 
+  const updateItemText = useMutation({
+    mutationFn: async ({ id, text }: { id: string; text: string }) => {
+      const { error } = await supabase.from('event_runbook_items').update({ text: text.slice(0, 500) }).eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['project', projectId, 'runbook-items'] }),
+  });
+
+  const reorderItems = useMutation({
+    mutationFn: async ({ blockId, orderedIds }: { blockId: string; orderedIds: string[] }) => {
+      void blockId;
+      await Promise.all(
+        orderedIds.map((iid, idx) =>
+          supabase.from('event_runbook_items').update({ position: idx }).eq('id', iid).then(({ error }) => {
+            if (error) throw error;
+          }),
+        ),
+      );
+    },
+    onMutate: async ({ blockId, orderedIds }) => {
+      await qc.cancelQueries({ queryKey: ['project', projectId, 'runbook-items'] });
+      const prev = qc.getQueryData<RunbookItem[]>(['project', projectId, 'runbook-items']);
+      qc.setQueryData<RunbookItem[]>(['project', projectId, 'runbook-items'], (old) => {
+        if (!old) return old;
+        const reordered = [...old];
+        const inBlock = reordered.filter(it => it.block_id === blockId);
+        const map = new Map(inBlock.map(it => [it.id, it]));
+        const newInBlock = orderedIds.map((iid, idx) => ({ ...(map.get(iid)!), position: idx }));
+        // Substitui os items do bloco pela nova ordem
+        let i = 0;
+        return reordered.map(it => it.block_id === blockId ? newInBlock[i++]! : it);
+      });
+      return { prev };
+    },
+    onError: (_e, _v, ctx) => { if (ctx?.prev) qc.setQueryData(['project', projectId, 'runbook-items'], ctx.prev); },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['project', projectId, 'runbook-items'] }),
+  });
+
   const updateProjectStartTime = useMutation({
     mutationFn: async (time: string | null) => {
       const { error } = await supabase.from('projects').update({ event_start_time: time }).eq('id', projectId);
@@ -361,6 +399,8 @@ export function RunbookTab({ projectId, canEdit }: Props) {
                 onCreateItem={(text) => createItem.mutate({ blockId: b.id, text })}
                 onToggleItem={(it) => toggleItem.mutate(it)}
                 onDeleteItem={(id) => deleteItem.mutate(id)}
+                onUpdateItemText={(id, text) => updateItemText.mutate({ id, text })}
+                onReorderItems={(orderedIds) => reorderItems.mutate({ blockId: b.id, orderedIds })}
               />
             ))}
           </div>
@@ -543,6 +583,8 @@ function SortableRunbookBlockCard(props: {
   onCreateItem: (text: string) => void;
   onToggleItem: (it: RunbookItem) => void;
   onDeleteItem: (id: string) => void;
+  onUpdateItemText: (id: string, text: string) => void;
+  onReorderItems: (orderedIds: string[]) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: props.block.id,
@@ -575,6 +617,8 @@ function RunbookBlockCard({
   onCreateItem,
   onToggleItem,
   onDeleteItem,
+  onUpdateItemText,
+  onReorderItems,
   sortableRef,
   sortableStyle,
   sortableAttributes,
@@ -591,6 +635,8 @@ function RunbookBlockCard({
   onCreateItem: (text: string) => void;
   onToggleItem: (it: RunbookItem) => void;
   onDeleteItem: (id: string) => void;
+  onUpdateItemText: (id: string, text: string) => void;
+  onReorderItems: (orderedIds: string[]) => void;
   sortableRef?: (node: HTMLElement | null) => void;
   sortableStyle?: React.CSSProperties;
   sortableAttributes?: React.HTMLAttributes<HTMLElement>;
@@ -765,15 +811,14 @@ function RunbookBlockCard({
 
       {expanded && !editingLabel && !editingOffset && (
         <div className="border-t border-border px-md py-2 space-y-1">
-          {items.map(it => (
-            <RunbookItemRow
-              key={it.id}
-              item={it}
-              canEdit={canEdit}
-              onToggle={() => onToggleItem(it)}
-              onDelete={() => onDeleteItem(it.id)}
-            />
-          ))}
+          <SortableItemList
+            items={items}
+            canEdit={canEdit}
+            onToggle={onToggleItem}
+            onDelete={onDeleteItem}
+            onUpdateText={onUpdateItemText}
+            onReorder={onReorderItems}
+          />
           {canEdit && (
             addingItem ? (
               <AddItemInline
@@ -796,23 +841,134 @@ function RunbookBlockCard({
   );
 }
 
+// ---- SortableItemList — DnD wrapper pros items do bloco -------------------
+function SortableItemList({
+  items,
+  canEdit,
+  onToggle,
+  onDelete,
+  onUpdateText,
+  onReorder,
+}: {
+  items: RunbookItem[];
+  canEdit: boolean;
+  onToggle: (it: RunbookItem) => void;
+  onDelete: (id: string) => void;
+  onUpdateText: (id: string, text: string) => void;
+  onReorder: (orderedIds: string[]) => void;
+}) {
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+  const ids = items.map(i => i.id);
+
+  function handleDragEnd(e: DragEndEvent) {
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+    const oldIdx = ids.indexOf(String(active.id));
+    const newIdx = ids.indexOf(String(over.id));
+    if (oldIdx < 0 || newIdx < 0) return;
+    onReorder(arrayMove(ids, oldIdx, newIdx));
+  }
+
+  return (
+    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <SortableContext items={ids} strategy={verticalListSortingStrategy}>
+        <div>
+          {items.map(it => (
+            <SortableItemRow
+              key={it.id}
+              item={it}
+              canEdit={canEdit}
+              onToggle={() => onToggle(it)}
+              onDelete={() => onDelete(it.id)}
+              onUpdateText={(text) => onUpdateText(it.id, text)}
+            />
+          ))}
+        </div>
+      </SortableContext>
+    </DndContext>
+  );
+}
+
+function SortableItemRow(props: {
+  item: RunbookItem;
+  canEdit: boolean;
+  onToggle: () => void;
+  onDelete: () => void;
+  onUpdateText: (text: string) => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: props.item.id,
+  });
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+  return (
+    <RunbookItemRow
+      {...props}
+      sortableRef={setNodeRef}
+      sortableStyle={style}
+      sortableAttributes={attributes}
+      sortableListeners={props.canEdit ? listeners : undefined}
+      isDragging={isDragging}
+    />
+  );
+}
+
 // ---- RunbookItemRow --------------------------------------------------------
 function RunbookItemRow({
   item,
   canEdit,
   onToggle,
   onDelete,
+  onUpdateText,
+  sortableRef,
+  sortableStyle,
+  sortableAttributes,
+  sortableListeners,
+  isDragging,
 }: {
   item: RunbookItem;
   canEdit: boolean;
   onToggle: () => void;
   onDelete: () => void;
+  onUpdateText: (text: string) => void;
+  sortableRef?: (node: HTMLElement | null) => void;
+  sortableStyle?: React.CSSProperties;
+  sortableAttributes?: React.HTMLAttributes<HTMLElement>;
+  sortableListeners?: React.DOMAttributes<HTMLElement>;
+  isDragging?: boolean;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(item.text);
+
+  function commit() {
+    const v = val.trim();
+    if (!v) { setVal(item.text); setEditing(false); return; }
+    if (v !== item.text) onUpdateText(v.slice(0, 500));
+    setEditing(false);
+  }
+
   return (
-    <div className="py-1.5 flex items-center gap-2 group">
+    <div
+      ref={sortableRef as ((node: HTMLDivElement | null) => void) | undefined}
+      style={{ ...sortableStyle, opacity: isDragging ? 0.5 : undefined, zIndex: isDragging ? 20 : undefined }}
+      className="py-1.5 flex items-center gap-2 group touch-none"
+      {...(sortableAttributes ?? {})}
+      {...(sortableListeners ?? {})}
+    >
+      {sortableListeners && (
+        <span aria-hidden className="text-fg-muted/40 cursor-grab shrink-0">
+          <GripVertical size={12} />
+        </span>
+      )}
       <button
         type="button"
-        onClick={onToggle}
+        onClick={(e) => { e.stopPropagation(); onToggle(); }}
         aria-label={item.done ? 'Desmarcar item' : 'Marcar item'}
         className={[
           'h-5 w-5 shrink-0 rounded-md border-2 grid place-items-center transition-colors focus-ring',
@@ -821,12 +977,37 @@ function RunbookItemRow({
       >
         {item.done && <Check size={12} strokeWidth={3} />}
       </button>
-      <span className={['flex-1 text-body-md', item.done ? 'line-through text-fg-muted' : ''].join(' ')}>
-        {item.text}
-      </span>
-      {canEdit && (
+      {editing ? (
+        <input
+          type="text"
+          autoFocus
+          value={val}
+          onChange={e => setVal(e.target.value)}
+          onBlur={commit}
+          onKeyDown={e => {
+            if (e.key === 'Enter') { e.preventDefault(); commit(); }
+            if (e.key === 'Escape') { setVal(item.text); setEditing(false); }
+          }}
+          maxLength={500}
+          className="flex-1 h-7 px-2 -ml-2 rounded-sm bg-bg-elevated border border-tom text-body-md text-fg focus-ring"
+        />
+      ) : (
+        <span
+          className={['flex-1 text-body-md', item.done ? 'line-through text-fg-muted' : ''].join(' ')}
+          onDoubleClick={(e) => {
+            if (!canEdit) return;
+            e.stopPropagation();
+            setVal(item.text);
+            setEditing(true);
+          }}
+        >
+          {item.text}
+        </span>
+      )}
+      {canEdit && !editing && (
         <RowMenu
           items={[
+            { label: 'Editar', onClick: () => { setVal(item.text); setEditing(true); } },
             { label: 'Excluir item', danger: true, confirm: 'Excluir esse item?', onClick: onDelete },
           ]}
         />
