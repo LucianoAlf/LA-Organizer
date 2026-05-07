@@ -67,7 +67,7 @@ async function fetchTasksToday(collabId: string): Promise<Task[]> {
   const today = todaySP();
   const { data, error } = await supabase
     .from('tasks')
-    .select('id, title, status, context, priority, category, action_type, source, due_date, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, completed_at, projects(name), assignee:collaborators!tasks_assigned_to_fkey(full_name)')
+    .select('id, title, status, context, priority, category, action_type, source, due_date, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, completed_at, projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(full_name)')
     .eq('assigned_to', collabId)
     .neq('status', 'cancelled')
     .or(`due_date.eq.${today},and(due_date.lt.${today},status.not.in.(done,cancelled))`)
@@ -82,7 +82,7 @@ async function fetchDelegatedTasks(collabId: string): Promise<Task[]> {
   const today = todaySP();
   const { data, error } = await supabase
     .from('tasks')
-    .select('id, title, status, context, priority, category, action_type, source, due_date, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, completed_at, projects(name), assignee:collaborators!tasks_assigned_to_fkey(full_name)')
+    .select('id, title, status, context, priority, category, action_type, source, due_date, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, completed_at, projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(full_name)')
     .eq('created_by', collabId)
     .neq('assigned_to', collabId)
     .neq('status', 'cancelled')

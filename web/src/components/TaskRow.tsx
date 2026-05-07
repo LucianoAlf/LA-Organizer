@@ -3,6 +3,15 @@ import { Badge } from './Badge';
 import { ActionTypeBadge } from './ActionTypeBadge';
 import type { Task } from '../types';
 
+const CATEGORY_TAG: Record<string, string> = {
+  pedagogical:    'bg-project/15 text-project',
+  commercial:     'bg-brand/15 text-brand',
+  administrative: 'bg-info/15 text-info',
+  operational:    'bg-success/15 text-success',
+  event:          'bg-warning/15 text-warning',
+  infrastructure: 'bg-bg-elevated text-fg-muted border border-border',
+};
+
 interface Props {
   task: Task;
   onToggle?: (task: Task) => void;
@@ -164,7 +173,15 @@ export function TaskRow({ task, onToggle, readOnly }: Props) {
         )}
         <div className="mt-1 flex flex-wrap items-center gap-2 text-body-sm text-fg-muted">
           <ActionTypeBadge type={task.action_type} />
-          {task.projects?.name && <span>• {task.projects.name}</span>}
+          {task.projects?.name && (() => {
+            const cat = (task.projects as { name: string; category?: string }).category;
+            const cls = (cat && CATEGORY_TAG[cat]) ?? 'bg-bg-elevated text-fg-muted border border-border';
+            return (
+              <span className={['inline-block text-label uppercase tracking-wide rounded-sm px-1.5 py-0.5', cls].join(' ')}>
+                {task.projects.name}
+              </span>
+            );
+          })()}
           {task.context === 'personal' && <span>• pessoal</span>}
           {showAssignee && (
             <span>→ <span className="text-fg">{task.assignee!.full_name.split(' ')[0]}</span></span>
