@@ -54,10 +54,11 @@ export function BottomNav() {
                 }}
               >
                 {({ isActive }) => {
-                  const active = isItemActive(item, isActive);
+                  const _active = isItemActive(item, isActive);
+                  void _active;
                   return (
                     <>
-                      <Icon size={22} fill={active && to === '/hoje' ? 'currentColor' : 'none'} />
+                      <Icon size={22} />
                       <span className="text-[11px] font-semibold tracking-wide">{label}</span>
                     </>
                   );
