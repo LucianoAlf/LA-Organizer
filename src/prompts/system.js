@@ -422,11 +422,11 @@ function pickSkill(collab, lastUserMessage, recentHistory) {
   }
 
   // Priority 2.5 (Sprint 22.22): consultar status de projeto.
-  // Triggers: "como tá o X", "status do X", "minha parte no X", "tô envolvido em quais projetos".
+  // Triggers cobrem: status, time, atribuicoes, progresso, atrasos, "quem".
   // RLS no banco filtra o que cada papel pode ver — skill orienta o tom da resposta.
   if (lastUserMessage) {
     const lm = lastUserMessage.toLowerCase();
-    const askStatus = /\b(como\s+(?:t[áa]|est[áa]|anda|vai)|status\s+(?:do|da)|o\s+que\s+falta|minha\s+parte|t[ôo]\s+envolvid[oa]|em\s+quais\s+projetos)\b/.test(lm);
+    const askStatus = /\b(como\s+(?:t[áa]|est[áa]|anda|vai)|status\s+(?:do|da)|o\s+que\s+falta|minha\s+parte|t[ôo]\s+envolvid|em\s+quais\s+projetos|envolvid[oa]s|quem\s+(?:s[ãa]o|[ée]|t[áa]|est[áa]|entra|fica|cuida|toca|coordena|trabalha|faz|fazendo)|time\s+(?:do|da|de)|equipe\s+(?:do|da|de)|membros\s+(?:do|da|de)|atribuíd|atrasad|prazo|tarefas\s+(?:do|da)|progresso\s+(?:do|da))\b/.test(lm);
     const mentionsProject = /\bprojeto\b|\bfestival\b|\bsemana\s+de\b|\bworkshop\b|\bsarau\b|\brecital\b|\bshow\b|\bcapta[çc][ãa]o\b|\bevento\b/i.test(lm);
     if (askStatus && mentionsProject) {
       return { name: 'consultar-projeto', body: loadSkill('consultar-projeto') };
