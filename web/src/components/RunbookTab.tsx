@@ -671,12 +671,9 @@ function RunbookBlockCard({
               </div>
             </div>
           ) : (
-            <button
-              type="button"
-              onClick={() => setExpanded(v => !v)}
-              className="w-full text-left focus-ring rounded-sm"
-            >
-              <div className="flex items-center gap-2 flex-wrap">
+            <div>
+              {/* Chips/badges fora do botao de expand pra permitir clique no offset */}
+              <div className="flex items-center gap-2 flex-wrap mb-1">
                 <button
                   type="button"
                   disabled={!canEdit}
@@ -689,12 +686,12 @@ function RunbookBlockCard({
                   }}
                   className={[
                     'text-[10px] uppercase tracking-wide font-semibold rounded-sm px-1.5 py-0.5 border tabular-nums',
-                    canEdit ? 'cursor-pointer hover:opacity-80' : 'cursor-default',
+                    canEdit ? 'cursor-pointer hover:opacity-80 focus-ring' : 'cursor-default',
                     isLate ? 'text-danger bg-danger/10 border-danger/30'
                           : allDone ? 'text-tom bg-tom/15 border-tom/30'
                           : 'text-tom bg-tom/15 border-tom/30',
                   ].join(' ')}
-                  title={canEdit ? 'Tap pra editar offset' : ''}
+                  title={canEdit ? 'Tap pra editar' : ''}
                 >
                   {formatOffset(block.offset_minutes)}
                 </button>
@@ -710,16 +707,23 @@ function RunbookBlockCard({
                 )}
                 {allDone && <span className="text-[11px] text-tom font-semibold">✓ feito</span>}
               </div>
-              <div className="text-card-title mt-1">{block.label}</div>
-              {total > 0 && (
-                <div className="mt-2 flex items-center gap-2 text-body-sm text-fg-muted tabular-nums">
-                  <div className="flex-1 h-1 bg-bg-elevated rounded-full overflow-hidden">
-                    <div className={['h-full transition-[width]', isLate ? 'bg-danger/70' : 'bg-tom'].join(' ')} style={{ width: `${pct}%` }} />
+              {/* Botao de expand: titulo + progresso */}
+              <button
+                type="button"
+                onClick={() => setExpanded(v => !v)}
+                className="w-full text-left focus-ring rounded-sm"
+              >
+                <div className="text-card-title">{block.label}</div>
+                {total > 0 && (
+                  <div className="mt-2 flex items-center gap-2 text-body-sm text-fg-muted tabular-nums">
+                    <div className="flex-1 h-1 bg-bg-elevated rounded-full overflow-hidden">
+                      <div className={['h-full transition-[width]', isLate ? 'bg-danger/70' : 'bg-tom'].join(' ')} style={{ width: `${pct}%` }} />
+                    </div>
+                    <span>{done}/{total}</span>
                   </div>
-                  <span>{done}/{total}</span>
-                </div>
-              )}
-            </button>
+                )}
+              </button>
+            </div>
           )}
         </div>
 
