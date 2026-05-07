@@ -353,7 +353,7 @@ function renderPendingDecisions(notifications) {
 }
 
 // ---------- BLOCK 4 — SKILL ATIVA (conditional, max 1) ----------
-function pickSkill(collab, lastUserMessage, recentHistory) {
+async function pickSkill(collab, lastUserMessage, recentHistory) {
   // Priority 1: onboarding active.
   if (collab && collab.onboarding_completed === false) {
     return { name: 'onboarding', body: loadSkill('onboarding') };
@@ -393,6 +393,21 @@ function pickSkill(collab, lastUserMessage, recentHistory) {
     /me\s+fala\s+o\s+nome|qual\s+a\s+data|qual\s+o\s+local|tem\s+alguma\s+descri[çc][ãa]o|quem\s+vai\s+participar|como\s+vai\s+executar/i.test(recentText) &&
     !/✅.*criado|cancelar|esquece/i.test(recentText.slice(-500));
   if (largeEventTermRe.test(lmFull) || inLargeEventFlow) {
+    // Sprint 22.22 — antes de assumir cadastro, checar se ja existe projeto
+    // com nome similar. Se existe, eh consulta de status, nao criacao.
+    const m = lmFull.match(largeEventTermRe);
+    if (m && m[0] && !/\b(criar|novo|cadastrar|montar|fazer|quero\s+(?:criar|fazer))\b/i.test(lmFull)) {
+      try {
+        const { data: existing } = await supabase.from('projects')
+          .select('id')
+          .ilike('name', `%${m[0]}%`)
+          .in('status', ['active','planning','pending_approval','paused'])
+          .limit(1);
+        if (existing && existing.length > 0) {
+          return { name: 'consultar-projeto', body: loadSkill('consultar-projeto') };
+        }
+      } catch { /* fallback pro cadastro abaixo */ }
+    }
     return { name: 'cadastro-projeto-5w2h', body: loadSkill('cadastro-projeto-5w2h') };
   }
 
@@ -1031,7 +1046,7 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     }
   }
 
-  const skill = pickSkill(collaborator, lastUserMessage, hist);
+  const skill = await pickSkill(collaborator, lastUserMessage, hist);
   // Sprint 12 Bloco D: skill priorizacao-inteligente é ANEXADA quando o fluxo
   // principal é checklist-tarefas, criar-compromisso ou cadastro-projeto-5w2h.
   // Ela é "skill auxiliar" — não substitui, completa: pra cada criação, o motor
@@ -1260,7 +1275,7 @@ async function buildSystemPrompt(collaborator, opts = {}) {
 // os blocks novos (rituals, projects-ranking, habits-overview). Se algum caller futuro
 // precisar de prompt sync, recriar a partir do buildSystemPrompt em vez de reanimar isto.
 // TODO: remover em Sprint 20 após confirmar zero uso externo.
-function composeSystemPrompt(collaborator, ctx) {
+async function composeSystemPrompt(collaborator, ctx) {
   let lastMsgAge = null;
   const hist = (ctx && ctx.recentMessages) || [];
   if (hist.length > 0) {
@@ -1269,7 +1284,7 @@ function composeSystemPrompt(collaborator, ctx) {
       lastMsgAge = Math.floor((Date.now() - new Date(last.created_at).getTime()) / 60000);
     }
   }
-  const skill = pickSkill(collaborator, '', hist);
+  const skill = await pickSkill(collaborator, '', hist);
   const skillBlock = (skill && skill.body) ? `# 🎯 SKILL ATIVA: ${skill.name}\n\n${skill.body}` : '';
   const blocks = [
     BLOCK_RULES,
