@@ -1,10 +1,57 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Check, ChevronDown, ChevronRight } from 'lucide-react';
+import { Plus, Check, ChevronDown, ChevronRight, MoreVertical } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { Button } from './Button';
 import { EmptyState } from './EmptyState';
-import { RowMenu } from './RowMenu';
+
+// Sprint 22.22r — RowMenu local minimalista (mesma API do RowMenu do ProjetoDetalhe).
+function RowMenu({ items }: { items: Array<{ label: string; onClick: () => void; danger?: boolean; confirm?: string }> }) {
+  const [open, setOpen] = useState(false);
+  const [confirmIdx, setConfirmIdx] = useState<number | null>(null);
+  function handleBlur(e: React.FocusEvent<HTMLDivElement>) {
+    if (!e.currentTarget.contains(e.relatedTarget)) setTimeout(() => { setOpen(false); setConfirmIdx(null); }, 150);
+  }
+  return (
+    <div className="relative" data-no-nav onBlur={handleBlur}>
+      <button
+        type="button"
+        onClick={() => { setOpen(v => !v); setConfirmIdx(null); }}
+        aria-label="Mais ações"
+        className="text-fg-muted hover:text-fg p-1 focus-ring rounded-sm"
+      >
+        <MoreVertical size={16} />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-50 min-w-[180px] rounded-md border border-border bg-bg-surface shadow-soft overflow-hidden">
+          {items.map((it, idx) => {
+            if (confirmIdx === idx && it.confirm) {
+              return (
+                <div key={idx} className="px-3 py-2 bg-danger/5 border-t border-border">
+                  <div className="text-body-sm text-fg mb-2">{it.confirm}</div>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setConfirmIdx(null)} className="flex-1 h-7 px-2 rounded-sm text-body-sm text-fg-muted border border-border focus-ring">Cancelar</button>
+                    <button type="button" onClick={() => { it.onClick(); setOpen(false); setConfirmIdx(null); }} className="flex-1 h-7 px-2 rounded-sm text-body-sm font-semibold bg-danger text-white focus-ring">Confirmar</button>
+                  </div>
+                </div>
+              );
+            }
+            return (
+              <button
+                key={idx}
+                type="button"
+                onClick={() => { if (it.confirm) setConfirmIdx(idx); else { it.onClick(); setOpen(false); } }}
+                className={['w-full px-3 py-2 text-left text-body-sm hover:bg-bg-elevated', it.danger ? 'text-danger' : 'text-fg'].join(' ')}
+              >
+                {it.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // Sprint 22.22r — Runbook T-minus pra projetos category=event.
 // Bloco = momento (T-2h, T-10min, T+5min, etc) com itens checkaveis dentro.
