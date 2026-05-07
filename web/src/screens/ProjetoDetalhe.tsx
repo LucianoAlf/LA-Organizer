@@ -531,16 +531,37 @@ export function ProjetoDetalhe() {
         </div>
       )}
 
-      <Tabs<TabId>
-        tabs={[
-          { id: 'checkpoints', label: 'Checkpoints', badge: checkpoints.length },
-          { id: 'contingencias', label: 'Contingências', badge: contingencies.length },
-          { id: 'time', label: 'Time', badge: members.length },
-          ...(project?.category === 'event' ? [{ id: 'dia_d' as const, label: 'Dia D' }] : []),
-        ]}
-        active={tab}
-        onChange={setTab}
-      />
+      <div className="flex items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <Tabs<TabId>
+            tabs={[
+              { id: 'checkpoints', label: 'Checkpoints', badge: checkpoints.length },
+              { id: 'contingencias', label: 'Contingências', badge: contingencies.length },
+              { id: 'time', label: 'Time', badge: members.length },
+            ]}
+            active={tab}
+            onChange={setTab}
+          />
+        </div>
+        {project?.category === 'event' && (
+          <button
+            type="button"
+            onClick={() => setTab('dia_d')}
+            aria-label="Dia D — roteiro do evento"
+            className={[
+              'shrink-0 inline-flex items-center gap-1.5 h-9 px-3 rounded-full border transition-all focus-ring',
+              'text-[12px] font-bold uppercase tracking-wider',
+              tab === 'dia_d'
+                ? 'bg-amber-400 text-bg-base border-amber-400 shadow-[0_0_0_3px_rgba(251,191,36,0.25)]'
+                : 'bg-amber-400/10 text-amber-300 border-amber-400/40 hover:bg-amber-400/20 hover:border-amber-400/60',
+            ].join(' ')}
+            title="Roteiro do dia do evento"
+          >
+            <span aria-hidden>🎯</span>
+            <span>Dia D</span>
+          </button>
+        )}
+      </div>
 
       {tab === 'checkpoints' && (
         <section className="space-y-sm">
