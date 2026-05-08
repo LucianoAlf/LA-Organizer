@@ -14,7 +14,8 @@ import { Fab } from '../components/Fab';
 import { QuickCreateSheet } from '../components/QuickCreateSheet';
 import { RescheduleSheet } from '../components/RescheduleSheet';
 import { EditEventSheet } from '../components/EditEventSheet';
-import type { Task, CalendarEvent, Project } from '../types';
+import { Tabs } from '../components/Tabs';
+import type { Task, CalendarEvent, Project, TaskContext } from '../types';
 
 // Sprint 22.11 — Semana refatorada: cards individuais por dia, inclui sábado,
 // tags de categoria do projeto, empty state limpo. Hoje destaca por borda olive sutil.
@@ -80,6 +81,8 @@ export function Semana() {
   const [createOpen, setCreateOpen] = useState(false);
   const [rescheduleTask, setRescheduleTask] = useState<Task | null>(null);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
+  // Sprint 22.34f — tabs Trabalho/Pessoal espelhando Hoje.
+  const [tab, setTab] = useState<TaskContext>('work');
 
   const { data: tasks = [], isLoading: tLoading, error } = useQuery({
     queryKey: ['tasks', 'semana', collaborator?.id, start, end],
@@ -97,25 +100,27 @@ export function Semana() {
     const map = new Map<string, WeekTask[]>();
     for (const d of days) map.set(d, []);
     for (const t of tasks) {
+      if (t.context !== tab) continue;
       if (t.due_date && map.has(t.due_date)) map.get(t.due_date)!.push(t);
     }
     return map;
-  }, [tasks, days]);
+  }, [tasks, days, tab]);
 
   const eventsByDay = useMemo(() => {
-    // Sprint 22.34e — Semana mostra trabalho + pessoal.
     const map = new Map<string, CalendarEvent[]>();
     for (const d of days) map.set(d, []);
     for (const e of events) {
+      if (e.context !== tab) continue;
       const ymd = eventLocalYmd(e.start_at);
       if (map.has(ymd)) map.get(ymd)!.push(e);
     }
     return map;
-  }, [events, days]);
+  }, [events, days, tab]);
 
-  const activeEvents = events.filter(e => e.status !== 'cancelled');
-  const totalWeek = tasks.length + activeEvents.length;
-  const doneWeek = tasks.filter(t => t.status === 'done').length + activeEvents.filter(e => e.status === 'done').length;
+  const tabTasks = tasks.filter(t => t.context === tab);
+  const tabEvents = events.filter(e => e.context === tab && e.status !== 'cancelled');
+  const totalWeek = tabTasks.length + tabEvents.length;
+  const doneWeek = tabTasks.filter(t => t.status === 'done').length + tabEvents.filter(e => e.status === 'done').length;
   const pct = totalWeek ? Math.round((doneWeek / totalWeek) * 100) : 0;
   const isLoading = tLoading || eLoading;
 
@@ -159,6 +164,16 @@ export function Semana() {
           <div className="h-full bg-tom transition-[width]" style={{ width: `${pct}%` }} />
         </div>
       </header>
+
+      {/* Sprint 22.34f — Tabs Trabalho/Pessoal alinhadas com Hoje. */}
+      <Tabs
+        tabs={[
+          { id: 'work', label: 'Trabalho' },
+          { id: 'personal', label: 'Pessoal' },
+        ]}
+        active={tab}
+        onChange={(t) => setTab(t)}
+      />
 
       {!supabaseConfigured ? (
         <EmptyState icon={<CalendarDays size={32} />} title="Configure Supabase" description="Defina VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY." />
