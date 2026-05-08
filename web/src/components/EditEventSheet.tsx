@@ -40,6 +40,7 @@ export function EditEventSheet({ open, event, onClose }: Props) {
   const [meetingUrl, setMeetingUrl] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const eventCategories = useEventCategories();
 
@@ -53,6 +54,7 @@ export function EditEventSheet({ open, event, onClose }: Props) {
       setMeetingUrl(event.meeting_url || '');
       setValidationError(null);
       setConfirmCancel(false);
+      setConfirmDelete(false);
     }
   }, [open, event]);
 
@@ -125,6 +127,24 @@ export function EditEventSheet({ open, event, onClose }: Props) {
     update.mutate({ status: 'cancelled' });
   };
   const onComplete = () => update.mutate({ status: 'done' });
+
+  // Sprint 22.28 — delete real (apaga do DB; diferente de cancel que mantem
+  // historico). Confirm inline obrigatorio antes de executar.
+  const deleteEvent = useMutation({
+    mutationFn: async () => {
+      if (!collaborator || !event) throw new Error('no_event');
+      const { error } = await supabase
+        .from('events')
+        .delete()
+        .eq('id', event.id)
+        .eq('collaborator_id', collaborator.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['events'] });
+      onClose();
+    },
+  });
 
   const endBeforeStart = startAt && endAt && new Date(endAt).getTime() <= new Date(startAt).getTime();
 
@@ -244,16 +264,53 @@ export function EditEventSheet({ open, event, onClose }: Props) {
                   </Button>
                 </div>
               </div>
-            ) : (
-              <div className="flex items-center gap-sm">
-                <Button type="button" variant="secondary" onClick={onComplete} disabled={update.isPending || event.status === 'done'}>
-                  Concluir
-                </Button>
-                <Button type="button" variant="secondary" onClick={onCancel} disabled={update.isPending || event.status === 'cancelled'}>
-                  Cancelar evento
-                </Button>
-                <Button type="button" variant="ghost" onClick={onClose} className="ml-auto">Fechar</Button>
+            ) : confirmDelete ? (
+              <div className="surface p-sm bg-danger/5 border-danger/30 space-y-sm" role="alert">
+                <div className="text-body-sm text-fg">
+                  Excluir este compromisso? Some pra sempre. Não dá pra desfazer.
+                </div>
+                <div className="flex items-center gap-sm">
+                  <Button
+                    type="button"
+                    variant="danger"
+                    onClick={() => deleteEvent.mutate()}
+                    disabled={deleteEvent.isPending}
+                    loading={deleteEvent.isPending}
+                    fullWidth
+                  >
+                    Sim, excluir
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => setConfirmDelete(false)}
+                    disabled={deleteEvent.isPending}
+                    fullWidth
+                  >
+                    Voltar
+                  </Button>
+                </div>
               </div>
+            ) : (
+              <>
+                <div className="flex items-center gap-sm">
+                  <Button type="button" variant="secondary" onClick={onComplete} disabled={update.isPending || event.status === 'done'}>
+                    Concluir
+                  </Button>
+                  <Button type="button" variant="secondary" onClick={onCancel} disabled={update.isPending || event.status === 'cancelled'}>
+                    Cancelar evento
+                  </Button>
+                  <Button type="button" variant="ghost" onClick={onClose} className="ml-auto">Fechar</Button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setConfirmDelete(true)}
+                  disabled={update.isPending || deleteEvent.isPending}
+                  className="text-body-sm text-danger hover:text-danger/80 focus-ring rounded-sm px-2 py-1 self-start"
+                >
+                  Excluir compromisso
+                </button>
+              </>
             )}
           </div>
         </form>

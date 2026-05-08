@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase';
 import { todaySP } from '../utils/date';
 import { BottomSheet } from './BottomSheet';
 import { Button } from './Button';
+import { DateInput } from './DateInput';
 import type { Task } from '../types';
 
 // Sprint 11.2 hotfix — formatador inline pro horário em America/Sao_Paulo.
@@ -102,16 +103,10 @@ export function RescheduleSheet({ open, task, onClose }: Props) {
             )}
           </div>
 
-          <label className="block">
+          <div>
             <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Novo prazo</div>
-            <input
-              type="date"
-              required
-              value={date}
-              onChange={e => setDate(e.target.value)}
-              className="w-full h-12 px-3 rounded-md bg-bg-elevated border border-border text-fg focus-ring"
-            />
-          </label>
+            <DateInput value={date} onChange={setDate} />
+          </div>
 
           {reschedule.error && (
             <p role="alert" className="text-body-sm text-danger">

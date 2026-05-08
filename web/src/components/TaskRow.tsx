@@ -3,6 +3,7 @@ import { Badge } from './Badge';
 import { ActionTypeBadge } from './ActionTypeBadge';
 import { CategoryTag } from './CategoryTag';
 import { TaskCheckbox } from './TaskCheckbox';
+import { RowMenu, type MenuItem } from './RowMenu';
 import type { Task } from '../types';
 
 // Sprint 22 Phase A — palette + checkbox migrados (docs/design-system.md §1.2/§4.2).
@@ -19,6 +20,10 @@ interface Props {
   onToggle?: (task: Task) => void;
   /** Quando true, esconde o checkbox e bloqueia interação. Para visões coord/director em PessoaDetalhe. */
   readOnly?: boolean;
+  /** Sprint 22.28 — Reagendar tarefa (abre RescheduleSheet no parent). */
+  onReschedule?: (task: Task) => void;
+  /** Sprint 22.28 — Excluir tarefa (RowMenu confirm inline cuida do "tem certeza"). */
+  onDelete?: (task: Task) => void;
 }
 
 // Sprint 22.5 — fonte que NÃO seja manual indica que veio do TOM (mental_dump, agent_*, coordinator_assignment).
@@ -94,7 +99,7 @@ function fmtSuffix(rel: string, dayIso: string): string {
   return ` (${dayIso.slice(8, 10)}/${dayIso.slice(5, 7)})`;
 }
 
-export function TaskRow({ task, onToggle, readOnly }: Props) {
+export function TaskRow({ task, onToggle, readOnly, onReschedule, onDelete }: Props) {
   const { tone, label } = statusOf(task);
   const isDone = task.status === 'done';
   const quadrantKey = task.eisenhower_quadrant ? String(task.eisenhower_quadrant) : null;
@@ -168,6 +173,18 @@ export function TaskRow({ task, onToggle, readOnly }: Props) {
       </div>
 
       {label && <Badge tone={tone}>{label}</Badge>}
+
+      {!readOnly && (onReschedule || onDelete) && (() => {
+        const items: MenuItem[] = [];
+        if (onReschedule) items.push({ label: 'Reagendar', onClick: () => onReschedule(task) });
+        if (onDelete) items.push({
+          label: 'Excluir tarefa',
+          danger: true,
+          confirm: 'Excluir essa tarefa?',
+          onClick: () => onDelete(task),
+        });
+        return items.length > 0 ? <RowMenu items={items} /> : null;
+      })()}
     </div>
   );
 }

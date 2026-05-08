@@ -214,8 +214,24 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
 
   const submitting = createTask.isPending || createEvent.isPending;
   const submitError = (createTask.error || createEvent.error) as Error | null;
-  const errorText = error
-    || (submitError?.message === 'end_before_start' ? 'fim precisa ser depois do início' : submitError?.message);
+  // Sprint 22.28 — categorizar erro de submit pra mensagem amigavel.
+  function friendlyError(err: Error | null): string | null {
+    if (!err) return null;
+    const m = err.message?.toLowerCase() ?? '';
+    if (m === 'end_before_start') return 'Fim precisa ser depois do início.';
+    if (m === 'no_session') return 'Sua sessão expirou. Faz login de novo.';
+    if (m.includes('row-level security') || m.includes('policy')) {
+      return 'Você não tem permissão pra criar isso. Confere com o coordenador.';
+    }
+    if (m.includes('check constraint')) {
+      return 'Algum campo veio fora do formato esperado. Tenta de novo.';
+    }
+    if (m.includes('failed to fetch') || m.includes('network')) {
+      return 'Sem conexão. Tenta de novo daqui a pouco.';
+    }
+    return err.message ?? 'Não consegui criar.';
+  }
+  const errorText = error || friendlyError(submitError);
 
   const showMeetingUrl = kind === 'event' && (modality === 'online' || modality === 'hibrido');
 

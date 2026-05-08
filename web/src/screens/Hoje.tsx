@@ -15,6 +15,7 @@ import { Button } from '../components/Button';
 import { Fab } from '../components/Fab';
 import { QuickCreateSheet } from '../components/QuickCreateSheet';
 import { EditEventSheet } from '../components/EditEventSheet';
+import { RescheduleSheet } from '../components/RescheduleSheet';
 import type { Task, TaskContext, CalendarEvent, ActionType } from '../types';
 import { ACTION_TYPE_LABELS, ACTION_TYPE_VISUAL } from '../types';
 
@@ -101,6 +102,7 @@ export function Hoje() {
   const [actionFilter, setActionFilter] = useState<ActionType | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
+  const [reschedulingTask, setReschedulingTask] = useState<Task | null>(null);
   const [doneOpen, setDoneOpen] = useState(false);
 
   const today = todaySP();
@@ -194,6 +196,30 @@ export function Hoje() {
         : t;
       qc.setQueryData<Task[]>(keyHoje, (old) => (old ?? []).map(flip));
       qc.setQueryData<Task[]>(keyDelegated, (old) => (old ?? []).map(flip));
+      return { prevHoje, prevDelegated, keyHoje, keyDelegated };
+    },
+    onError: (_e, _v, ctx) => {
+      if (!ctx) return;
+      if (ctx.prevHoje) qc.setQueryData(ctx.keyHoje, ctx.prevHoje);
+      if (ctx.prevDelegated) qc.setQueryData(ctx.keyDelegated, ctx.prevDelegated);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['tasks'] }),
+  });
+
+  // Sprint 22.28 — delete inline na Hoje (otimista). RowMenu cuida do confirm.
+  const deleteTask = useMutation({
+    mutationFn: async (task: Task) => {
+      const { error } = await supabase.from('tasks').delete().eq('id', task.id);
+      if (error) throw error;
+    },
+    onMutate: async (task) => {
+      const keyHoje = ['tasks', 'hoje', collaborator?.id] as const;
+      const keyDelegated = ['tasks', 'delegated', collaborator?.id] as const;
+      await qc.cancelQueries({ queryKey: ['tasks'] });
+      const prevHoje = qc.getQueryData<Task[]>(keyHoje);
+      const prevDelegated = qc.getQueryData<Task[]>(keyDelegated);
+      qc.setQueryData<Task[]>(keyHoje, (old) => (old ?? []).filter(t => t.id !== task.id));
+      qc.setQueryData<Task[]>(keyDelegated, (old) => (old ?? []).filter(t => t.id !== task.id));
       return { prevHoje, prevDelegated, keyHoje, keyDelegated };
     },
     onError: (_e, _v, ctx) => {
@@ -354,8 +380,9 @@ export function Hoje() {
       ) : tError ? (
         <section className="surface p-md">
           <EmptyState
-            title="Não consegui carregar suas tarefas"
-            description={(tError as Error).message}
+            icon={<ListTodo size={32} />}
+            title="Deu ruim ao carregar"
+            description="Não consegui buscar suas tarefas. Pode ser conexão instável. Tenta de novo."
             action={<Button variant="secondary" onClick={() => qc.invalidateQueries({ queryKey: ['tasks'] })}>Tentar de novo</Button>}
           />
         </section>
@@ -374,7 +401,11 @@ export function Hoje() {
               }
             />
           ) : (
-            <div className="text-body-sm text-fg-muted">Sem tarefas — só compromissos hoje.</div>
+            <EmptyState
+              icon={<ListTodo size={32} />}
+              title="Sem tarefas"
+              description="Só compromissos hoje. Foco no que tem horário."
+            />
           )}
         </section>
       ) : (
@@ -391,6 +422,8 @@ export function Hoje() {
                     task={t}
                     onToggle={tab === 'delegated' ? undefined : (task) => toggleTask.mutate(task)}
                     readOnly={tab === 'delegated'}
+                    onReschedule={tab === 'delegated' ? undefined : setReschedulingTask}
+                    onDelete={tab === 'delegated' ? undefined : (task) => deleteTask.mutate(task)}
                   />
                 ))}
               </div>
@@ -408,6 +441,8 @@ export function Hoje() {
                     task={t}
                     onToggle={tab === 'delegated' ? undefined : (task) => toggleTask.mutate(task)}
                     readOnly={tab === 'delegated'}
+                    onReschedule={tab === 'delegated' ? undefined : setReschedulingTask}
+                    onDelete={tab === 'delegated' ? undefined : (task) => deleteTask.mutate(task)}
                   />
                 ))}
               </div>
@@ -455,6 +490,7 @@ export function Hoje() {
       <Fab onClick={() => setSheetOpen(true)} label="Novo" ariaLabel="Criar novo item" />
       <QuickCreateSheet open={sheetOpen} onClose={() => setSheetOpen(false)} defaultDueDate={today} />
       <EditEventSheet open={Boolean(editingEvent)} event={editingEvent} onClose={() => setEditingEvent(null)} />
+      <RescheduleSheet open={Boolean(reschedulingTask)} task={reschedulingTask} onClose={() => setReschedulingTask(null)} />
     </div>
   );
 }
