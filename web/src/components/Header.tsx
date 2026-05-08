@@ -72,7 +72,7 @@ export function Header() {
           <h1 className="text-lg font-bold leading-tight">
             {greeting()}{firstName ? `, ${firstName}` : ''}
           </h1>
-          <p className="text-body-sm text-fg-muted mt-0.5">{dateLong()}</p>
+          <p className="text-xs text-fg-muted mt-0.5">{dateLong()}</p>
         </div>
 
         {/* Toggle dark/light + Avatar do user */}
