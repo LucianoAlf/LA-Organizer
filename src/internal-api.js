@@ -634,11 +634,18 @@ router.post('/internal/event-invites', requireInternalSecret, async (req, res) =
     .eq('id', event.created_by)
     .single();
 
-  const { data: participants } = await supabase
+  // Sprint 22.34l — FIX: event_participants tem 2 FKs pra collaborators
+  // (collaborator_id + invited_by), entao supabase-js nao sabe qual join
+  // usar com `collaborators(...)`. Disambiguar via hint explicito.
+  const { data: participants, error: pErr } = await supabase
     .from('event_participants')
-    .select('id, collaborator_id, status, collaborators(id, full_name, phone, is_active)')
+    .select('id, collaborator_id, status, collaborators!event_participants_collaborator_id_fkey(id, full_name, phone, is_active)')
     .eq('event_id', eventId)
     .is('notified_at', null);
+  if (pErr) {
+    console.error(`[InternalAPI] event-invites participants query err: ${pErr.message}`);
+    return res.status(500).json({ error: 'participants_query_failed', detail: pErr.message });
+  }
 
   const recipients = (participants || [])
     .map(p => {
@@ -650,8 +657,9 @@ router.post('/internal/event-invites', requireInternalSecret, async (req, res) =
     .filter(Boolean);
 
   if (recipients.length === 0) {
+    // Sprint 22.34l — marker_logs.result CHECK só aceita 'executed'/'rejected'.
     await supabase.from('marker_logs').insert({
-      marker_type: 'EVENT_INVITES', result: 'skipped',
+      marker_type: 'EVENT_INVITES', result: 'rejected',
       reason: 'no_recipients', raw_excerpt: dedupeKey,
     });
     return res.json({ status: 'no_recipients', key: dedupeKey });
