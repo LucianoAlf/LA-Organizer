@@ -62,6 +62,13 @@ async function toggleTaskStatus(task: WeekTask): Promise<void> {
   if (error) throw error;
 }
 
+// Sprint 22.34c — toggle done em eventos da Semana, espelhando Hoje.
+async function toggleEventStatus(event: CalendarEvent): Promise<void> {
+  const next = event.status === 'done' ? 'scheduled' : 'done';
+  const { error } = await supabase.from('events').update({ status: next }).eq('id', event.id);
+  if (error) throw error;
+}
+
 export function Semana() {
   const { collaborator } = useAuth();
   const qc = useQueryClient();
@@ -115,6 +122,13 @@ export function Semana() {
     mutationFn: toggleTaskStatus,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['tasks'] });
+    },
+  });
+
+  const toggleEvent = useMutation({
+    mutationFn: toggleEventStatus,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['events'] });
     },
   });
 
@@ -202,20 +216,39 @@ export function Semana() {
                 ) : (
                   <div className="mt-3 space-y-2">
                     {dayEvents.length > 0 && (
-                      <ul className="space-y-1.5">
+                      <ul className="space-y-2">
                         {dayEvents.map(e => {
                           const range = formatEventTimeRange(e.start_at, e.end_at);
                           const cancelled = e.status === 'cancelled';
+                          const isDone = e.status === 'done';
+                          const qk = e.eisenhower_quadrant ? String(e.eisenhower_quadrant) : null;
+                          const qcCls = qk && QUADRANT_DOT[qk] ? QUADRANT_DOT[qk] : null;
                           return (
-                            <li
-                              key={e.id}
-                              onClick={() => setEditingEvent(e)}
-                              className={[
-                                'text-body-sm flex items-baseline gap-2 cursor-pointer hover:bg-bg-elevated rounded-sm -mx-1 px-1 py-0.5',
-                                cancelled ? 'line-through text-fg-muted' : 'text-fg-secondary',
-                              ].join(' ')}>
-                              <span className="text-fg font-semibold tabular-nums shrink-0">{range.split('–')[0]}</span>
-                              <span className="truncate">{e.title}</span>
+                            <li key={e.id} className="flex items-start gap-2 -mx-1 px-1 py-0.5">
+                              <TaskCheckbox
+                                done={isDone}
+                                overdue={false}
+                                size="sm"
+                                disabled={cancelled || toggleEvent.isPending}
+                                onClick={() => !cancelled && toggleEvent.mutate(e)}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setEditingEvent(e)}
+                                className={[
+                                  'flex-1 min-w-0 text-left rounded-sm hover:bg-bg-elevated px-1 -mx-1 focus-ring',
+                                  cancelled ? 'line-through text-fg-muted' : isDone ? 'line-through text-fg-muted' : '',
+                                ].join(' ')}
+                                title="Editar compromisso"
+                              >
+                                <div className="text-body-sm flex items-baseline gap-2">
+                                  {qcCls && (
+                                    <span aria-hidden title={`Q${qk}`} className={['inline-block h-1.5 w-1.5 rounded-full align-middle shrink-0', qcCls].join(' ')} />
+                                  )}
+                                  <span className="text-fg font-semibold tabular-nums shrink-0">{range.split('–')[0]}</span>
+                                  <span className="truncate text-fg-secondary">{e.title}</span>
+                                </div>
+                              </button>
                             </li>
                           );
                         })}
