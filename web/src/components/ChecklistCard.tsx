@@ -104,7 +104,11 @@ export function ChecklistCard({ completion }: Props) {
   const doneCount = unified.filter(u => u.done).length
   const pct = totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0
   const windowClosed = isChecklistWindowClosed(completion.dispatched_at)
-  const readonly = !!completion.completed_at || windowClosed
+  // Sprint 22.36 (revisão) — só bloqueia interação quando a janela 6h fechou.
+  // Antes: readonly assim que completed_at era setado → user não conseguia
+  // desmarcar item (mesmo padrão do TaskRow no /projetos: tarefa "done" pode
+  // ser re-aberta clicando no checkbox).
+  const readonly = windowClosed
 
   // ─── Collapse state per-completion (auto-colapsa quando completo)
   const storageKey = `checklist:collapsed:${completion.id}`
@@ -166,28 +170,37 @@ export function ChecklistCard({ completion }: Props) {
       const newDone = next ? doneCount + 1 : Math.max(doneCount - 1, 0)
       const newPct = totalCount > 0 ? Math.round((newDone / totalCount) * 100) : 0
       const justCompleted = newPct >= 100 && !completion.completed_at
+      const justUncompleted = newPct < 100 && !!completion.completed_at
       if (justCompleted) {
         await supabase
           .from('op_checklist_completions')
           .update({ completed_at: new Date().toISOString() })
           .eq('id', completion.id)
+      } else if (justUncompleted) {
+        // Sprint 22.36 (revisão) — user desmarcou item num checklist 100%.
+        // Limpa completed_at pra refletir que voltou pra "em andamento".
+        await supabase
+          .from('op_checklist_completions')
+          .update({ completed_at: null })
+          .eq('id', completion.id)
       }
-      return { justCompleted }
+      return { justCompleted, justUncompleted }
     },
-    onSuccess: async ({ justCompleted }) => {
+    onSuccess: async ({ justCompleted, justUncompleted }) => {
       if (justCompleted) {
         showToast({
           kind: 'success',
           title: '🎉 Checklist concluído!',
           msg: `${template.name} fechado por hoje.`,
         })
-        // Auto-colapsa
         setCollapsed(true)
-        // Dispara TOM (2 Zaps: colab + gerente da unidade)
         const r = await notifyChecklistCompleted(completion.id)
         if (!r.ok) {
           console.warn('[ChecklistCard] notifyChecklistCompleted falhou:', r.reason)
         }
+      } else if (justUncompleted) {
+        // Reabriu o card, retira o auto-colapse pra usuário ver o que falta.
+        setCollapsed(false)
       }
     },
     onError: (err: Error) => {
