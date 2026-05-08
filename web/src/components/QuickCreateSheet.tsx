@@ -71,6 +71,9 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
   const [eventQuadrant, setEventQuadrant] = useState<number | null>(null);
   // Sprint 22.32 — participants do compromisso (collaborator ids).
   const [participantIds, setParticipantIds] = useState<string[]>([]);
+  // Sprint 22.34i — detecção de conflito de horário antes de criar evento.
+  // null = sem conflito pendente; array = lista de eventos sobrepondo o horário.
+  const [pendingConflict, setPendingConflict] = useState<Array<{ id: string; title: string; range: string }> | null>(null);
 
   // Sincroniza default de categoria quando lista carrega tardiamente.
   useEffect(() => {
@@ -266,9 +269,32 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
     }
   }
 
+  // Sprint 22.34i — checa se há outros eventos do user que sobrepõem o horário.
+  // Retorna array dos conflitos (vazio = sem conflito).
+  async function checkEventConflict(startIso: string, endIso: string) {
+    if (!collaborator) return [];
+    const { data } = await supabase
+      .from('events')
+      .select('id, title, start_at, end_at')
+      .eq('collaborator_id', collaborator.id)
+      .neq('status', 'cancelled')
+      .lt('start_at', endIso)
+      .gt('end_at', startIso)
+      .limit(5);
+    return (data || []).map(ev => {
+      const s = new Date(ev.start_at);
+      const e = new Date(ev.end_at);
+      const fmt = (d: Date) => new Intl.DateTimeFormat('pt-BR', {
+        timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', hour12: false,
+      }).format(d);
+      return { id: ev.id, title: ev.title, range: `${fmt(s)}–${fmt(e)}` };
+    });
+  }
+
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
     setError(null);
+    setPendingConflict(null);
     if (!title.trim()) {
       setError('Coloca um título.');
       return;
@@ -306,8 +332,23 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
         setError('Coloca fim válido (data + hora).');
         return;
       }
-      createEvent.mutate();
+      // Sprint 22.34i — checa conflito antes de criar.
+      const startIso = `${startAt}:00-03:00`;
+      const endIso = `${endAt}:00-03:00`;
+      checkEventConflict(startIso, endIso).then(conflicts => {
+        if (conflicts.length > 0) {
+          setPendingConflict(conflicts);
+        } else {
+          createEvent.mutate();
+        }
+      });
     }
+  };
+
+  // Sprint 22.34i — confirma criação ignorando conflito.
+  const onConfirmConflict = () => {
+    setPendingConflict(null);
+    createEvent.mutate();
   };
 
   const submitting = createTask.isPending || createEvent.isPending || createDelegated.isPending;
@@ -653,8 +694,39 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
           </p>
         )}
 
+        {/* Sprint 22.34i — banner de conflito de horário. */}
+        {pendingConflict && pendingConflict.length > 0 && (
+          <div className="rounded-md border border-warning bg-warning/10 p-3 space-y-2" role="alert">
+            <div className="text-body-sm font-semibold text-warning">
+              ⚠ Conflito de horário
+            </div>
+            <div className="text-body-sm text-fg">
+              Você já tem {pendingConflict.length === 1 ? 'um compromisso' : `${pendingConflict.length} compromissos`} nesse horário:
+            </div>
+            <ul className="text-body-sm text-fg-secondary space-y-0.5">
+              {pendingConflict.map(c => (
+                <li key={c.id}>• <span className="tabular-nums">{c.range}</span> — {c.title}</li>
+              ))}
+            </ul>
+            <div className="text-body-sm text-fg-muted pt-1">
+              Quer ajustar o horário ou marcar mesmo assim?
+            </div>
+          </div>
+        )}
+
         <div className="flex items-center gap-md pt-2">
-          <Button type="submit" loading={submitting} fullWidth>Criar</Button>
+          {pendingConflict && pendingConflict.length > 0 ? (
+            <>
+              <Button type="button" variant="secondary" onClick={() => setPendingConflict(null)}>
+                Voltar e ajustar
+              </Button>
+              <Button type="button" loading={submitting} fullWidth onClick={onConfirmConflict}>
+                Criar mesmo assim
+              </Button>
+            </>
+          ) : (
+            <Button type="submit" loading={submitting} fullWidth>Criar</Button>
+          )}
         </div>
       </form>
     </BottomSheet>
