@@ -18,6 +18,16 @@ const ai = require('./ai/provider');
 
 const router = express.Router();
 
+// Sprint 22.34g — CORS para /internal/* (browser cross-origin do localhost e Vercel).
+// Auth continua via x-internal-secret; CORS apenas abre o canal no browser.
+router.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-internal-secret');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
 const STOPWORDS = new Set([
   'LA','DA','DE','DO','DOS','DAS','O','A','OS','AS','UM','UMA',
   'NO','NA','EM','COM','PARA','POR','E','OU','SEM','SOB','PELO','PELA',
