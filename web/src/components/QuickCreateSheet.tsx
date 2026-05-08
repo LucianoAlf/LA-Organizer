@@ -9,6 +9,7 @@ import { Button } from './Button';
 import { CustomSelect } from './CustomSelect';
 import { DateInput } from './DateInput';
 import { DateTimeInput } from './DateTimeInput';
+import { TimeInput } from './TimeInput';
 import { useEventCategories } from '../hooks/useEventCategories';
 import {
   MODALITY_LABELS,
@@ -45,6 +46,9 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
   // task
   const [taskCtx, setTaskCtx] = useState<TaskContext>('work');
   const [due, setDue] = useState(today);
+  // Sprint 22.27 — hora opcional pra Tarefa. Quando preenchida, vira `remind_at`
+  // (NAO compromisso). Comportamento: lembrete em horario X, sem bloquear agenda.
+  const [taskTime, setTaskTime] = useState<string>('');
 
   // event
   const [categoryId, setCategoryId] = useState<string>('');
@@ -69,6 +73,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
       setTitle('');
       setTaskCtx('work');
       setDue(today);
+      setTaskTime('');
       setCategoryId(defaultCategoryId);
       setCreatingCat(false);
       setNewCatLabel('');
@@ -98,6 +103,9 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
   const createTask = useMutation({
     mutationFn: async () => {
       if (!collaborator) throw new Error('no_session');
+      // Sprint 22.27 — se taskTime preenchida, monta remind_at (timestamp SP).
+      // remind_at != compromisso: nao bloqueia agenda, so notifica.
+      const remindAt = taskTime ? `${due}T${taskTime}:00-03:00` : null;
       const { error: e } = await supabase.from('tasks').insert({
         title: title.trim().slice(0, 200),
         assigned_to: collaborator.id,
@@ -107,6 +115,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
         context: taskCtx,
         priority: 'medium',
         due_date: due,
+        remind_at: remindAt,
       });
       if (e) throw e;
     },
@@ -266,6 +275,29 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
               <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Para quando</div>
               <DateInput value={due} onChange={setDue} />
             </label>
+            <div>
+              <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5 flex items-baseline gap-2">
+                <span>Lembrar às</span>
+                <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">opcional</span>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <TimeInput value={taskTime} onChange={setTaskTime} />
+                {taskTime && (
+                  <button
+                    type="button"
+                    onClick={() => setTaskTime('')}
+                    className="text-body-sm text-fg-muted hover:text-fg focus-ring rounded-sm px-2 py-1"
+                  >
+                    limpar
+                  </button>
+                )}
+              </div>
+              <div className="text-body-sm text-fg-muted mt-1.5">
+                {taskTime
+                  ? 'Lembrete · TOM avisa nesse horário. Não bloqueia agenda.'
+                  : 'Sem hora · tarefa fica em aberto no dia.'}
+              </div>
+            </div>
           </>
         ) : (
           <>
