@@ -1,5 +1,5 @@
 import { useState, useEffect, FormEvent } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { BottomSheet } from './BottomSheet';
@@ -7,6 +7,7 @@ import { Button } from './Button';
 import { CustomSelect } from './CustomSelect';
 import { DateTimeInput } from './DateTimeInput';
 import { EisenhowerPicker } from './EisenhowerPicker';
+import { ParticipantsPicker } from './ParticipantsPicker';
 import { useEventCategories } from '../hooks/useEventCategories';
 import type { CalendarEvent } from '../types';
 
@@ -40,11 +41,43 @@ export function EditEventSheet({ open, event, onClose }: Props) {
   const [locationText, setLocationText] = useState('');
   const [meetingUrl, setMeetingUrl] = useState('');
   const [quadrant, setQuadrant] = useState<number | null>(null);
+  const [participantIds, setParticipantIds] = useState<string[]>([]);
+  const [originalParticipantIds, setOriginalParticipantIds] = useState<string[]>([]);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const eventCategories = useEventCategories();
+
+  // Sprint 22.32 — colabs ativos pra picker.
+  const { data: collaborators = [] } = useQuery({
+    queryKey: ['collaborators-active', collaborator?.id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('collaborators').select('id, full_name, role').eq('is_active', true)
+        .order('full_name', { ascending: true });
+      if (error) return [];
+      return ((data ?? []) as Array<{ id: string; full_name: string; role: string }>)
+        .filter(c => c.id !== collaborator?.id);
+    },
+    enabled: open && Boolean(collaborator?.id),
+    staleTime: 5 * 60_000,
+  });
+
+  // Sprint 22.32 — fetch participants do evento sendo editado.
+  const { data: existingParticipants = [] } = useQuery({
+    queryKey: ['event-participants', event?.id],
+    queryFn: async () => {
+      if (!event) return [];
+      const { data, error } = await supabase
+        .from('event_participants')
+        .select('id, collaborator_id, status')
+        .eq('event_id', event.id);
+      if (error) return [];
+      return (data ?? []) as Array<{ id: string; collaborator_id: string; status: string }>;
+    },
+    enabled: open && Boolean(event?.id),
+  });
 
   // Sprint 22.31 — dep event?.id em vez de event ref pra nao resetar state
   // quando refetch do React Query chega em background.
@@ -63,6 +96,13 @@ export function EditEventSheet({ open, event, onClose }: Props) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, event?.id]);
+
+  // Sprint 22.32 — quando carrega lista de participants do banco, popula state.
+  useEffect(() => {
+    const ids = existingParticipants.map(p => p.collaborator_id);
+    setParticipantIds(ids);
+    setOriginalParticipantIds(ids);
+  }, [existingParticipants]);
 
   const isOnlineLike = event?.modality === 'online' || event?.modality === 'hibrido';
 
@@ -129,6 +169,38 @@ export function EditEventSheet({ open, event, onClose }: Props) {
       location_text: locationText.trim() ? locationText.trim().slice(0, 200) : null,
       meeting_url: isOnlineLike && meetingUrl.trim() ? meetingUrl.trim().slice(0, 500) : null,
       eisenhower_quadrant: quadrant,
+    }, {
+      onSuccess: () => {
+        // Sprint 22.32 — diff de participants e aplica add/remove.
+        if (event && collaborator) {
+          const orig = new Set(originalParticipantIds);
+          const next = new Set(participantIds);
+          const toAdd = participantIds.filter(id => !orig.has(id));
+          const toRemove = originalParticipantIds.filter(id => !next.has(id));
+          (async () => {
+            try {
+              if (toAdd.length > 0) {
+                const rows = toAdd.map(pid => ({
+                  event_id: event.id,
+                  collaborator_id: pid,
+                  invited_by: collaborator.id,
+                  status: 'invited' as const,
+                }));
+                await supabase.from('event_participants').insert(rows);
+              }
+              if (toRemove.length > 0) {
+                await supabase.from('event_participants')
+                  .delete()
+                  .eq('event_id', event.id)
+                  .in('collaborator_id', toRemove);
+              }
+              qc.invalidateQueries({ queryKey: ['event-participants', event.id] });
+            } catch (e) {
+              console.warn('[EditEventSheet] participants diff err:', e instanceof Error ? e.message : e);
+            }
+          })();
+        }
+      },
     });
   };
 
@@ -247,6 +319,23 @@ export function EditEventSheet({ open, event, onClose }: Props) {
               <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">opcional</span>
             </div>
             <EisenhowerPicker value={quadrant} onChange={setQuadrant} />
+          </div>
+
+          <div>
+            <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5 flex items-baseline gap-2">
+              <span>Participantes</span>
+              <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">opcional</span>
+            </div>
+            <ParticipantsPicker
+              options={collaborators}
+              value={participantIds}
+              onChange={setParticipantIds}
+            />
+            <div className="text-body-sm text-fg-muted mt-1.5">
+              {participantIds.length === 0
+                ? 'Sem convidados.'
+                : `${participantIds.length} pessoa${participantIds.length > 1 ? 's' : ''} convidada${participantIds.length > 1 ? 's' : ''}.`}
+            </div>
           </div>
 
           {update.error && (

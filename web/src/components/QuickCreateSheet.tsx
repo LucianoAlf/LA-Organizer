@@ -11,6 +11,7 @@ import { DateInput } from './DateInput';
 import { DateTimeInput } from './DateTimeInput';
 import { TimeInput } from './TimeInput';
 import { EisenhowerPicker } from './EisenhowerPicker';
+import { ParticipantsPicker } from './ParticipantsPicker';
 import { useEventCategories } from '../hooks/useEventCategories';
 import {
   MODALITY_LABELS,
@@ -67,6 +68,8 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
   const [meetingUrl, setMeetingUrl] = useState('');
   // Sprint 22.30 — compromisso tambem ganhou Eisenhower opcional.
   const [eventQuadrant, setEventQuadrant] = useState<number | null>(null);
+  // Sprint 22.32 — participants do compromisso (collaborator ids).
+  const [participantIds, setParticipantIds] = useState<string[]>([]);
 
   // Sincroniza default de categoria quando lista carrega tardiamente.
   useEffect(() => {
@@ -93,6 +96,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
       setLocationText('');
       setMeetingUrl('');
       setEventQuadrant(null);
+      setParticipantIds([]);
     }
   }, [open, today, defaultCategoryId]);
 
@@ -124,7 +128,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
       return ((data ?? []) as Array<{ id: string; full_name: string; role: string }>)
         .filter(c => c.id !== collaborator?.id);
     },
-    enabled: kind === 'delegated' && Boolean(collaborator?.id),
+    enabled: (kind === 'delegated' || kind === 'event') && Boolean(collaborator?.id),
     staleTime: 5 * 60_000,
   });
 
@@ -208,8 +212,27 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
           : null,
         eisenhower_quadrant: eventQuadrant,
       };
-      const { error: e } = await supabase.from('events').insert(payload);
+      const { data: inserted, error: e } = await supabase
+        .from('events')
+        .insert(payload)
+        .select('id')
+        .single();
       if (e) throw e;
+      if (!inserted?.id) throw new Error('Não consegui criar o evento.');
+      // Sprint 22.32 — insere participants escolhidos.
+      if (participantIds.length > 0) {
+        const rows = participantIds.map(pid => ({
+          event_id: inserted.id as string,
+          collaborator_id: pid,
+          invited_by: collaborator.id,
+          status: 'invited' as const,
+        }));
+        const { error: pe } = await supabase.from('event_participants').insert(rows);
+        if (pe) {
+          // Evento criado com sucesso, mas participants falhou. Loga e segue.
+          console.warn('[QuickCreate] event_participants insert err:', pe.message);
+        }
+      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['events'] });
@@ -307,9 +330,9 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
     <BottomSheet open={open} onClose={onClose} title="Novo">
       {/* Kind selector */}
       <div role="tablist" className="grid grid-cols-3 gap-2 mb-md">
-        <KindButton active={kind === 'task'} onClick={() => setKind('task')} icon={<ListTodo size={16} />} label="Tarefa" hint="algo a fazer" />
-        <KindButton active={kind === 'event'} onClick={() => setKind('event')} icon={<CalendarClock size={16} />} label="Compromisso" hint="com horário" />
-        <KindButton active={kind === 'delegated'} onClick={() => setKind('delegated')} icon={<UserPlus size={16} />} label="Delegar" hint="pra outro do time" />
+        <KindButton active={kind === 'task'} onClick={() => setKind('task')} icon={<ListTodo size={20} />} label="Tarefa" hint="algo a fazer" />
+        <KindButton active={kind === 'event'} onClick={() => setKind('event')} icon={<CalendarClock size={20} />} label="Compromisso" hint="com horário" />
+        <KindButton active={kind === 'delegated'} onClick={() => setKind('delegated')} icon={<UserPlus size={20} />} label="Delegar" hint="pra alguém do time" />
       </div>
 
       <form onSubmit={onSubmit} className="space-y-md">
@@ -597,6 +620,23 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
               </div>
               <EisenhowerPicker value={eventQuadrant} onChange={setEventQuadrant} />
             </div>
+
+            <div>
+              <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5 flex items-baseline gap-2">
+                <span>Participantes</span>
+                <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">opcional</span>
+              </div>
+              <ParticipantsPicker
+                options={collaborators}
+                value={participantIds}
+                onChange={setParticipantIds}
+              />
+              <div className="text-body-sm text-fg-muted mt-1.5">
+                {participantIds.length === 0
+                  ? 'Sem convidados · só você fica com esse compromisso.'
+                  : `${participantIds.length} pessoa${participantIds.length > 1 ? 's' : ''} · TOM avisa pelo WhatsApp.`}
+              </div>
+            </div>
           </>
         )}
 
@@ -617,6 +657,8 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
 function KindButton({
   active, onClick, icon, label, hint,
 }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string; hint: string }) {
+  // Sprint 22.32 — layout vertical (icone -> label -> hint) pra acomodar 3 kinds
+  // (Tarefa, Compromisso, Delegar) sem texto se atropelar em telas estreitas.
   return (
     <button
       type="button"
@@ -624,17 +666,18 @@ function KindButton({
       aria-selected={active}
       onClick={onClick}
       className={[
-        'rounded-md border px-3 py-3 text-left transition-colors focus-ring',
+        'rounded-md border px-2 py-3 text-center transition-colors focus-ring',
+        'flex flex-col items-center gap-1.5',
         active
           ? 'border-tom bg-tom/10'
           : 'border-border bg-bg-subtle hover:bg-bg-elevated',
       ].join(' ')}
     >
-      <div className={['flex items-center gap-2 text-body-md font-semibold', active ? 'text-tom' : 'text-fg'].join(' ')}>
-        {icon}
+      <span className={active ? 'text-tom' : 'text-fg-muted'}>{icon}</span>
+      <div className={['text-body-md font-semibold leading-tight', active ? 'text-tom' : 'text-fg'].join(' ')}>
         {label}
       </div>
-      <div className="text-body-sm text-fg-muted leading-tight mt-0.5">{hint}</div>
+      <div className="text-body-sm text-fg-muted leading-tight">{hint}</div>
     </button>
   );
 }
