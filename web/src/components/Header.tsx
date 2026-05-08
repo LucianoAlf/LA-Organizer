@@ -69,7 +69,7 @@ export function Header() {
         </div>
 
         <div className="min-w-0 flex-1">
-          <h1 className="text-screen-title leading-tight">
+          <h1 className="text-lg font-bold leading-tight">
             {greeting()}{firstName ? `, ${firstName}` : ''}
           </h1>
           <p className="text-body-sm text-fg-muted mt-0.5">{dateLong()}</p>
