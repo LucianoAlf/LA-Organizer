@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Camera, Lock, Settings, LogOut, User } from 'lucide-react';
+import { Camera, Lock, Settings, LogOut, User, Sun, Moon } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { useTheme } from '../contexts/ThemeContext';
 
 function greeting(): string {
   const h = new Date().getHours();
@@ -32,6 +33,7 @@ function initials(name: string | null | undefined) {
 // abre menu de perfil (foto, senha, config, sair). Tagline removida.
 export function Header() {
   const { collaborator, role, signOut } = useAuth();
+  const { theme, toggle } = useTheme();
   const [avatarFailed, setAvatarFailed] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -73,15 +75,29 @@ export function Header() {
           <p className="text-body-sm text-fg-muted mt-0.5">{dateLong()}</p>
         </div>
 
-        {/* Avatar do user — clicável, abre menu de perfil */}
-        <div ref={menuRef} className="relative shrink-0">
+        {/* Toggle dark/light + Avatar do user */}
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={toggle}
+            aria-label={theme === 'dark' ? 'Mudar para modo claro' : 'Mudar para modo escuro'}
+            title={theme === 'dark' ? 'Modo claro' : 'Modo escuro'}
+            className="h-8 w-8 grid place-items-center rounded-full bg-bg-elevated border border-border text-fg-muted focus-ring transition-colors hover:bg-bg-subtle"
+          >
+            {theme === 'dark'
+              ? <Sun size={14} />
+              : <Moon size={14} />
+            }
+          </button>
+
+        <div ref={menuRef} className="relative">
           <button
             type="button"
             onClick={() => setMenuOpen(o => !o)}
             aria-label="Abrir menu de perfil"
             aria-expanded={menuOpen}
             title={role ? `${collaborator?.full_name} (${role})` : collaborator?.full_name ?? ''}
-            className="h-11 w-11 grid place-items-center rounded-full bg-bg-elevated border border-border text-body-md font-bold text-fg focus-ring transition-colors hover:bg-bg-subtle"
+            className="h-8 w-8 grid place-items-center rounded-full bg-bg-elevated border border-border text-body-sm font-bold text-fg focus-ring transition-colors hover:bg-bg-subtle"
           >
             {initials(collaborator?.full_name)}
           </button>
@@ -133,6 +149,7 @@ export function Header() {
             </div>
           )}
         </div>
+        </div>{/* fim flex toggle+avatar */}
       </div>
     </header>
   );
