@@ -104,7 +104,10 @@ export function EventRow({ event, onClick, onToggleDone, onCancel, onDelete }: P
             )}
             {event.title}
           </div>
+          {/* Sprint 22.34h — Badge da categoria movido pra linha de meta (debaixo do
+              titulo) pra nao espremer o titulo na vertical. */}
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-body-sm text-fg-muted">
+            <Badge tone={tone}>{label}</Badge>
             <span className="inline-flex items-center gap-1">
               <Icon size={13} />
               {MODALITY_LABELS[event.modality]}
@@ -124,8 +127,6 @@ export function EventRow({ event, onClick, onToggleDone, onCancel, onDelete }: P
             {event.projects?.name && <span>· {event.projects.name}</span>}
           </div>
         </div>
-
-        <Badge tone={tone}>{label}</Badge>
       </button>
 
       {/* Sprint 22.34 — menu inline pra cancel/delete (sem precisar abrir sheet). */}
