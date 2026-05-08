@@ -429,7 +429,6 @@ export function EditEventSheet({ open, event, onClose }: Props) {
                 >
                   Excluir
                 </Button>
-                <Button type="button" variant="ghost" onClick={onClose} className="ml-auto">Fechar</Button>
               </div>
             )}
           </div>

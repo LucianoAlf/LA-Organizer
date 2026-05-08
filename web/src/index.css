@@ -112,3 +112,43 @@
   }
 }
 
+/* ----------------------------------------------------------------------
+ * Sprint 22.34 — Scrollbar customizada (design system).
+ * Substitui o default nativo do Windows/Linux por uma barra fina e
+ * delicada, alinhada com a estetica premium do app.
+ * Firefox: scrollbar-width thin + scrollbar-color tokens.
+ * Chromium/Safari: ::-webkit-scrollbar.
+ * ----------------------------------------------------------------------*/
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(158, 158, 158, 0.3) transparent;
+}
+[data-theme='light'] * {
+  scrollbar-color: rgba(122, 122, 122, 0.35) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(158, 158, 158, 0.25);
+  border-radius: 3px;
+  transition: background 150ms ease;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(158, 158, 158, 0.45);
+}
+[data-theme='light'] ::-webkit-scrollbar-thumb {
+  background: rgba(122, 122, 122, 0.3);
+}
+[data-theme='light'] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(122, 122, 122, 0.5);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+

@@ -258,6 +258,61 @@ export function Hoje() {
     onSettled: () => qc.invalidateQueries({ queryKey: ['tasks'] }),
   });
 
+  // Sprint 22.34 — toggle done em event (igual task: status='done' <-> 'scheduled').
+  const toggleEventDone = useMutation({
+    mutationFn: async (event: CalendarEvent) => {
+      const next = event.status === 'done' ? 'scheduled' : 'done';
+      const { error } = await supabase
+        .from('events')
+        .update({ status: next })
+        .eq('id', event.id);
+      if (error) throw error;
+    },
+    onMutate: async (event) => {
+      const key = ['events', 'hoje', collaborator?.id, today] as const;
+      await qc.cancelQueries({ queryKey: ['events'] });
+      const prev = qc.getQueryData<CalendarEvent[]>(key);
+      qc.setQueryData<CalendarEvent[]>(key, (old) =>
+        (old ?? []).map(e => e.id === event.id
+          ? { ...e, status: e.status === 'done' ? 'scheduled' : 'done' } as CalendarEvent
+          : e),
+      );
+      return { prev, key };
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(ctx.key, ctx.prev);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['events'] }),
+  });
+
+  // Sprint 22.34 — cancel event inline (mantem historico).
+  const cancelEvent = useMutation({
+    mutationFn: async (event: CalendarEvent) => {
+      const { error } = await supabase.from('events').update({ status: 'cancelled' }).eq('id', event.id);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['events'] }),
+  });
+
+  // Sprint 22.34 — delete event inline (otimista).
+  const deleteEvent = useMutation({
+    mutationFn: async (event: CalendarEvent) => {
+      const { error } = await supabase.from('events').delete().eq('id', event.id);
+      if (error) throw error;
+    },
+    onMutate: async (event) => {
+      const key = ['events', 'hoje', collaborator?.id, today] as const;
+      await qc.cancelQueries({ queryKey: ['events'] });
+      const prev = qc.getQueryData<CalendarEvent[]>(key);
+      qc.setQueryData<CalendarEvent[]>(key, (old) => (old ?? []).filter(e => e.id !== event.id));
+      return { prev, key };
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(ctx.key, ctx.prev);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['events'] }),
+  });
+
   // Sprint 22.28 — delete inline na Hoje (otimista). RowMenu cuida do confirm.
   const deleteTask = useMutation({
     mutationFn: async (task: Task) => {
@@ -410,7 +465,14 @@ export function Hoje() {
             <CalendarClock size={14} /> Compromissos
           </div>
           {todayEvents.map(e => (
-            <EventRow key={e.id} event={e} onClick={setEditingEvent} />
+            <EventRow
+              key={e.id}
+              event={e}
+              onClick={setEditingEvent}
+              onToggleDone={(ev) => toggleEventDone.mutate(ev)}
+              onCancel={(ev) => cancelEvent.mutate(ev)}
+              onDelete={(ev) => deleteEvent.mutate(ev)}
+            />
           ))}
         </section>
       )}
