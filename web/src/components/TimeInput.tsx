@@ -37,12 +37,14 @@ function normalize(v: string): string {
 
 export function TimeInput({ value, onChange, invalid }: Props) {
   const [open, setOpen] = useState(false);
-  const [openUpward, setOpenUpward] = useState(false);
+  // Sprint 22.34e — posicao via fixed (escapa overflow do BottomSheet).
+  const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null);
   const [typed, setTyped] = useState(value);
 
   const wrapperRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
 
   // Sincroniza typed com value externo.
   useEffect(() => {
@@ -53,7 +55,10 @@ export function TimeInput({ value, onChange, invalid }: Props) {
   useEffect(() => {
     if (!open) return;
     function onDoc(e: MouseEvent) {
-      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+      const t = e.target as Node;
+      const inWrapper = wrapperRef.current?.contains(t);
+      const inPopover = popoverRef.current?.contains(t);
+      if (!inWrapper && !inPopover) {
         commitTyped();
         setOpen(false);
       }
@@ -63,12 +68,23 @@ export function TimeInput({ value, onChange, invalid }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, typed]);
 
-  // Decide direcao do popover ao abrir.
+  // Calcula posicao fixed do popover ao abrir.
   useLayoutEffect(() => {
-    if (!open || !triggerRef.current) return;
+    if (!open || !triggerRef.current) {
+      setPopoverPos(null);
+      return;
+    }
     const rect = triggerRef.current.getBoundingClientRect();
     const need = 280;
-    setOpenUpward(window.innerHeight - rect.bottom < need && rect.top > need);
+    const upward = window.innerHeight - rect.bottom < need && rect.top > need;
+    const top = upward ? rect.top - need - 4 : rect.bottom + 4;
+    const popoverWidth = 140;
+    let left = rect.left;
+    if (left + popoverWidth > window.innerWidth - 8) {
+      left = window.innerWidth - popoverWidth - 8;
+    }
+    if (left < 8) left = 8;
+    setPopoverPos({ top: Math.max(8, top), left });
   }, [open]);
 
   // Auto-scroll pra slot mais proximo do value atual ao abrir.
@@ -122,12 +138,11 @@ export function TimeInput({ value, onChange, invalid }: Props) {
         <Clock size={14} className="text-fg-muted shrink-0" />
         <span>{value || 'HH:MM'}</span>
       </button>
-      {open && (
+      {open && popoverPos && (
         <div
-          className={[
-            'absolute left-0 z-50 w-[140px] rounded-md border border-border bg-bg-surface shadow-soft overflow-hidden',
-            openUpward ? 'bottom-full mb-1' : 'top-full mt-1',
-          ].join(' ')}
+          ref={popoverRef}
+          style={{ position: 'fixed', top: popoverPos.top, left: popoverPos.left, width: 140, zIndex: 1000 }}
+          className="rounded-md border border-border bg-bg-surface shadow-soft overflow-hidden"
         >
           <div className="p-2 border-b border-border">
             <input

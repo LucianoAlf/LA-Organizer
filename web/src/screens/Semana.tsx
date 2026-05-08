@@ -22,11 +22,12 @@ import type { Task, CalendarEvent, Project } from '../types';
 type WeekTask = Task & { projects?: { name: string; category?: Project['category'] } | null };
 
 async function fetchWeekTasks(collabId: string, start: string, end: string): Promise<WeekTask[]> {
+  // Sprint 22.34e — Semana mostra trabalho + pessoal. Antes filtrava só work, mas
+  // tasks pessoais futuras ficavam invisíveis (Hoje é só hoje).
   const { data, error } = await supabase
     .from('tasks')
     .select('id, title, status, context, priority, category, due_date, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, projects(name, category)')
     .eq('assigned_to', collabId)
-    .eq('context', 'work')
     .neq('status', 'cancelled')
     .gte('due_date', start)
     .lte('due_date', end)
@@ -102,19 +103,19 @@ export function Semana() {
   }, [tasks, days]);
 
   const eventsByDay = useMemo(() => {
+    // Sprint 22.34e — Semana mostra trabalho + pessoal.
     const map = new Map<string, CalendarEvent[]>();
     for (const d of days) map.set(d, []);
     for (const e of events) {
-      if (e.context !== 'work') continue;
       const ymd = eventLocalYmd(e.start_at);
       if (map.has(ymd)) map.get(ymd)!.push(e);
     }
     return map;
   }, [events, days]);
 
-  const workEvents = events.filter(e => e.context === 'work' && e.status !== 'cancelled');
-  const totalWeek = tasks.length + workEvents.length;
-  const doneWeek = tasks.filter(t => t.status === 'done').length + workEvents.filter(e => e.status === 'done').length;
+  const activeEvents = events.filter(e => e.status !== 'cancelled');
+  const totalWeek = tasks.length + activeEvents.length;
+  const doneWeek = tasks.filter(t => t.status === 'done').length + activeEvents.filter(e => e.status === 'done').length;
   const pct = totalWeek ? Math.round((doneWeek / totalWeek) * 100) : 0;
   const isLoading = tLoading || eLoading;
 

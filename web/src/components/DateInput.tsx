@@ -68,12 +68,14 @@ function getCalendarDays(month: Date): Date[] {
 
 export function DateInput({ value, onChange, invalid }: Props) {
   const [open, setOpen] = useState(false);
-  const [openUpward, setOpenUpward] = useState(false);
+  // Sprint 22.34e — posicionamento via fixed (escapa do overflow do BottomSheet).
+  const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null);
   const initialView = parseYmd(value) ?? new Date();
   const [viewMonth, setViewMonth] = useState<Date>(initialView);
 
   const wrapperRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
 
   // Sincroniza viewMonth quando value muda externamente.
   useEffect(() => {
@@ -85,20 +87,32 @@ export function DateInput({ value, onChange, invalid }: Props) {
   useEffect(() => {
     if (!open) return;
     function onDoc(e: MouseEvent) {
-      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      const t = e.target as Node;
+      const inWrapper = wrapperRef.current?.contains(t);
+      const inPopover = popoverRef.current?.contains(t);
+      if (!inWrapper && !inPopover) setOpen(false);
     }
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
   }, [open]);
 
-  // Decide direcao do popover ao abrir.
+  // Calcula posicao fixed do popover ao abrir (relativa ao viewport).
   useLayoutEffect(() => {
-    if (!open || !triggerRef.current) return;
+    if (!open || !triggerRef.current) {
+      setPopoverPos(null);
+      return;
+    }
     const rect = triggerRef.current.getBoundingClientRect();
     const need = 360;
-    setOpenUpward(window.innerHeight - rect.bottom < need && rect.top > need);
+    const upward = window.innerHeight - rect.bottom < need && rect.top > need;
+    const top = upward ? rect.top - need - 4 : rect.bottom + 4;
+    const popoverWidth = 280;
+    let left = rect.left;
+    if (left + popoverWidth > window.innerWidth - 8) {
+      left = window.innerWidth - popoverWidth - 8;
+    }
+    if (left < 8) left = 8;
+    setPopoverPos({ top: Math.max(8, top), left });
   }, [open]);
 
   function pick(d: Date) {
@@ -126,12 +140,11 @@ export function DateInput({ value, onChange, invalid }: Props) {
         <Calendar size={14} className="text-fg-muted shrink-0" />
         <span>{value ? formatBR(value) : 'DD/MM/AAAA'}</span>
       </button>
-      {open && (
+      {open && popoverPos && (
         <div
-          className={[
-            'absolute left-0 z-50 w-[280px] p-3 rounded-md border border-border bg-bg-surface shadow-soft',
-            openUpward ? 'bottom-full mb-1' : 'top-full mt-1',
-          ].join(' ')}
+          ref={popoverRef}
+          style={{ position: 'fixed', top: popoverPos.top, left: popoverPos.left, width: 280, zIndex: 1000 }}
+          className="p-3 rounded-md border border-border bg-bg-surface shadow-soft"
         >
           <div className="flex items-center justify-between mb-2">
             <button
