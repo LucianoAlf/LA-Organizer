@@ -25,6 +25,8 @@ interface Props {
   onToggle?: (task: Task) => void;
   /** Quando true, esconde o checkbox e bloqueia interação. Para visões coord/director em PessoaDetalhe. */
   readOnly?: boolean;
+  /** Sprint 22.30 — Editar tarefa completo (titulo + contexto + datetime + Eisenhower). */
+  onEdit?: (task: Task) => void;
   /** Sprint 22.28 — Reagendar tarefa (abre RescheduleSheet no parent). */
   onReschedule?: (task: Task) => void;
   /** Sprint 22.28 — Excluir tarefa (RowMenu confirm inline cuida do "tem certeza"). */
@@ -102,7 +104,7 @@ function fmtSuffix(rel: string, dayIso: string): string {
 }
 
 export function TaskRow({
-  task, onToggle, readOnly, onReschedule, onDelete,
+  task, onToggle, readOnly, onEdit, onReschedule, onDelete,
   sortableRef, sortableStyle, sortableAttributes, sortableListeners, isDragging,
 }: Props) {
   const { tone, label } = statusOf(task);
@@ -128,7 +130,7 @@ export function TaskRow({
       ].join(' ')}
       {...(sortableAttributes ?? {})}
     >
-      {sortableListeners && !readOnly && (
+      {sortableListeners && (
         <span
           aria-label="Mover"
           className="mt-1 text-fg-muted/40 cursor-grab shrink-0 self-start"
@@ -137,12 +139,14 @@ export function TaskRow({
           <GripVertical size={16} />
         </span>
       )}
-      {!readOnly && (
+      {/* Sprint 22.30 — checkbox aparece sempre que onToggle for passado, mesmo
+          em delegadas (creator pode dar baixa se assignee esqueceu). */}
+      {onToggle && (
         <TaskCheckbox
           done={isDone}
           overdue={isOverdue}
           size="md"
-          onClick={() => onToggle?.(task)}
+          onClick={() => onToggle(task)}
         />
       )}
 
@@ -205,8 +209,9 @@ export function TaskRow({
       {/* Sprint 22.29 (Bucket 4) — menu independente de readOnly: em delegadas
           o checkbox some (readOnly) mas reagendar/excluir continuam disponiveis
           pra quem delegou (created_by). */}
-      {(onReschedule || onDelete) && (() => {
+      {(onEdit || onReschedule || onDelete) && (() => {
         const items: MenuItem[] = [];
+        if (onEdit) items.push({ label: 'Editar', onClick: () => onEdit(task) });
         if (onReschedule) items.push({ label: 'Reagendar', onClick: () => onReschedule(task) });
         if (onDelete) items.push({
           label: 'Excluir tarefa',

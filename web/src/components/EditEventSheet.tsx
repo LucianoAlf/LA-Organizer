@@ -6,6 +6,7 @@ import { BottomSheet } from './BottomSheet';
 import { Button } from './Button';
 import { CustomSelect } from './CustomSelect';
 import { DateTimeInput } from './DateTimeInput';
+import { EisenhowerPicker } from './EisenhowerPicker';
 import { useEventCategories } from '../hooks/useEventCategories';
 import type { CalendarEvent } from '../types';
 
@@ -38,6 +39,7 @@ export function EditEventSheet({ open, event, onClose }: Props) {
   const [endAt, setEndAt] = useState('');
   const [locationText, setLocationText] = useState('');
   const [meetingUrl, setMeetingUrl] = useState('');
+  const [quadrant, setQuadrant] = useState<number | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -52,6 +54,7 @@ export function EditEventSheet({ open, event, onClose }: Props) {
       setEndAt(isoToLocalInput(event.end_at));
       setLocationText(event.location_text || '');
       setMeetingUrl(event.meeting_url || '');
+      setQuadrant(event.eisenhower_quadrant ?? null);
       setValidationError(null);
       setConfirmCancel(false);
       setConfirmDelete(false);
@@ -116,6 +119,7 @@ export function EditEventSheet({ open, event, onClose }: Props) {
       end_at: localInputToIso(endAt),
       location_text: locationText.trim() ? locationText.trim().slice(0, 200) : null,
       meeting_url: isOnlineLike && meetingUrl.trim() ? meetingUrl.trim().slice(0, 500) : null,
+      eisenhower_quadrant: quadrant,
     });
   };
 
@@ -227,6 +231,14 @@ export function EditEventSheet({ open, event, onClose }: Props) {
               />
             </label>
           )}
+
+          <div>
+            <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5 flex items-baseline gap-2">
+              <span>Prioridade</span>
+              <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">opcional</span>
+            </div>
+            <EisenhowerPicker value={quadrant} onChange={setQuadrant} />
+          </div>
 
           {update.error && (
             <p role="alert" className="text-body-sm text-danger">

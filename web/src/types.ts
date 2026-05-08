@@ -160,6 +160,8 @@ export interface CalendarEvent {
   meeting_url: string | null;
   project_id: string | null;
   status: EventStatus;
+  /** Sprint 22.30 — prioridade Eisenhower (1-4) opcional. NULL = sem classificar. */
+  eisenhower_quadrant: number | null;
   created_by: string | null;
   source: 'manual' | 'tom' | 'imported';
   created_at: string;

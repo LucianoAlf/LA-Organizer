@@ -24,6 +24,7 @@ import { Button } from '../components/Button';
 import { Fab } from '../components/Fab';
 import { QuickCreateSheet } from '../components/QuickCreateSheet';
 import { EditEventSheet } from '../components/EditEventSheet';
+import { EditTaskSheet } from '../components/EditTaskSheet';
 import { RescheduleSheet } from '../components/RescheduleSheet';
 import type { Task, TaskContext, CalendarEvent, ActionType } from '../types';
 import { ACTION_TYPE_LABELS, ACTION_TYPE_VISUAL } from '../types';
@@ -114,6 +115,7 @@ export function Hoje() {
   const [actionFilter, setActionFilter] = useState<ActionType | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [reschedulingTask, setReschedulingTask] = useState<Task | null>(null);
   const [doneOpen, setDoneOpen] = useState(false);
 
@@ -467,8 +469,8 @@ export function Hoje() {
               </div>
               <SortableTaskList
                 tasks={overdue}
-                tabIsDelegated={tab === 'delegated'}
                 onToggle={(task) => toggleTask.mutate(task)}
+                onEdit={setEditingTask}
                 onReschedule={setReschedulingTask}
                 onDelete={(task) => deleteTask.mutate(task)}
                 onReorder={(ids) => reorderTasks.mutate(ids)}
@@ -482,8 +484,8 @@ export function Hoje() {
               </div>
               <SortableTaskList
                 tasks={dueToday}
-                tabIsDelegated={tab === 'delegated'}
                 onToggle={(task) => toggleTask.mutate(task)}
+                onEdit={setEditingTask}
                 onReschedule={setReschedulingTask}
                 onDelete={(task) => deleteTask.mutate(task)}
                 onReorder={(ids) => reorderTasks.mutate(ids)}
@@ -529,6 +531,7 @@ export function Hoje() {
       <QuickCreateSheet open={sheetOpen} onClose={() => setSheetOpen(false)} defaultDueDate={today} />
       <EditEventSheet open={Boolean(editingEvent)} event={editingEvent} onClose={() => setEditingEvent(null)} />
       <RescheduleSheet open={Boolean(reschedulingTask)} task={reschedulingTask} onClose={() => setReschedulingTask(null)} />
+      <EditTaskSheet open={Boolean(editingTask)} task={editingTask} onClose={() => setEditingTask(null)} />
     </div>
   );
 }
@@ -537,15 +540,15 @@ export function Hoje() {
 // tem seu proprio DndContext. Reorder so DENTRO do grupo (nao move task entre).
 function SortableTaskList({
   tasks,
-  tabIsDelegated,
   onToggle,
+  onEdit,
   onReschedule,
   onDelete,
   onReorder,
 }: {
   tasks: Task[];
-  tabIsDelegated: boolean;
   onToggle: (task: Task) => void;
+  onEdit: (task: Task) => void;
   onReschedule: (task: Task) => void;
   onDelete: (task: Task) => void;
   onReorder: (orderedIds: string[]) => void;
@@ -570,8 +573,8 @@ function SortableTaskList({
             <SortableTaskItem
               key={t.id}
               task={t}
-              tabIsDelegated={tabIsDelegated}
               onToggle={onToggle}
+              onEdit={onEdit}
               onReschedule={onReschedule}
               onDelete={onDelete}
             />
@@ -584,14 +587,14 @@ function SortableTaskList({
 
 function SortableTaskItem({
   task,
-  tabIsDelegated,
   onToggle,
+  onEdit,
   onReschedule,
   onDelete,
 }: {
   task: Task;
-  tabIsDelegated: boolean;
   onToggle: (task: Task) => void;
+  onEdit: (task: Task) => void;
   onReschedule: (task: Task) => void;
   onDelete: (task: Task) => void;
 }) {
@@ -602,13 +605,11 @@ function SortableTaskItem({
     transform: CSS.Transform.toString(transform),
     transition,
   };
-  // Sprint 22.29 (Bucket 4) — em delegadas, sem checkbox (so o assignee marca
-  // feita) mas COM reagendar/excluir (created_by mexe).
   return (
     <TaskRow
       task={task}
-      onToggle={tabIsDelegated ? undefined : onToggle}
-      readOnly={tabIsDelegated}
+      onToggle={onToggle}
+      onEdit={onEdit}
       onReschedule={onReschedule}
       onDelete={onDelete}
       sortableRef={setNodeRef}

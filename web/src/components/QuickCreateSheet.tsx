@@ -10,6 +10,7 @@ import { CustomSelect } from './CustomSelect';
 import { DateInput } from './DateInput';
 import { DateTimeInput } from './DateTimeInput';
 import { TimeInput } from './TimeInput';
+import { EisenhowerPicker } from './EisenhowerPicker';
 import { useEventCategories } from '../hooks/useEventCategories';
 import {
   MODALITY_LABELS,
@@ -62,6 +63,8 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
   const [modality, setModality] = useState<EventModality>('presencial');
   const [locationText, setLocationText] = useState('');
   const [meetingUrl, setMeetingUrl] = useState('');
+  // Sprint 22.30 — compromisso tambem ganhou Eisenhower opcional.
+  const [eventQuadrant, setEventQuadrant] = useState<number | null>(null);
 
   // Sincroniza default de categoria quando lista carrega tardiamente.
   useEffect(() => {
@@ -86,6 +89,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
       setModality('presencial');
       setLocationText('');
       setMeetingUrl('');
+      setEventQuadrant(null);
     }
   }, [open, today, defaultCategoryId]);
 
@@ -154,6 +158,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
         meeting_url: (modality === 'online' || modality === 'hibrido') && meetingUrl.trim()
           ? meetingUrl.trim()
           : null,
+        eisenhower_quadrant: eventQuadrant,
       };
       const { error: e } = await supabase.from('events').insert(payload);
       if (e) throw e;
@@ -323,34 +328,9 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
             <div>
               <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5 flex items-baseline gap-2">
                 <span>Prioridade</span>
-                <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">opcional · matriz Eisenhower</span>
+                <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">opcional</span>
               </div>
-              <div className="flex flex-wrap gap-2">
-                <QuadrantChip
-                  active={taskQuadrant === 1}
-                  tone="danger"
-                  onClick={() => setTaskQuadrant(taskQuadrant === 1 ? null : 1)}
-                  label="Urgente + importante"
-                />
-                <QuadrantChip
-                  active={taskQuadrant === 2}
-                  tone="warning"
-                  onClick={() => setTaskQuadrant(taskQuadrant === 2 ? null : 2)}
-                  label="Importante"
-                />
-                <QuadrantChip
-                  active={taskQuadrant === 3}
-                  tone="info"
-                  onClick={() => setTaskQuadrant(taskQuadrant === 3 ? null : 3)}
-                  label="Urgente"
-                />
-                <QuadrantChip
-                  active={taskQuadrant === 4}
-                  tone="neutral"
-                  onClick={() => setTaskQuadrant(taskQuadrant === 4 ? null : 4)}
-                  label="Nem um nem outro"
-                />
-              </div>
+              <EisenhowerPicker value={taskQuadrant} onChange={setTaskQuadrant} />
               <div className="text-body-sm text-fg-muted mt-1.5">
                 {taskQuadrant === null
                   ? 'Sem prioridade · TOM pode classificar depois.'
@@ -496,6 +476,14 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
                 />
               </label>
             )}
+
+            <div>
+              <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5 flex items-baseline gap-2">
+                <span>Prioridade</span>
+                <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">opcional</span>
+              </div>
+              <EisenhowerPicker value={eventQuadrant} onChange={setEventQuadrant} />
+            </div>
           </>
         )}
 
@@ -510,46 +498,6 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
         </div>
       </form>
     </BottomSheet>
-  );
-}
-
-// Sprint 22.29 (Bucket 3) — chip pra escolher quadrante Eisenhower no QuickCreate.
-function QuadrantChip({
-  active,
-  tone,
-  onClick,
-  label,
-}: {
-  active: boolean;
-  tone: 'danger' | 'warning' | 'info' | 'neutral';
-  onClick: () => void;
-  label: string;
-}) {
-  const dot = {
-    danger: 'bg-danger',
-    warning: 'bg-warning',
-    info: 'bg-info',
-    neutral: 'bg-fg-muted/30',
-  }[tone];
-  const activeRing = {
-    danger: 'border-danger bg-danger/10',
-    warning: 'border-warning bg-warning/10',
-    info: 'border-info bg-info/10',
-    neutral: 'border-fg-muted/40 bg-bg-elevated',
-  }[tone];
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={[
-        'inline-flex items-center gap-2 px-3 h-9 rounded-md border text-body-sm transition-colors focus-ring',
-        active ? activeRing : 'border-border bg-bg-subtle text-fg-muted hover:text-fg',
-      ].join(' ')}
-    >
-      <span aria-hidden className={`inline-block h-2 w-2 rounded-full ${dot}`} />
-      <span className={active ? 'text-fg font-semibold' : ''}>{label}</span>
-    </button>
   );
 }
 
