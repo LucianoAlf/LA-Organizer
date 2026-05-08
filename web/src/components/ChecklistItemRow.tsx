@@ -1,32 +1,42 @@
 // web/src/components/ChecklistItemRow.tsx
-// Sprint 22.35 — Polish + ações: nota inline, criar tarefa.
-// - Toggle continua sendo a ação principal (botão grande clicável)
-// - Botões secundários: nota (MessageSquare) e criar tarefa (ListTodo)
-// - Nota expande textarea inline abaixo da linha; salva via onSaveNote
-// - Criar tarefa: ação direta (parent confirma via toast)
-import { useState, useEffect } from 'react'
-import { MessageSquarePlus, MessageSquare, ListTodo, Check, X } from 'lucide-react'
+// Sprint 22.36 — Refactor pro design system de TaskRow:
+//  - Drag handle ⋮⋮ à esquerda (useSortable)
+//  - Checkbox circular grande, click toggle
+//  - ⋮ menu por item: Adicionar/editar nota, Criar tarefa, Apagar (só ad-hoc)
+//  - Nota inline expandível abaixo
+//  - Ad-hoc badge "+" pra diferenciar visualmente
+import { useEffect, useState } from 'react'
+import { useSortable } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+import { GripVertical, Check, X } from 'lucide-react'
+import { RowMenu, type MenuItem } from './RowMenu'
 
 interface Props {
+  uid: string
   index: number
   name: string
   done: boolean
   note?: string
+  isAdHoc: boolean
   readonly: boolean
   onToggle: () => void
   onSaveNote?: (note: string) => void
   onCreateTask?: () => void
+  onDelete?: () => void
 }
 
 export function ChecklistItemRow({
+  uid,
   index,
   name,
   done,
   note = '',
+  isAdHoc,
   readonly,
   onToggle,
   onSaveNote,
   onCreateTask,
+  onDelete,
 }: Props) {
   const [editingNote, setEditingNote] = useState(false)
   const [draft, setDraft] = useState(note)
@@ -37,20 +47,74 @@ export function ChecklistItemRow({
 
   const hasNote = !!note.trim()
 
-  function handleSave() {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: uid, disabled: readonly })
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+  }
+
+  function handleSaveNote() {
     if (!onSaveNote) return
     onSaveNote(draft.trim())
     setEditingNote(false)
   }
 
-  function handleCancel() {
+  function handleCancelNote() {
     setDraft(note)
     setEditingNote(false)
   }
 
+  // Build row menu
+  const menu: MenuItem[] = []
+  if (onSaveNote) {
+    menu.push({
+      label: hasNote ? 'Editar observação' : 'Adicionar observação',
+      onClick: () => setEditingNote(true),
+    })
+  }
+  if (onCreateTask && !readonly) {
+    menu.push({
+      label: 'Criar tarefa',
+      onClick: onCreateTask,
+    })
+  }
+  if (onDelete && isAdHoc && !readonly) {
+    menu.push({
+      label: 'Apagar item',
+      onClick: onDelete,
+      danger: true,
+      confirm: 'Apagar esse item ad-hoc?',
+    })
+  }
+
   return (
-    <div className="rounded-lg">
+    <div ref={setNodeRef} style={style} className="rounded-lg">
       <div className="flex items-center gap-1">
+        {/* Drag handle (só quando não readonly) */}
+        {!readonly ? (
+          <button
+            type="button"
+            {...attributes}
+            {...listeners}
+            className="touch-manipulation cursor-grab active:cursor-grabbing p-1 text-fg-muted hover:text-fg flex-shrink-0 focus-ring rounded-sm"
+            aria-label="Reordenar item"
+          >
+            <GripVertical size={14} />
+          </button>
+        ) : (
+          <span className="w-6 flex-shrink-0" aria-hidden />
+        )}
+
+        {/* Toggle button (checkbox + label) */}
         <button
           type="button"
           className={[
@@ -81,60 +145,41 @@ export function ChecklistItemRow({
               </svg>
             )}
           </span>
-          <span
-            className={[
-              'text-body-sm',
-              done ? 'line-through text-fg-muted' : 'text-fg',
-            ].join(' ')}
-          >
-            {index}. {name}
+          <span className="flex-1 min-w-0">
+            <span
+              className={[
+                'text-body-sm',
+                done ? 'line-through text-fg-muted' : 'text-fg',
+              ].join(' ')}
+            >
+              {index}. {name}
+            </span>
+            {isAdHoc && (
+              <span className="ml-2 inline-flex items-center text-[10px] px-1.5 py-0.5 rounded bg-tom/10 text-tom font-medium">
+                +ad-hoc
+              </span>
+            )}
           </span>
         </button>
 
-        {/* Action buttons (sempre visíveis, mesmo readonly só não dispara) */}
-        <div className="flex items-center gap-0.5 flex-shrink-0">
-          {onSaveNote && (
-            <button
-              type="button"
-              onClick={() => setEditingNote(v => !v)}
-              disabled={readonly && !hasNote}
-              className={[
-                'p-2 rounded-md transition-colors',
-                hasNote ? 'text-tom' : 'text-fg-muted',
-                readonly && !hasNote
-                  ? 'opacity-40 cursor-not-allowed'
-                  : 'hover:bg-bg-app hover:text-fg',
-              ].join(' ')}
-              aria-label={hasNote ? 'Ver/editar observação' : 'Adicionar observação'}
-              title={hasNote ? 'Observação registrada' : 'Adicionar observação'}
-            >
-              {hasNote ? <MessageSquare size={16} /> : <MessageSquarePlus size={16} />}
-            </button>
-          )}
-          {onCreateTask && !readonly && (
-            <button
-              type="button"
-              onClick={onCreateTask}
-              className="p-2 rounded-md text-fg-muted hover:bg-bg-app hover:text-fg transition-colors"
-              aria-label="Criar tarefa a partir deste item"
-              title="Criar tarefa a partir deste item"
-            >
-              <ListTodo size={16} />
-            </button>
-          )}
-        </div>
+        {/* RowMenu (always rendered if any menu item) */}
+        {menu.length > 0 && (
+          <div className="flex-shrink-0">
+            <RowMenu items={menu} />
+          </div>
+        )}
       </div>
 
-      {/* Note display (read-only, quando não está editando) */}
+      {/* Note display */}
       {hasNote && !editingNote && (
-        <div className="ml-10 mr-2 mb-1 -mt-0.5 px-2 py-1 rounded-md bg-bg-app/60 border-l-2 border-tom">
+        <div className="ml-12 mr-2 mb-1 -mt-0.5 px-2 py-1 rounded-md bg-bg-app/60 border-l-2 border-tom">
           <p className="text-caption text-fg-secondary whitespace-pre-wrap">{note}</p>
         </div>
       )}
 
-      {/* Note editor */}
+      {/* Note editor inline */}
       {editingNote && (
-        <div className="ml-10 mr-2 mb-2 mt-1 space-y-2">
+        <div className="ml-12 mr-2 mb-2 mt-1 space-y-2">
           <textarea
             value={draft}
             onChange={e => setDraft(e.target.value)}
@@ -148,7 +193,7 @@ export function ChecklistItemRow({
             <div className="flex justify-end gap-1">
               <button
                 type="button"
-                onClick={handleCancel}
+                onClick={handleCancelNote}
                 className="p-1.5 rounded-md text-fg-muted hover:bg-bg-app hover:text-fg transition-colors"
                 aria-label="Cancelar"
               >
@@ -156,7 +201,7 @@ export function ChecklistItemRow({
               </button>
               <button
                 type="button"
-                onClick={handleSave}
+                onClick={handleSaveNote}
                 className="p-1.5 rounded-md text-success hover:bg-bg-app transition-colors"
                 aria-label="Salvar observação"
               >

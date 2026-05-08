@@ -290,6 +290,22 @@ export interface OpChecklistItemCompletion {
   late: boolean
   /** Sprint 22.35 — observação capturada pelo TOM (skill add_note) ou pelo PWA. */
   notes?: string | null
+  /** Sprint 22.36 — reorder per-user. NULL = usa template default sort_order. */
+  user_sort_order?: number | null
+}
+
+/** Sprint 22.36 — Item ad-hoc criado pelo colaborador na instância de checklist do dia.
+ * Não polui o template — vive só nessa completion específica. */
+export interface OpChecklistCompletionExtraItem {
+  id: string
+  completion_id: string
+  description: string
+  is_checked: boolean
+  notes?: string | null
+  sort_order: number
+  user_sort_order?: number | null
+  created_at: string
+  created_by?: string | null
 }
 
 export interface OpChecklistCompletion {
@@ -299,11 +315,17 @@ export interface OpChecklistCompletion {
   reference_date: string       // "YYYY-MM-DD"
   dispatched_at: string | null
   completed_at: string | null
+  /** Sprint 22.36 — cobrança disparada pelo dispatcher quando janela 6h vence. */
+  reminded_at?: string | null
+  reminder_replied?: boolean
+  escalated_at?: string | null
   // joins
   op_checklists: OpChecklistTemplate & {
     op_checklist_items: OpChecklistItem[]
   }
   op_checklist_item_completions: OpChecklistItemCompletion[]
+  /** Sprint 22.36 — items ad-hoc criados pelo colab nessa instância. */
+  op_checklist_completion_extra_items?: OpChecklistCompletionExtraItem[]
 }
 
 /** Returns true if the checklist window (dispatched_at + 6h) has closed */

@@ -841,4 +841,118 @@ router.get('/internal/metrics', requireInternalSecret, async (req, res) => {
   res.json(out);
 });
 
+// Sprint 22.36 Fatia 6 — Checklist celebra + escalação ===========================
+
+// Helper: encontra o gerente responsável pela unidade.
+// 1. Coordinator ativo dessa unidade
+// 2. Fallback: director ativo (qualquer)
+async function findUnitManager(unit) {
+  if (unit && unit !== 'all') {
+    const { data: coord } = await supabase
+      .from('collaborators')
+      .select('id, full_name, phone')
+      .eq('role', 'coordinator')
+      .eq('unit', unit)
+      .eq('is_active', true)
+      .limit(1)
+      .maybeSingle();
+    if (coord && coord.phone) return coord;
+  }
+  const { data: director } = await supabase
+    .from('collaborators')
+    .select('id, full_name, phone')
+    .eq('role', 'director')
+    .eq('is_active', true)
+    .limit(1)
+    .maybeSingle();
+  return director && director.phone ? director : null;
+}
+
+// Sprint 22.36 — Fluxo de celebração: 2 Zaps quando checklist fecha 100%.
+// Idempotente via marker_logs CHECKLIST_COMPLETED.
+async function runChecklistCompletedFlow(completionId) {
+  const dedupeKey = `checklist-completed:${completionId}`;
+  const { data: prior } = await supabase
+    .from('marker_logs')
+    .select('id')
+    .eq('marker_type', 'CHECKLIST_COMPLETED')
+    .eq('raw_excerpt', dedupeKey)
+    .limit(1);
+  if (prior && prior.length > 0) {
+    return { status: 'already_notified', sent: 0 };
+  }
+
+  const { data: completion, error: fetchErr } = await supabase
+    .from('op_checklist_completions')
+    .select('id, completed_at, collaborator_id, op_checklists(name, unit)')
+    .eq('id', completionId)
+    .single();
+  if (fetchErr || !completion) {
+    console.warn('[ChecklistCompleted] completion not found:', completionId);
+    return { status: 'not_found', sent: 0 };
+  }
+
+  const { data: collab } = await supabase
+    .from('collaborators')
+    .select('id, full_name, phone, is_active, unit')
+    .eq('id', completion.collaborator_id)
+    .single();
+
+  const tplName = completion.op_checklists?.name || 'checklist';
+  const tplUnit = completion.op_checklists?.unit || (collab && collab.unit) || 'all';
+  const manager = await findUnitManager(tplUnit);
+
+  let sent = 0;
+
+  if (collab && collab.phone && collab.is_active) {
+    const managerName = manager && manager.id !== collab.id
+      ? (manager.full_name || '').split(' ')[0]
+      : null;
+    const body = managerName
+      ? `🎉 Fechado! Checklist *${tplName}* 100%. Mandei aviso pro ${managerName}.`
+      : `🎉 Fechado! Checklist *${tplName}* 100%. Boa!`;
+    try {
+      await whatsapp.sendMessage(collab.phone, body);
+      sent++;
+    } catch (e) {
+      console.error('[ChecklistCompleted] WA send (collab) err:', e.message);
+    }
+  }
+
+  if (manager && manager.phone && manager.id !== completion.collaborator_id) {
+    const body =
+      `✅ *${(collab && collab.full_name) || 'Colaborador'}* fechou o checklist ` +
+      `*${tplName}*${tplUnit && tplUnit !== 'all' ? ` na unidade *${tplUnit}*` : ''}. 100%, sem pendência.`;
+    try {
+      await whatsapp.sendMessage(manager.phone, body);
+      sent++;
+    } catch (e) {
+      console.error('[ChecklistCompleted] WA send (manager) err:', e.message);
+    }
+  }
+
+  await supabase.from('marker_logs').insert({
+    marker_type: 'CHECKLIST_COMPLETED',
+    result: 'executed',
+    reason: `sent=${sent} unit=${tplUnit}`,
+    raw_excerpt: dedupeKey,
+  });
+
+  return { status: 'sent', sent };
+}
+
+router.post('/internal/checklist-completed', requireInternalSecret, async (req, res) => {
+  const completionId = String(req.body?.completion_id || '').trim();
+  if (!completionId) return res.status(400).json({ error: 'missing_completion_id' });
+  try {
+    const out = await runChecklistCompletedFlow(completionId);
+    res.json(out);
+  } catch (err) {
+    console.error('[InternalAPI] checklist-completed err:', err.message);
+    res.status(500).json({ error: 'internal_error', message: err.message });
+  }
+});
+
 module.exports = router;
+module.exports.runChecklistCompletedFlow = runChecklistCompletedFlow;
+module.exports.findUnitManager = findUnitManager;

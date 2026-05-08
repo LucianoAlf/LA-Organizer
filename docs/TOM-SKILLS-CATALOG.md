@@ -187,6 +187,18 @@ Em dúvida, fallback para `checklist-tarefas` (cria task com `remind_at` se for 
 - interpreta preenchimento parcial ou total
 - emite `<<CHECKLIST_ACTION>>` quando necessário
 
+**Reforços Sprint 22.36:**
+- Meta agora é sempre 100% (não 80%). Auto-complete só dispara em `pct === 100`.
+- `applyChecklistAction` recalcula progresso somando items do template + ad-hoc do PWA (`op_checklist_completion_extra_items`).
+- Quando colab fecha 100% via WhatsApp, engine chama `runChecklistCompletedFlow(completionId)` (helper exportado de `internal-api.js`) que dispara 2 Zaps idempotentes via `marker_logs` `CHECKLIST_COMPLETED`:
+  - pro colab: `🎉 Fechado! Checklist *X* 100%. Mandei aviso pro <gerente>.`
+  - pro gerente da unidade: `✅ <colab> fechou *X* na unidade *X*. 100%, sem pendência.`
+- Quando `reminded_at IS NOT NULL` (cobrança disparada pelo dispatcher) e colab responde via marker, engine seta `reminder_replied = true` automaticamente — cancela escalação.
+- Dispatcher `checkChecklistEscalations` (todo tick, 8h-22h BRT):
+  - Fase 1 — janela 6h vence sem 100%: cobra colab 1x ("Oi X, faltam Y itens..."), marca `reminded_at`.
+  - Fase 2 — 20min sem resposta: escala pro gerente da unidade ("⚠️ X não fechou..."), marca `escalated_at`.
+- Helper `findUnitManager(unit)`: coordinator ativo da unidade → fallback director ativo.
+
 ---
 
 ## 7. Integração Emusys

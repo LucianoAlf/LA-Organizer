@@ -127,6 +127,27 @@ export async function notifyTaskUpdated(
   }
 }
 
+// Sprint 22.36 Fatia 6 — notifica TOM pra disparar celebração quando user fecha
+// checklist em 100%. Backend manda 2 Zaps: pro próprio user (confete) e pro
+// gerente da unidade (confirmação de fechamento). Idempotente via marker_logs.
+export async function notifyChecklistCompleted(completionId: string): Promise<NotifyResult> {
+  if (!INTERNAL_SECRET) return { ok: false, reason: 'no_secret' };
+  try {
+    const r = await fetch(`${TOM_BASE}/internal/checklist-completed`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-secret': INTERNAL_SECRET },
+      body: JSON.stringify({ completion_id: completionId }),
+    });
+    if (!r.ok) return { ok: false, reason: `http_${r.status}` };
+    const json = await r.json().catch(() => ({}));
+    return { ok: true, status: r.status, sent: typeof json.sent === 'number' ? json.sent : undefined };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn(`[tomEngine] checklist-completed notify falhou: ${msg}`);
+    return { ok: false, reason: msg };
+  }
+}
+
 // Sprint 22.33 — notifica TOM pra disparar WhatsApp pra cada participant de um
 // evento (so participants com notified_at IS NULL — idempotente p/ edicao).
 export async function notifyEventInvites(eventId: string): Promise<NotifyResult> {

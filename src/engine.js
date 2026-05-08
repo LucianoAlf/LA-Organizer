@@ -401,11 +401,11 @@ function parseChecklistActionMarker(text) {
 async function applyChecklistAction(collaborator, parsed) {
   const { completion_id, items, channel } = parsed;
 
-  // 1. Busca completion + checklist (threshold)
+  // 1. Busca completion + checklist (threshold + cobranca state Sprint 22.36)
   // NOTE: real column is 'checklist_id', not 'template_id'
   const { data: completion, error: fetchErr } = await supabase
     .from('op_checklist_completions')
-    .select('id, dispatched_at, completed_at, checklist_id, op_checklists(completion_threshold)')
+    .select('id, dispatched_at, completed_at, checklist_id, reminded_at, reminder_replied, op_checklists(completion_threshold)')
     .eq('id', completion_id)
     .eq('collaborator_id', collaborator.id)
     .single();
@@ -441,31 +441,69 @@ async function applyChecklistAction(collaborator, parsed) {
     if (error) console.warn(`[ChecklistAction] upsert item ${item.item_id}:`, error.message);
   }
 
-  // 4. Recalcular progresso
+  // 4. Recalcular progresso (template + ad-hoc Sprint 22.36)
   // NOTE: real column is 'checklist_id', not 'template_id'
-  const { count: totalCount } = await supabase
+  const { count: templateTotal } = await supabase
     .from('op_checklist_items')
     .select('id', { count: 'exact', head: true })
     .eq('checklist_id', completion.checklist_id);
 
-  const { count: doneCount } = await supabase
+  const { count: extraTotal } = await supabase
+    .from('op_checklist_completion_extra_items')
+    .select('id', { count: 'exact', head: true })
+    .eq('completion_id', completion_id);
+
+  const { count: templateDone } = await supabase
     .from('op_checklist_item_completions')
     .select('id', { count: 'exact', head: true })
     .eq('completion_id', completion_id)
     .eq('is_checked', true);
 
-  const threshold = completion.op_checklists?.completion_threshold ?? 80;
-  const pct = totalCount > 0 ? Math.round(((doneCount ?? 0) / totalCount) * 100) : 0;
+  const { count: extraDone } = await supabase
+    .from('op_checklist_completion_extra_items')
+    .select('id', { count: 'exact', head: true })
+    .eq('completion_id', completion_id)
+    .eq('is_checked', true);
 
-  // 5. Marcar completed_at se threshold atingido
+  const totalCount = (templateTotal ?? 0) + (extraTotal ?? 0);
+  const doneCount = (templateDone ?? 0) + (extraDone ?? 0);
+
+  const threshold = completion.op_checklists?.completion_threshold ?? 100;
+  const pct = totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0;
+
+  // 5. Sprint 22.36 Fatia 6 — atualizar estado de cobrança/celebração
+  const updates = {};
+  // 5a. Marcar completed_at se threshold atingido (e ainda não completed)
+  let justCompleted = false;
   if (pct >= threshold && !completion.completed_at) {
+    updates.completed_at = now.toISOString();
+    justCompleted = true;
+  }
+  // 5b. Sprint 22.36 — colab respondeu cobrança? Cancela escalação.
+  if (completion.reminded_at && !completion.reminder_replied) {
+    updates.reminder_replied = true;
+  }
+  if (Object.keys(updates).length > 0) {
     await supabase
       .from('op_checklist_completions')
-      .update({ completed_at: now.toISOString() })
+      .update(updates)
       .eq('id', completion_id);
   }
 
-  return { ok: true, pct, doneCount: doneCount ?? 0, totalCount: totalCount ?? 0, isLate, threshold };
+  // 5c. Sprint 22.36 — Disparar celebração (pro user + gerente da unidade)
+  if (justCompleted) {
+    try {
+      const { runChecklistCompletedFlow } = require('./internal-api');
+      // Fire-and-forget — não bloqueia resposta do TOM
+      runChecklistCompletedFlow(completion_id).catch(err =>
+        console.error(`[ChecklistAction] celebration flow err:`, err.message)
+      );
+    } catch (err) {
+      console.warn(`[ChecklistAction] could not trigger celebration:`, err.message);
+    }
+  }
+
+  return { ok: true, pct, doneCount, totalCount, isLate, threshold };
 }
 
 // Sprint 13 F1 — Marker <<ANNOUNCEMENT_ACTION>>. TOM emite quando director/coordinator

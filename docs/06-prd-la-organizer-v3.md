@@ -1,12 +1,12 @@
 # PRD — LA Organizer
 
 **Documento:** 06 — PRD Completo
-**Versão:** 3.8
-**Data:** 2026-05-08 (atualizado Sprint 22.34 — Agenda revamp + TOM mensageria PWA↔WhatsApp)
+**Versão:** 3.9
+**Data:** 2026-05-08 (atualizado Sprint 22.36 — Checklist design system + DnD + CRUD + TOM celebra/cobra/escala)
 **Autor:** Luciano Alf (produto) + Claude + OpenClaw (arquitetura)
 **Stakeholder:** Luciano Alf (CEO LA Music)
 **Agente:** TOM
-**Status:** Sprints 0→22 fechadas. PWA Agenda totalmente refatorada com CRUD inline, conflito de horário, mensageria bidirecional PWA↔TOM via WhatsApp. Próxima frente: governança da liderança (Sprint 21 Autogovernança Guiada).
+**Status:** Sprints 0→22.36 fechadas. PWA Agenda + Checklists totalmente refatoradas no design system unificado (collapse, DnD, ⋮ menus, CRUD inline). TOM agora lê delegadas + checklists no contexto, celebra fechamento via Zap pro colab + gerente, cobra pendência após janela 6h, escala em 20min sem resposta. Próxima frente: aderência semanal coord/director (Sprint 22.37) + Sprint 21 Autogovernança Guiada.
 
 > **Limites de papel do TOM:** ver `docs/TOM-LIMITES.md` (formalizado 2026-05-05). TOM é organizador de governança e organização pessoal da liderança — não é canal permanente de comunicação interpessoal entre toda a equipe.
 
@@ -320,6 +320,21 @@ Ver `docs/PROJECT-WIZARD.md` para decisões arquiteturais detalhadas, mapeamento
 | TOM-LIMITES.md | — | NOVO — formaliza papel do TOM (não vira "menino de recado") |
 | Hotfixes UX (radar Sprint 20) | — | 11: cadência self-intro, microconfirmação numerada, Eisenhower, dedup defensivo, cooldown deadline, COORD_HINT contexto, etc. |
 | Decisão estratégica | — | **Encerrada fase de expansão de departamentos** (2026-05-05). Próxima frente: governança da liderança |
+
+### v3.8 → v3.9 (2026-05-08) — pós-Sprint 22.35 + 22.36 (Checklist design system + TOM celebra/cobra/escala)
+
+| Item | v3.8 | v3.9 |
+|---|---|---|
+| `/checklists` PWA | Card simples sem CRUD inline | **Design system unificado** (igual /projetos): card colapsável, ⋮ menu por card, drag handle ⋮⋮ por item, ⋮ menu por item, "+ Item" pra ad-hoc, auto-colapsa quando 100% |
+| Meta de checklist | 80% por padrão | **100% sempre** — barra dinâmica 🔴<70 / 🟡70-99 / 🟢100. Tick removido |
+| Items ad-hoc | Não existia | Tabela `op_checklist_completion_extra_items` per-instância — somam no progresso, RLS user-only |
+| Notas por item | Não existia (só via TOM Zap) | Inline no PWA + visível no card; campo `notes` em `op_checklist_item_completions` |
+| Reorder per-user | Items fixos pelo template | DnD via `@dnd-kit/sortable` + nova coluna `user_sort_order` (NULL = template default) |
+| TOM celebra fechamento | Não fazia nada quando fechava | **Endpoint `/internal/checklist-completed`** dispara 2 Zaps idempotentes (marker_logs CHECKLIST_COMPLETED): pro colab (🎉 confete) + pro gerente da unidade (✅ confirmação). Helper `findUnitManager(unit)`: coordinator da unidade → fallback director. Engine + PWA dão trigger |
+| Cobrança automática | Sem cron | Dispatcher `checkChecklistEscalations` (a cada tick, 8h-22h BRT). Janela 6h fecha sem 100% → cobra colab 1x. 20min sem resposta → escala pro gerente. Detecção de resposta em `applyChecklistAction` |
+| TOM lê contexto | Tasks pessoal/work + eventos | **+Delegadas** (tarefas que ESTE user atribuiu pra outros, LIMIT 20) **+Checklists de hoje** (com %, observações). Resolve bug "não tenho esse dato no contexto" |
+| Schema 22.36 | n/a | `user_sort_order INTEGER` em `op_checklist_item_completions`; tabela `op_checklist_completion_extra_items`; `reminded_at`/`reminder_replied`/`escalated_at` em `op_checklist_completions`; índice composto pra cron de cobrança |
+| Componentes novos PWA | n/a | `ChecklistAddItemForm.tsx` |
 
 ### v3.7 → v3.8 (2026-05-08) — pós-Sprint 22.34 (Agenda revamp + TOM mensageria)
 

@@ -168,7 +168,10 @@ function nameFor(collab) {
 }
 
 // ---------- BLOCK 3 — CONTEXTO (dynamic, ~1KB) ----------
-function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habits, events) {
+// Sprint 22.36 Fatia 2 — Adicionado: delegatedTasks (tarefas que ESTE user atribuiu
+// pra outros), todayChecklists (checklists operacionais de hoje com %).
+// Antes ficavam fora do contexto e TOM dizia "não tenho esse dato" no relatório.
+function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habits, events, delegatedTasks, todayChecklists) {
   const nickname = nameFor(collab);
   const lines = ['# 📌 CONTEXTO DESTA INTERAÇÃO', ''];
   const fn = collab.function_title ? ', ' + collab.function_title : '';
@@ -330,6 +333,39 @@ function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habi
       const streak = h.current_streak ? ` — streak ${h.current_streak}d` : '';
       const time = h.reminder_time ? ` (${String(h.reminder_time).slice(0,5)})` : '';
       lines.push(`• [id=${sid}] ${h.icon || '💪'} ${h.name}${streak}${time}`);
+    });
+  }
+
+  // Sprint 22.36 Fatia 2 — DELEGADAS (tarefas que ESTE user atribuiu pra outros).
+  // Necessário pra TOM responder relatórios tipo "como tá meu dia, com delegadas".
+  if (delegatedTasks && delegatedTasks.length) {
+    lines.push('', `**Delegadas (${delegatedTasks.length}) — tarefas que você atribuiu pra outros:**`);
+    delegatedTasks.slice(0, 15).forEach(t => {
+      const assignee = (t.assignee && t.assignee.full_name) ? t.assignee.full_name.split(' ')[0] : '(?)';
+      const due = t.due_date ? ` — vence ${t.due_date}` : '';
+      const status = t.status ? ` — ${t.status}` : '';
+      lines.push(`• ${assignee}: "${t.title}"${due}${status}`);
+    });
+  }
+
+  // Sprint 22.36 Fatia 2 — CHECKLISTS DE HOJE.
+  if (todayChecklists && todayChecklists.length) {
+    lines.push('', `**Checklists de hoje:**`);
+    todayChecklists.forEach(c => {
+      const tplName = (c.op_checklists && c.op_checklists.name) || '(sem nome)';
+      const items = c.op_checklist_item_completions || [];
+      const extras = c.op_checklist_completion_extra_items || [];
+      const all = [...items, ...extras];
+      const done = all.filter(i => i.is_checked).length;
+      const total = all.length || 1;
+      const pct = Math.round((done / total) * 100);
+      const tag = c.completed_at ? '✅' : (pct >= 70 ? '🟡' : '🔴');
+      lines.push(`• ${tag} ${tplName}: ${done}/${total} (${pct}%)${c.completed_at ? ' — concluído' : ''}`);
+      // Mostra observações capturadas (TOM pode usar pra contextualizar)
+      const noted = all.filter(i => i.notes && String(i.notes).trim());
+      noted.slice(0, 3).forEach(i => {
+        lines.push(`   ↳ obs: ${String(i.notes).slice(0, 80)}`);
+      });
     });
   }
 
@@ -627,6 +663,8 @@ async function fetchCollaboratorContext(collaborator) {
     historyRes,
     habitsRes,
     eventsRes,
+    delegatedRes,
+    todayChecklistsRes,
   ] = await Promise.all([
     supabase.from('collaborator_profiles').select('*').eq('collaborator_id', id).maybeSingle(),
     supabase.from('collaborator_memory')
@@ -673,6 +711,18 @@ async function fetchCollaboratorContext(collaborator) {
       .lte('start_at', `${today}T23:59:59-03:00`)
       .neq('status', 'cancelled')
       .order('start_at', { ascending: true }).limit(20),
+    // Sprint 22.36 Fatia 2 — DELEGADAS: tarefas que ESTE user atribuiu pra outros.
+    // Antes ficavam fora do contexto. Bug do relatório do dia onde TOM dizia
+    // "não tenho esse dato no contexto atual" pra delegadas.
+    supabase.from('tasks')
+      .select('id, title, status, due_date, assigned_to, assignee:collaborators!tasks_assigned_to_fkey(full_name)')
+      .eq('created_by', id).neq('assigned_to', id).neq('status', 'done')
+      .order('due_date', { ascending: true, nullsFirst: false }).limit(20),
+    // Sprint 22.36 Fatia 2 — CHECKLISTS DE HOJE deste user.
+    supabase.from('op_checklist_completions')
+      .select('id, completed_at, dispatched_at, op_checklists(name, unit), op_checklist_item_completions(is_checked, notes), op_checklist_completion_extra_items(is_checked, notes)')
+      .eq('collaborator_id', id)
+      .eq('reference_date', today),
   ]);
 
   let activeProjects = [];
@@ -700,6 +750,8 @@ async function fetchCollaboratorContext(collaborator) {
     recentMessages: (historyRes.data || []).reverse(),
     habits: habitsRes.data || [],
     todayEvents: eventsRes.data || [],
+    delegatedTasks: delegatedRes.data || [],
+    todayChecklists: todayChecklistsRes.data || [],
     todayDate: today,
   };
 }
@@ -1207,7 +1259,7 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     eventsForCtx = eventsForCtx.filter(e => e.context === 'work');
   }
   // briefing_diario / daily_briefing: mantém todos os events (sem filtro).
-  const baseCtx = buildContext(collaborator, ctx.memories, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx);
+  const baseCtx = buildContext(collaborator, ctx.memories, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx, ctx.delegatedTasks || [], ctx.todayChecklists || []);
   const pending = renderPendingDecisions(ctx.notifications);
 
   // Sprint 10.1 hotfix-2 (Plano C): resolve temporal de "amanhã"/"hoje" + horário
@@ -1383,7 +1435,7 @@ async function composeSystemPrompt(collaborator, ctx) {
   const blocks = [
     BLOCK_RULES,
     BLOCK_IDENTITY,
-    buildContext(collaborator, ctx.memories || [], ctx.prefs, ctx.todayTasks || [], ctx.activeProjects || [], lastMsgAge, ctx.habits || [], ctx.todayEvents || []),
+    buildContext(collaborator, ctx.memories || [], ctx.prefs, ctx.todayTasks || [], ctx.activeProjects || [], lastMsgAge, ctx.habits || [], ctx.todayEvents || [], ctx.delegatedTasks || [], ctx.todayChecklists || []),
     skillBlock,
   ].filter(Boolean);
   let syncPrompt = blocks.join('\n\n---\n\n');

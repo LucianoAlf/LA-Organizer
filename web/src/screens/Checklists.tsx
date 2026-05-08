@@ -29,7 +29,8 @@ export function Checklists() {
             *,
             op_checklist_items ( id, description, sort_order )
           ),
-          op_checklist_item_completions (*)
+          op_checklist_item_completions (*),
+          op_checklist_completion_extra_items (*)
         `)
         .eq('collaborator_id', collaborator!.id)
         .eq('reference_date', today)
@@ -55,6 +56,17 @@ export function Checklists() {
           event: '*',
           schema: 'public',
           table: 'op_checklist_item_completions',
+          filter: `completion_id=in.(${ids.join(',')})`,
+        },
+        () => queryClient.invalidateQueries({ queryKey: ['checklists'] })
+      )
+      // Sprint 22.36 — items ad-hoc também precisam invalidar query.
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'op_checklist_completion_extra_items',
           filter: `completion_id=in.(${ids.join(',')})`,
         },
         () => queryClient.invalidateQueries({ queryKey: ['checklists'] })

@@ -733,6 +733,149 @@ async function checkChecklistConsequences(now = new Date()) {
   }
 }
 
+// Sprint 22.36 Fatia 6 — Checklist cobrança + escalação ===========================
+// Roda a cada tick, mas só dispara entre 8h-22h BRT (não acorda ninguém).
+//
+// Fase 1 — janela 6h fechada sem 100%: cobrança 1x ao colab.
+//   marca op_checklist_completions.reminded_at
+// Fase 2 — 20min sem resposta: escala pro gerente da unidade.
+//   marca op_checklist_completions.escalated_at
+//
+// Resposta detectada em engine.js applyChecklistAction (set reminder_replied=true).
+async function checkChecklistEscalations(now = new Date()) {
+  // Filtro horário 8h-22h BRT
+  const brtMs = now.getTime() - 3 * 60 * 60 * 1000;
+  const brtHour = new Date(brtMs).getUTCHours();
+  if (brtHour < 8 || brtHour >= 22) return;
+
+  const whatsapp = require('../services/whatsapp');
+  const internalApi = require('../internal-api');
+  const findUnitManager = internalApi.findUnitManager;
+
+  async function countItems(completionId, checklistId) {
+    const [tplTotalRes, tplDoneRes, extraTotalRes, extraDoneRes] = await Promise.all([
+      supabase.from('op_checklist_items')
+        .select('id', { count: 'exact', head: true })
+        .eq('checklist_id', checklistId || ''),
+      supabase.from('op_checklist_item_completions')
+        .select('id', { count: 'exact', head: true })
+        .eq('completion_id', completionId).eq('is_checked', true),
+      supabase.from('op_checklist_completion_extra_items')
+        .select('id', { count: 'exact', head: true })
+        .eq('completion_id', completionId),
+      supabase.from('op_checklist_completion_extra_items')
+        .select('id', { count: 'exact', head: true })
+        .eq('completion_id', completionId).eq('is_checked', true),
+    ]);
+    const total = (tplTotalRes.count || 0) + (extraTotalRes.count || 0);
+    const done = (tplDoneRes.count || 0) + (extraDoneRes.count || 0);
+    return { total, done, pending: total - done };
+  }
+
+  // ── Fase 1: cobrança ──
+  const sixHoursAgoIso = new Date(now.getTime() - 6 * 60 * 60 * 1000).toISOString();
+  const { data: needsReminder, error: reminderErr } = await supabase
+    .from('op_checklist_completions')
+    .select(`
+      id, dispatched_at, collaborator_id, checklist_id,
+      op_checklists(name, unit),
+      collaborator:collaborators!op_checklist_completions_collaborator_id_fkey(
+        id, full_name, phone, is_active
+      )
+    `)
+    .is('completed_at', null)
+    .is('reminded_at', null)
+    .lte('dispatched_at', sixHoursAgoIso)
+    .limit(50);
+
+  if (reminderErr) {
+    console.error('[checkChecklistEscalations] phase1 query err:', reminderErr.message);
+  } else if (needsReminder && needsReminder.length > 0) {
+    for (const c of needsReminder) {
+      if (!c.collaborator || !c.collaborator.phone || !c.collaborator.is_active) {
+        await supabase.from('op_checklist_completions')
+          .update({ reminded_at: now.toISOString() })
+          .eq('id', c.id);
+        continue;
+      }
+      const stats = await countItems(c.id, c.checklist_id);
+      if (stats.pending <= 0) {
+        await supabase.from('op_checklist_completions')
+          .update({ reminded_at: now.toISOString(), reminder_replied: true })
+          .eq('id', c.id);
+        continue;
+      }
+
+      const tplName = c.op_checklists?.name || 'checklist';
+      const collabName = (c.collaborator.full_name || '').split(' ')[0] || 'amigo';
+      const body =
+        `Oi ${collabName}, vi que faltam ${stats.pending} ${stats.pending === 1 ? 'item' : 'itens'} ` +
+        `no checklist *${tplName}* de hoje. Tudo certo? Conseguiu fazer?`;
+      try {
+        await whatsapp.sendMessage(c.collaborator.phone, body);
+        await supabase.from('op_checklist_completions')
+          .update({ reminded_at: now.toISOString() })
+          .eq('id', c.id);
+        console.log(`[checkChecklistEscalations] reminder sent comp=${c.id.slice(0, 8)} pending=${stats.pending}`);
+      } catch (e) {
+        console.error(`[checkChecklistEscalations] reminder send err comp=${c.id.slice(0,8)}:`, e.message);
+      }
+    }
+  }
+
+  // ── Fase 2: escalação ──
+  const twentyMinAgoIso = new Date(now.getTime() - 20 * 60 * 1000).toISOString();
+  const { data: needsEscalation, error: escErr } = await supabase
+    .from('op_checklist_completions')
+    .select(`
+      id, reminded_at, collaborator_id, checklist_id,
+      op_checklists(name, unit),
+      collaborator:collaborators!op_checklist_completions_collaborator_id_fkey(
+        id, full_name
+      )
+    `)
+    .is('completed_at', null)
+    .eq('reminder_replied', false)
+    .is('escalated_at', null)
+    .not('reminded_at', 'is', null)
+    .lte('reminded_at', twentyMinAgoIso)
+    .limit(50);
+
+  if (escErr) {
+    console.error('[checkChecklistEscalations] phase2 query err:', escErr.message);
+    return;
+  }
+  if (!needsEscalation || needsEscalation.length === 0) return;
+
+  for (const c of needsEscalation) {
+    const tplUnit = c.op_checklists?.unit || 'all';
+    const manager = findUnitManager ? await findUnitManager(tplUnit) : null;
+    if (!manager || !manager.phone || manager.id === c.collaborator_id) {
+      await supabase.from('op_checklist_completions')
+        .update({ escalated_at: now.toISOString() })
+        .eq('id', c.id);
+      continue;
+    }
+
+    const stats = await countItems(c.id, c.checklist_id);
+    const collabName = c.collaborator?.full_name || 'Colaborador';
+    const tplName = c.op_checklists?.name || 'checklist';
+    const body =
+      `⚠️ *${collabName}* não fechou o checklist *${tplName}* ` +
+      `(faltaram ${stats.pending} ${stats.pending === 1 ? 'item' : 'itens'}) ` +
+      `e não respondeu cobrança em 20min.`;
+    try {
+      await whatsapp.sendMessage(manager.phone, body);
+      await supabase.from('op_checklist_completions')
+        .update({ escalated_at: now.toISOString() })
+        .eq('id', c.id);
+      console.log(`[checkChecklistEscalations] escalation sent comp=${c.id.slice(0,8)} → ${manager.full_name}`);
+    } catch (e) {
+      console.error(`[checkChecklistEscalations] escalation send err comp=${c.id.slice(0,8)}:`, e.message);
+    }
+  }
+}
+
 // Sprint 15 F4 — Briefing operacional semanal por departamento
 // Roda toda segunda-feira 07:30 BRT, dispara WhatsApp ao default_responsible_id de cada
 // departamento ativo com fila aberta (pending/in_progress/awaiting_confirmation).
@@ -1300,6 +1443,13 @@ async function run(opts = {}) {
     await checkChecklistConsequences(new Date());
   } catch (err) {
     console.error('[Dispatcher] checkChecklistConsequences erro:', err.message);
+  }
+
+  // Sprint 22.36 Fatia 6 — Cobrança/escalação de checklists não fechados
+  try {
+    await checkChecklistEscalations(new Date());
+  } catch (err) {
+    console.error('[Dispatcher] checkChecklistEscalations erro:', err.message);
   }
 
   // Sprint 21 — Planejamento e Fechamento Mensal (liderança)
