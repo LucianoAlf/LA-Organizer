@@ -25,10 +25,10 @@ export function showToast(detail: ToastDetail): void {
   window.dispatchEvent(new CustomEvent<ToastDetail>('app-toast', { detail }));
 }
 
-const KIND_TONE: Record<ToastKind, { bg: string; border: string; icon: typeof CheckCircle2 }> = {
-  success: { bg: 'bg-success/10', border: 'border-success', icon: CheckCircle2 },
-  error: { bg: 'bg-danger/10', border: 'border-danger', icon: AlertCircle },
-  info: { bg: 'bg-info/10', border: 'border-info', icon: Info },
+const KIND_TONE: Record<ToastKind, { border: string; icon: typeof CheckCircle2; iconColor: string }> = {
+  success: { border: 'border-success', icon: CheckCircle2, iconColor: 'text-success' },
+  error: { border: 'border-danger', icon: AlertCircle, iconColor: 'text-danger' },
+  info: { border: 'border-info', icon: Info, iconColor: 'text-info' },
 };
 
 export function ToastHost() {
@@ -60,24 +60,16 @@ export function ToastHost() {
             key={t.id}
             role="status"
             className={[
-              'rounded-md border-l-4 p-3 shadow-soft pointer-events-auto',
-              'bg-bg-surface',
+              'rounded-md border border-border border-l-4 p-3 shadow-card pointer-events-auto',
+              'bg-bg-elevated',
               tone.border,
-              tone.bg,
-              'animate-[slideIn_0.2s_ease-out]',
             ].join(' ')}
             style={{
-              animation: 'toastSlideIn 200ms cubic-bezier(0.32, 0.72, 0, 1)',
+              animation: 'toastSlideIn 220ms cubic-bezier(0.32, 0.72, 0, 1)',
             }}
           >
             <div className="flex items-start gap-2">
-              <Icon
-                size={18}
-                className={[
-                  'shrink-0 mt-0.5',
-                  t.kind === 'success' ? 'text-success' : t.kind === 'error' ? 'text-danger' : 'text-info',
-                ].join(' ')}
-              />
+              <Icon size={18} className={['shrink-0 mt-0.5', tone.iconColor].join(' ')} />
               <div className="flex-1 min-w-0">
                 <div className="text-body-sm font-semibold text-fg leading-tight">{t.title}</div>
                 {t.msg && <div className="text-body-sm text-fg-secondary mt-0.5">{t.msg}</div>}
@@ -96,8 +88,8 @@ export function ToastHost() {
       })}
       <style>{`
         @keyframes toastSlideIn {
-          from { opacity: 0; transform: translateY(8px); }
-          to { opacity: 1; transform: translateY(0); }
+          0% { opacity: 0; transform: translateY(24px) scale(0.96); }
+          100% { opacity: 1; transform: translateY(0) scale(1); }
         }
       `}</style>
     </div>
