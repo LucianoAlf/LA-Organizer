@@ -843,21 +843,27 @@ router.get('/internal/metrics', requireInternalSecret, async (req, res) => {
 
 // Sprint 22.36 Fatia 6 — Checklist celebra + escalação ===========================
 
-// Helper: encontra o gerente responsável pela unidade.
-// 1. Coordinator ativo dessa unidade
-// 2. Fallback: director ativo (qualquer)
+// Helper: encontra o gerente operacional responsável pela unidade.
+// Sprint 22.36 (fix) — busca role='manager' (NÃO coordinator). Coordinators
+// pedagogical (Quintela, Juliana) NÃO devem receber escalação operacional.
+// Hierarquia já documentada em TOM-LIMITES.md (Sprint 20):
+//   - director (Alf, Anne) — vê tudo
+//   - coordinator (Quintela, Juliana, pedagogical_role='lead') — pedagogical, NÃO operacional
+//   - manager (Jereh/campo_grande, Clayton/recreio, Krissya/barra) — operacional por unidade
+//   - manager unit='all' (Yuri/Marketing) — NÃO é gerente de unidade operacional
 async function findUnitManager(unit) {
   if (unit && unit !== 'all') {
-    const { data: coord } = await supabase
+    const { data: manager } = await supabase
       .from('collaborators')
       .select('id, full_name, phone')
-      .eq('role', 'coordinator')
-      .eq('unit', unit)
+      .eq('role', 'manager')
+      .eq('unit', unit) // unit específica — exclui Yuri (unit='all')
       .eq('is_active', true)
       .limit(1)
       .maybeSingle();
-    if (coord && coord.phone) return coord;
+    if (manager && manager.phone) return manager;
   }
+  // Fallback: director ativo (sem manager mapeado pra unit, ou unit='all')
   const { data: director } = await supabase
     .from('collaborators')
     .select('id, full_name, phone')
