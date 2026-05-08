@@ -1,6 +1,7 @@
-import { useState, useMemo, useRef, useLayoutEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, X, UserPlus, ExternalLink, ChevronDown, GripVertical } from 'lucide-react';
+import { Plus, X, UserPlus, ExternalLink, GripVertical } from 'lucide-react';
+import { CustomSelect } from './CustomSelect';
 import {
   DndContext,
   closestCenter,
@@ -493,6 +494,7 @@ function AddInternalForm({
         options={collabOptions}
         onChange={setCollabId}
         prefer="up"
+        size="sm"
       />
       <input
         type="text"
@@ -507,6 +509,7 @@ function AddInternalForm({
         options={roleOptions}
         onChange={(v) => setRole(v as ProjectMemberRole)}
         prefer="up"
+        size="sm"
       />
       <div className="flex gap-2">
         <button
@@ -529,113 +532,7 @@ function AddInternalForm({
   );
 }
 
-// ---- CustomSelect — dropdown padrao design system com posicionamento inteligente
-function CustomSelect({
-  value,
-  options,
-  onChange,
-  placeholder,
-  prefer = 'auto',
-}: {
-  value: string;
-  options: Array<{ value: string; label: string; sublabel?: string }>;
-  onChange: (value: string) => void;
-  placeholder?: string;
-  /** 'up' fixa pra cima, 'down' pra baixo, 'auto' decide pelo espaco. */
-  prefer?: 'up' | 'down' | 'auto';
-}) {
-  const [open, setOpen] = useState(false);
-  const [openUpward, setOpenUpward] = useState(prefer === 'up');
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const current = options.find(o => o.value === value);
-
-  // Sprint 22.22l — quando abre, mede espaco. Sprint 22.22n — respeita prefer.
-  useLayoutEffect(() => {
-    if (!open || !triggerRef.current) return;
-    if (prefer === 'up') { setOpenUpward(true); return; }
-    if (prefer === 'down') { setOpenUpward(false); return; }
-    const rect = triggerRef.current.getBoundingClientRect();
-    const spaceBelow = window.innerHeight - rect.bottom;
-    const spaceAbove = rect.top;
-    const need = 280;
-    setOpenUpward(spaceBelow < need && spaceAbove > spaceBelow);
-  }, [open, options.length, prefer]);
-
-  function handleBlur(e: React.FocusEvent<HTMLDivElement>) {
-    if (!e.currentTarget.contains(e.relatedTarget)) {
-      setTimeout(() => setOpen(false), 150);
-    }
-  }
-
-  function pick(v: string) {
-    onChange(v);
-    setOpen(false);
-  }
-
-  return (
-    <div className="relative" onBlur={handleBlur}>
-      <button
-        ref={triggerRef}
-        type="button"
-        onClick={() => setOpen(v => !v)}
-        className={[
-          'w-full h-9 px-3 rounded-md bg-bg-elevated border border-border focus-ring',
-          'flex items-center justify-between gap-2 text-body-sm',
-          current ? 'text-fg' : 'text-fg-muted',
-        ].join(' ')}
-      >
-        <span className="truncate">
-          {current ? (
-            <>
-              {current.label}
-              {current.sublabel && (
-                <span className="text-fg-muted ml-1">({current.sublabel})</span>
-              )}
-            </>
-          ) : (
-            placeholder ?? 'Selecionar'
-          )}
-        </span>
-        <ChevronDown size={14} className={['shrink-0 text-fg-muted transition-transform', open ? 'rotate-180' : ''].join(' ')} />
-      </button>
-      {open && (
-        <div
-          className={[
-            'absolute left-0 right-0 z-50 max-h-60 overflow-y-auto rounded-md border border-border bg-bg-surface shadow-soft',
-            openUpward ? 'bottom-full mb-1' : 'top-full mt-1',
-          ].join(' ')}
-        >
-          {options.length === 0 ? (
-            <div className="px-3 py-2 text-body-sm text-fg-muted">Nenhuma opção</div>
-          ) : (
-            options.map(opt => {
-              const selected = opt.value === value;
-              return (
-                <button
-                  key={opt.value}
-                  type="button"
-                  onClick={() => pick(opt.value)}
-                  className={[
-                    'w-full px-3 py-2 text-left text-body-sm flex items-center justify-between gap-2',
-                    selected ? 'bg-bg-elevated text-fg' : 'text-fg hover:bg-bg-elevated',
-                  ].join(' ')}
-                >
-                  <span className="min-w-0 truncate">
-                    {opt.label}
-                    {opt.sublabel && (
-                      <span className="text-fg-muted ml-1.5 text-[11px]">({opt.sublabel})</span>
-                    )}
-                  </span>
-                  {selected && <span className="text-tom shrink-0">✓</span>}
-                </button>
-              );
-            })
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
+// CustomSelect extraido pra components/CustomSelect.tsx (Sprint 22.25 audit Hoje).
 
 // ---- AddExternalForm — nome livre + funcao --------------------------------
 

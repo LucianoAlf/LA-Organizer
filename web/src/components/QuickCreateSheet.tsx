@@ -6,6 +6,7 @@ import { supabase } from '../lib/supabase';
 import { todaySP } from '../utils/date';
 import { BottomSheet } from './BottomSheet';
 import { Button } from './Button';
+import { CustomSelect } from './CustomSelect';
 import { DateInput } from './DateInput';
 import { DateTimeInput } from './DateTimeInput';
 import {
@@ -228,24 +229,19 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
           </>
         ) : (
           <>
-            <label className="block">
+            <div>
               <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Categoria</div>
-              <select
-                required
+              <CustomSelect
                 value={category}
-                onChange={e => setCategory(e.target.value as Category)}
-                className="w-full h-12 px-3 rounded-md bg-bg-elevated border border-border text-fg focus-ring"
-              >
-                {CATEGORIES.map(c => (
-                  <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>
-                ))}
-              </select>
+                onChange={(v) => setCategory(v as Category)}
+                options={CATEGORIES.map(c => ({ value: c, label: CATEGORY_LABELS[c] }))}
+              />
               <div className="text-body-sm text-fg-muted mt-1.5">
                 {category === 'pessoal'
                   ? 'Compromisso pessoal · só você vê.'
                   : 'Compromisso de trabalho · coordenação enxerga.'}
               </div>
-            </label>
+            </div>
 
             <div className="space-y-md">
               <div>
