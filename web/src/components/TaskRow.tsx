@@ -14,6 +14,7 @@ import { RowMenu, type MenuItem } from './RowMenu';
 import type { Task } from '../types';
 
 // Eisenhower como dot inline. Q1 vermelho, Q2 âmbar, Q3 azul, Q4 sem dot.
+// Sprint 22.32 — match com EventRow + nome generico (sem vazar "Eisenhower" pro user).
 const QUADRANT_DOT: Record<string, string> = {
   '1': 'bg-danger',
   '2': 'bg-warning',
@@ -156,9 +157,9 @@ export function TaskRow({
           <span className="text-card-title min-w-0 flex-1 break-words leading-snug">
             {dotClass && !isDone && (
               <span
-                aria-label={`Eisenhower Q${quadrantKey}`}
-                title={`Q${quadrantKey}`}
-                className={['inline-block h-2 w-2 rounded-full mr-2 align-middle', dotClass].join(' ')}
+                aria-label={`Prioridade ${quadrantKey}`}
+                title={`Prioridade ${quadrantKey}`}
+                className={['inline-block h-2.5 w-2.5 rounded-full mr-2 align-middle ring-2 ring-bg-app', dotClass].join(' ')}
               />
             )}
             {task.title}
