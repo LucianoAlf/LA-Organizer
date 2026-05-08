@@ -509,8 +509,9 @@ export function Hoje() {
                 <TaskRow
                   key={t.id}
                   task={t}
-                  onToggle={tab === 'delegated' ? undefined : (task) => toggleTask.mutate(task)}
-                  readOnly={tab === 'delegated'}
+                  onToggle={(task) => toggleTask.mutate(task)}
+                  onReschedule={setReschedulingTask}
+                  onDelete={(task) => deleteTask.mutate(task)}
                 />
               ))}
             </section>
