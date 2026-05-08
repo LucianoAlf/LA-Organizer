@@ -16,6 +16,8 @@ import { Button } from './Button';
 import { DateInput } from './DateInput';
 import { TimeInput } from './TimeInput';
 import { EisenhowerPicker } from './EisenhowerPicker';
+import { notifyTaskUpdated } from '../lib/tomEngine';
+import { showToast } from './Toast';
 import type { Task, TaskContext } from '../types';
 
 interface Props {
@@ -84,6 +86,15 @@ export function EditTaskSheet({ open, task, onClose }: Props) {
       if (e) throw e;
       if (!data || data.length === 0) {
         throw new Error('Não consegui salvar (sem permissão ou tarefa removida).');
+      }
+      // Sprint 22.34m — se delegada (created_by != assigned_to), avisa o assignee.
+      if (task.created_by && task.assigned_to && task.created_by !== task.assigned_to && task.created_by === collaborator.id) {
+        const r = await notifyTaskUpdated(task.id, 'edited');
+        if (r.ok && (r.sent ?? 0) > 0) {
+          showToast({ kind: 'success', title: 'Tarefa atualizada', msg: 'TOM avisou pelo WhatsApp.' });
+        } else if (!r.ok) {
+          showToast({ kind: 'error', title: 'Tarefa atualizada', msg: `Salvou, mas notificação falhou (${r.reason}).` });
+        }
       }
       return patch;
     },

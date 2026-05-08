@@ -20,15 +20,18 @@ import type { Task, CalendarEvent, Project, TaskContext } from '../types';
 // Sprint 22.11 — Semana refatorada: cards individuais por dia, inclui sábado,
 // tags de categoria do projeto, empty state limpo. Hoje destaca por borda olive sutil.
 
-type WeekTask = Task & { projects?: { name: string; category?: Project['category'] } | null };
+type WeekTask = Task & {
+  projects?: { name: string; category?: Project['category'] } | null;
+  assignee?: { id: string; full_name: string } | null;
+};
 
 async function fetchWeekTasks(collabId: string, start: string, end: string): Promise<WeekTask[]> {
-  // Sprint 22.34e — Semana mostra trabalho + pessoal. Antes filtrava só work, mas
-  // tasks pessoais futuras ficavam invisíveis (Hoje é só hoje).
+  // Sprint 22.34m — Semana inclui delegadas (criadas por mim com assignee !== eu).
+  // OR no Supabase: tasks atribuídas a mim OU criadas por mim e atribuídas a outro.
   const { data, error } = await supabase
     .from('tasks')
-    .select('id, title, status, context, priority, category, due_date, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, projects(name, category)')
-    .eq('assigned_to', collabId)
+    .select('id, title, status, context, priority, category, due_date, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(id, full_name)')
+    .or(`assigned_to.eq.${collabId},and(created_by.eq.${collabId},assigned_to.neq.${collabId})`)
     .neq('status', 'cancelled')
     .gte('due_date', start)
     .lte('due_date', end)
@@ -81,8 +84,9 @@ export function Semana() {
   const [createOpen, setCreateOpen] = useState(false);
   const [rescheduleTask, setRescheduleTask] = useState<Task | null>(null);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
-  // Sprint 22.34f — tabs Trabalho/Pessoal espelhando Hoje.
-  const [tab, setTab] = useState<TaskContext>('work');
+  // Sprint 22.34m — tabs Trabalho/Pessoal/Delegadas espelhando Hoje.
+  type SemanaTab = TaskContext | 'delegated';
+  const [tab, setTab] = useState<SemanaTab>('work');
 
   const { data: tasks = [], isLoading: tLoading, error } = useQuery({
     queryKey: ['tasks', 'semana', collaborator?.id, start, end],
@@ -96,19 +100,32 @@ export function Semana() {
     enabled: Boolean(collaborator?.id && supabaseConfigured),
   });
 
+  // Sprint 22.34m — filtro por aba: work/personal usa context+assigned_to=me;
+  // delegated mostra tasks criadas por mim com assignee !== eu.
+  const taskMatchesTab = (t: WeekTask): boolean => {
+    if (!collaborator) return false;
+    if (tab === 'delegated') {
+      return t.created_by === collaborator.id && t.assigned_to !== collaborator.id;
+    }
+    return t.context === tab && t.assigned_to === collaborator.id;
+  };
+
   const tasksByDay = useMemo(() => {
     const map = new Map<string, WeekTask[]>();
     for (const d of days) map.set(d, []);
     for (const t of tasks) {
-      if (t.context !== tab) continue;
+      if (!taskMatchesTab(t)) continue;
       if (t.due_date && map.has(t.due_date)) map.get(t.due_date)!.push(t);
     }
     return map;
-  }, [tasks, days, tab]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks, days, tab, collaborator?.id]);
 
   const eventsByDay = useMemo(() => {
     const map = new Map<string, CalendarEvent[]>();
     for (const d of days) map.set(d, []);
+    // Delegadas não tem events.
+    if (tab === 'delegated') return map;
     for (const e of events) {
       if (e.context !== tab) continue;
       const ymd = eventLocalYmd(e.start_at);
@@ -117,8 +134,8 @@ export function Semana() {
     return map;
   }, [events, days, tab]);
 
-  const tabTasks = tasks.filter(t => t.context === tab);
-  const tabEvents = events.filter(e => e.context === tab && e.status !== 'cancelled');
+  const tabTasks = tasks.filter(taskMatchesTab);
+  const tabEvents = tab === 'delegated' ? [] : events.filter(e => e.context === tab && e.status !== 'cancelled');
   const totalWeek = tabTasks.length + tabEvents.length;
   const doneWeek = tabTasks.filter(t => t.status === 'done').length + tabEvents.filter(e => e.status === 'done').length;
   const pct = totalWeek ? Math.round((doneWeek / totalWeek) * 100) : 0;
@@ -170,9 +187,10 @@ export function Semana() {
         tabs={[
           { id: 'work', label: 'Trabalho' },
           { id: 'personal', label: 'Pessoal' },
+          { id: 'delegated', label: 'Delegadas' },
         ]}
         active={tab}
-        onChange={(t) => setTab(t)}
+        onChange={(t) => setTab(t as SemanaTab)}
       />
 
       {!supabaseConfigured ? (

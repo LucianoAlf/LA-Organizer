@@ -602,6 +602,77 @@ router.post('/internal/task-delegated', requireInternalSecret, async (req, res) 
   return res.json({ status: 'ok', key: dedupeKey });
 });
 
+// Sprint 22.34m — atualização de tarefa delegada → avisa o assignee.
+// Disparado pelo PWA quando user editou/reagendou tarefa criada por ele
+// e atribuída a outro colab. Sem idempotência: cada update real notifica.
+router.post('/internal/task-updated', requireInternalSecret, async (req, res) => {
+  const taskId = String(req.body?.task_id || '').trim();
+  const changeType = String(req.body?.change_type || 'edited').trim(); // 'rescheduled' | 'edited'
+  if (!taskId) return res.status(400).json({ error: 'missing_task_id' });
+
+  const { data: task, error: tErr } = await supabase
+    .from('tasks')
+    .select('id, title, due_date, remind_at, status, context, assigned_to, created_by')
+    .eq('id', taskId)
+    .single();
+  if (tErr || !task) return res.status(404).json({ error: 'task_not_found' });
+
+  // Só notifica se delegada (assignee != creator) e ambos existem.
+  if (!task.assigned_to || task.assigned_to === task.created_by) {
+    await supabase.from('marker_logs').insert({
+      marker_type: 'TASK_UPDATED', result: 'skipped',
+      reason: 'not_delegated', raw_excerpt: `task-updated:${taskId}`,
+    });
+    return res.json({ status: 'not_delegated' });
+  }
+
+  const [{ data: assignee }, { data: creator }] = await Promise.all([
+    supabase.from('collaborators').select('id, full_name, phone, is_active').eq('id', task.assigned_to).single(),
+    supabase.from('collaborators').select('id, full_name').eq('id', task.created_by).single(),
+  ]);
+
+  if (!assignee || !assignee.phone || !assignee.is_active) {
+    await supabase.from('marker_logs').insert({
+      marker_type: 'TASK_UPDATED', result: 'skipped',
+      reason: 'no_recipient', raw_excerpt: `task-updated:${taskId}`,
+    });
+    return res.json({ status: 'no_recipient' });
+  }
+
+  // Formata data BR
+  const dateBR = task.due_date
+    ? `${task.due_date.slice(8,10)}/${task.due_date.slice(5,7)}`
+    : 'sem data';
+  let timeStr = '';
+  if (task.remind_at) {
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', hour12: false,
+    }).formatToParts(new Date(task.remind_at));
+    const hh = parts.find(p => p.type === 'hour')?.value || '00';
+    const mm = parts.find(p => p.type === 'minute')?.value || '00';
+    timeStr = `\n🕐 ${parseInt(hh, 10)}h${mm === '00' ? '' : mm}`;
+  }
+
+  const verb = changeType === 'rescheduled' ? 'reagendou' : 'atualizou';
+  const body =
+    `🔄 *${creator?.full_name || 'Alguém'}* ${verb} uma tarefa que tá com você:\n\n` +
+    `*${task.title}*\n` +
+    `📅 ${dateBR}${timeStr}\n\n` +
+    `Quer continuar do mesmo jeito? Responde aqui.`;
+
+  whatsapp.sendMessage(assignee.phone, body).catch(e =>
+    console.error(`[InternalAPI] task-updated WA send err pra ${assignee.id}: ${e.message}`),
+  );
+
+  await supabase.from('marker_logs').insert({
+    marker_type: 'TASK_UPDATED', result: 'executed',
+    reason: `${changeType} → ${assignee.full_name}`,
+    raw_excerpt: `task-updated:${taskId}`,
+  });
+  console.log(`[InternalAPI] task-updated ${taskId} (${changeType}) → ${assignee.full_name}`);
+  return res.json({ status: 'ok', sent: 1 });
+});
+
 // Sprint 22.33 — convidados em compromisso → notifica cada participant.
 // PWA envia { event_id } depois do INSERT (evento + participants).
 router.post('/internal/event-invites', requireInternalSecret, async (req, res) => {

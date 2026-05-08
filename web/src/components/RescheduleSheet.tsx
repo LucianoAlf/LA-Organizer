@@ -6,6 +6,8 @@ import { todaySP } from '../utils/date';
 import { BottomSheet } from './BottomSheet';
 import { Button } from './Button';
 import { DateInput } from './DateInput';
+import { notifyTaskUpdated } from '../lib/tomEngine';
+import { showToast } from './Toast';
 import type { Task } from '../types';
 
 // Sprint 11.2 hotfix — formatador inline pro horário em America/Sao_Paulo.
@@ -62,12 +64,22 @@ export function RescheduleSheet({ open, task, onClose }: Props) {
         }
       }
       if (task.status === 'overdue') update.status = 'pending';
+      // Sprint 22.34m — RLS ja permite assignee OU creator atualizar (22.29);
+      // remove filtro assigned_to pra delegadas reagendarem do lado do creator.
       const { error } = await supabase
         .from('tasks')
         .update(update)
-        .eq('id', task.id)
-        .eq('assigned_to', collaborator.id);
+        .eq('id', task.id);
       if (error) throw error;
+      // Sprint 22.34m — se delegada (created_by != assigned_to), avisa o assignee.
+      if (task.created_by && task.assigned_to && task.created_by !== task.assigned_to) {
+        const r = await notifyTaskUpdated(task.id, 'rescheduled');
+        if (r.ok && (r.sent ?? 0) > 0) {
+          showToast({ kind: 'success', title: 'Reagendada', msg: 'TOM avisou pelo WhatsApp.' });
+        } else if (!r.ok) {
+          showToast({ kind: 'error', title: 'Reagendada', msg: `Salvou, mas notificação falhou (${r.reason}).` });
+        }
+      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['tasks'] });
