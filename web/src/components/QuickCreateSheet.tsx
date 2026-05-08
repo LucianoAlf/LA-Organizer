@@ -271,21 +271,21 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
                 })}
               </div>
             </fieldset>
-            <label className="block">
-              <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Para quando</div>
-              <DateInput value={due} onChange={setDue} />
-            </label>
             <div>
-              <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5 flex items-baseline gap-2">
-                <span>Lembrar às</span>
-                <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">opcional</span>
+              <div className="flex items-baseline gap-md flex-wrap mb-1.5">
+                <span className="text-label uppercase tracking-wide text-fg-muted">Para quando</span>
+                <span className="text-label uppercase tracking-wide text-fg-muted">
+                  Lembrar às <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">opcional</span>
+                </span>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
+                <DateInput value={due} onChange={setDue} />
                 <TimeInput value={taskTime} onChange={setTaskTime} />
                 {taskTime && (
                   <button
                     type="button"
                     onClick={() => setTaskTime('')}
+                    aria-label="Limpar hora"
                     className="text-body-sm text-fg-muted hover:text-fg focus-ring rounded-sm px-2 py-1"
                   >
                     limpar
