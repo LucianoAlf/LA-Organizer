@@ -22,6 +22,8 @@ import { EventoDetalhe } from './screens/EventoDetalhe';
 import { Observabilidade } from './screens/Observabilidade';
 import { OperacoesFilaTecnica } from './screens/OperacoesFilaTecnica';
 import { OperacaoDetalhe } from './screens/OperacaoDetalhe';
+import { AderenciaChecklists } from './screens/AderenciaChecklists';
+import { AderenciaChecklistDetalhe } from './screens/AderenciaChecklistDetalhe';
 
 export default function App() {
   return (
@@ -53,6 +55,12 @@ export default function App() {
           <Route element={<ProtectedRoute requireRoles={['coordinator', 'director']} />}>
             <Route path="time" element={<DashboardTime />} />
             <Route path="time/:id" element={<PessoaDetalhe />} />
+          </Route>
+
+          {/* Sprint 22.37 — Aderência operacional pra liderança operacional */}
+          <Route element={<ProtectedRoute requireRoles={['director', 'manager']} />}>
+            <Route path="mais/aderencia-checklists" element={<AderenciaChecklists />} />
+            <Route path="mais/aderencia-checklists/:id" element={<AderenciaChecklistDetalhe />} />
           </Route>
         </Route>
       </Route>
