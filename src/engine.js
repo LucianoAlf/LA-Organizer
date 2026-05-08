@@ -1684,20 +1684,27 @@ function parseEventCreateMarker(text) {
   const items = Array.isArray(parsed) ? parsed : [parsed];
   const valid = [];
   const dropped = [];
+  const droppedItems = []; // Sprint 22.34b — preserva items invalidos pra fallback (habit redirect)
   for (let i = 0; i < items.length; i++) {
     const why = validateEventItem(items[i]);
-    if (why) dropped.push(`item[${i}]:${why}`);
-    else valid.push(items[i]);
+    if (why) {
+      dropped.push(`item[${i}]:${why}`);
+      droppedItems.push(items[i]);
+    } else {
+      valid.push(items[i]);
+    }
   }
   if (dropped.length) logSchemaErr('EVENT_CREATE', dropped, parsed);
-  if (!valid.length) return { malformed: true, cleanText };
-  return { events: valid, cleanText, malformed: false };
+  if (!valid.length) return { malformed: true, cleanText, droppedItems };
+  return { events: valid, cleanText, malformed: false, droppedItems };
 }
 
 async function applyEventActions(collaborator, events) {
   let okCount = 0, failCount = 0;
   let integrityPayload = null;
   const last4 = String(collaborator.phone || '').slice(-4);
+  // Sprint 22.34b — Habit redirect (titles que batem habito ativo do user)
+  // acontece no caller, ANTES de chegar aqui. Aqui só processa events reais.
   for (const e of events) {
     try {
       // Sprint 18 — pre-check de integridade (fail-open: erros nos detectores não bloqueiam)
@@ -4428,6 +4435,67 @@ async function processMessage(phone, text, raw = {}) {
   // 2.65) Event create — compromissos com horário (Sprint 4+).
   {
     const parsedEv = parseEventCreateMarker(reply);
+
+    // Sprint 22.34b — Habit redirect: TOM (LLM) tende a emitir EVENT_CREATE
+    // quando user fala "academia 18h" / "treino 7h". Skill diz claramente que
+    // hábitos com hora são tarefas, mas LLM ignora. Fallback: aqui no engine,
+    // antes de validar/rejeitar, checamos se title bate hábito ativo do user
+    // → redirect pra task com remind_at. Funciona pra items válidos E inválidos.
+    let habitRedirected = 0;
+    if (parsedEv) {
+      const allItems = [...(parsedEv.events || []), ...(parsedEv.droppedItems || [])];
+      if (allItems.length > 0) {
+        const { data: userHabits } = await supabase
+          .from('habits').select('name')
+          .eq('collaborator_id', collab.id).eq('is_active', true);
+        const habitNamesNorm = (userHabits || [])
+          .map(h => normalizeForSim(String(h.name || '')))
+          .filter(s => s.length >= 3);
+        if (habitNamesNorm.length > 0) {
+          for (const item of allItems) {
+            const tNorm = normalizeForSim(String(item.title || ''));
+            const matches = tNorm && habitNamesNorm.some(h =>
+              tNorm === h || tNorm.includes(h) || h.includes(tNorm),
+            );
+            if (!matches) continue;
+            const dueDate = String(item.start_at || '').slice(0, 10) || null;
+            const { error: tErr } = await supabase.from('tasks').insert({
+              title: String(item.title).trim().slice(0, 200),
+              assigned_to: collab.id,
+              created_by: collab.id,
+              source: 'tom',
+              status: 'pending',
+              context: 'personal',
+              priority: 'medium',
+              due_date: dueDate,
+              remind_at: item.start_at || null,
+            });
+            if (tErr) {
+              console.error(`[Event→Task redirect] insert err: ${tErr.message}`);
+            } else {
+              habitRedirected++;
+              // Remove de events/droppedItems pra nao processar duas vezes.
+              if (parsedEv.events) parsedEv.events = parsedEv.events.filter(e => e !== item);
+              if (parsedEv.droppedItems) parsedEv.droppedItems = parsedEv.droppedItems.filter(e => e !== item);
+            }
+          }
+        }
+        // Re-avalia malformed: se sobrou item válido, não é mais malformed.
+        if (parsedEv.malformed && parsedEv.events && parsedEv.events.length > 0) {
+          parsedEv.malformed = false;
+        }
+        // Se TUDO virou hábito (nada sobrou em events nem droppedItems),
+        // limpa malformed e short-circuit.
+        const totalLeft = (parsedEv.events?.length || 0) + (parsedEv.droppedItems?.length || 0);
+        if (habitRedirected > 0 && totalLeft === 0) {
+          await logMarker(collab.id, 'EVENT_CREATE', 'redirected', `habit→task x${habitRedirected}`, null);
+          reply = parsedEv.cleanText || reply;
+          parsedEv.malformed = false;  // bypass error path
+          parsedEv.events = [];        // bypass applyEventActions
+        }
+      }
+    }
+
     if (parsedEv && parsedEv.malformed) {
       console.warn('[Event] WARN: malformed marker, dropping block');
       await logMarker(collab.id, 'EVENT_CREATE', 'rejected', 'schema_invalid', reply);
@@ -4440,7 +4508,7 @@ async function processMessage(phone, text, raw = {}) {
         baseEv += '\n\n_⚠️ Tive um problema técnico ao gravar o(s) compromisso(s). Não confirmei nada no banco — me passa de novo?_';
       }
       reply = baseEv;
-    } else if (parsedEv) {
+    } else if (parsedEv && parsedEv.events && parsedEv.events.length > 0) {
       const { okCount, failCount, integrityPayload } = await applyEventActions(collab, parsedEv.events);
       console.log(`[Event] batch done: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
       if (integrityPayload) {
