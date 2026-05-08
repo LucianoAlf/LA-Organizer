@@ -41,12 +41,9 @@ interface Props {
   completion: OpChecklistCompletion
 }
 
-// Fatia 1 — meta SEMPRE 100. Cor da barra reflete proximidade.
-function progressTone(pct: number) {
-  if (pct >= 100) return { bar: 'bg-success', text: 'text-success' }
-  if (pct >= 70) return { bar: 'bg-warning', text: 'text-warning' }
-  return { bar: 'bg-danger', text: 'text-danger' }
-}
+// Sprint 22.36 (revisão) — alinhado com /projetos: barra sempre `bg-tom`,
+// igual a ProjectCard. Sem escala vermelho/amarelo (semântica diferente do resto
+// do app). Cor é única, intensidade é dada pelo preenchimento (% width).
 
 interface UnifiedItem {
   id: string
@@ -108,7 +105,6 @@ export function ChecklistCard({ completion }: Props) {
   const pct = totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0
   const windowClosed = isChecklistWindowClosed(completion.dispatched_at)
   const readonly = !!completion.completed_at || windowClosed
-  const tone = progressTone(pct)
 
   // ─── Collapse state per-completion (auto-colapsa quando completo)
   const storageKey = `checklist:collapsed:${completion.id}`
@@ -128,7 +124,7 @@ export function ChecklistCard({ completion }: Props) {
   }, [collapsed, storageKey])
 
   const badge = completion.completed_at
-    ? { label: '✅ Completo', cls: 'text-success' }
+    ? { label: '✅ Completo', cls: 'text-tom' }
     : windowClosed
     ? { label: '⏰ Encerrado', cls: 'text-fg-muted' }
     : doneCount > 0
@@ -418,10 +414,10 @@ export function ChecklistCard({ completion }: Props) {
             </div>
           </div>
 
-          {/* Progress bar (Fatia 1: meta 100, sem tick) */}
-          <div className="mt-2 w-full bg-bg-app rounded-full h-2">
+          {/* Progress bar — mesmo token de /projetos (bg-tom em fundo bg-bg-elevated) */}
+          <div className="mt-2 h-1.5 w-full bg-bg-elevated rounded-full overflow-hidden">
             <div
-              className={['h-2 rounded-full transition-all duration-300', tone.bar].join(' ')}
+              className="h-full bg-tom transition-[width]"
               style={{ width: `${pct}%` }}
               role="progressbar"
               aria-valuenow={pct}
@@ -430,10 +426,8 @@ export function ChecklistCard({ completion }: Props) {
               aria-label={`Progresso ${pct}%`}
             />
           </div>
-          <p className="text-label text-fg-muted mt-1">
-            <span className={tone.text}>
-              {doneCount}/{totalCount} itens ({pct}%)
-            </span>
+          <p className="text-body-sm text-fg-muted mt-1.5 tabular-nums">
+            {doneCount}/{totalCount} itens ({pct}%)
           </p>
         </div>
       </button>

@@ -9,7 +9,9 @@ import { useEffect, useState } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { GripVertical, Check, X } from 'lucide-react'
+// `Check` ainda é usado no botão de salvar nota inline.
 import { RowMenu, type MenuItem } from './RowMenu'
+import { TaskCheckbox } from './TaskCheckbox'
 
 interface Props {
   uid: string
@@ -114,11 +116,19 @@ export function ChecklistItemRow({
           <span className="w-6 flex-shrink-0" aria-hidden />
         )}
 
-        {/* Toggle button (checkbox + label) */}
+        {/* Checkbox padronizado (mesma do /projetos via TaskCheckbox) */}
+        <TaskCheckbox
+          done={done}
+          disabled={readonly}
+          onClick={readonly ? undefined : onToggle}
+          ariaLabel={done ? 'Desmarcar item' : 'Marcar item'}
+        />
+
+        {/* Label clicável também marca/desmarca */}
         <button
           type="button"
           className={[
-            'flex-1 flex items-center gap-3 p-2 rounded-lg text-left transition-colors',
+            'flex-1 flex items-center gap-2 px-2 py-2 rounded-lg text-left transition-colors min-w-0',
             readonly
               ? 'cursor-default opacity-70'
               : 'hover:bg-bg-app cursor-pointer active:opacity-80',
@@ -127,24 +137,6 @@ export function ChecklistItemRow({
           disabled={readonly}
           aria-pressed={done}
         >
-          <span
-            className={[
-              'w-6 h-6 rounded-md border-2 flex items-center justify-center flex-shrink-0 transition-colors',
-              done ? 'bg-success border-success' : 'border-border',
-            ].join(' ')}
-          >
-            {done && (
-              <svg className="text-white" width="12" height="12" viewBox="0 0 12 12" fill="none">
-                <path
-                  d="M2 6l3 3 5-5"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            )}
-          </span>
           <span className="flex-1 min-w-0">
             <span
               className={[
