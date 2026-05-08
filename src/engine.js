@@ -71,7 +71,8 @@ const VALID_TASK_ACTIONS = new Set([
 ]);
 const VALID_COACHING = ['light', 'normal', 'hard'];
 const VALID_EVENT_MODALITIES = new Set(['online', 'presencial', 'hibrido']);
-const VALID_EVENT_CATEGORIES = new Set(['la_music', 'mentoria', 'aula_particular', 'outra_escola', 'estudio', 'pessoal']);
+// Sprint 22.26 — VALID_EVENT_CATEGORIES era set fixo; agora a validacao acontece
+// em runtime via lookupEventCategoryBySlug (tabela event_categories). Removido.
 const VALID_EVENT_UPDATE_ACTIONS = new Set(['reschedule', 'cancel', 'complete']);
 const ISO_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})$/;
 

@@ -12,7 +12,7 @@ Quando você (TOM) acabou de perguntar **que horas** sobre uma pendência sem ho
 ### Como resolver
 
 1. Olhe a pendência sobre a qual você perguntou. Ela aparece no contexto como `[id=ab12cd34]` em **Tarefas pessoais hoje** ou **Tarefas trabalho hoje**.
-2. Se o título da pendência indica **compromisso** (`reunião`, `aula`, `ensaio`, `mentoria`, `sessão`, `encontro`, `gravação`, `consulta`): **promova** — emita `<<TASK_UPDATE>>` com `complete` na task e `<<EVENT_CREATE>>` com o horário, na mesma resposta. Default: 1h de duração, modalidade que constar no título (ex.: "Reunião online com X" → `online`); na falta, `presencial`. Categoria por contexto: `la_music` em itens internos, `mentoria` em mentorias, `aula_particular`/`outra_escola`/`estudio` quando óbvio. Em dúvida, `la_music`.
+2. Se o título da pendência indica **compromisso** (`reunião`, `aula`, `ensaio`, `mentoria`, `sessão`, `encontro`, `gravação`, `consulta`, `show`): **promova** — emita `<<TASK_UPDATE>>` com `complete` na task e `<<EVENT_CREATE>>` com o horário, na mesma resposta. Default: 1h de duração, modalidade que constar no título (ex.: "Reunião online com X" → `online`); na falta, `presencial`. Categoria por contexto: `la_music` em itens internos, `mentoria` em mentorias/aulas particulares, `estudio` em gravação/produção, `show` em apresentações. Em dúvida, `la_music`.
 3. Se a pendência **já é um event** (apareceu em **Compromissos hoje** com `[id=...]`): emita `<<EVENT_UPDATE>>` com `action: "reschedule"` e os novos `new_start_at`/`new_end_at`.
 4. Se não houver pendência clara no contexto, NÃO improvise. Pergunte UMA vez "qual reunião?" — sem citar tabelas, banco, ou estrutura interna.
 
@@ -112,16 +112,19 @@ A skill **`cadastro-projeto-5w2h`** cobre isso completamente — pergunta os 7 i
 
 Em dúvida, prefira tarefa. Compromisso só quando há horário com duração ou termo de evento explícito.
 
-## Categorias (enum fechado, igual ao PWA)
+## Categorias
 
-| Categoria | Quando usar |
+System (sempre disponíveis, alinhado com PWA Sprint 22.26):
+
+| Slug | Quando usar |
 |---|---|
 | `la_music` | atividades da LA Music — aulas regulares, reuniões internas |
-| `mentoria` | sessões de mentoria de carreira |
-| `aula_particular` | aula particular fora da grade |
-| `outra_escola` | trabalho em outra escola de música |
-| `estudio` | gravação, mixagem, produção |
-| `pessoal` | médico, família, lazer, conta |
+| `mentoria` | mentoria de carreira **e/ou** aula particular avulsa (label PWA: "Aula Particular/Mentoria") |
+| `estudio` | gravação, mixagem, produção (label PWA: "Gravação/Produção") |
+| `show` | shows, apresentações, eventos com público |
+| `pessoal` | médico, família, lazer, conta — fallback genérico pessoal |
+
+**Pessoais customizadas:** o user pode criar suas próprias no PWA (academia, jiu-jitsu, terapia, etc.). Se a fala mencionar uma categoria pessoal específica e ela já existir pra esse colaborador, usar o slug exato dela. Se não existir, usar `pessoal` (a tabela `event_categories` resolve o resto).
 
 ## Modalidades
 
