@@ -171,7 +171,7 @@ function nameFor(collab) {
 // Sprint 22.36 Fatia 2 — Adicionado: delegatedTasks (tarefas que ESTE user atribuiu
 // pra outros), todayChecklists (checklists operacionais de hoje com %).
 // Antes ficavam fora do contexto e TOM dizia "não tenho esse dato" no relatório.
-function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habits, events, delegatedTasks, todayChecklists) {
+function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habits, events, delegatedTasks, todayChecklists, teamAdherence) {
   const nickname = nameFor(collab);
   const lines = ['# 📌 CONTEXTO DESTA INTERAÇÃO', ''];
   const fn = collab.function_title ? ', ' + collab.function_title : '';
@@ -366,6 +366,22 @@ function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habi
       noted.slice(0, 3).forEach(i => {
         lines.push(`   ↳ obs: ${String(i.notes).slice(0, 80)}`);
       });
+    });
+  }
+
+  // Sprint 22.37 — ADERÊNCIA DA EQUIPE (semana atual) pra liderança operacional.
+  // Skill subfluxo 7 (checklists-operacionais) usa esses dados pra responder
+  // perguntas tipo "como tá a aderência da equipe?" sem inventar.
+  if (teamAdherence && teamAdherence.length) {
+    lines.push('', `**Aderência da equipe (esta semana):**`);
+    teamAdherence.slice(0, 25).forEach(t => {
+      const emoji = t.pct >= 90 ? '🟢' : t.pct >= 70 ? '🟡' : '🔴';
+      const first = (t.full_name || '').split(' ')[0];
+      const annotations = [];
+      if (t.late_items > 0) annotations.push(`${t.late_items} c/atraso`);
+      if (t.escalated_count > 0) annotations.push(`${t.escalated_count} escaladas`);
+      const tail = annotations.length ? ` — ${annotations.join(', ')}` : '';
+      lines.push(`• ${emoji} ${first}: ${t.pct}% (${t.completed}/${t.dispatched})${tail}`);
     });
   }
 
@@ -665,6 +681,7 @@ async function fetchCollaboratorContext(collaborator) {
     eventsRes,
     delegatedRes,
     todayChecklistsRes,
+    teamAdherenceRes,
   ] = await Promise.all([
     supabase.from('collaborator_profiles').select('*').eq('collaborator_id', id).maybeSingle(),
     supabase.from('collaborator_memory')
@@ -723,6 +740,24 @@ async function fetchCollaboratorContext(collaborator) {
       .select('id, completed_at, dispatched_at, op_checklists(name, unit), op_checklist_item_completions(is_checked, notes), op_checklist_completion_extra_items(is_checked, notes)')
       .eq('collaborator_id', id)
       .eq('reference_date', today),
+    // Sprint 22.37 — Aderência da equipe (semana atual) pra liderança operacional.
+    // Director (qualquer unidade) e manager unit-específica recebem o bloco.
+    // Coordinator pedagogical (Quintela/Juliana) e manager unit='all' (Yuri) → [].
+    (collaborator.role === 'director' || (collaborator.role === 'manager' && collaborator.unit !== 'all'))
+      ? supabase.rpc('get_adherence_by_collab', {
+          p_start_date: (() => {
+            const tzFmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' });
+            const todayStr = tzFmt.format(new Date());
+            const d = new Date(todayStr + 'T15:00:00.000Z');
+            const dow = d.getUTCDay();
+            const diffToMonday = dow === 0 ? -6 : 1 - dow;
+            d.setUTCDate(d.getUTCDate() + diffToMonday);
+            return d.toISOString().slice(0, 10);
+          })(),
+          p_end_date: new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date()),
+          p_unit_filter: collaborator.role === 'manager' ? collaborator.unit : null,
+        })
+      : Promise.resolve({ data: [], error: null }),
   ]);
 
   let activeProjects = [];
@@ -752,6 +787,7 @@ async function fetchCollaboratorContext(collaborator) {
     todayEvents: eventsRes.data || [],
     delegatedTasks: delegatedRes.data || [],
     todayChecklists: todayChecklistsRes.data || [],
+    teamAdherence: teamAdherenceRes.data || [],
     todayDate: today,
   };
 }
@@ -1259,7 +1295,7 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     eventsForCtx = eventsForCtx.filter(e => e.context === 'work');
   }
   // briefing_diario / daily_briefing: mantém todos os events (sem filtro).
-  const baseCtx = buildContext(collaborator, ctx.memories, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx, ctx.delegatedTasks || [], ctx.todayChecklists || []);
+  const baseCtx = buildContext(collaborator, ctx.memories, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx, ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || []);
   const pending = renderPendingDecisions(ctx.notifications);
 
   // Sprint 10.1 hotfix-2 (Plano C): resolve temporal de "amanhã"/"hoje" + horário
@@ -1435,7 +1471,7 @@ async function composeSystemPrompt(collaborator, ctx) {
   const blocks = [
     BLOCK_RULES,
     BLOCK_IDENTITY,
-    buildContext(collaborator, ctx.memories || [], ctx.prefs, ctx.todayTasks || [], ctx.activeProjects || [], lastMsgAge, ctx.habits || [], ctx.todayEvents || [], ctx.delegatedTasks || [], ctx.todayChecklists || []),
+    buildContext(collaborator, ctx.memories || [], ctx.prefs, ctx.todayTasks || [], ctx.activeProjects || [], lastMsgAge, ctx.habits || [], ctx.todayEvents || [], ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || []),
     skillBlock,
   ].filter(Boolean);
   let syncPrompt = blocks.join('\n\n---\n\n');

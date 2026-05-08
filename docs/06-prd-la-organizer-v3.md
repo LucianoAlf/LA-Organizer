@@ -1,8 +1,8 @@
 # PRD — LA Organizer
 
 **Documento:** 06 — PRD Completo
-**Versão:** 3.9
-**Data:** 2026-05-08 (atualizado Sprint 22.36 — Checklist design system + DnD + CRUD + TOM celebra/cobra/escala)
+**Versão:** 3.10
+**Data:** 2026-05-08 (atualizado Sprint 22.37 — Aderência operacional pra liderança)
 **Autor:** Luciano Alf (produto) + Claude + OpenClaw (arquitetura)
 **Stakeholder:** Luciano Alf (CEO LA Music)
 **Agente:** TOM
@@ -320,6 +320,20 @@ Ver `docs/PROJECT-WIZARD.md` para decisões arquiteturais detalhadas, mapeamento
 | TOM-LIMITES.md | — | NOVO — formaliza papel do TOM (não vira "menino de recado") |
 | Hotfixes UX (radar Sprint 20) | — | 11: cadência self-intro, microconfirmação numerada, Eisenhower, dedup defensivo, cooldown deadline, COORD_HINT contexto, etc. |
 | Decisão estratégica | — | **Encerrada fase de expansão de departamentos** (2026-05-05). Próxima frente: governança da liderança |
+
+### v3.9 → v3.10 (2026-05-08) — pós-Sprint 22.37 (Aderência operacional)
+
+| Item | v3.9 | v3.10 |
+|---|---|---|
+| Tela aderência | Não existia | `/mais/aderencia-checklists` lista + drilldown `/:colabId`. Acesso `director` + `manager unit-específica`. Coordinator pedagogical (Quintela/Juliana) e manager Marketing (Yuri unit='all') NÃO veem |
+| Cor da aderência | n/a | 🟢 ≥90 / 🟡 70-89 / 🔴 <70 baseado em fechados/despachados |
+| Janela | n/a | Toggle Hoje / Semana / Mês (default Semana) |
+| Filtro unidade | n/a | Director vê chips Todas/Barra/Recreio/Campo Grande; manager vê só sua unidade |
+| Drilldown | n/a | Header colab + breakdown por template + observações capturadas + escalações |
+| TOM contexto | sem aderência da equipe | Bloco "Aderência da equipe (esta semana)" injetado em `buildContext` pra leadership. Skill subfluxo 7 ganha dado real |
+| Schema 22.37 | n/a | Helpers `current_collab_unit/role()` + 3 policies SELECT (completions/items/templates) + 2 RPCs (`get_adherence_by_collab`, `get_adherence_by_template`) |
+| Bug fix Sprint 22.36 | findUnitManager retornava coordinator | Agora retorna role='manager' AND unit-específica, fallback director. Quintela não recebe escalação |
+| Role enum PWA | collaborator/leader/coordinator/director | + manager |
 
 ### v3.8 → v3.9 (2026-05-08) — pós-Sprint 22.35 + 22.36 (Checklist design system + TOM celebra/cobra/escala)
 

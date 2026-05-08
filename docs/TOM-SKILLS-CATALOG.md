@@ -187,6 +187,11 @@ Em dúvida, fallback para `checklist-tarefas` (cria task com `remind_at` se for 
 - interpreta preenchimento parcial ou total
 - emite `<<CHECKLIST_ACTION>>` quando necessário
 
+**Reforços Sprint 22.37:**
+- Bloco "Aderência da equipe (esta semana)" agora aparece no `buildContext` pra `director` e `manager unit-específica`. Cada linha: `🟢/🟡/🔴 Nome: pct% (X/Y) — annotations`.
+- TOM responde subfluxo 7 ("Aderência da semana") usando esse dado real, não inventando.
+- Coordinator pedagogical (Quintela/Juliana) e manager Marketing (Yuri unit='all') não recebem o bloco — `teamAdherence: []`.
+
 **Reforços Sprint 22.36:**
 - Meta agora é sempre 100% (não 80%). Auto-complete só dispara em `pct === 100`.
 - `applyChecklistAction` recalcula progresso somando items do template + ad-hoc do PWA (`op_checklist_completion_extra_items`).

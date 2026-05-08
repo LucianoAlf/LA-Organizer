@@ -37,6 +37,8 @@
 | Hábitos pessoais `/habitos` | ✓ | ✓ | ✓ | ✅ Sprint 11 |
 | Checklists operacionais `/checklists` | ✓ | ✓ | ✓ | ✅ Sprint 11 F2+ |
 | Checklists Templates `/mais/checklists-templates` | — | ✓ | ✓ | ✅ Sprint 11 F2+ |
+| Aderência operacional `/mais/aderencia-checklists` | — | — | ✓ (manager + director) | ✅ Sprint 22.37 |
+| Aderência detalhe `/mais/aderencia-checklists/:id` | — | — | ✓ (manager + director) | ✅ Sprint 22.37 |
 | Comunicados `/mais/comunicados` | — | ✓ | ✓ | ✅ Sprint 13 F1 |
 | Agenda Escolar `/mais/agenda-escolar` | — | ✓ | ✓ | ✅ Sprint 13 F2 |
 | Observabilidade `/mais/observabilidade` | — | ✓ | ✓ | ✅ Sprint 13 F3 |
