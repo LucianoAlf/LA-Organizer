@@ -13,6 +13,7 @@ import { TimeInput } from './TimeInput';
 import { EisenhowerPicker } from './EisenhowerPicker';
 import { ParticipantsPicker } from './ParticipantsPicker';
 import { useEventCategories } from '../hooks/useEventCategories';
+import { notifyTaskDelegated, notifyEventInvites } from '../lib/tomEngine';
 import {
   MODALITY_LABELS,
   type EventModality,
@@ -166,7 +167,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
       if (!collaborator) throw new Error('no_session');
       if (!delegateTo) throw new Error('no_assignee');
       const remindAt = taskTime ? `${due}T${taskTime}:00-03:00` : null;
-      const { error: e } = await supabase.from('tasks').insert({
+      const { data, error: e } = await supabase.from('tasks').insert({
         title: title.trim().slice(0, 200),
         assigned_to: delegateTo,
         created_by: collaborator.id,
@@ -177,8 +178,11 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
         due_date: due,
         remind_at: remindAt,
         eisenhower_quadrant: taskQuadrant,
-      });
+      }).select('id').single();
       if (e) throw e;
+      if (!data?.id) throw new Error('Não consegui criar a tarefa.');
+      // Sprint 22.33 — TOM avisa o assignee pelo WhatsApp (fire-and-forget).
+      void notifyTaskDelegated(data.id as string);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['tasks'] });
@@ -231,6 +235,9 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
         if (pe) {
           // Evento criado com sucesso, mas participants falhou. Loga e segue.
           console.warn('[QuickCreate] event_participants insert err:', pe.message);
+        } else {
+          // Sprint 22.33 — TOM avisa cada participant pelo WhatsApp.
+          void notifyEventInvites(inserted.id as string);
         }
       }
     },

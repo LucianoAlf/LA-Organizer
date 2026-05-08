@@ -506,6 +506,188 @@ router.post('/internal/celebration', requireInternalSecret, async (req, res) => 
   return res.json({ status: 'ok', sent: recipients.length, key: dedupeKey });
 });
 
+// Sprint 22.33 — task delegada via PWA → notifica assignee no WhatsApp.
+// PWA envia { task_id } depois do INSERT. Endpoint le task + assignee + creator,
+// dispara mensagem amigavel. Idempotente via marker_logs.
+router.post('/internal/task-delegated', requireInternalSecret, async (req, res) => {
+  const taskId = String(req.body?.task_id || '').trim();
+  if (!taskId) return res.status(400).json({ error: 'missing_task_id' });
+
+  const dedupeKey = `task-delegated:${taskId}`;
+  const { data: prior } = await supabase
+    .from('marker_logs')
+    .select('id')
+    .eq('marker_type', 'TASK_DELEGATED')
+    .eq('raw_excerpt', dedupeKey)
+    .limit(1);
+  if (prior && prior.length > 0) {
+    return res.json({ status: 'already_notified', key: dedupeKey });
+  }
+
+  // Carrega task + creator + assignee (com phone/is_active)
+  const { data: task, error: taskErr } = await supabase
+    .from('tasks')
+    .select('id, title, due_date, remind_at, context, eisenhower_quadrant, created_by, assigned_to')
+    .eq('id', taskId)
+    .single();
+  if (taskErr || !task) return res.status(404).json({ error: 'task_not_found' });
+  if (task.assigned_to === task.created_by) {
+    return res.json({ status: 'skipped', reason: 'self-assigned' });
+  }
+
+  const { data: creator } = await supabase
+    .from('collaborators')
+    .select('id, full_name')
+    .eq('id', task.created_by)
+    .single();
+  const { data: assignee } = await supabase
+    .from('collaborators')
+    .select('id, full_name, phone, is_active')
+    .eq('id', task.assigned_to)
+    .single();
+  if (!assignee || !assignee.phone || !assignee.is_active) {
+    await supabase.from('marker_logs').insert({
+      marker_type: 'TASK_DELEGATED', result: 'skipped',
+      reason: 'no_phone_or_inactive', raw_excerpt: dedupeKey,
+    });
+    return res.json({ status: 'no_recipient', key: dedupeKey });
+  }
+
+  // Formata data ("hoje" / "amanhã" / DD/MM)
+  function fmtDay(ymd) {
+    if (!ymd) return null;
+    const today = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }))
+      .toISOString().slice(0, 10);
+    const tmrw = new Date(today + 'T03:00:00Z'); tmrw.setUTCDate(tmrw.getUTCDate() + 1);
+    if (ymd === today) return 'hoje';
+    if (ymd === tmrw.toISOString().slice(0, 10)) return 'amanhã';
+    const [, m, d] = ymd.split('-');
+    return `${d}/${m}`;
+  }
+  function fmtTime(iso) {
+    if (!iso) return null;
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', hour12: false,
+    }).format(new Date(iso));
+  }
+
+  const dayStr = fmtDay(task.due_date);
+  const timeStr = fmtTime(task.remind_at);
+  const whenLine = dayStr ? (timeStr ? ` *${dayStr}* às *${timeStr}*` : ` *${dayStr}*`) : '';
+
+  const body =
+    `📌 *${creator?.full_name || 'Alguém'}* delegou uma tarefa pra você:\n\n` +
+    `*${task.title}*${whenLine ? `\n\nPra${whenLine}.` : ''}\n\n` +
+    `Quando concluir, marca aqui ou no app.`;
+
+  whatsapp.sendMessage(assignee.phone, body).catch(e =>
+    console.error(`[InternalAPI] task-delegated WA send err pra ${assignee.id}: ${e.message}`),
+  );
+
+  await supabase.from('marker_logs').insert({
+    marker_type: 'TASK_DELEGATED', result: 'executed',
+    reason: `delegated to ${assignee.full_name}`, raw_excerpt: dedupeKey,
+  });
+  console.log(`[InternalAPI] task-delegated ${taskId} → ${assignee.full_name}`);
+  return res.json({ status: 'ok', key: dedupeKey });
+});
+
+// Sprint 22.33 — convidados em compromisso → notifica cada participant.
+// PWA envia { event_id } depois do INSERT (evento + participants).
+router.post('/internal/event-invites', requireInternalSecret, async (req, res) => {
+  const eventId = String(req.body?.event_id || '').trim();
+  if (!eventId) return res.status(400).json({ error: 'missing_event_id' });
+
+  // Idempotencia por event (assume mandar so 1x na criacao; updates futuros
+  // poderiam ter outro endpoint).
+  const dedupeKey = `event-invites:${eventId}`;
+  const { data: prior } = await supabase
+    .from('marker_logs')
+    .select('id')
+    .eq('marker_type', 'EVENT_INVITES')
+    .eq('raw_excerpt', dedupeKey)
+    .limit(1);
+  if (prior && prior.length > 0) {
+    return res.json({ status: 'already_notified', key: dedupeKey });
+  }
+
+  const { data: event } = await supabase
+    .from('events')
+    .select('id, title, start_at, end_at, modality, location_text, meeting_url, created_by')
+    .eq('id', eventId)
+    .single();
+  if (!event) return res.status(404).json({ error: 'event_not_found' });
+
+  const { data: creator } = await supabase
+    .from('collaborators')
+    .select('id, full_name')
+    .eq('id', event.created_by)
+    .single();
+
+  const { data: participants } = await supabase
+    .from('event_participants')
+    .select('id, collaborator_id, status, collaborators(id, full_name, phone, is_active)')
+    .eq('event_id', eventId)
+    .is('notified_at', null);
+
+  const recipients = (participants || [])
+    .map(p => {
+      const c = Array.isArray(p.collaborators) ? p.collaborators[0] : p.collaborators;
+      return c && c.phone && c.is_active
+        ? { participantId: p.id, id: c.id, name: c.full_name, phone: c.phone }
+        : null;
+    })
+    .filter(Boolean);
+
+  if (recipients.length === 0) {
+    await supabase.from('marker_logs').insert({
+      marker_type: 'EVENT_INVITES', result: 'skipped',
+      reason: 'no_recipients', raw_excerpt: dedupeKey,
+    });
+    return res.json({ status: 'no_recipients', key: dedupeKey });
+  }
+
+  // Formata janela "DD/MM HH:MM–HH:MM"
+  function fmtSP(iso) {
+    return new Intl.DateTimeFormat('pt-BR', {
+      timeZone: 'America/Sao_Paulo',
+      day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+    }).format(new Date(iso));
+  }
+  const startStr = fmtSP(event.start_at);
+  const endTime = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(new Date(event.end_at));
+  const where = event.modality === 'online'
+    ? (event.meeting_url ? `🔗 ${event.meeting_url}` : '🌐 Online')
+    : event.location_text || (event.modality === 'hibrido' ? '🏠/🌐 Híbrido' : '📍 Presencial');
+
+  for (const r of recipients) {
+    const body =
+      `📅 *${creator?.full_name || 'Alguém'}* te convidou pra um compromisso:\n\n` +
+      `*${event.title}*\n` +
+      `🕐 ${startStr} — ${endTime}\n` +
+      `${where}\n\n` +
+      `Confirma presença respondendo aqui ou no app.`;
+    whatsapp.sendMessage(r.phone, body).catch(e =>
+      console.error(`[InternalAPI] event-invite WA send err pra ${r.id}: ${e.message}`),
+    );
+  }
+
+  // Marca notified_at (best-effort)
+  const ids = recipients.map(r => r.participantId);
+  await supabase.from('event_participants')
+    .update({ notified_at: new Date().toISOString() })
+    .in('id', ids);
+
+  await supabase.from('marker_logs').insert({
+    marker_type: 'EVENT_INVITES', result: 'executed',
+    reason: `${recipients.length} invites sent`, raw_excerpt: dedupeKey,
+  });
+  console.log(`[InternalAPI] event-invites ${eventId} → ${recipients.length} msgs`);
+  return res.json({ status: 'ok', sent: recipients.length, key: dedupeKey });
+});
+
 // Sprint 10: telemetria operacional do TOM. Auth via x-internal-secret (mesma
 // porta /internal/, sem novo secret). Sem dashboard nesta sprint — só JSON.
 router.get('/internal/metrics', requireInternalSecret, async (req, res) => {

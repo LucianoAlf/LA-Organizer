@@ -9,6 +9,7 @@ import { DateTimeInput } from './DateTimeInput';
 import { EisenhowerPicker } from './EisenhowerPicker';
 import { ParticipantsPicker } from './ParticipantsPicker';
 import { useEventCategories } from '../hooks/useEventCategories';
+import { notifyEventInvites } from '../lib/tomEngine';
 import type { CalendarEvent } from '../types';
 
 interface Props {
@@ -203,6 +204,9 @@ export function EditEventSheet({ open, event, onClose }: Props) {
                   .in('collaborator_id', toRemove);
               }
               qc.invalidateQueries({ queryKey: ['event-participants', event.id] });
+              // Sprint 22.33 — endpoint filtra participants com notified_at NULL,
+              // entao chamar sempre eh idempotente. So ressoa pra novos add.
+              if (toAdd.length > 0) void notifyEventInvites(event.id);
             } catch (e) {
               console.warn('[EditEventSheet] participants diff err:', e instanceof Error ? e.message : e);
             }

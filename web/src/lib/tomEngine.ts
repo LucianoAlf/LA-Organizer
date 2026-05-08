@@ -80,3 +80,35 @@ export async function notifyCelebration(
     console.warn(`[tomEngine] celebration notify falhou: ${msg}`);
   }
 }
+
+// Sprint 22.33 — notifica TOM pra mandar WhatsApp pro assignee de uma task
+// recem-delegada via PWA. Idempotente via marker_logs no engine.
+export async function notifyTaskDelegated(taskId: string): Promise<void> {
+  if (!INTERNAL_SECRET) return;
+  try {
+    await fetch(`${TOM_BASE}/internal/task-delegated`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-secret': INTERNAL_SECRET },
+      body: JSON.stringify({ task_id: taskId }),
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn(`[tomEngine] task-delegated notify falhou: ${msg}`);
+  }
+}
+
+// Sprint 22.33 — notifica TOM pra disparar WhatsApp pra cada participant de um
+// evento (so participants com notified_at IS NULL — idempotente p/ edicao).
+export async function notifyEventInvites(eventId: string): Promise<void> {
+  if (!INTERNAL_SECRET) return;
+  try {
+    await fetch(`${TOM_BASE}/internal/event-invites`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-secret': INTERNAL_SECRET },
+      body: JSON.stringify({ event_id: eventId }),
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn(`[tomEngine] event-invites notify falhou: ${msg}`);
+  }
+}
