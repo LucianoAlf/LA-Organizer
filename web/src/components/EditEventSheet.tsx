@@ -109,8 +109,6 @@ export function EditEventSheet({ open, event, onClose }: Props) {
   const update = useMutation({
     mutationFn: async (patch: Record<string, unknown>) => {
       if (!collaborator || !event) throw new Error('no_event');
-      // Sprint 22.31 — .select() captura RLS silent. Sem isso, escolher novo
-      // quadrante ou trocar data parecia salvar mas nao tocava o banco.
       const { data, error } = await supabase
         .from('events')
         .update(patch)
@@ -121,8 +119,18 @@ export function EditEventSheet({ open, event, onClose }: Props) {
       if (!data || data.length === 0) {
         throw new Error('Não consegui salvar (sem permissão ou compromisso removido).');
       }
+      return patch;
     },
-    onSuccess: () => {
+    onSuccess: (patch) => {
+      // Sprint 22.32 — optimistic: aplica patch no cache events imediato.
+      if (event) {
+        qc.setQueriesData<unknown>({ queryKey: ['events'] }, (old: unknown) => {
+          if (!Array.isArray(old)) return old;
+          return (old as Array<{ id: string }>).map(e =>
+            e.id === event.id ? { ...e, ...patch } : e,
+          );
+        });
+      }
       qc.invalidateQueries({ queryKey: ['events'] });
       qc.invalidateQueries({ queryKey: ['hoje'] });
       qc.invalidateQueries({ queryKey: ['semana'] });

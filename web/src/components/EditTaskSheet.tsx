@@ -76,9 +76,6 @@ export function EditTaskSheet({ open, task, onClose }: Props) {
         remind_at: remindAt,
         eisenhower_quadrant: quadrant,
       };
-      // Sprint 22.31 — .select() captura RLS silenciar UPDATE (caso RLS rejeite,
-      // postgrest retorna 0 rows sem error visivel). Sem isso, sheet fechava
-      // como se tivesse salvo mas o banco nao mudou.
       const { data, error: e } = await supabase
         .from('tasks')
         .update(patch)
@@ -88,8 +85,18 @@ export function EditTaskSheet({ open, task, onClose }: Props) {
       if (!data || data.length === 0) {
         throw new Error('Não consegui salvar (sem permissão ou tarefa removida).');
       }
+      return patch;
     },
-    onSuccess: () => {
+    onSuccess: async (patch) => {
+      // Sprint 22.32 — optimistic: aplica patch direto no cache de TODAS queries
+      // que comecam com ['tasks'] pra UI refletir IMEDIATO (antes do refetch).
+      // Bug observado: invalidateQueries marca stale mas re-render so chega no
+      // proximo tick; user via dot/cor antiga. Agora atualiza na hora.
+      if (!task) return;
+      qc.setQueriesData<Task[]>({ queryKey: ['tasks'] }, (old) => {
+        if (!Array.isArray(old)) return old;
+        return old.map(t => t.id === task.id ? { ...t, ...patch } as Task : t);
+      });
       qc.invalidateQueries({ queryKey: ['tasks'] });
       onClose();
     },

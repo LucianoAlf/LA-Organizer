@@ -154,12 +154,12 @@ export function TaskRow({
       <div className="min-w-0 flex-1">
         {/* Linha 1 — titulo (card-title pra hierarquia) */}
         <div className={['flex items-start gap-2', isDone ? 'line-through' : ''].join(' ')}>
-          <span className="text-card-title min-w-0 flex-1 break-words leading-snug">
+          <span className="text-body-md font-medium min-w-0 flex-1 break-words leading-snug">
             {dotClass && !isDone && (
               <span
                 aria-label={`Prioridade ${quadrantKey}`}
                 title={`Prioridade ${quadrantKey}`}
-                className={['inline-block h-2.5 w-2.5 rounded-full mr-2 align-middle ring-2 ring-bg-app', dotClass].join(' ')}
+                className={['inline-block h-2 w-2 rounded-full mr-2 align-middle', dotClass].join(' ')}
               />
             )}
             {task.title}
