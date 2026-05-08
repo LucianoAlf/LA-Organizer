@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { BottomSheet } from './BottomSheet';
 import { Button } from './Button';
+import { DateTimeInput } from './DateTimeInput';
 import type { CalendarEvent } from '../types';
 
 interface Props {
@@ -34,6 +35,8 @@ export function EditEventSheet({ open, event, onClose }: Props) {
   const [endAt, setEndAt] = useState('');
   const [locationText, setLocationText] = useState('');
   const [meetingUrl, setMeetingUrl] = useState('');
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [confirmCancel, setConfirmCancel] = useState(false);
 
   useEffect(() => {
     if (open && event) {
@@ -42,6 +45,8 @@ export function EditEventSheet({ open, event, onClose }: Props) {
       setEndAt(isoToLocalInput(event.end_at));
       setLocationText(event.location_text || '');
       setMeetingUrl(event.meeting_url || '');
+      setValidationError(null);
+      setConfirmCancel(false);
     }
   }, [open, event]);
 
@@ -67,9 +72,24 @@ export function EditEventSheet({ open, event, onClose }: Props) {
 
   const onSave = (e: FormEvent) => {
     e.preventDefault();
+    setValidationError(null);
     if (!event) return;
-    if (!title.trim() || !startAt || !endAt) return;
-    if (new Date(endAt).getTime() <= new Date(startAt).getTime()) return;
+    if (!title.trim()) {
+      setValidationError('Título é obrigatório.');
+      return;
+    }
+    if (!startAt) {
+      setValidationError('Início inválido (data + hora).');
+      return;
+    }
+    if (!endAt) {
+      setValidationError('Fim inválido (data + hora).');
+      return;
+    }
+    if (new Date(endAt).getTime() <= new Date(startAt).getTime()) {
+      setValidationError('Fim precisa ser depois do início.');
+      return;
+    }
     update.mutate({
       title: title.trim().slice(0, 200),
       start_at: localInputToIso(startAt),
@@ -79,7 +99,13 @@ export function EditEventSheet({ open, event, onClose }: Props) {
     });
   };
 
-  const onCancel = () => update.mutate({ status: 'cancelled' });
+  const onCancel = () => {
+    if (!confirmCancel) {
+      setConfirmCancel(true);
+      return;
+    }
+    update.mutate({ status: 'cancelled' });
+  };
   const onComplete = () => update.mutate({ status: 'done' });
 
   const endBeforeStart = startAt && endAt && new Date(endAt).getTime() <= new Date(startAt).getTime();
@@ -100,30 +126,21 @@ export function EditEventSheet({ open, event, onClose }: Props) {
             />
           </label>
 
-          <div className="grid grid-cols-2 gap-md">
-            <label className="block">
+          <div className="space-y-md">
+            <div>
               <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Início</div>
-              <input
-                type="datetime-local"
-                required
-                value={startAt}
-                onChange={e => setStartAt(e.target.value)}
-                className="w-full h-12 px-3 rounded-md bg-bg-elevated border border-border text-fg focus-ring"
-              />
-            </label>
-            <label className="block">
+              <DateTimeInput value={startAt} onChange={setStartAt} />
+            </div>
+            <div>
               <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Fim</div>
-              <input
-                type="datetime-local"
-                required
-                value={endAt}
-                onChange={e => setEndAt(e.target.value)}
-                className="w-full h-12 px-3 rounded-md bg-bg-elevated border border-border text-fg focus-ring"
-              />
-            </label>
+              <DateTimeInput value={endAt} onChange={setEndAt} invalid={Boolean(endBeforeStart)} />
+            </div>
           </div>
           {endBeforeStart && (
             <p role="alert" className="text-body-sm text-danger">Fim precisa ser depois do início.</p>
+          )}
+          {validationError && (
+            <p role="alert" className="text-body-sm text-danger">{validationError}</p>
           )}
 
           <label className="block">
@@ -162,15 +179,43 @@ export function EditEventSheet({ open, event, onClose }: Props) {
             <Button type="submit" loading={update.isPending} fullWidth disabled={Boolean(endBeforeStart)}>
               Salvar
             </Button>
-            <div className="flex items-center gap-sm">
-              <Button type="button" variant="secondary" onClick={onComplete} disabled={update.isPending || event.status === 'done'}>
-                Concluir
-              </Button>
-              <Button type="button" variant="secondary" onClick={onCancel} disabled={update.isPending || event.status === 'cancelled'}>
-                Cancelar evento
-              </Button>
-              <Button type="button" variant="ghost" onClick={onClose} className="ml-auto">Fechar</Button>
-            </div>
+            {confirmCancel ? (
+              <div className="surface p-sm bg-danger/5 border-danger/30 space-y-sm" role="alert">
+                <div className="text-body-sm text-fg">
+                  Cancelar este compromisso? Ele fica como histórico, não some.
+                </div>
+                <div className="flex items-center gap-sm">
+                  <Button
+                    type="button"
+                    variant="danger"
+                    onClick={onCancel}
+                    disabled={update.isPending}
+                    fullWidth
+                  >
+                    Sim, cancelar
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => setConfirmCancel(false)}
+                    disabled={update.isPending}
+                    fullWidth
+                  >
+                    Voltar
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-sm">
+                <Button type="button" variant="secondary" onClick={onComplete} disabled={update.isPending || event.status === 'done'}>
+                  Concluir
+                </Button>
+                <Button type="button" variant="secondary" onClick={onCancel} disabled={update.isPending || event.status === 'cancelled'}>
+                  Cancelar evento
+                </Button>
+                <Button type="button" variant="ghost" onClick={onClose} className="ml-auto">Fechar</Button>
+              </div>
+            )}
           </div>
         </form>
       )}

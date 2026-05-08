@@ -6,6 +6,8 @@ import { supabase } from '../lib/supabase';
 import { todaySP } from '../utils/date';
 import { BottomSheet } from './BottomSheet';
 import { Button } from './Button';
+import { DateInput } from './DateInput';
+import { DateTimeInput } from './DateTimeInput';
 import {
   CATEGORY_LABELS,
   MODALITY_LABELS,
@@ -137,9 +139,27 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (!title.trim()) return;
-    if (kind === 'task') createTask.mutate();
-    else createEvent.mutate();
+    if (!title.trim()) {
+      setError('Coloca um título.');
+      return;
+    }
+    if (kind === 'task') {
+      if (!due) {
+        setError('Coloca uma data válida (DD/MM/AAAA).');
+        return;
+      }
+      createTask.mutate();
+    } else {
+      if (!startAt) {
+        setError('Coloca início válido (data + hora).');
+        return;
+      }
+      if (!endAt) {
+        setError('Coloca fim válido (data + hora).');
+        return;
+      }
+      createEvent.mutate();
+    }
   };
 
   const submitting = createTask.isPending || createEvent.isPending;
@@ -193,7 +213,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
                       className={[
                         'h-11 rounded-md border text-body-md font-semibold transition-colors focus-ring',
                         active
-                          ? 'bg-brand text-white border-brand'
+                          ? 'bg-tom text-white border-tom'
                           : 'bg-bg-subtle text-fg-secondary border-border',
                       ].join(' ')}
                     >{o.label}</button>
@@ -203,13 +223,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
             </fieldset>
             <label className="block">
               <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Para quando</div>
-              <input
-                type="date"
-                required
-                value={due}
-                onChange={e => setDue(e.target.value)}
-                className="w-full h-12 px-3 rounded-md bg-bg-elevated border border-border text-fg focus-ring"
-              />
+              <DateInput value={due} onChange={setDue} />
             </label>
           </>
         ) : (
@@ -233,27 +247,15 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
               </div>
             </label>
 
-            <div className="grid grid-cols-2 gap-2">
-              <label className="block">
+            <div className="space-y-md">
+              <div>
                 <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Início</div>
-                <input
-                  type="datetime-local"
-                  required
-                  value={startAt}
-                  onChange={e => setStartAt(e.target.value)}
-                  className="w-full h-12 px-2 rounded-md bg-bg-elevated border border-border text-fg focus-ring tabular-nums"
-                />
-              </label>
-              <label className="block">
+                <DateTimeInput value={startAt} onChange={setStartAt} />
+              </div>
+              <div>
                 <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Fim</div>
-                <input
-                  type="datetime-local"
-                  required
-                  value={endAt}
-                  onChange={e => setEndAt(e.target.value)}
-                  className="w-full h-12 px-2 rounded-md bg-bg-elevated border border-border text-fg focus-ring tabular-nums"
-                />
-              </label>
+                <DateTimeInput value={endAt} onChange={setEndAt} />
+              </div>
             </div>
 
             <fieldset>
@@ -271,7 +273,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
                       className={[
                         'h-11 rounded-md border text-body-sm font-semibold transition-colors focus-ring',
                         active
-                          ? 'bg-brand text-white border-brand'
+                          ? 'bg-tom text-white border-tom'
                           : 'bg-bg-subtle text-fg-secondary border-border',
                       ].join(' ')}
                     >{MODALITY_LABELS[m]}</button>
@@ -336,11 +338,11 @@ function KindButton({
       className={[
         'rounded-md border px-3 py-3 text-left transition-colors focus-ring',
         active
-          ? 'border-brand bg-brand/10'
+          ? 'border-tom bg-tom/10'
           : 'border-border bg-bg-subtle hover:bg-bg-elevated',
       ].join(' ')}
     >
-      <div className={['flex items-center gap-2 text-body-md font-semibold', active ? 'text-brand' : 'text-fg'].join(' ')}>
+      <div className={['flex items-center gap-2 text-body-md font-semibold', active ? 'text-tom' : 'text-fg'].join(' ')}>
         {icon}
         {label}
       </div>

@@ -170,6 +170,8 @@ export function Hoje() {
     enabled: Boolean(collaborator?.id && supabaseConfigured),
   });
 
+  // Sprint 22.25 (audit Hoje, Mega-fatia A) — toggle otimista (paridade com
+  // toggleHabit e ProjetoDetalhe). Elimina flicker visivel ao marcar/desmarcar.
   const toggleTask = useMutation({
     mutationFn: async (task: Task) => {
       const isDone = task.status === 'done';
@@ -181,7 +183,25 @@ export function Hoje() {
         .eq('id', task.id);
       if (error) throw error;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['tasks'] }),
+    onMutate: async (task) => {
+      const keyHoje = ['tasks', 'hoje', collaborator?.id] as const;
+      const keyDelegated = ['tasks', 'delegated', collaborator?.id] as const;
+      await qc.cancelQueries({ queryKey: ['tasks'] });
+      const prevHoje = qc.getQueryData<Task[]>(keyHoje);
+      const prevDelegated = qc.getQueryData<Task[]>(keyDelegated);
+      const flip = (t: Task): Task => t.id === task.id
+        ? ({ ...t, status: t.status === 'done' ? 'pending' : 'done', completed_at: t.status === 'done' ? null : new Date().toISOString() } as Task)
+        : t;
+      qc.setQueryData<Task[]>(keyHoje, (old) => (old ?? []).map(flip));
+      qc.setQueryData<Task[]>(keyDelegated, (old) => (old ?? []).map(flip));
+      return { prevHoje, prevDelegated, keyHoje, keyDelegated };
+    },
+    onError: (_e, _v, ctx) => {
+      if (!ctx) return;
+      if (ctx.prevHoje) qc.setQueryData(ctx.keyHoje, ctx.prevHoje);
+      if (ctx.prevDelegated) qc.setQueryData(ctx.keyDelegated, ctx.prevDelegated);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['tasks'] }),
   });
 
   const work = tasks.filter(t => t.context === 'work');
