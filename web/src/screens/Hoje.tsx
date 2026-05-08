@@ -1,9 +1,18 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ListTodo, CalendarClock, Check, Flame } from 'lucide-react';
+import { DndContext, closestCenter, type DragEndEvent } from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { todaySP } from '../utils/date';
+import { useSortableSensors } from '../lib/sortableSensors';
 import { fetchEventsForDay } from '../lib/events';
 import { TaskRow } from '../components/TaskRow';
 import { EventRow } from '../components/EventRow';
@@ -67,10 +76,12 @@ async function fetchTasksToday(collabId: string): Promise<Task[]> {
   const today = todaySP();
   const { data, error } = await supabase
     .from('tasks')
-    .select('id, title, status, context, priority, category, action_type, source, due_date, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, completed_at, projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(full_name)')
+    .select('id, title, status, context, priority, category, action_type, source, due_date, scheduled_date, remind_at, eisenhower_quadrant, sort_position, project_id, assigned_to, created_by, completed_at, projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(full_name)')
     .eq('assigned_to', collabId)
     .neq('status', 'cancelled')
     .or(`due_date.eq.${today},and(due_date.lt.${today},status.not.in.(done,cancelled))`)
+    // Sprint 22.29 — sort_position primeiro pra DnD manual mandar; data como tiebreak.
+    .order('sort_position', { ascending: true, nullsFirst: false })
     .order('remind_at', { ascending: true, nullsFirst: false })
     .order('due_date', { ascending: true })
     .order('eisenhower_quadrant', { ascending: true, nullsFirst: false });
@@ -82,11 +93,12 @@ async function fetchDelegatedTasks(collabId: string): Promise<Task[]> {
   const today = todaySP();
   const { data, error } = await supabase
     .from('tasks')
-    .select('id, title, status, context, priority, category, action_type, source, due_date, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, completed_at, projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(full_name)')
+    .select('id, title, status, context, priority, category, action_type, source, due_date, scheduled_date, remind_at, eisenhower_quadrant, sort_position, project_id, assigned_to, created_by, completed_at, projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(full_name)')
     .eq('created_by', collabId)
     .neq('assigned_to', collabId)
     .neq('status', 'cancelled')
     .or(`due_date.eq.${today},and(due_date.lt.${today},status.not.in.(done,cancelled))`)
+    .order('sort_position', { ascending: true, nullsFirst: false })
     .order('due_date', { ascending: true });
   if (error) throw error;
   return (data ?? []) as unknown as Task[];
@@ -202,6 +214,44 @@ export function Hoje() {
       if (!ctx) return;
       if (ctx.prevHoje) qc.setQueryData(ctx.keyHoje, ctx.prevHoje);
       if (ctx.prevDelegated) qc.setQueryData(ctx.keyDelegated, ctx.prevDelegated);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['tasks'] }),
+  });
+
+  // Sprint 22.29 — DnD reorder otimista. User arrasta dentro de um grupo
+  // (atrasadas/pra hoje) e atualiza sort_position. Query primaria ja ordena
+  // por sort_position, entao o feedback eh instantaneo.
+  const reorderTasks = useMutation({
+    mutationFn: async (orderedIds: string[]) => {
+      await Promise.all(
+        orderedIds.map((tid, idx) =>
+          supabase.from('tasks').update({ sort_position: idx }).eq('id', tid).then(({ error }) => {
+            if (error) throw error;
+          }),
+        ),
+      );
+    },
+    onMutate: async (orderedIds) => {
+      const keyHoje = ['tasks', 'hoje', collaborator?.id] as const;
+      await qc.cancelQueries({ queryKey: keyHoje });
+      const prev = qc.getQueryData<Task[]>(keyHoje);
+      qc.setQueryData<Task[]>(keyHoje, (old) => {
+        if (!old) return old;
+        const positionMap = new Map(orderedIds.map((id, idx) => [id, idx]));
+        return old.map(t => {
+          const newPos = positionMap.get(t.id);
+          if (newPos == null) return t;
+          return { ...t, sort_position: newPos } as Task;
+        }).sort((a, b) => {
+          const pa = (a as Task & { sort_position?: number | null }).sort_position ?? 999;
+          const pb = (b as Task & { sort_position?: number | null }).sort_position ?? 999;
+          return pa - pb;
+        });
+      });
+      return { prev, keyHoje };
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(ctx.keyHoje, ctx.prev);
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ['tasks'] }),
   });
@@ -409,70 +459,58 @@ export function Hoje() {
           )}
         </section>
       ) : (
-        <div className="space-y-md">
+        <div className="space-y-lg">
           {overdue.length > 0 && (
-            <section className="surface p-md">
-              <div className="pb-2 text-label uppercase tracking-wide text-danger">
-                🔴 Atrasadas ({overdue.length})
+            <section className="space-y-sm">
+              <div className="px-1 text-label uppercase tracking-wide text-danger">
+                Atrasadas ({overdue.length})
               </div>
-              <div className="divide-y divide-border">
-                {overdue.map(t => (
-                  <TaskRow
-                    key={t.id}
-                    task={t}
-                    onToggle={tab === 'delegated' ? undefined : (task) => toggleTask.mutate(task)}
-                    readOnly={tab === 'delegated'}
-                    onReschedule={tab === 'delegated' ? undefined : setReschedulingTask}
-                    onDelete={tab === 'delegated' ? undefined : (task) => deleteTask.mutate(task)}
-                  />
-                ))}
-              </div>
+              <SortableTaskList
+                tasks={overdue}
+                tabIsDelegated={tab === 'delegated'}
+                onToggle={(task) => toggleTask.mutate(task)}
+                onReschedule={setReschedulingTask}
+                onDelete={(task) => deleteTask.mutate(task)}
+                onReorder={(ids) => reorderTasks.mutate(ids)}
+              />
             </section>
           )}
           {dueToday.length > 0 && (
-            <section className="surface p-md">
-              <div className="pb-2 text-label uppercase tracking-wide text-fg-muted">
+            <section className="space-y-sm">
+              <div className="px-1 text-label uppercase tracking-wide text-fg-muted">
                 Pra hoje ({dueToday.length})
               </div>
-              <div className="divide-y divide-border">
-                {dueToday.map(t => (
-                  <TaskRow
-                    key={t.id}
-                    task={t}
-                    onToggle={tab === 'delegated' ? undefined : (task) => toggleTask.mutate(task)}
-                    readOnly={tab === 'delegated'}
-                    onReschedule={tab === 'delegated' ? undefined : setReschedulingTask}
-                    onDelete={tab === 'delegated' ? undefined : (task) => deleteTask.mutate(task)}
-                  />
-                ))}
-              </div>
+              <SortableTaskList
+                tasks={dueToday}
+                tabIsDelegated={tab === 'delegated'}
+                onToggle={(task) => toggleTask.mutate(task)}
+                onReschedule={setReschedulingTask}
+                onDelete={(task) => deleteTask.mutate(task)}
+                onReorder={(ids) => reorderTasks.mutate(ids)}
+              />
             </section>
           )}
           {done.length > 0 && (
-            <section className="surface p-md">
+            <section className="space-y-sm">
               <button
                 type="button"
                 onClick={() => setDoneOpen(o => !o)}
-                className="w-full flex items-center gap-2 text-label uppercase tracking-wide text-success focus-ring rounded-sm select-none cursor-pointer"
+                className="w-full px-1 flex items-center gap-2 text-label uppercase tracking-wide text-success focus-ring rounded-sm select-none cursor-pointer"
                 aria-expanded={doneOpen}
               >
-                <span>✅ Concluídas ({done.length})</span>
+                <span>Concluídas ({done.length})</span>
                 <span className="text-fg-muted text-body-sm normal-case tracking-normal">
                   {doneOpen ? 'recolher' : 'expandir'}
                 </span>
               </button>
-              {doneOpen && (
-                <div className="mt-2 divide-y divide-border">
-                  {done.map(t => (
-                    <TaskRow
-                      key={t.id}
-                      task={t}
-                      onToggle={tab === 'delegated' ? undefined : (task) => toggleTask.mutate(task)}
-                      readOnly={tab === 'delegated'}
-                    />
-                  ))}
-                </div>
-              )}
+              {doneOpen && done.map(t => (
+                <TaskRow
+                  key={t.id}
+                  task={t}
+                  onToggle={tab === 'delegated' ? undefined : (task) => toggleTask.mutate(task)}
+                  readOnly={tab === 'delegated'}
+                />
+              ))}
             </section>
           )}
         </div>
@@ -492,5 +530,92 @@ export function Hoje() {
       <EditEventSheet open={Boolean(editingEvent)} event={editingEvent} onClose={() => setEditingEvent(null)} />
       <RescheduleSheet open={Boolean(reschedulingTask)} task={reschedulingTask} onClose={() => setReschedulingTask(null)} />
     </div>
+  );
+}
+
+// Sprint 22.29 — Wrapper DnD pra grupos da Hoje (overdue / dueToday). Cada grupo
+// tem seu proprio DndContext. Reorder so DENTRO do grupo (nao move task entre).
+function SortableTaskList({
+  tasks,
+  tabIsDelegated,
+  onToggle,
+  onReschedule,
+  onDelete,
+  onReorder,
+}: {
+  tasks: Task[];
+  tabIsDelegated: boolean;
+  onToggle: (task: Task) => void;
+  onReschedule: (task: Task) => void;
+  onDelete: (task: Task) => void;
+  onReorder: (orderedIds: string[]) => void;
+}) {
+  const sensors = useSortableSensors();
+  const ids = tasks.map(t => t.id);
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = ids.indexOf(String(active.id));
+    const newIndex = ids.indexOf(String(over.id));
+    if (oldIndex < 0 || newIndex < 0) return;
+    onReorder(arrayMove(ids, oldIndex, newIndex));
+  }
+
+  return (
+    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <SortableContext items={ids} strategy={verticalListSortingStrategy}>
+        <div className="space-y-sm">
+          {tasks.map(t => (
+            <SortableTaskItem
+              key={t.id}
+              task={t}
+              tabIsDelegated={tabIsDelegated}
+              onToggle={onToggle}
+              onReschedule={onReschedule}
+              onDelete={onDelete}
+            />
+          ))}
+        </div>
+      </SortableContext>
+    </DndContext>
+  );
+}
+
+function SortableTaskItem({
+  task,
+  tabIsDelegated,
+  onToggle,
+  onReschedule,
+  onDelete,
+}: {
+  task: Task;
+  tabIsDelegated: boolean;
+  onToggle: (task: Task) => void;
+  onReschedule: (task: Task) => void;
+  onDelete: (task: Task) => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: task.id,
+  });
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+  // Sprint 22.29 (Bucket 4) — em delegadas, sem checkbox (so o assignee marca
+  // feita) mas COM reagendar/excluir (created_by mexe).
+  return (
+    <TaskRow
+      task={task}
+      onToggle={tabIsDelegated ? undefined : onToggle}
+      readOnly={tabIsDelegated}
+      onReschedule={onReschedule}
+      onDelete={onDelete}
+      sortableRef={setNodeRef}
+      sortableStyle={style}
+      sortableAttributes={attributes}
+      sortableListeners={listeners}
+      isDragging={isDragging}
+    />
   );
 }

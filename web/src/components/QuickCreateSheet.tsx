@@ -49,6 +49,9 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
   // Sprint 22.27 — hora opcional pra Tarefa. Quando preenchida, vira `remind_at`
   // (NAO compromisso). Comportamento: lembrete em horario X, sem bloquear agenda.
   const [taskTime, setTaskTime] = useState<string>('');
+  // Sprint 22.29 (Bucket 3) — Eisenhower picker manual. null = sem classificacao
+  // (TOM pode classificar depois via skill priorizacao-inteligente).
+  const [taskQuadrant, setTaskQuadrant] = useState<number | null>(null);
 
   // event
   const [categoryId, setCategoryId] = useState<string>('');
@@ -74,6 +77,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
       setTaskCtx('work');
       setDue(today);
       setTaskTime('');
+      setTaskQuadrant(null);
       setCategoryId(defaultCategoryId);
       setCreatingCat(false);
       setNewCatLabel('');
@@ -116,6 +120,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
         priority: 'medium',
         due_date: due,
         remind_at: remindAt,
+        eisenhower_quadrant: taskQuadrant,
       });
       if (e) throw e;
     },
@@ -314,6 +319,44 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
                   : 'Sem hora · tarefa fica em aberto no dia.'}
               </div>
             </div>
+
+            <div>
+              <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5 flex items-baseline gap-2">
+                <span>Prioridade</span>
+                <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">opcional · matriz Eisenhower</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <QuadrantChip
+                  active={taskQuadrant === 1}
+                  tone="danger"
+                  onClick={() => setTaskQuadrant(taskQuadrant === 1 ? null : 1)}
+                  label="Urgente + importante"
+                />
+                <QuadrantChip
+                  active={taskQuadrant === 2}
+                  tone="warning"
+                  onClick={() => setTaskQuadrant(taskQuadrant === 2 ? null : 2)}
+                  label="Importante"
+                />
+                <QuadrantChip
+                  active={taskQuadrant === 3}
+                  tone="info"
+                  onClick={() => setTaskQuadrant(taskQuadrant === 3 ? null : 3)}
+                  label="Urgente"
+                />
+                <QuadrantChip
+                  active={taskQuadrant === 4}
+                  tone="neutral"
+                  onClick={() => setTaskQuadrant(taskQuadrant === 4 ? null : 4)}
+                  label="Nem um nem outro"
+                />
+              </div>
+              <div className="text-body-sm text-fg-muted mt-1.5">
+                {taskQuadrant === null
+                  ? 'Sem prioridade · TOM pode classificar depois.'
+                  : 'Você definiu manualmente · TOM respeita.'}
+              </div>
+            </div>
           </>
         ) : (
           <>
@@ -467,6 +510,46 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
         </div>
       </form>
     </BottomSheet>
+  );
+}
+
+// Sprint 22.29 (Bucket 3) — chip pra escolher quadrante Eisenhower no QuickCreate.
+function QuadrantChip({
+  active,
+  tone,
+  onClick,
+  label,
+}: {
+  active: boolean;
+  tone: 'danger' | 'warning' | 'info' | 'neutral';
+  onClick: () => void;
+  label: string;
+}) {
+  const dot = {
+    danger: 'bg-danger',
+    warning: 'bg-warning',
+    info: 'bg-info',
+    neutral: 'bg-fg-muted/30',
+  }[tone];
+  const activeRing = {
+    danger: 'border-danger bg-danger/10',
+    warning: 'border-warning bg-warning/10',
+    info: 'border-info bg-info/10',
+    neutral: 'border-fg-muted/40 bg-bg-elevated',
+  }[tone];
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={[
+        'inline-flex items-center gap-2 px-3 h-9 rounded-md border text-body-sm transition-colors focus-ring',
+        active ? activeRing : 'border-border bg-bg-subtle text-fg-muted hover:text-fg',
+      ].join(' ')}
+    >
+      <span aria-hidden className={`inline-block h-2 w-2 rounded-full ${dot}`} />
+      <span className={active ? 'text-fg font-semibold' : ''}>{label}</span>
+    </button>
   );
 }
 

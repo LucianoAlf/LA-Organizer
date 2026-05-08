@@ -634,15 +634,20 @@ async function fetchCollaboratorContext(collaborator) {
       .eq('collaborator_id', id).eq('is_active', true)
       .order('created_at', { ascending: false }).limit(10),
     supabase.from('user_preferences').select('*').eq('collaborator_id', id).maybeSingle(),
+    // Sprint 22.29 (Bucket 6) — sort_position primeiro pra TOM respeitar a
+    // ordem manual definida pelo user no PWA (DnD na Hoje). Demais orders
+    // viram tiebreak pra tasks sem sort_position definido.
     supabase.from('tasks')
       .select(TASK_COLS)
       .eq('assigned_to', id).lte('due_date', today).eq('context', 'personal').neq('status', 'done')
+      .order('sort_position', { ascending: true, nullsFirst: false })
       .order('remind_at', { ascending: true, nullsFirst: false })
       .order('due_date', { ascending: true })
       .order('eisenhower_quadrant', { ascending: true, nullsFirst: false }),
     supabase.from('tasks')
       .select(TASK_COLS)
       .eq('assigned_to', id).lte('due_date', today).eq('context', 'work').neq('status', 'done')
+      .order('sort_position', { ascending: true, nullsFirst: false })
       .order('remind_at', { ascending: true, nullsFirst: false })
       .order('due_date', { ascending: true })
       .order('eisenhower_quadrant', { ascending: true, nullsFirst: false }),

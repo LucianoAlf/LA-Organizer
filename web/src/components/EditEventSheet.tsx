@@ -292,25 +292,23 @@ export function EditEventSheet({ open, event, onClose }: Props) {
                 </div>
               </div>
             ) : (
-              <>
-                <div className="flex items-center gap-sm">
-                  <Button type="button" variant="secondary" onClick={onComplete} disabled={update.isPending || event.status === 'done'}>
-                    Concluir
-                  </Button>
-                  <Button type="button" variant="secondary" onClick={onCancel} disabled={update.isPending || event.status === 'cancelled'}>
-                    Cancelar evento
-                  </Button>
-                  <Button type="button" variant="ghost" onClick={onClose} className="ml-auto">Fechar</Button>
-                </div>
-                <button
+              <div className="flex items-center gap-sm flex-wrap">
+                <Button type="button" variant="secondary" onClick={onComplete} disabled={update.isPending || event.status === 'done'}>
+                  Concluir
+                </Button>
+                <Button type="button" variant="secondary" onClick={onCancel} disabled={update.isPending || event.status === 'cancelled'}>
+                  Cancelar evento
+                </Button>
+                <Button
                   type="button"
+                  variant="danger"
                   onClick={() => setConfirmDelete(true)}
                   disabled={update.isPending || deleteEvent.isPending}
-                  className="text-body-sm text-danger hover:text-danger/80 focus-ring rounded-sm px-2 py-1 self-start"
                 >
-                  Excluir compromisso
-                </button>
-              </>
+                  Excluir
+                </Button>
+                <Button type="button" variant="ghost" onClick={onClose} className="ml-auto">Fechar</Button>
+              </div>
             )}
           </div>
         </form>
