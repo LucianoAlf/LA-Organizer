@@ -1,12 +1,12 @@
 # PRD — LA Organizer
 
 **Documento:** 06 — PRD Completo
-**Versão:** 3.7
-**Data:** 2026-05-05 (atualizado Sprint 20 — fase de expansão de departamentos encerrada)
+**Versão:** 3.8
+**Data:** 2026-05-08 (atualizado Sprint 22.34 — Agenda revamp + TOM mensageria PWA↔WhatsApp)
 **Autor:** Luciano Alf (produto) + Claude + OpenClaw (arquitetura)
 **Stakeholder:** Luciano Alf (CEO LA Music)
 **Agente:** TOM
-**Status:** Sprints 0→20 fechadas. 4 departamentos operacionais maduros. Próxima fase: governança da liderança.
+**Status:** Sprints 0→22 fechadas. PWA Agenda totalmente refatorada com CRUD inline, conflito de horário, mensageria bidirecional PWA↔TOM via WhatsApp. Próxima frente: governança da liderança (Sprint 21 Autogovernança Guiada).
 
 > **Limites de papel do TOM:** ver `docs/TOM-LIMITES.md` (formalizado 2026-05-05). TOM é organizador de governança e organização pessoal da liderança — não é canal permanente de comunicação interpessoal entre toda a equipe.
 
@@ -320,6 +320,31 @@ Ver `docs/PROJECT-WIZARD.md` para decisões arquiteturais detalhadas, mapeamento
 | TOM-LIMITES.md | — | NOVO — formaliza papel do TOM (não vira "menino de recado") |
 | Hotfixes UX (radar Sprint 20) | — | 11: cadência self-intro, microconfirmação numerada, Eisenhower, dedup defensivo, cooldown deadline, COORD_HINT contexto, etc. |
 | Decisão estratégica | — | **Encerrada fase de expansão de departamentos** (2026-05-05). Próxima frente: governança da liderança |
+
+### v3.7 → v3.8 (2026-05-08) — pós-Sprint 22.34 (Agenda revamp + TOM mensageria)
+
+| Item | v3.7 | v3.8 |
+|---|---|---|
+| Status Fase 2 | Sprints 0→20 entregues | Sprints 0→22 entregues |
+| Hosting PWA | VPS único | **Vercel auto-deploy** + VPS apenas pro engine TOM e proxy `/internal/*` |
+| Hoje (`/hoje`) | Tabs Trabalho/Pessoal | **+Delegadas** com badge count, CRUD inline (DnD, RowMenu, checkbox toggle, Eisenhower dot manual) |
+| Semana (`/semana`) | Filtro work-only sem tabs | **Tabs Trabalho/Pessoal/Delegadas** distribuídas por dia, eventos com checkbox + Eisenhower dot |
+| FAB criação | 2 kinds (Tarefa/Compromisso) | **3 kinds (+ Delegar)**, picker manual Eisenhower (4 chips), participants picker, detecção de conflito de horário com banner amarelo |
+| Categorias compromissos | Hardcoded | Tabela `event_categories` com slug + label + tone + context, **categorias pessoais por colaborador** (Sprint 22.26) |
+| Mensageria PWA→TOM | Não existia | **3 endpoints `/internal/*`**: `task-delegated`, `event-invites`, `task-updated`. CORS habilitado. Idempotência via `marker_logs` + `event_participants.notified_at`. Toast com resultado real (success/error com motivo) |
+| Edit sheets | Inexistentes ou simples | `EditTaskSheet` (Sprint 22.30) + `EditEventSheet` (Sprint 22.32) + `RescheduleSheet` v2 com diff de participants e notify automático |
+| Reagendar/editar delegada | Não notificava assignee | **TOM dispara WhatsApp pro assignee** com nova data/hora ("🔄 *creator* reagendou uma tarefa que tá com você...") |
+| Hábitos | Junto das tasks | Bloco próprio no topo da aba Pessoal |
+| DateInput / TimeInput | `<input type=date>` nativo | Custom popover (calendar grid + 30min slots) com `position: fixed` z-1000 (escapa overflow do BottomSheet) |
+| Toast notifications | Inexistente | Componente `Toast.tsx` + `ToastHost` no AppShell, window-event-based, slide-up + scale, autohide 4.5s |
+| Eisenhower auto | Trigger gerava Q3/Q1 demais | **Trigger desativado** (Sprint 22.34d) — fica NULL até user marcar manual via 4 chips. Trigger respeita manual quando setado (Sprint 22.32b: `IF NEW.eisenhower_quadrant IS NOT NULL RETURN NEW`) |
+| Tabelas novas | — | `event_categories`, `event_participants` |
+| ALTERs | — | `tasks.eisenhower_quadrant`, `events.eisenhower_quadrant`, `tasks.remind_at` exposto na UI |
+| RLS | — | Sprint 22.23 fix `context = 'work'` em UPDATE/DELETE; Sprint 22.29 `auth_update_created_tasks` permite creator mexer em delegada |
+| `marker_logs.result` CHECK | `executed/rejected` | **Expandido** pra `executed/rejected/skipped/redirected` (Sprint 22.34l — bug crítico de `INSERT` silenciosa) |
+| Engine markers | EVENT_CREATE com schema rígido | `parseEventCreateMarker` exporta `droppedItems` pra fallback; **habit redirect**: engine converte EVENT_CREATE inválido em TASK_CREATE com `remind_at` quando title bate hábito ativo do user |
+| Skill `criar-compromisso.md` | — | Reforçada com tabela canônica no topo (academia=task, reunião=event) e caso "N events em uma frase" |
+| Bateria E2E PWA↔TOM | — | **11/11 testes bidirecional passando** (delegação, convite com 3 participants, reagendamento notificando assignee, conflict detection bidirecional) |
 
 ### v3.2 → v3.3 (2026-05-03) — pós-Sprint 15
 

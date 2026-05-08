@@ -97,6 +97,13 @@ Em dúvida, fallback para `checklist-tarefas` (cria task com `remind_at` se for 
 - `pickSkill` priority 4.9 cobre verbos de update sobre termos de evento (`remarca a reunião`, `cancela o ensaio`, `fechei a mentoria`).
 - Convivência task↔event: a skill instrui Claude a perguntar UMA vez quando há task pendente muito similar antes de emitir `<<EVENT_CREATE>>` — evita duplicação. Resposta "promover" emite `<<TASK_UPDATE complete>>` + `<<EVENT_CREATE>>` na mesma resposta (única exceção à regra de operação única).
 
+**Sprint 22.33–22.34 — reforços e defesas em profundidade:**
+- Tabela canônica no topo da skill: `academia 18h → TASK + remind_at` vs `reunião X 14h → EVENT_CREATE` (caso "hábito com hora não vira evento").
+- Caso "N events em uma frase" documentado explicitamente: emit array com N items dentro do mesmo marker.
+- Backend defensivo (engine.js): se LLM ignora a regra de hábito, o engine consulta `habits` ativos do user e converte EVENT_CREATE → TASK INSERT com `remind_at = start_at` (habit redirect Sprint 22.34b).
+- `parseEventCreateMarker` exporta `droppedItems` pra fallback recovery quando schema parcialmente inválido.
+- `detectDuplicateSemanticEvent` agora aplica `stripVerbPrefix` + keyword overlap mínimo (espelha fix Sprint 21.4 do task dup) — evita falso positivo "reunião com Henrique" vs "Reunião Matheus" (Sprint 22.33).
+
 ---
 
 ## 3. Comunicados internos segmentados (atualizado Sprint 13 F1)

@@ -1,11 +1,11 @@
 # Mapa de Telas do PWA — LA Organizer
 
 **Documento:** 05
-**Versão:** 3.3
-**Data:** 3 de maio de 2026 (atualizado Sprint 15)
-**Plataforma:** PWA mobile-first (React/TypeScript) — VPS (nginx + PM2)
+**Versão:** 3.4
+**Data:** 8 de maio de 2026 (atualizado Sprint 22.34 — Agenda revamp)
+**Plataforma:** PWA mobile-first (React/TypeScript) — Vercel + VPS (nginx + PM2)
 **Design:** Dark mode padrão, opção light mode
-**Status:** Sprints 0→15 em produção
+**Status:** Sprints 0→22 em produção
 
 ---
 
@@ -338,3 +338,86 @@ Fila operacional do departamento Operações Técnicas. 4 filtros: unidade, tipo
 | Operações Técnicas | Não previsto | ✅ Entregue Sprint 15 F3 (`/mais/operacoes`) |
 | types.ts novos | — | `Department`, `DepartmentRequestType`, `OperationalTask`, `STATUS_LABEL_OPERATIONAL`, `PRIORITY_INDICATOR` |
 | Canal de criação operacional | — | Exclusivamente via TOM (sem FAB na tela) |
+
+---
+
+## O que muda v3.3 → v3.4 *(Sprint 22.x — Agenda revamp + TOM mensageria)*
+
+### Hoje (`/hoje`) — refatorada
+
+| Camada | Antes | Depois |
+|---|---|---|
+| Tabs | 2 (Trabalho/Pessoal) | **3 (Trabalho · Pessoal · Delegadas)** com badges de count |
+| TaskRow | Texto plano + checkbox | `<article>` card: GripVertical (DnD), checkbox toggle, **dot Eisenhower (Q1/Q2/Q3 manual)**, RowMenu (Editar/Reagendar/Excluir) inline, badge status |
+| EventRow | Texto + click pra editar | Checkbox toggle done, **dot Eisenhower**, RowMenu (Cancelar/Excluir), badge categoria reposicionado pra linha de meta (não quebra título) |
+| Hábitos | Junto das tasks | **Bloco próprio no topo da aba Pessoal** (Sprint 22.5) |
+| FAB criação | 2 kinds | **3 kinds (Tarefa · Compromisso · Delegar)** via QuickCreateSheet |
+| Categorias | Hardcoded | **Tabela `event_categories`**: LA Music · Aula Particular/Mentoria · Gravação/Produção · Show · Pessoal + categorias pessoais por usuário |
+| Picker datetime | `<input type=date>` nativo | **DateInput + TimeInput popover** custom (calendar grid + 30min slots) |
+
+### Semana (`/semana`) — refatorada
+
+| Camada | Antes | Depois |
+|---|---|---|
+| Tabs | Nenhuma — só work | **3 (Trabalho · Pessoal · Delegadas)** espelhando Hoje |
+| Eventos | Texto plano (hora + título) | Checkbox toggle done + **dot Eisenhower** + clique abre EditEventSheet |
+| Tasks pessoais | Não apareciam (filter context=work) | **Visíveis na aba Pessoal** distribuídas por dia |
+| Delegadas | Inexistente | **Distribuídas SEG–SAB** (não flat); ⚠ N indicator de overdue |
+| AgendaTabs (Dia/Semana) | Existia | Indicador deslizante iOS-style mantido |
+| Toggle done | Só tasks | Tasks **+ events** com mutation que invalida `['events']` |
+
+### CRUD avançado e edit sheets
+
+| Sheet | Função | Sprint |
+|---|---|---|
+| **EditTaskSheet** | Edit completo: title, context toggle, datetime, Eisenhower; modo "Delegada para X" read-only | 22.30 |
+| **EditEventSheet** | Categoria, Eisenhower, ParticipantsPicker com diff (toAdd/toRemove) | 22.32 |
+| **RescheduleSheet** | Atalho "só reagendar"; remove filtro `assigned_to=me` pra creator reagendar delegada (RLS Sprint 22.29 já permitia) | 22.34m |
+| **QuickCreateSheet** | 3 kinds, categories dinâmicas (`+ Nova categoria pessoal`), participants picker, Eisenhower picker, **detecção de conflito de horário** com banner amarelo | 22.34i |
+
+### Componentes novos
+
+| Componente | Função |
+|---|---|
+| `EisenhowerPicker.tsx` | 4 chips coloridos manual (sem expor jargão "Eisenhower") |
+| `DateInput.tsx` | Calendar popover, `position: fixed` z-1000 (escapa overflow do BottomSheet) |
+| `TimeInput.tsx` | Lista 30min slots, mesma estratégia z-index |
+| `DateTimeInput.tsx` | Combinação dos dois |
+| `Toast.tsx` + `ToastHost` | Window-event-based, slide-up + scale, autohide 4.5s, kinds success/error/info — montado no AppShell |
+| `ParticipantsPicker.tsx` | Multi-select de colaboradores pra event_participants |
+| `RowMenu.tsx` | Menu kebab inline (⋮) por linha pra Editar/Reagendar/Cancelar/Excluir |
+| `Tabs.tsx` | Já existia, agora consistente em Hoje + Semana + ProjetoDetalhe |
+
+### TOM ↔ PWA mensageria (Sprint 22.33–22.34m)
+
+3 endpoints internos no backend (auth via `x-internal-secret`, CORS habilitado pra `/internal/*`):
+
+| Endpoint | Trigger | Mensagem WhatsApp |
+|---|---|---|
+| `POST /internal/task-delegated` | PWA delega tarefa pra colega | "📌 *<creator>* delegou uma tarefa pra você: ..." |
+| `POST /internal/event-invites` | PWA cria evento com participants | "📅 *<creator>* te convidou pra um compromisso: ..." (loop por participant não notificado) |
+| `POST /internal/task-updated` | PWA reagenda/edita delegada | "🔄 *<creator>* reagendou/atualizou uma tarefa que tá com você: ..." |
+
+Cliente em `web/src/lib/tomEngine.ts` retorna `NotifyResult` (`{ok, status, sent, reason}`) — fetch awaited (não fire-and-forget). Toast mostra resultado real ao usuário (success verde / error vermelho com motivo).
+
+Idempotência via `marker_logs` (`TASK_DELEGATED`, `EVENT_INVITES`, `TASK_UPDATED`) + `event_participants.notified_at`.
+
+### Tabelas novas / migrations Sprint 22
+
+- `event_categories` (Sprint 22.26): slug + label + tone + context, com categorias pessoais por colaborador
+- `event_participants` (Sprint 22.32): event_id + collaborator_id + status (invited/confirmed/declined) + invited_by + invited_at + responded_at + notified_at + RLS
+- `tasks.eisenhower_quadrant` ALTER (Sprint 22.30; antes só em tasks via trigger; agora também em events)
+- `events.eisenhower_quadrant` ALTER (Sprint 22.30)
+- Trigger `fn_calculate_eisenhower` (Sprint 22.32b respeita manual; Sprint 22.34d desativado por gerar Q3/Q1 demais — fica NULL até user marcar)
+- `marker_logs.result` CHECK constraint expandido (Sprint 22.34l): `executed/rejected/skipped/redirected`
+- RLS Sprint 22.23: UPDATE/DELETE com `context = 'work'` filter
+- RLS Sprint 22.29: `auth_update_created_tasks` + `auth_delete_own_tasks` — creator pode mexer em delegadas
+
+### Hospedagem
+
+| Item | v3.3 | v3.4 |
+|---|---|---|
+| Hosting PWA | VPS (nginx + PM2) | **Vercel auto-deploy** + VPS pro backend TOM |
+| Deploy script | manual | `bash scripts/push-and-deploy.sh /tmp/deploy-X` (auto-detect mudanças em `src/skills/migrations` → `ssh tom "git pull && pm2 restart tom"`) |
+| Vercel rewrites | — | `/internal/*` → `http://89.116.73.186/internal/*` (server-side, sem CORS) |
+| Env vars | `web/.env` local | Vercel dashboard tem `VITE_INTERNAL_API_SECRET` + `VITE_SUPABASE_*` |
