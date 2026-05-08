@@ -328,6 +328,43 @@ export interface OpChecklistCompletion {
   op_checklist_completion_extra_items?: OpChecklistCompletionExtraItem[]
 }
 
+/** Sprint 22.37 — agregado de aderência por colab. Vem do RPC get_adherence_by_collab. */
+export interface AdherenceByCollab {
+  collab_id: string
+  full_name: string
+  role: string
+  unit: string | null
+  function_title: string | null
+  dispatched: number
+  completed: number
+  late_items: number
+  escalated_count: number
+  pct: number
+}
+
+/** Sprint 22.37 — agregado de aderência por template (drilldown). */
+export interface AdherenceByTemplate {
+  template_id: string
+  template_name: string
+  template_unit: string | null
+  dispatched: number
+  completed: number
+  late_items: number
+  escalated_count: number
+  pct: number
+}
+
+/** Sprint 22.37 — observação capturada num item (drilldown). */
+export interface AdherenceObservation {
+  notes: string
+  reference_date: string
+  template_name: string
+  item_description?: string | null
+}
+
+/** Sprint 22.37 — janela temporal selecionável na tela de aderência. */
+export type AdherenceWindow = 'today' | 'week' | 'month'
+
 /** Returns true if the checklist window (dispatched_at + 6h) has closed */
 export function isChecklistWindowClosed(dispatchedAt: string | null): boolean {
   if (!dispatchedAt) return false
