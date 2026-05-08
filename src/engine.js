@@ -3961,10 +3961,20 @@ async function detectDuplicateSemanticEvent(collab, candidate) {
       console.error('[detectDuplicateSemanticEvent] query err:', error.message);
       return { probable: [], possible: [] };
     }
-    const candTitleNorm = normalizeForSim(candidate.title);
+    // Sprint 22.34 hotfix — bug observado: "Reunião com Henrique amanhã" matchava
+    // "Reunião Matheus Emusys hoje" como dup probable (false positive). Causa:
+    // jaroWinkler dava score alto pelo prefix comum "reuniao". Mesmo padrao de
+    // bug fixado em Sprint 21.4 pra tasks (stripVerbPrefix + keyword overlap).
+    // Aplicado aqui o mesmo fix.
+    const candCore = stripVerbPrefix(candidate.title);
+    const candTitleNorm = normalizeForSim(candCore);
+    // Keywords distinguidoras (sem stopwords, capitalized = nomes/lugares).
+    const candKeywords = (candCore.match(/\b[A-ZÁÀÃÂÉÊÍÓÔÕÚ][a-záàãâéêíóôõúç]{3,}\b/g) || [])
+      .filter(k => !KEYWORD_STOPWORDS.has(k.toLowerCase()));
     const probable = [], possible = [];
     for (const ev of (candidates || [])) {
-      let score = jaroWinkler(candTitleNorm, normalizeForSim(ev.title));
+      const evCore = stripVerbPrefix(ev.title);
+      let score = jaroWinkler(candTitleNorm, normalizeForSim(evCore));
       const evDate = ev.start_at ? ev.start_at.slice(0, 10) : null;
       if (candDate && evDate && candDate === evDate) score = Math.min(score + 0.3, 1.0);
       if (candidate.category && ev.category === candidate.category) score = Math.min(score + 0.1, 1.0);
@@ -3972,8 +3982,21 @@ async function detectDuplicateSemanticEvent(collab, candidate) {
           normalizeForSim(candidate.location_text) === normalizeForSim(ev.location_text)) {
         score = Math.min(score + 0.1, 1.0);
       }
-      if (score > 0.7) probable.push({ ...ev, _score: score });
-      else if (score > 0.5) possible.push({ ...ev, _score: score });
+      // Keyword overlap boost: se compartilha 1+ palavra distinguidora capitalizada.
+      const evKeywords = (evCore.match(/\b[A-ZÁÀÃÂÉÊÍÓÔÕÚ][a-záàãâéêíóôõúç]{3,}\b/g) || [])
+        .filter(k => !KEYWORD_STOPWORDS.has(k.toLowerCase()));
+      const shared = candKeywords.filter(k => evKeywords.includes(k));
+      if (shared.length > 0) score = Math.min(score + 0.1 * Math.min(shared.length, 2), 1.0);
+      // Sprint 22.34: pra entrar como PROBABLE (bloqueia/pergunta), exigir keyword
+      // overlap real OU mesma data + alta similaridade nominal. Sem isso, "Reuniao
+      // com Henrique" e "Reuniao com Matheus" continuariam matchando pelo prefix.
+      const sameDate = candDate && evDate && candDate === evDate;
+      const hasSharedKeyword = shared.length > 0;
+      if (score > 0.7 && (hasSharedKeyword || sameDate)) {
+        probable.push({ ...ev, _score: score });
+      } else if (score > 0.5) {
+        possible.push({ ...ev, _score: score });
+      }
     }
     probable.sort((a, b) => b._score - a._score);
     possible.sort((a, b) => b._score - a._score);
