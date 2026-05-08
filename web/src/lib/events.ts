@@ -1,8 +1,10 @@
 import { supabase } from './supabase';
 import type { CalendarEvent } from '../types';
 
+// Sprint 22.26 — events.category virou events.category_id (FK pra event_categories).
+// JOIN traz a categoria sob a chave `category` (mesmo nome anterior, agora objeto).
 const SELECT_COLS =
-  'id, collaborator_id, title, description, context, category, start_at, end_at, modality, location_text, meeting_url, project_id, status, created_by, source, created_at, updated_at, projects(name)';
+  'id, collaborator_id, title, description, context, category_id, start_at, end_at, modality, location_text, meeting_url, project_id, status, created_by, source, created_at, updated_at, projects(name), category:event_categories(id, collaborator_id, slug, label, context, icon, is_system, sort_order)';
 
 /**
  * Events for a given local YMD (America/Sao_Paulo). Returns events whose

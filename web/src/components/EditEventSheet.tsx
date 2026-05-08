@@ -4,7 +4,9 @@ import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { BottomSheet } from './BottomSheet';
 import { Button } from './Button';
+import { CustomSelect } from './CustomSelect';
 import { DateTimeInput } from './DateTimeInput';
+import { useEventCategories } from '../hooks/useEventCategories';
 import type { CalendarEvent } from '../types';
 
 interface Props {
@@ -31,6 +33,7 @@ export function EditEventSheet({ open, event, onClose }: Props) {
   const qc = useQueryClient();
 
   const [title, setTitle] = useState('');
+  const [categoryId, setCategoryId] = useState('');
   const [startAt, setStartAt] = useState('');
   const [endAt, setEndAt] = useState('');
   const [locationText, setLocationText] = useState('');
@@ -38,9 +41,12 @@ export function EditEventSheet({ open, event, onClose }: Props) {
   const [validationError, setValidationError] = useState<string | null>(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
 
+  const eventCategories = useEventCategories();
+
   useEffect(() => {
     if (open && event) {
       setTitle(event.title || '');
+      setCategoryId(event.category_id || '');
       setStartAt(isoToLocalInput(event.start_at));
       setEndAt(isoToLocalInput(event.end_at));
       setLocationText(event.location_text || '');
@@ -90,8 +96,20 @@ export function EditEventSheet({ open, event, onClose }: Props) {
       setValidationError('Fim precisa ser depois do início.');
       return;
     }
+    if (!categoryId) {
+      setValidationError('Escolhe uma categoria.');
+      return;
+    }
+    const cat = eventCategories.byId(categoryId);
+    if (!cat) {
+      setValidationError('Categoria inválida.');
+      return;
+    }
     update.mutate({
       title: title.trim().slice(0, 200),
+      category_id: cat.id,
+      // Sprint 22.26 — context derivado da categoria escolhida (work/personal).
+      context: cat.context,
       start_at: localInputToIso(startAt),
       end_at: localInputToIso(endAt),
       location_text: locationText.trim() ? locationText.trim().slice(0, 200) : null,
@@ -125,6 +143,27 @@ export function EditEventSheet({ open, event, onClose }: Props) {
               className="w-full h-12 px-3 rounded-md bg-bg-elevated border border-border text-fg focus-ring"
             />
           </label>
+
+          <div>
+            <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Categoria</div>
+            <CustomSelect
+              value={categoryId}
+              placeholder="— Escolher categoria —"
+              onChange={setCategoryId}
+              options={[
+                ...eventCategories.workCategories.map(c => ({ value: c.id, label: c.label })),
+                ...eventCategories.personalCategories.map(c => ({
+                  value: c.id, label: c.label,
+                  sublabel: c.is_system ? undefined : 'minha',
+                })),
+              ]}
+            />
+            <div className="text-body-sm text-fg-muted mt-1.5">
+              {eventCategories.byId(categoryId)?.context === 'personal'
+                ? 'Compromisso pessoal · só você vê.'
+                : 'Compromisso de trabalho · coordenação enxerga.'}
+            </div>
+          </div>
 
           <div className="space-y-md">
             <div>

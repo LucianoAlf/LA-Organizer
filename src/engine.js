@@ -1621,6 +1621,31 @@ async function applyCheckpointBatch(collaborator, parsed) {
   return { okCount, failCount, projectId, projectName, insertedIds, reason: null };
 }
 
+// Sprint 22.26 — Lookup de categoria de evento por slug. Procura em ordem:
+// 1) categoria pessoal do collaborador (se tiver)
+// 2) categoria global system (collaborator_id IS NULL, is_system=true)
+// Retorna { id, slug, label, context } ou null.
+async function lookupEventCategoryBySlug(slug, collaboratorId) {
+  if (!slug || !collaboratorId) return null;
+  // Tenta pessoal primeiro (user pode ter "academia", "medico", etc).
+  const { data: personal } = await supabase
+    .from('event_categories')
+    .select('id, slug, label, context')
+    .eq('collaborator_id', collaboratorId)
+    .eq('slug', slug)
+    .maybeSingle();
+  if (personal) return personal;
+  // Fallback: categoria global system.
+  const { data: global } = await supabase
+    .from('event_categories')
+    .select('id, slug, label, context')
+    .is('collaborator_id', null)
+    .eq('slug', slug)
+    .eq('is_system', true)
+    .maybeSingle();
+  return global ?? null;
+}
+
 // Parse <<EVENT_CREATE>>[...]<<END>> — TOM emite evento (compromisso com horário).
 // Schema mínimo por item:
 //   title, start_at (ISO -03:00), end_at (ISO -03:00), modality, category
@@ -1633,7 +1658,10 @@ function validateEventItem(e) {
   if (typeof e.end_at !== 'string' || !ISO_DATETIME_RE.test(e.end_at)) return 'end_at:invalid';
   if (new Date(e.end_at).getTime() <= new Date(e.start_at).getTime()) return 'end_before_start';
   if (typeof e.modality !== 'string' || !VALID_EVENT_MODALITIES.has(e.modality)) return 'modality:invalid';
-  if (typeof e.category !== 'string' || !VALID_EVENT_CATEGORIES.has(e.category)) return 'category:invalid';
+  // Sprint 22.26 — categorias agora vivem em event_categories (DB). TOM aceita
+  // qualquer slug; validacao de existencia (system OU pessoal do user) acontece
+  // no lookupCategoryId logo antes do INSERT.
+  if (typeof e.category !== 'string' || !e.category.trim()) return 'category:invalid';
   if (e.modality === 'presencial' && e.meeting_url) return 'presencial_with_meeting_url';
   if (e.context !== undefined && e.context !== 'work' && e.context !== 'personal') return 'context:invalid';
   return null;
@@ -1727,15 +1755,24 @@ async function applyEventActions(collaborator, events) {
         continue;
       }
 
-      // Sem findings: INSERT normal
-      const ctx = e.context || (e.category === 'pessoal' ? 'personal' : 'work');
+      // Sprint 22.26 — lookup category_id do slug. Procura em system (global)
+      // primeiro, depois nas pessoais do user. Falha se nao achar.
+      const catRow = await lookupEventCategoryBySlug(e.category, collaborator.id);
+      if (!catRow) {
+        console.error(`[Event] category slug not found: "${e.category}" (collab ${collaborator.id})`);
+        failCount++;
+        continue;
+      }
+      // Context derivado da categoria (work/personal). e.context override permitido.
+      const ctx = e.context || catRow.context;
       const row = {
         title: e.title.trim().slice(0, 200),
         description: typeof e.description === 'string' ? e.description.slice(0, 1000) : null,
         collaborator_id: collaborator.id,
         created_by: collaborator.id,
         context: ctx,
-        category: e.category,
+        category: e.category,         // mantido temporariamente p/ conflict detection legado
+        category_id: catRow.id,        // FK pra event_categories — fonte de verdade
         start_at: e.start_at,
         end_at: e.end_at,
         modality: e.modality,

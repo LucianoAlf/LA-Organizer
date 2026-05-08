@@ -46,6 +46,10 @@ export type Quadrant = 'q1' | 'q2' | 'q3' | 'q4' | null;
 
 // Sprint 3 — informational categorization shared by tasks + events.
 // NOT a security axis. Privacy lives in `context`. See docs/MODELO-EVENTS-VS-TASKS.md.
+//
+// Sprint 22.26 — events migraram pra `event_categories` (tabela dinamica). Aqui
+// fica so o slug enum legado pra TASKS (que continuam usando string fixa). Pra
+// events, ver EventCategory abaixo.
 export type Category =
   | 'la_music'
   | 'mentoria'
@@ -63,8 +67,23 @@ export const CATEGORY_LABELS: Record<Category, string> = {
   pessoal: 'Pessoal',
 };
 
+// Sprint 22.26 — categoria de evento dinamica. Globais (collaborator_id NULL,
+// is_system=true) sao las work categories. Pessoais sao por user (academia,
+// medico, jiu-jitsu, etc.).
+export interface EventCategory {
+  id: string;
+  collaborator_id: string | null;  // NULL = global
+  slug: string;
+  label: string;
+  context: TaskContext;            // work | personal
+  icon: string | null;
+  is_system: boolean;
+  sort_order: number;
+}
+
 // Default mapping at creation: pessoal → personal; demais → work.
 // User can override only via UI (Sprint 4+ feature). Sprint 3 keeps simple.
+// Sprint 22.26 — usado so por tasks; events agora derivam de category.context.
 export function defaultContextForCategory(c: Category): TaskContext {
   return c === 'pessoal' ? 'personal' : 'work';
 }
@@ -130,7 +149,10 @@ export interface CalendarEvent {
   title: string;
   description: string | null;
   context: TaskContext;
-  category: Category;
+  // Sprint 22.26 — events.category (text slug) virou events.category_id (UUID FK
+  // para event_categories). Categoria carregada via JOIN aparece em `category`.
+  category_id: string;
+  category?: EventCategory | null;
   start_at: string;       // ISO with TZ
   end_at: string;
   modality: EventModality;

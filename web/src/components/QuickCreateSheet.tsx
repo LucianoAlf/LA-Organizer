@@ -9,11 +9,9 @@ import { Button } from './Button';
 import { CustomSelect } from './CustomSelect';
 import { DateInput } from './DateInput';
 import { DateTimeInput } from './DateTimeInput';
+import { useEventCategories } from '../hooks/useEventCategories';
 import {
-  CATEGORY_LABELS,
   MODALITY_LABELS,
-  defaultContextForCategory,
-  type Category,
   type EventModality,
   type TaskContext,
 } from '../types';
@@ -27,13 +25,18 @@ interface Props {
 
 type Kind = 'task' | 'event';
 
-const CATEGORIES: Category[] = ['la_music', 'mentoria', 'aula_particular', 'outra_escola', 'estudio', 'pessoal'];
 const MODALITIES: EventModality[] = ['presencial', 'online', 'hibrido'];
+// Sentinel value usado no CustomSelect pra acionar "criar nova categoria pessoal".
+const NEW_CATEGORY_VALUE = '__new__';
 
 export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
   const { collaborator } = useAuth();
   const qc = useQueryClient();
   const today = defaultDueDate || todaySP();
+
+  const eventCategories = useEventCategories();
+  // Default: la_music quando carrega.
+  const defaultCategoryId = eventCategories.bySlug('la_music')?.id ?? '';
 
   const [kind, setKind] = useState<Kind>('task');
   const [title, setTitle] = useState('');
@@ -44,12 +47,19 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
   const [due, setDue] = useState(today);
 
   // event
-  const [category, setCategory] = useState<Category>('la_music');
+  const [categoryId, setCategoryId] = useState<string>('');
+  const [creatingCat, setCreatingCat] = useState(false);
+  const [newCatLabel, setNewCatLabel] = useState('');
   const [startAt, setStartAt] = useState(`${today}T09:00`);
   const [endAt, setEndAt] = useState(`${today}T10:00`);
   const [modality, setModality] = useState<EventModality>('presencial');
   const [locationText, setLocationText] = useState('');
   const [meetingUrl, setMeetingUrl] = useState('');
+
+  // Sincroniza default de categoria quando lista carrega tardiamente.
+  useEffect(() => {
+    if (!categoryId && defaultCategoryId) setCategoryId(defaultCategoryId);
+  }, [defaultCategoryId, categoryId]);
 
   // Reset when reopening
   useEffect(() => {
@@ -59,14 +69,16 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
       setTitle('');
       setTaskCtx('work');
       setDue(today);
-      setCategory('la_music');
+      setCategoryId(defaultCategoryId);
+      setCreatingCat(false);
+      setNewCatLabel('');
       setStartAt(`${today}T09:00`);
       setEndAt(`${today}T10:00`);
       setModality('presencial');
       setLocationText('');
       setMeetingUrl('');
     }
-  }, [open, today]);
+  }, [open, today, defaultCategoryId]);
 
   // Auto-extend end_at to start_at + 60min if user changes start_at past end_at
   useEffect(() => {
@@ -107,19 +119,20 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
   const createEvent = useMutation({
     mutationFn: async () => {
       if (!collaborator) throw new Error('no_session');
+      const cat = eventCategories.byId(categoryId);
+      if (!cat) throw new Error('Categoria inválida');
       // Convert local datetime-local strings → ISO with -03:00 offset (SP).
       const startIso = `${startAt}:00-03:00`;
       const endIso = `${endAt}:00-03:00`;
       if (new Date(endIso) <= new Date(startIso)) throw new Error('end_before_start');
-      const ctx = defaultContextForCategory(category);
       const payload = {
         title: title.trim().slice(0, 200),
         collaborator_id: collaborator.id,
         created_by: collaborator.id,
         source: 'manual' as const,
         status: 'scheduled' as const,
-        context: ctx,
-        category,
+        context: cat.context,
+        category_id: cat.id,
         start_at: startIso,
         end_at: endIso,
         modality,
@@ -137,6 +150,25 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
     },
   });
 
+  // Sprint 22.26 — cria categoria pessoal nova e seleciona automaticamente.
+  async function handleCreateNewCategory() {
+    const label = newCatLabel.trim();
+    if (label.length < 2) {
+      setError('Nome da categoria curto demais.');
+      return;
+    }
+    try {
+      const cat = await eventCategories.createPersonal(label);
+      setCategoryId(cat.id);
+      setCreatingCat(false);
+      setNewCatLabel('');
+      setError(null);
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e);
+      setError(`Não consegui criar a categoria. ${m}`);
+    }
+  }
+
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -151,6 +183,14 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
       }
       createTask.mutate();
     } else {
+      if (creatingCat) {
+        setError('Termina de criar a categoria antes (ou cancela).');
+        return;
+      }
+      if (!categoryId) {
+        setError('Escolhe uma categoria.');
+        return;
+      }
       if (!startAt) {
         setError('Coloca início válido (data + hora).');
         return;
@@ -231,16 +271,76 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
           <>
             <div>
               <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Categoria</div>
-              <CustomSelect
-                value={category}
-                onChange={(v) => setCategory(v as Category)}
-                options={CATEGORIES.map(c => ({ value: c, label: CATEGORY_LABELS[c] }))}
-              />
-              <div className="text-body-sm text-fg-muted mt-1.5">
-                {category === 'pessoal'
-                  ? 'Compromisso pessoal · só você vê.'
-                  : 'Compromisso de trabalho · coordenação enxerga.'}
-              </div>
+              {creatingCat ? (
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    autoFocus
+                    value={newCatLabel}
+                    onChange={(e) => setNewCatLabel(e.target.value)}
+                    placeholder="Ex.: Academia, médico, jiu-jitsu..."
+                    maxLength={60}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') { e.preventDefault(); void handleCreateNewCategory(); }
+                      if (e.key === 'Escape') { setCreatingCat(false); setNewCatLabel(''); }
+                    }}
+                    className="w-full h-12 px-3 rounded-md bg-bg-elevated border border-border text-fg placeholder:text-fg-muted focus-ring"
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => { setCreatingCat(false); setNewCatLabel(''); }}
+                      className="h-9 px-3 rounded-md text-body-sm text-fg-muted hover:text-fg focus-ring border border-border"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleCreateNewCategory()}
+                      disabled={newCatLabel.trim().length < 2}
+                      className="h-9 px-3 rounded-md bg-tom text-white text-body-sm font-semibold disabled:opacity-50 focus-ring"
+                    >
+                      Criar categoria pessoal
+                    </button>
+                  </div>
+                  <div className="text-body-sm text-fg-muted">
+                    Categoria pessoal · só você vê.
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <CustomSelect
+                    value={categoryId}
+                    placeholder="— Escolher categoria —"
+                    onChange={(v) => {
+                      if (v === NEW_CATEGORY_VALUE) {
+                        setCreatingCat(true);
+                        setNewCatLabel('');
+                        return;
+                      }
+                      setCategoryId(v);
+                    }}
+                    options={[
+                      ...eventCategories.workCategories.map(c => ({
+                        value: c.id,
+                        label: c.label,
+                        sublabel: c.is_system ? undefined : 'pessoal',
+                      })),
+                      ...eventCategories.personalCategories.map(c => ({
+                        value: c.id,
+                        label: c.label,
+                        sublabel: c.is_system ? undefined : 'minha',
+                      })),
+                      { value: NEW_CATEGORY_VALUE, label: '+ Nova categoria pessoal', sublabel: 'criar' },
+                    ]}
+                  />
+                  <div className="text-body-sm text-fg-muted mt-1.5">
+                    {eventCategories.byId(categoryId)?.context === 'personal'
+                      ? 'Compromisso pessoal · só você vê.'
+                      : 'Compromisso de trabalho · coordenação enxerga.'}
+                  </div>
+                </>
+              )}
             </div>
 
             <div className="space-y-md">

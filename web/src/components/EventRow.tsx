@@ -1,6 +1,6 @@
 import { Video, MapPin, Link as LinkIcon, Building2 } from 'lucide-react';
 import { Badge } from './Badge';
-import { CATEGORY_LABELS, MODALITY_LABELS, type CalendarEvent } from '../types';
+import { MODALITY_LABELS, type CalendarEvent } from '../types';
 import { formatEventTimeRange } from '../lib/events';
 
 interface Props {
@@ -10,7 +10,9 @@ interface Props {
   showDate?: boolean;
 }
 
-const categoryTone: Record<CalendarEvent['category'], 'brand' | 'info' | 'project' | 'warning' | 'success' | 'neutral'> = {
+// Sprint 22.26 — categoria virou objeto (FK em event_categories). Mapeio por
+// slug. Categorias pessoais criadas pelo user caem em "neutral" como default.
+const categoryTone: Record<string, 'brand' | 'info' | 'project' | 'warning' | 'success' | 'neutral'> = {
   la_music: 'brand',
   mentoria: 'project',
   aula_particular: 'info',
@@ -21,7 +23,9 @@ const categoryTone: Record<CalendarEvent['category'], 'brand' | 'info' | 'projec
 
 export function EventRow({ event, onClick, showDate }: Props) {
   const range = formatEventTimeRange(event.start_at, event.end_at);
-  const tone = categoryTone[event.category];
+  const slug = event.category?.slug ?? '';
+  const tone = categoryTone[slug] ?? 'neutral';
+  const label = event.category?.label ?? '—';
   const isCancelled = event.status === 'cancelled';
   const isDone = event.status === 'done';
 
@@ -69,7 +73,7 @@ export function EventRow({ event, onClick, showDate }: Props) {
         </div>
       </div>
 
-      <Badge tone={tone}>{CATEGORY_LABELS[event.category]}</Badge>
+      <Badge tone={tone}>{label}</Badge>
     </button>
   );
 }
