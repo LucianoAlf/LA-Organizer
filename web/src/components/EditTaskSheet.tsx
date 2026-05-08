@@ -88,16 +88,21 @@ export function EditTaskSheet({ open, task, onClose }: Props) {
       return patch;
     },
     onSuccess: async (patch) => {
-      // Sprint 22.32 — optimistic: aplica patch direto no cache de TODAS queries
-      // que comecam com ['tasks'] pra UI refletir IMEDIATO (antes do refetch).
-      // Bug observado: invalidateQueries marca stale mas re-render so chega no
-      // proximo tick; user via dot/cor antiga. Agora atualiza na hora.
-      if (!task) return;
-      qc.setQueriesData<Task[]>({ queryKey: ['tasks'] }, (old) => {
-        if (!Array.isArray(old)) return old;
-        return old.map(t => t.id === task.id ? { ...t, ...patch } as Task : t);
-      });
-      qc.invalidateQueries({ queryKey: ['tasks'] });
+      // Sprint 22.32b — keys explicitas (setQueriesData com prefix tava nao
+      // disparando re-render confiavel). Atualiza cada chave + refetchQueries
+      // pra garantir sync com server.
+      if (!task || !collaborator) return;
+      const keys: readonly (readonly [string, string, string | undefined])[] = [
+        ['tasks', 'hoje', collaborator.id],
+        ['tasks', 'delegated', collaborator.id],
+      ];
+      for (const key of keys) {
+        qc.setQueryData<Task[]>([...key], (old) => {
+          if (!old) return old;
+          return old.map(t => t.id === task.id ? ({ ...t, ...patch } as Task) : t);
+        });
+      }
+      await qc.refetchQueries({ queryKey: ['tasks'], type: 'active' });
       onClose();
     },
   });
