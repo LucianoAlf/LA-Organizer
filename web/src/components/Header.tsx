@@ -97,7 +97,7 @@ export function Header() {
             aria-label="Abrir menu de perfil"
             aria-expanded={menuOpen}
             title={role ? `${collaborator?.full_name} (${role})` : collaborator?.full_name ?? ''}
-            className="h-8 w-8 grid place-items-center rounded-full bg-bg-elevated border border-border text-body-sm font-bold text-fg focus-ring transition-colors hover:bg-bg-subtle"
+            className="h-11 w-11 grid place-items-center rounded-full bg-bg-elevated border border-border text-xs font-bold text-fg focus-ring transition-colors hover:bg-bg-subtle"
           >
             {initials(collaborator?.full_name)}
           </button>
