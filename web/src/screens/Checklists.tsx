@@ -9,6 +9,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { ChecklistCard } from '../components/ChecklistCard'
 import { EmptyState } from '../components/EmptyState'
+import { ErrorState } from '../components/ErrorState'
 import { LoadingState } from '../components/LoadingState'
 import type { OpChecklistCompletion } from '../types'
 
@@ -17,7 +18,7 @@ export function Checklists() {
   const queryClient = useQueryClient()
   const today = new Date().toISOString().slice(0, 10)
 
-  const { data: completions = [], isLoading } = useQuery<OpChecklistCompletion[]>({
+  const { data: completions = [], isLoading, error, refetch } = useQuery<OpChecklistCompletion[]>({
     queryKey: ['checklists', today],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -75,6 +76,16 @@ export function Checklists() {
 
   if (isLoading) {
     return <LoadingState rows={2} />
+  }
+
+  if (error) {
+    return (
+      <ErrorState
+        title="Não consegui carregar os checklists"
+        description="Pode ser conexão ou um problema no servidor. Tenta de novo."
+        onRetry={() => refetch()}
+      />
+    )
   }
 
   if (!completions.length) {

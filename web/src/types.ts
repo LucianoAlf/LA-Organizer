@@ -288,6 +288,8 @@ export interface OpChecklistItemCompletion {
   is_checked: boolean
   channel: 'pwa' | 'whatsapp'
   late: boolean
+  /** Sprint 22.35 — observação capturada pelo TOM (skill add_note) ou pelo PWA. */
+  notes?: string | null
 }
 
 export interface OpChecklistCompletion {
