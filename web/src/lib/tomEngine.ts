@@ -81,34 +81,45 @@ export async function notifyCelebration(
   }
 }
 
-// Sprint 22.33 — notifica TOM pra mandar WhatsApp pro assignee de uma task
-// recem-delegada via PWA. Idempotente via marker_logs no engine.
-export async function notifyTaskDelegated(taskId: string): Promise<void> {
-  if (!INTERNAL_SECRET) return;
+// Sprint 22.34j — funções retornam resultado pra UI mostrar toast.
+export type NotifyResult =
+  | { ok: true; status: number; sent?: number }
+  | { ok: false; reason: string };
+
+// Sprint 22.33 — notifica TOM pra mandar WhatsApp pro assignee de uma task.
+export async function notifyTaskDelegated(taskId: string): Promise<NotifyResult> {
+  if (!INTERNAL_SECRET) return { ok: false, reason: 'no_secret' };
   try {
-    await fetch(`${TOM_BASE}/internal/task-delegated`, {
+    const r = await fetch(`${TOM_BASE}/internal/task-delegated`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-internal-secret': INTERNAL_SECRET },
       body: JSON.stringify({ task_id: taskId }),
     });
+    if (!r.ok) return { ok: false, reason: `http_${r.status}` };
+    return { ok: true, status: r.status };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.warn(`[tomEngine] task-delegated notify falhou: ${msg}`);
+    return { ok: false, reason: msg };
   }
 }
 
 // Sprint 22.33 — notifica TOM pra disparar WhatsApp pra cada participant de um
 // evento (so participants com notified_at IS NULL — idempotente p/ edicao).
-export async function notifyEventInvites(eventId: string): Promise<void> {
-  if (!INTERNAL_SECRET) return;
+export async function notifyEventInvites(eventId: string): Promise<NotifyResult> {
+  if (!INTERNAL_SECRET) return { ok: false, reason: 'no_secret' };
   try {
-    await fetch(`${TOM_BASE}/internal/event-invites`, {
+    const r = await fetch(`${TOM_BASE}/internal/event-invites`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-internal-secret': INTERNAL_SECRET },
       body: JSON.stringify({ event_id: eventId }),
     });
+    if (!r.ok) return { ok: false, reason: `http_${r.status}` };
+    const json = await r.json().catch(() => ({}));
+    return { ok: true, status: r.status, sent: typeof json.sent === 'number' ? json.sent : undefined };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.warn(`[tomEngine] event-invites notify falhou: ${msg}`);
+    return { ok: false, reason: msg };
   }
 }

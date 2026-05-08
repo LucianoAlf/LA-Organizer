@@ -1,0 +1,105 @@
+import { useEffect, useState } from 'react';
+import { CheckCircle2, AlertCircle, Info, X } from 'lucide-react';
+
+// Sprint 22.34j — Toast minimal: notifica ações pelo botão direito inferior.
+// Chamado via window.dispatchEvent(new CustomEvent('app-toast', { detail: ... })).
+// Sem dependência externa, sem context provider — só window event bus.
+
+export type ToastKind = 'success' | 'error' | 'info';
+export interface ToastDetail {
+  kind: ToastKind;
+  title: string;
+  msg?: string;
+  /** ms; default 4500 */
+  duration?: number;
+}
+
+interface InternalToast extends ToastDetail {
+  id: number;
+}
+
+let nextId = 1;
+
+export function showToast(detail: ToastDetail): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent<ToastDetail>('app-toast', { detail }));
+}
+
+const KIND_TONE: Record<ToastKind, { bg: string; border: string; icon: typeof CheckCircle2 }> = {
+  success: { bg: 'bg-success/10', border: 'border-success', icon: CheckCircle2 },
+  error: { bg: 'bg-danger/10', border: 'border-danger', icon: AlertCircle },
+  info: { bg: 'bg-info/10', border: 'border-info', icon: Info },
+};
+
+export function ToastHost() {
+  const [toasts, setToasts] = useState<InternalToast[]>([]);
+
+  useEffect(() => {
+    function onToast(e: Event) {
+      const ev = e as CustomEvent<ToastDetail>;
+      const t: InternalToast = { ...ev.detail, id: nextId++ };
+      setToasts(prev => [...prev, t]);
+      const dur = t.duration ?? 4500;
+      window.setTimeout(() => {
+        setToasts(prev => prev.filter(x => x.id !== t.id));
+      }, dur);
+    }
+    window.addEventListener('app-toast', onToast);
+    return () => window.removeEventListener('app-toast', onToast);
+  }, []);
+
+  if (toasts.length === 0) return null;
+
+  return (
+    <div className="fixed bottom-20 right-4 z-[9999] flex flex-col gap-2 pointer-events-none max-w-[360px]">
+      {toasts.map(t => {
+        const tone = KIND_TONE[t.kind];
+        const Icon = tone.icon;
+        return (
+          <div
+            key={t.id}
+            role="status"
+            className={[
+              'rounded-md border-l-4 p-3 shadow-soft pointer-events-auto',
+              'bg-bg-surface',
+              tone.border,
+              tone.bg,
+              'animate-[slideIn_0.2s_ease-out]',
+            ].join(' ')}
+            style={{
+              animation: 'toastSlideIn 200ms cubic-bezier(0.32, 0.72, 0, 1)',
+            }}
+          >
+            <div className="flex items-start gap-2">
+              <Icon
+                size={18}
+                className={[
+                  'shrink-0 mt-0.5',
+                  t.kind === 'success' ? 'text-success' : t.kind === 'error' ? 'text-danger' : 'text-info',
+                ].join(' ')}
+              />
+              <div className="flex-1 min-w-0">
+                <div className="text-body-sm font-semibold text-fg leading-tight">{t.title}</div>
+                {t.msg && <div className="text-body-sm text-fg-secondary mt-0.5">{t.msg}</div>}
+              </div>
+              <button
+                type="button"
+                onClick={() => setToasts(prev => prev.filter(x => x.id !== t.id))}
+                aria-label="Fechar"
+                className="shrink-0 -mr-1 -mt-1 p-1 text-fg-muted hover:text-fg focus-ring rounded-sm"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          </div>
+        );
+      })}
+      <style>{`
+        @keyframes toastSlideIn {
+          from { opacity: 0; transform: translateY(8px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
+    </div>
+  );
+}

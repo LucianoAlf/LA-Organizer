@@ -14,6 +14,7 @@ import { EisenhowerPicker } from './EisenhowerPicker';
 import { ParticipantsPicker } from './ParticipantsPicker';
 import { useEventCategories } from '../hooks/useEventCategories';
 import { notifyTaskDelegated, notifyEventInvites } from '../lib/tomEngine';
+import { showToast } from './Toast';
 import {
   MODALITY_LABELS,
   type EventModality,
@@ -184,8 +185,13 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
       }).select('id').single();
       if (e) throw e;
       if (!data?.id) throw new Error('Não consegui criar a tarefa.');
-      // Sprint 22.33 — TOM avisa o assignee pelo WhatsApp (fire-and-forget).
-      void notifyTaskDelegated(data.id as string);
+      // Sprint 22.34j — awaited + toast feedback.
+      const r = await notifyTaskDelegated(data.id as string);
+      if (r.ok) {
+        showToast({ kind: 'success', title: 'Tarefa delegada', msg: 'TOM mandou WhatsApp pra pessoa.' });
+      } else {
+        showToast({ kind: 'error', title: 'WhatsApp não enviado', msg: `Tarefa salva, mas notificação falhou (${r.reason}).` });
+      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['tasks'] });
@@ -238,10 +244,27 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
         if (pe) {
           // Evento criado com sucesso, mas participants falhou. Loga e segue.
           console.warn('[QuickCreate] event_participants insert err:', pe.message);
+          showToast({ kind: 'error', title: 'Compromisso criado', msg: 'Mas não consegui salvar os participantes.' });
         } else {
-          // Sprint 22.33 — TOM avisa cada participant pelo WhatsApp.
-          void notifyEventInvites(inserted.id as string);
+          // Sprint 22.34j — awaited + toast feedback.
+          const r = await notifyEventInvites(inserted.id as string);
+          if (r.ok) {
+            const n = r.sent ?? participantIds.length;
+            showToast({
+              kind: 'success',
+              title: 'Compromisso criado',
+              msg: n > 0 ? `TOM mandou convite pelo WhatsApp pra ${n} ${n === 1 ? 'pessoa' : 'pessoas'}.` : 'Sem participantes elegíveis pra notificar.',
+            });
+          } else {
+            showToast({
+              kind: 'error',
+              title: 'Compromisso criado',
+              msg: `Mas convite por WhatsApp falhou (${r.reason}). Tenta de novo no menu do compromisso.`,
+            });
+          }
         }
+      } else {
+        showToast({ kind: 'success', title: 'Compromisso criado' });
       }
     },
     onSuccess: () => {
