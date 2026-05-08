@@ -1,6 +1,6 @@
 import { useState, useEffect, FormEvent } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { ListTodo, CalendarClock } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ListTodo, CalendarClock, UserPlus } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { todaySP } from '../utils/date';
@@ -25,7 +25,7 @@ interface Props {
   defaultDueDate?: string;
 }
 
-type Kind = 'task' | 'event';
+type Kind = 'task' | 'event' | 'delegated';
 
 const MODALITIES: EventModality[] = ['presencial', 'online', 'hibrido'];
 // Sentinel value usado no CustomSelect pra acionar "criar nova categoria pessoal".
@@ -53,6 +53,8 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
   // Sprint 22.29 (Bucket 3) — Eisenhower picker manual. null = sem classificacao
   // (TOM pode classificar depois via skill priorizacao-inteligente).
   const [taskQuadrant, setTaskQuadrant] = useState<number | null>(null);
+  // Sprint 22.31 — Delegada: a quem atribuir (collaborator id). Quando kind='delegated'.
+  const [delegateTo, setDelegateTo] = useState<string>('');
 
   // event
   const [categoryId, setCategoryId] = useState<string>('');
@@ -81,6 +83,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
       setDue(today);
       setTaskTime('');
       setTaskQuadrant(null);
+      setDelegateTo('');
       setCategoryId(defaultCategoryId);
       setCreatingCat(false);
       setNewCatLabel('');
@@ -108,6 +111,23 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
     }
   }, [startAt]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Sprint 22.31 — colabs ativos pra delegacao (exclui o proprio user).
+  const { data: collaborators = [] } = useQuery({
+    queryKey: ['collaborators-active', collaborator?.id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('collaborators')
+        .select('id, full_name, role')
+        .eq('is_active', true)
+        .order('full_name', { ascending: true });
+      if (error) return [];
+      return ((data ?? []) as Array<{ id: string; full_name: string; role: string }>)
+        .filter(c => c.id !== collaborator?.id);
+    },
+    enabled: kind === 'delegated' && Boolean(collaborator?.id),
+    staleTime: 5 * 60_000,
+  });
+
   const createTask = useMutation({
     mutationFn: async () => {
       if (!collaborator) throw new Error('no_session');
@@ -121,6 +141,34 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
         source: 'manual',
         status: 'pending',
         context: taskCtx,
+        priority: 'medium',
+        due_date: due,
+        remind_at: remindAt,
+        eisenhower_quadrant: taskQuadrant,
+      });
+      if (e) throw e;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tasks'] });
+      onClose();
+    },
+  });
+
+  // Sprint 22.31 — delegacao: cria task pro outro (assigned_to != self).
+  // Sempre context='work' (delegacao pessoal nao faz sentido entre 2 pessoas
+  // por privacidade — tasks pessoais sao do dono e visiveis so pra ele).
+  const createDelegated = useMutation({
+    mutationFn: async () => {
+      if (!collaborator) throw new Error('no_session');
+      if (!delegateTo) throw new Error('no_assignee');
+      const remindAt = taskTime ? `${due}T${taskTime}:00-03:00` : null;
+      const { error: e } = await supabase.from('tasks').insert({
+        title: title.trim().slice(0, 200),
+        assigned_to: delegateTo,
+        created_by: collaborator.id,
+        source: 'manual',
+        status: 'pending',
+        context: 'work',
         priority: 'medium',
         due_date: due,
         remind_at: remindAt,
@@ -201,6 +249,16 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
         return;
       }
       createTask.mutate();
+    } else if (kind === 'delegated') {
+      if (!delegateTo) {
+        setError('Escolhe pra quem delegar.');
+        return;
+      }
+      if (!due) {
+        setError('Coloca uma data válida (DD/MM/AAAA).');
+        return;
+      }
+      createDelegated.mutate();
     } else {
       if (creatingCat) {
         setError('Termina de criar a categoria antes (ou cancela).');
@@ -222,8 +280,8 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
     }
   };
 
-  const submitting = createTask.isPending || createEvent.isPending;
-  const submitError = (createTask.error || createEvent.error) as Error | null;
+  const submitting = createTask.isPending || createEvent.isPending || createDelegated.isPending;
+  const submitError = (createTask.error || createEvent.error || createDelegated.error) as Error | null;
   // Sprint 22.28 — categorizar erro de submit pra mensagem amigavel.
   function friendlyError(err: Error | null): string | null {
     if (!err) return null;
@@ -248,9 +306,10 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
   return (
     <BottomSheet open={open} onClose={onClose} title="Novo">
       {/* Kind selector */}
-      <div role="tablist" className="grid grid-cols-2 gap-2 mb-md">
+      <div role="tablist" className="grid grid-cols-3 gap-2 mb-md">
         <KindButton active={kind === 'task'} onClick={() => setKind('task')} icon={<ListTodo size={16} />} label="Tarefa" hint="algo a fazer" />
         <KindButton active={kind === 'event'} onClick={() => setKind('event')} icon={<CalendarClock size={16} />} label="Compromisso" hint="com horário" />
+        <KindButton active={kind === 'delegated'} onClick={() => setKind('delegated')} icon={<UserPlus size={16} />} label="Delegar" hint="pra outro do time" />
       </div>
 
       <form onSubmit={onSubmit} className="space-y-md">
@@ -264,7 +323,11 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
             maxLength={200}
             value={title}
             onChange={e => setTitle(e.target.value)}
-            placeholder={kind === 'task' ? 'Ex.: Ligar pro pai do aluno X' : 'Ex.: Reunião com Henrique'}
+            placeholder={
+              kind === 'task' ? 'Ex.: Ligar pro pai do aluno X'
+              : kind === 'delegated' ? 'Ex.: Buscar material no Megadisconildo'
+              : 'Ex.: Reunião com Henrique'
+            }
             className="w-full h-12 px-3 rounded-md bg-bg-elevated border border-border text-fg placeholder:text-fg-muted focus-ring"
           />
         </label>
@@ -336,6 +399,56 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
                   ? 'Sem prioridade · TOM pode classificar depois.'
                   : 'Você definiu manualmente · TOM respeita.'}
               </div>
+            </div>
+          </>
+        ) : kind === 'delegated' ? (
+          <>
+            <div>
+              <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Pra quem</div>
+              <CustomSelect
+                value={delegateTo}
+                placeholder="— Escolher pessoa —"
+                onChange={setDelegateTo}
+                options={collaborators.map(c => ({
+                  value: c.id,
+                  label: c.full_name,
+                  sublabel: c.role,
+                }))}
+              />
+              <div className="text-body-sm text-fg-muted mt-1.5">
+                Tarefa de trabalho · vai aparecer na aba "Delegadas" sua e em "Trabalho" da pessoa.
+              </div>
+            </div>
+
+            <div>
+              <div className="flex items-baseline gap-md flex-wrap mb-1.5">
+                <span className="text-label uppercase tracking-wide text-fg-muted">Para quando</span>
+                <span className="text-label uppercase tracking-wide text-fg-muted">
+                  Lembrar às <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">opcional</span>
+                </span>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <DateInput value={due} onChange={setDue} />
+                <TimeInput value={taskTime} onChange={setTaskTime} />
+                {taskTime && (
+                  <button
+                    type="button"
+                    onClick={() => setTaskTime('')}
+                    aria-label="Limpar hora"
+                    className="text-body-sm text-fg-muted hover:text-fg focus-ring rounded-sm px-2 py-1"
+                  >
+                    limpar
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div>
+              <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5 flex items-baseline gap-2">
+                <span>Prioridade</span>
+                <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">opcional</span>
+              </div>
+              <EisenhowerPicker value={taskQuadrant} onChange={setTaskQuadrant} />
             </div>
           </>
         ) : (

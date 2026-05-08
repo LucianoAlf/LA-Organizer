@@ -189,8 +189,11 @@ export function TaskRow({
           </div>
         )}
 
-        {/* Linha 3 — meta secundaria (action type, categoria, contexto, assignee) */}
+        {/* Linha 3 — meta secundaria (action type, categoria, contexto, assignee, status).
+            Sprint 22.31: status badge ("atrasada") agora vai INLINE aqui em vez de
+            lateral pra nao espremer titulo (cards estavam ficando vertical demais). */}
         <div className="mt-2 flex flex-wrap items-center gap-2 text-body-sm text-fg-muted">
+          {label && <Badge tone={tone}>{label}</Badge>}
           <ActionTypeBadge type={task.action_type} />
           <CategoryTag project={task.projects as { name: string; category?: string } | null | undefined} />
           {task.context === 'personal' && <span>· pessoal</span>}
@@ -199,12 +202,6 @@ export function TaskRow({
           )}
         </div>
       </div>
-
-      {label && (
-        <div className="shrink-0 self-start">
-          <Badge tone={tone}>{label}</Badge>
-        </div>
-      )}
 
       {/* Sprint 22.29 (Bucket 4) — menu independente de readOnly: em delegadas
           o checkbox some (readOnly) mas reagendar/excluir continuam disponiveis

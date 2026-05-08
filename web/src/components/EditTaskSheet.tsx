@@ -46,6 +46,10 @@ export function EditTaskSheet({ open, task, onClose }: Props) {
   const [quadrant, setQuadrant] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Sprint 22.31 — dep eh task?.id (nao task ref). Evita reset de state quando
+  // queryClient refetcha em background e a referencia muda mas o id eh o mesmo.
+  // Bug observado: usuario mudava data, refetch chegava, state era resetado pro
+  // due_date antigo da task; ao salvar enviava o valor antigo.
   useEffect(() => {
     if (open && task) {
       setTitle(task.title || '');
@@ -55,7 +59,8 @@ export function EditTaskSheet({ open, task, onClose }: Props) {
       setQuadrant((task.eisenhower_quadrant as number | null) ?? null);
       setError(null);
     }
-  }, [open, task]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, task?.id]);
 
   const update = useMutation({
     mutationFn: async () => {
@@ -71,11 +76,18 @@ export function EditTaskSheet({ open, task, onClose }: Props) {
         remind_at: remindAt,
         eisenhower_quadrant: quadrant,
       };
-      const { error: e } = await supabase
+      // Sprint 22.31 — .select() captura RLS silenciar UPDATE (caso RLS rejeite,
+      // postgrest retorna 0 rows sem error visivel). Sem isso, sheet fechava
+      // como se tivesse salvo mas o banco nao mudou.
+      const { data, error: e } = await supabase
         .from('tasks')
         .update(patch)
-        .eq('id', task.id);
+        .eq('id', task.id)
+        .select('id');
       if (e) throw e;
+      if (!data || data.length === 0) {
+        throw new Error('Não consegui salvar (sem permissão ou tarefa removida).');
+      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['tasks'] });
@@ -107,32 +119,47 @@ export function EditTaskSheet({ open, task, onClose }: Props) {
             />
           </label>
 
-          <fieldset>
-            <legend className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Tipo</legend>
-            <div role="radiogroup" className="grid grid-cols-2 gap-2">
-              {([
-                { v: 'work', label: 'Trabalho' },
-                { v: 'personal', label: 'Pessoal' },
-              ] as const).map(o => {
-                const active = context === o.v;
-                return (
-                  <button
-                    key={o.v}
-                    type="button"
-                    role="radio"
-                    aria-checked={active}
-                    onClick={() => setContext(o.v)}
-                    className={[
-                      'h-11 rounded-md border text-body-md font-semibold transition-colors focus-ring',
-                      active
-                        ? 'bg-tom text-white border-tom'
-                        : 'bg-bg-subtle text-fg-secondary border-border',
-                    ].join(' ')}
-                  >{o.label}</button>
-                );
-              })}
+          {/* Sprint 22.31 — em delegadas (assigned_to != self), mostra "Delegada
+              para X" read-only e esconde toggle Trabalho/Pessoal (delegada e
+              sempre work — privacidade). */}
+          {task.assigned_to !== collaborator?.id ? (
+            <div className="rounded-md border border-border bg-bg-elevated p-3">
+              <div className="text-label uppercase tracking-wide text-fg-muted mb-1">Delegada para</div>
+              <div className="text-body-md text-fg">
+                {task.assignee?.full_name ?? '—'}
+              </div>
+              <div className="text-body-sm text-fg-muted mt-1">
+                Tarefa de trabalho · só {task.assignee?.full_name?.split(' ')[0] ?? 'a pessoa'} pode marcar como feita (você também pode dar baixa do seu lado).
+              </div>
             </div>
-          </fieldset>
+          ) : (
+            <fieldset>
+              <legend className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Tipo</legend>
+              <div role="radiogroup" className="grid grid-cols-2 gap-2">
+                {([
+                  { v: 'work', label: 'Trabalho' },
+                  { v: 'personal', label: 'Pessoal' },
+                ] as const).map(o => {
+                  const active = context === o.v;
+                  return (
+                    <button
+                      key={o.v}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      onClick={() => setContext(o.v)}
+                      className={[
+                        'h-11 rounded-md border text-body-md font-semibold transition-colors focus-ring',
+                        active
+                          ? 'bg-tom text-white border-tom'
+                          : 'bg-bg-subtle text-fg-secondary border-border',
+                      ].join(' ')}
+                    >{o.label}</button>
+                  );
+                })}
+              </div>
+            </fieldset>
+          )}
 
           <div>
             <div className="flex items-baseline gap-md flex-wrap mb-1.5">

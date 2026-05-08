@@ -46,6 +46,8 @@ export function EditEventSheet({ open, event, onClose }: Props) {
 
   const eventCategories = useEventCategories();
 
+  // Sprint 22.31 — dep event?.id em vez de event ref pra nao resetar state
+  // quando refetch do React Query chega em background.
   useEffect(() => {
     if (open && event) {
       setTitle(event.title || '');
@@ -59,19 +61,26 @@ export function EditEventSheet({ open, event, onClose }: Props) {
       setConfirmCancel(false);
       setConfirmDelete(false);
     }
-  }, [open, event]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, event?.id]);
 
   const isOnlineLike = event?.modality === 'online' || event?.modality === 'hibrido';
 
   const update = useMutation({
     mutationFn: async (patch: Record<string, unknown>) => {
       if (!collaborator || !event) throw new Error('no_event');
-      const { error } = await supabase
+      // Sprint 22.31 — .select() captura RLS silent. Sem isso, escolher novo
+      // quadrante ou trocar data parecia salvar mas nao tocava o banco.
+      const { data, error } = await supabase
         .from('events')
         .update(patch)
         .eq('id', event.id)
-        .eq('collaborator_id', collaborator.id);
+        .eq('collaborator_id', collaborator.id)
+        .select('id');
       if (error) throw error;
+      if (!data || data.length === 0) {
+        throw new Error('Não consegui salvar (sem permissão ou compromisso removido).');
+      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['events'] });
