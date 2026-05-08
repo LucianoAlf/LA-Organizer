@@ -21,6 +21,15 @@ const categoryTone: Record<string, 'brand' | 'info' | 'project' | 'warning' | 's
   pessoal: 'neutral',
 };
 
+// Sprint 22.32 — Eisenhower dot inline (mesmo padrao do TaskRow).
+// Q1 vermelho, Q2 ambar, Q3 azul, Q4 sem dot. Display so visual; usuario nao
+// precisa saber que e "matriz Eisenhower".
+const QUADRANT_DOT: Record<string, string> = {
+  '1': 'bg-danger',
+  '2': 'bg-warning',
+  '3': 'bg-info',
+};
+
 export function EventRow({ event, onClick, showDate }: Props) {
   const range = formatEventTimeRange(event.start_at, event.end_at);
   const slug = event.category?.slug ?? '';
@@ -28,6 +37,8 @@ export function EventRow({ event, onClick, showDate }: Props) {
   const label = event.category?.label ?? '—';
   const isCancelled = event.status === 'cancelled';
   const isDone = event.status === 'done';
+  const quadrantKey = event.eisenhower_quadrant ? String(event.eisenhower_quadrant) : null;
+  const dotClass = quadrantKey && QUADRANT_DOT[quadrantKey] ? QUADRANT_DOT[quadrantKey] : null;
 
   const Icon = event.modality === 'online' ? Video : event.modality === 'hibrido' ? Building2 : MapPin;
 
@@ -50,6 +61,13 @@ export function EventRow({ event, onClick, showDate }: Props) {
 
       <div className="min-w-0 flex-1">
         <div className={['text-body-md font-medium', isCancelled ? 'line-through text-fg-muted' : ''].join(' ')}>
+          {dotClass && !isCancelled && (
+            <span
+              aria-label={`Prioridade ${quadrantKey}`}
+              title={`Prioridade ${quadrantKey}`}
+              className={['inline-block h-2 w-2 rounded-full mr-2 align-middle', dotClass].join(' ')}
+            />
+          )}
           {event.title}
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-body-sm text-fg-muted">
