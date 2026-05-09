@@ -1388,6 +1388,13 @@ async function run(opts = {}) {
     console.error('[Dispatcher] checkTaskReminders erro:', err.message);
   }
 
+  // Sprint 22.50 — lembretes de events (events.remind_at). Marca remind_sent_at.
+  try {
+    await checkEventReminders();
+  } catch (err) {
+    console.error('[Dispatcher] checkEventReminders erro:', err.message);
+  }
+
   // Deadline + overdue alerts — fire at most once per task per day, gated by
   // hour window so we don't spam at 3am. Window: 8h-19h, América/Sao_Paulo.
   // Override with --force-alerts for tests/manual triggers.
@@ -1806,6 +1813,84 @@ async function checkReminders() {
       });
     } catch (err) {
       console.error(`[Reminders] send err for ${String(t.id).slice(0,8)}:`, err.message);
+    }
+  }
+}
+
+// Sprint 22.50 — Lembretes de events. Espelha checkReminders mas:
+// - NÃO marca event.status='done' (evento existe pra além do lembrete)
+// - Marca event.remind_sent_at = now() pra não disparar de novo
+// - Filtra status='scheduled' (ignora cancelled/done)
+// Mensagem: "📅 *Lembrete:* {title}" — diferente de tasks pra leitura rápida.
+async function checkEventReminders() {
+  const nowIso = new Date().toISOString();
+  const { data: due, error } = await supabase
+    .from('events')
+    .select('id, title, collaborator_id, remind_at, start_at, status, modality, location_text, meeting_url, context')
+    .not('remind_at', 'is', null)
+    .is('remind_sent_at', null)
+    .lte('remind_at', nowIso)
+    .eq('status', 'scheduled')
+    .limit(50);
+  if (error) {
+    console.error('[EventReminders] query err:', error.message);
+    return;
+  }
+  if (!due || !due.length) return;
+  console.log(`[EventReminders] ${due.length} pending event reminder(s)`);
+
+  const ids = [...new Set(due.map(e => e.owner_id).filter(Boolean))];
+  const { data: collabs } = await supabase
+    .from('collaborators').select('id, phone, full_name, is_active').in('id', ids);
+  const byId = new Map((collabs || []).map(c => [c.id, c]));
+
+  const whatsapp = require('../services/whatsapp');
+  for (const ev of due) {
+    const collab = byId.get(ev.collaborator_id);
+    if (!collab || !collab.is_active || !collab.phone) {
+      console.warn(`[EventReminders] event ${String(ev.id).slice(0,8)} skipped — no active collaborator/phone`);
+      // marca enviado pra não tentar infinitamente
+      await supabase.from('events').update({ remind_sent_at: nowIso }).eq('id', ev.id);
+      continue;
+    }
+    const dnd = await getDndState(collab.id);
+    if (dnd.active) {
+      console.log(`[EventReminders] defer ${String(ev.id).slice(0,8)} — DND until ${dnd.until}`);
+      continue;
+    }
+    // Linha de meta: hora + modalidade + local/link.
+    const startHm = (() => {
+      try {
+        const d = new Date(ev.start_at);
+        const fmt = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
+        return fmt.format(d);
+      } catch { return ''; }
+    })();
+    const metaParts = [];
+    if (startHm) metaParts.push(`⏰ ${startHm}`);
+    if (ev.modality === 'online') metaParts.push('💻 online');
+    else if (ev.modality === 'hibrido') metaParts.push('🏢 híbrido');
+    else if (ev.modality === 'presencial') metaParts.push('📍 presencial');
+    if (ev.location_text) metaParts.push(ev.location_text);
+    if (ev.meeting_url) metaParts.push(ev.meeting_url);
+    const meta = metaParts.length ? `\n${metaParts.join(' · ')}` : '';
+    const text = `📅 *Lembrete:* ${ev.title}${meta}`;
+    try {
+      await whatsapp.sendMessage(collab.phone, text);
+      const { error: upErr } = await supabase.from('events').update({ remind_sent_at: new Date().toISOString() }).eq('id', ev.id);
+      if (upErr) {
+        console.error(`[EventReminders] mark-sent err for ${String(ev.id).slice(0,8)}:`, upErr.message);
+      } else {
+        console.log(`[EventReminders] fired ${String(ev.id).slice(0,8)} "${ev.title.slice(0,40)}" → ${collab.phone.slice(-4)}`);
+      }
+      await supabase.from('conversation_history').insert({
+        collaborator_id: collab.id,
+        direction: 'outbound',
+        message_type: 'text',
+        content: text,
+      });
+    } catch (err) {
+      console.error(`[EventReminders] send err for ${String(ev.id).slice(0,8)}:`, err.message);
     }
   }
 }

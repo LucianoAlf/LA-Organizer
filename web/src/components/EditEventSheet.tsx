@@ -41,6 +41,8 @@ export function EditEventSheet({ open, event, onClose }: Props) {
   const [endAt, setEndAt] = useState('');
   const [locationText, setLocationText] = useState('');
   const [meetingUrl, setMeetingUrl] = useState('');
+  // Sprint 22.50 — lembrete pré-evento. '' = sem lembrete.
+  const [remindAt, setRemindAt] = useState('');
   const [quadrant, setQuadrant] = useState<number | null>(null);
   const [participantIds, setParticipantIds] = useState<string[]>([]);
   const [originalParticipantIds, setOriginalParticipantIds] = useState<string[]>([]);
@@ -90,6 +92,7 @@ export function EditEventSheet({ open, event, onClose }: Props) {
       setEndAt(isoToLocalInput(event.end_at));
       setLocationText(event.location_text || '');
       setMeetingUrl(event.meeting_url || '');
+      setRemindAt(isoToLocalInput(event.remind_at));
       setQuadrant(event.eisenhower_quadrant ?? null);
       setValidationError(null);
       setConfirmCancel(false);
@@ -178,6 +181,10 @@ export function EditEventSheet({ open, event, onClose }: Props) {
       location_text: locationText.trim() ? locationText.trim().slice(0, 200) : null,
       meeting_url: isOnlineLike && meetingUrl.trim() ? meetingUrl.trim().slice(0, 500) : null,
       eisenhower_quadrant: quadrant,
+      // Sprint 22.50 — se mudou remind_at, zera remind_sent_at pra dispatcher
+      // disparar de novo. Se removeu, ambos NULL.
+      remind_at: remindAt ? localInputToIso(remindAt) : null,
+      remind_sent_at: null,
     }, {
       onSuccess: () => {
         // Sprint 22.32 — diff de participants e aplica add/remove.
@@ -298,6 +305,65 @@ export function EditEventSheet({ open, event, onClose }: Props) {
           {validationError && (
             <p role="alert" className="text-body-sm text-danger">{validationError}</p>
           )}
+
+          {/* Sprint 22.50 — Lembrete opcional pre-evento. Chips com presets +
+              datetime customizavel + remover. */}
+          <div>
+            <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5 flex items-baseline gap-2">
+              <span>Lembrete</span>
+              <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">opcional</span>
+            </div>
+            <div className="flex flex-wrap gap-2 mb-2">
+              {[
+                { label: '15min antes', minutes: 15 },
+                { label: '30min antes', minutes: 30 },
+                { label: '1h antes', minutes: 60 },
+                { label: '2h antes', minutes: 120 },
+                { label: '1 dia antes', minutes: 60 * 24 },
+              ].map(p => {
+                const active = (() => {
+                  if (!startAt || !remindAt) return false;
+                  const diffMin = Math.round((new Date(localInputToIso(startAt)).getTime() - new Date(localInputToIso(remindAt)).getTime()) / 60000);
+                  return diffMin === p.minutes;
+                })();
+                return (
+                  <button
+                    key={p.minutes}
+                    type="button"
+                    onClick={() => {
+                      if (!startAt) return;
+                      const t = new Date(localInputToIso(startAt)).getTime() - p.minutes * 60_000;
+                      setRemindAt(isoToLocalInput(new Date(t).toISOString()));
+                    }}
+                    disabled={!startAt}
+                    className={[
+                      'px-3 py-1 rounded-full text-body-sm border transition-colors focus-ring',
+                      active
+                        ? 'bg-tom text-black border-tom'
+                        : 'bg-bg-elevated text-fg-muted border-border hover:text-fg disabled:opacity-50',
+                    ].join(' ')}
+                  >
+                    {p.label}
+                  </button>
+                );
+              })}
+              {remindAt && (
+                <button
+                  type="button"
+                  onClick={() => setRemindAt('')}
+                  className="px-3 py-1 rounded-full text-body-sm border border-border bg-bg-elevated text-danger hover:opacity-80 focus-ring"
+                >
+                  Remover
+                </button>
+              )}
+            </div>
+            {remindAt && (
+              <DateTimeInput value={remindAt} onChange={setRemindAt} />
+            )}
+            {!remindAt && (
+              <p className="text-body-sm text-fg-muted">Sem lembrete. Toque num preset acima ou deixe assim.</p>
+            )}
+          </div>
 
           <label className="block">
             <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Local</div>

@@ -164,6 +164,10 @@ export interface CalendarEvent {
   eisenhower_quadrant: number | null;
   created_by: string | null;
   source: 'manual' | 'tom' | 'imported';
+  /** Sprint 22.50 — lembrete pré-evento. NULL = sem lembrete. ISO timestamptz. */
+  remind_at: string | null;
+  /** Sprint 22.50 — quando o lembrete foi enviado. NULL = pendente. */
+  remind_sent_at?: string | null;
   created_at: string;
   updated_at: string;
   projects?: { name: string } | null;
