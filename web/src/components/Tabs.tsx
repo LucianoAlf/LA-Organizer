@@ -23,7 +23,7 @@ export function Tabs<T extends string>({ tabs, active, onChange, className = '' 
     <div
       role="tablist"
       className={[
-        'flex flex-wrap gap-1.5',
+        'flex flex-wrap gap-1',
         className,
       ].join(' ')}
     >
@@ -37,7 +37,7 @@ export function Tabs<T extends string>({ tabs, active, onChange, className = '' 
             aria-selected={isActive}
             onClick={() => onChange(t.id)}
             className={[
-              'h-9 px-3 rounded-md inline-flex items-center gap-1.5 focus-ring transition-colors',
+              'h-8 px-2.5 rounded-md inline-flex items-center gap-1 focus-ring transition-colors whitespace-nowrap',
               isActive
                 ? 'bg-tom text-black shadow-card dark:shadow-none'
                 : 'bg-bg-subtle text-fg-muted border border-border hover:text-fg',
@@ -46,8 +46,8 @@ export function Tabs<T extends string>({ tabs, active, onChange, className = '' 
             <span className="text-body-sm font-semibold">{t.label}</span>
             {t.badge != null && (
               <span className={[
-                'text-label px-1.5 rounded-sm tabular-nums',
-                isActive ? 'bg-black/15' : 'bg-bg-elevated dark:bg-bg-elevated',
+                'text-[11px] tabular-nums leading-none',
+                isActive ? 'text-black/70' : 'text-fg-muted/80',
               ].join(' ')}>{t.badge}</span>
             )}
           </button>

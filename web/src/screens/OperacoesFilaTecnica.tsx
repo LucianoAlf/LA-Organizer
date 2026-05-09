@@ -324,9 +324,7 @@ export function OperacoesFilaTecnica() {
   const tabsItems = depts.map(d => ({
     id: d.id,
     label: DEPT_LABEL_OVERRIDE[d.slug] ?? d.name,
-    badge: deptCounts[d.id]
-      ? <span className="px-1.5 py-0.5 rounded-full bg-bg-elevated text-fg-muted text-caption">{deptCounts[d.id]}</span>
-      : undefined,
+    badge: deptCounts[d.id] ? deptCounts[d.id] : undefined,
   }));
 
   return (
