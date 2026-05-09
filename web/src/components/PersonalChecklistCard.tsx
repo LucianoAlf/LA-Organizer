@@ -179,7 +179,7 @@ export function PersonalChecklistCard({ list }: Props) {
               <span className="text-lg flex-shrink-0" aria-hidden>
                 {PERSONAL_LIST_TYPE_ICON[list.list_type]}
               </span>
-              <h3 className="text-section-title text-fg truncate">{list.name}</h3>
+              <h3 className="text-card-title text-fg truncate">{list.name}</h3>
             </div>
             <div
               className="h-2 bg-bg-app rounded-full overflow-hidden"

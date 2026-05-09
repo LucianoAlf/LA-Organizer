@@ -186,7 +186,7 @@ function TrabalhoTab() {
   return (
     <div className="space-y-md">
       <div className="flex items-center justify-between">
-        <h2 className="text-section-title">Trabalho</h2>
+        <h2 className="text-card-title">Trabalho</h2>
         <Button
           variant="primary"
           size="sm"
@@ -298,7 +298,7 @@ function PessoalTab() {
   return (
     <div className="space-y-md">
       <div className="flex items-center justify-between">
-        <h2 className="text-section-title">Listas pessoais</h2>
+        <h2 className="text-card-title">Listas pessoais</h2>
         <Button
           variant="primary"
           size="sm"

@@ -414,7 +414,7 @@ export function ChecklistCard({ completion }: Props) {
         </span>
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2">
-            <h3 className="text-section-title text-fg truncate">{template.name}</h3>
+            <h3 className="text-card-title text-fg truncate">{template.name}</h3>
             <div className="flex items-center gap-1 flex-shrink-0">
               <span className={['text-body-sm font-medium whitespace-nowrap', badge.cls].join(' ')}>
                 {badge.label}
