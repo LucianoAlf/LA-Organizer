@@ -171,7 +171,7 @@ function nameFor(collab) {
 // Sprint 22.36 Fatia 2 — Adicionado: delegatedTasks (tarefas que ESTE user atribuiu
 // pra outros), todayChecklists (checklists operacionais de hoje com %).
 // Antes ficavam fora do contexto e TOM dizia "não tenho esse dato" no relatório.
-function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habits, events, delegatedTasks, todayChecklists, teamAdherence, personalChecklists, teamTodayChecklists) {
+function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habits, events, delegatedTasks, todayChecklists, teamAdherence, personalChecklists, teamTodayChecklists, teamExpectedTemplates) {
   const nickname = nameFor(collab);
   const lines = ['# 📌 CONTEXTO DESTA INTERAÇÃO', ''];
   const fn = collab.function_title ? ', ' + collab.function_title : '';
@@ -385,24 +385,57 @@ function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habi
     });
   }
 
-  // Sprint 22.47 — Checklists da equipe HOJE (só liderança).
-  if (teamTodayChecklists && teamTodayChecklists.length) {
-    const byCollab = new Map();
-    for (const c of teamTodayChecklists) {
-      const name = (Array.isArray(c.collaborators) ? c.collaborators[0] : c.collaborators)?.full_name || c.collaborator_id;
-      const first = name.split(' ')[0];
-      if (!byCollab.has(first)) byCollab.set(first, []);
-      const items = c.op_checklist_item_completions || [];
-      const done = items.filter(i => i.is_checked).length;
-      const total = items.length || 1;
-      const pct = Math.round((done / total) * 100);
-      const tplName = (Array.isArray(c.op_checklists) ? c.op_checklists[0] : c.op_checklists)?.name || '?';
-      const tag = c.completed_at ? '✅' : (pct >= 70 ? '🟡' : '🔴');
-      byCollab.get(first).push(`${tag} ${tplName} (${done}/${total})`);
-    }
+  // Sprint 22.47/48 — Checklists da equipe HOJE (só liderança).
+  // Mostra:
+  //  (a) status real (completions ja existentes — dispatcher rodou)
+  //  (b) templates ESPERADOS hoje (independente de dispatch) — assim TOM sempre
+  //      sabe responder "quem tem checklist pendente hoje?" mesmo quando o
+  //      dispatcher nao rodou ou esta com problema.
+  const hasTeamData = (teamTodayChecklists && teamTodayChecklists.length) ||
+                      (teamExpectedTemplates && teamExpectedTemplates.length);
+  if (hasTeamData) {
     lines.push('', '**Checklists da equipe hoje:**');
-    for (const [name, entries] of byCollab) {
-      lines.push(`• ${name}: ${entries.join(' · ')}`);
+
+    // (a) Status real
+    if (teamTodayChecklists && teamTodayChecklists.length) {
+      const byCollab = new Map();
+      for (const c of teamTodayChecklists) {
+        const name = (Array.isArray(c.collaborators) ? c.collaborators[0] : c.collaborators)?.full_name || c.collaborator_id;
+        const first = name.split(' ')[0];
+        if (!byCollab.has(first)) byCollab.set(first, []);
+        const items = c.op_checklist_item_completions || [];
+        const done = items.filter(i => i.is_checked).length;
+        const total = items.length || 1;
+        const pct = Math.round((done / total) * 100);
+        const tplName = (Array.isArray(c.op_checklists) ? c.op_checklists[0] : c.op_checklists)?.name || '?';
+        const tag = c.completed_at ? '✅' : (pct >= 70 ? '🟡' : '🔴');
+        byCollab.get(first).push(`${tag} ${tplName} (${done}/${total})`);
+      }
+      lines.push('Status real (já dispatched):');
+      for (const [name, entries] of byCollab) {
+        lines.push(`• ${name}: ${entries.join(' · ')}`);
+      }
+    } else {
+      lines.push('Status real: 0 dispatched, 0 completed.');
+    }
+
+    // (b) Templates esperados hoje (independente de dispatch ja ter rodado)
+    if (teamExpectedTemplates && teamExpectedTemplates.length) {
+      lines.push('Templates esperados hoje (por dia da semana):');
+      for (const t of teamExpectedTemplates) {
+        const hh = (t.dispatch_time || '').slice(0, 5);
+        // marca se ja existe completion pra esse template hoje
+        const dispatched = (teamTodayChecklists || []).some(c => {
+          const tpl = Array.isArray(c.op_checklists) ? c.op_checklists[0] : c.op_checklists;
+          return tpl && tpl.name === t.name;
+        });
+        const tag = dispatched ? '✅ dispatched' : '⏳ ainda não dispatched';
+        lines.push(`• ${t.name} (${hh}, ${t.shift}, ${t.unit}) — ${tag}`);
+      }
+      const noneDispatched = !(teamTodayChecklists && teamTodayChecklists.length);
+      if (noneDispatched) {
+        lines.push('⚠️ Nenhum template foi dispatched hoje. Pode ser cedo (dispatcher roda no horário do template), ou o cron pode estar com problema.');
+      }
     }
   }
 
@@ -747,6 +780,7 @@ async function fetchCollaboratorContext(collaborator) {
     teamAdherenceRes,
     personalChecklistsRes,
     teamTodayChecklistsRes,
+    teamExpectedTemplatesRes,
   ] = await Promise.all([
     supabase.from('collaborator_profiles').select('*').eq('collaborator_id', id).maybeSingle(),
     supabase.from('collaborator_memory')
@@ -843,6 +877,15 @@ async function fetchCollaboratorContext(collaborator) {
           .order('collaborator_id')
           .limit(80)
       : Promise.resolve({ data: [], error: null }),
+    // Sprint 22.48 — templates ATIVOS (independente de completions). Permite
+    // TOM responder "quem tem checklist pendente hoje?" mesmo quando o
+    // dispatcher não rodou (ou está quebrado). Filtragem por days_of_week
+    // contendo o dow atual acontece em buildContext.
+    isLeadership
+      ? supabase.from('op_checklists')
+          .select('id, name, function_role, shift, unit, days_of_week, dispatch_time')
+          .eq('is_active', true)
+      : Promise.resolve({ data: [], error: null }),
   ]);
 
   let activeProjects = [];
@@ -875,6 +918,13 @@ async function fetchCollaboratorContext(collaborator) {
     teamAdherence: teamAdherenceRes.data || [],
     personalChecklists: personalChecklistsRes.data || [],
     teamTodayChecklists: teamTodayChecklistsRes.data || [],
+    teamExpectedTemplates: (() => {
+      const all = teamExpectedTemplatesRes.data || [];
+      // dow: 1=Mon … 6=Sat, 7=Sun (consistente com dispatcher.js)
+      const jsDow = new Date(today + 'T15:00:00.000Z').getUTCDay();
+      const dow = jsDow === 0 ? 7 : jsDow;
+      return all.filter(t => Array.isArray(t.days_of_week) && t.days_of_week.includes(dow));
+    })(),
     todayDate: today,
   };
 }
@@ -1382,7 +1432,7 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     eventsForCtx = eventsForCtx.filter(e => e.context === 'work');
   }
   // briefing_diario / daily_briefing: mantém todos os events (sem filtro).
-  const baseCtx = buildContext(collaborator, ctx.memories, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx, ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || [], ctx.teamTodayChecklists || []);
+  const baseCtx = buildContext(collaborator, ctx.memories, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx, ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || [], ctx.teamTodayChecklists || [], ctx.teamExpectedTemplates || []);
   const pending = renderPendingDecisions(ctx.notifications);
 
   // Sprint 10.1 hotfix-2 (Plano C): resolve temporal de "amanhã"/"hoje" + horário
@@ -1558,7 +1608,7 @@ async function composeSystemPrompt(collaborator, ctx) {
   const blocks = [
     BLOCK_RULES,
     BLOCK_IDENTITY,
-    buildContext(collaborator, ctx.memories || [], ctx.prefs, ctx.todayTasks || [], ctx.activeProjects || [], lastMsgAge, ctx.habits || [], ctx.todayEvents || [], ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || [], ctx.teamTodayChecklists || []),
+    buildContext(collaborator, ctx.memories || [], ctx.prefs, ctx.todayTasks || [], ctx.activeProjects || [], lastMsgAge, ctx.habits || [], ctx.todayEvents || [], ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || [], ctx.teamTodayChecklists || [], ctx.teamExpectedTemplates || []),
     skillBlock,
   ].filter(Boolean);
   let syncPrompt = blocks.join('\n\n---\n\n');
