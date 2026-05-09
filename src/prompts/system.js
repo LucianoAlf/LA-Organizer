@@ -317,7 +317,16 @@ function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habi
       const mod = e.modality === 'online' ? '💻' : e.modality === 'hibrido' ? '🔀' : '🏢';
       const cat = e.category ? ` · ${e.category}` : '';
       const where = e.location_text ? ` · ${e.location_text}` : '';
-      lines.push(`• [id=${sid}] ${start}–${end} ${mod} ${e.title}${cat}${where}`);
+      // Sprint 22.50b — lembretes pendentes (sent_at IS NULL) listados depois.
+      const pendingReminders = (e.event_reminders || [])
+        .filter(r => !r.sent_at)
+        .map(r => fmtSP(r.remind_at))
+        .filter(Boolean)
+        .sort();
+      const reminders = pendingReminders.length
+        ? ` · ⏰ lembretes: ${pendingReminders.join(', ')}`
+        : '';
+      lines.push(`• [id=${sid}] ${start}–${end} ${mod} ${e.title}${cat}${where}${reminders}`);
     });
   }
 
@@ -823,7 +832,7 @@ async function fetchCollaboratorContext(collaborator) {
       .order('created_at', { ascending: true }).limit(20),
     // Compromissos de HOJE em America/Sao_Paulo (-03:00). Inclui scheduled e done.
     supabase.from('events')
-      .select('id, title, start_at, end_at, modality, category, context, location_text, meeting_url, status')
+      .select('id, title, start_at, end_at, modality, category, context, location_text, meeting_url, status, event_reminders(remind_at, sent_at)')
       .eq('collaborator_id', id)
       .gte('start_at', `${today}T00:00:00-03:00`)
       .lte('start_at', `${today}T23:59:59-03:00`)

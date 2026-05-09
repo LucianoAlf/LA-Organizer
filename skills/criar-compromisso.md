@@ -262,6 +262,13 @@ Uma única rodada de perguntas, nunca fragmentada. Nada de assumir presencial+la
 | `location_text` | string | não | endereço, sala |
 | `meeting_url` | string | não | só para online/hibrido |
 | `description` | string | não | observações |
+| `reminders_minutes_before` | int[] | não | minutos ANTES do start. Ex: `[15, 60, 1440]` = 15min, 1h e 1 dia antes. `0` = na hora. |
+
+### Lembretes (Sprint 22.50b)
+- Quando o user pede lembrete (`me lembra 1h antes`, `lembrete 15min antes e na hora`, etc), inclua `reminders_minutes_before` com os minutos.
+- Múltiplos lembretes: `[0, 15, 60, 1440]` (na hora, 15min, 1h, 1 dia antes).
+- Sem lembrete pedido → não inclua o campo.
+- Confirme na resposta: `⏰ Lembretes: 1 dia antes · 1h antes · 15min antes`.
 
 ## Respostas canônicas
 

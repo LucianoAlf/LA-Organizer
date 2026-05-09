@@ -357,6 +357,7 @@ export function EditEventSheet({ open, event, onClose }: Props) {
             </div>
             <div className="flex flex-wrap gap-2 mb-2">
               {[
+                { label: 'Na hora', minutes: 0 },
                 { label: '15min antes', minutes: 15 },
                 { label: '30min antes', minutes: 30 },
                 { label: '1h antes', minutes: 60 },

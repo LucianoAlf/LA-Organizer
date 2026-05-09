@@ -1839,6 +1839,35 @@ async function applyEventActions(collaborator, events) {
         continue;
       }
       console.log(`[Event] create "${row.title.slice(0, 60)}" cat=${row.category} mod=${row.modality} ctx=${ctx} by ${last4} (id=${String(data?.id || '').slice(0, 8)})`);
+      // Sprint 22.50b — TOM pode passar reminders_minutes_before:[15, 60, 1440]
+      // ou reminders:[ISO,...] pra criar lembretes vinculados.
+      try {
+        const eventId = data && data.id;
+        if (eventId) {
+          const reminderRows = [];
+          if (Array.isArray(e.reminders_minutes_before)) {
+            for (const m of e.reminders_minutes_before) {
+              const mins = Number(m);
+              if (!Number.isFinite(mins) || mins < 0 || mins > 60 * 24 * 30) continue;
+              const t = new Date(new Date(e.start_at).getTime() - mins * 60_000).toISOString();
+              reminderRows.push({ event_id: eventId, remind_at: t });
+            }
+          }
+          if (Array.isArray(e.reminders)) {
+            for (const iso of e.reminders) {
+              if (typeof iso !== 'string' || !ISO_DATETIME_RE.test(iso)) continue;
+              reminderRows.push({ event_id: eventId, remind_at: iso });
+            }
+          }
+          if (reminderRows.length > 0) {
+            const { error: rErr } = await supabase.from('event_reminders').insert(reminderRows);
+            if (rErr) console.error('[Event] reminders err:', rErr.message);
+            else console.log(`[Event] +${reminderRows.length} reminder(s) for event ${String(eventId).slice(0,8)}`);
+          }
+        }
+      } catch (rErr) {
+        console.warn('[Event] reminders attach failed:', rErr.message);
+      }
       okCount++;
     } catch (err) {
       console.error('[Event] throw err:', err.message);
