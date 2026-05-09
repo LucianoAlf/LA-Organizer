@@ -1,10 +1,13 @@
 // web/src/components/ChecklistTemplateSheet.tsx
 // Sprint 22.39 — Refactor pro design system unificado: CustomSelect (não <select>),
 // TimeInput (não <input type="time">), Button (não bg-brand cru). Day chips bg-tom.
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { DndContext, closestCenter, type DragEndEvent } from '@dnd-kit/core'
+import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
+import { useSortableSensors } from '../lib/sortableSensors'
 import { BottomSheet } from './BottomSheet'
 import { Button } from './Button'
 import { CustomSelect } from './CustomSelect'
@@ -13,6 +16,11 @@ import { ChecklistItemEditRow } from './ChecklistItemEditRow'
 import type { OpChecklistTemplate, OpChecklistItem, OpChecklistItemDraft } from '../types'
 
 type TemplateWithItems = OpChecklistTemplate & { op_checklist_items?: OpChecklistItem[] }
+
+/** Sprint 22.39b — adiciona local key (_lk) pra DnD em items sem id ainda. */
+type ItemDraft = OpChecklistItemDraft & { _lk: string }
+let _lkCounter = 0
+const newLk = () => `lk-${Date.now()}-${++_lkCounter}`
 
 const FUNCTION_ROLES = [
   { value: 'secretary_morning',     label: 'Secretária (manhã)' },
@@ -58,8 +66,9 @@ export function ChecklistTemplateSheet({ open, template, onClose }: Props) {
   const [daysOfWeek, setDaysOfWeek] = useState<number[]>([1,2,3,4,5])
   const [dispatchTime, setDispatchTime] = useState('08:00')
   const [threshold, setThreshold] = useState(80)
-  const [items, setItems] = useState<OpChecklistItemDraft[]>([])
+  const [items, setItems] = useState<ItemDraft[]>([])
   const [newItemText, setNewItemText] = useState('')
+  const sensors = useSortableSensors()
 
   useEffect(() => {
     if (!open) return
@@ -71,11 +80,16 @@ export function ChecklistTemplateSheet({ open, template, onClose }: Props) {
       setDaysOfWeek(template.days_of_week)
       setDispatchTime(template.dispatch_time)
       setThreshold(template.completion_threshold)
-      const activeItems = (template.op_checklist_items ?? [])
+      const activeItems: ItemDraft[] = (template.op_checklist_items ?? [])
         .filter((i: OpChecklistItem) => i.is_active !== false)
         .sort((a: OpChecklistItem, b: OpChecklistItem) => a.sort_order - b.sort_order)
-        .map((i: OpChecklistItem) => ({ id: i.id, description: i.description,
-                     sort_order: i.sort_order, is_active: true as const }))
+        .map((i: OpChecklistItem) => ({
+          id: i.id,
+          description: i.description,
+          sort_order: i.sort_order,
+          is_active: true as const,
+          _lk: i.id,
+        }))
       setItems(activeItems)
     } else {
       setName('')
@@ -99,12 +113,16 @@ export function ChecklistTemplateSheet({ open, template, onClose }: Props) {
       prev.includes(n) ? prev.filter(d => d !== n) : [...prev, n].sort((a,b) => a-b)
     )
 
-  const moveItem = (index: number, dir: -1 | 1) => {
+  function handleDragEnd(e: DragEndEvent) {
+    const { active, over } = e
+    if (!over || active.id === over.id) return
     setItems(prev => {
+      const oldIdx = prev.findIndex(i => i._lk === active.id)
+      const newIdx = prev.findIndex(i => i._lk === over.id)
+      if (oldIdx === -1 || newIdx === -1) return prev
       const next = [...prev]
-      const target = index + dir
-      if (target < 0 || target >= next.length) return prev
-      ;[next[index], next[target]] = [next[target], next[index]]
+      const [moved] = next.splice(oldIdx, 1)
+      next.splice(newIdx, 0, moved)
       return next.map((item, i) => ({ ...item, sort_order: i + 1 }))
     })
   }
@@ -116,6 +134,7 @@ export function ChecklistTemplateSheet({ open, template, onClose }: Props) {
       description: text,
       sort_order: prev.length + 1,
       is_active: true,
+      _lk: newLk(),
     }])
     setNewItemText('')
   }
@@ -265,21 +284,23 @@ export function ChecklistTemplateSheet({ open, template, onClose }: Props) {
 
         <div>
           <label className="text-caption text-fg-muted block mb-2">Itens ({items.length})</label>
-          <div className="space-y-0.5">
-            {items.map((item, index) => (
-              <ChecklistItemEditRow key={index}
-                description={item.description}
-                index={index + 1}
-                isFirst={index === 0}
-                isLast={index === items.length - 1}
-                onMoveUp={() => moveItem(index, -1)}
-                onMoveDown={() => moveItem(index, 1)}
-                onChange={val => setItems(prev =>
-                  prev.map((it, i) => i === index ? { ...it, description: val } : it))}
-                onDelete={() => setItems(prev => prev.filter((_, i) => i !== index))}
-              />
-            ))}
-          </div>
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <SortableContext items={items.map(i => i._lk)} strategy={verticalListSortingStrategy}>
+              <div className="space-y-0.5">
+                {items.map((item, index) => (
+                  <ChecklistItemEditRow
+                    key={item._lk}
+                    uid={item._lk}
+                    description={item.description}
+                    index={index + 1}
+                    onChange={val => setItems(prev =>
+                      prev.map((it, i) => i === index ? { ...it, description: val } : it))}
+                    onDelete={() => setItems(prev => prev.filter((_, i) => i !== index))}
+                  />
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
           <div className="flex gap-2 mt-2">
             <input
               type="text"
