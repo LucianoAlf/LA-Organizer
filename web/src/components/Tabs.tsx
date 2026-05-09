@@ -46,8 +46,8 @@ export function Tabs<T extends string>({ tabs, active, onChange, className = '' 
             <span className="text-body-sm font-semibold">{t.label}</span>
             {t.badge != null && (
               <span className={[
-                'text-[11px] tabular-nums leading-none',
-                isActive ? 'text-black/70' : 'text-fg-muted/80',
+                'text-body-sm font-semibold',
+                isActive ? 'text-black/60' : 'text-fg-muted/70',
               ].join(' ')}>{t.badge}</span>
             )}
           </button>
