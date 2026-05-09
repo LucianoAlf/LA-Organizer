@@ -98,6 +98,33 @@ export async function fetchEventsForCollabRange(
   return (data ?? []) as unknown as CalendarEvent[];
 }
 
+/**
+ * Sprint 22.42 — checa se ja existe evento ativo do colaborador que sobrepoe
+ * a janela [startIso, endIso). Sobrepoe = (existente.start < novo.end) AND
+ * (existente.end > novo.start). Retorna o primeiro conflito (titulo + horario)
+ * ou null se livre. Quando excludeId passado, ignora esse id (caso de edicao).
+ */
+export async function findConflictingEvent(
+  collabId: string,
+  startIso: string,
+  endIso: string,
+  excludeId?: string,
+): Promise<{ id: string; title: string; start_at: string; end_at: string } | null> {
+  let query = supabase
+    .from('events')
+    .select('id, title, start_at, end_at')
+    .eq('collaborator_id', collabId)
+    .neq('status', 'cancelled')
+    .lt('start_at', endIso)
+    .gt('end_at', startIso)
+    .order('start_at', { ascending: true })
+    .limit(1);
+  if (excludeId) query = query.neq('id', excludeId);
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data?.[0] ?? null) as { id: string; title: string; start_at: string; end_at: string } | null;
+}
+
 /** YYYY-MM-DD em SP a partir de um ISO timestamp. */
 export function eventLocalYmd(iso: string): string {
   const fmt = new Intl.DateTimeFormat('en-CA', {

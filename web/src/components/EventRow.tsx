@@ -46,6 +46,10 @@ export function EventRow({ event, onClick, onToggleDone, onCancel, onDelete }: P
   const Icon = event.modality === 'online' ? Video : event.modality === 'hibrido' ? Building2 : MapPin;
 
   const menuItems: MenuItem[] = [];
+  if (onClick && !isCancelled) menuItems.push({
+    label: 'Editar compromisso',
+    onClick: () => onClick(event),
+  });
   if (onCancel && !isCancelled && !isDone) menuItems.push({
     label: 'Cancelar evento',
     confirm: 'Cancelar este compromisso? Fica como histórico, não some.',
