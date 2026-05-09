@@ -50,7 +50,7 @@
   }
 
   body {
-    font-family: 'Prompt', system-ui, sans-serif;
+    font-family: 'Inter', system-ui, sans-serif;
     background-color: rgb(var(--bg-app));
     color: rgb(var(--fg-primary));
     -webkit-font-smoothing: antialiased;

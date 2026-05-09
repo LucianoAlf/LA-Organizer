@@ -4,7 +4,7 @@ export default {
   darkMode: ['class', '[data-theme="dark"]'],
   theme: {
     fontFamily: {
-      sans: ['Prompt', 'system-ui', 'sans-serif'],
+      sans: ['Inter', 'system-ui', 'sans-serif'],
     },
     extend: {
       colors: {
