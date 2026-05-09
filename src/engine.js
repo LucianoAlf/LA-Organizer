@@ -3389,6 +3389,31 @@ async function applyHabitActions(collaborator, actions) {
           continue;
         }
         console.log(`[Habit] create "${insertRow.name}" freq=${insertRow.frequency} id=${String(data.id).slice(0,8)} by ${last4}`);
+        // Sprint 22.55 — múltiplos lembretes via habit_reminders. Aceita:
+        //   - a.reminders: ["08:00","10:30",...] (preferido)
+        //   - a.reminder_time: "08:00" (legado, vira 1 row)
+        try {
+          const reminderTimes = [];
+          if (Array.isArray(a.reminders)) {
+            for (const t of a.reminders) {
+              if (typeof t !== 'string') continue;
+              if (!HABIT_TIME_RE.test(t)) continue;
+              reminderTimes.push(t.length > 5 ? t.slice(0, 5) : t);
+            }
+          }
+          // Se não veio array mas veio reminder_time legado, usa ele.
+          if (reminderTimes.length === 0 && a.reminder_time && HABIT_TIME_RE.test(a.reminder_time)) {
+            reminderTimes.push(a.reminder_time.length > 5 ? a.reminder_time.slice(0, 5) : a.reminder_time);
+          }
+          if (reminderTimes.length > 0) {
+            const reminderRows = [...new Set(reminderTimes)].map(t => ({ habit_id: data.id, time: t }));
+            const { error: rErr } = await supabase.from('habit_reminders').insert(reminderRows);
+            if (rErr) console.error('[Habit] reminders err:', rErr.message);
+            else console.log(`[Habit] +${reminderRows.length} reminder(s) for ${String(data.id).slice(0,8)}`);
+          }
+        } catch (rErr) {
+          console.warn('[Habit] reminders attach failed:', rErr.message);
+        }
         created.push(data);
         okCount++;
       } else if (a.action === 'log') {

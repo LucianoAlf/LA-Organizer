@@ -82,7 +82,7 @@ export function HabitoDetalhe() {
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['habit-detail', id, collaborator?.id],
-    queryFn: async (): Promise<{ habit: Habit; logs: Log[] } | null> => {
+    queryFn: async (): Promise<{ habit: Habit; logs: Log[]; reminders: string[] } | null> => {
       if (!id || !collaborator) return null;
       const { data: habit, error: hErr } = await supabase
         .from('habits')
@@ -92,13 +92,23 @@ export function HabitoDetalhe() {
         .single();
       if (hErr || !habit) throw hErr ?? new Error('not_found');
       const since = lastNDays(HEATMAP_DAYS).slice(-1)[0];
-      const { data: logs } = await supabase
-        .from('habit_logs')
-        .select('id, log_date, is_completed, notes')
-        .eq('habit_id', id)
-        .gte('log_date', since)
-        .order('log_date', { ascending: false });
-      return { habit: habit as Habit, logs: (logs ?? []) as Log[] };
+      const [logsRes, remindersRes] = await Promise.all([
+        supabase.from('habit_logs')
+          .select('id, log_date, is_completed, notes')
+          .eq('habit_id', id)
+          .gte('log_date', since)
+          .order('log_date', { ascending: false }),
+        supabase.from('habit_reminders')
+          .select('time')
+          .eq('habit_id', id)
+          .eq('is_active', true)
+          .order('time', { ascending: true }),
+      ]);
+      return {
+        habit: habit as Habit,
+        logs: (logsRes.data ?? []) as Log[],
+        reminders: ((remindersRes.data ?? []) as Array<{ time: string }>).map(r => r.time.slice(0, 5)),
+      };
     },
     enabled: Boolean(id && collaborator?.id && supabaseConfigured),
   });
@@ -211,8 +221,8 @@ export function HabitoDetalhe() {
           </h2>
           <p className="text-body-sm text-fg-muted mt-1">
             {FREQ_LABEL[habit.frequency]}
-            {habit.reminder_time && (
-              <> · ⏰ {habit.reminder_time.slice(0, 5)}{habit.notify_whatsapp ? ' · WhatsApp' : ''}</>
+            {(data?.reminders.length ?? 0) > 0 && (
+              <> · ⏰ {data!.reminders.join(' · ')}{habit.notify_whatsapp ? ' · WhatsApp' : ''}</>
             )}
           </p>
         </div>

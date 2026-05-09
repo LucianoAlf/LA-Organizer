@@ -1922,12 +1922,9 @@ async function checkEventReminders() {
   }
 }
 
-// Sprint 22.52 — Lembretes diários de hábitos. Espelha checkEventReminders mas:
-// - Filtra por frequency (daily/weekdays/weekly/custom_days) vs dia atual
-// - Janela: reminder_time caiu nos últimos 5min
-// - Idempotência: habits.last_reminder_at::date < CURRENT_DATE
-// - Skip se user já logou completed hoje
-// Mensagem: "{icon} *Lembrete:* {nome do hábito}"
+// Sprint 22.55 — Múltiplos lembretes por hábito (habit_reminders).
+// Cada linha em habit_reminders = 1 horário diário. Idempotência per-row via
+// last_sent_at. Filtra por frequency do hábito vs dow atual.
 async function checkHabitReminders() {
   const tzFmt = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/Sao_Paulo',
@@ -1938,26 +1935,24 @@ async function checkHabitReminders() {
   const brNow = new Date(brStr);
   const dow = brNow.getDay() === 0 ? 7 : brNow.getDay(); // 1=seg..7=dom
   const pad = n => String(n).padStart(2, '0');
-  const timeNow = `${pad(brNow.getHours())}:${pad(brNow.getMinutes())}:00`;
+  const timeNow = `${pad(brNow.getHours())}:${pad(brNow.getMinutes())}`;
   const brMinus5 = new Date(brNow.getTime() - 5 * 60 * 1000);
-  const timeMinus5 = `${pad(brMinus5.getHours())}:${pad(brMinus5.getMinutes())}:00`;
+  const timeMinus5 = `${pad(brMinus5.getHours())}:${pad(brMinus5.getMinutes())}`;
 
-  const { data: habits, error } = await supabase
-    .from('habits')
-    .select('id, collaborator_id, name, icon, frequency, custom_days, reminder_time, last_reminder_at')
+  const { data: rows, error } = await supabase
+    .from('habit_reminders')
+    .select('id, time, label, last_sent_at, habits(id, collaborator_id, name, icon, frequency, custom_days, notify_whatsapp, is_active)')
     .eq('is_active', true)
-    .eq('notify_whatsapp', true)
-    .not('reminder_time', 'is', null)
-    .gte('reminder_time', timeMinus5)
-    .lte('reminder_time', timeNow)
-    .limit(100);
+    .gte('time', timeMinus5)
+    .lte('time', timeNow)
+    .limit(200);
   if (error) {
     console.error('[HabitReminders] query err:', error.message);
     return;
   }
-  if (!habits || !habits.length) return;
+  if (!rows || !rows.length) return;
 
-  // Filtra por frequência vs dia da semana atual.
+  // Frequência vs dia da semana.
   const inSchedule = (h) => {
     const f = h.frequency;
     if (f === 'daily') return true;
@@ -1969,23 +1964,25 @@ async function checkHabitReminders() {
     return false;
   };
 
-  const due = habits.filter(inSchedule).filter(h => {
-    if (!h.last_reminder_at) return true;
-    const last = new Date(h.last_reminder_at);
-    const lastYmd = tzFmt.format(last);
+  // Idempotência por linha + filtro hábito ativo+notify.
+  const due = rows.filter(r => {
+    const h = r.habits;
+    if (!h || !h.is_active || !h.notify_whatsapp) return false;
+    if (!inSchedule(h)) return false;
+    if (!r.last_sent_at) return true;
+    const lastYmd = tzFmt.format(new Date(r.last_sent_at));
     return lastYmd !== today;
   });
   if (!due.length) return;
   console.log(`[HabitReminders] ${due.length} habit reminder(s) eligible`);
 
-  // Resolve colaboradores em lote.
-  const collabIds = [...new Set(due.map(h => h.collaborator_id).filter(Boolean))];
+  const collabIds = [...new Set(due.map(r => r.habits.collaborator_id).filter(Boolean))];
   const { data: collabs } = await supabase
     .from('collaborators').select('id, phone, full_name, is_active').in('id', collabIds);
   const byId = new Map((collabs || []).map(c => [c.id, c]));
 
-  // Pega logs de hoje em lote (skip se já completou).
-  const habitIds = due.map(h => h.id);
+  // Logs de hoje pra skip se já completou.
+  const habitIds = [...new Set(due.map(r => r.habits.id))];
   const { data: todayLogs } = await supabase
     .from('habit_logs')
     .select('habit_id, is_completed')
@@ -1994,28 +1991,29 @@ async function checkHabitReminders() {
   const completedSet = new Set((todayLogs || []).filter(l => l.is_completed).map(l => l.habit_id));
 
   const whatsapp = require('../services/whatsapp');
-  for (const h of due) {
+  for (const r of due) {
+    const h = r.habits;
     if (completedSet.has(h.id)) {
-      // Já feito hoje — marca pra não tentar de novo, sem enviar.
-      await supabase.from('habits').update({ last_reminder_at: new Date().toISOString() }).eq('id', h.id);
+      await supabase.from('habit_reminders').update({ last_sent_at: new Date().toISOString() }).eq('id', r.id);
       continue;
     }
     const collab = byId.get(h.collaborator_id);
     if (!collab || !collab.is_active || !collab.phone) {
-      await supabase.from('habits').update({ last_reminder_at: new Date().toISOString() }).eq('id', h.id);
+      await supabase.from('habit_reminders').update({ last_sent_at: new Date().toISOString() }).eq('id', r.id);
       continue;
     }
     const dnd = await getDndState(collab.id);
     if (dnd.active) {
-      console.log(`[HabitReminders] defer ${String(h.id).slice(0,8)} — DND until ${dnd.until}`);
+      console.log(`[HabitReminders] defer ${String(r.id).slice(0,8)} — DND until ${dnd.until}`);
       continue;
     }
     const icon = h.icon || '💪';
-    const text = `${icon} *Lembrete:* hora de "${h.name}"`;
+    const labelPrefix = r.label ? ` (${r.label})` : '';
+    const text = `${icon} *Lembrete:* hora de "${h.name}"${labelPrefix}`;
     try {
       await whatsapp.sendMessage(collab.phone, text);
-      await supabase.from('habits').update({ last_reminder_at: new Date().toISOString() }).eq('id', h.id);
-      console.log(`[HabitReminders] fired ${String(h.id).slice(0,8)} "${h.name.slice(0,30)}" → ${collab.phone.slice(-4)}`);
+      await supabase.from('habit_reminders').update({ last_sent_at: new Date().toISOString() }).eq('id', r.id);
+      console.log(`[HabitReminders] fired ${String(r.id).slice(0,8)} "${h.name.slice(0,30)}" @${r.time} → ${collab.phone.slice(-4)}`);
       await supabase.from('conversation_history').insert({
         collaborator_id: collab.id,
         direction: 'outbound',
@@ -2023,7 +2021,7 @@ async function checkHabitReminders() {
         content: text,
       });
     } catch (err) {
-      console.error(`[HabitReminders] send err for ${String(h.id).slice(0,8)}:`, err.message);
+      console.error(`[HabitReminders] send err for ${String(r.id).slice(0,8)}:`, err.message);
     }
   }
 }

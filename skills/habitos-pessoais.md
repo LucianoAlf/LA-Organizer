@@ -127,10 +127,24 @@ User: "criar afirmações positivas"
 - `action`: `"create"` (obrigatório)
 - `name`: string não vazia (obrigatório)
 - `frequency`: `"daily"` | `"weekdays"` | `"weekly"` | `"custom"` (default daily)
-- `reminder_time`: HH:MM (opcional)
+- `reminders`: **array** de strings HH:MM — múltiplos horários por dia (Sprint 22.55). Ex: `["08:00","12:00","15:00","18:00"]`. Use sempre que possível.
+- `reminder_time`: HH:MM (legado — usa só se for 1 horário e não quiser passar array). Se passar `reminders`, ignore esse campo.
 - `custom_days`: array de strings — só se frequency="custom" (opcional)
 - `icon`: emoji (opcional — engine usa default 💪 ou puxa do template)
 - `notify_whatsapp`: boolean (default true)
+
+### Múltiplos lembretes (Sprint 22.55)
+Quando o user pede múltiplos horários (ex: "me lembra 5x por dia em horários estratégicos", "manhã, almoço, tarde e noite", "8h, 12h, 18h"), use `reminders`:
+
+User: "criar hábito beber água, me lembra 5x: 8h, 10h30, 13h, 15h30 e 18h"
+→ Marker:
+```
+<<HABIT_ACTION>>
+[{"action":"create","name":"Beber água","frequency":"daily","reminders":["08:00","10:30","13:00","15:30","18:00"],"icon":"💧"}]
+<<END>>
+```
+
+**Regra dura:** se você verbalizou N horários no texto, o array `reminders` tem que ter exatamente esses N horários. Engine valida — se faltar, sai aviso.
 
 ---
 
