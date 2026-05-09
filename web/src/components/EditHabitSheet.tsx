@@ -4,7 +4,6 @@
 
 import { useState, useEffect, FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Trash2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { BottomSheet } from './BottomSheet';
@@ -61,7 +60,6 @@ export function EditHabitSheet({ open, habit, onClose }: Props) {
   const [reminderTime, setReminderTime] = useState('');
   const [notifyWhatsapp, setNotifyWhatsapp] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState(false);
 
   // Fetch templates só no modo criar.
   const { data: templates = [] } = useQuery({
@@ -99,7 +97,6 @@ export function EditHabitSheet({ open, habit, onClose }: Props) {
       setNotifyWhatsapp(false);
     }
     setError(null);
-    setConfirmDelete(false);
   }, [open, habit?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function applyTemplate(t: HabitTemplate) {
@@ -141,23 +138,6 @@ export function EditHabitSheet({ open, habit, onClose }: Props) {
         const { error } = await supabase.from('habits').insert(payload);
         if (error) throw error;
       }
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['habits'] });
-      onClose();
-    },
-    onError: (e) => setError(e instanceof Error ? e.message : String(e)),
-  });
-
-  const remove = useMutation({
-    mutationFn: async () => {
-      if (!habit || !collaborator) throw new Error('no_habit');
-      const { error } = await supabase
-        .from('habits')
-        .update({ is_active: false })
-        .eq('id', habit.id)
-        .eq('collaborator_id', collaborator.id);
-      if (error) throw error;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['habits'] });
@@ -324,28 +304,10 @@ export function EditHabitSheet({ open, habit, onClose }: Props) {
           <p role="alert" className="text-body-sm text-danger">{error}</p>
         )}
 
-        <div className="flex gap-2 pt-2">
-          <Button type="submit" disabled={save.isPending} className="flex-1">
+        <div className="pt-2">
+          <Button type="submit" disabled={save.isPending} className="w-full">
             {save.isPending ? 'Salvando…' : isNew ? 'Criar hábito' : 'Salvar'}
           </Button>
-          {!isNew && (
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => {
-                if (!confirmDelete) {
-                  setConfirmDelete(true);
-                  return;
-                }
-                remove.mutate();
-              }}
-              disabled={remove.isPending}
-              className="text-danger"
-            >
-              <Trash2 size={16} />
-              {confirmDelete ? 'Confirmar' : ''}
-            </Button>
-          )}
         </div>
       </form>
     </BottomSheet>

@@ -8,14 +8,14 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Pencil, Check } from 'lucide-react';
+import { ArrowLeft, Check } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { LoadingState } from '../components/LoadingState';
 import { EmptyState } from '../components/EmptyState';
-import { Button } from '../components/Button';
 import { StreakRing } from '../components/StreakRing';
 import { EditHabitSheet } from '../components/EditHabitSheet';
+import { RowMenu } from '../components/RowMenu';
 
 type Habit = {
   id: string;
@@ -154,6 +154,24 @@ export function HabitoDetalhe() {
     },
   });
 
+  // Sprint 22.54b — exclusão soft via RowMenu, navega de volta na hora.
+  const remove = useMutation({
+    mutationFn: async () => {
+      if (!habit || !collaborator) throw new Error('no_habit');
+      const { error } = await supabase
+        .from('habits')
+        .update({ is_active: false })
+        .eq('id', habit.id)
+        .eq('collaborator_id', collaborator.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['habits'] });
+      qc.removeQueries({ queryKey: ['habit-detail', id] });
+      navigate('/habitos');
+    },
+  });
+
   const saveNote = useMutation({
     mutationFn: async ({ logId, notes }: { logId: string; notes: string }) => {
       const { error: nErr } = await supabase.from('habit_logs').update({ notes: notes.trim() || null }).eq('id', logId);
@@ -198,9 +216,17 @@ export function HabitoDetalhe() {
             )}
           </p>
         </div>
-        <Button variant="secondary" onClick={() => setEditOpen(true)} className="shrink-0">
-          <Pencil size={14} /> Editar
-        </Button>
+        <RowMenu
+          items={[
+            { label: 'Editar', onClick: () => setEditOpen(true) },
+            {
+              label: 'Excluir hábito',
+              danger: true,
+              confirm: 'Excluir esse hábito? O histórico fica salvo, mas ele some das suas listas.',
+              onClick: () => remove.mutate(),
+            },
+          ]}
+        />
       </header>
 
       {/* Stats: ring + numbers + toggle hoje */}
