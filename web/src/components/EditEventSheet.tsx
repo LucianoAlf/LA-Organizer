@@ -41,8 +41,9 @@ export function EditEventSheet({ open, event, onClose }: Props) {
   const [endAt, setEndAt] = useState('');
   const [locationText, setLocationText] = useState('');
   const [meetingUrl, setMeetingUrl] = useState('');
-  // Sprint 22.50 — lembrete pré-evento. '' = sem lembrete.
-  const [remindAt, setRemindAt] = useState('');
+  // Sprint 22.50b — múltiplos lembretes. Array de datetime-local strings.
+  const [reminderTimes, setReminderTimes] = useState<string[]>([]);
+  const [originalReminders, setOriginalReminders] = useState<Array<{ id: string; remindAtLocal: string }>>([]);
   const [quadrant, setQuadrant] = useState<number | null>(null);
   const [participantIds, setParticipantIds] = useState<string[]>([]);
   const [originalParticipantIds, setOriginalParticipantIds] = useState<string[]>([]);
@@ -92,7 +93,7 @@ export function EditEventSheet({ open, event, onClose }: Props) {
       setEndAt(isoToLocalInput(event.end_at));
       setLocationText(event.location_text || '');
       setMeetingUrl(event.meeting_url || '');
-      setRemindAt(isoToLocalInput(event.remind_at));
+      // Sprint 22.50b — lembretes carregados via query separada (effect abaixo).
       setQuadrant(event.eisenhower_quadrant ?? null);
       setValidationError(null);
       setConfirmCancel(false);
@@ -107,6 +108,28 @@ export function EditEventSheet({ open, event, onClose }: Props) {
     setParticipantIds(ids);
     setOriginalParticipantIds(ids);
   }, [existingParticipants]);
+
+  // Sprint 22.50b — fetch lembretes existentes do evento.
+  const { data: existingReminders = [] } = useQuery({
+    queryKey: ['event-reminders', event?.id],
+    queryFn: async () => {
+      if (!event) return [];
+      const { data, error } = await supabase
+        .from('event_reminders')
+        .select('id, remind_at')
+        .eq('event_id', event.id)
+        .order('remind_at', { ascending: true });
+      if (error) return [];
+      return (data ?? []) as Array<{ id: string; remind_at: string }>;
+    },
+    enabled: open && Boolean(event?.id),
+  });
+
+  useEffect(() => {
+    const mapped = existingReminders.map(r => ({ id: r.id, remindAtLocal: isoToLocalInput(r.remind_at) }));
+    setOriginalReminders(mapped);
+    setReminderTimes(mapped.map(r => r.remindAtLocal));
+  }, [existingReminders]);
 
   const isOnlineLike = event?.modality === 'online' || event?.modality === 'hibrido';
 
@@ -181,10 +204,6 @@ export function EditEventSheet({ open, event, onClose }: Props) {
       location_text: locationText.trim() ? locationText.trim().slice(0, 200) : null,
       meeting_url: isOnlineLike && meetingUrl.trim() ? meetingUrl.trim().slice(0, 500) : null,
       eisenhower_quadrant: quadrant,
-      // Sprint 22.50 — se mudou remind_at, zera remind_sent_at pra dispatcher
-      // disparar de novo. Se removeu, ambos NULL.
-      remind_at: remindAt ? localInputToIso(remindAt) : null,
-      remind_sent_at: null,
     }, {
       onSuccess: () => {
         // Sprint 22.32 — diff de participants e aplica add/remove.
@@ -216,6 +235,29 @@ export function EditEventSheet({ open, event, onClose }: Props) {
               if (toAdd.length > 0) void notifyEventInvites(event.id);
             } catch (e) {
               console.warn('[EditEventSheet] participants diff err:', e instanceof Error ? e.message : e);
+            }
+          })();
+
+          // Sprint 22.50b — diff de lembretes. Insert pra times novos, delete pra removidos.
+          (async () => {
+            try {
+              const origLocal = new Set(originalReminders.map(r => r.remindAtLocal));
+              const nextLocal = new Set(reminderTimes);
+              const toInsert = [...nextLocal].filter(t => !origLocal.has(t));
+              const toDelete = originalReminders.filter(r => !nextLocal.has(r.remindAtLocal)).map(r => r.id);
+              if (toInsert.length > 0) {
+                const rows = toInsert.map(t => ({
+                  event_id: event.id,
+                  remind_at: localInputToIso(t),
+                }));
+                await supabase.from('event_reminders').insert(rows);
+              }
+              if (toDelete.length > 0) {
+                await supabase.from('event_reminders').delete().in('id', toDelete);
+              }
+              qc.invalidateQueries({ queryKey: ['event-reminders', event.id] });
+            } catch (e) {
+              console.warn('[EditEventSheet] reminders diff err:', e instanceof Error ? e.message : e);
             }
           })();
         }
@@ -306,12 +348,12 @@ export function EditEventSheet({ open, event, onClose }: Props) {
             <p role="alert" className="text-body-sm text-danger">{validationError}</p>
           )}
 
-          {/* Sprint 22.50 — Lembrete opcional pre-evento. Chips com presets +
-              datetime customizavel + remover. */}
+          {/* Sprint 22.50b — Múltiplos lembretes. Chips toggleáveis (selecionados ficam
+              olive). Lista os horários customizados abaixo com botão Remover. */}
           <div>
             <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5 flex items-baseline gap-2">
-              <span>Lembrete</span>
-              <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">opcional</span>
+              <span>Lembretes</span>
+              <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">selecione quantos quiser</span>
             </div>
             <div className="flex flex-wrap gap-2 mb-2">
               {[
@@ -321,19 +363,22 @@ export function EditEventSheet({ open, event, onClose }: Props) {
                 { label: '2h antes', minutes: 120 },
                 { label: '1 dia antes', minutes: 60 * 24 },
               ].map(p => {
-                const active = (() => {
-                  if (!startAt || !remindAt) return false;
-                  const diffMin = Math.round((new Date(localInputToIso(startAt)).getTime() - new Date(localInputToIso(remindAt)).getTime()) / 60000);
-                  return diffMin === p.minutes;
+                // Calcula o local-string que esse preset representaria pra startAt atual.
+                const presetLocal = (() => {
+                  if (!startAt) return '';
+                  const t = new Date(localInputToIso(startAt)).getTime() - p.minutes * 60_000;
+                  return isoToLocalInput(new Date(t).toISOString());
                 })();
+                const active = presetLocal && reminderTimes.includes(presetLocal);
                 return (
                   <button
                     key={p.minutes}
                     type="button"
                     onClick={() => {
-                      if (!startAt) return;
-                      const t = new Date(localInputToIso(startAt)).getTime() - p.minutes * 60_000;
-                      setRemindAt(isoToLocalInput(new Date(t).toISOString()));
+                      if (!presetLocal) return;
+                      setReminderTimes(prev => active
+                        ? prev.filter(t => t !== presetLocal)
+                        : [...prev, presetLocal].sort());
                     }}
                     disabled={!startAt}
                     className={[
@@ -347,21 +392,31 @@ export function EditEventSheet({ open, event, onClose }: Props) {
                   </button>
                 );
               })}
-              {remindAt && (
-                <button
-                  type="button"
-                  onClick={() => setRemindAt('')}
-                  className="px-3 py-1 rounded-full text-body-sm border border-border bg-bg-elevated text-danger hover:opacity-80 focus-ring"
-                >
-                  Remover
-                </button>
-              )}
             </div>
-            {remindAt && (
-              <DateTimeInput value={remindAt} onChange={setRemindAt} />
-            )}
-            {!remindAt && (
-              <p className="text-body-sm text-fg-muted">Sem lembrete. Toque num preset acima ou deixe assim.</p>
+            {reminderTimes.length > 0 ? (
+              <ul className="space-y-2">
+                {reminderTimes.map((t, idx) => (
+                  <li key={`${t}-${idx}`} className="flex items-center gap-2">
+                    <DateTimeInput
+                      value={t}
+                      onChange={(v) => setReminderTimes(prev => {
+                        const next = [...prev];
+                        next[idx] = v;
+                        return next;
+                      })}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setReminderTimes(prev => prev.filter((_, i) => i !== idx))}
+                      className="px-2 py-1 text-body-sm rounded-sm bg-bg-elevated text-danger hover:opacity-80 focus-ring whitespace-nowrap"
+                    >
+                      Remover
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-body-sm text-fg-muted">Sem lembretes. Toque num preset acima pra adicionar.</p>
             )}
           </div>
 

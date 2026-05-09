@@ -1817,20 +1817,15 @@ async function checkReminders() {
   }
 }
 
-// Sprint 22.50 — Lembretes de events. Espelha checkReminders mas:
-// - NÃO marca event.status='done' (evento existe pra além do lembrete)
-// - Marca event.remind_sent_at = now() pra não disparar de novo
-// - Filtra status='scheduled' (ignora cancelled/done)
-// Mensagem: "📅 *Lembrete:* {title}" — diferente de tasks pra leitura rápida.
+// Sprint 22.50b — Múltiplos lembretes por evento (event_reminders).
+// Cada linha vira um WA. Marca sent_at=now() por linha. NÃO mexe no status do evento.
 async function checkEventReminders() {
   const nowIso = new Date().toISOString();
   const { data: due, error } = await supabase
-    .from('events')
-    .select('id, title, collaborator_id, remind_at, start_at, status, modality, location_text, meeting_url, context')
-    .not('remind_at', 'is', null)
-    .is('remind_sent_at', null)
+    .from('event_reminders')
+    .select('id, event_id, remind_at, label, events(id, title, collaborator_id, start_at, status, modality, location_text, meeting_url, context)')
+    .is('sent_at', null)
     .lte('remind_at', nowIso)
-    .eq('status', 'scheduled')
     .limit(50);
   if (error) {
     console.error('[EventReminders] query err:', error.message);
@@ -1839,26 +1834,29 @@ async function checkEventReminders() {
   if (!due || !due.length) return;
   console.log(`[EventReminders] ${due.length} pending event reminder(s)`);
 
-  const ids = [...new Set(due.map(e => e.owner_id).filter(Boolean))];
+  const collabIds = [...new Set(due.map(r => r.events?.collaborator_id).filter(Boolean))];
   const { data: collabs } = await supabase
-    .from('collaborators').select('id, phone, full_name, is_active').in('id', ids);
+    .from('collaborators').select('id, phone, full_name, is_active').in('id', collabIds);
   const byId = new Map((collabs || []).map(c => [c.id, c]));
 
   const whatsapp = require('../services/whatsapp');
-  for (const ev of due) {
+  for (const r of due) {
+    const ev = r.events;
+    if (!ev || ev.status !== 'scheduled') {
+      await supabase.from('event_reminders').update({ sent_at: nowIso }).eq('id', r.id);
+      continue;
+    }
     const collab = byId.get(ev.collaborator_id);
     if (!collab || !collab.is_active || !collab.phone) {
-      console.warn(`[EventReminders] event ${String(ev.id).slice(0,8)} skipped — no active collaborator/phone`);
-      // marca enviado pra não tentar infinitamente
-      await supabase.from('events').update({ remind_sent_at: nowIso }).eq('id', ev.id);
+      console.warn(`[EventReminders] reminder ${String(r.id).slice(0,8)} skipped — no active collaborator/phone`);
+      await supabase.from('event_reminders').update({ sent_at: nowIso }).eq('id', r.id);
       continue;
     }
     const dnd = await getDndState(collab.id);
     if (dnd.active) {
-      console.log(`[EventReminders] defer ${String(ev.id).slice(0,8)} — DND until ${dnd.until}`);
+      console.log(`[EventReminders] defer ${String(r.id).slice(0,8)} — DND until ${dnd.until}`);
       continue;
     }
-    // Linha de meta: hora + modalidade + local/link.
     const startHm = (() => {
       try {
         const d = new Date(ev.start_at);
@@ -1874,14 +1872,15 @@ async function checkEventReminders() {
     if (ev.location_text) metaParts.push(ev.location_text);
     if (ev.meeting_url) metaParts.push(ev.meeting_url);
     const meta = metaParts.length ? `\n${metaParts.join(' · ')}` : '';
-    const text = `📅 *Lembrete:* ${ev.title}${meta}`;
+    const labelPrefix = r.label ? `(${r.label}) ` : '';
+    const text = `📅 *Lembrete:* ${labelPrefix}${ev.title}${meta}`;
     try {
       await whatsapp.sendMessage(collab.phone, text);
-      const { error: upErr } = await supabase.from('events').update({ remind_sent_at: new Date().toISOString() }).eq('id', ev.id);
+      const { error: upErr } = await supabase.from('event_reminders').update({ sent_at: new Date().toISOString() }).eq('id', r.id);
       if (upErr) {
-        console.error(`[EventReminders] mark-sent err for ${String(ev.id).slice(0,8)}:`, upErr.message);
+        console.error(`[EventReminders] mark-sent err for ${String(r.id).slice(0,8)}:`, upErr.message);
       } else {
-        console.log(`[EventReminders] fired ${String(ev.id).slice(0,8)} "${ev.title.slice(0,40)}" → ${collab.phone.slice(-4)}`);
+        console.log(`[EventReminders] fired ${String(r.id).slice(0,8)} "${ev.title.slice(0,40)}" → ${collab.phone.slice(-4)}`);
       }
       await supabase.from('conversation_history').insert({
         collaborator_id: collab.id,
@@ -1890,7 +1889,7 @@ async function checkEventReminders() {
         content: text,
       });
     } catch (err) {
-      console.error(`[EventReminders] send err for ${String(ev.id).slice(0,8)}:`, err.message);
+      console.error(`[EventReminders] send err for ${String(r.id).slice(0,8)}:`, err.message);
     }
   }
 }
