@@ -1,7 +1,8 @@
 // web/src/screens/AderenciaChecklistDetalhe.tsx
 // Sprint 22.37 — drilldown /mais/aderencia-checklists/:colabId.
-import { useNavigate, useParams } from 'react-router-dom'
-import { ChevronLeft, ClipboardCheck } from 'lucide-react'
+import { useParams } from 'react-router-dom'
+import { ClipboardCheck } from 'lucide-react'
+import { PageHeader } from '../components/PageHeader'
 import { LoadingState } from '../components/LoadingState'
 import { EmptyState } from '../components/EmptyState'
 import { ErrorState } from '../components/ErrorState'
@@ -24,7 +25,6 @@ const WINDOW_LABEL: Record<string, string> = {
 
 export function AderenciaChecklistDetalhe() {
   const { id } = useParams()
-  const navigate = useNavigate()
   const [window] = useAdherenceWindow()
   const [unit] = useUnitFilter()
 
@@ -36,14 +36,7 @@ export function AderenciaChecklistDetalhe() {
 
   return (
     <div className="space-y-md">
-      <button
-        type="button"
-        onClick={() => navigate('/mais/aderencia-checklists')}
-        className="inline-flex items-center gap-1 text-tom hover:text-tom-shade focus-ring rounded-sm"
-      >
-        <ChevronLeft size={16} />
-        <span className="text-body-sm">Aderência</span>
-      </button>
+      <PageHeader title="Aderência" backTo="/mais/aderencia-checklists" />
 
       {listQuery.isLoading && <LoadingState rows={1} />}
 

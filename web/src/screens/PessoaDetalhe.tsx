@@ -1,7 +1,8 @@
 import { useMemo } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronLeft, CalendarClock, ListTodo, Activity, User } from 'lucide-react';
+import { CalendarClock, ListTodo, Activity, User } from 'lucide-react';
+import { PageHeader } from '../components/PageHeader';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { todaySP, ymdAddDays, dowShort } from '../utils/date';
 import { fetchEventsForCollabRange } from '../lib/events';
@@ -113,7 +114,7 @@ export function PessoaDetalhe() {
   if (isLoading) return <LoadingState rows={4} />;
   if (error) return (
     <div className="space-y-md">
-      <BackLink />
+      <PageHeader title="Pessoa" backTo="/time" />
       <EmptyState title="Erro" description={(error as Error).message} />
     </div>
   );
@@ -124,21 +125,17 @@ export function PessoaDetalhe() {
 
   return (
     <div className="space-y-lg">
-      <BackLink />
-
-      <header className="surface p-md flex items-start gap-md">
-        <div className="h-12 w-12 rounded-full bg-bg-elevated grid place-items-center text-fg-muted shrink-0">
-          <User size={20} />
-        </div>
-        <div className="min-w-0 flex-1">
-          <h2 className="text-screen-title leading-tight">{profile.full_name}</h2>
-          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-body-sm text-fg-muted">
+      <PageHeader
+        title={profile.full_name}
+        subtitle={
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="capitalize">{profile.role}</span>
             {profile.function_title && <span>· {profile.function_title}</span>}
             <span className="tabular-nums">· {maskPhone(profile.phone)}</span>
-          </div>
-        </div>
-      </header>
+          </span>
+        }
+        backTo="/time"
+      />
 
       <div className="grid grid-cols-3 gap-sm">
         <StatCard label="Tarefas abertas" value={tasks.length} tone={tasks.length ? 'brand' : 'neutral'} />
@@ -204,10 +201,3 @@ export function PessoaDetalhe() {
   );
 }
 
-function BackLink() {
-  return (
-    <Link to="/time" className="inline-flex items-center gap-1 text-body-sm text-fg-muted hover:text-fg">
-      <ChevronLeft size={16} /> voltar
-    </Link>
-  );
-}

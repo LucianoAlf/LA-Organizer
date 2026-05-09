@@ -7,6 +7,7 @@ import { StatCard } from '../components/StatCard';
 import { Badge } from '../components/Badge';
 import { LoadingState } from '../components/LoadingState';
 import { EmptyState } from '../components/EmptyState';
+import { PageHeader } from '../components/PageHeader';
 import { fetchEventsForTeamDay, formatEventTimeRange } from '../lib/events';
 import type { CalendarEvent } from '../types';
 
@@ -124,10 +125,7 @@ export function DashboardTime() {
 
   return (
     <div className="space-y-lg">
-      <header>
-        <h2 className="text-screen-title">Time</h2>
-        <p className="text-body-sm text-fg-muted mt-1">Visão de coordenação · só dados de trabalho</p>
-      </header>
+      <PageHeader title="Time" subtitle="Visão de coordenação · só dados de trabalho" backTo="/mais" />
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-sm">
         <StatCard label="No time" value={team.length} />

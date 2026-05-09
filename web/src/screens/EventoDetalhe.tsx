@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
+import { PageHeader } from '../components/PageHeader';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, Plus, Trash2, Pencil } from 'lucide-react';
 import { supabase } from '../lib/supabase';
@@ -126,17 +127,11 @@ export function EventoDetalhe() {
 
   return (
     <div className="space-y-4">
-      <header className="space-y-1">
-        <Link to="/mais/agenda-escolar" className="text-caption text-fg-muted underline">
-          ← Voltar
-        </Link>
-        <h2 className="text-title text-fg">{event.title}</h2>
-        <p className="text-body-sm text-fg-muted">
-          {formatEventDate(event.event_date, event.start_time)}
-          {event.location ? ` · ${event.location}` : ''}
-          {' · '}{unitLabel(event.unit)}
-        </p>
-      </header>
+      <PageHeader
+        title={event.title}
+        subtitle={`${formatEventDate(event.event_date, event.start_time)}${event.location ? ` · ${event.location}` : ''} · ${unitLabel(event.unit)}`}
+        backTo="/mais/agenda-escolar"
+      />
 
       {tLoading && <p className="text-body-sm text-fg-muted">Carregando tarefas...</p>}
 
