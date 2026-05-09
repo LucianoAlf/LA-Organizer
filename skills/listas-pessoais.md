@@ -41,15 +41,20 @@ Ativar quando o user explicitamente pede uma **lista temática persistente**:
 
 ## Contexto disponível
 
-O bloco `**Listas pessoais**` no CONTEXTO traz as listas ativas do user com pendentes:
+O bloco `**Listas pessoais**` no CONTEXTO traz as listas ativas do user com TODOS os itens pendentes:
 
 ```
 **Listas pessoais (2 ativas com pendências):**
-• [list_id=a1b2c3d4] 🛒 Mercado: 5 pendentes (tomate, ovo, leite +2)
-• [list_id=e5f6g7h8] ✈️ Viagem RJ: 8 pendentes (passaporte, kindle...)
+• [list_id=550e8400-e29b-41d4-a716-446655440000] 🛒 Mercado: 5 pendentes
+  1. [item_id=f47ac10b-58cc-4372-a567-0e02b2c3d479] tomate
+  2. [item_id=6ba7b810-9dad-11d1-80b4-00c04fd430c8] ovo
+  ...
+• [list_id=6ba7b811-9dad-11d1-80b4-00c04fd430c8] ✈️ Viagem RJ: 3 pendentes
+  1. [item_id=...] passaporte
+  ...
 ```
 
-O `list_id` mostrado é o **prefixo de 8 chars** do uuid. Pra ações que precisam de `list_id`, peça pro user confirmar qual lista ou use a única ativa do tipo. Se ambíguo, **pergunte** antes de emitir o marker.
+O `list_id` e `item_id` são **UUIDs completos** — use-os diretamente no marker sem truncar.
 
 ## Markers
 
@@ -133,8 +138,8 @@ Campos:
 
 **User:** "adiciona alho na lista do mercado"
 **Contexto tem:** `[list_id=a1b2c3d4] 🛒 Mercado`
-**TOM:** "Adicionei alho na lista. <<PERSONAL_LIST_ACTION>>{\"action\":\"add_item\",\"list_id\":\"a1b2c3d4-...completo\",\"description\":\"alho\"}<<END>>"
+**TOM:** "Adicionei alho na lista. <<PERSONAL_LIST_ACTION>>{\"action\":\"add_item\",\"list_id\":\"550e8400-e29b-41d4-a716-446655440000\",\"description\":\"alho\"}<<END>>"
 
 **User:** "já comprei o tomate"
-**Contexto:** lista mercado tem item id começando com x9y8...
-**TOM:** "Marquei tomate como comprado. <<PERSONAL_LIST_ACTION>>{\"action\":\"toggle_item\",\"item_id\":\"x9y8...completo\",\"is_done\":true}<<END>>"
+**Contexto:** lista mercado tem item_id f47ac10b-58cc-4372-a567-0e02b2c3d479
+**TOM:** "Marquei tomate como comprado. <<PERSONAL_LIST_ACTION>>{\"action\":\"toggle_item\",\"item_id\":\"f47ac10b-58cc-4372-a567-0e02b2c3d479\",\"is_done\":true}<<END>>"
