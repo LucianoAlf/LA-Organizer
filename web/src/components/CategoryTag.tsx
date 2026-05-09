@@ -40,7 +40,7 @@ export function CategoryTag({ project, label, className, onChange }: Props) {
   if (!project?.name && !label) return null;
   const cat = project?.category as Project['category'] | undefined;
   const cls = (cat && CATEGORY_TAG[cat]) ?? 'bg-bg-elevated text-fg-muted border border-border';
-  const baseClass = ['inline-block text-[11px] font-medium rounded-sm px-1.5 py-0.5', cls, className ?? ''].join(' ');
+  const baseClass = ['inline-block text-[10px] font-normal lowercase rounded-sm px-1.5 py-0.5', cls, className ?? ''].join(' ');
 
   // Modo somente-leitura (default)
   if (!onChange) {
@@ -86,7 +86,7 @@ export function CategoryTag({ project, label, className, onChange }: Props) {
                   selected ? 'bg-bg-elevated' : 'hover:bg-bg-elevated',
                 ].join(' ')}
               >
-                <span className={['inline-block text-[11px] font-medium rounded-sm px-1.5 py-0.5', optCls].join(' ')}>
+                <span className={['inline-block text-[10px] font-normal lowercase rounded-sm px-1.5 py-0.5', optCls].join(' ')}>
                   {PROJECT_CATEGORY_LABELS[c]}
                 </span>
                 {selected && <span className="ml-auto text-fg-muted text-body-sm">✓</span>}
