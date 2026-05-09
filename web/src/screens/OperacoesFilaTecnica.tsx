@@ -1,7 +1,19 @@
 import { useState, useMemo, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Filter as FilterIcon } from 'lucide-react';
+import { Filter as FilterIcon, GripVertical } from 'lucide-react';
+import {
+  DndContext,
+  closestCenter,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { unitLabel } from '../types';
@@ -18,6 +30,8 @@ import { Fab } from '../components/Fab';
 import { RowMenu } from '../components/RowMenu';
 import { DemandaSheet } from '../components/DemandaSheet';
 import { showToast } from '../components/Toast';
+import { useSortableSensors } from '../lib/sortableSensors';
+import { dragLiftStyle } from '../lib/sortableStyle';
 
 const PRIORITY_ORDER: TaskPriority[] = ['critical', 'high', 'medium', 'low'];
 
@@ -40,10 +54,31 @@ function formatDueShort(due: string | null | undefined): string {
   return `${d}/${m}`;
 }
 
+// Local order persisted per dept (no DB column needed for now)
+function loadOrder(deptId: string): string[] {
+  if (!deptId || typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(`op-cards-order:${deptId}`);
+    return raw ? (JSON.parse(raw) as string[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveOrder(deptId: string, ids: string[]) {
+  if (!deptId || typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(`op-cards-order:${deptId}`, JSON.stringify(ids));
+  } catch {
+    // ignore quota errors
+  }
+}
+
 export function OperacoesFilaTecnica() {
   const { role } = useAuth();
   const isDirector = role === 'director';
   const qc = useQueryClient();
+  const sensors = useSortableSensors();
 
   const [unitFilter, setUnitFilter] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState<string>('');
@@ -54,6 +89,9 @@ export function OperacoesFilaTecnica() {
 
   const [createOpen, setCreateOpen] = useState(false);
   const [editTask, setEditTask] = useState<OperationalTask | null>(null);
+
+  // Local order — id list per priority bucket combined
+  const [localOrder, setLocalOrder] = useState<string[]>([]);
 
   // Q1 — all active departments
   const { data: depts = [] } = useQuery({
@@ -75,9 +113,18 @@ export function OperacoesFilaTecnica() {
     }
   }, [depts, selectedDeptId]);
 
+  // Reload order when dept changes
+  useEffect(() => {
+    if (selectedDeptId) {
+      setLocalOrder(loadOrder(selectedDeptId));
+    } else {
+      setLocalOrder([]);
+    }
+  }, [selectedDeptId]);
+
   const dept = depts.find(d => d.id === selectedDeptId) ?? null;
 
-  // Counts por dept (active tasks)
+  // Counts por dept
   const { data: deptCounts = {} } = useQuery({
     queryKey: ['operational-tasks-counts'],
     queryFn: async () => {
@@ -96,7 +143,6 @@ export function OperacoesFilaTecnica() {
     },
   });
 
-  // Q1b — request types for selected dept
   const { data: requestTypes = [] } = useQuery({
     queryKey: ['operational-types', selectedDeptId],
     queryFn: async () => {
@@ -113,7 +159,6 @@ export function OperacoesFilaTecnica() {
     enabled: !!selectedDeptId,
   });
 
-  // Q2 — task queue for selected dept
   const { data: tasks = [], isLoading, error: tasksError, refetch: refetchTasks } = useQuery({
     queryKey: ['operational-tasks', selectedDeptId],
     queryFn: async () => {
@@ -138,7 +183,6 @@ export function OperacoesFilaTecnica() {
     enabled: !!selectedDeptId,
   });
 
-  // Q3 — candidates for "responsável" filter
   const { data: deptAssignees = [] } = useQuery({
     queryKey: ['dept-assignees', dept?.slug ?? ''],
     queryFn: async () => {
@@ -190,6 +234,7 @@ export function OperacoesFilaTecnica() {
     });
   }, [tasks, unitFilter, typeFilter, statusFilter, responsibleFilter]);
 
+  // Sort each priority bucket using localOrder; tasks not in localOrder use natural order
   const grouped = useMemo(() => {
     const map = new Map<TaskPriority, OperationalTask[]>();
     for (const p of PRIORITY_ORDER) map.set(p, []);
@@ -197,10 +242,22 @@ export function OperacoesFilaTecnica() {
       const bucket = map.get(t.priority);
       if (bucket) bucket.push(t);
     }
+    if (localOrder.length > 0) {
+      const orderRank = new Map<string, number>();
+      localOrder.forEach((id, i) => orderRank.set(id, i));
+      for (const p of PRIORITY_ORDER) {
+        const bucket = map.get(p) ?? [];
+        bucket.sort((a, b) => {
+          const ra = orderRank.has(a.id) ? orderRank.get(a.id)! : 9999;
+          const rb = orderRank.has(b.id) ? orderRank.get(b.id)! : 9999;
+          if (ra !== rb) return ra - rb;
+          return 0;
+        });
+      }
+    }
     return map;
-  }, [filteredTasks]);
+  }, [filteredTasks, localOrder]);
 
-  // Filtros ativos count
   const activeFiltersCount = useMemo(() => {
     let n = 0;
     if (unitFilter) n++;
@@ -237,6 +294,30 @@ export function OperacoesFilaTecnica() {
     },
   });
 
+  function handleDragEnd(priority: TaskPriority) {
+    return (e: DragEndEvent) => {
+      const { active, over } = e;
+      if (!over || active.id === over.id) return;
+      const bucket = grouped.get(priority) ?? [];
+      const oldIdx = bucket.findIndex(t => t.id === active.id);
+      const newIdx = bucket.findIndex(t => t.id === over.id);
+      if (oldIdx < 0 || newIdx < 0) return;
+      const reorderedBucket = arrayMove(bucket, oldIdx, newIdx);
+
+      // Rebuild full order across all priorities preserving non-bucket positions
+      const allIds: string[] = [];
+      for (const p of PRIORITY_ORDER) {
+        if (p === priority) {
+          allIds.push(...reorderedBucket.map(t => t.id));
+        } else {
+          allIds.push(...(grouped.get(p) ?? []).map(t => t.id));
+        }
+      }
+      setLocalOrder(allIds);
+      saveOrder(selectedDeptId, allIds);
+    };
+  }
+
   const tabsItems = depts.map(d => ({
     id: d.id,
     label: d.name,
@@ -257,7 +338,6 @@ export function OperacoesFilaTecnica() {
         />
       )}
 
-      {/* Filtros — colapsáveis */}
       <section className="space-y-2">
         <div className="flex items-center justify-between">
           <button
@@ -287,7 +367,6 @@ export function OperacoesFilaTecnica() {
                 <UnitFilterChips value={unitFilter} onChange={setUnitFilter} />
               </div>
             )}
-
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div>
                 <label className="text-caption text-fg-muted block mb-1">Tipo</label>
@@ -316,7 +395,6 @@ export function OperacoesFilaTecnica() {
         )}
       </section>
 
-      {/* Content */}
       {isLoading ? (
         <LoadingState rows={3} />
       ) : tasksError ? (
@@ -348,63 +426,20 @@ export function OperacoesFilaTecnica() {
                   </span>
                   <span className="ml-1 text-caption">({bucket.length})</span>
                 </h3>
-                <div className="space-y-3">
-                  {bucket.map(t => {
-                    const overdue = isOverdue(t.due_date);
-                    return (
-                      <div
-                        key={t.id}
-                        className="relative bg-bg-surface rounded-xl border border-border p-4 hover:bg-bg-elevated transition-colors"
-                      >
-                        <Link to={`/mais/operacoes/${t.id}`} className="block space-y-1 pr-8">
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <span className="text-lg">{PRIORITY_INDICATOR[t.priority].emoji}</span>
-                              <span className="text-caption uppercase font-semibold text-fg-muted truncate">
-                                {t.request_type?.label ?? '—'}
-                              </span>
-                            </div>
-                            {t.due_date && (
-                              <span
-                                className={
-                                  overdue
-                                    ? 'text-caption font-semibold text-danger whitespace-nowrap'
-                                    : 'text-caption text-fg-muted whitespace-nowrap'
-                                }
-                              >
-                                {overdue ? '⚠ ' : ''}{formatDueShort(t.due_date)}
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-body font-medium text-fg">{t.title}</p>
-                          <p className="text-body-sm text-fg-muted">
-                            {unitLabel(t.collaborator?.unit ?? null)}
-                            {' · '}
-                            {t.collaborator?.full_name ?? '—'}
-                            {' · '}
-                            {STATUS_LABEL_OPERATIONAL[t.status] ?? t.status}
-                          </p>
-                          {t.notes && (
-                            <p className="text-caption text-fg-muted italic line-clamp-1">{t.notes}</p>
-                          )}
-                        </Link>
-                        <div className="absolute top-3 right-3">
-                          <RowMenu
-                            items={[
-                              { label: 'Editar', onClick: () => setEditTask(t) },
-                              {
-                                label: 'Cancelar demanda',
-                                danger: true,
-                                confirm: 'Cancelar essa demanda?',
-                                onClick: () => cancelMutation.mutate(t.id),
-                              },
-                            ]}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd(priority)}>
+                  <SortableContext items={bucket.map(t => t.id)} strategy={verticalListSortingStrategy}>
+                    <div className="space-y-3">
+                      {bucket.map(t => (
+                        <SortableDemandaCard
+                          key={t.id}
+                          task={t}
+                          onEdit={() => setEditTask(t)}
+                          onCancel={() => cancelMutation.mutate(t.id)}
+                        />
+                      ))}
+                    </div>
+                  </SortableContext>
+                </DndContext>
               </section>
             );
           })}
@@ -426,6 +461,92 @@ export function OperacoesFilaTecnica() {
           mode={{ kind: 'edit', task: editTask }}
         />
       )}
+    </div>
+  );
+}
+
+interface CardProps {
+  task: OperationalTask;
+  onEdit: () => void;
+  onCancel: () => void;
+}
+
+function SortableDemandaCard({ task: t, onEdit, onCancel }: CardProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: t.id,
+  });
+  const baseStyle: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+  const overdue = isOverdue(t.due_date);
+  return (
+    <div
+      ref={setNodeRef}
+      style={dragLiftStyle(isDragging, baseStyle)}
+      className={[
+        'relative bg-bg-surface rounded-xl border border-border p-4',
+        'transition-all duration-150',
+        'hover:border-tom/40 hover:shadow-[0_0_0_1px_rgba(157,184,91,0.15),0_8px_24px_-12px_rgba(157,184,91,0.30)]',
+        isDragging ? 'shadow-soft' : '',
+      ].join(' ')}
+      {...attributes}
+    >
+      {/* Drag handle column */}
+      <span
+        aria-label="Arrastar pra reordenar"
+        className="absolute left-1.5 top-0 bottom-0 grid place-items-center text-fg-muted/40 hover:text-fg-muted cursor-grab touch-none px-0.5"
+        {...listeners}
+      >
+        <GripVertical size={14} />
+      </span>
+
+      <Link to={`/mais/operacoes/${t.id}`} className="block space-y-1 pl-6 pr-8">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-lg">{PRIORITY_INDICATOR[t.priority].emoji}</span>
+            <span className="text-caption uppercase font-semibold text-fg-muted truncate">
+              {t.request_type?.label ?? '—'}
+            </span>
+          </div>
+          {t.due_date && (
+            <span
+              className={
+                overdue
+                  ? 'text-caption font-semibold text-danger whitespace-nowrap'
+                  : 'text-caption text-fg-muted whitespace-nowrap'
+              }
+            >
+              {overdue ? '⚠ ' : ''}{formatDueShort(t.due_date)}
+            </span>
+          )}
+        </div>
+        <p className="text-body font-medium text-fg">{t.title}</p>
+        <p className="text-body-sm text-fg-muted">
+          {unitLabel(t.collaborator?.unit ?? null)}
+          {' · '}
+          {t.collaborator?.full_name ?? '—'}
+          {' · '}
+          {STATUS_LABEL_OPERATIONAL[t.status] ?? t.status}
+        </p>
+        {t.notes && (
+          <p className="text-caption text-fg-muted italic line-clamp-1">{t.notes}</p>
+        )}
+      </Link>
+
+      <div className="absolute top-3 right-3">
+        <RowMenu
+          items={[
+            { label: 'Editar', onClick: onEdit },
+            {
+              label: 'Cancelar demanda',
+              danger: true,
+              confirm: 'Cancelar essa demanda?',
+              onClick: onCancel,
+            },
+          ]}
+        />
+      </div>
     </div>
   );
 }

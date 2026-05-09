@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { User } from 'lucide-react';
 
 // Sprint 22.22 — Dropdown inline pra atribuir task a um membro do projeto.
-// Mesmo padrao visual do CategoryTag (z-50, blur fecha).
+// Sprint 22.X — dropdown usa position: fixed com coords do trigger pra escapar
+// de containers com overflow (ex: BottomSheet).
 
 export interface AssigneeOption {
   id: string;            // collaborator_id
@@ -25,14 +26,42 @@ interface Props {
 
 export function AssigneePicker({ value, options, onChange, onClear, emptyLabel = 'Ninguém' }: Props) {
   const [open, setOpen] = useState(false);
+  const [coords, setCoords] = useState<{ top: number; left: number; width: number } | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const current = options.find(o => o.id === value);
   const label = current?.full_name ?? emptyLabel;
 
-  function handleBlur(e: React.FocusEvent<HTMLDivElement>) {
-    if (!e.currentTarget.contains(e.relatedTarget)) {
-      setTimeout(() => setOpen(false), 150);
+  useLayoutEffect(() => {
+    if (!open || !triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const dropdownWidth = Math.max(220, rect.width);
+    let left = rect.left;
+    if (left + dropdownWidth > window.innerWidth - 8) {
+      left = Math.max(8, window.innerWidth - 8 - dropdownWidth);
     }
-  }
+    setCoords({ top: rect.bottom + 4, left, width: dropdownWidth });
+  }, [open]);
+
+  // Click outside fecha
+  useEffect(() => {
+    if (!open) return;
+    function onDoc(e: MouseEvent) {
+      const t = e.target as Node;
+      if (triggerRef.current && triggerRef.current.contains(t)) return;
+      const dropdown = document.getElementById('assignee-picker-dropdown');
+      if (dropdown && dropdown.contains(t)) return;
+      setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false);
+    }
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
 
   function pick(id: string) {
     if (id !== value) onChange(id);
@@ -40,8 +69,9 @@ export function AssigneePicker({ value, options, onChange, onClear, emptyLabel =
   }
 
   return (
-    <div className="relative inline-block" data-no-nav onBlur={handleBlur}>
+    <div className="relative inline-block" data-no-nav>
       <button
+        ref={triggerRef}
         type="button"
         onClick={(e) => { e.stopPropagation(); setOpen(v => !v); }}
         className={[
@@ -58,9 +88,11 @@ export function AssigneePicker({ value, options, onChange, onClear, emptyLabel =
           {current ? label : '+ Atribuir'}
         </span>
       </button>
-      {open && (
+      {open && coords && (
         <div
-          className="absolute right-0 top-full mt-1 z-50 min-w-[200px] rounded-md border border-border bg-bg-surface shadow-soft overflow-hidden"
+          id="assignee-picker-dropdown"
+          style={{ position: 'fixed', top: coords.top, left: coords.left, width: coords.width, zIndex: 60 }}
+          className="max-h-60 overflow-y-auto rounded-md border border-border bg-bg-surface shadow-soft"
           onClick={(e) => e.stopPropagation()}
         >
           {options.length === 0 ? (
@@ -101,4 +133,3 @@ export function AssigneePicker({ value, options, onChange, onClear, emptyLabel =
     </div>
   );
 }
-
