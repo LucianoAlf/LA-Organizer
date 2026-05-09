@@ -318,12 +318,12 @@ export function OperacoesFilaTecnica() {
     };
   }
 
+  const DEPT_LABEL_OVERRIDE: Record<string, string> = {
+    'operacoes-tecnicas': 'Técnica',
+  };
   const tabsItems = depts.map(d => ({
     id: d.id,
-    label: d.name,
-    badge: deptCounts[d.id]
-      ? <span className="px-1.5 py-0.5 rounded-full bg-bg-elevated text-fg-muted text-caption">{deptCounts[d.id]}</span>
-      : undefined,
+    label: DEPT_LABEL_OVERRIDE[d.slug] ?? d.name,
   }));
 
   return (
