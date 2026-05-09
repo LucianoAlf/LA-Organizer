@@ -86,7 +86,7 @@ export function TemplateCard({ template, onEdit }: Props) {
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
           <p className="text-body-md font-semibold text-fg truncate">{template.name}</p>
-          <p className="text-caption text-fg-muted mt-0.5">
+          <p className="text-body-sm text-fg-muted mt-0.5">
             {FUNCTION_LABEL[template.function_role] ?? template.function_role}
             {' · '}
             {UNIT_LABEL[template.unit] ?? template.unit}
@@ -95,11 +95,11 @@ export function TemplateCard({ template, onEdit }: Props) {
             {' · '}
             {template.dispatch_time?.slice(0, 5)}
           </p>
-          <p className="text-caption text-fg-muted">
+          <p className="text-body-sm text-fg-muted">
             {activeItems.length} itens · threshold {template.completion_threshold}%
           </p>
           {editedAt && (
-            <p className="text-caption text-fg-muted mt-0.5">
+            <p className="text-body-sm text-fg-muted mt-0.5">
               Editado por {editorName ?? '—'} em {editedAt}
             </p>
           )}

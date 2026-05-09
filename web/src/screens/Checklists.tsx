@@ -226,8 +226,7 @@ function TrabalhoTab() {
 
       {canManageTemplates && (
         <div className="space-y-sm pt-md border-t border-border">
-          <div className="flex items-center justify-between">
-            <p className="text-caption text-fg-muted uppercase tracking-wide">Templates operacionais</p>
+          <div className="flex items-center justify-end">
             <Button
               variant="primary"
               size="sm"
