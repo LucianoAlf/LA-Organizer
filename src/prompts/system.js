@@ -399,10 +399,11 @@ function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habi
         const items = (l.personal_checklist_items || [])
           .filter(it => !it.is_done)
           .sort((a, b) => a.sort_order - b.sort_order);
-        const sample = items.slice(0, 3).map(it => it.description).join(', ');
-        const more = items.length > 3 ? ` +${items.length - 3}` : '';
         const icon = ICON[l.list_type] || '📋';
-        lines.push(`• [list_id=${String(l.id).slice(0, 8)}] ${icon} ${l.name}: ${items.length} pendentes (${sample}${more})`);
+        // list_id completo (UUID) pra marker add_item funcionar.
+        // Todos os itens expostos pra TOM poder listar sem truncar.
+        lines.push(`• [list_id=${l.id}] ${icon} ${l.name}: ${items.length} pendentes`);
+        items.forEach((it, i) => lines.push(`  ${i + 1}. [item_id=${it.id}] ${it.description}`));
       });
     }
   }
