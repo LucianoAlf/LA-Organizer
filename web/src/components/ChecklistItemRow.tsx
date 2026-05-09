@@ -25,6 +25,11 @@ interface Props {
   onSaveNote?: (note: string) => void
   onCreateTask?: () => void
   onDelete?: () => void
+  /**
+   * Sprint 22.38 — quando true, "Apagar item" aparece independentemente de isAdHoc.
+   * Usado por listas pessoais (todo item é deletável). Default: undefined.
+   */
+  canDelete?: boolean
 }
 
 export function ChecklistItemRow({
@@ -39,6 +44,7 @@ export function ChecklistItemRow({
   onSaveNote,
   onCreateTask,
   onDelete,
+  canDelete,
 }: Props) {
   const [editingNote, setEditingNote] = useState(false)
   const [draft, setDraft] = useState(note)
@@ -89,12 +95,12 @@ export function ChecklistItemRow({
       onClick: onCreateTask,
     })
   }
-  if (onDelete && isAdHoc && !readonly) {
+  if (onDelete && (isAdHoc || canDelete) && !readonly) {
     menu.push({
       label: 'Apagar item',
       onClick: onDelete,
       danger: true,
-      confirm: 'Apagar esse item ad-hoc?',
+      confirm: 'Apagar esse item?',
     })
   }
 

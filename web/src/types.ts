@@ -392,6 +392,46 @@ export interface OpChecklistItemDraft {
   is_active: boolean    // false = marked for removal
 }
 
+// ─── Sprint 22.38 — Personal checklists (mercado, viagem, remédios, geral) ──
+
+export type PersonalListType = 'shopping' | 'travel' | 'meds' | 'general'
+
+export interface PersonalChecklistItem {
+  id: string
+  list_id: string
+  description: string
+  is_done: boolean
+  sort_order: number
+  note: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface PersonalChecklist {
+  id: string
+  owner_collab_id: string
+  name: string
+  list_type: PersonalListType
+  is_active: boolean
+  created_at: string
+  updated_at: string
+  personal_checklist_items?: PersonalChecklistItem[]
+}
+
+export const PERSONAL_LIST_TYPE_ICON: Record<PersonalListType, string> = {
+  shopping: '🛒',
+  travel: '✈️',
+  meds: '💊',
+  general: '📋',
+}
+
+export const PERSONAL_LIST_TYPE_LABEL: Record<PersonalListType, string> = {
+  shopping: 'Mercado',
+  travel: 'Viagem',
+  meds: 'Remédios',
+  general: 'Geral',
+}
+
 // ─── Sprint 13 F1 — Comunicados Internos ────────────────────────────────────
 
 export interface AnnouncementAudience {

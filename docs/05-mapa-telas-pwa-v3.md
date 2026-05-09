@@ -1,7 +1,7 @@
 # Mapa de Telas do PWA — LA Organizer
 
 **Documento:** 05
-**Versão:** 3.4
+**Versão:** 3.5
 **Data:** 8 de maio de 2026 (atualizado Sprint 22.34 — Agenda revamp)
 **Plataforma:** PWA mobile-first (React/TypeScript) — Vercel + VPS (nginx + PM2)
 **Design:** Dark mode padrão, opção light mode
@@ -35,7 +35,7 @@
 | Pessoa-Detalhe `/time/:id` | — | ✓ | ✓ | ✅ Sprint 6 |
 | Project Wizard `/projetos/novo` | ✓ | ✓ | ✓ | ✅ Sprint 8 |
 | Hábitos pessoais `/habitos` | ✓ | ✓ | ✓ | ✅ Sprint 11 |
-| Checklists operacionais `/checklists` | ✓ | ✓ | ✓ | ✅ Sprint 11 F2+ |
+| Checklists `/checklists` (tabs Trabalho/Pessoal/Delegadas) | ✓ | ✓ | ✓ | ✅ Sprint 11 F2+ → 22.38 |
 | Checklists Templates `/mais/checklists-templates` | — | ✓ | ✓ | ✅ Sprint 11 F2+ |
 | Aderência operacional `/mais/aderencia-checklists` | — | — | ✓ (manager + director) | ✅ Sprint 22.37 |
 | Aderência detalhe `/mais/aderencia-checklists/:id` | — | — | ✓ (manager + director) | ✅ Sprint 22.37 |
@@ -191,13 +191,19 @@ Lista de hábitos do colaborador com check diário, StreakRing por hábito (sequ
 
 ---
 
-### Tela 11 — Checklists operacionais `/checklists` *(novo Sprint 11 F2+)*
+### Tela 11 — Checklists `/checklists` *(novo Sprint 11 F2+, refatorada Sprint 22.38)*
 
 **Route:** `<ProtectedRoute />` (any logged user)
 
-**Role:** Todos · **Sprint:** 11 F2+
+**Role:** Todos · **Sprint:** 11 F2+ → 22.38 (tabs)
 
-Exibe os checklists operacionais despachados para o colaborador logado no dia corrente. Cada checklist renderizado via `ChecklistCard`. Atualização em tempo real via Supabase Realtime (canal `checklist-item-realtime`, inscrição em `op_checklist_item_completions` e `op_checklist_completions`). Polling a cada 30s como fallback.
+Centro de checklists do user. **3 tabs** com URL state em `?tab=trabalho|pessoal|delegadas`:
+
+- **Trabalho** (default): checklists operacionais despachados pelo TOM no dia corrente. Render via `ChecklistCard`. Realtime via canal `checklist-item-realtime` (inscrição em `op_checklist_item_completions`, `op_checklist_completions` e `op_checklist_completion_extra_items`). Polling 30s fallback.
+- **Pessoal** (Sprint 22.38): listas que o user cria (`personal_checklists` + `personal_checklist_items`). Tipos: 🛒 mercado, ✈️ viagem, 💊 remédios, 📋 geral. CRUD completo via `PersonalChecklistCard` + `PersonalChecklistSheet`. DnD reorder, marcar/desmarcar, nota inline, renomear, mudar tipo, arquivar. RLS owner-only.
+- **Delegadas** (Sprint 22.38): leitura de `tasks` onde `created_by = self != assigned_to`. Sub-tabs Ativas/Concluídas (30d). Atrasadas no topo. Render via `DelegatedTaskRow` (link pra `/projetos/:id` se houver, senão `/agenda`).
+
+TOM lê listas pessoais no contexto (gated, só listas com pendências) e edita via `<<PERSONAL_LIST_ACTION>>` (skill `listas-pessoais.md`).
 
 ---
 

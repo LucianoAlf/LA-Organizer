@@ -206,6 +206,35 @@ Em dúvida, fallback para `checklist-tarefas` (cria task com `remind_at` se for 
 
 ---
 
+## 6.5 Listas pessoais (novo Sprint 22.38)
+**Arquivo:** `skills/listas-pessoais.md`
+
+**Função:** criar e manter listas temáticas explícitas do user (mercado, viagem, remédios, geral). Ortogonal a `lista-mental.md`: lista mental é dump aberto que classifica em task/event/project/memory; listas pessoais são containers persistentes que o user volta a usar.
+
+**Schema:** `personal_checklists` (`id, owner_collab_id, name, list_type, is_active`) + `personal_checklist_items` (`id, list_id, description, is_done, sort_order, note`). RLS owner-only.
+
+**list_type:** `shopping` 🛒 · `travel` ✈️ · `meds` 💊 · `general` 📋
+
+**Triggers:**
+- Criação: "lista de mercado", "lista da viagem", "remédios pra comprar".
+- Adição: "adiciona X na lista do mercado", "põe X na lista da viagem".
+- Marcar: "marca tomate como comprado", "já comprei X".
+
+**Marker:** `<<PERSONAL_LIST_ACTION>>...<<END>>` com payload JSON. Actions: `create | add_item | toggle_item | rename | archive`. Aceita batch (array). Ownership validado server-side em todas actions.
+
+**Contexto injetado em system.js (gated):**
+```
+**Listas pessoais (N ativas com pendências):**
+• [list_id=a1b2c3d4] 🛒 Mercado: 5 pendentes (tomate, ovo, leite +2)
+```
+Só renderiza listas com pelo menos 1 item pendente — evita ruído.
+
+**PWA:** Tab "Pessoal" em `/checklists?tab=pessoal`. CRUD completo via `PersonalChecklistCard` + `PersonalChecklistSheet`. Reusa `ChecklistItemRow` (com prop `canDelete`), `ChecklistAddItemForm`, `RowMenu`, `BottomSheet`.
+
+**Não-objetivos:** Não substitui `lista-mental.md` (dump aberto). Não notifica WhatsApp automaticamente (TOM lê, não cobra). Não compartilha entre users (single-owner).
+
+---
+
 ## 7. Integração Emusys
 **Arquivo:** `skills/integracao-emusys.md`
 

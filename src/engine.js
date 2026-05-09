@@ -4470,6 +4470,105 @@ async function processMessage(phone, text, raw = {}) {
     }
   }
 
+  // 2.62) Sprint 22.38 — <<PERSONAL_LIST_ACTION>> — listas pessoais do user.
+  // Actions: create | add_item | toggle_item | rename | archive
+  {
+    const re = /<<PERSONAL_LIST_ACTION>>\s*([\s\S]*?)\s*<<END>>/i;
+    const m = reply.match(re);
+    if (m) {
+      const cleanText = reply.replace(re, '').trim();
+      let parsed = null;
+      try {
+        parsed = JSON.parse(m[1].trim());
+      } catch (err) {
+        await logMarker(collab.id, 'PERSONAL_LIST_ACTION', 'rejected', 'invalid_json: ' + err.message, m[1]);
+        reply = cleanText || reply;
+      }
+      if (parsed) {
+        const actions = Array.isArray(parsed) ? parsed : [parsed];
+        let okCount = 0, failCount = 0;
+        for (const a of actions) {
+          try {
+            if (!a || typeof a !== 'object') { failCount++; continue; }
+            if (a.action === 'create') {
+              const name = String(a.name || '').trim();
+              if (!name) { failCount++; continue; }
+              const listType = ['shopping', 'travel', 'meds', 'general'].includes(a.list_type) ? a.list_type : 'general';
+              const { data: list, error: e1 } = await supabase
+                .from('personal_checklists')
+                .insert({ owner_collab_id: collab.id, name, list_type: listType })
+                .select('id').single();
+              if (e1) { failCount++; continue; }
+              const items = Array.isArray(a.items) ? a.items.filter(x => typeof x === 'string' && x.trim()) : [];
+              if (items.length) {
+                const rows = items.map((d, i) => ({ list_id: list.id, description: d.trim(), sort_order: i + 1 }));
+                const { error: e2 } = await supabase.from('personal_checklist_items').insert(rows);
+                if (e2) { failCount++; continue; }
+              }
+              okCount++;
+            } else if (a.action === 'add_item') {
+              if (!a.list_id || !a.description) { failCount++; continue; }
+              // Validar ownership: lista pertence ao collab.
+              const { data: owned } = await supabase
+                .from('personal_checklists').select('id')
+                .eq('id', a.list_id).eq('owner_collab_id', collab.id).maybeSingle();
+              if (!owned) { failCount++; continue; }
+              const { data: maxRow } = await supabase
+                .from('personal_checklist_items').select('sort_order')
+                .eq('list_id', a.list_id)
+                .order('sort_order', { ascending: false }).limit(1).maybeSingle();
+              const nextOrder = (maxRow && maxRow.sort_order ? maxRow.sort_order : 0) + 1;
+              const { error } = await supabase.from('personal_checklist_items').insert({
+                list_id: a.list_id, description: String(a.description).trim(), sort_order: nextOrder,
+              });
+              if (error) { failCount++; continue; }
+              okCount++;
+            } else if (a.action === 'toggle_item') {
+              if (!a.item_id) { failCount++; continue; }
+              // Ownership via FK chain: item → list.owner.
+              const { data: itemRow } = await supabase
+                .from('personal_checklist_items')
+                .select('id, personal_checklists!inner(owner_collab_id)')
+                .eq('id', a.item_id).maybeSingle();
+              if (!itemRow || !itemRow.personal_checklists || itemRow.personal_checklists.owner_collab_id !== collab.id) {
+                failCount++; continue;
+              }
+              const isDone = a.is_done === undefined ? true : !!a.is_done;
+              const { error } = await supabase.from('personal_checklist_items')
+                .update({ is_done: isDone }).eq('id', a.item_id);
+              if (error) { failCount++; continue; }
+              okCount++;
+            } else if (a.action === 'rename') {
+              if (!a.list_id || !a.name) { failCount++; continue; }
+              const { error } = await supabase.from('personal_checklists')
+                .update({ name: String(a.name).trim() })
+                .eq('id', a.list_id).eq('owner_collab_id', collab.id);
+              if (error) { failCount++; continue; }
+              okCount++;
+            } else if (a.action === 'archive') {
+              if (!a.list_id) { failCount++; continue; }
+              const { error } = await supabase.from('personal_checklists')
+                .update({ is_active: false })
+                .eq('id', a.list_id).eq('owner_collab_id', collab.id);
+              if (error) { failCount++; continue; }
+              okCount++;
+            } else {
+              failCount++;
+            }
+          } catch (e) {
+            console.error('[PersonalList] action err:', e.message);
+            failCount++;
+          }
+        }
+        const result = okCount > 0 ? 'executed' : 'rejected';
+        const reason = okCount > 0 ? `ok=${okCount} fail=${failCount}` : `all_failed:${failCount}`;
+        await logMarker(collab.id, 'PERSONAL_LIST_ACTION', result, reason, null);
+        console.log(`[PersonalList] batch done: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
+        reply = cleanText || reply;
+      }
+    }
+  }
+
   // 2.65) Event create — compromissos com horário (Sprint 4+).
   {
     const parsedEv = parseEventCreateMarker(reply);

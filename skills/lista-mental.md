@@ -5,6 +5,13 @@ description: Skill para esvaziar a cabeça do usuário em lote. Ativa quando há
 
 # Lista Mental
 
+> **Não confundir com `listas-pessoais.md` (Sprint 22.38).** Lista mental é
+> **dump aberto** — você classifica cada item em task/event/project/memory/resolve_now.
+> Listas pessoais são **listas temáticas explícitas** (mercado, viagem, remédios)
+> que o user mantém ao longo do tempo. Se o user pediu "lista de mercado" / "lista
+> da viagem" / "remédios pra comprar", **use `listas-pessoais.md`** em vez de
+> classificar item-a-item.
+
 ## Quando ativar
 
 Ative esta skill quando a mensagem trouxer:

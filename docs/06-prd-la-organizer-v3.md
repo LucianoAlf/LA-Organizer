@@ -1,12 +1,12 @@
 # PRD — LA Organizer
 
 **Documento:** 06 — PRD Completo
-**Versão:** 3.10
-**Data:** 2026-05-08 (atualizado Sprint 22.37 — Aderência operacional pra liderança)
+**Versão:** 3.11
+**Data:** 2026-05-08 (atualizado Sprint 22.38 — Tabs Trabalho/Pessoal/Delegadas em /checklists + listas pessoais)
 **Autor:** Luciano Alf (produto) + Claude + OpenClaw (arquitetura)
 **Stakeholder:** Luciano Alf (CEO LA Music)
 **Agente:** TOM
-**Status:** Sprints 0→22.36 fechadas. PWA Agenda + Checklists totalmente refatoradas no design system unificado (collapse, DnD, ⋮ menus, CRUD inline). TOM agora lê delegadas + checklists no contexto, celebra fechamento via Zap pro colab + gerente, cobra pendência após janela 6h, escala em 20min sem resposta. Próxima frente: aderência semanal coord/director (Sprint 22.37) + Sprint 21 Autogovernança Guiada.
+**Status:** Sprints 0→22.38 fechadas. PWA Agenda + Checklists totalmente refatoradas no design system unificado (collapse, DnD, ⋮ menus, CRUD inline). `/checklists` agora tem 3 tabs (Trabalho/Pessoal/Delegadas). TOM lê listas pessoais e aderência da equipe no contexto, celebra fechamento via Zap pro colab + gerente, cobra pendência após janela 6h, escala em 20min sem resposta. Próxima frente: validação em uso real + Sprint 21 Autogovernança Guiada.
 
 > **Limites de papel do TOM:** ver `docs/TOM-LIMITES.md` (formalizado 2026-05-05). TOM é organizador de governança e organização pessoal da liderança — não é canal permanente de comunicação interpessoal entre toda a equipe.
 
@@ -320,6 +320,19 @@ Ver `docs/PROJECT-WIZARD.md` para decisões arquiteturais detalhadas, mapeamento
 | TOM-LIMITES.md | — | NOVO — formaliza papel do TOM (não vira "menino de recado") |
 | Hotfixes UX (radar Sprint 20) | — | 11: cadência self-intro, microconfirmação numerada, Eisenhower, dedup defensivo, cooldown deadline, COORD_HINT contexto, etc. |
 | Decisão estratégica | — | **Encerrada fase de expansão de departamentos** (2026-05-05). Próxima frente: governança da liderança |
+
+### v3.10 → v3.11 (2026-05-08) — pós-Sprint 22.38 (Tabs em /checklists + listas pessoais)
+
+| Item | v3.10 | v3.11 |
+|---|---|---|
+| /checklists | Tela única com lista de hoje | 3 tabs: **Trabalho** (atual) / **Pessoal** (novo) / **Delegadas** (novo). URL state via `?tab=`. |
+| Schema 22.38 | n/a | `personal_checklists` + `personal_checklist_items` (RLS owner-only). Helper `public.update_updated_at_column()` provisionado |
+| Tab Pessoal | n/a | CRUD completo: criar (BottomSheet com tipo 🛒/✈️/💊/📋), DnD reorder, marcar/desmarcar, nota inline, renomear, mudar tipo, arquivar |
+| Tab Delegadas | n/a | Leitura de tasks onde `created_by=self != assigned_to`. Sub-tabs Ativas/Concluídas (30d). Atrasadas no topo. Status emoji 🟡🟢🟣🔴 |
+| Reuso DS | — | `ChecklistItemRow` ganha prop `canDelete` (sem refactor de assinatura). `ChecklistAddItemForm`, `RowMenu`, `Tabs`, `BottomSheet` reusados |
+| TOM contexto | sem listas pessoais | Bloco "Listas pessoais (N ativas com pendências)" gated em `buildContext` (só renderiza listas com items pendentes) |
+| TOM action | — | `<<PERSONAL_LIST_ACTION>>` (create/add_item/toggle_item/rename/archive). Validação ownership server-side. Skill `listas-pessoais.md` orquestra |
+| Skill cross-link | lista-mental sozinha | `lista-mental.md` ganha nota distinguindo dump aberto vs `listas-pessoais.md` (lista temática persistente) |
 
 ### v3.9 → v3.10 (2026-05-08) — pós-Sprint 22.37 (Aderência operacional)
 

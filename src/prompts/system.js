@@ -18,7 +18,7 @@ const BLOCK_RULES = `# 🚨 REGRAS INVIOLÁVEIS — PRIORIDADE MÁXIMA
 6. ZERO leaks: nada de IDs, UUIDs, markers <<...>> visíveis ao usuário, "5W2H", "Eisenhower", "quadrante", nomes de tabelas, paths de filesystem, "engine", "API", "banco". Você NÃO tem ferramentas neste contexto — NUNCA emita \`<tool_call>\`, \`<tool_use>\`, \`<function_call>\`, \`<tool_name>\`, \`<parameters>\`, ou qualquer marcação de invocação de tool. Sua resposta é APENAS texto natural + markers oficiais documentados.
 
 **MARKERS VÁLIDOS (lista canônica — Sprint 10.1+):**
-\`<<TASK_UPDATE>>\` (com action: create/complete/reschedule/delegate/extension_request/approve/deny) · \`<<EVENT_CREATE>>\` · \`<<EVENT_UPDATE>>\` · \`<<PROJECT_CREATE>>\` · \`<<PROJECT_APPROVE>>\` · \`<<PROJECT_REJECT>>\` · \`<<HABIT_ACTION>>\` · \`<<MEMORY_SAVE>>\` · \`<<DND_UPDATE>>\` · \`<<ONBOARDING_DONE>>\` · \`<<WEEKLY_PLAN>>\` · \`<<MONTHLY_PLAN>>\` · \`<<CHECKPOINT_BATCH>>\` (Sprint 11.4) · \`<<CHECKLIST_ACTION>>\` (Sprint 12) · \`<<ANNOUNCEMENT_ACTION>>\` (Sprint 13) · \`<<SCHOOL_EVENT_ACTION>>\` (Sprint 13) · \`<<ANNOUNCEMENT_APPROVAL>>\` (Sprint 13). Final SEMPRE \`<<END>>\`.
+\`<<TASK_UPDATE>>\` (com action: create/complete/reschedule/delegate/extension_request/approve/deny) · \`<<EVENT_CREATE>>\` · \`<<EVENT_UPDATE>>\` · \`<<PROJECT_CREATE>>\` · \`<<PROJECT_APPROVE>>\` · \`<<PROJECT_REJECT>>\` · \`<<HABIT_ACTION>>\` · \`<<MEMORY_SAVE>>\` · \`<<DND_UPDATE>>\` · \`<<ONBOARDING_DONE>>\` · \`<<WEEKLY_PLAN>>\` · \`<<MONTHLY_PLAN>>\` · \`<<CHECKPOINT_BATCH>>\` (Sprint 11.4) · \`<<CHECKLIST_ACTION>>\` (Sprint 12) · \`<<ANNOUNCEMENT_ACTION>>\` (Sprint 13) · \`<<SCHOOL_EVENT_ACTION>>\` (Sprint 13) · \`<<ANNOUNCEMENT_APPROVAL>>\` (Sprint 13) · \`<<PERSONAL_LIST_ACTION>>\` (Sprint 22.38). Final SEMPRE \`<<END>>\`.
 
 **MARKERS HALLUCINATED (NUNCA emita — não existem):**
 \`<<TASK_CREATE>>\` ❌ → use \`<<TASK_UPDATE>>\` action="create" · \`<<TASK_DONE>>\` ❌ → action="complete" · \`<<TASK_DELETE>>\` ❌ → action="cancel" · \`<<TASK_REMIND>>\` ❌ → action="create" + remind_at · \`<<TASK_NEW>>\`/\`<<TASK_ADD>>\`/\`<<TASK_LIST>>\` ❌ · \`<<EVENT_NEW>>\`/\`<<EVENT_DONE>>\`/\`<<EVENT_CANCEL>>\` ❌ → use \`<<EVENT_UPDATE>>\` action correta · \`<<HABIT_LOG>>\`/\`<<HABIT_DONE>>\` ❌ → use \`<<HABIT_ACTION>>\` action="log" · \`<<MEMORY_WRITE>>\`/\`<<MEMORY_UPDATE>>\` ❌ → \`<<MEMORY_SAVE>>\`. Se você "achou" um nome de marker que não está na lista válida acima, ele NÃO existe. NÃO invente.
@@ -171,7 +171,7 @@ function nameFor(collab) {
 // Sprint 22.36 Fatia 2 — Adicionado: delegatedTasks (tarefas que ESTE user atribuiu
 // pra outros), todayChecklists (checklists operacionais de hoje com %).
 // Antes ficavam fora do contexto e TOM dizia "não tenho esse dato" no relatório.
-function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habits, events, delegatedTasks, todayChecklists, teamAdherence) {
+function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habits, events, delegatedTasks, todayChecklists, teamAdherence, personalChecklists) {
   const nickname = nameFor(collab);
   const lines = ['# 📌 CONTEXTO DESTA INTERAÇÃO', ''];
   const fn = collab.function_title ? ', ' + collab.function_title : '';
@@ -383,6 +383,28 @@ function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habi
       const tail = annotations.length ? ` — ${annotations.join(', ')}` : '';
       lines.push(`• ${emoji} ${first}: ${t.pct}% (${t.completed}/${t.dispatched})${tail}`);
     });
+  }
+
+  // Sprint 22.38 — LISTAS PESSOAIS do user (mercado/viagem/remédios/geral).
+  // Gated: só injeta listas com pelo menos 1 item pendente, pra evitar ruído.
+  // Skill `listas-pessoais.md` usa pra responder/atualizar via TOM.
+  if (personalChecklists && personalChecklists.length) {
+    const ICON = { shopping: '🛒', travel: '✈️', meds: '💊', general: '📋' };
+    const withPending = personalChecklists.filter(l =>
+      (l.personal_checklist_items || []).some(it => !it.is_done)
+    );
+    if (withPending.length) {
+      lines.push('', `**Listas pessoais (${withPending.length} ativas com pendências):**`);
+      withPending.slice(0, 8).forEach(l => {
+        const items = (l.personal_checklist_items || [])
+          .filter(it => !it.is_done)
+          .sort((a, b) => a.sort_order - b.sort_order);
+        const sample = items.slice(0, 3).map(it => it.description).join(', ');
+        const more = items.length > 3 ? ` +${items.length - 3}` : '';
+        const icon = ICON[l.list_type] || '📋';
+        lines.push(`• [list_id=${String(l.id).slice(0, 8)}] ${icon} ${l.name}: ${items.length} pendentes (${sample}${more})`);
+      });
+    }
   }
 
   return lines.join('\n');
@@ -682,6 +704,7 @@ async function fetchCollaboratorContext(collaborator) {
     delegatedRes,
     todayChecklistsRes,
     teamAdherenceRes,
+    personalChecklistsRes,
   ] = await Promise.all([
     supabase.from('collaborator_profiles').select('*').eq('collaborator_id', id).maybeSingle(),
     supabase.from('collaborator_memory')
@@ -758,6 +781,14 @@ async function fetchCollaboratorContext(collaborator) {
           p_unit_filter: collaborator.role === 'manager' ? collaborator.unit : null,
         })
       : Promise.resolve({ data: [], error: null }),
+    // Sprint 22.38 — Listas pessoais ativas do user (mercado/viagem/remédios/geral).
+    // Bloco gated em buildContext: só renderiza listas com pendentes.
+    supabase.from('personal_checklists')
+      .select('id, name, list_type, personal_checklist_items(id, description, is_done, sort_order)')
+      .eq('owner_collab_id', id)
+      .eq('is_active', true)
+      .order('created_at', { ascending: false })
+      .limit(20),
   ]);
 
   let activeProjects = [];
@@ -788,6 +819,7 @@ async function fetchCollaboratorContext(collaborator) {
     delegatedTasks: delegatedRes.data || [],
     todayChecklists: todayChecklistsRes.data || [],
     teamAdherence: teamAdherenceRes.data || [],
+    personalChecklists: personalChecklistsRes.data || [],
     todayDate: today,
   };
 }
@@ -1295,7 +1327,7 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     eventsForCtx = eventsForCtx.filter(e => e.context === 'work');
   }
   // briefing_diario / daily_briefing: mantém todos os events (sem filtro).
-  const baseCtx = buildContext(collaborator, ctx.memories, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx, ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || []);
+  const baseCtx = buildContext(collaborator, ctx.memories, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx, ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || []);
   const pending = renderPendingDecisions(ctx.notifications);
 
   // Sprint 10.1 hotfix-2 (Plano C): resolve temporal de "amanhã"/"hoje" + horário
@@ -1471,7 +1503,7 @@ async function composeSystemPrompt(collaborator, ctx) {
   const blocks = [
     BLOCK_RULES,
     BLOCK_IDENTITY,
-    buildContext(collaborator, ctx.memories || [], ctx.prefs, ctx.todayTasks || [], ctx.activeProjects || [], lastMsgAge, ctx.habits || [], ctx.todayEvents || [], ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || []),
+    buildContext(collaborator, ctx.memories || [], ctx.prefs, ctx.todayTasks || [], ctx.activeProjects || [], lastMsgAge, ctx.habits || [], ctx.todayEvents || [], ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || []),
     skillBlock,
   ].filter(Boolean);
   let syncPrompt = blocks.join('\n\n---\n\n');
