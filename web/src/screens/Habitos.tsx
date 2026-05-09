@@ -2,6 +2,7 @@
 // Sprint 11 F2+ / Sessão B — adiciona Heatmap (agregado 30d) + StreakRing por hábito.
 // Mostra ritmo geral do user (heatmap) + aderência individual (ring colorido).
 // Privacy: só o próprio user vê seus hábitos (RLS via collaborator_id).
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Sparkles, Check } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
@@ -10,11 +11,18 @@ import { LoadingState } from '../components/LoadingState';
 import { EmptyState } from '../components/EmptyState';
 import { StreakRing } from '../components/StreakRing';
 import { HabitsHeatmap } from '../components/HabitsHeatmap';
+import { Fab } from '../components/Fab';
+import { EditHabitSheet } from '../components/EditHabitSheet';
 
 type Habit = {
   id: string;
   name: string;
   icon: string | null;
+  color: string | null;
+  frequency: 'daily' | 'weekdays' | 'weekly' | 'custom_days';
+  custom_days: number[] | null;
+  reminder_time: string | null;
+  notify_whatsapp: boolean;
   current_streak: number | null;
   best_streak: number | null;
   is_active: boolean;
@@ -62,7 +70,7 @@ function lastNDaysYmd(n: number): string[] {
 async function fetchHabits(collabId: string): Promise<HabitsData> {
   const { data: habits, error } = await supabase
     .from('habits')
-    .select('id, name, icon, current_streak, best_streak, is_active')
+    .select('id, name, icon, color, frequency, custom_days, reminder_time, notify_whatsapp, current_streak, best_streak, is_active')
     .eq('collaborator_id', collabId)
     .eq('is_active', true)
     .order('created_at', { ascending: true });
@@ -151,6 +159,9 @@ export function Habitos() {
   const { collaborator } = useAuth();
   const qc = useQueryClient();
   const collabId = collaborator?.id;
+  // Sprint 22.53 — CRUD inline.
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [editingHabit, setEditingHabit] = useState<HabitWithLog | null>(null);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['habits', collabId],
@@ -202,22 +213,21 @@ export function Habitos() {
         <EmptyState
           icon={<Sparkles size={32} />}
           title="Nenhum hábito ativo"
-          description="Crie pelo TOM no WhatsApp: 'criar hábito academia' ou 'novo hábito leitura'"
+          description="Toque no + abaixo pra criar seu primeiro hábito. Ou peça pro TOM no WhatsApp."
         />
       ) : (
         <>
           {/* Heatmap agregado — visão de ritmo do mês. */}
           <HabitsHeatmap days={heatmap} />
 
-          {/* Lista de hábitos com StreakRing à esquerda + checkbox direita. */}
+          {/* Lista de hábitos. Tap no corpo abre EditHabitSheet; tap no check toggle done. */}
           <ul className="surface divide-y divide-border">
             {habits.map(h => (
-              <li key={h.id}>
+              <li key={h.id} className="flex items-center gap-md p-md hover:bg-bg-elevated">
                 <button
                   type="button"
-                  onClick={() => toggle.mutate(h)}
-                  disabled={toggle.isPending}
-                  className="w-full flex items-center gap-md p-md hover:bg-bg-elevated focus-ring text-left"
+                  onClick={() => setEditingHabit(h)}
+                  className="flex items-center gap-md flex-1 min-w-0 text-left focus-ring rounded-sm"
                 >
                   <StreakRing
                     adherence={h.adherence30}
@@ -231,29 +241,41 @@ export function Habitos() {
                       <span className="tabular-nums">
                         {Math.round(h.adherence30 * 100)}% nos últimos 30d
                       </span>
+                      {h.reminder_time && (
+                        <span>· ⏰ {h.reminder_time.slice(0, 5)}</span>
+                      )}
                       {(h.best_streak ?? 0) > (h.current_streak ?? 0) && (
                         <span>· recorde: {h.best_streak}</span>
                       )}
                     </div>
                   </div>
-                  {/* Checkbox marca done hoje. */}
-                  <span
-                    className={[
-                      'h-7 w-7 shrink-0 rounded-full border grid place-items-center transition-colors',
-                      h.done_today
-                        ? 'bg-success border-success text-white'
-                        : 'border-border text-transparent',
-                    ].join(' ')}
-                    aria-label={h.done_today ? 'concluído hoje' : 'marcar feito'}
-                  >
-                    <Check size={16} strokeWidth={3} />
-                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); toggle.mutate(h); }}
+                  disabled={toggle.isPending}
+                  aria-label={h.done_today ? 'desmarcar feito hoje' : 'marcar feito hoje'}
+                  className={[
+                    'h-9 w-9 shrink-0 rounded-full border grid place-items-center transition-colors focus-ring',
+                    h.done_today
+                      ? 'bg-success border-success text-white'
+                      : 'border-border text-transparent hover:border-tom',
+                  ].join(' ')}
+                >
+                  <Check size={18} strokeWidth={3} />
                 </button>
               </li>
             ))}
           </ul>
         </>
       )}
+
+      <Fab onClick={() => setSheetOpen(true)} label="Novo hábito" ariaLabel="Criar novo hábito" />
+      <EditHabitSheet
+        open={sheetOpen || Boolean(editingHabit)}
+        habit={editingHabit}
+        onClose={() => { setSheetOpen(false); setEditingHabit(null); }}
+      />
 
       <p className="text-body-sm text-fg-muted">
         💡 Hábitos são pessoais. Nem coordenador nem diretor enxergam.
