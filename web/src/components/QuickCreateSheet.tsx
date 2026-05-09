@@ -70,6 +70,8 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
   const [meetingUrl, setMeetingUrl] = useState('');
   // Sprint 22.30 — compromisso tambem ganhou Eisenhower opcional.
   const [eventQuadrant, setEventQuadrant] = useState<number | null>(null);
+  // Sprint 22.51 — múltiplos lembretes na criação rápida de evento.
+  const [eventReminderTimes, setEventReminderTimes] = useState<string[]>([]);
   // Sprint 22.32 — participants do compromisso (collaborator ids).
   const [participantIds, setParticipantIds] = useState<string[]>([]);
   // Sprint 22.34i — detecção de conflito de horário antes de criar evento.
@@ -266,9 +268,19 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
       } else {
         showToast({ kind: 'success', title: 'Compromisso criado' });
       }
+      // Sprint 22.51 — lembretes selecionados na criação.
+      if (eventReminderTimes.length > 0 && inserted?.id) {
+        const reminderRows = eventReminderTimes.map(t => ({
+          event_id: inserted.id as string,
+          remind_at: `${t}:00-03:00`,
+        }));
+        const { error: re } = await supabase.from('event_reminders').insert(reminderRows);
+        if (re) console.warn('[QuickCreate] event_reminders insert err:', re.message);
+      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['events'] });
+      setEventReminderTimes([]);
       onClose();
     },
   });
@@ -707,6 +719,66 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
                   ? 'Sem convidados · só você fica com esse compromisso.'
                   : `${participantIds.length} pessoa${participantIds.length > 1 ? 's' : ''} · TOM avisa pelo WhatsApp.`}
               </div>
+            </div>
+
+            {/* Sprint 22.51 — lembretes (multi) na criação rápida. */}
+            <div>
+              <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5 flex items-baseline gap-2">
+                <span>Lembretes</span>
+                <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">opcional</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {([
+                  { label: 'Na hora', minutes: 0 },
+                  { label: '15min antes', minutes: 15 },
+                  { label: '30min antes', minutes: 30 },
+                  { label: '1h antes', minutes: 60 },
+                  { label: '1 dia antes', minutes: 60 * 24 },
+                ] as { label: string; minutes: number }[]).map(p => {
+                  const presetLocal = (() => {
+                    if (!startAt) return '';
+                    const t = new Date(`${startAt}:00-03:00`).getTime() - p.minutes * 60_000;
+                    const d = new Date(t);
+                    const sp = new Date(d.getTime() - 3 * 3600_000);
+                    return sp.toISOString().slice(0, 16);
+                  })();
+                  const active = presetLocal && eventReminderTimes.includes(presetLocal);
+                  return (
+                    <button
+                      key={p.minutes}
+                      type="button"
+                      onClick={() => {
+                        if (!presetLocal) return;
+                        setEventReminderTimes(prev => active
+                          ? prev.filter(t => t !== presetLocal)
+                          : [...prev, presetLocal].sort());
+                      }}
+                      className={[
+                        'px-3 py-1 rounded-full text-body-sm border transition-colors focus-ring',
+                        active
+                          ? 'bg-tom text-black border-tom'
+                          : 'bg-bg-elevated text-fg-muted border-border hover:text-fg',
+                      ].join(' ')}
+                    >
+                      {p.label}
+                    </button>
+                  );
+                })}
+                {eventReminderTimes.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setEventReminderTimes([])}
+                    className="px-3 py-1 rounded-full text-body-sm border border-border bg-bg-elevated text-danger hover:opacity-80 focus-ring"
+                  >
+                    Limpar
+                  </button>
+                )}
+              </div>
+              {eventReminderTimes.length > 0 && (
+                <p className="text-body-sm text-fg-muted mt-1.5">
+                  {eventReminderTimes.length} lembrete{eventReminderTimes.length > 1 ? 's' : ''} configurado{eventReminderTimes.length > 1 ? 's' : ''}.
+                </p>
+              )}
             </div>
           </>
         )}

@@ -345,17 +345,38 @@ async function dispatchChecklists(now = new Date(), { dry = false, filterPhone =
     template.op_checklist_items = (template.op_checklist_items || [])
       .filter(i => i.is_active !== false);
 
+    // Sprint 22.51 — collab matching: tenta por function_role+shift primeiro.
+    // Se ninguém tiver essa função configurada, fallback pra manager da unidade
+    // (garante que alguém sempre receba enquanto a equipe não estiver cadastrada).
     let collabQuery = supabase
       .from('collaborators')
-      .select('id, full_name, phone, unit, shift, function_role')
+      .select('id, full_name, phone, unit, function_role, shift')
+      .eq('is_active', true)
+      .not('phone', 'is', null)
       .eq('function_role', template.function_role)
       .eq('shift', template.shift);
+    if (template.unit !== 'all') collabQuery = collabQuery.eq('unit', template.unit);
     if (filterPhone) collabQuery = collabQuery.eq('phone', filterPhone);
 
-    const { data: collabs } = await collabQuery;
+    let { data: collabs } = await collabQuery;
+
+    // Fallback: nenhum collab com function_role/shift configurado → envia pra manager da unidade.
     if (!collabs || collabs.length === 0) {
-      results.push({ template_id: template.id, reason: 'no_collaborators', would_dispatch: false });
-      continue;
+      let fallbackQ = supabase
+        .from('collaborators')
+        .select('id, full_name, phone, unit, function_role, shift')
+        .eq('is_active', true)
+        .not('phone', 'is', null)
+        .eq('role', 'manager');
+      if (template.unit !== 'all') fallbackQ = fallbackQ.eq('unit', template.unit);
+      if (filterPhone) fallbackQ = fallbackQ.eq('phone', filterPhone);
+      const { data: fallback } = await fallbackQ;
+      if (!fallback || fallback.length === 0) {
+        results.push({ template_id: template.id, reason: 'no_collaborators_or_managers', would_dispatch: false });
+        continue;
+      }
+      collabs = fallback;
+      console.log(`[dispatchChecklists] ${template.name}: sem collabs com function_role=${template.function_role} — fallback ${collabs.length} manager(s)`);
     }
 
     // Unidades com template específico (prioridade unit > 'all')
