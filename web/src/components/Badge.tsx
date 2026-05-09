@@ -22,7 +22,7 @@ export function Badge({ tone = 'neutral', children, className = '' }: Props) {
   return (
     <span
       className={[
-        'inline-flex items-center gap-1 px-2 py-0.5 rounded-sm text-label uppercase tracking-wide whitespace-nowrap',
+        'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[10px] font-normal lowercase whitespace-nowrap',
         tones[tone],
         className,
       ].join(' ')}
