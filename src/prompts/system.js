@@ -717,14 +717,16 @@ async function fetchCollaboratorContext(collaborator) {
     // viram tiebreak pra tasks sem sort_position definido.
     supabase.from('tasks')
       .select(TASK_COLS)
-      .eq('assigned_to', id).lte('due_date', today).eq('context', 'personal').neq('status', 'done')
+      .eq('assigned_to', id).lte('due_date', today).eq('context', 'personal')
+      .not('status', 'in', '(done,cancelled)')
       .order('sort_position', { ascending: true, nullsFirst: false })
       .order('remind_at', { ascending: true, nullsFirst: false })
       .order('due_date', { ascending: true })
       .order('eisenhower_quadrant', { ascending: true, nullsFirst: false }),
     supabase.from('tasks')
       .select(TASK_COLS)
-      .eq('assigned_to', id).lte('due_date', today).eq('context', 'work').neq('status', 'done')
+      .eq('assigned_to', id).lte('due_date', today).eq('context', 'work')
+      .not('status', 'in', '(done,cancelled)')
       .order('sort_position', { ascending: true, nullsFirst: false })
       .order('remind_at', { ascending: true, nullsFirst: false })
       .order('due_date', { ascending: true })
@@ -756,7 +758,8 @@ async function fetchCollaboratorContext(collaborator) {
     // "não tenho esse dato no contexto atual" pra delegadas.
     supabase.from('tasks')
       .select('id, title, status, due_date, assigned_to, assignee:collaborators!tasks_assigned_to_fkey(full_name)')
-      .eq('created_by', id).neq('assigned_to', id).neq('status', 'done')
+      .eq('created_by', id).neq('assigned_to', id)
+      .not('status', 'in', '(done,cancelled)')
       .order('due_date', { ascending: true, nullsFirst: false }).limit(20),
     // Sprint 22.36 Fatia 2 — CHECKLISTS DE HOJE deste user.
     supabase.from('op_checklist_completions')
