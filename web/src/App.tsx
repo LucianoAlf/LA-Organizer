@@ -45,14 +45,20 @@ export default function App() {
           <Route path="habitos" element={<Habitos />} />
           <Route path="habitos/:id" element={<HabitoDetalhe />} />
           <Route path="checklists" element={<Checklists />} />
-          <Route path="mais/checklists-templates" element={<ChecklistsTemplates />} />
-          <Route path="mais/comunicados" element={<Comunicados />} />
-          <Route path="mais/agenda-escolar" element={<AgendaEscolar />} />
-          <Route path="mais/observabilidade" element={<Observabilidade />} />
-          <Route path="mais/eventos/:id" element={<EventoDetalhe />} />
-          <Route path="mais/agenda-escolar/equipe" element={<ConfigurarEquipe />} />
-          <Route path="mais/operacoes" element={<OperacoesFilaTecnica />} />
-          <Route path="mais/operacoes/:id" element={<OperacaoDetalhe />} />
+
+          <Route element={<ProtectedRoute requireRoles={['director', 'coordinator']} />}>
+            <Route path="mais/checklists-templates" element={<ChecklistsTemplates />} />
+            <Route path="mais/comunicados" element={<Comunicados />} />
+            <Route path="mais/agenda-escolar" element={<AgendaEscolar />} />
+            <Route path="mais/agenda-escolar/equipe" element={<ConfigurarEquipe />} />
+            <Route path="mais/observabilidade" element={<Observabilidade />} />
+            <Route path="mais/eventos/:id" element={<EventoDetalhe />} />
+          </Route>
+
+          <Route element={<ProtectedRoute requireRoles={['director', 'coordinator', 'manager']} />}>
+            <Route path="mais/operacoes" element={<OperacoesFilaTecnica />} />
+            <Route path="mais/operacoes/:id" element={<OperacaoDetalhe />} />
+          </Route>
 
           <Route element={<ProtectedRoute requireRoles={['coordinator', 'director']} />}>
             <Route path="time" element={<DashboardTime />} />
