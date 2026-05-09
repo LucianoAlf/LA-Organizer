@@ -182,7 +182,7 @@ export function DateInput({ value, onChange, invalid }: Props) {
                   className={[
                     'h-8 rounded-sm focus-ring tabular-nums text-body-sm transition-colors',
                     isSelected
-                      ? 'bg-tom text-white font-semibold hover:bg-tom-shade'
+                      ? 'bg-tom text-black font-semibold hover:bg-tom-shade'
                       : isToday
                         ? 'ring-1 ring-tom/50 text-fg hover:bg-bg-elevated'
                         : 'hover:bg-bg-elevated text-fg',

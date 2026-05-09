@@ -27,7 +27,7 @@ export function UnitFilterChips({ value, onChange }: Props) {
             className={[
               'px-3 py-1.5 rounded-full text-body-sm font-medium transition-colors focus-ring',
               active
-                ? 'bg-tom text-white'
+                ? 'bg-tom text-black'
                 : 'bg-bg-elevated text-fg-muted hover:text-fg hover:bg-bg-app border border-border',
             ].join(' ')}
             aria-pressed={active}

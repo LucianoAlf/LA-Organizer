@@ -227,7 +227,7 @@ export function Semana() {
                       {brShort(d)}
                     </span>
                     {isToday && (
-                      <span className="inline-block text-label uppercase tracking-wide bg-tom text-white rounded-sm px-1.5 py-0.5">
+                      <span className="inline-block text-label uppercase tracking-wide bg-tom text-black rounded-sm px-1.5 py-0.5">
                         hoje
                       </span>
                     )}

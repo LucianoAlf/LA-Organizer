@@ -41,7 +41,7 @@ export function CollabHeaderCard({ data, windowLabel }: Props) {
   return (
     <div className="bg-bg-surface rounded-xl border border-border p-4">
       <div className="flex items-center gap-3">
-        <div className="w-12 h-12 rounded-full bg-tom text-white flex items-center justify-center font-semibold flex-shrink-0">
+        <div className="w-12 h-12 rounded-full bg-tom text-black flex items-center justify-center font-semibold flex-shrink-0">
           {initials(data.full_name)}
         </div>
         <div className="flex-1 min-w-0">

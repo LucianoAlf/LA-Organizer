@@ -55,7 +55,7 @@ export function AdherenceCard({ data }: Props) {
       ].join(' ')}
     >
       <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-full bg-tom text-white flex items-center justify-center font-semibold text-body-sm flex-shrink-0">
+        <div className="w-10 h-10 rounded-full bg-tom text-black flex items-center justify-center font-semibold text-body-sm flex-shrink-0">
           {initials(data.full_name)}
         </div>
         <div className="flex-1 min-w-0">

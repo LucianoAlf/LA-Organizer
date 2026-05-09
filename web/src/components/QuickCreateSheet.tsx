@@ -446,7 +446,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
                       className={[
                         'h-11 rounded-md border text-body-md font-semibold transition-colors focus-ring',
                         active
-                          ? 'bg-tom text-white border-tom'
+                          ? 'bg-tom text-black border-tom'
                           : 'bg-bg-subtle text-fg-secondary border-border',
                       ].join(' ')}
                     >{o.label}</button>
@@ -576,7 +576,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
                       type="button"
                       onClick={() => void handleCreateNewCategory()}
                       disabled={newCatLabel.trim().length < 2}
-                      className="h-9 px-3 rounded-md bg-tom text-white text-body-sm font-semibold disabled:opacity-50 focus-ring"
+                      className="h-9 px-3 rounded-md bg-tom text-black text-body-sm font-semibold disabled:opacity-50 focus-ring"
                     >
                       Criar categoria pessoal
                     </button>
@@ -647,7 +647,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
                       className={[
                         'h-11 rounded-md border text-body-sm font-semibold transition-colors focus-ring',
                         active
-                          ? 'bg-tom text-white border-tom'
+                          ? 'bg-tom text-black border-tom'
                           : 'bg-bg-subtle text-fg-secondary border-border',
                       ].join(' ')}
                     >{MODALITY_LABELS[m]}</button>

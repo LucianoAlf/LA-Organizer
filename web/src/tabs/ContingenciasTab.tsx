@@ -194,7 +194,7 @@ function ContingencyCard({
             type="button"
             onClick={commit}
             disabled={!scenarioVal.trim() || !protocolVal.trim()}
-            className="h-9 px-3 rounded-md bg-tom text-white text-body-sm font-semibold disabled:opacity-50 focus-ring"
+            className="h-9 px-3 rounded-md bg-tom text-black text-body-sm font-semibold disabled:opacity-50 focus-ring"
           >
             Salvar
           </button>
@@ -302,7 +302,7 @@ function CreateContingencyInline({
         <button
           type="submit"
           disabled={!scenario.trim() || !protocol.trim()}
-          className="h-9 px-3 rounded-md bg-tom text-white text-body-sm font-semibold disabled:opacity-50 focus-ring"
+          className="h-9 px-3 rounded-md bg-tom text-black text-body-sm font-semibold disabled:opacity-50 focus-ring"
         >
           Criar
         </button>

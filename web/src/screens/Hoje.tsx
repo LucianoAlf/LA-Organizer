@@ -387,7 +387,7 @@ export function Hoje() {
             className={[
               'px-3 py-1 rounded-full text-body-sm border transition-colors focus-ring',
               actionFilter === null
-                ? 'bg-tom text-white border-tom'
+                ? 'bg-tom text-black border-tom'
                 : 'bg-bg-elevated text-fg-muted border-border hover:text-fg',
             ].join(' ')}
           >
@@ -404,7 +404,7 @@ export function Hoje() {
                 className={[
                   'px-3 py-1 rounded-full text-body-sm border transition-colors focus-ring',
                   active
-                    ? 'bg-tom text-white border-tom'
+                    ? 'bg-tom text-black border-tom'
                     : 'bg-bg-elevated text-fg-muted border-border hover:text-fg',
                 ].join(' ')}
                 aria-pressed={active}

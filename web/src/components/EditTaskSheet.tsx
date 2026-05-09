@@ -174,7 +174,7 @@ export function EditTaskSheet({ open, task, onClose }: Props) {
                       className={[
                         'h-11 rounded-md border text-body-md font-semibold transition-colors focus-ring',
                         active
-                          ? 'bg-tom text-white border-tom'
+                          ? 'bg-tom text-black border-tom'
                           : 'bg-bg-subtle text-fg-secondary border-border',
                       ].join(' ')}
                     >{o.label}</button>

@@ -457,7 +457,7 @@ function CreateTaskInline({
         <button
           type="submit"
           disabled={!title.trim() || createTask.isPending}
-          className="h-9 px-3 rounded-md bg-tom text-white text-body-sm font-semibold disabled:opacity-50 focus-ring"
+          className="h-9 px-3 rounded-md bg-tom text-black text-body-sm font-semibold disabled:opacity-50 focus-ring"
         >
           Salvar
         </button>
@@ -725,7 +725,7 @@ function CreateCheckpointInline({ onCreate }: { onCreate: (name: string) => void
         <button
           type="submit"
           disabled={!name.trim()}
-          className="h-9 px-3 rounded-md bg-tom text-white text-body-sm font-semibold disabled:opacity-50 focus-ring"
+          className="h-9 px-3 rounded-md bg-tom text-black text-body-sm font-semibold disabled:opacity-50 focus-ring"
         >
           Criar
         </button>

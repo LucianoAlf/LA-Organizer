@@ -75,7 +75,7 @@ export function TaskListItem({
         className={[
           'mt-0.5 h-5 w-5 shrink-0 rounded-full border-2 grid place-items-center transition-colors focus-ring',
           isDone
-            ? 'bg-tom border-tom text-white'
+            ? 'bg-tom border-tom text-black'
             : isOverdue
               ? 'border-danger text-transparent hover:border-danger animate-pulse'
               : 'border-fg-muted text-transparent hover:border-tom',

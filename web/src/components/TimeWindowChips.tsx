@@ -26,7 +26,7 @@ export function TimeWindowChips({ value, onChange }: Props) {
             className={[
               'px-3 py-1.5 rounded-md text-body-sm font-medium transition-colors focus-ring',
               active
-                ? 'bg-tom text-white shadow-sm'
+                ? 'bg-tom text-black shadow-sm'
                 : 'text-fg-muted hover:text-fg hover:bg-bg-app',
             ].join(' ')}
             aria-pressed={active}

@@ -515,7 +515,7 @@ function AddInternalForm({
           type="button"
           onClick={submit}
           disabled={!collabId}
-          className="flex-1 h-9 rounded-md text-body-sm font-semibold bg-tom text-white focus-ring disabled:opacity-40 disabled:cursor-not-allowed"
+          className="flex-1 h-9 rounded-md text-body-sm font-semibold bg-tom text-black focus-ring disabled:opacity-40 disabled:cursor-not-allowed"
         >
           Adicionar
         </button>
@@ -575,7 +575,7 @@ function AddExternalForm({
           type="button"
           onClick={submit}
           disabled={!name.trim()}
-          className="flex-1 h-9 rounded-md text-body-sm font-semibold bg-tom text-white focus-ring disabled:opacity-40 disabled:cursor-not-allowed"
+          className="flex-1 h-9 rounded-md text-body-sm font-semibold bg-tom text-black focus-ring disabled:opacity-40 disabled:cursor-not-allowed"
         >
           Adicionar externo
         </button>

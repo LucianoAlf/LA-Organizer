@@ -102,7 +102,7 @@ export function PersonalChecklistSheet({ open, onClose, context = 'personal' }: 
                     className={[
                       'h-9 px-3 rounded-md text-body-sm font-semibold transition-colors flex items-center gap-2 focus-ring',
                       isSel
-                        ? 'bg-tom text-white shadow-card dark:shadow-none'
+                        ? 'bg-tom text-black shadow-card dark:shadow-none'
                         : 'bg-bg-subtle text-fg-muted border border-border hover:text-fg',
                     ].join(' ')}
                   >

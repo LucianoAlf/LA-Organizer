@@ -515,7 +515,7 @@ function StartTimeRow({
           type="button"
           onMouseDown={(e) => e.preventDefault()}
           onClick={commit}
-          className="h-8 px-3 rounded-md bg-tom text-white text-body-sm font-semibold focus-ring"
+          className="h-8 px-3 rounded-md bg-tom text-black text-body-sm font-semibold focus-ring"
         >
           Salvar
         </button>
@@ -1050,7 +1050,7 @@ function AddBlockInline({
         <button type="button" onClick={onCancel} className="h-9 px-3 rounded-md text-body-sm text-fg-muted hover:text-fg focus-ring">
           Cancelar
         </button>
-        <button type="button" onClick={submit} disabled={!label.trim() || isNaN(parseInt(offset, 10))} className="h-9 px-3 rounded-md bg-tom text-white text-body-sm font-semibold focus-ring disabled:opacity-40">
+        <button type="button" onClick={submit} disabled={!label.trim() || isNaN(parseInt(offset, 10))} className="h-9 px-3 rounded-md bg-tom text-black text-body-sm font-semibold focus-ring disabled:opacity-40">
           Criar bloco
         </button>
       </div>
@@ -1092,7 +1092,7 @@ function AddItemInline({
       <button type="button" onClick={onCancel} className="h-8 px-2 text-body-sm text-fg-muted hover:text-fg focus-ring rounded-sm">
         Cancelar
       </button>
-      <button type="button" onClick={submit} disabled={!text.trim()} className="h-8 px-3 rounded-md bg-tom text-white text-body-sm font-semibold focus-ring disabled:opacity-40">
+      <button type="button" onClick={submit} disabled={!text.trim()} className="h-8 px-3 rounded-md bg-tom text-black text-body-sm font-semibold focus-ring disabled:opacity-40">
         Adicionar
       </button>
     </div>
