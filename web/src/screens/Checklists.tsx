@@ -22,11 +22,13 @@ import { Tabs } from '../components/Tabs'
 import { ChecklistCard } from '../components/ChecklistCard'
 import { PersonalChecklistCard } from '../components/PersonalChecklistCard'
 import { PersonalChecklistSheet } from '../components/PersonalChecklistSheet'
+import { TemplateCard, type TemplateCardData } from '../components/TemplateCard'
+import { ChecklistTemplateSheet } from '../components/ChecklistTemplateSheet'
 import { EmptyState } from '../components/EmptyState'
 import { ErrorState } from '../components/ErrorState'
 import { LoadingState } from '../components/LoadingState'
 import { fetchPersonalChecklists } from '../lib/personalChecklists'
-import type { OpChecklistCompletion } from '../types'
+import type { OpChecklistCompletion, OpChecklistAudit } from '../types'
 
 type Tab = 'trabalho' | 'pessoal'
 
@@ -65,6 +67,11 @@ function TrabalhoTab() {
     year: 'numeric', month: '2-digit', day: '2-digit',
   }).format(new Date())
   const [sheetOpen, setSheetOpen] = useState(false)
+  // undefined=closed, null=create mode, TemplateCardData=edit mode
+  const [templateSheet, setTemplateSheet] = useState<TemplateCardData | null | undefined>(undefined)
+
+  const canManageTemplates =
+    collaborator?.role === 'director' || collaborator?.role === 'coordinator'
 
   const { data: completions = [], isLoading: loadingTom, error: errorTom, refetch: refetchTom } =
     useQuery<OpChecklistCompletion[]>({
@@ -99,6 +106,40 @@ function TrabalhoTab() {
     staleTime: 30_000,
   })
 
+  // Sprint 22.39 — templates operacionais (só director/coordinator)
+  const { data: templates = [], isLoading: loadingTemplates } = useQuery<TemplateCardData[]>({
+    queryKey: ['checklists-templates'],
+    queryFn: async () => {
+      const tQuery = supabase
+        .from('op_checklists')
+        .select('*, op_checklist_items ( id, checklist_id, description, sort_order, is_active, updated_by )')
+        .eq('is_active', true)
+        .order('name')
+      const { data: tData, error: tErr } = await tQuery
+      if (tErr) throw tErr
+      const rows = (tData ?? []) as TemplateCardData[]
+      const ids = rows.map(r => r.id)
+      if (!ids.length) return rows
+      const { data: audits } = await supabase
+        .from('op_checklists_audit')
+        .select('template_id, changed_at, collaborator:collaborators(full_name)')
+        .in('template_id', ids)
+        .order('changed_at', { ascending: false })
+      type AuditEntry = Pick<OpChecklistAudit, 'changed_at'> & {
+        template_id: string; collaborator: { full_name: string } | null
+      }
+      const latest = new Map<string, AuditEntry>()
+      for (const a of (audits ?? []) as any[]) {
+        if (!a.template_id || latest.has(a.template_id)) continue
+        const collab = Array.isArray(a.collaborator) ? a.collaborator[0] ?? null : a.collaborator ?? null
+        latest.set(a.template_id, { template_id: a.template_id, changed_at: a.changed_at, collaborator: collab })
+      }
+      return rows.map(r => ({ ...r, last_audit: latest.get(r.id) ?? null })) as TemplateCardData[]
+    },
+    enabled: !!collaborator && canManageTemplates,
+    staleTime: 60_000,
+  })
+
   // Realtime subscription pra TOM completions
   useEffect(() => {
     if (!completions.length || !collaborator) return
@@ -121,7 +162,7 @@ function TrabalhoTab() {
     return () => { supabase.removeChannel(channel) }
   }, [completions.length, collaborator?.id])
 
-  const isLoading = loadingTom || loadingWork
+  const isLoading = loadingTom || loadingWork || loadingTemplates
   const error = errorTom || errorWork
 
   if (isLoading) return <LoadingState rows={2} />
@@ -136,7 +177,8 @@ function TrabalhoTab() {
     )
   }
 
-  const hasContent = completions.length > 0 || workLists.length > 0
+  const hasContent =
+    completions.length > 0 || workLists.length > 0 || (canManageTemplates && templates.length > 0)
 
   return (
     <div className="space-y-md">
@@ -148,7 +190,7 @@ function TrabalhoTab() {
           type="button"
           onClick={() => setSheetOpen(true)}
         >
-          + Criar checklist
+          + Criar lista
         </Button>
       </div>
 
@@ -156,7 +198,7 @@ function TrabalhoTab() {
         <EmptyState
           icon={<ClipboardCheck size={32} />}
           title="Nada de trabalho ainda hoje"
-          description="Os checklists do dia (do TOM) e suas listas de trabalho aparecem aqui. Use + Criar checklist pra começar."
+          description="Os checklists do dia (do TOM) e suas listas de trabalho aparecem aqui. Use + Criar lista pra começar."
         />
       ) : (
         <>
@@ -179,10 +221,45 @@ function TrabalhoTab() {
         </>
       )}
 
+      {canManageTemplates && (
+        <div className="space-y-sm pt-md border-t border-border">
+          <div className="flex items-center justify-between">
+            <p className="text-caption text-fg-muted uppercase tracking-wide">Templates operacionais</p>
+            <Button
+              variant="primary"
+              size="sm"
+              type="button"
+              onClick={() => setTemplateSheet(null)}
+            >
+              + Novo template
+            </Button>
+          </div>
+          {templates.length === 0 ? (
+            <p className="text-body-sm text-fg-muted py-2">
+              Nenhum template ativo. Use + Novo template pra criar abertura/fechamento/fiscalização.
+            </p>
+          ) : (
+            templates.map(t => (
+              <TemplateCard
+                key={t.id}
+                template={t}
+                onEdit={() => setTemplateSheet(t)}
+              />
+            ))
+          )}
+        </div>
+      )}
+
       <PersonalChecklistSheet
         open={sheetOpen}
         onClose={() => setSheetOpen(false)}
         context="work"
+      />
+
+      <ChecklistTemplateSheet
+        open={templateSheet !== undefined}
+        template={templateSheet ?? null}
+        onClose={() => setTemplateSheet(undefined)}
       />
     </div>
   )

@@ -1,9 +1,14 @@
 // web/src/components/ChecklistTemplateSheet.tsx
+// Sprint 22.39 — Refactor pro design system unificado: CustomSelect (não <select>),
+// TimeInput (não <input type="time">), Button (não bg-brand cru). Day chips bg-tom.
 import { useState, useEffect } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { BottomSheet } from './BottomSheet'
+import { Button } from './Button'
+import { CustomSelect } from './CustomSelect'
+import { TimeInput } from './TimeInput'
 import { ChecklistItemEditRow } from './ChecklistItemEditRow'
 import type { OpChecklistTemplate, OpChecklistItem, OpChecklistItemDraft } from '../types'
 
@@ -183,67 +188,78 @@ export function ChecklistTemplateSheet({ open, template, onClose }: Props) {
           <label className="text-caption text-fg-muted block mb-1">Nome *</label>
           <input type="text" value={name} onChange={e => setName(e.target.value)}
             maxLength={80} placeholder="ex: Abertura Escola"
-            className="w-full bg-bg-surface border border-border rounded-lg px-3 py-2
-                       text-body text-fg focus:outline-none focus:border-brand" />
+            className="w-full bg-bg-surface border border-border rounded-md px-3 py-2
+                       text-body text-fg focus:outline-none focus:border-tom focus-ring" />
         </div>
 
         <div>
           <label className="text-caption text-fg-muted block mb-1">Função *</label>
-          <select value={functionRole} onChange={e => setFunctionRole(e.target.value)}
-            className="w-full bg-bg-surface border border-border rounded-lg px-3 py-2
-                       text-body text-fg focus:outline-none focus:border-brand">
-            {FUNCTION_ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-          </select>
+          <CustomSelect
+            value={functionRole}
+            onChange={setFunctionRole}
+            options={FUNCTION_ROLES.map(r => ({ value: r.value, label: r.label }))}
+          />
         </div>
 
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="text-caption text-fg-muted block mb-1">Unidade *</label>
-            <select value={unit} onChange={e => setUnit(e.target.value)}
-              className="w-full bg-bg-surface border border-border rounded-lg px-3 py-2
-                         text-body-sm text-fg focus:outline-none focus:border-brand">
-              {UNITS.map(u => <option key={u.value} value={u.value}>{u.label}</option>)}
-            </select>
+            <CustomSelect
+              value={unit}
+              onChange={setUnit}
+              options={UNITS.map(u => ({ value: u.value, label: u.label }))}
+            />
           </div>
           <div>
             <label className="text-caption text-fg-muted block mb-1">Turno *</label>
-            <select value={shift} onChange={e => setShift(e.target.value)}
-              className="w-full bg-bg-surface border border-border rounded-lg px-3 py-2
-                         text-body-sm text-fg focus:outline-none focus:border-brand">
-              {SHIFTS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-            </select>
+            <CustomSelect
+              value={shift}
+              onChange={setShift}
+              options={SHIFTS.map(s => ({ value: s.value, label: s.label }))}
+            />
           </div>
         </div>
 
         <div>
           <label className="text-caption text-fg-muted block mb-2">Dias *</label>
           <div className="flex gap-1.5 flex-wrap">
-            {DAYS.map(d => (
-              <button key={d.n} type="button" onClick={() => toggleDay(d.n)}
-                className={['px-2.5 py-1 rounded-lg text-caption font-medium transition-colors',
-                  daysOfWeek.includes(d.n)
-                    ? 'bg-brand text-white'
-                    : 'bg-bg-surface border border-border text-fg-muted',
-                ].join(' ')}>
-                {d.label}
-              </button>
-            ))}
+            {DAYS.map(d => {
+              const isSel = daysOfWeek.includes(d.n)
+              return (
+                <button
+                  key={d.n}
+                  type="button"
+                  onClick={() => toggleDay(d.n)}
+                  className={[
+                    'h-9 px-3 rounded-md text-body-sm font-semibold transition-colors focus-ring',
+                    isSel
+                      ? 'bg-tom text-white shadow-card dark:shadow-none'
+                      : 'bg-bg-subtle text-fg-muted border border-border hover:text-fg',
+                  ].join(' ')}
+                >
+                  {d.label}
+                </button>
+              )
+            })}
           </div>
         </div>
 
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="text-caption text-fg-muted block mb-1">Horário *</label>
-            <input type="time" value={dispatchTime} onChange={e => setDispatchTime(e.target.value)}
-              className="w-full bg-bg-surface border border-border rounded-lg px-3 py-2
-                         text-body-sm text-fg focus:outline-none focus:border-brand" />
+            <TimeInput value={dispatchTime} onChange={setDispatchTime} />
           </div>
           <div>
             <label className="text-caption text-fg-muted block mb-1">Threshold (%) *</label>
-            <input type="number" min={0} max={100} value={threshold}
+            <input
+              type="number"
+              min={0}
+              max={100}
+              value={threshold}
               onChange={e => setThreshold(Number(e.target.value))}
-              className="w-full bg-bg-surface border border-border rounded-lg px-3 py-2
-                         text-body-sm text-fg focus:outline-none focus:border-brand" />
+              className="w-full h-12 bg-bg-surface border border-border rounded-md px-3
+                         text-body text-fg focus:outline-none focus:border-tom focus-ring"
+            />
           </div>
         </div>
 
@@ -265,16 +281,24 @@ export function ChecklistTemplateSheet({ open, template, onClose }: Props) {
             ))}
           </div>
           <div className="flex gap-2 mt-2">
-            <input type="text" value={newItemText}
+            <input
+              type="text"
+              value={newItemText}
               onChange={e => setNewItemText(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && addItem()}
               placeholder="Adicionar item..."
-              className="flex-1 bg-bg-surface border border-border rounded-lg px-3 py-1.5
-                         text-body-sm text-fg focus:outline-none focus:border-brand" />
-            <button type="button" onClick={addItem}
-              className="px-3 py-1.5 bg-brand text-white rounded-lg text-body-sm font-medium">
-              +
-            </button>
+              className="flex-1 bg-bg-surface border border-border rounded-md px-3 py-2
+                         text-body-sm text-fg focus:outline-none focus:border-tom focus-ring"
+            />
+            <Button
+              variant="secondary"
+              size="sm"
+              type="button"
+              onClick={addItem}
+              disabled={!newItemText.trim()}
+            >
+              Adicionar
+            </Button>
           </div>
         </div>
 
@@ -284,13 +308,17 @@ export function ChecklistTemplateSheet({ open, template, onClose }: Props) {
           </p>
         )}
 
-        <button type="button"
+        <Button
+          variant="primary"
+          size="md"
+          fullWidth
+          type="button"
+          loading={saveMutation.isPending}
+          disabled={!isValid}
           onClick={() => saveMutation.mutate()}
-          disabled={!isValid || saveMutation.isPending}
-          className="w-full py-3 bg-brand text-white rounded-xl font-semibold
-                     disabled:opacity-40 disabled:cursor-not-allowed transition-opacity">
-          {saveMutation.isPending ? 'Salvando...' : 'Salvar template'}
-        </button>
+        >
+          {template ? 'Salvar alterações' : 'Salvar template'}
+        </Button>
       </div>
     </BottomSheet>
   )

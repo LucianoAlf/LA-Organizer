@@ -19,8 +19,8 @@ import { RowMenu, type MenuItem } from './RowMenu'
 import { ChecklistItemRow } from './ChecklistItemRow'
 import { ChecklistAddItemForm } from './ChecklistAddItemForm'
 import {
-  toggleItem, addItem, updateItemDescription, deleteItem, reorderItems,
-  renameList, changeListType, archiveList, saveItemNote,
+  toggleItem, addItem, deleteItem, reorderItems,
+  renameList, changeListType, archiveList, deleteList, saveItemNote,
 } from '../lib/personalChecklists'
 import {
   PERSONAL_LIST_TYPE_ICON,
@@ -108,6 +108,10 @@ export function PersonalChecklistCard({ list }: Props) {
     mutationFn: () => archiveList(list.id),
     onSuccess: invalidate,
   })
+  const deleteListMutation = useMutation({
+    mutationFn: () => deleteList(list.id),
+    onSuccess: invalidate,
+  })
 
   function handleDragEnd(e: DragEndEvent) {
     const { active, over } = e
@@ -148,8 +152,13 @@ export function PersonalChecklistCard({ list }: Props) {
     {
       label: 'Arquivar',
       onClick: () => archiveMutation.mutate(),
+      confirm: 'Arquivar essa lista? Some da visualização (sem deletar dados).',
+    },
+    {
+      label: 'Apagar lista',
+      onClick: () => deleteListMutation.mutate(),
       danger: true,
-      confirm: 'Arquivar essa lista? Some da visualização.',
+      confirm: 'Apagar definitivamente essa lista e todos os itens? Não dá pra desfazer.',
     },
   ]
 

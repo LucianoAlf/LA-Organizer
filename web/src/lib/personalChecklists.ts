@@ -117,6 +117,15 @@ export async function archiveList(listId: string) {
   if (error) throw error
 }
 
+/** Hard delete (cascade nos items). Usar com confirmação no UI. */
+export async function deleteList(listId: string) {
+  const { error } = await supabase
+    .from('personal_checklists')
+    .delete()
+    .eq('id', listId)
+  if (error) throw error
+}
+
 export async function saveItemNote(itemId: string, note: string) {
   const { error } = await supabase
     .from('personal_checklist_items')
