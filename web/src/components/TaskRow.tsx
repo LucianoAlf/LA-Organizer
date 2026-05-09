@@ -118,7 +118,7 @@ export function TaskRow({
   const dueDay = task.due_date || '';
   const remindRel = task.remind_at ? fmtRelDate(task.remind_at) : '';
   const dueRel = task.due_date ? fmtRelDate(task.due_date) : '';
-  const showAssignee = readOnly && task.assignee?.full_name;
+  const showAssignee = task.assignee?.full_name;
 
   return (
     <article
