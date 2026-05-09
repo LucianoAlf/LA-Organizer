@@ -46,7 +46,7 @@ const FREQUENCY_LABELS: Record<Habit['frequency'], string> = {
 
 const DOW_LABELS = ['S', 'T', 'Q', 'Q', 'S', 'S', 'D']; // seg, ter, qua, qui, sex, sab, dom (1..7)
 const COLORS = ['#10B981', '#EF4444', '#3B82F6', '#84CC16', '#F97316', '#8B5CF6', '#E91E63', '#F59E0B', '#7C3AED', '#06B6D4'];
-const ICON_SUGGESTIONS = ['💪', '🧘', '📚', '🎸', '💧', '💊', '🚶', '✍️', '✨', '💰', '🏃', '🍎', '😴', '🙏', '🎯'];
+const ICON_SUGGESTIONS = ['💪', '🧘', '📚', '🎸', '💧', '💊', '🚶', '✍️', '✨', '💰', '🏃', '🍎', '😴', '🙏', '🎯', '🐶'];
 
 export function EditHabitSheet({ open, habit, onClose }: Props) {
   const { collaborator } = useAuth();
