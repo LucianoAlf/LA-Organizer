@@ -4,6 +4,7 @@ import { Plus } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { ComunicadoSheet } from '../components/ComunicadoSheet';
+import { PageHeader } from '../components/PageHeader';
 import { audienceLabel } from '../types';
 import type { Announcement, AnnouncementJob } from '../types';
 
@@ -79,10 +80,7 @@ export function Comunicados() {
 
   return (
     <div className="space-y-4">
-      <header>
-        <h2 className="text-title text-fg">Comunicados</h2>
-        <p className="text-body-sm text-fg-muted mt-1">Anúncios enviados para a equipe</p>
-      </header>
+      <PageHeader title="Comunicados" subtitle="Anúncios enviados para a equipe" backTo="/mais" />
 
       {isLoading && <p className="text-body-sm text-fg-muted">Carregando...</p>}
 

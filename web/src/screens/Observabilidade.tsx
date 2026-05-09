@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { AprovacaoSheet } from '../components/AprovacaoSheet';
+import { PageHeader } from '../components/PageHeader';
 import {
   audienceLabel,
   detectDuplicates,
@@ -105,12 +106,11 @@ export function Observabilidade() {
 
   return (
     <div className="space-y-lg">
-      <header>
-        <h2 className="text-section-title">Observabilidade</h2>
-        <p className="text-body-sm text-fg-muted mt-1">
-          Aprovações pendentes · fila ao vivo · histórico de envios
-        </p>
-      </header>
+      <PageHeader
+        title="Observabilidade"
+        subtitle="Aprovações pendentes · fila ao vivo · histórico de envios"
+        backTo="/mais"
+      />
 
       {isError && (
         <div className="surface p-md border border-danger bg-danger/10 text-body-sm text-danger">

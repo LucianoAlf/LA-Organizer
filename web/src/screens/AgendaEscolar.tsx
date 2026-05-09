@@ -5,6 +5,7 @@ import { Plus } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { EventoSheet } from '../components/EventoSheet';
+import { PageHeader } from '../components/PageHeader';
 import { unitLabel, formatEventDate } from '../types';
 import type { SchoolEventWithAnnouncements } from '../types';
 
@@ -90,18 +91,19 @@ export function AgendaEscolar() {
 
   return (
     <div className="space-y-4">
-      <header className="flex items-end justify-between gap-3">
-        <div>
-          <h2 className="text-title text-fg">Agenda Escolar</h2>
-          <p className="text-body-sm text-fg-muted mt-1">Eventos institucionais da escola</p>
-        </div>
-        <Link
-          to="/mais/agenda-escolar/equipe"
-          className="text-caption text-brand underline focus-ring rounded whitespace-nowrap"
-        >
-          Equipe
-        </Link>
-      </header>
+      <PageHeader
+        title="Agenda Escolar"
+        subtitle="Eventos institucionais da escola"
+        backTo="/mais"
+        right={
+          <Link
+            to="/mais/agenda-escolar/equipe"
+            className="text-caption text-brand underline focus-ring rounded whitespace-nowrap"
+          >
+            Equipe
+          </Link>
+        }
+      />
 
       {isLoading && <p className="text-body-sm text-fg-muted">Carregando...</p>}
 

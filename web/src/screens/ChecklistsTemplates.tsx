@@ -5,6 +5,7 @@ import { Plus, Archive, ArchiveRestore, Pencil } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { ChecklistTemplateSheet } from '../components/ChecklistTemplateSheet'
+import { PageHeader } from '../components/PageHeader'
 import type { OpChecklistTemplate, OpChecklistAudit, OpChecklistItem } from '../types'
 
 type TemplateRow = OpChecklistTemplate & {
@@ -83,13 +84,16 @@ export function ChecklistsTemplates() {
 
   return (
     <div className="p-4 space-y-4 max-w-content mx-auto pb-28">
-      <div className="flex items-center justify-between">
-        <h1 className="text-heading-sm font-bold text-fg">Templates de Checklist</h1>
-        <button type="button" onClick={() => setShowArchived(v => !v)}
-          className="text-caption text-fg-muted underline">
-          {showArchived ? 'Ocultar arquivados' : 'Mostrar arquivados'}
-        </button>
-      </div>
+      <PageHeader
+        title="Templates de Checklist"
+        backTo="/mais"
+        right={
+          <button type="button" onClick={() => setShowArchived(v => !v)}
+            className="text-caption text-fg-muted underline">
+            {showArchived ? 'Ocultar arquivados' : 'Mostrar arquivados'}
+          </button>
+        }
+      />
 
       {templateList.length === 0 && (
         <div className="text-center text-fg-muted py-12">

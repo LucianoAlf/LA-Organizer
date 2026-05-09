@@ -11,6 +11,7 @@ import { TimeWindowChips } from '../components/TimeWindowChips'
 import { UnitFilterChips } from '../components/UnitFilterChips'
 import { TeamSummaryCard } from '../components/TeamSummaryCard'
 import { AdherenceCard } from '../components/AdherenceCard'
+import { PageHeader } from '../components/PageHeader'
 import {
   useAdherenceWindow,
   useUnitFilter,
@@ -52,7 +53,7 @@ export function AderenciaChecklists() {
 
   return (
     <div className="space-y-md">
-      <h2 className="text-section-title">Aderência operacional</h2>
+      <PageHeader title="Aderência operacional" backTo="/mais" />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <TimeWindowChips value={window} onChange={setWindow} />

@@ -8,6 +8,7 @@ import {
   timeAgo,
 } from '../types';
 import type { OperationalTask, TaskPriority } from '../types';
+import { PageHeader } from '../components/PageHeader';
 
 const COMMENT_TYPE_LABEL: Record<string, string> = {
   manual: 'Comentário',
@@ -94,19 +95,11 @@ export function OperacaoDetalhe() {
   return (
     <div className="space-y-4">
       {/* Header */}
-      <header className="space-y-1">
-        <Link to="/mais/operacoes" className="text-caption text-fg-muted underline">
-          ← Voltar
-        </Link>
-        <h2 className="text-title text-fg">{task.title}</h2>
-        <p className="text-body-sm text-fg-muted">
-          {priorityInfo.emoji} {PRIORITY_LABEL[task.priority]}
-          {' · '}
-          {task.request_type?.label ?? '—'}
-          {' · '}
-          {STATUS_LABEL_OPERATIONAL[task.status] ?? task.status}
-        </p>
-      </header>
+      <PageHeader
+        title={task.title}
+        subtitle={`${priorityInfo.emoji} ${PRIORITY_LABEL[task.priority]} · ${task.request_type?.label ?? '—'} · ${STATUS_LABEL_OPERATIONAL[task.status] ?? task.status}`}
+        backTo="/mais/operacoes"
+      />
 
       {/* Bloco 1 — Resumo */}
       <section className="bg-bg-surface rounded-xl border border-border p-4 space-y-2">

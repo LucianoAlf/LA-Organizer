@@ -6,6 +6,7 @@ import { supabase, supabaseConfigured } from '../lib/supabase';
 import { Button } from '../components/Button';
 import { LoadingState } from '../components/LoadingState';
 import { EmptyState } from '../components/EmptyState';
+import { PageHeader } from '../components/PageHeader';
 
 interface Prefs {
   briefing_time: string;
@@ -95,10 +96,7 @@ export function Configuracoes() {
 
   return (
     <div className="space-y-lg">
-      <header>
-        <h2 className="text-screen-title">Configurações</h2>
-        <p className="text-body-sm text-fg-muted mt-1">Como o TOM te procura no WhatsApp.</p>
-      </header>
+      <PageHeader title="Configurações" subtitle="Como o TOM te procura no WhatsApp." backTo="/mais" />
 
       <form onSubmit={onSubmit} className="space-y-md">
         <section className="surface p-md space-y-md">

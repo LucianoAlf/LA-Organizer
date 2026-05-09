@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase';
 import { unitLabel } from '../types';
 import type { Department, DepartmentRequestType, OperationalTask, TaskPriority } from '../types';
 import { STATUS_LABEL_OPERATIONAL, PRIORITY_INDICATOR } from '../types';
+import { PageHeader } from '../components/PageHeader';
 
 const PRIORITY_ORDER: TaskPriority[] = ['critical', 'high', 'medium', 'low'];
 
@@ -165,10 +166,11 @@ export function OperacoesFilaTecnica() {
 
   return (
     <div className="space-y-lg">
-      <header className="space-y-1">
-        <h2 className="text-title text-fg">Operações</h2>
-        <p className="text-body-sm text-fg-muted">Fila de demandas operacionais por departamento</p>
-      </header>
+      <PageHeader
+        title="Operações"
+        subtitle="Fila de demandas operacionais por departamento"
+        backTo="/mais"
+      />
 
       {/* Department tabs */}
       <div className="flex gap-2 border-b border-border overflow-x-auto">

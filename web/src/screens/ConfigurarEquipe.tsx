@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { PageHeader } from '../components/PageHeader';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { SECTORS, SECTOR_LABELS } from '../types';
@@ -105,16 +105,11 @@ export function ConfigurarEquipe() {
 
   return (
     <div className="space-y-4">
-      <header className="space-y-1">
-        <Link to="/mais/agenda-escolar" className="text-caption text-fg-muted underline">
-          ← Voltar
-        </Link>
-        <h2 className="text-title text-fg">Equipe por Setor</h2>
-        <p className="text-body-sm text-fg-muted">
-          Define o responsável padrão por setor em cada unidade. Tasks de eventos são atribuídas
-          automaticamente a esses responsáveis no momento da criação.
-        </p>
-      </header>
+      <PageHeader
+        title="Equipe por Setor"
+        subtitle="Define o responsável padrão por setor em cada unidade. Tasks de eventos são atribuídas automaticamente a esses responsáveis no momento da criação."
+        backTo="/mais/agenda-escolar"
+      />
 
       <div className="flex gap-2 border-b border-border">
         {UNITS.map(u => (

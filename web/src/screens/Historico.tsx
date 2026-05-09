@@ -7,6 +7,7 @@ import { todaySP, ymdAddDays, brShort, dowShort } from '../utils/date';
 import { LoadingState } from '../components/LoadingState';
 import { EmptyState } from '../components/EmptyState';
 import { StatCard } from '../components/StatCard';
+import { PageHeader } from '../components/PageHeader';
 import type { Task } from '../types';
 
 interface DayStats {
@@ -119,10 +120,7 @@ export function Historico() {
 
   return (
     <div className="space-y-lg">
-      <header>
-        <h2 className="text-screen-title">Histórico</h2>
-        <p className="text-body-sm text-fg-muted mt-1">Últimos {RANGE_DAYS} dias · trabalho</p>
-      </header>
+      <PageHeader title="Histórico" subtitle={`Últimos ${RANGE_DAYS} dias · trabalho`} backTo="/mais" />
 
       {!supabaseConfigured ? (
         <EmptyState icon={<HistoryIcon size={32} />} title="Configure Supabase" />
