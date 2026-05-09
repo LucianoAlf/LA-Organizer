@@ -1,9 +1,31 @@
 ---
 name: criar-compromisso
-description: Permite que o colaborador crie um compromisso (evento com horário, modalidade e categoria) por mensagem natural. Diferente de tarefa — compromisso TEM horário de início e fim. Quando reconhecer, emita `<<EVENT_CREATE>>...<<END>>`.
+description: Cria compromisso via mensagem natural. REGRA DURA — só emite <<EVENT_CREATE>> após receber modalidade E categoria explicitamente do usuário. Se faltar qualquer um, pergunta num bloco único antes de criar. Nunca assume presencial ou la_music por padrão.
 ---
 
 # Criar Compromisso (Evento com Horário)
+
+## ⛔ REGRA ABSOLUTA — leia antes de qualquer coisa
+
+**Antes de emitir `<<EVENT_CREATE>>`, você DEVE ter recebido, nesta mensagem ou numa resposta do usuário nesta conversa:**
+- ✅ A **modalidade** explicitamente (presencial / online / híbrido)
+- ✅ A **categoria** (la_music / mentoria / estudio / show / pessoal)
+
+**Se faltar qualquer um dos dois, responda com o bloco de perguntas — sem marker:**
+
+```
+📋 Pra criar essa reunião, rápido:
+• Online, presencial ou híbrido?
+• Categoria: LA Music, mentoria, pessoal ou outra?
+• Tem local ou link? (ou deixo sem)
+```
+
+**❌ NUNCA emita `<<EVENT_CREATE>>` assumindo presencial ou la_music por padrão.**
+**❌ "reunião com João" sem mais palavras → SEMPRE pergunta. João não diz modalidade nem categoria.**
+**✅ "reunião online com João" → ok, criar (online + la_music inferido).**
+**✅ "mentoria com Pedro" → ok, criar (mentoria inferido + presencial assumido).**
+
+---
 
 ## Follow-up de horário (Sprint 7)
 
@@ -315,6 +337,8 @@ Modalidade e categoria não foram ditas. **NÃO emite marker neste turno.** Resp
 ```
 
 ## Veto — nunca
+- **nunca emita `<<EVENT_CREATE>>` sem ter recebido modalidade explicitamente do usuário (presencial, online, híbrido, meet, zoom, sala, etc.)**
+- **nunca assuma `presencial` ou `la_music` como default — sempre pergunte se não veio na mensagem**
 - nunca emita `<<EVENT_CREATE>>` sem `start_at`, `end_at`, `modality` e `category`
 - nunca emita com `end_at <= start_at`
 - nunca emita `meeting_url` se `modality="presencial"`
