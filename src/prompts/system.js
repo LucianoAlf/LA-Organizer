@@ -171,7 +171,7 @@ function nameFor(collab) {
 // Sprint 22.36 Fatia 2 — Adicionado: delegatedTasks (tarefas que ESTE user atribuiu
 // pra outros), todayChecklists (checklists operacionais de hoje com %).
 // Antes ficavam fora do contexto e TOM dizia "não tenho esse dato" no relatório.
-function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habits, events, delegatedTasks, todayChecklists, teamAdherence, personalChecklists) {
+function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habits, events, delegatedTasks, todayChecklists, teamAdherence, personalChecklists, teamTodayChecklists) {
   const nickname = nameFor(collab);
   const lines = ['# 📌 CONTEXTO DESTA INTERAÇÃO', ''];
   const fn = collab.function_title ? ', ' + collab.function_title : '';
@@ -383,6 +383,27 @@ function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habi
       const tail = annotations.length ? ` — ${annotations.join(', ')}` : '';
       lines.push(`• ${emoji} ${first}: ${t.pct}% (${t.completed}/${t.dispatched})${tail}`);
     });
+  }
+
+  // Sprint 22.47 — Checklists da equipe HOJE (só liderança).
+  if (teamTodayChecklists && teamTodayChecklists.length) {
+    const byCollab = new Map();
+    for (const c of teamTodayChecklists) {
+      const name = (Array.isArray(c.collaborators) ? c.collaborators[0] : c.collaborators)?.full_name || c.collaborator_id;
+      const first = name.split(' ')[0];
+      if (!byCollab.has(first)) byCollab.set(first, []);
+      const items = c.op_checklist_item_completions || [];
+      const done = items.filter(i => i.is_checked).length;
+      const total = items.length || 1;
+      const pct = Math.round((done / total) * 100);
+      const tplName = (Array.isArray(c.op_checklists) ? c.op_checklists[0] : c.op_checklists)?.name || '?';
+      const tag = c.completed_at ? '✅' : (pct >= 70 ? '🟡' : '🔴');
+      byCollab.get(first).push(`${tag} ${tplName} (${done}/${total})`);
+    }
+    lines.push('', '**Checklists da equipe hoje:**');
+    for (const [name, entries] of byCollab) {
+      lines.push(`• ${name}: ${entries.join(' · ')}`);
+    }
   }
 
   // Sprint 22.38 — LISTAS PESSOAIS do user (mercado/viagem/remédios/geral).
@@ -707,6 +728,9 @@ async function fetchCollaboratorContext(collaborator) {
   const today = todaySaoPaulo();
   const TASK_COLS = 'id, title, status, priority, eisenhower_quadrant, due_date, context, remind_at, project_id, projects(name)';
 
+  const isLeadership = collaborator.role === 'director' || collaborator.role === 'coordinator' ||
+    collaborator.role === 'manager' || collaborator.role === 'leader';
+
   const [
     profileRes,
     memoriesRes,
@@ -722,6 +746,7 @@ async function fetchCollaboratorContext(collaborator) {
     todayChecklistsRes,
     teamAdherenceRes,
     personalChecklistsRes,
+    teamTodayChecklistsRes,
   ] = await Promise.all([
     supabase.from('collaborator_profiles').select('*').eq('collaborator_id', id).maybeSingle(),
     supabase.from('collaborator_memory')
@@ -809,6 +834,15 @@ async function fetchCollaboratorContext(collaborator) {
       .eq('is_active', true)
       .order('created_at', { ascending: false })
       .limit(20),
+    // Sprint 22.47 — checklists da equipe hoje (só liderança). Mostra quem tem
+    // pendente pra TOM responder "quem tem checklist pendente hoje?".
+    isLeadership
+      ? supabase.from('op_checklist_completions')
+          .select('id, completed_at, collaborator_id, collaborators(full_name), op_checklists(name), op_checklist_item_completions(is_checked)')
+          .eq('reference_date', today)
+          .order('collaborator_id')
+          .limit(80)
+      : Promise.resolve({ data: [], error: null }),
   ]);
 
   let activeProjects = [];
@@ -840,6 +874,7 @@ async function fetchCollaboratorContext(collaborator) {
     todayChecklists: todayChecklistsRes.data || [],
     teamAdherence: teamAdherenceRes.data || [],
     personalChecklists: personalChecklistsRes.data || [],
+    teamTodayChecklists: teamTodayChecklistsRes.data || [],
     todayDate: today,
   };
 }
@@ -1347,7 +1382,7 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     eventsForCtx = eventsForCtx.filter(e => e.context === 'work');
   }
   // briefing_diario / daily_briefing: mantém todos os events (sem filtro).
-  const baseCtx = buildContext(collaborator, ctx.memories, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx, ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || []);
+  const baseCtx = buildContext(collaborator, ctx.memories, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx, ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || [], ctx.teamTodayChecklists || []);
   const pending = renderPendingDecisions(ctx.notifications);
 
   // Sprint 10.1 hotfix-2 (Plano C): resolve temporal de "amanhã"/"hoje" + horário
@@ -1523,7 +1558,7 @@ async function composeSystemPrompt(collaborator, ctx) {
   const blocks = [
     BLOCK_RULES,
     BLOCK_IDENTITY,
-    buildContext(collaborator, ctx.memories || [], ctx.prefs, ctx.todayTasks || [], ctx.activeProjects || [], lastMsgAge, ctx.habits || [], ctx.todayEvents || [], ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || []),
+    buildContext(collaborator, ctx.memories || [], ctx.prefs, ctx.todayTasks || [], ctx.activeProjects || [], lastMsgAge, ctx.habits || [], ctx.todayEvents || [], ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || [], ctx.teamTodayChecklists || []),
     skillBlock,
   ].filter(Boolean);
   let syncPrompt = blocks.join('\n\n---\n\n');
