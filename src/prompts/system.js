@@ -650,6 +650,22 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
     return { name: 'operacoes-tecnicas', body: loadSkill('operacoes-tecnicas') };
   }
 
+  // Sprint 22.46 — Priority 4.9: listas pessoais (mercado, viagem, remedios, geral).
+  // Captura ANTES de checklist-tarefas pra "adiciona X na lista de mercado" virar
+  // PERSONAL_LIST_ACTION, nao TASK_CREATE. Triggers no skill listas-pessoais.md.
+  const lmLists = (lastUserMessage || '').toLowerCase();
+  const listsTopicRe = /\b(mercado|supermercado|farm[aá]cia|rem[eé]dios?|viagem|compras?(?:\s+do\s+m[eê]s)?|presentes?|sup(?:er)?(?:mercado)?)\b/i;
+  const listsActionRe = /\b(adicion[ao]|p[oó]e|coloca|inclui|tira|remove|riscar?|marca|cria(?:r)?\s+(?:uma\s+)?lista|lista\s+(?:de|do|da|pra))\b/i;
+  const listsExplicitRe = /\b(?:minha\s+)?lista\s+(?:de|do|da|pra)\s+(?:mercado|supermercado|farm[aá]cia|rem[eé]dios?|viagem|compras?|presentes?)/i;
+  const listsMarkDoneRe = /\b(?:j[aá]\s+)?(?:comprei|tomei|peguei)\s+(?:o|a|os|as)?\s*\w/i;
+  if (
+    listsExplicitRe.test(lmLists) ||
+    (listsActionRe.test(lmLists) && listsTopicRe.test(lmLists)) ||
+    (listsMarkDoneRe.test(lmLists) && (recentText.includes('mercado') || recentText.includes('viagem') || recentText.includes('rem[eé]di')))
+  ) {
+    return { name: 'listas-pessoais', body: loadSkill('listas-pessoais') };
+  }
+
   // Priority 5: task management intent. Includes create/remind/reschedule/complete/delegate/extension signals,
   // PLUS new-demand signals (surgiu, preciso falar, tem que resolver, fala com, etc).
   if (/\b(fiz|terminei|feito|completei|fechei|reagenda|adia|adiar|delega|surgiu|anota|me\s+lembr[aeo]|lembr(?:a|e|ar|nça)|lembr(?:a|e)\s+(?:de|do|da)\s+\w|lembrete|me\s+chama|daqui\s+a?\s*\d|em\s+\d+\s*(min|hora|h)|p[oó]e\s+na\s+lista|adiciona|marca\s+(?:reuni|m[eé]dico|consulta|hor[áa]rio)|muda\s+(?:a|o|pra)|deixa\s+pra|n[aã]o\s+vou\s+conseguir|preciso\s+de\s+mais\s+prazo|n[aã]o\s+(?:dá|vai\s+dar)\s+at[eé]|estender\s+(?:o\s+)?prazo|aprov[ao]r|negar|nego\s+a)/i.test(lastUserMessage || '')) {
