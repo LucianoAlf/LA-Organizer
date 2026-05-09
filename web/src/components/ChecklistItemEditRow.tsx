@@ -26,8 +26,10 @@ export function ChecklistItemEditRow({ uid, description, index, onChange, onDele
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.4 : 1,
+    transition: isDragging ? 'none' : transition,
+    zIndex: isDragging ? 50 : undefined,
+    boxShadow: isDragging ? '0 12px 28px -8px rgba(0,0,0,0.35)' : undefined,
+    background: isDragging ? 'var(--bg-surface, #fff)' : undefined,
   }
 
   return (

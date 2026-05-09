@@ -64,10 +64,16 @@ export function ChecklistItemRow({
     isDragging,
   } = useSortable({ id: uid, disabled: readonly })
 
+  // Sprint 22.39d — UX de drag fluida: item "levantado" (shadow + scale) em vez
+  // de fantasma transparente. O transform ja segue o cursor; o feedback visual
+  // de "card erguido" e o que torna o arrasto convincente.
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.4 : 1,
+    transition: isDragging ? 'none' : transition,
+    zIndex: isDragging ? 50 : undefined,
+    boxShadow: isDragging ? '0 12px 28px -8px rgba(0,0,0,0.35)' : undefined,
+    background: isDragging ? 'var(--bg-surface, #fff)' : undefined,
+    cursor: isDragging ? 'grabbing' : undefined,
   }
 
   function handleSaveNote() {

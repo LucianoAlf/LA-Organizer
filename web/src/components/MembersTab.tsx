@@ -5,21 +5,17 @@ import { CustomSelect } from './CustomSelect';
 import {
   DndContext,
   closestCenter,
-  PointerSensor,
-  TouchSensor,
-  KeyboardSensor,
-  useSensor,
-  useSensors,
   type DragEndEvent,
 } from '@dnd-kit/core';
 import {
   arrayMove,
   SortableContext,
-  sortableKeyboardCoordinates,
   verticalListSortingStrategy,
   useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { useSortableSensors } from '../lib/sortableSensors';
+import { dragLiftStyle } from '../lib/sortableStyle';
 import { supabase } from '../lib/supabase';
 import { Button } from './Button';
 import { EmptyState } from './EmptyState';

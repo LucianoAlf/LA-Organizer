@@ -23,6 +23,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { Check, ChevronDown, ChevronRight, GripVertical, Plus } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useSortableSensors } from '../lib/sortableSensors';
+import { dragLiftStyle } from '../lib/sortableStyle';
 import { brShort } from '../utils/date';
 import { EmptyState } from '../components/EmptyState';
 import { RowMenu } from '../components/RowMenu';
@@ -238,7 +239,7 @@ function CheckpointCard({
   return (
     <article
       ref={sortableRef}
-      style={{ ...sortableStyle, opacity: isDragging ? 0.5 : undefined, zIndex: isDragging ? 20 : undefined }}
+      style={dragLiftStyle(isDragging, sortableStyle)}
       className="surface touch-none"
       {...(sortableAttributes ?? {})}
       {...(sortableListeners ?? {})}

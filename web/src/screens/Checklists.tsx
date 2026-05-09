@@ -207,7 +207,6 @@ function TrabalhoTab() {
         <>
           {completions.length > 0 && (
             <div className="space-y-sm">
-              <p className="text-caption text-fg-muted uppercase tracking-wide">Hoje (do TOM)</p>
               {completions.map(c => (
                 <ChecklistCard key={c.id} completion={c} />
               ))}
@@ -215,7 +214,9 @@ function TrabalhoTab() {
           )}
           {workLists.length > 0 && (
             <div className="space-y-sm">
-              <p className="text-caption text-fg-muted uppercase tracking-wide">Minhas listas de trabalho</p>
+              {completions.length > 0 && (
+                <p className="text-body-sm text-fg-muted pt-sm">Minhas listas</p>
+              )}
               {workLists.map(l => (
                 <PersonalChecklistCard key={l.id} list={l} />
               ))}

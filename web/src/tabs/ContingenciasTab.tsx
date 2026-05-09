@@ -16,6 +16,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { AlertTriangle, GripVertical, Plus } from 'lucide-react';
 import { useSortableSensors } from '../lib/sortableSensors';
+import { dragLiftStyle } from '../lib/sortableStyle';
 import { EmptyState } from '../components/EmptyState';
 import { RowMenu } from '../components/RowMenu';
 import type { Contingency } from '../types/projectDetail';
@@ -205,7 +206,7 @@ function ContingencyCard({
   return (
     <li
       ref={sortableRef as ((node: HTMLLIElement | null) => void) | undefined}
-      style={{ ...sortableStyle, opacity: isDragging ? 0.5 : undefined, zIndex: isDragging ? 20 : undefined }}
+      style={dragLiftStyle(isDragging, sortableStyle)}
       className="surface p-md border-l-4 border-l-danger/70 touch-none"
       {...(sortableAttributes ?? {})}
       {...(sortableListeners ?? {})}
