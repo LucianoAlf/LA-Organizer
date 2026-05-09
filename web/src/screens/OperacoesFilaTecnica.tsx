@@ -1,7 +1,9 @@
 import { useState, useMemo, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Filter as FilterIcon } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
 import { unitLabel } from '../types';
 import type { Department, DepartmentRequestType, OperationalTask, TaskPriority } from '../types';
 import { STATUS_LABEL_OPERATIONAL, PRIORITY_INDICATOR } from '../types';
@@ -9,6 +11,22 @@ import { PageHeader } from '../components/PageHeader';
 import { LoadingState } from '../components/LoadingState';
 import { EmptyState } from '../components/EmptyState';
 import { ErrorState } from '../components/ErrorState';
+import { Tabs } from '../components/Tabs';
+import { CustomSelect } from '../components/CustomSelect';
+import { UnitFilterChips } from '../components/UnitFilterChips';
+import { Fab } from '../components/Fab';
+import { RowMenu } from '../components/RowMenu';
+import { DemandaSheet } from '../components/DemandaSheet';
+import { showToast } from '../components/Toast';
+
+const PRIORITY_ORDER: TaskPriority[] = ['critical', 'high', 'medium', 'low'];
+
+const STATUS_OPTIONS = [
+  { value: '', label: 'Todos os status' },
+  { value: 'pending', label: 'Pendente' },
+  { value: 'in_progress', label: 'Em andamento' },
+  { value: 'awaiting_confirmation', label: 'Aguardando aprovação' },
+];
 
 function isOverdue(due: string | null | undefined): boolean {
   if (!due) return false;
@@ -22,31 +40,20 @@ function formatDueShort(due: string | null | undefined): string {
   return `${d}/${m}`;
 }
 
-const PRIORITY_ORDER: TaskPriority[] = ['critical', 'high', 'medium', 'low'];
-
-const UNIT_OPTIONS = [
-  { value: '', label: 'Todas as unidades' },
-  { value: 'barra', label: 'Barra' },
-  { value: 'recreio', label: 'Recreio' },
-  { value: 'campo_grande', label: 'Campo Grande' },
-];
-
-const STATUS_OPTIONS = [
-  { value: '', label: 'Todos os status' },
-  { value: 'pending', label: 'Pendente' },
-  { value: 'in_progress', label: 'Em andamento' },
-  { value: 'awaiting_confirmation', label: 'Aguardando aprovação' },
-];
-
-const SELECT_CLASS =
-  'mt-1 rounded-lg border border-border bg-bg-surface px-2 py-1 text-body-sm text-fg focus:outline-none focus:border-brand';
-
 export function OperacoesFilaTecnica() {
-  const [unitFilter, setUnitFilter] = useState<string>('');
+  const { role } = useAuth();
+  const isDirector = role === 'director';
+  const qc = useQueryClient();
+
+  const [unitFilter, setUnitFilter] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [responsibleFilter, setResponsibleFilter] = useState<string>('');
   const [selectedDeptId, setSelectedDeptId] = useState<string>('');
+  const [filtersOpen, setFiltersOpen] = useState(false);
+
+  const [createOpen, setCreateOpen] = useState(false);
+  const [editTask, setEditTask] = useState<OperationalTask | null>(null);
 
   // Q1 — all active departments
   const { data: depts = [] } = useQuery({
@@ -69,6 +76,25 @@ export function OperacoesFilaTecnica() {
   }, [depts, selectedDeptId]);
 
   const dept = depts.find(d => d.id === selectedDeptId) ?? null;
+
+  // Counts por dept (active tasks)
+  const { data: deptCounts = {} } = useQuery({
+    queryKey: ['operational-tasks-counts'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('tasks')
+        .select('department_id, status')
+        .not('department_id', 'is', null)
+        .in('status', ['pending', 'in_progress', 'awaiting_confirmation']);
+      if (error) throw error;
+      const counts: Record<string, number> = {};
+      for (const r of data ?? []) {
+        const k = (r as { department_id: string }).department_id;
+        counts[k] = (counts[k] ?? 0) + 1;
+      }
+      return counts;
+    },
+  });
 
   // Q1b — request types for selected dept
   const { data: requestTypes = [] } = useQuery({
@@ -96,7 +122,7 @@ export function OperacoesFilaTecnica() {
         .from('tasks')
         .select(`
           id, title, description, status, priority, due_date, notes,
-          assigned_to,
+          assigned_to, created_by,
           department_id, request_type_id,
           request_type:department_request_types!tasks_request_type_id_fkey(id, slug, label),
           department:departments!tasks_department_id_fkey(id, slug, name),
@@ -112,9 +138,7 @@ export function OperacoesFilaTecnica() {
     enabled: !!selectedDeptId,
   });
 
-  // Q3 — Sprint 19: candidatos a responsável por departamento
-  // pedagogico → todos com pedagogical_role IS NOT NULL (lead/assistant/mentor)
-  // outros → vazio aqui; fallback é o build dinâmico de tasks
+  // Q3 — candidates for "responsável" filter
   const { data: deptAssignees = [] } = useQuery({
     queryKey: ['dept-assignees', dept?.slug ?? ''],
     queryFn: async () => {
@@ -128,7 +152,6 @@ export function OperacoesFilaTecnica() {
         if (error) throw error;
         return (data ?? []) as Array<{ id: string; full_name: string }>;
       }
-      // Sprint 20 — gerencia: manager + coordinator + director (Decisão D5)
       if (dept.slug === 'gerencia') {
         const { data, error } = await supabase
           .from('collaborators')
@@ -144,7 +167,6 @@ export function OperacoesFilaTecnica() {
     enabled: !!dept,
   });
 
-  // Build responsibles: union de candidatos do dept + colabs já presentes em tasks atuais
   const responsibles = useMemo(() => {
     const m = new Map<string, string>();
     for (const c of deptAssignees) {
@@ -168,7 +190,6 @@ export function OperacoesFilaTecnica() {
     });
   }, [tasks, unitFilter, typeFilter, statusFilter, responsibleFilter]);
 
-  // Group by priority
   const grouped = useMemo(() => {
     const map = new Map<TaskPriority, OperationalTask[]>();
     for (const p of PRIORITY_ORDER) map.set(p, []);
@@ -179,96 +200,120 @@ export function OperacoesFilaTecnica() {
     return map;
   }, [filteredTasks]);
 
+  // Filtros ativos count
+  const activeFiltersCount = useMemo(() => {
+    let n = 0;
+    if (unitFilter) n++;
+    if (typeFilter) n++;
+    if (statusFilter) n++;
+    if (responsibleFilter) n++;
+    return n;
+  }, [unitFilter, typeFilter, statusFilter, responsibleFilter]);
+
+  function clearFilters() {
+    setUnitFilter(null);
+    setTypeFilter('');
+    setStatusFilter('');
+    setResponsibleFilter('');
+  }
+
+  function handleTabChange(id: string) {
+    setSelectedDeptId(id);
+    clearFilters();
+  }
+
+  const cancelMutation = useMutation({
+    mutationFn: async (taskId: string) => {
+      const { error } = await supabase.from('tasks').update({ status: 'cancelled' }).eq('id', taskId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['operational-tasks'] });
+      qc.invalidateQueries({ queryKey: ['operational-tasks-counts'] });
+      showToast({ kind: 'success', title: 'Demanda cancelada' });
+    },
+    onError: (err: Error) => {
+      showToast({ kind: 'error', title: 'Falha ao cancelar', msg: err.message });
+    },
+  });
+
+  const tabsItems = depts.map(d => ({
+    id: d.id,
+    label: d.name,
+    badge: deptCounts[d.id]
+      ? <span className="px-1.5 py-0.5 rounded-full bg-bg-elevated text-fg-muted text-caption">{deptCounts[d.id]}</span>
+      : undefined,
+  }));
+
   return (
-    <div className="space-y-lg">
-      <PageHeader
-        title="Operações"
-        subtitle="Fila de demandas operacionais por departamento"
-        backTo="/mais"
-      />
+    <div className="space-y-md">
+      <PageHeader title="Operações" subtitle="por departamento" backTo="/mais" />
 
-      {/* Department tabs */}
-      <div className="flex gap-2 border-b border-border overflow-x-auto">
-        {depts.map(d => (
+      {depts.length > 0 && (
+        <Tabs<string>
+          tabs={tabsItems}
+          active={selectedDeptId}
+          onChange={handleTabChange}
+        />
+      )}
+
+      {/* Filtros — colapsáveis */}
+      <section className="space-y-2">
+        <div className="flex items-center justify-between">
           <button
-            key={d.id}
             type="button"
-            onClick={() => {
-              setSelectedDeptId(d.id);
-              setUnitFilter('');
-              setTypeFilter('');
-              setStatusFilter('');
-              setResponsibleFilter('');
-            }}
-            className={[
-              'px-3 py-2 text-body focus-ring whitespace-nowrap',
-              d.id === selectedDeptId
-                ? 'border-b-2 border-brand text-fg font-medium'
-                : 'text-fg-muted hover:text-fg',
-            ].join(' ')}
+            onClick={() => setFiltersOpen(v => !v)}
+            className="inline-flex items-center gap-2 text-body-sm text-fg-muted hover:text-fg focus-ring rounded-sm"
           >
-            {d.name}
+            <FilterIcon size={16} />
+            <span>Filtros{activeFiltersCount > 0 ? ` (${activeFiltersCount})` : ''}</span>
           </button>
-        ))}
-      </div>
-
-      {/* Filter bar */}
-      <section className="bg-bg-surface rounded-xl border border-border p-4">
-        <div className="flex flex-wrap gap-3">
-          <div className="flex flex-col">
-            <label className="text-caption text-fg-muted">Unidade</label>
-            <select
-              value={unitFilter}
-              onChange={e => setUnitFilter(e.target.value)}
-              className={SELECT_CLASS}
+          {activeFiltersCount > 0 && (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="text-caption text-brand underline focus-ring rounded-sm"
             >
-              {UNIT_OPTIONS.map(o => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex flex-col">
-            <label className="text-caption text-fg-muted">Tipo</label>
-            <select
-              value={typeFilter}
-              onChange={e => setTypeFilter(e.target.value)}
-              className={SELECT_CLASS}
-            >
-              <option value="">Todos os tipos</option>
-              {requestTypes.map(rt => (
-                <option key={rt.id} value={rt.id}>{rt.label}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex flex-col">
-            <label className="text-caption text-fg-muted">Status</label>
-            <select
-              value={statusFilter}
-              onChange={e => setStatusFilter(e.target.value)}
-              className={SELECT_CLASS}
-            >
-              {STATUS_OPTIONS.map(o => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex flex-col">
-            <label className="text-caption text-fg-muted">Responsável</label>
-            <select
-              value={responsibleFilter}
-              onChange={e => setResponsibleFilter(e.target.value)}
-              className={SELECT_CLASS}
-            >
-              <option value="">Todos</option>
-              {responsibles.map(([id, name]) => (
-                <option key={id} value={id}>{name}</option>
-              ))}
-            </select>
-          </div>
+              Limpar
+            </button>
+          )}
         </div>
+
+        {filtersOpen && (
+          <div className="bg-bg-surface rounded-xl border border-border p-4 space-y-3">
+            {isDirector && (
+              <div>
+                <label className="text-caption text-fg-muted block mb-1">Unidade</label>
+                <UnitFilterChips value={unitFilter} onChange={setUnitFilter} />
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label className="text-caption text-fg-muted block mb-1">Tipo</label>
+                <CustomSelect
+                  value={typeFilter}
+                  options={[{ value: '', label: 'Todos os tipos' }, ...requestTypes.map(rt => ({ value: rt.id, label: rt.label }))]}
+                  onChange={setTypeFilter}
+                  size="sm"
+                />
+              </div>
+              <div>
+                <label className="text-caption text-fg-muted block mb-1">Status</label>
+                <CustomSelect value={statusFilter} options={STATUS_OPTIONS} onChange={setStatusFilter} size="sm" />
+              </div>
+              <div>
+                <label className="text-caption text-fg-muted block mb-1">Responsável</label>
+                <CustomSelect
+                  value={responsibleFilter}
+                  options={[{ value: '', label: 'Todos' }, ...responsibles.map(([id, name]) => ({ value: id, label: name }))]}
+                  onChange={setResponsibleFilter}
+                  size="sm"
+                />
+              </div>
+            </div>
+          </div>
+        )}
       </section>
 
       {/* Content */}
@@ -307,42 +352,56 @@ export function OperacoesFilaTecnica() {
                   {bucket.map(t => {
                     const overdue = isOverdue(t.due_date);
                     return (
-                      <Link
+                      <div
                         key={t.id}
-                        to={`/mais/operacoes/${t.id}`}
-                        className="block bg-bg-surface rounded-xl border border-border p-4 space-y-1 cursor-pointer hover:bg-bg-elevated transition-colors"
+                        className="relative bg-bg-surface rounded-xl border border-border p-4 hover:bg-bg-elevated transition-colors"
                       >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <span className="text-lg">{PRIORITY_INDICATOR[t.priority].emoji}</span>
-                            <span className="text-caption uppercase font-semibold text-fg-muted truncate">
-                              {t.request_type?.label ?? '—'}
-                            </span>
+                        <Link to={`/mais/operacoes/${t.id}`} className="block space-y-1 pr-8">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-lg">{PRIORITY_INDICATOR[t.priority].emoji}</span>
+                              <span className="text-caption uppercase font-semibold text-fg-muted truncate">
+                                {t.request_type?.label ?? '—'}
+                              </span>
+                            </div>
+                            {t.due_date && (
+                              <span
+                                className={
+                                  overdue
+                                    ? 'text-caption font-semibold text-danger whitespace-nowrap'
+                                    : 'text-caption text-fg-muted whitespace-nowrap'
+                                }
+                              >
+                                {overdue ? '⚠ ' : ''}{formatDueShort(t.due_date)}
+                              </span>
+                            )}
                           </div>
-                          {t.due_date && (
-                            <span
-                              className={
-                                overdue
-                                  ? 'text-caption font-semibold text-danger whitespace-nowrap'
-                                  : 'text-caption text-fg-muted whitespace-nowrap'
-                              }
-                            >
-                              {overdue ? '⚠ ' : ''}{formatDueShort(t.due_date)}
-                            </span>
+                          <p className="text-body font-medium text-fg">{t.title}</p>
+                          <p className="text-body-sm text-fg-muted">
+                            {unitLabel(t.collaborator?.unit ?? null)}
+                            {' · '}
+                            {t.collaborator?.full_name ?? '—'}
+                            {' · '}
+                            {STATUS_LABEL_OPERATIONAL[t.status] ?? t.status}
+                          </p>
+                          {t.notes && (
+                            <p className="text-caption text-fg-muted italic line-clamp-1">{t.notes}</p>
                           )}
+                        </Link>
+                        <div className="absolute top-3 right-3">
+                          <RowMenu
+                            items={[
+                              { label: 'Editar', onClick: () => setEditTask(t) },
+                              {
+                                label: 'Cancelar demanda',
+                                danger: true,
+                                confirm: 'Cancelar essa demanda?',
+                                onClick: () => cancelMutation.mutate(t.id),
+                              },
+                            ]}
+                          />
                         </div>
-                        <p className="text-body font-medium text-fg">{t.title}</p>
-                        <p className="text-body-sm text-fg-muted">
-                          {unitLabel(t.collaborator?.unit ?? null)}
-                          {' · '}
-                          {t.collaborator?.full_name ?? '—'}
-                          {' · '}
-                          {STATUS_LABEL_OPERATIONAL[t.status] ?? t.status}
-                        </p>
-                        {t.notes && (
-                          <p className="text-caption text-fg-muted italic line-clamp-1">{t.notes}</p>
-                        )}
-                      </Link>
+                      </div>
                     );
                   })}
                 </div>
@@ -350,6 +409,22 @@ export function OperacoesFilaTecnica() {
             );
           })}
         </div>
+      )}
+
+      <Fab onClick={() => setCreateOpen(true)} label="Nova" ariaLabel="Nova demanda" />
+
+      <DemandaSheet
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        mode={{ kind: 'create', deptId: selectedDeptId }}
+      />
+
+      {editTask && (
+        <DemandaSheet
+          open={!!editTask}
+          onClose={() => setEditTask(null)}
+          mode={{ kind: 'edit', task: editTask }}
+        />
       )}
     </div>
   );

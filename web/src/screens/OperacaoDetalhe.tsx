@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
@@ -14,6 +14,8 @@ import { PageHeader } from '../components/PageHeader';
 import { LoadingState } from '../components/LoadingState';
 import { ErrorState } from '../components/ErrorState';
 import { Button } from '../components/Button';
+import { RowMenu } from '../components/RowMenu';
+import { DemandaSheet } from '../components/DemandaSheet';
 import { showToast } from '../components/Toast';
 
 const COMMENT_TYPE_LABEL: Record<string, string> = {
@@ -60,7 +62,9 @@ export function OperacaoDetalhe() {
   const { id } = useParams<{ id: string }>();
   const { collaborator, role } = useAuth();
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const [commentBody, setCommentBody] = useState('');
+  const [editOpen, setEditOpen] = useState(false);
 
   const { data: task, isLoading, error, refetch } = useQuery({
     queryKey: ['operacao-detail', id],
@@ -111,6 +115,23 @@ export function OperacaoDetalhe() {
     },
     onError: (err: Error) => {
       showToast({ kind: 'error', title: 'Falha ao atualizar', msg: err.message });
+    },
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: async () => {
+      if (!id) throw new Error('sem id');
+      const { error } = await supabase.from('tasks').update({ status: 'cancelled' }).eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['operational-tasks'] });
+      qc.invalidateQueries({ queryKey: ['operational-tasks-counts'] });
+      showToast({ kind: 'success', title: 'Demanda cancelada' });
+      navigate('/mais/operacoes');
+    },
+    onError: (err: Error) => {
+      showToast({ kind: 'error', title: 'Falha ao cancelar', msg: err.message });
     },
   });
 
@@ -209,6 +230,19 @@ export function OperacaoDetalhe() {
         title={task.title}
         subtitle={`${priorityInfo.emoji} ${PRIORITY_LABEL[task.priority]} · ${task.request_type?.label ?? '—'} · ${STATUS_LABEL_OPERATIONAL[task.status] ?? task.status}`}
         backTo="/mais/operacoes"
+        right={
+          <RowMenu
+            items={[
+              { label: 'Editar', onClick: () => setEditOpen(true) },
+              {
+                label: 'Cancelar demanda',
+                danger: true,
+                confirm: 'Cancelar essa demanda?',
+                onClick: () => cancelMutation.mutate(),
+              },
+            ]}
+          />
+        }
       />
 
       {/* Ações */}
@@ -236,7 +270,13 @@ export function OperacaoDetalhe() {
 
           <span className="text-body-sm text-fg-muted">Responsável</span>
           <span className="text-body text-fg">
-            {task.collaborator?.full_name ?? '—'}
+            {task.collaborator?.id ? (
+              <Link to={`/time/${task.collaborator.id}`} className="text-brand underline focus-ring rounded-sm">
+                {task.collaborator.full_name}
+              </Link>
+            ) : (
+              task.collaborator?.full_name ?? '—'
+            )}
             {task.collaborator?.unit ? ` · ${unitLabel(task.collaborator.unit)}` : ''}
           </span>
 
@@ -325,6 +365,12 @@ export function OperacaoDetalhe() {
           </div>
         </form>
       </section>
+
+      <DemandaSheet
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+        mode={{ kind: 'edit', task }}
+      />
     </div>
   );
 }
