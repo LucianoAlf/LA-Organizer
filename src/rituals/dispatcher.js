@@ -1416,6 +1416,13 @@ async function run(opts = {}) {
     console.error('[Dispatcher] checkEventReminders erro:', err.message);
   }
 
+  // Sprint 22.52 — lembretes diários de hábitos (habits.reminder_time).
+  try {
+    await checkHabitReminders();
+  } catch (err) {
+    console.error('[Dispatcher] checkHabitReminders erro:', err.message);
+  }
+
   // Deadline + overdue alerts — fire at most once per task per day, gated by
   // hour window so we don't spam at 3am. Window: 8h-19h, América/Sao_Paulo.
   // Override with --force-alerts for tests/manual triggers.

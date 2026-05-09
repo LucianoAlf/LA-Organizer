@@ -179,6 +179,9 @@ export function Hoje() {
           });
         if (error) throw error;
       }
+      // Sprint 22.52 — recalcula streak via RPC.
+      const { error: rpcErr } = await supabase.rpc('recalc_habit_streak', { p_habit_id: h.id });
+      if (rpcErr) console.warn('[Hoje] recalc_habit_streak err:', rpcErr.message);
     },
     onMutate: async (h) => {
       await qc.cancelQueries({ queryKey: ['habits', 'hoje', collaborator?.id] });

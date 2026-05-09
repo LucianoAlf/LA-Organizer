@@ -142,6 +142,9 @@ async function toggleHabit(habit: HabitWithLog, collabId: string) {
       });
     if (error) throw error;
   }
+  // Sprint 22.52 — RPC recalcula streak no servidor (espelha engine.js calcHabitStreak).
+  const { error: rpcErr } = await supabase.rpc('recalc_habit_streak', { p_habit_id: habit.id });
+  if (rpcErr) console.warn('[Habitos] recalc_habit_streak err:', rpcErr.message);
 }
 
 export function Habitos() {
