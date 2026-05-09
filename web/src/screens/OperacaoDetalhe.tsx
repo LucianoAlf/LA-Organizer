@@ -1,6 +1,8 @@
-import { useParams, Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
+import { useParams } from 'react-router-dom';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext';
 import {
   unitLabel,
   STATUS_LABEL_OPERATIONAL,
@@ -9,6 +11,10 @@ import {
 } from '../types';
 import type { OperationalTask, TaskPriority } from '../types';
 import { PageHeader } from '../components/PageHeader';
+import { LoadingState } from '../components/LoadingState';
+import { ErrorState } from '../components/ErrorState';
+import { Button } from '../components/Button';
+import { showToast } from '../components/Toast';
 
 const COMMENT_TYPE_LABEL: Record<string, string> = {
   manual: 'Comentário',
@@ -31,6 +37,12 @@ function formatDate(iso: string | null | undefined): string {
   return `${d}/${m}/${y}`;
 }
 
+function isOverdue(due: string | null | undefined): boolean {
+  if (!due) return false;
+  const today = new Date().toISOString().slice(0, 10);
+  return due.slice(0, 10) < today;
+}
+
 type TaskWithCreator = OperationalTask & {
   creator?: { id: string; full_name: string } | null;
 };
@@ -46,8 +58,11 @@ interface TaskComment {
 
 export function OperacaoDetalhe() {
   const { id } = useParams<{ id: string }>();
+  const { collaborator, role } = useAuth();
+  const qc = useQueryClient();
+  const [commentBody, setCommentBody] = useState('');
 
-  const { data: task, isLoading, error } = useQuery({
+  const { data: task, isLoading, error, refetch } = useQuery({
     queryKey: ['operacao-detail', id],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -68,7 +83,7 @@ export function OperacaoDetalhe() {
     enabled: !!id,
   });
 
-  const { data: comments = [] } = useQuery({
+  const { data: comments = [], error: commentsError } = useQuery({
     queryKey: ['operacao-comments', id],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -82,26 +97,128 @@ export function OperacaoDetalhe() {
     enabled: !!id,
   });
 
-  if (isLoading) return <p className="text-body-sm text-fg-muted">Carregando...</p>;
-  if (error || !task) return (
-    <div className="space-y-3">
-      <Link to="/mais/operacoes" className="text-caption text-fg-muted underline">← Voltar</Link>
-      <p className="text-danger text-body-sm">Demanda não encontrada.</p>
-    </div>
-  );
+  const statusMutation = useMutation({
+    mutationFn: async (next: string) => {
+      if (!id) throw new Error('sem id');
+      const { error } = await supabase.from('tasks').update({ status: next }).eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: (_v, next) => {
+      qc.invalidateQueries({ queryKey: ['operacao-detail', id] });
+      qc.invalidateQueries({ queryKey: ['operacao-comments', id] });
+      qc.invalidateQueries({ queryKey: ['operational-tasks'] });
+      showToast({ kind: 'success', title: 'Status atualizado', msg: STATUS_LABEL_OPERATIONAL[next] ?? next });
+    },
+    onError: (err: Error) => {
+      showToast({ kind: 'error', title: 'Falha ao atualizar', msg: err.message });
+    },
+  });
+
+  const commentMutation = useMutation({
+    mutationFn: async (body: string) => {
+      if (!id || !collaborator?.id) throw new Error('sem auth');
+      const { error } = await supabase.from('task_comments').insert({
+        task_id: id,
+        body: body.trim(),
+        comment_type: 'manual',
+        created_by: collaborator.id,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      setCommentBody('');
+      qc.invalidateQueries({ queryKey: ['operacao-comments', id] });
+      showToast({ kind: 'success', title: 'Comentário registrado' });
+    },
+    onError: (err: Error) => {
+      showToast({ kind: 'error', title: 'Falha ao comentar', msg: err.message });
+    },
+  });
+
+  if (isLoading) {
+    return (
+      <div className="space-y-md">
+        <PageHeader title="Demanda" backTo="/mais/operacoes" />
+        <LoadingState rows={4} />
+      </div>
+    );
+  }
+  if (error || !task) {
+    return (
+      <div className="space-y-md">
+        <PageHeader title="Demanda" backTo="/mais/operacoes" />
+        <ErrorState
+          title="Não consegui carregar"
+          description={error ? (error as Error).message : 'Demanda não encontrada.'}
+          onRetry={() => refetch()}
+        />
+      </div>
+    );
+  }
 
   const priorityInfo = PRIORITY_INDICATOR[task.priority];
+  const overdue = isOverdue(task.due_date);
+  const canApprove = role === 'director' || role === 'coordinator';
+
+  // Status transition buttons available per current state
+  function actionButtons() {
+    const s = task!.status;
+    if (s === 'pending') {
+      return (
+        <Button
+          onClick={() => statusMutation.mutate('in_progress')}
+          disabled={statusMutation.isPending}
+          variant="primary"
+        >
+          Iniciar
+        </Button>
+      );
+    }
+    if (s === 'in_progress') {
+      return (
+        <Button
+          onClick={() => statusMutation.mutate('awaiting_confirmation')}
+          disabled={statusMutation.isPending}
+          variant="primary"
+        >
+          Marcar pronto
+        </Button>
+      );
+    }
+    if (s === 'awaiting_confirmation' && canApprove) {
+      return (
+        <div className="flex gap-2 flex-wrap">
+          <Button onClick={() => statusMutation.mutate('done')} disabled={statusMutation.isPending} variant="primary">
+            Aprovar
+          </Button>
+          <Button onClick={() => statusMutation.mutate('in_progress')} disabled={statusMutation.isPending} variant="ghost">
+            Reabrir
+          </Button>
+        </div>
+      );
+    }
+    if (s === 'awaiting_confirmation') {
+      return <p className="text-body-sm text-fg-muted">Aguardando aprovação da coordenação.</p>;
+    }
+    return null;
+  }
 
   return (
     <div className="space-y-4">
-      {/* Header */}
       <PageHeader
         title={task.title}
         subtitle={`${priorityInfo.emoji} ${PRIORITY_LABEL[task.priority]} · ${task.request_type?.label ?? '—'} · ${STATUS_LABEL_OPERATIONAL[task.status] ?? task.status}`}
         backTo="/mais/operacoes"
       />
 
-      {/* Bloco 1 — Resumo */}
+      {/* Ações */}
+      {actionButtons() && (
+        <section className="bg-bg-surface rounded-xl border border-border p-4">
+          {actionButtons()}
+        </section>
+      )}
+
+      {/* Resumo */}
       <section className="bg-bg-surface rounded-xl border border-border p-4 space-y-2">
         <p className="text-caption uppercase font-semibold text-fg-muted">Resumo</p>
 
@@ -127,14 +244,17 @@ export function OperacaoDetalhe() {
           <span className="text-body text-fg">{task.creator?.full_name ?? '—'}</span>
 
           <span className="text-body-sm text-fg-muted">Prazo</span>
-          <span className="text-body text-fg">{formatDate(task.due_date)}</span>
+          <span className={`text-body ${overdue ? 'text-danger font-semibold' : 'text-fg'}`}>
+            {formatDate(task.due_date)}
+            {overdue && ' · atrasada'}
+          </span>
 
           <span className="text-body-sm text-fg-muted">Criado em</span>
           <span className="text-body text-fg">{task.created_at ? timeAgo(task.created_at) : '—'}</span>
         </div>
       </section>
 
-      {/* Bloco 2 — Descrição */}
+      {/* Descrição */}
       {task.description && (
         <section className="bg-bg-surface rounded-xl border border-border p-4 space-y-2">
           <p className="text-caption uppercase font-semibold text-fg-muted">Descrição</p>
@@ -142,7 +262,7 @@ export function OperacaoDetalhe() {
         </section>
       )}
 
-      {/* Bloco 3 — Notes */}
+      {/* Notes */}
       {task.notes && (
         <section className="bg-bg-surface rounded-xl border border-border p-4 space-y-2">
           <p className="text-caption uppercase font-semibold text-fg-muted">Notas</p>
@@ -150,11 +270,13 @@ export function OperacaoDetalhe() {
         </section>
       )}
 
-      {/* Bloco 4 — Histórico */}
-      <section className="bg-bg-surface rounded-xl border border-border p-4 space-y-2">
+      {/* Histórico + form de comentário */}
+      <section className="bg-bg-surface rounded-xl border border-border p-4 space-y-3">
         <p className="text-caption uppercase font-semibold text-fg-muted">Histórico</p>
 
-        {comments.length === 0 ? (
+        {commentsError ? (
+          <p className="text-danger text-body-sm">Não consegui carregar comentários.</p>
+        ) : comments.length === 0 ? (
           <p className="text-body-sm text-fg-muted">Sem comentários ainda.</p>
         ) : (
           <div className="space-y-3">
@@ -175,6 +297,33 @@ export function OperacaoDetalhe() {
             ))}
           </div>
         )}
+
+        <form
+          className="space-y-2 pt-2 border-t border-border"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const body = commentBody.trim();
+            if (!body || commentMutation.isPending) return;
+            commentMutation.mutate(body);
+          }}
+        >
+          <textarea
+            value={commentBody}
+            onChange={(e) => setCommentBody(e.target.value)}
+            rows={2}
+            placeholder="Comentar (progresso, dúvida, próximo passo)…"
+            className="w-full rounded-lg border border-border bg-bg-app px-3 py-2 text-body resize-none focus:outline-none focus:border-brand"
+          />
+          <div className="flex justify-end">
+            <Button
+              type="submit"
+              disabled={!commentBody.trim() || commentMutation.isPending}
+              variant="primary"
+            >
+              {commentMutation.isPending ? 'Enviando…' : 'Comentar'}
+            </Button>
+          </div>
+        </form>
       </section>
     </div>
   );

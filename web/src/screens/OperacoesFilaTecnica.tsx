@@ -6,6 +6,21 @@ import { unitLabel } from '../types';
 import type { Department, DepartmentRequestType, OperationalTask, TaskPriority } from '../types';
 import { STATUS_LABEL_OPERATIONAL, PRIORITY_INDICATOR } from '../types';
 import { PageHeader } from '../components/PageHeader';
+import { LoadingState } from '../components/LoadingState';
+import { EmptyState } from '../components/EmptyState';
+import { ErrorState } from '../components/ErrorState';
+
+function isOverdue(due: string | null | undefined): boolean {
+  if (!due) return false;
+  const today = new Date().toISOString().slice(0, 10);
+  return due.slice(0, 10) < today;
+}
+
+function formatDueShort(due: string | null | undefined): string {
+  if (!due) return '';
+  const [, m, d] = due.slice(0, 10).split('-');
+  return `${d}/${m}`;
+}
 
 const PRIORITY_ORDER: TaskPriority[] = ['critical', 'high', 'medium', 'low'];
 
@@ -73,7 +88,7 @@ export function OperacoesFilaTecnica() {
   });
 
   // Q2 — task queue for selected dept
-  const { data: tasks = [], isLoading } = useQuery({
+  const { data: tasks = [], isLoading, error: tasksError, refetch: refetchTasks } = useQuery({
     queryKey: ['operational-tasks', selectedDeptId],
     queryFn: async () => {
       if (!selectedDeptId) return [];
@@ -258,9 +273,18 @@ export function OperacoesFilaTecnica() {
 
       {/* Content */}
       {isLoading ? (
-        <p className="text-body-sm text-fg-muted">Carregando fila operacional...</p>
+        <LoadingState rows={3} />
+      ) : tasksError ? (
+        <ErrorState
+          title="Não consegui carregar a fila"
+          description={(tasksError as Error).message}
+          onRetry={() => refetchTasks()}
+        />
       ) : filteredTasks.length === 0 ? (
-        <p className="text-body-sm text-fg-muted">Nenhuma demanda operacional ativa em {dept?.name ?? 'este departamento'}.</p>
+        <EmptyState
+          title="Sem demandas ativas"
+          description={`Nenhuma demanda operacional ativa em ${dept?.name ?? 'este departamento'}.`}
+        />
       ) : (
         <div className="space-y-6">
           {PRIORITY_ORDER.map(priority => {
@@ -280,31 +304,47 @@ export function OperacoesFilaTecnica() {
                   <span className="ml-1 text-caption">({bucket.length})</span>
                 </h3>
                 <div className="space-y-3">
-                  {bucket.map(t => (
-                    <Link
-                      key={t.id}
-                      to={`/mais/operacoes/${t.id}`}
-                      className="block bg-bg-surface rounded-xl border border-border p-4 space-y-1 cursor-pointer hover:bg-bg-elevated transition-colors"
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="text-lg">{PRIORITY_INDICATOR[t.priority].emoji}</span>
-                        <span className="text-caption uppercase font-semibold text-fg-muted">
-                          {t.request_type?.label ?? '—'}
-                        </span>
-                      </div>
-                      <p className="text-body font-medium text-fg">{t.title}</p>
-                      <p className="text-body-sm text-fg-muted">
-                        {unitLabel(t.collaborator?.unit ?? null)}
-                        {' · '}
-                        {t.collaborator?.full_name ?? '—'}
-                        {' · '}
-                        {STATUS_LABEL_OPERATIONAL[t.status] ?? t.status}
-                      </p>
-                      {t.notes && (
-                        <p className="text-caption text-fg-muted italic line-clamp-1">{t.notes}</p>
-                      )}
-                    </Link>
-                  ))}
+                  {bucket.map(t => {
+                    const overdue = isOverdue(t.due_date);
+                    return (
+                      <Link
+                        key={t.id}
+                        to={`/mais/operacoes/${t.id}`}
+                        className="block bg-bg-surface rounded-xl border border-border p-4 space-y-1 cursor-pointer hover:bg-bg-elevated transition-colors"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="text-lg">{PRIORITY_INDICATOR[t.priority].emoji}</span>
+                            <span className="text-caption uppercase font-semibold text-fg-muted truncate">
+                              {t.request_type?.label ?? '—'}
+                            </span>
+                          </div>
+                          {t.due_date && (
+                            <span
+                              className={
+                                overdue
+                                  ? 'text-caption font-semibold text-danger whitespace-nowrap'
+                                  : 'text-caption text-fg-muted whitespace-nowrap'
+                              }
+                            >
+                              {overdue ? '⚠ ' : ''}{formatDueShort(t.due_date)}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-body font-medium text-fg">{t.title}</p>
+                        <p className="text-body-sm text-fg-muted">
+                          {unitLabel(t.collaborator?.unit ?? null)}
+                          {' · '}
+                          {t.collaborator?.full_name ?? '—'}
+                          {' · '}
+                          {STATUS_LABEL_OPERATIONAL[t.status] ?? t.status}
+                        </p>
+                        {t.notes && (
+                          <p className="text-caption text-fg-muted italic line-clamp-1">{t.notes}</p>
+                        )}
+                      </Link>
+                    );
+                  })}
                 </div>
               </section>
             );
