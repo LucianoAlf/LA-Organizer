@@ -13,7 +13,7 @@ interface Props extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const variants: Record<Variant, string> = {
-  primary: 'bg-tom text-white hover:bg-tom-shade active:bg-tom-deep disabled:bg-tom/50',
+  primary: 'bg-tom text-black hover:bg-tom-shade active:bg-tom-deep disabled:bg-tom/50',
   secondary: 'bg-bg-surface text-fg border border-border hover:bg-bg-elevated',
   ghost: 'bg-transparent text-fg hover:bg-bg-surface',
   danger: 'bg-danger text-white hover:bg-danger/90',
@@ -44,7 +44,7 @@ export const Button = forwardRef<HTMLButtonElement, Props>(function Button(
         className,
       ].join(' ')}
     >
-      {loading ? <span className="h-4 w-4 rounded-full border-2 border-white/40 border-t-white animate-spin" aria-hidden /> : leadingIcon}
+      {loading ? <span className="h-4 w-4 rounded-full border-2 border-black/30 border-t-black animate-spin" aria-hidden /> : leadingIcon}
       <span className="truncate">{children}</span>
       {!loading && trailingIcon}
     </button>

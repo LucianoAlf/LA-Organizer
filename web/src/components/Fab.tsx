@@ -20,7 +20,7 @@ export function Fab({ onClick, label = 'Criar', ariaLabel = 'Criar tarefa' }: Pr
         'fixed z-20 right-md md:right-lg',
         // Above the bottom nav (88px area). Desktop: bottom of viewport.
         'bottom-[96px] md:bottom-md',
-        'h-14 px-5 rounded-full bg-tom text-white shadow-soft hover:bg-tom-shade active:bg-tom-deep',
+        'h-14 px-5 rounded-full bg-tom text-black shadow-soft hover:bg-tom-shade active:bg-tom-deep',
         'inline-flex items-center gap-2 font-semibold focus-ring',
       ].join(' ')}
       style={{ marginBottom: 'env(safe-area-inset-bottom)' }}

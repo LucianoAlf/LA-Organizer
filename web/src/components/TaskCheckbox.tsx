@@ -35,7 +35,7 @@ export function TaskCheckbox({ done, overdue = false, disabled = false, size = '
         s.mt, s.box,
         'shrink-0 rounded-full border-2 grid place-items-center transition-colors focus-ring',
         done
-          ? 'bg-tom border-tom text-white hover:bg-tom-shade'
+          ? 'bg-tom border-tom text-black hover:bg-tom-shade'
           : overdue
             ? 'border-danger text-transparent hover:bg-tom/10 hover:text-tom'
             : 'border-fg-muted text-transparent hover:border-tom hover:bg-tom/10 hover:text-tom',

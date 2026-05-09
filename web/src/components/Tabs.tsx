@@ -39,7 +39,7 @@ export function Tabs<T extends string>({ tabs, active, onChange, className = '' 
             className={[
               'h-9 px-3 rounded-md inline-flex items-center gap-1.5 focus-ring transition-colors',
               isActive
-                ? 'bg-tom text-white shadow-card dark:shadow-none'
+                ? 'bg-tom text-black shadow-card dark:shadow-none'
                 : 'bg-bg-subtle text-fg-muted border border-border hover:text-fg',
             ].join(' ')}
           >
@@ -47,7 +47,7 @@ export function Tabs<T extends string>({ tabs, active, onChange, className = '' 
             {t.badge != null && (
               <span className={[
                 'text-label px-1.5 rounded-sm tabular-nums',
-                isActive ? 'bg-white/20' : 'bg-bg-elevated dark:bg-bg-elevated',
+                isActive ? 'bg-black/15' : 'bg-bg-elevated dark:bg-bg-elevated',
               ].join(' ')}>{t.badge}</span>
             )}
           </button>
