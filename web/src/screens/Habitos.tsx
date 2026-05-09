@@ -33,9 +33,27 @@ type HabitWithLog = Habit & {
   done_today: boolean;
   /** Bool array dos últimos 30 dias, index 0 = hoje, 29 = 30 dias atrás. */
   last30: boolean[];
-  /** Aderência 0..1 dos últimos 30d (count_done / 30). */
+  /** Sprint 22.54 — aderência 0..1 frequency-aware (denominador = dias esperados na janela). */
   adherence30: number;
 };
+
+// Sprint 22.54 — quantos dias na janela seriam ESPERADOS pra esse hábito.
+function expectedDaysForHabit(h: Habit, days: string[]): number {
+  if (h.frequency === 'daily') return days.length;
+  const dows = days.map(ymd => {
+    const [y, m, d] = ymd.split('-').map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d, 12));
+    const dow = dt.getUTCDay(); // 0=dom..6=sab
+    return dow === 0 ? 7 : dow; // 1=seg..7=dom
+  });
+  if (h.frequency === 'weekdays') return dows.filter(d => d >= 1 && d <= 5).length;
+  // weekly e custom_days usam custom_days. weekly sem custom_days → 1x/semana = janela/7.
+  const cd = Array.isArray(h.custom_days) ? h.custom_days.map(Number) : [];
+  if (cd.length === 0) {
+    return h.frequency === 'weekly' ? Math.max(1, Math.round(days.length / 7)) : days.length;
+  }
+  return dows.filter(d => cd.includes(d)).length;
+}
 
 type HabitsData = {
   habits: HabitWithLog[];
@@ -99,11 +117,14 @@ async function fetchHabits(collabId: string): Promise<HabitsData> {
   const habitsAug: HabitWithLog[] = list.map(h => {
     const last30 = days.map(ymd => doneSet.has(`${h.id}|${ymd}`));
     const doneCount = last30.filter(Boolean).length;
+    // Sprint 22.54 — denominador = dias ESPERADOS na janela (frequency-aware).
+    const expected = Math.max(1, expectedDaysForHabit(h, days));
+    const adherence = Math.min(1, doneCount / expected);
     return {
       ...h,
       done_today: doneSet.has(`${h.id}|${today}`),
       last30,
-      adherence30: doneCount / WINDOW_DAYS,
+      adherence30: adherence,
     };
   });
 
