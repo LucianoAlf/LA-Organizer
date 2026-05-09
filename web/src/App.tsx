@@ -13,6 +13,7 @@ import { PessoaDetalhe } from './screens/PessoaDetalhe';
 import { Configuracoes } from './screens/Configuracoes';
 import { Historico } from './screens/Historico';
 import { Habitos } from './screens/Habitos';
+import { HabitoDetalhe } from './screens/HabitoDetalhe';
 import { Checklists } from './screens/Checklists';
 import { ChecklistsTemplates } from './screens/ChecklistsTemplates';
 import { Comunicados } from './screens/Comunicados';
@@ -42,6 +43,7 @@ export default function App() {
           <Route path="configuracoes" element={<Configuracoes />} />
           <Route path="historico" element={<Historico />} />
           <Route path="habitos" element={<Habitos />} />
+          <Route path="habitos/:id" element={<HabitoDetalhe />} />
           <Route path="checklists" element={<Checklists />} />
           <Route path="mais/checklists-templates" element={<ChecklistsTemplates />} />
           <Route path="mais/comunicados" element={<Comunicados />} />

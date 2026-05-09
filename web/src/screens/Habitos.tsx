@@ -3,6 +3,7 @@
 // Mostra ritmo geral do user (heatmap) + aderência individual (ring colorido).
 // Privacy: só o próprio user vê seus hábitos (RLS via collaborator_id).
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Sparkles, Check } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
@@ -161,7 +162,7 @@ export function Habitos() {
   const collabId = collaborator?.id;
   // Sprint 22.53 — CRUD inline.
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [editingHabit, setEditingHabit] = useState<HabitWithLog | null>(null);
+  const navigate = useNavigate();
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['habits', collabId],
@@ -226,16 +227,20 @@ export function Habitos() {
               <li key={h.id} className="flex items-center gap-md p-md hover:bg-bg-elevated">
                 <button
                   type="button"
-                  onClick={() => setEditingHabit(h)}
+                  onClick={() => navigate(`/habitos/${h.id}`)}
                   className="flex items-center gap-md flex-1 min-w-0 text-left focus-ring rounded-sm"
                 >
                   <StreakRing
                     adherence={h.adherence30}
                     streak={h.current_streak}
+                    color={h.color}
                   />
                   <div className="min-w-0 flex-1">
-                    <div className={['text-body-md', h.done_today ? 'line-through text-fg-muted' : ''].join(' ')}>
-                      {h.icon ? `${h.icon} ` : ''}{h.name}
+                    <div className={['text-body-md flex items-center gap-2', h.done_today ? 'line-through text-fg-muted' : ''].join(' ')}>
+                      {h.color && (
+                        <span className="inline-block h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: h.color }} />
+                      )}
+                      <span>{h.icon ? `${h.icon} ` : ''}{h.name}</span>
                     </div>
                     <div className="mt-0.5 flex items-center gap-3 text-body-sm text-fg-muted">
                       <span className="tabular-nums">
@@ -272,9 +277,9 @@ export function Habitos() {
 
       <Fab onClick={() => setSheetOpen(true)} label="Novo hábito" ariaLabel="Criar novo hábito" />
       <EditHabitSheet
-        open={sheetOpen || Boolean(editingHabit)}
-        habit={editingHabit}
-        onClose={() => { setSheetOpen(false); setEditingHabit(null); }}
+        open={sheetOpen}
+        habit={null}
+        onClose={() => setSheetOpen(false)}
       />
 
       <p className="text-body-sm text-fg-muted">

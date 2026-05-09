@@ -10,6 +10,8 @@ interface Props {
   size?: number;
   /** Espessura da linha. Default 5. */
   stroke?: number;
+  /** Sprint 22.54 — cor do hábito sobrescreve cor por threshold. */
+  color?: string | null;
 }
 
 function toneFor(adherence: number): { ring: string; text: string } {
@@ -19,7 +21,7 @@ function toneFor(adherence: number): { ring: string; text: string } {
   return                       { ring: 'stroke-fg-muted', text: 'text-fg-muted' };
 }
 
-export function StreakRing({ adherence, streak, size = 56, stroke = 5 }: Props) {
+export function StreakRing({ adherence, streak, size = 56, stroke = 5, color }: Props) {
   const clamped = Math.max(0, Math.min(1, adherence));
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
@@ -52,7 +54,8 @@ export function StreakRing({ adherence, streak, size = 56, stroke = 5 }: Props) 
             strokeWidth={stroke}
             strokeLinecap="round"
             strokeDasharray={`${dash} ${c - dash}`}
-            className={`${tone.ring} transition-[stroke-dasharray] duration-300`}
+            style={color ? { stroke: color } : undefined}
+            className={color ? 'transition-[stroke-dasharray] duration-300' : `${tone.ring} transition-[stroke-dasharray] duration-300`}
           />
         )}
       </svg>
