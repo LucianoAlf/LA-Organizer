@@ -3289,7 +3289,9 @@ function validateHabitAction(a) {
         && (typeof a.reminder_time !== 'string' || !HABIT_TIME_RE.test(a.reminder_time))) return 'bad_reminder_time';
     if (a.custom_days !== undefined && !Array.isArray(a.custom_days)) return 'bad_custom_days';
   } else if (a.action === 'log') {
-    if (typeof a.habit_id !== 'string' || !SHORT_ID_RE.test(a.habit_id)) return 'bad_habit_id';
+    const hasId = typeof a.habit_id === 'string' && SHORT_ID_RE.test(a.habit_id);
+    const hasName = typeof a.habit_name === 'string' && a.habit_name.trim().length > 0;
+    if (!hasId && !hasName) return 'bad_habit_id';
     if (a.completed !== undefined && typeof a.completed !== 'boolean') return 'completed_not_bool';
   } else {
     return 'unknown_action';
@@ -3308,6 +3310,23 @@ async function resolveHabitByShortId(collaboratorId, shortId) {
   const matches = data.filter(h => String(h.id).toLowerCase().startsWith(prefix));
   if (matches.length !== 1) return null;
   return matches[0];
+}
+
+// Resolve habit by exact name (case-insensitive, accent-insensitive), scoped to collaborator.
+async function resolveHabitByName(collaboratorId, name) {
+  if (!name || typeof name !== 'string') return null;
+  const norm = (s) => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+  const target = norm(name);
+  if (!target) return null;
+  const { data } = await supabase
+    .from('habits').select('id, name, icon, current_streak, best_streak, is_active')
+    .eq('collaborator_id', collaboratorId).eq('is_active', true).limit(200);
+  if (!data || !data.length) return null;
+  const exact = data.filter(h => norm(h.name) === target);
+  if (exact.length === 1) return exact[0];
+  const partial = data.filter(h => norm(h.name).includes(target) || target.includes(norm(h.name)));
+  if (partial.length === 1) return partial[0];
+  return null;
 }
 
 // Compute current streak for a habit (consecutive days with is_completed=true,
@@ -3418,9 +3437,15 @@ async function applyHabitActions(collaborator, actions) {
         okCount++;
       } else if (a.action === 'log') {
         const completed = a.completed !== false; // default true
-        const h = await resolveHabitByShortId(collaborator.id, a.habit_id);
+        let h = null;
+        if (typeof a.habit_id === 'string' && SHORT_ID_RE.test(a.habit_id)) {
+          h = await resolveHabitByShortId(collaborator.id, a.habit_id);
+        }
+        if (!h && typeof a.habit_name === 'string' && a.habit_name.trim()) {
+          h = await resolveHabitByName(collaborator.id, a.habit_name);
+        }
         if (!h) {
-          console.warn(`[Habit] log REJECTED — habit ${a.habit_id} not owned by ${last4}`);
+          console.warn(`[Habit] log REJECTED — habit ${a.habit_id || a.habit_name} not owned by ${last4}`);
           failCount++;
           continue;
         }
