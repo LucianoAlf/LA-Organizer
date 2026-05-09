@@ -171,6 +171,7 @@ export interface CalendarEvent {
   created_at: string;
   updated_at: string;
   projects?: { name: string } | null;
+  event_reminders?: Array<{ remind_at: string; sent_at: string | null }> | null;
 }
 
 export const MODALITY_LABELS: Record<EventModality, string> = {

@@ -296,6 +296,9 @@ export function Semana() {
                                     <span aria-hidden title={`Q${qk}`} className={['inline-block h-1.5 w-1.5 rounded-full align-middle shrink-0', qcCls].join(' ')} />
                                   )}
                                   <span className="text-fg font-semibold tabular-nums shrink-0">{range.split('–')[0]}</span>
+                                  {(e.event_reminders ?? []).some(r => !r.sent_at) && (
+                                    <span className="shrink-0 text-[10px] opacity-60" aria-label="tem lembrete">🔔</span>
+                                  )}
                                   <span className="truncate text-fg-secondary">{e.title}</span>
                                 </div>
                               </button>

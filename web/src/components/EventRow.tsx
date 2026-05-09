@@ -106,6 +106,9 @@ export function EventRow({ event, onClick, onToggleDone, onCancel, onDelete }: P
                 className={['inline-block h-2 w-2 rounded-full mr-2 align-middle', dotClass].join(' ')}
               />
             )}
+            {(event.event_reminders ?? []).some(r => !r.sent_at) && (
+              <span className="text-[11px] opacity-60 mr-1" aria-label="tem lembrete">🔔</span>
+            )}
             {event.title}
           </div>
           {/* Sprint 22.34h — Badge da categoria movido pra linha de meta (debaixo do
