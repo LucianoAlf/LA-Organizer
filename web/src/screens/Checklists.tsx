@@ -2,17 +2,19 @@
 // Sprint 22 Phase A — refactor design system. Checklists aqui são OPERACIONAIS
 // (op_checklist_completions enviados pelo TOM), não checkpoints de projeto.
 //
-// Sprint 22.38 — Tabs Trabalho / Pessoal / Delegadas:
+// Sprint 22.38 — Tabs Trabalho / Pessoal:
 //  - Trabalho: hoje (TOM) + listas de trabalho criadas pelo user.
 //  - Pessoal: listas pessoais (mercado/viagem/remédios/geral) com CRUD.
-//  - Delegadas: hoje da equipe (op_checklist_completions filtrado por scope).
+//
+// Sprint 22.38c — Removida tab "Delegadas". Pra executor já aparece em Trabalho;
+// pra liderança ver o time tem /mais/aderencia-checklists (semana toda + drilldown).
 //
 // Sprint 22.38b — Refactor cores: tudo no bg-tom (DS unificado), sem bg-brand
 // vermelho-rosado. Buttons via componente Button. Trabalho ganha + Criar.
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ClipboardCheck, ListChecks, Building2 } from 'lucide-react'
+import { ClipboardCheck, ListChecks } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { Button } from '../components/Button'
@@ -20,19 +22,17 @@ import { Tabs } from '../components/Tabs'
 import { ChecklistCard } from '../components/ChecklistCard'
 import { PersonalChecklistCard } from '../components/PersonalChecklistCard'
 import { PersonalChecklistSheet } from '../components/PersonalChecklistSheet'
-import { TeamChecklistRow, type TeamChecklistRowData } from '../components/TeamChecklistRow'
 import { EmptyState } from '../components/EmptyState'
 import { ErrorState } from '../components/ErrorState'
 import { LoadingState } from '../components/LoadingState'
 import { fetchPersonalChecklists } from '../lib/personalChecklists'
 import type { OpChecklistCompletion } from '../types'
 
-type Tab = 'trabalho' | 'pessoal' | 'delegadas'
+type Tab = 'trabalho' | 'pessoal'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'trabalho', label: 'Trabalho' },
   { id: 'pessoal', label: 'Pessoal' },
-  { id: 'delegadas', label: 'Delegadas' },
 ]
 
 export function Checklists() {
@@ -49,7 +49,6 @@ export function Checklists() {
       />
       {tab === 'trabalho' && <TrabalhoTab />}
       {tab === 'pessoal' && <PessoalTab />}
-      {tab === 'delegadas' && <DelegadasTab />}
     </div>
   )
 }
@@ -249,139 +248,6 @@ function PessoalTab() {
         onClose={() => setSheetOpen(false)}
         context="personal"
       />
-    </div>
-  )
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Tab Delegadas — hoje operacional do time, filtrado por scope do user
-// ─────────────────────────────────────────────────────────────────────────────
-
-function DelegadasTab() {
-  const { collaborator } = useAuth()
-  const today = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Sao_Paulo',
-    year: 'numeric', month: '2-digit', day: '2-digit',
-  }).format(new Date())
-
-  // Scope determina filtro:
-  // - director: vê tudo
-  // - manager (unit !== 'all'): só sua unidade
-  // - coordinator: só pedagogical_assistant function
-  // - outros: empty state ("você não delega checklists operacionais")
-  const role = collaborator?.role
-  const unit = collaborator?.unit
-  const canSeeTeam =
-    role === 'director' ||
-    (role === 'manager' && unit && unit !== 'all') ||
-    role === 'coordinator'
-
-  const { data: rows = [], isLoading, error, refetch } = useQuery<TeamChecklistRowData[]>({
-    queryKey: ['team-checklists-today', collaborator?.id, today],
-    queryFn: async () => {
-      const tplFilter = role === 'coordinator' ? 'pedagogical_assistant' : null
-
-      let q = supabase
-        .from('op_checklist_completions')
-        .select(`
-          id, completed_at, dispatched_at, reference_date,
-          collaborator:collaborators!op_checklist_completions_collaborator_id_fkey(full_name, unit),
-          op_checklists!inner(id, name, function_role, unit, dispatch_time, completion_threshold),
-          op_checklist_item_completions(is_checked),
-          op_checklist_completion_extra_items(is_checked)
-        `)
-        .eq('reference_date', today)
-        .order('dispatched_at', { ascending: true })
-
-      if (role === 'manager' && unit && unit !== 'all') {
-        // Filtro por unit: tanto template unit='all' quanto unit=user.unit
-        q = q.in('op_checklists.unit', ['all', unit])
-      }
-      if (tplFilter) {
-        q = q.eq('op_checklists.function_role', tplFilter)
-      }
-
-      const { data, error } = await q
-      if (error) throw error
-      // Supabase retorna join 1:1 como array. Normalizo pra single object.
-      const rows = (data ?? []).map((r: any) => ({
-        ...r,
-        collaborator: Array.isArray(r.collaborator) ? r.collaborator[0] ?? null : r.collaborator ?? null,
-        op_checklists: Array.isArray(r.op_checklists) ? r.op_checklists[0] ?? null : r.op_checklists ?? null,
-      }))
-      return rows.filter((r: any) => r.op_checklists) as unknown as TeamChecklistRowData[]
-    },
-    enabled: !!collaborator && canSeeTeam,
-    staleTime: 60_000,
-    refetchInterval: 60_000,
-  })
-
-  if (!canSeeTeam) {
-    return (
-      <EmptyState
-        icon={<Building2 size={32} />}
-        title="Você não delega checklists operacionais"
-        description="Esta tab mostra abertura/fechamento e outras rotinas que a equipe executa diariamente. Disponível para director, manager (por unidade) e coordinator (pedagógico)."
-      />
-    )
-  }
-
-  if (isLoading) return <LoadingState rows={3} />
-
-  if (error) {
-    return (
-      <ErrorState
-        title="Não consegui carregar os checklists do time"
-        description="Pode ser conexão ou um problema no servidor."
-        onRetry={() => refetch()}
-      />
-    )
-  }
-
-  // Sort: pendentes/atrasados primeiro, depois por unit + dispatch_time
-  const enriched = rows.map(r => {
-    const items = [...(r.op_checklist_item_completions ?? []), ...(r.op_checklist_completion_extra_items ?? [])]
-    const total = items.length
-    const done = items.filter(i => i.is_checked).length
-    const pct = total > 0 ? Math.round((done / total) * 100) : 0
-    const isClosed = !!r.completed_at
-    return { row: r, total, done, pct, isClosed }
-  })
-
-  enriched.sort((a, b) => {
-    if (a.isClosed !== b.isClosed) return a.isClosed ? 1 : -1
-    const aUnit = a.row.op_checklists?.unit ?? ''
-    const bUnit = b.row.op_checklists?.unit ?? ''
-    if (aUnit !== bUnit) return aUnit.localeCompare(bUnit)
-    const aTime = a.row.op_checklists?.dispatch_time ?? ''
-    const bTime = b.row.op_checklists?.dispatch_time ?? ''
-    return aTime.localeCompare(bTime)
-  })
-
-  return (
-    <div className="space-y-md">
-      <h2 className="text-section-title">Operacional hoje</h2>
-
-      {enriched.length === 0 ? (
-        <EmptyState
-          icon={<Building2 size={32} />}
-          title="Nenhum checklist operacional hoje"
-          description="Quando o TOM despachar checklists pra equipe, eles aparecem aqui."
-        />
-      ) : (
-        <div className="space-y-sm">
-          {enriched.map(({ row, done, total, pct, isClosed }) => (
-            <TeamChecklistRow
-              key={row.id}
-              data={row}
-              done={done}
-              total={total}
-              pct={pct}
-              isClosed={isClosed}
-            />
-          ))}
-        </div>
-      )}
     </div>
   )
 }
