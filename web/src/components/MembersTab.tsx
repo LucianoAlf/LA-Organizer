@@ -145,11 +145,7 @@ export function MembersTab({ projectId, members, canEdit }: Props) {
     onSettled: () => qc.invalidateQueries({ queryKey: ['project', projectId, 'members'] }),
   });
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  );
+  const sensors = useSortableSensors();
 
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
@@ -314,7 +310,7 @@ function MemberRow({
   return (
     <li
       ref={sortableRef as ((node: HTMLLIElement | null) => void) | undefined}
-      style={{ ...sortableStyle, opacity: isDragging ? 0.5 : undefined, zIndex: isDragging ? 20 : undefined }}
+      style={dragLiftStyle(isDragging, sortableStyle)}
       className={['surface p-md flex items-center justify-between gap-md border-l-4 touch-none', accentClass].join(' ')}
       {...(sortableAttributes ?? {})}
       {...(sortableListeners ?? {})}

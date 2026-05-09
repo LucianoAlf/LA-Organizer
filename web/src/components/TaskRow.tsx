@@ -11,6 +11,7 @@ import { ActionTypeBadge } from './ActionTypeBadge';
 import { CategoryTag } from './CategoryTag';
 import { TaskCheckbox } from './TaskCheckbox';
 import { RowMenu, type MenuItem } from './RowMenu';
+import { dragLiftStyle } from '../lib/sortableStyle';
 import type { Task } from '../types';
 
 // Eisenhower como dot inline. Q1 vermelho, Q2 âmbar, Q3 azul, Q4 sem dot.
@@ -122,7 +123,7 @@ export function TaskRow({
   return (
     <article
       ref={sortableRef as ((node: HTMLElement | null) => void) | undefined}
-      style={{ ...sortableStyle, opacity: isDragging ? 0.5 : undefined, zIndex: isDragging ? 20 : undefined }}
+      style={dragLiftStyle(isDragging, sortableStyle)}
       className={[
         'surface p-md flex items-start gap-md transition-opacity',
         isOverdue ? 'border-l-4 border-l-danger' : '',

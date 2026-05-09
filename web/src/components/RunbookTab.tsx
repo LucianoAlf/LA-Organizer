@@ -4,21 +4,17 @@ import { Plus, Check, ChevronDown, ChevronRight, MoreVertical, GripVertical, Clo
 import {
   DndContext,
   closestCenter,
-  PointerSensor,
-  TouchSensor,
-  KeyboardSensor,
-  useSensor,
-  useSensors,
   type DragEndEvent,
 } from '@dnd-kit/core';
 import {
   arrayMove,
   SortableContext,
-  sortableKeyboardCoordinates,
   verticalListSortingStrategy,
   useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { useSortableSensors } from '../lib/sortableSensors';
+import { dragLiftStyle } from '../lib/sortableStyle';
 import { supabase } from '../lib/supabase';
 import { Button } from './Button';
 import { EmptyState } from './EmptyState';
@@ -156,11 +152,7 @@ export function RunbookTab({ projectId, canEdit }: Props) {
   const doneItems = items.filter(i => i.done).length;
   const overallPct = totalItems > 0 ? Math.round((doneItems / totalItems) * 100) : 0;
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  );
+  const sensors = useSortableSensors();
 
   const reorderBlocks = useMutation({
     mutationFn: async (orderedIds: string[]) => {
@@ -675,7 +667,7 @@ function RunbookBlockCard({
   return (
     <article
       ref={sortableRef as ((node: HTMLElement | null) => void) | undefined}
-      style={{ ...sortableStyle, opacity: isDragging ? 0.5 : undefined, zIndex: isDragging ? 20 : undefined }}
+      style={dragLiftStyle(isDragging, sortableStyle)}
       className={[
         'surface touch-none border-l-4',
         isLate ? 'border-l-danger' : allDone ? 'border-l-tom' : 'border-l-border',
@@ -857,11 +849,7 @@ function SortableItemList({
   onUpdateText: (id: string, text: string) => void;
   onReorder: (orderedIds: string[]) => void;
 }) {
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  );
+  const sensors = useSortableSensors();
   const ids = items.map(i => i.id);
 
   function handleDragEnd(e: DragEndEvent) {
@@ -956,7 +944,7 @@ function RunbookItemRow({
   return (
     <div
       ref={sortableRef as ((node: HTMLDivElement | null) => void) | undefined}
-      style={{ ...sortableStyle, opacity: isDragging ? 0.5 : undefined, zIndex: isDragging ? 20 : undefined }}
+      style={dragLiftStyle(isDragging, sortableStyle)}
       className="py-1.5 flex items-center gap-2 group touch-none"
       {...(sortableAttributes ?? {})}
       {...(sortableListeners ?? {})}

@@ -2,6 +2,7 @@ import { useState, KeyboardEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { GripVertical, MoreVertical } from 'lucide-react';
 import { PROJECT_CATEGORY_LABELS, PROJECT_STATUS_LABELS } from '../lib/projectLabels';
+import { dragLiftStyle } from '../lib/sortableStyle';
 import { CategoryTag } from './CategoryTag';
 import type { Project } from '../types';
 
@@ -74,7 +75,7 @@ export function ProjectCard({
   return (
     <article
       ref={sortableRef}
-      style={{ ...sortableStyle, opacity: isDragging ? 0.5 : undefined, zIndex: isDragging ? 20 : undefined }}
+      style={dragLiftStyle(isDragging, sortableStyle)}
       onClick={handleCardClick}
       className={[
         'surface p-md transition-colors focus-ring touch-none',

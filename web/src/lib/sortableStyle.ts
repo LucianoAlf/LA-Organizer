@@ -4,7 +4,7 @@
 // com o cursor; o que faltava era o feedback visual de levantamento.
 import type { CSSProperties } from 'react'
 
-export function dragLiftStyle(isDragging: boolean, base?: CSSProperties): CSSProperties {
+export function dragLiftStyle(isDragging: boolean | undefined, base?: CSSProperties): CSSProperties {
   if (!isDragging) return base ?? {}
   return {
     ...(base ?? {}),

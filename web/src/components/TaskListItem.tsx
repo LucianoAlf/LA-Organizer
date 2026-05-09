@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { Check, GripVertical } from 'lucide-react';
 import { AssigneePicker, type AssigneeOption } from './AssigneePicker';
 import { RowMenu } from './RowMenu';
+import { dragLiftStyle } from '../lib/sortableStyle';
 import { brShort } from '../utils/date';
 import { daysOverdue, todaySP } from '../utils/overdue';
 import type { Task } from '../types';
@@ -57,7 +58,7 @@ export function TaskListItem({
   return (
     <li
       ref={sortableRef as ((node: HTMLLIElement | null) => void) | undefined}
-      style={{ ...sortableStyle, opacity: isDragging ? 0.5 : undefined, zIndex: isDragging ? 20 : undefined }}
+      style={dragLiftStyle(isDragging, sortableStyle)}
       className="py-2 flex items-start gap-2 group touch-none"
       {...(sortableAttributes ?? {})}
       {...(sortableListeners ?? {})}
