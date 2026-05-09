@@ -15,6 +15,7 @@ import { QuickCreateSheet } from '../components/QuickCreateSheet';
 import { RescheduleSheet } from '../components/RescheduleSheet';
 import { EditEventSheet } from '../components/EditEventSheet';
 import { Tabs } from '../components/Tabs';
+import { DateNavHeader } from '../components/DateNavHeader';
 import type { Task, CalendarEvent, Project, TaskContext } from '../types';
 
 // Sprint 22.11 — Semana refatorada: cards individuais por dia, inclui sábado,
@@ -78,9 +79,12 @@ export function Semana() {
   const { collaborator } = useAuth();
   const qc = useQueryClient();
   const today = todaySP();
-  const days = useMemo(() => weekDaysMonSat(today), [today]);
+  // Sprint 22.49 — viewYmd navegavel: chevrons (-7/+7 dias) + date picker.
+  const [viewYmd, setViewYmd] = useState(today);
+  const days = useMemo(() => weekDaysMonSat(viewYmd), [viewYmd]);
   const start = days[0];
   const end = days[days.length - 1];
+  const isCurrentWeek = days.includes(today);
   const [createOpen, setCreateOpen] = useState(false);
   const [rescheduleTask, setRescheduleTask] = useState<Task | null>(null);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
@@ -157,10 +161,22 @@ export function Semana() {
 
   return (
     <div className="space-y-md">
+      {/* Sprint 22.49 — navegacao por semana (-7/+7 dias). */}
+      <div className="surface px-md py-2">
+        <DateNavHeader
+          value={viewYmd}
+          onChange={setViewYmd}
+          step={7}
+          label={`Semana ${brShort(start)} – ${brShort(end)}`}
+          today={today}
+          todayLabel="Esta semana"
+        />
+      </div>
+
       <header className="space-y-2">
         <div className="flex items-baseline justify-between gap-md">
           <div>
-            <h2 className="text-section-title">Progresso da semana</h2>
+            <h2 className="text-section-title">{isCurrentWeek ? 'Progresso da semana' : 'Semana selecionada'}</h2>
             <p className="text-body-sm text-fg-muted mt-0.5">
               <span className="tabular-nums">{brShort(start)}</span>
               <span className="text-fg-muted"> – </span>

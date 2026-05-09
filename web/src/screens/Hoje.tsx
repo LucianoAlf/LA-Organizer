@@ -18,6 +18,8 @@ import { TaskRow } from '../components/TaskRow';
 import { EventRow } from '../components/EventRow';
 import { StatCard } from '../components/StatCard';
 import { Tabs } from '../components/Tabs';
+import { DateNavHeader } from '../components/DateNavHeader';
+import { dowShort, brShort } from '../utils/date';
 import { LoadingState } from '../components/LoadingState';
 import { EmptyState } from '../components/EmptyState';
 import { Button } from '../components/Button';
@@ -73,14 +75,20 @@ async function fetchHabitsToday(collabId: string): Promise<HabitToday[]> {
 
 // Sprint 22.7 — exclui 'cancelled' da view de Hoje. Cancelladas só interessam em
 // histórico, não no daily focus.
-async function fetchTasksToday(collabId: string): Promise<Task[]> {
-  const today = todaySP();
-  const { data, error } = await supabase
+async function fetchTasksToday(collabId: string, viewDate: string, isToday: boolean): Promise<Task[]> {
+  // Sprint 22.49 — quando navega pra outro dia, busca apenas tasks daquele dia.
+  // Quando viewDate === hoje real, mantem comportamento original (inclui atrasadas).
+  let q = supabase
     .from('tasks')
     .select('id, title, status, context, priority, category, action_type, source, due_date, scheduled_date, remind_at, eisenhower_quadrant, sort_position, project_id, assigned_to, created_by, completed_at, projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(full_name)')
     .eq('assigned_to', collabId)
-    .neq('status', 'cancelled')
-    .or(`due_date.eq.${today},and(due_date.lt.${today},status.not.in.(done,cancelled))`)
+    .neq('status', 'cancelled');
+  if (isToday) {
+    q = q.or(`due_date.eq.${viewDate},and(due_date.lt.${viewDate},status.not.in.(done,cancelled))`);
+  } else {
+    q = q.eq('due_date', viewDate);
+  }
+  const { data, error } = await q
     // Sprint 22.29 — sort_position primeiro pra DnD manual mandar; data como tiebreak.
     .order('sort_position', { ascending: true, nullsFirst: false })
     .order('remind_at', { ascending: true, nullsFirst: false })
@@ -90,15 +98,19 @@ async function fetchTasksToday(collabId: string): Promise<Task[]> {
   return (data ?? []) as unknown as Task[];
 }
 
-async function fetchDelegatedTasks(collabId: string): Promise<Task[]> {
-  const today = todaySP();
-  const { data, error } = await supabase
+async function fetchDelegatedTasks(collabId: string, viewDate: string, isToday: boolean): Promise<Task[]> {
+  let q = supabase
     .from('tasks')
     .select('id, title, status, context, priority, category, action_type, source, due_date, scheduled_date, remind_at, eisenhower_quadrant, sort_position, project_id, assigned_to, created_by, completed_at, projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(full_name)')
     .eq('created_by', collabId)
     .neq('assigned_to', collabId)
-    .neq('status', 'cancelled')
-    .or(`due_date.eq.${today},and(due_date.lt.${today},status.not.in.(done,cancelled))`)
+    .neq('status', 'cancelled');
+  if (isToday) {
+    q = q.or(`due_date.eq.${viewDate},and(due_date.lt.${viewDate},status.not.in.(done,cancelled))`);
+  } else {
+    q = q.eq('due_date', viewDate);
+  }
+  const { data, error } = await q
     .order('sort_position', { ascending: true, nullsFirst: false })
     .order('due_date', { ascending: true });
   if (error) throw error;
@@ -119,18 +131,22 @@ export function Hoje() {
   const [reschedulingTask, setReschedulingTask] = useState<Task | null>(null);
   const [doneOpen, setDoneOpen] = useState(false);
 
-  const today = todaySP();
+  const realToday = todaySP();
+  // Sprint 22.49 — viewDate navegavel: chevrons + date picker no header.
+  const [viewDate, setViewDate] = useState(realToday);
+  const today = viewDate;
+  const isViewingToday = viewDate === realToday;
 
   const { data: tasks = [], isLoading: tLoading, error: tError } = useQuery({
-    queryKey: ['tasks', 'hoje', collaborator?.id],
-    queryFn: () => collaborator ? fetchTasksToday(collaborator.id) : Promise.resolve([]),
+    queryKey: ['tasks', 'hoje', collaborator?.id, viewDate],
+    queryFn: () => collaborator ? fetchTasksToday(collaborator.id, viewDate, isViewingToday) : Promise.resolve([]),
     enabled: Boolean(collaborator?.id && supabaseConfigured),
   });
 
   // Sprint 22.5 — delegadas (criadas pra outros).
   const { data: delegated = [], isLoading: dLoading } = useQuery({
-    queryKey: ['tasks', 'delegated', collaborator?.id],
-    queryFn: () => collaborator ? fetchDelegatedTasks(collaborator.id) : Promise.resolve([]),
+    queryKey: ['tasks', 'delegated', collaborator?.id, viewDate],
+    queryFn: () => collaborator ? fetchDelegatedTasks(collaborator.id, viewDate, isViewingToday) : Promise.resolve([]),
     enabled: Boolean(collaborator?.id && supabaseConfigured),
   });
 
@@ -200,8 +216,8 @@ export function Hoje() {
       if (error) throw error;
     },
     onMutate: async (task) => {
-      const keyHoje = ['tasks', 'hoje', collaborator?.id] as const;
-      const keyDelegated = ['tasks', 'delegated', collaborator?.id] as const;
+      const keyHoje = ['tasks', 'hoje', collaborator?.id, viewDate] as const;
+      const keyDelegated = ['tasks', 'delegated', collaborator?.id, viewDate] as const;
       await qc.cancelQueries({ queryKey: ['tasks'] });
       const prevHoje = qc.getQueryData<Task[]>(keyHoje);
       const prevDelegated = qc.getQueryData<Task[]>(keyDelegated);
@@ -234,7 +250,7 @@ export function Hoje() {
       );
     },
     onMutate: async (orderedIds) => {
-      const keyHoje = ['tasks', 'hoje', collaborator?.id] as const;
+      const keyHoje = ['tasks', 'hoje', collaborator?.id, viewDate] as const;
       await qc.cancelQueries({ queryKey: keyHoje });
       const prev = qc.getQueryData<Task[]>(keyHoje);
       qc.setQueryData<Task[]>(keyHoje, (old) => {
@@ -320,8 +336,8 @@ export function Hoje() {
       if (error) throw error;
     },
     onMutate: async (task) => {
-      const keyHoje = ['tasks', 'hoje', collaborator?.id] as const;
-      const keyDelegated = ['tasks', 'delegated', collaborator?.id] as const;
+      const keyHoje = ['tasks', 'hoje', collaborator?.id, viewDate] as const;
+      const keyDelegated = ['tasks', 'delegated', collaborator?.id, viewDate] as const;
       await qc.cancelQueries({ queryKey: ['tasks'] });
       const prevHoje = qc.getQueryData<Task[]>(keyHoje);
       const prevDelegated = qc.getQueryData<Task[]>(keyDelegated);
@@ -357,11 +373,26 @@ export function Hoje() {
   const isLoading = tLoading || eLoading || dLoading;
   const hasNothing = todayList.length === 0 && todayEvents.length === 0;
 
+  const dateLabel = isViewingToday
+    ? `Hoje · ${dowShort(viewDate)} ${brShort(viewDate)}`
+    : `${dowShort(viewDate)} ${brShort(viewDate)}`;
+
   return (
     <div className="space-y-lg">
+      {/* Sprint 22.49 — navegacao por dia (chevrons + label clicavel + voltar pra hoje). */}
+      <div className="surface px-md py-2">
+        <DateNavHeader
+          value={viewDate}
+          onChange={setViewDate}
+          step={1}
+          label={dateLabel}
+          today={realToday}
+        />
+      </div>
+
       {/* Stats */}
       <div className="grid grid-cols-3 gap-sm">
-        <StatCard label="Pra hoje" value={dueToday.length + todayEvents.filter(e => e.status === 'scheduled').length} tone="brand" />
+        <StatCard label={isViewingToday ? 'Pra hoje' : `Pra ${brShort(viewDate)}`} value={dueToday.length + todayEvents.filter(e => e.status === 'scheduled').length} tone="brand" />
         <StatCard label="Atrasadas" value={overdue.length} tone={overdue.length ? 'danger' : 'neutral'} />
         <StatCard label="Concluídas" value={done.length} tone={done.length ? 'success' : 'neutral'} />
       </div>
