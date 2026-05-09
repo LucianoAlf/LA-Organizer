@@ -393,6 +393,9 @@ export interface OpChecklistItemDraft {
 }
 
 // ─── Sprint 22.38 — Personal checklists (mercado, viagem, remédios, geral) ──
+// Sprint 22.38b — `context` separa Pessoais de Trabalho (mesma schema, tab diferente).
+
+export type PersonalListContext = 'personal' | 'work'
 
 export type PersonalListType = 'shopping' | 'travel' | 'meds' | 'general'
 
@@ -412,6 +415,7 @@ export interface PersonalChecklist {
   owner_collab_id: string
   name: string
   list_type: PersonalListType
+  context: PersonalListContext
   is_active: boolean
   created_at: string
   updated_at: string

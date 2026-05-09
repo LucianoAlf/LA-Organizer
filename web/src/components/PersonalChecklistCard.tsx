@@ -122,7 +122,8 @@ export function PersonalChecklistCard({ list }: Props) {
     reorderMutation.mutate(updates)
   }
 
-  // ⋮ menu do card
+  // ⋮ menu do card. "Mudar tipo" só faz sentido pra context='personal'.
+  const isPersonal = list.context === 'personal'
   const cardMenu: MenuItem[] = [
     {
       label: 'Renomear',
@@ -131,7 +132,7 @@ export function PersonalChecklistCard({ list }: Props) {
         if (next && next.trim() && next !== list.name) renameMutation.mutate(next.trim())
       },
     },
-    {
+    ...(isPersonal ? [{
       label: 'Mudar tipo',
       onClick: () => {
         const labels = TYPES.map(t => `${PERSONAL_LIST_TYPE_ICON[t]} ${PERSONAL_LIST_TYPE_LABEL[t]}`).join('\n')
@@ -143,7 +144,7 @@ export function PersonalChecklistCard({ list }: Props) {
           typeMutation.mutate(next as PersonalListType)
         }
       },
-    },
+    }] : []),
     {
       label: 'Arquivar',
       onClick: () => archiveMutation.mutate(),

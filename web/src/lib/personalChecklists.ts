@@ -2,13 +2,17 @@
 // Sprint 22.38 — fetch/mutation helpers para personal_checklists.
 // RLS owner-only no banco; aqui usamos sempre o supabase user-jwt client.
 import { supabase } from './supabase'
-import type { PersonalChecklist, PersonalListType } from '../types'
+import type { PersonalChecklist, PersonalListContext, PersonalListType } from '../types'
 
-export async function fetchPersonalChecklists(ownerId: string): Promise<PersonalChecklist[]> {
+export async function fetchPersonalChecklists(
+  ownerId: string,
+  context: PersonalListContext = 'personal',
+): Promise<PersonalChecklist[]> {
   const { data, error } = await supabase
     .from('personal_checklists')
     .select('*, personal_checklist_items (*)')
     .eq('owner_collab_id', ownerId)
+    .eq('context', context)
     .eq('is_active', true)
     .order('created_at', { ascending: false })
   if (error) throw error
@@ -19,6 +23,7 @@ export async function createPersonalChecklist(input: {
   ownerId: string
   name: string
   listType: PersonalListType
+  context: PersonalListContext
   initialItems: string[]
 }): Promise<PersonalChecklist> {
   const { data: list, error: e1 } = await supabase
@@ -27,6 +32,7 @@ export async function createPersonalChecklist(input: {
       owner_collab_id: input.ownerId,
       name: input.name,
       list_type: input.listType,
+      context: input.context,
     })
     .select('*')
     .single()
