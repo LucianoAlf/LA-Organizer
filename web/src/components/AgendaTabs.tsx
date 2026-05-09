@@ -16,7 +16,7 @@ export function AgendaTabs() {
     [
       'relative z-10 flex-1 text-center py-2 text-body-sm font-semibold rounded-md focus-ring',
       'transition-colors duration-200',
-      active ? 'text-white' : 'text-fg-muted hover:text-fg',
+      active ? 'text-black' : 'text-fg-muted hover:text-fg',
     ].join(' ');
 
   return (
