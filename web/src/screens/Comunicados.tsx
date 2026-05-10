@@ -105,18 +105,19 @@ export function Comunicados() {
     },
   });
 
-  const cancelMutation = useMutation({
+  const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
       await supabase.rpc('set_config', { key: 'app.current_user_id', value: collaborator!.id });
-      const { error } = await supabase.from('announcements').update({ status: 'cancelled' }).eq('id', id);
+      // Hard delete — cascade remove announcement_jobs.
+      const { error } = await supabase.from('announcements').delete().eq('id', id);
       if (error) throw error;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['comunicados'] });
-      showToast({ kind: 'success', title: 'Comunicado cancelado' });
+      showToast({ kind: 'success', title: 'Comunicado excluído' });
     },
     onError: (err: Error) => {
-      showToast({ kind: 'error', title: 'Falha ao cancelar', msg: err.message });
+      showToast({ kind: 'error', title: 'Falha ao excluir', msg: err.message });
     },
   });
 
@@ -203,18 +204,15 @@ export function Comunicados() {
         <ul className="space-y-3">
           {filtered.map(ann => {
             const counts = jobCounts[ann.id];
-            const canCancel = ann.status === 'scheduled' || ann.status === 'sending' || ann.status === 'pending_approval';
             const menuItems = [
               { label: 'Reenviar (duplicar)', onClick: () => handleResend(ann) },
-            ];
-            if (canCancel) {
-              menuItems.push({
-                label: 'Cancelar comunicado',
+              {
+                label: 'Excluir comunicado',
                 danger: true,
-                confirm: 'Cancelar esse comunicado?',
-                onClick: () => cancelMutation.mutate(ann.id),
-              } as { label: string; onClick: () => void; danger?: boolean; confirm?: string });
-            }
+                confirm: 'Excluir? Não dá pra desfazer.',
+                onClick: () => deleteMutation.mutate(ann.id),
+              } as { label: string; onClick: () => void; danger?: boolean; confirm?: string },
+            ];
             return (
               <li
                 key={ann.id}

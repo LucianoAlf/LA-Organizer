@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { CheckCircle2, Clock, Send, AlertCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
@@ -64,6 +64,7 @@ function unitLabelShort(u: string | null): string {
 
 export function ComunicadoDetalhe() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const { collaborator } = useAuth();
   const qc = useQueryClient();
 
@@ -95,17 +96,17 @@ export function ComunicadoDetalhe() {
     enabled: !!id,
   });
 
-  const cancelMutation = useMutation({
+  const deleteMutation = useMutation({
     mutationFn: async () => {
       if (!id || !collaborator) return;
       await supabase.rpc('set_config', { key: 'app.current_user_id', value: collaborator.id });
-      const { error } = await supabase.from('announcements').update({ status: 'cancelled' }).eq('id', id);
+      const { error } = await supabase.from('announcements').delete().eq('id', id);
       if (error) throw error;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['comunicado', id] });
       qc.invalidateQueries({ queryKey: ['comunicados'] });
-      showToast({ kind: 'success', title: 'Comunicado cancelado' });
+      showToast({ kind: 'success', title: 'Comunicado excluído' });
+      navigate('/mais/comunicados');
     },
     onError: (err: Error) => showToast({ kind: 'error', title: 'Falha', msg: err.message }),
   });
@@ -162,7 +163,6 @@ export function ComunicadoDetalhe() {
   }
 
   const ann = annQ.data;
-  const canCancel = ann.status === 'scheduled' || ann.status === 'sending' || ann.status === 'pending_approval';
   const canRemind = ann.requires_confirmation && stats.unconfirmed > 0;
 
   return (
@@ -171,11 +171,11 @@ export function ComunicadoDetalhe() {
         title="Comunicado"
         subtitle={STATUS_LABEL[ann.status] ?? ann.status}
         backTo="/mais/comunicados"
-        right={canCancel ? (
+        right={
           <RowMenu items={[
-            { label: 'Cancelar comunicado', danger: true, confirm: 'Cancelar esse comunicado?', onClick: () => cancelMutation.mutate() },
+            { label: 'Excluir comunicado', danger: true, confirm: 'Excluir? Não dá pra desfazer.', onClick: () => deleteMutation.mutate() },
           ]} />
-        ) : undefined}
+        }
       />
 
       {/* Body */}
