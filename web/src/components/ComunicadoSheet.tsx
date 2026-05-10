@@ -200,28 +200,10 @@ export function ComunicadoSheet({ open, onClose, initial }: Props) {
         .single();
       if (annErr) throw annErr;
 
-      let rq = supabase
-        .from('collaborators')
-        .select('id, phone')
-        .eq('is_active', true)
-        .not('phone', 'is', null);
-      if (!audience.all) {
-        if (audience.role?.length) rq = rq.in('role', audience.role);
-        if (audience.function_role?.length) rq = rq.in('function_role', audience.function_role);
-        if (audience.unidade?.length) rq = rq.in('unit', audience.unidade);
-        if (audience.turno?.length) rq = rq.in('shift', audience.turno);
-        if (audience.collaborator_ids?.length) rq = rq.in('id', audience.collaborator_ids);
-      }
-      const { data: recipients } = await rq;
-      if (recipients?.length) {
-        const jobs = recipients.map(r => ({
-          announcement_id: ann.id,
-          recipient_id: r.id,
-          phone: r.phone,
-        }));
-        const { error: jobErr } = await supabase.from('announcement_jobs').insert(jobs);
-        if (jobErr) throw jobErr;
-      }
+      // Sprint 22.X — Jobs (announcement_jobs) são criados pelo backend (dispatcher
+      // tem service role). PWA só insere o announcement; dispatcher resolve audience
+      // e popula jobs no próximo tick. Mantém RLS limpa.
+      void ann;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['comunicados'] });

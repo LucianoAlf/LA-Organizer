@@ -1176,10 +1176,26 @@ async function dispatchAnnouncements(now = new Date()) {
   // 1. Anúncios prontos para enviar
   const { data: ready, error: rErr } = await supabase
     .from('announcements')
-    .select('id, body, status, requires_confirmation, confirmation_question')
+    .select('id, body, status, audience, requires_confirmation, confirmation_question')
     .in('status', ['scheduled', 'sending'])
     .or(`scheduled_at.is.null,scheduled_at.lte.${nowIso}`);
   if (rErr) { console.error('[dispatchAnnouncements] ready query err:', rErr.message); }
+
+  // 1b. Sprint 22.X — Lazy job creation: anúncios scheduled sem jobs (PWA não
+  // pode escrever em announcement_jobs por RLS). Cria via service role.
+  if (ready && ready.length > 0) {
+    for (const ann of ready) {
+      if (ann.status !== 'scheduled') continue;
+      const { count } = await supabase
+        .from('announcement_jobs')
+        .select('id', { count: 'exact', head: true })
+        .eq('announcement_id', ann.id);
+      if ((count ?? 0) === 0) {
+        const created = await createJobsFromAudience(ann.id, ann.audience);
+        console.log(`[dispatchAnnouncements] lazy jobs created for ${ann.id.slice(0,8)}: ${created}`);
+      }
+    }
+  }
 
   if (ready && ready.length > 0) {
     const annIds = ready.map(a => a.id);
