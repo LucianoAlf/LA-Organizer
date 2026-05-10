@@ -132,6 +132,10 @@ function isDocumentMessage(body) {
   return _typeCandidates(body).some(c => /^(document|documentmessage|documentwithcaptionmessage)$/i.test(c));
 }
 
+function isVideoMessage(body) {
+  return _typeCandidates(body).some(c => /^(video|videomessage|videowithcaptionmessage|ptv|ptvmessage)$/i.test(c));
+}
+
 /**
  * Envia mídia (imagem/documento/vídeo) via UAZAPI.
  * Endpoint: POST /send/media com { number, type, file (url pública), text (caption), docName }
@@ -218,4 +222,4 @@ function isIgnorable(body) {
   return false;
 }
 
-module.exports = { sendMessage, sendButtons, sendList, sendMedia, setTyping, isAudioMessage, isImageMessage, isDocumentMessage, extractText, extractPhone, extractName, isIgnorable };
+module.exports = { sendMessage, sendButtons, sendList, sendMedia, setTyping, isAudioMessage, isImageMessage, isDocumentMessage, isVideoMessage, extractText, extractPhone, extractName, isIgnorable };

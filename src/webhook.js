@@ -9,6 +9,7 @@ const queue = require('./services/per-user-queue');
 const dedupe = require('./services/dedupe');
 const audio = require('./services/audio');
 const vision = require('./services/vision');
+const gemini = require('./services/gemini');
 
 const router = express.Router();
 
@@ -193,11 +194,67 @@ router.post(['/webhook', '/webhook/:token'], async (req, res) => {
         return;
       }
     }
-    // ---- Sprint 22.X — Documento (PDF): acknowledge e pede contexto ----
-    else if ((!text || typeof text !== 'string') && whatsapp.isDocumentMessage(body)) {
-      console.log(`[Webhook] document detected from ${phone.slice(-4)} — acknowledge fallback`);
-      whatsapp.sendMessage(phone, 'recebi seu PDF aqui. Por enquanto não tô lendo PDFs automaticamente — me conta em texto o que precisa que eu faça com ele?').catch(() => {});
-      return;
+    // ---- Sprint 22.X — Vídeo: análise via Gemini 3.1 Flash Lite ----
+    else if (whatsapp.isVideoMessage(body)) {
+      const caption = (typeof text === 'string' && text.trim()) ? text.trim() : '';
+      console.log(`[Webhook] video detected from ${phone.slice(-4)} caption="${caption.slice(0, 60)}"`);
+      const messageId = audio.extractMessageId(body);
+      let buf = null, mime = 'video/mp4';
+      if (messageId) {
+        try {
+          const r = await audio.downloadMediaFromUazapi(messageId);
+          buf = r.buffer; mime = r.mime || mime;
+        } catch (err) {
+          console.warn('[Webhook] video download falhou:', err.message);
+        }
+      }
+      if (!buf) {
+        whatsapp.sendMessage(phone, 'recebi seu vídeo mas não consegui baixar. Tenta enviar de novo?').catch(() => {});
+        return;
+      }
+      const r = await gemini.analyzeMedia(buf, mime, caption);
+      if (r.ok) {
+        const captionLine = caption ? `Legenda: "${caption}"\n` : '';
+        text = `[vídeo analisado] ${captionLine}Descrição: ${r.text}`;
+        console.log(`[Webhook] video analyzed (${r.text.length} chars)`);
+      } else {
+        const reasons = {
+          no_provider: 'recebi seu vídeo, mas análise de vídeo ainda não tá configurada aqui.',
+          file_too_large: 'recebi seu vídeo, mas ele tá grande demais pra eu analisar (máximo 19 MB). Manda um trecho menor?',
+          unsupported_mime: 'recebi um formato de vídeo que ainda não consigo analisar.',
+        };
+        const fallback = reasons[r.reason] || 'recebi seu vídeo mas tive um problema pra analisar. Pode descrever em texto o que precisa?';
+        whatsapp.sendMessage(phone, fallback).catch(() => {});
+        return;
+      }
+    }
+    // ---- Sprint 22.X — Documento (PDF): análise via Gemini 3.1 Flash Lite ----
+    else if (whatsapp.isDocumentMessage(body)) {
+      const caption = (typeof text === 'string' && text.trim()) ? text.trim() : '';
+      console.log(`[Webhook] document detected from ${phone.slice(-4)} caption="${caption.slice(0, 60)}"`);
+      const messageId = audio.extractMessageId(body);
+      let buf = null, mime = 'application/pdf';
+      if (messageId) {
+        try {
+          const r = await audio.downloadMediaFromUazapi(messageId);
+          buf = r.buffer; mime = r.mime || mime;
+        } catch (err) {
+          console.warn('[Webhook] document download falhou:', err.message);
+        }
+      }
+      if (!buf || mime !== 'application/pdf') {
+        whatsapp.sendMessage(phone, 'recebi seu documento. Me conta em texto o que precisa que eu faça com ele?').catch(() => {});
+        return;
+      }
+      const r = await gemini.analyzeMedia(buf, mime, caption);
+      if (r.ok) {
+        const captionLine = caption ? `Legenda: "${caption}"\n` : '';
+        text = `[PDF analisado] ${captionLine}Conteúdo: ${r.text}`;
+        console.log(`[Webhook] PDF analyzed (${r.text.length} chars)`);
+      } else {
+        whatsapp.sendMessage(phone, 'recebi seu PDF mas tive um problema pra ler. Me conta em texto o que precisa?').catch(() => {});
+        return;
+      }
     }
 
     if (!text || typeof text !== 'string') {
