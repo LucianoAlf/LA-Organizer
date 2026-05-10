@@ -661,6 +661,63 @@ async function remindEventTasks(now = new Date()) {
   }
 }
 
+// Sprint 22.X — Lembrete T-1 para tasks operacionais (department_id != null).
+// Roda no tick. Janela: 09:00-09:10 BRT (UTC 12:00-12:10).
+// Filtra tasks com due_date = amanhã BRT, status pending/in_progress,
+// reminded_at IS NULL, school_event_id IS NULL (eventos têm fluxo próprio).
+// Marca reminded_at após envio. Idempotente.
+async function remindOperationalTasks(now = new Date()) {
+  const whatsapp = require('../services/whatsapp');
+  const utcH = now.getUTCHours();
+  const utcM = now.getUTCMinutes();
+  // 09:00-09:10 BRT = UTC 12:00-12:10
+  if (!(utcH === 12 && utcM >= 0 && utcM <= 10)) return;
+
+  const brtMs = now.getTime() - 3 * 60 * 60 * 1000;
+  const tomorrowBrt = new Date(brtMs + 24 * 60 * 60 * 1000);
+  const tomorrowYmd = tomorrowBrt.toISOString().slice(0, 10);
+
+  const { data: tasks, error } = await supabase
+    .from('tasks')
+    .select(`
+      id, title, assigned_to, due_date,
+      request_type:department_request_types!tasks_request_type_id_fkey(label),
+      collaborator:assigned_to(phone, full_name)
+    `)
+    .not('department_id', 'is', null)
+    .is('school_event_id', null)
+    .is('reminded_at', null)
+    .in('status', ['pending', 'in_progress'])
+    .eq('due_date', tomorrowYmd);
+
+  if (error) {
+    console.error('[remindOperationalTasks] query err:', error.message);
+    return;
+  }
+  if (!tasks || tasks.length === 0) return;
+
+  const nowIso = now.toISOString();
+  for (const task of tasks) {
+    const phone = task.collaborator?.phone;
+    if (!phone) {
+      await supabase.from('tasks').update({ reminded_at: nowIso }).eq('id', task.id);
+      continue;
+    }
+    const firstName = (task.collaborator?.full_name || '').split(' ')[0];
+    const greeting = firstName ? `${firstName}, ` : '';
+    const rtype = task.request_type?.label ? ` (${task.request_type.label})` : '';
+    const msg = `⏰ ${greeting}lembrete: *${task.title}*${rtype} vence amanhã. Tudo certo da sua parte?`;
+
+    try {
+      await whatsapp.sendMessage(phone, msg);
+      await supabase.from('tasks').update({ reminded_at: nowIso }).eq('id', task.id);
+      console.log(`[remindOperationalTasks] sent task=${task.id.slice(0, 8)} → ${phone.slice(-4)}`);
+    } catch (err) {
+      console.error(`[remindOperationalTasks] send err task=${task.id.slice(0, 8)}:`, err.message);
+    }
+  }
+}
+
 // Sprint 15 F4 — Checklist com consequência: itens flagged como não-feito que tenham
 // generates_request_type_id viram tasks operacionais automáticas.
 // Roda a cada tick. Idempotência via lookup em tasks.notes (contém completion_id + item_id).
@@ -1473,6 +1530,13 @@ async function run(opts = {}) {
     console.error('[Dispatcher] remindEventTasks erro:', err.message);
   }
 
+  // Sprint 22.X — lembretes T-1 de tasks operacionais (department_id != null)
+  try {
+    await remindOperationalTasks(new Date());
+  } catch (err) {
+    console.error('[Dispatcher] remindOperationalTasks erro:', err.message);
+  }
+
   // Sprint 15 F4 — Checklist com consequência (gera tasks automáticas)
   try {
     await checkChecklistConsequences(new Date());
@@ -2236,4 +2300,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { run, dispatchChecklists, dispatchAnnouncements, notifyCoordinators, remindEventTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined, isFirstMondayOfMonth, isLastFridayOfMonth, listLeadership, checkMonthlyPlanning, checkMonthlyClosing };
+module.exports = { run, dispatchChecklists, dispatchAnnouncements, notifyCoordinators, remindEventTasks, remindOperationalTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined, isFirstMondayOfMonth, isLastFridayOfMonth, listLeadership, checkMonthlyPlanning, checkMonthlyClosing };
