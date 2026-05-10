@@ -1201,31 +1201,36 @@ async function dispatchAnnouncements(now = new Date()) {
     const annIds = ready.map(a => a.id);
     const byId = new Map(ready.map(a => [a.id, a]));
 
-    // 2. Pegar 1 job pending (FIFO)
-    const { data: job, error: jErr } = await supabase
+    // 2. Mini-batch: até 20 jobs por tick, com delay 3–6s entre cada envio.
+    // Protege contra ban da Meta sem sacrificar velocidade (40 pessoas ≈ 2–3 min).
+    const BATCH_SIZE = 20;
+    const DELAY_MIN_MS = 3000;
+    const DELAY_MAX_MS = 6000;
+
+    const { data: jobs, error: jErr } = await supabase
       .from('announcement_jobs')
       .select('id, announcement_id, phone, retry_count')
       .eq('status', 'pending')
       .in('announcement_id', annIds)
       .order('created_at', { ascending: true })
-      .limit(1)
-      .maybeSingle();
+      .limit(BATCH_SIZE);
     if (jErr) console.error('[dispatchAnnouncements] job query err:', jErr.message);
 
-    if (job) {
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+    for (const job of (jobs || [])) {
       const ann = byId.get(job.announcement_id);
-      // Sprint 22.X — Comunicados Fatia 1: append instrução de confirmação quando requires_confirmation=true.
+      if (!ann) continue;
+
       const confirmTail = ann.requires_confirmation
         ? `\n\n_${ann.confirmation_question || 'Responde "ok" pra confirmar que recebeu.'}_`
         : '';
       const finalBody = ann.body + confirmTail;
       try {
-        // Sprint 22.X — Mídia: se há anexo, envia como mídia com caption.
-        // Senão, mantém comportamento legado de texto puro.
         if (ann.attachment_url && ann.attachment_type) {
           await whatsapp.sendMedia(job.phone, {
             url: ann.attachment_url,
-            type: ann.attachment_type, // 'image' | 'document'
+            type: ann.attachment_type,
             caption: finalBody,
             filename: ann.attachment_filename || '',
             mimetype: ann.attachment_mime || '',
@@ -1233,18 +1238,18 @@ async function dispatchAnnouncements(now = new Date()) {
         } else {
           await whatsapp.sendMessage(job.phone, finalBody);
         }
+        const sentAt = new Date().toISOString();
         await supabase.from('announcement_jobs')
-          .update({ status: 'sent', sent_at: nowIso })
+          .update({ status: 'sent', sent_at: sentAt })
           .eq('id', job.id);
 
-        // Primeiro job do anúncio: scheduled → sending
         if (ann.status === 'scheduled') {
           await supabase.from('announcements')
-            .update({ status: 'sending', updated_at: nowIso })
+            .update({ status: 'sending', updated_at: sentAt })
             .eq('id', ann.id);
+          ann.status = 'sending'; // atualiza local pra não re-setar
         }
 
-        // Verificar se é o último job pendente
         const { count } = await supabase
           .from('announcement_jobs')
           .select('id', { count: 'exact', head: true })
@@ -1252,7 +1257,7 @@ async function dispatchAnnouncements(now = new Date()) {
           .eq('status', 'pending');
         if (count === 0) {
           await supabase.from('announcements')
-            .update({ status: 'sent', updated_at: nowIso })
+            .update({ status: 'sent', updated_at: sentAt })
             .eq('id', ann.id);
           console.log(`[dispatchAnnouncements] announcement=${ann.id.slice(0,8)} fully sent`);
         }
@@ -1266,6 +1271,10 @@ async function dispatchAnnouncements(now = new Date()) {
         await supabase.from('announcement_jobs').update(updates).eq('id', job.id);
         console.error(`[dispatchAnnouncements] send err job=${job.id.slice(0,8)}:`, err.message);
       }
+
+      // Delay aleatório entre mensagens para evitar ban da Meta.
+      const delay = DELAY_MIN_MS + Math.floor(Math.random() * (DELAY_MAX_MS - DELAY_MIN_MS));
+      await sleep(delay);
     }
   }
 
