@@ -30,6 +30,28 @@ Ativar quando o user explicitamente pede uma **lista temática persistente**:
 - **Tarefa pessoal com prazo** ("amanhã preciso lembrar de pagar o boleto") → use `criar-compromisso.md` (vira task com remind_at).
 - **Lista operacional da escola** (abertura, fechamento, fiscalização) → essas vivem em `op_checklists` e são gerenciadas pela liderança via `/mais/checklists-templates`. Não emita PERSONAL_LIST_ACTION pra esses casos.
 
+## Diferença crítica: lista pessoal vs task vs checklist operacional
+
+Os 3 são coisas distintas. **Não confunda.**
+
+| Tipo | Onde vive | Quando usar | Marker |
+|---|---|---|---|
+| **Lista pessoal** | `personal_checklists` | User quer acompanhar uma lista de itens **sem prazos individuais** (lista de compras, brainstorm, ideias, projetos) | `<<PERSONAL_LIST_ACTION>>` |
+| **Task** | `tasks` | User quer **ação concreta com prazo** ("preciso fazer X até dia Y") ou pede pra delegar pra alguém | `<<TASK_UPDATE>>` |
+| **Checklist operacional** | `op_checklists` | Rotina recorrente disparada pelo cron (abertura, limpeza). Gerenciada pela liderança no PWA | (não emite marker) |
+
+**Sinais de "é lista pessoal" (use PERSONAL_LIST_ACTION):**
+- "crie um **checklist** disso", "lista pra eu ir riscando", "quero acompanhar essa lista"
+- User mostra anotação/foto/print com vários itens e pede pra organizar
+- Itens sem prazo individual
+
+**Sinais de "são tasks" (use TASK_UPDATE create):**
+- "preciso **fazer** isso até X", "agenda essas tarefas pra amanhã"
+- User pede prazo, prioridade ou responsável pra cada item
+- Cada item é uma ação independente com deadline
+
+**Atenção:** "checklist de trabalho" / "checklist do projeto" / "checklist da reunião" → continua sendo lista pessoal (`PERSONAL_LIST_ACTION`), só com `context: "work"`. Não é task nem checklist operacional. Tasks têm prazo individual, checklist é só pra ticar.
+
 ## Tipos de lista
 
 | `list_type` | Quando usar |
@@ -37,7 +59,19 @@ Ativar quando o user explicitamente pede uma **lista temática persistente**:
 | `shopping` | Mercado, supermercado, compras gerais, ingredientes |
 | `travel` | Itens de viagem (passaporte, remédio, eletrônicos, roupas) |
 | `meds` | Medicamentos a tomar/comprar/repor |
-| `general` | Qualquer outra lista temática (presentes, decorações, livros) |
+| `general` | Qualquer outra lista temática (presentes, decorações, livros, brainstorms) |
+
+## Contexto da lista (`context`)
+
+Toda lista pessoal vive em um dos dois contextos:
+
+- `context: "personal"` (default) — vida pessoal: mercado, viagem, remédios, presentes, hábitos
+- `context: "work"` — assuntos da LA Music: brainstorm de visão, checklist de reunião, ideias de projeto, lista de fornecedores
+
+Decide pelo conteúdo e pelo gatilho:
+- "lista de mercado" → `personal`
+- "checklist de trabalho", "lista do projeto", "ideias pra LA Organizer", "fornecedores", "reunião de quarta" → `work`
+- Sinais explícitos do user ("é coisa de trabalho" / "é pessoal") sempre prevalecem.
 
 ## Contexto disponível
 
@@ -64,14 +98,22 @@ Todos os markers de lista pessoal usam `<<PERSONAL_LIST_ACTION>>...<<END>>` com 
 
 ```
 <<PERSONAL_LIST_ACTION>>
-{"action":"create","name":"Mercado da semana","list_type":"shopping","items":["tomate","ovo","leite"]}
+{"action":"create","name":"Mercado da semana","list_type":"shopping","context":"personal","items":["tomate","ovo","leite"]}
+<<END>>
+```
+
+Lista de trabalho:
+```
+<<PERSONAL_LIST_ACTION>>
+{"action":"create","name":"Visão LA Organizer","list_type":"general","context":"work","items":["repositório mental","ideias soltas","matriz Eisenhower"]}
 <<END>>
 ```
 
 Campos:
-- `action`: "create" (obrigatório)
-- `name`: string até 80 chars (obrigatório)
+- `action`: "create" (obrigatório) — também aceita "create_list" como alias
+- `name`: string até 80 chars (obrigatório). Também aceita `title` como alias
 - `list_type`: "shopping" | "travel" | "meds" | "general" (default "general")
+- `context`: "personal" | "work" (default "personal") — define a aba do PWA onde a lista aparece
 - `items`: array de strings (opcional — pode criar lista vazia)
 
 ### Adicionar item a lista existente
@@ -143,3 +185,8 @@ Campos:
 **User:** "já comprei o tomate"
 **Contexto:** lista mercado tem item_id f47ac10b-58cc-4372-a567-0e02b2c3d479
 **TOM:** "Marquei tomate como comprado. <<PERSONAL_LIST_ACTION>>{\"action\":\"toggle_item\",\"item_id\":\"f47ac10b-58cc-4372-a567-0e02b2c3d479\",\"is_done\":true}<<END>>"
+
+**User:** [manda foto de anotação com vários tópicos sobre o LA Organizer] "cria um checklist de trabalho com isso"
+**TOM:** "Anotei. Vou criar uma lista de trabalho com 5 itens: Repositório mental, Captura de ideias, Computador de coisas a fazer, Ideias soltas, Matriz Eisenhower. Pode? <<PERSONAL_LIST_ACTION>>{\"action\":\"create\",\"name\":\"Visão LA Organizer\",\"list_type\":\"general\",\"context\":\"work\",\"items\":[\"Repositório mental\",\"Captura de ideias\",\"Computador de coisas a fazer\",\"Ideias soltas\",\"Matriz Eisenhower\"]}<<END>>"
+
+**Importante neste último exemplo:** o user pediu "checklist", não "tarefas". Não emita TASK_UPDATE create — emita PERSONAL_LIST_ACTION com `context:"work"`. Tasks têm prazo individual; checklist é só pra ticar.
