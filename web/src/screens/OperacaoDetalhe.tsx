@@ -51,7 +51,7 @@ type TaskWithCreator = OperationalTask & {
 
 interface TaskComment {
   id: string;
-  body: string;
+  content: string;
   comment_type: string;
   created_at: string;
   created_by: string;
@@ -92,7 +92,7 @@ export function OperacaoDetalhe() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('task_comments')
-        .select('id, body, comment_type, created_at, created_by, author:collaborators!task_comments_created_by_fkey(full_name)')
+        .select('id, content, comment_type, created_at, created_by, author:collaborators!task_comments_created_by_fkey(full_name)')
         .eq('task_id', id)
         .order('created_at', { ascending: true });
       if (error) throw error;
@@ -106,6 +106,17 @@ export function OperacaoDetalhe() {
       if (!id) throw new Error('sem id');
       const { error } = await supabase.from('tasks').update({ status: next }).eq('id', id);
       if (error) throw error;
+      // Audit trail: registra como task_comment status_change
+      if (collaborator?.id) {
+        const fromLabel = task ? (STATUS_LABEL_OPERATIONAL[task.status] ?? task.status) : '?';
+        const toLabel = STATUS_LABEL_OPERATIONAL[next] ?? next;
+        await supabase.from('task_comments').insert({
+          task_id: id,
+          content: `${fromLabel} → ${toLabel}`,
+          comment_type: 'status_change',
+          created_by: collaborator.id,
+        });
+      }
     },
     onSuccess: (_v, next) => {
       qc.invalidateQueries({ queryKey: ['operacao-detail', id] });
@@ -123,6 +134,14 @@ export function OperacaoDetalhe() {
       if (!id) throw new Error('sem id');
       const { error } = await supabase.from('tasks').update({ status: 'cancelled' }).eq('id', id);
       if (error) throw error;
+      if (collaborator?.id && task) {
+        await supabase.from('task_comments').insert({
+          task_id: id,
+          content: `${STATUS_LABEL_OPERATIONAL[task.status] ?? task.status} → Cancelada`,
+          comment_type: 'status_change',
+          created_by: collaborator.id,
+        });
+      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['operational-tasks'] });
@@ -140,7 +159,7 @@ export function OperacaoDetalhe() {
       if (!id || !collaborator?.id) throw new Error('sem auth');
       const { error } = await supabase.from('task_comments').insert({
         task_id: id,
-        body: body.trim(),
+        content: body.trim(),
         comment_type: 'manual',
         created_by: collaborator.id,
       });
@@ -302,11 +321,11 @@ export function OperacaoDetalhe() {
         </section>
       )}
 
-      {/* Notes */}
+      {/* Notas (contexto/origem capturado pelo TOM) */}
       {task.notes && (
         <section className="bg-bg-surface rounded-xl border border-border p-4 space-y-2">
           <p className="text-caption uppercase font-semibold text-fg-muted">Notas</p>
-          <p className="text-body-sm text-fg-muted italic">{task.notes}</p>
+          <p className="text-body text-fg" style={{ whiteSpace: 'pre-wrap' }}>{task.notes}</p>
         </section>
       )}
 
@@ -332,7 +351,7 @@ export function OperacaoDetalhe() {
                     {timeAgo(c.created_at)}
                   </span>
                 </div>
-                <p className="text-body text-fg" style={{ whiteSpace: 'pre-wrap' }}>{c.body}</p>
+                <p className="text-body text-fg" style={{ whiteSpace: 'pre-wrap' }}>{c.content}</p>
               </div>
             ))}
           </div>
