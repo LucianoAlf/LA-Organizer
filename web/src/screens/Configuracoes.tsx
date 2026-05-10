@@ -9,6 +9,8 @@ import { EmptyState } from '../components/EmptyState';
 import { PageHeader } from '../components/PageHeader';
 import { BottomSheet } from '../components/BottomSheet';
 import { CustomSelect } from '../components/CustomSelect';
+import { TimeInput } from '../components/TimeInput';
+import { DateInput } from '../components/DateInput';
 import { showToast } from '../components/Toast';
 
 interface Prefs {
@@ -169,19 +171,16 @@ export function Configuracoes() {
         {/* Rituais diários */}
         <Section title="Rituais diários">
           <Field label="Briefing pessoal" hint="Mensagem da manhã sobre o dia">
-            <input type="time" required value={form.personal_briefing_time}
-              onChange={e => setForm({ ...form, personal_briefing_time: e.target.value })}
-              className="input" />
+            <TimeInput value={form.personal_briefing_time}
+              onChange={v => setForm({ ...form, personal_briefing_time: v })} />
           </Field>
           <Field label="Briefing trabalho" hint="Plano de trabalho do dia (dias úteis)">
-            <input type="time" required value={form.briefing_time}
-              onChange={e => setForm({ ...form, briefing_time: e.target.value })}
-              className="input" />
+            <TimeInput value={form.briefing_time}
+              onChange={v => setForm({ ...form, briefing_time: v })} />
           </Field>
           <Field label="Fechamento do dia" hint="Revisão do que foi feito (dias úteis)">
-            <input type="time" required value={form.closing_time}
-              onChange={e => setForm({ ...form, closing_time: e.target.value })}
-              className="input" />
+            <TimeInput value={form.closing_time}
+              onChange={v => setForm({ ...form, closing_time: v })} />
           </Field>
         </Section>
 
@@ -196,23 +195,20 @@ export function Configuracoes() {
             />
           </Field>
           <Field label="Horário do planejamento" hint="Hora do dia escolhido acima">
-            <input type="time" required value={form.planning_time}
-              onChange={e => setForm({ ...form, planning_time: e.target.value })}
-              className="input" />
+            <TimeInput value={form.planning_time}
+              onChange={v => setForm({ ...form, planning_time: v })} />
           </Field>
         </Section>
 
         {/* Rituais mensais */}
         <Section title="Rituais mensais">
           <Field label="Planejamento mensal" hint="Primeira segunda do mês">
-            <input type="time" required value={form.monthly_planning_time}
-              onChange={e => setForm({ ...form, monthly_planning_time: e.target.value })}
-              className="input" />
+            <TimeInput value={form.monthly_planning_time}
+              onChange={v => setForm({ ...form, monthly_planning_time: v })} />
           </Field>
           <Field label="Fechamento mensal" hint="Última sexta do mês">
-            <input type="time" required value={form.monthly_closing_time}
-              onChange={e => setForm({ ...form, monthly_closing_time: e.target.value })}
-              className="input" />
+            <TimeInput value={form.monthly_closing_time}
+              onChange={v => setForm({ ...form, monthly_closing_time: v })} />
           </Field>
         </Section>
 
@@ -443,8 +439,8 @@ function DndSheet({ open, onClose, onConfirm, pending }: {
         <div>
           <p className="text-caption uppercase font-semibold text-fg-muted mb-2">Personalizado</p>
           <div className="grid grid-cols-2 gap-2">
-            <input type="date" value={customDate} onChange={e => setCustomDate(e.target.value)} className="input" />
-            <input type="time" value={customTime} onChange={e => setCustomTime(e.target.value)} className="input" />
+            <DateInput value={customDate} onChange={setCustomDate} />
+            <TimeInput value={customTime} onChange={setCustomTime} />
           </div>
           <Button onClick={pauseCustom} disabled={pending || !customDate || !customTime} fullWidth className="mt-2">
             Pausar até essa data
