@@ -1,19 +1,22 @@
 import { useState } from 'react';
-import { useParams } from 'react-router-dom';
-import { PageHeader } from '../components/PageHeader';
+import { Link, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight, Plus, Trash2, Pencil } from 'lucide-react';
+import { ChevronDown, ChevronRight, Plus, Trash2, Pencil, MapPin, Calendar, Clock, Megaphone } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { PageHeader } from '../components/PageHeader';
+import { LoadingState } from '../components/LoadingState';
+import { ErrorState } from '../components/ErrorState';
+import { Badge } from '../components/Badge';
 import { EventTaskSheet } from '../components/EventTaskSheet';
 import {
   SECTORS,
   SECTOR_LABELS,
   TASK_STATUS_LABELS,
-  formatEventDate,
-  unitLabel,
+  unitsLabel,
+  formatEventRange,
 } from '../types';
-import type { EventSector, SchoolEvent, Task } from '../types';
+import type { EventSector, EventType, SchoolEvent, Task } from '../types';
 
 interface EventTask extends Task {
   assigned_collab?: { id: string; full_name: string } | null;
@@ -21,15 +24,17 @@ interface EventTask extends Task {
 
 export function EventoDetalhe() {
   const { id: eventId } = useParams<{ id: string }>();
-  const { collaborator } = useAuth();
+  const { collaborator, role } = useAuth();
   const queryClient = useQueryClient();
+  const canEdit = role === 'director' || role === 'coordinator';
+
   const [sheetOpen, setSheetOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<EventTask | null>(null);
   const [defaultSector, setDefaultSector] = useState<EventSector | null>(null);
   const [collapsed, setCollapsed] = useState<Set<EventSector>>(new Set());
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
-  const { data: event, isLoading: evLoading, error: evError } = useQuery({
+  const { data: event, isLoading: evLoading, error: evError, refetch } = useQuery({
     queryKey: ['event', eventId],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -39,6 +44,33 @@ export function EventoDetalhe() {
         .single();
       if (error) throw error;
       return data as SchoolEvent;
+    },
+    enabled: !!eventId,
+  });
+
+  const { data: typeRow } = useQuery({
+    queryKey: ['event-type', event?.event_type],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('event_types')
+        .select('*')
+        .eq('id', event!.event_type)
+        .maybeSingle();
+      return (data ?? null) as EventType | null;
+    },
+    enabled: !!event?.event_type,
+  });
+
+  const { data: linkedAnnouncements = [] } = useQuery({
+    queryKey: ['event-announcements', eventId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('announcements')
+        .select('id, body, status, created_at, scheduled_at')
+        .eq('source_event_id', eventId)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return data ?? [];
     },
     enabled: !!eventId,
   });
@@ -122,106 +154,224 @@ export function EventoDetalhe() {
     setSheetOpen(true);
   };
 
-  if (evLoading) return <p className="text-body-sm text-fg-muted">Carregando...</p>;
-  if (evError || !event) return <p className="text-danger text-body-sm">Evento não encontrado.</p>;
+  if (evLoading) {
+    return (
+      <div className="space-y-md">
+        <PageHeader title="Evento" backTo="/mais/agenda-escolar" />
+        <LoadingState rows={4} />
+      </div>
+    );
+  }
+  if (evError || !event) {
+    return (
+      <div className="space-y-md">
+        <PageHeader title="Evento" backTo="/mais/agenda-escolar" />
+        <ErrorState
+          title="Evento não encontrado"
+          description={evError ? (evError as Error).message : 'Verifica se o link tá certo.'}
+          onRetry={() => refetch()}
+        />
+      </div>
+    );
+  }
+
+  const isCancelled = event.status === 'cancelled';
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-md">
       <PageHeader
         title={event.title}
-        subtitle={`${formatEventDate(event.event_date, event.start_time)}${event.location ? ` · ${event.location}` : ''} · ${unitLabel(event.unit)}`}
+        subtitle={isCancelled ? 'Cancelado' : (typeRow?.label ?? 'Evento')}
         backTo="/mais/agenda-escolar"
       />
 
-      {tLoading && <p className="text-body-sm text-fg-muted">Carregando tarefas...</p>}
-
-      {!tLoading && SECTORS.map(sector => {
-        const sectorTasks = tasksBySector[sector];
-        // Default: open if has tasks, collapsed if empty (unless user toggled)
-        const shouldShow = sectorTasks.length > 0 ? !collapsed.has(sector) : collapsed.has(sector);
-        return (
-          <section key={sector} className="bg-bg-surface rounded-xl border border-border">
-            <button
-              type="button"
-              onClick={() => toggleCollapsed(sector)}
-              className="w-full flex items-center justify-between p-3 focus-ring"
-            >
-              <div className="flex items-center gap-2">
-                {shouldShow ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                <span className="text-body font-medium">{SECTOR_LABELS[sector]}</span>
-                <span className="text-caption text-fg-muted">({sectorTasks.length})</span>
-              </div>
-            </button>
-
-            {shouldShow && (
-              <div className="px-3 pb-3 space-y-2">
-                {sectorTasks.map(task => (
-                  <div key={task.id} className="flex items-start gap-2 py-2 border-t border-border">
-                    <input
-                      type="checkbox"
-                      checked={task.status === 'done'}
-                      onChange={() => toggleStatus.mutate(task)}
-                      className="mt-1 focus-ring"
-                      aria-label={`Marcar ${task.title} como concluída`}
-                    />
-                    <div className="flex-1 min-w-0">
-                      <p className={`text-body ${task.status === 'done' ? 'line-through text-fg-muted' : 'text-fg'}`}>
-                        {task.title}
-                      </p>
-                      <p className="text-caption text-fg-muted">
-                        {task.assigned_collab?.full_name ?? '—'}
-                        {task.due_date ? ` · ${task.due_date.slice(8, 10)}/${task.due_date.slice(5, 7)}` : ''}
-                        {task.status !== 'pending' && task.status !== 'done'
-                          ? ` · ${TASK_STATUS_LABELS[task.status]}`
-                          : ''}
-                      </p>
-                      {task.notes && (
-                        <p className="text-caption text-fg-muted mt-1 italic">{task.notes}</p>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => openEdit(task)}
-                      className="h-8 w-8 grid place-items-center text-fg-muted hover:text-fg focus-ring rounded"
-                      aria-label="Editar"
-                    >
-                      <Pencil size={14} />
-                    </button>
-                    {confirmDelete === task.id ? (
-                      <button
-                        type="button"
-                        onClick={() => deleteTask.mutate(task.id)}
-                        className="text-caption text-danger px-2 focus-ring rounded"
-                      >
-                        Confirmar?
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setConfirmDelete(task.id);
-                          setTimeout(() => setConfirmDelete(prev => (prev === task.id ? null : prev)), 3000);
-                        }}
-                        className="h-8 w-8 grid place-items-center text-fg-muted hover:text-danger focus-ring rounded"
-                        aria-label="Excluir"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    )}
-                  </div>
-                ))}
-                <button
-                  type="button"
-                  onClick={() => openCreate(sector)}
-                  className="w-full mt-2 py-2 flex items-center justify-center gap-1 text-caption text-fg-muted hover:text-brand border border-dashed border-border rounded-lg focus-ring"
-                >
-                  <Plus size={14} /> Adicionar tarefa
-                </button>
-              </div>
+      {/* Hero: imagem + meta */}
+      <section className="bg-bg-surface rounded-xl border border-border overflow-hidden">
+        {event.image_url && (
+          <img
+            src={event.image_url}
+            alt={event.title}
+            className="w-full max-h-72 object-cover border-b border-border"
+          />
+        )}
+        <div className="p-4 space-y-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            {typeRow && (
+              <span
+                className="text-caption rounded-md px-2 py-0.5 font-medium"
+                style={{
+                  backgroundColor: typeRow.color_hex + '22',
+                  color: typeRow.color_hex,
+                }}
+              >
+                {typeRow.emoji} {typeRow.label}
+              </span>
             )}
-          </section>
-        );
-      })}
+            {isCancelled && <Badge tone="danger">Cancelado</Badge>}
+          </div>
+
+          <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-body-sm">
+            <Calendar size={14} className="text-fg-muted mt-0.5" />
+            <span className="tabular-nums">
+              {formatEventRange(event.event_date, event.end_date)}
+              {event.is_all_day ? ' · dia inteiro' : ''}
+            </span>
+            {!event.is_all_day && event.start_time && (
+              <>
+                <Clock size={14} className="text-fg-muted mt-0.5" />
+                <span className="tabular-nums">{event.start_time.slice(0, 5)}</span>
+              </>
+            )}
+            <MapPin size={14} className="text-fg-muted mt-0.5" />
+            <span>
+              {unitsLabel(event.units, event.unit)}
+              {event.location ? ` · ${event.location}` : ''}
+            </span>
+          </div>
+
+          {event.description && (
+            <p className="text-body text-fg whitespace-pre-wrap pt-2 border-t border-border">
+              {event.description}
+            </p>
+          )}
+        </div>
+      </section>
+
+      {/* Comunicados vinculados a este evento (visível pra todos) */}
+      {linkedAnnouncements.length > 0 && (
+        <section className="bg-bg-surface rounded-xl border border-border p-4 space-y-2">
+          <div className="flex items-center gap-2 text-caption uppercase font-semibold text-fg-muted">
+            <Megaphone size={12} />
+            Comunicados deste evento ({linkedAnnouncements.length})
+          </div>
+          <ul className="divide-y divide-border">
+            {linkedAnnouncements.map(ann => {
+              const previewBody = (ann.body || '').slice(0, 100);
+              const statusLabel = ann.status === 'sent' ? 'Enviado'
+                : ann.status === 'scheduled' ? 'Agendado'
+                : ann.status === 'sending' ? 'Enviando'
+                : ann.status === 'cancelled' ? 'Cancelado' : ann.status;
+              const tone = ann.status === 'sent' ? 'text-success'
+                : ann.status === 'cancelled' ? 'text-fg-muted line-through'
+                : 'text-warning';
+              return (
+                <li key={ann.id} className="py-2">
+                  {canEdit ? (
+                    <Link to={`/mais/comunicados/${ann.id}`} className="block hover:text-tom transition-colors">
+                      <p className="text-body-sm line-clamp-2">{previewBody}</p>
+                      <p className={`text-caption ${tone}`}>{statusLabel}</p>
+                    </Link>
+                  ) : (
+                    <>
+                      <p className="text-body-sm line-clamp-2">{previewBody}</p>
+                      <p className={`text-caption ${tone}`}>{statusLabel}</p>
+                    </>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
+
+      {/* Tarefas por setor (mantido — só visível pra liderança que pode editar tasks de evento) */}
+      {canEdit && (
+        <>
+          <h3 className="text-body-sm uppercase tracking-wide text-fg-muted font-semibold px-1">
+            Tarefas do evento
+          </h3>
+          {tLoading ? (
+            <LoadingState rows={2} />
+          ) : (
+            SECTORS.map(sector => {
+              const sectorTasks = tasksBySector[sector];
+              const shouldShow = sectorTasks.length > 0 ? !collapsed.has(sector) : collapsed.has(sector);
+              return (
+                <section key={sector} className="bg-bg-surface rounded-xl border border-border">
+                  <button
+                    type="button"
+                    onClick={() => toggleCollapsed(sector)}
+                    className="w-full flex items-center justify-between p-3 focus-ring"
+                  >
+                    <div className="flex items-center gap-2">
+                      {shouldShow ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                      <span className="text-body font-medium">{SECTOR_LABELS[sector]}</span>
+                      <span className="text-caption text-fg-muted">({sectorTasks.length})</span>
+                    </div>
+                  </button>
+
+                  {shouldShow && (
+                    <div className="px-3 pb-3 space-y-2">
+                      {sectorTasks.map(task => (
+                        <div key={task.id} className="flex items-start gap-2 py-2 border-t border-border">
+                          <input
+                            type="checkbox"
+                            checked={task.status === 'done'}
+                            onChange={() => toggleStatus.mutate(task)}
+                            className="mt-1 focus-ring accent-tom"
+                            aria-label={`Marcar ${task.title} como concluída`}
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className={`text-body ${task.status === 'done' ? 'line-through text-fg-muted' : 'text-fg'}`}>
+                              {task.title}
+                            </p>
+                            <p className="text-caption text-fg-muted">
+                              {task.assigned_collab?.full_name ?? '—'}
+                              {task.due_date ? ` · ${task.due_date.slice(8, 10)}/${task.due_date.slice(5, 7)}` : ''}
+                              {task.status !== 'pending' && task.status !== 'done'
+                                ? ` · ${TASK_STATUS_LABELS[task.status]}`
+                                : ''}
+                            </p>
+                            {task.notes && (
+                              <p className="text-caption text-fg-muted mt-1 italic">{task.notes}</p>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => openEdit(task)}
+                            className="h-8 w-8 grid place-items-center text-fg-muted hover:text-fg focus-ring rounded"
+                            aria-label="Editar"
+                          >
+                            <Pencil size={14} />
+                          </button>
+                          {confirmDelete === task.id ? (
+                            <button
+                              type="button"
+                              onClick={() => deleteTask.mutate(task.id)}
+                              className="text-caption text-danger px-2 focus-ring rounded"
+                            >
+                              Confirmar?
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setConfirmDelete(task.id);
+                                setTimeout(() => setConfirmDelete(prev => (prev === task.id ? null : prev)), 3000);
+                              }}
+                              className="h-8 w-8 grid place-items-center text-fg-muted hover:text-danger focus-ring rounded"
+                              aria-label="Excluir"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => openCreate(sector)}
+                        className="w-full mt-2 py-2 flex items-center justify-center gap-1 text-caption text-fg-muted hover:text-tom border border-dashed border-border rounded-lg focus-ring"
+                      >
+                        <Plus size={14} /> Adicionar tarefa
+                      </button>
+                    </div>
+                  )}
+                </section>
+              );
+            })
+          )}
+        </>
+      )}
 
       {sheetOpen && event && (
         <EventTaskSheet

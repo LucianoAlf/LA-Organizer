@@ -601,13 +601,30 @@ export function statusLabel(s: Announcement['status']): string {
 
 // ─── Sprint 13 F2 — Eventos Institucionais ──────────────────────────────────
 
+export type SchoolUnit = 'barra' | 'recreio' | 'campo_grande';
+
+export interface EventType {
+  id: string;
+  label: string;
+  emoji: string;
+  color_hex: string;
+  sort_order: number;
+}
+
 export interface SchoolEvent {
   id: string;
   title: string;
-  event_date: string;          // 'YYYY-MM-DD'
-  start_time: string | null;   // 'HH:MM:SS' or null
+  event_type: string;            // FK event_types.id (default 'outro')
+  event_date: string;            // 'YYYY-MM-DD'
+  end_date: string | null;       // 'YYYY-MM-DD' (range; NULL = single day)
+  start_time: string | null;     // 'HH:MM:SS' or null
+  is_all_day: boolean;
   location: string | null;
-  unit: 'barra' | 'recreio' | 'campo_grande' | null;
+  unit: SchoolUnit | null;       // legado (single)
+  units: SchoolUnit[];           // canônico (multi)
+  description: string | null;
+  image_url: string | null;
+  image_filename: string | null;
   created_by: string;
   status: 'active' | 'cancelled';
   notify_leadership: boolean;
@@ -638,6 +655,24 @@ export function unitLabel(unit: string | null): string {
     all: 'Todas',
   };
   return map[unit] ?? unit;
+}
+
+/** Label legível pra arrays de unidades (multi). Vazio/único trata bonito. */
+export function unitsLabel(units: string[] | null | undefined, fallbackUnit?: string | null): string {
+  const list = (units && units.length > 0) ? units : (fallbackUnit ? [fallbackUnit] : []);
+  if (list.length === 0) return 'Escola toda';
+  if (list.length === 3) return 'Todas as unidades';
+  return list.map(unitLabel).join(' · ');
+}
+
+/** Range bonito: "10/05" ou "10/05 → 17/05". */
+export function formatEventRange(eventDate: string, endDate: string | null): string {
+  const fmt = (ymd: string) => {
+    const [y, m, d] = ymd.split('-');
+    return `${d}/${m}`;
+  };
+  if (!endDate || endDate === eventDate) return fmt(eventDate);
+  return `${fmt(eventDate)} → ${fmt(endDate)}`;
 }
 
 export function formatEventDate(eventDate: string, startTime: string | null): string {
@@ -710,7 +745,8 @@ export function buildEventAnnouncements(ev: {
   title: string;
   event_date: string;
   start_time: string | null;
-  unit: string | null;
+  unit?: string | null;            // legado (single)
+  units?: string[];                 // canônico (multi)
   location: string | null;
   notify_leadership: boolean;
   notify_school: boolean;
@@ -721,6 +757,9 @@ export function buildEventAnnouncements(ev: {
   const timeStr = ev.start_time ? ` às ${ev.start_time.slice(0, 5)}` : '';
   const locStr = ev.location ? `, ${ev.location}` : '';
   const dateBR = `${d}/${m}/${y}`;
+  // Audience das unidades: prioriza units[], fallback pra unit single, fallback pra all.
+  const unitList = (ev.units && ev.units.length > 0) ? ev.units : (ev.unit ? [ev.unit] : []);
+  const unitAudience: AnnouncementAudience = unitList.length > 0 ? { unidade: unitList } : { all: true };
   const specs: Array<{ body: string; audience: AnnouncementAudience; scheduled_at: string | null }> = [];
   if (ev.notify_leadership) {
     specs.push({
@@ -739,7 +778,7 @@ export function buildEventAnnouncements(ev: {
   if (ev.notify_unit) {
     specs.push({
       body: `📅 Amanhã: *${ev.title}* — ${dateBR}${timeStr}${locStr}`,
-      audience: ev.unit ? { unidade: [ev.unit] } : { all: true },
+      audience: unitAudience,
       scheduled_at: computeStepScheduledAt(ev.event_date, 1),
     });
   }
@@ -748,7 +787,7 @@ export function buildEventAnnouncements(ev: {
     const T0 = new Date(Date.UTC(yn, mn - 1, dn, 12, 0, 0));
     specs.push({
       body: `📅 Hoje: *${ev.title}* — ${dateBR}${timeStr}${locStr}`,
-      audience: ev.unit ? { unidade: [ev.unit] } : { all: true },
+      audience: unitAudience,
       scheduled_at: T0 > new Date() ? T0.toISOString() : null,
     });
   }

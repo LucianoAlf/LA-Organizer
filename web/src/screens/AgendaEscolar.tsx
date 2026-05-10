@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { ChevronLeft, ChevronRight, MapPin } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { EventoSheet } from '../components/EventoSheet';
@@ -13,111 +14,201 @@ import { CustomSelect } from '../components/CustomSelect';
 import { RowMenu } from '../components/RowMenu';
 import { Badge } from '../components/Badge';
 import { showToast } from '../components/Toast';
-import { unitLabel, formatEventDate } from '../types';
-import type { SchoolEventWithAnnouncements } from '../types';
+import { unitsLabel, formatEventRange } from '../types';
+import type { SchoolEvent, EventType, SchoolUnit } from '../types';
 
-// Prefixos usados pelo dispatcher pra distinguir announcements por etapa.
-const STEP_PREFIXES = {
-  leadership: '📅 Novo evento:',
-  school: '📅 Em 3 dias:',
-  unit: '📅 Amanhã:',
-  dayOf: '📅 Hoje:',
+type Period = 'month' | 'quarter' | 'semester' | 'year';
+type UnitFilter = 'all' | SchoolUnit;
+
+interface EventoRow extends SchoolEvent {
+  // O select traz announcements como join se houver — opcional pra futura integração.
+  announcements?: { id: string; status: string }[];
+}
+
+const PERIOD_LABEL: Record<Period, string> = {
+  month: 'Mês',
+  quarter: 'Trimestre',
+  semester: 'Semestre',
+  year: 'Ano',
 };
 
-// Cor por status do announcement (chip da etapa de comunicação).
-const STATUS_TONE: Record<string, string> = {
-  scheduled: 'bg-warning/10 text-warning',
-  sending: 'bg-tom/15 text-tom',
-  sent: 'bg-success/15 text-success',
-  cancelled: 'bg-bg-elevated text-fg-muted line-through',
-};
-
-const STATUS_ICON: Record<string, string> = {
-  scheduled: '⏳',
-  sending: '📤',
-  sent: '✓',
-  cancelled: '✗',
-};
-
-const STATUS_OPTIONS = [
-  { value: 'active', label: 'Ativos' },
-  { value: 'cancelled', label: 'Cancelados' },
-  { value: '', label: 'Todos' },
+const PERIOD_OPTIONS: { value: Period; label: string }[] = [
+  { value: 'month', label: 'Mês' },
+  { value: 'quarter', label: 'Trimestre' },
+  { value: 'semester', label: 'Semestre' },
+  { value: 'year', label: 'Ano' },
 ];
 
-function monthKey(date: string): string {
-  return date.slice(0, 7); // YYYY-MM
+const UNIT_OPTIONS: { value: UnitFilter; label: string }[] = [
+  { value: 'all', label: 'Todas as unidades' },
+  { value: 'barra', label: 'Barra' },
+  { value: 'recreio', label: 'Recreio' },
+  { value: 'campo_grande', label: 'Campo Grande' },
+];
+
+const MONTHS_PT = [
+  'janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+  'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro',
+];
+
+function ymdToday(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-function monthLabel(key: string): string {
-  const [y, m] = key.split('-');
-  const d = new Date(Number(y), Number(m) - 1, 1);
-  return d.toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
+function ymdAt(year: number, month: number, day: number): string {
+  return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
-function daysUntil(eventDate: string): number {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const ev = new Date(eventDate + 'T00:00:00');
-  return Math.round((ev.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+function lastDayOfMonth(year: number, month: number): number {
+  return new Date(year, month + 1, 0).getDate();
 }
 
-function proximityBadge(eventDate: string): { label: string; tone: 'success' | 'warning' | 'neutral' } | null {
+/**
+ * Range [inicio, fim] em YMD para o período + ref escolhidos.
+ * - month: 1 mês completo
+ * - quarter: 3 meses (jan-mar, abr-jun, jul-set, out-dez)
+ * - semester: 6 meses (jan-jun, jul-dez)
+ * - year: ano todo
+ */
+function periodRange(period: Period, refYear: number, refMonth: number): { from: string; to: string; label: string } {
+  if (period === 'month') {
+    const last = lastDayOfMonth(refYear, refMonth);
+    return {
+      from: ymdAt(refYear, refMonth, 1),
+      to: ymdAt(refYear, refMonth, last),
+      label: `${MONTHS_PT[refMonth]} ${refYear}`,
+    };
+  }
+  if (period === 'quarter') {
+    const qIdx = Math.floor(refMonth / 3); // 0..3
+    const startMonth = qIdx * 3;
+    const endMonth = startMonth + 2;
+    const last = lastDayOfMonth(refYear, endMonth);
+    return {
+      from: ymdAt(refYear, startMonth, 1),
+      to: ymdAt(refYear, endMonth, last),
+      label: `${qIdx + 1}º trimestre · ${refYear}`,
+    };
+  }
+  if (period === 'semester') {
+    const isFirst = refMonth < 6;
+    const startMonth = isFirst ? 0 : 6;
+    const endMonth = isFirst ? 5 : 11;
+    const last = lastDayOfMonth(refYear, endMonth);
+    return {
+      from: ymdAt(refYear, startMonth, 1),
+      to: ymdAt(refYear, endMonth, last),
+      label: `${isFirst ? '1º' : '2º'} semestre · ${refYear}`,
+    };
+  }
+  // year
+  return {
+    from: ymdAt(refYear, 0, 1),
+    to: ymdAt(refYear, 11, 31),
+    label: `${refYear}`,
+  };
+}
+
+function shiftPeriod(period: Period, refYear: number, refMonth: number, dir: -1 | 1): { y: number; m: number } {
+  let y = refYear;
+  let m = refMonth;
+  const step =
+    period === 'month' ? 1 :
+    period === 'quarter' ? 3 :
+    period === 'semester' ? 6 :
+    12;
+  m = m + dir * step;
+  while (m < 0) { m += 12; y -= 1; }
+  while (m > 11) { m -= 12; y += 1; }
+  return { y, m };
+}
+
+function daysUntil(ymd: string): number {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const d = new Date(ymd + 'T00:00:00');
+  return Math.round((d.getTime() - today.getTime()) / 86400000);
+}
+
+function proximityBadge(eventDate: string, endDate: string | null) {
+  // Considera evento "ativo" se hoje está dentro do range
+  const today = ymdToday();
+  if (endDate && today >= eventDate && today <= endDate) {
+    return { label: 'Em curso', tone: 'tom' as const };
+  }
   const d = daysUntil(eventDate);
-  if (d === 0) return { label: 'Hoje', tone: 'warning' };
-  if (d === 1) return { label: 'Amanhã', tone: 'warning' };
-  if (d > 0 && d <= 7) return { label: `Em ${d} dias`, tone: 'success' };
+  if (d === 0) return { label: 'Hoje', tone: 'warning' as const };
+  if (d === 1) return { label: 'Amanhã', tone: 'warning' as const };
+  if (d > 0 && d <= 7) return { label: `Em ${d} dias`, tone: 'success' as const };
   return null;
 }
 
-function StepChip({
-  label,
-  announcement,
-}: {
-  label: string;
-  announcement?: { status: string; scheduled_at: string | null };
-}) {
-  if (!announcement) {
-    return (
-      <span className="text-caption text-fg-muted opacity-50">
-        {label} —
-      </span>
-    );
-  }
-  const icon = STATUS_ICON[announcement.status] ?? '·';
-  const tone = STATUS_TONE[announcement.status] ?? '';
-  const when = announcement.scheduled_at
-    ? new Date(announcement.scheduled_at).toLocaleDateString('pt-BR', {
-        day: '2-digit',
-        month: '2-digit',
-      })
-    : 'agora';
-  return (
-    <span className={['text-caption rounded-md px-2 py-0.5', tone].join(' ')}>
-      {label} {icon} {when}
-    </span>
-  );
+function monthKey(ymd: string): string {
+  return ymd.slice(0, 7); // YYYY-MM
+}
+
+function monthHeader(key: string): string {
+  const [y, m] = key.split('-').map(Number);
+  return `${MONTHS_PT[m - 1]} ${y}`;
 }
 
 export function AgendaEscolar() {
-  const { collaborator } = useAuth();
+  const { collaborator, role } = useAuth();
   const queryClient = useQueryClient();
-  const [sheetOpen, setSheetOpen] = useState(false);
-  const [statusFilter, setStatusFilter] = useState('active');
-  const [monthFilter, setMonthFilter] = useState('');
+  const canEdit = role === 'director' || role === 'coordinator';
 
-  const { data: events = [], isLoading, error: queryError, refetch } = useQuery({
-    queryKey: ['agenda-escolar'],
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [period, setPeriod] = useState<Period>('month');
+  const [unitFilter, setUnitFilter] = useState<UnitFilter>('all');
+
+  const today = new Date();
+  const [refYear, setRefYear] = useState(today.getFullYear());
+  const [refMonth, setRefMonth] = useState(today.getMonth());
+
+  const range = useMemo(() => periodRange(period, refYear, refMonth), [period, refYear, refMonth]);
+
+  // Tipos vêm do banco (cores + emojis).
+  const typesQ = useQuery({
+    queryKey: ['event-types'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('event_types')
+        .select('*')
+        .order('sort_order');
+      if (error) throw error;
+      return (data ?? []) as EventType[];
+    },
+  });
+  const typesById = useMemo(() => {
+    const map = new Map<string, EventType>();
+    for (const t of typesQ.data ?? []) map.set(t.id, t);
+    return map;
+  }, [typesQ.data]);
+
+  const { data: rawEvents = [], isLoading, error: queryError, refetch } = useQuery({
+    queryKey: ['agenda-escolar', range.from, range.to],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('school_events')
-        .select('*, announcements(id, body, status, scheduled_at, source_event_id)')
+        .select('*')
+        .gte('event_date', range.from)
+        .lte('event_date', range.to)
         .order('event_date', { ascending: true })
-        .limit(60);
+        .limit(200);
       if (error) throw error;
-      return (data ?? []) as SchoolEventWithAnnouncements[];
+      return (data ?? []) as EventoRow[];
     },
   });
+
+  // Filtro de unidade no client: evento sem unidades = escola toda (sempre aparece).
+  const events = useMemo(() => {
+    if (unitFilter === 'all') return rawEvents;
+    return rawEvents.filter(ev => {
+      const list = (ev.units && ev.units.length > 0) ? ev.units : (ev.unit ? [ev.unit] : []);
+      if (list.length === 0) return true;
+      return list.includes(unitFilter);
+    });
+  }, [rawEvents, unitFilter]);
 
   const cancelMutation = useMutation({
     mutationFn: async (eventId: string) => {
@@ -145,70 +236,101 @@ export function AgendaEscolar() {
     },
   });
 
-  const months = useMemo(() => {
-    const set = new Set<string>();
-    for (const ev of events) set.add(monthKey(ev.event_date));
-    return [...set].sort();
+  // Agrupamento por mês para renderização.
+  const grouped = useMemo(() => {
+    const map = new Map<string, EventoRow[]>();
+    for (const ev of events) {
+      const key = monthKey(ev.event_date);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(ev);
+    }
+    return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   }, [events]);
 
-  const filtered = useMemo(() => {
-    return events.filter(ev => {
-      if (statusFilter && ev.status !== statusFilter) return false;
-      if (monthFilter && monthKey(ev.event_date) !== monthFilter) return false;
-      return true;
-    });
-  }, [events, statusFilter, monthFilter]);
+  const totalCount = events.length;
+  const activeCount = events.filter(e => e.status === 'active').length;
 
-  const activeFilters = (statusFilter && statusFilter !== 'active' ? 1 : 0) + (monthFilter ? 1 : 0);
+  function goToday() {
+    const d = new Date();
+    setRefYear(d.getFullYear());
+    setRefMonth(d.getMonth());
+  }
 
   return (
     <div className="space-y-md">
       <PageHeader
         title="Agenda Escolar"
-        subtitle="Eventos institucionais da escola"
+        subtitle={totalCount > 0 ? `${activeCount} ativos · ${totalCount - activeCount} cancelados` : 'Calendário institucional'}
         backTo="/mais"
-        right={
+        right={canEdit ? (
           <Link
             to="/mais/agenda-escolar/equipe"
             className="text-caption text-tom underline focus-ring rounded-sm whitespace-nowrap"
           >
             Equipe
           </Link>
-        }
+        ) : null}
       />
 
-      {/* Filtros */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <div className="flex-1 min-w-[140px]">
-          <CustomSelect
-            value={statusFilter}
-            options={STATUS_OPTIONS}
-            onChange={setStatusFilter}
-            size="sm"
-            placeholder="Status"
-          />
+      {/* Período (4 chips) */}
+      <div className="flex items-center gap-1 overflow-x-auto -mx-md px-md">
+        {PERIOD_OPTIONS.map(p => {
+          const active = p.value === period;
+          return (
+            <button
+              key={p.value}
+              type="button"
+              onClick={() => setPeriod(p.value)}
+              className={[
+                'shrink-0 h-8 px-3 rounded-full text-body-sm font-medium transition-colors focus-ring',
+                active
+                  ? 'bg-tom text-black'
+                  : 'bg-bg-elevated text-fg-muted hover:text-fg',
+              ].join(' ')}
+            >
+              {p.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Navegação do período + filtro de unidade */}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => { const r = shiftPeriod(period, refYear, refMonth, -1); setRefYear(r.y); setRefMonth(r.m); }}
+          aria-label={`${PERIOD_LABEL[period]} anterior`}
+          className="h-9 w-9 grid place-items-center rounded-full bg-bg-elevated text-fg-muted hover:text-fg focus-ring"
+        >
+          <ChevronLeft size={16} />
+        </button>
+        <div className="flex-1 text-center">
+          <p className="text-body font-medium tabular-nums capitalize">{range.label}</p>
         </div>
-        <div className="flex-1 min-w-[140px]">
-          <CustomSelect
-            value={monthFilter}
-            options={[
-              { value: '', label: 'Todos os meses' },
-              ...months.map(m => ({ value: m, label: monthLabel(m) })),
-            ]}
-            onChange={setMonthFilter}
-            size="sm"
-            placeholder="Mês"
-          />
-        </div>
-        {activeFilters > 0 && (
-          <button
-            type="button"
-            onClick={() => { setStatusFilter('active'); setMonthFilter(''); }}
-            className="text-caption text-brand underline focus-ring rounded-sm"
-          >
-            Limpar
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={() => { const r = shiftPeriod(period, refYear, refMonth, 1); setRefYear(r.y); setRefMonth(r.m); }}
+          aria-label={`${PERIOD_LABEL[period]} seguinte`}
+          className="h-9 w-9 grid place-items-center rounded-full bg-bg-elevated text-fg-muted hover:text-fg focus-ring"
+        >
+          <ChevronRight size={16} />
+        </button>
+        <button
+          type="button"
+          onClick={goToday}
+          className="text-caption text-tom underline focus-ring rounded-sm px-1"
+        >
+          Hoje
+        </button>
+      </div>
+
+      <div>
+        <CustomSelect
+          value={unitFilter}
+          options={UNIT_OPTIONS as { value: string; label: string }[]}
+          onChange={(v) => setUnitFilter(v as UnitFilter)}
+          size="sm"
+        />
       </div>
 
       {/* Conteúdo */}
@@ -220,88 +342,103 @@ export function AgendaEscolar() {
           description={(queryError as Error).message}
           onRetry={() => refetch()}
         />
-      ) : filtered.length === 0 ? (
+      ) : grouped.length === 0 ? (
         <EmptyState
-          title={events.length === 0 ? 'Nenhum evento ainda' : 'Nenhum resultado'}
-          description={events.length === 0
-            ? 'Use o + pra criar o primeiro evento institucional da escola.'
-            : 'Ajuste os filtros ou limpa pra ver tudo.'}
+          title="Nenhum evento neste período"
+          description={canEdit
+            ? `Use o + pra criar um evento em ${range.label}.`
+            : `Nada cadastrado para ${range.label} ainda.`}
         />
       ) : (
-        <ul className="space-y-3">
-          {filtered.map(ev => {
-            const anns = ev.announcements ?? [];
-            const leadAnn = anns.find(a => a.body.startsWith(STEP_PREFIXES.leadership));
-            const schoolAnn = anns.find(a => a.body.startsWith(STEP_PREFIXES.school));
-            const unitAnn = anns.find(a => a.body.startsWith(STEP_PREFIXES.unit));
-            const dayOfAnn = anns.find(a => a.body.startsWith(STEP_PREFIXES.dayOf));
-            const isCancelled = ev.status === 'cancelled';
-            const prox = !isCancelled ? proximityBadge(ev.event_date) : null;
-
-            const menuItems: Array<{ label: string; onClick: () => void; danger?: boolean; confirm?: string }> = [];
-            if (!isCancelled) {
-              menuItems.push({
-                label: 'Cancelar evento',
-                danger: true,
-                confirm: 'Cancelar? Comunicações pendentes também serão canceladas.',
-                onClick: () => cancelMutation.mutate(ev.id),
-              });
-            }
-            return (
-              <li
-                key={ev.id}
-                className={[
-                  'relative bg-bg-surface rounded-xl border border-border p-4',
-                  'transition-all duration-150',
-                  isCancelled
-                    ? 'opacity-60'
-                    : 'hover:border-tom/40 hover:shadow-[0_0_0_1px_rgba(157,184,91,0.15),0_8px_24px_-12px_rgba(157,184,91,0.30)]',
-                ].join(' ')}
-              >
-                <Link to={`/mais/eventos/${ev.id}`} className="block space-y-2 pr-8">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <p className={['text-body font-medium', isCancelled ? 'line-through' : ''].join(' ')}>
-                          {ev.title}
-                        </p>
-                        {prox && <Badge tone={prox.tone}>{prox.label}</Badge>}
-                        {isCancelled && <Badge tone="danger">Cancelado</Badge>}
-                      </div>
-                      <p className="text-body-sm text-fg-muted mt-0.5">
-                        {formatEventDate(ev.event_date, ev.start_time)}
-                        {ev.location ? ` · ${ev.location}` : ''}
-                      </p>
-                    </div>
-                    <span className="text-caption bg-bg-elevated border border-border rounded-md px-2 py-0.5 whitespace-nowrap shrink-0">
-                      {unitLabel(ev.unit)}
-                    </span>
-                  </div>
-                  {!isCancelled && (
-                    <div className="flex flex-wrap gap-2">
-                      {ev.notify_leadership && <StepChip label="Liderança" announcement={leadAnn} />}
-                      {ev.notify_school && <StepChip label="Escola" announcement={schoolAnn} />}
-                      {ev.notify_unit && <StepChip label="Unidade" announcement={unitAnn} />}
-                      {ev.notify_day_of && <StepChip label="No dia" announcement={dayOfAnn} />}
-                    </div>
-                  )}
-                </Link>
-                {menuItems.length > 0 && (
-                  <div className="absolute top-3 right-3">
-                    <RowMenu items={menuItems} />
-                  </div>
-                )}
-              </li>
-            );
-          })}
-        </ul>
+        <div className="space-y-lg">
+          {grouped.map(([key, evs]) => (
+            <section key={key} className="space-y-2">
+              <h3 className="text-body-sm uppercase tracking-wide text-fg-muted font-semibold sticky top-0 bg-bg-app py-1 z-10">
+                {monthHeader(key)}
+              </h3>
+              <ul className="space-y-3">
+                {evs.map(ev => {
+                  const type = typesById.get(ev.event_type);
+                  const isCancelled = ev.status === 'cancelled';
+                  const prox = !isCancelled ? proximityBadge(ev.event_date, ev.end_date) : null;
+                  const items: Array<{ label: string; onClick: () => void; danger?: boolean; confirm?: string }> = [];
+                  if (canEdit && !isCancelled) {
+                    items.push({
+                      label: 'Cancelar evento',
+                      danger: true,
+                      confirm: 'Cancelar? Comunicações pendentes também serão canceladas.',
+                      onClick: () => cancelMutation.mutate(ev.id),
+                    });
+                  }
+                  return (
+                    <li
+                      key={ev.id}
+                      className={[
+                        'relative bg-bg-surface rounded-xl border border-border overflow-hidden',
+                        'transition-all duration-150',
+                        isCancelled ? 'opacity-60' : 'hover:border-tom/40 hover:shadow-[0_0_0_1px_rgba(157,184,91,0.15),0_8px_24px_-12px_rgba(157,184,91,0.30)]',
+                      ].join(' ')}
+                    >
+                      <Link to={`/mais/eventos/${ev.id}`} className="flex gap-3 p-3 pr-10">
+                        {ev.image_url && (
+                          <img
+                            src={ev.image_url}
+                            alt=""
+                            className="w-16 h-16 rounded-md object-cover shrink-0 border border-border"
+                          />
+                        )}
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span
+                              className="text-caption rounded-md px-1.5 py-0.5 font-medium"
+                              style={{
+                                backgroundColor: (type?.color_hex ?? '#6B7280') + '22',
+                                color: type?.color_hex ?? '#6B7280',
+                              }}
+                            >
+                              {type?.emoji ?? '📅'} {type?.label ?? 'Outro'}
+                            </span>
+                            {prox && <Badge tone={prox.tone === 'tom' ? 'success' : prox.tone}>{prox.label}</Badge>}
+                            {isCancelled && <Badge tone="danger">Cancelado</Badge>}
+                          </div>
+                          <p className={['text-body font-medium', isCancelled ? 'line-through' : ''].join(' ')}>
+                            {ev.title}
+                          </p>
+                          <p className="text-caption text-fg-muted tabular-nums">
+                            {formatEventRange(ev.event_date, ev.end_date)}
+                            {!ev.is_all_day && ev.start_time ? ` · ${ev.start_time.slice(0, 5)}` : ''}
+                            {ev.is_all_day ? ' · dia inteiro' : ''}
+                          </p>
+                          <div className="flex items-center gap-2 flex-wrap text-caption text-fg-muted">
+                            <span className="inline-flex items-center gap-0.5">
+                              <MapPin size={11} />
+                              {unitsLabel(ev.units, ev.unit)}
+                            </span>
+                            {ev.location && <span>· {ev.location}</span>}
+                          </div>
+                        </div>
+                      </Link>
+                      {items.length > 0 && (
+                        <div className="absolute top-2 right-2">
+                          <RowMenu items={items} />
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          ))}
+        </div>
       )}
 
-      <Fab
-        onClick={() => setSheetOpen(true)}
-        label="Novo"
-        ariaLabel="Novo evento"
-      />
+      {canEdit && (
+        <Fab
+          onClick={() => setSheetOpen(true)}
+          label="Novo"
+          ariaLabel="Novo evento"
+        />
+      )}
 
       <EventoSheet open={sheetOpen} onClose={() => setSheetOpen(false)} />
     </div>

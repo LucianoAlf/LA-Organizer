@@ -171,7 +171,7 @@ function nameFor(collab) {
 // Sprint 22.36 Fatia 2 — Adicionado: delegatedTasks (tarefas que ESTE user atribuiu
 // pra outros), todayChecklists (checklists operacionais de hoje com %).
 // Antes ficavam fora do contexto e TOM dizia "não tenho esse dato" no relatório.
-function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habits, events, delegatedTasks, todayChecklists, teamAdherence, personalChecklists, teamTodayChecklists, teamExpectedTemplates) {
+function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habits, events, delegatedTasks, todayChecklists, teamAdherence, personalChecklists, teamTodayChecklists, teamExpectedTemplates, schoolEvents = [], eventTypes = []) {
   const nickname = nameFor(collab);
   const lines = ['# 📌 CONTEXTO DESTA INTERAÇÃO', ''];
   const fn = collab.function_title ? ', ' + collab.function_title : '';
@@ -471,6 +471,34 @@ function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habi
     }
   }
 
+  // Sprint Agenda v2 — eventos institucionais dos próximos 30 dias (toda equipe).
+  // Skill `agenda-escolar.md` usa pra responder "o que vai acontecer esse mês?",
+  // "tem evento essa semana?", "qual a agenda da Barra?" etc.
+  if (schoolEvents && schoolEvents.length) {
+    const typeMap = new Map((eventTypes || []).map(t => [t.id, t]));
+    const fmtBR = (ymd) => { const [y, m, d] = ymd.split('-'); return `${d}/${m}`; };
+    const unitsLabel = (units, unit) => {
+      const list = (units && units.length > 0) ? units : (unit ? [unit] : []);
+      if (list.length === 0) return 'escola toda';
+      if (list.length === 3) return 'todas';
+      const map = { barra: 'Barra', recreio: 'Recreio', campo_grande: 'Campo Grande' };
+      return list.map(u => map[u] || u).join('+');
+    };
+    lines.push('', `**📅 Agenda — próximos 30 dias (${schoolEvents.length} eventos):**`);
+    schoolEvents.slice(0, 25).forEach(ev => {
+      const t = typeMap.get(ev.event_type);
+      const emoji = (t && t.emoji) || '📅';
+      const range = ev.end_date && ev.end_date !== ev.event_date
+        ? `${fmtBR(ev.event_date)}→${fmtBR(ev.end_date)}`
+        : fmtBR(ev.event_date);
+      const time = (!ev.is_all_day && ev.start_time) ? ` ${ev.start_time.slice(0, 5)}` : '';
+      const where = unitsLabel(ev.units, ev.unit);
+      const loc = ev.location ? ` · ${ev.location}` : '';
+      lines.push(`• ${emoji} [event_id=${ev.id}] *${ev.title}* — ${range}${time} · ${where}${loc}`);
+      if (ev.description) lines.push(`  ↳ ${ev.description.slice(0, 140)}`);
+    });
+  }
+
   return lines.join('\n');
 }
 
@@ -736,6 +764,22 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
     return { name: 'operacoes-tecnicas', body: loadSkill('operacoes-tecnicas') };
   }
 
+  // Sprint Agenda v2 — Priority 4.85: AGENDA ESCOLAR (eventos institucionais).
+  // Captura ANTES de listas-pessoais e checklist-tarefas pra "agenda do mês",
+  // "tem evento essa semana?", "quando é o show?", "tem recesso?" virarem
+  // consulta na agenda institucional, não criação de task ou lista pessoal.
+  const lmAgenda = (lastUserMessage || '').toLowerCase();
+  const agendaTopicRe = /\b(agenda|calend[áa]rio|evento(?:s)?|show|workshop|oficina(?:s)?|recesso|f[eé]rias|matr[íi]cula|avalia[çc][ãa]o|reuni[ãa]o\s+(?:de\s+)?pais|festa\s+(?:de\s+)?pais|aula\s+inaugural|apresenta[çc][ãa]o)\b/i;
+  const agendaQuestionRe = /\b(o\s+que\s+(?:vai|tem)|quando\s+(?:é|ser[áa])|tem\s+(?:algum)?|quais?\s+(?:s[ãa]o|os)|qual\s+(?:é|a)|m[eê]s\s+que\s+vem|essa\s+semana|esse\s+m[eê]s|trimestre|semestre|este\s+ano|do\s+ano)\b/i;
+  const agendaDispatchRe = /\b(manda|dispara|comunica|envia)\s+(?:a\s+|o\s+)?(?:resumo\s+(?:da\s+)?)?(?:agenda|calend[áa]rio)\s+(?:do\s+m[eê]s|do\s+trimestre|do\s+semestre|do\s+ano|pra\s+(?:o\s+)?(?:time|equipe|grupo))/i;
+  if (
+    agendaDispatchRe.test(lmAgenda) ||
+    (agendaTopicRe.test(lmAgenda) && agendaQuestionRe.test(lmAgenda)) ||
+    /\bagenda\s+(?:do|da)\s+(?:m[eê]s|trimestre|semestre|ano|barra|recreio|campo\s+grande)\b/i.test(lmAgenda)
+  ) {
+    return { name: 'agenda-escolar', body: loadSkill('agenda-escolar') };
+  }
+
   // Sprint 22.46 — Priority 4.9: listas pessoais (mercado, viagem, remedios, geral).
   // Captura ANTES de checklist-tarefas pra "adiciona X na lista de mercado" virar
   // PERSONAL_LIST_ACTION, nao TASK_CREATE. Triggers no skill listas-pessoais.md.
@@ -813,6 +857,8 @@ async function fetchCollaboratorContext(collaborator) {
     personalChecklistsRes,
     teamTodayChecklistsRes,
     teamExpectedTemplatesRes,
+    schoolEventsRes,
+    eventTypesRes,
   ] = await Promise.all([
     supabase.from('collaborator_profiles').select('*').eq('collaborator_id', id).maybeSingle(),
     supabase.from('collaborator_memory')
@@ -918,6 +964,23 @@ async function fetchCollaboratorContext(collaborator) {
           .select('id, name, function_role, shift, unit, days_of_week, dispatch_time')
           .eq('is_active', true)
       : Promise.resolve({ data: [], error: null }),
+    // Sprint Agenda v2 — eventos institucionais dos próximos 30 dias.
+    // Visível pra TODOS os colaboradores (resolve dor da Barra). Skill `agenda-escolar.md`
+    // usa pra responder "o que vai acontecer esse mês?", "tem evento na semana?", etc.
+    (() => {
+      const horizon = new Date();
+      horizon.setDate(horizon.getDate() + 30);
+      const horizonYmd = horizon.toISOString().slice(0, 10);
+      return supabase.from('school_events')
+        .select('id, title, event_type, event_date, end_date, start_time, is_all_day, units, unit, location, description, status')
+        .eq('status', 'active')
+        .gte('event_date', today)
+        .lte('event_date', horizonYmd)
+        .order('event_date', { ascending: true })
+        .limit(40);
+    })(),
+    // Tipos com emoji/cor pra renderização do bloco.
+    supabase.from('event_types').select('id, label, emoji').order('sort_order'),
   ]);
 
   let activeProjects = [];
@@ -965,6 +1028,8 @@ async function fetchCollaboratorContext(collaborator) {
       const dow = jsDow === 0 ? 7 : jsDow;
       return all.filter(t => Array.isArray(t.days_of_week) && t.days_of_week.includes(dow));
     })(),
+    schoolEvents: schoolEventsRes.data || [],
+    eventTypes: eventTypesRes.data || [],
     todayDate: today,
   };
 }
@@ -1472,7 +1537,7 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     eventsForCtx = eventsForCtx.filter(e => e.context === 'work');
   }
   // briefing_diario / daily_briefing: mantém todos os events (sem filtro).
-  const baseCtx = buildContext(collaborator, ctx.memories, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx, ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || [], ctx.teamTodayChecklists || [], ctx.teamExpectedTemplates || []);
+  const baseCtx = buildContext(collaborator, ctx.memories, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx, ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || [], ctx.teamTodayChecklists || [], ctx.teamExpectedTemplates || [], ctx.schoolEvents || [], ctx.eventTypes || []);
   const pending = renderPendingDecisions(ctx.notifications);
 
   // Sprint 10.1 hotfix-2 (Plano C): resolve temporal de "amanhã"/"hoje" + horário
@@ -1659,7 +1724,7 @@ async function composeSystemPrompt(collaborator, ctx) {
   const blocks = [
     BLOCK_RULES,
     BLOCK_IDENTITY,
-    buildContext(collaborator, ctx.memories || [], ctx.prefs, ctx.todayTasks || [], ctx.activeProjects || [], lastMsgAge, ctx.habits || [], ctx.todayEvents || [], ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || [], ctx.teamTodayChecklists || [], ctx.teamExpectedTemplates || []),
+    buildContext(collaborator, ctx.memories || [], ctx.prefs, ctx.todayTasks || [], ctx.activeProjects || [], lastMsgAge, ctx.habits || [], ctx.todayEvents || [], ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || [], ctx.teamTodayChecklists || [], ctx.teamExpectedTemplates || [], ctx.schoolEvents || [], ctx.eventTypes || []),
     skillBlock,
   ].filter(Boolean);
   let syncPrompt = blocks.join('\n\n---\n\n');

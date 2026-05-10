@@ -1671,6 +1671,116 @@ async function run(opts = {}) {
   } catch (err) {
     console.error('[Dispatcher] dispatchAnnouncements erro:', err.message);
   }
+
+  // Sprint Agenda v2 — dispatch automático do resumo mensal da agenda escolar
+  // (dia 1 do mês às 09:00 BRT, pra toda equipe). Idempotente via header do body.
+  try {
+    await dispatchMonthlyAgenda(new Date());
+  } catch (err) {
+    console.error('[Dispatcher] dispatchMonthlyAgenda erro:', err.message);
+  }
+}
+
+// Sprint Agenda v2 — Dispara o resumo mensal da agenda institucional pra toda equipe.
+// Roda dia 1 do mês às 09:00 BRT. Idempotente: checa se já existe um announcement
+// hoje com header "📅 Agenda da escola — {mês}/{ano}".
+async function dispatchMonthlyAgenda(now = new Date()) {
+  void now;
+  const sp = nowSaoPaulo();
+  // sp = { hour, minute, dow, ymd }. Derivamos day/month/year do ymd.
+  const [yearStr, monthStr, dayStr] = sp.ymd.split('-');
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  const day = Number(dayStr);
+
+  if (day !== 1) return;
+  if (currentSlot(sp) !== timeToSlot('09:00')) return;
+
+  const MONTHS_PT = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+                     'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+  const monthLabel = MONTHS_PT[month - 1];
+  const headerLine = `📅 *Agenda da escola — ${monthLabel}/${year}*`;
+
+  // Idempotência: já disparou hoje?
+  const todayStart = `${sp.ymd}T00:00:00-03:00`;
+  const { data: dup } = await supabase
+    .from('announcements')
+    .select('id')
+    .gte('created_at', todayStart)
+    .ilike('body', `${headerLine}%`)
+    .limit(1);
+  if (dup && dup.length) {
+    console.log('[MonthlyAgenda] já disparado hoje, skip');
+    return;
+  }
+
+  // Eventos do mês corrente.
+  const firstDay = `${yearStr}-${monthStr}-01`;
+  const lastDayNum = new Date(year, month, 0).getDate();
+  const lastDay = `${yearStr}-${monthStr}-${String(lastDayNum).padStart(2, '0')}`;
+
+  const [{ data: events }, { data: types }] = await Promise.all([
+    supabase.from('school_events')
+      .select('id, title, event_type, event_date, end_date, start_time, is_all_day, units, unit, location')
+      .eq('status', 'active')
+      .gte('event_date', firstDay)
+      .lte('event_date', lastDay)
+      .order('event_date', { ascending: true })
+      .limit(60),
+    supabase.from('event_types').select('id, emoji'),
+  ]);
+
+  if (!events || events.length === 0) {
+    console.log('[MonthlyAgenda] sem eventos no mês, skip dispatch');
+    return;
+  }
+
+  const emojiBy = new Map((types || []).map(t => [t.id, t.emoji]));
+  const fmt = (ymd) => { const [, m, d] = ymd.split('-'); return `${d}/${m}`; };
+
+  const lines = [headerLine, ''];
+  for (const ev of events) {
+    const emoji = emojiBy.get(ev.event_type) || '📅';
+    const range = (ev.end_date && ev.end_date !== ev.event_date)
+      ? `${fmt(ev.event_date)} a ${fmt(ev.end_date)}`
+      : fmt(ev.event_date);
+    const time = (!ev.is_all_day && ev.start_time) ? ` às ${ev.start_time.slice(0, 5)}` : '';
+    const loc = ev.location ? ` · ${ev.location}` : '';
+    lines.push(`${emoji} *${ev.title}* — ${range}${time}${loc}`);
+  }
+  lines.push('', '_Qualquer dúvida sobre a agenda, é só me perguntar._');
+
+  // Pega um director qualquer pra usar como created_by (RLS permite director).
+  const { data: director } = await supabase
+    .from('collaborators')
+    .select('id')
+    .eq('role', 'director')
+    .eq('is_active', true)
+    .limit(1)
+    .maybeSingle();
+  if (!director) {
+    console.warn('[MonthlyAgenda] sem director ativo — skip');
+    return;
+  }
+
+  const body = lines.join('\n');
+  const { data: ann, error: annErr } = await supabase
+    .from('announcements')
+    .insert({
+      created_by: director.id,
+      body,
+      audience: { all: true },
+      status: 'scheduled',
+      scheduled_at: null,
+    })
+    .select('id')
+    .single();
+  if (annErr) {
+    console.error('[MonthlyAgenda] erro ao criar announcement:', annErr.message);
+    return;
+  }
+  console.log(`[MonthlyAgenda] announcement criado id=${ann.id.slice(0,8)} eventos=${events.length}`);
+  // Jobs serão criados na próxima volta do dispatchAnnouncements (lazy).
 }
 
 // Compute YMD for "today + N days" in America/Sao_Paulo.
@@ -2383,4 +2493,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { run, dispatchChecklists, dispatchAnnouncements, remindUnconfirmedAnnouncements, notifyCoordinators, remindEventTasks, remindOperationalTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined, isFirstMondayOfMonth, isLastFridayOfMonth, listLeadership, checkMonthlyPlanning, checkMonthlyClosing };
+module.exports = { run, dispatchChecklists, dispatchAnnouncements, remindUnconfirmedAnnouncements, notifyCoordinators, remindEventTasks, remindOperationalTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined, isFirstMondayOfMonth, isLastFridayOfMonth, listLeadership, checkMonthlyPlanning, checkMonthlyClosing, dispatchMonthlyAgenda };

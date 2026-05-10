@@ -5,7 +5,9 @@ import { useAuth } from '../contexts/AuthContext';
 import { BottomSheet } from './BottomSheet';
 import { Button } from './Button';
 import { DateTimeInput } from './DateTimeInput';
-import type { AnnouncementAudience } from '../types';
+import { CustomSelect } from './CustomSelect';
+import { formatEventRange } from '../types';
+import type { AnnouncementAudience, SchoolEvent } from '../types';
 
 interface Props {
   open: boolean;
@@ -25,6 +27,7 @@ interface Props {
     attachment_mime?: string | null;
     attachment_filename?: string | null;
     attachment_size_bytes?: number | null;
+    source_event_id?: string | null;
   } | null;
 }
 
@@ -86,7 +89,38 @@ export function ComunicadoSheet({ open, onClose, initial, editTarget }: Props) {
   const [requiresConfirmation, setRequiresConfirmation] = useState(false);
   const [attachment, setAttachment] = useState<Attachment | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [linkedEventId, setLinkedEventId] = useState<string>('');
   const [error, setError] = useState('');
+
+  // Eventos institucionais futuros (próximos 90 dias) pra picker de vínculo opcional.
+  const eventsQ = useQuery({
+    queryKey: ['comunicado-sheet-events'],
+    queryFn: async () => {
+      const today = new Date().toISOString().slice(0, 10);
+      const horizon = new Date();
+      horizon.setDate(horizon.getDate() + 90);
+      const horizonYmd = horizon.toISOString().slice(0, 10);
+      const { data, error } = await supabase
+        .from('school_events')
+        .select('id, title, event_date, end_date')
+        .eq('status', 'active')
+        .gte('event_date', today)
+        .lte('event_date', horizonYmd)
+        .order('event_date', { ascending: true })
+        .limit(60);
+      if (error) throw error;
+      return (data ?? []) as Pick<SchoolEvent, 'id' | 'title' | 'event_date' | 'end_date'>[];
+    },
+    enabled: open,
+  });
+
+  const eventOptions = [
+    { value: '', label: 'Sem vínculo' },
+    ...(eventsQ.data ?? []).map(ev => ({
+      value: ev.id,
+      label: `${formatEventRange(ev.event_date, ev.end_date)} — ${ev.title}`,
+    })),
+  ];
 
   // Pré-preenche quando abre via "Reenviar" ou "Editar"; reseta quando fecha.
   useEffect(() => {
@@ -116,6 +150,7 @@ export function ComunicadoSheet({ open, onClose, initial, editTarget }: Props) {
             }
           : null,
       );
+      setLinkedEventId(editTarget.source_event_id ?? '');
       setCollabSearch('');
       setError('');
     } else if (initial) {
@@ -132,6 +167,7 @@ export function ComunicadoSheet({ open, onClose, initial, editTarget }: Props) {
       setScheduledAt('');
       setRequiresConfirmation(!!initial.requires_confirmation);
       setAttachment(initial.attachment ?? null);
+      setLinkedEventId('');
       setCollabSearch('');
       setError('');
     } else {
@@ -146,6 +182,7 @@ export function ComunicadoSheet({ open, onClose, initial, editTarget }: Props) {
       setScheduledAt('');
       setRequiresConfirmation(false);
       setAttachment(null);
+      setLinkedEventId('');
       setCollabSearch('');
       setError('');
     }
@@ -296,6 +333,8 @@ export function ComunicadoSheet({ open, onClose, initial, editTarget }: Props) {
             attachment_size_bytes: null,
           };
 
+      const linkFields = { source_event_id: linkedEventId || null };
+
       if (isEdit && editTarget) {
         // UPDATE — só permitido em pending_approval (edit normal)
         // ou scheduled (apenas reagendar/edit body — audience pode ter sido
@@ -308,6 +347,7 @@ export function ComunicadoSheet({ open, onClose, initial, editTarget }: Props) {
             scheduled_at,
             requires_confirmation: requiresConfirmation,
             ...attachmentFields,
+            ...linkFields,
             updated_at: new Date().toISOString(),
           })
           .eq('id', editTarget.id);
@@ -323,6 +363,7 @@ export function ComunicadoSheet({ open, onClose, initial, editTarget }: Props) {
             scheduled_at,
             requires_confirmation: requiresConfirmation,
             ...attachmentFields,
+            ...linkFields,
           })
           .select('id')
           .single();
@@ -398,6 +439,18 @@ export function ComunicadoSheet({ open, onClose, initial, editTarget }: Props) {
             </label>
           )}
           <p className="text-caption text-fg-muted mt-1">JPG, PNG, WEBP, GIF ou PDF — até 10 MB</p>
+        </div>
+
+        <div>
+          <p className="text-caption uppercase font-semibold text-fg-muted mb-1">Vincular a evento (opcional)</p>
+          <CustomSelect
+            value={linkedEventId}
+            options={eventOptions}
+            onChange={setLinkedEventId}
+            size="sm"
+            placeholder="Sem vínculo"
+          />
+          <p className="text-caption text-fg-muted mt-1">Se vincular, o comunicado aparece na página do evento.</p>
         </div>
 
         <div className="space-y-3">

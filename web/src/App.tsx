@@ -46,13 +46,16 @@ export default function App() {
           <Route path="habitos/:id" element={<HabitoDetalhe />} />
           <Route path="checklists" element={<Checklists />} />
 
+          {/* Agenda Escolar — leitura aberta a toda equipe (resolver dor da Barra). */}
+          {/* Criação/edição segue restrita a director/coordinator (validado por RLS no banco). */}
+          <Route path="mais/agenda-escolar" element={<AgendaEscolar />} />
+          <Route path="mais/eventos/:id" element={<EventoDetalhe />} />
+
           <Route element={<ProtectedRoute requireRoles={['director', 'coordinator']} />}>
             <Route path="mais/comunicados" element={<Comunicados />} />
             <Route path="mais/comunicados/:id" element={<ComunicadoDetalhe />} />
-            <Route path="mais/agenda-escolar" element={<AgendaEscolar />} />
             <Route path="mais/agenda-escolar/equipe" element={<ConfigurarEquipe />} />
             <Route path="mais/observabilidade" element={<Observabilidade />} />
-            <Route path="mais/eventos/:id" element={<EventoDetalhe />} />
           </Route>
 
           <Route element={<ProtectedRoute requireRoles={['director', 'coordinator', 'manager']} />}>

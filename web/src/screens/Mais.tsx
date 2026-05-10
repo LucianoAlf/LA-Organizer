@@ -12,6 +12,7 @@ interface Item {
 }
 
 const personalItems: Item[] = [
+  { to: '/mais/agenda-escolar', label: 'Agenda Escolar', hint: 'Calendário institucional da escola' },
   { to: '/configuracoes', label: 'Configurações', hint: 'Horários e intensidade do TOM' },
   { to: '/historico', label: 'Histórico', hint: 'Aderência dos últimos 30 dias' },
 ];
@@ -21,7 +22,6 @@ const coordItems: Item[] = [
   { to: '/mais/aderencia-checklists', label: 'Aderência operacional', hint: 'Checklists por colaborador', requireRoles: ['director', 'manager'] },
   { to: '/mais/operacoes', label: 'Operações', hint: 'Demandas operacionais por departamento', requireRoles: ['director', 'coordinator', 'manager'] },
   { to: '/mais/comunicados', label: 'Comunicados', hint: 'Anúncios para a equipe', requireRoles: ['director', 'coordinator'] },
-  { to: '/mais/agenda-escolar', label: 'Agenda Escolar', hint: 'Eventos e comunicações', requireRoles: ['director', 'coordinator'] },
   { to: '/mais/observabilidade', label: 'Observabilidade', hint: 'Aprovações e métricas de envio', requireRoles: ['director', 'coordinator'] },
 ];
 
