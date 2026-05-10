@@ -72,11 +72,13 @@ function formatDndUntil(iso: string | null): string {
 }
 
 export function Configuracoes() {
-  const { collaborator } = useAuth();
+  const { collaborator, role } = useAuth();
   const qc = useQueryClient();
   const [form, setForm] = useState<Prefs | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [dndOpen, setDndOpen] = useState(false);
+
+  const isLeadership = role === 'director' || role === 'coordinator' || role === 'manager';
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['user_preferences', collaborator?.id],
@@ -202,13 +204,23 @@ export function Configuracoes() {
 
         {/* Rituais mensais */}
         <Section title="Rituais mensais">
-          <Field label="Planejamento mensal" hint="Primeira segunda do mês">
-            <TimeInput value={form.monthly_planning_time}
-              onChange={v => setForm({ ...form, monthly_planning_time: v })} />
+          <Field label="Planejamento mensal">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="inline-flex items-center px-2 py-1 rounded-md bg-tom/15 text-tom text-caption font-semibold">
+                1ª segunda do mês
+              </span>
+              <TimeInput value={form.monthly_planning_time}
+                onChange={v => setForm({ ...form, monthly_planning_time: v })} />
+            </div>
           </Field>
-          <Field label="Fechamento mensal" hint="Última sexta do mês">
-            <TimeInput value={form.monthly_closing_time}
-              onChange={v => setForm({ ...form, monthly_closing_time: v })} />
+          <Field label="Fechamento mensal">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="inline-flex items-center px-2 py-1 rounded-md bg-tom/15 text-tom text-caption font-semibold">
+                Última sexta do mês
+              </span>
+              <TimeInput value={form.monthly_closing_time}
+                onChange={v => setForm({ ...form, monthly_closing_time: v })} />
+            </div>
           </Field>
         </Section>
 
@@ -268,9 +280,11 @@ export function Configuracoes() {
           <Toggle label="Alertas de atraso" hint="Cobra quando passou do prazo"
             value={form.notify_overdue_alerts}
             onChange={v => setForm({ ...form, notify_overdue_alerts: v })} />
-          {/* Sprint futura: 'Resumo do time' — pref existe (notify_team_summary) mas
-              nenhum cron usa pra disparar resumo automatizado da equipe. Ocultar
-              até a feature ser implementada. */}
+          {isLeadership && (
+            <Toggle label="Resumo do time" hint="Recebe panorama da equipe (só liderança)"
+              value={form.notify_team_summary}
+              onChange={v => setForm({ ...form, notify_team_summary: v })} />
+          )}
         </Section>
 
         <div className="flex items-center gap-md">
