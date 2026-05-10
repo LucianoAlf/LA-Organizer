@@ -181,8 +181,8 @@ router.post(['/webhook', '/webhook/:token'], async (req, res) => {
       }
       const r = await vision.analyzeImage(buf, mime, caption);
       if (r.ok) {
-        const captionLine = caption ? `Legenda do usuário: "${caption}"\n` : '';
-        text = `[imagem analisada] ${captionLine}Descrição: ${r.text}`;
+        const captionLine = caption ? `Legenda enviada pelo usuário: "${caption}"\n` : '';
+        text = `[O usuário ACABOU DE ENVIAR uma imagem agora — primeira vez vendo este arquivo. Análise automática:]\n${captionLine}${r.text}`;
         console.log(`[Webhook] image analyzed (${r.text.length} chars)`);
       } else {
         const reasons = {
@@ -214,8 +214,8 @@ router.post(['/webhook', '/webhook/:token'], async (req, res) => {
       }
       const r = await gemini.analyzeMedia(buf, mime, caption);
       if (r.ok) {
-        const captionLine = caption ? `Legenda: "${caption}"\n` : '';
-        text = `[vídeo analisado] ${captionLine}Descrição: ${r.text}`;
+        const captionLine = caption ? `Legenda enviada pelo usuário: "${caption}"\n` : '';
+        text = `[O usuário ACABOU DE ENVIAR um vídeo agora — primeira vez vendo este arquivo. Análise automática:]\n${captionLine}${r.text}`;
         console.log(`[Webhook] video analyzed (${r.text.length} chars)`);
       } else {
         const reasons = {
@@ -248,8 +248,8 @@ router.post(['/webhook', '/webhook/:token'], async (req, res) => {
       }
       const r = await gemini.analyzeMedia(buf, mime, caption);
       if (r.ok) {
-        const captionLine = caption ? `Legenda: "${caption}"\n` : '';
-        text = `[PDF analisado] ${captionLine}Conteúdo: ${r.text}`;
+        const captionLine = caption ? `Legenda enviada pelo usuário: "${caption}"\n` : '';
+        text = `[O usuário ACABOU DE ENVIAR um PDF agora — primeira vez vendo este arquivo. Conteúdo extraído:]\n${captionLine}${r.text}`;
         console.log(`[Webhook] PDF analyzed (${r.text.length} chars)`);
       } else {
         whatsapp.sendMessage(phone, 'recebi seu PDF mas tive um problema pra ler. Me conta em texto o que precisa?').catch(() => {});
