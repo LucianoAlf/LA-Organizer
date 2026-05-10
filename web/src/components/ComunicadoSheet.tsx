@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
@@ -8,6 +8,8 @@ import type { AnnouncementAudience } from '../types';
 interface Props {
   open: boolean;
   onClose: () => void;
+  /** Pré-preenche body+audience (usado em "Reenviar"/duplicar). */
+  initial?: { body: string; audience: AnnouncementAudience } | null;
 }
 
 const FUNCTION_ROLES = [
@@ -31,7 +33,7 @@ const TURNOS = [
   { value: 'full', label: 'Integral' },
 ];
 
-export function ComunicadoSheet({ open, onClose }: Props) {
+export function ComunicadoSheet({ open, onClose, initial }: Props) {
   const { collaborator } = useAuth();
   const queryClient = useQueryClient();
 
@@ -43,6 +45,32 @@ export function ComunicadoSheet({ open, onClose }: Props) {
   const [scheduledMode, setScheduledMode] = useState(false);
   const [scheduledAt, setScheduledAt] = useState('');
   const [error, setError] = useState('');
+
+  // Pré-preenche quando abre via "Reenviar"; reseta quando fecha.
+  useEffect(() => {
+    if (!open) return;
+    if (initial) {
+      setBody(initial.body);
+      const aud = initial.audience || {};
+      const isAll = aud.all === true;
+      setAudienceAll(isAll);
+      setSelectedRoles(aud.function_role ?? []);
+      setSelectedUnidades(aud.unidade ?? []);
+      setSelectedTurnos(aud.turno ?? []);
+      setScheduledMode(false);
+      setScheduledAt('');
+      setError('');
+    } else {
+      setBody('');
+      setAudienceAll(true);
+      setSelectedRoles([]);
+      setSelectedUnidades([]);
+      setSelectedTurnos([]);
+      setScheduledMode(false);
+      setScheduledAt('');
+      setError('');
+    }
+  }, [open, initial]);
 
   function toggleItem<T>(arr: T[], item: T): T[] {
     return arr.includes(item) ? arr.filter(x => x !== item) : [...arr, item];
