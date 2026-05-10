@@ -17,8 +17,9 @@ import { showToast } from '../components/Toast';
 import { unitsLabel, formatEventRange } from '../types';
 import type { SchoolEvent, EventType, SchoolUnit } from '../types';
 
-type Period = 'month' | 'quarter' | 'semester' | 'year';
+type Period = 'calendar' | 'month' | 'quarter' | 'semester' | 'year';
 type UnitFilter = 'all' | SchoolUnit;
+const DOW_LABELS = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
 
 interface EventoRow extends SchoolEvent {
   // O select traz announcements como join se houver — opcional pra futura integração.
@@ -26,6 +27,7 @@ interface EventoRow extends SchoolEvent {
 }
 
 const PERIOD_LABEL: Record<Period, string> = {
+  calendar: 'Calendário',
   month: 'Mês',
   quarter: 'Trimestre',
   semester: 'Semestre',
@@ -33,6 +35,7 @@ const PERIOD_LABEL: Record<Period, string> = {
 };
 
 const PERIOD_OPTIONS: { value: Period; label: string }[] = [
+  { value: 'calendar', label: 'Calendário' },
   { value: 'month', label: 'Mês' },
   { value: 'quarter', label: 'Trimestre' },
   { value: 'semester', label: 'Semestre' },
@@ -72,7 +75,7 @@ function lastDayOfMonth(year: number, month: number): number {
  * - year: ano todo
  */
 function periodRange(period: Period, refYear: number, refMonth: number): { from: string; to: string; label: string } {
-  if (period === 'month') {
+  if (period === 'month' || period === 'calendar') {
     const last = lastDayOfMonth(refYear, refMonth);
     return {
       from: ymdAt(refYear, refMonth, 1),
@@ -114,7 +117,7 @@ function shiftPeriod(period: Period, refYear: number, refMonth: number, dir: -1 
   let y = refYear;
   let m = refMonth;
   const step =
-    period === 'month' ? 1 :
+    period === 'month' || period === 'calendar' ? 1 :
     period === 'quarter' ? 3 :
     period === 'semester' ? 6 :
     12;
@@ -256,6 +259,65 @@ export function AgendaEscolar() {
     setRefMonth(d.getMonth());
   }
 
+  const isCurrentPeriod = useMemo(() => {
+    const d = new Date();
+    if (period === 'month' || period === 'calendar') {
+      return refYear === d.getFullYear() && refMonth === d.getMonth();
+    }
+    if (period === 'quarter') {
+      return refYear === d.getFullYear() && Math.floor(refMonth / 3) === Math.floor(d.getMonth() / 3);
+    }
+    if (period === 'semester') {
+      return refYear === d.getFullYear() && Math.floor(refMonth / 6) === Math.floor(d.getMonth() / 6);
+    }
+    return refYear === d.getFullYear();
+  }, [period, refYear, refMonth]);
+
+  // Eventos por dia (YMD) — usado pelo grid Calendário. Considera ranges (event_date..end_date).
+  const eventsByDay = useMemo(() => {
+    const map = new Map<string, EventoRow[]>();
+    for (const ev of events) {
+      const start = ev.event_date;
+      const end = ev.end_date || ev.event_date;
+      // Itera dia a dia entre start e end (limitado a 1 ano por segurança).
+      let d = new Date(start + 'T00:00:00');
+      const endD = new Date(end + 'T00:00:00');
+      let guard = 0;
+      while (d <= endD && guard < 400) {
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        if (!map.has(key)) map.set(key, []);
+        map.get(key)!.push(ev);
+        d = new Date(d.getTime() + 86400000);
+        guard++;
+      }
+    }
+    return map;
+  }, [events]);
+
+  // Grid 6×7 (42 células) começando no domingo da semana do dia 1.
+  const calendarCells = useMemo(() => {
+    if (period !== 'calendar') return [];
+    const first = new Date(refYear, refMonth, 1);
+    const startDow = first.getDay(); // 0=dom
+    const startDate = new Date(refYear, refMonth, 1 - startDow);
+    const cells: { ymd: string; day: number; inMonth: boolean; isToday: boolean }[] = [];
+    const todayYmd = ymdToday();
+    for (let i = 0; i < 42; i++) {
+      const d = new Date(startDate.getTime() + i * 86400000);
+      const ymd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      cells.push({
+        ymd,
+        day: d.getDate(),
+        inMonth: d.getMonth() === refMonth && d.getFullYear() === refYear,
+        isToday: ymd === todayYmd,
+      });
+    }
+    return cells;
+  }, [period, refYear, refMonth]);
+
+  const [calendarSelectedDay, setCalendarSelectedDay] = useState<string | null>(null);
+  const calendarSelectedEvents = calendarSelectedDay ? (eventsByDay.get(calendarSelectedDay) ?? []) : [];
+
   return (
     <div className="space-y-md">
       <PageHeader
@@ -272,7 +334,7 @@ export function AgendaEscolar() {
         ) : null}
       />
 
-      {/* Período (4 chips) */}
+      {/* Período (5 chips) */}
       <div className="flex items-center gap-1 overflow-x-auto -mx-md px-md">
         {PERIOD_OPTIONS.map(p => {
           const active = p.value === period;
@@ -294,34 +356,38 @@ export function AgendaEscolar() {
         })}
       </div>
 
-      {/* Navegação do período + filtro de unidade */}
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => { const r = shiftPeriod(period, refYear, refMonth, -1); setRefYear(r.y); setRefMonth(r.m); }}
-          aria-label={`${PERIOD_LABEL[period]} anterior`}
-          className="h-9 w-9 grid place-items-center rounded-full bg-bg-elevated text-fg-muted hover:text-fg focus-ring"
-        >
-          <ChevronLeft size={16} />
-        </button>
-        <div className="flex-1 text-center">
-          <p className="text-body font-medium tabular-nums capitalize">{range.label}</p>
+      {/* Navegação do período — estilo unificado ao DateNavHeader (Hoje/Semana). */}
+      <div className="surface px-md py-2">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => { const r = shiftPeriod(period, refYear, refMonth, -1); setRefYear(r.y); setRefMonth(r.m); }}
+            aria-label={`${PERIOD_LABEL[period]} anterior`}
+            className="h-8 w-8 grid place-items-center rounded-full text-fg-muted hover:bg-bg-elevated focus-ring"
+          >
+            <ChevronLeft size={18} />
+          </button>
+          <div className="flex-1 min-w-0 text-center text-body-md text-fg truncate capitalize">
+            {range.label}
+          </div>
+          <button
+            type="button"
+            onClick={() => { const r = shiftPeriod(period, refYear, refMonth, 1); setRefYear(r.y); setRefMonth(r.m); }}
+            aria-label={`${PERIOD_LABEL[period]} seguinte`}
+            className="h-8 w-8 grid place-items-center rounded-full text-fg-muted hover:bg-bg-elevated focus-ring"
+          >
+            <ChevronRight size={18} />
+          </button>
+          {!isCurrentPeriod && (
+            <button
+              type="button"
+              onClick={goToday}
+              className="ml-1 px-2 py-1 text-body-sm rounded-sm bg-bg-elevated text-fg-secondary hover:text-fg focus-ring"
+            >
+              Hoje
+            </button>
+          )}
         </div>
-        <button
-          type="button"
-          onClick={() => { const r = shiftPeriod(period, refYear, refMonth, 1); setRefYear(r.y); setRefMonth(r.m); }}
-          aria-label={`${PERIOD_LABEL[period]} seguinte`}
-          className="h-9 w-9 grid place-items-center rounded-full bg-bg-elevated text-fg-muted hover:text-fg focus-ring"
-        >
-          <ChevronRight size={16} />
-        </button>
-        <button
-          type="button"
-          onClick={goToday}
-          className="text-caption text-tom underline focus-ring rounded-sm px-1"
-        >
-          Hoje
-        </button>
       </div>
 
       <div>
@@ -342,6 +408,128 @@ export function AgendaEscolar() {
           description={(queryError as Error).message}
           onRetry={() => refetch()}
         />
+      ) : period === 'calendar' ? (
+        <div className="space-y-md">
+          <div className="bg-bg-surface rounded-xl border border-border overflow-hidden">
+            <div className="grid grid-cols-7 border-b border-border bg-bg-elevated">
+              {DOW_LABELS.map((d, i) => (
+                <div
+                  key={i}
+                  className={[
+                    'text-center text-caption font-semibold py-2',
+                    i === 0 ? 'text-brand' : 'text-fg-muted',
+                  ].join(' ')}
+                >
+                  {d}
+                </div>
+              ))}
+            </div>
+            <div className="grid grid-cols-7">
+              {calendarCells.map((cell, i) => {
+                const dayEvents = eventsByDay.get(cell.ymd) ?? [];
+                const isSelected = calendarSelectedDay === cell.ymd;
+                const dow = i % 7;
+                return (
+                  <button
+                    key={cell.ymd + '-' + i}
+                    type="button"
+                    onClick={() => setCalendarSelectedDay(isSelected ? null : cell.ymd)}
+                    className={[
+                      'min-h-[64px] p-1.5 text-left border-b border-r border-border focus-ring transition-colors',
+                      'flex flex-col gap-1',
+                      (i + 1) % 7 === 0 ? 'border-r-0' : '',
+                      i >= 35 ? 'border-b-0' : '',
+                      cell.inMonth ? 'bg-bg-surface' : 'bg-bg-app/40',
+                      isSelected ? 'ring-2 ring-tom ring-inset' : 'hover:bg-bg-elevated',
+                    ].join(' ')}
+                  >
+                    <span
+                      className={[
+                        'text-body-sm tabular-nums leading-none',
+                        cell.isToday
+                          ? 'inline-flex items-center justify-center w-6 h-6 rounded-full bg-tom text-black font-semibold'
+                          : cell.inMonth
+                            ? (dow === 0 ? 'text-brand font-medium' : 'text-fg')
+                            : 'text-fg-muted/60',
+                      ].join(' ')}
+                    >
+                      {cell.day}
+                    </span>
+                    {dayEvents.length > 0 && (
+                      <div className="flex flex-wrap gap-0.5 mt-auto">
+                        {dayEvents.slice(0, 3).map(ev => {
+                          const t = typesById.get(ev.event_type);
+                          return (
+                            <span
+                              key={ev.id}
+                              className="block w-full h-1 rounded-full"
+                              style={{ backgroundColor: t?.color_hex ?? '#9DB85B' }}
+                              aria-hidden
+                            />
+                          );
+                        })}
+                        {dayEvents.length > 3 && (
+                          <span className="text-[9px] text-fg-muted leading-none">+{dayEvents.length - 3}</span>
+                        )}
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Painel do dia selecionado */}
+          {calendarSelectedDay && (
+            <section className="space-y-2">
+              <h3 className="text-body-sm uppercase tracking-wide text-fg-muted font-semibold">
+                {(() => {
+                  const [y, m, dd] = calendarSelectedDay.split('-').map(Number);
+                  const d = new Date(y, m - 1, dd);
+                  return d.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' });
+                })()}
+              </h3>
+              {calendarSelectedEvents.length === 0 ? (
+                <p className="text-body-sm text-fg-muted">Nada nesse dia.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {calendarSelectedEvents.map(ev => {
+                    const type = typesById.get(ev.event_type);
+                    const isCancelled = ev.status === 'cancelled';
+                    return (
+                      <li key={ev.id}>
+                        <Link
+                          to={`/mais/eventos/${ev.id}`}
+                          className={[
+                            'flex items-center gap-2 p-2.5 rounded-lg bg-bg-surface border border-border',
+                            'hover:border-tom/40 transition-colors',
+                            isCancelled ? 'opacity-60' : '',
+                          ].join(' ')}
+                        >
+                          <span
+                            className="w-1 self-stretch rounded-full"
+                            style={{ backgroundColor: type?.color_hex ?? '#6B7280' }}
+                            aria-hidden
+                          />
+                          <div className="min-w-0 flex-1">
+                            <p className={['text-body-sm font-medium truncate', isCancelled ? 'line-through' : ''].join(' ')}>
+                              {type?.emoji ?? '📅'} {ev.title}
+                            </p>
+                            <p className="text-caption text-fg-muted truncate">
+                              {ev.is_all_day ? 'Dia inteiro' : (ev.start_time?.slice(0, 5) ?? 'Sem horário')}
+                              {' · '}
+                              {unitsLabel(ev.units, ev.unit)}
+                            </p>
+                          </div>
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </section>
+          )}
+        </div>
       ) : grouped.length === 0 ? (
         <EmptyState
           title="Nenhum evento neste período"

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '../components/PageHeader';
+import { CustomSelect } from '../components/CustomSelect';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { SECTORS, SECTOR_LABELS } from '../types';
@@ -136,16 +137,18 @@ export function ConfigurarEquipe() {
           {SECTORS.map(sector => (
             <div key={sector} className="flex items-center gap-3">
               <label className="text-body w-32 shrink-0">{SECTOR_LABELS[sector]}</label>
-              <select
-                className="flex-1 rounded-lg border border-border bg-bg-surface px-3 py-2 text-body text-fg focus:outline-none focus:border-brand"
-                value={draft[sector]}
-                onChange={e => setDraft(prev => ({ ...prev, [sector]: e.target.value }))}
-              >
-                <option value="">Sem responsável fixo</option>
-                {collabs.map(c => (
-                  <option key={c.id} value={c.id}>{c.full_name}</option>
-                ))}
-              </select>
+              <div className="flex-1 min-w-0">
+                <CustomSelect
+                  size="sm"
+                  value={draft[sector]}
+                  onChange={(v) => setDraft(prev => ({ ...prev, [sector]: v }))}
+                  placeholder="Sem responsável fixo"
+                  options={[
+                    { value: '', label: 'Sem responsável fixo' },
+                    ...collabs.map(c => ({ value: c.id, label: c.full_name })),
+                  ]}
+                />
+              </div>
             </div>
           ))}
         </div>
