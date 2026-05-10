@@ -4781,11 +4781,12 @@ async function processMessage(phone, text, raw = {}) {
               const name = String(a.name || '').trim();
               if (!name) { failCount++; continue; }
               const listType = ['shopping', 'travel', 'meds', 'general'].includes(a.list_type) ? a.list_type : 'general';
+              const context = ['work', 'personal'].includes(a.context) ? a.context : 'personal';
               const { data: list, error: e1 } = await supabase
                 .from('personal_checklists')
-                .insert({ owner_collab_id: collab.id, name, list_type: listType })
+                .insert({ owner_collab_id: collab.id, name, list_type: listType, context })
                 .select('id').single();
-              if (e1) { failCount++; continue; }
+              if (e1) { console.error('[PersonalList] insert err:', e1.message); failCount++; continue; }
               const items = Array.isArray(a.items) ? a.items.filter(x => typeof x === 'string' && x.trim()) : [];
               if (items.length) {
                 const rows = items.map((d, i) => ({ list_id: list.id, description: d.trim(), sort_order: i + 1 }));
