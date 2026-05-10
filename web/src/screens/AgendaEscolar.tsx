@@ -585,7 +585,7 @@ export function AgendaEscolar() {
                     <li
                       key={ev.id}
                       className={[
-                        'relative bg-bg-surface rounded-xl border border-border overflow-hidden',
+                        'relative bg-bg-surface rounded-xl border border-border',
                         'transition-all duration-150',
                         isCancelled ? 'opacity-60' : 'hover:border-tom/40 hover:shadow-[0_0_0_1px_rgba(157,184,91,0.15),0_8px_24px_-12px_rgba(157,184,91,0.30)]',
                       ].join(' ')}
