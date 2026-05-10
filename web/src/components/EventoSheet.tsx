@@ -10,11 +10,12 @@ import { CustomSelect } from './CustomSelect';
 import { Checkbox } from './Checkbox';
 import { showToast } from './Toast';
 import { buildEventAnnouncements, unitLabel } from '../types';
-import type { AnnouncementAudience, EventType, SchoolUnit } from '../types';
+import type { AnnouncementAudience, EventType, SchoolEvent, SchoolUnit } from '../types';
 
 interface Props {
   open: boolean;
   onClose: () => void;
+  editTarget?: SchoolEvent | null;
 }
 
 const ALL_UNITS: SchoolUnit[] = ['barra', 'recreio', 'campo_grande'];
@@ -23,7 +24,8 @@ const ALLOWED_IMAGE_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'im
 
 type Attachment = { url: string; filename: string };
 
-export function EventoSheet({ open, onClose }: Props) {
+export function EventoSheet({ open, onClose, editTarget = null }: Props) {
+  const isEditing = !!editTarget;
   const { collaborator } = useAuth();
   const queryClient = useQueryClient();
 
@@ -44,25 +46,45 @@ export function EventoSheet({ open, onClose }: Props) {
   const [notifyDayOf, setNotifyDayOf] = useState(true);
   const [error, setError] = useState('');
 
-  // Reset on open.
+  // Pre-populate or reset on open.
   useEffect(() => {
     if (!open) return;
-    setTitle('');
-    setEventType('outro');
-    setEventDate('');
-    setEndDate('');
-    setStartTime('');
-    setIsAllDay(false);
-    setUnits([]);
-    setLocation('');
-    setDescription('');
-    setImage(null);
-    setNotifyLeadership(true);
-    setNotifySchool(true);
-    setNotifyUnit(true);
-    setNotifyDayOf(true);
+    if (editTarget) {
+      setTitle(editTarget.title ?? '');
+      setEventType(editTarget.event_type ?? 'outro');
+      setEventDate(editTarget.event_date ?? '');
+      setEndDate(editTarget.end_date ?? '');
+      setStartTime(editTarget.start_time?.slice(0, 5) ?? '');
+      setIsAllDay(editTarget.is_all_day ?? false);
+      const u = (editTarget.units && editTarget.units.length > 0)
+        ? editTarget.units as SchoolUnit[]
+        : (editTarget.unit ? [editTarget.unit as SchoolUnit] : []);
+      setUnits(u);
+      setLocation(editTarget.location ?? '');
+      setDescription(editTarget.description ?? '');
+      setImage(editTarget.image_url ? { url: editTarget.image_url, filename: editTarget.image_filename ?? '' } : null);
+      setNotifyLeadership(false);
+      setNotifySchool(false);
+      setNotifyUnit(false);
+      setNotifyDayOf(false);
+    } else {
+      setTitle('');
+      setEventType('outro');
+      setEventDate('');
+      setEndDate('');
+      setStartTime('');
+      setIsAllDay(false);
+      setUnits([]);
+      setLocation('');
+      setDescription('');
+      setImage(null);
+      setNotifyLeadership(true);
+      setNotifySchool(true);
+      setNotifyUnit(true);
+      setNotifyDayOf(true);
+    }
     setError('');
-  }, [open]);
+  }, [open, editTarget]);
 
   const typesQ = useQuery({
     queryKey: ['event-types'],
@@ -83,7 +105,7 @@ export function EventoSheet({ open, onClose }: Props) {
   }));
 
   const hasNotification = notifyLeadership || notifySchool || notifyUnit || notifyDayOf;
-  const canSave = title.trim().length > 0 && eventDate.length > 0 && hasNotification;
+  const canSave = title.trim().length > 0 && eventDate.length > 0 && (isEditing || hasNotification);
 
   function toggleUnit(u: SchoolUnit, checked: boolean) {
     setUnits(prev => checked ? [...new Set([...prev, u])] : prev.filter(x => x !== u));
@@ -119,11 +141,9 @@ export function EventoSheet({ open, onClose }: Props) {
   const { mutate, isPending } = useMutation({
     mutationFn: async () => {
       setError('');
-      // Validações de range/datas.
       if (endDate && endDate < eventDate) {
         throw new Error('Data fim não pode ser antes da data início.');
       }
-      // Compat com schema antigo (single unit): primeira unidade vai pra coluna `unit`.
       const primaryUnit: SchoolUnit | null = units[0] ?? null;
       const evPayload = {
         title: title.trim(),
@@ -148,6 +168,15 @@ export function EventoSheet({ open, onClose }: Props) {
         key: 'app.current_user_id',
         value: collaborator!.id,
       });
+
+      if (isEditing) {
+        const { error: upErr } = await supabase
+          .from('school_events')
+          .update(evPayload)
+          .eq('id', editTarget!.id);
+        if (upErr) throw upErr;
+        return;
+      }
 
       const { data: ev, error: evErr } = await supabase
         .from('school_events')
@@ -199,14 +228,15 @@ export function EventoSheet({ open, onClose }: Props) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['agenda-escolar'] });
-      showToast({ kind: 'success', title: 'Evento criado' });
+      queryClient.invalidateQueries({ queryKey: ['evento', editTarget?.id] });
+      showToast({ kind: 'success', title: isEditing ? 'Evento atualizado' : 'Evento criado' });
       onClose();
     },
     onError: (err: Error) => setError(err.message),
   });
 
   return (
-    <BottomSheet open={open} onClose={onClose} title="Novo evento">
+    <BottomSheet open={open} onClose={onClose} title={isEditing ? 'Editar evento' : 'Novo evento'}>
       <div className="space-y-4 pb-4">
         <div>
           <label className="text-caption text-fg-muted block mb-1">Título *</label>
@@ -327,18 +357,20 @@ export function EventoSheet({ open, onClose }: Props) {
           <p className="text-caption text-fg-muted mt-1">JPG, PNG, WEBP ou GIF — até 5 MB</p>
         </div>
 
-        <div>
-          <p className="text-caption uppercase font-semibold text-fg-muted mb-2">Notificações</p>
-          <div className="space-y-2">
-            <Checkbox checked={notifyLeadership} onChange={setNotifyLeadership} label="Liderança — imediato ao criar" />
-            <Checkbox checked={notifySchool} onChange={setNotifySchool} label="Escola toda — 3 dias antes" />
-            <Checkbox checked={notifyUnit} onChange={setNotifyUnit} label="Unidades selecionadas — 1 dia antes" />
-            <Checkbox checked={notifyDayOf} onChange={setNotifyDayOf} label="Notif. No dia (09h)" />
+        {!isEditing && (
+          <div>
+            <p className="text-caption uppercase font-semibold text-fg-muted mb-2">Notificações</p>
+            <div className="space-y-2">
+              <Checkbox checked={notifyLeadership} onChange={setNotifyLeadership} label="Liderança — imediato ao criar" />
+              <Checkbox checked={notifySchool} onChange={setNotifySchool} label="Escola toda — 3 dias antes" />
+              <Checkbox checked={notifyUnit} onChange={setNotifyUnit} label="Unidades selecionadas — 1 dia antes" />
+              <Checkbox checked={notifyDayOf} onChange={setNotifyDayOf} label="Notif. No dia (09h)" />
+            </div>
+            {!hasNotification && (
+              <p className="text-danger text-caption mt-1">Selecione ao menos uma notificação</p>
+            )}
           </div>
-          {!hasNotification && (
-            <p className="text-danger text-caption mt-1">Selecione ao menos uma notificação</p>
-          )}
-        </div>
+        )}
 
         {error && <p className="text-danger text-caption">{error}</p>}
 
@@ -348,7 +380,7 @@ export function EventoSheet({ open, onClose }: Props) {
           disabled={!canSave || isPending}
           onClick={() => mutate()}
         >
-          {isPending ? 'Criando…' : 'Criar evento'}
+          {isPending ? (isEditing ? 'Salvando…' : 'Criando…') : (isEditing ? 'Salvar alterações' : 'Criar evento')}
         </Button>
       </div>
     </BottomSheet>

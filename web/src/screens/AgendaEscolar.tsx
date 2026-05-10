@@ -161,6 +161,7 @@ export function AgendaEscolar() {
   const canEdit = role === 'director' || role === 'coordinator';
 
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState<EventoRow | null>(null);
   const [period, setPeriod] = useState<Period>('month');
   const [unitFilter, setUnitFilter] = useState<UnitFilter>('all');
 
@@ -237,6 +238,19 @@ export function AgendaEscolar() {
     onError: (err: Error) => {
       showToast({ kind: 'error', title: 'Falha ao cancelar', msg: err.message });
     },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (eventId: string) => {
+      await supabase.rpc('set_config', { key: 'app.current_user_id', value: collaborator!.id });
+      const { error } = await supabase.from('school_events').delete().eq('id', eventId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['agenda-escolar'] });
+      showToast({ kind: 'success', title: 'Evento excluído' });
+    },
+    onError: (err: Error) => showToast({ kind: 'error', title: 'Falha ao excluir', msg: err.message }),
   });
 
   // Agrupamento por mês para renderização.
@@ -550,12 +564,21 @@ export function AgendaEscolar() {
                   const isCancelled = ev.status === 'cancelled';
                   const prox = !isCancelled ? proximityBadge(ev.event_date, ev.end_date) : null;
                   const items: Array<{ label: string; onClick: () => void; danger?: boolean; confirm?: string }> = [];
-                  if (canEdit && !isCancelled) {
+                  if (canEdit) {
+                    items.push({ label: 'Editar', onClick: () => { setEditTarget(ev); setSheetOpen(true); } });
+                    if (!isCancelled) {
+                      items.push({
+                        label: 'Cancelar evento',
+                        danger: true,
+                        confirm: 'Cancelar? Comunicações pendentes também serão canceladas.',
+                        onClick: () => cancelMutation.mutate(ev.id),
+                      });
+                    }
                     items.push({
-                      label: 'Cancelar evento',
+                      label: 'Excluir evento',
                       danger: true,
-                      confirm: 'Cancelar? Comunicações pendentes também serão canceladas.',
-                      onClick: () => cancelMutation.mutate(ev.id),
+                      confirm: 'Excluir permanentemente? Não dá pra desfazer.',
+                      onClick: () => deleteMutation.mutate(ev.id),
                     });
                   }
                   return (
@@ -622,13 +645,17 @@ export function AgendaEscolar() {
 
       {canEdit && (
         <Fab
-          onClick={() => setSheetOpen(true)}
+          onClick={() => { setEditTarget(null); setSheetOpen(true); }}
           label="Novo"
           ariaLabel="Novo evento"
         />
       )}
 
-      <EventoSheet open={sheetOpen} onClose={() => setSheetOpen(false)} />
+      <EventoSheet
+        open={sheetOpen}
+        onClose={() => { setSheetOpen(false); setEditTarget(null); }}
+        editTarget={editTarget}
+      />
     </div>
   );
 }
