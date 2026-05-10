@@ -1,7 +1,6 @@
 import { ChevronRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { useTheme } from '../contexts/ThemeContext';
 import { Badge } from '../components/Badge';
 
 interface Item {
@@ -64,8 +63,7 @@ function Section({ title, items }: { title: string; items: Item[] }) {
 }
 
 export function Mais() {
-  const { collaborator, role, signOut } = useAuth();
-  const { theme, toggle } = useTheme();
+  const { collaborator, role } = useAuth();
 
   const filterByRole = (list: Item[]) =>
     list.filter(i => !i.requireRoles || (role && i.requireRoles.includes(role)));
@@ -86,35 +84,6 @@ export function Mais() {
 
       <Section title="Para você" items={personal} />
       <Section title="Coordenação" items={coord} />
-
-      <section className="surface p-md space-y-md">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-body-md">Tema</div>
-            <div className="text-body-sm text-fg-muted">Dark é o padrão · light é suportado</div>
-          </div>
-          <button
-            type="button"
-            onClick={toggle}
-            className="h-9 px-3 rounded-sm bg-bg-elevated border border-border text-body-sm focus-ring"
-          >
-            {theme === 'dark' ? 'Mudar pra claro' : 'Mudar pra escuro'}
-          </button>
-        </div>
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-body-md">Sair</div>
-            <div className="text-body-sm text-fg-muted">Encerra sua sessão local</div>
-          </div>
-          <button
-            type="button"
-            onClick={signOut}
-            className="h-9 px-3 rounded-sm bg-danger/10 border border-danger/40 text-danger text-body-sm focus-ring"
-          >
-            Sair
-          </button>
-        </div>
-      </section>
     </div>
   );
 }
