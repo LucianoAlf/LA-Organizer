@@ -15,7 +15,6 @@ import { Historico } from './screens/Historico';
 import { Habitos } from './screens/Habitos';
 import { HabitoDetalhe } from './screens/HabitoDetalhe';
 import { Checklists } from './screens/Checklists';
-import { ChecklistsTemplates } from './screens/ChecklistsTemplates';
 import { Comunicados } from './screens/Comunicados';
 import { AgendaEscolar } from './screens/AgendaEscolar';
 import { ConfigurarEquipe } from './screens/ConfigurarEquipe';
@@ -47,7 +46,6 @@ export default function App() {
           <Route path="checklists" element={<Checklists />} />
 
           <Route element={<ProtectedRoute requireRoles={['director', 'coordinator']} />}>
-            <Route path="mais/checklists-templates" element={<ChecklistsTemplates />} />
             <Route path="mais/comunicados" element={<Comunicados />} />
             <Route path="mais/agenda-escolar" element={<AgendaEscolar />} />
             <Route path="mais/agenda-escolar/equipe" element={<ConfigurarEquipe />} />
