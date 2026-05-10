@@ -4,6 +4,10 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { BottomSheet } from './BottomSheet';
 import { Button } from './Button';
+import { DateInput } from './DateInput';
+import { TimeInput } from './TimeInput';
+import { CustomSelect } from './CustomSelect';
+import { Checkbox } from './Checkbox';
 import { buildEventAnnouncements } from '../types';
 import type { AnnouncementAudience } from '../types';
 
@@ -123,6 +127,10 @@ export function EventoSheet({ open, onClose }: Props) {
     onError: (err: Error) => setError(err.message),
   });
 
+  const unitForLabel = unit
+    ? UNIT_OPTIONS.find(o => o.value === unit)?.label ?? 'Unidade'
+    : 'Escola toda';
+
   return (
     <BottomSheet open={open} onClose={onClose} title="Novo evento">
       <div className="space-y-4 pb-4">
@@ -130,7 +138,7 @@ export function EventoSheet({ open, onClose }: Props) {
           <label className="text-caption text-fg-muted block mb-1">Título *</label>
           <input
             type="text"
-            className="mt-1 w-full rounded-lg border border-border bg-bg-surface px-3 py-2 text-body text-fg focus:outline-none focus:border-brand"
+            className="mt-1 w-full rounded-lg border border-border bg-bg-surface px-3 py-2 text-body text-fg focus:outline-none focus:border-tom"
             placeholder="Ex: Show de Fim de Ano"
             value={title}
             onChange={e => setTitle(e.target.value)}
@@ -140,44 +148,29 @@ export function EventoSheet({ open, onClose }: Props) {
         <div className="flex gap-3">
           <div className="flex-1">
             <label className="text-caption text-fg-muted block mb-1">Data *</label>
-            <input
-              type="date"
-              className="mt-1 w-full rounded-lg border border-border bg-bg-surface px-3 py-2 text-body text-fg focus:outline-none focus:border-brand"
-              value={eventDate}
-              onChange={e => setEventDate(e.target.value)}
-            />
+            <DateInput value={eventDate} onChange={setEventDate} />
           </div>
           <div className="flex-1">
             <label className="text-caption text-fg-muted block mb-1">Horário</label>
-            <input
-              type="time"
-              className="mt-1 w-full rounded-lg border border-border bg-bg-surface px-3 py-2 text-body text-fg focus:outline-none focus:border-brand"
-              value={startTime}
-              onChange={e => setStartTime(e.target.value)}
-            />
+            <TimeInput value={startTime} onChange={setStartTime} />
           </div>
         </div>
 
         <div>
           <label className="text-caption text-fg-muted block mb-1">Unidade</label>
-          <select
-            className="mt-1 w-full rounded-lg border border-border bg-bg-surface px-3 py-2 text-body text-fg focus:outline-none focus:border-brand"
+          <CustomSelect
             value={unit}
-            onChange={e => setUnit(e.target.value)}
-          >
-            {UNIT_OPTIONS.map(o => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
+            options={UNIT_OPTIONS}
+            onChange={setUnit}
+            placeholder="Selecionar"
+          />
         </div>
 
         <div>
           <label className="text-caption text-fg-muted block mb-1">Local (opcional)</label>
           <input
             type="text"
-            className="mt-1 w-full rounded-lg border border-border bg-bg-surface px-3 py-2 text-body text-fg focus:outline-none focus:border-brand"
+            className="mt-1 w-full rounded-lg border border-border bg-bg-surface px-3 py-2 text-body text-fg focus:outline-none focus:border-tom"
             placeholder="Ex: Teatro Municipal"
             value={location}
             onChange={e => setLocation(e.target.value)}
@@ -185,43 +178,28 @@ export function EventoSheet({ open, onClose }: Props) {
         </div>
 
         <div>
-          <p className="text-caption text-fg-muted mb-2">Notificações</p>
+          <p className="text-caption uppercase font-semibold text-fg-muted mb-2">Notificações</p>
           <div className="space-y-2">
-            <label className="flex items-center gap-2 text-body">
-              <input
-                type="checkbox"
-                checked={notifyLeadership}
-                onChange={e => setNotifyLeadership(e.target.checked)}
-              />
-              Liderança — imediato ao criar
-            </label>
-            <label className="flex items-center gap-2 text-body">
-              <input
-                type="checkbox"
-                checked={notifySchool}
-                onChange={e => setNotifySchool(e.target.checked)}
-              />
-              Escola toda — 3 dias antes
-            </label>
-            <label className="flex items-center gap-2 text-body">
-              <input
-                type="checkbox"
-                checked={notifyUnit}
-                onChange={e => setNotifyUnit(e.target.checked)}
-              />
-              {unit
-                ? UNIT_OPTIONS.find(o => o.value === unit)?.label ?? 'Unidade'
-                : 'Escola toda'}{' '}
-              — 1 dia antes
-            </label>
-            <label className="flex items-center gap-2 text-body">
-              <input
-                type="checkbox"
-                checked={notifyDayOf}
-                onChange={e => setNotifyDayOf(e.target.checked)}
-              />
-              Notif. No dia (09h)
-            </label>
+            <Checkbox
+              checked={notifyLeadership}
+              onChange={setNotifyLeadership}
+              label="Liderança — imediato ao criar"
+            />
+            <Checkbox
+              checked={notifySchool}
+              onChange={setNotifySchool}
+              label="Escola toda — 3 dias antes"
+            />
+            <Checkbox
+              checked={notifyUnit}
+              onChange={setNotifyUnit}
+              label={`${unitForLabel} — 1 dia antes`}
+            />
+            <Checkbox
+              checked={notifyDayOf}
+              onChange={setNotifyDayOf}
+              label="Notif. No dia (09h)"
+            />
           </div>
           {!hasNotification && (
             <p className="text-danger text-caption mt-1">Selecione ao menos uma notificação</p>
