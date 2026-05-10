@@ -11,7 +11,7 @@ interface Props {
   open: boolean;
   onClose: () => void;
   /** Pré-preenche body+audience (usado em "Reenviar"/duplicar). */
-  initial?: { body: string; audience: AnnouncementAudience } | null;
+  initial?: { body: string; audience: AnnouncementAudience; requires_confirmation?: boolean } | null;
 }
 
 const FUNCTION_ROLES = [
@@ -46,6 +46,7 @@ export function ComunicadoSheet({ open, onClose, initial }: Props) {
   const [selectedTurnos, setSelectedTurnos] = useState<string[]>([]);
   const [scheduledMode, setScheduledMode] = useState(false);
   const [scheduledAt, setScheduledAt] = useState('');
+  const [requiresConfirmation, setRequiresConfirmation] = useState(false);
   const [error, setError] = useState('');
 
   // Pré-preenche quando abre via "Reenviar"; reseta quando fecha.
@@ -61,6 +62,7 @@ export function ComunicadoSheet({ open, onClose, initial }: Props) {
       setSelectedTurnos(aud.turno ?? []);
       setScheduledMode(false);
       setScheduledAt('');
+      setRequiresConfirmation(!!initial.requires_confirmation);
       setError('');
     } else {
       setBody('');
@@ -70,6 +72,7 @@ export function ComunicadoSheet({ open, onClose, initial }: Props) {
       setSelectedTurnos([]);
       setScheduledMode(false);
       setScheduledAt('');
+      setRequiresConfirmation(false);
       setError('');
     }
   }, [open, initial]);
@@ -134,6 +137,7 @@ export function ComunicadoSheet({ open, onClose, initial }: Props) {
           audience,
           status: 'scheduled',
           scheduled_at,
+          requires_confirmation: requiresConfirmation,
         })
         .select('id')
         .single();
@@ -268,6 +272,23 @@ export function ComunicadoSheet({ open, onClose, initial }: Props) {
             </div>
           </>
         )}
+
+        <div>
+          <label className="flex items-center gap-2 text-body">
+            <input
+              type="checkbox"
+              className="accent-tom"
+              checked={requiresConfirmation}
+              onChange={e => setRequiresConfirmation(e.target.checked)}
+            />
+            Pedir confirmação de leitura
+          </label>
+          {requiresConfirmation && (
+            <p className="text-caption text-fg-muted mt-1 pl-6">
+              Cada destinatário recebe a mensagem com instrução pra responder "ok". Lembrete automático após 6h sem resposta.
+            </p>
+          )}
+        </div>
 
         <div>
           <label className="flex items-center gap-2 text-body">

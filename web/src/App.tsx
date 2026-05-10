@@ -16,6 +16,7 @@ import { Habitos } from './screens/Habitos';
 import { HabitoDetalhe } from './screens/HabitoDetalhe';
 import { Checklists } from './screens/Checklists';
 import { Comunicados } from './screens/Comunicados';
+import { ComunicadoDetalhe } from './screens/ComunicadoDetalhe';
 import { AgendaEscolar } from './screens/AgendaEscolar';
 import { ConfigurarEquipe } from './screens/ConfigurarEquipe';
 import { EventoDetalhe } from './screens/EventoDetalhe';
@@ -47,6 +48,7 @@ export default function App() {
 
           <Route element={<ProtectedRoute requireRoles={['director', 'coordinator']} />}>
             <Route path="mais/comunicados" element={<Comunicados />} />
+            <Route path="mais/comunicados/:id" element={<ComunicadoDetalhe />} />
             <Route path="mais/agenda-escolar" element={<AgendaEscolar />} />
             <Route path="mais/agenda-escolar/equipe" element={<ConfigurarEquipe />} />
             <Route path="mais/observabilidade" element={<Observabilidade />} />

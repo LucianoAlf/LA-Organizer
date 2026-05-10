@@ -1172,7 +1172,7 @@ async function dispatchAnnouncements(now = new Date()) {
   // 1. Anúncios prontos para enviar
   const { data: ready, error: rErr } = await supabase
     .from('announcements')
-    .select('id, body, status')
+    .select('id, body, status, requires_confirmation, confirmation_question')
     .in('status', ['scheduled', 'sending'])
     .or(`scheduled_at.is.null,scheduled_at.lte.${nowIso}`);
   if (rErr) { console.error('[dispatchAnnouncements] ready query err:', rErr.message); }
@@ -1194,8 +1194,13 @@ async function dispatchAnnouncements(now = new Date()) {
 
     if (job) {
       const ann = byId.get(job.announcement_id);
+      // Sprint 22.X — Comunicados Fatia 1: append instrução de confirmação quando requires_confirmation=true.
+      const confirmTail = ann.requires_confirmation
+        ? `\n\n_${ann.confirmation_question || 'Responde "ok" pra confirmar que recebeu.'}_`
+        : '';
+      const finalBody = ann.body + confirmTail;
       try {
-        await whatsapp.sendMessage(job.phone, ann.body);
+        await whatsapp.sendMessage(job.phone, finalBody);
         await supabase.from('announcement_jobs')
           .update({ status: 'sent', sent_at: nowIso })
           .eq('id', job.id);
@@ -1234,6 +1239,51 @@ async function dispatchAnnouncements(now = new Date()) {
 
   // 3. Tratar cancelamentos (todo tick)
   await handleCancellations(whatsapp);
+}
+
+// Sprint 22.X — Comunicados Fatia 1: lembrete pra quem recebeu e não confirmou
+// após 6h. Idempotente via reminder_sent_at no announcement_jobs.
+async function remindUnconfirmedAnnouncements(now = new Date()) {
+  const whatsapp = require('../services/whatsapp');
+  const sixHoursAgo = new Date(now.getTime() - 6 * 60 * 60 * 1000).toISOString();
+  const cutoffWindow = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  const { data: jobs, error } = await supabase
+    .from('announcement_jobs')
+    .select(`
+      id, announcement_id, phone, sent_at,
+      announcements!inner(body, requires_confirmation, confirmation_question, status)
+    `)
+    .eq('status', 'sent')
+    .is('confirmed_at', null)
+    .is('reminder_sent_at', null)
+    .lte('sent_at', sixHoursAgo)
+    .gte('sent_at', cutoffWindow)
+    .eq('announcements.requires_confirmation', true)
+    .neq('announcements.status', 'cancelled')
+    .limit(20);
+
+  if (error) {
+    console.error('[remindUnconfirmedAnnouncements] query err:', error.message);
+    return;
+  }
+  if (!jobs || jobs.length === 0) return;
+
+  const nowIso = now.toISOString();
+  for (const j of jobs) {
+    const annBody = j.announcements?.body || '';
+    const preview = annBody.slice(0, 80) + (annBody.length > 80 ? '…' : '');
+    const msg = `⏰ Lembrete: você recebeu um comunicado e ainda não confirmou.\n\n"${preview}"\n\n_Responde "ok" pra confirmar que recebeu._`;
+    try {
+      await whatsapp.sendMessage(j.phone, msg);
+      await supabase.from('announcement_jobs')
+        .update({ reminder_sent_at: nowIso })
+        .eq('id', j.id);
+      console.log(`[remindUnconfirmed] sent job=${j.id.slice(0,8)} → ${j.phone.slice(-4)}`);
+    } catch (err) {
+      console.error('[remindUnconfirmed] err job=' + j.id.slice(0,8) + ':', err.message);
+    }
+  }
 }
 
 // Sprint 18 — Higiene de execução: tasks zumbi (stale)
@@ -1585,6 +1635,7 @@ async function run(opts = {}) {
   // Sprint 13 F1 — comunicados internos (broadcast queue)
   try {
     await dispatchAnnouncements(new Date());
+    await remindUnconfirmedAnnouncements(new Date());
   } catch (err) {
     console.error('[Dispatcher] dispatchAnnouncements erro:', err.message);
   }
@@ -2300,4 +2351,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { run, dispatchChecklists, dispatchAnnouncements, notifyCoordinators, remindEventTasks, remindOperationalTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined, isFirstMondayOfMonth, isLastFridayOfMonth, listLeadership, checkMonthlyPlanning, checkMonthlyClosing };
+module.exports = { run, dispatchChecklists, dispatchAnnouncements, remindUnconfirmedAnnouncements, notifyCoordinators, remindEventTasks, remindOperationalTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined, isFirstMondayOfMonth, isLastFridayOfMonth, listLeadership, checkMonthlyPlanning, checkMonthlyClosing };

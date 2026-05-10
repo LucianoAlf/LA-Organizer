@@ -690,7 +690,7 @@ async function applyAnnouncementApproval(collaborator, parsed) {
 }
 
 async function applyAnnouncementAction(collaborator, parsed) {
-  const { action, body, audience, scheduled_at, announcement_id } = parsed;
+  const { action, body, audience, scheduled_at, announcement_id, requires_confirmation, confirmation_question } = parsed;
 
   if (action === 'cancel') {
     const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -729,6 +729,10 @@ async function applyAnnouncementAction(collaborator, parsed) {
         audience: audience || { all: true },
         status: isCoordinator ? 'pending_approval' : 'scheduled',
         scheduled_at: scheduled_at || null,
+        requires_confirmation: !!requires_confirmation,
+        confirmation_question: requires_confirmation && typeof confirmation_question === 'string'
+          ? confirmation_question.slice(0, 200)
+          : null,
       })
       .select('id')
       .single();
@@ -4331,6 +4335,62 @@ async function detectDuplicateSemanticTask(collab, candidate) {
   }
 }
 
+// Sprint 22.X — Detector de confirmação de comunicado.
+// Procura por jobs entregues nas últimas 48h com requires_confirmation=true
+// e confirmed_at IS NULL. Se a mensagem atual for afirmativa, marca confirmado.
+// Retorna true se consumiu a mensagem (curto-circuita o pipeline).
+const ANNOUNCEMENT_CONFIRM_RE = /^\s*(ok\b|okk\b|okay\b|sim\b|confirmo\b|confirmado[as]?\b|confirmad[ao]\b|recebi\b|recebido[as]?\b|ciente\b|estarei\b|vou\s+estar\b|tô\s+ciente\b|tudo\s+(?:bem|certo)\b|👍|✅|✓)/i;
+
+async function tryHandleAnnouncementConfirmation(collab, text) {
+  if (!collab || !collab.id || !text) return false;
+  const trimmed = text.trim();
+  if (trimmed.length === 0 || trimmed.length > 200) return false;
+  if (!ANNOUNCEMENT_CONFIRM_RE.test(trimmed)) return false;
+
+  const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+  const { data: jobs, error } = await supabase
+    .from('announcement_jobs')
+    .select('id, announcement_id, sent_at, announcements!inner(requires_confirmation, body)')
+    .eq('recipient_id', collab.id)
+    .eq('status', 'sent')
+    .is('confirmed_at', null)
+    .gte('sent_at', cutoff)
+    .eq('announcements.requires_confirmation', true)
+    .order('sent_at', { ascending: false })
+    .limit(1);
+
+  if (error) {
+    console.warn('[Announcement] confirmation lookup err:', error.message);
+    return false;
+  }
+  if (!jobs || jobs.length === 0) return false;
+
+  const job = jobs[0];
+  const { error: updErr } = await supabase
+    .from('announcement_jobs')
+    .update({
+      confirmed_at: new Date().toISOString(),
+      confirmation_response: trimmed.slice(0, 200),
+    })
+    .eq('id', job.id);
+
+  if (updErr) {
+    console.warn('[Announcement] confirmation update err:', updErr.message);
+    return false;
+  }
+
+  console.log(`[Announcement] confirmation registered: job=${job.id.slice(0,8)} ann=${job.announcement_id.slice(0,8)} collab=${String(collab.phone).slice(-4)}`);
+
+  try {
+    const { sendMessage } = require('./services/whatsapp');
+    await sendMessage(collab.phone, '✅ Confirmação registrada. Obrigado!');
+    await logConversation(collab.id, 'outbound', '✅ Confirmação registrada. Obrigado!');
+  } catch (err) {
+    console.warn('[Announcement] confirmation ack send err:', err.message);
+  }
+  return true;
+}
+
 async function processMessage(phone, text, raw = {}) {
   const _t0 = Date.now();
   const _phoneTail = String(phone).slice(-4);
@@ -4349,6 +4409,16 @@ async function processMessage(phone, text, raw = {}) {
   _metrics.collaborator_id = collab.id;
   console.log('[Engine] Mensagem de', collab.full_name);
   await logConversation(collab.id, 'inbound', text);
+
+  // Sprint 22.X — Comunicados Fatia 1: detector de confirmação de leitura.
+  // Se o user respondeu "ok/sim/confirmo/recebi/etc" e tem um announcement_jobs
+  // entregue recentemente (com requires_confirmation=true) e não confirmado,
+  // marca confirmação. Curto-circuita o pipeline pra não rodar skills.
+  const confirmed = await tryHandleAnnouncementConfirmation(collab, String(text || ''));
+  if (confirmed) {
+    console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (announcement_confirmed)`);
+    return;
+  }
 
   // Sprint 16 — COORD_HINT: verifica recados abertos onde collab é recipient
   let coordHint = null;

@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { CheckCircle2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { ComunicadoSheet } from '../components/ComunicadoSheet';
@@ -63,7 +65,7 @@ export function Comunicados() {
   const { collaborator } = useAuth();
   const qc = useQueryClient();
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [resendInitial, setResendInitial] = useState<{ body: string; audience: AnnouncementAudience } | null>(null);
+  const [resendInitial, setResendInitial] = useState<{ body: string; audience: AnnouncementAudience; requires_confirmation?: boolean } | null>(null);
   const [statusFilter, setStatusFilter] = useState('');
   const [monthFilter, setMonthFilter] = useState('');
 
@@ -80,20 +82,24 @@ export function Comunicados() {
     },
   });
 
-  const sendingIds = announcements.filter(a => a.status === 'sending').map(a => a.id);
+  // Counts agregados por announcement: total/sent/confirmed.
+  // Roda pra todos os anúncios visíveis (não só os "sending").
+  const allIds = announcements.map(a => a.id);
   const { data: jobCounts = {} } = useQuery({
-    queryKey: ['comunicados-jobs', sendingIds],
-    enabled: sendingIds.length > 0,
+    queryKey: ['comunicados-jobs', allIds],
+    enabled: allIds.length > 0,
     queryFn: async () => {
       const { data } = await supabase
         .from('announcement_jobs')
-        .select('announcement_id, status')
-        .in('announcement_id', sendingIds);
-      const counts: Record<string, { sent: number; total: number }> = {};
-      for (const job of (data as AnnouncementJob[] || [])) {
-        if (!counts[job.announcement_id]) counts[job.announcement_id] = { sent: 0, total: 0 };
+        .select('announcement_id, status, confirmed_at')
+        .in('announcement_id', allIds);
+      const counts: Record<string, { sent: number; total: number; confirmed: number }> = {};
+      type JobRow = AnnouncementJob & { confirmed_at: string | null };
+      for (const job of (data as JobRow[] || [])) {
+        if (!counts[job.announcement_id]) counts[job.announcement_id] = { sent: 0, total: 0, confirmed: 0 };
         counts[job.announcement_id].total++;
         if (job.status === 'sent') counts[job.announcement_id].sent++;
+        if (job.confirmed_at) counts[job.announcement_id].confirmed++;
       }
       return counts;
     },
@@ -131,7 +137,11 @@ export function Comunicados() {
   const activeFilters = (statusFilter ? 1 : 0) + (monthFilter ? 1 : 0);
 
   function handleResend(ann: Announcement) {
-    setResendInitial({ body: ann.body, audience: ann.audience });
+    setResendInitial({
+      body: ann.body,
+      audience: ann.audience,
+      requires_confirmation: !!(ann as Announcement & { requires_confirmation?: boolean }).requires_confirmation,
+    });
     setSheetOpen(true);
   }
 
@@ -209,28 +219,32 @@ export function Comunicados() {
               <li
                 key={ann.id}
                 className={[
-                  'relative bg-bg-surface rounded-xl border border-border p-4 space-y-2',
+                  'relative bg-bg-surface rounded-xl border border-border p-4',
                   'transition-all duration-150',
                   'hover:border-tom/40 hover:shadow-[0_0_0_1px_rgba(157,184,91,0.15),0_8px_24px_-12px_rgba(157,184,91,0.30)]',
                 ].join(' ')}
               >
-                <div className="flex items-start justify-between gap-2">
-                  <p className="text-body line-clamp-3 pr-6">{ann.body}</p>
-                  <div className="absolute top-3 right-3">
-                    <RowMenu items={menuItems} />
+                <Link to={`/mais/comunicados/${ann.id}`} className="block space-y-2 pr-8">
+                  <p className="text-body line-clamp-3">{ann.body}</p>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Badge tone="neutral">{audienceLabel(ann.audience)}</Badge>
+                    <span className={['text-caption font-semibold rounded-md px-2 py-0.5', STATUS_TONE[ann.status] ?? ''].join(' ')}>
+                      {STATUS_LABEL[ann.status] ?? ann.status}
+                      {ann.status === 'sending' && counts ? ` ${counts.sent}/${counts.total}` : ''}
+                    </span>
+                    {(ann as Announcement & { requires_confirmation?: boolean }).requires_confirmation && counts && (
+                      <span className="inline-flex items-center gap-1 text-caption font-semibold rounded-md px-2 py-0.5 bg-tom/15 text-tom">
+                        <CheckCircle2 size={12} /> {counts.confirmed}/{counts.sent || counts.total} confirmaram
+                      </span>
+                    )}
+                    {ann.scheduled_at && ann.status === 'scheduled' && (
+                      <span className="text-caption text-fg-muted">⏰ {formatDate(ann.scheduled_at)}</span>
+                    )}
+                    <span className="text-caption text-fg-muted ml-auto">{formatDate(ann.created_at)}</span>
                   </div>
-                </div>
-
-                <div className="flex items-center gap-2 flex-wrap">
-                  <Badge tone="neutral">{audienceLabel(ann.audience)}</Badge>
-                  <span className={['text-caption font-semibold rounded-md px-2 py-0.5', STATUS_TONE[ann.status] ?? ''].join(' ')}>
-                    {STATUS_LABEL[ann.status] ?? ann.status}
-                    {ann.status === 'sending' && counts ? ` ${counts.sent}/${counts.total}` : ''}
-                  </span>
-                  {ann.scheduled_at && ann.status === 'scheduled' && (
-                    <span className="text-caption text-fg-muted">⏰ {formatDate(ann.scheduled_at)}</span>
-                  )}
-                  <span className="text-caption text-fg-muted ml-auto">{formatDate(ann.created_at)}</span>
+                </Link>
+                <div className="absolute top-3 right-3">
+                  <RowMenu items={menuItems} />
                 </div>
               </li>
             );

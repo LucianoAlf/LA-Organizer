@@ -38,7 +38,25 @@ Identifique:
 
 Dimensões são combinadas com AND. Dentro de cada dimensão, OR.
 
-### Passo 2 — Confirmar antes de enviar
+### Passo 2 — Confirmação de leitura (requires_confirmation)
+
+Pergunte se o user quer rastrear quem confirmou ler o comunicado:
+
+> "Quer que eu peça pra cada pessoa confirmar que recebeu?"
+
+**Assuma `requires_confirmation: true` sem perguntar** quando a fala original do user já indicar isso. Sinais:
+- "preciso saber quem confirmou"
+- "quem vai estar"
+- "quem topa"
+- "quem leu"
+- "responde sim/não"
+
+Quando `requires_confirmation: true`:
+- O destinatário recebe a mensagem com instrução automática "_Responde 'ok' pra confirmar que recebeu._"
+- Após 6h sem confirmação, o sistema dispara um lembrete
+- O coordenador acompanha quem confirmou via PWA `/mais/comunicados/:id`
+
+### Passo 3 — Confirmar antes de enviar
 
 Sempre mostre um resumo e peça confirmação:
 
@@ -47,12 +65,13 @@ Vou mandar este comunicado:
 
 Público: [descrição legível do público]
 Mensagem: "[body]"
+Confirmação: [Sim — vou rastrear quem confirmou | Não]
 Envio: [imediato | data/hora formatada]
 
 Confirma?
 ```
 
-### Passo 3 — Emitir marker após confirmação
+### Passo 4 — Emitir marker após confirmação
 
 Só emita o marker DEPOIS que o usuário confirmar ("sim", "confirma", "pode", "vai", etc.).
 
@@ -62,10 +81,14 @@ Só emita o marker DEPOIS que o usuário confirmar ("sim", "confirma", "pode", "
   "action": "create",
   "body": "<texto exato a enviar>",
   "audience": <json do público>,
-  "scheduled_at": <"2026-04-30T08:00:00-03:00" | null>
+  "scheduled_at": <"2026-04-30T08:00:00-03:00" | null>,
+  "requires_confirmation": <true | false>,
+  "confirmation_question": "<opcional — texto custom em vez do default 'Responde ok pra confirmar'>"
 }
 <<END>>
 ```
+
+**Importante:** quando `requires_confirmation: false`, omita os 2 campos do marker. NÃO duplique a instrução de confirmação no `body` — o sistema injeta automaticamente.
 
 ### Passo 4 — Confirmar envio
 
