@@ -789,7 +789,7 @@ async function applyAnnouncementAction(collaborator, parsed) {
       .not('phone', 'is', null);
 
     if (audience && !audience.all) {
-      if (audience.function_role?.length) q = q.in('function_role', audience.function_role);
+      if (audience.function_role?.length) q = q.in('role', audience.function_role);
       if (audience.unidade?.length) q = q.in('unit', audience.unidade);
       if (audience.turno?.length) q = q.in('shift', audience.turno);
     }
@@ -1093,7 +1093,7 @@ async function applySchoolEventAction(collaborator, parsed) {
       }
       let q = supabase.from('collaborators').select('id, phone').eq('is_active', true).not('phone', 'is', null);
       if (!spec.audience.all) {
-        if (spec.audience.function_role?.length) q = q.in('function_role', spec.audience.function_role);
+        if (spec.audience.function_role?.length) q = q.in('role', spec.audience.function_role);
         if (spec.audience.unidade?.length) q = q.in('unit', spec.audience.unidade);
         if (spec.audience.turno?.length) q = q.in('shift', spec.audience.turno);
       }

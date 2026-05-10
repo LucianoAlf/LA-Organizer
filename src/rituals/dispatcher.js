@@ -477,7 +477,7 @@ async function createJobsFromAudience(announcementId, audience) {
   const aud = audience || {};
   if (aud.all !== true) {
     if (Array.isArray(aud.role) && aud.role.length) q = q.in('role', aud.role);
-    if (Array.isArray(aud.function_role) && aud.function_role.length) q = q.in('function_role', aud.function_role);
+    if (Array.isArray(aud.function_role) && aud.function_role.length) q = q.in('role', aud.function_role);
     if (Array.isArray(aud.unidade) && aud.unidade.length) q = q.in('unit', aud.unidade);
     if (Array.isArray(aud.turno) && aud.turno.length) q = q.in('shift', aud.turno);
     if (Array.isArray(aud.collaborator_ids) && aud.collaborator_ids.length) q = q.in('id', aud.collaborator_ids);
