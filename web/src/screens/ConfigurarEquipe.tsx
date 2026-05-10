@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '../components/PageHeader';
 import { CustomSelect } from '../components/CustomSelect';
+import { Tabs } from '../components/Tabs';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { SECTORS, SECTOR_LABELS } from '../types';
@@ -112,23 +113,11 @@ export function ConfigurarEquipe() {
         backTo="/mais/agenda-escolar"
       />
 
-      <div className="flex gap-2 border-b border-border">
-        {UNITS.map(u => (
-          <button
-            key={u}
-            type="button"
-            onClick={() => setUnit(u)}
-            className={[
-              'px-3 py-2 text-body focus-ring',
-              u === unit
-                ? 'border-b-2 border-brand text-fg font-medium'
-                : 'text-fg-muted hover:text-fg',
-            ].join(' ')}
-          >
-            {UNIT_LABELS[u]}
-          </button>
-        ))}
-      </div>
+      <Tabs
+        tabs={UNITS.map(u => ({ id: u, label: UNIT_LABELS[u] }))}
+        active={unit}
+        onChange={(u) => setUnit(u as Unit)}
+      />
 
       {isLoading && <p className="text-body-sm text-fg-muted">Carregando...</p>}
 
