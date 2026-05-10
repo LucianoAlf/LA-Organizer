@@ -4779,8 +4779,9 @@ async function processMessage(phone, text, raw = {}) {
           try {
             if (!a || typeof a !== 'object') { console.warn('[PersonalList] FAIL: not object'); failCount++; continue; }
             console.log('[PersonalList] action:', a.action, 'name:', a.name);
-            if (a.action === 'create') {
-              const name = String(a.name || '').trim();
+            if (a.action === 'create' || a.action === 'create_list') {
+              // aceita 'title' como alias de 'name' (TOM às vezes gera title em vez de name)
+              const name = String(a.name || a.title || '').trim();
               if (!name) { console.warn('[PersonalList] FAIL: no name'); failCount++; continue; }
               const listType = ['shopping', 'travel', 'meds', 'general'].includes(a.list_type) ? a.list_type : 'general';
               const context = ['work', 'personal'].includes(a.context) ? a.context : 'personal';
