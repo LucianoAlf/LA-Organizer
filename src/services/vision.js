@@ -46,7 +46,7 @@ async function analyzeImage(buffer, mime = 'image/jpeg', userCaption = '') {
 
   const payload = JSON.stringify({
     model: VISION_MODEL,
-    max_tokens: 400,
+    max_completion_tokens: 400,
     messages: [
       {
         role: 'user',
