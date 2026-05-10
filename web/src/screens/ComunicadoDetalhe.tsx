@@ -33,6 +33,11 @@ type AnnouncementFull = Announcement & {
   confirmation_question?: string | null;
   rejection_reason?: string | null;
   scheduled_at?: string | null;
+  attachment_url?: string | null;
+  attachment_type?: 'image' | 'document' | null;
+  attachment_mime?: string | null;
+  attachment_filename?: string | null;
+  attachment_size_bytes?: number | null;
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -186,6 +191,27 @@ export function ComunicadoDetalhe() {
       <section className="bg-bg-surface rounded-xl border border-border p-4 space-y-2">
         <p className="text-caption uppercase font-semibold text-fg-muted">Mensagem</p>
         <p className="text-body text-fg" style={{ whiteSpace: 'pre-wrap' }}>{ann.body}</p>
+        {ann.attachment_url && (
+          <div className="mt-2">
+            {ann.attachment_type === 'image' ? (
+              <img
+                src={ann.attachment_url}
+                alt={ann.attachment_filename ?? 'Anexo'}
+                className="max-w-full rounded-lg border border-border max-h-64 object-contain"
+              />
+            ) : (
+              <a
+                href={ann.attachment_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 rounded-lg border border-border bg-bg-elevated px-3 py-2 text-body-sm text-tom hover:underline"
+              >
+                📄 {ann.attachment_filename ?? 'Documento'}
+                {ann.attachment_size_bytes ? ` (${(ann.attachment_size_bytes / 1024).toFixed(0)} KB)` : ''}
+              </a>
+            )}
+          </div>
+        )}
         {ann.requires_confirmation && (
           <p className="text-caption text-tom inline-flex items-center gap-1 mt-1">
             <CheckCircle2 size={12} />
@@ -285,6 +311,11 @@ export function ComunicadoDetalhe() {
           requires_confirmation: !!ann.requires_confirmation,
           scheduled_at: ann.scheduled_at,
           status: ann.status,
+          attachment_url: ann.attachment_url,
+          attachment_type: ann.attachment_type,
+          attachment_mime: ann.attachment_mime,
+          attachment_filename: ann.attachment_filename,
+          attachment_size_bytes: ann.attachment_size_bytes,
         } : null}
       />
     </div>
