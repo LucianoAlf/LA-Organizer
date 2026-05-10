@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { BottomSheet } from './BottomSheet';
+import { Button } from './Button';
 import { buildEventAnnouncements } from '../types';
 import type { AnnouncementAudience } from '../types';
 
@@ -229,14 +230,14 @@ export function EventoSheet({ open, onClose }: Props) {
 
         {error && <p className="text-danger text-caption">{error}</p>}
 
-        <button
-          type="button"
+        <Button
+          variant="primary"
+          fullWidth
           disabled={!canSave || isPending}
           onClick={() => mutate()}
-          className="w-full py-3 bg-brand text-white rounded-xl font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
         >
-          {isPending ? 'Criando...' : 'Criar evento'}
-        </button>
+          {isPending ? 'Criando…' : 'Criar evento'}
+        </Button>
       </div>
     </BottomSheet>
   );
