@@ -11,7 +11,9 @@ interface Props {
   open: boolean;
   onClose: () => void;
   /** Pré-preenche body+audience (usado em "Reenviar"/duplicar). */
-  initial?: { body: string; audience: AnnouncementAudience; requires_confirmation?: boolean } | null;
+  initial?: { body: string; audience: AnnouncementAudience; requires_confirmation?: boolean; scheduled_at?: string | null } | null;
+  /** Modo edição: passa a row do announcement. UPDATE em vez de INSERT. */
+  editTarget?: { id: string; body: string; audience: AnnouncementAudience; requires_confirmation?: boolean; scheduled_at?: string | null; status: string } | null;
 }
 
 const ROLES = [
@@ -40,7 +42,8 @@ const TURNOS = [
   { value: 'full', label: 'Integral' },
 ];
 
-export function ComunicadoSheet({ open, onClose, initial }: Props) {
+export function ComunicadoSheet({ open, onClose, initial, editTarget }: Props) {
+  const isEdit = !!editTarget;
   const { collaborator } = useAuth();
   const queryClient = useQueryClient();
 
@@ -57,10 +60,26 @@ export function ComunicadoSheet({ open, onClose, initial }: Props) {
   const [requiresConfirmation, setRequiresConfirmation] = useState(false);
   const [error, setError] = useState('');
 
-  // Pré-preenche quando abre via "Reenviar"; reseta quando fecha.
+  // Pré-preenche quando abre via "Reenviar" ou "Editar"; reseta quando fecha.
   useEffect(() => {
     if (!open) return;
-    if (initial) {
+    if (editTarget) {
+      setBody(editTarget.body);
+      const aud = editTarget.audience || {};
+      const isAll = aud.all === true;
+      setAudienceAll(isAll);
+      setSelectedCargos(aud.role ?? []);
+      setSelectedRoles(aud.function_role ?? []);
+      setSelectedUnidades(aud.unidade ?? []);
+      setSelectedTurnos(aud.turno ?? []);
+      setSelectedCollabIds(aud.collaborator_ids ?? []);
+      setScheduledMode(!!editTarget.scheduled_at);
+      // datetime-local format: YYYY-MM-DDTHH:MM
+      setScheduledAt(editTarget.scheduled_at ? editTarget.scheduled_at.slice(0, 16) : '');
+      setRequiresConfirmation(!!editTarget.requires_confirmation);
+      setCollabSearch('');
+      setError('');
+    } else if (initial) {
       setBody(initial.body);
       const aud = initial.audience || {};
       const isAll = aud.all === true;
@@ -89,7 +108,7 @@ export function ComunicadoSheet({ open, onClose, initial }: Props) {
       setCollabSearch('');
       setError('');
     }
-  }, [open, initial]);
+  }, [open, initial, editTarget]);
 
   function toggleItem<T>(arr: T[], item: T): T[] {
     return arr.includes(item) ? arr.filter(x => x !== item) : [...arr, item];
@@ -186,24 +205,38 @@ export function ComunicadoSheet({ open, onClose, initial }: Props) {
         value: collaborator!.id,
       });
 
-      const { data: ann, error: annErr } = await supabase
-        .from('announcements')
-        .insert({
-          created_by: collaborator!.id,
-          body: body.trim(),
-          audience,
-          status: 'scheduled',
-          scheduled_at,
-          requires_confirmation: requiresConfirmation,
-        })
-        .select('id')
-        .single();
-      if (annErr) throw annErr;
-
-      // Sprint 22.X — Jobs (announcement_jobs) são criados pelo backend (dispatcher
-      // tem service role). PWA só insere o announcement; dispatcher resolve audience
-      // e popula jobs no próximo tick. Mantém RLS limpa.
-      void ann;
+      if (isEdit && editTarget) {
+        // UPDATE — só permitido em pending_approval (edit normal)
+        // ou scheduled (apenas reagendar/edit body — audience pode ter sido
+        // mudada mas dispatcher detecta jobs existentes e não recria).
+        const { error: updErr } = await supabase
+          .from('announcements')
+          .update({
+            body: body.trim(),
+            audience,
+            scheduled_at,
+            requires_confirmation: requiresConfirmation,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', editTarget.id);
+        if (updErr) throw updErr;
+      } else {
+        const { data: ann, error: annErr } = await supabase
+          .from('announcements')
+          .insert({
+            created_by: collaborator!.id,
+            body: body.trim(),
+            audience,
+            status: 'scheduled',
+            scheduled_at,
+            requires_confirmation: requiresConfirmation,
+          })
+          .select('id')
+          .single();
+        if (annErr) throw annErr;
+        void ann;
+        // Jobs criados pelo dispatcher (lazy) — RLS bloqueia INSERT direto.
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['comunicados'] });
@@ -220,7 +253,7 @@ export function ComunicadoSheet({ open, onClose, initial }: Props) {
   });
 
   return (
-    <BottomSheet open={open} onClose={onClose} title="Novo comunicado">
+    <BottomSheet open={open} onClose={onClose} title={isEdit ? 'Editar comunicado' : 'Novo comunicado'}>
       <div className="space-y-4 pb-4">
         <div>
           <label className="text-caption text-fg-muted block mb-1">Mensagem</label>
@@ -389,7 +422,7 @@ export function ComunicadoSheet({ open, onClose, initial }: Props) {
           disabled={!canSave || isPending}
           onClick={() => mutate()}
         >
-          {isPending ? 'Enviando…' : 'Enviar comunicado'}
+          {isPending ? (isEdit ? 'Salvando…' : 'Enviando…') : (isEdit ? 'Salvar alterações' : 'Enviar comunicado')}
         </Button>
       </div>
     </BottomSheet>

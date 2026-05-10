@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { CheckCircle2, Clock, Send, AlertCircle } from 'lucide-react';
@@ -11,6 +11,7 @@ import { EmptyState } from '../components/EmptyState';
 import { RowMenu } from '../components/RowMenu';
 import { Button } from '../components/Button';
 import { Badge } from '../components/Badge';
+import { ComunicadoSheet } from '../components/ComunicadoSheet';
 import { showToast } from '../components/Toast';
 import { audienceLabel } from '../types';
 import type { Announcement, AnnouncementAudience } from '../types';
@@ -67,6 +68,7 @@ export function ComunicadoDetalhe() {
   const navigate = useNavigate();
   const { collaborator } = useAuth();
   const qc = useQueryClient();
+  const [editOpen, setEditOpen] = useState(false);
 
   const annQ = useQuery({
     queryKey: ['comunicado', id],
@@ -164,6 +166,7 @@ export function ComunicadoDetalhe() {
 
   const ann = annQ.data;
   const canRemind = ann.requires_confirmation && stats.unconfirmed > 0;
+  const canEdit = ann.status === 'pending_approval' || ann.status === 'scheduled';
 
   return (
     <div className="space-y-md">
@@ -173,6 +176,7 @@ export function ComunicadoDetalhe() {
         backTo="/mais/comunicados"
         right={
           <RowMenu items={[
+            ...(canEdit ? [{ label: 'Editar', onClick: () => setEditOpen(true) }] : []),
             { label: 'Excluir comunicado', danger: true, confirm: 'Excluir? Não dá pra desfazer.', onClick: () => deleteMutation.mutate() },
           ]} />
         }
@@ -270,6 +274,19 @@ export function ComunicadoDetalhe() {
           </ul>
         )}
       </section>
+
+      <ComunicadoSheet
+        open={editOpen}
+        onClose={() => { setEditOpen(false); qc.invalidateQueries({ queryKey: ['comunicado', id] }); }}
+        editTarget={editOpen ? {
+          id: ann.id,
+          body: ann.body,
+          audience: ann.audience as AnnouncementAudience,
+          requires_confirmation: !!ann.requires_confirmation,
+          scheduled_at: ann.scheduled_at,
+          status: ann.status,
+        } : null}
+      />
     </div>
   );
 }

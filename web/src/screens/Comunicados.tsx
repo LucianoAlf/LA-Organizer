@@ -66,6 +66,7 @@ export function Comunicados() {
   const qc = useQueryClient();
   const [sheetOpen, setSheetOpen] = useState(false);
   const [resendInitial, setResendInitial] = useState<{ body: string; audience: AnnouncementAudience; requires_confirmation?: boolean } | null>(null);
+  const [editTarget, setEditTarget] = useState<Announcement | null>(null);
   const [statusFilter, setStatusFilter] = useState('');
   const [monthFilter, setMonthFilter] = useState('');
 
@@ -204,15 +205,18 @@ export function Comunicados() {
         <ul className="space-y-3">
           {filtered.map(ann => {
             const counts = jobCounts[ann.id];
-            const menuItems = [
-              { label: 'Reenviar (duplicar)', onClick: () => handleResend(ann) },
-              {
-                label: 'Excluir comunicado',
-                danger: true,
-                confirm: 'Excluir? Não dá pra desfazer.',
-                onClick: () => deleteMutation.mutate(ann.id),
-              } as { label: string; onClick: () => void; danger?: boolean; confirm?: string },
-            ];
+            const canEdit = ann.status === 'pending_approval' || ann.status === 'scheduled';
+            const menuItems: Array<{ label: string; onClick: () => void; danger?: boolean; confirm?: string }> = [];
+            if (canEdit) {
+              menuItems.push({ label: 'Editar', onClick: () => { setEditTarget(ann); setSheetOpen(true); } });
+            }
+            menuItems.push({ label: 'Reenviar (duplicar)', onClick: () => handleResend(ann) });
+            menuItems.push({
+              label: 'Excluir comunicado',
+              danger: true,
+              confirm: 'Excluir? Não dá pra desfazer.',
+              onClick: () => deleteMutation.mutate(ann.id),
+            });
             return (
               <li
                 key={ann.id}
@@ -251,15 +255,16 @@ export function Comunicados() {
       )}
 
       <Fab
-        onClick={() => { setResendInitial(null); setSheetOpen(true); }}
+        onClick={() => { setResendInitial(null); setEditTarget(null); setSheetOpen(true); }}
         label="Novo"
         ariaLabel="Novo comunicado"
       />
 
       <ComunicadoSheet
         open={sheetOpen}
-        onClose={() => { setSheetOpen(false); setResendInitial(null); }}
+        onClose={() => { setSheetOpen(false); setResendInitial(null); setEditTarget(null); }}
         initial={resendInitial}
+        editTarget={editTarget}
       />
     </div>
   );
