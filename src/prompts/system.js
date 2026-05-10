@@ -477,17 +477,40 @@ function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habi
 // Render pending coordinator decisions (extension requests waiting for approve/deny).
 function renderPendingDecisions(notifications) {
   if (!notifications || !notifications.length) return '';
-  const pending = notifications.filter(n =>
+  const out = [];
+
+  // Pedidos de extensão de prazo (deadline_extension_request)
+  const ext = notifications.filter(n =>
     n.notification_type === 'deadline_extension_request' && n.reference_id
   );
-  if (!pending.length) return '';
-  const lines = ['', '**📥 Pedidos de prazo aguardando sua decisão:**'];
-  pending.slice(0, 5).forEach(n => {
-    const sid = String(n.reference_id || '').slice(0, 8);
-    lines.push(`• [id=${sid}] ${n.title}`);
-    if (n.body) lines.push(`  ${n.body.split('\n')[0].slice(0, 200)}`);
-  });
-  return lines.join('\n');
+  if (ext.length) {
+    out.push('', '**📥 Pedidos de prazo aguardando sua decisão:**');
+    ext.slice(0, 5).forEach(n => {
+      const sid = String(n.reference_id || '').slice(0, 8);
+      out.push(`• [id=${sid}] ${n.title}`);
+      if (n.body) out.push(`  ${n.body.split('\n')[0].slice(0, 200)}`);
+    });
+  }
+
+  // Sprint 22.56 — Tasks recém-atribuídas a este user (aguardando resposta 1/2/3/4)
+  // Pega notifications dos últimos 2 dias. TOM precisa saber explicitamente qual
+  // task_id usar quando o user responde "1", "2", "3", "4" ou pede reschedule/concluir.
+  const cutoff = Date.now() - 2 * 24 * 60 * 60 * 1000;
+  const assigned = notifications.filter(n =>
+    n.notification_type === 'task_assigned_by_other'
+    && n.reference_id
+    && n.created_at && new Date(n.created_at).getTime() >= cutoff
+  );
+  if (assigned.length) {
+    out.push('', '**🔥 Tarefas recém-atribuídas a você (aguardam decisão 1/2/3/4):**');
+    assigned.slice(0, 5).forEach(n => {
+      const sid = String(n.reference_id || '').slice(0, 8);
+      out.push(`• [id=${sid}] ${n.title}`);
+    });
+    out.push('_Quando o user responder 1/2/3/4 ou pedir reschedule/concluir/delegar referente a uma dessas, **USE EXATAMENTE o [id=...]** acima — não confunda com tarefas mais antigas da lista de hoje._');
+  }
+
+  return out.join('\n');
 }
 
 // ---------- BLOCK 4 — SKILL ATIVA (conditional, max 1) ----------

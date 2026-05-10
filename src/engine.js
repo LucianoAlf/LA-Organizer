@@ -2604,6 +2604,23 @@ async function canDelegatePedagogical(requester, target) {
   return false;
 }
 
+// Sprint 22.56 — Audit trail no histórico da task. Quando TOM processa
+// TASK_UPDATE com sucesso, grava agent_note no task_comments para que o PWA
+// (OperacaoDetalhe) mostre a interação. Best-effort — se falhar, só log.
+async function logAgentNote(taskId, content, byCollabId) {
+  if (!taskId || !content || !byCollabId) return;
+  try {
+    await supabase.from('task_comments').insert({
+      task_id: taskId,
+      content: content.slice(0, 500),
+      comment_type: 'agent_note',
+      created_by: byCollabId,
+    });
+  } catch (err) {
+    console.warn('[Task] agent_note insert err:', err.message);
+  }
+}
+
 async function applyTaskActions(collaborator, actions) {
   let okCount = 0;
   let failCount = 0;
@@ -2635,6 +2652,7 @@ async function applyTaskActions(collaborator, actions) {
           failCount++;
         } else {
           console.log(`[Task] complete ${a.id} by ${last4}`);
+          await logAgentNote(t.id, `Concluída por ${nameForCollab(collaborator)}`, collaborator.id);
           okCount++;
         }
       } else if (a.action === 'reschedule') {
@@ -2668,6 +2686,10 @@ async function applyTaskActions(collaborator, actions) {
         } else {
           const sufx = update.remind_at ? ` remind_at=${update.remind_at}` : '';
           console.log(`[Task] reschedule ${a.id} to ${a.new_due_date}${sufx}`);
+          const oldDue = t.due_date ? formatBRDate(t.due_date) : 'sem prazo';
+          const newDue = formatBRDate(a.new_due_date);
+          const note = `Prazo: ${oldDue} → ${newDue}${update.remind_at ? ` (lembrete ${update.remind_at.slice(11, 16)})` : ''}${a.reason ? ` — ${a.reason}` : ''}`;
+          await logAgentNote(t.id, note, collaborator.id);
           okCount++;
         }
       } else if (a.action === 'create') {
@@ -3139,10 +3161,12 @@ async function applyTaskActions(collaborator, actions) {
             sent_at: new Date().toISOString(),
           });
           console.log(`[Task] delegate ${a.id} ${last4} → ${String(recipient.phone).slice(-4)} (${recipient.full_name})`);
+          await logAgentNote(t.id, `Delegada de ${nameForCollab(collaborator)} para ${recipient.full_name}`, collaborator.id);
           okCount++;
         } catch (err) {
           console.error('[Task] delegate notification err:', err.message);
           // task already updated in DB; still count ok so user sees confirmation
+          await logAgentNote(t.id, `Delegada de ${nameForCollab(collaborator)} para ${recipient.full_name}`, collaborator.id);
           okCount++;
         }
       } else {
