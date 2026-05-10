@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { CheckCircle2, Clock, Send, AlertCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
@@ -38,6 +38,7 @@ type AnnouncementFull = Announcement & {
   attachment_mime?: string | null;
   attachment_filename?: string | null;
   attachment_size_bytes?: number | null;
+  source_event_id?: string | null;
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -87,6 +88,20 @@ export function ComunicadoDetalhe() {
       return data as AnnouncementFull | null;
     },
     enabled: !!id,
+  });
+
+  const linkedEventQ = useQuery({
+    queryKey: ['comunicado-event', annQ.data?.source_event_id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('school_events')
+        .select('id, title, event_date, end_date')
+        .eq('id', annQ.data!.source_event_id)
+        .maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!annQ.data?.source_event_id,
   });
 
   const jobsQ = useQuery({
@@ -240,6 +255,17 @@ export function ComunicadoDetalhe() {
               <span className="text-body text-danger">{ann.rejection_reason}</span>
             </>
           )}
+          {linkedEventQ.data && (
+            <>
+              <span className="text-body-sm text-fg-muted">Evento</span>
+              <Link
+                to={`/mais/eventos/${linkedEventQ.data.id}`}
+                className="text-body text-tom hover:underline focus-ring rounded-sm"
+              >
+                📅 {linkedEventQ.data.title}
+              </Link>
+            </>
+          )}
         </div>
       </section>
 
@@ -316,6 +342,7 @@ export function ComunicadoDetalhe() {
           attachment_mime: ann.attachment_mime,
           attachment_filename: ann.attachment_filename,
           attachment_size_bytes: ann.attachment_size_bytes,
+          source_event_id: ann.source_event_id,
         } : null}
       />
     </div>
