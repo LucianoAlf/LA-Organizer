@@ -1547,6 +1547,17 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     }
   }
 
+  // Sprint 22.X — Configurar Preferências (todos os roles).
+  // Skill ensina TOM a emitir <<PREFS_UPDATE>> quando user pede mudança em
+  // briefing time, intensidade, notificações, DND, etc.
+  if (collaborator) {
+    const prefsPath = path.join(SKILLS_DIR, 'configurar-preferencias.md');
+    if (fs.existsSync(prefsPath)) {
+      const prefsSkill = fs.readFileSync(prefsPath, 'utf-8');
+      systemPrompt += '\n\n---\n\n' + prefsSkill;
+    }
+  }
+
   // Sprint 15 — Operações Técnicas (camada operacional replicável)
   // Disponível para TODOS os roles: qualquer colaborador pode reportar
   // incidente/falta/manutenção. Triagem e classificação acontecem dentro da skill.

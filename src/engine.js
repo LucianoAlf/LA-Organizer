@@ -2604,6 +2604,100 @@ async function canDelegatePedagogical(requester, target) {
   return false;
 }
 
+// Sprint 22.X — PREFS_UPDATE marker: TOM atualiza user_preferences do colab
+// (briefing_time, intensity, DND, etc.) quando o user pede. Schema validado.
+const HHMM_RE = /^([01]?\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
+const PREFS_TIME_FIELDS = new Set([
+  'briefing_time', 'personal_briefing_time', 'closing_time', 'planning_time',
+  'monthly_planning_time', 'monthly_closing_time',
+]);
+const PREFS_INT_FIELDS = new Set(['planning_day', 'max_daily_tasks']);
+const PREFS_BOOL_FIELDS = new Set(['notify_deadline_alerts', 'notify_overdue_alerts', 'notify_team_summary']);
+const PREFS_INTENSITY_VALUES = new Set(['light', 'normal', 'hard']);
+
+function parsePrefsMarker(text) {
+  if (!text) return null;
+  const re = /<<PREFS_UPDATE>>\s*([\s\S]*?)\s*<<END>>/i;
+  const m = text.match(re);
+  if (!m) return null;
+  const cleanText = text.replace(re, '').trim();
+  let parsed;
+  try { parsed = JSON.parse(m[1].trim()); }
+  catch (err) {
+    logSchemaErr('PREFS_UPDATE', ['invalid_json: ' + err.message], m[1]);
+    return { malformed: true, cleanText };
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    logSchemaErr('PREFS_UPDATE', ['not_object'], parsed);
+    return { malformed: true, cleanText };
+  }
+  const update = {};
+  const dropped = [];
+  for (const [k, v] of Object.entries(parsed)) {
+    if (PREFS_TIME_FIELDS.has(k)) {
+      if (typeof v === 'string' && HHMM_RE.test(v)) {
+        update[k] = v.length === 5 ? v + ':00' : v;
+      } else dropped.push(`${k}:bad_time`);
+    } else if (PREFS_INT_FIELDS.has(k)) {
+      const n = Number(v);
+      if (Number.isInteger(n)) {
+        if (k === 'planning_day' && (n < 0 || n > 6)) dropped.push(`${k}:out_of_range`);
+        else if (k === 'max_daily_tasks' && (n < 1 || n > 20)) dropped.push(`${k}:out_of_range`);
+        else update[k] = n;
+      } else dropped.push(`${k}:not_int`);
+    } else if (PREFS_BOOL_FIELDS.has(k)) {
+      if (typeof v === 'boolean') update[k] = v;
+      else dropped.push(`${k}:not_bool`);
+    } else if (k === 'coaching_intensity') {
+      if (PREFS_INTENSITY_VALUES.has(v)) update.coaching_intensity = v;
+      else dropped.push(`${k}:invalid`);
+    } else if (k === 'do_not_disturb_until') {
+      // ISO timestamp ou null pra despausar
+      if (v === null) update.do_not_disturb_until = null;
+      else if (typeof v === 'string' && !isNaN(new Date(v).getTime())) update.do_not_disturb_until = new Date(v).toISOString();
+      else dropped.push(`${k}:bad_iso`);
+    } else if (k === 'do_not_disturb_reason') {
+      if (v === null || (typeof v === 'string' && v.length <= 200)) update.do_not_disturb_reason = v;
+      else dropped.push(`${k}:invalid`);
+    } else {
+      dropped.push(`${k}:unknown_field`);
+    }
+  }
+  if (dropped.length) logSchemaErr('PREFS_UPDATE', dropped, parsed);
+  if (Object.keys(update).length === 0) return { malformed: true, cleanText };
+  return { update, cleanText, malformed: false };
+}
+
+async function applyPrefsUpdate(collab, update) {
+  if (!update || Object.keys(update).length === 0) return { okCount: 0, failCount: 1 };
+  // Upsert: tenta update; se 0 rows afetadas, insert.
+  const { data: existing } = await supabase
+    .from('user_preferences')
+    .select('id')
+    .eq('collaborator_id', collab.id)
+    .maybeSingle();
+  if (existing) {
+    const { error } = await supabase
+      .from('user_preferences')
+      .update(update)
+      .eq('collaborator_id', collab.id);
+    if (error) {
+      console.error('[Prefs] update err:', error.message);
+      return { okCount: 0, failCount: 1 };
+    }
+  } else {
+    const { error } = await supabase
+      .from('user_preferences')
+      .insert({ collaborator_id: collab.id, ...update });
+    if (error) {
+      console.error('[Prefs] insert err:', error.message);
+      return { okCount: 0, failCount: 1 };
+    }
+  }
+  console.log(`[Prefs] updated for ${String(collab.phone).slice(-4)} fields=${Object.keys(update).join(',')}`);
+  return { okCount: 1, failCount: 0 };
+}
+
 // Sprint 22.56 — Audit trail no histórico da task. Quando TOM processa
 // TASK_UPDATE com sucesso, grava agent_note no task_comments para que o PWA
 // (OperacaoDetalhe) mostre a interação. Best-effort — se falhar, só log.
@@ -4525,6 +4619,26 @@ async function processMessage(phone, text, raw = {}) {
         }
         reply = base || reply;
       }
+    }
+  }
+
+  // 2.55) PREFS_UPDATE — TOM atualiza user_preferences (briefing, intensity, DND, etc.)
+  {
+    const parsedPrefs = parsePrefsMarker(reply);
+    if (parsedPrefs && parsedPrefs.malformed) {
+      console.warn('[Prefs] WARN: malformed marker, dropping block');
+      await logMarker(collab.id, 'PREFS_UPDATE', 'rejected', 'schema_invalid', reply);
+      reply = parsedPrefs.cleanText || reply;
+    } else if (parsedPrefs) {
+      const { okCount, failCount } = await applyPrefsUpdate(collab, parsedPrefs.update);
+      const result = okCount > 0 ? 'executed' : 'rejected';
+      const reason = okCount > 0 ? `ok=${okCount} fail=${failCount}` : `all_failed:${failCount}`;
+      await logMarker(collab.id, 'PREFS_UPDATE', result, reason, null);
+      let base = parsedPrefs.cleanText || '';
+      if (failCount > 0 && okCount === 0) {
+        base = (base ? base + '\n\n' : '') + '_não consegui salvar a configuração agora — tenta de novo em instantes_';
+      }
+      reply = base || reply;
     }
   }
 
