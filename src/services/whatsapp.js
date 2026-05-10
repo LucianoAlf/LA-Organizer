@@ -114,6 +114,48 @@ function isAudioMessage(body) {
   return candidates.some(c => /^(audio|ptt|myaudio|audiomessage)$/i.test(c));
 }
 
+function _typeCandidates(body) {
+  if (!body) return [];
+  return [
+    body.messageType,
+    body.message?.messageType,
+    body.message?.mediaType,
+    body.chat?.wa_lastMessageType,
+  ].filter(Boolean).map(String);
+}
+
+function isImageMessage(body) {
+  return _typeCandidates(body).some(c => /^(image|imagemessage|sticker|stickermessage)$/i.test(c));
+}
+
+function isDocumentMessage(body) {
+  return _typeCandidates(body).some(c => /^(document|documentmessage|documentwithcaptionmessage)$/i.test(c));
+}
+
+/**
+ * Envia mídia (imagem/documento/vídeo) via UAZAPI.
+ * Endpoint: POST /send/media com { number, type, file (url pública), text (caption), docName }
+ */
+async function sendMedia(phone, { url, type, caption = '', filename = '', mimetype = '' }) {
+  try {
+    const payload = {
+      number: phone,
+      type, // 'image' | 'document' | 'video'
+      file: url,
+      text: caption || '',
+      readchat: true,
+    };
+    if (filename) payload.docName = filename;
+    if (mimetype) payload.mimetype = mimetype;
+    const response = await api.post('/send/media', payload);
+    console.log(`[WhatsApp] mídia (${type}) enviada pra ${phone.slice(-4)}`);
+    return response.data;
+  } catch (err) {
+    console.error(`[WhatsApp] sendMedia erro pra ${phone}: ${err.message}`);
+    throw err;
+  }
+}
+
 /**
  * Normaliza o payload — suporta formato novo UAZAPI (EventType + messages[])
  * e formato antigo (event + data).
@@ -176,4 +218,4 @@ function isIgnorable(body) {
   return false;
 }
 
-module.exports = { sendMessage, sendButtons, sendList, setTyping, isAudioMessage, extractText, extractPhone, extractName, isIgnorable };
+module.exports = { sendMessage, sendButtons, sendList, sendMedia, setTyping, isAudioMessage, isImageMessage, isDocumentMessage, extractText, extractPhone, extractName, isIgnorable };

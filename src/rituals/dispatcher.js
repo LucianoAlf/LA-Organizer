@@ -1176,7 +1176,7 @@ async function dispatchAnnouncements(now = new Date()) {
   // 1. Anúncios prontos para enviar
   const { data: ready, error: rErr } = await supabase
     .from('announcements')
-    .select('id, body, status, audience, requires_confirmation, confirmation_question')
+    .select('id, body, status, audience, requires_confirmation, confirmation_question, attachment_url, attachment_type, attachment_mime, attachment_filename')
     .in('status', ['scheduled', 'sending'])
     .or(`scheduled_at.is.null,scheduled_at.lte.${nowIso}`);
   if (rErr) { console.error('[dispatchAnnouncements] ready query err:', rErr.message); }
@@ -1220,7 +1220,19 @@ async function dispatchAnnouncements(now = new Date()) {
         : '';
       const finalBody = ann.body + confirmTail;
       try {
-        await whatsapp.sendMessage(job.phone, finalBody);
+        // Sprint 22.X — Mídia: se há anexo, envia como mídia com caption.
+        // Senão, mantém comportamento legado de texto puro.
+        if (ann.attachment_url && ann.attachment_type) {
+          await whatsapp.sendMedia(job.phone, {
+            url: ann.attachment_url,
+            type: ann.attachment_type, // 'image' | 'document'
+            caption: finalBody,
+            filename: ann.attachment_filename || '',
+            mimetype: ann.attachment_mime || '',
+          });
+        } else {
+          await whatsapp.sendMessage(job.phone, finalBody);
+        }
         await supabase.from('announcement_jobs')
           .update({ status: 'sent', sent_at: nowIso })
           .eq('id', job.id);

@@ -11,10 +11,36 @@ interface Props {
   open: boolean;
   onClose: () => void;
   /** Pré-preenche body+audience (usado em "Reenviar"/duplicar). */
-  initial?: { body: string; audience: AnnouncementAudience; requires_confirmation?: boolean; scheduled_at?: string | null } | null;
+  initial?: { body: string; audience: AnnouncementAudience; requires_confirmation?: boolean; scheduled_at?: string | null; attachment?: Attachment | null } | null;
   /** Modo edição: passa a row do announcement. UPDATE em vez de INSERT. */
-  editTarget?: { id: string; body: string; audience: AnnouncementAudience; requires_confirmation?: boolean; scheduled_at?: string | null; status: string } | null;
+  editTarget?: {
+    id: string;
+    body: string;
+    audience: AnnouncementAudience;
+    requires_confirmation?: boolean;
+    scheduled_at?: string | null;
+    status: string;
+    attachment_url?: string | null;
+    attachment_type?: 'image' | 'document' | null;
+    attachment_mime?: string | null;
+    attachment_filename?: string | null;
+    attachment_size_bytes?: number | null;
+  } | null;
 }
+
+type Attachment = {
+  url: string;
+  type: 'image' | 'document';
+  mime: string;
+  filename: string;
+  size: number;
+};
+
+const MAX_ATTACH_BYTES = 10 * 1024 * 1024; // 10 MB
+const ALLOWED_MIME = new Set([
+  'image/jpeg', 'image/png', 'image/webp', 'image/gif',
+  'application/pdf',
+]);
 
 const ROLES = [
   { value: 'director', label: 'Diretoria' },
@@ -58,6 +84,8 @@ export function ComunicadoSheet({ open, onClose, initial, editTarget }: Props) {
   const [scheduledMode, setScheduledMode] = useState(false);
   const [scheduledAt, setScheduledAt] = useState('');
   const [requiresConfirmation, setRequiresConfirmation] = useState(false);
+  const [attachment, setAttachment] = useState<Attachment | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
 
   // Pré-preenche quando abre via "Reenviar" ou "Editar"; reseta quando fecha.
@@ -77,6 +105,17 @@ export function ComunicadoSheet({ open, onClose, initial, editTarget }: Props) {
       // datetime-local format: YYYY-MM-DDTHH:MM
       setScheduledAt(editTarget.scheduled_at ? editTarget.scheduled_at.slice(0, 16) : '');
       setRequiresConfirmation(!!editTarget.requires_confirmation);
+      setAttachment(
+        editTarget.attachment_url && editTarget.attachment_type
+          ? {
+              url: editTarget.attachment_url,
+              type: editTarget.attachment_type,
+              mime: editTarget.attachment_mime || '',
+              filename: editTarget.attachment_filename || '',
+              size: editTarget.attachment_size_bytes || 0,
+            }
+          : null,
+      );
       setCollabSearch('');
       setError('');
     } else if (initial) {
@@ -92,6 +131,7 @@ export function ComunicadoSheet({ open, onClose, initial, editTarget }: Props) {
       setScheduledMode(false);
       setScheduledAt('');
       setRequiresConfirmation(!!initial.requires_confirmation);
+      setAttachment(initial.attachment ?? null);
       setCollabSearch('');
       setError('');
     } else {
@@ -105,10 +145,45 @@ export function ComunicadoSheet({ open, onClose, initial, editTarget }: Props) {
       setScheduledMode(false);
       setScheduledAt('');
       setRequiresConfirmation(false);
+      setAttachment(null);
       setCollabSearch('');
       setError('');
     }
   }, [open, initial, editTarget]);
+
+  async function handleFilePick(file: File) {
+    setError('');
+    if (!ALLOWED_MIME.has(file.type)) {
+      setError('Formato não suportado. Use JPG, PNG, WEBP, GIF ou PDF.');
+      return;
+    }
+    if (file.size > MAX_ATTACH_BYTES) {
+      setError(`Arquivo muito grande (${(file.size / 1024 / 1024).toFixed(1)} MB). Máximo 10 MB.`);
+      return;
+    }
+    setUploading(true);
+    try {
+      const ext = file.name.split('.').pop() || 'bin';
+      const path = `${collaborator!.id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+      const { error: upErr } = await supabase.storage
+        .from('comunicado-anexos')
+        .upload(path, file, { contentType: file.type, upsert: false });
+      if (upErr) throw upErr;
+      const { data: pub } = supabase.storage.from('comunicado-anexos').getPublicUrl(path);
+      setAttachment({
+        url: pub.publicUrl,
+        type: file.type === 'application/pdf' ? 'document' : 'image',
+        mime: file.type,
+        filename: file.name,
+        size: file.size,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(`Falha no upload: ${msg}`);
+    } finally {
+      setUploading(false);
+    }
+  }
 
   function toggleItem<T>(arr: T[], item: T): T[] {
     return arr.includes(item) ? arr.filter(x => x !== item) : [...arr, item];
@@ -205,6 +280,22 @@ export function ComunicadoSheet({ open, onClose, initial, editTarget }: Props) {
         value: collaborator!.id,
       });
 
+      const attachmentFields = attachment
+        ? {
+            attachment_url: attachment.url,
+            attachment_type: attachment.type,
+            attachment_mime: attachment.mime,
+            attachment_filename: attachment.filename,
+            attachment_size_bytes: attachment.size,
+          }
+        : {
+            attachment_url: null,
+            attachment_type: null,
+            attachment_mime: null,
+            attachment_filename: null,
+            attachment_size_bytes: null,
+          };
+
       if (isEdit && editTarget) {
         // UPDATE — só permitido em pending_approval (edit normal)
         // ou scheduled (apenas reagendar/edit body — audience pode ter sido
@@ -216,6 +307,7 @@ export function ComunicadoSheet({ open, onClose, initial, editTarget }: Props) {
             audience,
             scheduled_at,
             requires_confirmation: requiresConfirmation,
+            ...attachmentFields,
             updated_at: new Date().toISOString(),
           })
           .eq('id', editTarget.id);
@@ -230,6 +322,7 @@ export function ComunicadoSheet({ open, onClose, initial, editTarget }: Props) {
             status: 'scheduled',
             scheduled_at,
             requires_confirmation: requiresConfirmation,
+            ...attachmentFields,
           })
           .select('id')
           .single();
@@ -246,6 +339,7 @@ export function ComunicadoSheet({ open, onClose, initial, editTarget }: Props) {
       setScheduledMode(false);
       setScheduledAt('');
       setRequiresConfirmation(false);
+      setAttachment(null);
       setCollabSearch('');
       onClose();
     },
@@ -266,6 +360,44 @@ export function ComunicadoSheet({ open, onClose, initial, editTarget }: Props) {
             onChange={e => setBody(e.target.value)}
           />
           <p className="text-caption text-fg-muted text-right">{body.length}/1000</p>
+        </div>
+
+        <div>
+          <p className="text-caption uppercase font-semibold text-fg-muted mb-1">Anexo (opcional)</p>
+          {attachment ? (
+            <div className="flex items-center gap-3 rounded-lg border border-border bg-bg-elevated p-2">
+              {attachment.type === 'image' ? (
+                <img src={attachment.url} alt="" className="w-12 h-12 rounded object-cover" />
+              ) : (
+                <div className="w-12 h-12 rounded bg-bg-app border border-border flex items-center justify-center text-caption text-fg-muted">PDF</div>
+              )}
+              <div className="flex-1 min-w-0">
+                <p className="text-body-sm truncate">{attachment.filename}</p>
+                <p className="text-caption text-fg-muted">{(attachment.size / 1024).toFixed(0)} KB</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAttachment(null)}
+                className="text-caption text-danger underline px-2"
+              >Remover</button>
+            </div>
+          ) : (
+            <label className="flex items-center justify-center gap-2 h-10 rounded-lg border border-dashed border-border bg-bg-surface text-body-sm text-fg-muted hover:border-tom hover:text-tom cursor-pointer transition-colors">
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
+                className="hidden"
+                disabled={uploading}
+                onChange={e => {
+                  const f = e.target.files?.[0];
+                  if (f) handleFilePick(f);
+                  e.target.value = '';
+                }}
+              />
+              {uploading ? 'Enviando…' : '📎 Anexar imagem ou PDF'}
+            </label>
+          )}
+          <p className="text-caption text-fg-muted mt-1">JPG, PNG, WEBP, GIF ou PDF — até 10 MB</p>
         </div>
 
         <div className="space-y-3">

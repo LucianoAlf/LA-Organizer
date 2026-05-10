@@ -236,4 +236,11 @@ function isProviderConfigured() {
   return Boolean(PROVIDER_KEY);
 }
 
-module.exports = { transcribeAudio, findAudioUrl, isProviderConfigured };
+// Sprint 22.X — Mídia bidirecional: utilitário compartilhado para download
+// de qualquer mídia (imagem, documento, áudio) via UAZAPI /message/download.
+// Reusa o mesmo decrypt server-side que o transcribeAudio já usa.
+async function downloadMediaFromUazapi(messageId, opts = {}) {
+  return downloadFromUazapi(messageId, opts.timeoutMs || 30000);
+}
+
+module.exports = { transcribeAudio, findAudioUrl, isProviderConfigured, downloadMediaFromUazapi, extractMessageId };

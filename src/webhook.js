@@ -8,6 +8,7 @@ const whatsapp = require('./services/whatsapp');
 const queue = require('./services/per-user-queue');
 const dedupe = require('./services/dedupe');
 const audio = require('./services/audio');
+const vision = require('./services/vision');
 
 const router = express.Router();
 
@@ -157,6 +158,46 @@ router.post(['/webhook', '/webhook/:token'], async (req, res) => {
         whatsapp.sendMessage(phone, fallback).catch(e => console.error('[Webhook] audio-fallback send err:', e.message));
         return;
       }
+    }
+
+    // ---- Sprint 22.X — Imagem: análise via vision e injeção como texto ----
+    if (whatsapp.isImageMessage(body)) {
+      const caption = (typeof text === 'string' && text.trim()) ? text.trim() : '';
+      console.log(`[Webhook] image detected from ${phone.slice(-4)} caption="${caption.slice(0, 60)}"`);
+      const messageId = audio.extractMessageId(body);
+      let buf = null, mime = 'image/jpeg';
+      if (messageId) {
+        try {
+          const r = await audio.downloadMediaFromUazapi(messageId);
+          buf = r.buffer; mime = r.mime || mime;
+        } catch (err) {
+          console.warn('[Webhook] image download falhou:', err.message);
+        }
+      }
+      if (!buf) {
+        whatsapp.sendMessage(phone, 'recebi sua imagem mas não consegui baixar. Tenta enviar de novo?').catch(() => {});
+        return;
+      }
+      const r = await vision.analyzeImage(buf, mime, caption);
+      if (r.ok) {
+        const captionLine = caption ? `Legenda do usuário: "${caption}"\n` : '';
+        text = `[imagem analisada] ${captionLine}Descrição: ${r.text}`;
+        console.log(`[Webhook] image analyzed (${r.text.length} chars)`);
+      } else {
+        const reasons = {
+          no_provider: 'recebi sua imagem, mas ainda não tô analisando imagens aqui. Me conta em texto o que tá nela?',
+          unsupported_mime: 'recebi um formato de imagem que ainda não consigo ler. Pode mandar como JPG ou PNG?',
+        };
+        const fallback = reasons[r.reason] || 'recebi sua imagem mas tive um problema pra analisar. Pode descrever em texto?';
+        whatsapp.sendMessage(phone, fallback).catch(() => {});
+        return;
+      }
+    }
+    // ---- Sprint 22.X — Documento (PDF): acknowledge e pede contexto ----
+    else if ((!text || typeof text !== 'string') && whatsapp.isDocumentMessage(body)) {
+      console.log(`[Webhook] document detected from ${phone.slice(-4)} — acknowledge fallback`);
+      whatsapp.sendMessage(phone, 'recebi seu PDF aqui. Por enquanto não tô lendo PDFs automaticamente — me conta em texto o que precisa que eu faça com ele?').catch(() => {});
+      return;
     }
 
     if (!text || typeof text !== 'string') {

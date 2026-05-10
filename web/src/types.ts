@@ -465,6 +465,14 @@ export interface Announcement {
   coordinator_notified_at: string | null;
   created_at: string;
   updated_at: string;
+  // Sprint 22.X — Mídia bidirecional
+  requires_confirmation?: boolean;
+  confirmation_question?: string | null;
+  attachment_url?: string | null;
+  attachment_type?: 'image' | 'document' | null;
+  attachment_mime?: string | null;
+  attachment_filename?: string | null;
+  attachment_size_bytes?: number | null;
 }
 
 export interface AnnouncementJob {

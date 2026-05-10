@@ -65,7 +65,7 @@ export function Comunicados() {
   const { collaborator } = useAuth();
   const qc = useQueryClient();
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [resendInitial, setResendInitial] = useState<{ body: string; audience: AnnouncementAudience; requires_confirmation?: boolean } | null>(null);
+  const [resendInitial, setResendInitial] = useState<{ body: string; audience: AnnouncementAudience; requires_confirmation?: boolean; attachment?: { url: string; type: 'image' | 'document'; mime: string; filename: string; size: number } | null } | null>(null);
   const [editTarget, setEditTarget] = useState<Announcement | null>(null);
   const [statusFilter, setStatusFilter] = useState('');
   const [monthFilter, setMonthFilter] = useState('');
@@ -139,10 +139,25 @@ export function Comunicados() {
   const activeFilters = (statusFilter ? 1 : 0) + (monthFilter ? 1 : 0);
 
   function handleResend(ann: Announcement) {
+    const a = ann as Announcement & {
+      requires_confirmation?: boolean;
+      attachment_url?: string | null;
+      attachment_type?: 'image' | 'document' | null;
+      attachment_mime?: string | null;
+      attachment_filename?: string | null;
+      attachment_size_bytes?: number | null;
+    };
     setResendInitial({
       body: ann.body,
       audience: ann.audience,
-      requires_confirmation: !!(ann as Announcement & { requires_confirmation?: boolean }).requires_confirmation,
+      requires_confirmation: !!a.requires_confirmation,
+      attachment: a.attachment_url && a.attachment_type ? {
+        url: a.attachment_url,
+        type: a.attachment_type,
+        mime: a.attachment_mime || '',
+        filename: a.attachment_filename || '',
+        size: a.attachment_size_bytes || 0,
+      } : null,
     });
     setSheetOpen(true);
   }
