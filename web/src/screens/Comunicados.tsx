@@ -83,6 +83,31 @@ export function Comunicados() {
     },
   });
 
+  // Eventos vinculados (Fatia D)
+  const linkedEventIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const a of announcements) {
+      const ev = (a as Announcement & { source_event_id?: string | null }).source_event_id;
+      if (ev) ids.add(ev);
+    }
+    return [...ids];
+  }, [announcements]);
+  const { data: linkedEvents = {} } = useQuery({
+    queryKey: ['comunicados-linked-events', linkedEventIds],
+    enabled: linkedEventIds.length > 0,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('school_events')
+        .select('id, title')
+        .in('id', linkedEventIds);
+      const map: Record<string, string> = {};
+      for (const r of (data as Array<{ id: string; title: string }> || [])) {
+        map[r.id] = r.title;
+      }
+      return map;
+    },
+  });
+
   // Counts agregados por announcement: total/sent/confirmed.
   // Roda pra todos os anúncios visíveis (não só os "sending").
   const allIds = announcements.map(a => a.id);
@@ -245,6 +270,11 @@ export function Comunicados() {
                   <p className="text-body line-clamp-3">{ann.body}</p>
                   <div className="flex items-center gap-2 flex-wrap">
                     <Badge tone="neutral">{audienceLabel(ann.audience)}</Badge>
+                    {(ann as Announcement & { source_event_id?: string | null }).source_event_id && linkedEvents[(ann as Announcement & { source_event_id?: string | null }).source_event_id!] && (
+                      <span className="text-caption font-semibold rounded-md px-2 py-0.5 bg-tom/15 text-tom">
+                        📅 {linkedEvents[(ann as Announcement & { source_event_id?: string | null }).source_event_id!]}
+                      </span>
+                    )}
                     <span className={['text-caption font-semibold rounded-md px-2 py-0.5', STATUS_TONE[ann.status] ?? ''].join(' ')}>
                       {STATUS_LABEL[ann.status] ?? ann.status}
                       {ann.status === 'sending' && counts ? ` ${counts.sent}/${counts.total}` : ''}
