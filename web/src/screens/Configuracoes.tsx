@@ -70,13 +70,11 @@ function formatDndUntil(iso: string | null): string {
 }
 
 export function Configuracoes() {
-  const { collaborator, role } = useAuth();
+  const { collaborator } = useAuth();
   const qc = useQueryClient();
   const [form, setForm] = useState<Prefs | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [dndOpen, setDndOpen] = useState(false);
-
-  const isLeadership = role === 'director' || role === 'coordinator' || role === 'manager';
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['user_preferences', collaborator?.id],
@@ -274,11 +272,9 @@ export function Configuracoes() {
           <Toggle label="Alertas de atraso" hint="Cobra quando passou do prazo"
             value={form.notify_overdue_alerts}
             onChange={v => setForm({ ...form, notify_overdue_alerts: v })} />
-          {isLeadership && (
-            <Toggle label="Resumo do time" hint="Recebe panorama da equipe (só liderança)"
-              value={form.notify_team_summary}
-              onChange={v => setForm({ ...form, notify_team_summary: v })} />
-          )}
+          {/* Sprint futura: 'Resumo do time' — pref existe (notify_team_summary) mas
+              nenhum cron usa pra disparar resumo automatizado da equipe. Ocultar
+              até a feature ser implementada. */}
         </Section>
 
         <div className="flex items-center gap-md">

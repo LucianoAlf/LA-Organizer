@@ -931,7 +931,15 @@ async function fetchCollaboratorContext(collaborator) {
   }
 
   const personalTasks = personalRes.data || [];
-  const workTasks = workRes.data || [];
+  // Sprint 22.X — respeita max_daily_tasks (default 3) limitando o briefing de
+  // trabalho. Hoje sem cap, TOM lista 12+ tasks e quebra o foco. User-side a
+  // pref já existia mas nada limitava. Preferência default 3 reflete princípio
+  // "1-3 prioridades por dia" do framework.
+  const workRaw = workRes.data || [];
+  const maxDaily = (prefsRes.data && Number.isInteger(prefsRes.data.max_daily_tasks))
+    ? prefsRes.data.max_daily_tasks
+    : 3;
+  const workTasks = workRaw.slice(0, Math.max(1, Math.min(20, maxDaily)));
 
   return {
     profile: profileRes.data || null,
