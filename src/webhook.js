@@ -220,7 +220,7 @@ router.post(['/webhook', '/webhook/:token'], async (req, res) => {
       } else {
         const reasons = {
           no_provider: 'recebi seu vídeo, mas análise de vídeo ainda não tá configurada aqui.',
-          file_too_large: 'recebi seu vídeo, mas ele tá grande demais pra eu analisar (máximo 19 MB). Manda um trecho menor?',
+          file_too_large: 'recebi seu vídeo, mas ele tá maior do que consigo processar. Tenta um trecho menor?',
           unsupported_mime: 'recebi um formato de vídeo que ainda não consigo analisar.',
         };
         const fallback = reasons[r.reason] || 'recebi seu vídeo mas tive um problema pra analisar. Pode descrever em texto o que precisa?';
