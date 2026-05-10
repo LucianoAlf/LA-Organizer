@@ -1,49 +1,114 @@
 // src/services/media.js — Sprint 22.X: visão multimodal para mídia recebida pelo TOM
 //
 // Fluxo:
-//   1. Download da mídia via UAZAPI /message/download (server-side decrypt)
-//   2. Upload pro bucket privado tom-incoming-media no Supabase Storage
-//   3. Análise via Anthropic API (claude-haiku-4-5) com base64 — imagem ou PDF
-//   4. Retorna texto descritivo para o engine processar como mensagem
+//   1. UAZAPI /message/download com return_link=true → URL pública + mime
+//   2. Passa a URL pública diretamente pro OpenAI vision (sem re-upload)
+//   3. Retorna texto descritivo para o engine processar como mensagem normal
+//
+// Model: gpt-5.4-mini-2026-03-17 (suporta Text + Image, $0.75 input / $4.5 output MTok)
+// Requisito: OPENAI_API_KEY (mesma usada pelo Whisper de áudio)
 
 const https = require('https');
-const { createClient } = require('@supabase/supabase-js');
-const { extractMessageId, downloadMediaFromUazapi } = require('./audio');
+const http = require('http');
 
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
-const SUPABASE_URL = process.env.SUPABASE_URL || '';
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || '';
-const VISION_MODEL = process.env.VISION_MODEL || 'claude-haiku-4-5-20251001';
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || process.env.TRANSCRIPTION_API_KEY || '';
+const UAZAPI_URL = (process.env.UAZAPI_URL || '').replace(/\/+$/, '');
+const UAZAPI_TOKEN = process.env.UAZAPI_TOKEN || '';
+const VISION_MODEL = process.env.VISION_MODEL || 'gpt-5.4-mini-2026-03-17';
 
-function getServiceClient() {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) return null;
-  return createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+function extractMessageId(body) {
+  return (
+    body?.message?.id ||
+    body?.message?.key?.id ||
+    body?.id ||
+    body?.data?.id ||
+    null
+  );
 }
 
-async function callAnthropicVision(base64Data, mime, caption) {
-  if (!ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY não configurada');
+/**
+ * Chama UAZAPI /message/download com return_link=true.
+ * Retorna { url, mime, base64Data? } — url é URL pública acessível pela OpenAI.
+ */
+async function getMediaFromUazapi(messageId, timeoutMs = 30000) {
+  if (!UAZAPI_URL || !UAZAPI_TOKEN) throw new Error('UAZAPI_URL ou UAZAPI_TOKEN ausente');
+
+  const u = new URL(UAZAPI_URL + '/message/download');
+  const payload = JSON.stringify({
+    id: messageId,
+    return_link: true,   // URL pública — passa direto pra OpenAI
+    return_base64: false,
+    generate_mp3: false,
+  });
+
+  return new Promise((resolve, reject) => {
+    const lib = u.protocol === 'https:' ? https : http;
+    const req = lib.request({
+      method: 'POST',
+      hostname: u.hostname,
+      port: u.port || (u.protocol === 'https:' ? 443 : 80),
+      path: u.pathname,
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload),
+        token: UAZAPI_TOKEN,
+      },
+      timeout: timeoutMs,
+    }, res => {
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => {
+        const raw = Buffer.concat(chunks).toString('utf-8');
+        if ((res.statusCode || 0) >= 400) {
+          return reject(new Error(`UAZAPI download HTTP ${res.statusCode}: ${raw.slice(0, 200)}`));
+        }
+        try {
+          const j = JSON.parse(raw);
+          if (!j.url && !j.base64Data) {
+            return reject(new Error('UAZAPI download: sem url nem base64Data na resposta'));
+          }
+          resolve({ url: j.url || null, mime: j.mimetype || 'image/jpeg', base64Data: j.base64Data || null });
+        } catch (e) {
+          reject(new Error('UAZAPI download JSON inválido: ' + raw.slice(0, 200)));
+        }
+      });
+    });
+    req.on('timeout', () => req.destroy(new Error('UAZAPI download timeout')));
+    req.on('error', reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
+/**
+ * Chama OpenAI vision (gpt-5.4-mini-2026-03-17) com URL pública da imagem.
+ * Para PDF (não suportado como URL pelo OpenAI), passa base64 se disponível.
+ */
+async function callOpenAIVision(mediaUrl, mime, caption, base64Data) {
+  if (!OPENAI_API_KEY) throw new Error('OPENAI_API_KEY não configurada');
 
   const isImage = mime.startsWith('image/');
   const isPdf = mime === 'application/pdf';
 
-  let contentBlock;
-  if (isImage) {
-    contentBlock = {
-      type: 'image',
-      source: { type: 'base64', media_type: mime, data: base64Data },
-    };
-  } else if (isPdf) {
-    contentBlock = {
-      type: 'document',
-      source: { type: 'base64', media_type: 'application/pdf', data: base64Data },
-    };
-  } else {
+  if (!isImage && !isPdf) {
     throw new Error(`MIME não suportado para visão: ${mime}`);
   }
 
-  const prompt = caption
-    ? `O usuário enviou esta mídia com a legenda: "${caption}". Descreva o conteúdo da mídia e extraia todo texto visível. Responda em português, de forma direta e útil.`
-    : 'Descreva o conteúdo desta mídia e extraia todo texto visível. Responda em português, de forma direta e útil.';
+  const promptText = caption
+    ? `O usuário enviou esta mídia com a legenda: "${caption}". Descreva o conteúdo e extraia todo texto visível. Responda em português, direto e útil.`
+    : 'Descreva o conteúdo desta mídia e extraia todo texto visível. Responda em português, direto e útil.';
+
+  let imageContent;
+  if (isImage && mediaUrl) {
+    imageContent = { type: 'image_url', image_url: { url: mediaUrl } };
+  } else if (base64Data) {
+    imageContent = {
+      type: 'image_url',
+      image_url: { url: `data:${mime};base64,${base64Data}` },
+    };
+  } else {
+    throw new Error('Sem URL pública nem base64 para enviar ao OpenAI');
+  }
 
   const body = JSON.stringify({
     model: VISION_MODEL,
@@ -51,8 +116,8 @@ async function callAnthropicVision(base64Data, mime, caption) {
     messages: [{
       role: 'user',
       content: [
-        contentBlock,
-        { type: 'text', text: prompt },
+        imageContent,
+        { type: 'text', text: promptText },
       ],
     }],
   });
@@ -60,13 +125,12 @@ async function callAnthropicVision(base64Data, mime, caption) {
   return new Promise((resolve, reject) => {
     const req = https.request({
       method: 'POST',
-      hostname: 'api.anthropic.com',
-      path: '/v1/messages',
+      hostname: 'api.openai.com',
+      path: '/v1/chat/completions',
       headers: {
-        'x-api-key': ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-        'content-length': Buffer.byteLength(body),
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
       },
       timeout: 45000,
     }, res => {
@@ -75,101 +139,70 @@ async function callAnthropicVision(base64Data, mime, caption) {
       res.on('end', () => {
         const raw = Buffer.concat(chunks).toString('utf-8');
         if ((res.statusCode || 0) >= 400) {
-          return reject(new Error(`Anthropic vision HTTP ${res.statusCode}: ${raw.slice(0, 200)}`));
+          return reject(new Error(`OpenAI vision HTTP ${res.statusCode}: ${raw.slice(0, 200)}`));
         }
         try {
           const j = JSON.parse(raw);
-          const text = j.content?.[0]?.text || '';
+          const text = j.choices?.[0]?.message?.content || '';
           resolve(text.trim());
         } catch (e) {
-          reject(new Error('Anthropic vision JSON inválido: ' + raw.slice(0, 200)));
+          reject(new Error('OpenAI vision JSON inválido: ' + raw.slice(0, 200)));
         }
       });
     });
-    req.on('timeout', () => req.destroy(new Error('Anthropic vision timeout')));
+    req.on('timeout', () => req.destroy(new Error('OpenAI vision timeout')));
     req.on('error', reject);
     req.write(body);
     req.end();
   });
 }
 
-async function uploadToStorage(buffer, mime, collaboratorPhone) {
-  const sb = getServiceClient();
-  if (!sb) return null;
-  try {
-    const ext = mime.split('/')[1]?.replace('jpeg', 'jpg') || 'bin';
-    const path = `incoming/${collaboratorPhone.slice(-8)}/${Date.now()}.${ext}`;
-    const { error } = await sb.storage
-      .from('tom-incoming-media')
-      .upload(path, buffer, { contentType: mime, upsert: false });
-    if (error) {
-      console.warn('[Media] storage upload err:', error.message);
-      return null;
-    }
-    return path;
-  } catch (e) {
-    console.warn('[Media] storage upload exc:', e.message);
-    return null;
-  }
-}
-
 /**
- * Processa mídia recebida pelo TOM (imagem ou PDF).
- *
- * Returns: { ok: bool, text?: string, storagePath?: string, reason?: string }
- * - text: string descritivo para o engine tratar como mensagem
- * - reason: motivo de falha (no_provider, no_message_id, download_error, vision_error, unsupported_mime)
+ * Entry point: processa imagem/PDF recebida pelo TOM.
+ * Returns: { ok: bool, text?: string, reason?: string }
  */
-async function processIncomingMedia(body, phone, mimeHint = '') {
-  if (!ANTHROPIC_API_KEY) {
-    console.log('[Media] ANTHROPIC_API_KEY ausente — visão desabilitada');
+async function processIncomingMedia(body, phone) {
+  if (!OPENAI_API_KEY) {
+    console.log('[Media] OPENAI_API_KEY ausente — visão desabilitada');
     return { ok: false, reason: 'no_provider' };
   }
 
   const messageId = extractMessageId(body);
   if (!messageId) {
-    console.warn('[Media] sem message_id para download');
+    console.warn('[Media] sem message_id no payload');
     return { ok: false, reason: 'no_message_id' };
   }
 
-  let buffer, mime;
+  let mediaUrl, mime, base64Data;
   try {
-    const r = await downloadMediaFromUazapi(messageId);
-    buffer = r.buffer;
-    mime = r.mime || mimeHint || 'image/jpeg';
-    console.log(`[Media] download OK — ${buffer.length} bytes mime=${mime}`);
+    const r = await getMediaFromUazapi(messageId);
+    mediaUrl = r.url;
+    mime = r.mime;
+    base64Data = r.base64Data;
+    console.log(`[Media] UAZAPI download OK — mime=${mime} url=${mediaUrl ? mediaUrl.slice(0, 60) : 'null'}`);
   } catch (err) {
     console.error('[Media] download err:', err.message);
     return { ok: false, reason: 'download_error', error: err.message };
   }
 
-  const isImage = mime.startsWith('image/');
-  const isPdf = mime === 'application/pdf';
-  if (!isImage && !isPdf) {
+  if (!mime.startsWith('image/') && mime !== 'application/pdf') {
     return { ok: false, reason: 'unsupported_mime', mime };
   }
 
-  // Upload ao Storage (best-effort, não bloqueia visão)
-  const storagePath = await uploadToStorage(buffer, mime, phone);
-
-  // Caption vinda do webhook (se o user enviou texto junto com a imagem)
   const caption = body?.message?.content?.caption
     || body?.message?.caption
     || body?.caption
     || body?.data?.caption
     || null;
 
-  let description;
   try {
-    const base64 = buffer.toString('base64');
-    description = await callAnthropicVision(base64, mime, caption);
+    const description = await callOpenAIVision(mediaUrl, mime, caption, base64Data);
     console.log(`[Media] visão OK (${description.length} chars): ${description.slice(0, 80)}`);
+    return { ok: true, text: description, mime, caption };
   } catch (err) {
     console.error('[Media] visão err:', err.message);
-    return { ok: false, reason: 'vision_error', error: err.message, storagePath };
+    return { ok: false, reason: 'vision_error', error: err.message };
   }
-
-  return { ok: true, text: description, storagePath, mime, caption };
 }
 
-module.exports = { processIncomingMedia };
+module.exports = { processIncomingMedia, extractMessageId };

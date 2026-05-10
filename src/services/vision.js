@@ -13,7 +13,7 @@
 const https = require('https');
 
 const OPENAI_KEY = process.env.OPENAI_API_KEY || '';
-const VISION_MODEL = process.env.TOM_VISION_MODEL || 'gpt-4o-mini';
+const VISION_MODEL = process.env.TOM_VISION_MODEL || 'gpt-5.4-mini-2026-03-17';
 
 function isImageMime(mime) {
   return /^image\/(jpeg|png|webp|gif)$/i.test(String(mime || ''));
