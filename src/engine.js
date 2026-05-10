@@ -4772,26 +4772,31 @@ async function processMessage(phone, text, raw = {}) {
         reply = cleanText || reply;
       }
       if (parsed) {
+        console.log('[PersonalList] raw parsed:', JSON.stringify(parsed).slice(0, 300));
         const actions = Array.isArray(parsed) ? parsed : [parsed];
         let okCount = 0, failCount = 0;
         for (const a of actions) {
           try {
-            if (!a || typeof a !== 'object') { failCount++; continue; }
+            if (!a || typeof a !== 'object') { console.warn('[PersonalList] FAIL: not object'); failCount++; continue; }
+            console.log('[PersonalList] action:', a.action, 'name:', a.name);
             if (a.action === 'create') {
               const name = String(a.name || '').trim();
-              if (!name) { failCount++; continue; }
+              if (!name) { console.warn('[PersonalList] FAIL: no name'); failCount++; continue; }
               const listType = ['shopping', 'travel', 'meds', 'general'].includes(a.list_type) ? a.list_type : 'general';
               const context = ['work', 'personal'].includes(a.context) ? a.context : 'personal';
+              console.log('[PersonalList] inserting list:', { name, listType, context });
               const { data: list, error: e1 } = await supabase
                 .from('personal_checklists')
                 .insert({ owner_collab_id: collab.id, name, list_type: listType, context })
                 .select('id').single();
-              if (e1) { console.error('[PersonalList] insert err:', e1.message); failCount++; continue; }
+              if (e1) { console.error('[PersonalList] FAIL list insert:', e1.message); failCount++; continue; }
+              console.log('[PersonalList] list created id:', list?.id);
               const items = Array.isArray(a.items) ? a.items.filter(x => typeof x === 'string' && x.trim()) : [];
+              console.log('[PersonalList] items count:', items.length);
               if (items.length) {
                 const rows = items.map((d, i) => ({ list_id: list.id, description: d.trim(), sort_order: i + 1 }));
                 const { error: e2 } = await supabase.from('personal_checklist_items').insert(rows);
-                if (e2) { failCount++; continue; }
+                if (e2) { console.error('[PersonalList] FAIL items insert:', e2.message); failCount++; continue; }
               }
               okCount++;
             } else if (a.action === 'add_item') {
