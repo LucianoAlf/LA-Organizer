@@ -469,14 +469,18 @@ async function dispatchChecklists(now = new Date(), { dry = false, filterPhone =
   return results;
 }
 
-// Sprint 13 F3 — Audience-to-jobs helper. Mirrors Fatia 1 audience query logic.
+// Sprint 13 F3 — Audience-to-jobs helper. Mirrors PWA mutation filter logic.
+// Sprint 22.X — passou a suportar role + collaborator_ids; corrigiu function_role
+// que estava buscando na coluna errada (era 'role').
 async function createJobsFromAudience(announcementId, audience) {
-  let q = supabase.from('collaborators').select('id, phone').not('phone', 'is', null);
+  let q = supabase.from('collaborators').select('id, phone').eq('is_active', true).not('phone', 'is', null);
   const aud = audience || {};
   if (aud.all !== true) {
-    if (Array.isArray(aud.function_role) && aud.function_role.length) q = q.in('role', aud.function_role);
+    if (Array.isArray(aud.role) && aud.role.length) q = q.in('role', aud.role);
+    if (Array.isArray(aud.function_role) && aud.function_role.length) q = q.in('function_role', aud.function_role);
     if (Array.isArray(aud.unidade) && aud.unidade.length) q = q.in('unit', aud.unidade);
     if (Array.isArray(aud.turno) && aud.turno.length) q = q.in('shift', aud.turno);
+    if (Array.isArray(aud.collaborator_ids) && aud.collaborator_ids.length) q = q.in('id', aud.collaborator_ids);
   }
   const { data: recipients, error } = await q;
   if (error) {

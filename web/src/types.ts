@@ -445,9 +445,11 @@ export const PERSONAL_LIST_TYPE_LABEL: Record<PersonalListType, string> = {
 
 export interface AnnouncementAudience {
   all?: boolean;
+  role?: string[];
   function_role?: string[];
   unidade?: string[];
   turno?: string[];
+  collaborator_ids?: string[];
 }
 
 export interface Announcement {
@@ -481,12 +483,15 @@ export function audienceLabel(audience: AnnouncementAudience): string {
   if (!audience || audience.all) return 'Todos';
   const parts: string[] = [];
   const roleMap: Record<string, string> = {
+    director: 'Diretoria',
+    coordinator: 'Coordenação',
+    manager: 'Gerência',
+  };
+  const fnMap: Record<string, string> = {
     secretary_morning: 'Secretaria manhã',
     secretary_evening: 'Secretaria tarde',
     pedagogical_assistant: 'Pedagógico',
     cleaning: 'Limpeza',
-    coordinator: 'Coordenação',
-    director: 'Diretoria',
   };
   const unitMap: Record<string, string> = {
     barra: 'Barra', recreio: 'Recreio', campo_grande: 'Campo Grande',
@@ -494,14 +499,20 @@ export function audienceLabel(audience: AnnouncementAudience): string {
   const turnoMap: Record<string, string> = {
     morning: 'Manhã', afternoon: 'Tarde', evening: 'Noite', full: 'Integral',
   };
+  if (audience.role?.length) {
+    parts.push(audience.role.map(r => roleMap[r] ?? r).join(', '));
+  }
   if (audience.function_role?.length) {
-    parts.push(audience.function_role.map(r => roleMap[r] ?? r).join(', '));
+    parts.push(audience.function_role.map(r => fnMap[r] ?? r).join(', '));
   }
   if (audience.unidade?.length) {
     parts.push(audience.unidade.map(u => unitMap[u] ?? u).join(', '));
   }
   if (audience.turno?.length) {
     parts.push(audience.turno.map(t => turnoMap[t] ?? t).join(', '));
+  }
+  if (audience.collaborator_ids?.length) {
+    parts.push(`${audience.collaborator_ids.length} pessoa${audience.collaborator_ids.length > 1 ? 's' : ''} específica${audience.collaborator_ids.length > 1 ? 's' : ''}`);
   }
   return parts.join(' · ') || 'Todos';
 }

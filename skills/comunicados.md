@@ -22,9 +22,15 @@ Identifique:
 
 ### Público (`audience` JSON)
 
+5 dimensões independentes, combinadas com AND. Dentro de cada dimensão, OR.
+
 | Pedido do usuário | JSON audience |
 |---|---|
 | "todo mundo" / "todos" / "a equipe toda" | `{"all": true}` |
+| "a direção" / "os diretores" | `{"role": ["director"]}` |
+| "a coordenação" | `{"role": ["coordinator"]}` |
+| "a gerência" / "os gerentes" | `{"role": ["manager"]}` |
+| "liderança" / "todos os líderes" | `{"role": ["director","coordinator","manager"]}` |
 | "a secretaria" | `{"function_role": ["secretary_morning","secretary_evening"]}` |
 | "secretaria da manhã" | `{"function_role": ["secretary_morning"]}` |
 | "pedagógico" | `{"function_role": ["pedagogical_assistant"]}` |
@@ -34,9 +40,17 @@ Identifique:
 | "turno da manhã" | `{"turno": ["morning"]}` |
 | "turno da tarde" | `{"turno": ["afternoon"]}` |
 | "turno da noite" | `{"turno": ["evening"]}` |
+| "para Rafinha e Quintela" | `{"collaborator_ids": ["<uuid Rafinha>", "<uuid Quintela>"]}` |
 | combinação | `{"function_role": ["secretary_morning"], "unidade": ["barra"]}` |
 
-Dimensões são combinadas com AND. Dentro de cada dimensão, OR.
+**Importante sobre `role` vs `function_role`:**
+- `role` = cargo de liderança (`director`, `coordinator`, `manager`)
+- `function_role` = função operacional (`secretary_morning`, `pedagogical_assistant`, `cleaning`, `secretary_evening`)
+- NÃO misture: use `role` pra liderança, `function_role` pra operacional.
+
+**Sobre `collaborator_ids`:**
+- Usar quando user mencionar pessoas específicas pelo nome.
+- Você precisa resolver o nome → uuid via contexto. Se não tiver acesso ao uuid, prefira pedir ao user pra fazer pelo PWA, OU use uma combinação de cargo+unidade aproximada.
 
 ### Passo 2 — Confirmação de leitura (requires_confirmation)
 

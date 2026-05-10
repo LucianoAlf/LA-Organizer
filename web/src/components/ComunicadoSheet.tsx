@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { BottomSheet } from './BottomSheet';
@@ -14,12 +14,17 @@ interface Props {
   initial?: { body: string; audience: AnnouncementAudience; requires_confirmation?: boolean } | null;
 }
 
+const ROLES = [
+  { value: 'director', label: 'Diretoria' },
+  { value: 'coordinator', label: 'Coordenação' },
+  { value: 'manager', label: 'Gerência' },
+];
+
 const FUNCTION_ROLES = [
   { value: 'secretary_morning', label: 'Secretaria manhã' },
   { value: 'secretary_evening', label: 'Secretaria tarde' },
   { value: 'pedagogical_assistant', label: 'Pedagógico' },
   { value: 'cleaning', label: 'Limpeza' },
-  { value: 'coordinator', label: 'Coordenação' },
 ];
 
 const UNIDADES = [
@@ -41,9 +46,12 @@ export function ComunicadoSheet({ open, onClose, initial }: Props) {
 
   const [body, setBody] = useState('');
   const [audienceAll, setAudienceAll] = useState(true);
+  const [selectedCargos, setSelectedCargos] = useState<string[]>([]);
   const [selectedRoles, setSelectedRoles] = useState<string[]>([]);
   const [selectedUnidades, setSelectedUnidades] = useState<string[]>([]);
   const [selectedTurnos, setSelectedTurnos] = useState<string[]>([]);
+  const [selectedCollabIds, setSelectedCollabIds] = useState<string[]>([]);
+  const [collabSearch, setCollabSearch] = useState('');
   const [scheduledMode, setScheduledMode] = useState(false);
   const [scheduledAt, setScheduledAt] = useState('');
   const [requiresConfirmation, setRequiresConfirmation] = useState(false);
@@ -57,22 +65,28 @@ export function ComunicadoSheet({ open, onClose, initial }: Props) {
       const aud = initial.audience || {};
       const isAll = aud.all === true;
       setAudienceAll(isAll);
+      setSelectedCargos(aud.role ?? []);
       setSelectedRoles(aud.function_role ?? []);
       setSelectedUnidades(aud.unidade ?? []);
       setSelectedTurnos(aud.turno ?? []);
+      setSelectedCollabIds(aud.collaborator_ids ?? []);
       setScheduledMode(false);
       setScheduledAt('');
       setRequiresConfirmation(!!initial.requires_confirmation);
+      setCollabSearch('');
       setError('');
     } else {
       setBody('');
       setAudienceAll(true);
+      setSelectedCargos([]);
       setSelectedRoles([]);
       setSelectedUnidades([]);
       setSelectedTurnos([]);
+      setSelectedCollabIds([]);
       setScheduledMode(false);
       setScheduledAt('');
       setRequiresConfirmation(false);
+      setCollabSearch('');
       setError('');
     }
   }, [open, initial]);
@@ -81,20 +95,61 @@ export function ComunicadoSheet({ open, onClose, initial }: Props) {
     return arr.includes(item) ? arr.filter(x => x !== item) : [...arr, item];
   }
 
+  // Lista de colaboradores ativos pra picker individual.
+  const collabsQ = useQuery({
+    queryKey: ['active-collabs-for-comunicado'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('collaborators')
+        .select('id, full_name, role, unit')
+        .eq('is_active', true)
+        .not('phone', 'is', null)
+        .order('full_name');
+      if (error) throw error;
+      return (data ?? []) as Array<{ id: string; full_name: string; role: string | null; unit: string | null }>;
+    },
+    enabled: open,
+  });
+
+  const filteredCollabs = useMemo(() => {
+    const all = collabsQ.data ?? [];
+    const q = collabSearch.trim().toLowerCase();
+    if (!q) return all;
+    return all.filter(c => c.full_name.toLowerCase().includes(q));
+  }, [collabsQ.data, collabSearch]);
+
   function buildAudience(): AnnouncementAudience {
     if (audienceAll) return { all: true };
     const aud: AnnouncementAudience = {};
+    if (selectedCargos.length) aud.role = selectedCargos;
     if (selectedRoles.length) aud.function_role = selectedRoles;
     if (selectedUnidades.length) aud.unidade = selectedUnidades;
     if (selectedTurnos.length) aud.turno = selectedTurnos;
+    if (selectedCollabIds.length) aud.collaborator_ids = selectedCollabIds;
     return aud;
+  }
+
+  function clearGranular() {
+    setSelectedCargos([]);
+    setSelectedRoles([]);
+    setSelectedUnidades([]);
+    setSelectedTurnos([]);
+    setSelectedCollabIds([]);
+  }
+
+  // Quando user seleciona qualquer granular, "Todos" desmarca automaticamente.
+  function pickGranular(setter: (fn: (prev: string[]) => string[]) => void, value: string) {
+    setAudienceAll(false);
+    setter(prev => toggleItem(prev, value));
   }
 
   const hasAudienceSelection =
     audienceAll ||
+    selectedCargos.length > 0 ||
     selectedRoles.length > 0 ||
     selectedUnidades.length > 0 ||
-    selectedTurnos.length > 0;
+    selectedTurnos.length > 0 ||
+    selectedCollabIds.length > 0;
   const canSave =
     body.trim().length > 0 && hasAudienceSelection && (!scheduledMode || scheduledAt);
 
@@ -109,9 +164,11 @@ export function ComunicadoSheet({ open, onClose, initial }: Props) {
         .eq('is_active', true)
         .not('phone', 'is', null);
       if (!audience.all) {
+        if (audience.role?.length) q = q.in('role', audience.role);
         if (audience.function_role?.length) q = q.in('function_role', audience.function_role);
         if (audience.unidade?.length) q = q.in('unit', audience.unidade);
         if (audience.turno?.length) q = q.in('shift', audience.turno);
+        if (audience.collaborator_ids?.length) q = q.in('id', audience.collaborator_ids);
       }
       const { count } = await q;
       if (!count || count === 0)
@@ -149,9 +206,11 @@ export function ComunicadoSheet({ open, onClose, initial }: Props) {
         .eq('is_active', true)
         .not('phone', 'is', null);
       if (!audience.all) {
+        if (audience.role?.length) rq = rq.in('role', audience.role);
         if (audience.function_role?.length) rq = rq.in('function_role', audience.function_role);
         if (audience.unidade?.length) rq = rq.in('unit', audience.unidade);
         if (audience.turno?.length) rq = rq.in('shift', audience.turno);
+        if (audience.collaborator_ids?.length) rq = rq.in('id', audience.collaborator_ids);
       }
       const { data: recipients } = await rq;
       if (recipients?.length) {
@@ -168,11 +227,11 @@ export function ComunicadoSheet({ open, onClose, initial }: Props) {
       queryClient.invalidateQueries({ queryKey: ['comunicados'] });
       setBody('');
       setAudienceAll(true);
-      setSelectedRoles([]);
-      setSelectedUnidades([]);
-      setSelectedTurnos([]);
+      clearGranular();
       setScheduledMode(false);
       setScheduledAt('');
+      setRequiresConfirmation(false);
+      setCollabSearch('');
       onClose();
     },
     onError: (err: Error) => setError(err.message),
@@ -194,84 +253,117 @@ export function ComunicadoSheet({ open, onClose, initial }: Props) {
           <p className="text-caption text-fg-muted text-right">{body.length}/1000</p>
         </div>
 
-        <div>
-          <p className="text-caption text-fg-muted mb-1">Público</p>
-          <label className="flex items-center gap-2 text-body">
-            <input
-              type="checkbox"
-              className="accent-tom"
-              checked={audienceAll}
-              onChange={e => {
-                setAudienceAll(e.target.checked);
-                if (e.target.checked) {
-                  setSelectedRoles([]);
-                  setSelectedUnidades([]);
-                  setSelectedTurnos([]);
-                }
-              }}
-            />
-            Todos os colaboradores
-          </label>
-        </div>
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-caption uppercase font-semibold text-fg-muted">Público</p>
+            <button
+              type="button"
+              onClick={() => { setAudienceAll(true); clearGranular(); }}
+              className={[
+                'text-caption rounded-full px-3 py-1 border transition-colors',
+                audienceAll ? 'bg-tom/15 text-tom border-tom/40 font-semibold' : 'border-border text-fg-muted hover:text-fg',
+              ].join(' ')}
+            >
+              ✓ Todos os colaboradores
+            </button>
+          </div>
 
-        {!audienceAll && (
-          <>
-            <div>
-              <p className="text-caption text-fg-muted mb-1">Por função</p>
-              <div className="space-y-1">
-                {FUNCTION_ROLES.map(r => (
-                  <label key={r.value} className="flex items-center gap-2 text-body">
-                    <input
-                      type="checkbox"
-              className="accent-tom"
-                      checked={selectedRoles.includes(r.value)}
-                      onChange={() =>
-                        setSelectedRoles(prev => toggleItem(prev, r.value))
-                      }
-                    />
-                    {r.label}
-                  </label>
-                ))}
+          <details className="bg-bg-elevated rounded-md border border-border" open={!audienceAll}>
+            <summary className="cursor-pointer px-3 py-2 text-body-sm select-none flex items-center justify-between">
+              <span>Filtrar por grupo ou pessoas</span>
+              <span className="text-caption text-fg-muted">▾</span>
+            </summary>
+            <div className="px-3 pb-3 pt-1 space-y-3">
+              <div>
+                <p className="text-caption text-fg-muted mb-1">Por cargo</p>
+                <div className="flex flex-wrap gap-3">
+                  {ROLES.map(r => (
+                    <label key={r.value} className="flex items-center gap-1.5 text-body">
+                      <input type="checkbox" className="accent-tom"
+                        checked={selectedCargos.includes(r.value)}
+                        onChange={() => pickGranular(setSelectedCargos as never, r.value)} />
+                      {r.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p className="text-caption text-fg-muted mb-1">Por função</p>
+                <div className="space-y-1">
+                  {FUNCTION_ROLES.map(r => (
+                    <label key={r.value} className="flex items-center gap-2 text-body">
+                      <input type="checkbox" className="accent-tom"
+                        checked={selectedRoles.includes(r.value)}
+                        onChange={() => pickGranular(setSelectedRoles as never, r.value)} />
+                      {r.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p className="text-caption text-fg-muted mb-1">Por unidade</p>
+                <div className="flex flex-wrap gap-3">
+                  {UNIDADES.map(u => (
+                    <label key={u.value} className="flex items-center gap-1.5 text-body">
+                      <input type="checkbox" className="accent-tom"
+                        checked={selectedUnidades.includes(u.value)}
+                        onChange={() => pickGranular(setSelectedUnidades as never, u.value)} />
+                      {u.label}
+                    </label>
+                  ))}
+                </div>
+            </div>
+              <div>
+                <p className="text-caption text-fg-muted mb-1">Por turno</p>
+                <div className="flex flex-wrap gap-3">
+                  {TURNOS.map(t => (
+                    <label key={t.value} className="flex items-center gap-1.5 text-body">
+                      <input type="checkbox" className="accent-tom"
+                        checked={selectedTurnos.includes(t.value)}
+                        onChange={() => pickGranular(setSelectedTurnos as never, t.value)} />
+                      {t.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <p className="text-caption text-fg-muted mb-1">
+                  Pessoas específicas {selectedCollabIds.length > 0 && (
+                    <span className="text-tom font-semibold">({selectedCollabIds.length} selecionada{selectedCollabIds.length > 1 ? 's' : ''})</span>
+                  )}
+                </p>
+                <input
+                  type="text"
+                  placeholder="Buscar por nome..."
+                  value={collabSearch}
+                  onChange={e => setCollabSearch(e.target.value)}
+                  className="w-full h-9 px-3 rounded-md border border-border bg-bg-app text-body-sm focus:outline-none focus:border-tom mb-2"
+                />
+                <div className="max-h-40 overflow-y-auto rounded-md border border-border bg-bg-surface divide-y divide-border">
+                  {collabsQ.isLoading ? (
+                    <p className="px-3 py-2 text-body-sm text-fg-muted">Carregando…</p>
+                  ) : filteredCollabs.length === 0 ? (
+                    <p className="px-3 py-2 text-body-sm text-fg-muted">Nenhum colaborador.</p>
+                  ) : (
+                    filteredCollabs.map(c => (
+                      <label key={c.id} className="flex items-center gap-2 px-3 py-1.5 text-body-sm hover:bg-bg-elevated cursor-pointer">
+                        <input
+                          type="checkbox"
+                          className="accent-tom"
+                          checked={selectedCollabIds.includes(c.id)}
+                          onChange={() => pickGranular(setSelectedCollabIds as never, c.id)}
+                        />
+                        <span className="flex-1 truncate">{c.full_name}</span>
+                        {c.role && <span className="text-caption text-fg-muted">{c.role}</span>}
+                      </label>
+                    ))
+                  )}
+                </div>
               </div>
             </div>
-            <div>
-              <p className="text-caption text-fg-muted mb-1">Por unidade</p>
-              <div className="flex flex-wrap gap-3">
-                {UNIDADES.map(u => (
-                  <label key={u.value} className="flex items-center gap-1.5 text-body">
-                    <input
-                      type="checkbox"
-              className="accent-tom"
-                      checked={selectedUnidades.includes(u.value)}
-                      onChange={() =>
-                        setSelectedUnidades(prev => toggleItem(prev, u.value))
-                      }
-                    />
-                    {u.label}
-                  </label>
-                ))}
-              </div>
-            </div>
-            <div>
-              <p className="text-caption text-fg-muted mb-1">Por turno</p>
-              <div className="flex flex-wrap gap-3">
-                {TURNOS.map(t => (
-                  <label key={t.value} className="flex items-center gap-1.5 text-body">
-                    <input
-                      type="checkbox"
-              className="accent-tom"
-                      checked={selectedTurnos.includes(t.value)}
-                      onChange={() =>
-                        setSelectedTurnos(prev => toggleItem(prev, t.value))
-                      }
-                    />
-                    {t.label}
-                  </label>
-                ))}
-              </div>
-            </div>
-          </>
-        )}
+          </details>
+        </div>
 
         <div>
           <label className="flex items-center gap-2 text-body">
