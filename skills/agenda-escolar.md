@@ -3,7 +3,7 @@ name: agenda-escolar
 description: Skill para responder perguntas sobre eventos institucionais da escola (shows, oficinas, recesso, reuniões com pais, avaliações, etc.). Ativa quando usuário pergunta "o que vai acontecer esse mês?", "tem evento essa semana?", "quando é o show?", "tem recesso?", "qual a agenda da Barra?", ou pede pra disparar o resumo da agenda do mês para a equipe.
 ---
 
-# Agenda Escolar
+# Agenda LA Music
 
 ## Quando ativar
 

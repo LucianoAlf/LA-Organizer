@@ -335,8 +335,8 @@ export function AgendaEscolar() {
   return (
     <div className="space-y-md">
       <PageHeader
-        title="Agenda Escolar"
-        subtitle={totalCount > 0 ? `${activeCount} ativos · ${totalCount - activeCount} cancelados` : 'Calendário institucional'}
+        title="Agenda LA Music"
+        subtitle={totalCount > 0 ? `${activeCount} ativos · ${totalCount - activeCount} cancelados` : 'Calendário institucional de eventos'}
         backTo="/mais"
         right={canEdit ? (
           <Link

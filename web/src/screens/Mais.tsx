@@ -12,7 +12,7 @@ interface Item {
 }
 
 const personalItems: Item[] = [
-  { to: '/mais/agenda-escolar', label: 'Agenda Escolar', hint: 'Calendário institucional da escola' },
+  { to: '/mais/agenda-escolar', label: 'Agenda LA Music', hint: 'Calendário institucional de eventos' },
   { to: '/configuracoes', label: 'Configurações', hint: 'Horários e intensidade do TOM' },
   { to: '/historico', label: 'Histórico', hint: 'Aderência dos últimos 30 dias' },
 ];
