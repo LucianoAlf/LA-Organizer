@@ -3,6 +3,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { BottomSheet } from './BottomSheet';
+import { Button } from './Button';
+import { DateTimeInput } from './DateTimeInput';
 import type { AnnouncementAudience } from '../types';
 
 interface Props {
@@ -178,7 +180,7 @@ export function ComunicadoSheet({ open, onClose, initial }: Props) {
         <div>
           <label className="text-caption text-fg-muted block mb-1">Mensagem</label>
           <textarea
-            className="mt-1 w-full rounded-lg border border-border bg-bg-surface px-3 py-2 text-body text-fg focus:outline-none focus:border-brand resize-none"
+            className="mt-1 w-full rounded-lg border border-border bg-bg-surface px-3 py-2 text-body text-fg focus:outline-none focus:border-tom resize-none"
             rows={4}
             maxLength={1000}
             placeholder="Digite o comunicado..."
@@ -193,6 +195,7 @@ export function ComunicadoSheet({ open, onClose, initial }: Props) {
           <label className="flex items-center gap-2 text-body">
             <input
               type="checkbox"
+              className="accent-tom"
               checked={audienceAll}
               onChange={e => {
                 setAudienceAll(e.target.checked);
@@ -216,6 +219,7 @@ export function ComunicadoSheet({ open, onClose, initial }: Props) {
                   <label key={r.value} className="flex items-center gap-2 text-body">
                     <input
                       type="checkbox"
+              className="accent-tom"
                       checked={selectedRoles.includes(r.value)}
                       onChange={() =>
                         setSelectedRoles(prev => toggleItem(prev, r.value))
@@ -233,6 +237,7 @@ export function ComunicadoSheet({ open, onClose, initial }: Props) {
                   <label key={u.value} className="flex items-center gap-1.5 text-body">
                     <input
                       type="checkbox"
+              className="accent-tom"
                       checked={selectedUnidades.includes(u.value)}
                       onChange={() =>
                         setSelectedUnidades(prev => toggleItem(prev, u.value))
@@ -250,6 +255,7 @@ export function ComunicadoSheet({ open, onClose, initial }: Props) {
                   <label key={t.value} className="flex items-center gap-1.5 text-body">
                     <input
                       type="checkbox"
+              className="accent-tom"
                       checked={selectedTurnos.includes(t.value)}
                       onChange={() =>
                         setSelectedTurnos(prev => toggleItem(prev, t.value))
@@ -267,32 +273,29 @@ export function ComunicadoSheet({ open, onClose, initial }: Props) {
           <label className="flex items-center gap-2 text-body">
             <input
               type="checkbox"
+              className="accent-tom"
               checked={scheduledMode}
               onChange={e => setScheduledMode(e.target.checked)}
             />
             Agendar envio
           </label>
           {scheduledMode && (
-            <input
-              type="datetime-local"
-              className="mt-2 w-full rounded-lg border border-border bg-bg-surface px-3 py-2 text-body text-fg focus:outline-none focus:border-brand"
-              value={scheduledAt}
-              onChange={e => setScheduledAt(e.target.value)}
-              min={new Date().toISOString().slice(0, 16)}
-            />
+            <div className="mt-2">
+              <DateTimeInput value={scheduledAt} onChange={setScheduledAt} />
+            </div>
           )}
         </div>
 
         {error && <p className="text-danger text-caption">{error}</p>}
 
-        <button
-          type="button"
+        <Button
+          variant="primary"
+          fullWidth
           disabled={!canSave || isPending}
           onClick={() => mutate()}
-          className="w-full py-3 bg-brand text-white rounded-xl font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
         >
-          {isPending ? 'Enviando...' : 'Enviar comunicado'}
-        </button>
+          {isPending ? 'Enviando…' : 'Enviar comunicado'}
+        </Button>
       </div>
     </BottomSheet>
   );
