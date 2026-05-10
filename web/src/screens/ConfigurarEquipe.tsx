@@ -153,7 +153,7 @@ export function ConfigurarEquipe() {
         type="button"
         onClick={() => saveMutation.mutate()}
         disabled={saveMutation.isPending || isLoading}
-        className="w-full py-3 bg-brand text-white rounded-xl font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
+        className="w-full py-3 bg-tom text-black rounded-xl font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
       >
         {saveMutation.isPending ? 'Salvando...' : `Salvar equipe da ${UNIT_LABELS[unit]}`}
       </button>
