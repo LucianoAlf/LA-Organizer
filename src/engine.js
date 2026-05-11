@@ -5742,6 +5742,61 @@ Extraia até 5 itens novos. Apenas JSON.`;
     .slice(0, 5);
 }
 
+// Sprint 23.5+ — Etapa 3 do Dream: segunda LLM organiza/filtra/eleva memórias candidatas.
+// Recebe candidatas brutas + memórias existentes → retorna memórias limpas, sem ruído.
+async function _organizeDreamMemories(collab, candidates, existingMemories) {
+  if (!candidates || candidates.length === 0) return candidates;
+  const existingBlock = existingMemories.length > 0
+    ? existingMemories.slice(0, 30).map(m => `[${m.memory_type}/${m.importance}] ${m.content}`).join('\n')
+    : 'Nenhuma ainda';
+  const candidateBlock = candidates.map(c => `[${c.memory_type}] ${c.content}`).join('\n');
+
+  const sysPrompt = `Você organiza memórias de um assistente de IA chamado TOM sobre o colaborador ${collab.full_name}.
+
+Sua tarefa: receber memórias brutas extraídas de conversas e devolver uma lista limpa e organizada.
+
+REGRAS:
+1. Descarte ruído — informações sem valor duradouro ("disse que estava com fome", "precisou de um favor")
+2. Eleve importância — se um tema já aparece nas memórias existentes, eleve importance para "high" ou "critical"
+3. Detecte padrões — se tema se repete, sintetize em uma "lesson" ("Consistentemente menciona dificuldade X")
+4. Descarte duplicatas — se memória similar já existe nas existentes, não recrie
+5. Linguagem limpa — 3ª pessoa, objetiva, em português ("Prefere receber briefing às 11h")
+6. Classifique: fact | preference | decision | lesson | context
+7. Importance: critical | high | normal | low
+
+Retorne JSON array: [{"memory_type":"...","content":"...","importance":"..."}]
+Se não houver memórias válidas, retorne [].`;
+
+  const userMsg = `MEMÓRIAS EXISTENTES:
+${existingBlock}
+
+MEMÓRIAS CANDIDATAS DO DIA (brutas):
+${candidateBlock}
+
+Organize e retorne apenas o que vale salvar.`;
+
+  try {
+    const response = await ai.chat(sysPrompt, [{ role: 'user', content: userMsg }]);
+    const text = (response.text || '').trim();
+    const jsonMatch = text.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) return candidates; // fallback: usa candidatas brutas
+    const organized = JSON.parse(jsonMatch[0]);
+    if (!Array.isArray(organized)) return candidates;
+    const MEMORY_TYPES_SET = new Set(['fact','decision','preference','context','lesson']);
+    const IMPORTANCE_SET = new Set(['critical','high','normal','low']);
+    return organized
+      .filter(m => m && typeof m.content === 'string' && m.content.trim().length > 5)
+      .map(m => ({
+        memory_type: MEMORY_TYPES_SET.has(m.memory_type) ? m.memory_type : 'fact',
+        content: String(m.content).trim().slice(0, 500),
+        importance: IMPORTANCE_SET.has(m.importance) ? m.importance : 'normal',
+      }));
+  } catch (err) {
+    console.warn(`[Dream] organize err for ${collab.full_name}, usando candidatas brutas:`, err.message);
+    return candidates; // fallback seguro
+  }
+}
+
 async function consolidateMemoryFor(collab) {
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
   const { data: msgs } = await supabase
@@ -5762,11 +5817,13 @@ async function consolidateMemoryFor(collab) {
 
   const { data: existing } = await supabase
     .from('collaborator_memory')
-    .select('content')
+    .select('content, memory_type, importance')
     .eq('collaborator_id', collab.id)
     .eq('is_active', true)
+    .order('created_at', { ascending: false })
     .limit(100);
-  const existingTexts = (existing || []).map(e => e.content);
+  const existingMems = existing || [];
+  const existingTexts = existingMems.map(e => e.content);
 
   let candidates;
   try {
@@ -5774,6 +5831,12 @@ async function consolidateMemoryFor(collab) {
   } catch (err) {
     console.error(`[MemConsolidate] extract err for ${collab.full_name}:`, err.message);
     return { collab: collab.full_name, saved: 0, skipped: 'extract_error', error: err.message };
+  }
+
+  // Sprint 23.5+ — Etapa 3: organiza/filtra candidatas com segunda LLM (fail-open)
+  if (candidates.length > 0) {
+    candidates = await _organizeDreamMemories(collab, candidates, existingMems);
+    console.log(`[Dream] ${collab.full_name}: após organização = ${candidates.length} memórias`);
   }
 
   let saved = 0, dedup = 0;
