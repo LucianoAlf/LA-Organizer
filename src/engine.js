@@ -3337,18 +3337,25 @@ async function persistMemoryRows(collaboratorId, rows) {
     const memory_type = MEMORY_TYPES.includes(r.memory_type) ? r.memory_type : 'fact';
     const importance = IMPORTANCE_LEVELS.includes(r.importance) ? r.importance : 'normal';
     try {
-      const { error } = await supabase.from('collaborator_memory').insert({
+      const { data: inserted, error } = await supabase.from('collaborator_memory').insert({
         collaborator_id: collaboratorId,
         memory_type,
         content: r.content.trim(),
         importance,
         source: 'conversation',
         is_active: true,
-      });
+      }).select('id').single();
       if (error) {
         console.error('[Memory] insert err:', error.message, '| row:', r.content);
       } else {
         saved++;
+        // Sprint 23.5 — gera embedding assíncrono para busca semântica (fail-silent)
+        if (inserted?.id && process.env.OPENAI_API_KEY) {
+          const { getEmbedding } = require('./services/embeddings');
+          getEmbedding(r.content.trim()).then(embedding =>
+            supabase.from('collaborator_memory').update({ embedding }).eq('id', inserted.id)
+          ).catch(e => console.warn('[Memory] embedding err:', e.message));
+        }
       }
     } catch (err) {
       console.error('[Memory] exception:', err.message);

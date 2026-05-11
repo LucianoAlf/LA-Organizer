@@ -1606,6 +1606,28 @@ async function buildHistoricalContext(collabId, ritualType) {
 async function buildSystemPrompt(collaborator, opts = {}) {
   const lastUserMessage = opts.lastUserMessage || '';
   const ctx = await fetchCollaboratorContext(collaborator);
+
+  // Sprint 23.5 — busca semântica de memórias por similaridade com a mensagem atual.
+  // Substituí busca por recência (10 mais novas) por busca por relevância semântica.
+  // Fallback silencioso: se OPENAI_API_KEY ausente ou erro, mantém as memórias por recência.
+  if (lastUserMessage && process.env.OPENAI_API_KEY) {
+    try {
+      const { getEmbedding } = require('../services/embeddings');
+      const embedding = await getEmbedding(lastUserMessage);
+      const { data: semanticMems } = await supabase.rpc('match_memories', {
+        p_collaborator_id: collaborator.id,
+        p_embedding: embedding,
+        p_match_count: 10,
+        p_threshold: 0.5,
+      });
+      if (semanticMems && semanticMems.length > 0) {
+        ctx.memories = semanticMems; // substitui por memórias semanticamente relevantes
+      }
+    } catch (semErr) {
+      // fail-open: mantém memórias por recência se embedding falhar
+    }
+  }
+
   if (opts.coordHint) ctx.coordHint = opts.coordHint;
   if (opts.coordContext) ctx.coordContext = opts.coordContext;   // Sprint 17 ACC
   if (opts.integrityHygiene) ctx.integrityHygiene = opts.integrityHygiene; // Sprint 18 hygiene
