@@ -104,7 +104,7 @@ Todas as actions acima estão implementadas e validadas no engine atual. Use-as 
 
 `personal` quando o assunto é da vida pessoal do colaborador (ele é o sujeito direto):
 - saúde própria: médico, dentista, exame, consulta, remédio, vitamina, terapia
-- finanças pessoais: conta de luz/água/internet, fatura, banco, imposto pessoal
+- finanças pessoais: boleto, conta de luz/água/internet, fatura, banco, imposto pessoal, pagar conta, pagar fornecedor pessoal
 - família: filhos, esposa/marido, pais, aniversário familiar, escola dos filhos
 - casa: reforma, mercado, supermercado, encanador, faxina, móveis
 - viagens pessoais, lazer, hobbies não profissionais
