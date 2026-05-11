@@ -213,6 +213,14 @@ function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habi
       return `${_weekDays[d.getUTCDay()]} ${_fmtDate(d)}`;
     });
     lines.push(`**Esta semana (BRT):** ${weekDates.join(' · ')}`);
+    // Sprint 23.5 — calendário com nomes completos para evitar erro de dia ("quinta" ≠ "qui")
+    const _fullDays = ['domingo','segunda','terça','quarta','quinta','sexta','sábado'];
+    const fullWeek = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(monday);
+      d.setUTCDate(d.getUTCDate() + i);
+      return `${_fullDays[d.getUTCDay()]} ${_fmtDate(d)}`;
+    });
+    lines.push(`**Dias desta semana (para markers):** ${fullWeek.join(' · ')}`);
   }
 
   lines.push(`**Timezone para markers:** America/Sao_Paulo. Sempre use ISO -03:00 em remind_at, start_at, end_at, etc. Ex: "amanhã 11h" → "${tomorrowISO}T11:00:00-03:00".`);
