@@ -710,6 +710,23 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
     }
   }
 
+  // Sprint 23 — Follow-up de microconfirmação pós-duplicata.
+  // Padrão: engine detectou dup_event, perguntou "1/2/3", user respondeu só "2".
+  // Sem essa regra, pickSkill volta `none` e TOM não emite bypass_integrity:true,
+  // gerando loop infinito de microconfirmação (vide bug 11/05/2026).
+  {
+    const lm = (lastUserMessage || '').trim();
+    const isolatedChoiceRe = /^[123]\.?$/;
+    if (isolatedChoiceRe.test(lm)) {
+      const recent = (recentHistory || []).filter(m => m.direction === 'outbound');
+      const lastBot = recent.length ? String(recent[recent.length - 1].content || '') : '';
+      const dupMicroconfirmRe = /(Achei um compromisso parecido|mesmo compromisso.*atualizo|outro compromisso.*crio novo|Cancela,?\s+vou reformular)/i;
+      if (dupMicroconfirmRe.test(lastBot)) {
+        return { name: 'criar-compromisso', body: loadSkill('criar-compromisso') };
+      }
+    }
+  }
+
   // Priority 4.9: compromisso (evento com horário). Cobre create + update.
   // Create: termo de evento + horário, OR range "das X às Y", OR agendar + horário + (termo|modalidade).
   // Update: verbo update (remarca|cancela|fechei) + termo de evento.
