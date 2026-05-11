@@ -1030,7 +1030,7 @@ async function fetchCollaboratorContext(collaborator) {
     : 3;
   const workTasks = workRaw.slice(0, Math.max(1, Math.min(20, maxDaily)));
 
-  return {
+  const ctx = {
     profile: profileRes.data || null,
     memories: memoriesRes.data || [],
     prefs: prefsRes.data || null,
@@ -1058,6 +1058,18 @@ async function fetchCollaboratorContext(collaborator) {
     eventTypes: eventTypesRes.data || [],
     todayDate: today,
   };
+  // Sprint 23.5+ — médio prazo: resumo da semana passada (fail-silent)
+  try {
+    const { data: weeklySummary } = await supabase
+      .from('collaborator_weekly_summaries')
+      .select('summary, week_start')
+      .eq('collaborator_id', id)
+      .order('week_start', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (weeklySummary?.summary) ctx.weeklySummary = weeklySummary;
+  } catch (_) {}
+  return ctx;
 }
 
 // Sprint 11.3 hotfix — Active Thread Binding (anti context-bleed).
@@ -1872,6 +1884,12 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   // Sprint 18 — hygiene context injection (briefing matinal com findings de higiene)
   if (ctx && ctx.integrityHygiene) {
     systemPrompt += '\n\n[INTEGRITY_HYGIENE_CONTEXT]\n' + ctx.integrityHygiene;
+  }
+
+  // Sprint 23.5+ — médio prazo: resumo da semana passada (quando disponível)
+  if (ctx.weeklySummary) {
+    const ws = ctx.weeklySummary;
+    systemPrompt += `\n\n---\n\n📋 **Semana passada (${ws.week_start}):**\n${ws.summary}`;
   }
 
   // Histórico de desempenho — injetado apenas nos rituais que precisam de contexto histórico.

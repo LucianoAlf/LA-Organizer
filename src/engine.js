@@ -3337,25 +3337,45 @@ async function persistMemoryRows(collaboratorId, rows) {
     const memory_type = MEMORY_TYPES.includes(r.memory_type) ? r.memory_type : 'fact';
     const importance = IMPORTANCE_LEVELS.includes(r.importance) ? r.importance : 'normal';
     try {
-      const { data: inserted, error } = await supabase.from('collaborator_memory').insert({
-        collaborator_id: collaboratorId,
-        memory_type,
-        content: r.content.trim(),
-        importance,
-        source: 'conversation',
-        is_active: true,
-      }).select('id').single();
-      if (error) {
-        console.error('[Memory] insert err:', error.message, '| row:', r.content);
-      } else {
-        saved++;
-        // Sprint 23.5 — gera embedding assíncrono para busca semântica (fail-silent)
-        if (inserted?.id && process.env.OPENAI_API_KEY) {
+      const content = r.content.trim();
+      // Sprint 23.5+ — dedup semântico antes de inserir.
+      // Gera embedding, verifica similaridade > 0.92; se existir, atualiza a existente.
+      let dedupDone = false;
+      if (process.env.OPENAI_API_KEY) {
+        try {
           const { getEmbedding } = require('./services/embeddings');
-          getEmbedding(r.content.trim()).then(embedding =>
-            supabase.from('collaborator_memory').update({ embedding }).eq('id', inserted.id)
-          ).catch(e => console.warn('[Memory] embedding err:', e.message));
+          const embedding = await getEmbedding(content);
+          const { data: similar } = await supabase.rpc('match_memories', {
+            p_collaborator_id: collaboratorId,
+            p_embedding: embedding,
+            p_match_count: 1,
+            p_threshold: 0.92,
+          });
+          if (similar && similar.length > 0) {
+            await supabase.from('collaborator_memory')
+              .update({ content, embedding, importance })
+              .eq('id', similar[0].id);
+            console.log(`[Memory] dedup update id=${similar[0].id.slice(0,8)} sim=${similar[0].similarity?.toFixed(2)}`);
+            saved++;
+            dedupDone = true;
+          } else {
+            // Insere nova + embedding de uma vez
+            const { data: inserted, error } = await supabase.from('collaborator_memory').insert({
+              collaborator_id: collaboratorId, memory_type, content, importance, source: 'conversation', is_active: true, embedding,
+            }).select('id').single();
+            if (error) console.error('[Memory] insert err:', error.message);
+            else { saved++; dedupDone = true; }
+          }
+        } catch (embErr) {
+          console.warn('[Memory] embedding/dedup err (fallback to plain insert):', embErr.message);
         }
+      }
+      if (!dedupDone) {
+        const { error } = await supabase.from('collaborator_memory').insert({
+          collaborator_id: collaboratorId, memory_type, content, importance, source: 'conversation', is_active: true,
+        });
+        if (error) console.error('[Memory] insert err:', error.message);
+        else saved++;
       }
     } catch (err) {
       console.error('[Memory] exception:', err.message);
