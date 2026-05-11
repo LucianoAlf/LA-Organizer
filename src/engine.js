@@ -1735,6 +1735,21 @@ function parseEventCreateMarker(text) {
     return { malformed: true, cleanText };
   }
   const items = Array.isArray(parsed) ? parsed : [parsed];
+  // Sprint 23 — normaliza formato alternativo: event_date+start_time+end_time → start_at+end_at ISO.
+  // TOM às vezes emite esse schema errado; converte em vez de rejeitar.
+  for (const item of items) {
+    if (item && typeof item === 'object') {
+      if ((!item.start_at || !ISO_DATETIME_RE.test(item.start_at)) && item.event_date && item.start_time) {
+        const base = String(item.event_date).slice(0, 10); // YYYY-MM-DD
+        const st = String(item.start_time).padStart(5, '0'); // HH:MM
+        item.start_at = `${base}T${st}:00-03:00`;
+        if (item.end_time) {
+          const et = String(item.end_time).padStart(5, '0');
+          item.end_at = `${base}T${et}:00-03:00`;
+        }
+      }
+    }
+  }
   const valid = [];
   const dropped = [];
   const droppedItems = []; // Sprint 22.34b — preserva items invalidos pra fallback (habit redirect)
