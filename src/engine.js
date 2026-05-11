@@ -1698,9 +1698,17 @@ function validateEventItem(e) {
   if (!e || typeof e !== 'object') return 'not_object';
   if (typeof e.title !== 'string' || !e.title.trim()) return 'title:missing';
   if (typeof e.start_at !== 'string' || !ISO_DATETIME_RE.test(e.start_at)) return 'start_at:invalid';
-  if (typeof e.end_at !== 'string' || !ISO_DATETIME_RE.test(e.end_at)) return 'end_at:invalid';
+  // Sprint 23 fallback: end_at ausente → start_at + 1h (default razoavel).
+  if (typeof e.end_at !== 'string' || !ISO_DATETIME_RE.test(e.end_at)) {
+    const startMs = new Date(e.start_at).getTime();
+    if (!Number.isFinite(startMs)) return 'end_at:invalid';
+    e.end_at = new Date(startMs + 60 * 60 * 1000).toISOString().replace('Z', '-03:00');
+  }
   if (new Date(e.end_at).getTime() <= new Date(e.start_at).getTime()) return 'end_before_start';
-  if (typeof e.modality !== 'string' || !VALID_EVENT_MODALITIES.has(e.modality)) return 'modality:invalid';
+  // Sprint 23 fallback: modality ausente → infere de meeting_url, senao presencial.
+  if (typeof e.modality !== 'string' || !VALID_EVENT_MODALITIES.has(e.modality)) {
+    e.modality = e.meeting_url ? 'online' : 'presencial';
+  }
   // Sprint 22.26 — categorias agora vivem em event_categories (DB). TOM aceita
   // qualquer slug; validacao de existencia (system OU pessoal do user) acontece
   // no lookupCategoryId logo antes do INSERT.
