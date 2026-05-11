@@ -9,6 +9,8 @@ const metricsService = require('./services/metrics');
 const ai = require('./ai/provider');
 const { buildSystemPrompt, formatMessages } = require('./prompts/system');
 const supabase = require('./supabase/client');
+const OpenAI = require('openai');
+const openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const SKILLS_DIR = path.join(__dirname, '..', 'skills');
 
@@ -5728,9 +5730,14 @@ ${historyText}
 
 Extraia até 5 itens novos ou elevados. Apenas JSON.`;
 
-  const r = await ai.chat(sysPrompt, [{ role: 'user', content: userPrompt }]);
-  const raw = String(r.text || '').trim();
-  // Be lenient: strip any leading/trailing prose around the JSON array.
+  const nanoRes = await openaiClient.chat.completions.create({
+    model: 'gpt-4.1-nano',
+    messages: [{ role: 'system', content: sysPrompt }, { role: 'user', content: userPrompt }],
+    response_format: { type: 'json_object' },
+    temperature: 0.2,
+  });
+  const raw = String(nanoRes.choices[0].message.content || '').trim();
+  // Extract JSON array from response (may be wrapped in object like {"memories":[...]})
   const m = raw.match(/\[[\s\S]*\]/);
   if (!m) {
     console.warn(`[MemConsolidate] no JSON array in extractor output for ${collab.full_name}`);
@@ -5889,8 +5896,13 @@ ${msgBlock || '(sem mensagens)'}
 
 Atualize o perfil. Apenas JSON.`;
 
-    const response = await ai.chat(sysPrompt, [{ role: 'user', content: userMsg }]);
-    const raw = String(response.text || '').trim();
+    const response = await openaiClient.chat.completions.create({
+      model: 'gpt-4.1-nano',
+      messages: [{ role: 'system', content: sysPrompt }, { role: 'user', content: userMsg }],
+      response_format: { type: 'json_object' },
+      temperature: 0.1,
+    });
+    const raw = String(response.choices[0].message.content || '').trim();
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return;
     const updates = JSON.parse(jsonMatch[0]);
