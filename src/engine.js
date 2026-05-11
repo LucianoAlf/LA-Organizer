@@ -5679,41 +5679,54 @@ function looksLikeMemory(a, b, threshold = 0.6) {
   return union > 0 && inter / union >= threshold;
 }
 
-async function _consolidateExtract(collab, historyText, existingTexts) {
-  const sysPrompt = `Você é um extrator de memória durável.
-Receberá o histórico inbound dos últimos 7 dias de um colaborador no WhatsApp + lista de memórias já salvas.
-Sua tarefa: identificar até 5 NOVOS itens dignos de memória futura (que ainda NÃO estão na lista existente).
+async function _consolidateExtract(collab, historyText, existingMems) {
+  // existingMems: array de { content, memory_type, importance }
+  const existingTexts = Array.isArray(existingMems) ? existingMems.map(m => m.content || m) : (existingMems || []);
+  const sysPrompt = `Você é um extrator e organizador de memória durável para o colaborador ${collab.full_name}.
+Receberá o histórico recente de conversa + memórias já salvas.
+Sua tarefa: identificar até 5 itens dignos de memória futura que ainda NÃO estão salvos, OU que devem ser atualizados por recorrência.
 
 Tipos válidos (use exatamente um): fact | decision | lesson | preference | context
 - fact: dado concreto duradouro (mora em X, toca instrumento Y)
 - decision: decisão consciente (vai pausar projeto Z até agosto)
-- lesson: padrão aprendido (evitar reunião sexta após 17h)
+- lesson: padrão aprendido/recorrente (evitar reunião sexta após 17h)
 - preference: gosto/forma de trabalhar (prefere reuniões curtas)
 - context: situação temporária (filha nasceu em mar/2026 — sempre defina decay_at)
 
 Importance: critical | high | normal | low
 
+REGRAS DE ELEVAÇÃO E SÍNTESE:
+- Se um tema aparece nas memórias existentes E no histórico de hoje → eleve importance para "high" ou "critical"
+- Se vê o mesmo padrão mencionado 2+ vezes nas existentes → sintetize em uma nova "lesson" em vez de criar entradas separadas
+- 1 memória boa > 4 banais. Se nada novo/relevante, retorne [].
+- Conteúdo: 1 frase curta, terceira pessoa, neutra
+- NÃO duplique algo que já está nas memórias existentes sem mudança de importance
+- NÃO salve fofoca/julgamento de terceiros
+- NÃO salve estado momentâneo (cansaço de hoje) — só padrão duradouro
+- decay_at obrigatório se memory_type='context'
+
 Saída OBRIGATÓRIA: array JSON puro, sem texto antes/depois. Vazio se nada digno:
 [
   {"memory_type":"fact","content":"...","importance":"normal"},
   {"memory_type":"context","content":"...","importance":"normal","decay_at":"2026-08-01"}
-]
+]`;
 
-REGRAS:
-- 1 memória boa > 4 banais. Se nada novo, retorne [].
-- Conteúdo: 1 frase curta, terceira pessoa, neutra
-- NÃO duplique algo que já está nas memórias existentes
-- NÃO salve fofoca/julgamento de terceiros
-- NÃO salve estado momentâneo (cansaço de hoje) — só padrão
-- decay_at obrigatório se memory_type='context'`;
+  const existingBlock = Array.isArray(existingMems) && existingMems.length > 0
+    ? existingMems.slice(0, 30).map(m => {
+        const type = m.memory_type || 'fact';
+        const imp = m.importance || 'normal';
+        const content = m.content || m;
+        return `[${type}/${imp}] ${content}`;
+      }).join('\n')
+    : '(nenhuma)';
 
-  const userPrompt = `Memórias existentes (NÃO duplicar):
-${(existingTexts || []).map(t => '- ' + t).join('\n') || '(nenhuma)'}
+  const userPrompt = `Memórias existentes do colaborador:
+${existingBlock}
 
-Histórico dos últimos 7 dias (inbound):
+Histórico recente de conversa:
 ${historyText}
 
-Extraia até 5 itens novos. Apenas JSON.`;
+Extraia até 5 itens novos ou elevados. Apenas JSON.`;
 
   const r = await ai.chat(sysPrompt, [{ role: 'user', content: userPrompt }]);
   const raw = String(r.text || '').trim();
@@ -5742,60 +5755,7 @@ Extraia até 5 itens novos. Apenas JSON.`;
     .slice(0, 5);
 }
 
-// Sprint 23.5+ — Etapa 3 do Dream: segunda LLM organiza/filtra/eleva memórias candidatas.
-// Recebe candidatas brutas + memórias existentes → retorna memórias limpas, sem ruído.
-async function _organizeDreamMemories(collab, candidates, existingMemories) {
-  if (!candidates || candidates.length === 0) return candidates;
-  const existingBlock = existingMemories.length > 0
-    ? existingMemories.slice(0, 30).map(m => `[${m.memory_type}/${m.importance}] ${m.content}`).join('\n')
-    : 'Nenhuma ainda';
-  const candidateBlock = candidates.map(c => `[${c.memory_type}] ${c.content}`).join('\n');
 
-  const sysPrompt = `Você organiza memórias de um assistente de IA chamado TOM sobre o colaborador ${collab.full_name}.
-
-Sua tarefa: receber memórias brutas extraídas de conversas e devolver uma lista limpa e organizada.
-
-REGRAS:
-1. Descarte ruído — informações sem valor duradouro ("disse que estava com fome", "precisou de um favor")
-2. Eleve importância — se um tema já aparece nas memórias existentes, eleve importance para "high" ou "critical"
-3. Detecte padrões — se tema se repete, sintetize em uma "lesson" ("Consistentemente menciona dificuldade X")
-4. Descarte duplicatas — se memória similar já existe nas existentes, não recrie
-5. Linguagem limpa — 3ª pessoa, objetiva, em português ("Prefere receber briefing às 11h")
-6. Classifique: fact | preference | decision | lesson | context
-7. Importance: critical | high | normal | low
-
-Retorne JSON array: [{"memory_type":"...","content":"...","importance":"..."}]
-Se não houver memórias válidas, retorne [].`;
-
-  const userMsg = `MEMÓRIAS EXISTENTES:
-${existingBlock}
-
-MEMÓRIAS CANDIDATAS DO DIA (brutas):
-${candidateBlock}
-
-Organize e retorne apenas o que vale salvar.`;
-
-  try {
-    const response = await ai.chat(sysPrompt, [{ role: 'user', content: userMsg }]);
-    const text = (response.text || '').trim();
-    const jsonMatch = text.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) return candidates; // fallback: usa candidatas brutas
-    const organized = JSON.parse(jsonMatch[0]);
-    if (!Array.isArray(organized)) return candidates;
-    const MEMORY_TYPES_SET = new Set(['fact','decision','preference','context','lesson']);
-    const IMPORTANCE_SET = new Set(['critical','high','normal','low']);
-    return organized
-      .filter(m => m && typeof m.content === 'string' && m.content.trim().length > 5)
-      .map(m => ({
-        memory_type: MEMORY_TYPES_SET.has(m.memory_type) ? m.memory_type : 'fact',
-        content: String(m.content).trim().slice(0, 500),
-        importance: IMPORTANCE_SET.has(m.importance) ? m.importance : 'normal',
-      }));
-  } catch (err) {
-    console.warn(`[Dream] organize err for ${collab.full_name}, usando candidatas brutas:`, err.message);
-    return candidates; // fallback seguro
-  }
-}
 
 async function consolidateMemoryFor(collab) {
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
@@ -5827,16 +5787,10 @@ async function consolidateMemoryFor(collab) {
 
   let candidates;
   try {
-    candidates = await _consolidateExtract(collab, historyText, existingTexts);
+    candidates = await _consolidateExtract(collab, historyText, existingMems);
   } catch (err) {
     console.error(`[MemConsolidate] extract err for ${collab.full_name}:`, err.message);
     return { collab: collab.full_name, saved: 0, skipped: 'extract_error', error: err.message };
-  }
-
-  // Sprint 23.5+ — Etapa 3: organiza/filtra candidatas com segunda LLM (fail-open)
-  if (candidates.length > 0) {
-    candidates = await _organizeDreamMemories(collab, candidates, existingMems);
-    console.log(`[Dream] ${collab.full_name}: após organização = ${candidates.length} memórias`);
   }
 
   let saved = 0, dedup = 0;
