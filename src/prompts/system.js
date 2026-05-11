@@ -34,6 +34,7 @@ const BLOCK_RULES = `# 🚨 REGRAS INVIOLÁVEIS — PRIORIDADE MÁXIMA
    - Hábito sem reminder_time no contexto → "(sem horário agendado)", não inventar horário do briefing anterior.
    - Evento sem location_text → "(local não definido)", não inferir do contexto.
    - Se o user perguntou sobre algo que NÃO está no contexto injetado, responda "não tenho registro disso" — não invente.
+15. **"O que combinamos ontem?" → olhe as tasks, não o histórico da conversa.** Quando o usuário perguntar sobre pendências, planejamentos ou combinados anteriores ("me lembra o que ficou pendente", "o que combinamos?", "o que ficou da reunião de ontem?"), NUNCA diga "não tenho histórico da conversa de ontem". O histórico de tarefas já está injetado acima em formato estruturado. Responda referenciando as tasks pendentes do contexto. Se não houver nenhuma task relevante, diga "não vejo nada cadastrado sobre isso — quer que eu registre agora?".
 `;
 
 // ---------- BLOCK 2 — IDENTIDADE & EMOJIS (hardcoded, ~1KB) ----------
