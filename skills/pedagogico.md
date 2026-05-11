@@ -72,28 +72,6 @@ Quando criar task pedagógica e o user mencionar a unidade do aluno, **use EXATA
 
 ---
 
-## Apresentação visível ao usuário (NUNCA fale "Subdomain" / "School" / "Kids" em inglês como rótulo)
-
-Os enums ficam em inglês no JSON do marker. Na fala humana:
-
-**Rótulo:** use **"Escola:"** (nunca "Subdomain:" nem "Subdomínio:")
-
-**Valor (nome da escola):**
-
-| valor enum (JSON) | exiba ao usuário como |
-|---|---|
-| `school` | **LA Music School** |
-| `kids` | **LA Music Kids** |
-
-Ex.: "Escola: **LA Music School**" — NÃO "Subdomain: School", NÃO "Subdomínio: Escola".
-Ex.: "Vai pra Juliana (LA Music School)" — NÃO "Vai pra Juliana (School)".
-
-Outros rótulos em pt-BR:
-- "Priority:" → **"Prioridade:"**
-- "Origin:" → **"Origem:"**
-
-E valores de prioridade traduzidos: `critical`→urgente, `high`→alta, `medium`→média, `low`→baixa.
-
 ---
 
 ## Escola — LA Music School ↔ LA Music Kids
@@ -208,20 +186,7 @@ Markers fecham com `<<END>>`. **NUNCA** com tag de barra estilo XML (ex.: `</...
 ### Ex.2 — "alinha com a Juliana o planejamento do recital" (requester: coordinator)
 
 - Modo: `relay_assisted` (alinhamento, não cobrança).
-- Validação: requester=coordinator → autorizado.
-- Marker:
-```
-<<COORDINATION_REQUEST>>
-{
-  "recipient_name": "Juliana",
-  "mode": "relay_assisted",
-  "message_body": "queria alinhar o planejamento do recital — quando dá pra falar?",
-  "message_original": "alinha com a Juliana o planejamento do recital",
-  "expects_response": true,
-  "response_deadline_hours": 24
-}
-<<END>>
-```
+- Validação: requester=coordinator → autorizado. Emita `COORDINATION_REQUEST` (formato em `coordenacao-conversacional.md`).
 
 ### Ex.3 — "isso é Kids, leva pro Quintela" (requester: Juliana; aluno mencionado antes)
 
@@ -230,26 +195,8 @@ Markers fecham com `<<END>>`. **NUNCA** com tag de barra estilo XML (ex.: `</...
 
 ### Ex.4 — "abre uma pendência pedagógica do aluno Y" (requester: Leo, assistant/Barra)
 
-- Modo: criação direta.
-- Tipo: `pendencia-pedagogica`. Pergunte subdomain se não claro.
-- Marker:
-```
-<<TASK_UPDATE>>
-[{
-  "action": "create",
-  "title": "Pendência pedagógica — aluno Y",
-  "description": "Pendência aberta por Leo (assistente Barra). Aluno Y, contexto a detalhar.",
-  "to_name": "Juliana",
-  "due_date": "2026-05-04",
-  "priority": "medium",
-  "context": "work",
-  "department_id": "7f6bf077-678e-43f0-b6c9-54e46607386c",
-  "request_type_id": "51690ae4-d90c-470d-bbb1-1df67a66a161",
-  "subdomain": "school",
-  "notes": "Origem: Leo (assistente Barra)."
-}]
-<<END>>
-```
+- Modo: criação direta. Tipo: `pendencia-pedagogica`. Pergunte subdomain se não claro.
+- Emita `TASK_UPDATE` com `department_id` + `request_type_id` do UUID acima, `to_name="Juliana"`, `subdomain="school"`, `notes="Origem: Leo (assistente Barra)."`. Formato em §Markers.
 
 ### Ex.5 — "fala com o assistente pedagógico da Barra" (requester: coordinator)
 
