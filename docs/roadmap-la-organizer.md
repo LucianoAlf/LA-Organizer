@@ -4,7 +4,9 @@
 >
 > **Nota sobre sprints 0–10:** não há specs ou reports granulares para este período. O histórico foi reconstruído a partir do PRD v3.1 (escrito em 2026-04-28) e dos comentários inline do engine.js.
 >
-> **Atualizado Sprint 20 (2026-05-05):** adicionada seção Sprint 20 (Gerência) + radar pós-sprint com 11 hotfixes. Decisão estratégica do PO: **fechar fase de expansão de departamentos**. Próxima fase é governança da liderança.
+> **Atualizado Sprint 20 (2026-05-05):** adicionada seção Sprint 20 (Gerência) + radar pós-sprint com 11 hotfixes. Decisão estratégica do PO: **fechar fase de expansão de departamentos**.
+>
+> **Atualizado Sprint 26 (2026-05-10):** adicionadas seções Sprint 21 (Listas Pessoais), Sprint 22 (Mídia Bidirecional + Confirmação de Leitura + Comunicados com Anexo) e Sprint 26 (Agenda LA Music v2 — schema expandido, 5 visualizações, CRUD, TOM skill, cron mensal, link Comunicados↔Eventos, fila anti-ban Meta, fix crítico function_role→role). Sprints 23–25 do board de produto absorvidas nessas entregas. Pendente real: Sprint 23 (revisão de skills, system.js 96KB→45KB), Audit Lote 2/3, Auth E2E.
 
 ---
 
@@ -524,32 +526,151 @@ Limites formalizados em `docs/TOM-LIMITES.md`.
 
 ---
 
+## Sprint 21 — Listas Pessoais + Hábitos Privados via TOM
+
+**Status:** entregue
+**Data:** ~2026-05-06
+
+### Entregas
+- DB: tabela `personal_checklists` com `context` (personal/work), `list_type`, `owner_collab_id`; tabela de items associada
+- Marker `<<PERSONAL_LIST_ACTION>>` (create_list, add_item, remove_item, complete_item, clear_list)
+- Engine: `applyPersonalListAction` com validação de schema + fallback aliases (action: "create_list" ↔ "create", title ↔ name)
+- Skill `listas-pessoais.md`: criação, edição e consulta de listas pessoais via conversa
+- Fix: `personal_checklists.context NOT NULL` violation corrigido (default 'personal' inserido no engine)
+- PWA: `Checklists.tsx` com abas Pessoal / Trabalho; `PersonalChecklistSheet.tsx`, `PersonalChecklistCard.tsx`
+
+---
+
+## Sprint 22 — Mídia Bidirecional + Comunicados com Anexo
+
+**Status:** entregue (6/6)
+**Data:** ~2026-05-08
+
+### TOM recebe mídia (bidirecional entrada)
+- **Imagem:** OpenAI `gpt-5.4-mini` com vision multimodal — analisa e injeta descrição no prompt
+- **PDF:** Gemini Files API (`gemini-3.1-flash-lite`) — upload multipart, polling até `ACTIVE`, extração de texto completa; contexto injetado com prefixo explícito "O usuário ACABOU DE ENVIAR um PDF agora"
+- **Vídeo:** Gemini Files API (até 2GB) — análise de conteúdo via multimodal
+- Fix: modelo `gpt-5.4-mini` usa `max_completion_tokens` (não `max_tokens`); ambos modelos validados como existentes em produção
+
+### TOM envia mídia (bidirecional saída)
+- `whatsapp.sendMedia(phone, {url, type, caption, filename, mimetype})` via UAZAPI — imagens e documentos com legenda
+
+### Storage buckets (Supabase)
+- `comunicado-anexos` (public): flyers de eventos + anexos de comunicados
+- `tom-incoming-media` (private): mídia recebida pelo TOM para processamento
+
+### Comunicados com anexo (PWA)
+- `ComunicadoSheet.tsx`: upload de anexo (image/document), preview inline, badge de tipo
+- Dispatcher: `sendMedia` quando `attachment_url + attachment_type` presentes
+- DB: `announcements.attachment_url`, `attachment_type`, `attachment_mime`, `attachment_filename`, `attachment_size_bytes`
+
+### Confirmação de leitura (Comunicados)
+- DB: `announcements.requires_confirmation`, `announcement_jobs.confirmed_at`, `reminder_sent_at`, `confirmation_response`
+- Engine: detector de resposta afirmativa → marca `confirmed_at` no job correspondente
+- Cron: lembrete pra não-confirmados após 6h, idempotente via `reminder_sent_at`
+- PWA: checkbox "Confirmação de leitura" no sheet; contador "X/Y confirmaram" na lista; tela detalhe com stats + botão reenviar lembrete manual
+
+---
+
+## Sprint 26 — Agenda LA Music v2 (2026-05-10)
+
+**Status:** entregue + validado E2E em produção
+
+> Nota: sprints 23–25 referenciadas no board de produto foram absorvidas parcialmente em Sprint 22 (mídia/confirmação) e Sprint 26 (agenda). Sprint 23 (revisão de skills / redução de prompt) permanece pendente.
+
+### Fatia A — Schema + EventoSheet expandido
+- DB migration `agenda_escolar_v2_schema`: tabela `event_types` (14 tipos canônicos com emoji + color_hex + sort_order); `school_events` ganhou `end_date`, `description`, `image_url`, `image_filename`, `is_all_day`, `units[]` (multi-unidade); FK `event_type → event_types.id` substituindo CHECK constraint legada
+- `EventoSheet.tsx` reescrito: tipo com CustomSelect (emoji + label), datas início/fim, horário condicional, multi-unidade por Checkbox (Vazio = escola toda), local, descrição (500 chars), upload de cartaz/flyer (5MB para bucket `comunicado-anexos`), notificações configuráveis
+- Acesso de leitura aberto a toda equipe (RLS `qual=true` para `school_events`)
+
+### Fatia B — 5 visualizações + period nav unificado
+- 5 chips: **Calendário · Mês · Trimestre · Semestre · Ano**
+- Period nav no padrão `DateNavHeader` (surface bar, chevrons, botão "Hoje" só aparece fora do período atual) — unificado com Hoje/Semana
+- Lista agrupada por mês com separadores, badges de proximidade (Hoje/Amanhã/Em N dias/Em curso), type badges coloridos, suporte a ranges de dias
+- **Visão Calendário:** grid 6×7 estilo Google Calendar — domingo em brand red, hoje em pill verde tom, stripes coloridas por `event_type.color_hex`, ranges preenchem todos os dias do período, click no dia abre painel com lista de eventos
+
+### Fatia C — TOM como agente de agenda
+- Skill `agenda-escolar.md` (renomeada para Agenda LA Music): consulta filtrada por unidade, disparo de resumo mensal com confirmação prévia
+- `system.js`: contexto `📅 Agenda — próximos 30 dias` injetado no prompt de todos os usuários
+- Dispatcher: cron automático dia 1 de cada mês às 09h BRT, idempotente (header check)
+
+### Fatia D — Link bidirecional Comunicados ↔ Eventos
+- Migration `announcements_event_link`: FK `announcements.source_event_id → school_events.id` + index
+- `ComunicadoSheet`: dropdown "Vincular a evento" (próximos 90 dias), salva `source_event_id`
+- `ComunicadoDetalhe`: linha "Evento" clicável no resumo
+- `EventoDetalhe`: seção "Comunicados deste evento" com status de cada comunicado
+- `Comunicados` lista: badge `📅 título` no card quando vinculado
+
+### CRUD completo da Agenda
+- **Editar:** `EventoSheet` com prop `editTarget` — pré-preenche todos os campos, faz UPDATE, oculta seção de notificações (sem re-notificar)
+- **Cancelar evento:** soft-cancel + cancela comunicados pending vinculados
+- **Excluir evento:** hard delete com confirmação
+- Fix: `overflow-hidden` removido do card para dropdown RowMenu não ficar por trás
+
+### Design System — ConfigurarEquipe
+- 5 `<select>` nativos Windows → `CustomSelect`
+- Tabs Barra/Recreio/Campo Grande → componente `Tabs`
+- Botão "Salvar" brand/vermelho → `bg-tom text-black`
+
+### Fila WhatsApp anti-ban Meta
+- Dispatcher: mini-batch até **20 jobs/tick** com **delay aleatório 3–6s** entre envios
+- 40 pessoas → ~2 minutos (antes: 3h20 com 1 msg/tick a cada 5min)
+- Variação aleatória evita padrão mecânico detectável pela Meta
+
+### Bug crítico corrigido
+- `audience.function_role` filtrava em coluna `function_role` (sempre null) em vez de `role` em 3 pontos: `engine.js:792` (jobs via PWA), `engine.js:1096` (jobs via TOM/SCHOOL_EVENT_ACTION), `dispatcher.js:480` (createJobsFromAudience). Resultado: comunicados para "liderança" chegavam a 0 destinatários.
+
+### Validação E2E em produção
+- ✅ TOM listou agenda do mês filtrada por unidade
+- ✅ Criou evento via wizard (plano comunicação + 9 tasks kit performance atribuídas à equipe da Barra)
+- ✅ Evento apareceu imediatamente no PWA — Agenda LA Music → Junho 2026 → Barra
+- ✅ Disparou agenda de junho para 18 colaboradores em ~2 minutos
+
+---
+
 ## Próximos passos
 
-### Validações em uso real (Sprint 16–19)
-1. Validar workflow de coordenação conversacional com 4+ threads paralelos (testar mistura de contextos)
-2. Validar microconfirmações da Sprint 18 + Sprint 19 (Bug B2 fix) — confirmar que conflitos legítimos viram pergunta clara em vez de rejeição silenciosa
-3. Validar fluxo pedagógico end-to-end com Juliana e Quintela operando direto (ainda em validação interna pelo Alf)
-4. Confirmar primeira interação de novos collaborators com TOM ativando self-introduction (Radar 3 ainda sem teste E2E)
+### Validações em uso real (2026-05-10)
+1. ✅ Coordenação conversacional validada em produção (Sprints 16–17)
+2. ✅ Microconfirmações Sprint 18+19 validadas
+3. ✅ Fluxo pedagógico E2E validado com Juliana/Quintela
+4. ✅ Agenda LA Music validada E2E: TOM → evento → PWA → comunicado → 18 colaboradores notificados
 
-### Possíveis Sprints 21+
-- **Sprint 21 — Governança da liderança:** rituais avançados (planejamento mensal, OKRs leves), checklists pessoais por papel (CEO, coordenador, gerente), histórico/decisões importantes em memória estruturada
-- **Sprint 22 — Active Thread Stack:** TOM mantém N threads ativas em vez de 1 — quando user muda de assunto, TOM resgata contexto correto. Resolve bug de "perdeu o foco quando Anne entrou no meio da conversa de Krissya"
-- **Sprint 23 — Revisão de skills:** consolidar regras inflada em princípios; cortar redundâncias após uso real do piloto. Reduzir prompt size de ~65KB para ~45KB sem perda de capacidade
+### Pendente genuíno (2026-05-10)
 
-### Fora de escopo (decisão 2026-05-05)
-- Mais departamentos operacionais (financeiro, comercial, etc.) — só se houver demanda explícita
+#### Sprint 23 — Revisão de Skills (alta prioridade)
+- `system.js` está em **96KB** — meta ~45KB
+- Consolidar regras infladas em princípios (gerencia + pedagogico + coordenacao)
+- Anti "menino de recado" técnico: TOM deve facilitar, não relay infinito
+- Cleanup `composeSystemPrompt` (confirmar dead code ou alinhar com `buildSystemPrompt`)
+
+#### Audit de telas PWA (lote 2 e 3)
+- Lote 2: DashboardTime + PessoaDetalhe + Histórico + Observabilidade + Templates
+- Lote 3: Ops + Sistema (Fila/Observabilidade/Detalhe/Login/Mais)
+- Objetivo: garantir design system unificado em todas as telas
+
+#### Auth flow E2E
+- Magic link WhatsApp → PWA install → onboarding completo
+- Ainda não validado de ponta a ponta com novo collaborator real
+
+#### Sprint futura — Governança de Contexto
+- Classificação assistida pessoal vs trabalho
+- Fricção seletiva, heurísticas engine, `context_mismatch_flag`
+- Spec em `docs/SPRINT-FUTURA-GOVERNANCA-CONTEXTO.md`
+
+#### Sprint futura — Checklist de Produção de Evento (one-shot por projeto)
+- Tasks por setor (Logística/Técnica/Pedagógico/Comunicação/Produção)
+- Linha do tempo automática 30d/15d/7d/1d
+- Mapa de equipe no dia (override por evento específico, diferido Sprint 14)
+
+### Fora de escopo (decisão 2026-05-05, mantida)
+- Mais departamentos operacionais (financeiro, comercial, etc.)
 - Auditoria/analytics avançado
-- TOM em grupos de WhatsApp como participante ativo (risco de banimento)
+- TOM em grupos de WhatsApp como participante ativo (risco banimento Meta)
 - Professor como collaborator (manter via assistente/coord)
+- Múltiplos lembretes T-3/T-1 para tasks de evento (diferido — aguarda feedback do T-1 único)
+- Override de equipe por evento específico (diferido — aguarda uso real do `event_team_map`)
 
-### Cleanup arquitetural pendente
-- Investigar `composeSystemPrompt` (sync builder) — confirmar dead code ou alinhar com `buildSystemPrompt`
-- Workflow de dev local: localhost:4173 não atualiza automaticamente após push — investigar fluxo pull/build/preview
-- PWA aba Operações Técnicas — popular dropdown Responsável com candidatos formais (mesma lógica que aba Pedagógico)
-
-### Pendências históricas (continuam válidas)
-1. **Override de equipe e múltiplos lembretes** (diferido Sprint 14) — aguarda uso real do fluxo base
-2. **Code-splitting PWA** — bundle em ~633KB; só prioridade se carregamento lento começar a incomodar
-3. **Testes automatizados** — só vale o esforço com mais de 1 dev no projeto
-7. **Fase 3** — Dashboard gerencial avançado + check-in RH (escopo a definir)
+### Cleanup arquitetural
+- Code-splitting PWA — bundle ~951KB; só prioridade se carregamento lento incomodar
+- Testes automatizados — só vale com mais de 1 dev no projeto
