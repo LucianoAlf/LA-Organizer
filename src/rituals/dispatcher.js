@@ -42,6 +42,7 @@ const CANONICAL_BY_RITUAL = {
 const TEAM_SUMMARY_DEFAULT_TIME = '19:30';      // weekdays only
 const WEEKLY_RETRO_DEFAULT_TIME = '18:00';      // Sunday only
 const MEMORY_CONSOLIDATION_TIME = '22:00';      // Sunday only
+const DAILY_DREAM_TIME = '03:00';               // Every day — "sonhar": consolidar memórias das últimas 24h
 const COORDINATOR_ROLES = ['coordinator', 'director'];
 
 // Default time for briefing_pessoal (until user_preferences gains a personal_briefing_time column).
@@ -1544,6 +1545,35 @@ async function run(opts = {}) {
       }
     } catch (err) {
       console.error('[Dispatcher] memory-consolidation erro:', err.message);
+    }
+  }
+
+  // Sprint 23.5+ — "Sonho" diário às 3h BRT: consolida memórias das últimas 24h
+  // para colaboradores que tiveram conversa recente. Roda todo dia (não só domingo).
+  if (opts.force === 'dream' || timeToSlot(DAILY_DREAM_TIME) === slotNow) {
+    try {
+      const cutoff24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const { data: recentConvos } = await supabase
+        .from('conversation_history')
+        .select('collaborator_id')
+        .gte('created_at', cutoff24h)
+        .eq('direction', 'inbound');
+      const activeIds = [...new Set((recentConvos || []).map(r => r.collaborator_id))];
+      if (activeIds.length > 0) {
+        const { data: activeCollabs } = await supabase
+          .from('collaborators')
+          .select('id, full_name, phone, role, unit, onboarding_completed')
+          .in('id', activeIds)
+          .eq('is_active', true)
+          .eq('onboarding_completed', true);
+        console.log(`[Dream] consolidando memórias para ${(activeCollabs || []).length} colaborador(es) ativo(s)`);
+        for (const c of (activeCollabs || [])) {
+          try { await consolidateMemoryFor(c); }
+          catch (err) { console.error(`[Dream] err for ${c.full_name}:`, err.message); }
+        }
+      }
+    } catch (err) {
+      console.error('[Dispatcher] dream-consolidation erro:', err.message);
     }
   }
 
