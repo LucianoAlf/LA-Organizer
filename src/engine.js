@@ -5797,17 +5797,25 @@ async function consolidateMemoryFor(collab) {
   for (const c of candidates) {
     const dup = existingTexts.some(t => looksLikeMemory(c.content, t));
     if (dup) { dedup++; continue; }
+    let embedding = null;
+    try {
+      const { getEmbedding } = require('./services/embeddings');
+      embedding = await getEmbedding(c.content);
+    } catch (embErr) {
+      console.warn('[MemConsolidate] embedding err (inserindo sem embedding):', embErr.message);
+    }
     const { error } = await supabase.from('collaborator_memory').insert({
       collaborator_id: collab.id,
       memory_type: c.memory_type,
       content: c.content,
       importance: c.importance,
       decay_at: c.decay_at,
-      source: 'observation', // weekly consolidation = observação periódica
+      source: 'observation',
       is_active: true,
+      ...(embedding ? { embedding } : {}),
     });
     if (error) console.error('[MemConsolidate] insert err:', error.message);
-    else { saved++; existingTexts.push(c.content); /* prevent intra-batch dup */ }
+    else { saved++; existingTexts.push(c.content); }
   }
   console.log(`[MemConsolidate] ${collab.full_name}: candidates=${candidates.length} saved=${saved} dedup=${dedup}`);
 
