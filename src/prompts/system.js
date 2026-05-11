@@ -1755,39 +1755,35 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     }
   }
 
-  // Sprint 15 — Operações Técnicas (camada operacional replicável)
-  // Disponível para TODOS os roles: qualquer colaborador pode reportar
-  // incidente/falta/manutenção. Triagem e classificação acontecem dentro da skill.
-  // O engine cuida do resto — esta skill só ensina TOM a classificar e emitir
-  // <<TASK_UPDATE>> com department_id + request_type_id corretos.
-  if (collaborator) {
+  // Sprint 15 — Operações Técnicas: manager/coordinator/director apenas.
+  // Collaborators simples não classificam incidents — reportam via linguagem natural
+  // e TOM encaminha sem precisar do skill completo.
+  const isOpsRole = collaborator && ['manager', 'coordinator', 'director'].includes(collaborator.role);
+  if (isOpsRole) {
     const operacoesPath = path.join(SKILLS_DIR, 'operacoes-tecnicas.md');
     if (fs.existsSync(operacoesPath)) {
-      const operacoesSkill = fs.readFileSync(operacoesPath, 'utf-8');
-      systemPrompt += '\n\n---\n\n' + operacoesSkill;
+      systemPrompt += '\n\n---\n\n' + fs.readFileSync(operacoesPath, 'utf-8');
     }
   }
 
-  // Sprint 15 — Piloto Marketing (replicabilidade da camada operacional)
-  // Mesmo padrão de Operações Técnicas: registra demandas de comunicação externa
-  // como tasks com department_id=marketing + request_type_id correto.
-  // Disponível para todos os roles.
-  if (collaborator) {
+  // Sprint 15 — Marketing: apenas manager com unit='all' (Yuri / coordenação geral)
+  const isMarketingRole = collaborator && collaborator.role === 'manager' && collaborator.unit === 'all';
+  if (isMarketingRole) {
     const marketingPath = path.join(SKILLS_DIR, 'marketing.md');
     if (fs.existsSync(marketingPath)) {
-      const marketingSkill = fs.readFileSync(marketingPath, 'utf-8');
-      systemPrompt += '\n\n---\n\n' + marketingSkill;
+      systemPrompt += '\n\n---\n\n' + fs.readFileSync(marketingPath, 'utf-8');
     }
   }
 
-  // Sprint 16 — Coordenação Conversacional (intermediação de mensagens via TOM)
-  // Disponível para TODOS os roles: qualquer colaborador pode pedir relay/followup,
-  // mas a skill ensina TOM a recusar followup fora de alçada antes de emitir marker.
-  if (collaborator) {
+  // Sprint 16 — Coordenação Conversacional: carrega quando há COORD_HINT ativo
+  // OU quando role é manager/coordinator/director (podem emitir relay/followup).
+  // Collaborators sem COORD_HINT não precisam do skill — só respondem mensagens diretas.
+  const hasCoordHint = !!(ctx && ctx.coordHint);
+  const isCoordRole = collaborator && ['manager', 'coordinator', 'director'].includes(collaborator.role);
+  if (hasCoordHint || isCoordRole) {
     const coordPath = path.join(SKILLS_DIR, 'coordenacao-conversacional.md');
     if (fs.existsSync(coordPath)) {
-      const coordSkill = fs.readFileSync(coordPath, 'utf-8');
-      systemPrompt += '\n\n---\n\n' + coordSkill;
+      systemPrompt += '\n\n---\n\n' + fs.readFileSync(coordPath, 'utf-8');
     }
   }
 
@@ -1806,8 +1802,9 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     systemPrompt += integritySkillBlock;
   }
 
-  // Sprint 19 — pedagogico skill auxiliar (sempre carregada para todos os roles)
-  if (pedagogicoSkillBlock) {
+  // Sprint 19 — pedagogico: apenas coordinator/director (saves 12KB para collaborators/managers)
+  const isPedagogicoRole = collaborator && ['coordinator', 'director'].includes(collaborator.role);
+  if (pedagogicoSkillBlock && isPedagogicoRole) {
     systemPrompt += pedagogicoSkillBlock;
   }
 
@@ -1835,43 +1832,6 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   return { systemPrompt, ctx };
 }
 
-// DEPRECATED (Sprint 19 cleanup — 2026-05-03): dead code.
-// Nenhum call site em _remote/ importa esta função (verificado via grep em engine.js,
-// scripts/, e todo _remote/). Foi mantida como "backward-compat" quando buildSystemPrompt
-// virou async, mas o builder async foi reescrito para fazer tudo inline e nunca mais
-// delegou para cá. Diverge intencionalmente de buildSystemPrompt: NÃO carrega as skills
-// auxiliares globais (pedagogico, coordenacao-conversacional, integridade-agenda) nem
-// os blocks novos (rituals, projects-ranking, habits-overview). Se algum caller futuro
-// precisar de prompt sync, recriar a partir do buildSystemPrompt em vez de reanimar isto.
-// TODO: remover em Sprint 20 após confirmar zero uso externo.
-async function composeSystemPrompt(collaborator, ctx) {
-  let lastMsgAge = null;
-  const hist = (ctx && ctx.recentMessages) || [];
-  if (hist.length > 0) {
-    const last = hist[hist.length - 1];
-    if (last && last.created_at) {
-      lastMsgAge = Math.floor((Date.now() - new Date(last.created_at).getTime()) / 60000);
-    }
-  }
-  const skill = await pickSkill(collaborator, '', hist);
-  const skillBlock = (skill && skill.body) ? `# 🎯 SKILL ATIVA: ${skill.name}\n\n${skill.body}` : '';
-  const blocks = [
-    BLOCK_RULES,
-    BLOCK_IDENTITY,
-    buildContext(collaborator, ctx.memories || [], ctx.prefs, ctx.todayTasks || [], ctx.activeProjects || [], lastMsgAge, ctx.habits || [], ctx.todayEvents || [], ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || [], ctx.teamTodayChecklists || [], ctx.teamExpectedTemplates || [], ctx.schoolEvents || [], ctx.eventTypes || []),
-    skillBlock,
-  ].filter(Boolean);
-  let syncPrompt = blocks.join('\n\n---\n\n');
-  // Sprint 16 — COORD_HINT injection (só presente quando recipient tem recados abertos)
-  if (ctx && ctx.coordHint) {
-    syncPrompt += '\n\n' + ctx.coordHint;
-  }
-  // Sprint 17 — ACC injection
-  if (ctx && ctx.coordContext) {
-    syncPrompt += '\n\n' + ctx.coordContext;
-  }
-  return syncPrompt;
-}
 
 /**
  * Formata o histórico recente + mensagem atual como messages[] estilo OpenAI.
@@ -1890,4 +1850,4 @@ function formatMessages(recent, currentText) {
   return msgs;
 }
 
-module.exports = { buildSystemPrompt, formatMessages, composeSystemPrompt, fetchCollaboratorContext, nameFor, todaySaoPaulo };
+module.exports = { buildSystemPrompt, formatMessages, fetchCollaboratorContext, nameFor, todaySaoPaulo };
