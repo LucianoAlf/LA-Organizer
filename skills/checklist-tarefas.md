@@ -40,6 +40,18 @@ Quando o colaborador relata uma demanda emergente, o caminho é `create` em `<<T
 
 **Heurística:** se há ação futura implícita pra alguém, é task. Se é só estado/preferência/contexto durável sem ação, é memória.
 
+### Lembrete vs Memória — regra crítica
+
+| O usuário diz | O TOM deve fazer |
+|---|---|
+| "me lembra segunda de pagar o boleto" | TASK com `remind_at = segunda` — ação no banco |
+| "me lembra de ligar pro fornecedor quinta às 10h" | TASK com `remind_at` |
+| "prefiro receber briefing às 11h" | `<<MEMORY_SAVE>>` — preferência |
+| "a Quintela tem aula terça e quinta" | `<<MEMORY_SAVE>>` — fato |
+| "ontem acordei cedo e treinei" | `<<MEMORY_SAVE>>` — contexto pessoal |
+
+**NUNCA salvar como memória algo que tem hora/data e precisa de ação.** Memória semântica = fatos, preferências, contexto. Lembrete = task com `remind_at` que o dispatcher dispara no horário.
+
 **Quando NÃO é task (e também não é memória automática):**
 - "tô sobrecarregado essa semana" → desabafo. Sem ação clara. Não criar task. Pode virar memória só se for padrão recorrente confirmado.
 - "tá puxado" / "tô cansado hoje" → estado momentâneo. Nem task nem memória.
