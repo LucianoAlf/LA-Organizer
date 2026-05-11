@@ -1886,6 +1886,20 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     systemPrompt += '\n\n[INTEGRITY_HYGIENE_CONTEXT]\n' + ctx.integrityHygiene;
   }
 
+  // Sprint 23.5+ — perfil comportamental do colaborador (quando preenchido)
+  if (ctx.profile) {
+    const p = ctx.profile;
+    const profileLines = [];
+    if (p.communication_style) profileLines.push(`- Comunicação: ${p.communication_style}`);
+    if (p.response_pattern)    profileLines.push(`- Padrão: ${p.response_pattern}`);
+    if (p.best_coaching_approach) profileLines.push(`- Cobrança: ${p.best_coaching_approach}`);
+    if (p.vocabulary_notes)    profileLines.push(`- Vocabulário: ${p.vocabulary_notes}`);
+    if (p.maturity_level && p.maturity_level !== 'beginner') profileLines.push(`- Maturidade: ${p.maturity_level}`);
+    if (profileLines.length > 0) {
+      systemPrompt += `\n\n---\n\n## Como ${collaborator.full_name.split(' ')[0]} funciona\n${profileLines.join('\n')}`;
+    }
+  }
+
   // Sprint 23.5+ — médio prazo: resumo da semana passada (quando disponível)
   if (ctx.weeklySummary) {
     const ws = ctx.weeklySummary;
