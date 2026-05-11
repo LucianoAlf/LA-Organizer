@@ -13,6 +13,7 @@ import type { CalendarEvent } from '../types';
 
 interface TeamSnapshot {
   team: { id: string; full_name: string; role: string }[];
+  allCollabs: { id: string; full_name: string; role: string }[];
   responded: string[];
   noResponse: string[];
   completedToday: number;
@@ -30,7 +31,8 @@ async function fetchTeamSnapshot(myId: string): Promise<TeamSnapshot> {
     .select('id, full_name, role')
     .eq('is_active', true)
     .eq('onboarding_completed', true);
-  const team = (teamRaw ?? []).filter(c => c.id !== myId);
+  const allCollabs = teamRaw ?? [];
+  const team = allCollabs.filter(c => c.id !== myId);
 
   // Today's daily_briefing/sent rows.
   const { data: briefings } = await supabase
@@ -88,6 +90,7 @@ async function fetchTeamSnapshot(myId: string): Promise<TeamSnapshot> {
 
   return {
     team,
+    allCollabs,
     responded,
     noResponse,
     completedToday: completedToday ?? 0,
@@ -116,23 +119,23 @@ export function DashboardTime() {
   if (error) return <EmptyState title="Erro" description={(error as Error).message} />;
   if (!data) return null;
 
-  const { team, responded, noResponse, completedToday, dueToday, overdue, events, eventsByCollab } = data;
+  const { team, allCollabs, responded, noResponse, completedToday, dueToday, overdue, events, eventsByCollab } = data;
   const overdueByPerson = new Map<string, number>();
   for (const t of overdue) overdueByPerson.set(t.assigned_to, (overdueByPerson.get(t.assigned_to) ?? 0) + 1);
 
-  const nameOf = (id: string) => team.find(t => t.id === id)?.full_name?.split(' ')[0] ?? id.slice(0, 6);
+  const nameOf = (id: string) => allCollabs.find(t => t.id === id)?.full_name?.split(' ')[0] ?? id.slice(0, 6);
   const evCount = (id: string) => eventsByCollab[id] ?? 0;
 
   return (
     <div className="space-y-lg">
       <PageHeader title="Time" subtitle="Visão de coordenação · só dados de trabalho" backTo="/mais" />
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-sm">
+      <div className="grid grid-cols-3 gap-sm">
         <StatCard label="No time" value={team.length} />
-        <StatCard label="Concluídas hoje" value={completedToday} tone={completedToday ? 'success' : 'neutral'} />
-        <StatCard label="Pra hoje" value={dueToday} tone="brand" />
+        <StatCard label="Concluídas" value={completedToday} tone={completedToday ? 'success' : 'neutral'} />
+        <StatCard label="Pra hoje" value={dueToday} tone={dueToday ? 'tom' : 'neutral'} />
         <StatCard label="Atrasadas" value={overdue.length} tone={overdue.length ? 'danger' : 'neutral'} />
-        <StatCard label="Compromissos" value={events.length} tone={events.length ? 'brand' : 'neutral'} />
+        <StatCard label="Compromissos" value={events.length} tone={events.length ? 'tom' : 'neutral'} />
       </div>
 
       {events.length > 0 && (

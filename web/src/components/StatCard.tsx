@@ -4,7 +4,7 @@ interface Props {
   label: string;
   value: ReactNode;
   hint?: string;
-  tone?: 'neutral' | 'brand' | 'success' | 'warning' | 'danger';
+  tone?: 'neutral' | 'brand' | 'tom' | 'success' | 'warning' | 'danger';
   className?: string;
 }
 
@@ -12,6 +12,7 @@ interface Props {
 const tones: Record<NonNullable<Props['tone']>, string> = {
   neutral: 'text-fg-muted',
   brand: 'text-brand',
+  tom: 'text-tom',
   success: 'text-success',
   warning: 'text-warning',
   danger: 'text-danger',
