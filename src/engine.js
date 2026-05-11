@@ -1949,6 +1949,15 @@ function parseEventUpdateMarker(text) {
     return { malformed: true, cleanText };
   }
   const items = Array.isArray(parsed) ? parsed : [parsed];
+  // Sprint 23.5 — normaliza campos alternativos que TOM às vezes emite
+  for (const item of items) {
+    if (item && typeof item === 'object') {
+      // TOM às vezes usa event_id (full UUID) em vez de id (8-char short)
+      if (!item.id && item.event_id) item.id = String(item.event_id).slice(0, 8);
+      // Garante que id seja sempre short (primeiros 8 chars)
+      if (typeof item.id === 'string' && item.id.length > 8) item.id = item.id.slice(0, 8);
+    }
+  }
   const valid = [];
   const dropped = [];
   for (let i = 0; i < items.length; i++) {
