@@ -1753,13 +1753,16 @@ async function applyEventActions(collaborator, events) {
   for (const e of events) {
     try {
       // Sprint 18 — pre-check de integridade (fail-open: erros nos detectores não bloqueiam)
+      // bypass_integrity: true → skip dup check (user já confirmou "crio mesmo assim")
+      const bypassIntegrity = e.bypass_integrity === true;
       let temporalResult = { hardConflicts: [], softConflicts: [] };
       let dupResult      = { probable: [], possible: [] };
       try {
-        [temporalResult, dupResult] = await Promise.all([
-          detectTemporalConflict(collaborator, e),
-          detectDuplicateSemanticEvent(collaborator, e),
-        ]);
+        const detectors = [detectTemporalConflict(collaborator, e)];
+        if (!bypassIntegrity) detectors.push(detectDuplicateSemanticEvent(collaborator, e));
+        const results = await Promise.all(detectors);
+        temporalResult = results[0];
+        if (!bypassIntegrity) dupResult = results[1];
       } catch (detErr) {
         console.warn('[IntegrityCheck] event detectors err (non-fatal):', detErr.message);
       }

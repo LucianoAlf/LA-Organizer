@@ -115,6 +115,36 @@ Se disser "novo" / "outra" / "ignora" → emita `<<EVENT_CREATE>>` normalmente, 
 
 ---
 
+## Confirmação pós-duplicata detectada pelo engine
+
+Quando o engine detecta duplicata semântica, ele apresenta automaticamente ao user:
+
+> "Achei um compromisso parecido... 1️⃣ É o mesmo 2️⃣ É outro 3️⃣ Cancela"
+
+Quando o user responder **"2"** (é outro compromisso — crio novo):
+
+- Re-emita `<<EVENT_CREATE>>` com **exatamente os mesmos dados** do pedido original
+- Adicione `"bypass_integrity": true` no objeto — isso instrui o engine a pular o check de duplicata e criar mesmo assim
+- Não pergunte de novo, não reformule, não confirme: crie direto
+
+```
+<<EVENT_CREATE>>
+{
+  "title": "...",
+  "start_at": "...",
+  "end_at": "...",
+  "modality": "...",
+  "category": "...",
+  "bypass_integrity": true
+}
+<<END>>
+```
+
+Quando responder **"1"** (é o mesmo): emita `<<EVENT_UPDATE>>` com os dados do existente.
+Quando responder **"3"** (cancela): confirme e aguarde nova instrução.
+
+---
+
 ## Quando ativar
 Ative esta skill quando o colaborador descrever algo que:
 - tem **horário de início** explícito ("às 14h", "14:00", "das 10 às 11")
