@@ -4362,10 +4362,17 @@ async function detectDuplicateSemanticTask(collab, candidate) {
       const shared = candKeywords.filter(k => taskKeywords.includes(k));
       if (shared.length > 0) score = Math.min(score + 0.1 * Math.min(shared.length, 2), 1.0);
       // Sprint 22.3 — exigir keyword overlap real pra bloquear (probable). Sem keyword
-      // compartilhada, prefix bonus do jaroWinkler ("Re-", "Co-") gera falsos positivos.
-      // Score alto sem semântica vira só "possible" (avisa, não bloqueia).
-      if (score > 0.7 && shared.length > 0) probable.push({ ...task, _score: score });
-      else if (score > 0.5) possible.push({ ...task, _score: score });
+      // compartilhada, prefix bonus do jaroWinkler gera falsos positivos.
+      // Sprint 23.5 — threshold elevado de 0.7→0.85 (reduz falsos positivos tipo
+      // "pagar boleto academia" vs "pagar boleto peixaria"). Também exige prazo próximo
+      // (±3 dias) quando ambos têm due_date, para não bloquear boletos diferentes.
+      let isDupProbable = score > 0.85 && shared.length > 0;
+      if (isDupProbable && candidate.due_date && task.due_date) {
+        const diffDays = Math.abs(new Date(candidate.due_date) - new Date(task.due_date)) / 86400000;
+        if (diffDays > 3) isDupProbable = false; // prazos diferentes → não é dup
+      }
+      if (isDupProbable) probable.push({ ...task, _score: score });
+      else if (score > 0.6) possible.push({ ...task, _score: score });
     }
     probable.sort((a, b) => b._score - a._score);
     possible.sort((a, b) => b._score - a._score);
