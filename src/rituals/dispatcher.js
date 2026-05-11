@@ -17,7 +17,7 @@ process.chdir(path.join(__dirname, '..', '..'));
 loadDotEnv(path.join(process.cwd(), '.env'));
 
 const supabase = require('../supabase/client');
-const { sendRitual, sendCoordinatorReport, getDndState, consolidateMemoryFor, decayExpiredMemories, getRitualIntroDecision } = require('../engine');
+const { sendRitual, sendCoordinatorReport, getDndState, consolidateMemoryFor, decayExpiredMemories, generateWeeklySummaryFor, getRitualIntroDecision } = require('../engine');
 
 const RITUAL_BY_DIRECTIVE = {
   briefing_pessoal: 'personal_briefing',
@@ -1536,6 +1536,11 @@ async function run(opts = {}) {
       for (const c of all) {
         try { await consolidateMemoryFor(c); }
         catch (err) { console.error(`[MemConsolidate] err for ${c.full_name}:`, err.message); }
+      }
+      // Sprint 23.5+ — gera resumo semanal para cada colaborador ativo
+      for (const c of all) {
+        try { await generateWeeklySummaryFor(c); }
+        catch (err) { console.error(`[WeeklySummary] err for ${c.full_name}:`, err.message); }
       }
     } catch (err) {
       console.error('[Dispatcher] memory-consolidation erro:', err.message);

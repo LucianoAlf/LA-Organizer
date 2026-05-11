@@ -5814,6 +5814,87 @@ async function decayExpiredMemories() {
   return n;
 }
 
+// Sprint 23.5+ — gera resumo semanal via LLM e salva em collaborator_weekly_summaries.
+// Chamado pelo dispatcher todo domingo 22h (junto com consolidateMemoryFor).
+async function generateWeeklySummaryFor(collab) {
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
+  const weekStart = sevenDaysAgo.slice(0, 10);
+
+  // Evita re-geração se já existe resumo para esta semana
+  const { data: existing } = await supabase
+    .from('collaborator_weekly_summaries')
+    .select('id')
+    .eq('collaborator_id', collab.id)
+    .eq('week_start', weekStart)
+    .maybeSingle();
+  if (existing) return { collab: collab.full_name, skipped: 'already_exists' };
+
+  const { data: msgs } = await supabase
+    .from('conversation_history')
+    .select('direction, content, created_at')
+    .eq('collaborator_id', collab.id)
+    .gte('created_at', sevenDaysAgo)
+    .order('created_at', { ascending: true })
+    .limit(300);
+
+  const historyText = (msgs || [])
+    .map(m => `[${m.direction === 'inbound' ? 'User' : 'TOM'}] ${String(m.content || '').slice(0, 400)}`)
+    .join('\n')
+    .slice(0, 15000);
+
+  if (historyText.length < 100) return { collab: collab.full_name, skipped: 'too_thin' };
+
+  const prompt = `Você é um assistente que cria resumos semanais de contexto para ${collab.full_name}.
+
+Com base no histórico de conversa abaixo (última semana), escreva um resumo conciso em português (máximo 300 palavras) cobrindo:
+- Principais tarefas e compromissos que surgiram
+- Decisões importantes tomadas
+- Contexto pessoal relevante mencionado
+- Padrões ou temas recorrentes
+
+NÃO invente informações. Se algo não ficou claro, omita. Seja direto e útil.
+
+HISTÓRICO:
+${historyText}
+
+RESUMO:`;
+
+  let summary;
+  try {
+    const aiProvider = require('./ai/provider');
+    const response = await aiProvider.chat(prompt, [{ role: 'user', content: 'Gera o resumo da semana.' }]);
+    summary = (response.text || '').trim().slice(0, 2000);
+  } catch (aiErr) {
+    console.error(`[WeeklySummary] AI err for ${collab.full_name}:`, aiErr.message);
+    return { collab: collab.full_name, skipped: 'ai_error' };
+  }
+
+  if (!summary || summary.length < 20) return { collab: collab.full_name, skipped: 'empty_summary' };
+
+  const { error: insErr } = await supabase.from('collaborator_weekly_summaries').upsert({
+    collaborator_id: collab.id,
+    week_start: weekStart,
+    summary,
+  }, { onConflict: 'collaborator_id,week_start' });
+
+  if (insErr) {
+    console.error(`[WeeklySummary] insert err for ${collab.full_name}:`, insErr.message);
+    return { collab: collab.full_name, skipped: 'insert_error' };
+  }
+
+  // Gera embedding assíncrono (fail-silent)
+  if (process.env.OPENAI_API_KEY) {
+    const { getEmbedding } = require('./services/embeddings');
+    getEmbedding(summary).then(embedding =>
+      supabase.from('collaborator_weekly_summaries').update({ embedding })
+        .eq('collaborator_id', collab.id).eq('week_start', weekStart)
+    ).catch(e => console.warn('[WeeklySummary] embedding err:', e.message));
+  }
+
+  console.log(`[WeeklySummary] gerado para ${collab.full_name} (${weekStart}, ${summary.length} chars)`);
+  return { collab: collab.full_name, saved: true };
+}
+
 // ==================== COORDINATOR REPORTS ====================
 // Deterministic, template-based summaries that DO NOT call the AI provider.
 // Privacy contract: only WORK-context data is queried. Habits, personal tasks,
@@ -6256,4 +6337,4 @@ async function applyMonthlyPlan(collaborator, plan) {
   return { id: created?.id, action: 'created' };
 }
 
-module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamSummary, buildWeeklyRetrospective, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseWeeklyPlanMarker, parseHabitMarker, parseDndMarker, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, applyHabitActions, applyDnd, getDndState, consolidateMemoryFor, decayExpiredMemories, looksLikeMemory, resolveTaskByShortId, applyAnnouncementAction, parseAnnouncementApprovalMarker, applyAnnouncementApproval, applyCoordinationRequestAction, parseCoordinationResponseMarker, applyCoordinationResponseAction, computeProgress, getRitualIntroDecision, countRecentRelaysToRecipient, buildRelayLimitHint, parseMonthlyPlanMarker, applyMonthlyPlan };
+module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamSummary, buildWeeklyRetrospective, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseWeeklyPlanMarker, parseHabitMarker, parseDndMarker, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, applyHabitActions, applyDnd, getDndState, consolidateMemoryFor, decayExpiredMemories, generateWeeklySummaryFor, looksLikeMemory, resolveTaskByShortId, applyAnnouncementAction, parseAnnouncementApprovalMarker, applyAnnouncementApproval, applyCoordinationRequestAction, parseCoordinationResponseMarker, applyCoordinationResponseAction, computeProgress, getRitualIntroDecision, countRecentRelaysToRecipient, buildRelayLimitHint, parseMonthlyPlanMarker, applyMonthlyPlan };
