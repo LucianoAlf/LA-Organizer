@@ -733,7 +733,7 @@ async function checkChecklistConsequences(now = new Date()) {
   const { data: itemCompletions, error } = await supabase
     .from('op_checklist_item_completions')
     .select(`
-      id, item_id, completion_id, is_checked, created_at,
+      id, item_id, completion_id, is_checked, checked_at,
       item:op_checklist_items!op_checklist_item_completions_item_id_fkey(
         id, description, generates_request_type_id, checklist_id
       ),
@@ -743,7 +743,7 @@ async function checkChecklistConsequences(now = new Date()) {
       )
     `)
     .eq('is_checked', false)
-    .gte('created_at', cutoff);
+    .gte('checked_at', cutoff);
   if (error) {
     console.error('[checkChecklistConsequences] query err:', error.message);
     return;
