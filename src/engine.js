@@ -71,6 +71,11 @@ const VALID_TASK_ACTIONS = new Set([
 ]);
 const VALID_COACHING = ['light', 'normal', 'hard'];
 const VALID_EVENT_MODALITIES = new Set(['online', 'presencial', 'hibrido']);
+// Sprint 23.5 — estado pendente de dup microconfirm por collab.
+// Quando engine detecta dup_event e envia microconfirm 1/2/3, guarda o evento aqui.
+// Quando user responde "2", o engine aplica diretamente com bypass_integrity:true
+// sem depender da LLM emitir o campo (que provou ser não-confiável em 11/05/2026).
+const pendingDupEvents = new Map(); // collabId → { event, timestamp }
 // Sprint 22.26 — VALID_EVENT_CATEGORIES era set fixo; agora a validacao acontece
 // em runtime via lookupEventCategoryBySlug (tabela event_categories). Removido.
 const VALID_EVENT_UPDATE_ACTIONS = new Set(['reschedule', 'cancel', 'complete']);
@@ -1810,6 +1815,8 @@ async function applyEventActions(collaborator, events) {
       if (dupResult.probable.length > 0) {
         const d = dupResult.probable[0];
         console.warn(`[IntegrityCheck] DUP_EVENT score=${d._score.toFixed(2)} "${String(e.title).slice(0,40)}" ~ "${String(d.title).slice(0,40)}"`);
+        // Sprint 23.5 — persiste evento pendente para bypass engine-side quando user responder "2"
+        pendingDupEvents.set(collaborator.id, { event: { ...e }, timestamp: Date.now() });
         integrityPayload = {
           severity: 'soft',
           type: 'dup_event',
@@ -4420,6 +4427,43 @@ async function tryHandleAnnouncementConfirmation(collab, text) {
   return true;
 }
 
+// Sprint 23.5 — bypass engine-side para dup microconfirm.
+// Retorna { reply } se tratou direto (user respondeu 1/2/3 após dup bloqueado),
+// ou null se deve seguir fluxo normal (chamar LLM).
+async function tryDupBypass(collab, text) {
+  const lm = (text || '').trim();
+  if (!/^[123]\.?$/.test(lm)) return null;
+  const pending = pendingDupEvents.get(collab.id);
+  if (!pending) return null;
+  // Expira em 10 minutos (segurança: evita bypass stale)
+  if (Date.now() - pending.timestamp > 10 * 60 * 1000) {
+    pendingDupEvents.delete(collab.id);
+    return null;
+  }
+  pendingDupEvents.delete(collab.id);
+  console.log(`[DupBypass] user escolheu ${lm} para pending event "${String(pending.event.title).slice(0,40)}"`);
+  if (lm === '3') {
+    return { reply: 'Ok, cancelado. Me passa de novo quando quiser criar.' };
+  }
+  if (lm === '1') {
+    return { reply: `Certo! Já está na agenda como _${pending.event.title}_. Nada mudou.` };
+  }
+  // lm === '2': criar novo com bypass
+  const eventWithBypass = { ...pending.event, bypass_integrity: true };
+  const { okCount, failCount, integrityPayload } = await applyEventActions(collab, [eventWithBypass]);
+  if (integrityPayload) {
+    return { reply: _buildIntegrityConfirmText(integrityPayload) };
+  }
+  if (okCount > 0) {
+    const e = pending.event;
+    const dtOptions = { timeZone: 'America/Sao_Paulo' };
+    const dateStr = new Date(e.start_at).toLocaleDateString('pt-BR', { ...dtOptions, weekday: 'short', day: '2-digit', month: '2-digit' });
+    const timeStr = new Date(e.start_at).toLocaleTimeString('pt-BR', { ...dtOptions, hour: '2-digit', minute: '2-digit' });
+    return { reply: `✅ Criado — *${e.title}*, ${dateStr} às ${timeStr}.` };
+  }
+  return { reply: '_Não consegui salvar o compromisso. Me passa os dados de novo?_' };
+}
+
 async function processMessage(phone, text, raw = {}) {
   const _t0 = Date.now();
   const _phoneTail = String(phone).slice(-4);
@@ -4438,6 +4482,16 @@ async function processMessage(phone, text, raw = {}) {
   _metrics.collaborator_id = collab.id;
   console.log('[Engine] Mensagem de', collab.full_name);
   await logConversation(collab.id, 'inbound', text);
+
+  // Sprint 23.5 — bypass engine-side para dup microconfirm.
+  // Intercepta "1/2/3" quando há pending dup event, resolve sem chamar LLM.
+  const dupBypass = await tryDupBypass(collab, String(text || ''));
+  if (dupBypass) {
+    await logConversation(collab.id, 'outbound', dupBypass.reply);
+    await whatsapp.sendMessage(collab.phone, dupBypass.reply);
+    console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (dup_bypass)`);
+    return;
+  }
 
   // Sprint 22.X — Comunicados Fatia 1: detector de confirmação de leitura.
   // Se o user respondeu "ok/sim/confirmo/recebi/etc" e tem um announcement_jobs

@@ -1637,6 +1637,14 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   const integritySkillBlock = integritySkillBody
     ? `\n\n---\n\n# 🛡️ SKILL AUXILIAR: integridade-agenda\n\n${integritySkillBody}`
     : '';
+  // Sprint 23.5 — criar-compromisso: sempre carregada para todos os roles.
+  // Multi-turno crítico: respostas "1/2/3" após dup microconfirm precisam da skill no contexto.
+  // Não duplica se já for PRIMARY.
+  const criarCompromissoSkillBody = (skill && skill.name === 'criar-compromisso') ? '' : loadSkill('criar-compromisso');
+  const criarCompromissoSkillBlock = criarCompromissoSkillBody
+    ? `\n\n---\n\n# 📅 SKILL AUXILIAR: criar-compromisso\n\n${criarCompromissoSkillBody}`
+    : '';
+
   // Sprint 19 — pedagogico: injetada como skill auxiliar para todos os roles
   // EXCEÇÃO: se pedagogico já for PRIMARY (pickSkill retornou pedagogico), não duplica.
   const pedagogicoSkillBody = (skill && skill.name === 'pedagogico') ? '' : loadSkill('pedagogico');
@@ -1817,6 +1825,11 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   // Sprint 18 — integridade-agenda skill auxiliar (sempre carregada para todos os roles)
   if (integritySkillBlock) {
     systemPrompt += integritySkillBlock;
+  }
+
+  // Sprint 23.5 — criar-compromisso sempre carregada (multi-turno crítico, não condicional)
+  if (criarCompromissoSkillBlock) {
+    systemPrompt += criarCompromissoSkillBlock;
   }
 
   // Sprint 19 — pedagogico: apenas coordinator/director (saves 12KB para collaborators/managers)
