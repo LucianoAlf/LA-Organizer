@@ -138,8 +138,8 @@ export function PessoaDetalhe() {
       />
 
       <div className="grid grid-cols-3 gap-sm">
-        <StatCard label="Tarefas abertas" value={tasks.length} tone={tasks.length ? 'brand' : 'neutral'} />
-        <StatCard label="Compromissos hoje" value={eventsToday.length} tone={eventsToday.length ? 'brand' : 'neutral'} />
+        <StatCard label="Tarefas abertas" value={tasks.length} tone={tasks.length ? 'tom' : 'neutral'} />
+        <StatCard label="Compromissos hoje" value={eventsToday.length} tone={eventsToday.length ? 'tom' : 'neutral'} />
         <StatCard
           label="Rituais enviados"
           value={ritualsSent7d}
