@@ -1,6 +1,6 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { History as HistoryIcon } from 'lucide-react';
+import { History as HistoryIcon, ChevronDown, ChevronRight, CheckCircle2, Circle, CalendarClock } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { todaySP, ymdAddDays, brShort, dowShort } from '../utils/date';
@@ -8,56 +8,55 @@ import { LoadingState } from '../components/LoadingState';
 import { EmptyState } from '../components/EmptyState';
 import { StatCard } from '../components/StatCard';
 import { PageHeader } from '../components/PageHeader';
-import type { Task } from '../types';
+
+interface TaskItem { id: string; title: string; status: string; due_date: string | null; }
+interface EventItem { id: string; title: string; status: string; start_at: string; }
 
 interface DayStats {
   ymd: string;
-  // tasks (work only)
   total: number;
   done: number;
-  // events (work only)
   events_total: number;
   events_done: number;
   hadBriefing: boolean;
+  tasks: TaskItem[];
+  events: EventItem[];
 }
 
 const RANGE_DAYS = 30;
 
 async function fetchHistorico(collabId: string, startYmd: string, endYmd: string) {
-  // Tasks (work only).
-  const { data: tasksData, error: tErr } = await supabase
-    .from('tasks')
-    .select('id, status, due_date, completed_at, context, assigned_to')
-    .eq('assigned_to', collabId)
-    .eq('context', 'work')
-    .gte('due_date', startYmd)
-    .lte('due_date', endYmd);
-  if (tErr) throw tErr;
-
-  // Events (work only) — start_at falls in the window.
-  const { data: eventsData, error: eErr } = await supabase
-    .from('events')
-    .select('id, status, start_at, end_at, context, collaborator_id')
-    .eq('collaborator_id', collabId)
-    .eq('context', 'work')
-    .gte('start_at', `${startYmd}T00:00:00-03:00`)
-    .lte('start_at', `${endYmd}T23:59:59-03:00`);
-  if (eErr) throw eErr;
-
-  // Briefings.
-  const { data: briefData, error: bErr } = await supabase
-    .from('ritual_logs')
-    .select('reference_date, ritual_type, status')
-    .eq('collaborator_id', collabId)
-    .in('ritual_type', ['daily_briefing','briefing_trabalho'])
-    .gte('reference_date', startYmd)
-    .lte('reference_date', endYmd);
-  if (bErr) throw bErr;
+  const [tasksRes, eventsRes, briefRes] = await Promise.all([
+    supabase
+      .from('tasks')
+      .select('id, title, status, due_date, context, assigned_to')
+      .eq('assigned_to', collabId)
+      .eq('context', 'work')
+      .gte('due_date', startYmd)
+      .lte('due_date', endYmd)
+      .order('due_date', { ascending: false }),
+    supabase
+      .from('events')
+      .select('id, title, status, start_at, context, collaborator_id')
+      .eq('collaborator_id', collabId)
+      .eq('context', 'work')
+      .gte('start_at', `${startYmd}T00:00:00-03:00`)
+      .lte('start_at', `${endYmd}T23:59:59-03:00`),
+    supabase
+      .from('ritual_logs')
+      .select('reference_date, ritual_type, status')
+      .eq('collaborator_id', collabId)
+      .in('ritual_type', ['daily_briefing', 'briefing_trabalho'])
+      .gte('reference_date', startYmd)
+      .lte('reference_date', endYmd),
+  ]);
+  if (tasksRes.error) throw tasksRes.error;
+  if (briefRes.error) throw briefRes.error;
 
   return {
-    tasks: (tasksData ?? []) as unknown as Task[],
-    events: eventsData ?? [],
-    briefings: briefData ?? [],
+    tasks: (tasksRes.data ?? []) as TaskItem[],
+    events: (eventsRes.data ?? []) as EventItem[],
+    briefings: briefRes.data ?? [],
   };
 }
 
@@ -77,26 +76,28 @@ export function Historico() {
     const map = new Map<string, DayStats>();
     for (let i = 0; i < RANGE_DAYS; i++) {
       const d = ymdAddDays(start, i);
-      map.set(d, { ymd: d, total: 0, done: 0, events_total: 0, events_done: 0, hadBriefing: false });
+      map.set(d, { ymd: d, total: 0, done: 0, events_total: 0, events_done: 0, hadBriefing: false, tasks: [], events: [] });
     }
     for (const t of data.tasks) {
       if (!t.due_date) continue;
       const s = map.get(t.due_date); if (!s) continue;
       s.total++;
       if (t.status === 'done') s.done++;
+      s.tasks.push(t);
     }
-    for (const e of (data.events ?? [])) {
+    for (const e of data.events) {
       if (!e.start_at) continue;
-      const ymd = String(e.start_at).slice(0, 10); // ISO with -03:00 → YYYY-MM-DD
+      const ymd = String(e.start_at).slice(0, 10);
       const s = map.get(ymd); if (!s) continue;
       s.events_total++;
       if (e.status === 'done') s.events_done++;
+      s.events.push(e);
     }
     for (const b of data.briefings) {
       const s = map.get(b.reference_date); if (!s) continue;
       if (b.status === 'sent') s.hadBriefing = true;
     }
-    return [...map.values()].reverse(); // most recent first
+    return [...map.values()].reverse();
   }, [data, start]);
 
   // Filter: only weekdays AND days that had any activity. Empty weekend days clutter.
@@ -132,7 +133,7 @@ export function Historico() {
         <>
           <div className="grid grid-cols-3 gap-sm">
             <StatCard label="Tarefas" value={`${totalTasksDone}/${totalTasks}`} tone={taskPct >= 70 ? 'success' : taskPct >= 40 ? 'warning' : 'neutral'} hint={`${taskPct}%`} />
-            <StatCard label="Compromissos" value={totalEvents} tone={totalEvents ? 'brand' : 'neutral'} hint={totalEventsDone ? `${totalEventsDone} cumpridos` : undefined} />
+            <StatCard label="Compromissos" value={totalEvents} tone={totalEvents ? 'tom' : 'neutral'} hint={totalEventsDone ? `${totalEventsDone} cumpridos` : undefined} />
             <StatCard label="Dias ativos" value={daysActive} tone="neutral" hint={`de ${RANGE_DAYS}`} />
           </div>
 
@@ -154,11 +155,12 @@ export function Historico() {
 }
 
 function DayRow({ d, today }: { d: DayStats; today: string }) {
+  const [open, setOpen] = useState(false);
   const isToday = d.ymd === today;
   const pct = d.total ? Math.round((d.done / d.total) * 100) : null;
   const hasAnything = d.total > 0 || d.events_total > 0;
+  const isExpandable = hasAnything;
 
-  // Tone reflects task completion when there are tasks; if only events, treat as "briefed"-equivalent.
   const tone =
     !hasAnything && !d.hadBriefing ? 'idle' :
     !hasAnything ? 'briefed' :
@@ -168,42 +170,87 @@ function DayRow({ d, today }: { d: DayStats; today: string }) {
 
   const dotColor = {
     idle: 'bg-bg-elevated',
-    briefed: 'bg-info',
+    briefed: 'bg-tom/50',
     low: 'bg-danger',
     mid: 'bg-warning',
     good: 'bg-success',
   }[tone];
 
-  const right =
-    !hasAnything && tone === 'idle' ? <span className="text-fg-muted">—</span> :
-    !hasAnything && tone === 'briefed' ? <span className="text-fg-muted">briefing</span> :
-    <span className="inline-flex items-baseline gap-2">
+  const summary =
+    !hasAnything && tone === 'idle' ? <span className="text-fg-muted/60">—</span> :
+    !hasAnything ? <span className="text-fg-muted text-body-sm">só briefing</span> :
+    <span className="inline-flex items-center gap-2 text-body-sm">
       {d.total > 0 && (
-        <>
-          <span className={pct! >= 80 ? 'text-success' : pct! >= 50 ? 'text-warning' : 'text-danger'}>{d.done}</span>
-          <span className="text-fg-muted">/{d.total}</span>
-        </>
+        <span className={pct! >= 80 ? 'text-success' : pct! >= 50 ? 'text-warning' : 'text-danger'}>
+          {d.done}/{d.total} tasks
+        </span>
       )}
       {d.events_total > 0 && (
-        <span className="text-fg-muted">📅 {d.events_done}/{d.events_total}</span>
+        <span className="text-fg-muted">📅 {d.events_total}</span>
       )}
     </span>;
 
   return (
-    <div className="flex items-center gap-md p-md">
-      <span aria-hidden className={['inline-block w-2.5 h-2.5 rounded-full shrink-0', dotColor].join(' ')} />
-      <div className="flex-1 min-w-0">
-        <div className="flex items-baseline gap-2">
-          <span className={['text-label uppercase tracking-wide', isToday ? 'text-brand' : 'text-fg-muted'].join(' ')}>
+    <div>
+      <button
+        type="button"
+        onClick={() => isExpandable && setOpen(o => !o)}
+        className={[
+          'w-full flex items-center gap-md px-md py-3 text-left transition-colors',
+          isExpandable ? 'hover:bg-bg-elevated cursor-pointer' : 'cursor-default',
+          open ? 'bg-bg-elevated' : '',
+        ].join(' ')}
+      >
+        <span aria-hidden className={['inline-block w-2.5 h-2.5 rounded-full shrink-0', dotColor].join(' ')} />
+        <div className="flex-1 min-w-0 flex items-baseline gap-2">
+          <span className={['text-label uppercase tracking-wide shrink-0', isToday ? 'text-tom' : 'text-fg-muted'].join(' ')}>
             {dowShort(d.ymd)}
           </span>
-          <span className={['text-body-md tabular-nums', isToday ? '' : 'text-fg-secondary'].join(' ')}>
+          <span className={['text-body-md tabular-nums', isToday ? 'text-fg font-medium' : 'text-fg-secondary'].join(' ')}>
             {brShort(d.ymd)}
           </span>
-          {isToday && <span className="text-label uppercase tracking-wide text-brand">hoje</span>}
+          {isToday && <span className="text-label uppercase tracking-wide text-tom">hoje</span>}
         </div>
-      </div>
-      <div className="text-body-sm tabular-nums">{right}</div>
+        <div className="tabular-nums">{summary}</div>
+        {isExpandable && (
+          <span className="text-fg-muted shrink-0">
+            {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          </span>
+        )}
+      </button>
+
+      {open && isExpandable && (
+        <div className="px-md pb-3 pt-1 bg-bg-elevated space-y-2 border-t border-border">
+          {d.tasks.length > 0 && (
+            <div className="space-y-1">
+              {d.tasks.map(t => (
+                <div key={t.id} className="flex items-center gap-2 text-body-sm">
+                  {t.status === 'done'
+                    ? <CheckCircle2 size={13} className="text-success shrink-0" />
+                    : <Circle size={13} className="text-fg-muted shrink-0" />
+                  }
+                  <span className={t.status === 'done' ? 'text-fg-muted line-through' : 'text-fg'}>
+                    {t.title}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          {d.events.length > 0 && (
+            <div className="space-y-1">
+              {d.events.map(e => (
+                <div key={e.id} className="flex items-center gap-2 text-body-sm text-fg-muted">
+                  <CalendarClock size={13} className="shrink-0" />
+                  <span>{e.title}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {d.hadBriefing && (
+            <p className="text-caption text-fg-muted">✓ Briefing enviado</p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
