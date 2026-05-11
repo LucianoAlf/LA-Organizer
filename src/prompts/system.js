@@ -861,6 +861,7 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
 async function fetchCollaboratorContext(collaborator) {
   const id = collaborator.id;
   const today = todaySaoPaulo();
+  const next7days = (() => { const d = new Date(today + 'T15:00:00.000Z'); d.setDate(d.getDate() + 7); return d.toISOString().slice(0, 10); })();
   const TASK_COLS = 'id, title, status, priority, eisenhower_quadrant, due_date, context, remind_at, project_id, projects(name)';
 
   const isLeadership = collaborator.role === 'director' || collaborator.role === 'coordinator' ||
@@ -897,7 +898,7 @@ async function fetchCollaboratorContext(collaborator) {
     // viram tiebreak pra tasks sem sort_position definido.
     supabase.from('tasks')
       .select(TASK_COLS)
-      .eq('assigned_to', id).lte('due_date', today).eq('context', 'personal')
+      .eq('assigned_to', id).lte('due_date', next7days).eq('context', 'personal')
       .not('status', 'in', '(done,cancelled)')
       .order('sort_position', { ascending: true, nullsFirst: false })
       .order('remind_at', { ascending: true, nullsFirst: false })
@@ -905,7 +906,7 @@ async function fetchCollaboratorContext(collaborator) {
       .order('eisenhower_quadrant', { ascending: true, nullsFirst: false }),
     supabase.from('tasks')
       .select(TASK_COLS)
-      .eq('assigned_to', id).lte('due_date', today).eq('context', 'work')
+      .eq('assigned_to', id).lte('due_date', next7days).eq('context', 'work')
       .not('status', 'in', '(done,cancelled)')
       .order('sort_position', { ascending: true, nullsFirst: false })
       .order('remind_at', { ascending: true, nullsFirst: false })
