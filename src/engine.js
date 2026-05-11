@@ -1704,7 +1704,10 @@ function validateEventItem(e) {
   // Sprint 22.26 — categorias agora vivem em event_categories (DB). TOM aceita
   // qualquer slug; validacao de existencia (system OU pessoal do user) acontece
   // no lookupCategoryId logo antes do INSERT.
-  if (typeof e.category !== 'string' || !e.category.trim()) return 'category:invalid';
+  // Sprint 23 fallback: category ausente → default por context (não rejeita).
+  if (typeof e.category !== 'string' || !e.category.trim()) {
+    e.category = (e.context === 'personal') ? 'pessoal' : 'la_music';
+  }
   if (e.modality === 'presencial' && e.meeting_url) return 'presencial_with_meeting_url';
   if (e.context !== undefined && e.context !== 'work' && e.context !== 'personal') return 'context:invalid';
   return null;
