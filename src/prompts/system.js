@@ -1453,6 +1453,130 @@ async function buildProjectStatusContext(collaborator, lastUserMessage) {
   }
 }
 
+// Retorna YMD (YYYY-MM-DD) de hoje em BRT.
+function brtYmd(offsetDays = 0) {
+  const d = new Date(new Date().toLocaleString('en-CA', { timeZone: 'America/Sao_Paulo' }));
+  d.setDate(d.getDate() + offsetDays);
+  return d.toISOString().slice(0, 10);
+}
+
+// Retorna o primeiro e último dia do mês BRT relativo ao offset de meses.
+function brtMonthRange(monthOffset = 0) {
+  const now = new Date(new Date().toLocaleString('en-CA', { timeZone: 'America/Sao_Paulo' }));
+  const y = now.getFullYear();
+  const m = now.getMonth() + monthOffset;
+  const from = new Date(y, m, 1);
+  const to = new Date(y, m + 1, 0);
+  return {
+    from: from.toISOString().slice(0, 10),
+    to: to.toISOString().slice(0, 10),
+    label: from.toLocaleString('pt-BR', { month: 'long', year: 'numeric' }),
+  };
+}
+
+// Retorna stats de tasks e eventos para um período YMD.
+async function fetchPeriodStats(collabId, fromYmd, toYmd) {
+  const [tasksRes, eventsRes] = await Promise.all([
+    supabase
+      .from('tasks')
+      .select('id, status')
+      .eq('assigned_to', collabId)
+      .eq('context', 'work')
+      .gte('due_date', fromYmd)
+      .lte('due_date', toYmd),
+    supabase
+      .from('events')
+      .select('id, status')
+      .eq('collaborator_id', collabId)
+      .eq('context', 'work')
+      .gte('start_at', `${fromYmd}T00:00:00-03:00`)
+      .lte('start_at', `${toYmd}T23:59:59-03:00`),
+  ]);
+  const tasks = tasksRes.data || [];
+  const events = eventsRes.data || [];
+  const total = tasks.length;
+  const done = tasks.filter(t => t.status === 'done').length;
+  const pending = tasks.filter(t => !['done', 'cancelled'].includes(t.status)).length;
+  const cancelled = tasks.filter(t => t.status === 'cancelled').length;
+  const pct = total ? Math.round((done / total) * 100) : null;
+  return { total, done, pending, cancelled, pct, events: events.length };
+}
+
+/**
+ * Constrói bloco de contexto histórico para TOM consumir em rituais de fechamento/planejamento.
+ * Só é chamado quando ritual_type indica que o histórico é relevante — não em toda mensagem.
+ */
+async function buildHistoricalContext(collabId, ritualType) {
+  try {
+    const today = brtYmd();
+    const lines = ['', '---', '', '## 📊 Desempenho histórico (contexto para este ritual)'];
+
+    // Dia: fechamento diário e fechamento mensal
+    const needsDay = ['fechamento', 'daily_closing', 'fechamento_mensal'].includes(ritualType);
+    // Semana: fechamento + planejamento semanal
+    const needsWeek = ['fechamento', 'daily_closing', 'planejamento_semanal', 'weekly_planning'].includes(ritualType);
+    // Mês atual: planejamento semanal + fechamento/planejamento mensal
+    const needsMonth = ['planejamento_semanal', 'weekly_planning', 'fechamento_mensal', 'planejamento_mensal'].includes(ritualType);
+    // Mês anterior: planejamento mensal + fechamento mensal
+    const needsPrevMonth = ['fechamento_mensal', 'planejamento_mensal'].includes(ritualType);
+
+    if (needsDay) {
+      const s = await fetchPeriodStats(collabId, today, today);
+      lines.push('', `**Hoje (${today.slice(8, 10)}/${today.slice(5, 7)}):**`);
+      if (s.total === 0 && s.events === 0) {
+        lines.push('  Sem tarefas ou compromissos registrados no dia.');
+      } else {
+        if (s.total > 0) lines.push(`  Tarefas: ${s.done}/${s.total} concluídas${s.pct !== null ? ` (${s.pct}%)` : ''} · ${s.pending} pendentes${s.cancelled ? ` · ${s.cancelled} canceladas` : ''}`);
+        if (s.events > 0) lines.push(`  Compromissos: ${s.events}`);
+      }
+    }
+
+    if (needsWeek) {
+      // Semana = últimos 7 dias incluindo hoje
+      const weekFrom = brtYmd(-6);
+      const s = await fetchPeriodStats(collabId, weekFrom, today);
+      const weekLabel = `${weekFrom.slice(8, 10)}/${weekFrom.slice(5, 7)} – ${today.slice(8, 10)}/${today.slice(5, 7)}`;
+      lines.push('', `**Semana (${weekLabel}):**`);
+      if (s.total === 0 && s.events === 0) {
+        lines.push('  Sem tarefas ou compromissos na semana.');
+      } else {
+        if (s.total > 0) lines.push(`  Tarefas: ${s.done}/${s.total} concluídas${s.pct !== null ? ` (${s.pct}%)` : ''} · ${s.pending} pendentes`);
+        if (s.events > 0) lines.push(`  Compromissos: ${s.events}`);
+      }
+    }
+
+    if (needsMonth) {
+      const cur = brtMonthRange(0);
+      const s = await fetchPeriodStats(collabId, cur.from, today); // até hoje (mês em curso)
+      lines.push('', `**Mês atual (${cur.label}, até hoje):**`);
+      if (s.total === 0 && s.events === 0) {
+        lines.push('  Sem registros no mês até agora.');
+      } else {
+        if (s.total > 0) lines.push(`  Tarefas: ${s.done}/${s.total} concluídas${s.pct !== null ? ` (${s.pct}%)` : ''} · ${s.pending} pendentes${s.cancelled ? ` · ${s.cancelled} canceladas` : ''}`);
+        if (s.events > 0) lines.push(`  Compromissos: ${s.events}`);
+      }
+    }
+
+    if (needsPrevMonth) {
+      const prev = brtMonthRange(-1);
+      const s = await fetchPeriodStats(collabId, prev.from, prev.to);
+      lines.push('', `**Mês anterior (${prev.label}):**`);
+      if (s.total === 0 && s.events === 0) {
+        lines.push('  Sem registros no mês anterior.');
+      } else {
+        if (s.total > 0) lines.push(`  Tarefas: ${s.done}/${s.total} concluídas${s.pct !== null ? ` (${s.pct}%)` : ''} · ${s.pending} pendentes${s.cancelled ? ` · ${s.cancelled} canceladas` : ''}`);
+        if (s.events > 0) lines.push(`  Compromissos: ${s.events}`);
+      }
+    }
+
+    lines.push('', '> Use esses dados ao fechar o dia/semana/mês ou ao planejar o próximo período. Cite os números, reconheça conquistas e aponte onde melhorar.', '');
+    return lines.join('\n');
+  } catch (err) {
+    console.warn('[Prompt] buildHistoricalContext err:', err.message);
+    return '';
+  }
+}
+
 async function buildSystemPrompt(collaborator, opts = {}) {
   const lastUserMessage = opts.lastUserMessage || '';
   const ctx = await fetchCollaboratorContext(collaborator);
@@ -1690,6 +1814,16 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   // Sprint 18 — hygiene context injection (briefing matinal com findings de higiene)
   if (ctx && ctx.integrityHygiene) {
     systemPrompt += '\n\n[INTEGRITY_HYGIENE_CONTEXT]\n' + ctx.integrityHygiene;
+  }
+
+  // Histórico de desempenho — injetado apenas nos rituais que precisam de contexto histórico.
+  // Fechamento (dia+semana), planejamento semanal (semana+mês), fechamento/planejamento mensal (mês+mês anterior).
+  const HISTORICAL_RITUALS = ['fechamento', 'daily_closing', 'planejamento_semanal', 'weekly_planning', 'fechamento_mensal', 'planejamento_mensal'];
+  if (collaborator && collaborator.id && rt && HISTORICAL_RITUALS.includes(rt)) {
+    const historicalBlock = await buildHistoricalContext(collaborator.id, rt);
+    if (historicalBlock) {
+      systemPrompt += historicalBlock;
+    }
   }
 
   const totalTasks = (ctx.personalTasks?.length || 0) + (ctx.workTasks?.length || 0);
