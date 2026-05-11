@@ -5861,7 +5861,11 @@ Retorne APENAS JSON válido com esses campos (só preencha onde há evidência r
   "profile_notes": "observações operacionais consolidadas",
   "maturity_level": "beginner|developing|proficient|advanced"
 }
-REGRAS: Só escreva com evidência real. Não invente. Mantenha o existente se não houver mudança. Máximo 2 linhas por campo.
+REGRAS:
+- Só escreva um traço se aparecer em 2+ mensagens diferentes (episódio único = não é padrão)
+- Não invente. Se não tem evidência repetida, omita o campo
+- Mantenha o existente se não houver evidência nova para mudar
+- Máximo 2 linhas por campo
 maturity_level: beginner=novo no sistema, developing=usa mas oscila, proficient=consistente, advanced=autônomo.`;
 
     const msgBlock = (messages || [])
