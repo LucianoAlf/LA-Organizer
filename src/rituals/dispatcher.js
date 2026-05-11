@@ -1454,7 +1454,7 @@ async function run(opts = {}) {
   // Modo forçado: ignora time check e dispara o ritual pedido pra cada collab filtrado.
   // Exceções: 'aderencia'/'aderencia_diaria' são determinísticos (sem LLM/sendRitual);
   // caem no gancho condicional adiante e são tratados por checkAdherenceNudge.
-  if (opts.force && opts.force !== 'aderencia' && opts.force !== 'aderencia_diaria') {
+  if (opts.force && opts.force !== 'aderencia' && opts.force !== 'aderencia_diaria' && opts.force !== 'consolidacao_memoria' && opts.force !== 'dream') {
     const ritualType = RITUAL_BY_DIRECTIVE[opts.force];
     if (!ritualType) {
       console.error(`[Dispatcher] force inválido: ${opts.force}`);
