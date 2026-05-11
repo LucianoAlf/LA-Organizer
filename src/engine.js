@@ -5810,7 +5810,100 @@ async function consolidateMemoryFor(collab) {
     else { saved++; existingTexts.push(c.content); /* prevent intra-batch dup */ }
   }
   console.log(`[MemConsolidate] ${collab.full_name}: candidates=${candidates.length} saved=${saved} dedup=${dedup}`);
+
+  // Sprint 23.5+ — atualiza perfil comportamental após consolidar memórias
+  // msgs são só inbound; passa com direction anotado para o profiler
+  const msgsForProfile = (msgs || []).map(m => ({ ...m, direction: 'inbound' }));
+  await updateCollaboratorProfile(collab, msgsForProfile);
+
   return { collab: collab.full_name, candidates: candidates.length, saved, dedup };
+}
+
+// Sprint 23.5+ — atualiza collaborator_profiles com perfil comportamental via LLM.
+// Chamado após consolidateMemoryFor, reutilizando as mesmas mensagens do dia.
+async function updateCollaboratorProfile(collab, messages) {
+  try {
+    const { data: current } = await supabase
+      .from('collaborator_profiles')
+      .select('*')
+      .eq('collaborator_id', collab.id)
+      .maybeSingle();
+
+    const { data: taskStats } = await supabase.rpc('get_collaborator_task_stats', {
+      p_collaborator_id: collab.id,
+    });
+    const stat = taskStats?.[0] || {};
+
+    const { count: totalInteractions } = await supabase
+      .from('conversation_history')
+      .select('id', { count: 'exact', head: true })
+      .eq('collaborator_id', collab.id)
+      .eq('direction', 'inbound');
+
+    const currentProfile = current
+      ? Object.fromEntries(
+          Object.entries(current).filter(([k, v]) =>
+            v !== null && !['id','collaborator_id','created_at','updated_at'].includes(k)
+          )
+        )
+      : {};
+
+    const sysPrompt = `Você analisa conversas e extrai o perfil comportamental de ${collab.full_name}.
+Retorne APENAS JSON válido com esses campos (só preencha onde há evidência real):
+{
+  "communication_style": "como se comunica (ex: direto/usa áudio/usa emoji/detalhista)",
+  "response_pattern": "quando/como responde (ex: rápido de manhã/demora à noite)",
+  "best_coaching_approach": "o que funciona para cobrar/motivar",
+  "strengths": "padrões positivos observados",
+  "growth_areas": "dificuldades recorrentes",
+  "personal_context": "contexto pessoal mencionado voluntariamente",
+  "vocabulary_notes": "expressões e sinais úteis para interpretar",
+  "profile_notes": "observações operacionais consolidadas",
+  "maturity_level": "beginner|developing|proficient|advanced"
+}
+REGRAS: Só escreva com evidência real. Não invente. Mantenha o existente se não houver mudança. Máximo 2 linhas por campo.
+maturity_level: beginner=novo no sistema, developing=usa mas oscila, proficient=consistente, advanced=autônomo.`;
+
+    const msgBlock = (messages || [])
+      .map(m => `[${m.direction === 'inbound' ? 'User' : 'TOM'}] ${String(m.content || '').slice(0, 200)}`)
+      .join('\n')
+      .slice(0, 8000);
+
+    const userMsg = `PERFIL ATUAL:
+${JSON.stringify(currentProfile, null, 2) || '(vazio)'}
+
+CONVERSAS DAS ÚLTIMAS 24H:
+${msgBlock || '(sem mensagens)'}
+
+Atualize o perfil. Apenas JSON.`;
+
+    const response = await ai.chat(sysPrompt, [{ role: 'user', content: userMsg }]);
+    const raw = String(response.text || '').trim();
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return;
+    const updates = JSON.parse(jsonMatch[0]);
+
+    const VALID_MATURITY = ['beginner', 'developing', 'proficient', 'advanced'];
+    await supabase.from('collaborator_profiles').upsert({
+      collaborator_id: collab.id,
+      communication_style: updates.communication_style || current?.communication_style || null,
+      response_pattern: updates.response_pattern || current?.response_pattern || null,
+      best_coaching_approach: updates.best_coaching_approach || current?.best_coaching_approach || null,
+      strengths: updates.strengths || current?.strengths || null,
+      growth_areas: updates.growth_areas || current?.growth_areas || null,
+      personal_context: updates.personal_context || current?.personal_context || null,
+      vocabulary_notes: updates.vocabulary_notes || current?.vocabulary_notes || null,
+      profile_notes: updates.profile_notes || current?.profile_notes || null,
+      maturity_level: VALID_MATURITY.includes(updates.maturity_level) ? updates.maturity_level : (current?.maturity_level || 'beginner'),
+      total_interactions: totalInteractions || 0,
+      completion_rate_30d: stat.completion_rate_30d ?? current?.completion_rate_30d ?? null,
+      last_profile_update: new Date().toISOString(),
+    }, { onConflict: 'collaborator_id' });
+
+    console.log(`[Dream] profile atualizado: ${collab.full_name} (${updates.maturity_level || '?'})`);
+  } catch (err) {
+    console.error(`[Dream] updateProfile err for ${collab.full_name}:`, err.message);
+  }
 }
 
 // Decays expired memories: is_active flips to false. Returns count.
@@ -6354,4 +6447,4 @@ async function applyMonthlyPlan(collaborator, plan) {
   return { id: created?.id, action: 'created' };
 }
 
-module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamSummary, buildWeeklyRetrospective, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseWeeklyPlanMarker, parseHabitMarker, parseDndMarker, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, applyHabitActions, applyDnd, getDndState, consolidateMemoryFor, decayExpiredMemories, generateWeeklySummaryFor, looksLikeMemory, resolveTaskByShortId, applyAnnouncementAction, parseAnnouncementApprovalMarker, applyAnnouncementApproval, applyCoordinationRequestAction, parseCoordinationResponseMarker, applyCoordinationResponseAction, computeProgress, getRitualIntroDecision, countRecentRelaysToRecipient, buildRelayLimitHint, parseMonthlyPlanMarker, applyMonthlyPlan };
+module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamSummary, buildWeeklyRetrospective, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseWeeklyPlanMarker, parseHabitMarker, parseDndMarker, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, applyHabitActions, applyDnd, getDndState, consolidateMemoryFor, decayExpiredMemories, generateWeeklySummaryFor, updateCollaboratorProfile, looksLikeMemory, resolveTaskByShortId, applyAnnouncementAction, parseAnnouncementApprovalMarker, applyAnnouncementApproval, applyCoordinationRequestAction, parseCoordinationResponseMarker, applyCoordinationResponseAction, computeProgress, getRitualIntroDecision, countRecentRelaysToRecipient, buildRelayLimitHint, parseMonthlyPlanMarker, applyMonthlyPlan };
