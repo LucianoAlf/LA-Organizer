@@ -72,10 +72,11 @@ const VALID_TASK_ACTIONS = new Set([
 const VALID_COACHING = ['light', 'normal', 'hard'];
 const VALID_EVENT_MODALITIES = new Set(['online', 'presencial', 'hibrido']);
 // Sprint 23.5 — estado pendente de dup microconfirm por collab.
-// Quando engine detecta dup_event e envia microconfirm 1/2/3, guarda o evento aqui.
-// Quando user responde "2", o engine aplica diretamente com bypass_integrity:true
+// Quando engine detecta dup e envia microconfirm 1/2/3, guarda o item aqui.
+// Quando user responde "2", o engine aplica diretamente com bypass
 // sem depender da LLM emitir o campo (que provou ser não-confiável em 11/05/2026).
 const pendingDupEvents = new Map(); // collabId → { event, timestamp }
+const pendingDupTasks  = new Map(); // collabId → { task, timestamp }
 // Sprint 22.26 — VALID_EVENT_CATEGORIES era set fixo; agora a validacao acontece
 // em runtime via lookupEventCategoryBySlug (tabela event_categories). Removido.
 const VALID_EVENT_UPDATE_ACTIONS = new Set(['reschedule', 'cancel', 'complete']);
@@ -2951,6 +2952,8 @@ async function applyTaskActions(collaborator, actions) {
           if (_taskDupResult.probable.length > 0) {
             const _d = _taskDupResult.probable[0];
             console.warn(`[IntegrityCheck] DUP_TASK score=${_d._score.toFixed(2)} "${a.title.trim().slice(0,40)}" ~ "${String(_d.title).slice(0,40)}" (${_d.status})`);
+            // Sprint 23.5 — persiste task pendente para bypass engine-side quando user responder "2"
+            pendingDupTasks.set(collaborator.id, { task: { ...a, assigned_to: assignedTo }, timestamp: Date.now() });
             // A1: retornar suspect-payload. INSERT NÃO ocorre. Skill processa no novo turno.
             _taskIntegrityPayload = {
               severity: 'soft',
@@ -4310,7 +4313,9 @@ const KEYWORD_STOPWORDS = new Set([
   'ligar','falar','fazer','pedir','mandar','enviar','comprar','buscar','verificar','checar',
   'organizar','resolver','criar','contatar','chamar','marcar','agendar','combinar',
   'reuniao','reunião','outro','mesmo','para','pelo','pela','sobre','depois','antes',
-  'revisar','reajustar','rever','ajustar','atualizar','reformular'
+  'revisar','reajustar','rever','ajustar','atualizar','reformular',
+  // Sprint 23.5 — termos financeiros genéricos e verbos de pagamento
+  'pagar','boleto','conta','fatura','pagamento','nota','recibo','valor'
 ]);
 const stripVerbPrefix = s => {
   const stripped = String(s || '').replace(VERB_PREFIX_RE, '').trim();
@@ -4427,41 +4432,74 @@ async function tryHandleAnnouncementConfirmation(collab, text) {
   return true;
 }
 
-// Sprint 23.5 — bypass engine-side para dup microconfirm.
+// Sprint 23.5 — bypass engine-side para dup microconfirm (eventos e tasks).
 // Retorna { reply } se tratou direto (user respondeu 1/2/3 após dup bloqueado),
 // ou null se deve seguir fluxo normal (chamar LLM).
 async function tryDupBypass(collab, text) {
   const lm = (text || '').trim();
-  if (!/^[123]\.?$/.test(lm)) return null;
-  const pending = pendingDupEvents.get(collab.id);
-  if (!pending) return null;
-  // Expira em 10 minutos (segurança: evita bypass stale)
-  if (Date.now() - pending.timestamp > 10 * 60 * 1000) {
-    pendingDupEvents.delete(collab.id);
-    return null;
-  }
-  pendingDupEvents.delete(collab.id);
-  console.log(`[DupBypass] user escolheu ${lm} para pending event "${String(pending.event.title).slice(0,40)}"`);
-  if (lm === '3') {
+  // Aceita "2", "2.", "2 - texto..." (user às vezes inclui contexto junto)
+  const choiceMatch = lm.match(/^([123])[.\-\s]?/);
+  if (!choiceMatch) return null;
+  const choice = choiceMatch[1];
+  const EXP_MS = 10 * 60 * 1000;
+  const pendingEv = pendingDupEvents.get(collab.id);
+  const pendingTk = pendingDupTasks.get(collab.id);
+  // Só age se houver algo pendente e não expirado
+  const hasEv = pendingEv && (Date.now() - pendingEv.timestamp < EXP_MS);
+  const hasTk = pendingTk && (Date.now() - pendingTk.timestamp < EXP_MS);
+  if (!hasEv && !hasTk) return null;
+
+  if (choice === '3') {
+    if (hasEv) pendingDupEvents.delete(collab.id);
+    if (hasTk) pendingDupTasks.delete(collab.id);
     return { reply: 'Ok, cancelado. Me passa de novo quando quiser criar.' };
   }
-  if (lm === '1') {
-    return { reply: `Certo! Já está na agenda como _${pending.event.title}_. Nada mudou.` };
+
+  // Evento pendente tem prioridade (microconfirm de evento vem antes de task)
+  if (hasEv) {
+    pendingDupEvents.delete(collab.id);
+    const e = pendingEv.event;
+    console.log(`[DupBypass] event choice=${choice} "${String(e.title).slice(0,40)}"`);
+    if (choice === '1') return { reply: `Certo! Já está na agenda como _${e.title}_. Nada mudou.` };
+    // choice === '2': criar com bypass
+    const eventWithBypass = { ...e, bypass_integrity: true };
+    const { okCount, integrityPayload } = await applyEventActions(collab, [eventWithBypass]);
+    if (integrityPayload) return { reply: _buildIntegrityConfirmText(integrityPayload) };
+    if (okCount > 0) {
+      const dtOptions = { timeZone: 'America/Sao_Paulo' };
+      const dateStr = new Date(e.start_at).toLocaleDateString('pt-BR', { ...dtOptions, weekday: 'short', day: '2-digit', month: '2-digit' });
+      const timeStr = new Date(e.start_at).toLocaleTimeString('pt-BR', { ...dtOptions, hour: '2-digit', minute: '2-digit' });
+      return { reply: `✅ Criado — *${e.title}*, ${dateStr} às ${timeStr}.` };
+    }
+    return { reply: '_Não consegui salvar o compromisso. Me passa os dados de novo?_' };
   }
-  // lm === '2': criar novo com bypass
-  const eventWithBypass = { ...pending.event, bypass_integrity: true };
-  const { okCount, failCount, integrityPayload } = await applyEventActions(collab, [eventWithBypass]);
-  if (integrityPayload) {
-    return { reply: _buildIntegrityConfirmText(integrityPayload) };
+
+  // Task pendente
+  if (hasTk) {
+    pendingDupTasks.delete(collab.id);
+    const tk = pendingTk.task;
+    console.log(`[DupBypass] task choice=${choice} "${String(tk.title).slice(0,40)}"`);
+    if (choice === '1') return { reply: `Certo! Já está anotado como _${tk.title}_. Nada mudou.` };
+    // choice === '2': inserir task diretamente (bypass dup check)
+    const { data: inserted, error: insErr } = await supabase.from('tasks').insert({
+      title: String(tk.title).trim().slice(0, 200),
+      context: tk.context || 'personal',
+      assigned_to: tk.assigned_to,
+      created_by: tk.assigned_to,
+      source: 'tom',
+      status: 'pending',
+      priority: tk.priority || 'medium',
+      due_date: tk.due_date || null,
+      remind_at: tk.remind_at || null,
+    }).select('id, title').single();
+    if (insErr) {
+      console.error('[DupBypass] task insert err:', insErr.message);
+      return { reply: '_Não consegui salvar a tarefa. Me passa de novo?_' };
+    }
+    return { reply: `✅ Anotado: *${tk.title}*${tk.due_date ? ` — até ${tk.due_date}` : ''}.` };
   }
-  if (okCount > 0) {
-    const e = pending.event;
-    const dtOptions = { timeZone: 'America/Sao_Paulo' };
-    const dateStr = new Date(e.start_at).toLocaleDateString('pt-BR', { ...dtOptions, weekday: 'short', day: '2-digit', month: '2-digit' });
-    const timeStr = new Date(e.start_at).toLocaleTimeString('pt-BR', { ...dtOptions, hour: '2-digit', minute: '2-digit' });
-    return { reply: `✅ Criado — *${e.title}*, ${dateStr} às ${timeStr}.` };
-  }
-  return { reply: '_Não consegui salvar o compromisso. Me passa os dados de novo?_' };
+
+  return null;
 }
 
 async function processMessage(phone, text, raw = {}) {
