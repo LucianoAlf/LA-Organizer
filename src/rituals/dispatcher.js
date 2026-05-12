@@ -1606,6 +1606,13 @@ async function run(opts = {}) {
     console.error('[Dispatcher] checkHabitReminders erro:', err.message);
   }
 
+  // Sprint 23.6 — check-in de tarefas em horários configurados pelo colaborador.
+  try {
+    await checkTaskCheckins(now);
+  } catch (err) {
+    console.error('[Dispatcher] checkTaskCheckins erro:', err.message);
+  }
+
   // Deadline + overdue alerts — fire at most once per task per day, gated by
   // hour window so we don't spam at 3am. Window: 8h-19h, América/Sao_Paulo.
   // Override with --force-alerts for tests/manual triggers.
@@ -2219,6 +2226,79 @@ async function checkEventReminders() {
       });
     } catch (err) {
       console.error(`[EventReminders] send err for ${String(r.id).slice(0,8)}:`, err.message);
+    }
+  }
+}
+
+// Sprint 23.6 — Check-in de tarefas em múltiplos horários por colaborador.
+// Configurado em user_preferences.task_checkin_times (time[]).
+// Idempotência via ritual_logs (ritual_type = 'task_checkin_HH:MM' por slot).
+async function checkTaskCheckins(now) {
+  const slotNow = currentSlot(now);
+  const ymd = now.ymd;
+
+  const { data: collabs, error } = await supabase
+    .from('collaborators')
+    .select('id, full_name, phone, is_active, onboarding_completed, user_preferences(task_checkin_times)')
+    .eq('is_active', true)
+    .eq('onboarding_completed', true);
+
+  if (error) { console.error('[TaskCheckin] query err:', error.message); return; }
+
+  const tzFmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' });
+  const today = tzFmt.format(new Date());
+  const next7 = (() => { const d = new Date(today + 'T15:00:00.000Z'); d.setDate(d.getDate() + 7); return d.toISOString().slice(0, 10); })();
+  const whatsapp = require('../services/whatsapp');
+
+  for (const c of (collabs || [])) {
+    const times = c.user_preferences?.task_checkin_times;
+    if (!times || !times.length) continue;
+
+    const matchingTime = times.find(t => timeToSlot(t) === slotNow);
+    if (!matchingTime) continue;
+
+    const timeKey = String(matchingTime).slice(0, 5); // "08:00"
+    const ritualType = `task_checkin_${timeKey}`;
+
+    const dnd = await getDndState(c.id);
+    if (dnd.active) { console.log(`[TaskCheckin] ${c.full_name} DND, skip`); continue; }
+
+    if (await alreadySent(c.id, ritualType, ymd)) continue;
+
+    const { data: tasks } = await supabase
+      .from('tasks')
+      .select('title, context, due_date')
+      .eq('assigned_to', c.id)
+      .lte('due_date', next7)
+      .not('status', 'in', '(done,cancelled)')
+      .order('due_date', { ascending: true })
+      .limit(20);
+
+    if (!tasks || !tasks.length) {
+      await logRitualEvent(c.id, ritualType, 'skipped', 'no_pending_tasks', ymd);
+      continue;
+    }
+
+    const personal = tasks.filter(t => t.context === 'personal');
+    const work = tasks.filter(t => !t.context || t.context === 'work');
+    const hour = timeKey.slice(0, 2);
+    const firstName = c.full_name.split(' ')[0];
+
+    let msg = `⏰ *Check das ${hour}h, ${firstName}!*\n\nAinda pendente:`;
+    if (personal.length) {
+      msg += `\n\n📋 *Pessoal:*\n` + personal.map(t => `• ${t.title}`).join('\n');
+    }
+    if (work.length) {
+      msg += `\n\n📋 *Trabalho:*\n` + work.map(t => `• ${t.title}`).join('\n');
+    }
+    msg += `\n\nMe avisa o que você concluiu! 💪`;
+
+    try {
+      await whatsapp.sendMessage(c.phone, msg);
+      await logRitualEvent(c.id, ritualType, 'sent', null, ymd);
+      console.log(`[TaskCheckin] ${c.full_name} ${timeKey} enviado (${tasks.length} tarefas)`);
+    } catch (e) {
+      console.error(`[TaskCheckin] ${c.full_name} send err:`, e.message);
     }
   }
 }

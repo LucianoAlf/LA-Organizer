@@ -28,6 +28,7 @@ interface Prefs {
   notify_team_summary: boolean;
   do_not_disturb_until: string | null;
   do_not_disturb_reason: string | null;
+  task_checkin_times: string[];
 }
 
 const DOWS = [
@@ -49,7 +50,7 @@ const INTENSITIES = [
 const trimSec = (t: string) => (t || '').slice(0, 5);
 const padSec = (t: string) => (t.length === 5 ? t + ':00' : t);
 
-const PREF_COLS = 'briefing_time, personal_briefing_time, closing_time, planning_day, planning_time, monthly_planning_time, monthly_closing_time, max_daily_tasks, coaching_intensity, notify_deadline_alerts, notify_overdue_alerts, notify_team_summary, do_not_disturb_until, do_not_disturb_reason';
+const PREF_COLS = 'briefing_time, personal_briefing_time, closing_time, planning_day, planning_time, monthly_planning_time, monthly_closing_time, max_daily_tasks, coaching_intensity, notify_deadline_alerts, notify_overdue_alerts, notify_team_summary, do_not_disturb_until, do_not_disturb_reason, task_checkin_times';
 
 async function fetchPrefs(collabId: string): Promise<Prefs | null> {
   const { data, error } = await supabase
@@ -96,6 +97,7 @@ export function Configuracoes() {
         planning_time: trimSec(data.planning_time),
         monthly_planning_time: trimSec(data.monthly_planning_time),
         monthly_closing_time: trimSec(data.monthly_closing_time),
+        task_checkin_times: (data.task_checkin_times || []).map(trimSec),
       });
     }
   }, [data]);
@@ -118,6 +120,7 @@ export function Configuracoes() {
           notify_deadline_alerts: p.notify_deadline_alerts,
           notify_overdue_alerts: p.notify_overdue_alerts,
           notify_team_summary: p.notify_team_summary,
+          task_checkin_times: (p.task_checkin_times || []).filter(Boolean).map(padSec).sort(),
         })
         .eq('collaborator_id', collaborator.id);
       if (error) throw error;
@@ -184,6 +187,34 @@ export function Configuracoes() {
             <TimeInput value={form.closing_time}
               onChange={v => setForm({ ...form, closing_time: v })} />
           </Field>
+        </Section>
+
+        {/* Check-ins de tarefas */}
+        <Section title="Lembretes de tarefas" subtitle="TOM te avisa nos horários que você escolher com suas tarefas pendentes do dia.">
+          {(form.task_checkin_times || []).map((t, i) => (
+            <Field key={i} label={`Check-in ${i + 1}`}>
+              <div className="flex items-center gap-2">
+                <TimeInput value={t}
+                  onChange={v => {
+                    const updated = [...form.task_checkin_times];
+                    updated[i] = v;
+                    setForm({ ...form, task_checkin_times: updated });
+                  }} />
+                <button type="button"
+                  onClick={() => setForm({ ...form, task_checkin_times: form.task_checkin_times.filter((_, j) => j !== i) })}
+                  className="text-fg-muted hover:text-error transition-colors text-sm px-2 py-1 rounded">
+                  ✕
+                </button>
+              </div>
+            </Field>
+          ))}
+          {(form.task_checkin_times || []).length < 6 && (
+            <button type="button"
+              onClick={() => setForm({ ...form, task_checkin_times: [...(form.task_checkin_times || []), '12:00'] })}
+              className="text-tom text-sm font-medium hover:opacity-80 transition-opacity">
+              + Adicionar horário
+            </button>
+          )}
         </Section>
 
         {/* Rituais semanais */}
