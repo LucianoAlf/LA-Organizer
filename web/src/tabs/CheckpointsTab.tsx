@@ -240,14 +240,14 @@ function CheckpointCard({
     <article
       ref={sortableRef}
       style={dragLiftStyle(isDragging, sortableStyle)}
-      className="surface touch-none"
+      className="surface"
       {...(sortableAttributes ?? {})}
-      {...(sortableListeners ?? {})}
     >
       {/* Header — visual de "marco/container". Padding maior, fundo do surface, checkbox quadrado grande. */}
       <div className="p-md flex items-start gap-md">
         {sortableListeners && (
-          <span aria-hidden className="mt-1 text-fg-muted/40 cursor-grab">
+          <span aria-hidden className="mt-1 text-fg-muted/40 cursor-grab" style={{ touchAction: 'none' }}
+            {...sortableListeners}>
             <GripVertical size={16} />
           </span>
         )}

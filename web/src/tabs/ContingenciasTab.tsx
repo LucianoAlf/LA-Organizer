@@ -207,13 +207,13 @@ function ContingencyCard({
     <li
       ref={sortableRef as ((node: HTMLLIElement | null) => void) | undefined}
       style={dragLiftStyle(isDragging, sortableStyle)}
-      className="surface p-md border-l-4 border-l-danger/70 touch-none"
+      className="surface p-md border-l-4 border-l-danger/70"
       {...(sortableAttributes ?? {})}
-      {...(sortableListeners ?? {})}
     >
       <div className="flex items-start gap-2">
         {sortableListeners && (
-          <span aria-hidden className="mt-1 text-fg-muted/40 cursor-grab shrink-0">
+          <span aria-hidden className="mt-1 text-fg-muted/40 cursor-grab shrink-0" style={{ touchAction: 'none' }}
+            {...sortableListeners}>
             <GripVertical size={14} />
           </span>
         )}
