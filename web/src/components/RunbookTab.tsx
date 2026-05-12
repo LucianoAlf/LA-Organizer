@@ -669,15 +669,15 @@ function RunbookBlockCard({
       ref={sortableRef as ((node: HTMLElement | null) => void) | undefined}
       style={dragLiftStyle(isDragging, sortableStyle)}
       className={[
-        'surface touch-none border-l-4',
+        'surface border-l-4',
         isLate ? 'border-l-danger' : allDone ? 'border-l-tom' : 'border-l-border',
       ].join(' ')}
       {...(sortableAttributes ?? {})}
-      {...(sortableListeners ?? {})}
     >
       <div className="p-md flex items-start gap-2">
         {sortableListeners && (
-          <span aria-hidden className="mt-1 text-fg-muted/40 cursor-grab shrink-0">
+          <span aria-hidden className="mt-1 text-fg-muted/40 cursor-grab shrink-0" style={{ touchAction: 'none' }}
+            {...sortableListeners}>
             <GripVertical size={14} />
           </span>
         )}
@@ -945,12 +945,12 @@ function RunbookItemRow({
     <div
       ref={sortableRef as ((node: HTMLDivElement | null) => void) | undefined}
       style={dragLiftStyle(isDragging, sortableStyle)}
-      className="py-1.5 flex items-center gap-2 group touch-none"
+      className="py-1.5 flex items-center gap-2 group"
       {...(sortableAttributes ?? {})}
-      {...(sortableListeners ?? {})}
     >
       {sortableListeners && (
-        <span aria-hidden className="text-fg-muted/40 cursor-grab shrink-0">
+        <span aria-hidden className="text-fg-muted/40 cursor-grab shrink-0" style={{ touchAction: 'none' }}
+          {...sortableListeners}>
           <GripVertical size={12} />
         </span>
       )}

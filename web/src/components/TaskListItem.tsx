@@ -59,12 +59,12 @@ export function TaskListItem({
     <li
       ref={sortableRef as ((node: HTMLLIElement | null) => void) | undefined}
       style={dragLiftStyle(isDragging, sortableStyle)}
-      className="py-2 flex items-start gap-2 group touch-none"
+      className="py-2 flex items-start gap-2 group"
       {...(sortableAttributes ?? {})}
-      {...(sortableListeners ?? {})}
     >
       {sortableListeners && (
-        <span aria-hidden className="mt-1 text-fg-muted/40 cursor-grab">
+        <span aria-hidden className="mt-1 text-fg-muted/40 cursor-grab" style={{ touchAction: 'none' }}
+          {...sortableListeners}>
           <GripVertical size={14} />
         </span>
       )}

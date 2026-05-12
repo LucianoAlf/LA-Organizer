@@ -311,12 +311,12 @@ function MemberRow({
     <li
       ref={sortableRef as ((node: HTMLLIElement | null) => void) | undefined}
       style={dragLiftStyle(isDragging, sortableStyle)}
-      className={['surface p-md flex items-center justify-between gap-md border-l-4 touch-none', accentClass].join(' ')}
+      className={['surface p-md flex items-center justify-between gap-md border-l-4', accentClass].join(' ')}
       {...(sortableAttributes ?? {})}
-      {...(sortableListeners ?? {})}
     >
       {sortableListeners && (
-        <span aria-hidden className="text-fg-muted/40 cursor-grab shrink-0">
+        <span aria-hidden className="text-fg-muted/40 cursor-grab shrink-0 touch-none" style={{ touchAction: 'none' }}
+          {...sortableListeners}>
           <GripVertical size={14} />
         </span>
       )}

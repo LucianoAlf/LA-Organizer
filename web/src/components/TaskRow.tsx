@@ -128,7 +128,7 @@ export function TaskRow({
         'surface p-md flex items-start gap-md transition-opacity',
         isOverdue ? 'border-l-4 border-l-danger' : '',
         isDone ? 'opacity-60' : '',
-        sortableListeners ? 'touch-none' : '',
+        '',
       ].join(' ')}
       {...(sortableAttributes ?? {})}
     >
@@ -136,6 +136,7 @@ export function TaskRow({
         <span
           aria-label="Mover"
           className="mt-1 text-fg-muted/40 cursor-grab shrink-0 self-start"
+          style={{ touchAction: 'none' }}
           {...sortableListeners}
         >
           <GripVertical size={16} />

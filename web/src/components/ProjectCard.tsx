@@ -78,16 +78,16 @@ export function ProjectCard({
       style={dragLiftStyle(isDragging, sortableStyle)}
       onClick={handleCardClick}
       className={[
-        'surface p-md transition-colors focus-ring touch-none',
+        'surface p-md transition-colors focus-ring',
         editing ? 'cursor-default' : 'cursor-pointer hover:bg-bg-elevated',
       ].join(' ')}
       {...(sortableAttributes ?? {})}
-      {...(sortableListeners ?? {})}
     >
       <div className="flex items-start gap-md justify-between">
         <div className="flex items-start gap-2 min-w-0 flex-1">
           {sortableListeners && (
-            <span aria-hidden className="mt-0.5 text-fg-muted/40 cursor-grab shrink-0">
+            <span aria-hidden className="mt-0.5 text-fg-muted/40 cursor-grab shrink-0" style={{ touchAction: 'none' }}
+              {...sortableListeners}>
               <GripVertical size={14} />
             </span>
           )}
