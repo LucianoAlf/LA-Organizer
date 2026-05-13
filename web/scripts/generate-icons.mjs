@@ -10,7 +10,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
 const AVATAR = resolve(root, 'public/Avata-Tom.png');
 const PUBLIC = resolve(root, 'public');
-const BG = { r: 15, g: 17, b: 23, alpha: 255 }; // #0F1117
+
+const WHITE = { r: 255, g: 255, b: 255, alpha: 255 };
+const DARK  = { r: 15,  g: 17,  b: 23,  alpha: 255 };
 
 let sharp;
 try { sharp = (await import('sharp')).default; } catch {
@@ -18,42 +20,29 @@ try { sharp = (await import('sharp')).default; } catch {
   process.exit(1);
 }
 
+// Ícone do app: fundo branco, ET centralizado com padding, sem texto
 async function makeIcon(size) {
-  const avatarSize = Math.round(size * 0.70);
-  const fontSize   = Math.round(size * 0.105);
-  const textY      = size - Math.round(size * 0.055);
-  const avatarLeft = Math.round((size - avatarSize) / 2);
-  const avatarTop  = Math.round(size * 0.04);
+  const pad        = Math.round(size * 0.10);
+  const avatarSize = size - pad * 2;
 
   const avatar = await sharp(AVATAR)
-    .resize(avatarSize, avatarSize, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .resize(avatarSize, avatarSize, { fit: 'contain', background: { r: 255, g: 255, b: 255, alpha: 0 } })
     .png().toBuffer();
 
-  const textSvg = Buffer.from(
-    `<svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
-      <text x="${size / 2}" y="${textY}"
-        font-family="Arial,Helvetica,sans-serif" font-weight="700"
-        font-size="${fontSize}" fill="white" text-anchor="middle"
-        dominant-baseline="auto" letter-spacing="0.5">LA Organizer</text>
-    </svg>`
-  );
-
-  await sharp({ create: { width: size, height: size, channels: 4, background: BG } })
-    .composite([
-      { input: avatar,   top: avatarTop,  left: avatarLeft },
-      { input: textSvg,  top: 0,          left: 0 },
-    ])
+  await sharp({ create: { width: size, height: size, channels: 4, background: WHITE } })
+    .composite([{ input: avatar, top: pad, left: pad }])
     .png()
     .toFile(resolve(PUBLIC, `icon-${size}.png`));
 
   console.log(`✓ icon-${size}.png`);
 }
 
+// OG image para WhatsApp: fundo escuro, ET + título + subtítulo
 async function makeOgImage() {
   const W = 1200, H = 630;
   const avatarSize = 400;
   const avatarLeft = Math.round((W - avatarSize) / 2);
-  const avatarTop  = 60;
+  const avatarTop  = 50;
 
   const avatar = await sharp(AVATAR)
     .resize(avatarSize, avatarSize, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
@@ -70,10 +59,10 @@ async function makeOgImage() {
     </svg>`
   );
 
-  await sharp({ create: { width: W, height: H, channels: 4, background: BG } })
+  await sharp({ create: { width: W, height: H, channels: 4, background: DARK } })
     .composite([
-      { input: avatar,      top: avatarTop,  left: avatarLeft },
-      { input: svgOverlay,  top: 0,          left: 0 },
+      { input: avatar,     top: avatarTop, left: avatarLeft },
+      { input: svgOverlay, top: 0,         left: 0 },
     ])
     .png()
     .toFile(resolve(PUBLIC, 'og-image.png'));
@@ -84,4 +73,4 @@ async function makeOgImage() {
 await makeIcon(192);
 await makeIcon(512);
 await makeOgImage();
-console.log('\nÍcones gerados em public/');
+console.log('\nIcones gerados em public/');
