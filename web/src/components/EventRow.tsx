@@ -118,8 +118,8 @@ export function EventRow({ event, onClick, onToggleDone, onCancel, onDelete }: P
             <span className="inline-flex items-center gap-1">
               <Icon size={13} />
               {MODALITY_LABELS[event.modality]}
+              {event.location_text && <span className="text-fg-muted/70">· {event.location_text}</span>}
             </span>
-            {event.location_text && <span>· {event.location_text}</span>}
             {event.meeting_url && (
               <a
                 href={event.meeting_url}
