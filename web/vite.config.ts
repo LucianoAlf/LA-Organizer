@@ -7,11 +7,11 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg', 'icon-192.png', 'icon-512.png'],
+      includeAssets: ['favicon.svg', 'icon-192.png', 'icon-512.png', 'og-image.png'],
       manifest: {
         name: 'LA Organizer',
         short_name: 'LA Organizer',
-        description: 'PWA operacional do TOM — LA Music School',
+        description: 'Seu assistente operacional',
         theme_color: '#0A0A0A',
         background_color: '#0A0A0A',
         display: 'standalone',
