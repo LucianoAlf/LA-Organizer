@@ -2,7 +2,6 @@ import { FormEvent, useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from '../components/Button';
-import { LogoMark } from '../components/LogoMark';
 
 type Step = 'phone' | 'code';
 type Mode = 'magic' | 'password';
@@ -82,35 +81,35 @@ export function Login() {
   return (
     <div className="min-h-screen flex flex-col bg-ink-0 text-ink-1000">
       {/* Hero */}
-      <section className="relative flex-1 flex items-end overflow-hidden">
+      <section className="relative flex-1 flex flex-col items-center justify-center overflow-hidden px-md py-2xl">
         <div className="absolute inset-0 halftone-soft" aria-hidden />
-        <div
-          aria-hidden
-          className="absolute -right-12 -top-8 select-none pointer-events-none"
-          style={{
-            fontFamily: 'Prompt, sans-serif',
-            fontSize: '320px',
-            fontWeight: 900,
-            color: 'transparent',
-            WebkitTextStroke: '2px rgba(233, 20, 81, 0.18)',
-            letterSpacing: '-12px',
-            lineHeight: 1,
-          }}
-        >
-          LA
-        </div>
-        <div className="relative z-10 px-md pb-2xl w-full max-w-content mx-auto">
-          <div className="flex items-end gap-md mb-md">
-            <LogoMark variant="completa" size={36} forceTheme="dark" />
-            <div className="text-card-title leading-none pb-1">Organizer</div>
+
+        {/* TOM avatar */}
+        <div className="relative z-10 flex flex-col items-center gap-lg">
+          <div
+            className="relative"
+            style={{ filter: 'drop-shadow(0 0 32px rgba(233,20,81,0.25))' }}
+          >
+            <img
+              src="/tom-avatar.png"
+              alt="TOM"
+              className="h-32 w-32 object-contain select-none"
+              draggable={false}
+            />
           </div>
-          <h1 className="text-h1-brand leading-[0.95] max-w-[10ch]">
-            <span className="text-brand">Bom</span> dia<br/>
-            de produção.
-          </h1>
-          <p className="mt-md text-body-md text-ink-600 max-w-[42ch]">
-            O espelho visual do TOM. Suas tarefas, seus projetos, seu time — em um lugar só.
-          </p>
+
+          {/* Wordmark */}
+          <div className="text-center space-y-1">
+            <div
+              className="text-white select-none"
+              style={{ fontFamily: 'Prompt, sans-serif', fontSize: '32px', fontWeight: 900, letterSpacing: '-0.5px', lineHeight: 1 }}
+            >
+              <span style={{ color: '#E91451' }}>LA</span> Organizer
+            </div>
+            <p className="text-body-sm text-ink-500 max-w-[34ch] text-center">
+              Suas tarefas, projetos e time — em um lugar só.
+            </p>
+          </div>
         </div>
       </section>
 
