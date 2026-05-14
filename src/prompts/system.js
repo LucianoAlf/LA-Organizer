@@ -645,6 +645,19 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
     return { name: 'pausa-temporaria', body: loadSkill('pausa-temporaria') };
   }
 
+  // Trigger: skill de ajuda — usuário pergunta como o sistema funciona
+  const lmLower = (lastUserMessage || '').toLowerCase().trim();
+  const AJUDA_TRIGGERS = [
+    'como você funciona', 'o que você pode fazer', 'o que você faz',
+    'comandos', 'funcionalidades', 'o que tem aqui', 'como te uso',
+    'como usar você', 'me explica', 'menu',
+  ];
+  const isHelpAlone = /^(me ajuda|ajuda)[?!.]*$/.test(lmLower);
+  // lmLower.length < 80: evita ativar em "me ajuda a criar tarefa de marketing para..."
+  if ((AJUDA_TRIGGERS.some(t => lmLower.includes(t)) || isHelpAlone) && lmLower.length < 80) {
+    return { name: 'ajuda', body: loadSkill('ajuda') };
+  }
+
   // Priority 1.6 (Sprint 8): aprovação/rejeição de projeto pendente.
   // Trigger forte: APROVA <NOME> ou REJEITA <NOME> motivo (case-insensitive).
   // Trigger fraco: "aprovo"/"rejeito" solto — skill orienta a pedir identificador.
