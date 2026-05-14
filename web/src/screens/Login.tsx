@@ -2,6 +2,7 @@ import { FormEvent, useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from '../components/Button';
+import { PWAInstallPrompt } from '../components/PWAInstallPrompt';
 
 type Step = 'phone' | 'code';
 type Mode = 'magic' | 'password';
@@ -225,6 +226,7 @@ export function Login() {
           )}
         </div>
       </section>
+      <PWAInstallPrompt />
     </div>
   );
 }

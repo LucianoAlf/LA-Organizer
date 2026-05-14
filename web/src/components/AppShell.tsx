@@ -3,6 +3,7 @@ import { Header } from './Header';
 import { BottomNav } from './BottomNav';
 import { AgendaTabs } from './AgendaTabs';
 import { PWAUpdatePrompt } from './PWAUpdatePrompt';
+import { PWAInstallPrompt } from './PWAInstallPrompt';
 import { ToastHost } from './Toast';
 
 const FOCUSED_FLOW_PATHS = ['/projetos/novo'];
@@ -43,6 +44,7 @@ export function AppShell() {
       </main>
       {!focused && <BottomNav />}
       <PWAUpdatePrompt />
+      <PWAInstallPrompt />
       <ToastHost />
     </div>
   );
