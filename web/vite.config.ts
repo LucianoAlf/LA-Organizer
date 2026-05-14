@@ -14,8 +14,7 @@ export default defineConfig({
         description: 'Seu assistente operacional',
         theme_color: '#0A0A0A',
         background_color: '#0A0A0A',
-        display: 'standalone',
-        orientation: 'portrait',
+        display: 'minimal-ui',
         start_url: '/',
         scope: '/',
         icons: [
