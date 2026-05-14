@@ -862,6 +862,7 @@ async function fetchCollaboratorContext(collaborator) {
   const id = collaborator.id;
   const today = todaySaoPaulo();
   const next7days = (() => { const d = new Date(today + 'T15:00:00.000Z'); d.setDate(d.getDate() + 7); return d.toISOString().slice(0, 10); })();
+  const past7days = (() => { const d = new Date(today + 'T15:00:00.000Z'); d.setDate(d.getDate() - 7); return d.toISOString().slice(0, 10); })();
   const TASK_COLS = 'id, title, status, priority, eisenhower_quadrant, due_date, context, remind_at, project_id, projects(name)';
 
   const isLeadership = collaborator.role === 'director' || collaborator.role === 'coordinator' ||
@@ -886,6 +887,7 @@ async function fetchCollaboratorContext(collaborator) {
     teamExpectedTemplatesRes,
     schoolEventsRes,
     eventTypesRes,
+    pastEventsRes,
   ] = await Promise.all([
     supabase.from('collaborator_profiles').select('*').eq('collaborator_id', id).maybeSingle(),
     supabase.from('collaborator_memory')
@@ -1008,6 +1010,14 @@ async function fetchCollaboratorContext(collaborator) {
     })(),
     // Tipos com emoji/cor pra renderização do bloco.
     supabase.from('event_types').select('id, label, emoji').order('sort_order'),
+    // Histórico: eventos dos últimos 7 dias (exceto hoje) para TOM responder sobre o passado.
+    supabase.from('events')
+      .select('id, title, start_at, end_at, modality, context, location_text, status')
+      .eq('collaborator_id', id)
+      .gte('start_at', `${past7days}T00:00:00-03:00`)
+      .lt('start_at', `${today}T00:00:00-03:00`)
+      .neq('status', 'cancelled')
+      .order('start_at', { ascending: false }).limit(15),
   ]);
 
   let activeProjects = [];
@@ -1043,6 +1053,7 @@ async function fetchCollaboratorContext(collaborator) {
     recentMessages: (historyRes.data || []).reverse(),
     habits: habitsRes.data || [],
     todayEvents: eventsRes.data || [],
+    pastEvents: pastEventsRes.data || [],
     delegatedTasks: delegatedRes.data || [],
     todayChecklists: todayChecklistsRes.data || [],
     teamAdherence: teamAdherenceRes.data || [],
@@ -1731,6 +1742,27 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   }
   // briefing_diario / daily_briefing: mantém todos os events (sem filtro).
   const baseCtx = buildContext(collaborator, ctx.memories, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx, ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || [], ctx.teamTodayChecklists || [], ctx.teamExpectedTemplates || [], ctx.schoolEvents || [], ctx.eventTypes || []);
+
+  // Histórico de compromissos dos últimos 7 dias (para responder sobre o passado)
+  let pastEventsBlock = '';
+  const pastEvts = ctx.pastEvents || [];
+  if (pastEvts.length > 0) {
+    const fmtDay = (iso) => {
+      const d = new Date(iso);
+      return new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', weekday: 'short', day: '2-digit', month: '2-digit' }).format(d);
+    };
+    const fmtHr = (iso) => {
+      const d = new Date(iso);
+      return new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', hour12: false }).format(d);
+    };
+    const lines = ['\n\n**📅 Histórico de compromissos (últimos 7 dias):**'];
+    pastEvts.forEach(e => {
+      const mod = e.modality === 'online' ? '💻' : '🏢';
+      lines.push(`• ${fmtDay(e.start_at)} ${fmtHr(e.start_at)} ${mod} ${e.title}`);
+    });
+    pastEventsBlock = lines.join('\n');
+  }
+
   const pending = renderPendingDecisions(ctx.notifications);
 
   // Sprint 10.1 hotfix-2 (Plano C): resolve temporal de "amanhã"/"hoje" + horário
@@ -1762,7 +1794,7 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   const activeThread = await inferActiveThread(hist, allTasks, collaborator?.id);
   const activeThreadBlock = renderActiveThreadHint(activeThread);
 
-  const ctxBlock = (pending ? baseCtx + '\n' + pending : baseCtx) + resolutionBlock + activeThreadBlock;
+  const ctxBlock = (pending ? baseCtx + '\n' + pending : baseCtx) + pastEventsBlock + resolutionBlock + activeThreadBlock;
 
   const blocks = [
     BLOCK_RULES,
