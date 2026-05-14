@@ -18,13 +18,14 @@ interface AuthContextType {
   collaborator: Collaborator | null;
   role: Role | null;
   loading: boolean;
-  /** Magic link via WhatsApp (canonical, PRD §5.2). */
   sendMagicLink: (phone: string) => Promise<SendMagicLinkResult>;
-  /** Verify the 6-digit OTP returned by the magic link. Sets session on success. */
   verifyMagicCode: (email: string, code: string) => Promise<{ error: Error | null }>;
-  /** Email/password fallback (Sprint 0+1 default; remains until magic link is stable). */
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
+  /** Atualiza avatar_url ou full_name do colaborador */
+  updateProfile: (fields: { avatar_url?: string; full_name?: string }) => Promise<{ error: Error | null }>;
+  /** Força reload do colaborador (após upload de foto etc.) */
+  refreshCollaborator: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -60,7 +61,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       const { data, error } = await supabase
         .from('collaborators')
-        .select('id, full_name, email, phone, role, function_title, unit, is_active, onboarding_completed')
+        .select('id, full_name, email, phone, role, function_title, unit, is_active, onboarding_completed, avatar_url')
         .eq('email', session.user.email)
         .eq('is_active', true)
         .maybeSingle();
@@ -121,6 +122,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setCollaborator(null);
   }
 
+  async function refreshCollaborator() {
+    if (!session?.user?.email) return;
+    const { data } = await supabase
+      .from('collaborators')
+      .select('id, full_name, email, phone, role, function_title, unit, is_active, onboarding_completed, avatar_url')
+      .eq('email', session.user.email)
+      .eq('is_active', true)
+      .maybeSingle();
+    if (data) setCollaborator(data as Collaborator);
+  }
+
+  async function updateProfile(fields: { avatar_url?: string; full_name?: string }) {
+    if (!collaborator?.id) return { error: new Error('no_session') };
+    const { error } = await supabase
+      .from('collaborators')
+      .update(fields)
+      .eq('id', collaborator.id);
+    if (!error) setCollaborator(prev => prev ? { ...prev, ...fields } : prev);
+    return { error: error ?? null };
+  }
+
   return (
     <AuthContext.Provider
       value={{
@@ -132,6 +154,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         verifyMagicCode,
         signIn,
         signOut,
+        updateProfile,
+        refreshCollaborator,
       }}
     >
       {children}
