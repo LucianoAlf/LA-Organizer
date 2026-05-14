@@ -30,7 +30,6 @@ export default defineConfig({
         // chama updateServiceWorker(true) pra recarregar com bundle novo.
         // Sem isso, o user fica em bundle ANTIGO mesmo após `autoUpdate` instalar.
         skipWaiting: true,
-        clientsClaim: true,
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/fonts\.(?:googleapis|gstatic)\.com\/.*/i,
