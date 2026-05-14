@@ -177,6 +177,13 @@ function nameFor(collab) {
 function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habits, events, delegatedTasks, todayChecklists, teamAdherence, personalChecklists, teamTodayChecklists, teamExpectedTemplates, schoolEvents = [], eventTypes = []) {
   const nickname = nameFor(collab);
   const lines = ['# 📌 CONTEXTO DESTA INTERAÇÃO', ''];
+  const ROLE_LABELS_PT = {
+    collaborator: 'Colaborador',
+    leader:       'Líder',
+    coordinator:  'Coordenador',
+    manager:      'Gerente',
+    director:     'Diretor',
+  };
   const fn = collab.function_title ? ', ' + collab.function_title : '';
 
   // Sprint 10.1: âncora temporal explícita. Sem isto Claude calculava
@@ -229,7 +236,8 @@ function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habi
   lines.push(`**Timezone para markers:** America/Sao_Paulo. Sempre use ISO -03:00 em remind_at, start_at, end_at, etc. Ex: "amanhã 11h" → "${tomorrowISO}T11:00:00-03:00".`);
   lines.push('');
 
-  lines.push(`**Pessoa:** ${nickname} (${collab.full_name}) — ${collab.role || '—'}${fn}`);
+  const roleDisplay = ROLE_LABELS_PT[collab.role] || collab.role || '—';
+  lines.push(`**Pessoa:** ${nickname} (${collab.full_name}) — ${roleDisplay}${fn}`);
   if (collab.bio) {
     lines.push(`**Bio (${nickname} escreveu sobre si mesmo — leia com atenção):** ${collab.bio}`);
   }

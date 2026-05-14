@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import type { Role } from '../types';
+import { ROLE_COLOR, ROLE_LABELS } from '../lib/roles';
 import { PageHeader } from '../components/PageHeader';
 import { LoadingState } from '../components/LoadingState';
 import { EmptyState } from '../components/EmptyState';
@@ -10,18 +12,10 @@ import { EmptyState } from '../components/EmptyState';
 type CollabRow = {
   id: string;
   full_name: string;
-  role: string;
+  role: Role;
   unit: string | null;
   is_active: boolean;
   avatar_url: string | null;
-};
-
-const ROLE_COLOR: Record<string, string> = {
-  director:     '#E91451',
-  coordinator:  '#7c3aed',
-  manager:      '#0ea5e9',
-  leader:       '#f59e0b',
-  collaborator: '#6b7280',
 };
 
 function initials(name: string) {
@@ -126,7 +120,7 @@ export function GestaoEquipe() {
                 <div className="flex-1 min-w-0">
                   <div className="text-body-md font-medium truncate">{c.full_name}</div>
                   <div className="text-body-sm text-fg-muted">
-                    {c.role}{c.unit ? ` · ${c.unit}` : ''}
+                    {ROLE_LABELS[c.role]}{c.unit ? ` · ${c.unit}` : ''}
                   </div>
                 </div>
                 {/* Status dot */}

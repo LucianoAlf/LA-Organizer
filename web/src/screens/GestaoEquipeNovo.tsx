@@ -5,11 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { PageHeader } from '../components/PageHeader';
 import { showToast } from '../components/Toast';
 import type { Role } from '../types';
-
-const ROLES: Role[] = ['collaborator', 'leader', 'coordinator', 'manager', 'director'];
-const ROLE_RANK: Record<Role, number> = {
-  collaborator: 0, leader: 1, coordinator: 2, manager: 3, director: 4,
-};
+import { ROLES, ROLE_RANK, ROLE_LABELS, FUNCTION_TITLES } from '../lib/roles';
 const UNIT_OPTIONS = [
   { value: 'barra',        label: 'Barra' },
   { value: 'recreio',      label: 'Recreio' },
@@ -32,6 +28,11 @@ export function GestaoEquipeNovo() {
   // Admins só podem criar roles até o seu próprio nível
   const myRank = ROLE_RANK[(myRole as Role) ?? 'collaborator'] ?? 0;
   const allowedRoles = ROLES.filter(r => ROLE_RANK[r] <= myRank);
+
+  function handleRoleChange(r: Role) {
+    setSelectedRole(r);
+    setFunctionTitle(''); // reset cargo ao mudar nível
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -111,10 +112,16 @@ export function GestaoEquipeNovo() {
           <h2 className="text-label text-fg-muted uppercase tracking-wide">Função</h2>
           <div className="space-y-1">
             <label className="text-body-sm text-fg-muted">Cargo (opcional)</label>
-            <input type="text" value={functionTitle}
+            <select
+              value={functionTitle}
               onChange={e => setFunctionTitle(e.target.value)}
-              placeholder="Ex: Professora de piano"
-              className={inputCls} />
+              className={inputCls}
+            >
+              <option value="">— selecione —</option>
+              {FUNCTION_TITLES[selectedRole].map(t => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
           </div>
         </section>
 
@@ -123,9 +130,9 @@ export function GestaoEquipeNovo() {
           <h2 className="text-label text-fg-muted uppercase tracking-wide">Nível de acesso</h2>
           <div className="flex flex-wrap gap-2">
             {allowedRoles.map(r => (
-              <button key={r} type="button" onClick={() => setSelectedRole(r)}
+              <button key={r} type="button" onClick={() => handleRoleChange(r)}
                 className={chipCls(selectedRole === r)}>
-                {r}
+                {ROLE_LABELS[r]}
               </button>
             ))}
           </div>

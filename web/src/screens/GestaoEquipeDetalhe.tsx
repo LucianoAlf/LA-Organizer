@@ -7,11 +7,7 @@ import { PageHeader } from '../components/PageHeader';
 import { LoadingState } from '../components/LoadingState';
 import { showToast } from '../components/Toast';
 import type { Role } from '../types';
-
-const ROLES: Role[] = ['collaborator', 'leader', 'coordinator', 'manager', 'director'];
-const ROLE_RANK: Record<Role, number> = {
-  collaborator: 0, leader: 1, coordinator: 2, manager: 3, director: 4,
-};
+import { ROLES, ROLE_RANK, ROLE_LABELS, FUNCTION_TITLES } from '../lib/roles';
 const UNIT_OPTIONS = [
   { value: 'barra',        label: 'Barra' },
   { value: 'recreio',      label: 'Recreio' },
@@ -75,6 +71,19 @@ export function GestaoEquipeDetalhe() {
 
   const myRank = ROLE_RANK[(myRole as Role) ?? 'collaborator'] ?? 0;
   const allowedRoles = ROLES.filter(r => ROLE_RANK[r] <= myRank);
+
+  // Cargos disponíveis para o role selecionado
+  const titleOptions = FUNCTION_TITLES[selectedRole] ?? [];
+  // Se o valor salvo no banco não está na lista, inclui para não quebrar a edição
+  const allTitleOptions =
+    functionTitle && !titleOptions.includes(functionTitle)
+      ? [functionTitle, ...titleOptions]
+      : titleOptions;
+
+  function handleRoleChange(r: Role) {
+    setSelectedRole(r);
+    setFunctionTitle(''); // reset cargo ao mudar nível
+  }
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -209,9 +218,16 @@ export function GestaoEquipeDetalhe() {
           </div>
           <div className="space-y-1">
             <label className="text-body-sm text-fg-muted">Cargo</label>
-            <input type="text" value={functionTitle} onChange={e => setFunctionTitle(e.target.value)}
-              placeholder="Ex: Professora de piano"
-              className={inputCls} />
+            <select
+              value={functionTitle}
+              onChange={e => setFunctionTitle(e.target.value)}
+              className={inputCls}
+            >
+              <option value="">— selecione —</option>
+              {allTitleOptions.map(t => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
           </div>
         </section>
 
@@ -219,9 +235,9 @@ export function GestaoEquipeDetalhe() {
           <h2 className="text-label text-fg-muted uppercase tracking-wide">Nível de acesso</h2>
           <div className="flex flex-wrap gap-2">
             {allowedRoles.map(r => (
-              <button key={r} type="button" onClick={() => setSelectedRole(r)}
+              <button key={r} type="button" onClick={() => handleRoleChange(r)}
                 className={chipCls(selectedRole === r)}>
-                {r}
+                {ROLE_LABELS[r]}
               </button>
             ))}
           </div>
