@@ -216,18 +216,20 @@ export function GestaoEquipeDetalhe() {
               Alterar e-mail aqui atualiza só o cadastro, não a credencial de login.
             </p>
           </div>
-          <div className="space-y-1">
+          <div className="space-y-md">
             <label className="text-body-sm text-fg-muted">Cargo</label>
-            <select
-              value={functionTitle}
-              onChange={e => setFunctionTitle(e.target.value)}
-              className={inputCls}
-            >
-              <option value="">— selecione —</option>
+            <div className="flex flex-wrap gap-2">
               {allTitleOptions.map(t => (
-                <option key={t} value={t}>{t}</option>
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setFunctionTitle(functionTitle === t ? '' : t)}
+                  className={chipCls(functionTitle === t)}
+                >
+                  {t}
+                </button>
               ))}
-            </select>
+            </div>
           </div>
         </section>
 

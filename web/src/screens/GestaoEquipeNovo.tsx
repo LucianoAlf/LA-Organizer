@@ -110,18 +110,20 @@ export function GestaoEquipeNovo() {
         {/* Função */}
         <section className="surface p-lg space-y-md">
           <h2 className="text-label text-fg-muted uppercase tracking-wide">Função</h2>
-          <div className="space-y-1">
+          <div className="space-y-md">
             <label className="text-body-sm text-fg-muted">Cargo (opcional)</label>
-            <select
-              value={functionTitle}
-              onChange={e => setFunctionTitle(e.target.value)}
-              className={inputCls}
-            >
-              <option value="">— selecione —</option>
+            <div className="flex flex-wrap gap-2">
               {FUNCTION_TITLES[selectedRole].map(t => (
-                <option key={t} value={t}>{t}</option>
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setFunctionTitle(functionTitle === t ? '' : t)}
+                  className={chipCls(functionTitle === t)}
+                >
+                  {t}
+                </button>
               ))}
-            </select>
+            </div>
           </div>
         </section>
 
