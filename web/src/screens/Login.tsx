@@ -84,6 +84,22 @@ export function Login() {
       <section className="relative flex-1 flex flex-col items-center justify-center overflow-hidden px-md py-2xl">
         <div className="absolute inset-0 halftone-soft" aria-hidden />
 
+        {/* LA logo — fundo fantasma */}
+        <img
+          src="/la-logo-bg.svg"
+          aria-hidden
+          className="absolute select-none pointer-events-none"
+          style={{
+            width: '140%',
+            maxWidth: '560px',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            opacity: 0.07,
+            filter: 'brightness(2)',
+          }}
+        />
+
         {/* TOM avatar */}
         <div className="relative z-10 flex flex-col items-center gap-lg">
           <div
