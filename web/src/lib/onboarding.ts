@@ -79,6 +79,28 @@ const CONTENT: Record<string, OnboardingSlide2> = {
       { label: '📋 Checklists', highlight: false },
     ],
   },
+  'Coordenador de Tecnologia': {
+    icon: '💻',
+    title: 'Seus projetos e demandas em um lugar só',
+    subtitle: 'Acompanha projetos de tecnologia, tarefas e prazos sem perder nada.',
+    chips: [
+      { label: '📊 Projetos',   highlight: true  },
+      { label: '✅ Tarefas',    highlight: true  },
+      { label: '📅 Agenda',     highlight: false },
+      { label: '📋 Checklists', highlight: false },
+    ],
+  },
+  Marketing: {
+    icon: '📣',
+    title: 'Suas campanhas e projetos em um lugar só',
+    subtitle: 'Registra ações, acompanha prazos e nunca perde um entregável.',
+    chips: [
+      { label: '📊 Projetos',   highlight: true  },
+      { label: '✅ Tarefas',    highlight: true  },
+      { label: '📅 Agenda',     highlight: false },
+      { label: '📋 Checklists', highlight: false },
+    ],
+  },
   Gerente: MANAGEMENT_SLIDE,
   Coordenador: MANAGEMENT_SLIDE,
   Diretor: {

@@ -90,6 +90,32 @@ Pede do jeito que você falar — entendo linguagem natural 😉
 Pede do jeito que você falar — entendo linguagem natural 😉
 ```
 
+**Para Coordenador de Tecnologia:**
+```
+✅ *No trabalho posso te ajudar com:*
+
+• "cria projeto X" → projeto com checkpoints e prazos
+• "o que tenho hoje?" → tarefas e agenda do dia
+• "o que tá atrasado?" → pendências em aberto
+• "cria tarefa X pra sexta" → registro e cobrança no prazo
+• "como foi minha semana?" → retrospectiva semanal
+
+Pede do jeito que você falar — entendo linguagem natural 😉
+```
+
+**Para Marketing:**
+```
+✅ *No trabalho posso te ajudar com:*
+
+• "cria campanha X pra tal data" → projeto com checkpoints de entrega
+• "o que tenho hoje?" → tarefas e agenda do dia
+• "o que tá atrasado?" → pendências e entregáveis em aberto
+• "cria tarefa X pra sexta" → registro e cobrança no prazo
+• "como foi minha semana?" → retrospectiva de entregas
+
+Pede do jeito que você falar — entendo linguagem natural 😉
+```
+
 **Para demais cargos (Financeiro, RH, ou não mapeado):**
 ```
 ✅ *No trabalho posso te ajudar com:*
