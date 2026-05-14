@@ -177,13 +177,7 @@ function nameFor(collab) {
 function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habits, events, delegatedTasks, todayChecklists, teamAdherence, personalChecklists, teamTodayChecklists, teamExpectedTemplates, schoolEvents = [], eventTypes = []) {
   const nickname = nameFor(collab);
   const lines = ['# 📌 CONTEXTO DESTA INTERAÇÃO', ''];
-  const ROLE_LABELS_PT = {
-    collaborator: 'Colaborador',
-    leader:       'Líder',
-    coordinator:  'Coordenador',
-    manager:      'Gerente',
-    director:     'Diretor',
-  };
+  const { ROLE_LABELS: ROLE_LABELS_PT } = require('../lib/roles');
   const fn = collab.function_title ? ', ' + collab.function_title : '';
 
   // Sprint 10.1: âncora temporal explícita. Sem isto Claude calculava
