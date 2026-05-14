@@ -97,7 +97,7 @@ export function Header() {
 
   return (
     <>
-    <header className="w-full max-w-content mx-auto px-md pt-md">
+    <header className="w-full max-w-content mx-auto px-md" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 16px)' }}>
       <div className="flex items-center gap-md">
         {/* Avatar TOM */}
         <div className="h-14 w-14 shrink-0 grid place-items-center" aria-label="TOM, seu agente" title="TOM">

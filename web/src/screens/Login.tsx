@@ -50,6 +50,11 @@ export function Login() {
     }
     if (r.unknown || !r.email) {
       // Vague response — phone not in collaborators or inactive. Don't reveal.
+      // Still advance to code step so user can try to enter a code they may have received.
+      setPendingEmail(r.email ?? '');
+      setMaskedPhone(r.masked_phone || phone);
+      setFirstName(null);
+      setStep('code');
       setError('se esse número está cadastrado, o código chegou no WhatsApp.');
       return;
     }
