@@ -84,7 +84,12 @@ export function TemplateCard({ template, onEdit }: Props) {
       !template.is_active ? 'opacity-60' : '',
     ].join(' ')}>
       <div className="flex items-start justify-between gap-2">
-        <div className="flex-1 min-w-0">
+        {/* Área clicável — abre edição direto */}
+        <button
+          type="button"
+          onClick={onEdit}
+          className="flex-1 min-w-0 text-left focus-ring rounded-lg"
+        >
           <p className="text-body-md font-semibold text-fg truncate">{template.name}</p>
           <p className="text-body-sm text-fg-muted mt-0.5">
             {FUNCTION_LABEL[template.function_role] ?? template.function_role}
@@ -103,7 +108,7 @@ export function TemplateCard({ template, onEdit }: Props) {
               Editado por {editorName ?? '—'} em {editedAt}
             </p>
           )}
-        </div>
+        </button>
         <div className="flex-shrink-0">
           <RowMenu items={menu} />
         </div>
