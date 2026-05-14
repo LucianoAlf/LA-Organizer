@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { Camera, Lock, Settings, LogOut, User, Sun, Moon, X, Check } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Camera, Lock, Settings, LogOut, User, Sun, Moon } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { supabase } from '../lib/supabase';
@@ -32,11 +32,12 @@ function initials(name: string | null | undefined) {
 }
 
 export function Header() {
-  const { collaborator, role, signOut, updateProfile, refreshCollaborator } = useAuth();
+  const { collaborator, role, signOut, updateProfile, sendMagicLink } = useAuth();
   const { theme, toggle } = useTheme();
+  const navigate = useNavigate();
   const [tomFailed, setTomFailed] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [pwMode, setPwMode] = useState(false);
+  const [pwModal, setPwModal] = useState(false);
   const [pw, setPw] = useState('');
   const [pwConfirm, setPwConfirm] = useState('');
   const [pwLoading, setPwLoading] = useState(false);
@@ -46,8 +47,8 @@ export function Header() {
   const firstName = collaborator?.full_name?.split(' ')[0] ?? '';
 
   useEffect(() => {
-    if (!menuOpen) { setPwMode(false); setPw(''); setPwConfirm(''); }
-  }, [menuOpen]);
+    if (!pwModal) { setPw(''); setPwConfirm(''); }
+  }, [pwModal]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -89,12 +90,13 @@ export function Header() {
     setPwLoading(false);
     if (error) { showToast({ kind: 'error', title: 'Erro', msg: error.message }); return; }
     showToast({ kind: 'success', title: 'Senha alterada!' });
-    setMenuOpen(false);
+    setPwModal(false);
   }
 
   const avatarUrl = collaborator?.avatar_url;
 
   return (
+    <>
     <header className="w-full max-w-content mx-auto px-md pt-md">
       <div className="flex items-center gap-md">
         {/* Avatar TOM */}
@@ -172,45 +174,19 @@ export function Header() {
                 </button>
 
                 {/* Mudar senha */}
-                {!pwMode ? (
-                  <button
-                    type="button"
-                    onClick={() => setPwMode(true)}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-body-sm hover:bg-bg-elevated focus-ring"
-                  >
-                    <Lock size={16} className="text-fg-muted" /> Mudar senha
-                  </button>
-                ) : (
-                  <div className="px-3 py-2 space-y-1.5 border-t border-border">
-                    <p className="text-body-sm font-medium flex items-center justify-between">
-                      Nova senha
-                      <button type="button" onClick={() => setPwMode(false)} className="text-fg-muted hover:text-fg"><X size={14}/></button>
-                    </p>
-                    <input
-                      type="password" placeholder="Nova senha" value={pw}
-                      onChange={e => setPw(e.target.value)}
-                      className="w-full text-body-sm bg-bg-elevated border border-border rounded px-2 py-1.5 focus-ring outline-none"
-                    />
-                    <input
-                      type="password" placeholder="Confirmar senha" value={pwConfirm}
-                      onChange={e => setPwConfirm(e.target.value)}
-                      onKeyDown={e => e.key === 'Enter' && handlePasswordChange()}
-                      className="w-full text-body-sm bg-bg-elevated border border-border rounded px-2 py-1.5 focus-ring outline-none"
-                    />
-                    <button
-                      type="button" onClick={handlePasswordChange} disabled={pwLoading}
-                      className="w-full flex items-center justify-center gap-1.5 text-body-sm bg-tom text-white rounded py-1.5 font-medium disabled:opacity-50"
-                    >
-                      <Check size={14}/> {pwLoading ? 'Salvando…' : 'Salvar senha'}
-                    </button>
-                  </div>
-                )}
+                <button
+                  type="button"
+                  onClick={() => { setMenuOpen(false); setPwModal(true); }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-body-sm hover:bg-bg-elevated focus-ring"
+                >
+                  <Lock size={16} className="text-fg-muted" /> Mudar senha
+                </button>
 
-                <Link to="/mais" onClick={() => setMenuOpen(false)}
+                <Link to="/mais/perfil" onClick={() => setMenuOpen(false)}
                   className="flex items-center gap-2 px-3 py-2 text-body-sm hover:bg-bg-elevated focus-ring">
                   <User size={16} className="text-fg-muted" /> Perfil
                 </Link>
-                <Link to="/mais/configuracoes" onClick={() => setMenuOpen(false)}
+                <Link to="/configuracoes" onClick={() => setMenuOpen(false)}
                   className="flex items-center gap-2 px-3 py-2 text-body-sm hover:bg-bg-elevated focus-ring">
                   <Settings size={16} className="text-fg-muted" /> Configurações
                 </Link>
@@ -227,5 +203,68 @@ export function Header() {
         </div>
       </div>
     </header>
+
+    {/* Modal de mudar senha — centralizado */}
+    {pwModal && (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-md"
+        onClick={e => { if (e.target === e.currentTarget) setPwModal(false); }}
+      >
+        <div className="w-full max-w-sm bg-bg-surface border border-border rounded-xl shadow-soft p-6 space-y-4">
+          <h2 className="text-lg font-bold">Mudar senha</h2>
+          <div className="space-y-2">
+            <input
+              type="password"
+              placeholder="Nova senha (mín. 6 caracteres)"
+              value={pw}
+              onChange={e => setPw(e.target.value)}
+              autoFocus
+              className="w-full bg-bg-elevated border border-border rounded-lg px-3 py-2.5 text-body-md focus-ring outline-none"
+            />
+            <input
+              type="password"
+              placeholder="Confirmar nova senha"
+              value={pwConfirm}
+              onChange={e => setPwConfirm(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handlePasswordChange()}
+              className="w-full bg-bg-elevated border border-border rounded-lg px-3 py-2.5 text-body-md focus-ring outline-none"
+            />
+          </div>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setPwModal(false)}
+              className="flex-1 py-2.5 rounded-lg border border-border text-body-sm font-medium hover:bg-bg-elevated transition-colors"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={handlePasswordChange}
+              disabled={pwLoading}
+              className="flex-1 py-2.5 rounded-lg bg-tom text-white text-body-sm font-semibold disabled:opacity-50 hover:opacity-90 transition-opacity"
+            >
+              {pwLoading ? 'Salvando…' : 'Salvar senha'}
+            </button>
+          </div>
+          <p className="text-center text-body-sm text-fg-muted">
+            Esqueceu a senha?{' '}
+            <button
+              type="button"
+              onClick={async () => {
+                if (!collaborator?.phone) return;
+                await sendMagicLink(collaborator.phone);
+                showToast({ kind: 'success', title: 'Link enviado no WhatsApp!' });
+                setPwModal(false);
+              }}
+              className="text-tom underline"
+            >
+              Receber link no WhatsApp
+            </button>
+          </p>
+        </div>
+      </div>
+    )}
+    </>
   );
 }

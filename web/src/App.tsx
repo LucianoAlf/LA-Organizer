@@ -25,6 +25,7 @@ import { OperacoesFilaTecnica } from './screens/OperacoesFilaTecnica';
 import { OperacaoDetalhe } from './screens/OperacaoDetalhe';
 import { AderenciaChecklists } from './screens/AderenciaChecklists';
 import { AderenciaChecklistDetalhe } from './screens/AderenciaChecklistDetalhe';
+import { MeuPerfil } from './screens/MeuPerfil';
 
 export default function App() {
   return (
@@ -48,6 +49,7 @@ export default function App() {
 
           {/* Agenda Escolar — leitura aberta a toda equipe (resolver dor da Barra). */}
           {/* Criação/edição segue restrita a director/coordinator (validado por RLS no banco). */}
+          <Route path="mais/perfil" element={<MeuPerfil />} />
           <Route path="mais/agenda-escolar" element={<AgendaEscolar />} />
           <Route path="mais/eventos/:id" element={<EventoDetalhe />} />
 
