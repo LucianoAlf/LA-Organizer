@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { Header } from './Header';
 import { BottomNav } from './BottomNav';
@@ -5,6 +6,8 @@ import { AgendaTabs } from './AgendaTabs';
 import { PWAUpdatePrompt } from './PWAUpdatePrompt';
 import { PWAInstallPrompt } from './PWAInstallPrompt';
 import { ToastHost } from './Toast';
+import { OnboardingWizard, WIZARD_DISMISSED_KEY } from './OnboardingWizard';
+import { useAuth } from '../contexts/AuthContext';
 
 const FOCUSED_FLOW_PATHS = ['/projetos/novo'];
 const AGENDA_PATHS = ['/hoje', '/semana'];
@@ -19,8 +22,23 @@ function isAgendaRoute(pathname: string): boolean {
 
 export function AppShell() {
   const { pathname } = useLocation();
+  const { collaborator } = useAuth();
   const focused = isFocusedFlow(pathname);
   const showAgendaTabs = isAgendaRoute(pathname);
+
+  // Wizard: mostra se onboarding não concluído E usuário ainda não dispensou nesta sessão/localStorage
+  const [wizardDismissed, setWizardDismissed] = useState(
+    () => localStorage.getItem(WIZARD_DISMISSED_KEY) === 'true'
+  );
+
+  const showWizard =
+    collaborator !== null &&
+    !collaborator.onboarding_completed &&
+    !wizardDismissed;
+
+  if (showWizard) {
+    return <OnboardingWizard onDismiss={() => setWizardDismissed(true)} />;
+  }
 
   return (
     <div className="min-h-screen bg-bg-app text-fg flex flex-col">
