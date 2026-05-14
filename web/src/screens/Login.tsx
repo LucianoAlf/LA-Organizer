@@ -122,7 +122,7 @@ export function Login() {
             >
               <span style={{ color: '#E91451' }}>LA</span> Organizer
             </div>
-            <p className="text-body-sm text-ink-500 max-w-[34ch] text-center">
+            <p className="text-body-sm text-ink-500 text-center whitespace-nowrap">
               Suas tarefas, projetos e time — em um lugar só.
             </p>
           </div>
