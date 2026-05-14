@@ -7,5 +7,3 @@ dist-ssr
 .DS_Store
 *.log
 .vite
-public/icon-192.png
-public/icon-512.png
