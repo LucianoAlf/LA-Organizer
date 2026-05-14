@@ -888,6 +888,8 @@ async function fetchCollaboratorContext(collaborator) {
     schoolEventsRes,
     eventTypesRes,
     pastEventsRes,
+    pastTasksRes,
+    pastHabitLogsRes,
   ] = await Promise.all([
     supabase.from('collaborator_profiles').select('*').eq('collaborator_id', id).maybeSingle(),
     supabase.from('collaborator_memory')
@@ -1018,6 +1020,19 @@ async function fetchCollaboratorContext(collaborator) {
       .lt('start_at', `${today}T00:00:00-03:00`)
       .neq('status', 'cancelled')
       .order('start_at', { ascending: false }).limit(15),
+    // Tarefas concluídas nos últimos 7 dias.
+    supabase.from('tasks')
+      .select('id, title, context, completed_at, due_date')
+      .eq('assigned_to', id)
+      .eq('status', 'done')
+      .gte('completed_at', `${past7days}T00:00:00-03:00`)
+      .order('completed_at', { ascending: false }).limit(20),
+    // Hábitos dos últimos 7 dias.
+    supabase.from('habit_logs')
+      .select('log_date, is_completed, habits(name, icon)')
+      .eq('collaborator_id', id)
+      .gte('log_date', past7days)
+      .order('log_date', { ascending: false }).limit(30),
   ]);
 
   let activeProjects = [];
@@ -1054,6 +1069,8 @@ async function fetchCollaboratorContext(collaborator) {
     habits: habitsRes.data || [],
     todayEvents: eventsRes.data || [],
     pastEvents: pastEventsRes.data || [],
+    pastTasks: pastTasksRes.data || [],
+    pastHabitLogs: pastHabitLogsRes.data || [],
     delegatedTasks: delegatedRes.data || [],
     todayChecklists: todayChecklistsRes.data || [],
     teamAdherence: teamAdherenceRes.data || [],
@@ -1743,23 +1760,38 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   // briefing_diario / daily_briefing: mantém todos os events (sem filtro).
   const baseCtx = buildContext(collaborator, ctx.memories, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx, ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || [], ctx.teamTodayChecklists || [], ctx.teamExpectedTemplates || [], ctx.schoolEvents || [], ctx.eventTypes || []);
 
-  // Histórico de compromissos dos últimos 7 dias (para responder sobre o passado)
+  // Histórico completo dos últimos 7 dias: eventos, tarefas concluídas, hábitos
   let pastEventsBlock = '';
   const pastEvts = ctx.pastEvents || [];
-  if (pastEvts.length > 0) {
-    const fmtDay = (iso) => {
-      const d = new Date(iso);
-      return new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', weekday: 'short', day: '2-digit', month: '2-digit' }).format(d);
-    };
-    const fmtHr = (iso) => {
-      const d = new Date(iso);
-      return new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', hour12: false }).format(d);
-    };
-    const lines = ['\n\n**📅 Histórico de compromissos (últimos 7 dias):**'];
-    pastEvts.forEach(e => {
-      const mod = e.modality === 'online' ? '💻' : '🏢';
-      lines.push(`• ${fmtDay(e.start_at)} ${fmtHr(e.start_at)} ${mod} ${e.title}`);
-    });
+  const pastTasks = ctx.pastTasks || [];
+  const pastHabitLogs = ctx.pastHabitLogs || [];
+  if (pastEvts.length > 0 || pastTasks.length > 0 || pastHabitLogs.length > 0) {
+    const fmtDay = (iso) => new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', weekday: 'short', day: '2-digit', month: '2-digit' }).format(new Date(iso));
+    const fmtHr  = (iso) => new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(iso));
+    const lines = ['\n\n**📅 Histórico — últimos 7 dias:**'];
+    if (pastEvts.length) {
+      lines.push('\n_Compromissos:_');
+      pastEvts.forEach(e => {
+        const mod = e.modality === 'online' ? '💻' : '🏢';
+        lines.push(`• ${fmtDay(e.start_at)} ${fmtHr(e.start_at)} ${mod} ${e.title}`);
+      });
+    }
+    if (pastTasks.length) {
+      lines.push('\n_Tarefas concluídas:_');
+      pastTasks.forEach(t => {
+        const day = t.completed_at ? fmtDay(t.completed_at) : (t.due_date || '');
+        lines.push(`• ${day} ✅ ${t.title}`);
+      });
+    }
+    if (pastHabitLogs.length) {
+      lines.push('\n_Hábitos:_');
+      pastHabitLogs.forEach(h => {
+        const icon = h.habits?.icon || '🔁';
+        const name = h.habits?.name || '';
+        const done = h.is_completed ? '✓' : '✗';
+        lines.push(`• ${h.log_date} ${icon} ${name} ${done}`);
+      });
+    }
     pastEventsBlock = lines.join('\n');
   }
 
