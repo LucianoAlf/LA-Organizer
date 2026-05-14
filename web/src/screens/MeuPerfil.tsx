@@ -20,8 +20,8 @@ export function MeuPerfil() {
 
   useEffect(() => {
     if (collaborator) {
-      setPreferredName((collaborator as any).preferred_name ?? collaborator.full_name ?? '');
-      setBio((collaborator as any).bio ?? '');
+      setPreferredName(collaborator.preferred_name ?? collaborator.full_name ?? '');
+      setBio(collaborator.bio ?? '');
     }
   }, [collaborator]);
 

@@ -163,7 +163,9 @@ function fmtTime(t) {
 
 function nameFor(collab) {
   if (!collab) return 'amigo';
-  // Special case: full_name "Luciano Alf" → "Alf" (until we add a nickname column).
+  // preferred_name set by user in MeuPerfil takes top priority.
+  if (collab.preferred_name) return collab.preferred_name.trim().split(/\s+/)[0];
+  // Special case: full_name "Luciano Alf" → "Alf".
   if (collab.full_name === 'Luciano Alf') return 'Alf';
   return (collab.full_name || '').split(' ')[0] || 'amigo';
 }
@@ -228,6 +230,9 @@ function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habi
   lines.push('');
 
   lines.push(`**Pessoa:** ${nickname} (${collab.full_name}) — ${collab.role || '—'}${fn}`);
+  if (collab.bio) {
+    lines.push(`**Bio (${nickname} escreveu sobre si mesmo — leia com atenção):** ${collab.bio}`);
+  }
   lines.push(`**Onboarding:** ${collab.onboarding_completed ? 'COMPLETO' : '⚠️ ONBOARDING ATIVO — fluxo de 5 perguntas'}`);
 
   if (lastMsgAge !== null && lastMsgAge !== undefined) {

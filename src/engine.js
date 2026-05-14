@@ -2360,7 +2360,8 @@ async function findCollaboratorByName(name) {
     // Hotfix pós-Sprint20: incluir onboarding_completed + unit + pedagogical_role
     // para que helpers downstream (buildSelfIntroPrefix, gates, findAssistantByUnit)
     // possam ler esses campos sem precisar fazer query adicional.
-    .select('id, full_name, phone, is_active, role, unit, onboarding_completed, pedagogical_role')
+    // Sprint 23.6: bio + preferred_name injetados no system prompt via buildContext.
+    .select('id, full_name, phone, is_active, role, unit, onboarding_completed, pedagogical_role, bio, preferred_name')
     .eq('is_active', true);
   if (!data || !data.length) return null;
   const first = norm.split(/\s+/)[0];
@@ -2379,7 +2380,8 @@ async function findCollaboratorByPhone(phone) {
   const { data } = await supabase
     .from('collaborators')
     // Hotfix pós-Sprint20: idem findCollaboratorByName — campos completos.
-    .select('id, full_name, phone, is_active, role, unit, onboarding_completed, pedagogical_role')
+    // Sprint 23.6: bio + preferred_name para system prompt.
+    .select('id, full_name, phone, is_active, role, unit, onboarding_completed, pedagogical_role, bio, preferred_name')
     .eq('phone', cleaned)
     .maybeSingle();
   return data;

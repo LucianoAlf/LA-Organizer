@@ -15,6 +15,8 @@ export interface Collaborator {
   is_active: boolean;
   onboarding_completed: boolean;
   avatar_url?: string | null;
+  bio?: string | null;
+  preferred_name?: string | null;
 }
 
 export type TaskStatus = 'pending' | 'in_progress' | 'done' | 'cancelled' | 'overdue' | 'delegated' | 'awaiting_confirmation';
