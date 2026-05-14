@@ -26,6 +26,9 @@ import { OperacaoDetalhe } from './screens/OperacaoDetalhe';
 import { AderenciaChecklists } from './screens/AderenciaChecklists';
 import { AderenciaChecklistDetalhe } from './screens/AderenciaChecklistDetalhe';
 import { MeuPerfil } from './screens/MeuPerfil';
+import { GestaoEquipe } from './screens/GestaoEquipe';
+import { GestaoEquipeNovo } from './screens/GestaoEquipeNovo';
+import { GestaoEquipeDetalhe } from './screens/GestaoEquipeDetalhe';
 
 export default function App() {
   return (
@@ -52,6 +55,13 @@ export default function App() {
           <Route path="mais/perfil" element={<MeuPerfil />} />
           <Route path="mais/agenda-escolar" element={<AgendaEscolar />} />
           <Route path="mais/eventos/:id" element={<EventoDetalhe />} />
+
+          {/* Sprint 23.6 — Gestão de equipe (admin panel) */}
+          <Route element={<ProtectedRoute requireRoles={['director', 'coordinator', 'manager']} />}>
+            <Route path="mais/gestao-equipe" element={<GestaoEquipe />} />
+            <Route path="mais/gestao-equipe/novo" element={<GestaoEquipeNovo />} />
+            <Route path="mais/gestao-equipe/:id" element={<GestaoEquipeDetalhe />} />
+          </Route>
 
           <Route element={<ProtectedRoute requireRoles={['director', 'coordinator']} />}>
             <Route path="mais/comunicados" element={<Comunicados />} />
