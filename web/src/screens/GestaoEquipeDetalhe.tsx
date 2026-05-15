@@ -12,7 +12,7 @@ const UNIT_OPTIONS = [
   { value: 'barra',        label: 'Barra' },
   { value: 'recreio',      label: 'Recreio' },
   { value: 'campo_grande', label: 'Campo Grande' },
-  { value: 'geral',        label: 'Geral' },
+  { value: 'all',          label: 'Geral' },
 ] as const;
 
 type CollabFull = {
