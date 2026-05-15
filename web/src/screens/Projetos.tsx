@@ -50,6 +50,7 @@ interface PendingProject {
   created_at: string;
   justification?: string | null;
   creator: { id: string; full_name: string; supervisor_id: string | null } | null;
+  supervisorName?: string | null;
 }
 
 async function fetchPendingApprovals(collabId: string, isDirector: boolean): Promise<PendingProject[]> {
@@ -60,11 +61,28 @@ async function fetchPendingApprovals(collabId: string, isDirector: boolean): Pro
     .eq('requires_approval', true);
   if (error) throw error;
   const rows = (data ?? []) as unknown as PendingProject[];
+
   // Filtro client-side: só mostra se o user é supervisor do criador OU é director
-  return rows.filter(p => {
+  const filtered = rows.filter(p => {
     if (isDirector) return true;
     return p.creator?.supervisor_id === collabId;
   });
+
+  // Resolve nomes dos supervisores para exibir na Seção 2
+  const supervisorIds = [...new Set(filtered.map(p => p.creator?.supervisor_id).filter(Boolean))] as string[];
+  const supervisorsMap = new Map<string, string>();
+  if (supervisorIds.length > 0) {
+    const { data: sups } = await supabase
+      .from('collaborators')
+      .select('id, full_name')
+      .in('id', supervisorIds);
+    for (const s of (sups ?? [])) supervisorsMap.set(s.id, s.full_name);
+  }
+
+  return filtered.map(p => ({
+    ...p,
+    supervisorName: p.creator?.supervisor_id ? (supervisorsMap.get(p.creator.supervisor_id) ?? null) : null,
+  }));
 }
 
 function timeAgo(dateStr: string): string {
@@ -125,75 +143,140 @@ function PendingApprovalsBanner({
     }
   }
 
-  if (isLoading || pending.length === 0) return null;
+  const mineToApprove = pending.filter(p => p.creator?.supervisor_id === collabId);
+  const othersWaiting = pending.filter(p => p.creator?.supervisor_id !== collabId && isDirector);
+
+  if (isLoading || (mineToApprove.length === 0 && othersWaiting.length === 0)) return null;
+
+  function PendingCard({
+    project,
+    variant,
+    extraInfo,
+  }: {
+    project: PendingProject;
+    variant: 'primary' | 'secondary';
+    extraInfo?: string | null;
+  }) {
+    const isPrimary = variant === 'primary';
+    return (
+      <Card
+        variant="outline"
+        padded={false}
+        className={
+          isPrimary
+            ? 'border-amber-400/30 bg-amber-400/5 overflow-hidden'
+            : 'border-zinc-600/30 bg-zinc-800/30 overflow-hidden'
+        }
+      >
+        <div className="p-md space-y-2">
+          {/* Header: tag + tempo */}
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <CategoryTag project={project} label={project.category} />
+            <span className="text-[11px] text-fg-muted">{timeAgo(project.created_at)}</span>
+          </div>
+
+          {/* Nome do projeto */}
+          <p className="text-body-md font-semibold text-fg leading-snug">{project.name}</p>
+
+          {/* Criador */}
+          {project.creator && (
+            <p className="text-body-sm text-fg-muted">
+              Por <span className="text-fg">{project.creator.full_name}</span>
+            </p>
+          )}
+
+          {/* Supervisor real (Seção 2) */}
+          {extraInfo && (
+            <p className="text-[11px] text-zinc-400">
+              → {extraInfo}
+            </p>
+          )}
+
+          {/* Justificativa (se houver) */}
+          {project.justification && (
+            <p className="text-[11px] text-fg-muted line-clamp-2 italic">
+              "{project.justification}"
+            </p>
+          )}
+
+          {/* Ações */}
+          <div className="flex gap-2 pt-1">
+            <Button
+              variant="primary"
+              size="sm"
+              leadingIcon={<CheckCircle size={14} />}
+              loading={approvingId === project.id}
+              disabled={approvingId !== null}
+              onClick={() => handleApprove(project)}
+              className={
+                isPrimary
+                  ? 'bg-green-600 hover:bg-green-500 active:bg-green-700 text-white'
+                  : 'bg-zinc-700 hover:bg-zinc-600 active:bg-zinc-800 text-zinc-100'
+              }
+            >
+              Aprovar
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => navigate(`/projetos/${project.id}`)}
+              disabled={approvingId !== null}
+            >
+              Abrir
+            </Button>
+          </div>
+        </div>
+      </Card>
+    );
+  }
 
   return (
-    <section aria-label="Projetos aguardando aprovação">
-      <div className="flex items-center gap-2 mb-3">
-        <Clock size={16} className="text-amber-400 shrink-0" />
-        <h3 className="text-body-sm font-semibold text-amber-400">
-          Aguardando sua aprovação
-        </h3>
-        <span className="ml-1 inline-flex items-center justify-center h-5 min-w-[20px] px-1.5 rounded-full bg-amber-400/20 text-amber-400 text-[11px] font-semibold">
-          {pending.length}
-        </span>
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-md">
-        {pending.map(project => (
-          <Card key={project.id} variant="outline" padded={false}
-            className="border-amber-400/30 bg-amber-400/5 overflow-hidden"
-          >
-            <div className="p-md space-y-2">
-              {/* Header: tag + tempo */}
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <CategoryTag project={project} label={project.category} />
-                <span className="text-[11px] text-fg-muted">{timeAgo(project.created_at)}</span>
-              </div>
+    <div className="space-y-4" aria-label="Projetos aguardando aprovação">
+      {/* Seção 1 — Minhas aprovações (âmbar, primária) */}
+      {mineToApprove.length > 0 && (
+        <section>
+          <div className="flex items-center gap-2 mb-3">
+            <Clock size={16} className="text-amber-400 shrink-0" />
+            <h3 className="text-body-sm font-semibold text-amber-400">
+              ⏳ Aguardando sua aprovação
+            </h3>
+            <span className="ml-1 inline-flex items-center justify-center h-5 min-w-[20px] px-1.5 rounded-full bg-amber-400/20 text-amber-400 text-[11px] font-semibold">
+              {mineToApprove.length}
+            </span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-md">
+            {mineToApprove.map(project => (
+              <PendingCard key={project.id} project={project} variant="primary" />
+            ))}
+          </div>
+        </section>
+      )}
 
-              {/* Nome do projeto */}
-              <p className="text-body-md font-semibold text-fg leading-snug">{project.name}</p>
-
-              {/* Criador */}
-              {project.creator && (
-                <p className="text-body-sm text-fg-muted">
-                  Por <span className="text-fg">{project.creator.full_name}</span>
-                </p>
-              )}
-
-              {/* Justificativa (se houver) */}
-              {project.justification && (
-                <p className="text-[11px] text-fg-muted line-clamp-2 italic">
-                  "{project.justification}"
-                </p>
-              )}
-
-              {/* Ações */}
-              <div className="flex gap-2 pt-1">
-                <Button
-                  variant="primary"
-                  size="sm"
-                  leadingIcon={<CheckCircle size={14} />}
-                  loading={approvingId === project.id}
-                  disabled={approvingId !== null}
-                  onClick={() => handleApprove(project)}
-                  className="bg-green-600 hover:bg-green-500 active:bg-green-700 text-white"
-                >
-                  Aprovar
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => navigate(`/projetos/${project.id}`)}
-                  disabled={approvingId !== null}
-                >
-                  Abrir
-                </Button>
-              </div>
-            </div>
-          </Card>
-        ))}
-      </div>
-    </section>
+      {/* Seção 2 — Outras aprovações (cinza neutra, só directors) */}
+      {othersWaiting.length > 0 && (
+        <section className="opacity-90">
+          <div className="flex items-center gap-2 mb-3">
+            <Clock size={14} className="text-zinc-400 shrink-0" />
+            <h3 className="text-body-sm font-medium text-zinc-400">
+              👀 Outras aprovações pendentes
+            </h3>
+            <span className="ml-1 inline-flex items-center justify-center h-5 min-w-[20px] px-1.5 rounded-full bg-zinc-700/50 text-zinc-400 text-[11px] font-semibold">
+              {othersWaiting.length}
+            </span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-md">
+            {othersWaiting.map(project => (
+              <PendingCard
+                key={project.id}
+                project={project}
+                variant="secondary"
+                extraInfo={project.supervisorName ? `Aguarda: ${project.supervisorName}` : null}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+    </div>
   );
 }
 
