@@ -4633,7 +4633,8 @@ async function processMessage(phone, text, raw = {}) {
       const lines = openRequests.map(r => {
         const req = requesterMap[r.requester_id];
         const reqName = req ? ((req.full_name || '').split(' ')[0] || 'alguém') : 'alguém';
-        const preview = r.message_body.slice(0, 60) + (r.message_body.length > 60 ? '...' : '');
+        const body = String(r.message_body || '');
+        const preview = body.slice(0, 60) + (body.length > 60 ? '...' : '');
         const ago = Math.round((Date.now() - new Date(r.created_at).getTime()) / 60000);
         const agoStr = ago < 60 ? `${ago}min atrás` : `${Math.round(ago / 60)}h atrás`;
         return `- De: ${reqName} | ID: ${r.id} | "${preview}" | ${agoStr}`;
