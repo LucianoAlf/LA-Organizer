@@ -8,6 +8,7 @@ const whatsapp = require('./services/whatsapp');
 const metricsService = require('./services/metrics');
 const ai = require('./ai/provider');
 const { buildSystemPrompt, formatMessages } = require('./prompts/system');
+const { safeIsoDate, safeDate } = require('./utils/dates');
 const supabase = require('./supabase/client');
 const OpenAI = require('openai');
 const openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -948,8 +949,12 @@ async function buildEventTaskKit(eventId, eventDate, eventType, unit, createdBy)
 
   // remind_at = event_date às 09h BRT do dia ANTERIOR (T-1)
   // event_date é YYYY-MM-DD; 09h BRT = 12h UTC; subtrair 24h = dia anterior 12h UTC
-  const eventDayUtc = new Date(eventDate + 'T12:00:00Z').getTime();
-  const remindAtIso = new Date(eventDayUtc - 24 * 60 * 60 * 1000).toISOString();
+  const eventDayUtc = safeDate(eventDate ? eventDate + 'T12:00:00Z' : null);
+  if (!eventDayUtc) {
+    console.error(`[institutional_event_kit] eventDate inválido: ${JSON.stringify(eventDate)} — abortando criação de tasks`);
+    return { ok: false, error: 'invalid_event_date' };
+  }
+  const remindAtIso = safeIsoDate(eventDayUtc.getTime() - 24 * 60 * 60 * 1000);
 
   const tasks = kit.map(item => ({
     title: item.title,
@@ -1892,7 +1897,10 @@ async function applyEventActions(collaborator, events) {
             for (const m of e.reminders_minutes_before) {
               const mins = Number(m);
               if (!Number.isFinite(mins) || mins < 0 || mins > 60 * 24 * 30) continue;
-              const t = new Date(new Date(e.start_at).getTime() - mins * 60_000).toISOString();
+              const startD = safeDate(e.start_at);
+              if (!startD) { console.warn(`[Event] reminder skip: start_at inválido ${JSON.stringify(e.start_at)}`); continue; }
+              const t = safeIsoDate(startD.getTime() - mins * 60_000);
+              if (!t) continue;
               reminderRows.push({ event_id: eventId, remind_at: t });
             }
           }
@@ -4292,10 +4300,9 @@ async function detectDuplicateSemanticEvent(collab, candidate) {
   try {
     if (!candidate.title) return { probable: [], possible: [] };
     const candDate = candidate.start_at ? candidate.start_at.slice(0, 10) : null;
-    const windowStart = candDate
-      ? new Date(new Date(candDate).getTime() - 48 * 3600_000).toISOString() : null;
-    const windowEnd = candDate
-      ? new Date(new Date(candDate).getTime() + 48 * 3600_000).toISOString() : null;
+    const candAnchor = safeDate(candDate);
+    const windowStart = candAnchor ? safeIsoDate(candAnchor.getTime() - 48 * 3600_000) : null;
+    const windowEnd   = candAnchor ? safeIsoDate(candAnchor.getTime() + 48 * 3600_000) : null;
     let query = supabase
       .from('events')
       .select('id, title, start_at, end_at, category, location_text, status, created_at')

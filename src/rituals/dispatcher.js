@@ -44,6 +44,8 @@ const WEEKLY_RETRO_DEFAULT_TIME = '18:00';      // Sunday only
 const MEMORY_CONSOLIDATION_TIME = '22:00';      // Sunday only
 const PENDING_APPROVAL_REMINDER_TIMES = ['09:00', '15:00'];  // 2x/dia
 const DAILY_DREAM_TIME = '03:00';               // Every day — "sonhar": consolidar memórias das últimas 24h
+const HEALTH_CHECK_TIME = '05:00';              // Every day — auditoria do sistema (após Dream das 3h)
+const HEALTH_REPORT_TIME = '07:00';             // Every day — envia relatório do health check pro director (Luciano)
 const COORDINATOR_ROLES = ['coordinator', 'director'];
 
 // Default time for briefing_pessoal (until user_preferences gains a personal_briefing_time column).
@@ -1591,7 +1593,7 @@ async function run(opts = {}) {
   // Modo forçado: ignora time check e dispara o ritual pedido pra cada collab filtrado.
   // Exceções: 'aderencia'/'aderencia_diaria' são determinísticos (sem LLM/sendRitual);
   // caem no gancho condicional adiante e são tratados por checkAdherenceNudge.
-  if (opts.force && opts.force !== 'aderencia' && opts.force !== 'aderencia_diaria' && opts.force !== 'consolidacao_memoria' && opts.force !== 'dream' && opts.force !== 'pending_approvals') {
+  if (opts.force && opts.force !== 'aderencia' && opts.force !== 'aderencia_diaria' && opts.force !== 'consolidacao_memoria' && opts.force !== 'dream' && opts.force !== 'pending_approvals' && opts.force !== 'healthcheck' && opts.force !== 'health_report') {
     const ritualType = RITUAL_BY_DIRECTIVE[opts.force];
     if (!ritualType) {
       console.error(`[Dispatcher] force inválido: ${opts.force}`);
@@ -1704,6 +1706,26 @@ async function run(opts = {}) {
       }
     } catch (err) {
       console.error('[Dispatcher] dream-consolidation erro:', err.message);
+    }
+  }
+
+  // Auditoria do sistema (health check) — 5h BRT, depois do Dream das 3h.
+  if (opts.force === 'healthcheck' || timeToSlot(HEALTH_CHECK_TIME) === slotNow) {
+    try {
+      const { runHealthCheck } = require('./health-check');
+      const result = await runHealthCheck();
+      console.log(`[Dispatcher] health-check: ${result.summary.ok}/${result.summary.total} ok, ${result.summary.warning} warn, ${result.summary.error} err, ${result.summary.fixed} fixed`);
+    } catch (err) {
+      console.error('[Dispatcher] health-check erro:', err.message);
+    }
+  }
+
+  // Relatório do health check pro director (Luciano) — 7h BRT.
+  if (opts.force === 'health_report' || timeToSlot(HEALTH_REPORT_TIME) === slotNow) {
+    try {
+      await sendHealthReport();
+    } catch (err) {
+      console.error('[Dispatcher] health-report erro:', err.message);
     }
   }
 
@@ -2744,6 +2766,78 @@ function parseArgs(argv) {
     else if (a.startsWith('--')) opts[a.slice(2)] = true;
   }
   return opts;
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Health check report — envia o último run pro director (Luciano).
+// Chamado pelo dispatcher às 7h BRT. Idempotente: se não houver run
+// nas últimas 24h, dispara primeiro um runHealthCheck() inline.
+// ─────────────────────────────────────────────────────────────────
+function fmtBrtDayMonth() {
+  const parts = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit',
+  }).formatToParts(new Date());
+  const d = parts.find(p => p.type === 'day').value;
+  const m = parts.find(p => p.type === 'month').value;
+  return `${d}/${m}`;
+}
+
+function statusEmoji(s) {
+  return s === 'ok' ? '✅' : s === 'fixed' ? '🛠️' : s === 'warning' ? '⚠️' : '🔴';
+}
+
+function formatHealthReport(run) {
+  const head = `🔍 *Auditoria TOM — ${fmtBrtDayMonth()}*`;
+  const { summary, checks } = run;
+  // Caminho feliz: tudo verde
+  if (summary.warning === 0 && summary.error === 0 && summary.fixed === 0) {
+    return `${head}\n\n✅ Sistema saudável — ${summary.ok}/${summary.total} checks OK`;
+  }
+  const lines = checks
+    .filter(c => c.status !== 'ok')
+    .map(c => `${statusEmoji(c.status)} ${c.detail}`);
+  const okCount = summary.ok > 0 ? `\n\n✅ ${summary.ok}/${summary.total} checks OK` : '';
+  let footer = '';
+  if (summary.error > 0) footer = `\n\n_Precisa de atenção: ${summary.error} check(s) com erro._`;
+  else if (summary.warning > 0) footer = `\n\n_${summary.warning} alerta(s) — sem ação obrigatória._`;
+  return `${head}\n\n${lines.join('\n')}${okCount}${footer}`;
+}
+
+async function sendHealthReport() {
+  // 1. Pega último run (últimas 24h)
+  const cutoff = new Date(Date.now() - 24 * 3600_000).toISOString();
+  let { data: runs, error } = await supabase
+    .from('health_check_runs')
+    .select('ran_at, summary, checks, auto_fixes_applied')
+    .gte('ran_at', cutoff)
+    .order('ran_at', { ascending: false })
+    .limit(1);
+  if (error) throw error;
+  let run = runs && runs[0];
+  // Fallback: se não rodou hoje, dispara agora.
+  if (!run) {
+    console.log('[health-report] sem run nas últimas 24h — disparando inline');
+    const { runHealthCheck } = require('./health-check');
+    run = await runHealthCheck();
+  }
+  // 2. Acha o director
+  const { data: directors, error: dErr } = await supabase
+    .from('collaborators')
+    .select('id, full_name, phone')
+    .eq('role', 'director')
+    .eq('is_active', true)
+    .limit(1);
+  if (dErr) throw dErr;
+  const director = directors && directors[0];
+  if (!director || !director.phone) {
+    console.warn('[health-report] director sem phone — relatório não enviado');
+    return;
+  }
+  // 3. Formata + envia
+  const msg = formatHealthReport(run);
+  const whatsapp = require('../services/whatsapp');
+  await whatsapp.sendMessage(director.phone, msg);
+  console.log(`[health-report] enviado pra ${director.full_name} (${String(director.phone).slice(-4)})`);
 }
 
 if (require.main === module) {

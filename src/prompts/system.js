@@ -2118,6 +2118,27 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     }
   }
 
+  // Health check — injetado quando director pergunta sobre saúde do sistema.
+  // Skill `auditoria-sistema` consome o bloco [HEALTH_CHECK_LAST_RUN].
+  let healthCheckBlock = '';
+  const _healthKeywordRe = /\b(sa[úu]de\s+do\s+sistema|auditoria|status\s+do\s+sistema|status\s+do\s+tom|health\s*check|algum\s+(?:problema|erro)|erros?\s+recorrentes?|como\s+t[áa]\s+o\s+tom)\b/i;
+  if (collaborator && collaborator.role === 'director' && _healthKeywordRe.test(lastUserMessage)) {
+    try {
+      const supabaseClient = require('../supabase/client');
+      const { data: runs } = await supabaseClient
+        .from('health_check_runs')
+        .select('ran_at, summary, checks, auto_fixes_applied')
+        .order('ran_at', { ascending: false })
+        .limit(1);
+      if (runs && runs[0]) {
+        const r = runs[0];
+        healthCheckBlock = `\n\n---\n\n[HEALTH_CHECK_LAST_RUN]\nran_at: ${r.ran_at}\nsummary: ${JSON.stringify(r.summary)}\nchecks: ${JSON.stringify(r.checks)}\nauto_fixes_applied: ${JSON.stringify(r.auto_fixes_applied || [])}\n[/HEALTH_CHECK_LAST_RUN]\n`;
+      }
+    } catch (err) {
+      console.warn('[Prompt] healthcheck inject err:', err.message);
+    }
+  }
+
   // Sprint 12 Bloco D: skill priorizacao-inteligente é ANEXADA quando o fluxo
   // principal é checklist-tarefas, criar-compromisso ou cadastro-projeto-5w2h.
   // Ela é "skill auxiliar" — não substitui, completa: pra cada criação, o motor
