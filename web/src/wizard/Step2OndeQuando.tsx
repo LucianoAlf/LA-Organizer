@@ -1,6 +1,7 @@
 // Sprint 22.24 (refactor) — extraido de screens/NovoProjeto.tsx.
 // Passo 2: local + datas ("Onde e quando acontece").
 
+import { CustomSelect } from '../components/CustomSelect';
 import { Field } from '../components/Field';
 import { PROJECT_LOCATION_LABELS } from '../lib/projectLabels';
 import { todayISO } from '../utils/wizardDate';
@@ -23,20 +24,16 @@ export function Step2OndeQuando({ data, update }: Props) {
         </p>
       </header>
       <Field label="📍 Onde vai rolar?">
-        <select
-          value={data.location}
-          onChange={(e) => update('location', e.target.value as ProjectLocation)}
-          className={wizardInputClass}
-        >
-          <option value="">Selecione…</option>
-          {(Object.entries(PROJECT_LOCATION_LABELS) as [ProjectLocation, string][]).map(
-            ([k, lbl]) => (
-              <option key={k} value={k}>
-                {lbl}
-              </option>
+        <CustomSelect
+          value={data.location ?? ''}
+          onChange={(v) => update('location', v as ProjectLocation)}
+          options={[
+            { value: '', label: 'Selecione…' },
+            ...(Object.entries(PROJECT_LOCATION_LABELS) as [ProjectLocation, string][]).map(
+              ([k, lbl]) => ({ value: k, label: lbl }),
             ),
-          )}
-        </select>
+          ]}
+        />
       </Field>
       <Field label="🗓️ Quando começa">
         <input

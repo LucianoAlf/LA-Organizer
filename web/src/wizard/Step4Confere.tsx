@@ -2,6 +2,7 @@
 // Passo 4: categoria + resumo + aviso de aprovacao ("Confere se ta certo").
 
 import { Card } from '../components/Card';
+import { CustomSelect } from '../components/CustomSelect';
 import { Field } from '../components/Field';
 import { SummaryBlock, SummaryInline } from '../components/Summary';
 import {
@@ -9,7 +10,6 @@ import {
   PROJECT_LOCATION_LABELS,
 } from '../lib/projectLabels';
 import { formatBR } from '../utils/wizardDate';
-import { wizardInputClass } from './wizardTypes';
 import type { ProjectCategory } from '../types';
 import type { CollabLite, WizardData } from './wizardTypes';
 
@@ -34,19 +34,13 @@ export function Step4Confere({ data, update, collabsAvailable, isCoordOrDir }: P
         label="🏷️ Categoria"
         sub="Ajuda na visualização e nos relatórios. Dá pra mudar depois."
       >
-        <select
+        <CustomSelect
           value={data.category}
-          onChange={(e) => update('category', e.target.value as ProjectCategory)}
-          className={wizardInputClass}
-        >
-          {(Object.entries(PROJECT_CATEGORY_LABELS) as [ProjectCategory, string][]).map(
-            ([k, lbl]) => (
-              <option key={k} value={k}>
-                {lbl}
-              </option>
-            ),
+          onChange={(v) => update('category', v as ProjectCategory)}
+          options={(Object.entries(PROJECT_CATEGORY_LABELS) as [ProjectCategory, string][]).map(
+            ([k, lbl]) => ({ value: k, label: lbl }),
           )}
-        </select>
+        />
       </Field>
 
       <Card padded variant="outline">
