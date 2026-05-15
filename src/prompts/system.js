@@ -174,7 +174,7 @@ function nameFor(collab) {
 // Sprint 22.36 Fatia 2 — Adicionado: delegatedTasks (tarefas que ESTE user atribuiu
 // pra outros), todayChecklists (checklists operacionais de hoje com %).
 // Antes ficavam fora do contexto e TOM dizia "não tenho esse dato" no relatório.
-function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habits, events, delegatedTasks, todayChecklists, teamAdherence, personalChecklists, teamTodayChecklists, teamExpectedTemplates, schoolEvents = [], eventTypes = [], doneFutureTasks = [], monthlyCtxBlock = null) {
+function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habits, events, delegatedTasks, todayChecklists, teamAdherence, personalChecklists, teamTodayChecklists, teamExpectedTemplates, schoolEvents = [], eventTypes = [], doneFutureTasks = [], monthlyCtxBlock = null, orgChart = []) {
   const nickname = nameFor(collab);
   const lines = ['# 📌 CONTEXTO DESTA INTERAÇÃO', ''];
   const { ROLE_LABELS: ROLE_LABELS_PT } = require('../lib/roles');
@@ -425,6 +425,20 @@ function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habi
         lines.push(`   ↳ obs: ${String(i.notes).slice(0, 80)}`);
       });
     });
+  }
+
+  // Hierarquia explícita — só renderiza quando há colaboradores com manager_id configurado.
+  if (orgChart && orgChart.length) {
+    const withManager = orgChart.filter(c => c.manager);
+    if (withManager.length > 0) {
+      lines.push('', '**Hierarquia da equipe:**');
+      for (const c of withManager) {
+        const firstName = (c.full_name || '').split(' ')[0];
+        const managerFirst = (c.manager?.full_name || '—').split(' ')[0];
+        const unit = c.unit || '—';
+        lines.push(`• ${firstName} (${unit}) → ${managerFirst}`);
+      }
+    }
   }
 
   // Sprint 22.37 — ADERÊNCIA DA EQUIPE (semana atual) pra liderança operacional.
@@ -977,6 +991,7 @@ async function fetchCollaboratorContext(collaborator) {
     pastTasksRes,
     pastHabitLogsRes,
     pastDelegatedRes,
+    orgChartRes,
   ] = await Promise.all([
     supabase.from('collaborator_profiles').select('*').eq('collaborator_id', id).maybeSingle(),
     supabase.from('collaborator_memory')
@@ -1128,6 +1143,13 @@ async function fetchCollaboratorContext(collaborator) {
       .eq('status', 'done')
       .gte('completed_at', `${past7days}T00:00:00-03:00`)
       .order('completed_at', { ascending: false }).limit(15),
+    // Hierarquia explícita — org chart para liderança responder "quem responde pra quem?".
+    isLeadership
+      ? supabase.from('collaborators')
+          .select('id, full_name, unit, role, manager:collaborators!manager_id(id, full_name)')
+          .eq('is_active', true)
+          .order('full_name')
+      : Promise.resolve({ data: [], error: null }),
   ]);
 
   let activeProjects = [];
@@ -1185,6 +1207,7 @@ async function fetchCollaboratorContext(collaborator) {
     pastTasks: pastTasksRes.data || [],
     pastHabitLogs: pastHabitLogsRes.data || [],
     pastDelegated: pastDelegatedRes.data || [],
+    orgChart: orgChartRes.data || [],
     delegatedTasks: delegatedRes.data || [],
     todayChecklists: todayChecklistsRes.data || [],
     teamAdherence: teamAdherenceRes.data || [],
@@ -2007,7 +2030,7 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     eventsForCtx = eventsForCtx.filter(e => e.context === 'work');
   }
   // briefing_diario / daily_briefing: mantém todos os events (sem filtro).
-  const baseCtx = buildContext(collaborator, ctx.memories, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx, ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || [], ctx.teamTodayChecklists || [], ctx.teamExpectedTemplates || [], ctx.schoolEvents || [], ctx.eventTypes || [], ctx.doneFutureTasks || [], monthlyCtxBlock);
+  const baseCtx = buildContext(collaborator, ctx.memories, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx, ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || [], ctx.teamTodayChecklists || [], ctx.teamExpectedTemplates || [], ctx.schoolEvents || [], ctx.eventTypes || [], ctx.doneFutureTasks || [], monthlyCtxBlock, ctx.orgChart || []);
 
   // Histórico completo dos últimos 7 dias — agrupado por dia
   let pastEventsBlock = '';
