@@ -1716,24 +1716,41 @@ async function buildProjectStatusContext(collaborator, lastUserMessage) {
   }
 }
 
+// Extrai Y/M/D em BRT via Intl.DateTimeFormat.formatToParts. Não dá pra
+// re-parsear toLocaleString: Node 20 + ICU 78 retorna "YYYY-MM-DD, h:mm:ss p.m.",
+// formato não-parseável por new Date() → RangeError "Invalid time value".
+function _brtParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(date);
+  return {
+    y: parts.find(p => p.type === 'year').value,
+    m: parts.find(p => p.type === 'month').value,
+    d: parts.find(p => p.type === 'day').value,
+  };
+}
+
 // Retorna YMD (YYYY-MM-DD) de hoje em BRT.
 function brtYmd(offsetDays = 0) {
-  const d = new Date(new Date().toLocaleString('en-CA', { timeZone: 'America/Sao_Paulo' }));
-  d.setDate(d.getDate() + offsetDays);
+  const { y, m, d: dd } = _brtParts();
+  if (offsetDays === 0) return `${y}-${m}-${dd}`;
+  const d = new Date(`${y}-${m}-${dd}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + offsetDays);
   return d.toISOString().slice(0, 10);
 }
 
 // Retorna o primeiro e último dia do mês BRT relativo ao offset de meses.
 function brtMonthRange(monthOffset = 0) {
-  const now = new Date(new Date().toLocaleString('en-CA', { timeZone: 'America/Sao_Paulo' }));
-  const y = now.getFullYear();
-  const m = now.getMonth() + monthOffset;
-  const from = new Date(y, m, 1);
-  const to = new Date(y, m + 1, 0);
+  const { y, m } = _brtParts();
+  const year = parseInt(y, 10);
+  const monthIdx = parseInt(m, 10) - 1 + monthOffset;
+  const from = new Date(Date.UTC(year, monthIdx, 1, 12));
+  const to = new Date(Date.UTC(year, monthIdx + 1, 0, 12));
   return {
     from: from.toISOString().slice(0, 10),
     to: to.toISOString().slice(0, 10),
-    label: from.toLocaleString('pt-BR', { month: 'long', year: 'numeric' }),
+    label: from.toLocaleString('pt-BR', { month: 'long', year: 'numeric', timeZone: 'America/Sao_Paulo' }),
   };
 }
 
