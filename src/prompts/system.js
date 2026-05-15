@@ -292,7 +292,8 @@ function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habi
         timeBit = ` 📅 ${rel}`;
       }
       const overdue = (t.remind_at ? dayFromAny(t.remind_at) : t.due_date) < today ? '🔴 ' : '';
-      lines.push(`${i + 1}. [id=${sid}] ${overdue}${t.title}${timeBit}`);
+      const doneTag = t.status === 'done' ? '✅ ' : '';
+      lines.push(`${i + 1}. [id=${sid}] ${overdue}${doneTag}${t.title}${timeBit}`);
     });
   };
 
@@ -950,10 +951,14 @@ async function fetchCollaboratorContext(collaborator) {
     // Sprint 22.29 (Bucket 6) — sort_position primeiro pra TOM respeitar a
     // ordem manual definida pelo user no PWA (DnD na Hoje). Demais orders
     // viram tiebreak pra tasks sem sort_position definido.
+    // Fix (2026-05-15): inclui tasks done com due_date >= hoje para TOM responder
+    // "o que eu tinha para amanhã?" mesmo após marcar como feito.
+    // Lógica: status != cancelled AND (status != done OR due_date >= hoje)
     supabase.from('tasks')
       .select(TASK_COLS)
       .eq('assigned_to', id).lte('due_date', next7days).eq('context', 'personal')
-      .not('status', 'in', '(done,cancelled)')
+      .neq('status', 'cancelled')
+      .or(`status.neq.done,due_date.gte.${today}`)
       .order('sort_position', { ascending: true, nullsFirst: false })
       .order('remind_at', { ascending: true, nullsFirst: false })
       .order('due_date', { ascending: true })
@@ -961,7 +966,8 @@ async function fetchCollaboratorContext(collaborator) {
     supabase.from('tasks')
       .select(TASK_COLS)
       .eq('assigned_to', id).lte('due_date', next7days).eq('context', 'work')
-      .not('status', 'in', '(done,cancelled)')
+      .neq('status', 'cancelled')
+      .or(`status.neq.done,due_date.gte.${today}`)
       .order('sort_position', { ascending: true, nullsFirst: false })
       .order('remind_at', { ascending: true, nullsFirst: false })
       .order('due_date', { ascending: true })
