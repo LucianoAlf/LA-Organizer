@@ -87,12 +87,28 @@ export function GestaoEquipeDetalhe() {
 
   const saveMutation = useMutation({
     mutationFn: async () => {
+      const newEmail = email.trim().toLowerCase() || null;
+      const emailChanged = newEmail !== (collab?.email ?? null);
+
+      if (emailChanged && newEmail) {
+        const { data, error } = await supabase.functions.invoke('update-collaborator-email', {
+          body: { collaborator_id: id, new_email: newEmail },
+        });
+        if (error || !data?.ok) {
+          throw new Error(
+            data?.error === 'email_already_exists'
+              ? 'E-mail já está em uso por outra conta.'
+              : 'Erro ao atualizar e-mail de login.',
+          );
+        }
+      }
+
       const { error } = await supabase
         .from('collaborators')
         .update({
           full_name:      fullName.trim(),
           phone:          phone.replace(/\D/g, '') || null,
-          email:          email.trim().toLowerCase() || null,
+          email:          newEmail,
           function_title: functionTitle.trim() || null,
           role:           selectedRole,
           unit:           selectedUnit || null,
@@ -213,7 +229,7 @@ export function GestaoEquipeDetalhe() {
             <input type="email" value={email} onChange={e => setEmail(e.target.value)}
               className={inputCls} />
             <p className="text-body-sm text-fg-muted">
-              Alterar e-mail aqui atualiza só o cadastro, não a credencial de login.
+              Alterar e-mail atualiza o cadastro e a credencial de login.
             </p>
           </div>
           <div className="space-y-md">

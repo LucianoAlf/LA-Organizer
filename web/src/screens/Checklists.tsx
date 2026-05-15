@@ -115,8 +115,12 @@ function TrabalhoTab() {
     queryFn: async () => {
       const tQuery = supabase
         .from('op_checklists')
-        .select('*, op_checklist_items ( id, checklist_id, description, sort_order, is_active, updated_by )')
-        .eq('is_active', true)
+        .select(`
+          *,
+          op_checklist_items ( id, checklist_id, description, sort_order, is_active, updated_by ),
+          responsible:collaborators!responsible_id ( id, full_name ),
+          leader:collaborators!leader_id ( id, full_name )
+        `)
         .order('name')
       const { data: tData, error: tErr } = await tQuery
       if (tErr) throw tErr

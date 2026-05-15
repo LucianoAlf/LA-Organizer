@@ -346,38 +346,62 @@ async function dispatchChecklists(now = new Date(), { dry = false, filterPhone =
     template.op_checklist_items = (template.op_checklist_items || [])
       .filter(i => i.is_active !== false);
 
-    // Sprint 22.51 — collab matching: tenta por function_role+shift primeiro.
-    // Se ninguém tiver essa função configurada, fallback pra manager da unidade
-    // (garante que alguém sempre receba enquanto a equipe não estiver cadastrada).
-    let collabQuery = supabase
-      .from('collaborators')
-      .select('id, full_name, phone, unit, function_role, shift')
-      .eq('is_active', true)
-      .not('phone', 'is', null)
-      .eq('function_role', template.function_role)
-      .eq('shift', template.shift);
-    if (template.unit !== 'all') collabQuery = collabQuery.eq('unit', template.unit);
-    if (filterPhone) collabQuery = collabQuery.eq('phone', filterPhone);
-
-    let { data: collabs } = await collabQuery;
-
-    // Fallback: nenhum collab com function_role/shift configurado → envia pra manager da unidade.
-    if (!collabs || collabs.length === 0) {
-      let fallbackQ = supabase
+    // Task 6 — Routing: se template tem responsible_id, usa diretamente; senão fallback por função.
+    let collabs = [];
+    if (template.responsible_id) {
+      let personQ = supabase
+        .from('collaborators')
+        .select('id, full_name, phone')
+        .eq('id', template.responsible_id)
+        .eq('is_active', true)
+        .maybeSingle();
+      if (filterPhone) personQ = personQ.eq('phone', filterPhone);
+      const { data: person } = await personQ;
+      if (!person || !person.phone) {
+        results.push({
+          template_id: template.id,
+          name: template.name,
+          reason: 'responsible_inactive_or_no_phone',
+          would_dispatch: false,
+        });
+        continue;
+      }
+      collabs = [person];
+    } else {
+      // Fallback legado: matching por function_role + shift (Sprint 22.51).
+      // Se ninguém tiver essa função configurada, fallback pra manager da unidade
+      // (garante que alguém sempre receba enquanto a equipe não estiver cadastrada).
+      let collabQuery = supabase
         .from('collaborators')
         .select('id, full_name, phone, unit, function_role, shift')
         .eq('is_active', true)
         .not('phone', 'is', null)
-        .eq('role', 'manager');
-      if (template.unit !== 'all') fallbackQ = fallbackQ.eq('unit', template.unit);
-      if (filterPhone) fallbackQ = fallbackQ.eq('phone', filterPhone);
-      const { data: fallback } = await fallbackQ;
-      if (!fallback || fallback.length === 0) {
-        results.push({ template_id: template.id, reason: 'no_collaborators_or_managers', would_dispatch: false });
-        continue;
+        .eq('function_role', template.function_role)
+        .eq('shift', template.shift);
+      if (template.unit !== 'all') collabQuery = collabQuery.eq('unit', template.unit);
+      if (filterPhone) collabQuery = collabQuery.eq('phone', filterPhone);
+
+      const { data: matched } = await collabQuery;
+      collabs = matched ?? [];
+
+      // Fallback: nenhum collab com function_role/shift configurado → envia pra manager da unidade.
+      if (collabs.length === 0) {
+        let fallbackQ = supabase
+          .from('collaborators')
+          .select('id, full_name, phone, unit, function_role, shift')
+          .eq('is_active', true)
+          .not('phone', 'is', null)
+          .eq('role', 'manager');
+        if (template.unit !== 'all') fallbackQ = fallbackQ.eq('unit', template.unit);
+        if (filterPhone) fallbackQ = fallbackQ.eq('phone', filterPhone);
+        const { data: fallback } = await fallbackQ;
+        if (!fallback || fallback.length === 0) {
+          results.push({ template_id: template.id, reason: 'no_collaborators_or_managers', would_dispatch: false });
+          continue;
+        }
+        collabs = fallback;
+        console.log(`[dispatchChecklists] ${template.name}: sem collabs com function_role=${template.function_role} — fallback ${collabs.length} manager(s)`);
       }
-      collabs = fallback;
-      console.log(`[dispatchChecklists] ${template.name}: sem collabs com function_role=${template.function_role} — fallback ${collabs.length} manager(s)`);
     }
 
     // Unidades com template específico (prioridade unit > 'all')
@@ -912,7 +936,7 @@ async function checkChecklistEscalations(now = new Date()) {
     .from('op_checklist_completions')
     .select(`
       id, reminded_at, collaborator_id, checklist_id,
-      op_checklists(name, unit),
+      op_checklists(name, unit, leader_id),
       collaborator:collaborators!op_checklist_completions_collaborator_id_fkey(
         id, full_name
       )
@@ -932,8 +956,24 @@ async function checkChecklistEscalations(now = new Date()) {
 
   for (const c of needsEscalation) {
     const tplUnit = c.op_checklists?.unit || 'all';
-    const manager = findUnitManager ? await findUnitManager(tplUnit) : null;
-    if (!manager || !manager.phone || manager.id === c.collaborator_id) {
+
+    // Task 6 — leader_id tem prioridade sobre manager da unidade.
+    let escalationTarget = null;
+    if (c.op_checklists?.leader_id) {
+      const { data: leader } = await supabase
+        .from('collaborators')
+        .select('id, full_name, phone')
+        .eq('id', c.op_checklists.leader_id)
+        .eq('is_active', true)
+        .maybeSingle();
+      if (leader?.phone) escalationTarget = leader;
+    }
+    if (!escalationTarget) {
+      // Fallback: manager da unidade (comportamento original).
+      escalationTarget = findUnitManager ? await findUnitManager(tplUnit) : null;
+    }
+
+    if (!escalationTarget || !escalationTarget.phone || escalationTarget.id === c.collaborator_id) {
       await supabase.from('op_checklist_completions')
         .update({ escalated_at: now.toISOString() })
         .eq('id', c.id);
@@ -948,11 +988,11 @@ async function checkChecklistEscalations(now = new Date()) {
       `(faltaram ${stats.pending} ${stats.pending === 1 ? 'item' : 'itens'}) ` +
       `e não respondeu cobrança em 20min.`;
     try {
-      await whatsapp.sendMessage(manager.phone, body);
+      await whatsapp.sendMessage(escalationTarget.phone, body);
       await supabase.from('op_checklist_completions')
         .update({ escalated_at: now.toISOString() })
         .eq('id', c.id);
-      console.log(`[checkChecklistEscalations] escalation sent comp=${c.id.slice(0,8)} → ${manager.full_name}`);
+      console.log(`[checkChecklistEscalations] escalation sent comp=${c.id.slice(0,8)} → ${escalationTarget.full_name}`);
     } catch (e) {
       console.error(`[checkChecklistEscalations] escalation send err comp=${c.id.slice(0,8)}:`, e.message);
     }

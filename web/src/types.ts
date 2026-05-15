@@ -276,6 +276,8 @@ export interface OpChecklistTemplate {
   is_active: boolean
   created_by: string | null
   updated_by: string | null
+  responsible_id: string | null      // FK to collaborators — null means fallback to function_role+shift dispatch
+  leader_id: string | null           // FK to collaborators — null means fallback to unit manager escalation
   created_at?: string
   updated_at?: string
 }
@@ -334,6 +336,9 @@ export interface OpChecklistCompletion {
   op_checklist_item_completions: OpChecklistItemCompletion[]
   /** Sprint 22.36 — items ad-hoc criados pelo colab nessa instância. */
   op_checklist_completion_extra_items?: OpChecklistCompletionExtraItem[]
+  justification: string | null       // Text explanation from leader when responsible didn't complete
+  justified_at: string | null        // ISO timestamp when leader justified
+  justified_by_id: string | null     // FK to collaborators — who justified
 }
 
 /** Sprint 22.37 — agregado de aderência por colab. Vem do RPC get_adherence_by_collab. */

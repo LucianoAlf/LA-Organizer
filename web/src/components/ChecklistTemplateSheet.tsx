@@ -1,8 +1,8 @@
 // web/src/components/ChecklistTemplateSheet.tsx
 // Sprint 22.39 — Refactor pro design system unificado: CustomSelect (não <select>),
 // TimeInput (não <input type="time">), Button (não bg-brand cru). Day chips bg-tom.
-import { useState, useEffect, useMemo } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useState, useEffect } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { DndContext, closestCenter, type DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { supabase } from '../lib/supabase'
@@ -68,7 +68,29 @@ export function ChecklistTemplateSheet({ open, template, onClose }: Props) {
   const [threshold, setThreshold] = useState(80)
   const [items, setItems] = useState<ItemDraft[]>([])
   const [newItemText, setNewItemText] = useState('')
+  const [responsibleId, setResponsibleId] = useState<string>('')
+  const [leaderId, setLeaderId] = useState<string>('')
+  const [isActive, setIsActive] = useState(true)
   const sensors = useSortableSensors()
+
+  const { data: collaborators = [] } = useQuery<{ id: string; full_name: string }[]>({
+    queryKey: ['collaborators-active-minimal'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('collaborators')
+        .select('id, full_name')
+        .eq('is_active', true)
+        .order('full_name')
+      if (error) throw error
+      return data ?? []
+    },
+    staleTime: 5 * 60_000,
+  })
+
+  const collaboratorOptions = [
+    { value: '', label: 'Nenhum' },
+    ...collaborators.map(c => ({ value: c.id, label: c.full_name })),
+  ]
 
   useEffect(() => {
     if (!open) return
@@ -80,6 +102,9 @@ export function ChecklistTemplateSheet({ open, template, onClose }: Props) {
       setDaysOfWeek(template.days_of_week)
       setDispatchTime(template.dispatch_time)
       setThreshold(template.completion_threshold)
+      setResponsibleId(template.responsible_id ?? '')
+      setLeaderId(template.leader_id ?? '')
+      setIsActive(template.is_active)
       const activeItems: ItemDraft[] = (template.op_checklist_items ?? [])
         .filter((i: OpChecklistItem) => i.is_active !== false)
         .sort((a: OpChecklistItem, b: OpChecklistItem) => a.sort_order - b.sort_order)
@@ -100,6 +125,9 @@ export function ChecklistTemplateSheet({ open, template, onClose }: Props) {
       setDispatchTime('08:00')
       setThreshold(80)
       setItems([])
+      setResponsibleId('')
+      setLeaderId('')
+      setIsActive(true)
     }
     setNewItemText('')
   }, [open, template])
@@ -149,7 +177,9 @@ export function ChecklistTemplateSheet({ open, template, onClose }: Props) {
         days_of_week: daysOfWeek,
         dispatch_time: dispatchTime,
         completion_threshold: threshold,
-        is_active: true,
+        is_active: isActive,
+        responsible_id: responsibleId || null,
+        leader_id: leaderId || null,
         updated_by: collaborator!.id,
         ...(template ? { id: template.id } : {}),
       }
@@ -220,6 +250,26 @@ export function ChecklistTemplateSheet({ open, template, onClose }: Props) {
           />
         </div>
 
+        <div>
+          <label className="text-caption text-fg-muted block mb-1">Responsável</label>
+          <CustomSelect
+            value={responsibleId}
+            onChange={setResponsibleId}
+            options={collaboratorOptions}
+          />
+        </div>
+
+        <div>
+          <label className="text-caption text-fg-muted block mb-1">
+            Líder <span className="text-fg-muted font-normal">(recebe alerta se não fizer)</span>
+          </label>
+          <CustomSelect
+            value={leaderId}
+            onChange={setLeaderId}
+            options={collaboratorOptions}
+          />
+        </div>
+
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="text-caption text-fg-muted block mb-1">Unidade *</label>
@@ -263,7 +313,7 @@ export function ChecklistTemplateSheet({ open, template, onClose }: Props) {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-3 gap-3">
           <div>
             <label className="text-caption text-fg-muted block mb-1">Horário *</label>
             <TimeInput value={dispatchTime} onChange={setDispatchTime} />
@@ -279,6 +329,29 @@ export function ChecklistTemplateSheet({ open, template, onClose }: Props) {
               className="w-full h-12 bg-bg-surface border border-border rounded-md px-3
                          text-body text-fg focus:outline-none focus:border-tom focus-ring"
             />
+          </div>
+          <div>
+            <label className="text-caption text-fg-muted block mb-1">Status</label>
+            <div className="h-12 flex items-center gap-2">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={isActive}
+                onClick={() => setIsActive(v => !v)}
+                className={[
+                  'relative h-6 w-11 rounded-full transition-colors focus-ring flex-shrink-0',
+                  isActive ? 'bg-tom' : 'bg-fg-muted/30',
+                ].join(' ')}
+              >
+                <span className={[
+                  'absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform',
+                  isActive ? 'translate-x-5' : '',
+                ].join(' ')} />
+              </button>
+              <span className={`text-body-sm ${isActive ? 'text-fg' : 'text-fg-muted'}`}>
+                {isActive ? 'Ativo' : 'Pausado'}
+              </span>
+            </div>
           </div>
         </div>
 
