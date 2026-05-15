@@ -42,6 +42,7 @@ const CANONICAL_BY_RITUAL = {
 const TEAM_SUMMARY_DEFAULT_TIME = '19:30';      // weekdays only
 const WEEKLY_RETRO_DEFAULT_TIME = '18:00';      // Sunday only
 const MEMORY_CONSOLIDATION_TIME = '22:00';      // Sunday only
+const PENDING_APPROVAL_REMINDER_TIMES = ['09:00', '15:00'];  // 2x/dia
 const DAILY_DREAM_TIME = '03:00';               // Every day — "sonhar": consolidar memórias das últimas 24h
 const COORDINATOR_ROLES = ['coordinator', 'director'];
 
@@ -1475,6 +1476,95 @@ async function detectUnclosedPastEvents(now = new Date()) {
   }
 }
 
+// Token de aprovação idêntico ao do internal-api.js (mantém compatibilidade).
+function extractApprovalToken(name) {
+  const upper = String(name || '').toUpperCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^A-Z0-9\s]/g, '');
+  const words = upper.split(/\s+/).filter(Boolean);
+  const STOPWORDS = new Set(['DE', 'DA', 'DO', 'DAS', 'DOS', 'E', 'EM', 'NO', 'NA', 'NOS', 'NAS', 'A', 'O', 'AS', 'OS', 'UM', 'UMA', 'PARA', 'COM', 'POR', 'SEM', 'AO', 'AOS', 'AOS']);
+  for (const w of words) {
+    const cleaned = w.replace(/[^A-Z0-9]/g, '');
+    if (cleaned.length >= 3 && !STOPWORDS.has(cleaned)) return cleaned;
+  }
+  return (words[0] || '').replace(/[^A-Z0-9]/g, '') || 'PROJETO';
+}
+
+// Cobra approver de projetos pendentes há mais de 6h, máx 1 lembrete por slot.
+async function remindPendingProjectApprovals(opts = {}) {
+  let query = supabase
+    .from('projects')
+    .select('id, name, justification, created_at, created_by')
+    .eq('status', 'pending_approval')
+    .eq('requires_approval', true);
+  if (!opts.skipThreshold) {
+    const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+    query = query.lte('created_at', sixHoursAgo);
+  }
+  const { data: pending } = await query
+    .order('created_at', { ascending: true });
+  if (!pending || pending.length === 0) return;
+
+  console.log(`[PendingApproval] ${pending.length} projeto(s) aguardando aprovação >6h`);
+  // Agrupa por supervisor pra não spamar
+  const bySupervisor = new Map();
+  for (const p of pending) {
+    // Resolve supervisor: supervisor_id → director → coordinator
+    const { data: creator } = await supabase
+      .from('collaborators')
+      .select('id, full_name, supervisor_id')
+      .eq('id', p.created_by)
+      .maybeSingle();
+    if (!creator) continue;
+
+    let supervisor = null;
+    if (creator.supervisor_id) {
+      const { data: sup } = await supabase
+        .from('collaborators')
+        .select('id, full_name, phone, role')
+        .eq('id', creator.supervisor_id)
+        .eq('is_active', true)
+        .maybeSingle();
+      if (sup && sup.phone) supervisor = sup;
+    }
+    if (!supervisor) {
+      const { data: directors } = await supabase
+        .from('collaborators')
+        .select('id, full_name, phone')
+        .eq('role', 'director')
+        .eq('is_active', true)
+        .neq('id', creator.id)
+        .order('full_name');
+      supervisor = (directors || []).find(d => d.phone) || null;
+    }
+    if (!supervisor) continue;
+
+    if (!bySupervisor.has(supervisor.id)) {
+      bySupervisor.set(supervisor.id, { sup: supervisor, projects: [] });
+    }
+    bySupervisor.get(supervisor.id).projects.push({ project: p, creator });
+  }
+
+  const whatsapp = require('../services/whatsapp');
+  for (const [, { sup, projects }] of bySupervisor) {
+    const lines = [`👀 *${projects.length} projeto(s) aguardando sua aprovação:*\n`];
+    for (const { project, creator } of projects) {
+      const hours = Math.floor((Date.now() - new Date(project.created_at).getTime()) / 3600000);
+      const token = extractApprovalToken(project.name);
+      lines.push(`🗂️ *${project.name}*\n   por ${creator.full_name} · há ${hours}h`);
+      lines.push(`   Aprovar: *APROVA ${token}*  |  Rejeitar: *REJEITA ${token} motivo*\n`);
+    }
+    lines.push(`Você também pode aprovar pelo app.`);
+    const msg = lines.join('\n');
+    try {
+      await whatsapp.sendMessage(sup.phone, msg);
+      console.log(`[PendingApproval] cobrança enviada a ${sup.full_name} (${projects.length} projetos)`);
+    } catch (err) {
+      console.error(`[PendingApproval] WA falhou pra ${sup.full_name}:`, err.message);
+    }
+  }
+}
+
 /**
  * Executa o dispatcher.
  * @param {object} opts
@@ -1494,7 +1584,7 @@ async function run(opts = {}) {
   // Modo forçado: ignora time check e dispara o ritual pedido pra cada collab filtrado.
   // Exceções: 'aderencia'/'aderencia_diaria' são determinísticos (sem LLM/sendRitual);
   // caem no gancho condicional adiante e são tratados por checkAdherenceNudge.
-  if (opts.force && opts.force !== 'aderencia' && opts.force !== 'aderencia_diaria' && opts.force !== 'consolidacao_memoria' && opts.force !== 'dream') {
+  if (opts.force && opts.force !== 'aderencia' && opts.force !== 'aderencia_diaria' && opts.force !== 'consolidacao_memoria' && opts.force !== 'dream' && opts.force !== 'pending_approvals') {
     const ritualType = RITUAL_BY_DIRECTIVE[opts.force];
     if (!ritualType) {
       console.error(`[Dispatcher] force inválido: ${opts.force}`);
@@ -1607,6 +1697,15 @@ async function run(opts = {}) {
       }
     } catch (err) {
       console.error('[Dispatcher] dream-consolidation erro:', err.message);
+    }
+  }
+
+  // Cobrança de aprovação de projetos pendentes (2x/dia, 9h e 15h).
+  if (opts.force === 'pending_approvals' || PENDING_APPROVAL_REMINDER_TIMES.some(t => timeToSlot(t) === slotNow)) {
+    try {
+      await remindPendingProjectApprovals({ skipThreshold: opts.force === 'pending_approvals' });
+    } catch (err) {
+      console.error('[Dispatcher] pending-approvals erro:', err.message);
     }
   }
 

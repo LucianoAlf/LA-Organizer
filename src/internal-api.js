@@ -381,14 +381,48 @@ router.post('/internal/project-created', requireInternalSecret, async (req, res)
 
   // 4) WhatsApp pro supervisor (se requires_approval)
   if (project.requires_approval) {
-    const { data: supervisors } = await supabase
+    let supervisor = null;
+
+    // 1ª tentativa: supervisor_id direto do criador (organograma)
+    const { data: creatorWithSup } = await supabase
       .from('collaborators')
-      .select('id, full_name, phone, role')
-      .in('role', ['coordinator', 'director'])
-      .eq('is_active', true)
-      .neq('id', creator.id)
-      .order('role', { ascending: true });
-    const supervisor = (supervisors || [])[0] || null;
+      .select('supervisor_id')
+      .eq('id', creator.id)
+      .maybeSingle();
+    if (creatorWithSup?.supervisor_id) {
+      const { data: sup } = await supabase
+        .from('collaborators')
+        .select('id, full_name, phone, role')
+        .eq('id', creatorWithSup.supervisor_id)
+        .eq('is_active', true)
+        .maybeSingle();
+      if (sup && sup.phone) supervisor = sup;
+    }
+
+    // 2ª tentativa: primeiro director ativo (não coordinator)
+    if (!supervisor) {
+      const { data: directors } = await supabase
+        .from('collaborators')
+        .select('id, full_name, phone, role')
+        .eq('role', 'director')
+        .eq('is_active', true)
+        .neq('id', creator.id)
+        .order('full_name');
+      supervisor = (directors || []).find(d => d.phone) || null;
+    }
+
+    // 3ª tentativa: primeiro coordinator (último fallback)
+    if (!supervisor) {
+      const { data: coords } = await supabase
+        .from('collaborators')
+        .select('id, full_name, phone, role')
+        .eq('role', 'coordinator')
+        .eq('is_active', true)
+        .neq('id', creator.id)
+        .order('full_name');
+      supervisor = (coords || []).find(c => c.phone) || null;
+    }
+
     if (supervisor && supervisor.phone) {
       const token = extractApprovalToken(project.name);
       const supMsg =
@@ -400,8 +434,9 @@ router.post('/internal/project-created', requireInternalSecret, async (req, res)
         `Pra rejeitar, responde: *REJEITA ${token} motivo*`;
       whatsapp.sendMessage(supervisor.phone, supMsg).catch(e =>
         console.error(`[InternalAPI] WA supervisor falhou: ${e.message}`));
+      console.log(`[InternalAPI] approval notif → ${supervisor.full_name} (${supervisor.role}) for project ${projectId}`);
     } else {
-      console.warn(`[InternalAPI] supervisor não encontrado pra projeto ${projectId}`);
+      console.warn(`[InternalAPI] supervisor não encontrado pra projeto ${projectId} (creator=${creator.full_name})`);
     }
   }
 
