@@ -29,6 +29,7 @@ import { EmptyState } from '../components/EmptyState';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { CategoryTag } from '../components/CategoryTag';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import type { Project } from '../types';
 
 // Sprint 22.7 — listagem ganha CRUD inline (rename/delete) + drag-and-drop,
@@ -107,6 +108,7 @@ function PendingApprovalsBanner({
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [confirmProject, setConfirmProject] = useState<PendingProject | null>(null);
 
   const { data: pending = [], isLoading } = useQuery({
     queryKey: ['projects-pending-approval', collabId, isDirector],
@@ -115,8 +117,6 @@ function PendingApprovalsBanner({
   });
 
   async function handleApprove(project: PendingProject) {
-    const ok = window.confirm(`Aprovar o projeto "${project.name}"?`);
-    if (!ok) return;
     setApprovingId(project.id);
     try {
       const { error } = await supabase
@@ -207,7 +207,7 @@ function PendingApprovalsBanner({
               leadingIcon={<CheckCircle size={14} />}
               loading={approvingId === project.id}
               disabled={approvingId !== null}
-              onClick={() => handleApprove(project)}
+              onClick={() => setConfirmProject(project)}
               className={
                 isPrimary
                   ? 'bg-green-600 hover:bg-green-500 active:bg-green-700 text-white'
@@ -276,6 +276,38 @@ function PendingApprovalsBanner({
           </div>
         </section>
       )}
+
+      <ConfirmDialog
+        open={confirmProject !== null}
+        title="Aprovar projeto?"
+        description={
+          confirmProject && (
+            <>
+              <strong>{confirmProject.name}</strong>
+              {confirmProject.creator && (
+                <>
+                  <br />
+                  Por {confirmProject.creator.full_name}
+                </>
+              )}
+              <br />
+              <br />
+              O criador será notificado por WhatsApp.
+            </>
+          )
+        }
+        confirmLabel="✅ Aprovar"
+        cancelLabel="Cancelar"
+        variant="primary"
+        onConfirm={() => {
+          if (confirmProject) {
+            const p = confirmProject;
+            setConfirmProject(null);
+            handleApprove(p);
+          }
+        }}
+        onCancel={() => setConfirmProject(null)}
+      />
     </div>
   );
 }
