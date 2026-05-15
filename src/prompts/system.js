@@ -1882,6 +1882,74 @@ async function buildMonthlyContextBlock(collabId) {
       lines.push(`📊 vs ${prev.label}: ${comparatives.join(' | ')}`);
     }
 
+    // Bloco semanal: semana atual (últimos 7 dias) vs semana anterior (8-14d atrás)
+    const weekFrom   = brtYmd(-6);  // hoje incluso = 7 dias
+    const weekTo     = brtYmd(0);
+    const prevWkFrom = brtYmd(-13);
+    const prevWkTo   = brtYmd(-7);
+
+    let curWk, prevWk;
+    try {
+      [curWk, prevWk] = await Promise.all([
+        fetchMonthlyStats(collabId, weekFrom, weekTo),
+        fetchMonthlyStats(collabId, prevWkFrom, prevWkTo),
+      ]);
+    } catch (_) { curWk = prevWk = null; }
+
+    if (curWk) {
+      lines.push('', `📅 *Esta semana (${weekFrom.slice(8)}/${weekFrom.slice(5,7)}–${weekTo.slice(8)}/${weekTo.slice(5,7)}):*`);
+      const wkPct = curWk.tasks.total > 0 ? Math.round((curWk.tasks.done / curWk.tasks.total) * 100) : null;
+      if (curWk.tasks.total > 0) {
+        lines.push(`• Tarefas: ${curWk.tasks.done} ✅ | ${curWk.tasks.pending} ⏳` +
+          (wkPct !== null ? ` (${wkPct}%)` : ''));
+      }
+      if (curWk.habits.total > 0) {
+        lines.push(`• Hábitos: ${curWk.habits.done}/${curWk.habits.total} registros`);
+      }
+      if (curWk.checklists.total > 0) {
+        lines.push(`• Checklists: ${curWk.checklists.done}/${curWk.checklists.total} cumpridos`);
+      }
+      if (curWk.events > 0) {
+        lines.push(`• Compromissos: ${curWk.events}`);
+      }
+
+      // Comparativo semana atual vs semana anterior, com alerta automático
+      if (prevWk && (prevWk.tasks.total >= 3 || prevWk.habits.total >= 3 || prevWk.checklists.total >= 3)) {
+        const wkComps = [];
+
+        // Helper de alerta (>=20% diferença)
+        const flag = (cur, prev) => {
+          if (prev === 0) return '';
+          const delta = ((cur - prev) / prev) * 100;
+          if (delta <= -20) return ' 📉 atenção';
+          if (delta >= 20)  return ' 🚀';
+          return '';
+        };
+
+        if (prevWk.tasks.total >= 3) {
+          const diff = curWk.tasks.done - prevWk.tasks.done;
+          const sign = diff >= 0 ? '+' : '';
+          wkComps.push(`tarefas ${sign}${diff}${flag(curWk.tasks.done, prevWk.tasks.done)}`);
+        }
+        if (prevWk.habits.total >= 3) {
+          const diff = curWk.habits.done - prevWk.habits.done;
+          const sign = diff >= 0 ? '+' : '';
+          wkComps.push(`hábitos ${sign}${diff} registros${flag(curWk.habits.done, prevWk.habits.done)}`);
+        }
+        if (prevWk.checklists.total >= 3 && curWk.checklists.total > 0) {
+          const curPct  = Math.round((curWk.checklists.done  / curWk.checklists.total)  * 100);
+          const prevPct = Math.round((prevWk.checklists.done / prevWk.checklists.total) * 100);
+          const diff = curPct - prevPct;
+          const sign = diff >= 0 ? '+' : '';
+          wkComps.push(`checklists ${sign}${diff}%${flag(curWk.checklists.done, prevWk.checklists.done)}`);
+        }
+
+        if (wkComps.length > 0) {
+          lines.push(`📊 vs semana passada: ${wkComps.join(' | ')}`);
+        }
+      }
+    }
+
     return lines.join('\n');
   } catch (err) {
     console.warn('[Prompt] buildMonthlyContextBlock err:', err.message);
