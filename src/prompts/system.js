@@ -308,12 +308,14 @@ function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habi
     renderTaskList(tasks);
   }
 
-  // Compromissos hoje (events com horário). Ordenados por start_at.
+  // Agenda próximos 7 dias (events com horário). Ordenados por start_at.
   // Sprint 10 fix: horário em America/Sao_Paulo (-03:00). DB armazena ISO com
   // timezone (e.g. "2026-04-28 12:00:00+00" = 09:00 BRT). slice(11,16) cru
   // mostrava UTC pro Claude → resposta com horário errado.
+  // Fix (2026-05-15): expandido de hoje-só para próximos 7 dias, para TOM
+  // responder "o que tenho amanhã?" e ver eventos marcados como feito.
   if (events && events.length) {
-    lines.push('', `**Compromissos hoje (${events.length}):**`);
+    lines.push('', `**Agenda — próximos 7 dias (${events.length}):**`);
     const fmtSP = (iso) => {
       if (!iso) return '—';
       const d = new Date(iso);
@@ -326,13 +328,25 @@ function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habi
         hour12: false,
       }).format(d);
     };
-    events.slice(0, 8).forEach(e => {
+    const fmtDateSP = (iso) => {
+      if (!iso) return '';
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return '';
+      // Retorna YYYY-MM-DD em BRT para comparar com today
+      return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(d);
+    };
+    events.slice(0, 15).forEach(e => {
       const sid = String(e.id || '').slice(0, 8);
       const start = fmtSP(e.start_at);
       const end = fmtSP(e.end_at);
       const mod = e.modality === 'online' ? '💻' : e.modality === 'hibrido' ? '🔀' : '🏢';
       const cat = e.category ? ` · ${e.category}` : '';
       const where = e.location_text ? ` · ${e.location_text}` : '';
+      // Prefix de data: só mostra quando não é hoje
+      const evDate = fmtDateSP(e.start_at);
+      const datePrefix = evDate && evDate !== today ? `[${evDate}] ` : '';
+      // Status: done aparece como ✅ para TOM saber que já foi concluído
+      const statusTag = e.status === 'done' ? ' ✅' : '';
       // Sprint 22.50b — lembretes pendentes (sent_at IS NULL) listados depois.
       const pendingReminders = (e.event_reminders || [])
         .filter(r => !r.sent_at)
@@ -342,7 +356,7 @@ function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habi
       const reminders = pendingReminders.length
         ? ` · ⏰ lembretes: ${pendingReminders.join(', ')}`
         : '';
-      lines.push(`• [id=${sid}] ${start}–${end} ${mod} ${e.title}${cat}${where}${reminders}`);
+      lines.push(`• [id=${sid}] ${datePrefix}${start}–${end} ${mod} ${e.title}${statusTag}${cat}${where}${reminders}`);
     });
   }
 
@@ -966,14 +980,15 @@ async function fetchCollaboratorContext(collaborator) {
       .select('id, name, icon, current_streak, frequency, reminder_time')
       .eq('collaborator_id', id).eq('is_active', true)
       .order('created_at', { ascending: true }).limit(20),
-    // Compromissos de HOJE em America/Sao_Paulo (-03:00). Inclui scheduled e done.
+    // Compromissos próximos 7 dias em America/Sao_Paulo (-03:00). Inclui scheduled e done.
+    // Fix: antes só buscava hoje → TOM não via eventos de amanhã nem os marcados como feito.
     supabase.from('events')
       .select('id, title, start_at, end_at, modality, category, context, location_text, meeting_url, status, event_reminders(remind_at, sent_at)')
       .eq('collaborator_id', id)
       .gte('start_at', `${today}T00:00:00-03:00`)
-      .lte('start_at', `${today}T23:59:59-03:00`)
+      .lte('start_at', `${next7days}T23:59:59-03:00`)
       .neq('status', 'cancelled')
-      .order('start_at', { ascending: true }).limit(20),
+      .order('start_at', { ascending: true }).limit(30),
     // Sprint 22.36 Fatia 2 — DELEGADAS: tarefas que ESTE user atribuiu pra outros.
     // Antes ficavam fora do contexto. Bug do relatório do dia onde TOM dizia
     // "não tenho esse dato no contexto atual" pra delegadas.
