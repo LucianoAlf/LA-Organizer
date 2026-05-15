@@ -455,27 +455,45 @@ function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habi
     lines.push('', '**Checklists da equipe hoje:**');
 
     // (a) Status real
-    if (teamTodayChecklists && teamTodayChecklists.length) {
-      const byCollab = new Map();
-      for (const c of teamTodayChecklists) {
-        const name = (Array.isArray(c.collaborators) ? c.collaborators[0] : c.collaborators)?.full_name || c.collaborator_id;
-        const first = name.split(' ')[0];
-        if (!byCollab.has(first)) byCollab.set(first, []);
-        const items = c.op_checklist_item_completions || [];
-        const done = items.filter(i => i.is_checked).length;
-        const total = items.length || 1;
-        const pct = Math.round((done / total) * 100);
-        const tplName = (Array.isArray(c.op_checklists) ? c.op_checklists[0] : c.op_checklists)?.name || '?';
-        const tag = c.completed_at ? '✅' : (pct >= 70 ? '🟡' : '🔴');
-        byCollab.get(first).push(`${tag} ${tplName} (${done}/${total})`);
-      }
-      lines.push('Status real (já dispatched):');
+  if (teamTodayChecklists && teamTodayChecklists.length) {
+    // Per-unit drilldown: agrupa por unidade → colaborador.
+    // Se só uma unidade (manager), renderiza flat (sem header de unidade).
+    const byUnit = new Map();
+    for (const c of teamTodayChecklists) {
+      const tplObj = Array.isArray(c.op_checklists) ? c.op_checklists[0] : c.op_checklists;
+      const unit = tplObj?.unit || 'sem unidade';
+      const name = (Array.isArray(c.collaborators) ? c.collaborators[0] : c.collaborators)?.full_name || c.collaborator_id;
+      const first = name.split(' ')[0];
+      const items = c.op_checklist_item_completions || [];
+      const done = items.filter(i => i.is_checked).length;
+      const total = items.length || 1;
+      const pct = Math.round((done / total) * 100);
+      const tplName = tplObj?.name || '?';
+      const tag = c.completed_at ? '✅' : (pct >= 70 ? '🟡' : '🔴');
+      if (!byUnit.has(unit)) byUnit.set(unit, new Map());
+      const byCollab = byUnit.get(unit);
+      if (!byCollab.has(first)) byCollab.set(first, []);
+      byCollab.get(first).push(`${tag} ${tplName} (${done}/${total})`);
+    }
+    lines.push('Status real (já dispatched):');
+    if (byUnit.size === 1) {
+      // Manager com uma unidade: renderização flat (sem header).
+      const [[, byCollab]] = byUnit;
       for (const [name, entries] of byCollab) {
         lines.push(`• ${name}: ${entries.join(' · ')}`);
       }
     } else {
-      lines.push('Status real: 0 dispatched, 0 completed.');
+      // Diretor com múltiplas unidades: agrupa com header de unidade.
+      for (const [unit, byCollab] of byUnit) {
+        lines.push(`📍 ${unit}:`);
+        for (const [name, entries] of byCollab) {
+          lines.push(`  • ${name}: ${entries.join(' · ')}`);
+        }
+      }
     }
+  } else {
+    lines.push('Status real: 0 dispatched, 0 completed.');
+  }
 
     // (b) Templates esperados hoje (independente de dispatch ja ter rodado)
     if (teamExpectedTemplates && teamExpectedTemplates.length) {
@@ -1051,7 +1069,7 @@ async function fetchCollaboratorContext(collaborator) {
     // pendente pra TOM responder "quem tem checklist pendente hoje?".
     isLeadership
       ? supabase.from('op_checklist_completions')
-          .select('id, completed_at, collaborator_id, collaborators(full_name), op_checklists(name), op_checklist_item_completions(is_checked)')
+          .select('id, completed_at, collaborator_id, collaborators(full_name), op_checklists(name, unit), op_checklist_item_completions(is_checked)')
           .eq('reference_date', today)
           .order('collaborator_id')
           .limit(80)
