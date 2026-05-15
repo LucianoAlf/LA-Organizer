@@ -658,6 +658,21 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
     return { name: 'ajuda', body: loadSkill('ajuda') };
   }
 
+  // ── CHECKLISTS-ADMIN skill ───────────────────────────────────────────────
+  const CHECKLIST_ADMIN_TRIGGERS = [
+    'lista checklists', 'quais checklists', 'mostra os checklists',
+    'desliga checklist', 'pausa checklist', 'ativa checklist', 'liga checklist',
+    'troca responsável', 'muda responsável',
+    'quem é responsável pelo checklist', 'quem faz o checklist',
+  ]
+  const canManageChecklists = collab && ['director', 'coordinator', 'manager'].includes(collab.role)
+  if (
+    canManageChecklists &&
+    CHECKLIST_ADMIN_TRIGGERS.some(t => lmLower.includes(t))
+  ) {
+    return { name: 'checklists-admin', body: loadSkill('checklists-admin') }
+  }
+
   // Priority 1.6 (Sprint 8): aprovação/rejeição de projeto pendente.
   // Trigger forte: APROVA <NOME> ou REJEITA <NOME> motivo (case-insensitive).
   // Trigger fraco: "aprovo"/"rejeito" solto — skill orienta a pedir identificador.
