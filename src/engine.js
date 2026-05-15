@@ -4658,7 +4658,8 @@ async function processMessage(phone, text, raw = {}) {
   let { systemPrompt, ctx } = await buildSystemPrompt(collab, { lastUserMessage: text, coordHint, coordContext });
   const _tt = ctx.todayTasks || {};
   const _tCount = (_tt.personal?.length || 0) + (_tt.work?.length || 0);
-  console.log(`[Engine] system prompt size: ${systemPrompt.length} chars (memories=${ctx.memories.length}, tasks=${_tCount}, notifs=${ctx.notifications.length})`);
+  const _memCount = (ctx.criticalMemories?.length || 0) + (ctx.preferenceMemories?.length || 0) + (ctx.recentContextMemories?.length || 0);
+  console.log(`[Engine] system prompt size: ${systemPrompt.length} chars (memories=${_memCount}, tasks=${_tCount}, notifs=${ctx.notifications.length})`);
 
   // Sprint 21 — limite suave anti-relay (avisa, não bloqueia)
   try {
