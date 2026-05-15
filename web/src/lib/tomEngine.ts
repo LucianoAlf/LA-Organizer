@@ -167,3 +167,39 @@ export async function notifyEventInvites(eventId: string): Promise<NotifyResult>
     return { ok: false, reason: msg };
   }
 }
+
+// Notifica TOM quando projeto é aprovado via PWA — dispara WhatsApp pro criador.
+export async function notifyProjectApproved(projectId: string): Promise<NotifyResult> {
+  if (!INTERNAL_SECRET) return { ok: false, reason: 'no_secret' };
+  try {
+    const r = await fetch(`${TOM_BASE}/internal/project-approved`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-secret': INTERNAL_SECRET },
+      body: JSON.stringify({ projectId }),
+    });
+    if (!r.ok) return { ok: false, reason: `http_${r.status}` };
+    return { ok: true, status: r.status };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn(`[tomEngine] project-approved notify falhou: ${msg}`);
+    return { ok: false, reason: msg };
+  }
+}
+
+// Notifica TOM quando projeto é rejeitado via PWA — dispara WhatsApp pro criador.
+export async function notifyProjectRejected(projectId: string, reason?: string): Promise<NotifyResult> {
+  if (!INTERNAL_SECRET) return { ok: false, reason: 'no_secret' };
+  try {
+    const r = await fetch(`${TOM_BASE}/internal/project-rejected`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-secret': INTERNAL_SECRET },
+      body: JSON.stringify({ projectId, reason }),
+    });
+    if (!r.ok) return { ok: false, reason: `http_${r.status}` };
+    return { ok: true, status: r.status };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn(`[tomEngine] project-rejected notify falhou: ${msg}`);
+    return { ok: false, reason: msg };
+  }
+}

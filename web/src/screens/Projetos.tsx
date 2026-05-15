@@ -22,6 +22,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase, supabaseConfigured } from '../lib/supabase';
+import { notifyProjectApproved } from '../lib/tomEngine';
 import { ProjectCard } from '../components/ProjectCard';
 import { LoadingState } from '../components/LoadingState';
 import { EmptyState } from '../components/EmptyState';
@@ -110,6 +111,9 @@ function PendingApprovalsBanner({
         })
         .eq('id', project.id);
       if (error) throw error;
+      // Notifica o criador via WhatsApp (não bloqueia se falhar)
+      notifyProjectApproved(project.id).catch(e =>
+        console.warn('[Approve] WhatsApp notify failed:', e));
       // Invalida as duas queries para o banner sumir e a lista atualizar
       qc.invalidateQueries({ queryKey: ['projects-pending-approval'] });
       qc.invalidateQueries({ queryKey: ['projects'] });

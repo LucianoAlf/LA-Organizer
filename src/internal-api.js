@@ -551,6 +551,87 @@ router.post('/internal/celebration', requireInternalSecret, async (req, res) => 
   return res.json({ status: 'ok', sent: recipients.length, key: dedupeKey });
 });
 
+// POST /internal/project-approved — chamado pelo PWA quando usuário aprova projeto via UI.
+// Notifica o criador via WhatsApp (equivalente ao marker <<PROJECT_APPROVE>> do engine).
+router.post('/internal/project-approved', requireInternalSecret, async (req, res) => {
+  const t0 = Date.now();
+  const { projectId } = req.body || {};
+  if (!projectId) return res.status(400).json({ error: 'projectId required' });
+
+  try {
+    const { data: project } = await supabase
+      .from('projects')
+      .select('id, name, created_by, approved_by')
+      .eq('id', projectId)
+      .maybeSingle();
+    if (!project) return res.status(404).json({ error: 'project not found' });
+    if (!project.approved_by) return res.status(400).json({ error: 'project not approved yet' });
+
+    const { data: creator } = await supabase
+      .from('collaborators')
+      .select('id, full_name, phone')
+      .eq('id', project.created_by)
+      .maybeSingle();
+    const { data: approver } = await supabase
+      .from('collaborators')
+      .select('full_name')
+      .eq('id', project.approved_by)
+      .maybeSingle();
+
+    if (creator?.phone) {
+      const msg = `🎉 *${project.name}* foi aprovado por *${approver?.full_name || 'a liderança'}*!\n\nO TOM já vai começar a estruturar e distribuir as tarefas.`;
+      whatsapp.sendMessage(creator.phone, msg).catch(e =>
+        console.error(`[InternalAPI] approval-notify WA falhou: ${e.message}`));
+      console.log(`[InternalAPI] project-approved notif → ${creator.full_name} (project ${projectId}) in ${Date.now() - t0}ms`);
+    } else {
+      console.warn(`[InternalAPI] project-approved: criador sem phone (project ${projectId})`);
+    }
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('[InternalAPI] project-approved erro:', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /internal/project-rejected — chamado pelo PWA quando usuário rejeita projeto via UI.
+// Notifica o criador via WhatsApp com o motivo da rejeição.
+router.post('/internal/project-rejected', requireInternalSecret, async (req, res) => {
+  const t0 = Date.now();
+  const { projectId, reason } = req.body || {};
+  if (!projectId) return res.status(400).json({ error: 'projectId required' });
+
+  try {
+    const { data: project } = await supabase
+      .from('projects')
+      .select('id, name, created_by, rejection_reason')
+      .eq('id', projectId)
+      .maybeSingle();
+    if (!project) return res.status(404).json({ error: 'project not found' });
+
+    const { data: creator } = await supabase
+      .from('collaborators')
+      .select('id, full_name, phone')
+      .eq('id', project.created_by)
+      .maybeSingle();
+
+    if (creator?.phone) {
+      const finalReason = reason || project.rejection_reason || 'sem motivo informado';
+      const msg = `❌ *${project.name}* foi rejeitado.\n\nMotivo: ${finalReason}`;
+      whatsapp.sendMessage(creator.phone, msg).catch(e =>
+        console.error(`[InternalAPI] reject-notify WA falhou: ${e.message}`));
+      console.log(`[InternalAPI] project-rejected notif → ${creator.full_name} (project ${projectId}) in ${Date.now() - t0}ms`);
+    } else {
+      console.warn(`[InternalAPI] project-rejected: criador sem phone (project ${projectId})`);
+    }
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('[InternalAPI] project-rejected erro:', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // Sprint 22.33 — task delegada via PWA → notifica assignee no WhatsApp.
 // PWA envia { task_id } depois do INSERT. Endpoint le task + assignee + creator,
 // dispara mensagem amigavel. Idempotente via marker_logs.
