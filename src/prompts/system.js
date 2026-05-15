@@ -2313,11 +2313,35 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   if (ctx.profile) {
     const p = ctx.profile;
     const profileLines = [];
-    if (p.communication_style) profileLines.push(`- Comunicação: ${p.communication_style}`);
-    if (p.response_pattern)    profileLines.push(`- Padrão: ${p.response_pattern}`);
-    if (p.best_coaching_approach) profileLines.push(`- Cobrança: ${p.best_coaching_approach}`);
-    if (p.vocabulary_notes)    profileLines.push(`- Vocabulário: ${p.vocabulary_notes}`);
-    if (p.maturity_level && p.maturity_level !== 'beginner') profileLines.push(`- Maturidade: ${p.maturity_level}`);
+
+    // Helper: strengths/growth_areas podem vir como string OU array
+    const formatArrayOrString = (v) => Array.isArray(v) ? v.join(', ') : String(v);
+
+    // === Profile expandido — todos os 11 campos comportamentais ===
+    if (p.maturity_level && p.maturity_level !== 'beginner') {
+      profileLines.push(`- Maturidade: ${p.maturity_level}`);
+    }
+    if (p.communication_style)    profileLines.push(`- Comunicação: ${p.communication_style}`);
+    if (p.response_pattern)       profileLines.push(`- Padrão de resposta: ${p.response_pattern}`);
+    if (p.vocabulary_notes)       profileLines.push(`- Vocabulário: ${p.vocabulary_notes}`);
+    if (p.best_coaching_approach) profileLines.push(`- Como coaching: ${p.best_coaching_approach}`);
+    if (p.strengths)              profileLines.push(`- Pontos fortes: ${formatArrayOrString(p.strengths)}`);
+    if (p.growth_areas)           profileLines.push(`- A desenvolver: ${formatArrayOrString(p.growth_areas)}`);
+    if (p.personal_context)       profileLines.push(`- Contexto pessoal: ${p.personal_context}`);
+    if (p.profile_notes)          profileLines.push(`- Observações: ${p.profile_notes}`);
+
+    // Métricas — úteis pro TOM calibrar tom de cobrança
+    const metrics = [];
+    if (p.total_interactions != null && p.total_interactions > 0) {
+      metrics.push(`${p.total_interactions} interações totais`);
+    }
+    if (p.completion_rate_30d != null) {
+      metrics.push(`${Number(p.completion_rate_30d).toFixed(0)}% conclusão (30d)`);
+    }
+    if (metrics.length > 0) {
+      profileLines.push(`- Engajamento: ${metrics.join(' · ')}`);
+    }
+
     if (profileLines.length > 0) {
       systemPrompt += `\n\n---\n\n## Como ${collaborator.full_name.split(' ')[0]} funciona\n${profileLines.join('\n')}`;
     }
