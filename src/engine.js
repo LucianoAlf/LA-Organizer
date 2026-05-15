@@ -5840,6 +5840,39 @@ async function consolidateMemoryFor(collab) {
 // Chamado após consolidateMemoryFor, reutilizando as mesmas mensagens do dia.
 async function updateCollaboratorProfile(collab, messages) {
   try {
+    // Janela adaptativa: se as mensagens passadas forem < 5, busca histórico mais amplo.
+    // Cascata: 24h → 7d → 30d. Garante baseline mesmo para colaboradores inativos.
+    const WINDOWS = [
+      { label: '24h', ms: 24 * 60 * 60 * 1000,        minMsgs: 5 },
+      { label: '7d',  ms: 7  * 24 * 60 * 60 * 1000,   minMsgs: 5 },
+      { label: '30d', ms: 30 * 24 * 60 * 60 * 1000,   minMsgs: 5 },
+    ];
+
+    let resolvedMsgs = messages || [];
+    let usedWindow = 'caller';
+    if (resolvedMsgs.length < 5) {
+      for (const w of WINDOWS) {
+        const cutoff = new Date(Date.now() - w.ms).toISOString();
+        const { data } = await supabase.from('conversation_history')
+          .select('direction, content, created_at')
+          .eq('collaborator_id', collab.id)
+          .gte('created_at', cutoff)
+          .order('created_at', { ascending: false })
+          .limit(200);
+        resolvedMsgs = data || [];
+        if (resolvedMsgs.length >= w.minMsgs) {
+          usedWindow = w.label;
+          break;
+        }
+      }
+    }
+
+    if (!resolvedMsgs.length) {
+      console.log(`[Dream] profile skip: ${collab.full_name} (sem histórico em 30d)`);
+      return { skipped: 'no_history' };
+    }
+    console.log(`[Dream] profile janela: ${collab.full_name} usou ${usedWindow} (${resolvedMsgs.length} msgs)`);
+
     const { data: current } = await supabase
       .from('collaborator_profiles')
       .select('*')
@@ -5885,7 +5918,7 @@ REGRAS:
 - Máximo 2 linhas por campo
 maturity_level: beginner=novo no sistema, developing=usa mas oscila, proficient=consistente, advanced=autônomo.`;
 
-    const msgBlock = (messages || [])
+    const msgBlock = resolvedMsgs
       .map(m => `[${m.direction === 'inbound' ? 'User' : 'TOM'}] ${String(m.content || '').slice(0, 200)}`)
       .join('\n')
       .slice(0, 8000);
@@ -5893,7 +5926,7 @@ maturity_level: beginner=novo no sistema, developing=usa mas oscila, proficient=
     const userMsg = `PERFIL ATUAL:
 ${JSON.stringify(currentProfile, null, 2) || '(vazio)'}
 
-CONVERSAS DAS ÚLTIMAS 24H:
+CONVERSAS RECENTES (janela: ${usedWindow}):
 ${msgBlock || '(sem mensagens)'}
 
 Atualize o perfil. Apenas JSON.`;

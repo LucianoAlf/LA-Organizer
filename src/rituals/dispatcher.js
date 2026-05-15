@@ -1592,25 +1592,18 @@ async function run(opts = {}) {
   // para colaboradores que tiveram conversa recente. Roda todo dia (não só domingo).
   if (opts.force === 'dream' || timeToSlot(DAILY_DREAM_TIME) === slotNow) {
     try {
-      const cutoff24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-      const { data: recentConvos } = await supabase
-        .from('conversation_history')
-        .select('collaborator_id')
-        .gte('created_at', cutoff24h)
-        .eq('direction', 'inbound');
-      const activeIds = [...new Set((recentConvos || []).map(r => r.collaborator_id))];
-      if (activeIds.length > 0) {
-        const { data: activeCollabs } = await supabase
-          .from('collaborators')
-          .select('id, full_name, phone, role, unit, onboarding_completed')
-          .in('id', activeIds)
-          .eq('is_active', true)
-          .eq('onboarding_completed', true);
-        console.log(`[Dream] consolidando memórias para ${(activeCollabs || []).length} colaborador(es) ativo(s)`);
-        for (const c of (activeCollabs || [])) {
-          try { await consolidateMemoryFor(c); }
-          catch (err) { console.error(`[Dream] err for ${c.full_name}:`, err.message); }
-        }
+      // Estratégia expandida: pega TODOS os ativos+onboarded.
+      // updateCollaboratorProfile internamente usa janela adaptativa (24h→7d→30d)
+      // e pula automaticamente quem não tem histórico em 30d.
+      const { data: allCollabs } = await supabase
+        .from('collaborators')
+        .select('id, full_name, phone, role, unit, onboarding_completed')
+        .eq('is_active', true)
+        .eq('onboarding_completed', true);
+      console.log(`[Dream] consolidando memórias para ${(allCollabs || []).length} colaborador(es) ativo(s)+onboarded`);
+      for (const c of (allCollabs || [])) {
+        try { await consolidateMemoryFor(c); }
+        catch (err) { console.error(`[Dream] err for ${c.full_name}:`, err.message); }
       }
     } catch (err) {
       console.error('[Dispatcher] dream-consolidation erro:', err.message);
