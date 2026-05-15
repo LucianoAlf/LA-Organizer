@@ -309,6 +309,19 @@ function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habi
     renderTaskList(tasks);
   }
 
+  // Tarefas concluídas com prazo hoje ou futuro (done-futuro).
+  // Bloco separado para não ser cortado pelo slice(0,8) das tasks abertas.
+  // Garante que TOM responda "o que eu tinha pra amanhã?" mesmo após marcar como feito.
+  if (doneFutureTasks && doneFutureTasks.length) {
+    lines.push('', `**Concluído (prazo amanhã ou futuro, ${doneFutureTasks.length}):**`);
+    doneFutureTasks.forEach(t => {
+      const sid = String(t.id || '').slice(0, 8);
+      const rel = t.due_date === today ? 'hoje' : t.due_date;
+      const ctx = t.context === 'personal' ? 'pessoal' : t.context === 'work' ? 'trabalho' : t.context;
+      lines.push(`• ✅ [id=${sid}] "${t.title}" — vencia ${rel} (${ctx})`);
+    });
+  }
+
   // Agenda próximos 7 dias (events com horário). Ordenados por start_at.
   // Sprint 10 fix: horário em America/Sao_Paulo (-03:00). DB armazena ISO com
   // timezone (e.g. "2026-04-28 12:00:00+00" = 09:00 BRT). slice(11,16) cru
@@ -1109,8 +1122,8 @@ async function fetchCollaboratorContext(collaborator) {
 
   // Fix (2026-05-15): tasks done com due_date >= hoje — permite TOM responder
   // "o que eu tinha pra amanhã?" mesmo após marcar como feito.
-  // Query separada porque .or() do Supabase JS v2 não combina confiavelmente
-  // com outros filtros encadeados nesse contexto.
+  // Guardado em campo separado para não ser cortado pelo slice(0,8) do renderTaskList.
+  let doneFutureTasks = [];
   try {
     const { data: doneFuture } = await supabase.from('tasks')
       .select(TASK_COLS)
@@ -1120,10 +1133,7 @@ async function fetchCollaboratorContext(collaborator) {
       .lte('due_date', next7days)
       .order('due_date', { ascending: true })
       .limit(15);
-    if (doneFuture?.length) {
-      personalTasks.push(...doneFuture.filter(t => t.context === 'personal'));
-      workRaw.push(...doneFuture.filter(t => t.context === 'work'));
-    }
+    doneFutureTasks = doneFuture || [];
   } catch (_) { /* não bloqueia se falhar */ }
 
   // Sprint 22.X — respeita max_daily_tasks (default 3) limitando o briefing de
@@ -1142,6 +1152,7 @@ async function fetchCollaboratorContext(collaborator) {
     todayTasks: { personal: personalTasks, work: workTasks },
     personalTasks,
     workTasks,
+    doneFutureTasks,
     activeProjects,
     notifications: notificationsRes.data || [],
     recentMessages: (historyRes.data || []).reverse(),
