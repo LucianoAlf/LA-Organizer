@@ -1146,7 +1146,7 @@ async function fetchCollaboratorContext(collaborator) {
     // Hierarquia explícita — org chart para liderança responder "quem responde pra quem?".
     isLeadership
       ? supabase.from('collaborators')
-          .select('id, full_name, unit, role, manager:collaborators!manager_id(id, full_name)')
+          .select('id, full_name, unit, role, manager:collaborators!supervisor_id(id, full_name)')
           .eq('is_active', true)
           .order('full_name')
       : Promise.resolve({ data: [], error: null }),
