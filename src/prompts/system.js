@@ -951,14 +951,10 @@ async function fetchCollaboratorContext(collaborator) {
     // Sprint 22.29 (Bucket 6) — sort_position primeiro pra TOM respeitar a
     // ordem manual definida pelo user no PWA (DnD na Hoje). Demais orders
     // viram tiebreak pra tasks sem sort_position definido.
-    // Fix (2026-05-15): inclui tasks done com due_date >= hoje para TOM responder
-    // "o que eu tinha para amanhã?" mesmo após marcar como feito.
-    // Lógica: status != cancelled AND (status != done OR due_date >= hoje)
     supabase.from('tasks')
       .select(TASK_COLS)
       .eq('assigned_to', id).lte('due_date', next7days).eq('context', 'personal')
-      .neq('status', 'cancelled')
-      .or(`status.neq.done,due_date.gte.${today}`)
+      .not('status', 'in', '(done,cancelled)')
       .order('sort_position', { ascending: true, nullsFirst: false })
       .order('remind_at', { ascending: true, nullsFirst: false })
       .order('due_date', { ascending: true })
@@ -966,8 +962,7 @@ async function fetchCollaboratorContext(collaborator) {
     supabase.from('tasks')
       .select(TASK_COLS)
       .eq('assigned_to', id).lte('due_date', next7days).eq('context', 'work')
-      .neq('status', 'cancelled')
-      .or(`status.neq.done,due_date.gte.${today}`)
+      .not('status', 'in', '(done,cancelled)')
       .order('sort_position', { ascending: true, nullsFirst: false })
       .order('remind_at', { ascending: true, nullsFirst: false })
       .order('due_date', { ascending: true })
@@ -1110,11 +1105,31 @@ async function fetchCollaboratorContext(collaborator) {
   }
 
   const personalTasks = personalRes.data || [];
+  const workRaw = workRes.data || [];
+
+  // Fix (2026-05-15): tasks done com due_date >= hoje — permite TOM responder
+  // "o que eu tinha pra amanhã?" mesmo após marcar como feito.
+  // Query separada porque .or() do Supabase JS v2 não combina confiavelmente
+  // com outros filtros encadeados nesse contexto.
+  try {
+    const { data: doneFuture } = await supabase.from('tasks')
+      .select(TASK_COLS)
+      .eq('assigned_to', id)
+      .eq('status', 'done')
+      .gte('due_date', today)
+      .lte('due_date', next7days)
+      .order('due_date', { ascending: true })
+      .limit(15);
+    if (doneFuture?.length) {
+      personalTasks.push(...doneFuture.filter(t => t.context === 'personal'));
+      workRaw.push(...doneFuture.filter(t => t.context === 'work'));
+    }
+  } catch (_) { /* não bloqueia se falhar */ }
+
   // Sprint 22.X — respeita max_daily_tasks (default 3) limitando o briefing de
   // trabalho. Hoje sem cap, TOM lista 12+ tasks e quebra o foco. User-side a
   // pref já existia mas nada limitava. Preferência default 3 reflete princípio
   // "1-3 prioridades por dia" do framework.
-  const workRaw = workRes.data || [];
   const maxDaily = (prefsRes.data && Number.isInteger(prefsRes.data.max_daily_tasks))
     ? prefsRes.data.max_daily_tasks
     : 3;
