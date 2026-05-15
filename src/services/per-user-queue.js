@@ -17,7 +17,9 @@ function enqueue(key, fn) {
   const prev = queues.get(key) || Promise.resolve();
   // .then(fn, fn) garante que o próximo trabalho roda mesmo se o anterior rejeitou.
   const next = prev.then(fn, fn).catch(err => {
-    console.error(`[Queue] task err for ${String(key).slice(-4)}:`, err && err.message ? err.message : err);
+    const msg = err && err.message ? err.message : err;
+    const stack = err && err.stack ? `\n${err.stack}` : '';
+    console.error(`[Queue] task err for ${String(key).slice(-4)}: ${msg}${stack}`);
   });
   queues.set(key, next);
   // Cleanup quando esta tarefa termina E ela ainda for a cauda atual.
