@@ -1,6 +1,7 @@
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
-import { Plus, Rocket } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Plus, Rocket, Clock, CheckCircle } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -25,6 +26,8 @@ import { ProjectCard } from '../components/ProjectCard';
 import { LoadingState } from '../components/LoadingState';
 import { EmptyState } from '../components/EmptyState';
 import { Button } from '../components/Button';
+import { Card } from '../components/Card';
+import { CategoryTag } from '../components/CategoryTag';
 import type { Project } from '../types';
 
 // Sprint 22.7 — listagem ganha CRUD inline (rename/delete) + drag-and-drop,
@@ -32,6 +35,163 @@ import type { Project } from '../types';
 
 const ALIVE_STATUSES = ['active', 'planning', 'pending_approval', 'paused'] as const;
 const SELECT = 'id, name, description, category, status, progress_percent, start_date, end_date, sort_position, created_by';
+
+// Sprint 22.30 — Banner "Aguardando sua aprovação"
+const SELECT_PENDING = 'id, name, category, status, requires_approval, created_by, created_at, justification, creator:collaborators!created_by(id, full_name, supervisor_id)';
+
+interface PendingProject {
+  id: string;
+  name: string;
+  category: Project['category'];
+  status: string;
+  requires_approval: boolean;
+  created_by: string;
+  created_at: string;
+  justification?: string | null;
+  creator: { id: string; full_name: string; supervisor_id: string | null } | null;
+}
+
+async function fetchPendingApprovals(collabId: string, isDirector: boolean): Promise<PendingProject[]> {
+  const { data, error } = await supabase
+    .from('projects')
+    .select(SELECT_PENDING)
+    .eq('status', 'pending_approval')
+    .eq('requires_approval', true);
+  if (error) throw error;
+  const rows = (data ?? []) as unknown as PendingProject[];
+  // Filtro client-side: só mostra se o user é supervisor do criador OU é director
+  return rows.filter(p => {
+    if (isDirector) return true;
+    return p.creator?.supervisor_id === collabId;
+  });
+}
+
+function timeAgo(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 60) return `há ${mins}min`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `há ${hrs}h`;
+  const days = Math.floor(hrs / 24);
+  return `há ${days}d`;
+}
+
+// ---- Banner de aprovações pendentes ----------------------------------------
+
+function PendingApprovalsBanner({
+  collabId,
+  isDirector,
+}: {
+  collabId: string;
+  isDirector: boolean;
+}) {
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+
+  const { data: pending = [], isLoading } = useQuery({
+    queryKey: ['projects-pending-approval', collabId, isDirector],
+    queryFn: () => fetchPendingApprovals(collabId, isDirector),
+    enabled: Boolean(collabId && supabaseConfigured),
+  });
+
+  async function handleApprove(project: PendingProject) {
+    const ok = window.confirm(`Aprovar o projeto "${project.name}"?`);
+    if (!ok) return;
+    setApprovingId(project.id);
+    try {
+      const { error } = await supabase
+        .from('projects')
+        .update({
+          status: 'planning',
+          requires_approval: false,
+          approved_by: collabId,
+          approved_at: new Date().toISOString(),
+        })
+        .eq('id', project.id);
+      if (error) throw error;
+      // Invalida as duas queries para o banner sumir e a lista atualizar
+      qc.invalidateQueries({ queryKey: ['projects-pending-approval'] });
+      qc.invalidateQueries({ queryKey: ['projects'] });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Erro ao aprovar';
+      alert(`Falha: ${msg}`);
+    } finally {
+      setApprovingId(null);
+    }
+  }
+
+  if (isLoading || pending.length === 0) return null;
+
+  return (
+    <section aria-label="Projetos aguardando aprovação">
+      <div className="flex items-center gap-2 mb-3">
+        <Clock size={16} className="text-amber-400 shrink-0" />
+        <h3 className="text-body-sm font-semibold text-amber-400">
+          Aguardando sua aprovação
+        </h3>
+        <span className="ml-1 inline-flex items-center justify-center h-5 min-w-[20px] px-1.5 rounded-full bg-amber-400/20 text-amber-400 text-[11px] font-semibold">
+          {pending.length}
+        </span>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-md">
+        {pending.map(project => (
+          <Card key={project.id} variant="outline" padded={false}
+            className="border-amber-400/30 bg-amber-400/5 overflow-hidden"
+          >
+            <div className="p-md space-y-2">
+              {/* Header: tag + tempo */}
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <CategoryTag project={project} label={project.category} />
+                <span className="text-[11px] text-fg-muted">{timeAgo(project.created_at)}</span>
+              </div>
+
+              {/* Nome do projeto */}
+              <p className="text-body-md font-semibold text-fg leading-snug">{project.name}</p>
+
+              {/* Criador */}
+              {project.creator && (
+                <p className="text-body-sm text-fg-muted">
+                  Por <span className="text-fg">{project.creator.full_name}</span>
+                </p>
+              )}
+
+              {/* Justificativa (se houver) */}
+              {project.justification && (
+                <p className="text-[11px] text-fg-muted line-clamp-2 italic">
+                  "{project.justification}"
+                </p>
+              )}
+
+              {/* Ações */}
+              <div className="flex gap-2 pt-1">
+                <Button
+                  variant="primary"
+                  size="sm"
+                  leadingIcon={<CheckCircle size={14} />}
+                  loading={approvingId === project.id}
+                  disabled={approvingId !== null}
+                  onClick={() => handleApprove(project)}
+                  className="bg-green-600 hover:bg-green-500 active:bg-green-700 text-white"
+                >
+                  Aprovar
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => navigate(`/projetos/${project.id}`)}
+                  disabled={approvingId !== null}
+                >
+                  Abrir
+                </Button>
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+    </section>
+  );
+}
 
 async function fetchProjects(collabId: string, isCoordOrDir: boolean): Promise<Project[]> {
   if (isCoordOrDir) {
@@ -159,6 +319,14 @@ export function Projetos() {
           </Button>
         </Link>
       </header>
+
+      {/* Banner de aprovações — visível apenas para quem precisa aprovar */}
+      {supabaseConfigured && collaborator && (
+        <PendingApprovalsBanner
+          collabId={collaborator.id}
+          isDirector={role === 'director'}
+        />
+      )}
 
       {!supabaseConfigured ? (
         <EmptyState icon={<Rocket size={32} />} title="Configure Supabase" />
