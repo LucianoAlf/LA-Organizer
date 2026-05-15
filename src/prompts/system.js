@@ -189,7 +189,7 @@ function nameFor(collab) {
 // Sprint 22.36 Fatia 2 — Adicionado: delegatedTasks (tarefas que ESTE user atribuiu
 // pra outros), todayChecklists (checklists operacionais de hoje com %).
 // Antes ficavam fora do contexto e TOM dizia "não tenho esse dato" no relatório.
-function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habits, events, delegatedTasks, todayChecklists, teamAdherence, personalChecklists, teamTodayChecklists, teamExpectedTemplates, schoolEvents = [], eventTypes = [], doneFutureTasks = [], monthlyCtxBlock = null, orgChart = []) {
+function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events, delegatedTasks, todayChecklists, teamAdherence, personalChecklists, teamTodayChecklists, teamExpectedTemplates, schoolEvents = [], eventTypes = [], doneFutureTasks = [], monthlyCtxBlock = null, orgChart = [], criticalMemories = [], preferenceMemories = [], weeklySummary = null, recentContextMemories = []) {
   const nickname = nameFor(collab);
   const lines = ['# 📌 CONTEXTO DESTA INTERAÇÃO', ''];
   const { ROLE_LABELS: ROLE_LABELS_PT } = require('../lib/roles');
@@ -264,9 +264,35 @@ function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habi
     lines.push(`• Briefing: ${fmtTime(prefs.briefing_time)} | Fechamento: ${fmtTime(prefs.closing_time)} | Cobrança: ${prefs.coaching_intensity || 'normal'}`);
   }
 
-  if (memories && memories.length) {
-    lines.push('', '**Memória (top 10):**');
-    memories.slice(0, 10).forEach(m => lines.push(`• [${m.memory_type}] ${m.content}`));
+  // Memória estratificada — crítico + preferences + semana + contexto semântico.
+  const hasAnyMemory = (criticalMemories && criticalMemories.length) ||
+                       (preferenceMemories && preferenceMemories.length) ||
+                       weeklySummary ||
+                       (recentContextMemories && recentContextMemories.length);
+
+  if (hasAnyMemory) {
+    const nick = nameFor(collab);
+    lines.push('', `## O que sei sobre ${nick}`);
+
+    if (criticalMemories && criticalMemories.length) {
+      lines.push('', '**Crítico:**');
+      criticalMemories.forEach(m => lines.push(`• [${m.memory_type}] ${m.content}`));
+    }
+
+    if (preferenceMemories && preferenceMemories.length) {
+      lines.push('', '**Preferências:**');
+      preferenceMemories.forEach(m => lines.push(`• ${m.content}`));
+    }
+
+    if (weeklySummary && weeklySummary.summary) {
+      const wk = weeklySummary.week_start || '';
+      lines.push('', `**Semana passada (a partir de ${wk}):**`, weeklySummary.summary);
+    }
+
+    if (recentContextMemories && recentContextMemories.length) {
+      lines.push('', '**Contexto recente (relevante à mensagem atual):**');
+      recentContextMemories.forEach(m => lines.push(`• [${m.memory_type}] ${m.content}`));
+    }
   }
 
   // Render personal × work separately. Falls back to legacy mixed list if split not provided.
@@ -985,7 +1011,6 @@ async function fetchCollaboratorContext(collaborator) {
 
   const [
     profileRes,
-    memoriesRes,
     prefsRes,
     personalRes,
     workRes,
@@ -1007,12 +1032,11 @@ async function fetchCollaboratorContext(collaborator) {
     pastHabitLogsRes,
     pastDelegatedRes,
     orgChartRes,
+    critRes,
+    prefRes,
+    weeklyRes,
   ] = await Promise.all([
     supabase.from('collaborator_profiles').select('*').eq('collaborator_id', id).maybeSingle(),
-    supabase.from('collaborator_memory')
-      .select('memory_type, content, importance, created_at')
-      .eq('collaborator_id', id).eq('is_active', true)
-      .order('created_at', { ascending: false }).limit(10),
     supabase.from('user_preferences').select('*').eq('collaborator_id', id).maybeSingle(),
     // Sprint 22.29 (Bucket 6) — sort_position primeiro pra TOM respeitar a
     // ordem manual definida pelo user no PWA (DnD na Hoje). Demais orders
@@ -1165,6 +1189,23 @@ async function fetchCollaboratorContext(collaborator) {
           .eq('is_active', true)
           .order('full_name')
       : Promise.resolve({ data: [], error: null }),
+    // Memórias críticas (todas, sem limite — são raras)
+    supabase.from('collaborator_memory')
+      .select('id, memory_type, content, importance, created_at')
+      .eq('collaborator_id', id).eq('is_active', true)
+      .eq('importance', 'critical')
+      .order('created_at', { ascending: false }),
+    // Preferences (top 5 mais recentes)
+    supabase.from('collaborator_memory')
+      .select('id, memory_type, content, importance, created_at')
+      .eq('collaborator_id', id).eq('is_active', true)
+      .eq('memory_type', 'preference')
+      .order('created_at', { ascending: false }).limit(5),
+    // Weekly summary (último, se existir)
+    supabase.from('collaborator_weekly_summaries')
+      .select('summary, week_start')
+      .eq('collaborator_id', id)
+      .order('week_start', { ascending: false }).limit(1).maybeSingle(),
   ]);
 
   let activeProjects = [];
@@ -1207,7 +1248,10 @@ async function fetchCollaboratorContext(collaborator) {
 
   const ctx = {
     profile: profileRes.data || null,
-    memories: memoriesRes.data || [],
+    criticalMemories: critRes.data || [],
+    preferenceMemories: prefRes.data || [],
+    weeklySummary: weeklyRes.data || null,
+    recentContextMemories: [], // populado depois pelo semantic search
     prefs: prefsRes.data || null,
     todayTasks: { personal: personalTasks, work: workTasks },
     personalTasks,
@@ -1935,9 +1979,7 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   }
   const ctx = await fetchCollaboratorContext(collaborator);
 
-  // Sprint 23.5 — busca semântica de memórias por similaridade com a mensagem atual.
-  // Substituí busca por recência (10 mais novas) por busca por relevância semântica.
-  // Fallback silencioso: se OPENAI_API_KEY ausente ou erro, mantém as memórias por recência.
+  // Busca semântica para "Contexto recente" — top 5 que não sejam crítico nem preference.
   if (lastUserMessage && process.env.OPENAI_API_KEY) {
     try {
       const { getEmbedding } = require('../services/embeddings');
@@ -1945,14 +1987,18 @@ async function buildSystemPrompt(collaborator, opts = {}) {
       const { data: semanticMems } = await supabase.rpc('match_memories', {
         p_collaborator_id: collaborator.id,
         p_embedding: embedding,
-        p_match_count: 10,
-        p_threshold: 0.5,
+        p_match_count: 15,
+        p_threshold: 0.6,
       });
-      if (semanticMems && semanticMems.length > 0) {
-        ctx.memories = semanticMems; // substitui por memórias semanticamente relevantes
-      }
-    } catch (semErr) {
-      // fail-open: mantém memórias por recência se embedding falhar
+      const usedIds = new Set([
+        ...(ctx.criticalMemories || []).map(m => m.id),
+        ...(ctx.preferenceMemories || []).map(m => m.id),
+      ]);
+      ctx.recentContextMemories = (semanticMems || [])
+        .filter(m => !usedIds.has(m.id) && m.importance !== 'critical' && m.memory_type !== 'preference')
+        .slice(0, 5);
+    } catch (err) {
+      console.warn('[Prompt] semantic search err:', err.message);
     }
   }
 
@@ -2061,7 +2107,7 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     eventsForCtx = eventsForCtx.filter(e => e.context === 'work');
   }
   // briefing_diario / daily_briefing: mantém todos os events (sem filtro).
-  const baseCtx = buildContext(collaborator, ctx.memories, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx, ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || [], ctx.teamTodayChecklists || [], ctx.teamExpectedTemplates || [], ctx.schoolEvents || [], ctx.eventTypes || [], ctx.doneFutureTasks || [], monthlyCtxBlock, ctx.orgChart || []);
+  const baseCtx = buildContext(collaborator, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx, ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || [], ctx.teamTodayChecklists || [], ctx.teamExpectedTemplates || [], ctx.schoolEvents || [], ctx.eventTypes || [], ctx.doneFutureTasks || [], monthlyCtxBlock, ctx.orgChart || [], ctx.criticalMemories || [], ctx.preferenceMemories || [], ctx.weeklySummary || null, ctx.recentContextMemories || []);
 
   // Histórico completo dos últimos 7 dias — agrupado por dia
   let pastEventsBlock = '';
@@ -2295,7 +2341,8 @@ async function buildSystemPrompt(collaborator, opts = {}) {
 
   const totalTasks = (ctx.personalTasks?.length || 0) + (ctx.workTasks?.length || 0);
   const evCount = (ctx.todayEvents || []).length;
-  console.log(`[Prompt] size: ${systemPrompt.length} chars (skill: ${skill ? skill.name : 'none'}, history: ${hist.length}, memories: ${ctx.memories.length}, tasks: ${totalTasks}/p${ctx.personalTasks?.length || 0}/w${ctx.workTasks?.length || 0}, events: ${evCount}, ritual: ${rt || '-'})`);
+  const memCount = (ctx.criticalMemories?.length || 0) + (ctx.preferenceMemories?.length || 0) + (ctx.recentContextMemories?.length || 0);
+  console.log(`[Prompt] size: ${systemPrompt.length} chars (skill: ${skill ? skill.name : 'none'}, history: ${hist.length}, memories: ${memCount}, tasks: ${totalTasks}/p${ctx.personalTasks?.length || 0}/w${ctx.workTasks?.length || 0}, events: ${evCount}, ritual: ${rt || '-'})`);
 
   // Compatibility: engine.js destructures { systemPrompt, ctx } and reads ctx.memories,
   // ctx.todayTasks, ctx.notifications, ctx.recentMessages.
