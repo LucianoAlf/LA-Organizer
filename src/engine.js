@@ -1979,7 +1979,7 @@ const APPROVAL_STOPWORDS = new Set([
   'LA','DA','DE','DO','DOS','DAS','O','A','OS','AS','UM','UMA',
   'NO','NA','EM','COM','PARA','POR','E','OU','SEM','SOB','PELO','PELA',
 ]);
-function extractApprovalToken(name) {
+function extractApprovalTokenBase(name) {
   const upper = String(name || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase();
   const words = upper.split(/\s+/).filter(Boolean);
   for (const w of words) {
@@ -1987,6 +1987,23 @@ function extractApprovalToken(name) {
     if (cleaned.length >= 3 && !APPROVAL_STOPWORDS.has(cleaned)) return cleaned;
   }
   return (words[0] || '').replace(/[^A-Z0-9]/g, '') || 'PROJETO';
+}
+
+function idSuffix4(id) {
+  return String(id || '').replace(/-/g, '').slice(0, 4).toUpperCase();
+}
+
+function extractApprovalToken(name, id) {
+  const base = extractApprovalTokenBase(name);
+  if (!id) return base;
+  const suffix = idSuffix4(id);
+  return suffix ? `${base}-${suffix}` : base;
+}
+
+// Quebra token digitado (ex: "VIDEO" ou "VIDEO-3FDA") em { base, suffix? }.
+function splitUserToken(raw) {
+  const parts = String(raw || '').toUpperCase().split('-');
+  return { base: parts[0] || '', suffix: parts[1] || null };
 }
 
 function parseProjectApproveMarker(text) {
@@ -2046,7 +2063,11 @@ async function resolveApprovalToken(token) {
     console.error('[Project] resolveApprovalToken err:', error.message);
     return { match: null, ambiguous: false, none: false, error: error.message };
   }
-  const matches = (pendings || []).filter(p => extractApprovalToken(p.name) === token);
+  const { base, suffix } = splitUserToken(token);
+  let matches = (pendings || []).filter(p => extractApprovalTokenBase(p.name) === base);
+  if (suffix) {
+    matches = matches.filter(p => idSuffix4(p.id) === suffix);
+  }
   if (matches.length === 0) return { match: null, ambiguous: false, none: true };
   if (matches.length > 1) return { match: null, ambiguous: true, none: false, candidates: matches };
   return { match: matches[0], ambiguous: false, none: false };
@@ -2060,8 +2081,8 @@ async function applyProjectApprove(collab, body) {
   if (r.error) return { ok: false, reason: `db_error:${r.error}`, userMsg: '_não consegui consultar agora, tenta de novo daqui a pouco_' };
   if (r.none) return { ok: false, reason: `token_not_found:${body.token}`, userMsg: `_não tenho projeto pendente com nome \"${body.token}\". tem certeza?_` };
   if (r.ambiguous) {
-    const names = (r.candidates || []).map(p => `*${p.name}*`).join(', ');
-    return { ok: false, reason: `ambiguous_token:${body.token}`, userMsg: `_tenho mais de um projeto começando com ${body.token}: ${names}. pode reescrever o nome inteiro?_` };
+    const opts = (r.candidates || []).map(p => `*${p.name}* → ${extractApprovalToken(p.name, p.id)}`).join('\n');
+    return { ok: false, reason: `ambiguous_token:${body.token}`, userMsg: `_tenho mais de um projeto começando com "${body.token}". responde com o token completo:_\n${opts}` };
   }
   const project = r.match;
   const { error: upErr } = await supabase
@@ -2093,8 +2114,8 @@ async function applyProjectReject(collab, body) {
   if (r.error) return { ok: false, reason: `db_error:${r.error}`, userMsg: '_não consegui consultar agora, tenta de novo daqui a pouco_' };
   if (r.none) return { ok: false, reason: `token_not_found:${body.token}`, userMsg: `_não tenho projeto pendente com nome \"${body.token}\". tem certeza?_` };
   if (r.ambiguous) {
-    const names = (r.candidates || []).map(p => `*${p.name}*`).join(', ');
-    return { ok: false, reason: `ambiguous_token:${body.token}`, userMsg: `_tenho mais de um projeto começando com ${body.token}: ${names}. pode reescrever o nome inteiro?_` };
+    const opts = (r.candidates || []).map(p => `*${p.name}* → ${extractApprovalToken(p.name, p.id)}`).join('\n');
+    return { ok: false, reason: `ambiguous_token:${body.token}`, userMsg: `_tenho mais de um projeto começando com "${body.token}". responde com o token completo:_\n${opts}` };
   }
   const project = r.match;
   const reason = String(body.reason || '').slice(0, 1000);

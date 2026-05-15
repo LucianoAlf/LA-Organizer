@@ -1477,7 +1477,7 @@ async function detectUnclosedPastEvents(now = new Date()) {
 }
 
 // Token de aprovação idêntico ao do internal-api.js (mantém compatibilidade).
-function extractApprovalToken(name) {
+function extractApprovalTokenBase(name) {
   const upper = String(name || '').toUpperCase()
     .normalize('NFD').replace(/[̀-ͯ]/g, '')
     .replace(/[^A-Z0-9\s]/g, '');
@@ -1488,6 +1488,13 @@ function extractApprovalToken(name) {
     if (cleaned.length >= 3 && !STOPWORDS.has(cleaned)) return cleaned;
   }
   return (words[0] || '').replace(/[^A-Z0-9]/g, '') || 'PROJETO';
+}
+
+function extractApprovalToken(name, id) {
+  const base = extractApprovalTokenBase(name);
+  if (!id) return base;
+  const suffix = String(id).replace(/-/g, '').slice(0, 4).toUpperCase();
+  return suffix ? `${base}-${suffix}` : base;
 }
 
 // Cobra approver de projetos pendentes há mais de 6h, máx 1 lembrete por slot.
@@ -1550,7 +1557,7 @@ async function remindPendingProjectApprovals(opts = {}) {
     const lines = [`👀 *${projects.length} projeto(s) aguardando sua aprovação:*\n`];
     for (const { project, creator } of projects) {
       const hours = Math.floor((Date.now() - new Date(project.created_at).getTime()) / 3600000);
-      const token = extractApprovalToken(project.name);
+      const token = extractApprovalToken(project.name, project.id);
       lines.push(`🗂️ *${project.name}*\n   por ${creator.full_name} · há ${hours}h`);
       lines.push(`   Aprovar: *APROVA ${token}*  |  Rejeitar: *REJEITA ${token} motivo*\n`);
     }

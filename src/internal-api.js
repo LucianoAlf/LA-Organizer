@@ -37,7 +37,7 @@ function stripDiacritics(s) {
   return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '');
 }
 
-function extractApprovalToken(name) {
+function extractApprovalTokenBase(name) {
   const upper = stripDiacritics(name).toUpperCase();
   const words = upper.split(/\s+/).filter(Boolean);
   for (const w of words) {
@@ -45,6 +45,13 @@ function extractApprovalToken(name) {
     if (cleaned.length >= 3 && !STOPWORDS.has(cleaned)) return cleaned;
   }
   return (words[0] || '').replace(/[^A-Z0-9]/g, '') || 'PROJETO';
+}
+
+function extractApprovalToken(name, id) {
+  const base = extractApprovalTokenBase(name);
+  if (!id) return base;
+  const suffix = String(id).replace(/-/g, '').slice(0, 4).toUpperCase();
+  return suffix ? `${base}-${suffix}` : base;
 }
 
 const CATEGORY_LABELS = {
@@ -424,7 +431,7 @@ router.post('/internal/project-created', requireInternalSecret, async (req, res)
     }
 
     if (supervisor && supervisor.phone) {
-      const token = extractApprovalToken(project.name);
+      const token = extractApprovalToken(project.name, project.id);
       const supMsg =
         `*${creator.full_name}* criou um projeto novo:\n\n` +
         `🗂️ *${project.name}*\n` +
