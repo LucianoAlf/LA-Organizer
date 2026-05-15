@@ -7,6 +7,21 @@ const supabase = require('../supabase/client');
 
 const SKILLS_DIR = path.join(__dirname, '..', '..', 'skills');
 
+// Caminho do organograma (referência de governança LA Music)
+const ORGANOGRAMA_PATH = path.join(__dirname, '..', '..', 'docs', 'organograma-la-music.md');
+
+let _organogramaCache = null;
+function loadOrganograma() {
+  if (_organogramaCache !== null) return _organogramaCache;
+  try {
+    _organogramaCache = fs.readFileSync(ORGANOGRAMA_PATH, 'utf8');
+  } catch (err) {
+    console.warn('[Prompt] organograma load err:', err.message);
+    _organogramaCache = '';
+  }
+  return _organogramaCache;
+}
+
 // ---------- BLOCK 1 — REGRAS INVIOLÁVEIS (hardcoded, top of prompt) ----------
 const BLOCK_RULES = `# 🚨 REGRAS INVIOLÁVEIS — PRIORIDADE MÁXIMA
 
@@ -1956,6 +1971,22 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   }
 
   const skill = await pickSkill(collaborator, lastUserMessage, hist);
+
+  // Organograma — injetado quando skill de governança ativa OU keyword de hierarquia.
+  const _orgChartKeywordRe = /\b(organograma|quem\s+(?:é|cuida|coordena|reporta|escala|delega)|quem\s+(?:é\s+)?o?\s*(?:respons[áa]vel|gerente|coordenador|l[íi]der|supervisor)|reporta\s+pra\s+quem|escalar?\s+(?:pra|para)\s+quem|delegar?\s+(?:pra|para)\s+quem|hierarquia)\b/i;
+  const _governanceSkills = ['gerencia', 'pedagogico', 'coordenacao-conversacional'];
+  const _injectOrganograma =
+    (skill && _governanceSkills.includes(skill.name)) ||
+    _orgChartKeywordRe.test(lastUserMessage);
+
+  let organogramaBlock = '';
+  if (_injectOrganograma) {
+    const organograma = loadOrganograma();
+    if (organograma) {
+      organogramaBlock = `\n\n---\n\n# 🗺️ ORGANOGRAMA LA MUSIC (referência de governança)\n\n${organograma}\n\n---\n`;
+    }
+  }
+
   // Sprint 12 Bloco D: skill priorizacao-inteligente é ANEXADA quando o fluxo
   // principal é checklist-tarefas, criar-compromisso ou cadastro-projeto-5w2h.
   // Ela é "skill auxiliar" — não substitui, completa: pra cada criação, o motor
@@ -2112,6 +2143,7 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     BLOCK_RULES,
     BLOCK_IDENTITY,
     ctxBlock,
+    organogramaBlock,
     skillBlock,
     projectStatusContextBlock,
   ].filter(Boolean);

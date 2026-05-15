@@ -1,12 +1,16 @@
 # Skill: Gerência
 
+> **IMPORTANTE — Esta skill confia no bloco `🗺️ ORGANOGRAMA LA MUSIC` injetado no contexto.**
+> NÃO assuma nomes — sempre consulte o organograma para resolver gerente/coordenador/líder de cada unit ou domínio.
+> Se o organograma não estiver disponível no contexto, pergunte ao usuário qual gerente deve receber a demanda.
+
 Captura demandas gerenciais (retenção, experiência da unidade, atendimento, articulação interna) e roteia inteligentemente: trata direto, encaminha para pedagógico via relay, aciona comercial/financeiro/marketing, ou articula múltiplas áreas. Emite `<<TASK_UPDATE>>` (criação) ou `<<COORDINATION_REQUEST>>` (relay/cobrança operacional).
 
 ---
 
 ## Quando usar
 
-Gatilhos: **risco de evasão**, **retenção**, **recuperação de aluno**, **experiência da unidade**, **problema de atendimento**, **recepção**, **secretaria**, **pré-atendimento**, **articulação interna**, "aciona a gerência", nomes Jereh/Clayton/Krissya, "pai insatisfeito", "pai querendo sair", "negociar permanência", "negociar saída".
+Gatilhos: **risco de evasão**, **retenção**, **recuperação de aluno**, **experiência da unidade**, **problema de atendimento**, **recepção**, **secretaria**, **pré-atendimento**, **articulação interna**, "aciona a gerência", "gerente da unidade", "pai insatisfeito", "pai querendo sair", "negociar permanência", "negociar saída".
 
 NÃO ative para: aprendizado, plano de aula, relatório de aula, trilha do aluno, recital, banda, professor com dificuldade pedagógica — esses são pedagógicos (skill `pedagogico.md`).
 
@@ -61,17 +65,15 @@ O gerente é o **primeiro filtro da unidade**. Quando uma demanda chega, ele ava
 
 ---
 
-## Mapa de gerentes por unidade
+## Resolução de gerente por unidade
 
-| Gerente | Unidade | role | unit (DB) |
-|---|---|---|---|
-| **Jereh** | Campo Grande | manager | `campo_grande` |
-| **Clayton** | Recreio (interino) | manager | `recreio` |
-| **Krissya** | Barra | manager | `barra` |
+**Use o organograma injetado para resolver o gerente da unit.**
 
-**Distinção importante:** Yuri também é `manager`, mas com `unit='all'` — ele lidera Marketing, **NÃO é gerente de unidade**. Não confundir.
+No organograma, o gerente de cada unidade física é identificado por `role=manager` + `unit=<nome_da_unit>`. Exemplos de units: `barra`, `recreio`, `campo_grande`.
 
-Resolução de "gerência da [unidade]": unidade Barra → Krissya, Recreio → Clayton, Campo Grande → Jereh.
+**Distinção importante:** há membros com `role=manager` e `unit='all'` que lideram áreas funcionais (ex.: Marketing) — esses **NÃO são gerentes de unidade**. Não confundir com gerentes de unidade física ao rotear demandas operacionais.
+
+Para resolver o assignee de uma task, procure no organograma: `role=manager AND unit=<unit_da_demanda>`.
 
 ---
 
@@ -80,7 +82,7 @@ Resolução de "gerência da [unidade]": unidade Barra → Krissya, Recreio → 
 - Gerente NUNCA emite `mode: "followup"` para alguém com `pedagogical_role` (lead/assistant/mentor)
 - Gerente sempre usa `mode: "relay_assisted"` para encaminhar pedagógico — encaminha, não cobra
 - O gate pedagógico do engine bloqueia followup. Quando isso acontecer, TOM já oferece relay como alternativa automaticamente
-- Quando demanda chega ao gerente e é claramente pedagógica, **sugira encaminhamento ANTES de emitir marker**: assistente da unidade ou coordenação (Juliana/Quintela)
+- Quando demanda chega ao gerente e é claramente pedagógica, **sugira encaminhamento ANTES de emitir marker**: assistente da unidade ou coordenação (consulte o organograma para identificar coordenadores pedagógicos da unit)
 
 **Regra prática:** se a demanda menciona aprendizado, plano de aula, dificuldade pedagógica do aluno, ou o gerente está pedindo "ajuda do pedagógico", a resposta certa é relay (não cobrar, não criar task em Gerência).
 
@@ -91,7 +93,7 @@ Resolução de "gerência da [unidade]": unidade Barra → Krissya, Recreio → 
 Quando o user diz "**problema de atendimento**", "**ninguém atendeu o telefone**", "**recepção não respondeu**", "**secretaria errou**", "**pai não foi atendido**":
 
 - O departamento é **SEMPRE Gerência** — `request_type=problema-de-atendimento` (NUNCA `incidente-tecnico` operacional)
-- O assignee é **SEMPRE o gerente da unidade** — Jereh/Clayton/Krissya (NUNCA Rafinha)
+- O assignee é **SEMPRE o gerente da unit** (`role=manager + unit=X`), conforme organograma
 - Mesmo que apareça a palavra "telefone" — o contexto é **atendimento HUMANO falho**, não problema de equipamento
 - `incidente-tecnico` é para equipamento quebrado: ar-condicionado pifou, microfone com chiado, computador travou. NÃO é falha de pessoa atendendo
 - `problema-de-atendimento` é para pessoa não atender, atendimento ruim, recepção falhar, secretaria errar — falha humana operacional
@@ -109,8 +111,8 @@ Quando o user diz "**problema de atendimento**", "**ninguém atendeu o telefone*
 Quando o user diz "**risco de evasão**", "**pediu pra sair**", "**querendo sair**", "**desistir**", "**desanimado pedindo pra sair**":
 
 - O departamento é **SEMPRE Gerência** — `risco-de-evasao` (NUNCA `apoio-ao-aluno` pedagógico)
-- O assignee é **SEMPRE o gerente da unidade** — Jereh/Clayton/Krissya (NUNCA Juliana/Quintela)
-- **NÃO pergunte "School ou Kids?"** — subdomain é irrelevante para risco de evasão. Roteamento é pela unidade física (Barra/Recreio/Campo Grande), não pelo subdomínio pedagógico
+- O assignee é **SEMPRE o gerente da unit** (`role=manager + unit=X`), conforme organograma
+- **NÃO pergunte "School ou Kids?"** — subdomain é irrelevante para risco de evasão. Roteamento é pela unidade física (ex.: Barra/Recreio/Campo Grande), não pelo subdomínio pedagógico
 - **NÃO use o request_type `apoio-ao-aluno`** (esse é pedagógico — aluno tendo dificuldade no conteúdo). `risco-de-evasao` é diferente: é sinal de saída, não dificuldade pedagógica
 - Não use `subdomain` no marker (deixe `null`)
 
@@ -157,23 +159,26 @@ Use o contexto da frase do user para decidir o departamento. Se for ambíguo, pe
   "action": "create",
   "title": "<título curto>",
   "description": "<contexto: pai/aluno/situação>",
-  "to_name": "<gerente da unidade>",
+  "to_unit": "<unit da demanda — ex: barra, recreio, campo_grande>",
   "due_date": "<YYYY-MM-DD>",
   "priority": "<critical|high|medium|low>",
   "context": "work",
   "department_id": "861bd0d7-14f4-4021-be34-e6c0b3a1fb51",
   "request_type_id": "<UUID do tipo escolhido da tabela acima>",
-  "notes": "Origem: <quem reportou>."
+  "notes": "Origem: <quem reportou>. Assignee: gerente da unit <X> (role=manager, consulte organograma)."
 }]
 <<END>>
 ```
+
+> Se o sistema de markers exigir `assignee_id` em vez de `to_unit`, consulte o organograma injetado para obter o `id` do membro com `role=manager` e `unit=<unit_da_demanda>`, e use esse valor no campo `assignee_id`.
 
 ### Encaminhamento pedagógico → `<<COORDINATION_REQUEST>>` (sempre relay_assisted)
 
 ```
 <<COORDINATION_REQUEST>>
 {
-  "recipient_name": "<assistente da unidade ou Juliana/Quintela>",
+  "recipient_unit": "<unit>",
+  "recipient_role": "pedagogical_lead",
   "mode": "relay_assisted",
   "message_body": "<texto do encaminhamento>",
   "message_original": "<texto original do gerente>",
@@ -182,6 +187,8 @@ Use o contexto da frase do user para decidir o departamento. Se for ambíguo, pe
 }
 <<END>>
 ```
+
+> Se precisar nomear o destinatário explicitamente, consulte o organograma injetado para obter o assistente/coordenador pedagógico da unit. Nunca assuma o nome por memória.
 
 **NUNCA emita `mode: "followup"` para alvo com `pedagogical_role`.** O gate bloqueia automaticamente — se acontecer, é falha de roteamento da skill.
 
@@ -197,13 +204,13 @@ Use o contexto da frase do user para decidir o departamento. Se for ambíguo, pe
 
 **Fluxo correto (NÃO PULE etapas):**
 
-1. **Pergunte sinais ANTES de criar:** "Quais sinais o [aluno] tá dando? (faltas, desânimo, pai reclamando, pediu pra sair?)" — você precisa de contexto pra Krissya entender ao receber.
+1. **Pergunte sinais ANTES de criar:** "Quais sinais o [aluno] tá dando? (faltas, desânimo, pai reclamando, pediu pra sair?)" — você precisa de contexto pra o gerente da Barra entender ao receber.
 
 2. Após o user responder com os sinais (ex.: "pediu pra sair porque está desanimado"):
    - **NÃO pergunte "School ou Kids?"** — irrelevante pra risco de evasão
    - **NÃO peça mais confirmação** ("Quer que eu crie?") — emita o marker direto
 
-3. **Emita o marker já com `description` rica** — incluindo os sinais que o user passou. Krissya vai receber a mensagem com contexto + sugestões de próximos passos automaticamente.
+3. **Emita o marker já com `description` rica** — incluindo os sinais que o user passou. O gerente da unit vai receber a mensagem com contexto + sugestões de próximos passos automaticamente.
 
 **Marker exato:**
 ```
@@ -211,45 +218,46 @@ Use o contexto da frase do user para decidir o departamento. Se for ambíguo, pe
 [{
   "action": "create",
   "title": "Risco de evasão — aluno <Nome> — <Unidade>",
-  "description": "<Aluno> está com sinais de evasão: <sinais reportados pelo user>. Unidade: <Barra/Recreio/Campo Grande>.",
-  "to_name": "Krissya",
+  "description": "<Aluno> está com sinais de evasão: <sinais reportados pelo user>. Unidade: <Unidade>.",
+  "to_unit": "barra",
   "due_date": "<YYYY-MM-DD, hoje ou amanhã>",
   "priority": "high",
   "context": "work",
   "department_id": "861bd0d7-14f4-4021-be34-e6c0b3a1fb51",
   "request_type_id": "5b7221aa-ba4d-42d1-ae32-01722ccc73a3",
-  "notes": "Origem: Alf (relato direto)."
+  "notes": "Origem: Alf (relato direto). Assignee: gerente da unit barra (role=manager, consulte organograma)."
 }]
 <<END>>
 ```
 
-A Krissya recebe automaticamente: apresentação (1ª vez), contexto, e sugestões de próximos passos. Você não precisa montar essa mensagem — o engine cuida.
+O gerente da Barra recebe automaticamente: apresentação (1ª vez), contexto, e sugestões de próximos passos. Você não precisa montar essa mensagem — o engine cuida.
 
-### Ex.2 — "TOM, fala com a Krissya sobre esse pai insatisfeito"
-- Modo: `relay_assisted` para Krissya (gerente Barra)
-- Marker: `COORDINATION_REQUEST` com `recipient_name="Krissya"`, `mode="relay_assisted"`
-- Não criar task em gerência — Krissya recebe via WhatsApp e decide ela mesma
+### Ex.2 — "TOM, fala com o gerente da Barra sobre esse pai insatisfeito"
+- Consulte o organograma injetado para identificar o gerente da unit `barra` (`role=manager`)
+- Modo: `relay_assisted` para o gerente encontrado
+- Marker: `COORDINATION_REQUEST` com `recipient_unit="barra"` e `mode="relay_assisted"`
+- Não criar task em gerência — o gerente recebe via WhatsApp e decide ele mesmo
 
 ### Ex.3 — "TOM, pai do aluno X reclamando que o filho não aprende" (gerente é o requester)
 - Avaliação: claramente pedagógico
-- Resposta antes de marker: "Isso parece pedagógico — não é a Gerência que resolve aprendizado. Encaminho pra **<assistente da sua unidade>** ou direto pra **Juliana** (LA Music School) / **Quintela** (LA Music Kids)?"
+- Resposta antes de marker: "Isso parece pedagógico — não é a Gerência que resolve aprendizado. Encaminho pra **o assistente pedagógico da sua unidade** ou direto pra **coordenação pedagógica** (consulte o organograma para identificar quem é o lead pedagógico desta unit)?"
 - Após confirmação do user: `COORDINATION_REQUEST` mode=relay_assisted para o destinatário escolhido
 - **NÃO criar task em gerência** — Pedagógico cuida. Você só roteia.
 
 ### Ex.4 — "TOM, isso virou problema de atendimento no Recreio"
 - Tipo: `problema-de-atendimento`, prioridade `high`
-- Marker: `TASK_UPDATE` com `to_name="Clayton"` (gerente interino Recreio)
+- Marker: `TASK_UPDATE` com `to_unit="recreio"` (consulte o organograma para o gerente da unit `recreio`)
 - Description deve incluir o contexto do problema (qual atendimento, qual cliente)
 
 ### Ex.5 — "TOM, preciso articular recepção, secretaria e coordenação no caso da aluna W"
 - Tipo: `articulacao-interna`, prioridade `medium`
-- Marker: `TASK_UPDATE` com `to_name=<gerente da unidade do contexto>`
+- Marker: `TASK_UPDATE` com `to_unit=<unit da demanda, conforme contexto>`
 - Description: descreve as áreas envolvidas e o que precisa ser articulado
 
 ### Ex.6 — "TOM, aciona a gerência da Barra sobre o evento de amanhã"
-- Resolve por unit: Barra → Krissya
-- Modo: `relay_assisted` para Krissya
-- Marker: `COORDINATION_REQUEST` com `recipient_name="Krissya"`
+- Consulte o organograma injetado: identifique o gerente com `role=manager` e `unit=barra`
+- Modo: `relay_assisted` para o gerente encontrado
+- Marker: `COORDINATION_REQUEST` com `recipient_unit="barra"`
 - Se contexto for genérico ("aciona a gerência") sem unidade, pergunte qual unidade
 
 ---
@@ -258,8 +266,9 @@ A Krissya recebe automaticamente: apresentação (1ª vez), contexto, e sugestõ
 
 - NÃO emita followup para mentor/lead/assistant pedagógico — sempre `relay_assisted`
 - NÃO crie task em `gerencia` quando o caso é claramente pedagógico — encaminhe via relay
-- NÃO confunda Yuri (manager+all/Marketing) com gerente de unidade
+- NÃO confunda gerente com `unit='all'` (área funcional como Marketing) com gerente de unidade física
 - NÃO use `articulacao-interna` para casos simples — só quando precisa mobilizar **2 ou mais** áreas
 - NÃO use `pendencia-gerencial` como categoria padrão — sempre tente um tipo específico antes
 - NÃO invente UUIDs — use **exatamente** os da tabela acima
+- NÃO assuma nomes de gerentes por memória — sempre resolva pelo organograma injetado no contexto
 - Marker fecha com `<<END>>` — NUNCA com tag de barra estilo XML
