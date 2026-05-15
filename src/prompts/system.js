@@ -174,7 +174,7 @@ function nameFor(collab) {
 // Sprint 22.36 Fatia 2 — Adicionado: delegatedTasks (tarefas que ESTE user atribuiu
 // pra outros), todayChecklists (checklists operacionais de hoje com %).
 // Antes ficavam fora do contexto e TOM dizia "não tenho esse dato" no relatório.
-function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habits, events, delegatedTasks, todayChecklists, teamAdherence, personalChecklists, teamTodayChecklists, teamExpectedTemplates, schoolEvents = [], eventTypes = []) {
+function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habits, events, delegatedTasks, todayChecklists, teamAdherence, personalChecklists, teamTodayChecklists, teamExpectedTemplates, schoolEvents = [], eventTypes = [], doneFutureTasks = []) {
   const nickname = nameFor(collab);
   const lines = ['# 📌 CONTEXTO DESTA INTERAÇÃO', ''];
   const { ROLE_LABELS: ROLE_LABELS_PT } = require('../lib/roles');
@@ -312,9 +312,9 @@ function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habi
   // Tarefas concluídas com prazo hoje ou futuro (done-futuro).
   // Bloco separado para não ser cortado pelo slice(0,8) das tasks abertas.
   // Garante que TOM responda "o que eu tinha pra amanhã?" mesmo após marcar como feito.
-  if (ctx.doneFutureTasks && ctx.doneFutureTasks.length) {
-    lines.push('', `**Concluído (prazo amanhã ou futuro, ${ctx.doneFutureTasks.length}):**`);
-    ctx.doneFutureTasks.forEach(t => {
+  if (doneFutureTasks && doneFutureTasks.length) {
+    lines.push('', `**Concluído (prazo amanhã ou futuro, ${doneFutureTasks.length}):**`);
+    doneFutureTasks.forEach(t => {
       const sid = String(t.id || '').slice(0, 8);
       const rel = t.due_date === today ? 'hoje' : t.due_date;
       const ctx = t.context === 'personal' ? 'pessoal' : t.context === 'work' ? 'trabalho' : t.context;
@@ -1849,7 +1849,7 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     eventsForCtx = eventsForCtx.filter(e => e.context === 'work');
   }
   // briefing_diario / daily_briefing: mantém todos os events (sem filtro).
-  const baseCtx = buildContext(collaborator, ctx.memories, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx, ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || [], ctx.teamTodayChecklists || [], ctx.teamExpectedTemplates || [], ctx.schoolEvents || [], ctx.eventTypes || []);
+  const baseCtx = buildContext(collaborator, ctx.memories, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx, ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || [], ctx.teamTodayChecklists || [], ctx.teamExpectedTemplates || [], ctx.schoolEvents || [], ctx.eventTypes || [], ctx.doneFutureTasks || []);
 
   // Histórico completo dos últimos 7 dias — agrupado por dia
   let pastEventsBlock = '';
