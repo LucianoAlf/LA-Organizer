@@ -174,7 +174,7 @@ function nameFor(collab) {
 // Sprint 22.36 Fatia 2 — Adicionado: delegatedTasks (tarefas que ESTE user atribuiu
 // pra outros), todayChecklists (checklists operacionais de hoje com %).
 // Antes ficavam fora do contexto e TOM dizia "não tenho esse dato" no relatório.
-function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habits, events, delegatedTasks, todayChecklists, teamAdherence, personalChecklists, teamTodayChecklists, teamExpectedTemplates, schoolEvents = [], eventTypes = [], doneFutureTasks = []) {
+function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habits, events, delegatedTasks, todayChecklists, teamAdherence, personalChecklists, teamTodayChecklists, teamExpectedTemplates, schoolEvents = [], eventTypes = [], doneFutureTasks = [], monthlyCtxBlock = null) {
   const nickname = nameFor(collab);
   const lines = ['# 📌 CONTEXTO DESTA INTERAÇÃO', ''];
   const { ROLE_LABELS: ROLE_LABELS_PT } = require('../lib/roles');
@@ -320,6 +320,11 @@ function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habi
       const ctx = t.context === 'personal' ? 'pessoal' : t.context === 'work' ? 'trabalho' : t.context;
       lines.push(`• ✅ [id=${sid}] "${t.title}" — vencia ${rel} (${ctx})`);
     });
+  }
+
+  // Bloco mensal (injetado quando keyword mensal detectada ou últimos 7 dias do mês).
+  if (monthlyCtxBlock) {
+    lines.push('', monthlyCtxBlock);
   }
 
   // Agenda próximos 7 dias (events com horário). Ordenados por start_at.
@@ -1660,6 +1665,130 @@ async function fetchPeriodStats(collabId, fromYmd, toYmd) {
   return { total, done, pending, cancelled, pct, events: events.length };
 }
 
+// Busca stats completos (todas contexts) para bloco de contexto mensal.
+// Diferença de fetchPeriodStats: sem filtro context='work', inclui habit_logs e op_checklist_completions.
+async function fetchMonthlyStats(collabId, from, to) {
+  const [tasksRes, eventsRes, habitsRes, checklistsRes] = await Promise.all([
+    supabase.from('tasks')
+      .select('id, status')
+      .eq('assigned_to', collabId)
+      .gte('due_date', from)
+      .lte('due_date', to),
+    supabase.from('events')
+      .select('id')
+      .eq('collaborator_id', collabId)
+      .gte('start_at', `${from}T00:00:00-03:00`)
+      .lte('start_at', `${to}T23:59:59-03:00`)
+      .neq('status', 'cancelled'),
+    supabase.from('habit_logs')
+      .select('id, is_completed')
+      .eq('collaborator_id', collabId)
+      .gte('log_date', from)
+      .lte('log_date', to),
+    supabase.from('op_checklist_completions')
+      .select('id, completed_at')
+      .eq('collaborator_id', collabId)
+      .gte('reference_date', from)
+      .lte('reference_date', to),
+  ]);
+  const tasks = tasksRes.data || [];
+  const events = eventsRes.data || [];
+  const habits = habitsRes.data || [];
+  const checklists = checklistsRes.data || [];
+  return {
+    tasks: {
+      total: tasks.length,
+      done: tasks.filter(t => t.status === 'done').length,
+      pending: tasks.filter(t => !['done', 'cancelled'].includes(t.status)).length,
+      cancelled: tasks.filter(t => t.status === 'cancelled').length,
+    },
+    events: events.length,
+    habits: {
+      total: habits.length,
+      done: habits.filter(h => h.is_completed).length,
+    },
+    checklists: {
+      total: checklists.length,
+      done: checklists.filter(c => c.completed_at !== null).length,
+    },
+  };
+}
+
+/**
+ * Monta bloco compacto de stats do mês atual + comparativo com mês anterior.
+ * Ativado por keyword ou nos últimos 7 dias do mês.
+ * Retorna string formatada ou null em caso de erro.
+ */
+async function buildMonthlyContextBlock(collabId) {
+  try {
+    const cur  = brtMonthRange(0);
+    const prev = brtMonthRange(-1);
+    const today = brtYmd();
+    // Se ainda estamos dentro do mês, vai só até hoje; se mês virou, vai ao fim.
+    const toDate = today <= cur.to ? today : cur.to;
+
+    const [curStats, prevStats] = await Promise.all([
+      fetchMonthlyStats(collabId, cur.from, toDate),
+      fetchMonthlyStats(collabId, prev.from, prev.to),
+    ]);
+
+    const dayNow    = parseInt(toDate.slice(8), 10);
+    const totalDays = parseInt(cur.to.slice(8), 10);
+    const dayLabel  = today < cur.to ? `1–${dayNow} de ${totalDays}` : `1–${totalDays}`;
+
+    const lines = [`📅 *${cur.label} (${dayLabel}):*`];
+
+    if (curStats.tasks.total > 0) {
+      const pct = Math.round((curStats.tasks.done / curStats.tasks.total) * 100);
+      lines.push(
+        `• Tarefas: ${curStats.tasks.done} ✅ | ${curStats.tasks.pending} ⏳` +
+        (curStats.tasks.cancelled ? ` | ${curStats.tasks.cancelled} canceladas` : '') +
+        ` (${pct}% concluído)`
+      );
+    }
+
+    if (curStats.events > 0) {
+      lines.push(`• Compromissos: ${curStats.events} no mês`);
+    }
+
+    if (curStats.habits.total > 0) {
+      const pct = Math.round((curStats.habits.done / curStats.habits.total) * 100);
+      lines.push(`• Hábitos: ${curStats.habits.done}/${curStats.habits.total} registros (${pct}%)`);
+    }
+
+    if (curStats.checklists.total > 0) {
+      const pct = Math.round((curStats.checklists.done / curStats.checklists.total) * 100);
+      lines.push(`• Checklists: ${curStats.checklists.done}/${curStats.checklists.total} cumpridos (${pct}%)`);
+    }
+
+    // Comparativos: só se mês anterior tem dados mínimos (≥ 3 itens por categoria).
+    const comparatives = [];
+    if (prevStats.tasks.total >= 3) {
+      const diff = curStats.tasks.done - prevStats.tasks.done;
+      comparatives.push(`tarefas ${diff >= 0 ? '+' : ''}${diff}`);
+    }
+    if (prevStats.habits.total >= 3) {
+      const diff = curStats.habits.done - prevStats.habits.done;
+      comparatives.push(`hábitos ${diff >= 0 ? '+' : ''}${diff} registros`);
+    }
+    if (prevStats.checklists.total >= 3 && curStats.checklists.total > 0) {
+      const curPct  = Math.round((curStats.checklists.done  / curStats.checklists.total)  * 100);
+      const prevPct = Math.round((prevStats.checklists.done / prevStats.checklists.total) * 100);
+      const diff = curPct - prevPct;
+      comparatives.push(`checklists ${diff >= 0 ? '+' : ''}${diff}%`);
+    }
+
+    if (comparatives.length > 0) {
+      lines.push(`📊 vs ${prev.label}: ${comparatives.join(' | ')}`);
+    }
+
+    return lines.join('\n');
+  } catch (err) {
+    console.warn('[Prompt] buildMonthlyContextBlock err:', err.message);
+    return null;
+  }
+}
+
 /**
  * Constrói bloco de contexto histórico para TOM consumir em rituais de fechamento/planejamento.
  * Só é chamado quando ritual_type indica que o histórico é relevante — não em toda mensagem.
@@ -1737,6 +1866,17 @@ async function buildHistoricalContext(collabId, ritualType) {
 
 async function buildSystemPrompt(collaborator, opts = {}) {
   const lastUserMessage = opts.lastUserMessage || '';
+  // Janela Temporal Mensal: ativa por keyword ou nos últimos 7 dias do mês.
+  const _monthlyKeywordRe = /\b(esse\s+m[eê]s|este\s+m[eê]s|no\s+m[eê]s|do\s+m[eê]s|m[eê]s\s+atual|m[eê]s\s+passado|ao\s+longo\s+do\s+m[eê]s|mensal|balan[çc]o|resumo\s+do\s+m[eê]s|como\s+(?:foi|est[áa]|fui|estou)\s+(?:esse|este|o)\s+m[eê]s|o\s+que\s+fiz\s+esse\s+m[eê]s|produtividade|meta\s+do\s+m[eê]s)\b/i;
+  const _todayForMonth = brtYmd();
+  const _dayOfMonth = parseInt(_todayForMonth.slice(8), 10);
+  const _daysInMonth = new Date(parseInt(_todayForMonth.slice(0, 4)), parseInt(_todayForMonth.slice(5, 7)), 0).getDate();
+  const _isEndOfMonth = _dayOfMonth >= (_daysInMonth - 6);
+  const _includeMonthly = _monthlyKeywordRe.test(lastUserMessage) || _isEndOfMonth;
+  let monthlyCtxBlock = null;
+  if (_includeMonthly && collaborator) {
+    monthlyCtxBlock = await buildMonthlyContextBlock(collaborator.id);
+  }
   const ctx = await fetchCollaboratorContext(collaborator);
 
   // Sprint 23.5 — busca semântica de memórias por similaridade com a mensagem atual.
@@ -1849,7 +1989,7 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     eventsForCtx = eventsForCtx.filter(e => e.context === 'work');
   }
   // briefing_diario / daily_briefing: mantém todos os events (sem filtro).
-  const baseCtx = buildContext(collaborator, ctx.memories, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx, ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || [], ctx.teamTodayChecklists || [], ctx.teamExpectedTemplates || [], ctx.schoolEvents || [], ctx.eventTypes || [], ctx.doneFutureTasks || []);
+  const baseCtx = buildContext(collaborator, ctx.memories, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx, ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || [], ctx.teamTodayChecklists || [], ctx.teamExpectedTemplates || [], ctx.schoolEvents || [], ctx.eventTypes || [], ctx.doneFutureTasks || [], monthlyCtxBlock);
 
   // Histórico completo dos últimos 7 dias — agrupado por dia
   let pastEventsBlock = '';
