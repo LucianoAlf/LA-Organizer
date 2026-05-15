@@ -312,9 +312,9 @@ function buildContext(collab, memories, prefs, tasks, projects, lastMsgAge, habi
   // Tarefas concluídas com prazo hoje ou futuro (done-futuro).
   // Bloco separado para não ser cortado pelo slice(0,8) das tasks abertas.
   // Garante que TOM responda "o que eu tinha pra amanhã?" mesmo após marcar como feito.
-  if (doneFutureTasks && doneFutureTasks.length) {
-    lines.push('', `**Concluído (prazo amanhã ou futuro, ${doneFutureTasks.length}):**`);
-    doneFutureTasks.forEach(t => {
+  if (ctx.doneFutureTasks && ctx.doneFutureTasks.length) {
+    lines.push('', `**Concluído (prazo amanhã ou futuro, ${ctx.doneFutureTasks.length}):**`);
+    ctx.doneFutureTasks.forEach(t => {
       const sid = String(t.id || '').slice(0, 8);
       const rel = t.due_date === today ? 'hoje' : t.due_date;
       const ctx = t.context === 'personal' ? 'pessoal' : t.context === 'work' ? 'trabalho' : t.context;
