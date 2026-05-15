@@ -2820,12 +2820,16 @@ async function sendHealthReport() {
     const { runHealthCheck } = require('./health-check');
     run = await runHealthCheck();
   }
-  // 2. Acha o director
+  // 2. Acha o destinatário do relatório.
+  // Hardcoded: Luciano (owner do sistema). Anne tem role=director mas é dona
+  // da escola, não admin do TOM — não deve receber relatórios técnicos.
+  // TODO(roadmap): adicionar coluna `is_system_admin` em collaborators.
   const { data: directors, error: dErr } = await supabase
     .from('collaborators')
     .select('id, full_name, phone')
     .eq('role', 'director')
     .eq('is_active', true)
+    .ilike('full_name', 'Luciano%')
     .limit(1);
   if (dErr) throw dErr;
   const director = directors && directors[0];

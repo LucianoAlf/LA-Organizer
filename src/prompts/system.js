@@ -1072,14 +1072,33 @@ async function fetchCollaboratorContext(collaborator) {
       .eq('collaborator_id', id).eq('is_active', true)
       .order('created_at', { ascending: true }).limit(20),
     // Compromissos próximos 7 dias em America/Sao_Paulo (-03:00). Inclui scheduled e done.
-    // Fix: antes só buscava hoje → TOM não via eventos de amanhã nem os marcados como feito.
-    supabase.from('events')
-      .select('id, title, start_at, end_at, modality, category, context, location_text, meeting_url, status, event_reminders(remind_at, sent_at)')
-      .eq('collaborator_id', id)
-      .gte('start_at', `${today}T00:00:00-03:00`)
-      .lte('start_at', `${next7days}T23:59:59-03:00`)
-      .neq('status', 'cancelled')
-      .order('start_at', { ascending: true }).limit(30),
+    // Fix 2026-05-15: inclui também eventos onde o user é PARTICIPANTE (event_participants),
+    // não só os owned. Antes, convites de terceiros (ex: Juliana convidando Luciano) sumiam
+    // do contexto e TOM se confundia com lembretes/datas.
+    (async () => {
+      const SELECT_COLS = 'id, collaborator_id, title, start_at, end_at, modality, category, context, location_text, meeting_url, status, event_reminders(remind_at, sent_at)';
+      const lo = `${today}T00:00:00-03:00`;
+      const hi = `${next7days}T23:59:59-03:00`;
+      const [own, parts] = await Promise.all([
+        supabase.from('events').select(SELECT_COLS)
+          .eq('collaborator_id', id).gte('start_at', lo).lte('start_at', hi)
+          .neq('status', 'cancelled').order('start_at', { ascending: true }).limit(30),
+        supabase.from('event_participants')
+          .select(`event:events(${SELECT_COLS})`)
+          .eq('collaborator_id', id).neq('status', 'declined'),
+      ]);
+      const map = new Map();
+      for (const e of (own.data || [])) map.set(e.id, e);
+      for (const p of (parts.data || [])) {
+        const e = p.event;
+        if (!e || map.has(e.id)) continue;
+        if (e.status === 'cancelled') continue;
+        const t = new Date(e.start_at).getTime();
+        if (t >= new Date(lo).getTime() && t <= new Date(hi).getTime()) map.set(e.id, e);
+      }
+      const merged = [...map.values()].sort((a, b) => String(a.start_at).localeCompare(String(b.start_at))).slice(0, 30);
+      return { data: merged, error: own.error || parts.error };
+    })(),
     // Sprint 22.36 Fatia 2 — DELEGADAS: tarefas que ESTE user atribuiu pra outros.
     // Antes ficavam fora do contexto. Bug do relatório do dia onde TOM dizia
     // "não tenho esse dato no contexto atual" pra delegadas.
@@ -1155,13 +1174,31 @@ async function fetchCollaboratorContext(collaborator) {
     // Tipos com emoji/cor pra renderização do bloco.
     supabase.from('event_types').select('id, label, emoji').order('sort_order'),
     // Histórico: eventos dos últimos 7 dias (exceto hoje) para TOM responder sobre o passado.
-    supabase.from('events')
-      .select('id, title, start_at, end_at, modality, context, location_text, status')
-      .eq('collaborator_id', id)
-      .gte('start_at', `${past7days}T00:00:00-03:00`)
-      .lt('start_at', `${today}T00:00:00-03:00`)
-      .neq('status', 'cancelled')
-      .order('start_at', { ascending: false }).limit(15),
+    // Inclui owned + invited (mesma lógica do bloco de próximos eventos).
+    (async () => {
+      const COLS = 'id, title, start_at, end_at, modality, context, location_text, status';
+      const lo = `${past7days}T00:00:00-03:00`;
+      const hi = `${today}T00:00:00-03:00`;
+      const [own, parts] = await Promise.all([
+        supabase.from('events').select(COLS)
+          .eq('collaborator_id', id).gte('start_at', lo).lt('start_at', hi)
+          .neq('status', 'cancelled').order('start_at', { ascending: false }).limit(15),
+        supabase.from('event_participants')
+          .select(`event:events(${COLS})`)
+          .eq('collaborator_id', id).neq('status', 'declined'),
+      ]);
+      const map = new Map();
+      for (const e of (own.data || [])) map.set(e.id, e);
+      for (const p of (parts.data || [])) {
+        const e = p.event;
+        if (!e || map.has(e.id)) continue;
+        if (e.status === 'cancelled') continue;
+        const t = new Date(e.start_at).getTime();
+        if (t >= new Date(lo).getTime() && t < new Date(hi).getTime()) map.set(e.id, e);
+      }
+      const merged = [...map.values()].sort((a, b) => String(b.start_at).localeCompare(String(a.start_at))).slice(0, 15);
+      return { data: merged, error: own.error || parts.error };
+    })(),
     // Tarefas concluídas nos últimos 7 dias.
     supabase.from('tasks')
       .select('id, title, context, completed_at, due_date')

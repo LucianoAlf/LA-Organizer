@@ -10,19 +10,12 @@ const SELECT_COLS =
 /**
  * Events for a given local YMD (America/Sao_Paulo). Returns events whose
  * start_at falls within the day (in the SP timezone).
+ *
+ * Fix 2026-05-15: inclui owned + invited (event_participants). Antes, convites
+ * de terceiros (ex: Juliana convidou Luciano) sumiam da Agenda do convidado.
  */
 export async function fetchEventsForDay(collabId: string, ymd: string): Promise<CalendarEvent[]> {
-  const dayStart = `${ymd}T00:00:00-03:00`;
-  const dayEnd = `${ymd}T23:59:59-03:00`;
-  const { data, error } = await supabase
-    .from('events')
-    .select(SELECT_COLS)
-    .eq('collaborator_id', collabId)
-    .gte('start_at', dayStart)
-    .lte('start_at', dayEnd)
-    .order('start_at', { ascending: true });
-  if (error) throw error;
-  return (data ?? []) as unknown as CalendarEvent[];
+  return fetchEventsOwnedOrInvited(collabId, `${ymd}T00:00:00-03:00`, `${ymd}T23:59:59-03:00`);
 }
 
 /** Events whose start_at falls between two YMDs inclusive (SP timezone). */
@@ -31,15 +24,49 @@ export async function fetchEventsForRange(
   ymdStart: string,
   ymdEnd: string,
 ): Promise<CalendarEvent[]> {
-  const { data, error } = await supabase
-    .from('events')
-    .select(SELECT_COLS)
-    .eq('collaborator_id', collabId)
-    .gte('start_at', `${ymdStart}T00:00:00-03:00`)
-    .lte('start_at', `${ymdEnd}T23:59:59-03:00`)
-    .order('start_at', { ascending: true });
-  if (error) throw error;
-  return (data ?? []) as unknown as CalendarEvent[];
+  return fetchEventsOwnedOrInvited(collabId, `${ymdStart}T00:00:00-03:00`, `${ymdEnd}T23:59:59-03:00`);
+}
+
+/**
+ * Helper interno: une events.collaborator_id=user (owned) com event_participants
+ * (invited, exceto declined), dedupe por event id, ordena por start_at.
+ * Filtros aplicados em JS pra não precisar de RPC.
+ */
+async function fetchEventsOwnedOrInvited(
+  collabId: string,
+  startIso: string,
+  endIso: string,
+): Promise<CalendarEvent[]> {
+  const [ownRes, partsRes] = await Promise.all([
+    supabase
+      .from('events')
+      .select(SELECT_COLS)
+      .eq('collaborator_id', collabId)
+      .gte('start_at', startIso)
+      .lte('start_at', endIso)
+      .order('start_at', { ascending: true }),
+    supabase
+      .from('event_participants')
+      .select(`event:events(${SELECT_COLS})`)
+      .eq('collaborator_id', collabId)
+      .neq('status', 'declined'),
+  ]);
+  if (ownRes.error) throw ownRes.error;
+  if (partsRes.error) throw partsRes.error;
+  const map = new Map<string, CalendarEvent>();
+  for (const e of ((ownRes.data ?? []) as unknown as CalendarEvent[])) {
+    map.set(e.id, e);
+  }
+  const lo = new Date(startIso).getTime();
+  const hi = new Date(endIso).getTime();
+  for (const row of ((partsRes.data ?? []) as unknown as Array<{ event: CalendarEvent | null }>)) {
+    const e = row.event;
+    if (!e || map.has(e.id)) continue;
+    const t = new Date(e.start_at).getTime();
+    if (t < lo || t > hi) continue;
+    map.set(e.id, e);
+  }
+  return [...map.values()].sort((a, b) => String(a.start_at).localeCompare(String(b.start_at)));
 }
 
 /** "08:00–09:30" formatting from start/end ISO timestamps in America/Sao_Paulo. */
