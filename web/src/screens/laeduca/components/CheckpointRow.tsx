@@ -92,6 +92,32 @@ export function CheckpointRow({
         </div>
       </div>
 
+      {/* ── Preview no collapsed: barra de nota + 1 linha de observação ── */}
+      {!expanded && (
+        <div className="px-md pb-sm space-y-1">
+          {/* Barra de nota (não interativa — só visualização) */}
+          <div className="flex items-center gap-sm">
+            <div className="flex-1 h-1.5 bg-bg-app rounded-full overflow-hidden">
+              <div
+                className={`h-full ${nota >= notaMin ? 'bg-success' : nota > 0 ? 'bg-warning' : 'bg-border'}`}
+                style={{ width: `${Math.max(0, Math.min(100, nota * 10))}%` }}
+              />
+            </div>
+            <span
+              className={`text-[11px] font-semibold tabular-nums min-w-[2.5rem] text-right ${nota >= notaMin ? 'text-success' : nota > 0 ? 'text-warning' : 'text-fg-muted'}`}
+            >
+              {nota.toFixed(1)}
+            </span>
+          </div>
+          {/* Observação (1 linha, truncate) — só se houver */}
+          {obs && (
+            <p className="text-[11px] text-fg-muted truncate italic" title={obs}>
+              💬 {obs}
+            </p>
+          )}
+        </div>
+      )}
+
       {/* ── Conteúdo expandido ── */}
       {expanded && (
         <div className="px-md pb-md space-y-sm border-t border-border pt-sm">
