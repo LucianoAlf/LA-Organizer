@@ -116,9 +116,9 @@ export function LaEducaListaPage() {
         <div className="flex items-center justify-between gap-sm flex-wrap">
           <Link
             to="/la-educa/admin"
-            className="inline-flex items-center gap-sm text-body-sm text-tom hover:underline focus-ring"
+            className="inline-flex items-center gap-sm bg-bg-surface border border-border hover:border-tom text-fg px-md py-sm rounded-md font-semibold focus-ring"
           >
-            <Settings size={14} /> Editar trilha
+            <Settings size={16} /> Editar trilha
           </Link>
           <Link
             to="/la-educa/novo"
