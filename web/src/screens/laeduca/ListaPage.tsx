@@ -10,6 +10,7 @@ import { LoadingState } from '../../components/LoadingState';
 import { EmptyState } from '../../components/EmptyState';
 import { ProgressBar } from './components/ProgressBar';
 import { AlertCard } from './components/AlertCard';
+import { CustomSelect } from '../../components/CustomSelect';
 import { UNIDADE_LABELS } from '../../lib/laeduca-types';
 import type { Unidade } from '../../lib/laeduca-types';
 
@@ -65,15 +66,19 @@ export function LaEducaListaPage() {
 
       {isCoordOrDirector && (
         <div className="flex items-center gap-sm">
-          <label className="text-body-sm text-fg-muted">Unidade:</label>
-          <select
-            value={unidade}
-            onChange={e => setUnidade(e.target.value)}
-            className="bg-bg-surface text-fg rounded p-sm border border-border focus-ring"
-          >
-            <option value="">Todas</option>
-            {UNIDADES.map(u => <option key={u} value={u}>{UNIDADE_LABELS[u]}</option>)}
-          </select>
+          <span className="text-body-sm text-fg-muted shrink-0">Unidade:</span>
+          <div className="w-48">
+            <CustomSelect
+              value={unidade}
+              onChange={setUnidade}
+              size="sm"
+              placeholder="Todas"
+              options={[
+                { value: '', label: 'Todas' },
+                ...UNIDADES.map(u => ({ value: u, label: UNIDADE_LABELS[u] })),
+              ]}
+            />
+          </div>
         </div>
       )}
 

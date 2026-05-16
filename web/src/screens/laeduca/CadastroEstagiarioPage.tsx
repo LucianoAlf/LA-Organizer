@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '../../components/PageHeader';
+import { CustomSelect } from '../../components/CustomSelect';
 import { cadastrarEstagiario, fetchMentoresDisponiveis } from '../../lib/laeduca';
 import { showToast } from '../../components/Toast';
 import type { CadastroEstagiarioForm, Modalidade, Unidade } from '../../lib/laeduca-types';
@@ -75,25 +76,20 @@ export function LaEducaCadastroPage() {
         </Field>
 
         <Field label="Unidade">
-          <select
+          <CustomSelect
             value={form.unidade}
-            onChange={e => update('unidade', e.target.value as Unidade)}
-            className="w-full bg-bg-surface text-fg rounded p-sm border border-border focus-ring"
-          >
-            {UNIDADES.map(u => <option key={u} value={u}>{UNIDADE_LABELS[u]}</option>)}
-          </select>
+            onChange={v => update('unidade', v as Unidade)}
+            options={UNIDADES.map(u => ({ value: u, label: UNIDADE_LABELS[u] }))}
+          />
         </Field>
 
         <Field label={`Mentor responsável (${mentores.length} disponíveis)`}>
-          <select
+          <CustomSelect
             value={form.mentor_id}
-            onChange={e => update('mentor_id', e.target.value)}
-            className="w-full bg-bg-surface text-fg rounded p-sm border border-border focus-ring"
-            required
-          >
-            <option value="">— Selecione —</option>
-            {mentores.map(m => <option key={m.id} value={m.id}>{m.full_name}</option>)}
-          </select>
+            onChange={v => update('mentor_id', v)}
+            placeholder="— Selecione —"
+            options={mentores.map(m => ({ value: m.id, label: m.full_name }))}
+          />
         </Field>
 
         <Field label="Modalidade">
@@ -131,7 +127,7 @@ export function LaEducaCadastroPage() {
             type="date"
             value={form.data_inicio}
             onChange={e => update('data_inicio', e.target.value)}
-            className="w-full bg-bg-surface text-fg rounded p-sm border border-border focus-ring"
+            className="w-full bg-bg-surface text-fg rounded p-sm border border-border focus-ring [color-scheme:dark] dark:[color-scheme:dark]"
             required
           />
         </Field>
