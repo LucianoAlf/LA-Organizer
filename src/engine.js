@@ -12,6 +12,8 @@ const { safeIsoDate, safeDate } = require('./utils/dates');
 const supabase = require('./supabase/client');
 const OpenAI = require('openai');
 const openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const inventarioService = require('./services/inventario-service');
+const inventarioValidators = require('./services/inventario-validators');
 
 const SKILLS_DIR = path.join(__dirname, '..', 'skills');
 
@@ -4797,6 +4799,97 @@ async function processMessage(phone, text, raw = {}) {
     return; // não passar pra IA
   }
 
+  // ─── /inv [...] ──────────────────────────────────────────────────────────────
+  const invMatch = (typeof text === 'string') && text.trim().match(/^\/inv(?:\s+(.+))?$/i);
+  if (invMatch) {
+    const arg = (invMatch[1] || '').trim();
+    const tokens = arg.split(/\s+/).filter(Boolean);
+    try {
+      if (tokens.length === 0) {
+        const u = await inventarioService.listarUnidades();
+        const linhas = u.map(x => `• ${x.nome} — /inv ${x.nome.toLowerCase()}`);
+        await whatsapp.sendMessage(phone, `📦 *Inventário* — escolha a unidade:\n\n${linhas.join('\n')}`);
+        return;
+      }
+      if (tokens[0].toLowerCase() === 'alertas') {
+        const [estoque, manut, revisoes] = await Promise.all([
+          inventarioService.listarEstoqueBaixo(),
+          inventarioService.listarManutencoesPendentes(14),
+          inventarioService.listarRevisoesProgramadas(7),
+        ]);
+        let replyInv = `🔔 *Alertas inventário*\n\n`;
+        replyInv += `🔴 Estoque baixo: ${estoque.length}\n`;
+        replyInv += `🔧 Manutenções +14d: ${manut.length}\n`;
+        replyInv += `🗓 Revisões próximas (7d): ${revisoes.length}\n`;
+        await whatsapp.sendMessage(phone, replyInv);
+        return;
+      }
+      // /inv <unidade>: lista salas
+      const u = await inventarioService.listarUnidades();
+      const unidade = u.find(x => x.nome.toLowerCase().includes(tokens[0].toLowerCase()));
+      if (!unidade) {
+        await whatsapp.sendMessage(phone, `Unidade "${tokens[0]}" não encontrada. Use: ${u.map(x => x.nome).join(', ')}`);
+        return;
+      }
+      const salas = await inventarioService.listarSalasPorUnidade(unidade.id);
+      let replyInv = `📦 *Inventário ${unidade.nome}* — ${salas.length} salas:\n\n`;
+      for (const s of salas) {
+        replyInv += `• ${s.nome} (${s.tipo_sala || 'multiuso'}) — ${s.itens_count || 0} itens\n`;
+      }
+      await whatsapp.sendMessage(phone, replyInv.trim());
+    } catch (e) {
+      await whatsapp.sendMessage(phone, `Erro: ${e.message}`);
+    }
+    return;
+  }
+
+  // ─── /loja [...] ─────────────────────────────────────────────────────────────
+  const lojaMatch = (typeof text === 'string') && text.trim().match(/^\/loja(?:\s+(.+))?$/i);
+  if (lojaMatch) {
+    const arg = (lojaMatch[1] || '').trim().toLowerCase();
+    try {
+      if (!arg) {
+        const u = await inventarioService.listarUnidades();
+        const linhas = u.map(x => `• ${x.nome} — /loja ${x.nome.toLowerCase()}`);
+        await whatsapp.sendMessage(phone, `🛍 *Lojinha* — escolha a unidade:\n\n${linhas.join('\n')}`);
+        return;
+      }
+      if (arg === 'encomenda' || arg.startsWith('encomenda ')) {
+        const unitMatch = arg.match(/^encomenda\s+(.+)$/);
+        let unitId = null;
+        if (unitMatch) {
+          const u = await inventarioService.listarUnidades();
+          const found = u.find(x => x.nome.toLowerCase().includes(unitMatch[1]));
+          if (found) unitId = found.id;
+        }
+        const baixos = await inventarioService.listarEstoqueBaixo(unitId);
+        if (baixos.length === 0) {
+          await whatsapp.sendMessage(phone, '✅ Sem produtos abaixo do mínimo.');
+          return;
+        }
+        const linhas = baixos.map(p => `• ${p.nome} — ${p.estoque_atual}/${p.estoque_minimo} (custo R$${p.custo || '?'})`);
+        await whatsapp.sendMessage(phone, `🛒 *Lista de encomenda:*\n\n${linhas.join('\n')}`);
+        return;
+      }
+      const u = await inventarioService.listarUnidades();
+      const unidade = u.find(x => x.nome.toLowerCase().includes(arg));
+      if (!unidade) {
+        await whatsapp.sendMessage(phone, `Unidade "${arg}" não encontrada. Use: ${u.map(x => x.nome).join(', ')}`);
+        return;
+      }
+      const produtos = await inventarioService.listarLojaPorUnidade(unidade.id);
+      let replyLoja = `🛍 *Lojinha · ${unidade.nome}*\n\n`;
+      for (const p of produtos) {
+        const flag = p.zerado ? '🔴' : p.abaixo_minimo ? '🟠' : '✅';
+        replyLoja += `${flag} ${p.nome}: ${p.estoque_atual} un (R$${p.preco})\n`;
+      }
+      await whatsapp.sendMessage(phone, replyLoja.trim());
+    } catch (e) {
+      await whatsapp.sendMessage(phone, `Erro: ${e.message}`);
+    }
+    return;
+  }
+
   // Sprint 23.5 — bypass engine-side para dup microconfirm.
   // Intercepta "1/2/3" quando há pending dup event, resolve sem chamar LLM.
   const dupBypass = await tryDupBypass(collab, String(text || ''));
@@ -5489,6 +5582,145 @@ async function processMessage(phone, text, raw = {}) {
         base = approvalResult.reason || 'Tive um erro ao processar a aprovação. Tenta de novo?';
       }
       reply = base || reply;
+    }
+  }
+
+  // LA REPORT — <<INVENTORY_ACTION>> — operações de inventário e lojinha.
+  {
+    const invActionMatch = reply.match(/<<INVENTORY_ACTION>>([\s\S]*?)<<END>>/i);
+    if (invActionMatch) {
+      let payload;
+      try { payload = JSON.parse(invActionMatch[1].trim()); }
+      catch (e) {
+        console.warn('[InventoryAction] JSON inválido:', e.message);
+        reply = reply.replace(/<<INVENTORY_ACTION>>[\s\S]*?<<END>>/gi, '').trim();
+        reply = (reply ? reply + '\n\n' : '') + 'Não consegui interpretar o pedido. Pode reformular?';
+        payload = null;
+      }
+      if (payload) {
+        const baseCheck = inventarioValidators.validateAction(payload);
+        if (!baseCheck.ok) {
+          console.warn('[InventoryAction] validateAction failed:', baseCheck.errors);
+          reply = reply.replace(/<<INVENTORY_ACTION>>[\s\S]*?<<END>>/gi, '').trim();
+          reply = (reply ? reply + '\n\n' : '') + `Pedido inválido: ${baseCheck.errors.join(', ')}`;
+        } else {
+          reply = reply.replace(/<<INVENTORY_ACTION>>[\s\S]*?<<END>>/gi, '').trim();
+          const userName = (collab && collab.full_name) ? collab.full_name : 'usuário';
+          const p = payload.params;
+
+          async function resolverUnidadeId(nome) {
+            if (p.unidade_id) return p.unidade_id;
+            if (!nome) return null;
+            const u = await inventarioService.listarUnidades();
+            const m = u.find(x => x.nome.toLowerCase() === nome.toLowerCase()) ||
+                      u.find(x => x.nome.toLowerCase().includes(nome.toLowerCase()));
+            return m ? m.id : null;
+          }
+          async function resolverSalaId(nomeSala, unidadeId) {
+            if (p.sala_id) return p.sala_id;
+            if (!nomeSala) return null;
+            const r = await inventarioService.buscarSalaPorNome(nomeSala, unidadeId);
+            if (r.length === 0) return null;
+            if (r.length > 1) return { ambiguous: r.map(x => `${x.nome} (id ${x.id})`).join(', ') };
+            return r[0].id;
+          }
+
+          try {
+            if (payload.action === 'add_item') {
+              const vc = inventarioValidators.validateAddItem(p);
+              if (!vc.ok) { reply = (reply ? reply + '\n\n' : '') + `Faltam dados: ${vc.errors.join(', ')}`; }
+              else {
+                const unidadeId = await resolverUnidadeId(p.unidade_nome);
+                if (!unidadeId) { reply = (reply ? reply + '\n\n' : '') + `Unidade "${p.unidade_nome}" não encontrada.`; }
+                else {
+                  const salaId = await resolverSalaId(p.sala_nome, unidadeId);
+                  if (salaId == null) { reply = (reply ? reply + '\n\n' : '') + `Sala "${p.sala_nome}" não encontrada na ${p.unidade_nome}.`; }
+                  else if (typeof salaId === 'object' && salaId.ambiguous) { reply = (reply ? reply + '\n\n' : '') + `Mais de uma sala: ${salaId.ambiguous}. Qual?`; }
+                  else {
+                    const item = await inventarioService.inserirItem({ ...p, sala_id: salaId, unidade_id: unidadeId }, userName);
+                    reply = (reply ? reply + '\n\n' : '') + `✅ Item adicionado: ${item.nome}${item.codigo_patrimonio ? ` (${item.codigo_patrimonio})` : ''}`;
+                  }
+                }
+              }
+            } else if (payload.action === 'shop_movement') {
+              const vc = inventarioValidators.validateShopMovement(p);
+              if (!vc.ok) { reply = (reply ? reply + '\n\n' : '') + `Faltam dados: ${vc.errors.join(', ')}`; }
+              else {
+                const unidadeId = await resolverUnidadeId(p.unidade_nome);
+                if (!unidadeId) { reply = (reply ? reply + '\n\n' : '') + `Unidade "${p.unidade_nome}" não encontrada.`; }
+                else {
+                  let produtoId = p.produto_id;
+                  if (!produtoId) {
+                    const prods = await inventarioService.buscarProdutoPorNome(p.produto_nome);
+                    if (prods.length === 0) { reply = (reply ? reply + '\n\n' : '') + `Produto "${p.produto_nome}" não cadastrado na lojinha.`; produtoId = null; }
+                    else if (prods.length > 1) { reply = (reply ? reply + '\n\n' : '') + `Mais de um produto: ${prods.map(x => x.nome).join(', ')}. Qual?`; produtoId = null; }
+                    else produtoId = prods[0].id;
+                  }
+                  if (produtoId) {
+                    const qty = p.tipo === 'entrada' ? Math.abs(p.quantidade) : -Math.abs(p.quantidade);
+                    const res = await inventarioService.ajustarEstoqueLoja({
+                      produto_id: produtoId, unidade_id: unidadeId, quantidade: qty, tipo: p.tipo,
+                      nota_fiscal: p.nota_fiscal, motivo: p.motivo,
+                    }, userName);
+                    reply = (reply ? reply + '\n\n' : '') + `✅ Estoque atualizado. Saldo agora: ${res.saldo_apos} un.`;
+                  }
+                }
+              }
+            } else if (payload.action === 'move_item') {
+              const vc = inventarioValidators.validateMoveItem(p);
+              if (!vc.ok) { reply = (reply ? reply + '\n\n' : '') + `Faltam dados: ${vc.errors.join(', ')}`; }
+              else {
+                let itemId = p.item_id;
+                if (!itemId && p.item_nome) {
+                  const { laReportClient } = require('./services/la-report-client');
+                  const { data } = await laReportClient.from('inventario').select('id, nome').ilike('nome', `%${p.item_nome}%`).eq('ativo', true).limit(5);
+                  if (!data || data.length === 0) { reply = (reply ? reply + '\n\n' : '') + `Item "${p.item_nome}" não encontrado.`; itemId = null; }
+                  else if (data.length > 1) { reply = (reply ? reply + '\n\n' : '') + `Mais de um item: ${data.map(x => x.nome).join(', ')}. Qual?`; itemId = null; }
+                  else itemId = data[0].id;
+                }
+                if (itemId) {
+                  let destinoId = p.sala_destino_id;
+                  if (!destinoId && p.sala_destino_nome) {
+                    const r = await inventarioService.buscarSalaPorNome(p.sala_destino_nome);
+                    if (r.length === 1) destinoId = r[0].id;
+                  }
+                  await inventarioService.registrarMovimentacao({
+                    item_id: itemId, tipo: p.tipo, sala_destino_id: destinoId, motivo: p.motivo,
+                  }, userName);
+                  reply = (reply ? reply + '\n\n' : '') + `✅ Movimentação registrada.`;
+                }
+              }
+            } else if (payload.action === 'maintenance') {
+              const vc = inventarioValidators.validateMaintenance(p);
+              if (!vc.ok) { reply = (reply ? reply + '\n\n' : '') + `Faltam dados: ${vc.errors.join(', ')}`; }
+              else {
+                let itemId = p.item_id;
+                if (!itemId && p.item_nome) {
+                  const { laReportClient } = require('./services/la-report-client');
+                  const { data } = await laReportClient.from('inventario').select('id, nome').ilike('nome', `%${p.item_nome}%`).eq('ativo', true).limit(5);
+                  if (!data || data.length === 0) { reply = (reply ? reply + '\n\n' : '') + `Item "${p.item_nome}" não encontrado.`; itemId = null; }
+                  else if (data.length > 1) { reply = (reply ? reply + '\n\n' : '') + `Mais de um item: ${data.map(x => x.nome).join(', ')}. Qual?`; itemId = null; }
+                  else itemId = data[0].id;
+                }
+                if (itemId) {
+                  await inventarioService.registrarManutencao({
+                    item_id: itemId, tipo: p.tipo, descricao: p.descricao, custo: p.custo,
+                    fornecedor_servico: p.fornecedor_servico,
+                  }, userName);
+                  reply = (reply ? reply + '\n\n' : '') + `🔧 Manutenção registrada.`;
+                }
+              }
+            } else if (['query_room', 'query_shop', 'query_rooms'].includes(payload.action)) {
+              // Query handled by system prompt snapshot — reply already set by LLM
+            } else {
+              reply = (reply ? reply + '\n\n' : '') + `Ação ${payload.action} ainda não suportada.`;
+            }
+          } catch (e) {
+            console.error('[engine] INVENTORY_ACTION execução:', e);
+            reply = (reply ? reply + '\n\n' : '') + `Erro ao executar: ${e.message}`;
+          }
+        }
+      }
     }
   }
 

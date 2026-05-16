@@ -15,6 +15,7 @@ const express = require('express');
 const supabase = require('./supabase/client');
 const whatsapp = require('./services/whatsapp');
 const ai = require('./ai/provider');
+const inventarioService = require('./services/inventario-service');
 
 const router = express.Router();
 
@@ -1169,6 +1170,76 @@ router.get('/internal/la-journey/status', requireInternalSecret, async (_req, re
   } catch (err) {
     console.error('[InternalAPI] la-journey/status err:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════
+// INVENTÁRIO (cross-project LA Report)
+// ═══════════════════════════════════════════════════════════
+
+// GET /internal/lareport/unidades
+router.get('/internal/lareport/unidades', requireInternalSecret, async (_req, res) => {
+  try {
+    const data = await inventarioService.listarUnidades();
+    res.json({ ok: true, data });
+  } catch (e) {
+    console.error('[internal-api] /lareport/unidades:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// GET /internal/lareport/salas?unit=<uuid>
+router.get('/internal/lareport/salas', requireInternalSecret, async (req, res) => {
+  const unit = req.query.unit;
+  if (!unit) return res.status(400).json({ ok: false, error: 'unit_obrigatorio' });
+  try {
+    const data = await inventarioService.listarSalasPorUnidade(unit);
+    res.json({ ok: true, data });
+  } catch (e) {
+    console.error('[internal-api] /lareport/salas:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// GET /internal/lareport/sala/:salaId
+router.get('/internal/lareport/sala/:salaId', requireInternalSecret, async (req, res) => {
+  const salaId = parseInt(req.params.salaId, 10);
+  if (!Number.isInteger(salaId)) return res.status(400).json({ ok: false, error: 'sala_id_invalido' });
+  try {
+    const data = await inventarioService.detalheSala(salaId);
+    res.json({ ok: true, data });
+  } catch (e) {
+    console.error('[internal-api] /lareport/sala/:id:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// GET /internal/lareport/loja?unit=<uuid>
+router.get('/internal/lareport/loja', requireInternalSecret, async (req, res) => {
+  const unit = req.query.unit;
+  if (!unit) return res.status(400).json({ ok: false, error: 'unit_obrigatorio' });
+  try {
+    const data = await inventarioService.listarLojaPorUnidade(unit);
+    res.json({ ok: true, data });
+  } catch (e) {
+    console.error('[internal-api] /lareport/loja:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// GET /internal/lareport/alertas (consolidado: estoque baixo + manutenções + revisões)
+router.get('/internal/lareport/alertas', requireInternalSecret, async (req, res) => {
+  const unit = req.query.unit; // opcional
+  try {
+    const [estoque, manut, revisoes] = await Promise.all([
+      inventarioService.listarEstoqueBaixo(unit),
+      inventarioService.listarManutencoesPendentes(14),
+      inventarioService.listarRevisoesProgramadas(7),
+    ]);
+    res.json({ ok: true, data: { estoque_baixo: estoque, manutencoes_pendentes: manut, revisoes_proximas: revisoes } });
+  } catch (e) {
+    console.error('[internal-api] /lareport/alertas:', e);
+    res.status(500).json({ ok: false, error: e.message });
   }
 });
 

@@ -27,6 +27,11 @@ const {
   runLaJourneyPrimeiraAcao,
   processarFilaLaJourney,
 } = require('./la-journey-lembretes');
+const {
+  runInventarioEstoqueBaixo,
+  runInventarioManutencoesPendentes,
+  runInventarioRevisoesProgramadas,
+} = require('./inventario-alertas');
 
 const RITUAL_BY_DIRECTIVE = {
   briefing_pessoal: 'personal_briefing',
@@ -2006,6 +2011,37 @@ async function run(opts = {}) {
           sent_at: new Date().toISOString(),
         });
       } catch (e) { console.error('[dispatcher] falha primeira ação LA Journey:', e.message); }
+    }
+  }
+
+  // INVENTÁRIO — Segunda 09h: alertas semanais consolidados (estoque + manutenções + revisões).
+  if (opts.force === 'inventario_alertas_semanal' ||
+      (now.dow === 1 && now.minute === 0 && timeToSlot('09:00') === slotNow)) {
+    const { data: jaRodouInv } = await supabase
+      .from('ritual_logs')
+      .select('id')
+      .eq('ritual_type', 'inventario_alertas_semanal')
+      .eq('reference_date', now.ymd)
+      .limit(1);
+    if (opts.force !== 'inventario_alertas_semanal' && jaRodouInv && jaRodouInv.length > 0) {
+      console.log('[inventario-dispatch] alertas_semanal já rodou hoje, skip');
+    } else {
+      console.log('[dispatcher] rodando alertas inventário');
+      try {
+        await runInventarioEstoqueBaixo();
+        await runInventarioManutencoesPendentes();
+        await runInventarioRevisoesProgramadas();
+        const { data: dir } = await supabase
+          .from('collaborators').select('id').eq('role', 'director').eq('is_active', true)
+          .order('full_name').limit(1).single();
+        await supabase.from('ritual_logs').insert({
+          collaborator_id: dir?.id,
+          ritual_type: 'inventario_alertas_semanal',
+          reference_date: now.ymd,
+          status: 'sent',
+          sent_at: new Date().toISOString(),
+        });
+      } catch (e) { console.error('[dispatcher] falha alertas inventário:', e.message); }
     }
   }
 

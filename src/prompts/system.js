@@ -33,7 +33,7 @@ const BLOCK_RULES = `# 🚨 REGRAS INVIOLÁVEIS — PRIORIDADE MÁXIMA
 6. ZERO leaks: nada de IDs, UUIDs, markers <<...>> visíveis ao usuário, "5W2H", "Eisenhower", "quadrante", nomes de tabelas, paths de filesystem, "engine", "API", "banco". Você NÃO tem ferramentas neste contexto — NUNCA emita \`<tool_call>\`, \`<tool_use>\`, \`<function_call>\`, \`<tool_name>\`, \`<parameters>\`, ou qualquer marcação de invocação de tool. Sua resposta é APENAS texto natural + markers oficiais documentados.
 
 **MARKERS VÁLIDOS (lista canônica — Sprint 10.1+):**
-\`<<TASK_UPDATE>>\` (com action: create/complete/reschedule/delegate/extension_request/approve/deny) · \`<<EVENT_CREATE>>\` · \`<<EVENT_UPDATE>>\` · \`<<PROJECT_CREATE>>\` · \`<<PROJECT_APPROVE>>\` · \`<<PROJECT_REJECT>>\` · \`<<HABIT_ACTION>>\` · \`<<MEMORY_SAVE>>\` · \`<<DND_UPDATE>>\` · \`<<ONBOARDING_DONE>>\` · \`<<WEEKLY_PLAN>>\` · \`<<MONTHLY_PLAN>>\` · \`<<CHECKPOINT_BATCH>>\` (Sprint 11.4) · \`<<CHECKLIST_ACTION>>\` (Sprint 12) · \`<<ANNOUNCEMENT_ACTION>>\` (Sprint 13) · \`<<SCHOOL_EVENT_ACTION>>\` (Sprint 13) · \`<<ANNOUNCEMENT_APPROVAL>>\` (Sprint 13) · \`<<PERSONAL_LIST_ACTION>>\` (Sprint 22.38). Final SEMPRE \`<<END>>\`.
+\`<<TASK_UPDATE>>\` (com action: create/complete/reschedule/delegate/extension_request/approve/deny) · \`<<EVENT_CREATE>>\` · \`<<EVENT_UPDATE>>\` · \`<<PROJECT_CREATE>>\` · \`<<PROJECT_APPROVE>>\` · \`<<PROJECT_REJECT>>\` · \`<<HABIT_ACTION>>\` · \`<<MEMORY_SAVE>>\` · \`<<DND_UPDATE>>\` · \`<<ONBOARDING_DONE>>\` · \`<<WEEKLY_PLAN>>\` · \`<<MONTHLY_PLAN>>\` · \`<<CHECKPOINT_BATCH>>\` (Sprint 11.4) · \`<<CHECKLIST_ACTION>>\` (Sprint 12) · \`<<ANNOUNCEMENT_ACTION>>\` (Sprint 13) · \`<<SCHOOL_EVENT_ACTION>>\` (Sprint 13) · \`<<ANNOUNCEMENT_APPROVAL>>\` (Sprint 13) · \`<<PERSONAL_LIST_ACTION>>\` (Sprint 22.38) · \`<<INVENTORY_ACTION>>\` (LA Report). Final SEMPRE \`<<END>>\`.
 
 **MARKERS HALLUCINATED (NUNCA emita — não existem):**
 \`<<TASK_CREATE>>\` ❌ → use \`<<TASK_UPDATE>>\` action="create" · \`<<TASK_DONE>>\` ❌ → action="complete" · \`<<TASK_DELETE>>\` ❌ → action="cancel" · \`<<TASK_REMIND>>\` ❌ → action="create" + remind_at · \`<<TASK_NEW>>\`/\`<<TASK_ADD>>\`/\`<<TASK_LIST>>\` ❌ · \`<<EVENT_NEW>>\`/\`<<EVENT_DONE>>\`/\`<<EVENT_CANCEL>>\` ❌ → use \`<<EVENT_UPDATE>>\` action correta · \`<<HABIT_LOG>>\`/\`<<HABIT_DONE>>\` ❌ → use \`<<HABIT_ACTION>>\` action="log" · \`<<MEMORY_WRITE>>\`/\`<<MEMORY_UPDATE>>\` ❌ → \`<<MEMORY_SAVE>>\`. Se você "achou" um nome de marker que não está na lista válida acima, ele NÃO existe. NÃO invente.
@@ -2754,6 +2754,35 @@ async function buildSystemPrompt(collaborator, opts = {}) {
       systemPrompt += '\n\n---\n\n' + blocoJourney;
     } catch (err) {
       console.error('[system.js] LA_JOURNEY_STATUS erro:', err.message);
+    }
+  }
+
+  // ─── INVENTÁRIO — detecção contextual (R2) ──────────────────────────────────
+  const lowerMsg = (lastUserMessage || '').toLowerCase();
+  const triggersFortesInv = ['inventário', 'inventario', 'patrimônio', 'patrimonio', 'lojinha', 'loja', 'estoque baixo', 'estoque da'];
+  const cmdsInv = /^\s*\/(inv|loja)\b/.test(lastUserMessage || '');
+  const unidadesNomes = ['barra', 'recreio', 'campo grande', ' cg '];
+  const verbosOperacionais = ['comprei', 'recebi', 'peguei', 'levei', 'chiando', 'quebrado', 'quebrou', 'falta', 'acabou'];
+  const matchUnidadeInv = unidadesNomes.some(u => (' ' + lowerMsg + ' ').includes(u));
+  const matchVerboInv = verbosOperacionais.some(v => lowerMsg.includes(v));
+  const matchInvForte = triggersFortesInv.some(t => lowerMsg.includes(t));
+  const matchInv = cmdsInv || matchInvForte || (matchUnidadeInv && matchVerboInv);
+
+  if (matchInv) {
+    try {
+      const { laReportClient, isLaReportConfigured } = require('../services/la-report-client');
+      if (isLaReportConfigured()) {
+        const { data: unidadesCat } = await laReportClient.from('unidades').select('id, nome');
+        const { data: salasCat } = await laReportClient.from('salas').select('id, nome, tipo_sala, unidade_id').eq('ativo', true);
+        const { data: produtosCat } = await laReportClient.from('loja_produtos').select('id, nome, sku').eq('ativo', true);
+        systemPrompt += `\n\n[INVENTARIO_CATALOGO]\n`;
+        systemPrompt += `Unidades: ${(unidadesCat || []).map(u => `${u.nome}(${u.id})`).join(', ')}\n`;
+        systemPrompt += `Salas: ${(salasCat || []).map(s => `${s.nome}/${s.tipo_sala || '?'}/uid=${s.unidade_id}`).join(' | ')}\n`;
+        systemPrompt += `Produtos lojinha: ${(produtosCat || []).map(p => `${p.nome}${p.sku ? '(' + p.sku + ')' : ''}`).join(', ')}\n\n`;
+        systemPrompt += `Quando o usuário descrever uma ação operacional, use a skill inventario.md e emita <<INVENTORY_ACTION>>...<<END>> com JSON estruturado. Sempre confirmar antes de gravar.`;
+      }
+    } catch (e) {
+      systemPrompt += `\n[INVENTARIO_CATALOGO]\nErro ao carregar catálogo: ${e.message}`;
     }
   }
 

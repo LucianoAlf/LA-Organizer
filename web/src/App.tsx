@@ -37,6 +37,9 @@ import { LaEducaAdminTrilhaPage } from './screens/laeduca/AdminTrilhaPage';
 import { LaJourneyListaPage } from './screens/lajourney/ListaPage';
 import { LaJourneyAdminPage } from './screens/lajourney/AdminPage';
 import { LaJourneyCheckpointPage } from './screens/lajourney/CheckpointPage';
+import { InventarioListaPage } from './screens/inventario/ListaPage';
+import { InventarioSalaPage } from './screens/inventario/SalaPage';
+import { InventarioLojaPage } from './screens/inventario/LojaPage';
 
 export default function App() {
   return (
@@ -101,6 +104,15 @@ export default function App() {
             <Route path="la-journey/admin" element={<LaJourneyAdminPage />} />
           </Route>
           <Route path="la-journey/:checkpointId" element={<LaJourneyCheckpointPage />} />
+
+          {/* INVENTÁRIO — dados vêm do LA Report via internal-api do TOM. Read-only.
+              Gated em coord/director/manager (Rafinha é manager).
+              IMPORTANT: /inventario/loja antes de /inventario/sala/:salaId. */}
+          <Route element={<ProtectedRoute requireRoles={['coordinator', 'director', 'manager']} />}>
+            <Route path="inventario" element={<InventarioListaPage />} />
+            <Route path="inventario/loja" element={<InventarioLojaPage />} />
+            <Route path="inventario/sala/:salaId" element={<InventarioSalaPage />} />
+          </Route>
 
           <Route element={<ProtectedRoute requireRoles={['coordinator', 'director']} />}>
             <Route path="time" element={<DashboardTime />} />
