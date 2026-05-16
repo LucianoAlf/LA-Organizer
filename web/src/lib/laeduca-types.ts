@@ -80,6 +80,7 @@ export interface Checkpoint {
   titulo: string;
   descricao: string;
   criterio: string;
+  nota_minima: number;        // nota mínima para ancorar sem justificativa (default 7.0)
   modalidade_filtro: 'musicalizacao' | 'instrumento' | null; // legado
   trilha_id: string | null;   // novo — NULL = universal (P1/P3/P4), valor = específico da trilha (P2)
   sort_order: number;

@@ -2,19 +2,20 @@ import { useState } from 'react';
 
 interface Props {
   nota: number;
+  notaMin: number;
   onConfirm: (justificativa: string) => void;
   onCancel: () => void;
 }
 
-export function JustificativaModal({ nota, onConfirm, onCancel }: Props) {
+export function JustificativaModal({ nota, notaMin, onConfirm, onCancel }: Props) {
   const [txt, setTxt] = useState('');
   const valid = txt.trim().length >= 20;
   return (
     <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-md">
       <div className="bg-bg-surface rounded-lg p-md max-w-md w-full space-y-md">
-        <h2 className="font-semibold text-fg text-lg">Nota abaixo do mínimo</h2>
+        <h2 className="font-semibold text-fg text-lg">Nota abaixo do mínimo ({notaMin.toFixed(1)})</h2>
         <p className="text-body-sm text-fg-muted">
-          A nota <strong>{nota.toFixed(1)}</strong> está abaixo de 7,0. Pra ancorar mesmo assim,
+          A nota <strong>{nota.toFixed(1)}</strong> está abaixo de {notaMin.toFixed(1)}. Pra ancorar mesmo assim,
           descreva a justificativa (mínimo 20 caracteres):
         </p>
         <textarea

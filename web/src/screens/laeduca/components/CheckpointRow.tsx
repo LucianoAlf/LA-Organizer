@@ -14,6 +14,7 @@ export function CheckpointRow({ item, onAncorar }: Props) {
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const ancorado = item.ancorado;
+  const notaMin = item.checkpoint.nota_minima ?? 7;
 
   async function handleAncorar(justificativa: string | null) {
     setSaving(true);
@@ -26,14 +27,14 @@ export function CheckpointRow({ item, onAncorar }: Props) {
   }
 
   function tryAncorar() {
-    if (nota >= 7) handleAncorar(null);
+    if (nota >= notaMin) handleAncorar(null);
     else setShowModal(true);
   }
 
   return (
     <div className="bg-bg-surface rounded-lg p-md border border-border space-y-sm">
       <div className="flex items-start justify-between gap-sm">
-        <div>
+        <div className="flex-1">
           <h3 className="font-semibold text-fg">
             <span className="text-fg-muted mr-2">{item.checkpoint.id}</span>
             {item.checkpoint.titulo}
@@ -41,11 +42,16 @@ export function CheckpointRow({ item, onAncorar }: Props) {
           <p className="text-body-sm text-fg-muted mt-1">{item.checkpoint.descricao}</p>
           <p className="text-body-sm text-fg-muted mt-1 italic">Critério: {item.checkpoint.criterio}</p>
         </div>
-        {ancorado && (
-          <span className="text-success flex items-center gap-1 text-body-sm font-semibold">
-            <Check size={16} /> Ancorado
-          </span>
-        )}
+        <div className="shrink-0 text-right">
+          {ancorado && (
+            <span className="text-success flex items-center gap-1 text-body-sm font-semibold justify-end">
+              <Check size={16} /> Ancorado
+            </span>
+          )}
+          <div className="text-[11px] text-fg-muted mt-1">
+            Mínimo: <strong className="text-tom">{notaMin.toFixed(1)}</strong>
+          </div>
+        </div>
       </div>
 
       <div className="flex items-center gap-md">
@@ -59,7 +65,7 @@ export function CheckpointRow({ item, onAncorar }: Props) {
           className="flex-1"
           disabled={saving}
         />
-        <span className={`min-w-[3rem] text-right font-semibold ${nota >= 7 ? 'text-success' : 'text-warning'}`}>
+        <span className={`min-w-[3rem] text-right font-semibold ${nota >= notaMin ? 'text-success' : 'text-warning'}`}>
           {nota.toFixed(1)}
         </span>
       </div>
@@ -85,6 +91,7 @@ export function CheckpointRow({ item, onAncorar }: Props) {
       {showModal && (
         <JustificativaModal
           nota={nota}
+          notaMin={notaMin}
           onCancel={() => setShowModal(false)}
           onConfirm={j => handleAncorar(j)}
         />

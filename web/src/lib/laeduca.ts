@@ -280,6 +280,7 @@ export async function criarCheckpoint(form: {
   titulo: string;
   descricao: string;
   criterio: string;
+  nota_minima?: number;
   modalidade_filtro?: 'musicalizacao' | 'instrumento' | null;
   trilha_id?: string | null;
   sort_order: number;

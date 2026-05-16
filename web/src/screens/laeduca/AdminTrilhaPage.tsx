@@ -80,6 +80,7 @@ interface CheckpointForm {
   titulo: string;
   descricao: string;
   criterio: string;
+  nota_minima: number;
   sort_order: string;
 }
 
@@ -328,9 +329,10 @@ function ModalCheckpoint({
           titulo: checkpoint.titulo,
           descricao: checkpoint.descricao,
           criterio: checkpoint.criterio,
+          nota_minima: checkpoint.nota_minima ?? 7.0,
           sort_order: String(checkpoint.sort_order),
         }
-      : { id: suggestedId, titulo: '', descricao: '', criterio: '', sort_order: String(nextNum) },
+      : { id: suggestedId, titulo: '', descricao: '', criterio: '', nota_minima: 7.0, sort_order: String(nextNum) },
   );
 
   const mut = useMutation({
@@ -342,6 +344,7 @@ function ModalCheckpoint({
           titulo: form.titulo.trim(),
           descricao: form.descricao.trim(),
           criterio: form.criterio.trim(),
+          nota_minima: form.nota_minima,
           sort_order: sortOrder,
         });
       }
@@ -353,6 +356,7 @@ function ModalCheckpoint({
         titulo: form.titulo.trim(),
         descricao: form.descricao.trim(),
         criterio: form.criterio.trim(),
+        nota_minima: form.nota_minima,
         trilha_id: trilhaId,
         sort_order: sortOrder,
       });
@@ -366,6 +370,10 @@ function ModalCheckpoint({
   });
 
   function set(k: keyof CheckpointForm, v: string) {
+    setForm(f => ({ ...f, [k]: v }));
+  }
+
+  function setNum(k: keyof CheckpointForm, v: number) {
     setForm(f => ({ ...f, [k]: v }));
   }
 
@@ -436,6 +444,22 @@ function ModalCheckpoint({
           />
         </div>
 
+        <div>
+          <label className="text-body-sm font-semibold text-fg-muted mb-1 block">Nota mínima para ancorar</label>
+          <input
+            type="number"
+            step={0.5}
+            min={0}
+            max={10}
+            value={form.nota_minima}
+            onChange={e => setNum('nota_minima', parseFloat(e.target.value) || 0)}
+            className="w-full border border-border rounded-lg px-sm py-sm text-fg bg-bg-app focus-ring"
+          />
+          <p className="text-[11px] text-fg-muted mt-1">
+            Definida pela coordenação. O mentor não pode alterar durante a avaliação.
+          </p>
+        </div>
+
         <div className="flex justify-end gap-sm pt-sm">
           <button
             onClick={onClose}
@@ -450,7 +474,9 @@ function ModalCheckpoint({
               (!isEditing && !form.id.trim()) ||
               !form.titulo.trim() ||
               !form.descricao.trim() ||
-              !form.criterio.trim()
+              !form.criterio.trim() ||
+              form.nota_minima < 0 ||
+              form.nota_minima > 10
             }
             className="px-md py-sm rounded-lg bg-tom text-white font-semibold focus-ring disabled:opacity-50"
           >
