@@ -64,11 +64,15 @@ export async function fetchMentoresDisponiveis(_unidade?: string): Promise<Array
   // Critério: director/coordinator OU tem pedagogical_role (mentor/lead/assistant).
   // Exclui managers (Jereh, Clayton, Krissya, Yuri) que não fazem mentoria pedagógica.
   void _unidade;
+  // Critério: tem pedagogical_role definido (mentor/lead/assistant).
+  // Director sozinho NÃO é mentor pedagógico — precisa ter pedagogical_role setado.
+  // Ex: Anne Susan é director mas não é mentora, então não aparece.
+  // Luciano Alf é director E lead pedagógico, aparece.
   const { data, error } = await supabase
     .from('collaborators')
-    .select('id, full_name, role, pedagogical_role')
+    .select('id, full_name, pedagogical_role')
     .eq('is_active', true)
-    .or('role.in.(director,coordinator),pedagogical_role.not.is.null')
+    .not('pedagogical_role', 'is', null)
     .order('full_name');
   if (error) throw error;
   return (data ?? []).map(c => ({ id: c.id, full_name: c.full_name }));

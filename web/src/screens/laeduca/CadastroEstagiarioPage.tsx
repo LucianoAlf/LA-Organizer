@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '../../components/PageHeader';
 import { CustomSelect } from '../../components/CustomSelect';
+import { DateInput } from '../../components/DateInput';
 import { cadastrarEstagiario, fetchMentoresDisponiveis } from '../../lib/laeduca';
 import { useLaEducaTrilhas } from '../../hooks/useLaEducaTrilhas';
 import { showToast } from '../../components/Toast';
@@ -117,13 +118,12 @@ export function LaEducaCadastroPage() {
         </Field>
 
         <Field label="Data de início">
-          <input
-            type="date"
-            value={form.data_inicio}
-            onChange={e => update('data_inicio', e.target.value)}
-            className="w-full bg-bg-surface text-fg rounded p-sm border border-border focus-ring [color-scheme:dark] dark:[color-scheme:dark]"
-            required
-          />
+          <div className="[&>div]:!block [&>div]:w-full [&>div>button]:w-full [&>div>button]:!justify-start [&>div>button]:!py-sm">
+            <DateInput
+              value={form.data_inicio}
+              onChange={v => update('data_inicio', v)}
+            />
+          </div>
         </Field>
 
         <Field label="Diagnóstico de entrada (opcional)">
