@@ -18,7 +18,7 @@ loadDotEnv(path.join(process.cwd(), '.env'));
 
 const supabase = require('../supabase/client');
 const { sendRitual, sendCoordinatorReport, getDndState, consolidateMemoryFor, decayExpiredMemories, generateWeeklySummaryFor, getRitualIntroDecision } = require('../engine');
-const { runLaEducaLembretes, processarNotificacoesAtribuicao } = require('./la-educa-lembretes');
+const { runLaEducaLembretes, processarFilaNotificacoes, processarNotificacoesAtribuicao, runLaEducaEscalation, runLaEducaBriefingSexta } = require('./la-educa-lembretes');
 
 const RITUAL_BY_DIRECTIVE = {
   briefing_pessoal: 'personal_briefing',
@@ -1620,11 +1620,11 @@ async function run(opts = {}) {
   const slotNow = currentSlot(now);
   const isWeekend = now.dow === 0 || now.dow === 6;
 
-  // LA EDUCA — processa notificações de atribuição a cada tick (latência max 5min)
+  // LA EDUCA — processa fila de notificações *_envio a cada tick (latência max 5min)
   try {
-    await processarNotificacoesAtribuicao();
+    await processarFilaNotificacoes();
   } catch (err) {
-    console.error('[la-educa atrib-dispatch] erro:', err.message);
+    console.error('[la-educa fila-dispatch] erro:', err.message);
   }
 
   for (const c of collabs) {
@@ -1807,6 +1807,33 @@ async function run(opts = {}) {
         console.error('[la-educa-dispatch] erro:', err.message);
       }
     }
+  }
+
+  // G6 — LA EDUCA Escalation: quarta 10:00 (dow=3).
+  const LA_EDUCA_ESCALATION_TIME = '10:00';
+  if (now.dow === 3 && now.minute === 0 && timeToSlot(LA_EDUCA_ESCALATION_TIME) === slotNow) {
+    const { data: jaRodouEsc } = await supabase
+      .from('ritual_logs').select('id')
+      .eq('ritual_type', 'la_educa_escalation').eq('reference_date', now.ymd).limit(1);
+    if (!jaRodouEsc || jaRodouEsc.length === 0) {
+      try {
+        await runLaEducaEscalation();
+        const { data: dir } = await supabase.from('collaborators')
+          .select('id').eq('role', 'director').eq('is_active', true).limit(1).single();
+        await supabase.from('ritual_logs').insert({
+          collaborator_id: dir?.id, ritual_type: 'la_educa_escalation',
+          reference_date: now.ymd, status: 'sent', sent_at: new Date().toISOString(),
+        });
+      } catch (err) { console.error('[la-educa escalation-dispatch] erro:', err.message); }
+    }
+  }
+
+  // G7 — LA EDUCA Briefing Sexta: sexta 14:00 (dow=5).
+  const LA_EDUCA_BRIEFING_SEXTA_TIME = '14:00';
+  if (now.dow === 5 && now.minute === 0 && timeToSlot(LA_EDUCA_BRIEFING_SEXTA_TIME) === slotNow) {
+    try {
+      await runLaEducaBriefingSexta();
+    } catch (err) { console.error('[la-educa briefing-sexta-dispatch] erro:', err.message); }
   }
 
   // Cobrança de aprovação de projetos pendentes (2x/dia, 9h e 15h).
