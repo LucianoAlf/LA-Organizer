@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLaEducaEstagiario } from '../../hooks/useLaEducaEstagiario';
 import { useLaEducaPilares } from '../../hooks/useLaEducaPilares';
+import { useLaEducaResponsaveis } from '../../hooks/useLaEducaResponsaveis';
 import { PageHeader } from '../../components/PageHeader';
 import { LoadingState } from '../../components/LoadingState';
 import { CheckpointRow } from './components/CheckpointRow';
@@ -16,6 +17,7 @@ export function LaEducaPilarPage() {
   const qc = useQueryClient();
   const { data, isLoading, error } = useLaEducaEstagiario(id);
   const { data: pilares, isLoading: pilaresLoading } = useLaEducaPilares();
+  const { data: responsaveis = [] } = useLaEducaResponsaveis(id);
 
   if (isLoading || pilaresLoading) return <LoadingState />;
   if (error || !data) return <div className="p-md text-danger">Estagiário não encontrado.</div>;
@@ -24,6 +26,12 @@ export function LaEducaPilarPage() {
   if (!pilarObj) return <div className="p-md text-danger">Pilar inválido.</div>;
 
   const items = data.avaliacoes_por_pilar[pilarObj.codigo] ?? [];
+
+  const responsavelDoPilar = responsaveis.find(r => r.pilar_codigo === pilarObj.codigo);
+  const responsavelNome = responsavelDoPilar
+    ? responsavelDoPilar.instrutor_nome
+    : (data.progresso.mentor_nome ?? '—');
+  const ehInstrutor = !!responsavelDoPilar;
 
   async function handleAncorar(avaliacaoId: string, params: { nota: number; observacoes: string; justificativaBaixa: string | null }) {
     if (!collaborator) return;
@@ -50,6 +58,12 @@ export function LaEducaPilarPage() {
         subtitle={`${data.estagiario.nome} · ${items.filter(i => i.ancorado).length}/${items.length} ancorados`}
         backTo={`/la-educa/${id}`}
       />
+
+      <div className="bg-bg-surface rounded-lg p-sm border border-border text-body-sm text-fg-muted">
+        Responsável por este pilar:{' '}
+        <strong className="text-fg">{responsavelNome}</strong>
+        {!ehInstrutor && <span> (mentor)</span>}
+      </div>
 
       {pilarObj.foco && (
         <div className="bg-warning/10 border-l-4 border-warning rounded-r-lg p-md">

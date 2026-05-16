@@ -1,10 +1,11 @@
 // src/rituals/la-educa-lembretes.js
 // Lembretes semanais do LA EDUCA — disparado pelo dispatcher toda segunda 09:00.
 // Três tipos:
-//   1. avaliacao_pendente  → mentor (estagiário >7d sem update)
+//   1. avaliacao_pendente  → mentor OU instrutor delegado por pilar (estagiário >7d sem update)
 //   2. avaliacao_atrasada  → coord/director da unidade (>14d sem update)
 //   3. certificado_pronto  → coord/director da unidade (100% e sem cert)
-// Idempotência: la_educa_lembretes_log — não reenvia mesmo tipo+estagiário em <6 dias.
+// Idempotência: la_educa_lembretes_log — não reenvia mesmo tipo+estagiário+destinatário em <6 dias.
+// Delegação: la_educa_responsaveis_pilar define instrutores responsáveis por pilar específico.
 const supabase = require('../supabase/client');
 const whatsapp = require('../services/whatsapp');
 
@@ -55,25 +56,95 @@ async function buscarCoordsDaUnidade(unidade) {
   return data || [];
 }
 
+async function buscarPendenciasPorPilar(estagiarioId) {
+  const { data } = await supabase
+    .from('la_educa_avaliacoes')
+    .select(`
+      pilar, ancorado,
+      checkpoint:la_educa_checkpoints(pilar_id, pilar_nome)
+    `)
+    .eq('estagiario_id', estagiarioId);
+  if (!data) return [];
+
+  const grouped = {};
+  for (const a of data) {
+    const cod = a.pilar;
+    const pilar_id = a.checkpoint?.pilar_id;
+    const pilar_nome = a.checkpoint?.pilar_nome || cod;
+    if (!grouped[cod]) grouped[cod] = { pilar_codigo: cod, pilar_nome, pilar_id, total: 0, ancorados: 0 };
+    grouped[cod].total += 1;
+    if (a.ancorado) grouped[cod].ancorados += 1;
+  }
+  return Object.values(grouped).filter(p => p.ancorados < p.total);
+}
+
+async function buscarResponsavel(estagiarioId, pilarId, fallbackMentorId) {
+  const { data } = await supabase
+    .from('la_educa_responsaveis_pilar')
+    .select('instrutor_id')
+    .eq('estagiario_id', estagiarioId)
+    .eq('pilar_id', pilarId)
+    .limit(1);
+  return (data?.[0]?.instrutor_id) || fallbackMentorId;
+}
+
 async function enviarPendente(estagiario) {
-  const mentor = await buscarCollab(estagiario.mentor_id);
-  if (!mentor || !mentor.phone || !mentor.is_active) return;
-  if (await jaEnviouRecente('avaliacao_pendente', estagiario.id, mentor.id)) return;
+  const pendencias = await buscarPendenciasPorPilar(estagiario.id);
+  if (pendencias.length === 0) return;
+
+  // Agrupar por responsável: { collab_id: [pilar1, pilar2, ...] }
+  const porResponsavel = {};
+  for (const p of pendencias) {
+    const responsavelId = await buscarResponsavel(estagiario.id, p.pilar_id, estagiario.mentor_id);
+    if (!responsavelId) continue;
+    if (!porResponsavel[responsavelId]) porResponsavel[responsavelId] = [];
+    porResponsavel[responsavelId].push(p);
+  }
+
+  // Buscar nome do mentor (pra incluir nas mensagens enviadas a instrutores)
+  const mentor = estagiario.mentor_id ? await buscarCollab(estagiario.mentor_id) : null;
+  const mentorNome = mentor?.full_name || '—';
+
   const dias = Math.floor((Date.now() - new Date(estagiario.ultima_atualizacao).getTime()) / 86400000);
-  const msg =
-`Olá ${mentor.full_name.split(' ')[0]}! 👋
+
+  for (const [respId, pilares] of Object.entries(porResponsavel)) {
+    const responsavel = await buscarCollab(respId);
+    if (!responsavel || !responsavel.phone || !responsavel.is_active) continue;
+    if (await jaEnviouRecente('avaliacao_pendente', estagiario.id, responsavel.id)) continue;
+
+    const ehMentor = respId === estagiario.mentor_id;
+    const primeiroNome = responsavel.full_name.split(' ')[0];
+    const linhasPilares = pilares.map(p => `• ${p.pilar_nome}: ${p.ancorados}/${p.total} ancorados`).join('\n');
+
+    let msg;
+    if (ehMentor) {
+      msg =
+`Olá ${primeiroNome}! 👋
 
 Lembrete LA EDUCA: ${estagiario.nome} está com avaliações pendentes há ${dias} dias.
 
-Progresso atual: ${estagiario.checkpoints_ancorados}/${estagiario.checkpoints_total} (${Math.round(estagiario.percentual)}%).
+Pilares sob sua responsabilidade direta:
+${linhasPilares}
 
 Acesse o LA Organizer pra registrar as avaliações. 🎵`;
-  try {
-    await whatsapp.sendMessage(mentor.phone, msg);
-    await logEnvio('avaliacao_pendente', estagiario.id, mentor.id, msg);
-    console.log(`[la-educa] pendente enviado pra mentor ${mentor.full_name} sobre ${estagiario.nome}`);
-  } catch (err) {
-    console.error(`[la-educa] falha pendente ${estagiario.nome}: ${err.message}`);
+    } else {
+      msg =
+`Olá ${primeiroNome}! 👋
+
+Lembrete LA EDUCA: você é instrutor delegado nos seguintes pilares do estagiário ${estagiario.nome} (mentor: ${mentorNome}):
+
+${linhasPilares}
+
+Última atualização há ${dias} dias. Acesse o LA Organizer pra registrar as avaliações. 🎵`;
+    }
+
+    try {
+      await whatsapp.sendMessage(responsavel.phone, msg);
+      await logEnvio('avaliacao_pendente', estagiario.id, responsavel.id, msg);
+      console.log(`[la-educa] pendente enviado pra ${responsavel.full_name} (${ehMentor ? 'mentor' : 'instrutor'}) sobre ${estagiario.nome}`);
+    } catch (err) {
+      console.error(`[la-educa] falha pendente ${estagiario.nome} → ${responsavel.full_name}: ${err.message}`);
+    }
   }
 }
 

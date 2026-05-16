@@ -1,18 +1,40 @@
-// Detalhe do estagiário: header com info, PilarCards dinâmicos, botão Certificar Alfa (só coord/director com 100%)
+// Detalhe do estagiário: header com info, PilarCards dinâmicos, responsáveis por pilar, botão Certificar Alfa
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLaEducaEstagiario } from '../../hooks/useLaEducaEstagiario';
 import { useLaEducaPilares } from '../../hooks/useLaEducaPilares';
+import { useLaEducaResponsaveis } from '../../hooks/useLaEducaResponsaveis';
 import { PageHeader } from '../../components/PageHeader';
 import { LoadingState } from '../../components/LoadingState';
+import { CustomSelect } from '../../components/CustomSelect';
 import { ProgressBar } from './components/ProgressBar';
 import { PilarCard } from './components/PilarCard';
-import { emitirCertificado } from '../../lib/laeduca';
-import type { Unidade, Modalidade } from '../../lib/laeduca-types';
+import {
+  emitirCertificado,
+  fetchMentoresDisponiveis,
+  atribuirInstrutorAoPilar,
+  removerInstrutorDoPilar,
+} from '../../lib/laeduca';
+import type { Unidade, Modalidade, Pilar } from '../../lib/laeduca-types';
 import { UNIDADE_LABELS, MODALIDADE_LABELS } from '../../lib/laeduca-types';
 import { showToast } from '../../components/Toast';
+
+// ─── Modal inline ─────────────────────────────────────────────────────────────
+function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-md overflow-y-auto">
+      <div className="bg-bg-surface rounded-lg border border-border w-full max-w-md mt-xl">
+        <div className="flex items-center justify-between px-md pt-md pb-sm border-b border-border">
+          <h3 className="font-semibold text-fg">{title}</h3>
+          <button onClick={onClose} className="text-fg-muted hover:text-fg text-lg leading-none">✕</button>
+        </div>
+        <div className="p-md">{children}</div>
+      </div>
+    </div>
+  );
+}
 
 export function LaEducaEstagiarioDetalhePage() {
   const { id } = useParams<{ id: string }>();
@@ -20,7 +42,17 @@ export function LaEducaEstagiarioDetalhePage() {
   const qc = useQueryClient();
   const { data, isLoading, error } = useLaEducaEstagiario(id);
   const { data: pilares, isLoading: pilaresLoading } = useLaEducaPilares();
+  const { data: responsaveis = [] } = useLaEducaResponsaveis(id);
   const [showDiagnostico, setShowDiagnostico] = useState(false);
+  const [modalAtrib, setModalAtrib] = useState<{ open: boolean; pilar: Pilar | null }>({ open: false, pilar: null });
+  const [instrutorSelecionado, setInstrutorSelecionado] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const { data: mentores = [] } = useQuery({
+    queryKey: ['laeduca-mentores'],
+    queryFn: () => fetchMentoresDisponiveis(),
+    staleTime: 60_000,
+  });
 
   const certMutation = useMutation({
     mutationFn: () => emitirCertificado({ estagiarioId: id!, emissorId: collaborator!.id }),
@@ -40,6 +72,71 @@ export function LaEducaEstagiarioDetalhePage() {
     (role === 'coordinator' || role === 'director') &&
     progresso.percentual === 100 &&
     !estagiario.certificado_emitido;
+
+  const podeDelegar =
+    role === 'coordinator' ||
+    role === 'director' ||
+    collaborator?.id === estagiario.mentor_id;
+
+  function responsavelDoPilar(codigo: string) {
+    const r = responsaveis.find(r => r.pilar_codigo === codigo);
+    return r ? r.instrutor_nome : (progresso.mentor_nome ?? '—');
+  }
+
+  function temInstrutor(codigo: string) {
+    return responsaveis.some(r => r.pilar_codigo === codigo);
+  }
+
+  function abrirModal(pilar: Pilar) {
+    const atual = responsaveis.find(r => r.pilar_codigo === pilar.codigo);
+    setInstrutorSelecionado(atual?.instrutor_id ?? '');
+    setModalAtrib({ open: true, pilar });
+  }
+
+  function fecharModal() {
+    setModalAtrib({ open: false, pilar: null });
+    setInstrutorSelecionado('');
+  }
+
+  async function handleSalvar() {
+    if (!modalAtrib.pilar || !instrutorSelecionado || !collaborator) return;
+    setSaving(true);
+    try {
+      await atribuirInstrutorAoPilar({
+        estagiarioId: id!,
+        pilarId: modalAtrib.pilar.id,
+        instrutorId: instrutorSelecionado,
+        atribuidoPor: collaborator.id,
+      });
+      qc.invalidateQueries({ queryKey: ['laeduca-responsaveis', id] });
+      showToast({ kind: 'success', title: 'Instrutor atribuído.' });
+      fecharModal();
+    } catch (e) {
+      showToast({ kind: 'error', title: 'Falha', msg: (e as Error).message });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleRemover() {
+    if (!modalAtrib.pilar || !collaborator) return;
+    setSaving(true);
+    try {
+      await removerInstrutorDoPilar({
+        estagiarioId: id!,
+        pilarId: modalAtrib.pilar.id,
+      });
+      qc.invalidateQueries({ queryKey: ['laeduca-responsaveis', id] });
+      showToast({ kind: 'success', title: 'Atribuição removida. Mentor assume o pilar.' });
+      fecharModal();
+    } catch (e) {
+      showToast({ kind: 'error', title: 'Falha', msg: (e as Error).message });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const mentoresOptions = mentores.map(m => ({ value: m.id, label: m.full_name }));
 
   return (
     <div className="space-y-lg pb-xl">
@@ -88,15 +185,30 @@ export function LaEducaEstagiarioDetalhePage() {
           const items = avaliacoes_por_pilar[p.codigo] ?? [];
           const ancorados = items.filter(i => i.ancorado).length;
           return (
-            <PilarCard
-              key={p.id}
-              pilarCodigo={p.codigo}
-              pilarNome={p.nome}
-              iconeName={p.icone}
-              ancorados={ancorados}
-              total={items.length}
-              to={`/la-educa/${id}/${p.codigo}`}
-            />
+            <div key={p.id} className="space-y-1">
+              <PilarCard
+                pilarCodigo={p.codigo}
+                pilarNome={p.nome}
+                iconeName={p.icone}
+                ancorados={ancorados}
+                total={items.length}
+                to={`/la-educa/${id}/${p.codigo}`}
+              />
+              <div className="flex items-center justify-between text-[11px] text-fg-muted px-1">
+                <span>
+                  Responsável: <strong className="text-fg">{responsavelDoPilar(p.codigo)}</strong>
+                  {!temInstrutor(p.codigo) && <span className="text-fg-muted"> (mentor)</span>}
+                </span>
+                {podeDelegar && (
+                  <button
+                    onClick={() => abrirModal(p)}
+                    className="text-tom hover:underline ml-2 whitespace-nowrap"
+                  >
+                    {temInstrutor(p.codigo) ? '✎ Trocar' : '+ Delegar'}
+                  </button>
+                )}
+              </div>
+            </div>
           );
         })}
       </div>
@@ -113,6 +225,51 @@ export function LaEducaEstagiarioDetalhePage() {
         >
           🏆 Emitir Certificado Alfa
         </button>
+      )}
+
+      {/* Modal de atribuição de instrutor */}
+      {modalAtrib.open && modalAtrib.pilar && (
+        <Modal
+          title={`Atribuir instrutor — ${modalAtrib.pilar.nome}`}
+          onClose={fecharModal}
+        >
+          <div className="space-y-md">
+            <div>
+              <label className="block text-body-sm text-fg-muted mb-1">Instrutor</label>
+              <CustomSelect
+                value={instrutorSelecionado}
+                onChange={setInstrutorSelecionado}
+                options={mentoresOptions}
+                placeholder="Selecionar instrutor..."
+              />
+            </div>
+            <div className="flex flex-col gap-sm">
+              <button
+                onClick={handleSalvar}
+                disabled={saving || !instrutorSelecionado}
+                className="w-full py-sm bg-tom text-white rounded-lg font-semibold focus-ring disabled:opacity-50"
+              >
+                {saving ? 'Salvando...' : 'Salvar atribuição'}
+              </button>
+              {temInstrutor(modalAtrib.pilar.codigo) && (
+                <button
+                  onClick={handleRemover}
+                  disabled={saving}
+                  className="w-full py-sm bg-bg-app border border-danger text-danger rounded-lg font-semibold focus-ring disabled:opacity-50"
+                >
+                  Remover atribuição (volta ao mentor)
+                </button>
+              )}
+              <button
+                onClick={fecharModal}
+                disabled={saving}
+                className="w-full py-sm text-fg-muted hover:text-fg focus-ring rounded-lg"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </Modal>
       )}
     </div>
   );

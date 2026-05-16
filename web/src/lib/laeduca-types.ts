@@ -141,3 +141,18 @@ export interface EstagiarioDetalhe {
   progresso: ProgressoEstagiario;
   avaliacoes_por_pilar: Record<string, AvaliacaoComCheckpoint[]>;  // key = codigo do pilar
 }
+
+export interface ResponsavelPilar {
+  id: string;
+  estagiario_id: string;
+  pilar_id: string;        // FK uuid → la_educa_pilares.id
+  instrutor_id: string;
+  atribuido_por: string;
+  atribuido_em: string;
+}
+
+// Versão enriquecida (com JOIN) pra UI
+export interface ResponsavelPilarComNomes extends ResponsavelPilar {
+  instrutor_nome: string;  // full_name do collaborator
+  pilar_codigo: string;    // 'p1', 'p2', etc — pra match com `pilar` na tela
+}

@@ -12,6 +12,8 @@ import type {
   EstagiarioDetalhe,
   Pilar,
   Trilha,
+  ResponsavelPilar,
+  ResponsavelPilarComNomes,
 } from './laeduca-types';
 
 /** Lista todos os estagiários visíveis (RLS filtra). */
@@ -309,5 +311,65 @@ export async function atualizarCheckpoint(id: string, patch: Partial<Checkpoint>
 /** Deleta checkpoint. */
 export async function deletarCheckpoint(id: string): Promise<void> {
   const { error } = await supabase.from('la_educa_checkpoints').delete().eq('id', id);
+  if (error) throw error;
+}
+
+// ─── Responsáveis por pilar ───────────────────────────────────────────────
+
+/** Lista responsáveis (com instrutor_nome JOIN) de um estagiário, agrupados por pilar_codigo. */
+export async function fetchResponsaveisDoEstagiario(estagiarioId: string): Promise<ResponsavelPilarComNomes[]> {
+  const { data, error } = await supabase
+    .from('la_educa_responsaveis_pilar')
+    .select(`
+      id, estagiario_id, pilar_id, instrutor_id, atribuido_por, atribuido_em,
+      instrutor:collaborators!instrutor_id(full_name),
+      pilar:la_educa_pilares!pilar_id(codigo)
+    `)
+    .eq('estagiario_id', estagiarioId);
+  if (error) throw error;
+  // Achatar JOINs
+  return (data ?? []).map((r: any) => ({
+    id: r.id,
+    estagiario_id: r.estagiario_id,
+    pilar_id: r.pilar_id,
+    instrutor_id: r.instrutor_id,
+    atribuido_por: r.atribuido_por,
+    atribuido_em: r.atribuido_em,
+    instrutor_nome: r.instrutor?.full_name ?? '—',
+    pilar_codigo: r.pilar?.codigo ?? '',
+  }));
+}
+
+/** Cria ou atualiza (upsert) atribuição de instrutor a um pilar de um estagiário. */
+export async function atribuirInstrutorAoPilar(params: {
+  estagiarioId: string;
+  pilarId: string;          // uuid do pilar
+  instrutorId: string;
+  atribuidoPor: string;
+}): Promise<ResponsavelPilar> {
+  const { data, error } = await supabase
+    .from('la_educa_responsaveis_pilar')
+    .upsert({
+      estagiario_id: params.estagiarioId,
+      pilar_id: params.pilarId,
+      instrutor_id: params.instrutorId,
+      atribuido_por: params.atribuidoPor,
+    }, { onConflict: 'estagiario_id,pilar_id' })
+    .select('*')
+    .single();
+  if (error) throw error;
+  return data as ResponsavelPilar;
+}
+
+/** Remove atribuição (volta pro fallback mentor). */
+export async function removerInstrutorDoPilar(params: {
+  estagiarioId: string;
+  pilarId: string;
+}): Promise<void> {
+  const { error } = await supabase
+    .from('la_educa_responsaveis_pilar')
+    .delete()
+    .eq('estagiario_id', params.estagiarioId)
+    .eq('pilar_id', params.pilarId);
   if (error) throw error;
 }
