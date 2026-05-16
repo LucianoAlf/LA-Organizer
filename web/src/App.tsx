@@ -29,6 +29,10 @@ import { MeuPerfil } from './screens/MeuPerfil';
 import { GestaoEquipe } from './screens/GestaoEquipe';
 import { GestaoEquipeNovo } from './screens/GestaoEquipeNovo';
 import { GestaoEquipeDetalhe } from './screens/GestaoEquipeDetalhe';
+import { LaEducaListaPage } from './screens/laeduca/ListaPage';
+import { LaEducaCadastroPage } from './screens/laeduca/CadastroEstagiarioPage';
+import { LaEducaEstagiarioDetalhePage } from './screens/laeduca/EstagiarioDetalhePage';
+import { LaEducaPilarPage } from './screens/laeduca/PilarAvaliacaoPage';
 
 export default function App() {
   return (
@@ -74,6 +78,15 @@ export default function App() {
             <Route path="mais/operacoes" element={<OperacoesFilaTecnica />} />
             <Route path="mais/operacoes/:id" element={<OperacaoDetalhe />} />
           </Route>
+
+          {/* LA EDUCA — qualquer autenticado pode acessar (RLS filtra o que vê).
+              Cadastro fica gated com ProtectedRoute pra coord/director. */}
+          <Route path="la-educa" element={<LaEducaListaPage />} />
+          <Route element={<ProtectedRoute requireRoles={['coordinator', 'director']} />}>
+            <Route path="la-educa/novo" element={<LaEducaCadastroPage />} />
+          </Route>
+          <Route path="la-educa/:id" element={<LaEducaEstagiarioDetalhePage />} />
+          <Route path="la-educa/:id/:pilar" element={<LaEducaPilarPage />} />
 
           <Route element={<ProtectedRoute requireRoles={['coordinator', 'director']} />}>
             <Route path="time" element={<DashboardTime />} />

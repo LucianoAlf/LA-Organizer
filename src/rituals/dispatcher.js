@@ -18,6 +18,7 @@ loadDotEnv(path.join(process.cwd(), '.env'));
 
 const supabase = require('../supabase/client');
 const { sendRitual, sendCoordinatorReport, getDndState, consolidateMemoryFor, decayExpiredMemories, generateWeeklySummaryFor, getRitualIntroDecision } = require('../engine');
+const { runLaEducaLembretes } = require('./la-educa-lembretes');
 
 const RITUAL_BY_DIRECTIVE = {
   briefing_pessoal: 'personal_briefing',
@@ -46,6 +47,7 @@ const PENDING_APPROVAL_REMINDER_TIMES = ['09:00', '15:00'];  // 2x/dia
 const DAILY_DREAM_TIME = '03:00';               // Every day — "sonhar": consolidar memórias das últimas 24h
 const HEALTH_CHECK_TIME = '05:00';              // Every day — auditoria do sistema (após Dream das 3h)
 const HEALTH_REPORT_TIME = '07:00';             // Every day — envia relatório do health check pro director (Luciano)
+const LA_EDUCA_LEMBRETES_TIME = '09:00';        // Monday only — lembretes semanais do LA EDUCA
 const COORDINATOR_ROLES = ['coordinator', 'director'];
 
 // Default time for briefing_pessoal (until user_preferences gains a personal_briefing_time column).
@@ -1593,7 +1595,7 @@ async function run(opts = {}) {
   // Modo forçado: ignora time check e dispara o ritual pedido pra cada collab filtrado.
   // Exceções: 'aderencia'/'aderencia_diaria' são determinísticos (sem LLM/sendRitual);
   // caem no gancho condicional adiante e são tratados por checkAdherenceNudge.
-  if (opts.force && opts.force !== 'aderencia' && opts.force !== 'aderencia_diaria' && opts.force !== 'consolidacao_memoria' && opts.force !== 'dream' && opts.force !== 'pending_approvals' && opts.force !== 'healthcheck' && opts.force !== 'health_report') {
+  if (opts.force && opts.force !== 'aderencia' && opts.force !== 'aderencia_diaria' && opts.force !== 'consolidacao_memoria' && opts.force !== 'dream' && opts.force !== 'pending_approvals' && opts.force !== 'healthcheck' && opts.force !== 'health_report' && opts.force !== 'la_educa_lembretes') {
     const ritualType = RITUAL_BY_DIRECTIVE[opts.force];
     if (!ritualType) {
       console.error(`[Dispatcher] force inválido: ${opts.force}`);
@@ -1756,6 +1758,45 @@ async function run(opts = {}) {
       }
     } catch (err) {
       console.error('[Dispatcher] health-report erro:', err.message);
+    }
+  }
+
+  // LA EDUCA — lembretes semanais (segunda 09:00).
+  // Gate: dow=1 (segunda) + minuto=0 + slot bate.
+  // Idempotência interna: la_educa_lembretes_log (não reenvia <6d).
+  if (opts.force === 'la_educa_lembretes' ||
+      (now.dow === 1 && now.minute === 0 && timeToSlot(LA_EDUCA_LEMBRETES_TIME) === slotNow)) {
+    const { data: jaRodou } = await supabase
+      .from('ritual_logs')
+      .select('id')
+      .eq('ritual_type', 'la_educa_lembretes')
+      .eq('reference_date', now.ymd)
+      .limit(1);
+    if (opts.force !== 'la_educa_lembretes' && jaRodou && jaRodou.length > 0) {
+      console.log('[la-educa-dispatch] já rodou hoje, skip');
+    } else {
+      try {
+        await runLaEducaLembretes();
+        // ritual_logs.collaborator_id é NOT NULL → usar 1º director ativo como
+        // placeholder (la_educa_lembretes é system-level, não per-collab).
+        const { data: dir } = await supabase
+          .from('collaborators')
+          .select('id')
+          .eq('role', 'director')
+          .eq('is_active', true)
+          .order('full_name')
+          .limit(1)
+          .single();
+        await supabase.from('ritual_logs').insert({
+          collaborator_id: dir?.id,
+          ritual_type: 'la_educa_lembretes',
+          reference_date: now.ymd,
+          status: 'sent',
+          sent_at: new Date().toISOString(),
+        });
+      } catch (err) {
+        console.error('[la-educa-dispatch] erro:', err.message);
+      }
     }
   }
 

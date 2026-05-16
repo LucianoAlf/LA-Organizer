@@ -1013,6 +1013,12 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
     }
   }
 
+  // LA EDUCA — só pra coord/director
+  if ((collab?.role === 'coordinator' || collab?.role === 'director')
+      && /(la\s*educa|estagi[áa]rios?|mentor(?:i?a)?|ancoragem|certificado\s*alfa|trilha)/i.test(lastUserMessage || '')) {
+    return { name: 'la-educa', body: loadSkill('la-educa') };
+  }
+
   return null;
 }
 
@@ -2521,6 +2527,50 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     const historicalBlock = await buildHistoricalContext(collaborator.id, rt);
     if (historicalBlock) {
       systemPrompt += historicalBlock;
+    }
+  }
+
+  // LA EDUCA — só injeta resumo quando a skill está ativa e o role permite
+  if ((collaborator?.role === 'coordinator' || collaborator?.role === 'director') && skill?.name === 'la-educa') {
+    try {
+      const supabaseClient = require('../supabase/client');
+      const { data: rows } = await supabaseClient
+        .from('la_educa_progresso')
+        .select('id, nome, unidade, mentor_nome, percentual, checkpoints_ancorados, checkpoints_total, certificado_emitido, ultima_atualizacao')
+        .order('unidade');
+      const lista = rows || [];
+      const porUnidade = lista.reduce((acc, e) => {
+        acc[e.unidade] = acc[e.unidade] || { count: 0, somaPct: 0 };
+        acc[e.unidade].count += 1;
+        acc[e.unidade].somaPct += Number(e.percentual || 0);
+        return acc;
+      }, {});
+      const resumoUnidades = Object.entries(porUnidade)
+        .map(([u, v]) => `${u}: ${v.count} ativos, ${Math.round(v.somaPct / v.count)}% médio`)
+        .join(' | ');
+      const atrasadosArr = lista
+        .filter(e => {
+          if (!e.ultima_atualizacao) return false;
+          const dias = Math.floor((Date.now() - new Date(e.ultima_atualizacao).getTime()) / 86400000);
+          return dias > 14 && Number(e.percentual) < 100;
+        })
+        .slice(0, 3)
+        .map(e => {
+          const dias = Math.floor((Date.now() - new Date(e.ultima_atualizacao).getTime()) / 86400000);
+          return `${e.nome} (mentor: ${e.mentor_nome || '—'}, ${dias}d parado)`;
+        })
+        .join('; ');
+      const prontosArr = lista
+        .filter(e => Number(e.percentual) === 100 && !e.certificado_emitido)
+        .map(e => `${e.nome} (${e.unidade})`)
+        .join('; ');
+      systemPrompt +=
+        `\n\n---\n\n[LA_EDUCA_RESUMO]\n` +
+        `Por unidade: ${resumoUnidades || '(sem estagiários)'}\n` +
+        `Atrasados (>14d): ${atrasadosArr || 'nenhum'}\n` +
+        `Prontos pra Certificado Alfa: ${prontosArr || 'nenhum'}`;
+    } catch (err) {
+      console.error('[system.js] LA_EDUCA_RESUMO erro:', err.message);
     }
   }
 

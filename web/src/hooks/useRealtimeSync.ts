@@ -39,6 +39,11 @@ const WATCHED_TABLES = [
   'personal_checklists',
   'personal_checklist_items',
   'coordination_requests',
+  // LA EDUCA
+  'la_educa_estagiarios',
+  'la_educa_avaliacoes',
+  'la_educa_historico',
+  'la_educa_lembretes_log',
 ];
 
 export function useRealtimeSync(collabId: string | undefined) {
