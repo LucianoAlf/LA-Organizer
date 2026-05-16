@@ -264,9 +264,9 @@ function ModalPilar({ pilar, onClose }: { pilar: Pilar; onClose: () => void }) {
         <div>
           <label className="text-body-sm font-semibold text-fg-muted mb-1 block">Foco (banner de destaque)</label>
           <textarea
-            rows={2}
-            className="w-full border border-border rounded-lg px-sm py-sm text-fg bg-bg-app focus-ring resize-none"
-            placeholder="Texto exibido em banner na tela de avaliação"
+            rows={7}
+            className="w-full border border-border rounded-lg px-sm py-sm text-fg bg-bg-app focus-ring resize-y min-h-[160px]"
+            placeholder="Texto exibido em banner amarelo na tela de avaliação do pilar"
             value={form.foco}
             onChange={e => set('foco', e.target.value)}
           />
@@ -674,56 +674,55 @@ export function LaEducaAdminTrilhaPage() {
 
       {/* ── Seletor de trilha ── */}
       <div className="bg-bg-surface rounded-lg border border-border p-md space-y-sm">
-        <p className="text-body-sm font-semibold text-fg-muted uppercase tracking-wide">
-          Trilha selecionada
-        </p>
-
-        <div className="flex flex-wrap items-center gap-sm">
-          <div className="w-56">
-            <CustomSelect
-              value={currentTrilhaId}
-              onChange={handleTrilhaChange}
-              options={trilhaOpcoes}
-              placeholder="Selecionar trilha…"
-            />
-          </div>
-
-          {/* Editar / Deletar trilha atual */}
-          {trilhaSelecionada && (
-            <>
-              <button
-                onClick={() => setModalTrilha({ open: true, trilha: trilhaSelecionada })}
-                className="inline-flex items-center gap-1 text-body-sm border border-border bg-bg-surface hover:border-tom text-fg px-sm py-1.5 rounded focus-ring"
-              >
-                <Pencil size={13} /> Editar
-              </button>
-              {!isPadrao && (
-                <button
-                  onClick={() => {
-                    if (
-                      confirm(
-                        `Desativar trilha "${trilhaSelecionada.nome}"? Os estagiários existentes não são afetados.`,
-                      )
-                    ) {
-                      deleteTrilhaMut.mutate(trilhaSelecionada.id);
-                    }
-                  }}
-                  disabled={deleteTrilhaMut.isPending}
-                  className="inline-flex items-center gap-1 text-body-sm border border-border bg-bg-surface hover:border-danger text-fg-muted hover:text-danger px-sm py-1.5 rounded focus-ring"
-                >
-                  <Trash2 size={13} /> Desativar
-                </button>
-              )}
-            </>
-          )}
-
+        {/* Header: título + ação global "Nova trilha" */}
+        <div className="flex items-center justify-between gap-sm">
+          <p className="text-body-sm font-semibold text-fg-muted uppercase tracking-wide">
+            Trilha selecionada
+          </p>
           <button
             onClick={() => setModalTrilha({ open: true, trilha: null })}
-            className="inline-flex items-center gap-1 text-body-sm bg-tom text-white px-sm py-1.5 rounded font-semibold focus-ring ml-auto"
+            className="inline-flex items-center gap-1 text-body-sm bg-tom text-white px-sm py-1.5 rounded font-semibold focus-ring"
           >
             <Plus size={14} /> Nova trilha
           </button>
         </div>
+
+        {/* Dropdown da trilha (full width) */}
+        <CustomSelect
+          value={currentTrilhaId}
+          onChange={handleTrilhaChange}
+          options={trilhaOpcoes}
+          placeholder="Selecionar trilha…"
+        />
+
+        {/* Ações da trilha selecionada (agrupadas) */}
+        {trilhaSelecionada && (
+          <div className="flex items-center gap-sm">
+            <button
+              onClick={() => setModalTrilha({ open: true, trilha: trilhaSelecionada })}
+              className="inline-flex items-center gap-1 text-body-sm border border-border bg-bg-surface hover:border-tom text-fg px-sm py-1.5 rounded focus-ring"
+            >
+              <Pencil size={13} /> Editar trilha
+            </button>
+            {!isPadrao && (
+              <button
+                onClick={() => {
+                  if (
+                    confirm(
+                      `Desativar trilha "${trilhaSelecionada.nome}"? Os estagiários existentes não são afetados.`,
+                    )
+                  ) {
+                    deleteTrilhaMut.mutate(trilhaSelecionada.id);
+                  }
+                }}
+                disabled={deleteTrilhaMut.isPending}
+                className="inline-flex items-center gap-1 text-body-sm border border-border bg-bg-surface hover:border-danger text-fg-muted hover:text-danger px-sm py-1.5 rounded focus-ring"
+              >
+                <Trash2 size={13} /> Desativar trilha
+              </button>
+            )}
+          </div>
+        )}
 
         {trilhaSelecionada?.descricao && (
           <p className="text-body-sm text-fg-muted">{trilhaSelecionada.descricao}</p>
