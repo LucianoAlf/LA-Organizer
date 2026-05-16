@@ -1,24 +1,21 @@
 import { Link } from 'react-router-dom';
-import { BookOpen, Music, Users, School } from 'lucide-react';
-import type { PilarId } from '../../../lib/laeduca-types';
-import { PILAR_NOMES } from '../../../lib/laeduca-types';
+import { BookOpen, Music, Users, School, GraduationCap, Heart, Star, Target, Award, Briefcase, type LucideIcon } from 'lucide-react';
 
-const ICONS: Record<PilarId, typeof BookOpen> = {
-  p1: BookOpen,
-  p2: Music,
-  p3: Users,
-  p4: School,
+const ICONS_MAP: Record<string, LucideIcon> = {
+  BookOpen, Music, Users, School, GraduationCap, Heart, Star, Target, Award, Briefcase,
 };
 
 interface Props {
-  pilar: PilarId;
+  pilarCodigo: string;   // 'p1', etc — usado em URL
+  pilarNome: string;
+  iconeName: string;     // 'BookOpen' etc
   ancorados: number;
   total: number;
   to: string;
 }
 
-export function PilarCard({ pilar, ancorados, total, to }: Props) {
-  const Icon = ICONS[pilar];
+export function PilarCard({ pilarCodigo: _pilarCodigo, pilarNome, iconeName, ancorados, total, to }: Props) {
+  const Icon = ICONS_MAP[iconeName] ?? BookOpen;
   const pct = total === 0 ? 0 : Math.round((ancorados / total) * 100);
   const status = ancorados === 0 ? 'Não iniciado' : ancorados === total ? 'Concluído' : 'Em andamento';
   const badgeClass =
@@ -38,7 +35,7 @@ export function PilarCard({ pilar, ancorados, total, to }: Props) {
           <Icon size={20} />
         </div>
         <div className="flex-1 min-w-0">
-          <h3 className="font-semibold text-fg">{PILAR_NOMES[pilar]}</h3>
+          <h3 className="font-semibold text-fg">{pilarNome}</h3>
           <div className="text-body-sm text-fg-muted mt-1">
             {ancorados} de {total} ancorados · {pct}%
           </div>

@@ -17,7 +17,20 @@ export const MODALIDADE_LABELS: Record<Modalidade, string> = {
   ambos: 'Ambos',
 };
 
-export type PilarId = 'p1' | 'p2' | 'p3' | 'p4';
+export type PilarId = string; // codigo do pilar, dinâmico
+
+export interface Pilar {
+  id: string;
+  codigo: string;            // 'p1', 'p2', 'p3', 'p4', e novos como 'p5' etc
+  nome: string;
+  descricao_breve: string | null;
+  foco: string | null;
+  icone: string;             // lucide icon name
+  sort_order: number;
+  editavel: boolean;
+  created_at: string;
+  updated_at: string;
+}
 
 // Status alinhado com check constraint do banco la_educa_estagiarios.status
 export type StatusEstagiario = 'em_andamento' | 'concluido' | 'desistente' | 'arquivado';
@@ -48,7 +61,8 @@ export interface Estagiario {
 
 export interface Checkpoint {
   id: string;                 // 'p1.1', 'p2m.1', 'p2i.5', 'p4.4'
-  pilar: PilarId;
+  pilar: PilarId;             // codigo (legado, ainda em uso)
+  pilar_id: string;           // FK uuid pra la_educa_pilares.id
   pilar_nome: string;
   titulo: string;
   descricao: string;
@@ -61,7 +75,7 @@ export interface Avaliacao {
   id: string;
   estagiario_id: string;
   checkpoint_id: string;
-  pilar: PilarId;
+  pilar: string;
   ancorado: boolean;
   nota: number;
   observacoes: string | null;
@@ -107,12 +121,5 @@ export interface AvaliacaoComCheckpoint extends Avaliacao {
 export interface EstagiarioDetalhe {
   estagiario: Estagiario;
   progresso: ProgressoEstagiario;
-  avaliacoes_por_pilar: Record<PilarId, AvaliacaoComCheckpoint[]>;
+  avaliacoes_por_pilar: Record<string, AvaliacaoComCheckpoint[]>;  // key = codigo do pilar
 }
-
-export const PILAR_NOMES: Record<PilarId, string> = {
-  p1: 'Teoria Musical',
-  p2: 'Prática do Instrumento',
-  p3: 'Metodologia Pedagógica',
-  p4: 'Vivência de Sala de Aula',
-};

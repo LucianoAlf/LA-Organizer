@@ -2,7 +2,7 @@
 // Visão mentor (collaborator com estagiários): só lista filtrada pelo banco via RLS
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus } from 'lucide-react';
+import { Plus, Settings } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLaEducaProgresso } from '../../hooks/useLaEducaProgresso';
 import { PageHeader } from '../../components/PageHeader';
@@ -113,12 +113,20 @@ export function LaEducaListaPage() {
       )}
 
       {isCoordOrDirector && collaborator && (
-        <Link
-          to="/la-educa/novo"
-          className="fixed bottom-20 right-md md:static md:inline-flex inline-flex items-center gap-sm bg-tom text-white px-md py-sm rounded-full shadow-lg focus-ring"
-        >
-          <Plus size={18} /> Novo estagiário
-        </Link>
+        <div className="flex items-center justify-between gap-sm flex-wrap">
+          <Link
+            to="/la-educa/admin"
+            className="inline-flex items-center gap-sm text-body-sm text-tom hover:underline focus-ring"
+          >
+            <Settings size={14} /> Editar trilha
+          </Link>
+          <Link
+            to="/la-educa/novo"
+            className="fixed bottom-20 right-md md:static md:inline-flex inline-flex items-center gap-sm bg-tom text-white px-md py-sm rounded-full shadow-lg focus-ring"
+          >
+            <Plus size={18} /> Novo estagiário
+          </Link>
+        </div>
       )}
     </div>
   );

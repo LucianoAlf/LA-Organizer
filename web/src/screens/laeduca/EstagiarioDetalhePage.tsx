@@ -1,25 +1,25 @@
-// Detalhe do estagiário: header com info, 4 PilarCards, botão Certificar Alfa (só coord/director com 100%)
+// Detalhe do estagiário: header com info, PilarCards dinâmicos, botão Certificar Alfa (só coord/director com 100%)
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLaEducaEstagiario } from '../../hooks/useLaEducaEstagiario';
+import { useLaEducaPilares } from '../../hooks/useLaEducaPilares';
 import { PageHeader } from '../../components/PageHeader';
 import { LoadingState } from '../../components/LoadingState';
 import { ProgressBar } from './components/ProgressBar';
 import { PilarCard } from './components/PilarCard';
 import { emitirCertificado } from '../../lib/laeduca';
-import type { PilarId, Unidade } from '../../lib/laeduca-types';
+import type { Unidade } from '../../lib/laeduca-types';
 import { UNIDADE_LABELS, MODALIDADE_LABELS } from '../../lib/laeduca-types';
 import { showToast } from '../../components/Toast';
-
-const PILARES: PilarId[] = ['p1', 'p2', 'p3', 'p4'];
 
 export function LaEducaEstagiarioDetalhePage() {
   const { id } = useParams<{ id: string }>();
   const { collaborator, role } = useAuth();
   const qc = useQueryClient();
   const { data, isLoading, error } = useLaEducaEstagiario(id);
+  const { data: pilares, isLoading: pilaresLoading } = useLaEducaPilares();
   const [showDiagnostico, setShowDiagnostico] = useState(false);
 
   const certMutation = useMutation({
@@ -32,7 +32,7 @@ export function LaEducaEstagiarioDetalhePage() {
     onError: e => showToast({ kind: 'error', title: 'Falha', msg: (e as Error).message }),
   });
 
-  if (isLoading) return <LoadingState />;
+  if (isLoading || pilaresLoading) return <LoadingState />;
   if (error || !data) return <div className="p-md text-danger">Estagiário não encontrado.</div>;
 
   const { estagiario, progresso, avaliacoes_por_pilar } = data;
@@ -81,16 +81,18 @@ export function LaEducaEstagiarioDetalhePage() {
       )}
 
       <div className="grid gap-sm md:grid-cols-2">
-        {PILARES.map(p => {
-          const items = avaliacoes_por_pilar[p];
+        {(pilares ?? []).map(p => {
+          const items = avaliacoes_por_pilar[p.codigo] ?? [];
           const ancorados = items.filter(i => i.ancorado).length;
           return (
             <PilarCard
-              key={p}
-              pilar={p}
+              key={p.id}
+              pilarCodigo={p.codigo}
+              pilarNome={p.nome}
+              iconeName={p.icone}
               ancorados={ancorados}
               total={items.length}
-              to={`/la-educa/${id}/${p}`}
+              to={`/la-educa/${id}/${p.codigo}`}
             />
           );
         })}

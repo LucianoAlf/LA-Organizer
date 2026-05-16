@@ -10,7 +10,7 @@ import type {
   CadastroEstagiarioForm,
   AvaliacaoComCheckpoint,
   EstagiarioDetalhe,
-  PilarId,
+  Pilar,
 } from './laeduca-types';
 
 /** Lista todos os estagiários visíveis (RLS filtra). */
@@ -37,11 +37,12 @@ export async function fetchEstagiarioDetalhe(estagiarioId: string): Promise<Esta
   if (avalRes.error) throw avalRes.error;
 
   const avaliacoes = (avalRes.data ?? []) as unknown as AvaliacaoComCheckpoint[];
-  const agrupado: Record<PilarId, AvaliacaoComCheckpoint[]> = { p1: [], p2: [], p3: [], p4: [] };
+  const agrupado: Record<string, AvaliacaoComCheckpoint[]> = {};
   for (const a of avaliacoes) {
+    if (!agrupado[a.pilar]) agrupado[a.pilar] = [];
     agrupado[a.pilar].push(a);
   }
-  for (const k of Object.keys(agrupado) as PilarId[]) {
+  for (const k of Object.keys(agrupado)) {
     agrupado[k].sort((a, b) => a.checkpoint.sort_order - b.checkpoint.sort_order);
   }
 
@@ -162,4 +163,89 @@ export async function fetchCheckpoints(): Promise<Checkpoint[]> {
     .order('sort_order');
   if (error) throw error;
   return (data ?? []) as Checkpoint[];
+}
+
+/** Lista todos os pilares ordenados por sort_order. */
+export async function fetchPilares(): Promise<Pilar[]> {
+  const { data, error } = await supabase
+    .from('la_educa_pilares')
+    .select('*')
+    .order('sort_order');
+  if (error) throw error;
+  return (data ?? []) as Pilar[];
+}
+
+/** Cria pilar novo. */
+export async function criarPilar(form: {
+  codigo: string;
+  nome: string;
+  descricao_breve?: string;
+  foco?: string;
+  icone?: string;
+  sort_order?: number;
+}): Promise<Pilar> {
+  const { data, error } = await supabase
+    .from('la_educa_pilares')
+    .insert({ ...form, editavel: true })
+    .select('*')
+    .single();
+  if (error) throw error;
+  return data as Pilar;
+}
+
+/** Atualiza pilar. */
+export async function atualizarPilar(id: string, patch: Partial<Pilar>): Promise<Pilar> {
+  const { data, error } = await supabase
+    .from('la_educa_pilares')
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select('*')
+    .single();
+  if (error) throw error;
+  return data as Pilar;
+}
+
+/** Deleta pilar (RLS valida coord/director + editavel=true). */
+export async function deletarPilar(id: string): Promise<void> {
+  const { error } = await supabase.from('la_educa_pilares').delete().eq('id', id);
+  if (error) throw error;
+}
+
+/** Cria checkpoint novo. */
+export async function criarCheckpoint(form: {
+  id: string;
+  pilar: string;
+  pilar_id: string;
+  pilar_nome: string;
+  titulo: string;
+  descricao: string;
+  criterio: string;
+  modalidade_filtro?: 'musicalizacao' | 'instrumento' | null;
+  sort_order: number;
+}): Promise<Checkpoint> {
+  const { data, error } = await supabase
+    .from('la_educa_checkpoints')
+    .insert(form)
+    .select('*')
+    .single();
+  if (error) throw error;
+  return data as Checkpoint;
+}
+
+/** Atualiza checkpoint. */
+export async function atualizarCheckpoint(id: string, patch: Partial<Checkpoint>): Promise<Checkpoint> {
+  const { data, error } = await supabase
+    .from('la_educa_checkpoints')
+    .update(patch)
+    .eq('id', id)
+    .select('*')
+    .single();
+  if (error) throw error;
+  return data as Checkpoint;
+}
+
+/** Deleta checkpoint. */
+export async function deletarCheckpoint(id: string): Promise<void> {
+  const { error } = await supabase.from('la_educa_checkpoints').delete().eq('id', id);
+  if (error) throw error;
 }

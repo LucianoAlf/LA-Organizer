@@ -3,29 +3,27 @@ import { useParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLaEducaEstagiario } from '../../hooks/useLaEducaEstagiario';
+import { useLaEducaPilares } from '../../hooks/useLaEducaPilares';
 import { PageHeader } from '../../components/PageHeader';
 import { LoadingState } from '../../components/LoadingState';
 import { CheckpointRow } from './components/CheckpointRow';
 import { ancorarAvaliacao } from '../../lib/laeduca';
-import type { PilarId } from '../../lib/laeduca-types';
-import { PILAR_NOMES } from '../../lib/laeduca-types';
 import { showToast } from '../../components/Toast';
-
-const PILARES_VALIDOS: PilarId[] = ['p1', 'p2', 'p3', 'p4'];
 
 export function LaEducaPilarPage() {
   const { id, pilar } = useParams<{ id: string; pilar: string }>();
   const { collaborator } = useAuth();
   const qc = useQueryClient();
   const { data, isLoading, error } = useLaEducaEstagiario(id);
+  const { data: pilares, isLoading: pilaresLoading } = useLaEducaPilares();
 
-  if (isLoading) return <LoadingState />;
+  if (isLoading || pilaresLoading) return <LoadingState />;
   if (error || !data) return <div className="p-md text-danger">Estagiário não encontrado.</div>;
 
-  const pilarId = PILARES_VALIDOS.includes(pilar as PilarId) ? (pilar as PilarId) : null;
-  if (!pilarId) return <div className="p-md text-danger">Pilar inválido.</div>;
+  const pilarObj = (pilares ?? []).find(p => p.codigo === pilar);
+  if (!pilarObj) return <div className="p-md text-danger">Pilar inválido.</div>;
 
-  const items = data.avaliacoes_por_pilar[pilarId];
+  const items = data.avaliacoes_por_pilar[pilarObj.codigo] ?? [];
 
   async function handleAncorar(avaliacaoId: string, params: { nota: number; observacoes: string; justificativaBaixa: string | null }) {
     if (!collaborator) return;
@@ -48,10 +46,17 @@ export function LaEducaPilarPage() {
   return (
     <div className="space-y-md pb-xl">
       <PageHeader
-        title={PILAR_NOMES[pilarId]}
+        title={pilarObj.nome}
         subtitle={`${data.estagiario.nome} · ${items.filter(i => i.ancorado).length}/${items.length} ancorados`}
         backTo={`/la-educa/${id}`}
       />
+
+      {pilarObj.foco && (
+        <div className="bg-warning/10 border-l-4 border-warning rounded-r-lg p-md">
+          <div className="text-body-sm font-semibold text-warning mb-1">Foco do pilar</div>
+          <p className="text-body-sm text-fg-muted">{pilarObj.foco}</p>
+        </div>
+      )}
 
       <ul className="space-y-sm">
         {items.map(item => (

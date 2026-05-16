@@ -33,6 +33,7 @@ import { LaEducaListaPage } from './screens/laeduca/ListaPage';
 import { LaEducaCadastroPage } from './screens/laeduca/CadastroEstagiarioPage';
 import { LaEducaEstagiarioDetalhePage } from './screens/laeduca/EstagiarioDetalhePage';
 import { LaEducaPilarPage } from './screens/laeduca/PilarAvaliacaoPage';
+import { LaEducaAdminTrilhaPage } from './screens/laeduca/AdminTrilhaPage';
 
 export default function App() {
   return (
@@ -80,10 +81,11 @@ export default function App() {
           </Route>
 
           {/* LA EDUCA — qualquer autenticado pode acessar (RLS filtra o que vê).
-              Cadastro fica gated com ProtectedRoute pra coord/director. */}
+              Cadastro e admin da trilha ficam gated com ProtectedRoute pra coord/director. */}
           <Route path="la-educa" element={<LaEducaListaPage />} />
           <Route element={<ProtectedRoute requireRoles={['coordinator', 'director']} />}>
             <Route path="la-educa/novo" element={<LaEducaCadastroPage />} />
+            <Route path="la-educa/admin" element={<LaEducaAdminTrilhaPage />} />
           </Route>
           <Route path="la-educa/:id" element={<LaEducaEstagiarioDetalhePage />} />
           <Route path="la-educa/:id/:pilar" element={<LaEducaPilarPage />} />
