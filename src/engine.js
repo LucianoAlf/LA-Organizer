@@ -4596,6 +4596,44 @@ async function processMessage(phone, text, raw = {}) {
   console.log('[Engine] Mensagem de', collab.full_name);
   await logConversation(collab.id, 'inbound', text);
 
+  // G11 — Comando rápido /educa <nome>
+  if (typeof text === 'string' && /^\/educa\s+/i.test(text)) {
+    const nome = text.replace(/^\/educa\s+/i, '').trim();
+    if (!nome) {
+      await whatsapp.sendMessage(phone, 'Uso: /educa <nome do estagiário>');
+      return;
+    }
+    try {
+      const { data: matches } = await supabase
+        .from('la_educa_progresso')
+        .select('id, nome, unidade, mentor_nome, trilha_icone, trilha_nome, checkpoints_ancorados, checkpoints_total, percentual, certificado_emitido, certificado_emitido_em, ultima_atualizacao')
+        .ilike('nome', `%${nome}%`)
+        .limit(5);
+      if (!matches || matches.length === 0) {
+        await whatsapp.sendMessage(phone, `🔍 Nenhum estagiário encontrado com "${nome}".`);
+        return;
+      }
+      if (matches.length > 1) {
+        const lista = matches.map(e => `• ${e.nome} (${e.unidade})`).join('\n');
+        await whatsapp.sendMessage(phone, `🔍 Encontrei vários:\n${lista}\n\nUse o nome completo.`);
+        return;
+      }
+      const e = matches[0];
+      const dias = e.ultima_atualizacao ? Math.floor((Date.now() - new Date(e.ultima_atualizacao).getTime()) / 86400000) : null;
+      const msg =
+        `🎓 ${e.nome}\n` +
+        `${e.trilha_icone || ''} ${e.trilha_nome || '—'} · ${e.unidade}\n` +
+        `Mentor: ${e.mentor_nome || '—'}\n` +
+        `Progresso: ${e.checkpoints_ancorados}/${e.checkpoints_total} (${Math.round(e.percentual || 0)}%)\n` +
+        `Última atualização: ${dias !== null ? dias + 'd atrás' : 'nunca'}` +
+        (e.certificado_emitido ? `\n🏆 Certificado Alfa emitido em ${e.certificado_emitido_em?.slice(0,10)}` : '');
+      await whatsapp.sendMessage(phone, msg);
+    } catch (err) {
+      await whatsapp.sendMessage(phone, `Erro ao buscar: ${err.message}`);
+    }
+    return;  // não passar pra IA
+  }
+
   // Sprint 23.5 — bypass engine-side para dup microconfirm.
   // Intercepta "1/2/3" quando há pending dup event, resolve sem chamar LLM.
   const dupBypass = await tryDupBypass(collab, String(text || ''));

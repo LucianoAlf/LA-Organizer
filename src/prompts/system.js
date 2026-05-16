@@ -2534,41 +2534,133 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   if ((collaborator?.role === 'coordinator' || collaborator?.role === 'director') && skill?.name === 'la-educa') {
     try {
       const supabaseClient = require('../supabase/client');
+
+      // 1. Dados gerais (view la_educa_progresso)
       const { data: rows } = await supabaseClient
         .from('la_educa_progresso')
-        .select('id, nome, unidade, mentor_nome, percentual, checkpoints_ancorados, checkpoints_total, certificado_emitido, ultima_atualizacao')
+        .select('*')
         .order('unidade');
       const lista = rows || [];
-      const porUnidade = lista.reduce((acc, e) => {
-        acc[e.unidade] = acc[e.unidade] || { count: 0, somaPct: 0 };
-        acc[e.unidade].count += 1;
-        acc[e.unidade].somaPct += Number(e.percentual || 0);
-        return acc;
-      }, {});
-      const resumoUnidades = Object.entries(porUnidade)
-        .map(([u, v]) => `${u}: ${v.count} ativos, ${Math.round(v.somaPct / v.count)}% médio`)
-        .join(' | ');
-      const atrasadosArr = lista
-        .filter(e => {
-          if (!e.ultima_atualizacao) return false;
-          const dias = Math.floor((Date.now() - new Date(e.ultima_atualizacao).getTime()) / 86400000);
-          return dias > 14 && Number(e.percentual) < 100;
-        })
-        .slice(0, 3)
-        .map(e => {
-          const dias = Math.floor((Date.now() - new Date(e.ultima_atualizacao).getTime()) / 86400000);
-          return `${e.nome} (mentor: ${e.mentor_nome || '—'}, ${dias}d parado)`;
-        })
-        .join('; ');
-      const prontosArr = lista
-        .filter(e => Number(e.percentual) === 100 && !e.certificado_emitido)
-        .map(e => `${e.nome} (${e.unidade})`)
-        .join('; ');
-      systemPrompt +=
-        `\n\n---\n\n[LA_EDUCA_RESUMO]\n` +
-        `Por unidade: ${resumoUnidades || '(sem estagiários)'}\n` +
-        `Atrasados (>14d): ${atrasadosArr || 'nenhum'}\n` +
-        `Prontos pra Certificado Alfa: ${prontosArr || 'nenhum'}`;
+
+      // G5 — detectar se user mencionou nome de estagiário
+      const lowerMsg = (lastUserMessage || '').toLowerCase();
+      const estagMencionado = lista.find(e => {
+        if (!e.nome) return false;
+        const partes = e.nome.toLowerCase().split(/\s+/);
+        return partes.some(p => p.length >= 4 && lowerMsg.includes(p));
+      });
+
+      let blocoTexto = '';
+
+      if (estagMencionado) {
+        // ── Detalhe POR ESTAGIÁRIO mencionado (G5) ──
+        const e = estagMencionado;
+
+        // Buscar responsáveis por pilar deste estagiário
+        const { data: resp } = await supabaseClient
+          .from('la_educa_responsaveis_pilar')
+          .select(`pilar_id, instrutor_id,
+                   instrutor:collaborators!instrutor_id(full_name),
+                   pilar:la_educa_pilares!pilar_id(codigo, nome)`)
+          .eq('estagiario_id', e.id);
+
+        // Breakdown por pilar via avaliações
+        const { data: avals } = await supabaseClient
+          .from('la_educa_avaliacoes')
+          .select('pilar, ancorado')
+          .eq('estagiario_id', e.id);
+
+        const grouped = {};
+        for (const a of (avals || [])) {
+          const cod = a.pilar || '?';
+          if (!grouped[cod]) grouped[cod] = { codigo: cod, total: 0, ancorados: 0 };
+          grouped[cod].total += 1;
+          if (a.ancorado) grouped[cod].ancorados += 1;
+        }
+
+        // Enriquecer com nome do pilar via responsáveis
+        for (const r of (resp || [])) {
+          const cod = r.pilar?.codigo;
+          if (cod && grouped[cod]) {
+            grouped[cod].nome = r.pilar?.nome || cod;
+          }
+        }
+
+        const pilaresLinhas = Object.values(grouped)
+          .sort((a, b) => a.codigo.localeCompare(b.codigo))
+          .map(p => {
+            const r = (resp || []).find(x => x.pilar?.codigo === p.codigo);
+            const respNome = r ? (r.instrutor?.full_name || 'mentor') : 'mentor';
+            return `${p.codigo.toUpperCase()} ${p.nome || p.codigo}: ${p.ancorados}/${p.total} (resp: ${respNome})`;
+          }).join(' | ');
+
+        const dias = e.ultima_atualizacao
+          ? Math.floor((Date.now() - new Date(e.ultima_atualizacao).getTime()) / 86400000)
+          : null;
+
+        blocoTexto =
+          `[LA_EDUCA_ESTAGIARIO]\n` +
+          `Nome: ${e.nome}\n` +
+          `Trilha: ${e.trilha_icone || ''} ${e.trilha_nome || '—'}\n` +
+          `Unidade: ${e.unidade || '—'}\n` +
+          `Mentor: ${e.mentor_nome || '—'}\n` +
+          `Progresso: ${e.checkpoints_ancorados}/${e.checkpoints_total} (${Math.round(e.percentual || 0)}%)\n` +
+          `Última atualização: ${dias !== null ? dias + 'd atrás' : 'nunca'}\n` +
+          `Pilares: ${pilaresLinhas || '(sem avaliações)'}` +
+          (e.certificado_emitido ? `\n🏆 Certificado Alfa emitido em ${(e.certificado_emitido_em || '').slice(0, 10)}` : '');
+
+      } else {
+        // ── Visão geral — sem cap de 3 (G10) ──
+        const porUnidade = lista.reduce((acc, e) => {
+          const u = e.unidade || '—';
+          acc[u] = acc[u] || { count: 0, somaPct: 0 };
+          acc[u].count += 1;
+          acc[u].somaPct += Number(e.percentual || 0);
+          return acc;
+        }, {});
+        const resumoUnidades = Object.entries(porUnidade)
+          .map(([u, v]) => `${u}: ${v.count} ativos, ${Math.round(v.somaPct / v.count)}% médio`)
+          .join(' | ');
+
+        // Atrasados — lista COMPLETA, sem .slice(0, 3)
+        const atrasados = lista
+          .filter(e => {
+            if (!e.ultima_atualizacao) return false;
+            const d = Math.floor((Date.now() - new Date(e.ultima_atualizacao).getTime()) / 86400000);
+            return d > 14 && Number(e.percentual) < 100;
+          })
+          .map(e => {
+            const d = Math.floor((Date.now() - new Date(e.ultima_atualizacao).getTime()) / 86400000);
+            return `${e.nome} (mentor: ${e.mentor_nome || '—'}, ${d}d)`;
+          });
+
+        const prontos = lista
+          .filter(e => Number(e.percentual) === 100 && !e.certificado_emitido)
+          .map(e => `${e.nome} (${e.unidade})`);
+
+        // Certificados emitidos últimos 30 dias
+        const limite30 = new Date(Date.now() - 30 * 86400 * 1000);
+        const certRecentes = lista
+          .filter(e => e.certificado_emitido && e.certificado_emitido_em && new Date(e.certificado_emitido_em) > limite30)
+          .map(e => `${e.nome} (${e.unidade}, ${(e.certificado_emitido_em || '').slice(0, 10)})`);
+
+        // Total de checkpoints personalizados (sem checkpoint_id vinculado)
+        const { count: customCount } = await supabaseClient
+          .from('la_educa_avaliacoes')
+          .select('id', { count: 'exact', head: true })
+          .is('checkpoint_id', null);
+
+        blocoTexto =
+          `[LA_EDUCA_RESUMO]\n` +
+          `Por unidade: ${resumoUnidades || '(sem estagiários)'}\n` +
+          `Atrasados (>14d): ${atrasados.length > 0 ? atrasados.join('; ') : 'nenhum'}\n` +
+          `Prontos pra Certificado Alfa: ${prontos.length > 0 ? prontos.join('; ') : 'nenhum'}\n` +
+          `Certificados emitidos (últimos 30d): ${certRecentes.length > 0 ? certRecentes.join('; ') : 'nenhum'}\n` +
+          `Checkpoints personalizados no total: ${customCount || 0}`;
+      }
+
+      systemPrompt += '\n\n---\n\n' + blocoTexto;
+
     } catch (err) {
       console.error('[system.js] LA_EDUCA_RESUMO erro:', err.message);
     }
