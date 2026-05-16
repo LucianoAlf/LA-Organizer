@@ -107,6 +107,8 @@ export async function cadastrarEstagiario(form: CadastroEstagiarioForm): Promise
       instrumento: form.instrumento || null,
       data_inicio: form.data_inicio,
       diagnostico_entrada: form.diagnostico_entrada || null,
+      phone: form.phone || null,
+      notificacoes_opt_in: form.notificacoes_opt_in ?? false,
     })
     .select('id')
     .single();

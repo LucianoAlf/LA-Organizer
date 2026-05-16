@@ -1082,6 +1082,55 @@ router.post('/internal/checklist-completed', requireInternalSecret, async (req, 
   }
 });
 
+// G8 — LA EDUCA: notify-event
+router.post('/internal/la-educa/notify-event', requireInternalSecret, async (req, res) => {
+  try {
+    const { tipo, estagiarioId, destinatarioId, payload } = req.body || {};
+    if (!tipo || !destinatarioId) return res.status(400).json({ error: 'tipo e destinatarioId obrigatórios' });
+    const tipoFinal = tipo.endsWith('_envio') ? tipo : (tipo + '_envio');
+    const { data, error } = await supabase.from('la_educa_lembretes_log').insert({
+      tipo: tipoFinal,
+      destinatario_id: destinatarioId,
+      estagiario_id: estagiarioId || null,
+      mensagem: null,
+      enviado_em: new Date().toISOString(),
+    }).select('id').single();
+    if (error) throw error;
+    res.json({ enqueued: true, id: data.id, tipo: tipoFinal });
+  } catch (err) {
+    console.error('[InternalAPI] la-educa/notify-event err:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// G8 — LA EDUCA: status snapshot
+router.get('/internal/la-educa/status', requireInternalSecret, async (_req, res) => {
+  try {
+    const { data: lista } = await supabase.from('la_educa_progresso').select('*');
+    const all = lista || [];
+    const ativos = all.filter(e => Number(e.percentual) < 100);
+    const atrasados = all.filter(e => {
+      if (!e.ultima_atualizacao) return false;
+      const dias = Math.floor((Date.now() - new Date(e.ultima_atualizacao).getTime()) / 86400000);
+      return dias > 14 && Number(e.percentual) < 100;
+    });
+    const limite30 = new Date(Date.now() - 30 * 86400 * 1000);
+    const certMes = all.filter(e => e.certificado_emitido && e.certificado_emitido_em && new Date(e.certificado_emitido_em) > limite30);
+    const { count: customCount } = await supabase
+      .from('la_educa_avaliacoes').select('id', { count: 'exact', head: true }).is('checkpoint_id', null);
+    res.json({
+      total_estagiarios: all.length,
+      ativos: ativos.length,
+      atrasados: atrasados.length,
+      certificados_30d: certMes.length,
+      checkpoints_custom_total: customCount || 0,
+    });
+  } catch (err) {
+    console.error('[InternalAPI] la-educa/status err:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
 module.exports.runChecklistCompletedFlow = runChecklistCompletedFlow;
 module.exports.findUnitManager = findUnitManager;

@@ -68,6 +68,8 @@ export interface Estagiario {
   certificado_emitido: boolean;
   certificado_emitido_em: string | null;
   certificado_emitido_por: string | null;
+  phone: string | null;
+  notificacoes_opt_in: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -138,6 +140,8 @@ export interface CadastroEstagiarioForm {
   instrumento?: string;       // opcional — texto livre (ex: "Bateria 5 peças")
   data_inicio: string;
   diagnostico_entrada?: string;
+  phone?: string;
+  notificacoes_opt_in?: boolean;
 }
 
 export interface AvaliacaoComCheckpoint extends Avaliacao {

@@ -26,6 +26,8 @@ export function LaEducaCadastroPage() {
     instrumento: '',
     data_inicio: new Date().toISOString().slice(0, 10),
     diagnostico_entrada: '',
+    phone: '',
+    notificacoes_opt_in: false,
   });
   const [saving, setSaving] = useState(false);
 
@@ -133,6 +135,30 @@ export function LaEducaCadastroPage() {
             className="w-full bg-bg-surface text-fg rounded p-sm border border-border focus-ring"
             rows={3}
           />
+        </Field>
+
+        <Field label="Telefone do estagiário (opcional)">
+          <input
+            type="tel"
+            value={form.phone ?? ''}
+            onChange={e => update('phone', e.target.value)}
+            placeholder="Ex: 5521999999999 (sem espaços, com DDI)"
+            className="w-full bg-bg-surface text-fg rounded p-sm border border-border focus-ring"
+          />
+        </Field>
+
+        <Field label="">
+          <label className="flex items-center gap-sm cursor-pointer">
+            <input
+              type="checkbox"
+              checked={form.notificacoes_opt_in ?? false}
+              onChange={e => update('notificacoes_opt_in', e.target.checked)}
+              className="w-4 h-4"
+            />
+            <span className="text-body-sm text-fg">
+              Estagiário consente em receber notificações pelo WhatsApp (marcos: cadastro, certificado, etc)
+            </span>
+          </label>
         </Field>
 
         <button

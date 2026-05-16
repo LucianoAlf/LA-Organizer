@@ -213,6 +213,23 @@ export function LaEducaEstagiarioDetalhePage() {
         })}
       </div>
 
+      {(role === 'coordinator' || role === 'director' || estagiario.mentor_id === collaborator?.id) && (
+        <div className="bg-bg-surface rounded-lg p-md border border-border space-y-sm">
+          <h3 className="text-body-sm font-semibold text-fg-muted">📱 Notificações do estagiário</h3>
+          <div className="text-body-sm text-fg">
+            Telefone: <strong>{estagiario.phone || '— não cadastrado'}</strong>
+          </div>
+          <div className="text-body-sm text-fg">
+            Opt-in: <strong>{estagiario.notificacoes_opt_in ? '✅ Sim' : '❌ Não'}</strong>
+          </div>
+          <p className="text-[11px] text-fg-muted">
+            {estagiario.notificacoes_opt_in && estagiario.phone
+              ? 'O estagiário recebe notificações em marcos importantes (cadastro, certificado Alfa).'
+              : 'Pra ativar, edite via tela admin ou peça pra coord cadastrar o telefone.'}
+          </p>
+        </div>
+      )}
+
       {podeCertificar && (
         <button
           onClick={() => {
