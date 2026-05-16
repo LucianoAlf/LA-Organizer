@@ -32,6 +32,10 @@ export default defineConfig({
         // chama updateServiceWorker(true) pra recarregar com bundle novo.
         // Sem isso, o user fica em bundle ANTIGO mesmo após `autoUpdate` instalar.
         skipWaiting: true,
+        // clientsClaim: força SW novo a assumir TODAS as abas abertas imediatamente
+        // após ativar — sem isso o browser continua servindo o bundle anterior
+        // mesmo com skipWaiting. Par obrigatório do skipWaiting.
+        clientsClaim: true,
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/fonts\.(?:googleapis|gstatic)\.com\/.*/i,
