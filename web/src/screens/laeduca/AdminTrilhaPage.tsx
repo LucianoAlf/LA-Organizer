@@ -1,7 +1,8 @@
-// Tela administrativa: CRUD de trilhas, pilares e checkpoints da trilha LA EDUCA
+// Tela administrativa — LA EDUCA — abordagem trilha-first (Sprint 22.27)
+// Layout: seletor de trilha no topo → pilares P1-P4 expandidos com checkpoints filtrados
 import { useState, useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight, Plus, Pencil, Trash2, Lock } from 'lucide-react';
+import { Plus, Pencil, Trash2 } from 'lucide-react';
 import { PageHeader } from '../../components/PageHeader';
 import { LoadingState } from '../../components/LoadingState';
 import { CustomSelect } from '../../components/CustomSelect';
@@ -9,9 +10,7 @@ import { showToast } from '../../components/Toast';
 import {
   fetchPilares,
   fetchCheckpoints,
-  criarPilar,
   atualizarPilar,
-  deletarPilar,
   criarCheckpoint,
   atualizarCheckpoint,
   deletarCheckpoint,
@@ -22,7 +21,7 @@ import {
 } from '../../lib/laeduca';
 import type { Pilar, Checkpoint, Trilha } from '../../lib/laeduca-types';
 
-// --- Ícones disponíveis ---
+// ─── Ícones disponíveis para pilares ─────────────────────────────────────────
 const ICONE_OPCOES = [
   { value: 'BookOpen', label: 'BookOpen' },
   { value: 'Music', label: 'Music' },
@@ -36,7 +35,32 @@ const ICONE_OPCOES = [
   { value: 'Briefcase', label: 'Briefcase' },
 ];
 
-// Form de Trilha
+// ─── Modal genérico ───────────────────────────────────────────────────────────
+function Modal({
+  title,
+  onClose,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-md overflow-y-auto">
+      <div className="bg-bg-surface rounded-lg border border-border w-full max-w-lg my-md">
+        <div className="flex items-center justify-between p-md border-b border-border">
+          <h2 className="font-semibold text-fg">{title}</h2>
+          <button onClick={onClose} className="text-fg-muted hover:text-fg focus-ring rounded px-1">
+            ✕
+          </button>
+        </div>
+        <div className="p-md">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Tipos de form ────────────────────────────────────────────────────────────
 interface TrilhaForm {
   id: string;
   nome: string;
@@ -44,15 +68,36 @@ interface TrilhaForm {
   descricao: string;
 }
 
-const TRILHA_FORM_VAZIO: TrilhaForm = { id: '', nome: '', icone: '', descricao: '' };
+interface PilarForm {
+  nome: string;
+  descricao_breve: string;
+  foco: string;
+  icone: string;
+}
 
-// Modal de Trilha
-function ModalTrilha({ trilha, onClose }: { trilha: Trilha | null; onClose: () => void }) {
+interface CheckpointForm {
+  id: string;
+  titulo: string;
+  descricao: string;
+  criterio: string;
+  sort_order: string;
+}
+
+// ─── Modal de Trilha ──────────────────────────────────────────────────────────
+function ModalTrilha({
+  trilha,
+  onClose,
+  onSaveSuccess,
+}: {
+  trilha: Trilha | null;
+  onClose: () => void;
+  onSaveSuccess?: (newId: string) => void;
+}) {
   const qc = useQueryClient();
   const [form, setForm] = useState<TrilhaForm>(
     trilha
       ? { id: trilha.id, nome: trilha.nome, icone: trilha.icone ?? '', descricao: trilha.descricao ?? '' }
-      : TRILHA_FORM_VAZIO,
+      : { id: '', nome: '', icone: '', descricao: '' },
   );
 
   const mut = useMutation({
@@ -74,6 +119,9 @@ function ModalTrilha({ trilha, onClose }: { trilha: Trilha | null; onClose: () =
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['laeduca-trilhas'] });
       showToast({ kind: 'success', title: trilha ? 'Trilha atualizada.' : 'Trilha criada.' });
+      if (!trilha && onSaveSuccess) {
+        onSaveSuccess(form.id.trim().toLowerCase().replace(/\s+/g, '-'));
+      }
       onClose();
     },
     onError: e => showToast({ kind: 'error', title: 'Erro', msg: (e as Error).message }),
@@ -88,7 +136,9 @@ function ModalTrilha({ trilha, onClose }: { trilha: Trilha | null; onClose: () =
       <div className="space-y-md">
         {!trilha && (
           <div>
-            <label className="text-body-sm font-semibold text-fg-muted mb-1 block">ID * (slug, ex: bateria-eletrica)</label>
+            <label className="text-body-sm font-semibold text-fg-muted mb-1 block">
+              ID * (slug, ex: bateria-eletrica)
+            </label>
             <input
               className="w-full border border-border rounded-lg px-sm py-sm text-fg bg-bg-app focus-ring"
               placeholder="bateria"
@@ -97,6 +147,7 @@ function ModalTrilha({ trilha, onClose }: { trilha: Trilha | null; onClose: () =
             />
           </div>
         )}
+
         <div className="grid grid-cols-2 gap-md">
           <div>
             <label className="text-body-sm font-semibold text-fg-muted mb-1 block">Nome *</label>
@@ -117,6 +168,7 @@ function ModalTrilha({ trilha, onClose }: { trilha: Trilha | null; onClose: () =
             />
           </div>
         </div>
+
         <div>
           <label className="text-body-sm font-semibold text-fg-muted mb-1 block">Descrição (opcional)</label>
           <textarea
@@ -126,8 +178,12 @@ function ModalTrilha({ trilha, onClose }: { trilha: Trilha | null; onClose: () =
             onChange={e => set('descricao', e.target.value)}
           />
         </div>
+
         <div className="flex justify-end gap-sm pt-sm">
-          <button onClick={onClose} className="px-md py-sm rounded-lg border border-border text-fg-muted hover:text-fg focus-ring">
+          <button
+            onClick={onClose}
+            className="px-md py-sm rounded-lg border border-border text-fg-muted hover:text-fg focus-ring"
+          >
             Cancelar
           </button>
           <button
@@ -143,175 +199,27 @@ function ModalTrilha({ trilha, onClose }: { trilha: Trilha | null; onClose: () =
   );
 }
 
-// Seção de listagem de trilhas
-function SecaoTrilhas({
-  trilhas,
-  onEdit,
-  onAdd,
-}: {
-  trilhas: Trilha[];
-  onEdit: (t: Trilha) => void;
-  onAdd: () => void;
-}) {
+// ─── Modal de Pilar ───────────────────────────────────────────────────────────
+function ModalPilar({ pilar, onClose }: { pilar: Pilar; onClose: () => void }) {
   const qc = useQueryClient();
-  const desativarMut = useMutation({
-    mutationFn: (id: string) => deletarTrilha(id),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['laeduca-trilhas'] });
-      showToast({ kind: 'success', title: 'Trilha desativada.' });
-    },
-    onError: e => showToast({ kind: 'error', title: 'Erro', msg: (e as Error).message }),
+  const [form, setForm] = useState<PilarForm>({
+    nome: pilar.nome,
+    descricao_breve: pilar.descricao_breve ?? '',
+    foco: pilar.foco ?? '',
+    icone: pilar.icone,
   });
 
-  return (
-    <div className="bg-bg-surface rounded-lg border border-border overflow-hidden">
-      <div className="flex items-center justify-between p-md border-b border-border">
-        <h2 className="font-semibold text-fg">Trilhas Pedagógicas</h2>
-        <button
-          onClick={onAdd}
-          className="inline-flex items-center gap-sm text-body-sm bg-tom text-white px-sm py-1.5 rounded-lg font-semibold focus-ring"
-        >
-          <Plus size={14} /> Adicionar
-        </button>
-      </div>
-      {trilhas.length === 0 ? (
-        <p className="px-md py-sm text-body-sm text-fg-muted italic">Nenhuma trilha ativa.</p>
-      ) : (
-        <ul className="divide-y divide-border">
-          {trilhas.map(t => (
-            <li key={t.id} className="flex items-center gap-sm px-md py-sm">
-              <span className="text-xl shrink-0">{t.icone ?? '🎵'}</span>
-              <div className="flex-1 min-w-0">
-                <span className="font-semibold text-fg">{t.nome}</span>
-                <span className="text-[11px] text-fg-muted ml-2">({t.id})</span>
-                {t.descricao && (
-                  <p className="text-body-sm text-fg-muted truncate">{t.descricao}</p>
-                )}
-              </div>
-              <div className="flex items-center gap-sm shrink-0">
-                <button
-                  onClick={() => onEdit(t)}
-                  className="p-1 text-fg-muted hover:text-tom focus-ring rounded"
-                  title="Editar trilha"
-                >
-                  <Pencil size={15} />
-                </button>
-                <button
-                  onClick={() => {
-                    if (confirm(`Desativar trilha "${t.nome}"? Os estagiários existentes não são afetados.`)) {
-                      desativarMut.mutate(t.id);
-                    }
-                  }}
-                  disabled={desativarMut.isPending}
-                  className="p-1 text-fg-muted hover:text-danger focus-ring rounded"
-                  title="Desativar trilha"
-                >
-                  <Trash2 size={15} />
-                </button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-// --- Form de Pilar ---
-interface PilarForm {
-  codigo: string;
-  nome: string;
-  descricao_breve: string;
-  foco: string;
-  icone: string;
-  sort_order: string;
-}
-
-const PILAR_FORM_VAZIO: PilarForm = {
-  codigo: '',
-  nome: '',
-  descricao_breve: '',
-  foco: '',
-  icone: 'BookOpen',
-  sort_order: '',
-};
-
-// --- Form de Checkpoint ---
-interface CheckpointForm {
-  id: string;
-  titulo: string;
-  descricao: string;
-  criterio: string;
-  trilha_id: string;  // '' = universal (NULL no banco)
-  sort_order: string;
-}
-
-const CP_FORM_VAZIO: CheckpointForm = {
-  id: '',
-  titulo: '',
-  descricao: '',
-  criterio: '',
-  trilha_id: '',
-  sort_order: '',
-};
-
-// --- Modal genérico ---
-function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-md overflow-y-auto">
-      <div className="bg-bg-surface rounded-lg border border-border w-full max-w-lg my-md">
-        <div className="flex items-center justify-between p-md border-b border-border">
-          <h2 className="font-semibold text-fg">{title}</h2>
-          <button onClick={onClose} className="text-fg-muted hover:text-fg focus-ring rounded">✕</button>
-        </div>
-        <div className="p-md">{children}</div>
-      </div>
-    </div>
-  );
-}
-
-// --- Modal de Pilar ---
-function ModalPilar({
-  pilar,
-  onClose,
-  maxSortOrder,
-}: {
-  pilar: Pilar | null;
-  onClose: () => void;
-  maxSortOrder: number;
-}) {
-  const qc = useQueryClient();
-  const [form, setForm] = useState<PilarForm>(
-    pilar
-      ? {
-          codigo: pilar.codigo,
-          nome: pilar.nome,
-          descricao_breve: pilar.descricao_breve ?? '',
-          foco: pilar.foco ?? '',
-          icone: pilar.icone,
-          sort_order: String(pilar.sort_order),
-        }
-      : { ...PILAR_FORM_VAZIO, sort_order: String(maxSortOrder + 1) },
-  );
-
   const mut = useMutation({
-    mutationFn: async () => {
-      const payload = {
-        codigo: form.codigo.trim(),
+    mutationFn: () =>
+      atualizarPilar(pilar.id, {
         nome: form.nome.trim(),
-        descricao_breve: form.descricao_breve.trim() || undefined,
-        foco: form.foco.trim() || undefined,
+        descricao_breve: form.descricao_breve.trim() || null,
+        foco: form.foco.trim() || null,
         icone: form.icone || 'BookOpen',
-        sort_order: form.sort_order ? parseInt(form.sort_order) : maxSortOrder + 1,
-      };
-      if (pilar) {
-        return atualizarPilar(pilar.id, payload);
-      }
-      return criarPilar(payload);
-    },
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['laeduca-pilares'] });
-      showToast({ kind: 'success', title: pilar ? 'Pilar atualizado.' : 'Pilar criado.' });
+      showToast({ kind: 'success', title: 'Pilar atualizado.' });
       onClose();
     },
     onError: e => showToast({ kind: 'error', title: 'Erro', msg: (e as Error).message }),
@@ -322,28 +230,15 @@ function ModalPilar({
   }
 
   return (
-    <Modal title={pilar ? 'Editar pilar' : 'Adicionar pilar'} onClose={onClose}>
+    <Modal title={`Editar pilar — ${pilar.codigo.toUpperCase()}`} onClose={onClose}>
       <div className="space-y-md">
-        <div className="grid grid-cols-2 gap-md">
-          <div>
-            <label className="text-body-sm font-semibold text-fg-muted mb-1 block">Código *</label>
-            <input
-              className="w-full border border-border rounded-lg px-sm py-sm text-fg bg-bg-app focus-ring"
-              placeholder="p5"
-              value={form.codigo}
-              disabled={!!pilar}
-              onChange={e => set('codigo', e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="text-body-sm font-semibold text-fg-muted mb-1 block">Sort order</label>
-            <input
-              type="number"
-              className="w-full border border-border rounded-lg px-sm py-sm text-fg bg-bg-app focus-ring"
-              value={form.sort_order}
-              onChange={e => set('sort_order', e.target.value)}
-            />
-          </div>
+        <div>
+          <label className="text-body-sm font-semibold text-fg-muted mb-1 block">Código</label>
+          <input
+            className="w-full border border-border rounded-lg px-sm py-sm text-fg bg-bg-app focus-ring opacity-60"
+            value={pilar.codigo}
+            disabled
+          />
         </div>
 
         <div>
@@ -371,7 +266,7 @@ function ModalPilar({
           <textarea
             rows={2}
             className="w-full border border-border rounded-lg px-sm py-sm text-fg bg-bg-app focus-ring resize-none"
-            placeholder="Texto exibido em banner amarelo na tela de avaliação"
+            placeholder="Texto exibido em banner na tela de avaliação"
             value={form.foco}
             onChange={e => set('foco', e.target.value)}
           />
@@ -379,20 +274,19 @@ function ModalPilar({
 
         <div>
           <label className="text-body-sm font-semibold text-fg-muted mb-1 block">Ícone</label>
-          <CustomSelect
-            value={form.icone}
-            onChange={v => set('icone', v)}
-            options={ICONE_OPCOES}
-          />
+          <CustomSelect value={form.icone} onChange={v => set('icone', v)} options={ICONE_OPCOES} />
         </div>
 
         <div className="flex justify-end gap-sm pt-sm">
-          <button onClick={onClose} className="px-md py-sm rounded-lg border border-border text-fg-muted hover:text-fg focus-ring">
+          <button
+            onClick={onClose}
+            className="px-md py-sm rounded-lg border border-border text-fg-muted hover:text-fg focus-ring"
+          >
             Cancelar
           </button>
           <button
             onClick={() => mut.mutate()}
-            disabled={mut.isPending || !form.codigo.trim() || !form.nome.trim()}
+            disabled={mut.isPending || !form.nome.trim()}
             className="px-md py-sm rounded-lg bg-tom text-white font-semibold focus-ring disabled:opacity-50"
           >
             {mut.isPending ? 'Salvando…' : 'Salvar'}
@@ -403,23 +297,29 @@ function ModalPilar({
   );
 }
 
-// --- Modal de Checkpoint ---
+// ─── Modal de Checkpoint ──────────────────────────────────────────────────────
 function ModalCheckpoint({
   checkpoint,
   pilar,
+  trilhaSelecionada,
+  isUniversal,
   checkpointsDoPilar,
-  trilhas,
   onClose,
 }: {
   checkpoint: Checkpoint | null;
   pilar: Pilar;
+  trilhaSelecionada: Trilha;
+  isUniversal: boolean; // true para P1/P3/P4
   checkpointsDoPilar: Checkpoint[];
-  trilhas: Trilha[];
   onClose: () => void;
 }) {
   const qc = useQueryClient();
-  const nextSortOrder = checkpointsDoPilar.length + 1;
-  const suggestedId = `${pilar.codigo}.${nextSortOrder}`;
+  const nextNum = checkpointsDoPilar.length + 1;
+
+  // Sugestão de ID: universal usa `p1.7`, específico usa `p2-bateria.6`
+  const suggestedId = isUniversal
+    ? `${pilar.codigo}.${nextNum}`
+    : `${pilar.codigo}-${trilhaSelecionada.id}.${nextNum}`;
 
   const [form, setForm] = useState<CheckpointForm>(
     checkpoint
@@ -428,27 +328,20 @@ function ModalCheckpoint({
           titulo: checkpoint.titulo,
           descricao: checkpoint.descricao,
           criterio: checkpoint.criterio,
-          trilha_id: checkpoint.trilha_id ?? '',
           sort_order: String(checkpoint.sort_order),
         }
-      : { ...CP_FORM_VAZIO, id: suggestedId, sort_order: String(nextSortOrder) },
+      : { id: suggestedId, titulo: '', descricao: '', criterio: '', sort_order: String(nextNum) },
   );
-
-  const trilhaOpcoes = [
-    { value: '', label: 'Universal (todas as trilhas)' },
-    ...trilhas.map(t => ({ value: t.id, label: `${t.icone ?? ''} ${t.nome}`.trim() })),
-  ];
 
   const mut = useMutation({
     mutationFn: async () => {
-      const sortOrder = form.sort_order ? parseInt(form.sort_order) : nextSortOrder;
-      const trilhaId = form.trilha_id.trim() || null;
+      const sortOrder = form.sort_order ? parseInt(form.sort_order) : nextNum;
+      const trilhaId = isUniversal ? null : trilhaSelecionada.id;
       if (checkpoint) {
         return atualizarCheckpoint(checkpoint.id, {
           titulo: form.titulo.trim(),
           descricao: form.descricao.trim(),
           criterio: form.criterio.trim(),
-          trilha_id: trilhaId,
           sort_order: sortOrder,
         });
       }
@@ -476,17 +369,30 @@ function ModalCheckpoint({
     setForm(f => ({ ...f, [k]: v }));
   }
 
+  const isEditing = !!checkpoint;
+  const titleModal = isEditing ? 'Editar checkpoint' : `Adicionar checkpoint${isUniversal ? ' universal' : ` de ${trilhaSelecionada.nome}`}`;
+
   return (
-    <Modal title={checkpoint ? 'Editar checkpoint' : 'Adicionar checkpoint'} onClose={onClose}>
+    <Modal title={titleModal} onClose={onClose}>
       <div className="space-y-md">
+        {/* Banner de aviso universal */}
+        {isUniversal && (
+          <div className="flex gap-sm items-start bg-yellow-50 border border-yellow-300 rounded-lg px-sm py-sm text-yellow-800 text-body-sm">
+            <span className="shrink-0 mt-0.5">⚠️</span>
+            <span>
+              <strong>Checkpoint universal</strong> — afeta TODOS os estagiários de TODAS as trilhas.
+            </span>
+          </div>
+        )}
+
         <div className="grid grid-cols-2 gap-md">
           <div>
             <label className="text-body-sm font-semibold text-fg-muted mb-1 block">ID *</label>
             <input
-              className="w-full border border-border rounded-lg px-sm py-sm text-fg bg-bg-app focus-ring"
+              className="w-full border border-border rounded-lg px-sm py-sm text-fg bg-bg-app focus-ring disabled:opacity-60"
               placeholder={suggestedId}
               value={form.id}
-              disabled={!!checkpoint}
+              disabled={isEditing}
               onChange={e => set('id', e.target.value)}
             />
           </div>
@@ -530,22 +436,22 @@ function ModalCheckpoint({
           />
         </div>
 
-        <div>
-          <label className="text-body-sm font-semibold text-fg-muted mb-1 block">Trilha</label>
-          <CustomSelect
-            value={form.trilha_id}
-            onChange={v => set('trilha_id', v)}
-            options={trilhaOpcoes}
-          />
-        </div>
-
         <div className="flex justify-end gap-sm pt-sm">
-          <button onClick={onClose} className="px-md py-sm rounded-lg border border-border text-fg-muted hover:text-fg focus-ring">
+          <button
+            onClick={onClose}
+            className="px-md py-sm rounded-lg border border-border text-fg-muted hover:text-fg focus-ring"
+          >
             Cancelar
           </button>
           <button
             onClick={() => mut.mutate()}
-            disabled={mut.isPending || !form.id.trim() || !form.titulo.trim() || !form.descricao.trim() || !form.criterio.trim()}
+            disabled={
+              mut.isPending ||
+              (!isEditing && !form.id.trim()) ||
+              !form.titulo.trim() ||
+              !form.descricao.trim() ||
+              !form.criterio.trim()
+            }
             className="px-md py-sm rounded-lg bg-tom text-white font-semibold focus-ring disabled:opacity-50"
           >
             {mut.isPending ? 'Salvando…' : 'Salvar'}
@@ -556,33 +462,25 @@ function ModalCheckpoint({
   );
 }
 
-// --- Card de Pilar com checkpoints ---
-function PilarAdminCard({
+// ─── Card de Pilar ────────────────────────────────────────────────────────────
+function PilarCard({
   pilar,
   checkpoints,
-  trilhas,
+  trilhaSelecionada,
+  isUniversal,
   onEditPilar,
   onAddCheckpoint,
   onEditCheckpoint,
 }: {
   pilar: Pilar;
   checkpoints: Checkpoint[];
-  trilhas: Trilha[];
+  trilhaSelecionada: Trilha;
+  isUniversal: boolean;
   onEditPilar: (p: Pilar) => void;
   onAddCheckpoint: (p: Pilar) => void;
   onEditCheckpoint: (cp: Checkpoint, p: Pilar) => void;
 }) {
-  const [expanded, setExpanded] = useState(true);
   const qc = useQueryClient();
-
-  const deletePilarMut = useMutation({
-    mutationFn: () => deletarPilar(pilar.id),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['laeduca-pilares'] });
-      showToast({ kind: 'success', title: 'Pilar removido.' });
-    },
-    onError: e => showToast({ kind: 'error', title: 'Erro ao remover pilar', msg: (e as Error).message }),
-  });
 
   const deleteCpMut = useMutation({
     mutationFn: (cpId: string) => deletarCheckpoint(cpId),
@@ -590,121 +488,95 @@ function PilarAdminCard({
       qc.invalidateQueries({ queryKey: ['laeduca-checkpoints'] });
       showToast({ kind: 'success', title: 'Checkpoint removido.' });
     },
-    onError: e => showToast({ kind: 'error', title: 'Erro ao remover checkpoint', msg: (e as Error).message }),
+    onError: e => showToast({ kind: 'error', title: 'Erro', msg: (e as Error).message }),
   });
 
-  function handleDeletePilar() {
-    if (!pilar.editavel) return;
-    if (confirm(`Remover pilar "${pilar.nome}"? Os checkpoints vinculados também serão removidos.`)) {
-      deletePilarMut.mutate();
-    }
-  }
-
   function handleDeleteCp(cp: Checkpoint) {
-    if (confirm(`Remover checkpoint "${cp.titulo}"?`)) {
+    const msg = isUniversal
+      ? `Você tem certeza? Isto removerá o checkpoint "${cp.titulo}" de TODAS as trilhas e remove avaliações pendentes dele em TODOS os estagiários.`
+      : `Remover checkpoint "${cp.titulo}"?`;
+    if (confirm(msg)) {
       deleteCpMut.mutate(cp.id);
     }
   }
 
+  const checkpointIcon = isUniversal ? '🌐' : (trilhaSelecionada.icone ?? '🎵');
+  const addLabel = isUniversal
+    ? '+ Adicionar checkpoint universal'
+    : `+ Adicionar checkpoint de ${trilhaSelecionada.nome}`;
+
   return (
     <div className="bg-bg-surface rounded-lg border border-border overflow-hidden">
       {/* Header do pilar */}
-      <div className="flex items-center gap-sm p-md">
-        <button
-          onClick={() => setExpanded(e => !e)}
-          className="text-fg-muted hover:text-fg focus-ring rounded"
-        >
-          {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-        </button>
-
+      <div className="flex items-start justify-between gap-sm p-md border-b border-border">
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-sm">
-            <span className="font-semibold text-fg">{pilar.nome}</span>
-            <span className="text-[11px] text-fg-muted">({pilar.codigo})</span>
-            {!pilar.editavel && (
-              <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-bg-app text-fg-muted font-semibold">
-                <Lock size={10} /> Bloqueado
-              </span>
-            )}
+          <div className="flex items-center gap-sm flex-wrap">
+            <span className="font-semibold text-fg">
+              {pilar.codigo.toUpperCase()} · {pilar.nome}
+            </span>
+            <span className="ml-auto text-[12px] font-mono text-fg-muted shrink-0">
+              {checkpoints.length}
+            </span>
           </div>
           {pilar.descricao_breve && (
             <p className="text-body-sm text-fg-muted mt-0.5">{pilar.descricao_breve}</p>
           )}
         </div>
-
-        {pilar.editavel && (
-          <div className="flex items-center gap-sm shrink-0">
-            <button
-              onClick={() => onEditPilar(pilar)}
-              className="p-1 text-fg-muted hover:text-tom focus-ring rounded"
-              title="Editar pilar"
-            >
-              <Pencil size={15} />
-            </button>
-            <button
-              onClick={handleDeletePilar}
-              disabled={deletePilarMut.isPending}
-              className="p-1 text-fg-muted hover:text-danger focus-ring rounded"
-              title="Remover pilar"
-            >
-              <Trash2 size={15} />
-            </button>
-          </div>
-        )}
+        <button
+          onClick={() => onEditPilar(pilar)}
+          className="shrink-0 inline-flex items-center gap-1 text-body-sm text-fg-muted hover:text-tom border border-border rounded px-sm py-1 focus-ring"
+          title="Editar pilar"
+        >
+          <Pencil size={13} /> Editar pilar
+        </button>
       </div>
 
-      {/* Checkpoints */}
-      {expanded && (
-        <div className="border-t border-border">
-          {checkpoints.length === 0 ? (
-            <p className="px-md py-sm text-body-sm text-fg-muted italic">Nenhum checkpoint ainda.</p>
-          ) : (
-            <ul className="divide-y divide-border">
-              {checkpoints.map(cp => (
-                <li key={cp.id} className="flex items-start gap-sm px-md py-sm">
-                  <span className="text-[11px] text-fg-muted font-mono shrink-0 mt-0.5">[{cp.id}]</span>
-                  <span className="text-body-sm text-fg flex-1">{cp.titulo}</span>
-                  {cp.trilha_id && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-app text-fg-muted shrink-0">
-                      {trilhas.find(t => t.id === cp.trilha_id)?.icone ?? ''} {cp.trilha_id}
-                    </span>
-                  )}
-                  <div className="flex items-center gap-sm shrink-0">
-                    <button
-                      onClick={() => onEditCheckpoint(cp, pilar)}
-                      className="p-1 text-fg-muted hover:text-tom focus-ring rounded"
-                      title="Editar checkpoint"
-                    >
-                      <Pencil size={13} />
-                    </button>
-                    <button
-                      onClick={() => handleDeleteCp(cp)}
-                      disabled={deleteCpMut.isPending}
-                      className="p-1 text-fg-muted hover:text-danger focus-ring rounded"
-                      title="Remover checkpoint"
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-          <div className="px-md py-sm border-t border-border">
-            <button
-              onClick={() => onAddCheckpoint(pilar)}
-              className="inline-flex items-center gap-sm text-body-sm text-tom hover:underline focus-ring"
-            >
-              <Plus size={14} /> Adicionar checkpoint
-            </button>
-          </div>
+      {/* Lista de checkpoints */}
+      <div>
+        {checkpoints.length === 0 ? (
+          <p className="px-md py-sm text-body-sm text-fg-muted italic">Nenhum checkpoint ainda.</p>
+        ) : (
+          <ul className="divide-y divide-border">
+            {checkpoints.map(cp => (
+              <li key={cp.id} className="flex items-center gap-sm px-md py-sm">
+                <span className="text-[11px] text-fg-muted font-mono shrink-0">[{cp.id}]</span>
+                <span className="text-sm shrink-0">{checkpointIcon}</span>
+                <span className="text-body-sm text-fg flex-1 min-w-0">{cp.titulo}</span>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    onClick={() => onEditCheckpoint(cp, pilar)}
+                    className="p-1 text-fg-muted hover:text-tom focus-ring rounded"
+                    title="Editar checkpoint"
+                  >
+                    <Pencil size={13} />
+                  </button>
+                  <button
+                    onClick={() => handleDeleteCp(cp)}
+                    disabled={deleteCpMut.isPending}
+                    className="p-1 text-fg-muted hover:text-danger focus-ring rounded"
+                    title="Remover checkpoint"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="px-md py-sm border-t border-border">
+          <button
+            onClick={() => onAddCheckpoint(pilar)}
+            className="inline-flex items-center gap-1 text-body-sm text-tom hover:underline focus-ring"
+          >
+            <Plus size={14} /> {addLabel}
+          </button>
         </div>
-      )}
+      </div>
     </div>
   );
 }
 
-// --- Tela principal ---
+// ─── Tela principal ───────────────────────────────────────────────────────────
 export function LaEducaAdminTrilhaPage() {
   const { data: pilares, isLoading: pilaresLoading } = useQuery({
     queryKey: ['laeduca-pilares'],
@@ -716,94 +588,199 @@ export function LaEducaAdminTrilhaPage() {
     queryFn: fetchCheckpoints,
     staleTime: 30_000,
   });
-  const { data: trilhas = [], isLoading: trilhasLoading } = useQuery({
+  const { data: trilhasRaw = [], isLoading: trilhasLoading } = useQuery({
     queryKey: ['laeduca-trilhas'],
     queryFn: fetchTrilhas,
     staleTime: 60_000,
   });
 
-  const [modalPilar, setModalPilar] = useState<{ open: boolean; pilar: Pilar | null }>({ open: false, pilar: null });
-  const [modalCp, setModalCp] = useState<{ open: boolean; checkpoint: Checkpoint | null; pilar: Pilar | null }>({
-    open: false, checkpoint: null, pilar: null,
-  });
-  const [modalTrilha, setModalTrilha] = useState<{ open: boolean; trilha: Trilha | null }>({ open: false, trilha: null });
+  // Apenas trilhas ativas
+  const trilhas = useMemo(() => trilhasRaw.filter(t => t.is_active), [trilhasRaw]);
 
+  // Trilha selecionada — default 'padrao' ou primeira disponível
+  const [trilhaId, setTrilhaId] = useState<string>('padrao');
+  const trilhaSelecionada: Trilha | undefined = useMemo(
+    () => trilhas.find(t => t.id === trilhaId) ?? trilhas[0],
+    [trilhas, trilhaId],
+  );
+
+  // Modais
+  const [modalTrilha, setModalTrilha] = useState<{ open: boolean; trilha: Trilha | null }>({
+    open: false,
+    trilha: null,
+  });
+  const [modalPilar, setModalPilar] = useState<{ open: boolean; pilar: Pilar | null }>({
+    open: false,
+    pilar: null,
+  });
+  const [modalCp, setModalCp] = useState<{
+    open: boolean;
+    checkpoint: Checkpoint | null;
+    pilar: Pilar | null;
+  }>({ open: false, checkpoint: null, pilar: null });
+
+  // Fecha modais ao trocar trilha
+  function handleTrilhaChange(id: string) {
+    setTrilhaId(id);
+    setModalCp({ open: false, checkpoint: null, pilar: null });
+    setModalPilar({ open: false, pilar: null });
+  }
+
+  // Delete trilha
+  const qc = useQueryClient();
+  const deleteTrilhaMut = useMutation({
+    mutationFn: (id: string) => deletarTrilha(id),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ['laeduca-trilhas'] });
+      showToast({ kind: 'success', title: 'Trilha desativada.' });
+      // Se era a trilha selecionada, voltar pra padrao
+      if (id === trilhaId) setTrilhaId('padrao');
+    },
+    onError: e => showToast({ kind: 'error', title: 'Erro', msg: (e as Error).message }),
+  });
+
+  // Checkpoints por pilar (codigo) filtrados conforme contexto
   const checkpointsByPilar = useMemo(() => {
+    const all = checkpoints ?? [];
     const map: Record<string, Checkpoint[]> = {};
-    for (const cp of checkpoints ?? []) {
-      if (!map[cp.pilar]) map[cp.pilar] = [];
-      map[cp.pilar].push(cp);
+    if (!trilhaSelecionada) return map;
+    for (const pilar of pilares ?? []) {
+      const isP2 = pilar.codigo === 'p2';
+      map[pilar.codigo] = all.filter(cp => {
+        if (isP2) {
+          // P2: checkpoints específicos da trilha selecionada
+          return cp.pilar === pilar.codigo && cp.trilha_id === trilhaSelecionada.id;
+        }
+        // P1/P3/P4: checkpoints universais
+        return cp.pilar === pilar.codigo && cp.trilha_id === null;
+      });
     }
     return map;
-  }, [checkpoints]);
-
-  const maxSortOrder = useMemo(
-    () => Math.max(0, ...(pilares ?? []).map(p => p.sort_order)),
-    [pilares],
-  );
+  }, [checkpoints, pilares, trilhaSelecionada]);
 
   if (pilaresLoading || cpsLoading || trilhasLoading) return <LoadingState />;
 
+  const trilhaOpcoes = trilhas.map(t => ({
+    value: t.id,
+    label: `${t.icone ?? '🎵'} ${t.nome}`,
+  }));
+
+  const currentTrilhaId = trilhaSelecionada?.id ?? trilhaId;
+  const isPadrao = currentTrilhaId === 'padrao';
+
   return (
     <div className="space-y-lg pb-xl">
-      <PageHeader
-        title="Administração — LA EDUCA"
-        backTo="/la-educa"
-      />
+      <PageHeader title="Administração — LA EDUCA" backTo="/la-educa" />
 
-      {/* Seção Trilhas */}
-      <SecaoTrilhas
-        trilhas={trilhas}
-        onEdit={t => setModalTrilha({ open: true, trilha: t })}
-        onAdd={() => setModalTrilha({ open: true, trilha: null })}
-      />
+      {/* ── Seletor de trilha ── */}
+      <div className="bg-bg-surface rounded-lg border border-border p-md space-y-sm">
+        <p className="text-body-sm font-semibold text-fg-muted uppercase tracking-wide">
+          Trilha selecionada
+        </p>
 
-      {/* Seção Pilares */}
-      <div className="flex items-center justify-between">
-        <h2 className="font-semibold text-fg">Pilares e Checkpoints</h2>
-        <button
-          onClick={() => setModalPilar({ open: true, pilar: null })}
-          className="inline-flex items-center gap-sm bg-tom text-white px-md py-sm rounded-lg font-semibold focus-ring"
-        >
-          <Plus size={16} /> Adicionar pilar
-        </button>
+        <div className="flex flex-wrap items-center gap-sm">
+          <div className="w-56">
+            <CustomSelect
+              value={currentTrilhaId}
+              onChange={handleTrilhaChange}
+              options={trilhaOpcoes}
+              placeholder="Selecionar trilha…"
+            />
+          </div>
+
+          {/* Editar / Deletar trilha atual */}
+          {trilhaSelecionada && (
+            <>
+              <button
+                onClick={() => setModalTrilha({ open: true, trilha: trilhaSelecionada })}
+                className="inline-flex items-center gap-1 text-body-sm border border-border bg-bg-surface hover:border-tom text-fg px-sm py-1.5 rounded focus-ring"
+              >
+                <Pencil size={13} /> Editar
+              </button>
+              {!isPadrao && (
+                <button
+                  onClick={() => {
+                    if (
+                      confirm(
+                        `Desativar trilha "${trilhaSelecionada.nome}"? Os estagiários existentes não são afetados.`,
+                      )
+                    ) {
+                      deleteTrilhaMut.mutate(trilhaSelecionada.id);
+                    }
+                  }}
+                  disabled={deleteTrilhaMut.isPending}
+                  className="inline-flex items-center gap-1 text-body-sm border border-border bg-bg-surface hover:border-danger text-fg-muted hover:text-danger px-sm py-1.5 rounded focus-ring"
+                >
+                  <Trash2 size={13} /> Desativar
+                </button>
+              )}
+            </>
+          )}
+
+          <button
+            onClick={() => setModalTrilha({ open: true, trilha: null })}
+            className="inline-flex items-center gap-1 text-body-sm bg-tom text-white px-sm py-1.5 rounded font-semibold focus-ring ml-auto"
+          >
+            <Plus size={14} /> Nova trilha
+          </button>
+        </div>
+
+        {trilhaSelecionada?.descricao && (
+          <p className="text-body-sm text-fg-muted">{trilhaSelecionada.descricao}</p>
+        )}
       </div>
 
-      <div className="space-y-md">
-        {(pilares ?? []).map(pilar => (
-          <PilarAdminCard
-            key={pilar.id}
-            pilar={pilar}
-            checkpoints={checkpointsByPilar[pilar.codigo] ?? []}
-            trilhas={trilhas}
-            onEditPilar={p => setModalPilar({ open: true, pilar: p })}
-            onAddCheckpoint={p => setModalCp({ open: true, checkpoint: null, pilar: p })}
-            onEditCheckpoint={(cp, p) => setModalCp({ open: true, checkpoint: cp, pilar: p })}
-          />
-        ))}
-      </div>
+      {/* ── Pilares da trilha ── */}
+      {trilhaSelecionada && (
+        <>
+          <h2 className="font-semibold text-fg">
+            PILARES DA TRILHA — {trilhaSelecionada.nome.toUpperCase()}
+          </h2>
 
+          <div className="space-y-md">
+            {(pilares ?? []).map(pilar => {
+              const isUniversal = pilar.codigo !== 'p2';
+              const cps = checkpointsByPilar[pilar.codigo] ?? [];
+              return (
+                <PilarCard
+                  key={pilar.id}
+                  pilar={pilar}
+                  checkpoints={cps}
+                  trilhaSelecionada={trilhaSelecionada}
+                  isUniversal={isUniversal}
+                  onEditPilar={p => setModalPilar({ open: true, pilar: p })}
+                  onAddCheckpoint={p => setModalCp({ open: true, checkpoint: null, pilar: p })}
+                  onEditCheckpoint={(cp, p) => setModalCp({ open: true, checkpoint: cp, pilar: p })}
+                />
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {/* ── Modais ── */}
       {modalTrilha.open && (
         <ModalTrilha
           trilha={modalTrilha.trilha}
           onClose={() => setModalTrilha({ open: false, trilha: null })}
+          onSaveSuccess={newId => setTrilhaId(newId)}
         />
       )}
 
-      {modalPilar.open && (
+      {modalPilar.open && modalPilar.pilar && (
         <ModalPilar
           pilar={modalPilar.pilar}
-          maxSortOrder={maxSortOrder}
           onClose={() => setModalPilar({ open: false, pilar: null })}
         />
       )}
 
-      {modalCp.open && modalCp.pilar && (
+      {modalCp.open && modalCp.pilar && trilhaSelecionada && (
         <ModalCheckpoint
           checkpoint={modalCp.checkpoint}
           pilar={modalCp.pilar}
+          trilhaSelecionada={trilhaSelecionada}
+          isUniversal={modalCp.pilar.codigo !== 'p2'}
           checkpointsDoPilar={checkpointsByPilar[modalCp.pilar.codigo] ?? []}
-          trilhas={trilhas}
           onClose={() => setModalCp({ open: false, checkpoint: null, pilar: null })}
         />
       )}
