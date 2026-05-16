@@ -1,4 +1,4 @@
-import { useState } from 'react';
+﻿import { useState } from 'react';
 import { Anchor, Check } from 'lucide-react';
 import type { AvaliacaoComCheckpoint } from '../../../lib/laeduca-types';
 import { JustificativaModal } from './JustificativaModal';
@@ -82,7 +82,7 @@ export function CheckpointRow({ item, onAncorar }: Props) {
       <button
         onClick={tryAncorar}
         disabled={saving}
-        className="w-full flex items-center justify-center gap-sm px-md py-sm rounded bg-tom text-white font-semibold disabled:opacity-50 focus-ring"
+        className="w-full flex items-center justify-center gap-sm px-md py-sm rounded bg-tom text-black font-semibold disabled:opacity-50 focus-ring"
       >
         <Anchor size={16} />
         {ancorado ? 'Atualizar âncora' : 'Ancorar checkpoint'}

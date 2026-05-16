@@ -1,4 +1,4 @@
-// Visão coord/director: tabela completa + alertas (atrasados, prontos pra cert)
+﻿// Visão coord/director: tabela completa + alertas (atrasados, prontos pra cert)
 // Visão mentor (collaborator com estagiários): só lista filtrada pelo banco via RLS
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -125,7 +125,10 @@ export function LaEducaListaPage() {
           </Link>
           <Link
             to="/la-educa/novo"
-            className="fixed bottom-20 right-md md:static md:inline-flex inline-flex items-center gap-sm bg-tom text-white px-md py-sm rounded-full shadow-lg focus-ring"
+            // bottom respeita safe-area-inset-bottom do iPhone (notch/home-indicator)
+            // Sem isso o FAB fica encoberto pelo BottomNav no iOS.
+            className="fixed right-md md:static md:inline-flex inline-flex items-center gap-sm bg-tom text-black px-md py-sm rounded-full shadow-lg focus-ring"
+            style={{ bottom: 'calc(5rem + env(safe-area-inset-bottom))' }}
           >
             <Plus size={18} /> Novo estagiário
           </Link>

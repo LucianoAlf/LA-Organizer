@@ -1,4 +1,4 @@
-// Tela administrativa — LA EDUCA — abordagem trilha-first (Sprint 22.27)
+﻿// Tela administrativa — LA EDUCA — abordagem trilha-first (Sprint 22.27)
 // Layout: seletor de trilha no topo → pilares P1-P4 expandidos com checkpoints filtrados
 import { useState, useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -190,7 +190,7 @@ function ModalTrilha({
           <button
             onClick={() => mut.mutate()}
             disabled={mut.isPending || !form.nome.trim() || (!trilha && !form.id.trim())}
-            className="px-md py-sm rounded-lg bg-tom text-white font-semibold focus-ring disabled:opacity-50"
+            className="px-md py-sm rounded-lg bg-tom text-black font-semibold focus-ring disabled:opacity-50"
           >
             {mut.isPending ? 'Salvando…' : 'Salvar'}
           </button>
@@ -288,7 +288,7 @@ function ModalPilar({ pilar, onClose }: { pilar: Pilar; onClose: () => void }) {
           <button
             onClick={() => mut.mutate()}
             disabled={mut.isPending || !form.nome.trim()}
-            className="px-md py-sm rounded-lg bg-tom text-white font-semibold focus-ring disabled:opacity-50"
+            className="px-md py-sm rounded-lg bg-tom text-black font-semibold focus-ring disabled:opacity-50"
           >
             {mut.isPending ? 'Salvando…' : 'Salvar'}
           </button>
@@ -478,7 +478,7 @@ function ModalCheckpoint({
               form.nota_minima < 0 ||
               form.nota_minima > 10
             }
-            className="px-md py-sm rounded-lg bg-tom text-white font-semibold focus-ring disabled:opacity-50"
+            className="px-md py-sm rounded-lg bg-tom text-black font-semibold focus-ring disabled:opacity-50"
           >
             {mut.isPending ? 'Salvando…' : 'Salvar'}
           </button>
@@ -707,7 +707,7 @@ export function LaEducaAdminTrilhaPage() {
           </p>
           <button
             onClick={() => setModalTrilha({ open: true, trilha: null })}
-            className="inline-flex items-center gap-1 text-body-sm bg-tom text-white px-sm py-1.5 rounded font-semibold focus-ring"
+            className="inline-flex items-center gap-1 text-body-sm bg-tom text-black px-sm py-1.5 rounded font-semibold focus-ring"
           >
             <Plus size={14} /> Nova trilha
           </button>

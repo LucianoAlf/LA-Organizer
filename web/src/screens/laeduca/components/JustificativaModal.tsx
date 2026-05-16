@@ -1,4 +1,4 @@
-import { useState } from 'react';
+﻿import { useState } from 'react';
 
 interface Props {
   nota: number;
@@ -31,7 +31,7 @@ export function JustificativaModal({ nota, notaMin, onConfirm, onCancel }: Props
           <button
             onClick={() => onConfirm(txt.trim())}
             disabled={!valid}
-            className="px-md py-sm rounded bg-tom text-white font-semibold disabled:opacity-50 focus-ring"
+            className="px-md py-sm rounded bg-tom text-black font-semibold disabled:opacity-50 focus-ring"
           >
             Ancorar mesmo assim
           </button>

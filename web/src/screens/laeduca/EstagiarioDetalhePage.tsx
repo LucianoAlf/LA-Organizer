@@ -1,4 +1,4 @@
-// Detalhe do estagiário: header com info, PilarCards dinâmicos, responsáveis por pilar, botão Certificar Alfa
+﻿// Detalhe do estagiário: header com info, PilarCards dinâmicos, responsáveis por pilar, botão Certificar Alfa
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -247,7 +247,7 @@ export function LaEducaEstagiarioDetalhePage() {
               <button
                 onClick={handleSalvar}
                 disabled={saving || !instrutorSelecionado}
-                className="w-full py-sm bg-tom text-white rounded-lg font-semibold focus-ring disabled:opacity-50"
+                className="w-full py-sm bg-tom text-black rounded-lg font-semibold focus-ring disabled:opacity-50"
               >
                 {saving ? 'Salvando...' : 'Salvar atribuição'}
               </button>

@@ -1,4 +1,4 @@
-// Cadastra estagiário e gera as avaliações automaticamente (universais + da trilha).
+﻿// Cadastra estagiário e gera as avaliações automaticamente (universais + da trilha).
 // Acesso restrito (gating na rota — ProtectedRoute requireRoles=['coordinator','director'])
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -138,7 +138,7 @@ export function LaEducaCadastroPage() {
         <button
           type="submit"
           disabled={!valido || saving}
-          className="w-full px-md py-sm bg-tom text-white rounded font-semibold disabled:opacity-50 focus-ring"
+          className="w-full px-md py-sm bg-tom text-black rounded font-semibold disabled:opacity-50 focus-ring"
         >
           {saving ? 'Salvando...' : 'Cadastrar e gerar avaliações'}
         </button>
