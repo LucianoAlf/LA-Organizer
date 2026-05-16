@@ -1,24 +1,31 @@
 import { ChevronLeft } from 'lucide-react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import type { ReactNode } from 'react';
 
 interface PageHeaderProps {
   title: string;
   subtitle?: ReactNode;
+  /** Destino do voltar. Quando passado, SEMPRE prevalece sobre navigate(-1)
+   *  pra evitar loops em fluxos tipo Lista→Detalhe→Filho→Detalhe→Filho. */
   backTo?: string;
   right?: ReactNode;
 }
 
-export function PageHeader({ title, subtitle, backTo = '/mais', right }: PageHeaderProps) {
+export function PageHeader({ title, subtitle, backTo, right }: PageHeaderProps) {
   const navigate = useNavigate();
-  const location = useLocation();
 
   function handleBack() {
+    // Se backTo explícito → navegação determinística (não confia no history).
+    if (backTo !== undefined) {
+      navigate(backTo);
+      return;
+    }
+    // Sem backTo → tenta history back; fallback /mais.
     const idx = (window.history.state && (window.history.state.idx as number | undefined)) ?? 0;
     if (idx > 0) {
       navigate(-1);
     } else {
-      navigate(backTo);
+      navigate('/mais');
     }
   }
 
