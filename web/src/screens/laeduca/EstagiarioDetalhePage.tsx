@@ -10,7 +10,7 @@ import { LoadingState } from '../../components/LoadingState';
 import { ProgressBar } from './components/ProgressBar';
 import { PilarCard } from './components/PilarCard';
 import { emitirCertificado } from '../../lib/laeduca';
-import type { Unidade } from '../../lib/laeduca-types';
+import type { Unidade, Modalidade } from '../../lib/laeduca-types';
 import { UNIDADE_LABELS, MODALIDADE_LABELS } from '../../lib/laeduca-types';
 import { showToast } from '../../components/Toast';
 
@@ -56,7 +56,10 @@ export function LaEducaEstagiarioDetalhePage() {
         </div>
         <ProgressBar percentual={progresso.percentual} />
         <div className="text-[11px] text-fg-muted">
-          Modalidade: {MODALIDADE_LABELS[estagiario.modalidade]}{estagiario.instrumento ? ` · ${estagiario.instrumento}` : ''} ·
+          {progresso.trilha_nome
+            ? `Trilha: ${progresso.trilha_icone ?? ''} ${progresso.trilha_nome}`.trim()
+            : `Modalidade: ${MODALIDADE_LABELS[estagiario.modalidade as Modalidade] ?? estagiario.modalidade}`}
+          {estagiario.instrumento ? ` · ${estagiario.instrumento}` : ''} ·
           {' '}Início: {new Date(estagiario.data_inicio).toLocaleDateString('pt-BR')}
         </div>
         {estagiario.certificado_emitido && (

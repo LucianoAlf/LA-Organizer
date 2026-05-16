@@ -11,6 +11,7 @@ import type {
   AvaliacaoComCheckpoint,
   EstagiarioDetalhe,
   Pilar,
+  Trilha,
 } from './laeduca-types';
 
 /** Lista todos os estagiários visíveis (RLS filtra). */
@@ -53,23 +54,30 @@ export async function fetchEstagiarioDetalhe(estagiarioId: string): Promise<Esta
   };
 }
 
-/** Lista mentores possíveis (collaborators ativos da unidade). */
-export async function fetchMentoresDisponiveis(unidade: string): Promise<Array<{ id: string; full_name: string }>> {
+/** Lista mentores possíveis.
+ *  Critério: ativos + (role IN director/coordinator OU pedagogical_role preenchido).
+ *  Filtro de unidade mantido para exibir somente mentores da unidade do estagiário;
+ *  se no futuro quiser cross-unit, basta remover o .eq('unit', unidade).
+ */
+export async function fetchMentoresDisponiveis(_unidade?: string): Promise<Array<{ id: string; full_name: string }>> {
+  // Mentor pedagógico pode mentorar estagiário de qualquer unidade — não filtra por unit.
+  // Critério: director/coordinator OU tem pedagogical_role (mentor/lead/assistant).
+  // Exclui managers (Jereh, Clayton, Krissya, Yuri) que não fazem mentoria pedagógica.
+  void _unidade;
   const { data, error } = await supabase
     .from('collaborators')
-    .select('id, full_name')
+    .select('id, full_name, role, pedagogical_role')
     .eq('is_active', true)
-    .eq('unit', unidade)
+    .or('role.in.(director,coordinator),pedagogical_role.not.is.null')
     .order('full_name');
   if (error) throw error;
-  return data ?? [];
+  return (data ?? []).map(c => ({ id: c.id, full_name: c.full_name }));
 }
 
 /**
- * Cadastra estagiário E gera todas as avaliações aplicáveis. Filtro de modalidade:
- * - musicalizacao → 16 nulls + 5 musicalizacao = 21 checkpoints
- * - instrumento   → 16 nulls + 5 instrumento  = 21 checkpoints
- * - ambos         → todos os 26
+ * Cadastra estagiário E gera todas as avaliações aplicáveis.
+ * Checkpoints aplicáveis = universais (trilha_id IS NULL) + específicos da trilha escolhida.
+ * 16 universais + até 35 específicos → número varia por trilha.
  */
 export async function cadastrarEstagiario(form: CadastroEstagiarioForm): Promise<string> {
   const { data: est, error: e1 } = await supabase
@@ -78,7 +86,9 @@ export async function cadastrarEstagiario(form: CadastroEstagiarioForm): Promise
       nome: form.nome,
       unidade: form.unidade,
       mentor_id: form.mentor_id,
-      modalidade: form.modalidade,
+      trilha_id: form.trilha_id,
+      // modalidade como default para não quebrar coluna NOT NULL (se existir)
+      modalidade: 'instrumento',
       instrumento: form.instrumento || null,
       data_inicio: form.data_inicio,
       diagnostico_entrada: form.diagnostico_entrada || null,
@@ -88,15 +98,11 @@ export async function cadastrarEstagiario(form: CadastroEstagiarioForm): Promise
   if (e1) throw e1;
   if (!est) throw new Error('Insert do estagiário não retornou id');
 
-  const filter =
-    form.modalidade === 'ambos'
-      ? 'modalidade_filtro.is.null,modalidade_filtro.eq.musicalizacao,modalidade_filtro.eq.instrumento'
-      : `modalidade_filtro.is.null,modalidade_filtro.eq.${form.modalidade}`;
-
+  // Busca checkpoints: universais (trilha_id IS NULL) + específicos da trilha
   const { data: cps, error: e2 } = await supabase
     .from('la_educa_checkpoints')
     .select('id, pilar')
-    .or(filter);
+    .or(`trilha_id.is.null,trilha_id.eq.${form.trilha_id}`);
   if (e2) throw e2;
   if (!cps || cps.length === 0) throw new Error('Nenhum checkpoint aplicável encontrado');
 
@@ -153,6 +159,55 @@ export async function emitirCertificado(params: {
     .eq('id', params.estagiarioId);
   if (error) throw error;
 }
+
+// ─── Trilhas pedagógicas ───────────────────────────────────────────────────
+
+export async function fetchTrilhas(): Promise<Trilha[]> {
+  const { data, error } = await supabase
+    .from('la_educa_trilhas')
+    .select('*')
+    .eq('is_active', true)
+    .order('nome');
+  if (error) throw error;
+  return (data ?? []) as Trilha[];
+}
+
+export async function criarTrilha(form: {
+  id: string;
+  nome: string;
+  icone?: string;
+  descricao?: string;
+}): Promise<Trilha> {
+  const { data, error } = await supabase
+    .from('la_educa_trilhas')
+    .insert({ ...form, is_active: true })
+    .select('*')
+    .single();
+  if (error) throw error;
+  return data as Trilha;
+}
+
+export async function atualizarTrilha(id: string, patch: Partial<Trilha>): Promise<Trilha> {
+  const { data, error } = await supabase
+    .from('la_educa_trilhas')
+    .update(patch)
+    .eq('id', id)
+    .select('*')
+    .single();
+  if (error) throw error;
+  return data as Trilha;
+}
+
+/** Soft delete — não apaga pois pode ter estagiários linkados. */
+export async function deletarTrilha(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('la_educa_trilhas')
+    .update({ is_active: false })
+    .eq('id', id);
+  if (error) throw error;
+}
+
+// ─── Checkpoints ──────────────────────────────────────────────────────────
 
 /** Lista checkpoints. */
 export async function fetchCheckpoints(): Promise<Checkpoint[]> {
@@ -221,6 +276,7 @@ export async function criarCheckpoint(form: {
   descricao: string;
   criterio: string;
   modalidade_filtro?: 'musicalizacao' | 'instrumento' | null;
+  trilha_id?: string | null;
   sort_order: number;
 }): Promise<Checkpoint> {
   const { data, error } = await supabase

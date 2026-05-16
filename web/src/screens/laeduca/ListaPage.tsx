@@ -12,7 +12,7 @@ import { ProgressBar } from './components/ProgressBar';
 import { AlertCard } from './components/AlertCard';
 import { CustomSelect } from '../../components/CustomSelect';
 import { UNIDADE_LABELS, MODALIDADE_LABELS } from '../../lib/laeduca-types';
-import type { Unidade } from '../../lib/laeduca-types';
+import type { Unidade, Modalidade } from '../../lib/laeduca-types';
 
 const UNIDADES: Unidade[] = ['campo_grande', 'recreio', 'barra'];
 
@@ -100,7 +100,10 @@ export function LaEducaListaPage() {
                   <span className="text-[11px] text-fg-muted">{UNIDADE_LABELS[e.unidade as Unidade]}</span>
                 </div>
                 <div className="text-body-sm text-fg-muted mt-1">
-                  {MODALIDADE_LABELS[e.modalidade]}{e.instrumento ? ` · ${e.instrumento}` : ''} · Mentor: {e.mentor_nome || '—'}
+                  {e.trilha_nome
+                    ? `${e.trilha_icone ?? ''} ${e.trilha_nome}`.trim()
+                    : MODALIDADE_LABELS[e.modalidade as Modalidade] ?? e.modalidade}
+                  {e.instrumento ? ` · ${e.instrumento}` : ''} · Mentor: {e.mentor_nome || '—'}
                 </div>
                 <ProgressBar percentual={e.percentual} className="mt-2" />
                 <div className="text-[11px] text-fg-muted mt-1">

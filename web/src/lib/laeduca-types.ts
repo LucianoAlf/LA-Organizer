@@ -9,6 +9,8 @@ export const UNIDADE_LABELS: Record<Unidade, string> = {
   recreio: 'Recreio',
   barra: 'Barra da Tijuca',
 };
+
+// Mantido para compatibilidade com estagiários legados (sem trilha_id)
 export type Modalidade = 'musicalizacao' | 'instrumento' | 'ambos';
 
 export const MODALIDADE_LABELS: Record<Modalidade, string> = {
@@ -16,6 +18,15 @@ export const MODALIDADE_LABELS: Record<Modalidade, string> = {
   instrumento: 'Instrumento',
   ambos: 'Ambos',
 };
+
+export interface Trilha {
+  id: string;           // 'bateria', 'guitarra', etc
+  nome: string;
+  icone: string | null; // emoji
+  descricao: string | null;
+  is_active: boolean;
+  created_at: string;
+}
 
 export type PilarId = string; // codigo do pilar, dinâmico
 
@@ -47,7 +58,8 @@ export interface Estagiario {
   nome: string;
   unidade: Unidade;
   mentor_id: string | null;
-  modalidade: Modalidade;
+  modalidade: Modalidade;     // legado — mantido para fallback na UI
+  trilha_id: string | null;   // novo — trilha pedagógica (primário na UI)
   instrumento: string | null;
   data_inicio: string;        // YYYY-MM-DD
   diagnostico_entrada: string | null;
@@ -67,7 +79,8 @@ export interface Checkpoint {
   titulo: string;
   descricao: string;
   criterio: string;
-  modalidade_filtro: 'musicalizacao' | 'instrumento' | null;
+  modalidade_filtro: 'musicalizacao' | 'instrumento' | null; // legado
+  trilha_id: string | null;   // novo — NULL = universal (P1/P3/P4), valor = específico da trilha (P2)
   sort_order: number;
 }
 
@@ -90,12 +103,15 @@ export interface ProgressoEstagiario {
   id: string;
   nome: string;
   unidade: Unidade;
-  modalidade: Modalidade;
+  modalidade: Modalidade;     // legado — fallback se trilha_id for null
   instrumento: string | null;
   data_inicio: string;
   status: StatusEstagiario;
   mentor_id: string | null;
   mentor_nome: string | null;
+  trilha_id: string | null;
+  trilha_nome: string | null;
+  trilha_icone: string | null;
   checkpoints_ancorados: number;
   checkpoints_total: number;
   percentual: number;
@@ -108,8 +124,8 @@ export interface CadastroEstagiarioForm {
   nome: string;
   unidade: Unidade;
   mentor_id: string;
-  modalidade: Modalidade;
-  instrumento?: string;
+  trilha_id: string;          // substitui modalidade como campo primário
+  instrumento?: string;       // opcional — texto livre (ex: "Bateria 5 peças")
   data_inicio: string;
   diagnostico_entrada?: string;
 }

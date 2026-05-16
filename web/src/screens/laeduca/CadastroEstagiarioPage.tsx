@@ -1,4 +1,4 @@
-// Cadastra estagiário e gera as 21 ou 26 avaliações automaticamente.
+// Cadastra estagiário e gera as avaliações automaticamente (universais + da trilha).
 // Acesso restrito (gating na rota — ProtectedRoute requireRoles=['coordinator','director'])
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -6,8 +6,9 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '../../components/PageHeader';
 import { CustomSelect } from '../../components/CustomSelect';
 import { cadastrarEstagiario, fetchMentoresDisponiveis } from '../../lib/laeduca';
+import { useLaEducaTrilhas } from '../../hooks/useLaEducaTrilhas';
 import { showToast } from '../../components/Toast';
-import type { CadastroEstagiarioForm, Modalidade, Unidade } from '../../lib/laeduca-types';
+import type { CadastroEstagiarioForm, Unidade } from '../../lib/laeduca-types';
 import { UNIDADE_LABELS } from '../../lib/laeduca-types';
 
 const UNIDADES: Unidade[] = ['campo_grande', 'recreio', 'barra'];
@@ -20,7 +21,7 @@ export function LaEducaCadastroPage() {
     nome: '',
     unidade: 'campo_grande',
     mentor_id: '',
-    modalidade: 'musicalizacao',
+    trilha_id: '',
     instrumento: '',
     data_inicio: new Date().toISOString().slice(0, 10),
     diagnostico_entrada: '',
@@ -32,12 +33,13 @@ export function LaEducaCadastroPage() {
     queryFn: () => fetchMentoresDisponiveis(form.unidade),
   });
 
-  const precisaInstrumento = form.modalidade !== 'musicalizacao';
+  const { data: trilhas = [] } = useLaEducaTrilhas();
+
   const valido =
     form.nome.trim().length > 2 &&
-    form.mentor_id &&
-    form.data_inicio &&
-    (!precisaInstrumento || (form.instrumento && form.instrumento.trim().length > 0));
+    form.mentor_id !== '' &&
+    form.trilha_id !== '' &&
+    form.data_inicio !== '';
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -92,35 +94,27 @@ export function LaEducaCadastroPage() {
           />
         </Field>
 
-        <Field label="Modalidade">
-          <div className="flex gap-sm">
-            {(['musicalizacao', 'instrumento', 'ambos'] as Modalidade[]).map(m => (
-              <label key={m} className="flex items-center gap-1 text-body-sm">
-                <input
-                  type="radio"
-                  name="modalidade"
-                  value={m}
-                  checked={form.modalidade === m}
-                  onChange={() => update('modalidade', m)}
-                />
-                {m === 'musicalizacao' ? 'Musicalização' : m === 'instrumento' ? 'Instrumento' : 'Ambos'}
-              </label>
-            ))}
-          </div>
+        <Field label="Trilha pedagógica">
+          <CustomSelect
+            value={form.trilha_id}
+            onChange={v => update('trilha_id', v)}
+            placeholder="— Selecione a trilha —"
+            options={trilhas.map(t => ({
+              value: t.id,
+              label: t.icone ? `${t.icone} ${t.nome}` : t.nome,
+            }))}
+          />
         </Field>
 
-        {precisaInstrumento && (
-          <Field label="Instrumento">
-            <input
-              type="text"
-              value={form.instrumento ?? ''}
-              onChange={e => update('instrumento', e.target.value)}
-              placeholder="Ex: Violão, Piano"
-              className="w-full bg-bg-surface text-fg rounded p-sm border border-border focus-ring"
-              required
-            />
-          </Field>
-        )}
+        <Field label="Instrumento (opcional — texto livre)">
+          <input
+            type="text"
+            value={form.instrumento ?? ''}
+            onChange={e => update('instrumento', e.target.value)}
+            placeholder="Ex: Bateria 5 peças, Violão clássico"
+            className="w-full bg-bg-surface text-fg rounded p-sm border border-border focus-ring"
+          />
+        </Field>
 
         <Field label="Data de início">
           <input
