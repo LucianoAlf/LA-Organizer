@@ -232,9 +232,167 @@ async function runLaEducaLembretes() {
   }
 
   console.log(`[la-educa] fim em ${Date.now() - inicio}ms — pendente:${stats.pendente} atrasado:${stats.atrasado} pronto:${stats.pronto}`);
+
+  await enviarResumoSemanalMentores();
 }
 
-module.exports = { runLaEducaLembretes };
+// ── Feature 1: Resumo semanal pro mentor ─────────────────────────────────────
+
+async function buscarBreakdownPorPilar(estagiarioId, mentorId) {
+  const { data: avals } = await supabase
+    .from('la_educa_avaliacoes')
+    .select('pilar, ancorado, checkpoint:la_educa_checkpoints(pilar_id, pilar_nome)')
+    .eq('estagiario_id', estagiarioId);
+  if (!avals) return [];
+
+  const grouped = {};
+  for (const a of avals) {
+    const cod = a.pilar;
+    const pid = a.checkpoint?.pilar_id;
+    const pnome = a.checkpoint?.pilar_nome || cod;
+    if (!grouped[cod]) grouped[cod] = { pilar_codigo: cod, pilar_nome: pnome, pilar_id: pid, total: 0, ancorados: 0 };
+    grouped[cod].total += 1;
+    if (a.ancorado) grouped[cod].ancorados += 1;
+  }
+
+  const arr = Object.values(grouped);
+  for (const p of arr) {
+    const respId = await buscarResponsavel(estagiarioId, p.pilar_id, mentorId);
+    if (respId === mentorId) {
+      p.responsavel_nome = 'você';
+    } else {
+      const r = await buscarCollab(respId);
+      p.responsavel_nome = r?.full_name?.split(' ')[0] || '—';
+    }
+  }
+  arr.sort((a, b) => a.pilar_codigo.localeCompare(b.pilar_codigo));
+  return arr;
+}
+
+async function enviarResumoSemanalMentores() {
+  const inicio = Date.now();
+  console.log('[la-educa] iniciando resumo semanal mentores');
+
+  const { data: mentores } = await supabase
+    .from('collaborators')
+    .select('id, full_name, phone, is_active')
+    .eq('is_active', true)
+    .not('phone', 'is', null);
+
+  if (!mentores) return;
+
+  let enviados = 0;
+  for (const mentor of mentores) {
+    const { data: estags } = await supabase
+      .from('la_educa_progresso')
+      .select('id, nome, trilha_nome, trilha_icone, checkpoints_ancorados, checkpoints_total, percentual')
+      .eq('mentor_id', mentor.id);
+    if (!estags || estags.length === 0) continue;
+
+    const today = new Date().toISOString().slice(0, 10);
+    const { data: jaEnviou } = await supabase
+      .from('ritual_logs')
+      .select('id')
+      .eq('ritual_type', 'la_educa_resumo_mentor')
+      .eq('collaborator_id', mentor.id)
+      .eq('reference_date', today)
+      .limit(1);
+    if (jaEnviou && jaEnviou.length > 0) continue;
+
+    const linhasEstagiarios = [];
+    for (const e of estags) {
+      const breakdown = await buscarBreakdownPorPilar(e.id, mentor.id);
+      const linhasPilares = breakdown.map(b => `• ${b.pilar_nome}: ${b.ancorados}/${b.total} (${b.responsavel_nome})`).join('\n');
+      linhasEstagiarios.push(
+        `${e.trilha_icone || '📘'} ${e.nome} (${e.trilha_nome || '—'}, ${e.checkpoints_ancorados}/${e.checkpoints_total} = ${Math.round(e.percentual || 0)}%)\n${linhasPilares}`
+      );
+    }
+
+    const primeiroNome = mentor.full_name.split(' ')[0];
+    const msg = `📊 LA EDUCA — Resumo semanal\n\nOlá ${primeiroNome}! Aqui está o resumo dos estagiários sob sua coordenação:\n\n${linhasEstagiarios.join('\n\n')}\n\nAcesse o LA Organizer pra acompanhar 🎵`;
+    try {
+      await whatsapp.sendMessage(mentor.phone, msg);
+      await supabase.from('ritual_logs').insert({
+        collaborator_id: mentor.id,
+        ritual_type: 'la_educa_resumo_mentor',
+        reference_date: today,
+        status: 'sent',
+        sent_at: new Date().toISOString(),
+      });
+      enviados++;
+    } catch (err) {
+      console.error(`[la-educa resumo] falha pra ${mentor.full_name}: ${err.message}`);
+    }
+  }
+
+  console.log(`[la-educa] resumo semanal: ${enviados} mentores em ${Date.now() - inicio}ms`);
+}
+
+// ── Feature 2: Processador de notificações de atribuição (roda a cada tick) ──
+
+async function processarNotificacoesAtribuicao() {
+  const { data: pendentes } = await supabase
+    .from('la_educa_lembretes_log')
+    .select('id, destinatario_id, estagiario_id, enviado_em')
+    .eq('tipo', 'atribuicao_pendente_envio')
+    .is('mensagem', null)
+    .limit(50);
+  if (!pendentes || pendentes.length === 0) return;
+
+  console.log(`[la-educa atrib] ${pendentes.length} pendente(s)`);
+
+  for (const p of pendentes) {
+    try {
+      const instrutor = await buscarCollab(p.destinatario_id);
+      if (!instrutor?.phone || !instrutor.is_active) {
+        await supabase.from('la_educa_lembretes_log')
+          .update({ mensagem: 'SKIP: sem phone ou inativo' })
+          .eq('id', p.id);
+        continue;
+      }
+
+      const { data: atrib } = await supabase
+        .from('la_educa_responsaveis_pilar')
+        .select('pilar_id, instrutor_id, atribuido_por, estagiario_id, atribuido_em, pilar:la_educa_pilares!pilar_id(nome,codigo)')
+        .eq('estagiario_id', p.estagiario_id)
+        .eq('instrutor_id', p.destinatario_id)
+        .order('atribuido_em', { ascending: false })
+        .limit(1);
+      const at = atrib?.[0];
+      if (!at) {
+        await supabase.from('la_educa_lembretes_log')
+          .update({ mensagem: 'SKIP: atribuicao removida antes do envio' })
+          .eq('id', p.id);
+        continue;
+      }
+
+      const { data: estag } = await supabase
+        .from('la_educa_estagiarios')
+        .select('nome, mentor_id')
+        .eq('id', p.estagiario_id)
+        .single();
+      const mentor = estag?.mentor_id ? await buscarCollab(estag.mentor_id) : null;
+      const mentorNome = mentor?.full_name || '—';
+
+      const primeiroNome = instrutor.full_name.split(' ')[0];
+      const pilarNome = at.pilar?.nome || at.pilar?.codigo || '—';
+      const msg = `Olá ${primeiroNome}! 🎓\n\nVocê foi atribuído como instrutor de *${pilarNome}* pra ${estag?.nome || 'um estagiário'} (mentor: ${mentorNome}).\n\nAcesse o LA Organizer pra ver os checkpoints e começar as avaliações 🎵`;
+
+      await whatsapp.sendMessage(instrutor.phone, msg);
+      await supabase.from('la_educa_lembretes_log')
+        .update({ mensagem: msg, enviado_em: new Date().toISOString() })
+        .eq('id', p.id);
+      console.log(`[la-educa atrib] enviado pra ${instrutor.full_name} sobre ${estag?.nome}`);
+    } catch (err) {
+      console.error(`[la-educa atrib] erro ${p.id}: ${err.message}`);
+      await supabase.from('la_educa_lembretes_log')
+        .update({ mensagem: 'ERRO: ' + err.message })
+        .eq('id', p.id);
+    }
+  }
+}
+
+module.exports = { runLaEducaLembretes, processarNotificacoesAtribuicao };
 
 // CLI standalone
 if (require.main === module) {

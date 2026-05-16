@@ -18,7 +18,7 @@ loadDotEnv(path.join(process.cwd(), '.env'));
 
 const supabase = require('../supabase/client');
 const { sendRitual, sendCoordinatorReport, getDndState, consolidateMemoryFor, decayExpiredMemories, generateWeeklySummaryFor, getRitualIntroDecision } = require('../engine');
-const { runLaEducaLembretes } = require('./la-educa-lembretes');
+const { runLaEducaLembretes, processarNotificacoesAtribuicao } = require('./la-educa-lembretes');
 
 const RITUAL_BY_DIRECTIVE = {
   briefing_pessoal: 'personal_briefing',
@@ -1619,6 +1619,13 @@ async function run(opts = {}) {
 
   const slotNow = currentSlot(now);
   const isWeekend = now.dow === 0 || now.dow === 6;
+
+  // LA EDUCA — processa notificações de atribuição a cada tick (latência max 5min)
+  try {
+    await processarNotificacoesAtribuicao();
+  } catch (err) {
+    console.error('[la-educa atrib-dispatch] erro:', err.message);
+  }
 
   for (const c of collabs) {
     const p = c.user_preferences;
