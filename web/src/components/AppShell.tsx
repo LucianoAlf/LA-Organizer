@@ -8,6 +8,7 @@ import { PWAInstallPrompt } from './PWAInstallPrompt';
 import { ToastHost } from './Toast';
 import { OnboardingWizard, WIZARD_DISMISSED_KEY } from './OnboardingWizard';
 import { useAuth } from '../contexts/AuthContext';
+import { useRealtimeSync } from '../hooks/useRealtimeSync';
 
 const FOCUSED_FLOW_PATHS = ['/projetos/novo'];
 const AGENDA_PATHS = ['/hoje', '/semana'];
@@ -25,6 +26,10 @@ export function AppShell() {
   const { collaborator } = useAuth();
   const focused = isFocusedFlow(pathname);
   const showAgendaTabs = isAgendaRoute(pathname);
+
+  // Realtime sync com Supabase — invalida TanStack quando TOM escreve no banco.
+  // Sem isso, mudanças via WhatsApp só aparecem no PWA após staleTime + interação.
+  useRealtimeSync(collaborator?.id);
 
   // Wizard: mostra se onboarding não concluído E usuário ainda não dispensou nesta sessão/localStorage
   const [wizardDismissed, setWizardDismissed] = useState(
