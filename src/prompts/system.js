@@ -242,6 +242,24 @@ function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events
     lines.push(`**Dias desta semana (para markers):** ${fullWeek.join(' · ')}`);
   }
 
+  // Calendário de lookup — evita que TOM calcule dia-da-semana e erre.
+  // Formato compacto 1 linha, 16 dias. Root cause: LLM date arithmetic falha.
+  {
+    const _abbrDays = ['dom','seg','ter','qua','qui','sex','sáb'];
+    const todayAnchor = new Date(todayISO + 'T15:00:00.000Z');
+    const calParts = [];
+    for (let i = 0; i <= 15; i++) {
+      const d = new Date(todayAnchor);
+      d.setUTCDate(d.getUTCDate() + i);
+      const dd = String(d.getUTCDate()).padStart(2, '0');
+      const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const abbr = _abbrDays[d.getUTCDay()];
+      const tag = i === 0 ? '(HOJE)' : i === 1 ? '(amanhã)' : '';
+      calParts.push(tag ? `${abbr} ${dd}/${mm}${tag}` : `${abbr} ${dd}/${mm}`);
+    }
+    lines.push(`**TABELA DE DATAS — Use SEMPRE esta tabela para converter dia-da-semana em data. NUNCA calcule datas mentalmente. Se o usuário pedir data além do último dia desta tabela, pergunte: "Qual a data exata?"**\n${calParts.join(' | ')}`);
+  }
+
   lines.push(`**Timezone para markers:** America/Sao_Paulo. Sempre use ISO -03:00 em remind_at, start_at, end_at, etc. Ex: "amanhã 11h" → "${tomorrowISO}T11:00:00-03:00".`);
   lines.push('');
 
