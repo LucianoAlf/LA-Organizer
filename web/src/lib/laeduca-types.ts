@@ -10,8 +10,24 @@ export const UNIDADE_LABELS: Record<Unidade, string> = {
   barra: 'Barra da Tijuca',
 };
 export type Modalidade = 'musicalizacao' | 'instrumento' | 'ambos';
+
+export const MODALIDADE_LABELS: Record<Modalidade, string> = {
+  musicalizacao: 'Musicalização',
+  instrumento: 'Instrumento',
+  ambos: 'Ambos',
+};
+
 export type PilarId = 'p1' | 'p2' | 'p3' | 'p4';
-export type StatusEstagiario = 'ativo' | 'pausado' | 'desligado';
+
+// Status alinhado com check constraint do banco la_educa_estagiarios.status
+export type StatusEstagiario = 'em_andamento' | 'concluido' | 'desistente' | 'arquivado';
+
+export const STATUS_LABELS: Record<StatusEstagiario, string> = {
+  em_andamento: 'Em andamento',
+  concluido: 'Concluído',
+  desistente: 'Desistente',
+  arquivado: 'Arquivado',
+};
 
 export interface Estagiario {
   id: string;

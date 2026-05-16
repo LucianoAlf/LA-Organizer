@@ -10,7 +10,7 @@ import { ProgressBar } from './components/ProgressBar';
 import { PilarCard } from './components/PilarCard';
 import { emitirCertificado } from '../../lib/laeduca';
 import type { PilarId, Unidade } from '../../lib/laeduca-types';
-import { UNIDADE_LABELS } from '../../lib/laeduca-types';
+import { UNIDADE_LABELS, MODALIDADE_LABELS } from '../../lib/laeduca-types';
 import { showToast } from '../../components/Toast';
 
 const PILARES: PilarId[] = ['p1', 'p2', 'p3', 'p4'];
@@ -56,7 +56,7 @@ export function LaEducaEstagiarioDetalhePage() {
         </div>
         <ProgressBar percentual={progresso.percentual} />
         <div className="text-[11px] text-fg-muted">
-          Modalidade: {estagiario.modalidade}{estagiario.instrumento ? ` · ${estagiario.instrumento}` : ''} ·
+          Modalidade: {MODALIDADE_LABELS[estagiario.modalidade]}{estagiario.instrumento ? ` · ${estagiario.instrumento}` : ''} ·
           {' '}Início: {new Date(estagiario.data_inicio).toLocaleDateString('pt-BR')}
         </div>
         {estagiario.certificado_emitido && (
