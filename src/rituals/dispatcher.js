@@ -336,6 +336,7 @@ async function dispatchChecklists(now = new Date(), { dry = false, filterPhone =
   const { data: templates, error: tErr } = await supabase
     .from('op_checklists')
     .select('*, op_checklist_items(id, description, sort_order, is_active)')
+    .eq('is_active', true)
     .contains('days_of_week', [dow])
     .gte('dispatch_time', timeMinus5)
     .lte('dispatch_time', timeNow);
@@ -415,6 +416,7 @@ async function dispatchChecklists(now = new Date(), { dry = false, filterPhone =
       const { data: specifics } = await supabase
         .from('op_checklists')
         .select('unit')
+        .eq('is_active', true)
         .eq('function_role', template.function_role)
         .eq('shift', template.shift)
         .neq('unit', 'all')
