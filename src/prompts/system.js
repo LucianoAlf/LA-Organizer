@@ -2668,21 +2668,42 @@ async function buildSystemPrompt(collaborator, opts = {}) {
 
   // LA JOURNEY — injeta resumo quando a skill está ativa ou a mensagem menciona journey/cursos
   const lowerMsgJourney = (lastUserMessage || '').toLowerCase();
+
+  const hasJourneyKeyword = ['la journey', 'la-journey', 'lajourney', 'journey', 'jornada', 'jornada pedagógica',
+    'atrasados journey', 'pendências journey', 'pendencias journey', 'publicado journey'].some(t => lowerMsgJourney.includes(t));
+
+  const cursoNames = ['bateria', 'canto', 'cordas', 'teclas', 'musicalização', 'musicalizacao'];
+  const pedagogicalContext = ['journey', 'jornada', 'checkpoint', 'foundation', 'grow', 'advance', 'master', 'iniciação', 'iniciacao', 'marco', 'mentor', 'pedagógic', 'pedagogic'];
+  const hasCursoWithContext = cursoNames.some(c =>
+    lowerMsgJourney.includes(c) && pedagogicalContext.some(k => lowerMsgJourney.includes(k))
+  );
+
+  const isJourneyCommand = /^\s*\/journey\b/.test(lastUserMessage || '');
   const journeyTriggered =
     skill?.name === 'la-journey' ||
-    /la[\s-]?journey|lajourney|jornada\s+pedag[oó]gica|jornada/.test(lowerMsgJourney) ||
-    /atrasados\s+journey|pend[eê]ncias\s+journey|publicado\s+journey/.test(lowerMsgJourney) ||
-    /bateria|canto|cordas|teclas|musicaliza[cç][aã]o/.test(lowerMsgJourney) ||
-    /^\s*\/journey\b/.test(lastUserMessage || '');
+    hasJourneyKeyword ||
+    hasCursoWithContext ||
+    isJourneyCommand;
 
   if ((collaborator?.role === 'coordinator' || collaborator?.role === 'director') && journeyTriggered) {
     try {
       const supabaseClient = require('../supabase/client');
 
+      // Detecta curso mencionado (se houver) para injeção filtrada
+      const cursoMencionado = cursoNames.find(c => lowerMsgJourney.includes(c));
+      const filtraCurso = cursoMencionado ? cursoMencionado.replace('ção', 'cao') : null;
+
       const [{ data: schoolRows }, { data: kidsRows }] = await Promise.all([
         supabaseClient.rpc('la_journey_lista_progresso', { p_programa_id: 'school' }),
         supabaseClient.rpc('la_journey_lista_progresso', { p_programa_id: 'kids' }),
       ]);
+
+      let all = [...(schoolRows || []), ...(kidsRows || [])];
+      if (filtraCurso) {
+        all = all.filter(r =>
+          r.curso_id === filtraCurso || (r.curso_nome || '').toLowerCase().includes(filtraCurso)
+        );
+      }
 
       const { data: pendRaw } = await supabaseClient
         .from('la_journey_conteudo_checkpoint')
@@ -2696,7 +2717,7 @@ async function buildSystemPrompt(collaborator, opts = {}) {
         return '⬜';
       }
 
-      function formatPrograma(rows, label) {
+      function formatRows(rows, label) {
         if (!rows || rows.length === 0) return `${label}: sem dados`;
         const total = rows.length;
         const publicados = rows.filter(r => r.status === 'publicado').length;
@@ -2708,18 +2729,27 @@ async function buildSystemPrompt(collaborator, opts = {}) {
         return `${label}: ${pctGeral}% preenchido\n${cursos}`;
       }
 
-      const pendencias = (pendRaw || []).map(p => {
-        const cursoNome = p.la_journey_cursos?.nome || p.curso_id;
-        const checkNome = p.la_journey_checkpoints?.nome || p.checkpoint_id;
-        return `  - ${cursoNome}: ${checkNome}`;
-      });
-
-      const blocoJourney =
-        `[LA_JOURNEY_STATUS]\n` +
-        formatPrograma(schoolRows, 'School') + '\n\n' +
-        formatPrograma(kidsRows, 'Kids') + '\n\n' +
-        `Pendências de revisão (${pendencias.length}):\n` +
-        (pendencias.length > 0 ? pendencias.join('\n') : '  (nenhuma)');
+      let blocoJourney;
+      if (filtraCurso) {
+        // Injeção filtrada: só o curso mencionado
+        const cursosStr = all.map(r => {
+          const emoji = emojiStatus(r.status, r.pct_publicado || 0);
+          return `  - ${emoji} ${r.curso_nome || r.curso_id} (${r.programa_id}): ${Math.round(r.pct_publicado || 0)}%`;
+        }).join('\n');
+        blocoJourney = `[LA_JOURNEY_STATUS — filtrado: ${cursoMencionado}]\n${cursosStr || '  (sem dados)'}`;
+      } else {
+        const pendencias = (pendRaw || []).map(p => {
+          const cursoNome = p.la_journey_cursos?.nome || p.curso_id;
+          const checkNome = p.la_journey_checkpoints?.nome || p.checkpoint_id;
+          return `  - ${cursoNome}: ${checkNome}`;
+        });
+        blocoJourney =
+          `[LA_JOURNEY_STATUS]\n` +
+          formatRows(schoolRows, 'School') + '\n\n' +
+          formatRows(kidsRows, 'Kids') + '\n\n' +
+          `Pendências de revisão (${pendencias.length}):\n` +
+          (pendencias.length > 0 ? pendencias.join('\n') : '  (nenhuma)');
+      }
 
       systemPrompt += '\n\n---\n\n' + blocoJourney;
     } catch (err) {

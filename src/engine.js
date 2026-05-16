@@ -4634,10 +4634,117 @@ async function processMessage(phone, text, raw = {}) {
     return;  // não passar pra IA
   }
 
-  // LA JOURNEY — Comando rápido /journey [curso]
+  // LA JOURNEY — Comando rápido /journey [subcomando|curso]
   if (typeof text === 'string' && /^\s*\/journey\b/i.test(text)) {
-    const arg = text.replace(/^\s*\/journey\s*/i, '').trim().toLowerCase();
+    const arg = text.replace(/^\s*\/journey\s*/i, '').trim();
+    const lower = arg.toLowerCase();
     try {
+      // ─── /journey atrasados ─────────
+      if (lower === 'atrasados' || lower === 'atraso') {
+        const { data: rows } = await supabase
+          .from('la_journey_conteudo_checkpoint')
+          .select('id, programa_id, curso_id, checkpoint_id, status, updated_at, la_journey_cursos(nome), la_journey_checkpoints(nome)')
+          .neq('status', 'publicado')
+          .lt('updated_at', new Date(Date.now() - 14 * 86400000).toISOString());
+        if (!rows || rows.length === 0) {
+          await whatsapp.sendMessage(phone, '✅ Nenhum checkpoint atrasado (>14d).');
+        } else {
+          const linhas = rows.map(r => {
+            const dias = Math.floor((Date.now() - new Date(r.updated_at).getTime()) / 86400000);
+            return `• ${r.la_journey_cursos?.nome} · ${r.la_journey_checkpoints?.nome} — ${dias}d`;
+          });
+          await whatsapp.sendMessage(phone, `⚠️ *Atrasados >14d:*\n\n${linhas.join('\n')}`);
+        }
+        return;
+      }
+
+      // ─── /journey pendencias ─────────
+      if (lower === 'pendencias' || lower === 'pendências' || lower === 'revisao' || lower === 'revisão') {
+        const { data: rows } = await supabase
+          .from('la_journey_conteudo_checkpoint')
+          .select('id, la_journey_cursos(nome), la_journey_checkpoints(nome), updated_at')
+          .eq('status', 'em_revisao')
+          .order('updated_at', { ascending: true });
+        if (!rows || rows.length === 0) {
+          await whatsapp.sendMessage(phone, '✅ Nenhum checkpoint aguardando revisão.');
+        } else {
+          const linhas = rows.map(r => `• ${r.la_journey_cursos?.nome} · ${r.la_journey_checkpoints?.nome}`);
+          await whatsapp.sendMessage(phone, `🟡 *Em revisão (${rows.length}):*\n\n${linhas.join('\n')}\n\nVer: la-organizer.com/la-journey/admin`);
+        }
+        return;
+      }
+
+      // ─── /journey publicados ─────────
+      if (lower === 'publicados' || lower === 'publicado') {
+        const { data: rows } = await supabase
+          .from('la_journey_conteudo_checkpoint')
+          .select('id, publicado_em, la_journey_cursos(nome), la_journey_checkpoints(nome), collaborators!publicado_por(full_name)')
+          .eq('status', 'publicado')
+          .order('publicado_em', { ascending: false })
+          .limit(10);
+        if (!rows || rows.length === 0) {
+          await whatsapp.sendMessage(phone, '📭 Nenhum checkpoint publicado ainda.');
+        } else {
+          const linhas = rows.map(r => {
+            const data = r.publicado_em ? new Date(r.publicado_em).toLocaleDateString('pt-BR') : '?';
+            const por = r.collaborators?.full_name ?? '?';
+            return `• ${r.la_journey_cursos?.nome} · ${r.la_journey_checkpoints?.nome} — ${data} por ${por}`;
+          });
+          await whatsapp.sendMessage(phone, `✅ *Últimos publicados:*\n\n${linhas.join('\n')}`);
+        }
+        return;
+      }
+
+      // ─── /journey mentor [nome] ─────────
+      const mentorMatch = arg.match(/^mentor\s+(.+)$/i);
+      if (mentorMatch) {
+        const nome = mentorMatch[1].trim().toLowerCase();
+        const { data: coll } = await supabase
+          .from('collaborators').select('id, full_name')
+          .ilike('full_name', `%${nome}%`).limit(1).maybeSingle();
+        if (!coll) {
+          await whatsapp.sendMessage(phone, `Não achei nenhum colaborador com "${nome}".`);
+        } else {
+          const { data: cursosMent } = await supabase
+            .from('la_journey_curso_mentores')
+            .select('curso_id, programa_id, papel, la_journey_cursos(nome)')
+            .eq('collaborator_id', coll.id).eq('ativo', true);
+          if (!cursosMent || cursosMent.length === 0) {
+            await whatsapp.sendMessage(phone, `${coll.full_name} não é mentor de nenhum curso no LA Journey.`);
+          } else {
+            let reply = `👤 *${coll.full_name}* — cursos:\n`;
+            for (const cm of cursosMent) {
+              reply += `• ${cm.la_journey_cursos?.nome} (${cm.programa_id}, ${cm.papel.replace('mentor_', '')})\n`;
+            }
+            await whatsapp.sendMessage(phone, reply.trim());
+          }
+        }
+        return;
+      }
+
+      // ─── /journey ping [mentor] ─────────
+      const pingMatch = arg.match(/^ping\s+(.+)$/i);
+      if (pingMatch) {
+        const nome = pingMatch[1].trim().toLowerCase();
+        const { data: coll } = await supabase
+          .from('collaborators').select('id, full_name, phone, notification_opt_in')
+          .ilike('full_name', `%${nome}%`).limit(1).maybeSingle();
+        if (!coll) {
+          await whatsapp.sendMessage(phone, `Não achei "${nome}". Tente o primeiro nome.`);
+        } else if (!coll.phone || !coll.notification_opt_in) {
+          await whatsapp.sendMessage(phone, `${coll.full_name} não tem WhatsApp/opt-in configurado.`);
+        } else {
+          await supabase.from('la_journey_lembretes_log').insert({
+            tipo: 'ping_manual',
+            destinatario_id: coll.id,
+            mensagem: `👋 Oi ${coll.full_name.split(' ')[0]}, a coordenação pediu pra eu te lembrar do LA Journey. Quando puder, dá uma olhada em https://la-organizer.com/la-journey`,
+          });
+          await whatsapp.sendMessage(phone, `✅ Ping enfileirado pra ${coll.full_name}. Será enviado no próximo tick (5min).`);
+        }
+        return;
+      }
+
+      // ─── /journey [curso] ou /journey (visão geral) ─────────
       const [{ data: schoolRows }, { data: kidsRows }] = await Promise.all([
         supabase.rpc('la_journey_lista_progresso', { p_programa_id: 'school' }),
         supabase.rpc('la_journey_lista_progresso', { p_programa_id: 'kids' }),
@@ -4651,9 +4758,9 @@ async function processMessage(phone, text, raw = {}) {
         return '⬜';
       }
 
-      if (arg) {
+      if (lower) {
         const filtrados = allRows.filter(r =>
-          (r.curso_nome || r.curso_id || '').toLowerCase().includes(arg)
+          (r.curso_nome || r.curso_id || '').toLowerCase().includes(lower)
         );
         if (filtrados.length === 0) {
           await whatsapp.sendMessage(phone,

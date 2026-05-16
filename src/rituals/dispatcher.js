@@ -19,7 +19,14 @@ loadDotEnv(path.join(process.cwd(), '.env'));
 const supabase = require('../supabase/client');
 const { sendRitual, sendCoordinatorReport, getDndState, consolidateMemoryFor, decayExpiredMemories, generateWeeklySummaryFor, getRitualIntroDecision } = require('../engine');
 const { runLaEducaLembretes, processarFilaNotificacoes, processarNotificacoesAtribuicao, runLaEducaEscalation, runLaEducaBriefingSexta } = require('./la-educa-lembretes');
-const { runLaJourneyLembreteSemanal, runLaJourneyAlertaAtraso, processarFilaLaJourney } = require('./la-journey-lembretes');
+const {
+  runLaJourneyLembreteSemanal,
+  runLaJourneyAlertaAtraso,
+  runLaJourneyBriefingSexta,
+  runLaJourneyEscalation,
+  runLaJourneyPrimeiraAcao,
+  processarFilaLaJourney,
+} = require('./la-journey-lembretes');
 
 const RITUAL_BY_DIRECTIVE = {
   briefing_pessoal: 'personal_briefing',
@@ -1912,6 +1919,93 @@ async function run(opts = {}) {
       } catch (err) {
         console.error('[la-journey-dispatch] alerta_atraso erro:', err.message);
       }
+    }
+  }
+
+  // LA JOURNEY — Sexta 14h: briefing pra coordenação
+  if (opts.force === 'la_journey_briefing_sexta' ||
+      (now.dow === 5 && now.hour === 14 && now.minute === 0)) {
+    const { data: jaRodouBriefing } = await supabase
+      .from('ritual_logs')
+      .select('id')
+      .eq('ritual_type', 'la_journey_briefing_sexta')
+      .eq('reference_date', now.ymd)
+      .limit(1);
+    if (opts.force !== 'la_journey_briefing_sexta' && jaRodouBriefing && jaRodouBriefing.length > 0) {
+      console.log('[la-journey-dispatch] briefing_sexta já rodou hoje, skip');
+    } else {
+      console.log('[dispatcher] rodando LA Journey briefing sexta');
+      try {
+        await runLaJourneyBriefingSexta();
+        const { data: dir } = await supabase
+          .from('collaborators').select('id').eq('role', 'director').eq('is_active', true)
+          .order('full_name').limit(1).single();
+        await supabase.from('ritual_logs').insert({
+          collaborator_id: dir?.id,
+          ritual_type: 'la_journey_briefing_sexta',
+          reference_date: now.ymd,
+          status: 'sent',
+          sent_at: new Date().toISOString(),
+        });
+      } catch (e) { console.error('[dispatcher] falha briefing sexta LA Journey:', e.message); }
+    }
+  }
+
+  // LA JOURNEY — Quarta 10h: escalation pra direção (>21d sem editar)
+  if (opts.force === 'la_journey_escalation' ||
+      (now.dow === 3 && now.hour === 10 && now.minute === 0)) {
+    const { data: jaRodouEscalation } = await supabase
+      .from('ritual_logs')
+      .select('id')
+      .eq('ritual_type', 'la_journey_escalation')
+      .eq('reference_date', now.ymd)
+      .limit(1);
+    if (opts.force !== 'la_journey_escalation' && jaRodouEscalation && jaRodouEscalation.length > 0) {
+      console.log('[la-journey-dispatch] escalation já rodou hoje, skip');
+    } else {
+      console.log('[dispatcher] rodando LA Journey escalation');
+      try {
+        await runLaJourneyEscalation();
+        const { data: dir } = await supabase
+          .from('collaborators').select('id').eq('role', 'director').eq('is_active', true)
+          .order('full_name').limit(1).single();
+        await supabase.from('ritual_logs').insert({
+          collaborator_id: dir?.id,
+          ritual_type: 'la_journey_escalation',
+          reference_date: now.ymd,
+          status: 'sent',
+          sent_at: new Date().toISOString(),
+        });
+      } catch (e) { console.error('[dispatcher] falha escalation LA Journey:', e.message); }
+    }
+  }
+
+  // LA JOURNEY — Diário 10h: ping primeira ação (mentor há 3d sem abrir)
+  if (opts.force === 'la_journey_primeira_acao' ||
+      (now.hour === 10 && now.minute === 0)) {
+    const { data: jaRodouPrimeiraAcao } = await supabase
+      .from('ritual_logs')
+      .select('id')
+      .eq('ritual_type', 'la_journey_primeira_acao')
+      .eq('reference_date', now.ymd)
+      .limit(1);
+    if (opts.force !== 'la_journey_primeira_acao' && jaRodouPrimeiraAcao && jaRodouPrimeiraAcao.length > 0) {
+      console.log('[la-journey-dispatch] primeira_acao já rodou hoje, skip');
+    } else {
+      console.log('[dispatcher] rodando LA Journey primeira ação');
+      try {
+        await runLaJourneyPrimeiraAcao();
+        const { data: dir } = await supabase
+          .from('collaborators').select('id').eq('role', 'director').eq('is_active', true)
+          .order('full_name').limit(1).single();
+        await supabase.from('ritual_logs').insert({
+          collaborator_id: dir?.id,
+          ritual_type: 'la_journey_primeira_acao',
+          reference_date: now.ymd,
+          status: 'sent',
+          sent_at: new Date().toISOString(),
+        });
+      } catch (e) { console.error('[dispatcher] falha primeira ação LA Journey:', e.message); }
     }
   }
 
