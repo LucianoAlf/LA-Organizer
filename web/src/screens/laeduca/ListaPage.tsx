@@ -47,6 +47,18 @@ export function LaEducaListaPage() {
         title="LA EDUCA"
         subtitle="Acompanhamento de estagiários pedagógicos"
         backTo="/mais"
+        right={
+          isCoordOrDirector ? (
+            <Link
+              to="/la-educa/admin"
+              title="Editar trilha pedagógica"
+              aria-label="Editar trilha"
+              className="inline-flex items-center gap-1 text-body-sm bg-bg-surface border border-border hover:border-tom text-fg-muted hover:text-fg px-sm py-1.5 rounded-md focus-ring"
+            >
+              <Settings size={14} /> <span className="hidden sm:inline">Trilha</span>
+            </Link>
+          ) : undefined
+        }
       />
 
       {isCoordOrDirector && (
@@ -116,13 +128,7 @@ export function LaEducaListaPage() {
       )}
 
       {isCoordOrDirector && collaborator && (
-        <div className="flex items-center justify-between gap-sm flex-wrap">
-          <Link
-            to="/la-educa/admin"
-            className="inline-flex items-center gap-sm bg-bg-surface border border-border hover:border-tom text-fg px-md py-sm rounded-md font-semibold focus-ring"
-          >
-            <Settings size={16} /> Editar trilha
-          </Link>
+        <div className="flex justify-end">
           <Link
             to="/la-educa/novo"
             // bottom respeita safe-area-inset-bottom do iPhone (notch/home-indicator)
