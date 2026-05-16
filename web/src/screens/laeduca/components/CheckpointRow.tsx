@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Anchor, Check, ChevronDown, ChevronUp, GripVertical } from 'lucide-react';
 import type { DraggableAttributes } from '@dnd-kit/core';
 import type { SyntheticListenerMap } from '@dnd-kit/core/dist/hooks/utilities';
-import type { AvaliacaoComCheckpoint } from '../../../lib/laeduca-types';
+import { type AvaliacaoComCheckpoint, resolveCheckpointDisplay } from '../../../lib/laeduca-types';
 import { JustificativaModal } from './JustificativaModal';
 
 interface Props {
@@ -28,7 +28,8 @@ export function CheckpointRow({
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const ancorado = item.ancorado;
-  const notaMin = item.checkpoint.nota_minima ?? 7;
+  const view = resolveCheckpointDisplay(item);
+  const notaMin = view.nota_minima;
 
   async function handleAncorar(justificativa: string | null) {
     setSaving(true);
@@ -45,7 +46,7 @@ export function CheckpointRow({
     else setShowModal(true);
   }
 
-  const labelDisplay = posicaoLabel ?? item.checkpoint.id;
+  const labelDisplay = posicaoLabel ?? view.id;
 
   return (
     <div className="bg-bg-surface rounded-lg border border-border overflow-hidden">
@@ -68,7 +69,15 @@ export function CheckpointRow({
 
         {/* Título */}
         <span className="text-body-sm text-fg font-semibold flex-1 min-w-0 truncate">
-          {item.checkpoint.titulo}
+          {view.titulo}
+          {view.is_custom && (
+            <span
+              className="ml-1 inline-flex items-center text-[10px] font-semibold bg-tom/10 text-tom border border-tom/30 rounded px-1 align-middle"
+              title={item.criador_nome ? `Criado por ${item.criador_nome}` : 'Checkpoint personalizado'}
+            >
+              ✨{item.criador_nome ? ` por ${item.criador_nome}` : ' Personalizado'}
+            </span>
+          )}
         </span>
 
         {/* Status badges */}
@@ -121,8 +130,8 @@ export function CheckpointRow({
       {/* ── Conteúdo expandido ── */}
       {expanded && (
         <div className="px-md pb-md space-y-sm border-t border-border pt-sm">
-          <p className="text-body-sm text-fg-muted">{item.checkpoint.descricao}</p>
-          <p className="text-body-sm text-fg-muted italic">Critério: {item.checkpoint.criterio}</p>
+          <p className="text-body-sm text-fg-muted">{view.descricao}</p>
+          <p className="text-body-sm text-fg-muted italic">Critério: {view.criterio}</p>
 
           <div className="flex items-center gap-md">
             <input

@@ -33,14 +33,18 @@ export async function fetchEstagiarioDetalhe(estagiarioId: string): Promise<Esta
     supabase.from('la_educa_progresso').select('*').eq('id', estagiarioId).single(),
     supabase
       .from('la_educa_avaliacoes')
-      .select('sort_order, *, checkpoint:la_educa_checkpoints(*)')
+      .select('sort_order, *, checkpoint:la_educa_checkpoints(*), criador:collaborators!criado_por_collab(full_name)')
       .eq('estagiario_id', estagiarioId),
   ]);
   if (estRes.error) throw estRes.error;
   if (progRes.error) throw progRes.error;
   if (avalRes.error) throw avalRes.error;
 
-  const avaliacoes = (avalRes.data ?? []) as unknown as AvaliacaoComCheckpoint[];
+  const avaliacoes = (avalRes.data ?? []).map((a: any) => ({
+    ...a,
+    checkpoint: a.checkpoint ?? null,
+    criador_nome: a.criador?.full_name ?? null,
+  })) as AvaliacaoComCheckpoint[];
   const agrupado: Record<string, AvaliacaoComCheckpoint[]> = {};
   for (const a of avaliacoes) {
     if (!agrupado[a.pilar]) agrupado[a.pilar] = [];
@@ -49,8 +53,8 @@ export async function fetchEstagiarioDetalhe(estagiarioId: string): Promise<Esta
   for (const k of Object.keys(agrupado)) {
     agrupado[k].sort(
       (a, b) =>
-        (a.sort_order ?? a.checkpoint.sort_order) -
-        (b.sort_order ?? b.checkpoint.sort_order),
+        (a.sort_order ?? (a.checkpoint?.sort_order ?? 999)) -
+        (b.sort_order ?? (b.checkpoint?.sort_order ?? 999)),
     );
   }
 
@@ -376,4 +380,60 @@ export async function removerInstrutorDoPilar(params: {
     .eq('estagiario_id', params.estagiarioId)
     .eq('pilar_id', params.pilarId);
   if (error) throw error;
+}
+
+// ─── Checkpoints personalizados ───────────────────────────────────────────────
+
+/** Cria avaliação personalizada (sem checkpoint_id) para um estagiário específico. */
+export async function criarAvaliacaoCustom(params: {
+  estagiarioId: string;
+  pilarCodigo: string;
+  titulo: string;
+  descricao: string;
+  criterio: string;
+  notaMinima: number;
+  criadoPorCollab: string;
+  sortOrder?: number;
+}): Promise<Avaliacao> {
+  const { data, error } = await supabase
+    .from('la_educa_avaliacoes')
+    .insert({
+      estagiario_id: params.estagiarioId,
+      pilar: params.pilarCodigo,
+      pilar_codigo_custom: params.pilarCodigo,
+      titulo_custom: params.titulo,
+      descricao_custom: params.descricao,
+      criterio_custom: params.criterio,
+      nota_minima_custom: params.notaMinima,
+      criado_por_collab: params.criadoPorCollab,
+      sort_order: params.sortOrder ?? 999,
+      ancorado: false,
+      nota: 0,
+      // checkpoint_id fica null
+    })
+    .select('*')
+    .single();
+  if (error) throw error;
+  return data as Avaliacao;
+}
+
+/** Deleta uma avaliação (personalizada ou template). RLS garante permissão. */
+export async function deletarAvaliacao(avaliacaoId: string): Promise<void> {
+  const { error } = await supabase.from('la_educa_avaliacoes').delete().eq('id', avaliacaoId);
+  if (error) throw error;
+}
+
+/** Lista todas as avaliações personalizadas (custom) de um estagiário pra auditoria. */
+export async function fetchCustomDoEstagiario(estagiarioId: string): Promise<AvaliacaoComCheckpoint[]> {
+  const { data, error } = await supabase
+    .from('la_educa_avaliacoes')
+    .select('*, criador:collaborators!criado_por_collab(full_name)')
+    .eq('estagiario_id', estagiarioId)
+    .is('checkpoint_id', null);
+  if (error) throw error;
+  return (data ?? []).map((a: any) => ({
+    ...a,
+    checkpoint: null,
+    criador_nome: a.criador?.full_name ?? null,
+  })) as AvaliacaoComCheckpoint[];
 }

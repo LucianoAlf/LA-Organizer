@@ -2,7 +2,7 @@
 // Layout: seletor de trilha no topo → pilares P1-P4 expandidos com checkpoints filtrados
 import { useState, useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Pencil, Trash2, GripVertical } from 'lucide-react';
+import { Plus, Pencil, Trash2, GripVertical, Sparkles } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -37,8 +37,12 @@ import {
   criarTrilha,
   atualizarTrilha,
   deletarTrilha,
+  fetchProgressoEstagiarios,
+  fetchCustomDoEstagiario,
+  deletarAvaliacao,
 } from '../../lib/laeduca';
-import type { Pilar, Checkpoint, Trilha } from '../../lib/laeduca-types';
+import type { Pilar, Checkpoint, Trilha, AvaliacaoComCheckpoint } from '../../lib/laeduca-types';
+import { resolveCheckpointDisplay as resolveDisplay } from '../../lib/laeduca-types';
 
 // ─── Ícones disponíveis para pilares ─────────────────────────────────────────
 const ICONE_OPCOES = [
@@ -708,6 +712,113 @@ function PilarCard({
   );
 }
 
+// ─── Auditoria de checkpoints personalizados ──────────────────────────────────
+function CustomCheckpointsAuditoria() {
+  const qc = useQueryClient();
+
+  // Busca todos os estagiários ativos
+  const { data: estagiarios = [] } = useQuery({
+    queryKey: ['laeduca-progresso'],
+    queryFn: () => fetchProgressoEstagiarios(),
+    staleTime: 60_000,
+  });
+
+  const ativos = estagiarios.filter(e => e.status === 'em_andamento');
+
+  // Busca customs de cada estagiário ativo
+  const { data: customPorEstagiario = {} } = useQuery({
+    queryKey: ['laeduca-custom-all', ativos.map(e => e.id)],
+    queryFn: async () => {
+      const results = await Promise.all(
+        ativos.map(e => fetchCustomDoEstagiario(e.id).then(items => ({ id: e.id, items }))),
+      );
+      const map: Record<string, AvaliacaoComCheckpoint[]> = {};
+      for (const r of results) map[r.id] = r.items;
+      return map;
+    },
+    enabled: ativos.length > 0,
+    staleTime: 30_000,
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (avalId: string) => deletarAvaliacao(avalId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['laeduca-custom-all'] });
+      qc.invalidateQueries({ queryKey: ['laeduca-progresso'] });
+      showToast({ kind: 'success', title: 'Checkpoint personalizado removido.' });
+    },
+    onError: e => showToast({ kind: 'error', title: 'Erro', msg: (e as Error).message }),
+  });
+
+  // Flatten: todos os customs com referência ao estagiário
+  const rows = ativos.flatMap(e =>
+    (customPorEstagiario[e.id] ?? []).map(av => ({ estagiario: e, av })),
+  );
+
+  if (rows.length === 0) return null;
+
+  return (
+    <section className="space-y-md">
+      <div className="flex items-center gap-sm">
+        <Sparkles size={16} className="text-tom" />
+        <h2 className="font-semibold text-fg">Checkpoints personalizados por estagiário</h2>
+        <span className="text-[11px] text-fg-muted bg-bg-surface border border-border rounded px-1.5 py-0.5">
+          {rows.length}
+        </span>
+      </div>
+      <p className="text-body-sm text-fg-muted">
+        Criados por mentores/instrutores para estagiários específicos. Você pode auditar e deletar.
+      </p>
+      <div className="bg-bg-surface rounded-lg border border-border overflow-hidden">
+        <table className="w-full text-body-sm">
+          <thead>
+            <tr className="border-b border-border text-fg-muted text-[11px] uppercase tracking-wide">
+              <th className="text-left px-md py-sm font-semibold">Estagiário</th>
+              <th className="text-left px-md py-sm font-semibold hidden sm:table-cell">Pilar</th>
+              <th className="text-left px-md py-sm font-semibold">Título</th>
+              <th className="text-left px-md py-sm font-semibold hidden md:table-cell">Criado por</th>
+              <th className="px-md py-sm" />
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {rows.map(({ estagiario, av }) => {
+              const view = resolveDisplay(av);
+              return (
+                <tr key={av.id} className="hover:bg-bg-app/50">
+                  <td className="px-md py-sm font-medium text-fg">{estagiario.nome}</td>
+                  <td className="px-md py-sm text-fg-muted hidden sm:table-cell font-mono text-[11px]">
+                    {view.pilar_codigo.toUpperCase()}
+                  </td>
+                  <td className="px-md py-sm text-fg max-w-[200px] truncate" title={view.titulo}>
+                    {view.titulo}
+                  </td>
+                  <td className="px-md py-sm text-fg-muted hidden md:table-cell">
+                    {av.criador_nome ?? '—'}
+                  </td>
+                  <td className="px-md py-sm text-right">
+                    <button
+                      onClick={() => {
+                        if (confirm(`Remover checkpoint "${view.titulo}" de ${estagiario.nome}?`)) {
+                          deleteMut.mutate(av.id);
+                        }
+                      }}
+                      disabled={deleteMut.isPending}
+                      className="p-1 text-fg-muted hover:text-danger focus-ring rounded"
+                      title="Remover checkpoint personalizado"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 // ─── Tela principal ───────────────────────────────────────────────────────────
 export function LaEducaAdminTrilhaPage() {
   const { role } = useAuth();
@@ -892,6 +1003,9 @@ export function LaEducaAdminTrilhaPage() {
           </div>
         </>
       )}
+
+      {/* ── Checkpoints personalizados (auditoria coord/director) ── */}
+      <CustomCheckpointsAuditoria />
 
       {/* ── Modais ── */}
       {modalTrilha.open && (

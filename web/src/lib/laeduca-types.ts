@@ -89,7 +89,7 @@ export interface Checkpoint {
 export interface Avaliacao {
   id: string;
   estagiario_id: string;
-  checkpoint_id: string;
+  checkpoint_id: string | null;       // nullable — NULL = avaliação personalizada
   pilar: string;
   ancorado: boolean;
   nota: number;
@@ -98,6 +98,13 @@ export interface Avaliacao {
   ancorado_em: string | null;
   avaliado_por: string | null;
   sort_order: number | null;
+  // Campos custom (preenchidos quando checkpoint_id IS NULL)
+  titulo_custom: string | null;
+  descricao_custom: string | null;
+  criterio_custom: string | null;
+  nota_minima_custom: number | null;
+  pilar_codigo_custom: string | null;
+  criado_por_collab: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -134,7 +141,40 @@ export interface CadastroEstagiarioForm {
 }
 
 export interface AvaliacaoComCheckpoint extends Avaliacao {
-  checkpoint: Checkpoint;
+  checkpoint: Checkpoint | null;      // null para avaliações personalizadas
+  criador_nome?: string | null;       // nome de quem criou (JOIN collaborators), só custom
+}
+
+/** Resolve campos de exibição independente de ser avaliação template ou custom. */
+export function resolveCheckpointDisplay(a: AvaliacaoComCheckpoint): {
+  id: string;
+  titulo: string;
+  descricao: string;
+  criterio: string;
+  nota_minima: number;
+  pilar_codigo: string;
+  is_custom: boolean;
+} {
+  if (a.checkpoint) {
+    return {
+      id: a.checkpoint.id,
+      titulo: a.checkpoint.titulo,
+      descricao: a.checkpoint.descricao,
+      criterio: a.checkpoint.criterio,
+      nota_minima: a.checkpoint.nota_minima ?? 7,
+      pilar_codigo: a.checkpoint.pilar,
+      is_custom: false,
+    };
+  }
+  return {
+    id: a.id,
+    titulo: a.titulo_custom ?? '(sem título)',
+    descricao: a.descricao_custom ?? '',
+    criterio: a.criterio_custom ?? '',
+    nota_minima: a.nota_minima_custom ?? 7,
+    pilar_codigo: a.pilar_codigo_custom ?? a.pilar,
+    is_custom: true,
+  };
 }
 
 export interface EstagiarioDetalhe {

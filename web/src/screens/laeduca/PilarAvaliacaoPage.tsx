@@ -1,7 +1,7 @@
 // Lista de checkpoints de UM pilar pra avaliação — com DnD por estagiário
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   DndContext,
   closestCenter,
@@ -28,10 +28,130 @@ import { useLaEducaResponsaveis } from '../../hooks/useLaEducaResponsaveis';
 import { PageHeader } from '../../components/PageHeader';
 import { LoadingState } from '../../components/LoadingState';
 import { CheckpointRow } from './components/CheckpointRow';
-import { ancorarAvaliacao } from '../../lib/laeduca';
+import { ancorarAvaliacao, criarAvaliacaoCustom } from '../../lib/laeduca';
 import { supabase } from '../../lib/supabase';
 import { showToast } from '../../components/Toast';
 import type { AvaliacaoComCheckpoint } from '../../lib/laeduca-types';
+
+// ─── Modal de checkpoint personalizado ───────────────────────────────────────
+function ModalCustomCheckpoint({
+  pilarCodigo,
+  estagiarioId,
+  estagiarioNome,
+  criadoPorCollab,
+  onClose,
+  onSuccess,
+}: {
+  pilarCodigo: string;
+  estagiarioId: string;
+  estagiarioNome: string;
+  criadoPorCollab: string;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const [titulo, setTitulo] = useState('');
+  const [descricao, setDescricao] = useState('');
+  const [criterio, setCriterio] = useState('');
+  const [notaMinima, setNotaMinima] = useState(7.0);
+
+  const mut = useMutation({
+    mutationFn: () =>
+      criarAvaliacaoCustom({
+        estagiarioId,
+        pilarCodigo,
+        titulo: titulo.trim(),
+        descricao: descricao.trim(),
+        criterio: criterio.trim(),
+        notaMinima,
+        criadoPorCollab,
+      }),
+    onSuccess: () => {
+      showToast({ kind: 'success', title: 'Checkpoint personalizado criado.' });
+      onSuccess();
+    },
+    onError: (e) => showToast({ kind: 'error', title: 'Erro', msg: (e as Error).message }),
+  });
+
+  const disabled =
+    mut.isPending ||
+    titulo.trim().length < 5 ||
+    descricao.trim().length < 20 ||
+    criterio.trim().length < 20 ||
+    notaMinima < 0 ||
+    notaMinima > 10;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-md overflow-y-auto">
+      <div className="bg-bg-surface rounded-lg border border-border w-full max-w-lg my-md">
+        <div className="flex items-center justify-between p-md border-b border-border">
+          <h2 className="font-semibold text-fg">Checkpoint personalizado — {estagiarioNome}</h2>
+          <button onClick={onClose} className="text-fg-muted hover:text-fg focus-ring rounded px-1">✕</button>
+        </div>
+        <div className="p-md space-y-md">
+          <div>
+            <label className="text-body-sm font-semibold text-fg-muted mb-1 block">Título *</label>
+            <input
+              className="w-full border border-border rounded-lg px-sm py-sm text-fg bg-bg-app focus-ring"
+              placeholder="Ex: Posição de acordes no teclado"
+              value={titulo}
+              onChange={e => setTitulo(e.target.value)}
+            />
+            <p className="text-[11px] text-fg-muted mt-1">Mínimo 5 caracteres</p>
+          </div>
+          <div>
+            <label className="text-body-sm font-semibold text-fg-muted mb-1 block">O que demonstrar *</label>
+            <textarea
+              rows={3}
+              className="w-full border border-border rounded-lg px-sm py-sm text-fg bg-bg-app focus-ring resize-none"
+              placeholder="Descreva o que o estagiário precisa fazer"
+              value={descricao}
+              onChange={e => setDescricao(e.target.value)}
+            />
+            <p className="text-[11px] text-fg-muted mt-1">Mínimo 20 caracteres</p>
+          </div>
+          <div>
+            <label className="text-body-sm font-semibold text-fg-muted mb-1 block">Critério de avaliação *</label>
+            <textarea
+              rows={3}
+              className="w-full border border-border rounded-lg px-sm py-sm text-fg bg-bg-app focus-ring resize-none"
+              placeholder="Ex: Execução fluente com metrônomo 80 BPM"
+              value={criterio}
+              onChange={e => setCriterio(e.target.value)}
+            />
+            <p className="text-[11px] text-fg-muted mt-1">Mínimo 20 caracteres</p>
+          </div>
+          <div>
+            <label className="text-body-sm font-semibold text-fg-muted mb-1 block">Nota mínima para ancorar</label>
+            <input
+              type="number"
+              step={0.5}
+              min={0}
+              max={10}
+              value={notaMinima}
+              onChange={e => setNotaMinima(parseFloat(e.target.value) || 0)}
+              className="w-full border border-border rounded-lg px-sm py-sm text-fg bg-bg-app focus-ring"
+            />
+          </div>
+          <div className="flex justify-end gap-sm pt-sm">
+            <button
+              onClick={onClose}
+              className="px-md py-sm rounded-lg border border-border text-fg-muted hover:text-fg focus-ring"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={() => mut.mutate()}
+              disabled={disabled}
+              className="px-md py-sm rounded-lg bg-tom text-black font-semibold focus-ring disabled:opacity-50"
+            >
+              {mut.isPending ? 'Criando…' : 'Criar checkpoint'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ─── Item arrastável de avaliação ─────────────────────────────────────────────
 function SortableAvaliacaoItem({
@@ -83,6 +203,7 @@ export function LaEducaPilarPage() {
 
   // Estado local dos itens para DnD optimistic
   const [localItems, setLocalItems] = useState<AvaliacaoComCheckpoint[] | null>(null);
+  const [modalCustom, setModalCustom] = useState(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -116,6 +237,9 @@ export function LaEducaPilarPage() {
     role === 'director' ||
     data.estagiario.mentor_id === collaborator?.id ||
     responsavelDoPilar?.instrutor_id === collaborator?.id;
+
+  // Permissão de criar checkpoint personalizado
+  const podePersonalizar = canReorder;
 
   async function handleDragEnd(e: DragEndEvent) {
     const { active, over } = e;
@@ -200,6 +324,30 @@ export function LaEducaPilarPage() {
           </ul>
         </SortableContext>
       </DndContext>
+
+      {podePersonalizar && (
+        <button
+          onClick={() => setModalCustom(true)}
+          className="w-full mt-md py-sm px-md rounded-lg border-2 border-dashed border-border hover:border-tom hover:text-tom text-fg-muted text-body-sm focus-ring"
+        >
+          + Personalizar checkpoint para {data.estagiario.nome}
+        </button>
+      )}
+
+      {modalCustom && collaborator && (
+        <ModalCustomCheckpoint
+          pilarCodigo={pilarObj.codigo}
+          estagiarioId={id!}
+          estagiarioNome={data.estagiario.nome}
+          criadoPorCollab={collaborator.id}
+          onClose={() => setModalCustom(false)}
+          onSuccess={() => {
+            setModalCustom(false);
+            qc.invalidateQueries({ queryKey: ['laeduca-estagiario', id] });
+            qc.invalidateQueries({ queryKey: ['laeduca-progresso'] });
+          }}
+        />
+      )}
     </div>
   );
 }
