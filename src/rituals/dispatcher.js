@@ -1700,30 +1700,60 @@ async function run(opts = {}) {
         .eq('is_active', true)
         .eq('onboarding_completed', true);
       console.log(`[Dream] consolidando memórias para ${(allCollabs || []).length} colaborador(es) ativo(s)+onboarded`);
+      let dreamOk = 0;
       for (const c of (allCollabs || [])) {
-        try { await consolidateMemoryFor(c); }
-        catch (err) { console.error(`[Dream] err for ${c.full_name}:`, err.message); }
+        try {
+          await consolidateMemoryFor(c);
+          dreamOk++;
+          // Log p/ ritual_logs — health check usa pra detectar "Dream não rodou".
+          await logRitualEvent(c.id, 'daily_dream', 'sent', null, now.ymd);
+        }
+        catch (err) {
+          console.error(`[Dream] err for ${c.full_name}:`, err.message);
+          try { await logRitualEvent(c.id, 'daily_dream', 'error', err.message, now.ymd); } catch (_) {}
+        }
       }
+      console.log(`[Dream] concluído: ${dreamOk}/${(allCollabs || []).length} colaboradores`);
     } catch (err) {
       console.error('[Dispatcher] dream-consolidation erro:', err.message);
     }
   }
 
   // Auditoria do sistema (health check) — 5h BRT, depois do Dream das 3h.
-  if (opts.force === 'healthcheck' || timeToSlot(HEALTH_CHECK_TIME) === slotNow) {
+  // Idempotência: cron roda a cada 5min e o slot é 15min, então timeToSlot bate
+  // 3x consecutivos no mesmo slot. Gate por now.minute === 0 garante uma execução
+  // por hora; gate adicional via health_check_runs garante uma por dia.
+  if (opts.force === 'healthcheck' ||
+      (now.minute === 0 && timeToSlot(HEALTH_CHECK_TIME) === slotNow)) {
     try {
-      const { runHealthCheck } = require('./health-check');
-      const result = await runHealthCheck();
-      console.log(`[Dispatcher] health-check: ${result.summary.ok}/${result.summary.total} ok, ${result.summary.warning} warn, ${result.summary.error} err, ${result.summary.fixed} fixed`);
+      const todayStart = new Date(now.ymd + 'T00:00:00-03:00').toISOString();
+      const { data: existing } = await supabase.from('health_check_runs')
+        .select('id').gte('ran_at', todayStart).limit(1);
+      if (opts.force !== 'healthcheck' && existing && existing.length > 0) {
+        console.log('[Dispatcher] health-check: já rodou hoje, skip');
+      } else {
+        const { runHealthCheck } = require('./health-check');
+        const result = await runHealthCheck();
+        console.log(`[Dispatcher] health-check: ${result.summary.ok}/${result.summary.total} ok, ${result.summary.warning} warn, ${result.summary.error} err, ${result.summary.fixed} fixed`);
+      }
     } catch (err) {
       console.error('[Dispatcher] health-check erro:', err.message);
     }
   }
 
   // Relatório do health check pro director (Luciano) — 7h BRT.
-  if (opts.force === 'health_report' || timeToSlot(HEALTH_REPORT_TIME) === slotNow) {
+  // Mesma proteção de idempotência: now.minute === 0 + gate por ritual_logs.
+  if (opts.force === 'health_report' ||
+      (now.minute === 0 && timeToSlot(HEALTH_REPORT_TIME) === slotNow)) {
     try {
-      await sendHealthReport();
+      const { data: sentToday } = await supabase.from('ritual_logs')
+        .select('id').eq('ritual_type', 'health_report').eq('reference_date', now.ymd)
+        .eq('status', 'sent').limit(1);
+      if (opts.force !== 'health_report' && sentToday && sentToday.length > 0) {
+        console.log('[Dispatcher] health-report: já enviado hoje, skip');
+      } else {
+        await sendHealthReport(now.ymd);
+      }
     } catch (err) {
       console.error('[Dispatcher] health-report erro:', err.message);
     }
@@ -2803,7 +2833,7 @@ function formatHealthReport(run) {
   return `${head}\n\n${lines.join('\n')}${okCount}${footer}`;
 }
 
-async function sendHealthReport() {
+async function sendHealthReport(refYmd = null) {
   // 1. Pega último run (últimas 24h)
   const cutoff = new Date(Date.now() - 24 * 3600_000).toISOString();
   let { data: runs, error } = await supabase
@@ -2842,6 +2872,12 @@ async function sendHealthReport() {
   const whatsapp = require('../services/whatsapp');
   await whatsapp.sendMessage(director.phone, msg);
   console.log(`[health-report] enviado pra ${director.full_name} (${String(director.phone).slice(-4)})`);
+  // Idempotência: marca em ritual_logs pra dispatcher não reenviar no próximo tick.
+  try {
+    await logRitualEvent(director.id, 'health_report', 'sent', `summary=${JSON.stringify(run.summary)}`, refYmd);
+  } catch (e) {
+    console.warn('[health-report] log err:', e.message);
+  }
 }
 
 if (require.main === module) {
