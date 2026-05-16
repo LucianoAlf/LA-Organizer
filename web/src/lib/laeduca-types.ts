@@ -2,12 +2,13 @@
 // Tipos para o módulo LA EDUCA — espelham o schema Supabase já criado.
 // Schema confirmado via execute_sql em 2026-05-16.
 
-export type Unidade = 'campo_grande' | 'recreio' | 'barra';
+export type Unidade = 'campo_grande' | 'recreio' | 'barra' | 'all';
 
 export const UNIDADE_LABELS: Record<Unidade, string> = {
   campo_grande: 'Campo Grande',
   recreio: 'Recreio',
   barra: 'Barra da Tijuca',
+  all: 'Todas as unidades',
 };
 
 // Mantido para compatibilidade com estagiários legados (sem trilha_id)

@@ -12,7 +12,7 @@ import { showToast } from '../../components/Toast';
 import type { CadastroEstagiarioForm, Unidade } from '../../lib/laeduca-types';
 import { UNIDADE_LABELS } from '../../lib/laeduca-types';
 
-const UNIDADES: Unidade[] = ['campo_grande', 'recreio', 'barra'];
+const UNIDADES: Unidade[] = ['campo_grande', 'recreio', 'barra', 'all'];
 
 export function LaEducaCadastroPage() {
   const navigate = useNavigate();

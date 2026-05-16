@@ -17,7 +17,8 @@ import type {
 /** Lista todos os estagiários visíveis (RLS filtra). */
 export async function fetchProgressoEstagiarios(unidade?: string): Promise<ProgressoEstagiario[]> {
   let q = supabase.from('la_educa_progresso').select('*').order('nome');
-  if (unidade) q = q.eq('unidade', unidade);
+  // Estagiário com unidade='all' aparece em TODOS os filtros (roda todas as unidades).
+  if (unidade) q = q.in('unidade', [unidade, 'all']);
   const { data, error } = await q;
   if (error) throw error;
   return (data ?? []) as ProgressoEstagiario[];
