@@ -4634,6 +4634,62 @@ async function processMessage(phone, text, raw = {}) {
     return;  // não passar pra IA
   }
 
+  // LA JOURNEY — Comando rápido /journey [curso]
+  if (typeof text === 'string' && /^\s*\/journey\b/i.test(text)) {
+    const arg = text.replace(/^\s*\/journey\s*/i, '').trim().toLowerCase();
+    try {
+      const [{ data: schoolRows }, { data: kidsRows }] = await Promise.all([
+        supabase.rpc('la_journey_lista_progresso', { p_programa_id: 'school' }),
+        supabase.rpc('la_journey_lista_progresso', { p_programa_id: 'kids' }),
+      ]);
+      const allRows = [...(schoolRows || []), ...(kidsRows || [])];
+
+      function journeyEmoji(status, pct) {
+        if (status === 'publicado') return '✅';
+        if (status === 'em_revisao') return '🟡';
+        if (pct > 0) return '⚪';
+        return '⬜';
+      }
+
+      if (arg) {
+        const filtrados = allRows.filter(r =>
+          (r.curso_nome || r.curso_id || '').toLowerCase().includes(arg)
+        );
+        if (filtrados.length === 0) {
+          await whatsapp.sendMessage(phone,
+            `🔍 Nenhum curso encontrado com "${arg}".\nCursos disponíveis: bateria, canto, cordas, teclas, musicalização.`
+          );
+        } else {
+          const linhas = filtrados.map(r => {
+            const emoji = journeyEmoji(r.status, r.pct_publicado || 0);
+            return `${emoji} ${r.curso_nome || r.curso_id} (${r.programa_id}): ${Math.round(r.pct_publicado || 0)}%`;
+          });
+          await whatsapp.sendMessage(phone, `🎓 LA Journey — ${arg}\n${linhas.join('\n')}`);
+        }
+      } else {
+        // Visão geral por programa
+        function resumePrograma(rows, label) {
+          if (!rows || rows.length === 0) return `*${label}:* sem dados`;
+          const publicados = rows.filter(r => r.status === 'publicado').length;
+          const pct = Math.round((publicados / rows.length) * 100);
+          const linhas = rows.map(r => {
+            const emoji = journeyEmoji(r.status, r.pct_publicado || 0);
+            return `  ${emoji} ${r.curso_nome || r.curso_id}: ${Math.round(r.pct_publicado || 0)}%`;
+          });
+          return `*${label}* (${pct}% publicado):\n${linhas.join('\n')}`;
+        }
+        const msg =
+          `🎓 *LA Journey — Status Geral*\n\n` +
+          resumePrograma(schoolRows, 'School') + '\n\n' +
+          resumePrograma(kidsRows, 'Kids');
+        await whatsapp.sendMessage(phone, msg);
+      }
+    } catch (err) {
+      await whatsapp.sendMessage(phone, `Erro ao carregar LA Journey: ${err.message}`);
+    }
+    return; // não passar pra IA
+  }
+
   // Sprint 23.5 — bypass engine-side para dup microconfirm.
   // Intercepta "1/2/3" quando há pending dup event, resolve sem chamar LLM.
   const dupBypass = await tryDupBypass(collab, String(text || ''));

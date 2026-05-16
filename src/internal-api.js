@@ -1131,6 +1131,47 @@ router.get('/internal/la-educa/status', requireInternalSecret, async (_req, res)
   }
 });
 
+// LA JOURNEY: notify-event — enfileira lembretes por destinatário
+router.post('/internal/la-journey/notify-event', requireInternalSecret, async (req, res) => {
+  try {
+    const { conteudoId, tipo, destinatarios } = req.body || {};
+    if (!conteudoId || !tipo || !Array.isArray(destinatarios) || destinatarios.length === 0) {
+      return res.status(400).json({ error: 'conteudoId, tipo e destinatarios (array não-vazio) são obrigatórios' });
+    }
+    const rows = destinatarios.map(dest => ({
+      conteudo_id: conteudoId,
+      tipo,
+      destinatario_id: dest,
+      enviado: false,
+      created_at: new Date().toISOString(),
+    }));
+    const { error } = await supabase.from('la_journey_lembretes_log').insert(rows);
+    if (error) throw error;
+    res.json({ ok: true, enfileirados: rows.length });
+  } catch (err) {
+    console.error('[InternalAPI] la-journey/notify-event err:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// LA JOURNEY: status snapshot — retorna progresso school + kids + pendências
+router.get('/internal/la-journey/status', requireInternalSecret, async (_req, res) => {
+  try {
+    const [{ data: school }, { data: kids }] = await Promise.all([
+      supabase.rpc('la_journey_lista_progresso', { p_programa_id: 'school' }),
+      supabase.rpc('la_journey_lista_progresso', { p_programa_id: 'kids' }),
+    ]);
+    const { data: pendencias } = await supabase
+      .from('la_journey_conteudo_checkpoint')
+      .select('id, programa_id, curso_id, checkpoint_id, updated_at, la_journey_cursos(nome), la_journey_checkpoints(nome)')
+      .eq('status', 'em_revisao');
+    res.json({ school: school || [], kids: kids || [], pendencias: pendencias || [] });
+  } catch (err) {
+    console.error('[InternalAPI] la-journey/status err:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
 module.exports.runChecklistCompletedFlow = runChecklistCompletedFlow;
 module.exports.findUnitManager = findUnitManager;

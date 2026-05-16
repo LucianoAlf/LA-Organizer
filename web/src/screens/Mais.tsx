@@ -88,6 +88,7 @@ export function Mais() {
     enabled: !!collaborator,
   });
   const showLaEduca = role === 'coordinator' || role === 'director' || isMentor;
+  const showLaJourney = role !== 'manager';
 
   const unit = collaborator?.unit;
   const unitLabel = unit && unit !== 'all' ? unit : null;
@@ -103,25 +104,44 @@ export function Mais() {
       <Section title="Para você" items={personal} />
       <Section title="Coordenação" items={coord} />
 
-      {showLaEduca && (
+      {(showLaEduca || showLaJourney) && (
         <section className="space-y-sm">
           <h3 className="text-body-sm text-fg-muted uppercase tracking-wide px-md">Educação</h3>
           <ul className="surface divide-y divide-border">
-            <li>
-              <Link
-                to="/la-educa"
-                className="flex items-center justify-between gap-md p-md hover:bg-bg-elevated focus-ring"
-              >
-                <div className="flex items-center gap-md">
-                  <GraduationCap size={18} className="text-fg-muted" />
-                  <div>
-                    <div className="text-body-md">LA EDUCA</div>
-                    <div className="text-body-sm text-fg-muted">Acompanhamento de estagiários</div>
+            {showLaEduca && (
+              <li>
+                <Link
+                  to="/la-educa"
+                  className="flex items-center justify-between gap-md p-md hover:bg-bg-elevated focus-ring"
+                >
+                  <div className="flex items-center gap-md">
+                    <GraduationCap size={18} className="text-fg-muted" />
+                    <div>
+                      <div className="text-body-md">LA EDUCA</div>
+                      <div className="text-body-sm text-fg-muted">Acompanhamento de estagiários</div>
+                    </div>
                   </div>
-                </div>
-                <ChevronRight size={18} className="text-fg-muted" />
-              </Link>
-            </li>
+                  <ChevronRight size={18} className="text-fg-muted" />
+                </Link>
+              </li>
+            )}
+            {showLaJourney && (
+              <li>
+                <Link
+                  to="/la-journey"
+                  className="flex items-center justify-between gap-md p-md hover:bg-bg-elevated focus-ring"
+                >
+                  <div className="flex items-center gap-md">
+                    <span className="text-body-md">🎵</span>
+                    <div>
+                      <div className="text-body-md">LA Journey</div>
+                      <div className="text-body-sm text-fg-muted">Jornada pedagógica do aluno</div>
+                    </div>
+                  </div>
+                  <ChevronRight size={18} className="text-fg-muted" />
+                </Link>
+              </li>
+            )}
           </ul>
         </section>
       )}

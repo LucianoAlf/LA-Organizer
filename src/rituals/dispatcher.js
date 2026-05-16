@@ -19,6 +19,7 @@ loadDotEnv(path.join(process.cwd(), '.env'));
 const supabase = require('../supabase/client');
 const { sendRitual, sendCoordinatorReport, getDndState, consolidateMemoryFor, decayExpiredMemories, generateWeeklySummaryFor, getRitualIntroDecision } = require('../engine');
 const { runLaEducaLembretes, processarFilaNotificacoes, processarNotificacoesAtribuicao, runLaEducaEscalation, runLaEducaBriefingSexta } = require('./la-educa-lembretes');
+const { runLaJourneyLembreteSemanal, runLaJourneyAlertaAtraso, processarFilaLaJourney } = require('./la-journey-lembretes');
 
 const RITUAL_BY_DIRECTIVE = {
   briefing_pessoal: 'personal_briefing',
@@ -1627,6 +1628,13 @@ async function run(opts = {}) {
     console.error('[la-educa fila-dispatch] erro:', err.message);
   }
 
+  // LA JOURNEY — processa fila de lembretes a cada tick (latência max 5min)
+  try {
+    await processarFilaLaJourney();
+  } catch (err) {
+    console.error('[la-journey fila-dispatch] erro:', err.message);
+  }
+
   for (const c of collabs) {
     const p = c.user_preferences;
     try {
@@ -1834,6 +1842,77 @@ async function run(opts = {}) {
     try {
       await runLaEducaBriefingSexta();
     } catch (err) { console.error('[la-educa briefing-sexta-dispatch] erro:', err.message); }
+  }
+
+  // LA JOURNEY — lembrete semanal (segunda 09:00).
+  const LA_JOURNEY_LEMBRETES_TIME = '09:00';
+  if (opts.force === 'la_journey_lembrete_semanal' ||
+      (now.dow === 1 && now.minute === 0 && timeToSlot(LA_JOURNEY_LEMBRETES_TIME) === slotNow)) {
+    const { data: jaRodouJourney } = await supabase
+      .from('ritual_logs')
+      .select('id')
+      .eq('ritual_type', 'la_journey_lembrete_semanal')
+      .eq('reference_date', now.ymd)
+      .limit(1);
+    if (opts.force !== 'la_journey_lembrete_semanal' && jaRodouJourney && jaRodouJourney.length > 0) {
+      console.log('[la-journey-dispatch] lembrete_semanal já rodou hoje, skip');
+    } else {
+      try {
+        await runLaJourneyLembreteSemanal();
+        const { data: dir } = await supabase
+          .from('collaborators')
+          .select('id')
+          .eq('role', 'director')
+          .eq('is_active', true)
+          .order('full_name')
+          .limit(1)
+          .single();
+        await supabase.from('ritual_logs').insert({
+          collaborator_id: dir?.id,
+          ritual_type: 'la_journey_lembrete_semanal',
+          reference_date: now.ymd,
+          status: 'sent',
+          sent_at: new Date().toISOString(),
+        });
+      } catch (err) {
+        console.error('[la-journey-dispatch] lembrete_semanal erro:', err.message);
+      }
+    }
+  }
+
+  // LA JOURNEY — alerta de atraso (segunda 09:00).
+  if (opts.force === 'la_journey_alerta_atraso' ||
+      (now.dow === 1 && now.minute === 0 && timeToSlot(LA_JOURNEY_LEMBRETES_TIME) === slotNow)) {
+    const { data: jaRodouAlerta } = await supabase
+      .from('ritual_logs')
+      .select('id')
+      .eq('ritual_type', 'la_journey_alerta_atraso')
+      .eq('reference_date', now.ymd)
+      .limit(1);
+    if (opts.force !== 'la_journey_alerta_atraso' && jaRodouAlerta && jaRodouAlerta.length > 0) {
+      console.log('[la-journey-dispatch] alerta_atraso já rodou hoje, skip');
+    } else {
+      try {
+        await runLaJourneyAlertaAtraso();
+        const { data: dir } = await supabase
+          .from('collaborators')
+          .select('id')
+          .eq('role', 'director')
+          .eq('is_active', true)
+          .order('full_name')
+          .limit(1)
+          .single();
+        await supabase.from('ritual_logs').insert({
+          collaborator_id: dir?.id,
+          ritual_type: 'la_journey_alerta_atraso',
+          reference_date: now.ymd,
+          status: 'sent',
+          sent_at: new Date().toISOString(),
+        });
+      } catch (err) {
+        console.error('[la-journey-dispatch] alerta_atraso erro:', err.message);
+      }
+    }
   }
 
   // Cobrança de aprovação de projetos pendentes (2x/dia, 9h e 15h).

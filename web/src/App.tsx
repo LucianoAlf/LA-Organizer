@@ -34,6 +34,9 @@ import { LaEducaCadastroPage } from './screens/laeduca/CadastroEstagiarioPage';
 import { LaEducaEstagiarioDetalhePage } from './screens/laeduca/EstagiarioDetalhePage';
 import { LaEducaPilarPage } from './screens/laeduca/PilarAvaliacaoPage';
 import { LaEducaAdminTrilhaPage } from './screens/laeduca/AdminTrilhaPage';
+import { LaJourneyListaPage } from './screens/lajourney/ListaPage';
+import { LaJourneyAdminPage } from './screens/lajourney/AdminPage';
+import { LaJourneyCheckpointPage } from './screens/lajourney/CheckpointPage';
 
 export default function App() {
   return (
@@ -89,6 +92,15 @@ export default function App() {
           </Route>
           <Route path="la-educa/:id" element={<LaEducaEstagiarioDetalhePage />} />
           <Route path="la-educa/:id/:pilar" element={<LaEducaPilarPage />} />
+
+          {/* LA JOURNEY — qualquer autenticado pode acessar (RLS filtra o que vê).
+              Admin gated com ProtectedRoute pra coord/director.
+              IMPORTANT: la-journey/admin declarado ANTES de la-journey/:checkpointId. */}
+          <Route path="la-journey" element={<LaJourneyListaPage />} />
+          <Route element={<ProtectedRoute requireRoles={['coordinator', 'director']} />}>
+            <Route path="la-journey/admin" element={<LaJourneyAdminPage />} />
+          </Route>
+          <Route path="la-journey/:checkpointId" element={<LaJourneyCheckpointPage />} />
 
           <Route element={<ProtectedRoute requireRoles={['coordinator', 'director']} />}>
             <Route path="time" element={<DashboardTime />} />

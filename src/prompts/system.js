@@ -2666,6 +2666,67 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     }
   }
 
+  // LA JOURNEY — injeta resumo quando a skill está ativa ou a mensagem menciona journey/cursos
+  const lowerMsgJourney = (lastUserMessage || '').toLowerCase();
+  const journeyTriggered =
+    skill?.name === 'la-journey' ||
+    /la[\s-]?journey|lajourney|jornada\s+pedag[oó]gica|jornada/.test(lowerMsgJourney) ||
+    /atrasados\s+journey|pend[eê]ncias\s+journey|publicado\s+journey/.test(lowerMsgJourney) ||
+    /bateria|canto|cordas|teclas|musicaliza[cç][aã]o/.test(lowerMsgJourney) ||
+    /^\s*\/journey\b/.test(lastUserMessage || '');
+
+  if ((collaborator?.role === 'coordinator' || collaborator?.role === 'director') && journeyTriggered) {
+    try {
+      const supabaseClient = require('../supabase/client');
+
+      const [{ data: schoolRows }, { data: kidsRows }] = await Promise.all([
+        supabaseClient.rpc('la_journey_lista_progresso', { p_programa_id: 'school' }),
+        supabaseClient.rpc('la_journey_lista_progresso', { p_programa_id: 'kids' }),
+      ]);
+
+      const { data: pendRaw } = await supabaseClient
+        .from('la_journey_conteudo_checkpoint')
+        .select('id, programa_id, curso_id, checkpoint_id, updated_at, la_journey_cursos(nome), la_journey_checkpoints(nome)')
+        .eq('status', 'em_revisao');
+
+      function emojiStatus(status, pct) {
+        if (status === 'publicado') return '✅';
+        if (status === 'em_revisao') return '🟡';
+        if (pct > 0) return '⚪';
+        return '⬜';
+      }
+
+      function formatPrograma(rows, label) {
+        if (!rows || rows.length === 0) return `${label}: sem dados`;
+        const total = rows.length;
+        const publicados = rows.filter(r => r.status === 'publicado').length;
+        const pctGeral = Math.round((publicados / total) * 100);
+        const cursos = rows.map(r => {
+          const emoji = emojiStatus(r.status, r.pct_publicado || 0);
+          return `  - ${emoji} ${r.curso_nome || r.curso_id}: ${Math.round(r.pct_publicado || 0)}%`;
+        }).join('\n');
+        return `${label}: ${pctGeral}% preenchido\n${cursos}`;
+      }
+
+      const pendencias = (pendRaw || []).map(p => {
+        const cursoNome = p.la_journey_cursos?.nome || p.curso_id;
+        const checkNome = p.la_journey_checkpoints?.nome || p.checkpoint_id;
+        return `  - ${cursoNome}: ${checkNome}`;
+      });
+
+      const blocoJourney =
+        `[LA_JOURNEY_STATUS]\n` +
+        formatPrograma(schoolRows, 'School') + '\n\n' +
+        formatPrograma(kidsRows, 'Kids') + '\n\n' +
+        `Pendências de revisão (${pendencias.length}):\n` +
+        (pendencias.length > 0 ? pendencias.join('\n') : '  (nenhuma)');
+
+      systemPrompt += '\n\n---\n\n' + blocoJourney;
+    } catch (err) {
+      console.error('[system.js] LA_JOURNEY_STATUS erro:', err.message);
+    }
+  }
+
   const totalTasks = (ctx.personalTasks?.length || 0) + (ctx.workTasks?.length || 0);
   const evCount = (ctx.todayEvents || []).length;
   const memCount = (ctx.criticalMemories?.length || 0) + (ctx.preferenceMemories?.length || 0) + (ctx.recentContextMemories?.length || 0);
