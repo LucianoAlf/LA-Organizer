@@ -1,14 +1,28 @@
-﻿import { useState } from 'react';
-import { Anchor, Check } from 'lucide-react';
+import { useState } from 'react';
+import { Anchor, Check, ChevronDown, ChevronUp, GripVertical } from 'lucide-react';
+import type { DraggableAttributes } from '@dnd-kit/core';
+import type { SyntheticListenerMap } from '@dnd-kit/core/dist/hooks/utilities';
 import type { AvaliacaoComCheckpoint } from '../../../lib/laeduca-types';
 import { JustificativaModal } from './JustificativaModal';
 
 interface Props {
   item: AvaliacaoComCheckpoint;
   onAncorar: (params: { nota: number; observacoes: string; justificativaBaixa: string | null }) => Promise<void>;
+  posicaoLabel?: string;       // ex: "p1.3" — label posicional calculado pelo parent
+  canReorder?: boolean;        // se true, exibe drag handle (listeners/attributes vêm do parent via wrapper)
+  dragHandleListeners?: SyntheticListenerMap;
+  dragHandleAttributes?: DraggableAttributes;
 }
 
-export function CheckpointRow({ item, onAncorar }: Props) {
+export function CheckpointRow({
+  item,
+  onAncorar,
+  posicaoLabel,
+  canReorder = false,
+  dragHandleListeners,
+  dragHandleAttributes,
+}: Props) {
+  const [expanded, setExpanded] = useState(false);
   const [nota, setNota] = useState<number>(item.nota || 0);
   const [obs, setObs] = useState<string>(item.observacoes || '');
   const [showModal, setShowModal] = useState(false);
@@ -31,62 +45,95 @@ export function CheckpointRow({ item, onAncorar }: Props) {
     else setShowModal(true);
   }
 
+  const labelDisplay = posicaoLabel ?? item.checkpoint.id;
+
   return (
-    <div className="bg-bg-surface rounded-lg p-md border border-border space-y-sm">
-      <div className="flex items-start justify-between gap-sm">
-        <div className="flex-1">
-          <h3 className="font-semibold text-fg">
-            <span className="text-fg-muted mr-2">{item.checkpoint.id}</span>
-            {item.checkpoint.titulo}
-          </h3>
-          <p className="text-body-sm text-fg-muted mt-1">{item.checkpoint.descricao}</p>
-          <p className="text-body-sm text-fg-muted mt-1 italic">Critério: {item.checkpoint.criterio}</p>
-        </div>
-        <div className="shrink-0 text-right">
+    <div className="bg-bg-surface rounded-lg border border-border overflow-hidden">
+      {/* ── Header sempre visível ── */}
+      <div className="flex items-center gap-sm px-md py-sm">
+        {/* Drag handle */}
+        {canReorder && (
+          <button
+            className="cursor-grab shrink-0 text-fg-muted hover:text-fg focus-ring rounded p-0.5 touch-none"
+            title="Arrastar para reordenar"
+            {...dragHandleListeners}
+            {...dragHandleAttributes}
+          >
+            <GripVertical size={14} />
+          </button>
+        )}
+
+        {/* Label posicional */}
+        <span className="text-[11px] text-fg-muted font-mono shrink-0">[{labelDisplay}]</span>
+
+        {/* Título */}
+        <span className="text-body-sm text-fg font-semibold flex-1 min-w-0 truncate">
+          {item.checkpoint.titulo}
+        </span>
+
+        {/* Status badges */}
+        <div className="flex items-center gap-sm shrink-0">
           {ancorado && (
-            <span className="text-success flex items-center gap-1 text-body-sm font-semibold justify-end">
-              <Check size={16} /> Ancorado
+            <span className="text-success flex items-center gap-1 text-[11px] font-semibold">
+              <Check size={13} /> Ancorado
             </span>
           )}
-          <div className="text-[11px] text-fg-muted mt-1">
-            Mínimo: <strong className="text-tom">{notaMin.toFixed(1)}</strong>
-          </div>
+          <span className="text-[11px] text-fg-muted hidden sm:inline">
+            Mín: <strong className="text-tom">{notaMin.toFixed(1)}</strong>
+          </span>
+          {/* Chevron expand/collapse */}
+          <button
+            onClick={() => setExpanded(e => !e)}
+            className="p-1 text-fg-muted hover:text-fg focus-ring rounded"
+            title={expanded ? 'Colapsar' : 'Expandir'}
+          >
+            {expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+          </button>
         </div>
       </div>
 
-      <div className="flex items-center gap-md">
-        <input
-          type="range"
-          min={0}
-          max={10}
-          step={0.5}
-          value={nota}
-          onChange={e => setNota(parseFloat(e.target.value))}
-          className="flex-1"
-          disabled={saving}
-        />
-        <span className={`min-w-[3rem] text-right font-semibold ${nota >= notaMin ? 'text-success' : 'text-warning'}`}>
-          {nota.toFixed(1)}
-        </span>
-      </div>
+      {/* ── Conteúdo expandido ── */}
+      {expanded && (
+        <div className="px-md pb-md space-y-sm border-t border-border pt-sm">
+          <p className="text-body-sm text-fg-muted">{item.checkpoint.descricao}</p>
+          <p className="text-body-sm text-fg-muted italic">Critério: {item.checkpoint.criterio}</p>
 
-      <textarea
-        className="w-full bg-bg-app text-fg rounded p-sm border border-border focus-ring text-body-sm"
-        placeholder="Observações (opcional)"
-        value={obs}
-        onChange={e => setObs(e.target.value)}
-        rows={2}
-        disabled={saving}
-      />
+          <div className="flex items-center gap-md">
+            <input
+              type="range"
+              min={0}
+              max={10}
+              step={0.5}
+              value={nota}
+              onChange={e => setNota(parseFloat(e.target.value))}
+              className="flex-1"
+              disabled={saving}
+            />
+            <span className={`min-w-[3rem] text-right font-semibold ${nota >= notaMin ? 'text-success' : 'text-warning'}`}>
+              {nota.toFixed(1)}
+            </span>
+          </div>
 
-      <button
-        onClick={tryAncorar}
-        disabled={saving}
-        className="w-full flex items-center justify-center gap-sm px-md py-sm rounded bg-tom text-black font-semibold disabled:opacity-50 focus-ring"
-      >
-        <Anchor size={16} />
-        {ancorado ? 'Atualizar âncora' : 'Ancorar checkpoint'}
-      </button>
+          <textarea
+            className="w-full bg-bg-app text-fg rounded p-sm border border-border focus-ring text-body-sm resize-y"
+            placeholder="Observações (opcional)"
+            value={obs}
+            onChange={e => setObs(e.target.value)}
+            rows={5}
+            style={{ minHeight: '120px' }}
+            disabled={saving}
+          />
+
+          <button
+            onClick={tryAncorar}
+            disabled={saving}
+            className="w-full flex items-center justify-center gap-sm px-md py-sm rounded bg-tom text-black font-semibold disabled:opacity-50 focus-ring"
+          >
+            <Anchor size={16} />
+            {ancorado ? 'Atualizar âncora' : 'Ancorar checkpoint'}
+          </button>
+        </div>
+      )}
 
       {showModal && (
         <JustificativaModal

@@ -97,6 +97,7 @@ export interface Avaliacao {
   justificativa_baixa: string | null;
   ancorado_em: string | null;
   avaliado_por: string | null;
+  sort_order: number | null;
   created_at: string;
   updated_at: string;
 }

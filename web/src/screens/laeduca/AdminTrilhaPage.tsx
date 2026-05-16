@@ -2,7 +2,26 @@
 // Layout: seletor de trilha no topo → pilares P1-P4 expandidos com checkpoints filtrados
 import { useState, useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Pencil, Trash2, GripVertical } from 'lucide-react';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { useAuth } from '../../contexts/AuthContext';
+import { supabase } from '../../lib/supabase';
 import { PageHeader } from '../../components/PageHeader';
 import { LoadingState } from '../../components/LoadingState';
 import { CustomSelect } from '../../components/CustomSelect';
@@ -488,12 +507,81 @@ function ModalCheckpoint({
   );
 }
 
+// ─── Item arrastável de Checkpoint (admin) ────────────────────────────────────
+function SortableCheckpointItem({
+  cp,
+  pilarCodigo,
+  posicao,
+  canReorder,
+  checkpointIcon,
+  onEdit,
+  onDelete,
+  deleteDisabled,
+}: {
+  cp: Checkpoint;
+  pilarCodigo: string;
+  posicao: number;   // 1-indexed
+  canReorder: boolean;
+  checkpointIcon: string;
+  onEdit: () => void;
+  onDelete: () => void;
+  deleteDisabled: boolean;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: cp.id });
+
+  const posicaoLabel = `${pilarCodigo}.${posicao}`;
+
+  return (
+    <li
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.5 : 1,
+      }}
+      className="flex items-center gap-sm px-md py-sm"
+    >
+      {canReorder && (
+        <button
+          {...attributes}
+          {...listeners}
+          className="cursor-grab shrink-0 text-fg-muted hover:text-fg focus-ring rounded p-0.5 touch-none"
+          title="Arrastar para reordenar"
+        >
+          <GripVertical size={14} />
+        </button>
+      )}
+      <span className="text-[11px] text-fg-muted font-mono shrink-0">[{posicaoLabel}]</span>
+      <span className="text-sm shrink-0">{checkpointIcon}</span>
+      <span className="text-body-sm text-fg flex-1 min-w-0">{cp.titulo}</span>
+      <div className="flex items-center gap-1 shrink-0">
+        <button
+          onClick={onEdit}
+          className="p-1 text-fg-muted hover:text-tom focus-ring rounded"
+          title="Editar checkpoint"
+        >
+          <Pencil size={13} />
+        </button>
+        <button
+          onClick={onDelete}
+          disabled={deleteDisabled}
+          className="p-1 text-fg-muted hover:text-danger focus-ring rounded"
+          title="Remover checkpoint"
+        >
+          <Trash2 size={13} />
+        </button>
+      </div>
+    </li>
+  );
+}
+
 // ─── Card de Pilar ────────────────────────────────────────────────────────────
 function PilarCard({
   pilar,
   checkpoints,
   trilhaSelecionada,
   isUniversal,
+  canReorder,
   onEditPilar,
   onAddCheckpoint,
   onEditCheckpoint,
@@ -502,6 +590,7 @@ function PilarCard({
   checkpoints: Checkpoint[];
   trilhaSelecionada: Trilha;
   isUniversal: boolean;
+  canReorder: boolean;
   onEditPilar: (p: Pilar) => void;
   onAddCheckpoint: (p: Pilar) => void;
   onEditCheckpoint: (cp: Checkpoint, p: Pilar) => void;
@@ -524,6 +613,30 @@ function PilarCard({
     if (confirm(msg)) {
       deleteCpMut.mutate(cp.id);
     }
+  }
+
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  async function handleDragEnd(e: DragEndEvent) {
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+
+    const oldIdx = checkpoints.findIndex(c => c.id === active.id);
+    const newIdx = checkpoints.findIndex(c => c.id === over.id);
+    const reordered = arrayMove(checkpoints, oldIdx, newIdx);
+
+    // Optimistic: invalida pra refetch
+    const updates = reordered.map((cp, idx) => ({ id: cp.id, sort_order: idx + 1 }));
+    const { error } = await supabase
+      .from('la_educa_checkpoints')
+      .upsert(updates, { onConflict: 'id' });
+    if (error) {
+      showToast({ kind: 'error', title: 'Erro ao reordenar', msg: error.message });
+    }
+    qc.invalidateQueries({ queryKey: ['laeduca-checkpoints'] });
   }
 
   const checkpointIcon = isUniversal ? '🌐' : (trilhaSelecionada.icone ?? '🎵');
@@ -557,37 +670,30 @@ function PilarCard({
         </button>
       </div>
 
-      {/* Lista de checkpoints */}
+      {/* Lista de checkpoints com DnD */}
       <div>
         {checkpoints.length === 0 ? (
           <p className="px-md py-sm text-body-sm text-fg-muted italic">Nenhum checkpoint ainda.</p>
         ) : (
-          <ul className="divide-y divide-border">
-            {checkpoints.map(cp => (
-              <li key={cp.id} className="flex items-center gap-sm px-md py-sm">
-                <span className="text-[11px] text-fg-muted font-mono shrink-0">[{cp.id}]</span>
-                <span className="text-sm shrink-0">{checkpointIcon}</span>
-                <span className="text-body-sm text-fg flex-1 min-w-0">{cp.titulo}</span>
-                <div className="flex items-center gap-1 shrink-0">
-                  <button
-                    onClick={() => onEditCheckpoint(cp, pilar)}
-                    className="p-1 text-fg-muted hover:text-tom focus-ring rounded"
-                    title="Editar checkpoint"
-                  >
-                    <Pencil size={13} />
-                  </button>
-                  <button
-                    onClick={() => handleDeleteCp(cp)}
-                    disabled={deleteCpMut.isPending}
-                    className="p-1 text-fg-muted hover:text-danger focus-ring rounded"
-                    title="Remover checkpoint"
-                  >
-                    <Trash2 size={13} />
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <SortableContext items={checkpoints.map(c => c.id)} strategy={verticalListSortingStrategy}>
+              <ul className="divide-y divide-border">
+                {checkpoints.map((cp, idx) => (
+                  <SortableCheckpointItem
+                    key={cp.id}
+                    cp={cp}
+                    pilarCodigo={pilar.codigo}
+                    posicao={idx + 1}
+                    canReorder={canReorder}
+                    checkpointIcon={checkpointIcon}
+                    onEdit={() => onEditCheckpoint(cp, pilar)}
+                    onDelete={() => handleDeleteCp(cp)}
+                    deleteDisabled={deleteCpMut.isPending}
+                  />
+                ))}
+              </ul>
+            </SortableContext>
+          </DndContext>
         )}
         <div className="px-md py-sm border-t border-border">
           <button
@@ -604,6 +710,9 @@ function PilarCard({
 
 // ─── Tela principal ───────────────────────────────────────────────────────────
 export function LaEducaAdminTrilhaPage() {
+  const { role } = useAuth();
+  const canReorder = role === 'coordinator' || role === 'director';
+
   const { data: pilares, isLoading: pilaresLoading } = useQuery({
     queryKey: ['laeduca-pilares'],
     queryFn: fetchPilares,
@@ -773,6 +882,7 @@ export function LaEducaAdminTrilhaPage() {
                   checkpoints={cps}
                   trilhaSelecionada={trilhaSelecionada}
                   isUniversal={isUniversal}
+                  canReorder={canReorder}
                   onEditPilar={p => setModalPilar({ open: true, pilar: p })}
                   onAddCheckpoint={p => setModalCp({ open: true, checkpoint: null, pilar: p })}
                   onEditCheckpoint={(cp, p) => setModalCp({ open: true, checkpoint: cp, pilar: p })}

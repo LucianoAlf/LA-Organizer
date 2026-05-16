@@ -33,7 +33,7 @@ export async function fetchEstagiarioDetalhe(estagiarioId: string): Promise<Esta
     supabase.from('la_educa_progresso').select('*').eq('id', estagiarioId).single(),
     supabase
       .from('la_educa_avaliacoes')
-      .select('*, checkpoint:la_educa_checkpoints(*)')
+      .select('sort_order, *, checkpoint:la_educa_checkpoints(*)')
       .eq('estagiario_id', estagiarioId),
   ]);
   if (estRes.error) throw estRes.error;
@@ -47,7 +47,11 @@ export async function fetchEstagiarioDetalhe(estagiarioId: string): Promise<Esta
     agrupado[a.pilar].push(a);
   }
   for (const k of Object.keys(agrupado)) {
-    agrupado[k].sort((a, b) => a.checkpoint.sort_order - b.checkpoint.sort_order);
+    agrupado[k].sort(
+      (a, b) =>
+        (a.sort_order ?? a.checkpoint.sort_order) -
+        (b.sort_order ?? b.checkpoint.sort_order),
+    );
   }
 
   return {
