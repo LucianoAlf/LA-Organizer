@@ -5625,6 +5625,19 @@ async function processMessage(phone, text, raw = {}) {
             console.log('[InventoryAction] normalizado flat→params:', JSON.stringify(payload));
           }
         }
+        // Normaliza aliases de action que o LLM costuma inventar
+        const actionAliases = {
+          create: 'add_item', criar: 'add_item', cadastrar: 'add_item', adicionar: 'add_item', novo: 'add_item', add: 'add_item',
+          mover: 'move_item', move: 'move_item', transferir: 'move_item',
+          manutencao: 'maintenance', manutenção: 'maintenance', reparar: 'maintenance', consertar: 'maintenance',
+          loja: 'shop_movement', estoque: 'shop_movement',
+          ver: 'query_room', consultar: 'query_room', listar: 'query_rooms',
+        };
+        if (payload.action && actionAliases[String(payload.action).toLowerCase()]) {
+          const novo = actionAliases[String(payload.action).toLowerCase()];
+          console.log(`[InventoryAction] alias action: ${payload.action} → ${novo}`);
+          payload.action = novo;
+        }
         const baseCheck = inventarioValidators.validateAction(payload);
         if (!baseCheck.ok) {
           console.warn('[InventoryAction] validateAction failed:', baseCheck.errors);
