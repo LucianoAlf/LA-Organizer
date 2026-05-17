@@ -2796,19 +2796,23 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   // Palavras de item de inventário — se o user fala disso sem mencionar sala, herdar sala da conversa recente
   const itemKeywordsRe = /\b(ar[\s-]condicionad[oa]|piano|teclado|microfone|microphone|caixa de som|amplificador|cabo|cadeira|mesa|espelho|quadro|projetor|tv|televisão|televisao|c[âa]mera|bateria|guitarra|violão|violao|baixo|computador|notebook|impressora|fornecedor|valor|patrim[ôo]nio|n[°º] s[ée]rie|n[úu]mero de s[ée]rie|nota fiscal|condi[çc][ãa]o do|manuten[çc][ãa]o do|condi[çc][ãa]o desse|condicao do|condicao desse)\b/i;
   const mencionaItemInv = itemKeywordsRe.test(lowerMsg);
-  // Se não tem sala explícita mas menciona item, procura sala recente no histórico (últimas 6 msgs)
+  // Se não tem sala explícita mas menciona item, procura sala recente no histórico (todas as msgs disponíveis)
   if (!querSalaMatch && mencionaItemInv && Array.isArray(hist)) {
-    const recentes = hist.slice(-6);
+    const recentes = hist.slice(-20);
+    let achouEmHist = null;
     for (let i = recentes.length - 1; i >= 0; i--) {
       const m = recentes[i];
-      const txt = (m && (m.content || m.body || m.text || '')) + '';
-      // 1) usuário falou "sala X" antes
-      const mu = /\bsala\s+([a-zA-ZáàâãéêíóôõúçÁÀÂÃÉÊÍÓÔÕÚÇ0-9]+)/i.exec(txt);
-      if (mu) { querSalaMatch = mu; break; }
+      const txt = (m && (m.content || m.body || m.text || m.message || '')) + '';
+      if (!txt) continue;
+      // 1) "Sala X" / "sala X" em qualquer msg (user ou tom)
+      const mu = /\b[Ss]ala\s+([A-Za-zÀ-ÿ0-9]+)/.exec(txt);
+      if (mu) { achouEmHist = mu; break; }
       // 2) assistente já injetou "[SALA_DETALHE: X ..."
       const ma = /\[SALA_DETALHE:\s*([^\s—\-\]]+)/i.exec(txt);
-      if (ma) { querSalaMatch = [ma[0], ma[1]]; break; }
+      if (ma) { achouEmHist = [ma[0], ma[1]]; break; }
     }
+    if (achouEmHist) querSalaMatch = achouEmHist;
+    console.log(`[InvCtx] item=${mencionaItemInv} hist=${hist.length} salaInferida=${querSalaMatch ? querSalaMatch[1] : 'NENHUMA'}`);
   }
   const querConsultaSala = !!(querSalaMatch && (verbosConsultaSala.test(lowerMsg) || mencionaItemInv));
   const matchInv = cmdsInv || matchInvForte || (matchUnidadeInv && matchVerboInv) || querConsultaSala || mencionaItemInv;
