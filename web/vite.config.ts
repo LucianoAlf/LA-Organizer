@@ -1,66 +1,120 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react-swc';
 import { VitePWA } from 'vite-plugin-pwa';
+import type { IncomingMessage, ServerResponse } from 'http';
 
-export default defineConfig({
-  plugins: [
-    react(),
-    VitePWA({
-      registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg', 'icon-192.png', 'icon-512.png', 'og-image.png'],
-      manifest: {
-        name: 'LA Organizer',
-        short_name: 'LA Organizer',
-        description: 'Seu assistente operacional',
-        theme_color: '#0A0A0A',
-        background_color: '#0A0A0A',
-        display: 'standalone',
-        orientation: 'portrait',
-        id: '/',
-        start_url: '/',
-        scope: '/',
-        icons: [
-          { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
-          { src: '/icon-512.png', sizes: '512x512', type: 'image/png' },
-          { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
-        ],
-      },
-      workbox: {
-        cleanupOutdatedCaches: true,
-        // Sprint 11.2 hotfix — força novo SW a ativar imediatamente sem aguardar
-        // todas as abas fecharem. Casado com PWAUpdatePrompt que avisa o user e
-        // chama updateServiceWorker(true) pra recarregar com bundle novo.
-        // Sem isso, o user fica em bundle ANTIGO mesmo após `autoUpdate` instalar.
-        skipWaiting: true,
-        // clientsClaim: força SW novo a assumir TODAS as abas abertas imediatamente
-        // após ativar — sem isso o browser continua servindo o bundle anterior
-        // mesmo com skipWaiting. Par obrigatório do skipWaiting.
-        clientsClaim: true,
-        runtimeCaching: [
-          {
-            urlPattern: /^https:\/\/fonts\.(?:googleapis|gstatic)\.com\/.*/i,
-            handler: 'CacheFirst',
-            options: {
-              cacheName: 'gfonts',
-              expiration: { maxEntries: 16, maxAgeSeconds: 60 * 60 * 24 * 365 },
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '');
+  const TOM_API_BASE = env.TOM_API_BASE || '';
+  const TOM_INTERNAL_SECRET = env.TOM_INTERNAL_SECRET || '';
+
+  // Custom plugin: middleware que emula a serverless function /api/lareport/* localmente.
+  // Em vez de usar proxy config do vite (que não tava interceptando), faço HTTP request
+  // direto pra TOM e devolvo a resposta. Equivalente ao web/api/lareport/[...path].ts.
+  // Debug trace: confirma se a callback do defineConfig roda
+  try {
+    require('fs').writeFileSync('/tmp/vite-cfg-trace.log',
+      `${new Date().toISOString()} mode=${mode} TOM_API_BASE=${TOM_API_BASE ? 'SET' : 'EMPTY'} SECRET=${TOM_INTERNAL_SECRET ? 'SET' : 'EMPTY'}\n`,
+      { flag: 'a' });
+  } catch (e) { /* ignore */ }
+  const lareportProxyPlugin = () => ({
+    name: 'lareport-local-proxy',
+    configureServer(server: { middlewares: { use: (handler: (req: IncomingMessage, res: ServerResponse, next: () => void) => void) => void } }) {
+      if (!TOM_API_BASE || !TOM_INTERNAL_SECRET) return;
+      server.middlewares.use(async (req, res, next) => {
+        if (!req.url || !req.url.startsWith('/api/lareport')) return next();
+        const sub = req.url.replace(/^\/api\/lareport\/?/, '');
+        const url = `${TOM_API_BASE}/internal/lareport/${sub}`;
+        try {
+          const upstream = await fetch(url, {
+            method: req.method || 'GET',
+            headers: { 'x-internal-secret': TOM_INTERNAL_SECRET },
+          });
+          const text = await upstream.text();
+          res.statusCode = upstream.status;
+          res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/json');
+          res.end(text);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          res.statusCode = 502;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ ok: false, error: 'upstream_failed', detail: msg }));
+        }
+      });
+    },
+    configurePreviewServer(server: { middlewares: { use: (handler: (req: IncomingMessage, res: ServerResponse, next: () => void) => void) => void } }) {
+      if (!TOM_API_BASE || !TOM_INTERNAL_SECRET) return;
+      server.middlewares.use(async (req, res, next) => {
+        if (!req.url || !req.url.startsWith('/api/lareport')) return next();
+        const sub = req.url.replace(/^\/api\/lareport\/?/, '');
+        const url = `${TOM_API_BASE}/internal/lareport/${sub}`;
+        try {
+          const upstream = await fetch(url, {
+            method: req.method || 'GET',
+            headers: { 'x-internal-secret': TOM_INTERNAL_SECRET },
+          });
+          const text = await upstream.text();
+          res.statusCode = upstream.status;
+          res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/json');
+          res.end(text);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          res.statusCode = 502;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ ok: false, error: 'upstream_failed', detail: msg }));
+        }
+      });
+    },
+  });
+
+  return {
+    plugins: [
+      react(),
+      lareportProxyPlugin(),
+      VitePWA({
+        registerType: 'autoUpdate',
+        includeAssets: ['favicon.svg', 'icon-192.png', 'icon-512.png', 'og-image.png'],
+        manifest: {
+          name: 'LA Organizer',
+          short_name: 'LA Organizer',
+          description: 'Seu assistente operacional',
+          theme_color: '#0A0A0A',
+          background_color: '#0A0A0A',
+          display: 'standalone',
+          orientation: 'portrait',
+          id: '/',
+          start_url: '/',
+          scope: '/',
+          icons: [
+            { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+            { src: '/icon-512.png', sizes: '512x512', type: 'image/png' },
+            { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+          ],
+        },
+        workbox: {
+          cleanupOutdatedCaches: true,
+          skipWaiting: true,
+          clientsClaim: true,
+          runtimeCaching: [
+            {
+              urlPattern: /^https:\/\/fonts\.(?:googleapis|gstatic)\.com\/.*/i,
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'gfonts',
+                expiration: { maxEntries: 16, maxAgeSeconds: 60 * 60 * 24 * 365 },
+              },
             },
-          },
-        ],
-      },
-      devOptions: { enabled: false },
-    }),
-  ],
-  server: { port: 5173, host: true },
-  // `vite preview` blocks unknown hosts by default. Whitelist:
-  //  - `.vercel.app` for production deploys (la-organizer.vercel.app + previews)
-  //  - `localhost` for local preview / IDE workflows
-  // Cloudflare quick tunnel (`.trycloudflare.com`) usado nas Sprints 2–6 foi
-  // descontinuado quando a Vercel virou hosting oficial (Sprint 6 hot-fix +
-  // produção em 28/04/2026).
-  preview: {
-    port: 4173,
-    host: true,
-    allowedHosts: ['.vercel.app', 'localhost'],
-  },
-  build: { sourcemap: false, target: 'es2020' },
+          ],
+        },
+        devOptions: { enabled: false },
+      }),
+    ],
+    server: { port: 5173, host: true },
+    preview: {
+      port: 4173,
+      host: true,
+      allowedHosts: ['.vercel.app', 'localhost'],
+    },
+    build: { sourcemap: false, target: 'es2020' },
+  };
 });
