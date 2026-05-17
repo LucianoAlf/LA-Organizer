@@ -111,16 +111,21 @@ if (!access.allowed) {
 }
 
 let query = laReportClient.from('inventario').select('*').eq('sala_id', salaId);
-if (access.unitFilter) query = query.eq('unidade_id', access.unitFilter);
-if (access.scopeFilter === 'sua_sala' && collaborator.sala_id) {
-  query = query.eq('sala_id', collaborator.sala_id);
+if (access.unitFilter) {
+  // unitFilter pode ser uuid (1 unidade) ou uuid[] (multi-unidade, ex: professor)
+  if (Array.isArray(access.unitFilter)) {
+    query = query.in('unidade_id', access.unitFilter);
+  } else {
+    query = query.eq('unidade_id', access.unitFilter);
+  }
 }
 ```
 
 **Filtros aplicados automaticamente:**
 - Manager Barra → `WHERE unidade_id = barra_id`
 - Farmer CG → `WHERE unidade_id = cg_id`
-- Professor → `WHERE sala_id = sua_sala_id`
+- Professor 1 unidade → `WHERE unidade_id = sua_unidade`
+- Professor multi-unidade → `WHERE unidade_id IN (suas_unidades)`
 - Rafinha (ops_tecnicas, unit=all) → sem filtro
 
 ### Escritas (PWA)
@@ -332,7 +337,8 @@ Reusamos a tabela aprovada na `matriz-governanca-la-report.md`:
 | Jereh (gerente CG) | manager | — | CG | ✔ 🔒u | ✘ | ✔ 🔒u | ✔ 🔒u |
 | Krissya (gerente Barra) | manager | — | Barra | ✔ 🔒u | ✘ | ✔ 🔒u | ✔ 🔒u |
 | Farmer Barra | collaborator | farmer | Barra | ✔ 🔒u | ✘ | ✔ 🔒u | ✔ 🔒u |
-| Professor X | collaborator | professor | Barra | ✔ 🔒sala | ✘ | ✘ | ✘ |
+| Professor (1 unid) | collaborator | professor | Barra | ✔ 🔒u (Barra) | ✘ | ✘ | ✘ (só manutenção) |
+| Professor (multi) | collaborator | professor | all | ✔ (suas unid) | ✘ | ✘ | ✘ (só manutenção) |
 | Pedagógico (Dai) | collaborator | — (pedagogical_role=true) | all | ✔ | ✘ | ✘ | ✘ |
 | Hugo (tech) | collaborator | tech | all | ✔ | ✘ | ✘ | ✔ |
 | Marketing (Yuri) | collaborator | marketing | all | ✘ | ✘ | ✘ | ✘ |
@@ -438,11 +444,13 @@ Fixture com 12 collaborators (Luciano, Anne, Rafinha, Jereh, Krissya, Clayton, J
 |---|---|---|---|
 | Inventário liberado all | Rafinha | abrir SalaPage Hendrix Barra | Lista equipamentos |
 | Inventário filtrado | Farmer CG | abrir ListaPage | Vê só CG, não Barra/Recreio |
-| Inventário sala | Professor X | abrir ListaPage | Vê só sua sala |
+| Inventário prof (1 unid) | Professor Barra | abrir ListaPage | Vê todas salas da Barra |
+| Inventário prof (multi) | Professor Barra+CG | abrir ListaPage | Vê salas da Barra e CG |
 | Valor patrim. bloqueado | Manager Barra | abrir ItemSheet | Sem seção Financeiro |
 | Lojinha bloqueada | Juliana coord | abrir ListaPage | Sem card Lojinha |
 | Edit unit mismatch | Manager Barra | tentar editar item CG via URL direta | 403 |
-| Manutenção liberada | Professor X | abrir ItemAcoesMenu na sua sala | Só vê "Manutenção", sem "Editar/Mover/Baixa" |
+| Manutenção liberada | Professor | abrir ItemAcoesMenu em qualquer item | Só vê "🔧 Registrar manutenção", sem "Editar/Mover/Baixa" |
+| Tentativa criar item | Professor | tentar acionar FAB | FAB não renderiza |
 
 ---
 
@@ -452,34 +460,40 @@ Fixture com 12 collaborators (Luciano, Anne, Rafinha, Jereh, Krissya, Clayton, J
 2. **Limite tamanho foto:** 5MB ✅
 3. **Permissões por role:**
    - Roles autorizadas pra **ler/escrever** inventário: as que `checkAccess('inventario').allowed === true`
-   - **Professor:** pode VER (🔒sala) + REGISTRAR MANUTENÇÃO; NÃO pode criar item, mover entre salas, dar baixa
+   - **Professor:** pode VER inventário de QUALQUER sala (precisa saber o que tem antes de dar aula) + REGISTRAR MANUTENÇÃO. NÃO cria, NÃO move, NÃO dá baixa. Sem conceito de "sala fixa".
+   - **Filtro de unidade pra professor:** se trabalha em 1 unidade só, `unitFilter` = essa unidade. Se trabalha em 2+, `unitFilter = null` (vê todas as suas).
    - **ItemAcoesMenu** condicional: pra professor mostra só "🔧 Registrar manutenção" + "❌ Cancelar"
 4. **Schema do `collaborators`:**
    - `pedagogical_role` ✅ existe (valores: `lead`, `assistant`, `mentor`)
    - `function_role` ✅ existe (nullable, criado Sprint 22.51)
-   - `sala_id` ❌ NÃO existe (decisão: resolver via `turmas_explicitas` no LA Report)
+   - **NÃO precisa de `sala_id`** — professor não tem sala fixa.
    - **Migration pendente:** `_remote/docs/migrations/2026-05-17-collaborators-function-roles.sql` popula `function_role` pra Rafinha (ops_tecnicas), Hugo (tech), Yuri (marketing). Aplicar antes da implementação.
 
-### Resolução de `sala_id` pro filtro 🔒sala do professor
+### Resolução de `unitFilter` para professor
 
-Sem coluna nova no schema. Quando `checkAccess(prof, 'inventario')` retorna `scopeFilter: 'sua_sala'`, o hook/serverless faz:
+Sem coluna nova. Quando `checkAccess(prof, 'inventario')` é chamado, o helper resolve unidades onde o professor dá aula:
 
 ```ts
-// Helper: salasDoProfessor(collab) — retorna int[]
-async function salasDoProfessor(collab) {
+// Helper: unidadesDoProfessor(collab) — retorna uuid[]
+async function unidadesDoProfessor(collab) {
   const { data } = await laReportClient
-    .from('turmas_explicitas')  // ou aulas_emusys se mais atual
-    .select('sala_id')
-    .eq('professor_id', collab.la_report_professor_id);  // ver §Mapping
-  return [...new Set(data.map(t => t.sala_id))];
+    .from('professores_unidades')  // ou turmas_explicitas join salas
+    .select('unidade_id')
+    .eq('professor_id', collab.la_report_professor_id);
+  return [...new Set(data.map(r => r.unidade_id))];
 }
 
 // Aplica na query
-const salas = await salasDoProfessor(collab);
-query = query.in('sala_id', salas);
+const unidades = await unidadesDoProfessor(collab);
+if (unidades.length === 1) {
+  query = query.eq('unidade_id', unidades[0]);  // unitFilter
+} else if (unidades.length > 1) {
+  query = query.in('unidade_id', unidades);     // multi-unit, sem filtro único
+}
+// Se 0 unidades, professor não dá aula — bloqueia
 ```
 
-**Mapping professor LA Organizer ↔ LA Report:** `collaborators.la_report_professor_id` (uuid, nullable). Se não existe, adicionar nessa mesma migration (TBD: confirmar se a coluna já existe). Por ora, plano assume que existe ou que pode ser resolvido por `full_name` match (fallback fuzzy).
+**Mapping professor LA Organizer ↔ LA Report:** `collaborators.la_report_professor_id` (uuid, nullable). Se a coluna não existe, fallback fuzzy por `full_name` na primeira task. Confirmar antes da implementação se já existe.
 
 ---
 
