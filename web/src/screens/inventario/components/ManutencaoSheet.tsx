@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import type { ReportInventarioItem } from '../../../lib/lareport-types';
+import { CustomSelect } from '../../../components/CustomSelect';
+import { DateInput } from '../../../components/DateInput';
 
 interface Props {
   open: boolean; onClose: () => void;
@@ -16,15 +18,21 @@ export function ManutencaoSheet({ open, onClose, item, onSubmit }: Props) {
     <div className="fixed inset-0 bg-black/60 z-50 flex items-end" onClick={onClose}>
       <div className="bg-bg-surface w-full rounded-t-xl p-md space-y-3" onClick={e => e.stopPropagation()}>
         <h3 className="font-bold">Manutenção: {item.nome}</h3>
-        <select className="w-full bg-bg-app border border-border rounded-md p-2" value={form.tipo} onChange={e => setForm({ ...form, tipo: e.target.value })}>
-          <option value="preventiva">Preventiva</option><option value="corretiva">Corretiva</option><option value="revisao">Revisão</option>
-        </select>
+        <CustomSelect
+          value={form.tipo}
+          onChange={(v) => setForm({ ...form, tipo: v })}
+          options={[
+            { value: 'preventiva', label: 'Preventiva' },
+            { value: 'corretiva', label: 'Corretiva' },
+            { value: 'revisao', label: 'Revisão' },
+          ]}
+        />
         <textarea rows={3} className="w-full bg-bg-app border border-border rounded-md p-2" placeholder="Descrição *" value={form.descricao} onChange={e => setForm({ ...form, descricao: e.target.value })} />
         <div className="grid grid-cols-2 gap-2">
-          <input type="date" className="bg-bg-app border border-border rounded-md p-2" value={form.data_manutencao} onChange={e => setForm({ ...form, data_manutencao: e.target.value })} />
+          <DateInput value={form.data_manutencao} onChange={(v) => setForm({ ...form, data_manutencao: v })} />
           <input type="number" step="0.01" className="bg-bg-app border border-border rounded-md p-2" placeholder="Custo R$" value={form.custo} onChange={e => setForm({ ...form, custo: e.target.value })} />
           <input className="bg-bg-app border border-border rounded-md p-2" placeholder="Responsável" value={form.responsavel} onChange={e => setForm({ ...form, responsavel: e.target.value })} />
-          <input type="date" className="bg-bg-app border border-border rounded-md p-2" placeholder="Próx revisão" value={form.data_proxima_revisao} onChange={e => setForm({ ...form, data_proxima_revisao: e.target.value })} />
+          <DateInput value={form.data_proxima_revisao} onChange={(v) => setForm({ ...form, data_proxima_revisao: v })} />
         </div>
         <button disabled={!form.descricao || saving} onClick={async () => {
           setSaving(true);

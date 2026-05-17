@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { useAccess } from '../../../hooks/useAccess';
 import { CATEGORIA_INVENTARIO_META, type ReportInventarioItem } from '../../../lib/lareport-types';
 import { FotoUploader } from './FotoUploader';
+import { CustomSelect } from '../../../components/CustomSelect';
+import { DateInput } from '../../../components/DateInput';
 
 interface Props {
   open: boolean;
@@ -57,10 +59,15 @@ export function ItemSheet({ open, onClose, onSubmit, item, defaultSalaId, defaul
         <section className="bg-bg-surface rounded-lg p-md space-y-2 mb-md">
           <div className="text-[10px] uppercase tracking-wide text-fg-muted font-semibold">Identificação</div>
           <input className="w-full bg-bg-app border border-border rounded-md p-2" placeholder="Nome *" value={form.nome} onChange={e => setForm({ ...form, nome: e.target.value })} />
-          <select className="w-full bg-bg-app border border-border rounded-md p-2" value={form.categoria} onChange={e => setForm({ ...form, categoria: e.target.value })}>
-            <option value="">Categoria *</option>
-            {CATEGORIAS.map(c => <option key={c} value={c}>{CATEGORIA_INVENTARIO_META[c].emoji} {CATEGORIA_INVENTARIO_META[c].label}</option>)}
-          </select>
+          <CustomSelect
+            value={form.categoria}
+            onChange={(v) => setForm({ ...form, categoria: v })}
+            placeholder="Categoria *"
+            options={CATEGORIAS.map(c => ({
+              value: c,
+              label: `${CATEGORIA_INVENTARIO_META[c].emoji} ${CATEGORIA_INVENTARIO_META[c].label}`,
+            }))}
+          />
           <div className="grid grid-cols-2 gap-2">
             <input className="bg-bg-app border border-border rounded-md p-2" placeholder="Marca" value={form.marca || ''} onChange={e => setForm({ ...form, marca: e.target.value })} />
             <input className="bg-bg-app border border-border rounded-md p-2" placeholder="Modelo" value={form.modelo || ''} onChange={e => setForm({ ...form, modelo: e.target.value })} />
@@ -74,7 +81,7 @@ export function ItemSheet({ open, onClose, onSubmit, item, defaultSalaId, defaul
             <div className="text-[10px] uppercase tracking-wide text-fg-muted font-semibold">Financeiro</div>
             <div className="grid grid-cols-2 gap-2">
               <input type="number" step="0.01" className="bg-bg-app border border-border rounded-md p-2" placeholder="Valor compra" value={form.valor_compra ?? ''} onChange={e => setForm({ ...form, valor_compra: e.target.value ? parseFloat(e.target.value) : null })} />
-              <input type="date" className="bg-bg-app border border-border rounded-md p-2" value={form.data_compra || ''} onChange={e => setForm({ ...form, data_compra: e.target.value || null })} />
+              <DateInput value={form.data_compra ?? ''} onChange={(v) => setForm({ ...form, data_compra: v || null })} />
               <input className="bg-bg-app border border-border rounded-md p-2" placeholder="NF" value={form.nota_fiscal || ''} onChange={e => setForm({ ...form, nota_fiscal: e.target.value })} />
               <input className="bg-bg-app border border-border rounded-md p-2" placeholder="Fornecedor" value={form.fornecedor || ''} onChange={e => setForm({ ...form, fornecedor: e.target.value })} />
             </div>
@@ -84,13 +91,27 @@ export function ItemSheet({ open, onClose, onSubmit, item, defaultSalaId, defaul
         <section className="bg-bg-surface rounded-lg p-md space-y-2 mb-md">
           <div className="text-[10px] uppercase tracking-wide text-fg-muted font-semibold">Status & Condição</div>
           <div className="grid grid-cols-2 gap-2">
-            <select className="bg-bg-app border border-border rounded-md p-2" value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>
-              <option value="ativo">Ativo</option><option value="manutencao">Manutenção</option><option value="baixa">Baixa</option><option value="inativo">Inativo</option>
-            </select>
-            <select className="bg-bg-app border border-border rounded-md p-2" value={form.condicao} onChange={e => setForm({ ...form, condicao: e.target.value })}>
-              <option value="novo">Novo</option><option value="bom">Bom</option><option value="regular">Regular</option><option value="ruim">Ruim</option>
-            </select>
-            <input type="date" className="bg-bg-app border border-border rounded-md p-2" placeholder="Próx revisão" value={form.proxima_revisao || ''} onChange={e => setForm({ ...form, proxima_revisao: e.target.value || null })} />
+            <CustomSelect
+              value={form.status}
+              onChange={(v) => setForm({ ...form, status: v })}
+              options={[
+                { value: 'ativo', label: 'Ativo' },
+                { value: 'manutencao', label: 'Manutenção' },
+                { value: 'baixa', label: 'Baixa' },
+                { value: 'inativo', label: 'Inativo' },
+              ]}
+            />
+            <CustomSelect
+              value={form.condicao}
+              onChange={(v) => setForm({ ...form, condicao: v })}
+              options={[
+                { value: 'novo', label: 'Novo' },
+                { value: 'bom', label: 'Bom' },
+                { value: 'regular', label: 'Regular' },
+                { value: 'ruim', label: 'Ruim' },
+              ]}
+            />
+            <DateInput value={form.proxima_revisao ?? ''} onChange={(v) => setForm({ ...form, proxima_revisao: v || null })} />
             <input type="number" className="bg-bg-app border border-border rounded-md p-2" placeholder="Alerta dias" value={form.alerta_revisao_dias} onChange={e => setForm({ ...form, alerta_revisao_dias: parseInt(e.target.value) || 30 })} />
           </div>
         </section>
