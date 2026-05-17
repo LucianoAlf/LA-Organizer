@@ -192,10 +192,19 @@ function parseMemoryMarker(text) {
   const dropped = [];
   for (let i = 0; i < rawRows.length; i++) {
     const r = rawRows[i];
-    if (!r || typeof r.content !== 'string' || !r.content.trim()) {
+    // Aceita `text` ou `value` como sinônimos de `content` (TOM às vezes usa esses nomes).
+    const contentVal = (typeof r.content === 'string' && r.content.trim())
+      ? r.content
+      : (typeof r.text === 'string' && r.text.trim())
+        ? r.text
+        : (typeof r.value === 'string' && r.value.trim())
+          ? r.value
+          : null;
+    if (!r || !contentVal) {
       dropped.push(`row[${i}]:missing_content`);
       continue;
     }
+    r.content = contentVal; // normaliza pro campo canônico
     validRows.push(r);
   }
   if (dropped.length) logSchemaErr('MEMORY_SAVE', dropped, parsed);

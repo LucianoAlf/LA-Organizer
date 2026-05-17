@@ -227,7 +227,7 @@ function requireInternalSecret(req, res, next) {
     return res.status(503).json({ error: 'internal_api_disabled' });
   }
   if (!got || got !== expected) {
-    console.warn(`[InternalAPI] auth fail — header_present=${!!got}`);
+    console.warn(`[InternalAPI] auth fail — header_present=${!!got} method=${req.method} url=${req.originalUrl} ua=${req.get('user-agent') || '-'}`);
     return res.status(401).json({ error: 'invalid_internal_secret' });
   }
   next();
