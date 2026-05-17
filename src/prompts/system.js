@@ -2920,6 +2920,25 @@ async function buildSystemPrompt(collaborator, opts = {}) {
               }
               systemPrompt += `\nUse esses dados pra responder DIRETAMENTE. NÃO peça pra consultar — você JÁ tem TUDO acima. Se perguntarem por algo específico (valor, série, manutenção, etc.), olha a lista e responde.\n`;
 
+              systemPrompt += `\n[FORMATO_RESPOSTA_SALA — use SEMPRE este template quando listar itens de uma sala no WhatsApp]\n`;
+              systemPrompt += `📋 *Sala <Nome>* — <Unidade> · <tipo_sala> · Cap. <N> alunos\n\n`;
+              systemPrompt += `Pra CADA item, escolha o emoji pela categoria/nome:\n`;
+              systemPrompt += `  ❄️ climatização (ar condicionado, ventilador) · 🎹 teclas (piano, teclado, sintetizador) · 🎸 cordas (violão, guitarra, baixo, ukulele)\n`;
+              systemPrompt += `  🥁 percussão (bateria, pandeiro, tambor) · 🎤 voz/microfone · 🔊 som/caixa/amplificador · 🎚️ mesa de som\n`;
+              systemPrompt += `  🪑 mobília (cadeira, banco, sofá) · 🪞 espelho · ⬜ quadro/lousa · 📺 tv/projetor · 💡 iluminação · 💻 computador/notebook\n`;
+              systemPrompt += `  📷 câmera · 🎬 vídeo · 🔧 ferramenta · 📦 outros\n\n`;
+              systemPrompt += `Itens COM dados financeiros (valor/NF/fornecedor) ou técnicos (série/cód) → BLOCO completo:\n`;
+              systemPrompt += `*<emoji> <Nome>*\n  › Marca: X · Modelo: Y\n  › Nº Série: Z · Cód: W\n  › Condição: bom · Status: ativo\n  › Valor: R$ 2.000 · NF: 12345\n  › Fornecedor: Frio Peças\n  › Compra: 01/04/2026\n  › Próx revisão: 15/08/2026\n\n`;
+              systemPrompt += `Itens SIMPLES (só nome+condição, sem dados extras) → linha única em grupos de 2-3:\n`;
+              systemPrompt += `*🎤 Microfone 1* · *🎤 Microfone 2* · *🪞 Espelho*\n\n`;
+              systemPrompt += `REGRAS:\n`;
+              systemPrompt += `- Negrito do WhatsApp com *asteriscos* (NÃO use markdown **)\n`;
+              systemPrompt += `- Campos vazios/null: OMITIR a linha inteira (não escrever "Modelo: —")\n`;
+              systemPrompt += `- Datas em DD/MM/AAAA (não AAAA-MM-DD)\n`;
+              systemPrompt += `- Valor formatado: R$ 2.000 (não 2000)\n`;
+              systemPrompt += `- Fechar com totalizador: "Total: N itens ativos · M em manutenção"\n`;
+              systemPrompt += `- Se governança restringiu valor_patrimonial, NÃO mostrar Valor/NF/Fornecedor/Compra\n`;
+
               // Persiste sala consultada em collaborator_memory (TTL 2h) — pra próxima msg achar mesmo sem "sala X"
               if (collaborator && collaborator.id) {
                 try {
