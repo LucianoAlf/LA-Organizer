@@ -2791,10 +2791,27 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   const matchVerboInv = verbosOperacionais.some(v => lowerMsg.includes(v));
   const matchInvForte = triggersFortesInv.some(t => lowerMsg.includes(t));
   // Consulta de sala específica: "o que tem na sala X", "ver sala X", "mostra a sala X", "sala X" com verbo de consulta
-  const querSalaMatch = /\bsala\s+([a-zA-ZáàâãéêíóôõúçÁÀÂÃÉÊÍÓÔÕÚÇ0-9]+)/i.exec(lastUserMessage || '');
+  let querSalaMatch = /\bsala\s+([a-zA-ZáàâãéêíóôõúçÁÀÂÃÉÊÍÓÔÕÚÇ0-9]+)/i.exec(lastUserMessage || '');
   const verbosConsultaSala = /\b(o que tem|o que h[áa]|que tem|tem o que|ver|mostra|mostrar|mostre|lista|listar|conte[uú]do|inventário|inventario|quais|qual[s]?|equipamento[s]?|item|itens)\b/i;
-  const querConsultaSala = !!(querSalaMatch && verbosConsultaSala.test(lowerMsg));
-  const matchInv = cmdsInv || matchInvForte || (matchUnidadeInv && matchVerboInv) || querConsultaSala;
+  // Palavras de item de inventário — se o user fala disso sem mencionar sala, herdar sala da conversa recente
+  const itemKeywordsRe = /\b(ar[\s-]condicionad[oa]|piano|teclado|microfone|microphone|caixa de som|amplificador|cabo|cadeira|mesa|espelho|quadro|projetor|tv|televisão|televisao|c[âa]mera|bateria|guitarra|violão|violao|baixo|computador|notebook|impressora|fornecedor|valor|patrim[ôo]nio|n[°º] s[ée]rie|n[úu]mero de s[ée]rie|nota fiscal|condi[çc][ãa]o do|manuten[çc][ãa]o do|condi[çc][ãa]o desse|condicao do|condicao desse)\b/i;
+  const mencionaItemInv = itemKeywordsRe.test(lowerMsg);
+  // Se não tem sala explícita mas menciona item, procura sala recente no histórico (últimas 6 msgs)
+  if (!querSalaMatch && mencionaItemInv && Array.isArray(hist)) {
+    const recentes = hist.slice(-6);
+    for (let i = recentes.length - 1; i >= 0; i--) {
+      const m = recentes[i];
+      const txt = (m && (m.content || m.body || m.text || '')) + '';
+      // 1) usuário falou "sala X" antes
+      const mu = /\bsala\s+([a-zA-ZáàâãéêíóôõúçÁÀÂÃÉÊÍÓÔÕÚÇ0-9]+)/i.exec(txt);
+      if (mu) { querSalaMatch = mu; break; }
+      // 2) assistente já injetou "[SALA_DETALHE: X ..."
+      const ma = /\[SALA_DETALHE:\s*([^\s—\-\]]+)/i.exec(txt);
+      if (ma) { querSalaMatch = [ma[0], ma[1]]; break; }
+    }
+  }
+  const querConsultaSala = !!(querSalaMatch && (verbosConsultaSala.test(lowerMsg) || mencionaItemInv));
+  const matchInv = cmdsInv || matchInvForte || (matchUnidadeInv && matchVerboInv) || querConsultaSala || mencionaItemInv;
 
   if (matchInv) {
     try {
