@@ -2840,12 +2840,20 @@ async function buildSystemPrompt(collaborator, opts = {}) {
         systemPrompt += `Salas: ${(salasCat || []).map(s => `${s.nome}/${s.tipo_sala || '?'}/uid=${s.unidade_id}`).join(' | ')}\n`;
         systemPrompt += `Produtos lojinha: ${(produtosCat || []).map(p => `${p.nome}${p.sku ? '(' + p.sku + ')' : ''}`).join(', ')}\n\n`;
         systemPrompt += `Quando o usuário descrever uma ação operacional, use a skill inventario.md e emita <<INVENTORY_ACTION>>...<<END>> com JSON estruturado. Sempre confirmar antes de gravar.\n\n`;
-        systemPrompt += `ACTIONS PERMITIDAS:\n`;
-        systemPrompt += `- "add_item" — cadastrar novo item\n`;
-        systemPrompt += `- "move_item" — registrar movimentação entre salas\n`;
-        systemPrompt += `- "maintenance" — registrar manutenção\n`;
-        systemPrompt += `- "shop_movement" — movimentação de estoque da lojinha\n`;
-        systemPrompt += `- "ver" — consultar item por nome (Fase A bidirecional)\n\n`;
+        systemPrompt += `ACTIONS PERMITIDAS (use exatamente esses nomes):\n`;
+        systemPrompt += `- "add_item" — cadastrar novo item (params: nome, sala_nome, [unidade_nome], [categoria], [marca], [quantidade], etc)\n`;
+        systemPrompt += `- "edit_item" — atualizar item existente (params: nome, sala_nome, + os campos a mudar: quantidade, condicao, status, marca, modelo, valor_compra, fornecedor, etc)\n`;
+        systemPrompt += `- "delete_item" — dar baixa em item (params: nome, sala_nome, [motivo])\n`;
+        systemPrompt += `- "move_item" — registrar movimentação entre salas (params: item_nome, tipo, sala_destino_nome, [motivo])\n`;
+        systemPrompt += `- "maintenance" — registrar manutenção (params: item_nome, tipo, descricao, [custo], [fornecedor_servico])\n`;
+        systemPrompt += `- "shop_movement" — movimentação de estoque da lojinha (params: produto_nome, unidade_nome, tipo, quantidade)\n`;
+        systemPrompt += `- "ver" — consultar item por nome (params: nome)\n\n`;
+        systemPrompt += `REGRAS:\n`;
+        systemPrompt += `- SEMPRE aninhe os dados em "params". NUNCA mande flat.\n`;
+        systemPrompt += `- Use os nomes exatos das actions acima. NÃO invente "create", "update", "update_item", "remove" etc.\n`;
+        systemPrompt += `- Use os nomes PT dos campos (nome, sala_nome, unidade_nome, quantidade, condicao). NÃO use item_name, room, unit, quantity, etc.\n\n`;
+        systemPrompt += `EXEMPLO de "edit_item":\n<<INVENTORY_ACTION>>\n{"action":"edit_item","params":{"nome":"Cadeiras","sala_nome":"Amy","quantidade":3}}\n<<END>>\n\n`;
+        systemPrompt += `EXEMPLO de "delete_item":\n<<INVENTORY_ACTION>>\n{"action":"delete_item","params":{"nome":"Microfone 2","sala_nome":"Amy","motivo":"quebrou"}}\n<<END>>\n\n`;
         systemPrompt += `EXEMPLO de "ver":\n<<INVENTORY_ACTION>>\n{"action":"ver","params":{"nome":"piano"}}\n<<END>>`;
 
         // Se usuário perguntou sobre uma sala específica, busca e injeta o detalhe
