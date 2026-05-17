@@ -446,12 +446,40 @@ Fixture com 12 collaborators (Luciano, Anne, Rafinha, Jereh, Krissya, Clayton, J
 
 ---
 
-## Decisões abertas pra confirmar antes da implementação
+## Decisões fechadas (2026-05-17)
 
-1. **Bucket de fotos:** confirmar nome `inventario-fotos` ou outro padrão.
-2. **Limite de tamanho de foto:** 5MB é razoável? (já é grande pra mobile)
-3. **Quem pode escrever vs ler inventário:** assumindo paridade (quem lê escreve, exceto Marketing/Hunters/Backoffice-não-Rose que nem leem). Professor pode SÓ registrar manutenção (não criar/mover/baixa). OK?
-4. **`collaborator.function_role` e `pedagogical_role` existem no schema?** Verificar no DB do LA Organizer antes de implementar. Se não existem, adicionar migration.
+1. **Bucket de fotos:** `inventario-fotos` ✅
+2. **Limite tamanho foto:** 5MB ✅
+3. **Permissões por role:**
+   - Roles autorizadas pra **ler/escrever** inventário: as que `checkAccess('inventario').allowed === true`
+   - **Professor:** pode VER (🔒sala) + REGISTRAR MANUTENÇÃO; NÃO pode criar item, mover entre salas, dar baixa
+   - **ItemAcoesMenu** condicional: pra professor mostra só "🔧 Registrar manutenção" + "❌ Cancelar"
+4. **Schema do `collaborators`:**
+   - `pedagogical_role` ✅ existe (valores: `lead`, `assistant`, `mentor`)
+   - `function_role` ✅ existe (nullable, criado Sprint 22.51)
+   - `sala_id` ❌ NÃO existe (decisão: resolver via `turmas_explicitas` no LA Report)
+   - **Migration pendente:** `_remote/docs/migrations/2026-05-17-collaborators-function-roles.sql` popula `function_role` pra Rafinha (ops_tecnicas), Hugo (tech), Yuri (marketing). Aplicar antes da implementação.
+
+### Resolução de `sala_id` pro filtro 🔒sala do professor
+
+Sem coluna nova no schema. Quando `checkAccess(prof, 'inventario')` retorna `scopeFilter: 'sua_sala'`, o hook/serverless faz:
+
+```ts
+// Helper: salasDoProfessor(collab) — retorna int[]
+async function salasDoProfessor(collab) {
+  const { data } = await laReportClient
+    .from('turmas_explicitas')  // ou aulas_emusys se mais atual
+    .select('sala_id')
+    .eq('professor_id', collab.la_report_professor_id);  // ver §Mapping
+  return [...new Set(data.map(t => t.sala_id))];
+}
+
+// Aplica na query
+const salas = await salasDoProfessor(collab);
+query = query.in('sala_id', salas);
+```
+
+**Mapping professor LA Organizer ↔ LA Report:** `collaborators.la_report_professor_id` (uuid, nullable). Se não existe, adicionar nessa mesma migration (TBD: confirmar se a coluna já existe). Por ora, plano assume que existe ou que pode ser resolvido por `full_name` match (fallback fuzzy).
 
 ---
 
