@@ -2790,7 +2790,11 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   const matchUnidadeInv = unidadesNomes.some(u => (' ' + lowerMsg + ' ').includes(u));
   const matchVerboInv = verbosOperacionais.some(v => lowerMsg.includes(v));
   const matchInvForte = triggersFortesInv.some(t => lowerMsg.includes(t));
-  const matchInv = cmdsInv || matchInvForte || (matchUnidadeInv && matchVerboInv);
+  // Consulta de sala específica: "o que tem na sala X", "ver sala X", "mostra a sala X", "sala X" com verbo de consulta
+  const querSalaMatch = /\bsala\s+([a-zA-ZáàâãéêíóôõúçÁÀÂÃÉÊÍÓÔÕÚÇ0-9]+)/i.exec(lastUserMessage || '');
+  const verbosConsultaSala = /\b(o que tem|o que h[áa]|que tem|tem o que|ver|mostra|mostrar|mostre|lista|listar|conte[uú]do|inventário|inventario|quais|qual[s]?|equipamento[s]?|item|itens)\b/i;
+  const querConsultaSala = !!(querSalaMatch && verbosConsultaSala.test(lowerMsg));
+  const matchInv = cmdsInv || matchInvForte || (matchUnidadeInv && matchVerboInv) || querConsultaSala;
 
   if (matchInv) {
     try {
@@ -2811,6 +2815,43 @@ async function buildSystemPrompt(collaborator, opts = {}) {
         systemPrompt += `- "shop_movement" — movimentação de estoque da lojinha\n`;
         systemPrompt += `- "ver" — consultar item por nome (Fase A bidirecional)\n\n`;
         systemPrompt += `EXEMPLO de "ver":\n<<INVENTORY_ACTION>>\n{"action":"ver","params":{"nome":"piano"}}\n<<END>>`;
+
+        // Se usuário perguntou sobre uma sala específica, busca e injeta o detalhe
+        if (querConsultaSala && querSalaMatch) {
+          try {
+            const inventarioService = require('../services/inventario-service');
+            const nomeBuscado = querSalaMatch[1];
+            // Detecta unidade na mensagem
+            const unidadeMencionada = unidadesNomes.find(u => (' ' + lowerMsg + ' ').includes(u))?.trim();
+            let unidadeId = null;
+            if (unidadeMencionada) {
+              const u = (unidadesCat || []).find(x => x.nome.toLowerCase().includes(unidadeMencionada.toLowerCase()));
+              if (u) unidadeId = u.id;
+            }
+            const matches = await inventarioService.buscarSalaPorNome(nomeBuscado, unidadeId);
+            if (matches.length === 0) {
+              systemPrompt += `\n\n[SALA_CONSULTADA: "${nomeBuscado}" — nenhuma sala encontrada${unidadeMencionada ? ` na unidade ${unidadeMencionada}` : ''}]\n`;
+            } else if (matches.length > 1) {
+              systemPrompt += `\n\n[SALA_CONSULTADA: múltiplas salas "${nomeBuscado}" → ${matches.map(s => `${s.nome} (uid=${s.unidade_id}, id=${s.id})`).join(', ')}]\nPergunta ao usuário qual.\n`;
+            } else {
+              const detalhe = await inventarioService.detalheSala(matches[0].id, collaborator);
+              const sala = detalhe.sala;
+              const itens = detalhe.itens || [];
+              systemPrompt += `\n\n[SALA_DETALHE: ${sala.nome} — ${sala.unidades?.nome || ''} (id=${sala.id})]\n`;
+              systemPrompt += `Total itens: ${itens.length}\n`;
+              if (itens.length > 0) {
+                systemPrompt += itens.map(i => `- ${i.nome}${i.marca ? ' ' + i.marca : ''}${i.modelo ? ' ' + i.modelo : ''} · qtd ${i.quantidade ?? 1} · ${i.condicao || '?'}/${i.status || '?'}${i.codigo_patrimonio ? ' · cód ' + i.codigo_patrimonio : ''}`).join('\n') + '\n';
+              }
+              systemPrompt += `Use esses dados pra responder diretamente. NÃO peça pra consultar — você JÁ tem.\n`;
+            }
+          } catch (eDet) {
+            if (eDet.code === 'ACCESS_DENIED') {
+              systemPrompt += `\n\n[SALA_CONSULTADA: acesso negado — ${eDet.message}]\n`;
+            } else {
+              systemPrompt += `\n\n[SALA_CONSULTADA: erro ${eDet.message}]\n`;
+            }
+          }
+        }
       }
     } catch (e) {
       systemPrompt += `\n[INVENTARIO_CATALOGO]\nErro ao carregar catálogo: ${e.message}`;
