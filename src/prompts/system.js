@@ -2837,12 +2837,47 @@ async function buildSystemPrompt(collaborator, opts = {}) {
               const detalhe = await inventarioService.detalheSala(matches[0].id, collaborator);
               const sala = detalhe.sala;
               const itens = detalhe.itens || [];
-              systemPrompt += `\n\n[SALA_DETALHE: ${sala.nome} — ${sala.unidades?.nome || ''} (id=${sala.id})]\n`;
-              systemPrompt += `Total itens: ${itens.length}\n`;
+              const movs = detalhe.movimentacoes || [];
+              const manuts = detalhe.manutencoes || [];
+              const verValor = checkAccess(collaborator, 'valor_patrimonial').allowed;
+              systemPrompt += `\n\n[SALA_DETALHE: ${sala.nome} — ${sala.unidades?.nome || ''} (id=${sala.id}${sala.tipo_sala ? ', ' + sala.tipo_sala : ''}${sala.capacidade_maxima ? ', cap ' + sala.capacidade_maxima : ''})]\n`;
+              systemPrompt += `Total itens: ${itens.length}\n\n`;
               if (itens.length > 0) {
-                systemPrompt += itens.map(i => `- ${i.nome}${i.marca ? ' ' + i.marca : ''}${i.modelo ? ' ' + i.modelo : ''} · qtd ${i.quantidade ?? 1} · ${i.condicao || '?'}/${i.status || '?'}${i.codigo_patrimonio ? ' · cód ' + i.codigo_patrimonio : ''}`).join('\n') + '\n';
+                systemPrompt += `ITENS COMPLETOS (use TUDO pra responder, não invente que não tem):\n`;
+                systemPrompt += itens.map(i => {
+                  const partes = [`id=${i.id}`, `nome="${i.nome}"`];
+                  if (i.categoria) partes.push(`cat=${i.categoria}`);
+                  if (i.marca) partes.push(`marca=${i.marca}`);
+                  if (i.modelo) partes.push(`modelo=${i.modelo}`);
+                  if (i.numero_serie) partes.push(`nº_série=${i.numero_serie}`);
+                  if (i.codigo_patrimonio) partes.push(`cód_patrim=${i.codigo_patrimonio}`);
+                  partes.push(`qtd=${i.quantidade ?? 1}`);
+                  partes.push(`condição=${i.condicao || '?'}`);
+                  partes.push(`status=${i.status || '?'}`);
+                  if (verValor && i.valor_compra != null) partes.push(`valor_compra=R$${i.valor_compra}`);
+                  if (verValor && i.data_compra) partes.push(`data_compra=${i.data_compra}`);
+                  if (verValor && i.nota_fiscal) partes.push(`nf=${i.nota_fiscal}`);
+                  if (verValor && i.fornecedor) partes.push(`fornecedor=${i.fornecedor}`);
+                  if (i.vida_util_meses) partes.push(`vida_útil=${i.vida_util_meses}m`);
+                  if (i.proxima_revisao) partes.push(`próx_revisão=${i.proxima_revisao}`);
+                  if (i.alertar_dias_antes != null) partes.push(`alerta=${i.alertar_dias_antes}d`);
+                  if (i.foto_url) partes.push(`foto=sim`);
+                  if (i.observacoes) partes.push(`obs="${String(i.observacoes).slice(0, 200)}"`);
+                  return `- ${partes.join(' · ')}`;
+                }).join('\n') + '\n';
               }
-              systemPrompt += `Use esses dados pra responder diretamente. NÃO peça pra consultar — você JÁ tem.\n`;
+              if (movs.length > 0) {
+                systemPrompt += `\nMOVIMENTAÇÕES recentes (últimas ${movs.length}):\n`;
+                systemPrompt += movs.slice(0, 10).map(m => `- ${m.data_movimentacao?.slice(0, 10) || '?'} · ${m.tipo} · item="${m.inventario?.nome || m.item_id}" · ${m.motivo || ''}`).join('\n') + '\n';
+              }
+              if (manuts.length > 0) {
+                systemPrompt += `\nMANUTENÇÕES recentes (últimas ${manuts.length}):\n`;
+                systemPrompt += manuts.slice(0, 10).map(m => `- ${m.data_manutencao || '?'} · ${m.tipo} · item="${m.inventario?.nome || m.item_id}" · ${m.descricao || ''}${verValor && m.custo != null ? ' · R$' + m.custo : ''}${m.responsavel ? ' · resp=' + m.responsavel : ''}`).join('\n') + '\n';
+              }
+              if (!verValor) {
+                systemPrompt += `\n[GOVERNANÇA] Este colaborador NÃO tem acesso a valor patrimonial (valor_compra, data_compra, nota_fiscal, fornecedor, custos de manutenção). Se ele perguntar, responde: "Essa info é restrita ao seu perfil. Fala com o Alf ou a coordenação."\n`;
+              }
+              systemPrompt += `\nUse esses dados pra responder DIRETAMENTE. NÃO peça pra consultar — você JÁ tem TUDO acima. Se perguntarem por algo específico (valor, série, manutenção, etc.), olha a lista e responde.\n`;
             }
           } catch (eDet) {
             if (eDet.code === 'ACCESS_DENIED') {
