@@ -5625,6 +5625,44 @@ async function processMessage(phone, text, raw = {}) {
             console.log('[InventoryAction] normalizado flat→params:', JSON.stringify(payload));
           }
         }
+        // Normaliza aliases de FIELDS em params (LLM inventa item_name, room, unit, quantity, etc)
+        if (payload.params && typeof payload.params === 'object') {
+          const fieldAliases = {
+            item_name: 'nome', itemname: 'nome', item: 'nome', name: 'nome',
+            room: 'sala_nome', sala: 'sala_nome', room_name: 'sala_nome', roomname: 'sala_nome',
+            unit: 'unidade_nome', unidade: 'unidade_nome', unit_name: 'unidade_nome', unitname: 'unidade_nome',
+            quantity: 'quantidade', qty: 'quantidade', qtd: 'quantidade',
+            category: 'categoria',
+            brand: 'marca', model: 'modelo',
+            serial_number: 'numero_serie', serial: 'numero_serie', serialnumber: 'numero_serie',
+            heritage_code: 'codigo_patrimonio', patrimony_code: 'codigo_patrimonio',
+            condition: 'condicao',
+            purchase_value: 'valor_compra', price: 'valor_compra', value: 'valor_compra', valor: 'valor_compra',
+            purchase_date: 'data_compra', date: 'data_compra',
+            invoice: 'nota_fiscal', nf: 'nota_fiscal',
+            supplier: 'fornecedor', vendor: 'fornecedor',
+            photo_url: 'foto_url', photo: 'foto_url', foto: 'foto_url',
+            notes: 'observacoes', observations: 'observacoes', obs: 'observacoes',
+            destination_room: 'sala_destino_nome', destination: 'sala_destino_nome', dest_room: 'sala_destino_nome',
+            source_room: 'sala_origem_nome', origin: 'sala_origem_nome',
+            reason: 'motivo', motivation: 'motivo',
+            description: 'descricao', desc: 'descricao',
+            cost: 'custo',
+            service_provider: 'fornecedor_servico', service: 'fornecedor_servico',
+            type: 'tipo', kind: 'tipo',
+            product_name: 'produto_nome', product: 'produto_nome',
+          };
+          const novoParams = {};
+          for (const [k, v] of Object.entries(payload.params)) {
+            const target = fieldAliases[String(k).toLowerCase()] || k;
+            // só escreve se ainda não tiver (não sobrescreve key correta vinda em paralelo)
+            if (novoParams[target] === undefined) novoParams[target] = v;
+          }
+          if (JSON.stringify(novoParams) !== JSON.stringify(payload.params)) {
+            console.log(`[InventoryAction] normalizado fields:`, JSON.stringify(novoParams));
+            payload.params = novoParams;
+          }
+        }
         // Normaliza aliases de action que o LLM costuma inventar
         const actionAliases = {
           create: 'add_item', criar: 'add_item', cadastrar: 'add_item', adicionar: 'add_item', novo: 'add_item', add: 'add_item',
