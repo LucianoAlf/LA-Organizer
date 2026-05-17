@@ -1,17 +1,27 @@
 // Cliente HTTP para os endpoints /internal/lareport/* do TOM.
-// IMPORTANTE: não importa @supabase/supabase-js — o PWA NÃO tem credenciais do LA Report.
+//
+// Usa as MESMAS env vars que o resto da PWA (tomEngine.ts):
+//   - VITE_TOM_API_BASE     (vazio em prod → caminho relativo; vercel.json
+//                            rewrita /internal/* server-side pro VPS)
+//   - VITE_INTERNAL_API_SECRET (em bundle — tech debt aceito Sprint 8,
+//                            documentado em tomEngine.ts)
+//
+// Header lowercase 'x-internal-secret' (HTTP é case-insensitive, mas
+// alinhamos com o padrão do projeto).
 
 import type {
   ReportUnidade, ReportSala, ReportSalaDetalhe, ReportProduto, ReportAlertas,
 } from './lareport-types';
 
-const INTERNAL_API_BASE = import.meta.env.VITE_TOM_INTERNAL_BASE || 'https://tom.la-organizer.com';
-const INTERNAL_API_SECRET = import.meta.env.VITE_TOM_INTERNAL_SECRET || '';
+const TOM_BASE = import.meta.env.VITE_TOM_API_BASE || '';
+const INTERNAL_SECRET = import.meta.env.VITE_INTERNAL_API_SECRET || '';
 
 async function call<T>(path: string): Promise<T> {
-  const res = await fetch(`${INTERNAL_API_BASE}${path}`, {
-    headers: { 'X-Internal-Secret': INTERNAL_API_SECRET },
-    credentials: 'include',
+  if (!INTERNAL_SECRET) {
+    throw new Error('VITE_INTERNAL_API_SECRET ausente — configurar no Vercel ou .env');
+  }
+  const res = await fetch(`${TOM_BASE}${path}`, {
+    headers: { 'x-internal-secret': INTERNAL_SECRET },
   });
   if (!res.ok) {
     const text = await res.text();
