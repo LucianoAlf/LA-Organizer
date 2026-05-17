@@ -5666,8 +5666,11 @@ async function processMessage(phone, text, raw = {}) {
         // Normaliza aliases de action que o LLM costuma inventar
         const actionAliases = {
           create: 'add_item', criar: 'add_item', cadastrar: 'add_item', adicionar: 'add_item', novo: 'add_item', add: 'add_item',
+          update_item: 'edit_item', update: 'edit_item', atualizar: 'edit_item', editar: 'edit_item', edit: 'edit_item',
+          alterar: 'edit_item', modificar: 'edit_item', change: 'edit_item', patch: 'edit_item',
           mover: 'move_item', move: 'move_item', transferir: 'move_item',
-          manutencao: 'maintenance', manutenção: 'maintenance', reparar: 'maintenance', consertar: 'maintenance',
+          manutencao: 'maintenance', manutenção: 'maintenance', reparar: 'maintenance', consertar: 'maintenance', conserto: 'maintenance',
+          baixa: 'delete_item', desativar: 'delete_item', remover: 'delete_item', delete: 'delete_item', excluir: 'delete_item',
           loja: 'shop_movement', estoque: 'shop_movement',
           ver: 'query_room', consultar: 'query_room', listar: 'query_rooms',
         };
@@ -5826,6 +5829,60 @@ async function processMessage(phone, text, raw = {}) {
                   }, userName);
                   reply = (reply ? reply + '\n\n' : '') + `🔧 Manutenção registrada.`;
                 }
+              }
+            } else if (payload.action === 'edit_item') {
+              const { laReportClient } = require('./services/la-report-client');
+              // Resolve item por id ou nome (+ sala opcional)
+              let itemId = p.item_id;
+              if (!itemId && p.nome) {
+                let q = laReportClient.from('inventario').select('id, nome, sala_id, unidade_id').ilike('nome', `%${p.nome}%`).eq('ativo', true);
+                if (p.sala_nome) {
+                  const r = await inventarioService.buscarSalaPorNome(p.sala_nome);
+                  if (r.length === 1) q = q.eq('sala_id', r[0].id);
+                }
+                const { data } = await q.limit(5);
+                if (!data || data.length === 0) { reply = (reply ? reply + '\n\n' : '') + `Item "${p.nome}" não encontrado${p.sala_nome ? ` na sala ${p.sala_nome}` : ''}.`; itemId = null; }
+                else if (data.length > 1) { reply = (reply ? reply + '\n\n' : '') + `Mais de um item bate "${p.nome}": ${data.map(x => x.nome).join(', ')}. Qual?`; itemId = null; }
+                else itemId = data[0].id;
+              }
+              if (itemId) {
+                // Monta patch só com os campos que vieram (não sobrescreve com null)
+                const patch = {};
+                const camposEditaveis = ['nome', 'categoria', 'marca', 'modelo', 'numero_serie', 'codigo_patrimonio',
+                  'quantidade', 'condicao', 'status', 'valor_compra', 'data_compra', 'nota_fiscal', 'fornecedor',
+                  'foto_url', 'observacoes', 'sala_id', 'unidade_id', 'vida_util_meses', 'proxima_revisao', 'alertar_dias_antes'];
+                for (const c of camposEditaveis) if (p[c] !== undefined) patch[c] = p[c];
+                if (Object.keys(patch).length === 0) {
+                  reply = (reply ? reply + '\n\n' : '') + `Nenhum campo pra editar. Diz o que mudar (qtd, condição, marca, etc).`;
+                } else {
+                  if (typeof patch.quantidade !== 'undefined') patch.quantidade = parseInt(patch.quantidade, 10);
+                  patch.updated_at = new Date().toISOString();
+                  const { data: upd, error } = await laReportClient.from('inventario').update(patch).eq('id', itemId).select('id, nome, quantidade, condicao, status').single();
+                  if (error) reply = (reply ? reply + '\n\n' : '') + `Erro ao atualizar: ${error.message}`;
+                  else reply = (reply ? reply + '\n\n' : '') + `✏️ Atualizado: ${upd.nome} → qtd ${upd.quantidade}, cond ${upd.condicao}, status ${upd.status}`;
+                }
+              }
+            } else if (payload.action === 'delete_item') {
+              const { laReportClient } = require('./services/la-report-client');
+              let itemId = p.item_id;
+              if (!itemId && p.nome) {
+                let q = laReportClient.from('inventario').select('id, nome').ilike('nome', `%${p.nome}%`).eq('ativo', true);
+                if (p.sala_nome) {
+                  const r = await inventarioService.buscarSalaPorNome(p.sala_nome);
+                  if (r.length === 1) q = q.eq('sala_id', r[0].id);
+                }
+                const { data } = await q.limit(5);
+                if (!data || data.length === 0) { reply = (reply ? reply + '\n\n' : '') + `Item "${p.nome}" não encontrado.`; itemId = null; }
+                else if (data.length > 1) { reply = (reply ? reply + '\n\n' : '') + `Mais de um item bate: ${data.map(x => x.nome).join(', ')}. Qual?`; itemId = null; }
+                else itemId = data[0].id;
+              }
+              if (itemId) {
+                const obs = `Baixa via TOM por ${userName}${p.motivo ? ' — ' + p.motivo : ''}`;
+                const { data: del, error } = await laReportClient.from('inventario')
+                  .update({ status: 'baixa', ativo: false, observacoes: obs, updated_at: new Date().toISOString() })
+                  .eq('id', itemId).select('id, nome').single();
+                if (error) reply = (reply ? reply + '\n\n' : '') + `Erro na baixa: ${error.message}`;
+                else reply = (reply ? reply + '\n\n' : '') + `🗑️ Baixado: ${del.nome}`;
               }
             } else if (payload.action === 'ver') {
               const nome = p && p.nome ? p.nome : payload.nome;
