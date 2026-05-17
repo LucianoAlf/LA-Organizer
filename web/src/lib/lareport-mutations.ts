@@ -53,7 +53,7 @@ export async function deleteItem(id: number): Promise<void> {
 }
 
 export async function moverItem(id: number, payload: { sala_destino_id: number; motivo?: string }): Promise<any> {
-  const res = await fetch(`/api/lareport/inventario/${id}/mover`, {
+  const res = await fetch(`/api/lareport/inventario-mover/${id}`, {
     method: 'POST',
     headers: { ...(await authHeader()), 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -63,7 +63,7 @@ export async function moverItem(id: number, payload: { sala_destino_id: number; 
 }
 
 export async function registrarManutencao(id: number, payload: { tipo: string; descricao: string; custo?: number; data_manutencao: string; responsavel?: string; fornecedor_servico?: string; data_proxima_revisao?: string }): Promise<any> {
-  const res = await fetch(`/api/lareport/inventario/${id}/manutencao`, {
+  const res = await fetch(`/api/lareport/inventario-manutencao/${id}`, {
     method: 'POST',
     headers: { ...(await authHeader()), 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
