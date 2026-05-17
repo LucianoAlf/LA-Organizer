@@ -11,7 +11,7 @@
       "destination": "http://89.116.73.186/internal/:path*"
     },
     {
-      "source": "/((?!.*\\.).*)",
+      "source": "/((?!api/|assets/|.*\\.).*)",
       "destination": "/index.html"
     }
   ],
