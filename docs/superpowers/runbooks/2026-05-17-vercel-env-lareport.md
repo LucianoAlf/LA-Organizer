@@ -21,6 +21,16 @@ Adicionar em https://vercel.com/<org>/la-organizer/settings/environment-variable
 
 Após adicionar, redeploy automático no próximo push.
 
+### ⚠️ ATENÇÃO: flag "Sensitive" no Vercel
+
+Vars marcadas como **Sensitive** **NÃO ficam disponíveis no bundle client**. São acessíveis SÓ no server-side (serverless functions). Isso quebra qualquer var `VITE_*` que precisa estar no bundle.
+
+**Regra obrigatória:**
+- `VITE_*` (cliente) → **NUNCA Sensitive** (precisa estar no bundle do browser)
+- Sem prefixo `VITE_` (servidor) → **Sensitive OK** (e recomendado pra secrets)
+
+Sintoma se errado: warning no console "VITE_X ou VITE_Y não definidos" mesmo em produção, mesmo após redeploy. Fix: edita a var no Vercel → desmarca Sensitive → redeploy.
+
 ### .env.local (dev, gitignored)
 Adicionar em `_remote/web/.env.local`:
 
