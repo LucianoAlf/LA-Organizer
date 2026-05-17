@@ -1,8 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { requireCollaborator } from '../../_lib/auth';
-import { checkAccess } from '../../_lib/access-control';
-import { lareport } from '../../_lib/lareport-server';
-import { withAudit, stripRestrictedFields } from '../../_lib/audit';
+import { requireCollaborator } from '../../_lib/auth.js';
+import { checkAccess } from '../../_lib/access-control.js';
+import { lareport } from '../../_lib/lareport-server.js';
+import { withAudit, stripRestrictedFields } from '../../_lib/audit.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!['PATCH', 'DELETE'].includes(req.method!)) return res.status(405).json({ ok: false, error: 'method_not_allowed' });

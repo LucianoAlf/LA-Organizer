@@ -1,4 +1,4 @@
-import type { CollaboratorAuth } from './access-control';
+import type { CollaboratorAuth } from './access-control.js';
 
 export function withAudit(text: string | null | undefined, collab: CollaboratorAuth, prefix = 'via PWA'): string {
   const prev = (text ?? '').trim();

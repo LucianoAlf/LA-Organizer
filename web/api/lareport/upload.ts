@@ -1,9 +1,9 @@
 // Upload de foto via JSON com data URL (base64). Evita multipart/formidable
 // que tem incompatibilidade ESM em alguns runtimes da Vercel.
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { requireCollaborator } from '../_lib/auth';
-import { checkAccess } from '../_lib/access-control';
-import { lareport } from '../_lib/lareport-server';
+import { requireCollaborator } from '../_lib/auth.js';
+import { checkAccess } from '../_lib/access-control.js';
+import { lareport } from '../_lib/lareport-server.js';
 import { randomUUID } from 'node:crypto';
 
 export const config = { api: { bodyParser: { sizeLimit: '8mb' } } };
