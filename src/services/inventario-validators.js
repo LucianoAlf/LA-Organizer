@@ -22,7 +22,7 @@ function validateAddItem(p) {
   const errors = [];
   if (!p.nome || typeof p.nome !== 'string' || p.nome.trim().length < 3) errors.push('nome_invalido');
   if (!p.sala_id && !p.sala_nome) errors.push('sala_obrigatoria');
-  if (!p.unidade_id && !p.unidade_nome) errors.push('unidade_obrigatoria');
+  // unidade é opcional: o engine infere a partir da sala quando única
   // categoria: aceita texto livre (LA Report usa "Áudio", "Climatização", "Teclados/Piano", etc — não enum)
   if (p.condicao && !VALID_CONDICOES.includes(p.condicao)) errors.push(`condicao_invalida: ${p.condicao}`);
   if (p.quantidade !== undefined && (!Number.isInteger(p.quantidade) || p.quantidade < 1)) errors.push('quantidade_invalida');

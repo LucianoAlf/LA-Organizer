@@ -5657,11 +5657,29 @@ async function processMessage(phone, text, raw = {}) {
               const vc = inventarioValidators.validateAddItem(p);
               if (!vc.ok) { reply = (reply ? reply + '\n\n' : '') + `Faltam dados: ${vc.errors.join(', ')}`; }
               else {
-                const unidadeId = await resolverUnidadeId(p.unidade_nome);
-                if (!unidadeId) { reply = (reply ? reply + '\n\n' : '') + `Unidade "${p.unidade_nome}" não encontrada.`; }
-                else {
+                let unidadeId = await resolverUnidadeId(p.unidade_nome);
+                // Se faltou unidade, tenta inferir pela sala (busca sala — se única, pega unidade dela)
+                if (!unidadeId && (p.sala_id || p.sala_nome)) {
+                  if (p.sala_id) {
+                    const { laReportClient } = require('./services/la-report-client');
+                    const { data: s } = await laReportClient.from('salas').select('unidade_id').eq('id', p.sala_id).maybeSingle();
+                    if (s) unidadeId = s.unidade_id;
+                  } else {
+                    const salas = await inventarioService.buscarSalaPorNome(p.sala_nome);
+                    if (salas.length === 1) unidadeId = salas[0].unidade_id;
+                    else if (salas.length > 1) {
+                      reply = (reply ? reply + '\n\n' : '') + `Mais de uma sala "${p.sala_nome}" em unidades diferentes: ${salas.map(s => `id ${s.id}`).join(', ')}. Diz a unidade (Barra/Recreio/CG).`;
+                      unidadeId = 'AMBIGUOUS';
+                    }
+                  }
+                }
+                if (unidadeId === 'AMBIGUOUS') {
+                  // já mandou pergunta — não prossegue
+                } else if (!unidadeId) {
+                  reply = (reply ? reply + '\n\n' : '') + `Não consegui identificar a unidade${p.unidade_nome ? ` "${p.unidade_nome}"` : ''}. Diz a unidade (Barra/Recreio/CG).`;
+                } else {
                   const salaId = await resolverSalaId(p.sala_nome, unidadeId);
-                  if (salaId == null) { reply = (reply ? reply + '\n\n' : '') + `Sala "${p.sala_nome}" não encontrada na ${p.unidade_nome}.`; }
+                  if (salaId == null) { reply = (reply ? reply + '\n\n' : '') + `Sala "${p.sala_nome}" não encontrada.`; }
                   else if (typeof salaId === 'object' && salaId.ambiguous) { reply = (reply ? reply + '\n\n' : '') + `Mais de uma sala: ${salaId.ambiguous}. Qual?`; }
                   else {
                     const item = await inventarioService.inserirItem({ ...p, sala_id: salaId, unidade_id: unidadeId }, userName);
