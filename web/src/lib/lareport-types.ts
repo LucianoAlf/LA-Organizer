@@ -11,7 +11,6 @@ export interface ReportSala {
   nome: string;
   tipo_sala: string | null;
   capacidade_maxima: number | null;
-  recursos: string[] | null;
   codigo: string | null;
   ativo: boolean;
   itens_count?: number;

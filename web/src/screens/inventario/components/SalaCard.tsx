@@ -22,7 +22,8 @@ export function SalaCard({ sala, onClick }: Props) {
       <div className="flex-1 min-w-0">
         <div className="font-semibold text-fg truncate">{sala.nome}</div>
         <div className="text-[11px] text-fg-muted">
-          {sala.tipo_sala || 'Multiuso'} · {(sala.recursos?.length ?? 0)} recursos
+          {sala.tipo_sala || 'Multiuso'}
+          {sala.capacidade_maxima ? ` · ${sala.capacidade_maxima} alunos` : ''}
         </div>
       </div>
       <Badge tone={semItens ? 'danger' : 'neutral'}>{itens} itens</Badge>

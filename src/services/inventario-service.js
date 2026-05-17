@@ -22,7 +22,7 @@ async function listarUnidades() {
 async function listarSalasPorUnidade(unidadeId) {
   const { data, error } = await laReportClient
     .from('salas')
-    .select('id, nome, tipo_sala, capacidade_maxima, recursos, codigo, ativo')
+    .select('id, nome, tipo_sala, capacidade_maxima, codigo, ativo')
     .eq('unidade_id', unidadeId)
     .eq('ativo', true)
     .order('nome');
@@ -43,7 +43,7 @@ async function listarSalasPorUnidade(unidadeId) {
 async function buscarSalaPorNome(nome, unidadeId) {
   let query = laReportClient
     .from('salas')
-    .select('id, nome, tipo_sala, unidade_id, recursos, ativo')
+    .select('id, nome, tipo_sala, unidade_id, ativo')
     .ilike('nome', `%${nome}%`)
     .eq('ativo', true);
   if (unidadeId) query = query.eq('unidade_id', unidadeId);
