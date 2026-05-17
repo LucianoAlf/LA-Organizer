@@ -57,16 +57,6 @@ export function InventarioSalaPage() {
             </div>
           </div>
         </div>
-        {sala.recursos && sala.recursos.length > 0 && (
-          <div className="mt-md">
-            <div className="text-[10px] uppercase tracking-wide text-fg-muted font-semibold mb-1">Recursos declarados</div>
-            <div className="flex flex-wrap gap-1">
-              {sala.recursos.map((r, i) => (
-                <span key={i} className="text-[10px] px-2 py-0.5 rounded-full bg-bg-app border border-border text-fg-muted">{r}</span>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
 
       <div className="flex gap-1.5">
