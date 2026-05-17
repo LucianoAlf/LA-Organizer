@@ -19,15 +19,14 @@ function validateAction(payload) {
 }
 
 function validateAddItem(p) {
-  const errors = [];
-  if (!p.nome || typeof p.nome !== 'string' || p.nome.trim().length < 3) errors.push('nome_invalido');
-  if (!p.sala_id && !p.sala_nome) errors.push('sala_obrigatoria');
-  // unidade é opcional: o engine infere a partir da sala quando única
-  // categoria: aceita texto livre (LA Report usa "Áudio", "Climatização", "Teclados/Piano", etc — não enum)
-  if (p.condicao && !VALID_CONDICOES.includes(p.condicao)) errors.push(`condicao_invalida: ${p.condicao}`);
-  if (p.quantidade !== undefined && (!Number.isInteger(p.quantidade) || p.quantidade < 1)) errors.push('quantidade_invalida');
-  if (p.valor_compra !== undefined && (typeof p.valor_compra !== 'number' || p.valor_compra < 0)) errors.push('valor_compra_invalido');
-  return { ok: errors.length === 0, errors };
+  // Mínimo absoluto: precisa de nome e de alguma forma de identificar a sala.
+  // TODO o resto tem default no engine. Sem mais "campo X inválido".
+  if (!p || typeof p !== 'object') return { ok: false, errors: ['params_ausente'] };
+  if (!p.nome || typeof p.nome !== 'string' || p.nome.trim().length < 1) {
+    return { ok: false, errors: ['nome obrigatório'] };
+  }
+  if (!p.sala_id && !p.sala_nome) return { ok: false, errors: ['sala obrigatória'] };
+  return { ok: true, errors: [] };
 }
 
 function validateMoveItem(p) {

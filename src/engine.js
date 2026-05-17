@@ -5695,7 +5695,28 @@ async function processMessage(phone, text, raw = {}) {
                   if (salaId == null) { reply = (reply ? reply + '\n\n' : '') + `Sala "${p.sala_nome}" não encontrada.`; }
                   else if (typeof salaId === 'object' && salaId.ambiguous) { reply = (reply ? reply + '\n\n' : '') + `Mais de uma sala: ${salaId.ambiguous}. Qual?`; }
                   else {
-                    const item = await inventarioService.inserirItem({ ...p, sala_id: salaId, unidade_id: unidadeId }, userName);
+                    // Normaliza defaults — LLM nunca preenche tudo, e os campos opcionais aceitam null no DB
+                    const qtyParsed = parseInt(p.quantidade, 10);
+                    const itemPayload = {
+                      nome: String(p.nome).trim(),
+                      sala_id: salaId,
+                      unidade_id: unidadeId,
+                      categoria: p.categoria || null,
+                      marca: p.marca || null,
+                      modelo: p.modelo || null,
+                      numero_serie: p.numero_serie || null,
+                      codigo_patrimonio: p.codigo_patrimonio || null,
+                      quantidade: Number.isInteger(qtyParsed) && qtyParsed > 0 ? qtyParsed : 1,
+                      condicao: p.condicao || 'bom',
+                      status: p.status || 'ativo',
+                      valor_compra: typeof p.valor_compra === 'number' ? p.valor_compra : null,
+                      data_compra: p.data_compra || null,
+                      nota_fiscal: p.nota_fiscal || null,
+                      fornecedor: p.fornecedor || null,
+                      foto_url: p.foto_url || null,
+                      observacoes: p.observacoes || null,
+                    };
+                    const item = await inventarioService.inserirItem(itemPayload, userName);
                     reply = (reply ? reply + '\n\n' : '') + `✅ Item adicionado: ${item.nome}${item.codigo_patrimonio ? ` (${item.codigo_patrimonio})` : ''}`;
                   }
                 }
