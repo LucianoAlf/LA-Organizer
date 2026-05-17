@@ -61,7 +61,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       const { data, error } = await supabase
         .from('collaborators')
-        .select('id, full_name, email, phone, role, function_title, unit, is_active, onboarding_completed, avatar_url, bio, preferred_name')
+        .select('id, full_name, email, phone, role, function_title, unit, is_active, onboarding_completed, avatar_url, bio, preferred_name, function_role, pedagogical_role')
         .eq('email', session.user.email)
         .eq('is_active', true)
         .maybeSingle();
@@ -126,7 +126,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!session?.user?.email) return;
     const { data } = await supabase
       .from('collaborators')
-      .select('id, full_name, email, phone, role, function_title, unit, is_active, onboarding_completed, avatar_url, bio, preferred_name')
+      .select('id, full_name, email, phone, role, function_title, unit, is_active, onboarding_completed, avatar_url, bio, preferred_name, function_role, pedagogical_role')
       .eq('email', session.user.email)
       .eq('is_active', true)
       .maybeSingle();

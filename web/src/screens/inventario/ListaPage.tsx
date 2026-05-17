@@ -1,12 +1,14 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PageHeader } from '../../components/PageHeader';
 import { Tabs } from '../../components/Tabs';
-import { StatCard } from '../../components/StatCard';
 import { LoadingState } from '../../components/LoadingState';
 import { EmptyState } from '../../components/EmptyState';
-import { useReportUnidades, useReportSalas, useReportLoja, useReportAlertas } from '../../hooks/useLaReport';
-import { SalaCard } from './components/SalaCard';
+import { useReportUnidades, useReportSalas, useReportLoja } from '../../hooks/useLaReport';
+import { SalaCardMedio } from './components/SalaCardMedio';
+import { StatsCards } from './components/StatsCards';
+import { useAccess } from '../../hooks/useAccess';
+import { useRealtimeSalas } from '../../hooks/useRealtimeSalas';
 
 export function InventarioListaPage() {
   const navigate = useNavigate();
@@ -22,10 +24,9 @@ export function InventarioListaPage() {
 
   const { data: salas = [], isLoading: lS } = useReportSalas(unidadeId || null);
   const { data: produtos = [] } = useReportLoja(unidadeId || null);
-  const { data: alertas } = useReportAlertas(unidadeId || undefined);
+  const lojaAccess = useAccess('loja_produtos');
+  useRealtimeSalas(unidadeId);
 
-  const totalItens = useMemo(() => salas.reduce((s, sl) => s + (sl.itens_count ?? 0), 0), [salas]);
-  const totalManutencao = alertas?.manutencoes_pendentes.length ?? 0;
   const estoqueBaixoCount = produtos.filter(p => p.abaixo_minimo || p.zerado).length;
 
   if (lU) return <LoadingState />;
@@ -48,26 +49,24 @@ export function InventarioListaPage() {
         onChange={setUnidadeId}
       />
 
-      <div className="grid grid-cols-3 gap-sm">
-        <StatCard label="Salas" value={salas.length} />
-        <StatCard label="Itens" value={totalItens} />
-        <StatCard label="Manut." value={totalManutencao} />
-      </div>
+      <StatsCards unidadeId={unidadeId} onAtencaoClick={() => navigate(`/inventario/atencao?unit=${unidadeId}`)} />
 
-      <button
-        type="button"
-        onClick={() => navigate('/inventario/loja')}
-        className="w-full bg-fg text-bg-surface rounded-lg p-md flex items-center gap-md text-left hover:opacity-90"
-      >
-        <span className="text-2xl">🛍</span>
-        <div className="flex-1">
-          <div className="font-semibold">Lojinha</div>
-          <div className="text-body-sm opacity-60">
-            {produtos.length} produtos{estoqueBaixoCount > 0 ? ` · estoque baixo: ${estoqueBaixoCount} ⚠️` : ''}
+      {lojaAccess.allowed && (
+        <button
+          type="button"
+          onClick={() => navigate('/inventario/loja')}
+          className="w-full bg-fg text-bg-surface rounded-lg p-md flex items-center gap-md text-left hover:opacity-90"
+        >
+          <span className="text-2xl">🛍</span>
+          <div className="flex-1">
+            <div className="font-semibold">Lojinha</div>
+            <div className="text-body-sm opacity-60">
+              {produtos.length} produtos{estoqueBaixoCount > 0 ? ` · estoque baixo: ${estoqueBaixoCount} ⚠️` : ''}
+            </div>
           </div>
-        </div>
-        <span className="opacity-60">›</span>
-      </button>
+          <span className="opacity-60">›</span>
+        </button>
+      )}
 
       <div className="flex items-center gap-sm">
         <h3 className="text-body-sm text-fg-muted font-semibold uppercase tracking-wide">Salas ({salas.length})</h3>
@@ -81,7 +80,7 @@ export function InventarioListaPage() {
       ) : (
         <div className="space-y-2">
           {salas.map(s => (
-            <SalaCard key={s.id} sala={s} onClick={() => navigate(`/inventario/sala/${s.id}`)} />
+            <SalaCardMedio key={s.id} sala={s} onClick={() => navigate(`/inventario/sala/${s.id}`)} />
           ))}
         </div>
       )}

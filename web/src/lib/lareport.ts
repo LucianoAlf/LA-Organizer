@@ -38,22 +38,27 @@ async function call<T>(path: string): Promise<T> {
   return json.data as T;
 }
 
+/** @deprecated Use o hook correspondente em useLaReport.ts (cliente direto LA Report). */
 export async function fetchReportUnidades(): Promise<ReportUnidade[]> {
   return call<ReportUnidade[]>('unidades');
 }
 
+/** @deprecated Use o hook correspondente em useLaReport.ts (cliente direto LA Report). */
 export async function fetchReportSalas(unidadeId: string): Promise<ReportSala[]> {
   return call<ReportSala[]>(`salas?unit=${encodeURIComponent(unidadeId)}`);
 }
 
+/** @deprecated Use o hook correspondente em useLaReport.ts (cliente direto LA Report). */
 export async function fetchReportSalaDetalhe(salaId: number): Promise<ReportSalaDetalhe> {
   return call<ReportSalaDetalhe>(`sala/${salaId}`);
 }
 
+/** @deprecated Use o hook correspondente em useLaReport.ts (cliente direto LA Report). */
 export async function fetchReportLoja(unidadeId: string): Promise<ReportProduto[]> {
   return call<ReportProduto[]>(`loja?unit=${encodeURIComponent(unidadeId)}`);
 }
 
+/** @deprecated Use o hook correspondente em useLaReport.ts (cliente direto LA Report). */
 export async function fetchReportAlertas(unidadeId?: string): Promise<ReportAlertas> {
   const q = unidadeId ? `?unit=${encodeURIComponent(unidadeId)}` : '';
   return call<ReportAlertas>(`alertas${q}`);

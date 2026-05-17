@@ -6,7 +6,15 @@ import { EmptyState } from '../../components/EmptyState';
 import { Badge } from '../../components/Badge';
 import { useReportSalaDetalhe } from '../../hooks/useLaReport';
 import { ItemCard } from './components/ItemCard';
-import { iconeParaTipoSala, categoriaInventarioMeta } from '../../lib/lareport-types';
+import { ItemFAB } from './components/ItemFAB';
+import { ItemSheet } from './components/ItemSheet';
+import { ItemAcoesMenu } from './components/ItemAcoesMenu';
+import { MoverItemSheet } from './components/MoverItemSheet';
+import { ManutencaoSheet } from './components/ManutencaoSheet';
+import { BaixaConfirmSheet } from './components/BaixaConfirmSheet';
+import { useInventarioMutations } from '../../hooks/useInventarioMutations';
+import { useRealtimeSala } from '../../hooks/useRealtimeSala';
+import { iconeParaTipoSala, categoriaInventarioMeta, type ReportInventarioItem } from '../../lib/lareport-types';
 
 type AbaSala = 'itens' | 'movimentacoes' | 'manutencao';
 
@@ -14,8 +22,16 @@ export function InventarioSalaPage() {
   const { salaId } = useParams<{ salaId: string }>();
   const id = salaId ? parseInt(salaId, 10) : null;
   const { data, isLoading } = useReportSalaDetalhe(id);
+  const m = useInventarioMutations(id);
+  useRealtimeSala(id);
   const [aba, setAba] = useState<AbaSala>('itens');
   const [categoriaFilter, setCategoriaFilter] = useState<string | 'all'>('all');
+  const [novoOpen, setNovoOpen] = useState(false);
+  const [acoesItem, setAcoesItem] = useState<ReportInventarioItem | null>(null);
+  const [editItem, setEditItem] = useState<ReportInventarioItem | null>(null);
+  const [moverItemSt, setMoverItemSt] = useState<ReportInventarioItem | null>(null);
+  const [manutItem, setManutItem] = useState<ReportInventarioItem | null>(null);
+  const [baixaItem, setBaixaItem] = useState<ReportInventarioItem | null>(null);
 
   const categorias = useMemo(() => {
     if (!data) return [];
@@ -111,7 +127,9 @@ export function InventarioSalaPage() {
           ) : (
             <div className="space-y-2">
               {itensFiltrados.map(item => (
-                <ItemCard key={item.id} item={item} />
+                <button key={item.id} type="button" onClick={() => setAcoesItem(item)} className="w-full text-left">
+                  <ItemCard item={item} />
+                </button>
               ))}
             </div>
           )}
@@ -168,6 +186,54 @@ export function InventarioSalaPage() {
       <div className="bg-warning/10 border border-warning/40 rounded-md p-md text-body-sm text-fg-muted">
         💡 <strong className="text-fg">Pra adicionar item:</strong> escreve no WhatsApp do TOM tipo "comprei [item] pra sala {sala.nome} {unidadeNome}". Ou use <code className="bg-bg-surface px-1 rounded">/inv add</code>.
       </div>
+
+      <ItemFAB onClick={() => setNovoOpen(true)} />
+      <ItemSheet
+        open={novoOpen}
+        onClose={() => setNovoOpen(false)}
+        onSubmit={async (p) => { await m.create.mutateAsync({ ...p, sala_id: id, unidade_id: sala.unidade_id }); }}
+        defaultSalaId={id}
+        defaultUnidadeId={sala.unidade_id}
+      />
+      <ItemSheet
+        open={!!editItem}
+        onClose={() => setEditItem(null)}
+        item={editItem}
+        onSubmit={async (p) => { if (editItem) await m.update.mutateAsync({ id: editItem.id, payload: p }); }}
+      />
+      <ItemAcoesMenu
+        open={!!acoesItem}
+        item={acoesItem}
+        onClose={() => setAcoesItem(null)}
+        onEdit={() => { setEditItem(acoesItem); setAcoesItem(null); }}
+        onMover={() => { setMoverItemSt(acoesItem); setAcoesItem(null); }}
+        onManutencao={() => { setManutItem(acoesItem); setAcoesItem(null); }}
+        onBaixa={() => { setBaixaItem(acoesItem); setAcoesItem(null); }}
+      />
+      {moverItemSt && (
+        <MoverItemSheet
+          open
+          onClose={() => setMoverItemSt(null)}
+          item={moverItemSt}
+          onSubmit={async (dest, motivo) => { await m.mover.mutateAsync({ id: moverItemSt.id, sala_destino_id: dest, motivo }); }}
+        />
+      )}
+      {manutItem && (
+        <ManutencaoSheet
+          open
+          onClose={() => setManutItem(null)}
+          item={manutItem}
+          onSubmit={async (p) => { await m.manutencao.mutateAsync({ id: manutItem.id, payload: p }); }}
+        />
+      )}
+      {baixaItem && (
+        <BaixaConfirmSheet
+          open
+          onClose={() => setBaixaItem(null)}
+          item={baixaItem}
+          onConfirm={async () => { await m.remove.mutateAsync(baixaItem.id); }}
+        />
+      )}
     </div>
   );
 }

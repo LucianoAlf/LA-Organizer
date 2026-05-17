@@ -17,6 +17,16 @@ const inventarioValidators = require('./services/inventario-validators');
 
 const SKILLS_DIR = path.join(__dirname, '..', 'skills');
 
+// LA Report — formatador de card de item de inventário (usado por <<INVENTORY_ACTION>> action="ver").
+function formatarCardItem(it) {
+  const sala = (it.salas && it.salas.nome) || 'sem sala';
+  const unid = (it.salas && it.salas.unidades && it.salas.unidades.nome) || '';
+  const cond = it.condicao || '?';
+  const valor = it.valor_compra ? `R$ ${it.valor_compra}` : 's/ valor';
+  const proxRev = it.proxima_revisao ? ` · Próx revisão: ${it.proxima_revisao}` : '';
+  return `🎵 *${it.nome}* (${sala}${unid ? ` · ${unid}` : ''})\n• Condição: ${cond}\n• ${valor}${proxRev}`;
+}
+
 // Sprint 13 F3 T3 — Helper: converte objeto audience em string legível para humanos.
 function describeAudience(audience) {
   if (!audience) return 'sem público';
@@ -5708,6 +5718,26 @@ async function processMessage(phone, text, raw = {}) {
                     fornecedor_servico: p.fornecedor_servico,
                   }, userName);
                   reply = (reply ? reply + '\n\n' : '') + `🔧 Manutenção registrada.`;
+                }
+              }
+            } else if (payload.action === 'ver') {
+              const nome = p && p.nome ? p.nome : payload.nome;
+              if (!nome) {
+                reply = (reply ? reply + '\n\n' : '') + 'Falta o nome do item. Ex: "/inv ver piano"';
+              } else {
+                try {
+                  const itens = await inventarioService.buscarItemPorNome(nome, null, collab);
+                  if (!itens || itens.length === 0) {
+                    reply = (reply ? reply + '\n\n' : '') + `Nenhum item com "${nome}" encontrado.`;
+                  } else {
+                    reply = (reply ? reply + '\n\n' : '') + itens.map(formatarCardItem).join('\n\n');
+                  }
+                } catch (e) {
+                  if (e.code === 'ACCESS_DENIED') {
+                    reply = (reply ? reply + '\n\n' : '') + e.message;
+                  } else {
+                    throw e;
+                  }
                 }
               }
             } else if (['query_room', 'query_shop', 'query_rooms'].includes(payload.action)) {

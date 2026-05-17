@@ -1,4 +1,16 @@
 const { laReportClient } = require('./la-report-client');
+const { checkAccess } = require('./la-report-access');
+
+function gate(collab, dataType, fnName) {
+  const access = checkAccess(collab, dataType);
+  if (!access.allowed) {
+    const err = new Error(access.reason);
+    err.code = 'ACCESS_DENIED';
+    err.fn = fnName;
+    throw err;
+  }
+  return access;
+}
 
 function viaTomLabel(nome) {
   return `via TOM por ${nome || 'usuário desconhecido'}`;
@@ -52,7 +64,19 @@ async function buscarSalaPorNome(nome, unidadeId) {
   return data || [];
 }
 
-async function detalheSala(salaId) {
+async function detalheSala(salaId, collab) {
+  if (collab) {
+    const access = gate(collab, 'inventario', 'detalheSala');
+    if (access.unitFilter) {
+      const { data: sala } = await laReportClient.from('salas').select('unidade_id').eq('id', salaId).single();
+      const units = Array.isArray(access.unitFilter) ? access.unitFilter : [access.unitFilter];
+      if (!sala || !units.includes(sala.unidade_id)) {
+        const err = new Error('Essa informação é restrita ao seu perfil. Fala com o Alf ou a coordenação.');
+        err.code = 'ACCESS_DENIED';
+        throw err;
+      }
+    }
+  }
   const [salaRes, itensRes, movRes, manutRes] = await Promise.all([
     laReportClient.from('salas').select('*, unidades(nome)').eq('id', salaId).single(),
     laReportClient.from('inventario').select('*').eq('sala_id', salaId).eq('ativo', true).order('nome'),
@@ -275,10 +299,30 @@ async function uploadFotoItem(itemId, buffer, contentType) {
   return pub.publicUrl;
 }
 
+async function buscarItemPorNome(nome, unidadeId, collab) {
+  if (collab) {
+    const access = gate(collab, 'inventario', 'buscarItemPorNome');
+    if (access.unitFilter && !unidadeId) {
+      unidadeId = Array.isArray(access.unitFilter) ? null : access.unitFilter;
+    }
+  }
+  let q = laReportClient
+    .from('inventario')
+    .select('*, salas(nome, unidade_id, unidades(nome))')
+    .ilike('nome', `%${nome}%`)
+    .eq('ativo', true)
+    .limit(5);
+  if (unidadeId) q = q.eq('unidade_id', unidadeId);
+  const { data, error } = await q;
+  if (error) throw error;
+  return data || [];
+}
+
 module.exports = {
   viaTomLabel, withViaTom,
   // leitura
   listarUnidades, listarSalasPorUnidade, buscarSalaPorNome, detalheSala,
+  buscarItemPorNome,
   listarLojaPorUnidade, buscarProdutoPorNome,
   listarEstoqueBaixo, listarManutencoesPendentes, listarRevisoesProgramadas,
   // escrita

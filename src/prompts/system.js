@@ -4,8 +4,32 @@
 const fs = require('fs');
 const path = require('path');
 const supabase = require('../supabase/client');
+const { checkAccess, DATA_LEVELS } = require('../services/la-report-access');
 
 const SKILLS_DIR = path.join(__dirname, '..', '..', 'skills');
+
+// Fase A — Bloco dinâmico de governança de dados injetado no system prompt.
+// Lista o que o collaborator atual pode/não pode consultar no LA Report.
+function buildAccessBlock(collab) {
+  if (!collab) return '';
+  const allowed = [];
+  const blocked = [];
+  for (const dataType of Object.keys(DATA_LEVELS)) {
+    const res = checkAccess(collab, dataType);
+    const pretty = dataType.replace(/_/g, ' ');
+    if (res.allowed) {
+      const suffix = res.unitFilter
+        ? ` (apenas ${Array.isArray(res.unitFilter) ? res.unitFilter.join(', ') : res.unitFilter})`
+        : res.scopeFilter === 'seus_alunos'
+        ? ' (apenas seus alunos)'
+        : '';
+      allowed.push(`- ${pretty}${suffix}`);
+    } else {
+      blocked.push(`- ${pretty}`);
+    }
+  }
+  return `\n## Regras de acesso ao LA Report para ${collab.full_name}\n\n### ✅ Pode consultar:\n${allowed.join('\n')}\n\n### 🚫 NÃO pode consultar:\n${blocked.join('\n')}\n\n### Comportamento obrigatório:\n1. NUNCA revelar dados da lista bloqueada\n2. Dizer "essa informação é restrita ao seu perfil" se pedirem algo bloqueado\n3. Aplicar filtros de unidade quando indicado\n4. Sugerir "Fala com o Alf ou a coordenação" ao negar\n`;
+}
 
 // Caminho do organograma (referência de governança LA Music)
 const ORGANOGRAMA_PATH = path.join(__dirname, '..', '..', 'docs', 'organograma-la-music.md');
@@ -2779,11 +2803,23 @@ async function buildSystemPrompt(collaborator, opts = {}) {
         systemPrompt += `Unidades: ${(unidadesCat || []).map(u => `${u.nome}(${u.id})`).join(', ')}\n`;
         systemPrompt += `Salas: ${(salasCat || []).map(s => `${s.nome}/${s.tipo_sala || '?'}/uid=${s.unidade_id}`).join(' | ')}\n`;
         systemPrompt += `Produtos lojinha: ${(produtosCat || []).map(p => `${p.nome}${p.sku ? '(' + p.sku + ')' : ''}`).join(', ')}\n\n`;
-        systemPrompt += `Quando o usuário descrever uma ação operacional, use a skill inventario.md e emita <<INVENTORY_ACTION>>...<<END>> com JSON estruturado. Sempre confirmar antes de gravar.`;
+        systemPrompt += `Quando o usuário descrever uma ação operacional, use a skill inventario.md e emita <<INVENTORY_ACTION>>...<<END>> com JSON estruturado. Sempre confirmar antes de gravar.\n\n`;
+        systemPrompt += `ACTIONS PERMITIDAS:\n`;
+        systemPrompt += `- "add_item" — cadastrar novo item\n`;
+        systemPrompt += `- "move_item" — registrar movimentação entre salas\n`;
+        systemPrompt += `- "maintenance" — registrar manutenção\n`;
+        systemPrompt += `- "shop_movement" — movimentação de estoque da lojinha\n`;
+        systemPrompt += `- "ver" — consultar item por nome (Fase A bidirecional)\n\n`;
+        systemPrompt += `EXEMPLO de "ver":\n<<INVENTORY_ACTION>>\n{"action":"ver","params":{"nome":"piano"}}\n<<END>>`;
       }
     } catch (e) {
       systemPrompt += `\n[INVENTARIO_CATALOGO]\nErro ao carregar catálogo: ${e.message}`;
     }
+  }
+
+  // Fase A — bloco dinâmico de governança de dados (sempre injetado quando há collaborator).
+  if (collaborator) {
+    systemPrompt += '\n\n' + buildAccessBlock(collaborator);
   }
 
   const totalTasks = (ctx.personalTasks?.length || 0) + (ctx.workTasks?.length || 0);
@@ -2814,4 +2850,4 @@ function formatMessages(recent, currentText) {
   return msgs;
 }
 
-module.exports = { buildSystemPrompt, formatMessages, fetchCollaboratorContext, nameFor, todaySaoPaulo };
+module.exports = { buildSystemPrompt, formatMessages, fetchCollaboratorContext, nameFor, todaySaoPaulo, buildAccessBlock };

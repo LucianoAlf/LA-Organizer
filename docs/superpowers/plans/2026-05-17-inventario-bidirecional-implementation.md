@@ -256,10 +256,10 @@ const fixtures = {
   anne:       { role: 'director', unit: 'all', full_name: 'Anne Susan' },
   rafinha:    { role: 'collaborator', function_role: 'ops_tecnicas', unit: 'all', full_name: 'Rafinha' },
   juliana:    { role: 'coordinator', unit: 'all', full_name: 'Juliana' },
-  jereh:      { role: 'manager', unit: 'cg-uuid', full_name: 'Jereh' },
-  krissya:    { role: 'manager', unit: 'barra-uuid', full_name: 'Krissya' },
-  farmer_cg:  { role: 'collaborator', function_role: 'farmer', unit: 'cg-uuid', full_name: 'Gabi' },
-  professor:  { role: 'collaborator', function_role: 'professor', unit: 'barra-uuid', full_name: 'Peterson' },
+  jereh:      { role: 'manager', unit: 'cg-uuid-placeholder', full_name: 'Jereh' },
+  krissya:    { role: 'manager', unit: 'barra-uuid-placeholder', full_name: 'Krissya' },
+  farmer_cg:  { role: 'collaborator', function_role: 'farmer', unit: 'cg-uuid-placeholder', full_name: 'Gabi' },
+  professor:  { role: 'collaborator', function_role: 'professor', unit: 'barra-uuid-placeholder', full_name: 'Peterson' },
   dai_ped:    { role: 'collaborator', pedagogical_role: 'mentor', unit: 'all', full_name: 'Dai' },
   hugo:       { role: 'collaborator', function_role: 'tech', unit: 'all', full_name: 'Hugo' },
   yuri_mkt:   { role: 'manager', function_role: 'marketing', unit: 'all', full_name: 'Yuri' },
@@ -275,11 +275,11 @@ const cases = [
   ['juliana',   'inventario',        true,  null],
   ['juliana',   'valor_patrimonial', false, null],
   ['juliana',   'loja_produtos',     false, null],
-  ['jereh',     'inventario',        true,  'cg-uuid'],
+  ['jereh',     'inventario',        true,  'cg-uuid-placeholder'],
   ['jereh',     'valor_patrimonial', false, null],
-  ['jereh',     'loja_produtos',     true,  'cg-uuid'],
+  ['jereh',     'loja_produtos',     true,  'cg-uuid-placeholder'],
   ['krissya',   'leads',             true,  null],  // exceção
-  ['farmer_cg', 'inventario',        true,  'cg-uuid'],
+  ['farmer_cg', 'inventario',        true,  'cg-uuid-placeholder'],
   ['farmer_cg', 'valor_patrimonial', false, null],
   ['professor', 'inventario',        false, null],  // stub Fase A
   ['dai_ped',   'inventario',        true,  null],
@@ -2393,7 +2393,7 @@ Se for impraticável testar logando como outro usuário, validar logicamente via
 
 ```js
 // preview_eval
-const c = { role: 'manager', unit: 'cg-uuid', full_name: 'Jereh', function_role: null, pedagogical_role: null };
+const c = { role: 'manager', unit: 'cg-uuid-placeholder', full_name: 'Jereh', function_role: null, pedagogical_role: null };
 console.log(window._checkAccess?.(c, 'valor_patrimonial'));  // se expuser, deve ser allowed:false
 ```
 

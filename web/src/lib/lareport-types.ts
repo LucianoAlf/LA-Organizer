@@ -13,6 +13,7 @@ export interface ReportSala {
   capacidade_maxima: number | null;
   codigo: string | null;
   ativo: boolean;
+  unidade_id?: string | null;
   itens_count?: number;
   unidades?: { nome: string };
 }
