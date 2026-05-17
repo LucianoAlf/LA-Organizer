@@ -1,8 +1,12 @@
 # Inventário Bidirecional (LA Report ↔ PWA ↔ TOM) — Design
 
-**Data:** 2026-05-17
-**Sprint:** Fase A (Inventário CRUD + cards ricos + FAB + realtime)
+**Data:** 2026-05-17 (v2 — incorpora 3 camadas de governança)
+**Sprint:** Fase A (Inventário CRUD + cards ricos + FAB + realtime + governança)
 **Sprint seguinte (Fase B, documentado):** Lojinha bidirecional
+
+**Referências obrigatórias:**
+- `matriz-governanca-la-report.md` (aprovada pelo Alf)
+- `spec-camadas-protecao-la-report.md` (3 camadas de proteção)
 
 ---
 
@@ -15,7 +19,9 @@ PWA do LA Organizer vira a interface primária do Rafinha pra gestão de invent�
 ## Princípios
 
 - **LA Report é fonte única de verdade.** Nenhuma duplicação de dados.
+- **Governança via `checkAccess()` — fonte única.** PWA, TOM e Vercel serverless consultam a MESMA tabela de regras (`la-report-access-rules.json`). Zero listas duplicadas de roles.
 - **Auditoria preservada.** Toda escrita do PWA grava "via PWA por &lt;nome&gt;" em `observacoes`/`motivo` (mesmo padrão R1 do TOM).
+- **Defesa em profundidade.** Filtros aplicados no client (PWA), revalidados no serverless. RLS frouxa do LA Report aceita porque gate está no nosso código.
 - **Segurança escalável ao uso atual.** Anon key do LA Report no bundle (single-org, single-tenant operacional) é aceitável; gating de escrita acontece no serverless.
 - **YAGNI.** Lojinha CRUD fica pra Fase B (separada).
 
@@ -24,31 +30,56 @@ PWA do LA Organizer vira a interface primária do Rafinha pra gestão de invent�
 ## Arquitetura
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  PWA (Vite/React PWA, Vercel)                       │
-│                                                     │
-│  READ + REALTIME  ───────────► laReportClient       │
-│  (supabase-js direto)          ANON KEY + RLS       │
-│                                                     │
-│  WRITE  ─────► /api/lareport/inventario/... ───►    │
-│  (serverless, valida JWT → role → injeta auditoria) │
-└────────┬────────────────────────────┬───────────────┘
-         │ realtime channel           │ HTTPS POST/PATCH/DELETE
-         ▼                            ▼
-┌─────────────────────────────────────────────────────┐
-│  LA Report Supabase (ouqwbbermlzqqvtqwlul)          │
-│  Tables: inventario, inventario_movimentacoes,      │
-│          inventario_manutencoes, salas, unidades    │
-│  Storage bucket: inventario-fotos                   │
-└─────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│  PWA (Vite/React PWA, Vercel)                                       │
+│                                                                     │
+│  READ + REALTIME ──► checkAccess(collab,'inventario') ──► filtros  │
+│                      laReportClient (anon key)                      │
+│                      .from('inventario')                            │
+│                      .eq('unidade_id', unitFilter)                  │
+│                                                                     │
+│  WRITE ──► /api/lareport/inventario/... ──► serverless              │
+│                  ├─ valida JWT                                      │
+│                  ├─ checkAccess(collab,'inventario') [revalidação] │
+│                  ├─ injeta "via PWA por <nome>"                     │
+│                  └─ writes via service-role                         │
+│                                                                     │
+│  FIELD GATING ──► campo "Valor compra" só renderiza se              │
+│                   checkAccess(collab,'valor_patrimonial').allowed   │
+└────────┬───────────────────────────────────────┬────────────────────┘
+         │ realtime channel                      │ HTTPS
+         ▼                                       ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  LA Report Supabase (ouqwbbermlzqqvtqwlul)                          │
+│  Tables: inventario, inventario_movimentacoes,                      │
+│          inventario_manutencoes, salas, unidades                    │
+│  Storage bucket: inventario-fotos                                   │
+└─────────────────────────────────────────────────────────────────────┘
          ▲
          │ service-role (server-side only)
-┌────────┴────────────────────────────────────────────┐
-│  TOM (VPS, WhatsApp agent)                          │
-│  src/services/inventario-service.js (já existe)     │
-│  Novo: buscarItemPorNome() + handler /inv ver       │
-└─────────────────────────────────────────────────────┘
+┌────────┴────────────────────────────────────────────────────────────┐
+│  TOM (VPS, WhatsApp agent)                                          │
+│  src/services/la-report-access.js (NOVO) ──► checkAccess()         │
+│  src/services/inventario-service.js (já existe + buscarItemPorNome)│
+│  src/prompts/system.js (modificado: injeta bloco dinâmico)         │
+│  skills/governanca-dados.md (NOVO)                                  │
+│  skills/inventario.md (modificado: passa por checkAccess)          │
+└─────────────────────────────────────────────────────────────────────┘
 ```
+
+### Fonte única de verdade: `la-report-access-rules.json`
+
+Arquivo de regras (DATA_LEVELS + ACCESS_RULES) vive em **um único lugar**:
+
+```
+_remote/src/services/la-report-access-rules.json
+```
+
+- TOM (`la-report-access.js`) faz `require('./la-report-access-rules.json')`.
+- PWA (`access-control.ts`) importa via `import rules from '../../../src/services/la-report-access-rules.json'` (Vite resolve build-time, sem cross-bundle).
+- Alternativa se Vite não conseguir: símbolo soft-link `web/src/lib/la-report-access-rules.json` → `../../../src/services/la-report-access-rules.json` ou copy via build script.
+
+**Zero duplicação de listas de roles.** Mudar regra de governança = editar 1 arquivo.
 
 ### Leituras (PWA)
 
@@ -66,6 +97,32 @@ PWA do LA Organizer vira a interface primária do Rafinha pra gestão de invent�
 - No evento, invalida cache do TanStack Query (`queryClient.invalidateQueries`).
 - `useReportSalas` subscribe em mudanças globais de `inventario` (refetch lista de contagem).
 
+### Governança aplicada nas leituras (PWA)
+
+Cada hook de leitura passa por `checkAccess()`:
+
+```ts
+// useInventarioSala.ts (exemplo)
+const { collaborator } = useAuth();
+const access = checkAccess(collaborator, 'inventario', { unit: targetUnit });
+
+if (!access.allowed) {
+  return { data: null, error: 'Acesso negado', allowed: false };
+}
+
+let query = laReportClient.from('inventario').select('*').eq('sala_id', salaId);
+if (access.unitFilter) query = query.eq('unidade_id', access.unitFilter);
+if (access.scopeFilter === 'sua_sala' && collaborator.sala_id) {
+  query = query.eq('sala_id', collaborator.sala_id);
+}
+```
+
+**Filtros aplicados automaticamente:**
+- Manager Barra → `WHERE unidade_id = barra_id`
+- Farmer CG → `WHERE unidade_id = cg_id`
+- Professor → `WHERE sala_id = sua_sala_id`
+- Rafinha (ops_tecnicas, unit=all) → sem filtro
+
 ### Escritas (PWA)
 
 Todas via Vercel serverless. Endpoints novos:
@@ -79,18 +136,26 @@ web/api/lareport/inventario/[id]/manutencao.ts  POST  registrar manutenção
 web/api/lareport/upload.ts                  POST   multipart, upload de foto pro Storage
 ```
 
-Cada endpoint segue o mesmo fluxo do `[...path].ts` existente:
+Cada endpoint segue o mesmo fluxo:
 
 1. Extrai JWT do `Authorization: Bearer`
 2. Valida via `supabase.auth.getUser(token)` (cliente do LA Organizer)
-3. Busca `collaborators` por `auth_user_id` → pega `role` e `full_name`
-4. Checa `role IN ALLOWED_WRITE_ROLES` (ver §Permissões)
-5. Antes de gravar, monta payload com:
+3. Busca `collaborators` completo: `id, role, unit, full_name, function_role, pedagogical_role, sala_id`
+4. **Chama `checkAccess(collab, dataType)`** onde `dataType` depende do endpoint:
+   - POST `/inventario` (criar) → `dataType='inventario'`
+   - PATCH `/inventario/[id]` → `dataType='inventario'`. Se payload contém `valor_compra` ou `nota_fiscal`, **adicional `checkAccess(collab, 'valor_patrimonial')`** — senão remove esses campos do payload (defesa em profundidade contra request manipulado).
+   - DELETE `/inventario/[id]` → `dataType='inventario'`
+   - POST `/inventario/[id]/mover` → `dataType='movimentacoes'`
+   - POST `/inventario/[id]/manutencao` → `dataType='inventario'`
+5. Se `!access.allowed` → 403 com `{ ok: false, error: access.reason }`
+6. Se `access.unitFilter` definido, valida que o registro pertence àquela unidade (consulta antes do UPDATE/DELETE):
+   - PATCH/DELETE: `SELECT unidade_id FROM inventario WHERE id=X` → se `!= access.unitFilter`, 403
+7. Antes de gravar, monta payload com:
    - `observacoes = "via PWA por ${full_name}\n\n${payload.observacoes ?? ''}".trim()`
    - Em manutenções/movimentações, prefixo análogo no campo `motivo`/`descricao`
    - `created_by = null` (R1: cross-project user mapping não é possível)
-6. Cliente Supabase do LA Report (service-role) executa
-7. Retorna `{ ok: true, data: row }` ou erro
+8. Cliente Supabase do LA Report (service-role) executa
+9. Retorna `{ ok: true, data: row }` ou erro
 
 ### Upload de foto
 
@@ -117,33 +182,74 @@ Cada endpoint segue o mesmo fluxo do `[...path].ts` existente:
 
 ---
 
-## Componentes PWA novos
+## Componentes — PWA + TOM + serverless
+
+### Governança (novos, transversais)
+
+```
+_remote/src/services/
+  la-report-access-rules.json   NOVO — DATA_LEVELS + ACCESS_RULES (FONTE ÚNICA)
+  la-report-access.js           NOVO — checkAccess() para TOM/Node (CommonJS)
+
+_remote/web/src/lib/
+  access-control.ts             NOVO — checkAccess() para PWA (TS port, importa o JSON)
+
+_remote/web/api/_lib/
+  access-control.ts             NOVO — checkAccess() para Vercel serverless (TS, importa o JSON)
+
+_remote/skills/
+  governanca-dados.md           NOVO — skill markdown carregada quando LA Report ativo
+```
+
+**Teste de paridade obrigatório:** snapshot test comparando outputs de `checkAccess()` em JS vs TS pra um set de fixtures (Rafinha, Jereh, Krissya, professor, farmer CG, etc).
+
+### PWA — invent ário
 
 ```
 web/src/screens/inventario/
-  ListaPage.tsx                 modificado (stats 4 cards + sala cards médios)
+  ListaPage.tsx                 modificado (StatsCards condicional + Lojinha condicional + sala cards médios)
   SalaPage.tsx                  modificado (FAB contextual + menu de ações no item)
   components/
     SalaCardMedio.tsx           NOVO — substitui SalaCard atual
-    StatsCards.tsx              NOVO — 4 cards (Total / Valor / Manut / Atenção)
-    ItemFAB.tsx                 NOVO — botão flutuante contextual (bottom-right)
-    ItemSheet.tsx               NOVO — bottom sheet full-screen pra criar/editar
-    MoverItemSheet.tsx          NOVO — escolhe sala destino + motivo
-    ManutencaoSheet.tsx         NOVO — registra manutenção
-    BaixaConfirmSheet.tsx       NOVO — confirma soft-delete
-    ItemAcoesMenu.tsx           NOVO — bottom sheet com ações disponíveis
+    StatsCards.tsx              NOVO — 3 ou 4 cards baseado em checkAccess('valor_patrimonial')
+    ItemFAB.tsx                 NOVO — botão flutuante (só renderiza se checkAccess('inventario').allowed)
+    ItemSheet.tsx               NOVO — bottom sheet criar/editar; campos sensíveis condicionais
+    MoverItemSheet.tsx          NOVO — checkAccess('movimentacoes')
+    ManutencaoSheet.tsx         NOVO — checkAccess('inventario')
+    BaixaConfirmSheet.tsx       NOVO — checkAccess('inventario')
+    ItemAcoesMenu.tsx           NOVO — só mostra ações permitidas pelo role
     FotoUploader.tsx            NOVO — preview + upload
+    AcessoNegadoState.tsx       NOVO — empty state pra quando access.allowed===false
 
 web/src/lib/
-  lareport-client.ts            NOVO — supabase-js direto ao LA Report
-  lareport-mutations.ts         NOVO — funções fetch pros endpoints write
+  lareport-client.ts            NOVO — supabase-js direto ao LA Report (anon key)
+  lareport-mutations.ts         NOVO — fetch wrappers pros endpoints write
   lareport-realtime.ts          NOVO — wrapper de channel subscription
+  access-control.ts             NOVO — re-export checkAccess + helpers de field-gating
 
 web/src/hooks/
   useInventarioMutations.ts     NOVO — createItem/updateItem/moveItem/registrarManutencao/darBaixa
   useRealtimeSala.ts            NOVO — subscribe nas mudanças da sala atual
   useRealtimeSalas.ts           NOVO — subscribe na lista de salas
-  useLaReport.ts                modificado — refatora pra usar laReportClient direto
+  useLaReport.ts                modificado — aplica unitFilter/scopeFilter de checkAccess
+  useAccess.ts                  NOVO — hook conveniente: useAccess('inventario') → {allowed, unitFilter, scopeFilter}
+```
+
+### TOM
+
+```
+_remote/src/services/
+  la-report-access.js           NOVO (descrito acima)
+  inventario-service.js         modificado — buscarItemPorNome() + todas funções recebem `collab` e checam access
+
+_remote/src/prompts/
+  system.js                     modificado — bloco dinâmico de governança quando LA Report ativo
+
+_remote/src/engine.js           modificado — handler /inv ver + revalida checkAccess antes de cada query
+
+_remote/skills/
+  inventario.md                 modificado — invoca checkAccess; resposta de recusa padronizada
+  governanca-dados.md           NOVO
 ```
 
 ### SalaCardMedio (layout)
@@ -160,29 +266,43 @@ web/src/hooks/
 
 Click no card → SalaPage. Sem botões inline (mantém zona de tap limpa).
 
-### StatsCards (4 cards, grid 2×2 no mobile)
+### StatsCards (condicional 3 ou 4 cards)
 
-| Total itens | Valor total |
-| ----------- | ----------- |
-| Em manutenção (warn) | Atenção (danger) |
+**Comportamento:**
+- `checkAccess(collab, 'valor_patrimonial').allowed === true` → renderiza **4 cards** (grid 2×2): Total / Valor total / Em manutenção / Atenção
+- Caso contrário → renderiza **3 cards** (grid 3×1 ou 2+1): Total / Em manutenção / Atenção
 
-- "Total itens" = COUNT(inventario WHERE unidade_id=X AND ativo=true)
-- "Valor total" = SUM(valor_compra WHERE ...)
+**Quem vê "Valor total":** apenas Direção, Rafinha (ops_tecnicas), Rose (backoffice_fin).
+
+**Queries:**
+- "Total itens" = COUNT(inventario WHERE ativo=true [+ unitFilter se aplicável])
+- "Valor total" = SUM(valor_compra WHERE ativo=true [+ unitFilter])
 - "Em manutenção" = COUNT(... AND status='manutencao')
 - "Atenção" = COUNT(... AND proxima_revisao <= NOW() + alerta_revisao_dias)
-- Click no "Atenção" navega pra `/inventario/atencao` (lista filtrada). Os outros 3 são informativos.
+
+Click no "Atenção" → `/inventario/atencao` (lista filtrada). Outros são informativos.
+
+### Lojinha card na ListaPage (condicional)
+
+`checkAccess(collab, 'loja_produtos').allowed === false` → card "Lojinha" não renderiza.
+
+**Quem NÃO vê Lojinha:** Coordenação (Juliana, Quintela), Marketing, Pedagógico, Professores, Hunters, Tech.
+
+**Quem vê:** Direção, Gerentes (🔒u), Ops (Rafinha), Farmers (🔒u), Backoffice (Rose).
 
 ### ItemSheet (modal de criar/editar)
 
 Bottom sheet full-screen com 5 seções (cada uma é um `<section>` separado, scroll vertical único):
 
 1. **Identificação** — Nome\*, Categoria\* (select com emojis CATEGORIA_INVENTARIO_META), Marca, Modelo, Núm Série, Qtd (default 1)
-2. **Localização** — Unidade\* (auto-selecionada pelo contexto), Sala (auto-selecionada na SalaPage)
-3. **Financeiro** — Valor compra, Data compra, NF, Fornecedor
+2. **Localização** — Unidade\* (auto-selecionada pelo contexto + restrita a `unitFilter` se houver), Sala (auto-selecionada na SalaPage; opções filtradas pra unidade permitida)
+3. **Financeiro** *(toda a seção condicional)* — só renderiza se `checkAccess(collab, 'valor_patrimonial').allowed`. Campos: Valor compra, Data compra, NF, Fornecedor. Pra quem não vê, esses campos são `null` no payload.
 4. **Status & Condição** — Status (select), Condição (select), Próx revisão, Alertar dias antes (default 30)
 5. **Foto + Observações** — FotoUploader (drag & drop ou tap pra escolher) + textarea
 
 CTA fixo no rodapé: "Cadastrar Equipamento" (criação) / "Salvar Alterações" (edição). Validação client-side antes de submeter.
+
+**Defesa em profundidade:** Se um cliente malicioso enviar `valor_compra` no payload sem ter acesso, o serverless **remove o campo silenciosamente** (não rejeita o request — apenas ignora o campo restrito). Loga warning no console pra auditoria.
 
 ### ItemAcoesMenu
 
@@ -195,23 +315,45 @@ Tap no item → bottom sheet com:
 
 ---
 
-## Permissões
+## Permissões — `checkAccess()` é fonte única
 
-### Roles autorizadas pra escrita
+**Zero listas hardcoded de roles.** Tudo passa por `checkAccess(collab, dataType, opts)` que consulta `la-report-access-rules.json`.
 
-Confirmar antes da implementação: `collaborator.role` em uso no LA Organizer DB tem apenas **director, coordinator, manager** (verificado em App.tsx). O usuário mencionou também "Rafinha, AP, Farmers" — esses provavelmente são:
-- Rafinha → usuário específico, provavelmente `coordinator` ou `director`
-- AP (Assistente Pedagógico) → pode ser `function_role` (campo separado) ou role atual
-- Farmers → texto em `unidades.farmers_nomes`, não system role
+### Mapeamento operacional
 
-**Decisão pra Fase A:** começar com `ALLOWED_WRITE_ROLES = ['director', 'coordinator', 'manager']` (paridade com reads). Se Rafinha não tiver um desses roles, ajustar antes do deploy. Documentar essa lista em `web/api/lareport/_common/auth.ts` (helper compartilhado) pra fácil ajuste futuro.
+Reusamos a tabela aprovada na `matriz-governanca-la-report.md`:
+
+| Quem | role | function_role | unit | inventario | valor_patrim. | loja | movimentações |
+|---|---|---|---|---|---|---|---|
+| Luciano Alf | director | — | all | ✔ | ✔ | ✔ | ✔ |
+| Anne Susan | director | — | all | ✔ | ✔ | ✔ | ✔ |
+| Rafinha | collaborator | ops_tecnicas | all | ✔ | ✔ | ✔ | ✔ |
+| Juliana (coord) | coordinator | — | all | ✔ | ✘ | ✘ | ✔ |
+| Jereh (gerente CG) | manager | — | CG | ✔ 🔒u | ✘ | ✔ 🔒u | ✔ 🔒u |
+| Krissya (gerente Barra) | manager | — | Barra | ✔ 🔒u | ✘ | ✔ 🔒u | ✔ 🔒u |
+| Farmer Barra | collaborator | farmer | Barra | ✔ 🔒u | ✘ | ✔ 🔒u | ✔ 🔒u |
+| Professor X | collaborator | professor | Barra | ✔ 🔒sala | ✘ | ✘ | ✘ |
+| Pedagógico (Dai) | collaborator | — (pedagogical_role=true) | all | ✔ | ✘ | ✘ | ✘ |
+| Hugo (tech) | collaborator | tech | all | ✔ | ✘ | ✘ | ✔ |
+| Marketing (Yuri) | collaborator | marketing | all | ✘ | ✘ | ✘ | ✘ |
+
+(Lista completa vive no JSON; tabela acima é resumo pra contexto.)
+
+### Aplicação
+
+- **Reads (PWA):** hook `useAccess('inventario')` retorna `{ allowed, unitFilter, scopeFilter }`. Hook de query aplica os filtros automaticamente.
+- **Writes (serverless):** revalida `checkAccess()` antes de cada mutation. Se `unitFilter` setado, valida que o registro alvo pertence a essa unidade.
+- **Field gating (PWA + serverless):** `valor_compra`/`nota_fiscal` só passam se `checkAccess(collab, 'valor_patrimonial').allowed`.
+- **TOM:** `engine.js` chama `checkAccess()` antes de qualquer query no `laReportClient`. Skill `governanca-dados.md` instrui o LLM a respeitar a frase de recusa padrão.
 
 ### RLS no LA Report
 
-Permanece frouxa (`true` pra authenticated). Não é prioridade apertar agora porque:
-- Acesso ao bundle exige login no LA Organizer (Supabase auth do LA Organizer)
-- Anon key do LA Report sem JWT do LA Report ainda permite reads via RLS frouxa — aceitável (não há dado sensível por unidade)
-- Gate real fica no serverless (writes)
+Permanece frouxa (`true` pra authenticated). Aceito porque:
+- Acesso ao bundle exige login no LA Organizer (Supabase auth nosso)
+- Bundle não expõe service-role do LA Report
+- Gate real está no `checkAccess()` (3 lugares: PWA, serverless, TOM)
+
+**Reavaliar na Fase C** (depois de Lojinha): apertar RLS do LA Report pra auth-based row policies. Por ora, não é prioridade.
 
 ---
 
@@ -267,27 +409,49 @@ Subscriptions são montadas no `useEffect` do hook e desmontadas no cleanup. Lim
 
 ## Testes
 
-### TOM service
-- Smoke test: `curl -X POST /internal/lareport/inventario/buscar-por-nome -d '{"nome":"piano"}'` retorna 5 items max
-- Engine: enviar mensagem "como tá o piano da Amy?" no WhatsApp → confirmar card formatado
+### Paridade JS↔TS de `checkAccess()`
+
+Fixture com 12 collaborators (Luciano, Anne, Rafinha, Jereh, Krissya, Clayton, Juliana, farmer CG, professor Barra, Dai pedagógico, Hugo, Yuri marketing) × 12 dataTypes → 144 cenários. Output JS == output TS pra cada cenário.
+
+### TOM
+- Smoke: `node -e "console.log(require('./src/services/la-report-access').checkAccess(rafinha, 'inventario'))"` → allowed:true
+- Engine: "como tá o piano da Amy?" enviado por Rafinha → card formatado; enviado por Marketing → "Essa informação é restrita ao seu perfil"
+- `/inv add` enviado por professor → recusado com frase padrão
 
 ### PWA (validação visual via Claude Preview)
-- Após cada componente: screenshot + smoke flow
-- Final: 2 abas abertas → editar em uma → confirmar update na outra sem refresh (realtime)
-- Mobile width 360px: confirmar que bottom sheets funcionam sem overflow
+- Login como Rafinha → vê 4 stats cards + Lojinha + FAB + campo Valor compra
+- Login como Manager Barra → vê 3 stats cards + Lojinha (só Barra) + FAB + SEM campo Valor compra
+- Login como Coordenação → vê 3 stats cards, SEM Lojinha, FAB sim
+- Login como Professor → vê só inventário da sua sala, FAB só pra Manutenção (sem criar/mover/baixa)
+- 2 abas abertas → editar em uma → confirmar update na outra (realtime)
+- Mobile 360px: bottom sheets sem overflow
 
 ### Serverless endpoints
-- Smoke test cada endpoint com role autorizada → 200 + auditoria gravada
-- Com role não autorizada → 403
+- POST /inventario com Rafinha → 200, auditoria gravada
+- POST /inventario com Marketing → 403
+- PATCH /inventario/[id] com Manager Barra editando item da CG → 403 (unitFilter mismatch)
+- PATCH /inventario/[id] com `valor_compra` enviado por Manager → 200 mas campo removido do payload + warning log
 - Sem JWT → 401
+
+### Cenários da matriz (E2E PWA)
+| Cenário | Collaborator | Ação | Esperado |
+|---|---|---|---|
+| Inventário liberado all | Rafinha | abrir SalaPage Hendrix Barra | Lista equipamentos |
+| Inventário filtrado | Farmer CG | abrir ListaPage | Vê só CG, não Barra/Recreio |
+| Inventário sala | Professor X | abrir ListaPage | Vê só sua sala |
+| Valor patrim. bloqueado | Manager Barra | abrir ItemSheet | Sem seção Financeiro |
+| Lojinha bloqueada | Juliana coord | abrir ListaPage | Sem card Lojinha |
+| Edit unit mismatch | Manager Barra | tentar editar item CG via URL direta | 403 |
+| Manutenção liberada | Professor X | abrir ItemAcoesMenu na sua sala | Só vê "Manutenção", sem "Editar/Mover/Baixa" |
 
 ---
 
 ## Decisões abertas pra confirmar antes da implementação
 
-1. **Roles autorizadas:** confirmar que `['director', 'coordinator', 'manager']` cobre Rafinha + Coord + Gerentes + Diretores. Se AP/Farmers precisarem escrever, definir como mapear.
-2. **Bucket de fotos:** confirmar nome `inventario-fotos` ou outro padrão.
-3. **Limite de tamanho de foto:** 5MB é razoável? (já é grande pra mobile)
+1. **Bucket de fotos:** confirmar nome `inventario-fotos` ou outro padrão.
+2. **Limite de tamanho de foto:** 5MB é razoável? (já é grande pra mobile)
+3. **Quem pode escrever vs ler inventário:** assumindo paridade (quem lê escreve, exceto Marketing/Hunters/Backoffice-não-Rose que nem leem). Professor pode SÓ registrar manutenção (não criar/mover/baixa). OK?
+4. **`collaborator.function_role` e `pedagogical_role` existem no schema?** Verificar no DB do LA Organizer antes de implementar. Se não existem, adicionar migration.
 
 ---
 
