@@ -5617,6 +5617,14 @@ async function processMessage(phone, text, raw = {}) {
         payload = null;
       }
       if (payload) {
+        // Normaliza: aceita payload "flat" (sem `params` aninhado). O LLM frequentemente esquece.
+        if (payload && typeof payload === 'object' && payload.action && !payload.params) {
+          const { action, ...rest } = payload;
+          if (Object.keys(rest).length > 0) {
+            payload = { action, params: rest };
+            console.log('[InventoryAction] normalizado flat→params:', JSON.stringify(payload));
+          }
+        }
         const baseCheck = inventarioValidators.validateAction(payload);
         if (!baseCheck.ok) {
           console.warn('[InventoryAction] validateAction failed:', baseCheck.errors);
