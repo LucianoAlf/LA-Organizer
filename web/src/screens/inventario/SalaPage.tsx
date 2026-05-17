@@ -24,10 +24,25 @@ export function InventarioSalaPage() {
     return Array.from(set);
   }, [data]);
 
-  const itensFiltrados = useMemo(() => {
+  // Funde a lista de recursos declarados (array salas.recursos) com itens catalogados
+  // (tabela inventario). Recursos sem correspondência viram cards "leves" com badge
+  // "não catalogado" — convidando o Rafinha a catalogar via TOM.
+  const itensCombinados = useMemo(() => {
     if (!data) return [];
-    if (categoriaFilter === 'all') return data.itens;
-    return data.itens.filter(i => i.categoria === categoriaFilter);
+    const itensCat = (categoriaFilter === 'all'
+      ? data.itens
+      : data.itens.filter(i => i.categoria === categoriaFilter)
+    ).map(i => ({ tipo: 'catalogado' as const, item: i }));
+
+    if (categoriaFilter !== 'all') return itensCat;  // recursos não têm categoria
+
+    const recursos = data.sala.recursos ?? [];
+    const nomesCatalogados = new Set(data.itens.map(i => i.nome.trim().toLowerCase()));
+    const recursosSemMatch = recursos
+      .filter(r => !nomesCatalogados.has(r.trim().toLowerCase()))
+      .map(r => ({ tipo: 'recurso' as const, nome: r }));
+
+    return [...itensCat, ...recursosSemMatch];
   }, [data, categoriaFilter]);
 
   if (isLoading || !data) return <LoadingState />;
@@ -44,7 +59,7 @@ export function InventarioSalaPage() {
       />
 
       <div className="bg-bg-surface rounded-lg border border-border p-md">
-        <div className="flex items-center gap-sm mb-3">
+        <div className="flex items-center gap-sm">
           <div className="w-12 h-12 rounded-lg bg-success/10 text-success flex items-center justify-center text-2xl">
             {iconeParaTipoSala(sala.tipo_sala)}
           </div>
@@ -56,16 +71,15 @@ export function InventarioSalaPage() {
             </div>
           </div>
         </div>
-        {sala.recursos && sala.recursos.length > 0 && (
-          <div className="text-[11px] text-fg pt-2 border-t border-border">
-            <strong className="text-fg-muted">Recursos declarados:</strong> {sala.recursos.join(', ')}
-          </div>
-        )}
       </div>
 
       <div className="flex gap-1.5">
         {[
-          { id: 'itens' as AbaSala, label: `Itens (${data.itens.length})` },
+          { id: 'itens' as AbaSala, label: `Itens (${(() => {
+            const nomesCat = new Set(data.itens.map(i => i.nome.trim().toLowerCase()));
+            const recursosSemMatch = (data.sala.recursos ?? []).filter(r => !nomesCat.has(r.trim().toLowerCase())).length;
+            return data.itens.length + recursosSemMatch;
+          })()})` },
           { id: 'movimentacoes' as AbaSala, label: `Movimentações (${data.movimentacoes.length})` },
           { id: 'manutencao' as AbaSala, label: `Manutenção (${data.manutencoes.length})` },
         ].map(t => (
@@ -107,11 +121,28 @@ export function InventarioSalaPage() {
               ))}
             </div>
           )}
-          {itensFiltrados.length === 0 ? (
-            <EmptyState icon={<span>📭</span>} title="Sem itens" description="Nenhum item cadastrado nesta sala. Use o TOM no WhatsApp pra adicionar." />
+          {itensCombinados.length === 0 ? (
+            <EmptyState icon={<span>📭</span>} title="Sem itens" description="Nenhum item nesta sala — nem recursos declarados, nem patrimônio catalogado." />
           ) : (
             <div className="space-y-2">
-              {itensFiltrados.map(i => <ItemCard key={i.id} item={i} />)}
+              {itensCombinados.map((entry, idx) => entry.tipo === 'catalogado' ? (
+                <ItemCard key={`cat-${entry.item.id}`} item={entry.item} />
+              ) : (
+                <div key={`rec-${idx}`} className="bg-bg-surface/60 rounded-lg border border-dashed border-border p-sm flex items-center gap-sm">
+                  <div className="w-14 h-14 rounded-md bg-bg-app/50 flex items-center justify-center text-2xl flex-shrink-0">
+                    📦
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold text-fg truncate">{entry.nome}</div>
+                    <div className="text-[11px] text-fg-muted mt-0.5">
+                      Declarado na sala — sem dados de patrimônio (NF, valor, condição)
+                    </div>
+                    <div className="mt-1">
+                      <Badge tone="neutral">não catalogado</Badge>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </>
