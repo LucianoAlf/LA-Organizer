@@ -8,12 +8,20 @@ async function authHeader() {
 }
 
 export async function uploadFoto(file: File): Promise<string> {
-  const form = new FormData();
-  form.append('file', file);
-  const res = await fetch('/api/lareport/upload', { method: 'POST', headers: await authHeader(), body: form });
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error || new Error('FileReader error'));
+    reader.readAsDataURL(file);
+  });
+  const res = await fetch('/api/lareport/upload', {
+    method: 'POST',
+    headers: { ...(await authHeader()), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dataUrl, filename: file.name }),
+  });
   if (!res.ok) {
     const j = await res.json().catch(() => ({}));
-    throw new Error(j.error || `Upload falhou: ${res.status}`);
+    throw new Error(j.detail || j.error || `Upload falhou: ${res.status}`);
   }
   const j = await res.json();
   return j.url as string;
