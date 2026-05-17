@@ -469,31 +469,43 @@ Fixture com 12 collaborators (Luciano, Anne, Rafinha, Jereh, Krissya, Clayton, J
    - **NÃO precisa de `sala_id`** — professor não tem sala fixa.
    - **Migration pendente:** `_remote/docs/migrations/2026-05-17-collaborators-function-roles.sql` popula `function_role` pra Rafinha (ops_tecnicas), Hugo (tech), Yuri (marketing). Aplicar antes da implementação.
 
-### Resolução de `unitFilter` para professor
+### Resolução de `unitFilter` para professor (STUB nesta Fase A)
 
-Sem coluna nova. Quando `checkAccess(prof, 'inventario')` é chamado, o helper resolve unidades onde o professor dá aula:
+**Status atual do DB (verificado 2026-05-17):**
+- `collaborators.la_report_professor_id` ❌ NÃO existe
+- Zero collaborators com `function_role='professor'` (17 nulls, 3 populados)
+- Conclusão: **professor logando na PWA é cenário teórico nesta Fase A**
+
+**Decisão:** implementar `unidadesDoProfessor(collab)` como **stub que retorna `[]`** (acesso negado). Mantém a regra na matriz `ACCESS_RULES` por consistência, mas a função real só será implementada na Fase B+ quando professores forem cadastrados como collaborators.
 
 ```ts
-// Helper: unidadesDoProfessor(collab) — retorna uuid[]
-async function unidadesDoProfessor(collab) {
-  const { data } = await laReportClient
-    .from('professores_unidades')  // ou turmas_explicitas join salas
-    .select('unidade_id')
-    .eq('professor_id', collab.la_report_professor_id);
-  return [...new Set(data.map(r => r.unidade_id))];
+// web/src/lib/access-control.ts (stub Fase A)
+async function unidadesDoProfessor(collab: Collaborator): Promise<string[]> {
+  // TODO Fase B+: implementar quando professores forem cadastrados como collaborators
+  // Opções de mapping na Fase B:
+  //   1. Adicionar coluna la_report_professor_id em collaborators (limpo)
+  //   2. Fuzzy match por full_name vs professores.nome no LA Report (rápido)
+  //   3. Query em turmas_explicitas / aulas_emusys por professor_nome
+  console.warn('unidadesDoProfessor: stub Fase A — retornando [] (acesso negado)');
+  return [];
 }
 
-// Aplica na query
-const unidades = await unidadesDoProfessor(collab);
-if (unidades.length === 1) {
-  query = query.eq('unidade_id', unidades[0]);  // unitFilter
-} else if (unidades.length > 1) {
-  query = query.in('unidade_id', unidades);     // multi-unit, sem filtro único
+// No checkAccess, quando function_role==='professor':
+if (rule.professor_seus_unidades && function_role === 'professor') {
+  const unidades = await unidadesDoProfessor(collab);
+  if (unidades.length === 0) {
+    return { allowed: false, reason: 'Professor sem unidades vinculadas — fala com a coordenação.' };
+  }
+  return {
+    allowed: true,
+    unitFilter: unidades.length === 1 ? unidades[0] : unidades,  // string ou string[]
+    scopeFilter: null,
+    reason: 'ok'
+  };
 }
-// Se 0 unidades, professor não dá aula — bloqueia
 ```
 
-**Mapping professor LA Organizer ↔ LA Report:** `collaborators.la_report_professor_id` (uuid, nullable). Se a coluna não existe, fallback fuzzy por `full_name` na primeira task. Confirmar antes da implementação se já existe.
+**Teste:** caso "Professor logando" da matriz será marcado como **PENDENTE Fase B** no plan. Ação permitida no ItemAcoesMenu pra professor segue sendo só "🔧 Registrar manutenção" — mas como nenhum professor existe, comportamento real é "acesso negado".
 
 ---
 
