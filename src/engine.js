@@ -5665,19 +5665,43 @@ async function processMessage(phone, text, raw = {}) {
         }
         // Normaliza aliases de action que o LLM costuma inventar
         const actionAliases = {
-          create: 'add_item', criar: 'add_item', cadastrar: 'add_item', adicionar: 'add_item', novo: 'add_item', add: 'add_item',
-          update_item: 'edit_item', update: 'edit_item', atualizar: 'edit_item', editar: 'edit_item', edit: 'edit_item',
-          alterar: 'edit_item', modificar: 'edit_item', change: 'edit_item', patch: 'edit_item',
-          mover: 'move_item', move: 'move_item', transferir: 'move_item',
-          manutencao: 'maintenance', manutenção: 'maintenance', reparar: 'maintenance', consertar: 'maintenance', conserto: 'maintenance',
-          baixa: 'delete_item', desativar: 'delete_item', remover: 'delete_item', delete: 'delete_item', excluir: 'delete_item',
+          // criar
+          create: 'add_item', criar: 'add_item', cadastrar: 'add_item', adicionar: 'add_item',
+          novo: 'add_item', add: 'add_item', register: 'add_item', registrar: 'add_item', inserir: 'add_item',
+          // editar / atualizar (qualquer variação)
+          update: 'edit_item', update_item: 'edit_item', update_quantity: 'edit_item', update_qty: 'edit_item',
+          update_field: 'edit_item', update_status: 'edit_item', update_condition: 'edit_item', update_condicao: 'edit_item',
+          atualizar: 'edit_item', atualizar_quantidade: 'edit_item', editar: 'edit_item', edit: 'edit_item',
+          alterar: 'edit_item', modificar: 'edit_item', change: 'edit_item', change_quantity: 'edit_item',
+          patch: 'edit_item', set: 'edit_item', set_quantity: 'edit_item', set_field: 'edit_item',
+          // mover
+          mover: 'move_item', move: 'move_item', transferir: 'move_item', transfer: 'move_item', relocate: 'move_item',
+          // manutenção
+          manutencao: 'maintenance', manutenção: 'maintenance', reparar: 'maintenance', consertar: 'maintenance',
+          conserto: 'maintenance', repair: 'maintenance', fix: 'maintenance', report_issue: 'maintenance',
+          // baixa / deletar
+          baixa: 'delete_item', desativar: 'delete_item', remover: 'delete_item', delete: 'delete_item',
+          excluir: 'delete_item', remove: 'delete_item', inativar: 'delete_item', deactivate: 'delete_item',
+          // shop
           loja: 'shop_movement', estoque: 'shop_movement',
-          ver: 'query_room', consultar: 'query_room', listar: 'query_rooms',
+          // consultar / ver
+          consultar: 'ver', query: 'ver', buscar: 'ver', search: 'ver', get: 'ver', view: 'ver',
+          listar: 'query_rooms', list: 'query_rooms', list_rooms: 'query_rooms',
         };
+        const KNOWN_ACTIONS = ['add_item', 'edit_item', 'delete_item', 'move_item', 'maintenance', 'shop_movement', 'ver', 'query_room', 'query_shop', 'query_rooms'];
         if (payload.action && actionAliases[String(payload.action).toLowerCase()]) {
           const novo = actionAliases[String(payload.action).toLowerCase()];
           console.log(`[InventoryAction] alias action: ${payload.action} → ${novo}`);
           payload.action = novo;
+        }
+        // Fallback inteligente: action desconhecida + params tem campos de update → edit_item
+        if (payload.action && !KNOWN_ACTIONS.includes(payload.action) && payload.params) {
+          const p2 = payload.params;
+          const hasUpdateField = ['quantidade', 'condicao', 'status', 'marca', 'modelo', 'valor_compra', 'fornecedor', 'observacoes', 'foto_url', 'codigo_patrimonio', 'numero_serie', 'data_compra', 'nota_fiscal', 'proxima_revisao'].some(k => p2[k] !== undefined);
+          if (hasUpdateField && (p2.nome || p2.item_id)) {
+            console.log(`[InventoryAction] fallback unknown→edit_item (action era "${payload.action}")`);
+            payload.action = 'edit_item';
+          }
         }
         const baseCheck = inventarioValidators.validateAction(payload);
         if (!baseCheck.ok) {
