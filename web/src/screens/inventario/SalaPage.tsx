@@ -6,7 +6,7 @@ import { EmptyState } from '../../components/EmptyState';
 import { Badge } from '../../components/Badge';
 import { useReportSalaDetalhe } from '../../hooks/useLaReport';
 import { ItemCard } from './components/ItemCard';
-import { iconeParaTipoSala } from '../../lib/lareport-types';
+import { iconeParaTipoSala, categoriaInventarioMeta } from '../../lib/lareport-types';
 
 type AbaSala = 'itens' | 'movimentacoes' | 'manutencao';
 
@@ -89,18 +89,21 @@ export function InventarioSalaPage() {
                   categoriaFilter === 'all' ? 'bg-tom text-black' : 'bg-bg-surface border border-border text-fg-muted'
                 }`}
               >Todas</button>
-              {categorias.map(c => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => setCategoriaFilter(c)}
-                  className={`text-[10px] px-2.5 py-1 rounded-full font-semibold ${
-                    categoriaFilter === c ? 'bg-tom text-black' : 'bg-bg-surface border border-border text-fg-muted'
-                  }`}
-                >
-                  {c} ({data.itens.filter(i => i.categoria === c).length})
-                </button>
-              ))}
+              {categorias.map(c => {
+                const meta = categoriaInventarioMeta(c);
+                return (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => setCategoriaFilter(c)}
+                    className={`text-[10px] px-2.5 py-1 rounded-full font-semibold ${
+                      categoriaFilter === c ? 'bg-tom text-black' : 'bg-bg-surface border border-border text-fg-muted'
+                    }`}
+                  >
+                    {meta.emoji} {meta.label} ({data.itens.filter(i => i.categoria === c).length})
+                  </button>
+                );
+              })}
             </div>
           )}
           {itensFiltrados.length === 0 ? (

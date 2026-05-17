@@ -128,3 +128,29 @@ export const STATUS_LABELS: Record<StatusItem, string> = {
   baixa: 'Baixa',
   inativo: 'Inativo',
 };
+
+// Mapeamento dos slugs de categoria (vindos da tabela inventario) para
+// label apresentável + emoji. Espelha o LA Report admin web.
+export const CATEGORIA_INVENTARIO_META: Record<string, { label: string; emoji: string }> = {
+  climatizacao: { label: 'Climatização', emoji: '❄️' },
+  mobiliario: { label: 'Mobiliário', emoji: '🪑' },
+  audio: { label: 'Áudio', emoji: '🎤' },
+  acessorios: { label: 'Acessórios', emoji: '🎼' },
+  teclados: { label: 'Teclados/Piano', emoji: '🎹' },
+  'teclados-piano': { label: 'Teclados/Piano', emoji: '🎹' },
+  bateria: { label: 'Bateria/Percussão', emoji: '🥁' },
+  'bateria-percussao': { label: 'Bateria/Percussão', emoji: '🥁' },
+  percussao: { label: 'Percussão', emoji: '🥁' },
+  cordas: { label: 'Cordas', emoji: '🎸' },
+  sopro: { label: 'Sopro', emoji: '🎺' },
+  iluminacao: { label: 'Iluminação', emoji: '💡' },
+  informatica: { label: 'Informática', emoji: '💻' },
+  'canto-vocal': { label: 'Canto/Vocal', emoji: '🎤' },
+  outros: { label: 'Outros', emoji: '📦' },
+};
+
+export function categoriaInventarioMeta(slug: string | null | undefined): { label: string; emoji: string } {
+  if (!slug) return { label: 'Sem categoria', emoji: '📦' };
+  const key = slug.toLowerCase().trim();
+  return CATEGORIA_INVENTARIO_META[key] || { label: slug.charAt(0).toUpperCase() + slug.slice(1), emoji: '📦' };
+}

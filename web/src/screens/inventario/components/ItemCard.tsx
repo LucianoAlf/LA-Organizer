@@ -1,5 +1,5 @@
 import { Badge } from '../../../components/Badge';
-import type { ReportInventarioItem } from '../../../lib/lareport-types';
+import { categoriaInventarioMeta, type ReportInventarioItem } from '../../../lib/lareport-types';
 
 interface Props { item: ReportInventarioItem; }
 
@@ -17,17 +17,23 @@ function statusTone(s: string | null): 'success' | 'warning' | 'danger' | 'neutr
 }
 
 export function ItemCard({ item }: Props) {
+  const catMeta = categoriaInventarioMeta(item.categoria);
   return (
     <div className="bg-bg-surface rounded-lg border border-border p-sm flex gap-sm">
       <div className="w-14 h-14 rounded-md bg-bg-app flex items-center justify-center text-2xl flex-shrink-0 overflow-hidden">
         {item.foto_url ? (
           <img src={item.foto_url} alt={item.nome} className="w-full h-full object-cover" />
         ) : (
-          <span>📦</span>
+          <span>{catMeta.emoji}</span>
         )}
       </div>
       <div className="flex-1 min-w-0">
         <div className="font-semibold text-fg truncate">{item.nome}</div>
+        {item.categoria && (
+          <div className="text-[11px] text-fg-muted truncate">
+            {catMeta.emoji} {catMeta.label}
+          </div>
+        )}
         {(item.marca || item.modelo) && (
           <div className="text-body-sm text-fg-muted truncate">
             {[item.marca, item.modelo].filter(Boolean).join(' · ')}
