@@ -2796,23 +2796,34 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   // Palavras de item de inventário — se o user fala disso sem mencionar sala, herdar sala da conversa recente
   const itemKeywordsRe = /\b(ar[\s-]condicionad[oa]|piano|teclado|microfone|microphone|caixa de som|amplificador|cabo|cadeira|mesa|espelho|quadro|projetor|tv|televisão|televisao|c[âa]mera|bateria|guitarra|violão|violao|baixo|computador|notebook|impressora|fornecedor|valor|patrim[ôo]nio|n[°º] s[ée]rie|n[úu]mero de s[ée]rie|nota fiscal|condi[çc][ãa]o do|manuten[çc][ãa]o do|condi[çc][ãa]o desse|condicao do|condicao desse)\b/i;
   const mencionaItemInv = itemKeywordsRe.test(lowerMsg);
-  // Se não tem sala explícita mas menciona item, procura sala recente no histórico (todas as msgs disponíveis)
-  if (!querSalaMatch && mencionaItemInv && Array.isArray(hist)) {
-    const recentes = hist.slice(-20);
-    let achouEmHist = null;
-    for (let i = recentes.length - 1; i >= 0; i--) {
-      const m = recentes[i];
-      const txt = (m && (m.content || m.body || m.text || m.message || '')) + '';
-      if (!txt) continue;
-      // 1) "Sala X" / "sala X" em qualquer msg (user ou tom)
-      const mu = /\b[Ss]ala\s+([A-Za-zÀ-ÿ0-9]+)/.exec(txt);
-      if (mu) { achouEmHist = mu; break; }
-      // 2) assistente já injetou "[SALA_DETALHE: X ..."
-      const ma = /\[SALA_DETALHE:\s*([^\s—\-\]]+)/i.exec(txt);
-      if (ma) { achouEmHist = [ma[0], ma[1]]; break; }
+  // Se não tem sala explícita mas menciona item de inventário, busca "sala consultada recentemente"
+  // persistida em collaborator_memory (TTL 2h) — mais confiável que regex em histórico.
+  let salaRecentePersistida = null;
+  if (!querSalaMatch && mencionaItemInv && collaborator) {
+    try {
+      const { data: memRec } = await supabase
+        .from('collaborator_memory')
+        .select('content, decay_at')
+        .eq('collaborator_id', collaborator.id)
+        .eq('memory_type', 'inventario_sala_recente')
+        .eq('is_active', true)
+        .gt('decay_at', new Date().toISOString())
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (memRec && memRec.content) {
+        try {
+          const parsed = JSON.parse(memRec.content);
+          if (parsed.sala_id) {
+            salaRecentePersistida = parsed;
+            querSalaMatch = [`sala ${parsed.sala_nome}`, parsed.sala_nome];
+          }
+        } catch (_) { /* ignora json inválido */ }
+      }
+    } catch (e) {
+      console.warn('[InvCtx] erro lookup sala recente:', e.message);
     }
-    if (achouEmHist) querSalaMatch = achouEmHist;
-    console.log(`[InvCtx] item=${mencionaItemInv} hist=${hist.length} salaInferida=${querSalaMatch ? querSalaMatch[1] : 'NENHUMA'}`);
+    console.log(`[InvCtx] item=${mencionaItemInv} hist=${hist.length} salaRecentePersistida=${salaRecentePersistida ? salaRecentePersistida.sala_nome : 'NENHUMA'}`);
   }
   const querConsultaSala = !!(querSalaMatch && (verbosConsultaSala.test(lowerMsg) || mencionaItemInv));
   const matchInv = cmdsInv || matchInvForte || (matchUnidadeInv && matchVerboInv) || querConsultaSala || mencionaItemInv;
@@ -2849,7 +2860,16 @@ async function buildSystemPrompt(collaborator, opts = {}) {
               const u = (unidadesCat || []).find(x => x.nome.toLowerCase().includes(unidadeMencionada.toLowerCase()));
               if (u) unidadeId = u.id;
             }
-            const matches = await inventarioService.buscarSalaPorNome(nomeBuscado, unidadeId);
+            // Se veio de memória persistida, usa direto o sala_id (sem ambiguidade)
+            let matches;
+            if (salaRecentePersistida && salaRecentePersistida.sala_id) {
+              const { data: salaDireta } = await laReportClient
+                .from('salas').select('id, nome, tipo_sala, unidade_id, ativo')
+                .eq('id', salaRecentePersistida.sala_id).maybeSingle();
+              matches = salaDireta ? [salaDireta] : [];
+            } else {
+              matches = await inventarioService.buscarSalaPorNome(nomeBuscado, unidadeId);
+            }
             if (matches.length === 0) {
               systemPrompt += `\n\n[SALA_CONSULTADA: "${nomeBuscado}" — nenhuma sala encontrada${unidadeMencionada ? ` na unidade ${unidadeMencionada}` : ''}]\n`;
             } else if (matches.length > 1) {
@@ -2899,6 +2919,34 @@ async function buildSystemPrompt(collaborator, opts = {}) {
                 systemPrompt += `\n[GOVERNANÇA] Este colaborador NÃO tem acesso a valor patrimonial (valor_compra, data_compra, nota_fiscal, fornecedor, custos de manutenção). Se ele perguntar, responde: "Essa info é restrita ao seu perfil. Fala com o Alf ou a coordenação."\n`;
               }
               systemPrompt += `\nUse esses dados pra responder DIRETAMENTE. NÃO peça pra consultar — você JÁ tem TUDO acima. Se perguntarem por algo específico (valor, série, manutenção, etc.), olha a lista e responde.\n`;
+
+              // Persiste sala consultada em collaborator_memory (TTL 2h) — pra próxima msg achar mesmo sem "sala X"
+              if (collaborator && collaborator.id) {
+                try {
+                  const decayIso = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+                  const memContent = JSON.stringify({
+                    sala_id: sala.id, sala_nome: sala.nome,
+                    unidade_id: sala.unidade_id, unidade_nome: sala.unidades?.nome || null,
+                  });
+                  // Desativa anteriores e insere a nova como ativa
+                  await supabase.from('collaborator_memory')
+                    .update({ is_active: false })
+                    .eq('collaborator_id', collaborator.id)
+                    .eq('memory_type', 'inventario_sala_recente')
+                    .eq('is_active', true);
+                  await supabase.from('collaborator_memory').insert({
+                    collaborator_id: collaborator.id,
+                    memory_type: 'inventario_sala_recente',
+                    content: memContent,
+                    importance: 'medium',
+                    is_active: true,
+                    decay_at: decayIso,
+                  });
+                  console.log(`[InvCtx] sala persistida: ${sala.nome} (id=${sala.id}) decay=${decayIso}`);
+                } catch (eMem) {
+                  console.warn('[InvCtx] erro persistir sala recente:', eMem.message);
+                }
+              }
             }
           } catch (eDet) {
             if (eDet.code === 'ACCESS_DENIED') {
