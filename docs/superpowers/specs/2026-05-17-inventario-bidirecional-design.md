@@ -81,6 +81,8 @@ _remote/src/services/la-report-access-rules.json
 
 **Zero duplicação de listas de roles.** Mudar regra de governança = editar 1 arquivo.
 
+**Manutenção do espelho:** o arquivo `web/src/lib/access-rules.json` é uma cópia commitada do arquivo fonte (`src/services/la-report-access-rules.json`). Sync automático via `predev`/`prebuild` foi removido porque o Vercel builda só a pasta `web/` e não tem acesso a `../scripts/`. Quando mudar regras, rodar manualmente `cd web && npm run sync-rules` antes de commitar.
+
 ### Leituras (PWA)
 
 - Novo módulo `web/src/lib/lareport-client.ts` — cria cliente Supabase apontando pra LA Report com `VITE_LA_REPORT_URL` + `VITE_LA_REPORT_ANON_KEY`.
