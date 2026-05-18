@@ -56,7 +56,12 @@ $changed = git -C $workDir diff HEAD~1 --name-only 2>$null
 $needsVPS = $changed | Where-Object { $_ -match "^(src/|skills/|migrations/)" }
 
 if ($needsVPS) {
-    ssh tom "cd /opt/LA-Organizer && git pull origin main 2>&1 | tail -3 && pm2 restart tom --no-color 2>&1 | tail -2" 2>$null
+    # Sprint 26 — fetch + reset --hard origin/main em vez de git pull.
+    # Diferença crítica: reset --hard SÓ TOCA arquivos tracked. Untracked
+    # (.env, .claude-tom/, node_modules/) ficam intactos. Nunca mais arrastar
+    # com -u por engano. Pull com merge conflict virava intervenção manual
+    # com stash -u (que apagou .env em 18/05).
+    ssh tom "cd /opt/LA-Organizer && git fetch origin main --quiet 2>&1 | tail -2 && git reset --hard origin/main --quiet 2>&1 | tail -2 && pm2 restart tom --no-color 2>&1 | tail -2" 2>$null
 }
 
 exit 0
