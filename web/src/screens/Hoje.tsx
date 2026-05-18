@@ -278,14 +278,17 @@ export function Hoje() {
   });
 
   // Sprint 22.34 — toggle done em event (igual task: status='done' <-> 'scheduled').
+  // Sprint 26 — .select('id') + check de linha retornada pra detectar silent fail de RLS.
   const toggleEventDone = useMutation({
     mutationFn: async (event: CalendarEvent) => {
       const next = event.status === 'done' ? 'scheduled' : 'done';
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('events')
         .update({ status: next })
-        .eq('id', event.id);
+        .eq('id', event.id)
+        .select('id');
       if (error) throw error;
+      if (!data || data.length === 0) throw new Error('Sem permissão para alterar este compromisso.');
     },
     onMutate: async (event) => {
       const key = ['events', 'hoje', collaborator?.id, today] as const;
@@ -307,8 +310,9 @@ export function Hoje() {
   // Sprint 22.34 — cancel event inline (mantem historico).
   const cancelEvent = useMutation({
     mutationFn: async (event: CalendarEvent) => {
-      const { error } = await supabase.from('events').update({ status: 'cancelled' }).eq('id', event.id);
+      const { data, error } = await supabase.from('events').update({ status: 'cancelled' }).eq('id', event.id).select('id');
       if (error) throw error;
+      if (!data || data.length === 0) throw new Error('Sem permissão para cancelar este compromisso.');
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['events'] }),
   });

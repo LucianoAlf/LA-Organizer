@@ -71,8 +71,9 @@ async function toggleTaskStatus(task: WeekTask): Promise<void> {
 // Sprint 22.34c — toggle done em eventos da Semana, espelhando Hoje.
 async function toggleEventStatus(event: CalendarEvent): Promise<void> {
   const next = event.status === 'done' ? 'scheduled' : 'done';
-  const { error } = await supabase.from('events').update({ status: next }).eq('id', event.id);
+  const { data, error } = await supabase.from('events').update({ status: next }).eq('id', event.id).select('id');
   if (error) throw error;
+  if (!data || data.length === 0) throw new Error('Sem permissão para alterar este compromisso.');
 }
 
 export function Semana() {
