@@ -30,11 +30,16 @@ function validateAddItem(p) {
 }
 
 function validateMoveItem(p) {
-  const errors = [];
-  if (!p.item_id && !p.item_nome) errors.push('item_obrigatorio');
-  if (!VALID_MOV_TIPOS.includes(p.tipo)) errors.push(`tipo_invalido: ${p.tipo}`);
-  if (p.tipo === 'transferencia' && !p.sala_destino_id && !p.sala_destino_nome) errors.push('destino_obrigatorio_para_transferencia');
-  return { ok: errors.length === 0, errors };
+  // Aceita aliases: item, nome, name, item_name → item_nome.
+  // tipo default = 'transferencia' (cobre 99% dos casos via WhatsApp).
+  // destino aceita várias variações.
+  if (!p || typeof p !== 'object') return { ok: false, errors: ['params_ausente'] };
+  const temItem = p.item_id || p.item_nome || p.item || p.nome || p.name || p.item_name;
+  if (!temItem) return { ok: false, errors: ['item_obrigatorio'] };
+  const temDestino = p.sala_destino_id || p.sala_destino_nome || p.sala_destino
+    || p.destino || p.destination || p.sala_para || p.para || p.to;
+  if (!temDestino) return { ok: false, errors: ['sala_destino_obrigatoria'] };
+  return { ok: true, errors: [] };
 }
 
 function validateMaintenance(p) {

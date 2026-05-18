@@ -5828,13 +5828,26 @@ async function processMessage(phone, text, raw = {}) {
                 }
               }
             } else if (payload.action === 'move_item') {
+              // Normaliza aliases ANTES de validar
+              p.item_nome = p.item_nome || p.item || p.nome || p.name || p.item_name;
+              p.sala_destino_nome = p.sala_destino_nome || p.sala_destino || p.destino
+                || p.destination || p.sala_para || p.para || p.to;
+              p.sala_origem_nome = p.sala_origem_nome || p.sala_nome || p.sala
+                || p.room || p.origem || p.from;
+              if (!p.tipo || !inventarioValidators.VALID_MOV_TIPOS.includes(p.tipo)) p.tipo = 'transferencia';
               const vc = inventarioValidators.validateMoveItem(p);
               if (!vc.ok) { reply = (reply ? reply + '\n\n' : '') + `Faltam dados: ${vc.errors.join(', ')}`; }
               else {
                 let itemId = p.item_id;
                 if (!itemId && p.item_nome) {
                   const { laReportClient } = require('./services/la-report-client');
-                  const { data } = await laReportClient.from('inventario').select('id, nome').ilike('nome', `%${p.item_nome}%`).eq('ativo', true).limit(5);
+                  let q = laReportClient.from('inventario').select('id, nome, sala_id').ilike('nome', `%${p.item_nome}%`).eq('ativo', true);
+                  // Se a origem foi dita, filtra por ela pra desambiguar
+                  if (p.sala_origem_nome) {
+                    const ro = await inventarioService.buscarSalaPorNome(p.sala_origem_nome);
+                    if (ro.length === 1) q = q.eq('sala_id', ro[0].id);
+                  }
+                  const { data } = await q.limit(5);
                   if (!data || data.length === 0) { reply = (reply ? reply + '\n\n' : '') + `Item "${p.item_nome}" não encontrado.`; itemId = null; }
                   else if (data.length > 1) { reply = (reply ? reply + '\n\n' : '') + `Mais de um item: ${data.map(x => x.nome).join(', ')}. Qual?`; itemId = null; }
                   else itemId = data[0].id;
@@ -5844,11 +5857,15 @@ async function processMessage(phone, text, raw = {}) {
                   if (!destinoId && p.sala_destino_nome) {
                     const r = await inventarioService.buscarSalaPorNome(p.sala_destino_nome);
                     if (r.length === 1) destinoId = r[0].id;
+                    else if (r.length === 0) { reply = (reply ? reply + '\n\n' : '') + `Sala "${p.sala_destino_nome}" não encontrada.`; }
+                    else { reply = (reply ? reply + '\n\n' : '') + `Mais de uma sala bate "${p.sala_destino_nome}": ${r.map(x => x.nome).join(', ')}. Qual?`; }
                   }
-                  await inventarioService.registrarMovimentacao({
-                    item_id: itemId, tipo: p.tipo, sala_destino_id: destinoId, motivo: p.motivo,
-                  }, userName);
-                  reply = (reply ? reply + '\n\n' : '') + `✅ Movimentação registrada.`;
+                  if (destinoId) {
+                    await inventarioService.registrarMovimentacao({
+                      item_id: itemId, tipo: p.tipo, sala_destino_id: destinoId, motivo: p.motivo || `via TOM por ${userName}`,
+                    }, userName);
+                    reply = (reply ? reply + '\n\n' : '') + `✅ Movimentação registrada.`;
+                  }
                 }
               }
             } else if (payload.action === 'maintenance') {
