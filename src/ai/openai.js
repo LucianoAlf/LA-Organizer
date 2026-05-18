@@ -12,7 +12,15 @@ async function chat(systemPrompt, messages /*, maxTokens */) {
       reject(e);
     };
     let settled = false;
-    const proc = spawn('codex', ['exec', '--model', 'gpt-5.4', prompt], { env: process.env });
+    // Sprint 26 — modelo gpt-5.4 era inválido (Codex ficava em "Reading from stdin"
+    // até estourar 120s). Trocado pra gpt-5.5 com reasoning effort=medium
+    // (balanço custo/latência).
+    const proc = spawn('codex', [
+      'exec',
+      '--model', 'gpt-5.5',
+      '-c', 'model_reasoning_effort=medium',
+      prompt,
+    ], { env: process.env });
     let out = '', err = '';
     const killTimer = setTimeout(() => {
       if (settled) return;

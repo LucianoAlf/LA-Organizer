@@ -15,11 +15,20 @@
 const { spawn } = require('child_process');
 
 const CLAUDE_BIN = process.env.CLAUDE_BIN || '/usr/bin/claude';
+const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'sonnet';  // alias do CLI → Sonnet 4.6 atual
 const TOM_CLAUDE_HOME = process.env.TOM_CLAUDE_HOME || '/opt/LA-Organizer/.claude-tom';
 const CLAUDE_HOME = process.env.CLAUDE_HOME || `${TOM_CLAUDE_HOME}/.claude`;
 const CLAUDE_USER_HOME = process.env.TOM_CLAUDE_HOME || TOM_CLAUDE_HOME;
 const CLAUDE_PATH = process.env.PATH || '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 const CLAUDE_TIMEOUT_MS = Number(process.env.CLAUDE_TIMEOUT_MS) || 60000;
+
+// Sprint 26 — Mutex serializa chamadas ao CLI pra impedir race no .claude.json.
+// Causa-raiz: dois `claude -p` em paralelo abriam o mesmo arquivo de config e
+// o último a fechar truncava (virava 50 bytes). Backups corrompidos em
+// .claude-tom/.claude/backups/.claude.json.backup.* confirmam o padrão.
+// Solução: fila promise. Latência sobe um pouco quando 2+ msgs chegam juntas,
+// mas elimina o corrompimento e o "TOM ficou mudo" subsequente.
+let _claudeQueue = Promise.resolve();
 
 function buildEnv() {
   const env = {
@@ -38,7 +47,15 @@ function buildEnv() {
  * @param {Array<{role:string,content:string}>} messages - Histórico + mensagem atual.
  * @returns {Promise<{text:string, provider:string}>}
  */
-async function chat(systemPrompt, messages /*, maxTokens */) {
+// Wrapper público: enfileira na _claudeQueue pra serializar acesso ao .claude.json.
+async function chat(systemPrompt, messages, maxTokens) {
+  const job = _claudeQueue.then(() => _chatInner(systemPrompt, messages, maxTokens));
+  // Mantém a cadeia viva mesmo se este job rejeitar (catch silencioso só pra fila).
+  _claudeQueue = job.catch(() => {});
+  return job;
+}
+
+async function _chatInner(systemPrompt, messages /*, maxTokens */) {
   const lastUser = messages.filter(m => m.role === 'user').pop()?.content || '';
 
   // Histórico recente como contexto na mensagem do usuário (para Claude ver o turno anterior).
@@ -66,6 +83,7 @@ async function chat(systemPrompt, messages /*, maxTokens */) {
     // ao usuário e estourando latência (58s vs 4s típico).
     const args = [
       '-p', userPrompt,
+      '--model', CLAUDE_MODEL,
       '--append-system-prompt', systemPrompt,
       '--output-format', 'json',
       '--strict-mcp-config',
