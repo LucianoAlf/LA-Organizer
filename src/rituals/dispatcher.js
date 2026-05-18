@@ -1434,6 +1434,11 @@ async function detectStaleTasks(now = new Date()) {
   const collabs = await listCollaborators();
   for (const collab of collabs) {
     if (await alreadySent(collab.id, 'hygiene_stale_tasks', ymdRef)) continue;
+    const q = await isQuietNow(collab, sp);
+    if (q.quiet) {
+      await logRitualEvent(collab.id, 'hygiene_stale_tasks', 'skipped', q.reason, ymdRef);
+      continue;
+    }
 
     const { data: staleTasks, error } = await supabase
       .from('tasks')
@@ -1485,6 +1490,11 @@ async function detectUnclosedPastEvents(now = new Date()) {
   const collabs = await listCollaborators();
   for (const collab of collabs) {
     if (await alreadySent(collab.id, 'hygiene_unclosed_events', ymdRef)) continue;
+    const q = await isQuietNow(collab, sp);
+    if (q.quiet) {
+      await logRitualEvent(collab.id, 'hygiene_unclosed_events', 'skipped', q.reason, ymdRef);
+      continue;
+    }
 
     const { data: unclosed, error } = await supabase
       .from('events')
@@ -1694,7 +1704,12 @@ async function run(opts = {}) {
       const briefingTime = p.briefing_time || p.personal_briefing_time || PERSONAL_BRIEFING_DEFAULT;
       const bSlot = timeToSlot(briefingTime);
       if (bSlot !== null && bSlot === slotNow) {
-        await fireRitual(c, 'daily_briefing', now.ymd);
+        const q = await isQuietNow(p, now);
+        if (q.quiet) {
+          await logRitualEvent(c.id, 'daily_briefing', 'skipped', q.reason, now.ymd);
+        } else {
+          await fireRitual(c, 'daily_briefing', now.ymd);
+        }
       }
       // Fechamento — dias úteis
       if (!isWeekend) {
@@ -2398,7 +2413,7 @@ async function checkDeadlineAlerts(ymdToday) {
   if (!ids.length) return;
   const { data: collabs } = await supabase
     .from('collaborators')
-    .select('id, phone, full_name, is_active, user_preferences(notify_deadline_alerts)')
+    .select('id, phone, full_name, is_active, user_preferences(notify_deadline_alerts, quiet_weekends, quiet_days, quiet_reason)')
     .in('id', ids).eq('is_active', true);
   const byId = new Map((collabs || []).map(c => [c.id, c]));
 
@@ -2412,6 +2427,11 @@ async function checkDeadlineAlerts(ymdToday) {
     const dnd = await getDndState(collab.id);
     if (dnd.active) {
       await logRitualEvent(collab.id, 'alerta_prazo', 'skipped', `dnd_active until=${dnd.until}`, ymdToday);
+      continue;
+    }
+    const q = await isQuietNow(collab.user_preferences, nowSaoPaulo());
+    if (q.quiet) {
+      await logRitualEvent(collab.id, 'alerta_prazo', 'skipped', q.reason, ymdToday);
       continue;
     }
     if (await alreadyNotifiedToday(collab.id, t.id, 'deadline_alert', ymdToday)) {
@@ -2475,7 +2495,7 @@ async function checkOverdueAlerts(ymdToday) {
   if (!ids.length) return;
   const { data: collabs } = await supabase
     .from('collaborators')
-    .select('id, phone, full_name, is_active, user_preferences(notify_overdue_alerts)')
+    .select('id, phone, full_name, is_active, user_preferences(notify_overdue_alerts, quiet_weekends, quiet_days, quiet_reason)')
     .in('id', ids).eq('is_active', true);
   const byId = new Map((collabs || []).map(c => [c.id, c]));
 
@@ -2498,6 +2518,11 @@ async function checkOverdueAlerts(ymdToday) {
     const dnd = await getDndState(collab.id);
     if (dnd.active) {
       await logRitualEvent(collab.id, 'alerta_atraso', 'skipped', `dnd_active until=${dnd.until}`, ymdToday);
+      continue;
+    }
+    const q = await isQuietNow(collab.user_preferences, nowSaoPaulo());
+    if (q.quiet) {
+      await logRitualEvent(collab.id, 'alerta_atraso', 'skipped', q.reason, ymdToday);
       continue;
     }
     if (await alreadyNotifiedToday(collab.id, t.id, 'overdue_alert', ymdToday)) {
