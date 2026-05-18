@@ -6429,19 +6429,36 @@ Extraia até 5 itens novos ou elevados. Apenas JSON.`;
     temperature: 0.2,
   });
   const raw = String(nanoRes.choices[0].message.content || '').trim();
-  // Extract JSON array from response (may be wrapped in object like {"memories":[...]})
-  const m = raw.match(/\[[\s\S]*\]/);
-  if (!m) {
-    console.warn(`[MemConsolidate] no JSON array in extractor output for ${collab.full_name}`);
+  // OpenAI `response_format: json_object` força resposta como objeto `{}`. gpt-4.1-nano
+  // ignora o "retorne array" do prompt e retorna 1 objeto direto OU {} vazio OU
+  // {memories:[...]} embrulhado. Parser cobre TODOS os 4 casos:
+  //   1) [{...}, ...]            (raro — modelo respeitou prompt)
+  //   2) {memories: [...]}       (objeto wrapper com key array)
+  //   3) {memory_type, content}  (1 memória direto, mais comum com nano)
+  //   4) {}                      (vazio = nada novo, não é erro)
+  if (!raw) return []; // raw vazio = nada novo, sem warning
+  let parsed = null;
+  try {
+    const obj = JSON.parse(raw);
+    if (Array.isArray(obj)) {
+      parsed = obj;
+    } else if (obj && typeof obj === 'object') {
+      const arrKey = Object.keys(obj).find(k => Array.isArray(obj[k]));
+      if (arrKey) parsed = obj[arrKey];
+      else if (Object.keys(obj).length === 0) parsed = []; // {} = nada novo, OK
+      // Objeto único com schema de memória → trata como [obj]
+      else if (typeof obj.content === 'string' && typeof obj.memory_type === 'string') parsed = [obj];
+    }
+  } catch (_err) {
+    const m = raw.match(/\[[\s\S]*\]/);
+    if (m) {
+      try { parsed = JSON.parse(m[0]); } catch (_err2) { /* fall through */ }
+    }
+  }
+  if (!Array.isArray(parsed)) {
+    console.warn(`[MemConsolidate] no JSON array in extractor output for ${collab.full_name} — raw="${raw.slice(0, 200).replace(/\s+/g, ' ')}"`);
     return [];
   }
-  let parsed;
-  try { parsed = JSON.parse(m[0]); }
-  catch (err) {
-    console.warn(`[MemConsolidate] JSON parse err for ${collab.full_name}:`, err.message);
-    return [];
-  }
-  if (!Array.isArray(parsed)) return [];
   return parsed
     .filter(x => x && typeof x === 'object' && typeof x.content === 'string' && x.content.trim())
     .filter(x => MEM_VALID_TYPES.includes(x.memory_type))
