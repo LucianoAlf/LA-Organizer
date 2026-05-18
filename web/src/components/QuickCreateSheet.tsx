@@ -269,11 +269,17 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
         showToast({ kind: 'success', title: 'Compromisso criado' });
       }
       // Sprint 22.51 — lembretes selecionados na criação.
-      if (eventReminderTimes.length > 0 && inserted?.id) {
-        const reminderRows = eventReminderTimes.map(t => ({
-          event_id: inserted.id as string,
-          remind_at: `${t}:00-03:00`,
-        }));
+      // Sprint 23 — default T-15min se user não selecionou nenhum (audit 18/05: 57% sem lembrete).
+      if (inserted?.id) {
+        const reminderRows = eventReminderTimes.length > 0
+          ? eventReminderTimes.map(t => ({
+              event_id: inserted.id as string,
+              remind_at: `${t}:00-03:00`,
+            }))
+          : [{
+              event_id: inserted.id as string,
+              remind_at: new Date(new Date(startIso).getTime() - 15 * 60 * 1000).toISOString(),
+            }];
         const { error: re } = await supabase.from('event_reminders').insert(reminderRows);
         if (re) console.warn('[QuickCreate] event_reminders insert err:', re.message);
       }

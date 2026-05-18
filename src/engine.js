@@ -1931,6 +1931,15 @@ async function applyEventActions(collaborator, events) {
               reminderRows.push({ event_id: eventId, remind_at: iso });
             }
           }
+          // Sprint 23 — default T-15min se TOM não passou reminder explícito.
+          // Health-check 18/05 mostrou 57% dos eventos próximos sem lembrete.
+          if (reminderRows.length === 0) {
+            const startD = safeDate(e.start_at);
+            if (startD) {
+              const t = safeIsoDate(startD.getTime() - 15 * 60_000);
+              if (t) reminderRows.push({ event_id: eventId, remind_at: t });
+            }
+          }
           if (reminderRows.length > 0) {
             const { error: rErr } = await supabase.from('event_reminders').insert(reminderRows);
             if (rErr) console.error('[Event] reminders err:', rErr.message);
