@@ -36,6 +36,17 @@ foreach ($f in $webRootFiles) {
     Copy-Item $f.FullName (Join-Path $workDir "web\$($f.Name)") -Force 2>$null
 }
 
+# Sprint 26 — package.json + package-lock.json do TOM (raiz) versionados.
+# Antes ficavam apenas no VPS; se o servidor caía, dependências viravam
+# adivinhação. Agora sobem junto e auto-recovery via `npm install` funciona.
+$tomRootFiles = @("package.json", "package-lock.json", "ecosystem.config.js")
+foreach ($name in $tomRootFiles) {
+    $src = Join-Path $srcRoot $name
+    if (Test-Path $src) {
+        Copy-Item $src (Join-Path $workDir $name) -Force 2>$null
+    }
+}
+
 # 3. Nada mudou -> sai sem fazer nada
 $status = git -C $workDir status --porcelain 2>$null
 if ([string]::IsNullOrWhiteSpace($status)) { exit 0 }
