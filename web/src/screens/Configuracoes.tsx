@@ -29,6 +29,9 @@ interface Prefs {
   do_not_disturb_until: string | null;
   do_not_disturb_reason: string | null;
   task_checkin_times: string[];
+  quiet_weekends: boolean;
+  quiet_days: number[];
+  quiet_reason: string | null;
 }
 
 const DOWS = [
@@ -50,7 +53,7 @@ const INTENSITIES = [
 const trimSec = (t: string) => (t || '').slice(0, 5);
 const padSec = (t: string) => (t.length === 5 ? t + ':00' : t);
 
-const PREF_COLS = 'briefing_time, personal_briefing_time, closing_time, planning_day, planning_time, monthly_planning_time, monthly_closing_time, max_daily_tasks, coaching_intensity, notify_deadline_alerts, notify_overdue_alerts, notify_team_summary, do_not_disturb_until, do_not_disturb_reason, task_checkin_times';
+const PREF_COLS = 'briefing_time, personal_briefing_time, closing_time, planning_day, planning_time, monthly_planning_time, monthly_closing_time, max_daily_tasks, coaching_intensity, notify_deadline_alerts, notify_overdue_alerts, notify_team_summary, do_not_disturb_until, do_not_disturb_reason, task_checkin_times, quiet_weekends, quiet_days, quiet_reason';
 
 async function fetchPrefs(collabId: string): Promise<Prefs | null> {
   const { data, error } = await supabase
@@ -121,6 +124,9 @@ export function Configuracoes() {
           notify_overdue_alerts: p.notify_overdue_alerts,
           notify_team_summary: p.notify_team_summary,
           task_checkin_times: (p.task_checkin_times || []).filter(Boolean).map(padSec).sort(),
+          quiet_weekends: !!p.quiet_weekends,
+          quiet_days: Array.isArray(p.quiet_days) ? [...new Set(p.quiet_days.filter(n => n >= 0 && n <= 6))].sort() : [],
+          quiet_reason: p.quiet_reason || null,
         })
         .eq('collaborator_id', collaborator.id);
       if (error) throw error;
@@ -325,6 +331,70 @@ export function Configuracoes() {
           )}
         </div>
       </form>
+
+      {/* Silenciar TOM em dias recorrentes da semana */}
+      <Section title="Dias de silêncio" subtitle="Em dias marcados, o TOM não cobra briefings, lembretes nem alertas.">
+        <p className="text-body-sm text-fg-muted">
+          Marca os dias que você não quer ser cobrado. Vale toda semana — você pode reativar a qualquer momento.
+        </p>
+        <div className="grid grid-cols-7 gap-1">
+          {DOWS.map(d => {
+            const isOn = (form.quiet_weekends && (d.v === 0 || d.v === 6)) || form.quiet_days.includes(d.v);
+            const fromWeekend = form.quiet_weekends && (d.v === 0 || d.v === 6);
+            return (
+              <button
+                key={d.v}
+                type="button"
+                onClick={() => {
+                  if (fromWeekend) return; // não permite desmarcar via day-toggle quando vier de quiet_weekends
+                  const next = isOn
+                    ? form.quiet_days.filter(n => n !== d.v)
+                    : [...form.quiet_days, d.v].sort();
+                  setForm({ ...form, quiet_days: next });
+                }}
+                className={`h-12 rounded-md text-body-sm font-medium border transition ${
+                  isOn
+                    ? 'bg-tom text-bg-app border-tom'
+                    : 'bg-bg-surface border-border text-fg-muted hover:border-tom/60'
+                } ${fromWeekend ? 'opacity-80 cursor-not-allowed' : ''}`}
+                title={fromWeekend ? 'Vem de "Fim de semana inteiro"' : ''}
+              >
+                {d.label.slice(0, 3)}
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant={form.quiet_weekends ? 'primary' : 'secondary'}
+            onClick={() => setForm({ ...form, quiet_weekends: !form.quiet_weekends })}
+          >
+            {form.quiet_weekends ? '✓ Fim de semana inteiro' : 'Fim de semana inteiro'}
+          </Button>
+          {(form.quiet_weekends || form.quiet_days.length > 0) && (
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setForm({ ...form, quiet_weekends: false, quiet_days: [], quiet_reason: null })}
+            >
+              Limpar todos
+            </Button>
+          )}
+        </div>
+        {(form.quiet_weekends || form.quiet_days.length > 0) && (
+          <p className="text-body-sm text-fg-muted">
+            🔕 TOM ficará em silêncio: {(() => {
+              const ativos = new Set<number>(form.quiet_days);
+              if (form.quiet_weekends) { ativos.add(0); ativos.add(6); }
+              return [...ativos].sort().map(v => DOWS.find(d => d.v === v)?.label).join(', ');
+            })()}.
+          </p>
+        )}
+        <p className="text-body-sm text-fg-muted italic">
+          Salvar com o botão lá em cima.
+        </p>
+      </Section>
 
       {/* Pausar TOM (DND) */}
       <Section title="Pausar TOM">
