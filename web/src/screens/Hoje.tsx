@@ -377,7 +377,13 @@ export function Hoje() {
   const overdue = todayList.filter(t => t.status === 'overdue' || (t.due_date && t.due_date < today && t.status !== 'done' && t.status !== 'cancelled'));
   const done = todayList.filter(t => t.status === 'done');
 
-  const isLoading = tLoading || eLoading || dLoading;
+  // Sprint 26 — só mostra skeleton no carregamento INICIAL (sem dados cacheados).
+  // Antes: qualquer invalidate (incl. toggle de task) virava isLoading=true momentaneamente
+  // e a UI piscava o skeleton, "engolindo" a lista. Agora, se já temos dados em mãos,
+  // o optimistic update do toggleTask renderiza imediatamente sem flash.
+  const isInitialLoad = (tLoading || eLoading || dLoading)
+    && todayList.length === 0
+    && todayEvents.length === 0;
   const hasNothing = todayList.length === 0 && todayEvents.length === 0;
 
   const dateLabel = isViewingToday
@@ -525,7 +531,7 @@ export function Hoje() {
             description="Defina VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY no .env e reinicie."
           />
         </section>
-      ) : isLoading ? (
+      ) : isInitialLoad ? (
         <section className="surface p-md">
           <LoadingState rows={3} />
         </section>
