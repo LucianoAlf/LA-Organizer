@@ -184,7 +184,7 @@ export function InventarioSalaPage() {
       )}
 
       <div className="bg-warning/10 border border-warning/40 rounded-md p-md text-body-sm text-fg-muted">
-        💡 <strong className="text-fg">Pra adicionar item:</strong> escreve no WhatsApp do TOM tipo "comprei [item] pra sala {sala.nome} {unidadeNome}". Ou use <code className="bg-bg-surface px-1 rounded">/inv add</code>.
+        💡 <strong className="text-fg">Dica:</strong> dá pra adicionar item por aqui no botão <span className="text-fg">＋</span>, ou pedindo pro TOM no WhatsApp — por exemplo: <em className="text-fg">"comprei uma cadeira pra sala {sala.nome} da {unidadeNome}"</em>.
       </div>
 
       <ItemFAB onClick={() => setNovoOpen(true)} />
