@@ -2725,7 +2725,7 @@ const PREFS_TIME_FIELDS = new Set([
   'monthly_planning_time', 'monthly_closing_time',
 ]);
 const PREFS_INT_FIELDS = new Set(['planning_day', 'max_daily_tasks']);
-const PREFS_BOOL_FIELDS = new Set(['notify_deadline_alerts', 'notify_overdue_alerts', 'notify_team_summary']);
+const PREFS_BOOL_FIELDS = new Set(['notify_deadline_alerts', 'notify_overdue_alerts', 'notify_team_summary', 'quiet_weekends']);
 const PREFS_INTENSITY_VALUES = new Set(['light', 'normal', 'hard']);
 
 function parsePrefsMarker(text) {
@@ -2771,6 +2771,14 @@ function parsePrefsMarker(text) {
       else dropped.push(`${k}:bad_iso`);
     } else if (k === 'do_not_disturb_reason') {
       if (v === null || (typeof v === 'string' && v.length <= 200)) update.do_not_disturb_reason = v;
+      else dropped.push(`${k}:invalid`);
+    } else if (k === 'quiet_days') {
+      // Array de ints 0-6 (0=domingo, 6=sábado). Vazio = limpar.
+      if (Array.isArray(v) && v.every(n => Number.isInteger(n) && n >= 0 && n <= 6)) {
+        update.quiet_days = [...new Set(v)];
+      } else dropped.push(`${k}:bad_dow_array`);
+    } else if (k === 'quiet_reason') {
+      if (v === null || (typeof v === 'string' && v.length <= 200)) update.quiet_reason = v;
       else dropped.push(`${k}:invalid`);
     } else {
       dropped.push(`${k}:unknown_field`);

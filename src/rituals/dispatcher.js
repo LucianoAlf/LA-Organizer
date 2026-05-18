@@ -1388,6 +1388,37 @@ async function remindUnconfirmedAnnouncements(now = new Date()) {
   }
 }
 
+// Sprint 26 — Pausa recorrente (quiet_weekends / quiet_days) respeitada por
+// TODOS os rituais de cobrança proativa (alertas, higiene, eventos abertos,
+// briefing). Retorna { quiet, reason } — chamadores devem fazer logRitualEvent
+// 'skipped' e seguir adiante.
+//
+// Aceita objeto user_preferences ou collaborator-com-preferences ou
+// collaboratorId (busca no banco). Quando o objeto está em mãos (cron normal)
+// evita query extra.
+async function isQuietNow(collabOrId, now = nowSaoPaulo()) {
+  let prefs = null;
+  if (collabOrId && typeof collabOrId === 'object') {
+    prefs = collabOrId.user_preferences || collabOrId;
+  } else if (collabOrId) {
+    const { data } = await supabase
+      .from('user_preferences')
+      .select('quiet_weekends, quiet_days, quiet_reason')
+      .eq('collaborator_id', collabOrId)
+      .maybeSingle();
+    prefs = data;
+  }
+  if (!prefs) return { quiet: false, reason: null };
+  const dow = now.dow;
+  if (prefs.quiet_weekends && (dow === 0 || dow === 6)) {
+    return { quiet: true, reason: `quiet_weekends${prefs.quiet_reason ? ':' + prefs.quiet_reason : ''}` };
+  }
+  if (Array.isArray(prefs.quiet_days) && prefs.quiet_days.includes(dow)) {
+    return { quiet: true, reason: `quiet_day:${dow}${prefs.quiet_reason ? ':' + prefs.quiet_reason : ''}` };
+  }
+  return { quiet: false, reason: null };
+}
+
 // Sprint 18 — Higiene de execução: tasks zumbi (stale)
 // Dispara segunda-feira às 09:00 BRT. Max 5 tasks. Idempotência via ritual_logs.
 async function detectStaleTasks(now = new Date()) {
@@ -1632,6 +1663,11 @@ async function run(opts = {}) {
 
   const slotNow = currentSlot(now);
   const isWeekend = now.dow === 0 || now.dow === 6;
+
+  // Sprint 26 — pausa recorrente respeitada por TODOS os rituais cobradores.
+  // Centraliza checagem para que briefing/alertas/higiene/eventos respeitem
+  // quiet_weekends e quiet_days configurados em user_preferences.
+  // dow: 0=domingo … 6=sábado.
 
   // LA EDUCA — processa fila de notificações *_envio a cada tick (latência max 5min)
   try {
