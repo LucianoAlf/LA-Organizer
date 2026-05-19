@@ -2520,17 +2520,17 @@ async function checkOverdueAlerts(ymdToday) {
       await logRitualEvent(collab.id, 'alerta_atraso', 'skipped', `dnd_active until=${dnd.until}`, ymdToday);
       continue;
     }
+    // Sprint 27 — atraso supera silêncio: tasks já vencidas notificam mesmo
+    // em quiet_day. Tom muda pra reconhecer o silêncio em vez de ignorar.
     const q = await isQuietNow(collab.user_preferences, nowSaoPaulo());
-    if (q.quiet) {
-      await logRitualEvent(collab.id, 'alerta_atraso', 'skipped', q.reason, ymdToday);
-      continue;
-    }
     if (await alreadyNotifiedToday(collab.id, t.id, 'overdue_alert', ymdToday)) {
       await logRitualEvent(collab.id, 'alerta_atraso', 'skipped', `ja_notificado:${String(t.id).slice(0,8)}`, ymdToday);
       continue;
     }
     const n = daysLate(t.due_date);
-    const text = `🔴 *${t.title}* tá atrasada ${n} dia${n > 1 ? 's' : ''}. Resolve hoje ou reagenda?`;
+    const text = q.quiet
+      ? `Sei que hoje é dia tranquilo, mas *${t.title}* atrasou ${n} dia${n > 1 ? 's' : ''}. Resolve quando puder ou reagenda pra outra data?`
+      : `🔴 *${t.title}* tá atrasada ${n} dia${n > 1 ? 's' : ''}. Resolve hoje ou reagenda?`;
     try {
       await whatsapp.sendMessage(collab.phone, text);
       await supabase.from('notifications').insert({
