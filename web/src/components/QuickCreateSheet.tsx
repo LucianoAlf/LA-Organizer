@@ -35,7 +35,7 @@ const MODALITIES: EventModality[] = ['presencial', 'online', 'hibrido'];
 const NEW_CATEGORY_VALUE = '__new__';
 
 export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
-  const { collaborator } = useAuth();
+  const { collaborator, ensureSession } = useAuth();
   const qc = useQueryClient();
   const today = defaultDueDate || todaySP();
 
@@ -141,14 +141,16 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
 
   const createTask = useMutation({
     mutationFn: async () => {
-      if (!collaborator) throw new Error('no_session');
+      // Sprint 27 — ensureSession antes do throw, pra refresh transparente.
+      const collab = collaborator ?? await ensureSession();
+      if (!collab) throw new Error('no_session');
       // Sprint 22.27 — se taskTime preenchida, monta remind_at (timestamp SP).
       // remind_at != compromisso: nao bloqueia agenda, so notifica.
       const remindAt = taskTime ? `${due}T${taskTime}:00-03:00` : null;
       const { error: e } = await supabase.from('tasks').insert({
         title: title.trim().slice(0, 200),
-        assigned_to: collaborator.id,
-        created_by: collaborator.id,
+        assigned_to: collab.id,
+        created_by: collab.id,
         source: 'manual',
         status: 'pending',
         context: taskCtx,
@@ -170,13 +172,14 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
   // por privacidade — tasks pessoais sao do dono e visiveis so pra ele).
   const createDelegated = useMutation({
     mutationFn: async () => {
-      if (!collaborator) throw new Error('no_session');
+      const collab = collaborator ?? await ensureSession();
+      if (!collab) throw new Error('no_session');
       if (!delegateTo) throw new Error('no_assignee');
       const remindAt = taskTime ? `${due}T${taskTime}:00-03:00` : null;
       const { data, error: e } = await supabase.from('tasks').insert({
         title: title.trim().slice(0, 200),
         assigned_to: delegateTo,
-        created_by: collaborator.id,
+        created_by: collab.id,
         source: 'manual',
         status: 'pending',
         context: 'work',
@@ -203,7 +206,8 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
 
   const createEvent = useMutation({
     mutationFn: async () => {
-      if (!collaborator) throw new Error('no_session');
+      const collab = collaborator ?? await ensureSession();
+      if (!collab) throw new Error('no_session');
       const cat = eventCategories.byId(categoryId);
       if (!cat) throw new Error('Categoria inválida');
       // Convert local datetime-local strings → ISO with -03:00 offset (SP).
@@ -212,8 +216,8 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
       if (new Date(endIso) <= new Date(startIso)) throw new Error('end_before_start');
       const payload = {
         title: title.trim().slice(0, 200),
-        collaborator_id: collaborator.id,
-        created_by: collaborator.id,
+        collaborator_id: collab.id,
+        created_by: collab.id,
         source: 'manual' as const,
         status: 'scheduled' as const,
         context: cat.context,
@@ -239,7 +243,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
         const rows = participantIds.map(pid => ({
           event_id: inserted.id as string,
           collaborator_id: pid,
-          invited_by: collaborator.id,
+          invited_by: collab.id,
           status: 'invited' as const,
         }));
         const { error: pe } = await supabase.from('event_participants').insert(rows);

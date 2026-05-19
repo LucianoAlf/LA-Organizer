@@ -26,6 +26,10 @@ interface AuthContextType {
   updateProfile: (fields: { avatar_url?: string; full_name?: string }) => Promise<{ error: Error | null }>;
   /** Força reload do colaborador (após upload de foto etc.) */
   refreshCollaborator: () => Promise<void>;
+  /** Sprint 27 — Garante que ainda temos session + collaborator válidos.
+   *  Se token tá perto de expirar, faz refresh; se collaborator sumiu, re-busca.
+   *  Retorna o collaborator ou null se realmente não rolou (aí sim pedir login). */
+  ensureSession: () => Promise<Collaborator | null>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -47,7 +51,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
       setSession(s);
     });
-    return () => sub.subscription.unsubscribe();
+
+    // Sprint 27 — refresh proativo ao voltar pra foreground.
+    // Causa: timer de autoRefreshToken do supabase-js pausa em aba background.
+    // PWA fica horas em background, volta com token expirado e Cris é forçada
+    // a deslogar/relogar. Aqui, sempre que a aba volta a ser visível, dispara
+    // refreshSession() — supabase só renova de fato se faltar menos que o
+    // expiryMargin pro token vencer, então é barato chamar.
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        supabase.auth.refreshSession().catch(() => { /* falha silenciosa — ensureSession trata na próxima ação */ });
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      sub.subscription.unsubscribe();
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
   }, []);
 
   // Resolve collaborator row from session.user.email.
@@ -122,6 +143,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setCollaborator(null);
   }
 
+  // Sprint 27 — fluxo:
+  //   1. Se já tem collaborator em memória, retorna direto.
+  //   2. Senão (state perdido OU token expirou), pede refresh ao supabase.
+  //   3. Se refresh OK, re-busca o collaborator pelo email da session renovada.
+  //   4. Atualiza state e retorna. Nunca limpa session/collab no caminho feliz.
+  // Resultado: usuário nunca mais é forçado a deslogar/relogar por causa de
+  // token vencido em background — só perde session de verdade quando refresh
+  // token expira (default 7 dias inativo).
+  async function ensureSession(): Promise<Collaborator | null> {
+    if (collaborator) return collaborator;
+    try {
+      const { data: refresh, error } = await supabase.auth.refreshSession();
+      if (error || !refresh.session?.user?.email) return null;
+      const { data } = await supabase
+        .from('collaborators')
+        .select('id, full_name, email, phone, role, function_title, unit, is_active, onboarding_completed, avatar_url, bio, preferred_name, function_role, pedagogical_role')
+        .eq('email', refresh.session.user.email)
+        .eq('is_active', true)
+        .maybeSingle();
+      if (data) {
+        setSession(refresh.session);
+        setCollaborator(data as Collaborator);
+        return data as Collaborator;
+      }
+      return null;
+    } catch (_e) {
+      return null;
+    }
+  }
+
   async function refreshCollaborator() {
     if (!session?.user?.email) return;
     const { data } = await supabase
@@ -156,6 +207,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signOut,
         updateProfile,
         refreshCollaborator,
+        ensureSession,
       }}
     >
       {children}

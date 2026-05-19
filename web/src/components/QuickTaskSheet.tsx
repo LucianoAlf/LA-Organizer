@@ -21,7 +21,7 @@ interface Props {
  * cycle if needed. Auth/INSERT policy enforces ownership.
  */
 export function QuickTaskSheet({ open, onClose, defaultDueDate }: Props) {
-  const { collaborator } = useAuth();
+  const { collaborator, ensureSession } = useAuth();
   const qc = useQueryClient();
   const [title, setTitle] = useState('');
   const [ctx, setCtx] = useState<TaskContext>('work');
@@ -38,11 +38,13 @@ export function QuickTaskSheet({ open, onClose, defaultDueDate }: Props) {
 
   const create = useMutation({
     mutationFn: async () => {
-      if (!collaborator) throw new Error('no_session');
+      // Sprint 27 — refresh transparente antes do throw
+      const collab = collaborator ?? await ensureSession();
+      if (!collab) throw new Error('no_session');
       const { error } = await supabase.from('tasks').insert({
         title: title.trim().slice(0, 200),
-        assigned_to: collaborator.id,
-        created_by: collaborator.id,
+        assigned_to: collab.id,
+        created_by: collab.id,
         source: 'manual', // CHECK constraint: manual|agent_*|checkpoint_decomposition|coordinator_assignment|system
         status: 'pending',
         context: ctx,

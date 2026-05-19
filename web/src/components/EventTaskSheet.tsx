@@ -28,7 +28,7 @@ const STATUS_OPTIONS: { value: TaskStatus; label: string }[] = [
 ];
 
 export function EventTaskSheet({ open, onClose, event, task, defaultSector }: Props) {
-  const { collaborator } = useAuth();
+  const { collaborator, ensureSession } = useAuth();
   const queryClient = useQueryClient();
 
   const isEdit = !!task;
@@ -87,11 +87,13 @@ export function EventTaskSheet({ open, onClose, event, task, defaultSector }: Pr
   const { mutate, isPending } = useMutation({
     mutationFn: async () => {
       setError('');
-      if (!collaborator) throw new Error('no_session');
+      // Sprint 27 — refresh transparente antes do throw
+      const collab = collaborator ?? await ensureSession();
+      if (!collab) throw new Error('no_session');
 
       await supabase.rpc('set_config', {
         key: 'app.current_user_id',
-        value: collaborator.id,
+        value: collab.id,
       });
 
       const payload = {
@@ -114,7 +116,7 @@ export function EventTaskSheet({ open, onClose, event, task, defaultSector }: Pr
       } else {
         const { error: insErr } = await supabase.from('tasks').insert({
           ...payload,
-          created_by: collaborator.id,
+          created_by: collab.id,
           source: 'manual',
           context: 'work',
           priority: 'medium',
