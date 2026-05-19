@@ -12,18 +12,24 @@ async function chat(systemPrompt, messages /*, maxTokens */) {
       reject(e);
     };
     let settled = false;
-    // Sprint 26 — modelo gpt-5.4 era inválido (Codex ficava em "Reading from stdin"
-    // até estourar 120s). Trocado pra gpt-5.5 com reasoning effort=medium
-    // (balanço custo/latência).
+    // Sprint 26 — modelo gpt-5.4 era inválido (Codex ficava em "Reading from stdin").
+    // Trocado pra gpt-5.5 com reasoning effort=medium (balanço custo/latência).
     // Sprint 27 — Codex CLI atualizado 0.120 → 0.131 (suporte gpt-5.5).
     // CLI novo exige --skip-git-repo-check ou trusted directory; passamos a flag.
+    // Sprint 27 — Prompt do TOM tem ~90KB. Passar como argv estoura ARG_MAX
+    // do Linux (em alguns kernels 128KB inclui env vars e quebra mesmo abaixo
+    // disso). Resultado: Codex não recebe argumento e fica eternamente em
+    // "Reading additional input from stdin..." até timeout 120s. Solução:
+    // mandar prompt via stdin (passando '-' como prompt arg).
     const proc = spawn('codex', [
       'exec',
       '--model', 'gpt-5.5',
       '-c', 'model_reasoning_effort=medium',
       '--skip-git-repo-check',
-      prompt,
-    ], { env: process.env });
+      '-',
+    ], { env: process.env, stdio: ['pipe', 'pipe', 'pipe'] });
+    proc.stdin.write(prompt);
+    proc.stdin.end();
     let out = '', err = '';
     const killTimer = setTimeout(() => {
       if (settled) return;
