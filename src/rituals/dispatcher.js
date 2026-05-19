@@ -241,20 +241,29 @@ async function listLeadership() {
 async function checkMonthlyPlanning(now) {
   const dateForCal = (now && now.date) ? now.date : new Date(`${now.ymd}T${String(now.hour).padStart(2,'0')}:${String(now.minute).padStart(2,'0')}:00-03:00`);
   if (!isFirstMondayOfMonth(dateForCal)) return;
+  // Sprint 27 — Audit 19/05: ritual mensal não rodou em 04/05 e ninguém recebeu
+  // por 60 dias. Logs daquele dia foram rotacionados, causa não reconstrutível.
+  // Adicionado log explícito quando a janela é válida — em 01/06 a gente vê se
+  // a função chega aqui e quantos passam pelo gate de slot/alreadySent/etc.
   const collabs = await listLeadership();
   const ymdToday = now.ymd || nowSaoPaulo().ymd;
+  console.log(`[checkMonthlyPlanning] janela válida (${ymdToday} slot=${currentSlot(now)}), ${collabs.length} leadership ativo`);
+  let triedSlot = 0, alreadyDone = 0, fired = 0;
   for (const c of collabs) {
     const time = c.user_preferences?.monthly_planning_time || '07:00';
     if (currentSlot(now) !== timeToSlot(time)) continue;
-    if (await alreadySent(c.id, 'monthly_planning', ymdToday)) continue;
+    triedSlot++;
+    if (await alreadySent(c.id, 'monthly_planning', ymdToday)) { alreadyDone++; continue; }
     try {
       const decision = await getRitualIntroDecision(c.id, 'monthly_planning');
       if (decision === 'show_intro') {
         await sendRitual(c.id, 'monthly_planning_intro');
         await logRitualEvent(c.id, 'monthly_planning', 'intro_shown', null, ymdToday);
+        fired++;
       } else if (decision === 'send_ritual') {
         await sendRitual(c.id, 'monthly_planning');
         await logRitualEvent(c.id, 'monthly_planning', 'sent', null, ymdToday);
+        fired++;
       } else { // 'skip_saturated'
         await logRitualEvent(c.id, 'monthly_planning', 'skipped', 'saturated', ymdToday);
       }
@@ -262,6 +271,7 @@ async function checkMonthlyPlanning(now) {
       console.error('[checkMonthlyPlanning]', c.full_name, err.message);
     }
   }
+  console.log(`[checkMonthlyPlanning] resumo: bateu_slot=${triedSlot} ja_enviado=${alreadyDone} disparou=${fired}`);
 }
 
 // Sprint 21 — Fechamento Mensal (última sexta do mês)
