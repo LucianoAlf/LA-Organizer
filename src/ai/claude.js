@@ -20,7 +20,10 @@ const TOM_CLAUDE_HOME = process.env.TOM_CLAUDE_HOME || '/opt/LA-Organizer/.claud
 const CLAUDE_HOME = process.env.CLAUDE_HOME || `${TOM_CLAUDE_HOME}/.claude`;
 const CLAUDE_USER_HOME = process.env.TOM_CLAUDE_HOME || TOM_CLAUDE_HOME;
 const CLAUDE_PATH = process.env.PATH || '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
-const CLAUDE_TIMEOUT_MS = Number(process.env.CLAUDE_TIMEOUT_MS) || 60000;
+// Sprint 27 — 60s era apertado: tasks normais já estavam em 38-59s.
+// Subindo pra 120s pra dar folga em prompts pesados (criar_compromisso com
+// validação cruzada, leitura de inventário grande, etc).
+const CLAUDE_TIMEOUT_MS = Number(process.env.CLAUDE_TIMEOUT_MS) || 120000;
 
 // Sprint 26 — Mutex serializa chamadas ao CLI pra impedir race no .claude.json.
 // Causa-raiz: dois `claude -p` em paralelo abriam o mesmo arquivo de config e

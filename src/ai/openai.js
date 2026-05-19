@@ -15,10 +15,13 @@ async function chat(systemPrompt, messages /*, maxTokens */) {
     // Sprint 26 — modelo gpt-5.4 era inválido (Codex ficava em "Reading from stdin"
     // até estourar 120s). Trocado pra gpt-5.5 com reasoning effort=medium
     // (balanço custo/latência).
+    // Sprint 27 — Codex CLI atualizado 0.120 → 0.131 (suporte gpt-5.5).
+    // CLI novo exige --skip-git-repo-check ou trusted directory; passamos a flag.
     const proc = spawn('codex', [
       'exec',
       '--model', 'gpt-5.5',
       '-c', 'model_reasoning_effort=medium',
+      '--skip-git-repo-check',
       prompt,
     ], { env: process.env });
     let out = '', err = '';
