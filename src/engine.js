@@ -5828,12 +5828,18 @@ async function processMessage(phone, text, raw = {}) {
                 }
               }
             } else if (payload.action === 'move_item') {
-              // Normaliza aliases ANTES de validar
+              // Normaliza aliases ANTES de validar.
+              // LLM varia muito: from_room/to_room, from_location/to_location, etc.
+              const stripSala = (v) => typeof v === 'string'
+                ? v.replace(/^\s*sala\s+/i, '').trim()
+                : v;
               p.item_nome = p.item_nome || p.item || p.nome || p.name || p.item_name;
-              p.sala_destino_nome = p.sala_destino_nome || p.sala_destino || p.destino
-                || p.destination || p.sala_para || p.para || p.to;
-              p.sala_origem_nome = p.sala_origem_nome || p.sala_nome || p.sala
-                || p.room || p.origem || p.from;
+              p.sala_destino_nome = stripSala(p.sala_destino_nome || p.sala_destino || p.destino
+                || p.destination || p.sala_para || p.para || p.to
+                || p.to_room || p.to_location || p.destination_room || p.destination_location);
+              p.sala_origem_nome = stripSala(p.sala_origem_nome || p.sala_nome || p.sala
+                || p.room || p.origem || p.from
+                || p.from_room || p.from_location || p.source_room || p.source_location);
               if (!p.tipo || !inventarioValidators.VALID_MOV_TIPOS.includes(p.tipo)) p.tipo = 'transferencia';
               const vc = inventarioValidators.validateMoveItem(p);
               if (!vc.ok) { reply = (reply ? reply + '\n\n' : '') + `Faltam dados: ${vc.errors.join(', ')}`; }

@@ -37,7 +37,8 @@ function validateMoveItem(p) {
   const temItem = p.item_id || p.item_nome || p.item || p.nome || p.name || p.item_name;
   if (!temItem) return { ok: false, errors: ['item_obrigatorio'] };
   const temDestino = p.sala_destino_id || p.sala_destino_nome || p.sala_destino
-    || p.destino || p.destination || p.sala_para || p.para || p.to;
+    || p.destino || p.destination || p.sala_para || p.para || p.to
+    || p.to_room || p.to_location || p.destination_room || p.destination_location;
   if (!temDestino) return { ok: false, errors: ['sala_destino_obrigatoria'] };
   return { ok: true, errors: [] };
 }
