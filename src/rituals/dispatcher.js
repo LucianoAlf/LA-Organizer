@@ -2141,6 +2141,18 @@ async function run(opts = {}) {
     console.error('[Dispatcher] checkTaskCheckins erro:', err.message);
   }
 
+  // Sprint 27 — Check-in semanal proativo. Roda quarta 10h BRT. Identifica
+  // colaboradores ativos que não falam com o TOM há 7+ dias e dispara uma
+  // mensagem leve perguntando como tá. Limite 5 por execução pra não inundar.
+  // Respeita DND + quiet_days (check-in é nice-to-have, silêncio supera).
+  if ((opts['force-checkin'] || (now.dow === 3 && now.hour === 10 && now.minute === 0))) {
+    try {
+      await checkSilentCollaboratorsCheckin(now.ymd);
+    } catch (err) {
+      console.error('[Dispatcher] checkSilentCollaboratorsCheckin erro:', err.message);
+    }
+  }
+
   // Deadline + overdue alerts — fire at most once per task per day, gated by
   // hour window so we don't spam at 3am. Window: 8h-19h, América/Sao_Paulo.
   // Override with --force-alerts for tests/manual triggers.
@@ -2558,6 +2570,92 @@ async function checkOverdueAlerts(ymdToday) {
     }
   }
   if (sent) console.log(`[OverdueAlert] fired ${sent} overdue alert(s) (today=${ymdToday})`);
+}
+
+// Sprint 27 — Check-in semanal pra quem some 7+ dias do TOM.
+// Roda uma vez por semana (quarta 10h BRT). Limita 5 colabs por execução pra
+// não inundar. Respeita DND + quiet + cooldown próprio (não toca 2x na mesma
+// semana). Mensagem leve, sem urgência — só lembra que o TOM tá aqui.
+async function checkSilentCollaboratorsCheckin(ymdToday) {
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 3600_000).toISOString();
+  const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 3600_000).toISOString();
+
+  // Colabs ativos com phone, sem conversa nos últimos 7 dias E sem check-in
+  // proativo nos últimos 14 (cooldown semanal com folga).
+  const { data: collabs, error } = await supabase
+    .from('collaborators')
+    .select('id, full_name, phone')
+    .eq('is_active', true)
+    .not('phone', 'is', null)
+    .limit(50);
+  if (error) {
+    console.error('[CheckinSilent] query collabs err:', error.message);
+    return;
+  }
+  if (!collabs?.length) return;
+
+  const whatsapp = require('../services/whatsapp');
+  let sent = 0;
+  for (const c of collabs) {
+    if (sent >= 5) break;
+
+    // Tem conversa nos últimos 7 dias? skip.
+    const { count: convCount } = await supabase
+      .from('conversation_history')
+      .select('id', { count: 'exact', head: true })
+      .eq('collaborator_id', c.id)
+      .gt('created_at', sevenDaysAgo);
+    if (convCount && convCount > 0) continue;
+
+    // Já fizemos check-in proativo nos últimos 14 dias? skip.
+    const { count: recentCheckin } = await supabase
+      .from('notifications')
+      .select('id', { count: 'exact', head: true })
+      .eq('collaborator_id', c.id)
+      .eq('notification_type', 'silent_checkin')
+      .gt('sent_at', fourteenDaysAgo);
+    if (recentCheckin && recentCheckin > 0) continue;
+
+    // DND ativo? skip.
+    const dnd = await getDndState(c.id);
+    if (dnd.active) continue;
+
+    // Quiet day/weekend? skip (check-in é gentileza, silêncio supera).
+    const { data: pref } = await supabase
+      .from('user_preferences')
+      .select('quiet_weekends, quiet_days, quiet_reason')
+      .eq('collaborator_id', c.id)
+      .maybeSingle();
+    const q = await isQuietNow(pref, nowSaoPaulo());
+    if (q.quiet) continue;
+
+    const nick = c.full_name === 'Luciano Alf' ? 'Alf' : (c.full_name || '').split(' ')[0] || 'amigo';
+    const text = `Oi ${nick}, aqui é o TOM. Faz uns dias que a gente não conversa — tudo certo aí? Se precisar de algo (organizar a semana, criar tarefa, marcar reunião), é só falar.`;
+    try {
+      await whatsapp.sendMessage(c.phone, text);
+      await supabase.from('notifications').insert({
+        collaborator_id: c.id,
+        notification_type: 'silent_checkin',
+        title: 'Check-in semanal',
+        body: text,
+        channel: 'whatsapp',
+        status: 'sent',
+        sent_at: new Date().toISOString(),
+      });
+      await supabase.from('conversation_history').insert({
+        collaborator_id: c.id,
+        direction: 'outbound',
+        message_type: 'text',
+        content: text,
+      });
+      await logRitualEvent(c.id, 'checkin_silencioso', 'sent', `nick=${nick}`, ymdToday);
+      sent++;
+    } catch (err) {
+      console.error(`[CheckinSilent] send err ${String(c.phone).slice(-4)}:`, err.message);
+      await logRitualEvent(c.id, 'checkin_silencioso', 'error', err.message, ymdToday);
+    }
+  }
+  if (sent) console.log(`[CheckinSilent] fired ${sent} silent check-in(s)`);
 }
 
 // Multi-reminder: dispara linhas de task_reminders pendentes (sent_at IS NULL,
