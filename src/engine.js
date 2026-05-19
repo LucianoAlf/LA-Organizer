@@ -2995,13 +2995,17 @@ async function applyTaskActions(collaborator, actions) {
         if (departmentId) insertRow.department_id = departmentId;
         if (requestTypeId) insertRow.request_type_id = requestTypeId;
         // Sprint 19 — subdomain pedagógico (school/kids)
+        // Sprint 27 — LLM confunde com `context` (work/personal). Em vez de
+        // rejeitar a task inteira por subdomain inválido, ignora o campo só
+        // (a task ainda salva com subdomain=NULL). Tasks perdidas eram falhas
+        // silenciosas que o usuário só descobria depois pelo audit.
         if (a.subdomain !== undefined) {
           if (a.subdomain !== null && !['school','kids'].includes(a.subdomain)) {
-            console.warn(`[Task] create REJECTED — invalid subdomain=${a.subdomain}`);
-            failCount++;
-            continue;
+            console.warn(`[Task] subdomain inválido descartado: ${a.subdomain} (task segue normal)`);
+            // não setar insertRow.subdomain — deixa NULL
+          } else {
+            insertRow.subdomain = a.subdomain;
           }
-          insertRow.subdomain = a.subdomain;
         }
         // remind_at = ONE-SHOT (e.g. "me lembra de tomar remédio em 30 min").
         //             Dispatcher fires WA AND marks task done. Use só quando a tarefa

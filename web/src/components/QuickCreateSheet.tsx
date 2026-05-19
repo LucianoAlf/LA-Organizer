@@ -214,6 +214,15 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
       const startIso = `${startAt}:00-03:00`;
       const endIso = `${endAt}:00-03:00`;
       if (new Date(endIso) <= new Date(startIso)) throw new Error('end_before_start');
+      // Sprint 27 — default remind_at = 1h antes do start (se houver folga >= 1h).
+      // Auditoria mostrou 3/8 eventos próximos sem lembrete; UX não pedia campo
+      // e o usuário ficava sem aviso. Pra eventos com menos de 1h de folga, deixa
+      // NULL (já é iminente, TOM avisaria tarde).
+      const startMs = new Date(startIso).getTime();
+      const remindMs = startMs - 60 * 60 * 1000;
+      const remindAtDefault = remindMs > Date.now()
+        ? new Date(remindMs).toISOString()
+        : null;
       const payload = {
         title: title.trim().slice(0, 200),
         collaborator_id: collab.id,
@@ -224,6 +233,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
         category_id: cat.id,
         start_at: startIso,
         end_at: endIso,
+        remind_at: remindAtDefault,
         modality,
         location_text: locationText.trim() || null,
         meeting_url: (modality === 'online' || modality === 'hibrido') && meetingUrl.trim()

@@ -250,10 +250,32 @@ async function checkEventsWithoutReminders() {
 
 // ─────────────────────────────────────────────────────────────────
 // CHECK 10 — Erros recorrentes nos logs (>3 do mesmo padrão/24h)
+// Sprint 27 — Cutoff = max(24h_ago, last_process_start). Crash de boot
+// (ex: MODULE_NOT_FOUND quando node_modules sumiu) ficava poluindo a
+// auditoria por 24h mesmo depois do TOM voltar estável. Agora descarta
+// tudo que aconteceu antes do último PROCESS START — só erros do processo
+// atual contam.
 // ─────────────────────────────────────────────────────────────────
+function lastProcessStartMs() {
+  try {
+    const OUT_LOG_PATH = ERROR_LOG_PATH.replace('-error.log', '-out.log');
+    if (!fs.existsSync(OUT_LOG_PATH)) return 0;
+    const lines = fs.readFileSync(OUT_LOG_PATH, 'utf8').split('\n').slice(-2000);
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (lines[i].includes('PROCESS START')) {
+        const m = lines[i].match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/);
+        if (m) return new Date(m[1] + 'Z').getTime();
+      }
+    }
+  } catch (_) { /* silencioso */ }
+  return 0;
+}
+
 async function checkRecurringErrors() {
   if (!fs.existsSync(ERROR_LOG_PATH)) return { status: 'ok', detail: 'log de erros não encontrado (skipped)' };
-  const cutoff = Date.now() - 24 * 3600_000;
+  const win24h = Date.now() - 24 * 3600_000;
+  const procStart = lastProcessStartMs();
+  const cutoff = Math.max(win24h, procStart);
   const lines = fs.readFileSync(ERROR_LOG_PATH, 'utf8').split('\n').slice(-5000); // últimos 5k linhas
   const tally = new Map();
   for (const line of lines) {
