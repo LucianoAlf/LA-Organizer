@@ -1,0 +1,23 @@
+-- ============================================================
+-- 20260519_la_educa_triggers_security_definer
+--
+-- Bug real do "Erro desconhecido" no cadastro de estagiário (Quintela):
+-- la_educa_lembretes_log tem RLS habilitado mas SEM policy de INSERT
+-- (só READ). Os 5 triggers do LA Educa que inserem nessa tabela rodavam
+-- sem SECURITY DEFINER → executavam no contexto do usuário → RLS bloqueava
+-- o INSERT do trigger → INSERT principal em estagiarios também abortava.
+--
+-- Os 2 triggers do LA Journey (notify_kickoff, notify_status_change) já
+-- tinham SECURITY DEFINER por sorte. Padronizando os 5 do LA Educa:
+--
+--   • trigger_la_educa_atribuicao_notify
+--   • trigger_la_educa_certificado_emitido
+--   • trigger_la_educa_custom_criado
+--   • trigger_la_educa_estagiario_cadastrado
+--   • trigger_la_educa_nota_anormal
+--
+-- Aplicado via mcp em prod em 19/05/2026.
+-- ============================================================
+-- Conteúdo: CREATE OR REPLACE de todas as 5 functions adicionando
+-- SECURITY DEFINER + SET search_path TO 'public'.
+-- Ver migration aplicada via dashboard ou pg_proc pra ver diff completo.
