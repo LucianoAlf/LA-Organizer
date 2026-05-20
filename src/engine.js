@@ -6260,7 +6260,10 @@ async function processMessage(phone, text, raw = {}) {
         .trim();
       if (before !== reply) {
         console.warn(`[Engine] tool_call/narration stripped (${before.length}→${reply.length} chars)`);
-        await logMarker(collab.id, 'TOOL_CALL_STRIPPED', 'cleaned', `delta:${before.length - reply.length}`, before.slice(0, 500));
+        // result='rejected' (não 'cleaned') pra respeitar marker_logs_result_check
+        // constraint que só aceita 'executed' | 'rejected'. Semântica: tool_call
+        // não foi executado, foi limpo/rejeitado da resposta. Sprint 23.6 hotfix.
+        await logMarker(collab.id, 'TOOL_CALL_STRIPPED', 'rejected', `delta:${before.length - reply.length}`, before.slice(0, 500));
       }
 
       if (reply.includes('<<') || reply.includes('>>')) {
