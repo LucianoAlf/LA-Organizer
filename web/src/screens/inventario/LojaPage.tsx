@@ -75,30 +75,15 @@ export function InventarioLojaPage() {
         💡 <strong className="text-fg">Recebeu mercadoria?</strong> Escreve no TOM "recebi 50 cadernos de violão pra Barra" ou use o botão abaixo.
       </div>
 
-      {/* FAB Venda — direita (padrão do componente) */}
+      {/* FAB único com menu de 2 ações (Sprint Fase B). */}
       <Fab
-        onClick={() => setVendaOpen(true)}
-        label="Venda"
-        ariaLabel="Registrar venda"
+        label="Novo"
+        ariaLabel="Nova operação na lojinha"
+        actions={[
+          { icon: '💰', label: 'Registrar venda', onClick: () => setVendaOpen(true) },
+          { icon: '📦', label: 'Lançar entrada', onClick: () => setEntradaOpen(true) },
+        ]}
       />
-
-      {/* FAB Entrada de estoque — esquerda */}
-      <button
-        type="button"
-        onClick={() => setEntradaOpen(true)}
-        aria-label="Registrar entrada de estoque"
-        className={[
-          'fixed z-20 left-md md:left-lg',
-          'bottom-[96px] md:bottom-md',
-          'h-14 px-5 rounded-full bg-bg-surface border border-border text-fg shadow-soft',
-          'hover:bg-bg-elevated active:bg-bg-app',
-          'inline-flex items-center gap-2 font-semibold focus-ring',
-        ].join(' ')}
-        style={{ marginBottom: 'env(safe-area-inset-bottom)' }}
-      >
-        <span aria-hidden>📦</span>
-        <span className="hidden sm:inline">Entrada</span>
-      </button>
 
       <VendaSheet
         open={vendaOpen}
