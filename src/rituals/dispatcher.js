@@ -1793,7 +1793,15 @@ async function run(opts = {}) {
         .eq('onboarding_completed', true);
       console.log(`[Dream] consolidando memórias para ${(allCollabs || []).length} colaborador(es) ativo(s)+onboarded`);
       let dreamOk = 0;
+      let dreamSkipped = 0;
       for (const c of (allCollabs || [])) {
+        // Idempotência: slot de 15min × cron de 5min faz 3 ticks consecutivos
+        // baterem o mesmo slot 03:00. Sem este gate, o Dream rodava 3× por noite
+        // (39 calls LLM em vez de 13). Sprint 23.6 hotfix. Force=dream ignora gate.
+        if (opts.force !== 'dream' && await alreadySent(c.id, 'daily_dream', now.ymd)) {
+          dreamSkipped++;
+          continue;
+        }
         try {
           await consolidateMemoryFor(c);
           dreamOk++;
@@ -1805,7 +1813,7 @@ async function run(opts = {}) {
           try { await logRitualEvent(c.id, 'daily_dream', 'error', err.message, now.ymd); } catch (_) {}
         }
       }
-      console.log(`[Dream] concluído: ${dreamOk}/${(allCollabs || []).length} colaboradores`);
+      console.log(`[Dream] concluído: ${dreamOk}/${(allCollabs || []).length} colaboradores (skipped=${dreamSkipped} ja_enviado_hoje)`);
     } catch (err) {
       console.error('[Dispatcher] dream-consolidation erro:', err.message);
     }
