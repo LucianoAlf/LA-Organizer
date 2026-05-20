@@ -2106,6 +2106,16 @@ async function run(opts = {}) {
     }
   }
 
+  // Sprint Fase B — alerta de reposição da lojinha (segunda 9h BRT).
+  if (opts.force === 'loja_reposicao' ||
+      (now.dow === 1 && now.hour === 9 && now.minute === 0)) {
+    try {
+      await checkLojaReposicao(now.ymd);
+    } catch (e) {
+      console.error('[checkLojaReposicao]', e.message);
+    }
+  }
+
   // Cobrança de aprovação de projetos pendentes (2x/dia, 9h e 15h).
   if (opts.force === 'pending_approvals' || PENDING_APPROVAL_REMINDER_TIMES.some(t => timeToSlot(t) === slotNow)) {
     try {
@@ -2489,6 +2499,66 @@ async function checkDeadlineAlerts(ymdToday) {
     }
   }
   if (sent) console.log(`[DeadlineAlert] fired ${sent} deadline alert(s) for ${tomorrow}`);
+}
+
+// Sprint Fase B — Lojinha: verifica produtos abaixo do estoque mínimo e dispara
+// alerta WhatsApp pros responsáveis de reposição de cada unidade (segunda 9h BRT).
+async function checkLojaReposicao(ymdToday) {
+  // CORREÇÃO pós-Dispatch G: usar laReportClient (LA Report DB), NÃO supabase
+  // (LA Organizer DB). Tabelas loja_* só existem no LA Report.
+  const { laReportClient } = require('../services/la-report-client');
+  // 1. Produtos com estoque baixo: busca todos e filtra abaixo do mínimo
+  const { data: estoques, error } = await laReportClient
+    .from('loja_estoque')
+    .select('produto_id, unidade_id, quantidade, loja_produtos!inner(nome, estoque_minimo, ativo)');
+  if (error) {
+    console.error('[checkLojaReposicao] query err:', error.message);
+    return;
+  }
+  const baixos = (estoques || []).filter(e =>
+    e.loja_produtos?.ativo && e.quantidade < (e.loja_produtos?.estoque_minimo ?? 5)
+  );
+  if (baixos.length === 0) {
+    console.log('[checkLojaReposicao] sem produtos abaixo do mínimo');
+    return;
+  }
+
+  // 2. Agrupa por unidade
+  const byUnidade = new Map();
+  for (const b of baixos) {
+    if (!byUnidade.has(b.unidade_id)) byUnidade.set(b.unidade_id, []);
+    byUnidade.get(b.unidade_id).push(b);
+  }
+
+  // 3. Nomes das unidades (LA Report)
+  const { data: unidades } = await laReportClient
+    .from('unidades')
+    .select('id, nome')
+    .in('id', [...byUnidade.keys()]);
+  const unidadeNome = new Map((unidades || []).map(u => [u.id, u.nome]));
+
+  // 4. Pra cada unidade, dispara alerta pros responsáveis
+  const whatsapp = require('../services/whatsapp');
+  let totalSent = 0;
+  for (const [unidadeId, lista] of byUnidade) {
+    const nome = unidadeNome.get(unidadeId) || '?';
+    const { data: resp } = await laReportClient
+      .from('loja_responsaveis_reposicao')
+      .select('nome, whatsapp')
+      .eq('unidade_id', unidadeId)
+      .eq('ativo', true);
+    const linhas = lista.map(l =>
+      `• ${l.loja_produtos.nome}: ${l.quantidade} (mín ${l.loja_produtos.estoque_minimo ?? 5})`
+    ).join('\n');
+    const msg = `📦 *Reposição lojinha — ${nome}*\n\n${linhas}`;
+    for (const r of (resp || [])) {
+      if (r.whatsapp) {
+        try { await whatsapp.sendMessage(r.whatsapp, msg); totalSent++; }
+        catch (e) { console.warn('[checkLojaReposicao] WA err:', e.message); }
+      }
+    }
+  }
+  console.log(`[checkLojaReposicao] disparou ${totalSent} alerta(s)`);
 }
 
 // Overdue alert: tasks que viraram atrasadas EXATAMENTE 1 dia (vencimento ontem,

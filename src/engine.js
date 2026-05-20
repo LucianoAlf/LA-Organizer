@@ -5986,6 +5986,21 @@ async function processMessage(phone, text, raw = {}) {
     }
   }
 
+  // Sprint Fase B — <<SHOP_ACTION>> — venda, entrada, ajuste e consulta da lojinha.
+  {
+    const shop = parseShopAction(reply);
+    if (shop) {
+      const _userName = (collab && collab.full_name) ? collab.full_name : 'usuário';
+      try {
+        const shopResult = await handleShopAction(shop, collab, _userName);
+        if (shopResult) reply = (reply.replace(/<<SHOP_ACTION>>[\s\S]*?<<\/?SHOP_ACTION>>/g, '') + '\n\n' + shopResult).trim();
+      } catch (e) {
+        console.error('[ShopAction] handler err:', e.message);
+        reply = (reply.replace(/<<SHOP_ACTION>>[\s\S]*?<<\/?SHOP_ACTION>>/g, '') + '\n\n⚠️ Não consegui registrar: ' + e.message).trim();
+      }
+    }
+  }
+
   // Sprint 13 F2 — <<SCHOOL_EVENT_ACTION>> — criar/cancelar evento institucional.
   {
     const parsedEv = parseSchoolEventActionMarker(reply);
@@ -7215,6 +7230,243 @@ function parseMonthlyPlanMarker(text) {
     cleanText,
     malformed: false
   };
+}
+
+// Sprint Fase B — parser do marker <<SHOP_ACTION>>
+function parseShopAction(text) {
+  const m = text.match(/<<SHOP_ACTION>>\s*([\s\S]*?)\s*<<\/?SHOP_ACTION>>/);
+  if (!m) return null;
+  try {
+    const payload = JSON.parse(m[1]);
+    if (!payload?.action) return null;
+    const ACTION_ALIASES = {
+      sale: 'shop_sale', vender: 'shop_sale', venda: 'shop_sale',
+      entry: 'shop_entry', entrada: 'shop_entry', chegada: 'shop_entry',
+      adjust: 'shop_adjust', ajuste: 'shop_adjust', ajustar: 'shop_adjust',
+      query: 'query_shop', consulta: 'query_shop', listar: 'query_shop',
+    };
+    const canonical = ACTION_ALIASES[payload.action] || payload.action;
+    return { action: canonical, params: payload.params || {} };
+  } catch (e) {
+    console.warn('[ShopAction] JSON parse fail:', e.message);
+    return null;
+  }
+}
+
+// Normaliza params do LLM (aliases comuns)
+function normalizeShopParams(p) {
+  return {
+    nome: p.nome || p.produto || p.product || p.item || p.name,
+    quantidade: parseInt(p.quantidade || p.qtd || p.qty || p.amount || 1, 10),
+    unidade: p.unidade || p.unit || p.loja || p.local,
+    forma_pagamento: p.forma_pagamento || p.pagamento || p.payment || p.forma || p.pgto,
+    cliente_nome: p.cliente_nome || p.cliente || p.customer || null,
+    tipo_cliente: p.tipo_cliente || p.customer_type || 'avulso',
+    professor_indicador: p.professor_indicador || p.professor || p.indicador || null,
+    delta: typeof p.delta === 'number' ? p.delta : (parseInt(p.delta, 10) || 0),
+    motivo: p.motivo || p.reason || p.razao || null,
+    observacoes: p.observacoes || p.obs || p.notes || null,
+  };
+}
+
+async function resolveUnidadeIdShop(unidadeNome) {
+  if (!unidadeNome) return null;
+  const { laReportClient: _lrc } = require('./services/la-report-client');
+  const { data } = await _lrc
+    .from('unidades').select('id, nome')
+    .ilike('nome', `%${unidadeNome}%`).limit(3);
+  if (!data || data.length === 0) return null;
+  if (data.length > 1) {
+    const exact = data.find(u => u.nome.toLowerCase() === unidadeNome.toLowerCase());
+    if (exact) return exact.id;
+    return null;
+  }
+  return data[0].id;
+}
+
+async function resolveProfessorIndicadorId(nome) {
+  if (!nome) return null;
+  try {
+    const { laReportClient: _lrc } = require('./services/la-report-client');
+    const { data } = await _lrc
+      .from('professores').select('id, nome')
+      .ilike('nome', `%${nome}%`).limit(3);
+    if (!data || data.length !== 1) return null;
+    return data[0].id;
+  } catch (e) {
+    console.warn('[ShopAction] resolveProfessorIndicadorId fallback:', e.message);
+    return null;
+  }
+}
+
+async function handleShopAction(shop, collab, userName) {
+  const { laReportClient: _lrc } = require('./services/la-report-client');
+  const p = normalizeShopParams(shop.params);
+  const viaAudit = `via TOM por ${userName}`;
+
+  if (shop.action === 'shop_sale') {
+    if (!p.nome) return 'Qual produto você vendeu?';
+    if (!p.unidade) return 'Em qual unidade? (Barra, Recreio, CG)';
+    if (!p.forma_pagamento) return 'Forma de pagamento? (pix, crédito, débito, dinheiro)';
+
+    const unidadeId = await resolveUnidadeIdShop(p.unidade);
+    if (!unidadeId) return `Unidade "${p.unidade}" não encontrada.`;
+
+    const { data: matches, error: e1 } = await _lrc.rpc('buscar_produto_fuzzy',
+      { p_termo: p.nome, p_unidade_id: unidadeId });
+    if (e1) return `Erro buscando produto: ${e1.message}`;
+    if (!matches || matches.length === 0) return `Não achei "${p.nome}" na lojinha de ${p.unidade}.`;
+    if (matches.length > 1 && matches[0].score < 0.7) {
+      return `Mais de um produto bate. Qual?\n` + matches.slice(0, 5).map(
+        (m, i) => `${i + 1}. ${m.nome} (R$${m.preco})`
+      ).join('\n');
+    }
+    const produto = matches[0];
+
+    let professorId = null;
+    if (p.professor_indicador) {
+      professorId = await resolveProfessorIndicadorId(p.professor_indicador);
+    }
+
+    const { data, error } = await _lrc.rpc('registrar_venda', {
+      p_produto_id: produto.id,
+      p_unidade_id: unidadeId,
+      p_quantidade: p.quantidade,
+      p_forma_pagamento: p.forma_pagamento,
+      p_via_audit: viaAudit,
+      p_tipo_cliente: p.tipo_cliente,
+      p_cliente_nome: p.cliente_nome,
+      p_professor_indicador_id: professorId,
+      p_observacoes: p.observacoes,
+    });
+    if (error) return `⚠️ ${error.message}`;
+    const r = data?.[0];
+    if (!r) return '⚠️ Venda não retornou resultado.';
+
+    const total = produto.preco * p.quantidade;
+    let msg = `✅ Venda registrada — ${produto.nome} ×${p.quantidade} (R$${total.toFixed(2)}, ${p.forma_pagamento}). Estoque ${p.unidade}: ${r.saldo_apos}.`;
+    if (r.comissao_professor > 0) {
+      msg += `\n💰 Comissão R$${Number(r.comissao_professor).toFixed(2)} creditada pra ${p.professor_indicador}.`;
+    }
+
+    // Alerta tempo real ZERO
+    if (r.saldo_apos === 0) {
+      try {
+        const { data: resp } = await _lrc
+          .from('loja_responsaveis_reposicao')
+          .select('nome, whatsapp').eq('unidade_id', unidadeId).eq('ativo', true);
+        const alertMsg = `🚨 *${produto.nome}* zerou na ${p.unidade}. Repor URGENTE.`;
+        for (const res of (resp || [])) {
+          if (res.whatsapp) await whatsapp.sendMessage(res.whatsapp, alertMsg);
+        }
+        console.log(`[ShopAction] Alerta ZERO disparado pra ${(resp||[]).length} responsável(eis)`);
+      } catch (e) {
+        console.warn('[ShopAction] alerta ZERO falhou:', e.message);
+      }
+    }
+    return msg;
+  }
+
+  if (shop.action === 'shop_entry') {
+    if (!p.nome) return 'Qual produto chegou?';
+    if (!p.unidade) return 'Pra qual unidade? (Barra, Recreio, CG)';
+    if (!p.quantidade || p.quantidade <= 0) return 'Quantos chegaram?';
+
+    const unidadeId = await resolveUnidadeIdShop(p.unidade);
+    if (!unidadeId) return `Unidade "${p.unidade}" não encontrada.`;
+
+    const { data: matches } = await _lrc.rpc('buscar_produto_fuzzy',
+      { p_termo: p.nome, p_unidade_id: unidadeId });
+    if (!matches || matches.length === 0) return `Não achei "${p.nome}" no catálogo.`;
+    if (matches.length > 1 && matches[0].score < 0.7) {
+      return `Qual produto?\n` + matches.slice(0, 5).map(
+        (m, i) => `${i + 1}. ${m.nome}`).join('\n');
+    }
+    const produto = matches[0];
+
+    const { data, error } = await _lrc.rpc('registrar_entrada_estoque', {
+      p_produto_id: produto.id,
+      p_unidade_id: unidadeId,
+      p_quantidade: p.quantidade,
+      p_via_audit: viaAudit,
+      p_observacoes: p.observacoes,
+    });
+    if (error) return `⚠️ ${error.message}`;
+    return `📦 Entrada registrada — ${produto.nome} +${p.quantidade}. Saldo ${p.unidade}: ${data?.[0]?.saldo_apos}.`;
+  }
+
+  if (shop.action === 'shop_adjust') {
+    if (!p.nome) return 'Qual produto?';
+    if (!p.unidade) return 'Em qual unidade?';
+    if (!p.delta || p.delta === 0) return 'Quanto ajustar? (+ ou -)';
+    if (!p.motivo) return 'Qual o motivo do ajuste? (perda, sobra contada, etc)';
+
+    const unidadeId = await resolveUnidadeIdShop(p.unidade);
+    if (!unidadeId) return `Unidade "${p.unidade}" não encontrada.`;
+
+    const { data: matches } = await _lrc.rpc('buscar_produto_fuzzy',
+      { p_termo: p.nome, p_unidade_id: unidadeId });
+    if (!matches || matches.length === 0) return `Não achei "${p.nome}".`;
+    if (matches.length > 1 && matches[0].score < 0.7) {
+      return `Qual produto?\n` + matches.slice(0, 5).map(
+        (m, i) => `${i + 1}. ${m.nome}`).join('\n');
+    }
+    const produto = matches[0];
+
+    const { data, error } = await _lrc.rpc('ajustar_estoque_manual', {
+      p_produto_id: produto.id,
+      p_unidade_id: unidadeId,
+      p_delta: p.delta,
+      p_motivo: p.motivo,
+      p_via_audit: viaAudit,
+    });
+    if (error) return `⚠️ ${error.message}`;
+    const sinal = p.delta > 0 ? '+' : '';
+    return `🔧 Ajuste aplicado — ${produto.nome} ${sinal}${p.delta}. Saldo ${p.unidade}: ${data?.[0]?.saldo_apos}.`;
+  }
+
+  if (shop.action === 'query_shop') {
+    let unidadeId = null;
+    if (p.unidade) {
+      unidadeId = await resolveUnidadeIdShop(p.unidade);
+      if (!unidadeId) return `Unidade "${p.unidade}" não encontrada.`;
+    }
+
+    const { data: produtos } = await _lrc.from('loja_produtos')
+      .select('id, nome, preco, loja_categorias(nome, icone)')
+      .eq('ativo', true).limit(50);
+    if (!produtos || produtos.length === 0) return 'Nenhum produto ativo na lojinha.';
+
+    let estoqueQuery = _lrc.from('loja_estoque')
+      .select('produto_id, quantidade, unidade_id')
+      .in('produto_id', produtos.map(x => x.id))
+      .gt('quantidade', 0);
+    if (unidadeId) estoqueQuery = estoqueQuery.eq('unidade_id', unidadeId);
+    const { data: estoque } = await estoqueQuery;
+
+    const stockMap = new Map();
+    for (const e of (estoque || [])) {
+      stockMap.set(e.produto_id, (stockMap.get(e.produto_id) || 0) + e.quantidade);
+    }
+
+    const comEstoque = produtos.filter(pr => stockMap.get(pr.id) > 0);
+    if (comEstoque.length === 0) return `📭 Nada com estoque${p.unidade ? ' em ' + p.unidade : ''}.`;
+
+    const byCat = new Map();
+    for (const pr of comEstoque) {
+      const cat = (pr.loja_categorias?.icone || '') + ' ' + (pr.loja_categorias?.nome || 'Outros');
+      if (!byCat.has(cat)) byCat.set(cat, []);
+      byCat.get(cat).push(`• ${pr.nome} (R$${pr.preco}) — ${stockMap.get(pr.id)} un`);
+    }
+
+    let out = `🛍 *Lojinha${p.unidade ? ' — ' + p.unidade : ''}*\n`;
+    for (const [cat, itens] of byCat) {
+      out += `\n${cat}\n` + itens.join('\n');
+    }
+    return out;
+  }
+
+  return null;
 }
 
 // Persist a monthly plan: monthly_plans table.

@@ -4,12 +4,17 @@ import { Tabs } from '../../components/Tabs';
 import { StatCard } from '../../components/StatCard';
 import { LoadingState } from '../../components/LoadingState';
 import { EmptyState } from '../../components/EmptyState';
+import { Fab } from '../../components/Fab';
 import { useReportUnidades, useReportLoja } from '../../hooks/useLaReport';
 import { ProdutoCard } from './components/ProdutoCard';
+import { VendaSheet } from './components/VendaSheet';
+import { EntradaEstoqueSheet } from './components/EntradaEstoqueSheet';
 
 export function InventarioLojaPage() {
   const { data: unidades = [], isLoading: lU } = useReportUnidades();
   const [unidadeId, setUnidadeId] = useState<string>('');
+  const [vendaOpen, setVendaOpen] = useState(false);
+  const [entradaOpen, setEntradaOpen] = useState(false);
 
   useEffect(() => {
     if (!unidadeId && unidades.length > 0) {
@@ -67,8 +72,45 @@ export function InventarioLojaPage() {
       )}
 
       <div className="bg-warning/10 border border-warning/40 rounded-md p-md text-body-sm text-fg-muted">
-        💡 <strong className="text-fg">Recebeu mercadoria?</strong> Escreve no TOM "recebi 50 cadernos de violão pra Barra" ou use <code className="bg-bg-surface px-1 rounded">/loja entrada</code>.
+        💡 <strong className="text-fg">Recebeu mercadoria?</strong> Escreve no TOM "recebi 50 cadernos de violão pra Barra" ou use o botão abaixo.
       </div>
+
+      {/* FAB Venda — direita (padrão do componente) */}
+      <Fab
+        onClick={() => setVendaOpen(true)}
+        label="Venda"
+        ariaLabel="Registrar venda"
+      />
+
+      {/* FAB Entrada de estoque — esquerda */}
+      <button
+        type="button"
+        onClick={() => setEntradaOpen(true)}
+        aria-label="Registrar entrada de estoque"
+        className={[
+          'fixed z-20 left-md md:left-lg',
+          'bottom-[96px] md:bottom-md',
+          'h-14 px-5 rounded-full bg-bg-surface border border-border text-fg shadow-soft',
+          'hover:bg-bg-elevated active:bg-bg-app',
+          'inline-flex items-center gap-2 font-semibold focus-ring',
+        ].join(' ')}
+        style={{ marginBottom: 'env(safe-area-inset-bottom)' }}
+      >
+        <span aria-hidden>📦</span>
+        <span className="hidden sm:inline">Entrada</span>
+      </button>
+
+      <VendaSheet
+        open={vendaOpen}
+        onClose={() => setVendaOpen(false)}
+        unidadeId={unidadeId}
+      />
+
+      <EntradaEstoqueSheet
+        open={entradaOpen}
+        onClose={() => setEntradaOpen(false)}
+        unidadeId={unidadeId}
+      />
     </div>
   );
 }

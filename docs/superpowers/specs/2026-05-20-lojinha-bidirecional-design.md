@@ -18,7 +18,7 @@ Estender a integração LA Organizer ↔ LA Report ↔ TOM (entregue na Fase A p
 | Decisão | Escolha |
 |---|---|
 | Banco-alvo das SPs | **LA Report** (`ouqwbbermlzqqvtqwlul`), não LA Organizer |
-| Campos venda TOM | produto + unidade + forma_pagamento (cliente_nome NULL default, tipo_cliente='externo') |
+| Campos venda TOM | produto + unidade + forma_pagamento (cliente_nome NULL default, tipo_cliente='avulso') |
 | Variações | Suportar mas opcional (TOM pergunta só se produto tiver variações cadastradas) |
 | Comissões | 5% professor indicador → credita `loja_carteira` direto. 5% farmer → calculado mas **não creditado** nesta sprint (depende de mapping cross-project, ver §11). Saldo em R$, sem conversão moeda LA. |
 | Conversão Moeda LA | Não nessa fase (saldo R$ acumula; conversão manual depois) |
@@ -83,7 +83,7 @@ CREATE OR REPLACE FUNCTION public.registrar_venda(
   p_unidade_id      UUID,
   p_quantidade      INT,                 -- > 0
   p_forma_pagamento VARCHAR,             -- 'pix'|'credito'|'debito'|'dinheiro'
-  p_tipo_cliente    VARCHAR DEFAULT 'externo',
+  p_tipo_cliente    VARCHAR DEFAULT 'avulso',
   p_cliente_nome    VARCHAR DEFAULT NULL,
   p_aluno_id        INT DEFAULT NULL,
   p_professor_indicador_id INT DEFAULT NULL,
@@ -209,9 +209,12 @@ DECLARE v_saldo INT;
 BEGIN
   IF p_quantidade <= 0 THEN RAISE EXCEPTION 'quantidade_deve_ser_positiva'; END IF;
   -- upsert estoque
+  -- UNIQUE index já criado: loja_estoque_produto_unidade_variacao_uq
+  --   ON loja_estoque (produto_id, unidade_id, COALESCE(variacao_id, 0))
+  -- ON CONFLICT precisa usar EXATAMENTE a mesma expressão do index.
   INSERT INTO loja_estoque (produto_id, variacao_id, unidade_id, quantidade, updated_at)
   VALUES (p_produto_id, p_variacao_id, p_unidade_id, p_quantidade, NOW())
-  ON CONFLICT (produto_id, unidade_id) DO UPDATE  -- requer UNIQUE constraint
+  ON CONFLICT (produto_id, unidade_id, COALESCE(variacao_id, 0)) DO UPDATE
     SET quantidade = loja_estoque.quantidade + EXCLUDED.quantidade, updated_at=NOW()
   RETURNING quantidade INTO v_saldo;
 
@@ -224,7 +227,7 @@ END;
 $$;
 ```
 
-**Pre-req:** `loja_estoque` precisa UNIQUE em `(produto_id, unidade_id, COALESCE(variacao_id,0))`. Se não tiver, migration adiciona.
+**Pre-req:** ✅ JÁ APLICADO no LA Report — UNIQUE index `loja_estoque_produto_unidade_variacao_uq` em `(produto_id, unidade_id, COALESCE(variacao_id, 0))`.
 
 ### 4.3 `ajustar_estoque_manual`
 
@@ -247,7 +250,7 @@ AS $$
 $$;
 ```
 
-**Pre-req:** extensão `pg_trgm` habilitada (geralmente já vem ativa em projetos Supabase).
+**Pre-req:** ✅ JÁ APLICADO no LA Report — extensão `pg_trgm` habilitada.
 
 ---
 
@@ -353,7 +356,7 @@ Botão expansível com 2 ações (reusa `<Fab>` da Fase A):
 - Input quantidade
 - Select forma_pagamento (CustomSelect do DS: pix/crédito/débito/dinheiro)
 - Input cliente_nome (opcional, livre)
-- Select tipo_cliente (CustomSelect: aluno/externo/colaborador)
+- Select tipo_cliente (CustomSelect: aluno/avulso/colaborador)
 - Select professor_indicador (CustomSelect populado de `loja_carteira.tipo_titular='professor'`, opcional)
 - Input desconto (opcional, R$ ou %)
 - Input observações (opcional)
@@ -465,13 +468,15 @@ if (resultado.saldo_apos === 0) {
 
 No **LA Report** (`ouqwbbermlzqqvtqwlul`):
 
-1. `20260520_loja_estoque_unique_constraint.sql` — UNIQUE em `loja_estoque(produto_id, unidade_id, COALESCE(variacao_id,0))` (pré-requisito do upsert do `registrar_entrada_estoque`).
-2. `20260520_loja_sp_registrar_venda.sql` — função `registrar_venda`.
-3. `20260520_loja_sp_registrar_entrada.sql` — função `registrar_entrada_estoque`.
-4. `20260520_loja_sp_ajustar_estoque.sql` — função `ajustar_estoque_manual`.
-5. `20260520_loja_sp_buscar_produto_fuzzy.sql` — função `buscar_produto_fuzzy` (requer `pg_trgm`).
+### Pré-requisitos (✅ JÁ APLICADOS no banco — não precisa rodar)
+- ✅ Extensão `pg_trgm` habilitada
+- ✅ UNIQUE index `loja_estoque_produto_unidade_variacao_uq` em `(produto_id, unidade_id, COALESCE(variacao_id, 0))`
 
-Aplicadas via MCP (LA Report).
+### A aplicar via MCP
+1. `20260520_loja_sp_registrar_venda.sql` — função `registrar_venda` (§4.1)
+2. `20260520_loja_sp_registrar_entrada.sql` — função `registrar_entrada_estoque` (§4.2)
+3. `20260520_loja_sp_ajustar_estoque.sql` — função `ajustar_estoque_manual` (§4.3)
+4. `20260520_loja_sp_buscar_produto_fuzzy.sql` — função `buscar_produto_fuzzy` (§4.4)
 
 No **LA Organizer** (`cesnbnrynvxvgdhfmaua`): nenhuma migration.
 

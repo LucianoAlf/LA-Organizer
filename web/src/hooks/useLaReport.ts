@@ -1,6 +1,8 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect } from 'react';
 import { laReportClient } from '../lib/lareport-client';
 import { useAccess } from './useAccess';
+import { buscarProduto } from '../lib/lareport-mutations';
 import type {
   ReportUnidade, ReportSala, ReportSalaDetalhe, ReportProduto, ReportAlertas,
   ReportInventarioItem, ReportMovimentacao, ReportManutencao,
@@ -117,6 +119,20 @@ export function useReportSalaDetalhe(salaId: number | null) {
 
 export function useReportLoja(unidadeId: string | null) {
   const access = useAccess('loja_produtos');
+  const qc = useQueryClient();
+
+  useEffect(() => {
+    if (!unidadeId) return;
+    const ch = laReportClient
+      .channel(`loja_estoque_${unidadeId}`)
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'loja_estoque', filter: `unidade_id=eq.${unidadeId}` },
+        () => qc.invalidateQueries({ queryKey: ['lareport', 'loja', unidadeId] })
+      )
+      .subscribe();
+    return () => { laReportClient.removeChannel(ch); };
+  }, [unidadeId, qc]);
+
   return useQuery({
     queryKey: ['lareport', 'loja', unidadeId, access.unitFilter],
     enabled: access.allowed && Boolean(unidadeId),
@@ -135,6 +151,15 @@ export function useReportLoja(unidadeId: string | null) {
         zerado: (p.estoque_atual ?? 0) === 0,
       })) as ReportProduto[];
     },
+  });
+}
+
+export function useProdutoSearch(termo: string, unidadeId: string | null) {
+  return useQuery({
+    queryKey: ['loja-produto-search', termo, unidadeId],
+    queryFn: () => buscarProduto(termo, unidadeId),
+    enabled: termo.trim().length >= 2,
+    staleTime: 30_000,
   });
 }
 
