@@ -138,18 +138,32 @@ export function useReportLoja(unidadeId: string | null) {
     enabled: access.allowed && Boolean(unidadeId),
     staleTime: 60_000,
     queryFn: async (): Promise<ReportProduto[]> => {
+      // Sprint Fase B fix — loja_produtos NÃO tem estoque_atual nativo. Saldo
+      // mora em loja_estoque (por unidade). JOIN inline filtrado pela unidade
+      // selecionada. Se o produto não tem linha em loja_estoque pra essa
+      // unidade, saldo é 0 (default).
       const { data, error } = await laReportClient
         .from('loja_produtos')
-        .select('*, loja_categorias(nome, icone)')
+        .select(`
+          *,
+          loja_categorias(nome, icone),
+          loja_estoque!left(quantidade, unidade_id)
+        `)
         .eq('ativo', true)
         .order('nome');
       if (error) throw error;
-      return ((data || []) as any[]).map(p => ({
-        ...p,
-        estoque_atual: p.estoque_atual ?? 0,
-        abaixo_minimo: p.estoque_minimo != null && (p.estoque_atual ?? 0) < p.estoque_minimo,
-        zerado: (p.estoque_atual ?? 0) === 0,
-      })) as ReportProduto[];
+      return ((data || []) as any[]).map(p => {
+        // Estoque pode ter múltiplas linhas (várias unidades) — filtra pela atual.
+        const linhas = Array.isArray(p.loja_estoque) ? p.loja_estoque : [];
+        const aqui = linhas.find((e: any) => e.unidade_id === unidadeId);
+        const estoque = aqui?.quantidade ?? 0;
+        return {
+          ...p,
+          estoque_atual: estoque,
+          abaixo_minimo: p.estoque_minimo != null && estoque < p.estoque_minimo,
+          zerado: estoque === 0,
+        };
+      }) as ReportProduto[];
     },
   });
 }
