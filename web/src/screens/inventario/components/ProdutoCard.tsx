@@ -1,9 +1,15 @@
 import { Badge } from '../../../components/Badge';
 import type { ReportProduto } from '../../../lib/lareport-types';
 
-interface Props { produto: ReportProduto; }
+interface Props {
+  produto: ReportProduto;
+  /** Opcional: abre formulário de edição. Só renderiza o botão se fornecido. */
+  onEdit?: () => void;
+  /** Opcional: desativa o produto. Só renderiza o botão se fornecido. */
+  onDeactivate?: () => void;
+}
 
-export function ProdutoCard({ produto }: Props) {
+export function ProdutoCard({ produto, onEdit, onDeactivate }: Props) {
   const tone: 'success' | 'warning' | 'danger' = produto.zerado
     ? 'danger'
     : produto.abaixo_minimo
@@ -34,6 +40,28 @@ export function ProdutoCard({ produto }: Props) {
         <div className="mt-1">
           <Badge tone={tone}>{label}</Badge>
         </div>
+        {(onEdit || onDeactivate) && (
+          <div className="mt-1.5 flex gap-2">
+            {onEdit && (
+              <button
+                type="button"
+                onClick={onEdit}
+                className="text-[11px] text-fg-muted hover:text-tom transition-colors px-1.5 py-0.5 rounded border border-border hover:border-tom"
+              >
+                ✏️ Editar
+              </button>
+            )}
+            {onDeactivate && (
+              <button
+                type="button"
+                onClick={onDeactivate}
+                className="text-[11px] text-fg-muted hover:text-danger transition-colors px-1.5 py-0.5 rounded border border-border hover:border-danger"
+              >
+                🗑️ Desativar
+              </button>
+            )}
+          </div>
+        )}
       </div>
       <div className="flex flex-col items-end justify-center text-fg font-bold text-lg px-1">
         R${produto.preco}

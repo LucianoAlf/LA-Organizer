@@ -23,6 +23,9 @@ Elevar a UX da lojinha do PWA ao nível da UI rica do LA Report (mostrada nos sc
 | Autocomplete aluno | **Server-side** (1480 alunos — debounce 200ms + ILIKE + LIMIT 10) |
 | Comprovante WA | Checkbox no checkout, default ON se aluno tem telefone |
 | Permissões escrita | **Tudo liberado** pra Direção, Coord, Rafinha, Gerente 🔒u, Farmer 🔒u (sem restrição extra em estorno/transferência/CRUD) |
+| **Constraints reais do banco (auditados)** | `tipo_cliente`: aluno/colaborador/avulso. `desconto_tipo`: **valor**/percentual (NÃO 'reais'). `forma_pagamento`: pix/dinheiro/debito/credito/**folha**/**saldo** (6 opções, não 4). `loja_movimentacoes.tipo`: entrada/venda/estorno/ajuste — falta adicionar saida_transferencia/entrada_transferencia. |
+| **UUIDs unidades** | Barra `368d47f5-2d88-4475-bc14-ba084a9a348e` · Campo Grande `2ec861f6-023f-4d7b-9927-3960ad8c2a92` · Recreio `95553e96-971b-4590-a6eb-0201d013c14d` |
+| **Estoque populado** | Barra: 10 produtos / 112 itens · CG: 10/142 · Recreio: 10/79. pg_trgm + UNIQUE constraint ✅ aplicados. |
 | Estoque disponível com reservas | `loja_estoque.quantidade - SUM(loja_reservas WHERE status='ativa')` — só na Fase 2.3 |
 | Produto = global / Estoque = por unidade | Mantido. CRUD produto não pede unidade. |
 | Duplicata produto | Detecção por similarity > 0.7 — aviso, não bloqueio |
@@ -96,7 +99,7 @@ Elevar a UX da lojinha do PWA ao nível da UI rica do LA Report (mostrada nos sc
 - Campo opcional: **"Indicado por professor?"** → `<ProfessorAutocomplete>` → comissão 5% credita carteira.
 
 **Passo 3 — Pagamento + finalizar:**
-- Forma de pagamento (CustomSelect): pix / crédito / débito / dinheiro
+- Forma de pagamento (CustomSelect): pix / crédito / débito / dinheiro / folha / saldo *(6 opções — folha = desconto em folha do colaborador; saldo = consumir saldo da carteira do professor)*
 - Parcelas (NumberInput 1-12x) — aparece SÓ se forma = "crédito"
 - Desconto: input numérico + toggle de tipo (R$ ou %)
 - Resumo em cartão destacado:
@@ -128,7 +131,7 @@ CREATE OR REPLACE FUNCTION public.registrar_venda_v2(
   p_colaborador_cliente_id INT DEFAULT NULL,
   p_professor_indicador_id INT DEFAULT NULL,
   p_desconto        NUMERIC DEFAULT 0,
-  p_desconto_tipo   VARCHAR DEFAULT 'reais',  -- 'reais'|'percentual'
+  p_desconto_tipo   VARCHAR DEFAULT 'valor',  -- 'valor'|'percentual' (CHECK constraint real)
   p_parcelas        INT DEFAULT 1,
   p_observacoes     TEXT DEFAULT NULL
 ) RETURNS TABLE (
@@ -442,12 +445,13 @@ Bypass do engine ganha pattern matches pra essas frases (mesmo padrão da Fase B
 4. `20260520_loja_sp_transferir_estoque.sql` — SP nova
 
 ### Fase 2.3
-5. `20260520_loja_movimentacoes_tipo_estorno.sql` — adiciona `'estorno'` no CHECK
-6. `20260520_loja_sp_estornar_venda.sql` — SP nova
-7. `20260520_loja_reservas_table.sql` — CREATE TABLE + indexes
-8. `20260520_loja_fn_estoque_disponivel.sql` — função helper
-9. `20260520_loja_buscar_produto_fuzzy_v2.sql` — atualiza `buscar_produto_fuzzy` pra usar `estoque_disponivel`
-10. `20260520_loja_sp_expirar_reservas.sql` — SP do cron
+*(observação: `'estorno'` JÁ existe no CHECK — confirmado em auditoria. Migration desnecessária.)*
+
+5. `20260520_loja_sp_estornar_venda.sql` — SP nova
+6. `20260520_loja_reservas_table.sql` — CREATE TABLE + indexes
+7. `20260520_loja_fn_estoque_disponivel.sql` — função helper
+8. `20260520_loja_buscar_produto_fuzzy_v2.sql` — atualiza `buscar_produto_fuzzy` pra usar `estoque_disponivel`
+9. `20260520_loja_sp_expirar_reservas.sql` — SP do cron
 
 ---
 

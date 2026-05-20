@@ -3,6 +3,13 @@ import { requireCollaborator } from '../../_lib/auth.js';
 import { checkAccess } from '../../_lib/access-control.js';
 import { lareport } from '../../_lib/lareport-server.js';
 
+interface EntradaItem {
+  produto_id: number;
+  variacao_id?: number | null;
+  quantidade: number;
+  preco_custo?: number | null;
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'method_not_allowed' });
 
@@ -12,19 +19,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const access = checkAccess(collab, 'loja_produtos');
   if (!access.allowed) return res.status(403).json({ ok: false, error: access.reason });
 
+  const body = req.body || {};
+
   const {
-    produto_id,
     unidade_id,
-    quantidade,
-    preco_custo,
     fornecedor,
     nota_fiscal,
+    nf,
     observacao,
-  } = req.body || {};
+    observacoes,
+    // multi-item
+    itens: itensRaw,
+    // legacy single-item (compat)
+    produto_id,
+    variacao_id,
+    quantidade,
+    preco_custo,
+  } = body;
 
-  if (!produto_id) return res.status(400).json({ ok: false, error: 'produto_id obrigatório' });
   if (!unidade_id) return res.status(400).json({ ok: false, error: 'unidade_id obrigatório' });
-  if (!quantidade || quantidade <= 0) return res.status(400).json({ ok: false, error: 'quantidade obrigatória e deve ser positiva' });
 
   // Gerente/farmer só pode dar entrada na própria unidade
   if (access.unitFilter) {
@@ -34,14 +47,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
   }
 
-  const { data, error } = await lareport.rpc('registrar_entrada_estoque', {
-    p_produto_id: produto_id,
+  // Normaliza para array de itens (compat com body single-item legado)
+  let itens: EntradaItem[];
+  if (Array.isArray(itensRaw) && itensRaw.length > 0) {
+    itens = itensRaw;
+  } else if (produto_id != null) {
+    // Legacy single-item: converte para array de 1
+    if (!quantidade || quantidade <= 0) {
+      return res.status(400).json({ ok: false, error: 'quantidade obrigatória e deve ser positiva' });
+    }
+    itens = [{
+      produto_id,
+      variacao_id: variacao_id ?? null,
+      quantidade,
+      preco_custo: preco_custo ?? null,
+    }];
+  } else {
+    return res.status(400).json({ ok: false, error: 'Forneça "itens" (array) ou "produto_id"' });
+  }
+
+  // Valida cada item
+  for (let i = 0; i < itens.length; i++) {
+    const item = itens[i];
+    if (!item.produto_id) return res.status(400).json({ ok: false, error: `itens[${i}].produto_id obrigatório` });
+    if (!item.quantidade || item.quantidade <= 0) return res.status(400).json({ ok: false, error: `itens[${i}].quantidade deve ser positivo` });
+  }
+
+  const { data, error } = await lareport.rpc('registrar_entrada_estoque_v2', {
     p_unidade_id: unidade_id,
-    p_quantidade: quantidade,
-    p_preco_custo: preco_custo ?? null,
+    p_itens: itens,
     p_fornecedor: fornecedor ?? null,
-    p_nota_fiscal: nota_fiscal ?? null,
-    p_observacao: observacao ?? null,
+    p_nota_fiscal: nota_fiscal ?? nf ?? null,
+    p_observacao: observacao ?? observacoes ?? null,
     p_registrado_por: collab.id,
   });
 

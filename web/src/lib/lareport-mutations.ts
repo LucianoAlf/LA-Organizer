@@ -155,3 +155,155 @@ export async function buscarProduto(
   );
   return r.results;
 }
+
+// ============================================================
+// Sprint Fase 2.1 — Multi-item e busca de cliente/professor
+// ============================================================
+
+export interface VendaItem {
+  produto_id: number;
+  variacao_id?: number | null;
+  quantidade: number;
+  preco_unitario: number;
+  desconto?: number;
+  desconto_tipo?: 'valor' | 'percentual';
+}
+
+export interface VendaMultiInput {
+  unidade_id: string;
+  forma_pagamento: 'pix' | 'dinheiro' | 'debito' | 'credito' | 'folha' | 'saldo';
+  itens: VendaItem[];
+  tipo_cliente?: 'aluno' | 'avulso' | 'colaborador';
+  aluno_id?: number | null;
+  colaborador_id?: number | null;
+  professor_indicador_id?: number | null;
+  observacoes?: string | null;
+  via_audit?: string | null;
+  parcelas?: number | null;
+}
+
+export interface VendaMultiResult {
+  ok: boolean;
+  venda_id: number;
+  saldo_apos: number;
+  comissao_farmer: number;
+  comissao_professor: number;
+}
+
+export interface EntradaItem {
+  produto_id: number;
+  variacao_id?: number | null;
+  quantidade: number;
+  preco_custo?: number | null;
+}
+
+export interface EntradaMultiInput {
+  unidade_id: string;
+  itens: EntradaItem[];
+  fornecedor?: string | null;
+  nota_fiscal?: string | null;
+  nf?: string | null;
+  observacao?: string | null;
+}
+
+export async function registrarVendaMulti(input: VendaMultiInput): Promise<VendaMultiResult> {
+  return callApi<VendaMultiResult>('/api/lareport/loja/venda', {
+    method: 'POST', body: JSON.stringify(input),
+  });
+}
+
+export async function registrarEntradaMulti(input: EntradaMultiInput): Promise<{ ok: boolean; data: unknown }> {
+  return callApi('/api/lareport/loja/entrada', {
+    method: 'POST', body: JSON.stringify(input),
+  });
+}
+
+export interface ClienteSearchResult {
+  id: number;
+  nome: string;
+  telefone?: string | null;
+  status?: string | null;
+  cargo?: string | null;
+  unidade_id?: string | null;
+}
+
+export async function buscarCliente(
+  tipo: 'aluno' | 'colaborador',
+  q: string,
+  unidade_id?: string | null,
+  limit = 10,
+): Promise<ClienteSearchResult[]> {
+  const qs = new URLSearchParams({ tipo, q, limit: String(limit) });
+  if (unidade_id) qs.set('unidade_id', unidade_id);
+  const r = await callApi<{ ok: boolean; results: ClienteSearchResult[] }>(
+    `/api/lareport/loja/buscar-cliente?${qs}`, { method: 'GET' }
+  );
+  return r.results;
+}
+
+export interface ProfessorSearchResult {
+  id: number;
+  nome: string;
+  telefone?: string | null;
+  unidade_id?: string | null;
+}
+
+export async function buscarProfessor(
+  q: string,
+  unidade_id?: string | null,
+  limit = 10,
+): Promise<ProfessorSearchResult[]> {
+  const qs = new URLSearchParams({ q, limit: String(limit) });
+  if (unidade_id) qs.set('unidade_id', unidade_id);
+  const r = await callApi<{ ok: boolean; results: ProfessorSearchResult[] }>(
+    `/api/lareport/loja/buscar-professor?${qs}`, { method: 'GET' }
+  );
+  return r.results;
+}
+
+// ============================================================
+// Sprint Fase 2.2 — CRUD produto + transferência
+// ============================================================
+
+export interface ProdutoUpsertInput {
+  id?: number;
+  nome: string;
+  categoria_id: number;
+  sku?: string | null;
+  preco: number;
+  custo?: number | null;
+  estoque_minimo?: number;
+  comissao_especial?: number | null;
+  foto_url?: string | null;
+  descricao?: string | null;
+  disponivel_whatsapp?: boolean;
+  ativo?: boolean;
+}
+export async function upsertProduto(input: ProdutoUpsertInput): Promise<{ ok: boolean; produto_id: number }> {
+  return callApi('/api/lareport/loja/produto/upsert', { method: 'POST', body: JSON.stringify(input) });
+}
+
+export async function desativarProduto(id: number): Promise<{ ok: boolean }> {
+  return callApi('/api/lareport/loja/produto/desativar', { method: 'POST', body: JSON.stringify({ id }) });
+}
+
+export interface ProdutoSimilarResult { id: number; nome: string; sku: string; preco: number; score: number; }
+export async function buscarProdutoSimilar(nome: string, limit = 5): Promise<ProdutoSimilarResult[]> {
+  const qs = new URLSearchParams({ nome, limit: String(limit) });
+  const r = await callApi<{ ok: boolean; results: ProdutoSimilarResult[] }>(
+    `/api/lareport/loja/produto/similar?${qs}`, { method: 'GET' }
+  );
+  return r.results;
+}
+
+export interface TransferenciaInput {
+  produto_id: number;
+  unidade_origem: string;
+  unidade_destino: string;
+  quantidade: number;
+  motivo: string;
+  variacao_id?: number | null;
+}
+export async function transferirEstoque(input: TransferenciaInput): Promise<{ ok: boolean; saldo_origem: number; saldo_destino: number }> {
+  return callApi('/api/lareport/loja/transferencia', { method: 'POST', body: JSON.stringify(input) });
+}

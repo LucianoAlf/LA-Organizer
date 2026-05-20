@@ -6,15 +6,24 @@ import { LoadingState } from '../../components/LoadingState';
 import { EmptyState } from '../../components/EmptyState';
 import { Fab } from '../../components/Fab';
 import { useReportUnidades, useReportLoja } from '../../hooks/useLaReport';
+import { useQueryClient } from '@tanstack/react-query';
 import { ProdutoCard } from './components/ProdutoCard';
-import { VendaSheet } from './components/VendaSheet';
-import { EntradaEstoqueSheet } from './components/EntradaEstoqueSheet';
+import { VendaWizardSheet } from './components/VendaWizardSheet';
+import { EntradaRicaSheet } from './components/EntradaRicaSheet';
+import { ProdutoFormSheet } from './components/ProdutoFormSheet';
+import { TransferenciaSheet } from './components/TransferenciaSheet';
+import { desativarProduto } from '../../lib/lareport-mutations';
+import type { ReportProduto } from '../../lib/lareport-types';
 
 export function InventarioLojaPage() {
+  const qc = useQueryClient();
   const { data: unidades = [], isLoading: lU } = useReportUnidades();
   const [unidadeId, setUnidadeId] = useState<string>('');
   const [vendaOpen, setVendaOpen] = useState(false);
   const [entradaOpen, setEntradaOpen] = useState(false);
+  const [produtoOpen, setProdutoOpen] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [editandoProduto, setEditandoProduto] = useState<ReportProduto | null>(null);
 
   useEffect(() => {
     if (!unidadeId && unidades.length > 0) {
@@ -67,7 +76,22 @@ export function InventarioLojaPage() {
         <EmptyState icon={<span>🛍</span>} title="Sem produtos" description="Nenhum produto cadastrado na lojinha." />
       ) : (
         <div className="space-y-2">
-          {produtos.map(p => <ProdutoCard key={p.id} produto={p} />)}
+          {produtos.map(p => (
+            <ProdutoCard
+              key={p.id}
+              produto={p}
+              onEdit={() => { setEditandoProduto(p); setProdutoOpen(true); }}
+              onDeactivate={async () => {
+                if (!window.confirm('Desativar produto? Vendas antigas não mudam.')) return;
+                try {
+                  await desativarProduto(p.id);
+                  qc.invalidateQueries({ queryKey: ['lareport', 'loja'] });
+                } catch (e) {
+                  alert(e instanceof Error ? e.message : 'Erro ao desativar.');
+                }
+              }}
+            />
+          ))}
         </div>
       )}
 
@@ -75,26 +99,52 @@ export function InventarioLojaPage() {
         💡 <strong className="text-fg">Recebeu mercadoria?</strong> Escreve no TOM "recebi 50 cadernos de violão pra Barra" ou use o botão abaixo.
       </div>
 
-      {/* FAB único com menu de 2 ações (Sprint Fase B). */}
+      {/* FAB com menu de 4 ações (Sprint Fase 2.2). */}
       <Fab
         label="Novo"
         ariaLabel="Nova operação na lojinha"
         actions={[
           { icon: '💰', label: 'Registrar venda', onClick: () => setVendaOpen(true) },
           { icon: '📦', label: 'Lançar entrada', onClick: () => setEntradaOpen(true) },
+          { icon: '🆕', label: 'Cadastrar produto', onClick: () => { setEditandoProduto(null); setProdutoOpen(true); } },
+          { icon: '🔄', label: 'Transferir estoque', onClick: () => setTransferOpen(true) },
         ]}
       />
 
-      <VendaSheet
+      <VendaWizardSheet
         open={vendaOpen}
         onClose={() => setVendaOpen(false)}
         unidadeId={unidadeId}
       />
 
-      <EntradaEstoqueSheet
+      <EntradaRicaSheet
         open={entradaOpen}
         onClose={() => setEntradaOpen(false)}
         unidadeId={unidadeId}
+      />
+
+      <ProdutoFormSheet
+        open={produtoOpen}
+        onClose={() => { setProdutoOpen(false); setEditandoProduto(null); }}
+        mode={editandoProduto ? 'edit' : 'create'}
+        produto={editandoProduto ? {
+          id: editandoProduto.id,
+          nome: editandoProduto.nome,
+          sku: editandoProduto.sku,
+          preco: editandoProduto.preco,
+          custo: editandoProduto.custo,
+          estoque_minimo: editandoProduto.estoque_minimo ?? undefined,
+          foto_url: editandoProduto.foto_url,
+          disponivel_whatsapp: editandoProduto.disponivel_whatsapp,
+          ativo: editandoProduto.ativo,
+        } : undefined}
+        unidadeId={unidadeId}
+      />
+
+      <TransferenciaSheet
+        open={transferOpen}
+        onClose={() => setTransferOpen(false)}
+        unidadeOrigem={unidadeId}
       />
     </div>
   );
