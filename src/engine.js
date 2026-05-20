@@ -4638,6 +4638,33 @@ async function processMessage(phone, text, raw = {}) {
   console.log('[Engine] Mensagem de', collab.full_name);
   await logConversation(collab.id, 'inbound', text);
 
+  // Sprint Fase B — Bypass do LLM pra consultas de lojinha.
+  // Quando a intenção é claramente "ver estoque", pulamos o LLM (que estava
+  // respondendo "Buscando estoque..." sem emitir o marker) e executamos
+  // handleShopAction('query_shop') direto. Resposta em ~1-2s, determinística.
+  if (typeof text === 'string') {
+    const shopBypass = tryShopQueryBypass(text);
+    if (shopBypass) {
+      console.log(`[ShopBypass] detectado query_shop unidade="${shopBypass.unidade || '*'}"`);
+      try {
+        const result = await handleShopAction(
+          { action: 'query_shop', params: { unidade: shopBypass.unidade } },
+          collab,
+          collab.full_name
+        );
+        const reply = result || 'Sem retorno.';
+        await whatsapp.sendMessage(phone, reply);
+        await logConversation(collab.id, 'outbound', reply);
+        console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (shop_bypass)`);
+        return;
+      } catch (e) {
+        console.error('[ShopBypass] err:', e.message);
+        await whatsapp.sendMessage(phone, `⚠️ Falha consultando lojinha: ${e.message}`);
+        return;
+      }
+    }
+  }
+
   // G11 — Comando rápido /educa <nome>
   if (typeof text === 'string' && /^\/educa\s+/i.test(text)) {
     const nome = text.replace(/^\/educa\s+/i, '').trim();
@@ -7230,6 +7257,51 @@ function parseMonthlyPlanMarker(text) {
     cleanText,
     malformed: false
   };
+}
+
+// Sprint Fase B — Bypass do LLM pra consultas óbvias de lojinha.
+// Retorna { unidade: 'Barra'|'Recreio'|'Campo Grande'|null } se a frase
+// for claramente um query_shop, ou null caso contrário.
+// Padrões cobertos:
+//   /loja                       → todas as unidades
+//   /loja <unidade>             → unidade específica
+//   "o que tem na lojinha [da/de X]?"
+//   "lista/mostra/listar/mostrar produtos da lojinha [da X]"
+//   "estoque da lojinha [da X]"
+//   "lojinha da/do/de X"        → frase curta
+function tryShopQueryBypass(text) {
+  const t = String(text || '').trim();
+  if (!t) return null;
+
+  // Slash command
+  const slash = t.match(/^\/loja(?:\s+(.+?))?\s*$/i);
+  if (slash) return { unidade: extractUnidadeFromText(slash[1] || '') };
+
+  // Tem que mencionar "loja" ou "lojinha"
+  if (!/\b(lojinha|loja)\b/i.test(t)) return null;
+
+  // Padrões de intenção de consulta
+  const queryIntent = /\b(o\s+que\s+tem|lista(?:r)?|mostra(?:r|e)?|me\s+mostra|estoque|consultar|ver|mostr[ae]\s+(?:o|a))\b/i;
+  // Padrão curto "lojinha da X" (sem verbo, só localização)
+  const shortLoc = /^\s*lojinha\s+(?:da|de|do)\s+([\wÀ-ú\s]+?)\s*[?!.\s]*$/i;
+
+  if (queryIntent.test(t) || shortLoc.test(t)) {
+    return { unidade: extractUnidadeFromText(t) };
+  }
+  return null;
+}
+
+// Extrai nome de unidade ("Barra", "Recreio", "Campo Grande"/"CG") do texto.
+// Procura padrão "da/de/do/no/na <unidade>" ou unidade isolada.
+function extractUnidadeFromText(t) {
+  const txt = String(t || '');
+  // Padrões diretos primeiro
+  if (/\b(campo\s+grande|\bcg\b)\b/i.test(txt)) return 'Campo Grande';
+  if (/\brecreio\b/i.test(txt)) return 'Recreio';
+  if (/\bbarra\b/i.test(txt)) return 'Barra';
+  // Fallback: pega 1ª palavra depois de "da/de/do/na/no"
+  const m = txt.match(/\b(?:da|de|do|na|no)\s+([A-ZÀ-Ú][\wÀ-ú]+(?:\s+[A-ZÀ-Ú][\wÀ-ú]+)?)\b/);
+  return m ? m[1] : null;
 }
 
 // Sprint Fase B — parser do marker <<SHOP_ACTION>>
