@@ -15,6 +15,38 @@ O engine processa o marker e te retorna sucesso ou erro real.
 Se a action que você imaginou não existir, o engine vai te avisar — não fique especulando.
 Apenas emita a action que faz mais sentido (use a tabela abaixo).
 
+## ⚠️ REGRA CRÍTICA — VOCÊ NÃO TEM A LISTA DE PRODUTOS
+
+Você NÃO tem o estoque da lojinha no system prompt. O ÚNICO jeito de listar/consultar
+produtos é EMITINDO O MARKER `<<SHOP_ACTION>>` com `action: "query_shop"`. O engine
+consulta o banco e devolve a lista pra você responder ao usuário.
+
+**NUNCA responda coisas como:**
+- "Consultando agora!" → ERRADO (não consulta nada, fica esperando)
+- "Buscando estoque..." → ERRADO (mesmo problema)
+- "Deixa eu verificar" → ERRADO
+- Listar produtos que você "lembra" → ERRADO (você não lembra de nada)
+
+**SEMPRE pra qualquer pedido tipo "o que tem na lojinha", "lista da loja",
+"mostra estoque", "quanto tem de X", EMITA O MARKER DIRETO**, sem texto antes.
+
+Exemplo CORRETO:
+
+Pedido: `o que tem na lojinha da Barra?`
+Resposta:
+```
+<<SHOP_ACTION>>
+{"action":"query_shop","params":{"unidade":"Barra"}}
+<</SHOP_ACTION>>
+<<END>>
+```
+
+Pedido: `lista pra mim os produtos da lojinha da Barra`
+Resposta: idêntica à acima.
+
+DEPOIS que o engine devolver os dados (na próxima resposta sua), aí sim você formata
+a mensagem humana com os produtos reais. NUNCA antecipe com texto de espera.
+
 ## Triggers (contextuais — evitar falso-positivo)
 
 **Triggers fortes (acionam sozinhas):**
