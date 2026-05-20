@@ -4638,17 +4638,17 @@ async function processMessage(phone, text, raw = {}) {
   console.log('[Engine] Mensagem de', collab.full_name);
   await logConversation(collab.id, 'inbound', text);
 
-  // Sprint Fase B — Bypass do LLM pra consultas de lojinha.
-  // Quando a intenção é claramente "ver estoque", pulamos o LLM (que estava
-  // respondendo "Buscando estoque..." sem emitir o marker) e executamos
-  // handleShopAction('query_shop') direto. Resposta em ~1-2s, determinística.
+  // Sprint Fase B — Bypass do LLM pra operações simples de lojinha.
+  // Quando a intenção é clara (query/venda/entrada), pulamos o LLM (que vinha
+  // emitindo JSON malformado ou texto humano sem marker) e executamos
+  // handleShopAction direto. Resposta em ~1-2s, determinística.
   if (typeof text === 'string') {
-    const shopBypass = tryShopQueryBypass(text);
+    const shopBypass = tryShopBypass(text);
     if (shopBypass) {
-      console.log(`[ShopBypass] detectado query_shop unidade="${shopBypass.unidade || '*'}"`);
+      console.log(`[ShopBypass] detectado action=${shopBypass.action} params=${JSON.stringify(shopBypass.params)}`);
       try {
         const result = await handleShopAction(
-          { action: 'query_shop', params: { unidade: shopBypass.unidade } },
+          { action: shopBypass.action, params: shopBypass.params },
           collab,
           collab.full_name
         );
@@ -4659,7 +4659,7 @@ async function processMessage(phone, text, raw = {}) {
         return;
       } catch (e) {
         console.error('[ShopBypass] err:', e.message);
-        await whatsapp.sendMessage(phone, `⚠️ Falha consultando lojinha: ${e.message}`);
+        await whatsapp.sendMessage(phone, `⚠️ Falha na lojinha: ${e.message}`);
         return;
       }
     }
@@ -7259,35 +7259,81 @@ function parseMonthlyPlanMarker(text) {
   };
 }
 
-// Sprint Fase B — Bypass do LLM pra consultas óbvias de lojinha.
-// Retorna { unidade: 'Barra'|'Recreio'|'Campo Grande'|null } se a frase
-// for claramente um query_shop, ou null caso contrário.
+// Sprint Fase B — Bypass do LLM pra operações simples de lojinha via WhatsApp.
+// Retorna { action, params } se a frase bate um padrão simples; null caso contrário.
+//
 // Padrões cobertos:
-//   /loja                       → todas as unidades
-//   /loja <unidade>             → unidade específica
-//   "o que tem na lojinha [da/de X]?"
-//   "lista/mostra/listar/mostrar produtos da lojinha [da X]"
-//   "estoque da lojinha [da X]"
-//   "lojinha da/do/de X"        → frase curta
-function tryShopQueryBypass(text) {
+//   QUERY:
+//     /loja                              → todas as unidades
+//     /loja <unidade>                    → unidade específica
+//     "o que tem na lojinha [da/de X]?"
+//     "lista/mostra produtos da lojinha [da X]"
+//     "estoque da lojinha [da X]"
+//     "lojinha da/do/de X"
+//
+//   VENDA (shop_sale):
+//     "vendi (N)? <produto> (na|da|de|pra) <unidade> [pgto]?"
+//     "vendeu (N)? <produto> ..."
+//     "venda (N)? <produto> ..."
+//     Se forma_pagamento não vier, handler vai pedir.
+//
+//   ENTRADA (shop_entry):
+//     "chegou (N)? <produto> (pra|na|da) <unidade>"
+//     "recebi (N)? <produto> ..."
+//     "entrou (N)? <produto> ..."
+function tryShopBypass(text) {
   const t = String(text || '').trim();
   if (!t) return null;
 
-  // Slash command
+  // Slash command (query)
   const slash = t.match(/^\/loja(?:\s+(.+?))?\s*$/i);
-  if (slash) return { unidade: extractUnidadeFromText(slash[1] || '') };
+  if (slash) return { action: 'query_shop', params: { unidade: extractUnidadeFromText(slash[1] || '') } };
 
-  // Tem que mencionar "loja" ou "lojinha"
+  // VENDA: "vendi/vendeu/venda [N] <produto> (na/da/de) <unidade> [pgto]"
+  const vendaMatch = t.match(/^\s*(?:vendi|vendeu|venda|vendendo)\s+(?:(\d+)\s+)?(.+?)\s+(?:na|da|do|em|pra)\s+(.+?)(?:\s+(pix|cr[eé]dito|d[eé]bito|dinheiro|cash))?\s*[.!?]?\s*$/i);
+  if (vendaMatch) {
+    const qtd = parseInt(vendaMatch[1] || '1', 10);
+    const produto = vendaMatch[2].trim();
+    const restoUnidade = vendaMatch[3].trim();
+    const pgto = vendaMatch[4] ? normalizarPagamento(vendaMatch[4]) : null;
+    const unidade = extractUnidadeFromText(restoUnidade) || restoUnidade;
+    return {
+      action: 'shop_sale',
+      params: { nome: produto, quantidade: qtd, unidade, forma_pagamento: pgto },
+    };
+  }
+
+  // ENTRADA: "chegou/recebi/entrou [N] <produto> (pra/na/da) <unidade>"
+  const entradaMatch = t.match(/^\s*(?:chegou|chegaram|recebi|entrou|entraram)\s+(?:(\d+)\s+)?(.+?)\s+(?:na|da|do|em|pra|para)\s+(.+?)\s*[.!?]?\s*$/i);
+  if (entradaMatch) {
+    const qtd = parseInt(entradaMatch[1] || '1', 10);
+    const produto = entradaMatch[2].trim();
+    const restoUnidade = entradaMatch[3].trim();
+    const unidade = extractUnidadeFromText(restoUnidade) || restoUnidade;
+    return {
+      action: 'shop_entry',
+      params: { nome: produto, quantidade: qtd, unidade },
+    };
+  }
+
+  // QUERY: tem que mencionar "loja" ou "lojinha"
   if (!/\b(lojinha|loja)\b/i.test(t)) return null;
 
-  // Padrões de intenção de consulta
   const queryIntent = /\b(o\s+que\s+tem|lista(?:r)?|mostra(?:r|e)?|me\s+mostra|estoque|consultar|ver|mostr[ae]\s+(?:o|a))\b/i;
-  // Padrão curto "lojinha da X" (sem verbo, só localização)
   const shortLoc = /^\s*lojinha\s+(?:da|de|do)\s+([\wÀ-ú\s]+?)\s*[?!.\s]*$/i;
 
   if (queryIntent.test(t) || shortLoc.test(t)) {
-    return { unidade: extractUnidadeFromText(t) };
+    return { action: 'query_shop', params: { unidade: extractUnidadeFromText(t) } };
   }
+  return null;
+}
+
+function normalizarPagamento(s) {
+  const x = String(s || '').toLowerCase().replace(/[éê]/g, 'e');
+  if (x.includes('pix')) return 'pix';
+  if (x.includes('cred')) return 'credito';
+  if (x.includes('deb')) return 'debito';
+  if (x.includes('dinh') || x.includes('cash')) return 'dinheiro';
   return null;
 }
 
