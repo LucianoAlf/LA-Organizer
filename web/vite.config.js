@@ -1,3 +1,14 @@
+var __assign = (this && this.__assign) || function () {
+    __assign = Object.assign || function(t) {
+        for (var s, i = 1, n = arguments.length; i < n; i++) {
+            s = arguments[i];
+            for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p))
+                t[p] = s[p];
+        }
+        return t;
+    };
+    return __assign.apply(this, arguments);
+};
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
     function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
     return new (P || (P = Promise))(function (resolve, reject) {
@@ -50,89 +61,69 @@ export default defineConfig(function (_a) {
         require('fs').writeFileSync('/tmp/vite-cfg-trace.log', "".concat(new Date().toISOString(), " mode=").concat(mode, " TOM_API_BASE=").concat(TOM_API_BASE ? 'SET' : 'EMPTY', " SECRET=").concat(TOM_INTERNAL_SECRET ? 'SET' : 'EMPTY', "\n"), { flag: 'a' });
     }
     catch (e) { /* ignore */ }
+    // Lê body completo do request (POST/PUT/etc) — Node streams.
+    var readBody = function (req) { return new Promise(function (resolve, reject) {
+        var chunks = [];
+        req.on('data', function (c) { return chunks.push(c); });
+        req.on('end', function () { return resolve(Buffer.concat(chunks)); });
+        req.on('error', reject);
+    }); };
+    var proxyHandler = function (req, res, next) { return __awaiter(void 0, void 0, void 0, function () {
+        var sub, url, method, fetchInit, body, upstream, text, e_1, msg;
+        return __generator(this, function (_a) {
+            switch (_a.label) {
+                case 0:
+                    if (!req.url || !req.url.startsWith('/api/lareport'))
+                        return [2 /*return*/, next()];
+                    sub = req.url.replace(/^\/api\/lareport\/?/, '');
+                    url = "".concat(TOM_API_BASE, "/internal/lareport/").concat(sub);
+                    method = req.method || 'GET';
+                    _a.label = 1;
+                case 1:
+                    _a.trys.push([1, 6, , 7]);
+                    fetchInit = {
+                        method: method,
+                        headers: __assign({ 'x-internal-secret': TOM_INTERNAL_SECRET }, (req.headers['content-type'] ? { 'Content-Type': String(req.headers['content-type']) } : {})),
+                    };
+                    if (!(method !== 'GET' && method !== 'HEAD')) return [3 /*break*/, 3];
+                    return [4 /*yield*/, readBody(req)];
+                case 2:
+                    body = _a.sent();
+                    if (body.length)
+                        fetchInit.body = body.toString('utf8');
+                    _a.label = 3;
+                case 3: return [4 /*yield*/, fetch(url, fetchInit)];
+                case 4:
+                    upstream = _a.sent();
+                    return [4 /*yield*/, upstream.text()];
+                case 5:
+                    text = _a.sent();
+                    res.statusCode = upstream.status;
+                    res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/json');
+                    res.end(text);
+                    return [3 /*break*/, 7];
+                case 6:
+                    e_1 = _a.sent();
+                    msg = e_1 instanceof Error ? e_1.message : String(e_1);
+                    res.statusCode = 502;
+                    res.setHeader('Content-Type', 'application/json');
+                    res.end(JSON.stringify({ ok: false, error: 'upstream_failed', detail: msg }));
+                    return [3 /*break*/, 7];
+                case 7: return [2 /*return*/];
+            }
+        });
+    }); };
     var lareportProxyPlugin = function () { return ({
         name: 'lareport-local-proxy',
         configureServer: function (server) {
-            var _this = this;
             if (!TOM_API_BASE || !TOM_INTERNAL_SECRET)
                 return;
-            server.middlewares.use(function (req, res, next) { return __awaiter(_this, void 0, void 0, function () {
-                var sub, url, upstream, text, e_1, msg;
-                return __generator(this, function (_a) {
-                    switch (_a.label) {
-                        case 0:
-                            if (!req.url || !req.url.startsWith('/api/lareport'))
-                                return [2 /*return*/, next()];
-                            sub = req.url.replace(/^\/api\/lareport\/?/, '');
-                            url = "".concat(TOM_API_BASE, "/internal/lareport/").concat(sub);
-                            _a.label = 1;
-                        case 1:
-                            _a.trys.push([1, 4, , 5]);
-                            return [4 /*yield*/, fetch(url, {
-                                    method: req.method || 'GET',
-                                    headers: { 'x-internal-secret': TOM_INTERNAL_SECRET },
-                                })];
-                        case 2:
-                            upstream = _a.sent();
-                            return [4 /*yield*/, upstream.text()];
-                        case 3:
-                            text = _a.sent();
-                            res.statusCode = upstream.status;
-                            res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/json');
-                            res.end(text);
-                            return [3 /*break*/, 5];
-                        case 4:
-                            e_1 = _a.sent();
-                            msg = e_1 instanceof Error ? e_1.message : String(e_1);
-                            res.statusCode = 502;
-                            res.setHeader('Content-Type', 'application/json');
-                            res.end(JSON.stringify({ ok: false, error: 'upstream_failed', detail: msg }));
-                            return [3 /*break*/, 5];
-                        case 5: return [2 /*return*/];
-                    }
-                });
-            }); });
+            server.middlewares.use(proxyHandler);
         },
         configurePreviewServer: function (server) {
-            var _this = this;
             if (!TOM_API_BASE || !TOM_INTERNAL_SECRET)
                 return;
-            server.middlewares.use(function (req, res, next) { return __awaiter(_this, void 0, void 0, function () {
-                var sub, url, upstream, text, e_2, msg;
-                return __generator(this, function (_a) {
-                    switch (_a.label) {
-                        case 0:
-                            if (!req.url || !req.url.startsWith('/api/lareport'))
-                                return [2 /*return*/, next()];
-                            sub = req.url.replace(/^\/api\/lareport\/?/, '');
-                            url = "".concat(TOM_API_BASE, "/internal/lareport/").concat(sub);
-                            _a.label = 1;
-                        case 1:
-                            _a.trys.push([1, 4, , 5]);
-                            return [4 /*yield*/, fetch(url, {
-                                    method: req.method || 'GET',
-                                    headers: { 'x-internal-secret': TOM_INTERNAL_SECRET },
-                                })];
-                        case 2:
-                            upstream = _a.sent();
-                            return [4 /*yield*/, upstream.text()];
-                        case 3:
-                            text = _a.sent();
-                            res.statusCode = upstream.status;
-                            res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/json');
-                            res.end(text);
-                            return [3 /*break*/, 5];
-                        case 4:
-                            e_2 = _a.sent();
-                            msg = e_2 instanceof Error ? e_2.message : String(e_2);
-                            res.statusCode = 502;
-                            res.setHeader('Content-Type', 'application/json');
-                            res.end(JSON.stringify({ ok: false, error: 'upstream_failed', detail: msg }));
-                            return [3 /*break*/, 5];
-                        case 5: return [2 /*return*/];
-                    }
-                });
-            }); });
+            server.middlewares.use(proxyHandler);
         },
     }); };
     return {
