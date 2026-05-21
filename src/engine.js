@@ -6020,10 +6020,10 @@ async function processMessage(phone, text, raw = {}) {
       const _userName = (collab && collab.full_name) ? collab.full_name : 'usuário';
       try {
         const shopResult = await handleShopAction(shop, collab, _userName);
-        if (shopResult) reply = (reply.replace(/<<SHOP_ACTION>>[\s\S]*?<<\/?SHOP_ACTION>>/g, '') + '\n\n' + shopResult).trim();
+        if (shopResult) reply = (reply.replace(/<<SHOP_ACTION>>[\s\S]*?<<(?:\/?SHOP_ACTION|END)>>/g, '') + '\n\n' + shopResult).trim();
       } catch (e) {
         console.error('[ShopAction] handler err:', e.message);
-        reply = (reply.replace(/<<SHOP_ACTION>>[\s\S]*?<<\/?SHOP_ACTION>>/g, '') + '\n\n⚠️ Não consegui registrar: ' + e.message).trim();
+        reply = (reply.replace(/<<SHOP_ACTION>>[\s\S]*?<<(?:\/?SHOP_ACTION|END)>>/g, '') + '\n\n⚠️ Não consegui registrar: ' + e.message).trim();
       }
     }
   }
@@ -7380,8 +7380,11 @@ function extractUnidadeFromText(t) {
 }
 
 // Sprint Fase B — parser do marker <<SHOP_ACTION>>
+// Sprint 23.7 hotfix: aceita fechamento <<END>> (padrão global declarado em
+// system.js) além do <</SHOP_ACTION>> legado da skill lojinha.md. Sem isso,
+// TOM emite <<SHOP_ACTION>>...<<END>> e o catch-all stripa como UNKNOWN_MARKER.
 function parseShopAction(text) {
-  const m = text.match(/<<SHOP_ACTION>>\s*([\s\S]*?)\s*<<\/?SHOP_ACTION>>/);
+  const m = text.match(/<<SHOP_ACTION>>\s*([\s\S]*?)\s*<<(?:\/?SHOP_ACTION|END)>>/);
   if (!m) return null;
   try {
     const payload = JSON.parse(m[1]);

@@ -1301,7 +1301,6 @@ router.post('/internal/lareport/loja/estorno', requireInternalSecret, async (req
 // POST /internal/lareport/loja/reserva  body: {produto_id, variacao_id?, unidade_id, quantidade, cliente_nome, aluno_id?, observacoes?, prazo?}
 router.post('/internal/lareport/loja/reserva', requireInternalSecret, async (req, res) => {
   const b = req.body || {};
-  console.log('[DEBUG reserva] body=', JSON.stringify(b), 'headers.ct=', req.headers['content-type']);
   if (!b.produto_id) return res.status(400).json({ ok: false, error: 'produto_id_obrigatorio' });
   if (!b.unidade_id) return res.status(400).json({ ok: false, error: 'unidade_id_obrigatorio' });
   if (!b.quantidade || Number(b.quantidade) <= 0) return res.status(400).json({ ok: false, error: 'quantidade_invalida' });

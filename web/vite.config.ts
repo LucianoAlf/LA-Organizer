@@ -39,9 +39,18 @@ export default defineConfig(({ mode }) => {
         },
       };
       // Repassa body em POST/PUT/PATCH/DELETE
+      let bodyDbg = '';
       if (method !== 'GET' && method !== 'HEAD') {
         const body = await readBody(req);
+        bodyDbg = body.toString('utf8');
         if (body.length) (fetchInit as RequestInit & { body?: Buffer }).body = body;
+      }
+      // DEBUG TEMP
+      if (req.url.endsWith('?_debug=1')) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ ok: true, _proxy: { method, url, bodyLen: bodyDbg.length, bodyPreview: bodyDbg.slice(0, 200), ct: req.headers['content-type'] || null } }));
+        return;
       }
       const upstream = await fetch(url, fetchInit);
       const text = await upstream.text();
