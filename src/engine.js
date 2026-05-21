@@ -7772,17 +7772,18 @@ async function handleShopAction(shop, collab, userName) {
     const titulo = (p.titulo || '').trim();
     const salaTermo = (p.sala_termo || '').trim();
     const prioridade = p.prioridade || 'importante';
-    const categoria = p.categoria || null;
     const descricao = p.descricao || null;
 
-    // Resolver unidade
-    let uid = p.unidade_id;
-    if (!uid && p.unidade) {
-      uid = await resolveUnidadeIdShop(p.unidade);
-      if (!uid) return `Unidade "${p.unidade}" não encontrada.`;
+    // Inferir categoria do verbo no título (se LLM não passou)
+    function inferirCategoria(t) {
+      const s = t.toLowerCase();
+      if (/\b(comprar|adquirir|encomendar)\b/.test(s)) return 'compra';
+      if (/\b(repor|reposi[çc][aã]o|refil)\b/.test(s)) return 'reposicao';
+      if (/\b(reparar|consertar|trocar|arrumar|conserto|reparo|quebrad[oa]|com\s+defeito)\b/.test(s)) return 'reparo';
+      if (/\b(melhorar|melhoria|upgrade|atualizar|modernizar)\b/.test(s)) return 'melhoria';
+      return null;
     }
-    if (!uid) uid = collab?.unidade_id;
-    if (!uid) return '🤔 Em qual unidade é a sala? (Barra/Campo Grande/Recreio)';
+    const categoria = p.categoria || inferirCategoria(titulo);
 
     if (!titulo || titulo.length < 3) {
       return '🤔 Não entendi o que precisa. Diz tipo "precisa comprar fone abafador pra sala Amy, urgente".';
@@ -7791,23 +7792,35 @@ async function handleShopAction(shop, collab, userName) {
       return '🤔 Pra qual sala? Diz tipo "...pra sala Amy".';
     }
 
-    // Resolver sala (fuzzy por nome dentro da unidade)
-    const { data: salas, error: salasErr } = await _lrc
+    // Resolver unidade — se não fornecida, busca sala em TODAS unidades (caso de Direção)
+    let uid = p.unidade_id;
+    if (!uid && p.unidade) {
+      uid = await resolveUnidadeIdShop(p.unidade);
+      if (!uid) return `Unidade "${p.unidade}" não encontrada.`;
+    }
+    if (!uid) uid = collab?.unidade_id;
+
+    let salasQuery = _lrc
       .from('salas')
-      .select('id, nome, unidade_id')
-      .eq('unidade_id', uid)
+      .select('id, nome, unidade_id, unidades(nome)')
       .eq('ativo', true)
       .ilike('nome', `%${salaTermo}%`)
-      .limit(3);
+      .limit(5);
+    if (uid) salasQuery = salasQuery.eq('unidade_id', uid);
+
+    const { data: salas, error: salasErr } = await salasQuery;
     if (salasErr) return `❌ Erro buscando sala: ${salasErr.message}`;
     if (!salas || salas.length === 0) {
-      return `🤔 Não achei sala "${salaTermo}" nessa unidade. Tenta um nome mais específico.`;
+      return uid
+        ? `🤔 Não achei sala "${salaTermo}" nessa unidade. Tenta um nome mais específico.`
+        : `🤔 Não achei sala "${salaTermo}" em nenhuma unidade. Tenta um nome mais específico.`;
     }
     if (salas.length > 1) {
-      const opts = salas.map((s, i) => `${i + 1}. ${s.nome}`).join('\n');
+      const opts = salas.map((s, i) => `${i + 1}. ${s.nome} (${s.unidades?.nome || '?'})`).join('\n');
       return `🤔 Achei ${salas.length} salas com "${salaTermo}". Qual?\n${opts}`;
     }
     const sala = salas[0];
+    uid = sala.unidade_id; // ajusta uid com a unidade real da sala resolvida
 
     const solicitante = (collab && (collab.full_name || collab.nome)) || userName || 'TOM user';
 
@@ -7830,7 +7843,9 @@ async function handleShopAction(shop, collab, userName) {
     if (insErr) return `❌ Erro ao registrar pendência: ${insErr.message}`;
 
     const emoji = prioridade === 'urgente' ? '🔴' : prioridade === 'futuramente' ? '🟡' : '🟠';
-    return `✅ Pendência #${created.id} registrada na ${sala.nome}: ${emoji} ${created.titulo}`;
+    const unidadeNome = sala.unidades?.nome ? ` · ${sala.unidades.nome}` : '';
+    const catTxt = categoria ? ` · ${categoria}` : '';
+    return `✅ Pendência #${created.id} registrada — ${emoji} ${created.titulo}\n📍 ${sala.nome}${unidadeNome}${catTxt}`;
   }
 
   return null;
