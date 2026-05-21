@@ -67,14 +67,14 @@ export function DesktopShell() {
             a MESMA instância persista entre /hoje ↔ /semana (indicador deslizante
             só anima se o elemento não for desmontado). */}
         {showAgendaTabs && (
-          <div className="w-full max-w-7xl mx-auto px-6 lg:px-10 pt-6">
+          <div className="w-full px-6 lg:px-10 pt-6">
             <AgendaTabs />
           </div>
         )}
-        {/* Fase D2.1 — libera largura desktop até max-w-7xl (1280px); tablet em
-            max-w-5xl; mobile mantém max-w-content (720px). Padding lateral cresce
-            no desktop para o conteúdo não colar nas bordas da tela em telas largas. */}
-        <div className="w-full max-w-content md:max-w-5xl lg:max-w-7xl mx-auto px-4 md:px-6 lg:px-10 py-6">
+        {/* Fase D2.2 — conteúdo ocupa toda a largura disponível (sem max-w),
+            respeitando apenas o padding lateral. Assim, recolher a sidebar
+            de fato expande o conteúdo na mesma distância. */}
+        <div className="w-full px-4 md:px-6 lg:px-10 py-6">
           <Outlet />
         </div>
       </main>
