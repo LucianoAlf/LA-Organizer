@@ -50,7 +50,7 @@ function resumoItens(venda: HistoricoVenda): string {
   const itens = venda.loja_venda_itens || [];
   if (itens.length === 0) return '(sem itens)';
   const first = itens[0];
-  const nome = first.loja_produtos?.nome ?? `Produto #${first.produto_id}`;
+  const nome = (first as any).produto_nome ?? first.loja_produtos?.nome ?? `Produto #${first.produto_id}`;
   const head = `${first.quantidade}x ${nome}`;
   if (itens.length === 1) return head;
   return `${head} + ${itens.length - 1} outro${itens.length - 1 > 1 ? 's' : ''}`;

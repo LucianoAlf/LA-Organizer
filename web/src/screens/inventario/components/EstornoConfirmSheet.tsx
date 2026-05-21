@@ -114,7 +114,7 @@ export function EstornoConfirmSheet({ open, onClose, venda }: Props) {
           {(venda.loja_venda_itens || []).map((it, i) => (
             <div key={i} className="px-md py-2 flex justify-between items-center text-body-sm">
               <div className="min-w-0">
-                <div className="text-fg truncate">{it.loja_produtos?.nome ?? `Produto #${it.produto_id}`}</div>
+                <div className="text-fg truncate">{(it as any).produto_nome ?? it.loja_produtos?.nome ?? `Produto #${it.produto_id}`}</div>
                 {it.loja_produtos?.sku && (
                   <div className="text-fg-muted text-[11px]">{it.loja_produtos.sku}</div>
                 )}

@@ -17,53 +17,54 @@ export default defineConfig(({ mode }) => {
       `${new Date().toISOString()} mode=${mode} TOM_API_BASE=${TOM_API_BASE ? 'SET' : 'EMPTY'} SECRET=${TOM_INTERNAL_SECRET ? 'SET' : 'EMPTY'}\n`,
       { flag: 'a' });
   } catch (e) { /* ignore */ }
+  // Lê body completo do request (POST/PUT/etc) — Node streams.
+  const readBody = (req: IncomingMessage): Promise<Buffer> => new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (c: Buffer) => chunks.push(c));
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+
+  const proxyHandler = async (req: IncomingMessage, res: ServerResponse, next: () => void) => {
+    if (!req.url || !req.url.startsWith('/api/lareport')) return next();
+    const sub = req.url.replace(/^\/api\/lareport\/?/, '');
+    const url = `${TOM_API_BASE}/internal/lareport/${sub}`;
+    const method = req.method || 'GET';
+    try {
+      const fetchInit: RequestInit = {
+        method,
+        headers: {
+          'x-internal-secret': TOM_INTERNAL_SECRET,
+          ...(req.headers['content-type'] ? { 'Content-Type': String(req.headers['content-type']) } : {}),
+        },
+      };
+      // Repassa body em POST/PUT/PATCH/DELETE
+      if (method !== 'GET' && method !== 'HEAD') {
+        const body = await readBody(req);
+        if (body.length) (fetchInit as RequestInit & { body?: Buffer }).body = body;
+      }
+      const upstream = await fetch(url, fetchInit);
+      const text = await upstream.text();
+      res.statusCode = upstream.status;
+      res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/json');
+      res.end(text);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      res.statusCode = 502;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ ok: false, error: 'upstream_failed', detail: msg }));
+    }
+  };
+
   const lareportProxyPlugin = () => ({
     name: 'lareport-local-proxy',
     configureServer(server: { middlewares: { use: (handler: (req: IncomingMessage, res: ServerResponse, next: () => void) => void) => void } }) {
       if (!TOM_API_BASE || !TOM_INTERNAL_SECRET) return;
-      server.middlewares.use(async (req, res, next) => {
-        if (!req.url || !req.url.startsWith('/api/lareport')) return next();
-        const sub = req.url.replace(/^\/api\/lareport\/?/, '');
-        const url = `${TOM_API_BASE}/internal/lareport/${sub}`;
-        try {
-          const upstream = await fetch(url, {
-            method: req.method || 'GET',
-            headers: { 'x-internal-secret': TOM_INTERNAL_SECRET },
-          });
-          const text = await upstream.text();
-          res.statusCode = upstream.status;
-          res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/json');
-          res.end(text);
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
-          res.statusCode = 502;
-          res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ ok: false, error: 'upstream_failed', detail: msg }));
-        }
-      });
+      server.middlewares.use(proxyHandler);
     },
     configurePreviewServer(server: { middlewares: { use: (handler: (req: IncomingMessage, res: ServerResponse, next: () => void) => void) => void } }) {
       if (!TOM_API_BASE || !TOM_INTERNAL_SECRET) return;
-      server.middlewares.use(async (req, res, next) => {
-        if (!req.url || !req.url.startsWith('/api/lareport')) return next();
-        const sub = req.url.replace(/^\/api\/lareport\/?/, '');
-        const url = `${TOM_API_BASE}/internal/lareport/${sub}`;
-        try {
-          const upstream = await fetch(url, {
-            method: req.method || 'GET',
-            headers: { 'x-internal-secret': TOM_INTERNAL_SECRET },
-          });
-          const text = await upstream.text();
-          res.statusCode = upstream.status;
-          res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/json');
-          res.end(text);
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
-          res.statusCode = 502;
-          res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ ok: false, error: 'upstream_failed', detail: msg }));
-        }
-      });
+      server.middlewares.use(proxyHandler);
     },
   });
 
