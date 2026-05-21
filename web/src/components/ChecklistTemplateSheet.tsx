@@ -8,7 +8,7 @@ import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { useSortableSensors } from '../lib/sortableSensors'
-import { BottomSheet } from './BottomSheet'
+import { AdaptiveSheet } from './AdaptiveSheet'
 import { Button } from './Button'
 import { CustomSelect } from './CustomSelect'
 import { TimeInput } from './TimeInput'
@@ -229,8 +229,8 @@ export function ChecklistTemplateSheet({ open, template, onClose }: Props) {
   })
 
   return (
-    <BottomSheet open={open} onClose={onClose}
-      title={template ? 'Editar template' : 'Novo template'}>
+    <AdaptiveSheet open={open} onClose={onClose}
+      title={template ? 'Editar template' : 'Novo template'} size="md">
       <div className="space-y-4 pb-4">
 
         <div>
@@ -414,6 +414,6 @@ export function ChecklistTemplateSheet({ open, template, onClose }: Props) {
           {template ? 'Salvar alterações' : 'Salvar template'}
         </Button>
       </div>
-    </BottomSheet>
+    </AdaptiveSheet>
   )
 }

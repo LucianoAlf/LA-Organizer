@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { todaySP } from '../utils/date';
-import { BottomSheet } from './BottomSheet';
+import { AdaptiveSheet } from './AdaptiveSheet';
 import { Button } from './Button';
 import type { TaskContext } from '../types';
 
@@ -66,7 +66,7 @@ export function QuickTaskSheet({ open, onClose, defaultDueDate }: Props) {
   };
 
   return (
-    <BottomSheet open={open} onClose={onClose} title="Nova tarefa">
+    <AdaptiveSheet open={open} onClose={onClose} title="Nova tarefa" size="sm">
       <form onSubmit={onSubmit} className="space-y-md">
         <label className="block">
           <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Título</div>
@@ -130,6 +130,6 @@ export function QuickTaskSheet({ open, onClose, defaultDueDate }: Props) {
           <Button type="submit" loading={create.isPending} fullWidth>Criar</Button>
         </div>
       </form>
-    </BottomSheet>
+    </AdaptiveSheet>
   );
 }

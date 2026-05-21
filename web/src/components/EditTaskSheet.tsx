@@ -11,7 +11,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { todaySP } from '../utils/date';
-import { BottomSheet } from './BottomSheet';
+import { AdaptiveSheet } from './AdaptiveSheet';
 import { Button } from './Button';
 import { DateInput } from './DateInput';
 import { TimeInput } from './TimeInput';
@@ -127,7 +127,7 @@ export function EditTaskSheet({ open, task, onClose }: Props) {
   };
 
   return (
-    <BottomSheet open={open && Boolean(task)} onClose={onClose} title="Editar tarefa">
+    <AdaptiveSheet open={open && Boolean(task)} onClose={onClose} title="Editar tarefa" size="md">
       {task && (
         <form onSubmit={onSave} className="space-y-md">
           <label className="block">
@@ -224,6 +224,6 @@ export function EditTaskSheet({ open, task, onClose }: Props) {
           </div>
         </form>
       )}
-    </BottomSheet>
+    </AdaptiveSheet>
   );
 }

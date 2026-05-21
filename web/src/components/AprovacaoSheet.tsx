@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BottomSheet } from './BottomSheet';
+import { AdaptiveSheet } from './AdaptiveSheet';
 import type { Announcement } from '../types';
 
 interface Props {
@@ -42,7 +42,7 @@ export function AprovacaoSheet({ open, onClose, announcement, onConfirm }: Props
     : announcement.body;
 
   return (
-    <BottomSheet open={open} onClose={handleClose} title="Rejeitar comunicado">
+    <AdaptiveSheet open={open} onClose={handleClose} title="Rejeitar comunicado" size="sm">
       <div className="space-y-md">
         <div className="text-body-sm text-fg-muted">
           Comunicado de <strong>{announcement.created_by.slice(0, 8)}</strong>:
@@ -82,6 +82,6 @@ export function AprovacaoSheet({ open, onClose, announcement, onConfirm }: Props
           </button>
         </div>
       </div>
-    </BottomSheet>
+    </AdaptiveSheet>
   );
 }

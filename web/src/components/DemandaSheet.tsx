@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { BottomSheet } from './BottomSheet';
+import { AdaptiveSheet } from './AdaptiveSheet';
 import { Button } from './Button';
 import { CustomSelect } from './CustomSelect';
 import { DateInput } from './DateInput';
@@ -207,7 +207,7 @@ export function DemandaSheet({ open, onClose, mode }: Props) {
   }
 
   return (
-    <BottomSheet open={open} onClose={onClose} title={isEdit ? 'Editar demanda' : 'Nova demanda'}>
+    <AdaptiveSheet open={open} onClose={onClose} title={isEdit ? 'Editar demanda' : 'Nova demanda'} size="md">
       <div className="space-y-4">
         <div>
           <label className="text-caption text-fg-muted block mb-1">Departamento</label>
@@ -287,6 +287,6 @@ export function DemandaSheet({ open, onClose, mode }: Props) {
           </Button>
         </div>
       </div>
-    </BottomSheet>
+    </AdaptiveSheet>
   );
 }

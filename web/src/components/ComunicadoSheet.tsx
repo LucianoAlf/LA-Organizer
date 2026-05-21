@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { BottomSheet } from './BottomSheet';
+import { AdaptiveSheet } from './AdaptiveSheet';
 import { Button } from './Button';
 import { DateTimeInput } from './DateTimeInput';
 import { CustomSelect } from './CustomSelect';
@@ -388,7 +388,7 @@ export function ComunicadoSheet({ open, onClose, initial, editTarget }: Props) {
   });
 
   return (
-    <BottomSheet open={open} onClose={onClose} title={isEdit ? 'Editar comunicado' : 'Novo comunicado'}>
+    <AdaptiveSheet open={open} onClose={onClose} title={isEdit ? 'Editar comunicado' : 'Novo comunicado'} size="lg">
       <div className="space-y-4 pb-4">
         <div>
           <label className="text-caption text-fg-muted block mb-1">Mensagem</label>
@@ -610,6 +610,6 @@ export function ComunicadoSheet({ open, onClose, initial, editTarget }: Props) {
           {isPending ? (isEdit ? 'Salvando…' : 'Enviando…') : (isEdit ? 'Salvar alterações' : 'Enviar comunicado')}
         </Button>
       </div>
-    </BottomSheet>
+    </AdaptiveSheet>
   );
 }

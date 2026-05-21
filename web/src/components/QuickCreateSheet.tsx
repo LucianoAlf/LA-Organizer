@@ -4,7 +4,7 @@ import { ListTodo, CalendarClock, UserPlus } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { todaySP } from '../utils/date';
-import { BottomSheet } from './BottomSheet';
+import { AdaptiveSheet } from './AdaptiveSheet';
 import { Button } from './Button';
 import { CustomSelect } from './CustomSelect';
 import { DateInput } from './DateInput';
@@ -430,7 +430,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
   const showMeetingUrl = kind === 'event' && (modality === 'online' || modality === 'hibrido');
 
   return (
-    <BottomSheet open={open} onClose={onClose} title="Novo">
+    <AdaptiveSheet open={open} onClose={onClose} title="Novo" size="sm">
       {/* Kind selector */}
       <div role="tablist" className="grid grid-cols-3 gap-2 mb-md">
         <KindButton active={kind === 'task'} onClick={() => setKind('task')} icon={<ListTodo size={20} />} label="Tarefa" hint="algo a fazer" />
@@ -844,7 +844,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
           )}
         </div>
       </form>
-    </BottomSheet>
+    </AdaptiveSheet>
   );
 }
 

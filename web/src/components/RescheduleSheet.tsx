@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { todaySP } from '../utils/date';
-import { BottomSheet } from './BottomSheet';
+import { AdaptiveSheet } from './AdaptiveSheet';
 import { Button } from './Button';
 import { DateInput } from './DateInput';
 import { notifyTaskUpdated } from '../lib/tomEngine';
@@ -97,7 +97,7 @@ export function RescheduleSheet({ open, task, onClose }: Props) {
   const sameDate = task && date === task.due_date;
 
   return (
-    <BottomSheet open={open && Boolean(task)} onClose={onClose} title="Reagendar tarefa">
+    <AdaptiveSheet open={open && Boolean(task)} onClose={onClose} title="Reagendar tarefa" size="sm">
       {task && (
         <form onSubmit={onSubmit} className="space-y-md">
           <div className="rounded-md border border-border bg-bg-elevated p-3">
@@ -134,6 +134,6 @@ export function RescheduleSheet({ open, task, onClose }: Props) {
           </div>
         </form>
       )}
-    </BottomSheet>
+    </AdaptiveSheet>
   );
 }

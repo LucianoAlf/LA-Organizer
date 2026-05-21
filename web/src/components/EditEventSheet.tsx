@@ -2,7 +2,7 @@ import { useState, useEffect, FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
-import { BottomSheet } from './BottomSheet';
+import { AdaptiveSheet } from './AdaptiveSheet';
 import { Button } from './Button';
 import { CustomSelect } from './CustomSelect';
 import { DateTimeInput } from './DateTimeInput';
@@ -295,7 +295,7 @@ export function EditEventSheet({ open, event, onClose }: Props) {
   const endBeforeStart = startAt && endAt && new Date(endAt).getTime() <= new Date(startAt).getTime();
 
   return (
-    <BottomSheet open={open && Boolean(event)} onClose={onClose} title="Editar compromisso">
+    <AdaptiveSheet open={open && Boolean(event)} onClose={onClose} title="Editar compromisso" size="md">
       {event && (
         <form onSubmit={onSave} className="space-y-md">
           <label className="block">
@@ -556,6 +556,6 @@ export function EditEventSheet({ open, event, onClose }: Props) {
           </div>
         </form>
       )}
-    </BottomSheet>
+    </AdaptiveSheet>
   );
 }

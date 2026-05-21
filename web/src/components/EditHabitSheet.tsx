@@ -6,7 +6,7 @@ import { useState, useEffect, FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
-import { BottomSheet } from './BottomSheet';
+import { AdaptiveSheet } from './AdaptiveSheet';
 import { Button } from './Button';
 import { TimeInput } from './TimeInput';
 
@@ -204,7 +204,7 @@ export function EditHabitSheet({ open, habit, onClose }: Props) {
   }
 
   return (
-    <BottomSheet open={open} onClose={onClose} title={isNew ? 'Novo hábito' : 'Editar hábito'}>
+    <AdaptiveSheet open={open} onClose={onClose} title={isNew ? 'Novo hábito' : 'Editar hábito'} size="sm">
       <form onSubmit={onSubmit} className="space-y-md">
         {/* Templates só no modo criar */}
         {isNew && templates.length > 0 && (
@@ -416,6 +416,6 @@ export function EditHabitSheet({ open, habit, onClose }: Props) {
           </Button>
         </div>
       </form>
-    </BottomSheet>
+    </AdaptiveSheet>
   );
 }

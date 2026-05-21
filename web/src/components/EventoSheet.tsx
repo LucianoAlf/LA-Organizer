@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
-import { BottomSheet } from './BottomSheet';
+import { AdaptiveSheet } from './AdaptiveSheet';
 import { Button } from './Button';
 import { DateInput } from './DateInput';
 import { TimeInput } from './TimeInput';
@@ -236,7 +236,7 @@ export function EventoSheet({ open, onClose, editTarget = null }: Props) {
   });
 
   return (
-    <BottomSheet open={open} onClose={onClose} title={isEditing ? 'Editar evento' : 'Novo evento'}>
+    <AdaptiveSheet open={open} onClose={onClose} title={isEditing ? 'Editar evento' : 'Novo evento'} size="md">
       <div className="space-y-4 pb-4">
         <div>
           <label className="text-caption text-fg-muted block mb-1">Título *</label>
@@ -383,6 +383,6 @@ export function EventoSheet({ open, onClose, editTarget = null }: Props) {
           {isPending ? (isEditing ? 'Salvando…' : 'Criando…') : (isEditing ? 'Salvar alterações' : 'Criar evento')}
         </Button>
       </div>
-    </BottomSheet>
+    </AdaptiveSheet>
   );
 }
