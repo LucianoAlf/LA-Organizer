@@ -133,7 +133,7 @@ export function useReservas(
     queryFn: async (): Promise<ReportReserva[]> => {
       let q = laReportClient
         .from('loja_reservas')
-        .select('*, loja_produtos(nome, sku), loja_alunos(nome)')
+        .select('*, loja_produtos(nome, sku), loja_alunos:alunos!aluno_id(nome)')
         .eq('unidade_id', unidadeId!)
         .order('created_at', { ascending: false });
       if (status !== 'todas') q = q.eq('status', status);

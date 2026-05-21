@@ -60,9 +60,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         desconto_tipo, subtotal, total,
         loja_produtos ( nome, sku )
       ),
-      loja_alunos:aluno_id ( nome ),
-      loja_colaboradores:colaborador_cliente_id ( nome ),
-      loja_professores:professor_indicador_id ( nome )
+      loja_alunos:alunos!aluno_id ( nome ),
+      loja_colaboradores:colaboradores!colaborador_cliente_id ( nome ),
+      loja_professores:professores!professor_indicador_id ( nome )
     `)
     .eq('unidade_id', unidadeId)
     .gte('created_at', cutoff)
