@@ -4,7 +4,8 @@ import { PageHeader } from '../../components/PageHeader';
 import { LoadingState } from '../../components/LoadingState';
 import { EmptyState } from '../../components/EmptyState';
 import { Badge } from '../../components/Badge';
-import { useReportSalaDetalhe } from '../../hooks/useLaReport';
+import { useReportSalaDetalhe, usePendencias } from '../../hooks/useLaReport';
+import { PendenciasView } from './components/PendenciasView';
 import { ItemCard } from './components/ItemCard';
 import { ItemFAB } from './components/ItemFAB';
 import { ItemSheet } from './components/ItemSheet';
@@ -16,12 +17,13 @@ import { useInventarioMutations } from '../../hooks/useInventarioMutations';
 import { useRealtimeSala } from '../../hooks/useRealtimeSala';
 import { iconeParaTipoSala, categoriaInventarioMeta, type ReportInventarioItem } from '../../lib/lareport-types';
 
-type AbaSala = 'itens' | 'movimentacoes' | 'manutencao';
+type AbaSala = 'itens' | 'movimentacoes' | 'manutencao' | 'pendencias';
 
 export function InventarioSalaPage() {
   const { salaId } = useParams<{ salaId: string }>();
   const id = salaId ? parseInt(salaId, 10) : null;
   const { data, isLoading } = useReportSalaDetalhe(id);
+  const { data: pendencias = [] } = usePendencias(id, { status: 'abertas' });
   const m = useInventarioMutations(id);
   useRealtimeSala(id);
   const [aba, setAba] = useState<AbaSala>('itens');
@@ -80,6 +82,7 @@ export function InventarioSalaPage() {
           { id: 'itens' as AbaSala, label: `Itens (${data.itens.length})` },
           { id: 'movimentacoes' as AbaSala, label: `Movimentações (${data.movimentacoes.length})` },
           { id: 'manutencao' as AbaSala, label: `Manutenção (${data.manutencoes.length})` },
+          { id: 'pendencias' as AbaSala, label: `Pendências (${pendencias.length})` },
         ].map(t => (
           <button
             key={t.id}
@@ -181,6 +184,15 @@ export function InventarioSalaPage() {
             ))}
           </div>
         )
+      )}
+
+      {aba === 'pendencias' && id !== null && (
+        <PendenciasView
+          salaId={id}
+          unidadeId={sala.unidade_id ?? ''}
+          pendencias={pendencias}
+          itensSala={data.itens.map(i => ({ id: i.id, nome: i.nome }))}
+        />
       )}
 
       <div className="bg-warning/10 border border-warning/40 rounded-md p-md text-body-sm text-fg-muted">

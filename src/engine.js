@@ -7345,6 +7345,28 @@ function tryShopBypass(text) {
     }
   }
 
+  // PENDÊNCIA DE INVENTÁRIO: "precisa comprar X pra sala Y [, urgente]"
+  // "tá faltando X na sala Y", "pendência: ...", "anota: ..."
+  const pendRe = /^\s*(?:precisa\s+(?:comprar|repor|reparar|trocar)|t[áa]\s+faltando|pend[êe]ncia[:\s]+|anota[:\s]+(?:que\s+)?(?:precisa|comprar|repor|t[áa])|falta\s+um)\s+(.+?)(?:\s+(?:pra|para|na|no)\s+sala\s+(.+?))?(?:\s+[-,]\s*(urgente|urgent[íi]ssimo|importante|futuro|futuramente))?\s*[.!?]?\s*$/i;
+  const pendMatch = t.match(pendRe);
+  if (pendMatch) {
+    const tituloBruto = (pendMatch[1] || '').trim();
+    const salaTermo = (pendMatch[2] || '').trim() || null;
+    const prioKw = (pendMatch[3] || '').toLowerCase();
+    let prioridade = 'importante';
+    if (/^urgent/.test(prioKw)) prioridade = 'urgente';
+    else if (/^futur/.test(prioKw)) prioridade = 'futuramente';
+    else if (/^importante/.test(prioKw)) prioridade = 'importante';
+    // Conservador: título mínimo de 3 chars e não puramente genérico
+    const generic = /^(isso|aquilo|coisa|negocio|negócio|algo|uma\s+coisa)$/i;
+    if (tituloBruto.length >= 3 && !generic.test(tituloBruto)) {
+      return {
+        action: 'shop_pendencia',
+        params: { titulo: tituloBruto, sala_termo: salaTermo, prioridade },
+      };
+    }
+  }
+
   // QUERY: tem que mencionar "loja" ou "lojinha"
   if (!/\b(lojinha|loja)\b/i.test(t)) return null;
 
@@ -7396,6 +7418,8 @@ function parseShopAction(text) {
       query: 'query_shop', consulta: 'query_shop', listar: 'query_shop',
       estorno: 'shop_estorno', estornar: 'shop_estorno', cancelar_venda: 'shop_estorno',
       reserva: 'shop_reserve', reservar: 'shop_reserve', separar: 'shop_reserve',
+      pendencia: 'shop_pendencia', pedido: 'shop_pendencia',
+      pendency: 'shop_pendencia', pending_item: 'shop_pendencia',
     };
     const canonical = ACTION_ALIASES[payload.action] || payload.action;
     return { action: canonical, params: payload.params || {} };
@@ -7423,6 +7447,22 @@ function normalizeShopParams(p) {
     venda_id: parseInt(p.venda_id || p.id_venda || p.sale_id || p.venda || 0, 10) || null,
     aluno_id: p.aluno_id || p.student_id || null,
     prazo: p.prazo || p.deadline || p.data_limite || null,
+    // Pendência de inventário (shop_pendencia)
+    titulo: p.titulo || p.title || p.assunto || null,
+    sala_termo: p.sala_termo || p.sala_nome || p.sala || p.room || null,
+    prioridade: (() => {
+      const raw = String(p.prioridade || p.priority || 'importante').toLowerCase();
+      if (raw === 'urgent' || raw === 'urgente' || raw === 'urgentissimo' || raw === 'urgentíssimo' || raw === 'high') return 'urgente';
+      if (raw === 'low' || raw === 'futuro' || raw === 'futuramente') return 'futuramente';
+      if (raw === 'medium' || raw === 'importante' || raw === 'normal') return 'importante';
+      return 'importante';
+    })(),
+    categoria: (() => {
+      const raw = String(p.categoria || p.category || '').toLowerCase();
+      if (['compra', 'reposicao', 'reparo', 'melhoria'].includes(raw)) return raw;
+      return null;
+    })(),
+    descricao: p.descricao || p.description || p.desc || null,
   };
 }
 
@@ -7725,6 +7765,72 @@ async function handleShopAction(shop, collab, userName) {
       .single();
     if (rErr) return `❌ Erro ao reservar: ${rErr.message}`;
     return `✅ Reserva #${reserva.id} criada: ${qtd}x ${prod.nome} pra ${cliente} até ${reserva.prazo}.`;
+  }
+
+  // Pendência de inventário (LA Report) — cria registro em inventario_pendencias
+  if (shop.action === 'shop_pendencia') {
+    const titulo = (p.titulo || '').trim();
+    const salaTermo = (p.sala_termo || '').trim();
+    const prioridade = p.prioridade || 'importante';
+    const categoria = p.categoria || null;
+    const descricao = p.descricao || null;
+
+    // Resolver unidade
+    let uid = p.unidade_id;
+    if (!uid && p.unidade) {
+      uid = await resolveUnidadeIdShop(p.unidade);
+      if (!uid) return `Unidade "${p.unidade}" não encontrada.`;
+    }
+    if (!uid) uid = collab?.unidade_id;
+    if (!uid) return '🤔 Em qual unidade é a sala? (Barra/Campo Grande/Recreio)';
+
+    if (!titulo || titulo.length < 3) {
+      return '🤔 Não entendi o que precisa. Diz tipo "precisa comprar fone abafador pra sala Amy, urgente".';
+    }
+    if (!salaTermo) {
+      return '🤔 Pra qual sala? Diz tipo "...pra sala Amy".';
+    }
+
+    // Resolver sala (fuzzy por nome dentro da unidade)
+    const { data: salas, error: salasErr } = await _lrc
+      .from('salas')
+      .select('id, nome, unidade_id')
+      .eq('unidade_id', uid)
+      .eq('ativo', true)
+      .ilike('nome', `%${salaTermo}%`)
+      .limit(3);
+    if (salasErr) return `❌ Erro buscando sala: ${salasErr.message}`;
+    if (!salas || salas.length === 0) {
+      return `🤔 Não achei sala "${salaTermo}" nessa unidade. Tenta um nome mais específico.`;
+    }
+    if (salas.length > 1) {
+      const opts = salas.map((s, i) => `${i + 1}. ${s.nome}`).join('\n');
+      return `🤔 Achei ${salas.length} salas com "${salaTermo}". Qual?\n${opts}`;
+    }
+    const sala = salas[0];
+
+    const solicitante = (collab && (collab.full_name || collab.nome)) || userName || 'TOM user';
+
+    const { data: created, error: insErr } = await _lrc
+      .from('inventario_pendencias')
+      .insert({
+        sala_id: sala.id,
+        unidade_id: uid,
+        titulo: titulo.slice(0, 200),
+        descricao,
+        categoria,
+        prioridade,
+        status: 'aberta',
+        solicitante,
+        created_via: `via TOM por ${solicitante}`,
+      })
+      .select('id, titulo, prioridade')
+      .single();
+
+    if (insErr) return `❌ Erro ao registrar pendência: ${insErr.message}`;
+
+    const emoji = prioridade === 'urgente' ? '🔴' : prioridade === 'futuramente' ? '🟡' : '🟠';
+    return `✅ Pendência #${created.id} registrada na ${sala.nome}: ${emoji} ${created.titulo}`;
   }
 
   return null;

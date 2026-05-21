@@ -316,6 +316,74 @@ export function useProdutoSearch(termo: string, unidadeId: string | null) {
   });
 }
 
+// ============================================================
+// Pendências de Inventário
+// ============================================================
+
+export interface ReportPendencia {
+  id: number;
+  sala_id: number;
+  unidade_id: string;
+  titulo: string;
+  descricao: string | null;
+  categoria: 'compra' | 'reposicao' | 'reparo' | 'melhoria' | null;
+  prioridade: 'urgente' | 'importante' | 'futuramente';
+  status: 'aberta' | 'em_andamento' | 'concluida' | 'cancelada';
+  solicitante: string | null;
+  created_via: string | null;
+  resolvido_em: string | null;
+  resolvido_por: string | null;
+  resolucao_obs: string | null;
+  item_vinculado_id: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export function usePendencias(
+  salaId: number | null,
+  opts?: { status?: 'aberta' | 'em_andamento' | 'concluida' | 'cancelada' | 'abertas' | 'todas' },
+) {
+  const access = useAccess('inventario');
+  const qc = useQueryClient();
+  const status = opts?.status ?? 'abertas';
+
+  useEffect(() => {
+    if (!salaId) return;
+    const uniq = Math.random().toString(36).slice(2, 10);
+    const ch = laReportClient
+      .channel(`pendencias_sala_${salaId}_${uniq}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'inventario_pendencias', filter: `sala_id=eq.${salaId}` },
+        () => qc.invalidateQueries({ queryKey: ['lareport', 'pendencias', salaId] }),
+      )
+      .subscribe();
+    return () => { laReportClient.removeChannel(ch); };
+  }, [salaId, qc]);
+
+  return useQuery({
+    queryKey: ['lareport', 'pendencias', salaId, status, access.unitFilter],
+    enabled: access.allowed && salaId !== null,
+    staleTime: 30_000,
+    queryFn: async (): Promise<ReportPendencia[]> => {
+      let q = laReportClient
+        .from('inventario_pendencias')
+        .select('*')
+        .eq('sala_id', salaId!)
+        .order('prioridade', { ascending: true })
+        .order('created_at', { ascending: false });
+      if (status === 'abertas') {
+        q = q.in('status', ['aberta', 'em_andamento']);
+      } else if (status !== 'todas') {
+        q = q.eq('status', status);
+      }
+      const { data, error } = await q;
+      if (error) throw error;
+      return (data || []) as ReportPendencia[];
+    },
+  });
+}
+
 export function useReportAlertas(unidadeId?: string | null) {
   const access = useAccess('inventario');
   return useQuery({

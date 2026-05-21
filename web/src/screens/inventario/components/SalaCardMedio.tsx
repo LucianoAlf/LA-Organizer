@@ -1,9 +1,9 @@
 import { Badge } from '../../../components/Badge';
 import { iconeParaTipoSala, type ReportSala } from '../../../lib/lareport-types';
 
-interface Props { sala: ReportSala & { manutencoes_pendentes?: number; sala_coringa?: boolean; buffer_operacional?: number }; onClick: () => void; }
+interface Props { sala: ReportSala & { manutencoes_pendentes?: number; sala_coringa?: boolean; buffer_operacional?: number }; pendCount?: number; onClick: () => void; }
 
-export function SalaCardMedio({ sala, onClick }: Props) {
+export function SalaCardMedio({ sala, pendCount = 0, onClick }: Props) {
   const itens = sala.itens_count ?? 0;
   const manut = sala.manutencoes_pendentes ?? 0;
   return (
@@ -23,7 +23,12 @@ export function SalaCardMedio({ sala, onClick }: Props) {
       </div>
       <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-fg-muted">
         <span>👥 {sala.capacidade_maxima ?? '?'} alunos · ⏱️ {sala.buffer_operacional ?? 10}min</span>
-        <span className="text-right">📦 {itens} itens{manut > 0 ? ` · 🔧 ${manut}` : ''}</span>
+        <span className="text-right">
+          📦 {itens} itens{manut > 0 ? ` · 🔧 ${manut}` : ''}
+          {pendCount > 0 && (
+            <span className="text-warning"> · ⚠️ {pendCount} pendência{pendCount > 1 ? 's' : ''}</span>
+          )}
+        </span>
       </div>
     </button>
   );

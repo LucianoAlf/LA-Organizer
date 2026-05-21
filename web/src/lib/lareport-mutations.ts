@@ -374,3 +374,41 @@ export async function finalizarReserva(
     body: JSON.stringify(input),
   });
 }
+
+// ============================================================
+// Pendências de Inventário
+// ============================================================
+
+export interface PendenciaInput {
+  sala_id: number;
+  unidade_id: string;
+  titulo: string;
+  descricao?: string | null;
+  categoria?: 'compra' | 'reposicao' | 'reparo' | 'melhoria' | null;
+  prioridade: 'urgente' | 'importante' | 'futuramente';
+  solicitante?: string | null;
+}
+
+export interface PendenciaPatch {
+  titulo?: string;
+  descricao?: string | null;
+  categoria?: 'compra' | 'reposicao' | 'reparo' | 'melhoria' | null;
+  prioridade?: 'urgente' | 'importante' | 'futuramente';
+  status?: 'aberta' | 'em_andamento' | 'concluida' | 'cancelada';
+  resolucao_obs?: string | null;
+  item_vinculado_id?: number | null;
+}
+
+export async function criarPendencia(input: PendenciaInput): Promise<{ ok: boolean; data: any }> {
+  return callApi('/api/lareport/inventario-pendencias', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function atualizarPendencia(id: number, patch: PendenciaPatch): Promise<{ ok: boolean; data: any }> {
+  return callApi(`/api/lareport/inventario-pendencias?id=${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+}
