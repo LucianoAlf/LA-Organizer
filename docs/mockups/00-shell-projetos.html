@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LA Organizer — Projetos · Mockup 00</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/tom-tokens.css" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: {
+        colors: {
+          tom: 'var(--tom)',
+          'bg-app': 'var(--bg-app)',
+          'bg-surface': 'var(--bg-surface)',
+          'bg-elevated': 'var(--bg-elevated)',
+          'bg-elevated-2': 'var(--bg-elevated-2)',
+          border: 'var(--border)',
+          'border-strong': 'var(--border-strong)',
+          fg: 'var(--fg)',
+          'fg-secondary': 'var(--fg-secondary)',
+          'fg-muted': 'var(--fg-muted)',
+          success: 'var(--success)',
+          warning: 'var(--warning)',
+          danger: 'var(--danger)',
+          info: 'var(--info)',
+        },
+      } }
+    };
+  </script>
+  <style>
+    body { font-family: var(--font-sans); }
+    .nav-item { display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 10px; border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--fg-muted); transition: background 0.1s, color 0.1s; position: relative; }
+    .nav-item:hover { background: var(--bg-elevated); color: var(--fg); }
+    .nav-item.active { background: rgba(168,230,67,0.1); color: var(--fg); font-weight: 500; }
+    .nav-item.active::before { content: ''; position: absolute; left: -1px; top: 4px; bottom: 4px; width: 2px; background: var(--tom); border-radius: 0 2px 2px 0; }
+    .nav-group-label { font-size: 10px; text-transform: uppercase; font-weight: 600; color: rgba(138,138,138,0.6); padding-left: 10px; margin-bottom: 4px; margin-top: 12px; letter-spacing: 0.06em; }
+    .kanban-col { width: 240px; min-width: 240px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; display: flex; flex-direction: column; }
+    .kanban-header { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+    .kanban-body { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 8px; }
+    .kanban-card { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 6px; padding: 10px; cursor: pointer; transition: border-color 0.1s; }
+    .kanban-card:hover { border-color: var(--border-strong); }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .badge-kids { background: rgba(251,191,36,0.15); color: #fbbf24; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px; }
+    .badge-school { background: rgba(96,165,250,0.15); color: #60a5fa; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px; }
+    .badge-colab { background: rgba(167,139,250,0.15); color: #a78bfa; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px; }
+    .count-chip { font-size: 10px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; color: var(--fg-muted); }
+    .view-btn { font-size: 12px; padding: 0 10px; height: 100%; border-radius: 4px; color: var(--fg-muted); cursor: pointer; white-space: nowrap; }
+    .view-btn:hover { color: var(--fg); }
+    .view-btn.active { background: var(--bg-surface); border: 1px solid var(--border); color: var(--fg); }
+    .filter-pill { display: flex; align-items: center; gap: 4px; height: 28px; padding: 0 10px; border: 1px solid var(--border); border-radius: 999px; font-size: 12px; color: var(--fg-muted); cursor: pointer; white-space: nowrap; }
+    .filter-pill:hover { border-color: var(--border-strong); color: var(--fg); }
+    .filter-pill.dashed { border-style: dashed; }
+    .avatar { width: 16px; height: 16px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 8px; font-weight: 700; flex-shrink: 0; }
+  </style>
+</head>
+<body class="h-screen overflow-hidden flex" style="background: var(--bg-app); color: var(--fg);">
+
+  <!-- ===== SIDEBAR ===== -->
+  <aside style="width: 240px; min-width: 240px; background: var(--bg-surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; height: 100vh;">
+
+    <!-- Sidebar Header -->
+    <div style="height: 52px; display: flex; align-items: center; gap: 10px; padding: 0 12px; border-bottom: 1px solid var(--border); flex-shrink: 0;">
+      <div style="width: 30px; height: 30px; border-radius: 50%; background: var(--tom); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; color: #0a0a0a; flex-shrink: 0;">T</div>
+      <div>
+        <div style="font-size: 13px; font-weight: 700; color: var(--fg); line-height: 1.2;">TOM</div>
+        <div style="font-size: 10px; color: var(--fg-muted); line-height: 1.2;">LA Organizer</div>
+      </div>
+    </div>
+
+    <!-- Busca rápida -->
+    <div style="padding: 8px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0;">
+      <div style="display: flex; align-items: center; gap: 6px; height: 32px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 6px; padding: 0 8px;">
+        <svg width="12" height="12" viewBox="0 0 24 24" stroke="var(--fg-muted)" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <span style="flex: 1; font-size: 12px; color: var(--fg-muted);">Buscar</span>
+        <span style="font-size: 10px; background: var(--bg-elevated-2); border: 1px solid var(--border); border-radius: 3px; padding: 1px 4px; color: var(--fg-muted);">⌘K</span>
+      </div>
+    </div>
+
+    <!-- Nav scrollável -->
+    <nav style="flex: 1; overflow-y: auto; padding: 8px 8px 4px;">
+
+      <!-- PRINCIPAL -->
+      <div class="nav-group-label">Principal</div>
+      <div class="nav-item">
+        <svg width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        <span>Agenda</span>
+      </div>
+      <div class="nav-item active">
+        <svg width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+        <span style="flex: 1;">Projetos</span>
+        <span style="font-size: 10px; background: rgba(168,230,67,0.15); color: var(--tom); border-radius: 3px; padding: 1px 5px; font-weight: 600;">86</span>
+      </div>
+      <div class="nav-item">
+        <svg width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        <span>Checklists</span>
+      </div>
+      <div class="nav-item">
+        <svg width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M2 12h20"/><circle cx="12" cy="12" r="4"/></svg>
+        <span>Hábitos</span>
+      </div>
+
+      <!-- GESTÃO -->
+      <div class="nav-group-label">Gestão</div>
+      <div class="nav-item">
+        <svg width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+        <span>Dashboard time</span>
+      </div>
+      <div class="nav-item">
+        <svg width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        <span>Aderência</span>
+      </div>
+      <div class="nav-item">
+        <svg width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
+        <span>Operações</span>
+      </div>
+      <div class="nav-item">
+        <svg width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        <span>Comunicados</span>
+      </div>
+      <div class="nav-item">
+        <svg width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        <span>Observabilidade</span>
+      </div>
+      <div class="nav-item">
+        <svg width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        <span>Gestão equipe</span>
+      </div>
+
+      <!-- EDUCAÇÃO -->
+      <div class="nav-group-label">Educação</div>
+      <div class="nav-item">
+        <svg width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
+        <span>LA Educa</span>
+      </div>
+      <div class="nav-item">
+        <svg width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+        <span>LA Journey</span>
+      </div>
+
+      <!-- OPERAÇÕES -->
+      <div class="nav-group-label">Operações</div>
+      <div class="nav-item">
+        <svg width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+        <span>Inventário</span>
+      </div>
+      <div class="nav-item">
+        <svg width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
+        <span>Lojinha</span>
+      </div>
+
+      <!-- SISTEMA -->
+      <div class="nav-group-label">Sistema</div>
+      <div class="nav-item">
+        <svg width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+        <span>Agenda LA Music</span>
+      </div>
+      <div class="nav-item">
+        <svg width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        <span>Histórico</span>
+      </div>
+      <div class="nav-item">
+        <svg width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93l-1.41 1.41M6.34 17.66l-1.41 1.41M2 12h2M20 12h2M6.34 6.34l-1.41-1.41M19.07 19.07l-1.41-1.41M12 20v2M12 2v2"/></svg>
+        <span>Configurações</span>
+      </div>
+
+    </nav>
+
+    <!-- Footer user chip -->
+    <div style="flex-shrink: 0; border-top: 1px solid var(--border); padding: 8px 10px;">
+      <div style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; transition: background 0.1s;" onmouseover="this.style.background='var(--bg-elevated)'" onmouseout="this.style.background=''">
+        <div style="width: 28px; height: 28px; border-radius: 50%; background: #6366f1; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: white; flex-shrink: 0;">L</div>
+        <div style="flex: 1; min-width: 0;">
+          <div style="font-size: 12px; font-weight: 500; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Luciano Alf</div>
+          <div style="font-size: 10px; color: var(--fg-muted);">Diretor</div>
+        </div>
+        <svg width="12" height="12" viewBox="0 0 24 24" stroke="var(--fg-muted)" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- ===== MAIN AREA ===== -->
+  <div style="flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0;">
+
+    <!-- Topbar -->
+    <header style="height: 52px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 24px; flex-shrink: 0; background: var(--bg-surface);">
+      <!-- Breadcrumb -->
+      <div style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+        <span style="color: var(--fg-muted);">LA Organizer</span>
+        <span style="color: rgba(138,138,138,0.4); font-size: 14px;">/</span>
+        <span style="color: var(--fg); font-weight: 600;">Projetos</span>
+      </div>
+      <!-- Right actions -->
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <button style="width: 32px; height: 32px; border-radius: 6px; border: 1px solid var(--border); background: transparent; display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--fg-muted);" title="Notificações">
+          <svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+        </button>
+        <button style="display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; background: var(--tom); border: none; border-radius: 6px; font-size: 12px; font-weight: 600; color: #0a0a0a; cursor: pointer;">
+          <svg width="12" height="12" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Quick Add
+        </button>
+      </div>
+    </header>
+
+    <!-- Page content wrapper (scrollable) -->
+    <div style="flex: 1; overflow-y: auto; display: flex; flex-direction: column;">
+
+      <!-- Page header -->
+      <div style="padding: 20px 24px 12px; display: flex; align-items: flex-end; justify-content: space-between; flex-shrink: 0;">
+        <div>
+          <div style="font-size: 11px; text-transform: uppercase; font-weight: 600; color: rgba(138,138,138,0.7); letter-spacing: 0.06em; margin-bottom: 4px;">Gestão</div>
+          <h1 style="font-size: 22px; font-weight: 700; color: var(--fg); margin: 0 0 4px;">Projetos</h1>
+          <div style="font-size: 13px; color: var(--fg-muted);">86 projetos · 12 ativos esta semana</div>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button style="display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; background: transparent; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; color: var(--fg-muted); cursor: pointer;">
+            <svg width="12" height="12" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Exportar
+          </button>
+          <button style="display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; background: var(--tom); border: none; border-radius: 6px; font-size: 12px; font-weight: 600; color: #0a0a0a; cursor: pointer;">
+            <svg width="12" height="12" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Novo Projeto
+          </button>
+        </div>
+      </div>
+
+      <!-- Toolbar -->
+      <div style="padding: 0 24px 12px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; flex-shrink: 0;">
+        <!-- View switcher -->
+        <div style="display: inline-flex; height: 36px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 6px; padding: 2px; align-items: center;">
+          <button class="view-btn">Dashboard</button>
+          <button class="view-btn">Lista</button>
+          <button class="view-btn active">Kanban</button>
+          <button class="view-btn">Calendário</button>
+          <button class="view-btn">Timeline</button>
+          <button class="view-btn">Por pessoa</button>
+        </div>
+
+        <!-- Divider -->
+        <div style="width: 1px; height: 24px; background: var(--border);"></div>
+
+        <!-- Filtros -->
+        <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+          <button class="filter-pill">
+            <svg width="10" height="10" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/></svg>
+            Status
+            <span style="background: rgba(168,230,67,0.15); color: var(--tom); font-size: 10px; font-weight: 700; padding: 0 4px; border-radius: 3px;">3</span>
+          </button>
+          <button class="filter-pill">
+            <svg width="10" height="10" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            Responsável
+          </button>
+          <button class="filter-pill">
+            <svg width="10" height="10" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            Programa
+          </button>
+          <button class="filter-pill dashed">
+            <svg width="10" height="10" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Filtro
+          </button>
+        </div>
+
+        <!-- Search -->
+        <div style="margin-left: auto; display: flex; align-items: center; gap: 6px; height: 32px; width: 200px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 6px; padding: 0 8px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" stroke="var(--fg-muted)" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          <span style="font-size: 12px; color: var(--fg-muted);">Buscar</span>
+        </div>
+      </div>
+
+      <!-- Kanban Board -->
+      <div style="padding: 0 24px 24px; flex: 1; display: flex; gap: 12px; overflow-x: auto; align-items: flex-start;">
+
+        <!-- Coluna: Brainstorm -->
+        <div class="kanban-col">
+          <div class="kanban-header">
+            <div class="status-dot" style="background: var(--fg-muted);"></div>
+            <span style="font-size: 12px; font-weight: 600; flex: 1; color: var(--fg);">Brainstorm</span>
+            <span class="count-chip">22</span>
+          </div>
+          <div class="kanban-body">
+            <!-- Card 1 -->
+            <div class="kanban-card">
+              <div style="font-size: 12px; font-weight: 500; color: var(--fg); margin-bottom: 6px; line-height: 1.3;">História da guitarra</div>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 6px; flex-wrap: wrap;">
+                <span class="badge-kids">KIDS</span>
+                <span style="font-size: 10px; color: var(--fg-muted);">?</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <div class="avatar" style="background: #6366f1; color: white;">—</div>
+                <span style="font-size: 10px; color: var(--fg-muted); flex: 1;">sem responsável</span>
+                <span style="font-size: 10px; color: var(--fg-muted);">sem data</span>
+              </div>
+            </div>
+            <!-- Card 2 -->
+            <div class="kanban-card">
+              <div style="font-size: 12px; font-weight: 500; color: var(--fg); margin-bottom: 6px; line-height: 1.3;">Músicas emblemáticas dos últimos 50 anos</div>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 6px; flex-wrap: wrap;">
+                <span class="badge-school">SCHOOL</span>
+                <span style="font-size: 10px; color: var(--fg-muted);">?</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <div class="avatar" style="background: #6366f1; color: white;">—</div>
+                <span style="font-size: 10px; color: var(--fg-muted); flex: 1;">sem responsável</span>
+                <span style="font-size: 10px; color: var(--fg-muted);">sem data</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Coluna: Planejamento -->
+        <div class="kanban-col">
+          <div class="kanban-header">
+            <div class="status-dot" style="background: var(--info);"></div>
+            <span style="font-size: 12px; font-weight: 600; flex: 1; color: var(--fg);">Planejamento</span>
+            <span class="count-chip">3</span>
+          </div>
+          <div class="kanban-body">
+            <!-- Card 1 -->
+            <div class="kanban-card">
+              <div style="font-size: 12px; font-weight: 500; color: var(--fg); margin-bottom: 6px; line-height: 1.3;">3 Amigas - alunas</div>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 6px; flex-wrap: wrap;">
+                <span class="badge-kids">KIDS</span>
+                <span style="font-size: 10px; color: var(--fg-muted);">la_kids</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <div class="avatar" style="background: #0891b2; color: white;">J</div>
+                <span style="font-size: 10px; color: var(--fg-muted); flex: 1;">John</span>
+                <span style="font-size: 10px; color: var(--fg-muted);">sem data</span>
+              </div>
+            </div>
+            <!-- Card 2 -->
+            <div class="kanban-card">
+              <div style="font-size: 12px; font-weight: 500; color: var(--fg); margin-bottom: 6px; line-height: 1.3;">3 Amigas - mães</div>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 6px; flex-wrap: wrap;">
+                <span class="badge-kids">KIDS</span>
+                <span style="font-size: 10px; color: var(--fg-muted);">la_kids</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <div class="avatar" style="background: #0891b2; color: white;">J</div>
+                <span style="font-size: 10px; color: var(--fg-muted); flex: 1;">John</span>
+                <span style="font-size: 10px; color: var(--fg-muted);">sem data</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Coluna: A Fazer -->
+        <div class="kanban-col">
+          <div class="kanban-header">
+            <div class="status-dot" style="background: var(--info);"></div>
+            <span style="font-size: 12px; font-weight: 600; flex: 1; color: var(--fg);">A Fazer</span>
+            <span class="count-chip">7</span>
+          </div>
+          <div class="kanban-body">
+            <!-- Card 1 -->
+            <div class="kanban-card">
+              <div style="font-size: 12px; font-weight: 500; color: var(--fg); margin-bottom: 6px; line-height: 1.3;">Bianca Stoianof - Aula 1 - Pega na Mentira</div>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 6px; flex-wrap: wrap;">
+                <span class="badge-kids">KIDS</span>
+                <span style="font-size: 10px; color: var(--fg-muted);">la_kids</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <div class="avatar" style="background: #0891b2; color: white;">J</div>
+                <span style="font-size: 10px; color: var(--fg-muted); flex: 1;">John</span>
+                <svg width="10" height="10" viewBox="0 0 24 24" stroke="var(--fg-muted)" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                <span style="font-size: 10px; color: var(--fg-muted);">07 de abr.</span>
+              </div>
+            </div>
+            <!-- Card 2 -->
+            <div class="kanban-card">
+              <div style="font-size: 12px; font-weight: 500; color: var(--fg); margin-bottom: 6px; line-height: 1.3;">Quem são as mulheres que...</div>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 6px; flex-wrap: wrap;">
+                <span class="badge-kids">KIDS</span>
+                <span style="font-size: 10px; color: var(--fg-muted);">dia das mulheres</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <div class="avatar" style="background: #0891b2; color: white;">J</div>
+                <span style="font-size: 10px; color: var(--fg-muted); flex: 1;">John</span>
+                <svg width="10" height="10" viewBox="0 0 24 24" stroke="var(--fg-muted)" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                <span style="font-size: 10px; color: var(--fg-muted);">16 de mar.</span>
+              </div>
+            </div>
+            <!-- Card 3 -->
+            <div class="kanban-card">
+              <div style="font-size: 12px; font-weight: 500; color: var(--fg); margin-bottom: 6px; line-height: 1.3;">Chamada Viva Elas</div>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 6px; flex-wrap: wrap;">
+                <span class="badge-school">SCHOOL</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <div class="avatar" style="background: #0891b2; color: white;">J</div>
+                <span style="font-size: 10px; color: var(--fg-muted); flex: 1;">John</span>
+                <svg width="10" height="10" viewBox="0 0 24 24" stroke="var(--fg-muted)" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                <span style="font-size: 10px; color: var(--fg-muted);">08 de mar.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Coluna: Captando -->
+        <div class="kanban-col">
+          <div class="kanban-header">
+            <div class="status-dot" style="background: var(--warning);"></div>
+            <span style="font-size: 12px; font-weight: 600; flex: 1; color: var(--fg);">Captando</span>
+            <span class="count-chip">5</span>
+          </div>
+          <div class="kanban-body">
+            <!-- Card 1 -->
+            <div class="kanban-card">
+              <div style="font-size: 12px; font-weight: 500; color: var(--fg); margin-bottom: 6px; line-height: 1.3;">Dia do Guitarrista - Valdo</div>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 6px; flex-wrap: wrap;">
+                <span class="badge-school">SCHOOL</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <div class="avatar" style="background: #dc2626; color: white;">Y</div>
+                <span style="font-size: 10px; color: var(--fg-muted); flex: 1;">Yuri</span>
+                <svg width="10" height="10" viewBox="0 0 24 24" stroke="var(--fg-muted)" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                <span style="font-size: 10px; color: var(--fg-muted);">20 de mar.</span>
+              </div>
+            </div>
+            <!-- Card 2 -->
+            <div class="kanban-card">
+              <div style="font-size: 12px; font-weight: 500; color: var(--fg); margin-bottom: 6px; line-height: 1.3;">Rec Agenda Abril - Belos</div>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 6px; flex-wrap: wrap;">
+                <span class="badge-school">SCHOOL</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <div class="avatar" style="background: #dc2626; color: white;">Y</div>
+                <span style="font-size: 10px; color: var(--fg-muted); flex: 1;">Yuri</span>
+                <span style="font-size: 10px; color: var(--fg-muted);">sem data</span>
+              </div>
+            </div>
+            <!-- Card 3 -->
+            <div class="kanban-card">
+              <div style="font-size: 12px; font-weight: 500; color: var(--fg); margin-bottom: 6px; line-height: 1.3;">Dia das mulheres - Dai</div>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 6px; flex-wrap: wrap;">
+                <span class="badge-school">SCHOOL</span>
+                <span style="font-size: 10px; color: var(--fg-muted);">dia das mulheres</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <div class="avatar" style="background: #dc2626; color: white;">Y</div>
+                <span style="font-size: 10px; color: var(--fg-muted); flex: 1;">Yuri</span>
+                <span style="font-size: 10px; color: var(--fg-muted);">sem data</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Coluna: Editando -->
+        <div class="kanban-col">
+          <div class="kanban-header">
+            <div class="status-dot" style="background: var(--danger);"></div>
+            <span style="font-size: 12px; font-weight: 600; flex: 1; color: var(--fg);">Editando</span>
+            <span class="count-chip">15</span>
+          </div>
+          <div class="kanban-body">
+            <div style="font-size: 11px; color: var(--fg-muted); text-align: center; padding: 12px 8px;">15 projetos</div>
+          </div>
+        </div>
+
+        <!-- Coluna: Aguardando Aprovação -->
+        <div class="kanban-col">
+          <div class="kanban-header">
+            <div class="status-dot" style="background: var(--success);"></div>
+            <span style="font-size: 12px; font-weight: 600; flex: 1; color: var(--fg);">Aguardando Aprovação</span>
+            <span class="count-chip">2</span>
+          </div>
+          <div class="kanban-body">
+            <div style="font-size: 11px; color: var(--fg-muted); text-align: center; padding: 12px 8px;">2 projetos</div>
+          </div>
+        </div>
+
+        <!-- Coluna: Aprovado/Agendado -->
+        <div class="kanban-col">
+          <div class="kanban-header">
+            <div class="status-dot" style="background: var(--tom);"></div>
+            <span style="font-size: 12px; font-weight: 600; flex: 1; color: var(--fg);">Aprovado/Agendado</span>
+            <span class="count-chip">9</span>
+          </div>
+          <div class="kanban-body">
+            <div style="font-size: 11px; color: var(--fg-muted); text-align: center; padding: 12px 8px;">9 projetos</div>
+          </div>
+        </div>
+
+        <!-- Coluna: Publicado -->
+        <div class="kanban-col">
+          <div class="kanban-header">
+            <div class="status-dot" style="background: var(--tom);"></div>
+            <span style="font-size: 12px; font-weight: 600; flex: 1; color: var(--fg);">Publicado</span>
+            <span class="count-chip">14</span>
+          </div>
+          <div class="kanban-body">
+            <div style="font-size: 11px; color: var(--fg-muted); text-align: center; padding: 12px 8px;">14 projetos</div>
+          </div>
+        </div>
+
+      </div><!-- /kanban board -->
+    </div><!-- /page content -->
+  </div><!-- /main area -->
+
+</body>
+</html>
