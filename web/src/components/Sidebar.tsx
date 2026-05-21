@@ -6,7 +6,7 @@ import {
   GraduationCap, Music,
   Package, ShoppingBag,
   CalendarRange, History, Settings,
-  PanelLeftClose, PanelLeftOpen,
+  ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
@@ -205,23 +205,17 @@ export function Sidebar({ collapsed = false, onToggleCollapse }: SidebarProps) {
         })}
       </nav>
 
-      {/* Rodapé — botão de recolher/expandir (só renderiza se houver callback;
-          no tablet o estado é forçado pelo breakpoint, então não mostra). */}
+      {/* Chevron flutuante no canto inferior — recolhe/expande sem ocupar
+          espaço no fluxo (evita criar scroll). Só renderiza no desktop. */}
       {onToggleCollapse && (
         <button
           type="button"
           onClick={onToggleCollapse}
           title={collapsed ? 'Expandir sidebar' : 'Recolher sidebar'}
           aria-label={collapsed ? 'Expandir sidebar' : 'Recolher sidebar'}
-          className={[
-            'flex items-center border-t border-border shrink-0',
-            'text-fg-muted hover:text-fg hover:bg-bg-elevated transition-colors',
-            'focus-ring',
-            collapsed ? 'justify-center h-12' : 'gap-2 px-4 h-12',
-          ].join(' ')}
+          className="absolute bottom-3 right-2 w-7 h-7 flex items-center justify-center rounded-md text-fg-muted hover:text-fg hover:bg-bg-elevated transition-colors focus-ring"
         >
-          {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
-          {!collapsed && <span className="text-body-sm">Recolher</span>}
+          {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
         </button>
       )}
     </aside>
