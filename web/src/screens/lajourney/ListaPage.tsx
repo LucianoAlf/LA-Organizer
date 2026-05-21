@@ -124,7 +124,7 @@ export function LaJourneyListaPage() {
   const semCursos = showCursoSelect && !loadingCursos && cursoOptions.length === 0;
 
   return (
-    <div className="px-md py-md max-w-2xl mx-auto">
+    <div className="px-md py-md">
       <PageHeader
         title="LA Journey"
         subtitle="Jornada pedagógica do aluno"
@@ -186,7 +186,7 @@ export function LaJourneyListaPage() {
 
       {/* Lista de checkpoints */}
       {!isLoading && !semCursos && (
-        <div className="flex flex-col gap-2">
+        <div className="grid gap-2 lg:grid-cols-2">
           {checkpointsFiltrados.length === 0 && (
             <EmptyState
               title="Nenhum checkpoint encontrado"
