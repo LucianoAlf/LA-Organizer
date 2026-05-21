@@ -1227,6 +1227,205 @@ router.get('/internal/lareport/loja', requireInternalSecret, async (req, res) =>
   }
 });
 
+// ============================================================
+// Fase 2.3 — proxies pra dev local (PWA via Vite proxy → VPS).
+// Em produção, PWA usa serverless Vercel direto. Aqui replicamos
+// pra que localhost:4173 também funcione.
+// ============================================================
+const { laReportClient: _lrcInternal } = require('./services/la-report-client');
+
+// GET /internal/lareport/loja/historico-vendas?unit=&dias=&status=&professor_id=&forma_pagamento=&limit=
+router.get('/internal/lareport/loja/historico-vendas', requireInternalSecret, async (req, res) => {
+  const unidadeId = req.query.unidade_id || req.query.unit;
+  if (!unidadeId) return res.status(400).json({ ok: false, error: 'unit_obrigatorio' });
+  const dias = Math.min(Math.max(parseInt(req.query.dias || '30', 10) || 30, 1), 90);
+  const limit = Math.min(Math.max(parseInt(req.query.limit || '50', 10) || 50, 1), 200);
+  const status = ['ativa', 'estornada', 'todas'].includes(req.query.status) ? req.query.status : 'ativa';
+  const cutoff = new Date(Date.now() - dias * 86400000).toISOString();
+  let q = _lrcInternal
+    .from('loja_vendas')
+    .select(`
+      id, unidade_id, data_venda, tipo_cliente, aluno_id, colaborador_cliente_id,
+      cliente_nome, professor_indicador_id, subtotal, desconto, desconto_tipo,
+      total, forma_pagamento, parcelas, observacoes, status,
+      estornada_em, estornada_por, motivo_estorno, vendedor_id, created_at,
+      loja_vendas_itens (
+        id, produto_id, variacao_id, quantidade, preco_unitario, desconto,
+        desconto_tipo, subtotal, total,
+        loja_produtos ( nome, sku )
+      ),
+      loja_alunos:alunos!aluno_id ( nome ),
+      loja_colaboradores:colaboradores!colaborador_cliente_id ( nome ),
+      loja_professores:professores!professor_indicador_id ( nome )
+    `)
+    .eq('unidade_id', unidadeId)
+    .gte('created_at', cutoff)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (status !== 'todas') q = q.eq('status', status);
+  if (req.query.professor_id) q = q.eq('professor_indicador_id', parseInt(req.query.professor_id, 10));
+  if (req.query.forma_pagamento) q = q.eq('forma_pagamento', req.query.forma_pagamento);
+  try {
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ ok: false, error: error.message });
+    res.json({ ok: true, data });
+  } catch (e) {
+    console.error('[internal-api] /lareport/loja/historico-vendas:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// POST /internal/lareport/loja/estorno  body: {venda_id, motivo}
+router.post('/internal/lareport/loja/estorno', requireInternalSecret, async (req, res) => {
+  const { venda_id, motivo } = req.body || {};
+  if (!venda_id) return res.status(400).json({ ok: false, error: 'venda_id_obrigatorio' });
+  if (!motivo || String(motivo).trim().length < 5) {
+    return res.status(400).json({ ok: false, error: 'motivo_obrigatorio_min_5' });
+  }
+  try {
+    const { data, error } = await _lrcInternal.rpc('estornar_venda', {
+      p_venda_id: parseInt(venda_id, 10),
+      p_motivo: String(motivo).trim(),
+      p_via_audit: 'estorno via PWA-dev local',
+    });
+    if (error) {
+      const code = /ja_estornada|inexistente|invalida|obrigatorio/i.test(error.message) ? 400 : 500;
+      return res.status(code).json({ ok: false, error: error.message });
+    }
+    res.json({ ok: true, data });
+  } catch (e) {
+    console.error('[internal-api] /lareport/loja/estorno:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// POST /internal/lareport/loja/reserva  body: {produto_id, variacao_id?, unidade_id, quantidade, cliente_nome, aluno_id?, observacoes?, prazo?}
+router.post('/internal/lareport/loja/reserva', requireInternalSecret, async (req, res) => {
+  const b = req.body || {};
+  if (!b.produto_id) return res.status(400).json({ ok: false, error: 'produto_id_obrigatorio' });
+  if (!b.unidade_id) return res.status(400).json({ ok: false, error: 'unidade_id_obrigatorio' });
+  if (!b.quantidade || Number(b.quantidade) <= 0) return res.status(400).json({ ok: false, error: 'quantidade_invalida' });
+  if (!b.cliente_nome || !String(b.cliente_nome).trim()) return res.status(400).json({ ok: false, error: 'cliente_nome_obrigatorio' });
+  try {
+    const { data: disp, error: dErr } = await _lrcInternal.rpc('estoque_disponivel', {
+      p_produto_id: parseInt(b.produto_id, 10),
+      p_unidade_id: b.unidade_id,
+      p_variacao_id: b.variacao_id ?? null,
+    });
+    if (dErr) return res.status(500).json({ ok: false, error: dErr.message });
+    if (Number(disp) < Number(b.quantidade)) {
+      return res.status(400).json({ ok: false, error: `estoque_insuficiente — disp=${disp}, pedido=${b.quantidade}` });
+    }
+    const prazoIso = (typeof b.prazo === 'string' ? b.prazo.slice(0, 10) : null)
+      || new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+    const { data, error } = await _lrcInternal.from('loja_reservas').insert({
+      produto_id: parseInt(b.produto_id, 10),
+      variacao_id: b.variacao_id ?? null,
+      unidade_id: b.unidade_id,
+      aluno_id: b.aluno_id ?? null,
+      cliente_nome: String(b.cliente_nome).trim().slice(0, 200),
+      quantidade: parseInt(b.quantidade, 10),
+      prazo: prazoIso,
+      status: 'ativa',
+      observacoes: b.observacoes ? String(b.observacoes) : null,
+      created_via: 'pwa-dev',
+    }).select('id, prazo').single();
+    if (error) return res.status(500).json({ ok: false, error: error.message });
+    res.json({ ok: true, reserva_id: data.id, prazo: data.prazo });
+  } catch (e) {
+    console.error('[internal-api] /lareport/loja/reserva:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// POST /internal/lareport/loja/reserva/cancelar  body: {reserva_id, motivo?}
+router.post('/internal/lareport/loja/reserva/cancelar', requireInternalSecret, async (req, res) => {
+  const { reserva_id, motivo } = req.body || {};
+  if (!reserva_id) return res.status(400).json({ ok: false, error: 'reserva_id_obrigatorio' });
+  try {
+    const { data, error } = await _lrcInternal
+      .from('loja_reservas')
+      .update({
+        status: 'cancelada',
+        cancelada_em: new Date().toISOString(),
+        motivo_cancelamento: motivo ? String(motivo).trim().slice(0, 500) : null,
+      })
+      .eq('id', parseInt(reserva_id, 10))
+      .eq('status', 'ativa')
+      .select('id')
+      .maybeSingle();
+    if (error) return res.status(500).json({ ok: false, error: error.message });
+    if (!data) return res.status(400).json({ ok: false, error: 'reserva_nao_ativa' });
+    res.json({ ok: true, reserva_id: data.id });
+  } catch (e) {
+    console.error('[internal-api] /lareport/loja/reserva/cancelar:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// POST /internal/lareport/loja/reserva/finalizar  body: {reserva_id, forma_pagamento, preco_unitario, ...}
+router.post('/internal/lareport/loja/reserva/finalizar', requireInternalSecret, async (req, res) => {
+  const b = req.body || {};
+  if (!b.reserva_id) return res.status(400).json({ ok: false, error: 'reserva_id_obrigatorio' });
+  if (!b.forma_pagamento) return res.status(400).json({ ok: false, error: 'forma_pagamento_obrigatoria' });
+  if (b.preco_unitario == null) return res.status(400).json({ ok: false, error: 'preco_unitario_obrigatorio' });
+  try {
+    const reservaId = parseInt(b.reserva_id, 10);
+    const { data: r, error: rErr } = await _lrcInternal
+      .from('loja_reservas')
+      .select('id, status, unidade_id, produto_id, variacao_id, quantidade, aluno_id, cliente_nome')
+      .eq('id', reservaId)
+      .maybeSingle();
+    if (rErr) return res.status(500).json({ ok: false, error: rErr.message });
+    if (!r) return res.status(400).json({ ok: false, error: 'reserva_inexistente' });
+    if (r.status !== 'ativa') return res.status(400).json({ ok: false, error: 'reserva_nao_ativa' });
+
+    const tipoCli = ['aluno', 'avulso', 'colaborador'].includes(b.tipo_cliente)
+      ? b.tipo_cliente : (r.aluno_id ? 'aluno' : 'avulso');
+    const itens = [{
+      produto_id: r.produto_id,
+      variacao_id: r.variacao_id,
+      quantidade: r.quantidade,
+      preco_unitario: Number(b.preco_unitario),
+      desconto: b.desconto != null ? Number(b.desconto) : 0,
+      desconto_tipo: b.desconto_tipo === 'percentual' ? 'percentual' : 'valor',
+    }];
+    const { data: vendaData, error: vErr } = await _lrcInternal.rpc('registrar_venda_v2', {
+      p_unidade_id: r.unidade_id,
+      p_itens: itens,
+      p_forma_pagamento: b.forma_pagamento,
+      p_via_audit: `reserva:${reservaId} pwa-dev`,
+      p_tipo_cliente: tipoCli,
+      p_cliente_nome: r.cliente_nome ?? null,
+      p_aluno_id: r.aluno_id ?? null,
+      p_colaborador_cliente_id: b.colaborador_id ?? null,
+      p_professor_indicador_id: b.professor_indicador_id ?? null,
+      p_desconto: 0,
+      p_desconto_tipo: 'valor',
+      p_parcelas: b.parcelas ?? 1,
+      p_observacoes: b.observacoes ?? null,
+    });
+    if (vErr) return res.status(500).json({ ok: false, error: vErr.message });
+
+    let vendaId = null;
+    if (vendaData && typeof vendaData === 'object') {
+      vendaId = vendaData.venda_id ?? vendaData.id ?? (Array.isArray(vendaData) ? vendaData[0]?.venda_id : null);
+    }
+    if (typeof vendaData === 'number') vendaId = vendaData;
+
+    await _lrcInternal.from('loja_reservas').update({
+      status: 'finalizada',
+      finalizada_em: new Date().toISOString(),
+      finalizada_venda_id: vendaId,
+    }).eq('id', reservaId).eq('status', 'ativa');
+
+    res.json({ ok: true, venda_id: vendaId });
+  } catch (e) {
+    console.error('[internal-api] /lareport/loja/reserva/finalizar:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // GET /internal/lareport/alertas (consolidado: estoque baixo + manutenções + revisões)
 router.get('/internal/lareport/alertas', requireInternalSecret, async (req, res) => {
   const unit = req.query.unit; // opcional

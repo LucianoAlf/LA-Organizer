@@ -55,7 +55,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       cliente_nome, professor_indicador_id, subtotal, desconto, desconto_tipo,
       total, forma_pagamento, parcelas, observacoes, status,
       estornada_em, estornada_por, motivo_estorno, vendedor_id, created_at,
-      loja_venda_itens (
+      loja_vendas_itens (
         id, produto_id, variacao_id, quantidade, preco_unitario, desconto,
         desconto_tipo, subtotal, total,
         loja_produtos ( nome, sku )
