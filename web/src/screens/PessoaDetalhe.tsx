@@ -148,6 +148,8 @@ export function PessoaDetalhe() {
         />
       </div>
 
+      {/* Fase D2 — desktop: Tarefas (esq) + Compromissos (dir) lado a lado. */}
+      <div className="lg:grid lg:grid-cols-2 lg:gap-6 lg:items-start space-y-lg lg:space-y-0">
       <section className="surface p-md">
         <div className="flex items-center gap-2 text-label uppercase tracking-wide text-fg-muted">
           <ListTodo size={14} /> Tarefas em aberto · trabalho
@@ -173,6 +175,8 @@ export function PessoaDetalhe() {
           </div>
         )}
       </section>
+
+      </div>
 
       <section className="surface p-md">
         <div className="flex items-center gap-2 text-label uppercase tracking-wide text-fg-muted">

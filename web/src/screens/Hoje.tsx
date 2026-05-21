@@ -502,6 +502,9 @@ export function Hoje() {
         </section>
       )}
 
+      {/* Fase D2 — desktop: Compromissos (esq) + Tarefas (dir) lado a lado.
+          Mobile preserva empilhado via space-y-lg do wrapper externo. */}
+      <div className="lg:grid lg:grid-cols-2 lg:gap-6 lg:items-start space-y-lg lg:space-y-0">
       {/* Events block (with time) */}
       {todayEvents.length > 0 && (
         <section className="surface px-md">
@@ -624,6 +627,8 @@ export function Hoje() {
           )}
         </div>
       )}
+
+      </div>
 
       {/* Sprint 22.16 — legenda Eisenhower como dots (igual ao display inline). */}
       {todayList.some(t => t.eisenhower_quadrant) && (

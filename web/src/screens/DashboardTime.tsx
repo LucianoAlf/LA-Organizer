@@ -130,7 +130,8 @@ export function DashboardTime() {
     <div className="space-y-lg">
       <PageHeader title="Time" subtitle="Visão de coordenação · só dados de trabalho" backTo="/mais" />
 
-      <div className="grid grid-cols-3 gap-sm">
+      {/* Fase D2 — 5 stats: 3 cols no mobile, 5 cols no desktop pra uma unica linha. */}
+      <div className="grid grid-cols-3 lg:grid-cols-5 gap-sm">
         <StatCard label="No time" value={team.length} />
         <StatCard label="Concluídas" value={completedToday} tone={completedToday ? 'success' : 'neutral'} />
         <StatCard label="Pra hoje" value={dueToday} tone={dueToday ? 'tom' : 'neutral'} />

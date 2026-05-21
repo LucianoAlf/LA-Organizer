@@ -37,7 +37,9 @@ export function DesktopShell() {
         className="pt-14 min-h-screen"
         style={{ marginLeft: sidebarWidth }}
       >
-        <div className="w-full max-w-content mx-auto px-4 lg:px-6 py-4">
+        {/* Fase D2 — desktop libera largura para max-w-5xl (1024px); mobile/tablet
+            mantem max-w-content (720px) para preservar legibilidade. */}
+        <div className="w-full max-w-content lg:max-w-5xl mx-auto px-4 lg:px-6 py-4">
           <Outlet />
         </div>
       </main>

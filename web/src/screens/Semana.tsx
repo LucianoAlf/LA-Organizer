@@ -217,7 +217,9 @@ export function Semana() {
       ) : error ? (
         <EmptyState title="Erro" description={(error as Error).message} />
       ) : (
-        <div className="space-y-sm">
+        // Fase D2 — desktop renderiza dias em grid 3 colunas (2 linhas x 3 dias
+        // para 6 dias seg-sab). Mobile mantem stack vertical.
+        <div className="space-y-sm lg:grid lg:grid-cols-3 lg:gap-3 lg:space-y-0">
           {days.map(d => {
             const dayTasks = tasksByDay.get(d) ?? [];
             const dayEvents = eventsByDay.get(d) ?? [];
