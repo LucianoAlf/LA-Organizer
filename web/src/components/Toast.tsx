@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useBreakpoint } from '../hooks/useBreakpoint';
 import { CheckCircle2, AlertCircle, Info, X } from 'lucide-react';
 
 // Sprint 22.34j — Toast minimal: notifica ações pelo botão direito inferior.
@@ -33,6 +34,8 @@ const KIND_TONE: Record<ToastKind, { border: string; icon: typeof CheckCircle2; 
 
 export function ToastHost() {
   const [toasts, setToasts] = useState<InternalToast[]>([]);
+  const bp = useBreakpoint();
+  const positionClass = bp === 'mobile' ? 'bottom-20 right-4' : 'top-4 right-4';
 
   useEffect(() => {
     function onToast(e: Event) {
@@ -51,7 +54,7 @@ export function ToastHost() {
   if (toasts.length === 0) return null;
 
   return (
-    <div className="fixed bottom-20 right-4 z-[9999] flex flex-col gap-2 pointer-events-none max-w-[360px]">
+    <div className={`fixed ${positionClass} z-[9999] flex flex-col gap-2 pointer-events-none max-w-[360px]`}>
       {toasts.map(t => {
         const tone = KIND_TONE[t.kind];
         const Icon = tone.icon;

@@ -1,6 +1,6 @@
 // Sprint Fase 2.1 — Wizard 3 passos para registrar venda multi-item
 import { useState, useEffect, useMemo } from 'react';
-import { BottomSheet } from '../../../components/BottomSheet';
+import { AdaptiveSheet } from '../../../components/AdaptiveSheet';
 import { Button } from '../../../components/Button';
 import { CustomSelect } from '../../../components/CustomSelect';
 import { Field } from '../../../components/Field';
@@ -197,10 +197,11 @@ export function VendaWizardSheet({ open, onClose, unidadeId, onSuccess }: Props)
   }
 
   return (
-    <BottomSheet
+    <AdaptiveSheet
       open={open}
       onClose={onClose}
       title="Nova venda"
+      size="lg"
     >
       <div className="px-md pb-md space-y-md">
         <StepIndicator />
@@ -408,6 +409,6 @@ export function VendaWizardSheet({ open, onClose, unidadeId, onSuccess }: Props)
           </div>
         )}
       </div>
-    </BottomSheet>
+    </AdaptiveSheet>
   );
 }

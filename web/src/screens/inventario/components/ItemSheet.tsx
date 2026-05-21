@@ -4,6 +4,7 @@ import { CATEGORIA_INVENTARIO_META, type ReportInventarioItem } from '../../../l
 import { FotoUploader } from './FotoUploader';
 import { CustomSelect } from '../../../components/CustomSelect';
 import { DateInput } from '../../../components/DateInput';
+import { AdaptiveSheet } from '../../../components/AdaptiveSheet';
 
 interface Props {
   open: boolean;
@@ -33,8 +34,6 @@ export function ItemSheet({ open, onClose, onSubmit, item, defaultSalaId, defaul
     else setForm((f: any) => ({ ...f, unidade_id: defaultUnidadeId ?? null, sala_id: defaultSalaId ?? null }));
   }, [item, defaultUnidadeId, defaultSalaId]);
 
-  if (!open) return null;
-
   async function submit() {
     if (!form.nome || !form.categoria || !form.unidade_id) { setErro('Nome, Categoria e Unidade são obrigatórios'); return; }
     setSaving(true); setErro(null);
@@ -49,12 +48,8 @@ export function ItemSheet({ open, onClose, onSubmit, item, defaultSalaId, defaul
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 z-50 overflow-y-auto">
-      <div className="bg-bg-app min-h-full p-md pb-24">
-        <header className="flex items-center justify-between mb-md">
-          <h2 className="text-lg font-bold">{item ? 'Editar' : 'Novo'} Equipamento</h2>
-          <button onClick={onClose}>✕</button>
-        </header>
+    <AdaptiveSheet open={open} onClose={onClose} title={item ? 'Editar Equipamento' : 'Novo Equipamento'} size="lg">
+      <div className="space-y-md">
 
         <section className="bg-bg-surface rounded-lg p-md space-y-2 mb-md">
           <div className="text-[10px] uppercase tracking-wide text-fg-muted font-semibold">Identificação</div>
@@ -124,12 +119,10 @@ export function ItemSheet({ open, onClose, onSubmit, item, defaultSalaId, defaul
 
         {erro && <div className="text-danger text-sm mb-md">{erro}</div>}
 
-        <div className="fixed bottom-0 inset-x-0 bg-bg-surface border-t border-border p-md">
-          <button onClick={submit} disabled={saving} className="w-full bg-tom text-black font-bold py-3 rounded-md disabled:opacity-50">
-            {saving ? 'Salvando...' : item ? 'Salvar Alterações' : 'Cadastrar Equipamento'}
-          </button>
-        </div>
+        <button onClick={submit} disabled={saving} className="w-full bg-tom text-black font-bold py-3 rounded-md disabled:opacity-50">
+          {saving ? 'Salvando...' : item ? 'Salvar Alterações' : 'Cadastrar Equipamento'}
+        </button>
       </div>
-    </div>
+    </AdaptiveSheet>
   );
 }

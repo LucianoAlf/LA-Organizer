@@ -1,7 +1,7 @@
 // Sprint Fase 2.3 — Confirma estorno de venda (visualiza + exige motivo).
 import { useState, useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { BottomSheet } from '../../../components/BottomSheet';
+import { AdaptiveSheet } from '../../../components/AdaptiveSheet';
 import { Button } from '../../../components/Button';
 import { Field } from '../../../components/Field';
 import { showToast } from '../../../components/Toast';
@@ -40,9 +40,9 @@ export function EstornoConfirmSheet({ open, onClose, venda }: Props) {
 
   if (!venda) {
     return (
-      <BottomSheet open={open} onClose={onClose} title="Estorno">
+      <AdaptiveSheet open={open} onClose={onClose} title="Estorno" size="sm">
         <p className="text-body-sm text-fg-muted">Nenhuma venda selecionada.</p>
-      </BottomSheet>
+      </AdaptiveSheet>
     );
   }
 
@@ -69,10 +69,11 @@ export function EstornoConfirmSheet({ open, onClose, venda }: Props) {
   }
 
   return (
-    <BottomSheet
+    <AdaptiveSheet
       open={open}
       onClose={onClose}
       title={isEstornada ? `Venda #${venda.id} (estornada)` : `Estornar venda #${venda.id}`}
+      size="sm"
     >
       <div className="space-y-md">
         {/* Resumo */}
@@ -172,6 +173,6 @@ export function EstornoConfirmSheet({ open, onClose, venda }: Props) {
           </>
         )}
       </div>
-    </BottomSheet>
+    </AdaptiveSheet>
   );
 }

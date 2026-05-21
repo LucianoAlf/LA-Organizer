@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { ReportInventarioItem } from '../../../lib/lareport-types';
+import { AdaptiveSheet } from '../../../components/AdaptiveSheet';
 
 interface Props {
   open: boolean; onClose: () => void;
@@ -9,11 +10,9 @@ interface Props {
 
 export function BaixaConfirmSheet({ open, onClose, item, onConfirm }: Props) {
   const [saving, setSaving] = useState(false);
-  if (!open) return null;
   return (
-    <div className="fixed inset-0 bg-black/60 z-50 flex items-end" onClick={onClose}>
-      <div className="bg-bg-surface w-full rounded-t-xl p-md space-y-3" onClick={e => e.stopPropagation()}>
-        <h3 className="font-bold text-danger">Dar baixa em "{item.nome}"?</h3>
+    <AdaptiveSheet open={open} onClose={onClose} title={`Dar baixa em "${item.nome}"?`} size="sm">
+      <div className="space-y-3">
         <p className="text-sm text-fg-muted">O item será marcado como inativo (status=baixa). Histórico preservado. Reversível só via admin do LA Report.</p>
         <div className="grid grid-cols-2 gap-2">
           <button onClick={onClose} className="bg-bg-app border border-border py-2 rounded-md">Cancelar</button>
@@ -22,6 +21,6 @@ export function BaixaConfirmSheet({ open, onClose, item, onConfirm }: Props) {
           </button>
         </div>
       </div>
-    </div>
+    </AdaptiveSheet>
   );
 }

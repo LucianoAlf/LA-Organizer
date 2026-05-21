@@ -1,7 +1,7 @@
 // Sprint Fase 2.3 — Sheet de criação de reserva.
 import { useState, useEffect, useMemo } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { BottomSheet } from '../../../components/BottomSheet';
+import { AdaptiveSheet } from '../../../components/AdaptiveSheet';
 import { Button } from '../../../components/Button';
 import { Field } from '../../../components/Field';
 import { CustomSelect } from '../../../components/CustomSelect';
@@ -111,7 +111,7 @@ export function ReservaSheet({ open, onClose, unidadeId, produtoPreSelecionado }
   }
 
   return (
-    <BottomSheet open={open} onClose={onClose} title="Nova reserva">
+    <AdaptiveSheet open={open} onClose={onClose} title="Nova reserva" size="md">
       <div className="space-y-md">
         {/* Produto */}
         <Field label="Produto">
@@ -213,6 +213,6 @@ export function ReservaSheet({ open, onClose, unidadeId, produtoPreSelecionado }
           </Button>
         </div>
       </div>
-    </BottomSheet>
+    </AdaptiveSheet>
   );
 }

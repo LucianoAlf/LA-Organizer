@@ -1,7 +1,7 @@
 // Sprint Fase 2.2 — Cadastro/edição de produto com detecção de duplicata.
 import { useState, useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { BottomSheet } from '../../../components/BottomSheet';
+import { AdaptiveSheet } from '../../../components/AdaptiveSheet';
 import { Field } from '../../../components/Field';
 import { CustomSelect } from '../../../components/CustomSelect';
 import { Button } from '../../../components/Button';
@@ -150,10 +150,11 @@ export function ProdutoFormSheet({ open, onClose, mode, produto, unidadeId }: Pr
   }));
 
   return (
-    <BottomSheet
+    <AdaptiveSheet
       open={open}
       onClose={onClose}
       title={mode === 'create' ? '🆕 Cadastrar Produto' : '✏️ Editar Produto'}
+      size="lg"
     >
       <div className="space-y-md">
         {/* Nome + detecção de duplicata */}
@@ -305,6 +306,6 @@ export function ProdutoFormSheet({ open, onClose, mode, produto, unidadeId }: Pr
           </Button>
         </div>
       </div>
-    </BottomSheet>
+    </AdaptiveSheet>
   );
 }

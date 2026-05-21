@@ -1,4 +1,6 @@
+import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
+import { LoadingState } from './components/LoadingState';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { AppShell } from './components/AppShell';
 import { DesktopShell } from './components/DesktopShell';
@@ -31,20 +33,20 @@ import { MeuPerfil } from './screens/MeuPerfil';
 import { GestaoEquipe } from './screens/GestaoEquipe';
 import { GestaoEquipeNovo } from './screens/GestaoEquipeNovo';
 import { GestaoEquipeDetalhe } from './screens/GestaoEquipeDetalhe';
-import { LaEducaListaPage } from './screens/laeduca/ListaPage';
-import { LaEducaCadastroPage } from './screens/laeduca/CadastroEstagiarioPage';
-import { LaEducaEstagiarioDetalhePage } from './screens/laeduca/EstagiarioDetalhePage';
-import { LaEducaPilarPage } from './screens/laeduca/PilarAvaliacaoPage';
-import { LaEducaAdminTrilhaPage } from './screens/laeduca/AdminTrilhaPage';
-import { LaJourneyListaPage } from './screens/lajourney/ListaPage';
-import { LaJourneyAdminPage } from './screens/lajourney/AdminPage';
-import { LaJourneyCheckpointPage } from './screens/lajourney/CheckpointPage';
-import { InventarioListaPage } from './screens/inventario/ListaPage';
-import { InventarioSalaPage } from './screens/inventario/SalaPage';
-import { LojaHub } from './screens/inventario/LojaHub';
-import { ProdutosPage } from './screens/inventario/ProdutosPage';
-import { HistoricoPage } from './screens/inventario/HistoricoPage';
-import { ReservasPage } from './screens/inventario/ReservasPage';
+const LaEducaListaPage = lazy(() => import('./screens/laeduca/ListaPage').then(m => ({ default: m.LaEducaListaPage })));
+const LaEducaCadastroPage = lazy(() => import('./screens/laeduca/CadastroEstagiarioPage').then(m => ({ default: m.LaEducaCadastroPage })));
+const LaEducaEstagiarioDetalhePage = lazy(() => import('./screens/laeduca/EstagiarioDetalhePage').then(m => ({ default: m.LaEducaEstagiarioDetalhePage })));
+const LaEducaPilarPage = lazy(() => import('./screens/laeduca/PilarAvaliacaoPage').then(m => ({ default: m.LaEducaPilarPage })));
+const LaEducaAdminTrilhaPage = lazy(() => import('./screens/laeduca/AdminTrilhaPage').then(m => ({ default: m.LaEducaAdminTrilhaPage })));
+const LaJourneyListaPage = lazy(() => import('./screens/lajourney/ListaPage').then(m => ({ default: m.LaJourneyListaPage })));
+const LaJourneyAdminPage = lazy(() => import('./screens/lajourney/AdminPage').then(m => ({ default: m.LaJourneyAdminPage })));
+const LaJourneyCheckpointPage = lazy(() => import('./screens/lajourney/CheckpointPage').then(m => ({ default: m.LaJourneyCheckpointPage })));
+const InventarioListaPage = lazy(() => import('./screens/inventario/ListaPage').then(m => ({ default: m.InventarioListaPage })));
+const InventarioSalaPage = lazy(() => import('./screens/inventario/SalaPage').then(m => ({ default: m.InventarioSalaPage })));
+const LojaHub = lazy(() => import('./screens/inventario/LojaHub').then(m => ({ default: m.LojaHub })));
+const ProdutosPage = lazy(() => import('./screens/inventario/ProdutosPage').then(m => ({ default: m.ProdutosPage })));
+const HistoricoPage = lazy(() => import('./screens/inventario/HistoricoPage').then(m => ({ default: m.HistoricoPage })));
+const ReservasPage = lazy(() => import('./screens/inventario/ReservasPage').then(m => ({ default: m.ReservasPage })));
 
 /**
  * Wrapper que escolhe o shell com base no breakpoint.
@@ -59,6 +61,7 @@ function AppLayout() {
 
 export default function App() {
   return (
+    <Suspense fallback={<LoadingState />}>
     <Routes>
       <Route path="/login" element={<Login />} />
 
@@ -154,5 +157,6 @@ export default function App() {
 
       <Route path="*" element={<Navigate to="/hoje" replace />} />
     </Routes>
+    </Suspense>
   );
 }

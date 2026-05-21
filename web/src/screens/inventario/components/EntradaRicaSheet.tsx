@@ -1,6 +1,6 @@
 // Sprint Fase 2.1 — Entrada rica multi-item com NF para Lojinha
 import { useState, useEffect } from 'react';
-import { BottomSheet } from '../../../components/BottomSheet';
+import { AdaptiveSheet } from '../../../components/AdaptiveSheet';
 import { Button } from '../../../components/Button';
 import { Field } from '../../../components/Field';
 import { showToast } from '../../../components/Toast';
@@ -202,7 +202,7 @@ export function EntradaRicaSheet({ open, onClose, unidadeId, onSuccess }: Props)
   }
 
   return (
-    <BottomSheet open={open} onClose={onClose} title="Lançar entrada de estoque">
+    <AdaptiveSheet open={open} onClose={onClose} title="Lançar entrada de estoque" size="lg">
       <div className="px-md pb-md space-y-md">
 
         {/* Itens */}
@@ -276,6 +276,6 @@ export function EntradaRicaSheet({ open, onClose, unidadeId, onSuccess }: Props)
           Confirmar entrada
         </Button>
       </div>
-    </BottomSheet>
+    </AdaptiveSheet>
   );
 }

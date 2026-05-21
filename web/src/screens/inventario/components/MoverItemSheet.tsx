@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useReportSalas } from '../../../hooks/useLaReport';
 import type { ReportInventarioItem } from '../../../lib/lareport-types';
 import { CustomSelect } from '../../../components/CustomSelect';
+import { AdaptiveSheet } from '../../../components/AdaptiveSheet';
 
 interface Props {
   open: boolean; onClose: () => void;
@@ -14,12 +15,10 @@ export function MoverItemSheet({ open, onClose, item, onSubmit }: Props) {
   const [destino, setDestino] = useState<number | ''>('');
   const [motivo, setMotivo] = useState('');
   const [saving, setSaving] = useState(false);
-  if (!open) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/60 z-50 flex items-end" onClick={onClose}>
-      <div className="bg-bg-surface w-full rounded-t-xl p-md space-y-3" onClick={e => e.stopPropagation()}>
-        <h3 className="font-bold">Mover "{item.nome}" de sala</h3>
+    <AdaptiveSheet open={open} onClose={onClose} title={`Mover "${item.nome}" de sala`} size="sm">
+      <div className="space-y-3">
         <CustomSelect
           value={destino ? String(destino) : ''}
           onChange={(v) => setDestino(v ? parseInt(v) : '')}
@@ -34,6 +33,6 @@ export function MoverItemSheet({ open, onClose, item, onSubmit }: Props) {
           {saving ? 'Movendo...' : 'Mover'}
         </button>
       </div>
-    </div>
+    </AdaptiveSheet>
   );
 }

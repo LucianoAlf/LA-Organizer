@@ -1,7 +1,7 @@
 // Sprint Fase 2.2 — Transferência de estoque entre unidades.
 import { useState, useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { BottomSheet } from '../../../components/BottomSheet';
+import { AdaptiveSheet } from '../../../components/AdaptiveSheet';
 import { Field } from '../../../components/Field';
 import { CustomSelect } from '../../../components/CustomSelect';
 import { Button } from '../../../components/Button';
@@ -105,7 +105,7 @@ export function TransferenciaSheet({ open, onClose, unidadeOrigem }: Props) {
   }
 
   return (
-    <BottomSheet open={open} onClose={onClose} title="🔄 Transferir Estoque">
+    <AdaptiveSheet open={open} onClose={onClose} title="🔄 Transferir Estoque" size="md">
       <div className="space-y-md">
         {/* Produto — autocomplete */}
         <Field label="Produto">
@@ -217,6 +217,6 @@ export function TransferenciaSheet({ open, onClose, unidadeOrigem }: Props) {
           </Button>
         </div>
       </div>
-    </BottomSheet>
+    </AdaptiveSheet>
   );
 }

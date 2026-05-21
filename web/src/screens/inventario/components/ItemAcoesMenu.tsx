@@ -1,6 +1,7 @@
 import { useAccess } from '../../../hooks/useAccess';
 import { useIsProfessor } from '../../../hooks/useIsProfessor';
 import type { ReportInventarioItem } from '../../../lib/lareport-types';
+import { AdaptiveSheet } from '../../../components/AdaptiveSheet';
 
 interface Props {
   item: ReportInventarioItem | null;
@@ -16,7 +17,7 @@ export function ItemAcoesMenu({ item, open, onClose, onEdit, onMover, onManutenc
   const invAccess = useAccess('inventario');
   const movAccess = useAccess('movimentacoes');
   const isProf = useIsProfessor();
-  if (!open || !item) return null;
+  if (!item) return null;
 
   const podeEditar = invAccess.allowed && !isProf;
   const podeMover = movAccess.allowed && !isProf;
@@ -24,8 +25,8 @@ export function ItemAcoesMenu({ item, open, onClose, onEdit, onMover, onManutenc
   const podeManut = invAccess.allowed;
 
   return (
-    <div className="fixed inset-0 bg-black/60 z-50 flex items-end" onClick={onClose}>
-      <div className="bg-bg-surface w-full rounded-t-xl p-md space-y-2" onClick={e => e.stopPropagation()}>
+    <AdaptiveSheet open={open} onClose={onClose} size="sm">
+      <div className="space-y-2">
         <div className="text-[11px] text-fg-muted text-center mb-2">{item.nome}</div>
         {podeEditar && <button onClick={onEdit} className="w-full text-left p-sm rounded-md hover:bg-bg-app">✏️ Editar</button>}
         {podeMover && <button onClick={onMover} className="w-full text-left p-sm rounded-md hover:bg-bg-app">↔️ Mover de sala</button>}
@@ -33,6 +34,6 @@ export function ItemAcoesMenu({ item, open, onClose, onEdit, onMover, onManutenc
         {podeBaixa && <button onClick={onBaixa} className="w-full text-left p-sm rounded-md hover:bg-bg-app text-danger">🗑️ Dar baixa</button>}
         <button onClick={onClose} className="w-full text-left p-sm rounded-md hover:bg-bg-app text-fg-muted">❌ Cancelar</button>
       </div>
-    </div>
+    </AdaptiveSheet>
   );
 }

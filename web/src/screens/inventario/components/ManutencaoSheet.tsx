@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { ReportInventarioItem } from '../../../lib/lareport-types';
 import { CustomSelect } from '../../../components/CustomSelect';
 import { DateInput } from '../../../components/DateInput';
+import { AdaptiveSheet } from '../../../components/AdaptiveSheet';
 
 interface Props {
   open: boolean; onClose: () => void;
@@ -12,12 +13,10 @@ interface Props {
 export function ManutencaoSheet({ open, onClose, item, onSubmit }: Props) {
   const [form, setForm] = useState({ tipo: 'preventiva', descricao: '', custo: '', data_manutencao: new Date().toISOString().slice(0, 10), responsavel: '', data_proxima_revisao: '' });
   const [saving, setSaving] = useState(false);
-  if (!open) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/60 z-50 flex items-end" onClick={onClose}>
-      <div className="bg-bg-surface w-full rounded-t-xl p-md space-y-3" onClick={e => e.stopPropagation()}>
-        <h3 className="font-bold">Manutenção: {item.nome}</h3>
+    <AdaptiveSheet open={open} onClose={onClose} title={`Manutenção: ${item.nome}`} size="md">
+      <div className="space-y-3">
         <CustomSelect
           value={form.tipo}
           onChange={(v) => setForm({ ...form, tipo: v })}
@@ -51,6 +50,6 @@ export function ManutencaoSheet({ open, onClose, item, onSubmit }: Props) {
           {saving ? 'Registrando...' : 'Registrar'}
         </button>
       </div>
-    </div>
+    </AdaptiveSheet>
   );
 }
