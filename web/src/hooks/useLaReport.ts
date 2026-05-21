@@ -111,8 +111,12 @@ export function useReservas(
 
   useEffect(() => {
     if (!unidadeId) return;
+    // Sufixo único: Supabase reusa channel com mesmo nome, fazendo .on()
+    // ser chamado após .subscribe() em re-mounts (StrictMode/HMR) → erro
+    // "cannot add callbacks after subscribe()".
+    const uniq = Math.random().toString(36).slice(2, 10);
     const ch = laReportClient
-      .channel(`loja_reservas_${unidadeId}`)
+      .channel(`loja_reservas_${unidadeId}_${uniq}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'loja_reservas', filter: `unidade_id=eq.${unidadeId}` },
@@ -256,8 +260,10 @@ export function useReportLoja(unidadeId: string | null) {
 
   useEffect(() => {
     if (!unidadeId) return;
+    // Sufixo único — vide nota em useReservas (evita colisão de channel).
+    const uniq = Math.random().toString(36).slice(2, 10);
     const ch = laReportClient
-      .channel(`loja_estoque_${unidadeId}`)
+      .channel(`loja_estoque_${unidadeId}_${uniq}`)
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'loja_estoque', filter: `unidade_id=eq.${unidadeId}` },
         () => qc.invalidateQueries({ queryKey: ['lareport', 'loja', unidadeId] })
