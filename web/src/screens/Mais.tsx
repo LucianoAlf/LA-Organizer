@@ -90,8 +90,8 @@ export function Mais() {
   });
   const showLaEduca = role === 'coordinator' || role === 'director' || isMentor;
   const showLaJourney = role !== 'manager';
-  const showInventario = role === 'coordinator' || role === 'director' || role === 'manager';
-  const showLoja = useAccess('loja_produtos').allowed;
+  const { allowed: showInventario } = useAccess('inventario');
+  const { allowed: showLoja } = useAccess('loja_produtos');
 
   const unit = collaborator?.unit;
   const unitLabel = unit && unit !== 'all' ? unit : null;
