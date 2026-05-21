@@ -7347,7 +7347,7 @@ function tryShopBypass(text) {
 
   // PENDÊNCIA DE INVENTÁRIO: "precisa comprar X pra sala Y [, urgente]"
   // "tá faltando X na sala Y", "pendência: ...", "anota: ..."
-  const pendRe = /^\s*(?:precisa\s+(?:comprar|repor|reparar|trocar)|t[áa]\s+faltando|pend[êe]ncia[:\s]+|anota[:\s]+(?:que\s+)?(?:precisa|comprar|repor|t[áa])|falta\s+um)\s+(.+?)(?:\s+(?:pra|para|na|no)\s+sala\s+(.+?))?(?:\s+[-,]\s*(urgente|urgent[íi]ssimo|importante|futuro|futuramente))?\s*[.!?]?\s*$/i;
+  const pendRe = /^\s*(?:precisa\s+(?:comprar|repor|reparar|trocar)|t[áa]\s+faltando|pend[êe]ncia[:\s]+|anota[:\s]+(?:que\s+)?(?:precisa|comprar|repor|t[áa])|falta\s+um)\s+(.+?)(?:\s+(?:pra|para|na|no)\s+sala\s+(.+?))?(?:\s*[-,]\s*(urgente|urgent[íi]ssimo|importante|futuro|futuramente))?\s*[.!?]?\s*$/i;
   const pendMatch = t.match(pendRe);
   if (pendMatch) {
     const tituloBruto = (pendMatch[1] || '').trim();
