@@ -307,3 +307,70 @@ export interface TransferenciaInput {
 export async function transferirEstoque(input: TransferenciaInput): Promise<{ ok: boolean; saldo_origem: number; saldo_destino: number }> {
   return callApi('/api/lareport/loja/transferencia', { method: 'POST', body: JSON.stringify(input) });
 }
+
+// ============================================================
+// Sprint Fase 2.3 — Estorno e Reservas
+// ============================================================
+
+export async function estornarVenda(
+  venda_id: number,
+  motivo: string,
+): Promise<{ ok: boolean; data: unknown }> {
+  return callApi('/api/lareport/loja/estorno', {
+    method: 'POST',
+    body: JSON.stringify({ venda_id, motivo }),
+  });
+}
+
+export interface ReservaInput {
+  produto_id: number;
+  variacao_id?: number | null;
+  unidade_id: string;
+  quantidade: number;
+  cliente_nome: string;
+  aluno_id?: number | null;
+  observacoes?: string | null;
+  /** YYYY-MM-DD ou ISO. Default: hoje + 7d (no backend). */
+  prazo?: string | null;
+}
+
+export async function criarReserva(
+  input: ReservaInput,
+): Promise<{ ok: boolean; reserva_id: number; prazo: string }> {
+  return callApi('/api/lareport/loja/reserva', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function cancelarReserva(
+  reserva_id: number,
+  motivo?: string,
+): Promise<{ ok: boolean; reserva_id: number }> {
+  return callApi('/api/lareport/loja/reserva/cancelar', {
+    method: 'POST',
+    body: JSON.stringify({ reserva_id, motivo }),
+  });
+}
+
+export interface FinalizarReservaInput {
+  reserva_id: number;
+  forma_pagamento: 'pix' | 'dinheiro' | 'debito' | 'credito' | 'folha' | 'saldo';
+  preco_unitario: number;
+  tipo_cliente?: 'aluno' | 'avulso' | 'colaborador';
+  desconto?: number;
+  desconto_tipo?: 'valor' | 'percentual';
+  professor_indicador_id?: number | null;
+  colaborador_id?: number | null;
+  observacoes?: string | null;
+  parcelas?: number | null;
+}
+
+export async function finalizarReserva(
+  input: FinalizarReservaInput,
+): Promise<{ ok: boolean; venda_id: number }> {
+  return callApi('/api/lareport/loja/reserva/finalizar', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}

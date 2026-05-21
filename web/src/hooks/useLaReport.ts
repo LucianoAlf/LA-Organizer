@@ -3,10 +3,143 @@ import { useEffect } from 'react';
 import { laReportClient } from '../lib/lareport-client';
 import { useAccess } from './useAccess';
 import { buscarProduto } from '../lib/lareport-mutations';
+import { supabase } from '../lib/supabase';
 import type {
   ReportUnidade, ReportSala, ReportSalaDetalhe, ReportProduto, ReportAlertas,
   ReportInventarioItem, ReportMovimentacao, ReportManutencao,
 } from '../lib/lareport-types';
+
+// ============================================================
+// Sprint Fase 2.3 — Histórico de Vendas / Estorno / Reservas
+// ============================================================
+
+export interface HistoricoVendaItem {
+  produto_id: number;
+  quantidade: number;
+  preco_unitario: number;
+  loja_produtos?: { nome: string; sku: string | null } | null;
+}
+
+export interface HistoricoVenda {
+  id: number;
+  data_venda: string;
+  total: number;
+  forma_pagamento: string;
+  status: 'ativa' | 'estornada';
+  motivo_estorno?: string | null;
+  estornada_em?: string | null;
+  observacoes?: string | null;
+  loja_venda_itens: HistoricoVendaItem[];
+  loja_alunos?: { nome: string } | null;
+  loja_professores?: { nome: string } | null;
+  tipo_cliente?: string | null;
+  cliente_nome?: string | null;
+}
+
+export function useHistoricoVendas(
+  unidadeId: string | null,
+  opts?: {
+    dias?: number;
+    professorId?: number;
+    formaPagamento?: string;
+    status?: 'ativa' | 'estornada' | 'todas';
+    limit?: number;
+  },
+) {
+  const access = useAccess('loja_produtos');
+  const dias = opts?.dias ?? 30;
+  const status = opts?.status ?? 'todas';
+  const limit = opts?.limit ?? 100;
+  return useQuery({
+    queryKey: [
+      'lareport', 'historico-vendas',
+      unidadeId, dias, opts?.professorId ?? null,
+      opts?.formaPagamento ?? null, status, limit,
+      access.unitFilter,
+    ],
+    enabled: access.allowed && Boolean(unidadeId),
+    staleTime: 30_000,
+    queryFn: async (): Promise<HistoricoVenda[]> => {
+      const qs = new URLSearchParams();
+      qs.set('unidade_id', unidadeId!);
+      qs.set('dias', String(dias));
+      qs.set('status', status);
+      qs.set('limit', String(limit));
+      if (opts?.professorId) qs.set('professor_id', String(opts.professorId));
+      if (opts?.formaPagamento) qs.set('forma_pagamento', opts.formaPagamento);
+      const { data: sess } = await supabase.auth.getSession();
+      const r = await fetch(`/api/lareport/loja/historico-vendas?${qs}`, {
+        headers: { Authorization: `Bearer ${sess.session?.access_token ?? ''}` },
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        throw new Error(txt || `historico-vendas HTTP ${r.status}`);
+      }
+      const j = await r.json();
+      return (j.data || []) as HistoricoVenda[];
+    },
+  });
+}
+
+export interface ReportReserva {
+  id: number;
+  produto_id: number;
+  variacao_id: number | null;
+  unidade_id: string;
+  aluno_id: number | null;
+  cliente_nome: string;
+  quantidade: number;
+  prazo: string;
+  status: 'ativa' | 'finalizada' | 'expirada' | 'cancelada';
+  observacoes: string | null;
+  created_at: string;
+  created_via: string | null;
+  finalizada_em: string | null;
+  finalizada_venda_id: number | null;
+  cancelada_em: string | null;
+  motivo_cancelamento: string | null;
+  loja_produtos?: { nome: string; sku: string | null } | null;
+  loja_alunos?: { nome: string } | null;
+}
+
+export function useReservas(
+  unidadeId: string | null,
+  status: 'ativa' | 'finalizada' | 'expirada' | 'cancelada' | 'todas' = 'ativa',
+) {
+  const access = useAccess('loja_produtos');
+  const qc = useQueryClient();
+
+  useEffect(() => {
+    if (!unidadeId) return;
+    const ch = laReportClient
+      .channel(`loja_reservas_${unidadeId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'loja_reservas', filter: `unidade_id=eq.${unidadeId}` },
+        () => qc.invalidateQueries({ queryKey: ['lareport', 'reservas', unidadeId] }),
+      )
+      .subscribe();
+    return () => { laReportClient.removeChannel(ch); };
+  }, [unidadeId, qc]);
+
+  return useQuery({
+    queryKey: ['lareport', 'reservas', unidadeId, status, access.unitFilter],
+    enabled: access.allowed && Boolean(unidadeId),
+    staleTime: 30_000,
+    queryFn: async (): Promise<ReportReserva[]> => {
+      let q = laReportClient
+        .from('loja_reservas')
+        .select('*, loja_produtos(nome, sku), loja_alunos(nome)')
+        .eq('unidade_id', unidadeId!)
+        .order('created_at', { ascending: false });
+      if (status !== 'todas') q = q.eq('status', status);
+      const { data, error } = await q;
+      if (error) throw error;
+      return (data || []) as unknown as ReportReserva[];
+    },
+  });
+}
+
 
 function applyUnitFilter<Q extends { in: Function; eq: Function }>(
   q: Q,

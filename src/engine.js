@@ -7316,6 +7316,35 @@ function tryShopBypass(text) {
     };
   }
 
+  // Fase 2.3 — ESTORNO: "estornar/cancelar venda #N [motivo: ...]"
+  const estornoMatch = t.match(/^\s*(?:estornar?|cancelar)\s+venda\s+#?(\d+)(?:\s*[-:,.]?\s*(?:motivo\s*[:=]?\s*)?(.+?))?\s*[.!?]?\s*$/i);
+  if (estornoMatch) {
+    const vendaId = parseInt(estornoMatch[1], 10);
+    let motivo = (estornoMatch[2] || '').trim();
+    // Limpa prefixos comuns
+    motivo = motivo.replace(/^(motivo|porque|por que|razao|razão)\s*[:=]?\s*/i, '').trim();
+    return {
+      action: 'shop_estorno',
+      params: { venda_id: vendaId, motivo: motivo || null },
+    };
+  }
+
+  // Fase 2.3 — RESERVA: "reserva/reservar [N] <produto> pra/para <cliente>"
+  const reservaMatch = t.match(/^\s*(?:reserva|reservar|separa|separar)\s+(\d+)\s+(.+?)\s+(?:pra|para)\s+(.+?)\s*[.!?]?\s*$/i);
+  if (reservaMatch) {
+    const qtd = parseInt(reservaMatch[1], 10);
+    const produto = reservaMatch[2].trim();
+    const cliente = reservaMatch[3].trim();
+    // Só processar se cliente parecer nome (não conter palavras que sugiram outro intent)
+    if (qtd > 0 && produto && cliente && cliente.length >= 2 && cliente.length <= 80
+        && !/\b(loja|estoque|unidade|venda)\b/i.test(cliente)) {
+      return {
+        action: 'shop_reserve',
+        params: { produto_termo: produto, quantidade: qtd, cliente_nome: cliente },
+      };
+    }
+  }
+
   // QUERY: tem que mencionar "loja" ou "lojinha"
   if (!/\b(lojinha|loja)\b/i.test(t)) return null;
 
@@ -7362,6 +7391,8 @@ function parseShopAction(text) {
       entry: 'shop_entry', entrada: 'shop_entry', chegada: 'shop_entry',
       adjust: 'shop_adjust', ajuste: 'shop_adjust', ajustar: 'shop_adjust',
       query: 'query_shop', consulta: 'query_shop', listar: 'query_shop',
+      estorno: 'shop_estorno', estornar: 'shop_estorno', cancelar_venda: 'shop_estorno',
+      reserva: 'shop_reserve', reservar: 'shop_reserve', separar: 'shop_reserve',
     };
     const canonical = ACTION_ALIASES[payload.action] || payload.action;
     return { action: canonical, params: payload.params || {} };
@@ -7375,15 +7406,20 @@ function parseShopAction(text) {
 function normalizeShopParams(p) {
   return {
     nome: p.nome || p.produto || p.product || p.item || p.name,
+    produto_termo: p.produto_termo || p.termo || p.search_term || p.nome || p.produto || null,
     quantidade: parseInt(p.quantidade || p.qtd || p.qty || p.amount || 1, 10),
     unidade: p.unidade || p.unit || p.loja || p.local,
+    unidade_id: p.unidade_id || p.uid || null,
     forma_pagamento: p.forma_pagamento || p.pagamento || p.payment || p.forma || p.pgto,
-    cliente_nome: p.cliente_nome || p.cliente || p.customer || null,
+    cliente_nome: p.cliente_nome || p.cliente || p.customer || p.nome_cliente || null,
     tipo_cliente: p.tipo_cliente || p.customer_type || 'avulso',
     professor_indicador: p.professor_indicador || p.professor || p.indicador || null,
     delta: typeof p.delta === 'number' ? p.delta : (parseInt(p.delta, 10) || 0),
     motivo: p.motivo || p.reason || p.razao || null,
     observacoes: p.observacoes || p.obs || p.notes || null,
+    venda_id: parseInt(p.venda_id || p.id_venda || p.sale_id || p.venda || 0, 10) || null,
+    aluno_id: p.aluno_id || p.student_id || null,
+    prazo: p.prazo || p.deadline || p.data_limite || null,
   };
 }
 
@@ -7582,6 +7618,110 @@ async function handleShopAction(shop, collab, userName) {
       out += `\n${cat}\n` + itens.join('\n');
     }
     return out;
+  }
+
+  // Fase 2.3 — Estorno de venda
+  if (shop.action === 'shop_estorno') {
+    const vendaId = p.venda_id;
+    const motivo = (p.motivo || '').trim();
+    if (!vendaId) {
+      return '🤔 Qual venda quer estornar? Diz tipo "estornar venda #42 motivo: cliente desistiu".';
+    }
+    if (!motivo || motivo.length < 5) {
+      return `⚠️ Preciso de um motivo (mín 5 chars) pra estornar a venda #${vendaId}. Diz tipo "estornar venda #${vendaId} motivo: produto com defeito".`;
+    }
+    const { data, error } = await _lrc.rpc('estornar_venda', {
+      p_venda_id: vendaId,
+      p_motivo: motivo,
+      p_via_audit: viaAudit,
+    });
+    if (error) {
+      if (/ja_estornada|j[aá]\s+estornada/i.test(error.message)) {
+        return `⚠️ Venda #${vendaId} já está estornada.`;
+      }
+      if (/inexistente|not\s*found|n[aã]o\s+encontrad/i.test(error.message)) {
+        return `❌ Venda #${vendaId} não existe.`;
+      }
+      return `❌ Erro ao estornar: ${error.message}`;
+    }
+    const det = data && (Array.isArray(data) ? data[0] : data) || {};
+    const comissao = det.comissao_debitada || det.comissao_estornada || 0;
+    const extra = comissao > 0 ? `, R$${Number(comissao).toFixed(2)} debitado da carteira do professor` : '';
+    return `✅ Venda #${vendaId} estornada. Estoque devolvido${extra}.`;
+  }
+
+  // Fase 2.3 — Reserva de produto
+  if (shop.action === 'shop_reserve') {
+    const termo = p.produto_termo || p.nome;
+    const qtd = p.quantidade;
+    const cliente = (p.cliente_nome || '').trim();
+    if (!termo) return '🤔 Qual produto quer reservar?';
+    if (!qtd || qtd <= 0) return '🤔 Quantas unidades reservar?';
+    if (!cliente) return '🤔 Pra quem é a reserva? (nome do cliente)';
+
+    // Resolver unidade: param ou collaborator
+    let uid = p.unidade_id;
+    if (!uid && p.unidade) {
+      uid = await resolveUnidadeIdShop(p.unidade);
+      if (!uid) return `Unidade "${p.unidade}" não encontrada.`;
+    }
+    if (!uid) uid = collab?.unidade_id;
+    if (!uid) return '🤔 Em qual unidade? (Barra, Recreio, Campo Grande)';
+
+    // Fuzzy buscar produto — usa v2 se existir, fallback no v1
+    let prods = null;
+    let bErr = null;
+    try {
+      const r = await _lrc.rpc('loja_buscar_produto_fuzzy_v2', {
+        p_termo: termo, p_unidade_id: uid, p_limit: 3,
+      });
+      prods = r.data; bErr = r.error;
+    } catch (e) {
+      bErr = { message: e.message };
+    }
+    // Fallback v1
+    if (bErr || !prods) {
+      const r2 = await _lrc.rpc('buscar_produto_fuzzy',
+        { p_termo: termo, p_unidade_id: uid });
+      prods = r2.data; bErr = r2.error;
+    }
+    if (bErr) return `❌ Erro buscando produto: ${bErr.message}`;
+    if (!prods || prods.length === 0) {
+      return `🤔 Não achei produto "${termo}". Tenta um nome mais específico.`;
+    }
+    if (prods.length > 1 && (prods[0].score == null || prods[0].score < 0.7)) {
+      const opts = prods.slice(0, 5).map((pr, i) =>
+        `${i + 1}. ${pr.nome}${pr.estoque_disponivel != null ? ` (disp: ${pr.estoque_disponivel})` : ''}`
+      ).join('\n');
+      return `🤔 Achei ${prods.length} produtos. Qual?\n${opts}`;
+    }
+    const prod = prods[0];
+
+    // Validar estoque disponível se disponível no resultado
+    const disp = prod.estoque_disponivel;
+    if (disp != null && disp < qtd) {
+      return `⚠️ Estoque insuficiente — disponível ${disp}, pedido ${qtd}.`;
+    }
+
+    // Calcular prazo: default hoje+7 dias
+    const prazoDate = p.prazo || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+    const { data: reserva, error: rErr } = await _lrc
+      .from('loja_reservas')
+      .insert({
+        produto_id: prod.id,
+        unidade_id: uid,
+        quantidade: qtd,
+        cliente_nome: cliente,
+        aluno_id: p.aluno_id || null,
+        prazo: prazoDate,
+        status: 'ativa',
+        created_via: 'tom',
+      })
+      .select('id, prazo')
+      .single();
+    if (rErr) return `❌ Erro ao reservar: ${rErr.message}`;
+    return `✅ Reserva #${reserva.id} criada: ${qtd}x ${prod.nome} pra ${cliente} até ${reserva.prazo}.`;
   }
 
   return null;

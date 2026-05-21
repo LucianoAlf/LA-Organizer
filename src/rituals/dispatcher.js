@@ -2298,6 +2298,37 @@ async function run(opts = {}) {
   } catch (err) {
     console.error('[Dispatcher] dispatchMonthlyAgenda erro:', err.message);
   }
+
+  // Lojinha Fase 2.3 — expira reservas vencidas todo dia às 09:00 BRT (slot único).
+  // Silencioso: não envia mensagem, só atualiza status e loga contagem.
+  if (currentSlot(now) === timeToSlot('09:00')) {
+    try {
+      await expirarReservasVencidas();
+    } catch (err) {
+      console.error('[Dispatcher] expirarReservasVencidas erro:', err.message);
+    }
+  }
+}
+
+// Lojinha Fase 2.3 — marca como 'expirada' toda reserva 'ativa' cujo prazo já passou.
+// Silencioso: só loga a contagem, sem enviar mensagens.
+// IMPORTANTE: loja_reservas vive no projeto LA Report, não LA Organizer.
+async function expirarReservasVencidas() {
+  const hoje = nowSaoPaulo().ymd;
+  const { laReportClient } = require('../services/la-report-client');
+  const { data, error } = await laReportClient
+    .from('loja_reservas')
+    .update({ status: 'expirada' })
+    .eq('status', 'ativa')
+    .lt('prazo', hoje)
+    .select('id');
+  if (error) {
+    console.error('[reservas] erro ao expirar reservas:', error.message);
+    return 0;
+  }
+  const n = data ? data.length : 0;
+  console.log(`[reservas] ${n} reservas expiradas`);
+  return n;
 }
 
 // Sprint Agenda v2 — Dispara o resumo mensal da agenda institucional pra toda equipe.
@@ -3423,4 +3454,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { run, dispatchChecklists, dispatchAnnouncements, remindUnconfirmedAnnouncements, notifyCoordinators, remindEventTasks, remindOperationalTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined, isFirstMondayOfMonth, isLastFridayOfMonth, listLeadership, checkMonthlyPlanning, checkMonthlyClosing, dispatchMonthlyAgenda };
+module.exports = { run, dispatchChecklists, dispatchAnnouncements, remindUnconfirmedAnnouncements, notifyCoordinators, remindEventTasks, remindOperationalTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined, isFirstMondayOfMonth, isLastFridayOfMonth, listLeadership, checkMonthlyPlanning, checkMonthlyClosing, dispatchMonthlyAgenda, expirarReservasVencidas };

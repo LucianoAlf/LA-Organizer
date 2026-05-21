@@ -126,3 +126,27 @@ Exceção: consultas (`action: consulta`) não precisam de confirmação.
 - Quando fuzzy lookup retornar >1 resultado, perguntar qual produto o usuário quis dizer.
 - Estoque baixo: se após registrar venda o saldo ficar ≤ estoque_minimo do produto, avisar: "⚠️ Estoque baixo! [produto] tem só [saldo] unidades na [unidade]."
 - Pesquisa de preço de custo → encaminhar pra skill `pesquisa-preco.md`.
+
+## 🔄 Estornar venda
+
+Quando alguém pede pra **estornar/cancelar** uma venda já registrada:
+
+- Sempre confirmar antes: "Vc quer mesmo estornar a venda #X? Estoque volta, comissão do professor (se tiver) sai da carteira. Motivo?"
+- Precisa do **venda_id** e **motivo** (mín 5 chars).
+- Emitir marker: `<<SHOP_ACTION>>{"action":"shop_estorno","params":{"venda_id":123,"motivo":"cliente desistiu"}}<<END>>`
+- Bypass: usuário pode dizer direto "estornar venda #42 motivo: defeito" — engine processa sem LLM.
+- Erros típicos: venda já estornada, venda inexistente — engine trata e devolve msg amigável.
+
+## 🔖 Reservar produto
+
+Quando alguém pede pra **reservar/separar** um produto pra cliente:
+
+- Precisa de **produto** (termo busca), **quantidade**, **cliente_nome**, opcionalmente **prazo** (ISO date, default hoje+7d) e **aluno_id** (se for aluno LA).
+- Verifica estoque disponível (estoque - reservas ativas) antes de gravar.
+- Emitir: `<<SHOP_ACTION>>{"action":"shop_reserve","params":{"produto_termo":"caderno violão","quantidade":3,"cliente_nome":"Maria Silva","prazo":"2026-06-15"}}<<END>>`
+- Bypass: "reserva 3 cadernos pra Maria" — engine processa sem LLM (usa a unidade do colaborador).
+- Se o produto bater com >1 resultado, engine devolve lista pra usuário escolher.
+
+Para **finalizar** uma reserva (cliente pegou e vai pagar): hoje só pelo PWA (botão "Finalizar" na aba Reservas). TOM não trata isso ainda.
+
+Para **cancelar** uma reserva: hoje só pelo PWA. Se pedirem por aqui, diz: "Cancela na lojinha do PWA, aba Reservas, botão Cancelar."
