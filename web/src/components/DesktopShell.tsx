@@ -1,12 +1,18 @@
-import { Outlet } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
+import { AgendaTabs } from './AgendaTabs';
 import { useBreakpoint } from '../hooks/useBreakpoint';
 import { ToastHost } from './Toast';
 import { PWAUpdatePrompt } from './PWAUpdatePrompt';
 import { PWAInstallPrompt } from './PWAInstallPrompt';
 import { useAuth } from '../contexts/AuthContext';
 import { useRealtimeSync } from '../hooks/useRealtimeSync';
+
+const AGENDA_PATHS = ['/hoje', '/semana'];
+function isAgendaRoute(pathname: string): boolean {
+  return AGENDA_PATHS.some(p => pathname === p || pathname.startsWith(p + '/'));
+}
 
 /**
  * Shell desktop/tablet — Fase D1.
@@ -21,8 +27,10 @@ import { useRealtimeSync } from '../hooks/useRealtimeSync';
  */
 export function DesktopShell() {
   const bp = useBreakpoint();
+  const { pathname } = useLocation();
   const collapsed = bp === 'tablet';
   const sidebarWidth = collapsed ? 64 : 240;
+  const showAgendaTabs = isAgendaRoute(pathname);
 
   // Realtime sync com Supabase — mantém TanStack atualizado quando o TOM
   // escreve no banco via WhatsApp.
@@ -37,9 +45,18 @@ export function DesktopShell() {
         className="pt-14 min-h-screen"
         style={{ marginLeft: sidebarWidth }}
       >
-        {/* Fase D2 — desktop libera largura para max-w-5xl (1024px); mobile/tablet
-            mantem max-w-content (720px) para preservar legibilidade. */}
-        <div className="w-full max-w-content lg:max-w-5xl mx-auto px-4 lg:px-6 py-4">
+        {/* Tabs Dia/Semana — paridade com mobile. Renderizado no shell para que
+            a MESMA instância persista entre /hoje ↔ /semana (indicador deslizante
+            só anima se o elemento não for desmontado). */}
+        {showAgendaTabs && (
+          <div className="w-full max-w-7xl mx-auto px-6 lg:px-10 pt-6">
+            <AgendaTabs />
+          </div>
+        )}
+        {/* Fase D2.1 — libera largura desktop até max-w-7xl (1280px); tablet em
+            max-w-5xl; mobile mantém max-w-content (720px). Padding lateral cresce
+            no desktop para o conteúdo não colar nas bordas da tela em telas largas. */}
+        <div className="w-full max-w-content md:max-w-5xl lg:max-w-7xl mx-auto px-4 md:px-6 lg:px-10 py-6">
           <Outlet />
         </div>
       </main>
