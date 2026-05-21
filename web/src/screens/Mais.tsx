@@ -2,6 +2,7 @@ import { ChevronRight, GraduationCap } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../contexts/AuthContext';
+import { useAccess } from '../hooks/useAccess';
 import { Badge } from '../components/Badge';
 import { supabase } from '../lib/supabase';
 
@@ -90,6 +91,7 @@ export function Mais() {
   const showLaEduca = role === 'coordinator' || role === 'director' || isMentor;
   const showLaJourney = role !== 'manager';
   const showInventario = role === 'coordinator' || role === 'director' || role === 'manager';
+  const showLoja = useAccess('loja_produtos').allowed;
 
   const unit = collaborator?.unit;
   const unitLabel = unit && unit !== 'all' ? unit : null;
@@ -105,7 +107,7 @@ export function Mais() {
       <Section title="Para você" items={personal} />
       <Section title="Coordenação" items={coord} />
 
-      {(showLaEduca || showLaJourney || showInventario) && (
+      {(showLaEduca || showLaJourney || showInventario || showLoja) && (
         <section className="space-y-sm">
           <h3 className="text-body-sm text-fg-muted uppercase tracking-wide px-md">Educação</h3>
           <ul className="surface divide-y divide-border">
@@ -153,7 +155,24 @@ export function Mais() {
                     <span className="text-body-md">📦</span>
                     <div>
                       <div className="text-body-md">Inventário</div>
-                      <div className="text-body-sm text-fg-muted">Salas, equipamentos e lojinha</div>
+                      <div className="text-body-sm text-fg-muted">Salas e equipamentos</div>
+                    </div>
+                  </div>
+                  <ChevronRight size={18} className="text-fg-muted" />
+                </Link>
+              </li>
+            )}
+            {showLoja && (
+              <li>
+                <Link
+                  to="/inventario/loja"
+                  className="flex items-center justify-between gap-md p-md hover:bg-bg-elevated focus-ring"
+                >
+                  <div className="flex items-center gap-md">
+                    <span className="text-body-md">🛍</span>
+                    <div>
+                      <div className="text-body-md">Lojinha</div>
+                      <div className="text-body-sm text-fg-muted">Vendas, estoque e reservas</div>
                     </div>
                   </div>
                   <ChevronRight size={18} className="text-fg-muted" />
