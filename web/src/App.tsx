@@ -39,7 +39,10 @@ import { LaJourneyAdminPage } from './screens/lajourney/AdminPage';
 import { LaJourneyCheckpointPage } from './screens/lajourney/CheckpointPage';
 import { InventarioListaPage } from './screens/inventario/ListaPage';
 import { InventarioSalaPage } from './screens/inventario/SalaPage';
-import { InventarioLojaPage } from './screens/inventario/LojaPage';
+import { LojaHub } from './screens/inventario/LojaHub';
+import { ProdutosPage } from './screens/inventario/ProdutosPage';
+import { HistoricoPage } from './screens/inventario/HistoricoPage';
+import { ReservasPage } from './screens/inventario/ReservasPage';
 
 export default function App() {
   return (
@@ -110,7 +113,10 @@ export default function App() {
               IMPORTANT: /inventario/loja antes de /inventario/sala/:salaId. */}
           <Route element={<ProtectedRoute requireRoles={['coordinator', 'director', 'manager']} />}>
             <Route path="inventario" element={<InventarioListaPage />} />
-            <Route path="inventario/loja" element={<InventarioLojaPage />} />
+            <Route path="inventario/loja" element={<LojaHub />} />
+            <Route path="inventario/loja/produtos" element={<ProdutosPage />} />
+            <Route path="inventario/loja/historico" element={<HistoricoPage />} />
+            <Route path="inventario/loja/reservas" element={<ReservasPage />} />
             <Route path="inventario/sala/:salaId" element={<InventarioSalaPage />} />
           </Route>
 
