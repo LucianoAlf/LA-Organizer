@@ -124,7 +124,7 @@ export function LaJourneyListaPage() {
   const semCursos = showCursoSelect && !loadingCursos && cursoOptions.length === 0;
 
   return (
-    <div className="px-md py-md">
+    <div className="space-y-lg">
       <PageHeader
         title="LA Journey"
         subtitle="Jornada pedagógica do aluno"
