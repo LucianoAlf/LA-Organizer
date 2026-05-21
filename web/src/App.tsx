@@ -108,16 +108,22 @@ export default function App() {
           </Route>
           <Route path="la-journey/:checkpointId" element={<LaJourneyCheckpointPage />} />
 
-          {/* INVENTÁRIO — dados vêm do LA Report via internal-api do TOM. Read-only.
-              Gated em coord/director/manager (Rafinha é manager).
+          {/* INVENTÁRIO — gated por access-rules.json (dataType 'inventario').
+              Permite role director/coordinator + function_role ops_tecnicas/farmer/tech + manager_unit + pedagogico + professor_seus_unidades.
+              Rafinha (role=collaborator, function_role=ops_tecnicas, unit='all') passa.
               IMPORTANT: /inventario/loja antes de /inventario/sala/:salaId. */}
-          <Route element={<ProtectedRoute requireRoles={['coordinator', 'director', 'manager']} />}>
+          <Route element={<ProtectedRoute requireAccess="inventario" />}>
             <Route path="inventario" element={<InventarioListaPage />} />
+            <Route path="inventario/sala/:salaId" element={<InventarioSalaPage />} />
+          </Route>
+
+          {/* LOJINHA — gated por access-rules.json (dataType 'loja_produtos').
+              Permite role director + function_role ops_tecnicas/farmer/backoffice_fin + manager_unit. */}
+          <Route element={<ProtectedRoute requireAccess="loja_produtos" />}>
             <Route path="inventario/loja" element={<LojaHub />} />
             <Route path="inventario/loja/produtos" element={<ProdutosPage />} />
             <Route path="inventario/loja/historico" element={<HistoricoPage />} />
             <Route path="inventario/loja/reservas" element={<ReservasPage />} />
-            <Route path="inventario/sala/:salaId" element={<InventarioSalaPage />} />
           </Route>
 
           <Route element={<ProtectedRoute requireRoles={['coordinator', 'director']} />}>
