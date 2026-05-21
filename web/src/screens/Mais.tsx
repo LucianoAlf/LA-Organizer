@@ -1,8 +1,9 @@
 import { ChevronRight, GraduationCap } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../contexts/AuthContext';
 import { useAccess } from '../hooks/useAccess';
+import { useBreakpoint } from '../hooks/useBreakpoint';
 import { Badge } from '../components/Badge';
 import { supabase } from '../lib/supabase';
 
@@ -69,6 +70,11 @@ function Section({ title, items }: { title: string; items: Item[] }) {
 
 export function Mais() {
   const { collaborator, role } = useAuth();
+
+  // No desktop/tablet a navegação vive na Sidebar; "Mais" não faz sentido.
+  // Redireciona pra /hoje pra evitar tela duplicada.
+  const bp = useBreakpoint();
+  if (bp !== 'mobile') return <Navigate to="/hoje" replace />;
 
   const filterByRole = (list: Item[]) =>
     list.filter(i => !i.requireRoles || (role && i.requireRoles.includes(role)));

@@ -1,6 +1,8 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { AppShell } from './components/AppShell';
+import { DesktopShell } from './components/DesktopShell';
+import { useBreakpoint } from './hooks/useBreakpoint';
 import { Login } from './screens/Login';
 import { Hoje } from './screens/Hoje';
 import { Semana } from './screens/Semana';
@@ -44,13 +46,24 @@ import { ProdutosPage } from './screens/inventario/ProdutosPage';
 import { HistoricoPage } from './screens/inventario/HistoricoPage';
 import { ReservasPage } from './screens/inventario/ReservasPage';
 
+/**
+ * Wrapper que escolhe o shell com base no breakpoint.
+ * Mobile (<768px) usa o AppShell legado (BottomNav + Header).
+ * Tablet e desktop usam o DesktopShell (Sidebar + Topbar) — Fase D1.
+ */
+function AppLayout() {
+  const bp = useBreakpoint();
+  if (bp === 'mobile') return <AppShell />;
+  return <DesktopShell />;
+}
+
 export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
 
       <Route element={<ProtectedRoute />}>
-        <Route element={<AppShell />}>
+        <Route element={<AppLayout />}>
           <Route index element={<Navigate to="/hoje" replace />} />
           <Route path="hoje" element={<Hoje />} />
           <Route path="semana" element={<Semana />} />
