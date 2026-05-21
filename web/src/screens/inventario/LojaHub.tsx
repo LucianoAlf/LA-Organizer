@@ -45,7 +45,7 @@ export function LojaHub() {
   return (
     <div className="space-y-md pb-xl">
       <div className="flex items-center justify-between gap-sm">
-        <PageHeader title="🛍 Lojinha" backTo="/inventario" />
+        <PageHeader title="🛍 Lojinha" backTo="/mais" />
         <UnidadeChip />
       </div>
 

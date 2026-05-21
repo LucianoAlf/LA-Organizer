@@ -23,11 +23,7 @@ export function InventarioListaPage() {
   }, [unidades, unidadeId]);
 
   const { data: salas = [], isLoading: lS } = useReportSalas(unidadeId || null);
-  const { data: produtos = [] } = useReportLoja(unidadeId || null);
-  const lojaAccess = useAccess('loja_produtos');
   useRealtimeSalas(unidadeId);
-
-  const estoqueBaixoCount = produtos.filter(p => p.abaixo_minimo || p.zerado).length;
 
   if (lU) return <LoadingState />;
   if (unidades.length === 0) {
@@ -51,24 +47,7 @@ export function InventarioListaPage() {
 
       <StatsCards unidadeId={unidadeId} onAtencaoClick={() => navigate(`/inventario/atencao?unit=${unidadeId}`)} />
 
-      {lojaAccess.allowed && (
-        <button
-          type="button"
-          onClick={() => navigate('/inventario/loja')}
-          className="w-full bg-fg text-bg-surface rounded-lg p-md flex items-center gap-md text-left hover:opacity-90"
-        >
-          <span className="text-2xl">🛍</span>
-          <div className="flex-1">
-            <div className="font-semibold">Lojinha</div>
-            <div className="text-body-sm opacity-60">
-              {produtos.length} produtos{estoqueBaixoCount > 0 ? ` · estoque baixo: ${estoqueBaixoCount} ⚠️` : ''}
-            </div>
-          </div>
-          <span className="opacity-60">›</span>
-        </button>
-      )}
-
-      <div className="flex items-center gap-sm">
+<div className="flex items-center gap-sm">
         <h3 className="text-body-sm text-fg-muted font-semibold uppercase tracking-wide">Salas ({salas.length})</h3>
         <div className="flex-1 h-px bg-border" />
       </div>
