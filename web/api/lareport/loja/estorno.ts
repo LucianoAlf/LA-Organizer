@@ -47,7 +47,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // SP real: estornar_venda(p_venda_id, p_motivo, p_via_audit) — sem param de
   // responsável. Embeda quem estornou no p_via_audit pra rastreabilidade.
-  const viaAudit = `estorno via PWA por ${collab.nome ?? collab.id}`;
+  const viaAudit = `estorno via PWA por ${collab.full_name ?? collab.id}`;
   const { data, error } = await lareport.rpc('estornar_venda', {
     p_venda_id: vendaId,
     p_motivo: motivo.trim(),
