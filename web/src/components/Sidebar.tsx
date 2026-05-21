@@ -6,15 +6,18 @@ import {
   GraduationCap, Music,
   Package, ShoppingBag,
   CalendarRange, History, Settings,
+  PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useAccess } from '../hooks/useAccess';
 import { supabase } from '../lib/supabase';
-import { LogoMark } from './LogoMark';
 
 interface SidebarProps {
   collapsed?: boolean;
+  /** Callback para alternar collapsed manualmente. Se omitido, botão é escondido
+   *  (ex.: tablet onde o estado é forçado pelo breakpoint). */
+  onToggleCollapse?: () => void;
 }
 
 interface NavItem {
@@ -31,7 +34,7 @@ interface SectionDef {
   items: NavItem[];
 }
 
-export function Sidebar({ collapsed = false }: SidebarProps) {
+export function Sidebar({ collapsed = false, onToggleCollapse }: SidebarProps) {
   const { collaborator, role } = useAuth();
   const location = useLocation();
 
@@ -138,16 +141,23 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
       style={{ width }}
       aria-label="Navegação lateral"
     >
-      {/* Header com logo */}
+      {/* Header com avatar do TOM */}
       <div
         className={[
           'h-14 flex items-center border-b border-border shrink-0',
-          collapsed ? 'justify-center px-2' : 'gap-2 px-4',
+          collapsed ? 'justify-center px-2' : 'gap-3 px-4',
         ].join(' ')}
       >
-        <LogoMark variant="solo" size={28} />
+        <img
+          src="/Avata-Tom.png"
+          alt="TOM"
+          className="w-9 h-9 rounded-full object-cover shrink-0"
+        />
         {!collapsed && (
-          <span className="text-body-md font-bold tracking-tight text-fg">LA Organizer</span>
+          <div className="min-w-0">
+            <div className="text-body-sm font-semibold text-fg leading-tight">TOM</div>
+            <div className="text-[10px] text-fg-muted leading-tight">LA Organizer</div>
+          </div>
         )}
       </div>
 
@@ -194,6 +204,26 @@ export function Sidebar({ collapsed = false }: SidebarProps) {
           );
         })}
       </nav>
+
+      {/* Rodapé — botão de recolher/expandir (só renderiza se houver callback;
+          no tablet o estado é forçado pelo breakpoint, então não mostra). */}
+      {onToggleCollapse && (
+        <button
+          type="button"
+          onClick={onToggleCollapse}
+          title={collapsed ? 'Expandir sidebar' : 'Recolher sidebar'}
+          aria-label={collapsed ? 'Expandir sidebar' : 'Recolher sidebar'}
+          className={[
+            'flex items-center border-t border-border shrink-0',
+            'text-fg-muted hover:text-fg hover:bg-bg-elevated transition-colors',
+            'focus-ring',
+            collapsed ? 'justify-center h-12' : 'gap-2 px-4 h-12',
+          ].join(' ')}
+        >
+          {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+          {!collapsed && <span className="text-body-sm">Recolher</span>}
+        </button>
+      )}
     </aside>
   );
 }

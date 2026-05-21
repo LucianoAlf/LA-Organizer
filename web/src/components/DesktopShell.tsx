@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
@@ -10,6 +11,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { useRealtimeSync } from '../hooks/useRealtimeSync';
 
 const AGENDA_PATHS = ['/hoje', '/semana'];
+const SIDEBAR_COLLAPSED_KEY = 'la-sidebar-collapsed';
+
 function isAgendaRoute(pathname: string): boolean {
   return AGENDA_PATHS.some(p => pathname === p || pathname.startsWith(p + '/'));
 }
@@ -28,7 +31,19 @@ function isAgendaRoute(pathname: string): boolean {
 export function DesktopShell() {
   const bp = useBreakpoint();
   const { pathname } = useLocation();
-  const collapsed = bp === 'tablet';
+  const isTablet = bp === 'tablet';
+
+  // Estado de colapso controlado pelo usuário (desktop apenas). Tablet força true.
+  // Persistido em localStorage para sobreviver entre navegações/sessões.
+  const [userCollapsed, setUserCollapsed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true';
+  });
+  useEffect(() => {
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(userCollapsed));
+  }, [userCollapsed]);
+
+  const collapsed = isTablet || userCollapsed;
   const sidebarWidth = collapsed ? 64 : 240;
   const showAgendaTabs = isAgendaRoute(pathname);
 
@@ -39,7 +54,10 @@ export function DesktopShell() {
 
   return (
     <div className="min-h-screen bg-bg-app text-fg">
-      <Sidebar collapsed={collapsed} />
+      <Sidebar
+        collapsed={collapsed}
+        onToggleCollapse={isTablet ? undefined : () => setUserCollapsed(v => !v)}
+      />
       <Topbar sidebarCollapsed={collapsed} />
       <main
         className="pt-14 min-h-screen"
