@@ -69,9 +69,11 @@
 
   /* #root sempre preenche viewport — mesmo em iframes/webviews com viewport
    * menor que a janela física (ex: Simple Browser do VS Code).
-   * Isso garante que o bg-bg-app preto cubra TODA a área visível. */
+   * NOTA: min-width usa 100% (não 100vw) pois 100vw inclui a largura do
+   * scrollbar vertical, causando overflow horizontal → scrollbar horizontal
+   * → redução de 10px na altura → gap visível no fundo da tela. */
   #root {
-    min-width: 100vw;
+    min-width: 100%;
     min-height: 100vh;
   }
 

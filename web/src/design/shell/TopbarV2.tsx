@@ -2,11 +2,46 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
   Camera, Lock, Settings, LogOut, User, Bell, Plus, Sun, Moon,
+  CalendarDays, Rocket, ClipboardCheck, Sparkles, Users, BarChart3,
+  Target, Megaphone, Eye, UserCog, GraduationCap, Music,
+  Package, ShoppingBag, CalendarRange, History,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { supabase } from '../../lib/supabase';
 import { showToast } from '../../components/Toast';
+
+const ROUTE_ICONS: Record<string, LucideIcon> = {
+  '/hoje': CalendarDays,
+  '/semana': CalendarDays,
+  '/projetos': Rocket,
+  '/checklists': ClipboardCheck,
+  '/habitos': Sparkles,
+  '/time': Users,
+  '/mais/aderencia-checklists': BarChart3,
+  '/mais/operacoes': Target,
+  '/mais/comunicados': Megaphone,
+  '/mais/observabilidade': Eye,
+  '/mais/gestao-equipe': UserCog,
+  '/la-educa': GraduationCap,
+  '/la-journey': Music,
+  '/inventario/loja': ShoppingBag,
+  '/inventario': Package,
+  '/mais/agenda-escolar': CalendarRange,
+  '/historico': History,
+  '/configuracoes': Settings,
+  '/mais/perfil': User,
+};
+
+function getRouteIcon(pathname: string): LucideIcon | null {
+  if (ROUTE_ICONS[pathname]) return ROUTE_ICONS[pathname];
+  const sorted = Object.keys(ROUTE_ICONS).sort((a, b) => b.length - a.length);
+  for (const path of sorted) {
+    if (pathname.startsWith(path + '/')) return ROUTE_ICONS[path];
+  }
+  return null;
+}
 
 const ROUTE_LABELS: Record<string, string> = {
   '/hoje': 'Agenda',
@@ -73,6 +108,7 @@ export function TopbarV2({ sidebarCollapsed = false, onQuickAdd }: TopbarV2Props
   const avatarUrl = collaborator?.avatar_url;
   const fullName = collaborator?.preferred_name || collaborator?.full_name || '';
   const routeLabel = getRouteLabel(pathname);
+  const RouteIcon = getRouteIcon(pathname);
 
   useEffect(() => {
     if (!pwModal) { setPw(''); setPwConfirm(''); }
@@ -149,8 +185,9 @@ export function TopbarV2({ sidebarCollapsed = false, onQuickAdd }: TopbarV2Props
         style={{ left: sidebarWidth }}
       >
         {/* Breadcrumb */}
-        <h1 className="text-[14px] font-semibold text-fg truncate">
-          {routeLabel}
+        <h1 className="flex items-center gap-2 text-[14px] font-semibold text-fg min-w-0">
+          {RouteIcon && <RouteIcon size={16} className="text-fg-muted shrink-0" />}
+          <span className="truncate">{routeLabel}</span>
         </h1>
 
         {/* Actions: bell + quick add + avatar */}
