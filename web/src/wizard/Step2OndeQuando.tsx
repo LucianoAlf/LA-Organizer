@@ -2,10 +2,9 @@
 // Passo 2: local + datas ("Onde e quando acontece").
 
 import { CustomSelect } from '../components/CustomSelect';
+import { DateInput } from '../components/DateInput';
 import { Field } from '../components/Field';
 import { PROJECT_LOCATION_LABELS } from '../lib/projectLabels';
-import { todayISO } from '../utils/wizardDate';
-import { wizardInputClass } from './wizardTypes';
 import type { ProjectLocation } from '../types';
 import type { WizardData } from './wizardTypes';
 
@@ -36,21 +35,16 @@ export function Step2OndeQuando({ data, update }: Props) {
         />
       </Field>
       <Field label="🗓️ Quando começa">
-        <input
-          type="date"
+        <DateInput
           value={data.start_date}
-          min={todayISO()}
-          onChange={(e) => update('start_date', e.target.value)}
-          className={wizardInputClass}
+          onChange={(v) => update('start_date', v)}
         />
       </Field>
       <Field label="🗓️ Quando termina">
-        <input
-          type="date"
+        <DateInput
           value={data.end_date}
-          min={data.start_date || todayISO()}
-          onChange={(e) => update('end_date', e.target.value)}
-          className={wizardInputClass}
+          onChange={(v) => update('end_date', v)}
+          invalid={!!data.start_date && !!data.end_date && data.end_date < data.start_date}
         />
       </Field>
     </>
