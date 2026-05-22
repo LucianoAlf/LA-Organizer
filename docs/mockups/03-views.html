@@ -1,0 +1,1521 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>03 · View Patterns — LA Organizer Desktop</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/tom-tokens.css" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: {
+        colors: {
+          tom: 'var(--tom)',
+          'tom-hover': 'var(--tom-hover)',
+          'tom-active': 'var(--tom-active)',
+          'tom-deep': 'var(--tom-deep)',
+          'tom-tint': 'var(--tom-tint)',
+          'bg-app': 'var(--bg-app)',
+          'bg-surface': 'var(--bg-surface)',
+          'bg-elevated': 'var(--bg-elevated)',
+          'bg-elevated-2': 'var(--bg-elevated-2)',
+          border: 'var(--border)',
+          'border-strong': 'var(--border-strong)',
+          fg: 'var(--fg)',
+          'fg-secondary': 'var(--fg-secondary)',
+          'fg-muted': 'var(--fg-muted)',
+          'fg-disabled': 'var(--fg-disabled)',
+          success: 'var(--success)',
+          warning: 'var(--warning)',
+          danger: 'var(--danger)',
+          info: 'var(--info)',
+        },
+        fontFamily: {
+          sans: ['Inter', 'system-ui', 'sans-serif'],
+          serif: ['Instrument Serif', 'Georgia', 'serif'],
+        }
+      } }
+    };
+  </script>
+
+  <style>
+    /* ── Layout base ── */
+    body {
+      display: flex !important;
+      height: 100vh !important;
+      overflow: hidden !important;
+      background-image:
+        radial-gradient(ellipse at top left, rgba(163, 190, 80, 0.04), transparent 50%),
+        radial-gradient(ellipse at bottom right, rgba(96, 165, 250, 0.03), transparent 50%);
+    }
+
+    /* ── Sidebar ── */
+    .sg-sidebar {
+      width: 220px;
+      flex-shrink: 0;
+      height: 100vh;
+      overflow-y: auto;
+      background: var(--bg-surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .sg-main {
+      flex: 1;
+      height: 100vh;
+      overflow-y: auto;
+    }
+
+    .sg-main-inner {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 48px;
+    }
+
+    /* ── Nav ── */
+    .nav-link {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 16px;
+      font-size: 12px;
+      color: var(--fg-muted);
+      text-decoration: none;
+      border-radius: 4px;
+      margin: 1px 8px;
+      transition: background 150ms, color 150ms;
+    }
+    .nav-link:hover { background: var(--bg-elevated); color: var(--fg); }
+    .nav-link.active { color: var(--tom); background: rgba(163,190,80,0.08); }
+
+    /* ── View containers ── */
+    .view-container {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.4), 0 8px 24px -8px rgba(0,0,0,0.5);
+      overflow: hidden;
+    }
+
+    .view-header {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: linear-gradient(to bottom, rgba(255,255,255,0.02), transparent);
+      flex-shrink: 0;
+    }
+
+    .view-title {
+      font-family: 'Instrument Serif', serif;
+      font-size: 22px;
+      line-height: 1;
+      color: var(--fg);
+    }
+
+    /* ── Dense Table ── */
+    .dt-wrap { overflow: auto; height: calc(520px - 53px); }
+    .dt-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .dt-thead th {
+      position: sticky; top: 0; z-index: 1;
+      background: rgba(20,20,20,0.85);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      padding: 8px 12px;
+      text-align: left;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--fg-muted);
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    .dt-row {
+      border-bottom: 1px solid rgba(42,42,42,0.5);
+      transition: background 150ms;
+      cursor: pointer;
+    }
+    .dt-row:nth-child(even) { background: rgba(255,255,255,0.012); }
+    .dt-row:hover { background: rgba(255,255,255,0.04) !important; }
+    .dt-row td { padding: 9px 12px; vertical-align: middle; white-space: nowrap; }
+
+    .avatar {
+      width: 24px; height: 24px;
+      border-radius: 50%;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 10px; font-weight: 700; color: #fff;
+      flex-shrink: 0;
+    }
+    .avatar-lg {
+      width: 56px; height: 56px;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px; font-weight: 700; color: #fff;
+      flex-shrink: 0;
+    }
+
+    .badge {
+      display: inline-flex; align-items: center;
+      padding: 2px 7px; border-radius: 20px;
+      font-size: 11px; font-weight: 500; line-height: 1.5;
+    }
+    .badge-success { background: rgba(34,197,94,0.12); color: var(--success); }
+    .badge-warning { background: rgba(245,158,11,0.12); color: var(--warning); }
+    .badge-muted   { background: rgba(158,158,158,0.1); color: var(--fg-muted); }
+    .badge-info    { background: rgba(96,165,250,0.12); color: var(--info); }
+    .badge-pink    { background: rgba(236,72,153,0.12); color: #ec4899; }
+    .badge-green   { background: rgba(34,197,94,0.12);  color: var(--success); }
+    .badge-blue    { background: rgba(96,165,250,0.12);  color: var(--info); }
+    .badge-orange  { background: rgba(249,115,22,0.12); color: #f97316; }
+
+    .btn-sm {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 5px 10px; border-radius: 6px;
+      font-size: 12px; font-weight: 500;
+      background: var(--bg-elevated-2); color: var(--fg-secondary);
+      border: 1px solid var(--border); cursor: pointer;
+      transition: background 150ms, color 150ms, border-color 150ms;
+    }
+    .btn-sm:hover { background: var(--bg-elevated); color: var(--fg); border-color: var(--border-strong); }
+    .btn-primary {
+      background: var(--tom); color: #111; border-color: var(--tom);
+    }
+    .btn-primary:hover { background: var(--tom-hover); border-color: var(--tom-hover); }
+
+    /* ── Kanban ── */
+    .kanban-wrap { display: flex; gap: 12px; padding: 14px; overflow-x: auto; height: calc(520px - 53px); }
+    .kanban-col { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; width: 220px; }
+    .kanban-col-header {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 4px; font-size: 12px; font-weight: 600;
+      color: var(--fg-secondary);
+    }
+    .col-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .col-count {
+      margin-left: auto;
+      background: var(--bg-elevated-2);
+      color: var(--fg-muted);
+      font-size: 11px; padding: 1px 6px; border-radius: 20px;
+    }
+    .kanban-card {
+      background: var(--bg-elevated);
+      border-radius: 8px;
+      padding: 12px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.3), inset 0 0 0 1px var(--border);
+      cursor: grab;
+      transition: transform 150ms, box-shadow 150ms;
+      position: relative;
+    }
+    .kanban-card:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4), inset 0 0 0 1px var(--border-strong);
+    }
+    .drag-handle {
+      position: absolute; top: 10px; left: 8px;
+      display: grid; grid-template-columns: repeat(2, 3px); gap: 2px;
+      opacity: 0.3; transition: opacity 150ms;
+    }
+    .drag-handle span { width: 3px; height: 3px; border-radius: 50%; background: var(--fg-muted); display: block; }
+    .kanban-card:hover .drag-handle { opacity: 0.6; }
+    .kcard-title { font-size: 13px; font-weight: 600; line-height: 1.4; margin-left: 14px; margin-bottom: 8px; }
+    .kcard-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; }
+    .avatar-stack { display: flex; }
+    .avatar-stack .avatar { margin-right: -6px; border: 2px solid var(--bg-elevated); }
+    .progress-bar { height: 3px; background: var(--bg-elevated-2); border-radius: 2px; margin-top: 8px; overflow: hidden; }
+    .progress-fill { height: 100%; background: var(--tom); border-radius: 2px; }
+
+    /* ── Month Calendar ── */
+    .mcal-wrap { height: calc(520px - 53px); display: flex; flex-direction: column; padding: 14px; gap: 8px; overflow: hidden; }
+    .mcal-grid { flex: 1; display: grid; grid-template-columns: repeat(7, 1fr); grid-template-rows: auto repeat(6, 1fr); gap: 1px; background: var(--border); border-radius: 4px; overflow: hidden; }
+    .mcal-dow {
+      background: var(--bg-surface);
+      text-align: center; padding: 6px 2px;
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--fg-muted); font-weight: 600;
+    }
+    .mcal-cell {
+      background: var(--bg-surface);
+      padding: 4px 5px; display: flex; flex-direction: column;
+      gap: 2px; min-height: 68px; overflow: hidden;
+      transition: background 150ms;
+    }
+    .mcal-cell:hover { background: var(--bg-elevated); }
+    .mcal-cell.weekend { background: rgba(255,255,255,0.015); }
+    .mcal-cell.weekend:hover { background: var(--bg-elevated); }
+    .mcal-cell.other-month { opacity: 0.3; }
+    .mcal-cell.today { box-shadow: inset 0 0 0 2px var(--tom); }
+    .mcal-day-num { font-size: 11px; font-weight: 500; color: var(--fg-muted); line-height: 1; margin-bottom: 2px; }
+    .mcal-cell.today .mcal-day-num { color: var(--tom); font-weight: 700; }
+    .mcal-evt {
+      height: 14px; border-radius: 3px; padding: 0 4px;
+      font-size: 9px; font-weight: 500; line-height: 14px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .mcal-evt-pink   { background: rgba(236,72,153,0.2); color: #f472b6; }
+    .mcal-evt-green  { background: rgba(34,197,94,0.18); color: #4ade80; }
+    .mcal-evt-blue   { background: rgba(96,165,250,0.18); color: #93c5fd; }
+    .mcal-evt-orange { background: rgba(249,115,22,0.18); color: #fb923c; }
+    .mcal-more { font-size: 9px; color: var(--fg-disabled); padding: 0 4px; cursor: pointer; }
+
+    /* ── Week Calendar ── */
+    .wcal-wrap { height: calc(520px - 53px); display: flex; flex-direction: column; overflow: hidden; }
+    .wcal-head { display: grid; grid-template-columns: 52px repeat(7, 1fr); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .wcal-head-cell {
+      padding: 8px 4px; text-align: center;
+      font-size: 11px; color: var(--fg-muted);
+      border-left: 1px solid rgba(42,42,42,0.4);
+    }
+    .wcal-head-cell:first-child { border-left: none; }
+    .wcal-head-cell.today-col { background: rgba(163,190,80,0.05); color: var(--tom); }
+    .wcal-head-dow { font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; display: block; }
+    .wcal-head-date { font-size: 16px; font-weight: 600; display: block; }
+    .wcal-body { flex: 1; overflow-y: auto; position: relative; }
+    .wcal-grid { display: grid; grid-template-columns: 52px repeat(7, 1fr); }
+    .wcal-time { font-size: 10px; color: var(--fg-disabled); padding: 4px 8px 0; text-align: right; height: 52px; line-height: 1; }
+    .wcal-slot {
+      height: 52px; border-left: 1px solid rgba(42,42,42,0.4);
+      border-bottom: 1px solid rgba(42,42,42,0.25);
+      position: relative;
+    }
+    .wcal-slot.today-col { background: rgba(163,190,80,0.025); }
+    .wcal-event {
+      position: absolute; left: 3px; right: 3px;
+      border-radius: 4px; padding: 4px 6px;
+      font-size: 10px; font-weight: 500; line-height: 1.3;
+      overflow: hidden; z-index: 1;
+    }
+    .wcal-now-line {
+      position: absolute; left: 0; right: 0; z-index: 10;
+      display: flex; align-items: center; pointer-events: none;
+    }
+    .wcal-now-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); flex-shrink: 0; margin-left: 46px; }
+    .wcal-now-bar { flex: 1; height: 1px; background: var(--danger); opacity: 0.8; }
+
+    /* ── Gantt Timeline ── */
+    .gantt-wrap { display: flex; height: calc(600px - 53px); overflow: hidden; }
+    .gantt-sidebar { width: 220px; flex-shrink: 0; overflow: hidden; border-right: 1px solid var(--border); }
+    .gantt-sidebar-header {
+      height: 40px; display: flex; align-items: center; padding: 0 12px;
+      font-size: 11px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.08em; color: var(--fg-muted);
+      border-bottom: 1px solid var(--border); background: var(--bg-surface);
+    }
+    .gantt-sidebar-row {
+      height: 36px; display: flex; align-items: center; gap: 8px;
+      padding: 0 12px; border-bottom: 1px solid rgba(42,42,42,0.4);
+      overflow: hidden;
+    }
+    .gantt-sidebar-row:hover { background: rgba(255,255,255,0.03); }
+    .gchart { flex: 1; overflow-x: auto; overflow-y: hidden; position: relative; }
+    .gchart-head { height: 40px; position: sticky; top: 0; z-index: 2; background: var(--bg-surface); border-bottom: 1px solid var(--border); display: flex; }
+    .gchart-month { display: flex; flex-direction: column; border-right: 1px solid var(--border); }
+    .gchart-month-label {
+      font-size: 11px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.07em; color: var(--fg-secondary); padding: 4px 8px; flex-shrink: 0;
+    }
+    .gchart-weeks { display: flex; flex: 1; }
+    .gchart-week { flex: 1; font-size: 9px; color: var(--fg-disabled); padding: 0 4px; border-left: 1px solid rgba(42,42,42,0.4); display: flex; align-items: flex-end; padding-bottom: 3px; }
+    .gchart-body { position: relative; }
+    .gchart-row { height: 36px; display: flex; align-items: center; border-bottom: 1px solid rgba(42,42,42,0.4); position: relative; }
+    .gchart-row:hover { background: rgba(255,255,255,0.02); }
+    .gchart-bg-line { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(42,42,42,0.4); }
+    .gantt-bar {
+      position: absolute; height: 24px; border-radius: 4px;
+      display: flex; align-items: center; padding: 0 8px;
+      font-size: 10px; font-weight: 600; white-space: nowrap; overflow: hidden;
+      cursor: pointer; transition: filter 150ms;
+    }
+    .gantt-bar:hover { filter: brightness(1.15); }
+    .today-line {
+      position: absolute; top: 0; bottom: 0; width: 1px; background: var(--danger); z-index: 5;
+      animation: pulse-line 2s ease-in-out infinite;
+    }
+    @keyframes pulse-line {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .today-line::before {
+      content: ''; position: absolute; top: -4px; left: -4px;
+      width: 9px; height: 9px; border-radius: 50%; background: var(--danger);
+    }
+
+    /* ── Person Grid ── */
+    .pgrid-wrap { height: calc(520px - 53px); overflow: auto; }
+    .pgrid-inner { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; padding: 14px; }
+    .person-card {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 10px; padding: 14px;
+      display: flex; flex-direction: column; gap: 8px;
+      transition: background 150ms, border-color 150ms, transform 150ms;
+      cursor: pointer;
+    }
+    .person-card:hover { background: var(--bg-elevated-2); border-color: var(--border-strong); transform: translateY(-1px); }
+    .avatar-ring-green  { box-shadow: 0 0 0 3px var(--bg-elevated), 0 0 0 5px var(--success); }
+    .avatar-ring-yellow { box-shadow: 0 0 0 3px var(--bg-elevated), 0 0 0 5px var(--warning); }
+    .avatar-ring-red    { box-shadow: 0 0 0 3px var(--bg-elevated), 0 0 0 5px var(--danger); }
+    .metric-chip {
+      display: inline-flex; align-items: center; gap: 3px;
+      font-size: 11px; color: var(--fg-muted); padding: 2px 6px;
+      background: var(--bg-elevated-2); border-radius: 20px; border: 1px solid var(--border);
+    }
+    .metric-chip.warn { color: var(--warning); }
+
+    /* ── Misc ── */
+    .tab-btn {
+      padding: 4px 10px; border-radius: 5px; font-size: 11px; font-weight: 500;
+      cursor: pointer; transition: background 150ms, color 150ms;
+      color: var(--fg-muted); border: 1px solid transparent;
+    }
+    .tab-btn.active { background: var(--bg-elevated-2); color: var(--fg); border-color: var(--border); }
+    .icon-btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 28px; height: 28px; border-radius: 6px;
+      color: var(--fg-muted); cursor: pointer;
+      transition: background 150ms, color 150ms;
+      border: none; background: transparent;
+    }
+    .icon-btn:hover { background: var(--bg-elevated-2); color: var(--fg); }
+    .search-input {
+      background: var(--bg-elevated-2); border: 1px solid var(--border);
+      border-radius: 6px; padding: 4px 8px 4px 28px;
+      font-size: 12px; color: var(--fg); outline: none;
+      width: 160px; transition: border-color 150ms, box-shadow 150ms;
+    }
+    .search-input:focus { border-color: var(--tom); box-shadow: 0 0 0 3px rgba(163,190,80,0.15); }
+    .search-wrap { position: relative; display: inline-flex; align-items: center; }
+    .search-icon { position: absolute; left: 8px; color: var(--fg-muted); pointer-events: none; }
+
+    /* Instrument Serif page title */
+    .page-title { font-family: 'Instrument Serif', serif; font-size: 36px; line-height: 1.1; color: var(--fg); }
+    .page-subtitle { font-size: 13px; color: var(--fg-muted); margin-top: 4px; }
+
+    /* Section anchor offset */
+    .section-anchor { scroll-margin-top: 32px; }
+  </style>
+</head>
+<body>
+
+<!-- ══ SIDEBAR ══ -->
+<nav class="sg-sidebar">
+  <div style="padding: 20px 16px 12px;">
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--fg-muted);margin-bottom:2px;">🎨 View Patterns</div>
+    <div style="font-size:11px;color:var(--fg-disabled);">6 visualizações com personalidade</div>
+  </div>
+
+  <div style="padding: 0 0 8px; flex:1;">
+    <div style="padding: 8px 16px 4px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--fg-disabled);">Views</div>
+    <a href="#densetable" class="nav-link">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></svg>
+      Lista densa
+    </a>
+    <a href="#kanban" class="nav-link">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="5" height="18" rx="1"/><rect x="10" y="3" width="5" height="18" rx="1"/><rect x="17" y="3" width="5" height="18" rx="1"/></svg>
+      Kanban
+    </a>
+    <a href="#monthcalendar" class="nav-link">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+      Calendário · Mês
+    </a>
+    <a href="#weekcalendar" class="nav-link">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M8 14h.01M12 14h.01M16 14h.01"/></svg>
+      Semana
+    </a>
+    <a href="#timeline" class="nav-link">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h12M3 18h8"/></svg>
+      Timeline · Gantt
+    </a>
+    <a href="#persongrid" class="nav-link">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4"/><circle cx="17" cy="11" r="3"/><path d="M21 21v-1a3 3 0 0 0-3-3h-2a3 3 0 0 0-3 3v1"/></svg>
+      Por pessoa
+    </a>
+  </div>
+
+  <div style="padding: 12px 16px; border-top: 1px solid var(--border); margin-top: auto;">
+    <a href="index.html" class="nav-link" style="margin: 0; gap: 6px;">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+      Index
+    </a>
+  </div>
+</nav>
+
+<!-- ══ MAIN ══ -->
+<main class="sg-main">
+  <div class="sg-main-inner">
+
+    <!-- Page header -->
+    <div style="margin-bottom: 48px;">
+      <h1 class="page-title"><em>View Patterns</em></h1>
+      <p class="page-subtitle">6 visualizações com personalidade própria — cada uma otimizada para uma forma de pensar</p>
+    </div>
+
+    <!-- ══════════════════════════════════════════ -->
+    <!-- 1 · DENSE TABLE                           -->
+    <!-- ══════════════════════════════════════════ -->
+    <div id="densetable" class="section-anchor" style="margin-bottom: 56px;">
+      <div style="margin-bottom: 12px;">
+        <h2 style="font-family:'Instrument Serif',serif; font-size:24px; color:var(--fg); line-height:1; margin:0 0 4px;">Lista densa</h2>
+        <p style="font-size:12px;color:var(--fg-muted);margin:0;">Tabela de alta densidade · sticky header · row actions</p>
+      </div>
+
+      <div class="view-container" style="height:520px; display:flex; flex-direction:column;">
+        <div class="view-header">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span class="view-title">Colaboradores</span>
+            <span class="badge badge-muted">12</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <div class="search-wrap">
+              <svg class="search-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+              <input class="search-input" placeholder="Buscar…" />
+            </div>
+            <button class="btn-sm">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Exportar
+            </button>
+            <button class="btn-sm btn-primary">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Novo
+            </button>
+          </div>
+        </div>
+
+        <div class="dt-wrap">
+          <table class="dt-table">
+            <thead class="dt-thead">
+              <tr>
+                <th style="width:32px;padding:8px 8px 8px 14px;">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+                </th>
+                <th>Pessoa</th>
+                <th>Função</th>
+                <th>Unidade</th>
+                <th>Status</th>
+                <th>Última atividade</th>
+                <th style="width:32px;"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <!-- Row macro -->
+              <tr class="dt-row">
+                <td style="padding-left:14px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></td>
+                <td><div style="display:flex;align-items:center;gap:8px;"><span class="avatar" style="background:#7C3AED;">Q</span><span style="font-weight:500;">Quintela</span></div></td>
+                <td style="color:var(--fg-secondary);">Coordenador</td>
+                <td style="color:var(--fg-muted);font-size:12px;">Barra</td>
+                <td><span class="badge badge-success">Ativo</span></td>
+                <td style="color:var(--fg-muted);font-size:12px;">Há 2 min</td>
+                <td><button class="icon-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></button></td>
+              </tr>
+              <tr class="dt-row">
+                <td style="padding-left:14px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></td>
+                <td><div style="display:flex;align-items:center;gap:8px;"><span class="avatar" style="background:#0891B2;">R</span><span style="font-weight:500;">Rafinha</span></div></td>
+                <td style="color:var(--fg-secondary);">Mentor</td>
+                <td style="color:var(--fg-muted);font-size:12px;">Recreio</td>
+                <td><span class="badge badge-success">Ativo</span></td>
+                <td style="color:var(--fg-muted);font-size:12px;">Há 1 hora</td>
+                <td><button class="icon-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></button></td>
+              </tr>
+              <tr class="dt-row">
+                <td style="padding-left:14px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></td>
+                <td><div style="display:flex;align-items:center;gap:8px;"><span class="avatar" style="background:#059669;">Y</span><span style="font-weight:500;">Yuri</span></div></td>
+                <td style="color:var(--fg-secondary);">Coordenador</td>
+                <td style="color:var(--fg-muted);font-size:12px;">Campo Grande</td>
+                <td><span class="badge badge-warning">Férias</span></td>
+                <td style="color:var(--fg-muted);font-size:12px;">Ontem 14:32</td>
+                <td><button class="icon-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></button></td>
+              </tr>
+              <tr class="dt-row">
+                <td style="padding-left:14px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></td>
+                <td><div style="display:flex;align-items:center;gap:8px;"><span class="avatar" style="background:#B45309;">J</span><span style="font-weight:500;">John</span></div></td>
+                <td style="color:var(--fg-secondary);">Mentor</td>
+                <td style="color:var(--fg-muted);font-size:12px;">Barra</td>
+                <td><span class="badge badge-success">Ativo</span></td>
+                <td style="color:var(--fg-muted);font-size:12px;">Há 3 horas</td>
+                <td><button class="icon-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></button></td>
+              </tr>
+              <tr class="dt-row">
+                <td style="padding-left:14px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></td>
+                <td><div style="display:flex;align-items:center;gap:8px;"><span class="avatar" style="background:#DC2626;">K</span><span style="font-weight:500;">Krissya</span></div></td>
+                <td style="color:var(--fg-secondary);">Professora</td>
+                <td style="color:var(--fg-muted);font-size:12px;">Recreio</td>
+                <td><span class="badge badge-success">Ativo</span></td>
+                <td style="color:var(--fg-muted);font-size:12px;">Há 20 min</td>
+                <td><button class="icon-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></button></td>
+              </tr>
+              <tr class="dt-row">
+                <td style="padding-left:14px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></td>
+                <td><div style="display:flex;align-items:center;gap:8px;"><span class="avatar" style="background:#0F766E;">J</span><span style="font-weight:500;">Jordan</span></div></td>
+                <td style="color:var(--fg-secondary);">Administrativo</td>
+                <td style="color:var(--fg-muted);font-size:12px;">Campo Grande</td>
+                <td><span class="badge badge-muted">Ausente</span></td>
+                <td style="color:var(--fg-muted);font-size:12px;">Há 3 dias</td>
+                <td><button class="icon-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></button></td>
+              </tr>
+              <tr class="dt-row">
+                <td style="padding-left:14px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></td>
+                <td><div style="display:flex;align-items:center;gap:8px;"><span class="avatar" style="background:#9333EA;">D</span><span style="font-weight:500;">Dai</span></div></td>
+                <td style="color:var(--fg-secondary);">Professora</td>
+                <td style="color:var(--fg-muted);font-size:12px;">Barra</td>
+                <td><span class="badge badge-success">Ativo</span></td>
+                <td style="color:var(--fg-muted);font-size:12px;">Há 45 min</td>
+                <td><button class="icon-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></button></td>
+              </tr>
+              <tr class="dt-row">
+                <td style="padding-left:14px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></td>
+                <td><div style="display:flex;align-items:center;gap:8px;"><span class="avatar" style="background:#2563EB;">L</span><span style="font-weight:500;">Leo</span></div></td>
+                <td style="color:var(--fg-secondary);">Ops Técnico</td>
+                <td style="color:var(--fg-muted);font-size:12px;">Recreio</td>
+                <td><span class="badge badge-success">Ativo</span></td>
+                <td style="color:var(--fg-muted);font-size:12px;">Há 2 horas</td>
+                <td><button class="icon-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></button></td>
+              </tr>
+              <tr class="dt-row">
+                <td style="padding-left:14px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></td>
+                <td><div style="display:flex;align-items:center;gap:8px;"><span class="avatar" style="background:#CA8A04;">R</span><span style="font-weight:500;">Ramon</span></div></td>
+                <td style="color:var(--fg-secondary);">Professor</td>
+                <td style="color:var(--fg-muted);font-size:12px;">Campo Grande</td>
+                <td><span class="badge badge-warning">Férias</span></td>
+                <td style="color:var(--fg-muted);font-size:12px;">Há 2 dias</td>
+                <td><button class="icon-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></button></td>
+              </tr>
+              <tr class="dt-row">
+                <td style="padding-left:14px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></td>
+                <td><div style="display:flex;align-items:center;gap:8px;"><span class="avatar" style="background:#0369A1;">R</span><span style="font-weight:500;">Rodrigo</span></div></td>
+                <td style="color:var(--fg-secondary);">Administrativo</td>
+                <td style="color:var(--fg-muted);font-size:12px;">Barra</td>
+                <td><span class="badge badge-success">Ativo</span></td>
+                <td style="color:var(--fg-muted);font-size:12px;">Há 30 min</td>
+                <td><button class="icon-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></button></td>
+              </tr>
+              <tr class="dt-row">
+                <td style="padding-left:14px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></td>
+                <td><div style="display:flex;align-items:center;gap:8px;"><span class="avatar" style="background:#BE185D;">P</span><span style="font-weight:500;">Peterson</span></div></td>
+                <td style="color:var(--fg-secondary);">Mentor</td>
+                <td style="color:var(--fg-muted);font-size:12px;">Campo Grande</td>
+                <td><span class="badge badge-success">Ativo</span></td>
+                <td style="color:var(--fg-muted);font-size:12px;">Há 5 min</td>
+                <td><button class="icon-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></button></td>
+              </tr>
+              <tr class="dt-row">
+                <td style="padding-left:14px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></td>
+                <td><div style="display:flex;align-items:center;gap:8px;"><span class="avatar" style="background:#15803D;">J</span><span style="font-weight:500;">Juliana</span></div></td>
+                <td style="color:var(--fg-secondary);">Coordenadora</td>
+                <td style="color:var(--fg-muted);font-size:12px;">Recreio</td>
+                <td><span class="badge badge-success">Ativo</span></td>
+                <td style="color:var(--fg-muted);font-size:12px;">Ontem 09:15</td>
+                <td><button class="icon-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></button></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════ -->
+    <!-- 2 · KANBAN                                -->
+    <!-- ══════════════════════════════════════════ -->
+    <div id="kanban" class="section-anchor" style="margin-bottom: 56px;">
+      <div style="margin-bottom: 12px;">
+        <h2 style="font-family:'Instrument Serif',serif; font-size:24px; color:var(--fg); line-height:1; margin:0 0 4px;">Kanban</h2>
+        <p style="font-size:12px;color:var(--fg-muted);margin:0;">Gestão de fluxo por status · drag & drop · progresso inline</p>
+      </div>
+
+      <div class="view-container" style="height:520px; display:flex; flex-direction:column;">
+        <div class="view-header">
+          <span class="view-title">Projetos</span>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <div style="display:flex;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:6px;padding:2px;">
+              <button class="tab-btn">Compacto</button>
+              <button class="tab-btn active">Confortável</button>
+            </div>
+            <button class="btn-sm btn-primary">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Novo
+            </button>
+          </div>
+        </div>
+
+        <div class="kanban-wrap">
+          <!-- Col: Planejamento -->
+          <div class="kanban-col" style="min-width:220px;">
+            <div class="kanban-col-header">
+              <span class="col-dot" style="background:var(--fg-muted);"></span>
+              Em planejamento
+              <span class="col-count">7</span>
+            </div>
+            <!-- Card -->
+            <div class="kanban-card">
+              <div class="drag-handle"><span></span><span></span><span></span><span></span><span></span><span></span></div>
+              <div class="kcard-title">Inventário das escolas</div>
+              <span class="badge badge-blue">Infraestrutura</span>
+              <div class="progress-bar"><div class="progress-fill" style="width:0%"></div></div>
+              <div class="kcard-footer">
+                <div class="avatar-stack">
+                  <span class="avatar" style="background:#7C3AED;">Q</span>
+                  <span class="avatar" style="background:#0891B2;">Y</span>
+                </div>
+                <span style="font-size:11px;color:var(--fg-muted);">📋 3</span>
+              </div>
+            </div>
+            <div class="kanban-card">
+              <div class="drag-handle"><span></span><span></span><span></span><span></span><span></span><span></span></div>
+              <div class="kcard-title">LA CANTO - Jornada</div>
+              <span class="badge badge-green">Pedagógico</span>
+              <div class="progress-bar"><div class="progress-fill" style="width:0%"></div></div>
+              <div class="kcard-footer">
+                <div class="avatar-stack">
+                  <span class="avatar" style="background:#15803D;">J</span>
+                </div>
+                <span style="font-size:11px;color:var(--fg-muted);">📋 5</span>
+              </div>
+            </div>
+            <div class="kanban-card">
+              <div class="drag-handle"><span></span><span></span><span></span><span></span><span></span><span></span></div>
+              <div class="kcard-title" style="font-size:12px;">RECURSOS DO CURSO DE CANTO</div>
+              <span class="badge badge-blue">Infraestrutura</span>
+              <div class="progress-bar"><div class="progress-fill" style="width:0%"></div></div>
+              <div class="kcard-footer">
+                <div class="avatar-stack">
+                  <span class="avatar" style="background:#0891B2;">R</span>
+                  <span class="avatar" style="background:#DC2626;">K</span>
+                </div>
+                <span style="font-size:11px;color:var(--fg-muted);">📋 7</span>
+              </div>
+            </div>
+            <div class="kanban-card">
+              <div class="drag-handle"><span></span><span></span><span></span><span></span><span></span><span></span></div>
+              <div class="kcard-title" style="font-size:12px;">Vídeo de Onboarding L.A</div>
+              <span class="badge badge-orange">Operacional</span>
+              <div class="progress-bar"><div class="progress-fill" style="width:0%"></div></div>
+              <div class="kcard-footer">
+                <div class="avatar-stack">
+                  <span class="avatar" style="background:#CA8A04;">L</span>
+                </div>
+                <span style="font-size:11px;color:var(--fg-muted);">📋 4</span>
+              </div>
+            </div>
+            <div class="kanban-card">
+              <div class="drag-handle"><span></span><span></span><span></span><span></span><span></span><span></span></div>
+              <div class="kcard-title" style="font-size:11px;">Vídeo Onboarding Colaboradores</div>
+              <span class="badge badge-orange">Operacional</span>
+              <div class="progress-bar"><div class="progress-fill" style="width:0%"></div></div>
+              <div class="kcard-footer">
+                <div class="avatar-stack">
+                  <span class="avatar" style="background:#0369A1;">L</span>
+                </div>
+                <span style="font-size:11px;color:var(--fg-muted);">📋 4</span>
+              </div>
+            </div>
+            <div class="kanban-card">
+              <div class="drag-handle"><span></span><span></span><span></span><span></span><span></span><span></span></div>
+              <div class="kcard-title">LA Teclas</div>
+              <span class="badge badge-orange">Operacional</span>
+              <div class="progress-bar"><div class="progress-fill" style="width:0%"></div></div>
+              <div class="kcard-footer">
+                <div class="avatar-stack">
+                  <span class="avatar" style="background:#BE185D;">M</span>
+                </div>
+                <span style="font-size:11px;color:var(--fg-muted);">📋 2</span>
+              </div>
+            </div>
+            <div class="kanban-card">
+              <div class="drag-handle"><span></span><span></span><span></span><span></span><span></span><span></span></div>
+              <div class="kcard-title">Masterclass de Percussão</div>
+              <span class="badge badge-green">Pedagógico</span>
+              <div class="progress-bar"><div class="progress-fill" style="width:0%"></div></div>
+              <div class="kcard-footer">
+                <div class="avatar-stack">
+                  <span class="avatar" style="background:#059669;">Y</span>
+                </div>
+                <span style="font-size:11px;color:var(--fg-muted);">📋 3</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Col: Em andamento -->
+          <div class="kanban-col" style="min-width:220px;">
+            <div class="kanban-col-header">
+              <span class="col-dot" style="background:var(--info);"></span>
+              Em andamento
+              <span class="col-count">1</span>
+            </div>
+            <div class="kanban-card" style="box-shadow: 0 1px 2px rgba(0,0,0,0.3), inset 0 0 0 1px rgba(96,165,250,0.3);">
+              <div class="drag-handle"><span></span><span></span><span></span><span></span><span></span><span></span></div>
+              <div class="kcard-title">Festival de Cordas 2026</div>
+              <span class="badge badge-pink">Evento</span>
+              <div class="progress-bar"><div class="progress-fill" style="width:32%;background:var(--info);"></div></div>
+              <div class="kcard-footer">
+                <div class="avatar-stack">
+                  <span class="avatar" style="background:#7C3AED;">Q</span>
+                  <span class="avatar" style="background:#0891B2;">R</span>
+                  <span class="avatar" style="background:#DC2626;">J</span>
+                </div>
+                <span style="font-size:11px;color:var(--fg-muted);">📋 9</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Col: Concluído -->
+          <div class="kanban-col" style="min-width:220px;">
+            <div class="kanban-col-header">
+              <span class="col-dot" style="background:var(--success);"></span>
+              Concluído
+              <span class="col-count">0</span>
+            </div>
+            <div style="padding: 20px; text-align: center; color: var(--fg-disabled); font-size: 12px;">
+              <div style="margin-bottom:8px;opacity:0.4;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin:0 auto;display:block;"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>
+              </div>
+              Nenhum item
+            </div>
+          </div>
+
+          <!-- Col: Cancelado -->
+          <div class="kanban-col" style="min-width:220px;">
+            <div class="kanban-col-header">
+              <span class="col-dot" style="background:var(--danger);"></span>
+              Cancelado
+              <span class="col-count">0</span>
+            </div>
+            <div style="padding: 20px; text-align: center; color: var(--fg-disabled); font-size: 12px;">
+              <div style="margin-bottom:8px;opacity:0.4;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin:0 auto;display:block;"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6M9 9l6 6"/></svg>
+              </div>
+              Nenhum item
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════ -->
+    <!-- 3 · MONTH CALENDAR                        -->
+    <!-- ══════════════════════════════════════════ -->
+    <div id="monthcalendar" class="section-anchor" style="margin-bottom: 56px;">
+      <div style="margin-bottom: 12px;">
+        <h2 style="font-family:'Instrument Serif',serif; font-size:24px; color:var(--fg); line-height:1; margin:0 0 4px;">Calendário · Mês</h2>
+        <p style="font-size:12px;color:var(--fg-muted);margin:0;">Visão mensal · eventos por categoria · "Hoje" em destaque</p>
+      </div>
+
+      <div class="view-container" style="height:520px; display:flex; flex-direction:column;">
+        <div class="view-header">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span class="view-title">Calendário</span>
+            <div style="display:flex;align-items:center;gap:4px;">
+              <button class="icon-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg></button>
+              <span style="font-size:13px;font-weight:600;color:var(--fg);min-width:90px;text-align:center;">Maio 2026</span>
+              <button class="icon-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg></button>
+            </div>
+          </div>
+          <button class="btn-sm">Hoje</button>
+        </div>
+
+        <div class="mcal-wrap">
+          <div class="mcal-grid">
+            <!-- DOW headers -->
+            <div class="mcal-dow">Dom</div>
+            <div class="mcal-dow">Seg</div>
+            <div class="mcal-dow">Ter</div>
+            <div class="mcal-dow">Qua</div>
+            <div class="mcal-dow">Qui</div>
+            <div class="mcal-dow">Sex</div>
+            <div class="mcal-dow">Sáb</div>
+
+            <!-- Week 1: Apr 27 - May 2 -->
+            <div class="mcal-cell weekend other-month"><div class="mcal-day-num">27</div></div>
+            <div class="mcal-cell other-month"><div class="mcal-day-num">28</div></div>
+            <div class="mcal-cell other-month"><div class="mcal-day-num">29</div></div>
+            <div class="mcal-cell other-month"><div class="mcal-day-num">30</div></div>
+            <div class="mcal-cell"><div class="mcal-day-num">1</div><div class="mcal-evt mcal-evt-orange">Onboarding L.A</div></div>
+            <div class="mcal-cell"><div class="mcal-day-num">2</div><div class="mcal-evt mcal-evt-orange">Onboarding L.A</div></div>
+            <div class="mcal-cell weekend"><div class="mcal-day-num">3</div></div>
+
+            <!-- Week 2 -->
+            <div class="mcal-cell weekend"><div class="mcal-day-num">4</div></div>
+            <div class="mcal-cell"><div class="mcal-day-num">5</div><div class="mcal-evt mcal-evt-orange">Onboarding L.A</div></div>
+            <div class="mcal-cell"><div class="mcal-day-num">6</div></div>
+            <div class="mcal-cell"><div class="mcal-day-num">7</div></div>
+            <div class="mcal-cell"><div class="mcal-day-num">8</div></div>
+            <div class="mcal-cell"><div class="mcal-day-num">9</div></div>
+            <div class="mcal-cell weekend"><div class="mcal-day-num">10</div></div>
+
+            <!-- Week 3 -->
+            <div class="mcal-cell weekend"><div class="mcal-day-num">11</div></div>
+            <div class="mcal-cell"><div class="mcal-day-num">12</div></div>
+            <div class="mcal-cell"><div class="mcal-day-num">13</div></div>
+            <div class="mcal-cell"><div class="mcal-day-num">14</div></div>
+            <div class="mcal-cell"><div class="mcal-day-num">15</div><div class="mcal-evt mcal-evt-blue">Inventário</div><div class="mcal-evt mcal-evt-orange">Onboarding Col.</div></div>
+            <div class="mcal-cell"><div class="mcal-day-num">16</div><div class="mcal-evt mcal-evt-blue">Inventário</div></div>
+            <div class="mcal-cell weekend"><div class="mcal-day-num">17</div><div class="mcal-evt mcal-evt-blue">Inventário</div></div>
+
+            <!-- Week 4 -->
+            <div class="mcal-cell weekend"><div class="mcal-day-num">18</div><div class="mcal-evt mcal-evt-blue">Inventário</div></div>
+            <div class="mcal-cell"><div class="mcal-day-num">19</div><div class="mcal-evt mcal-evt-green">LA CANTO</div><div class="mcal-evt mcal-evt-blue">Inventário</div><div class="mcal-evt mcal-evt-blue" style="opacity:0.7;">Recursos Canto</div></div>
+            <div class="mcal-cell"><div class="mcal-day-num">20</div><div class="mcal-evt mcal-evt-green">LA CANTO</div><div class="mcal-evt mcal-evt-blue">Inventário</div><div class="mcal-evt mcal-evt-blue" style="opacity:0.7;">Recursos Canto</div></div>
+            <div class="mcal-cell today"><div class="mcal-day-num">21</div><div class="mcal-evt mcal-evt-green">LA CANTO</div><div class="mcal-evt mcal-evt-blue">Inventário</div><div class="mcal-more">+1 mais</div></div>
+            <div class="mcal-cell"><div class="mcal-day-num">22</div><div class="mcal-evt mcal-evt-green">LA CANTO</div><div class="mcal-evt mcal-evt-blue">Inventário</div><div class="mcal-evt mcal-evt-blue" style="opacity:0.7;">Recursos Canto</div></div>
+            <div class="mcal-cell"><div class="mcal-day-num">23</div><div class="mcal-evt mcal-evt-green">LA CANTO</div><div class="mcal-evt mcal-evt-blue">Inventário</div><div class="mcal-evt mcal-evt-pink">Festival Cordas</div></div>
+            <div class="mcal-cell weekend"><div class="mcal-day-num">24</div><div class="mcal-evt mcal-evt-green">LA CANTO</div><div class="mcal-evt mcal-evt-pink">Festival Cordas</div></div>
+
+            <!-- Week 5 -->
+            <div class="mcal-cell weekend"><div class="mcal-day-num">25</div><div class="mcal-evt mcal-evt-green">LA CANTO</div><div class="mcal-evt mcal-evt-pink">Festival Cordas</div></div>
+            <div class="mcal-cell"><div class="mcal-day-num">26</div><div class="mcal-evt mcal-evt-green">LA CANTO</div><div class="mcal-evt mcal-evt-blue">Recursos Canto</div></div>
+            <div class="mcal-cell"><div class="mcal-day-num">27</div><div class="mcal-evt mcal-evt-green">LA CANTO</div><div class="mcal-evt mcal-evt-blue">Recursos Canto</div><div class="mcal-evt mcal-evt-pink">Festival Cordas</div></div>
+            <div class="mcal-cell"><div class="mcal-day-num">28</div><div class="mcal-evt mcal-evt-green">LA CANTO</div><div class="mcal-evt mcal-evt-blue">Recursos Canto</div><div class="mcal-more">+1 mais</div></div>
+            <div class="mcal-cell"><div class="mcal-day-num">29</div><div class="mcal-evt mcal-evt-green">LA CANTO</div><div class="mcal-evt mcal-evt-blue">Inventário ✓</div></div>
+            <div class="mcal-cell"><div class="mcal-day-num">30</div><div class="mcal-evt mcal-evt-green">LA CANTO</div><div class="mcal-evt mcal-evt-blue">Recursos Canto</div></div>
+            <div class="mcal-cell weekend"><div class="mcal-day-num">31</div><div class="mcal-evt mcal-evt-green">LA CANTO</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════ -->
+    <!-- 4 · WEEK CALENDAR                         -->
+    <!-- ══════════════════════════════════════════ -->
+    <div id="weekcalendar" class="section-anchor" style="margin-bottom: 56px;">
+      <div style="margin-bottom: 12px;">
+        <h2 style="font-family:'Instrument Serif',serif; font-size:24px; color:var(--fg); line-height:1; margin:0 0 4px;">Semana</h2>
+        <p style="font-size:12px;color:var(--fg-muted);margin:0;">Visão semanal estilo Sunsama · linha "agora" · blocos de tempo</p>
+      </div>
+
+      <div class="view-container" style="height:520px; display:flex; flex-direction:column;">
+        <div class="view-header">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span class="view-title">Semana · 18–24 mai</span>
+            <div style="display:flex;align-items:center;gap:2px;">
+              <button class="icon-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg></button>
+              <button class="icon-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg></button>
+            </div>
+          </div>
+          <button class="btn-sm">Hoje</button>
+        </div>
+
+        <div class="wcal-wrap">
+          <!-- Column headers -->
+          <div class="wcal-head">
+            <div></div>
+            <div class="wcal-head-cell"><span class="wcal-head-dow">dom</span><span class="wcal-head-date">18</span></div>
+            <div class="wcal-head-cell"><span class="wcal-head-dow">seg</span><span class="wcal-head-date">19</span></div>
+            <div class="wcal-head-cell"><span class="wcal-head-dow">ter</span><span class="wcal-head-date">20</span></div>
+            <div class="wcal-head-cell today-col"><span class="wcal-head-dow" style="color:var(--tom);">qui</span><span class="wcal-head-date" style="color:var(--tom);">21</span></div>
+            <div class="wcal-head-cell"><span class="wcal-head-dow">sex</span><span class="wcal-head-date">22</span></div>
+            <div class="wcal-head-cell"><span class="wcal-head-dow">sáb</span><span class="wcal-head-date">23</span></div>
+            <div class="wcal-head-cell"><span class="wcal-head-dow">dom</span><span class="wcal-head-date">24</span></div>
+          </div>
+          <!-- Body -->
+          <div class="wcal-body">
+            <!-- Now line at ~14:30 = (14.5 - 6) * 52px = 8.5 * 52 = 442px from top -->
+            <div class="wcal-now-line" style="top: 442px;">
+              <div class="wcal-now-dot"></div>
+              <div class="wcal-now-bar"></div>
+            </div>
+
+            <div class="wcal-grid" style="position:relative;">
+              <!-- Hours 06-22 -->
+              <!-- 06:00 -->
+              <div class="wcal-time">06</div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot today-col"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <!-- 07 -->
+              <div class="wcal-time">07</div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot today-col"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <!-- 08 -->
+              <div class="wcal-time">08</div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot today-col"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <!-- 09 -->
+              <div class="wcal-time">09</div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot today-col" style="position:relative;">
+                <!-- Reunião equipe 09-10 qui -->
+                <div class="wcal-event" style="top:0;height:52px;background:rgba(96,165,250,0.15);border-left:3px solid var(--info);color:var(--info);">
+                  <div style="font-weight:600;font-size:10px;">Reunião de equipe</div>
+                  <div style="font-size:9px;opacity:0.7;">09:00 – 10:00</div>
+                </div>
+              </div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <!-- 10 -->
+              <div class="wcal-time">10</div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot today-col"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <!-- 11 -->
+              <div class="wcal-time">11</div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot today-col" style="position:relative;">
+                <div class="wcal-event" style="top:0;height:52px;background:rgba(96,165,250,0.12);border-left:3px solid var(--info);color:#93c5fd;">
+                  <div style="font-weight:600;font-size:10px;">Inventário Sala 1</div>
+                  <div style="font-size:9px;opacity:0.7;">11:00 – 12:00</div>
+                </div>
+              </div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <!-- 12 -->
+              <div class="wcal-time">12</div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot today-col"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <!-- 13 -->
+              <div class="wcal-time">13</div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot today-col"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <!-- 14 -->
+              <div class="wcal-time">14</div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot" style="position:relative;">
+                <!-- Checkpoint Festival ter 14-15 -->
+                <div class="wcal-event" style="top:0;height:52px;background:rgba(236,72,153,0.13);border-left:3px solid #ec4899;color:#f472b6;">
+                  <div style="font-weight:600;font-size:10px;">Checkpoint Festival</div>
+                  <div style="font-size:9px;opacity:0.7;">14:00 – 15:00</div>
+                </div>
+              </div>
+              <div class="wcal-slot today-col"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <!-- 15 -->
+              <div class="wcal-time">15</div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot today-col"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <!-- 16 -->
+              <div class="wcal-time">16</div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot" style="position:relative;">
+                <!-- Aula LA Educa seg 16-17:30 -->
+                <div class="wcal-event" style="top:0;height:78px;background:rgba(34,197,94,0.12);border-left:3px solid var(--success);color:#4ade80;">
+                  <div style="font-weight:600;font-size:10px;">Aula LA Educa</div>
+                  <div style="font-size:9px;opacity:0.7;">16:00 – 17:30</div>
+                </div>
+              </div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot today-col"></div>
+              <div class="wcal-slot" style="position:relative;">
+                <!-- Aula LA Educa sex 16-17:30 -->
+                <div class="wcal-event" style="top:0;height:78px;background:rgba(34,197,94,0.12);border-left:3px solid var(--success);color:#4ade80;">
+                  <div style="font-weight:600;font-size:10px;">Aula LA Educa</div>
+                  <div style="font-size:9px;opacity:0.7;">16:00 – 17:30</div>
+                </div>
+              </div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <!-- 17 -->
+              <div class="wcal-time">17</div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot today-col"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <!-- 18 -->
+              <div class="wcal-time">18</div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot today-col"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <!-- 19 -->
+              <div class="wcal-time">19</div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot today-col"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <!-- 20 -->
+              <div class="wcal-time">20</div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot today-col"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <!-- 21 -->
+              <div class="wcal-time">21</div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot today-col"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <!-- 22 -->
+              <div class="wcal-time">22</div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot today-col"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+              <div class="wcal-slot"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════ -->
+    <!-- 5 · TIMELINE GANTT                        -->
+    <!-- ══════════════════════════════════════════ -->
+    <div id="timeline" class="section-anchor" style="margin-bottom: 56px;">
+      <div style="margin-bottom: 12px;">
+        <h2 style="font-family:'Instrument Serif',serif; font-size:24px; color:var(--fg); line-height:1; margin:0 0 4px;">Timeline</h2>
+        <p style="font-size:12px;color:var(--fg-muted);margin:0;">Gantt por projeto · escala mensal · linha "hoje" pulsante</p>
+      </div>
+
+      <div class="view-container" style="height:600px; display:flex; flex-direction:column;">
+        <div class="view-header">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span class="view-title">Timeline</span>
+            <div style="display:flex;background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:6px;padding:2px;">
+              <button class="tab-btn">Semanas</button>
+              <button class="tab-btn active">Meses</button>
+              <button class="tab-btn">Trimestres</button>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:4px;">
+            <button class="icon-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg></button>
+            <span style="font-size:12px;color:var(--fg-muted);">Mai – Jul 2026</span>
+            <button class="icon-btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg></button>
+          </div>
+        </div>
+
+        <!-- Gantt body -->
+        <div class="gantt-wrap">
+          <!-- Sidebar -->
+          <div class="gantt-sidebar">
+            <div class="gantt-sidebar-header">Projeto</div>
+            <div class="gantt-sidebar-row">
+              <span style="width:10px;height:10px;border-radius:50%;background:#ec4899;flex-shrink:0;"></span>
+              <div style="overflow:hidden;">
+                <div style="font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Festival de Cordas 2026</div>
+                <div style="font-size:10px;color:var(--fg-muted);">Evento</div>
+              </div>
+            </div>
+            <div class="gantt-sidebar-row">
+              <span style="width:10px;height:10px;border-radius:50%;background:var(--info);flex-shrink:0;"></span>
+              <div style="overflow:hidden;">
+                <div style="font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Inventário das escolas</div>
+                <div style="font-size:10px;color:var(--fg-muted);">Infraestrutura</div>
+              </div>
+            </div>
+            <div class="gantt-sidebar-row">
+              <span style="width:10px;height:10px;border-radius:50%;background:var(--success);flex-shrink:0;"></span>
+              <div style="overflow:hidden;">
+                <div style="font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">LA CANTO - Jornada</div>
+                <div style="font-size:10px;color:var(--fg-muted);">Pedagógico</div>
+              </div>
+            </div>
+            <div class="gantt-sidebar-row">
+              <span style="width:10px;height:10px;border-radius:50%;background:var(--info);flex-shrink:0;"></span>
+              <div style="overflow:hidden;">
+                <div style="font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Recursos Curso Canto</div>
+                <div style="font-size:10px;color:var(--fg-muted);">Infraestrutura</div>
+              </div>
+            </div>
+            <div class="gantt-sidebar-row">
+              <span style="width:10px;height:10px;border-radius:50%;background:#f97316;flex-shrink:0;"></span>
+              <div style="overflow:hidden;">
+                <div style="font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Vídeo Onboarding L.A</div>
+                <div style="font-size:10px;color:var(--fg-muted);">Operacional</div>
+              </div>
+            </div>
+            <div class="gantt-sidebar-row">
+              <span style="width:10px;height:10px;border-radius:50%;background:#f97316;flex-shrink:0;"></span>
+              <div style="overflow:hidden;">
+                <div style="font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Onboarding Colaboradores</div>
+                <div style="font-size:10px;color:var(--fg-muted);">Operacional</div>
+              </div>
+            </div>
+            <div class="gantt-sidebar-row">
+              <span style="width:10px;height:10px;border-radius:50%;background:#f97316;flex-shrink:0;"></span>
+              <div style="overflow:hidden;">
+                <div style="font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">LA Teclas</div>
+                <div style="font-size:10px;color:var(--fg-muted);">Operacional</div>
+              </div>
+            </div>
+            <div class="gantt-sidebar-row">
+              <span style="width:10px;height:10px;border-radius:50%;background:var(--success);flex-shrink:0;opacity:0.5;"></span>
+              <div style="overflow:hidden;">
+                <div style="font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:0.5;">Masterclass Percussão</div>
+                <div style="font-size:10px;color:var(--fg-muted);">Pedagógico · Cancelado</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Chart area -->
+          <!--
+            3 months: May, Jun, Jul
+            Total days: 31 + 30 + 31 = 92 days
+            Chart width: ~700px = 7.6px/day
+          -->
+          <div class="gchart">
+            <div class="gchart-head" id="gchart-head">
+              <!-- Months -->
+              <div class="gchart-month" style="width:236px;"><!-- 31 days * 7.6 = 235.6 -->
+                <div class="gchart-month-label">Maio</div>
+                <div class="gchart-weeks">
+                  <div class="gchart-week">S1</div>
+                  <div class="gchart-week">S2</div>
+                  <div class="gchart-week">S3</div>
+                  <div class="gchart-week">S4</div>
+                </div>
+              </div>
+              <div class="gchart-month" style="width:228px;"><!-- 30 days * 7.6 = 228 -->
+                <div class="gchart-month-label">Junho</div>
+                <div class="gchart-weeks">
+                  <div class="gchart-week">S1</div>
+                  <div class="gchart-week">S2</div>
+                  <div class="gchart-week">S3</div>
+                  <div class="gchart-week">S4</div>
+                </div>
+              </div>
+              <div class="gchart-month" style="width:236px;"><!-- 31 days * 7.6 = 235.6 -->
+                <div class="gchart-month-label">Julho</div>
+                <div class="gchart-weeks">
+                  <div class="gchart-week">S1</div>
+                  <div class="gchart-week">S2</div>
+                  <div class="gchart-week">S3</div>
+                  <div class="gchart-week">S4</div>
+                </div>
+              </div>
+            </div>
+
+            <!--
+              Scale: 7.6px/day. Day 0 = May 1.
+              Today = May 21 → offset = 20 * 7.6 = 152px
+
+              Festival Cordas: May 1 → Jun 15 = 45 days → left=0, width=342
+              Inventário:  May 15 → May 29 = 14 days → left=106, width=106
+              LA CANTO: May 19 → Jun 9 = 21 days → left=136, width=160
+              Recursos Canto: May 19 → Jun 2 = 14 days → left=136, width=106
+              Onboarding LA: May 15 → Jul 31 = 77 days → left=106, width=585
+              Onboarding Col: May 15 → Jul 31 = 77 days → left=106, width=585
+              LA Teclas: Jun 23 → Jun 27 = 4 days → left=53+167=220... Jun23=day53 → left=52*7.6=395... wait
+              Jun23 = 31(May) + 23 - 1 = day 53 → left=53*7.6=402, width=4*7.6=30
+              Masterclass: Jun 15 = day 45 → left=342, width=8
+            -->
+            <div class="gchart-body" style="width:700px;position:relative;">
+              <!-- Background grid lines at month boundaries -->
+              <div class="gchart-bg-line" style="left:236px;"></div>
+              <div class="gchart-bg-line" style="left:464px;"></div>
+
+              <!-- Today line: May 21 = day 20 → 20*7.6 = 152px -->
+              <div class="today-line" style="left:152px;"></div>
+
+              <!-- Row 1: Festival de Cordas 2026 (May 1 → Jun 15 = 45 days) -->
+              <div class="gchart-row">
+                <div class="gantt-bar" style="left:0;width:342px;background:linear-gradient(180deg,rgba(236,72,153,0.75),rgba(236,72,153,0.6));color:#fce7f3;">
+                  Festival de Cordas 2026
+                </div>
+              </div>
+              <!-- Row 2: Inventário (May 15 → May 29 = 14 days) -->
+              <div class="gchart-row">
+                <div class="gantt-bar" style="left:106px;width:106px;background:linear-gradient(180deg,rgba(96,165,250,0.75),rgba(96,165,250,0.6));color:#dbeafe;">
+                  Inventário
+                </div>
+              </div>
+              <!-- Row 3: LA CANTO (May 19 → Jun 9 = 21 days) -->
+              <div class="gchart-row">
+                <div class="gantt-bar" style="left:136px;width:160px;background:linear-gradient(180deg,rgba(34,197,94,0.75),rgba(34,197,94,0.6));color:#dcfce7;">
+                  LA CANTO - Jornada
+                </div>
+              </div>
+              <!-- Row 4: Recursos Canto (May 19 → Jun 2 = 14 days) -->
+              <div class="gchart-row">
+                <div class="gantt-bar" style="left:136px;width:106px;background:linear-gradient(180deg,rgba(96,165,250,0.7),rgba(96,165,250,0.55));color:#dbeafe;">
+                  Recursos Canto
+                </div>
+              </div>
+              <!-- Row 5: Onboarding L.A (May 15 → Jul 31 = 77 days) -->
+              <div class="gchart-row">
+                <div class="gantt-bar" style="left:106px;width:585px;background:linear-gradient(180deg,rgba(249,115,22,0.75),rgba(249,115,22,0.6));color:#ffedd5;">
+                  Vídeo Onboarding L.A
+                </div>
+              </div>
+              <!-- Row 6: Onboarding Col (May 15 → Jul 31 = 77 days) -->
+              <div class="gchart-row">
+                <div class="gantt-bar" style="left:106px;width:585px;background:linear-gradient(180deg,rgba(249,115,22,0.65),rgba(249,115,22,0.5));color:#ffedd5;">
+                  Onboarding Colaboradores
+                </div>
+              </div>
+              <!-- Row 7: LA Teclas (Jun 23 → Jun 27 = 4 days, Jun 23 = day 53) -->
+              <div class="gchart-row">
+                <div class="gantt-bar" style="left:403px;width:31px;background:linear-gradient(180deg,rgba(249,115,22,0.8),rgba(249,115,22,0.65));color:#ffedd5;">
+                  Teclas
+                </div>
+              </div>
+              <!-- Row 8: Masterclass (Jun 15 = day 45 → ~1 day width) -->
+              <div class="gchart-row">
+                <div class="gantt-bar" style="left:342px;width:8px;background:rgba(34,197,94,0.4);opacity:0.5;min-width:8px;" title="Masterclass Percussão — Cancelado">
+                </div>
+                <span style="position:absolute;left:356px;font-size:10px;color:var(--fg-disabled);top:8px;">Masterclass ✕</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════ -->
+    <!-- 6 · PERSON GRID                          -->
+    <!-- ══════════════════════════════════════════ -->
+    <div id="persongrid" class="section-anchor" style="margin-bottom: 56px;">
+      <div style="margin-bottom: 12px;">
+        <h2 style="font-family:'Instrument Serif',serif; font-size:24px; color:var(--fg); line-height:1; margin:0 0 4px;">Por pessoa</h2>
+        <p style="font-size:12px;color:var(--fg-muted);margin:0;">Grid de colaboradores · carga de trabalho · métricas rápidas</p>
+      </div>
+
+      <div class="view-container" style="height:520px; display:flex; flex-direction:column;">
+        <div class="view-header">
+          <span class="view-title">Colaboradores</span>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <select style="background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12px;color:var(--fg-secondary);outline:none;">
+              <option>Todas as unidades</option>
+              <option>Barra</option>
+              <option>Recreio</option>
+              <option>Campo Grande</option>
+            </select>
+            <select style="background:var(--bg-elevated-2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12px;color:var(--fg-secondary);outline:none;">
+              <option>Todas as funções</option>
+              <option>Coordenador</option>
+              <option>Mentor</option>
+              <option>Professor</option>
+            </select>
+            <div class="search-wrap">
+              <svg class="search-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+              <input class="search-input" placeholder="Buscar pessoa…" />
+            </div>
+          </div>
+        </div>
+
+        <div class="pgrid-wrap">
+          <div class="pgrid-inner">
+
+            <!-- Quintela — yellow ring (5 proj) -->
+            <div class="person-card">
+              <div style="display:flex;align-items:center;gap:12px;">
+                <span class="avatar-lg avatar-ring-yellow" style="background:#7C3AED;">Q</span>
+                <div>
+                  <div style="font-size:14px;font-weight:600;line-height:1.2;">Quintela</div>
+                  <div style="font-size:11px;color:var(--fg-muted);">Coordenador</div>
+                  <div style="font-size:10px;color:var(--fg-disabled);margin-top:2px;">Barra</div>
+                </div>
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;">
+                <span class="metric-chip">📊 5 projetos</span>
+                <span class="metric-chip">✓ 0% concluído</span>
+                <span class="metric-chip warn">🔔 2 pendências</span>
+              </div>
+            </div>
+
+            <!-- Rafinha — green ring (3 proj) -->
+            <div class="person-card">
+              <div style="display:flex;align-items:center;gap:12px;">
+                <span class="avatar-lg avatar-ring-green" style="background:#0891B2;">R</span>
+                <div>
+                  <div style="font-size:14px;font-weight:600;line-height:1.2;">Rafinha</div>
+                  <div style="font-size:11px;color:var(--fg-muted);">Mentor</div>
+                  <div style="font-size:10px;color:var(--fg-disabled);margin-top:2px;">Recreio</div>
+                </div>
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;">
+                <span class="metric-chip">📊 3 projetos</span>
+                <span class="metric-chip">✓ 12% concluído</span>
+                <span class="metric-chip warn">🔔 1 pendência</span>
+              </div>
+            </div>
+
+            <!-- Yuri — yellow ring (4 proj) -->
+            <div class="person-card">
+              <div style="display:flex;align-items:center;gap:12px;">
+                <span class="avatar-lg avatar-ring-yellow" style="background:#059669;">Y</span>
+                <div>
+                  <div style="font-size:14px;font-weight:600;line-height:1.2;">Yuri</div>
+                  <div style="font-size:11px;color:var(--fg-muted);">Coordenador</div>
+                  <div style="font-size:10px;color:var(--fg-disabled);margin-top:2px;">Campo Grande</div>
+                </div>
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;">
+                <span class="metric-chip">📊 4 projetos</span>
+                <span class="metric-chip">✓ 8% concluído</span>
+                <span class="metric-chip warn">🔔 3 pendências</span>
+              </div>
+            </div>
+
+            <!-- John — green ring (2 proj) -->
+            <div class="person-card">
+              <div style="display:flex;align-items:center;gap:12px;">
+                <span class="avatar-lg avatar-ring-green" style="background:#B45309;">J</span>
+                <div>
+                  <div style="font-size:14px;font-weight:600;line-height:1.2;">John</div>
+                  <div style="font-size:11px;color:var(--fg-muted);">Mentor</div>
+                  <div style="font-size:10px;color:var(--fg-disabled);margin-top:2px;">Barra</div>
+                </div>
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;">
+                <span class="metric-chip">📊 2 projetos</span>
+                <span class="metric-chip">✓ 30% concluído</span>
+                <span class="metric-chip" style="color:var(--fg-muted);">🔔 0 pendências</span>
+              </div>
+            </div>
+
+            <!-- Dai — green ring (2 proj) -->
+            <div class="person-card">
+              <div style="display:flex;align-items:center;gap:12px;">
+                <span class="avatar-lg avatar-ring-green" style="background:#9333EA;">D</span>
+                <div>
+                  <div style="font-size:14px;font-weight:600;line-height:1.2;">Dai</div>
+                  <div style="font-size:11px;color:var(--fg-muted);">Professora</div>
+                  <div style="font-size:10px;color:var(--fg-disabled);margin-top:2px;">Barra</div>
+                </div>
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;">
+                <span class="metric-chip">📊 2 projetos</span>
+                <span class="metric-chip">✓ 5% concluído</span>
+                <span class="metric-chip warn">🔔 1 pendência</span>
+              </div>
+            </div>
+
+            <!-- Juliana — red ring (6 proj) -->
+            <div class="person-card">
+              <div style="display:flex;align-items:center;gap:12px;">
+                <span class="avatar-lg avatar-ring-red" style="background:#15803D;">J</span>
+                <div>
+                  <div style="font-size:14px;font-weight:600;line-height:1.2;">Juliana</div>
+                  <div style="font-size:11px;color:var(--fg-muted);">Coordenadora</div>
+                  <div style="font-size:10px;color:var(--fg-disabled);margin-top:2px;">Recreio</div>
+                </div>
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;">
+                <span class="metric-chip">📊 6 projetos</span>
+                <span class="metric-chip">✓ 4% concluído</span>
+                <span class="metric-chip warn" style="color:var(--danger);">🔔 4 pendências</span>
+              </div>
+            </div>
+
+            <!-- Luciano Alf — red ring (7 proj) -->
+            <div class="person-card" style="border-color:rgba(239,68,68,0.25);">
+              <div style="display:flex;align-items:center;gap:12px;">
+                <span class="avatar-lg avatar-ring-red" style="background:#1D4ED8;">L</span>
+                <div>
+                  <div style="font-size:14px;font-weight:600;line-height:1.2;">Luciano Alf</div>
+                  <div style="font-size:11px;color:var(--fg-muted);">Diretor</div>
+                  <div style="font-size:10px;color:var(--fg-disabled);margin-top:2px;">Todas</div>
+                </div>
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;">
+                <span class="metric-chip">📊 7 projetos</span>
+                <span class="metric-chip">✓ 10% concluído</span>
+                <span class="metric-chip warn" style="color:var(--danger);">🔔 5 pendências</span>
+              </div>
+            </div>
+
+            <!-- Matheus Felipe — green ring (3 proj) -->
+            <div class="person-card">
+              <div style="display:flex;align-items:center;gap:12px;">
+                <span class="avatar-lg avatar-ring-green" style="background:#BE185D;">M</span>
+                <div>
+                  <div style="font-size:14px;font-weight:600;line-height:1.2;">Matheus Felipe</div>
+                  <div style="font-size:11px;color:var(--fg-muted);">Ops Técnico</div>
+                  <div style="font-size:10px;color:var(--fg-disabled);margin-top:2px;">Campo Grande</div>
+                </div>
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;">
+                <span class="metric-chip">📊 3 projetos</span>
+                <span class="metric-chip">✓ 0% concluído</span>
+                <span class="metric-chip warn">🔔 2 pendências</span>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer spacing -->
+    <div style="height: 48px;"></div>
+  </div>
+</main>
+
+<script>
+  // Highlight active nav link on scroll
+  const sections = document.querySelectorAll('.section-anchor');
+  const navLinks = document.querySelectorAll('.nav-link[href^="#"]');
+
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        navLinks.forEach(l => l.classList.remove('active'));
+        const link = document.querySelector(`.nav-link[href="#${e.target.id}"]`);
+        if (link) link.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-20% 0px -60% 0px', threshold: 0 });
+
+  sections.forEach(s => observer.observe(s));
+
+  // Smooth scroll
+  navLinks.forEach(link => {
+    link.addEventListener('click', e => {
+      e.preventDefault();
+      const id = link.getAttribute('href').slice(1);
+      document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
+</script>
+</body>
+</html>
