@@ -11,6 +11,8 @@ export interface ProjectFull extends Project {
 
 export interface CheckpointFull extends Checkpoint {
   rationale?: string | null;
+  // Sprint 22.24 — responsavel pelo checkpoint. Null = fallback pro created_by do projeto.
+  assigned_to?: string | null;
 }
 
 export interface Contingency {

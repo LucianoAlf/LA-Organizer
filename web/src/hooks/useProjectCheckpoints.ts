@@ -18,13 +18,30 @@ async function fetchCheckpoints(projectId: string): Promise<CheckpointFull[]> {
   return (data ?? []) as CheckpointFull[];
 }
 
+export interface CreateCheckpointInput {
+  name: string;
+  due_date?: string | null;        // YYYY-MM-DD
+  assigned_to?: string | null;      // collaborator_id
+  rationale?: string | null;
+}
+
+export interface UpdateCheckpointInput {
+  id: string;
+  name?: string;
+  due_date?: string | null;
+  assigned_to?: string | null;
+  rationale?: string | null;
+  status?: 'pending' | 'in_progress' | 'done' | 'cancelled';
+}
+
 export interface UseProjectCheckpointsResult {
   checkpoints: CheckpointFull[];
   togglePending: boolean;
   toggle: (cp: CheckpointFull) => void;
   rename: (input: { id: string; name: string }) => void;
+  update: (input: UpdateCheckpointInput) => void;
   remove: (cpId: string) => void;
-  create: (name: string) => void;
+  create: (input: string | CreateCheckpointInput) => void;
   reorder: (orderedIds: string[]) => void;
 }
 
@@ -89,15 +106,38 @@ export function useProjectCheckpoints(projectId: string): UseProjectCheckpointsR
   });
 
   const createMut = useMutation({
-    mutationFn: async (name: string) => {
+    mutationFn: async (input: string | CreateCheckpointInput) => {
       if (!collaborator) throw new Error('no_auth');
+      // Backcompat: callers antigos passam string direto.
+      const data: CreateCheckpointInput = typeof input === 'string' ? { name: input } : input;
       const maxOrder = checkpoints.reduce((m, c) => Math.max(m, c.sort_order ?? 0), -1);
-      const { error } = await supabase.from('project_checkpoints').insert({
+      const payload: Record<string, unknown> = {
         project_id: projectId,
-        name: name.slice(0, 200),
+        name: data.name.slice(0, 200),
         status: 'pending',
         sort_order: maxOrder + 1,
-      });
+      };
+      if (data.due_date) payload.due_date = data.due_date;
+      if (data.assigned_to) payload.assigned_to = data.assigned_to;
+      if (data.rationale) payload.rationale = data.rationale;
+      const { error } = await supabase.from('project_checkpoints').insert(payload);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey }),
+  });
+
+  // Patch parcial — envia somente campos definidos. null limpa o campo no banco.
+  const updateMut = useMutation({
+    mutationFn: async (input: UpdateCheckpointInput) => {
+      const { id: cpId, ...rest } = input;
+      const patch: Record<string, unknown> = {};
+      if (rest.name !== undefined) patch.name = rest.name.slice(0, 200);
+      if (rest.due_date !== undefined) patch.due_date = rest.due_date;
+      if (rest.assigned_to !== undefined) patch.assigned_to = rest.assigned_to;
+      if (rest.rationale !== undefined) patch.rationale = rest.rationale;
+      if (rest.status !== undefined) patch.status = rest.status;
+      if (Object.keys(patch).length === 0) return;
+      const { error } = await supabase.from('project_checkpoints').update(patch).eq('id', cpId);
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey }),
@@ -135,8 +175,9 @@ export function useProjectCheckpoints(projectId: string): UseProjectCheckpointsR
     togglePending: toggleMut.isPending,
     toggle: (cp) => toggleMut.mutate(cp),
     rename: (input) => renameMut.mutate(input),
+    update: (input) => updateMut.mutate(input),
     remove: (cpId) => deleteMut.mutate(cpId),
-    create: (name) => createMut.mutate(name),
+    create: (input) => createMut.mutate(input),
     reorder: (orderedIds) => reorderMut.mutate(orderedIds),
   };
 }
