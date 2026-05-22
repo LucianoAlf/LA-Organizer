@@ -1,21 +1,18 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Plus, GripVertical } from 'lucide-react';
 import {
   DndContext,
+  DragOverlay,
   PointerSensor,
   KeyboardSensor,
   useSensor,
   useSensors,
-  closestCorners,
+  pointerWithin,
+  useDraggable,
   useDroppable,
   type DragEndEvent,
+  type DragStartEvent,
 } from '@dnd-kit/core';
-import {
-  SortableContext,
-  useSortable,
-  verticalListSortingStrategy,
-  sortableKeyboardCoordinates,
-} from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 
 export interface KanbanColumn<T> {
@@ -37,38 +34,34 @@ interface KanbanBoardProps<T> {
   onAddToColumn?: (columnId: string) => void;
   getItemKey: (item: T) => string;
   /**
-   * Callback ao mover um card. Chamado tanto em moves cross-column (status change)
-   * quanto same-column (reorder). Se ausente, DnD ainda é habilitado visualmente
-   * mas drops são no-op.
+   * Callback ao mover um card entre colunas. Se ausente, drops são no-op.
    */
   onMoveItem?: (itemId: string, fromColumnId: string, toColumnId: string) => void;
 }
 
-interface SortableCardProps<T> {
+interface DraggableCardProps<T> {
   id: string;
   columnId: string;
   item: T;
   renderCard: (item: T, columnId: string, dragHandle?: ReactNode) => ReactNode;
 }
 
-function SortableCard<T>({ id, columnId, item, renderCard }: SortableCardProps<T>) {
+function DraggableCard<T>({ id, columnId, item, renderCard }: DraggableCardProps<T>) {
   const {
     attributes,
     listeners,
     setNodeRef,
     setActivatorNodeRef,
     transform,
-    transition,
     isDragging,
-  } = useSortable({
+  } = useDraggable({
     id,
     data: { columnId, type: 'card' },
   });
 
-  // O handle é um span (não <button>) pra evitar nested-button HTML inválido
-  // quando o card ele mesmo já é um botão clicável. role="button" + tabIndex
-  // mantém a a11y. Click no handle não propaga pro card (stopPropagation no
-  // mouseDown) — então drag não dispara onClick do card.
+  // Handle do drag — só o handle escuta os listeners. Click no card abre drawer;
+  // drag pelo handle move entre colunas. stopPropagation no click/mousedown
+  // garante que arrastar o handle não dispara o onClick do card.
   const dragHandle = (
     <span
       ref={setActivatorNodeRef}
@@ -87,11 +80,11 @@ function SortableCard<T>({ id, columnId, item, renderCard }: SortableCardProps<T
     <div
       ref={setNodeRef}
       style={{
-        transform: CSS.Transform.toString(transform),
-        transition,
-        opacity: isDragging ? 0.4 : 1,
-        boxShadow: isDragging ? '0 12px 28px -8px rgba(0,0,0,0.45)' : undefined,
-        zIndex: isDragging ? 50 : undefined,
+        // O card original NÃO se move via transform — fica no lugar com opacity
+        // reduzida. Quem segue o cursor é o <DragOverlay> renderizado no portal
+        // do body (escapa do overflow-hidden das colunas).
+        transform: transform ? CSS.Translate.toString(transform) : undefined,
+        opacity: isDragging ? 0.25 : 1,
       }}
     >
       {renderCard(item, columnId, dragHandle)}
@@ -101,29 +94,26 @@ function SortableCard<T>({ id, columnId, item, renderCard }: SortableCardProps<T
 
 interface ColumnDropZoneProps {
   columnId: string;
-  cardIds: string[];
   isEmpty: boolean;
   children: ReactNode;
 }
 
-function ColumnDropZone({ columnId, cardIds, isEmpty, children }: ColumnDropZoneProps) {
+function ColumnDropZone({ columnId, isEmpty, children }: ColumnDropZoneProps) {
   const { setNodeRef, isOver } = useDroppable({
     id: columnId,
     data: { type: 'column' },
   });
   return (
-    <SortableContext items={cardIds} strategy={verticalListSortingStrategy}>
-      <div
-        ref={setNodeRef}
-        className={[
-          'flex-1 overflow-y-auto px-2 py-2 space-y-2 min-h-0 transition-colors',
-          isOver ? 'bg-tom/5 outline outline-2 outline-tom/30 outline-offset-[-4px] rounded-md' : '',
-          isEmpty ? 'flex items-center justify-center' : '',
-        ].join(' ')}
-      >
-        {children}
-      </div>
-    </SortableContext>
+    <div
+      ref={setNodeRef}
+      className={[
+        'flex-1 overflow-y-auto px-2 py-2 space-y-2 min-h-0 transition-colors',
+        isOver ? 'bg-tom/5 ring-2 ring-inset ring-tom/30' : '',
+        isEmpty ? 'flex items-center justify-center' : '',
+      ].join(' ')}
+    >
+      {children}
+    </div>
   );
 }
 
@@ -136,33 +126,53 @@ export function KanbanBoard<T>({
 }: KanbanBoardProps<T>) {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+    useSensor(KeyboardSensor),
   );
 
-  function handleDragEnd(event: DragEndEvent) {
-    const { active, over } = event;
-    if (!over || !onMoveItem) return;
-    if (active.id === over.id) return;
+  // Estado do card sendo arrastado — necessário pro DragOverlay renderizar
+  // o mesmo card no portal seguindo o cursor.
+  const [active, setActive] = useState<{ id: string; columnId: string; item: T } | null>(null);
 
-    const fromColumnId = active.data.current?.columnId as string | undefined;
+  function handleDragStart(event: DragStartEvent) {
+    const id = String(event.active.id);
+    const columnId = event.active.data.current?.columnId as string | undefined;
+    if (!columnId) return;
+    const col = columns.find(c => c.id === columnId);
+    const item = col?.items.find(it => getItemKey(it) === id);
+    if (item) setActive({ id, columnId, item });
+  }
+
+  function handleDragEnd(event: DragEndEvent) {
+    setActive(null);
+    const { active: act, over } = event;
+    if (!over || !onMoveItem) return;
+
+    const fromColumnId = act.data.current?.columnId as string | undefined;
     const overType = over.data.current?.type;
-    // Se solto sobre um card, pega a coluna do card. Se solto sobre o corpo da
-    // coluna (drop zone), over.id é o ID da coluna.
     const toColumnId =
       overType === 'card'
         ? (over.data.current?.columnId as string | undefined)
         : String(over.id);
 
-    if (fromColumnId && toColumnId) {
-      onMoveItem(String(active.id), fromColumnId, toColumnId);
+    if (fromColumnId && toColumnId && fromColumnId !== toColumnId) {
+      onMoveItem(String(act.id), fromColumnId, toColumnId);
     }
   }
 
+  function handleDragCancel() {
+    setActive(null);
+  }
+
   return (
-    <DndContext sensors={sensors} collisionDetection={closestCorners} onDragEnd={handleDragEnd}>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={pointerWithin}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+      onDragCancel={handleDragCancel}
+    >
       <div className="flex gap-3 h-full overflow-x-auto pb-2">
         {columns.map(col => {
-          const cardIds = col.items.map(getItemKey);
           const isEmpty = col.items.length === 0;
           return (
             <div
@@ -193,28 +203,43 @@ export function KanbanBoard<T>({
                   </button>
                 )}
               </header>
-              <ColumnDropZone columnId={col.id} cardIds={cardIds} isEmpty={isEmpty}>
+              <ColumnDropZone columnId={col.id} isEmpty={isEmpty}>
                 {isEmpty ? (
                   <div className="text-[11px] text-fg-muted">Vazio</div>
                 ) : (
-                  col.items.map(item => {
-                    const key = getItemKey(item);
-                    return (
-                      <SortableCard
-                        key={key}
-                        id={key}
-                        columnId={col.id}
-                        item={item}
-                        renderCard={renderCard}
-                      />
-                    );
-                  })
+                  col.items.map(item => (
+                    <DraggableCard
+                      key={getItemKey(item)}
+                      id={getItemKey(item)}
+                      columnId={col.id}
+                      item={item}
+                      renderCard={renderCard}
+                    />
+                  ))
                 )}
               </ColumnDropZone>
             </div>
           );
         })}
       </div>
+
+      {/* DragOverlay renderiza o card "fantasma" no portal do body, seguindo
+          o cursor. Escapa do overflow-hidden das colunas (sem clipping nem
+          z-index issue) e elimina jitter (não tem reordenação no DOM). */}
+      <DragOverlay dropAnimation={{ duration: 180, easing: 'cubic-bezier(0.18, 0.67, 0.6, 1.22)' }}>
+        {active ? (
+          <div
+            style={{
+              boxShadow: '0 18px 40px -8px rgba(0,0,0,0.55), 0 0 0 1px rgba(163, 190, 80, 0.4)',
+              borderRadius: 8,
+              transform: 'rotate(1.5deg)',
+              cursor: 'grabbing',
+            }}
+          >
+            {renderCard(active.item, active.columnId, undefined)}
+          </div>
+        ) : null}
+      </DragOverlay>
     </DndContext>
   );
 }
