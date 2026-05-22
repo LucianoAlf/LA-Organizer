@@ -108,13 +108,13 @@ export function ProjetosDesktop() {
       if (projectIds.length === 0) return [];
       const { data, error } = await supabase
         .from('project_checkpoints')
-        .select('id, project_id, title, due_date, status')
+        .select('id, project_id, name, due_date, status')
         .in('project_id', projectIds);
       if (error) return [];
       return (data ?? []) as Array<{
         id: string;
         project_id: string;
-        title: string | null;
+        name: string | null;
         due_date: string | null;
         status: string | null;
       }>;
@@ -367,7 +367,9 @@ export function ProjetosDesktop() {
               start: new Date(p.start_date!).getTime(),
               end: new Date(p.end_date!).getTime(),
               lane: p.id, // cada projeto na sua própria lane
-              color: STATUS_COLORS[p.status],
+              // Cor por CATEGORIA (não status) — 6 cores distintas, hierarquia
+              // semântica que diferencia tipos de projeto de relance.
+              color: CATEGORY_BADGE[p.category].base,
             }));
             // Checkpoints viram pins na lane do projeto correspondente
             const markers: TimelineMarker[] = timelineCheckpoints
@@ -376,8 +378,8 @@ export function ProjetosDesktop() {
                 id: c.id,
                 lane: c.project_id,
                 date: new Date(c.due_date!).getTime(),
-                label: c.title ?? 'Checkpoint',
-                done: c.status === 'done' || c.status === 'completed',
+                label: c.name ?? 'Checkpoint',
+                done: c.status === 'done',
               }));
             const starts = items.map(i => i.start);
             const ends = items.map(i => i.end);

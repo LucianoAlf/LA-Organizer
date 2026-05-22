@@ -148,7 +148,7 @@ export function ProjectsDashboard({ projects }: ProjectsDashboardProps) {
                   label={meta.label}
                   count={stats.byCategory[cat] ?? 0}
                   total={stats.total}
-                  color={meta.fg}
+                  color={meta.base}
                 />
               );
             })}
