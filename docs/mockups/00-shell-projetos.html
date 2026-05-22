@@ -92,7 +92,7 @@
       <div class="nav-item active">
         <svg width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
         <span style="flex: 1;">Projetos</span>
-        <span style="font-size: 10px; background: rgba(168,230,67,0.15); color: var(--tom); border-radius: 3px; padding: 1px 5px; font-weight: 600;">86</span>
+        <span style="font-size: 10px; background: rgba(168,230,67,0.15); color: var(--tom); border-radius: 3px; padding: 1px 5px; font-weight: 600;">8</span>
       </div>
       <div class="nav-item">
         <svg width="14" height="14" viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
@@ -214,7 +214,7 @@
         <div>
           <div style="font-size: 11px; text-transform: uppercase; font-weight: 600; color: rgba(138,138,138,0.7); letter-spacing: 0.06em; margin-bottom: 4px;">Gestão</div>
           <h1 style="font-size: 22px; font-weight: 700; color: var(--fg); margin: 0 0 4px;">Projetos</h1>
-          <div style="font-size: 13px; color: var(--fg-muted);">86 projetos · 12 ativos esta semana</div>
+          <div style="font-size: 13px; color: var(--fg-muted);">8 projetos · 7 em planejamento</div>
         </div>
         <div style="display: flex; gap: 8px;">
           <button style="display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; background: transparent; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; color: var(--fg-muted); cursor: pointer;">
@@ -272,228 +272,244 @@
       </div>
 
       <!-- Kanban Board -->
-      <div style="padding: 0 24px 24px; flex: 1; display: flex; gap: 12px; overflow-x: auto; align-items: flex-start;">
+      <div style="padding: 0 24px 24px; flex: 1; display: flex; gap: 12px; align-items: flex-start;">
 
-        <!-- Coluna: Brainstorm -->
-        <div class="kanban-col">
-          <div class="kanban-header">
-            <div class="status-dot" style="background: var(--fg-muted);"></div>
-            <span style="font-size: 12px; font-weight: 600; flex: 1; color: var(--fg);">Brainstorm</span>
-            <span class="count-chip">22</span>
-          </div>
-          <div class="kanban-body">
-            <!-- Card 1 -->
-            <div class="kanban-card">
-              <div style="font-size: 12px; font-weight: 500; color: var(--fg); margin-bottom: 6px; line-height: 1.3;">História da guitarra</div>
-              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 6px; flex-wrap: wrap;">
-                <span class="badge-kids">KIDS</span>
-                <span style="font-size: 10px; color: var(--fg-muted);">?</span>
-              </div>
-              <div style="display: flex; align-items: center; gap: 6px;">
-                <div class="avatar" style="background: #6366f1; color: white;">—</div>
-                <span style="font-size: 10px; color: var(--fg-muted); flex: 1;">sem responsável</span>
-                <span style="font-size: 10px; color: var(--fg-muted);">sem data</span>
-              </div>
-            </div>
-            <!-- Card 2 -->
-            <div class="kanban-card">
-              <div style="font-size: 12px; font-weight: 500; color: var(--fg); margin-bottom: 6px; line-height: 1.3;">Músicas emblemáticas dos últimos 50 anos</div>
-              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 6px; flex-wrap: wrap;">
-                <span class="badge-school">SCHOOL</span>
-                <span style="font-size: 10px; color: var(--fg-muted);">?</span>
-              </div>
-              <div style="display: flex; align-items: center; gap: 6px;">
-                <div class="avatar" style="background: #6366f1; color: white;">—</div>
-                <span style="font-size: 10px; color: var(--fg-muted); flex: 1;">sem responsável</span>
-                <span style="font-size: 10px; color: var(--fg-muted);">sem data</span>
-              </div>
-            </div>
-          </div>
-        </div>
+        <!-- SVG calendar icon reutilizável via inline -->
 
-        <!-- Coluna: Planejamento -->
-        <div class="kanban-col">
+        <!-- ===== Coluna: Em planejamento (7) ===== -->
+        <div style="flex: 1; min-width: 280px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; display: flex; flex-direction: column;">
           <div class="kanban-header">
             <div class="status-dot" style="background: var(--info);"></div>
-            <span style="font-size: 12px; font-weight: 600; flex: 1; color: var(--fg);">Planejamento</span>
-            <span class="count-chip">3</span>
-          </div>
-          <div class="kanban-body">
-            <!-- Card 1 -->
-            <div class="kanban-card">
-              <div style="font-size: 12px; font-weight: 500; color: var(--fg); margin-bottom: 6px; line-height: 1.3;">3 Amigas - alunas</div>
-              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 6px; flex-wrap: wrap;">
-                <span class="badge-kids">KIDS</span>
-                <span style="font-size: 10px; color: var(--fg-muted);">la_kids</span>
-              </div>
-              <div style="display: flex; align-items: center; gap: 6px;">
-                <div class="avatar" style="background: #0891b2; color: white;">J</div>
-                <span style="font-size: 10px; color: var(--fg-muted); flex: 1;">John</span>
-                <span style="font-size: 10px; color: var(--fg-muted);">sem data</span>
-              </div>
-            </div>
-            <!-- Card 2 -->
-            <div class="kanban-card">
-              <div style="font-size: 12px; font-weight: 500; color: var(--fg); margin-bottom: 6px; line-height: 1.3;">3 Amigas - mães</div>
-              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 6px; flex-wrap: wrap;">
-                <span class="badge-kids">KIDS</span>
-                <span style="font-size: 10px; color: var(--fg-muted);">la_kids</span>
-              </div>
-              <div style="display: flex; align-items: center; gap: 6px;">
-                <div class="avatar" style="background: #0891b2; color: white;">J</div>
-                <span style="font-size: 10px; color: var(--fg-muted); flex: 1;">John</span>
-                <span style="font-size: 10px; color: var(--fg-muted);">sem data</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Coluna: A Fazer -->
-        <div class="kanban-col">
-          <div class="kanban-header">
-            <div class="status-dot" style="background: var(--info);"></div>
-            <span style="font-size: 12px; font-weight: 600; flex: 1; color: var(--fg);">A Fazer</span>
+            <span style="font-size: 12px; font-weight: 600; flex: 1; color: var(--fg);">Em planejamento</span>
             <span class="count-chip">7</span>
           </div>
           <div class="kanban-body">
-            <!-- Card 1 -->
+
+            <!-- Card 1: Festival de Cordas 2026 -->
             <div class="kanban-card">
-              <div style="font-size: 12px; font-weight: 500; color: var(--fg); margin-bottom: 6px; line-height: 1.3;">Bianca Stoianof - Aula 1 - Pega na Mentira</div>
-              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 6px; flex-wrap: wrap;">
-                <span class="badge-kids">KIDS</span>
-                <span style="font-size: 10px; color: var(--fg-muted);">la_kids</span>
+              <div style="font-size: 12px; font-weight: 500; color: var(--fg); margin-bottom: 6px; line-height: 1.3; max-height: 2.6em; overflow: hidden;">Festival de Cordas 2026</div>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 5px; flex-wrap: wrap;">
+                <span style="background: rgba(236,72,153,0.2); color: #f9a8d4; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px;">event</span>
+                <span style="background: var(--bg-elevated-2); color: var(--fg-muted); font-size: 10px; padding: 1px 6px; border-radius: 3px;">✓ 6</span>
               </div>
-              <div style="display: flex; align-items: center; gap: 6px;">
-                <div class="avatar" style="background: #0891b2; color: white;">J</div>
-                <span style="font-size: 10px; color: var(--fg-muted); flex: 1;">John</span>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 5px;">
                 <svg width="10" height="10" viewBox="0 0 24 24" stroke="var(--fg-muted)" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                <span style="font-size: 10px; color: var(--fg-muted);">07 de abr.</span>
+                <span style="font-size: 10px; color: var(--fg-muted);">01/05 → 15/06</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 5px;">
+                <div class="avatar" style="background: #7c3aed; color: white; margin-left: 0;">Q</div>
+                <div class="avatar" style="background: #059669; color: white; margin-left: -4px;">R</div>
+                <div class="avatar" style="background: #d97706; color: white; margin-left: -4px;">J</div>
+                <div class="avatar" style="background: #2563eb; color: white; margin-left: -4px;">L</div>
+              </div>
+              <div style="display: flex; align-items: center; gap: 4px;">
+                <div style="flex: 1; height: 3px; background: var(--bg-elevated-2); border-radius: 9999px;"><div style="width: 0%; height: 100%; background: #f9a8d4; border-radius: 9999px;"></div></div>
+                <span style="font-size: 10px; color: var(--fg-muted);">0%</span>
               </div>
             </div>
-            <!-- Card 2 -->
+
+            <!-- Card 2: Inventário das escolas -->
             <div class="kanban-card">
-              <div style="font-size: 12px; font-weight: 500; color: var(--fg); margin-bottom: 6px; line-height: 1.3;">Quem são as mulheres que...</div>
-              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 6px; flex-wrap: wrap;">
-                <span class="badge-kids">KIDS</span>
-                <span style="font-size: 10px; color: var(--fg-muted);">dia das mulheres</span>
+              <div style="font-size: 12px; font-weight: 500; color: var(--fg); margin-bottom: 6px; line-height: 1.3; max-height: 2.6em; overflow: hidden;">Inventário das escolas</div>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 5px; flex-wrap: wrap;">
+                <span style="background: rgba(59,130,246,0.2); color: #93c5fd; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px;">infrastructure</span>
+                <span style="background: var(--bg-elevated-2); color: var(--fg-muted); font-size: 10px; padding: 1px 6px; border-radius: 3px;">✓ 5</span>
               </div>
-              <div style="display: flex; align-items: center; gap: 6px;">
-                <div class="avatar" style="background: #0891b2; color: white;">J</div>
-                <span style="font-size: 10px; color: var(--fg-muted); flex: 1;">John</span>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 5px;">
                 <svg width="10" height="10" viewBox="0 0 24 24" stroke="var(--fg-muted)" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                <span style="font-size: 10px; color: var(--fg-muted);">16 de mar.</span>
+                <span style="font-size: 10px; color: var(--fg-muted);">15/05 → 29/05</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 5px;">
+                <div class="avatar" style="background: #7c3aed; color: white;">Q</div>
+                <div class="avatar" style="background: #059669; color: white; margin-left: -4px;">R</div>
+                <div class="avatar" style="background: #0891b2; color: white; margin-left: -4px;">L</div>
+                <div class="avatar" style="background: #b45309; color: white; margin-left: -4px;">R</div>
+                <span style="font-size: 10px; color: var(--fg-muted); margin-left: 2px;">+4</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 4px;">
+                <div style="flex: 1; height: 3px; background: var(--bg-elevated-2); border-radius: 9999px;"><div style="width: 0%; height: 100%; background: #93c5fd; border-radius: 9999px;"></div></div>
+                <span style="font-size: 10px; color: var(--fg-muted);">0%</span>
               </div>
             </div>
-            <!-- Card 3 -->
+
+            <!-- Card 3: LA CANTO -->
             <div class="kanban-card">
-              <div style="font-size: 12px; font-weight: 500; color: var(--fg); margin-bottom: 6px; line-height: 1.3;">Chamada Viva Elas</div>
-              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 6px; flex-wrap: wrap;">
-                <span class="badge-school">SCHOOL</span>
+              <div style="font-size: 12px; font-weight: 500; color: var(--fg); margin-bottom: 6px; line-height: 1.3; max-height: 2.6em; overflow: hidden;">LA CANTO - Jornada do curso de canto</div>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 5px; flex-wrap: wrap;">
+                <span style="background: rgba(34,197,94,0.2); color: #86efac; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px;">pedagogical</span>
+                <span style="background: var(--bg-elevated-2); color: var(--fg-muted); font-size: 10px; padding: 1px 6px; border-radius: 3px;">✓ 5</span>
               </div>
-              <div style="display: flex; align-items: center; gap: 6px;">
-                <div class="avatar" style="background: #0891b2; color: white;">J</div>
-                <span style="font-size: 10px; color: var(--fg-muted); flex: 1;">John</span>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 5px;">
                 <svg width="10" height="10" viewBox="0 0 24 24" stroke="var(--fg-muted)" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                <span style="font-size: 10px; color: var(--fg-muted);">08 de mar.</span>
+                <span style="font-size: 10px; color: var(--fg-muted);">19/05 → 09/06</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 5px;">
+                <div class="avatar" style="background: #7c3aed; color: white;">Q</div>
+                <div class="avatar" style="background: #db2777; color: white; margin-left: -4px;">D</div>
+                <div class="avatar" style="background: #d97706; color: white; margin-left: -4px;">J</div>
+                <div class="avatar" style="background: #2563eb; color: white; margin-left: -4px;">L</div>
+              </div>
+              <div style="display: flex; align-items: center; gap: 4px;">
+                <div style="flex: 1; height: 3px; background: var(--bg-elevated-2); border-radius: 9999px;"><div style="width: 0%; height: 100%; background: #86efac; border-radius: 9999px;"></div></div>
+                <span style="font-size: 10px; color: var(--fg-muted);">0%</span>
               </div>
             </div>
+
+            <!-- Card 4: RECURSOS DO CURSO DE CANTO -->
+            <div class="kanban-card">
+              <div style="font-size: 12px; font-weight: 500; color: var(--fg); margin-bottom: 6px; line-height: 1.3; max-height: 2.6em; overflow: hidden;">RECURSOS DO CURSO DE CANTO</div>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 5px; flex-wrap: wrap;">
+                <span style="background: rgba(59,130,246,0.2); color: #93c5fd; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px;">infrastructure</span>
+                <span style="background: var(--bg-elevated-2); color: var(--fg-muted); font-size: 10px; padding: 1px 6px; border-radius: 3px;">✓ 5</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 5px;">
+                <svg width="10" height="10" viewBox="0 0 24 24" stroke="var(--fg-muted)" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                <span style="font-size: 10px; color: var(--fg-muted);">19/05 → 02/06</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 5px;">
+                <div class="avatar" style="background: #db2777; color: white;">D</div>
+                <div class="avatar" style="background: #059669; color: white; margin-left: -4px;">R</div>
+                <div class="avatar" style="background: #d97706; color: white; margin-left: -4px;">J</div>
+                <div class="avatar" style="background: #7c3aed; color: white; margin-left: -4px;">M</div>
+                <span style="font-size: 10px; color: var(--fg-muted); margin-left: 2px;">+1</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 4px;">
+                <div style="flex: 1; height: 3px; background: var(--bg-elevated-2); border-radius: 9999px;"><div style="width: 0%; height: 100%; background: #93c5fd; border-radius: 9999px;"></div></div>
+                <span style="font-size: 10px; color: var(--fg-muted);">0%</span>
+              </div>
+            </div>
+
+            <!-- Card 5: Vídeo de Onboarding L.A -->
+            <div class="kanban-card">
+              <div style="font-size: 12px; font-weight: 500; color: var(--fg); margin-bottom: 6px; line-height: 1.3; max-height: 2.6em; overflow: hidden;">Vídeo de Onboarding L.A</div>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 5px; flex-wrap: wrap;">
+                <span style="background: rgba(249,115,22,0.2); color: #fdba74; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px;">operational</span>
+                <span style="background: var(--bg-elevated-2); color: var(--fg-muted); font-size: 10px; padding: 1px 6px; border-radius: 3px;">✓ 5</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 5px;">
+                <svg width="10" height="10" viewBox="0 0 24 24" stroke="var(--fg-muted)" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                <span style="font-size: 10px; color: var(--fg-muted);">15/05 → 31/07</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 5px;">
+                <div class="avatar" style="background: #dc2626; color: white;">Y</div>
+                <div class="avatar" style="background: #2563eb; color: white; margin-left: -4px;">L</div>
+              </div>
+              <div style="display: flex; align-items: center; gap: 4px;">
+                <div style="flex: 1; height: 3px; background: var(--bg-elevated-2); border-radius: 9999px;"><div style="width: 0%; height: 100%; background: #fdba74; border-radius: 9999px;"></div></div>
+                <span style="font-size: 10px; color: var(--fg-muted);">0%</span>
+              </div>
+            </div>
+
+            <!-- Card 6: Vídeo de Onboarding para Colaboradores -->
+            <div class="kanban-card">
+              <div style="font-size: 12px; font-weight: 500; color: var(--fg); margin-bottom: 6px; line-height: 1.3; max-height: 2.6em; overflow: hidden;">Vídeo de Onboarding L.A para Colaboradores</div>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 5px; flex-wrap: wrap;">
+                <span style="background: rgba(249,115,22,0.2); color: #fdba74; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px;">operational</span>
+                <span style="background: var(--bg-elevated-2); color: var(--fg-muted); font-size: 10px; padding: 1px 6px; border-radius: 3px;">✓ 6</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 5px;">
+                <svg width="10" height="10" viewBox="0 0 24 24" stroke="var(--fg-muted)" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                <span style="font-size: 10px; color: var(--fg-muted);">15/05 → 31/07</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 5px;">
+                <div class="avatar" style="background: #dc2626; color: white;">Y</div>
+                <div class="avatar" style="background: #2563eb; color: white; margin-left: -4px;">L</div>
+              </div>
+              <div style="display: flex; align-items: center; gap: 4px;">
+                <div style="flex: 1; height: 3px; background: var(--bg-elevated-2); border-radius: 9999px;"><div style="width: 0%; height: 100%; background: #fdba74; border-radius: 9999px;"></div></div>
+                <span style="font-size: 10px; color: var(--fg-muted);">0%</span>
+              </div>
+            </div>
+
+            <!-- Card 7: LA Teclas -->
+            <div class="kanban-card">
+              <div style="font-size: 12px; font-weight: 500; color: var(--fg); margin-bottom: 6px; line-height: 1.3; max-height: 2.6em; overflow: hidden;">LA Teclas</div>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 5px; flex-wrap: wrap;">
+                <span style="background: rgba(249,115,22,0.2); color: #fdba74; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px;">operational</span>
+                <span style="background: var(--bg-elevated-2); color: var(--fg-muted); font-size: 10px; padding: 1px 6px; border-radius: 3px;">✓ 3</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 5px;">
+                <svg width="10" height="10" viewBox="0 0 24 24" stroke="var(--fg-muted)" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                <span style="font-size: 10px; color: var(--fg-muted);">23/06 → 27/06</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 5px;">
+                <div class="avatar" style="background: #7c3aed; color: white;">Q</div>
+                <div class="avatar" style="background: #0891b2; color: white; margin-left: -4px;">L</div>
+                <div class="avatar" style="background: #be185d; color: white; margin-left: -4px;">K</div>
+                <div class="avatar" style="background: #065f46; color: white; margin-left: -4px;">J</div>
+                <span style="font-size: 10px; color: var(--fg-muted); margin-left: 2px;">+1</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 4px;">
+                <div style="flex: 1; height: 3px; background: var(--bg-elevated-2); border-radius: 9999px;"><div style="width: 0%; height: 100%; background: #fdba74; border-radius: 9999px;"></div></div>
+                <span style="font-size: 10px; color: var(--fg-muted);">0%</span>
+              </div>
+            </div>
+
           </div>
         </div>
 
-        <!-- Coluna: Captando -->
-        <div class="kanban-col">
+        <!-- ===== Coluna: Em andamento (0) ===== -->
+        <div style="flex: 1; min-width: 280px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; display: flex; flex-direction: column;">
           <div class="kanban-header">
             <div class="status-dot" style="background: var(--warning);"></div>
-            <span style="font-size: 12px; font-weight: 600; flex: 1; color: var(--fg);">Captando</span>
-            <span class="count-chip">5</span>
+            <span style="font-size: 12px; font-weight: 600; flex: 1; color: var(--fg);">Em andamento</span>
+            <span class="count-chip">0</span>
           </div>
-          <div class="kanban-body">
-            <!-- Card 1 -->
-            <div class="kanban-card">
-              <div style="font-size: 12px; font-weight: 500; color: var(--fg); margin-bottom: 6px; line-height: 1.3;">Dia do Guitarrista - Valdo</div>
-              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 6px; flex-wrap: wrap;">
-                <span class="badge-school">SCHOOL</span>
-              </div>
-              <div style="display: flex; align-items: center; gap: 6px;">
-                <div class="avatar" style="background: #dc2626; color: white;">Y</div>
-                <span style="font-size: 10px; color: var(--fg-muted); flex: 1;">Yuri</span>
-                <svg width="10" height="10" viewBox="0 0 24 24" stroke="var(--fg-muted)" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                <span style="font-size: 10px; color: var(--fg-muted);">20 de mar.</span>
-              </div>
-            </div>
-            <!-- Card 2 -->
-            <div class="kanban-card">
-              <div style="font-size: 12px; font-weight: 500; color: var(--fg); margin-bottom: 6px; line-height: 1.3;">Rec Agenda Abril - Belos</div>
-              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 6px; flex-wrap: wrap;">
-                <span class="badge-school">SCHOOL</span>
-              </div>
-              <div style="display: flex; align-items: center; gap: 6px;">
-                <div class="avatar" style="background: #dc2626; color: white;">Y</div>
-                <span style="font-size: 10px; color: var(--fg-muted); flex: 1;">Yuri</span>
-                <span style="font-size: 10px; color: var(--fg-muted);">sem data</span>
-              </div>
-            </div>
-            <!-- Card 3 -->
-            <div class="kanban-card">
-              <div style="font-size: 12px; font-weight: 500; color: var(--fg); margin-bottom: 6px; line-height: 1.3;">Dia das mulheres - Dai</div>
-              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 6px; flex-wrap: wrap;">
-                <span class="badge-school">SCHOOL</span>
-                <span style="font-size: 10px; color: var(--fg-muted);">dia das mulheres</span>
-              </div>
-              <div style="display: flex; align-items: center; gap: 6px;">
-                <div class="avatar" style="background: #dc2626; color: white;">Y</div>
-                <span style="font-size: 10px; color: var(--fg-muted); flex: 1;">Yuri</span>
-                <span style="font-size: 10px; color: var(--fg-muted);">sem data</span>
-              </div>
+          <div class="kanban-body" style="justify-content: center; padding: 24px 12px;">
+            <div style="text-align: center; color: var(--fg-muted);">
+              <div style="font-size: 11px; line-height: 1.5;">Nenhum projeto em andamento.</div>
+              <div style="font-size: 11px; line-height: 1.5; margin-top: 2px;">Mova um card de Planejamento pra cá.</div>
             </div>
           </div>
         </div>
 
-        <!-- Coluna: Editando -->
-        <div class="kanban-col">
-          <div class="kanban-header">
-            <div class="status-dot" style="background: var(--danger);"></div>
-            <span style="font-size: 12px; font-weight: 600; flex: 1; color: var(--fg);">Editando</span>
-            <span class="count-chip">15</span>
-          </div>
-          <div class="kanban-body">
-            <div style="font-size: 11px; color: var(--fg-muted); text-align: center; padding: 12px 8px;">15 projetos</div>
-          </div>
-        </div>
-
-        <!-- Coluna: Aguardando Aprovação -->
-        <div class="kanban-col">
+        <!-- ===== Coluna: Concluído (0) ===== -->
+        <div style="flex: 1; min-width: 280px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; display: flex; flex-direction: column;">
           <div class="kanban-header">
             <div class="status-dot" style="background: var(--success);"></div>
-            <span style="font-size: 12px; font-weight: 600; flex: 1; color: var(--fg);">Aguardando Aprovação</span>
-            <span class="count-chip">2</span>
+            <span style="font-size: 12px; font-weight: 600; flex: 1; color: var(--fg);">Concluído</span>
+            <span class="count-chip">0</span>
           </div>
-          <div class="kanban-body">
-            <div style="font-size: 11px; color: var(--fg-muted); text-align: center; padding: 12px 8px;">2 projetos</div>
-          </div>
-        </div>
-
-        <!-- Coluna: Aprovado/Agendado -->
-        <div class="kanban-col">
-          <div class="kanban-header">
-            <div class="status-dot" style="background: var(--tom);"></div>
-            <span style="font-size: 12px; font-weight: 600; flex: 1; color: var(--fg);">Aprovado/Agendado</span>
-            <span class="count-chip">9</span>
-          </div>
-          <div class="kanban-body">
-            <div style="font-size: 11px; color: var(--fg-muted); text-align: center; padding: 12px 8px;">9 projetos</div>
+          <div class="kanban-body" style="justify-content: center; padding: 24px 12px;">
+            <div style="text-align: center; color: var(--fg-muted);">
+              <div style="font-size: 11px; line-height: 1.5;">Nenhum concluído ainda.</div>
+            </div>
           </div>
         </div>
 
-        <!-- Coluna: Publicado -->
-        <div class="kanban-col">
+        <!-- ===== Coluna: Cancelado (1) ===== -->
+        <div style="flex: 1; min-width: 280px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; display: flex; flex-direction: column;">
           <div class="kanban-header">
-            <div class="status-dot" style="background: var(--tom);"></div>
-            <span style="font-size: 12px; font-weight: 600; flex: 1; color: var(--fg);">Publicado</span>
-            <span class="count-chip">14</span>
+            <div class="status-dot" style="background: var(--fg-muted);"></div>
+            <span style="font-size: 12px; font-weight: 600; flex: 1; color: var(--fg);">Cancelado</span>
+            <span class="count-chip">1</span>
           </div>
           <div class="kanban-body">
-            <div style="font-size: 11px; color: var(--fg-muted); text-align: center; padding: 12px 8px;">14 projetos</div>
+
+            <!-- Card: Masterclass de Percussão (cancelado) -->
+            <div class="kanban-card" style="opacity: 0.6; position: relative;">
+              <!-- X no canto -->
+              <div style="position: absolute; top: 8px; right: 8px;">
+                <svg width="12" height="12" viewBox="0 0 24 24" stroke="var(--fg-muted)" fill="none" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </div>
+              <div style="font-size: 12px; font-weight: 500; color: var(--fg); margin-bottom: 6px; line-height: 1.3; max-height: 2.6em; overflow: hidden; padding-right: 16px;">Masterclass de Percussão</div>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 5px; flex-wrap: wrap;">
+                <span style="background: rgba(34,197,94,0.2); color: #86efac; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 3px;">pedagogical</span>
+                <span style="background: var(--bg-elevated-2); color: var(--fg-muted); font-size: 10px; padding: 1px 6px; border-radius: 3px;">✓ 0</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 5px;">
+                <svg width="10" height="10" viewBox="0 0 24 24" stroke="var(--fg-muted)" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                <span style="font-size: 10px; color: var(--fg-muted);">15/06 → 15/06</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 4px; margin-bottom: 5px;">
+                <span style="font-size: 10px; color: var(--fg-muted);">sem responsáveis</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 4px;">
+                <div style="flex: 1; height: 3px; background: var(--bg-elevated-2); border-radius: 9999px;"><div style="width: 0%; height: 100%; background: var(--fg-muted); border-radius: 9999px;"></div></div>
+                <span style="font-size: 10px; color: var(--fg-muted);">0%</span>
+              </div>
+            </div>
+
           </div>
         </div>
 
