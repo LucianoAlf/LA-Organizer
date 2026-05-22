@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>02 · Page Primitives — LA Organizer Desktop</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/tom-tokens.css" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: {
+        colors: {
+          tom: 'var(--tom)',
+          'bg-app': 'var(--bg-app)',
+          'bg-surface': 'var(--bg-surface)',
+          'bg-elevated': 'var(--bg-elevated)',
+          'bg-elevated-2': 'var(--bg-elevated-2)',
+          border: 'var(--border)',
+          'border-strong': 'var(--border-strong)',
+          fg: 'var(--fg)',
+          'fg-secondary': 'var(--fg-secondary)',
+          'fg-muted': 'var(--fg-muted)',
+          success: 'var(--success)',
+          warning: 'var(--warning)',
+          danger: 'var(--danger)',
+          info: 'var(--info)',
+        },
+      } }
+    };
+  </script>
+
+  <style>
+    /* Layout flex para contornar overflow:hidden do tom-tokens.css */
+    body {
+      display: flex !important;
+      height: 100vh !important;
+      overflow: hidden !important;
+    }
+
+    .sg-sidebar {
+      width: 220px;
+      flex-shrink: 0;
+      height: 100vh;
+      overflow-y: auto;
+      background: var(--bg-surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .sg-main {
+      flex: 1;
+      height: 100vh;
+      overflow-y: auto;
+    }
+
+    .sg-main-inner {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 48px;
+    }
+
+    /* Nav links */
+    .nav-link {
+      display: block;
+      padding: 6px 16px;
+      font-size: 12px;
+      color: var(--fg-muted);
+      text-decoration: none;
+      border-radius: 4px;
+      margin: 1px 8px;
+      transition: background 0.1s, color 0.1s;
+    }
+    .nav-link:hover {
+      background: var(--bg-elevated);
+      color: var(--fg);
+    }
+    .nav-link.active {
+      background: rgba(163,190,80,0.12);
+      color: var(--tom);
+    }
+
+    /* Section headers */
+    .section-h2 {
+      font-size: 20px;
+      font-weight: 700;
+      margin-top: 48px;
+      margin-bottom: 4px;
+      color: var(--fg);
+    }
+    .section-sub {
+      font-size: 13px;
+      color: var(--fg-muted);
+      margin-bottom: 24px;
+    }
+    .section-border {
+      border-top: 1px solid var(--border);
+      padding-top: 32px;
+    }
+
+    /* Variant label */
+    .variant-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: rgba(158,158,158,0.6);
+      margin-top: 24px;
+      margin-bottom: 8px;
+    }
+
+    /* PageHeader container */
+    .primitive-box {
+      background: var(--bg-app);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 32px;
+    }
+
+    /* Toolbar box */
+    .toolbar-box {
+      background: var(--bg-app);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+    }
+
+    /* FilterPill base */
+    .filter-pill {
+      height: 28px;
+      padding: 0 10px;
+      border-radius: 9999px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--fg-muted);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      transition: color 0.1s, border-color 0.1s;
+      white-space: nowrap;
+    }
+    .filter-pill:hover {
+      color: var(--fg);
+      border-color: var(--border-strong);
+    }
+    .filter-pill.active {
+      color: var(--fg);
+      border-color: var(--border-strong);
+    }
+    .filter-pill.dashed {
+      border-style: dashed;
+    }
+    .filter-pill.disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .pill-count {
+      color: var(--fg);
+    }
+    .pill-sep {
+      color: rgba(158,158,158,0.6);
+    }
+
+    /* ViewSwitcher */
+    .view-switcher {
+      display: inline-flex;
+      height: 36px;
+      border-radius: 6px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      padding: 2px;
+      font-size: 12px;
+    }
+    .view-tab {
+      padding: 0 12px;
+      border-radius: 4px;
+      color: var(--fg-muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      transition: color 0.1s;
+      border: 1px solid transparent;
+      background: transparent;
+      font-size: 12px;
+    }
+    .view-tab:hover {
+      color: var(--fg);
+    }
+    .view-tab.active {
+      background: var(--bg-surface);
+      border-color: var(--border);
+      color: var(--fg);
+      font-weight: 500;
+    }
+
+    /* Search input */
+    .search-input {
+      width: 200px;
+      height: 28px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0 8px 0 28px;
+      font-size: 12px;
+      color: var(--fg);
+      outline: none;
+      transition: border-color 0.1s;
+    }
+    .search-input:focus {
+      border-color: var(--border-strong);
+    }
+    .search-input::placeholder {
+      color: var(--fg-muted);
+    }
+    .search-wrap {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+    }
+    .search-wrap svg {
+      position: absolute;
+      left: 8px;
+      color: var(--fg-muted);
+      pointer-events: none;
+    }
+
+    /* Button styles */
+    .btn-primary {
+      height: 32px;
+      padding: 0 14px;
+      background: var(--tom);
+      color: #1a1a1a;
+      font-size: 12px;
+      font-weight: 600;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      transition: background 0.1s;
+    }
+    .btn-primary:hover { background: var(--tom-hover); }
+
+    .btn-secondary {
+      height: 32px;
+      padding: 0 14px;
+      background: var(--bg-elevated);
+      color: var(--fg);
+      font-size: 12px;
+      font-weight: 500;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      transition: background 0.1s, border-color 0.1s;
+    }
+    .btn-secondary:hover {
+      background: var(--bg-elevated-2);
+      border-color: var(--border-strong);
+    }
+
+    /* Spec table */
+    .spec-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      margin-top: 16px;
+    }
+    .spec-table th {
+      text-align: left;
+      padding: 6px 12px;
+      color: var(--fg-muted);
+      font-weight: 500;
+      border-bottom: 1px solid var(--border);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .spec-table td {
+      padding: 8px 12px;
+      border-bottom: 1px solid rgba(42,42,42,0.5);
+      color: var(--fg-secondary);
+    }
+    .spec-table td:first-child {
+      color: var(--fg-muted);
+      font-size: 11px;
+    }
+    .spec-table code {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 1px 5px;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      font-size: 11px;
+      color: var(--tom);
+    }
+
+    /* Vertical divider */
+    .vdivider {
+      width: 1px;
+      height: 20px;
+      background: var(--border);
+      flex-shrink: 0;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ====== SIDEBAR ====== -->
+  <nav class="sg-sidebar">
+    <div style="padding: 20px 16px 12px;">
+      <div style="font-size: 12px; font-weight: 700; color: var(--fg); line-height: 1.3; margin-bottom: 4px;">
+        🧩 LA Organizer Desktop
+      </div>
+      <div style="font-size: 12px; font-weight: 700; color: var(--fg); margin-bottom: 6px;">Page primitives</div>
+      <div style="font-size: 11px; color: var(--fg-muted); line-height: 1.4;">Compostos de página · referência</div>
+    </div>
+
+    <div style="border-top: 1px solid var(--border); margin: 0 0 8px;"></div>
+
+    <div style="flex: 1; padding: 4px 0;">
+      <a href="#pageheader" class="nav-link">PageHeader</a>
+      <a href="#toolbar" class="nav-link">Toolbar</a>
+      <a href="#filterpill" class="nav-link">FilterPill</a>
+      <a href="#viewswitcher" class="nav-link">ViewSwitcher</a>
+      <a href="#combinado" class="nav-link">Combinado</a>
+    </div>
+
+    <div style="border-top: 1px solid var(--border); padding: 12px 16px;">
+      <a href="index.html" style="font-size: 11px; color: var(--fg-muted); text-decoration: none; display: flex; align-items: center; gap: 6px;">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15,18 9,12 15,6"></polyline></svg>
+        Index
+      </a>
+    </div>
+  </nav>
+
+  <!-- ====== MAIN ====== -->
+  <main class="sg-main">
+    <div class="sg-main-inner">
+
+      <!-- Title -->
+      <div style="margin-bottom: 16px;">
+        <div style="font-size: 11px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px;">02 · Foundation Desktop</div>
+        <h1 style="font-size: 28px; font-weight: 700; margin: 0 0 8px;">Page Primitives</h1>
+        <p style="font-size: 14px; color: var(--fg-muted); margin: 0;">Blocos compostos reutilizáveis que formam a estrutura de cada página — PageHeader, Toolbar, FilterPill, ViewSwitcher.</p>
+      </div>
+
+      <!-- ========================= -->
+      <!-- SECTION 1: PageHeader     -->
+      <!-- ========================= -->
+      <section id="pageheader" class="section-border">
+        <h2 class="section-h2">PageHeader</h2>
+        <p class="section-sub">Header de página com eyebrow, título, subtitle e actions à direita</p>
+
+        <!-- Variante A -->
+        <div class="variant-label">Variante A — Completo</div>
+        <div class="primitive-box">
+          <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;">
+            <div>
+              <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; color: rgba(158,158,158,0.7); margin-bottom: 4px;">Gestão</div>
+              <h1 style="font-size: 22px; font-weight: 700; margin: 0 0 4px; color: var(--fg);">Projetos</h1>
+              <div style="font-size: 13px; color: var(--fg-muted);">8 projetos · 7 em planejamento</div>
+            </div>
+            <div style="display: flex; gap: 8px; flex-shrink: 0; padding-top: 4px;">
+              <button class="btn-secondary">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                Exportar
+              </button>
+              <button class="btn-primary">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                Novo Projeto
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="variant-label" style="margin-top: 6px;">Variante A — Completo</div>
+
+        <!-- Variante B -->
+        <div class="variant-label">Variante B — Com breadcrumb</div>
+        <div class="primitive-box">
+          <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;">
+            <div>
+              <div style="font-size: 12px; color: var(--fg-muted); margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
+                <span>LA Organizer</span>
+                <span style="color: rgba(158,158,158,0.4);">/</span>
+                <span>Operações</span>
+                <span style="color: rgba(158,158,158,0.4);">/</span>
+                <span style="color: var(--fg);">Inventário</span>
+              </div>
+              <h1 style="font-size: 22px; font-weight: 700; margin: 0 0 4px; color: var(--fg);">Sala 1 - LA Lab</h1>
+              <div style="font-size: 13px; color: var(--fg-muted);">12 itens · última atualização há 3 dias</div>
+            </div>
+            <div style="display: flex; gap: 8px; flex-shrink: 0; padding-top: 4px;">
+              <button class="btn-secondary">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                Editar sala
+              </button>
+              <button class="btn-primary">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                Adicionar item
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="variant-label" style="margin-top: 6px;">Variante B — Com breadcrumb</div>
+
+        <!-- Variante C -->
+        <div class="variant-label">Variante C — Mínimo (sem actions)</div>
+        <div class="primitive-box">
+          <h1 style="font-size: 22px; font-weight: 700; margin: 0 0 4px; color: var(--fg);">Histórico</h1>
+          <div style="font-size: 13px; color: var(--fg-muted);">Aderência dos últimos 30 dias</div>
+        </div>
+        <div class="variant-label" style="margin-top: 6px;">Variante C — Mínimo (sem actions)</div>
+      </section>
+
+      <!-- ========================= -->
+      <!-- SECTION 2: Toolbar        -->
+      <!-- ========================= -->
+      <section id="toolbar" class="section-border">
+        <h2 class="section-h2">Toolbar</h2>
+        <p class="section-sub">Barra de filtros, view switcher e busca/actions</p>
+
+        <!-- Variante A -->
+        <div class="variant-label">Variante A — Toolbar cheia</div>
+        <div class="toolbar-box">
+          <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+            <!-- ViewSwitcher -->
+            <div class="view-switcher">
+              <button class="view-tab">Dashboard</button>
+              <button class="view-tab">Lista</button>
+              <button class="view-tab active">Kanban</button>
+              <button class="view-tab">Calendário</button>
+              <button class="view-tab">Timeline</button>
+              <button class="view-tab">Por pessoa</button>
+            </div>
+
+            <!-- Divider -->
+            <div class="vdivider"></div>
+
+            <!-- Filter pills -->
+            <button class="filter-pill active">
+              Status <span class="pill-sep">·</span> <span class="pill-count">3</span>
+            </button>
+            <button class="filter-pill">Responsável</button>
+            <button class="filter-pill">Programa</button>
+            <button class="filter-pill dashed">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+              Filtro
+            </button>
+
+            <!-- Spacer + search -->
+            <div style="margin-left: auto;">
+              <div class="search-wrap">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                <input class="search-input" type="text" placeholder="Buscar..." />
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="variant-label" style="margin-top: 6px;">Variante A — Toolbar cheia (Projetos)</div>
+
+        <!-- Variante B -->
+        <div class="variant-label">Variante B — Toolbar enxuta</div>
+        <div class="toolbar-box">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <!-- Filter pills only -->
+            <button class="filter-pill active">
+              Período <span class="pill-sep">·</span> <span class="pill-count">Últimos 30d</span>
+            </button>
+            <button class="filter-pill">Categoria</button>
+            <button class="filter-pill dashed">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+              Filtro
+            </button>
+
+            <!-- Spacer + search -->
+            <div style="margin-left: auto;">
+              <div class="search-wrap">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                <input class="search-input" type="text" placeholder="Buscar..." />
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="variant-label" style="margin-top: 6px;">Variante B — Toolbar enxuta (ex: Histórico — apenas 1 view)</div>
+      </section>
+
+      <!-- ========================= -->
+      <!-- SECTION 3: FilterPill     -->
+      <!-- ========================= -->
+      <section id="filterpill" class="section-border">
+        <h2 class="section-h2">FilterPill</h2>
+        <p class="section-sub">Chip de filtro removível com count opcional</p>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 32px; margin-top: 8px;">
+
+          <!-- Coluna 1: Estados base -->
+          <div>
+            <div class="variant-label" style="margin-top: 0;">Estados base</div>
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+              <div>
+                <button class="filter-pill">Status</button>
+                <div style="font-size: 11px; color: rgba(158,158,158,0.5); margin-top: 4px;">Default</div>
+              </div>
+              <div>
+                <button class="filter-pill" style="border-color: var(--border-strong); color: var(--fg);">Status</button>
+                <div style="font-size: 11px; color: rgba(158,158,158,0.5); margin-top: 4px;">Hover</div>
+              </div>
+              <div>
+                <button class="filter-pill active">Status <span class="pill-sep">·</span> <span class="pill-count">3</span></button>
+                <div style="font-size: 11px; color: rgba(158,158,158,0.5); margin-top: 4px;">Ativo com count</div>
+              </div>
+              <div>
+                <button class="filter-pill disabled" disabled>Status</button>
+                <div style="font-size: 11px; color: rgba(158,158,158,0.5); margin-top: 4px;">Disabled</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Coluna 2: Com ícone -->
+          <div>
+            <div class="variant-label" style="margin-top: 0;">Com ícone</div>
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+              <div>
+                <button class="filter-pill">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                  Período
+                </button>
+              </div>
+              <div>
+                <button class="filter-pill active">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                  Responsável <span class="pill-sep">·</span> <span class="pill-count">2</span>
+                </button>
+              </div>
+              <div>
+                <button class="filter-pill">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                  Prioridade
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Coluna 3: Add filter (dashed) -->
+          <div>
+            <div class="variant-label" style="margin-top: 0;">Add filter (dashed)</div>
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+              <div>
+                <button class="filter-pill dashed">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                  Filtro
+                </button>
+              </div>
+              <div>
+                <button class="filter-pill dashed" style="padding: 0 14px;">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                  Adicionar critério
+                </button>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Spec table -->
+        <table class="spec-table" style="margin-top: 32px; background: var(--bg-elevated); border-radius: 6px; overflow: hidden;">
+          <thead>
+            <tr>
+              <th>Propriedade</th>
+              <th>Valor</th>
+              <th>Token / classe</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Altura</td><td>28px</td><td><code>h-7</code></td></tr>
+            <tr><td>Padding horizontal</td><td>10px</td><td><code>px-2.5</code></td></tr>
+            <tr><td>Font size</td><td>12px</td><td><code>text-[12px]</code></td></tr>
+            <tr><td>Border radius</td><td>full (pill)</td><td><code>rounded-full</code></td></tr>
+            <tr><td>Background</td><td>bg-elevated</td><td><code>bg-bg-elevated</code></td></tr>
+            <tr><td>Border</td><td>1px solid (ou dashed)</td><td><code>border border-border</code></td></tr>
+            <tr><td>Gap entre elementos</td><td>6px</td><td><code>gap-1.5</code></td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- ========================= -->
+      <!-- SECTION 4: ViewSwitcher   -->
+      <!-- ========================= -->
+      <section id="viewswitcher" class="section-border">
+        <h2 class="section-h2">ViewSwitcher</h2>
+        <p class="section-sub">Tabs de visualização da mesma lista</p>
+
+        <!-- Variante A -->
+        <div class="variant-label">Variante A — 6 views (Projetos)</div>
+        <div class="view-switcher">
+          <button class="view-tab">Dashboard</button>
+          <button class="view-tab">Lista</button>
+          <button class="view-tab active">Kanban</button>
+          <button class="view-tab">Calendário</button>
+          <button class="view-tab">Timeline</button>
+          <button class="view-tab">Por pessoa</button>
+        </div>
+
+        <!-- Variante B -->
+        <div class="variant-label">Variante B — 3 views (Agenda)</div>
+        <div class="view-switcher">
+          <button class="view-tab">Dia</button>
+          <button class="view-tab">Semana</button>
+          <button class="view-tab active">Mês</button>
+        </div>
+
+        <!-- Variante C -->
+        <div class="variant-label">Variante C — 2 views (Inventário)</div>
+        <div class="view-switcher">
+          <button class="view-tab active">Lista</button>
+          <button class="view-tab">Por sala</button>
+        </div>
+
+        <!-- Spec table -->
+        <table class="spec-table" style="margin-top: 32px; background: var(--bg-elevated); border-radius: 6px; overflow: hidden;">
+          <thead>
+            <tr>
+              <th>Propriedade</th>
+              <th>Valor</th>
+              <th>Token / classe</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Container altura</td><td>36px</td><td><code>h-9</code></td></tr>
+            <tr><td>Container bg</td><td>bg-elevated</td><td><code>bg-bg-elevated</code></td></tr>
+            <tr><td>Container padding</td><td>2px</td><td><code>p-0.5</code></td></tr>
+            <tr><td>Tab inativa</td><td>text-fg-muted, hover text-fg</td><td><code>text-fg-muted hover:text-fg</code></td></tr>
+            <tr><td>Tab ativa</td><td>bg-surface, border, font-medium</td><td><code>bg-bg-surface border border-border font-medium</code></td></tr>
+            <tr><td>Font size</td><td>12px</td><td><code>text-[12px]</code></td></tr>
+            <tr><td>Tab padding</td><td>0 12px</td><td><code>px-3</code></td></tr>
+            <tr><td>Persistência</td><td>localStorage por rota</td><td>—</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- ========================= -->
+      <!-- SECTION 5: Combinado      -->
+      <!-- ========================= -->
+      <section id="combinado" class="section-border">
+        <h2 class="section-h2">Combinado</h2>
+        <p class="section-sub">PageHeader + Toolbar em uma página real (exemplo Agenda)</p>
+
+        <!-- Preview container -->
+        <div style="background: var(--bg-surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin-top: 16px;">
+
+          <!-- PageHeader dentro do container -->
+          <div style="padding: 20px 28px 16px; border-bottom: 1px solid var(--border);">
+            <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;">
+              <div>
+                <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; color: rgba(158,158,158,0.7); margin-bottom: 4px;">Principal</div>
+                <div style="display: flex; align-items: baseline; gap: 10px;">
+                  <h1 style="font-size: 22px; font-weight: 700; margin: 0; color: var(--fg);">Agenda</h1>
+                  <span style="font-size: 13px; color: var(--fg-muted);">Hoje · qui 21/05</span>
+                  <span style="display: inline-flex; align-items: center; height: 20px; padding: 0 8px; background: rgba(163,190,80,0.12); border-radius: 9999px; font-size: 11px; color: var(--tom); font-weight: 600;">2 tarefas pra hoje</span>
+                </div>
+              </div>
+              <div style="display: flex; gap: 8px; flex-shrink: 0; padding-top: 4px;">
+                <button class="btn-secondary">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>
+                  Filtros
+                </button>
+                <button class="btn-primary">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                  Quick capture
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Toolbar -->
+          <div style="padding: 10px 28px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; background: var(--bg-surface);">
+            <!-- ViewSwitcher -->
+            <div class="view-switcher">
+              <button class="view-tab active">Hoje</button>
+              <button class="view-tab">Dia</button>
+              <button class="view-tab">Semana</button>
+              <button class="view-tab">Mês</button>
+            </div>
+
+            <!-- Divider -->
+            <div class="vdivider"></div>
+
+            <!-- Pills -->
+            <button class="filter-pill active">Trabalho <span class="pill-sep">·</span> <span class="pill-count">2</span></button>
+            <button class="filter-pill">Pessoal</button>
+            <button class="filter-pill dashed">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+              Filtro
+            </button>
+
+            <!-- Spacer + search -->
+            <div style="margin-left: auto;">
+              <div class="search-wrap">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                <input class="search-input" type="text" placeholder="Buscar..." />
+              </div>
+            </div>
+          </div>
+
+          <!-- Body placeholder -->
+          <div style="height: 200px; display: flex; align-items: center; justify-content: center; background: var(--bg-app);">
+            <div style="text-align: center; color: var(--fg-muted);">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin: 0 auto 10px; display: block; opacity: 0.3;"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+              <p style="font-size: 13px; margin: 0; opacity: 0.5;">Conteúdo da página aqui</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="variant-label" style="margin-top: 12px;">Preview — Agenda · PageHeader + Toolbar compostos</div>
+
+        <!-- Spacer at bottom -->
+        <div style="height: 48px;"></div>
+      </section>
+
+    </div><!-- /sg-main-inner -->
+  </main><!-- /sg-main -->
+
+</body>
+</html>
