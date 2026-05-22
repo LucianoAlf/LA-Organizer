@@ -3,7 +3,7 @@ import type { Role } from '../types';
 /** Display names em português para os níveis de permissão internos. */
 export const ROLE_LABELS: Record<Role, string> = {
   collaborator: 'Colaborador',
-  leader:       'Líder',
+  leader:       'Responsável',
   coordinator:  'Coordenador',
   manager:      'Gerente',
   director:     'Diretor',
@@ -42,7 +42,7 @@ export const ROLES: Role[] = [
  */
 export const FUNCTION_TITLES: Record<Role, string[]> = {
   collaborator: ['Farmer', 'Hunter', 'Professor', 'Assistente Pedagógico', 'Financeiro', 'RH', 'Coordenador de Tecnologia', 'Marketing'],
-  leader:       ['Líder de Equipe'],
+  leader:       ['Responsável de Equipe'],
   coordinator:  ['Coordenador'],
   manager:      ['Gerente'],
   director:     ['Diretor'],

@@ -32,6 +32,7 @@ const {
   runInventarioManutencoesPendentes,
   runInventarioRevisoesProgramadas,
 } = require('./inventario-alertas');
+const { runCheckProjectDeadlines } = require('./checkpoint-deadlines');
 
 const RITUAL_BY_DIRECTIVE = {
   briefing_pessoal: 'personal_briefing',

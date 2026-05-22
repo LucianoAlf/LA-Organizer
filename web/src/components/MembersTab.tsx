@@ -487,7 +487,7 @@ function AddInternalForm({
   const roleOptions: Array<{ value: ProjectMemberRole; label: string; sublabel: string }> = [
     { value: 'member', label: 'Membro', sublabel: 'executa' },
     { value: 'coordinator', label: 'Coordenador', sublabel: 'vê tudo do projeto' },
-    { value: 'owner', label: 'Owner', sublabel: 'criador / lidera' },
+    { value: 'owner', label: 'Responsável', sublabel: 'criador / lidera' },
   ];
 
   return (

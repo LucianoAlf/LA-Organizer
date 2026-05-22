@@ -10,6 +10,7 @@ const dedupe = require('./services/dedupe');
 const audio = require('./services/audio');
 const vision = require('./services/vision');
 const gemini = require('./services/gemini');
+const shutdown = require('./services/shutdown');
 
 const router = express.Router();
 
@@ -271,7 +272,9 @@ router.post(['/webhook', '/webhook/:token'], async (req, res) => {
     // Guard 1: serializa por phone — duas mensagens do mesmo usuário NÃO rodam em
     // paralelo (evita corrida no Supabase, no histórico, e na detecção de skill).
     // Usuários diferentes continuam em paralelo. Não bloqueia o webhook (já respondemos 200 acima).
-    queue.enqueue(phone, () => processMessage(phone, text, body));
+    // Sprint 23.14: wrap em shutdown.withTracking() — em deploy/restart, SIGTERM
+    // espera até 30s pra essa promise resolver antes de matar o processo.
+    queue.enqueue(phone, () => shutdown.withTracking(() => processMessage(phone, text, body)));
 
   } catch (err) {
     console.error(`[Webhook] Erro ao processar: ${err.message}`);

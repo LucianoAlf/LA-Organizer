@@ -261,7 +261,7 @@ export function ChecklistTemplateSheet({ open, template, onClose }: Props) {
 
         <div>
           <label className="text-caption text-fg-muted block mb-1">
-            Líder <span className="text-fg-muted font-normal">(recebe alerta se não fizer)</span>
+            Responsável <span className="text-fg-muted font-normal">(recebe alerta se não fizer)</span>
           </label>
           <CustomSelect
             value={leaderId}

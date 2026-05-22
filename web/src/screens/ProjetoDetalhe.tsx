@@ -24,7 +24,8 @@ import { CheckpointsTab } from '../tabs/CheckpointsTab';
 import { ContingenciasTab } from '../tabs/ContingenciasTab';
 import { DiaDBanner } from '../tabs/DiaDBanner';
 import { useProjectMembers } from '../hooks/useProjectMembers';
-import { useProjectCheckpoints } from '../hooks/useProjectCheckpoints';
+import { useProjectCheckpoints, type CreateCheckpointInput } from '../hooks/useProjectCheckpoints';
+import { computeCheckpointResponsavel } from '../hooks/useCheckpointResponsavel';
 import { useProjectTasks } from '../hooks/useProjectTasks';
 import { useProjectContingencies } from '../hooks/useProjectContingencies';
 import { brShort } from '../utils/date';
@@ -146,6 +147,18 @@ export function ProjetoDetalhe() {
   const orphanTasks = tasksByCheckpoint.get(null) ?? [];
   const totalTaskCount = tasks.length;
 
+  // Nome do dono do projeto — fallback mostrado no picker de responsável quando
+  // nenhum checkpoint owner é escolhido (= herda do projeto).
+  const ownerFallbackName = members.find(m => m.collaborator_id === project.created_by)?.collaborator?.full_name ?? '—';
+
+  // Sprint — Map de responsavel computado por checkpoint. useCheckpointResponsavel
+  // e hook puro (sem useState/useEffect) — chamar em loop e seguro.
+  const responsavelByCheckpoint = new Map<string, { name: string; isFallback: boolean }>();
+  for (const cp of checkpoints) {
+    const r = computeCheckpointResponsavel(cp, project, members);
+    responsavelByCheckpoint.set(cp.id, { name: r.displayName, isFallback: r.isFallback });
+  }
+
   return (
     <div className="space-y-md">
       <ProjectHeader
@@ -215,7 +228,14 @@ export function ProjetoDetalhe() {
           onAssignTask={(tId, cId) => tasksApi.assign({ taskId: tId, collabId: cId })}
           onReorderCheckpoints={(ids) => checkpointsApi.reorder(ids)}
           onReorderTasks={(cpId, ids) => tasksApi.reorder({ checkpointId: cpId, orderedIds: ids })}
-          onCreateCheckpoint={(name) => checkpointsApi.create(name)}
+          onCreateCheckpoint={(input: CreateCheckpointInput) => checkpointsApi.create(input)}
+          ownerFallbackName={ownerFallbackName}
+          responsavelByCheckpoint={responsavelByCheckpoint}
+          onChangeCheckpointResponsavel={
+            canSeeAll
+              ? (cpId, collabId) => checkpointsApi.update({ id: cpId, assigned_to: collabId })
+              : undefined
+          }
         />
       )}
 

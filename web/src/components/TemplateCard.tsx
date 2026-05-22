@@ -102,7 +102,7 @@ export function TemplateCard({ template, onEdit }: Props) {
           </p>
           {template.leader?.full_name && (
             <p className="text-body-sm text-fg-muted">
-              Líder: {template.leader.full_name}
+              Responsável: {template.leader.full_name}
             </p>
           )}
           <p className="text-body-sm text-fg-muted">

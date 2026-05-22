@@ -18,7 +18,11 @@ function resolveDisplayName(m: ProjectMember): string {
   return m.collaborator?.full_name ?? m.guest_name ?? '—';
 }
 
-export function useCheckpointResponsavel(
+/**
+ * Versao "funcao pura" — sem prefixo `use`, pode ser chamada em loop
+ * sem violar rules-of-hooks. Use em ProjetoDetalhe pra construir Map<cpId, resp>.
+ */
+export function computeCheckpointResponsavel(
   cp: Pick<CheckpointFull, 'assigned_to'>,
   project: Pick<ProjectFull, 'created_by'> | null | undefined,
   members: ProjectMember[],
@@ -46,3 +50,6 @@ export function useCheckpointResponsavel(
   }
   return { member: null, isFallback: true, displayName: '—' };
 }
+
+/** Alias historico — mantem compatibilidade com chamadas existentes. */
+export const useCheckpointResponsavel = computeCheckpointResponsavel;

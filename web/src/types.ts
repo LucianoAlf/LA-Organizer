@@ -232,7 +232,7 @@ export interface Project {
 export type ProjectMemberRole = 'owner' | 'coordinator' | 'member';
 
 export const PROJECT_MEMBER_ROLE_LABELS: Record<ProjectMemberRole, string> = {
-  owner: 'Owner',
+  owner: 'Responsável',
   coordinator: 'Coordenador',
   member: 'Membro',
 };
