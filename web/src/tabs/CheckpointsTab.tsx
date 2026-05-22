@@ -112,12 +112,16 @@ export function CheckpointsTab(props: CheckpointsTabProps) {
         </div>
       )}
       {checkpoints.length === 0 && totalTaskCount === 0 ? (
-        <div className="surface">
-          <EmptyState
-            title="Sem checkpoints ainda"
-            description="Marcos do projeto. Peça pro TOM estruturar pelo WhatsApp ou crie manualmente quando o CRUD inline subir."
-          />
-        </div>
+        <>
+          <div className="surface">
+            <EmptyState
+              title="Sem checkpoints ainda"
+              description="Marcos do projeto. Crie abaixo manualmente ou peça pro TOM estruturar pelo WhatsApp."
+            />
+          </div>
+          {/* CRUD inline disponível mesmo no estado vazio — desbloqueia criação direta no app */}
+          <CreateCheckpointInline onCreate={onCreateCheckpoint} />
+        </>
       ) : (
         <>
           {canSeeAll && viewMode === 'by_person' ? (

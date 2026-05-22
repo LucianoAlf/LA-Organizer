@@ -130,7 +130,8 @@ export function TimelineGantt({
                     </button>
                   );
                 })}
-                {/* Markers (pins/checkpoints) — sobre a barra, ancorados no centro */}
+                {/* Markers (pins/checkpoints) — espetados acima da barra. A ponta
+                    do pin (parte de baixo do ícone) toca o topo da barra. */}
                 {laneMarkers.map(m => (
                   <button
                     key={m.id}
@@ -141,12 +142,17 @@ export function TimelineGantt({
                         ? `${m.label} · ${new Date(m.date).toLocaleDateString('pt-BR')}`
                         : new Date(m.date).toLocaleDateString('pt-BR')
                     }
-                    className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 z-10 grid place-items-center w-5 h-7 hover:scale-110 transition-transform focus-ring rounded"
-                    style={{ left: `${pct(m.date, rangeStart, rangeEnd)}%` }}
+                    className="absolute z-20 grid place-items-center hover:scale-110 transition-transform focus-ring rounded"
+                    style={{
+                      left: `${pct(m.date, rangeStart, rangeEnd)}%`,
+                      top: '50%',
+                      transform: 'translate(-50%, calc(-50% - 18px))',
+                      filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.6))',
+                    }}
                   >
                     <MapPin
-                      size={16}
-                      strokeWidth={2.2}
+                      size={18}
+                      strokeWidth={2.4}
                       fill={m.done ? '#22C55E' : '#EF4444'}
                       className={m.done ? 'text-success' : 'text-danger'}
                     />

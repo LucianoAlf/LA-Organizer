@@ -18,6 +18,7 @@ import type { CalendarItem } from '../design/views/MonthCalendar';
 import { ProjectCardV2 } from './projetos/ProjectCardV2';
 import { ProjectDetailDrawer } from './projetos/ProjectDetailDrawer';
 import { ProjectsDashboard } from './projetos/ProjectsDashboard';
+import { useProjectOwners } from './projetos/useProjectOwners';
 import { KANBAN_COLUMNS, CATEGORY_BADGE, groupByStatus } from './projetos/constants';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
@@ -99,9 +100,13 @@ export function ProjetosDesktop() {
     enabled: !!collaborator?.id && isCoordOrDir,
   });
 
+  const projectIds = useMemo(() => projects.map(p => p.id), [projects]);
+
+  // Owners (responsáveis) e contagem de membros pra mostrar nos cards.
+  const { data: ownersMap = {} } = useProjectOwners(projectIds);
+
   // Checkpoints — usados como pins no Timeline. Só busca quando a view é
   // 'timeline' (lazy fetch).
-  const projectIds = useMemo(() => projects.map(p => p.id), [projects]);
   const { data: timelineCheckpoints = [] } = useQuery({
     queryKey: ['projects-checkpoints', projectIds],
     queryFn: async () => {
@@ -327,7 +332,13 @@ export function ProjetosDesktop() {
             columns={columns}
             getItemKey={p => p.id}
             renderCard={(p, _colId, dragHandle) => (
-              <ProjectCardV2 project={p} onClick={() => setSelected(p)} dragHandle={dragHandle} />
+              <ProjectCardV2
+                project={p}
+                onClick={() => setSelected(p)}
+                dragHandle={dragHandle}
+                ownerName={ownersMap[p.id]?.ownerName ?? null}
+                memberCount={ownersMap[p.id]?.memberCount ?? 0}
+              />
             )}
             onMoveItem={(itemId, fromCol, toCol) => {
               if (fromCol === toCol) return; // reorder dentro da mesma coluna: ignorar (futuro: sort_position)

@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { Crown, Users } from 'lucide-react';
 import type { Project } from '../../types';
 import { CATEGORY_BADGE } from './constants';
 
@@ -7,9 +8,19 @@ interface ProjectCardV2Props {
   onClick?: () => void;
   /** Drag handle pré-renderizado (vindo do SortableCard do KanbanBoard). */
   dragHandle?: ReactNode;
+  /** Nome do responsável (owner) — destaque no card. */
+  ownerName?: string | null;
+  /** Total de membros (incluindo owner). */
+  memberCount?: number;
 }
 
-export function ProjectCardV2({ project, onClick, dragHandle }: ProjectCardV2Props) {
+export function ProjectCardV2({
+  project,
+  onClick,
+  dragHandle,
+  ownerName,
+  memberCount,
+}: ProjectCardV2Props) {
   const cat = CATEGORY_BADGE[project.category];
   const progress = Math.max(0, Math.min(100, project.progress_percent ?? 0));
 
@@ -21,8 +32,6 @@ export function ProjectCardV2({ project, onClick, dragHandle }: ProjectCardV2Pro
   }
 
   return (
-    // div com role="button" em vez de <button> nativo, pra permitir o handle
-    // (também elemento interativo) ser filho sem violar HTML válido.
     <div
       role="button"
       tabIndex={0}
@@ -44,6 +53,31 @@ export function ProjectCardV2({ project, onClick, dragHandle }: ProjectCardV2Pro
           {cat.label}
         </span>
       </div>
+
+      {/* Responsável (Owner) + contagem de membros */}
+      {(ownerName || (memberCount && memberCount > 0)) && (
+        <div className="flex items-center gap-2 mb-2 text-[11px]">
+          {ownerName && (
+            <span
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-tom/10 border border-tom/30 text-tom font-medium"
+              title={`Responsável: ${ownerName}`}
+            >
+              <Crown size={10} />
+              {ownerName}
+            </span>
+          )}
+          {memberCount && memberCount > 1 && (
+            <span
+              className="inline-flex items-center gap-1 text-fg-muted"
+              title={`${memberCount} membros no total`}
+            >
+              <Users size={10} />
+              +{memberCount - 1}
+            </span>
+          )}
+        </div>
+      )}
+
       {project.description && (
         <p className="text-[11px] text-fg-muted line-clamp-2 mb-2">{project.description}</p>
       )}
