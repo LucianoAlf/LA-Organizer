@@ -1,2 +1,10 @@
 export { SidebarV2 } from './shell/SidebarV2';
 export { TopbarV2 } from './shell/TopbarV2';
+export { PageShell } from './primitives/PageShell';
+export { Toolbar } from './primitives/Toolbar';
+export { FilterPill } from './primitives/FilterPill';
+export { ViewSwitcher } from './primitives/ViewSwitcher';
+export type { ViewOption } from './primitives/ViewSwitcher';
+export { DetailDrawer } from './primitives/DetailDrawer';
+export { EmptyStateDesktop } from './primitives/EmptyStateDesktop';
+export { Skeleton, SkeletonCard, SkeletonRow, SkeletonList } from './primitives/LoadingSkeleton';

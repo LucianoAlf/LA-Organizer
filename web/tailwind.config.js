@@ -105,6 +105,12 @@ export default {
         screen: '480px',
         content: '720px',
       },
+      keyframes: {
+        slideInRight: {
+          '0%': { transform: 'translateX(100%)' },
+          '100%': { transform: 'translateX(0)' },
+        },
+      },
     },
   },
   plugins: [],
