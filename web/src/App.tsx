@@ -33,6 +33,7 @@ import { MeuPerfil } from './screens/MeuPerfil';
 import { GestaoEquipe } from './screens/GestaoEquipe';
 import { GestaoEquipeNovo } from './screens/GestaoEquipeNovo';
 import { GestaoEquipeDetalhe } from './screens/GestaoEquipeDetalhe';
+import { DesignSystem } from './screens/DesignSystem';
 const LaEducaListaPage = lazy(() => import('./screens/laeduca/ListaPage').then(m => ({ default: m.LaEducaListaPage })));
 const LaEducaCadastroPage = lazy(() => import('./screens/laeduca/CadastroEstagiarioPage').then(m => ({ default: m.LaEducaCadastroPage })));
 const LaEducaEstagiarioDetalhePage = lazy(() => import('./screens/laeduca/EstagiarioDetalhePage').then(m => ({ default: m.LaEducaEstagiarioDetalhePage })));
@@ -64,6 +65,7 @@ export default function App() {
     <Suspense fallback={<LoadingState />}>
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/design-system" element={<DesignSystem />} />
 
       <Route element={<ProtectedRoute />}>
         <Route element={<AppLayout />}>

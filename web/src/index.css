@@ -14,6 +14,7 @@
   --bg-surface: 20 20 20;         /* #141414 */
   --bg-elevated: 26 26 26;        /* #1A1A1A */
   --bg-subtle: 30 30 30;          /* slight elevation */
+  --bg-elevated-2: 42 42 42;      /* #2A2A2A — hover de cards, nested */
 
   /* text */
   --fg-primary: 255 255 255;
@@ -31,6 +32,7 @@
   --bg-surface: 255 255 255;
   --bg-elevated: 255 255 255;
   --bg-subtle: 232 232 232;       /* #E8E8E8 */
+  --bg-elevated-2: 220 220 220;   /* #DCDCDC — nested cards no light mode */
 
   --fg-primary: 17 17 17;
   --fg-secondary: 66 66 66;

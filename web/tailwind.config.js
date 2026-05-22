@@ -5,6 +5,7 @@ export default {
   theme: {
     fontFamily: {
       sans: ['Inter', 'system-ui', 'sans-serif'],
+      display: ['"Instrument Serif"', 'Georgia', 'serif'],
     },
     extend: {
       colors: {
@@ -53,6 +54,7 @@ export default {
           surface: 'rgb(var(--bg-surface) / <alpha-value>)',
           elevated: 'rgb(var(--bg-elevated) / <alpha-value>)',
           subtle: 'rgb(var(--bg-subtle) / <alpha-value>)',
+          elevated2: 'rgb(var(--bg-elevated-2) / <alpha-value>)',
         },
         fg: {
           DEFAULT: 'rgb(var(--fg-primary) / <alpha-value>)',

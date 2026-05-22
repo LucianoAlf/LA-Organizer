@@ -1,0 +1,1446 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>01 · Tokens — LA Organizer Desktop</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+/* tom-tokens.css — design tokens compartilhados pelos mockups da Foundation */
+:root {
+  /* Cores — base do LA Organizer (Tom green — paleta oficial do app) */
+  --tom: #A3BE50;          /* DEFAULT — CTAs, FAB, tabs ativos */
+  --tom-hover: #BAD179;    /* light — hover */
+  --tom-active: #8BA244;   /* shade — active/pressed */
+  --tom-deep: #728538;     /* deep — variantes escuras */
+  --tom-tint: #E8F0CF;     /* tint — backgrounds claros */
+
+  /* Surfaces — paleta ink oficial do app */
+  --bg-app: #0A0A0A;          /* ink-0 — fundo da página */
+  --bg-surface: #141414;       /* ink-50 — cards, sidebar */
+  --bg-elevated: #1A1A1A;      /* ink-100 — hover, modais */
+  --bg-elevated-2: #2A2A2A;    /* ink-200 — nested cards */
+
+  /* Bordas */
+  --border: #2A2A2A;           /* ink-200 */
+  --border-strong: #424242;    /* ink-300 — hover, focus */
+
+  /* Foreground */
+  --fg: #F4F4F4;               /* ink-900 — texto primário */
+  --fg-secondary: #CFCFCF;     /* ink-600 — texto secundário */
+  --fg-muted: #9E9E9E;         /* ink-500 — subtextos, labels */
+  --fg-disabled: #7A7A7A;      /* ink-400 — desabilitados */
+
+  /* Status — paleta oficial do app */
+  --success: #22C55E;
+  --warning: #F59E0B;
+  --danger: #EF4444;
+  --info: #60a5fa;
+
+  /* Tipografia desktop — escala mais densa */
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --fs-11: 11px;
+  --fs-12: 12px;
+  --fs-13: 13px;
+  --fs-14: 14px;
+  --fs-16: 16px;
+  --fs-20: 20px;
+  --fs-24: 24px;
+
+  /* Spacing granular */
+  --sp-xs: 4px;
+  --sp-sm: 6px;
+  --sp-md: 8px;
+  --sp-lg: 12px;
+  --sp-xl: 16px;
+  --sp-2xl: 24px;
+  --sp-3xl: 32px;
+
+  /* Densidades alvo */
+  --row-height: 40px;
+  --card-padding: 14px;
+  --sidebar-width: 240px;
+  --sidebar-collapsed: 64px;
+  --topbar-height: 52px;
+  --drawer-width: 450px;
+
+  /* Sombras */
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.4);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.5);
+  --shadow-lg: 0 12px 32px rgba(0,0,0,0.6);
+
+  /* Radius */
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 8px;
+  --r-xl: 12px;
+}
+
+* { box-sizing: border-box; }
+html, body {
+  width: 100vw;
+  min-width: 100vw;
+  height: 100vh;
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+}
+body {
+  font-family: var(--font-sans);
+  font-size: var(--fs-13);
+  line-height: 1.4;
+  background: var(--bg-app);
+  color: var(--fg);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* Scrollbar fina global */
+* { scrollbar-width: thin; scrollbar-color: rgba(158,158,158,0.3) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: rgba(158,158,158,0.3); border-radius: 4px; }
+*::-webkit-scrollbar-thumb:hover { background: rgba(158,158,158,0.5); }
+
+</style>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: {
+        colors: {
+          tom: 'var(--tom)',
+          'bg-app': 'var(--bg-app)',
+          'bg-surface': 'var(--bg-surface)',
+          'bg-elevated': 'var(--bg-elevated)',
+          'bg-elevated-2': 'var(--bg-elevated-2)',
+          border: 'var(--border)',
+          'border-strong': 'var(--border-strong)',
+          fg: 'var(--fg)',
+          'fg-secondary': 'var(--fg-secondary)',
+          'fg-muted': 'var(--fg-muted)',
+          success: 'var(--success)',
+          warning: 'var(--warning)',
+          danger: 'var(--danger)',
+          info: 'var(--info)',
+        },
+      } }
+    };
+  </script>
+
+  <style>
+    /* Override overflow:hidden do tom-tokens para o styleguide poder rolar */
+    body { overflow: hidden !important; }
+
+    .sg-layout {
+      display: flex;
+      height: 100vh;
+      width: 100vw;
+    }
+    .sg-sidebar {
+      width: 220px;
+      flex-shrink: 0;
+      height: 100vh;
+      overflow-y: auto;
+      background: var(--bg-surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+    }
+    .sg-main {
+      flex: 1;
+      height: 100vh;
+      overflow-y: auto;
+    }
+    .sg-main-inner {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 48px 64px;
+    }
+
+    /* Âncoras com offset */
+    [id] { scroll-margin-top: 24px; }
+
+    /* Sidebar nav links */
+    .nav-link {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 16px;
+      font-size: 13px;
+      color: var(--fg-secondary);
+      text-decoration: none;
+      border-radius: 0;
+      transition: background 0.12s, color 0.12s;
+    }
+    .nav-link:hover {
+      background: var(--bg-elevated);
+      color: var(--fg);
+    }
+    .nav-link.active {
+      color: var(--tom);
+    }
+    .nav-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--border-strong);
+      flex-shrink: 0;
+    }
+
+    /* Seções */
+    .sg-section {
+      border-top: 1px solid var(--border);
+      padding-top: 40px;
+      margin-top: 48px;
+    }
+    .sg-section:first-child {
+      border-top: none;
+      padding-top: 0;
+      margin-top: 0;
+    }
+
+    h2.sg-title {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--fg);
+      margin: 0 0 4px 0;
+    }
+    p.sg-sub {
+      font-size: 13px;
+      color: var(--fg-muted);
+      margin: 0 0 28px 0;
+    }
+
+    /* Swatch */
+    .swatch-grid {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 24px;
+    }
+    .swatch-item {
+      display: flex;
+      flex-direction: column;
+    }
+    .swatch-block {
+      width: 96px;
+      height: 80px;
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.06);
+    }
+    .swatch-name {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--fg);
+      margin-top: 6px;
+    }
+    .swatch-hex {
+      font-size: 10px;
+      color: var(--fg-muted);
+      font-family: monospace;
+    }
+
+    /* Spacing bars */
+    .sp-bar-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+    .sp-bar {
+      height: 20px;
+      background: var(--tom);
+      opacity: 0.8;
+      border-radius: 3px;
+      min-width: 4px;
+    }
+    .sp-label {
+      font-size: 12px;
+      color: var(--fg-secondary);
+      font-family: monospace;
+    }
+    .sp-px {
+      font-size: 11px;
+      color: var(--fg-muted);
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border-radius: 6px;
+      font-weight: 500;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: background 0.12s, border-color 0.12s, color 0.12s;
+      white-space: nowrap;
+    }
+    .btn-sm  { height: 28px; padding: 0 10px; font-size: 12px; }
+    .btn-md  { height: 36px; padding: 0 14px; font-size: 13px; }
+    .btn-lg  { height: 40px; padding: 0 16px; font-size: 14px; }
+
+    .btn-primary  { background: var(--tom); color: var(--bg-app); font-weight: 600; }
+    .btn-primary:hover { background: var(--tom-hover); }
+    .btn-secondary { background: var(--bg-elevated); border-color: var(--border); color: var(--fg); }
+    .btn-secondary:hover { border-color: var(--border-strong); }
+    .btn-ghost { background: transparent; color: var(--fg-muted); }
+    .btn-ghost:hover { background: var(--bg-elevated); color: var(--fg); }
+    .btn-danger { background: var(--danger); color: #fff; }
+    .btn-danger:hover { opacity: 0.9; }
+    .btn[disabled] { opacity: 0.4; cursor: not-allowed; }
+
+    /* Inputs */
+    .field-label {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--fg-secondary);
+      margin-bottom: 5px;
+    }
+    .field-input {
+      width: 100%;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 7px 10px;
+      font-size: 13px;
+      color: var(--fg);
+      outline: none;
+      font-family: var(--font-sans);
+      transition: border-color 0.12s;
+    }
+    .field-input:focus { border-color: var(--tom); }
+    .field-input::placeholder { color: var(--fg-muted); opacity: 0.6; }
+    .field-input.error { border-color: var(--danger); }
+    .field-helper { font-size: 11px; color: var(--fg-muted); margin-top: 4px; }
+    .field-error  { font-size: 11px; color: var(--danger); margin-top: 4px; }
+
+    /* Checkbox custom */
+    .cb-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+      font-size: 13px;
+      color: var(--fg);
+      cursor: pointer;
+    }
+    .cb-box {
+      width: 16px;
+      height: 16px;
+      border-radius: 4px;
+      border: 1.5px solid var(--border-strong);
+      background: var(--bg-elevated);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .cb-box.checked { background: var(--tom); border-color: var(--tom); }
+    .cb-box.indeterminate { background: var(--bg-elevated); border-color: var(--tom); }
+    .cb-box.disabled { opacity: 0.4; }
+
+    /* Radio custom */
+    .radio-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+      font-size: 13px;
+      color: var(--fg);
+      cursor: pointer;
+    }
+    .radio-circle {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 1.5px solid var(--border-strong);
+      background: var(--bg-elevated);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .radio-circle.checked { border-color: var(--tom); }
+    .radio-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--tom);
+    }
+
+    /* Switch */
+    .switch-wrap {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+      font-size: 13px;
+      color: var(--fg);
+    }
+    .switch-track {
+      width: 36px;
+      height: 20px;
+      border-radius: 10px;
+      background: var(--bg-elevated-2);
+      border: 1px solid var(--border-strong);
+      position: relative;
+      flex-shrink: 0;
+      transition: background 0.15s;
+    }
+    .switch-track.on { background: var(--tom); border-color: var(--tom); }
+    .switch-thumb {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: var(--fg-muted);
+      position: absolute;
+      top: 2px;
+      left: 3px;
+      transition: left 0.15s, background 0.15s;
+    }
+    .switch-track.on .switch-thumb { left: 19px; background: var(--bg-app); }
+
+    /* Badge */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    /* Progress bar */
+    .progress-track {
+      height: 4px;
+      background: var(--bg-elevated-2);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      background: var(--tom);
+      border-radius: 2px;
+    }
+
+    /* Icon grid */
+    .icon-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      padding: 12px 8px;
+      border-radius: 6px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+    }
+    .icon-item svg { color: var(--fg-secondary); }
+    .icon-item span { font-size: 10px; color: var(--fg-muted); text-align: center; line-height: 1.2; }
+
+    /* Table */
+    .sg-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .sg-table th { text-align: left; padding: 8px 12px; font-size: 11px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.06em; border-bottom: 1px solid var(--border); }
+    .sg-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); color: var(--fg); vertical-align: middle; }
+    .sg-table tr:last-child td { border-bottom: none; }
+    .sg-table code { font-size: 11px; font-family: monospace; color: var(--tom); }
+
+    /* Shadow preview */
+    .shadow-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px;
+      flex: 1;
+    }
+    .shadow-label { font-size: 12px; font-weight: 600; color: var(--fg-secondary); margin-bottom: 4px; }
+    .shadow-value { font-size: 10px; font-family: monospace; color: var(--fg-muted); }
+
+    /* Spinner */
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner {
+      width: 12px;
+      height: 12px;
+      border: 2px solid rgba(10,10,10,0.3);
+      border-top-color: var(--bg-app);
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+
+    /* Select fake */
+    .fake-select {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 7px 10px;
+      font-size: 13px;
+      color: var(--fg-muted);
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+<div class="sg-layout">
+
+  <!-- ── SIDEBAR DE NAVEGAÇÃO ── -->
+  <nav class="sg-sidebar">
+    <div style="padding: 20px 16px 16px; border-bottom: 1px solid var(--border);">
+      <div style="font-size: 11px; font-weight: 700; color: var(--tom); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 2px;">LA Organizer Desktop</div>
+      <div style="font-size: 13px; font-weight: 600; color: var(--fg);">🎨 Tokens</div>
+    </div>
+
+    <div style="padding: 12px 0; flex: 1;">
+      <div style="padding: 4px 16px 8px; font-size: 10px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.08em;">Seções</div>
+      <a href="#cores" class="nav-link"><span class="nav-dot"></span>Cores</a>
+      <a href="#tipografia" class="nav-link"><span class="nav-dot"></span>Tipografia</a>
+      <a href="#espacamentos" class="nav-link"><span class="nav-dot"></span>Espaçamentos</a>
+      <a href="#botoes" class="nav-link"><span class="nav-dot"></span>Botões</a>
+      <a href="#inputs" class="nav-link"><span class="nav-dot"></span>Inputs</a>
+      <a href="#badges" class="nav-link"><span class="nav-dot"></span>Badges</a>
+      <a href="#cards" class="nav-link"><span class="nav-dot"></span>Cards</a>
+      <a href="#sombras" class="nav-link"><span class="nav-dot"></span>Sombras</a>
+      <a href="#icones" class="nav-link"><span class="nav-dot"></span>Iconografia</a>
+    </div>
+
+    <div style="padding: 12px 0; border-top: 1px solid var(--border);">
+      <a href="index.html" class="nav-link" style="color: var(--fg-muted); font-size: 12px;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M5 12l7 7M5 12l7-7"/></svg>
+        Index
+      </a>
+    </div>
+  </nav>
+
+  <!-- ── MAIN SCROLLÁVEL ── -->
+  <main class="sg-main">
+    <div class="sg-main-inner">
+
+      <!-- Page header -->
+      <div style="margin-bottom: 48px;">
+        <div style="font-size: 11px; font-weight: 600; color: var(--tom); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px;">Mockup 01</div>
+        <h1 style="font-size: 28px; font-weight: 700; color: var(--fg); margin: 0 0 8px;">Design Tokens</h1>
+        <p style="font-size: 14px; color: var(--fg-muted); margin: 0;">Styleguide visual completo do LA Organizer — Foundation desktop. Referência para Claude e designers.</p>
+      </div>
+
+      <!-- ═══════════════════════════════════════════ -->
+      <!-- 1. CORES                                   -->
+      <!-- ═══════════════════════════════════════════ -->
+      <section id="cores" class="sg-section" style="border-top: none; padding-top: 0; margin-top: 0;">
+        <h2 class="sg-title">Cores</h2>
+        <p class="sg-sub">Paleta do dark mode desktop</p>
+
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; margin-bottom: 32px;">
+
+          <!-- Brand -->
+          <div>
+            <div style="font-size: 11px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 12px;">Brand</div>
+            <div class="swatch-grid" style="flex-direction: column; gap: 8px;">
+              <div class="swatch-item" style="flex-direction: row; align-items: center; gap: 12px;">
+                <div class="swatch-block" style="width: 64px; height: 44px; flex-shrink: 0; background: var(--tom);"></div>
+                <div>
+                  <div class="swatch-name">--tom</div>
+                  <div class="swatch-hex">#A3BE50</div>
+                  <div style="font-size: 10px; color: var(--fg-muted);">Accent principal · CTAs · FAB</div>
+                </div>
+              </div>
+              <div class="swatch-item" style="flex-direction: row; align-items: center; gap: 12px;">
+                <div class="swatch-block" style="width: 64px; height: 44px; flex-shrink: 0; background: var(--tom-hover);"></div>
+                <div>
+                  <div class="swatch-name">--tom-hover</div>
+                  <div class="swatch-hex">#BAD179</div>
+                  <div style="font-size: 10px; color: var(--fg-muted);">Light · hover</div>
+                </div>
+              </div>
+              <div class="swatch-item" style="flex-direction: row; align-items: center; gap: 12px;">
+                <div class="swatch-block" style="width: 64px; height: 44px; flex-shrink: 0; background: var(--tom-active);"></div>
+                <div>
+                  <div class="swatch-name">--tom-active</div>
+                  <div class="swatch-hex">#8BA244</div>
+                  <div style="font-size: 10px; color: var(--fg-muted);">Shade · active/pressed</div>
+                </div>
+              </div>
+              <div class="swatch-item" style="flex-direction: row; align-items: center; gap: 12px;">
+                <div class="swatch-block" style="width: 64px; height: 44px; flex-shrink: 0; background: var(--tom-deep);"></div>
+                <div>
+                  <div class="swatch-name">--tom-deep</div>
+                  <div class="swatch-hex">#728538</div>
+                  <div style="font-size: 10px; color: var(--fg-muted);">Deep · variantes escuras</div>
+                </div>
+              </div>
+              <div class="swatch-item" style="flex-direction: row; align-items: center; gap: 12px;">
+                <div class="swatch-block" style="width: 64px; height: 44px; flex-shrink: 0; background: var(--tom-tint); border: 1px solid var(--border);"></div>
+                <div>
+                  <div class="swatch-name">--tom-tint</div>
+                  <div class="swatch-hex">#E8F0CF</div>
+                  <div style="font-size: 10px; color: var(--fg-muted);">Tint · backgrounds claros</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Surfaces -->
+          <div>
+            <div style="font-size: 11px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 12px;">Surfaces — 4 níveis</div>
+            <div class="swatch-grid" style="flex-direction: column; gap: 8px;">
+              <div class="swatch-item" style="flex-direction: row; align-items: center; gap: 12px;">
+                <div class="swatch-block" style="width: 64px; height: 36px; flex-shrink: 0; background: #0a0a0a; border: 1px solid #2a2a2a;"></div>
+                <div>
+                  <div class="swatch-name">--bg-app</div>
+                  <div class="swatch-hex">#0a0a0a</div>
+                  <div style="font-size: 10px; color: var(--fg-muted);">Fundo da página</div>
+                </div>
+              </div>
+              <div class="swatch-item" style="flex-direction: row; align-items: center; gap: 12px;">
+                <div class="swatch-block" style="width: 64px; height: 36px; flex-shrink: 0; background: #141414; border: 1px solid #2a2a2a;"></div>
+                <div>
+                  <div class="swatch-name">--bg-surface</div>
+                  <div class="swatch-hex">#141414</div>
+                  <div style="font-size: 10px; color: var(--fg-muted);">Cards, sidebar</div>
+                </div>
+              </div>
+              <div class="swatch-item" style="flex-direction: row; align-items: center; gap: 12px;">
+                <div class="swatch-block" style="width: 64px; height: 36px; flex-shrink: 0; background: #1A1A1A; border: 1px solid #2a2a2a;"></div>
+                <div>
+                  <div class="swatch-name">--bg-elevated</div>
+                  <div class="swatch-hex">#1A1A1A</div>
+                  <div style="font-size: 10px; color: var(--fg-muted);">Hover, modais</div>
+                </div>
+              </div>
+              <div class="swatch-item" style="flex-direction: row; align-items: center; gap: 12px;">
+                <div class="swatch-block" style="width: 64px; height: 36px; flex-shrink: 0; background: #2A2A2A; border: 1px solid #2a2a2a;"></div>
+                <div>
+                  <div class="swatch-name">--bg-elevated-2</div>
+                  <div class="swatch-hex">#2A2A2A</div>
+                  <div style="font-size: 10px; color: var(--fg-muted);">Nested</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Status -->
+          <div>
+            <div style="font-size: 11px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 12px;">Status</div>
+            <div class="swatch-grid" style="flex-direction: column; gap: 8px;">
+              <div class="swatch-item" style="flex-direction: row; align-items: center; gap: 12px;">
+                <div class="swatch-block" style="width: 64px; height: 36px; flex-shrink: 0; background: #22C55E;"></div>
+                <div>
+                  <div class="swatch-name">--success</div>
+                  <div class="swatch-hex">#22C55E</div>
+                </div>
+              </div>
+              <div class="swatch-item" style="flex-direction: row; align-items: center; gap: 12px;">
+                <div class="swatch-block" style="width: 64px; height: 36px; flex-shrink: 0; background: #F59E0B;"></div>
+                <div>
+                  <div class="swatch-name">--warning</div>
+                  <div class="swatch-hex">#F59E0B</div>
+                </div>
+              </div>
+              <div class="swatch-item" style="flex-direction: row; align-items: center; gap: 12px;">
+                <div class="swatch-block" style="width: 64px; height: 36px; flex-shrink: 0; background: #EF4444;"></div>
+                <div>
+                  <div class="swatch-name">--danger</div>
+                  <div class="swatch-hex">#EF4444</div>
+                </div>
+              </div>
+              <div class="swatch-item" style="flex-direction: row; align-items: center; gap: 12px;">
+                <div class="swatch-block" style="width: 64px; height: 36px; flex-shrink: 0; background: #60a5fa;"></div>
+                <div>
+                  <div class="swatch-name">--info</div>
+                  <div class="swatch-hex">#60a5fa</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Foreground -->
+        <div style="margin-bottom: 24px;">
+          <div style="font-size: 11px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 12px;">Foreground — Texto</div>
+          <div style="display: flex; gap: 12px;">
+            <div class="swatch-item" style="flex-direction: row; align-items: center; gap: 12px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 16px; flex: 1;">
+              <div style="font-size: 24px; font-weight: 700; color: #F4F4F4;">Aa</div>
+              <div>
+                <div class="swatch-name" style="color: #F4F4F4;">--fg</div>
+                <div class="swatch-hex">#F4F4F4</div>
+                <div style="font-size: 10px; color: var(--fg-muted);">Texto primário</div>
+              </div>
+            </div>
+            <div class="swatch-item" style="flex-direction: row; align-items: center; gap: 12px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 16px; flex: 1;">
+              <div style="font-size: 24px; font-weight: 700; color: #CFCFCF;">Aa</div>
+              <div>
+                <div class="swatch-name" style="color: #CFCFCF;">--fg-secondary</div>
+                <div class="swatch-hex">#CFCFCF</div>
+                <div style="font-size: 10px; color: var(--fg-muted);">Texto secundário</div>
+              </div>
+            </div>
+            <div class="swatch-item" style="flex-direction: row; align-items: center; gap: 12px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 16px; flex: 1;">
+              <div style="font-size: 24px; font-weight: 700; color: #9E9E9E;">Aa</div>
+              <div>
+                <div class="swatch-name" style="color: #9E9E9E;">--fg-muted</div>
+                <div class="swatch-hex">#9E9E9E</div>
+                <div style="font-size: 10px; color: var(--fg-muted);">Subtexto, labels</div>
+              </div>
+            </div>
+            <div class="swatch-item" style="flex-direction: row; align-items: center; gap: 12px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 16px; flex: 1;">
+              <div style="font-size: 24px; font-weight: 700; color: #555;">Aa</div>
+              <div>
+                <div class="swatch-name" style="color: #555;">--fg-disabled</div>
+                <div class="swatch-hex">#7A7A7A</div>
+                <div style="font-size: 10px; color: var(--fg-muted);">Desabilitado</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bordas -->
+        <div>
+          <div style="font-size: 11px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 12px;">Bordas</div>
+          <div style="display: flex; flex-direction: column; gap: 10px;">
+            <div style="display: flex; align-items: center; gap: 16px;">
+              <div style="width: 200px; height: 2px; background: #2a2a2a;"></div>
+              <code style="font-size: 11px; color: var(--tom); font-family: monospace;">--border</code>
+              <span style="font-size: 11px; color: var(--fg-muted);">#2a2a2a — bordas padrão</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 16px;">
+              <div style="width: 200px; height: 2px; background: #424242;"></div>
+              <code style="font-size: 11px; color: var(--tom); font-family: monospace;">--border-strong</code>
+              <span style="font-size: 11px; color: var(--fg-muted);">#424242 — hover, focus</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ═══════════════════════════════════════════ -->
+      <!-- 2. TIPOGRAFIA                              -->
+      <!-- ═══════════════════════════════════════════ -->
+      <section id="tipografia" class="sg-section">
+        <h2 class="sg-title">Tipografia</h2>
+        <p class="sg-sub">Escala desktop densa — Inter</p>
+
+        <table class="sg-table" style="margin-bottom: 32px;">
+          <thead>
+            <tr>
+              <th style="width: 45%;">Amostra</th>
+              <th>Token</th>
+              <th>Tamanho</th>
+              <th>Use case</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span style="font-size: 11px; line-height: 1.3;">The quick brown fox jumps</span></td>
+              <td><code>--fs-11</code></td>
+              <td style="color: var(--fg-muted); font-size: 12px;">11px / 1.3</td>
+              <td style="color: var(--fg-muted); font-size: 11px;">Eyebrow, badges</td>
+            </tr>
+            <tr>
+              <td><span style="font-size: 12px; line-height: 1.4;">The quick brown fox jumps</span></td>
+              <td><code>--fs-12</code></td>
+              <td style="color: var(--fg-muted); font-size: 12px;">12px / 1.4</td>
+              <td style="color: var(--fg-muted); font-size: 11px;">Caption, table cell, sub-text</td>
+            </tr>
+            <tr>
+              <td><span style="font-size: 13px; line-height: 1.4; font-weight: 500;">The quick brown fox jumps</span></td>
+              <td><code>--fs-13</code></td>
+              <td style="color: var(--fg-muted); font-size: 12px;">13px / 1.4</td>
+              <td style="color: var(--tom); font-size: 11px; font-weight: 600;">Body default ★</td>
+            </tr>
+            <tr>
+              <td><span style="font-size: 14px; line-height: 1.5;">The quick brown fox jumps</span></td>
+              <td><code>--fs-14</code></td>
+              <td style="color: var(--fg-muted); font-size: 12px;">14px / 1.5</td>
+              <td style="color: var(--fg-muted); font-size: 11px;">Emphasis body</td>
+            </tr>
+            <tr>
+              <td><span style="font-size: 16px; line-height: 1.4; font-weight: 600;">The quick brown fox jumps</span></td>
+              <td><code>--fs-16</code></td>
+              <td style="color: var(--fg-muted); font-size: 12px;">16px / 1.4</td>
+              <td style="color: var(--fg-muted); font-size: 11px;">Section title</td>
+            </tr>
+            <tr>
+              <td><span style="font-size: 20px; line-height: 1.3; font-weight: 600;">The quick brown fox</span></td>
+              <td><code>--fs-20</code></td>
+              <td style="color: var(--fg-muted); font-size: 12px;">20px / 1.3</td>
+              <td style="color: var(--fg-muted); font-size: 11px;">Page title minor</td>
+            </tr>
+            <tr>
+              <td><span style="font-size: 24px; line-height: 1.2; font-weight: 700;">The quick brown fox</span></td>
+              <td><code>--fs-24</code></td>
+              <td style="color: var(--fg-muted); font-size: 12px;">24px / 1.2</td>
+              <td style="color: var(--fg-muted); font-size: 11px;">Page title h1</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <!-- Pesos -->
+        <div style="background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 20px;">
+          <div style="font-size: 11px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 16px;">Inter — Pesos disponíveis</div>
+          <div style="display: flex; gap: 48px; align-items: baseline;">
+            <div style="text-align: center;">
+              <div style="font-size: 40px; font-weight: 400; color: var(--fg); line-height: 1;">Aa</div>
+              <div style="font-size: 11px; color: var(--fg-muted); margin-top: 8px;">400 Regular</div>
+            </div>
+            <div style="text-align: center;">
+              <div style="font-size: 40px; font-weight: 500; color: var(--fg); line-height: 1;">Aa</div>
+              <div style="font-size: 11px; color: var(--fg-muted); margin-top: 8px;">500 Medium</div>
+            </div>
+            <div style="text-align: center;">
+              <div style="font-size: 40px; font-weight: 600; color: var(--fg); line-height: 1;">Aa</div>
+              <div style="font-size: 11px; color: var(--fg-muted); margin-top: 8px;">600 Semibold</div>
+            </div>
+            <div style="text-align: center;">
+              <div style="font-size: 40px; font-weight: 700; color: var(--fg); line-height: 1;">Aa</div>
+              <div style="font-size: 11px; color: var(--fg-muted); margin-top: 8px;">700 Bold</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ═══════════════════════════════════════════ -->
+      <!-- 3. ESPAÇAMENTOS                            -->
+      <!-- ═══════════════════════════════════════════ -->
+      <section id="espacamentos" class="sg-section">
+        <h2 class="sg-title">Espaçamentos</h2>
+        <p class="sg-sub">Escala granular</p>
+
+        <div style="background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 20px; margin-bottom: 24px;">
+          <div class="sp-bar-item">
+            <div class="sp-bar" style="width: 4px;"></div>
+            <span class="sp-label">--sp-xs</span>
+            <span class="sp-px">4px</span>
+          </div>
+          <div class="sp-bar-item">
+            <div class="sp-bar" style="width: 6px;"></div>
+            <span class="sp-label">--sp-sm</span>
+            <span class="sp-px">6px</span>
+          </div>
+          <div class="sp-bar-item">
+            <div class="sp-bar" style="width: 8px;"></div>
+            <span class="sp-label">--sp-md</span>
+            <span class="sp-px">8px</span>
+          </div>
+          <div class="sp-bar-item">
+            <div class="sp-bar" style="width: 12px;"></div>
+            <span class="sp-label">--sp-lg</span>
+            <span class="sp-px">12px</span>
+          </div>
+          <div class="sp-bar-item">
+            <div class="sp-bar" style="width: 16px;"></div>
+            <span class="sp-label">--sp-xl</span>
+            <span class="sp-px">16px</span>
+          </div>
+          <div class="sp-bar-item">
+            <div class="sp-bar" style="width: 24px;"></div>
+            <span class="sp-label">--sp-2xl</span>
+            <span class="sp-px">24px</span>
+          </div>
+          <div class="sp-bar-item" style="margin-bottom: 0;">
+            <div class="sp-bar" style="width: 32px;"></div>
+            <span class="sp-label">--sp-3xl</span>
+            <span class="sp-px">32px</span>
+          </div>
+        </div>
+
+        <!-- Densidades -->
+        <div style="font-size: 11px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 12px;">Densidades alvo do layout</div>
+        <table class="sg-table">
+          <thead>
+            <tr>
+              <th>Token</th>
+              <th>Valor</th>
+              <th>Uso</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>--row-height</code></td>
+              <td style="color: var(--fg-muted);">40px</td>
+              <td style="color: var(--fg-muted); font-size: 12px;">Linhas de tabela, items de lista</td>
+            </tr>
+            <tr>
+              <td><code>--card-padding</code></td>
+              <td style="color: var(--fg-muted);">14px</td>
+              <td style="color: var(--fg-muted); font-size: 12px;">Interior de cards</td>
+            </tr>
+            <tr>
+              <td><code>--sidebar-width</code></td>
+              <td style="color: var(--fg-muted);">240px</td>
+              <td style="color: var(--fg-muted); font-size: 12px;">Sidebar expandida</td>
+            </tr>
+            <tr>
+              <td><code>--sidebar-collapsed</code></td>
+              <td style="color: var(--fg-muted);">64px</td>
+              <td style="color: var(--fg-muted); font-size: 12px;">Sidebar colapsada</td>
+            </tr>
+            <tr>
+              <td><code>--topbar-height</code></td>
+              <td style="color: var(--fg-muted);">52px</td>
+              <td style="color: var(--fg-muted); font-size: 12px;">Topbar fixa</td>
+            </tr>
+            <tr>
+              <td><code>--drawer-width</code></td>
+              <td style="color: var(--fg-muted);">450px</td>
+              <td style="color: var(--fg-muted); font-size: 12px;">Detail drawer direito</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- ═══════════════════════════════════════════ -->
+      <!-- 4. BOTÕES                                  -->
+      <!-- ═══════════════════════════════════════════ -->
+      <section id="botoes" class="sg-section">
+        <h2 class="sg-title">Botões</h2>
+        <p class="sg-sub">Variants e tamanhos</p>
+
+        <!-- Grid de variants × sizes -->
+        <div style="background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 20px; margin-bottom: 20px;">
+          <!-- Header dos sizes -->
+          <div style="display: grid; grid-template-columns: 100px 1fr 1fr 1fr; gap: 0; margin-bottom: 12px;">
+            <div></div>
+            <div style="text-align: center; font-size: 11px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.06em;">sm</div>
+            <div style="text-align: center; font-size: 11px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.06em;">md</div>
+            <div style="text-align: center; font-size: 11px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.06em;">lg</div>
+          </div>
+
+          <!-- Primary -->
+          <div style="display: grid; grid-template-columns: 100px 1fr 1fr 1fr; gap: 0; margin-bottom: 14px; align-items: center;">
+            <div style="font-size: 12px; font-weight: 600; color: var(--fg-muted);">Primary</div>
+            <div style="display: flex; justify-content: center;"><button class="btn btn-primary btn-sm">Confirmar</button></div>
+            <div style="display: flex; justify-content: center;"><button class="btn btn-primary btn-md">Confirmar</button></div>
+            <div style="display: flex; justify-content: center;"><button class="btn btn-primary btn-lg">Confirmar</button></div>
+          </div>
+
+          <!-- Secondary -->
+          <div style="display: grid; grid-template-columns: 100px 1fr 1fr 1fr; gap: 0; margin-bottom: 14px; align-items: center;">
+            <div style="font-size: 12px; font-weight: 600; color: var(--fg-muted);">Secondary</div>
+            <div style="display: flex; justify-content: center;"><button class="btn btn-secondary btn-sm">Cancelar</button></div>
+            <div style="display: flex; justify-content: center;"><button class="btn btn-secondary btn-md">Cancelar</button></div>
+            <div style="display: flex; justify-content: center;"><button class="btn btn-secondary btn-lg">Cancelar</button></div>
+          </div>
+
+          <!-- Ghost -->
+          <div style="display: grid; grid-template-columns: 100px 1fr 1fr 1fr; gap: 0; margin-bottom: 14px; align-items: center;">
+            <div style="font-size: 12px; font-weight: 600; color: var(--fg-muted);">Ghost</div>
+            <div style="display: flex; justify-content: center;"><button class="btn btn-ghost btn-sm">Ver mais</button></div>
+            <div style="display: flex; justify-content: center;"><button class="btn btn-ghost btn-md">Ver mais</button></div>
+            <div style="display: flex; justify-content: center;"><button class="btn btn-ghost btn-lg">Ver mais</button></div>
+          </div>
+
+          <!-- Danger -->
+          <div style="display: grid; grid-template-columns: 100px 1fr 1fr 1fr; gap: 0; align-items: center;">
+            <div style="font-size: 12px; font-weight: 600; color: var(--fg-muted);">Danger</div>
+            <div style="display: flex; justify-content: center;"><button class="btn btn-danger btn-sm">Excluir</button></div>
+            <div style="display: flex; justify-content: center;"><button class="btn btn-danger btn-md">Excluir</button></div>
+            <div style="display: flex; justify-content: center;"><button class="btn btn-danger btn-lg">Excluir</button></div>
+          </div>
+        </div>
+
+        <!-- Estados especiais -->
+        <div style="font-size: 11px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 12px;">Estados especiais</div>
+        <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: center;">
+          <!-- Com ícone -->
+          <button class="btn btn-primary btn-md">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            Buscar
+          </button>
+          <!-- Icon only -->
+          <button class="btn btn-secondary btn-md" style="padding: 0 10px; width: 36px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+          </button>
+          <!-- Loading -->
+          <button class="btn btn-primary btn-md" disabled>
+            <div class="spinner"></div>
+            Salvando...
+          </button>
+          <!-- Disabled -->
+          <button class="btn btn-secondary btn-md" disabled>
+            Desabilitado
+          </button>
+          <!-- Ghost com ícone -->
+          <button class="btn btn-ghost btn-md">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Novo projeto
+          </button>
+        </div>
+      </section>
+
+      <!-- ═══════════════════════════════════════════ -->
+      <!-- 5. INPUTS                                  -->
+      <!-- ═══════════════════════════════════════════ -->
+      <section id="inputs" class="sg-section">
+        <h2 class="sg-title">Inputs</h2>
+        <p class="sg-sub">Form controls</p>
+
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px;">
+
+          <!-- 1. Text input -->
+          <div style="background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
+            <div style="font-size: 11px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 14px;">Text input</div>
+            <div class="field-label">Nome do projeto</div>
+            <input class="field-input" type="text" placeholder="Ex: Festival de Cordas 2026" />
+            <div class="field-helper">Mín. 3 caracteres</div>
+          </div>
+
+          <!-- 2. Input com erro -->
+          <div style="background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
+            <div style="font-size: 11px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 14px;">Com erro</div>
+            <div class="field-label">E-mail</div>
+            <input class="field-input error" type="text" value="email-invalido" />
+            <div class="field-error">E-mail inválido. Verifique o formato.</div>
+          </div>
+
+          <!-- 3. Select -->
+          <div style="background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
+            <div style="font-size: 11px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 14px;">Select</div>
+            <div class="field-label">Categoria</div>
+            <div class="fake-select">
+              <span>Selecionar...</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+            </div>
+            <div class="field-helper">Dropdown personalizado</div>
+          </div>
+
+          <!-- 4. Textarea -->
+          <div style="background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
+            <div style="font-size: 11px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 14px;">Textarea</div>
+            <div class="field-label">Descrição</div>
+            <textarea class="field-input" style="height: 96px; resize: none;" placeholder="Descreva o projeto..."></textarea>
+          </div>
+
+          <!-- 5. Checkboxes -->
+          <div style="background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
+            <div style="font-size: 11px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 14px;">Checkbox</div>
+            <label class="cb-item">
+              <div class="cb-box">
+              </div>
+              <span>Unchecked</span>
+            </label>
+            <label class="cb-item">
+              <div class="cb-box checked">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#0a0a0a" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+              </div>
+              <span>Checked</span>
+            </label>
+            <label class="cb-item">
+              <div class="cb-box indeterminate">
+                <div style="width: 8px; height: 2px; background: var(--tom); border-radius: 1px;"></div>
+              </div>
+              <span>Indeterminate</span>
+            </label>
+            <label class="cb-item">
+              <div class="cb-box disabled">
+              </div>
+              <span style="color: var(--fg-muted);">Disabled</span>
+            </label>
+          </div>
+
+          <!-- 6. Radio -->
+          <div style="background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
+            <div style="font-size: 11px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 14px;">Radio group</div>
+            <label class="radio-item">
+              <div class="radio-circle checked"><div class="radio-dot"></div></div>
+              <span>Opção A</span>
+            </label>
+            <label class="radio-item">
+              <div class="radio-circle"></div>
+              <span>Opção B</span>
+            </label>
+            <label class="radio-item">
+              <div class="radio-circle"></div>
+              <span>Opção C</span>
+            </label>
+
+            <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border);">
+              <div style="font-size: 11px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px;">Switch</div>
+              <div class="switch-wrap">
+                <div class="switch-track on"><div class="switch-thumb"></div></div>
+                <span>Ativo</span>
+              </div>
+              <div class="switch-wrap">
+                <div class="switch-track"><div class="switch-thumb"></div></div>
+                <span style="color: var(--fg-muted);">Inativo</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 7. Date input -->
+          <div style="background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
+            <div style="font-size: 11px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 14px;">Date input</div>
+            <div class="field-label">Data de início</div>
+            <div style="position: relative;">
+              <input class="field-input" type="text" value="2026-05-21" style="padding-right: 36px;" />
+              <div style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: var(--fg-muted);">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              </div>
+            </div>
+            <div class="field-helper">Formato YYYY-MM-DD</div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ═══════════════════════════════════════════ -->
+      <!-- 6. BADGES                                  -->
+      <!-- ═══════════════════════════════════════════ -->
+      <section id="badges" class="sg-section">
+        <h2 class="sg-title">Badges</h2>
+        <p class="sg-sub">Status e categorias</p>
+
+        <!-- Status -->
+        <div style="font-size: 11px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 12px;">Status de projetos</div>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 24px;">
+          <span class="badge" style="background: rgba(168,85,247,0.2); color: #c084fc;">pending_approval</span>
+          <span class="badge" style="background: rgba(59,130,246,0.2); color: #93c5fd;">planning</span>
+          <span class="badge" style="background: rgba(251,191,36,0.2); color: #F59E0B;">active</span>
+          <span class="badge" style="background: rgba(138,138,138,0.2); color: #9E9E9E;">paused</span>
+          <span class="badge" style="background: rgba(74,222,128,0.2); color: #22C55E;">completed</span>
+          <span class="badge" style="background: rgba(248,113,113,0.2); color: #EF4444;">cancelled</span>
+        </div>
+
+        <!-- Categorias -->
+        <div style="font-size: 11px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 12px;">Categorias</div>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 24px;">
+          <span class="badge" style="background: rgba(236,72,153,0.2); color: #f9a8d4;">event</span>
+          <span class="badge" style="background: rgba(74,222,128,0.2); color: #22C55E;">pedagogical</span>
+          <span class="badge" style="background: rgba(59,130,246,0.2); color: #93c5fd;">infrastructure</span>
+          <span class="badge" style="background: rgba(251,146,60,0.2); color: #fb923c;">operational</span>
+          <span class="badge" style="background: rgba(168,85,247,0.2); color: #c084fc;">commercial</span>
+          <span class="badge" style="background: rgba(138,138,138,0.2); color: #9E9E9E;">administrative</span>
+        </div>
+
+        <!-- Numéricos -->
+        <div style="font-size: 11px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 12px;">Count chips</div>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <span style="display: inline-flex; align-items: center; padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 500; background: var(--bg-elevated); color: var(--fg-muted);">12</span>
+          <span style="font-size: 11px; color: var(--fg-muted);">Default</span>
+          <span style="width: 20px;"></span>
+          <span style="display: inline-flex; align-items: center; padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; background: var(--tom); color: var(--bg-app);">5</span>
+          <span style="font-size: 11px; color: var(--fg-muted);">Ativo (com filtro)</span>
+        </div>
+      </section>
+
+      <!-- ═══════════════════════════════════════════ -->
+      <!-- 7. CARDS                                   -->
+      <!-- ═══════════════════════════════════════════ -->
+      <section id="cards" class="sg-section">
+        <h2 class="sg-title">Cards</h2>
+        <p class="sg-sub">Containers de informação</p>
+
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;">
+
+          <!-- Card básico -->
+          <div>
+            <div style="font-size: 11px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px;">Básico</div>
+            <div style="background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px;">
+              <div style="display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 10px;">
+                <div>
+                  <div style="font-size: 14px; font-weight: 600; color: var(--fg); margin-bottom: 4px;">Festival de Cordas 2026</div>
+                  <span class="badge" style="background: rgba(236,72,153,0.2); color: #f9a8d4;">event</span>
+                </div>
+              </div>
+              <div style="font-size: 12px; color: var(--fg-muted); margin-bottom: 12px;">Mai 15 – Jun 30, 2026</div>
+              <!-- Avatares -->
+              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
+                <div style="display: flex;">
+                  <div style="width: 22px; height: 22px; border-radius: 50%; background: #22C55E; border: 2px solid var(--bg-surface); display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; color: #0a0a0a;">LF</div>
+                  <div style="width: 22px; height: 22px; border-radius: 50%; background: #60a5fa; border: 2px solid var(--bg-surface); display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; color: #0a0a0a; margin-left: -6px;">AM</div>
+                  <div style="width: 22px; height: 22px; border-radius: 50%; background: var(--bg-elevated-2); border: 2px solid var(--bg-surface); display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; color: var(--fg-muted); margin-left: -6px;">+3</div>
+                </div>
+                <span style="font-size: 11px; color: var(--fg-muted);">67%</span>
+              </div>
+              <!-- Progress -->
+              <div class="progress-track"><div class="progress-fill" style="width: 67%;"></div></div>
+              <!-- Footer -->
+              <div style="margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 11px; color: var(--fg-muted);">8 tarefas · 2 em progresso</div>
+            </div>
+          </div>
+
+          <!-- Card interativo -->
+          <div>
+            <div style="font-size: 11px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px;">Interativo (hover)</div>
+            <div style="background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: 8px; padding: 14px; cursor: pointer;">
+              <div style="display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 10px;">
+                <div>
+                  <div style="font-size: 14px; font-weight: 600; color: var(--fg); margin-bottom: 4px;">Festival de Cordas 2026</div>
+                  <span class="badge" style="background: rgba(251,191,36,0.2); color: #F59E0B;">active</span>
+                </div>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--fg-muted)" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+              </div>
+              <div style="font-size: 12px; color: var(--fg-muted); margin-bottom: 12px;">Mai 15 – Jun 30, 2026</div>
+              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
+                <div style="display: flex;">
+                  <div style="width: 22px; height: 22px; border-radius: 50%; background: var(--tom); border: 2px solid var(--bg-elevated); display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; color: #0a0a0a;">LF</div>
+                  <div style="width: 22px; height: 22px; border-radius: 50%; background: #F59E0B; border: 2px solid var(--bg-elevated); display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; color: #0a0a0a; margin-left: -6px;">AM</div>
+                  <div style="width: 22px; height: 22px; border-radius: 50%; background: var(--bg-elevated-2); border: 2px solid var(--bg-elevated); display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; color: var(--fg-muted); margin-left: -6px;">+3</div>
+                </div>
+                <span style="font-size: 11px; color: var(--fg-muted);">40%</span>
+              </div>
+              <div class="progress-track"><div class="progress-fill" style="width: 40%;"></div></div>
+              <div style="margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 11px; color: var(--fg-muted);">8 tarefas · 2 em progresso</div>
+            </div>
+          </div>
+
+          <!-- Card destacado -->
+          <div>
+            <div style="font-size: 11px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px;">Destacado (tom border)</div>
+            <div style="background: var(--bg-surface); border: 1px solid rgba(168,230,67,0.4); border-radius: 8px; padding: 14px; box-shadow: 0 0 16px rgba(168,230,67,0.06);">
+              <div style="display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 10px;">
+                <div>
+                  <div style="font-size: 14px; font-weight: 600; color: var(--fg); margin-bottom: 4px;">Festival de Cordas 2026</div>
+                  <span class="badge" style="background: rgba(74,222,128,0.2); color: #22C55E;">completed</span>
+                </div>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--tom)" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+              </div>
+              <div style="font-size: 12px; color: var(--fg-muted); margin-bottom: 12px;">Jan 10 – Mar 30, 2026</div>
+              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
+                <div style="display: flex;">
+                  <div style="width: 22px; height: 22px; border-radius: 50%; background: #22C55E; border: 2px solid var(--bg-surface); display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; color: #0a0a0a;">LF</div>
+                  <div style="width: 22px; height: 22px; border-radius: 50%; background: var(--tom); border: 2px solid var(--bg-surface); display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; color: #0a0a0a; margin-left: -6px;">AM</div>
+                </div>
+                <span style="font-size: 11px; color: var(--tom); font-weight: 600;">100%</span>
+              </div>
+              <div class="progress-track"><div class="progress-fill" style="width: 100%;"></div></div>
+              <div style="margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(168,230,67,0.15); font-size: 11px; color: var(--fg-muted);">12 tarefas · todas concluídas</div>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ═══════════════════════════════════════════ -->
+      <!-- 8. SOMBRAS                                 -->
+      <!-- ═══════════════════════════════════════════ -->
+      <section id="sombras" class="sg-section">
+        <h2 class="sg-title">Sombras</h2>
+        <p class="sg-sub">Elevação sutil para dark mode</p>
+
+        <div style="display: flex; gap: 24px; padding: 32px; background: var(--bg-app); border-radius: 8px; border: 1px solid var(--border);">
+
+          <div class="shadow-card" style="box-shadow: var(--shadow-sm);">
+            <div class="shadow-label">--shadow-sm</div>
+            <div class="shadow-value" style="margin-top: 4px;">0 1px 2px rgba(0,0,0,0.4)</div>
+            <div style="font-size: 11px; color: var(--fg-muted); margin-top: 8px;">Elevação ligeira<br>Cards base, rows</div>
+          </div>
+
+          <div class="shadow-card" style="box-shadow: var(--shadow-md);">
+            <div class="shadow-label">--shadow-md</div>
+            <div class="shadow-value" style="margin-top: 4px;">0 4px 12px rgba(0,0,0,0.5)</div>
+            <div style="font-size: 11px; color: var(--fg-muted); margin-top: 8px;">Elevação média<br>Modais, dropdowns</div>
+          </div>
+
+          <div class="shadow-card" style="box-shadow: var(--shadow-lg);">
+            <div class="shadow-label">--shadow-lg</div>
+            <div class="shadow-value" style="margin-top: 4px;">0 12px 32px rgba(0,0,0,0.6)</div>
+            <div style="font-size: 11px; color: var(--fg-muted); margin-top: 8px;">Elevação alta<br>Popovers, drawers</div>
+          </div>
+
+        </div>
+
+        <!-- Radius também -->
+        <div style="margin-top: 24px;">
+          <div style="font-size: 11px; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 12px;">Border radius</div>
+          <div style="display: flex; gap: 16px; align-items: flex-end;">
+            <div style="text-align: center;">
+              <div style="width: 48px; height: 48px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 4px;"></div>
+              <div style="font-size: 11px; color: var(--fg-muted); margin-top: 6px; font-family: monospace;">--r-sm<br>4px</div>
+            </div>
+            <div style="text-align: center;">
+              <div style="width: 48px; height: 48px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 6px;"></div>
+              <div style="font-size: 11px; color: var(--fg-muted); margin-top: 6px; font-family: monospace;">--r-md<br>6px</div>
+            </div>
+            <div style="text-align: center;">
+              <div style="width: 48px; height: 48px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 8px;"></div>
+              <div style="font-size: 11px; color: var(--fg-muted); margin-top: 6px; font-family: monospace;">--r-lg<br>8px</div>
+            </div>
+            <div style="text-align: center;">
+              <div style="width: 48px; height: 48px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 12px;"></div>
+              <div style="font-size: 11px; color: var(--fg-muted); margin-top: 6px; font-family: monospace;">--r-xl<br>12px</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ═══════════════════════════════════════════ -->
+      <!-- 9. ICONOGRAFIA                             -->
+      <!-- ═══════════════════════════════════════════ -->
+      <section id="icones" class="sg-section">
+        <h2 class="sg-title">Iconografia</h2>
+        <p class="sg-sub">Lucide icons · stroke-width 2 · sizes 14 / 16 / 18px</p>
+
+        <!-- Tamanhos -->
+        <div style="display: flex; gap: 24px; margin-bottom: 24px; align-items: center;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--fg-secondary)" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            <span style="font-size: 11px; color: var(--fg-muted);">14px</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--fg-secondary)" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            <span style="font-size: 11px; color: var(--fg-muted);">16px · padrão UI</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--fg-secondary)" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            <span style="font-size: 11px; color: var(--fg-muted);">18px · sidebar, nav</span>
+          </div>
+        </div>
+
+        <!-- Grid de ícones -->
+        <div style="display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px;">
+
+          <div class="icon-item">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            <span>Calendar</span>
+          </div>
+
+          <div class="icon-item">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="14" x2="8" y2="14"/><line x1="12" y1="14" x2="12" y2="14"/><line x1="16" y1="14" x2="16" y2="14"/><line x1="8" y1="18" x2="8" y2="18"/><line x1="12" y1="18" x2="12" y2="18"/></svg>
+            <span>Cal-days</span>
+          </div>
+
+          <div class="icon-item">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            <span>Clock</span>
+          </div>
+
+          <div class="icon-item">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+            <span>Bell</span>
+          </div>
+
+          <div class="icon-item">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></svg>
+            <span>Rocket</span>
+          </div>
+
+          <div class="icon-item">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/><path d="M5 3v4"/><path d="M19 17v4"/><path d="M3 5h4"/><path d="M17 19h4"/></svg>
+            <span>Sparkles</span>
+          </div>
+
+          <div class="icon-item">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+            <span>ClipCheck</span>
+          </div>
+
+          <div class="icon-item">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            <span>Users</span>
+          </div>
+
+          <div class="icon-item">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+            <span>BarChart</span>
+          </div>
+
+          <div class="icon-item">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
+            <span>Target</span>
+          </div>
+
+          <div class="icon-item">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l19-9-9 19-2-8-8-2z"/></svg>
+            <span>Megaphone</span>
+          </div>
+
+          <div class="icon-item">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            <span>Eye</span>
+          </div>
+
+          <div class="icon-item">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/><circle cx="18" cy="5" r="3"/></svg>
+            <span>UserCog</span>
+          </div>
+
+          <div class="icon-item">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
+            <span>Grad.Cap</span>
+          </div>
+
+          <div class="icon-item">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+            <span>Music</span>
+          </div>
+
+          <div class="icon-item">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16.5 9.4 7.55 4.24"/><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.29 7 12 12 20.71 7"/><line x1="12" y1="22" x2="12" y2="12"/></svg>
+            <span>Package</span>
+          </div>
+
+          <div class="icon-item">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
+            <span>Shopping</span>
+          </div>
+
+          <div class="icon-item">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            <span>Settings</span>
+          </div>
+
+          <div class="icon-item">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="12 8 12 12 14 14"/><path d="M3.05 11a9 9 0 1 1 .5 4m-.5 5v-5h5"/></svg>
+            <span>History</span>
+          </div>
+
+          <div class="icon-item">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14h8"/></svg>
+            <span>Cal.Range</span>
+          </div>
+
+          <div class="icon-item">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <span>Search</span>
+          </div>
+
+          <div class="icon-item">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            <span>Plus</span>
+          </div>
+
+          <div class="icon-item">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+            <span>Filter</span>
+          </div>
+
+          <div class="icon-item">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+            <span>MoreVert</span>
+          </div>
+
+          <div class="icon-item">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+            <span>ChevRight</span>
+          </div>
+
+        </div>
+
+        <!-- Nota -->
+        <div style="margin-top: 16px; padding: 12px 16px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: 6px; font-size: 12px; color: var(--fg-muted);">
+          <strong style="color: var(--fg-secondary);">Nota:</strong> Sempre usar stroke-width="2" e stroke="currentColor". Nunca fill. Tamanho padrão: 16px em ações inline, 18px em sidebar e nav principal, 14px em badges e tabelas compactas.
+        </div>
+      </section>
+
+      <!-- Footer -->
+      <div style="margin-top: 64px; padding-top: 24px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center;">
+        <div style="font-size: 12px; color: var(--fg-muted);">LA Organizer Desktop · Foundation · Mockup 01 · Tokens</div>
+        <a href="index.html" style="font-size: 12px; color: var(--fg-muted); text-decoration: none; display: flex; align-items: center; gap: 6px;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M5 12l7 7M5 12l7-7"/></svg>
+          Voltar ao Index
+        </a>
+      </div>
+
+    </div><!-- /sg-main-inner -->
+  </main>
+
+</div><!-- /sg-layout -->
+
+</body>
+</html>
