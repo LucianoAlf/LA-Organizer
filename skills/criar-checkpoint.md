@@ -131,7 +131,31 @@ Se o usuário pedir pra **estruturar checkpoints de um projeto** (várias etapas
 3. Pra cada item, sugerir um `rationale` curto (mas perguntar antes de assumir).
 4. Pra cada item, perguntar prazo (ou "todos sem prazo por enquanto?").
 5. Confirmar TUDO antes de inserir (mostrar lista numerada).
-6. Inserir em lote (1 transação).
+6. Inserir usando o marker `<<CHECKPOINT_BATCH>>`.
+
+### Marker obrigatório para multi-checkpoint
+
+**CRÍTICO: use EXATAMENTE este formato — campo `items` (nunca `checkpoints`), campo `name` (nunca `title`):**
+
+```
+<<CHECKPOINT_BATCH>>
+{
+  "project_name": "<nome exato do projeto>",
+  "items": [
+    { "name": "Confirmação de Professores e Repertório", "due_date": "2026-05-25" },
+    { "name": "Definição de Local, Data e Horário", "due_date": "2026-05-28" }
+  ]
+}
+<<END>>
+```
+
+Regras do schema (qualquer desvio = marker rejeitado silenciosamente):
+- Chave do array: `items` — **NUNCA** `checkpoints`, `checkpoints_list`, `list`, etc.
+- Chave do nome: `name` — **NUNCA** `title`, `nome`, `checkpoint`, etc.
+- `due_date`: formato `YYYY-MM-DD` ou omitir (não passar `null` explícito se sem prazo)
+- `project_name` OU `project_id` (uuid) — obrigatório um dos dois
+- Mínimo 2 items no array
+- O marker fecha com `<<END>>` na mesma resposta
 
 **Importante:** sempre `sort_order` incrementando — o primeiro checkpoint da lista vira o de menor número.
 
