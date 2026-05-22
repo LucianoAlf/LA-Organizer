@@ -1543,8 +1543,10 @@ async function detectStaleTasks(now = new Date()) {
   }
 }
 
-// Sprint 18 — Higiene de execução: eventos passados sem fechamento
-// Dispara todos os dias às 09:30 BRT. Max 3 eventos. Idempotência via ritual_logs.
+// Sprint 18 → 23.10 — Higiene de execução: eventos passados sem fechamento.
+// Dispara todos os dias às 09:30 BRT como CATCH-ALL (eventos com end_at > 24h
+// que escaparam do followup das 21h). Idempotência via ritual_logs +
+// followup_sent_at (Sprint 23.10 — pra o auto-close de 6h pegar depois).
 async function detectUnclosedPastEvents(now = new Date()) {
   const sp = nowSaoPaulo();
   if (currentSlot(sp) !== timeToSlot('09:30')) return; // 09:30 (qualquer dia)
@@ -1553,6 +1555,7 @@ async function detectUnclosedPastEvents(now = new Date()) {
   const MAX_ALERTS = 3;
   const cutoff24h = new Date(now.getTime() - 24 * 3600_000).toISOString();
   const ymdRef = sp.ymd;
+  const nowIso = now.toISOString();
 
   const collabs = await listCollaborators();
   for (const collab of collabs) {
@@ -1563,11 +1566,14 @@ async function detectUnclosedPastEvents(now = new Date()) {
       continue;
     }
 
+    // Sprint 23.10: filtra eventos que JÁ foram perguntados pelo followup_eod
+    // (followup_sent_at IS NULL) — evita duplicar pergunta.
     const { data: unclosed, error } = await supabase
       .from('events')
       .select('id, title, start_at, end_at, category')
       .eq('collaborator_id', collab.id)
       .not('status', 'in', '("done","cancelled")')
+      .is('followup_sent_at', null)
       .lt('end_at', cutoff24h)
       .order('end_at', { ascending: false })
       .limit(MAX_ALERTS);
@@ -1591,14 +1597,107 @@ async function detectUnclosedPastEvents(now = new Date()) {
         return `• _${String(e.title).slice(0, 60)}_ (${dateStr})`;
       })
       .join('\n');
-    const msg = `📌 *Compromissos sem fechamento*\n\nTinha *${count}* compromisso${count > 1 ? 's' : ''} que já aconteceu${count > 1 ? 'ram' : ''} e ainda está${count > 1 ? 'o' : ''} em aberto:\n${listText}\n\nQuer fechar agora? Só responder "fecha" ou me dizer o que aconteceu.`;
+    const msg = `📌 *Compromissos sem fechamento*\n\nTinha *${count}* compromisso${count > 1 ? 's' : ''} que já aconteceu${count > 1 ? 'ram' : ''} e ainda está${count > 1 ? 'o' : ''} em aberto:\n${listText}\n\nQuer fechar agora? Só responder "fecha" ou me dizer o que aconteceu.\n\n_Sem resposta em 6h marco como concluído automaticamente._`;
 
     try {
       await whatsapp.sendMessage(collab.phone, msg);
+      // Sprint 23.10: marca followup_sent_at pra ativar auto-close 6h depois
+      await supabase
+        .from('events')
+        .update({ followup_sent_at: nowIso })
+        .in('id', unclosed.map(e => e.id));
       await logRitualEvent(collab.id, 'hygiene_unclosed_events', 'sent', `count=${count}`, ymdRef);
     } catch (err) {
       console.error(`[detectUnclosedPastEvents] send err ${String(collab.phone).slice(-4)}:`, err.message);
       await logRitualEvent(collab.id, 'hygiene_unclosed_events', 'error', err.message, ymdRef);
+    }
+  }
+}
+
+// Sprint 23.10 — Followup do fim do dia: 21h BRT. Pergunta sobre compromissos
+// do DIA atual (end_at hoje, no passado) ainda em scheduled. Marca followup_sent_at
+// pra que o autoCloseStaleEventFollowups feche em 6h se não houver resposta.
+async function askEndOfDayEventFollowup(now = new Date()) {
+  const sp = nowSaoPaulo();
+  if (currentSlot(sp) !== timeToSlot('21:00')) return;
+
+  const whatsapp = require('../services/whatsapp');
+  const nowIso = now.toISOString();
+  // Início do dia BRT (00h BRT = 03h UTC)
+  const dayStartUtc = new Date(sp.ymd + 'T00:00:00-03:00').toISOString();
+
+  const collabs = await listCollaborators();
+  for (const collab of collabs) {
+    const q = await isQuietNow(collab, sp);
+    if (q.quiet) continue;
+
+    const { data: pending, error } = await supabase
+      .from('events')
+      .select('id, title, start_at')
+      .eq('collaborator_id', collab.id)
+      .not('status', 'in', '("done","cancelled")')
+      .is('followup_sent_at', null)
+      .gte('end_at', dayStartUtc)
+      .lt('end_at', nowIso)
+      .order('start_at');
+
+    if (error) {
+      console.error('[EventFollowupEOD] query err:', error.message);
+      continue;
+    }
+    if (!pending || pending.length === 0) continue;
+
+    const lines = pending.map(e => {
+      const time = new Date(e.start_at).toLocaleString('pt-BR', {
+        timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit',
+      });
+      return `• ${time} — _${String(e.title).slice(0, 60)}_`;
+    }).join('\n');
+    const c = pending.length;
+    const msg = `🌙 *Como foi o dia?*\n\n${c === 1 ? 'Teve este compromisso' : 'Teve estes compromissos'} hoje:\n${lines}\n\nResponde *"fecha"* pra marcar como feito${c > 1 ? 's' : ''}, ou me conta o que rolou (pra eu guardar como memória).\n\n_Sem resposta em 6h fecho automaticamente._`;
+
+    try {
+      await whatsapp.sendMessage(collab.phone, msg);
+      await supabase
+        .from('events')
+        .update({ followup_sent_at: nowIso })
+        .in('id', pending.map(p => p.id));
+      await logRitualEvent(collab.id, 'event_followup_eod', 'sent', `count=${c}`, sp.ymd);
+      console.log(`[EventFollowupEOD] asked ${c} → ${String(collab.phone).slice(-4)}`);
+    } catch (err) {
+      console.error(`[EventFollowupEOD] send err ${String(collab.phone).slice(-4)}:`, err.message);
+      await logRitualEvent(collab.id, 'event_followup_eod', 'error', err.message, sp.ymd);
+    }
+  }
+}
+
+// Sprint 23.10 — Auto-close de eventos sem resposta após 6h da pergunta.
+// Roda a cada tick. Status 'done' com source='auto-close' pra rastrear no DB
+// (vs fechamento manual via EVENT_UPDATE complete). Não envia mensagem.
+async function autoCloseStaleEventFollowups(now = new Date()) {
+  const cutoff6h = new Date(now.getTime() - 6 * 3600_000).toISOString();
+  const { data: stale, error } = await supabase
+    .from('events')
+    .select('id, title, collaborator_id')
+    .not('status', 'in', '("done","cancelled")')
+    .lt('followup_sent_at', cutoff6h)
+    .limit(100);
+  if (error) {
+    console.error('[EventAutoClose] query err:', error.message);
+    return;
+  }
+  if (!stale || stale.length === 0) return;
+
+  for (const ev of stale) {
+    const { error: uErr } = await supabase
+      .from('events')
+      .update({ status: 'done', source: 'auto-close' })
+      .eq('id', ev.id)
+      .not('status', 'in', '("done","cancelled")'); // race-safe
+    if (uErr) {
+      console.error(`[EventAutoClose] update err ${ev.id.slice(0, 8)}:`, uErr.message);
+    } else {
+      console.log(`[EventAutoClose] ${ev.id.slice(0, 8)} "${String(ev.title).slice(0, 40)}" → done (sem resposta 6h)`);
     }
   }
 }
@@ -2345,6 +2444,20 @@ async function run(opts = {}) {
     await detectUnclosedPastEvents(new Date());
   } catch (err) {
     console.error('[Dispatcher] detectUnclosedPastEvents erro:', err.message);
+  }
+
+  // Sprint 23.10 — Followup 21h BRT: pergunta sobre eventos do dia ainda em scheduled
+  try {
+    await askEndOfDayEventFollowup(new Date());
+  } catch (err) {
+    console.error('[Dispatcher] askEndOfDayEventFollowup erro:', err.message);
+  }
+
+  // Sprint 23.10 — Auto-close de eventos sem resposta após 6h da pergunta
+  try {
+    await autoCloseStaleEventFollowups(new Date());
+  } catch (err) {
+    console.error('[Dispatcher] autoCloseStaleEventFollowups erro:', err.message);
   }
 
   // Sprint 13 F1 — comunicados internos (broadcast queue)
