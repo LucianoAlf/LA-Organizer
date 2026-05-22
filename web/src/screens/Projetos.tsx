@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { LayoutGrid, List, Rocket, Check, X as XIcon } from 'lucide-react';
+import { LayoutGrid, List, Rocket, Check, X as XIcon, GanttChart, CalendarDays } from 'lucide-react';
 import { PageShell } from '../design/primitives/PageShell';
 import { Toolbar } from '../design/primitives/Toolbar';
 import { ViewSwitcher } from '../design/primitives/ViewSwitcher';
@@ -11,6 +11,10 @@ import { SkeletonList } from '../design/primitives/LoadingSkeleton';
 import { KanbanBoard } from '../design/views/KanbanBoard';
 import { DenseTable } from '../design/views/DenseTable';
 import type { DenseTableColumn } from '../design/views/DenseTable';
+import { TimelineGantt } from '../design/views/TimelineGantt';
+import type { TimelineItem } from '../design/views/TimelineGantt';
+import { MonthCalendar } from '../design/views/MonthCalendar';
+import type { CalendarItem } from '../design/views/MonthCalendar';
 import { ProjectCardV2 } from './projetos/ProjectCardV2';
 import { ProjectDetailDrawer } from './projetos/ProjectDetailDrawer';
 import { KANBAN_COLUMNS, CATEGORY_BADGE, groupByStatus } from './projetos/constants';
@@ -19,7 +23,17 @@ import { supabase } from '../lib/supabase';
 import { showToast } from '../components/Toast';
 import type { Project, ProjectStatus } from '../types';
 
-type ViewMode = 'kanban' | 'list';
+type ViewMode = 'kanban' | 'list' | 'timeline' | 'calendar';
+
+const TODAY = new Date();
+const STATUS_COLORS: Record<string, string> = {
+  pending_approval: '#F59E0B',
+  planning: '#60a5fa',
+  active: '#A3BE50',
+  paused: '#9E9E9E',
+  completed: '#22C55E',
+  cancelled: '#EF4444',
+};
 
 const ALIVE_STATUSES: ProjectStatus[] = ['active', 'planning', 'pending_approval', 'paused'];
 
@@ -174,8 +188,10 @@ export function Projetos() {
               <>
                 <ViewSwitcher
                   options={[
-                    { id: 'kanban', label: 'Kanban', Icon: LayoutGrid },
-                    { id: 'list',   label: 'Lista',  Icon: List },
+                    { id: 'kanban',   label: 'Kanban',     Icon: LayoutGrid },
+                    { id: 'list',     label: 'Lista',      Icon: List },
+                    { id: 'timeline', label: 'Linha do tempo', Icon: GanttChart },
+                    { id: 'calendar', label: 'Calendário', Icon: CalendarDays },
                   ]}
                   value={view}
                   onChange={setView}
@@ -183,7 +199,7 @@ export function Projetos() {
                 <button
                   type="button"
                   onClick={() => navigate('/projetos/novo')}
-                  className="h-8 px-3 rounded-md bg-tom text-white text-[12px] font-semibold hover:opacity-90 focus-ring"
+                  className="h-8 px-3 rounded-md bg-tom text-black text-[12px] font-semibold hover:opacity-90 focus-ring"
                 >
                   + Novo
                 </button>
@@ -244,7 +260,7 @@ export function Projetos() {
               <button
                 type="button"
                 onClick={() => navigate('/projetos/novo')}
-                className="h-9 px-4 rounded-md bg-tom text-white text-[13px] font-semibold hover:opacity-90 focus-ring"
+                className="h-9 px-4 rounded-md bg-tom text-black text-[13px] font-semibold hover:opacity-90 focus-ring"
               >
                 Criar projeto
               </button>
@@ -256,13 +272,78 @@ export function Projetos() {
             getItemKey={p => p.id}
             renderCard={p => <ProjectCardV2 project={p} onClick={() => setSelected(p)} />}
           />
-        ) : (
+        ) : view === 'list' ? (
           <DenseTable
             columns={tableColumns}
             rows={projects}
             getRowKey={p => p.id}
             onRowClick={p => setSelected(p)}
           />
+        ) : view === 'timeline' ? (
+          (() => {
+            // Timeline: projetos com start_date+end_date, lanes por status.
+            const datedProjects = projects.filter(p => p.start_date && p.end_date);
+            if (datedProjects.length === 0) {
+              return (
+                <EmptyStateDesktop
+                  Icon={GanttChart}
+                  title="Sem datas para plotar"
+                  description="A linha do tempo precisa que os projetos tenham data de início e fim cadastradas."
+                />
+              );
+            }
+            const items: TimelineItem[] = datedProjects.map(p => ({
+              id: p.id,
+              label: p.name,
+              start: new Date(p.start_date!).getTime(),
+              end: new Date(p.end_date!).getTime(),
+              lane: p.status,
+              color: STATUS_COLORS[p.status],
+            }));
+            const lanes = KANBAN_COLUMNS.map(c => ({ id: c.id, label: c.title }));
+            const starts = items.map(i => i.start);
+            const ends = items.map(i => i.end);
+            const rangeStart = Math.min(...starts, TODAY.getTime() - 7 * 86400000);
+            const rangeEnd = Math.max(...ends, TODAY.getTime() + 30 * 86400000);
+            return (
+              <div className="h-[600px]">
+                <TimelineGantt
+                  items={items}
+                  rangeStart={rangeStart}
+                  rangeEnd={rangeEnd}
+                  lanes={lanes}
+                  onItemClick={it => {
+                    const proj = projects.find(p => p.id === it.id);
+                    if (proj) setSelected(proj);
+                  }}
+                />
+              </div>
+            );
+          })()
+        ) : (
+          (() => {
+            // Calendar: projetos plotados na sua start_date.
+            const datedProjects = projects.filter(p => p.start_date);
+            const items: CalendarItem[] = datedProjects.map(p => ({
+              id: p.id,
+              date: p.start_date!.slice(0, 10), // YYYY-MM-DD
+              label: p.name,
+              color: STATUS_COLORS[p.status],
+            }));
+            return (
+              <div className="h-[600px]">
+                <MonthCalendar
+                  year={TODAY.getFullYear()}
+                  month={TODAY.getMonth() + 1}
+                  items={items}
+                  onDayClick={date => {
+                    const proj = projects.find(p => p.start_date?.slice(0, 10) === date);
+                    if (proj) setSelected(proj);
+                  }}
+                />
+              </div>
+            );
+          })()
         )}
       </PageShell>
 

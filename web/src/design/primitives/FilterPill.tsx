@@ -37,7 +37,7 @@ export function FilterPill({
         </>
       )}
       {count !== undefined && count > 0 && (
-        <span className={`min-w-[18px] h-[18px] px-1.5 rounded-full text-[10px] font-bold grid place-items-center ${active ? 'bg-tom text-white' : 'bg-bg-elevated2 text-fg'}`}>
+        <span className={`min-w-[18px] h-[18px] px-1.5 rounded-full text-[10px] font-bold grid place-items-center ${active ? 'bg-tom text-black' : 'bg-bg-elevated2 text-fg'}`}>
           {count}
         </span>
       )}

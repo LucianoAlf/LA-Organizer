@@ -51,7 +51,7 @@ export function ProjectDetailDrawer({ project, onClose }: ProjectDetailDrawerPro
         <button
           type="button"
           onClick={() => { onClose(); navigate(`/projetos/${project.id}`); }}
-          className="w-full h-9 flex items-center justify-center gap-2 rounded-md bg-tom text-white text-[13px] font-semibold hover:opacity-90 transition-opacity focus-ring"
+          className="w-full h-9 flex items-center justify-center gap-2 rounded-md bg-tom text-black text-[13px] font-semibold hover:opacity-90 transition-opacity focus-ring"
         >
           <ExternalLink size={14} />
           Abrir projeto

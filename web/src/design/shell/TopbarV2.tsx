@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
-  Camera, Lock, Settings, LogOut, User, Bell, Plus, Sun, Moon,
+  Camera, Lock, Settings, LogOut, User, Bell, Sun, Moon,
   CalendarDays, Rocket, ClipboardCheck, Sparkles, Users, BarChart3,
   Target, Megaphone, Eye, UserCog, GraduationCap, Music,
   Package, ShoppingBag, CalendarRange, History,
@@ -86,10 +86,9 @@ function initials(name: string | null | undefined): string {
 
 interface TopbarV2Props {
   sidebarCollapsed?: boolean;
-  onQuickAdd?: () => void;
 }
 
-export function TopbarV2({ sidebarCollapsed = false, onQuickAdd }: TopbarV2Props) {
+export function TopbarV2({ sidebarCollapsed = false }: TopbarV2Props) {
   const { collaborator, signOut, updateProfile, sendMagicLink } = useAuth();
   const { theme, toggle } = useTheme();
   const { pathname } = useLocation();
@@ -201,15 +200,15 @@ export function TopbarV2({ sidebarCollapsed = false, onQuickAdd }: TopbarV2Props
             <Bell size={15} />
           </button>
 
-          {/* Quick Add */}
+          {/* Theme toggle — visível no topbar */}
           <button
             type="button"
-            onClick={onQuickAdd}
-            aria-label="Adicionar"
-            className="h-8 flex items-center gap-1.5 px-3 rounded-md bg-tom text-white text-[12px] font-semibold hover:opacity-90 transition-opacity focus-ring"
+            onClick={toggle}
+            aria-label={theme === 'dark' ? 'Mudar para modo claro' : 'Mudar para modo escuro'}
+            title={theme === 'dark' ? 'Modo claro' : 'Modo escuro'}
+            className="h-8 w-8 grid place-items-center rounded-md text-fg-muted hover:text-fg hover:bg-bg-elevated border border-border transition-colors focus-ring"
           >
-            <Plus size={14} />
-            Adicionar
+            {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
           </button>
 
           <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handlePhotoChange} />
@@ -358,7 +357,7 @@ export function TopbarV2({ sidebarCollapsed = false, onQuickAdd }: TopbarV2Props
                 type="button"
                 onClick={handlePasswordChange}
                 disabled={pwLoading}
-                className="flex-1 py-2.5 rounded-lg bg-tom text-white text-[13px] font-semibold disabled:opacity-50 hover:opacity-90 transition-opacity"
+                className="flex-1 py-2.5 rounded-lg bg-tom text-black text-[13px] font-semibold disabled:opacity-50 hover:opacity-90 transition-opacity"
               >
                 {pwLoading ? 'Salvando…' : 'Salvar senha'}
               </button>
