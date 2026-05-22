@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { LayoutGrid, List, Rocket, Check, X as XIcon, GanttChart, CalendarDays } from 'lucide-react';
+import { LayoutGrid, List, Rocket, Check, X as XIcon, GanttChart, CalendarDays, BarChart3 } from 'lucide-react';
 import { PageShell } from '../design/primitives/PageShell';
 import { Toolbar } from '../design/primitives/Toolbar';
 import { ViewSwitcher } from '../design/primitives/ViewSwitcher';
@@ -17,13 +17,14 @@ import { MonthCalendar } from '../design/views/MonthCalendar';
 import type { CalendarItem } from '../design/views/MonthCalendar';
 import { ProjectCardV2 } from './projetos/ProjectCardV2';
 import { ProjectDetailDrawer } from './projetos/ProjectDetailDrawer';
+import { ProjectsDashboard } from './projetos/ProjectsDashboard';
 import { KANBAN_COLUMNS, CATEGORY_BADGE, groupByStatus } from './projetos/constants';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { showToast } from '../components/Toast';
 import type { Project, ProjectStatus } from '../types';
 
-type ViewMode = 'kanban' | 'list' | 'timeline' | 'calendar';
+type ViewMode = 'dashboard' | 'kanban' | 'list' | 'timeline' | 'calendar';
 
 const TODAY = new Date();
 const STATUS_COLORS: Record<string, string> = {
@@ -83,7 +84,7 @@ export function ProjetosDesktop() {
   const qc = useQueryClient();
 
   const isCoordOrDir = role === 'coordinator' || role === 'director';
-  const [view, setView] = useState<ViewMode>('kanban');
+  const [view, setView] = useState<ViewMode>('dashboard');
   const [selected, setSelected] = useState<Project | null>(null);
 
   const { data: projects = [], isLoading } = useQuery({
@@ -216,10 +217,11 @@ export function ProjetosDesktop() {
               <>
                 <ViewSwitcher
                   options={[
-                    { id: 'kanban',   label: 'Kanban',     Icon: LayoutGrid },
-                    { id: 'list',     label: 'Lista',      Icon: List },
-                    { id: 'timeline', label: 'Linha do tempo', Icon: GanttChart },
-                    { id: 'calendar', label: 'Calendário', Icon: CalendarDays },
+                    { id: 'dashboard', label: 'Dashboard',  Icon: BarChart3 },
+                    { id: 'kanban',    label: 'Kanban',     Icon: LayoutGrid },
+                    { id: 'list',      label: 'Lista',      Icon: List },
+                    { id: 'timeline',  label: 'Linha do tempo', Icon: GanttChart },
+                    { id: 'calendar',  label: 'Calendário', Icon: CalendarDays },
                   ]}
                   value={view}
                   onChange={setView}
@@ -294,6 +296,8 @@ export function ProjetosDesktop() {
               </button>
             }
           />
+        ) : view === 'dashboard' ? (
+          <ProjectsDashboard projects={projects} />
         ) : view === 'kanban' ? (
           <KanbanBoard
             columns={columns}
