@@ -127,7 +127,7 @@ export function NovoProjetoDesktop() {
   const progress = (step / TOTAL_STEPS) * 100;
 
   return (
-    <div className="h-full grid grid-cols-[minmax(280px,38%)_1fr] overflow-hidden -mx-4 md:-mx-6 lg:-mx-10 -my-6">
+    <div className="h-[calc(100%+3rem)] grid grid-cols-[minmax(280px,38%)_1fr] overflow-hidden -mx-4 md:-mx-6 lg:-mx-10 -my-6">
       {/* === PAINEL ESQUERDO — brand + stepper === */}
       <aside className="relative flex flex-col bg-bg-surface border-r border-border overflow-hidden">
         {/* Halftone sutil de fundo */}
