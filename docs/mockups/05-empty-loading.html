@@ -1,0 +1,1133 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>05 · Empty &amp; Loading — LA Organizer Foundation</title>
+  <link rel="stylesheet" href="assets/tom-tokens.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+  <style>
+    /* ── Reset + base ─────────────────────────────────────────────── */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--font-sans);
+      background-color: var(--bg-app);
+      color: var(--fg);
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+      background-image:
+        radial-gradient(ellipse at 20% 10%, rgba(163,190,80,0.05), transparent 45%),
+        radial-gradient(ellipse at 80% 80%, rgba(96,165,250,0.03), transparent 45%);
+    }
+
+    /* ── Scrollbar custom ─────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 2px; }
+
+    /* ── Typography helpers ───────────────────────────────────────── */
+    .serif { font-family: 'Instrument Serif', Georgia, serif; }
+    .text-muted { color: var(--fg-muted); }
+    .text-secondary { color: var(--fg-secondary); }
+    .text-tom { color: var(--tom); }
+
+    /* ── Layout root ──────────────────────────────────────────────── */
+    .layout-root {
+      display: flex;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ══════════════════════════════════════════════════════════════ */
+    /*  SIDEBAR NAV                                                    */
+    /* ══════════════════════════════════════════════════════════════ */
+    .sidebar {
+      width: 220px;
+      min-width: 220px;
+      height: 100vh;
+      background: var(--bg-surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      z-index: 10;
+      flex-shrink: 0;
+    }
+
+    .sidebar-header {
+      padding: 16px 14px 12px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .sidebar-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--fg);
+      letter-spacing: -0.01em;
+      line-height: 1.3;
+    }
+
+    .sidebar-subtitle {
+      font-size: 11px;
+      color: var(--fg-muted);
+      margin-top: 3px;
+    }
+
+    .sidebar-nav {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 0;
+    }
+
+    .nav-group {
+      margin-bottom: 16px;
+    }
+
+    .nav-group-label {
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--fg-disabled);
+      padding: 4px 14px 6px;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 10px;
+      height: 32px;
+      border-radius: var(--r-md);
+      margin: 1px 6px;
+      cursor: pointer;
+      font-size: 12px;
+      color: var(--fg-secondary);
+      transition: background 150ms ease-out, color 150ms ease-out;
+      text-decoration: none;
+    }
+
+    .nav-item:hover {
+      background: var(--bg-elevated);
+      color: var(--fg);
+    }
+
+    .nav-item svg { flex-shrink: 0; opacity: 0.7; }
+    .nav-item:hover svg { opacity: 1; }
+
+    .sidebar-footer {
+      padding: 10px 10px;
+      border-top: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .sidebar-footer a {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--fg-muted);
+      text-decoration: none;
+      padding: 6px 8px;
+      border-radius: var(--r-md);
+      transition: background 150ms ease-out, color 150ms ease-out;
+    }
+
+    .sidebar-footer a:hover {
+      background: var(--bg-elevated);
+      color: var(--fg);
+    }
+
+    /* ══════════════════════════════════════════════════════════════ */
+    /*  MAIN AREA                                                       */
+    /* ══════════════════════════════════════════════════════════════ */
+    .main-wrapper {
+      flex: 1;
+      min-width: 0;
+      height: 100vh;
+      overflow-y: auto;
+    }
+
+    .page-content {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 48px;
+    }
+
+    /* Page header */
+    .page-header {
+      margin-bottom: 48px;
+    }
+
+    .page-title {
+      font-family: 'Instrument Serif', Georgia, serif;
+      font-size: 36px;
+      font-weight: 400;
+      color: var(--fg);
+      letter-spacing: -0.02em;
+      line-height: 1.1;
+      margin-bottom: 8px;
+    }
+
+    .page-subtitle {
+      font-size: 14px;
+      color: var(--fg-muted);
+    }
+
+    /* Section */
+    .section {
+      border-top: 1px solid var(--border);
+      padding-top: 32px;
+      margin-top: 48px;
+    }
+
+    .section:first-of-type {
+      border-top: none;
+      margin-top: 0;
+    }
+
+    .section-heading {
+      font-family: 'Instrument Serif', Georgia, serif;
+      font-size: 24px;
+      font-weight: 400;
+      color: var(--fg);
+      letter-spacing: -0.01em;
+      margin-bottom: 6px;
+    }
+
+    .section-desc {
+      font-size: 13px;
+      color: var(--fg-muted);
+      margin-bottom: 24px;
+    }
+
+    /* ── Demo Card ────────────────────────────────────────────────── */
+    .demo-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.4), 0 8px 24px -8px rgba(0,0,0,0.5);
+      overflow: hidden;
+      margin-bottom: 24px;
+    }
+
+    .demo-card-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--fg-muted);
+      font-weight: 600;
+    }
+
+    .demo-card-body {
+      padding: 32px;
+      min-height: 320px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* ── Empty State shared ───────────────────────────────────────── */
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      max-width: 480px;
+      text-align: center;
+    }
+
+    .empty-illustration {
+      width: 120px;
+      height: 120px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .empty-title {
+      font-size: 22px;
+      font-weight: 600;
+      color: var(--fg);
+      letter-spacing: -0.02em;
+      line-height: 1.2;
+    }
+
+    .empty-subtitle {
+      font-size: 14px;
+      color: var(--fg-muted);
+      line-height: 1.6;
+      max-width: 420px;
+    }
+
+    .empty-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 8px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      border-radius: var(--r-md);
+      padding: 7px 14px;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: background 150ms ease-out, border-color 150ms ease-out, color 150ms ease-out, opacity 150ms ease-out;
+      text-decoration: none;
+      white-space: nowrap;
+      font-family: var(--font-sans);
+    }
+
+    .btn-primary {
+      background: var(--tom);
+      color: #000;
+      border-color: var(--tom);
+    }
+
+    .btn-primary:hover {
+      background: var(--tom-hover);
+      border-color: var(--tom-hover);
+    }
+
+    .btn-secondary {
+      background: transparent;
+      color: var(--fg-secondary);
+      border-color: var(--border-strong);
+    }
+
+    .btn-secondary:hover {
+      background: var(--bg-elevated);
+      color: var(--fg);
+      border-color: var(--border-strong);
+    }
+
+    .btn-link {
+      background: transparent;
+      color: var(--fg-muted);
+      border-color: transparent;
+      padding-left: 4px;
+      padding-right: 4px;
+    }
+
+    .btn-link:hover { color: var(--fg); }
+
+    /* Search suggestion chips */
+    .suggestion-chips {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: center;
+      margin-top: 8px;
+    }
+
+    .chip-suggestion {
+      display: inline-flex;
+      align-items: center;
+      padding: 5px 12px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      font-size: 12px;
+      color: var(--fg-secondary);
+      cursor: pointer;
+      transition: background 150ms ease-out, border-color 150ms ease-out, color 150ms ease-out;
+    }
+
+    .chip-suggestion:hover {
+      background: var(--bg-elevated-2);
+      border-color: var(--border-strong);
+      color: var(--fg);
+    }
+
+    /* Filter tags display */
+    .filter-tags {
+      display: inline-flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .filter-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 10px;
+      background: rgba(163,190,80,0.1);
+      border: 1px solid rgba(163,190,80,0.2);
+      border-radius: 999px;
+      font-size: 11px;
+      color: var(--tom);
+    }
+
+    /* ── Skeleton ─────────────────────────────────────────────────── */
+    @keyframes skeleton-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.45; }
+    }
+
+    .skel {
+      background: var(--bg-elevated-2);
+      border-radius: 6px;
+      animation: skeleton-pulse 1.6s ease-in-out infinite;
+    }
+
+    .skel-circle {
+      border-radius: 50%;
+    }
+
+    /* Skeleton cards grid */
+    .skel-cards-grid {
+      display: flex;
+      gap: 12px;
+      padding: 0;
+      width: 100%;
+      justify-content: center;
+    }
+
+    .skel-card {
+      width: 220px;
+      min-width: 220px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .skel-card-top {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .skel-metrics {
+      display: flex;
+      gap: 6px;
+      margin-top: 4px;
+    }
+
+    /* Skeleton table */
+    .skel-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .skel-table th {
+      padding: 10px 12px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--fg-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    .skel-table td {
+      padding: 0 12px;
+      height: 44px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+
+    .skel-table tr:last-child td { border-bottom: none; }
+
+    /* Skeleton kanban */
+    .skel-kanban {
+      display: flex;
+      gap: 10px;
+      width: 100%;
+      overflow: hidden;
+    }
+
+    .skel-col {
+      width: 240px;
+      min-width: 240px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+
+    .skel-col-header {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .skel-col-body {
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .skel-kanban-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .skel-avatars {
+      display: flex;
+    }
+
+    .skel-avatar-overlap {
+      border-radius: 50%;
+      border: 2px solid var(--bg-elevated);
+      margin-left: -6px;
+    }
+
+    .skel-avatar-overlap:first-child { margin-left: 0; }
+
+    /* ── Error State ──────────────────────────────────────────────── */
+    .error-icon {
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      background: rgba(239,68,68,0.12);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .error-details {
+      margin-top: 12px;
+      width: 100%;
+      max-width: 440px;
+    }
+
+    .error-details summary {
+      font-size: 11px;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      color: var(--fg-muted);
+      cursor: pointer;
+      user-select: none;
+      list-style: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .error-details summary::-webkit-details-marker { display: none; }
+
+    .error-details summary:hover { color: var(--fg-secondary); }
+
+    .error-details[open] summary { color: var(--fg-secondary); }
+
+    .error-pre {
+      margin-top: 10px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--r-md);
+      padding: 12px 14px;
+      font-size: 11px;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      color: var(--danger);
+      line-height: 1.6;
+      text-align: left;
+      white-space: pre;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body>
+<div class="layout-root">
+
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <!--  SIDEBAR                                                         -->
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-title">🌫 Empty &amp; Loading</div>
+      <div class="sidebar-subtitle">Estados não-felizes</div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <div class="nav-group">
+        <div class="nav-group-label">Empty States</div>
+        <a href="#empty-inicial" class="nav-item">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M9 9h.01M15 9h.01"/><path d="M9 13a4 4 0 0 0 6 0"/></svg>
+          Inicial
+        </a>
+        <a href="#empty-filtro" class="nav-item">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+          Por filtros
+        </a>
+        <a href="#empty-busca" class="nav-item">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          Por busca
+        </a>
+        <a href="#empty-permissao" class="nav-item">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          Sem permissão
+        </a>
+      </div>
+
+      <div class="nav-group">
+        <div class="nav-group-label">Loading Skeletons</div>
+        <a href="#skel-cards" class="nav-item">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><rect x="8" y="21" width="8" height="1"/><path d="M12 17v4"/></svg>
+          Cards
+        </a>
+        <a href="#skel-tabela" class="nav-item">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h18v18H3zM3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
+          Tabela
+        </a>
+        <a href="#skel-kanban" class="nav-item">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="18" rx="1"/><rect x="14" y="3" width="7" height="10" rx="1"/></svg>
+          Kanban
+        </a>
+      </div>
+
+      <div class="nav-group">
+        <div class="nav-group-label">Error</div>
+        <a href="#error" class="nav-item">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+          Error State
+        </a>
+      </div>
+    </nav>
+
+    <div class="sidebar-footer">
+      <a href="index.html">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+        ← Index
+      </a>
+    </div>
+  </aside>
+
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <!--  MAIN                                                             -->
+  <!-- ═══════════════════════════════════════════════════════════════ -->
+  <main class="main-wrapper">
+    <div class="page-content">
+
+      <!-- Page header -->
+      <div class="page-header">
+        <h1 class="page-title">Empty &amp; Loading</h1>
+        <p class="page-subtitle">Estados não-felizes com personalidade</p>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════ -->
+      <!-- SECTION 1 — EMPTY STATES                        -->
+      <!-- ═══════════════════════════════════════════════ -->
+      <section class="section" id="empty">
+        <h2 class="section-heading">Empty States</h2>
+        <p class="section-desc">Telas vazias com contexto e direção — nunca só "sem dados"</p>
+
+        <!-- 1a. Empty inicial -->
+        <div id="empty-inicial" class="demo-card">
+          <div class="demo-card-header">INICIAL · primeira vez na tela</div>
+          <div class="demo-card-body">
+            <div class="empty-state">
+
+              <!-- Ilustração: constelação de círculos -->
+              <div class="empty-illustration">
+                <svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <!-- Linhas conectoras tênues -->
+                  <line x1="30" y1="55" x2="60" y2="30" stroke="#A3BE50" stroke-opacity="0.15" stroke-width="1"/>
+                  <line x1="60" y1="30" x2="90" y2="65" stroke="#A3BE50" stroke-opacity="0.15" stroke-width="1"/>
+                  <line x1="90" y1="65" x2="52" y2="88" stroke="#A3BE50" stroke-opacity="0.15" stroke-width="1"/>
+                  <line x1="30" y1="55" x2="52" y2="88" stroke="#A3BE50" stroke-opacity="0.1" stroke-width="1"/>
+                  <!-- Círculos: opacidade decrescente -->
+                  <circle cx="60" cy="30" r="10" fill="#A3BE50" fill-opacity="1"/>
+                  <circle cx="90" cy="65" r="7" fill="#A3BE50" fill-opacity="0.6"/>
+                  <circle cx="52" cy="88" r="5" fill="#A3BE50" fill-opacity="0.35"/>
+                  <circle cx="30" cy="55" r="4" fill="#A3BE50" fill-opacity="0.18"/>
+                  <!-- Halo externo no principal -->
+                  <circle cx="60" cy="30" r="18" fill="#A3BE50" fill-opacity="0.06"/>
+                </svg>
+              </div>
+
+              <div class="empty-title">Nada por aqui ainda</div>
+              <div class="empty-subtitle">
+                Crie seu primeiro projeto pra começar a organizar entregas, prazos e responsáveis.
+              </div>
+              <div class="empty-actions">
+                <button class="btn btn-primary">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+                  Criar primeiro projeto
+                </button>
+                <a href="#" class="btn btn-link">Ver exemplos →</a>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 1b. Empty por filtro -->
+        <div id="empty-filtro" class="demo-card">
+          <div class="demo-card-header">POR FILTRO · resultados vazios</div>
+          <div class="demo-card-body">
+            <div class="empty-state">
+
+              <!-- Ilustração: funil com X -->
+              <div class="empty-illustration">
+                <svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <!-- Funil -->
+                  <path d="M20 28 L100 28 L70 58 L70 88 L50 96 L50 58 Z" fill="#A3BE50" fill-opacity="0.1" stroke="#A3BE50" stroke-opacity="0.3" stroke-width="1.5" stroke-linejoin="round"/>
+                  <!-- Stripes internas -->
+                  <line x1="35" y1="38" x2="85" y2="38" stroke="#A3BE50" stroke-opacity="0.2" stroke-width="1"/>
+                  <line x1="42" y1="48" x2="78" y2="48" stroke="#A3BE50" stroke-opacity="0.15" stroke-width="1"/>
+                  <!-- X centralizado no funil -->
+                  <circle cx="60" cy="68" r="13" fill="#A3BE50" fill-opacity="0.08" stroke="#A3BE50" stroke-opacity="0.2" stroke-width="1.5"/>
+                  <path d="M55 63 L65 73 M65 63 L55 73" stroke="#A3BE50" stroke-opacity="0.7" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+              </div>
+
+              <div class="empty-title">Nenhum projeto bate com esses filtros</div>
+              <div class="empty-subtitle">
+                Você tá filtrando por:
+              </div>
+              <div class="filter-tags">
+                <span class="filter-tag">Status: Concluído</span>
+                <span class="filter-tag">Categoria: Pedagógico</span>
+                <span class="filter-tag" style="background:rgba(239,68,68,0.08);border-color:rgba(239,68,68,0.2);color:var(--danger)">0 resultados</span>
+              </div>
+              <div class="empty-actions">
+                <button class="btn btn-secondary">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>
+                  Limpar todos os filtros
+                </button>
+                <button class="btn btn-primary">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+                  Ajustar filtros
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 1c. Empty por busca -->
+        <div id="empty-busca" class="demo-card">
+          <div class="demo-card-header">POR BUSCA · sem CTA principal</div>
+          <div class="demo-card-body">
+            <div class="empty-state">
+
+              <!-- Ilustração: lupa cruzada -->
+              <div class="empty-illustration">
+                <svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <!-- Círculo da lupa -->
+                  <circle cx="50" cy="50" r="26" stroke="#A3BE50" stroke-opacity="0.35" stroke-width="2" fill="#A3BE50" fill-opacity="0.04"/>
+                  <!-- Halo externo -->
+                  <circle cx="50" cy="50" r="34" stroke="#A3BE50" stroke-opacity="0.1" stroke-width="1" stroke-dasharray="4 3"/>
+                  <!-- Cabo da lupa -->
+                  <path d="M70 70 L88 88" stroke="#A3BE50" stroke-opacity="0.4" stroke-width="3" stroke-linecap="round"/>
+                  <!-- X interno -->
+                  <path d="M43 43 L57 57 M57 43 L43 57" stroke="#A3BE50" stroke-opacity="0.6" stroke-width="2.5" stroke-linecap="round"/>
+                </svg>
+              </div>
+
+              <div class="empty-title">Sem resultados pra "festival 2027"</div>
+              <div class="empty-subtitle">
+                Tenta um termo mais curto ou diferente.
+              </div>
+              <div class="suggestion-chips">
+                <button class="chip-suggestion">festival</button>
+                <button class="chip-suggestion">festival 2026</button>
+                <button class="chip-suggestion">cordas</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 1d. Empty sem permissão -->
+        <div id="empty-permissao" class="demo-card">
+          <div class="demo-card-header">SEM PERMISSÃO · gate de acesso</div>
+          <div class="demo-card-body">
+            <div class="empty-state">
+
+              <!-- Ilustração: cadeado com brilho tom -->
+              <div class="empty-illustration">
+                <svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <!-- Halo externo -->
+                  <circle cx="60" cy="62" r="38" fill="#A3BE50" fill-opacity="0.03"/>
+                  <!-- Corpo do cadeado -->
+                  <rect x="34" y="56" width="52" height="38" rx="6" fill="#A3BE50" fill-opacity="0.1" stroke="#A3BE50" stroke-opacity="0.3" stroke-width="1.5"/>
+                  <!-- Arco -->
+                  <path d="M42 56 V42 a18 18 0 0 1 36 0 V56" stroke="#A3BE50" stroke-opacity="0.4" stroke-width="2" fill="none" stroke-linecap="round"/>
+                  <!-- Buraco da fechadura -->
+                  <circle cx="60" cy="72" r="5" fill="#A3BE50" fill-opacity="0.5"/>
+                  <rect x="57.5" y="72" width="5" height="8" rx="2" fill="#A3BE50" fill-opacity="0.35"/>
+                  <!-- Brilho tom sutil -->
+                  <ellipse cx="60" cy="90" rx="20" ry="4" fill="#A3BE50" fill-opacity="0.08"/>
+                </svg>
+              </div>
+
+              <div class="empty-title">Você não tem acesso a esta área</div>
+              <div class="empty-subtitle">
+                Essa seção é exclusiva pra coordenadores e diretores. Fale com seu gestor pra liberar.
+              </div>
+              <div class="empty-actions">
+                <button class="btn btn-secondary">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+                  Voltar pra Agenda
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ═══════════════════════════════════════════════ -->
+      <!-- SECTION 2 — LOADING SKELETONS                   -->
+      <!-- ═══════════════════════════════════════════════ -->
+      <section class="section" id="loading">
+        <h2 class="section-heading">Loading Skeletons</h2>
+        <p class="section-desc">Placeholder com pulse animado · usa <code style="font-family:monospace;font-size:12px;background:var(--bg-elevated);padding:1px 6px;border-radius:4px;color:var(--fg-secondary)">--bg-elevated-2</code> como cor base</p>
+
+        <!-- 2a. Skeleton cards -->
+        <div id="skel-cards" class="demo-card">
+          <div class="demo-card-header">GRID DE CARDS · ex: PersonGrid carregando</div>
+          <div class="demo-card-body" style="padding:24px 32px;">
+            <div class="skel-cards-grid">
+
+              <!-- Card skeleton × 4 -->
+              <div class="skel-card" style="animation-delay:0s">
+                <div class="skel-card-top">
+                  <div class="skel skel-circle" style="width:56px;height:56px;flex-shrink:0;"></div>
+                  <div style="flex:1;display:flex;flex-direction:column;gap:7px;">
+                    <div class="skel" style="height:14px;width:65%;animation-delay:0.1s;"></div>
+                    <div class="skel" style="height:11px;width:42%;animation-delay:0.15s;"></div>
+                  </div>
+                </div>
+                <div class="skel-metrics">
+                  <div class="skel" style="height:10px;width:58px;border-radius:999px;animation-delay:0.2s;"></div>
+                  <div class="skel" style="height:10px;width:52px;border-radius:999px;animation-delay:0.25s;"></div>
+                  <div class="skel" style="height:10px;width:48px;border-radius:999px;animation-delay:0.3s;"></div>
+                </div>
+              </div>
+
+              <div class="skel-card">
+                <div class="skel-card-top">
+                  <div class="skel skel-circle" style="width:56px;height:56px;flex-shrink:0;animation-delay:0.05s;"></div>
+                  <div style="flex:1;display:flex;flex-direction:column;gap:7px;">
+                    <div class="skel" style="height:14px;width:55%;animation-delay:0.12s;"></div>
+                    <div class="skel" style="height:11px;width:38%;animation-delay:0.18s;"></div>
+                  </div>
+                </div>
+                <div class="skel-metrics">
+                  <div class="skel" style="height:10px;width:62px;border-radius:999px;animation-delay:0.22s;"></div>
+                  <div class="skel" style="height:10px;width:44px;border-radius:999px;animation-delay:0.28s;"></div>
+                  <div class="skel" style="height:10px;width:54px;border-radius:999px;animation-delay:0.32s;"></div>
+                </div>
+              </div>
+
+              <div class="skel-card">
+                <div class="skel-card-top">
+                  <div class="skel skel-circle" style="width:56px;height:56px;flex-shrink:0;animation-delay:0.08s;"></div>
+                  <div style="flex:1;display:flex;flex-direction:column;gap:7px;">
+                    <div class="skel" style="height:14px;width:72%;animation-delay:0.14s;"></div>
+                    <div class="skel" style="height:11px;width:46%;animation-delay:0.2s;"></div>
+                  </div>
+                </div>
+                <div class="skel-metrics">
+                  <div class="skel" style="height:10px;width:50px;border-radius:999px;animation-delay:0.24s;"></div>
+                  <div class="skel" style="height:10px;width:58px;border-radius:999px;animation-delay:0.3s;"></div>
+                  <div class="skel" style="height:10px;width:46px;border-radius:999px;animation-delay:0.35s;"></div>
+                </div>
+              </div>
+
+              <div class="skel-card">
+                <div class="skel-card-top">
+                  <div class="skel skel-circle" style="width:56px;height:56px;flex-shrink:0;animation-delay:0.12s;"></div>
+                  <div style="flex:1;display:flex;flex-direction:column;gap:7px;">
+                    <div class="skel" style="height:14px;width:58%;animation-delay:0.18s;"></div>
+                    <div class="skel" style="height:11px;width:35%;animation-delay:0.24s;"></div>
+                  </div>
+                </div>
+                <div class="skel-metrics">
+                  <div class="skel" style="height:10px;width:56px;border-radius:999px;animation-delay:0.28s;"></div>
+                  <div class="skel" style="height:10px;width:48px;border-radius:999px;animation-delay:0.33s;"></div>
+                  <div class="skel" style="height:10px;width:60px;border-radius:999px;animation-delay:0.38s;"></div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+
+        <!-- 2b. Skeleton tabela -->
+        <div id="skel-tabela" class="demo-card">
+          <div class="demo-card-header">TABELA DENSA · ex: Lista carregando</div>
+          <div class="demo-card-body" style="align-items:flex-start;padding:0;">
+            <table class="skel-table" style="width:100%;">
+              <thead>
+                <tr>
+                  <th>Nome</th>
+                  <th>Status</th>
+                  <th>Categoria</th>
+                  <th>Período</th>
+                  <th>Equipe</th>
+                  <th>Progresso</th>
+                </tr>
+              </thead>
+              <tbody>
+                <!-- Row 1 -->
+                <tr>
+                  <td><div class="skel" style="height:12px;width:58%;animation-delay:0s;"></div></td>
+                  <td><div class="skel" style="height:12px;width:70px;border-radius:999px;animation-delay:0.05s;"></div></td>
+                  <td><div class="skel" style="height:12px;width:50%;animation-delay:0.1s;"></div></td>
+                  <td><div class="skel" style="height:12px;width:65%;animation-delay:0.15s;"></div></td>
+                  <td><div class="skel" style="height:12px;width:45%;animation-delay:0.2s;"></div></td>
+                  <td><div class="skel" style="height:7px;width:80%;border-radius:999px;animation-delay:0.25s;"></div></td>
+                </tr>
+                <!-- Row 2 -->
+                <tr>
+                  <td><div class="skel" style="height:12px;width:45%;animation-delay:0.08s;"></div></td>
+                  <td><div class="skel" style="height:12px;width:64px;border-radius:999px;animation-delay:0.13s;"></div></td>
+                  <td><div class="skel" style="height:12px;width:60%;animation-delay:0.18s;"></div></td>
+                  <td><div class="skel" style="height:12px;width:55%;animation-delay:0.23s;"></div></td>
+                  <td><div class="skel" style="height:12px;width:50%;animation-delay:0.28s;"></div></td>
+                  <td><div class="skel" style="height:7px;width:55%;border-radius:999px;animation-delay:0.33s;"></div></td>
+                </tr>
+                <!-- Row 3 -->
+                <tr>
+                  <td><div class="skel" style="height:12px;width:68%;animation-delay:0.06s;"></div></td>
+                  <td><div class="skel" style="height:12px;width:72px;border-radius:999px;animation-delay:0.11s;"></div></td>
+                  <td><div class="skel" style="height:12px;width:42%;animation-delay:0.16s;"></div></td>
+                  <td><div class="skel" style="height:12px;width:70%;animation-delay:0.21s;"></div></td>
+                  <td><div class="skel" style="height:12px;width:38%;animation-delay:0.26s;"></div></td>
+                  <td><div class="skel" style="height:7px;width:70%;border-radius:999px;animation-delay:0.31s;"></div></td>
+                </tr>
+                <!-- Row 4 -->
+                <tr>
+                  <td><div class="skel" style="height:12px;width:52%;animation-delay:0.1s;"></div></td>
+                  <td><div class="skel" style="height:12px;width:68px;border-radius:999px;animation-delay:0.15s;"></div></td>
+                  <td><div class="skel" style="height:12px;width:55%;animation-delay:0.2s;"></div></td>
+                  <td><div class="skel" style="height:12px;width:48%;animation-delay:0.25s;"></div></td>
+                  <td><div class="skel" style="height:12px;width:55%;animation-delay:0.3s;"></div></td>
+                  <td><div class="skel" style="height:7px;width:45%;border-radius:999px;animation-delay:0.35s;"></div></td>
+                </tr>
+                <!-- Row 5 -->
+                <tr>
+                  <td><div class="skel" style="height:12px;width:40%;animation-delay:0.12s;"></div></td>
+                  <td><div class="skel" style="height:12px;width:60px;border-radius:999px;animation-delay:0.17s;"></div></td>
+                  <td><div class="skel" style="height:12px;width:48%;animation-delay:0.22s;"></div></td>
+                  <td><div class="skel" style="height:12px;width:62%;animation-delay:0.27s;"></div></td>
+                  <td><div class="skel" style="height:12px;width:42%;animation-delay:0.32s;"></div></td>
+                  <td><div class="skel" style="height:7px;width:90%;border-radius:999px;animation-delay:0.37s;"></div></td>
+                </tr>
+                <!-- Row 6 -->
+                <tr>
+                  <td><div class="skel" style="height:12px;width:63%;animation-delay:0.14s;"></div></td>
+                  <td><div class="skel" style="height:12px;width:76px;border-radius:999px;animation-delay:0.19s;"></div></td>
+                  <td><div class="skel" style="height:12px;width:52%;animation-delay:0.24s;"></div></td>
+                  <td><div class="skel" style="height:12px;width:58%;animation-delay:0.29s;"></div></td>
+                  <td><div class="skel" style="height:12px;width:47%;animation-delay:0.34s;"></div></td>
+                  <td><div class="skel" style="height:7px;width:62%;border-radius:999px;animation-delay:0.39s;"></div></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 2c. Skeleton kanban -->
+        <div id="skel-kanban" class="demo-card">
+          <div class="demo-card-header">KANBAN · 4 colunas com cards parciais</div>
+          <div class="demo-card-body" style="padding:24px 32px;align-items:flex-start;overflow:hidden;">
+            <div class="skel-kanban">
+
+              <!-- Coluna 1 -->
+              <div class="skel-col">
+                <div class="skel-col-header">
+                  <div class="skel" style="height:13px;width:80px;animation-delay:0s;"></div>
+                  <div class="skel" style="height:18px;width:28px;border-radius:999px;margin-left:auto;animation-delay:0.1s;"></div>
+                </div>
+                <div class="skel-col-body">
+                  <div class="skel-kanban-card">
+                    <div class="skel" style="height:13px;width:75%;animation-delay:0.05s;"></div>
+                    <div class="skel" style="height:18px;width:60px;border-radius:999px;animation-delay:0.12s;"></div>
+                    <div class="skel-avatars">
+                      <div class="skel skel-circle skel-avatar-overlap" style="width:20px;height:20px;animation-delay:0.18s;"></div>
+                      <div class="skel skel-circle skel-avatar-overlap" style="width:20px;height:20px;animation-delay:0.22s;"></div>
+                      <div class="skel skel-circle skel-avatar-overlap" style="width:20px;height:20px;animation-delay:0.26s;"></div>
+                    </div>
+                    <div class="skel" style="height:4px;width:100%;border-radius:999px;animation-delay:0.3s;"></div>
+                  </div>
+                  <div class="skel-kanban-card">
+                    <div class="skel" style="height:13px;width:60%;animation-delay:0.08s;"></div>
+                    <div class="skel" style="height:18px;width:52px;border-radius:999px;animation-delay:0.15s;"></div>
+                    <div class="skel-avatars">
+                      <div class="skel skel-circle skel-avatar-overlap" style="width:20px;height:20px;animation-delay:0.2s;"></div>
+                      <div class="skel skel-circle skel-avatar-overlap" style="width:20px;height:20px;animation-delay:0.25s;"></div>
+                    </div>
+                    <div class="skel" style="height:4px;width:100%;border-radius:999px;animation-delay:0.32s;"></div>
+                  </div>
+                  <div class="skel-kanban-card">
+                    <div class="skel" style="height:13px;width:85%;animation-delay:0.1s;"></div>
+                    <div class="skel" style="height:18px;width:68px;border-radius:999px;animation-delay:0.18s;"></div>
+                    <div class="skel-avatars">
+                      <div class="skel skel-circle skel-avatar-overlap" style="width:20px;height:20px;animation-delay:0.24s;"></div>
+                    </div>
+                    <div class="skel" style="height:4px;width:100%;border-radius:999px;animation-delay:0.35s;"></div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Coluna 2 -->
+              <div class="skel-col">
+                <div class="skel-col-header">
+                  <div class="skel" style="height:13px;width:94px;animation-delay:0.04s;"></div>
+                  <div class="skel" style="height:18px;width:24px;border-radius:999px;margin-left:auto;animation-delay:0.12s;"></div>
+                </div>
+                <div class="skel-col-body">
+                  <div class="skel-kanban-card">
+                    <div class="skel" style="height:13px;width:68%;animation-delay:0.07s;"></div>
+                    <div class="skel" style="height:18px;width:56px;border-radius:999px;animation-delay:0.14s;"></div>
+                    <div class="skel-avatars">
+                      <div class="skel skel-circle skel-avatar-overlap" style="width:20px;height:20px;animation-delay:0.2s;"></div>
+                      <div class="skel skel-circle skel-avatar-overlap" style="width:20px;height:20px;animation-delay:0.25s;"></div>
+                      <div class="skel skel-circle skel-avatar-overlap" style="width:20px;height:20px;animation-delay:0.3s;"></div>
+                    </div>
+                    <div class="skel" style="height:4px;width:100%;border-radius:999px;animation-delay:0.36s;"></div>
+                  </div>
+                  <div class="skel-kanban-card">
+                    <div class="skel" style="height:13px;width:55%;animation-delay:0.1s;"></div>
+                    <div class="skel" style="height:18px;width:64px;border-radius:999px;animation-delay:0.17s;"></div>
+                    <div class="skel-avatars">
+                      <div class="skel skel-circle skel-avatar-overlap" style="width:20px;height:20px;animation-delay:0.23s;"></div>
+                      <div class="skel skel-circle skel-avatar-overlap" style="width:20px;height:20px;animation-delay:0.28s;"></div>
+                    </div>
+                    <div class="skel" style="height:4px;width:100%;border-radius:999px;animation-delay:0.38s;"></div>
+                  </div>
+                  <div class="skel-kanban-card">
+                    <div class="skel" style="height:13px;width:78%;animation-delay:0.13s;"></div>
+                    <div class="skel" style="height:18px;width:48px;border-radius:999px;animation-delay:0.2s;"></div>
+                    <div class="skel-avatars">
+                      <div class="skel skel-circle skel-avatar-overlap" style="width:20px;height:20px;animation-delay:0.26s;"></div>
+                      <div class="skel skel-circle skel-avatar-overlap" style="width:20px;height:20px;animation-delay:0.31s;"></div>
+                      <div class="skel skel-circle skel-avatar-overlap" style="width:20px;height:20px;animation-delay:0.36s;"></div>
+                    </div>
+                    <div class="skel" style="height:4px;width:100%;border-radius:999px;animation-delay:0.4s;"></div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Coluna 3 (parcialmente cortada) -->
+              <div class="skel-col">
+                <div class="skel-col-header">
+                  <div class="skel" style="height:13px;width:72px;animation-delay:0.07s;"></div>
+                  <div class="skel" style="height:18px;width:32px;border-radius:999px;margin-left:auto;animation-delay:0.14s;"></div>
+                </div>
+                <div class="skel-col-body">
+                  <div class="skel-kanban-card">
+                    <div class="skel" style="height:13px;width:62%;animation-delay:0.1s;"></div>
+                    <div class="skel" style="height:18px;width:70px;border-radius:999px;animation-delay:0.18s;"></div>
+                    <div class="skel-avatars">
+                      <div class="skel skel-circle skel-avatar-overlap" style="width:20px;height:20px;animation-delay:0.25s;"></div>
+                      <div class="skel skel-circle skel-avatar-overlap" style="width:20px;height:20px;animation-delay:0.3s;"></div>
+                    </div>
+                    <div class="skel" style="height:4px;width:100%;border-radius:999px;animation-delay:0.38s;"></div>
+                  </div>
+                  <div class="skel-kanban-card">
+                    <div class="skel" style="height:13px;width:80%;animation-delay:0.12s;"></div>
+                    <div class="skel" style="height:18px;width:54px;border-radius:999px;animation-delay:0.2s;"></div>
+                    <div class="skel-avatars">
+                      <div class="skel skel-circle skel-avatar-overlap" style="width:20px;height:20px;animation-delay:0.28s;"></div>
+                    </div>
+                    <div class="skel" style="height:4px;width:100%;border-radius:999px;animation-delay:0.4s;"></div>
+                  </div>
+                  <div class="skel-kanban-card">
+                    <div class="skel" style="height:13px;width:48%;animation-delay:0.15s;"></div>
+                    <div class="skel" style="height:18px;width:62px;border-radius:999px;animation-delay:0.22s;"></div>
+                    <div class="skel-avatars">
+                      <div class="skel skel-circle skel-avatar-overlap" style="width:20px;height:20px;animation-delay:0.3s;"></div>
+                      <div class="skel skel-circle skel-avatar-overlap" style="width:20px;height:20px;animation-delay:0.35s;"></div>
+                      <div class="skel skel-circle skel-avatar-overlap" style="width:20px;height:20px;animation-delay:0.4s;"></div>
+                    </div>
+                    <div class="skel" style="height:4px;width:100%;border-radius:999px;animation-delay:0.44s;"></div>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ═══════════════════════════════════════════════ -->
+      <!-- SECTION 3 — ERROR STATE                         -->
+      <!-- ═══════════════════════════════════════════════ -->
+      <section class="section" id="error">
+        <h2 class="section-heading">Error State</h2>
+        <p class="section-desc">Falha com diagnóstico e caminho de recuperação</p>
+
+        <div class="demo-card">
+          <div class="demo-card-header">ERRO · falha de carregamento</div>
+          <div class="demo-card-body">
+            <div class="empty-state">
+
+              <div class="error-icon">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/>
+                  <path d="M12 9v4"/>
+                  <path d="M12 17h.01"/>
+                </svg>
+              </div>
+
+              <div class="empty-title">Algo deu errado</div>
+              <div class="empty-subtitle">
+                Não conseguimos carregar seus projetos. Tenta novamente em alguns segundos. Se persistir, fale com o suporte.
+              </div>
+
+              <details class="error-details">
+                <summary>
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+                  Detalhes técnicos
+                </summary>
+                <pre class="error-pre"><code>FetchError: Failed to fetch · status: 503
+at /api/projects · timestamp: 2026-05-22T14:32:11Z</code></pre>
+              </details>
+
+              <div class="empty-actions">
+                <button class="btn btn-secondary">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+                  Voltar
+                </button>
+                <button class="btn btn-primary">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/></svg>
+                  Tentar novamente
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- spacer final -->
+      <div style="height:48px;"></div>
+    </div>
+  </main>
+
+</div>
+</body>
+</html>
