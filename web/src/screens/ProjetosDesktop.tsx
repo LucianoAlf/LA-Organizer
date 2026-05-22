@@ -131,6 +131,34 @@ export function ProjetosDesktop() {
     onError: (err: Error) => showToast({ kind: 'error', title: 'Erro', msg: err.message }),
   });
 
+  // DnD do Kanban: arrastar card entre colunas muda o status do projeto.
+  const moveStatusMut = useMutation({
+    mutationFn: async ({ id, newStatus }: { id: string; newStatus: ProjectStatus }) => {
+      const { error } = await supabase.from('projects').update({ status: newStatus }).eq('id', id);
+      if (error) throw error;
+    },
+    onMutate: async ({ id, newStatus }) => {
+      // Update otimista: move o card visualmente antes do round-trip.
+      await qc.cancelQueries({ queryKey: ['projects'] });
+      const prev = qc.getQueryData<Project[]>(['projects', collaborator?.id, isCoordOrDir]);
+      if (prev) {
+        qc.setQueryData<Project[]>(
+          ['projects', collaborator?.id, isCoordOrDir],
+          prev.map(p => (p.id === id ? { ...p, status: newStatus } : p)),
+        );
+      }
+      return { prev };
+    },
+    onError: (err: Error, _vars, ctx) => {
+      // Rollback otimista em caso de erro.
+      if (ctx?.prev) qc.setQueryData(['projects', collaborator?.id, isCoordOrDir], ctx.prev);
+      showToast({ kind: 'error', title: 'Erro ao mover', msg: err.message });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['projects'] });
+    },
+  });
+
   const grouped = useMemo(() => groupByStatus(projects), [projects]);
   const totalAlive = projects.length;
 
@@ -271,6 +299,10 @@ export function ProjetosDesktop() {
             columns={columns}
             getItemKey={p => p.id}
             renderCard={p => <ProjectCardV2 project={p} onClick={() => setSelected(p)} />}
+            onMoveItem={(itemId, fromCol, toCol) => {
+              if (fromCol === toCol) return; // reorder dentro da mesma coluna: ignorar (futuro: sort_position)
+              moveStatusMut.mutate({ id: itemId, newStatus: toCol as ProjectStatus });
+            }}
           />
         ) : view === 'list' ? (
           <DenseTable
