@@ -53,27 +53,25 @@ export function DesktopShell() {
   useRealtimeSync(collaborator?.id);
 
   return (
-    <div className="min-h-screen bg-bg-app text-fg">
+    // Shell fixo no viewport — sempre ocupa exatamente 100% da janela.
+    // Sidebar e Topbar são fixed; main é absolute e rola internamente.
+    // Padrão desktop app (Linear, Notion, Stripe): janela do shell não cresce
+    // com o conteúdo — só o painel <main> rola. Garante zero vazio embaixo.
+    <div className="fixed inset-0 bg-bg-app text-fg overflow-hidden">
       <SidebarV2
         collapsed={collapsed}
         onToggleCollapse={isTablet ? undefined : () => setUserCollapsed(v => !v)}
       />
       <TopbarV2 sidebarCollapsed={collapsed} />
       <main
-        className="pt-14 min-h-screen"
-        style={{ marginLeft: sidebarWidth }}
+        className="absolute top-14 right-0 bottom-0 overflow-y-auto"
+        style={{ left: sidebarWidth }}
       >
-        {/* Tabs Dia/Semana — paridade com mobile. Renderizado no shell para que
-            a MESMA instância persista entre /hoje ↔ /semana (indicador deslizante
-            só anima se o elemento não for desmontado). */}
         {showAgendaTabs && (
           <div className="w-full px-6 lg:px-10 pt-6">
             <AgendaTabs />
           </div>
         )}
-        {/* Fase D2.2 — conteúdo ocupa toda a largura disponível (sem max-w),
-            respeitando apenas o padding lateral. Assim, recolher a sidebar
-            de fato expande o conteúdo na mesma distância. */}
         <div className="w-full px-4 md:px-6 lg:px-10 py-6">
           <Outlet />
         </div>
