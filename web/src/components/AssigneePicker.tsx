@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { User } from 'lucide-react';
+import { PROJECT_MEMBER_ROLE_LABELS, type ProjectMemberRole } from '../types';
 
 // Sprint 22.22 — Dropdown inline pra atribuir task a um membro do projeto.
 // Sprint 22.X — dropdown usa position: fixed com coords do trigger pra escapar
@@ -39,7 +40,13 @@ export function AssigneePicker({ value, options, onChange, onClear, emptyLabel =
     if (left + dropdownWidth > window.innerWidth - 8) {
       left = Math.max(8, window.innerWidth - 8 - dropdownWidth);
     }
-    setCoords({ top: rect.bottom + 4, left, width: dropdownWidth });
+    // Flip pra cima se nao tem espaco abaixo (max-h-60 = 240px + folga).
+    const dropdownMaxH = 280;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const top = spaceBelow < dropdownMaxH
+      ? Math.max(8, rect.top - dropdownMaxH - 4)
+      : rect.bottom + 4;
+    setCoords({ top, left, width: dropdownWidth });
   }, [open]);
 
   // Click outside fecha
@@ -112,7 +119,9 @@ export function AssigneePicker({ value, options, onChange, onClear, emptyLabel =
                 >
                   <span className="flex-1 truncate">{opt.full_name}</span>
                   {opt.role_in_project && (
-                    <span className="text-[10px] text-fg-muted/60">{opt.role_in_project}</span>
+                    <span className="text-[10px] text-fg-muted/60">
+                      {PROJECT_MEMBER_ROLE_LABELS[opt.role_in_project as ProjectMemberRole] ?? opt.role_in_project}
+                    </span>
                   )}
                   {selected && <span className="text-fg-muted text-body-sm">✓</span>}
                 </button>

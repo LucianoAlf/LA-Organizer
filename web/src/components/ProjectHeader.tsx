@@ -3,16 +3,18 @@
 
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Crown, Users } from 'lucide-react';
 import { CategoryTag } from './CategoryTag';
 import { RowMenu } from './RowMenu';
 import { PROJECT_CATEGORY_LABELS } from '../lib/projectLabels';
 import { brShort } from '../utils/date';
 import type { ProjectFull } from '../types/projectDetail';
+import type { ProjectMember } from '../types';
 
 export function ProjectHeader({
   project,
   pct,
+  members,
   onRename,
   onUpdateDescription,
   onUpdateEventDate,
@@ -21,6 +23,7 @@ export function ProjectHeader({
 }: {
   project: ProjectFull;
   pct: number;
+  members?: ProjectMember[];
   onRename: (name: string) => void;
   onUpdateDescription: (description: string) => void;
   onUpdateEventDate: (eventDate: string) => void;
@@ -48,6 +51,20 @@ export function ProjectHeader({
     if (dateVal !== (project.event_date ?? '')) onUpdateEventDate(dateVal);
     setEditDate(false);
   }
+
+  // Sprint — linha "Responsável: X · Time: Y, Z (+N)" logo abaixo do nome.
+  // Owner (created_by) ganha destaque; resto vira lista enxuta com truncamento.
+  const internalMembers = (members ?? []).filter(m => m.collaborator?.full_name);
+  const ownerMember = internalMembers.find(m => m.collaborator_id === project.created_by)
+    ?? internalMembers.find(m => m.role_in_project === 'owner')
+    ?? internalMembers.find(m => m.role_in_project === 'coordinator');
+  const ownerName = ownerMember?.collaborator?.full_name ?? null;
+  const otherMembers = internalMembers.filter(m => m !== ownerMember);
+  const otherFirstNames = otherMembers
+    .map(m => (m.collaborator?.full_name ?? '').split(' ')[0])
+    .filter(Boolean);
+  const visibleOthers = otherFirstNames.slice(0, 4);
+  const extraOthers = Math.max(0, otherFirstNames.length - visibleOthers.length);
 
   return (
     <header>
@@ -78,6 +95,27 @@ export function ProjectHeader({
             >
               {project.name}
             </button>
+          )}
+
+          {(ownerName || visibleOthers.length > 0) && (
+            <div className="mt-1 text-body-sm text-fg-muted flex flex-wrap items-center gap-x-2 gap-y-1">
+              {ownerName && (
+                <span className="inline-flex items-center gap-1 text-tom font-medium">
+                  <Crown size={12} />
+                  Responsável: <span className="text-fg">{ownerName}</span>
+                </span>
+              )}
+              {visibleOthers.length > 0 && (
+                <>
+                  {ownerName && <span className="text-fg-muted/40">·</span>}
+                  <span className="inline-flex items-center gap-1">
+                    <Users size={12} className="opacity-70" />
+                    Time: {visibleOthers.join(', ')}
+                    {extraOthers > 0 && ` +${extraOthers}`}
+                  </span>
+                </>
+              )}
+            </div>
           )}
 
           {editDesc ? (

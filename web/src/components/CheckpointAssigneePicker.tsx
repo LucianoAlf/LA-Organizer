@@ -6,6 +6,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { ChevronDown, User, Crown } from 'lucide-react';
 import type { AssigneeOption } from './AssigneePicker';
+import { PROJECT_MEMBER_ROLE_LABELS, type ProjectMemberRole } from '../types';
 
 export interface CheckpointAssigneePickerProps {
   value: string | null;
@@ -20,7 +21,9 @@ export function CheckpointAssigneePicker({
   value, onChange, options, fallbackName, disabled,
 }: CheckpointAssigneePickerProps) {
   const [open, setOpen] = useState(false);
+  const [openUp, setOpenUp] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     function onDoc(e: MouseEvent) {
@@ -30,15 +33,25 @@ export function CheckpointAssigneePicker({
     return () => document.removeEventListener('mousedown', onDoc);
   }, [open]);
 
+  function toggleOpen() {
+    if (!open && triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      setOpenUp(spaceBelow < 280);
+    }
+    setOpen(v => !v);
+  }
+
   const selected = value ? options.find(o => o.id === value) : null;
   const label = selected?.full_name ?? fallbackName;
 
   return (
     <div ref={ref} className="relative inline-block" data-no-nav>
       <button
+        ref={triggerRef}
         type="button"
         disabled={disabled}
-        onClick={() => setOpen(v => !v)}
+        onClick={toggleOpen}
         className={[
           'inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-body-sm focus-ring transition-colors',
           value
@@ -54,7 +67,10 @@ export function CheckpointAssigneePicker({
       </button>
 
       {open && (
-        <div className="absolute z-20 top-full mt-1 left-0 min-w-[200px] bg-bg-elevated2 border border-border rounded-md shadow-lg py-1 max-h-64 overflow-y-auto">
+        <div className={[
+          'absolute z-20 left-0 min-w-[200px] bg-bg-elevated2 border border-border rounded-md shadow-lg py-1 max-h-64 overflow-y-auto',
+          openUp ? 'bottom-full mb-1' : 'top-full mt-1',
+        ].join(' ')}>
           <button
             type="button"
             onClick={() => { onChange(null); setOpen(false); }}
@@ -77,7 +93,9 @@ export function CheckpointAssigneePicker({
               <User size={12} />
               <span className="truncate flex-1">{opt.full_name}</span>
               {opt.role_in_project && (
-                <span className="text-[10px] text-fg-muted/60">{opt.role_in_project}</span>
+                <span className="text-[10px] text-fg-muted/60">
+                  {PROJECT_MEMBER_ROLE_LABELS[opt.role_in_project as ProjectMemberRole] ?? opt.role_in_project}
+                </span>
               )}
               {opt.id === value && <span className="text-tom">✓</span>}
             </button>

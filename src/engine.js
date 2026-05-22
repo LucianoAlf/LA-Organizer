@@ -1254,7 +1254,7 @@ async function applyCoordinationResponseAction(collab, parsed) {
     .eq('id', req.requester_id)
     .maybeSingle();
 
-  const recipientFirstName = (collab.full_name || '').split(' ')[0] || 'alguém';
+  const recipientFirstName = _displayName(collab);
 
   if (requester?.phone) {
     const msg = `Boa! O ${recipientFirstName} respondeu o que você pediu:\n\n"${parsed.response_summary}"`;
@@ -1285,14 +1285,18 @@ function _buildRecipientMessage(requesterDisplayName, mode, messageBody) {
   }
 }
 
-// Sprint 16 UX §6 — display name do requester com fallback de homônimo via function_title.
-// Radar pós-Sprint19: usar APENAS o primeiro nome — sem '(CEO / Fundador)' etc.
-// Tom mais leve no relay. Se houver homônimos no futuro, resolver via contexto/ACC,
-// não via title em parêntese.
-function _requesterDisplayName(requester) {
-  const firstName = (requester.full_name || '').split(' ')[0];
+// Sprint 16 → 23.15 UX §6 — display name de qualquer pessoa (requester ou recipient).
+// Prefere preferred_name (codinome consciente, ex: "Alf" pra "Luciano Alf").
+// Fallback: primeiro nome do full_name. Tom mais leve no relay — sem títulos.
+function _displayName(person) {
+  if (!person) return 'Alguém';
+  const preferred = (person.preferred_name || '').trim();
+  if (preferred) return preferred;
+  const firstName = (person.full_name || '').split(' ')[0];
   return firstName || 'Alguém';
 }
+// Alias legacy pra calls existentes.
+const _requesterDisplayName = _displayName;
 
 // Bug B2 fix (Radar pós-Sprint19): quando IntegrityCheck bloqueia criação,
 // substitui qualquer texto otimista que o LLM possa ter gerado ("✅ Registrado!")
@@ -1356,7 +1360,7 @@ async function applyCoordinationRequestAction(collab, parsed) {
     };
   }
 
-  const recipientFirstName = (recipient.full_name || '').split(' ')[0];
+  const recipientFirstName = _displayName(recipient);
 
   // Sprint 19 — Gate pedagógico tem PRECEDÊNCIA sobre o gate genérico Sprint 16.
   // DENY pedagógico = DENY final. Gate genérico não pode reautorizar acima dele.

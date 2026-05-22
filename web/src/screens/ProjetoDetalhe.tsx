@@ -164,6 +164,7 @@ export function ProjetoDetalhe() {
       <ProjectHeader
         project={project}
         pct={pct}
+        members={members}
         onRename={(name) => updateProject.mutate({ name })}
         onUpdateDescription={(description) => updateProject.mutate({ description: description || null })}
         onUpdateEventDate={(event_date) => updateProject.mutate({ event_date: event_date || null })}

@@ -31,7 +31,7 @@ import { TaskListItem } from '../components/TaskListItem';
 import { AssigneePicker, type AssigneeOption } from '../components/AssigneePicker';
 import { DateInput } from '../components/DateInput';
 import { CheckpointAssigneePicker } from '../components/CheckpointAssigneePicker';
-import type { Task, ProjectMember } from '../types';
+import { PROJECT_MEMBER_ROLE_LABELS, type Task, type ProjectMember, type ProjectMemberRole } from '../types';
 import type { CheckpointFull } from '../types/projectDetail';
 import type { CreateCheckpointInput } from '../hooks/useProjectCheckpoints';
 
@@ -912,7 +912,9 @@ function CheckpointResponsavelChip({
     : 'bg-tom/10 text-tom border-tom/30';
 
   const [open, setOpen] = useState(false);
+  const [openUp, setOpenUp] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -924,6 +926,15 @@ function CheckpointResponsavelChip({
     document.addEventListener('mousedown', handle);
     return () => document.removeEventListener('mousedown', handle);
   }, [open]);
+
+  function toggleOpen() {
+    if (!open && triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      setOpenUp(spaceBelow < 280);
+    }
+    setOpen(v => !v);
+  }
 
   // Estatico: sem permissao pra trocar
   if (!onChange || !options) {
@@ -941,8 +952,9 @@ function CheckpointResponsavelChip({
   return (
     <div ref={ref} className="relative">
       <button
+        ref={triggerRef}
         type="button"
-        onClick={(e) => { e.stopPropagation(); setOpen(v => !v); }}
+        onClick={(e) => { e.stopPropagation(); toggleOpen(); }}
         className={['inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[11px] font-medium cursor-pointer hover:opacity-80 focus-ring', cls].join(' ')}
         title={isFallback ? `Responsável (fallback do projeto): ${label} — clique para trocar` : `Responsável: ${label} — clique para trocar`}
       >
@@ -950,7 +962,10 @@ function CheckpointResponsavelChip({
         <span className="truncate max-w-[140px]">{label}</span>
       </button>
       {open && (
-        <div className="absolute left-0 top-full mt-1 z-50 min-w-[200px] rounded-md border border-border bg-bg-surface shadow-soft overflow-hidden">
+        <div className={[
+          'absolute left-0 z-50 min-w-[200px] rounded-md border border-border bg-bg-surface shadow-soft overflow-hidden',
+          openUp ? 'bottom-full mb-1' : 'top-full mt-1',
+        ].join(' ')}>
           {options.map((o) => (
             <button
               key={o.id}
@@ -1011,7 +1026,7 @@ function PeopleGroupedTasks({
     buckets.push({
       key: m.collaborator_id!,
       name: m.collaborator?.full_name ?? '—',
-      subtitle: m.role_in_project,
+      subtitle: PROJECT_MEMBER_ROLE_LABELS[m.role_in_project as ProjectMemberRole] ?? m.role_in_project,
       tasks: byPerson.get(m.collaborator_id!) ?? [],
     });
   }
