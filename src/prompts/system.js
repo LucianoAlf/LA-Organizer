@@ -2465,13 +2465,18 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     }
   }
 
-  // Sprint 16 → 23.13 — Coordenação Conversacional: carrega pra TODOS os
-  // colaboradores (era restrita a manager/coordinator/director, mas isso
-  // bloqueava casos legítimos tipo "Rafinha pede pro Tom avisar o Alf
-  // sobre conserto de equipamento"). Qualquer membro do time pode pedir
-  // relay/followup; gate de comportamento fica na skill (confirmação +
-  // validação de recipient via lookup). RLS no banco já protege INSERT.
-  if (collaborator) {
+  // Sprint 16 → 23.13 → 23.15 — Coordenação Conversacional:
+  // Carrega sob 2 condições:
+  //   (a) COORD_HINT ativo → recipient tem recados pendentes, precisa da skill
+  //       pra emitir COORDINATION_RESPONSE corretamente
+  //   (b) lastUserMessage casa com keywords de relay/followup → user tá pedindo
+  // Sem essas condições, NÃO carrega (economiza ~10KB de prompt, reduz latência).
+  // Resultado: mensagens triviais ficam ágeis; relay continua disponível quando
+  // o user pede explicitamente. RLS no banco já protege INSERT.
+  const COORD_KEYWORDS_RE = /\b(manda|mande|mandar|envia|envie|enviar|avisa|avise|avisar|fala\s+com|falar\s+com|fale\s+com|cobra|cobre|cobrar|cobrança|cobrar?\s+(?:o|a|os|as)|pergunta\s+(?:pro|pra|para|ao|à)|perguntar?\s+(?:pro|pra|para|ao|à)|passa\s+pro|passar?\s+pro|transmite|transmita|transmitir|encaminha|encaminhe|encaminhar|comunica|comunique|comunicar|recado|repassa|repasse|repassar|relay)\b/i;
+  const hasCoordHint = !!(ctx && ctx.coordHint);
+  const hasCoordIntent = lastUserMessage && COORD_KEYWORDS_RE.test(lastUserMessage);
+  if (collaborator && (hasCoordHint || hasCoordIntent)) {
     const coordPath = path.join(SKILLS_DIR, 'coordenacao-conversacional.md');
     if (fs.existsSync(coordPath)) {
       systemPrompt += '\n\n---\n\n' + fs.readFileSync(coordPath, 'utf-8');

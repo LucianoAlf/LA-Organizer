@@ -66,6 +66,17 @@ export function ProjectHeader({
   const visibleOthers = otherFirstNames.slice(0, 4);
   const extraOthers = Math.max(0, otherFirstNames.length - visibleOthers.length);
 
+  // Detecta description "lixo" gerada pelo wizard antigo (memberNames.join(', ')).
+  // Se a description for so uma lista de nomes que batem com os membros, suprime
+  // a renderizacao — a linha de Responsavel/Time ja mostra essa informacao.
+  const descRaw = (project.description ?? '').trim();
+  const memberFullNames = internalMembers.map(m => (m.collaborator?.full_name ?? '').trim()).filter(Boolean);
+  const memberFirstNames = memberFullNames.map(n => n.split(' ')[0]);
+  const descTokens = descRaw.split(/\s*,\s*/).map(s => s.trim()).filter(Boolean);
+  const isMemberListDesc = descTokens.length > 0
+    && descTokens.every(tok => memberFullNames.includes(tok) || memberFirstNames.includes(tok));
+  const showDescription = descRaw.length > 0 && !isMemberListDesc;
+
   return (
     <header>
       <Link to="/projetos" className="inline-flex items-center gap-2 text-body-sm text-fg-muted hover:text-fg focus-ring">
@@ -133,7 +144,7 @@ export function ProjectHeader({
               className="w-full mt-1 px-2 py-1.5 -ml-2 rounded-md bg-bg-elevated border border-border text-body-md text-fg focus-ring resize-none"
               placeholder="Descrição do projeto"
             />
-          ) : project.description ? (
+          ) : showDescription ? (
             <button
               type="button"
               onClick={() => { setDescVal(project.description ?? ''); setEditDesc(true); }}
