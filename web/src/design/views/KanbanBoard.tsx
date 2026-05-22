@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Plus } from 'lucide-react';
+import { Plus, GripVertical } from 'lucide-react';
 import {
   DndContext,
   PointerSensor,
@@ -46,7 +46,15 @@ interface SortableCardProps {
 }
 
 function SortableCard({ id, columnId, children }: SortableCardProps) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
     id,
     data: { columnId, type: 'card' },
   });
@@ -57,12 +65,28 @@ function SortableCard({ id, columnId, children }: SortableCardProps) {
         transform: CSS.Transform.toString(transform),
         transition,
         opacity: isDragging ? 0.4 : 1,
-        cursor: isDragging ? 'grabbing' : 'grab',
+        boxShadow: isDragging ? '0 12px 28px -8px rgba(0,0,0,0.45)' : undefined,
+        zIndex: isDragging ? 50 : undefined,
       }}
-      {...attributes}
-      {...listeners}
+      className="group flex items-stretch gap-1"
     >
-      {children}
+      {/* Drag handle — pontinhos verticais à esquerda do card. Listeners
+          ficam APENAS no handle (via setActivatorNodeRef + listeners). Assim
+          o click no card (abre o DetailDrawer) e o drag (move entre colunas)
+          ficam completamente separados — sem conflito. */}
+      <button
+        ref={setActivatorNodeRef}
+        type="button"
+        aria-label="Arrastar card"
+        {...attributes}
+        {...listeners}
+        className="shrink-0 w-5 grid place-items-center rounded text-fg-muted/70 group-hover:text-fg hover:bg-bg-elevated transition-colors cursor-grab active:cursor-grabbing touch-none focus-ring"
+      >
+        <GripVertical size={14} />
+      </button>
+      <div className="flex-1 min-w-0">
+        {children}
+      </div>
     </div>
   );
 }
