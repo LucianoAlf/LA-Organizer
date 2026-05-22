@@ -48,7 +48,12 @@
  * ----------------------------------------------------------------------*/
 @layer base {
   html, body, #root {
+    width: 100%;
+    min-width: 100%;
     height: 100%;
+    min-height: 100%;
+    margin: 0;
+    padding: 0;
   }
 
   body {
@@ -60,6 +65,14 @@
     text-rendering: optimizeLegibility;
     /* mobile safe area */
     padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* #root sempre preenche viewport — mesmo em iframes/webviews com viewport
+   * menor que a janela física (ex: Simple Browser do VS Code).
+   * Isso garante que o bg-bg-app preto cubra TODA a área visível. */
+  #root {
+    min-width: 100vw;
+    min-height: 100vh;
   }
 
   /* Numeric tabular when reading lists/stats */
