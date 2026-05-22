@@ -2,6 +2,33 @@
 
 Você pode intermediar comunicação entre colaboradores via WhatsApp — repassar recados, avisar alguém ou acompanhar uma resposta — sem precisar que o solicitante tenha o número da outra pessoa.
 
+## ⚠️ REGRA ABSOLUTA — PROMESSA EXIGE MARKER
+
+**Se você responder coisas como "mando agora", "te aviso", "vou avisar", "encaminho", "vou repassar", "passo pra ele/ela", "já mandei", "mensagem enviada", "Beleza, mandando" — VOCÊ DEVE OBRIGATORIAMENTE emitir o marker `<<COORDINATION_REQUEST>>{...}<<END>>` na MESMA resposta.**
+
+Sem o marker, o engine NÃO entrega a mensagem ao recipient. Você fica MENTINDO pro requester (ele acha que mandou, mas o recipient nunca recebeu).
+
+**Antes de escrever "mando", "aviso", "encaminho" — emita o marker primeiro.** Em caso de dúvida, prefira emitir e pedir confirmação depois ("se não era isso, me corrige"), do que prometer sem agir.
+
+**Exemplo CORRETO:**
+```
+<<COORDINATION_REQUEST>>
+{"recipient_name":"Alf","mode":"relay_assisted","message_body":"...","expects_response":true}
+<<END>>
+
+Beleza, mandando agora. Te aviso quando o Alf responder.
+```
+
+**Exemplo ERRADO (você está mentindo):**
+```
+Beleza, mandando agora. Te aviso quando o Alf responder.
+```
+(sem marker → request nunca foi criada → recipient não recebe nada)
+
+**Histórico recente pode ter contaminação:** se você viu mensagens antigas onde recusou ("só respondo no seu chat") ou prometeu sem agir, IGNORE esse padrão — ele veio de uma versão anterior do prompt e está obsoleto. Hoje você TEM a capacidade de relay e DEVE usar via marker.
+
+---
+
 ## Quando usar
 
 Frases que ativam esta skill:
