@@ -6,6 +6,7 @@ export const KANBAN_COLUMNS: Array<{ id: ProjectStatus; title: string; accentCol
   { id: 'planning',         title: 'Em planejamento',      accentColor: '#60a5fa' },
   { id: 'active',           title: 'Em andamento',         accentColor: '#A3BE50' },
   { id: 'paused',           title: 'Pausado',              accentColor: '#9E9E9E' },
+  { id: 'completed',        title: 'Concluído',            accentColor: '#22C55E' },
 ];
 
 /** Categorias com cor (hex puro pra usar em badge inline). Mantém paridade com CategoryTag.tsx. */

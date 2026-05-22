@@ -8,12 +8,13 @@ import {
   useSensor,
   useSensors,
   pointerWithin,
+  rectIntersection,
   useDraggable,
   useDroppable,
+  type CollisionDetection,
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
-import { CSS } from '@dnd-kit/utilities';
 
 export interface KanbanColumn<T> {
   id: string;
@@ -52,7 +53,6 @@ function DraggableCard<T>({ id, columnId, item, renderCard }: DraggableCardProps
     listeners,
     setNodeRef,
     setActivatorNodeRef,
-    transform,
     isDragging,
   } = useDraggable({
     id,
@@ -80,11 +80,10 @@ function DraggableCard<T>({ id, columnId, item, renderCard }: DraggableCardProps
     <div
       ref={setNodeRef}
       style={{
-        // O card original NÃO se move via transform — fica no lugar com opacity
-        // reduzida. Quem segue o cursor é o <DragOverlay> renderizado no portal
-        // do body (escapa do overflow-hidden das colunas).
-        transform: transform ? CSS.Translate.toString(transform) : undefined,
-        opacity: isDragging ? 0.25 : 1,
+        // O card original fica fixo no lugar com opacity reduzida — NÃO se move
+        // via transform. Quem segue o cursor é o <DragOverlay>. Isso elimina
+        // jitter e "teleport" visual quando o card é solto em outra coluna.
+        opacity: isDragging ? 0.3 : 1,
       }}
     >
       {renderCard(item, columnId, dragHandle)}
@@ -125,9 +124,18 @@ export function KanbanBoard<T>({
   onMoveItem,
 }: KanbanBoardProps<T>) {
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor),
   );
+
+  // Hybrid collision detection: pointerWithin (preciso, segue o cursor) com
+  // fallback pra rectIntersection (pega drops onde o cursor saiu rapidamente
+  // do droppable). Mais fluido que closestCorners pra kanban com mouse.
+  const collisionDetection: CollisionDetection = args => {
+    const pointer = pointerWithin(args);
+    if (pointer.length > 0) return pointer;
+    return rectIntersection(args);
+  };
 
   // Estado do card sendo arrastado — necessário pro DragOverlay renderizar
   // o mesmo card no portal seguindo o cursor.
@@ -166,7 +174,7 @@ export function KanbanBoard<T>({
   return (
     <DndContext
       sensors={sensors}
-      collisionDetection={pointerWithin}
+      collisionDetection={collisionDetection}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
@@ -223,16 +231,17 @@ export function KanbanBoard<T>({
         })}
       </div>
 
-      {/* DragOverlay renderiza o card "fantasma" no portal do body, seguindo
-          o cursor. Escapa do overflow-hidden das colunas (sem clipping nem
-          z-index issue) e elimina jitter (não tem reordenação no DOM). */}
-      <DragOverlay dropAnimation={{ duration: 180, easing: 'cubic-bezier(0.18, 0.67, 0.6, 1.22)' }}>
+      {/* DragOverlay renderiza o card no portal do body seguindo o cursor.
+          dropAnimation={null} = snap imediato no soltar (sem animação de "voo
+          de volta"). A mutação optimista do React Query já move o card visualmente
+          assim que o drop acontece, então a animação de drop ficaria conflitante. */}
+      <DragOverlay dropAnimation={null}>
         {active ? (
           <div
             style={{
-              boxShadow: '0 18px 40px -8px rgba(0,0,0,0.55), 0 0 0 1px rgba(163, 190, 80, 0.4)',
+              width: 272, // mesma largura do card original (w-72 da coluna - px-2)
+              boxShadow: '0 8px 24px -6px rgba(0,0,0,0.45)',
               borderRadius: 8,
-              transform: 'rotate(1.5deg)',
               cursor: 'grabbing',
             }}
           >

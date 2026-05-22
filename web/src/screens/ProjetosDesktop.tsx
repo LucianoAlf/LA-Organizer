@@ -35,7 +35,7 @@ const STATUS_COLORS: Record<string, string> = {
   cancelled: '#EF4444',
 };
 
-const ALIVE_STATUSES: ProjectStatus[] = ['active', 'planning', 'pending_approval', 'paused'];
+const ALIVE_STATUSES: ProjectStatus[] = ['active', 'planning', 'pending_approval', 'paused', 'completed'];
 
 const SELECT = `
   id, name, description, category, status, progress_percent,
