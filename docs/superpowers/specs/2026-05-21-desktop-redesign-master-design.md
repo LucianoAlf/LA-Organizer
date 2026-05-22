@@ -233,6 +233,14 @@ Cada categoria tem cor própria no badge do card:
 
 Decisão: **manter os 6 views ativos** (decisão do owner em 21/05). Calendário e Dashboard ficam "leves" agora e ganham densidade conforme o uso crescer.
 
+### Pendência da Fase 2 — Pipeline de aprovação
+
+Observação do Alf em 21/05/2026 (revisão do mockup 03 — Kanban):
+
+> "A gente vai precisar revisar esses estágios depois. Em planejamento é porque tem que ter aprovação. Se você olhar nosso sistema, tem muita aprovação em projetos, e aqui no pipeline não tem. Quando coloca, fica aguardando a aprovação do projeto."
+
+**Ação na Fase 2:** Antes de implementar o Kanban final, revisar os estágios usando os campos que já existem no banco (`status` permite `pending_approval`; `requires_approval`, `approved_by`, `approved_at`, `rejection_reason`). Conversar com o Alf sobre os estágios desejados. Considerar colunas adicionais (Aguardando aprovação) e UX de rejeição (exibir `rejection_reason` no card).
+
 ### Estado atual (21/05/2026)
 
 - Total projetos: 8 (7 `planning`, 1 `cancelled`)
