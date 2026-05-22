@@ -1,3 +1,2 @@
-// LA Organizer Desktop Design System — barrel export
-// Componentes serão exportados aqui conforme implementação avança.
-export {};
+export { SidebarV2 } from './shell/SidebarV2';
+export { TopbarV2 } from './shell/TopbarV2';

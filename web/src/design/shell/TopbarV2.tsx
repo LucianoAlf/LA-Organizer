@@ -85,8 +85,15 @@ export function TopbarV2({ sidebarCollapsed = false, onQuickAdd }: TopbarV2Props
         setMenuOpen(false);
       }
     }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') setMenuOpen(false);
+    }
     document.addEventListener('mousedown', onClickOutside);
-    return () => document.removeEventListener('mousedown', onClickOutside);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onClickOutside);
+      document.removeEventListener('keydown', onKeyDown);
+    };
   }, [menuOpen]);
 
   async function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -122,14 +129,17 @@ export function TopbarV2({ sidebarCollapsed = false, onQuickAdd }: TopbarV2Props
       return;
     }
     setPwLoading(true);
-    const { error } = await supabase.auth.updateUser({ password: pw });
-    setPwLoading(false);
-    if (error) {
-      showToast({ kind: 'error', title: 'Erro', msg: error.message });
-      return;
+    try {
+      const { error } = await supabase.auth.updateUser({ password: pw });
+      if (error) {
+        showToast({ kind: 'error', title: 'Erro', msg: error.message });
+        return;
+      }
+      showToast({ kind: 'success', title: 'Senha alterada!' });
+      setPwModal(false);
+    } finally {
+      setPwLoading(false);
     }
-    showToast({ kind: 'success', title: 'Senha alterada!' });
-    setPwModal(false);
   }
 
   return (
@@ -210,6 +220,7 @@ export function TopbarV2({ sidebarCollapsed = false, onQuickAdd }: TopbarV2Props
 
                 <button
                   type="button"
+                  role="menuitem"
                   onClick={() => { fileRef.current?.click(); setMenuOpen(false); }}
                   className="w-full flex items-center gap-2 px-3 py-2 text-[13px] hover:bg-bg-elevated focus-ring"
                 >
@@ -219,6 +230,7 @@ export function TopbarV2({ sidebarCollapsed = false, onQuickAdd }: TopbarV2Props
 
                 <button
                   type="button"
+                  role="menuitem"
                   onClick={() => { setMenuOpen(false); setPwModal(true); }}
                   className="w-full flex items-center gap-2 px-3 py-2 text-[13px] hover:bg-bg-elevated focus-ring"
                 >
@@ -227,6 +239,7 @@ export function TopbarV2({ sidebarCollapsed = false, onQuickAdd }: TopbarV2Props
 
                 <Link
                   to="/mais/perfil"
+                  role="menuitem"
                   onClick={() => setMenuOpen(false)}
                   className="flex items-center gap-2 px-3 py-2 text-[13px] hover:bg-bg-elevated focus-ring"
                 >
@@ -235,6 +248,7 @@ export function TopbarV2({ sidebarCollapsed = false, onQuickAdd }: TopbarV2Props
 
                 <Link
                   to="/configuracoes"
+                  role="menuitem"
                   onClick={() => setMenuOpen(false)}
                   className="flex items-center gap-2 px-3 py-2 text-[13px] hover:bg-bg-elevated focus-ring"
                 >
@@ -244,6 +258,7 @@ export function TopbarV2({ sidebarCollapsed = false, onQuickAdd }: TopbarV2Props
                 {/* Tema — movido do topbar para cá no V2 */}
                 <button
                   type="button"
+                  role="menuitem"
                   onClick={() => { toggle(); setMenuOpen(false); }}
                   className="w-full flex items-center gap-2 px-3 py-2 text-[13px] hover:bg-bg-elevated focus-ring"
                 >
@@ -256,6 +271,7 @@ export function TopbarV2({ sidebarCollapsed = false, onQuickAdd }: TopbarV2Props
 
                 <button
                   type="button"
+                  role="menuitem"
                   onClick={() => { setMenuOpen(false); signOut(); }}
                   className="w-full flex items-center gap-2 px-3 py-2 text-[13px] text-danger hover:bg-danger/10 focus-ring border-t border-border mt-1 pt-2"
                 >
@@ -316,9 +332,13 @@ export function TopbarV2({ sidebarCollapsed = false, onQuickAdd }: TopbarV2Props
                 type="button"
                 onClick={async () => {
                   if (!collaborator?.phone) return;
-                  await sendMagicLink(collaborator.phone);
-                  showToast({ kind: 'success', title: 'Link enviado no WhatsApp!' });
-                  setPwModal(false);
+                  try {
+                    await sendMagicLink(collaborator.phone);
+                    showToast({ kind: 'success', title: 'Link enviado no WhatsApp!' });
+                    setPwModal(false);
+                  } catch {
+                    showToast({ kind: 'error', title: 'Erro ao enviar link' });
+                  }
                 }}
                 className="text-tom underline"
               >

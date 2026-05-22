@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
-import { Sidebar } from './Sidebar';
-import { Topbar } from './Topbar';
+import { SidebarV2 } from '../design/shell/SidebarV2';
+import { TopbarV2 } from '../design/shell/TopbarV2';
 import { AgendaTabs } from './AgendaTabs';
 import { useBreakpoint } from '../hooks/useBreakpoint';
 import { ToastHost } from './Toast';
@@ -54,11 +54,11 @@ export function DesktopShell() {
 
   return (
     <div className="min-h-screen bg-bg-app text-fg">
-      <Sidebar
+      <SidebarV2
         collapsed={collapsed}
         onToggleCollapse={isTablet ? undefined : () => setUserCollapsed(v => !v)}
       />
-      <Topbar sidebarCollapsed={collapsed} />
+      <TopbarV2 sidebarCollapsed={collapsed} />
       <main
         className="pt-14 min-h-screen"
         style={{ marginLeft: sidebarWidth }}
