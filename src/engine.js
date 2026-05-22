@@ -1724,6 +1724,24 @@ async function lookupEventCategoryBySlug(slug, collaboratorId) {
 }
 
 // Parse <<EVENT_CREATE>>[...]<<END>> — TOM emite evento (compromisso com horário).
+// Sprint 23.12 — Infere category baseado em keywords no título do evento.
+// Usado por validateEventItem quando TOM não emite category explícita.
+// Substring matching (mais permissivo que \b — pega "pedagógica", "manutenção" etc).
+// Ordem: mais específico primeiro (mentoria antes de pedagogico).
+function inferEventCategory(title) {
+  if (typeof title !== 'string' || !title.trim()) return null;
+  const t = title.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const has = (...words) => words.some(w => t.includes(w));
+  if (has('mentor', 'coach', 'benj')) return 'mentoria';
+  if (has('acolhimento', 'acolher', 'recepcao', 'recepcionar')) return 'acolhimento';
+  if (has('pedagog', 'aula ', 'aula de', 'professor')) return 'pedagogico';
+  if (has('marketing', 'midia', 'instagram', 'tiktok', 'youtube', 'reels', 'conteudo')) return 'marketing';
+  if (has('financ', 'contador', 'nota fiscal', 'rose ', 'rose(', 'fluxo de caixa')) return 'comercial';
+  if (has('comercial', 'venda', 'matricula', 'aluno novo', 'negocia')) return 'comercial';
+  if (has('manutenc', 'consertar', 'equipamento', 'loja', 'estoque', 'inventario', 'comprar', 'compra ', 'orcamento', 'abertura escola', 'fechamento escola', 'fiscaliza', 'limpeza', 'canetas', 'apagador')) return 'operacional';
+  return null;
+}
+
 // Schema mínimo por item:
 //   title, start_at (ISO -03:00), end_at (ISO -03:00), modality, category
 //   opcionais: context, location_text, meeting_url, description, project_id
@@ -1747,8 +1765,14 @@ function validateEventItem(e) {
   // qualquer slug; validacao de existencia (system OU pessoal do user) acontece
   // no lookupCategoryId logo antes do INSERT.
   // Sprint 23 fallback: category ausente → default por context (não rejeita).
+  // Sprint 23.12 — inferência por keywords no título antes de cair em 'la_music'
+  // genérico (que entupia o CEO report). Permite category_leaders rotear corretamente.
   if (typeof e.category !== 'string' || !e.category.trim()) {
-    e.category = (e.context === 'personal') ? 'pessoal' : 'la_music';
+    if (e.context === 'personal') {
+      e.category = 'pessoal';
+    } else {
+      e.category = inferEventCategory(e.title) || 'la_music';
+    }
   }
   if (e.modality === 'presencial' && e.meeting_url) return 'presencial_with_meeting_url';
   if (e.context !== undefined && e.context !== 'work' && e.context !== 'personal') return 'context:invalid';

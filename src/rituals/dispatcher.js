@@ -1712,10 +1712,57 @@ async function autoCloseStaleEventFollowups(now = new Date()) {
   }
 }
 
+// Sprint 23.12 — Resolve líder responsável por cobrar fechamento de um evento.
+// Estratégias (em ordem):
+//   1. event_category_leaders.leader_collaborator_id direto
+//   2. fallback_strategy='by_event_owner_unit_manager' → manager da unit do dono
+//   3. retorna null (CEO decide)
+async function resolveLeaderForEvent(event) {
+  const cat = event.category || 'sem_categoria';
+  const { data: mapping } = await supabase
+    .from('event_category_leaders')
+    .select('leader_collaborator_id, fallback_strategy')
+    .eq('category_slug', cat)
+    .maybeSingle();
+  if (!mapping) return null;
+
+  // Estratégia 1: leader direto
+  if (mapping.leader_collaborator_id) {
+    const { data: leader } = await supabase
+      .from('collaborators')
+      .select('id, full_name, phone')
+      .eq('id', mapping.leader_collaborator_id)
+      .eq('is_active', true)
+      .maybeSingle();
+    if (leader) return leader;
+  }
+
+  // Estratégia 2: gerente da unidade do dono
+  if (mapping.fallback_strategy === 'by_event_owner_unit_manager' && event.collaborator_id) {
+    const { data: owner } = await supabase
+      .from('collaborators')
+      .select('unit')
+      .eq('id', event.collaborator_id)
+      .maybeSingle();
+    if (owner?.unit && owner.unit !== 'all') {
+      const { data: mgr } = await supabase
+        .from('collaborators')
+        .select('id, full_name, phone')
+        .eq('role', 'manager')
+        .eq('unit', owner.unit)
+        .eq('is_active', true)
+        .limit(1)
+        .maybeSingle();
+      if (mgr) return mgr;
+    }
+  }
+  return null;
+}
+
 // Sprint 23.11 — Relatório de governança pro CEO: compromissos do TIME
 // (context='work') que já passaram e estão sem fechamento. Agrupa por category
-// e mostra idade em dias. Envia 08:30 BRT diariamente pro role='director'.
-// Idempotente via ritual_logs.
+// e mostra idade em dias + líder sugerido pra cobrança (Sprint 23.12).
+// Envia 08:30 BRT diariamente pro role='director'. Idempotente via ritual_logs.
 async function ceoTeamUnclosedEventsReport(now = new Date()) {
   const sp = nowSaoPaulo();
   if (currentSlot(sp) !== timeToSlot('08:30')) return;
@@ -1758,41 +1805,55 @@ async function ceoTeamUnclosedEventsReport(now = new Date()) {
       continue;
     }
 
-    // Agrupa por category
-    const byCategory = {};
+    // Sprint 23.12 — Resolve líder responsável por evento e agrupa por líder
+    // (não por categoria), pra deixar claro PRA QUEM cobrar.
+    const enriched = [];
     for (const ev of stale) {
-      const cat = ev.category || 'sem_categoria';
-      if (!byCategory[cat]) byCategory[cat] = [];
-      byCategory[cat].push(ev);
+      const leader = await resolveLeaderForEvent(ev);
+      enriched.push({ ...ev, leader });
     }
 
-    // Mapeamento amigável de category → label
+    // Agrupa por leader (id) — undefined = "sem líder mapeado"
+    const byLeader = {};
+    for (const ev of enriched) {
+      const key = ev.leader?.id || '__unassigned__';
+      if (!byLeader[key]) byLeader[key] = { leader: ev.leader, evs: [] };
+      byLeader[key].evs.push(ev);
+    }
+
     const CATEGORY_LABELS = {
-      la_music: '🎵 LA Music',
-      mentoria: '🎯 Mentoria',
-      pedagogico: '📚 Pedagógico',
-      operacional: '🔧 Operacional',
-      comercial: '💼 Comercial',
-      acolhimento: '🤝 Acolhimento',
-      sem_categoria: '📌 Sem categoria',
+      la_music: 'LA Music', mentoria: 'Mentoria', pedagogico: 'Pedagógico',
+      operacional: 'Operacional', comercial: 'Comercial',
+      acolhimento: 'Acolhimento', marketing: 'Marketing', sem_categoria: 'Sem categoria',
     };
 
     const lines = [];
-    for (const [cat, evs] of Object.entries(byCategory)) {
-      const label = CATEGORY_LABELS[cat] || `📌 ${cat}`;
-      lines.push(`*${label}* (${evs.length})`);
+    // Ordena: grupos com líder primeiro, "sem líder" no fim
+    const sortedKeys = Object.keys(byLeader).sort((a, b) => {
+      if (a === '__unassigned__') return 1;
+      if (b === '__unassigned__') return -1;
+      return 0;
+    });
+    for (const key of sortedKeys) {
+      const { leader, evs } = byLeader[key];
+      const leaderLabel = leader
+        ? `🎯 *Cobra com ${leader.full_name.split(' ')[0]}* (${evs.length})`
+        : `❓ *Sem líder mapeado — você decide* (${evs.length})`;
+      lines.push(leaderLabel);
       for (const ev of evs.slice(0, 5)) {
         const days = Math.floor((now.getTime() - new Date(ev.end_at).getTime()) / (24 * 3600_000));
         const owner = ev.collaborators?.full_name?.split(' ')[0] || '—';
         const dateStr = new Date(ev.end_at).toLocaleDateString('pt-BR', {
           timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit',
         });
-        lines.push(`  • _${String(ev.title).slice(0, 55)}_ (${dateStr}, ${days}d, ${owner})`);
+        const catLabel = CATEGORY_LABELS[ev.category] || ev.category || '—';
+        lines.push(`  • _${String(ev.title).slice(0, 55)}_ (${dateStr}, ${days}d · ${catLabel} · ${owner})`);
       }
       if (evs.length > 5) lines.push(`  _+${evs.length - 5} outros_`);
+      lines.push('');
     }
 
-    const msg = `🎖️ *Governança — Compromissos do time sem fechamento*\n\n${lines.join('\n')}\n\n_Total: ${stale.length} compromisso${stale.length > 1 ? 's' : ''} parado${stale.length > 1 ? 's' : ''}._ Direciona pra liderança da área cobrar. Quando confirmar conclusão, me responde "fecha ID" ou descreve.`;
+    const msg = `🎖️ *Governança — Compromissos do time sem fechamento*\n\n${lines.join('\n').trim()}\n\n_Total: ${stale.length} compromisso${stale.length > 1 ? 's' : ''} parado${stale.length > 1 ? 's' : ''}._\n\nPra delegar cobrança, me diz tipo: *"manda recado pro Quintela: cobra fechamento da reunião pedagógica de 21/05"*.`;
 
     try {
       await whatsapp.sendMessage(ceo.phone, msg);
