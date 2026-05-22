@@ -1680,11 +1680,14 @@ async function askEndOfDayEventFollowup(now = new Date()) {
 // Sprint 23.10 — Auto-close de eventos sem resposta após 6h da pergunta.
 // Roda a cada tick. Status 'done' com source='auto-close' pra rastrear no DB
 // (vs fechamento manual via EVENT_UPDATE complete). Não envia mensagem.
+// Sprint 23.11: APENAS context='personal'. Eventos do time NUNCA são auto-fechados
+// — vão pro relatório CEO pra governança/direcionamento.
 async function autoCloseStaleEventFollowups(now = new Date()) {
   const cutoff6h = new Date(now.getTime() - 6 * 3600_000).toISOString();
   const { data: stale, error } = await supabase
     .from('events')
     .select('id, title, collaborator_id')
+    .eq('context', 'personal')
     .not('status', 'in', '("done","cancelled")')
     .lt('followup_sent_at', cutoff6h)
     .limit(100);
@@ -1699,11 +1702,105 @@ async function autoCloseStaleEventFollowups(now = new Date()) {
       .from('events')
       .update({ status: 'done', source: 'auto-close' })
       .eq('id', ev.id)
+      .eq('context', 'personal')
       .not('status', 'in', '("done","cancelled")'); // race-safe
     if (uErr) {
       console.error(`[EventAutoClose] update err ${ev.id.slice(0, 8)}:`, uErr.message);
     } else {
       console.log(`[EventAutoClose] ${ev.id.slice(0, 8)} "${String(ev.title).slice(0, 40)}" → done (sem resposta 6h)`);
+    }
+  }
+}
+
+// Sprint 23.11 — Relatório de governança pro CEO: compromissos do TIME
+// (context='work') que já passaram e estão sem fechamento. Agrupa por category
+// e mostra idade em dias. Envia 08:30 BRT diariamente pro role='director'.
+// Idempotente via ritual_logs.
+async function ceoTeamUnclosedEventsReport(now = new Date()) {
+  const sp = nowSaoPaulo();
+  if (currentSlot(sp) !== timeToSlot('08:30')) return;
+
+  const whatsapp = require('../services/whatsapp');
+  const ymdRef = sp.ymd;
+
+  // CEO = director(s) ativos com phone
+  const { data: ceos } = await supabase
+    .from('collaborators')
+    .select('id, full_name, phone')
+    .eq('is_active', true)
+    .eq('role', 'director')
+    .not('phone', 'is', null);
+
+  if (!ceos || ceos.length === 0) return;
+
+  for (const ceo of ceos) {
+    if (await alreadySent(ceo.id, 'ceo_team_unclosed_events', ymdRef)) continue;
+
+    // Eventos do TIME passados sem fechamento — NÃO filtra por dono
+    // (relatório é global pra CEO ver tudo)
+    const cutoff24h = new Date(now.getTime() - 24 * 3600_000).toISOString();
+    const { data: stale, error } = await supabase
+      .from('events')
+      .select('id, title, start_at, end_at, category, collaborator_id, collaborators!events_collaborator_id_fkey(full_name)')
+      .eq('context', 'work')
+      .not('status', 'in', '("done","cancelled")')
+      .lt('end_at', cutoff24h)
+      .order('end_at', { ascending: true })
+      .limit(50);
+
+    if (error) {
+      console.error('[CEOReport] query err:', error.message);
+      await logRitualEvent(ceo.id, 'ceo_team_unclosed_events', 'error', error.message, ymdRef);
+      continue;
+    }
+    if (!stale || stale.length === 0) {
+      await logRitualEvent(ceo.id, 'ceo_team_unclosed_events', 'skipped', 'none_found', ymdRef);
+      continue;
+    }
+
+    // Agrupa por category
+    const byCategory = {};
+    for (const ev of stale) {
+      const cat = ev.category || 'sem_categoria';
+      if (!byCategory[cat]) byCategory[cat] = [];
+      byCategory[cat].push(ev);
+    }
+
+    // Mapeamento amigável de category → label
+    const CATEGORY_LABELS = {
+      la_music: '🎵 LA Music',
+      mentoria: '🎯 Mentoria',
+      pedagogico: '📚 Pedagógico',
+      operacional: '🔧 Operacional',
+      comercial: '💼 Comercial',
+      acolhimento: '🤝 Acolhimento',
+      sem_categoria: '📌 Sem categoria',
+    };
+
+    const lines = [];
+    for (const [cat, evs] of Object.entries(byCategory)) {
+      const label = CATEGORY_LABELS[cat] || `📌 ${cat}`;
+      lines.push(`*${label}* (${evs.length})`);
+      for (const ev of evs.slice(0, 5)) {
+        const days = Math.floor((now.getTime() - new Date(ev.end_at).getTime()) / (24 * 3600_000));
+        const owner = ev.collaborators?.full_name?.split(' ')[0] || '—';
+        const dateStr = new Date(ev.end_at).toLocaleDateString('pt-BR', {
+          timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit',
+        });
+        lines.push(`  • _${String(ev.title).slice(0, 55)}_ (${dateStr}, ${days}d, ${owner})`);
+      }
+      if (evs.length > 5) lines.push(`  _+${evs.length - 5} outros_`);
+    }
+
+    const msg = `🎖️ *Governança — Compromissos do time sem fechamento*\n\n${lines.join('\n')}\n\n_Total: ${stale.length} compromisso${stale.length > 1 ? 's' : ''} parado${stale.length > 1 ? 's' : ''}._ Direciona pra liderança da área cobrar. Quando confirmar conclusão, me responde "fecha ID" ou descreve.`;
+
+    try {
+      await whatsapp.sendMessage(ceo.phone, msg);
+      await logRitualEvent(ceo.id, 'ceo_team_unclosed_events', 'sent', `count=${stale.length}`, ymdRef);
+      console.log(`[CEOReport] sent ${stale.length} → ${String(ceo.phone).slice(-4)}`);
+    } catch (err) {
+      console.error(`[CEOReport] send err ${String(ceo.phone).slice(-4)}:`, err.message);
+      await logRitualEvent(ceo.id, 'ceo_team_unclosed_events', 'error', err.message, ymdRef);
     }
   }
 }
@@ -2464,6 +2561,13 @@ async function run(opts = {}) {
     await autoCloseStaleEventFollowups(new Date());
   } catch (err) {
     console.error('[Dispatcher] autoCloseStaleEventFollowups erro:', err.message);
+  }
+
+  // Sprint 23.11 — Relatório CEO 08:30 BRT: compromissos do time sem fechamento
+  try {
+    await ceoTeamUnclosedEventsReport(new Date());
+  } catch (err) {
+    console.error('[Dispatcher] ceoTeamUnclosedEventsReport erro:', err.message);
   }
 
   // Sprint 13 F1 — comunicados internos (broadcast queue)
