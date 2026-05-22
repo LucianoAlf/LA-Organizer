@@ -27,7 +27,7 @@ export function KanbanBoard<T>({
       {columns.map(col => (
         <div
           key={col.id}
-          className="flex-shrink-0 w-72 flex flex-col bg-bg-surface border border-border rounded-lg overflow-hidden"
+          className="flex-shrink-0 w-72 flex flex-col bg-bg-elevated2 border border-border rounded-lg overflow-hidden"
         >
           <header className="flex items-center justify-between gap-2 px-3 py-2.5 border-b border-border shrink-0">
             <div className="flex items-center gap-2 min-w-0">

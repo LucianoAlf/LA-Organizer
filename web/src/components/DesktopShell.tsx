@@ -64,15 +64,19 @@ export function DesktopShell() {
       />
       <TopbarV2 sidebarCollapsed={collapsed} />
       <main
-        className="absolute top-14 right-0 bottom-0 overflow-y-auto"
+        className="absolute top-14 right-0 bottom-0 overflow-y-auto flex flex-col"
         style={{ left: sidebarWidth }}
       >
         {showAgendaTabs && (
-          <div className="w-full px-6 lg:px-10 pt-6">
+          <div className="w-full px-6 lg:px-10 pt-6 shrink-0">
             <AgendaTabs />
           </div>
         )}
-        <div className="w-full px-4 md:px-6 lg:px-10 py-6">
+        {/* flex-1 + min-h-0 garante que o wrapper tem altura DEFINIDA igual ao
+            espaço restante do main. Isso propaga `min-h-full` / `h-full` pros
+            children (PageShell, KanbanBoard) — sem isso, eles colapsam e o
+            conteúdo só ocupa altura natural. */}
+        <div className="w-full px-4 md:px-6 lg:px-10 py-6 flex-1 min-h-0">
           <Outlet />
         </div>
       </main>

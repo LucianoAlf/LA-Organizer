@@ -10,7 +10,7 @@ interface PageShellProps {
 
 export function PageShell({ title, subtitle, toolbar, children, preHeader }: PageShellProps) {
   return (
-    <div className="flex flex-col gap-6 min-h-full">
+    <div className="flex flex-col gap-6 h-full">
       {preHeader}
       <header className="flex items-start justify-between gap-4 flex-wrap">
         <div className="min-w-0">
