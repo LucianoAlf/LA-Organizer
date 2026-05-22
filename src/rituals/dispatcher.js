@@ -62,6 +62,7 @@ const DAILY_DREAM_TIME = '03:00';               // Every day — "sonhar": conso
 const HEALTH_CHECK_TIME = '05:00';              // Every day — auditoria do sistema (após Dream das 3h)
 const HEALTH_REPORT_TIME = '07:00';             // Every day — envia relatório do health check pro director (Luciano)
 const LA_EDUCA_LEMBRETES_TIME = '09:00';        // Monday only — lembretes semanais do LA EDUCA
+const CHECKPOINT_DEADLINE_TIME = '09:00';       // Every day — lembretes de prazo de checkpoint de projeto (D-3/D-1/D0/D+1)
 const COORDINATOR_ROLES = ['coordinator', 'director'];
 
 // Default time for briefing_pessoal (until user_preferences gains a personal_briefing_time column).
@@ -2216,6 +2217,19 @@ async function run(opts = {}) {
       } catch (err) {
         console.error('[la-educa-dispatch] erro:', err.message);
       }
+    }
+  }
+
+  // Task 8 — Lembrete de prazo de checkpoint (todo dia 09:00 BRT).
+  // Varre project_checkpoints com prazo em D-3, D-1, D0, D+1 e cutuca
+  // o responsavel via WhatsApp. Idempotente via ritual_logs (1x por
+  // checkpoint+marco+dia). NAO substitui nenhum outro bloco do slot 09:00.
+  if (opts.force === 'checkpoint_deadlines' ||
+      (now.minute === 0 && timeToSlot(CHECKPOINT_DEADLINE_TIME) === slotNow)) {
+    try {
+      await runCheckProjectDeadlines({ today: now.ymd });
+    } catch (err) {
+      console.error('[dispatcher] checkpoint_deadline err:', err.message);
     }
   }
 

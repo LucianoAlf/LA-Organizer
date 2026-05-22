@@ -123,6 +123,43 @@ Use `☐` pra item pendente, `✅` pra item feito. Agrupe por bloco. Sem emojis
 extras (só os do header). NÃO use blocos de código markdown — texto direto pro
 WhatsApp interpretar.
 
+## Status de checkpoint específico
+
+Gatilhos:
+- "como tá o checkpoint X?"
+- "qual o status de X?"
+- "X já foi feito?"
+
+Buscar o checkpoint:
+```sql
+SELECT cp.id, cp.name, cp.status, cp.due_date, cp.assigned_to,
+       c.full_name as responsavel_name,
+       p.name as projeto_name
+FROM project_checkpoints cp
+JOIN projects p ON p.id = cp.project_id
+LEFT JOIN collaborators c ON c.id = cp.assigned_to
+WHERE cp.name ILIKE '%<termo>%'
+  AND p.status IN ('active', 'planning', 'paused')
+ORDER BY cp.due_date NULLS LAST
+LIMIT 5;
+```
+
+Se múltiplos: pedir desambiguação por projeto.
+
+Buscar tasks vinculadas:
+```sql
+SELECT id, title, status, assigned_to, due_date
+FROM tasks
+WHERE checkpoint_id = '<cp_id>';
+```
+
+Responder com:
+- Nome do checkpoint + projeto
+- Status atual + prazo (se houver)
+- Responsável (ou "responsável do projeto" se null)
+- X/Y tarefas concluídas
+- Lista das pendentes (até 5)
+
 ## Diferença pra "como tá o time?" ou "o que o pessoal tá fazendo?"
 
 Se a pergunta é sobre o time geral (não um projeto específico), não use essa skill — use `coordenacao-conversacional`. Esta skill é estritamente sobre status de **um projeto identificável**.

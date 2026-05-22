@@ -28,6 +28,7 @@ A tabela `project_checkpoints` no Supabase tem as colunas:
 | `rationale` | text | não | "por que esse checkpoint existe" — contexto pro time |
 | `sort_order` | integer | não | ordem visual. Se omitir, pode usar `max(sort_order) + 1` do projeto |
 | `completed_at` | timestamp | não | preenche quando vira done |
+| `assigned_to` | uuid | não | FK pra `collaborators.id`. Se null, fallback = `projects.created_by` |
 
 ## Fluxo conversacional
 
@@ -63,19 +64,39 @@ Se o usuário já disse no mesmo turno ("checkpoint montar escala"), extraia. Se
 - "20 de junho" → `2026-06-20`
 - "não tem prazo" / "depois" → deixar `due_date` como null
 
-### 4. Rationale — opcional, mas perguntar uma vez
+### 4. Responsável — opcional, perguntar uma vez
+
+"Quem fica responsável por esse checkpoint? Se não me disser, fica com o responsável do projeto."
+
+- Se o usuário citar uma pessoa: buscar em `project_members` do projeto:
+  ```sql
+  SELECT pm.collaborator_id, c.full_name, c.preferred_name
+  FROM project_members pm
+  JOIN collaborators c ON c.id = pm.collaborator_id
+  WHERE pm.project_id = '<project_id>'
+    AND (c.full_name ILIKE '%<nome>%' OR c.preferred_name ILIKE '%<nome>%');
+  ```
+- Match único → usar.
+- Múltiplos matches → confirmar.
+- Sem match → avisar "Não achei essa pessoa no time do projeto. Quer que adicione, ou deixo sem responsável (cai pro dono do projeto)?"
+- Se ele disser "ninguém" / "deixa em branco" / "sem responsável" → `assigned_to = null` (vai cair no fallback do `projects.created_by`).
+
+Salvar `collaborator_id` em `assigned_to` ou deixar null.
+
+### 5. Rationale — opcional, mas perguntar uma vez
 
 "Quer me dizer por que esse checkpoint existe? Isso ajuda o time depois quando alguém pegar pra fazer."
 
 Se ele disser "não", pular. Se ele explicar, salvar em `rationale`.
 
-### 5. Confirmar e inserir
+### 6. Confirmar e inserir
 
 Antes de inserir, **confirme** o que vai criar:
 
 > "Beleza, vou criar:
 > 🎯 **Checkpoint:** Montar escala de ensaios gerais
 > 📅 **Prazo:** 20/05/2026
+> 👤 **Responsável:** Krissya
 > 💡 **Por quê:** Ensaio sem escala vira caos
 > 📁 **Projeto:** Festival de Cordas 2026
 >
@@ -84,14 +105,15 @@ Antes de inserir, **confirme** o que vai criar:
 Se ele confirmar, inserir:
 
 ```sql
-INSERT INTO project_checkpoints (project_id, name, due_date, rationale, status, sort_order)
+INSERT INTO project_checkpoints (project_id, name, due_date, rationale, status, sort_order, assigned_to)
 VALUES (
   '<project_id>',
   '<nome>',
   '<due_date or null>',
   '<rationale or null>',
   'pending',
-  COALESCE((SELECT MAX(sort_order) + 1 FROM project_checkpoints WHERE project_id = '<project_id>'), 0)
+  COALESCE((SELECT MAX(sort_order) + 1 FROM project_checkpoints WHERE project_id = '<project_id>'), 0),
+  '<assigned_to or null>'
 )
 RETURNING id, name;
 ```
