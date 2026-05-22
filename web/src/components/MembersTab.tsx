@@ -19,6 +19,7 @@ import { dragLiftStyle } from '../lib/sortableStyle';
 import { supabase } from '../lib/supabase';
 import { Button } from './Button';
 import { EmptyState } from './EmptyState';
+import { showToast } from './Toast';
 import { PROJECT_MEMBER_ROLE_LABELS, type ProjectMember, type ProjectMemberRole, type Collaborator } from '../types';
 
 // Sprint 22.22 — Aba Time com CRUD completo.
@@ -68,6 +69,10 @@ export function MembersTab({ projectId, members, canEdit }: Props) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['project', projectId, 'members'] });
       setAdding(null);
+      showToast({ kind: 'success', title: 'Membro adicionado' });
+    },
+    onError: (err: Error) => {
+      showToast({ kind: 'error', title: 'Erro ao adicionar membro', msg: err.message });
     },
   });
 
@@ -96,6 +101,10 @@ export function MembersTab({ projectId, members, canEdit }: Props) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['project', projectId, 'members'] });
       setAdding(null);
+      showToast({ kind: 'success', title: 'Externo adicionado' });
+    },
+    onError: (err: Error) => {
+      showToast({ kind: 'error', title: 'Erro ao adicionar externo', msg: err.message });
     },
   });
 
@@ -116,6 +125,9 @@ export function MembersTab({ projectId, members, canEdit }: Props) {
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['project', projectId, 'members'] }),
+    onError: (err: Error) => {
+      showToast({ kind: 'error', title: 'Erro ao remover membro', msg: err.message });
+    },
   });
 
   // Sprint 22.22m — reorder com optimistic update (mesmo padrao de projetos/checkpoints)
