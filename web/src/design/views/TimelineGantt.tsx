@@ -1,6 +1,51 @@
-import type { ReactNode } from 'react';
+import { useState, useRef, useEffect, type ReactNode } from 'react';
 import { MapPin } from 'lucide-react';
 
+// ---- Tooltip custom (substitui title= nativo do OS) ------------------------
+// CSS-only via group não cobre todos os casos de posicionamento (pins perto
+// do topo clipam). Usamos estado + ref pra calcular se abre pra cima ou baixo.
+function Tooltip({ content, children }: { content: ReactNode; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const [above, setAbove] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  function handleEnter() {
+    if (ref.current) {
+      const rect = ref.current.getBoundingClientRect();
+      setAbove(rect.top < 80); // abre pra baixo se perto do topo
+    }
+    setOpen(true);
+  }
+
+  return (
+    <div
+      ref={ref}
+      className="relative inline-flex"
+      onMouseEnter={handleEnter}
+      onMouseLeave={() => setOpen(false)}
+      onFocus={handleEnter}
+      onBlur={() => setOpen(false)}
+    >
+      {children}
+      {open && content && (
+        <div
+          role="tooltip"
+          className={[
+            'pointer-events-none absolute z-50 left-1/2 -translate-x-1/2',
+            'w-max max-w-[220px] px-2.5 py-1.5 rounded-md',
+            'bg-bg-elevated2 border border-border shadow-lg',
+            'text-[11px] text-fg leading-snug whitespace-pre-wrap text-center',
+            above ? 'top-full mt-2' : 'bottom-full mb-2',
+          ].join(' ')}
+        >
+          {content}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---- Tipos -----------------------------------------------------------------
 export interface TimelineItem {
   id: string;
   label: string;
@@ -28,21 +73,13 @@ export interface TimelineMarker {
 
 interface TimelineGanttProps {
   items: TimelineItem[];
-  /** Início do range visível em ms. */
   rangeStart: number;
-  /** Fim do range visível em ms. */
   rangeEnd: number;
-  /** Ordem das lanes. */
   lanes: Array<{ id: string; label: string; sublabel?: string }>;
-  /** Markers/pins ao longo das lanes (ex: checkpoints, prazos). */
   markers?: TimelineMarker[];
-  /** Callback ao clicar em uma barra de item. */
   onItemClick?: (item: TimelineItem) => void;
-  /** Callback ao clicar em um marker. */
   onMarkerClick?: (marker: TimelineMarker) => void;
-  /** Largura da coluna de labels das lanes. */
   laneLabelWidth?: number;
-  /** Renderiza markers do eixo X. Recebe array de timestamps. */
   renderAxis?: (ticks: number[]) => ReactNode;
 }
 
@@ -50,6 +87,7 @@ function pct(value: number, min: number, max: number) {
   return Math.max(0, Math.min(100, ((value - min) / (max - min)) * 100));
 }
 
+// ---- Componente principal --------------------------------------------------
 export function TimelineGantt({
   items,
   rangeStart,
@@ -67,8 +105,9 @@ export function TimelineGantt({
 
   return (
     <div className="flex flex-col h-full border border-border rounded-lg overflow-hidden bg-bg-surface">
+
       {/* Axis header */}
-      <div className="flex border-b border-border shrink-0">
+      <div className="flex border-b border-border shrink-0 bg-bg-elevated">
         <div
           className="shrink-0 px-3 py-2 border-r border-border text-[11px] uppercase tracking-wider text-fg-muted font-semibold"
           style={{ width: laneLabelWidth }}
@@ -76,13 +115,11 @@ export function TimelineGantt({
           Projeto
         </div>
         <div className="flex-1 relative h-9">
-          {renderAxis ? (
-            renderAxis(ticks)
-          ) : (
+          {renderAxis ? renderAxis(ticks) : (
             ticks.map((t, i) => (
               <div
                 key={i}
-                className="absolute top-0 bottom-0 flex items-center text-[10px] text-fg-muted border-l border-border/50 pl-1"
+                className="absolute top-0 bottom-0 flex items-center text-[10px] text-fg-muted border-l border-border/40 pl-1.5"
                 style={{ left: `${pct(t, rangeStart, rangeEnd)}%` }}
               >
                 {new Date(t).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}
@@ -91,77 +128,109 @@ export function TimelineGantt({
           )}
         </div>
       </div>
+
       {/* Lanes */}
-      <div className="flex-1 overflow-y-auto">
-        {lanes.map(lane => {
+      <div className="flex-1 overflow-y-auto min-h-0">
+        {lanes.map((lane, laneIdx) => {
           const laneItems = items.filter(it => (it.lane ?? 'default') === lane.id);
           const laneMarkers = markers.filter(m => m.lane === lane.id);
+          const isLast = laneIdx === lanes.length - 1;
           return (
-            <div key={lane.id} className="flex border-b border-border/50 last:border-b-0">
+            <div
+              key={lane.id}
+              className={[
+                'flex',
+                isLast ? 'border-b border-border' : 'border-b border-border/50',
+                laneIdx % 2 === 1 ? 'bg-bg-elevated/30' : '',
+              ].join(' ')}
+            >
+              {/* Label da lane */}
               <div
-                className="shrink-0 px-3 py-3 border-r border-border text-[12px] font-medium text-fg-secondary"
+                className="shrink-0 px-3 py-3 border-r border-border"
                 style={{ width: laneLabelWidth }}
               >
-                <div className="truncate text-fg">{lane.label}</div>
+                <div className="text-[12px] font-semibold text-fg truncate">{lane.label}</div>
                 {lane.sublabel && (
                   <div className="text-[10px] text-fg-muted truncate mt-0.5">{lane.sublabel}</div>
                 )}
               </div>
-              <div className="flex-1 relative h-14">
+
+              {/* Área de barras + pins */}
+              <div className="flex-1 relative h-16">
+                {/* Grid lines verticais alinhadas aos ticks */}
+                {ticks.map((t, i) => (
+                  <div
+                    key={i}
+                    className="absolute top-0 bottom-0 border-l border-border/25 pointer-events-none"
+                    style={{ left: `${pct(t, rangeStart, rangeEnd)}%` }}
+                  />
+                ))}
+
                 {/* Barras de items */}
                 {laneItems.map(item => {
                   const left = pct(item.start, rangeStart, rangeEnd);
                   const right = pct(item.end, rangeStart, rangeEnd);
                   const width = Math.max(2, right - left);
                   return (
-                    <button
+                    <Tooltip
                       key={item.id}
-                      type="button"
-                      onClick={() => onItemClick?.(item)}
-                      title={item.label}
-                      className="absolute top-1/2 -translate-y-1/2 h-7 rounded-md px-2 text-[11px] font-medium text-white truncate text-left hover:opacity-90 transition-opacity focus-ring"
-                      style={{
-                        left: `${left}%`,
-                        width: `${width}%`,
-                        backgroundColor: item.color ?? '#A3BE50',
-                      }}
+                      content={item.label}
                     >
-                      {item.label}
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() => onItemClick?.(item)}
+                        className="absolute top-1/2 -translate-y-1/2 h-7 rounded-md px-2 text-[11px] font-semibold text-white truncate text-left hover:opacity-85 transition-opacity focus-ring"
+                        style={{
+                          left: `${left}%`,
+                          width: `${width}%`,
+                          backgroundColor: item.color ?? '#A3BE50',
+                        }}
+                      >
+                        {item.label}
+                      </button>
+                    </Tooltip>
                   );
                 })}
-                {/* Markers (pins/checkpoints) — espetados acima da barra. A ponta
-                    do pin (parte de baixo do ícone) toca o topo da barra. */}
-                {laneMarkers.map(m => (
-                  <button
-                    key={m.id}
-                    type="button"
-                    onClick={() => onMarkerClick?.(m)}
-                    title={
-                      m.label
-                        ? `${m.label} · ${new Date(m.date).toLocaleDateString('pt-BR')}`
-                        : new Date(m.date).toLocaleDateString('pt-BR')
-                    }
-                    className="absolute z-20 grid place-items-center hover:scale-110 transition-transform focus-ring rounded"
-                    style={{
-                      left: `${pct(m.date, rangeStart, rangeEnd)}%`,
-                      top: '50%',
-                      transform: 'translate(-50%, calc(-50% - 18px))',
-                      filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.6))',
-                    }}
-                  >
-                    <MapPin
-                      size={18}
-                      strokeWidth={2.4}
-                      fill={m.done ? '#22C55E' : '#EF4444'}
-                      className={m.done ? 'text-success' : 'text-danger'}
-                    />
-                  </button>
-                ))}
+
+                {/* Markers (pins de checkpoint) */}
+                {laneMarkers.map(m => {
+                  const tooltipText = m.label
+                    ? `${m.label}\n${new Date(m.date).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: '2-digit' })}`
+                    : new Date(m.date).toLocaleDateString('pt-BR');
+                  return (
+                    <Tooltip key={m.id} content={tooltipText}>
+                      <button
+                        type="button"
+                        onClick={() => onMarkerClick?.(m)}
+                        className="absolute z-20 grid place-items-center hover:scale-110 transition-transform focus-ring rounded"
+                        style={{
+                          left: `${pct(m.date, rangeStart, rangeEnd)}%`,
+                          top: '50%',
+                          transform: 'translate(-50%, calc(-50% - 18px))',
+                          filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.55))',
+                        }}
+                      >
+                        <MapPin
+                          size={18}
+                          strokeWidth={2.4}
+                          fill={m.done ? '#22C55E' : '#EF4444'}
+                          className={m.done ? 'text-success' : 'text-danger'}
+                        />
+                      </button>
+                    </Tooltip>
+                  );
+                })}
               </div>
             </div>
           );
         })}
+
+        {/* Linha de fechamento no fundo + espaço respirável */}
+        {lanes.length === 0 && (
+          <div className="flex items-center justify-center h-32 text-fg-muted text-body-sm">
+            Nenhum projeto com datas definidas.
+          </div>
+        )}
       </div>
     </div>
   );
