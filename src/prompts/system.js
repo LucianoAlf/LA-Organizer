@@ -2439,10 +2439,12 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     }
   }
 
-  // Sprint 15 — Operações Técnicas: manager/coordinator/director apenas.
-  // Collaborators simples não classificam incidents — reportam via linguagem natural
-  // e TOM encaminha sem precisar do skill completo.
-  const isOpsRole = collaborator && ['manager', 'coordinator', 'director'].includes(collaborator.role);
+  // Sprint 15 → 23.13 — Operações Técnicas: liderança OU quem tem function_role='ops_tecnicas'
+  // (ex: Rafinha — é literalmente o cara das ops técnicas, precisa da skill completa).
+  const isOpsRole = collaborator && (
+    ['manager', 'coordinator', 'director'].includes(collaborator.role) ||
+    collaborator.function_role === 'ops_tecnicas'
+  );
   if (isOpsRole) {
     const operacoesPath = path.join(SKILLS_DIR, 'operacoes-tecnicas.md');
     if (fs.existsSync(operacoesPath)) {
@@ -2450,8 +2452,12 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     }
   }
 
-  // Sprint 15 — Marketing: apenas manager com unit='all' (Yuri / coordenação geral)
-  const isMarketingRole = collaborator && collaborator.role === 'manager' && collaborator.unit === 'all';
+  // Sprint 15 → 23.13 — Marketing: Yuri (manager+unit=all) OU qualquer function_role='marketing'
+  // (ex: John — collaborator de marketing, precisa da skill mesmo sem ser gerente).
+  const isMarketingRole = collaborator && (
+    (collaborator.role === 'manager' && collaborator.unit === 'all') ||
+    collaborator.function_role === 'marketing'
+  );
   if (isMarketingRole) {
     const marketingPath = path.join(SKILLS_DIR, 'marketing.md');
     if (fs.existsSync(marketingPath)) {
@@ -2492,8 +2498,13 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     systemPrompt += criarCompromissoSkillBlock;
   }
 
-  // Sprint 19 — pedagogico: apenas coordinator/director (saves 12KB para collaborators/managers)
-  const isPedagogicoRole = collaborator && ['coordinator', 'director'].includes(collaborator.role);
+  // Sprint 19 → 23.13 — pedagogico: liderança OU quem tem function_role='pedagogico'
+  // (mentores/assistentes que dão aula — Peterson, Jordan, Kinho, Dai, Renan, Leo,
+  // Ramon, Rodrigo, Matheus Felipe). Sem isso TOM improvisa em conversas sobre alunos.
+  const isPedagogicoRole = collaborator && (
+    ['coordinator', 'director'].includes(collaborator.role) ||
+    collaborator.function_role === 'pedagogico'
+  );
   if (pedagogicoSkillBlock && isPedagogicoRole) {
     systemPrompt += pedagogicoSkillBlock;
   }
