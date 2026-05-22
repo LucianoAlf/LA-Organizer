@@ -7,26 +7,26 @@
   --tom-deep: #728538;     /* deep — variantes escuras */
   --tom-tint: #E8F0CF;     /* tint — backgrounds claros */
 
-  /* Surfaces — 4 níveis de hierarquia (vs 2 do mobile) */
-  --bg-app: #0a0a0a;          /* fundo da página */
-  --bg-surface: #141414;       /* cards, sidebar */
-  --bg-elevated: #1c1c1c;      /* hover, modais */
-  --bg-elevated-2: #242424;    /* nested cards */
+  /* Surfaces — paleta ink oficial do app */
+  --bg-app: #0A0A0A;          /* ink-0 — fundo da página */
+  --bg-surface: #141414;       /* ink-50 — cards, sidebar */
+  --bg-elevated: #1A1A1A;      /* ink-100 — hover, modais */
+  --bg-elevated-2: #2A2A2A;    /* ink-200 — nested cards */
 
   /* Bordas */
-  --border: #2a2a2a;
-  --border-strong: #383838;
+  --border: #2A2A2A;           /* ink-200 */
+  --border-strong: #424242;    /* ink-300 — hover, focus */
 
   /* Foreground */
-  --fg: #f5f5f5;
-  --fg-secondary: #c0c0c0;
-  --fg-muted: #8a8a8a;
-  --fg-disabled: #555;
+  --fg: #F4F4F4;               /* ink-900 — texto primário */
+  --fg-secondary: #CFCFCF;     /* ink-600 — texto secundário */
+  --fg-muted: #9E9E9E;         /* ink-500 — subtextos, labels */
+  --fg-disabled: #7A7A7A;      /* ink-400 — desabilitados */
 
-  /* Status */
-  --success: #4ade80;
-  --warning: #fbbf24;
-  --danger: #f87171;
+  /* Status — paleta oficial do app */
+  --success: #22C55E;
+  --warning: #F59E0B;
+  --danger: #EF4444;
   --info: #60a5fa;
 
   /* Tipografia desktop — escala mais densa */
