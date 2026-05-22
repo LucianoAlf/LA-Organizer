@@ -12,7 +12,7 @@ import { KanbanBoard } from '../design/views/KanbanBoard';
 import { DenseTable } from '../design/views/DenseTable';
 import type { DenseTableColumn } from '../design/views/DenseTable';
 import { TimelineGantt } from '../design/views/TimelineGantt';
-import type { TimelineItem } from '../design/views/TimelineGantt';
+import type { TimelineItem, TimelineMarker } from '../design/views/TimelineGantt';
 import { MonthCalendar } from '../design/views/MonthCalendar';
 import type { CalendarItem } from '../design/views/MonthCalendar';
 import { ProjectCardV2 } from './projetos/ProjectCardV2';
@@ -97,6 +97,30 @@ export function ProjetosDesktop() {
     queryKey: ['projects-pending-approval'],
     queryFn: () => fetchPendingApprovals(collaborator?.id),
     enabled: !!collaborator?.id && isCoordOrDir,
+  });
+
+  // Checkpoints — usados como pins no Timeline. Só busca quando a view é
+  // 'timeline' (lazy fetch).
+  const projectIds = useMemo(() => projects.map(p => p.id), [projects]);
+  const { data: timelineCheckpoints = [] } = useQuery({
+    queryKey: ['projects-checkpoints', projectIds],
+    queryFn: async () => {
+      if (projectIds.length === 0) return [];
+      const { data, error } = await supabase
+        .from('project_checkpoints')
+        .select('id, project_id, title, due_date, status')
+        .in('project_id', projectIds);
+      if (error) return [];
+      return (data ?? []) as Array<{
+        id: string;
+        project_id: string;
+        title: string | null;
+        due_date: string | null;
+        status: string | null;
+      }>;
+    },
+    enabled: view === 'timeline' && projectIds.length > 0,
+    staleTime: 60_000,
   });
 
   const approveMut = useMutation({
@@ -319,7 +343,8 @@ export function ProjetosDesktop() {
           />
         ) : view === 'timeline' ? (
           (() => {
-            // Timeline: projetos com start_date+end_date, lanes por status.
+            // Timeline: cada PROJETO é uma lane. Barra = duração (start→end).
+            // Pins = checkpoints na due_date. Pin verde = concluído, vermelho = pendente.
             const datedProjects = projects.filter(p => p.start_date && p.end_date);
             if (datedProjects.length === 0) {
               return (
@@ -330,15 +355,30 @@ export function ProjetosDesktop() {
                 />
               );
             }
+            // Uma lane por projeto, sublabel mostra o status
+            const lanes = datedProjects.map(p => ({
+              id: p.id,
+              label: p.name,
+              sublabel: KANBAN_COLUMNS.find(c => c.id === p.status)?.title ?? p.status,
+            }));
             const items: TimelineItem[] = datedProjects.map(p => ({
               id: p.id,
               label: p.name,
               start: new Date(p.start_date!).getTime(),
               end: new Date(p.end_date!).getTime(),
-              lane: p.status,
+              lane: p.id, // cada projeto na sua própria lane
               color: STATUS_COLORS[p.status],
             }));
-            const lanes = KANBAN_COLUMNS.map(c => ({ id: c.id, label: c.title }));
+            // Checkpoints viram pins na lane do projeto correspondente
+            const markers: TimelineMarker[] = timelineCheckpoints
+              .filter(c => c.due_date && projectIds.includes(c.project_id))
+              .map(c => ({
+                id: c.id,
+                lane: c.project_id,
+                date: new Date(c.due_date!).getTime(),
+                label: c.title ?? 'Checkpoint',
+                done: c.status === 'done' || c.status === 'completed',
+              }));
             const starts = items.map(i => i.start);
             const ends = items.map(i => i.end);
             const rangeStart = Math.min(...starts, TODAY.getTime() - 7 * 86400000);
@@ -350,8 +390,13 @@ export function ProjetosDesktop() {
                   rangeStart={rangeStart}
                   rangeEnd={rangeEnd}
                   lanes={lanes}
+                  markers={markers}
                   onItemClick={it => {
                     const proj = projects.find(p => p.id === it.id);
+                    if (proj) setSelected(proj);
+                  }}
+                  onMarkerClick={m => {
+                    const proj = projects.find(p => p.id === m.lane);
                     if (proj) setSelected(proj);
                   }}
                 />

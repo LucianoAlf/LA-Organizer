@@ -11,7 +11,7 @@ export { Skeleton, SkeletonCard, SkeletonRow, SkeletonList } from './primitives/
 export { KanbanBoard } from './views/KanbanBoard';
 export type { KanbanColumn } from './views/KanbanBoard';
 export { TimelineGantt } from './views/TimelineGantt';
-export type { TimelineItem } from './views/TimelineGantt';
+export type { TimelineItem, TimelineMarker } from './views/TimelineGantt';
 export { DenseTable } from './views/DenseTable';
 export type { DenseTableColumn } from './views/DenseTable';
 export { MonthCalendar } from './views/MonthCalendar';
