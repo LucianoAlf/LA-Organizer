@@ -9,9 +9,9 @@ export type WizardData = {
   location: ProjectLocation | '';
   start_date: string; // YYYY-MM-DD
   end_date: string;
+  description: string;
   // Sprint 9: "Quem participa" agora e multi-select de collaborators (member_ids)
-  // + texto livre opcional pra pessoas de fora do sistema. description (no banco)
-  // e composto na hora do submit como "Nome1, Nome2 + extras".
+  // + texto livre opcional pra pessoas de fora do sistema.
   member_ids: string[];
   extra_members: string;
   methodology: string;
@@ -22,6 +22,7 @@ export type WizardData = {
 export const initialWizardData: WizardData = {
   name: '',
   justification: '',
+  description: '',
   location: '',
   start_date: '',
   end_date: '',

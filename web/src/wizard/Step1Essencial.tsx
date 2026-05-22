@@ -42,6 +42,18 @@ export function Step1Essencial({ data, update }: Props) {
           className={wizardTextareaClass}
         />
       </Field>
+      <Field
+        label="📝 Descrição do projeto (opcional)"
+        sub="Um parágrafo livre sobre o escopo, contexto ou observações. Pode deixar em branco."
+      >
+        <textarea
+          value={data.description}
+          onChange={(e) => update('description', e.target.value)}
+          placeholder="Ex: Apresentação ao vivo com alunos do módulo avançado, aberta ao público..."
+          rows={3}
+          className={wizardTextareaClass}
+        />
+      </Field>
     </>
   );
 }

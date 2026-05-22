@@ -53,24 +53,13 @@ export function useCreateProject(args: UseCreateProjectArgs): UseCreateProjectRe
     const status: ProjectStatus = isCoordOrDir ? 'planning' : 'pending_approval';
     const hours = data.estimated_hours_week.trim() ? Number(data.estimated_hours_week) : null;
 
-    // Sprint 9: compoe description a partir dos nomes selecionados + extras.
-    // Solucao temporaria — quando member picker maduro, description ganha
-    // outra funcao (ex.: notas livres do projeto).
-    const memberNames = data.member_ids
-      .map((id) => collabsAvailable.find((c) => c.id === id)?.full_name)
-      .filter(Boolean) as string[];
-    const composedDescription = [
-      memberNames.join(', '),
-      data.extra_members.trim() ? `+ ${data.extra_members.trim()}` : '',
-    ].filter(Boolean).join(' ').trim();
-
     const insertPayload = {
       name: data.name.trim(),
       justification: data.justification.trim(),
       location: data.location || null,
       start_date: data.start_date,
       end_date: data.end_date,
-      description: composedDescription,
+      description: data.description.trim() || null,
       methodology: data.methodology.trim(),
       estimated_hours_week: hours,
       category: data.category,
