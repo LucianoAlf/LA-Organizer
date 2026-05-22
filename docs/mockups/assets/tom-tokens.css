@@ -1,9 +1,11 @@
 /* tom-tokens.css — design tokens compartilhados pelos mockups da Foundation */
 :root {
-  /* Cores — base do LA Organizer (Tom green) */
-  --tom: #a8e643;
-  --tom-hover: #b8f053;
-  --tom-active: #98d633;
+  /* Cores — base do LA Organizer (Tom green — paleta oficial do app) */
+  --tom: #A3BE50;          /* DEFAULT — CTAs, FAB, tabs ativos */
+  --tom-hover: #BAD179;    /* light — hover */
+  --tom-active: #8BA244;   /* shade — active/pressed */
+  --tom-deep: #728538;     /* deep — variantes escuras */
+  --tom-tint: #E8F0CF;     /* tint — backgrounds claros */
 
   /* Surfaces — 4 níveis de hierarquia (vs 2 do mobile) */
   --bg-app: #0a0a0a;          /* fundo da página */
