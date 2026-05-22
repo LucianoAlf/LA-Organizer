@@ -1568,10 +1568,13 @@ async function detectUnclosedPastEvents(now = new Date()) {
 
     // Sprint 23.10: filtra eventos que JÁ foram perguntados pelo followup_eod
     // (followup_sent_at IS NULL) — evita duplicar pergunta.
+    // Sprint 23.11: APENAS context='personal'. Eventos do time vão pro
+    // relatório CEO (ceoTeamUnclosedEventsReport), nunca auto-close.
     const { data: unclosed, error } = await supabase
       .from('events')
       .select('id, title, start_at, end_at, category')
       .eq('collaborator_id', collab.id)
+      .eq('context', 'personal')
       .not('status', 'in', '("done","cancelled")')
       .is('followup_sent_at', null)
       .lt('end_at', cutoff24h)
@@ -1631,10 +1634,13 @@ async function askEndOfDayEventFollowup(now = new Date()) {
     const q = await isQuietNow(collab, sp);
     if (q.quiet) continue;
 
+    // Sprint 23.11: APENAS context='personal'. Eventos do time vão pro
+    // relatório CEO; auto-close não toca neles.
     const { data: pending, error } = await supabase
       .from('events')
       .select('id, title, start_at')
       .eq('collaborator_id', collab.id)
+      .eq('context', 'personal')
       .not('status', 'in', '("done","cancelled")')
       .is('followup_sent_at', null)
       .gte('end_at', dayStartUtc)
