@@ -2459,12 +2459,13 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     }
   }
 
-  // Sprint 16 — Coordenação Conversacional: carrega quando há COORD_HINT ativo
-  // OU quando role é manager/coordinator/director (podem emitir relay/followup).
-  // Collaborators sem COORD_HINT não precisam do skill — só respondem mensagens diretas.
-  const hasCoordHint = !!(ctx && ctx.coordHint);
-  const isCoordRole = collaborator && ['manager', 'coordinator', 'director'].includes(collaborator.role);
-  if (hasCoordHint || isCoordRole) {
+  // Sprint 16 → 23.13 — Coordenação Conversacional: carrega pra TODOS os
+  // colaboradores (era restrita a manager/coordinator/director, mas isso
+  // bloqueava casos legítimos tipo "Rafinha pede pro Tom avisar o Alf
+  // sobre conserto de equipamento"). Qualquer membro do time pode pedir
+  // relay/followup; gate de comportamento fica na skill (confirmação +
+  // validação de recipient via lookup). RLS no banco já protege INSERT.
+  if (collaborator) {
     const coordPath = path.join(SKILLS_DIR, 'coordenacao-conversacional.md');
     if (fs.existsSync(coordPath)) {
       systemPrompt += '\n\n---\n\n' + fs.readFileSync(coordPath, 'utf-8');
