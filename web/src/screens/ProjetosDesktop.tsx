@@ -298,7 +298,9 @@ export function ProjetosDesktop() {
           <KanbanBoard
             columns={columns}
             getItemKey={p => p.id}
-            renderCard={p => <ProjectCardV2 project={p} onClick={() => setSelected(p)} />}
+            renderCard={(p, _colId, dragHandle) => (
+              <ProjectCardV2 project={p} onClick={() => setSelected(p)} dragHandle={dragHandle} />
+            )}
             onMoveItem={(itemId, fromCol, toCol) => {
               if (fromCol === toCol) return; // reorder dentro da mesma coluna: ignorar (futuro: sort_position)
               moveStatusMut.mutate({ id: itemId, newStatus: toCol as ProjectStatus });

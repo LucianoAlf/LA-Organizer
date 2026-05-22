@@ -28,7 +28,12 @@ export interface KanbanColumn<T> {
 
 interface KanbanBoardProps<T> {
   columns: KanbanColumn<T>[];
-  renderCard: (item: T, columnId: string) => ReactNode;
+  /**
+   * Render do card. Recebe (item, columnId, dragHandle?) — o `dragHandle` é um
+   * ReactNode já com listeners/ref do @dnd-kit; o card deve renderizá-lo DENTRO
+   * de si (antes do título, por exemplo). Se ausente, renderiza sem handle.
+   */
+  renderCard: (item: T, columnId: string, dragHandle?: ReactNode) => ReactNode;
   onAddToColumn?: (columnId: string) => void;
   getItemKey: (item: T) => string;
   /**
@@ -39,13 +44,14 @@ interface KanbanBoardProps<T> {
   onMoveItem?: (itemId: string, fromColumnId: string, toColumnId: string) => void;
 }
 
-interface SortableCardProps {
+interface SortableCardProps<T> {
   id: string;
   columnId: string;
-  children: ReactNode;
+  item: T;
+  renderCard: (item: T, columnId: string, dragHandle?: ReactNode) => ReactNode;
 }
 
-function SortableCard({ id, columnId, children }: SortableCardProps) {
+function SortableCard<T>({ id, columnId, item, renderCard }: SortableCardProps<T>) {
   const {
     attributes,
     listeners,
@@ -58,6 +64,25 @@ function SortableCard({ id, columnId, children }: SortableCardProps) {
     id,
     data: { columnId, type: 'card' },
   });
+
+  // O handle é um span (não <button>) pra evitar nested-button HTML inválido
+  // quando o card ele mesmo já é um botão clicável. role="button" + tabIndex
+  // mantém a a11y. Click no handle não propaga pro card (stopPropagation no
+  // mouseDown) — então drag não dispara onClick do card.
+  const dragHandle = (
+    <span
+      ref={setActivatorNodeRef}
+      aria-label="Arrastar card"
+      onClick={e => e.stopPropagation()}
+      onMouseDown={e => e.stopPropagation()}
+      {...attributes}
+      {...listeners}
+      className="shrink-0 inline-grid place-items-center w-4 h-5 rounded text-fg-muted/60 hover:text-fg hover:bg-bg-app/60 transition-colors cursor-grab active:cursor-grabbing touch-none focus-ring -ml-0.5"
+    >
+      <GripVertical size={12} />
+    </span>
+  );
+
   return (
     <div
       ref={setNodeRef}
@@ -68,25 +93,8 @@ function SortableCard({ id, columnId, children }: SortableCardProps) {
         boxShadow: isDragging ? '0 12px 28px -8px rgba(0,0,0,0.45)' : undefined,
         zIndex: isDragging ? 50 : undefined,
       }}
-      className="group flex items-stretch gap-1"
     >
-      {/* Drag handle — pontinhos verticais à esquerda do card. Listeners
-          ficam APENAS no handle (via setActivatorNodeRef + listeners). Assim
-          o click no card (abre o DetailDrawer) e o drag (move entre colunas)
-          ficam completamente separados — sem conflito. */}
-      <button
-        ref={setActivatorNodeRef}
-        type="button"
-        aria-label="Arrastar card"
-        {...attributes}
-        {...listeners}
-        className="shrink-0 w-5 grid place-items-center rounded text-fg-muted/70 group-hover:text-fg hover:bg-bg-elevated transition-colors cursor-grab active:cursor-grabbing touch-none focus-ring"
-      >
-        <GripVertical size={14} />
-      </button>
-      <div className="flex-1 min-w-0">
-        {children}
-      </div>
+      {renderCard(item, columnId, dragHandle)}
     </div>
   );
 }
@@ -192,9 +200,13 @@ export function KanbanBoard<T>({
                   col.items.map(item => {
                     const key = getItemKey(item);
                     return (
-                      <SortableCard key={key} id={key} columnId={col.id}>
-                        {renderCard(item, col.id)}
-                      </SortableCard>
+                      <SortableCard
+                        key={key}
+                        id={key}
+                        columnId={col.id}
+                        item={item}
+                        renderCard={renderCard}
+                      />
                     );
                   })
                 )}
