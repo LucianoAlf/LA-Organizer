@@ -192,4 +192,55 @@ Cada fase de grupo (2+) é considerada pronta quando todas as telas do grupo mig
 
 ---
 
+## Apêndice A — Constraints reais do banco (descoberto em 21/05/2026)
+
+Decisões validadas após inspeção do schema Supabase (`projects` + relacionadas):
+
+### Status (constraint `projects_status_check`)
+
+Os 6 valores permitidos já existem — **não há necessidade de migration**:
+
+```
+pending_approval | planning | active | paused | completed | cancelled
+```
+
+Decisão: Kanban com **4 colunas principais** (Em planejamento / Em andamento / Concluído / Cancelado) usando `planning`, `active`, `completed`, `cancelled`. `pending_approval` e `paused` ficam como swimlanes/filtros opcionais (não viraram colunas).
+
+### Categorias (constraint `projects_category_check`)
+
+```
+pedagogical | commercial | administrative | operational | event | infrastructure
+```
+
+Cada categoria tem cor própria no badge do card:
+- event → rosa (`bg-pink-500/20`)
+- pedagogical → verde (`bg-green-500/20`)
+- infrastructure → azul (`bg-blue-500/20`)
+- operational → laranja (`bg-orange-500/20`)
+- commercial → roxo (definido quando aparecer)
+- administrative → cinza (definido quando aparecer)
+
+### Views — todos suportados pelos dados existentes
+
+| View | Coluna/relacionamento utilizado |
+|---|---|
+| Lista | todos os campos de `projects` |
+| Kanban | `status` |
+| Calendário | `event_date` (fallback `start_date`) |
+| Timeline (Gantt) | `start_date` + `end_date` |
+| Por pessoa | `project_members` → `collaborators` |
+| Dashboard | agregados: `status`, `category`, `progress_percent`, `start_date`, `end_date` |
+
+Decisão: **manter os 6 views ativos** (decisão do owner em 21/05). Calendário e Dashboard ficam "leves" agora e ganham densidade conforme o uso crescer.
+
+### Estado atual (21/05/2026)
+
+- Total projetos: 8 (7 `planning`, 1 `cancelled`)
+- Todos com `start_date` + `end_date` preenchidos → Timeline funciona 100%
+- 1 com `event_date` → Calendário fraco hoje
+- 30 membros distribuídos (média 3-4 por projeto)
+- 35 checkpoints (média 4-5 por projeto)
+
+---
+
 *Master spec · LA Organizer Desktop Redesign · Maio 2026*
