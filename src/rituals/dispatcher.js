@@ -777,6 +777,63 @@ async function remindOperationalTasks(now = new Date()) {
   }
 }
 
+// Sprint 23.9 — Lembrete T-1 para tasks pessoais avulsas (sem department_id,
+// sem project_id, sem school_event_id). Roda 09:00-09:10 BRT. Tom + leveza
+// pessoal (diferente do tom operacional/corporativo).
+// Filtra tasks com due_date = amanhã BRT, status pending/in_progress,
+// reminded_at IS NULL. Marca reminded_at após envio. Idempotente.
+async function remindPersonalTasks(now = new Date()) {
+  const whatsapp = require('../services/whatsapp');
+  const utcH = now.getUTCHours();
+  const utcM = now.getUTCMinutes();
+  // 09:00-09:10 BRT = UTC 12:00-12:10
+  if (!(utcH === 12 && utcM >= 0 && utcM <= 10)) return;
+
+  const brtMs = now.getTime() - 3 * 60 * 60 * 1000;
+  const tomorrowBrt = new Date(brtMs + 24 * 60 * 60 * 1000);
+  const tomorrowYmd = tomorrowBrt.toISOString().slice(0, 10);
+
+  const { data: tasks, error } = await supabase
+    .from('tasks')
+    .select(`
+      id, title, assigned_to, due_date,
+      collaborator:assigned_to(phone, full_name)
+    `)
+    .is('department_id', null)
+    .is('project_id', null)
+    .is('school_event_id', null)
+    .is('reminded_at', null)
+    .in('status', ['pending', 'in_progress'])
+    .eq('due_date', tomorrowYmd);
+
+  if (error) {
+    console.error('[remindPersonalTasks] query err:', error.message);
+    return;
+  }
+  if (!tasks || tasks.length === 0) return;
+
+  const nowIso = now.toISOString();
+  for (const task of tasks) {
+    const phone = task.collaborator?.phone;
+    if (!phone) {
+      await supabase.from('tasks').update({ reminded_at: nowIso }).eq('id', task.id);
+      continue;
+    }
+    const firstName = (task.collaborator?.full_name || '').split(' ')[0];
+    const greeting = firstName ? `${firstName}, ` : '';
+    // Tom mais leve/pessoal — não é cobrança corporativa
+    const msg = `📌 ${greeting}amanhã está marcado: *${task.title}*. Se rolar antes ou se quiser remarcar, é só me dizer.`;
+
+    try {
+      await whatsapp.sendMessage(phone, msg);
+      await supabase.from('tasks').update({ reminded_at: nowIso }).eq('id', task.id);
+      console.log(`[remindPersonalTasks] sent task=${task.id.slice(0, 8)} → ${phone.slice(-4)}`);
+    } catch (err) {
+      console.error(`[remindPersonalTasks] send err task=${task.id.slice(0, 8)}:`, err.message);
+    }
+  }
+}
+
 // Sprint 15 F4 — Checklist com consequência: itens flagged como não-feito que tenham
 // generates_request_type_id viram tasks operacionais automáticas.
 // Roda a cada tick. Idempotência via lookup em tasks.notes (contém completion_id + item_id).
@@ -2236,6 +2293,13 @@ async function run(opts = {}) {
     await remindOperationalTasks(new Date());
   } catch (err) {
     console.error('[Dispatcher] remindOperationalTasks erro:', err.message);
+  }
+
+  // Sprint 23.9 — lembretes T-1 de tasks pessoais avulsas (sem dept/project/event)
+  try {
+    await remindPersonalTasks(new Date());
+  } catch (err) {
+    console.error('[Dispatcher] remindPersonalTasks erro:', err.message);
   }
 
   // Sprint 15 F4 — Checklist com consequência (gera tasks automáticas)
