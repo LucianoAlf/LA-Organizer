@@ -3,13 +3,29 @@
 // mensagens WhatsApp em tempo real. Throttle de 1h por evento+id pra evitar spam.
 
 const { createClient } = require('@supabase/supabase-js');
+// supabase-realtime-js v2.104+ exige Node.js 22+ pra WebSocket nativo.
+// O VPS roda Node 20, entao passamos o pacote `ws` explicitamente como transport.
+const wsLib = require('ws');
 
-// Cliente dedicado pro Realtime (service_role bypass RLS)
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY,
-  { realtime: { timeout: 30000 } }
-);
+// Criado lazy dentro de startRealtime() para garantir que o .env ja foi carregado.
+// Usa ANON_KEY — conexao Realtime WebSocket nao aceita service_role;
+// service_role e usado so nas queries de enriquecimento (supabaseMain).
+let _supabaseRealtime = null;
+function getRealtimeClient() {
+  if (!_supabaseRealtime) {
+    _supabaseRealtime = createClient(
+      process.env.SUPABASE_URL,
+      process.env.SUPABASE_ANON_KEY,
+      {
+        realtime: {
+          timeout: 30000,
+          transport: wsLib, // Node 20 nao tem WebSocket nativo — passa ws explicito
+        }
+      }
+    );
+  }
+  return _supabaseRealtime;
+}
 
 // Throttle: max 1 mensagem por (table:id:event) por hora
 const recentEvents = new Map();
@@ -35,7 +51,7 @@ setInterval(() => {
 function startRealtime(sendWhatsApp, supabaseMain) {
   console.log('[Realtime] Iniciando subscriber...');
 
-  const channel = supabase
+  const channel = getRealtimeClient()
     .channel('tom-events')
 
     // 1. Checkpoint marcado como done -> celebra
@@ -158,7 +174,7 @@ function startRealtime(sendWhatsApp, supabaseMain) {
     });
 
   process.on('SIGTERM', () => {
-    try { supabase.removeChannel(channel); } catch {}
+    try { getRealtimeClient().removeChannel(channel); } catch {}
   });
 
   return channel;
