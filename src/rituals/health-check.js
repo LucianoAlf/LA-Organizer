@@ -14,7 +14,6 @@
 const fs = require('fs');
 const path = require('path');
 const supabase = require('../supabase/client');
-const { generateWeeklySummaryFor } = require('../engine');
 
 const ERROR_LOG_PATH = '/opt/LA-Organizer/logs/tom-error.log';
 const WARN_THRESHOLDS = {
@@ -38,18 +37,6 @@ function isoHoursAgo(h) {
   return new Date(Date.now() - h * 3600_000).toISOString();
 }
 
-// Último domingo (week_start de weekly summary)
-function lastSundayYmd() {
-  const now = new Date();
-  const dow = now.getDay(); // 0=domingo
-  const diff = dow === 0 ? 0 : dow;
-  const sunday = new Date(now.getTime() - diff * 24 * 3600_000);
-  const y = sunday.getUTCFullYear();
-  const m = String(sunday.getUTCMonth() + 1).padStart(2, '0');
-  const d = String(sunday.getUTCDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
-}
-
 // ─────────────────────────────────────────────────────────────────
 // CHECK 1 — Dream rodou nas últimas 24h
 // ─────────────────────────────────────────────────────────────────
@@ -66,35 +53,22 @@ async function checkDreamRecent() {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// CHECK 2 — Weekly summary do último domingo (auto-fix)
+// CHECK 2 — Weekly summary recente (sem auto-fix)
 // ─────────────────────────────────────────────────────────────────
+// O engine.generateWeeklySummaryFor usa week_start = (today − 7 dias),
+// uma janela rolante. lastSundayYmd() nunca bate com isso, então o auto-fix
+// anterior regenerava 15 summaries TODO DIA (~105 calls LLM/semana de waste).
+// Agora: só verifica se houve summary nos últimos 8 dias (o ritual roda domingo
+// 22h). Se parou, alerta — não auto-corrige (mascararia o problema do cron).
 async function checkWeeklySummary() {
-  const weekStart = lastSundayYmd();
-  const { data: summaries, error } = await supabase
+  const cutoff = isoHoursAgo(8 * 24);
+  const { count, error } = await supabase
     .from('collaborator_weekly_summaries')
-    .select('id, collaborator_id')
-    .eq('week_start', weekStart);
+    .select('id', { count: 'exact', head: true })
+    .gte('created_at', cutoff);
   if (error) throw error;
-  if (summaries && summaries.length > 0) {
-    return { status: 'ok', detail: `Weekly summary OK (${summaries.length} colaboradores, semana ${weekStart})` };
-  }
-  // Auto-fix: gerar pra colaboradores ativos+onboarded
-  const { data: collabs } = await supabase
-    .from('collaborators')
-    .select('id, full_name, phone, role')
-    .eq('is_active', true)
-    .eq('onboarding_completed', true);
-  let fixed = 0;
-  let failed = 0;
-  for (const c of (collabs || [])) {
-    try { await generateWeeklySummaryFor(c); fixed++; }
-    catch (err) { failed++; console.warn(`[health-check] weekly summary fail for ${c.full_name}:`, err.message); }
-  }
-  return {
-    status: 'fixed',
-    detail: `Weekly summary vazio — auto-corrigido (${fixed} ok, ${failed} fail)`,
-    fix: { type: 'weekly_summary_backfill', week_start: weekStart, fixed, failed },
-  };
+  if (count > 0) return { status: 'ok', detail: `${count} weekly summaries nos últimos 8 dias` };
+  return { status: 'warning', detail: 'Nenhum weekly summary nos últimos 8 dias — ritual de domingo 22h provavelmente parou' };
 }
 
 // ─────────────────────────────────────────────────────────────────
