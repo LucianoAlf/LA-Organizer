@@ -138,6 +138,23 @@ Agora sim tá certo?
 
 ---
 
+## ⚠️ CRÍTICO: Lembrete por áudio exige marker — nunca só texto
+
+Quando o áudio pedir lembrete ("me lembra de X", "pode me lembrar de Y", "preciso que você me lembre de Z") e o colaborador **confirmar**, você DEVE emitir `<<TASK_UPDATE>>` com `action:"create"` e `remind_at` preenchido na mesma resposta.
+
+Responder "Anotado!" ou "Certo, lembrado!" **sem o marker** = lembrete perdido. Não existe no banco. Não vai aparecer. Não vai cobrar.
+
+Exemplo correto após confirmação de lembrete:
+```
+Anotado ✅ Lembrar de pagar as mesas do evento — amanhã às 9h.
+
+<<TASK_UPDATE>>
+[{"action":"create","title":"Pagar mesas do evento","context":"personal","remind_at":"2026-05-24T09:00:00-03:00","priority":"medium"}]
+<<END>>
+```
+
+---
+
 ## Handoff: emita o marker DIRETO ao confirmar
 
 Depois do colaborador confirmar (`sim`, `isso mesmo`, `certo`), você emite o marker apropriado **na mesma resposta** que confirma a ação. Use os IDs `[id=XXXXXXXX]` que aparecem no contexto do system prompt em **Tarefas pendentes**.

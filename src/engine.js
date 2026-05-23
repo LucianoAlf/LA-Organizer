@@ -353,22 +353,33 @@ function parseCheckpointBatchMarker(text) {
     logSchemaErr('CHECKPOINT_BATCH', ['project_id_or_name:missing'], parsed);
     return { malformed: true, cleanText };
   }
-  if (!Array.isArray(parsed.items) || parsed.items.length === 0) {
+  // Tolera alias 'checkpoints' que o LLM às vezes usa em vez de 'items'
+  const rawItems = Array.isArray(parsed.items) ? parsed.items
+    : Array.isArray(parsed.checkpoints) ? parsed.checkpoints
+    : null;
+  if (!rawItems || rawItems.length === 0) {
     logSchemaErr('CHECKPOINT_BATCH', ['items:empty_or_not_array'], parsed);
     return { malformed: true, cleanText };
   }
   // Threshold mínimo: 2 items (regra de "não vira batch pra listinha trivial").
   // Skill orienta 4+ mas engine aceita 2+ pra flexibilidade.
-  if (parsed.items.length < 2) {
+  if (rawItems.length < 2) {
     logSchemaErr('CHECKPOINT_BATCH', ['items:below_threshold_2'], parsed);
     return { malformed: true, cleanText };
   }
+  // Tolera alias 'title' em vez de 'name' (LLM às vezes usa o nome do campo errado)
+  const normalizedItems = rawItems.map(item => {
+    if (item && typeof item === 'object' && !item.name && item.title) {
+      return { ...item, name: String(item.title) };
+    }
+    return item;
+  });
   const valid = [];
   const dropped = [];
-  for (let i = 0; i < parsed.items.length; i++) {
-    const why = validateCheckpointItem(parsed.items[i]);
+  for (let i = 0; i < normalizedItems.length; i++) {
+    const why = validateCheckpointItem(normalizedItems[i]);
     if (why) dropped.push(`item[${i}]:${why}`);
-    else valid.push(parsed.items[i]);
+    else valid.push(normalizedItems[i]);
   }
   if (dropped.length) logSchemaErr('CHECKPOINT_BATCH', dropped, parsed);
   if (!valid.length) return { malformed: true, cleanText };
@@ -1153,15 +1164,19 @@ async function applySchoolEventAction(collaborator, parsed) {
 // Sprint 16 — Marker <<COORDINATION_REQUEST>>.
 function parseCoordinationRequestMarker(text) {
   if (!text) return null;
-  const re = /<<COORDINATION_REQUEST>>\s*([\s\S]*?)\s*<<END>>/i;
-  const m = text.match(re);
-  if (!m) return null;
-  const cleanText = text.replace(re, '').trim();
+  const reG = /<<COORDINATION_REQUEST>>\s*([\s\S]*?)\s*<<END>>/gi;
+  const matches = [...text.matchAll(reG)];
+  if (!matches.length) return null;
+  // Strip TODOS os blocos — duplicatas ficam como UNKNOWN_MARKER_STRIPPED sem isso
+  const cleanText = text.replace(reG, '').trim();
+  if (matches.length > 1) {
+    console.warn(`[CoordinationRequest] ${matches.length} markers em uma resposta — só o primeiro é processado`);
+  }
   let parsed;
   try {
-    parsed = JSON.parse(m[1].trim());
+    parsed = JSON.parse(matches[0][1].trim());
   } catch (err) {
-    logSchemaErr('COORDINATION_REQUEST', ['invalid_json: ' + err.message], m[1]);
+    logSchemaErr('COORDINATION_REQUEST', ['invalid_json: ' + err.message], matches[0][1]);
     return { malformed: true, cleanText };
   }
   if (!parsed || typeof parsed !== 'object') return { malformed: true, cleanText };
@@ -6354,11 +6369,13 @@ async function processMessage(phone, text, raw = {}) {
         .replace(/\n{3,}/g, '\n\n')
         .trim();
       if (before !== reply) {
-        console.warn(`[Engine] tool_call/narration stripped (${before.length}→${reply.length} chars)`);
-        // result='rejected' (não 'cleaned') pra respeitar marker_logs_result_check
-        // constraint que só aceita 'executed' | 'rejected'. Semântica: tool_call
-        // não foi executado, foi limpo/rejeitado da resposta. Sprint 23.6 hotfix.
-        await logMarker(collab.id, 'TOOL_CALL_STRIPPED', 'rejected', `delta:${before.length - reply.length}`, before.slice(0, 500));
+        const delta = before.length - reply.length;
+        console.warn(`[Engine] tool_call/narration stripped (${before.length}→${reply.length} chars, delta=${delta})`);
+        // delta ≤ 10 = normalização de whitespace (\n\n\n\n→\n\n) — não é tool_call real.
+        // Só loga no marker_logs se houve remoção substantiva de conteúdo.
+        if (delta > 10) {
+          await logMarker(collab.id, 'TOOL_CALL_STRIPPED', 'rejected', `delta:${delta}`, before.slice(0, 500));
+        }
       }
 
       if (reply.includes('<<') || reply.includes('>>')) {
