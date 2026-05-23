@@ -181,9 +181,11 @@ export async function fetchJourneyPendencias(): Promise<JourneyPendencia[]> {
 
 async function getCurrentCollaboratorId(): Promise<string> {
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new Error('Não autenticado');
+  if (!user?.email) throw new Error('Não autenticado');
+  // A tabela collaborators não tem auth_user_id — o link com auth.users é via email
+  // (mesmo padrão usado em DashboardTime.tsx e na RPC current_collab_id).
   const { data, error } = await supabase
-    .from('collaborators').select('id').eq('auth_user_id', user.id).maybeSingle();
+    .from('collaborators').select('id').eq('email', user.email).maybeSingle();
   if (error) throw error;
   if (!data) throw new Error('Colaborador não encontrado');
   return data.id;
