@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { RowMenu } from '../../components/RowMenu';
 import type { TaskForPanel } from './hooks/useAgendaTasks';
 
 export interface TasksPanelProps {
@@ -9,6 +10,12 @@ export interface TasksPanelProps {
   onTaskClick: (t: TaskForPanel) => void;
   onToggleDone: (t: TaskForPanel) => void;
   onCreateTask: (date: Date) => void;
+  /** Editar (abre sheet/drawer da tarefa). Recebe task. */
+  onEditTask: (t: TaskForPanel) => void;
+  /** Reagendar (pede nova data e atualiza). Recebe task. */
+  onRescheduleTask: (t: TaskForPanel) => void;
+  /** Excluir tarefa. Recebe task. AgendaDesktop deve fazer confirm + delete. */
+  onDeleteTask: (t: TaskForPanel) => void;
 }
 
 const LS = 'agenda.tasksPanel.collapsed';
@@ -40,22 +47,28 @@ export function TasksPanel(p: TasksPanelProps) {
   const done = inRange.filter(t => t.status === 'done');
 
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => {
-    try {
-      return JSON.parse(localStorage.getItem(LS) ?? '{}');
-    } catch {
-      return {};
-    }
+    try { return JSON.parse(localStorage.getItem(LS) ?? '{}'); }
+    catch { return {}; }
   });
   const toggle = (k: string) =>
     setCollapsed(prev => {
       const next = { ...prev, [k]: !prev[k] };
-      try {
-        localStorage.setItem(LS, JSON.stringify(next));
-      } catch {
-        // ignore
-      }
+      try { localStorage.setItem(LS, JSON.stringify(next)); } catch { /* ignore */ }
       return next;
     });
+
+  const renderRow = (t: TaskForPanel, done = false) => (
+    <TaskRow
+      key={t.id}
+      task={t}
+      onClick={p.onTaskClick}
+      onToggle={p.onToggleDone}
+      onEdit={p.onEditTask}
+      onReschedule={p.onRescheduleTask}
+      onDelete={p.onDeleteTask}
+      done={done}
+    />
+  );
 
   return (
     <aside className="w-[320px] shrink-0 border-l border-border bg-bg-surface flex flex-col">
@@ -64,9 +77,7 @@ export function TasksPanel(p: TasksPanelProps) {
         <div className="text-[11px] text-fg-muted">
           {p.view === 'day'
             ? p.currentDate.toLocaleDateString('pt-BR', {
-                weekday: 'short',
-                day: '2-digit',
-                month: '2-digit',
+                weekday: 'short', day: '2-digit', month: '2-digit',
               })
             : 'Semana'}
           {' · '}
@@ -74,51 +85,18 @@ export function TasksPanel(p: TasksPanelProps) {
         </div>
       </header>
       <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2 text-[12px]">
-        <Section
-          title={`ATRASADAS (${overdue.length})`}
-          k="overdue"
+        <Section title={`ATRASADAS (${overdue.length})`} k="overdue"
           collapsed={collapsed.overdue ?? overdue.length === 0}
-          onToggle={() => toggle('overdue')}
-        >
-          {overdue.map(t => (
-            <TaskRow
-              key={t.id}
-              task={t}
-              onClick={p.onTaskClick}
-              onToggle={p.onToggleDone}
-            />
-          ))}
+          onToggle={() => toggle('overdue')}>
+          {overdue.map(t => renderRow(t))}
         </Section>
-        <Section
-          title={`PRA HOJE (${todayTasks.length})`}
-          k="today"
-          collapsed={!!collapsed.today}
-          onToggle={() => toggle('today')}
-        >
-          {todayTasks.map(t => (
-            <TaskRow
-              key={t.id}
-              task={t}
-              onClick={p.onTaskClick}
-              onToggle={p.onToggleDone}
-            />
-          ))}
+        <Section title={`PRA HOJE (${todayTasks.length})`} k="today"
+          collapsed={!!collapsed.today} onToggle={() => toggle('today')}>
+          {todayTasks.map(t => renderRow(t))}
         </Section>
-        <Section
-          title={`CONCLUÍDAS (${done.length})`}
-          k="done"
-          collapsed={collapsed.done ?? true}
-          onToggle={() => toggle('done')}
-        >
-          {done.map(t => (
-            <TaskRow
-              key={t.id}
-              task={t}
-              onClick={p.onTaskClick}
-              onToggle={p.onToggleDone}
-              done
-            />
-          ))}
+        <Section title={`CONCLUÍDAS (${done.length})`} k="done"
+          collapsed={collapsed.done ?? true} onToggle={() => toggle('done')}>
+          {done.map(t => renderRow(t, true))}
         </Section>
       </div>
       <div className="px-3 py-2 border-t border-border">
@@ -134,23 +112,15 @@ export function TasksPanel(p: TasksPanelProps) {
 }
 
 function Section({
-  title,
-  collapsed,
-  onToggle,
-  children,
+  title, collapsed, onToggle, children,
 }: {
-  title: string;
-  k: string;
-  collapsed: boolean;
-  onToggle: () => void;
-  children: React.ReactNode;
+  title: string; k: string; collapsed: boolean;
+  onToggle: () => void; children: React.ReactNode;
 }) {
   return (
     <section>
-      <button
-        onClick={onToggle}
-        className="w-full text-left text-[10px] uppercase tracking-wider text-fg-muted font-semibold py-1 hover:text-fg focus-ring rounded"
-      >
+      <button onClick={onToggle}
+        className="w-full text-left text-[10px] uppercase tracking-wider text-fg-muted font-semibold py-1 hover:text-fg focus-ring rounded">
         {collapsed ? '▶' : '▼'} {title}
       </button>
       {!collapsed && <div className="space-y-1">{children}</div>}
@@ -159,18 +129,18 @@ function Section({
 }
 
 function TaskRow({
-  task,
-  onClick,
-  onToggle,
-  done,
+  task, onClick, onToggle, onEdit, onReschedule, onDelete, done,
 }: {
   task: TaskForPanel;
   onClick: (t: TaskForPanel) => void;
   onToggle: (t: TaskForPanel) => void;
+  onEdit: (t: TaskForPanel) => void;
+  onReschedule: (t: TaskForPanel) => void;
+  onDelete: (t: TaskForPanel) => void;
   done?: boolean;
 }) {
   return (
-    <div className="flex items-start gap-2 px-2 py-1.5 rounded hover:bg-bg-elevated">
+    <div className="group flex items-start gap-2 px-2 py-1.5 rounded hover:bg-bg-elevated">
       <input
         type="checkbox"
         checked={task.status === 'done'}
@@ -186,6 +156,20 @@ function TaskRow({
       >
         {task.title}
       </button>
+      <div className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+        <RowMenu
+          items={[
+            { label: 'Editar', onClick: () => onEdit(task) },
+            { label: 'Reagendar', onClick: () => onReschedule(task) },
+            {
+              label: 'Excluir tarefa',
+              danger: true,
+              confirm: 'Excluir essa tarefa? Essa ação não pode ser desfeita.',
+              onClick: () => onDelete(task),
+            },
+          ]}
+        />
+      </div>
     </div>
   );
 }

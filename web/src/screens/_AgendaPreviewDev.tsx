@@ -154,6 +154,7 @@ export default function AgendaPreviewDev() {
               weekStart={startOfWeek(currentDate)}
               tasks={MOCK_TASKS}
               onTaskClick={() => {}} onToggleDone={() => {}} onCreateTask={() => {}}
+              onEditTask={() => {}} onRescheduleTask={() => {}} onDeleteTask={() => {}}
             />
           )}
         >

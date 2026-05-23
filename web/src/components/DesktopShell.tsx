@@ -11,10 +11,15 @@ import { useAuth } from '../contexts/AuthContext';
 import { useRealtimeSync } from '../hooks/useRealtimeSync';
 
 const AGENDA_PATHS = ['/hoje', '/semana'];
+const FULLSCREEN_PATHS = ['/agenda']; // rotas que renderizam o próprio shell e topbar — escondem TopbarV2 + padding
 const SIDEBAR_COLLAPSED_KEY = 'la-sidebar-collapsed';
 
 function isAgendaRoute(pathname: string): boolean {
   return AGENDA_PATHS.some(p => pathname === p || pathname.startsWith(p + '/'));
+}
+
+function isFullscreenRoute(pathname: string): boolean {
+  return FULLSCREEN_PATHS.some(p => pathname === p || pathname.startsWith(p + '/'));
 }
 
 /**
@@ -46,6 +51,7 @@ export function DesktopShell() {
   const collapsed = isTablet || userCollapsed;
   const sidebarWidth = collapsed ? 64 : 240;
   const showAgendaTabs = isAgendaRoute(pathname);
+  const fullscreen = isFullscreenRoute(pathname);
 
   // Realtime sync com Supabase — mantém TanStack atualizado quando o TOM
   // escreve no banco via WhatsApp.
@@ -62,21 +68,26 @@ export function DesktopShell() {
         collapsed={collapsed}
         onToggleCollapse={isTablet ? undefined : () => setUserCollapsed(v => !v)}
       />
-      <TopbarV2 sidebarCollapsed={collapsed} />
+      {!fullscreen && <TopbarV2 sidebarCollapsed={collapsed} />}
       <main
-        className="absolute top-14 right-0 bottom-0 overflow-y-auto flex flex-col"
+        className={[
+          'absolute right-0 bottom-0 overflow-y-auto flex flex-col',
+          fullscreen ? 'top-0' : 'top-14',
+        ].join(' ')}
         style={{ left: sidebarWidth }}
       >
-        {showAgendaTabs && (
+        {showAgendaTabs && !fullscreen && (
           <div className="w-full px-6 lg:px-10 pt-6 shrink-0">
             <AgendaTabs />
           </div>
         )}
-        {/* flex-1 + min-h-0 garante que o wrapper tem altura DEFINIDA igual ao
-            espaço restante do main. Isso propaga `min-h-full` / `h-full` pros
-            children (PageShell, KanbanBoard) — sem isso, eles colapsam e o
-            conteúdo só ocupa altura natural. */}
-        <div className="w-full px-4 md:px-6 lg:px-10 py-6 flex-1 min-h-0">
+        {/* Em rotas fullscreen (/agenda) — sem padding wrapper: a screen controla 100% da área */}
+        <div
+          className={[
+            'w-full flex-1 min-h-0',
+            fullscreen ? '' : 'px-4 md:px-6 lg:px-10 py-6',
+          ].join(' ')}
+        >
           <Outlet />
         </div>
       </main>

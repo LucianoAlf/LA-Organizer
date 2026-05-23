@@ -117,6 +117,14 @@ export function AgendaDesktop() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['agenda-tasks'] }),
   });
 
+  const deleteTask = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from('tasks').delete().eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['agenda-tasks'] }),
+  });
+
   const setView = useCallback((v: AgendaView) => {
     const next = new URLSearchParams(params);
     next.set('view', v);
@@ -261,7 +269,11 @@ export function AgendaDesktop() {
               currentDate={currentDate}
               weekStart={startOfWeek(currentDate)}
               tasks={tasks}
-              onTaskClick={() => { /* TODO: task edit drawer */ }}
+              onTaskClick={(t) => {
+                // sem TaskEditDrawer ainda — Editar via RowMenu abre QuickCreateSheet com a data atual.
+                // No próximo iteration, abrir TaskEditDrawer paritário com mobile.
+                setQuickCreate({ open: true, dueDate: (t.scheduled_date ?? t.due_date ?? undefined) ?? undefined });
+              }}
               onToggleDone={(t) =>
                 updateTask.mutate({
                   id: t.id,
@@ -269,6 +281,26 @@ export function AgendaDesktop() {
                 })
               }
               onCreateTask={(d) => setQuickCreate({ open: true, dueDate: d.toISOString().slice(0, 10) })}
+              onEditTask={(t) => {
+                // MVP: edit = abre o sheet pré-preenchido com a data.
+                // TODO próximo turno: TaskEditDrawer dedicado paritário com mobile EditTaskSheet.
+                setQuickCreate({ open: true, dueDate: (t.scheduled_date ?? t.due_date ?? undefined) ?? undefined });
+              }}
+              onRescheduleTask={(t) => {
+                const cur = (t.scheduled_date ?? t.due_date ?? '').slice(0, 10);
+                // MVP: prompt nativo. Próximo turno: DatePicker popover ancorado.
+                // eslint-disable-next-line no-alert
+                const next = window.prompt('Reagendar para (AAAA-MM-DD):', cur);
+                if (!next) return;
+                if (!/^\d{4}-\d{2}-\d{2}$/.test(next)) {
+                  toast.error('Formato inválido. Use AAAA-MM-DD.');
+                  return;
+                }
+                updateTask.mutate({ id: t.id, patch: { scheduled_date: next, due_date: next } });
+              }}
+              onDeleteTask={(t) => deleteTask.mutate(t.id, {
+                onError: () => toast.error('Não foi possível excluir.'),
+              })}
             />
           )
         }
