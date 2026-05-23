@@ -8,7 +8,6 @@ import {
   Package, ShoppingBag,
   CalendarRange, History, Settings,
   ChevronLeft, ChevronRight, ChevronDown,
-  Search,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
@@ -169,21 +168,6 @@ export function SidebarV2({ collapsed = false, onToggleCollapse }: SidebarV2Prop
           </div>
         )}
       </div>
-
-      {/* Quick search — visível só no modo expandido */}
-      {!collapsed && (
-        <div className="px-3 py-2 border-b border-border shrink-0">
-          <button
-            type="button"
-            className="w-full flex items-center gap-2 h-8 px-3 rounded-md bg-bg-elevated border border-border text-fg-muted text-[12px] hover:border-tom/40 transition-colors focus-ring"
-            aria-label="Pesquisa rápida (⌘K)"
-          >
-            <Search size={13} />
-            <span className="flex-1 text-left">Buscar...</span>
-            <kbd className="text-[10px] opacity-50 font-mono">⌘K</kbd>
-          </button>
-        </div>
-      )}
 
       {/* Nav groups */}
       <nav className="flex-1 overflow-y-auto py-2">
