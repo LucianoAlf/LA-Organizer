@@ -196,13 +196,18 @@ export async function upsertJourneyConteudoHeader(input: {
   perfilEntrada?: string; transformacaoEsperada?: string;
 }): Promise<string> {
   const userId = await getCurrentCollaboratorId();
-  const { data: existing } = await supabase
+  // cursoId vem como string vazia '' quando o ?curso= não está na URL — coluna
+  // é nullable mas FK valida que o valor exista em la_journey_cursos, então
+  // '' explode com violation. Normaliza pra null antes da query.
+  const cursoIdNorm = input.cursoId || null;
+  const lookup = supabase
     .from('la_journey_conteudo_checkpoint')
     .select('id, status')
     .eq('programa_id', input.programaId)
-    .eq('curso_id', input.cursoId)
-    .eq('checkpoint_id', input.checkpointId)
-    .maybeSingle();
+    .eq('checkpoint_id', input.checkpointId);
+  const { data: existing } = await (cursoIdNorm === null
+    ? lookup.is('curso_id', null).maybeSingle()
+    : lookup.eq('curso_id', cursoIdNorm).maybeSingle());
 
   if (existing) {
     if (existing.status === 'publicado') {
@@ -222,7 +227,7 @@ export async function upsertJourneyConteudoHeader(input: {
       .from('la_journey_conteudo_checkpoint')
       .insert({
         programa_id: input.programaId,
-        curso_id: input.cursoId,
+        curso_id: cursoIdNorm,
         checkpoint_id: input.checkpointId,
         perfil_entrada: input.perfilEntrada ?? null,
         transformacao_esperada: input.transformacaoEsperada ?? null,

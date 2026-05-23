@@ -84,6 +84,13 @@ export function LaJourneyCheckpointPage() {
 
   async function handleAddMarco(tipo: TipoMarco) {
     try {
+      // Guard: checkpoint que separa por curso (ex: Foundation school) exige
+      // ?curso=bateria|canto|... na URL. Sem isso, qualquer write quebra com
+      // FK violation. Avisa explicitamente em vez de deixar estourar.
+      if (checkpoint?.separa_por_curso && !cursoId) {
+        showToast({ kind: 'error', title: 'Selecione um curso', msg: 'Esse checkpoint exige curso (bateria, canto, cordas, teclas...). Volte e abra pelo curso desejado.' });
+        return;
+      }
       // Primeira chamada num checkpoint vazio precisa criar o header antes do marco.
       // upsertJourneyConteudoHeader retorna o id do conteúdo (novo ou existente)
       // — usa direto, sem depender de refetch que não atualiza o closure local.
