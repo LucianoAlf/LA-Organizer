@@ -7,6 +7,7 @@ export type TabId = 'checkpoints' | 'contingencias' | 'time' | 'dia_d';
 
 export interface ProjectFull extends Project {
   event_date?: string | null;
+  event_start_time?: string | null;
 }
 
 export interface CheckpointFull extends Checkpoint {

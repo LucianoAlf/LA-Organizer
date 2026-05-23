@@ -3,9 +3,10 @@
 
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, Crown, Users } from 'lucide-react';
+import { ArrowLeft, Crown, Pencil, Users } from 'lucide-react';
 import { CategoryTag } from './CategoryTag';
 import { DateInput } from './DateInput';
+import { ProjectEditDrawer } from './ProjectEditDrawer';
 import { RowMenu } from './RowMenu';
 import { PROJECT_CATEGORY_LABELS } from '../lib/projectLabels';
 import { brShort } from '../utils/date';
@@ -22,6 +23,7 @@ export function ProjectHeader({
   onUpdateStartDate,
   onUpdateEndDate,
   onUpdateCategory,
+  onUpdateFull,
   onDelete,
 }: {
   project: ProjectFull;
@@ -33,8 +35,10 @@ export function ProjectHeader({
   onUpdateStartDate: (date: string) => void;
   onUpdateEndDate: (date: string) => void;
   onUpdateCategory: (category: ProjectFull['category']) => void;
+  onUpdateFull: (patch: Partial<ProjectFull>) => void;
   onDelete: () => void;
 }) {
+  const [editDrawerOpen, setEditDrawerOpen] = useState(false);
   const [editName, setEditName] = useState(false);
   const [nameVal, setNameVal] = useState(project.name);
   const [editDesc, setEditDesc] = useState(false);
@@ -254,6 +258,14 @@ export function ProjectHeader({
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => setEditDrawerOpen(true)}
+            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-bg-elevated hover:bg-bg-elevated2 border border-border text-body-sm text-fg-muted hover:text-fg focus-ring transition-colors"
+          >
+            <Pencil size={14} />
+            Editar
+          </button>
           <CategoryTag
             project={project}
             label={PROJECT_CATEGORY_LABELS[project.category]}
@@ -281,6 +293,13 @@ export function ProjectHeader({
           <div className="h-full bg-tom transition-[width]" style={{ width: `${pct}%` }} />
         </div>
       </div>
+
+      <ProjectEditDrawer
+        open={editDrawerOpen}
+        onClose={() => setEditDrawerOpen(false)}
+        project={project}
+        onSave={onUpdateFull}
+      />
     </header>
   );
 }

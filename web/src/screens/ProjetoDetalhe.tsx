@@ -38,7 +38,7 @@ import type { CheckpointFull, ProjectFull, TabId } from '../types/projectDetail'
 async function fetchProject(id: string): Promise<ProjectFull | null> {
   const { data, error } = await supabase
     .from('projects')
-    .select('id, name, description, category, status, progress_percent, start_date, end_date, event_date, created_by')
+    .select('id, name, description, category, status, progress_percent, start_date, end_date, event_date, event_start_time, created_by, justification, methodology, location, estimated_hours_week, requires_approval, approved_by, approved_at, rejection_reason')
     .eq('id', id).maybeSingle();
   if (error) throw error;
   return data as ProjectFull | null;
@@ -171,6 +171,7 @@ export function ProjetoDetalhe() {
         onUpdateStartDate={(start_date) => updateProject.mutate({ start_date: start_date || null })}
         onUpdateEndDate={(end_date) => updateProject.mutate({ end_date: end_date || null })}
         onUpdateCategory={(category) => updateProject.mutate({ category })}
+        onUpdateFull={(patch) => updateProject.mutate(patch)}
         onDelete={() => deleteProject.mutate()}
       />
 
