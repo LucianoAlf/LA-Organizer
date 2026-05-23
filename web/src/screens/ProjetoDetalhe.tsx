@@ -168,6 +168,8 @@ export function ProjetoDetalhe() {
         onRename={(name) => updateProject.mutate({ name })}
         onUpdateDescription={(description) => updateProject.mutate({ description: description || null })}
         onUpdateEventDate={(event_date) => updateProject.mutate({ event_date: event_date || null })}
+        onUpdateStartDate={(start_date) => updateProject.mutate({ start_date: start_date || null })}
+        onUpdateEndDate={(end_date) => updateProject.mutate({ end_date: end_date || null })}
         onUpdateCategory={(category) => updateProject.mutate({ category })}
         onDelete={() => deleteProject.mutate()}
       />

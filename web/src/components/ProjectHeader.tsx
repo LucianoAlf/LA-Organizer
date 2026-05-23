@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, Crown, Users } from 'lucide-react';
 import { CategoryTag } from './CategoryTag';
+import { DateInput } from './DateInput';
 import { RowMenu } from './RowMenu';
 import { PROJECT_CATEGORY_LABELS } from '../lib/projectLabels';
 import { brShort } from '../utils/date';
@@ -18,6 +19,8 @@ export function ProjectHeader({
   onRename,
   onUpdateDescription,
   onUpdateEventDate,
+  onUpdateStartDate,
+  onUpdateEndDate,
   onUpdateCategory,
   onDelete,
 }: {
@@ -27,6 +30,8 @@ export function ProjectHeader({
   onRename: (name: string) => void;
   onUpdateDescription: (description: string) => void;
   onUpdateEventDate: (eventDate: string) => void;
+  onUpdateStartDate: (date: string) => void;
+  onUpdateEndDate: (date: string) => void;
   onUpdateCategory: (category: ProjectFull['category']) => void;
   onDelete: () => void;
 }) {
@@ -36,6 +41,8 @@ export function ProjectHeader({
   const [descVal, setDescVal] = useState(project.description ?? '');
   const [editDate, setEditDate] = useState(false);
   const [dateVal, setDateVal] = useState(project.event_date ?? '');
+  const [editStartDate, setEditStartDate] = useState(false);
+  const [editEndDate, setEditEndDate] = useState(false);
 
   function commitName() {
     const v = nameVal.trim();
@@ -193,6 +200,58 @@ export function ProjectHeader({
               + data do evento
             </button>
           ) : null}
+
+          {/* Datas de início e fim do projeto */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1">
+            {/* Início */}
+            <div className="flex items-center gap-1.5 text-body-sm text-fg-muted">
+              <span className="text-fg-muted/60">Início:</span>
+              {editStartDate ? (
+                <DateInput
+                  value={project.start_date ?? ''}
+                  onChange={(date) => {
+                    if (date !== (project.start_date ?? '')) onUpdateStartDate(date);
+                    setEditStartDate(false);
+                  }}
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setEditStartDate(true)}
+                  className="text-fg hover:text-tom transition-colors focus-ring rounded-sm tabular-nums"
+                >
+                  {project.start_date
+                    ? brShort(project.start_date)
+                    : <span className="italic text-fg-muted/60">+ início</span>
+                  }
+                </button>
+              )}
+            </div>
+            {/* Fim */}
+            <div className="flex items-center gap-1.5 text-body-sm text-fg-muted">
+              <span className="text-fg-muted/60">Fim:</span>
+              {editEndDate ? (
+                <DateInput
+                  value={project.end_date ?? ''}
+                  onChange={(date) => {
+                    if (date !== (project.end_date ?? '')) onUpdateEndDate(date);
+                    setEditEndDate(false);
+                  }}
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setEditEndDate(true)}
+                  className="text-fg hover:text-tom transition-colors focus-ring rounded-sm tabular-nums"
+                >
+                  {project.end_date
+                    ? brShort(project.end_date)
+                    : <span className="italic text-fg-muted/60">+ fim</span>
+                  }
+                </button>
+              )}
+            </div>
+          </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <CategoryTag

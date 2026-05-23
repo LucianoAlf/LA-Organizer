@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { LayoutGrid, List, Rocket, Check, X as XIcon, GanttChart, CalendarDays, BarChart3 } from 'lucide-react';
+import { LayoutGrid, List, Rocket, Check, X as XIcon, GanttChart, CalendarDays, BarChart3, Plus } from 'lucide-react';
 import { PageShell } from '../design/primitives/PageShell';
 import { Toolbar } from '../design/primitives/Toolbar';
 import { ViewSwitcher } from '../design/primitives/ViewSwitcher';
@@ -258,9 +258,10 @@ export function ProjetosDesktop() {
                 <button
                   type="button"
                   onClick={() => navigate('/projetos/novo')}
-                  className="h-8 px-3 rounded-md bg-tom text-black text-[12px] font-semibold hover:opacity-90 focus-ring"
+                  className="h-10 px-5 rounded-lg bg-tom text-black text-sm font-semibold hover:opacity-90 focus-ring inline-flex items-center gap-1.5"
                 >
-                  + Novo
+                  <Plus size={16} />
+                  Novo
                 </button>
               </>
             }
