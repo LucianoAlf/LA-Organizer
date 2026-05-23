@@ -170,9 +170,10 @@ export function TimelineGantt({
                 )}
               </div>
 
-              {/* Área de barras + pins (overflow-hidden evita pin vazar pra coluna de label
-                  quando a data esta perto do limite e o transform -50% empurra metade fora) */}
-              <div className="flex-1 relative h-16 overflow-hidden">
+              {/* Área de barras + pins. Sem overflow-hidden — o tooltip dos pins
+                  precisa transbordar verticalmente, e o filtro de range ja garante
+                  que pins fora do periodo nao renderizam (evita stack no left=0). */}
+              <div className="flex-1 relative h-16">
                 {/* Grid lines verticais alinhadas aos ticks */}
                 {ticks.map((t, i) => (
                   <div
