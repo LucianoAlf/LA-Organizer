@@ -42,7 +42,10 @@ export function EventTaskSheet({ open, onClose, event, task, defaultSector }: Pr
   const [status, setStatus] = useState<TaskStatus>('pending');
   const [error, setError] = useState('');
 
-  // Sync state when sheet opens or task changes
+  // Sync state quando o sheet abre ou a task em edição muda.
+  // defaultSector / event.event_date / collaborator?.id excluídos das deps de
+  // propósito: se incluídos, qualquer recarga assíncrona dessas props re-executa
+  // o effect enquanto o sheet está aberto, sobrescrevendo o que o usuário digitou.
   useEffect(() => {
     if (!open) return;
     if (task) {
@@ -63,7 +66,7 @@ export function EventTaskSheet({ open, onClose, event, task, defaultSector }: Pr
       setStatus('pending');
     }
     setError('');
-  }, [open, task, defaultSector, event.event_date, collaborator?.id]);
+  }, [open, task]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load collaborators (filtered by event unit if set; null-unit collaborators always included)
   const { data: collabs = [] } = useQuery({

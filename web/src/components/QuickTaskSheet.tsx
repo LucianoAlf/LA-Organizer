@@ -27,14 +27,16 @@ export function QuickTaskSheet({ open, onClose, defaultDueDate }: Props) {
   const [ctx, setCtx] = useState<TaskContext>('work');
   const [due, setDue] = useState(defaultDueDate || todaySP());
 
-  // Reset form on open + sync default due_date
+  // Reset form on open. defaultDueDate excluído das deps de propósito: se
+  // incluído, o effect re-executa caso o pai recalcule a data enquanto o sheet
+  // está aberto, sobrescrevendo a escolha do usuário.
   useEffect(() => {
     if (open) {
       setTitle('');
       setCtx('work');
       setDue(defaultDueDate || todaySP());
     }
-  }, [open, defaultDueDate]);
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const create = useMutation({
     mutationFn: async () => {
