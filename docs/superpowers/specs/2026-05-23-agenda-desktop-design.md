@@ -563,26 +563,21 @@ Seções (Atrasadas/Pra hoje/Concluídas) colapsáveis. Default colapsada se cou
 
 ## Seção 8 — Migration, Realtime, Testing, Acceptance
 
-### 8.1 Migration única
+### 8.1 Migration — JÁ APLICADA (não rodar)
 
-```sql
--- 2026-05-23_add_color_to_event_categories.sql
-ALTER TABLE event_categories
-  ADD COLUMN IF NOT EXISTS color text;
+A migration `add_color_to_event_categories` já está aplicada no banco `cesnbnrynvxvgdhfmaua`. Slugs reais das 5 categorias existentes e cores populadas:
 
-UPDATE event_categories SET color = CASE slug
-  WHEN 'la_music'        THEN '#A3BE50'
-  WHEN 'mentoria'        THEN '#7B61FF'
-  WHEN 'aula_particular' THEN '#F59E0B'
-  WHEN 'outra_escola'    THEN '#06B6D4'
-  WHEN 'estudio'         THEN '#EC4899'
-  WHEN 'pessoal'         THEN '#64748B'
-  ELSE '#64748B'
-END
-WHERE color IS NULL;
-```
+| Slug | Cor | Uso |
+|---|---|---|
+| `la_music` | `#A3BE50` | atividades da escola |
+| `mentoria` | `#7B61FF` | sessões de mentoria |
+| `estudio` | `#EC4899` | gravação/mixagem |
+| `show` | `#F59E0B` | apresentações |
+| `pessoal` | `#64748B` | médico, família, lazer |
 
-Fallback em código para `color IS NULL`: cor binária por `context` (work=`#A3BE50`, personal=`#64748B`).
+**Não existem** `outra_escola` nem `aula_particular` como slugs.
+
+Fallback em código para `color IS NULL` (categoria nova criada futuramente sem cor): cor binária por `context` (work=`#A3BE50`, personal=`#64748B`).
 
 ### 8.2 Realtime
 
