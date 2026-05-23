@@ -425,6 +425,16 @@ export function Hoje() {
 
   const dueToday = todayList.filter(t => t.due_date === today && t.status !== 'done' && t.status !== 'cancelled');
   const overdue = todayList.filter(t => t.status === 'overdue' || (t.due_date && t.due_date < today && t.status !== 'done' && t.status !== 'cancelled'));
+  // Sub-buckets por idade do atraso — tom cresce com os dias parados.
+  const daysOverdue = (t: { due_date?: string | null }) => {
+    if (!t.due_date) return 0;
+    const a = new Date(today + 'T00:00:00').getTime();
+    const b = new Date(t.due_date + 'T00:00:00').getTime();
+    return Math.max(1, Math.round((a - b) / 86400000));
+  };
+  const overdue1d = overdue.filter(t => daysOverdue(t) === 1);
+  const overdue23d = overdue.filter(t => { const n = daysOverdue(t); return n >= 2 && n <= 3; });
+  const overdue4plus = overdue.filter(t => daysOverdue(t) >= 4);
   const done = todayList.filter(t => t.status === 'done');
 
   // Sprint 26 — só mostra skeleton no carregamento INICIAL (sem dados cacheados).
@@ -621,13 +631,46 @@ export function Hoje() {
         </section>
       ) : (
         <div className="space-y-lg">
-          {overdue.length > 0 && (
+          {overdue4plus.length > 0 && (
             <section className="space-y-sm">
-              <div className="px-1 text-label uppercase tracking-wide text-danger">
-                Atrasadas ({overdue.length})
+              <div className="px-1 text-label uppercase tracking-wide text-danger flex items-center gap-1">
+                <span>🚨</span>
+                <span>Parou há 4+ dias ({overdue4plus.length})</span>
               </div>
               <SortableTaskList
-                tasks={overdue}
+                tasks={overdue4plus}
+                onToggle={(task) => toggleTask.mutate(task)}
+                onEdit={setEditingTask}
+                onReschedule={setReschedulingTask}
+                onDelete={(task) => deleteTask.mutate(task)}
+                onReorder={(ids) => reorderTasks.mutate(ids)}
+              />
+            </section>
+          )}
+          {overdue23d.length > 0 && (
+            <section className="space-y-sm">
+              <div className="px-1 text-label uppercase tracking-wide text-warning flex items-center gap-1">
+                <span>🟠</span>
+                <span>Atrasadas 2-3 dias ({overdue23d.length})</span>
+              </div>
+              <SortableTaskList
+                tasks={overdue23d}
+                onToggle={(task) => toggleTask.mutate(task)}
+                onEdit={setEditingTask}
+                onReschedule={setReschedulingTask}
+                onDelete={(task) => deleteTask.mutate(task)}
+                onReorder={(ids) => reorderTasks.mutate(ids)}
+              />
+            </section>
+          )}
+          {overdue1d.length > 0 && (
+            <section className="space-y-sm">
+              <div className="px-1 text-label uppercase tracking-wide text-danger flex items-center gap-1">
+                <span>🔴</span>
+                <span>Atrasou ontem ({overdue1d.length})</span>
+              </div>
+              <SortableTaskList
+                tasks={overdue1d}
                 onToggle={(task) => toggleTask.mutate(task)}
                 onEdit={setEditingTask}
                 onReschedule={setReschedulingTask}

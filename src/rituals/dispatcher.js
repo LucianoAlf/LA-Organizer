@@ -1619,9 +1619,14 @@ async function detectUnclosedPastEvents(now = new Date()) {
   }
 }
 
-// Sprint 23.10 — Followup do fim do dia: 21h BRT. Pergunta sobre compromissos
-// do DIA atual (end_at hoje, no passado) ainda em scheduled. Marca followup_sent_at
-// pra que o autoCloseStaleEventFollowups feche em 6h se não houver resposta.
+// Sprint 23.10 → revisão: Followup do fim do dia, 21h BRT. Pergunta sobre TODOS
+// os compromissos do DIA (personal + work) ainda em scheduled. Tom conversacional
+// individualizado quando 1 evento ("Como foi a *Reunião com Rose*?"), agregado
+// quando vários.
+//
+// Marca followup_sent_at em todos. AUTO-CLOSE 6h continua restrito a personal
+// (autoCloseStaleEventFollowups segue com .eq('context','personal')) — eventos
+// work nunca fecham sozinhos, ficam no CEO report até resposta humana.
 async function askEndOfDayEventFollowup(now = new Date()) {
   const sp = nowSaoPaulo();
   if (currentSlot(sp) !== timeToSlot('21:00')) return;
@@ -1636,13 +1641,10 @@ async function askEndOfDayEventFollowup(now = new Date()) {
     const q = await isQuietNow(collab, sp);
     if (q.quiet) continue;
 
-    // Sprint 23.11: APENAS context='personal'. Eventos do time vão pro
-    // relatório CEO; auto-close não toca neles.
     const { data: pending, error } = await supabase
       .from('events')
-      .select('id, title, start_at')
+      .select('id, title, start_at, context')
       .eq('collaborator_id', collab.id)
-      .eq('context', 'personal')
       .not('status', 'in', '("done","cancelled")')
       .is('followup_sent_at', null)
       .gte('end_at', dayStartUtc)
@@ -1655,14 +1657,23 @@ async function askEndOfDayEventFollowup(now = new Date()) {
     }
     if (!pending || pending.length === 0) continue;
 
-    const lines = pending.map(e => {
+    const c = pending.length;
+    let msg;
+    if (c === 1) {
+      const e = pending[0];
       const time = new Date(e.start_at).toLocaleString('pt-BR', {
         timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit',
       });
-      return `• ${time} — _${String(e.title).slice(0, 60)}_`;
-    }).join('\n');
-    const c = pending.length;
-    const msg = `🌙 *Como foi o dia?*\n\n${c === 1 ? 'Teve este compromisso' : 'Teve estes compromissos'} hoje:\n${lines}\n\nResponde *"fecha"* pra marcar como feito${c > 1 ? 's' : ''}, ou me conta o que rolou (pra eu guardar como memória).\n\n_Sem resposta em 6h fecho automaticamente._`;
+      msg = `🌙 *Fechamento do dia*\n\nComo foi *${String(e.title).slice(0, 80)}* (${time})?\n\nMe conta — texto ou áudio. Se já fechou, é só dizer "fecha".`;
+    } else {
+      const lines = pending.map(e => {
+        const time = new Date(e.start_at).toLocaleString('pt-BR', {
+          timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit',
+        });
+        return `• ${time} — _${String(e.title).slice(0, 60)}_`;
+      }).join('\n');
+      msg = `🌙 *Como foi o dia?*\n\nTeve estes compromissos:\n${lines}\n\nMe conta como foi cada um — texto ou áudio. Pra fechar tudo, manda "fecha".`;
+    }
 
     try {
       await whatsapp.sendMessage(collab.phone, msg);
@@ -2963,11 +2974,29 @@ async function checkLojaReposicao(ymdToday) {
   console.log(`[checkLojaReposicao] disparou ${totalSent} alerta(s)`);
 }
 
-// Overdue alert: tasks que viraram atrasadas EXATAMENTE 1 dia (vencimento ontem,
-// status != done/cancelled). Sprint 11.2: limitado a 1 dia pra evitar spam — tasks
-// com 2+ dias de atraso ficam só no nudge agregado das 19h (checkAdherenceNudge).
-// Resultado: máx 1 alerta individual por task + 1 agregado/dia se ainda parado.
+// Texto escalado por idade do atraso. Em quiet_day usa tom suave em qualquer faixa.
+// Encerro sempre convida a responder ("me responde aqui, pode ser áudio") pra
+// estimular fechamento bilateral.
+function buildOverdueText(title, n, quiet) {
+  if (quiet) {
+    return `Sei que hoje é dia tranquilo, mas *${title}* tá há ${n} dia${n > 1 ? 's' : ''} sem fechamento. Me responde quando puder — pode ser áudio.`;
+  }
+  if (n === 1) {
+    return `🔴 *${title}* atrasou 1 dia. Resolve hoje ou reagenda? Me responde aqui — pode ser áudio.`;
+  }
+  if (n <= 3) {
+    return `🟠 *${title}* tá parada há ${n} dias. O que rolou? Reagenda, cancela, ou já fechou? Me responde aqui — pode ser áudio.`;
+  }
+  return `🚨 *${title}* tá há ${n} dias sem mexer. Não dá mais pra ignorar — me dá um sinal. Texto, áudio, qualquer coisa.`;
+}
+
+// Overdue alert: tasks atrasadas de 1 a 5 dias, status != done/cancelled.
+// Cobrança individual escalada (tom muda com a idade do atraso). Após 5 dias,
+// task sai do alerta individual e só aparece no nudge agregado das 19h —
+// previne loop infinito de cobrança que vira ruído.
+// Cooldown: alreadyNotifiedToday garante 1 envio/task/dia.
 async function checkOverdueAlerts(ymdToday) {
+  const oldest = ymdOffset(ymdToday, -5);
   const yesterday = ymdOffset(ymdToday, -1);
   // Hotfix pós-Sprint20: mesmo cooldown que checkDeadlineAlerts (6h).
   // Evita loop quando user pede pra reagendar e dispatcher dispara overdue logo após.
@@ -2975,7 +3004,8 @@ async function checkOverdueAlerts(ymdToday) {
   const { data: tasks, error } = await supabase
     .from('tasks')
     .select('id, title, assigned_to, due_date, status, updated_at')
-    .eq('due_date', yesterday)
+    .gte('due_date', oldest)
+    .lte('due_date', yesterday)
     .not('status', 'in', '(done,cancelled)')
     .lt('updated_at', cooldownCutoff)
     .limit(200);
@@ -3022,9 +3052,7 @@ async function checkOverdueAlerts(ymdToday) {
       continue;
     }
     const n = daysLate(t.due_date);
-    const text = q.quiet
-      ? `Sei que hoje é dia tranquilo, mas *${t.title}* atrasou ${n} dia${n > 1 ? 's' : ''}. Resolve quando puder ou reagenda pra outra data?`
-      : `🔴 *${t.title}* tá atrasada ${n} dia${n > 1 ? 's' : ''}. Resolve hoje ou reagenda?`;
+    const text = buildOverdueText(t.title, n, q.quiet);
     try {
       await whatsapp.sendMessage(collab.phone, text);
       await supabase.from('notifications').insert({
