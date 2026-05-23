@@ -9,6 +9,7 @@ import { Login } from './screens/Login';
 import { Hoje } from './screens/Hoje';
 import { Semana } from './screens/Semana';
 import Agenda from './screens/Agenda';
+import AgendaPreviewDev from './screens/_AgendaPreviewDev';
 import { Projetos } from './screens/Projetos';
 import { NovoProjeto } from './screens/NovoProjeto';
 import { ProjetoDetalhe } from './screens/ProjetoDetalhe';
@@ -66,6 +67,7 @@ export default function App() {
     <Suspense fallback={<LoadingState />}>
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/_agenda-preview" element={<AgendaPreviewDev />} />
       <Route path="/design-system" element={<DesignSystem />} />
 
       <Route element={<ProtectedRoute />}>
