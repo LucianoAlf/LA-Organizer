@@ -27,10 +27,14 @@ function Tooltip({
     setOpen(true);
   }
 
+  // Se o caller ja passa absolute/fixed via className, nao adiciona 'relative'
+  // (Tailwind: .relative aparece DEPOIS de .absolute no CSS, entao venceria).
+  const hasOwnPosition = !!className && /\b(absolute|fixed|sticky)\b/.test(className);
+  const baseCls = hasOwnPosition ? '' : 'relative inline-block';
   return (
     <div
       ref={ref}
-      className={['relative', className].filter(Boolean).join(' ')}
+      className={[baseCls, className].filter(Boolean).join(' ')}
       style={style}
       onMouseEnter={handleEnter}
       onMouseLeave={() => setOpen(false)}
@@ -166,8 +170,9 @@ export function TimelineGantt({
                 )}
               </div>
 
-              {/* Área de barras + pins */}
-              <div className="flex-1 relative h-16">
+              {/* Área de barras + pins (overflow-hidden evita pin vazar pra coluna de label
+                  quando a data esta perto do limite e o transform -50% empurra metade fora) */}
+              <div className="flex-1 relative h-16 overflow-hidden">
                 {/* Grid lines verticais alinhadas aos ticks */}
                 {ticks.map((t, i) => (
                   <div
@@ -201,8 +206,11 @@ export function TimelineGantt({
                   );
                 })}
 
-                {/* Markers (pins de checkpoint) */}
-                {laneMarkers.map(m => {
+                {/* Markers (pins de checkpoint) — so renderiza pins dentro do range visivel.
+                    Pins com data fora do range nao aparecem (evita stack no left=0 ou right=100%). */}
+                {laneMarkers
+                  .filter(m => m.date >= rangeStart && m.date <= rangeEnd)
+                  .map(m => {
                   const tooltipText = m.label
                     ? `${m.label}\n${new Date(m.date).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: '2-digit' })}`
                     : new Date(m.date).toLocaleDateString('pt-BR');
