@@ -1,9 +1,11 @@
 import { useState, useRef, useEffect, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { MapPin } from 'lucide-react';
 
 // ---- Tooltip custom (substitui title= nativo do OS) ------------------------
-// CSS-only via group não cobre todos os casos de posicionamento (pins perto
-// do topo clipam). Usamos estado + ref pra calcular se abre pra cima ou baixo.
+// Renderiza o popup via portal em document.body com position:fixed calculado
+// do bounding rect do trigger. Evita problema de DOM order entre lanes (lane
+// de cima ficava com tooltip coberto pela lane de baixo).
 function Tooltip({
   content,
   children,
@@ -16,47 +18,73 @@ function Tooltip({
   style?: React.CSSProperties;
 }) {
   const [open, setOpen] = useState(false);
-  const [above, setAbove] = useState(false);
+  const [coords, setCoords] = useState<{ top: number; left: number; placement: 'above' | 'below' } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
+  function compute() {
+    if (!ref.current) return;
+    const rect = ref.current.getBoundingClientRect();
+    const placement: 'above' | 'below' = rect.top < 80 ? 'below' : 'above';
+    const centerX = rect.left + rect.width / 2;
+    const top = placement === 'above' ? rect.top - 8 : rect.bottom + 8;
+    setCoords({ top, left: centerX, placement });
+  }
+
   function handleEnter() {
-    if (ref.current) {
-      const rect = ref.current.getBoundingClientRect();
-      setAbove(rect.top < 80); // abre pra baixo se perto do topo
-    }
+    compute();
     setOpen(true);
   }
+
+  // Recalcula em scroll/resize enquanto aberto (caso o container role)
+  useEffect(() => {
+    if (!open) return;
+    function update() { compute(); }
+    window.addEventListener('scroll', update, true);
+    window.addEventListener('resize', update);
+    return () => {
+      window.removeEventListener('scroll', update, true);
+      window.removeEventListener('resize', update);
+    };
+  }, [open]);
 
   // Se o caller ja passa absolute/fixed via className, nao adiciona 'relative'
   // (Tailwind: .relative aparece DEPOIS de .absolute no CSS, entao venceria).
   const hasOwnPosition = !!className && /\b(absolute|fixed|sticky)\b/.test(className);
   const baseCls = hasOwnPosition ? '' : 'relative inline-block';
   return (
-    <div
-      ref={ref}
-      className={[baseCls, className].filter(Boolean).join(' ')}
-      style={style}
-      onMouseEnter={handleEnter}
-      onMouseLeave={() => setOpen(false)}
-      onFocus={handleEnter}
-      onBlur={() => setOpen(false)}
-    >
-      {children}
-      {open && content && (
+    <>
+      <div
+        ref={ref}
+        className={[baseCls, className].filter(Boolean).join(' ')}
+        style={style}
+        onMouseEnter={handleEnter}
+        onMouseLeave={() => setOpen(false)}
+        onFocus={handleEnter}
+        onBlur={() => setOpen(false)}
+      >
+        {children}
+      </div>
+      {open && content && coords && createPortal(
         <div
           role="tooltip"
+          style={{
+            position: 'fixed',
+            top: coords.top,
+            left: coords.left,
+            transform: coords.placement === 'above' ? 'translate(-50%, -100%)' : 'translate(-50%, 0)',
+          }}
           className={[
-            'pointer-events-none absolute z-50 left-1/2 -translate-x-1/2',
-            'w-max max-w-[220px] px-2.5 py-1.5 rounded-md',
+            'pointer-events-none z-[9999]',
+            'w-max max-w-[240px] px-2.5 py-1.5 rounded-md',
             'bg-bg-elevated2 border border-border shadow-lg',
             'text-[11px] text-fg leading-snug whitespace-pre-wrap text-center',
-            above ? 'top-full mt-2' : 'bottom-full mb-2',
           ].join(' ')}
         >
           {content}
-        </div>
+        </div>,
+        document.body,
       )}
-    </div>
+    </>
   );
 }
 
