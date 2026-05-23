@@ -58,7 +58,7 @@ export function SidebarV2({ collapsed = false, onToggleCollapse }: SidebarV2Prop
       key: 'principal',
       label: 'Principal',
       items: [
-        { to: '/hoje', label: 'Agenda', Icon: CalendarDays, matchPaths: ['/hoje', '/semana'] },
+        { to: '/agenda?view=day', label: 'Agenda', Icon: CalendarDays, matchPaths: ['/agenda', '/hoje', '/semana'] },
         { to: '/projetos', label: 'Projetos', Icon: Rocket },
         { to: '/checklists', label: 'Checklists', Icon: ClipboardCheck },
         { to: '/habitos', label: 'Hábitos', Icon: Sparkles },

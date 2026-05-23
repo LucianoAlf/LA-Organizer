@@ -8,6 +8,7 @@ import { useBreakpoint } from './hooks/useBreakpoint';
 import { Login } from './screens/Login';
 import { Hoje } from './screens/Hoje';
 import { Semana } from './screens/Semana';
+import Agenda from './screens/Agenda';
 import { Projetos } from './screens/Projetos';
 import { NovoProjeto } from './screens/NovoProjeto';
 import { ProjetoDetalhe } from './screens/ProjetoDetalhe';
@@ -72,6 +73,7 @@ export default function App() {
           <Route index element={<Navigate to="/hoje" replace />} />
           <Route path="hoje" element={<Hoje />} />
           <Route path="semana" element={<Semana />} />
+          <Route path="agenda" element={<Agenda />} />
           <Route path="projetos" element={<Projetos />} />
           <Route path="projetos/novo" element={<NovoProjeto />} />
           <Route path="projetos/:id" element={<ProjetoDetalhe />} />

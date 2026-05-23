@@ -435,10 +435,18 @@ Anotar a assinatura real. Se `useEvents` aceitar range de datas como prop, passa
 
 - [ ] **Step 2: Implementar `useAgendaEvents.ts`**
 
+⚠️ **CORREÇÃO CRÍTICA do schema**: a tabela `events` tem dois campos de categoria:
+- `category` (text, nullable, legacy slug)
+- `category_id` (uuid NOT NULL, FK → `event_categories`)
+
+A cor vem de `event_categories.color` via `category_id`, NÃO via `category` text. Se `useEvents` existente não faz o JOIN com `event_categories`, criar query própria nesse hook (não modificar `useEvents` global pra não quebrar outras telas).
+
 ```ts
 // web/src/screens/agenda/hooks/useAgendaEvents.ts
 import { useMemo } from 'react';
-import { useEvents } from '../../../hooks/useEvents'; // CONFIRMAR caminho real
+import { useQuery } from '@tanstack/react-query';
+import { supabase } from '../../../lib/supabase'; // CONFIRMAR caminho real
+import { useAuth } from '../../../contexts/AuthContext'; // CONFIRMAR caminho real
 import type { AgendaFilters } from './useAgendaFilters';
 
 export interface EventForGrid {
@@ -447,8 +455,8 @@ export interface EventForGrid {
   start_at: string;
   end_at: string;
   context: 'work' | 'personal';
-  category: string;
-  category_color: string | null;
+  category: string;                    // slug (de event_categories.slug ou legacy)
+  category_color: string | null;       // de event_categories.color
   modality: 'presencial' | 'online' | 'hibrido';
   location_text: string | null;
   meeting_url: string | null;
@@ -458,25 +466,48 @@ export interface EventForGrid {
 }
 
 export function useAgendaEvents(params: { from: Date; to: Date; filters: AgendaFilters }) {
-  const { data, isLoading, error } = useEvents({ from: params.from, to: params.to }); // ADAPTAR
+  const { user } = useAuth();
+  const collaboratorId = user?.id; // CONFIRMAR como obter collaborator_id real (pode ser via user_preferences)
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['agenda-events', collaboratorId, params.from.toISOString(), params.to.toISOString()],
+    enabled: !!collaboratorId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('events')
+        .select(`
+          id, title, start_at, end_at, context, category, modality,
+          location_text, meeting_url, status, project_id, source,
+          event_categories!category_id ( slug, label, color )
+        `)
+        .gte('start_at', params.from.toISOString())
+        .lte('start_at', params.to.toISOString())
+        .eq('collaborator_id', collaboratorId);
+      if (error) throw error;
+      return data;
+    },
+  });
+
   const events = useMemo<EventForGrid[]>(() => {
     if (!data) return [];
     return data
-      .filter(e => {
+      .filter((e: any) => {
         if (e.context === 'work' && !params.filters.trabalho) return false;
         if (e.context === 'personal' && !params.filters.pessoal) return false;
         return true;
       })
-      .map(e => ({
+      .map((e: any) => ({
         id: e.id, title: e.title,
         start_at: e.start_at, end_at: e.end_at,
-        context: e.context, category: e.category,
-        category_color: e.category_color ?? null,
+        context: e.context,
+        category: e.event_categories?.slug ?? e.category ?? 'la_music',
+        category_color: e.event_categories?.color ?? null,
         modality: e.modality, location_text: e.location_text,
         meeting_url: e.meeting_url, status: e.status,
         project_id: e.project_id, source: e.source,
       }));
   }, [data, params.filters]);
+
   return { events, isLoading, error };
 }
 ```
@@ -2009,9 +2040,11 @@ Spec ref: Seções 1, 2 (router/URL), 5/6 (mutations + drawers/popovers).
 
 ```tsx
 // web/src/screens/AgendaDesktop.tsx
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
+// IMPORTANTE: confirmar lib de toast usada no projeto (Step 2 desta Task) e ajustar:
+// import { toast } from 'sonner';  // ou 'react-hot-toast', ou wrapper interno
 import { AgendaShell, type AgendaView } from './agenda/AgendaShell';
 import { AgendaLeftRail } from './agenda/AgendaLeftRail';
 import { TasksPanel } from './agenda/TasksPanel';
@@ -2088,29 +2121,31 @@ export function AgendaDesktop() {
   };
   const onToday = () => { const t=new Date(); setDate(t); setMiniMonth(startOfMonth(t)); };
 
-  // Atalhos
+  // ⚠️ Toast: usar o sistema real do projeto (auditar antes — Step 2 da Task 16).
+  // Placeholder para o import correto:
+  // import { toast } from '<lib do projeto>';
+
+  // Atalhos — handler via ref evita closure velha sem re-registrar listener a cada render
+  const handlerRef = useRef<(e: KeyboardEvent) => void>();
+  handlerRef.current = (e: KeyboardEvent) => {
+    if ((e.target as HTMLElement)?.tagName?.match(/INPUT|TEXTAREA|SELECT/)) return;
+    if (e.key === 'd') setView('day');
+    else if (e.key === 'w') setView('week');
+    else if (e.key === 'm') setView('month');
+    else if (e.key === 't') onToday();
+    else if (e.key === 'ArrowLeft') onPrev();
+    else if (e.key === 'ArrowRight') onNext();
+    else if (e.key === 'n') openNewMenu();
+  };
   useEffect(() => {
-    const h = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement)?.tagName?.match(/INPUT|TEXTAREA|SELECT/)) return;
-      if (e.key==='d') setView('day');
-      else if (e.key==='w') setView('week');
-      else if (e.key==='m') setView('month');
-      else if (e.key==='t') onToday();
-      else if (e.key==='ArrowLeft') onPrev();
-      else if (e.key==='ArrowRight') onNext();
-      else if (e.key==='n') openNewMenu();
-    };
+    const h = (e: KeyboardEvent) => handlerRef.current?.(e);
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
-  }); // eslint-disable-line
+  }, []);
 
-  const openNewMenu = () => {
-    const choose = window.confirm('OK = Evento, Cancelar = Tarefa');
-    setQuickCreate({
-      x: window.innerWidth / 2 - 170, y: window.innerHeight / 2,
-      date: currentDate, mode: choose ? 'event' : 'task',
-    });
-  };
+  // Menu "+ Novo" inline (não usar window.confirm)
+  const [newMenu, setNewMenu] = useState<{ x: number; y: number } | null>(null);
+  const openNewMenu = () => setNewMenu({ x: window.innerWidth - 160, y: 64 });
 
   // Mutations com optimistic + toast no erro
   const onEventDrop = async (ev: EventForGrid, newStart: Date) => {
@@ -2120,13 +2155,13 @@ export function AgendaDesktop() {
       end_at: new Date(newStart.getTime() + durationMs).toISOString(),
     };
     try { await updateEvent.mutateAsync({ id: ev.id, patch }); }
-    catch { window.alert('Não foi possível atualizar o evento. Tente de novo.'); }
+    catch { toast.error('Não foi possível atualizar o evento. Tente de novo.'); }
   };
   const onEventResize = async (ev: EventForGrid, newDurMs: number) => {
     const start = new Date(ev.start_at);
     const patch = { end_at: new Date(start.getTime() + newDurMs).toISOString() };
     try { await updateEvent.mutateAsync({ id: ev.id, patch }); }
-    catch { window.alert('Não foi possível redimensionar. Tente de novo.'); }
+    catch { toast.error('Não foi possível redimensionar. Tente de novo.'); }
   };
 
   const centerLabel =
@@ -2212,7 +2247,7 @@ export function AgendaDesktop() {
               else await createTask.mutateAsync(payload as any);
               qc.invalidateQueries({ queryKey: ['events'] });
               qc.invalidateQueries({ queryKey: ['tasks'] });
-            } catch { window.alert('Não foi possível criar. Tente de novo.'); }
+            } catch { toast.error('Não foi possível criar. Tente de novo.'); }
           }}
           onMoreOptions={(draft) => { setQuickCreate(null); setEditingEvent(draft as any); }}
         />
@@ -2223,13 +2258,45 @@ export function AgendaDesktop() {
         onClose={() => setEditingEvent(null)}
         onSave={async (id, patch) => {
           try { await updateEvent.mutateAsync({ id, patch }); }
-          catch { window.alert('Não foi possível salvar.'); }
+          catch { toast.error('Não foi possível salvar.'); }
         }}
         onDelete={async (id) => {
           try { await deleteEvent.mutateAsync(id); }
-          catch { window.alert('Não foi possível deletar.'); }
+          catch { toast.error('Não foi possível deletar.'); }
         }}
       />
+
+      {/* Menu inline do + Novo (não usar window.confirm) */}
+      {newMenu && (
+        <>
+          <div className="fixed inset-0 z-[9997]" onClick={() => setNewMenu(null)} />
+          <div
+            className="fixed z-[9998] w-40 rounded-lg border border-border bg-bg-elevated shadow-xl py-1"
+            style={{ top: newMenu.y, left: newMenu.x }}
+          >
+            <button
+              type="button"
+              className="w-full text-left px-3 py-2 text-[13px] text-fg hover:bg-bg-elevated2 focus-ring"
+              onClick={() => {
+                setNewMenu(null);
+                setQuickCreate({ x: newMenu.x, y: newMenu.y, date: currentDate, mode: 'event' });
+              }}
+            >
+              📅 Evento
+            </button>
+            <button
+              type="button"
+              className="w-full text-left px-3 py-2 text-[13px] text-fg hover:bg-bg-elevated2 focus-ring"
+              onClick={() => {
+                setNewMenu(null);
+                setQuickCreate({ x: newMenu.x, y: newMenu.y, date: currentDate, mode: 'task' });
+              }}
+            >
+              ✓ Tarefa
+            </button>
+          </div>
+        </>
+      )}
     </>
   );
 }
@@ -2242,13 +2309,17 @@ function formatWeekRange(d: Date) {
 }
 ```
 
-- [ ] **Step 2: Auditar nomes reais dos mutators**
+- [ ] **Step 2: Auditar nomes reais dos mutators + lib de toast**
 
 ```bash
 grep -rn "useCreateEvent\|useUpdateEvent\|useDeleteEvent\|useCreateTask\|useUpdateTask" _remote/web/src/hooks 2>/dev/null | head -10
+grep -rn "from 'sonner'\|from 'react-hot-toast'\|toast.error\|toast.success" _remote/web/src --include='*.ts' --include='*.tsx' 2>/dev/null | head -5
 ```
 
-Se nomes/assinaturas diferem do `mutateAsync({id, patch})`, ajustar chamadas no `AgendaDesktop.tsx`.
+Ajustar no `AgendaDesktop.tsx`:
+- Imports/chamadas dos mutators (se assinatura difere de `mutateAsync({id, patch})`)
+- Import do `toast` (substituir o placeholder pela lib real)
+- Se o projeto não usa toast lib, criar wrapper interno `lib/toast.ts` antes de seguir (não usar `window.alert`/`window.confirm`)
 
 - [ ] **Step 3: Validar TS + commit**
 
