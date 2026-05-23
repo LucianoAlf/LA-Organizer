@@ -3046,7 +3046,13 @@ async function applyTaskActions(collaborator, actions) {
           : [];
         if (reminders.length === 0 && a.remind_at && isValidRemindAt(a.remind_at)) {
           insertRow.remind_at = a.remind_at;
-          insertRow.due_date = todaySaoPaulo();
+          // Sprint 23.17 — derivar due_date do DIA do remind_at em BRT (não
+          // hardcodar hoje). Bug observado: TOM emite remind_at=amanhã 10h
+          // sem due_date; engine forçava due_date=hoje; task aparecia em
+          // "PRA HOJE" da PWA. Respeita a.due_date se TOM emitiu (raro).
+          insertRow.due_date = isValidISODate(a.due_date)
+            ? a.due_date
+            : _remindAtToYmdBrt(a.remind_at) || todaySaoPaulo();
         } else {
           insertRow.due_date = isValidISODate(a.due_date) ? a.due_date : todaySaoPaulo();
         }
@@ -3491,6 +3497,25 @@ const VALID_PROJECT_CATEGORIES = ['pedagogical', 'commercial', 'administrative',
 
 function isValidISODate(s) {
   return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s);
+}
+
+// Sprint 23.17 — converte ISO timestamp (Z ou ±HH:MM) pra YYYY-MM-DD no fuso BRT.
+// Usado pra derivar due_date do dia do remind_at quando TOM emite só o lembrete.
+// Retorna null se ISO inválido.
+function _remindAtToYmdBrt(iso) {
+  try {
+    if (typeof iso !== 'string') return null;
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return null;
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Sao_Paulo',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts(d);
+    const y = parts.find(p => p.type === 'year')?.value;
+    const m = parts.find(p => p.type === 'month')?.value;
+    const dd = parts.find(p => p.type === 'day')?.value;
+    return (y && m && dd) ? `${y}-${m}-${dd}` : null;
+  } catch (_) { return null; }
 }
 
 // Validates ISO 8601 timestamp with timezone (Z or ±HH:MM). Sanity-check parses.
