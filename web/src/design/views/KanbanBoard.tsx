@@ -185,9 +185,11 @@ export function KanbanBoard<T>({
           return (
             <div
               key={col.id}
-              className="flex-shrink-0 w-72 flex flex-col bg-bg-elevated2 border border-border rounded-lg overflow-hidden"
+              // Colunas: fundo bem escuro (sutil acima do app), borda discreta + gradiente
+              // top-down pra dar sensacao de elevacao sem ficar clarao "cinza Office"
+              className="flex-shrink-0 w-72 flex flex-col rounded-lg overflow-hidden border border-border/70 bg-gradient-to-b from-[#141414] to-[#0E0E0E] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.03)]"
             >
-              <header className="flex items-center justify-between gap-2 px-3 py-2.5 border-b border-border shrink-0">
+              <header className="flex items-center justify-between gap-2 px-3 py-2.5 border-b border-border/60 shrink-0 bg-black/20">
                 <div className="flex items-center gap-2 min-w-0">
                   {col.accentColor && (
                     <span
