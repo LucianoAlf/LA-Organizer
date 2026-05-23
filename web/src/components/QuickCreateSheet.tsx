@@ -83,7 +83,11 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
     if (!categoryId && defaultCategoryId) setCategoryId(defaultCategoryId);
   }, [defaultCategoryId, categoryId]);
 
-  // Reset when reopening
+  // Reset when reopening — defaultCategoryId excluído das deps intencionalmente:
+  // se incluído, o effect re-executa quando as categorias carregam de forma assíncrona
+  // (defaultCategoryId muda de '' → UUID enquanto o sheet já está aberto), o que
+  // reseta taskCtx para 'work' mesmo que o usuário já tenha selecionado 'Pessoal'.
+  // O late-load effect abaixo cuida de inicializar categoryId quando as categorias chegam.
   useEffect(() => {
     if (open) {
       setError(null);
@@ -94,7 +98,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
       setTaskTime('');
       setTaskQuadrant(null);
       setDelegateTo('');
-      setCategoryId(defaultCategoryId);
+      setCategoryId(''); // late-load effect abaixo seta o default quando categorias carregam
       setCreatingCat(false);
       setNewCatLabel('');
       setStartAt(`${today}T09:00`);
@@ -105,7 +109,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
       setEventQuadrant(null);
       setParticipantIds([]);
     }
-  }, [open, today, defaultCategoryId]);
+  }, [open, today]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-extend end_at to start_at + 60min if user changes start_at past end_at
   useEffect(() => {
