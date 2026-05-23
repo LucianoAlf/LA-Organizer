@@ -8,6 +8,7 @@ import { LoadingState } from '../../components/LoadingState';
 import { EmptyState } from '../../components/EmptyState';
 import { Tabs } from '../../components/Tabs';
 import { Badge } from '../../components/Badge';
+import { showToast } from '../../components/Toast';
 import { useJourneyCheckpoints, useJourneyCursos, useJourneyListaProgresso } from '../../hooks/useLaJourney';
 import { ProgressBar } from './components/ProgressBar';
 import type { Programa, StatusConteudo, JourneyCursoProgresso } from '../../lib/lajourney-types';
@@ -116,9 +117,16 @@ export function LaJourneyListaPage() {
     setCursoId(v);
   }
 
-  function handleCheckpointClick(checkpointId: string) {
+  function handleCheckpointClick(cp: { id: string; separa_por_curso?: boolean }) {
+    // Guard: checkpoints que separam por curso exigem curso selecionado antes
+    // de navegar. Sem isso, a página destino quebra com FK violation ao tentar
+    // salvar qualquer coisa.
+    if (cp.separa_por_curso && !cursoEfetivo) {
+      showToast({ kind: 'info', title: 'Selecione um curso', msg: 'Esse checkpoint exige curso. Escolha bateria, canto, cordas, teclas ou musicalização geral no seletor acima.' });
+      return;
+    }
     const params = cursoEfetivo ? `?curso=${cursoEfetivo}` : '';
-    navigate(`/la-journey/${checkpointId}${params}`);
+    navigate(`/la-journey/${cp.id}${params}`);
   }
 
   const semCursos = showCursoSelect && !loadingCursos && cursoOptions.length === 0;
@@ -208,7 +216,7 @@ export function LaJourneyListaPage() {
               <button
                 key={cp.id}
                 type="button"
-                onClick={() => handleCheckpointClick(cp.id)}
+                onClick={() => handleCheckpointClick(cp)}
                 className="w-full text-left bg-bg-surface border border-border rounded-lg px-4 py-3 hover:bg-bg-elevated transition-colors focus-ring"
               >
                 <div className="flex items-start justify-between gap-3">

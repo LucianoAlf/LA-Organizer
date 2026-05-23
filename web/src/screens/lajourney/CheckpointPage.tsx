@@ -58,10 +58,21 @@ export function LaJourneyCheckpointPage() {
   function flashSaved() {
     setSavingState('saved');
     setTimeout(() => setSavingState('idle'), 1500);
+    // Marca o cache do conteúdo como stale sem refetch imediato (refetchType:none).
+    // Garante que outro usuário abrindo a mesma tela ou esta ao trocar de aba
+    // pega a versão atualizada — sem interromper o textarea que está sendo digitado.
+    qc.invalidateQueries({ queryKey: ['lajourney-conteudo', programa, cursoId, checkpointId], refetchType: 'none' });
   }
 
   function saveHeader(field: 'perfil_entrada' | 'transformacao_esperada', value: string) {
-    if (!checkpointId || !cursoId) return;
+    if (!checkpointId) return;
+    // Sem curso selecionado num checkpoint que separa por curso, salvar é no-op
+    // silencioso — usuário digita e nada acontece. Avisa explicitamente.
+    if (checkpoint?.separa_por_curso && !cursoId) {
+      showToast({ kind: 'info', title: 'Selecione um curso', msg: 'Esse checkpoint exige curso (bateria, canto, cordas, teclas...). Volte e abra pelo curso desejado.' });
+      return;
+    }
+    if (!cursoId) return;
     if (dados?.conteudo?.status === 'publicado') return;
     const key: 'pe' | 'te' = field === 'perfil_entrada' ? 'pe' : 'te';
     if (headerTimerRef.current[key]) clearTimeout(headerTimerRef.current[key]);
@@ -269,15 +280,20 @@ export function LaJourneyCheckpointPage() {
           </MarcoCard>
         ))}
 
-        {!readOnly && (
-          <button
-            type="button"
-            onClick={() => setAddOpen(true)}
-            className="w-full border-2 border-dashed border-border text-fg-muted hover:border-tom hover:text-tom rounded-lg p-md font-semibold text-body-sm"
-          >
-            + Adicionar marco
-          </button>
-        )}
+        {!readOnly && (() => {
+          const cursoMissing = Boolean(checkpoint?.separa_por_curso) && !cursoId;
+          return (
+            <button
+              type="button"
+              onClick={() => setAddOpen(true)}
+              disabled={cursoMissing}
+              title={cursoMissing ? 'Selecione um curso primeiro (bateria, canto, cordas, teclas...)' : undefined}
+              className="w-full border-2 border-dashed border-border text-fg-muted rounded-lg p-md font-semibold text-body-sm enabled:hover:border-tom enabled:hover:text-tom disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {cursoMissing ? '+ Adicionar marco (selecione um curso)' : '+ Adicionar marco'}
+            </button>
+          );
+        })()}
       </div>
 
       {!readOnly && (
