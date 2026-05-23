@@ -134,16 +134,30 @@ async function checkMemoriesEmbedding() {
 // CHECK 4 — Tasks vencidas sem cobrança
 // ─────────────────────────────────────────────────────────────────
 async function checkOverdueTasks() {
+  // Mede cobrança real via notifications.overdue_alert/deadline_alert nas últimas 24h.
+  // `reminded_at` não serve aqui — ela é tocada pelos rituais T-1 (event/operational/personal),
+  // não pelo checkOverdueAlerts que grava em `notifications`.
   const today = todayBrt();
-  const { count, error } = await supabase
+  const since24h = isoHoursAgo(24);
+  const { data: overdue, error } = await supabase
     .from('tasks')
-    .select('id', { count: 'exact', head: true })
+    .select('id')
     .lt('due_date', today)
-    .eq('status', 'pending')
-    .is('reminded_at', null);
+    .eq('status', 'pending');
   if (error) throw error;
-  if (count === 0) return { status: 'ok', detail: 'Nenhuma task vencida sem cobrança' };
-  return { status: 'warning', detail: `${count} tasks vencidas sem cobrança (reminded_at NULL)` };
+  if (!overdue || overdue.length === 0) return { status: 'ok', detail: 'Nenhuma task vencida' };
+  const ids = overdue.map(t => t.id);
+  const { data: notified, error: nErr } = await supabase
+    .from('notifications')
+    .select('reference_id')
+    .in('reference_id', ids)
+    .in('notification_type', ['overdue_alert', 'deadline_alert'])
+    .gte('sent_at', since24h);
+  if (nErr) throw nErr;
+  const notifiedIds = new Set((notified || []).map(n => n.reference_id));
+  const sem_cobranca = overdue.filter(t => !notifiedIds.has(t.id));
+  if (sem_cobranca.length === 0) return { status: 'ok', detail: `${overdue.length} tasks vencidas, todas cobradas nas últimas 24h` };
+  return { status: 'warning', detail: `${sem_cobranca.length}/${overdue.length} tasks vencidas sem cobrança nas últimas 24h` };
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -188,9 +202,10 @@ async function checkSilentCollaborators() {
   if (error) throw error;
   const cutoff = isoHoursAgo(7 * 24);
   const silent = [];
+  // Tabela correta é `conversation_history` (a antiga `messages` nunca existiu).
   for (const c of (collabs || [])) {
     const { count } = await supabase
-      .from('messages')
+      .from('conversation_history')
       .select('id', { count: 'exact', head: true })
       .eq('collaborator_id', c.id)
       .gte('created_at', cutoff);
@@ -204,22 +219,17 @@ async function checkSilentCollaborators() {
 // CHECK 8 — Profiles sem update 7+ dias
 // ─────────────────────────────────────────────────────────────────
 async function checkStaleProfiles() {
+  // `updated_at` é tocado por qualquer write na linha (incluindo bump de
+  // total_interactions), então não mede atualização semântica do perfil.
+  // `last_profile_update` é o timestamp do refresh do perfil pelo LLM.
   const cutoff = isoHoursAgo(7 * 24);
   const { count, error } = await supabase
     .from('collaborator_profiles')
     .select('collaborator_id', { count: 'exact', head: true })
-    .lt('updated_at', cutoff);
-  if (error) {
-    // tenta last_updated_at se updated_at não existir
-    if (/column.*updated_at.*does not exist/i.test(error.message)) {
-      const r2 = await supabase.from('collaborator_profiles').select('collaborator_id', { count: 'exact', head: true }).lt('last_updated_at', cutoff);
-      if (r2.error) throw r2.error;
-      return { status: r2.count > 0 ? 'warning' : 'ok', detail: `${r2.count} profiles sem update 7+ dias` };
-    }
-    throw error;
-  }
+    .lt('last_profile_update', cutoff);
+  if (error) throw error;
   if (count === 0) return { status: 'ok', detail: 'Profiles atualizados' };
-  return { status: 'warning', detail: `${count} profiles sem update 7+ dias` };
+  return { status: 'warning', detail: `${count} profiles sem refresh 7+ dias` };
 }
 
 // ─────────────────────────────────────────────────────────────────
