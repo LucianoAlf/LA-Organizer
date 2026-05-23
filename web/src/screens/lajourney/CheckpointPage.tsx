@@ -83,14 +83,14 @@ export function LaJourneyCheckpointPage() {
   }
 
   async function handleAddMarco(tipo: TipoMarco) {
-    if (!dados?.conteudo) {
-      await upsertJourneyConteudoHeader({ programaId: programa, cursoId, checkpointId: checkpointId! });
-      await refetch();
-      return;
-    }
-    const nextNumero = (dados.marcos[dados.marcos.length - 1]?.numero ?? 0) + 1;
     try {
-      await adicionarJourneyMarco({ conteudoId: dados.conteudo.id, numero: nextNumero, tipo });
+      // Primeira chamada num checkpoint vazio precisa criar o header antes do marco.
+      // upsertJourneyConteudoHeader retorna o id do conteúdo (novo ou existente)
+      // — usa direto, sem depender de refetch que não atualiza o closure local.
+      const conteudoId = dados?.conteudo?.id
+        ?? await upsertJourneyConteudoHeader({ programaId: programa, cursoId, checkpointId: checkpointId! });
+      const nextNumero = (dados?.marcos?.[dados.marcos.length - 1]?.numero ?? 0) + 1;
+      await adicionarJourneyMarco({ conteudoId, numero: nextNumero, tipo });
       showToast({ kind: 'success', title: 'Marco adicionado.' });
       qc.invalidateQueries({ queryKey: ['lajourney-conteudo', programa, cursoId, checkpointId] });
     } catch (e) {
