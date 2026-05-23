@@ -298,8 +298,8 @@ export function LaJourneyCheckpointPage() {
 
       {!readOnly && (
         <div
-          className="fixed left-0 right-0 bg-bg-surface border-t border-border p-md flex gap-sm z-40"
-          style={{ bottom: 'calc(4rem + env(safe-area-inset-bottom))' }}
+          className="sticky bottom-0 -mx-md mt-md bg-bg-surface border-t border-border px-md py-md flex gap-sm z-40"
+          style={{ paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))' }}
         >
           {status === 'rascunho' && (
             <button
