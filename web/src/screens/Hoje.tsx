@@ -125,9 +125,11 @@ async function fetchTasksToday(collabId: string, viewDate: string, isToday: bool
 }
 
 async function fetchDelegatedTasks(collabId: string, viewDate: string, isToday: boolean): Promise<Task[]> {
+  const baseSelect = 'id, title, status, context, priority, category, action_type, source, due_date, scheduled_date, remind_at, eisenhower_quadrant, sort_position, project_id, assigned_to, created_by, completed_at, projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(full_name)';
+
   let q = supabase
     .from('tasks')
-    .select('id, title, status, context, priority, category, action_type, source, due_date, scheduled_date, remind_at, eisenhower_quadrant, sort_position, project_id, assigned_to, created_by, completed_at, projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(full_name)')
+    .select(baseSelect)
     .eq('created_by', collabId)
     .neq('assigned_to', collabId)
     .neq('status', 'cancelled');
@@ -140,7 +142,29 @@ async function fetchDelegatedTasks(collabId: string, viewDate: string, isToday: 
     .order('sort_position', { ascending: true, nullsFirst: false })
     .order('due_date', { ascending: true });
   if (error) throw error;
-  return (data ?? []) as unknown as Task[];
+  const rows = (data ?? []) as unknown as Task[];
+
+  // Sprint 23.16 — mesmo fix de fetchTasksToday: tasks delegadas concluídas
+  // no dia da view (independente de due_date). Cobre "delegada atrasada
+  // concluída hoje pelo assignee".
+  const startUtc = `${viewDate}T03:00:00.000Z`;
+  const next = new Date(viewDate + 'T12:00:00Z');
+  next.setUTCDate(next.getUTCDate() + 1);
+  const endUtc = `${next.toISOString().slice(0, 10)}T03:00:00.000Z`;
+
+  const { data: doneData, error: doneErr } = await supabase
+    .from('tasks')
+    .select(baseSelect)
+    .eq('created_by', collabId)
+    .neq('assigned_to', collabId)
+    .eq('status', 'done')
+    .gte('completed_at', startUtc)
+    .lt('completed_at', endUtc);
+  if (doneErr) throw doneErr;
+
+  const seen = new Set<string>(rows.map(r => r.id));
+  const extras = ((doneData ?? []) as unknown as Task[]).filter(t => !seen.has(t.id));
+  return rows.concat(extras);
 }
 
 type TabKey = TaskContext | 'delegated';
