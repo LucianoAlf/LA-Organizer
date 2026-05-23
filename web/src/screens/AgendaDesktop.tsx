@@ -11,7 +11,7 @@ import { DayView } from './agenda/views/DayView';
 import { WeekView } from './agenda/views/WeekView';
 import { MonthView } from './agenda/views/MonthView';
 import { MonthDayDrawer } from './agenda/components/MonthDayDrawer';
-import { QuickCreatePopover } from './agenda/components/QuickCreatePopover';
+import { QuickCreateSheet } from '../components/QuickCreateSheet';
 import { EventEditDrawer } from './agenda/components/EventEditDrawer';
 import { useAgendaFilters } from './agenda/hooks/useAgendaFilters';
 import { useAgendaEvents, type EventForGrid } from './agenda/hooks/useAgendaEvents';
@@ -80,11 +80,8 @@ export function AgendaDesktop() {
   const { filters, toggle } = useAgendaFilters();
   const [selectedMonthDay, setSelectedMonthDay] = useState<Date | null>(null);
   const [miniMonth, setMiniMonth] = useState<Date>(startOfMonth(currentDate));
-  const [quickCreate, setQuickCreate] = useState<{
-    x: number; y: number; date: Date; time?: Date; mode: 'event' | 'task';
-  } | null>(null);
+  const [quickCreate, setQuickCreate] = useState<{ open: boolean; dueDate?: string }>({ open: false });
   const [editingEvent, setEditingEvent] = useState<EventForGrid | null>(null);
-  const [newMenu, setNewMenu] = useState<{ x: number; y: number } | null>(null);
 
   const { from, to } = useMemo(() => {
     if (view === 'day') return { from: startOfDay(currentDate), to: endOfDay(currentDate) };
@@ -95,29 +92,7 @@ export function AgendaDesktop() {
   const { events } = useAgendaEvents({ from, to, filters });
   const { tasks } = useAgendaTasks({ from, to, filters });
 
-  // Mutations — supabase direto, padrão Hoje.tsx/Semana.tsx
-  const createEvent = useMutation({
-    mutationFn: async (payload: {
-      title: string; start_at: string; end_at: string;
-      category: string; context: 'work' | 'personal';
-    }) => {
-      const { error } = await supabase.from('events').insert({
-        title: payload.title,
-        start_at: payload.start_at,
-        end_at: payload.end_at,
-        category: payload.category,
-        context: payload.context,
-        collaborator_id: collabId,
-        created_by: collabId,
-        modality: 'presencial',
-        source: 'manual',
-        status: 'scheduled',
-      });
-      if (error) throw error;
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['agenda-events'] }),
-  });
-
+  // Mutations — update/delete events e update tasks (create event/task vem do QuickCreateSheet).
   const updateEvent = useMutation({
     mutationFn: async ({ id, patch }: { id: string; patch: Partial<EventForGrid> }) => {
       const { error } = await supabase.from('events').update(patch).eq('id', id);
@@ -132,23 +107,6 @@ export function AgendaDesktop() {
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['agenda-events'] }),
-  });
-
-  const createTask = useMutation({
-    mutationFn: async (payload: {
-      title: string; due_date: string; context: 'work' | 'personal';
-    }) => {
-      const { error } = await supabase.from('tasks').insert({
-        title: payload.title,
-        due_date: payload.due_date,
-        context: payload.context,
-        assigned_to: collabId,
-        created_by: collabId,
-        status: 'pending',
-      });
-      if (error) throw error;
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['agenda-tasks'] }),
   });
 
   const updateTask = useMutation({
@@ -196,7 +154,7 @@ export function AgendaDesktop() {
   }, [setDate]);
 
   const openNewMenu = useCallback(() => {
-    setNewMenu({ x: window.innerWidth - 200, y: 64 });
+    setQuickCreate({ open: true });
   }, []);
 
   // Atalhos via ref — evita closure velha sem re-registrar listener
@@ -268,7 +226,7 @@ export function AgendaDesktop() {
         onPrev={onPrev}
         onNext={onNext}
         onToday={onToday}
-        onNewClick={openNewMenu}
+        onNewClick={() => setQuickCreate({ open: true })}
         leftRail={
           <AgendaLeftRail
             miniMonth={miniMonth}
@@ -292,8 +250,8 @@ export function AgendaDesktop() {
                 onClose={() => setSelectedMonthDay(null)}
                 onEventClick={setEditingEvent}
                 onTaskClick={() => { /* TODO: task edit drawer */ }}
-                onCreateEvent={(d) => setQuickCreate({ x: window.innerWidth - 360, y: 120, date: d, mode: 'event' })}
-                onCreateTask={(d) => setQuickCreate({ x: window.innerWidth - 360, y: 120, date: d, mode: 'task' })}
+                onCreateEvent={(d) => setQuickCreate({ open: true, dueDate: d.toISOString().slice(0, 10) })}
+                onCreateTask={(d) => setQuickCreate({ open: true, dueDate: d.toISOString().slice(0, 10) })}
                 onOpenDayView={(d) => { setDate(d); setView('day'); }}
               />
             </div>
@@ -310,7 +268,7 @@ export function AgendaDesktop() {
                   patch: { status: t.status === 'done' ? 'pending' : 'done' },
                 })
               }
-              onCreateTask={(d) => setQuickCreate({ x: window.innerWidth - 360, y: 120, date: d, mode: 'task' })}
+              onCreateTask={(d) => setQuickCreate({ open: true, dueDate: d.toISOString().slice(0, 10) })}
             />
           )
         }
@@ -319,9 +277,7 @@ export function AgendaDesktop() {
           <DayView
             date={currentDate}
             events={events}
-            onSlotClick={(d) => setQuickCreate({
-              x: window.innerWidth / 2 - 170, y: window.innerHeight / 2 - 100, date: d, time: d, mode: 'event',
-            })}
+            onSlotClick={(d) => setQuickCreate({ open: true, dueDate: d.toISOString().slice(0, 10) })}
             onEventClick={setEditingEvent}
             onEventDrop={onEventDrop}
             onEventResize={onEventResize}
@@ -331,9 +287,7 @@ export function AgendaDesktop() {
           <WeekView
             weekStart={startOfWeek(currentDate)}
             events={events}
-            onSlotClick={(d) => setQuickCreate({
-              x: window.innerWidth / 2 - 170, y: window.innerHeight / 2 - 100, date: d, time: d, mode: 'event',
-            })}
+            onSlotClick={(d) => setQuickCreate({ open: true, dueDate: d.toISOString().slice(0, 10) })}
             onEventClick={setEditingEvent}
             onEventDrop={onEventDrop}
             onEventResize={onEventResize}
@@ -347,36 +301,16 @@ export function AgendaDesktop() {
             onDayClick={setSelectedMonthDay}
             onDayDoubleClick={(d) => { setDate(d); setView('day'); }}
             onEventClick={setEditingEvent}
-            onEmptyAreaClick={(d) => setQuickCreate({
-              x: window.innerWidth / 2 - 170, y: window.innerHeight / 2 - 100, date: d, mode: 'event',
-            })}
+            onEmptyAreaClick={(d) => setQuickCreate({ open: true, dueDate: d.toISOString().slice(0, 10) })}
           />
         )}
       </AgendaShell>
 
-      {quickCreate && (
-        <QuickCreatePopover
-          mode={quickCreate.mode}
-          anchor={quickCreate}
-          onClose={() => setQuickCreate(null)}
-          onCreate={async (payload) => {
-            try {
-              if (quickCreate.mode === 'event') {
-                await createEvent.mutateAsync(payload as Parameters<typeof createEvent.mutateAsync>[0]);
-              } else {
-                await createTask.mutateAsync(payload as Parameters<typeof createTask.mutateAsync>[0]);
-              }
-            } catch {
-              toast.error('Não foi possível criar. Tente de novo.');
-            }
-          }}
-          onMoreOptions={(draft) => {
-            setQuickCreate(null);
-            // Abre EventEditDrawer com draft; tipo é parcial — cast intencional
-            setEditingEvent(draft as unknown as EventForGrid);
-          }}
-        />
-      )}
+      <QuickCreateSheet
+        open={quickCreate.open}
+        onClose={() => setQuickCreate({ open: false })}
+        defaultDueDate={quickCreate.dueDate}
+      />
 
       <EventEditDrawer
         event={editingEvent}
@@ -398,37 +332,6 @@ export function AgendaDesktop() {
         }}
       />
 
-      {/* Menu inline + Novo — substitui window.confirm */}
-      {newMenu && (
-        <>
-          <div className="fixed inset-0 z-[9997]" onClick={() => setNewMenu(null)} />
-          <div
-            className="fixed z-[9998] w-44 rounded-lg border border-border bg-bg-elevated shadow-xl py-1"
-            style={{ top: newMenu.y, left: newMenu.x }}
-          >
-            <button
-              type="button"
-              className="w-full text-left px-3 py-2 text-[13px] text-fg hover:bg-bg-elevated2 focus-ring"
-              onClick={() => {
-                setNewMenu(null);
-                setQuickCreate({ x: newMenu.x, y: newMenu.y + 32, date: currentDate, mode: 'event' });
-              }}
-            >
-              Evento
-            </button>
-            <button
-              type="button"
-              className="w-full text-left px-3 py-2 text-[13px] text-fg hover:bg-bg-elevated2 focus-ring"
-              onClick={() => {
-                setNewMenu(null);
-                setQuickCreate({ x: newMenu.x, y: newMenu.y + 32, date: currentDate, mode: 'task' });
-              }}
-            >
-              Tarefa
-            </button>
-          </div>
-        </>
-      )}
     </>
   );
 }
