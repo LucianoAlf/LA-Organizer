@@ -75,12 +75,17 @@ async function fetchHabitsToday(collabId: string): Promise<HabitToday[]> {
 
 // Sprint 22.7 — exclui 'cancelled' da view de Hoje. Cancelladas só interessam em
 // histórico, não no daily focus.
+// Sprint 23.16 — bugfix: tasks ATRASADAS concluídas no DIA da view sumiam
+// porque o OR só pegava (due_date=view) OU (due_date<view AND pending).
+// Quando done, caía fora dos dois braços. Adiciona segundo query: tasks
+// concluídas dentro do dia da view (completed_at no range), independente
+// de due_date. Merge dedup. View "Concluídas" passa a contar correto.
 async function fetchTasksToday(collabId: string, viewDate: string, isToday: boolean): Promise<Task[]> {
-  // Sprint 22.49 — quando navega pra outro dia, busca apenas tasks daquele dia.
-  // Quando viewDate === hoje real, mantem comportamento original (inclui atrasadas).
+  const baseSelect = 'id, title, status, context, priority, category, action_type, source, due_date, scheduled_date, remind_at, eisenhower_quadrant, sort_position, project_id, assigned_to, created_by, completed_at, projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(full_name)';
+
   let q = supabase
     .from('tasks')
-    .select('id, title, status, context, priority, category, action_type, source, due_date, scheduled_date, remind_at, eisenhower_quadrant, sort_position, project_id, assigned_to, created_by, completed_at, projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(full_name)')
+    .select(baseSelect)
     .eq('assigned_to', collabId)
     .neq('status', 'cancelled');
   if (isToday) {
@@ -95,7 +100,28 @@ async function fetchTasksToday(collabId: string, viewDate: string, isToday: bool
     .order('due_date', { ascending: true })
     .order('eisenhower_quadrant', { ascending: true, nullsFirst: false });
   if (error) throw error;
-  return (data ?? []) as unknown as Task[];
+  const rows = (data ?? []) as unknown as Task[];
+
+  // Sprint 23.16 — segundo query: tasks concluídas DENTRO do dia da view
+  // (independente de due_date). Cobre "atrasada concluída hoje".
+  // viewDate é YYYY-MM-DD em BRT. Dia BRT 00:00 = UTC 03:00 do mesmo dia.
+  const startUtc = `${viewDate}T03:00:00.000Z`;
+  const next = new Date(viewDate + 'T12:00:00Z');
+  next.setUTCDate(next.getUTCDate() + 1);
+  const endUtc = `${next.toISOString().slice(0, 10)}T03:00:00.000Z`;
+
+  const { data: doneData, error: doneErr } = await supabase
+    .from('tasks')
+    .select(baseSelect)
+    .eq('assigned_to', collabId)
+    .eq('status', 'done')
+    .gte('completed_at', startUtc)
+    .lt('completed_at', endUtc);
+  if (doneErr) throw doneErr;
+
+  const seen = new Set<string>(rows.map(r => r.id));
+  const extras = ((doneData ?? []) as unknown as Task[]).filter(t => !seen.has(t.id));
+  return rows.concat(extras);
 }
 
 async function fetchDelegatedTasks(collabId: string, viewDate: string, isToday: boolean): Promise<Task[]> {

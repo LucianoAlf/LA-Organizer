@@ -161,6 +161,22 @@ export function ProjetosDesktop() {
     onError: (err: Error) => showToast({ kind: 'error', title: 'Erro', msg: err.message }),
   });
 
+  // Update genérico de campos do projeto — usado pelo ProjectEditDrawer
+  // disparado a partir do ProjectDetailDrawer (botão "Editar").
+  const updateProjectMut = useMutation({
+    mutationFn: async ({ id, patch }: { id: string; patch: Partial<Project> }) => {
+      const { error } = await supabase.from('projects').update(patch).eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ['projects'] });
+      // Atualiza o card aberto no drawer otimistamente para refletir o patch.
+      setSelected(prev => (prev && prev.id === vars.id ? { ...prev, ...vars.patch } as Project : prev));
+      showToast({ kind: 'success', title: 'Projeto atualizado' });
+    },
+    onError: (err: Error) => showToast({ kind: 'error', title: 'Erro ao salvar', msg: err.message }),
+  });
+
   // DnD do Kanban: arrastar card entre colunas muda o status do projeto.
   const moveStatusMut = useMutation({
     mutationFn: async ({ id, newStatus }: { id: string; newStatus: ProjectStatus }) => {
@@ -425,7 +441,10 @@ export function ProjetosDesktop() {
               id: p.id,
               date: p.start_date!.slice(0, 10), // YYYY-MM-DD
               label: p.name,
-              color: STATUS_COLORS[p.status],
+              // Cor por CATEGORIA (consistente com a Linha do tempo) — 6 cores
+              // distintas dão hierarquia semântica forte. STATUS_COLORS é mantido
+              // só para referência futura caso o usuário queira alternar.
+              color: CATEGORY_BADGE[p.category].base,
             }));
             return (
               <div className="h-[600px]">
@@ -447,6 +466,10 @@ export function ProjetosDesktop() {
       <ProjectDetailDrawer
         project={selected}
         onClose={() => setSelected(null)}
+        onUpdate={async patch => {
+          if (!selected) return;
+          await updateProjectMut.mutateAsync({ id: selected.id, patch: patch as Partial<Project> });
+        }}
       />
     </>
   );

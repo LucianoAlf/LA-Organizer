@@ -1,12 +1,20 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ExternalLink, Calendar, Users, Tag, Activity } from 'lucide-react';
+import { ExternalLink, Calendar, Users, Tag, Activity, Pencil } from 'lucide-react';
 import { DetailDrawer } from '../../design/primitives/DetailDrawer';
+import { ProjectEditDrawer } from '../../components/ProjectEditDrawer';
 import type { Project } from '../../types';
+import type { ProjectFull } from '../../types/projectDetail';
 import { CATEGORY_BADGE, KANBAN_COLUMNS } from './constants';
 
 interface ProjectDetailDrawerProps {
   project: Project | null;
   onClose: () => void;
+  /**
+   * Quando fornecido, exibe um botao "Editar" no footer que abre o
+   * ProjectEditDrawer. O callback recebe o patch a aplicar no projeto.
+   */
+  onUpdate?: (patch: Partial<ProjectFull>) => void | Promise<void>;
 }
 
 function formatDate(iso: string | null): string {
@@ -18,11 +26,18 @@ function formatDate(iso: string | null): string {
   }
 }
 
-export function ProjectDetailDrawer({ project, onClose }: ProjectDetailDrawerProps) {
+export function ProjectDetailDrawer({ project, onClose, onUpdate }: ProjectDetailDrawerProps) {
   const navigate = useNavigate();
+  const [editOpen, setEditOpen] = useState(false);
 
   if (!project) {
     return <DetailDrawer open={false} onClose={onClose} title="">{null}</DetailDrawer>;
+  }
+
+  async function handleSave(patch: Partial<ProjectFull>) {
+    if (!onUpdate) return;
+    await onUpdate(patch);
+    setEditOpen(false);
   }
 
   const cat = CATEGORY_BADGE[project.category];
@@ -31,6 +46,7 @@ export function ProjectDetailDrawer({ project, onClose }: ProjectDetailDrawerPro
   const progress = Math.max(0, Math.min(100, project.progress_percent ?? 0));
 
   return (
+    <>
     <DetailDrawer
       open={!!project}
       onClose={onClose}
@@ -48,14 +64,35 @@ export function ProjectDetailDrawer({ project, onClose }: ProjectDetailDrawerPro
         </span>
       }
       footer={
-        <button
-          type="button"
-          onClick={() => { onClose(); navigate(`/projetos/${project.id}`); }}
-          className="w-full h-9 flex items-center justify-center gap-2 rounded-md bg-tom text-black text-[13px] font-semibold hover:opacity-90 transition-opacity focus-ring"
-        >
-          <ExternalLink size={14} />
-          Abrir projeto
-        </button>
+        onUpdate ? (
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setEditOpen(true)}
+              className="flex-1 h-9 flex items-center justify-center gap-2 rounded-md bg-bg-elevated border border-border text-fg text-[13px] font-semibold hover:bg-bg-elevated2 transition-colors focus-ring"
+            >
+              <Pencil size={14} />
+              Editar
+            </button>
+            <button
+              type="button"
+              onClick={() => { onClose(); navigate(`/projetos/${project.id}`); }}
+              className="flex-1 h-9 flex items-center justify-center gap-2 rounded-md bg-tom text-black text-[13px] font-semibold hover:opacity-90 transition-opacity focus-ring"
+            >
+              <ExternalLink size={14} />
+              Abrir
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => { onClose(); navigate(`/projetos/${project.id}`); }}
+            className="w-full h-9 flex items-center justify-center gap-2 rounded-md bg-tom text-black text-[13px] font-semibold hover:opacity-90 transition-opacity focus-ring"
+          >
+            <ExternalLink size={14} />
+            Abrir projeto
+          </button>
+        )
       }
     >
       <div className="space-y-4">
@@ -123,5 +160,14 @@ export function ProjectDetailDrawer({ project, onClose }: ProjectDetailDrawerPro
         )}
       </div>
     </DetailDrawer>
+    {onUpdate && (
+      <ProjectEditDrawer
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+        project={project as unknown as ProjectFull}
+        onSave={handleSave}
+      />
+    )}
+    </>
   );
 }

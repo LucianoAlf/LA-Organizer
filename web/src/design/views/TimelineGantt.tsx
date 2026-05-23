@@ -4,7 +4,17 @@ import { MapPin } from 'lucide-react';
 // ---- Tooltip custom (substitui title= nativo do OS) ------------------------
 // CSS-only via group não cobre todos os casos de posicionamento (pins perto
 // do topo clipam). Usamos estado + ref pra calcular se abre pra cima ou baixo.
-function Tooltip({ content, children }: { content: ReactNode; children: ReactNode }) {
+function Tooltip({
+  content,
+  children,
+  className,
+  style,
+}: {
+  content: ReactNode;
+  children: ReactNode;
+  className?: string;
+  style?: React.CSSProperties;
+}) {
   const [open, setOpen] = useState(false);
   const [above, setAbove] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -20,7 +30,8 @@ function Tooltip({ content, children }: { content: ReactNode; children: ReactNod
   return (
     <div
       ref={ref}
-      className="relative inline-flex"
+      className={['relative', className].filter(Boolean).join(' ')}
+      style={style}
       onMouseEnter={handleEnter}
       onMouseLeave={() => setOpen(false)}
       onFocus={handleEnter}
@@ -175,16 +186,14 @@ export function TimelineGantt({
                     <Tooltip
                       key={item.id}
                       content={item.label}
+                      className="absolute top-1/2 -translate-y-1/2"
+                      style={{ left: `${left}%`, width: `${width}%` }}
                     >
                       <button
                         type="button"
                         onClick={() => onItemClick?.(item)}
-                        className="absolute top-1/2 -translate-y-1/2 h-7 rounded-md px-2 text-[11px] font-semibold text-white truncate text-left hover:opacity-85 transition-opacity focus-ring"
-                        style={{
-                          left: `${left}%`,
-                          width: `${width}%`,
-                          backgroundColor: item.color ?? '#A3BE50',
-                        }}
+                        className="block w-full h-7 rounded-md px-2 text-[11px] font-semibold text-white truncate text-left hover:opacity-85 transition-opacity focus-ring"
+                        style={{ backgroundColor: item.color ?? '#A3BE50' }}
                       >
                         {item.label}
                       </button>
@@ -198,17 +207,21 @@ export function TimelineGantt({
                     ? `${m.label}\n${new Date(m.date).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: '2-digit' })}`
                     : new Date(m.date).toLocaleDateString('pt-BR');
                   return (
-                    <Tooltip key={m.id} content={tooltipText}>
+                    <Tooltip
+                      key={m.id}
+                      content={tooltipText}
+                      className="absolute z-20"
+                      style={{
+                        left: `${pct(m.date, rangeStart, rangeEnd)}%`,
+                        top: '50%',
+                        transform: 'translate(-50%, calc(-50% - 18px))',
+                      }}
+                    >
                       <button
                         type="button"
                         onClick={() => onMarkerClick?.(m)}
-                        className="absolute z-20 grid place-items-center hover:scale-110 transition-transform focus-ring rounded"
-                        style={{
-                          left: `${pct(m.date, rangeStart, rangeEnd)}%`,
-                          top: '50%',
-                          transform: 'translate(-50%, calc(-50% - 18px))',
-                          filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.55))',
-                        }}
+                        className="grid place-items-center hover:scale-110 transition-transform focus-ring rounded"
+                        style={{ filter: 'drop-shadow(0 1px 3px rgba(0,0,0,0.55))' }}
                       >
                         <MapPin
                           size={18}
