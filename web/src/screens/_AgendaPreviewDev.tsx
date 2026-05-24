@@ -1,16 +1,14 @@
 // Dev-only preview route — renderiza o AgendaShell completo com mock data, sem auth.
 // Inclui fake sidebar global à esquerda pra mostrar como fica tudo junto.
 
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { CalendarDays, Rocket, ClipboardCheck, Sparkles, Users, Settings } from 'lucide-react';
 import { AgendaShell, type AgendaView } from './agenda/AgendaShell';
-import { AgendaLeftRail } from './agenda/AgendaLeftRail';
-import { TasksPanel } from './agenda/TasksPanel';
+import { AgendaDesktopLeftPanel } from './agenda/leftPanel/AgendaDesktopLeftPanel';
 import { DayView } from './agenda/views/DayView';
 import { WeekView } from './agenda/views/WeekView';
 import { MonthView } from './agenda/views/MonthView';
-import { MonthDayDrawer } from './agenda/components/MonthDayDrawer';
-import { useAgendaFilters } from './agenda/hooks/useAgendaFilters';
+
 import type { EventForGrid } from './agenda/hooks/useAgendaEvents';
 import type { TaskForPanel } from './agenda/hooks/useAgendaTasks';
 
@@ -65,6 +63,17 @@ const MOCK_TASKS: TaskForPanel[] = [
     scheduled_date: todayIso, due_date: null, delegated_to: null },
 ];
 
+const MOCK_HABITS_DAY = [
+  { id: 'h1', name: 'Meditação + leitura', done_today: true, current_streak: 5 },
+  { id: 'h2', name: 'Beber água', done_today: true, current_streak: 12 },
+  { id: 'h3', name: 'Academia', done_today: false, current_streak: 0 },
+];
+const MOCK_HABITS_WEEK = [
+  { id: 'h1', name: 'Meditação + leitura', week: [true,false,false,false,true,true,false], current_streak: 5 },
+  { id: 'h2', name: 'Beber água', week: [true,true,true,true,true,true,false], current_streak: 12 },
+  { id: 'h3', name: 'Academia', week: [false,true,true,false,true,false,false], current_streak: 0 },
+];
+
 // Fake sidebar global (visual only, pra mostrar a foto completa do desktop)
 function FakeGlobalSidebar() {
   const items = [
@@ -104,14 +113,6 @@ export default function AgendaPreviewDev() {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedMonthDay, setSelectedMonthDay] = useState<Date | null>(new Date());
   const [miniMonth, setMiniMonth] = useState(startOfMonth(new Date()));
-  const { filters, toggle } = useAgendaFilters();
-
-  const daysWithEvents = useMemo(() => {
-    const s = new Set<string>();
-    MOCK_EVENTS.forEach(e => s.add(e.start_at.slice(0,10)));
-    return s;
-  }, []);
-
   const centerLabel =
     view === 'day' ? currentDate.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' }) :
     view === 'week' ? `${startOfWeek(currentDate).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})} – ...` :
@@ -126,39 +127,30 @@ export default function AgendaPreviewDev() {
           onChangeView={setView}
           onPrev={() => {}} onNext={() => {}} onToday={() => setCurrentDate(new Date())}
           onNewClick={() => {}}
+          currentContext={'work'}
+          contextCounts={{ work: MOCK_TASKS.filter(t => t.context === 'work').length, personal: MOCK_TASKS.filter(t => t.context === 'personal').length, delegated: 0 }}
+          onChangeContext={() => {}}
           leftRail={
-            <AgendaLeftRail
-              miniMonth={miniMonth}
-              selectedDay={view === 'month' ? selectedMonthDay : currentDate}
-              daysWithEvents={daysWithEvents}
-              tasks={MOCK_TASKS} filters={filters}
-              onToggleFilter={toggle}
-              onMiniMonthChange={setMiniMonth}
-              onMiniDayClick={(d) => { setCurrentDate(d); setView('day'); }}
-              onCountClick={() => {}}
-            />
-          }
-          rightRail={view === 'month' ? (
-            <div className="w-[320px] shrink-0 border-l border-border bg-bg-surface">
-              <MonthDayDrawer
-                selectedDay={selectedMonthDay} events={MOCK_EVENTS} tasks={MOCK_TASKS}
-                onClose={() => setSelectedMonthDay(null)}
-                onEventClick={() => {}} onTaskClick={() => {}}
-                onCreateEvent={() => {}} onCreateTask={() => {}}
-                onOpenDayView={(d) => { setCurrentDate(d); setView('day'); }}
-              />
-            </div>
-          ) : (
-            <TasksPanel
-              view={view as 'day'|'week'} currentDate={currentDate}
+            <AgendaDesktopLeftPanel
+              view={view as 'day'|'week'|'month'}
+              currentDate={currentDate}
               weekStart={startOfWeek(currentDate)}
+              monthDate={miniMonth}
+              selectedMonthDay={selectedMonthDay}
               tasks={MOCK_TASKS}
               events={MOCK_EVENTS}
+              habitsDay={MOCK_HABITS_DAY}
+              habitsWeek={MOCK_HABITS_WEEK}
+              onTaskClick={() => {}}
+              onToggleTaskDone={() => {}}
               onEventClick={() => {}}
-              onTaskClick={() => {}} onToggleDone={() => {}} onCreateTask={() => {}}
-              onEditTask={() => {}} onRescheduleTask={() => {}} onDeleteTask={() => {}}
+              onToggleHabit={() => {}}
+              onPickDay={(d) => { setCurrentDate(d); setView('day'); }}
+              onClearSelectedDay={() => setSelectedMonthDay(null)}
+              onOpenDayView={(d) => { setCurrentDate(d); setView('day'); }}
             />
-          )}
+          }
+          rightRail={null}
         >
           {view === 'day' && (
             <DayView date={currentDate} events={MOCK_EVENTS}

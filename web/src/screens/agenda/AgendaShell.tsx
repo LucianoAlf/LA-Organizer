@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { Bell, CalendarDays, ChevronLeft, ChevronRight, Moon, Sun } from 'lucide-react';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useAuth } from '../../contexts/AuthContext';
+import type { AgendaContext } from './hooks/useAgendaFilters';
 
 export type AgendaView = 'day' | 'week' | 'month';
 
@@ -17,6 +18,9 @@ export interface AgendaShellProps {
   onNext: () => void;
   onToday: () => void;
   onNewClick: () => void;
+  currentContext: AgendaContext;
+  contextCounts: { work: number; personal: number; delegated: number };
+  onChangeContext: (ctx: AgendaContext) => void;
 }
 
 export function AgendaShell(p: AgendaShellProps) {
@@ -42,7 +46,7 @@ export function AgendaShell(p: AgendaShellProps) {
           </div>
         </div>
 
-        <div className="flex-1 flex items-center justify-center gap-2">
+        <div className="flex items-center gap-2">
           <button onClick={p.onPrev} className="text-fg-muted hover:text-fg focus-ring rounded p-1.5"><ChevronLeft size={16}/></button>
           <button onClick={p.onToday}
             className="h-8 px-3 rounded-md bg-bg-elevated border border-border text-[12px] text-fg hover:bg-bg-elevated2 focus-ring">
@@ -50,6 +54,28 @@ export function AgendaShell(p: AgendaShellProps) {
           </button>
           <div className="text-[13px] text-fg tabular-nums capitalize">{p.centerLabel}</div>
           <button onClick={p.onNext} className="text-fg-muted hover:text-fg focus-ring rounded p-1.5"><ChevronRight size={16}/></button>
+        </div>
+
+        <div className="ml-auto inline-flex gap-1.5 mr-3">
+          {([
+            { id: 'work',      label: 'Trabalho',  count: p.contextCounts.work },
+            { id: 'personal',  label: 'Pessoal',   count: p.contextCounts.personal },
+            { id: 'delegated', label: 'Delegadas', count: p.contextCounts.delegated },
+          ] as const).map(t => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => p.onChangeContext(t.id)}
+              className={[
+                'h-8 px-3 rounded-full text-[12px] focus-ring border',
+                p.currentContext === t.id
+                  ? 'bg-tom/15 text-tom border-tom/40 font-medium'
+                  : 'bg-bg-elevated text-fg-muted border-border hover:text-fg',
+              ].join(' ')}
+            >
+              {t.label} · {t.count}
+            </button>
+          ))}
         </div>
 
         <div className="flex items-center gap-2 shrink-0">

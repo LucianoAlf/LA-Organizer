@@ -5,12 +5,10 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 
 import { AgendaShell, type AgendaView } from './agenda/AgendaShell';
-import { AgendaLeftRail } from './agenda/AgendaLeftRail';
-import { TasksPanel } from './agenda/TasksPanel';
+import { AgendaDesktopLeftPanel } from './agenda/leftPanel/AgendaDesktopLeftPanel';
 import { DayView } from './agenda/views/DayView';
 import { WeekView } from './agenda/views/WeekView';
 import { MonthView } from './agenda/views/MonthView';
-import { MonthDayDrawer } from './agenda/components/MonthDayDrawer';
 import { QuickCreateSheet } from '../components/QuickCreateSheet';
 import { Fab } from '../components/Fab';
 import { EventEditDrawer } from './agenda/components/EventEditDrawer';
@@ -78,7 +76,7 @@ export function AgendaDesktop() {
   const dateIso = params.get('date') ?? new Date().toISOString().slice(0, 10);
   const currentDate = useMemo(() => new Date(`${dateIso}T00:00:00`), [dateIso]);
 
-  const { filters, toggle } = useAgendaFilters();
+  const { filters, toggle, currentContext, changeContext } = useAgendaFilters();
   const [selectedMonthDay, setSelectedMonthDay] = useState<Date | null>(null);
   const [miniMonth, setMiniMonth] = useState<Date>(startOfMonth(currentDate));
   const [quickCreate, setQuickCreate] = useState<{ open: boolean; dueDate?: string }>({ open: false });
@@ -93,13 +91,49 @@ export function AgendaDesktop() {
   const { events } = useAgendaEvents({ from, to, filters });
   const { tasks } = useAgendaTasks({ from, to, filters });
 
-  // Query separada SÓ pros indicadores do mini-cal — sempre o mês inteiro do `miniMonth`,
-  // independente da view central. Sem isso a vista Dia mostra apenas 1 dot (hoje).
-  const { events: miniMonthEvents } = useAgendaEvents({
-    from: startOfMonth(miniMonth),
-    to: endOfMonth(miniMonth),
-    filters,
-  });
+  // Contagens por contexto — sobre listas completas (não filtradas por contexto).
+  const contextCounts = useMemo(() => {
+    const work = tasks.filter(t => t.context === 'work' && t.status !== 'done').length
+               + events.filter(e => e.context === 'work').length;
+    const personal = tasks.filter(t => t.context === 'personal' && t.status !== 'done').length
+                   + events.filter(e => e.context === 'personal').length;
+    const delegated = tasks.filter(t => t.delegated_to != null && t.status !== 'done').length;
+    return { work, personal, delegated };
+  }, [tasks, events]);
+
+  // Listas filtradas pelo contexto ativo — passadas ao painel esquerdo e timegrid.
+  const tasksFiltered = useMemo(() => {
+    if (currentContext === 'delegated') return tasks.filter(t => t.delegated_to != null);
+    return tasks.filter(t => t.context === currentContext);
+  }, [tasks, currentContext]);
+
+  const eventsFiltered = useMemo(() => {
+    if (currentContext === 'delegated') return [];
+    return events.filter(e => e.context === currentContext);
+  }, [events, currentContext]);
+
+  const todayIso = currentDate.toISOString().slice(0, 10);
+
+  // Tarefas "dia todo" para DayView: due_date = hoje, sem remind_at
+  const allDayTasksDay = useMemo(() =>
+    tasksFiltered.filter(t =>
+      t.due_date && t.due_date.slice(0, 10) === todayIso && !t.remind_at
+    ),
+  [tasksFiltered, todayIso]);
+
+  // Tarefas "dia todo" para WeekView: due_date dentro da semana, sem remind_at
+  const allDayTasksWeek = useMemo(() => {
+    const weekS = startOfWeek(currentDate);
+    const weekE = new Date(weekS);
+    weekE.setDate(weekS.getDate() + 6);
+    const startIso = weekS.toISOString().slice(0, 10);
+    const endIso = weekE.toISOString().slice(0, 10);
+    return tasksFiltered.filter(t => {
+      if (!t.due_date || t.remind_at) return false;
+      const iso = t.due_date.slice(0, 10);
+      return iso >= startIso && iso <= endIso;
+    });
+  }, [tasksFiltered, currentDate]);
 
   // Mutations — update/delete events e update tasks (create event/task vem do QuickCreateSheet).
   const updateEvent = useMutation({
@@ -227,12 +261,6 @@ export function AgendaDesktop() {
       ? formatWeekRange(currentDate)
       : miniMonth.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
 
-  const daysWithEvents = useMemo(() => {
-    const s = new Set<string>();
-    miniMonthEvents.forEach((e) => s.add(e.start_at.slice(0, 10)));
-    return s;
-  }, [miniMonthEvents]);
-
   return (
     <>
       <AgendaShell
@@ -244,80 +272,37 @@ export function AgendaDesktop() {
         onNext={onNext}
         onToday={onToday}
         onNewClick={() => setQuickCreate({ open: true })}
+        currentContext={currentContext}
+        contextCounts={contextCounts}
+        onChangeContext={changeContext}
         leftRail={
-          <aside className="w-[300px] shrink-0 border-r border-border bg-bg-surface flex flex-col overflow-hidden">
-            <div className="shrink-0">
-              <AgendaLeftRail
-                miniMonth={miniMonth}
-                selectedDay={view === 'month' ? selectedMonthDay : currentDate}
-                daysWithEvents={daysWithEvents}
-                tasks={tasks}
-                filters={filters}
-                onToggleFilter={toggle}
-                onMiniMonthChange={setMiniMonth}
-                onMiniDayClick={(d) => { setDate(d); setView('day'); }}
-                onCountClick={() => { /* TODO: scroll into view section */ }}
-              />
-            </div>
-            {view !== 'month' && (
-              <>
-                <div className="border-t border-border shrink-0" />
-                <TasksPanel
-                  view={view as 'day' | 'week'}
-                  currentDate={currentDate}
-                  weekStart={startOfWeek(currentDate)}
-                  tasks={tasks}
-                  events={events}
-                  onEventClick={setEditingEvent}
-                  onTaskClick={(t) => {
-                    setQuickCreate({ open: true, dueDate: (t.scheduled_date ?? t.due_date ?? undefined) ?? undefined });
-                  }}
-                  onToggleDone={(t) =>
-                    updateTask.mutate({
-                      id: t.id,
-                      patch: { status: t.status === 'done' ? 'pending' : 'done' },
-                    })
-                  }
-                  onCreateTask={(d) => setQuickCreate({ open: true, dueDate: d.toISOString().slice(0, 10) })}
-                  onEditTask={(t) => {
-                    setQuickCreate({ open: true, dueDate: (t.scheduled_date ?? t.due_date ?? undefined) ?? undefined });
-                  }}
-                  onRescheduleTask={(t) => {
-                    const cur = (t.scheduled_date ?? t.due_date ?? '').slice(0, 10);
-                    // eslint-disable-next-line no-alert
-                    const next = window.prompt('Reagendar para (AAAA-MM-DD):', cur);
-                    if (!next) return;
-                    if (!/^\d{4}-\d{2}-\d{2}$/.test(next)) {
-                      toast.error('Formato inválido. Use AAAA-MM-DD.');
-                      return;
-                    }
-                    updateTask.mutate({ id: t.id, patch: { scheduled_date: next, due_date: next } });
-                  }}
-                  onDeleteTask={(t) => deleteTask.mutate(t.id, {
-                    onError: () => toast.error('Não foi possível excluir.'),
-                  })}
-                />
-              </>
-            )}
-          </aside>
+          <AgendaDesktopLeftPanel
+            view={view}
+            currentDate={currentDate}
+            weekStart={startOfWeek(currentDate)}
+            monthDate={miniMonth}
+            selectedMonthDay={selectedMonthDay}
+            tasks={tasksFiltered}
+            events={eventsFiltered}
+            habitsDay={[]}
+            habitsWeek={[]}
+            onTaskClick={(t) => {
+              setQuickCreate({ open: true, dueDate: (t.scheduled_date ?? t.due_date ?? undefined) ?? undefined });
+            }}
+            onToggleTaskDone={(t) =>
+              updateTask.mutate({
+                id: t.id,
+                patch: { status: t.status === 'done' ? 'pending' : 'done' },
+              })
+            }
+            onEventClick={setEditingEvent}
+            onToggleHabit={() => {}}
+            onPickDay={(d) => { setDate(d); setView('day'); }}
+            onClearSelectedDay={() => setSelectedMonthDay(null)}
+            onOpenDayView={(d) => { setDate(d); setView('day'); }}
+          />
         }
-        rightRail={
-          view === 'month' ? (
-            <aside className="w-[320px] shrink-0 border-l border-border bg-bg-surface">
-              <MonthDayDrawer
-                selectedDay={selectedMonthDay}
-                events={events}
-                tasks={tasks}
-                onClose={() => setSelectedMonthDay(null)}
-                onEventClick={setEditingEvent}
-                onTaskClick={() => { /* TODO: task edit drawer */ }}
-                onCreateEvent={(d) => setQuickCreate({ open: true, dueDate: d.toISOString().slice(0, 10) })}
-                onCreateTask={(d) => setQuickCreate({ open: true, dueDate: d.toISOString().slice(0, 10) })}
-                onOpenDayView={(d) => { setDate(d); setView('day'); }}
-              />
-            </aside>
-          ) : null
-        }
+        rightRail={null}
       >
         {view === 'day' && (
           <DayView
@@ -327,6 +312,10 @@ export function AgendaDesktop() {
             onEventClick={setEditingEvent}
             onEventDrop={onEventDrop}
             onEventResize={onEventResize}
+            allDayTasks={allDayTasksDay}
+            onAllDayTaskClick={(t) =>
+              setQuickCreate({ open: true, dueDate: (t.scheduled_date ?? t.due_date ?? undefined) ?? undefined })
+            }
           />
         )}
         {view === 'week' && (
@@ -337,6 +326,10 @@ export function AgendaDesktop() {
             onEventClick={setEditingEvent}
             onEventDrop={onEventDrop}
             onEventResize={onEventResize}
+            allDayTasks={allDayTasksWeek}
+            onAllDayTaskClick={(t) =>
+              setQuickCreate({ open: true, dueDate: (t.scheduled_date ?? t.due_date ?? undefined) ?? undefined })
+            }
           />
         )}
         {view === 'month' && (

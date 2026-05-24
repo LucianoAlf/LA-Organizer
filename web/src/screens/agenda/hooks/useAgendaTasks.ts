@@ -12,6 +12,8 @@ export interface TaskForPanel {
   scheduled_date: string | null;
   due_date: string | null;
   delegated_to: string | null;
+  eisenhower_quadrant?: number | null;
+  remind_at?: string | null;
 }
 
 // Sprint Agenda Desktop — tasks no range [from,to]. Espelha padrão de
