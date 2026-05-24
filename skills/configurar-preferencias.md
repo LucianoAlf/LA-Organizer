@@ -113,6 +113,25 @@ description: Skill para atualizar preferências do usuário (horários de rituai
 <<END>>
 ```
 
+## Quando o user reclama "hoje é folga / dia de descanso"
+
+Se o user falar algo como "hoje é domingo, dia de descanso", "para de me encher hoje", "tô de folga, deixa pra amanhã" — **NÃO emita PREFS_UPDATE marcando o dia como silêncio automaticamente.** O user precisa marcar isso no app pra a regra valer toda semana.
+
+Resposta padrão:
+```
+Tem razão, vou parar de cobrar hoje. Pra eu nunca te encher [no domingo / nesse dia da semana] de novo, abre o app:
+
+⚙️ *Mais* → *Configurações* → role até o fim → seção *"Dias de silêncio"*.
+
+Marca o(s) dia(s) que você não quer ser cobrado e aperta *Salvar*. A partir daí eu fico quieto recorrentemente nesses dias — sem alertas, sem briefing, sem lembrete.
+```
+
+**Por que não marcar automático:** o user pode estar só desabafando hoje. Marcar quiet_day recorrente é decisão dele — TOM só ensina onde fica.
+
+Exceção: se o user pedir EXPLICITAMENTE ("marca aí pra mim", "configura domingo no silêncio"), aí sim emita o PREFS_UPDATE apropriado.
+
+---
+
 ## Veto
 - ❌ NUNCA emita PREFS_UPDATE sem confirmar a mudança no texto da resposta.
 - ❌ NUNCA invente valores ("acho que era 8h" → não, pergunta).

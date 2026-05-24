@@ -236,21 +236,63 @@ export function AgendaDesktop() {
         onToday={onToday}
         onNewClick={() => setQuickCreate({ open: true })}
         leftRail={
-          <AgendaLeftRail
-            miniMonth={miniMonth}
-            selectedDay={view === 'month' ? selectedMonthDay : currentDate}
-            daysWithEvents={daysWithEvents}
-            tasks={tasks}
-            filters={filters}
-            onToggleFilter={toggle}
-            onMiniMonthChange={setMiniMonth}
-            onMiniDayClick={(d) => { setDate(d); setView('day'); }}
-            onCountClick={() => { /* TODO: filter tasks panel by which */ }}
-          />
+          <aside className="w-[300px] shrink-0 border-r border-border bg-bg-surface flex flex-col overflow-hidden">
+            <div className="shrink-0 overflow-y-auto max-h-[55%]">
+              <AgendaLeftRail
+                miniMonth={miniMonth}
+                selectedDay={view === 'month' ? selectedMonthDay : currentDate}
+                daysWithEvents={daysWithEvents}
+                tasks={tasks}
+                filters={filters}
+                onToggleFilter={toggle}
+                onMiniMonthChange={setMiniMonth}
+                onMiniDayClick={(d) => { setDate(d); setView('day'); }}
+                onCountClick={() => { /* TODO: scroll into view section */ }}
+              />
+            </div>
+            {view !== 'month' && (
+              <>
+                <div className="border-t border-border shrink-0" />
+                <TasksPanel
+                  view={view as 'day' | 'week'}
+                  currentDate={currentDate}
+                  weekStart={startOfWeek(currentDate)}
+                  tasks={tasks}
+                  onTaskClick={(t) => {
+                    setQuickCreate({ open: true, dueDate: (t.scheduled_date ?? t.due_date ?? undefined) ?? undefined });
+                  }}
+                  onToggleDone={(t) =>
+                    updateTask.mutate({
+                      id: t.id,
+                      patch: { status: t.status === 'done' ? 'pending' : 'done' },
+                    })
+                  }
+                  onCreateTask={(d) => setQuickCreate({ open: true, dueDate: d.toISOString().slice(0, 10) })}
+                  onEditTask={(t) => {
+                    setQuickCreate({ open: true, dueDate: (t.scheduled_date ?? t.due_date ?? undefined) ?? undefined });
+                  }}
+                  onRescheduleTask={(t) => {
+                    const cur = (t.scheduled_date ?? t.due_date ?? '').slice(0, 10);
+                    // eslint-disable-next-line no-alert
+                    const next = window.prompt('Reagendar para (AAAA-MM-DD):', cur);
+                    if (!next) return;
+                    if (!/^\d{4}-\d{2}-\d{2}$/.test(next)) {
+                      toast.error('Formato inválido. Use AAAA-MM-DD.');
+                      return;
+                    }
+                    updateTask.mutate({ id: t.id, patch: { scheduled_date: next, due_date: next } });
+                  }}
+                  onDeleteTask={(t) => deleteTask.mutate(t.id, {
+                    onError: () => toast.error('Não foi possível excluir.'),
+                  })}
+                />
+              </>
+            )}
+          </aside>
         }
         rightRail={
           view === 'month' ? (
-            <div className="w-[320px] shrink-0 border-l border-border bg-bg-surface">
+            <aside className="w-[320px] shrink-0 border-l border-border bg-bg-surface">
               <MonthDayDrawer
                 selectedDay={selectedMonthDay}
                 events={events}
@@ -262,47 +304,8 @@ export function AgendaDesktop() {
                 onCreateTask={(d) => setQuickCreate({ open: true, dueDate: d.toISOString().slice(0, 10) })}
                 onOpenDayView={(d) => { setDate(d); setView('day'); }}
               />
-            </div>
-          ) : (
-            <TasksPanel
-              view={view as 'day' | 'week'}
-              currentDate={currentDate}
-              weekStart={startOfWeek(currentDate)}
-              tasks={tasks}
-              onTaskClick={(t) => {
-                // sem TaskEditDrawer ainda — Editar via RowMenu abre QuickCreateSheet com a data atual.
-                // No próximo iteration, abrir TaskEditDrawer paritário com mobile.
-                setQuickCreate({ open: true, dueDate: (t.scheduled_date ?? t.due_date ?? undefined) ?? undefined });
-              }}
-              onToggleDone={(t) =>
-                updateTask.mutate({
-                  id: t.id,
-                  patch: { status: t.status === 'done' ? 'pending' : 'done' },
-                })
-              }
-              onCreateTask={(d) => setQuickCreate({ open: true, dueDate: d.toISOString().slice(0, 10) })}
-              onEditTask={(t) => {
-                // MVP: edit = abre o sheet pré-preenchido com a data.
-                // TODO próximo turno: TaskEditDrawer dedicado paritário com mobile EditTaskSheet.
-                setQuickCreate({ open: true, dueDate: (t.scheduled_date ?? t.due_date ?? undefined) ?? undefined });
-              }}
-              onRescheduleTask={(t) => {
-                const cur = (t.scheduled_date ?? t.due_date ?? '').slice(0, 10);
-                // MVP: prompt nativo. Próximo turno: DatePicker popover ancorado.
-                // eslint-disable-next-line no-alert
-                const next = window.prompt('Reagendar para (AAAA-MM-DD):', cur);
-                if (!next) return;
-                if (!/^\d{4}-\d{2}-\d{2}$/.test(next)) {
-                  toast.error('Formato inválido. Use AAAA-MM-DD.');
-                  return;
-                }
-                updateTask.mutate({ id: t.id, patch: { scheduled_date: next, due_date: next } });
-              }}
-              onDeleteTask={(t) => deleteTask.mutate(t.id, {
-                onError: () => toast.error('Não foi possível excluir.'),
-              })}
-            />
-          )
+            </aside>
+          ) : null
         }
       >
         {view === 'day' && (

@@ -41,7 +41,7 @@ export function AgendaLeftRail(p: AgendaLeftRailProps) {
     delegadas: p.tasks.filter(t => isDelegated(t)).length,
   };
   return (
-    <aside className="w-[260px] shrink-0 border-r border-border bg-bg-surface overflow-y-auto flex flex-col">
+    <div className="flex flex-col shrink-0">
       <MiniCalendar
         monthDate={p.miniMonth}
         selectedDay={p.selectedDay}
@@ -89,7 +89,7 @@ export function AgendaLeftRail(p: AgendaLeftRailProps) {
           </button>
         ))}
       </div>
-    </aside>
+    </div>
   );
 }
 

@@ -3512,6 +3512,13 @@ async function checkTaskReminders() {
       console.log(`[TaskReminders] defer ${String(r.id).slice(0,8)} — DND until ${dnd.until}`);
       continue;
     }
+    // Respeita quiet_days/quiet_weekends — mesmo lembrete criado pelo user
+    // não dispara em dia marcado como silêncio. Não consome (retry no próximo).
+    const q = await isQuietNow(collab.id, nowSaoPaulo());
+    if (q.quiet) {
+      console.log(`[TaskReminders] defer ${String(r.id).slice(0,8)} — quiet (${q.reason})`);
+      continue;
+    }
     const labelStr = r.label ? `${r.label}: ` : 'Lembrete: ';
     const text = `⏰ ${labelStr}*${t.title}*`;
     try {
@@ -3665,6 +3672,12 @@ async function checkEventReminders() {
     const dnd = await getDndState(collab.id);
     if (dnd.active) {
       console.log(`[EventReminders] defer ${String(r.id).slice(0,8)} — DND until ${dnd.until}`);
+      continue;
+    }
+    // Quiet_day: defer (não consome sent_at) pra disparar quando sair do quiet.
+    const q = await isQuietNow(collab.id, nowSaoPaulo());
+    if (q.quiet) {
+      console.log(`[EventReminders] defer ${String(r.id).slice(0,8)} — quiet (${q.reason})`);
       continue;
     }
     const startHm = (() => {
@@ -3987,7 +4000,7 @@ function buildAdherenceText(collab, signals, ymdToday) {
 async function checkAdherenceNudge(ymdToday, filterPhone, { dry = false } = {}) {
   let q = supabase
     .from('collaborators')
-    .select('id, full_name, phone, is_active, onboarding_completed, user_preferences(notify_overdue_alerts)')
+    .select('id, full_name, phone, is_active, onboarding_completed, user_preferences(notify_overdue_alerts, quiet_weekends, quiet_days, quiet_reason)')
     .eq('is_active', true)
     .eq('onboarding_completed', true);
   if (filterPhone) q = q.eq('phone', filterPhone);
@@ -4017,6 +4030,13 @@ async function checkAdherenceNudge(ymdToday, filterPhone, { dry = false } = {}) 
       const dnd = await getDndState(c.id);
       if (dnd.active) {
         await logRitualEvent(c.id, 'aderencia_diaria', 'skipped', `dnd_active until=${dnd.until}`, ymdToday);
+        skipped++;
+        continue;
+      }
+      // Quiet_day/weekend — silêncio literal, sem cobrança nem agregada.
+      const q = await isQuietNow(c.user_preferences, nowSaoPaulo());
+      if (q.quiet) {
+        await logRitualEvent(c.id, 'aderencia_diaria', 'skipped', `quiet:${q.reason}`, ymdToday);
         skipped++;
         continue;
       }

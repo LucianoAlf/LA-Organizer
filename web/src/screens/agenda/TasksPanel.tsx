@@ -71,7 +71,7 @@ export function TasksPanel(p: TasksPanelProps) {
   );
 
   return (
-    <aside className="w-[320px] shrink-0 border-l border-border bg-bg-surface flex flex-col">
+    <div className="flex flex-col min-h-0 flex-1">
       <header className="px-3 py-3 border-b border-border">
         <div className="text-[13px] font-semibold text-fg">Tarefas</div>
         <div className="text-[11px] text-fg-muted">
@@ -107,7 +107,7 @@ export function TasksPanel(p: TasksPanelProps) {
           + Tarefa
         </button>
       </div>
-    </aside>
+    </div>
   );
 }
 
