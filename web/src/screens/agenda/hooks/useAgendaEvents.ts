@@ -19,6 +19,8 @@ export interface EventForGrid {
   status: 'scheduled' | 'done' | 'cancelled';
   project_id: string | null;
   source: 'manual' | 'tom' | 'imported';
+  eisenhower_quadrant?: number | null;
+  remind_at?: string | null;
 }
 
 // Sprint Agenda Desktop — query de eventos no range [from,to] com JOIN em
@@ -39,6 +41,7 @@ export function useAgendaEvents(params: { from: Date; to: Date; filters: AgendaF
         .select(`
           id, title, description, start_at, end_at, context, category, modality,
           location_text, meeting_url, status, project_id, source,
+          eisenhower_quadrant, remind_at,
           event_categories!category_id ( slug, label, color )
         `)
         .eq('collaborator_id', collaboratorId!)
@@ -75,6 +78,8 @@ export function useAgendaEvents(params: { from: Date; to: Date; filters: AgendaF
           status: e.status,
           project_id: e.project_id,
           source: e.source,
+          eisenhower_quadrant: e.eisenhower_quadrant ?? null,
+          remind_at: e.remind_at ?? null,
         };
       });
   }, [data, params.filters]);

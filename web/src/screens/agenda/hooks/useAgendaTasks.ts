@@ -33,7 +33,7 @@ export function useAgendaTasks(params: { from: Date; to: Date; filters: AgendaFi
     queryFn: async () => {
       const { data, error } = await supabase
         .from('tasks')
-        .select('id, title, context, status, scheduled_date, due_date, assigned_to, created_by')
+        .select('id, title, context, status, scheduled_date, due_date, assigned_to, created_by, eisenhower_quadrant, remind_at')
         .or(`assigned_to.eq.${collaboratorId},and(created_by.eq.${collaboratorId},assigned_to.neq.${collaboratorId})`)
         .neq('status', 'cancelled')
         .gte('due_date', fromYmd)
@@ -56,6 +56,8 @@ export function useAgendaTasks(params: { from: Date; to: Date; filters: AgendaFi
         scheduled_date: t.scheduled_date,
         due_date: t.due_date,
         delegated_to: isDelegated ? t.assigned_to : null,
+        eisenhower_quadrant: t.eisenhower_quadrant ?? null,
+        remind_at: t.remind_at ?? null,
       };
     });
     return mapped.filter(t => {
