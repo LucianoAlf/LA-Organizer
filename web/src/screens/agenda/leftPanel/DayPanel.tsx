@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { Clock, ListTodo, Flame, CheckCheck, AlertTriangle, AlarmClock, Pin } from 'lucide-react';
 import { StatCard } from '../../../components/StatCard';
 import { CompactEventRow } from './rows/CompactEventRow';
 import { CompactTaskRow } from './rows/CompactTaskRow';
@@ -126,7 +127,8 @@ export function DayPanel(p: Props) {
         {p.habits.length > 0 && (
           <CollapsibleSection
             storageKey="day.habits"
-            title="🔥 Hábitos hoje"
+            icon={<Flame size={12} />}
+            title="Hábitos hoje"
             meta={`${habitsDoneCount}/${p.habits.length}`}
           >
             <div className="space-y-1">
@@ -173,7 +175,8 @@ export function DayPanel(p: Props) {
         {/* Compromissos */}
         <CollapsibleSection
           storageKey="day.events"
-          title="🕒 Compromissos"
+          icon={<Clock size={12} />}
+          title="Compromissos"
           meta={dayEvents.length > 0 ? String(dayEvents.length) : undefined}
         >
           {dayEvents.length === 0 ? (
@@ -193,14 +196,15 @@ export function DayPanel(p: Props) {
         {/* Tarefas */}
         <CollapsibleSection
           storageKey="day.tasks"
-          title="📋 Tarefas"
+          icon={<ListTodo size={12} />}
+          title="Tarefas"
           meta={pending.length > 0 ? String(pending.length) : undefined}
         >
           {/* Grupo: +4 dias atrasadas */}
           {groups.plus4.length > 0 && (
             <>
-              <div className="text-[10px] uppercase tracking-wider text-danger font-semibold px-1 pt-2 pb-1">
-                ⚠️ +4 dias atrasadas
+              <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-danger font-semibold px-1 pt-2 pb-1">
+                <AlertTriangle size={10} /><span>+4 dias atrasadas</span>
               </div>
               {groups.plus4.map(t => {
                 const d = overdueDays(t.due_date, todayIso);
@@ -220,8 +224,8 @@ export function DayPanel(p: Props) {
           {/* Grupo: 2-3 dias atrasadas */}
           {groups.d2_3.length > 0 && (
             <>
-              <div className="text-[10px] uppercase tracking-wider text-warning font-semibold px-1 pt-2 pb-1">
-                ⏰ 2–3 dias atrasadas
+              <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-warning font-semibold px-1 pt-2 pb-1">
+                <AlarmClock size={10} /><span>2–3 dias atrasadas</span>
               </div>
               {groups.d2_3.map(t => {
                 const d = overdueDays(t.due_date, todayIso);
@@ -241,8 +245,8 @@ export function DayPanel(p: Props) {
           {/* Grupo: 1 dia atrasadas */}
           {groups.d1.length > 0 && (
             <>
-              <div className="text-[10px] uppercase tracking-wider text-warning/80 font-semibold px-1 pt-2 pb-1">
-                📌 Ontem
+              <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-warning/80 font-semibold px-1 pt-2 pb-1">
+                <Pin size={10} /><span>Ontem</span>
               </div>
               {groups.d1.map(t => {
                 const d = overdueDays(t.due_date, todayIso);
@@ -287,7 +291,8 @@ export function DayPanel(p: Props) {
         {done.length > 0 && (
           <CollapsibleSection
             storageKey="day.done"
-            title="▶ Concluídas"
+            icon={<CheckCheck size={12} />}
+            title="Concluídas"
             meta={String(done.length)}
             defaultOpen={false}
           >

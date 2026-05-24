@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { Clock, ListTodo, AlertTriangle } from 'lucide-react';
 import { StatCard } from '../../../components/StatCard';
 import { CompactEventRow } from './rows/CompactEventRow';
 import { CompactTaskRow } from './rows/CompactTaskRow';
@@ -113,7 +114,8 @@ export function MonthPanel(p: Props) {
         {overdueAll.length > 0 && (
           <CollapsibleSection
             storageKey="month.topoverdue"
-            title="🚨 Top atrasos"
+            icon={<AlertTriangle size={12} />}
+            title="Top atrasos"
             meta={overdueAll.length}
           >
             {groups.plus15.length > 0 && (
@@ -159,7 +161,8 @@ export function MonthPanel(p: Props) {
 
         <CollapsibleSection
           storageKey="month.tasks"
-          title="📋 Tarefas do mês"
+          icon={<ListTodo size={12} />}
+          title="Tarefas do mês"
           meta={monthTasks.length}
           defaultOpen={false}
         >
@@ -175,7 +178,8 @@ export function MonthPanel(p: Props) {
 
         <CollapsibleSection
           storageKey="month.events"
-          title="🕒 Compromissos do mês"
+          icon={<Clock size={12} />}
+          title="Compromissos do mês"
           meta={monthEvents.length}
           defaultOpen={false}
         >
