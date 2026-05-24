@@ -108,14 +108,8 @@ export function TasksPanel(p: TasksPanelProps) {
         </div>
       </header>
       <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2 text-[12px]">
-        {eventsInRange.length > 0 && (
-          <Section title={`EVENTOS (${eventsInRange.length})`} k="events"
-            collapsed={!!collapsed.events} onToggle={() => toggle('events')}>
-            {eventsInRange.map(e => (
-              <EventRowMini key={e.id} event={e} onClick={p.onEventClick} />
-            ))}
-          </Section>
-        )}
+        {/* Eventos NÃO são listados aqui — já aparecem como blocos no timegrid central.
+            Listar de novo seria redundância. O header acima conta os eventos por contexto. */}
         <Section title={`ATRASADAS (${overdue.length})`} k="overdue"
           collapsed={collapsed.overdue ?? overdue.length === 0}
           onToggle={() => toggle('overdue')}>
