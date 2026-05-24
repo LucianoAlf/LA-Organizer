@@ -62,14 +62,14 @@ export function EventEditDrawer(p: EventEditDrawerProps) {
     p.onClose();
   };
   const handleDelete = async () => {
-    if (!confirm('Deletar esse evento? Essa ação não pode ser desfeita.')) return;
+    if (!confirm('Deletar esse compromisso? Essa ação não pode ser desfeita.')) return;
     await p.onDelete(ev.id);
     p.onClose();
   };
 
   return (
     <DetailDrawer
-      open={p.open} onClose={p.onClose} title="Editar evento"
+      open={p.open} onClose={p.onClose} title="Editar compromisso"
       footer={
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="sm" onClick={handleDelete}>

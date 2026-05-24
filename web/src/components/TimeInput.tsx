@@ -130,7 +130,7 @@ export function TimeInput({ value, onChange, invalid }: Props) {
         type="button"
         onClick={() => setOpen(o => !o)}
         className={[
-          'h-12 px-3 rounded-md bg-bg-elevated border focus-ring inline-flex items-center gap-2 tabular-nums',
+          'h-9 px-3 rounded-md bg-bg-elevated border focus-ring inline-flex items-center gap-2 tabular-nums',
           invalid ? 'border-danger' : 'border-border',
           value ? 'text-fg' : 'text-fg-muted',
         ].join(' ')}
