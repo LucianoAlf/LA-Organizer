@@ -3,12 +3,12 @@ import { useBreakpoint } from '../hooks/useBreakpoint';
 import { AgendaDesktop } from './AgendaDesktop';
 
 /**
- * Dispatcher /agenda — mobile NUNCA hospeda essa rota: redireciona para `/hoje`
- * (preserva o AppShell mobile com AgendaTabs original intocado). Desktop renderiza
- * o AgendaDesktop completo. Tablet também vai pro mobile (Hoje) — desktop só >=1024px.
+ * Dispatcher /agenda — só mobile puro (<768px) redireciona para `/hoje` (preserva
+ * AppShell mobile com AgendaTabs original). Tablet (768-1023) E desktop (>=1024)
+ * renderizam o AgendaDesktop — ambos têm espaço pra shell de 3 painéis.
  */
 export default function Agenda() {
   const bp = useBreakpoint();
-  if (bp !== 'desktop') return <Navigate to="/hoje" replace />;
+  if (bp === 'mobile') return <Navigate to="/hoje" replace />;
   return <AgendaDesktop />;
 }
