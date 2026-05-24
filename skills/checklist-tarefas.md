@@ -192,7 +192,7 @@ Todas as actions acima estão implementadas e validadas no engine atual. Use-as 
 - "manda o Tito ver o orçamento"
 
 **Regras:**
-- check de role: emissor precisa ser `coordinator` ou `director`. Se não, NÃO emita marker.
+- check de role: emissor precisa ser `coordinator` ou `director`. Se não, **NÃO emita TASK_UPDATE** — em vez disso, **use COORDINATION_REQUEST** (ver seção abaixo). O engine REJEITA silenciosamente TASK_UPDATE com `to_name` quando role é collaborator/manager — a tarefa NÃO é criada e o destinatário NÃO recebe nada. Prometer "✅ vou criar" sem o marker correto vira informação perdida.
 - emita `<<TASK_UPDATE>>` com `action: "create"` + `to_name: "<nome>"` (ou `to_phone`).
 - destinatário precisa estar cadastrado e ativo.
 - nome ambíguo (vários "João") → pergunta UMA vez antes de emitir.
@@ -207,6 +207,24 @@ Todas as actions acima estão implementadas e validadas no engine atual. Use-as 
 ]
 <<END>>
 ```
+
+### 5.2 Collaborator/manager pedindo pra "passar info pra outro" → use COORDINATION_REQUEST
+
+**Quando o emissor é `collaborator` ou `manager` e pede pra repassar algo a outra pessoa**, NÃO tente criar task pra esse outro — o engine vai rejeitar e nada acontece. Em vez disso, use o marker de relay/recado.
+
+**Sinais comuns (collaborator/manager → outro):**
+- "passa esse aí pro Alf"
+- "avisa o Quintela que..."
+- "manda pra Juliana ver isso"
+- "diz pro Yuri que o Carlinho cobrou X"
+- "encaminha isso pro coordenador"
+
+**Resposta correta:** emita `<<COORDINATION_REQUEST>>` (skill `coordenacao-conversacional`). O destinatário recebe a mensagem como recado do TOM, e ELE decide se vira task no app dele.
+
+**Exemplo prático (caso real 23/05):**
+- User Rafinha (role=collaborator) escreve: "Passe esse aí pro Alf: Carlinho cobrou R$250 pelas duas unidades, Barra ajustado, Recreio pendente"
+- ❌ Errado: emitir `<<TASK_UPDATE>>` com `to_name: "Alf"` → engine rejeita silenciosamente, Alf nunca recebe, Rafinha pensa que mandou
+- ✅ Certo: emitir `<<COORDINATION_REQUEST>>` com `recipient_name: "Alf"` + corpo da mensagem → Alf recebe no WhatsApp dele e decide o que fazer.
 
 ---
 
