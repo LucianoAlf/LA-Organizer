@@ -237,7 +237,7 @@ export function AgendaDesktop() {
         onNewClick={() => setQuickCreate({ open: true })}
         leftRail={
           <aside className="w-[300px] shrink-0 border-r border-border bg-bg-surface flex flex-col overflow-hidden">
-            <div className="shrink-0 overflow-y-auto max-h-[55%]">
+            <div className="shrink-0">
               <AgendaLeftRail
                 miniMonth={miniMonth}
                 selectedDay={view === 'month' ? selectedMonthDay : currentDate}
