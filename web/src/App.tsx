@@ -62,6 +62,22 @@ function AppLayout() {
   return <DesktopShell />;
 }
 
+/**
+ * Dispatchers de rota legada: /hoje e /semana no mobile mantém Hoje/Semana
+ * originais; no desktop redirecionam pra /agenda?view=day|week — assim links
+ * antigos (sidebar cacheada, bookmarks) caem na rota nova sem quebrar mobile.
+ */
+function HojeOrDesktopAgenda() {
+  const bp = useBreakpoint();
+  if (bp === 'mobile') return <Hoje />;
+  return <Navigate to="/agenda?view=day" replace />;
+}
+function SemanaOrDesktopAgenda() {
+  const bp = useBreakpoint();
+  if (bp === 'mobile') return <Semana />;
+  return <Navigate to="/agenda?view=week" replace />;
+}
+
 export default function App() {
   return (
     <Suspense fallback={<LoadingState />}>
@@ -73,8 +89,8 @@ export default function App() {
       <Route element={<ProtectedRoute />}>
         <Route element={<AppLayout />}>
           <Route index element={<Navigate to="/hoje" replace />} />
-          <Route path="hoje" element={<Hoje />} />
-          <Route path="semana" element={<Semana />} />
+          <Route path="hoje" element={<HojeOrDesktopAgenda />} />
+          <Route path="semana" element={<SemanaOrDesktopAgenda />} />
           <Route path="agenda" element={<Agenda />} />
           <Route path="projetos" element={<Projetos />} />
           <Route path="projetos/novo" element={<NovoProjeto />} />
