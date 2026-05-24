@@ -7,6 +7,7 @@ import type { AgendaFilters } from './useAgendaFilters';
 export interface EventForGrid {
   id: string;
   title: string;
+  description?: string | null;
   start_at: string;
   end_at: string;
   context: 'work' | 'personal';
@@ -36,7 +37,7 @@ export function useAgendaEvents(params: { from: Date; to: Date; filters: AgendaF
       const { data, error } = await supabase
         .from('events')
         .select(`
-          id, title, start_at, end_at, context, category, modality,
+          id, title, description, start_at, end_at, context, category, modality,
           location_text, meeting_url, status, project_id, source,
           event_categories!category_id ( slug, label, color )
         `)
@@ -62,6 +63,7 @@ export function useAgendaEvents(params: { from: Date; to: Date; filters: AgendaF
         return {
           id: e.id,
           title: e.title,
+          description: e.description ?? null,
           start_at: e.start_at,
           end_at: e.end_at,
           context: e.context,

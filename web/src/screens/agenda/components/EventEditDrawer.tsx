@@ -88,6 +88,13 @@ export function EventEditDrawer(p: EventEditDrawerProps) {
             className="w-full h-9 px-2 rounded-md bg-bg-surface border border-border text-fg" />
         </Field>
 
+        <Field label="Descrição">
+          <textarea value={form.description ?? ''} maxLength={2000} rows={3}
+            onChange={(e) => setForm({ ...form, description: e.target.value || null })}
+            placeholder="Pauta, contexto, o que tratar..."
+            className="w-full px-2 py-1.5 rounded-md bg-bg-surface border border-border text-fg resize-y placeholder:text-fg-muted" />
+        </Field>
+
         <Field label="Início">
           <div className="flex gap-2">
             <DateInput value={startDate} onChange={(d: string) => setStart(d, startTime)} />

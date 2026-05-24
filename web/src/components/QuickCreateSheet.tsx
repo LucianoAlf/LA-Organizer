@@ -45,6 +45,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
 
   const [kind, setKind] = useState<Kind>('task');
   const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   // task
@@ -93,6 +94,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
       setError(null);
       setKind('task');
       setTitle('');
+      setDescription('');
       setTaskCtx('work');
       setDue(today);
       setTaskTime('');
@@ -153,6 +155,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
       const remindAt = taskTime ? `${due}T${taskTime}:00-03:00` : null;
       const { error: e } = await supabase.from('tasks').insert({
         title: title.trim().slice(0, 200),
+        description: description.trim() || null,
         assigned_to: collab.id,
         created_by: collab.id,
         source: 'manual',
@@ -182,6 +185,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
       const remindAt = taskTime ? `${due}T${taskTime}:00-03:00` : null;
       const { data, error: e } = await supabase.from('tasks').insert({
         title: title.trim().slice(0, 200),
+        description: description.trim() || null,
         assigned_to: delegateTo,
         created_by: collab.id,
         source: 'manual',
@@ -229,6 +233,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
         : null;
       const payload = {
         title: title.trim().slice(0, 200),
+        description: description.trim() || null,
         collaborator_id: collab.id,
         created_by: collab.id,
         source: 'manual' as const,
@@ -459,6 +464,26 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
               : 'Ex.: Reunião com Henrique'
             }
             className="w-full h-12 px-3 rounded-md bg-bg-elevated border border-border text-fg placeholder:text-fg-muted focus-ring"
+          />
+        </label>
+
+        {/* Descrição — vale pros 3 kinds. TOM consome esse campo. */}
+        <label className="block">
+          <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5 flex items-baseline gap-2">
+            <span>Descrição</span>
+            <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">opcional</span>
+          </div>
+          <textarea
+            rows={3}
+            maxLength={2000}
+            value={description}
+            onChange={e => setDescription(e.target.value)}
+            placeholder={
+              kind === 'task' ? 'Detalhes da tarefa, contexto, links...'
+              : kind === 'delegated' ? 'O que a pessoa precisa fazer, contexto, prazo...'
+              : 'Pauta, contexto, o que tratar...'
+            }
+            className="w-full px-3 py-2 rounded-md bg-bg-elevated border border-border text-fg placeholder:text-fg-muted focus-ring resize-y"
           />
         </label>
 
