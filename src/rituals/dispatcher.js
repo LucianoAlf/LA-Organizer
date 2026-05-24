@@ -1793,6 +1793,69 @@ async function resolveLeaderForEvent(event) {
 // (context='work') que já passaram e estão sem fechamento. Agrupa por category
 // e mostra idade em dias + líder sugerido pra cobrança (Sprint 23.12).
 // Envia 08:30 BRT diariamente pro role='director'. Idempotente via ritual_logs.
+// Cobrança escalada (1-5d) do DONO de eventos work passados sem fechamento.
+// Espelha checkOverdueAlerts (de tasks) — antes do CEO report às 08:45.
+// Roda 08:00 BRT diariamente. Cooldown via events.followup_sent_at (24h).
+// Mensagem convida explicitamente "feito" / "deu certo" pra o engine fechar
+// via EVENT_UPDATE complete (já existente).
+async function checkOverdueWorkEvents(now = new Date()) {
+  const sp = nowSaoPaulo();
+  if (currentSlot(sp) !== timeToSlot('08:00')) return;
+
+  const whatsapp = require('../services/whatsapp');
+  // Janela: end_at entre 5 dias atrás e ontem (00h BRT)
+  const yesterdayEnd = new Date(sp.ymd + 'T00:00:00-03:00').toISOString();
+  const fiveDaysAgo = new Date(new Date(sp.ymd + 'T00:00:00-03:00').getTime() - 5 * 24 * 3600_000).toISOString();
+  // Cooldown 24h via followup_sent_at
+  const cooldownIso = new Date(now.getTime() - 24 * 3600_000).toISOString();
+
+  const { data: stale, error } = await supabase
+    .from('events')
+    .select('id, title, end_at, collaborator_id, followup_sent_at, collaborators!events_collaborator_id_fkey(full_name, phone, is_active, user_preferences(quiet_weekends, quiet_days, quiet_reason))')
+    .eq('context', 'work')
+    .not('status', 'in', '("done","cancelled")')
+    .lt('end_at', yesterdayEnd)
+    .gte('end_at', fiveDaysAgo)
+    .or(`followup_sent_at.is.null,followup_sent_at.lt.${cooldownIso}`)
+    .limit(100);
+  if (error) {
+    console.error('[OverdueWorkEvents] query err:', error.message);
+    return;
+  }
+  if (!stale || !stale.length) return;
+
+  for (const ev of stale) {
+    const collab = ev.collaborators;
+    if (!collab || !collab.is_active || !collab.phone) continue;
+    const q = await isQuietNow(collab.user_preferences, sp);
+    if (q.quiet) continue; // defer; volta no próximo tick fora do quiet
+    const days = Math.max(1, Math.floor((Date.now() - new Date(ev.end_at).getTime()) / 86400000));
+    const firstName = (collab.full_name || '').split(' ')[0];
+    let text;
+    if (days === 1) {
+      text = `🔵 ${firstName}, como foi *${ev.title}* ontem? Me diz "feito" pra fechar, ou conta o que rolou.`;
+    } else if (days <= 3) {
+      text = `🟠 ${firstName}, *${ev.title}* (há ${days} dias) ficou aberta. Já rolou? Manda "feito" ou me conta — texto/áudio.`;
+    } else {
+      text = `🚨 ${firstName}, *${ev.title}* (há ${days} dias) sem fechamento. Fecha ou reagenda? Não dá pra ignorar — qualquer resposta serve.`;
+    }
+    try {
+      await whatsapp.sendMessage(collab.phone, text);
+      await supabase.from('events').update({ followup_sent_at: now.toISOString() }).eq('id', ev.id);
+      await supabase.from('conversation_history').insert({
+        collaborator_id: ev.collaborator_id,
+        direction: 'outbound',
+        message_type: 'text',
+        content: text,
+      });
+      await logRitualEvent(ev.collaborator_id, 'event_overdue', 'sent', `event:${String(ev.id).slice(0,8)} late=${days}d`, sp.ymd);
+      console.log(`[OverdueWorkEvents] sent ${String(ev.id).slice(0,8)} d=${days} → ${collab.phone.slice(-4)}`);
+    } catch (err) {
+      console.error(`[OverdueWorkEvents] send err for ${String(ev.id).slice(0,8)}:`, err.message);
+    }
+  }
+}
+
 async function ceoTeamUnclosedEventsReport(now = new Date()) {
   const sp = nowSaoPaulo();
   if (currentSlot(sp) !== timeToSlot('08:30')) return;
@@ -1814,16 +1877,26 @@ async function ceoTeamUnclosedEventsReport(now = new Date()) {
     if (await alreadySent(ceo.id, 'ceo_team_unclosed_events', ymdRef)) continue;
 
     // Eventos do TIME passados sem fechamento — NÃO filtra por dono
-    // (relatório é global pra CEO ver tudo)
+    // (relatório é global pra CEO ver tudo).
+    // Filtra eventos 1-5d que JÁ foram cobrados nas últimas 24h (donos receberam
+    // pergunta via checkOverdueWorkEvents). 6+d ou nunca cobrados sobem pro CEO.
     const cutoff24h = new Date(now.getTime() - 24 * 3600_000).toISOString();
+    const sixDaysAgo = new Date(now.getTime() - 6 * 24 * 3600_000).toISOString();
     const { data: stale, error } = await supabase
       .from('events')
-      .select('id, title, start_at, end_at, category, collaborator_id, collaborators!events_collaborator_id_fkey(full_name)')
+      .select('id, title, start_at, end_at, category, collaborator_id, followup_sent_at, collaborators!events_collaborator_id_fkey(full_name)')
       .eq('context', 'work')
       .not('status', 'in', '("done","cancelled")')
       .lt('end_at', cutoff24h)
       .order('end_at', { ascending: true })
       .limit(50);
+    const allStale = stale || [];
+    // Apenas mantém: eventos com 6+d OU sem cobrança nas últimas 24h
+    const filteredStale = allStale.filter(ev => {
+      const isOld = ev.end_at < sixDaysAgo;
+      const recentlyAsked = ev.followup_sent_at && ev.followup_sent_at > cutoff24h;
+      return isOld || !recentlyAsked;
+    });
 
     if (error) {
       console.error('[CEOReport] query err:', error.message);
@@ -1835,10 +1908,15 @@ async function ceoTeamUnclosedEventsReport(now = new Date()) {
       continue;
     }
 
+    if (filteredStale.length === 0) {
+      await logRitualEvent(ceo.id, 'ceo_team_unclosed_events', 'skipped', `all_recently_asked total=${allStale.length}`, ymdRef);
+      continue;
+    }
+
     // Sprint 23.12 — Resolve líder responsável por evento e agrupa por líder
     // (não por categoria), pra deixar claro PRA QUEM cobrar.
     const enriched = [];
-    for (const ev of stale) {
+    for (const ev of filteredStale) {
       const leader = await resolveLeaderForEvent(ev);
       enriched.push({ ...ev, leader });
     }
@@ -1883,12 +1961,16 @@ async function ceoTeamUnclosedEventsReport(now = new Date()) {
       lines.push('');
     }
 
-    const msg = `🎖️ *Governança — Compromissos do time sem fechamento*\n\n${lines.join('\n').trim()}\n\n_Total: ${stale.length} compromisso${stale.length > 1 ? 's' : ''} parado${stale.length > 1 ? 's' : ''}._\n\nPra delegar cobrança, me diz tipo: *"manda recado pro Quintela: cobra fechamento da reunião pedagógica de 21/05"*.`;
+    const hiddenCount = allStale.length - filteredStale.length;
+    const hiddenNote = hiddenCount > 0
+      ? `\n\n_${hiddenCount} já cobrad${hiddenCount > 1 ? 'os' : 'o'} do dono nas últimas 24h — não listado${hiddenCount > 1 ? 's' : ''} aqui._`
+      : '';
+    const msg = `🎖️ *Governança — Compromissos do time sem fechamento*\n\n${lines.join('\n').trim()}\n\n_Total: ${filteredStale.length} compromisso${filteredStale.length > 1 ? 's' : ''} parado${filteredStale.length > 1 ? 's' : ''}._${hiddenNote}\n\nPra delegar cobrança, me diz tipo: *"manda recado pro Quintela: cobra fechamento da reunião pedagógica de 21/05"*.`;
 
     try {
       await whatsapp.sendMessage(ceo.phone, msg);
-      await logRitualEvent(ceo.id, 'ceo_team_unclosed_events', 'sent', `count=${stale.length}`, ymdRef);
-      console.log(`[CEOReport] sent ${stale.length} → ${String(ceo.phone).slice(-4)}`);
+      await logRitualEvent(ceo.id, 'ceo_team_unclosed_events', 'sent', `count=${filteredStale.length} hidden=${hiddenCount}`, ymdRef);
+      console.log(`[CEOReport] sent ${filteredStale.length} (${hiddenCount} hidden) → ${String(ceo.phone).slice(-4)}`);
     } catch (err) {
       console.error(`[CEOReport] send err ${String(ceo.phone).slice(-4)}:`, err.message);
       await logRitualEvent(ceo.id, 'ceo_team_unclosed_events', 'error', err.message, ymdRef);
@@ -2936,6 +3018,13 @@ async function run(opts = {}) {
     await ceoTeamUnclosedEventsReport(new Date());
   } catch (err) {
     console.error('[Dispatcher] ceoTeamUnclosedEventsReport erro:', err.message);
+  }
+
+  // Cobrança escalada (1-5d) do dono de eventos work antes do CEO report.
+  try {
+    await checkOverdueWorkEvents(new Date());
+  } catch (err) {
+    console.error('[Dispatcher] checkOverdueWorkEvents erro:', err.message);
   }
 
   // Relatório CEO 08:45 BRT: tarefas do time atrasadas (espelha o de eventos).
