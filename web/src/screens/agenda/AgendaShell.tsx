@@ -46,14 +46,15 @@ export function AgendaShell(p: AgendaShellProps) {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button onClick={p.onPrev} className="text-fg-muted hover:text-fg focus-ring rounded p-1.5"><ChevronLeft size={16}/></button>
-          <button onClick={p.onToday}
-            className="h-8 px-3 rounded-md bg-bg-elevated border border-border text-[12px] text-fg hover:bg-bg-elevated2 focus-ring">
-            Hoje
-          </button>
-          <div className="text-[13px] text-fg tabular-nums capitalize">{p.centerLabel}</div>
-          <button onClick={p.onNext} className="text-fg-muted hover:text-fg focus-ring rounded p-1.5"><ChevronRight size={16}/></button>
+        <button onClick={p.onToday}
+          className="h-8 px-4 rounded-full bg-bg-elevated border border-border text-[12px] text-fg hover:bg-bg-elevated2 focus-ring font-medium">
+          Hoje
+        </button>
+
+        <div className="flex items-center gap-1 px-2">
+          <button onClick={p.onPrev} aria-label="Anterior" className="text-fg-muted hover:text-fg focus-ring rounded p-1.5"><ChevronLeft size={16}/></button>
+          <div className="text-[13px] text-fg capitalize px-2 min-w-[200px] text-center select-none">{p.centerLabel}</div>
+          <button onClick={p.onNext} aria-label="Próximo" className="text-fg-muted hover:text-fg focus-ring rounded p-1.5"><ChevronRight size={16}/></button>
         </div>
 
         <div className="ml-auto inline-flex gap-1.5 mr-3">

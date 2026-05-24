@@ -254,7 +254,11 @@ export function AgendaDesktop() {
 
   const centerLabel =
     view === 'day'
-      ? currentDate.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' })
+      ? (() => {
+          const wd = currentDate.toLocaleDateString('pt-BR', { weekday: 'long' });
+          const dm = currentDate.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+          return `${wd} · ${dm}`;
+        })()
       : view === 'week'
       ? formatWeekRange(currentDate)
       : miniMonth.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
