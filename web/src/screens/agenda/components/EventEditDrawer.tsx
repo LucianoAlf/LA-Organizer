@@ -81,7 +81,7 @@ export function EventEditDrawer(p: EventEditDrawerProps) {
         </div>
       }
     >
-      <div className="space-y-3">
+      <div className="space-y-5">
         <Field label="Título">
           <input value={form.title} maxLength={200}
             onChange={(e) => setForm({ ...form, title: e.target.value })}
