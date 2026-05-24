@@ -105,7 +105,7 @@ export function TimeGrid(p: TimeGridProps) {
           <div style={{ width: GUTTER_W }} className="shrink-0 relative border-r border-border/30">
             {Array.from({ length: END_HOUR - START_HOUR + 1 }, (_, i) => (
               <div key={i} style={{ height: HOUR_HEIGHT }}
-                className="text-[10px] text-fg-muted text-right pr-2 -translate-y-1.5">
+                className={`text-[10px] text-fg-muted text-right pr-2${i > 0 ? ' -translate-y-1.5' : ''}`}>
                 {String(START_HOUR + i).padStart(2, '0')}:00
               </div>
             ))}
