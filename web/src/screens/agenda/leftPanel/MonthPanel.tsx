@@ -1,11 +1,10 @@
 import { useMemo } from 'react';
 import { StatCard } from '../../../components/StatCard';
-import { EventRow } from '../../../components/EventRow';
-import { TaskRow } from '../../../components/TaskRow';
+import { CompactEventRow } from './rows/CompactEventRow';
+import { CompactTaskRow } from './rows/CompactTaskRow';
 import { CollapsibleSection } from './CollapsibleSection';
 import type { TaskForPanel } from '../hooks/useAgendaTasks';
 import type { EventForGrid } from '../hooks/useAgendaEvents';
-import type { Task, CalendarEvent } from '../../../types';
 
 interface Props {
   monthDate: Date;
@@ -29,58 +28,12 @@ function daysSince(dueIso: string, todayIso: string): number {
   return Math.round((today.getTime() - due.getTime()) / (1000 * 60 * 60 * 24));
 }
 
-/** Constrói um objeto Task mínimo compatível com TaskRow a partir de TaskForPanel. */
-function toTask(t: TaskForPanel): Task {
-  return {
-    id: t.id,
-    title: t.title,
-    status: t.status,
-    context: t.context,
-    priority: 'medium',
-    due_date: t.due_date,
-    scheduled_date: t.scheduled_date ?? null,
-    remind_at: null,
-    eisenhower_quadrant: null,
-    project_id: null,
-    assigned_to: '',
-    created_by: '',
-  };
-}
-
-/** Constrói um CalendarEvent mínimo a partir de EventForGrid para o EventRow. */
-function toCalendarEvent(e: EventForGrid): CalendarEvent {
-  return {
-    id: e.id,
-    collaborator_id: '',
-    title: e.title,
-    description: null,
-    context: e.context,
-    category_id: '',
-    category: {
-      id: '',
-      collaborator_id: null,
-      slug: e.category,
-      label: e.category,
-      context: e.context,
-      icon: null,
-      is_system: true,
-      sort_order: 0,
-    },
-    start_at: e.start_at,
-    end_at: e.end_at,
-    modality: e.modality,
-    location_text: e.location_text,
-    meeting_url: e.meeting_url,
-    project_id: e.project_id,
-    status: e.status,
-    eisenhower_quadrant: null,
-    created_by: null,
-    source: e.source,
-    remind_at: null,
-    created_at: '',
-    updated_at: '',
-    event_reminders: [],
-  };
+function overdueDays(dueIso: string | null | undefined, todayIso: string): number | null {
+  if (!dueIso) return null;
+  const due = new Date(dueIso.slice(0, 10) + 'T00:00:00Z').getTime();
+  const today = new Date(todayIso + 'T00:00:00Z').getTime();
+  const d = Math.round((today - due) / 86400000);
+  return d > 0 ? d : null;
 }
 
 export function MonthPanel(p: Props) {
@@ -208,9 +161,9 @@ export function MonthPanel(p: Props) {
               <div className="px-2 py-2 text-[11px] text-fg-muted italic">Sem compromissos</div>
             ) : (
               dayEvents.map(e => (
-                <EventRow
+                <CompactEventRow
                   key={e.id}
-                  event={toCalendarEvent(e)}
+                  event={e}
                   onClick={() => p.onEventClick(e)}
                 />
               ))
@@ -226,11 +179,11 @@ export function MonthPanel(p: Props) {
               <div className="px-2 py-2 text-[11px] text-fg-muted italic">Sem tarefas</div>
             ) : (
               dayTasks.map(t => (
-                <TaskRow
+                <CompactTaskRow
                   key={t.id}
-                  task={toTask(t)}
+                  task={t}
                   onToggle={() => p.onToggleTaskDone(t)}
-                  onEdit={() => p.onTaskClick(t)}
+                  onClick={() => p.onTaskClick(t)}
                 />
               ))
             )}
@@ -288,14 +241,18 @@ export function MonthPanel(p: Props) {
                 <div className="text-[10px] uppercase tracking-wider text-danger font-semibold py-1 px-1">
                   Parou 15+ dias · {groups.plus15.length}
                 </div>
-                {groups.plus15.map(t => (
-                  <TaskRow
-                    key={t.id}
-                    task={toTask(t)}
-                    onToggle={() => p.onToggleTaskDone(t)}
-                    onEdit={() => p.onTaskClick(t)}
-                  />
-                ))}
+                {groups.plus15.map(t => {
+                  const d = overdueDays(t.due_date, todayIso);
+                  return (
+                    <CompactTaskRow
+                      key={t.id}
+                      task={t}
+                      onToggle={() => p.onToggleTaskDone(t)}
+                      onClick={() => p.onTaskClick(t)}
+                      trailingBadge={d != null ? { text: `${d}d`, tone: 'danger' } : undefined}
+                    />
+                  );
+                })}
               </>
             )}
             {groups.d5_14.length > 0 && (
@@ -303,14 +260,18 @@ export function MonthPanel(p: Props) {
                 <div className="text-[10px] uppercase tracking-wider text-warning font-semibold py-1 px-1">
                   Parou 5-14 dias · {groups.d5_14.length}
                 </div>
-                {groups.d5_14.map(t => (
-                  <TaskRow
-                    key={t.id}
-                    task={toTask(t)}
-                    onToggle={() => p.onToggleTaskDone(t)}
-                    onEdit={() => p.onTaskClick(t)}
-                  />
-                ))}
+                {groups.d5_14.map(t => {
+                  const d = overdueDays(t.due_date, todayIso);
+                  return (
+                    <CompactTaskRow
+                      key={t.id}
+                      task={t}
+                      onToggle={() => p.onToggleTaskDone(t)}
+                      onClick={() => p.onTaskClick(t)}
+                      trailingBadge={d != null ? { text: `${d}d`, tone: 'warning' } : undefined}
+                    />
+                  );
+                })}
               </>
             )}
           </CollapsibleSection>
@@ -323,11 +284,11 @@ export function MonthPanel(p: Props) {
           defaultOpen={false}
         >
           {monthTasks.map(t => (
-            <TaskRow
+            <CompactTaskRow
               key={t.id}
-              task={toTask(t)}
+              task={t}
               onToggle={() => p.onToggleTaskDone(t)}
-              onEdit={() => p.onTaskClick(t)}
+              onClick={() => p.onTaskClick(t)}
             />
           ))}
         </CollapsibleSection>
@@ -339,7 +300,7 @@ export function MonthPanel(p: Props) {
           defaultOpen={false}
         >
           {monthEvents.map(e => (
-            <EventRow key={e.id} event={toCalendarEvent(e)} onClick={() => p.onEventClick(e)} />
+            <CompactEventRow key={e.id} event={e} onClick={() => p.onEventClick(e)} />
           ))}
         </CollapsibleSection>
       </div>

@@ -1,12 +1,11 @@
 import { useMemo } from 'react';
 import { StatCard } from '../../../components/StatCard';
-import { EventRow } from '../../../components/EventRow';
-import { TaskRow } from '../../../components/TaskRow';
+import { CompactEventRow } from './rows/CompactEventRow';
+import { CompactTaskRow } from './rows/CompactTaskRow';
 import { CollapsibleSection } from './CollapsibleSection';
 import { HabitWeekHeatmap } from './HabitWeekHeatmap';
 import type { TaskForPanel } from '../hooks/useAgendaTasks';
 import type { EventForGrid } from '../hooks/useAgendaEvents';
-import type { Task, CalendarEvent } from '../../../types';
 
 interface HabitWithWeek {
   id: string;
@@ -29,60 +28,6 @@ interface Props {
 }
 
 const DAY_NAMES = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB'] as const;
-
-/** Constrói um objeto Task mínimo compatível com TaskRow a partir de TaskForPanel. */
-function toTask(t: TaskForPanel): Task {
-  return {
-    id: t.id,
-    title: t.title,
-    status: t.status,
-    context: t.context,
-    priority: 'medium',
-    due_date: t.due_date,
-    scheduled_date: t.scheduled_date ?? null,
-    remind_at: null,
-    eisenhower_quadrant: null,
-    project_id: null,
-    assigned_to: '',
-    created_by: '',
-  };
-}
-
-/** Constrói um CalendarEvent mínimo a partir de EventForGrid para o EventRow. */
-function toCalendarEvent(e: EventForGrid): CalendarEvent {
-  return {
-    id: e.id,
-    collaborator_id: '',
-    title: e.title,
-    description: null,
-    context: e.context,
-    category_id: '',
-    category: {
-      id: '',
-      collaborator_id: null,
-      slug: e.category,
-      label: e.category,
-      context: e.context,
-      icon: null,
-      is_system: true,
-      sort_order: 0,
-    },
-    start_at: e.start_at,
-    end_at: e.end_at,
-    modality: e.modality,
-    location_text: e.location_text,
-    meeting_url: e.meeting_url,
-    project_id: e.project_id,
-    status: e.status,
-    eisenhower_quadrant: null,
-    created_by: null,
-    source: e.source,
-    remind_at: null,
-    created_at: '',
-    updated_at: '',
-    event_reminders: [],
-  };
-}
 
 /** Gera um array de 7 datas a partir de weekStart. */
 function buildWeekDays(weekStart: Date): Date[] {
@@ -238,18 +183,18 @@ export function WeekPanel(p: Props) {
                 {itemCount > 0 && (
                   <div className="pl-2 space-y-0.5 mt-0.5">
                     {dayEvents.map(e => (
-                      <EventRow
+                      <CompactEventRow
                         key={e.id}
-                        event={toCalendarEvent(e)}
+                        event={e}
                         onClick={() => p.onEventClick(e)}
                       />
                     ))}
                     {dayTasks.map(t => (
-                      <TaskRow
+                      <CompactTaskRow
                         key={t.id}
-                        task={toTask(t)}
+                        task={t}
                         onToggle={() => p.onToggleTaskDone(t)}
-                        onEdit={() => p.onTaskClick(t)}
+                        onClick={() => p.onTaskClick(t)}
                       />
                     ))}
                   </div>

@@ -1,11 +1,10 @@
 import { useMemo } from 'react';
 import { StatCard } from '../../../components/StatCard';
-import { EventRow } from '../../../components/EventRow';
-import { TaskRow } from '../../../components/TaskRow';
+import { CompactEventRow } from './rows/CompactEventRow';
+import { CompactTaskRow } from './rows/CompactTaskRow';
 import { CollapsibleSection } from './CollapsibleSection';
 import type { TaskForPanel } from '../hooks/useAgendaTasks';
 import type { EventForGrid } from '../hooks/useAgendaEvents';
-import type { Task, CalendarEvent } from '../../../types';
 
 interface Habit {
   id: string;
@@ -36,61 +35,12 @@ function classifyOverdue(dueIso: string, todayIso: string): 'plus4' | 'd2_3' | '
   return 'd1';
 }
 
-/** Constrói um objeto Task mínimo compatível com TaskRow a partir de TaskForPanel. */
-function toTask(t: TaskForPanel): Task {
-  return {
-    id: t.id,
-    title: t.title,
-    status: t.status,
-    context: t.context,
-    priority: 'medium',
-    due_date: t.due_date,
-    scheduled_date: t.scheduled_date ?? null,
-    remind_at: null,
-    // TaskForPanel.eisenhower_quadrant é number|null; Task.eisenhower_quadrant é Quadrant (string|null)
-    eisenhower_quadrant: null,
-    project_id: null,
-    assigned_to: '',
-    created_by: '',
-  };
-}
-
-/** Constrói um CalendarEvent mínimo a partir de EventForGrid para o EventRow.
- *  EventCategory não tem campo `color` — EventRow usa apenas slug+label para derivar o tone.
- */
-function toCalendarEvent(e: EventForGrid): CalendarEvent {
-  return {
-    id: e.id,
-    collaborator_id: '',
-    title: e.title,
-    description: null,
-    context: e.context,
-    category_id: '',
-    category: {
-      id: '',
-      collaborator_id: null,
-      slug: e.category,
-      label: e.category,
-      context: e.context,
-      icon: null,
-      is_system: true,
-      sort_order: 0,
-    },
-    start_at: e.start_at,
-    end_at: e.end_at,
-    modality: e.modality,
-    location_text: e.location_text,
-    meeting_url: e.meeting_url,
-    project_id: e.project_id,
-    status: e.status,
-    eisenhower_quadrant: null,
-    created_by: null,
-    source: e.source,
-    remind_at: null,
-    created_at: '',
-    updated_at: '',
-    event_reminders: [],
-  };
+function overdueDays(dueIso: string | null | undefined, todayIso: string): number | null {
+  if (!dueIso) return null;
+  const due = new Date(dueIso.slice(0, 10) + 'T00:00:00Z').getTime();
+  const today = new Date(todayIso + 'T00:00:00Z').getTime();
+  const d = Math.round((today - due) / 86400000);
+  return d > 0 ? d : null;
 }
 
 export function DayPanel(p: Props) {
@@ -228,9 +178,9 @@ export function DayPanel(p: Props) {
             <p className="text-body-sm text-fg-muted px-1 py-2">Sem compromissos hoje.</p>
           ) : (
             dayEvents.map(e => (
-              <EventRow
+              <CompactEventRow
                 key={e.id}
-                event={toCalendarEvent(e)}
+                event={e}
                 onClick={() => p.onEventClick(e)}
               />
             ))
@@ -249,14 +199,18 @@ export function DayPanel(p: Props) {
               <div className="text-[10px] uppercase tracking-wider text-danger font-semibold px-1 pt-2 pb-1">
                 ⚠️ +4 dias atrasadas
               </div>
-              {groups.plus4.map(t => (
-                <TaskRow
-                  key={t.id}
-                  task={toTask(t)}
-                  onToggle={() => p.onToggleTaskDone(t)}
-                  onEdit={() => p.onTaskClick(t)}
-                />
-              ))}
+              {groups.plus4.map(t => {
+                const d = overdueDays(t.due_date, todayIso);
+                return (
+                  <CompactTaskRow
+                    key={t.id}
+                    task={t}
+                    onToggle={() => p.onToggleTaskDone(t)}
+                    onClick={() => p.onTaskClick(t)}
+                    trailingBadge={d != null ? { text: `${d}d`, tone: d >= 4 ? 'danger' : 'warning' } : undefined}
+                  />
+                );
+              })}
             </>
           )}
 
@@ -266,14 +220,18 @@ export function DayPanel(p: Props) {
               <div className="text-[10px] uppercase tracking-wider text-warning font-semibold px-1 pt-2 pb-1">
                 ⏰ 2–3 dias atrasadas
               </div>
-              {groups.d2_3.map(t => (
-                <TaskRow
-                  key={t.id}
-                  task={toTask(t)}
-                  onToggle={() => p.onToggleTaskDone(t)}
-                  onEdit={() => p.onTaskClick(t)}
-                />
-              ))}
+              {groups.d2_3.map(t => {
+                const d = overdueDays(t.due_date, todayIso);
+                return (
+                  <CompactTaskRow
+                    key={t.id}
+                    task={t}
+                    onToggle={() => p.onToggleTaskDone(t)}
+                    onClick={() => p.onTaskClick(t)}
+                    trailingBadge={d != null ? { text: `${d}d`, tone: d >= 4 ? 'danger' : 'warning' } : undefined}
+                  />
+                );
+              })}
             </>
           )}
 
@@ -283,14 +241,18 @@ export function DayPanel(p: Props) {
               <div className="text-[10px] uppercase tracking-wider text-warning/80 font-semibold px-1 pt-2 pb-1">
                 📌 Ontem
               </div>
-              {groups.d1.map(t => (
-                <TaskRow
-                  key={t.id}
-                  task={toTask(t)}
-                  onToggle={() => p.onToggleTaskDone(t)}
-                  onEdit={() => p.onTaskClick(t)}
-                />
-              ))}
+              {groups.d1.map(t => {
+                const d = overdueDays(t.due_date, todayIso);
+                return (
+                  <CompactTaskRow
+                    key={t.id}
+                    task={t}
+                    onToggle={() => p.onToggleTaskDone(t)}
+                    onClick={() => p.onTaskClick(t)}
+                    trailingBadge={d != null ? { text: `${d}d`, tone: d >= 4 ? 'danger' : 'warning' } : undefined}
+                  />
+                );
+              })}
             </>
           )}
 
@@ -303,11 +265,11 @@ export function DayPanel(p: Props) {
                 </div>
               )}
               {todayTasks.map(t => (
-                <TaskRow
+                <CompactTaskRow
                   key={t.id}
-                  task={toTask(t)}
+                  task={t}
                   onToggle={() => p.onToggleTaskDone(t)}
-                  onEdit={() => p.onTaskClick(t)}
+                  onClick={() => p.onTaskClick(t)}
                 />
               ))}
             </>
@@ -327,9 +289,11 @@ export function DayPanel(p: Props) {
             defaultOpen={false}
           >
             {done.map(t => (
-              <TaskRow
+              <CompactTaskRow
                 key={t.id}
-                task={toTask(t)}
+                task={t}
+                onToggle={() => p.onToggleTaskDone(t)}
+                onClick={() => p.onTaskClick(t)}
               />
             ))}
           </CollapsibleSection>
