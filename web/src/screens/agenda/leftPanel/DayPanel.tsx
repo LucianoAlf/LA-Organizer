@@ -21,6 +21,7 @@ interface Props {
   onTaskClick: (t: TaskForPanel) => void;
   onToggleTaskDone: (t: TaskForPanel) => void;
   onEventClick: (e: EventForGrid) => void;
+  onToggleEventDone: (e: EventForGrid) => void;
   onToggleHabit: (h: Habit) => void;
 }
 
@@ -182,6 +183,7 @@ export function DayPanel(p: Props) {
                 key={e.id}
                 event={e}
                 onClick={() => p.onEventClick(e)}
+                onToggleDone={() => p.onToggleEventDone(e)}
               />
             ))
           )}

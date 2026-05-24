@@ -24,6 +24,7 @@ interface Props {
   onTaskClick: (t: TaskForPanel) => void;
   onToggleTaskDone: (t: TaskForPanel) => void;
   onEventClick: (e: EventForGrid) => void;
+  onToggleEventDone: (e: EventForGrid) => void;
   onPickDay: (d: Date) => void;
 }
 
@@ -187,6 +188,7 @@ export function WeekPanel(p: Props) {
                         key={e.id}
                         event={e}
                         onClick={() => p.onEventClick(e)}
+                        onToggleDone={() => p.onToggleEventDone(e)}
                       />
                     ))}
                     {dayTasks.map(t => (

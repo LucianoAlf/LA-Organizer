@@ -144,6 +144,7 @@ export default function AgendaPreviewDev() {
               onTaskClick={() => {}}
               onToggleTaskDone={() => {}}
               onEventClick={() => {}}
+              onToggleEventDone={() => {}}
               onToggleHabit={() => {}}
               onPickDay={(d) => { setCurrentDate(d); setView('day'); }}
               onClearSelectedDay={() => setSelectedMonthDay(null)}

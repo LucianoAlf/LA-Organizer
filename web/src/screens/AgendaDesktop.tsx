@@ -91,15 +91,34 @@ export function AgendaDesktop() {
   const { events } = useAgendaEvents({ from, to, filters });
   const { tasks } = useAgendaTasks({ from, to, filters });
 
-  // Contagens por contexto — sobre listas completas (não filtradas por contexto).
+  // Contagens por contexto — refletem a janela visível do painel atual.
   const contextCounts = useMemo(() => {
-    const work = tasks.filter(t => t.context === 'work' && t.status !== 'done').length
-               + events.filter(e => e.context === 'work').length;
-    const personal = tasks.filter(t => t.context === 'personal' && t.status !== 'done').length
-                   + events.filter(e => e.context === 'personal').length;
-    const delegated = tasks.filter(t => t.delegated_to != null && t.status !== 'done').length;
+    const todayIso = currentDate.toISOString().slice(0, 10);
+    let inRange: (iso: string) => boolean;
+    if (view === 'day') {
+      inRange = (iso) => iso <= todayIso;
+    } else if (view === 'week') {
+      const s = startOfWeek(currentDate);
+      const e = new Date(s); e.setDate(s.getDate() + 6);
+      const sIso = s.toISOString().slice(0, 10);
+      const eIso = e.toISOString().slice(0, 10);
+      inRange = (iso) => iso >= sIso && iso <= eIso;
+    } else {
+      const sIso = new Date(miniMonth.getFullYear(), miniMonth.getMonth(), 1).toISOString().slice(0, 10);
+      const eIso = new Date(miniMonth.getFullYear(), miniMonth.getMonth() + 1, 0).toISOString().slice(0, 10);
+      inRange = (iso) => iso >= sIso && iso <= eIso;
+    }
+    const tInRange = (t: typeof tasks[number]) => {
+      const d = (t.scheduled_date ?? t.due_date ?? '').slice(0, 10);
+      return !!d && inRange(d);
+    };
+    const work = tasks.filter(t => t.context === 'work' && t.status !== 'done' && tInRange(t)).length
+               + events.filter(e => e.context === 'work' && inRange(e.start_at.slice(0, 10))).length;
+    const personal = tasks.filter(t => t.context === 'personal' && t.status !== 'done' && tInRange(t)).length
+                   + events.filter(e => e.context === 'personal' && inRange(e.start_at.slice(0, 10))).length;
+    const delegated = tasks.filter(t => t.delegated_to != null && t.status !== 'done' && tInRange(t)).length;
     return { work, personal, delegated };
-  }, [tasks, events]);
+  }, [tasks, events, view, currentDate, miniMonth]);
 
   // Listas filtradas pelo contexto ativo — passadas ao painel esquerdo e timegrid.
   const tasksFiltered = useMemo(() => {
@@ -113,27 +132,6 @@ export function AgendaDesktop() {
   }, [events, currentContext]);
 
   const todayIso = currentDate.toISOString().slice(0, 10);
-
-  // Tarefas "dia todo" para DayView: due_date = hoje, sem remind_at
-  const allDayTasksDay = useMemo(() =>
-    tasksFiltered.filter(t =>
-      t.due_date && t.due_date.slice(0, 10) === todayIso && !t.remind_at
-    ),
-  [tasksFiltered, todayIso]);
-
-  // Tarefas "dia todo" para WeekView: due_date dentro da semana, sem remind_at
-  const allDayTasksWeek = useMemo(() => {
-    const weekS = startOfWeek(currentDate);
-    const weekE = new Date(weekS);
-    weekE.setDate(weekS.getDate() + 6);
-    const startIso = weekS.toISOString().slice(0, 10);
-    const endIso = weekE.toISOString().slice(0, 10);
-    return tasksFiltered.filter(t => {
-      if (!t.due_date || t.remind_at) return false;
-      const iso = t.due_date.slice(0, 10);
-      return iso >= startIso && iso <= endIso;
-    });
-  }, [tasksFiltered, currentDate]);
 
   // Mutations — update/delete events e update tasks (create event/task vem do QuickCreateSheet).
   const updateEvent = useMutation({
@@ -296,6 +294,12 @@ export function AgendaDesktop() {
               })
             }
             onEventClick={setEditingEvent}
+            onToggleEventDone={(e) =>
+              updateEvent.mutate({
+                id: e.id,
+                patch: { status: e.status === 'done' ? 'scheduled' : 'done' } as Partial<EventForGrid>,
+              })
+            }
             onToggleHabit={() => {}}
             onPickDay={(d) => { setDate(d); setView('day'); }}
             onClearSelectedDay={() => setSelectedMonthDay(null)}
@@ -312,10 +316,6 @@ export function AgendaDesktop() {
             onEventClick={setEditingEvent}
             onEventDrop={onEventDrop}
             onEventResize={onEventResize}
-            allDayTasks={allDayTasksDay}
-            onAllDayTaskClick={(t) =>
-              setQuickCreate({ open: true, dueDate: (t.scheduled_date ?? t.due_date ?? undefined) ?? undefined })
-            }
           />
         )}
         {view === 'week' && (
@@ -326,10 +326,6 @@ export function AgendaDesktop() {
             onEventClick={setEditingEvent}
             onEventDrop={onEventDrop}
             onEventResize={onEventResize}
-            allDayTasks={allDayTasksWeek}
-            onAllDayTaskClick={(t) =>
-              setQuickCreate({ open: true, dueDate: (t.scheduled_date ?? t.due_date ?? undefined) ?? undefined })
-            }
           />
         )}
         {view === 'month' && (

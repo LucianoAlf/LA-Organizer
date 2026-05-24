@@ -22,6 +22,7 @@ interface Props {
   onTaskClick: (t: TaskForPanel) => void;
   onToggleTaskDone: (t: TaskForPanel) => void;
   onEventClick: (e: EventForGrid) => void;
+  onToggleEventDone: (e: EventForGrid) => void;
   onToggleHabit: (h: Habit) => void;
 
   onPickDay: (d: Date) => void;
@@ -41,6 +42,7 @@ export function AgendaDesktopLeftPanel(p: Props) {
           onTaskClick={p.onTaskClick}
           onToggleTaskDone={p.onToggleTaskDone}
           onEventClick={p.onEventClick}
+          onToggleEventDone={p.onToggleEventDone}
           onToggleHabit={p.onToggleHabit}
         />
       )}
@@ -54,6 +56,7 @@ export function AgendaDesktopLeftPanel(p: Props) {
           onTaskClick={p.onTaskClick}
           onToggleTaskDone={p.onToggleTaskDone}
           onEventClick={p.onEventClick}
+          onToggleEventDone={p.onToggleEventDone}
           onPickDay={p.onPickDay}
         />
       )}
@@ -66,6 +69,7 @@ export function AgendaDesktopLeftPanel(p: Props) {
           onTaskClick={p.onTaskClick}
           onToggleTaskDone={p.onToggleTaskDone}
           onEventClick={p.onEventClick}
+          onToggleEventDone={p.onToggleEventDone}
           onClearSelectedDay={p.onClearSelectedDay}
           onOpenDayView={p.onOpenDayView}
         />

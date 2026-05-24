@@ -6,9 +6,7 @@ import {
 } from '@dnd-kit/core';
 import { computeLanes, timeToY, yToTime, type GridConfig } from '../lib/timeGrid';
 import { EventBlock } from './EventBlock';
-import { AllDayStrip } from './AllDayStrip';
 import type { EventForGrid } from '../hooks/useAgendaEvents';
-import type { TaskForPanel } from '../hooks/useAgendaTasks';
 
 const HOUR_HEIGHT = 64;
 const START_HOUR = 6;
@@ -25,8 +23,6 @@ export interface TimeGridProps {
   onEventClick: (event: EventForGrid) => void;
   onEventDrop: (event: EventForGrid, newStart: Date) => void;
   onEventResize: (event: EventForGrid, newDurationMs: number) => void;
-  allDayTasks?: TaskForPanel[];
-  onAllDayTaskClick?: (t: TaskForPanel) => void;
 }
 
 function DroppableDay({ day, children }: { day: Date; children: React.ReactNode }) {
@@ -103,11 +99,6 @@ export function TimeGrid(p: TimeGridProps) {
           ))}
         </div>
       )}
-
-      <AllDayStrip
-        tasks={p.allDayTasks ?? []}
-        onTaskClick={p.onAllDayTaskClick ?? (() => {})}
-      />
 
       <div ref={scrollerRef} className="flex-1 overflow-y-auto relative">
         <div className="flex" style={{ height: totalHeight }}>

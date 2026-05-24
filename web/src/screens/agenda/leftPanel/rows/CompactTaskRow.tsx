@@ -34,7 +34,7 @@ export function CompactTaskRow({ task, onToggle, onClick, trailingBadge }: Props
       <input
         type="checkbox"
         checked={isDone}
-        onChange={onToggle}
+        onChange={(e) => { e.stopPropagation(); onToggle(); }}
         className="w-3.5 h-3.5 accent-tom shrink-0 cursor-pointer"
         aria-label="Marcar como feita"
       />

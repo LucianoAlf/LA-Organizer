@@ -14,6 +14,7 @@ interface Props {
   onTaskClick: (t: TaskForPanel) => void;
   onToggleTaskDone: (t: TaskForPanel) => void;
   onEventClick: (e: EventForGrid) => void;
+  onToggleEventDone: (e: EventForGrid) => void;
   onClearSelectedDay: () => void;
   onOpenDayView: (d: Date) => void;
 }
@@ -165,6 +166,7 @@ export function MonthPanel(p: Props) {
                   key={e.id}
                   event={e}
                   onClick={() => p.onEventClick(e)}
+                  onToggleDone={() => p.onToggleEventDone(e)}
                 />
               ))
             )}
@@ -300,7 +302,7 @@ export function MonthPanel(p: Props) {
           defaultOpen={false}
         >
           {monthEvents.map(e => (
-            <CompactEventRow key={e.id} event={e} onClick={() => p.onEventClick(e)} />
+            <CompactEventRow key={e.id} event={e} onClick={() => p.onEventClick(e)} onToggleDone={() => p.onToggleEventDone(e)} />
           ))}
         </CollapsibleSection>
       </div>
