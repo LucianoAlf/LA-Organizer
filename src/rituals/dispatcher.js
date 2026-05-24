@@ -686,7 +686,7 @@ async function remindEventTasks(now = new Date()) {
     .from('tasks')
     .select(`
       id, title, assigned_to, school_event_id,
-      collaborator:assigned_to ( phone, full_name ),
+      collaborator:assigned_to ( id, phone, full_name, user_preferences(quiet_weekends, quiet_days, quiet_reason) ),
       event:school_event_id ( title )
     `)
     .not('school_event_id', 'is', null)
@@ -705,6 +705,12 @@ async function remindEventTasks(now = new Date()) {
     if (!phone) {
       // Marca como notificado mesmo sem phone — evita reprocessamento infinito
       await supabase.from('tasks').update({ reminded_at: nowIso }).eq('id', task.id);
+      continue;
+    }
+    // Respeita quiet_days/weekends — não marca reminded_at pra retentar fora do quiet.
+    const q = await isQuietNow(task.collaborator?.user_preferences, nowSaoPaulo());
+    if (q.quiet) {
+      console.log(`[remindEventTasks] skip ${task.id.slice(0,8)} — quiet (${q.reason})`);
       continue;
     }
     const firstName = (task.collaborator?.full_name || '').split(' ')[0];
@@ -744,7 +750,7 @@ async function remindOperationalTasks(now = new Date()) {
     .select(`
       id, title, assigned_to, due_date,
       request_type:department_request_types!tasks_request_type_id_fkey(label),
-      collaborator:assigned_to(phone, full_name)
+      collaborator:assigned_to(id, phone, full_name, user_preferences(quiet_weekends, quiet_days, quiet_reason))
     `)
     .not('department_id', 'is', null)
     .is('school_event_id', null)
@@ -763,6 +769,11 @@ async function remindOperationalTasks(now = new Date()) {
     const phone = task.collaborator?.phone;
     if (!phone) {
       await supabase.from('tasks').update({ reminded_at: nowIso }).eq('id', task.id);
+      continue;
+    }
+    const q = await isQuietNow(task.collaborator?.user_preferences, nowSaoPaulo());
+    if (q.quiet) {
+      console.log(`[remindOperationalTasks] skip ${task.id.slice(0,8)} — quiet (${q.reason})`);
       continue;
     }
     const firstName = (task.collaborator?.full_name || '').split(' ')[0];
@@ -800,7 +811,7 @@ async function remindPersonalTasks(now = new Date()) {
     .from('tasks')
     .select(`
       id, title, assigned_to, due_date,
-      collaborator:assigned_to(phone, full_name)
+      collaborator:assigned_to(id, phone, full_name, user_preferences(quiet_weekends, quiet_days, quiet_reason))
     `)
     .is('department_id', null)
     .is('project_id', null)
@@ -820,6 +831,11 @@ async function remindPersonalTasks(now = new Date()) {
     const phone = task.collaborator?.phone;
     if (!phone) {
       await supabase.from('tasks').update({ reminded_at: nowIso }).eq('id', task.id);
+      continue;
+    }
+    const q = await isQuietNow(task.collaborator?.user_preferences, nowSaoPaulo());
+    if (q.quiet) {
+      console.log(`[remindPersonalTasks] skip ${task.id.slice(0,8)} — quiet (${q.reason})`);
       continue;
     }
     const firstName = (task.collaborator?.full_name || '').split(' ')[0];
@@ -3324,15 +3340,20 @@ async function checkOverdueAlerts(ymdToday) {
       await logRitualEvent(collab.id, 'alerta_atraso', 'skipped', `dnd_active until=${dnd.until}`, ymdToday);
       continue;
     }
-    // Sprint 27 — atraso supera silêncio: tasks já vencidas notificam mesmo
-    // em quiet_day. Tom muda pra reconhecer o silêncio em vez de ignorar.
+    // Revisão 24/05 (caso Rafinha): quiet_day SUPERA atraso. "Dia de silêncio"
+    // significa silêncio literal — TOM não cobra nada nesse dia.
+    // (Antes: Sprint 27 mandava com tom suave; usuário sentiu como invasão.)
     const q = await isQuietNow(collab.user_preferences, nowSaoPaulo());
+    if (q.quiet) {
+      await logRitualEvent(collab.id, 'alerta_atraso', 'skipped', `quiet:${q.reason}`, ymdToday);
+      continue;
+    }
     if (await alreadyNotifiedToday(collab.id, t.id, 'overdue_alert', ymdToday)) {
       await logRitualEvent(collab.id, 'alerta_atraso', 'skipped', `ja_notificado:${String(t.id).slice(0,8)}`, ymdToday);
       continue;
     }
     const n = daysLate(t.due_date);
-    const text = buildOverdueText(t.title, n, q.quiet);
+    const text = buildOverdueText(t.title, n, false);
     try {
       await whatsapp.sendMessage(collab.phone, text);
       await supabase.from('notifications').insert({
