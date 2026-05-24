@@ -81,20 +81,24 @@ export function TimeGrid(p: TimeGridProps) {
 
   return (
     <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-      <div className="flex sticky top-0 z-20 bg-bg-surface border-b border-border">
-        <div style={{ width: GUTTER_W }} className="shrink-0" />
-        {p.days.map((d) => (
-          <div
-            key={d.toISOString()}
-            className={[
-              'flex-1 text-center py-2 text-[11px] uppercase tracking-wider',
-              isSameDay(d, new Date()) ? 'bg-tom/5 text-fg font-semibold' : 'text-fg-muted',
-            ].join(' ')}
-          >
-            {d.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' })}
-          </div>
-        ))}
-      </div>
+      {/* Header dos dias — renderiza só na vista Semana (>1 dia). Na vista Dia
+          a data já aparece no topbar central (evita duplicação). */}
+      {p.days.length > 1 && (
+        <div className="flex sticky top-0 z-20 bg-bg-surface border-b border-border">
+          <div style={{ width: GUTTER_W }} className="shrink-0" />
+          {p.days.map((d) => (
+            <div
+              key={d.toISOString()}
+              className={[
+                'flex-1 text-center py-2 text-[11px] uppercase tracking-wider',
+                isSameDay(d, new Date()) ? 'bg-tom/5 text-fg font-semibold' : 'text-fg-muted',
+              ].join(' ')}
+            >
+              {d.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' })}
+            </div>
+          ))}
+        </div>
+      )}
 
       <div ref={scrollerRef} className="flex-1 overflow-y-auto relative">
         <div className="flex" style={{ height: totalHeight }}>

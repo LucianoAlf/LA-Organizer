@@ -49,21 +49,9 @@ export function AgendaLeftRail(p: AgendaLeftRailProps) {
         onMonthChange={p.onMiniMonthChange}
         onDayClick={p.onMiniDayClick}
       />
-      <div className="px-3 py-2 border-t border-border space-y-1.5">
-        <CountRow label="PRA HOJE" value={counts.today} onClick={() => p.onCountClick('today')} />
-        <CountRow
-          label="CONCLUÍDAS"
-          value={counts.done}
-          onClick={() => p.onCountClick('done')}
-          colorClass="text-success"
-        />
-        <CountRow
-          label="ATRASADAS"
-          value={counts.overdue}
-          onClick={() => p.onCountClick('overdue')}
-          colorClass="text-danger"
-        />
-      </div>
+      {/* Removido bloco PRA HOJE / CONCLUÍDAS / ATRASADAS — era redundante com as
+          seções colapsáveis do TasksPanel logo abaixo. Padrão Google Calendar:
+          counters não duplicam a lista de tarefas. */}
       <div className="px-3 py-2 border-t border-border">
         <div className="text-[10px] uppercase tracking-wider text-fg-muted font-semibold mb-2">
           Filtrar
