@@ -153,6 +153,8 @@ export default function AgendaPreviewDev() {
               view={view as 'day'|'week'} currentDate={currentDate}
               weekStart={startOfWeek(currentDate)}
               tasks={MOCK_TASKS}
+              events={MOCK_EVENTS}
+              onEventClick={() => {}}
               onTaskClick={() => {}} onToggleDone={() => {}} onCreateTask={() => {}}
               onEditTask={() => {}} onRescheduleTask={() => {}} onDeleteTask={() => {}}
             />

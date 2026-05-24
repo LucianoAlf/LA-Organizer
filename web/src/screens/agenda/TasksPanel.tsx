@@ -204,3 +204,24 @@ function TaskRow({
     </div>
   );
 }
+
+function EventRowMini({ event, onClick }: { event: EventForGrid; onClick: (e: EventForGrid) => void }) {
+  const color = event.category_color ?? CONTEXT_FALLBACK_COLOR[event.context];
+  const start = new Date(event.start_at);
+  const end = new Date(event.end_at);
+  const fmt = (d: Date) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return (
+    <button
+      type="button"
+      onClick={() => onClick(event)}
+      className="w-full flex items-start gap-2 px-2 py-1.5 rounded text-left hover:bg-bg-elevated focus-ring"
+    >
+      <span className="w-1 self-stretch rounded-sm shrink-0 mt-0.5" style={{ backgroundColor: color }} />
+      <div className="flex-1 min-w-0">
+        <div className="text-[10px] text-fg-muted tabular-nums">{fmt(start)}–{fmt(end)}</div>
+        <div className="text-[12px] text-fg truncate">{event.title}</div>
+      </div>
+    </button>
+  );
+}
+

@@ -267,6 +267,8 @@ export function AgendaDesktop() {
                   currentDate={currentDate}
                   weekStart={startOfWeek(currentDate)}
                   tasks={tasks}
+                  events={events}
+                  onEventClick={setEditingEvent}
                   onTaskClick={(t) => {
                     setQuickCreate({ open: true, dueDate: (t.scheduled_date ?? t.due_date ?? undefined) ?? undefined });
                   }}
