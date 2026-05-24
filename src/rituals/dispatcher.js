@@ -2052,10 +2052,34 @@ async function ceoTeamUnclosedTasksReport(now = new Date()) {
       continue;
     }
 
+    // Esconde tasks 1-5d que JÁ foram cobradas individualmente do dono nas
+    // últimas 24h via checkOverdueAlerts. Só sobem pro CEO: 6+d OU sem cobrança
+    // recente. (checkOverdueAlerts só cobra individual até 5d; após isso é só
+    // o CEO que age.)
+    const totalCount = stale.length;
+    const ids = stale.map(t => t.id);
+    const cutoff24h = new Date(now.getTime() - 24 * 3600_000).toISOString();
+    const { data: notified } = await supabase
+      .from('notifications')
+      .select('reference_id')
+      .in('reference_id', ids)
+      .in('notification_type', ['overdue_alert', 'deadline_alert'])
+      .gte('sent_at', cutoff24h);
+    const cobradas24h = new Set((notified || []).map(n => n.reference_id));
+    const filteredStale = stale.filter(t => {
+      const days = daysOverdue(t.due_date);
+      return days >= 6 || !cobradas24h.has(t.id);
+    });
+    const hiddenCount = totalCount - filteredStale.length;
+    if (filteredStale.length === 0) {
+      await logRitualEvent(ceo.id, 'ceo_team_unclosed_tasks', 'skipped', `all_recently_asked total=${totalCount}`, ymdRef);
+      continue;
+    }
+
     // Separa por idade: 3+ dias = bucket CEO; resto agrupa por líder.
     const ceoBucket = [];
     const byLeader = {};
-    for (const t of stale) {
+    for (const t of filteredStale) {
       const days = daysOverdue(t.due_date);
       if (days >= 3) {
         ceoBucket.push({ ...t, days });
@@ -2105,11 +2129,14 @@ async function ceoTeamUnclosedTasksReport(now = new Date()) {
       lines.push('');
     }
 
-    const msg = `📋 *Governança — Tarefas do time atrasadas*\n\n${lines.join('\n').trim()}\n\n_Total: ${stale.length} tarefa${stale.length > 1 ? 's' : ''} atrasada${stale.length > 1 ? 's' : ''}._\n\nPra delegar cobrança, me diz tipo: *"manda recado pra Krissya: cobra a tarefa X"*.`;
+    const hiddenNote = hiddenCount > 0
+      ? `\n\n_${hiddenCount} já cobrad${hiddenCount > 1 ? 'as' : 'a'} do dono nas últimas 24h — não listad${hiddenCount > 1 ? 'as' : 'a'} aqui._`
+      : '';
+    const msg = `📋 *Governança — Tarefas do time atrasadas*\n\n${lines.join('\n').trim()}\n\n_Total: ${filteredStale.length} tarefa${filteredStale.length > 1 ? 's' : ''} atrasada${filteredStale.length > 1 ? 's' : ''}._${hiddenNote}\n\nPra delegar cobrança, me diz tipo: *"manda recado pra Krissya: cobra a tarefa X"*.`;
 
     try {
       await whatsapp.sendMessage(ceo.phone, msg);
-      await logRitualEvent(ceo.id, 'ceo_team_unclosed_tasks', 'sent', `count=${stale.length} ceo=${ceoBucket.length}`, ymdRef);
+      await logRitualEvent(ceo.id, 'ceo_team_unclosed_tasks', 'sent', `count=${filteredStale.length} ceo=${ceoBucket.length} hidden=${hiddenCount}`, ymdRef);
       console.log(`[CEOTasksReport] sent ${stale.length} (${ceoBucket.length} CEO direto) → ${String(ceo.phone).slice(-4)}`);
     } catch (err) {
       console.error(`[CEOTasksReport] send err ${String(ceo.phone).slice(-4)}:`, err.message);
