@@ -1,4 +1,4 @@
-import { Video, MapPin, Building2, XCircle } from 'lucide-react';
+import { Video, MapPin, Building2 } from 'lucide-react';
 import type { EventForGrid } from '../../hooks/useAgendaEvents';
 
 /**
@@ -45,21 +45,17 @@ export function CompactEventRow({ event, onClick, onToggleDone }: Props) {
 
   return (
     <div className="group flex items-center gap-2 px-2 py-1 rounded hover:bg-bg-elevated min-w-0">
-      {isCancelled ? (
-        <XCircle size={14} className="shrink-0 text-fg-muted/50" aria-label="Cancelado" />
-      ) : (
-        <input
-          type="checkbox"
-          checked={isDone}
-          onChange={(e) => { e.stopPropagation(); onToggleDone?.(); }}
-          disabled={!onToggleDone}
-          className={[
-            'w-3.5 h-3.5 accent-tom shrink-0',
-            onToggleDone ? 'cursor-pointer' : 'cursor-not-allowed opacity-40',
-          ].join(' ')}
-          aria-label="Marcar como feito"
-        />
-      )}
+      <input
+        type="checkbox"
+        checked={isDone}
+        onChange={(e) => { e.stopPropagation(); onToggleDone?.(); }}
+        disabled={!onToggleDone}
+        className={[
+          'w-3.5 h-3.5 accent-tom shrink-0',
+          onToggleDone ? 'cursor-pointer' : 'cursor-not-allowed opacity-40',
+        ].join(' ')}
+        aria-label="Marcar como feito"
+      />
       <span className="text-[11px] text-fg-muted tabular-nums shrink-0 font-medium">{formatHM(event.start_at)}</span>
       <button
         type="button"
