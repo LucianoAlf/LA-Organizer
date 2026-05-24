@@ -136,7 +136,6 @@ export default function AgendaPreviewDev() {
               currentDate={currentDate}
               weekStart={startOfWeek(currentDate)}
               monthDate={miniMonth}
-              selectedMonthDay={selectedMonthDay}
               tasks={MOCK_TASKS}
               events={MOCK_EVENTS}
               habitsDay={MOCK_HABITS_DAY}
@@ -147,8 +146,6 @@ export default function AgendaPreviewDev() {
               onToggleEventDone={() => {}}
               onToggleHabit={() => {}}
               onPickDay={(d) => { setCurrentDate(d); setView('day'); }}
-              onClearSelectedDay={() => setSelectedMonthDay(null)}
-              onOpenDayView={(d) => { setCurrentDate(d); setView('day'); }}
             />
           }
           rightRail={null}
@@ -165,10 +162,8 @@ export default function AgendaPreviewDev() {
           )}
           {view === 'month' && (
             <MonthView monthDate={miniMonth} events={MOCK_EVENTS}
-              selectedDay={selectedMonthDay}
-              onDayClick={setSelectedMonthDay}
-              onDayDoubleClick={(d) => { setCurrentDate(d); setView('day'); }}
-              onEventClick={() => {}} onEmptyAreaClick={() => {}} />
+              onDayClick={(d) => { setCurrentDate(d); setView('day'); }}
+              onEventClick={() => {}} />
           )}
         </AgendaShell>
       </div>

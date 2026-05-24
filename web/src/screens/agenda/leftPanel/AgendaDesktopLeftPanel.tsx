@@ -12,8 +12,6 @@ interface Props {
   currentDate: Date;
   weekStart: Date;
   monthDate: Date;
-  selectedMonthDay: Date | null;
-
   tasks: TaskForPanel[];
   events: EventForGrid[];
   habitsDay: Habit[];
@@ -26,8 +24,6 @@ interface Props {
   onToggleHabit: (h: Habit) => void;
 
   onPickDay: (d: Date) => void;
-  onClearSelectedDay: () => void;
-  onOpenDayView: (d: Date) => void;
 }
 
 export function AgendaDesktopLeftPanel(p: Props) {
@@ -63,15 +59,12 @@ export function AgendaDesktopLeftPanel(p: Props) {
       {p.view === 'month' && (
         <MonthPanel
           monthDate={p.monthDate}
-          selectedDay={p.selectedMonthDay}
           tasks={p.tasks}
           events={p.events}
           onTaskClick={p.onTaskClick}
           onToggleTaskDone={p.onToggleTaskDone}
           onEventClick={p.onEventClick}
           onToggleEventDone={p.onToggleEventDone}
-          onClearSelectedDay={p.onClearSelectedDay}
-          onOpenDayView={p.onOpenDayView}
         />
       )}
     </aside>

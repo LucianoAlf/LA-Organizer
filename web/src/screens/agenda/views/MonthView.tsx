@@ -8,11 +8,8 @@ const WEEKDAYS = ['DOM','SEG','TER','QUA','QUI','SEX','SÁB'];
 export interface MonthViewProps {
   monthDate: Date;
   events: EventForGrid[];
-  selectedDay: Date | null;
   onDayClick: (date: Date) => void;
-  onDayDoubleClick: (date: Date) => void;
   onEventClick: (event: EventForGrid) => void;
-  onEmptyAreaClick: (date: Date) => void;
 }
 
 export function MonthView(p: MonthViewProps) {
@@ -43,7 +40,6 @@ export function MonthView(p: MonthViewProps) {
           const events = byDay.get(iso) ?? [];
           const isOther = d.getMonth() !== month;
           const isToday = sameDay(d, today);
-          const isSelected = p.selectedDay && sameDay(d, p.selectedDay);
           const visibleCap = 3;
           const visible = events.slice(0, visibleCap);
           const overflow = events.length - visible.length;
@@ -53,12 +49,10 @@ export function MonthView(p: MonthViewProps) {
               className={[
                 'border-r border-b border-border/40 p-1 flex flex-col gap-0.5 min-h-[100px] cursor-pointer',
                 isOther ? 'opacity-40' : '',
-                isSelected ? 'bg-tom/5 ring-1 ring-tom/40 ring-inset' : '',
               ].join(' ')}
               onClick={(e) => {
-                if (e.target === e.currentTarget) p.onEmptyAreaClick(d);
+                if (e.target === e.currentTarget) p.onDayClick(d);
               }}
-              onDoubleClick={() => p.onDayDoubleClick(d)}
             >
               <button
                 type="button"

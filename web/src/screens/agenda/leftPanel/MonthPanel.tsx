@@ -8,15 +8,12 @@ import type { EventForGrid } from '../hooks/useAgendaEvents';
 
 interface Props {
   monthDate: Date;
-  selectedDay: Date | null;
   tasks: TaskForPanel[];
   events: EventForGrid[];
   onTaskClick: (t: TaskForPanel) => void;
   onToggleTaskDone: (t: TaskForPanel) => void;
   onEventClick: (e: EventForGrid) => void;
   onToggleEventDone: (e: EventForGrid) => void;
-  onClearSelectedDay: () => void;
-  onOpenDayView: (d: Date) => void;
 }
 
 function isoOf(d: Date): string {
@@ -40,24 +37,7 @@ function overdueDays(dueIso: string | null | undefined, todayIso: string): numbe
 export function MonthPanel(p: Props) {
   const todayIso = new Date().toISOString().slice(0, 10);
 
-  // ── Derived values for selected-day mode ──────────────────────────────────
-  const selectedIso = p.selectedDay ? isoOf(p.selectedDay) : null;
-
-  const dayEvents = useMemo(() => {
-    if (!selectedIso) return [];
-    return p.events
-      .filter(e => e.start_at.slice(0, 10) === selectedIso)
-      .sort((a, b) => a.start_at.localeCompare(b.start_at));
-  }, [p.events, selectedIso]);
-
-  const dayTasks = useMemo(() => {
-    if (!selectedIso) return [];
-    return p.tasks.filter(
-      t => (t.scheduled_date ?? t.due_date ?? '').slice(0, 10) === selectedIso,
-    );
-  }, [p.tasks, selectedIso]);
-
-  // ── Derived values for month-summary mode ─────────────────────────────────
+  // ── Derived values ────────────────────────────────────────────────────────
   const monthStart = new Date(p.monthDate.getFullYear(), p.monthDate.getMonth(), 1);
   const monthEnd = new Date(p.monthDate.getFullYear(), p.monthDate.getMonth() + 1, 0);
   const startIso = isoOf(monthStart);
@@ -100,108 +80,6 @@ export function MonthPanel(p: Props) {
     }
     return g;
   }, [overdueAll, todayIso]);
-
-  // ── Render: dia selecionado ───────────────────────────────────────────────
-  if (p.selectedDay) {
-    const pending = dayTasks.filter(t => t.status !== 'done');
-    const overdue = dayTasks.filter(
-      t => t.due_date && t.due_date.slice(0, 10) < todayIso && t.status !== 'done',
-    );
-    const done = dayTasks.filter(t => t.status === 'done');
-
-    return (
-      <div className="flex flex-col h-full">
-        <header className="px-3 pt-3 pb-2 border-b border-border flex items-start justify-between shrink-0">
-          <div>
-            <div className="text-[14px] font-semibold text-fg capitalize">
-              {p.selectedDay.toLocaleDateString('pt-BR', {
-                weekday: 'long',
-                day: '2-digit',
-                month: '2-digit',
-              })}
-            </div>
-            <div className="text-[11px] text-fg-muted">dia selecionado</div>
-          </div>
-          <button
-            type="button"
-            onClick={p.onClearSelectedDay}
-            className="text-[11px] text-tom hover:underline focus-ring rounded px-1"
-          >
-            ← voltar
-          </button>
-        </header>
-
-        <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2 min-h-0">
-          <div className="flex gap-2 mb-3">
-            <StatCard
-              label={`Pra ${p.selectedDay.getDate()}`}
-              value={pending.length}
-              tone="neutral"
-              className="flex-1"
-            />
-            <StatCard
-              label="Atrasadas"
-              value={overdue.length}
-              tone={overdue.length > 0 ? 'danger' : 'neutral'}
-              className="flex-1"
-            />
-            <StatCard
-              label="Feitas"
-              value={done.length}
-              tone={done.length > 0 ? 'success' : 'neutral'}
-              className="flex-1"
-            />
-          </div>
-
-          <CollapsibleSection
-            storageKey="month.day.events"
-            title="🕒 Compromissos"
-            meta={dayEvents.length}
-          >
-            {dayEvents.length === 0 ? (
-              <div className="px-2 py-2 text-[11px] text-fg-muted italic">Sem compromissos</div>
-            ) : (
-              dayEvents.map(e => (
-                <CompactEventRow
-                  key={e.id}
-                  event={e}
-                  onClick={() => p.onEventClick(e)}
-                  onToggleDone={() => p.onToggleEventDone(e)}
-                />
-              ))
-            )}
-          </CollapsibleSection>
-
-          <CollapsibleSection
-            storageKey="month.day.tasks"
-            title="📋 Tarefas"
-            meta={dayTasks.length}
-          >
-            {dayTasks.length === 0 ? (
-              <div className="px-2 py-2 text-[11px] text-fg-muted italic">Sem tarefas</div>
-            ) : (
-              dayTasks.map(t => (
-                <CompactTaskRow
-                  key={t.id}
-                  task={t}
-                  onToggle={() => p.onToggleTaskDone(t)}
-                  onClick={() => p.onTaskClick(t)}
-                />
-              ))
-            )}
-          </CollapsibleSection>
-
-          <button
-            type="button"
-            onClick={() => p.onOpenDayView(p.selectedDay!)}
-            className="w-full mt-3 px-3 py-2 rounded-md bg-bg-elevated border border-border text-[12px] text-tom hover:bg-bg-elevated2 focus-ring"
-          >
-            Abrir dia {p.selectedDay.getDate()} em Day view →
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   // ── Render: resumo do mês ─────────────────────────────────────────────────
   const total = monthTasks.length + monthEvents.length;

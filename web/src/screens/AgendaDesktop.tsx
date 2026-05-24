@@ -77,7 +77,6 @@ export function AgendaDesktop() {
   const currentDate = useMemo(() => new Date(`${dateIso}T00:00:00`), [dateIso]);
 
   const { filters, toggle, currentContext, changeContext } = useAgendaFilters();
-  const [selectedMonthDay, setSelectedMonthDay] = useState<Date | null>(null);
   const [miniMonth, setMiniMonth] = useState<Date>(startOfMonth(currentDate));
   const [quickCreate, setQuickCreate] = useState<{ open: boolean; dueDate?: string }>({ open: false });
   const [editingEvent, setEditingEvent] = useState<EventForGrid | null>(null);
@@ -283,7 +282,6 @@ export function AgendaDesktop() {
             currentDate={currentDate}
             weekStart={startOfWeek(currentDate)}
             monthDate={miniMonth}
-            selectedMonthDay={selectedMonthDay}
             tasks={tasksFiltered}
             events={eventsFiltered}
             habitsDay={[]}
@@ -306,8 +304,6 @@ export function AgendaDesktop() {
             }
             onToggleHabit={() => {}}
             onPickDay={(d) => { setDate(d); setView('day'); }}
-            onClearSelectedDay={() => setSelectedMonthDay(null)}
-            onOpenDayView={(d) => { setDate(d); setView('day'); }}
           />
         }
         rightRail={null}
@@ -336,11 +332,8 @@ export function AgendaDesktop() {
           <MonthView
             monthDate={miniMonth}
             events={events}
-            selectedDay={selectedMonthDay}
-            onDayClick={setSelectedMonthDay}
-            onDayDoubleClick={(d) => { setDate(d); setView('day'); }}
+            onDayClick={(d) => { setDate(d); setView('day'); }}
             onEventClick={setEditingEvent}
-            onEmptyAreaClick={(d) => setSelectedMonthDay(d)}
           />
         )}
       </AgendaShell>
