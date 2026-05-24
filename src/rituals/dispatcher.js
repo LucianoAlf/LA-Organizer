@@ -3667,10 +3667,11 @@ async function checkReminders() {
   const cooldownCutoff = new Date(Date.now() - 6 * 3600_000).toISOString();
   const { data: due, error } = await supabase
     .from('tasks')
-    .select('id, title, assigned_to, remind_at, status, context')
+    .select('id, title, assigned_to, remind_at, status, context, reminded_at')
     .not('remind_at', 'is', null)
     .lte('remind_at', nowIso)
     .not('status', 'in', '(done,cancelled)')
+    .is('reminded_at', null)   // Evita re-disparo: padrão igual a remindEventTasks/Operational/Personal.
     .limit(50);
   if (error) {
     console.error('[Reminders] query err:', error.message);
@@ -3715,9 +3716,12 @@ async function checkReminders() {
     const text = `${reminderEmoji} *Lembrete:* ${t.title}`;
     try {
       await whatsapp.sendMessage(collab.phone, text);
+      // Marca reminded_at IMEDIATAMENTE após envio — previne re-disparo mesmo se
+      // o mark-done falhar (padrão de remindEventTasks / remindOperationalTasks).
+      await supabase.from('tasks').update({ reminded_at: nowIso }).eq('id', t.id);
       const { error: upErr } = await supabase.from('tasks').update({
         status: 'done',
-        completed_at: new Date().toISOString(),
+        completed_at: nowIso,
         completed_by: collab.id,
       }).eq('id', t.id);
       if (upErr) {

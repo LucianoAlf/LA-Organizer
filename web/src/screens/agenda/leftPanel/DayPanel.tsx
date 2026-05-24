@@ -55,8 +55,9 @@ export function DayPanel(p: Props) {
 
   const pending = inWindow.filter(t => t.status !== 'done');
   const overdue = pending.filter(t => t.due_date && t.due_date.slice(0, 10) < todayIso);
+  // Inclui tarefas onde scheduled_date OU due_date = hoje (sem scheduled_date definido).
   const todayTasks = pending.filter(
-    t => (t.scheduled_date ?? '').slice(0, 10) === todayIso && !(t.due_date && t.due_date.slice(0, 10) < todayIso)
+    t => (t.scheduled_date ?? t.due_date ?? '').slice(0, 10) === todayIso && !(t.due_date && t.due_date.slice(0, 10) < todayIso)
   );
   const done = inWindow.filter(t => t.status === 'done');
 
