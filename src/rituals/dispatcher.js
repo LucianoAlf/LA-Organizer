@@ -3518,6 +3518,9 @@ async function checkTaskReminders() {
 // Format: "👉 *Lembrete:* {title}" (personal) | "🔔 *Lembrete:* {title}" (work)
 async function checkReminders() {
   const nowIso = new Date().toISOString();
+  // Cooldown 6h: independente de status, não dispara 2x na mesma janela.
+  // Defesa contra task voltar pra pending por bug/race (ocorreu 23/05 com Carol).
+  const cooldownCutoff = new Date(Date.now() - 6 * 3600_000).toISOString();
   const { data: due, error } = await supabase
     .from('tasks')
     .select('id, title, assigned_to, remind_at, status, context')
@@ -3550,6 +3553,18 @@ async function checkReminders() {
       console.log(`[Reminders] defer ${String(t.id).slice(0,8)} — DND until ${dnd.until}`);
       continue; // don't mark task done; will fire on next tick after DND
     }
+    // Cooldown 6h independente de status (defesa contra reaberturas silenciosas).
+    const { data: recent } = await supabase
+      .from('notifications')
+      .select('id')
+      .eq('reference_id', t.id)
+      .eq('notification_type', 'task_reminder')
+      .gte('sent_at', cooldownCutoff)
+      .limit(1);
+    if (recent && recent.length) {
+      console.log(`[Reminders] skip ${String(t.id).slice(0,8)} — cooldown 6h ainda ativo`);
+      continue;
+    }
     // Emoji por contexto: personal=👉 (pessoal/cuidado), work=🔔 (trabalho/sino).
     // Fallback work se context for null/desconhecido (mais comum em tasks legadas).
     const reminderEmoji = t.context === 'personal' ? '👉' : '🔔';
@@ -3566,6 +3581,18 @@ async function checkReminders() {
       } else {
         console.log(`[Reminders] fired ${String(t.id).slice(0,8)} "${t.title.slice(0,40)}" → ${collab.phone.slice(-4)}`);
       }
+      // Registra no notifications pra cooldown e auditoria de cobranças.
+      await supabase.from('notifications').insert({
+        collaborator_id: collab.id,
+        notification_type: 'task_reminder',
+        title: `Lembrete: ${t.title}`,
+        body: text,
+        reference_type: 'task',
+        reference_id: t.id,
+        channel: 'whatsapp',
+        status: 'sent',
+        sent_at: new Date().toISOString(),
+      });
       // Log to conversation_history (outbound).
       await supabase.from('conversation_history').insert({
         collaborator_id: collab.id,
