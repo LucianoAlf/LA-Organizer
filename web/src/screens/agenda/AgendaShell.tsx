@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { Bell, CalendarDays, ChevronLeft, ChevronRight, Moon, Plus, Sun } from 'lucide-react';
+import { Bell, CalendarDays, ChevronLeft, ChevronRight, Moon, Sun } from 'lucide-react';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -53,10 +53,7 @@ export function AgendaShell(p: AgendaShellProps) {
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          <button onClick={p.onNewClick}
-            className="h-8 px-3 rounded-md bg-tom text-black text-[12px] font-semibold hover:opacity-90 focus-ring inline-flex items-center gap-1">
-            <Plus size={14}/> Novo
-          </button>
+          {/* "+ Novo" foi promovido a FAB no canto inferior direito (paridade com mobile) */}
 
           {/* Notificações — placeholder (sem ação por ora, idem TopbarV2) */}
           <button type="button" aria-label="Notificações"

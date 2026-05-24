@@ -12,6 +12,7 @@ import { WeekView } from './agenda/views/WeekView';
 import { MonthView } from './agenda/views/MonthView';
 import { MonthDayDrawer } from './agenda/components/MonthDayDrawer';
 import { QuickCreateSheet } from '../components/QuickCreateSheet';
+import { Fab } from '../components/Fab';
 import { EventEditDrawer } from './agenda/components/EventEditDrawer';
 import { useAgendaFilters } from './agenda/hooks/useAgendaFilters';
 import { useAgendaEvents, type EventForGrid } from './agenda/hooks/useAgendaEvents';
@@ -91,6 +92,14 @@ export function AgendaDesktop() {
 
   const { events } = useAgendaEvents({ from, to, filters });
   const { tasks } = useAgendaTasks({ from, to, filters });
+
+  // Query separada SÓ pros indicadores do mini-cal — sempre o mês inteiro do `miniMonth`,
+  // independente da view central. Sem isso a vista Dia mostra apenas 1 dot (hoje).
+  const { events: miniMonthEvents } = useAgendaEvents({
+    from: startOfMonth(miniMonth),
+    to: endOfMonth(miniMonth),
+    filters,
+  });
 
   // Mutations — update/delete events e update tasks (create event/task vem do QuickCreateSheet).
   const updateEvent = useMutation({
@@ -220,9 +229,9 @@ export function AgendaDesktop() {
 
   const daysWithEvents = useMemo(() => {
     const s = new Set<string>();
-    events.forEach((e) => s.add(e.start_at.slice(0, 10)));
+    miniMonthEvents.forEach((e) => s.add(e.start_at.slice(0, 10)));
     return s;
-  }, [events]);
+  }, [miniMonthEvents]);
 
   return (
     <>
@@ -336,7 +345,7 @@ export function AgendaDesktop() {
             onDayClick={setSelectedMonthDay}
             onDayDoubleClick={(d) => { setDate(d); setView('day'); }}
             onEventClick={setEditingEvent}
-            onEmptyAreaClick={(d) => setQuickCreate({ open: true, dueDate: d.toISOString().slice(0, 10) })}
+            onEmptyAreaClick={(d) => setSelectedMonthDay(d)}
           />
         )}
       </AgendaShell>
@@ -345,6 +354,14 @@ export function AgendaDesktop() {
         open={quickCreate.open}
         onClose={() => setQuickCreate({ open: false })}
         defaultDueDate={quickCreate.dueDate}
+      />
+
+      {/* FAB "+ Novo" no canto inf-direito — paridade com mobile, abre o QuickCreateSheet
+          (que tem 3 segmented: Tarefa / Compromisso / Delegar). */}
+      <Fab
+        onClick={() => setQuickCreate({ open: true, dueDate: currentDate.toISOString().slice(0, 10) })}
+        label="Novo"
+        ariaLabel="Criar tarefa, compromisso ou delegar"
       />
 
       <EventEditDrawer

@@ -1,12 +1,17 @@
 import { useMemo, useState } from 'react';
 import { RowMenu } from '../../components/RowMenu';
 import type { TaskForPanel } from './hooks/useAgendaTasks';
+import type { EventForGrid } from './hooks/useAgendaEvents';
+
+const CONTEXT_FALLBACK_COLOR = { work: '#A3BE50', personal: '#A78BFA' } as const;
 
 export interface TasksPanelProps {
   view: 'day' | 'week';
   currentDate: Date;
   weekStart: Date;
   tasks: TaskForPanel[];
+  /** Eventos do período (mesma janela do timegrid). Listados acima das tasks. */
+  events: EventForGrid[];
   onTaskClick: (t: TaskForPanel) => void;
   onToggleDone: (t: TaskForPanel) => void;
   onCreateTask: (date: Date) => void;
@@ -16,6 +21,8 @@ export interface TasksPanelProps {
   onRescheduleTask: (t: TaskForPanel) => void;
   /** Excluir tarefa. Recebe task. AgendaDesktop deve fazer confirm + delete. */
   onDeleteTask: (t: TaskForPanel) => void;
+  /** Click em evento da listagem — abre EventEditDrawer no parent. */
+  onEventClick: (e: EventForGrid) => void;
 }
 
 const LS = 'agenda.tasksPanel.collapsed';
@@ -70,10 +77,24 @@ export function TasksPanel(p: TasksPanelProps) {
     />
   );
 
+  // Eventos filtrados pelo período (Day = hoje, Week = semana)
+  const eventsInRange = useMemo(() => {
+    const todayIso = p.currentDate.toISOString().slice(0, 10);
+    const weekStartIso = p.weekStart.toISOString().slice(0, 10);
+    const weekEnd = new Date(p.weekStart); weekEnd.setDate(p.weekStart.getDate() + 6);
+    const weekEndIso = weekEnd.toISOString().slice(0, 10);
+    return p.events
+      .filter(e => {
+        const iso = e.start_at.slice(0, 10);
+        return p.view === 'day' ? iso === todayIso : (iso >= weekStartIso && iso <= weekEndIso);
+      })
+      .sort((a, b) => a.start_at.localeCompare(b.start_at));
+  }, [p.events, p.view, p.currentDate, p.weekStart]);
+
   return (
     <div className="flex flex-col min-h-0 flex-1">
       <header className="px-3 py-3 border-b border-border">
-        <div className="text-[13px] font-semibold text-fg">Tarefas</div>
+        <div className="text-[13px] font-semibold text-fg">Agenda do dia</div>
         <div className="text-[11px] text-fg-muted">
           {p.view === 'day'
             ? p.currentDate.toLocaleDateString('pt-BR', {
@@ -81,10 +102,20 @@ export function TasksPanel(p: TasksPanelProps) {
               })
             : 'Semana'}
           {' · '}
+          {eventsInRange.length} {eventsInRange.length === 1 ? 'evento' : 'eventos'}
+          {' · '}
           {todayTasks.length + overdue.length} pendentes
         </div>
       </header>
       <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2 text-[12px]">
+        {eventsInRange.length > 0 && (
+          <Section title={`EVENTOS (${eventsInRange.length})`} k="events"
+            collapsed={!!collapsed.events} onToggle={() => toggle('events')}>
+            {eventsInRange.map(e => (
+              <EventRowMini key={e.id} event={e} onClick={p.onEventClick} />
+            ))}
+          </Section>
+        )}
         <Section title={`ATRASADAS (${overdue.length})`} k="overdue"
           collapsed={collapsed.overdue ?? overdue.length === 0}
           onToggle={() => toggle('overdue')}>
