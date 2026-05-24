@@ -88,20 +88,18 @@ export function EventEditDrawer(p: EventEditDrawerProps) {
             className="w-full h-9 px-2 rounded-md bg-bg-surface border border-border text-fg" />
         </Field>
 
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Início">
-            <div className="flex gap-2">
-              <DateInput value={startDate} onChange={(d: string) => setStart(d, startTime)} />
-              <TimeInput value={startTime} onChange={(t: string) => setStart(startDate, t)} />
-            </div>
-          </Field>
-          <Field label="Fim">
-            <div className="flex gap-2">
-              <DateInput value={endDate} onChange={(d: string) => setEnd(d, endTime)} />
-              <TimeInput value={endTime} onChange={(t: string) => setEnd(endDate, t)} />
-            </div>
-          </Field>
-        </div>
+        <Field label="Início">
+          <div className="flex gap-2">
+            <DateInput value={startDate} onChange={(d: string) => setStart(d, startTime)} />
+            <TimeInput value={startTime} onChange={(t: string) => setStart(startDate, t)} />
+          </div>
+        </Field>
+        <Field label="Fim">
+          <div className="flex gap-2">
+            <DateInput value={endDate} onChange={(d: string) => setEnd(d, endTime)} />
+            <TimeInput value={endTime} onChange={(t: string) => setEnd(endDate, t)} />
+          </div>
+        </Field>
 
         <Field label="Categoria">
           <CustomSelect
