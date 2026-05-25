@@ -320,13 +320,9 @@ export function GovernancaPage() {
     <>
       <div className="space-y-4 pb-xl">
 
-        {/* Header */}
-        <div className="px-5 pt-1 flex items-center gap-2">
-          <ShieldCheck size={20} className="text-tom shrink-0" />
-          <div>
-            <h1 className="text-[15px] font-bold text-fg leading-tight">Credenciais</h1>
-            <p className="text-[12px] text-fg-muted">Credenciais e acessos da empresa</p>
-          </div>
+        {/* Subtítulo da página (título "Credenciais" já vem no topbar) */}
+        <div className="px-5 pt-1">
+          <p className="text-[12px] text-fg-muted">Credenciais e acessos da empresa</p>
         </div>
 
         {/* Stats — KpiCard pattern (alinhado com Projetos / Dashboard time) */}

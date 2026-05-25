@@ -4,7 +4,7 @@ import {
   Camera, Lock, Settings, LogOut, User, Bell, Sun, Moon,
   CalendarDays, Rocket, ClipboardCheck, Sparkles, Users, BarChart3,
   Target, Megaphone, Eye, UserCog, GraduationCap, Music,
-  Package, ShoppingBag, CalendarRange, History,
+  Package, ShoppingBag, CalendarRange, History, ShieldCheck,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
@@ -24,6 +24,7 @@ const ROUTE_ICONS: Record<string, LucideIcon> = {
   '/mais/comunicados': Megaphone,
   '/mais/observabilidade': Eye,
   '/mais/gestao-equipe': UserCog,
+  '/mais/governanca': ShieldCheck,
   '/la-educa': GraduationCap,
   '/la-journey': Music,
   '/inventario/loja': ShoppingBag,
@@ -55,6 +56,7 @@ const ROUTE_LABELS: Record<string, string> = {
   '/mais/comunicados': 'Comunicados',
   '/mais/observabilidade': 'Observabilidade',
   '/mais/gestao-equipe': 'Gestão equipe',
+  '/mais/governanca': 'Credenciais',
   '/la-educa': 'LA Educa',
   '/la-journey': 'LA Journey',
   '/inventario/loja': 'Lojinha',
