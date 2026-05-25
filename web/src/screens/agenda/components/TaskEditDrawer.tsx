@@ -190,6 +190,30 @@ export function TaskEditDrawer(p: TaskEditDrawerProps) {
               </button>
             )}
           </div>
+          {/* Atalhos de horário comum — single-select, escreve no remind_time. */}
+          <div className="flex flex-wrap gap-1.5 mt-2">
+            {(['09:00','12:00','14:00','18:00'] as const).map(t => {
+              const active = form.remind_time === t;
+              return (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setForm({ ...form, remind_time: active ? '' : t })}
+                  className={[
+                    'px-3 py-1 rounded-full text-[11px] border transition-colors focus-ring',
+                    active
+                      ? 'bg-tom text-black border-tom font-semibold'
+                      : 'bg-bg-elevated text-fg-muted border-border hover:text-fg',
+                  ].join(' ')}
+                >
+                  {t === '09:00' ? 'Manhã (9h)' :
+                   t === '12:00' ? 'Almoço (12h)' :
+                   t === '14:00' ? 'Tarde (14h)' :
+                                   'Fim do dia (18h)'}
+                </button>
+              );
+            })}
+          </div>
         </Field>
 
         <Field label="Prioridade">

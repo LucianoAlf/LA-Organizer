@@ -174,6 +174,53 @@ export function EventEditDrawer(p: EventEditDrawerProps) {
           </div>
         </Field>
 
+        {/* Lembretes — chips relativos a start_at, escrevem em events.remind_at (single). */}
+        <Field label="Lembrete">
+          <div className="flex flex-wrap gap-1.5">
+            {([
+              { label: 'Na hora',       minutes: 0    },
+              { label: '15min antes',   minutes: 15   },
+              { label: '30min antes',   minutes: 30   },
+              { label: '1h antes',      minutes: 60   },
+              { label: '1 dia antes',   minutes: 1440 },
+            ] as const).map(p => {
+              const startMs = new Date(form.start_at).getTime();
+              const presetMs = startMs - p.minutes * 60_000;
+              const presetIso = new Date(presetMs).toISOString();
+              const active = form.remind_at && Math.abs(new Date(form.remind_at).getTime() - presetMs) < 60_000;
+              return (
+                <button
+                  key={p.minutes}
+                  type="button"
+                  onClick={() => setForm({ ...form, remind_at: active ? null : presetIso })}
+                  className={[
+                    'px-3 py-1 rounded-full text-[11px] border transition-colors focus-ring',
+                    active
+                      ? 'bg-tom text-black border-tom font-semibold'
+                      : 'bg-bg-elevated text-fg-muted border-border hover:text-fg',
+                  ].join(' ')}
+                >
+                  {p.label}
+                </button>
+              );
+            })}
+            {form.remind_at && (
+              <button
+                type="button"
+                onClick={() => setForm({ ...form, remind_at: null })}
+                className="px-3 py-1 rounded-full text-[11px] border border-border bg-bg-elevated text-danger hover:opacity-80 focus-ring"
+              >
+                Sem lembrete
+              </button>
+            )}
+          </div>
+          {form.remind_at && (
+            <p className="text-[10px] text-fg-muted mt-1.5">
+              TOM vai avisar em {new Date(form.remind_at).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' })}.
+            </p>
+          )}
+        </Field>
+
         <div className="text-[10px] text-fg-muted pt-2 border-t border-border">
           Criado por {ev.source} · {new Date(form.start_at).toLocaleDateString('pt-BR')}
         </div>
