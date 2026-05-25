@@ -3,7 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   CalendarDays, Rocket, ClipboardCheck, Sparkles,
-  Users, BarChart3, Target, Megaphone, Eye, UserCog, ShieldCheck,
+  Users, BarChart3, Target, Megaphone, Eye, UserCog,
   GraduationCap, Music,
   Package, ShoppingBag,
   CalendarRange, History, Settings,
@@ -85,9 +85,6 @@ export function SidebarV2({ collapsed = false, onToggleCollapse }: SidebarV2Prop
           : []),
         ...(role && ['director', 'coordinator', 'manager'].includes(role)
           ? [{ to: '/mais/gestao-equipe', label: 'Gestão equipe', Icon: UserCog } as NavItem]
-          : []),
-        ...(role === 'director'
-          ? [{ to: '/mais/governanca', label: 'Governança', Icon: ShieldCheck } as NavItem]
           : []),
       ],
     },

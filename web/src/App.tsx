@@ -35,9 +35,6 @@ import { MeuPerfil } from './screens/MeuPerfil';
 import { GestaoEquipe } from './screens/GestaoEquipe';
 import { GestaoEquipeNovo } from './screens/GestaoEquipeNovo';
 import { GestaoEquipeDetalhe } from './screens/GestaoEquipeDetalhe';
-import { GovernancaPage } from './screens/GovernancaPage';
-import { GovernancaNovo } from './screens/GovernancaNovo';
-import { GovernancaDetalhe } from './screens/GovernancaDetalhe';
 import { DesignSystem } from './screens/DesignSystem';
 const LaEducaListaPage = lazy(() => import('./screens/laeduca/ListaPage').then(m => ({ default: m.LaEducaListaPage })));
 const LaEducaCadastroPage = lazy(() => import('./screens/laeduca/CadastroEstagiarioPage').then(m => ({ default: m.LaEducaCadastroPage })));
@@ -118,10 +115,7 @@ export default function App() {
             <Route path="mais/gestao-equipe/:id" element={<GestaoEquipeDetalhe />} />
           </Route>
 
-          <Route element={<ProtectedRoute requireRoles={['director']} />}>
-            <Route path="mais/governanca" element={<GovernancaPage />} />
-            <Route path="mais/governanca/novo" element={<GovernancaNovo />} />
-            <Route path="mais/governanca/:id" element={<GovernancaDetalhe />} />
+          <Route element={<ProtectedRoute requireRoles={['director', 'coordinator']} />}>
             <Route path="mais/comunicados" element={<Comunicados />} />
             <Route path="mais/comunicados/:id" element={<ComunicadoDetalhe />} />
             <Route path="mais/agenda-escolar/equipe" element={<ConfigurarEquipe />} />
