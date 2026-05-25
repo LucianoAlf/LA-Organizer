@@ -14,8 +14,9 @@ import { todaySP } from '../utils/date';
 import { AdaptiveSheet } from './AdaptiveSheet';
 import { Button } from './Button';
 import { DateInput } from './DateInput';
-import { TimeInput } from './TimeInput';
 import { EisenhowerPicker } from './EisenhowerPicker';
+import { RemindersField } from './RemindersField';
+import { useReminders } from '../screens/agenda/hooks/useReminders';
 import { notifyTaskUpdated } from '../lib/tomEngine';
 import { showToast } from './Toast';
 import type { Task, TaskContext } from '../types';
@@ -44,9 +45,10 @@ export function EditTaskSheet({ open, task, onClose }: Props) {
   const [title, setTitle] = useState('');
   const [context, setContext] = useState<TaskContext>('work');
   const [due, setDue] = useState('');
-  const [time, setTime] = useState('');
   const [quadrant, setQuadrant] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [reminderTimes, setReminderTimes] = useState<string[]>([]);
+  const reminders = useReminders('task', task?.id);
 
   // Sprint 22.31 — dep eh task?.id (nao task ref). Evita reset de state quando
   // queryClient refetcha em background e a referencia muda mas o id eh o mesmo.
@@ -57,12 +59,16 @@ export function EditTaskSheet({ open, task, onClose }: Props) {
       setTitle(task.title || '');
       setContext(task.context);
       setDue(task.due_date || todaySP());
-      setTime(timeFromIso(task.remind_at));
       setQuadrant((task.eisenhower_quadrant as number | null) ?? null);
       setError(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, task?.id]);
+  // Sincroniza lembretes do servidor quando task muda ou data chega.
+  useEffect(() => {
+    setReminderTimes(reminders.localTimes);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [task?.id, reminders.localTimes.length]);
 
   const update = useMutation({
     mutationFn: async () => {
@@ -70,12 +76,13 @@ export function EditTaskSheet({ open, task, onClose }: Props) {
       const t = title.trim();
       if (t.length < 2) throw new Error('Título curto demais.');
       if (!due) throw new Error('Coloca uma data válida.');
-      const remindAt = time ? `${due}T${time}:00-03:00` : null;
+      // remind_at (single) deprecated em favor de task_reminders (multi).
+      // Setamos null pra não conflitar; lembretes vêm via reminders.sync abaixo.
       const patch = {
         title: t.slice(0, 200),
         context,
         due_date: due,
-        remind_at: remindAt,
+        remind_at: null,
         eisenhower_quadrant: quadrant,
       };
       const { data, error: e } = await supabase
@@ -114,6 +121,8 @@ export function EditTaskSheet({ open, task, onClose }: Props) {
         });
       }
       await qc.refetchQueries({ queryKey: ['tasks'], type: 'active' });
+      // Sincroniza task_reminders (DELETE-all + INSERT-new).
+      try { await reminders.sync(reminderTimes); } catch (e) { console.warn('[EditTaskSheet] reminders sync err:', e); }
       onClose();
     },
   });
@@ -185,26 +194,17 @@ export function EditTaskSheet({ open, task, onClose }: Props) {
           )}
 
           <div>
-            <div className="flex items-baseline gap-md flex-wrap mb-1.5">
-              <span className="text-label uppercase tracking-wide text-fg-muted">Para quando</span>
-              <span className="text-label uppercase tracking-wide text-fg-muted">
-                Lembrar às <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">opcional</span>
-              </span>
-            </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <DateInput value={due} onChange={setDue} />
-              <TimeInput value={time} onChange={setTime} />
-              {time && (
-                <button
-                  type="button"
-                  onClick={() => setTime('')}
-                  className="text-body-sm text-fg-muted hover:text-fg focus-ring rounded-sm px-2 py-1"
-                >
-                  limpar
-                </button>
-              )}
-            </div>
+            <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Para quando</div>
+            <DateInput value={due} onChange={setDue} />
           </div>
+
+          {/* Lembretes — RemindersField shared. Referência: 09:00 da due_date.
+              Persistência: task_reminders table via useReminders('task', id). */}
+          <RemindersField
+            referenceDateTime={due ? `${due}T09:00` : ''}
+            value={reminderTimes}
+            onChange={setReminderTimes}
+          />
 
           <div>
             <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5 flex items-baseline gap-2">

@@ -5,6 +5,8 @@ import { DateInput } from '../../../components/DateInput';
 import { TimeInput } from '../../../components/TimeInput';
 import { CustomSelect } from '../../../components/CustomSelect';
 import { Button } from '../../../components/Button';
+import { RemindersField } from '../../../components/RemindersField';
+import { useReminders } from '../hooks/useReminders';
 import type { EventForGrid } from '../hooks/useAgendaEvents';
 
 const CATEGORIES = [
@@ -24,8 +26,15 @@ export interface EventEditDrawerProps {
 export function EventEditDrawer(p: EventEditDrawerProps) {
   const ev = p.event;
   const [form, setForm] = useState<EventForGrid | null>(ev);
+  const [reminderTimes, setReminderTimes] = useState<string[]>([]);
+  const reminders = useReminders('event', ev?.id);
 
   useEffect(() => { setForm(ev); /* eslint-disable-next-line */ }, [ev?.id]);
+  // Sincroniza lembretes do servidor quando o evento muda ou data chega.
+  useEffect(() => {
+    setReminderTimes(reminders.localTimes);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ev?.id, reminders.localTimes.length]);
 
   const patch = useMemo<Partial<EventForGrid>>(() => {
     if (!form || !ev) return {};
@@ -59,6 +68,8 @@ export function EventEditDrawer(p: EventEditDrawerProps) {
   const handleSave = async () => {
     if (error) return;
     await p.onSave(ev.id, patch);
+    // Sincroniza lembretes em event_reminders (DELETE-all + INSERT-new).
+    try { await reminders.sync(reminderTimes); } catch (e) { console.warn('[EventEditDrawer] reminders sync err:', e); }
     p.onClose();
   };
   const handleDelete = async () => {
@@ -174,59 +185,17 @@ export function EventEditDrawer(p: EventEditDrawerProps) {
           </div>
         </Field>
 
-        {/* Lembretes — chips relativos a start_at. Mesmos 6 chips do EditEventSheet
-            (componente referência mobile). Single-select por enquanto pq events.remind_at
-            é coluna única; multi-select via tabela event_reminders fica pra depois. */}
-        <div>
-          <div className="text-[10px] uppercase tracking-wider text-fg-muted font-semibold mb-1 flex items-baseline gap-2">
-            <span>Lembretes</span>
-            <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">selecione um</span>
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {([
-              { label: 'Na hora',       minutes: 0    },
-              { label: '15min antes',   minutes: 15   },
-              { label: '30min antes',   minutes: 30   },
-              { label: '1h antes',      minutes: 60   },
-              { label: '2h antes',      minutes: 120  },
-              { label: '1 dia antes',   minutes: 1440 },
-            ] as const).map(p => {
-              const startMs = new Date(form.start_at).getTime();
-              const presetMs = startMs - p.minutes * 60_000;
-              const presetIso = new Date(presetMs).toISOString();
-              const active = form.remind_at && Math.abs(new Date(form.remind_at).getTime() - presetMs) < 60_000;
-              return (
-                <button
-                  key={p.minutes}
-                  type="button"
-                  onClick={() => setForm({ ...form, remind_at: active ? null : presetIso })}
-                  className={[
-                    'px-3 py-1 rounded-full text-[11px] border transition-colors focus-ring',
-                    active
-                      ? 'bg-tom text-black border-tom font-semibold'
-                      : 'bg-bg-elevated text-fg-muted border-border hover:text-fg',
-                  ].join(' ')}
-                >
-                  {p.label}
-                </button>
-              );
-            })}
-            {form.remind_at && (
-              <button
-                type="button"
-                onClick={() => setForm({ ...form, remind_at: null })}
-                className="px-3 py-1 rounded-full text-[11px] border border-border bg-bg-elevated text-danger hover:opacity-80 focus-ring"
-              >
-                Sem lembrete
-              </button>
-            )}
-          </div>
-          {form.remind_at && (
-            <p className="text-[10px] text-fg-muted mt-1.5">
-              TOM vai avisar em {new Date(form.remind_at).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' })}.
-            </p>
-          )}
-        </div>
+        {/* Lembretes — RemindersField shared (multi-select).
+            Persistência: event_reminders table via useReminders('event', ev.id).
+            TOM dispatcher já lê event_reminders e envia WhatsApp marcando sent_at. */}
+        <RemindersField
+          referenceDateTime={(() => {
+            const sp = new Date(new Date(form.start_at).getTime() - 3 * 3600_000);
+            return sp.toISOString().slice(0, 16);
+          })()}
+          value={reminderTimes}
+          onChange={setReminderTimes}
+        />
 
         <div className="text-[10px] text-fg-muted pt-2 border-t border-border">
           Criado por {ev.source} · {new Date(form.start_at).toLocaleDateString('pt-BR')}

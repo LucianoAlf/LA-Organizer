@@ -7,6 +7,7 @@ import { Button } from './Button';
 import { CustomSelect } from './CustomSelect';
 import { DateTimeInput } from './DateTimeInput';
 import { EisenhowerPicker } from './EisenhowerPicker';
+import { RemindersField } from './RemindersField';
 import { ParticipantsPicker } from './ParticipantsPicker';
 import { useEventCategories } from '../hooks/useEventCategories';
 import { notifyEventInvites } from '../lib/tomEngine';
@@ -348,78 +349,12 @@ export function EditEventSheet({ open, event, onClose }: Props) {
             <p role="alert" className="text-body-sm text-danger">{validationError}</p>
           )}
 
-          {/* Sprint 22.50b — Múltiplos lembretes. Chips toggleáveis (selecionados ficam
-              olive). Lista os horários customizados abaixo com botão Remover. */}
-          <div>
-            <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5 flex items-baseline gap-2">
-              <span>Lembretes</span>
-              <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">selecione quantos quiser</span>
-            </div>
-            <div className="flex flex-wrap gap-2 mb-2">
-              {[
-                { label: 'Na hora', minutes: 0 },
-                { label: '15min antes', minutes: 15 },
-                { label: '30min antes', minutes: 30 },
-                { label: '1h antes', minutes: 60 },
-                { label: '2h antes', minutes: 120 },
-                { label: '1 dia antes', minutes: 60 * 24 },
-              ].map(p => {
-                // Calcula o local-string que esse preset representaria pra startAt atual.
-                const presetLocal = (() => {
-                  if (!startAt) return '';
-                  const t = new Date(localInputToIso(startAt)).getTime() - p.minutes * 60_000;
-                  return isoToLocalInput(new Date(t).toISOString());
-                })();
-                const active = presetLocal && reminderTimes.includes(presetLocal);
-                return (
-                  <button
-                    key={p.minutes}
-                    type="button"
-                    onClick={() => {
-                      if (!presetLocal) return;
-                      setReminderTimes(prev => active
-                        ? prev.filter(t => t !== presetLocal)
-                        : [...prev, presetLocal].sort());
-                    }}
-                    disabled={!startAt}
-                    className={[
-                      'px-3 py-1 rounded-full text-body-sm border transition-colors focus-ring',
-                      active
-                        ? 'bg-tom text-black border-tom'
-                        : 'bg-bg-elevated text-fg-muted border-border hover:text-fg disabled:opacity-50',
-                    ].join(' ')}
-                  >
-                    {p.label}
-                  </button>
-                );
-              })}
-            </div>
-            {reminderTimes.length > 0 ? (
-              <ul className="space-y-2">
-                {reminderTimes.map((t, idx) => (
-                  <li key={`${t}-${idx}`} className="flex items-center gap-2">
-                    <DateTimeInput
-                      value={t}
-                      onChange={(v) => setReminderTimes(prev => {
-                        const next = [...prev];
-                        next[idx] = v;
-                        return next;
-                      })}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setReminderTimes(prev => prev.filter((_, i) => i !== idx))}
-                      className="px-2 py-1 text-body-sm rounded-sm bg-bg-elevated text-danger hover:opacity-80 focus-ring whitespace-nowrap"
-                    >
-                      Remover
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-body-sm text-fg-muted">Sem lembretes. Toque num preset acima pra adicionar.</p>
-            )}
-          </div>
+          {/* Lembretes — agora usa RemindersField shared (espelha desktop drawers). */}
+          <RemindersField
+            referenceDateTime={startAt || ''}
+            value={reminderTimes}
+            onChange={setReminderTimes}
+          />
 
           <label className="block">
             <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Local</div>

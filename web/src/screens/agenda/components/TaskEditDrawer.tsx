@@ -9,7 +9,9 @@ import { DetailDrawer } from '../../../design/primitives/DetailDrawer';
 import { DateInput } from '../../../components/DateInput';
 import { Button } from '../../../components/Button';
 import { EisenhowerPicker } from '../../../components/EisenhowerPicker';
+import { RemindersField } from '../../../components/RemindersField';
 import { useCollaboratorNames } from '../hooks/useCollaboratorNames';
+import { useReminders } from '../hooks/useReminders';
 import type { TaskForPanel } from '../hooks/useAgendaTasks';
 
 export interface TaskEditDrawerProps {
@@ -53,12 +55,19 @@ function buildInitialForm(t: TaskForPanel): FormState {
 export function TaskEditDrawer(p: TaskEditDrawerProps) {
   const t = p.task;
   const [form, setForm] = useState<FormState | null>(t ? buildInitialForm(t) : null);
+  const [reminderTimes, setReminderTimes] = useState<string[]>([]);
   const names = useCollaboratorNames();
+  const reminders = useReminders('task', t?.id);
 
   // Resetar quando trocar de task.
   useEffect(() => {
     setForm(t ? buildInitialForm(t) : null);
   }, [t?.id]);  // eslint-disable-line react-hooks/exhaustive-deps
+  // Sincroniza lembretes do servidor quando task muda ou data chega.
+  useEffect(() => {
+    setReminderTimes(reminders.localTimes);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [t?.id, reminders.localTimes.length]);
 
   const patch = useMemo(() => {
     if (!form || !t) return null;
@@ -85,6 +94,8 @@ export function TaskEditDrawer(p: TaskEditDrawerProps) {
   const handleSave = async () => {
     if (error || !patch) return;
     await p.onSave(t.id, patch);
+    // Sincroniza lembretes em task_reminders (DELETE-all + INSERT-new).
+    try { await reminders.sync(reminderTimes); } catch (e) { console.warn('[TaskEditDrawer] reminders sync err:', e); }
     p.onClose();
   };
 
@@ -177,79 +188,15 @@ export function TaskEditDrawer(p: TaskEditDrawerProps) {
           <DateInput value={form.due_date} onChange={(d) => setForm({ ...form, due_date: d })} />
         </Field>
 
-        {/* Lembretes — mesmos 6 chips do EventEditDrawer e EditEventSheet referência.
+        {/* Lembretes — RemindersField shared (multi-select).
+            Persistência: task_reminders table via useReminders('task', t.id).
             Referência pra tasks: 09:00 da due_date (manhã do dia da tarefa).
-            Single-select por enquanto pq tasks.remind_at é coluna única. */}
-        <div>
-          <div className="text-[10px] uppercase tracking-wider text-fg-muted font-semibold mb-1 flex items-baseline gap-2">
-            <span>Lembretes</span>
-            <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">selecione um</span>
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {([
-              { label: 'Na hora',       minutes: 0    },
-              { label: '15min antes',   minutes: 15   },
-              { label: '30min antes',   minutes: 30   },
-              { label: '1h antes',      minutes: 60   },
-              { label: '2h antes',      minutes: 120  },
-              { label: '1 dia antes',   minutes: 1440 },
-            ] as const).map(p => {
-              if (!form.due_date) {
-                // Sem data, chips desabilitados
-                return (
-                  <button
-                    key={p.minutes}
-                    type="button"
-                    disabled
-                    className="px-3 py-1 rounded-full text-[11px] border border-border bg-bg-elevated text-fg-muted/40 cursor-not-allowed"
-                  >
-                    {p.label}
-                  </button>
-                );
-              }
-              // Referência: 09:00 SP da due_date
-              const refIso = `${form.due_date}T09:00:00-03:00`;
-              const refMs = new Date(refIso).getTime();
-              const presetMs = refMs - p.minutes * 60_000;
-              const presetTime = new Date(presetMs).toTimeString().slice(0, 5);
-              const active = form.remind_time === presetTime;
-              return (
-                <button
-                  key={p.minutes}
-                  type="button"
-                  onClick={() => setForm({ ...form, remind_time: active ? '' : presetTime })}
-                  className={[
-                    'px-3 py-1 rounded-full text-[11px] border transition-colors focus-ring',
-                    active
-                      ? 'bg-tom text-black border-tom font-semibold'
-                      : 'bg-bg-elevated text-fg-muted border-border hover:text-fg',
-                  ].join(' ')}
-                >
-                  {p.label}
-                </button>
-              );
-            })}
-            {form.remind_time && (
-              <button
-                type="button"
-                onClick={() => setForm({ ...form, remind_time: '' })}
-                className="px-3 py-1 rounded-full text-[11px] border border-border bg-bg-elevated text-danger hover:opacity-80 focus-ring"
-              >
-                Sem lembrete
-              </button>
-            )}
-          </div>
-          {form.remind_time && form.due_date && (
-            <p className="text-[10px] text-fg-muted mt-1.5">
-              TOM vai avisar em {new Date(`${form.due_date}T${form.remind_time}:00-03:00`).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' })}.
-            </p>
-          )}
-          {!form.due_date && (
-            <p className="text-[10px] text-fg-muted mt-1.5">
-              Coloca uma data primeiro pra escolher lembrete.
-            </p>
-          )}
-        </div>
+            TOM dispatcher já lê task_reminders e envia WhatsApp marcando sent_at. */}
+        <RemindersField
+          referenceDateTime={form.due_date ? `${form.due_date}T09:00` : ''}
+          value={reminderTimes}
+          onChange={setReminderTimes}
+        />
 
         <Field label="Prioridade">
           <EisenhowerPicker
