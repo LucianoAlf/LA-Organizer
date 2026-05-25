@@ -12,9 +12,10 @@ import { MonthView } from './agenda/views/MonthView';
 import { QuickCreateSheet } from '../components/QuickCreateSheet';
 import { Fab } from '../components/Fab';
 import { EventEditDrawer } from './agenda/components/EventEditDrawer';
+import { TaskEditDrawer } from './agenda/components/TaskEditDrawer';
 import { useAgendaFilters } from './agenda/hooks/useAgendaFilters';
 import { useAgendaEvents, type EventForGrid } from './agenda/hooks/useAgendaEvents';
-import { useAgendaTasks } from './agenda/hooks/useAgendaTasks';
+import { useAgendaTasks, type TaskForPanel } from './agenda/hooks/useAgendaTasks';
 
 // Toast fallback — projeto não tem sonner/react-hot-toast instalado.
 // Aceitável para dev (single-user). Produção: instalar sonner e trocar.
@@ -80,6 +81,7 @@ export function AgendaDesktop() {
   const [miniMonth, setMiniMonth] = useState<Date>(startOfMonth(currentDate));
   const [quickCreate, setQuickCreate] = useState<{ open: boolean; dueDate?: string }>({ open: false });
   const [editingEvent, setEditingEvent] = useState<EventForGrid | null>(null);
+  const [editingTask, setEditingTask] = useState<TaskForPanel | null>(null);
 
   const { from, to } = useMemo(() => {
     if (view === 'day') return { from: startOfDay(currentDate), to: endOfDay(currentDate) };
@@ -286,9 +288,7 @@ export function AgendaDesktop() {
             events={eventsFiltered}
             habitsDay={[]}
             habitsWeek={[]}
-            onTaskClick={(t) => {
-              setQuickCreate({ open: true, dueDate: (t.scheduled_date ?? t.due_date ?? undefined) ?? undefined });
-            }}
+            onTaskClick={(t) => setEditingTask(t)}
             onToggleTaskDone={(t) =>
               updateTask.mutate({
                 id: t.id,
@@ -368,6 +368,26 @@ export function AgendaDesktop() {
             await deleteEvent.mutateAsync(id);
           } catch {
             toast.error('Não foi possível deletar.');
+          }
+        }}
+      />
+
+      <TaskEditDrawer
+        task={editingTask}
+        open={!!editingTask}
+        onClose={() => setEditingTask(null)}
+        onSave={async (id, patch) => {
+          try {
+            await updateTask.mutateAsync({ id, patch });
+          } catch {
+            toast.error('Não foi possível salvar a tarefa.');
+          }
+        }}
+        onDelete={async (id) => {
+          try {
+            await deleteTask.mutateAsync(id);
+          } catch {
+            toast.error('Não foi possível deletar a tarefa.');
           }
         }}
       />

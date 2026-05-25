@@ -7,6 +7,7 @@ import type { AgendaFilters } from './useAgendaFilters';
 export interface TaskForPanel {
   id: string;
   title: string;
+  description?: string | null;
   context: 'work' | 'personal';
   status: 'pending' | 'in_progress' | 'done' | 'overdue' | 'delegated';
   scheduled_date: string | null;
@@ -14,6 +15,8 @@ export interface TaskForPanel {
   delegated_to: string | null;
   eisenhower_quadrant?: number | null;
   remind_at?: string | null;
+  source?: string | null;
+  created_at?: string | null;
 }
 
 // Sprint Agenda Desktop — tasks no range [from,to]. Espelha padrão de
@@ -33,7 +36,7 @@ export function useAgendaTasks(params: { from: Date; to: Date; filters: AgendaFi
     queryFn: async () => {
       const { data, error } = await supabase
         .from('tasks')
-        .select('id, title, context, status, scheduled_date, due_date, assigned_to, created_by, eisenhower_quadrant, remind_at')
+        .select('id, title, description, context, status, scheduled_date, due_date, assigned_to, created_by, eisenhower_quadrant, remind_at, source, created_at')
         .or(`assigned_to.eq.${collaboratorId},and(created_by.eq.${collaboratorId},assigned_to.neq.${collaboratorId})`)
         .neq('status', 'cancelled')
         .gte('due_date', fromYmd)
@@ -51,6 +54,7 @@ export function useAgendaTasks(params: { from: Date; to: Date; filters: AgendaFi
       return {
         id: t.id,
         title: t.title,
+        description: t.description ?? null,
         context: t.context,
         status: t.status,
         scheduled_date: t.scheduled_date,
@@ -58,6 +62,8 @@ export function useAgendaTasks(params: { from: Date; to: Date; filters: AgendaFi
         delegated_to: isDelegated ? t.assigned_to : null,
         eisenhower_quadrant: t.eisenhower_quadrant ?? null,
         remind_at: t.remind_at ?? null,
+        source: t.source ?? null,
+        created_at: t.created_at ?? null,
       };
     });
     return mapped.filter(t => {
