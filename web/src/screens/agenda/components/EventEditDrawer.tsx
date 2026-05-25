@@ -174,14 +174,21 @@ export function EventEditDrawer(p: EventEditDrawerProps) {
           </div>
         </Field>
 
-        {/* Lembretes — chips relativos a start_at, escrevem em events.remind_at (single). */}
-        <Field label="Lembrete">
+        {/* Lembretes — chips relativos a start_at. Mesmos 6 chips do EditEventSheet
+            (componente referência mobile). Single-select por enquanto pq events.remind_at
+            é coluna única; multi-select via tabela event_reminders fica pra depois. */}
+        <div>
+          <div className="text-[10px] uppercase tracking-wider text-fg-muted font-semibold mb-1 flex items-baseline gap-2">
+            <span>Lembretes</span>
+            <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">selecione um</span>
+          </div>
           <div className="flex flex-wrap gap-1.5">
             {([
               { label: 'Na hora',       minutes: 0    },
               { label: '15min antes',   minutes: 15   },
               { label: '30min antes',   minutes: 30   },
               { label: '1h antes',      minutes: 60   },
+              { label: '2h antes',      minutes: 120  },
               { label: '1 dia antes',   minutes: 1440 },
             ] as const).map(p => {
               const startMs = new Date(form.start_at).getTime();
@@ -219,7 +226,7 @@ export function EventEditDrawer(p: EventEditDrawerProps) {
               TOM vai avisar em {new Date(form.remind_at).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' })}.
             </p>
           )}
-        </Field>
+        </div>
 
         <div className="text-[10px] text-fg-muted pt-2 border-t border-border">
           Criado por {ev.source} · {new Date(form.start_at).toLocaleDateString('pt-BR')}

@@ -7,7 +7,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import { DetailDrawer } from '../../../design/primitives/DetailDrawer';
 import { DateInput } from '../../../components/DateInput';
-import { TimeInput } from '../../../components/TimeInput';
 import { Button } from '../../../components/Button';
 import { EisenhowerPicker } from '../../../components/EisenhowerPicker';
 import { useCollaboratorNames } from '../hooks/useCollaboratorNames';
@@ -175,30 +174,50 @@ export function TaskEditDrawer(p: TaskEditDrawerProps) {
         </Field>
 
         <Field label="Para quando">
-          <div className="flex items-center gap-2 flex-wrap">
-            <DateInput value={form.due_date} onChange={(d) => setForm({ ...form, due_date: d })} />
-            <span className="text-[11px] uppercase tracking-wider text-fg-muted font-semibold ml-2">Lembrar às</span>
-            <TimeInput value={form.remind_time} onChange={(t) => setForm({ ...form, remind_time: t })} />
-            {form.remind_time && (
-              <button
-                type="button"
-                onClick={() => setForm({ ...form, remind_time: '' })}
-                aria-label="Limpar hora"
-                className="text-body-sm text-fg-muted hover:text-fg focus-ring rounded-sm px-2 py-1"
-              >
-                limpar
-              </button>
-            )}
+          <DateInput value={form.due_date} onChange={(d) => setForm({ ...form, due_date: d })} />
+        </Field>
+
+        {/* Lembretes — mesmos 6 chips do EventEditDrawer e EditEventSheet referência.
+            Referência pra tasks: 09:00 da due_date (manhã do dia da tarefa).
+            Single-select por enquanto pq tasks.remind_at é coluna única. */}
+        <div>
+          <div className="text-[10px] uppercase tracking-wider text-fg-muted font-semibold mb-1 flex items-baseline gap-2">
+            <span>Lembretes</span>
+            <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">selecione um</span>
           </div>
-          {/* Atalhos de horário comum — single-select, escreve no remind_time. */}
-          <div className="flex flex-wrap gap-1.5 mt-2">
-            {(['09:00','12:00','14:00','18:00'] as const).map(t => {
-              const active = form.remind_time === t;
+          <div className="flex flex-wrap gap-1.5">
+            {([
+              { label: 'Na hora',       minutes: 0    },
+              { label: '15min antes',   minutes: 15   },
+              { label: '30min antes',   minutes: 30   },
+              { label: '1h antes',      minutes: 60   },
+              { label: '2h antes',      minutes: 120  },
+              { label: '1 dia antes',   minutes: 1440 },
+            ] as const).map(p => {
+              if (!form.due_date) {
+                // Sem data, chips desabilitados
+                return (
+                  <button
+                    key={p.minutes}
+                    type="button"
+                    disabled
+                    className="px-3 py-1 rounded-full text-[11px] border border-border bg-bg-elevated text-fg-muted/40 cursor-not-allowed"
+                  >
+                    {p.label}
+                  </button>
+                );
+              }
+              // Referência: 09:00 SP da due_date
+              const refIso = `${form.due_date}T09:00:00-03:00`;
+              const refMs = new Date(refIso).getTime();
+              const presetMs = refMs - p.minutes * 60_000;
+              const presetTime = new Date(presetMs).toTimeString().slice(0, 5);
+              const active = form.remind_time === presetTime;
               return (
                 <button
-                  key={t}
+                  key={p.minutes}
                   type="button"
-                  onClick={() => setForm({ ...form, remind_time: active ? '' : t })}
+                  onClick={() => setForm({ ...form, remind_time: active ? '' : presetTime })}
                   className={[
                     'px-3 py-1 rounded-full text-[11px] border transition-colors focus-ring',
                     active
@@ -206,15 +225,31 @@ export function TaskEditDrawer(p: TaskEditDrawerProps) {
                       : 'bg-bg-elevated text-fg-muted border-border hover:text-fg',
                   ].join(' ')}
                 >
-                  {t === '09:00' ? 'Manhã (9h)' :
-                   t === '12:00' ? 'Almoço (12h)' :
-                   t === '14:00' ? 'Tarde (14h)' :
-                                   'Fim do dia (18h)'}
+                  {p.label}
                 </button>
               );
             })}
+            {form.remind_time && (
+              <button
+                type="button"
+                onClick={() => setForm({ ...form, remind_time: '' })}
+                className="px-3 py-1 rounded-full text-[11px] border border-border bg-bg-elevated text-danger hover:opacity-80 focus-ring"
+              >
+                Sem lembrete
+              </button>
+            )}
           </div>
-        </Field>
+          {form.remind_time && form.due_date && (
+            <p className="text-[10px] text-fg-muted mt-1.5">
+              TOM vai avisar em {new Date(`${form.due_date}T${form.remind_time}:00-03:00`).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' })}.
+            </p>
+          )}
+          {!form.due_date && (
+            <p className="text-[10px] text-fg-muted mt-1.5">
+              Coloca uma data primeiro pra escolher lembrete.
+            </p>
+          )}
+        </div>
 
         <Field label="Prioridade">
           <EisenhowerPicker
