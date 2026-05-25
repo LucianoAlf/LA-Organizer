@@ -2,11 +2,13 @@ import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Plus, X, Eye, EyeOff, Pencil, Copy, Check, AlertCircle, Search, Trash2,
+  ShieldCheck, CheckCircle2, AlertTriangle, AlertOctagon, MinusCircle,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { LoadingState } from '../components/LoadingState';
 import { showToast } from '../components/Toast';
 import { CustomSelect } from '../components/CustomSelect';
+import { KpiCard } from '../components/KpiCard';
 
 export type Categoria = 'whatsapp' | 'api_key' | 'token' | 'vps' | 'social' | 'email' | 'plataforma' | 'outro';
 export type Status = 'ok' | 'atencao' | 'critico';
@@ -319,25 +321,21 @@ export function GovernancaPage() {
       <div className="space-y-4 pb-xl">
 
         {/* Header */}
-        <div className="px-5 pt-1">
-          <h1 className="text-[15px] font-bold text-fg">Governança</h1>
-          <p className="text-[12px] text-fg-muted">Credenciais e acessos da empresa</p>
+        <div className="px-5 pt-1 flex items-center gap-2">
+          <ShieldCheck size={20} className="text-tom shrink-0" />
+          <div>
+            <h1 className="text-[15px] font-bold text-fg leading-tight">Credenciais</h1>
+            <p className="text-[12px] text-fg-muted">Credenciais e acessos da empresa</p>
+          </div>
         </div>
 
-        {/* Stats bar */}
-        <div className="px-5 flex gap-2 overflow-x-auto pb-0.5 scrollbar-hide">
-          {[
-            { val: total,      lbl: 'Total',   cls: 'text-fg'         },
-            { val: countOk,    lbl: 'OK',      cls: 'text-green-400'  },
-            { val: countAtenc, lbl: 'Atenção', cls: 'text-yellow-400' },
-            { val: countCrit,  lbl: 'Crítico', cls: 'text-red-400'    },
-            { val: countVaz,   lbl: 'Vazios',  cls: 'text-fg-muted'   },
-          ].map(s => (
-            <div key={s.lbl} className="bg-bg-surface border border-border rounded-xl px-4 py-2 flex flex-col gap-0.5 shrink-0">
-              <span className={`text-[18px] font-bold leading-none ${s.cls}`}>{s.val}</span>
-              <span className="text-[10px] font-bold uppercase tracking-wider text-fg-muted">{s.lbl}</span>
-            </div>
-          ))}
+        {/* Stats — KpiCard pattern (alinhado com Projetos / Dashboard time) */}
+        <div className="px-5 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          <KpiCard label="Total"   value={total}      Icon={ShieldCheck}   accentColor="#A3BE50" />
+          <KpiCard label="OK"      value={countOk}    Icon={CheckCircle2}  accentColor="#34d399" />
+          <KpiCard label="Atenção" value={countAtenc} Icon={AlertTriangle} accentColor="#facc15" />
+          <KpiCard label="Crítico" value={countCrit}  Icon={AlertOctagon}  accentColor="#f87171" />
+          <KpiCard label="Vazios"  value={countVaz}   Icon={MinusCircle}   accentColor="#94a3b8" />
         </div>
 
         {/* Toolbar */}
