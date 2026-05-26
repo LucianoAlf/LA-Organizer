@@ -6,6 +6,7 @@ const path = require('path');
 const supabase = require('../supabase/client');
 const { checkAccess, DATA_LEVELS } = require('../services/la-report-access');
 const { hasCoordLevel } = require('../utils/roles');
+const { formatRelativeDate } = require('../utils/dates');
 
 const SKILLS_DIR = path.join(__dirname, '..', '..', 'skills');
 
@@ -288,6 +289,7 @@ function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events
   }
 
   lines.push(`**Timezone para markers:** America/Sao_Paulo. Sempre use ISO -03:00 em remind_at, start_at, end_at, etc. Ex: "amanhã 11h" → "${tomorrowISO}T11:00:00-03:00".`);
+  lines.push(`**REGRA DE OURO DAS DATAS:** Todas as tarefas e eventos no contexto abaixo JÁ TÊM o dia-relativo computado entre parênteses: \`(HOJE)\`, \`(amanhã)\`, \`(em Nd)\` ou \`(ATRASADA -Nd)\`. **NUNCA recalcule mentalmente.** Quando for cobrar/lembrar/relatar, use EXATAMENTE o rótulo entre parênteses. Se uma task diz \`28/05 qui (em 2d)\`, você fala "vence em 2 dias, quinta" — não fala "amanhã", não fala "hoje".`);
   lines.push('');
 
   const roleDisplay = ROLE_LABELS_PT[collab.role] || collab.role || '—';
@@ -494,7 +496,7 @@ function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events
     lines.push('', `**Delegadas (${delegatedTasks.length}) — tarefas que você atribuiu pra outros:**`);
     delegatedTasks.slice(0, 15).forEach(t => {
       const assignee = (t.assignee && t.assignee.full_name) ? t.assignee.full_name.split(' ')[0] : '(?)';
-      const due = t.due_date ? ` — vence ${t.due_date}` : '';
+      const due = t.due_date ? ` — vence ${formatRelativeDate(t.due_date, today) || t.due_date}` : '';
       const status = t.status ? ` — ${t.status}` : '';
       lines.push(`• ${assignee}: "${t.title}"${due}${status}`);
     });
@@ -1576,7 +1578,7 @@ function renderActiveThreadHint(thread) {
     '**🧵 ASSUNTO CORRENTE da conversa (Active Thread):**',
     `- Task ativa: "${String(t.title).slice(0, 90)}" (${ageLabel})`,
     t.remind_at ? `- Lembrete: ${t.remind_at}` : '',
-    t.due_date ? `- Prazo: ${t.due_date}` : '',
+    t.due_date ? `- Prazo: ${formatRelativeDate(t.due_date, today) || t.due_date}` : '',
     '',
     '**REGRA**: Se o user usar pronome ou referência genérica ("a ligação", "ele", "isso", "me lembra", "agenda"), ASSOCIE essa intenção à task ativa acima — NÃO ao mais saliente do contexto geral. Se houver dúvida real, PERGUNTE qual task antes de agir. NUNCA puxe outra task só porque tem horário próximo ou aparece em destaque.',
   ].filter(Boolean).join('\n');
@@ -1710,11 +1712,11 @@ async function buildProjectStatusContext(collaborator, lastUserMessage) {
           const cpTasks = tasks.filter(t => t.checkpoint_id === cp.id);
           const done = cpTasks.filter(t => t.status === 'done').length;
           const status = cp.status === 'done' ? '✅' : cp.status === 'in_progress' ? '🟡' : '⏳';
-          lines.push(`- ${status} ${cp.name}${cp.due_date ? ` (${cp.due_date})` : ''} — ${done}/${cpTasks.length} tarefas`);
+          lines.push(`- ${status} ${cp.name}${cp.due_date ? ` (${formatRelativeDate(cp.due_date, today) || cp.due_date})` : ''} — ${done}/${cpTasks.length} tarefas`);
           for (const t of cpTasks) {
             const assignee = t.assigned_to ? (nameById.get(t.assigned_to) || 'desconhecido') : 'sem atribuição';
             const tStatus = t.status === 'done' ? '✓' : '·';
-            lines.push(`    ${tStatus} ${t.title} (${assignee}${t.due_date ? `, vence ${t.due_date}` : ''})`);
+            lines.push(`    ${tStatus} ${t.title} (${assignee}${t.due_date ? `, vence ${formatRelativeDate(t.due_date, today) || t.due_date}` : ''})`);
           }
         }
       } else {
@@ -1728,7 +1730,7 @@ async function buildProjectStatusContext(collaborator, lastUserMessage) {
         for (const t of orphan) {
           const assignee = t.assigned_to ? (nameById.get(t.assigned_to) || 'desconhecido') : 'sem atribuição';
           const tStatus = t.status === 'done' ? '✓' : '·';
-          lines.push(`- ${tStatus} ${t.title} (${assignee}${t.due_date ? `, vence ${t.due_date}` : ''})`);
+          lines.push(`- ${tStatus} ${t.title} (${assignee}${t.due_date ? `, vence ${formatRelativeDate(t.due_date, today) || t.due_date}` : ''})`);
         }
       }
 
