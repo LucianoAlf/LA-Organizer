@@ -7,6 +7,7 @@ const { processMessage } = require('./engine');
 const whatsapp = require('./services/whatsapp');
 const queue = require('./services/per-user-queue');
 const dedupe = require('./services/dedupe');
+const messageBuffer = require('./services/message-buffer');
 const audio = require('./services/audio');
 const vision = require('./services/vision');
 const gemini = require('./services/gemini');
@@ -286,12 +287,31 @@ router.post(['/webhook', '/webhook/:token'], async (req, res) => {
     // Fire-and-forget — nunca bloqueia o fluxo principal.
     whatsapp.setTyping(`${phone}@s.whatsapp.net`).catch(() => {});
 
-    // Guard 1: serializa por phone — duas mensagens do mesmo usuário NÃO rodam em
-    // paralelo (evita corrida no Supabase, no histórico, e na detecção de skill).
-    // Usuários diferentes continuam em paralelo. Não bloqueia o webhook (já respondemos 200 acima).
-    // Sprint 23.14: wrap em shutdown.withTracking() — em deploy/restart, SIGTERM
-    // espera até 30s pra essa promise resolver antes de matar o processo.
-    queue.enqueue(phone, () => shutdown.withTracking(() => processMessage(phone, text, body)));
+    // ---- Sprint 28 — Buffer de agregação (debounce 3.5s).
+    // Caso real: user manda PDF + 👀 + texto curto em rápida sequência. Sem buffer,
+    // cada um vira processMessage isolado; TOM responde 3 vezes e alucina contexto
+    // ("chegou duas vezes"). Com buffer, todas as msgs do user dentro da janela
+    // viram UMA chamada processMessage com texto concatenado.
+    // - per-user-queue continua serializando o flush.
+    // - shutdown.withTracking ainda protege em SIGTERM.
+    messageBuffer.add(phone, text, body, (items) => {
+      let combinedText;
+      let latestRaw;
+      if (items.length === 1) {
+        combinedText = items[0].text;
+        latestRaw = items[0].raw;
+      } else {
+        // Header explícito pro TOM saber que são N msgs em sequência (anti-alucinação
+        // "chegou duas vezes"). Numera cada uma. Usa o raw da ÚLTIMA pro extractMessageId
+        // (reação vai pra última msg do user, que é o gesto mais recente).
+        const header = `[O usuário enviou ${items.length} mensagens em rápida sequência. Trate como UM contexto único, não responda cada uma separadamente:]`;
+        const numbered = items.map((it, i) => `[mensagem ${i + 1}/${items.length}]\n${it.text}`).join('\n\n');
+        combinedText = `${header}\n\n${numbered}`;
+        latestRaw = items[items.length - 1].raw;
+        console.log(`[Webhook] buffer flush phone=${phone.slice(-4)} items=${items.length} combinedLen=${combinedText.length}`);
+      }
+      queue.enqueue(phone, () => shutdown.withTracking(() => processMessage(phone, combinedText, latestRaw)));
+    });
 
   } catch (err) {
     console.error(`[Webhook] Erro ao processar: ${err.message}`);
