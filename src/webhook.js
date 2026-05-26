@@ -8,6 +8,7 @@ const whatsapp = require('./services/whatsapp');
 const queue = require('./services/per-user-queue');
 const dedupe = require('./services/dedupe');
 const messageBuffer = require('./services/message-buffer');
+const supabase = require('./supabase/client');
 const audio = require('./services/audio');
 const vision = require('./services/vision');
 const gemini = require('./services/gemini');
@@ -264,15 +265,45 @@ router.post(['/webhook', '/webhook/:token'], async (req, res) => {
       return;
     }
 
-    // ---- Sprint 28 — Reply/quoted: se user respondeu a uma msg, prefixa o
-    // contexto pra TOM entender que isto é uma resposta dirigida (caso Petros/Léo
-    // marcando msg pra corrigir o TOM). UAZAPI manda em content.contextInfo.quotedMessage.
+    // ---- Sprint 28 — Reply/quoted: UAZAPI manda quoted truncado (caso Quintela
+    // 26/05: TOM mandou msg com 300+ chars, quoted veio só "Registrado!\n").
+    // Solução: tenta enriquecer com a msg completa do conversation_history
+    // (lookup por prefix nas últimas 48h de outbound desse user). Cai fallback
+    // pro snippet se DB não achar.
     try {
       const quoted = whatsapp.extractQuotedMessage(body);
       if (quoted && quoted.text) {
-        const snippet = quoted.text.length > 1500 ? quoted.text.slice(0, 1500) + '…' : quoted.text;
-        text = `[O usuário está RESPONDENDO a esta mensagem anterior: "${snippet}"]\n${text}`;
-        console.log(`[Webhook] reply detectado — quoted="${snippet.slice(0, 60)}"`);
+        let fullText = quoted.text;
+        let enriched = false;
+        try {
+          const { data: collab } = await supabase
+            .from('collaborators')
+            .select('id')
+            .or(`phone.eq.${phone},phone.eq.55${phone}`)
+            .maybeSingle();
+          if (collab?.id) {
+            const sinceIso = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+            const probe = quoted.text.slice(0, 40);
+            const { data: rows } = await supabase
+              .from('conversation_history')
+              .select('content')
+              .eq('collaborator_id', collab.id)
+              .eq('direction', 'outbound')
+              .gte('created_at', sinceIso)
+              .order('created_at', { ascending: false })
+              .limit(50);
+            const match = (rows || []).find(r => typeof r.content === 'string' && r.content.startsWith(probe));
+            if (match && match.content.length > quoted.text.length) {
+              fullText = match.content;
+              enriched = true;
+            }
+          }
+        } catch (lookupErr) {
+          console.warn('[Webhook] reply enrichment lookup err:', lookupErr.message);
+        }
+        const snippet = fullText.length > 1500 ? fullText.slice(0, 1500) + '…' : fullText;
+        text = `[O usuário está RESPONDENDO a esta mensagem anterior${enriched ? ' (conteúdo completo do banco)' : ''}: "${snippet}"]\n${text}`;
+        console.log(`[Webhook] reply detectado — quoted="${snippet.slice(0, 60)}" enriched=${enriched} len=${snippet.length}`);
       } else if (quoted && quoted.type !== 'text') {
         text = `[O usuário está RESPONDENDO a uma mídia anterior do tipo ${quoted.type}]\n${text}`;
         console.log(`[Webhook] reply a mídia detectado — type=${quoted.type}`);
