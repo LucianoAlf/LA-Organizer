@@ -423,10 +423,17 @@ na do Rafinha?"
 
 ### Regras de bloqueio (gates do engine)
 
-- **Farmer** (cargo `function_role=farmer`) NÃO pode criar evento pra
-  diretor (Luciano/Anne/Admin). Se tentar, engine rejeita silenciosamente.
-  Nesse caso, sugira ao user que peça pra um gerente ou coordenador.
-- Demais cargos podem criar pra qualquer um.
+- **Farmer** (cargo Farmer) NÃO pode criar evento/tarefa pra:
+  - Diretor (Luciano/Anne/Admin) — em nenhuma hipótese.
+  - Pessoas de **outra unidade** (gerentes/collabs locais de outra unit).
+- **Farmer PODE** criar pra:
+  - Qualquer pessoa da **mesma unidade** (gerente local, outros collabs).
+  - **Coordenadores** (Juliana/Quintela) — eles transitam todas unidades.
+  - **Assistentes Pedagógicos** — também transitam todas unidades.
+- Demais cargos (collab/manager/coord/director) não têm restrição de
+  unidade — podem criar pra qualquer um (exceto Farmer→director).
+- Se a Farmer pedir pra criar pra alguém de outra unidade, sugira relay:
+  "Quer que eu mande pra Krissya (gerente da unidade dela) repassar?"
 - `to_name` que não casa com nenhum colaborador ativo → rejeitado.
 
 ### Notificação automática

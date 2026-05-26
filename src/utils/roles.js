@@ -42,8 +42,71 @@ function isDirector(collab) {
  */
 const COORDINATOR_ROLES_LITERAL = ['coordinator', 'director'];
 
+/**
+ * Sprint 28 — detecta cargo Farmer. Form PWA salva em `function_title`
+ * (string livre tipo "Farmer"); pode também ter `function_role='farmer'`
+ * via SQL direto. Casa qualquer um, case-insensitive.
+ */
+function isFarmer(collab) {
+  if (!collab) return false;
+  const fr = String(collab.function_role || '').toLowerCase();
+  const ft = String(collab.function_title || '').toLowerCase();
+  return fr === 'farmer' || ft === 'farmer';
+}
+
+/**
+ * Sprint 28 — Detecta cargo "pedagógico" (assistente pedagógico / pedagógico).
+ * Transita entre unidades — Farmer pode criar tarefa pra eles em qualquer unit.
+ */
+function isPedagogicoTransit(collab) {
+  if (!collab) return false;
+  const fr = String(collab.function_role || '').toLowerCase();
+  const ft = String(collab.function_title || '').toLowerCase();
+  return fr === 'pedagogico' || /pedag/.test(ft);
+}
+
+/**
+ * Sprint 28 — Decide se `creator` pode criar tarefa/evento pra `target`.
+ *
+ * Regras de bloqueio:
+ *   1. Director nunca pode receber de Farmer.
+ *   2. Farmer só pode criar pra:
+ *      - role='coordinator' (qualquer unidade — transit)
+ *      - function_role/title pedagogico (qualquer unidade — transit)
+ *      - mesma unidade do creator (qualquer cargo)
+ *
+ * Demais creators (collaborator/manager/coord/director) não têm restrição
+ * de unidade nesta camada — segue comportamento atual.
+ *
+ * Returns { allowed: boolean, reason?: string }
+ */
+function canCreateForOther(creator, target) {
+  if (!creator || !target) return { allowed: false, reason: 'missing_party' };
+
+  // Gate 1: Director nunca recebe de Farmer
+  if (isFarmer(creator) && target.role === 'director') {
+    return { allowed: false, reason: 'farmer_to_director' };
+  }
+
+  // Gate 2: Farmer scope-limited
+  if (isFarmer(creator)) {
+    if (target.role === 'coordinator') return { allowed: true };
+    if (isPedagogicoTransit(target)) return { allowed: true };
+    const cu = String(creator.unit || '').trim().toLowerCase();
+    const tu = String(target.unit || '').trim().toLowerCase();
+    if (cu && tu && cu === tu) return { allowed: true };
+    // Sem unidade ou unidades diferentes → bloqueia
+    return { allowed: false, reason: `farmer_out_of_unit:creator=${creator.unit || 'none'},target=${target.unit || 'none'}` };
+  }
+
+  return { allowed: true };
+}
+
 module.exports = {
   hasCoordLevel,
   isDirector,
+  isFarmer,
+  isPedagogicoTransit,
+  canCreateForOther,
   COORDINATOR_ROLES_LITERAL,
 };

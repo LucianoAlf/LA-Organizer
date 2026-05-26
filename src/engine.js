@@ -9,7 +9,7 @@ const metricsService = require('./services/metrics');
 const ai = require('./ai/provider');
 const { buildSystemPrompt, formatMessages } = require('./prompts/system');
 const { safeIsoDate, safeDate } = require('./utils/dates');
-const { hasCoordLevel } = require('./utils/roles');
+const { hasCoordLevel, canCreateForOther } = require('./utils/roles');
 const supabase = require('./supabase/client');
 const OpenAI = require('openai');
 const openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -1950,9 +1950,12 @@ async function applyEventActions(collaborator, events) {
           failCount++;
           continue;
         }
-        if (collaborator.function_role === 'farmer' && eventRecipient.role === 'director') {
-          console.warn(`[Event] create-for-other REJECTED — farmer ${collaborator.full_name} cannot create for director ${eventRecipient.full_name}`);
-          await logMarker(collaborator.id, 'EVENT_CREATE', 'rejected', `farmer_to_director:${eventRecipient.full_name}`, null);
+        // Sprint 28 — mesmo gate da task (Farmer → director bloqueado, Farmer
+        // fora de unidade bloqueado, exceto coord/pedagógico transit).
+        const evGate = canCreateForOther(collaborator, eventRecipient);
+        if (!evGate.allowed) {
+          console.warn(`[Event] create-for-other REJECTED — ${collaborator.full_name} → ${eventRecipient.full_name} reason=${evGate.reason}`);
+          await logMarker(collaborator.id, 'EVENT_CREATE', 'rejected', evGate.reason, null);
           failCount++;
           continue;
         }
@@ -2536,7 +2539,7 @@ async function findCollaboratorByName(name) {
   if (!norm) return null;
   const { data } = await supabase
     .from('collaborators')
-    .select('id, full_name, phone, is_active, role, unit, onboarding_completed, pedagogical_role, bio, preferred_name, aliases, has_coord_permissions')
+    .select('id, full_name, phone, is_active, role, unit, onboarding_completed, pedagogical_role, function_role, function_title, bio, preferred_name, aliases, has_coord_permissions')
     .eq('is_active', true);
   if (!data || !data.length) return null;
   const first = norm.split(/\s+/)[0];
@@ -2577,7 +2580,7 @@ async function findCollaboratorByPhone(phone) {
     .from('collaborators')
     // Hotfix pós-Sprint20: idem findCollaboratorByName — campos completos.
     // Sprint 23.6: bio + preferred_name para system prompt.
-    .select('id, full_name, phone, is_active, role, unit, onboarding_completed, pedagogical_role, bio, preferred_name, has_coord_permissions')
+    .select('id, full_name, phone, is_active, role, unit, onboarding_completed, pedagogical_role, function_role, function_title, bio, preferred_name, has_coord_permissions')
     .eq('phone', cleaned)
     .maybeSingle();
   return data;
@@ -3111,11 +3114,12 @@ async function applyTaskActions(collaborator, actions) {
             failCount++;
             continue;
           }
-          // Sprint 28 — Farmer não pode criar tarefa pra director. Cargo Farmer
-          // tem alçada lateral/inferior; pra delegar pra diretor, deve usar relay.
-          if (collaborator.function_role === 'farmer' && recipient.role === 'director') {
-            console.warn(`[Task] create-for-other REJECTED — farmer ${collaborator.full_name} cannot create for director ${recipient.full_name}`);
-            await logMarker(collaborator.id, 'TASK_UPDATE', 'rejected', `farmer_to_director:${recipient.full_name}`, null);
+          // Sprint 28 — gate Farmer: bloqueia director (qualquer unidade) +
+          // bloqueia fora da unidade (exceto coord e pedagógico que transitam).
+          const taskGate = canCreateForOther(collaborator, recipient);
+          if (!taskGate.allowed) {
+            console.warn(`[Task] create-for-other REJECTED — ${collaborator.full_name} → ${recipient.full_name} reason=${taskGate.reason}`);
+            await logMarker(collaborator.id, 'TASK_UPDATE', 'rejected', taskGate.reason, null);
             failCount++;
             continue;
           }
