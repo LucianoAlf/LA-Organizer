@@ -6533,7 +6533,9 @@ async function processMessage(phone, text, raw = {}) {
         _metrics.leak_match = String(leakMatch[0]).slice(0, 100);
       }
       // 3) Se reply ficou vazio depois da limpeza, fallback genérico.
-      if (!reply.trim()) {
+      // Sprint 28: EXCETO quando TOM emitiu só <<REACT>>emoji<<END>> — aí
+      // reply vazio é intencional (só a reação será enviada), sem fallback.
+      if (!reply.trim() && (!_reactionsToSend || _reactionsToSend.length === 0)) {
         console.warn('[Engine] reply ficou vazio após strip — usando fallback');
         reply = '_recebi sua mensagem, mas tive um problema pra responder. Tenta de novo?_';
       }
