@@ -263,6 +263,23 @@ router.post(['/webhook', '/webhook/:token'], async (req, res) => {
       return;
     }
 
+    // ---- Sprint 28 — Reply/quoted: se user respondeu a uma msg, prefixa o
+    // contexto pra TOM entender que isto é uma resposta dirigida (caso Petros/Léo
+    // marcando msg pra corrigir o TOM). UAZAPI manda em content.contextInfo.quotedMessage.
+    try {
+      const quoted = whatsapp.extractQuotedMessage(body);
+      if (quoted && quoted.text) {
+        const snippet = quoted.text.length > 200 ? quoted.text.slice(0, 200) + '…' : quoted.text;
+        text = `[O usuário está RESPONDENDO a esta mensagem anterior: "${snippet}"]\n${text}`;
+        console.log(`[Webhook] reply detectado — quoted="${snippet.slice(0, 60)}"`);
+      } else if (quoted && quoted.type !== 'text') {
+        text = `[O usuário está RESPONDENDO a uma mídia anterior do tipo ${quoted.type}]\n${text}`;
+        console.log(`[Webhook] reply a mídia detectado — type=${quoted.type}`);
+      }
+    } catch (e) {
+      console.warn('[Webhook] extractQuotedMessage err (silent):', e.message);
+    }
+
     console.log(`[Webhook] Mensagem de ${phone.slice(-4)}: ${text.substring(0, 50)}`);
 
     // UX: dispara "digitando..." imediatamente, em paralelo ao engine (Claude leva 6-30s).

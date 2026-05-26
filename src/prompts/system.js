@@ -2491,6 +2491,15 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     }
   }
 
+  // Sprint 28 — skill reagir-mensagens.md SEMPRE carregada (cross-cutting,
+  // humaniza comportamento do TOM em qualquer skill ativa). Pequena (~3KB).
+  if (collaborator) {
+    const reactPath = path.join(SKILLS_DIR, 'reagir-mensagens.md');
+    if (fs.existsSync(reactPath)) {
+      systemPrompt += '\n\n---\n\n' + fs.readFileSync(reactPath, 'utf-8');
+    }
+  }
+
   // Sprint 16 — COORD_HINT injection (só presente quando recipient tem recados abertos)
   if (ctx && ctx.coordHint) {
     systemPrompt += '\n\n' + ctx.coordHint;

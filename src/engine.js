@@ -6377,6 +6377,38 @@ async function processMessage(phone, text, raw = {}) {
     }
   }
 
+  // ---- Sprint 28 — Parser <<REACT>>emoji<<END>>
+  // TOM reage à mensagem do user com emoji (🚀🔥❤️😂👍...) pra humanizar.
+  // Roda ANTES do catch-all stripper (senão <<REACT>> seria removido como unknown).
+  // Se reply ficar vazio após strip, só a reação é enviada (sem texto).
+  // messageId vem do payload bruto via whatsapp.extractMessageId(raw).
+  let _reactionsToSend = [];
+  try {
+    if (typeof reply === 'string') {
+      const reactRe = /<<REACT>>\s*([\s\S]*?)\s*<<END>>/gi;
+      const matches = [...reply.matchAll(reactRe)];
+      for (const m of matches) {
+        const emoji = String(m[1] || '').trim();
+        if (emoji && emoji.length <= 8) _reactionsToSend.push(emoji);
+      }
+      if (_reactionsToSend.length) {
+        reply = reply.replace(reactRe, '').replace(/\n{3,}/g, '\n\n').trim();
+        console.log(`[Engine] REACT marker(s): ${_reactionsToSend.join(' ')} (residual_len=${reply.length})`);
+        const targetMsgId = whatsapp.extractMessageId(raw);
+        if (targetMsgId) {
+          whatsapp.sendReaction(phone, targetMsgId, _reactionsToSend[0])
+            .catch(e => console.warn('[Engine] sendReaction async err:', e.message));
+          await logMarker(collab.id, 'REACT', 'executed', _reactionsToSend[0], null);
+        } else {
+          console.warn('[Engine] REACT skipped — no messageId in raw payload');
+          await logMarker(collab.id, 'REACT', 'rejected', 'no_message_id', null);
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[Engine] REACT parse/dispatch err (silent):', e.message);
+  }
+
   // ════════════════════════════════════════════════════════════════════════
   // SPRINT 10 HOTFIX-CRÍTICO (29/04/2026): catch-all marker strip.
   // ════════════════════════════════════════════════════════════════════════
@@ -6537,8 +6569,13 @@ async function processMessage(phone, text, raw = {}) {
     }
   } catch (e) { /* metric never breaks main flow */ }
 
-  await whatsapp.sendMessage(phone, reply);
-  await logConversation(collab.id, 'outbound', reply);
+  if (reply && reply.trim()) {
+    await whatsapp.sendMessage(phone, reply);
+    await logConversation(collab.id, 'outbound', reply);
+  } else if (_reactionsToSend && _reactionsToSend.length) {
+    console.log(`[Engine] reply vazio pós-REACT — só reação enviada (${_reactionsToSend[0]})`);
+    await logConversation(collab.id, 'outbound', `[reação: ${_reactionsToSend[0]}]`);
+  }
   // Sprint 10: grava telemetria. Fire-and-forget — falha de metric não quebra fluxo.
   _metrics.latency_ms = Date.now() - _t0;
   metricsService.recordMessage(_metrics).catch(() => {});

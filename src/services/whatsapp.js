@@ -222,4 +222,98 @@ function isIgnorable(body) {
   return false;
 }
 
-module.exports = { sendMessage, sendButtons, sendList, sendMedia, setTyping, isAudioMessage, isImageMessage, isDocumentMessage, isVideoMessage, extractText, extractPhone, extractName, isIgnorable };
+/**
+ * Extrai o ID da mensagem do user (necessário pra reagir a ela).
+ * Casa formatos antigos (data.id) e novos (message.id, message.key.id).
+ */
+function extractMessageId(body) {
+  const m = getData(body);
+  if (!m || typeof m !== 'object') return null;
+  const candidates = [
+    m.id,
+    m.messageid,
+    m.message_id,
+    m.key && m.key.id,
+    body && body.id,
+  ];
+  for (const c of candidates) {
+    if (typeof c === 'string' && c.length >= 4) return c;
+  }
+  return null;
+}
+
+/**
+ * Sprint 28 — Extrai mensagem citada (reply) do payload UAZAPI.
+ * UAZAPI manda em `content.contextInfo.quotedMessage` (ExtendedTextMessage) ou
+ * `message.quotedMessage` direto. Retorna { id, text } ou null se não tem reply.
+ *
+ * Casos cobertos:
+ *  - ExtendedTextMessage: content = { text, contextInfo: { stanzaID, quotedMessage: {...} } }
+ *  - Mídia com caption respondendo: contextInfo no nível do message
+ *  - QuotedMessage pode ser TextMessage, ImageMessage (.caption), etc.
+ */
+function extractQuotedMessage(body) {
+  const m = getData(body);
+  if (!m || typeof m !== 'object') return null;
+  // contextInfo pode estar em content.contextInfo OU message.contextInfo
+  let ctx = null;
+  if (m.content && typeof m.content === 'object' && m.content.contextInfo) {
+    ctx = m.content.contextInfo;
+  } else if (m.contextInfo) {
+    ctx = m.contextInfo;
+  }
+  if (!ctx || typeof ctx !== 'object') return null;
+  const quoted = ctx.quotedMessage;
+  if (!quoted || typeof quoted !== 'object') return null;
+  // Extrai texto da quoted (varia conforme tipo)
+  let text =
+    quoted.conversation ||
+    quoted.extendedTextMessage?.text ||
+    quoted.imageMessage?.caption ||
+    quoted.videoMessage?.caption ||
+    quoted.documentMessage?.caption ||
+    quoted.text ||
+    null;
+  // Tipo (pra TOM saber se reply é a uma mídia)
+  let type = 'text';
+  if (quoted.imageMessage) type = 'image';
+  else if (quoted.videoMessage) type = 'video';
+  else if (quoted.documentMessage) type = 'document';
+  else if (quoted.audioMessage) type = 'audio';
+  return {
+    id: ctx.stanzaID || ctx.stanzaId || null,
+    text: typeof text === 'string' ? text.trim() : null,
+    type,
+    fromMe: ctx.participant === undefined && (m.fromMe === false) ? null : null, // best-effort
+  };
+}
+
+/**
+ * Sprint 28 — Envia reação (emoji) a uma mensagem específica.
+ * UAZAPI: POST /message/react { number, text: '<emoji>', id: '<message_id>' }
+ * - text vazio remove reação
+ * - só funciona em mensagens de OUTROS users (não nas do bot)
+ * - falha em msgs com mais de 7 dias
+ * Fire-and-forget na chamada — não bloqueia o pipeline se UAZAPI falhar.
+ */
+async function sendReaction(phone, messageId, emoji) {
+  try {
+    if (!messageId || !emoji) {
+      console.warn('[WhatsApp] sendReaction skipped — missing messageId or emoji');
+      return null;
+    }
+    const number = String(phone).includes('@') ? phone : `${phone}@s.whatsapp.net`;
+    const response = await api.post('/message/react', {
+      number,
+      text: String(emoji),
+      id: String(messageId),
+    });
+    console.log(`[WhatsApp] reação ${emoji} enviada pra ${String(phone).slice(-4)} (msgId=${String(messageId).slice(0,12)})`);
+    return response.data;
+  } catch (err) {
+    console.warn(`[WhatsApp] sendReaction falhou: ${err.message}`);
+    return null;
+  }
+}
+
+module.exports = { sendMessage, sendButtons, sendList, sendMedia, setTyping, sendReaction, isAudioMessage, isImageMessage, isDocumentMessage, isVideoMessage, extractText, extractPhone, extractName, extractMessageId, extractQuotedMessage, isIgnorable };
