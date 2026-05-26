@@ -2,7 +2,7 @@
 // lives in docs/03-esquema-banco-dados-la-organizer.md and src/supabase/client (backend).
 // PWA reads only — never duplicates business logic (see PRD §5.2).
 
-export type Role = 'collaborator' | 'leader' | 'coordinator' | 'manager' | 'director';
+export type Role = 'collaborator' | 'coordinator' | 'manager' | 'director';
 
 export interface Collaborator {
   id: string;

@@ -3061,6 +3061,14 @@ async function applyTaskActions(collaborator, actions) {
             failCount++;
             continue;
           }
+          // Sprint 28 — Farmer não pode criar tarefa pra director. Cargo Farmer
+          // tem alçada lateral/inferior; pra delegar pra diretor, deve usar relay.
+          if (collaborator.function_role === 'farmer' && recipient.role === 'director') {
+            console.warn(`[Task] create-for-other REJECTED — farmer ${collaborator.full_name} cannot create for director ${recipient.full_name}`);
+            await logMarker(collaborator.id, 'TASK_UPDATE', 'rejected', `farmer_to_director:${recipient.full_name}`, null);
+            failCount++;
+            continue;
+          }
           // Self-assignment via to_name → silently fall back to normal create
           if (recipient.id !== collaborator.id) {
             assignedTo = recipient.id;
@@ -3626,12 +3634,13 @@ function isValidRemindAt(s) {
 }
 
 async function persistProject(collaborator, p) {
-  const allowedRoles = ['coordinator', 'director'];
-  if (!allowedRoles.includes(collaborator.role)) {
-    console.log(`[Project] BLOCKED: ${collaborator.full_name} (role=${collaborator.role}) tried to create project. Server gate.`);
+  // Sprint 28 — usa hasCoordLevel (inclui role coord/director + has_coord_permissions=true).
+  // Fecha gap da refatoração anterior em que esse spot continuava literal.
+  if (!hasCoordLevel(collaborator)) {
+    console.log(`[Project] BLOCKED: ${collaborator.full_name} (role=${collaborator.role} coord_perm=${!!collaborator.has_coord_permissions}) tried to create project. Server gate.`);
     return {
       error: true,
-      userFacingReply: '_Eu te ajudo a anotar a ideia, mas só coordenador ou diretor pode criar projeto direto._ Quer que eu repasse pra alguém?'
+      userFacingReply: '_Eu te ajudo a anotar a ideia, mas só quem tem permissão de coordenação pode criar projeto direto._ Quer que eu repasse pra alguém?'
     };
   }
   const creatorId = collaborator.id;

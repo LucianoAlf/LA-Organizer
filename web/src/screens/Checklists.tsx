@@ -70,10 +70,10 @@ function TrabalhoTab() {
   // undefined=closed, null=create mode, TemplateCardData=edit mode
   const [templateSheet, setTemplateSheet] = useState<TemplateCardData | null | undefined>(undefined)
 
-  // Sprint 22.39 — leadership operacional: director, coordinator, manager, leader.
+  // Sprint 22.39 → 28 — leadership operacional: director, coordinator, manager.
   // Membros (collaborator) NAO veem o bloco de templates.
   const canManageTemplates = !!collaborator?.role && [
-    'director', 'coordinator', 'manager', 'leader',
+    'director', 'coordinator', 'manager',
   ].includes(collaborator.role)
 
   const { data: completions = [], isLoading: loadingTom, error: errorTom, refetch: refetchTom } =
