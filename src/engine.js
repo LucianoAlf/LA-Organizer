@@ -1281,6 +1281,44 @@ async function applyCoordinationResponseAction(collab, parsed) {
     }
   }
 
+  // Cascata: mata outras requests órfãs do mesmo recipient com conteúdo
+  // similar ao body da req respondida — evita que uma resposta antiga seja
+  // "reaproveitada" 12h depois numa request que ficou pendente.
+  // Bug 25/05 (Juliana): REQ A (20:25) e REQ B (20:45) com mesma pergunta;
+  // resposta matou só B, A ficou viva e foi casada hoje 07:47 com msg nova.
+  try {
+    const candNorm = normalizeForSim(req.message_body || '');
+    const { data: siblings } = await supabase
+      .from('coordination_requests')
+      .select('id, message_body')
+      .eq('recipient_id', collab.id)
+      .eq('mode', req.mode)
+      .eq('status', 'sent')
+      .neq('id', req.id)
+      .gte('created_at', new Date(Date.now() - 48 * 3600 * 1000).toISOString());
+    let cascaded = 0;
+    for (const sib of (siblings || [])) {
+      const score = jaroWinkler(candNorm, normalizeForSim(sib.message_body || ''));
+      if (score >= 0.6) {
+        await supabase
+          .from('coordination_requests')
+          .update({
+            status: 'responded',
+            responded_at: new Date().toISOString(),
+            response_summary: parsed.response_summary,
+            cancelled_reason: `cascade_from:${req.id.slice(0,8)}`,
+          })
+          .eq('id', sib.id);
+        cascaded++;
+      }
+    }
+    if (cascaded > 0) {
+      console.log(`[CoordinationResponse] cascade closed ${cascaded} sibling(s) of req=${req.id.slice(0,8)}`);
+    }
+  } catch (cascadeErr) {
+    console.warn('[CoordinationResponse] cascade err (non-fatal):', cascadeErr.message);
+  }
+
   console.log(`[CoordinationResponse] req=${req.id.slice(0, 8)} responded by ${String(collab.phone).slice(-4)}`);
   return { ok: true, reason: `req=${req.id.slice(0, 8)}` };
 }
@@ -1483,14 +1521,13 @@ async function applyCoordinationRequestAction(collab, parsed) {
     ).toISOString();
   }
 
-  // 5.5. Dedup defensivo (hotfix pós-Sprint20).
-  // Bug observado: Rafinha mandou "Tom pergunta ao Alf...", TOM emitiu relay.
-  // Rafinha respondeu "Ok" (confirmando) e TOM emitiu SEGUNDO relay com o
-  // mesmo conteúdo — Alf recebeu duplicado. Skill ensina não re-emitir mas
-  // engine reforça: se há coord_request similar nos últimos 90s
-  // (mesmo requester+recipient+mode, body similar via jaroWinkler), rejeita.
+  // 5.5. Dedup defensivo. Janela 30min (era 90s).
+  // Bug 25/05 (Juliana): Alf pediu "marca reunião e avisa", e 20min depois
+  // "Pede confirmação a ela" — TOM criou 2 requests porque janela era 90s.
+  // Resultado: REQ órfã foi casada 12h depois com resposta nova da Juliana,
+  // disparando notificação duplicada. 30min cobre o caso de re-pedido humano.
   try {
-    const dedupCutoff = new Date(Date.now() - 90 * 1000).toISOString();
+    const dedupCutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
     const { data: recent } = await supabase
       .from('coordination_requests')
       .select('id, message_body, status, created_at')
@@ -5045,16 +5082,20 @@ async function processMessage(phone, text, raw = {}) {
     return;
   }
 
-  // Sprint 16 — COORD_HINT: verifica recados abertos onde collab é recipient
+  // Sprint 16 — COORD_HINT: verifica recados abertos onde collab é recipient.
+  // Janela 2h (era 24h). Bug 25/05: REQ órfã de ontem 20:25 foi casada com
+  // resposta de hoje 07:47 porque o LLM viu a request fantasma de 11h atrás.
+  // 2h cobre o uso real (resposta no mesmo turno de conversa) sem expor o
+  // LLM a requests velhas que devem ser tratadas pelo auto-close cron.
   let coordHint = null;
   {
-    const cutoff24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const cutoff2h = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
     const { data: openRequests } = await supabase
       .from('coordination_requests')
       .select('id, requester_id, message_body, created_at')
       .eq('recipient_id', collab.id)
       .eq('status', 'sent')
-      .gte('created_at', cutoff24h)
+      .gte('created_at', cutoff2h)
       .order('created_at', { ascending: false })
       .limit(3);
 
