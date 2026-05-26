@@ -45,6 +45,7 @@ async function textToSpeech(text) {
         similarity_boost: 0.75,
         style: 0.4,
         use_speaker_boost: true,
+        speed: 1.15, // 15% mais rápido — soa natural sem perder qualidade
       },
     });
 
