@@ -91,7 +91,11 @@ function fmtRelDate(iso: string | null): string {
 function statusOf(task: Task): { tone: 'success' | 'warning' | 'danger' | 'neutral'; label: string | null } {
   if (task.status === 'done') return { tone: 'success', label: null };
   const today = todaySaoPauloISO();
-  const refDay = task.remind_at ? dayISOFromAny(task.remind_at) : task.due_date;
+  // Considera task_reminders multi (Sprint 23) como fallback do remind_at legado.
+  const reminders = (task as Task & { task_reminders?: Array<{ remind_at: string; sent_at: string | null }> }).task_reminders;
+  const earliestPending = (reminders ?? []).filter(r => !r.sent_at).map(r => r.remind_at).sort()[0];
+  const effective = task.remind_at ?? earliestPending ?? null;
+  const refDay = effective ? dayISOFromAny(effective) : task.due_date;
   if (refDay && refDay < today) {
     return { tone: 'danger', label: 'atrasada ' + fmtRelDate(refDay) };
   }
@@ -114,9 +118,18 @@ export function TaskRow({
   const isOverdue = tone === 'danger' && !isDone;
   const quadrantKey = task.eisenhower_quadrant ? String(task.eisenhower_quadrant) : null;
   const dotClass = quadrantKey && QUADRANT_DOT[quadrantKey] ? QUADRANT_DOT[quadrantKey] : null;
-  const remindDay = task.remind_at ? dayISOFromAny(task.remind_at) : '';
+  // Sprint 23 — fallback de remind_at (legado single) pra task_reminders (multi).
+  // Quando user usa o componente RemindersField novo, remind_at fica null e os
+  // lembretes vão pra task_reminders. Aqui pegamos o primeiro pendente como display.
+  const taskReminders = (task as Task & { task_reminders?: Array<{ remind_at: string; sent_at: string | null }> }).task_reminders;
+  const earliestPendingReminder = (taskReminders ?? [])
+    .filter(r => !r.sent_at)
+    .map(r => r.remind_at)
+    .sort()[0];
+  const effectiveRemindAt = task.remind_at ?? earliestPendingReminder ?? null;
+  const remindDay = effectiveRemindAt ? dayISOFromAny(effectiveRemindAt) : '';
   const dueDay = task.due_date || '';
-  const remindRel = task.remind_at ? fmtRelDate(task.remind_at) : '';
+  const remindRel = effectiveRemindAt ? fmtRelDate(effectiveRemindAt) : '';
   const dueRel = task.due_date ? fmtRelDate(task.due_date) : '';
   const showAssignee = task.assignee?.full_name;
 
@@ -174,12 +187,12 @@ export function TaskRow({
         </div>
 
         {/* Linha 2 — data/lembrete */}
-        {(task.remind_at || task.due_date) && (
+        {(effectiveRemindAt || task.due_date) && (
           <div className="mt-1.5 flex items-baseline gap-1.5 text-body-sm">
-            {task.remind_at ? (
+            {effectiveRemindAt ? (
               <>
                 <span aria-hidden>⏰</span>
-                <span className="font-semibold tabular-nums text-fg">{fmtTimeBR(task.remind_at)}</span>
+                <span className="font-semibold tabular-nums text-fg">{fmtTimeBR(effectiveRemindAt)}</span>
                 <span className="text-fg-muted">·</span>
                 <span className="text-fg-muted">{remindRel}{fmtSuffix(remindRel, remindDay)}</span>
               </>

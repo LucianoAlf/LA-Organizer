@@ -87,6 +87,52 @@ Todas as actions acima estão implementadas e validadas no engine atual. Use-as 
 - se houver dúvida sobre qual tarefa é, pergunte **UMA vez** antes de emitir o marker
 - nunca marque tarefa sem confirmação clara
 
+**⚠️ Tarefa vs Compromisso — desambiguação obrigatória:**
+Se o user mencionar palavras como **reunião, compromisso, evento, aula, mentoria, consulta, sessão, encontro, call, 1:1** e o item correspondente estiver na lista de **compromissos** (agenda), **NÃO use TASK_UPDATE** — use `<<EVENT_UPDATE>>` (ver subfluxo 1b abaixo). Sinal forte: item aparece em "Compromissos hoje" ao invés de "Tarefas hoje" no contexto.
+
+Exemplo:
+- User: "fiz a reunião familiar, foi legal!"
+- Contexto: "Reunião Familiar" está em **Compromissos hoje** (não em Tarefas)
+- → Emita `<<EVENT_UPDATE>>` action="complete" (NÃO TASK_UPDATE)
+
+---
+
+### 1b. Fechar compromisso/evento (`EVENT_UPDATE complete`)
+
+**Sinais comuns:**
+- "fiz a reunião", "terminou a aula", "completei o compromisso"
+- "foi legal!", "deu certo a consulta", "tive a mentoria"
+- "rolou o encontro", "fechei o 1:1", "show a sessão"
+
+**Regras:**
+- O item DEVE estar em "Compromissos" no contexto (lista de eventos).
+- Se houver dúvida (palavra ambígua, pode ser task OU event), pergunte **UMA vez**: `É o compromisso "<título>" das <hora>?`.
+- Nunca marque sem confirmação clara.
+- Use o `id` do evento exibido na lista (não confunda com id de task).
+
+**Formato do marker:**
+```
+<<EVENT_UPDATE>>
+[
+  {"action":"complete","id":"<8-char-event-id>"}
+]
+<<END>>
+```
+
+**Resposta canônica:**
+- User: `fiz a reunião familiar, foi legal!`
+- Você: `✅ Fechado: *Reunião Familiar*. Que bom que rolou!`
+
+**Multi-eventos no mesmo turno** (raro):
+```
+<<EVENT_UPDATE>>
+[
+  {"action":"complete","id":"ab12cd34"},
+  {"action":"complete","id":"ef56gh78"}
+]
+<<END>>
+```
+
 ---
 
 ### 2. Reagendar tarefa (`reschedule`)

@@ -24,6 +24,7 @@ import type { Task, CalendarEvent, Project, TaskContext } from '../types';
 type WeekTask = Task & {
   projects?: { name: string; category?: Project['category'] } | null;
   assignee?: { id: string; full_name: string } | null;
+  task_reminders?: Array<{ remind_at: string; sent_at: string | null }>;
 };
 
 async function fetchWeekTasks(collabId: string, start: string, end: string): Promise<WeekTask[]> {
@@ -31,7 +32,7 @@ async function fetchWeekTasks(collabId: string, start: string, end: string): Pro
   // OR no Supabase: tasks atribuídas a mim OU criadas por mim e atribuídas a outro.
   const { data, error } = await supabase
     .from('tasks')
-    .select('id, title, status, context, priority, category, due_date, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(id, full_name)')
+    .select('id, title, status, context, priority, category, due_date, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(id, full_name), task_reminders(remind_at, sent_at)')
     .or(`assigned_to.eq.${collabId},and(created_by.eq.${collabId},assigned_to.neq.${collabId})`)
     .neq('status', 'cancelled')
     .gte('due_date', start)
@@ -50,6 +51,21 @@ const QUADRANT_DOT: Record<string, string> = {
   '2': 'bg-warning',
   '3': 'bg-info',
 };
+
+/** Retorna HH:MM do horário mais cedo de lembrete da task.
+ *  Prioriza task_reminders (multi, pendentes) sobre remind_at (legado single). */
+function earliestReminderHM(t: WeekTask): string | null {
+  // Multi: task_reminders pendentes (sent_at null)
+  const pendingMulti = (t.task_reminders ?? [])
+    .filter((r: { remind_at: string; sent_at: string | null }) => !r.sent_at)
+    .map(r => r.remind_at)
+    .sort();
+  const earliest = pendingMulti[0] ?? t.remind_at;
+  if (!earliest) return null;
+  return new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(new Date(earliest));
+}
 
 function dayCounts(tasks: WeekTask[], events: CalendarEvent[], today: string) {
   const activeEvents = events.filter(e => e.status !== 'cancelled');
@@ -329,18 +345,25 @@ export function Semana() {
                                 onClick={() => !isCancelled && toggleTask.mutate(t)}
                               />
                               {/* Corpo: clica pra reagendar. */}
-                              {!isDone && !isCancelled ? (
+                              {(() => { const remHM = earliestReminderHM(t); return !isDone && !isCancelled ? (
                                 <button
                                   type="button"
                                   onClick={() => setRescheduleTask(t)}
                                   className="flex-1 min-w-0 text-left rounded-sm hover:bg-bg-elevated px-1 -mx-1 focus-ring"
                                   title="Reagendar"
                                 >
-                                  <div className="text-body-sm text-fg">
+                                  <div className="text-body-sm text-fg flex items-baseline gap-1.5">
                                     {qcCls && (
-                                      <span aria-hidden title={`Q${qk}`} className={['inline-block h-1.5 w-1.5 rounded-full mr-1.5 align-middle', qcCls].join(' ')} />
+                                      <span aria-hidden title={`Q${qk}`} className="inline-block h-1.5 w-1.5 rounded-full align-middle shrink-0">
+                                        <span className={['inline-block h-1.5 w-1.5 rounded-full', qcCls].join(' ')} />
+                                      </span>
                                     )}
-                                    {t.title}
+                                    <span className="flex-1 min-w-0 truncate">{t.title}</span>
+                                    {remHM && (
+                                      <span className="shrink-0 inline-flex items-center gap-0.5 text-[10px] text-tom tabular-nums" title={`Lembrete às ${remHM}`}>
+                                        <span aria-hidden>🔔</span>{remHM}
+                                      </span>
+                                    )}
                                   </div>
                                   <div className="mt-1">
                                     <CategoryTag project={t.projects} />
@@ -348,14 +371,19 @@ export function Semana() {
                                 </button>
                               ) : (
                                 <div className="flex-1 min-w-0">
-                                  <div className={['text-body-sm', isDone ? 'line-through text-fg-muted' : 'text-fg'].join(' ')}>
-                                    {t.title}
+                                  <div className={['text-body-sm flex items-baseline gap-1.5', isDone ? 'line-through text-fg-muted' : 'text-fg'].join(' ')}>
+                                    <span className="flex-1 min-w-0 truncate">{t.title}</span>
+                                    {remHM && (
+                                      <span className="shrink-0 inline-flex items-center gap-0.5 text-[10px] text-fg-muted tabular-nums" title={`Lembrete às ${remHM}`}>
+                                        <span aria-hidden>🔔</span>{remHM}
+                                      </span>
+                                    )}
                                   </div>
                                   <div className="mt-1">
                                     <CategoryTag project={t.projects} />
                                   </div>
                                 </div>
-                              )}
+                              ); })()}
                             </li>
                           );
                         })}
