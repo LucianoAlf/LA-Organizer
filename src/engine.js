@@ -1161,46 +1161,65 @@ async function applySchoolEventAction(collaborator, parsed) {
   return { ok: false, reason: 'unknown_action' };
 }
 
-// Sprint 16 — Marker <<COORDINATION_REQUEST>>.
+// Sprint 16 → revisão 26/05 — Marker <<COORDINATION_REQUEST>>.
+// Bug histórico: engine só processava o PRIMEIRO marker, ignorando os outros
+// silenciosamente. Caso 22/05 do Jereh: pediu pra mandar pra 4 pessoas (Luciano,
+// Yuri, John, Rafinha), LLM emitiu 4 markers, engine processou só 1 — Rafinha
+// nunca recebeu. Agora retorna ARRAY de items, caller itera.
 function parseCoordinationRequestMarker(text) {
   if (!text) return null;
   const reG = /<<COORDINATION_REQUEST>>\s*([\s\S]*?)\s*<<END>>/gi;
   const matches = [...text.matchAll(reG)];
   if (!matches.length) return null;
-  // Strip TODOS os blocos — duplicatas ficam como UNKNOWN_MARKER_STRIPPED sem isso
   const cleanText = text.replace(reG, '').trim();
+
+  const items = [];
+  const malformedReasons = [];
+  for (let i = 0; i < matches.length; i++) {
+    let parsed;
+    try {
+      parsed = JSON.parse(matches[i][1].trim());
+    } catch (err) {
+      logSchemaErr('COORDINATION_REQUEST', [`marker[${i}]:invalid_json: ${err.message}`], matches[i][1]);
+      malformedReasons.push(`marker[${i}]:invalid_json`);
+      continue;
+    }
+    if (!parsed || typeof parsed !== 'object') {
+      malformedReasons.push(`marker[${i}]:not_object`);
+      continue;
+    }
+    if (!parsed.recipient_name || typeof parsed.recipient_name !== 'string') {
+      logSchemaErr('COORDINATION_REQUEST', [`marker[${i}]:recipient_name:missing`], parsed);
+      malformedReasons.push(`marker[${i}]:recipient_name`);
+      continue;
+    }
+    if (!['relay_literal', 'relay_assisted', 'followup'].includes(parsed.mode)) {
+      logSchemaErr('COORDINATION_REQUEST', [`marker[${i}]:mode:invalid`], parsed);
+      malformedReasons.push(`marker[${i}]:mode`);
+      continue;
+    }
+    if (!parsed.message_body || typeof parsed.message_body !== 'string') {
+      logSchemaErr('COORDINATION_REQUEST', [`marker[${i}]:message_body:missing`], parsed);
+      malformedReasons.push(`marker[${i}]:message_body`);
+      continue;
+    }
+    items.push({
+      recipient_name:           String(parsed.recipient_name).trim(),
+      mode:                     parsed.mode,
+      message_body:             String(parsed.message_body).trim(),
+      message_original:         parsed.message_original ? String(parsed.message_original).trim() : null,
+      expects_response:         Boolean(parsed.expects_response),
+      response_deadline_hours:  parsed.response_deadline_hours ? Number(parsed.response_deadline_hours) : null,
+    });
+  }
+
+  if (items.length === 0) {
+    return { malformed: true, cleanText, reasons: malformedReasons };
+  }
   if (matches.length > 1) {
-    console.warn(`[CoordinationRequest] ${matches.length} markers em uma resposta — só o primeiro é processado`);
+    console.log(`[CoordinationRequest] processing ${items.length} markers (${malformedReasons.length} malformed dropped)`);
   }
-  let parsed;
-  try {
-    parsed = JSON.parse(matches[0][1].trim());
-  } catch (err) {
-    logSchemaErr('COORDINATION_REQUEST', ['invalid_json: ' + err.message], matches[0][1]);
-    return { malformed: true, cleanText };
-  }
-  if (!parsed || typeof parsed !== 'object') return { malformed: true, cleanText };
-  if (!parsed.recipient_name || typeof parsed.recipient_name !== 'string') {
-    logSchemaErr('COORDINATION_REQUEST', ['recipient_name:missing'], parsed);
-    return { malformed: true, cleanText };
-  }
-  if (!['relay_literal', 'relay_assisted', 'followup'].includes(parsed.mode)) {
-    logSchemaErr('COORDINATION_REQUEST', ['mode:invalid'], parsed);
-    return { malformed: true, cleanText };
-  }
-  if (!parsed.message_body || typeof parsed.message_body !== 'string') {
-    logSchemaErr('COORDINATION_REQUEST', ['message_body:missing'], parsed);
-    return { malformed: true, cleanText };
-  }
-  return {
-    recipient_name:           String(parsed.recipient_name).trim(),
-    mode:                     parsed.mode,
-    message_body:             String(parsed.message_body).trim(),
-    message_original:         parsed.message_original ? String(parsed.message_original).trim() : null,
-    expects_response:         Boolean(parsed.expects_response),
-    response_deadline_hours:  parsed.response_deadline_hours ? Number(parsed.response_deadline_hours) : null,
-    cleanText,
-  };
+  return { items, cleanText };
 }
 
 // Sprint 16 — Marker <<COORDINATION_RESPONSE>>.
@@ -6131,23 +6150,38 @@ async function processMessage(phone, text, raw = {}) {
     }
   }
 
-  // Sprint 16 — <<COORDINATION_REQUEST>> — repassar mensagem / cobrar / avisar outro colaborador.
+  // Sprint 16 → revisão 26/05 — <<COORDINATION_REQUEST>>: processa TODOS os
+  // markers (antes só o primeiro). Caso real: broadcast pra 4 pessoas em 1 turn.
   {
     const parsedCoord = parseCoordinationRequestMarker(reply);
     if (parsedCoord && parsedCoord.malformed) {
-      console.warn('[CoordinationRequest] WARN: malformed marker, dropping block');
+      console.warn('[CoordinationRequest] WARN: all markers malformed, dropping block', parsedCoord.reasons);
       await logMarker(collab.id, 'COORDINATION_REQUEST', 'rejected', 'schema_invalid', null);
       reply = parsedCoord.cleanText || reply;
-    } else if (parsedCoord) {
-      const result = await applyCoordinationRequestAction(collab, parsedCoord);
-      await logMarker(
-        collab.id,
-        'COORDINATION_REQUEST',
-        result.ok ? 'executed' : 'rejected',
-        result.reason,
-        null
-      );
-      reply = parsedCoord.cleanText || result.replyText || reply;
+    } else if (parsedCoord && parsedCoord.items) {
+      let okCount = 0, failCount = 0;
+      const failedRecipients = [];
+      for (const item of parsedCoord.items) {
+        const result = await applyCoordinationRequestAction(collab, item);
+        await logMarker(
+          collab.id,
+          'COORDINATION_REQUEST',
+          result.ok ? 'executed' : 'rejected',
+          `${item.recipient_name}:${result.reason}`,
+          null
+        );
+        if (result.ok) okCount++;
+        else { failCount++; failedRecipients.push(`${item.recipient_name} (${result.reason})`); }
+      }
+      if (parsedCoord.items.length > 1) {
+        console.log(`[CoordinationRequest] batch: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
+      }
+      // Limpa texto da resposta e, se houver falhas, expõe pro user (não esconde).
+      reply = parsedCoord.cleanText || reply;
+      if (failCount > 0 && parsedCoord.items.length > 1) {
+        const failMsg = `\n\n⚠️ Não consegui enviar pra: ${failedRecipients.join(', ')}.`;
+        reply = (reply || '') + failMsg;
+      }
     }
   }
 
