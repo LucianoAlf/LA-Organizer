@@ -379,6 +379,14 @@ function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events
       const overdue = (t.remind_at ? dayFromAny(t.remind_at) : t.due_date) < today ? '🔴 ' : '';
       const doneTag = t.status === 'done' ? '✅ ' : '';
       lines.push(`${i + 1}. [id=${sid}] ${overdue}${doneTag}${t.title}${timeBit}`);
+      // Descrição (quando houver) — uma linha indentada abaixo do título.
+      // Mantém lista escaneável mas expõe contexto pro TOM responder perguntas
+      // tipo "pra que é essa ligação?" sem precisar abrir o detalhe.
+      if (t.description && t.description.trim()) {
+        const desc = t.description.trim().replace(/\s+/g, ' ');
+        const truncated = desc.length > 240 ? desc.slice(0, 240) + '…' : desc;
+        lines.push(`   ↳ ${truncated}`);
+      }
     });
   };
 
@@ -1054,7 +1062,7 @@ async function fetchCollaboratorContext(collaborator) {
   const today = todaySaoPaulo();
   const next7days = (() => { const d = new Date(today + 'T15:00:00.000Z'); d.setDate(d.getDate() + 7); return d.toISOString().slice(0, 10); })();
   const past7days = (() => { const d = new Date(today + 'T15:00:00.000Z'); d.setDate(d.getDate() - 7); return d.toISOString().slice(0, 10); })();
-  const TASK_COLS = 'id, title, status, priority, eisenhower_quadrant, due_date, context, remind_at, project_id, projects(name)';
+  const TASK_COLS = 'id, title, description, status, priority, eisenhower_quadrant, due_date, context, remind_at, project_id, projects(name)';
 
   const isLeadership = collaborator.role === 'director' || collaborator.role === 'coordinator' ||
     collaborator.role === 'manager' || collaborator.role === 'leader';
