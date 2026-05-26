@@ -2900,6 +2900,47 @@ async function logAgentNote(taskId, content, byCollabId) {
   }
 }
 
+// 26/05 — Quando uma task delegada (created_by != assigned_to) é fechada
+// ou reagendada pelo responsável, notifica o CRIADOR via WhatsApp.
+// Sem isso, Léo cria task pra Juliana, Juliana fecha, e Léo nunca sabe.
+async function notifyTaskCreatorOfAction(task, actor, action, detail = null) {
+  try {
+    if (!task || !task.created_by || !task.assigned_to) return;
+    if (task.created_by === task.assigned_to) return; // task própria — sem notificação
+    const { data: creator } = await supabase
+      .from('collaborators')
+      .select('id, full_name, preferred_name, phone, is_active')
+      .eq('id', task.created_by).maybeSingle();
+    if (!creator || !creator.is_active || !creator.phone) return;
+    const creatorName = creator.preferred_name || (creator.full_name || '').split(' ')[0];
+    const actorName = actor.preferred_name || (actor.full_name || '').split(' ')[0];
+    const titleShort = String(task.title || '').slice(0, 80);
+    let msg;
+    if (action === 'complete') {
+      msg = `✅ ${creatorName}, o ${actorName} concluiu a tarefa que você pediu:\n_"${titleShort}"_`;
+    } else if (action === 'reschedule') {
+      const newDate = detail ? ` pra ${detail}` : '';
+      msg = `🗓️ ${creatorName}, o ${actorName} reagendou${newDate}:\n_"${titleShort}"_`;
+    } else if (action === 'cancel') {
+      msg = `❌ ${creatorName}, o ${actorName} cancelou:\n_"${titleShort}"_${detail ? `\n\nMotivo: ${detail}` : ''}`;
+    } else if (action === 'delegate') {
+      msg = `↪️ ${creatorName}, o ${actorName} repassou pra outra pessoa:\n_"${titleShort}"_${detail ? `\n\nPra: ${detail}` : ''}`;
+    } else {
+      return;
+    }
+    await whatsapp.sendMessage(creator.phone, msg);
+    await supabase.from('conversation_history').insert({
+      collaborator_id: creator.id,
+      direction: 'outbound',
+      message_type: 'text',
+      content: msg,
+    });
+    console.log(`[Task] notify creator ${String(creator.phone).slice(-4)} of ${action} by ${String(actor.phone).slice(-4)} on task ${String(task.id).slice(0,8)}`);
+  } catch (err) {
+    console.warn('[Task] notifyTaskCreator err (non-fatal):', err.message);
+  }
+}
+
 async function applyTaskActions(collaborator, actions) {
   let okCount = 0;
   let failCount = 0;
@@ -2917,6 +2958,10 @@ async function applyTaskActions(collaborator, actions) {
           failCount++;
           continue;
         }
+        // Buscar created_by ANTES do UPDATE pra saber se é task delegada
+        const { data: fullTask } = await supabase
+          .from('tasks').select('id, title, created_by, assigned_to')
+          .eq('id', t.id).maybeSingle();
         const { error } = await supabase
           .from('tasks')
           .update({
@@ -2932,6 +2977,7 @@ async function applyTaskActions(collaborator, actions) {
         } else {
           console.log(`[Task] complete ${a.id} by ${last4}`);
           await logAgentNote(t.id, `Concluída por ${nameForCollab(collaborator)}`, collaborator.id);
+          await notifyTaskCreatorOfAction(fullTask, collaborator, 'complete');
           okCount++;
         }
       } else if (a.action === 'reschedule') {
@@ -2947,13 +2993,13 @@ async function applyTaskActions(collaborator, actions) {
           continue;
         }
         const update = { due_date: a.new_due_date };
-        // Sprint 11.2 hotfix — reschedule também aplica new_remind_at quando presente.
-        // Bug observado: TOM disse "amanhã 12h" mas só due_date era atualizado, mantendo
-        // remind_at antigo (criação inicial). Resultado: PWA mostrava horário velho.
         if (typeof a.new_remind_at === 'string' && isValidRemindAt(a.new_remind_at)) {
           update.remind_at = a.new_remind_at;
         }
         if (t.status === 'overdue') update.status = 'pending';
+        const { data: fullTaskR } = await supabase
+          .from('tasks').select('id, title, created_by, assigned_to')
+          .eq('id', t.id).maybeSingle();
         const { error } = await supabase
           .from('tasks')
           .update(update)
@@ -2969,6 +3015,7 @@ async function applyTaskActions(collaborator, actions) {
           const newDue = formatBRDate(a.new_due_date);
           const note = `Prazo: ${oldDue} → ${newDue}${update.remind_at ? ` (lembrete ${update.remind_at.slice(11, 16)})` : ''}${a.reason ? ` — ${a.reason}` : ''}`;
           await logAgentNote(t.id, note, collaborator.id);
+          await notifyTaskCreatorOfAction(fullTaskR, collaborator, 'reschedule', newDue);
           okCount++;
         }
       } else if (a.action === 'create') {
