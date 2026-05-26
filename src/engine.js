@@ -5411,7 +5411,12 @@ async function processMessage(phone, text, raw = {}) {
         const userTextLC = String(text || '').toLowerCase();
         const wantsTomorrow = /\b(amanh[ãa])\b/.test(userTextLC);
         const wantsToday = /\b(hoje)\b/.test(userTextLC) && !wantsTomorrow;
-        if (wantsTomorrow || wantsToday) {
+        // Sprint 28 — auto-align SÓ quando há 1 action no marker. Em batch
+        // (vários itens), o user disse "hoje/amanhã" sobre UMA das tasks, e o
+        // auto-align estava sobrescrevendo as datas das OUTRAS (caso Bass Night
+        // 26/05: data 28/05 foi forçada pra 26/05). Confia em Claude pro resto.
+        const isSingleAction = Array.isArray(parsedTask.actions) && parsedTask.actions.length === 1;
+        if ((wantsTomorrow || wantsToday) && isSingleAction) {
           const fmt = new Intl.DateTimeFormat('en-CA', {
             timeZone: 'America/Sao_Paulo',
             year: 'numeric', month: '2-digit', day: '2-digit',

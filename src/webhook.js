@@ -270,7 +270,7 @@ router.post(['/webhook', '/webhook/:token'], async (req, res) => {
     try {
       const quoted = whatsapp.extractQuotedMessage(body);
       if (quoted && quoted.text) {
-        const snippet = quoted.text.length > 200 ? quoted.text.slice(0, 200) + '…' : quoted.text;
+        const snippet = quoted.text.length > 1500 ? quoted.text.slice(0, 1500) + '…' : quoted.text;
         text = `[O usuário está RESPONDENDO a esta mensagem anterior: "${snippet}"]\n${text}`;
         console.log(`[Webhook] reply detectado — quoted="${snippet.slice(0, 60)}"`);
       } else if (quoted && quoted.type !== 'text') {
