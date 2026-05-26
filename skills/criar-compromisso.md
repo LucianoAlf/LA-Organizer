@@ -381,7 +381,66 @@ Modalidade e categoria não foram ditas. **NÃO emite marker neste turno.** Resp
 - nunca emita `meeting_url` se `modality="presencial"`
 - nunca exiba o marker / horários internos / IDs ao usuário
 - nunca misture `<<EVENT_CREATE>>` com `<<TASK_UPDATE>>` na mesma resposta — escolha um
-- nunca emita evento de outro colaborador (a skill não tem create-for-other; isso fica em `checklist-tarefas`)
+
+---
+
+## Criar compromisso na agenda de OUTRO colaborador (Sprint 28)
+
+Você AGORA pode criar evento direto na agenda de outra pessoa usando os
+campos `to_name` ou `to_phone` no `<<EVENT_CREATE>>`. O evento aparece na
+agenda do destinatário, e o TOM avisa ele por WhatsApp automaticamente.
+
+### Quando usar
+
+User diz algo do tipo:
+- "Marca uma reunião com o Rafinha amanhã 10h" → evento NA agenda do user
+  (o Rafinha é só o assunto, não o dono).
+- "Coloca na agenda do Rafinha: reunião sobre flyer amanhã 10h" → evento na
+  agenda DO RAFINHA (use `to_name: "Rafinha"`).
+- "Marca pro Jereh: visita técnica Recreio sexta 14h" → agenda DO JEREH.
+
+**Diferença sutil:** `marca COM X` = evento na sua agenda; `marca PRO X` /
+`coloca na agenda do X` / `agenda DO X` = evento na agenda DELE.
+
+Se estiver em dúvida, **pergunte uma vez**: "É pra entrar na sua agenda ou
+na do Rafinha?"
+
+### Exemplo
+
+```
+<<EVENT_CREATE>>
+{
+  "title": "Visita técnica — Recreio",
+  "start_at": "2026-05-28T14:00:00-03:00",
+  "end_at": "2026-05-28T15:00:00-03:00",
+  "modality": "presencial",
+  "location_text": "LA Music Recreio",
+  "category": "la_music",
+  "to_name": "Jereh"
+}
+<<END>>
+```
+
+### Regras de bloqueio (gates do engine)
+
+- **Farmer** (cargo `function_role=farmer`) NÃO pode criar evento pra
+  diretor (Luciano/Anne/Admin). Se tentar, engine rejeita silenciosamente.
+  Nesse caso, sugira ao user que peça pra um gerente ou coordenador.
+- Demais cargos podem criar pra qualquer um.
+- `to_name` que não casa com nenhum colaborador ativo → rejeitado.
+
+### Notificação automática
+
+Quando você usa `to_name`/`to_phone`, o engine envia automaticamente uma
+mensagem ao destinatário no formato:
+
+> 📅 *Krissya* marcou um compromisso na sua agenda:
+> *Visita técnica — Recreio*
+> 🗓️ 28/05/2026 14:00
+> 📍 LA Music Recreio
+> Se não puder, fala com Krissya pra remarcar.
+
+Você (TOM) **não precisa avisar nada de extra** — o engine cuida disso.
 
 ---
 

@@ -1935,11 +1935,41 @@ async function applyEventActions(collaborator, events) {
         continue;
       }
 
+      // Sprint 28 — create-for-other (event): opt-in via to_name/to_phone.
+      // Cria evento na agenda do destinatário (collaborator_id = recipient),
+      // mantém created_by = emissor. Gate Farmer→director aplicado igual a tasks.
+      let eventOwnerId = collaborator.id;
+      let eventRecipient = null;
+      const wantsForOtherEvent = (typeof e.to_name === 'string' && e.to_name.trim()) ||
+                                  (typeof e.to_phone === 'string' && e.to_phone.trim());
+      if (wantsForOtherEvent) {
+        if (e.to_phone) eventRecipient = await findCollaboratorByPhone(e.to_phone);
+        else eventRecipient = await findCollaboratorByName(e.to_name);
+        if (!eventRecipient || !eventRecipient.is_active) {
+          console.warn(`[Event] create-for-other REJECTED — recipient not found/inactive: ${e.to_phone || e.to_name}`);
+          failCount++;
+          continue;
+        }
+        if (collaborator.function_role === 'farmer' && eventRecipient.role === 'director') {
+          console.warn(`[Event] create-for-other REJECTED — farmer ${collaborator.full_name} cannot create for director ${eventRecipient.full_name}`);
+          await logMarker(collaborator.id, 'EVENT_CREATE', 'rejected', `farmer_to_director:${eventRecipient.full_name}`, null);
+          failCount++;
+          continue;
+        }
+        if (eventRecipient.id !== collaborator.id) {
+          eventOwnerId = eventRecipient.id;
+        } else {
+          eventRecipient = null; // self → fallback pra fluxo normal
+        }
+      }
+
       // Sprint 22.26 — lookup category_id do slug. Procura em system (global)
       // primeiro, depois nas pessoais do user. Falha se nao achar.
-      const catRow = await lookupEventCategoryBySlug(e.category, collaborator.id);
+      // Sprint 28 — quando create-for-other, lookup usa eventOwnerId (categoria pessoal
+      // do destinatário ou system). Senão sempre cai em system, o que é OK.
+      const catRow = await lookupEventCategoryBySlug(e.category, eventOwnerId);
       if (!catRow) {
-        console.error(`[Event] category slug not found: "${e.category}" (collab ${collaborator.id})`);
+        console.error(`[Event] category slug not found: "${e.category}" (owner ${eventOwnerId})`);
         failCount++;
         continue;
       }
@@ -1948,7 +1978,7 @@ async function applyEventActions(collaborator, events) {
       const row = {
         title: e.title.trim().slice(0, 200),
         description: typeof e.description === 'string' ? e.description.slice(0, 1000) : null,
-        collaborator_id: collaborator.id,
+        collaborator_id: eventOwnerId,
         created_by: collaborator.id,
         context: ctx,
         category: e.category,         // mantido temporariamente p/ conflict detection legado
@@ -1972,7 +2002,27 @@ async function applyEventActions(collaborator, events) {
         failCount++;
         continue;
       }
-      console.log(`[Event] create "${row.title.slice(0, 60)}" cat=${row.category} mod=${row.modality} ctx=${ctx} by ${last4} (id=${String(data?.id || '').slice(0, 8)})`);
+      console.log(`[Event] create "${row.title.slice(0, 60)}" cat=${row.category} mod=${row.modality} ctx=${ctx} by ${last4} owner=${String(eventOwnerId).slice(0,8)} (id=${String(data?.id || '').slice(0, 8)})`);
+      // Sprint 28 — Notifica destinatário quando evento foi criado pra outra agenda.
+      if (eventRecipient && eventRecipient.phone && eventRecipient.id !== collaborator.id) {
+        try {
+          const whenStr = (() => {
+            try {
+              const d = safeDate(e.start_at);
+              return d ? d.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' }) : e.start_at;
+            } catch { return e.start_at; }
+          })();
+          const senderName = (collaborator.preferred_name || collaborator.full_name || '').split(' ')[0];
+          const locPart = e.location_text ? `\n📍 ${String(e.location_text).slice(0, 80)}` : '';
+          const modPart = e.modality === 'online' && e.meeting_url ? `\n🔗 ${String(e.meeting_url).slice(0, 120)}` : '';
+          const msg = `📅 *${senderName}* marcou um compromisso na sua agenda:\n\n*${row.title}*\n🗓️ ${whenStr}${locPart}${modPart}\n\nSe não puder, fala com ${senderName} pra remarcar.`;
+          whatsapp.sendMessage(eventRecipient.phone, msg).catch(err =>
+            console.error(`[Event] notify recipient err: ${err.message}`));
+          await logConversation(eventRecipient.id, 'outbound', `[event criado por ${senderName}: ${row.title}]`);
+        } catch (notifErr) {
+          console.warn(`[Event] notify build err (silent): ${notifErr.message}`);
+        }
+      }
       // Sprint 22.50b — TOM pode passar reminders_minutes_before:[15, 60, 1440]
       // ou reminders:[ISO,...] pra criar lembretes vinculados.
       try {
