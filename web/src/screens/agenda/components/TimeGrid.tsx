@@ -94,7 +94,7 @@ export function TimeGrid(p: TimeGridProps) {
                 isSameDay(d, new Date()) ? 'bg-tom/5 text-fg font-semibold' : 'text-fg-muted',
               ].join(' ')}
             >
-              {d.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' })}
+              {`${d.toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '').toUpperCase()} · ${d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}`}
             </div>
           ))}
         </div>
