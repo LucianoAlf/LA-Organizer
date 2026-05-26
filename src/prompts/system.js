@@ -2498,6 +2498,15 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     if (fs.existsSync(reactPath)) {
       systemPrompt += '\n\n---\n\n' + fs.readFileSync(reactPath, 'utf-8');
     }
+    // Sprint 28 — skill responder-por-audio.md SEMPRE carregada quando voice
+    // estiver enabled. Ensina TOM a escrever de um jeito que funciona BEM
+    // se a resposta virar áudio (engine decide automaticamente).
+    if (String(process.env.TOM_VOICE_ENABLED || '').toLowerCase() === 'true') {
+      const voicePath = path.join(SKILLS_DIR, 'responder-por-audio.md');
+      if (fs.existsSync(voicePath)) {
+        systemPrompt += '\n\n---\n\n' + fs.readFileSync(voicePath, 'utf-8');
+      }
+    }
   }
 
   // Sprint 16 — COORD_HINT injection (só presente quando recipient tem recados abertos)

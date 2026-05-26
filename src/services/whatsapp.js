@@ -289,6 +289,35 @@ function extractQuotedMessage(body) {
 }
 
 /**
+ * Sprint 28 — Envia mensagem de voz (PTT) via UAZAPI.
+ * Recebe buffer MP3 (gerado pelo TTS) e manda como push-to-talk —
+ * aparece como mensagem de voz nativa no WhatsApp.
+ *
+ * UAZAPI aceita base64 no campo `file` (data sem prefix data:). Falha
+ * silenciosamente: chamador deve ter fallback pra mandar texto.
+ */
+async function sendVoice(phone, audioBuffer) {
+  try {
+    if (!Buffer.isBuffer(audioBuffer) || audioBuffer.length < 100) {
+      throw new Error('audioBuffer inválido ou muito pequeno');
+    }
+    const base64 = audioBuffer.toString('base64');
+    const response = await api.post('/send/media', {
+      number: phone,
+      type: 'ptt',
+      file: base64,
+      mimetype: 'audio/mpeg',
+      readchat: true,
+    }, { timeout: 30000 });
+    console.log(`[WhatsApp] PTT enviado pra ${String(phone).slice(-4)} (${audioBuffer.length} bytes)`);
+    return response.data;
+  } catch (err) {
+    console.error(`[WhatsApp] sendVoice falhou pra ${phone}: ${err.message}`);
+    throw err;
+  }
+}
+
+/**
  * Sprint 28 — Envia reação (emoji) a uma mensagem específica.
  * UAZAPI: POST /message/react { number, text: '<emoji>', id: '<message_id>' }
  * - text vazio remove reação
@@ -316,4 +345,4 @@ async function sendReaction(phone, messageId, emoji) {
   }
 }
 
-module.exports = { sendMessage, sendButtons, sendList, sendMedia, setTyping, sendReaction, isAudioMessage, isImageMessage, isDocumentMessage, isVideoMessage, extractText, extractPhone, extractName, extractMessageId, extractQuotedMessage, isIgnorable };
+module.exports = { sendMessage, sendButtons, sendList, sendMedia, setTyping, sendReaction, sendVoice, isAudioMessage, isImageMessage, isDocumentMessage, isVideoMessage, extractText, extractPhone, extractName, extractMessageId, extractQuotedMessage, isIgnorable };

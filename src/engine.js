@@ -6569,10 +6569,68 @@ async function processMessage(phone, text, raw = {}) {
     }
   } catch (e) { /* metric never breaks main flow */ }
 
+  // ---- Sprint 28 — TOM Voice (TTS via ElevenLabs)
+  // Decide se manda áudio em vez de (ou junto com) texto. Gates em
+  // shouldSendVoice: feature flag + allowlist + cap diário + matriz contextual.
+  // Fallback explícito: se TTS/sendVoice falhar, manda só texto.
+  let _voiceSent = false;
   if (reply && reply.trim()) {
+    try {
+      const tts = require('./services/tts');
+      const { shouldSendVoice } = require('./utils/shouldSendVoice');
+      if (tts.isConfigured()) {
+        // Conta áudios de hoje pro cap diário (00:00 BRT — usa UTC simplificado)
+        const sinceIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+        const { count: voiceCountToday } = await supabase
+          .from('voice_message_log')
+          .select('id', { count: 'exact', head: true })
+          .eq('collaborator_id', collab.id)
+          .gte('sent_at', sinceIso);
+        const voiceCtx = {
+          voiceCountToday: voiceCountToday || 0,
+          isAudioMessage: /\[áudio transcrito\]/i.test(String(text || '')),
+          isRelay: /<<COORDINATION_REQUEST>>/i.test(reply),
+          isRitual: false, // processMessage path não é ritual; sendRitual seria separado
+          userInDND: false, // já filtrado upstream
+        };
+        const decision = shouldSendVoice(collab, text, reply, voiceCtx);
+        if (decision.send) {
+          console.log(`[Voice] DECISION send=true reason=${decision.reason} count=${voiceCtx.voiceCountToday}`);
+          // Stripa qualquer marker residual e prefixos sintéticos antes de gerar TTS.
+          // Mantém só o texto humano que TOM disse.
+          const ttsText = reply
+            .replace(/\[O usuário (?:ACABOU DE ENVIAR|está RESPONDENDO|enviou \d+).*?\]/g, '')
+            .replace(/<<[^>]+>>[\s\S]*?<<END>>/g, '')
+            .replace(/<<[^>]+>>/g, '')
+            .replace(/\[mensagem \d+\/\d+\]/g, '')
+            .trim();
+          try {
+            const audioBuf = await tts.textToSpeech(ttsText);
+            await whatsapp.sendVoice(phone, audioBuf);
+            await supabase.from('voice_message_log').insert({
+              collaborator_id: collab.id,
+              duration_chars: ttsText.length,
+            });
+            await logMarker(collab.id, 'VOICE_SENT', 'executed', decision.reason, null);
+            await logConversation(collab.id, 'outbound', `[áudio TOM: ${ttsText.slice(0, 200)}]`);
+            _voiceSent = true;
+          } catch (e) {
+            console.warn(`[Voice] TTS/sendVoice falhou (${e.message}) — fallback pra texto`);
+            await logMarker(collab.id, 'VOICE_SENT', 'rejected', `error:${e.message.slice(0,60)}`, null);
+          }
+        } else {
+          console.log(`[Voice] DECISION send=false reason=${decision.reason}`);
+        }
+      }
+    } catch (e) {
+      console.warn('[Voice] pipeline err (silent):', e.message);
+    }
+  }
+
+  if (reply && reply.trim() && !_voiceSent) {
     await whatsapp.sendMessage(phone, reply);
     await logConversation(collab.id, 'outbound', reply);
-  } else if (_reactionsToSend && _reactionsToSend.length) {
+  } else if (_reactionsToSend && _reactionsToSend.length && !_voiceSent) {
     console.log(`[Engine] reply vazio pós-REACT — só reação enviada (${_reactionsToSend[0]})`);
     await logConversation(collab.id, 'outbound', `[reação: ${_reactionsToSend[0]}]`);
   }
