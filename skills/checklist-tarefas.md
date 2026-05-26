@@ -215,7 +215,7 @@ Exemplo:
 
 ### 5. Delegar tarefa (`delegate`)
 
-**Apenas coordenador ou diretor** pode delegar tarefa pra outro colaborador. Se o emissor é `collaborator` comum, NÃO emita o marker — explique que delegação é só pelo coordenador.
+**Qualquer role** pode delegar tarefa pra outra pessoa (decisão 26/05 — hierarquia não bloqueia fluxo operacional).
 
 **Sinais comuns:**
 - "passa pro Joel", "delega pra Juliana", "isso não precisa ser eu"
@@ -229,7 +229,7 @@ Exemplo:
 
 ### 5.1 Criar tarefa pra outro colaborador (`create` com `to_name`)
 
-**Apenas coordenador ou diretor**. Permite atribuir uma tarefa nova diretamente a outro colaborador (sem ser delegação de tarefa existente).
+**Qualquer role** pode criar tarefa pra outra pessoa (decisão 26/05 — hierarquia não bloqueia comunicação operacional). Use quando o emissor pede pra **adicionar uma tarefa concreta** na lista de outro.
 
 **Sinais comuns:**
 - "cria uma tarefa pro Joel ligar pro pai do aluno"
@@ -238,14 +238,13 @@ Exemplo:
 - "manda o Tito ver o orçamento"
 
 **Regras:**
-- check de role: emissor precisa ser `coordinator` ou `director`. Se não, **NÃO emita TASK_UPDATE** — em vez disso, **use COORDINATION_REQUEST** (ver seção abaixo). O engine REJEITA silenciosamente TASK_UPDATE com `to_name` quando role é collaborator/manager — a tarefa NÃO é criada e o destinatário NÃO recebe nada. Prometer "✅ vou criar" sem o marker correto vira informação perdida.
 - emita `<<TASK_UPDATE>>` com `action: "create"` + `to_name: "<nome>"` (ou `to_phone`).
 - destinatário precisa estar cadastrado e ativo.
 - nome ambíguo (vários "João") → pergunta UMA vez antes de emitir.
-- prazo: se o coordenador especificou (`due_date` ISO), use; senão, default = hoje.
-- o destinatário recebe um WhatsApp automático ("📋 \<coordenador\> abriu uma tarefa pra você: *título* (prazo DD/MM)").
+- prazo: se especificado (`due_date` ISO), use; senão, default = hoje.
+- destinatário recebe WhatsApp automático ("📋 \<emissor\> abriu uma tarefa pra você: *título* (prazo DD/MM)").
 
-**Exemplo de marker:**
+**Exemplo:**
 ```text
 <<TASK_UPDATE>>
 [
@@ -254,23 +253,38 @@ Exemplo:
 <<END>>
 ```
 
-### 5.2 Collaborator/manager pedindo pra "passar info pra outro" → use COORDINATION_REQUEST
+### 5.2 Pedir confirmação/validação → use COORDINATION_REQUEST (NÃO task)
 
-**Quando o emissor é `collaborator` ou `manager` e pede pra repassar algo a outra pessoa**, NÃO tente criar task pra esse outro — o engine vai rejeitar e nada acontece. Em vez disso, use o marker de relay/recado.
+**Quando o emissor pede pra CONFIRMAR, VALIDAR, PERGUNTAR algo a outras pessoas** (espera resposta de volta, não uma execução), use `<<COORDINATION_REQUEST>>` com `mode: "followup"`. **Não crie task** — isso é troca de informação, não compromisso de execução.
 
-**Sinais comuns (collaborator/manager → outro):**
-- "passa esse aí pro Alf"
+**Sinais comuns:**
+- "confirma com a Juliana se essa data tá ok"
+- "pergunta pro Quintela se ele vai conseguir"
+- "preciso que você confirme com Juliana, Quintela, Jordan e Luciano se essas datas podem ser..."
+- "vê com o Yuri se rolou aquilo"
+
+**Diferença chave:**
+- "**Cria tarefa** pra Juliana revisar X" → TASK_UPDATE com `to_name`
+- "**Confirma** com Juliana se X tá ok" → COORDINATION_REQUEST mode=followup
+
+**Múltiplos destinatários:** emita 1 marker COORDINATION_REQUEST POR destinatário. Não tente bundlar em 1 só.
+
+**Exemplo (caso Léo 26/05):**
+Léo (collaborator pedagogico) escreve: "Confirma com Juliana, Quintela, Jordan e Luciano se Campo Grande 26/06 e Barra/Recreio 27/06 podem ser as datas dos eventos de teclas"
+
+✅ Certo: 4 markers COORDINATION_REQUEST, mode=followup, um pra cada pessoa, mesmo body.
+❌ Errado: TASK_UPDATE com 4 actions create — engine não bundla, e além disso não é tarefa, é validação.
+
+### 5.3 Passar recado/aviso (sem esperar resposta) → COORDINATION_REQUEST relay
+
+**Quando o emissor pede pra REPASSAR uma informação** sem esperar volta:
+
 - "avisa o Quintela que..."
+- "passa pro Alf essa info"
 - "manda pra Juliana ver isso"
 - "diz pro Yuri que o Carlinho cobrou X"
-- "encaminha isso pro coordenador"
 
-**Resposta correta:** emita `<<COORDINATION_REQUEST>>` (skill `coordenacao-conversacional`). O destinatário recebe a mensagem como recado do TOM, e ELE decide se vira task no app dele.
-
-**Exemplo prático (caso real 23/05):**
-- User Rafinha (role=collaborator) escreve: "Passe esse aí pro Alf: Carlinho cobrou R$250 pelas duas unidades, Barra ajustado, Recreio pendente"
-- ❌ Errado: emitir `<<TASK_UPDATE>>` com `to_name: "Alf"` → engine rejeita silenciosamente, Alf nunca recebe, Rafinha pensa que mandou
-- ✅ Certo: emitir `<<COORDINATION_REQUEST>>` com `recipient_name: "Alf"` + corpo da mensagem → Alf recebe no WhatsApp dele e decide o que fazer.
+Use `<<COORDINATION_REQUEST>>` mode=`relay_assisted` (parafraseado) ou `relay_literal` (palavra por palavra).
 
 ---
 
@@ -381,7 +395,7 @@ O bloco deve ficar no final da resposta. Não escreva nada depois de `<<END>>`.
 - `create`: `{"action":"create","title":"<curto>","context":"personal|work","due_date":"YYYY-MM-DD","priority":"low|medium|high"}`
 - `create` com lembrete: `{"action":"create","title":"<curto>","context":"personal","remind_at":"YYYY-MM-DDTHH:MM:SS-03:00"}`
 - `delegate`: `{"action":"delegate","id":"<8-char>","to_name":"<primeiro_nome>"}` (ou `to_phone`)
-- `create` para outro: `{"action":"create","title":"...","context":"work","due_date":"YYYY-MM-DD","priority":"medium","to_name":"<primeiro_nome>"}` (apenas coordinator/director)
+- `create` para outro: `{"action":"create","title":"...","context":"work","due_date":"YYYY-MM-DD","priority":"medium","to_name":"<primeiro_nome>"}` (qualquer role)
 - `extension_request`: `{"action":"extension_request","id":"<8-char>","reason":"<texto>"}`
 - `extension_decision`: `{"action":"extension_decision","id":"<8-char>","decision":"approved|denied"}`
 
@@ -470,8 +484,8 @@ O bloco deve ficar no final da resposta. Não escreva nada depois de `<<END>>`.
 - nunca emita `complete` sem confirmação clara do colaborador
 - nunca emita `reschedule` sem data resolvida
 - nunca emita `delegate` sem destinatário confirmado no banco
-- nunca emita `delegate` se o emissor NÃO for coordinator ou director (engine bloqueia, mas o ideal é nem chegar lá)
-- nunca emita `create` com `to_name`/`to_phone` se o emissor NÃO for coordinator ou director
+- nunca emita `delegate` sem destinatário válido (qualquer role pode delegar a partir de 26/05)
+- nunca emita `create` com `to_name`/`to_phone` sem destinatário válido no banco (qualquer role pode criar pra outro a partir de 26/05)
 - nunca emita `extension_decision` para colaboradores sem role coordinator ou director
 - nunca misture marker com texto solto fora do bloco final
 - `remind_at` deve sempre usar timezone `-03:00`

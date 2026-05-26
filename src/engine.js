@@ -1450,47 +1450,12 @@ async function applyCoordinationRequestAction(collab, parsed) {
     }
   }
 
-  // 3. Followup bloqueado para collaborator (PRD §8.3)
-  if (parsed.mode === 'followup' && collab.role === 'collaborator') {
-    await supabase.from('coordination_requests').insert({
-      requester_id: collab.id,
-      recipient_id: recipient.id,
-      mode: parsed.mode,
-      message_body: parsed.message_body,
-      message_original: parsed.message_original,
-      status: 'rejected_by_tom',
-      expects_response: parsed.expects_response,
-      cancelled_reason: 'role_insufficient',
-    });
-    return {
-      ok: false,
-      reason: 'role_insufficient',
-      replyText: `Não vou cobrar o ${recipientFirstName} por você. Esse tipo de cobrança precisa vir do coordenador ou diretor. Quer que eu te ajude a formular para mandar pro teu coordenador?`,
-    };
-  }
-
-  // 4. Followup bloqueado coord/manager → director
-  if (
-    parsed.mode === 'followup' &&
-    ['coordinator', 'manager'].includes(collab.role) &&
-    recipient.role === 'director'
-  ) {
-    await supabase.from('coordination_requests').insert({
-      requester_id: collab.id,
-      recipient_id: recipient.id,
-      mode: parsed.mode,
-      message_body: parsed.message_body,
-      message_original: parsed.message_original,
-      status: 'rejected_by_tom',
-      expects_response: parsed.expects_response,
-      cancelled_reason: 'cannot_followup_director',
-    });
-    return {
-      ok: false,
-      reason: 'cannot_followup_director',
-      replyText: `Não é minha função cobrar o ${recipientFirstName} por você — ele/ela é diretor/a. Você pode falar diretamente ou me pedir pra repassar um recado (relay).`,
-    };
-  }
+  // 26/05 — Hierarquia de role NÃO bloqueia comunicação operacional.
+  // Decisão CEO: collaborator pode emitir followup pra qualquer role,
+  // incluindo coordinator/manager/director (caso real: Léo professor pedindo
+  // confirmação de datas pra Juliana, Quintela, Jordan e Luciano).
+  // Governança fica nos relatórios CEO/líderes, não no bloqueio de fluxo.
+  // Único gate preservado: canDelegatePedagogical (acima) — lógica específica.
 
   // Sprint 17 F4 — Defense-in-depth: strip de cabeçalho de origem duplicado.
   // A skill já é instruída a não incluir prefixo (Sprint 16 484d708), mas
@@ -2998,11 +2963,8 @@ async function applyTaskActions(collaborator, actions) {
         let assignedTo = collaborator.id;
         let recipient = null;
         if (wantsForOther) {
-          if (collaborator.role !== 'coordinator' && collaborator.role !== 'director') {
-            console.warn(`[Task] create-for-other REJECTED — role=${collaborator.role || 'collaborator'} cannot create task for others`);
-            failCount++;
-            continue;
-          }
+          // 26/05 — Gate de role removido. Qualquer collab pode criar task pra
+          // outra pessoa (caso real: professor delegando pra coordenador).
           if (a.to_phone) recipient = await findCollaboratorByPhone(a.to_phone);
           else recipient = await findCollaboratorByName(a.to_name);
           if (!recipient || !recipient.is_active) {
@@ -3404,12 +3366,8 @@ async function applyTaskActions(collaborator, actions) {
         console.log(`[Task] extension_decision ${shortId} ${approved ? 'APPROVED→' + a.new_due_date : 'DENIED'} by ${last4}`);
         okCount++;
       } else if (a.action === 'delegate') {
-        // Role gate: only coordinator/director can delegate to others.
-        if (collaborator.role !== 'coordinator' && collaborator.role !== 'director') {
-          console.warn(`[Task] delegate REJECTED — role=${collaborator.role || 'collaborator'} cannot delegate to others`);
-          failCount++;
-          continue;
-        }
+        // 26/05 — Gate de role removido. Qualquer collab pode delegar tarefa
+        // própria pra outra pessoa.
         const t = await resolveTaskByShortId(collaborator.id, a.id);
         if (!t) {
           console.warn(`[Task] delegate REJECTED id=${a.id} (not owned by ${last4} or not found)`);
