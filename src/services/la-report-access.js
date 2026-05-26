@@ -21,11 +21,13 @@ function checkAccess(collab, dataType, opts = {}) {
 
   if (!collab) return { allowed: false, unitFilter: null, scopeFilter: null, reason: 'Sem collaborator.' };
 
-  const { role, unit, full_name, function_role, pedagogical_role } = collab;
+  const { role, unit, full_name, function_role, pedagogical_role, has_coord_permissions } = collab;
 
   if (rule.all) return ok();
   if (role === 'director') return ok();
   if (rule.roles && rule.roles.includes(role)) return ok();
+  // Sprint 28 — has_coord_permissions concede acesso quando a regra contempla coordinator.
+  if (has_coord_permissions === true && rule.roles && rule.roles.includes('coordinator')) return ok();
 
   if (rule.function_roles && function_role && rule.function_roles.includes(function_role)) {
     const needsUnit = rule.unit_filter && unit && unit !== 'all';

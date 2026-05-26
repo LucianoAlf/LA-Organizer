@@ -9,6 +9,7 @@ const metricsService = require('./services/metrics');
 const ai = require('./ai/provider');
 const { buildSystemPrompt, formatMessages } = require('./prompts/system');
 const { safeIsoDate, safeDate } = require('./utils/dates');
+const { hasCoordLevel } = require('./utils/roles');
 const supabase = require('./supabase/client');
 const OpenAI = require('openai');
 const openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -2176,7 +2177,7 @@ async function resolveApprovalToken(token) {
 }
 
 async function applyProjectApprove(collab, body) {
-  if (collab.role !== 'coordinator' && collab.role !== 'director') {
+  if (!hasCoordLevel(collab)) {
     return { ok: false, reason: 'role_not_authorized', userMsg: '_aprovar projeto é só pra coord/diretor_' };
   }
   const r = await resolveApprovalToken(body.token);
@@ -2209,7 +2210,7 @@ async function applyProjectApprove(collab, body) {
 }
 
 async function applyProjectReject(collab, body) {
-  if (collab.role !== 'coordinator' && collab.role !== 'director') {
+  if (!hasCoordLevel(collab)) {
     return { ok: false, reason: 'role_not_authorized', userMsg: '_rejeitar projeto é só pra coord/diretor_' };
   }
   const r = await resolveApprovalToken(body.token);
@@ -2485,7 +2486,7 @@ async function findCollaboratorByName(name) {
   if (!norm) return null;
   const { data } = await supabase
     .from('collaborators')
-    .select('id, full_name, phone, is_active, role, unit, onboarding_completed, pedagogical_role, bio, preferred_name, aliases')
+    .select('id, full_name, phone, is_active, role, unit, onboarding_completed, pedagogical_role, bio, preferred_name, aliases, has_coord_permissions')
     .eq('is_active', true);
   if (!data || !data.length) return null;
   const first = norm.split(/\s+/)[0];
@@ -2526,7 +2527,7 @@ async function findCollaboratorByPhone(phone) {
     .from('collaborators')
     // Hotfix pós-Sprint20: idem findCollaboratorByName — campos completos.
     // Sprint 23.6: bio + preferred_name para system prompt.
-    .select('id, full_name, phone, is_active, role, unit, onboarding_completed, pedagogical_role, bio, preferred_name')
+    .select('id, full_name, phone, is_active, role, unit, onboarding_completed, pedagogical_role, bio, preferred_name, has_coord_permissions')
     .eq('phone', cleaned)
     .maybeSingle();
   return data;
@@ -3329,7 +3330,7 @@ async function applyTaskActions(collaborator, actions) {
         if (!supervisor) {
           const { data } = await supabase
             .from('collaborators')
-            .select('id, full_name, phone, is_active, role')
+            .select('id, full_name, phone, is_active, role, has_coord_permissions')
             .in('role', ['coordinator', 'director'])
             .eq('is_active', true).neq('id', collaborator.id).limit(1);
           if (data && data.length) supervisor = data[0];
@@ -7368,14 +7369,14 @@ async function buildWeeklyRetrospective(coord, ymdEnd) {
 async function sendCoordinatorReport(collaboratorId, type, ymdRef) {
   const { data: collab } = await supabase
     .from('collaborators')
-    .select('id, full_name, phone, role, is_active')
+    .select('id, full_name, phone, role, is_active, has_coord_permissions')
     .eq('id', collaboratorId).single();
   if (!collab || !collab.is_active) {
     console.warn(`[CoordReport] skipped ${type} — collaborator inactive/missing`);
     return false;
   }
-  if (!COORDINATOR_ROLES.includes(collab.role)) {
-    console.warn(`[CoordReport] DENIED ${type} for ${collab.full_name} — role=${collab.role || 'collaborator'}`);
+  if (!hasCoordLevel(collab)) {
+    console.warn(`[CoordReport] DENIED ${type} for ${collab.full_name} — role=${collab.role || 'collaborator'} coord_perm=${!!collab.has_coord_permissions}`);
     return false;
   }
   let text;

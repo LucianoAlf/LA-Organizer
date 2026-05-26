@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const supabase = require('../supabase/client');
 const { checkAccess, DATA_LEVELS } = require('../services/la-report-access');
+const { hasCoordLevel } = require('../utils/roles');
 
 const SKILLS_DIR = path.join(__dirname, '..', '..', 'skills');
 
@@ -835,7 +836,7 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
   // Trigger forte: APROVA <NOME> ou REJEITA <NOME> motivo (case-insensitive).
   // Trigger fraco: "aprovo"/"rejeito" solto — skill orienta a pedir identificador.
   // Gate por role acontece dentro da skill também (defense in depth).
-  if (collab && (collab.role === 'coordinator' || collab.role === 'director')) {
+  if (hasCoordLevel(collab)) {
     const lm = (lastUserMessage || '').trim();
     if (/^(APROVA|REJEITA)\b/i.test(lm) || /^(aprov[oa]|rejeit[oa])\s*$/i.test(lm)) {
       return { name: 'aprovar-projeto', body: loadSkill('aprovar-projeto') };
@@ -1048,7 +1049,7 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
   }
 
   // LA EDUCA — só pra coord/director
-  if ((collab?.role === 'coordinator' || collab?.role === 'director')
+  if (hasCoordLevel(collab)
       && /(la\s*educa|estagi[áa]rios?|mentor(?:i?a)?|ancoragem|certificado\s*alfa|trilha)/i.test(lastUserMessage || '')) {
     return { name: 'la-educa', body: loadSkill('la-educa') };
   }
@@ -1588,7 +1589,7 @@ function renderActiveThreadHint(thread) {
 async function buildProjectStatusContext(collaborator, lastUserMessage) {
   try {
     const collabId = collaborator.id;
-    const isGlobalLead = collaborator.role === 'coordinator' || collaborator.role === 'director';
+    const isGlobalLead = hasCoordLevel(collaborator);
 
     // 1. Pega projetos relevantes: por nome (ILIKE) + projetos onde o collab eh membro.
     const term = (lastUserMessage || '').slice(0, 200);
@@ -2409,8 +2410,8 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     systemPrompt += checklistHint;
   }
 
-  // Comunicados internos — disponível apenas para director/coordinator
-  if (collaborator && (collaborator.role === 'director' || collaborator.role === 'coordinator')) {
+  // Comunicados internos — disponível para director/coordinator e quem tem has_coord_permissions
+  if (hasCoordLevel(collaborator)) {
     const comunicadosPath = path.join(SKILLS_DIR, 'comunicados.md');
     if (fs.existsSync(comunicadosPath)) {
       const comunicadosSkill = fs.readFileSync(comunicadosPath, 'utf-8');
@@ -2418,8 +2419,8 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     }
   }
 
-  // Eventos institucionais — disponível apenas para director/coordinator
-  if (collaborator && (collaborator.role === 'director' || collaborator.role === 'coordinator')) {
+  // Eventos institucionais — disponível para director/coordinator e quem tem has_coord_permissions
+  if (hasCoordLevel(collaborator)) {
     const eventosPath = path.join(SKILLS_DIR, 'eventos-institucionais.md');
     if (fs.existsSync(eventosPath)) {
       const eventosSkill = fs.readFileSync(eventosPath, 'utf-8');
@@ -2427,8 +2428,8 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     }
   }
 
-  // Aprovação de comunicados — disponível apenas para director/coordinator
-  if (collaborator && (collaborator.role === 'director' || collaborator.role === 'coordinator')) {
+  // Aprovação de comunicados — disponível para director/coordinator e quem tem has_coord_permissions
+  if (hasCoordLevel(collaborator)) {
     const aprovacaoPath = path.join(SKILLS_DIR, 'aprovacao-comunicados.md');
     if (fs.existsSync(aprovacaoPath)) {
       const aprovacaoSkill = fs.readFileSync(aprovacaoPath, 'utf-8');
@@ -2600,7 +2601,7 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   }
 
   // LA EDUCA — só injeta resumo quando a skill está ativa e o role permite
-  if ((collaborator?.role === 'coordinator' || collaborator?.role === 'director') && skill?.name === 'la-educa') {
+  if (hasCoordLevel(collaborator) && skill?.name === 'la-educa') {
     try {
       const supabaseClient = require('../supabase/client');
 
@@ -2754,7 +2755,7 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     hasCursoWithContext ||
     isJourneyCommand;
 
-  if ((collaborator?.role === 'coordinator' || collaborator?.role === 'director') && journeyTriggered) {
+  if (hasCoordLevel(collaborator) && journeyTriggered) {
     try {
       const supabaseClient = require('../supabase/client');
 
