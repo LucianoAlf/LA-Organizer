@@ -15,7 +15,7 @@
 //   6. PROBABILÍSTICO: celebração (70%), áudio curto afetivo (50%),
 //      ritual matinal segunda-feira (40%)
 
-const VOICE_DAILY_CAP = 3;
+const VOICE_DAILY_CAP = 10;
 
 function shouldSendVoice(collab, userText, replyText, context = {}) {
   // ---- Gates ----
