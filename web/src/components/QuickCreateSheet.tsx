@@ -12,6 +12,7 @@ import { DateTimeInput } from './DateTimeInput';
 import { TimeInput } from './TimeInput';
 import { EisenhowerPicker } from './EisenhowerPicker';
 import { ParticipantsPicker } from './ParticipantsPicker';
+import { RemindersField } from './RemindersField';
 import { useEventCategories } from '../hooks/useEventCategories';
 import { notifyTaskDelegated, notifyEventInvites } from '../lib/tomEngine';
 import { showToast } from './Toast';
@@ -54,6 +55,9 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
   // Sprint 22.27 — hora opcional pra Tarefa. Quando preenchida, vira `remind_at`
   // (NAO compromisso). Comportamento: lembrete em horario X, sem bloquear agenda.
   const [taskTime, setTaskTime] = useState<string>('');
+  // Sprint 23 — Multi-reminder pra task/delegada na criação rápida.
+  // INSERT em task_reminders após criar a task (mesmo padrão do evento).
+  const [taskReminderTimes, setTaskReminderTimes] = useState<string[]>([]);
   // Sprint 22.29 (Bucket 3) — Eisenhower picker manual. null = sem classificacao
   // (TOM pode classificar depois via skill priorizacao-inteligente).
   const [taskQuadrant, setTaskQuadrant] = useState<number | null>(null);
@@ -98,6 +102,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
       setTaskCtx('work');
       setDue(today);
       setTaskTime('');
+      setTaskReminderTimes([]);
       setTaskQuadrant(null);
       setDelegateTo('');
       setCategoryId(''); // late-load effect abaixo seta o default quando categorias carregam
@@ -147,13 +152,15 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
 
   const createTask = useMutation({
     mutationFn: async () => {
-      // Sprint 27 — ensureSession antes do throw, pra refresh transparente.
       const collab = collaborator ?? await ensureSession();
       if (!collab) throw new Error('no_session');
-      // Sprint 22.27 — se taskTime preenchida, monta remind_at (timestamp SP).
-      // remind_at != compromisso: nao bloqueia agenda, so notifica.
-      const remindAt = taskTime ? `${due}T${taskTime}:00-03:00` : null;
-      const { error: e } = await supabase.from('tasks').insert({
+      // Sprint 23 — task_reminders (multi) substitui o legado remind_at (single).
+      // remind_at fica null quando há chips selecionados; os lembretes vão em tabela
+      // separada que o TOM dispatcher já lê.
+      const remindAt = (taskReminderTimes.length === 0 && taskTime)
+        ? `${due}T${taskTime}:00-03:00`
+        : null;
+      const { data, error: e } = await supabase.from('tasks').insert({
         title: title.trim().slice(0, 200),
         description: description.trim() || null,
         assigned_to: collab.id,
@@ -165,8 +172,17 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
         due_date: due,
         remind_at: remindAt,
         eisenhower_quadrant: taskQuadrant,
-      });
+      }).select('id').single();
       if (e) throw e;
+      // Sprint 23 — insere task_reminders se houver chips selecionados.
+      if (data?.id && taskReminderTimes.length > 0) {
+        const rows = taskReminderTimes.map(t => ({
+          task_id: data.id as string,
+          remind_at: `${t}:00-03:00`,
+        }));
+        const { error: re } = await supabase.from('task_reminders').insert(rows);
+        if (re) console.warn('[QuickCreate] task_reminders insert err:', re.message);
+      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['tasks'] });
@@ -182,7 +198,9 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
       const collab = collaborator ?? await ensureSession();
       if (!collab) throw new Error('no_session');
       if (!delegateTo) throw new Error('no_assignee');
-      const remindAt = taskTime ? `${due}T${taskTime}:00-03:00` : null;
+      const remindAt = (taskReminderTimes.length === 0 && taskTime)
+        ? `${due}T${taskTime}:00-03:00`
+        : null;
       const { data, error: e } = await supabase.from('tasks').insert({
         title: title.trim().slice(0, 200),
         description: description.trim() || null,
@@ -198,6 +216,15 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
       }).select('id').single();
       if (e) throw e;
       if (!data?.id) throw new Error('Não consegui criar a tarefa.');
+      // Sprint 23 — task_reminders (multi) na criação delegada também.
+      if (taskReminderTimes.length > 0) {
+        const rows = taskReminderTimes.map(t => ({
+          task_id: data.id as string,
+          remind_at: `${t}:00-03:00`,
+        }));
+        const { error: re } = await supabase.from('task_reminders').insert(rows);
+        if (re) console.warn('[QuickCreate] task_reminders insert err:', re.message);
+      }
       // Sprint 22.34j — awaited + toast feedback.
       const r = await notifyTaskDelegated(data.id as string);
       if (r.ok) {
@@ -516,32 +543,16 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
               </div>
             </fieldset>
             <div>
-              <div className="flex items-baseline gap-md flex-wrap mb-1.5">
-                <span className="text-label uppercase tracking-wide text-fg-muted">Para quando</span>
-                <span className="text-label uppercase tracking-wide text-fg-muted">
-                  Lembrar às <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">opcional</span>
-                </span>
-              </div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <DateInput value={due} onChange={setDue} />
-                <TimeInput value={taskTime} onChange={setTaskTime} />
-                {taskTime && (
-                  <button
-                    type="button"
-                    onClick={() => setTaskTime('')}
-                    aria-label="Limpar hora"
-                    className="text-body-sm text-fg-muted hover:text-fg focus-ring rounded-sm px-2 py-1"
-                  >
-                    limpar
-                  </button>
-                )}
-              </div>
-              <div className="text-body-sm text-fg-muted mt-1.5">
-                {taskTime
-                  ? 'Lembrete · TOM avisa nesse horário. Não bloqueia agenda.'
-                  : 'Sem hora · tarefa fica em aberto no dia.'}
-              </div>
+              <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Para quando</div>
+              <DateInput value={due} onChange={setDue} />
             </div>
+
+            {/* Sprint 23 — Multi-reminder (task_reminders). Ref = 09:00 da due_date. */}
+            <RemindersField
+              referenceDateTime={due ? `${due}T09:00` : ''}
+              value={taskReminderTimes}
+              onChange={setTaskReminderTimes}
+            />
 
             <div>
               <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5 flex items-baseline gap-2">
@@ -576,27 +587,16 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
             </div>
 
             <div>
-              <div className="flex items-baseline gap-md flex-wrap mb-1.5">
-                <span className="text-label uppercase tracking-wide text-fg-muted">Para quando</span>
-                <span className="text-label uppercase tracking-wide text-fg-muted">
-                  Lembrar às <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">opcional</span>
-                </span>
-              </div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <DateInput value={due} onChange={setDue} />
-                <TimeInput value={taskTime} onChange={setTaskTime} />
-                {taskTime && (
-                  <button
-                    type="button"
-                    onClick={() => setTaskTime('')}
-                    aria-label="Limpar hora"
-                    className="text-body-sm text-fg-muted hover:text-fg focus-ring rounded-sm px-2 py-1"
-                  >
-                    limpar
-                  </button>
-                )}
-              </div>
+              <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Para quando</div>
+              <DateInput value={due} onChange={setDue} />
             </div>
+
+            {/* Sprint 23 — Multi-reminder (task_reminders) na delegação. */}
+            <RemindersField
+              referenceDateTime={due ? `${due}T09:00` : ''}
+              value={taskReminderTimes}
+              onChange={setTaskReminderTimes}
+            />
 
             <div>
               <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5 flex items-baseline gap-2">
@@ -770,65 +770,13 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
               </div>
             </div>
 
-            {/* Sprint 22.51 — lembretes (multi) na criação rápida. */}
-            <div>
-              <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5 flex items-baseline gap-2">
-                <span>Lembretes</span>
-                <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">opcional</span>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {([
-                  { label: 'Na hora', minutes: 0 },
-                  { label: '15min antes', minutes: 15 },
-                  { label: '30min antes', minutes: 30 },
-                  { label: '1h antes', minutes: 60 },
-                  { label: '1 dia antes', minutes: 60 * 24 },
-                ] as { label: string; minutes: number }[]).map(p => {
-                  const presetLocal = (() => {
-                    if (!startAt) return '';
-                    const t = new Date(`${startAt}:00-03:00`).getTime() - p.minutes * 60_000;
-                    const d = new Date(t);
-                    const sp = new Date(d.getTime() - 3 * 3600_000);
-                    return sp.toISOString().slice(0, 16);
-                  })();
-                  const active = presetLocal && eventReminderTimes.includes(presetLocal);
-                  return (
-                    <button
-                      key={p.minutes}
-                      type="button"
-                      onClick={() => {
-                        if (!presetLocal) return;
-                        setEventReminderTimes(prev => active
-                          ? prev.filter(t => t !== presetLocal)
-                          : [...prev, presetLocal].sort());
-                      }}
-                      className={[
-                        'px-3 py-1 rounded-full text-body-sm border transition-colors focus-ring',
-                        active
-                          ? 'bg-tom text-black border-tom'
-                          : 'bg-bg-elevated text-fg-muted border-border hover:text-fg',
-                      ].join(' ')}
-                    >
-                      {p.label}
-                    </button>
-                  );
-                })}
-                {eventReminderTimes.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setEventReminderTimes([])}
-                    className="px-3 py-1 rounded-full text-body-sm border border-border bg-bg-elevated text-danger hover:opacity-80 focus-ring"
-                  >
-                    Limpar
-                  </button>
-                )}
-              </div>
-              {eventReminderTimes.length > 0 && (
-                <p className="text-body-sm text-fg-muted mt-1.5">
-                  {eventReminderTimes.length} lembrete{eventReminderTimes.length > 1 ? 's' : ''} configurado{eventReminderTimes.length > 1 ? 's' : ''}.
-                </p>
-              )}
-            </div>
+            {/* Sprint 23 — Lembretes via RemindersField shared (paridade com EditEventSheet,
+                EventEditDrawer e Task drawers). Inclui chip "2h antes" e custom datetime. */}
+            <RemindersField
+              referenceDateTime={startAt || ''}
+              value={eventReminderTimes}
+              onChange={setEventReminderTimes}
+            />
           </>
         )}
 
