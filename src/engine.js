@@ -2475,25 +2475,47 @@ function formatBRDate(iso) {
 
 // Resolve a collaborator by best-effort name match (active only). Returns single
 // match or null (rejects when ambiguous).
+// 26/05 — Normalização: lowercase + strip diacritics (Gerê → gere).
+function _stripDiacritics(s) {
+  return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+}
+
 async function findCollaboratorByName(name) {
-  const norm = String(name || '').trim().toLowerCase();
+  const norm = _stripDiacritics(name);
   if (!norm) return null;
   const { data } = await supabase
     .from('collaborators')
-    // Hotfix pós-Sprint20: incluir onboarding_completed + unit + pedagogical_role
-    // para que helpers downstream (buildSelfIntroPrefix, gates, findAssistantByUnit)
-    // possam ler esses campos sem precisar fazer query adicional.
-    // Sprint 23.6: bio + preferred_name injetados no system prompt via buildContext.
-    .select('id, full_name, phone, is_active, role, unit, onboarding_completed, pedagogical_role, bio, preferred_name')
+    .select('id, full_name, phone, is_active, role, unit, onboarding_completed, pedagogical_role, bio, preferred_name, aliases')
     .eq('is_active', true);
   if (!data || !data.length) return null;
   const first = norm.split(/\s+/)[0];
-  // Try exact match on first name (case-insensitive), then prefix.
-  const exact = data.filter(c => (c.full_name || '').toLowerCase().split(' ')[0] === first);
-  if (exact.length === 1) return exact[0];
-  if (exact.length > 1) return null;
-  const prefix = data.filter(c => (c.full_name || '').toLowerCase().startsWith(first));
-  if (prefix.length === 1) return prefix[0];
+
+  // 1) Match exato no primeiro nome do full_name
+  let candidates = data.filter(c => _stripDiacritics((c.full_name || '').split(' ')[0]) === first);
+  if (candidates.length === 1) return candidates[0];
+  if (candidates.length === 0) {
+    // 2) Match em preferred_name (exato ou primeiro token)
+    candidates = data.filter(c => {
+      const pn = _stripDiacritics(c.preferred_name);
+      if (!pn) return false;
+      return pn === first || pn.split(' ')[0] === first;
+    });
+    if (candidates.length === 1) return candidates[0];
+  }
+  if (candidates.length === 0) {
+    // 3) Match em aliases[] (cada alias normalizado)
+    candidates = data.filter(c => {
+      const aliases = Array.isArray(c.aliases) ? c.aliases : [];
+      return aliases.some(a => _stripDiacritics(a) === first);
+    });
+    if (candidates.length === 1) return candidates[0];
+  }
+  if (candidates.length === 0) {
+    // 4) Prefix em full_name (fallback original)
+    candidates = data.filter(c => _stripDiacritics(c.full_name).startsWith(first));
+    if (candidates.length === 1) return candidates[0];
+  }
+  // Ambíguo (>1) ou nada encontrado
   return null;
 }
 
