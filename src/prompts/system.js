@@ -824,7 +824,7 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
     'troca responsável', 'muda responsável',
     'quem é responsável pelo checklist', 'quem faz o checklist',
   ]
-  const canManageChecklists = collab && ['director', 'coordinator', 'manager'].includes(collab.role)
+  const canManageChecklists = collab && (['director', 'coordinator', 'manager'].includes(collab.role) || hasCoordLevel(collab))
   if (
     canManageChecklists &&
     CHECKLIST_ADMIN_TRIGGERS.some(t => lmLower.includes(t))

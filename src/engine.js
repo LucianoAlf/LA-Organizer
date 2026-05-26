@@ -1696,8 +1696,8 @@ async function applyCheckpointBatch(collaborator, parsed) {
       .select('id').eq('project_id', projectId).eq('collaborator_id', collaborator.id).maybeSingle();
     isMember = Boolean(mb);
   }
-  if (!isMember && !['coordinator', 'director'].includes(collaborator.role)) {
-    console.warn(`[CheckpointBatch] blocked — collab ${last4} not member/owner of ${projectId.slice(0,8)} and not coord/dir`);
+  if (!isMember && !hasCoordLevel(collaborator)) {
+    console.warn(`[CheckpointBatch] blocked — collab ${last4} not member/owner of ${projectId.slice(0,8)} and not coord-level`);
     return { okCount: 0, failCount: parsed.items.length, projectId, projectName, reason: 'permission_denied' };
   }
 
