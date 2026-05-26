@@ -1381,9 +1381,9 @@ function _buildIntegrityConfirmText(payload) {
   const existing = String(first.title || '').slice(0, 80);
   switch (payload.type) {
     case 'dup_task': {
-      const existId = String(first.id || '').slice(0, 8);
-      const idRef = existId ? ` [ref:${existId}]` : '';
-      return `Item bloqueado: _"${cand}"_\n\nJá existe parecido:${idRef}\n_"${existing}"_\n\nQual o caso? Responde com o **número**:\n\n1️⃣ *Mesma situação* — a existente já cobre, não preciso criar. Se quiser atualizar, use o id \`${existId}\`.\n2️⃣ *Outro caso* — crio nova com nome **explicitamente diferente** do existente (me diz o nome novo).\n3️⃣ Cancela, vou reformular.`;
+      // 26/05 — Remove [ref:UUID] e `id` literal do texto pro user.
+      // ID interno não interessa pro humano; o LLM aprende via número 1/2/3.
+      return `Achei uma tarefa parecida já criada:\n_"${existing}"_\n\nA nova seria:\n_"${cand}"_\n\nResponde com o **número**:\n\n1️⃣ *Mesma situação* — já tá coberta, não preciso criar nova.\n2️⃣ *Outro caso* — crio essa nova mesmo (com nome um pouco diferente pra não confundir).\n3️⃣ Cancela, vou reformular.`;
     }
     case 'dup_event':
       return `Achei um compromisso parecido já criado:\n_"${existing}"_\n\nQual o caso? Responde com o **número**:\n\n1️⃣ É o *mesmo compromisso* — atualizo o existente\n2️⃣ É *outro compromisso* — crio novo\n3️⃣ Cancela, vou reformular`;
@@ -4507,7 +4507,12 @@ const KEYWORD_STOPWORDS = new Set([
   'reuniao','reunião','outro','mesmo','para','pelo','pela','sobre','depois','antes',
   'revisar','reajustar','rever','ajustar','atualizar','reformular',
   // Sprint 23.5 — termos financeiros genéricos e verbos de pagamento
-  'pagar','boleto','conta','fatura','pagamento','nota','recibo','valor'
+  'pagar','boleto','conta','fatura','pagamento','nota','recibo','valor',
+  // 26/05 — verbos de validação que geravam falsos positivos
+  // (Caso Léo: "Confirmar datas do evento de teclas" vs "Confirmar repertório
+  // e ordem de apresentação" — JW alto pelo prefixo + shared['Confirmar'] = dup falso)
+  'confirmar','validar','aprovar','definir','escolher','decidir','alinhar','combinar',
+  'finalizar','fechar','responder','perguntar','tirar','retirar'
 ]);
 const stripVerbPrefix = s => {
   const stripped = String(s || '').replace(VERB_PREFIX_RE, '').trim();
