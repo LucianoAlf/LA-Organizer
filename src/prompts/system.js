@@ -735,6 +735,24 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
     return { name: 'onboarding', body: loadSkill('onboarding') };
   }
 
+  // Sprint 29.1 — Skills de governança: sanitizar/diagnosticar/escalar.
+  // Carrega TODAS quando contexto for de governança (director + gatilho específico).
+  // Empilhamos as 3 num único body porque pickSkill retorna 1 skill.
+  if (collab && collab.role === 'director') {
+    const msgLower = String(lastUserMessage || '').toLowerCase();
+    const GOV_RE = /governan[çc]a|enrolando|atrasad[ao]|cobra(?:r|nça)?\b|panor[aâ]ma|me\s+d[áa]\s+um\s+resumo|como\s+t[áa]\s+(?:o\s+|meu\s+|a\s+)?(?:time|equipe)|(?:é|s[ãa]o|aí\s+é)\s+teste|tira[r]?\s+da\s+lista|arquiv[ao]r?\s|j[aá]\s+rolou|j[aá]\s+aconteceu|descarta|ignora\s+isso|j[aá]\s+(?:fechou|terminei|conclu[ií])|esquece\s+(?:essa|esse|isso)/i;
+    if (GOV_RE.test(msgLower)) {
+      const parts = [
+        loadSkill('governanca-sanitizar'),
+        loadSkill('governanca-diagnosticar'),
+        loadSkill('governanca-escalar'),
+      ].filter(Boolean);
+      if (parts.length > 0) {
+        return { name: 'governanca-completa', body: parts.join('\n\n---\n\n') };
+      }
+    }
+  }
+
   // Sprint 11.4 hotfix — Mid-flow project detection ANTES de tratamento-audio.
   // Bug observado (29/04 13:30): user mandou áudio durante cadastro de evento Dia
   // das Mães. tratamento-audio sequestrou o turno → cadastro-projeto-5w2h perdeu

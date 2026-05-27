@@ -3117,6 +3117,12 @@ async function applyTaskActions(collaborator, actions) {
           failCount++;
         } else {
           console.log(`[Task] complete ${a.id} by ${last4}`);
+          // Sprint 29.1 — task fechou: zera contador de cobrança pra não
+          // poluir a próxima vez que a task voltar (reopen) ou pra historico.
+          try {
+            const { resetOnComplete } = require('./services/escalation-tracker');
+            await resetOnComplete(t.id);
+          } catch (e) { /* não-fatal */ }
           await logAgentNote(t.id, `Concluída por ${nameForCollab(collaborator)}`, collaborator.id);
           await notifyTaskCreatorOfAction(fullTask, collaborator, 'complete');
           okCount++;

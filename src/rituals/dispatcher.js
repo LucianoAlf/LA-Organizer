@@ -2179,13 +2179,35 @@ async function ceoTeamUnclosedTasksReport(now = new Date()) {
       }
     }
 
+    // Sprint 29.1 — diagnóstico inteligente por DONO (não por líder).
+    // Pessoas com 3+ pendências ganham análise via LLM (sumário+hipótese+recomendação).
+    const byOwner = new Map();
+    for (const t of filteredStale) {
+      const ownerName = t.collaborators?.full_name?.split(' ')[0] || 'Sem dono';
+      if (!byOwner.has(ownerName)) byOwner.set(ownerName, []);
+      byOwner.get(ownerName).push({ ...t, daysOverdue: daysOverdue(t.due_date) });
+    }
+    const { analyzePersonBacklog } = require('../services/governance-analyzer');
+    const diagnostics = [];
+    for (const [ownerName, ownerItems] of byOwner.entries()) {
+      if (ownerItems.length >= 3) {
+        try {
+          const diag = await analyzePersonBacklog({ ownerName, items: ownerItems });
+          if (diag) diagnostics.push(diag);
+        } catch (e) { /* nunca quebra ritual */ }
+      }
+    }
+    const diagnosticsBlock = diagnostics.length > 0
+      ? `\n\n${diagnostics.join('\n\n')}`
+      : '';
+
     // Sprint 29.1 — também sinaliza tasks com 3+ cobranças sem efeito.
     const stuckTasks = filteredStale.filter(t => (t.coordination_request_count || 0) >= 3);
     const stuckBlock = stuckTasks.length > 0
       ? `\n\n⚠️ _${stuckTasks.length} task(s) com 3+ cobranças sem efeito — repetir mais não vai resolver. Considera mudar de tática (1:1, ligar, redistribuir)._`
       : '';
 
-    const msg = `📋 *Governança — Tarefas do time atrasadas*\n\n${lines.join('\n').trim()}\n\n_Total: ${filteredStale.length} tarefa${filteredStale.length > 1 ? 's' : ''} atrasada${filteredStale.length > 1 ? 's' : ''}._${hiddenNote}${stuckBlock}${staleCheckBlock}\n\nPra delegar cobrança, me diz tipo: *"manda recado pra Krissya: cobra a tarefa X"*.`;
+    const msg = `📋 *Governança — Tarefas do time atrasadas*${diagnosticsBlock}\n\n${lines.join('\n').trim()}\n\n_Total: ${filteredStale.length} tarefa${filteredStale.length > 1 ? 's' : ''} atrasada${filteredStale.length > 1 ? 's' : ''}._${hiddenNote}${stuckBlock}${staleCheckBlock}\n\nPra delegar cobrança, me diz tipo: *"manda recado pra Krissya: cobra a tarefa X"*.`;
 
     try {
       await whatsapp.sendMessage(ceo.phone, msg);
@@ -2424,9 +2446,83 @@ async function remindPendingProjectApprovals(opts = {}) {
  * @param {string} [opts.force] — 'briefing_trabalho' | 'fechamento' (ignora horário)
  * @param {string} [opts.phone] — filtra para um único colaborador
  */
+// Sprint 29.1 — Auto-arquivamento de items parados sem resposta.
+// Roda 22:00 BRT diariamente (uma vez por slot via ritual_logs).
+// Items que TOM perguntou "isso já rolou?" via staleness_check_sent_at e que
+// passaram 24h sem resposta viram archived → somem das listas de governança.
+// Reversível: Alf pode dizer "Tom, isso aí ainda tá em pé" → DATA_CLASSIFY
+// re-marca como real.
+async function autoArchiveStale(now = new Date()) {
+  const sp = nowSaoPaulo();
+  if (currentSlot(sp) !== timeToSlot('22:00')) return;
+  const ymdRef = sp.ymd;
+
+  // Idempotência simples — log diário pra não rodar duas vezes no mesmo dia
+  try {
+    const { data: already } = await supabase
+      .from('ritual_logs').select('id')
+      .eq('ritual_type', 'auto_archive_stale')
+      .eq('ymd', ymdRef).maybeSingle();
+    if (already) return;
+  } catch (e) { /* tabela ritual_logs sem unique constraint? segue */ }
+
+  const cutoff = new Date(now.getTime() - 24 * 3600_000).toISOString();
+  let archivedTasks = 0;
+  let archivedEvents = 0;
+
+  try {
+    const { data: stTasks } = await supabase
+      .from('tasks').select('id, title')
+      .eq('status', 'pending')
+      .eq('data_classification', 'real')
+      .not('staleness_check_sent_at', 'is', null)
+      .lt('staleness_check_sent_at', cutoff)
+      .limit(200);
+    if (stTasks && stTasks.length > 0) {
+      const ids = stTasks.map(t => t.id);
+      await supabase.from('tasks').update({ data_classification: 'archived' }).in('id', ids);
+      archivedTasks = ids.length;
+      console.log(`[AutoArchive] archived ${archivedTasks} tasks: ${stTasks.slice(0, 3).map(t => t.title?.slice(0, 30)).join(' | ')}${archivedTasks > 3 ? ' ...' : ''}`);
+    }
+  } catch (err) {
+    console.error('[AutoArchive] tasks err:', err.message);
+  }
+
+  try {
+    const { data: stEvents } = await supabase
+      .from('events').select('id, title')
+      .not('status', 'in', '("done","cancelled")')
+      .eq('data_classification', 'real')
+      .not('staleness_check_sent_at', 'is', null)
+      .lt('staleness_check_sent_at', cutoff)
+      .limit(200);
+    if (stEvents && stEvents.length > 0) {
+      const ids = stEvents.map(e => e.id);
+      await supabase.from('events').update({ data_classification: 'archived' }).in('id', ids);
+      archivedEvents = ids.length;
+      console.log(`[AutoArchive] archived ${archivedEvents} events: ${stEvents.slice(0, 3).map(e => e.title?.slice(0, 30)).join(' | ')}${archivedEvents > 3 ? ' ...' : ''}`);
+    }
+  } catch (err) {
+    console.error('[AutoArchive] events err:', err.message);
+  }
+
+  // Log diário (idempotência) — usa um collaborator_id genérico (primeiro director encontrado).
+  try {
+    const { data: director } = await supabase
+      .from('collaborators').select('id').eq('role', 'director').limit(1).maybeSingle();
+    if (director) {
+      await logRitualEvent(director.id, 'auto_archive_stale', 'sent',
+        `tasks=${archivedTasks} events=${archivedEvents}`, ymdRef);
+    }
+  } catch (e) { /* log opcional */ }
+}
+
 async function run(opts = {}) {
   const now = nowSaoPaulo();
   console.log(`[Dispatcher] now=${now.ymd} ${String(now.hour).padStart(2,'0')}:${String(now.minute).padStart(2,'0')} dow=${now.dow}${opts.force ? ' force=' + opts.force : ''}${opts.phone ? ' phone=' + opts.phone.slice(-4) : ''}`);
+
+  // Sprint 29.1 — auto-arquivamento 22h BRT
+  try { await autoArchiveStale(new Date()); } catch (err) { console.error('[AutoArchive] outer err:', err.message); }
 
   const collabs = await listCollaborators(opts.phone);
   if (!collabs.length) {
@@ -3536,6 +3632,12 @@ async function checkOverdueAlerts(ymdToday) {
         status: 'sent',
         sent_at: new Date().toISOString(),
       });
+      // Sprint 29.1 — incrementa contador de cobrança pra ritual de governança
+      // sinalizar tasks "travadas" (>=3 sem efeito).
+      try {
+        const { incrementRequestCount } = require('../services/escalation-tracker');
+        await incrementRequestCount(t.id);
+      } catch (e) { /* não-fatal */ }
       await supabase.from('conversation_history').insert({
         collaborator_id: collab.id,
         direction: 'outbound',
