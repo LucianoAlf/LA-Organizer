@@ -36,9 +36,13 @@ export function useAgendaTasks(params: { from: Date; to: Date; filters: AgendaFi
     queryFn: async () => {
       const { data, error } = await supabase
         .from('tasks')
-        .select('id, title, description, context, status, scheduled_date, due_date, assigned_to, created_by, eisenhower_quadrant, remind_at, source, created_at')
+        .select('id, title, description, context, status, scheduled_date, due_date, assigned_to, created_by, eisenhower_quadrant, remind_at, source, created_at, recurrence_rule, recurrence_parent_id')
         .or(`assigned_to.eq.${collaboratorId},and(created_by.eq.${collaboratorId},assigned_to.neq.${collaboratorId})`)
         .neq('status', 'cancelled')
+        // Sprint 29.1 — esconde teste/arquivado
+        .eq('data_classification', 'real')
+        // Sprint 29.4 — esconde TEMPLATES recorrentes (mostra só instâncias + não-recorrentes)
+        .or('recurrence_rule.is.null,recurrence_parent_id.not.is.null')
         .gte('due_date', fromYmd)
         .lte('due_date', toYmd)
         .order('due_date', { ascending: true });

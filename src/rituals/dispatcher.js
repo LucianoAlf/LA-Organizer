@@ -2524,6 +2524,12 @@ async function run(opts = {}) {
   // Sprint 29.1 — auto-arquivamento 22h BRT
   try { await autoArchiveStale(new Date()); } catch (err) { console.error('[AutoArchive] outer err:', err.message); }
 
+  // Sprint 29.4 — materializa próximas ocorrências de séries recorrentes (00:30 BRT)
+  try {
+    const recurrenceMaterializer = require('./recurrence-materializer');
+    await recurrenceMaterializer.tick();
+  } catch (err) { console.error('[Recurrence] outer err:', err.message); }
+
   const collabs = await listCollaborators(opts.phone);
   if (!collabs.length) {
     console.log('[Dispatcher] Nenhum colaborador elegível.');

@@ -735,6 +735,14 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
     return { name: 'onboarding', body: loadSkill('onboarding') };
   }
 
+  // Sprint 29.4 — Skill de recorrência (todos os roles): ativa quando user
+  // pede ação que se repete no tempo. Tem prioridade sobre criar-compromisso
+  // pra evitar TOM materializar manualmente várias rows.
+  const RECURRENCE_RE = /todo\s+(?:dia|m[eê]s|ano|natal)|toda\s+(?:segunda|ter[çc]a|quarta|quinta|sexta|s[aá]bado|domingo|semana)|a\s+cada\s+\d+\s+(?:dia|semana|m[eê]s|ano)|(?:[uú]ltim[ao]|primeir[ao]|segund[ao]|terceir[ao]|quart[ao])\s+(?:segunda|ter[çc]a|quarta|quinta|sexta|s[aá]bado|domingo|dia\s+do\s+m[eê]s)|dia\s+[uú]til|fim\s+de\s+semana|mensal|semanal|di[áa]rio|anual|quinzenal|trimestral|recorrente|que\s+se\s+repete|repete\s+(?:toda|todo|a\s+cada)|todo\s+dia\s+\d+/i;
+  if (RECURRENCE_RE.test(String(lastUserMessage || ''))) {
+    return { name: 'criar-recorrencia', body: loadSkill('criar-recorrencia') };
+  }
+
   // Sprint 29.1 — Skills de governança: sanitizar/diagnosticar/escalar.
   // Carrega TODAS quando contexto for de governança (director + gatilho específico).
   // Empilhamos as 3 num único body porque pickSkill retorna 1 skill.

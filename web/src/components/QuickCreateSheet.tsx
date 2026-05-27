@@ -1,4 +1,6 @@
 import { useState, useEffect, FormEvent } from 'react';
+import { RecurrencePicker } from './RecurrencePicker';
+import { materializeSeriesClient } from '../lib/materialize-recurrence';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ListTodo, CalendarClock, UserPlus } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
@@ -82,6 +84,8 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
   // Sprint 22.34i — detecção de conflito de horário antes de criar evento.
   // null = sem conflito pendente; array = lista de eventos sobrepondo o horário.
   const [pendingConflict, setPendingConflict] = useState<Array<{ id: string; title: string; range: string }> | null>(null);
+  // Sprint 29.4 — recorrência opcional (RRULE iCalendar)
+  const [recurrenceRule, setRecurrenceRule] = useState<string | null>(null);
 
   // Sincroniza default de categoria quando lista carrega tardiamente.
   useEffect(() => {
@@ -98,6 +102,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
       setError(null);
       setKind('task');
       setTitle('');
+      setRecurrenceRule(null);
       setDescription('');
       setTaskCtx('work');
       setDue(today);
@@ -172,8 +177,16 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
         due_date: due,
         remind_at: remindAt,
         eisenhower_quadrant: taskQuadrant,
-      }).select('id').single();
+        // Sprint 29.4 — recorrência opcional (vira TEMPLATE)
+        recurrence_rule: recurrenceRule || null,
+      }).select('*').single();
       if (e) throw e;
+      // Sprint 29.4 — se template recorrente, materializa instâncias na hora
+      if (data?.id && recurrenceRule) {
+        const r = await materializeSeriesClient('tasks', data as { id: string; recurrence_rule: string });
+        if (r.error) console.warn('[QuickCreate] materialize err:', r.error);
+        else console.log(`[QuickCreate] materialized ${r.created} task instances (skipped=${r.skipped})`);
+      }
       // Sprint 23 — insere task_reminders se houver chips selecionados.
       if (data?.id && taskReminderTimes.length > 0) {
         const rows = taskReminderTimes.map(t => ({
@@ -213,9 +226,16 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
         due_date: due,
         remind_at: remindAt,
         eisenhower_quadrant: taskQuadrant,
-      }).select('id').single();
+        // Sprint 29.4 — delegada com recorrência também vira template
+        recurrence_rule: recurrenceRule || null,
+      }).select('*').single();
       if (e) throw e;
       if (!data?.id) throw new Error('Não consegui criar a tarefa.');
+      // Sprint 29.4 — materializa instâncias se for template
+      if (recurrenceRule) {
+        const r = await materializeSeriesClient('tasks', data as { id: string; recurrence_rule: string });
+        if (r.error) console.warn('[QuickCreate delegated] materialize err:', r.error);
+      }
       // Sprint 23 — task_reminders (multi) na criação delegada também.
       if (taskReminderTimes.length > 0) {
         const rows = taskReminderTimes.map(t => ({
@@ -276,14 +296,22 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
           ? meetingUrl.trim()
           : null,
         eisenhower_quadrant: eventQuadrant,
+        // Sprint 29.4 — recorrência opcional (vira TEMPLATE)
+        recurrence_rule: recurrenceRule || null,
       };
       const { data: inserted, error: e } = await supabase
         .from('events')
         .insert(payload)
-        .select('id')
+        .select('*')
         .single();
       if (e) throw e;
       if (!inserted?.id) throw new Error('Não consegui criar o evento.');
+      // Sprint 29.4 — materializa instâncias se template recorrente
+      if (recurrenceRule) {
+        const r = await materializeSeriesClient('events', inserted as { id: string; recurrence_rule: string });
+        if (r.error) console.warn('[QuickCreate event] materialize err:', r.error);
+        else console.log(`[QuickCreate event] materialized ${r.created} event instances`);
+      }
       // Sprint 22.32 — insere participants escolhidos.
       if (participantIds.length > 0) {
         const rows = participantIds.map(pid => ({
@@ -546,6 +574,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
               <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Para quando</div>
               <DateInput value={due} onChange={setDue} />
             </div>
+            <RecurrencePicker value={recurrenceRule} onChange={setRecurrenceRule} startDate={due} />
 
             {/* Sprint 23 — Multi-reminder (task_reminders). Ref = 09:00 da due_date. */}
             <RemindersField
@@ -590,6 +619,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
               <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Para quando</div>
               <DateInput value={due} onChange={setDue} />
             </div>
+            <RecurrencePicker value={recurrenceRule} onChange={setRecurrenceRule} startDate={due} />
 
             {/* Sprint 23 — Multi-reminder (task_reminders) na delegação. */}
             <RemindersField
@@ -686,6 +716,9 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
               <div>
                 <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Início</div>
                 <DateTimeInput value={startAt} onChange={setStartAt} />
+                <div className="mt-sm">
+                  <RecurrencePicker value={recurrenceRule} onChange={setRecurrenceRule} startDate={startAt.slice(0, 10)} />
+                </div>
               </div>
               <div>
                 <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Fim</div>

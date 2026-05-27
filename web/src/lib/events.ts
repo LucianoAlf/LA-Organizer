@@ -42,6 +42,9 @@ async function fetchEventsOwnedOrInvited(
       .from('events')
       .select(SELECT_COLS)
       .eq('collaborator_id', collabId)
+      // Sprint 29.1 — esconde teste/arquivado; Sprint 29.4 — esconde TEMPLATES
+      .eq('data_classification', 'real')
+      .or('recurrence_rule.is.null,recurrence_parent_id.not.is.null')
       .gte('start_at', startIso)
       .lte('start_at', endIso)
       .order('start_at', { ascending: true }),
@@ -93,6 +96,8 @@ export async function fetchEventsForTeamDay(ymd: string, ctx: 'work' | 'personal
     .from('events')
     .select(SELECT_COLS)
     .eq('context', ctx)
+    .eq('data_classification', 'real')
+    .or('recurrence_rule.is.null,recurrence_parent_id.not.is.null')
     .gte('start_at', `${ymd}T00:00:00-03:00`)
     .lte('start_at', `${ymd}T23:59:59-03:00`)
     .neq('status', 'cancelled')
@@ -117,6 +122,8 @@ export async function fetchEventsForCollabRange(
     .select(SELECT_COLS)
     .eq('collaborator_id', collabId)
     .eq('context', ctx)
+    .eq('data_classification', 'real')
+    .or('recurrence_rule.is.null,recurrence_parent_id.not.is.null')
     .gte('start_at', `${ymdStart}T00:00:00-03:00`)
     .lte('start_at', `${ymdEnd}T23:59:59-03:00`)
     .neq('status', 'cancelled')

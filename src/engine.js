@@ -1876,6 +1876,18 @@ function validateEventItem(e) {
   }
   if (e.modality === 'presencial' && e.meeting_url) return 'presencial_with_meeting_url';
   if (e.context !== undefined && e.context !== 'work' && e.context !== 'personal') return 'context:invalid';
+  // Sprint 29.4 — recurrence_rule opcional. Se presente, valida via rrule lib.
+  if (e.recurrence_rule !== undefined && e.recurrence_rule !== null && e.recurrence_rule !== '') {
+    if (typeof e.recurrence_rule !== 'string') return 'recurrence_rule_not_string';
+    if (!/^FREQ=/i.test(e.recurrence_rule.trim().replace(/^RRULE:/i, ''))) return 'recurrence_rule_missing_freq';
+    try {
+      const { parseRule } = require('./services/recurrence-engine');
+      const dtstart = e.start_at ? new Date(e.start_at) : new Date();
+      parseRule(e.recurrence_rule, dtstart);
+    } catch (err) {
+      return 'invalid_recurrence_rule';
+    }
+  }
   return null;
 }
 
@@ -2054,6 +2066,10 @@ async function applyEventActions(collaborator, events) {
         status: 'scheduled',
         source: 'tom',
       };
+      // Sprint 29.4 — evento com recorrência vira TEMPLATE
+      if (typeof e.recurrence_rule === 'string' && e.recurrence_rule.trim()) {
+        row.recurrence_rule = e.recurrence_rule.trim().replace(/^RRULE:/i, '');
+      }
       const { data, error } = await supabase
         .from('events')
         .insert(row)
@@ -2065,6 +2081,19 @@ async function applyEventActions(collaborator, events) {
         continue;
       }
       console.log(`[Event] create "${row.title.slice(0, 60)}" cat=${row.category} mod=${row.modality} ctx=${ctx} by ${last4} owner=${String(eventOwnerId).slice(0,8)} (id=${String(data?.id || '').slice(0, 8)})`);
+      // Sprint 29.4 — se evento é TEMPLATE recorrente, materializa próximas instâncias
+      if (row.recurrence_rule && data?.id) {
+        try {
+          const { materializeSeries } = require('./services/recurrence-engine');
+          const { data: fullTpl } = await supabase.from('events').select('*').eq('id', data.id).maybeSingle();
+          if (fullTpl) {
+            const r = await materializeSeries('events', fullTpl);
+            console.log(`[Event] recurrence materialized ${r.created} instances (skipped=${r.skipped})`);
+          }
+        } catch (re) {
+          console.warn('[Event] recurrence initial materialize failed:', re.message);
+        }
+      }
       // Sprint 28 — Notifica destinatário quando evento foi criado pra outra agenda.
       if (eventRecipient && eventRecipient.phone && eventRecipient.id !== collaborator.id) {
         try {
@@ -2568,6 +2597,18 @@ function validateTaskAction(a) {
     if (typeof a.approved !== 'boolean' && a.approved !== 'true' && a.approved !== 'false') return 'approved_not_bool';
     const isApproved = a.approved === true || a.approved === 'true';
     if (isApproved && (typeof a.new_due_date !== 'string' || !ISO_DATE_RE.test(a.new_due_date))) return 'approved_needs_date';
+  }
+  // Sprint 29.4 — recurrence_rule (opcional em create, ignorado em outras actions)
+  if (a.recurrence_rule !== undefined && a.recurrence_rule !== null && a.recurrence_rule !== '') {
+    if (typeof a.recurrence_rule !== 'string') return 'recurrence_rule_not_string';
+    if (!/^FREQ=/i.test(a.recurrence_rule.trim().replace(/^RRULE:/i, ''))) return 'recurrence_rule_missing_freq';
+    try {
+      const { parseRule } = require('./services/recurrence-engine');
+      const dtstart = a.due_date ? new Date(String(a.due_date) + 'T12:00:00-03:00') : new Date();
+      parseRule(a.recurrence_rule, dtstart);
+    } catch (e) {
+      return 'invalid_recurrence_rule';
+    }
   }
   return null;
 }
@@ -3270,6 +3311,10 @@ async function applyTaskActions(collaborator, actions) {
           priority,
           action_type: actionType,
         };
+        // Sprint 29.4 — task com recorrência vira TEMPLATE (engine materializa próximas)
+        if (typeof a.recurrence_rule === 'string' && a.recurrence_rule.trim()) {
+          insertRow.recurrence_rule = a.recurrence_rule.trim().replace(/^RRULE:/i, '');
+        }
         // Sprint 15 F2 — optional operational layer fields
         if (typeof a.description === 'string' && a.description.trim()) {
           insertRow.description = a.description.trim().slice(0, 2000);
@@ -3406,6 +3451,20 @@ async function applyTaskActions(collaborator, actions) {
         const deptSuf = departmentId ? ` dept=${departmentId.slice(0,8)}${requestTypeId ? `/rt=${requestTypeId.slice(0,8)}` : ''}` : '';
         const apprSuf = initialStatus === 'awaiting_confirmation' ? ' AWAIT_APPROVAL' : '';
         console.log(`[Task] create "${a.title.trim().slice(0, 60)}" ctx=${context}${sufx}${forSuf}${deptSuf}${apprSuf} (id=${String(taskId || '').slice(0, 8)})`);
+        // Sprint 29.4 — se task é TEMPLATE recorrente, materializa próximas instâncias imediatamente
+        if (insertRow.recurrence_rule && taskId) {
+          try {
+            const { materializeSeries } = require('./services/recurrence-engine');
+            // Refaz fetch pra ter row completa (com defaults aplicados pelo DB)
+            const { data: fullTpl } = await supabase.from('tasks').select('*').eq('id', taskId).maybeSingle();
+            if (fullTpl) {
+              const r = await materializeSeries('tasks', fullTpl);
+              console.log(`[Task] recurrence materialized ${r.created} instances (skipped=${r.skipped})`);
+            }
+          } catch (e) {
+            console.warn('[Task] recurrence initial materialize failed:', e.message);
+          }
+        }
         // Notify recipient when created-for-other (best-effort).
         if (recipient && taskId) {
           const creatorName = nameForCollab(collaborator);
