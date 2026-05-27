@@ -37,6 +37,22 @@ function isDirector(collab) {
 }
 
 /**
+ * Sprint 30 — Apenas o CEO (decisor final). Distingue de outros directors
+ * no organograma (Anne, Admin) que usam o TOM como usuários comuns sem
+ * receber notificações de governança/aprovação/relatórios sistêmicos.
+ *
+ * Use isCEO() em vez de isDirector() pra:
+ *   - Aprovar comunicados internos (only CEO approves)
+ *   - Receber relatórios diários consolidados (eventos sem fechamento,
+ *     tasks vencidas, engajamento de líderes, scorecard semanal)
+ *   - Receber escalações LA Educa/LA Journey
+ *   - Receber alertas de projetos pending_approval +6h
+ */
+function isCEO(collab) {
+  return !!collab && collab.is_ceo === true;
+}
+
+/**
  * Lista de roles que historicamente recebiam relatórios coordinator-level.
  * Mantido pra compat com checks COORDINATOR_ROLES.includes(role).
  */
@@ -105,6 +121,7 @@ function canCreateForOther(creator, target) {
 module.exports = {
   hasCoordLevel,
   isDirector,
+  isCEO,
   isFarmer,
   isPedagogicoTransit,
   canCreateForOther,

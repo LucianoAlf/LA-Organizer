@@ -1843,7 +1843,7 @@ async function ceoTeamUnclosedEventsReport(now = new Date()) {
     .from('collaborators')
     .select('id, full_name, phone')
     .eq('is_active', true)
-    .eq('role', 'director')
+    .eq('is_ceo', true)
     .not('phone', 'is', null);
 
   if (!ceos || ceos.length === 0) return;
@@ -1998,7 +1998,7 @@ async function ceoTeamUnclosedTasksReport(now = new Date()) {
     .from('collaborators')
     .select('id, full_name, phone')
     .eq('is_active', true)
-    .eq('role', 'director')
+    .eq('is_ceo', true)
     .not('phone', 'is', null);
   if (!ceos || ceos.length === 0) return;
 
@@ -2224,7 +2224,7 @@ async function weeklyLeaderEngagementReport(now = new Date()) {
     .from('collaborators')
     .select('id, full_name, phone')
     .eq('is_active', true)
-    .eq('role', 'director')
+    .eq('is_ceo', true)
     .not('phone', 'is', null);
   if (!ceos || ceos.length === 0) return;
 

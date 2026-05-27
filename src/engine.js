@@ -969,16 +969,17 @@ async function applyAnnouncementAction(collaborator, parsed) {
     if (annErr) return { ok: false, reason: annErr.message };
 
     if (needsApproval) {
-      // Buscar directors com phone
+      // Sprint 30 — só o CEO recebe aprovação. Outros directors (Anne, Admin)
+      // usam o TOM como usuários, não como aprovadores.
       const { data: directors, error: dirErr } = await supabase
         .from('collaborators')
         .select('id, full_name, phone')
-        .eq('role', 'director')
+        .eq('is_ceo', true)
         .not('phone', 'is', null);
 
       if (dirErr) {
-        console.error('[applyAnnouncementAction] Falha ao buscar directors:', dirErr.message);
-        // Don't compensating-delete the announcement — it's still valid in pending_approval and director can approve via PWA later.
+        console.error('[applyAnnouncementAction] Falha ao buscar CEO:', dirErr.message);
+        // Don't compensating-delete the announcement — it's still valid in pending_approval and CEO can approve via PWA later.
         return { ok: false, reason: dirErr.message, announcement_id: ann.id };
       }
 
