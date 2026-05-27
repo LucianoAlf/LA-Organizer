@@ -188,6 +188,13 @@ export function Comunicados() {
     setSheetOpen(true);
   }
 
+  // Sprint 30 — Gate de permissão. Quem não tem coord level (Farmers, collaborator
+  // sem flag) não acessa a tela mesmo digitando URL direto. Posicionado APÓS todos
+  // os hooks pra respeitar Rules of Hooks (ordem fixa em todo render).
+  if (!hasCoordLevel(collaborator)) {
+    return <Navigate to="/" replace />;
+  }
+
   return (
     <div className="space-y-md">
       <PageHeader title="Comunicados" subtitle="Anúncios para a equipe" backTo="/mais" />
