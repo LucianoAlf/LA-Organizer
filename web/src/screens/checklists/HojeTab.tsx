@@ -1,113 +1,56 @@
-// Sprint 23 — HojeTab (Task 2.5 — implementação completa)
+// Sprint 23 — HojeTab refatorado v2.
+// Decisão: trazer a UI do mobile (cards expansíveis com bolinha, drag handle,
+// numeração, "+ Item") pro desktop, em coluna única centralizada (~720px).
+// Sem painel direito, sem anexo, sem nota inline, sem botões soltos.
+//
+// Trabalho: completions do TOM de hoje (ChecklistCard) + listas pessoais context='work'.
+// Pessoal: listas pessoais context='personal' (PersonalChecklistCard).
+// Criação: botão "+ Criar lista" inline (não FAB) — mesmo padrão do mobile.
 
 import { useState } from 'react';
-import { useChecklistsHoje } from './hooks/useChecklistsHoje';
-import type { WorkChecklistHoje, PersonalChecklistHoje } from './hooks/useChecklistsHoje';
-import { ChecklistExecucaoDrawer } from './ChecklistExecucaoDrawer';
-import { Fab } from '../../components/Fab';
+import { useQuery } from '@tanstack/react-query';
+import { useAuth } from '../../contexts/AuthContext';
+import { supabase } from '../../lib/supabase';
+import { fetchPersonalChecklists } from '../../lib/personalChecklists';
+import { Button } from '../../components/Button';
+import { PersonalChecklistCard } from '../../components/PersonalChecklistCard';
+import { ChecklistCard } from '../../components/ChecklistCard';
 import { PersonalChecklistSheet } from '../../components/PersonalChecklistSheet';
+import { EmptyState } from '../../components/EmptyState';
+import { LoadingState } from '../../components/LoadingState';
+import { ErrorState } from '../../components/ErrorState';
+import type { OpChecklistCompletion, PersonalChecklist } from '../../types';
 
 type Mode = 'work' | 'personal';
 
 export function HojeTab() {
   const [mode, setMode] = useState<Mode>('work');
-  const { data, isLoading, error } = useChecklistsHoje();
-  const [openId, setOpenId] = useState<string | null>(null);
-  const [sheetContext, setSheetContext] = useState<'work' | 'personal' | null>(null);
-
-  if (error) {
-    return (
-      <div className="p-6 text-danger text-sm">
-        Erro ao carregar checklists: {String((error as Error).message || error)}
-      </div>
-    );
-  }
-
-  if (isLoading || !data) {
-    return <div className="p-6 text-fg/40">Carregando…</div>;
-  }
-
-  const list = mode === 'work' ? data.work : data.personal;
-  const workCount = data.work.length;
-  const personalCount = data.personal.length;
+  const [sheetOpen, setSheetOpen] = useState(false);
 
   return (
-    <div className="flex h-full">
-      <div className="flex-1 min-w-0 px-6 py-4 overflow-y-auto">
-        <div className="flex gap-2 mb-4">
+    <div className="px-6 py-6">
+      <div className="max-w-[760px] mx-auto space-y-md">
+        {/* Toggle Trabalho / Pessoal — sem emoji, mesma cara do DS */}
+        <div className="flex gap-2">
           <Chip active={mode === 'work'} onClick={() => setMode('work')}>
-            Trabalho ({workCount})
+            Trabalho
           </Chip>
           <Chip active={mode === 'personal'} onClick={() => setMode('personal')}>
-            Pessoal ({personalCount})
+            Pessoal
           </Chip>
         </div>
 
-        {list.length === 0 ? (
-          <EmptyList mode={mode} />
+        {mode === 'work' ? (
+          <TrabalhoView onCreateClick={() => setSheetOpen(true)} />
         ) : (
-          <ul className="space-y-1">
-            {list.map((c) => (
-              <ChecklistRow
-                key={`${c.scope}-${c.completion_id ?? c.checklist_id}`}
-                checklist={c}
-                selected={openId === (c.completion_id ?? c.checklist_id)}
-                onClick={() => setOpenId(c.completion_id ?? c.checklist_id)}
-              />
-            ))}
-          </ul>
+          <PessoalView onCreateClick={() => setSheetOpen(true)} />
         )}
       </div>
 
-      <div className="w-[480px] border-l border-border bg-bg-surface hidden lg:block overflow-y-auto">
-        {(() => {
-          if (!openId) {
-            return (
-              <div className="p-6 text-fg/40 text-sm">
-                Selecione um checklist à esquerda pra executar
-              </div>
-            );
-          }
-          const selected = [...data.work, ...data.personal].find(
-            (c) => (c.completion_id ?? c.checklist_id) === openId
-          );
-          if (!selected) {
-            return (
-              <div className="p-6 text-fg/40 text-sm">Checklist não encontrado.</div>
-            );
-          }
-          return (
-            <ChecklistExecucaoDrawer
-              checklist={selected}
-              onClose={() => setOpenId(null)}
-            />
-          );
-        })()}
-      </div>
-
-      <Fab
-        label="Novo"
-        ariaLabel="Criar checklist"
-        actions={[
-          {
-            icon: '📋',
-            label: 'Lista pessoal',
-            ariaLabel: 'Criar lista pessoal',
-            onClick: () => setSheetContext('personal'),
-          },
-          {
-            icon: '💼',
-            label: 'Lista de trabalho',
-            ariaLabel: 'Criar lista de trabalho',
-            onClick: () => setSheetContext('work'),
-          },
-        ]}
-      />
-
       <PersonalChecklistSheet
-        open={sheetContext !== null}
-        onClose={() => setSheetContext(null)}
-        context={sheetContext ?? 'personal'}
+        open={sheetOpen}
+        onClose={() => setSheetOpen(false)}
+        context={mode}
       />
     </div>
   );
@@ -124,6 +67,7 @@ function Chip({
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
       className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
         active
@@ -136,62 +80,143 @@ function Chip({
   );
 }
 
-function ChecklistRow({
-  checklist,
-  selected,
-  onClick,
-}: {
-  checklist: WorkChecklistHoje | PersonalChecklistHoje;
-  selected: boolean;
-  onClick: () => void;
-}) {
-  const totalItems =
-    checklist.items.length +
-    (checklist.scope === 'work' ? checklist.extras.length : 0);
-  const doneItems =
-    checklist.items.filter((i) => i.is_checked).length +
-    (checklist.scope === 'work'
-      ? checklist.extras.filter((e) => e.is_checked).length
-      : 0);
-  const isComplete = !!checklist.completed_at;
-  const time =
-    checklist.scope === 'work'
-      ? checklist.dispatch_time
-        ? checklist.dispatch_time.slice(0, 5)
-        : '—'
-      : '—';
+// ─────────────────────────────────────────────────────────────────
+// Tab Trabalho: completions do TOM de hoje + listas pessoais context='work'
+// ─────────────────────────────────────────────────────────────────
+
+function TrabalhoView({ onCreateClick }: { onCreateClick: () => void }) {
+  const { collaborator } = useAuth();
+  const collabId = collaborator?.id ?? null;
+
+  const completions = useQuery({
+    queryKey: ['op-checklist-completions-today', collabId],
+    enabled: !!collabId,
+    queryFn: async () => {
+      if (!collabId) return [];
+      const today = new Date().toISOString().slice(0, 10);
+      const { data, error } = await supabase
+        .from('op_checklist_completions')
+        .select(
+          `*, op_checklists!inner ( id, name, dispatch_time, completion_threshold,
+              op_checklist_items ( id, description, sort_order, is_active )
+            ),
+            op_checklist_item_completions ( id, item_id, is_checked, notes ),
+            op_checklist_completion_extra_items ( id, description, is_checked, notes, sort_order )`
+        )
+        .eq('reference_date', today)
+        .eq('collaborator_id', collabId)
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+      return (data || []) as OpChecklistCompletion[];
+    },
+    staleTime: 30_000,
+  });
+
+  const lists = useQuery({
+    queryKey: ['personal-checklists', collabId, 'work'],
+    enabled: !!collabId,
+    queryFn: () => fetchPersonalChecklists(collabId!, 'work'),
+    staleTime: 30_000,
+  });
+
+  if (completions.isLoading || lists.isLoading) {
+    return <LoadingState rows={2} />;
+  }
+
+  if (completions.error || lists.error) {
+    const err = (completions.error || lists.error) as Error;
+    return (
+      <ErrorState
+        title="Não consegui carregar"
+        description={String(err?.message || err)}
+        onRetry={() => {
+          completions.refetch();
+          lists.refetch();
+        }}
+      />
+    );
+  }
+
+  const todayCompletions = completions.data || [];
+  const workLists = lists.data || [];
+  const isEmpty = todayCompletions.length === 0 && workLists.length === 0;
 
   return (
-    <li>
-      <button
-        onClick={onClick}
-        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-left border transition-colors ${
-          selected
-            ? 'bg-bg-surface border-tom/40'
-            : 'border-transparent hover:bg-bg-surface hover:border-border'
-        } ${isComplete ? 'opacity-60' : ''}`}
-      >
-        <div
-          className={`w-4 h-4 rounded border-2 ${
-            isComplete ? 'bg-tom border-tom' : 'border-fg/40'
-          }`}
+    <div className="space-y-md">
+      <div className="flex items-center justify-between">
+        <h2 className="text-card-title">Trabalho</h2>
+        <Button variant="primary" size="sm" onClick={onCreateClick}>
+          + Criar lista
+        </Button>
+      </div>
+
+      {isEmpty ? (
+        <EmptyState
+          title="Nada por aqui hoje"
+          description="Quando o TOM disparar um checklist, ele aparece aqui. Ou crie uma lista de trabalho rápida com o botão acima."
         />
-        <span className="text-xs text-fg/60 w-12">{time}</span>
-        <span className="flex-1 text-sm">{checklist.name}</span>
-        <span className="text-xs px-2 py-0.5 rounded-full bg-bg-app text-fg/60">
-          {totalItems ? `${doneItems}/${totalItems}` : '0/0'}
-        </span>
-      </button>
-    </li>
+      ) : (
+        <div className="space-y-sm">
+          {todayCompletions.map((c) => (
+            <ChecklistCard key={c.id} completion={c} />
+          ))}
+          {workLists.map((l: PersonalChecklist) => (
+            <PersonalChecklistCard key={l.id} list={l} />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
-function EmptyList({ mode }: { mode: Mode }) {
+// ─────────────────────────────────────────────────────────────────
+// Tab Pessoal: listas pessoais context='personal'
+// ─────────────────────────────────────────────────────────────────
+
+function PessoalView({ onCreateClick }: { onCreateClick: () => void }) {
+  const { collaborator } = useAuth();
+  const collabId = collaborator?.id ?? null;
+
+  const { data: lists = [], isLoading, error, refetch } = useQuery({
+    queryKey: ['personal-checklists', collabId, 'personal'],
+    enabled: !!collabId,
+    queryFn: () => fetchPersonalChecklists(collabId!, 'personal'),
+    staleTime: 30_000,
+  });
+
+  if (isLoading) return <LoadingState rows={2} />;
+
+  if (error) {
+    return (
+      <ErrorState
+        title="Não consegui carregar suas listas"
+        description="Pode ser conexão ou um problema no servidor."
+        onRetry={() => refetch()}
+      />
+    );
+  }
+
   return (
-    <div className="text-fg/40 text-sm py-8 text-center">
-      {mode === 'work'
-        ? 'Sem checklists de trabalho hoje. Quando o TOM disparar algum, ele aparece aqui.'
-        : 'Sem checklists pessoais hoje. Crie uma lista pra acompanhar suas rotinas.'}
+    <div className="space-y-md">
+      <div className="flex items-center justify-between">
+        <h2 className="text-card-title">Listas pessoais</h2>
+        <Button variant="primary" size="sm" onClick={onCreateClick}>
+          + Criar lista
+        </Button>
+      </div>
+
+      {lists.length === 0 ? (
+        <EmptyState
+          title="Nenhuma lista pessoal ainda"
+          description="Crie sua primeira lista — mercado, viagem, remédios… O TOM vai te ajudar a lembrar."
+        />
+      ) : (
+        <div className="space-y-sm">
+          {lists.map((l) => (
+            <PersonalChecklistCard key={l.id} list={l} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -7125,26 +7125,44 @@ async function processMessage(phone, text, raw = {}) {
 Contexto:
 - Data hoje (BRT): ${todayBrt}
 - Data amanhã (BRT): ${tomorrowBrt}
-- User disse: "${String(text || '').slice(0, 400)}"
-- TOM respondeu verbalizando promessa: "${String(reply || '').slice(0, 700)}"
+- Colaborador: ${collab.full_name || '?'} (role=${collab.role || '?'})
+- User disse: "${String(text || '').slice(0, 500)}"
+- TOM respondeu verbalizando promessa: "${String(reply || '').slice(0, 900)}"
 
-TOM prometeu uma ação mas esqueceu de emitir o marker. Sua tarefa: emitir o marker correto.
+TOM prometeu uma ação mas esqueceu de emitir o marker. Sua tarefa: emitir o marker correto. PODE EMITIR ARRAY com várias actions se TOM prometeu múltiplas coisas (ex: "adicionando ao pacote" com 3 itens).
 
-Regras:
-- Lembrete/aviso ("lembrete às X", "te aviso às X") → <<TASK_UPDATE>> com action="reschedule" (se task existe) ou "create" (se task nova) e remind_at no formato ISO completo com timezone BRT: "YYYY-MM-DDTHH:mm:ss-03:00"
-- Reagendamento ("marquei pra amanhã", "reagendei pra segunda") → <<TASK_UPDATE>> action="reschedule" com new_due_date (e new_remind_at se mencionou horário) OU <<EVENT_UPDATE>> action="reschedule" se for evento
-- Conclusão ("tá feito", "concluí") → action="complete"
-- Criação ("criei", "abri") → action="create" com title
-- Cancelamento → action="cancel"
+Regras por tipo de promessa:
+
+1) **Lembrete/aviso** ("lembrete às X", "te aviso às X", "te cobro às X") → action="reschedule" (se task existe) ou "create" (se nova) com remind_at ISO BRT "YYYY-MM-DDTHH:mm:ss-03:00"
+
+2) **Reagendamento** ("marquei pra amanhã", "reagendei pra segunda", "coloquei pra X") → action="reschedule" com new_due_date (e new_remind_at se mencionou hora)
+
+3) **Conclusão** ("tá feito", "concluí", "fechei") → action="complete"
+
+4) **Criação genérica** ("criei", "abri", "anotei") → action="create" com title
+
+5) **DEMANDA OPERACIONAL** (compras, manutenção, reparo, montagem — vistas em "registrar", "adicionando ao pacote", "crio as duas/três", "juntando", "tá na fila") → action="create" + category="operational" + action_type="task" + priority="medium" + título descritivo extraído da fala do user/TOM (ex: "Comprar 2 lâmpadas 8w — Sala Bateria Kids Recreio"). Se TOM listou N itens, emitir ARRAY com N actions, uma por item.
+
+6) **Cancelamento** → action="cancel"
 
 IMPORTANTE:
 - Use title (não id) pra referenciar a task — o engine resolve por título
-- Se não tiver certeza qual task, use o título mais específico mencionado no contexto
-- Se for ambíguo ou faltar dado crítico, retorne literalmente: NO_MARKER
+- Múltiplas demandas → ARRAY com várias actions no MESMO marker
+- Se ambíguo ou faltar dado crítico em TUDO, retorne literalmente: NO_MARKER
+- Se conseguir extrair PELO MENOS UMA ação clara, emita só ela (não retorne NO_MARKER por causa de itens duvidosos)
 
-Formato de saída (exemplo):
+Formato de saída — exemplo de demanda operacional múltipla:
 <<TASK_UPDATE>>
-[{"action":"reschedule","title":"Formular pesquisa NPS","remind_at":"${todayBrt}T15:00:00-03:00"}]
+[
+  {"action":"create","title":"Comprar 2 lâmpadas 8w — Sala Bateria Kids Recreio","category":"operational","action_type":"task","priority":"medium"},
+  {"action":"create","title":"Limpeza ar-condicionado York — Sala Bateria Kids Recreio","category":"operational","action_type":"task","priority":"medium"},
+  {"action":"create","title":"Prender quadro na parede — Recreio","category":"operational","action_type":"task","priority":"medium"}
+]
+<<END>>
+
+Exemplo de lembrete temporal:
+<<TASK_UPDATE>>
+[{"action":"create","title":"Almoçar","remind_at":"${todayBrt}T13:30:00-03:00","priority":"medium"}]
 <<END>>
 
 Output AGORA, apenas o marker:`;
