@@ -113,8 +113,58 @@ async function createJobsFromAudience(announcementId, audience, opts = {}) {
   return { count: jobs.length, recipients };
 }
 
+// Sprint 30 Caminho C — Resolve audience semanticamente: bate no banco e
+// retorna os colaboradores reais que correspondem. Permite distinguir
+// "audience com formato OK mas resolve a 0 pessoas" (caso de UUIDs alucinados
+// pelo LLM) de "audience com 3 destinatários reais".
+//
+// Diferente de createJobsFromAudience que JÁ insere os jobs, este faz
+// apenas read-only: ideal pra preview na hora do submit e re-validação
+// no momento da aprovação.
+//
+// Retorna { count, recipients[], missing_collaborator_ids[], reason? }.
+//   recipients: array de { id, full_name, phone } dos que resolveram.
+//   missing_collaborator_ids: apenas se audience.collaborator_ids foi usado
+//     — lista os IDs que não foram encontrados no banco (provável alucinação).
+async function resolveAudienceRecipients(audience) {
+  const v = validateAudience(audience);
+  if (!v.valid) {
+    return { count: 0, recipients: [], reason: v.reason };
+  }
+
+  let q = supabase.from('collaborators').select('id, full_name, phone').eq('is_active', true).not('phone', 'is', null);
+
+  const aud = audience;
+  let requestedIds = null;
+  if (aud.all !== true) {
+    if (Array.isArray(aud.role) && aud.role.length) q = q.in('role', aud.role);
+    if (Array.isArray(aud.function_role) && aud.function_role.length) q = q.in('role', aud.function_role);
+    if (Array.isArray(aud.unidade) && aud.unidade.length) q = q.in('unit', aud.unidade);
+    if (Array.isArray(aud.turno) && aud.turno.length) q = q.in('shift', aud.turno);
+    if (Array.isArray(aud.collaborator_ids) && aud.collaborator_ids.length) {
+      requestedIds = aud.collaborator_ids.filter(v => typeof v === 'string' && UUID_RE.test(v));
+      q = q.in('id', requestedIds);
+    }
+  }
+
+  const { data, error } = await q;
+  if (error) {
+    console.error('[announcements.resolveAudienceRecipients] erro:', error.message);
+    return { count: 0, recipients: [], reason: 'query_error', error: error.message };
+  }
+  const recipients = data || [];
+
+  const result = { count: recipients.length, recipients };
+  if (requestedIds) {
+    const foundIds = new Set(recipients.map(r => r.id));
+    result.missing_collaborator_ids = requestedIds.filter(id => !foundIds.has(id));
+  }
+  return result;
+}
+
 module.exports = {
   validateAudience,
   createJobsFromAudience,
+  resolveAudienceRecipients,
   UUID_RE,
 };

@@ -910,13 +910,24 @@ async function applyAnnouncementAction(collaborator, parsed) {
   }
 
   // GUARD B (Sprint 30 hotfix) — Para action=create, audience precisa ser válido
-  // (ao menos uma chave de filtro com array não-vazio, OU all:true). Sem isso,
-  // o filtro silencioso virava broadcast geral (bug LA Teclas 27/05).
+  // (ao menos uma chave de filtro com array não-vazio, OU all:true).
+  // GUARD C (Sprint 30 Caminho C) — Resolve audience semanticamente. Se LLM
+  // alucinou UUIDs ou cargo inexistente e resolve a 0 pessoas, rejeita marker
+  // ANTES de criar announcement (evita "comunicado fantasma" aprovado sem disparo).
+  let resolvedAudience = null;
   if (action === 'create') {
     const v = announcementsService.validateAudience(audience);
     if (!v.valid) {
       console.warn(`[applyAnnouncementAction] audience inválida (${v.reason}) — recusando create`);
       return { ok: false, reason: `audience_invalid:${v.reason}` };
+    }
+    resolvedAudience = await announcementsService.resolveAudienceRecipients(audience);
+    if (resolvedAudience.count === 0) {
+      console.warn(`[applyAnnouncementAction] audience resolve pra 0 destinatários — recusando create`);
+      return { ok: false, reason: 'audience_resolves_to_zero' };
+    }
+    if (resolvedAudience.missing_collaborator_ids?.length) {
+      console.warn(`[applyAnnouncementAction] collaborator_ids não encontrados: ${resolvedAudience.missing_collaborator_ids.join(',')} — seguindo só com os ${resolvedAudience.count} válidos`);
     }
   }
 
@@ -985,6 +996,15 @@ async function applyAnnouncementAction(collaborator, parsed) {
 
       const shortId = ann.id.slice(0, 4);
       const audienceStr = describeAudience(parsed.audience);
+      // Sprint 30 Caminho C — preview enriquecido com contagem real e nomes
+      // resolvidos do banco. Se houver UUIDs alucinados, lista os ausentes.
+      const recipientNames = (resolvedAudience?.recipients || []).map(r => r.full_name);
+      const audienceDetail = resolvedAudience
+        ? `${audienceStr} — *${resolvedAudience.count} pessoa${resolvedAudience.count === 1 ? '' : 's'}*: ${recipientNames.join(', ')}`
+        : audienceStr;
+      const missingWarning = resolvedAudience?.missing_collaborator_ids?.length
+        ? `\n⚠️ *Atenção:* ${resolvedAudience.missing_collaborator_ids.length} ID(s) solicitado(s) não foram encontrados no banco — seguindo só com os ${resolvedAudience.count} válidos.`
+        : '';
       const bodyPreview = parsed.body.length > 80
         ? parsed.body.slice(0, 80) + '...'
         : parsed.body;
@@ -999,7 +1019,7 @@ async function applyAnnouncementAction(collaborator, parsed) {
           await whatsapp.sendMessage(director.phone, [
             '📋 *Comunicado pendente de aprovação*',
             `De: ${collaborator.full_name} (${collaborator.role}${collaborator.function_role ? ` · ${collaborator.function_role}` : ''})`,
-            `Para: ${audienceStr}`,
+            `Para: ${audienceDetail}${missingWarning}`,
             `Mensagem: "${bodyPreview}"`,
             `ID: \`${shortId}\``,
             `Responda: APROVAR ${shortId} ou REJEITAR ${shortId} [motivo opcional]`,
