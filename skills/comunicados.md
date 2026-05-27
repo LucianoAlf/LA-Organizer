@@ -66,6 +66,7 @@ Identifique:
 **Sobre `collaborator_ids`:**
 - Usar quando user mencionar pessoas específicas pelo nome.
 - ⚠️ **OBRIGATÓRIO emitir UUIDs reais** (formato `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`). NUNCA passar nome em texto ("juliana", "leo") — o sistema agora rejeita o marker se os ids não forem UUIDs válidos.
+- ⚠️ **JAMAIS invente UUIDs.** Se você emitir UUIDs que não existem no banco, o sistema agora detecta na hora da criação (resolução semântica) — vai rejeitar o marker com erro `audience_resolves_to_zero`, ou avisar o director que faltaram destinatários. Você perde credibilidade e o user fica frustrado.
 - Como obter o UUID: procure no contexto da conversa (system prompt, memórias, histórico) a referência ao colaborador. Os UUIDs aparecem em campos `id` de listagens de colaboradores e em campos `assigned_to`/`created_by` de tarefas/eventos.
 - Se não tiver acesso ao UUID exato, **NÃO chute e NÃO use nome em texto**. Em vez disso:
   - Use combinação de `function_role` + `unidade` que aproxime as pessoas (ex: pra "Juliana e Quintela" da Barra, se ambas têm `function_role=coordinator`, use `{role:["coordinator"], unidade:["barra"]}`).

@@ -849,6 +849,25 @@ async function applyAnnouncementApproval(collaborator, parsed) {
   }
 
   if (parsed.action === 'approve') {
+    // Sprint 30 Caminho C — Re-valida audience no momento da aprovação.
+    // Se algum collaborator foi desativado entre submit e approve (ou se
+    // collaborator_ids eram alucinação do LLM que passou pela criação),
+    // resolve a 0 destinatários → marca announcement como failed e avisa.
+    const preview = await announcementsService.resolveAudienceRecipients(ann.audience);
+    if (preview.count === 0) {
+      console.warn(`[applyAnnouncementApproval] approval abortada — audience resolve a 0 destinatários para announcement ${ann.id}`);
+      await supabase
+        .from('announcements')
+        .update({
+          status: 'cancelled',
+          reviewed_by: collaborator.id,
+          rejection_reason: 'audience_resolves_to_zero_at_approval',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', ann.id);
+      return { ok: false, reason: 'audience_resolves_to_zero_at_approval', announcement_id: ann.id };
+    }
+
     const { error: updErr } = await supabase
       .from('announcements')
       .update({
