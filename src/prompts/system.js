@@ -2442,7 +2442,28 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   const activeThread = await inferActiveThread(hist, allTasks, collaborator?.id);
   const activeThreadBlock = renderActiveThreadHint(activeThread, _todayForMonth);
 
-  const ctxBlock = (pending ? baseCtx + '\n' + pending : baseCtx) + pastEventsBlock + resolutionBlock + activeThreadBlock;
+  // Sprint 30.3 — Pending Intents: bloco de LEITURA (não regra dura).
+  // TOM vê o que ele mesmo perguntou em turnos anteriores e ainda não resolveu.
+  // Quando o usuário responder, TOM tem contexto pra fechar naturalmente
+  // emitindo o marker certo — sem precisar reperguntar.
+  let pendingIntentsBlock = '';
+  try {
+    const openIntents = await pendingIntentsSvc.listOpenIntents(collaborator.id, { limit: 3 });
+    if (openIntents.length > 0) {
+      const lines = openIntents.map((i, idx) => {
+        const q = (i.question_text || '').replace(/\s+/g, ' ').slice(0, 160);
+        const when = i.asked_at ? new Date(i.asked_at).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : '';
+        const drafts = (i.payload?.drafts && Array.isArray(i.payload.drafts))
+          ? ` (${i.payload.drafts.length} item(s) pendente(s))` : '';
+        return `${idx + 1}. [${i.kind}${drafts}, ${when}] "${q}"`;
+      }).join('\n');
+      pendingIntentsBlock = `\n\n## 🕘 Coisas que você perguntou e ainda não resolveu\n\n${lines}\n\n_Se o usuário responder algo confirmando (sim/ok/pode/cria) ou negando, feche o loop emitindo o marker apropriado — não repergunte._`;
+    }
+  } catch (e) {
+    // never break prompt build
+  }
+
+  const ctxBlock = (pending ? baseCtx + '\n' + pending : baseCtx) + pastEventsBlock + resolutionBlock + activeThreadBlock + pendingIntentsBlock;
 
   const blocks = [
     BLOCK_RULES,
