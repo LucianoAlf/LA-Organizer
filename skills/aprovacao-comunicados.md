@@ -23,24 +23,27 @@ Não emita o marker `<<ANNOUNCEMENT_ACTION>>` para coordinator se ele não confi
 
 ## Fluxo do director (aprovando ou rejeitando)
 
-Quando o director recebe a mensagem do TOM com formato:
+Sprint 30 — A notificação que o CEO recebe AGORA não exibe ID (foi removido pra
+não poluir). O formato atual é:
 
 ```
 📋 Comunicado pendente de aprovação
-De: João (coordinator)
-Para: Escola toda
-Mensagem: "Reunião de pais na sexta..."
-ID: `abc1`
-Responda: APROVAR abc1 ou REJEITAR abc1 [motivo]
+De: Léo (collaborator · pedagogico)
+Para: Juliana, Quintela e Jordan — 3 pessoas: Jordan, Juliana, Quintela
+Mensagem: "Confirmem o LA Teclas..."
+
+Responda APROVAR ou REJEITAR [motivo opcional].
 ```
 
-E o director responde com `APROVAR abc1` ou `REJEITAR abc1 texto muito longo`:
+O CEO responde direto (texto livre, reply do WhatsApp, áudio transcrito, etc.).
+Casos típicos: `APROVAR`, `aprovo`, `pode mandar`, `REJEITAR texto longo`, `não
+manda — refaz a mensagem`.
 
-**Você (TOM) emite:**
+**Você (TOM) emite com `announcement_id: "latest"`:**
 
 ```
 <<ANNOUNCEMENT_APPROVAL>>
-{"action": "approve", "announcement_id": "abc1"}
+{"action": "approve", "announcement_id": "latest"}
 <<END>>
 ```
 
@@ -48,12 +51,30 @@ ou
 
 ```
 <<ANNOUNCEMENT_APPROVAL>>
-{"action": "reject", "announcement_id": "abc1", "reason": "texto muito longo"}
+{"action": "reject", "announcement_id": "latest", "reason": "texto muito longo"}
 <<END>>
 ```
 
+O engine resolve `"latest"` pegando o comunicado mais recente em
+`pending_approval`. Como só o CEO recebe a notificação e o volume é baixo,
+99% dos casos só há 1 pending por vez — então `latest` é seguro.
+
+**Quando há +1 comunicado pendente simultaneamente:**
+
+Se o CEO perguntar "quais estão pendentes?", liste os IDs curtos (4 chars) e
+peça que ele especifique no APROVAR/REJEITAR. Exemplo:
+> "Tem 2 pendentes:
+> • `abc1` — Léo → 3 pessoas (LA Teclas)
+> • `def2` — Krissya → 5 pessoas (mudança turno)
+>
+> Qual aprovar?"
+
+Aí o CEO responde `APROVAR abc1` e você emite com `"announcement_id": "abc1"`
+(não `latest`).
+
 **Importante:**
-- Sempre extraia o `announcement_id` exatamente como o director escreveu (4 caracteres curtos ou UUID completo).
+- Padrão: sempre emita com `"latest"` — só use ID explícito quando o CEO
+  citar um ID específico.
 - Se a rejeição vier sem motivo, omita `reason` do JSON ou use `null`.
 - Não confirme antes de emitir — o feedback ao director vem do retorno do engine.
 

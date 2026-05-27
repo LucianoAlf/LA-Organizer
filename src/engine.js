@@ -769,6 +769,10 @@ function parseAnnouncementApprovalMarker(text) {
     return null;
   }
   if (!['approve', 'reject'].includes(parsed.action)) return null;
+  // Sprint 30 — aceita "latest" quando o user responde APROVAR/REJEITAR sem ID
+  // (UI nova omite o ID; CEO usa reply do WhatsApp ou contexto da última msg).
+  // applyAnnouncementApproval resolve "latest" pegando o pending_approval mais
+  // recente.
   if (typeof parsed.announcement_id !== 'string' || !parsed.announcement_id.trim()) return null;
   if (parsed.reason !== undefined && parsed.reason !== null && typeof parsed.reason !== 'string') {
     parsed.reason = null;
@@ -823,7 +827,12 @@ async function applyAnnouncementApproval(collaborator, parsed) {
 
   const idValue = parsed.announcement_id;
   let query = supabase.from('announcements').select('*');
-  if (idValue.length === 4) {
+  // Sprint 30 — "latest" pula filtro de id e pega o pending_approval mais recente.
+  // Usado quando o CEO responde só "APROVAR"/"REJEITAR" sem citar ID (UI nova
+  // omite o ID na notificação — aproveita o comportamento natural de reply).
+  if (idValue === 'latest') {
+    // sem filtro de id; .order().limit(1) abaixo pega o mais recente
+  } else if (idValue.length === 4) {
     query = query.filter('id::text', 'ilike', `${idValue}%`);
   } else {
     query = query.eq('id', idValue);
@@ -1040,8 +1049,8 @@ async function applyAnnouncementAction(collaborator, parsed) {
             `De: ${collaborator.full_name} (${collaborator.role}${collaborator.function_role ? ` · ${collaborator.function_role}` : ''})`,
             `Para: ${audienceDetail}${missingWarning}`,
             `Mensagem: "${bodyPreview}"`,
-            `ID: \`${shortId}\``,
-            `Responda: APROVAR ${shortId} ou REJEITAR ${shortId} [motivo opcional]`,
+            ``,
+            `Responda *APROVAR* ou *REJEITAR [motivo opcional]*.`,
           ].join('\n'));
         } catch (err) {
           console.error(`[applyAnnouncementAction] Falha ao notificar director ${director.id}:`, err.message);
