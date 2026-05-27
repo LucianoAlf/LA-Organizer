@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useChecklistsHoje } from './hooks/useChecklistsHoje';
 import type { WorkChecklistHoje, PersonalChecklistHoje } from './hooks/useChecklistsHoje';
+import { ChecklistExecucaoDrawer } from './ChecklistExecucaoDrawer';
 
 type Mode = 'work' | 'personal';
 
@@ -48,15 +49,29 @@ export function HojeTab() {
       </div>
 
       <div className="w-[480px] border-l border-border bg-bg-surface hidden lg:block overflow-y-auto">
-        {openId ? (
-          <div className="p-6 text-fg/60 text-sm">
-            Drawer de execução virá na Sprint 3 (id: {openId})
-          </div>
-        ) : (
-          <div className="p-6 text-fg/40 text-sm">
-            Selecione um checklist à esquerda pra executar
-          </div>
-        )}
+        {(() => {
+          if (!openId) {
+            return (
+              <div className="p-6 text-fg/40 text-sm">
+                Selecione um checklist à esquerda pra executar
+              </div>
+            );
+          }
+          const selected = [...data.work, ...data.personal].find(
+            (c) => (c.completion_id ?? c.checklist_id) === openId
+          );
+          if (!selected) {
+            return (
+              <div className="p-6 text-fg/40 text-sm">Checklist não encontrado.</div>
+            );
+          }
+          return (
+            <ChecklistExecucaoDrawer
+              checklist={selected}
+              onClose={() => setOpenId(null)}
+            />
+          );
+        })()}
       </div>
     </div>
   );
