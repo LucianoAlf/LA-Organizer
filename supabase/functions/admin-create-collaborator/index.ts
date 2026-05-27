@@ -41,11 +41,11 @@ Deno.serve(async (req) => {
     // Client com service_role para operações privilegiadas
     const adminClient = createClient(supabaseUrl, serviceKey);
 
-    // Buscar role do chamador na tabela collaborators
+    // Buscar role do chamador na tabela collaborators (por email — mais robusto que id)
     const { data: caller } = await adminClient
       .from('collaborators')
       .select('role, is_active')
-      .eq('id', user.id)
+      .eq('email', user.email!)
       .maybeSingle();
 
     if (!caller?.is_active || !['director', 'coordinator', 'manager'].includes(caller.role)) {
@@ -101,9 +101,10 @@ Deno.serve(async (req) => {
       role,
       unit: unit || null,
       is_active: true,
-      onboarding_completed: false,
+      onboarding_completed: true, // Admin já apresentou o TOM via WhatsApp — wizard não é necessário
     });
     if (collabErr) {
+      console.error('[admin-create-collaborator] INSERT collaborators failed — code:', (collabErr as any).code, 'constraint:', (collabErr as any).details, 'message:', collabErr.message);
       // Rollback: remover auth user criado
       const { error: rollbackErr } = await adminClient.auth.admin.deleteUser(authData.user.id);
       if (rollbackErr) {
@@ -112,15 +113,35 @@ Deno.serve(async (req) => {
       throw collabErr;
     }
 
-    // 3. Disparar magic link pelo WhatsApp
-    const { error: waErr } = await adminClient.functions.invoke('send-magic-link', {
-      body: { phone: cleanPhone },
+    // 3. Apresentar TOM ao novo colaborador via WhatsApp
+    const firstName = String(full_name).trim().split(' ')[0];
+    const uazapiUrl   = Deno.env.get('UAZAPI_URL')   || 'https://lamusic.uazapi.com';
+    const uazapiToken = Deno.env.get('UAZAPI_TOKEN') || 'cfbb6715-3814-4b77-8270-8bbd07abf42e';
+
+    // Sprint 23.6 — URL em linha própria (sem emoji prefix nem texto na MESMA linha).
+    // Bug: WhatsApp não auto-linka quando URL vem grudada em emoji/texto.
+    // Fix: linha 1 "Acessa o link abaixo:" + linha 2 URL crua → linkify garantido.
+    const welcomeMsg =
+      `👽 Oi, ${firstName}! Aqui é o TOM — assistente operacional da LA Music.\n\n` +
+      `Você acabou de ser cadastrado no *LA Organizer*, o sistema de organização da equipe! 🎉\n\n` +
+      `Tô aqui pra te ajudar no dia a dia: tarefas, agenda, projetos e checklists. E também pra organizar sua vida pessoal 🤐 — hábitos, lembretes particulares, o que você quiser.\n\n` +
+      `Para acessar o app, instala no seu celular:\n\n` +
+      `1. Acessa o link abaixo:\n` +
+      `https://la-organizer.vercel.app\n\n` +
+      `2. Toca nos *3 pontinhos* (⋮) do Chrome\n` +
+      `3. Escolhe *"Adicionar à tela inicial"*\n\n` +
+      `💡 Qualquer dúvida, é só me mandar *ajuda* aqui que eu te mostro tudo! 😉`;
+
+    const waRes = await fetch(`${uazapiUrl}/send/text`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', token: uazapiToken },
+      body: JSON.stringify({ number: cleanPhone, text: welcomeMsg, readchat: true }),
     });
 
     return json({
       ok: true,
       collaborator_id: authData.user.id,
-      whatsapp_sent: !waErr,
+      whatsapp_sent: waRes.ok,
     });
 
   } catch (err) {
