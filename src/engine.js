@@ -17,6 +17,7 @@ const openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const inventarioService = require('./services/inventario-service');
 const inventarioValidators = require('./services/inventario-validators');
 const announcementsService = require('./services/announcements');
+const pendingIntents = require('./services/pending-intents');
 
 const SKILLS_DIR = path.join(__dirname, '..', 'skills');
 
@@ -5269,6 +5270,33 @@ async function processMessage(phone, text, raw = {}) {
   console.log('[Engine] Mensagem de', collab.full_name);
   await logConversation(collab.id, 'inbound', text);
 
+  // ---- Sprint 30.3 — Pending Intents: auto-resolve quando user confirma ----
+  // Se TOM perguntou "Crio?" turnos atrás (intent aberta) e o user agora
+  // respondeu "sim/ok/pode/cria", injeta contexto extra no `text` pra forçar
+  // o LLM a emitir o marker. A intent é resolvida ao final do turno.
+  let _pendingIntentToResolve = null;
+  try {
+    const openIntents = await pendingIntents.listOpenIntents(collab.id, { limit: 3 });
+    if (openIntents.length > 0) {
+      const userConfirm = pendingIntents.detectUserConfirmation(String(text || ''));
+      if (userConfirm === 'yes') {
+        const target = openIntents[0];  // mais recente
+        _pendingIntentToResolve = { intent: target, resolution: 'confirmed' };
+        // Injeta contexto inline pra LLM saber o que confirmar.
+        const payloadStr = JSON.stringify(target.payload || {}).slice(0, 800);
+        const ctxHint = `\n\n[CONTEXTO INTERNO — não verbalize ao usuário]\nVocê tinha aberto uma intent (${target.kind}) com a pergunta: "${(target.question_text || '').slice(0, 200)}".\nPayload pendente: ${payloadStr}\nO usuário CONFIRMOU. Emita o marker apropriado AGORA (ex: <<TASK_UPDATE>> com action=create para cada draft).`;
+        text = String(text || '') + ctxHint;
+        console.log(`[PendingIntents] auto-resolve YES — intent=${target.id.slice(0,8)} kind=${target.kind}`);
+      } else if (userConfirm === 'no') {
+        const target = openIntents[0];
+        _pendingIntentToResolve = { intent: target, resolution: 'denied' };
+        console.log(`[PendingIntents] auto-resolve NO — intent=${target.id.slice(0,8)} kind=${target.kind}`);
+      }
+    }
+  } catch (e) {
+    console.warn('[PendingIntents] auto-resolve check err:', e.message);
+  }
+
   // Sprint Fase B — Bypass do LLM pra operações simples de lojinha.
   // Quando a intenção é clara (query/venda/entrada), pulamos o LLM (que vinha
   // emitindo JSON malformado ou texto humano sem marker) e executamos
@@ -7209,6 +7237,38 @@ Output AGORA, apenas o marker:`;
       }
     }
   } catch (e) { /* metric never breaks main flow */ }
+
+  // ---- Sprint 30.3 — Pending Intents: fecha intent confirmada/negada + abre nova
+  try {
+    // 1) Se este turno resolveu uma intent (yes/no detectado no início), fecha agora
+    if (_pendingIntentToResolve && _pendingIntentToResolve.intent && _pendingIntentToResolve.intent.id) {
+      const intentId = _pendingIntentToResolve.intent.id;
+      const resolution = _pendingIntentToResolve.resolution;
+      const note = `auto-resolved on turn ${new Date().toISOString()}`;
+      await pendingIntents.resolveIntent(intentId, resolution, note);
+      console.log(`[PendingIntents] resolved ${intentId.slice(0,8)} as ${resolution}`);
+    }
+
+    // 2) Detecta nova pergunta de confirmação na reply do TOM e abre intent.
+    //    Só abre se NENHUM marker foi emitido neste turno (senão a ação já foi
+    //    persistida — não há intent pendente real).
+    const noMarkerEmitted = !_metrics.marker_emitted && !_metrics.auto_retry_succeeded;
+    if (reply && typeof reply === 'string' && noMarkerEmitted) {
+      const detected = pendingIntents.detectConfirmationQuestion(reply);
+      if (detected) {
+        // Payload mínimo: salva o user_text e a reply pra recuperação no próximo turno.
+        // O LLM lê isso no hook inicial e gera o marker certo.
+        const payload = {
+          last_user_text: String(text || '').slice(0, 600),
+          last_tom_reply: reply.slice(0, 900),
+        };
+        await pendingIntents.openIntent(collab.id, detected.kind, payload, reply.slice(0, 500));
+        _metrics.pending_intent_opened = detected.kind;
+      }
+    }
+  } catch (e) {
+    console.warn('[PendingIntents] hook err:', e.message);
+  }
 
   // ---- Sprint 28 — TOM Voice (TTS via ElevenLabs)
   // Decide se manda áudio em vez de (ou junto com) texto. Gates em
