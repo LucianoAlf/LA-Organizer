@@ -14,7 +14,7 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ClipboardCheck, ListChecks } from 'lucide-react'
+import { ClipboardCheck, ListChecks, Settings } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { Button } from '../../components/Button'
@@ -22,8 +22,7 @@ import { Tabs } from '../../components/Tabs'
 import { ChecklistCard } from '../../components/ChecklistCard'
 import { PersonalChecklistCard } from '../../components/PersonalChecklistCard'
 import { PersonalChecklistSheet } from '../../components/PersonalChecklistSheet'
-import { TemplateCard, type TemplateCardData } from '../../components/TemplateCard'
-import { ChecklistTemplateSheet } from '../../components/ChecklistTemplateSheet'
+// Sprint 23 — TemplateCard e ChecklistTemplateSheet movidos pra rota /checklists/templates
 import { EmptyState } from '../../components/EmptyState'
 import { ErrorState } from '../../components/ErrorState'
 import { LoadingState } from '../../components/LoadingState'
@@ -44,11 +43,23 @@ export function ChecklistsMobile() {
 
   return (
     <div className="space-y-md">
-      <Tabs<Tab>
-        tabs={TABS}
-        active={tab}
-        onChange={setTab}
-      />
+      <div className="flex items-center gap-2">
+        <div className="flex-1 min-w-0">
+          <Tabs<Tab>
+            tabs={TABS}
+            active={tab}
+            onChange={setTab}
+          />
+        </div>
+        <a
+          href="/checklists/templates"
+          aria-label="Gerenciar templates"
+          title="Gerenciar templates"
+          className="p-2 rounded-md text-fg-muted hover:text-tom hover:bg-bg-surface transition-colors flex-shrink-0"
+        >
+          <Settings size={20} />
+        </a>
+      </div>
       {tab === 'trabalho' && <TrabalhoTab />}
       {tab === 'pessoal' && <PessoalTab />}
     </div>
@@ -67,14 +78,7 @@ function TrabalhoTab() {
     year: 'numeric', month: '2-digit', day: '2-digit',
   }).format(new Date())
   const [sheetOpen, setSheetOpen] = useState(false)
-  // undefined=closed, null=create mode, TemplateCardData=edit mode
-  const [templateSheet, setTemplateSheet] = useState<TemplateCardData | null | undefined>(undefined)
-
-  // Sprint 22.39 → 28 — leadership operacional: director, coordinator, manager.
-  // Membros (collaborator) NAO veem o bloco de templates.
-  const canManageTemplates = !!collaborator?.role && [
-    'director', 'coordinator', 'manager',
-  ].includes(collaborator.role)
+  // Sprint 23 — gestão de templates movida pra /checklists/templates (acesso via engrenagem no header)
 
   const { data: completions = [], isLoading: loadingTom, error: errorTom, refetch: refetchTom } =
     useQuery<OpChecklistCompletion[]>({
@@ -109,43 +113,7 @@ function TrabalhoTab() {
     staleTime: 30_000,
   })
 
-  // Sprint 22.39 — templates operacionais (só director/coordinator)
-  const { data: templates = [], isLoading: loadingTemplates } = useQuery<TemplateCardData[]>({
-    queryKey: ['checklists-templates'],
-    queryFn: async () => {
-      const tQuery = supabase
-        .from('op_checklists')
-        .select(`
-          *,
-          op_checklist_items ( id, checklist_id, description, sort_order, is_active, updated_by ),
-          responsible:collaborators!responsible_id ( id, full_name ),
-          leader:collaborators!leader_id ( id, full_name )
-        `)
-        .order('name')
-      const { data: tData, error: tErr } = await tQuery
-      if (tErr) throw tErr
-      const rows = (tData ?? []) as TemplateCardData[]
-      const ids = rows.map(r => r.id)
-      if (!ids.length) return rows
-      const { data: audits } = await supabase
-        .from('op_checklists_audit')
-        .select('template_id, changed_at, collaborator:collaborators(full_name)')
-        .in('template_id', ids)
-        .order('changed_at', { ascending: false })
-      type AuditEntry = Pick<OpChecklistAudit, 'changed_at'> & {
-        template_id: string; collaborator: { full_name: string } | null
-      }
-      const latest = new Map<string, AuditEntry>()
-      for (const a of (audits ?? []) as any[]) {
-        if (!a.template_id || latest.has(a.template_id)) continue
-        const collab = Array.isArray(a.collaborator) ? a.collaborator[0] ?? null : a.collaborator ?? null
-        latest.set(a.template_id, { template_id: a.template_id, changed_at: a.changed_at, collaborator: collab })
-      }
-      return rows.map(r => ({ ...r, last_audit: latest.get(r.id) ?? null })) as TemplateCardData[]
-    },
-    enabled: !!collaborator && canManageTemplates,
-    staleTime: 60_000,
-  })
+  // Sprint 23 — query de templates removida (movida pra TemplatesPage em /checklists/templates)
 
   // Realtime subscription pra TOM completions
   useEffect(() => {
@@ -169,7 +137,7 @@ function TrabalhoTab() {
     return () => { supabase.removeChannel(channel) }
   }, [completions.length, collaborator?.id])
 
-  const isLoading = loadingTom || loadingWork || loadingTemplates
+  const isLoading = loadingTom || loadingWork
   const error = errorTom || errorWork
 
   if (isLoading) return <LoadingState rows={2} />
@@ -184,8 +152,7 @@ function TrabalhoTab() {
     )
   }
 
-  const hasContent =
-    completions.length > 0 || workLists.length > 0 || (canManageTemplates && templates.length > 0)
+  const hasContent = completions.length > 0 || workLists.length > 0
 
   return (
     <div className="space-y-md">
@@ -229,44 +196,13 @@ function TrabalhoTab() {
         </>
       )}
 
-      {canManageTemplates && (
-        <div className="space-y-sm pt-md border-t border-border">
-          <div className="flex items-center justify-end">
-            <Button
-              variant="primary"
-              size="sm"
-              type="button"
-              onClick={() => setTemplateSheet(null)}
-            >
-              + Novo template
-            </Button>
-          </div>
-          {templates.length === 0 ? (
-            <p className="text-body-sm text-fg-muted py-2">
-              Nenhum template ativo. Use + Novo template pra criar abertura/fechamento/fiscalização.
-            </p>
-          ) : (
-            templates.map(t => (
-              <TemplateCard
-                key={t.id}
-                template={t}
-                onEdit={() => setTemplateSheet(t)}
-              />
-            ))
-          )}
-        </div>
-      )}
+      {/* Sprint 23 — templates agora vivem em rota separada /checklists/templates
+          (acessível pela engrenagem no header). Mantemos a tela aqui só com execução. */}
 
       <PersonalChecklistSheet
         open={sheetOpen}
         onClose={() => setSheetOpen(false)}
         context="work"
-      />
-
-      <ChecklistTemplateSheet
-        open={templateSheet !== undefined}
-        template={templateSheet ?? null}
-        onClose={() => setTemplateSheet(undefined)}
       />
     </div>
   )
