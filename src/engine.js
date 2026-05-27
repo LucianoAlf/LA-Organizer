@@ -2084,7 +2084,8 @@ async function applyEventActions(collaborator, events) {
 function validateEventUpdateAction(a) {
   if (!a || typeof a !== 'object') return 'not_object';
   if (!VALID_EVENT_UPDATE_ACTIONS.has(a.action)) return 'action:invalid';
-  if (typeof a.id !== 'string' || !SHORT_ID_RE.test(a.id)) return 'id:invalid';
+  // Sprint 28 — aceitar "latest" como id especial (handler já resolve via DB lookup).
+  if (typeof a.id !== 'string' || (a.id !== 'latest' && !SHORT_ID_RE.test(a.id))) return 'id:invalid';
   if (a.action === 'reschedule') {
     if (typeof a.new_start_at !== 'string' || !ISO_DATETIME_RE.test(a.new_start_at)) return 'new_start_at:invalid';
     if (typeof a.new_end_at !== 'string' || !ISO_DATETIME_RE.test(a.new_end_at)) return 'new_end_at:invalid';
@@ -2468,7 +2469,12 @@ function validateTaskAction(a) {
   if (a.action === 'complete') {
     if (typeof a.id !== 'string' || !SHORT_ID_RE.test(a.id)) return 'bad_id';
   } else if (a.action === 'reschedule') {
-    if (typeof a.id !== 'string' || !SHORT_ID_RE.test(a.id)) return 'bad_id';
+    // Sprint 28 hotfix — aceitar title como alternativa ao id.
+    // TOM às vezes emite title em vez de id quando não tem o short-id na cabeça.
+    // applyTaskActions resolve title→id via DB lookup antes de aplicar.
+    const hasId = typeof a.id === 'string' && SHORT_ID_RE.test(a.id);
+    const hasTitle = typeof a.title === 'string' && a.title.trim().length > 0;
+    if (!hasId && !hasTitle) return 'bad_id';
     if (typeof a.new_due_date !== 'string' || !ISO_DATE_RE.test(a.new_due_date)) return 'bad_new_due_date';
   } else if (a.action === 'create') {
     if (typeof a.title !== 'string' || !a.title.trim()) return 'title_missing';
@@ -3057,6 +3063,26 @@ async function applyTaskActions(collaborator, actions) {
           okCount++;
         }
       } else if (a.action === 'reschedule') {
+        // Sprint 28 — resolução title→id quando TOM não emitiu id numérico.
+        if (!a.id && a.title) {
+          const { data: byTitle } = await supabase
+            .from('tasks')
+            .select('id')
+            .eq('assigned_to', collaborator.id)
+            .ilike('title', `%${String(a.title).slice(0, 60)}%`)
+            .not('status', 'in', '("done","cancelled")')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (byTitle) {
+            a.id = byTitle.id.replace(/-/g, '').slice(0, 8);
+            console.log(`[Task] reschedule title-lookup: "${a.title}" → id=${a.id}`);
+          } else {
+            console.warn(`[Task] reschedule title-lookup failed: "${a.title}" not found for ${last4}`);
+            failCount++;
+            continue;
+          }
+        }
         const t = await resolveTaskByShortId(collaborator.id, a.id);
         if (!t) {
           console.warn(`[Task] reschedule REJECTED id=${a.id} (not owned by ${last4} or not found)`);
