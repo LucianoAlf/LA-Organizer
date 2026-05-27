@@ -10,7 +10,7 @@ const metricsService = require('./services/metrics');
 const ai = require('./ai/provider');
 const { buildSystemPrompt, formatMessages } = require('./prompts/system');
 const { safeIsoDate, safeDate } = require('./utils/dates');
-const { hasCoordLevel, canCreateForOther } = require('./utils/roles');
+const { hasCoordLevel, isDirector, canCreateForOther } = require('./utils/roles');
 const supabase = require('./supabase/client');
 const OpenAI = require('openai');
 const openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -897,12 +897,15 @@ async function applyAnnouncementApproval(collaborator, parsed) {
 async function applyAnnouncementAction(collaborator, parsed) {
   const { action, body, audience, scheduled_at, announcement_id, requires_confirmation, confirmation_question } = parsed;
 
-  // GUARD A (Sprint 30 hotfix) — Apenas director/coordinator podem criar/cancelar
-  // comunicados. Sem essa checagem, qualquer collaborator caía no else
-  // (`isCoordinator === false`) e ia direto pra status='scheduled' sem aprovação.
-  // O cancelamento também é restrito porque dispara retratação amplificadora.
-  if (collaborator.role !== 'director' && collaborator.role !== 'coordinator') {
-    console.warn(`[applyAnnouncementAction] negado: collaborator ${collaborator.id} role=${collaborator.role} tentou ${action}`);
+  // GUARD A (Sprint 30 hotfix v2) — Quem pode criar/cancelar comunicados:
+  // qualquer colaborador com nível operacional de coordenador (director,
+  // coordinator, manager com flag, ou collaborator com has_coord_permissions=true,
+  // ex: assistentes pedagógicos como Léo, Dai, Jordan, Ramon, Renan, Rodrigo,
+  // Matheus Felipe, Kinho, Peterson, Hugo, Rafinha, John).
+  // Farmers (Arthur, Gabi) e collaborators sem a flag NÃO podem.
+  // Lógica centralizada em utils/roles.js hasCoordLevel().
+  if (!hasCoordLevel(collaborator)) {
+    console.warn(`[applyAnnouncementAction] negado: collaborator ${collaborator.id} role=${collaborator.role} has_coord_permissions=${collaborator.has_coord_permissions} tentou ${action}`);
     return { ok: false, reason: 'no_permission' };
   }
 
@@ -943,8 +946,10 @@ async function applyAnnouncementAction(collaborator, parsed) {
   }
 
   if (action === 'create') {
-    // Sprint 13 F3 T3 — Coordinators go to pending_approval; directors go straight to scheduled.
-    const isCoordinator = collaborator.role === 'coordinator';
+    // Sprint 30 hotfix v2 — Director pula aprovação (autoridade própria).
+    // Qualquer outro com nível operacional de coord (manager, coordinator,
+    // collaborator+flag) precisa de aprovação de director.
+    const needsApproval = !isDirector(collaborator);
 
     const { data: ann, error: annErr } = await supabase
       .from('announcements')
@@ -952,7 +957,7 @@ async function applyAnnouncementAction(collaborator, parsed) {
         created_by: collaborator.id,
         body: body.trim(),
         audience: audience || { all: true },
-        status: isCoordinator ? 'pending_approval' : 'scheduled',
+        status: needsApproval ? 'pending_approval' : 'scheduled',
         scheduled_at: scheduled_at || null,
         requires_confirmation: !!requires_confirmation,
         confirmation_question: requires_confirmation && typeof confirmation_question === 'string'
@@ -963,7 +968,7 @@ async function applyAnnouncementAction(collaborator, parsed) {
       .single();
     if (annErr) return { ok: false, reason: annErr.message };
 
-    if (isCoordinator) {
+    if (needsApproval) {
       // Buscar directors com phone
       const { data: directors, error: dirErr } = await supabase
         .from('collaborators')
@@ -992,7 +997,7 @@ async function applyAnnouncementAction(collaborator, parsed) {
         try {
           await whatsapp.sendMessage(director.phone, [
             '📋 *Comunicado pendente de aprovação*',
-            `De: ${collaborator.full_name} (coordinator)`,
+            `De: ${collaborator.full_name} (${collaborator.role}${collaborator.function_role ? ` · ${collaborator.function_role}` : ''})`,
             `Para: ${audienceStr}`,
             `Mensagem: "${bodyPreview}"`,
             `ID: \`${shortId}\``,
