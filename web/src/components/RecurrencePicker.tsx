@@ -1,23 +1,23 @@
-// Sprint 29.4 — Picker de recorrência para tasks e events.
-// Usa RRULE iCalendar (RFC 5545) internamente. UI expõe 7 presets familiares
-// + opção custom (string RRULE livre, pra power users).
-// Mostra preview das próximas 3 ocorrências pro user confirmar antes de salvar.
+// Sprint 23 v2 — RecurrencePicker simplificado.
+// Removida exposição de RRULE crua. Mantém RRULE iCalendar (RFC 5545) por baixo —
+// TOM continua consumindo via src/services/recurrence-engine.js sem mudanças.
+//
+// UI:
+//   5 presets + Dias úteis + Personalizado (sub-form visual, nunca textual)
+//   → Não repete · Diária · Semanal · Mensal · Anual · Dias úteis · Personalizado…
+//
+// Personalizado abre sub-form:
+//   "A cada [N] [Dia/Semana/Mês/Ano]" + chips D S T Q Q S S (se Semana, multi-select)
+//
+// Preview das próximas 3 ocorrências continua disponível.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { RRule, rrulestr } from 'rrule';
 import { CustomSelect } from './CustomSelect';
 import { Field } from './Field';
 
-type Preset =
-  | 'none'
-  | 'daily'
-  | 'weekdays'
-  | 'weekly'
-  | 'biweekly'
-  | 'monthly'
-  | 'monthly_dow'   // primeira/última X-feira do mês
-  | 'yearly'
-  | 'custom';
+type Preset = 'none' | 'daily' | 'weekly' | 'monthly' | 'yearly' | 'weekdays' | 'custom';
+type CustomUnit = 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY';
 
 interface Props {
   /** RRULE string atual, ou null/'' se não-recorrente. */
@@ -30,18 +30,32 @@ interface Props {
   hidePreview?: boolean;
 }
 
-const DAY_CODES = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+const DAY_CODES = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'] as const;
+const WEEK_CHIPS: Array<{ code: typeof DAY_CODES[number]; label: string }> = [
+  { code: 'SU', label: 'D' },
+  { code: 'MO', label: 'S' },
+  { code: 'TU', label: 'T' },
+  { code: 'WE', label: 'Q' },
+  { code: 'TH', label: 'Q' },
+  { code: 'FR', label: 'S' },
+  { code: 'SA', label: 'S' },
+];
 
 const PRESETS: { value: Preset; label: string; sublabel?: string }[] = [
-  { value: 'none',        label: 'Não repetir' },
-  { value: 'daily',       label: 'Todo dia' },
-  { value: 'weekdays',    label: 'Dias úteis (seg–sex)' },
-  { value: 'weekly',      label: 'Toda semana', sublabel: 'mesmo dia da semana' },
-  { value: 'biweekly',    label: 'A cada 2 semanas' },
-  { value: 'monthly',     label: 'Todo mês', sublabel: 'no mesmo dia do mês' },
-  { value: 'monthly_dow', label: 'Mês (mesma semana)', sublabel: 'ex: 2ª segunda' },
-  { value: 'yearly',      label: 'Todo ano' },
-  { value: 'custom',      label: 'Personalizado…', sublabel: 'RRULE livre' },
+  { value: 'none',     label: 'Não repete' },
+  { value: 'daily',    label: 'Diária' },
+  { value: 'weekly',   label: 'Semanal',     sublabel: 'mesmo dia da semana' },
+  { value: 'monthly',  label: 'Mensal',      sublabel: 'mesmo dia do mês' },
+  { value: 'yearly',   label: 'Anual' },
+  { value: 'weekdays', label: 'Dias úteis',  sublabel: 'seg–sex' },
+  { value: 'custom',   label: 'Personalizado…' },
+];
+
+const UNIT_OPTIONS = [
+  { value: 'DAILY',   label: 'Dia(s)' },
+  { value: 'WEEKLY',  label: 'Semana(s)' },
+  { value: 'MONTHLY', label: 'Mês(es)' },
+  { value: 'YEARLY',  label: 'Ano(s)' },
 ];
 
 function presetToRrule(preset: Preset, startDate: string): string | null {
@@ -50,19 +64,14 @@ function presetToRrule(preset: Preset, startDate: string): string | null {
   const dayCode = DAY_CODES[d.getUTCDay()];
   const dayOfMonth = d.getUTCDate();
   switch (preset) {
-    case 'none':        return null;
-    case 'daily':       return 'FREQ=DAILY';
-    case 'weekdays':    return 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR';
-    case 'weekly':      return `FREQ=WEEKLY;BYDAY=${dayCode}`;
-    case 'biweekly':    return `FREQ=WEEKLY;INTERVAL=2;BYDAY=${dayCode}`;
-    case 'monthly':     return `FREQ=MONTHLY;BYMONTHDAY=${dayOfMonth}`;
-    case 'monthly_dow': {
-      const weekOfMonth = Math.ceil(dayOfMonth / 7);
-      return `FREQ=MONTHLY;BYDAY=${weekOfMonth}${dayCode}`;
-    }
-    case 'yearly':      return `FREQ=YEARLY;BYMONTH=${d.getUTCMonth() + 1};BYMONTHDAY=${dayOfMonth}`;
-    case 'custom':      return null;
-    default:            return null;
+    case 'none':     return null;
+    case 'daily':    return 'FREQ=DAILY';
+    case 'weekly':   return `FREQ=WEEKLY;BYDAY=${dayCode}`;
+    case 'monthly':  return `FREQ=MONTHLY;BYMONTHDAY=${dayOfMonth}`;
+    case 'yearly':   return `FREQ=YEARLY;BYMONTH=${d.getUTCMonth() + 1};BYMONTHDAY=${dayOfMonth}`;
+    case 'weekdays': return 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR';
+    case 'custom':   return null;
+    default:         return null;
   }
 }
 
@@ -72,14 +81,43 @@ function rruleToPreset(rrule: string | null): Preset {
   if (r === 'FREQ=DAILY') return 'daily';
   if (r === 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR') return 'weekdays';
   if (/^FREQ=WEEKLY;BYDAY=[A-Z]{2}$/.test(r)) return 'weekly';
-  if (/^FREQ=WEEKLY;INTERVAL=2;BYDAY=[A-Z]{2}$/.test(r)) return 'biweekly';
   if (/^FREQ=MONTHLY;BYMONTHDAY=-?\d{1,2}$/.test(r)) return 'monthly';
-  if (/^FREQ=MONTHLY;BYDAY=-?\d?[A-Z]{2}$/.test(r)) return 'monthly_dow';
-  if (/^FREQ=YEARLY/.test(r)) return 'yearly';
+  if (/^FREQ=YEARLY;BYMONTH=\d{1,2};BYMONTHDAY=\d{1,2}$/.test(r)) return 'yearly';
   return 'custom';
 }
 
-function previewOccurrences(rrule: string | null, startDate: string, count: number = 3): string[] {
+/** Parse RRULE → estado do form custom (best-effort). */
+function rruleToCustomState(rrule: string | null): {
+  unit: CustomUnit;
+  interval: number;
+  byday: string[];
+} {
+  if (!rrule) return { unit: 'WEEKLY', interval: 1, byday: [] };
+  const parts = Object.fromEntries(
+    rrule
+      .toUpperCase()
+      .replace(/^RRULE:/i, '')
+      .split(';')
+      .map((p) => p.split('='))
+  );
+  const freq = (parts.FREQ || 'WEEKLY') as CustomUnit;
+  const interval = Math.max(1, parseInt(parts.INTERVAL || '1', 10) || 1);
+  const byday = (parts.BYDAY || '')
+    .split(',')
+    .map((s: string) => s.trim())
+    .filter(Boolean);
+  return { unit: freq, interval, byday };
+}
+
+function customFormToRrule(unit: CustomUnit, interval: number, byday: string[]): string | null {
+  if (interval < 1) return null;
+  const parts: string[] = [`FREQ=${unit}`];
+  if (interval > 1) parts.push(`INTERVAL=${interval}`);
+  if (unit === 'WEEKLY' && byday.length > 0) parts.push(`BYDAY=${byday.join(',')}`);
+  return parts.join(';');
+}
+
+function previewOccurrences(rrule: string | null, startDate: string, count = 3): string[] {
   if (!rrule || !startDate) return [];
   try {
     const dt = new Date(startDate + 'T12:00:00Z');
@@ -96,23 +134,36 @@ function previewOccurrences(rrule: string | null, startDate: string, count: numb
 }
 
 export function RecurrencePicker({ value, onChange, startDate, hidePreview }: Props) {
-  const [preset, setPreset] = useState<Preset>(rruleToPreset(value));
-  const [customRrule, setCustomRrule] = useState(
-    rruleToPreset(value) === 'custom' ? (value ?? '') : ''
-  );
+  const initialPreset = rruleToPreset(value);
+  const [preset, setPreset] = useState<Preset>(initialPreset);
+
+  // Estado do form custom (só usado quando preset === 'custom')
+  const initCustom = rruleToCustomState(value);
+  const [customUnit, setCustomUnit] = useState<CustomUnit>(initCustom.unit);
+  const [customInterval, setCustomInterval] = useState<number>(initCustom.interval);
+  const [customByday, setCustomByday] = useState<string[]>(initCustom.byday);
+
+  // Quando o user mexe no form custom, emite RRULE
+  useEffect(() => {
+    if (preset !== 'custom') return;
+    onChange(customFormToRrule(customUnit, customInterval, customByday));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preset, customUnit, customInterval, customByday]);
 
   function applyPreset(p: Preset) {
     setPreset(p);
     if (p === 'custom') {
-      onChange(customRrule || null);
+      // Quando entra em "custom", emite o estado atual do form (não null)
+      onChange(customFormToRrule(customUnit, customInterval, customByday));
     } else {
       onChange(presetToRrule(p, startDate));
     }
   }
 
-  function applyCustom(input: string) {
-    setCustomRrule(input);
-    onChange(input.trim() || null);
+  function toggleByday(code: string) {
+    setCustomByday((prev) =>
+      prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code]
+    );
   }
 
   const preview = useMemo(
@@ -124,18 +175,58 @@ export function RecurrencePicker({ value, onChange, startDate, hidePreview }: Pr
     <Field label="Repetição">
       <CustomSelect
         value={preset}
-        options={PRESETS.map(p => ({ value: p.value, label: p.label, sublabel: p.sublabel }))}
+        options={PRESETS.map((p) => ({ value: p.value, label: p.label, sublabel: p.sublabel }))}
         onChange={(v) => applyPreset(v as Preset)}
         size="md"
       />
+
       {preset === 'custom' && (
-        <input
-          className="mt-sm w-full bg-bg-surface border border-border rounded-md p-2 text-fg focus:outline-none focus:border-tom font-mono text-body-sm"
-          placeholder="ex: FREQ=MONTHLY;BYDAY=-1FR"
-          value={customRrule}
-          onChange={(e) => applyCustom(e.target.value)}
-        />
+        <div className="mt-sm p-3 bg-bg-surface border border-border rounded-md space-y-3">
+          <div className="flex items-center gap-2">
+            <span className="text-body-sm text-fg-muted">A cada</span>
+            <input
+              type="number"
+              min={1}
+              max={99}
+              value={customInterval}
+              onChange={(e) => setCustomInterval(Math.max(1, parseInt(e.target.value, 10) || 1))}
+              className="w-16 bg-bg-app border border-border rounded-md p-2 text-fg text-center focus:outline-none focus:border-tom"
+            />
+            <div className="flex-1 min-w-0">
+              <CustomSelect
+                value={customUnit}
+                options={UNIT_OPTIONS}
+                onChange={(v) => setCustomUnit(v as CustomUnit)}
+                size="md"
+              />
+            </div>
+          </div>
+
+          {customUnit === 'WEEKLY' && (
+            <div className="flex gap-1 flex-wrap">
+              {WEEK_CHIPS.map((d) => {
+                const active = customByday.includes(d.code);
+                return (
+                  <button
+                    key={d.code}
+                    type="button"
+                    onClick={() => toggleByday(d.code)}
+                    className={`w-9 h-9 rounded-full text-body-sm font-medium transition-colors ${
+                      active
+                        ? 'bg-tom text-bg-app'
+                        : 'bg-bg-app text-fg/60 border border-border hover:text-fg'
+                    }`}
+                    aria-pressed={active}
+                  >
+                    {d.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
       )}
+
       {!hidePreview && value && preview.length > 0 && (
         <p className="mt-xs text-body-sm text-fg-muted">
           📅 Próximas: <span className="text-fg">{preview.join(' • ')}</span>
@@ -143,7 +234,7 @@ export function RecurrencePicker({ value, onChange, startDate, hidePreview }: Pr
       )}
       {!hidePreview && value && preview.length === 0 && (
         <p className="mt-xs text-body-sm text-red-500">
-          ⚠ RRULE inválida — corrige antes de salvar.
+          ⚠ Configuração inválida — confere os campos.
         </p>
       )}
     </Field>
@@ -151,7 +242,6 @@ export function RecurrencePicker({ value, onChange, startDate, hidePreview }: Pr
 }
 
 // Helper exportado pra outras telas: traduz RRULE em string humana.
-// Ex: "FREQ=WEEKLY;BYDAY=MO" → "Toda segunda"
 export function humanizeRrule(rrule: string | null): string {
   if (!rrule) return '';
   try {
