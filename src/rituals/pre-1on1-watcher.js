@@ -12,7 +12,7 @@ const supabase = require('../supabase/client');
 const whatsapp = require('../services/whatsapp');
 const { buildLeaderBriefing } = require('../services/leader-briefing');
 
-const BRIEFING_KEY_PREFIX = 'pre_1on1_briefing';
+const RITUAL_TYPE = 'pre_1on1_briefing';
 const WINDOW_START_MIN = 25;  // pega quem começa em 25min
 const WINDOW_END_MIN = 35;    // até 35min (folga pra tick não escapar)
 
@@ -39,13 +39,15 @@ async function tick(opts = {}) {
 
   let sent = 0, skipped = 0, errors = 0;
   for (const ev of upcoming) {
-    const idempotencyKey = `${BRIEFING_KEY_PREFIX}_${ev.id}`;
-
-    // Checa idempotência (não enviar 2x pro mesmo evento)
+    // Idempotência: ritual_logs sem unique key — usamos detail LIKE
+    // pra detectar se já enviamos briefing pra este evento.
+    const idempotencyMarker = `event=${ev.id}`;
     const { data: existing } = await supabase
       .from('ritual_logs')
       .select('id')
-      .eq('idempotency_key', idempotencyKey)
+      .eq('ritual_type', RITUAL_TYPE)
+      .ilike('detail', `%${idempotencyMarker}%`)
+      .limit(1)
       .maybeSingle();
     if (existing) { skipped++; continue; }
 
@@ -68,10 +70,11 @@ async function tick(opts = {}) {
       await whatsapp.sendMessage(recipient.phone, briefing);
       await supabase.from('ritual_logs').insert({
         collaborator_id: recipient.id,
-        ritual_type: 'pre_1on1_briefing',
+        ritual_type: RITUAL_TYPE,
         status: 'sent',
-        idempotency_key: idempotencyKey,
-        notes: `event=${String(ev.id).slice(0,8)} leader=${String(ev.related_to_collaborator_id).slice(0,8)}`,
+        sent_at: new Date().toISOString(),
+        reference_date: new Date().toISOString().slice(0, 10),
+        detail: `event=${ev.id} leader=${ev.related_to_collaborator_id}`,
       });
       sent++;
       console.log(`[Pre1on1] sent briefing event=${String(ev.id).slice(0,8)} leader=${String(ev.related_to_collaborator_id).slice(0,8)} → ${recipient.full_name}`);
