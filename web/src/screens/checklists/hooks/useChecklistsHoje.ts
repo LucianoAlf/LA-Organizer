@@ -1,8 +1,17 @@
 // Sprint 23 — useChecklistsHoje (work + personal de hoje)
+// Schema mapping:
+//  - personal_checklists.owner_collab_id (não user_id)
+//  - personal_checklists.list_type (não type)
+//  - personal_checklists.is_active (true = visível; archived → is_active=false)
+//  - personal_checklist_items.is_done (não is_checked) + sem filtro is_active
+//  - Pra esta sprint, listas pessoais usam o modelo simples (is_done direto no item).
+//    Recorrência (personal_checklist_completions) entra em sprint futura quando
+//    todo o fluxo Hoje/reset diário for adaptado.
 
 import { useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../../../lib/supabase';
+import { useAuth } from '../../../contexts/AuthContext';
 
 export interface ChecklistItem {
   id: string;
@@ -51,8 +60,10 @@ export type ChecklistHoje = WorkChecklistHoje | PersonalChecklistHoje;
 
 export function useChecklistsHoje() {
   const qc = useQueryClient();
+  const { collaborator } = useAuth();
+  const collabId = collaborator?.id ?? null;
 
-  // Sprint 23 — subscribe a mudanças em realtime (TOM marca via WhatsApp → PWA atualiza)
+  // Sprint 23 — realtime: TOM marca via WhatsApp → PWA atualiza instantâneo
   useEffect(() => {
     const ch = supabase
       .channel('checklists-hoje-realtime')
@@ -74,7 +85,7 @@ export function useChecklistsHoje() {
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'personal_checklist_item_completions' },
+        { event: '*', schema: 'public', table: 'personal_checklist_items' },
         () => {
           qc.invalidateQueries({ queryKey: ['checklists-hoje'] });
         }
@@ -93,12 +104,11 @@ export function useChecklistsHoje() {
   }, [qc]);
 
   return useQuery<{ work: WorkChecklistHoje[]; personal: PersonalChecklistHoje[] }>({
-    queryKey: ['checklists-hoje'],
+    queryKey: ['checklists-hoje', collabId],
+    enabled: !!collabId,
     queryFn: async () => {
       const today = new Date().toISOString().slice(0, 10);
-      const { data: userData } = await supabase.auth.getUser();
-      const user = userData.user;
-      if (!user) throw new Error('Não autenticado');
+      if (!collabId) throw new Error('Sem colaborador no contexto');
 
       // 1. Work: completions de hoje com itens + extras
       const { data: workComps, error: e1 } = await supabase
@@ -114,9 +124,12 @@ export function useChecklistsHoje() {
         `
         )
         .eq('reference_date', today)
-        .eq('collaborator_id', user.id);
+        .eq('collaborator_id', collabId);
 
-      if (e1) throw e1;
+      if (e1) {
+        console.error('[useChecklistsHoje] work query error:', e1);
+        throw e1;
+      }
 
       const work: WorkChecklistHoje[] = (workComps || []).map((c: any) => {
         const tpl = c.op_checklists;
@@ -159,51 +172,45 @@ export function useChecklistsHoje() {
         };
       });
 
-      // 2. Personal: listas do user + completions de hoje
+      // 2. Personal: usa schema antigo (is_done direto no item — sem completions por dia).
+      // Recorrência fica reservada pra próxima sprint quando o fluxo de reset diário entrar.
       const { data: personalLists, error: e2 } = await supabase
         .from('personal_checklists')
         .select(
           `
-          id, name, type, recurrence_type, archived_at, user_id,
-          personal_checklist_items ( id, description, sort_order, is_active ),
-          personal_checklist_completions ( id, completed_at, started_at, reference_date,
-            personal_checklist_item_completions ( id, item_id, is_checked, notes )
-          )
+          id, name, list_type, recurrence_type, is_active, owner_collab_id,
+          personal_checklist_items ( id, description, sort_order, is_done, note )
         `
         )
-        .eq('user_id', user.id)
-        .is('archived_at', null);
+        .eq('owner_collab_id', collabId)
+        .eq('is_active', true);
 
-      if (e2) throw e2;
+      if (e2) {
+        console.error('[useChecklistsHoje] personal query error:', e2);
+        throw e2;
+      }
 
       const personal: PersonalChecklistHoje[] = (personalLists || []).map((l: any) => {
-        const todayComp = (l.personal_checklist_completions || []).find(
-          (c: any) => c.reference_date === today
-        );
-        const itemCompletions = todayComp?.personal_checklist_item_completions || [];
         const items: ChecklistItem[] = (l.personal_checklist_items || [])
-          .filter((it: any) => it.is_active)
-          .sort((a: any, b: any) => a.sort_order - b.sort_order)
-          .map((it: any) => {
-            const ic = itemCompletions.find((x: any) => x.item_id === it.id);
-            return {
-              id: it.id,
-              description: it.description,
-              sort_order: it.sort_order,
-              is_checked: !!ic?.is_checked,
-              notes: ic?.notes ?? null,
-              item_completion_id: ic?.id ?? null,
-            };
-          });
+          .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+          .map((it: any) => ({
+            id: it.id,
+            description: it.description,
+            sort_order: it.sort_order ?? 0,
+            is_checked: !!it.is_done,
+            notes: it.note ?? null,
+            item_completion_id: it.id, // pra listas pessoais usamos o próprio item id
+          }));
+        const allDone = items.length > 0 && items.every((i) => i.is_checked);
         return {
           scope: 'personal' as const,
-          completion_id: todayComp?.id ?? null,
+          completion_id: l.id, // usa o próprio checklist id como completion (modelo simples)
           checklist_id: l.id,
           name: l.name,
-          type: l.type || 'general',
+          type: l.list_type || 'general',
           recurrence_type: l.recurrence_type || 'once',
           items,
-          completed_at: todayComp?.completed_at ?? null,
+          completed_at: allDone ? new Date().toISOString() : null,
           reference_date: today,
         };
       });
@@ -211,5 +218,6 @@ export function useChecklistsHoje() {
       return { work, personal };
     },
     staleTime: 30_000,
+    retry: 1,
   });
 }

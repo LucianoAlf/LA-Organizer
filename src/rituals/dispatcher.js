@@ -2597,6 +2597,12 @@ async function run(opts = {}) {
     await pre1on1.tick();
   } catch (err) { console.error('[Pre1on1] outer err:', err.message); }
 
+  // Sprint 29.3 — Scorecard semanal (segunda 8h director, 9h cada líder)
+  try {
+    const mondayScorecard = require('./monday-scorecard');
+    await mondayScorecard.tick();
+  } catch (err) { console.error('[Scorecard] outer err:', err.message); }
+
   // Sprint 23 — dispatch de listas pessoais recorrentes
   // Roda só ao redor das 00:30 BRT (uma vez por dia, mesma janela do recurrence-materializer)
   if (now.hour === 0 && now.minute <= 45) {

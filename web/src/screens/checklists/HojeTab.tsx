@@ -9,8 +9,16 @@ type Mode = 'work' | 'personal';
 
 export function HojeTab() {
   const [mode, setMode] = useState<Mode>('work');
-  const { data, isLoading } = useChecklistsHoje();
+  const { data, isLoading, error } = useChecklistsHoje();
   const [openId, setOpenId] = useState<string | null>(null);
+
+  if (error) {
+    return (
+      <div className="p-6 text-danger text-sm">
+        Erro ao carregar checklists: {String((error as Error).message || error)}
+      </div>
+    );
+  }
 
   if (isLoading || !data) {
     return <div className="p-6 text-fg/40">Carregando…</div>;

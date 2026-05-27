@@ -752,6 +752,15 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
     }
   }
 
+  // Sprint 29.3 — Skill scorecard-semanal: ativa pra director OU manager/coord
+  // quando pergunta sobre o scorecard (recebido segunda 8h/9h).
+  if (collab && (collab.role === 'director' || collab.role === 'manager' || collab.role === 'coordinator' || collab.has_coord_permissions === true)) {
+    const SCORECARD_RE = /scorecard|fechamento|closure|minha\s+semana|sua\s+semana|nossa\s+semana|melhor\s+semana|pior\s+(?:semana|bottleneck)|comparativo|comparar.*(?:semana|m[eê]s)|evolu[çc][ãa]o\s+(?:do|da)\s+\w+|delta/i;
+    if (SCORECARD_RE.test(String(lastUserMessage || ''))) {
+      return { name: 'scorecard-semanal', body: loadSkill('scorecard-semanal') };
+    }
+  }
+
   // Sprint 29.1 — Skills de governança: sanitizar/diagnosticar/escalar.
   // Carrega TODAS quando contexto for de governança (director + gatilho específico).
   // Empilhamos as 3 num único body porque pickSkill retorna 1 skill.

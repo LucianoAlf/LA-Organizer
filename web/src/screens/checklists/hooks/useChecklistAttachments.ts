@@ -3,6 +3,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../../../lib/supabase';
+import { useAuth } from '../../../contexts/AuthContext';
 
 type Scope = 'work' | 'personal';
 
@@ -20,6 +21,7 @@ interface AttachmentRow {
 
 export function useChecklistAttachments(scope: Scope, itemCompletionId: string | null) {
   const qc = useQueryClient();
+  const { collaborator } = useAuth();
   const queryKey = ['checklist-attachments', scope, itemCompletionId];
 
   const list = useQuery<AttachmentRow[]>({
@@ -41,12 +43,14 @@ export function useChecklistAttachments(scope: Scope, itemCompletionId: string |
   const upload = useMutation({
     mutationFn: async ({ file }: { file: File }) => {
       if (!itemCompletionId) throw new Error('Sem item_completion_id (toque o item ao menos uma vez primeiro)');
+      if (!collaborator?.id) throw new Error('Sem colaborador');
+      // Storage paths usam auth.uid() (foldername[2]) — RLS exige isso
       const { data: userData } = await supabase.auth.getUser();
-      const user = userData.user;
-      if (!user) throw new Error('Sem usuário');
+      const authUid = userData.user?.id;
+      if (!authUid) throw new Error('Sem auth.uid()');
 
       const ext = (file.name.split('.').pop() || 'bin').toLowerCase();
-      const path = `${scope}/${user.id}/${itemCompletionId}/${crypto.randomUUID()}.${ext}`;
+      const path = `${scope}/${authUid}/${itemCompletionId}/${crypto.randomUUID()}.${ext}`;
 
       const { error: upErr } = await supabase.storage
         .from('checklist-attachments')
@@ -60,7 +64,7 @@ export function useChecklistAttachments(scope: Scope, itemCompletionId: string |
         file_name: file.name,
         mime_type: file.type,
         size_bytes: file.size,
-        uploaded_by: user.id,
+        uploaded_by: authUid,
       });
       if (insErr) throw insErr;
     },

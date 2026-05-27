@@ -3,6 +3,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../../lib/supabase';
+import { useAuth } from '../../contexts/AuthContext';
 
 interface KpiData {
   feitas: number;
@@ -13,20 +14,21 @@ interface KpiData {
 }
 
 export function KpiStripe() {
-  const { data, isLoading } = useQuery<KpiData>({
-    queryKey: ['checklists-kpi'],
+  const { collaborator } = useAuth();
+  const collabId = collaborator?.id ?? null;
+  const { data, isLoading, error } = useQuery<KpiData>({
+    queryKey: ['checklists-kpi', collabId],
+    enabled: !!collabId,
     queryFn: async () => {
       const today = new Date().toISOString().slice(0, 10);
       const monthAgo = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
-      const { data: userData } = await supabase.auth.getUser();
-      const user = userData.user;
-      if (!user) throw new Error('Sem usuário');
+      if (!collabId) throw new Error('Sem colaborador');
 
       // Hoje: feitas, pendentes, atrasadas
       const { data: hoje } = await supabase
         .from('op_checklist_completions')
         .select('id, completed_at, dispatched_at, op_checklists!inner(completion_threshold)')
-        .eq('collaborator_id', user.id)
+        .eq('collaborator_id', collabId)
         .eq('reference_date', today);
 
       const sixHoursAgo = new Date(Date.now() - 6 * 3600000);
@@ -43,7 +45,7 @@ export function KpiStripe() {
       const { data: mes } = await supabase
         .from('op_checklist_completions')
         .select('id, completed_at')
-        .eq('collaborator_id', user.id)
+        .eq('collaborator_id', collabId)
         .gte('reference_date', monthAgo);
       const totalMes = mes?.length || 0;
       const completedMes = (mes || []).filter((c: any) => c.completed_at).length;
@@ -59,6 +61,14 @@ export function KpiStripe() {
     },
     staleTime: 60_000,
   });
+
+  if (error) {
+    return (
+      <div className="mx-6 my-3 px-4 py-2 bg-bg-surface border border-danger/40 rounded-md text-xs text-danger">
+        Erro nos KPIs: {String((error as Error).message || error).slice(0, 200)}
+      </div>
+    );
+  }
 
   if (isLoading || !data) {
     return (
