@@ -2395,6 +2395,18 @@ function splitUserToken(raw) {
   return { base: parts[0] || '', suffix: parts[1] || null };
 }
 
+// Aliases aceitos pra resiliência contra hallucination do LLM (ex: emitiu
+// project_code em vez de token). Sempre normalizamos pra { token }.
+const APPROVAL_TOKEN_KEYS = ['token', 'project_code', 'code', 'name', 'slug', 'project'];
+function extractApprovalTokenFromParsed(parsed) {
+  if (!parsed || typeof parsed !== 'object') return null;
+  for (const k of APPROVAL_TOKEN_KEYS) {
+    const v = parsed[k];
+    if (typeof v === 'string' && v.trim()) return v.trim().toUpperCase();
+  }
+  return null;
+}
+
 function parseProjectApproveMarker(text) {
   if (typeof text !== 'string') return null;
   const re = /<<PROJECT_APPROVE>>\s*([\s\S]*?)\s*<<END>>/i;
@@ -2406,7 +2418,7 @@ function parseProjectApproveMarker(text) {
     logSchemaErr('PROJECT_APPROVE', ['invalid_json: ' + err.message], m[1]);
     return { malformed: true, cleanText };
   }
-  const token = parsed && typeof parsed.token === 'string' ? parsed.token.trim().toUpperCase() : null;
+  const token = extractApprovalTokenFromParsed(parsed);
   if (!token) {
     logSchemaErr('PROJECT_APPROVE', ['token:missing_or_invalid'], parsed);
     return { malformed: true, cleanText };
@@ -2425,7 +2437,7 @@ function parseProjectRejectMarker(text) {
     logSchemaErr('PROJECT_REJECT', ['invalid_json: ' + err.message], m[1]);
     return { malformed: true, cleanText };
   }
-  const token = parsed && typeof parsed.token === 'string' ? parsed.token.trim().toUpperCase() : null;
+  const token = extractApprovalTokenFromParsed(parsed);
   const reason = parsed && typeof parsed.reason === 'string' ? parsed.reason.trim() : null;
   if (!token) {
     logSchemaErr('PROJECT_REJECT', ['token:missing_or_invalid'], parsed);
@@ -5700,7 +5712,8 @@ async function processMessage(phone, text, raw = {}) {
     if (parsedAp && parsedAp.malformed) {
       console.warn('[Project] WARN: malformed PROJECT_APPROVE marker');
       await logMarker(collab.id, 'PROJECT_APPROVE', 'rejected', 'schema_invalid', reply);
-      reply = parsedAp.cleanText || reply;
+      // Não vaza o texto "aprovado" alucinado — substitui por erro claro.
+      reply = '_tive um problema técnico processando a aprovação. Manda de novo no formato:_ *APROVA <NOME-DO-PROJETO>*';
     } else if (parsedAp) {
       const r = await applyProjectApprove(collab, parsedAp);
       if (!r.ok) {
@@ -5721,7 +5734,8 @@ async function processMessage(phone, text, raw = {}) {
     if (parsedRj && parsedRj.malformed) {
       console.warn('[Project] WARN: malformed PROJECT_REJECT marker');
       await logMarker(collab.id, 'PROJECT_REJECT', 'rejected', 'schema_invalid', reply);
-      reply = parsedRj.cleanText || reply;
+      // Não vaza o texto "rejeitado" alucinado — substitui por erro claro.
+      reply = '_tive um problema técnico processando a rejeição. Manda de novo no formato:_ *REJEITA <NOME-DO-PROJETO> motivo*';
     } else if (parsedRj) {
       const r = await applyProjectReject(collab, parsedRj);
       if (!r.ok) {

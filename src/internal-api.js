@@ -55,6 +55,28 @@ function extractApprovalToken(name, id) {
   return suffix ? `${base}-${suffix}` : base;
 }
 
+// Versão async: omite o sufixo -XXXX quando não há ambiguidade
+// (zero ou um único pending com a mesma base). Só usa sufixo quando há colisão.
+async function extractApprovalTokenSmart(name, id) {
+  const base = extractApprovalTokenBase(name);
+  if (!id) return base;
+  try {
+    const { data: pendings } = await supabase
+      .from('projects')
+      .select('id, name')
+      .eq('status', 'pending_approval')
+      .eq('requires_approval', true);
+    const collisions = (pendings || []).filter(p =>
+      p.id !== id && extractApprovalTokenBase(p.name) === base
+    );
+    if (collisions.length === 0) return base;
+  } catch (err) {
+    console.warn('[InternalAPI] extractApprovalTokenSmart fallback:', err.message);
+  }
+  const suffix = String(id).replace(/-/g, '').slice(0, 4).toUpperCase();
+  return suffix ? `${base}-${suffix}` : base;
+}
+
 const CATEGORY_LABELS = {
   pedagogical: 'Pedagógico', commercial: 'Comercial', administrative: 'Administrativo',
   operational: 'Operacional', event: 'Evento', infrastructure: 'Infraestrutura',
@@ -432,7 +454,7 @@ router.post('/internal/project-created', requireInternalSecret, async (req, res)
     }
 
     if (supervisor && supervisor.phone) {
-      const token = extractApprovalToken(project.name, project.id);
+      const token = await extractApprovalTokenSmart(project.name, project.id);
       const supMsg =
         `*${creator.full_name}* criou um projeto novo:\n\n` +
         `🗂️ *${project.name}*\n` +
