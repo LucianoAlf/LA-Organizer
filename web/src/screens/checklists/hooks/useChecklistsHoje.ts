@@ -1,6 +1,7 @@
 // Sprint 23 — useChecklistsHoje (work + personal de hoje)
 
-import { useQuery } from '@tanstack/react-query';
+import { useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../../../lib/supabase';
 
 export interface ChecklistItem {
@@ -49,6 +50,48 @@ export interface PersonalChecklistHoje {
 export type ChecklistHoje = WorkChecklistHoje | PersonalChecklistHoje;
 
 export function useChecklistsHoje() {
+  const qc = useQueryClient();
+
+  // Sprint 23 — subscribe a mudanças em realtime (TOM marca via WhatsApp → PWA atualiza)
+  useEffect(() => {
+    const ch = supabase
+      .channel('checklists-hoje-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'op_checklist_item_completions' },
+        () => {
+          qc.invalidateQueries({ queryKey: ['checklists-hoje'] });
+          qc.invalidateQueries({ queryKey: ['checklists-kpi'] });
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'op_checklist_completions' },
+        () => {
+          qc.invalidateQueries({ queryKey: ['checklists-hoje'] });
+          qc.invalidateQueries({ queryKey: ['checklists-kpi'] });
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'personal_checklist_item_completions' },
+        () => {
+          qc.invalidateQueries({ queryKey: ['checklists-hoje'] });
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'checklist_attachments' },
+        () => {
+          qc.invalidateQueries({ queryKey: ['checklist-attachments'] });
+        }
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(ch);
+    };
+  }, [qc]);
+
   return useQuery<{ work: WorkChecklistHoje[]; personal: PersonalChecklistHoje[] }>({
     queryKey: ['checklists-hoje'],
     queryFn: async () => {

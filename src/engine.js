@@ -3,6 +3,7 @@
 // Phase 1: Onboarding state machine via marker block + ritual entry point.
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const collaboratorService = require('./services/collaborator');
 const whatsapp = require('./services/whatsapp');
 const metricsService = require('./services/metrics');
@@ -605,6 +606,123 @@ async function applyChecklistAction(collaborator, parsed) {
   }
 
   return { ok: true, pct, doneCount, totalCount, isLate, threshold };
+}
+
+// ============================================================
+// Sprint 23 — 3 markers novos pra fluxo de checklist via WhatsApp:
+// CHECKLIST_ATTACHMENT, DERIVE_TASK, CHECKLIST_JUSTIFY
+// ============================================================
+
+function parseChecklistAttachmentMarker(text) {
+  if (!text) return null;
+  const m = text.match(/<<CHECKLIST_ATTACHMENT>>\s*([\s\S]*?)\s*<<END>>/i);
+  if (!m) return null;
+  try {
+    const json = JSON.parse(m[1].trim());
+    if (!json.completion_id || !json.item_id || !json.media_id || !json.mime_type) return null;
+    return json;
+  } catch { return null; }
+}
+
+async function applyChecklistAttachment({ completion_id, item_id, mime_type, file_name, media_id, collaborator }) {
+  const mediaUrl = `${process.env.UAZAPI_URL}/media/${media_id}`;
+  const resp = await fetch(mediaUrl, { headers: { token: process.env.UAZAPI_TOKEN } });
+  if (!resp.ok) throw new Error(`UAZAPI media fetch falhou: ${resp.status}`);
+  const buf = Buffer.from(await resp.arrayBuffer());
+
+  const { data: ic, error: icErr } = await supabase
+    .from('op_checklist_item_completions')
+    .select('id')
+    .eq('completion_id', completion_id)
+    .eq('item_id', item_id)
+    .maybeSingle();
+  if (icErr) throw icErr;
+  if (!ic) throw new Error('item_completion não existe — colab precisa marcar/desmarcar o item primeiro');
+
+  const ext = (mime_type.split('/')[1] || 'bin').toLowerCase();
+  const path = `work/${collaborator.id}/${ic.id}/${crypto.randomUUID()}.${ext}`;
+  const { error: upErr } = await supabase.storage
+    .from('checklist-attachments')
+    .upload(path, buf, { contentType: mime_type, cacheControl: '3600' });
+  if (upErr) throw upErr;
+
+  const { error: insErr } = await supabase.from('checklist_attachments').insert({
+    scope: 'work',
+    item_completion_id: ic.id,
+    storage_path: path,
+    file_name: file_name || `anexo.${ext}`,
+    mime_type,
+    size_bytes: buf.byteLength,
+    uploaded_by: collaborator.id,
+  });
+  if (insErr) throw insErr;
+
+  console.log(`[ChecklistAttachment] OK item_completion=${ic.id} path=${path}`);
+  return { ok: true, path };
+}
+
+function parseDeriveTaskMarker(text) {
+  if (!text) return null;
+  const m = text.match(/<<DERIVE_TASK>>\s*([\s\S]*?)\s*<<END>>/i);
+  if (!m) return null;
+  try {
+    const json = JSON.parse(m[1].trim());
+    if (!json.completion_id || !json.item_id || !json.title) return null;
+    return json;
+  } catch { return null; }
+}
+
+async function applyDeriveTask({ completion_id, item_id, title, description, collaborator }) {
+  const { data: task, error: tErr } = await supabase
+    .from('tasks')
+    .insert({
+      owner_id: collaborator.id,
+      title,
+      description: description || null,
+      status: 'open',
+      context: 'work',
+      created_via: 'tom_checklist_derive',
+    })
+    .select('id')
+    .single();
+  if (tErr) throw tErr;
+
+  const { error: linkErr } = await supabase
+    .from('op_checklist_item_completions')
+    .upsert({
+      completion_id,
+      item_id,
+      derived_task_id: task.id,
+    }, { onConflict: 'completion_id,item_id' });
+  if (linkErr) throw linkErr;
+
+  console.log(`[DeriveTask] OK task=${task.id} from completion=${completion_id} item=${item_id}`);
+  return { ok: true, task_id: task.id };
+}
+
+function parseChecklistJustifyMarker(text) {
+  if (!text) return null;
+  const m = text.match(/<<CHECKLIST_JUSTIFY>>\s*([\s\S]*?)\s*<<END>>/i);
+  if (!m) return null;
+  try {
+    const json = JSON.parse(m[1].trim());
+    if (!json.completion_id || !json.justification) return null;
+    return json;
+  } catch { return null; }
+}
+
+async function applyChecklistJustify({ completion_id, justification, collaborator }) {
+  const { error } = await supabase
+    .from('op_checklist_completions')
+    .update({
+      justification,
+      justified_at: new Date().toISOString(),
+      justified_by_id: collaborator.id,
+    })
+    .eq('id', completion_id);
+  if (error) throw error;
+  console.log(`[ChecklistJustify] OK completion=${completion_id}`);
+  return { ok: true };
 }
 
 // Sprint 13 F1 — Marker <<ANNOUNCEMENT_ACTION>>. TOM emite quando director/coordinator
@@ -2070,6 +2188,17 @@ async function applyEventActions(collaborator, events) {
       if (typeof e.recurrence_rule === 'string' && e.recurrence_rule.trim()) {
         row.recurrence_rule = e.recurrence_rule.trim().replace(/^RRULE:/i, '');
       }
+      // Sprint 29.2 — related_to_collaborator_id pra eventos 1:1.
+      // TOM pode passar explícito (skill criar-compromisso atualizada) OU
+      // engine infere do título: "1:1 com X", "conversa com X", "alinhamento com X".
+      if (typeof e.related_to_collaborator_id === 'string' && e.related_to_collaborator_id) {
+        row.related_to_collaborator_id = e.related_to_collaborator_id;
+      } else if (typeof e.related_to_name === 'string' && e.related_to_name.trim()) {
+        try {
+          const inferred = await findCollaboratorByName(e.related_to_name.trim());
+          if (inferred?.id) row.related_to_collaborator_id = inferred.id;
+        } catch (_) { /* silent */ }
+      }
       const { data, error } = await supabase
         .from('events')
         .insert(row)
@@ -2081,6 +2210,22 @@ async function applyEventActions(collaborator, events) {
         continue;
       }
       console.log(`[Event] create "${row.title.slice(0, 60)}" cat=${row.category} mod=${row.modality} ctx=${ctx} by ${last4} owner=${String(eventOwnerId).slice(0,8)} (id=${String(data?.id || '').slice(0, 8)})`);
+      // Sprint 29.2 — registra na timeline do líder se for 1:1
+      if (row.related_to_collaborator_id && data?.id) {
+        const isOneOnOne = /1\s*:?\s*1|one[\s-]?on[\s-]?one|conversa\s+com|sentar\s+com|alinhamento\s+com|c[áa]?\s+com\s+/i.test(row.title || '');
+        if (isOneOnOne) {
+          try {
+            const leaderTimeline = require('./services/leader-timeline');
+            await leaderTimeline.append({
+              leaderId: row.related_to_collaborator_id,
+              eventType: '1on1_scheduled',
+              eventData: { title: row.title, scheduled_for: row.start_at, scheduled_by: collaborator.id },
+              relatedEventId: data.id,
+            });
+            console.log(`[LeaderTimeline] 1on1_scheduled for leader=${String(row.related_to_collaborator_id).slice(0,8)} event=${String(data.id).slice(0,8)}`);
+          } catch (lte) { console.warn('[LeaderTimeline] append err:', lte.message); }
+        }
+      }
       // Sprint 29.4 — se evento é TEMPLATE recorrente, materializa próximas instâncias
       if (row.recurrence_rule && data?.id) {
         try {
@@ -3164,6 +3309,31 @@ async function applyTaskActions(collaborator, actions) {
           try {
             const { resetOnComplete } = require('./services/escalation-tracker');
             await resetOnComplete(t.id);
+          } catch (e) { /* não-fatal */ }
+          // Sprint 29.2 — registra task_closed na timeline do dono (se for líder).
+          // Filtro: só persiste se assigned_to é manager/coordinator/director.
+          // Pra collaborator regular, timeline não interessa (não tem briefing).
+          try {
+            if (fullTask?.assigned_to) {
+              const { data: owner } = await supabase
+                .from('collaborators')
+                .select('id, role, has_coord_permissions')
+                .eq('id', fullTask.assigned_to)
+                .maybeSingle();
+              const isLeader = owner && (
+                owner.role === 'manager' || owner.role === 'coordinator' ||
+                owner.role === 'director' || owner.has_coord_permissions === true
+              );
+              if (isLeader) {
+                const leaderTimeline = require('./services/leader-timeline');
+                await leaderTimeline.append({
+                  leaderId: owner.id,
+                  eventType: 'task_closed',
+                  eventData: { title: fullTask.title, completed_by: collaborator.id },
+                  relatedTaskId: t.id,
+                });
+              }
+            }
           } catch (e) { /* não-fatal */ }
           await logAgentNote(t.id, `Concluída por ${nameForCollab(collaborator)}`, collaborator.id);
           await notifyTaskCreatorOfAction(fullTask, collaborator, 'complete');
@@ -5990,6 +6160,43 @@ async function processMessage(phone, text, raw = {}) {
           : `⚠️ ${result.doneCount}/${result.totalCount} itens (${result.pct}%) — abaixo do mínimo (${result.threshold}%). Registrado como parcial.${lateNote}`;
       }
       reply = base || reply;
+    }
+
+    // Sprint 23 — 3 markers novos
+    const parsedAttach = parseChecklistAttachmentMarker(reply);
+    if (parsedAttach) {
+      try {
+        await applyChecklistAttachment({ ...parsedAttach, collaborator: collab });
+        await logMarker(collab.id, 'CHECKLIST_ATTACHMENT', 'executed', `path=ok`, null);
+        reply = reply.replace(/<<CHECKLIST_ATTACHMENT>>[\s\S]*?<<END>>/i, '').trim() || 'Anexo registrado ✅';
+      } catch (e) {
+        await logMarker(collab.id, 'CHECKLIST_ATTACHMENT', 'rejected', e.message.slice(0,200), null);
+        console.error('[CHECKLIST_ATTACHMENT] failed:', e.message);
+      }
+    }
+
+    const parsedDerive = parseDeriveTaskMarker(reply);
+    if (parsedDerive) {
+      try {
+        const r = await applyDeriveTask({ ...parsedDerive, collaborator: collab });
+        await logMarker(collab.id, 'DERIVE_TASK', 'executed', `task=${r.task_id}`, null);
+        reply = reply.replace(/<<DERIVE_TASK>>[\s\S]*?<<END>>/i, '').trim() || `✅ Tarefa criada: "${parsedDerive.title}"`;
+      } catch (e) {
+        await logMarker(collab.id, 'DERIVE_TASK', 'rejected', e.message.slice(0,200), null);
+        console.error('[DERIVE_TASK] failed:', e.message);
+      }
+    }
+
+    const parsedJustify = parseChecklistJustifyMarker(reply);
+    if (parsedJustify) {
+      try {
+        await applyChecklistJustify({ ...parsedJustify, collaborator: collab });
+        await logMarker(collab.id, 'CHECKLIST_JUSTIFY', 'executed', `len=${parsedJustify.justification.length}`, null);
+        reply = reply.replace(/<<CHECKLIST_JUSTIFY>>[\s\S]*?<<END>>/i, '').trim() || 'Anotei a justificativa ✅';
+      } catch (e) {
+        await logMarker(collab.id, 'CHECKLIST_JUSTIFY', 'rejected', e.message.slice(0,200), null);
+        console.error('[CHECKLIST_JUSTIFY] failed:', e.message);
+      }
     }
   }
 

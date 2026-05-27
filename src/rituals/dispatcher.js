@@ -2517,6 +2517,67 @@ async function autoArchiveStale(now = new Date()) {
   } catch (e) { /* log opcional */ }
 }
 
+// Sprint 23 — dispatch de listas pessoais recorrentes (sem WhatsApp; só cria
+// completion no banco). Idempotente via UNIQUE (checklist_id, user_id, reference_date).
+// Roda 1× ao redor das 00:30 BRT pra inicializar o "Hoje" da galera.
+async function dispatchPersonalRecurrentes() {
+  const today = new Date();
+  const refDate = today.toISOString().slice(0, 10);
+  const dow = today.getDay() + 1; // JS 0-6 (dom-sáb) → app 1-7
+  const dom = today.getDate();
+
+  console.log(`[Rituals] dispatchPersonalRecurrentes ref=${refDate} dow=${dow} dom=${dom}`);
+
+  const { data: lists, error } = await supabase
+    .from('personal_checklists')
+    .select('id, user_id, recurrence_type, days_of_week, day_of_month, name')
+    .neq('recurrence_type', 'once')
+    .is('archived_at', null);
+
+  if (error) {
+    console.error('[Rituals] dispatchPersonalRecurrentes erro select:', error.message);
+    return { created: 0, errors: 1 };
+  }
+
+  let created = 0;
+  let errors = 0;
+
+  for (const l of lists || []) {
+    let shouldDispatch = false;
+    if (l.recurrence_type === 'daily') {
+      shouldDispatch = true;
+    } else if (l.recurrence_type === 'weekly' && Array.isArray(l.days_of_week) && l.days_of_week.includes(dow)) {
+      shouldDispatch = true;
+    } else if (l.recurrence_type === 'monthly' && l.day_of_month === dom) {
+      shouldDispatch = true;
+    }
+    if (!shouldDispatch) continue;
+
+    const { error: insErr } = await supabase
+      .from('personal_checklist_completions')
+      .insert({
+        checklist_id: l.id,
+        user_id: l.user_id,
+        reference_date: refDate,
+        channel: 'cron',
+      });
+
+    if (insErr) {
+      if (insErr.code === '23505') {
+        // duplicate (já existe completion pra hoje) — ignora
+      } else {
+        console.error(`[Rituals] erro insert pcc list=${l.id}:`, insErr.message);
+        errors++;
+      }
+    } else {
+      created++;
+    }
+  }
+
+  console.log(`[Rituals] dispatchPersonalRecurrentes done: created=${created} errors=${errors}`);
+  return { created, errors };
+}
+
 async function run(opts = {}) {
   const now = nowSaoPaulo();
   console.log(`[Dispatcher] now=${now.ymd} ${String(now.hour).padStart(2,'0')}:${String(now.minute).padStart(2,'0')} dow=${now.dow}${opts.force ? ' force=' + opts.force : ''}${opts.phone ? ' phone=' + opts.phone.slice(-4) : ''}`);
@@ -2529,6 +2590,18 @@ async function run(opts = {}) {
     const recurrenceMaterializer = require('./recurrence-materializer');
     await recurrenceMaterializer.tick();
   } catch (err) { console.error('[Recurrence] outer err:', err.message); }
+
+  // Sprint 29.2 — Pré-briefing de 1:1 (varre eventos próximos 30min, idempotente)
+  try {
+    const pre1on1 = require('./pre-1on1-watcher');
+    await pre1on1.tick();
+  } catch (err) { console.error('[Pre1on1] outer err:', err.message); }
+
+  // Sprint 23 — dispatch de listas pessoais recorrentes
+  // Roda só ao redor das 00:30 BRT (uma vez por dia, mesma janela do recurrence-materializer)
+  if (now.hour === 0 && now.minute <= 45) {
+    try { await dispatchPersonalRecurrentes(); } catch (err) { console.error('[PersonalRec] outer err:', err.message); }
+  }
 
   const collabs = await listCollaborators(opts.phone);
   if (!collabs.length) {
@@ -3644,6 +3717,31 @@ async function checkOverdueAlerts(ymdToday) {
         const { incrementRequestCount } = require('../services/escalation-tracker');
         await incrementRequestCount(t.id);
       } catch (e) { /* não-fatal */ }
+      // Sprint 29.2 — registra task_overdue na timeline do dono (se líder).
+      // Idempotência: só na PRIMEIRA detecção (count <= 1) pra não inflar timeline.
+      try {
+        const { data: tk } = await supabase
+          .from('tasks').select('coordination_request_count, assigned_to')
+          .eq('id', t.id).maybeSingle();
+        if (tk && (tk.coordination_request_count || 0) <= 1 && tk.assigned_to) {
+          const { data: owner } = await supabase
+            .from('collaborators').select('id, role, has_coord_permissions')
+            .eq('id', tk.assigned_to).maybeSingle();
+          const isLeader = owner && (
+            owner.role === 'manager' || owner.role === 'coordinator' ||
+            owner.role === 'director' || owner.has_coord_permissions === true
+          );
+          if (isLeader) {
+            const leaderTimeline = require('../services/leader-timeline');
+            await leaderTimeline.append({
+              leaderId: owner.id,
+              eventType: 'task_overdue',
+              eventData: { title: t.title, days_late: n },
+              relatedTaskId: t.id,
+            });
+          }
+        }
+      } catch (e) { /* não-fatal */ }
       await supabase.from('conversation_history').insert({
         collaborator_id: collab.id,
         direction: 'outbound',
@@ -4475,4 +4573,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { run, dispatchChecklists, dispatchAnnouncements, remindUnconfirmedAnnouncements, notifyCoordinators, remindEventTasks, remindOperationalTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined, isFirstMondayOfMonth, isLastFridayOfMonth, listLeadership, checkMonthlyPlanning, checkMonthlyClosing, dispatchMonthlyAgenda, expirarReservasVencidas };
+module.exports = { run, dispatchChecklists, dispatchPersonalRecurrentes, dispatchAnnouncements, remindUnconfirmedAnnouncements, notifyCoordinators, remindEventTasks, remindOperationalTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined, isFirstMondayOfMonth, isLastFridayOfMonth, listLeadership, checkMonthlyPlanning, checkMonthlyClosing, dispatchMonthlyAgenda, expirarReservasVencidas };

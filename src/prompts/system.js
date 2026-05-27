@@ -743,6 +743,15 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
     return { name: 'criar-recorrencia', body: loadSkill('criar-recorrencia') };
   }
 
+  // Sprint 29.2 — Skill briefing-pre-1on1: ativa quando director pergunta
+  // sobre líder específico ou sobre um briefing recebido.
+  if (collab && collab.role === 'director') {
+    const BRIEFING_RE = /briefing|me\s+explica\s+(?:esse|isso|o)|resumo\s+(?:do|da|de)\s+\w+|por\s+que\s+(?:a|o)\s+\w+\s+t[áa]|o\s+que\s+combinei|combinamos\s+com|pra\s+1\s*:\s*1\s+com|antes\s+da?\s+(?:reuni[ãa]o|1\s*:\s*1)/i;
+    if (BRIEFING_RE.test(String(lastUserMessage || ''))) {
+      return { name: 'briefing-pre-1on1', body: loadSkill('briefing-pre-1on1') };
+    }
+  }
+
   // Sprint 29.1 — Skills de governança: sanitizar/diagnosticar/escalar.
   // Carrega TODAS quando contexto for de governança (director + gatilho específico).
   // Empilhamos as 3 num único body porque pickSkill retorna 1 skill.

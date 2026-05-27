@@ -25,6 +25,9 @@ export async function createPersonalChecklist(input: {
   listType: PersonalListType
   context: PersonalListContext
   initialItems: string[]
+  recurrence_type?: 'once' | 'daily' | 'weekly' | 'monthly'
+  days_of_week?: number[] | null
+  day_of_month?: number | null
 }): Promise<PersonalChecklist> {
   const { data: list, error: e1 } = await supabase
     .from('personal_checklists')
@@ -33,6 +36,9 @@ export async function createPersonalChecklist(input: {
       name: input.name,
       list_type: input.listType,
       context: input.context,
+      recurrence_type: input.recurrence_type ?? 'once',
+      days_of_week: input.days_of_week ?? null,
+      day_of_month: input.day_of_month ?? null,
     })
     .select('*')
     .single()

@@ -10,6 +10,7 @@ import { BottomSheet } from './BottomSheet'
 import { Button } from './Button'
 import { useAuth } from '../contexts/AuthContext'
 import { createPersonalChecklist } from '../lib/personalChecklists'
+import { RecurrenceField, type RecurrenceValue } from '../screens/checklists/RecurrenceField'
 import {
   PERSONAL_LIST_TYPE_ICON,
   PERSONAL_LIST_TYPE_LABEL,
@@ -34,6 +35,7 @@ export function PersonalChecklistSheet({ open, onClose, context = 'personal' }: 
   const [listType, setListType] = useState<PersonalListType>(context === 'work' ? 'general' : 'shopping')
   const [items, setItems] = useState<string[]>([])
   const [newItemText, setNewItemText] = useState('')
+  const [recurrence, setRecurrence] = useState<RecurrenceValue>({ recurrence_type: 'once' })
 
   useEffect(() => {
     if (!open) return
@@ -41,6 +43,7 @@ export function PersonalChecklistSheet({ open, onClose, context = 'personal' }: 
     setListType(context === 'work' ? 'general' : 'shopping')
     setItems([])
     setNewItemText('')
+    setRecurrence({ recurrence_type: 'once' })
   }, [open, context])
 
   const createMutation = useMutation({
@@ -50,6 +53,9 @@ export function PersonalChecklistSheet({ open, onClose, context = 'personal' }: 
       listType,
       context,
       initialItems: items,
+      recurrence_type: recurrence.recurrence_type,
+      days_of_week: recurrence.days_of_week ?? null,
+      day_of_month: recurrence.day_of_month ?? null,
     }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['personal-checklists'] })
@@ -86,6 +92,11 @@ export function PersonalChecklistSheet({ open, onClose, context = 'personal' }: 
             className="w-full bg-bg-surface border border-border rounded-md px-3 py-2
                        text-body text-fg focus:outline-none focus:border-tom focus-ring"
           />
+        </div>
+
+        <div>
+          <label className="text-caption text-fg-muted block mb-2">Recorrência</label>
+          <RecurrenceField value={recurrence} onChange={setRecurrence} />
         </div>
 
         {context === 'personal' && (
