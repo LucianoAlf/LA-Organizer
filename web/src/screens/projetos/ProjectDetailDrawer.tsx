@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ExternalLink, Calendar, Users, Tag, Activity, Pencil } from 'lucide-react';
+import { ExternalLink, Calendar, Users, Tag, Activity, Pencil, Trash2 } from 'lucide-react';
 import { DetailDrawer } from '../../design/primitives/DetailDrawer';
 import { ProjectEditDrawer } from '../../components/ProjectEditDrawer';
 import type { Project } from '../../types';
@@ -15,6 +15,11 @@ interface ProjectDetailDrawerProps {
    * ProjectEditDrawer. O callback recebe o patch a aplicar no projeto.
    */
   onUpdate?: (patch: Partial<ProjectFull>) => void | Promise<void>;
+  /**
+   * Quando fornecido, exibe icone "Excluir" (trash) no footer e propaga
+   * pro ProjectEditDrawer. Confirmacao inline antes de disparar.
+   */
+  onDelete?: () => void | Promise<void>;
 }
 
 function formatDate(iso: string | null): string {
@@ -26,9 +31,11 @@ function formatDate(iso: string | null): string {
   }
 }
 
-export function ProjectDetailDrawer({ project, onClose, onUpdate }: ProjectDetailDrawerProps) {
+export function ProjectDetailDrawer({ project, onClose, onUpdate, onDelete }: ProjectDetailDrawerProps) {
   const navigate = useNavigate();
   const [editOpen, setEditOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   if (!project) {
     return <DetailDrawer open={false} onClose={onClose} title="">{null}</DetailDrawer>;
@@ -38,6 +45,18 @@ export function ProjectDetailDrawer({ project, onClose, onUpdate }: ProjectDetai
     if (!onUpdate) return;
     await onUpdate(patch);
     setEditOpen(false);
+  }
+
+  async function handleDeleteConfirmed() {
+    if (!onDelete) return;
+    try {
+      setDeleting(true);
+      await onDelete();
+      setConfirmDelete(false);
+      onClose();
+    } finally {
+      setDeleting(false);
+    }
   }
 
   const cat = CATEGORY_BADGE[project.category];
@@ -64,8 +83,41 @@ export function ProjectDetailDrawer({ project, onClose, onUpdate }: ProjectDetai
         </span>
       }
       footer={
-        onUpdate ? (
+        confirmDelete && onDelete ? (
           <div className="flex items-center gap-2">
+            <span className="text-[12px] text-fg-muted flex-1 truncate">
+              Excluir? Tarefas viram órfãs.
+            </span>
+            <button
+              type="button"
+              onClick={() => setConfirmDelete(false)}
+              disabled={deleting}
+              className="h-9 px-3 rounded-md text-[13px] text-fg hover:bg-bg-elevated transition-colors focus-ring disabled:opacity-50"
+            >
+              Não
+            </button>
+            <button
+              type="button"
+              onClick={handleDeleteConfirmed}
+              disabled={deleting}
+              className="h-9 px-3 rounded-md bg-danger text-white text-[13px] font-semibold hover:opacity-90 transition-opacity focus-ring disabled:opacity-50"
+            >
+              {deleting ? 'Excluindo…' : 'Sim, excluir'}
+            </button>
+          </div>
+        ) : onUpdate ? (
+          <div className="flex items-center gap-2">
+            {onDelete && (
+              <button
+                type="button"
+                aria-label="Excluir projeto"
+                title="Excluir projeto"
+                onClick={() => setConfirmDelete(true)}
+                className="h-9 w-9 flex items-center justify-center rounded-md text-fg-muted hover:text-danger hover:bg-bg-elevated transition-colors focus-ring"
+              >
+                <Trash2 size={14} />
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setEditOpen(true)}
@@ -166,6 +218,7 @@ export function ProjectDetailDrawer({ project, onClose, onUpdate }: ProjectDetai
         onClose={() => setEditOpen(false)}
         project={project as unknown as ProjectFull}
         onSave={handleSave}
+        onDelete={onDelete ? async () => { await onDelete(); setEditOpen(false); } : undefined}
       />
     )}
     </>

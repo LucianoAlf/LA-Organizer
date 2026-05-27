@@ -177,6 +177,21 @@ export function ProjetosDesktop() {
     onError: (err: Error) => showToast({ kind: 'error', title: 'Erro ao salvar', msg: err.message }),
   });
 
+  // Delete fisico do projeto (tasks viram orfas — comportamento ja documentado
+  // em ProjectCard/ProjectHeader). Disparado pelo ProjectDetailDrawer ou ProjectEditDrawer.
+  const deleteProjectMut = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from('projects').delete().eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['projects'] });
+      setSelected(null);
+      showToast({ kind: 'success', title: 'Projeto excluído' });
+    },
+    onError: (err: Error) => showToast({ kind: 'error', title: 'Erro ao excluir', msg: err.message }),
+  });
+
   // DnD do Kanban: arrastar card entre colunas muda o status do projeto.
   const moveStatusMut = useMutation({
     mutationFn: async ({ id, newStatus }: { id: string; newStatus: ProjectStatus }) => {
@@ -469,6 +484,10 @@ export function ProjetosDesktop() {
         onUpdate={async patch => {
           if (!selected) return;
           await updateProjectMut.mutateAsync({ id: selected.id, patch: patch as Partial<Project> });
+        }}
+        onDelete={async () => {
+          if (!selected) return;
+          await deleteProjectMut.mutateAsync(selected.id);
         }}
       />
     </>

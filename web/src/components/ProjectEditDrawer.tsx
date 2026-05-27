@@ -18,6 +18,8 @@ interface ProjectEditDrawerProps {
   onClose: () => void;
   project: ProjectFull;
   onSave: (patch: Partial<ProjectFull>) => void | Promise<void>;
+  /** Quando fornecido, exibe botão "Excluir" no rodapé (com confirmação inline). */
+  onDelete?: () => void | Promise<void>;
 }
 
 const CATEGORY_OPTIONS = (Object.keys(PROJECT_CATEGORY_LABELS) as ProjectCategory[]).map(v => ({
@@ -114,9 +116,11 @@ const LABEL_CLS = 'block text-label text-fg-muted uppercase tracking-wide mb-1';
 const INPUT_CLS = 'w-full h-10 px-3 rounded-md bg-bg-elevated border border-border text-body-md text-fg focus-ring';
 const TEXTAREA_CLS = 'w-full px-3 py-2 rounded-md bg-bg-elevated border border-border text-body-md text-fg focus-ring resize-none';
 
-export function ProjectEditDrawer({ open, onClose, project, onSave }: ProjectEditDrawerProps) {
+export function ProjectEditDrawer({ open, onClose, project, onSave, onDelete }: ProjectEditDrawerProps) {
   const [form, setForm] = useState<FormState>(() => toForm(project));
   const [saving, setSaving] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   // Sprint — controla a fase do mount pra animar entrada com translate-x.
   const [mounted, setMounted] = useState(false);
 
@@ -125,6 +129,8 @@ export function ProjectEditDrawer({ open, onClose, project, onSave }: ProjectEdi
     if (open) {
       setForm(toForm(project));
       setSaving(false);
+      setConfirmDelete(false);
+      setDeleting(false);
       const r = requestAnimationFrame(() => setMounted(true));
       return () => cancelAnimationFrame(r);
     } else {
@@ -318,11 +324,48 @@ export function ProjectEditDrawer({ open, onClose, project, onSave }: ProjectEdi
         </div>
 
         {/* Footer com acoes */}
-        <div className="flex items-center justify-end gap-2 px-md py-3 border-t border-border shrink-0">
-          <Button variant="ghost" size="sm" onClick={onClose} disabled={saving}>
+        <div className="flex items-center gap-2 px-md py-3 border-t border-border shrink-0">
+          {onDelete && !confirmDelete && (
+            <button
+              type="button"
+              onClick={() => setConfirmDelete(true)}
+              disabled={saving || deleting}
+              className="h-9 px-3 rounded-md text-body-sm text-danger hover:bg-bg-surface focus-ring transition-colors disabled:opacity-50"
+            >
+              Excluir
+            </button>
+          )}
+          {onDelete && confirmDelete && (
+            <div className="flex-1 flex items-center gap-2">
+              <span className="text-body-sm text-fg-muted flex-1 truncate">
+                Excluir? Tarefas viram órfãs.
+              </span>
+              <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)} disabled={deleting}>
+                Não
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                loading={deleting}
+                onClick={async () => {
+                  try {
+                    setDeleting(true);
+                    await onDelete();
+                    onClose();
+                  } finally {
+                    setDeleting(false);
+                  }
+                }}
+              >
+                Sim, excluir
+              </Button>
+            </div>
+          )}
+          <div className="flex-1" />
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={saving || deleting}>
             Cancelar
           </Button>
-          <Button variant="primary" size="sm" onClick={handleSave} loading={saving}>
+          <Button variant="primary" size="sm" onClick={handleSave} loading={saving} disabled={deleting}>
             Salvar
           </Button>
         </div>
