@@ -144,6 +144,17 @@ Quando o áudio pedir lembrete ("me lembra de X", "pode me lembrar de Y", "preci
 
 Responder "Anotado!" ou "Certo, lembrado!" **sem o marker** = lembrete perdido. Não existe no banco. Não vai aparecer. Não vai cobrar.
 
+## ⚠️ CRÍTICO: Demanda operacional por áudio também exige marker
+
+Áudio do tipo "Tom, vou te mandar as pendências e você vai criando" / "anota essas demandas aí" / "registra essas 3 coisas pra mim" é **confirmação explícita de criação**. Você DEVE:
+
+1. Responder texto curto confirmando ("Pode mandar, vou criando" ou "Beleza, tô anotando")
+2. Se já há demandas pendentes verbalizadas no histórico recente (ex: fotos com captions tipo "Compra 2 lâmpadas", "Limpeza AC", "Prender quadro" — tudo que ficou em status "Crio?" sem marker), **emita 1 `<<TASK_UPDATE>>` com array de N actions** criando tudo de uma vez.
+
+❌ ERRADO: responder áudio "Beleza, vai mandando" e fechar a conversa sem marker — as demandas das fotos anteriores nunca são persistidas.
+
+✅ CERTO: confirma curto + marker em array com tudo que ficou pendente no histórico recente.
+
 Exemplo correto após confirmação de lembrete:
 ```
 Anotado ✅ Lembrar de pagar as mesas do evento — amanhã às 9h.

@@ -7045,11 +7045,13 @@ async function processMessage(phone, text, raw = {}) {
   // Conservador: só dispara em gatilhos cristalinos. Reply visual NÃO muda;
   // apenas os efeitos colaterais (persistência) são corrigidos.
   try {
-    const ACTIONABLE_RE = /\b(anota|me\s+lembra|lembra\s+(?:de|do|da)\b|lembrete|me\s+chama|preciso|surgiu|p[oó]e\s+na\s+lista|adiciona|paguei|fiz|terminei|fechei|completei|delega|marca\s+(?:reuni|m[eé]dico|consulta|ensaio|encontro|aula))/i;
+    const ACTIONABLE_RE = /\b(anota|me\s+lembra|lembra\s+(?:de|do|da)\b|lembrete|me\s+chama|preciso|surgiu|p[oó]e\s+na\s+lista|adiciona|paguei|fiz|terminei|fechei|completei|delega|marca\s+(?:reuni|m[eé]dico|consulta|ensaio|encontro|aula)|compr(?:a|ar|e)\s|consert(?:a|ar)|trocar?|reparar?|montar?|instalar?|limpar?|verificar?|vai\s+criando|vai\s+anotando|vou\s+te\s+mandar|t[eô]\s+(?:te\s+)?mandando\s+as?\s+(?:pend|demanda|tarefa)|tem\s+(?:que|pra)\s+(?:fazer|comprar|consertar|trocar))/i;
     // Detector de promessa EXPLÍCITA na reply do TOM (gatilhos conservadores).
-    // Cobre os casos onde TOM verbaliza "lembrete às X", "reagendei pra X",
-    // "te aviso às X" sem emitir o marker correspondente.
-    const REPLY_PROMISE_RE = /(?:lembrete|lembro|te\s+(?:aviso|cobro|lembro))\s+(?:hoje\s+|amanh[aã]\s+|j[aá]\s+|de\s+novo\s+|mais\s+tarde\s+)?(?:[aà]s?\s+|nas?\s+)?\d{1,2}\s*[h:]|(?:reagendei|reagendo|reagendado|reagendamento|marquei\s+(?:pra|para)|agendei\s+(?:pra|para)|coloquei\s+(?:pra|para)|movi\s+(?:pra|para))\s+(?:hoje|amanh[aã]|segunda|terça|quarta|quinta|sexta|sábado|domingo|próxima|semana\s+que\s+vem|\d{1,2}\/\d{1,2})/i;
+    // Cobre casos onde TOM verbaliza intenção de persistir sem emitir o marker:
+    // - "lembrete às X" / "te aviso às X" → cron/remind
+    // - "reagendei pra X" / "marquei pra X" → reschedule
+    // - "registrar/registrei/anotando/criando/adicionando/crio as/juntando/no pacote/na lista" → create operacional
+    const REPLY_PROMISE_RE = /(?:lembrete|lembro|te\s+(?:aviso|cobro|lembro))\s+(?:hoje\s+|amanh[aã]\s+|j[aá]\s+|de\s+novo\s+|mais\s+tarde\s+)?(?:[aà]s?\s+|nas?\s+)?\d{1,2}\s*[h:]|(?:reagendei|reagendo|reagendado|reagendamento|marquei\s+(?:pra|para)|agendei\s+(?:pra|para)|coloquei\s+(?:pra|para)|movi\s+(?:pra|para))\s+(?:hoje|amanh[aã]|segunda|terça|quarta|quinta|sexta|sábado|domingo|próxima|semana\s+que\s+vem|\d{1,2}\/\d{1,2})|\b(?:registr(?:ar|ei|ando|o)|anot(?:ar|ei|ando|ado)|adicion(?:ar|ei|ando|ado|o)|juntando|criando|criei|vou\s+criar|crio\s+as?|colocando\s+(?:na|no)\s+(?:lista|pacote|fila)|(?:t[oô]|estou)\s+(?:adicionando|registrando|anotando|criando)|adicionando\s+ao\s+pacote)\b/i;
     const inputActionable = ACTIONABLE_RE.test(String(text || ''));
     const replyHasPromise = REPLY_PROMISE_RE.test(String(reply || ''));
     if (inputActionable || replyHasPromise) {
