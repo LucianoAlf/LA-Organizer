@@ -17,6 +17,10 @@ export interface Collaborator {
   avatar_url?: string | null;
   bio?: string | null;
   preferred_name?: string | null;
+  // Sprint 30 — campos usados em lib/permissions.ts (gate de comunicados, etc).
+  function_role?: string | null;
+  pedagogical_role?: string | null;
+  has_coord_permissions?: boolean | null;
 }
 
 export type TaskStatus = 'pending' | 'in_progress' | 'done' | 'cancelled' | 'overdue' | 'delegated' | 'awaiting_confirmation';

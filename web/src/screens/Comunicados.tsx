@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { CheckCircle2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { hasCoordLevel } from '../lib/permissions';
 import { ComunicadoSheet } from '../components/ComunicadoSheet';
 import { PageHeader } from '../components/PageHeader';
 import { Fab } from '../components/Fab';

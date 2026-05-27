@@ -11,6 +11,7 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useAccess } from '../hooks/useAccess';
+import { hasCoordLevel } from '../lib/permissions';
 import { supabase } from '../lib/supabase';
 
 interface SidebarProps {
@@ -80,7 +81,7 @@ export function Sidebar({ collapsed = false, onToggleCollapse }: SidebarProps) {
         ...(role && ['director', 'coordinator', 'manager'].includes(role)
           ? [{ to: '/mais/operacoes', label: 'Operações', Icon: Target } as NavItem]
           : []),
-        ...(role === 'director' || role === 'coordinator'
+        ...(hasCoordLevel(collaborator)
           ? [{ to: '/mais/comunicados', label: 'Comunicados', Icon: Megaphone } as NavItem]
           : []),
         ...(role === 'director' || role === 'coordinator'

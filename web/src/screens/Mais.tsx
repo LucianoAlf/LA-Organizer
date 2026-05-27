@@ -3,6 +3,7 @@ import { Link, Navigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../contexts/AuthContext';
 import { useAccess } from '../hooks/useAccess';
+import { hasCoordLevel } from '../lib/permissions';
 import { useBreakpoint } from '../hooks/useBreakpoint';
 import { Badge } from '../components/Badge';
 import { supabase } from '../lib/supabase';
@@ -13,6 +14,10 @@ interface Item {
   hint: string;
   status?: 'soon' | 'beta';
   requireRoles?: string[];
+  // Sprint 30 — Alternativa a requireRoles que aceita has_coord_permissions.
+  // Use pra itens que devem aparecer pra qualquer um com hasCoordLevel
+  // (ex: Comunicados — Léo, Dai e outros assistentes pedagógicos precisam).
+  requireCoordLevel?: boolean;
 }
 
 const personalItems: Item[] = [
@@ -25,7 +30,7 @@ const coordItems: Item[] = [
   { to: '/time', label: 'Dashboard do time', hint: 'Coordenação · trabalho', requireRoles: ['coordinator', 'director'] },
   { to: '/mais/aderencia-checklists', label: 'Aderência operacional', hint: 'Checklists por colaborador', requireRoles: ['director', 'manager'] },
   { to: '/mais/operacoes', label: 'Operações', hint: 'Demandas operacionais por departamento', requireRoles: ['director', 'coordinator', 'manager'] },
-  { to: '/mais/comunicados', label: 'Comunicados', hint: 'Anúncios para a equipe', requireRoles: ['director', 'coordinator'] },
+  { to: '/mais/comunicados', label: 'Comunicados', hint: 'Anúncios para a equipe', requireCoordLevel: true },
   { to: '/mais/observabilidade', label: 'Observabilidade', hint: 'Aprovações e métricas de envio', requireRoles: ['director', 'coordinator'] },
   // Sprint 23.6
   { to: '/mais/gestao-equipe', label: 'Gestão de equipe', hint: 'Cadastrar e gerenciar colaboradores', requireRoles: ['director', 'coordinator', 'manager'] },
@@ -76,8 +81,15 @@ export function Mais() {
   const bp = useBreakpoint();
   if (bp !== 'mobile') return <Navigate to="/hoje" replace />;
 
+  const coordOk = hasCoordLevel(collaborator);
   const filterByRole = (list: Item[]) =>
-    list.filter(i => !i.requireRoles || (role && i.requireRoles.includes(role)));
+    list.filter(i => {
+      // requireCoordLevel: aceita director/coordinator OU has_coord_permissions=true
+      if (i.requireCoordLevel && !coordOk) return false;
+      // requireRoles: check tradicional por role literal
+      if (i.requireRoles && !(role && i.requireRoles.includes(role))) return false;
+      return true;
+    });
 
   const personal = filterByRole(personalItems);
   const coord = filterByRole(coordItems);
