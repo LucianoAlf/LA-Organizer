@@ -6642,9 +6642,20 @@ async function processMessage(phone, text, raw = {}) {
   // Sprint 10.1: detecta regressão silenciosa — user pediu ação mas
   // nenhum marker foi emitido (TOM disse "Anotado!" mas DB ficou vazio).
   // Query marker_logs por ações 'executed' deste user desde o início desta msg.
+  //
+  // Sprint 28.2: Camada 1 do guardrail — retry automático quando promessa
+  // explícita aparece na REPLY do TOM mas nenhum marker foi emitido.
+  // Conservador: só dispara em gatilhos cristalinos. Reply visual NÃO muda;
+  // apenas os efeitos colaterais (persistência) são corrigidos.
   try {
     const ACTIONABLE_RE = /\b(anota|me\s+lembra|lembra\s+(?:de|do|da)\b|lembrete|me\s+chama|preciso|surgiu|p[oó]e\s+na\s+lista|adiciona|paguei|fiz|terminei|fechei|completei|delega|marca\s+(?:reuni|m[eé]dico|consulta|ensaio|encontro|aula))/i;
-    if (ACTIONABLE_RE.test(String(text || ''))) {
+    // Detector de promessa EXPLÍCITA na reply do TOM (gatilhos conservadores).
+    // Cobre os casos onde TOM verbaliza "lembrete às X", "reagendei pra X",
+    // "te aviso às X" sem emitir o marker correspondente.
+    const REPLY_PROMISE_RE = /(?:lembrete|lembro|te\s+(?:aviso|cobro|lembro))\s+(?:hoje\s+|amanh[aã]\s+|j[aá]\s+|de\s+novo\s+|mais\s+tarde\s+)?(?:[aà]s?\s+|nas?\s+)?\d{1,2}\s*[h:]|(?:reagendei|reagendo|reagendado|reagendamento|marquei\s+(?:pra|para)|agendei\s+(?:pra|para)|coloquei\s+(?:pra|para)|movi\s+(?:pra|para))\s+(?:hoje|amanh[aã]|segunda|terça|quarta|quinta|sexta|sábado|domingo|próxima|semana\s+que\s+vem|\d{1,2}\/\d{1,2})/i;
+    const inputActionable = ACTIONABLE_RE.test(String(text || ''));
+    const replyHasPromise = REPLY_PROMISE_RE.test(String(reply || ''));
+    if (inputActionable || replyHasPromise) {
       _metrics.actionable_intent = true;
       const sinceIso = new Date(_t0 - 1000).toISOString();
       const { data: recentMarkers } = await supabase
@@ -6659,6 +6670,74 @@ async function processMessage(phone, text, raw = {}) {
         console.warn(`[Engine] ACTIONABLE_NO_MARKER — text="${String(text).slice(0,80)}" reply="${String(reply).slice(0,100)}"`);
         await logMarker(collab.id, 'ACTIONABLE_NO_MARKER', 'rejected',
           `text:${String(text).slice(0,200)}`, String(reply).slice(0,500));
+
+        // --- Sprint 28.2: Camada 1 — retry com prompt cirúrgico ---
+        // Só ataca quando há promessa EXPLÍCITA na reply (caso cristalino).
+        // Não toca na reply visual; só persiste o marker via chamada dedicada.
+        if (replyHasPromise && !(raw && raw._isMarkerRetry)) {
+          try {
+            const todayBrt = todaySaoPaulo();
+            const tomorrowBrt = (() => {
+              const d = new Date(todayBrt + 'T12:00:00-03:00');
+              d.setUTCDate(d.getUTCDate() + 1);
+              return d.toISOString().slice(0,10);
+            })();
+            const miniSys = `Você é um conversor mecânico texto→marker. Sua única saída é UM marker JSON, sem nenhum texto fora dele.
+
+Contexto:
+- Data hoje (BRT): ${todayBrt}
+- Data amanhã (BRT): ${tomorrowBrt}
+- User disse: "${String(text || '').slice(0, 400)}"
+- TOM respondeu verbalizando promessa: "${String(reply || '').slice(0, 700)}"
+
+TOM prometeu uma ação mas esqueceu de emitir o marker. Sua tarefa: emitir o marker correto.
+
+Regras:
+- Lembrete/aviso ("lembrete às X", "te aviso às X") → <<TASK_UPDATE>> com action="reschedule" (se task existe) ou "create" (se task nova) e remind_at no formato ISO completo com timezone BRT: "YYYY-MM-DDTHH:mm:ss-03:00"
+- Reagendamento ("marquei pra amanhã", "reagendei pra segunda") → <<TASK_UPDATE>> action="reschedule" com new_due_date (e new_remind_at se mencionou horário) OU <<EVENT_UPDATE>> action="reschedule" se for evento
+- Conclusão ("tá feito", "concluí") → action="complete"
+- Criação ("criei", "abri") → action="create" com title
+- Cancelamento → action="cancel"
+
+IMPORTANTE:
+- Use title (não id) pra referenciar a task — o engine resolve por título
+- Se não tiver certeza qual task, use o título mais específico mencionado no contexto
+- Se for ambíguo ou faltar dado crítico, retorne literalmente: NO_MARKER
+
+Formato de saída (exemplo):
+<<TASK_UPDATE>>
+[{"action":"reschedule","title":"Formular pesquisa NPS","remind_at":"${todayBrt}T15:00:00-03:00"}]
+<<END>>
+
+Output AGORA, apenas o marker:`;
+            const retryResp = await ai.chat(miniSys, [{ role: 'user', content: 'Emita o marker correto.' }]);
+            const retryText = String(retryResp?.text || retryResp?.reply || retryResp?.content || '');
+            if (retryText && !/NO_MARKER/i.test(retryText)) {
+              const parsedRetry = parseTaskUpdateMarker(retryText);
+              if (parsedRetry && Array.isArray(parsedRetry.actions) && parsedRetry.actions.length > 0) {
+                try {
+                  await applyTaskActions(collab, parsedRetry.actions);
+                  console.log(`[Engine] AUTO_RETRY_OK — marker=TASK_UPDATE actions=${parsedRetry.actions.length}`);
+                  await logMarker(collab.id, 'TASK_UPDATE_AUTO_RETRY', 'executed',
+                    `actions:${parsedRetry.actions.length}`, retryText.slice(0, 500));
+                  _metrics.auto_retry_succeeded = true;
+                } catch (applyErr) {
+                  console.warn(`[Engine] AUTO_RETRY_APPLY_FAILED — ${applyErr.message}`);
+                  await logMarker(collab.id, 'TASK_UPDATE_AUTO_RETRY', 'rejected',
+                    `apply_failed:${String(applyErr.message).slice(0,180)}`, retryText.slice(0, 500));
+                }
+              } else {
+                console.warn('[Engine] AUTO_RETRY_NO_PARSE — retry sem TASK_UPDATE válido');
+                await logMarker(collab.id, 'AUTO_RETRY_NO_PARSE', 'rejected',
+                  'no_task_update_in_retry', retryText.slice(0, 500));
+              }
+            } else {
+              console.log('[Engine] AUTO_RETRY skipped — LLM retornou NO_MARKER ou vazio');
+            }
+          } catch (retryErr) {
+            console.warn(`[Engine] AUTO_RETRY_ERR — ${retryErr.message}`);
+          }
+        }
       } else {
         _metrics.marker_emitted = fired.join(',').slice(0, 100);
         _metrics.marker_result = 'executed';
