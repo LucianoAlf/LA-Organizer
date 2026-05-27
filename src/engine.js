@@ -213,6 +213,65 @@ function parseMemoryMarker(text) {
   return { rows: validRows, cleanText, malformed: false };
 }
 
+// Parse <<DATA_CLASSIFY>>{...}<<END>> — Sprint 29.1
+// Marca tasks/events como teste/real/arquivado. Opcionalmente aprende padrão
+// pra próximas inserções automáticas.
+// Formato esperado:
+//   {"items":[{"type":"task","id":"<uuid>","classification":"test"}],"learn_pattern":true}
+function parseDataClassifyMarker(text) {
+  if (!text) return null;
+  const re = /<<DATA_CLASSIFY>>\s*([\s\S]*?)\s*<<END>>/i;
+  const m = text.match(re);
+  if (!m) return null;
+  const cleanText = text.replace(re, '').trim();
+  let parsed;
+  try {
+    parsed = JSON.parse(m[1].trim());
+  } catch (err) {
+    logSchemaErr('DATA_CLASSIFY', ['invalid_json: ' + err.message], m[1]);
+    return { malformed: true, cleanText };
+  }
+  if (!parsed || !Array.isArray(parsed.items) || parsed.items.length === 0) {
+    logSchemaErr('DATA_CLASSIFY', ['missing_items'], parsed);
+    return { malformed: true, cleanText };
+  }
+  const items = parsed.items.filter(i =>
+    i && typeof i === 'object'
+    && (i.type === 'task' || i.type === 'event')
+    && typeof i.id === 'string' && i.id.length > 0
+    && ['real', 'test', 'archived'].includes(i.classification)
+  );
+  if (items.length === 0) {
+    logSchemaErr('DATA_CLASSIFY', ['no_valid_items'], parsed);
+    return { malformed: true, cleanText };
+  }
+  return {
+    items,
+    learnPattern: parsed.learn_pattern === true,
+    cleanText,
+    malformed: false,
+  };
+}
+
+// Aplica DATA_CLASSIFY: atualiza data_classification em tasks/events +
+// aprende padrão de title_contains se learn_pattern=true.
+async function applyDataClassify(collaborator, parsed) {
+  const { applyClassification } = require('./services/data-classifier');
+  const results = [];
+  for (const item of parsed.items) {
+    const targetType = item.type === 'task' ? 'tasks' : 'events';
+    const r = await applyClassification({
+      collaboratorId: collaborator.id,
+      targetType,
+      targetId: item.id,
+      classification: item.classification,
+      learnPattern: parsed.learnPattern,
+    });
+    results.push({ id: item.id, type: item.type, ...r });
+  }
+  return results;
+}
+
 // Parse <<PROJECT_CREATE>>{...}<<END>> — name obrigatório não-vazio.
 function parseProjectMarker(text) {
   if (!text) return null;
@@ -4722,7 +4781,11 @@ async function detectDuplicateSemanticTask(collab, candidate) {
       // Sprint 23.5 — threshold elevado de 0.7→0.85 (reduz falsos positivos tipo
       // "pagar boleto academia" vs "pagar boleto peixaria"). Também exige prazo próximo
       // (±3 dias) quando ambos têm due_date, para não bloquear boletos diferentes.
-      let isDupProbable = score > 0.85 && shared.length > 0;
+      // Sprint 23.6 — caso "Colocar papel A4 na planilha" vs "Colocar falta do Willian
+      // na planilha" passava: ambos compartilham 1 keyword ("planilha") + boost de
+      // strip-verbo gera 0.86. Agora: probable exige 2+ keywords compartilhadas
+      // OU score muito alto (>=0.95). Reduz falso positivo sem perder duplicatas reais.
+      let isDupProbable = (score >= 0.95 && shared.length > 0) || (score > 0.85 && shared.length >= 2);
       if (isDupProbable && candidate.due_date && task.due_date) {
         const diffDays = Math.abs(new Date(candidate.due_date) - new Date(task.due_date)) / 86400000;
         if (diffDays > 3) isDupProbable = false; // prazos diferentes → não é dup
@@ -4844,22 +4907,45 @@ async function tryDupBypass(collab, text) {
     console.log(`[DupBypass] task choice=${choice} "${String(tk.title).slice(0,40)}"`);
     if (choice === '1') return { reply: `Certo! Já está anotado como _${tk.title}_. Nada mudou.` };
     // choice === '2': inserir task diretamente (bypass dup check)
-    const { data: inserted, error: insErr } = await supabase.from('tasks').insert({
+    // Sprint 23.6 — fallback de assigned_to: se pendingDupTasks armazenou sem
+    // o assignedTo (regression observada), usa collab.id atual. Previne FK violation.
+    const assignedTo = tk.assigned_to || collab.id;
+    if (!assignedTo) {
+      console.error('[DupBypass] task insert ABORT: no assignedTo (tk.assigned_to + collab.id both empty)');
+      return { reply: '_Não consegui salvar a tarefa porque não identifiquei pra quem é. Tenta de novo me dizendo o que é._' };
+    }
+    const insertRow = {
       title: String(tk.title).trim().slice(0, 200),
       context: tk.context || 'personal',
-      assigned_to: tk.assigned_to,
-      created_by: tk.assigned_to,
+      assigned_to: assignedTo,
+      created_by: tk.created_by || assignedTo,
       source: 'tom',
       status: 'pending',
       priority: tk.priority || 'medium',
       due_date: tk.due_date || null,
       remind_at: tk.remind_at || null,
-    }).select('id, title').single();
+    };
+    const { data: inserted, error: insErr } = await supabase.from('tasks').insert(insertRow).select('id, title').single();
     if (insErr) {
-      console.error('[DupBypass] task insert err:', insErr.message);
-      return { reply: '_Não consegui salvar a tarefa. Me passa de novo?_' };
+      // Sprint 23.6 — log detalhado pra diagnosticar (FK? RLS? not-null violation?)
+      console.error('[DupBypass] task insert err:', {
+        code: insErr.code,
+        message: insErr.message,
+        details: insErr.details,
+        hint: insErr.hint,
+        row: { ...insertRow, title: insertRow.title.slice(0, 50) },
+      });
+      // Erro categorizado pro user
+      const m = (insErr.message || '').toLowerCase();
+      if (m.includes('row-level security') || m.includes('policy')) {
+        return { reply: '_Não consegui salvar essa tarefa por restrição de permissão. Avisa o coordenador._' };
+      }
+      if (m.includes('foreign key') || m.includes('violates')) {
+        return { reply: '_Não consegui salvar (referência inválida no banco). Tenta de novo._' };
+      }
+      return { reply: `_Não consegui salvar a tarefa (${insErr.code || 'erro'}). Me passa de novo?_` };
     }
-    return { reply: `✅ Anotado: *${tk.title}*${tk.due_date ? ` — até ${tk.due_date}` : ''}.` };
+    return { reply: `✅ Anotado: *${inserted?.title || tk.title}*${tk.due_date ? ` — até ${tk.due_date}` : ''}.` };
   }
 
   return null;
@@ -6420,6 +6506,27 @@ async function processMessage(phone, text, raw = {}) {
         await logMarker(collab.id, 'MONTHLY_PLAN', 'rejected', `persist_error:${err.message}`, null);
         const base = parsedMonthly.cleanText || '';
         reply = (base ? base + '\n\n' : '') + '_não rolou salvar agora, mas seu plano mensal tá registrado em conversa. Tenta de novo daqui a pouco?_';
+      }
+    }
+
+    // 2.7c) Data classification (Sprint 29.1) — marca task/event como teste/real/archived
+    const parsedClassify = parseDataClassifyMarker(reply);
+    if (parsedClassify && parsedClassify.malformed) {
+      console.warn('[DATA_CLASSIFY] WARN: malformed marker, dropping block');
+      await logMarker(collab.id, 'DATA_CLASSIFY', 'rejected', 'schema_invalid', reply);
+      reply = parsedClassify.cleanText || reply;
+    } else if (parsedClassify) {
+      try {
+        const results = await applyDataClassify(collab, parsedClassify);
+        const okCount = results.filter(r => r.ok).length;
+        const learned = results.find(r => r.patternLearned)?.patternLearned;
+        const detail = `items_ok:${okCount}/${results.length}` + (learned ? ` pattern:${learned.type}=${learned.value}(hits=${learned.hits})` : '');
+        await logMarker(collab.id, 'DATA_CLASSIFY', 'executed', detail, JSON.stringify(parsedClassify.items).slice(0, 400));
+        reply = parsedClassify.cleanText || reply;
+      } catch (err) {
+        console.error('[DATA_CLASSIFY] persist err:', err.message);
+        await logMarker(collab.id, 'DATA_CLASSIFY', 'rejected', `persist_error:${err.message}`, JSON.stringify(parsedClassify.items).slice(0, 400));
+        reply = parsedClassify.cleanText || reply;
       }
     }
 
@@ -8333,4 +8440,4 @@ async function applyMonthlyPlan(collaborator, plan) {
   return { id: created?.id, action: 'created' };
 }
 
-module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamSummary, buildWeeklyRetrospective, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseWeeklyPlanMarker, parseHabitMarker, parseDndMarker, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, applyHabitActions, applyDnd, getDndState, consolidateMemoryFor, decayExpiredMemories, generateWeeklySummaryFor, updateCollaboratorProfile, looksLikeMemory, resolveTaskByShortId, applyAnnouncementAction, parseAnnouncementApprovalMarker, applyAnnouncementApproval, applyCoordinationRequestAction, parseCoordinationResponseMarker, applyCoordinationResponseAction, computeProgress, getRitualIntroDecision, countRecentRelaysToRecipient, buildRelayLimitHint, parseMonthlyPlanMarker, applyMonthlyPlan };
+module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamSummary, buildWeeklyRetrospective, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseWeeklyPlanMarker, parseHabitMarker, parseDndMarker, parseDataClassifyMarker, applyDataClassify, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, applyHabitActions, applyDnd, getDndState, consolidateMemoryFor, decayExpiredMemories, generateWeeklySummaryFor, updateCollaboratorProfile, looksLikeMemory, resolveTaskByShortId, applyAnnouncementAction, parseAnnouncementApprovalMarker, applyAnnouncementApproval, applyCoordinationRequestAction, parseCoordinationResponseMarker, applyCoordinationResponseAction, computeProgress, getRitualIntroDecision, countRecentRelaysToRecipient, buildRelayLimitHint, parseMonthlyPlanMarker, applyMonthlyPlan };

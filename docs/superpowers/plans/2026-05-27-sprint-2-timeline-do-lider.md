@@ -10,9 +10,16 @@
 
 ---
 
+## ⚠️ Pré-requisito: coluna `related_to_collaborator_id` em events
+
+A tabela `events` (verificado 27/05/2026) NÃO tem `related_to_collaborator_id`. O watcher de 1:1 precisa dela pra saber QUAL líder a reunião referencia. **Migration adicional** (Task 0 abaixo) cria essa coluna ANTES da Task 3.
+
+---
+
 ## Mapa de arquivos
 
 **Criar:**
+- `supabase/migrations/20260527125000_events_related_to_collaborator.sql` — coluna nova (PRÉ-requisito)
 - `supabase/migrations/20260527130000_leader_timeline.sql` — tabela + índices
 - `src/services/leader-timeline.js` — append/query
 - `src/services/leader-briefing.js` — geração de briefing pré-reunião
@@ -22,6 +29,26 @@
 **Modificar:**
 - `src/engine.js` — hook em `applyEventActions` (registra 1:1 agendado/realizado) e `applyTaskActions` (registra fechamento/atraso)
 - `src/rituals/dispatcher.js` — registrar cron a cada 5min do watcher
+
+---
+
+## Task 0: Mini-migration — adicionar `related_to_collaborator_id` em events
+
+**Files:**
+- Create: `supabase/migrations/20260527125000_events_related_to_collaborator.sql`
+
+- [ ] **Step 1: SQL**
+
+```sql
+ALTER TABLE events
+  ADD COLUMN IF NOT EXISTS related_to_collaborator_id uuid REFERENCES collaborators(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_events_related_to ON events(related_to_collaborator_id) WHERE related_to_collaborator_id IS NOT NULL;
+COMMENT ON COLUMN events.related_to_collaborator_id IS 'Para eventos 1:1 e reuniões focadas em uma pessoa específica — quem é o foco. Diferente de collaborator_id (dono) e created_by (criador).';
+```
+
+- [ ] **Step 2: Aplicar via MCP `apply_migration`** + validar com `\d events`.
+
+- [ ] **Step 3: Commit**
 
 ---
 

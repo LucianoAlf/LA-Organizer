@@ -1882,10 +1882,12 @@ async function ceoTeamUnclosedEventsReport(now = new Date()) {
     // pergunta via checkOverdueWorkEvents). 6+d ou nunca cobrados sobem pro CEO.
     const cutoff24h = new Date(now.getTime() - 24 * 3600_000).toISOString();
     const sixDaysAgo = new Date(now.getTime() - 6 * 24 * 3600_000).toISOString();
+    // Sprint 29.1 — filtra data_classification='real' pra esconder testes/arquivados.
     const { data: stale, error } = await supabase
       .from('events')
-      .select('id, title, start_at, end_at, category, collaborator_id, followup_sent_at, collaborators!events_collaborator_id_fkey(full_name)')
+      .select('id, title, start_at, end_at, category, collaborator_id, followup_sent_at, staleness_check_sent_at, data_classification, coordination_request_count, collaborators!events_collaborator_id_fkey(full_name)')
       .eq('context', 'work')
+      .eq('data_classification', 'real')
       .not('status', 'in', '("done","cancelled")')
       .lt('end_at', cutoff24h)
       .order('end_at', { ascending: true })
@@ -1965,7 +1967,30 @@ async function ceoTeamUnclosedEventsReport(now = new Date()) {
     const hiddenNote = hiddenCount > 0
       ? `\n\n_${hiddenCount} já cobrad${hiddenCount > 1 ? 'os' : 'o'} do dono nas últimas 24h — não listado${hiddenCount > 1 ? 's' : ''} aqui._`
       : '';
-    const msg = `🎖️ *Governança — Compromissos do time sem fechamento*\n\n${lines.join('\n').trim()}\n\n_Total: ${filteredStale.length} compromisso${filteredStale.length > 1 ? 's' : ''} parado${filteredStale.length > 1 ? 's' : ''}._${hiddenNote}\n\nPra delegar cobrança, me diz tipo: *"manda recado pro Quintela: cobra fechamento da reunião pedagógica de 21/05"*.`;
+
+    // Sprint 29.1 — staleness check: items 5+ dias parados sem TOM ter perguntado.
+    // Pergunta UMA VEZ; sem resposta em 24h, job noturno arquiva (Task 10).
+    const fiveDaysAgo = new Date(now.getTime() - 5 * 24 * 3600_000).toISOString();
+    const toStaleCheck = filteredStale.filter(ev =>
+      ev.end_at < fiveDaysAgo && !ev.staleness_check_sent_at
+    );
+    let staleCheckBlock = '';
+    if (toStaleCheck.length > 0) {
+      const top3 = toStaleCheck.slice(0, 3).map(ev =>
+        `  • _${String(ev.title).slice(0, 50)}_`
+      ).join('\n');
+      staleCheckBlock = `\n\n⏳ *${toStaleCheck.length} item(s) parado(s) 5+ dias — já rolou ou arquivo?*\n${top3}${toStaleCheck.length > 3 ? `\n  _+${toStaleCheck.length - 3} outros_` : ''}\n_Sem resposta em 24h, arquivo automaticamente._`;
+      // Marca staleness_check_sent_at pra não repetir amanhã
+      try {
+        await supabase.from('events')
+          .update({ staleness_check_sent_at: now.toISOString() })
+          .in('id', toStaleCheck.map(ev => ev.id));
+      } catch (err) {
+        console.warn('[CEOReport] staleness mark err:', err.message);
+      }
+    }
+
+    const msg = `🎖️ *Governança — Compromissos do time sem fechamento*\n\n${lines.join('\n').trim()}\n\n_Total: ${filteredStale.length} compromisso${filteredStale.length > 1 ? 's' : ''} parado${filteredStale.length > 1 ? 's' : ''}._${hiddenNote}${staleCheckBlock}\n\nPra delegar cobrança, me diz tipo: *"manda recado pro Quintela: cobra fechamento da reunião pedagógica de 21/05"*.`;
 
     try {
       await whatsapp.sendMessage(ceo.phone, msg);
@@ -2033,10 +2058,12 @@ async function ceoTeamUnclosedTasksReport(now = new Date()) {
     if (await alreadySent(ceo.id, 'ceo_team_unclosed_tasks', ymdRef)) continue;
 
     const today = sp.ymd;
+    // Sprint 29.1 — filtra data_classification='real' pra esconder teste/arquivado.
     const { data: stale, error } = await supabase
       .from('tasks')
-      .select('id, title, due_date, category, assigned_to, collaborators!tasks_assigned_to_fkey(full_name)')
+      .select('id, title, due_date, category, assigned_to, staleness_check_sent_at, data_classification, coordination_request_count, collaborators!tasks_assigned_to_fkey(full_name)')
       .eq('context', 'work')
+      .eq('data_classification', 'real')
       .eq('status', 'pending')
       .lt('due_date', today)
       .order('due_date', { ascending: true })
@@ -2132,7 +2159,33 @@ async function ceoTeamUnclosedTasksReport(now = new Date()) {
     const hiddenNote = hiddenCount > 0
       ? `\n\n_${hiddenCount} já cobrad${hiddenCount > 1 ? 'as' : 'a'} do dono nas últimas 24h — não listad${hiddenCount > 1 ? 'as' : 'a'} aqui._`
       : '';
-    const msg = `📋 *Governança — Tarefas do time atrasadas*\n\n${lines.join('\n').trim()}\n\n_Total: ${filteredStale.length} tarefa${filteredStale.length > 1 ? 's' : ''} atrasada${filteredStale.length > 1 ? 's' : ''}._${hiddenNote}\n\nPra delegar cobrança, me diz tipo: *"manda recado pra Krissya: cobra a tarefa X"*.`;
+
+    // Sprint 29.1 — staleness check: tasks 5+ dias parados sem TOM ter perguntado.
+    const toStaleCheck = filteredStale.filter(t =>
+      (t.days >= 5 || daysOverdue(t.due_date) >= 5) && !t.staleness_check_sent_at
+    );
+    let staleCheckBlock = '';
+    if (toStaleCheck.length > 0) {
+      const top3 = toStaleCheck.slice(0, 3).map(t =>
+        `  • _${String(t.title).slice(0, 50)}_`
+      ).join('\n');
+      staleCheckBlock = `\n\n⏳ *${toStaleCheck.length} tarefa(s) parada(s) 5+ dias — já rolou ou arquivo?*\n${top3}${toStaleCheck.length > 3 ? `\n  _+${toStaleCheck.length - 3} outras_` : ''}\n_Sem resposta em 24h, arquivo automaticamente._`;
+      try {
+        await supabase.from('tasks')
+          .update({ staleness_check_sent_at: now.toISOString() })
+          .in('id', toStaleCheck.map(t => t.id));
+      } catch (err) {
+        console.warn('[CEOTasksReport] staleness mark err:', err.message);
+      }
+    }
+
+    // Sprint 29.1 — também sinaliza tasks com 3+ cobranças sem efeito.
+    const stuckTasks = filteredStale.filter(t => (t.coordination_request_count || 0) >= 3);
+    const stuckBlock = stuckTasks.length > 0
+      ? `\n\n⚠️ _${stuckTasks.length} task(s) com 3+ cobranças sem efeito — repetir mais não vai resolver. Considera mudar de tática (1:1, ligar, redistribuir)._`
+      : '';
+
+    const msg = `📋 *Governança — Tarefas do time atrasadas*\n\n${lines.join('\n').trim()}\n\n_Total: ${filteredStale.length} tarefa${filteredStale.length > 1 ? 's' : ''} atrasada${filteredStale.length > 1 ? 's' : ''}._${hiddenNote}${stuckBlock}${staleCheckBlock}\n\nPra delegar cobrança, me diz tipo: *"manda recado pra Krissya: cobra a tarefa X"*.`;
 
     try {
       await whatsapp.sendMessage(ceo.phone, msg);

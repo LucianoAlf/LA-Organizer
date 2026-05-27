@@ -10,6 +10,18 @@
 
 ---
 
+## ⚠️ Schema real de `events` (verificado em 27/05/2026)
+
+Cuidado ao escrever queries — os nomes não são óbvios:
+- **Dono do evento:** `collaborator_id` (não `owner_collaborator_id`)
+- **Quem criou:** `created_by`
+- **Quando começa:** `start_at` (timestamptz, não `event_date`)
+- **Líder de categoria:** vive em `event_category_leaders.leader_collaborator_id`, NÃO em `events`
+
+Ao adaptar trechos do plano que dizem `owner_collaborator_id` ou `event_date`, traduza para os nomes acima.
+
+---
+
 ## Mapa de arquivos
 
 **Criar:**
