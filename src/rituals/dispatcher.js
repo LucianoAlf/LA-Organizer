@@ -2340,6 +2340,27 @@ function extractApprovalToken(name, id) {
   return suffix ? `${base}-${suffix}` : base;
 }
 
+// Versão async: omite sufixo quando não há ambiguidade real entre pendings.
+async function extractApprovalTokenSmart(name, id) {
+  const base = extractApprovalTokenBase(name);
+  if (!id) return base;
+  try {
+    const { data: pendings } = await supabase
+      .from('projects')
+      .select('id, name')
+      .eq('status', 'pending_approval')
+      .eq('requires_approval', true);
+    const collisions = (pendings || []).filter(p =>
+      p.id !== id && extractApprovalTokenBase(p.name) === base
+    );
+    if (collisions.length === 0) return base;
+  } catch (err) {
+    console.warn('[Dispatcher] extractApprovalTokenSmart fallback:', err.message);
+  }
+  const suffix = String(id).replace(/-/g, '').slice(0, 4).toUpperCase();
+  return suffix ? `${base}-${suffix}` : base;
+}
+
 // Cobra approver de projetos pendentes há mais de 6h, máx 1 lembrete por slot.
 async function remindPendingProjectApprovals(opts = {}) {
   let query = supabase
@@ -2400,7 +2421,7 @@ async function remindPendingProjectApprovals(opts = {}) {
     const lines = [`👀 *${projects.length} projeto(s) aguardando sua aprovação:*\n`];
     for (const { project, creator } of projects) {
       const hours = Math.floor((Date.now() - new Date(project.created_at).getTime()) / 3600000);
-      const token = extractApprovalToken(project.name, project.id);
+      const token = await extractApprovalTokenSmart(project.name, project.id);
       lines.push(`🗂️ *${project.name}*\n   por ${creator.full_name} · há ${hours}h`);
       lines.push(`   Aprovar: *APROVA ${token}*  |  Rejeitar: *REJEITA ${token} motivo*\n`);
     }
