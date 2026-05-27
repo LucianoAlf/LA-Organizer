@@ -4691,11 +4691,15 @@ async function detectDuplicateSemanticEvent(collab, candidate) {
       // Sprint 22.34: pra entrar como PROBABLE (bloqueia/pergunta), exigir keyword
       // overlap real OU mesma data + alta similaridade nominal. Sem isso, "Reuniao
       // com Henrique" e "Reuniao com Matheus" continuariam matchando pelo prefix.
+      // Sprint 23.6: caso "Reunião com Rayan" (ontem) vs "Reunião com Juliana" (hoje)
+      // entrava como "possible" pelo prefix "Reunião" + score 0.7. Agora exige
+      // keyword shared (nome próprio diferente NÃO compartilha) E score mais alto.
+      // sameDate sozinho não é mais suficiente — precisa keyword shared também.
       const sameDate = candDate && evDate && candDate === evDate;
       const hasSharedKeyword = shared.length > 0;
-      if (score > 0.7 && (hasSharedKeyword || sameDate)) {
+      if (score >= 0.85 && hasSharedKeyword) {
         probable.push({ ...ev, _score: score });
-      } else if (score > 0.5) {
+      } else if (score > 0.7 && (hasSharedKeyword || sameDate)) {
         possible.push({ ...ev, _score: score });
       }
     }
