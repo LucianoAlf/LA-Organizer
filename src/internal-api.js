@@ -871,8 +871,11 @@ router.post('/internal/event-invites', requireInternalSecret, async (req, res) =
   const endTime = new Intl.DateTimeFormat('en-GB', {
     timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', hour12: false,
   }).format(new Date(event.end_at));
+  // Sprint 23.6 — URL em linha própria (sem emoji prefix na MESMA linha).
+  // Bug: WhatsApp não auto-linka quando emoji vem antes do URL sem newline
+  // forte. Fix: 🔗 Link: em linha 1, URL crua em linha 2 → linkify garantido.
   const where = event.modality === 'online'
-    ? (event.meeting_url ? `🔗 ${event.meeting_url}` : '🌐 Online')
+    ? (event.meeting_url ? `🔗 Link da reunião:\n${event.meeting_url}` : '🌐 Online')
     : event.location_text || (event.modality === 'hibrido' ? '🏠/🌐 Híbrido' : '📍 Presencial');
 
   for (const r of recipients) {

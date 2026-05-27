@@ -3968,10 +3968,11 @@ async function checkEventReminders() {
     else if (ev.modality === 'hibrido') metaParts.push('🏢 híbrido');
     else if (ev.modality === 'presencial') metaParts.push('📍 presencial');
     if (ev.location_text) metaParts.push(ev.location_text);
-    if (ev.meeting_url) metaParts.push(ev.meeting_url);
     const meta = metaParts.length ? `\n${metaParts.join(' · ')}` : '';
+    // Sprint 23.6 — URL em linha própria pra WhatsApp linkar (não dentro do "·").
+    const linkLine = ev.meeting_url ? `\n${ev.meeting_url}` : '';
     const labelPrefix = r.label ? `(${r.label}) ` : '';
-    const text = `📅 *Lembrete:* ${labelPrefix}${ev.title}${meta}`;
+    const text = `📅 *Lembrete:* ${labelPrefix}${ev.title}${meta}${linkLine}`;
     try {
       await whatsapp.sendMessage(collab.phone, text);
       const { error: upErr } = await supabase.from('event_reminders').update({ sent_at: new Date().toISOString() }).eq('id', r.id);

@@ -2076,7 +2076,8 @@ async function applyEventActions(collaborator, events) {
           })();
           const senderName = (collaborator.preferred_name || collaborator.full_name || '').split(' ')[0];
           const locPart = e.location_text ? `\n📍 ${String(e.location_text).slice(0, 80)}` : '';
-          const modPart = e.modality === 'online' && e.meeting_url ? `\n🔗 ${String(e.meeting_url).slice(0, 120)}` : '';
+          // Sprint 23.6 — URL em linha própria pra WhatsApp linkar.
+          const modPart = e.modality === 'online' && e.meeting_url ? `\n🔗 Link:\n${String(e.meeting_url).slice(0, 120)}` : '';
           const msg = `📅 *${senderName}* marcou um compromisso na sua agenda:\n\n*${row.title}*\n🗓️ ${whenStr}${locPart}${modPart}\n\nSe não puder, fala com ${senderName} pra remarcar.`;
           whatsapp.sendMessage(eventRecipient.phone, msg).catch(err =>
             console.error(`[Event] notify recipient err: ${err.message}`));
