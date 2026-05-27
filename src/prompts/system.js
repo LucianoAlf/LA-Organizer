@@ -7,6 +7,7 @@ const supabase = require('../supabase/client');
 const { checkAccess, DATA_LEVELS } = require('../services/la-report-access');
 const { hasCoordLevel } = require('../utils/roles');
 const { formatRelativeDate } = require('../utils/dates');
+const pendingIntentsSvc = require('../services/pending-intents');
 
 const SKILLS_DIR = path.join(__dirname, '..', '..', 'skills');
 
