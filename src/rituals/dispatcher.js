@@ -4505,9 +4505,22 @@ function statusEmoji(s) {
 function formatHealthReport(run) {
   const head = `🔍 *Auditoria TOM — ${fmtBrtDayMonth()}*`;
   const { summary, checks } = run;
+  // Sprint 30.1: sempre mostra amostras de ACTIONABLE_NO_MARKER quando há (mesmo se status=ok)
+  const anmCheck = (checks || []).find(c => c.name === 'actionable_no_marker');
+  const anmSamplesBlock = (anmCheck && anmCheck.samples && anmCheck.samples.length)
+    ? '\n\n📋 *Promessas sem persistência (últimas 24h):*\n' +
+      anmCheck.samples.slice(0, 3).map((s, i) => {
+        const name = s.collaborators?.full_name || 'desconhecido';
+        const when = s.created_at ? new Date(s.created_at).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : '';
+        const userText = String(s.reason || '').replace(/^text:/, '').slice(0, 100);
+        const tomReply = String(s.raw_excerpt || '').slice(0, 100);
+        return `${i + 1}. *${name}* (${when})\n   _user:_ "${userText}"\n   _TOM:_ "${tomReply}"`;
+      }).join('\n')
+    : '';
+
   // Caminho feliz: tudo verde
   if (summary.warning === 0 && summary.error === 0 && summary.fixed === 0) {
-    return `${head}\n\n✅ Sistema saudável — ${summary.ok}/${summary.total} checks OK`;
+    return `${head}\n\n✅ Sistema saudável — ${summary.ok}/${summary.total} checks OK${anmSamplesBlock}`;
   }
   const lines = checks
     .filter(c => c.status !== 'ok')
@@ -4516,7 +4529,7 @@ function formatHealthReport(run) {
   let footer = '';
   if (summary.error > 0) footer = `\n\n_Precisa de atenção: ${summary.error} check(s) com erro._`;
   else if (summary.warning > 0) footer = `\n\n_${summary.warning} alerta(s) — sem ação obrigatória._`;
-  return `${head}\n\n${lines.join('\n')}${okCount}${footer}`;
+  return `${head}\n\n${lines.join('\n')}${anmSamplesBlock}${okCount}${footer}`;
 }
 
 async function sendHealthReport(refYmd = null) {

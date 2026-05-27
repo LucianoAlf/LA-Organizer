@@ -20,6 +20,7 @@ const WARN_THRESHOLDS = {
   rejectedMarkers: 5,
   unknownMarkers: 3,
   recurringErrors: 3,
+  actionableNoMarker: 3,
 };
 
 function todayBrt() {
@@ -147,6 +148,45 @@ async function checkRejectedMarkers() {
   if (count === 0) return { status: 'ok', detail: '0 markers rejeitados nas últimas 24h' };
   if (count <= WARN_THRESHOLDS.rejectedMarkers) return { status: 'ok', detail: `${count} markers rejeitados (abaixo do threshold)` };
   return { status: 'warning', detail: `${count} markers rejeitados nas últimas 24h (threshold ${WARN_THRESHOLDS.rejectedMarkers})` };
+}
+
+// ─────────────────────────────────────────────────────────────────
+// CHECK 5.5 — ACTIONABLE_NO_MARKER (TOM "alucinou" sucesso sem persistir)
+// Sprint 30.1: detecta casos onde TOM falou "registrei/criei/anotei" mas o
+// engine não viu marker correspondente. Retorna amostras pro relatório 7h.
+// ─────────────────────────────────────────────────────────────────
+async function checkActionableNoMarker() {
+  const { count, error } = await supabase
+    .from('marker_logs')
+    .select('id', { count: 'exact', head: true })
+    .eq('marker_type', 'ACTIONABLE_NO_MARKER')
+    .eq('result', 'rejected')
+    .gte('created_at', isoHoursAgo(24));
+  if (error) throw error;
+
+  // Sempre carrega amostras pra incluir no relatório (mesmo quando count<=threshold)
+  let samples = [];
+  if (count > 0) {
+    const { data } = await supabase
+      .from('marker_logs')
+      .select('created_at, reason, raw_excerpt, collaborator_id, collaborators:collaborator_id(full_name)')
+      .eq('marker_type', 'ACTIONABLE_NO_MARKER')
+      .eq('result', 'rejected')
+      .gte('created_at', isoHoursAgo(24))
+      .order('created_at', { ascending: false })
+      .limit(5);
+    samples = data || [];
+  }
+
+  if (count === 0) return { status: 'ok', detail: '0 ACTIONABLE_NO_MARKER (TOM fiel ao banco)', samples };
+  if (count <= WARN_THRESHOLDS.actionableNoMarker) {
+    return { status: 'ok', detail: `${count} ACTIONABLE_NO_MARKER nas últimas 24h (abaixo do threshold)`, samples };
+  }
+  return {
+    status: 'warning',
+    detail: `${count} ACTIONABLE_NO_MARKER nas últimas 24h — TOM verbalizou ação SEM persistir (verificar amostras)`,
+    samples,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -293,6 +333,7 @@ const ALL_CHECKS = [
   ['memories_embedding',     checkMemoriesEmbedding],
   ['overdue_tasks',          checkOverdueTasks],
   ['rejected_markers',       checkRejectedMarkers],
+  ['actionable_no_marker',   checkActionableNoMarker],
   ['unknown_markers',        checkUnknownMarkers],
   ['silent_collaborators',   checkSilentCollaborators],
   ['stale_profiles',         checkStaleProfiles],
@@ -307,7 +348,9 @@ async function runHealthCheck() {
   for (const [name, fn] of ALL_CHECKS) {
     try {
       const result = await fn();
-      checks.push({ name, status: result.status, detail: result.detail });
+      const entry = { name, status: result.status, detail: result.detail };
+      if (result.samples && result.samples.length > 0) entry.samples = result.samples;
+      checks.push(entry);
       if (result.fix) fixes.push(result.fix);
     } catch (err) {
       console.error(`[health-check] ${name} threw:`, err.message);
