@@ -10,7 +10,7 @@ type View = 'cards' | 'tabela';
 export function AderenciaTab() {
   const [range, setRange] = useState<Range>('today');
   const [view, setView] = useState<View>('cards');
-  const { data, isLoading } = useAderencia(range);
+  const { data, isLoading, error } = useAderencia(range);
 
   return (
     <div className="px-6 py-4">
@@ -49,7 +49,11 @@ export function AderenciaTab() {
         </div>
       </div>
 
-      {isLoading || !data ? (
+      {error ? (
+        <div className="text-danger text-sm py-4">
+          Erro ao carregar aderência: {String((error as Error).message || error).slice(0, 200)}
+        </div>
+      ) : isLoading || !data ? (
         <div className="text-fg/40 text-sm">Carregando…</div>
       ) : view === 'cards' ? (
         <AderenciaCards data={data.byTemplate} />

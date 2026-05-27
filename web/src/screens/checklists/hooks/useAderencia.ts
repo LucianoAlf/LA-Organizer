@@ -52,18 +52,29 @@ export function useAderencia(range: Range) {
     queryFn: async () => {
       const { from, to } = rangeDates(range);
 
+      // Query 1: completions com template (join op_checklists funciona pq FK direta)
       const { data: comps, error } = await supabase
         .from('op_checklist_completions')
         .select(
-          `
-          id, reference_date, completed_at, dispatched_at, collaborator_id,
-          op_checklists!inner ( id, name, dispatch_time ),
-          collaborators ( id, full_name, preferred_name )
-        `
+          `id, reference_date, completed_at, dispatched_at, collaborator_id,
+           op_checklists!inner ( id, name, dispatch_time )`
         )
         .gte('reference_date', from)
         .lte('reference_date', to);
       if (error) throw error;
+
+      // Query 2: nomes dos colaboradores envolvidos (separada — RLS pode bloquear join)
+      const collabIds = Array.from(new Set((comps || []).map((c: any) => c.collaborator_id))).filter(Boolean);
+      let collabNames = new Map<string, string>();
+      if (collabIds.length > 0) {
+        const { data: collabs } = await supabase
+          .from('collaborators')
+          .select('id, full_name, preferred_name')
+          .in('id', collabIds);
+        for (const c of collabs || []) {
+          collabNames.set(c.id, (c as any).preferred_name || (c as any).full_name || '?');
+        }
+      }
 
       const sixHoursAgo = Date.now() - 6 * 3600000;
       const instances: AderenciaInstance[] = (comps || []).map((c: any) => {
@@ -76,8 +87,7 @@ export function useAderencia(range: Range) {
           template_id: c.op_checklists.id,
           template_name: c.op_checklists.name,
           collaborator_id: c.collaborator_id,
-          collaborator_name:
-            c.collaborators?.preferred_name || c.collaborators?.full_name || '?',
+          collaborator_name: collabNames.get(c.collaborator_id) || '?',
           dispatch_time: c.op_checklists.dispatch_time,
           reference_date: c.reference_date,
           status,

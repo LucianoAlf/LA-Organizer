@@ -4,6 +4,8 @@ import { useState } from 'react';
 import { useChecklistsHoje } from './hooks/useChecklistsHoje';
 import type { WorkChecklistHoje, PersonalChecklistHoje } from './hooks/useChecklistsHoje';
 import { ChecklistExecucaoDrawer } from './ChecklistExecucaoDrawer';
+import { Fab } from '../../components/Fab';
+import { PersonalChecklistSheet } from '../../components/PersonalChecklistSheet';
 
 type Mode = 'work' | 'personal';
 
@@ -11,6 +13,7 @@ export function HojeTab() {
   const [mode, setMode] = useState<Mode>('work');
   const { data, isLoading, error } = useChecklistsHoje();
   const [openId, setOpenId] = useState<string | null>(null);
+  const [sheetContext, setSheetContext] = useState<'work' | 'personal' | null>(null);
 
   if (error) {
     return (
@@ -33,10 +36,10 @@ export function HojeTab() {
       <div className="flex-1 min-w-0 px-6 py-4 overflow-y-auto">
         <div className="flex gap-2 mb-4">
           <Chip active={mode === 'work'} onClick={() => setMode('work')}>
-            💼 Trabalho ({workCount})
+            Trabalho ({workCount})
           </Chip>
           <Chip active={mode === 'personal'} onClick={() => setMode('personal')}>
-            🏡 Pessoal ({personalCount})
+            Pessoal ({personalCount})
           </Chip>
         </div>
 
@@ -81,6 +84,31 @@ export function HojeTab() {
           );
         })()}
       </div>
+
+      <Fab
+        label="Novo"
+        ariaLabel="Criar checklist"
+        actions={[
+          {
+            icon: '📋',
+            label: 'Lista pessoal',
+            ariaLabel: 'Criar lista pessoal',
+            onClick: () => setSheetContext('personal'),
+          },
+          {
+            icon: '💼',
+            label: 'Lista de trabalho',
+            ariaLabel: 'Criar lista de trabalho',
+            onClick: () => setSheetContext('work'),
+          },
+        ]}
+      />
+
+      <PersonalChecklistSheet
+        open={sheetContext !== null}
+        onClose={() => setSheetContext(null)}
+        context={sheetContext ?? 'personal'}
+      />
     </div>
   );
 }
