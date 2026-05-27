@@ -16,6 +16,7 @@ const OpenAI = require('openai');
 const openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const inventarioService = require('./services/inventario-service');
 const inventarioValidators = require('./services/inventario-validators');
+const announcementsService = require('./services/announcements');
 
 const SKILLS_DIR = path.join(__dirname, '..', 'skills');
 
@@ -779,27 +780,12 @@ function parseAnnouncementApprovalMarker(text) {
   };
 }
 
+// Sprint 30 hotfix — Wrapper que delega pro service consolidado. Mantém
+// assinatura legacy { count, error } pros callers existentes (applyAnnouncementApproval).
+// Substituiu cópia bugada que não conhecia `collaborator_ids` nem `role`.
 async function createAnnouncementJobs(ann) {
-  let q = supabase.from('collaborators').select('id, phone').not('phone', 'is', null);
-  const aud = ann.audience || {};
-  if (aud.all !== true) {
-    if (Array.isArray(aud.function_role) && aud.function_role.length) q = q.in('role', aud.function_role);
-    if (Array.isArray(aud.unidade) && aud.unidade.length) q = q.in('unit', aud.unidade);
-    if (Array.isArray(aud.turno) && aud.turno.length) q = q.in('shift', aud.turno);
-  }
-  const { data: recipients, error: recErr } = await q;
-  if (recErr) return { count: 0, error: recErr.message };
-  if (!recipients || recipients.length === 0) return { count: 0, error: null };
-  const jobs = recipients.map(r => ({
-    announcement_id: ann.id,
-    recipient_id: r.id,
-    phone: r.phone,
-    status: 'pending',
-    retry_count: 0,
-  }));
-  const { error: jobErr } = await supabase.from('announcement_jobs').insert(jobs);
-  if (jobErr) return { count: 0, error: jobErr.message };
-  return { count: jobs.length, error: null };
+  const result = await announcementsService.createJobsFromAudience(ann.id, ann.audience);
+  return { count: result.count || 0, error: result.error || null };
 }
 
 async function notifyCoordinatorOfDecision(ann, director, action, reason) {
@@ -911,6 +897,26 @@ async function applyAnnouncementApproval(collaborator, parsed) {
 async function applyAnnouncementAction(collaborator, parsed) {
   const { action, body, audience, scheduled_at, announcement_id, requires_confirmation, confirmation_question } = parsed;
 
+  // GUARD A (Sprint 30 hotfix) — Apenas director/coordinator podem criar/cancelar
+  // comunicados. Sem essa checagem, qualquer collaborator caía no else
+  // (`isCoordinator === false`) e ia direto pra status='scheduled' sem aprovação.
+  // O cancelamento também é restrito porque dispara retratação amplificadora.
+  if (collaborator.role !== 'director' && collaborator.role !== 'coordinator') {
+    console.warn(`[applyAnnouncementAction] negado: collaborator ${collaborator.id} role=${collaborator.role} tentou ${action}`);
+    return { ok: false, reason: 'no_permission' };
+  }
+
+  // GUARD B (Sprint 30 hotfix) — Para action=create, audience precisa ser válido
+  // (ao menos uma chave de filtro com array não-vazio, OU all:true). Sem isso,
+  // o filtro silencioso virava broadcast geral (bug LA Teclas 27/05).
+  if (action === 'create') {
+    const v = announcementsService.validateAudience(audience);
+    if (!v.valid) {
+      console.warn(`[applyAnnouncementAction] audience inválida (${v.reason}) — recusando create`);
+      return { ok: false, reason: `audience_invalid:${v.reason}` };
+    }
+  }
+
   if (action === 'cancel') {
     const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     let annId = (announcement_id && announcement_id !== 'latest' && UUID_RE.test(announcement_id))
@@ -1000,36 +1006,23 @@ async function applyAnnouncementAction(collaborator, parsed) {
       return { ok: true, action: 'pending_approval', announcement_id: ann.id, recipient_count: directors.length };
     }
 
-    // Caso director (fluxo já existente) — buscar recipients e inserir jobs
-    let q = supabase
-      .from('collaborators')
-      .select('id, phone')
-      .eq('is_active', true)
-      .not('phone', 'is', null);
-
-    if (audience && !audience.all) {
-      if (audience.function_role?.length) q = q.in('role', audience.function_role);
-      if (audience.unidade?.length) q = q.in('unit', audience.unidade);
-      if (audience.turno?.length) q = q.in('shift', audience.turno);
-    }
-
-    const { data: recipients, error: rErr } = await q;
-    if (rErr) return { ok: false, reason: rErr.message };
-    if (!recipients || recipients.length === 0) return { ok: false, reason: 'no_recipients' };
-
-    const jobs = recipients.map(r => ({
-      announcement_id: ann.id,
-      recipient_id: r.id,
-      phone: r.phone,
-    }));
-    const { error: jobErr } = await supabase.from('announcement_jobs').insert(jobs);
-    if (jobErr) {
+    // Sprint 30 hotfix — Director cria comunicado direto: delega resolução de
+    // audience pro service consolidado (suporta role, function_role, unidade,
+    // turno, collaborator_ids, e rejeita audience vazio).
+    const jobsResult = await announcementsService.createJobsFromAudience(ann.id, audience);
+    if (jobsResult.error) {
       // compensate: remove the orphaned announcement row
       await supabase.from('announcements').delete().eq('id', ann.id);
-      return { ok: false, reason: jobErr.message };
+      return { ok: false, reason: jobsResult.error };
+    }
+    if (jobsResult.count === 0) {
+      // empty_audience ou nenhum match de filtro: também rollback pra não
+      // deixar announcement orfão em scheduled sem jobs.
+      await supabase.from('announcements').delete().eq('id', ann.id);
+      return { ok: false, reason: jobsResult.empty_audience ? 'empty_audience' : 'no_recipients' };
     }
 
-    return { ok: true, action: 'created', announcement_id: ann.id, recipient_count: recipients.length };
+    return { ok: true, action: 'created', announcement_id: ann.id, recipient_count: jobsResult.count };
   }
 
   return { ok: false, reason: 'unknown_action' };

@@ -17,6 +17,7 @@ process.chdir(path.join(__dirname, '..', '..'));
 loadDotEnv(path.join(process.cwd(), '.env'));
 
 const supabase = require('../supabase/client');
+const announcementsService = require('../services/announcements');
 const { sendRitual, sendCoordinatorReport, getDndState, consolidateMemoryFor, decayExpiredMemories, generateWeeklySummaryFor, getRitualIntroDecision } = require('../engine');
 const { runLaEducaLembretes, processarFilaNotificacoes, processarNotificacoesAtribuicao, runLaEducaEscalation, runLaEducaBriefingSexta } = require('./la-educa-lembretes');
 const {
@@ -527,38 +528,12 @@ async function dispatchChecklists(now = new Date(), { dry = false, filterPhone =
   return results;
 }
 
-// Sprint 13 F3 — Audience-to-jobs helper. Mirrors PWA mutation filter logic.
-// Sprint 22.X — passou a suportar role + collaborator_ids; corrigiu function_role
-// que estava buscando na coluna errada (era 'role').
+// Sprint 30 hotfix — Wrapper delegando pro service consolidado em
+// services/announcements.js. Mantém assinatura legacy (retorna apenas count)
+// pros callers existentes (notifyCoordinators).
 async function createJobsFromAudience(announcementId, audience) {
-  let q = supabase.from('collaborators').select('id, phone').eq('is_active', true).not('phone', 'is', null);
-  const aud = audience || {};
-  if (aud.all !== true) {
-    if (Array.isArray(aud.role) && aud.role.length) q = q.in('role', aud.role);
-    if (Array.isArray(aud.function_role) && aud.function_role.length) q = q.in('role', aud.function_role);
-    if (Array.isArray(aud.unidade) && aud.unidade.length) q = q.in('unit', aud.unidade);
-    if (Array.isArray(aud.turno) && aud.turno.length) q = q.in('shift', aud.turno);
-    if (Array.isArray(aud.collaborator_ids) && aud.collaborator_ids.length) q = q.in('id', aud.collaborator_ids);
-  }
-  const { data: recipients, error } = await q;
-  if (error) {
-    console.error('[createJobsFromAudience] erro buscando recipients:', error.message);
-    return 0;
-  }
-  if (!recipients || recipients.length === 0) return 0;
-  const jobs = recipients.map(r => ({
-    announcement_id: announcementId,
-    recipient_id: r.id,
-    phone: r.phone,
-    status: 'pending',
-    retry_count: 0,
-  }));
-  const { error: jobErr } = await supabase.from('announcement_jobs').insert(jobs);
-  if (jobErr) {
-    console.error('[createJobsFromAudience] erro INSERT jobs:', jobErr.message);
-    return 0;
-  }
-  return jobs.length;
+  const result = await announcementsService.createJobsFromAudience(announcementId, audience);
+  return result.count || 0;
 }
 
 // Sprint 13 F3 — Notifica coordenadores sobre aprovação/rejeição pelo diretor (via PWA).

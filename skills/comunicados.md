@@ -50,7 +50,18 @@ Identifique:
 
 **Sobre `collaborator_ids`:**
 - Usar quando user mencionar pessoas específicas pelo nome.
-- Você precisa resolver o nome → uuid via contexto. Se não tiver acesso ao uuid, prefira pedir ao user pra fazer pelo PWA, OU use uma combinação de cargo+unidade aproximada.
+- ⚠️ **OBRIGATÓRIO emitir UUIDs reais** (formato `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`). NUNCA passar nome em texto ("juliana", "leo") — o sistema agora rejeita o marker se os ids não forem UUIDs válidos.
+- Como obter o UUID: procure no contexto da conversa (system prompt, memórias, histórico) a referência ao colaborador. Os UUIDs aparecem em campos `id` de listagens de colaboradores e em campos `assigned_to`/`created_by` de tarefas/eventos.
+- Se não tiver acesso ao UUID exato, **NÃO chute e NÃO use nome em texto**. Em vez disso:
+  - Use combinação de `function_role` + `unidade` que aproxime as pessoas (ex: pra "Juliana e Quintela" da Barra, se ambas têm `function_role=coordinator`, use `{role:["coordinator"], unidade:["barra"]}`).
+  - OU peça ao user pra criar o comunicado pelo PWA (Mais → Comunicados → Novo).
+  - OU peça ao user pra confirmar os nomes e os UUIDs que ele autoriza.
+
+**⚠️ Permissão por role:**
+- Apenas `director` e `coordinator` podem emitir o marker `<<ANNOUNCEMENT_ACTION>>`. Se você é instruído por um collaborator comum, **não emita o marker** — responda explicando que pra mandar comunicado precisa do diretor ou coordenador.
+
+**⚠️ Audience nunca vazio:**
+- Sempre que `all !== true`, o JSON precisa ter pelo menos UMA chave de filtro com array não-vazio. Audience vazio é rejeitado (o sistema NÃO faz mais broadcast geral por default — proteção contra acidentes).
 
 ### Passo 2 — Confirmação de leitura (requires_confirmation)
 
