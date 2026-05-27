@@ -107,12 +107,83 @@ async function materializeSeries(table, template) {
 
   if (toInsert.length === 0) return { created: 0, skipped };
 
-  const { error } = await supabase.from(table).insert(toInsert);
+  // Insere e retorna IDs + anchor (due_date/start_at) pra clonar reminders depois
+  const anchorCol = table === 'tasks' ? 'due_date' : 'start_at';
+  const { data: inserted, error } = await supabase
+    .from(table)
+    .insert(toInsert)
+    .select(`id, ${anchorCol}`);
   if (error) {
     console.error(`[recurrence] insert err series=${template.id}:`, error.message);
     return { created: 0, skipped, error: error.message };
   }
-  return { created: toInsert.length, skipped };
+
+  // Sprint 23 — copia task_reminders / event_reminders (múltiplos) por instância,
+  // preservando o delta entre cada remind_at e o anchor do template.
+  // Idempotência: a função busca reminders existentes na instância e só insere os faltantes.
+  if (inserted && inserted.length > 0) {
+    await _cloneRemindersForInstances(table, template, inserted).catch((e) =>
+      console.error(`[recurrence] _cloneReminders unhandled:`, e.message)
+    );
+  }
+
+  return { created: (inserted || toInsert).length, skipped };
+}
+
+/**
+ * Sprint 23 — Copia task_reminders/event_reminders do template pra cada
+ * instância recém-criada, ajustando delta de tempo em relação ao anchor.
+ *
+ * @param {'tasks'|'events'} table
+ * @param {Object} template — row do template (tem id, due_date|start_at, etc)
+ * @param {Array<{id:string, due_date?:string, start_at?:string}>} instances
+ */
+async function _cloneRemindersForInstances(table, template, instances) {
+  const reminderTable = table === 'tasks' ? 'task_reminders' : 'event_reminders';
+  const fkColumn = table === 'tasks' ? 'task_id' : 'event_id';
+
+  // 1. Busca os reminders do template (inclui label pra preservar "1h antes" etc)
+  const { data: templateReminders, error: rErr } = await supabase
+    .from(reminderTable)
+    .select('remind_at, label')
+    .eq(fkColumn, template.id);
+  if (rErr) {
+    console.error(`[recurrence] reminders query err table=${reminderTable}:`, rErr.message);
+    return;
+  }
+  if (!templateReminders || templateReminders.length === 0) return;
+
+  // 2. Anchor do template (00:00 BRT pra tasks; start_at pra events)
+  const tplAnchor = table === 'tasks'
+    ? new Date(String(template.due_date) + 'T00:00:00-03:00')
+    : new Date(template.start_at);
+  if (isNaN(tplAnchor.getTime())) return;
+
+  // 3. Pra cada instância, calcula novos remind_at preservando delta
+  const toInsert = [];
+  for (const inst of instances) {
+    const instAnchor = table === 'tasks'
+      ? new Date(String(inst.due_date) + 'T00:00:00-03:00')
+      : new Date(inst.start_at);
+    if (isNaN(instAnchor.getTime())) continue;
+
+    for (const tr of templateReminders) {
+      const tmplRemind = new Date(tr.remind_at);
+      if (isNaN(tmplRemind.getTime())) continue;
+      const delta = tmplRemind.getTime() - tplAnchor.getTime();
+      const newRemind = new Date(instAnchor.getTime() + delta).toISOString();
+      toInsert.push({ [fkColumn]: inst.id, remind_at: newRemind, label: tr.label || null });
+    }
+  }
+
+  if (toInsert.length === 0) return;
+
+  const { error: insErr } = await supabase.from(reminderTable).insert(toInsert);
+  if (insErr) {
+    console.error(`[recurrence] reminders insert err table=${reminderTable}:`, insErr.message);
+  } else {
+    console.log(`[recurrence] cloned ${toInsert.length} reminders for ${instances.length} instances (series=${template.id})`);
+  }
 }
 
 /**
