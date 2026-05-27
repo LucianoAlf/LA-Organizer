@@ -1556,7 +1556,7 @@ async function getActiveChecklistHint(collaboratorId) {
   );
 }
 
-function renderActiveThreadHint(thread) {
+function renderActiveThreadHint(thread, today) {
   if (!thread) return '';
   if (thread.ambiguous) {
     const list = thread.candidates.map(t => `  - "${String(t.title).slice(0, 70)}"`).join('\n');
@@ -2385,7 +2385,7 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   // ("a ligação", "ele", "me lembra") sem chutar pelo mais saliente.
   const allTasks = [...(ctx.personalTasks || []), ...(ctx.workTasks || [])];
   const activeThread = await inferActiveThread(hist, allTasks, collaborator?.id);
-  const activeThreadBlock = renderActiveThreadHint(activeThread);
+  const activeThreadBlock = renderActiveThreadHint(activeThread, _todayForMonth);
 
   const ctxBlock = (pending ? baseCtx + '\n' + pending : baseCtx) + pastEventsBlock + resolutionBlock + activeThreadBlock;
 
