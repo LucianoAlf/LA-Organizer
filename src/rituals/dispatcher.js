@@ -2399,10 +2399,11 @@ async function remindPendingProjectApprovals(opts = {}) {
       if (sup && sup.phone) supervisor = sup;
     }
     if (!supervisor) {
+      // Sprint 30 — fallback de aprovador: só o CEO (não Anne/Admin).
       const { data: directors } = await supabase
         .from('collaborators')
         .select('id, full_name, phone')
-        .eq('role', 'director')
+        .eq('is_ceo', true)
         .eq('is_active', true)
         .neq('id', creator.id)
         .order('full_name');

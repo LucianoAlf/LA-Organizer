@@ -67,14 +67,14 @@ async function sendToDirector(opts = {}) {
 
   const { weekStart, weekEnd } = builder.lastWeekRange(now);
 
-  // Director(s)
+  // Sprint 30 — Apenas o CEO recebe scorecard consolidado (não Anne/Admin).
   const { data: directors } = await supabase
     .from('collaborators')
     .select('id, full_name, phone')
-    .eq('role', 'director')
+    .eq('is_ceo', true)
     .eq('is_active', true)
     .not('phone', 'is', null);
-  if (!directors || directors.length === 0) return { skipped: 'no_director' };
+  if (!directors || directors.length === 0) return { skipped: 'no_ceo' };
 
   // Idempotência: 1 envio por director por semana
   let sentCount = 0;

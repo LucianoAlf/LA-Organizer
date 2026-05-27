@@ -208,9 +208,11 @@ async function runLaJourneyEscalation() {
 
   if (!conteudos || conteudos.length === 0) return;
 
+  // Sprint 30 — Escalation LA Journey vai só pro CEO. Bug colateral: coluna é
+  // `is_active` (não `active`); corrigido junto.
   const { data: directors } = await supabase
-    .from('collaborators').select('id, full_name')
-    .eq('role', 'director').eq('active', true);
+    .from('collaborators').select('id, full_name, phone')
+    .eq('is_ceo', true).eq('is_active', true);
   if (!directors || directors.length === 0) return;
 
   // Agrupa por director — uma msg consolidada
