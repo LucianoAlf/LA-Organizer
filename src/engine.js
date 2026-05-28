@@ -3833,7 +3833,20 @@ async function applyTaskActions(collaborator, actions) {
             const _d = _taskDupResult.probable[0];
             console.warn(`[IntegrityCheck] DUP_TASK score=${_d._score.toFixed(2)} "${a.title.trim().slice(0,40)}" ~ "${String(_d.title).slice(0,40)}" (${_d.status})`);
             // Sprint 23.5 — persiste task pendente para bypass engine-side quando user responder "2"
-            pendingDupTasks.set(collaborator.id, { task: { ...a, assigned_to: assignedTo }, timestamp: Date.now() });
+            // Sprint 31.4 Bug-B fix: armazena insertRow validado (não action bruto do LLM)
+            // garante created_by correto, context sanitizado, todos os campos validados.
+            const _pendingTask = { ...insertRow, created_by: collaborator.id };
+            pendingDupTasks.set(collaborator.id, { task: _pendingTask, timestamp: Date.now() });
+            // Sprint 31.4 Bug-A fix: persistir no DB pra sobreviver pm2 restart.
+            // Usa pending_intents (kind=task_creation, _dup_bypass=true no payload).
+            try {
+              await pendingIntents.openIntent(
+                collaborator.id,
+                'task_creation',
+                { drafts: [_pendingTask], _dup_bypass: true },
+                null,
+              );
+            } catch (_pie) { console.warn('[DupBypass] pending_intent persist err (non-fatal):', _pie.message); }
             // A1: retornar suspect-payload. INSERT NÃO ocorre. Skill processa no novo turno.
             _taskIntegrityPayload = {
               severity: 'soft',
@@ -5399,11 +5412,30 @@ async function tryDupBypass(collab, text) {
   const choice = choiceMatch[1];
   const EXP_MS = 10 * 60 * 1000;
   const pendingEv = pendingDupEvents.get(collab.id);
-  const pendingTk = pendingDupTasks.get(collab.id);
+  let pendingTk = pendingDupTasks.get(collab.id);
   // Só age se houver algo pendente e não expirado
-  const hasEv = pendingEv && (Date.now() - pendingEv.timestamp < EXP_MS);
-  const hasTk = pendingTk && (Date.now() - pendingTk.timestamp < EXP_MS);
-  if (!hasEv && !hasTk) return null;
+  let hasEv = pendingEv && (Date.now() - pendingEv.timestamp < EXP_MS);
+  let hasTk = pendingTk && (Date.now() - pendingTk.timestamp < EXP_MS);
+
+  // Sprint 31.4 Bug-A fix: DB fallback pra sobreviver pm2 restart.
+  // Se Map vazio (processo reiniciou entre a pergunta e o "2"), recupera do pending_intents.
+  if (!hasEv && !hasTk) {
+    try {
+      const _dbIntents = await pendingIntents.listOpenIntents(collab.id);
+      const _dbDup = _dbIntents.find(i =>
+        i.kind === 'task_creation' && i.payload?._dup_bypass === true &&
+        Array.isArray(i.payload?.drafts) && i.payload.drafts.length > 0
+      );
+      if (_dbDup) {
+        pendingTk = { task: _dbDup.payload.drafts[0], timestamp: Date.now(), _intentId: _dbDup.id };
+        hasTk = true;
+        console.log(`[DupBypass] DB fallback task="${String(_dbDup.payload.drafts[0]?.title || '').slice(0,40)}" intent=${_dbDup.id.slice(0,8)}`);
+      }
+    } catch (_e) {
+      console.warn('[DupBypass] DB fallback err (non-fatal):', _e.message);
+    }
+    if (!hasEv && !hasTk) return null;
+  }
 
   if (choice === '3') {
     if (hasEv) pendingDupEvents.delete(collab.id);
@@ -5437,24 +5469,32 @@ async function tryDupBypass(collab, text) {
     console.log(`[DupBypass] task choice=${choice} "${String(tk.title).slice(0,40)}"`);
     if (choice === '1') return { reply: `Certo! Já está anotado como _${tk.title}_. Nada mudou.` };
     // choice === '2': inserir task diretamente (bypass dup check)
-    // Sprint 23.6 — fallback de assigned_to: se pendingDupTasks armazenou sem
-    // o assignedTo (regression observada), usa collab.id atual. Previne FK violation.
-    const assignedTo = tk.assigned_to || collab.id;
-    if (!assignedTo) {
-      console.error('[DupBypass] task insert ABORT: no assignedTo (tk.assigned_to + collab.id both empty)');
+    // Sprint 31.4 Bug-B fix: insertRow vem do validated insertRow (armazenado no Map/DB),
+    // não mais reconstruído do action bruto do LLM. Garante created_by=collab.id,
+    // context sanitizado, department_id/request_type_id/description preservados.
+    const insertRow = {
+      ...tk,
+      created_by: collab.id,  // sempre o sender como creator (não LLM action)
+      source: 'tom',
+      status: 'pending',       // sempre pending (não herdar awaiting_confirmation)
+    };
+    delete insertRow._dup_bypass;  // limpar marker interno antes de inserir
+    delete insertRow._intentId;    // idem
+    if (!insertRow.assigned_to) insertRow.assigned_to = collab.id;
+    if (!insertRow.assigned_to) {
+      console.error('[DupBypass] task insert ABORT: no assignedTo');
       return { reply: '_Não consegui salvar a tarefa porque não identifiquei pra quem é. Tenta de novo me dizendo o que é._' };
     }
-    const insertRow = {
-      title: String(tk.title).trim().slice(0, 200),
-      context: tk.context || 'personal',
-      assigned_to: assignedTo,
-      created_by: tk.created_by || assignedTo,
-      source: 'tom',
-      status: 'pending',
-      priority: tk.priority || 'medium',
-      due_date: tk.due_date || null,
-      remind_at: tk.remind_at || null,
-    };
+    // Resolve intent do DB se veio do fallback (DB fallback path)
+    if (pendingTk._intentId) {
+      try { await pendingIntents.resolveIntent(pendingTk._intentId, 'confirmed', 'dup_bypass choice=2'); } catch (_e) { /* non-fatal */ }
+    } else {
+      // Limpa intent ativa do DB mesmo quando veio do Map (Map foi populado recentemente)
+      try {
+        const _dbI = (await pendingIntents.listOpenIntents(collab.id)).find(i => i.kind === 'task_creation' && i.payload?._dup_bypass);
+        if (_dbI) await pendingIntents.resolveIntent(_dbI.id, 'confirmed', 'dup_bypass choice=2');
+      } catch (_e) { /* non-fatal */ }
+    }
     const { data: inserted, error: insErr } = await supabase.from('tasks').insert(insertRow).select('id, title').single();
     if (insErr) {
       // Sprint 23.6 — log detalhado pra diagnosticar (FK? RLS? not-null violation?)
