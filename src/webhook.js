@@ -13,6 +13,7 @@ const audio = require('./services/audio');
 const vision = require('./services/vision');
 const gemini = require('./services/gemini');
 const shutdown = require('./services/shutdown');
+const webhookPersistence = require('./services/webhook-persistence');
 
 const router = express.Router();
 
@@ -90,32 +91,14 @@ function verifyWebhookSignature(req) {
 }
 
 /**
- * POST /webhook (ou /webhook/:token) — Recebe mensagens da UAZAPI.
+ * Processa o payload de um webhook após autenticação e 200.
+ * Extraído do router para permitir replay de webhooks salvos durante graceful
+ * shutdown (Sprint WQ). Chamado também por webhook-persistence.replayPending().
  *
- * Dois métodos de autenticação suportados:
- *   1. URL token (UAZAPI atual): /webhook/<WEBHOOK_SECRET>
- *      → token vai no path, validado em verifyWebhookSignature.
- *   2. Header HMAC (futuro): X-Webhook-Signature: sha256=<hex>
- *      → suportado para providers que computam HMAC do body.
+ * @param {object} body - req.body original (payload da UAZAPI)
  */
-router.post(['/webhook', '/webhook/:token'], async (req, res) => {
-  // 0) HMAC. Em strict mode rejeita ANTES do 200 — UAZAPI deve reenviar até autenticar.
-  const sig = verifyWebhookSignature(req);
-  if (sig.mode === 'strict' && !sig.ok) {
-    console.warn(`[Webhook] REJECT 401 — auth ${sig.reason}`);
-    return res.status(401).json({ error: 'invalid_signature' });
-  }
-  // Responder 200 imediatamente pra UAZAPI não reenviar
-  res.status(200).json({ status: 'received' });
-  if (sig.mode === 'permissive' && !sig.ok) {
-    console.warn(`[Webhook] auth permissive — ${sig.reason} (would-401 in strict mode)`);
-  } else if (sig.mode !== 'disabled') {
-    console.log(`[Webhook] auth ok (mode=${sig.mode}, method=${sig.method || '?'})`);
-  }
-
+async function processWebhookBody(body) {
   try {
-    const body = req.body;
-
     console.log('[DEBUG] Body:', JSON.stringify(body).substring(0, 2000));
 
     // Guard 2: dedupe — descarta reentrega do MESMO evento (UAZAPI retry ou curl duplicado).
@@ -347,6 +330,43 @@ router.post(['/webhook', '/webhook/:token'], async (req, res) => {
   } catch (err) {
     console.error(`[Webhook] Erro ao processar: ${err.message}`);
   }
+}
+
+/**
+ * POST /webhook (ou /webhook/:token) — Recebe mensagens da UAZAPI.
+ *
+ * Dois métodos de autenticação suportados:
+ *   1. URL token (UAZAPI atual): /webhook/<WEBHOOK_SECRET>
+ *      → token vai no path, validado em verifyWebhookSignature.
+ *   2. Header HMAC (futuro): X-Webhook-Signature: sha256=<hex>
+ *      → suportado para providers que computam HMAC do body.
+ */
+router.post(['/webhook', '/webhook/:token'], async (req, res) => {
+  // 0) HMAC. Em strict mode rejeita ANTES do 200 — UAZAPI deve reenviar até autenticar.
+  const sig = verifyWebhookSignature(req);
+  if (sig.mode === 'strict' && !sig.ok) {
+    console.warn(`[Webhook] REJECT 401 — auth ${sig.reason}`);
+    return res.status(401).json({ error: 'invalid_signature' });
+  }
+  // Responder 200 imediatamente pra UAZAPI não reenviar
+  res.status(200).json({ status: 'received' });
+  if (sig.mode === 'permissive' && !sig.ok) {
+    console.warn(`[Webhook] auth permissive — ${sig.reason} (would-401 in strict mode)`);
+  } else if (sig.mode !== 'disabled') {
+    console.log(`[Webhook] auth ok (mode=${sig.mode}, method=${sig.method || '?'})`);
+  }
+
+  // Sprint WQ — durante graceful shutdown, salva payload no banco em vez de processar.
+  // Porta 3100 fica aberta (server.close() removido do shutdown.js), uazapi recebe 200.
+  // No próximo startup, index.js chama replayPending() 2s após TOM estar pronto.
+  if (shutdown.isInShutdown()) {
+    const phone = whatsapp.extractPhone(req.body) || '?';
+    console.log(`[Webhook] shutdown — queuing for replay (phone=...${String(phone).slice(-4)})`);
+    await webhookPersistence.saveToQueue(req.body);
+    return;
+  }
+
+  await processWebhookBody(req.body);
 });
 
 /**
@@ -373,3 +393,4 @@ router.get('/', (req, res) => {
 });
 
 module.exports = router;
+module.exports.processWebhookBody = processWebhookBody;

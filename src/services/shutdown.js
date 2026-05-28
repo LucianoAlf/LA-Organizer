@@ -12,8 +12,10 @@
 //   try { /* ... */ } finally { shutdown.trackEnd(); }
 //
 // SIGTERM agora:
-//   1. Marca isShuttingDown=true (consumidores podem skipar trabalho novo)
-//   2. server.close() — para de aceitar novos webhooks
+//   1. Marca isShuttingDown=true
+//   2. NÃO fecha o servidor HTTP — porta fica aberta (Sprint WQ)
+//      webhook.js detecta isInShutdown() → salva payload no banco → retorna 200
+//      Assim uazapi não perde o webhook nem retenta. index.js replaya no próximo startup.
 //   3. Aguarda activeProcesses chegar a 0 (max timeoutMs, default 30s)
 //   4. process.exit(0)
 //
@@ -47,10 +49,9 @@ function installGracefulShutdown(server, timeoutMs = 30000) {
     isShuttingDown = true;
     console.log(`[TOM] ${sig} recebido — graceful shutdown (active=${activeProcesses}, timeout=${timeoutMs}ms)`);
 
-    // Para de aceitar novos webhooks/HTTP — conexões existentes terminam
-    if (server && typeof server.close === 'function') {
-      try { server.close(); } catch (e) { console.warn('[TOM] server.close err:', e.message); }
-    }
+    // Sprint WQ: NÃO chama server.close() — porta 3100 fica aberta durante shutdown.
+    // Webhooks que chegam nessa janela são salvos no banco pelo webhook.js (isInShutdown check)
+    // e replayados pelo index.js no próximo startup. Assim uazapi recebe 200 e não perde msgs.
 
     const deadline = Date.now() + timeoutMs;
     while (activeProcesses > 0 && Date.now() < deadline) {
