@@ -434,6 +434,7 @@ export interface PersonalChecklist {
   list_type: PersonalListType
   context: PersonalListContext
   is_active: boolean
+  icon_emoji: string | null
   created_at: string
   updated_at: string
   personal_checklist_items?: PersonalChecklistItem[]

@@ -2,6 +2,8 @@
 // Sprint 22.38 — Card de lista pessoal (mercado, viagem, remédios, geral).
 // Reusa ChecklistItemRow + ChecklistAddItemForm + RowMenu do design system.
 // RLS owner-only no banco; aqui assumimos que o user logado é o owner.
+// Sprint 29.x — Remover window.prompt/confirm. Edição via PersonalChecklistSheet,
+// confirmações via ConfirmDialog. Emoji customizável via icon_emoji.
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, ChevronRight } from 'lucide-react'
@@ -18,23 +20,21 @@ import { useSortableSensors } from '../lib/sortableSensors'
 import { RowMenu, type MenuItem } from './RowMenu'
 import { ChecklistItemRow } from './ChecklistItemRow'
 import { ChecklistAddItemForm } from './ChecklistAddItemForm'
+import { PersonalChecklistSheet } from './PersonalChecklistSheet'
+import { ConfirmDialog } from './ConfirmDialog'
 import {
   toggleItem, addItem, deleteItem, reorderItems,
-  renameList, changeListType, archiveList, deleteList, saveItemNote,
+  archiveList, deleteList, saveItemNote,
 } from '../lib/personalChecklists'
 import {
   PERSONAL_LIST_TYPE_ICON,
-  PERSONAL_LIST_TYPE_LABEL,
   type PersonalChecklist,
   type PersonalChecklistItem,
-  type PersonalListType,
 } from '../types'
 
 interface Props {
   list: PersonalChecklist
 }
-
-const TYPES: PersonalListType[] = ['shopping', 'travel', 'meds', 'general']
 
 export function PersonalChecklistCard({ list }: Props) {
   const queryClient = useQueryClient()
@@ -71,6 +71,10 @@ export function PersonalChecklistCard({ list }: Props) {
     if (!allDone && autoCollapsed) setAutoCollapsed(false)
   }, [allDone, autoCollapsed, collapsed])
 
+  // Sheet de edição e dialogs de confirmação
+  const [editSheetOpen, setEditSheetOpen]   = useState(false)
+  const [confirmAction, setConfirmAction]   = useState<'archive' | 'delete' | null>(null)
+
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['personal-checklists'] })
 
   const toggleMutation = useMutation({
@@ -96,14 +100,6 @@ export function PersonalChecklistCard({ list }: Props) {
     mutationFn: (ordered: { id: string; sort_order: number }[]) => reorderItems(ordered),
     onSuccess: invalidate,
   })
-  const renameMutation = useMutation({
-    mutationFn: (name: string) => renameList(list.id, name),
-    onSuccess: invalidate,
-  })
-  const typeMutation = useMutation({
-    mutationFn: (t: PersonalListType) => changeListType(list.id, t),
-    onSuccess: invalidate,
-  })
   const archiveMutation = useMutation({
     mutationFn: () => archiveList(list.id),
     onSuccess: invalidate,
@@ -126,39 +122,20 @@ export function PersonalChecklistCard({ list }: Props) {
     reorderMutation.mutate(updates)
   }
 
-  // ⋮ menu do card. "Mudar tipo" só faz sentido pra context='personal'.
-  const isPersonal = list.context === 'personal'
+  // Menu do card — sem window.prompt/confirm
   const cardMenu: MenuItem[] = [
     {
-      label: 'Renomear',
-      onClick: () => {
-        const next = window.prompt('Novo nome', list.name)
-        if (next && next.trim() && next !== list.name) renameMutation.mutate(next.trim())
-      },
+      label: 'Editar',
+      onClick: () => setEditSheetOpen(true),
     },
-    ...(isPersonal ? [{
-      label: 'Mudar tipo',
-      onClick: () => {
-        const labels = TYPES.map(t => `${PERSONAL_LIST_TYPE_ICON[t]} ${PERSONAL_LIST_TYPE_LABEL[t]}`).join('\n')
-        const next = window.prompt(
-          `Digite o tipo:\n\n${labels}\n\n(shopping / travel / meds / general)`,
-          list.list_type,
-        )
-        if (next && (TYPES as string[]).includes(next) && next !== list.list_type) {
-          typeMutation.mutate(next as PersonalListType)
-        }
-      },
-    }] : []),
     {
       label: 'Arquivar',
-      onClick: () => archiveMutation.mutate(),
-      confirm: 'Arquivar essa lista? Some da visualização (sem deletar dados).',
+      onClick: () => setConfirmAction('archive'),
     },
     {
       label: 'Apagar lista',
-      onClick: () => deleteListMutation.mutate(),
       danger: true,
-      confirm: 'Apagar definitivamente essa lista e todos os itens? Não dá pra desfazer.',
+      onClick: () => setConfirmAction('delete'),
     },
   ]
 
@@ -177,7 +154,7 @@ export function PersonalChecklistCard({ list }: Props) {
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1.5">
               <span className="text-lg flex-shrink-0" aria-hidden>
-                {PERSONAL_LIST_TYPE_ICON[list.list_type]}
+                {list.icon_emoji ?? PERSONAL_LIST_TYPE_ICON[list.list_type]}
               </span>
               <h3 className="text-card-title text-fg truncate">{list.name}</h3>
             </div>
@@ -240,6 +217,38 @@ export function PersonalChecklistCard({ list }: Props) {
           />
         </div>
       )}
+
+      {/* Sheet de edição */}
+      <PersonalChecklistSheet
+        open={editSheetOpen}
+        onClose={() => setEditSheetOpen(false)}
+        context={list.context}
+        editList={list}
+      />
+
+      {/* Confirmação: arquivar */}
+      <ConfirmDialog
+        open={confirmAction === 'archive'}
+        onClose={() => setConfirmAction(null)}
+        title={`Arquivar "${list.name}"?`}
+        description="A lista some da visualização mas pode ser recuperada depois."
+        confirmLabel="Arquivar"
+        confirmVariant="primary"
+        onConfirm={() => { archiveMutation.mutate(); setConfirmAction(null) }}
+        isPending={archiveMutation.isPending}
+      />
+
+      {/* Confirmação: apagar */}
+      <ConfirmDialog
+        open={confirmAction === 'delete'}
+        onClose={() => setConfirmAction(null)}
+        title={`Apagar "${list.name}"?`}
+        description="Essa ação não pode ser desfeita. Todos os itens serão removidos."
+        confirmLabel="Apagar lista"
+        confirmVariant="danger"
+        onConfirm={() => { deleteListMutation.mutate(); setConfirmAction(null) }}
+        isPending={deleteListMutation.isPending}
+      />
     </div>
   )
 }

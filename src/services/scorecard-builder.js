@@ -180,39 +180,93 @@ const CATEGORY_LABELS = {
 };
 
 /**
- * Renderiza versão CONSOLIDADA pro director (todos líderes).
+ * Renderiza versão CONSOLIDADA pro director — hierarquia CEO-first.
+ * CEO deve conseguir escanear em <10s: quem precisa de ação vs quem está bem.
+ *
+ * Classificação:
+ *   🔴 Atenção: closure < 60% OU 3+ atrasadas OU 2+ travadas (precisa ter tarefas)
+ *   🟡 Olhar:   closure < 85% OU 1+ atrasadas (precisa ter tarefas)
+ *   🟢 Ritmo:   todos os demais (incluindo sem tarefas registradas)
  */
 function renderForDirector(scorecards, leadersById) {
   if (!scorecards || scorecards.length === 0) return null;
-  const lines = ['📊 *Scorecard semanal — seus líderes*\n'];
 
-  // Ordena: pior closure_rate primeiro (precisa atenção)
-  const sorted = [...scorecards].sort((a, b) => a.closure_rate - b.closure_rate);
+  const SEP  = '─────────────────────';
+  const SEP2 = '━━━━━━━━━━━━━━━━━━━━━';
 
-  for (const sc of sorted) {
+  // Classificar cada líder por urgência
+  const atencao = [], olhar = [], ritmo = [];
+  for (const sc of scorecards) {
     const leader = leadersById.get(sc.leader_id);
     if (!leader) continue;
-    const pct = Math.round(sc.closure_rate * 100);
-    const delta = sc.delta_vs_prev || {};
-    const arrow = delta.is_first_week
-      ? '🆕'
-      : (delta.closure_rate_delta > 0.05 ? '↑' : delta.closure_rate_delta < -0.05 ? '↓' : '→');
-    const deltaTxt = delta.is_first_week
-      ? '(1ª semana)'
-      : ` (${delta.closure_rate_delta >= 0 ? '+' : ''}${Math.round(delta.closure_rate_delta * 100)}pp)`;
-    const firstName = (leader.preferred_name || leader.full_name || '').split(' ')[0];
+    const hasNoTasks = sc.tasks_closed === 0 && sc.tasks_overdue === 0 && sc.tasks_stuck === 0;
+    if (!hasNoTasks && (sc.closure_rate < 0.60 || sc.tasks_overdue >= 3 || sc.tasks_stuck >= 2)) {
+      atencao.push({ sc, leader });
+    } else if (!hasNoTasks && (sc.closure_rate < 0.85 || sc.tasks_overdue >= 1)) {
+      olhar.push({ sc, leader });
+    } else {
+      ritmo.push({ sc, leader });
+    }
+  }
 
-    lines.push(`*${firstName}* ${arrow} ${pct}%${deltaTxt}`);
-    lines.push(`  ✅ fechou ${sc.tasks_closed} • ⚠️ ${sc.tasks_overdue} atrasadas • 🔒 ${sc.tasks_stuck} travadas 3+`);
-    if (sc.insights) lines.push(`  _${sc.insights}_`);
-    if (sc.top_bottlenecks?.[0]) {
-      const b = sc.top_bottlenecks[0];
-      lines.push(`  🎯 bottleneck: *${CATEGORY_LABELS[b.category] || b.category}* (${b.count})`);
+  // Ordena grupos: pior primeiro em atenção/olhar, mais tarefas primeiro em ritmo
+  atencao.sort((a, b) => a.sc.closure_rate - b.sc.closure_rate);
+  olhar.sort((a, b) => a.sc.closure_rate - b.sc.closure_rate);
+  ritmo.sort((a, b) => b.sc.tasks_closed - a.sc.tasks_closed);
+
+  const _name = l => (l.preferred_name || l.full_name || '').split(' ')[0];
+
+  const lines = [];
+  lines.push('📊 *Scorecard semanal — seus líderes*');
+  lines.push(SEP2);
+  lines.push('');
+
+  // --- 🔴 ATENÇÃO ---
+  if (atencao.length > 0) {
+    lines.push(`🔴 *Atenção — ${atencao.length} líder${atencao.length > 1 ? 'es' : ''}*`);
+    for (const { sc, leader } of atencao) {
+      const pct = Math.round(sc.closure_rate * 100);
+      const bot = sc.top_bottlenecks?.[0];
+      const botTxt = bot ? ` • ${CATEGORY_LABELS[bot.category] || bot.category}` : '';
+      const stuck = sc.tasks_stuck >= 2 ? ` • ${sc.tasks_stuck} travadas 3+` : '';
+      lines.push(`• *${_name(leader)}* — ${pct}% fechamento, ${sc.tasks_overdue} atrasada${sc.tasks_overdue !== 1 ? 's' : ''}${stuck}${botTxt}`);
+      if (sc.insights) lines.push(`  _${sc.insights}_`);
     }
     lines.push('');
   }
 
-  lines.push('_Versão individual de cada líder vai chegar 9h._');
+  // --- 🟡 OLHAR ---
+  if (olhar.length > 0) {
+    lines.push(SEP);
+    lines.push(`🟡 *Olhar de perto — ${olhar.length} líder${olhar.length > 1 ? 'es' : ''}*`);
+    for (const { sc, leader } of olhar) {
+      const pct = Math.round(sc.closure_rate * 100);
+      const bot = sc.top_bottlenecks?.[0];
+      const botTxt = bot ? ` • ${CATEGORY_LABELS[bot.category] || bot.category}` : '';
+      lines.push(`• *${_name(leader)}* — ${pct}%, ${sc.tasks_overdue} atrasada${sc.tasks_overdue !== 1 ? 's' : ''}${botTxt}`);
+    }
+    lines.push('');
+  }
+
+  // --- 🟢 NO RITMO ---
+  lines.push(SEP);
+  const ritmoLabel = `🟢 *No ritmo — ${ritmo.length} líder${ritmo.length > 1 ? 'es' : ''}*`;
+  lines.push(ritmoLabel);
+
+  // Destaca quem mais fechou; colapsa o resto numa linha
+  const comTarefas = ritmo.filter(r => r.sc.tasks_closed > 0).slice(0, 5);
+  const resto = ritmo.length - comTarefas.length;
+  if (comTarefas.length > 0) {
+    const inline = comTarefas.map(r => `${_name(r.leader)} ${r.sc.tasks_closed}✅`).join(' · ');
+    lines.push(inline + (resto > 0 ? ` · _+${resto} estáveis_` : ''));
+  } else if (ritmo.length > 0) {
+    lines.push(ritmo.map(r => _name(r.leader)).join(', '));
+  }
+
+  lines.push('');
+  lines.push(SEP2);
+  lines.push('_Versão individual de cada líder: enviada às 9h_');
+
   return lines.join('\n').trim();
 }
 
@@ -220,38 +274,57 @@ function renderForDirector(scorecards, leadersById) {
  * Renderiza versão INDIVIDUAL pro próprio líder (sem comparar com outros).
  */
 function renderForLeader(scorecard, leader) {
-  const pct = Math.round(scorecard.closure_rate * 100);
   const firstName = (leader.preferred_name || leader.full_name || '').split(' ')[0];
-  const lines = [`📊 *Sua semana, ${firstName}*\n`];
+  const hasNoTasks = scorecard.tasks_closed === 0 && scorecard.tasks_overdue === 0 && scorecard.tasks_stuck === 0;
+  const pct = Math.round(scorecard.closure_rate * 100);
+  const SEP = '─────────────────────';
 
-  lines.push(`✅ Fechou *${scorecard.tasks_closed}* tarefas (${pct}% de fechamento)`);
+  const lines = [`📊 *Sua semana, ${firstName}*`, SEP, ''];
+
+  if (hasNoTasks) {
+    lines.push('Nenhuma tarefa registrada esta semana.');
+    lines.push('_Quer começar a registrar? É só me mandar o que tá no seu radar._');
+    return lines.join('\n');
+  }
+
+  // Métricas principais
+  lines.push(`✅ *${scorecard.tasks_closed}* fechada${scorecard.tasks_closed !== 1 ? 's' : ''} — *${pct}% de fechamento*`);
   if (scorecard.tasks_overdue > 0) {
-    lines.push(`⚠️ *${scorecard.tasks_overdue}* ainda abertas/atrasadas`);
+    lines.push(`⚠️ *${scorecard.tasks_overdue}* ainda abert${scorecard.tasks_overdue !== 1 ? 'as' : 'a'}/atrasada${scorecard.tasks_overdue !== 1 ? 's' : ''}`);
   }
   if (scorecard.tasks_stuck > 0) {
-    lines.push(`🔒 *${scorecard.tasks_stuck}* travadas com 3+ cobranças — vamos destravar?`);
+    lines.push(`🔒 *${scorecard.tasks_stuck}* travada${scorecard.tasks_stuck !== 1 ? 's' : ''} com 3+ cobranças — vamos destravar?`);
   }
 
+  // Bottleneck
   if (scorecard.top_bottlenecks?.[0]) {
     const b = scorecard.top_bottlenecks[0];
     lines.push('');
-    lines.push(`Padrão da semana: *${CATEGORY_LABELS[b.category] || b.category}* concentrou ${b.count} pendências.`);
+    lines.push(`🎯 Padrão: *${CATEGORY_LABELS[b.category] || b.category}* concentrou ${b.count} pendência${b.count !== 1 ? 's' : ''}.`);
   }
 
+  // Delta vs semana anterior
   const delta = scorecard.delta_vs_prev || {};
   if (!delta.is_first_week && delta.closure_rate_delta != null) {
     lines.push('');
     if (delta.closure_rate_delta >= 0.10) {
-      lines.push(`🏆 Bora! Semana melhor que a anterior (+${Math.round(delta.closure_rate_delta * 100)}pp).`);
+      lines.push(`📈 Semana melhor que a anterior (+${Math.round(delta.closure_rate_delta * 100)}pp). Bora manter!`);
     } else if (delta.closure_rate_delta <= -0.10) {
-      lines.push(`👀 Semana ${Math.round(delta.closure_rate_delta * 100)}pp abaixo da anterior. Me chama se quiser destravar.`);
+      lines.push(`📉 ${Math.round(Math.abs(delta.closure_rate_delta * 100))}pp abaixo da semana anterior. Me chama se precisar destravar.`);
     } else {
-      lines.push(`📊 Estável vs semana anterior.`);
+      lines.push(`➡️ Estável vs semana anterior.`);
     }
   }
 
+  // Insight LLM (apenas se existir e for diferente do óbvio)
+  if (scorecard.insights && !scorecard.delta_vs_prev?.is_first_week) {
+    lines.push('');
+    lines.push(`_${scorecard.insights}_`);
+  }
+
   lines.push('');
-  lines.push(`_Quer puxar isso no seu time? Posso te ajudar a montar a conversa._`);
+  lines.push(SEP);
+  lines.push('_Quer conversar sobre essa semana? Me chama._');
   return lines.join('\n');
 }
 

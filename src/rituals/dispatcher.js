@@ -1898,18 +1898,16 @@ async function ceoTeamUnclosedEventsReport(now = new Date()) {
     });
     for (const key of sortedKeys) {
       const { leader, evs } = byLeader[key];
+      // Separador entre seções (não antes da primeira)
+      if (lines.length > 0) lines.push('─────────────────────');
       const leaderLabel = leader
-        ? `🎯 *Cobra com ${leader.full_name.split(' ')[0]}* (${evs.length})`
-        : `❓ *Sem líder mapeado — você decide* (${evs.length})`;
+        ? `⚠️ *${leader.full_name.split(' ')[0]} — ${evs.length} compromisso${evs.length > 1 ? 's' : ''}*`
+        : `❓ *Sem líder — ${evs.length} item${evs.length > 1 ? 's' : ''} (você decide)*`;
       lines.push(leaderLabel);
       for (const ev of evs.slice(0, 5)) {
         const days = Math.floor((now.getTime() - new Date(ev.end_at).getTime()) / (24 * 3600_000));
         const owner = ev.collaborators?.full_name?.split(' ')[0] || '—';
-        const dateStr = new Date(ev.end_at).toLocaleDateString('pt-BR', {
-          timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit',
-        });
-        const catLabel = CATEGORY_LABELS[ev.category] || ev.category || '—';
-        lines.push(`  • _${String(ev.title).slice(0, 55)}_ (${dateStr}, ${days}d · ${catLabel} · ${owner})`);
+        lines.push(`  • _${String(ev.title).slice(0, 55)}_ — ${days}d (${owner})`);
       }
       if (evs.length > 5) lines.push(`  _+${evs.length - 5} outros_`);
       lines.push('');
@@ -1931,7 +1929,7 @@ async function ceoTeamUnclosedEventsReport(now = new Date()) {
       const top3 = toStaleCheck.slice(0, 3).map(ev =>
         `  • _${String(ev.title).slice(0, 50)}_`
       ).join('\n');
-      staleCheckBlock = `\n\n⏳ *${toStaleCheck.length} item(s) parado(s) 5+ dias — já rolou ou arquivo?*\n${top3}${toStaleCheck.length > 3 ? `\n  _+${toStaleCheck.length - 3} outros_` : ''}\n_Sem resposta em 24h, arquivo automaticamente._`;
+      staleCheckBlock = `\n\n─────────────────────\n⏳ *${toStaleCheck.length} item${toStaleCheck.length > 1 ? 's' : ''} parado${toStaleCheck.length > 1 ? 's' : ''} 5+ dias — já rolou?*\n${top3}${toStaleCheck.length > 3 ? `\n  _+${toStaleCheck.length - 3} outros_` : ''}\n_Sem resposta até amanhã → arquivo automático_`;
       // Marca staleness_check_sent_at pra não repetir amanhã
       // Sprint 31 fix: SDK Supabase retorna {error} sem lançar — checar explicitamente
       const { error: staleEvErr } = await supabase.from('events')
@@ -1945,7 +1943,9 @@ async function ceoTeamUnclosedEventsReport(now = new Date()) {
       }
     }
 
-    const msg = `🎖️ *Governança — Compromissos do time sem fechamento*\n\n${lines.join('\n').trim()}\n\n_Total: ${filteredStale.length} compromisso${filteredStale.length > 1 ? 's' : ''} parado${filteredStale.length > 1 ? 's' : ''}._${hiddenNote}${staleCheckBlock}\n\nPra delegar cobrança, me diz tipo: *"manda recado pro Quintela: cobra fechamento da reunião pedagógica de 21/05"*.`;
+    const dateLabel = new Date(now).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: 'short' });
+    const hiddenSuffixEv = hiddenCount > 0 ? ` · ${hiddenCount} já cobrado${hiddenCount > 1 ? 's' : ''} hoje` : '';
+    const msg = `🎖️ *Governança — Compromissos em aberto*\n_${dateLabel} · ${filteredStale.length} parado${filteredStale.length > 1 ? 's' : ''}_\n━━━━━━━━━━━━━━━━━━━━━\n\n${lines.join('\n').trim()}${staleCheckBlock}\n\n━━━━━━━━━━━━━━━━━━━━━\n_${filteredStale.length} compromisso${filteredStale.length > 1 ? 's' : ''} parado${filteredStale.length > 1 ? 's' : ''}${hiddenSuffixEv}. Pra cobrar: "cobra [nome] sobre [assunto]"_`;
 
     try {
       await whatsapp.sendMessage(ceo.phone, msg);
@@ -2080,17 +2080,13 @@ async function ceoTeamUnclosedTasksReport(now = new Date()) {
     };
     const fmtItem = (t) => {
       const owner = t.collaborators?.full_name?.split(' ')[0] || '—';
-      const dateStr = (() => {
-        const [y, m, d] = t.due_date.split('-');
-        return `${d}/${m}`;
-      })();
-      const catLabel = CATEGORY_LABELS[t.category] || t.category || '—';
-      return `  • _${String(t.title).slice(0, 55)}_ (${dateStr}, ${t.days}d · ${catLabel} · ${owner})`;
+      const stuckMark = (t.coordination_request_count || 0) >= 3 ? ' 🔒' : '';
+      return `  • _${String(t.title).slice(0, 55)}_ — ${t.days}d (${owner})${stuckMark}`;
     };
 
     const lines = [];
     if (ceoBucket.length > 0) {
-      lines.push(`🚨 *Pra você decidir — atrasadas 3+ dias* (${ceoBucket.length})`);
+      lines.push(`🚨 *Pra você decidir — ${ceoBucket.length} tarefa${ceoBucket.length > 1 ? 's' : ''} com 3+ dias*`);
       for (const t of ceoBucket.slice(0, 8)) lines.push(fmtItem(t));
       if (ceoBucket.length > 8) lines.push(`  _+${ceoBucket.length - 8} outras_`);
       lines.push('');
@@ -2102,9 +2098,10 @@ async function ceoTeamUnclosedTasksReport(now = new Date()) {
     });
     for (const key of sortedKeys) {
       const { leader, items } = byLeader[key];
+      if (lines.length > 0) lines.push('─────────────────────');
       const label = leader
-        ? `🎯 *Cobra com ${leader.full_name.split(' ')[0]}* (${items.length})`
-        : `❓ *Sem líder mapeado* (${items.length})`;
+        ? `⚠️ *${leader.full_name.split(' ')[0]} — ${items.length} tarefa${items.length > 1 ? 's' : ''}*`
+        : `❓ *Sem líder — ${items.length} tarefa${items.length > 1 ? 's' : ''} (você decide)*`;
       lines.push(label);
       for (const t of items.slice(0, 5)) lines.push(fmtItem(t));
       if (items.length > 5) lines.push(`  _+${items.length - 5} outras_`);
@@ -2124,7 +2121,7 @@ async function ceoTeamUnclosedTasksReport(now = new Date()) {
       const top3 = toStaleCheck.slice(0, 3).map(t =>
         `  • _${String(t.title).slice(0, 50)}_`
       ).join('\n');
-      staleCheckBlock = `\n\n⏳ *${toStaleCheck.length} tarefa(s) parada(s) 5+ dias — já rolou ou arquivo?*\n${top3}${toStaleCheck.length > 3 ? `\n  _+${toStaleCheck.length - 3} outras_` : ''}\n_Sem resposta em 24h, arquivo automaticamente._`;
+      staleCheckBlock = `\n\n─────────────────────\n⏳ *${toStaleCheck.length} tarefa${toStaleCheck.length > 1 ? 's' : ''} parada${toStaleCheck.length > 1 ? 's' : ''} 5+ dias — já rolou?*\n${top3}${toStaleCheck.length > 3 ? `\n  _+${toStaleCheck.length - 3} outras_` : ''}\n_Sem resposta até amanhã → arquivo automático_`;
       // Sprint 31 fix: SDK Supabase retorna {error} sem lançar — checar explicitamente
       const { error: staleTaskErr } = await supabase.from('tasks')
         .update({ staleness_check_sent_at: now.toISOString() })
@@ -2165,7 +2162,11 @@ async function ceoTeamUnclosedTasksReport(now = new Date()) {
       ? `\n\n⚠️ _${stuckTasks.length} task(s) com 3+ cobranças sem efeito — repetir mais não vai resolver. Considera mudar de tática (1:1, ligar, redistribuir)._`
       : '';
 
-    const msg = `📋 *Governança — Tarefas do time atrasadas*${diagnosticsBlock}\n\n${lines.join('\n').trim()}\n\n_Total: ${filteredStale.length} tarefa${filteredStale.length > 1 ? 's' : ''} atrasada${filteredStale.length > 1 ? 's' : ''}._${hiddenNote}${stuckBlock}${staleCheckBlock}\n\nPra delegar cobrança, me diz tipo: *"manda recado pra Krissya: cobra a tarefa X"*.`;
+    const dateLabelT = new Date(now).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: 'short' });
+    const hiddenSuffixT = hiddenCount > 0 ? ` · ${hiddenCount} já cobrada${hiddenCount > 1 ? 's' : ''} hoje` : '';
+    const stuckSection = stuckTasks.length > 0 ? `\n\n_⚠️ ${stuckTasks.length} task${stuckTasks.length > 1 ? 's' : ''} com 3+ cobranças — cobrar mais não resolve. Considera 1:1, ligar ou redistribuir._` : '';
+    const diagSection = diagnosticsBlock ? `\n\n─────────────────────\n🔍 *Diagnóstico*\n${diagnosticsBlock.trim()}` : '';
+    const msg = `📋 *Governança — Tarefas atrasadas*\n_${dateLabelT} · ${filteredStale.length} tarefa${filteredStale.length > 1 ? 's' : ''}_\n━━━━━━━━━━━━━━━━━━━━━\n\n${lines.join('\n').trim()}${diagSection}${stuckSection}${staleCheckBlock}\n\n━━━━━━━━━━━━━━━━━━━━━\n_${filteredStale.length} atrasada${filteredStale.length > 1 ? 's' : ''}${hiddenSuffixT}. Pra cobrar: "cobra [nome] sobre [tarefa]"_`;
 
     try {
       await whatsapp.sendMessage(ceo.phone, msg);

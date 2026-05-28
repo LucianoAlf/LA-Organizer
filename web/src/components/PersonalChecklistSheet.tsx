@@ -1,19 +1,20 @@
 // web/src/components/PersonalChecklistSheet.tsx
 // Sprint 22.38 — BottomSheet para criar uma lista pessoal/trabalho nova.
-// Sprint 22.38b — Refactor pra design system: usa <Button variant="primary"> (bg-tom),
-// chips de tipo com bg-tom (não bg-brand). Aceita prop context pra Trabalho/Pessoal.
-// Edição inline já é coberta pelo card (renomear/mudar tipo via ⋮).
+// Sprint 22.38b — Refactor pra design system: usa <Button variant="primary"> (bg-tom).
+// Sprint 29.x — Modo edição (prop editList) + EmojiPicker. Zero window.prompt.
 import { useState, useEffect } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { X } from 'lucide-react'
 import { BottomSheet } from './BottomSheet'
 import { Button } from './Button'
+import { EmojiPicker } from './EmojiPicker'
 import { useAuth } from '../contexts/AuthContext'
-import { createPersonalChecklist } from '../lib/personalChecklists'
+import { createPersonalChecklist, updateList } from '../lib/personalChecklists'
 import { RecurrenceField, type RecurrenceValue } from '../screens/checklists/RecurrenceField'
 import {
   PERSONAL_LIST_TYPE_ICON,
   PERSONAL_LIST_TYPE_LABEL,
+  type PersonalChecklist,
   type PersonalListContext,
   type PersonalListType,
 } from '../types'
@@ -23,28 +24,41 @@ interface Props {
   onClose: () => void
   /** 'personal' (default) → tipos shopping/travel/meds/general. 'work' → tipo fixo general. */
   context?: PersonalListContext
+  /** Se passado, abre em modo edição pré-preenchido. */
+  editList?: PersonalChecklist | null
 }
 
 const TYPES: PersonalListType[] = ['shopping', 'travel', 'meds', 'general']
 
-export function PersonalChecklistSheet({ open, onClose, context = 'personal' }: Props) {
+export function PersonalChecklistSheet({ open, onClose, context = 'personal', editList }: Props) {
   const { collaborator } = useAuth()
   const queryClient = useQueryClient()
+  const isEditing = Boolean(editList)
 
-  const [name, setName] = useState('')
-  const [listType, setListType] = useState<PersonalListType>(context === 'work' ? 'general' : 'shopping')
-  const [items, setItems] = useState<string[]>([])
+  const [name, setName]           = useState('')
+  const [listType, setListType]   = useState<PersonalListType>('shopping')
+  const [emoji, setEmoji]         = useState<string | null>(null)
+  const [items, setItems]         = useState<string[]>([])
   const [newItemText, setNewItemText] = useState('')
-  const [recurrence, setRecurrence] = useState<RecurrenceValue>({ recurrence_type: 'once' })
+  const [recurrence, setRecurrence]  = useState<RecurrenceValue>({ recurrence_type: 'once' })
 
+  // Inicializa form sempre que o sheet abre ou a lista de edição muda
   useEffect(() => {
     if (!open) return
-    setName('')
-    setListType(context === 'work' ? 'general' : 'shopping')
-    setItems([])
-    setNewItemText('')
-    setRecurrence({ recurrence_type: 'once' })
-  }, [open, context])
+    if (editList) {
+      setName(editList.name)
+      setListType(editList.list_type)
+      setEmoji(editList.icon_emoji ?? null)
+      setRecurrence({ recurrence_type: 'once' })
+    } else {
+      setName('')
+      setListType(context === 'work' ? 'general' : 'shopping')
+      setEmoji(null)
+      setItems([])
+      setNewItemText('')
+      setRecurrence({ recurrence_type: 'once' })
+    }
+  }, [open, editList, context])
 
   const createMutation = useMutation({
     mutationFn: () => createPersonalChecklist({
@@ -52,6 +66,7 @@ export function PersonalChecklistSheet({ open, onClose, context = 'personal' }: 
       name: name.trim(),
       listType,
       context,
+      icon_emoji: emoji,
       initialItems: items,
       recurrence_type: recurrence.recurrence_type,
       days_of_week: recurrence.days_of_week ?? null,
@@ -63,7 +78,23 @@ export function PersonalChecklistSheet({ open, onClose, context = 'personal' }: 
     },
   })
 
-  const isValid = name.trim().length > 0 && !!collaborator
+  const editMutation = useMutation({
+    mutationFn: () => updateList(editList!.id, {
+      name: name.trim(),
+      list_type: listType,
+      icon_emoji: emoji,
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['personal-checklists'] })
+      onClose()
+    },
+  })
+
+  const mutation = isEditing ? editMutation : createMutation
+  const isValid  = name.trim().length > 0 && !!collaborator
+
+  // Contexto efetivo: ao editar usa o contexto da lista, ao criar usa a prop
+  const effectiveContext = editList?.context ?? context
 
   function addInitial() {
     const t = newItemText.trim()
@@ -76,11 +107,15 @@ export function PersonalChecklistSheet({ open, onClose, context = 'personal' }: 
     setItems(prev => prev.filter((_, idx) => idx !== i))
   }
 
-  const title = context === 'work' ? 'Nova checklist de trabalho' : 'Nova lista pessoal'
+  const title = isEditing
+    ? 'Editar lista'
+    : context === 'work' ? 'Nova checklist de trabalho' : 'Nova lista pessoal'
 
   return (
     <BottomSheet open={open} onClose={onClose} title={title}>
       <div className="space-y-4 pb-4">
+
+        {/* Nome */}
         <div>
           <label className="text-caption text-fg-muted block mb-1">Nome *</label>
           <input
@@ -88,18 +123,23 @@ export function PersonalChecklistSheet({ open, onClose, context = 'personal' }: 
             value={name}
             onChange={e => setName(e.target.value)}
             maxLength={80}
-            placeholder={context === 'work' ? 'ex: Rotina de fechamento' : 'ex: Mercado da semana'}
+            placeholder={effectiveContext === 'work' ? 'ex: Rotina de fechamento' : 'ex: Mercado da semana'}
             className="w-full bg-bg-surface border border-border rounded-md px-3 py-2
                        text-body text-fg focus:outline-none focus:border-tom focus-ring"
           />
         </div>
 
+        {/* Emoji picker */}
+        <EmojiPicker value={emoji} onChange={setEmoji} />
+
+        {/* Recorrência */}
         <div>
           <label className="text-caption text-fg-muted block mb-2">Recorrência</label>
           <RecurrenceField value={recurrence} onChange={setRecurrence} />
         </div>
 
-        {context === 'personal' && (
+        {/* Tipo — pessoal (criação ou edição de lista pessoal) */}
+        {effectiveContext === 'personal' && (
           <div>
             <label className="text-caption text-fg-muted block mb-2">Tipo *</label>
             <div className="grid grid-cols-2 gap-2">
@@ -126,58 +166,61 @@ export function PersonalChecklistSheet({ open, onClose, context = 'personal' }: 
           </div>
         )}
 
-        <div>
-          <label className="text-caption text-fg-muted block mb-2">
-            Itens iniciais ({items.length})
-          </label>
-          {items.length > 0 && (
-            <ul className="space-y-1 mb-2">
-              {items.map((it, idx) => (
-                <li
-                  key={idx}
-                  className="flex items-center gap-2 bg-bg-app rounded-md px-2 py-1.5"
-                >
-                  <span className="flex-1 text-body-sm text-fg truncate">{it}</span>
-                  <button
-                    type="button"
-                    onClick={() => removeInitial(idx)}
-                    className="text-fg-muted hover:text-danger p-1 focus-ring rounded-sm"
-                    aria-label={`Remover ${it}`}
+        {/* Itens iniciais — só no modo criação */}
+        {!isEditing && (
+          <div>
+            <label className="text-caption text-fg-muted block mb-2">
+              Itens iniciais ({items.length})
+            </label>
+            {items.length > 0 && (
+              <ul className="space-y-1 mb-2">
+                {items.map((it, idx) => (
+                  <li
+                    key={idx}
+                    className="flex items-center gap-2 bg-bg-app rounded-md px-2 py-1.5"
                   >
-                    <X size={14} />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={newItemText}
-              onChange={e => setNewItemText(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter') {
-                  e.preventDefault()
-                  addInitial()
-                }
-              }}
-              placeholder="Adicionar item..."
-              className="flex-1 bg-bg-surface border border-border rounded-md px-3 py-2
-                         text-body-sm text-fg focus:outline-none focus:border-tom focus-ring"
-            />
-            <Button
-              variant="secondary"
-              size="sm"
-              type="button"
-              onClick={addInitial}
-              disabled={!newItemText.trim()}
-            >
-              Adicionar
-            </Button>
+                    <span className="flex-1 text-body-sm text-fg truncate">{it}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeInitial(idx)}
+                      className="text-fg-muted hover:text-danger p-1 focus-ring rounded-sm"
+                      aria-label={`Remover ${it}`}
+                    >
+                      <X size={14} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={newItemText}
+                onChange={e => setNewItemText(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    addInitial()
+                  }
+                }}
+                placeholder="Adicionar item..."
+                className="flex-1 bg-bg-surface border border-border rounded-md px-3 py-2
+                           text-body-sm text-fg focus:outline-none focus:border-tom focus-ring"
+              />
+              <Button
+                variant="secondary"
+                size="sm"
+                type="button"
+                onClick={addInitial}
+                disabled={!newItemText.trim()}
+              >
+                Adicionar
+              </Button>
+            </div>
           </div>
-        </div>
+        )}
 
-        {createMutation.isError && (
+        {mutation.isError && (
           <p className="text-danger text-caption">
             Erro ao salvar. Verifique sua conexão e tente novamente.
           </p>
@@ -188,11 +231,13 @@ export function PersonalChecklistSheet({ open, onClose, context = 'personal' }: 
           size="md"
           fullWidth
           type="button"
-          loading={createMutation.isPending}
+          loading={mutation.isPending}
           disabled={!isValid}
-          onClick={() => createMutation.mutate()}
+          onClick={() => mutation.mutate()}
         >
-          {context === 'work' ? 'Salvar checklist' : 'Salvar lista'}
+          {isEditing
+            ? 'Salvar alterações'
+            : effectiveContext === 'work' ? 'Salvar checklist' : 'Salvar lista'}
         </Button>
       </div>
     </BottomSheet>

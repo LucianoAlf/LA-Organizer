@@ -1,15 +1,27 @@
-import { ReactNode } from 'react';
+// web/src/components/ConfirmDialog.tsx
+// Sprint 29.x — atualizado para usar DS tokens + Button + suporte a isPending.
+// Backward-compat: onCancel ainda funciona (alias de onClose).
+// Zero dialogs nativos — funciona no Simple Browser, PWA e desktop.
+import type { ReactNode } from 'react'
+import { Button } from './Button'
 
 type Props = {
-  open: boolean;
-  title: string;
-  description?: ReactNode;
-  confirmLabel?: string;
-  cancelLabel?: string;
-  variant?: 'primary' | 'danger';
-  onConfirm: () => void;
-  onCancel: () => void;
-};
+  open: boolean
+  title: string
+  description?: ReactNode
+  confirmLabel?: string
+  cancelLabel?: string
+  /** Novo — preferred. Alias de variant. */
+  confirmVariant?: 'primary' | 'danger'
+  /** Legacy — mantido para callers existentes. */
+  variant?: 'primary' | 'danger'
+  onConfirm: () => void
+  /** Novo — preferred. Alias de onCancel. */
+  onClose?: () => void
+  /** Legacy — mantido para callers existentes. */
+  onCancel?: () => void
+  isPending?: boolean
+}
 
 export function ConfirmDialog({
   open,
@@ -17,47 +29,60 @@ export function ConfirmDialog({
   description,
   confirmLabel = 'Confirmar',
   cancelLabel = 'Cancelar',
+  confirmVariant,
   variant = 'primary',
   onConfirm,
+  onClose,
   onCancel,
+  isPending = false,
 }: Props) {
-  if (!open) return null;
+  if (!open) return null
 
-  const confirmColors =
-    variant === 'danger'
-      ? 'bg-rose-500 hover:bg-rose-600 text-white'
-      : 'bg-green-600 hover:bg-green-500 active:bg-green-700 text-white';
+  const handleClose = onClose ?? onCancel ?? (() => {})
+  const resolvedVariant = confirmVariant ?? variant
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
-      onClick={onCancel}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+      onClick={handleClose}
       role="dialog"
       aria-modal="true"
     >
       <div
-        className="w-full max-w-sm rounded-2xl bg-zinc-900 border border-zinc-700 shadow-2xl p-6"
+        className="w-full max-w-sm rounded-2xl bg-bg-surface border border-border shadow-2xl p-6 space-y-4"
         onClick={e => e.stopPropagation()}
       >
-        <h2 className="text-lg font-semibold text-zinc-100 mb-2">{title}</h2>
+        <h2 className="text-card-title text-fg">{title}</h2>
         {description && (
-          <div className="text-sm text-zinc-300 mb-5">{description}</div>
+          <p className="text-body-md text-fg-muted">{description}</p>
         )}
-        <div className="flex gap-3 justify-end">
-          <button
-            onClick={onCancel}
-            className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-sm font-medium"
-          >
-            {cancelLabel}
-          </button>
-          <button
-            onClick={onConfirm}
-            className={`px-4 py-2 rounded-xl text-sm font-semibold ${confirmColors}`}
-          >
-            {confirmLabel}
-          </button>
+        <div className="flex gap-3">
+          <div className="flex-1">
+            <Button
+              variant="secondary"
+              size="md"
+              fullWidth
+              type="button"
+              onClick={handleClose}
+              disabled={isPending}
+            >
+              {cancelLabel}
+            </Button>
+          </div>
+          <div className="flex-1">
+            <Button
+              variant={resolvedVariant}
+              size="md"
+              fullWidth
+              type="button"
+              onClick={onConfirm}
+              loading={isPending}
+            >
+              {confirmLabel}
+            </Button>
+          </div>
         </div>
       </div>
     </div>
-  );
+  )
 }

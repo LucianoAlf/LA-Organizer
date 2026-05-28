@@ -25,6 +25,7 @@ export async function createPersonalChecklist(input: {
   listType: PersonalListType
   context: PersonalListContext
   initialItems: string[]
+  icon_emoji?: string | null
   recurrence_type?: 'once' | 'daily' | 'weekly' | 'monthly'
   days_of_week?: number[] | null
   day_of_month?: number | null
@@ -36,6 +37,7 @@ export async function createPersonalChecklist(input: {
       name: input.name,
       list_type: input.listType,
       context: input.context,
+      icon_emoji: input.icon_emoji ?? null,
       recurrence_type: input.recurrence_type ?? 'once',
       days_of_week: input.days_of_week ?? null,
       day_of_month: input.day_of_month ?? null,
@@ -137,5 +139,20 @@ export async function saveItemNote(itemId: string, note: string) {
     .from('personal_checklist_items')
     .update({ note: note || null })
     .eq('id', itemId)
+  if (error) throw error
+}
+
+/**
+ * Atualiza campos de uma lista pessoal. Aceita patch parcial.
+ * Substitui renameList + changeListType no fluxo do EditSheet.
+ */
+export async function updateList(
+  listId: string,
+  patch: { name?: string; list_type?: PersonalListType; icon_emoji?: string | null },
+): Promise<void> {
+  const { error } = await supabase
+    .from('personal_checklists')
+    .update(patch)
+    .eq('id', listId)
   if (error) throw error
 }
