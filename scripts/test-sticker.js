@@ -1,5 +1,12 @@
 #!/usr/bin/env node
-// Teste: manda o sticker tom_dancando pro Alf.
+// Manda um sticker do catálogo tom_stickers pra um número WhatsApp.
+//
+// Uso:
+//   node scripts/test-sticker.js <phone> <sticker_name> ["<texto opcional antes do sticker>"]
+//
+// Ex:
+//   node scripts/test-sticker.js 5521966950296 tom_dancando
+
 const path = require('path');
 const fs   = require('fs');
 const root = path.join(__dirname, '..');
@@ -16,14 +23,34 @@ if (fs.existsSync(envFile)) {
   }
 }
 
+const { createClient } = require('@supabase/supabase-js');
 const w = require(path.join(root, 'src/services/whatsapp'));
+
+const [, , phone, stickerName, optText] = process.argv;
+if (!phone || !stickerName) {
+  console.error('Uso: node scripts/test-sticker.js <phone> <sticker_name> ["<texto antes>"]');
+  process.exit(1);
+}
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY,
+  { auth: { persistSession: false } }
+);
 
 (async () => {
   try {
-    const url = 'https://cesnbnrynvxvgdhfmaua.supabase.co/storage/v1/object/public/tom-stickers/tom_dancando.webp';
-    await w.sendMessage('5521981278047', 'Testando figurinha 🧪 — se aparecer o alien dançando logo abaixo, deu certo!');
-    await w.sendMedia('5521981278047', { url, type: 'sticker' });
-    console.log('✅ Sticker enviado pro Alf');
+    const { data: row, error } = await supabase
+      .from('tom_stickers')
+      .select('url')
+      .eq('name', stickerName)
+      .eq('is_active', true)
+      .maybeSingle();
+    if (error) throw error;
+    if (!row) throw new Error(`Sticker '${stickerName}' não encontrado ou inativo`);
+    if (optText) await w.sendMessage(phone, optText);
+    await w.sendMedia(phone, { url: row.url, type: 'sticker' });
+    console.log(`✅ Sticker '${stickerName}' enviado pra ${phone.slice(-4)}`);
     process.exit(0);
   } catch (err) {
     console.error('❌ Falhou:', err.message);
