@@ -150,6 +150,17 @@ export function RecurrencePicker({ value, onChange, startDate, hidePreview }: Pr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preset, customUnit, customInterval, customByday]);
 
+  // Quando startDate muda E o preset é dependente da data (weekly/monthly/yearly),
+  // re-emite o RRULE pra atualizar BYDAY/BYMONTHDAY/BYMONTH. Senão "Próximas" mostra
+  // datas baseadas no dia antigo (ex: user escolheu Mensal com data 28, depois trocou
+  // pra 08 — sem isso, BYMONTHDAY ficava travado em 28).
+  useEffect(() => {
+    if (preset !== 'weekly' && preset !== 'monthly' && preset !== 'yearly') return;
+    const newRrule = presetToRrule(preset, startDate);
+    if (newRrule && newRrule !== value) onChange(newRrule);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startDate]);
+
   function applyPreset(p: Preset) {
     setPreset(p);
     if (p === 'custom') {
