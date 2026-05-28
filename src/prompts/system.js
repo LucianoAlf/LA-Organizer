@@ -2981,7 +2981,12 @@ async function buildSystemPrompt(collaborator, opts = {}) {
 
   // ─── INVENTÁRIO — detecção contextual (R2) ──────────────────────────────────
   const lowerMsg = (lastUserMessage || '').toLowerCase();
-  const triggersFortesInv = ['inventário', 'inventario', 'patrimônio', 'patrimonio', 'lojinha', 'loja', 'estoque baixo', 'estoque da'];
+  // Sprint 31.3 — triggers expandidos. Bug 28/05/2026 (Rodrigo): falou
+  // "levantar guitarras e violões" + 6 fotos com legendas tipo "Strato Squier",
+  // "Telecaster GBS", "Semi-acústica Strinberg" — NENHUM match, skill ficou
+  // de fora do prompt, TOM caiu no fallback TASK_UPDATE criando 6 tasks
+  // soltas em vez de cadastrar em laReport.inventario.
+  const triggersFortesInv = ['inventário', 'inventario', 'patrimônio', 'patrimonio', 'lojinha', 'loja', 'estoque baixo', 'estoque da', 'instrumento', 'instrumentos', 'regulagem', 'levantar guitarra', 'levantar violão', 'levantar viola', 'levantar instrumento', 'condições de funcionamento'];
   const cmdsInv = /^\s*\/(inv|loja)\b/.test(lastUserMessage || '');
   const unidadesNomes = ['barra', 'recreio', 'campo grande', ' cg '];
   const verbosOperacionais = ['comprei', 'recebi', 'peguei', 'levei', 'chiando', 'quebrado', 'quebrou', 'falta', 'acabou'];
@@ -2992,7 +2997,13 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   let querSalaMatch = /\bsala\s+([a-zA-ZáàâãéêíóôõúçÁÀÂÃÉÊÍÓÔÕÚÇ0-9]+)/i.exec(lastUserMessage || '');
   const verbosConsultaSala = /\b(o que tem|o que h[áa]|que tem|tem o que|ver|mostra|mostrar|mostre|lista|listar|conte[uú]do|inventário|inventario|quais|qual[s]?|equipamento[s]?|item|itens)\b/i;
   // Palavras de item de inventário — se o user fala disso sem mencionar sala, herdar sala da conversa recente
-  const itemKeywordsRe = /\b(ar[\s-]condicionad[oa]|piano|teclado|microfone|microphone|caixa de som|amplificador|cabo|cadeira|mesa|espelho|quadro|projetor|tv|televisão|televisao|c[âa]mera|bateria|guitarra|violão|violao|baixo|computador|notebook|impressora|fornecedor|valor|patrim[ôo]nio|n[°º] s[ée]rie|n[úu]mero de s[ée]rie|nota fiscal|condi[çc][ãa]o do|manuten[çc][ãa]o do|condi[çc][ãa]o desse|condicao do|condicao desse)\b/i;
+  // Sprint 31.3 — regex expandida. Bug 28/05/2026 (Rodrigo): \\bguitarra\\b
+  // NÃO matcheia "guitarras" (plural) nem nomes de modelos (Strato, Telecaster,
+  // Squier, Fender, Strinberg). Adicionado: plurais (s/es), marcas comuns,
+  // vocabulário técnico de instrumentos (cordas, regulagem, captador, ponte,
+  // potenciômetro, traste, inlay, escala, oitavação, afinação) e variantes
+  // (semi-acústica, acústica, elétrica, folk, eletro-acústica).
+  const itemKeywordsRe = /\b(ar[\s-]condicionad[oa]|piano[s]?|teclado[s]?|microfone[s]?|microphone[s]?|caixas? de som|amplificador(?:es)?|cabo[s]?|cadeira[s]?|mesa[s]?|espelho[s]?|quadro[s]?|projetor(?:es)?|tv[s]?|televis(?:ão|ao|ões|oes)|c[âa]mera[s]?|bateria[s]?|guitarra[s]?|viol(?:ão|ao|ões|oes)|baixo[s]?|computador(?:es)?|notebook[s]?|impressora[s]?|fornecedor(?:es)?|valor(?:es)?|patrim[ôo]nio|n[°º] s[ée]rie|n[úu]mero de s[ée]rie|nota fiscal|condi[çc][ãa]o do|manuten[çc][ãa]o do|condi[çc][ãa]o desse|condicao do|condicao desse|instrumento[s]?|regulagem|cordas?|captador(?:es)?|traste[s]?|inlay|potenci[ôo]metro[s]?|afina[çc][ãa]o|oitava[çc][ãa]o|escala|trastilho|tarraxa[s]?|ponte|str[iy]nberg|fender|squier|squeir|gibson|epiphone|yamaha|tagima|giannini|takamine|stratocaster|strato|telecaster|telecasters|les paul|semi[\s-]?ac[úu]stica|ac[úu]stica|el[ée]trica|folk|eletro[\s-]?ac[úu]stica|sf200|af-?60|gbs)\b/i;
   const mencionaItemInv = itemKeywordsRe.test(lowerMsg);
   // Se não tem sala explícita mas menciona item de inventário, busca "sala consultada recentemente"
   // persistida em collaborator_memory (TTL 2h) — mais confiável que regex em histórico.
