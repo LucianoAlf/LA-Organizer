@@ -85,7 +85,7 @@ const TIME_RE = /^([01]?\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const SHORT_ID_RE = /^[a-f0-9]{4,12}$/i;
 const VALID_TASK_ACTIONS = new Set([
-  'complete', 'reschedule', 'create', 'delegate',
+  'complete', 'cancel', 'reschedule', 'create', 'delegate',
   'extension_request', 'extension_decision',
 ]);
 const VALID_COACHING = ['light', 'normal', 'hard'];
@@ -2761,7 +2761,15 @@ function validateTaskAction(a) {
     }
   }
   if (a.action === 'complete') {
-    if (typeof a.id !== 'string' || !SHORT_ID_RE.test(a.id)) return 'bad_id';
+    // Sprint 31 — aceita title como alternativa ao id (igual reschedule desde Sprint 28)
+    const hasId = typeof a.id === 'string' && SHORT_ID_RE.test(a.id);
+    const hasTitle = typeof a.title === 'string' && a.title.trim().length > 0;
+    if (!hasId && !hasTitle) return 'bad_id';
+  } else if (a.action === 'cancel') {
+    // Sprint 31 — cancel: aceita id ou title
+    const hasId = typeof a.id === 'string' && SHORT_ID_RE.test(a.id);
+    const hasTitle = typeof a.title === 'string' && a.title.trim().length > 0;
+    if (!hasId && !hasTitle) return 'bad_id';
   } else if (a.action === 'reschedule') {
     // Sprint 28 hotfix — aceitar title como alternativa ao id.
     // TOM às vezes emite title em vez de id quando não tem o short-id na cabeça.
@@ -2769,7 +2777,10 @@ function validateTaskAction(a) {
     const hasId = typeof a.id === 'string' && SHORT_ID_RE.test(a.id);
     const hasTitle = typeof a.title === 'string' && a.title.trim().length > 0;
     if (!hasId && !hasTitle) return 'bad_id';
-    if (typeof a.new_due_date !== 'string' || !ISO_DATE_RE.test(a.new_due_date)) return 'bad_new_due_date';
+    // Sprint 31 — new_due_date OU new_remind_at (pelo menos um obrigatório)
+    const hasNewDate = typeof a.new_due_date === 'string' && ISO_DATE_RE.test(a.new_due_date);
+    const hasNewRemind = typeof a.new_remind_at === 'string' && a.new_remind_at.length > 0;
+    if (!hasNewDate && !hasNewRemind) return 'bad_reschedule_needs_date_or_remind';
   } else if (a.action === 'create') {
     if (typeof a.title !== 'string' || !a.title.trim()) return 'title_missing';
     // remind_at e due_date são opcionais — applyTaskActions trata defaults.
@@ -3372,6 +3383,26 @@ async function applyTaskActions(collaborator, actions) {
     }
     try {
       if (a.action === 'complete') {
+        // Sprint 31 — title-lookup (mesmo padrão de reschedule)
+        if (!a.id && a.title) {
+          const { data: byTitleC } = await supabase
+            .from('tasks')
+            .select('id')
+            .eq('assigned_to', collaborator.id)
+            .ilike('title', `%${String(a.title).slice(0, 60)}%`)
+            .not('status', 'in', '("done","cancelled")')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (byTitleC) {
+            a.id = byTitleC.id.replace(/-/g, '').slice(0, 8);
+            console.log(`[Task] complete title-lookup: "${a.title}" → id=${a.id}`);
+          } else {
+            console.warn(`[Task] complete title-lookup failed: "${a.title}" not found for ${last4}`);
+            failCount++;
+            continue;
+          }
+        }
         const t = await resolveTaskByShortId(collaborator.id, a.id);
         if (!t) {
           console.warn(`[Task] complete REJECTED id=${a.id} (not owned by ${last4} or not found)`);
@@ -3431,6 +3462,50 @@ async function applyTaskActions(collaborator, actions) {
           await notifyTaskCreatorOfAction(fullTask, collaborator, 'complete');
           okCount++;
         }
+      } else if (a.action === 'cancel') {
+        // Sprint 31 — handler cancel (title-lookup igual complete/reschedule)
+        if (!a.id && a.title) {
+          const { data: byTitleCan } = await supabase
+            .from('tasks')
+            .select('id')
+            .eq('assigned_to', collaborator.id)
+            .ilike('title', `%${String(a.title).slice(0, 60)}%`)
+            .not('status', 'in', '("done","cancelled")')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (byTitleCan) {
+            a.id = byTitleCan.id.replace(/-/g, '').slice(0, 8);
+            console.log(`[Task] cancel title-lookup: "${a.title}" → id=${a.id}`);
+          } else {
+            console.warn(`[Task] cancel title-lookup failed: "${a.title}" not found for ${last4}`);
+            failCount++;
+            continue;
+          }
+        }
+        const tCan = await resolveTaskByShortId(collaborator.id, a.id);
+        if (!tCan) {
+          console.warn(`[Task] cancel REJECTED id=${a.id} (not owned by ${last4} or not found)`);
+          failCount++;
+          continue;
+        }
+        const { data: fullTaskCan } = await supabase
+          .from('tasks').select('id, title, created_by, assigned_to')
+          .eq('id', tCan.id).maybeSingle();
+        const { error: errCan } = await supabase
+          .from('tasks')
+          .update({ status: 'cancelled' })
+          .eq('id', tCan.id)
+          .eq('assigned_to', collaborator.id);
+        if (errCan) {
+          console.error('[Task] cancel err:', errCan.message);
+          failCount++;
+        } else {
+          console.log(`[Task] cancel ${a.id} by ${last4}`);
+          await logAgentNote(tCan.id, `Cancelada por ${nameForCollab(collaborator)}${a.reason ? ': ' + a.reason : ''}`, collaborator.id);
+          await notifyTaskCreatorOfAction(fullTaskCan, collaborator, 'cancel');
+          okCount++;
+        }
       } else if (a.action === 'reschedule') {
         // Sprint 28 — resolução title→id quando TOM não emitiu id numérico.
         if (!a.id && a.title) {
@@ -3458,12 +3533,15 @@ async function applyTaskActions(collaborator, actions) {
           failCount++;
           continue;
         }
-        if (!isValidISODate(a.new_due_date)) {
-          console.warn(`[Task] reschedule REJECTED — bad date ${a.new_due_date}`);
+        // Sprint 31 — new_due_date OU new_remind_at (pelo menos um)
+        const update = {};
+        if (a.new_due_date && isValidISODate(a.new_due_date)) {
+          update.due_date = a.new_due_date;
+        } else if (!a.new_remind_at) {
+          console.warn(`[Task] reschedule REJECTED — needs new_due_date or new_remind_at`);
           failCount++;
           continue;
         }
-        const update = { due_date: a.new_due_date };
         if (typeof a.new_remind_at === 'string' && isValidRemindAt(a.new_remind_at)) {
           update.remind_at = a.new_remind_at;
         }
@@ -3481,10 +3559,10 @@ async function applyTaskActions(collaborator, actions) {
           failCount++;
         } else {
           const sufx = update.remind_at ? ` remind_at=${update.remind_at}` : '';
-          console.log(`[Task] reschedule ${a.id} to ${a.new_due_date}${sufx}`);
+          console.log(`[Task] reschedule ${a.id} to ${update.due_date || 'same'}${sufx}`);
           const oldDue = t.due_date ? formatBRDate(t.due_date) : 'sem prazo';
-          const newDue = formatBRDate(a.new_due_date);
-          const note = `Prazo: ${oldDue} → ${newDue}${update.remind_at ? ` (lembrete ${update.remind_at.slice(11, 16)})` : ''}${a.reason ? ` — ${a.reason}` : ''}`;
+          const newDue = update.due_date ? formatBRDate(update.due_date) : oldDue;
+          const note = `${update.due_date ? `Prazo: ${oldDue} → ${newDue}` : 'Lembrete atualizado'}${update.remind_at ? ` (lembrete ${update.remind_at.slice(11, 16)})` : ''}${a.reason ? ` — ${a.reason}` : ''}`;
           await logAgentNote(t.id, note, collaborator.id);
           await notifyTaskCreatorOfAction(fullTaskR, collaborator, 'reschedule', newDue);
           okCount++;
@@ -7162,7 +7240,12 @@ async function processMessage(phone, text, raw = {}) {
     const REPLY_PROMISE_RE = /(?:lembrete|lembro|te\s+(?:aviso|cobro|lembro))\s+(?:hoje\s+|amanh[aã]\s+|j[aá]\s+|de\s+novo\s+|mais\s+tarde\s+)?(?:[aà]s?\s+|nas?\s+)?\d{1,2}\s*[h:]|(?:reagendei|reagendo|reagendado|reagendamento|marquei\s+(?:pra|para)|agendei\s+(?:pra|para)|coloquei\s+(?:pra|para)|movi\s+(?:pra|para))\s+(?:hoje|amanh[aã]|segunda|terça|quarta|quinta|sexta|sábado|domingo|próxima|semana\s+que\s+vem|\d{1,2}\/\d{1,2})|\b(?:registr(?:ar|ei|ando|o)|anot(?:ar|ei|ando|ado)|adicion(?:ar|ei|ando|ado|o)|juntando|criando|criei|vou\s+criar|crio\s+as?|colocando\s+(?:na|no)\s+(?:lista|pacote|fila)|(?:t[oô]|estou)\s+(?:adicionando|registrando|anotando|criando)|adicionando\s+ao\s+pacote)\b/i;
     const inputActionable = ACTIONABLE_RE.test(String(text || ''));
     const replyHasPromise = REPLY_PROMISE_RE.test(String(reply || ''));
-    if (inputActionable || replyHasPromise) {
+    // Sprint 31 — pula quando TOM está coletando info (pergunta sem tarefa bold)
+    // ex: "Claro! De que é o lembrete?" → info-gathering, não promessa quebrada
+    const _replyEndsQ = /\?\s*$/.test((reply || '').trim());
+    const _replyHasBoldTask = /\*[^*]{3,80}\*/.test(reply || '');
+    const _replyIsInfoGathering = _replyEndsQ && !_replyHasBoldTask;
+    if (!_replyIsInfoGathering && (inputActionable || replyHasPromise)) {
       _metrics.actionable_intent = true;
       const sinceIso = new Date(_t0 - 1000).toISOString();
       const { data: recentMarkers } = await supabase

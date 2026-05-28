@@ -141,7 +141,7 @@ function detectConfirmationQuestion(reply) {
   // Padrões de "Crio?", "Posso criar?", "Crio as 2/3?", "Marco?", "Confirma?"
   const TASK_Q = /\b(crio\s+as?\s+\d|crio\s*\?|posso\s+criar|posso\s+anotar|posso\s+registrar|crio\s+pra\s+voc[eê]|deixo\s+(?:na|no)\s+(?:lista|fila|pacote)|fica\s+como\s+tarefa|adiciono\s+na\s+lista|registro\s+isso\??)\??/i;
   const EVENT_Q = /\b(marco\s*\?|marco\s+pra\s+voc[eê]|coloco\s+na\s+agenda|agendo\s+pra\s+voc[eê]|crio\s+(?:o\s+)?evento|crio\s+(?:a\s+)?reuni[ãa]o)\??/i;
-  const GENERIC_CONFIRM_Q = /\b(confirma\??|posso\s+seguir\??|tudo\s+certo\??|fechado\??|topa\??)\b/i;
+  const GENERIC_CONFIRM_Q = /\b(confirma\??|posso\s+seguir\??|tudo\s+certo\??|certo\??|t[áa]\s+certo\??|fechado\??|topa\??|pode\s+ser\??|fica\s+assim\??)\b/i;
 
   if (TASK_Q.test(trimmed)) return { kind: 'task_creation' };
   if (EVENT_Q.test(trimmed)) return { kind: 'event_creation' };
