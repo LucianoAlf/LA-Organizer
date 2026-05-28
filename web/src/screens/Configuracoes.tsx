@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Settings, Save, PauseCircle } from 'lucide-react';
+import { Settings, PauseCircle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { Button } from '../components/Button';
@@ -79,7 +79,11 @@ export function Configuracoes() {
   const { collaborator, role } = useAuth();
   const qc = useQueryClient();
   const [form, setForm] = useState<Prefs | null>(null);
-  const [savedAt, setSavedAt] = useState<number | null>(null);
+  // Sprint AutoSaveConfig — debounce auto-save com indicador discreto.
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'pending' | 'saved'>('idle');
+  const initialFormJson = useRef<string | null>(null);
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const savedToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [dndOpen, setDndOpen] = useState(false);
 
   const isLeadership = role === 'director' || role === 'coordinator' || role === 'manager';
@@ -92,7 +96,7 @@ export function Configuracoes() {
 
   useEffect(() => {
     if (data) {
-      setForm({
+      const next = {
         ...data,
         briefing_time: trimSec(data.briefing_time),
         personal_briefing_time: trimSec(data.personal_briefing_time),
@@ -101,9 +105,57 @@ export function Configuracoes() {
         monthly_planning_time: trimSec(data.monthly_planning_time),
         monthly_closing_time: trimSec(data.monthly_closing_time),
         task_checkin_times: (data.task_checkin_times || []).map(trimSec),
-      });
+      };
+      setForm(next);
+      // Baseline: serializa o estado inicial pra detectar "houve mudança real"
+      // e não disparar auto-save no primeiro paint.
+      initialFormJson.current = JSON.stringify(next);
     }
   }, [data]);
+
+  // Sprint AutoSaveConfig — debounce de 800ms. Quando form muda e difere
+  // da baseline serializada, agenda save. Cancela timer se houver nova edição
+  // antes do prazo. Validação leve: TimeInputs precisam estar completos (HH:MM)
+  // ou vazios — evita salvar "08:0" enquanto a pessoa ainda digita.
+  useEffect(() => {
+    if (!form || initialFormJson.current === null) return;
+    const formJson = JSON.stringify(form);
+    if (formJson === initialFormJson.current) return;  // sem mudança vs baseline
+
+    // Valida times — só dispara se todos estão completos
+    const HHMM = /^([01]?\d|2[0-3]):[0-5]\d$/;
+    const timeFields: (keyof Prefs)[] = [
+      'briefing_time', 'personal_briefing_time', 'closing_time',
+      'planning_time', 'monthly_planning_time', 'monthly_closing_time',
+    ];
+    const partial = timeFields.some(f => {
+      const v = (form as any)[f];
+      return v && !HHMM.test(v);
+    });
+    if (partial) return;
+    const partialCheckins = (form.task_checkin_times || []).some(t => t && !HHMM.test(t));
+    if (partialCheckins) return;
+
+    // Agenda save
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    setSaveStatus('pending');
+    debounceTimer.current = setTimeout(() => {
+      save.mutate(form, {
+        onSuccess: () => {
+          initialFormJson.current = JSON.stringify(form);
+          setSaveStatus('saved');
+          if (savedToastTimer.current) clearTimeout(savedToastTimer.current);
+          savedToastTimer.current = setTimeout(() => setSaveStatus('idle'), 1800);
+        },
+        onError: () => setSaveStatus('idle'),
+      });
+    }, 800);
+
+    return () => {
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form]);
 
   const save = useMutation({
     mutationFn: async (p: Prefs) => {
@@ -132,9 +184,9 @@ export function Configuracoes() {
       if (error) throw error;
     },
     onSuccess: () => {
-      setSavedAt(Date.now());
+      // Status visual é controlado pelo debounce no useEffect — sem toast aqui
+      // pra não spammar a cada save automático.
       qc.invalidateQueries({ queryKey: ['user_preferences'] });
-      showToast({ kind: 'success', title: 'Configurações salvas' });
     },
     onError: (err: Error) => {
       showToast({ kind: 'error', title: 'Falha ao salvar', msg: err.message });
@@ -209,13 +261,17 @@ export function Configuracoes() {
   if (isLoading || !form) return <LoadingState rows={4} />;
   if (error) return <EmptyState title="Erro" description={(error as Error).message} />;
 
-  const onSubmit = (e: React.FormEvent) => { e.preventDefault(); save.mutate(form); };
-
   return (
     <div className="space-y-lg pb-24">
       <PageHeader title="Configurações" subtitle="Como o TOM te procura no WhatsApp." backTo="/mais" />
 
-      <form onSubmit={onSubmit} className="space-y-md">
+      {/* Indicador discreto de auto-save — Sprint AutoSaveConfig */}
+      <div className="h-5 flex items-center justify-end px-1 -mt-2 text-body-sm" aria-live="polite">
+        {saveStatus === 'pending' && <span className="text-fg-muted">salvando…</span>}
+        {saveStatus === 'saved' && <span className="text-success">✓ salvo</span>}
+      </div>
+
+      <div className="space-y-md">
         {/* Rituais diários */}
         <Section title="Rituais diários">
           <Field label="Briefing pessoal" hint="Mensagem da manhã sobre o dia">
@@ -371,13 +427,7 @@ export function Configuracoes() {
           />
         </Section>
 
-        <div className="flex items-center gap-md">
-          <Button type="submit" leadingIcon={<Save size={18} />} loading={save.isPending}>Salvar</Button>
-          {savedAt && Date.now() - savedAt < 4000 && (
-            <span className="text-body-sm text-success">✓ Salvo</span>
-          )}
-        </div>
-      </form>
+      </div>
 
       {/* Silenciar TOM em dias recorrentes da semana */}
       <Section title="Dias de silêncio" subtitle="Em dias marcados, o TOM não cobra briefings, lembretes nem alertas.">
@@ -438,9 +488,6 @@ export function Configuracoes() {
             })()}.
           </p>
         )}
-        <p className="text-body-sm text-fg-muted italic">
-          Salvar com o botão lá em cima.
-        </p>
       </Section>
 
       {/* Pausar TOM (DND) */}
