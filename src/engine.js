@@ -2647,6 +2647,18 @@ async function applyEventUpdates(collaborator, actions) {
       }
       console.log(`[Event] ${a.action} ${a.id} by ${last4}${a.action === 'reschedule' ? ` to ${a.new_start_at.slice(0, 16)}` : ''}`);
       okCount++;
+      // Sprint 31.1 — fecha qualquer pending_followup aberto pra esse evento
+      try {
+        const pendingFollowups = require('./services/pending-followups');
+        const actionMap = { complete: 'completed', cancel: 'cancelled', reschedule: 'rescheduled' };
+        await pendingFollowups.resolveByTarget({
+          collaboratorId: collaborator.id,
+          targetType: 'event',
+          targetId: ev.id,
+          action: actionMap[a.action] || 'dismissed',
+          via: 'marker:EVENT_UPDATE',
+        });
+      } catch (e) { /* não-fatal */ }
     } catch (err) {
       console.error('[Event] update throw err:', err.message);
       failCount++;
@@ -3466,6 +3478,17 @@ async function applyTaskActions(collaborator, actions) {
           } catch (e) { /* não-fatal */ }
           await logAgentNote(t.id, `Concluída por ${nameForCollab(collaborator)}`, collaborator.id);
           await notifyTaskCreatorOfAction(fullTask, collaborator, 'complete');
+          // Sprint 31.1 — fecha pending_followups dessa task
+          try {
+            const pendingFollowups = require('./services/pending-followups');
+            await pendingFollowups.resolveByTarget({
+              collaboratorId: collaborator.id,
+              targetType: 'task',
+              targetId: t.id,
+              action: 'completed',
+              via: 'marker:TASK_UPDATE',
+            });
+          } catch (e) { /* não-fatal */ }
           okCount++;
         }
       } else if (a.action === 'cancel') {
@@ -3510,6 +3533,17 @@ async function applyTaskActions(collaborator, actions) {
           console.log(`[Task] cancel ${a.id} by ${last4}`);
           await logAgentNote(tCan.id, `Cancelada por ${nameForCollab(collaborator)}${a.reason ? ': ' + a.reason : ''}`, collaborator.id);
           await notifyTaskCreatorOfAction(fullTaskCan, collaborator, 'cancel');
+          // Sprint 31.1 — fecha pending_followups dessa task
+          try {
+            const pendingFollowups = require('./services/pending-followups');
+            await pendingFollowups.resolveByTarget({
+              collaboratorId: collaborator.id,
+              targetType: 'task',
+              targetId: tCan.id,
+              action: 'cancelled',
+              via: 'marker:TASK_UPDATE',
+            });
+          } catch (e) { /* não-fatal */ }
           okCount++;
         }
       } else if (a.action === 'reschedule') {
@@ -3571,6 +3605,17 @@ async function applyTaskActions(collaborator, actions) {
           const note = `${update.due_date ? `Prazo: ${oldDue} → ${newDue}` : 'Lembrete atualizado'}${update.remind_at ? ` (lembrete ${update.remind_at.slice(11, 16)})` : ''}${a.reason ? ` — ${a.reason}` : ''}`;
           await logAgentNote(t.id, note, collaborator.id);
           await notifyTaskCreatorOfAction(fullTaskR, collaborator, 'reschedule', newDue);
+          // Sprint 31.1 — fecha pending_followups dessa task (reagendada)
+          try {
+            const pendingFollowups = require('./services/pending-followups');
+            await pendingFollowups.resolveByTarget({
+              collaboratorId: collaborator.id,
+              targetType: 'task',
+              targetId: t.id,
+              action: 'rescheduled',
+              via: 'marker:TASK_UPDATE',
+            });
+          } catch (e) { /* não-fatal */ }
           okCount++;
         }
       } else if (a.action === 'create') {

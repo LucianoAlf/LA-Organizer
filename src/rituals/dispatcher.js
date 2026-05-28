@@ -35,6 +35,9 @@ const {
 } = require('./inventario-alertas');
 const { runCheckProjectDeadlines } = require('./checkpoint-deadlines');
 const { isQuietNow } = require('../services/quiet-hours');
+// Sprint 31.1 — Pending Followups: rastro de "TOM cobrou X" pra que respostas
+// curtas ("Feito") sejam aplicadas ao target certo via id exato.
+const pendingFollowups = require('../services/pending-followups');
 
 const RITUAL_BY_DIRECTIVE = {
   briefing_pessoal: 'personal_briefing',
@@ -1580,6 +1583,20 @@ async function detectUnclosedPastEvents(now = new Date()) {
         .from('events')
         .update({ followup_sent_at: nowIso })
         .in('id', unclosed.map(e => e.id));
+      // Sprint 31.1 — rastro pra fechamento via id exato
+      for (const ev of unclosed) {
+        try {
+          await pendingFollowups.createOrRefresh({
+            collaboratorId: collab.id,
+            targetType: 'event',
+            targetId: ev.id,
+            targetTitle: ev.title,
+            kind: 'closure_check',
+            questionText: msg,
+            ttlHours: 12,
+          });
+        } catch (e) { /* não-fatal */ }
+      }
       await logRitualEvent(collab.id, 'hygiene_unclosed_events', 'sent', `count=${count}`, ymdRef);
     } catch (err) {
       console.error(`[detectUnclosedPastEvents] send err ${String(collab.phone).slice(-4)}:`, err.message);
@@ -1650,6 +1667,20 @@ async function askEndOfDayEventFollowup(now = new Date()) {
         .from('events')
         .update({ followup_sent_at: nowIso })
         .in('id', pending.map(p => p.id));
+      // Sprint 31.1 — rastro pra fechamento via id exato (1 por evento perguntado)
+      for (const ev of pending) {
+        try {
+          await pendingFollowups.createOrRefresh({
+            collaboratorId: collab.id,
+            targetType: 'event',
+            targetId: ev.id,
+            targetTitle: ev.title,
+            kind: 'closure_check',
+            questionText: msg,
+            ttlHours: 12,
+          });
+        } catch (e) { /* não-fatal */ }
+      }
       await logRitualEvent(collab.id, 'event_followup_eod', 'sent', `count=${c}`, sp.ymd);
       console.log(`[EventFollowupEOD] asked ${c} → ${String(collab.phone).slice(-4)}`);
     } catch (err) {
@@ -1800,6 +1831,21 @@ async function checkOverdueWorkEvents(now = new Date()) {
         message_type: 'text',
         content: text,
       });
+      // Sprint 31.1 — rastro pra fechamento via id exato
+      try {
+        const kind = days === 1 ? 'closure_check'
+                   : days <= 3 ? 'overdue_check'
+                   : 'staleness_check';
+        await pendingFollowups.createOrRefresh({
+          collaboratorId: ev.collaborator_id,
+          targetType: 'event',
+          targetId: ev.id,
+          targetTitle: ev.title,
+          kind,
+          questionText: text,
+          ttlHours: 24,
+        });
+      } catch (e) { /* não-fatal */ }
       await logRitualEvent(ev.collaborator_id, 'event_overdue', 'sent', `event:${String(ev.id).slice(0,8)} late=${days}d`, sp.ymd);
       console.log(`[OverdueWorkEvents] sent ${String(ev.id).slice(0,8)} d=${days} → ${collab.phone.slice(-4)}`);
     } catch (err) {
@@ -3531,6 +3577,18 @@ async function checkDeadlineAlerts(ymdToday) {
         message_type: 'text',
         content: text,
       });
+      // Sprint 31.1 — rastro pra TASK_UPDATE via id exato
+      try {
+        await pendingFollowups.createOrRefresh({
+          collaboratorId: collab.id,
+          targetType: 'task',
+          targetId: t.id,
+          targetTitle: t.title,
+          kind: 'reminder_due_today',
+          questionText: text,
+          ttlHours: 36,
+        });
+      } catch (e) { /* não-fatal */ }
       await logRitualEvent(collab.id, 'alerta_prazo', 'sent', `task:${String(t.id).slice(0,8)}`, ymdToday);
       sent++;
     } catch (err) {
@@ -3698,6 +3756,19 @@ async function checkOverdueAlerts(ymdToday) {
         status: 'sent',
         sent_at: new Date().toISOString(),
       });
+      // Sprint 31.1 — rastro pra TASK_UPDATE via id exato
+      try {
+        const kind = n <= 3 ? 'overdue_check' : 'staleness_check';
+        await pendingFollowups.createOrRefresh({
+          collaboratorId: collab.id,
+          targetType: 'task',
+          targetId: t.id,
+          targetTitle: t.title,
+          kind,
+          questionText: text,
+          ttlHours: 24,
+        });
+      } catch (e) { /* não-fatal */ }
       // Sprint 29.1 — incrementa contador de cobrança pra ritual de governança
       // sinalizar tasks "travadas" (>=3 sem efeito).
       try {

@@ -8,6 +8,9 @@ const { checkAccess, DATA_LEVELS } = require('../services/la-report-access');
 const { hasCoordLevel } = require('../utils/roles');
 const { formatRelativeDate } = require('../utils/dates');
 const pendingIntentsSvc = require('../services/pending-intents');
+// Sprint 31.1 — rastro de cobranças (TOM perguntou "já fechou?") pra fechar
+// no marker com id exato em vez de adivinhar título.
+const pendingFollowupsSvc = require('../services/pending-followups');
 
 const SKILLS_DIR = path.join(__dirname, '..', '..', 'skills');
 
@@ -2472,7 +2475,29 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     // never break prompt build
   }
 
-  const ctxBlock = (pending ? baseCtx + '\n' + pending : baseCtx) + pastEventsBlock + resolutionBlock + activeThreadBlock + pendingIntentsBlock;
+  // Sprint 31.1 — Cobranças abertas que TOM já mandou (followups).
+  // TOM precisa do (id, tipo, título) EXATO pra emitir TASK_UPDATE/EVENT_UPDATE
+  // correto quando o user responder "Feito", "Já fiz", "fechei", etc.
+  // Bug observado 27/05/2026 (Yuri): respostas curtas + múltiplas em sequência
+  // viravam texto-pelado sem marker, ou marker com schema_invalid → lembrete
+  // reaparecia no dia seguinte.
+  let pendingFollowupsBlock = '';
+  try {
+    const openFollowups = await pendingFollowupsSvc.listActive(collaborator.id, { limit: 8 });
+    if (openFollowups.length > 0) {
+      const lines = openFollowups.map((f, idx) => {
+        const when = f.sent_at ? new Date(f.sent_at).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : '';
+        const marker = f.target_type === 'task' ? 'TASK_UPDATE' : 'EVENT_UPDATE';
+        const title = String(f.target_title || '').replace(/\s+/g, ' ').slice(0, 80);
+        return `${idx + 1}. [${f.followup_kind}, ${when}] ${f.target_type} *${title}* — id=\`${f.target_id}\` → use <<${marker}>> com esse id pra fechar/reagendar/cancelar.`;
+      }).join('\n');
+      pendingFollowupsBlock = `\n\n## 📮 Cobranças que eu mandei e ainda aguardam resposta\n\n${lines}\n\n**REGRA:** Se a resposta do usuário confirmar conclusão (ex: "Feito", "Já fiz", "fechei", "rolou", "deu certo", "tá pronto"), EMITA o marker indicado acima com o \`id\` EXATO listado e \`action="complete"\`. Se vier reagendamento ("amanhã", "semana que vem", "DD/MM"), use \`action="reschedule"\` com o \`id\`. Múltiplos "Feito" em sequência → 1 marker por cobrança aberta, na ordem em que foram cobradas. NUNCA invente um title — use o id desta lista.`;
+    }
+  } catch (e) {
+    // never break prompt build
+  }
+
+  const ctxBlock = (pending ? baseCtx + '\n' + pending : baseCtx) + pastEventsBlock + resolutionBlock + activeThreadBlock + pendingIntentsBlock + pendingFollowupsBlock;
 
   const blocks = [
     BLOCK_RULES,
