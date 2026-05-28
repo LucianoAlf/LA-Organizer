@@ -571,14 +571,34 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
               </div>
             </fieldset>
             <div>
-              <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Para quando</div>
-              <DateInput value={due} onChange={setDue} />
+              <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5 flex items-baseline gap-2">
+                <span>Para quando</span>
+                <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">data + hora opcional</span>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <DateInput value={due} onChange={setDue} />
+                <TimeInput value={taskTime} onChange={setTaskTime} />
+                {taskTime && (
+                  <button
+                    type="button"
+                    onClick={() => setTaskTime('')}
+                    className="text-body-sm text-fg-muted hover:text-fg underline underline-offset-2"
+                  >
+                    limpar hora
+                  </button>
+                )}
+              </div>
+              {taskTime && taskReminderTimes.length === 0 && (
+                <div className="text-body-sm text-fg-muted mt-1.5">
+                  Vai virar lembrete às {taskTime} · TOM avisa pelo WhatsApp.
+                </div>
+              )}
             </div>
             <RecurrencePicker value={recurrenceRule} onChange={setRecurrenceRule} startDate={due} />
 
             {/* Sprint 23 — Multi-reminder (task_reminders). Ref = 09:00 da due_date. */}
             <RemindersField
-              referenceDateTime={due ? `${due}T09:00` : ''}
+              referenceDateTime={due ? `${due}T${taskTime || '09:00'}` : ''}
               value={taskReminderTimes}
               onChange={setTaskReminderTimes}
             />
@@ -616,14 +636,34 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
             </div>
 
             <div>
-              <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Para quando</div>
-              <DateInput value={due} onChange={setDue} />
+              <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5 flex items-baseline gap-2">
+                <span>Para quando</span>
+                <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">data + hora opcional</span>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <DateInput value={due} onChange={setDue} />
+                <TimeInput value={taskTime} onChange={setTaskTime} />
+                {taskTime && (
+                  <button
+                    type="button"
+                    onClick={() => setTaskTime('')}
+                    className="text-body-sm text-fg-muted hover:text-fg underline underline-offset-2"
+                  >
+                    limpar hora
+                  </button>
+                )}
+              </div>
+              {taskTime && taskReminderTimes.length === 0 && (
+                <div className="text-body-sm text-fg-muted mt-1.5">
+                  TOM vai avisar pelo WhatsApp às {taskTime} no dia do prazo.
+                </div>
+              )}
             </div>
             <RecurrencePicker value={recurrenceRule} onChange={setRecurrenceRule} startDate={due} />
 
             {/* Sprint 23 — Multi-reminder (task_reminders) na delegação. */}
             <RemindersField
-              referenceDateTime={due ? `${due}T09:00` : ''}
+              referenceDateTime={due ? `${due}T${taskTime || '09:00'}` : ''}
               value={taskReminderTimes}
               onChange={setTaskReminderTimes}
             />

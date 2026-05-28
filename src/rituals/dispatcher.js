@@ -2605,52 +2605,6 @@ async function dispatchPersonalRecurrentes() {
   return { created, errors };
 }
 
-// Lembrete mensal de recarga dos chips pré-pagos da secretaria.
-// Dia 7 de cada mês às 14h → Jereh (Campo Grande) e Krissya (Barra).
-const CHIP_RECHARGE_RECIPIENTS = [
-  {
-    id:    '2088e506-54df-4a56-96a8-f3221ed543dd',
-    phone: '5521985525984',
-    name:  'Jereh',
-    chip:  '(21) 96552-9851',
-    device: 'Tel. Jereh',
-  },
-  {
-    id:    '4d52c86f-6211-47d1-87fe-e97a9679ac67',
-    phone: '5521966875271',
-    name:  'Krissya',
-    chip:  '(21) 96957-5619',
-    device: 'Tablet Barra',
-  },
-];
-const CHIP_RECHARGE_DAY  = 7;
-const CHIP_RECHARGE_TIME = '14:00';
-
-async function checkChipRechargeReminder(now) {
-  const dom = parseInt((now.ymd || '').split('-')[2], 10);
-  if (dom !== CHIP_RECHARGE_DAY) return;
-  if (currentSlot(now) !== timeToSlot(CHIP_RECHARGE_TIME)) return;
-
-  const whatsapp = require('../services/whatsapp');
-  for (const r of CHIP_RECHARGE_RECIPIENTS) {
-    try {
-      if (await alreadySent(r.id, 'chip_recharge_reminder', now.ymd)) {
-        console.log(`[ChipRecharge] já enviado para ${r.name} em ${now.ymd}`);
-        continue;
-      }
-      const msg =
-        `📱 *Lembrete mensal — recarga do chip da secretaria*\n` +
-        `O número ${r.chip} (${r.device}) precisa de recarga este mês.\n` +
-        `Lembra de fazer antes do dia 10 e repassar para Rose reembolsar no seu PG! 🙏`;
-      await whatsapp.sendMessage(r.phone, msg);
-      await logRitualEvent(r.id, 'chip_recharge_reminder', 'sent', null, now.ymd);
-      console.log(`[ChipRecharge] enviado para ${r.name}`);
-    } catch (err) {
-      console.error(`[ChipRecharge] erro ao enviar para ${r.name}:`, err.message);
-    }
-  }
-}
-
 async function run(opts = {}) {
   const now = nowSaoPaulo();
   console.log(`[Dispatcher] now=${now.ymd} ${String(now.hour).padStart(2,'0')}:${String(now.minute).padStart(2,'0')} dow=${now.dow}${opts.force ? ' force=' + opts.force : ''}${opts.phone ? ' phone=' + opts.phone.slice(-4) : ''}`);
@@ -3305,9 +3259,6 @@ async function run(opts = {}) {
   // Sprint 21 — Planejamento e Fechamento Mensal (liderança)
   try { await checkMonthlyPlanning(now); } catch (e) { console.error('[run] monthlyPlanning', e); }
   try { await checkMonthlyClosing(now);  } catch (e) { console.error('[run] monthlyClosing', e); }
-
-  // Lembrete mensal — recarga chips pré-pagos secretaria (dia 7 às 14h)
-  try { await checkChipRechargeReminder(now); } catch (e) { console.error('[run] chipRecharge', e); }
 
   // Sprint 15 F4 — Briefing operacional semanal por departamento (segunda 07:30 BRT)
   try {
