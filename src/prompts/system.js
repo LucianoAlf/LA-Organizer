@@ -571,6 +571,19 @@ function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events
         lines.push(`• ${firstName} (${unit}) → ${managerFirst}`);
       }
     }
+
+    // Desambiguação: colaboradores com apelidos alternativos
+    const withAliases = orgChart.filter(c => Array.isArray(c.aliases) && c.aliases.length > 0);
+    if (withAliases.length > 0) {
+      lines.push('', '**Nomes alternativos / desambiguação:**');
+      for (const c of withAliases) {
+        const firstName = (c.full_name || '').split(' ')[0];
+        const aliasStr = c.aliases.slice(0, 4).join(', ');
+        const hint = c.function_title ? ` (${c.function_title})` : '';
+        lines.push(`• "${firstName}"${hint} → tb. chamada de: ${aliasStr}`);
+      }
+      lines.push('  ⚠️ Se alguém disser "Dai" sem qualificador e o contexto for ambíguo, pergunte qual das duas.');
+    }
   }
 
   // Sprint 22.37 — ADERÊNCIA DA EQUIPE (semana atual) pra liderança operacional.
@@ -1371,7 +1384,7 @@ async function fetchCollaboratorContext(collaborator) {
     // Hierarquia explícita — org chart para liderança responder "quem responde pra quem?".
     isLeadership
       ? supabase.from('collaborators')
-          .select('id, full_name, unit, role, manager:collaborators!supervisor_id(id, full_name)')
+          .select('id, full_name, unit, role, aliases, preferred_name, manager:collaborators!supervisor_id(id, full_name)')
           .eq('is_active', true)
           .order('full_name')
       : Promise.resolve({ data: [], error: null }),

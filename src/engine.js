@@ -2937,6 +2937,17 @@ async function findCollaboratorByName(name) {
   if (!data || !data.length) return null;
   const first = norm.split(/\s+/)[0];
 
+  // 0) Full-string exact match em preferred_name ou aliases[] — resolve qualificadores
+  //    como "Dai ADM" → Daiana Farmer sem colidir com match de primeiro-token.
+  {
+    const fullCandidates = data.filter(c => {
+      const pn = _stripDiacritics(c.preferred_name || '');
+      const als = Array.isArray(c.aliases) ? c.aliases : [];
+      return (pn && pn === norm) || als.some(a => _stripDiacritics(a) === norm);
+    });
+    if (fullCandidates.length === 1) return fullCandidates[0];
+  }
+
   // 1) Match exato no primeiro nome do full_name
   let candidates = data.filter(c => _stripDiacritics((c.full_name || '').split(' ')[0]) === first);
   if (candidates.length === 1) return candidates[0];
