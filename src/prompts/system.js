@@ -89,7 +89,7 @@ const BLOCK_RULES = `# 🚨 REGRAS INVIOLÁVEIS — PRIORIDADE MÁXIMA
    - Hábito sem reminder_time no contexto → "(sem horário agendado)", não inventar horário do briefing anterior.
    - Evento sem location_text → "(local não definido)", não inferir do contexto.
    - Se o user perguntou sobre algo que NÃO está no contexto injetado, responda "não tenho registro disso" — não invente.
-15. **"O que combinamos ontem?" → olhe as tasks, não o histórico da conversa.** Quando o usuário perguntar sobre pendências, planejamentos ou combinados anteriores ("me lembra o que ficou pendente", "o que combinamos?", "o que ficou da reunião de ontem?"), NUNCA diga "não tenho histórico da conversa de ontem". O histórico de tarefas já está injetado acima em formato estruturado. Responda referenciando as tasks pendentes do contexto. Se não houver nenhuma task relevante, diga "não vejo nada cadastrado sobre isso — quer que eu registre agora?".
+15. **"O que combinamos ontem?" / "o que tá em aberto?" → olhe as tasks, não o histórico da conversa. JAMAIS INVENTE NOMES.** Quando o usuário perguntar sobre pendências, planejamentos, combinados anteriores ou itens em aberto ("me lembra o que ficou pendente", "o que combinamos?", "o que ficou da reunião de ontem?", "o que mais temos em aberto?", "tem algo sem data?"), o histórico de tarefas já está injetado acima em formato estruturado em DUAS seções: "Tarefas pessoais/trabalho hoje" (com prazo nos próximos 7 dias) e "Tarefas pendentes SEM prazo definido". Use APENAS o que está nessas seções + Agenda + Concluído. **NUNCA invente nomes de tarefas que viu em mensagens passadas (conversation_history) como se fossem pendências.** Se uma seção mostra "_nenhuma_", responda literalmente que não há nada cadastrado nessa categoria. Se não houver nenhuma task relevante em NENHUMA seção, diga "não vejo nada cadastrado sobre isso — quer que eu registre agora?". Confabular nome de task (ex: listar "Follow Up Moreira Jr." como aberta quando ela aparece só em msg antiga e não nas seções estruturadas) é falha grave — o engine vai rejeitar o marker com **all_failed** e o usuário fica confuso achando que registrou algo.
 16. **NUNCA quebre o personagem falando de mecanismos internos.** Você é assistente operacional, não dev. JAMAIS diga "deixa eu verificar o código", "vou olhar o engine", "vou checar a skill", "vou ver como o sistema trata", "preciso entender como está implementado", "vou analisar o handler", ou qualquer variação que revele que existe código/engine/skill por trás. Quando o usuário pedir ação operacional (cadastrar/atualizar/mover/dar baixa/consultar inventário, criar task, agendar evento, etc), EMITA O MARKER imediatamente com os dados extraídos do pedido. Se o engine rejeitar, ele te avisa — você só responde "não consegui executar, pode reformular?" ou tenta outra variação. NUNCA expõe que está debugando.
 17. **Pedidos de pausa RECORRENTE viram PREFS_UPDATE, não desculpa social.** Quando o user pedir pra parar de cobrar em padrão recorrente — "não me cobra fim de semana", "não me cobra aos domingos", "só me cobra em dias úteis", "para de me lembrar nos sábados", "não me incomoda no weekend", etc — você DEVE emitir o marker \`<<PREFS_UPDATE>>\` ANTES de confirmar. Mapeamento: "fim de semana" / "weekend" / "sábado e domingo" → \`{"quiet_weekends":true,"quiet_reason":"<motivo se disse>"}\`. Dias específicos → \`{"quiet_days":[0,6]}\` (0=domingo … 6=sábado). Pra REATIVAR ("volta a me cobrar"): \`{"quiet_weekends":false,"quiet_days":[]}\`. Apenas DEPOIS de emitir o marker você confirma: "beleza, fim de semana fica silencioso. Volto na segunda." Se prometer sem persistir, o ritual vai cobrar de novo amanhã e o user vai te xingar com razão.
 18. **"Só a partir das Xh" / "não me chama antes das Xh" → PREFS_UPDATE com quiet_hours, não DND.** Quando o user pedir horário de silêncio DIÁRIO RECORRENTE — "só me manda mensagem a partir das 11h", "não me chama antes das 9h", "pode me contatar só depois das 13h" — você DEVE emitir \`<<PREFS_UPDATE>>\` com \`quiet_start_time\` e \`quiet_end_time\` ANTES de confirmar. Mapeamento: "a partir das Xh" → \`{"quiet_start_time":"00:00","quiet_end_time":"HH:MM"}\`. "Silêncio noturno de 22h às 8h" → \`{"quiet_start_time":"22:00","quiet_end_time":"08:00"}\`. "Sem restrição" / "pode me chamar a qualquer hora" → \`{"quiet_start_time":null,"quiet_end_time":null}\`. **NÃO use \`do_not_disturb_until\` para isso** — DND expira, quiet_hours é permanente. Se prometer "não te mando mensagem antes das 11h" sem persistir via marker, vai repetir o mesmo erro no dia seguinte.
@@ -232,7 +232,7 @@ function nameFor(collab) {
 // Sprint 22.36 Fatia 2 — Adicionado: delegatedTasks (tarefas que ESTE user atribuiu
 // pra outros), todayChecklists (checklists operacionais de hoje com %).
 // Antes ficavam fora do contexto e TOM dizia "não tenho esse dato" no relatório.
-function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events, delegatedTasks, todayChecklists, teamAdherence, personalChecklists, teamTodayChecklists, teamExpectedTemplates, schoolEvents = [], eventTypes = [], doneFutureTasks = [], monthlyCtxBlock = null, orgChart = [], criticalMemories = [], preferenceMemories = [], weeklySummary = null, recentContextMemories = []) {
+function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events, delegatedTasks, todayChecklists, teamAdherence, personalChecklists, teamTodayChecklists, teamExpectedTemplates, schoolEvents = [], eventTypes = [], doneFutureTasks = [], monthlyCtxBlock = null, orgChart = [], criticalMemories = [], preferenceMemories = [], weeklySummary = null, recentContextMemories = [], openTasksNoDue = []) {
   const nickname = nameFor(collab);
   const lines = ['# 📌 CONTEXTO DESTA INTERAÇÃO', ''];
   const { ROLE_LABELS: ROLE_LABELS_PT } = require('../lib/roles');
@@ -431,6 +431,27 @@ function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events
       const ctx = t.context === 'personal' ? 'pessoal' : t.context === 'work' ? 'trabalho' : t.context;
       lines.push(`• ✅ [id=${sid}] "${t.title}" — vencia ${rel} (${ctx})`);
     });
+  }
+
+  // Sprint 31.2 — Tarefas pendentes SEM prazo definido.
+  // SEMPRE renderiza o bloco (mesmo vazio) com label explícito.
+  // Por que sempre: bug observado 28/05/2026 (Yuri). Sem o bloco, quando user
+  // perguntava "o que tá em aberto sem data?", o LLM alucinava nomes de
+  // conversation_history. Com "_nenhuma_" explícito, TOM responde a verdade.
+  lines.push('', `**Tarefas pendentes SEM prazo definido (${(openTasksNoDue || []).length}):**`);
+  if (openTasksNoDue && openTasksNoDue.length) {
+    openTasksNoDue.slice(0, 20).forEach((t, i) => {
+      const sid = String(t.id || '').slice(0, 8);
+      const ctx = t.context === 'personal' ? 'pessoal' : t.context === 'work' ? 'trabalho' : t.context;
+      const cat = t.category ? ` · ${t.category}` : '';
+      lines.push(`${i + 1}. [id=${sid}] ${t.title} (${ctx}${cat})`);
+      if (t.description && t.description.trim()) {
+        const desc = t.description.trim().replace(/\s+/g, ' ');
+        lines.push(`   ↳ ${desc.length > 200 ? desc.slice(0, 200) + '…' : desc}`);
+      }
+    });
+  } else {
+    lines.push('_nenhuma_');
   }
 
   // Bloco mensal (injetado quando keyword mensal detectada ou últimos 7 dias do mês).
@@ -1402,6 +1423,24 @@ async function fetchCollaboratorContext(collaborator) {
     doneFutureTasks = doneFuture || [];
   } catch (_) { /* não bloqueia se falhar */ }
 
+  // Sprint 31.2 — Tarefas PENDENTES sem prazo definido (due_date IS NULL).
+  // Por que existe: bug observado 28/05/2026 (Yuri). Quando user pergunta
+  // "o que está em aberto?", a query principal só pega tasks com due_date
+  // dentro dos próximos 7 dias. Tasks sem prazo eram invisíveis ao TOM, que
+  // alucinava nomes do conversation_history (4 tasks done listadas como abertas).
+  // Limite 20 pra cobrir backlog sem inflar prompt.
+  let openTasksNoDue = [];
+  try {
+    const { data: noDue } = await supabase.from('tasks')
+      .select(TASK_COLS)
+      .eq('assigned_to', id)
+      .eq('status', 'pending')
+      .is('due_date', null)
+      .order('created_at', { ascending: false })
+      .limit(20);
+    openTasksNoDue = noDue || [];
+  } catch (_) { /* não bloqueia se falhar */ }
+
   // Sprint 22.X — respeita max_daily_tasks (default 3) limitando o briefing de
   // trabalho. Hoje sem cap, TOM lista 12+ tasks e quebra o foco. User-side a
   // pref já existia mas nada limitava. Preferência default 3 reflete princípio
@@ -1422,6 +1461,7 @@ async function fetchCollaboratorContext(collaborator) {
     personalTasks,
     workTasks,
     doneFutureTasks,
+    openTasksNoDue,
     activeProjects,
     notifications: notificationsRes.data || [],
     recentMessages: (historyRes.data || []).reverse(),
@@ -2378,7 +2418,7 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     eventsForCtx = eventsForCtx.filter(e => e.context === 'work');
   }
   // briefing_diario / daily_briefing: mantém todos os events (sem filtro).
-  const baseCtx = buildContext(collaborator, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx, ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || [], ctx.teamTodayChecklists || [], ctx.teamExpectedTemplates || [], ctx.schoolEvents || [], ctx.eventTypes || [], ctx.doneFutureTasks || [], monthlyCtxBlock, ctx.orgChart || [], ctx.criticalMemories || [], ctx.preferenceMemories || [], ctx.weeklySummary || null, ctx.recentContextMemories || []);
+  const baseCtx = buildContext(collaborator, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx, ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || [], ctx.teamTodayChecklists || [], ctx.teamExpectedTemplates || [], ctx.schoolEvents || [], ctx.eventTypes || [], ctx.doneFutureTasks || [], monthlyCtxBlock, ctx.orgChart || [], ctx.criticalMemories || [], ctx.preferenceMemories || [], ctx.weeklySummary || null, ctx.recentContextMemories || [], ctx.openTasksNoDue || []);
 
   // Histórico completo dos últimos 7 dias — agrupado por dia
   let pastEventsBlock = '';

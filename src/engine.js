@@ -7375,11 +7375,24 @@ Output AGORA, apenas o marker:`;
               const parsedRetry = parseTaskUpdateMarker(retryText);
               if (parsedRetry && Array.isArray(parsedRetry.actions) && parsedRetry.actions.length > 0) {
                 try {
-                  await applyTaskActions(collab, parsedRetry.actions);
-                  console.log(`[Engine] AUTO_RETRY_OK — marker=TASK_UPDATE actions=${parsedRetry.actions.length}`);
-                  await logMarker(collab.id, 'TASK_UPDATE_AUTO_RETRY', 'executed',
-                    `actions:${parsedRetry.actions.length}`, retryText.slice(0, 500));
-                  _metrics.auto_retry_succeeded = true;
+                  // Sprint 31.2 — telemetria honesta: olha okCount/failCount em vez de
+                  // assumir sucesso. Bug observado 28/05/2026 (Yuri): AUTO_RETRY com 4
+                  // títulos alucinados logava "executed actions:4" mesmo quando todas
+                  // falharam — escondia o problema do health-check.
+                  const retryResult = await applyTaskActions(collab, parsedRetry.actions) || { okCount: 0, failCount: parsedRetry.actions.length };
+                  const ok = retryResult.okCount || 0;
+                  const fail = retryResult.failCount || 0;
+                  if (ok > 0) {
+                    console.log(`[Engine] AUTO_RETRY_OK — marker=TASK_UPDATE ok=${ok} fail=${fail}`);
+                    await logMarker(collab.id, 'TASK_UPDATE_AUTO_RETRY',
+                      fail > 0 ? 'partial' : 'executed',
+                      `ok=${ok} fail=${fail}`, retryText.slice(0, 500));
+                    _metrics.auto_retry_succeeded = true;
+                  } else {
+                    console.warn(`[Engine] AUTO_RETRY_ALL_FAILED — fail=${fail}`);
+                    await logMarker(collab.id, 'TASK_UPDATE_AUTO_RETRY', 'rejected',
+                      `all_failed:${fail}`, retryText.slice(0, 500));
+                  }
                 } catch (applyErr) {
                   console.warn(`[Engine] AUTO_RETRY_APPLY_FAILED — ${applyErr.message}`);
                   await logMarker(collab.id, 'TASK_UPDATE_AUTO_RETRY', 'rejected',
