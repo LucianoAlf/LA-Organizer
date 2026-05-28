@@ -1967,9 +1967,9 @@ async function ceoTeamUnclosedEventsReport(now = new Date(), opts = {}) {
 // Reusa event_category_leaders por enquanto: a maioria das tasks têm category
 // 'operational' (sem leader mapeado) e cai no bucket "Sem líder". Quando houver
 // necessidade de roteamento mais fino, criar task_category_leaders separada.
-async function ceoTeamUnclosedTasksReport(now = new Date()) {
+async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
   const sp = nowSaoPaulo();
-  if (currentSlot(sp) !== timeToSlot('08:45')) return;
+  if (!opts.force && currentSlot(sp) !== timeToSlot('08:45')) return;
 
   const whatsapp = require('../services/whatsapp');
   const ymdRef = sp.ymd;
@@ -2010,7 +2010,7 @@ async function ceoTeamUnclosedTasksReport(now = new Date()) {
   }
 
   for (const ceo of ceos) {
-    if (await alreadySent(ceo.id, 'ceo_team_unclosed_tasks', ymdRef)) continue;
+    if (!opts.force && await alreadySent(ceo.id, 'ceo_team_unclosed_tasks', ymdRef)) continue;
 
     const today = sp.ymd;
     // Sprint 29.1 — filtra data_classification='real' pra esconder teste/arquivado.
@@ -4573,4 +4573,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { run, dispatchChecklists, dispatchPersonalRecurrentes, dispatchAnnouncements, remindUnconfirmedAnnouncements, notifyCoordinators, remindEventTasks, remindOperationalTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined, isFirstMondayOfMonth, isLastFridayOfMonth, listLeadership, checkMonthlyPlanning, checkMonthlyClosing, dispatchMonthlyAgenda, expirarReservasVencidas };
+module.exports = { run, dispatchChecklists, dispatchPersonalRecurrentes, dispatchAnnouncements, remindUnconfirmedAnnouncements, notifyCoordinators, remindEventTasks, remindOperationalTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined, isFirstMondayOfMonth, isLastFridayOfMonth, listLeadership, checkMonthlyPlanning, checkMonthlyClosing, dispatchMonthlyAgenda, expirarReservasVencidas, ceoTeamUnclosedEventsReport, ceoTeamUnclosedTasksReport };
