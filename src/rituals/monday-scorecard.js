@@ -57,12 +57,13 @@ async function generateAllScorecards(weekStart, weekEnd) {
 async function sendToDirector(opts = {}) {
   const now = opts.now || new Date();
   if (!opts.force) {
-    // Segunda 8h BRT = 11h UTC. Janela 8h00-8h14 BRT = 11:00-11:14 UTC.
+    // Segunda 8h BRT = 11h UTC. Janela ampliada: qualquer tick de segunda
+    // após 11h UTC (até 23h UTC) — idempotência via ritual_logs impede reenvio.
+    // Janela estreita (11:00-11:14) causava miss quando deploy acontecia nessa janela.
     const utcDow = now.getUTCDay();  // monday=1
     const utcH = now.getUTCHours();
-    const utcM = now.getUTCMinutes();
-    const isMondayMorning = utcDow === 1 && utcH === 11 && utcM < 15;
-    if (!isMondayMorning) return { skipped: 'out_of_window' };
+    const isMonday = utcDow === 1 && utcH >= 11 && utcH < 23;
+    if (!isMonday) return { skipped: 'out_of_window' };
   }
 
   const { weekStart, weekEnd } = builder.lastWeekRange(now);
@@ -139,12 +140,12 @@ async function sendToDirector(opts = {}) {
 async function sendToEachLeader(opts = {}) {
   const now = opts.now || new Date();
   if (!opts.force) {
-    // Segunda 9h BRT = 12h UTC. Janela 9h00-9h14 BRT.
+    // Segunda 9h BRT = 12h UTC. Janela ampliada: qualquer tick de segunda
+    // após 12h UTC — idempotência via ritual_logs impede reenvio.
     const utcDow = now.getUTCDay();
     const utcH = now.getUTCHours();
-    const utcM = now.getUTCMinutes();
-    const isMondayMorning = utcDow === 1 && utcH === 12 && utcM < 15;
-    if (!isMondayMorning) return { skipped: 'out_of_window' };
+    const isMonday = utcDow === 1 && utcH >= 12 && utcH < 23;
+    if (!isMonday) return { skipped: 'out_of_window' };
   }
 
   const { weekStart } = builder.lastWeekRange(now);
