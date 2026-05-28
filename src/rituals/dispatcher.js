@@ -1956,12 +1956,15 @@ async function ceoTeamUnclosedEventsReport(now = new Date()) {
       ).join('\n');
       staleCheckBlock = `\n\n⏳ *${toStaleCheck.length} item(s) parado(s) 5+ dias — já rolou ou arquivo?*\n${top3}${toStaleCheck.length > 3 ? `\n  _+${toStaleCheck.length - 3} outros_` : ''}\n_Sem resposta em 24h, arquivo automaticamente._`;
       // Marca staleness_check_sent_at pra não repetir amanhã
-      try {
-        await supabase.from('events')
-          .update({ staleness_check_sent_at: now.toISOString() })
-          .in('id', toStaleCheck.map(ev => ev.id));
-      } catch (err) {
-        console.warn('[CEOReport] staleness mark err:', err.message);
+      // Sprint 31 fix: SDK Supabase retorna {error} sem lançar — checar explicitamente
+      const { error: staleEvErr } = await supabase.from('events')
+        .update({ staleness_check_sent_at: now.toISOString() })
+        .in('id', toStaleCheck.map(ev => ev.id))
+        .select('id');
+      if (staleEvErr) {
+        console.error(`[CEOReport] staleness mark FAILED: ${staleEvErr.message}`);
+      } else {
+        console.log(`[CEOReport] staleness marcou ${toStaleCheck.length} evento(s)`);
       }
     }
 
@@ -2145,12 +2148,15 @@ async function ceoTeamUnclosedTasksReport(now = new Date()) {
         `  • _${String(t.title).slice(0, 50)}_`
       ).join('\n');
       staleCheckBlock = `\n\n⏳ *${toStaleCheck.length} tarefa(s) parada(s) 5+ dias — já rolou ou arquivo?*\n${top3}${toStaleCheck.length > 3 ? `\n  _+${toStaleCheck.length - 3} outras_` : ''}\n_Sem resposta em 24h, arquivo automaticamente._`;
-      try {
-        await supabase.from('tasks')
-          .update({ staleness_check_sent_at: now.toISOString() })
-          .in('id', toStaleCheck.map(t => t.id));
-      } catch (err) {
-        console.warn('[CEOTasksReport] staleness mark err:', err.message);
+      // Sprint 31 fix: SDK Supabase retorna {error} sem lançar — checar explicitamente
+      const { error: staleTaskErr } = await supabase.from('tasks')
+        .update({ staleness_check_sent_at: now.toISOString() })
+        .in('id', toStaleCheck.map(t => t.id))
+        .select('id');
+      if (staleTaskErr) {
+        console.error(`[CEOTasksReport] staleness mark FAILED: ${staleTaskErr.message}`);
+      } else {
+        console.log(`[CEOTasksReport] staleness marcou ${toStaleCheck.length} task(s)`);
       }
     }
 
