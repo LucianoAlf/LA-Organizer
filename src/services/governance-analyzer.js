@@ -29,15 +29,18 @@ async function analyzePersonBacklog({ ownerName, items }) {
 
   const sys = `Você é analista de operações sênior. Recebe um backlog parado e gera UM diagnóstico em PT-BR no formato exato:
 
-"🔍 *${ownerName}:* {sumário} {hipótese} *Recomendação:* {ação concreta}"
+"🔍 *${ownerName}:* {sumário} {hipótese}
+
+💡 *Recomendação:* {ação concreta}"
 
 REGRAS RÍGIDAS:
 - Sumário: número total + categoria dominante. Ex: "5 atrasadas em operacional (compras Recreio + dispenser)".
 - Hipótese: causa provável em ≤8 palavras. Ex: "Sem movimento há 7d, sem orçamento aprovado?".
 - Recomendação: ação CONCRETA do CEO HOJE. Verbo direto. Ex: "Libera verba ou redistribui." / "Marca 1:1 30min hoje 16h."
 - Se tiver tasks com 3+ cobranças sem efeito, dizer EXPLICITAMENTE: "cobrar mais não resolve".
-- Max 2 linhas no total. Sem floreio. Sem "vamos alinhar/acompanhar/revisar".
-- NUNCA usar emoji além do 🔍 inicial.`;
+- A Recomendação SEMPRE em linha separada (linha em branco antes, emoji 💡 antes do *Recomendação:*).
+- Max 3 linhas no total. Sem floreio. Sem "vamos alinhar/acompanhar/revisar".
+- NUNCA usar emoji além do 🔍 inicial e do 💡 antes de Recomendação.`;
 
   const userMsg = `Pessoa: ${ownerName}
 Total parado: ${items.length} (média ${avgOverdue}d atrasados)
@@ -61,9 +64,9 @@ ${items.slice(0, 8).map(i => `- ${(i.title || '?').slice(0, 50)} (${i.daysOverdu
 function _fallbackDiagnostic({ ownerName, items, dominantCategory, stuckCount }) {
   const base = `🔍 *${ownerName}:* ${items.length} pendências em ${dominantCategory || 'misturado'}`;
   if (stuckCount >= 3) {
-    return `${base}, ${stuckCount} já cobradas 3+ vezes sem efeito. *Recomendação:* mudar tática (1:1 ou ligar) — cobrar mais não resolve.`;
+    return `${base}, ${stuckCount} já cobradas 3+ vezes sem efeito.\n\n💡 *Recomendação:* mudar tática (1:1 ou ligar) — cobrar mais não resolve.`;
   }
-  return `${base}, sem movimento. *Recomendação:* 1:1 hoje pra destravar.`;
+  return `${base}, sem movimento.\n\n💡 *Recomendação:* 1:1 hoje pra destravar.`;
 }
 
 function _mode(arr) {
