@@ -582,7 +582,7 @@ function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events
         const hint = c.function_title ? ` (${c.function_title})` : '';
         lines.push(`• "${firstName}"${hint} → tb. chamada de: ${aliasStr}`);
       }
-      lines.push('  ⚠️ Se alguém disser "Dai" sem qualificador e o contexto for ambíguo, pergunte qual das duas.');
+      lines.push('  ⚠️ "Dai" e "Day" (sem qualificador) são AMBÍGUOS — podem ser qualquer uma das duas. SEMPRE pergunte antes de emitir marker: "Qual Day — a Dai pedagógica ou a Daiana do Recreio?"');
     }
   }
 
