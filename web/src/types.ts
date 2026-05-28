@@ -414,7 +414,7 @@ export interface OpChecklistItemDraft {
 
 export type PersonalListContext = 'personal' | 'work'
 
-export type PersonalListType = 'shopping' | 'travel' | 'meds' | 'general'
+export type PersonalListType = 'shopping' | 'home' | 'meds' | 'travel' | 'work' | 'finance' | 'general'
 
 export interface PersonalChecklistItem {
   id: string
@@ -442,16 +442,22 @@ export interface PersonalChecklist {
 
 export const PERSONAL_LIST_TYPE_ICON: Record<PersonalListType, string> = {
   shopping: '🛒',
-  travel: '✈️',
-  meds: '💊',
-  general: '📋',
+  home:     '🏠',
+  meds:     '💊',
+  travel:   '✈️',
+  work:     '💼',
+  finance:  '💰',
+  general:  '📋',
 }
 
 export const PERSONAL_LIST_TYPE_LABEL: Record<PersonalListType, string> = {
   shopping: 'Mercado',
-  travel: 'Viagem',
-  meds: 'Remédios',
-  general: 'Geral',
+  home:     'Casa',
+  meds:     'Saúde',
+  travel:   'Viagem',
+  work:     'Trabalho',
+  finance:  'Finanças',
+  general:  'Geral',
 }
 
 // ─── Sprint 13 F1 — Comunicados Internos ────────────────────────────────────

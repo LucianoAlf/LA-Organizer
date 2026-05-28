@@ -2,7 +2,9 @@
 // Sprint 22.38 — BottomSheet para criar uma lista pessoal/trabalho nova.
 // Sprint 22.38b — Refactor pra design system: usa <Button variant="primary"> (bg-tom).
 // Sprint 29.x — Modo edição (prop editList) + EmojiPicker. Zero window.prompt.
+// Sprint 29.x+1 — Unificar Tipo e Ícone: 7 chips de tipo + picker colapsável.
 import { useState, useEffect } from 'react'
+import { ChevronDown, ChevronUp } from 'lucide-react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { X } from 'lucide-react'
 import { BottomSheet } from './BottomSheet'
@@ -28,19 +30,20 @@ interface Props {
   editList?: PersonalChecklist | null
 }
 
-const TYPES: PersonalListType[] = ['shopping', 'travel', 'meds', 'general']
+const TYPES: PersonalListType[] = ['shopping', 'home', 'meds', 'travel', 'work', 'finance', 'general']
 
 export function PersonalChecklistSheet({ open, onClose, context = 'personal', editList }: Props) {
   const { collaborator } = useAuth()
   const queryClient = useQueryClient()
   const isEditing = Boolean(editList)
 
-  const [name, setName]           = useState('')
-  const [listType, setListType]   = useState<PersonalListType>('shopping')
-  const [emoji, setEmoji]         = useState<string | null>(null)
-  const [items, setItems]         = useState<string[]>([])
+  const [name, setName]             = useState('')
+  const [listType, setListType]     = useState<PersonalListType>('shopping')
+  const [emoji, setEmoji]           = useState<string | null>(null)
+  const [emojiOpen, setEmojiOpen]   = useState(false)
+  const [items, setItems]           = useState<string[]>([])
   const [newItemText, setNewItemText] = useState('')
-  const [recurrence, setRecurrence]  = useState<RecurrenceValue>({ recurrence_type: 'once' })
+  const [recurrence, setRecurrence]   = useState<RecurrenceValue>({ recurrence_type: 'once' })
 
   // Inicializa form sempre que o sheet abre ou a lista de edição muda
   useEffect(() => {
@@ -49,11 +52,13 @@ export function PersonalChecklistSheet({ open, onClose, context = 'personal', ed
       setName(editList.name)
       setListType(editList.list_type)
       setEmoji(editList.icon_emoji ?? null)
+      setEmojiOpen(Boolean(editList.icon_emoji))
       setRecurrence({ recurrence_type: 'once' })
     } else {
       setName('')
       setListType(context === 'work' ? 'general' : 'shopping')
       setEmoji(null)
+      setEmojiOpen(false)
       setItems([])
       setNewItemText('')
       setRecurrence({ recurrence_type: 'once' })
@@ -129,20 +134,11 @@ export function PersonalChecklistSheet({ open, onClose, context = 'personal', ed
           />
         </div>
 
-        {/* Emoji picker */}
-        <EmojiPicker value={emoji} onChange={setEmoji} />
-
-        {/* Recorrência */}
-        <div>
-          <label className="text-caption text-fg-muted block mb-2">Recorrência</label>
-          <RecurrenceField value={recurrence} onChange={setRecurrence} />
-        </div>
-
         {/* Tipo — pessoal (criação ou edição de lista pessoal) */}
         {effectiveContext === 'personal' && (
           <div>
             <label className="text-caption text-fg-muted block mb-2">Tipo *</label>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               {TYPES.map(t => {
                 const isSel = listType === t
                 return (
@@ -151,20 +147,49 @@ export function PersonalChecklistSheet({ open, onClose, context = 'personal', ed
                     type="button"
                     onClick={() => setListType(t)}
                     className={[
-                      'h-9 px-3 rounded-md text-body-sm font-semibold transition-colors flex items-center gap-2 focus-ring',
+                      'h-10 px-2 rounded-md text-body-sm font-semibold transition-colors flex items-center gap-1.5 focus-ring',
                       isSel
                         ? 'bg-tom text-black shadow-card dark:shadow-none'
                         : 'bg-bg-subtle text-fg-muted border border-border hover:text-fg',
                     ].join(' ')}
                   >
-                    <span aria-hidden>{PERSONAL_LIST_TYPE_ICON[t]}</span>
-                    {PERSONAL_LIST_TYPE_LABEL[t]}
+                    <span aria-hidden className="text-base">{PERSONAL_LIST_TYPE_ICON[t]}</span>
+                    <span className="truncate">{PERSONAL_LIST_TYPE_LABEL[t]}</span>
                   </button>
                 )
               })}
             </div>
           </div>
         )}
+
+        {/* Personalizar ícone — colapsável */}
+        <div>
+          <button
+            type="button"
+            onClick={() => setEmojiOpen(v => !v)}
+            className="flex items-center gap-2 text-caption text-fg-muted hover:text-fg transition-colors focus-ring rounded-sm w-full text-left"
+          >
+            <span>
+              {emoji
+                ? <>{emoji} Personalizar ícone</>
+                : 'Personalizar ícone'
+              }
+            </span>
+            {emojiOpen ? <ChevronUp size={14} className="ml-auto" /> : <ChevronDown size={14} className="ml-auto" />}
+          </button>
+
+          {emojiOpen && (
+            <div className="mt-2">
+              <EmojiPicker value={emoji} onChange={setEmoji} />
+            </div>
+          )}
+        </div>
+
+        {/* Recorrência */}
+        <div>
+          <label className="text-caption text-fg-muted block mb-2">Recorrência</label>
+          <RecurrenceField value={recurrence} onChange={setRecurrence} />
+        </div>
 
         {/* Itens iniciais — só no modo criação */}
         {!isEditing && (
