@@ -2111,6 +2111,44 @@ async function applyEventActions(collaborator, events) {
   // acontece no caller, ANTES de chegar aqui. Aqui só processa events reais.
   for (const e of events) {
     try {
+      // Sprint 29.x — RSVP: confirmar/recusar presença num compromisso existente.
+      // TOM emite <<EVENT>>{"action":"rsvp","event_id":"<8chars ou uuid>","status":"confirmed|declined|tentative"}<<END>>
+      // O event_id vem do [ev:xxxxxxxx] embedado nas mensagens de convite.
+      if (e.action === 'rsvp') {
+        const evId   = typeof e.event_id === 'string' ? e.event_id.trim() : null;
+        const status = ['confirmed', 'declined', 'tentative'].includes(e.status) ? e.status : 'confirmed';
+        if (!evId) {
+          console.warn('[Event][RSVP] event_id ausente — ignorado');
+          failCount++;
+          continue;
+        }
+        // Resolve UUID completo (pode vir como prefixo de 8 chars)
+        let resolvedEventId = evId;
+        if (evId.length < 36) {
+          const { data: evRows } = await supabase
+            .from('events').select('id').ilike('id', `${evId}%`).limit(1);
+          if (!evRows || evRows.length === 0) {
+            console.warn(`[Event][RSVP] prefix "${evId}" não resolveu para nenhum evento`);
+            failCount++;
+            continue;
+          }
+          resolvedEventId = evRows[0].id;
+        }
+        const { error: rsvpErr } = await supabase.from('event_participants').upsert({
+          event_id: resolvedEventId,
+          collaborator_id: collaborator.id,
+          status,
+          responded_at: new Date().toISOString(),
+        }, { onConflict: 'event_id,collaborator_id' });
+        if (rsvpErr) {
+          console.error('[Event][RSVP] upsert err:', rsvpErr.message);
+          failCount++;
+        } else {
+          console.log(`[Event][RSVP] ${String(collaborator.id).slice(0,8)} → event ${String(resolvedEventId).slice(0,8)} status=${status}`);
+          okCount++;
+        }
+        continue;
+      }
       // Sprint 18 — pre-check de integridade (fail-open: erros nos detectores não bloqueiam)
       // bypass_integrity: true → skip dup check (user já confirmou "crio mesmo assim")
       const bypassIntegrity = e.bypass_integrity === true;
@@ -2287,6 +2325,24 @@ async function applyEventActions(collaborator, events) {
           console.warn('[Event] recurrence initial materialize failed:', re.message);
         }
       }
+      // Sprint 29.x — Quando evento é criado para outro (to_name/to_phone), registra
+      // o criador como participante confirmado — evento aparece na agenda de ambos.
+      if (eventRecipient && data?.id && collaborator.id !== eventOwnerId) {
+        try {
+          const { error: partErr } = await supabase.from('event_participants').insert({
+            event_id: data.id,
+            collaborator_id: collaborator.id,
+            status: 'confirmed',
+            invited_by: collaborator.id,
+            invited_at: new Date().toISOString(),
+            responded_at: new Date().toISOString(),
+          });
+          if (partErr) console.warn('[Event] creator-as-participant err:', partErr.message);
+          else console.log(`[Event] creator ${String(collaborator.id).slice(0,8)} added as participant for event ${String(data.id).slice(0,8)}`);
+        } catch (cpErr) {
+          console.warn('[Event] creator-as-participant catch:', cpErr.message);
+        }
+      }
       // Sprint 28 — Notifica destinatário quando evento foi criado pra outra agenda.
       if (eventRecipient && eventRecipient.phone && eventRecipient.id !== collaborator.id) {
         try {
@@ -2300,7 +2356,9 @@ async function applyEventActions(collaborator, events) {
           const locPart = e.location_text ? `\n📍 ${String(e.location_text).slice(0, 80)}` : '';
           // Sprint 23.6 — URL em linha própria pra WhatsApp linkar.
           const modPart = e.modality === 'online' && e.meeting_url ? `\n🔗 Link:\n${String(e.meeting_url).slice(0, 120)}` : '';
-          const msg = `📅 *${senderName}* marcou um compromisso na sua agenda:\n\n*${row.title}*\n🗓️ ${whenStr}${locPart}${modPart}\n\nSe não puder, fala com ${senderName} pra remarcar.`;
+          // Sprint 29.x — [ev:short_id] para RSVP via WhatsApp.
+          const evShortRef = data?.id ? ` [ev:${String(data.id).slice(0, 8)}]` : '';
+          const msg = `📅 *${senderName}* marcou um compromisso na sua agenda:\n\n*${row.title}*\n🗓️ ${whenStr}${locPart}${modPart}\n\nSe não puder, fala com ${senderName} pra remarcar.${evShortRef}`;
           whatsapp.sendMessage(eventRecipient.phone, msg).catch(err =>
             console.error(`[Event] notify recipient err: ${err.message}`));
           await logConversation(eventRecipient.id, 'outbound', `[event criado por ${senderName}: ${row.title}]`);

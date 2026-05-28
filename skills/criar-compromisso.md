@@ -449,6 +449,59 @@ mensagem ao destinatário no formato:
 
 Você (TOM) **não precisa avisar nada de extra** — o engine cuida disso.
 
+> **Sprint 29.x:** A notificação agora inclui um código de referência `[ev:xxxxxxxx]` no final. Esse código identifica o evento. Quando o destinatário responder, use-o para emitir o RSVP correto.
+
+---
+
+## Confirmar ou recusar presença em convite (RSVP) — Sprint 29.x
+
+Quando alguém recebeu um convite (via `to_name` ou via `/internal/event-invites`) e responde no chat:
+
+### Sinais
+| Intenção | Frases típicas | status |
+|---|---|---|
+| Confirmar | "sim", "vou", "confirmado", "pode marcar", "tô dentro", "topo" | `confirmed` |
+| Recusar | "não posso", "não vou", "não consigo", "cancela pra mim", "tira meu nome" | `declined` |
+| Talvez | "talvez", "depende", "vou tentar", "não sei ainda" | `tentative` |
+
+### Como identificar o evento
+
+1. A mensagem de convite contém `[ev:xxxxxxxx]` — esses 8 caracteres são o prefixo do UUID do evento.
+2. O histórico recente da conversa (contexto injetado) mostra convites pendentes com `[ev:...]`.
+3. Se houver **mais de um** convite pendente sem resposta, pergunte qual antes de emitir.
+
+### Marker
+
+```text
+<<EVENT>>
+{"action": "rsvp", "event_id": "xxxxxxxx", "status": "confirmed"}
+<<END>>
+```
+
+| campo | tipo | obrigatório |
+|---|---|---|
+| `action` | `"rsvp"` (literal) | ✅ |
+| `event_id` | string — 8 chars do `[ev:...]` ou UUID completo | ✅ |
+| `status` | `"confirmed"` \| `"declined"` \| `"tentative"` | ✅ |
+
+### Respostas canônicas
+
+**User:** `sim, vou na reunião`  
+_(contexto tem `[ev:3f8a12b4]` de convite recente)_
+```text
+✅ Presença confirmada na *Reunião com Peterson e Quintela*.
+```
+
+**User:** `não posso ir`
+```text
+❌ Anotei que você não vai. Vou avisar quem organizou.
+```
+
+### Veto — RSVP
+- **Nunca** emita RSVP sem `event_id` identificável — pergunte se não tiver referência.
+- **Nunca** emita `action: "rsvp"` junto com `action: "create"` na mesma mensagem.
+- Se a frase misturar confirmação de RSVP + confirmação retroativa de outro evento, emita dois markers separados: `<<EVENT>>` com rsvp e `<<EVENT_UPDATE>>` com complete.
+
 ---
 
 ## Atualizar compromisso já existente (Sprint 5+)
