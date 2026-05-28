@@ -1808,9 +1808,9 @@ async function checkOverdueWorkEvents(now = new Date()) {
   }
 }
 
-async function ceoTeamUnclosedEventsReport(now = new Date()) {
+async function ceoTeamUnclosedEventsReport(now = new Date(), opts = {}) {
   const sp = nowSaoPaulo();
-  if (currentSlot(sp) !== timeToSlot('08:30')) return;
+  if (!opts.force && currentSlot(sp) !== timeToSlot('08:30')) return;
 
   const whatsapp = require('../services/whatsapp');
   const ymdRef = sp.ymd;
@@ -1826,7 +1826,7 @@ async function ceoTeamUnclosedEventsReport(now = new Date()) {
   if (!ceos || ceos.length === 0) return;
 
   for (const ceo of ceos) {
-    if (await alreadySent(ceo.id, 'ceo_team_unclosed_events', ymdRef)) continue;
+    if (!opts.force && await alreadySent(ceo.id, 'ceo_team_unclosed_events', ymdRef)) continue;
 
     // Eventos do TIME passados sem fechamento — NÃO filtra por dono
     // (relatório é global pra CEO ver tudo).
