@@ -5475,7 +5475,11 @@ async function tryDupBypass(collab, text) {
     const insertRow = {
       ...tk,
       created_by: collab.id,  // sempre o sender como creator (não LLM action)
-      source: 'tom',
+      // Sprint 31.4 Bug-C fix (raiz real): 'tom' viola tasks_source_check.
+      // Valores válidos: manual|agent_briefing|agent_closing|checkpoint_decomposition|
+      // coordinator_assignment|system|mental_dump|retroactive_capture. Usa 'manual'
+      // (mesmo do fluxo normal de create). Esse era o bug ANTIGO que sempre quebrou o bypass.
+      source: 'manual',
       status: 'pending',       // sempre pending (não herdar awaiting_confirmation)
     };
     delete insertRow._dup_bypass;  // limpar marker interno antes de inserir
@@ -6393,7 +6397,8 @@ async function processMessage(phone, text, raw = {}) {
               title: String(item.title).trim().slice(0, 200),
               assigned_to: collab.id,
               created_by: collab.id,
-              source: 'tom',
+              // Sprint 31.4 Bug-C fix: 'tom' viola tasks_source_check (só events aceita 'tom').
+              source: 'manual',
               status: 'pending',
               context: 'personal',
               priority: 'medium',
