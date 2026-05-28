@@ -23,9 +23,20 @@ export interface EventForGrid {
   remind_at?: string | null;
 }
 
-// Sprint Agenda Desktop — query de eventos no range [from,to] com JOIN em
-// event_categories para puxar a cor (events.category_id é NOT NULL e referencia
-// event_categories; events.category texto é legado/slug).
+const EVENT_SELECT = `
+  id, title, description, start_at, end_at, context, category, modality,
+  location_text, meeting_url, status, project_id, source,
+  eisenhower_quadrant, remind_at,
+  event_categories!category_id ( slug, label, color )
+` as const;
+
+// Sprint Agenda Desktop — query de eventos no range [from,to].
+//
+// Fix 2026-05-28: replica o padrão owned + invited de fetchEventsForDay
+// (lib/events.ts, fix 2026-05-15). Antes, eventos onde o user era convidado
+// via event_participants não apareciam no desktop, só no mobile (/hoje).
+// Agora: query 1 = events.collaborator_id=eu + query 2 = event_participants,
+// merge dedup por id, filtra pelo range em JS (participants não tem range no SQL).
 export function useAgendaEvents(params: { from: Date; to: Date; filters: AgendaFilters }) {
   const { collaborator } = useAuth();
   const collaboratorId = collaborator?.id;
@@ -36,20 +47,40 @@ export function useAgendaEvents(params: { from: Date; to: Date; filters: AgendaF
     queryKey: ['agenda-events', collaboratorId, fromIso, toIso],
     enabled: Boolean(collaboratorId && supabaseConfigured),
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('events')
-        .select(`
-          id, title, description, start_at, end_at, context, category, modality,
-          location_text, meeting_url, status, project_id, source,
-          eisenhower_quadrant, remind_at,
-          event_categories!category_id ( slug, label, color )
-        `)
-        .eq('collaborator_id', collaboratorId!)
-        .gte('start_at', fromIso)
-        .lte('start_at', toIso)
-        .order('start_at', { ascending: true });
-      if (error) throw error;
-      return data ?? [];
+      const [ownRes, partsRes] = await Promise.all([
+        supabase
+          .from('events')
+          .select(EVENT_SELECT)
+          .eq('collaborator_id', collaboratorId!)
+          .gte('start_at', fromIso)
+          .lte('start_at', toIso)
+          .order('start_at', { ascending: true }),
+        supabase
+          .from('event_participants')
+          .select(`event:events(${EVENT_SELECT})`)
+          .eq('collaborator_id', collaboratorId!)
+          .neq('status', 'declined'),
+      ]);
+      if (ownRes.error) throw ownRes.error;
+      if (partsRes.error) throw partsRes.error;
+
+      const map = new Map<string, unknown>();
+      const fromTs = params.from.getTime();
+      const toTs = params.to.getTime();
+
+      for (const e of ownRes.data ?? []) {
+        map.set((e as any).id, e);
+      }
+      for (const row of (partsRes.data ?? []) as Array<{ event: any }>) {
+        const e = row.event;
+        if (!e || map.has(e.id)) continue;
+        const t = new Date(e.start_at).getTime();
+        if (t < fromTs || t > toTs) continue;
+        map.set(e.id, e);
+      }
+      return [...map.values()].sort((a: any, b: any) =>
+        String(a.start_at).localeCompare(String(b.start_at))
+      );
     },
   });
 
