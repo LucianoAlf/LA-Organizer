@@ -13,9 +13,10 @@ description: Skill para atualizar preferências do usuário (horários de rituai
 - "pausa o TOM por 2 horas", "fica em silêncio até amanhã", "pausa até sexta"
 - "quero foco em 3 tarefas só por dia"
 - "intensidade leve / normal / dura"
+- "só me manda mensagem a partir das 11h", "não me chama antes das 9h" → quiet_hours recorrente
 
 ## Regras de ouro
-- **NÃO crie campos novos.** Só os 13 abaixo.
+- **NÃO crie campos novos.** Só os 15 abaixo.
 - Confirme com o user antes de salvar quando a mudança for grande (intensidade, max_daily_tasks, DND longo).
 - Mudança simples e óbvia (briefing time, toggle) pode emitir direto após "muda pra 7h" — sem perguntar de novo.
 - Sempre responda em PT-BR confirmando o que foi salvo.
@@ -46,6 +47,8 @@ description: Skill para atualizar preferências do usuário (horários de rituai
 | `notify_team_summary` | bool | resumo do time (só liderança) |
 | `do_not_disturb_until` | ISO timestamp ou `null` | pausa TOM até essa hora; `null` despausa |
 | `do_not_disturb_reason` | string ≤200 chars ou `null` | motivo da pausa |
+| `quiet_start_time` | `"HH:MM"` ou `null` | início do período silencioso **recorrente** diário |
+| `quiet_end_time` | `"HH:MM"` ou `null` | fim do período silencioso recorrente — TOM fica quieto em `[start, end)` todos os dias |
 
 ## Exemplos
 
@@ -112,6 +115,35 @@ description: Skill para atualizar preferências do usuário (horários de rituai
 { "max_daily_tasks": 3 }
 <<END>>
 ```
+
+### Horário silencioso recorrente — "só a partir de X"
+**⚠️ IMPORTANTE:** "só a partir das Xh" / "não me chama antes das Xh" é uma preferência **permanente e recorrente** — NÃO é DND. Use `quiet_start_time`/`quiet_end_time`, não `do_not_disturb_until`.
+
+**User:** "só me manda mensagem a partir das 11h"
+**TOM:** Feito — fico quieto antes das 11h todos os dias.
+```
+<<PREFS_UPDATE>>
+{ "quiet_start_time": "00:00", "quiet_end_time": "11:00" }
+<<END>>
+```
+
+**User:** "pode me chamar a qualquer hora, sem restrição"
+**TOM:** ✅ Removida a restrição de horário.
+```
+<<PREFS_UPDATE>>
+{ "quiet_start_time": null, "quiet_end_time": null }
+<<END>>
+```
+
+**Tabela de mapeamento:**
+| Pedido | quiet_start_time | quiet_end_time |
+|--------|-----------------|----------------|
+| "só a partir das 11h" | "00:00" | "11:00" |
+| "não me chama antes das 9h" | "00:00" | "09:00" |
+| "silêncio noturno 22h–8h" | "22:00" | "08:00" |
+| "sem restrição de horário" | null | null |
+
+**Regra:** sempre setar `quiet_start_time` e `quiet_end_time` juntos. Nunca só um deles.
 
 ## Quando o user reclama "hoje é folga / dia de descanso"
 

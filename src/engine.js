@@ -3249,6 +3249,12 @@ function parsePrefsMarker(text) {
     } else if (k === 'quiet_reason') {
       if (v === null || (typeof v === 'string' && v.length <= 200)) update.quiet_reason = v;
       else dropped.push(`${k}:invalid`);
+    } else if (k === 'quiet_start_time' || k === 'quiet_end_time') {
+      // Sprint QuietHours — intervalo silencioso recorrente diário.
+      // null = desativar; HH:MM = ativar. Ambos devem ser setados juntos.
+      if (v === null) update[k] = null;
+      else if (typeof v === 'string' && HHMM_RE.test(v)) update[k] = v.length === 5 ? v + ':00' : v;
+      else dropped.push(`${k}:bad_time`);
     } else {
       dropped.push(`${k}:unknown_field`);
     }

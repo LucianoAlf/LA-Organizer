@@ -9,6 +9,21 @@
 
 const supabase = require('../supabase/client');
 const whatsapp = require('../services/whatsapp');
+const { isQuietNow } = require('../services/quiet-hours');
+
+// Retorna { hour, minute, dow } em America/Sao_Paulo (mini-versão local de nowSaoPaulo).
+function spNow() {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Sao_Paulo',
+    hour: '2-digit', minute: '2-digit', weekday: 'short', hour12: false,
+  }).formatToParts(new Date());
+  const get = type => parts.find(p => p.type === type).value;
+  return {
+    hour:   parseInt(get('hour'),   10),
+    minute: parseInt(get('minute'), 10),
+    dow:    ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].indexOf(get('weekday')),
+  };
+}
 
 function addDays(ymd, n) {
   const d = new Date(ymd + 'T12:00:00Z');
@@ -84,7 +99,7 @@ async function logSent(collaboratorId, refKey, ymd) {
 async function getCollab(collaboratorId) {
   const { data } = await supabase
     .from('collaborators')
-    .select('id, phone, full_name, is_active')
+    .select('id, phone, full_name, is_active, user_preferences(quiet_weekends, quiet_days, quiet_reason, quiet_start_time, quiet_end_time)')
     .eq('id', collaboratorId)
     .maybeSingle();
   return data;
@@ -150,6 +165,14 @@ async function runCheckProjectDeadlines(opts = {}) {
 
     const collab = await getCollab(responsavelId);
     if (!collab?.phone || !collab.is_active) { skipped++; continue; }
+
+    // Respeita quiet_hours recorrente (quiet_start_time / quiet_end_time) e quiet_days/weekends.
+    const q = await isQuietNow(collab, spNow());
+    if (q.quiet) {
+      console.log(`[checkpoint_deadline] skip cp=${cp.id.slice(0,8)} — quiet (${q.reason})`);
+      skipped++;
+      continue;
+    }
 
     const msg = buildMessage(cp, cp.projects.name, dias);
     try {

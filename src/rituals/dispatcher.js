@@ -34,6 +34,7 @@ const {
   runInventarioRevisoesProgramadas,
 } = require('./inventario-alertas');
 const { runCheckProjectDeadlines } = require('./checkpoint-deadlines');
+const { isQuietNow } = require('../services/quiet-hours');
 
 const RITUAL_BY_DIRECTIVE = {
   briefing_pessoal: 'personal_briefing',
@@ -661,7 +662,7 @@ async function remindEventTasks(now = new Date()) {
     .from('tasks')
     .select(`
       id, title, assigned_to, school_event_id,
-      collaborator:assigned_to ( id, phone, full_name, user_preferences(quiet_weekends, quiet_days, quiet_reason) ),
+      collaborator:assigned_to ( id, phone, full_name, user_preferences(quiet_weekends, quiet_days, quiet_reason, quiet_start_time, quiet_end_time) ),
       event:school_event_id ( title )
     `)
     .not('school_event_id', 'is', null)
@@ -725,7 +726,7 @@ async function remindOperationalTasks(now = new Date()) {
     .select(`
       id, title, assigned_to, due_date,
       request_type:department_request_types!tasks_request_type_id_fkey(label),
-      collaborator:assigned_to(id, phone, full_name, user_preferences(quiet_weekends, quiet_days, quiet_reason))
+      collaborator:assigned_to(id, phone, full_name, user_preferences(quiet_weekends, quiet_days, quiet_reason, quiet_start_time, quiet_end_time))
     `)
     .not('department_id', 'is', null)
     .is('school_event_id', null)
@@ -786,7 +787,7 @@ async function remindPersonalTasks(now = new Date()) {
     .from('tasks')
     .select(`
       id, title, assigned_to, due_date,
-      collaborator:assigned_to(id, phone, full_name, user_preferences(quiet_weekends, quiet_days, quiet_reason))
+      collaborator:assigned_to(id, phone, full_name, user_preferences(quiet_weekends, quiet_days, quiet_reason, quiet_start_time, quiet_end_time))
     `)
     .is('department_id', null)
     .is('project_id', null)
@@ -1452,33 +1453,9 @@ async function remindUnconfirmedAnnouncements(now = new Date()) {
 // Sprint 26 — Pausa recorrente (quiet_weekends / quiet_days) respeitada por
 // TODOS os rituais de cobrança proativa (alertas, higiene, eventos abertos,
 // briefing). Retorna { quiet, reason } — chamadores devem fazer logRitualEvent
-// 'skipped' e seguir adiante.
-//
-// Aceita objeto user_preferences ou collaborator-com-preferences ou
-// collaboratorId (busca no banco). Quando o objeto está em mãos (cron normal)
-// evita query extra.
-async function isQuietNow(collabOrId, now = nowSaoPaulo()) {
-  let prefs = null;
-  if (collabOrId && typeof collabOrId === 'object') {
-    prefs = collabOrId.user_preferences || collabOrId;
-  } else if (collabOrId) {
-    const { data } = await supabase
-      .from('user_preferences')
-      .select('quiet_weekends, quiet_days, quiet_reason')
-      .eq('collaborator_id', collabOrId)
-      .maybeSingle();
-    prefs = data;
-  }
-  if (!prefs) return { quiet: false, reason: null };
-  const dow = now.dow;
-  if (prefs.quiet_weekends && (dow === 0 || dow === 6)) {
-    return { quiet: true, reason: `quiet_weekends${prefs.quiet_reason ? ':' + prefs.quiet_reason : ''}` };
-  }
-  if (Array.isArray(prefs.quiet_days) && prefs.quiet_days.includes(dow)) {
-    return { quiet: true, reason: `quiet_day:${dow}${prefs.quiet_reason ? ':' + prefs.quiet_reason : ''}` };
-  }
-  return { quiet: false, reason: null };
-}
+// isQuietNow movida para src/services/quiet-hours.js (Sprint QuietHours).
+// Importada no topo do arquivo para evitar dependência circular com checkpoint-deadlines.js.
+// Suporta quiet_weekends, quiet_days e o novo quiet_start_time/quiet_end_time recorrente.
 
 // Sprint 18 — Higiene de execução: tasks zumbi (stale)
 // Dispara segunda-feira às 09:00 BRT. Max 5 tasks. Idempotência via ritual_logs.
@@ -1786,7 +1763,7 @@ async function checkOverdueWorkEvents(now = new Date()) {
 
   const { data: stale, error } = await supabase
     .from('events')
-    .select('id, title, end_at, collaborator_id, followup_sent_at, collaborators!events_collaborator_id_fkey(full_name, phone, is_active, user_preferences(quiet_weekends, quiet_days, quiet_reason))')
+    .select('id, title, end_at, collaborator_id, followup_sent_at, collaborators!events_collaborator_id_fkey(full_name, phone, is_active, user_preferences(quiet_weekends, quiet_days, quiet_reason, quiet_start_time, quiet_end_time))')
     .eq('context', 'work')
     .not('status', 'in', '("done","cancelled")')
     .lt('end_at', yesterdayEnd)
