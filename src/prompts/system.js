@@ -3228,6 +3228,31 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     systemPrompt += '\n\n' + buildAccessBlock(collaborator);
   }
 
+  // ─── FIGURINHAS — catálogo + skill ───────────────────────────────────────
+  // Lista stickers ativos de tom_stickers + injeta a skill figurinhas.md com
+  // as regras de uso. Sempre injetado (skill é pequena, evita TOM mandar em
+  // contexto errado). Se a tabela estiver vazia, não injeta nada.
+  try {
+    const { data: stickersData } = await supabase
+      .from('tom_stickers')
+      .select('name, when_to_use')
+      .eq('is_active', true)
+      .order('name');
+    if (stickersData && stickersData.length > 0) {
+      const figurinhasSkill = loadSkill('figurinhas');
+      if (figurinhasSkill) {
+        const catalogo = stickersData
+          .map(s => `- **${s.name}** — ${s.when_to_use}`)
+          .join('\n');
+        systemPrompt +=
+          `\n\n---\n\n[SKILL ATIVA: figurinhas]\n\n${figurinhasSkill}` +
+          `\n\n## Figurinhas disponíveis (use o slug exato no marker)\n\n${catalogo}`;
+      }
+    }
+  } catch (e) {
+    console.warn('[Prompt] stickers fetch err (silent):', e.message);
+  }
+
   const totalTasks = (ctx.personalTasks?.length || 0) + (ctx.workTasks?.length || 0);
   const evCount = (ctx.todayEvents || []).length;
   const memCount = (ctx.criticalMemories?.length || 0) + (ctx.preferenceMemories?.length || 0) + (ctx.recentContextMemories?.length || 0);

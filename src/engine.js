@@ -7247,6 +7247,21 @@ async function processMessage(phone, text, raw = {}) {
     console.warn('[Engine] REACT parse/dispatch err (silent):', e.message);
   }
 
+  // STICKER markers — extrai nomes ANTES do catch-all stripar. Envio é feito
+  // como follow-up depois do reply de texto. Máx 1 por mensagem (rule no skill
+  // figurinhas.md). Slug válido = [a-z][a-z0-9_]{0,40}.
+  let _pendingStickers = [];
+  try {
+    if (typeof reply === 'string') {
+      const STICKER_RE = /<<STICKER>>\s*([a-z][a-z0-9_]{0,40})\s*<<END>>/gi;
+      let _sm;
+      while ((_sm = STICKER_RE.exec(reply)) !== null) {
+        _pendingStickers.push(_sm[1].toLowerCase());
+      }
+      _pendingStickers = _pendingStickers.slice(0, 1);
+    }
+  } catch (_) { /* silent */ }
+
   // ════════════════════════════════════════════════════════════════════════
   // SPRINT 10 HOTFIX-CRÍTICO (29/04/2026): catch-all marker strip.
   // ════════════════════════════════════════════════════════════════════════
@@ -7623,6 +7638,37 @@ Output AGORA, apenas o marker:`;
     console.log(`[Engine] reply vazio pós-REACT — só reação enviada (${_reactionsToSend[0]})`);
     await logConversation(collab.id, 'outbound', `[reação: ${_reactionsToSend[0]}]`);
   }
+
+  // STICKER follow-up — depois do reply de texto, manda figurinha(s) extraída(s)
+  // do marker <<STICKER>>nome<<END>>. Lookup em tom_stickers, fire-and-forget
+  // por sticker (uma falha não bloqueia próximos nem afeta o fluxo principal).
+  if (_pendingStickers && _pendingStickers.length > 0) {
+    try {
+      const { data: stickersData } = await supabase
+        .from('tom_stickers')
+        .select('name, url')
+        .in('name', _pendingStickers)
+        .eq('is_active', true);
+      const byName = Object.fromEntries((stickersData || []).map(s => [s.name, s.url]));
+      for (const name of _pendingStickers) {
+        const url = byName[name];
+        if (!url) {
+          console.warn(`[Engine] STICKER not found in DB: '${name}'`);
+          continue;
+        }
+        try {
+          await whatsapp.sendMedia(phone, { url, type: 'sticker' });
+          console.log(`[Engine] STICKER sent: ${name} → ${phone.slice(-4)}`);
+          await logConversation(collab.id, 'outbound', `[sticker: ${name}]`);
+        } catch (err) {
+          console.error(`[Engine] STICKER send err (${name}):`, err.message);
+        }
+      }
+    } catch (err) {
+      console.error('[Engine] STICKER block err:', err.message);
+    }
+  }
+
   // Sprint 10: grava telemetria. Fire-and-forget — falha de metric não quebra fluxo.
   _metrics.latency_ms = Date.now() - _t0;
   metricsService.recordMessage(_metrics).catch(() => {});
