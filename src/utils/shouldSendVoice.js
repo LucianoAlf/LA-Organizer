@@ -19,6 +19,13 @@ const VOICE_DAILY_CAP = 10;
 
 function shouldSendVoice(collab, userText, replyText, context = {}) {
   // ---- Gates ----
+  // Sprint VoiceToggle: opt-out individual. Quando a pessoa desliga (via PWA
+  // Configurações ou comando "para de mandar áudio"), TOM passa a responder
+  // só por texto. Curto-circuita antes dos outros gates.
+  if (collab && collab.voice_enabled === false) {
+    return { send: false, reason: 'user_opt_out' };
+  }
+
   const enabled = String(process.env.TOM_VOICE_ENABLED || '').toLowerCase() === 'true';
   if (!enabled) return { send: false, reason: 'feature_disabled' };
 

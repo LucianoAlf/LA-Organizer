@@ -861,6 +861,14 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
     return { name: 'pausa-temporaria', body: loadSkill('pausa-temporaria') };
   }
 
+  // Priority 1.6 — Sprint VoiceToggle: opt-in/opt-out de áudios.
+  // Captura "para de mandar áudio", "sem áudio", "desliga voz", "manda áudio
+  // de novo", "liga voz", "saudades dos áudios" etc. NÃO captura "tô sem fone"
+  // (DND temporário) nem "manda menos áudio" (não tem setting intermediário).
+  if (/\b(?:(?:para|chega|sem|desativ|desliga|n[aã]o\s+(?:quero|manda|mande))\s+(?:de\s+(?:mandar|enviar)\s+)?(?:os?\s+)?[aá]udios?|s[oó]\s+texto|prefiro\s+texto|desliga\s+(?:a\s+)?voz|(?:pode\s+)?(?:volta(?:r)?|liga(?:r)?|ativa)\s+(?:a\s+)?(?:voz|com\s+)?(?:os?\s+)?[aá]udios?|saudad(?:es)?\s+(?:da\s+|dos?\s+)?(?:voz|[aá]udios?)|[aá]udio\s+(?:de\s+volta|liberad[oa]|sim)|quero\s+[aá]udio\s+de\s+volta)/i.test(lastUserMessage || '')) {
+    return { name: 'preferencias-voz', body: loadSkill('preferencias-voz') };
+  }
+
   // Trigger: skill de ajuda — usuário pergunta como o sistema funciona
   const lmLower = (lastUserMessage || '').toLowerCase().trim();
   const AJUDA_TRIGGERS = [

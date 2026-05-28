@@ -141,6 +141,43 @@ export function Configuracoes() {
     },
   });
 
+  // Sprint VoiceToggle — carrega voice_enabled de collaborators (separado de user_preferences)
+  const voiceQuery = useQuery({
+    queryKey: ['collab-voice', collaborator?.id],
+    queryFn: async () => {
+      if (!collaborator?.id) return null;
+      const { data, error } = await supabase
+        .from('collaborators')
+        .select('voice_enabled')
+        .eq('id', collaborator.id)
+        .single();
+      if (error) throw error;
+      return data?.voice_enabled ?? true;
+    },
+    enabled: Boolean(collaborator?.id && supabaseConfigured),
+  });
+  const voiceEnabled = voiceQuery.data ?? true;
+
+  const voiceMutation = useMutation({
+    mutationFn: async (enabled: boolean) => {
+      if (!collaborator) throw new Error('no_session');
+      const { error } = await supabase
+        .from('collaborators')
+        .update({ voice_enabled: enabled })
+        .eq('id', collaborator.id);
+      if (error) throw error;
+    },
+    onSuccess: (_data, enabled) => {
+      qc.invalidateQueries({ queryKey: ['collab-voice'] });
+      showToast({
+        kind: 'success',
+        title: enabled ? 'Voz do TOM ligada 🎙️' : 'Voz do TOM desligada 🤫',
+        msg: enabled ? 'TOM volta a mandar áudio quando fizer sentido.' : 'Só texto a partir de agora.',
+      });
+    },
+    onError: (err: Error) => showToast({ kind: 'error', title: 'Erro ao salvar', msg: err.message }),
+  });
+
   const dndMutation = useMutation({
     mutationFn: async ({ untilIso, reason }: { untilIso: string | null; reason: string | null }) => {
       if (!collaborator) throw new Error('no_session');
@@ -175,7 +212,7 @@ export function Configuracoes() {
   const onSubmit = (e: React.FormEvent) => { e.preventDefault(); save.mutate(form); };
 
   return (
-    <div className="space-y-lg">
+    <div className="space-y-lg pb-24">
       <PageHeader title="Configurações" subtitle="Como o TOM te procura no WhatsApp." backTo="/mais" />
 
       <form onSubmit={onSubmit} className="space-y-md">
@@ -322,6 +359,16 @@ export function Configuracoes() {
               value={form.notify_team_summary}
               onChange={v => setForm({ ...form, notify_team_summary: v })} />
           )}
+        </Section>
+
+        {/* Voz do TOM — opt-in/opt-out individual de áudios */}
+        <Section title="Voz do TOM" subtitle="Quando desligado, TOM responde só por texto. A frequência geral continua igual.">
+          <Toggle
+            label="Receber áudios do TOM"
+            hint="Você também pode falar &quot;TOM, para de mandar áudio&quot; / &quot;TOM, manda áudio de novo&quot;."
+            value={voiceEnabled}
+            onChange={v => voiceMutation.mutate(v)}
+          />
         </Section>
 
         <div className="flex items-center gap-md">

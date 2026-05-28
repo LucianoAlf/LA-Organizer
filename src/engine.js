@@ -3178,6 +3178,8 @@ const PREFS_TIME_FIELDS = new Set([
 ]);
 const PREFS_INT_FIELDS = new Set(['planning_day', 'max_daily_tasks']);
 const PREFS_BOOL_FIELDS = new Set(['notify_deadline_alerts', 'notify_overdue_alerts', 'notify_team_summary', 'quiet_weekends']);
+// Sprint VoiceToggle — campos que vão pra tabela `collaborators`, NÃO user_preferences.
+const COLLAB_BOOL_FIELDS = new Set(['voice_enabled']);
 const PREFS_INTENSITY_VALUES = new Set(['light', 'normal', 'hard']);
 
 function parsePrefsMarker(text) {
@@ -3213,6 +3215,10 @@ function parsePrefsMarker(text) {
     } else if (PREFS_BOOL_FIELDS.has(k)) {
       if (typeof v === 'boolean') update[k] = v;
       else dropped.push(`${k}:not_bool`);
+    } else if (COLLAB_BOOL_FIELDS.has(k)) {
+      // Vai pra tabela collaborators (não user_preferences) — applyPrefsUpdate separa.
+      if (typeof v === 'boolean') update[k] = v;
+      else dropped.push(`${k}:not_bool`);
     } else if (k === 'coaching_intensity') {
       if (PREFS_INTENSITY_VALUES.has(v)) update.coaching_intensity = v;
       else dropped.push(`${k}:invalid`);
@@ -3243,7 +3249,33 @@ function parsePrefsMarker(text) {
 
 async function applyPrefsUpdate(collab, update) {
   if (!update || Object.keys(update).length === 0) return { okCount: 0, failCount: 1 };
-  // Upsert: tenta update; se 0 rows afetadas, insert.
+
+  // Sprint VoiceToggle: separa campos que vão pra tabela `collaborators` (voice_enabled)
+  // dos que vão pra `user_preferences`. Aplica em paralelo.
+  const collabUpdate = {};
+  const prefsUpdate = {};
+  for (const [k, v] of Object.entries(update)) {
+    if (COLLAB_BOOL_FIELDS.has(k)) collabUpdate[k] = v;
+    else prefsUpdate[k] = v;
+  }
+
+  // Aplica em collaborators (se houver)
+  if (Object.keys(collabUpdate).length > 0) {
+    const { error: cErr } = await supabase
+      .from('collaborators')
+      .update(collabUpdate)
+      .eq('id', collab.id);
+    if (cErr) {
+      console.error('[Prefs] collaborators update err:', cErr.message);
+      return { okCount: 0, failCount: 1 };
+    }
+    console.log(`[Prefs] collaborators updated for ${String(collab.id).slice(0,8)}: ${JSON.stringify(collabUpdate)}`);
+  }
+
+  // Se só havia campos de collaborators, retorna sucesso aqui
+  if (Object.keys(prefsUpdate).length === 0) return { okCount: 1, failCount: 0 };
+
+  // Upsert em user_preferences: tenta update; se 0 rows afetadas, insert.
   const { data: existing } = await supabase
     .from('user_preferences')
     .select('id')
@@ -3252,7 +3284,7 @@ async function applyPrefsUpdate(collab, update) {
   if (existing) {
     const { error } = await supabase
       .from('user_preferences')
-      .update(update)
+      .update(prefsUpdate)
       .eq('collaborator_id', collab.id);
     if (error) {
       console.error('[Prefs] update err:', error.message);
@@ -3261,7 +3293,7 @@ async function applyPrefsUpdate(collab, update) {
   } else {
     const { error } = await supabase
       .from('user_preferences')
-      .insert({ collaborator_id: collab.id, ...update });
+      .insert({ collaborator_id: collab.id, ...prefsUpdate });
     if (error) {
       console.error('[Prefs] insert err:', error.message);
       return { okCount: 0, failCount: 1 };
