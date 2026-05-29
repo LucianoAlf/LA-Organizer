@@ -83,7 +83,11 @@ function appendRitualSection(systemPrompt) {
 
 const TIME_RE = /^([01]?\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const SHORT_ID_RE = /^[a-f0-9]{4,12}$/i;
+// Aceita short-id (prefixo hex 4-12 chars, ex: "56768dfc") OU UUID completo.
+// O bloco [COBRANÇAS ABERTAS] no system prompt entrega target_id como UUID
+// inteiro e manda o LLM usar esse id no marker — sem a alternativa de UUID
+// abaixo, complete/reschedule/cancel viravam schema_invalid (bug Anne 29/05).
+const SHORT_ID_RE = /^([a-f0-9]{4,12}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 const VALID_TASK_ACTIONS = new Set([
   'complete', 'cancel', 'reschedule', 'create', 'delegate',
   'extension_request', 'extension_decision',
