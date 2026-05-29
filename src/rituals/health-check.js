@@ -109,30 +109,47 @@ async function checkMemoriesEmbedding() {
 // CHECK 4 — Tasks vencidas sem cobrança
 // ─────────────────────────────────────────────────────────────────
 async function checkOverdueTasks() {
-  // Mede cobrança real via notifications.overdue_alert/deadline_alert nas últimas 24h.
+  // Mede cobrança real via notifications.overdue_alert/deadline_alert.
   // `reminded_at` não serve aqui — ela é tocada pelos rituais T-1 (event/operational/personal),
   // não pelo checkOverdueAlerts que grava em `notifications`.
+  //
+  // Sprint 31.6 (D1) — alinhado à POLÍTICA REAL de cobrança:
+  //   • checkOverdueAlerts só cobra individualmente tasks de 1-5 dias de atraso.
+  //     Tasks 6+ dias são escaladas via CEO report (não cobrança individual), então
+  //     NÃO devem contar como "sem cobrança" aqui (gerava falso positivo crônico).
+  //   • Janela de notificação = 48h (não 24h): o health-check roda 07:00 e o job de
+  //     cobrança roda ~08:13; com 24h o check via sempre o buraco da madrugada.
   const today = todayBrt();
-  const since24h = isoHoursAgo(24);
+  const oldest = ymdMinus(today, 5);       // limite inferior = 5 dias atrás (cap do chaser)
+  const since48h = isoHoursAgo(48);
   const { data: overdue, error } = await supabase
     .from('tasks')
     .select('id')
+    .gte('due_date', oldest)
     .lt('due_date', today)
-    .eq('status', 'pending');
+    .not('status', 'in', '(done,cancelled)');
   if (error) throw error;
-  if (!overdue || overdue.length === 0) return { status: 'ok', detail: 'Nenhuma task vencida' };
+  if (!overdue || overdue.length === 0) return { status: 'ok', detail: 'Nenhuma task vencida na janela de cobrança (1-5d)' };
   const ids = overdue.map(t => t.id);
   const { data: notified, error: nErr } = await supabase
     .from('notifications')
     .select('reference_id')
     .in('reference_id', ids)
     .in('notification_type', ['overdue_alert', 'deadline_alert'])
-    .gte('sent_at', since24h);
+    .gte('sent_at', since48h);
   if (nErr) throw nErr;
   const notifiedIds = new Set((notified || []).map(n => n.reference_id));
   const sem_cobranca = overdue.filter(t => !notifiedIds.has(t.id));
-  if (sem_cobranca.length === 0) return { status: 'ok', detail: `${overdue.length} tasks vencidas, todas cobradas nas últimas 24h` };
-  return { status: 'warning', detail: `${sem_cobranca.length}/${overdue.length} tasks vencidas sem cobrança nas últimas 24h` };
+  if (sem_cobranca.length === 0) return { status: 'ok', detail: `${overdue.length} tasks vencidas (1-5d), todas cobradas nas últimas 48h` };
+  return { status: 'warning', detail: `${sem_cobranca.length}/${overdue.length} tasks vencidas (1-5d) sem cobrança nas últimas 48h` };
+}
+
+// Sprint 31.6 (D1) — subtrai N dias de um ymd 'YYYY-MM-DD' (timezone-safe via UTC).
+function ymdMinus(ymd, days) {
+  const [y, m, d] = String(ymd).split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() - days);
+  return dt.toISOString().slice(0, 10);
 }
 
 // ─────────────────────────────────────────────────────────────────

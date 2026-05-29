@@ -136,11 +136,18 @@ Ação: nenhuma. Confirmar na auditoria de 30/05.
 
 ## Ordem de execução sugerida (incremental, sem quebrar nada)
 
-| # | Item | Prioridade | Risco | Esforço |
-|---|------|-----------|-------|---------|
-| 1 | B1 EVENT_UPDATE `update` | Alta | Médio | M |
-| 2 | B2 dup-task sufixo distinto | Alta | Baixo-Médio | P |
-| 3 | D1 cobrança de tasks vencidas | Alta | Médio | M |
+| # | Item | Prioridade | Risco | Esforço | Status |
+|---|------|-----------|-------|---------|--------|
+| 1 | B1 EVENT_UPDATE `update` | Alta | Médio | M | ✅ FEITO (engine+skill, deploy, 7/7 testes) |
+| 2 | B2 dup-task sufixo distinto | Alta | Baixo-Médio | P | ✅ FEITO (engine, deploy, 6/6 testes) |
+| 3 | D1 cobrança de tasks vencidas | Alta | Médio | M | ✅ FEITO (era artefato de medição — corrigido no health-check) |
+
+### Revisão do D1 após investigação
+O job de cobrança (`checkOverdueAlerts`) **funciona** — 20 alertas/24h enviados.
+O "17/26 sem cobrança" era **artefato da auditoria**: (a) rodava 07:00, antes do
+job de cobrança (~08:13); (b) contava TODAS as vencidas, mas o chaser só cobre
+1-5 dias por design (6+ dias → CEO report). Fix: health-check agora mede só a
+janela 1-5d com lookback de 48h. Resultado simulado: 0 sem cobrança.
 | 4 | B5 coordination recipient claro | Média | Baixo | P |
 | 5 | C1 refinar ACTIONABLE detector | Média | Baixo | P |
 | 6 | E2 reschedule cross-user | Média | Médio | M (+investigação) |

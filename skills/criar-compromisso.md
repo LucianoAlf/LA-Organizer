@@ -514,6 +514,7 @@ A skill também cobre **reagendar / cancelar / concluir** compromisso já existe
 | reagendar | "remarca a reunião pra quinta 15h", "muda o ensaio pra sexta", "passa pra outra hora" | `reschedule` |
 | cancelar | "cancela o compromisso", "cancela a reunião com Juliana", "não vai rolar" | `cancel` |
 | concluir | "fechei o ensaio", "fiz a aula", "saiu a mentoria", "rolou", "rolou sim", "foi tudo certo", "deu certo a reunião", "tudo certo com X", "fizemos a reunião", "saiu a reunião com X", "a aula foi", "a reunião foi" | `complete` |
+| editar | "muda o título da reunião pra X", "adiciona nos detalhes que...", "põe o link da call", "corrige o local pra sala 2", "foi online, não presencial", "inclui o Alf na reunião" | `update` |
 
 ### ⚠️ REGRA CRÍTICA — confirmação retroativa SEMPRE emite marker
 
@@ -556,7 +557,12 @@ Quando o user responde ao alerta diário de hygiene (`📌 Compromissos sem fech
 
 Sem marker → o user vai receber o mesmo alerta amanhã. Frustração garantida.
 
-> Observação sobre **correção de modalidade** (ex.: user disse "foi online, não presencial"): o marker `EVENT_UPDATE` atual suporta só `reschedule/cancel/complete`. Pra mudar modalidade retroativamente, ainda não há action — pergunte UMA vez se quer reagendar com modalidade nova ou aceite que ficará registrado como criado e siga. Sprint 11+ adiciona `edit` action.
+> **Editar metadados (Sprint 31.6):** pra mudar **título, descrição/notas, local, link da call ou modalidade** de um evento existente, use `action: "update"` com o `id` + SÓ os campos que mudam. Exemplos:
+> - `{"action":"update","id":"ab12cd34","modality":"online"}` (corrige modalidade)
+> - `{"action":"update","id":"ab12cd34","description":"Pontos: X, Y, Z"}` (adiciona notas)
+> - `{"action":"update","id":"ab12cd34","title":"Reunião LA Drum — Yuri + Quintela + Alf"}` (renomeia / inclui participante no título)
+>
+> Pra **adicionar participante** não há campo separado: edite o `title` OU a `description` incluindo o nome. Modalidade só aceita `online`/`presencial`/`hibrido`.
 
 ### Resolução do compromisso
 Os compromissos do dia/da semana aparecem no contexto com `[id=ab12cd34]`. Use esse id curto no marker. Em ambiguidade, pergunte UMA vez antes de emitir.
@@ -576,6 +582,7 @@ Os compromissos do dia/da semana aparecem no contexto com `[id=ab12cd34]`. Use e
 | `reschedule` | `id`, `new_start_at` (ISO -03:00), `new_end_at` (ISO -03:00, > new_start_at) |
 | `cancel` | `id` |
 | `complete` | `id` |
+| `update` | `id` + ao menos 1 de: `title`, `description` (ou `notes`), `location_text`, `meeting_url`, `modality` |
 
 ### Respostas canônicas
 
@@ -597,6 +604,7 @@ Os compromissos do dia/da semana aparecem no contexto com `[id=ab12cd34]`. Use e
 ### Veto — update
 - nunca emita `<<EVENT_UPDATE>>` sem `id`
 - `reschedule` exige `new_start_at` E `new_end_at`. Se o usuário só disser "muda pra 15h" sem dizer duração, mantenha a mesma duração que o evento original tem.
+- `update` exige ao menos 1 campo editável (title/description/notes/location_text/meeting_url/modality). Sem campo válido → não emita, pergunte o que mudar.
 - nunca misture `<<EVENT_CREATE>>` e `<<EVENT_UPDATE>>` na mesma resposta — uma operação por vez.
 
 ---

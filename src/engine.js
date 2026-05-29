@@ -98,7 +98,7 @@ const pendingDupEvents = new Map(); // collabId → { event, timestamp }
 const pendingDupTasks  = new Map(); // collabId → { task, timestamp }
 // Sprint 22.26 — VALID_EVENT_CATEGORIES era set fixo; agora a validacao acontece
 // em runtime via lookupEventCategoryBySlug (tabela event_categories). Removido.
-const VALID_EVENT_UPDATE_ACTIONS = new Set(['reschedule', 'cancel', 'complete']);
+const VALID_EVENT_UPDATE_ACTIONS = new Set(['reschedule', 'cancel', 'complete', 'update']);
 const ISO_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})$/;
 
 function logSchemaErr(marker, errors, raw) {
@@ -2431,6 +2431,14 @@ function validateEventUpdateAction(a) {
     if (typeof a.new_end_at !== 'string' || !ISO_DATETIME_RE.test(a.new_end_at)) return 'new_end_at:invalid';
     if (new Date(a.new_end_at).getTime() <= new Date(a.new_start_at).getTime()) return 'end_before_start';
   }
+  if (a.action === 'update') {
+    // Sprint 31.6 (B1) — edição de metadados do evento (título, descrição/notas,
+    // local, link, modalidade). Exige ao menos 1 campo editável presente.
+    const editable = ['title', 'description', 'notes', 'location_text', 'meeting_url', 'modality'];
+    const hasField = editable.some(f => typeof a[f] === 'string' && a[f].trim());
+    if (!hasField) return 'update:no_editable_field';
+    if (typeof a.modality === 'string' && a.modality.trim() && !VALID_EVENT_MODALITIES.has(a.modality)) return 'modality:invalid';
+  }
   return null;
 }
 
@@ -2692,6 +2700,17 @@ async function applyEventUpdates(collaborator, actions) {
         patch = { status: 'cancelled' };
       } else if (a.action === 'complete') {
         patch = { status: 'done' };
+      } else if (a.action === 'update') {
+        // Sprint 31.6 (B1) — edita metadados. Só seta os campos presentes.
+        if (typeof a.title === 'string' && a.title.trim()) patch.title = a.title.trim().slice(0, 200);
+        // events não tem coluna `notes` → mapeia pra description.
+        const desc = (typeof a.description === 'string' && a.description.trim()) ? a.description
+                   : (typeof a.notes === 'string' && a.notes.trim()) ? a.notes : null;
+        if (desc) patch.description = desc.trim().slice(0, 2000);
+        if (typeof a.location_text === 'string' && a.location_text.trim()) patch.location_text = a.location_text.trim().slice(0, 200);
+        if (typeof a.meeting_url === 'string' && a.meeting_url.trim()) patch.meeting_url = a.meeting_url.trim().slice(0, 500);
+        if (typeof a.modality === 'string' && VALID_EVENT_MODALITIES.has(a.modality)) patch.modality = a.modality;
+        if (Object.keys(patch).length === 0) { failCount++; continue; }
       }
       const { error } = await supabase
         .from('events')
@@ -2708,7 +2727,7 @@ async function applyEventUpdates(collaborator, actions) {
       // Sprint 31.1 — fecha qualquer pending_followup aberto pra esse evento
       try {
         const pendingFollowups = require('./services/pending-followups');
-        const actionMap = { complete: 'completed', cancel: 'cancelled', reschedule: 'rescheduled' };
+        const actionMap = { complete: 'completed', cancel: 'cancelled', reschedule: 'rescheduled', update: 'updated' };
         await pendingFollowups.resolveByTarget({
           collaboratorId: collaborator.id,
           targetType: 'event',
@@ -5298,9 +5317,15 @@ async function detectDuplicateSemanticTask(collab, candidate) {
     // Sprint 19 hotfix: strip do suffix "— UNIDADE/SALA" antes de comparar.
     // Sprint 21.4: strip também do prefixo verbal antes do JW.
     const stripSuffix = s => String(s || '').split(/\s*[—–]\s+/)[0].trim();
+    // Sprint 31.6 (B2) — extrai o sufixo APÓS "—" (o que distingue "X — Renan" de "X — Kinho").
+    const extractSuffix = s => {
+      const parts = String(s || '').split(/\s*[—–]\s+/);
+      return parts.length > 1 ? parts.slice(1).join(' — ').trim() : '';
+    };
     const candStripped = stripSuffix(candidate.title);
     const candCore = stripVerbPrefix(candStripped);             // núcleo nominal
     const candTitleNorm = normalizeForSim(candCore);
+    const candSuffixNorm = normalizeForSim(extractSuffix(candidate.title));
     const probable = [], possible = [];
     for (const task of (openTasks || [])) {
       // Pré-filtro: personal vs work são domínios distintos. Não compara.
@@ -5332,6 +5357,14 @@ async function detectDuplicateSemanticTask(collab, candidate) {
       if (isDupProbable && candidate.due_date && task.due_date) {
         const diffDays = Math.abs(new Date(candidate.due_date) - new Date(task.due_date)) / 86400000;
         if (diffDays > 3) isDupProbable = false; // prazos diferentes → não é dup
+      }
+      // Sprint 31.6 (B2) — "Tarefa — Fulano" vs "Tarefa — Sicrano": mesmo núcleo,
+      // sufixos DISTINTOS = itens deliberadamente diferentes (1 por pessoa/grupo).
+      // Caso real Quintela: "Avaliação de estagiários — Renan/Kinho/Leo" travavam.
+      // Rebaixa de probable→possible (não bloqueia o fluxo, mas ainda registra sinal).
+      if (isDupProbable && candSuffixNorm) {
+        const taskSuffixNorm = normalizeForSim(extractSuffix(task.title));
+        if (taskSuffixNorm && taskSuffixNorm !== candSuffixNorm) isDupProbable = false;
       }
       if (isDupProbable) probable.push({ ...task, _score: score });
       else if (score > 0.6) possible.push({ ...task, _score: score });
