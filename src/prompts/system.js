@@ -1712,6 +1712,7 @@ async function buildProjectStatusContext(collaborator, lastUserMessage) {
   try {
     const collabId = collaborator.id;
     const isGlobalLead = hasCoordLevel(collaborator);
+    const today = todaySaoPaulo();
 
     // 1. Pega projetos relevantes: por nome (ILIKE) + projetos onde o collab eh membro.
     const term = (lastUserMessage || '').slice(0, 200);
