@@ -85,14 +85,18 @@ Marker único `<<FINANCE_ACTION>>` com campo `action` discriminador (PRD §5.2/�
    - (a) `BEFORE INSERT/UPDATE` em `pf_transactions` que valida `pf_accounts.collaborator_id = NEW.collaborator_id` e rejeita se divergir; ou
    - (b) a própria `pf_sync_account_balance()` só atualiza saldo quando `pf_accounts.collaborator_id = NEW.collaborator_id`.
    - Recomendação: (a) — falha barulhenta no insert é melhor que saldo silenciosamente não-sincronizado.
-2. **RLS owner-only** nas 5 tabelas (`collaborator_id = current_collab_id()`), com teste cross-user explícito (User A não enxerga dados de User B — retorna vazio).
-3. **Isolamento de visibilidade:** dado financeiro aparece SÓ no briefing pessoal (7h) e nos rituais financeiros dedicados. NUNCA em dashboard gerencial, relatório de time ou visão de coordenador. Reforçar nos never-dos da skill.
-4. **TOM nunca cruza dado financeiro** entre colaboradores nem reporta ao Alf (já nos never-dos do SOUL; reforçar na skill).
+2. **No caminho do TOM (service_role), RLS NÃO protege — o filtro manual por `collaborator_id` é a única blindagem.** O engine escreve via `service_role`, que ignora RLS por completo. O código já admite isso: `system.js:1712` ("Filtra por permissão manualmente (RLS só vale com JWT, aqui usamos service_role)") e `dispatcher.js:4410` ("RLS: assumindo todos visíveis ao service_role"). A RLS owner-only só vale pro PWA (JWT/`current_collab_id()`); o caminho de maior volume de escrita — o WhatsApp — não toca RLS. Para dado financeiro isso exige, sem exceção:
+   - **O `collaborator_id` SEMPRE vem do remetente WhatsApp resolvido server-side — NUNCA do JSON do marker `<<FINANCE_ACTION>>`.** O JSON é gerado pelo LLM; confiar no `collaborator_id` (ou `account_id`) que veio nele permitiria gravar/ler na conta errada. O LLM não escolhe de quem é o dado.
+   - **Todo SELECT/UPDATE/DELETE nos services `pf_*` filtra explicitamente pelo `collaborator_id` resolvido do remetente** — não confiar em RLS no caminho service_role.
+   - Este guard-rail é o irmão do trigger endurecido (item 1): o trigger cobre `account_id` cross-owner; este cobre o resto das queries.
+3. **RLS owner-only** nas 5 tabelas (`collaborator_id = current_collab_id()`) — proteção do caminho PWA (JWT). Com teste cross-user explícito (User A não enxerga dados de User B — retorna vazio).
+4. **Isolamento de visibilidade:** dado financeiro aparece SÓ no briefing pessoal (7h) e nos rituais financeiros dedicados. NUNCA em dashboard gerencial, relatório de time ou visão de coordenador. Reforçar nos never-dos da skill.
+5. **TOM nunca cruza dado financeiro** entre colaboradores nem reporta ao Alf (já nos never-dos do SOUL; reforçar na skill).
 
 ## 7. Plano de testes (além do smoke do PRD §10)
 
-- RLS cross-user nas 5 tabelas → vazio.
-- `account_id` de outra carteira → insert rejeitado, saldo alheio intacto.
+- Cross-user nos **dois caminhos**: (a) PWA (JWT/RLS) → vazio; (b) engine (service_role + filtro manual) → handler nunca lê/grava dado de outro `collaborator_id`, mesmo que o JSON do marker traga um `collaborator_id`/`account_id` forjado de outro dono.
+- `account_id` de outra carteira → insert rejeitado pelo trigger, saldo alheio intacto.
 - Dedup (D3): transações levando categoria a 60→72→85% disparam alerta só em 72 (faixa 70) e 85 (faixa 80), 1x cada; nada nas demais.
 - Selic API indisponível → fallback constante, TOM responde normalmente.
 - Conta paga em maio aparece **pendente** em junho (derivação por `last_paid_at`, D6).
