@@ -165,9 +165,15 @@ function startRealtime(sendWhatsApp, supabaseMain) {
       if (status === 'SUBSCRIBED') {
         console.log('[Realtime] Conectado ao Supabase Realtime');
       } else if (status === 'CHANNEL_ERROR') {
-        console.error('[Realtime] Erro de canal:', err);
+        // Sprint 31.6 (D2) — CHANNEL_ERROR é tipicamente uma queda transitória de
+        // WebSocket; o supabase-js reconecta sozinho (com backoff). O `err` vem
+        // undefined nesses casos. Antes: console.error('...:', undefined) →
+        // poluía o error log e inflava "erros recorrentes" na auditoria diária.
+        // Agora: warn (sai do error log) com detalhe real quando houver.
+        const detail = (err && (err.message || String(err))) || 'queda transitória, reconectando automaticamente';
+        console.warn(`[Realtime] canal instável: ${detail}`);
       } else if (status === 'TIMED_OUT') {
-        console.error('[Realtime] Timeout — supabase-js tenta reconectar sozinho');
+        console.warn('[Realtime] timeout — supabase-js tenta reconectar sozinho');
       } else if (status === 'CLOSED') {
         console.log('[Realtime] Canal fechado');
       }
