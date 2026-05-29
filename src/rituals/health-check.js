@@ -21,6 +21,10 @@ const WARN_THRESHOLDS = {
   unknownMarkers: 3,
   recurringErrors: 3,
   actionableNoMarker: 3,
+  // Provider health (Sprint 31.9): warning se latência/fallback passar destes limites.
+  providerMedianMs: 30000,
+  providerP95Ms: 90000,
+  providerFallbackPct: 10,
 };
 
 function todayBrt() {
@@ -368,6 +372,44 @@ async function checkKnownIssuesRegression() {
 }
 
 // ─────────────────────────────────────────────────────────────────
+// CHECK — Saúde do provider de IA (latência + fallback), Sprint 31.9
+// Lê tom_metrics (24h). Volume ~125/dia → calcula percentil em JS (sem RPC).
+// ─────────────────────────────────────────────────────────────────
+function _percentileMs(sortedAsc, p) {
+  if (!sortedAsc.length) return 0;
+  const idx = Math.ceil((p / 100) * sortedAsc.length) - 1;
+  return sortedAsc[Math.max(0, Math.min(idx, sortedAsc.length - 1))];
+}
+
+async function checkProviderHealth() {
+  const since = isoHoursAgo(24);
+  const { data, error } = await supabase
+    .from('tom_metrics')
+    .select('latency_ms, provider_used, fallback_from, error_kind')
+    .gte('ts', since);
+  if (error) return { status: 'error', detail: `provider-health indisponível: ${error.message}` };
+  if (!data || data.length === 0) return { status: 'ok', detail: 'Sem mensagens nas últimas 24h' };
+
+  const n = data.length;
+  const lat = data.map(r => r.latency_ms).filter(v => typeof v === 'number').sort((a, b) => a - b);
+  const med = _percentileMs(lat, 50);
+  const p95 = _percentileMs(lat, 95);
+  const max = lat.length ? lat[lat.length - 1] : 0;
+  const fb = data.filter(r => r.fallback_from).length;
+  const fails = data.filter(r => r.error_kind).length;
+  const over60 = lat.filter(v => v > 60000).length;
+  const fbPct = n ? (fb / n) * 100 : 0;
+  const s = (ms) => (ms / 1000).toFixed(1);
+
+  const detail = `${n} msgs · mediana ${s(med)}s · P95 ${s(p95)}s · máx ${s(max)}s · fallback ${fbPct.toFixed(1)}% · falhas ${fails} · >60s ${over60}`;
+  const warn = med > WARN_THRESHOLDS.providerMedianMs
+    || p95 > WARN_THRESHOLDS.providerP95Ms
+    || fbPct > WARN_THRESHOLDS.providerFallbackPct
+    || fails > 0;
+  return { status: warn ? 'warning' : 'ok', detail };
+}
+
+// ─────────────────────────────────────────────────────────────────
 // Runner
 // ─────────────────────────────────────────────────────────────────
 const ALL_CHECKS = [
@@ -383,6 +425,7 @@ const ALL_CHECKS = [
   ['events_without_reminders', checkEventsWithoutReminders],
   ['recurring_errors',       checkRecurringErrors],
   ['known_issues_regression', checkKnownIssuesRegression],
+  ['provider_health',        checkProviderHealth],
 ];
 
 async function runHealthCheck() {
@@ -432,4 +475,4 @@ if (require.main === module) {
   }).catch(e => { console.error(e); process.exit(1); });
 }
 
-module.exports = { runHealthCheck };
+module.exports = { runHealthCheck, checkProviderHealth };
