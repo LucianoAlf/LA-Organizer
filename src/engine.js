@@ -18,6 +18,10 @@ const inventarioService = require('./services/inventario-service');
 const inventarioValidators = require('./services/inventario-validators');
 const announcementsService = require('./services/announcements');
 const pendingIntents = require('./services/pending-intents');
+const financeService = require('./services/financeiro-service');
+const { mapCategory, normalizeParams } = require('./finance/categorize');
+const { crossedThreshold, buildBudgetAlert } = require('./finance/budget-alert');
+const { monthsToGoalSimple, monthsToGoalWithInterest, formatMonths } = require('./finance/projection');
 
 const SKILLS_DIR = path.join(__dirname, '..', 'skills');
 
@@ -5609,6 +5613,128 @@ async function tryDupBypass(collab, text) {
   return null;
 }
 
+// ---- Sprint 27 — Financas Pessoais: marker <<FINANCE_ACTION>> + dispatcher ----
+const FINANCE_ACTIONS = [
+  'register_transaction', 'register_bill', 'pay_bill', 'create_goal',
+  'update_goal', 'set_budget', 'query_summary', 'query_budget', 'query_goal', 'create_account',
+];
+const MONTH_TAXA = 0.0083; // ~10,5%/ano (referencia; Fase B troca pela Selic viva)
+
+function parseFinanceMarker(text) {
+  if (!text) return null;
+  const re = /<<FINANCE_ACTION>>\s*([\s\S]*?)\s*<<END>>/i;
+  const m = text.match(re);
+  if (!m) return null;
+  const cleanText = text.replace(re, '').trim();
+  let json;
+  try {
+    json = JSON.parse(m[1].trim());
+  } catch (err) {
+    logSchemaErr('FINANCE_ACTION', ['invalid_json: ' + err.message], m[1]);
+    return { malformed: true, cleanText };
+  }
+  if (!json || !FINANCE_ACTIONS.includes(json.action)) {
+    logSchemaErr('FINANCE_ACTION', ['action_invalida: ' + (json && json.action)], m[1]);
+    return { malformed: true, cleanText };
+  }
+  return { action: json.action, params: json.params || {}, cleanText, malformed: false };
+}
+
+// SEGURANCA (spec §6.2): cid SEMPRE = collab.id (remetente resolvido server-side). NUNCA params.collaborator_id.
+async function handleFinanceAction(collab, action, params) {
+  const cid = collab.id;
+  const p = normalizeParams(params || {});
+
+  switch (action) {
+    case 'register_transaction': {
+      if (!p.amount || p.amount <= 0) return '❓ Qual foi o valor?';
+      const type = p.type || 'expense';
+      const category = p.category || mapCategory(p.description || '');
+      const account_id = p.account_id || null; // trigger BEFORE barra conta de outro dono
+      const prev = type === 'expense' ? await financeService.monthCategoryTotal(cid, category) : 0;
+      await financeService.insertTransaction(cid, { type, category, amount: p.amount, description: p.description, transaction_date: p.date, account_id });
+      let reply = `✅ R$${p.amount} em ${category}.`;
+      if (type === 'expense') {
+        const novo = prev + Number(p.amount);
+        const limit = await financeService.getBudget(cid, category);
+        if (limit) {
+          const pct = Math.round((novo / limit) * 100);
+          reply += ` Total do mês: R$${novo}/R$${limit} (${pct}%)`;
+          const cruzou = crossedThreshold(prev, novo, limit);
+          if (cruzou) reply += `\n${buildBudgetAlert(category, novo, limit, cruzou)}`;
+        }
+      }
+      return reply;
+    }
+    case 'register_bill': {
+      const b = await financeService.createBill(cid, {
+        name: params.name, amount: params.amount, due_day: params.due_day,
+        category: params.category || mapCategory(params.name || ''),
+        type: params.type || 'expense', remind_days_before: params.remind_days_before,
+      });
+      return `✅ Conta cadastrada: ${b.name} (R$${b.amount}, dia ${b.due_day}).`;
+    }
+    case 'pay_bill': {
+      const cands = await financeService.findBills(cid, params.bill_name || params.name || '');
+      if (cands.length === 0) return 'Não achei conta com esse nome.';
+      if (cands.length > 1) return 'Achei mais de uma: ' + cands.map((c, i) => `${i + 1}) ${c.name}`).join(', ') + '. Qual delas?';
+      const paid = await financeService.payBill(cid, cands[0]);
+      return `✅ ${paid.name} marcada como paga (R$${paid.amount}).`;
+    }
+    case 'create_goal': {
+      const g = await financeService.createGoal(cid, {
+        name: params.name, target_amount: params.target_amount,
+        monthly_contribution: params.monthly_contribution, deadline: params.deadline, icon: params.icon,
+      });
+      let reply = `${g.icon || '🎯'} Meta criada: ${g.name} (R$${g.target_amount}).`;
+      if (g.monthly_contribution) {
+        const ms = monthsToGoalSimple(g.target_amount, g.current_amount, g.monthly_contribution);
+        const mj = monthsToGoalWithInterest(g.target_amount, g.current_amount, g.monthly_contribution, MONTH_TAXA);
+        reply += `\n💰 Guardando R$${g.monthly_contribution}/mês, você chega em ${formatMonths(ms)}.`;
+        reply += `\nInvestindo a ~10,5%/ano: ${formatMonths(mj)}. Bora!`;
+      }
+      return reply;
+    }
+    case 'update_goal': {
+      const cands = await financeService.findGoal(cid, params.goal_name || params.name || '');
+      if (cands.length === 0) return 'Não achei essa meta.';
+      const g = await financeService.addToGoal(cid, cands[0], params.add_amount || 0);
+      const pct = Math.round((g.current_amount / g.target_amount) * 100);
+      return `✅ Guardou R$${params.add_amount} em ${g.name}. Progresso: ${pct}% (R$${g.current_amount}/R$${g.target_amount}).`;
+    }
+    case 'set_budget': {
+      const b = await financeService.setBudget(cid, { category: params.category, monthly_limit: params.monthly_limit });
+      return `✅ Orçamento de ${b.category}: R$${b.monthly_limit}/mês.`;
+    }
+    case 'create_account': {
+      const a = await financeService.createAccount(cid, { name: params.name, type: params.type, icon: params.icon, goal_monthly: params.goal_monthly });
+      return `✅ Carteira criada: ${a.icon || '🏦'} ${a.name}.`;
+    }
+    case 'query_summary': {
+      const s = await financeService.querySummary(cid);
+      const top = s.top.map(([c, v]) => `• ${c}: R$${v}`).join('\n');
+      return `💰 Mês atual:\n📈 Receitas: R$${s.receitas}\n📉 Despesas: R$${s.despesas}\n💵 Saldo: ${s.saldo >= 0 ? '+' : ''}R$${s.saldo}` + (top ? `\n\nTop gastos:\n${top}` : '');
+    }
+    case 'query_budget': {
+      const rows = await financeService.queryBudget(cid);
+      if (rows.length === 0) return 'Você ainda não definiu orçamento por categoria.';
+      const linhas = rows.map((r) => `${r.category}: ${Math.round((r.spent / r.limit) * 100)}% (R$${r.spent}/R$${r.limit})`).join('\n');
+      return `📊 Orçamento:\n${linhas}`;
+    }
+    case 'query_goal': {
+      const gs = await financeService.listGoals(cid);
+      if (gs.length === 0) return 'Você ainda não tem metas. Bora criar uma?';
+      const linhas = gs.map((g) => {
+        const pct = Math.round((g.current_amount / g.target_amount) * 100);
+        return `${g.icon || '🎯'} ${g.name}: ${pct}% (R$${g.current_amount}/R$${g.target_amount})`;
+      }).join('\n');
+      return `🎯 Suas metas:\n${linhas}`;
+    }
+    default:
+      return null;
+  }
+}
+
 async function processMessage(phone, text, raw = {}) {
   const _t0 = Date.now();
   const _phoneTail = String(phone).slice(-4);
@@ -7301,6 +7427,26 @@ async function processMessage(phone, text, raw = {}) {
         null
       );
       reply = parsedCoordResp.cleanText || reply;
+    }
+  }
+
+  // 2.9) Finance action (Sprint 27). SEGURANCA: collab.id (remetente), nunca o id do marker.
+  {
+    const fin = parseFinanceMarker(reply);
+    if (fin && fin.malformed) {
+      console.warn('[Finance] WARN: malformed marker');
+      await logMarker(collab.id, 'FINANCE_ACTION', 'rejected', 'schema_invalid', reply);
+      reply = fin.cleanText || reply;
+    } else if (fin) {
+      try {
+        const finReply = await handleFinanceAction(collab, fin.action, fin.params);
+        await logMarker(collab.id, 'FINANCE_ACTION', 'executed', fin.action, null);
+        reply = (fin.cleanText ? fin.cleanText + '\n' : '') + (finReply || '');
+      } catch (err) {
+        console.error('[Finance] erro:', err.message);
+        await logMarker(collab.id, 'FINANCE_ACTION', 'rejected', `error:${err.message}`, null);
+        reply = (fin.cleanText || '') + '\nDeu ruim ao registrar isso aqui — tenta de novo?';
+      }
     }
   }
 

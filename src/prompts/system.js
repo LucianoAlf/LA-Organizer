@@ -784,6 +784,12 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
     return { name: 'criar-recorrencia', body: loadSkill('criar-recorrencia') };
   }
 
+  // Sprint 27 — Financas pessoais: registro/consulta de dinheiro, contas, metas, orcamento.
+  const FINANCE_RE = /\b(gastei|recebi|paguei|sal[áa]rio|comiss[ãa]o|aluguel|ifood|mercado|uber|gasolina|farm[áa]cia|or[çc]amento|meta|guardar|poupan[çc]a|caixinha|investir|selic|juros|quanto\s+gastei|conta\s+(?:a\s+pagar|vencendo))\b/i;
+  if (FINANCE_RE.test(String(lastUserMessage || ''))) {
+    return { name: 'financeiro-pessoal', body: loadSkill('financeiro-pessoal') };
+  }
+
   // Sprint 29.2 — Skill briefing-pre-1on1: ativa quando director pergunta
   // sobre líder específico ou sobre um briefing recebido.
   if (collab && collab.role === 'director') {

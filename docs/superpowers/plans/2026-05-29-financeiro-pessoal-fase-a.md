@@ -111,8 +111,9 @@ CREATE TABLE pf_transactions (
 );
 CREATE INDEX idx_pf_transactions_collab_date
   ON pf_transactions(collaborator_id, transaction_date DESC);
+-- cast ::timestamp torna date_trunc IMMUTABLE (exigido em indice; date_trunc(text,date) e STABLE)
 CREATE INDEX idx_pf_transactions_collab_month
-  ON pf_transactions(collaborator_id, date_trunc('month', transaction_date));
+  ON pf_transactions(collaborator_id, (date_trunc('month', transaction_date::timestamp)));
 
 -- pf_bills
 CREATE TABLE pf_bills (
