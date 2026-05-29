@@ -137,6 +137,7 @@ async function processWebhookBody(body) {
         const reasons = {
           no_provider: 'recebi seu áudio. Por enquanto eu não tô processando áudio aqui — me manda o mesmo recado em texto, por favor?',
           no_audio_url: 'recebi seu áudio mas não consegui baixar o arquivo. Tenta de novo, ou me manda em texto?',
+          download_failed: 'recebi seu áudio, mas tive uma instabilidade pra baixar ele agora (acontece de vez em quando do lado do WhatsApp). Me manda de novo, por favor — costuma funcionar na segunda tentativa. 🙏',
           empty_audio: 'o áudio veio vazio. Manda de novo?',
           transcription_empty: 'não consegui entender o áudio. Pode mandar de novo, ou em texto?',
           transcription_error: 'tive um erro tentando entender o áudio. Pode mandar em texto?',

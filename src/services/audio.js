@@ -39,7 +39,32 @@ function extractMessageId(body) {
   );
 }
 
+// Sprint 31.5 — retry com backoff na RAIZ do download. As falhas do
+// /message/download são transitórias (UAZAPI↔WhatsApp CDN: "download failed
+// after 3 attempts" / "host not mapped"). A CDN se recupera em segundos — a
+// mesma mensagem que falha agora costuma baixar numa 2ª/3ª tentativa. Evidência
+// real: áudio da Krissya falhou 22:11/22:12 e funcionou 22:19 sem mudar código.
+// Fica aqui (não só no transcribeAudio) pra imagem/vídeo também se beneficiarem.
 async function downloadFromUazapi(messageId, timeoutMs = 30000) {
+  const RETRY_DELAYS_MS = [0, 1500, 4000];
+  let lastErr = null;
+  for (let attempt = 0; attempt < RETRY_DELAYS_MS.length; attempt++) {
+    if (RETRY_DELAYS_MS[attempt] > 0) {
+      await new Promise(r => setTimeout(r, RETRY_DELAYS_MS[attempt]));
+    }
+    try {
+      const r = await _downloadOnceFromUazapi(messageId, timeoutMs);
+      if (attempt > 0) console.log(`[Audio] UAZAPI download recuperou na tentativa ${attempt + 1}/${RETRY_DELAYS_MS.length}`);
+      return r;
+    } catch (err) {
+      lastErr = err;
+      console.warn(`[Audio] UAZAPI download falhou (tentativa ${attempt + 1}/${RETRY_DELAYS_MS.length}): ${err.message}`);
+    }
+  }
+  throw lastErr || new Error('UAZAPI download failed');
+}
+
+function _downloadOnceFromUazapi(messageId, timeoutMs = 30000) {
   if (!UAZAPI_URL || !UAZAPI_TOKEN) {
     throw new Error('UAZAPI_URL or UAZAPI_TOKEN missing');
   }
@@ -193,18 +218,24 @@ async function transcribeAudio(body) {
   const messageId = extractMessageId(body);
   if (messageId && UAZAPI_URL && UAZAPI_TOKEN) {
     try {
+      // downloadFromUazapi já faz retry com backoff internamente (Sprint 31.5).
       const r = await downloadFromUazapi(messageId);
       buf = r.buffer;
       mime = r.mime || mime;
       console.log(`[Audio] UAZAPI download OK — ${buf.length} bytes mime=${mime}`);
     } catch (err) {
-      console.warn(`[Audio] UAZAPI download falhou (${err.message}); tentando URL direta...`);
+      // Sprint 31.5 — esgotou os retries. NÃO cair no fallback de URL encriptada:
+      // pra UAZAPI ela é SEMPRE ciphertext (mmg.whatsapp.net/...enc) → Whisper
+      // rejeita com "Invalid file format", gerando o erro confuso que o usuário
+      // via. Retorna reason limpo pra o webhook orientar o reenvio.
+      console.error(`[Audio] UAZAPI download falhou após retries: ${err.message}`);
+      return { ok: false, reason: 'download_failed', error: err.message };
     }
   }
 
   if (!buf) {
-    // Fallback legacy: tenta URL plain do webhook (provavelmente encriptada
-    // mas não custa tentar pra payloads de outro provider).
+    // Fallback legacy: SÓ pra payloads SEM message_id (outro provider).
+    // Tenta URL plain do webhook (provavelmente encriptada, mas não custa tentar).
     const url = findAudioUrl(body);
     if (!url) {
       console.warn('[Audio] no message_id e no audio URL — payload sample:',
