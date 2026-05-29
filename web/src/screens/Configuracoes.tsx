@@ -32,6 +32,16 @@ interface Prefs {
   quiet_weekends: boolean;
   quiet_days: number[];
   quiet_reason: string | null;
+  quiet_start_time_work: string;
+  quiet_end_time_work: string;
+  quiet_days_work: number[];
+  quiet_weekends_work: boolean;
+  quiet_start_time_personal: string;
+  quiet_end_time_personal: string;
+  quiet_days_personal: number[];
+  quiet_weekends_personal: boolean;
+  notify_deadline_alerts_personal: boolean;
+  notify_overdue_alerts_personal: boolean;
 }
 
 const DOWS = [
@@ -53,7 +63,7 @@ const INTENSITIES = [
 const trimSec = (t: string) => (t || '').slice(0, 5);
 const padSec = (t: string) => (t.length === 5 ? t + ':00' : t);
 
-const PREF_COLS = 'briefing_time, personal_briefing_time, closing_time, planning_day, planning_time, monthly_planning_time, monthly_closing_time, max_daily_tasks, coaching_intensity, notify_deadline_alerts, notify_overdue_alerts, notify_team_summary, do_not_disturb_until, do_not_disturb_reason, task_checkin_times, quiet_weekends, quiet_days, quiet_reason';
+const PREF_COLS = 'briefing_time, personal_briefing_time, closing_time, planning_day, planning_time, monthly_planning_time, monthly_closing_time, max_daily_tasks, coaching_intensity, notify_deadline_alerts, notify_overdue_alerts, notify_team_summary, do_not_disturb_until, do_not_disturb_reason, task_checkin_times, quiet_weekends, quiet_days, quiet_reason, quiet_start_time_work, quiet_end_time_work, quiet_days_work, quiet_weekends_work, quiet_start_time_personal, quiet_end_time_personal, quiet_days_personal, quiet_weekends_personal, notify_deadline_alerts_personal, notify_overdue_alerts_personal';
 
 async function fetchPrefs(collabId: string): Promise<Prefs | null> {
   const { data, error } = await supabase
@@ -85,6 +95,7 @@ export function Configuracoes() {
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savedToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [dndOpen, setDndOpen] = useState(false);
+  const [silenceTab, setSilenceTab] = useState<'work' | 'personal'>('work');
 
   const isLeadership = role === 'director' || role === 'coordinator' || role === 'manager';
 
@@ -105,6 +116,14 @@ export function Configuracoes() {
         monthly_planning_time: trimSec(data.monthly_planning_time),
         monthly_closing_time: trimSec(data.monthly_closing_time),
         task_checkin_times: (data.task_checkin_times || []).map(trimSec),
+        quiet_start_time_work: trimSec(data.quiet_start_time_work),
+        quiet_end_time_work: trimSec(data.quiet_end_time_work),
+        quiet_start_time_personal: trimSec(data.quiet_start_time_personal),
+        quiet_end_time_personal: trimSec(data.quiet_end_time_personal),
+        quiet_days_work: Array.isArray(data.quiet_days_work) ? data.quiet_days_work : [],
+        quiet_days_personal: Array.isArray(data.quiet_days_personal) ? data.quiet_days_personal : [],
+        quiet_weekends_work: !!data.quiet_weekends_work,
+        quiet_weekends_personal: !!data.quiet_weekends_personal,
       };
       setForm(next);
       // Baseline: serializa o estado inicial pra detectar "houve mudança real"
@@ -179,6 +198,16 @@ export function Configuracoes() {
           quiet_weekends: !!p.quiet_weekends,
           quiet_days: Array.isArray(p.quiet_days) ? [...new Set(p.quiet_days.filter(n => n >= 0 && n <= 6))].sort() : [],
           quiet_reason: p.quiet_reason || null,
+          quiet_start_time_work: p.quiet_start_time_work ? padSec(p.quiet_start_time_work) : null,
+          quiet_end_time_work: p.quiet_end_time_work ? padSec(p.quiet_end_time_work) : null,
+          quiet_days_work: Array.isArray(p.quiet_days_work) ? [...new Set(p.quiet_days_work.filter(n => n >= 0 && n <= 6))].sort() : [],
+          quiet_weekends_work: !!p.quiet_weekends_work,
+          quiet_start_time_personal: p.quiet_start_time_personal ? padSec(p.quiet_start_time_personal) : null,
+          quiet_end_time_personal: p.quiet_end_time_personal ? padSec(p.quiet_end_time_personal) : null,
+          quiet_days_personal: Array.isArray(p.quiet_days_personal) ? [...new Set(p.quiet_days_personal.filter(n => n >= 0 && n <= 6))].sort() : [],
+          quiet_weekends_personal: !!p.quiet_weekends_personal,
+          notify_deadline_alerts_personal: p.notify_deadline_alerts_personal,
+          notify_overdue_alerts_personal: p.notify_overdue_alerts_personal,
         })
         .eq('collaborator_id', collaborator.id);
       if (error) throw error;
@@ -429,65 +458,117 @@ export function Configuracoes() {
 
       </div>
 
-      {/* Silenciar TOM em dias recorrentes da semana */}
-      <Section title="Dias de silêncio" subtitle="Em dias marcados, o TOM não cobra briefings, lembretes nem alertas.">
-        <p className="text-body-sm text-fg-muted">
-          Marca os dias que você não quer ser cobrado. Vale toda semana — você pode reativar a qualquer momento.
-        </p>
-        <div className="grid grid-cols-7 gap-1">
-          {DOWS.map(d => {
-            const isOn = (form.quiet_weekends && (d.v === 0 || d.v === 6)) || form.quiet_days.includes(d.v);
-            const fromWeekend = form.quiet_weekends && (d.v === 0 || d.v === 6);
-            return (
-              <button
-                key={d.v}
-                type="button"
-                onClick={() => {
-                  if (fromWeekend) return; // não permite desmarcar via day-toggle quando vier de quiet_weekends
-                  const next = isOn
-                    ? form.quiet_days.filter(n => n !== d.v)
-                    : [...form.quiet_days, d.v].sort();
-                  setForm({ ...form, quiet_days: next });
-                }}
-                className={`h-12 rounded-md text-body-sm font-medium border transition ${
-                  isOn
-                    ? 'bg-tom text-bg-app border-tom'
-                    : 'bg-bg-surface border-border text-fg-muted hover:border-tom/60'
-                } ${fromWeekend ? 'opacity-80 cursor-not-allowed' : ''}`}
-                title={fromWeekend ? 'Vem de "Fim de semana inteiro"' : ''}
-              >
-                {d.label.slice(0, 3)}
-              </button>
-            );
-          })}
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            variant={form.quiet_weekends ? 'primary' : 'secondary'}
-            onClick={() => setForm({ ...form, quiet_weekends: !form.quiet_weekends })}
-          >
-            {form.quiet_weekends ? '✓ Fim de semana inteiro' : 'Fim de semana inteiro'}
-          </Button>
-          {(form.quiet_weekends || form.quiet_days.length > 0) && (
-            <Button
+      {/* Abas Pessoal/Trabalho — compartilhadas pelas seções de silêncio abaixo */}
+      <Section title="🔕 Silêncio diário" subtitle="Trabalho = suas atividades na LA Music. Pessoal = sua vida e trabalhos seus fora da LA Music.">
+        <div className="flex gap-2">
+          {(['work', 'personal'] as const).map(tab => (
+            <button
+              key={tab}
               type="button"
-              variant="ghost"
-              onClick={() => setForm({ ...form, quiet_weekends: false, quiet_days: [], quiet_reason: null })}
+              onClick={() => setSilenceTab(tab)}
+              className={`h-9 px-4 rounded-md text-body-sm font-semibold border transition ${
+                silenceTab === tab
+                  ? 'bg-tom text-bg-app border-tom'
+                  : 'bg-bg-surface border-border text-fg-muted hover:border-tom/60'
+              }`}
             >
-              Limpar todos
-            </Button>
+              {tab === 'work' ? 'Trabalho' : 'Pessoal'}
+            </button>
+          ))}
+        </div>
+
+        <p className="text-body-sm text-fg-muted">
+          Em qual horário você NÃO quer ser cobrado de {silenceTab === 'work' ? 'trabalho' : 'coisas pessoais'}.
+          Deixe vazio para não ter silêncio neste contexto.
+        </p>
+        <div className="flex items-center gap-2">
+          <TimeInput
+            value={(form as any)[`quiet_start_time_${silenceTab}`] || ''}
+            onChange={v => setForm({ ...form, [`quiet_start_time_${silenceTab}`]: v })}
+          />
+          <span className="text-fg-muted">até</span>
+          <TimeInput
+            value={(form as any)[`quiet_end_time_${silenceTab}`] || ''}
+            onChange={v => setForm({ ...form, [`quiet_end_time_${silenceTab}`]: v })}
+          />
+          {((form as any)[`quiet_start_time_${silenceTab}`] || (form as any)[`quiet_end_time_${silenceTab}`]) && (
+            <button
+              type="button"
+              onClick={() => setForm({ ...form, [`quiet_start_time_${silenceTab}`]: '', [`quiet_end_time_${silenceTab}`]: '' })}
+              className="text-body-sm text-fg-muted hover:text-fg underline underline-offset-2"
+            >
+              limpar
+            </button>
           )}
         </div>
-        {(form.quiet_weekends || form.quiet_days.length > 0) && (
+        {(form as any)[`quiet_start_time_${silenceTab}`] && (form as any)[`quiet_end_time_${silenceTab}`] && (
           <p className="text-body-sm text-fg-muted">
-            🔕 TOM ficará em silêncio: {(() => {
-              const ativos = new Set<number>(form.quiet_days);
-              if (form.quiet_weekends) { ativos.add(0); ativos.add(6); }
-              return [...ativos].sort().map(v => DOWS.find(d => d.v === v)?.label).join(', ');
-            })()}.
+            🔕 TOM em silêncio de {silenceTab === 'work' ? 'trabalho' : 'pessoal'} das{' '}
+            {(form as any)[`quiet_start_time_${silenceTab}`]} às {(form as any)[`quiet_end_time_${silenceTab}`]}.
           </p>
         )}
+      </Section>
+
+      {/* Dias de silêncio — por contexto (usa a aba selecionada acima) */}
+      <Section title="Dias de silêncio" subtitle={`Dias em que o TOM não cobra ${silenceTab === 'work' ? 'trabalho (LA Music)' : 'coisas pessoais'}. Use as abas acima pra trocar de contexto.`}>
+        {(() => {
+          const qDays: number[] = (form as any)[`quiet_days_${silenceTab}`] || [];
+          const qWeekends: boolean = !!(form as any)[`quiet_weekends_${silenceTab}`];
+          return (
+            <>
+              <div className="grid grid-cols-7 gap-1">
+                {DOWS.map(d => {
+                  const isOn = (qWeekends && (d.v === 0 || d.v === 6)) || qDays.includes(d.v);
+                  const fromWeekend = qWeekends && (d.v === 0 || d.v === 6);
+                  return (
+                    <button
+                      key={d.v}
+                      type="button"
+                      onClick={() => {
+                        if (fromWeekend) return;
+                        const next = isOn ? qDays.filter(n => n !== d.v) : [...qDays, d.v].sort();
+                        setForm({ ...form, [`quiet_days_${silenceTab}`]: next });
+                      }}
+                      className={`h-12 rounded-md text-body-sm font-medium border transition ${
+                        isOn ? 'bg-tom text-bg-app border-tom' : 'bg-bg-surface border-border text-fg-muted hover:border-tom/60'
+                      } ${fromWeekend ? 'opacity-80 cursor-not-allowed' : ''}`}
+                      title={fromWeekend ? 'Vem de "Fim de semana inteiro"' : ''}
+                    >
+                      {d.label.slice(0, 3)}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant={qWeekends ? 'primary' : 'secondary'}
+                  onClick={() => setForm({ ...form, [`quiet_weekends_${silenceTab}`]: !qWeekends })}
+                >
+                  {qWeekends ? '✓ Fim de semana inteiro' : 'Fim de semana inteiro'}
+                </Button>
+                {(qWeekends || qDays.length > 0) && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => setForm({ ...form, [`quiet_weekends_${silenceTab}`]: false, [`quiet_days_${silenceTab}`]: [] })}
+                  >
+                    Limpar todos
+                  </Button>
+                )}
+              </div>
+              {(qWeekends || qDays.length > 0) && (
+                <p className="text-body-sm text-fg-muted">
+                  🔕 Silêncio de {silenceTab === 'work' ? 'trabalho' : 'pessoal'}: {(() => {
+                    const ativos = new Set<number>(qDays);
+                    if (qWeekends) { ativos.add(0); ativos.add(6); }
+                    return [...ativos].sort().map(v => DOWS.find(d => d.v === v)?.label).join(', ');
+                  })()}.
+                </p>
+              )}
+            </>
+          );
+        })()}
       </Section>
 
       {/* Pausar TOM (DND) */}

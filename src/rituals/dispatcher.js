@@ -262,6 +262,8 @@ async function checkMonthlyPlanning(now) {
     if (currentSlot(now) !== timeToSlot(time)) continue;
     triedSlot++;
     if (await alreadySent(c.id, 'monthly_planning', ymdToday)) { alreadyDone++; continue; }
+    const qmp = await isQuietNow(c.id, now, 'work');
+    if (qmp.quiet) { await logRitualEvent(c.id, 'monthly_planning', 'skipped', `quiet:${qmp.reason}`, ymdToday); continue; }
     try {
       const decision = await getRitualIntroDecision(c.id, 'monthly_planning');
       if (decision === 'show_intro') {
@@ -292,6 +294,8 @@ async function checkMonthlyClosing(now) {
     const time = c.user_preferences?.monthly_closing_time || '18:00';
     if (currentSlot(now) !== timeToSlot(time)) continue;
     if (await alreadySent(c.id, 'monthly_closing', ymdToday)) continue;
+    const qmc = await isQuietNow(c.id, now, 'work');
+    if (qmc.quiet) { await logRitualEvent(c.id, 'monthly_closing', 'skipped', `quiet:${qmc.reason}`, ymdToday); continue; }
     try {
       const decision = await getRitualIntroDecision(c.id, 'monthly_closing');
       if (decision === 'show_intro') {
@@ -513,6 +517,14 @@ async function dispatchChecklists(now = new Date(), { dry = false, filterPhone =
         `Marque os itens concluídos:\n${sortedItems}\n\n` +
         `Responda com os números (ex: *1 3 5*) ou *feito tudo*.`;
 
+      // Checklist operacional = trabalho (LA Music). Respeita o silêncio de trabalho.
+      const qChk = await isQuietNow(collab.id, nowSaoPaulo(), 'work');
+      if (qChk.quiet) {
+        console.log(`[dispatchChecklists] defer collab=${collab.id} — quiet work (${qChk.reason})`);
+        results.push({ collab_id: collab.id, template_id: template.id, reason: 'quiet', would_dispatch: false });
+        continue;
+      }
+
       try {
         await whatsapp.sendMessage(collab.phone, msg);
         await supabase.from('conversation_history').insert({
@@ -687,7 +699,7 @@ async function remindEventTasks(now = new Date()) {
       continue;
     }
     // Respeita quiet_days/weekends — não marca reminded_at pra retentar fora do quiet.
-    const q = await isQuietNow(task.collaborator?.user_preferences, nowSaoPaulo());
+    const q = await isQuietNow(task.assigned_to, nowSaoPaulo(), 'work');
     if (q.quiet) {
       console.log(`[remindEventTasks] skip ${task.id.slice(0,8)} — quiet (${q.reason})`);
       continue;
@@ -750,7 +762,7 @@ async function remindOperationalTasks(now = new Date()) {
       await supabase.from('tasks').update({ reminded_at: nowIso }).eq('id', task.id);
       continue;
     }
-    const q = await isQuietNow(task.collaborator?.user_preferences, nowSaoPaulo());
+    const q = await isQuietNow(task.assigned_to, nowSaoPaulo(), 'work');
     if (q.quiet) {
       console.log(`[remindOperationalTasks] skip ${task.id.slice(0,8)} — quiet (${q.reason})`);
       continue;
@@ -789,7 +801,7 @@ async function remindPersonalTasks(now = new Date()) {
   const { data: tasks, error } = await supabase
     .from('tasks')
     .select(`
-      id, title, assigned_to, due_date,
+      id, title, assigned_to, due_date, context,
       collaborator:assigned_to(id, phone, full_name, user_preferences(quiet_weekends, quiet_days, quiet_reason, quiet_start_time, quiet_end_time))
     `)
     .is('department_id', null)
@@ -812,7 +824,7 @@ async function remindPersonalTasks(now = new Date()) {
       await supabase.from('tasks').update({ reminded_at: nowIso }).eq('id', task.id);
       continue;
     }
-    const q = await isQuietNow(task.collaborator?.user_preferences, nowSaoPaulo());
+    const q = await isQuietNow(task.assigned_to, nowSaoPaulo(), task.context === 'personal' ? 'personal' : 'work');
     if (q.quiet) {
       console.log(`[remindPersonalTasks] skip ${task.id.slice(0,8)} — quiet (${q.reason})`);
       continue;
@@ -4015,6 +4027,12 @@ async function checkReminders() {
       console.log(`[Reminders] defer ${String(t.id).slice(0,8)} — DND until ${dnd.until}`);
       continue; // don't mark task done; will fire on next tick after DND
     }
+    const ctxR = t.context === 'personal' ? 'personal' : 'work';
+    const qR = await isQuietNow(collab.id, nowSaoPaulo(), ctxR);
+    if (qR.quiet) {
+      console.log(`[Reminders] defer ${String(t.id).slice(0,8)} — quiet ${ctxR} (${qR.reason})`);
+      continue; // não marca reminded_at; volta no próximo tick fora do quiet
+    }
     // Cooldown 6h independente de status (defesa contra reaberturas silenciosas).
     const { data: recent } = await supabase
       .from('notifications')
@@ -4209,12 +4227,22 @@ async function checkTaskCheckins(now) {
     const hour = timeKey.slice(0, 2);
     const firstName = c.full_name.split(' ')[0];
 
-    let msg = `⏰ *Check das ${hour}h, ${firstName}!*\n\nAinda pendente:`;
-    if (personal.length) {
-      msg += `\n\n📋 *Pessoal:*\n` + personal.map(t => `• ${t.title}`).join('\n');
+    // Filtra cada seção pelo silêncio do seu contexto. Se ambos silenciados, pula.
+    const qWork = await isQuietNow(c.id, now, 'work');
+    const qPersonal = await isQuietNow(c.id, now, 'personal');
+    const workVisible = qWork.quiet ? [] : work;
+    const personalVisible = qPersonal.quiet ? [] : personal;
+    if (!workVisible.length && !personalVisible.length) {
+      await logRitualEvent(c.id, ritualType, 'skipped', 'quiet_both_contexts', ymd);
+      continue;
     }
-    if (work.length) {
-      msg += `\n\n📋 *Trabalho:*\n` + work.map(t => `• ${t.title}`).join('\n');
+
+    let msg = `⏰ *Check das ${hour}h, ${firstName}!*\n\nAinda pendente:`;
+    if (personalVisible.length) {
+      msg += `\n\n📋 *Pessoal:*\n` + personalVisible.map(t => `• ${t.title}`).join('\n');
+    }
+    if (workVisible.length) {
+      msg += `\n\n📋 *Trabalho:*\n` + workVisible.map(t => `• ${t.title}`).join('\n');
     }
     msg += `\n\nMe avisa o que você concluiu! 💪`;
 
@@ -4311,6 +4339,12 @@ async function checkHabitReminders() {
     const dnd = await getDndState(collab.id);
     if (dnd.active) {
       console.log(`[HabitReminders] defer ${String(r.id).slice(0,8)} — DND until ${dnd.until}`);
+      continue;
+    }
+    // Hábito não tem context no schema → tratado como 'personal' (academia/água/leitura).
+    const qHab = await isQuietNow(collab.id, nowSaoPaulo(), 'personal');
+    if (qHab.quiet) {
+      console.log(`[HabitReminders] defer ${String(r.id).slice(0,8)} — quiet personal (${qHab.reason})`);
       continue;
     }
     const icon = h.icon || '💪';
