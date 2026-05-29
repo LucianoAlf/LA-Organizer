@@ -1,4 +1,4 @@
-import { Bell, ArrowRight, Repeat } from 'lucide-react';
+import { Bell, ArrowRight, Repeat, Clock } from 'lucide-react';
 import type { TaskForPanel } from '../../hooks/useAgendaTasks';
 import { useCollaboratorNames } from '../../hooks/useCollaboratorNames';
 
@@ -37,6 +37,8 @@ export function CompactTaskRow({ task, onToggle, onClick, trailingBadge }: Props
   const q = task.eisenhower_quadrant != null ? String(task.eisenhower_quadrant) : null;
   const dot = q && QUADRANT_DOT[q];
   const remindHM = task.remind_at ? formatHM(task.remind_at) : null;
+  // Sprint 30 — horário-alvo da tarefa (due_time "HH:MM:SS" → "HH:MM").
+  const dueHM = task.due_time ? task.due_time.slice(0, 5) : null;
   const names = useCollaboratorNames();
   const delegatedToName = names.firstName(task.delegated_to);
 
@@ -60,6 +62,12 @@ export function CompactTaskRow({ task, onToggle, onClick, trailingBadge }: Props
       >
         {task.title}
       </button>
+      {dueHM && (
+        <span className="shrink-0 inline-flex items-center gap-0.5 text-[10px] text-fg-muted tabular-nums" title={`Horário da tarefa: ${dueHM}`}>
+          <Clock size={10} aria-hidden />
+          {dueHM}
+        </span>
+      )}
       {task.is_recurring && (
         <span className="shrink-0 inline-flex items-center text-fg-muted" title="Tarefa recorrente">
           <Repeat size={11} aria-label="Recorrente" />

@@ -347,6 +347,27 @@ async function checkRecurringErrors() {
 }
 
 // ─────────────────────────────────────────────────────────────────
+// CHECK 12 — Regressão de incidentes conhecidos (tom_known_issues) — Sprint 31.7
+// Chama a RPC evaluate_known_issues(), que (a) bumpa contadores dos incidentes com
+// sinal em marker_logs e (b) retorna os que regrediram (corrigido mas voltou a
+// disparar). Como é um check normal, a regressão entra no relatório das 07:00 pelo
+// mesmo caminho dos outros alertas.
+// ─────────────────────────────────────────────────────────────────
+async function checkKnownIssuesRegression() {
+  const { data: regs, error } = await supabase.rpc('evaluate_known_issues');
+  if (error) return { status: 'error', detail: `evaluate_known_issues: ${error.message}` };
+  if (!regs || regs.length === 0) return { status: 'ok', detail: 'Nenhuma regressão de incidente conhecido' };
+  const fmt = (d) => d
+    ? new Date(d).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit' })
+    : '?';
+  const linhas = regs.map((r) => {
+    const quem = (r.afetados && r.afetados.length) ? ` · ${r.afetados.join(', ')}` : '';
+    return `${r.codigo} ${r.titulo} (corrigido ${fmt(r.corrigido_em)}, voltou ${r.ocorrencias_novas}×${quem})`;
+  });
+  return { status: 'warning', detail: `🔁 ${regs.length} regressão(ões): ${linhas.join('; ')}` };
+}
+
+// ─────────────────────────────────────────────────────────────────
 // Runner
 // ─────────────────────────────────────────────────────────────────
 const ALL_CHECKS = [
@@ -361,6 +382,7 @@ const ALL_CHECKS = [
   ['stale_profiles',         checkStaleProfiles],
   ['events_without_reminders', checkEventsWithoutReminders],
   ['recurring_errors',       checkRecurringErrors],
+  ['known_issues_regression', checkKnownIssuesRegression],
 ];
 
 async function runHealthCheck() {

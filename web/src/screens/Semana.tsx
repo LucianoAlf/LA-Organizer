@@ -12,7 +12,7 @@ import { CategoryTag } from '../components/CategoryTag';
 import { TaskCheckbox } from '../components/TaskCheckbox';
 import { Fab } from '../components/Fab';
 import { QuickCreateSheet } from '../components/QuickCreateSheet';
-import { RescheduleSheet } from '../components/RescheduleSheet';
+import { EditTaskSheet } from '../components/EditTaskSheet';
 import { EditEventSheet } from '../components/EditEventSheet';
 import { Tabs } from '../components/Tabs';
 import { DateNavHeader } from '../components/DateNavHeader';
@@ -32,7 +32,7 @@ async function fetchWeekTasks(collabId: string, start: string, end: string): Pro
   // OR no Supabase: tasks atribuídas a mim OU criadas por mim e atribuídas a outro.
   const { data, error } = await supabase
     .from('tasks')
-    .select('id, title, status, context, priority, category, due_date, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, recurrence_rule, recurrence_parent_id, projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(id, full_name), task_reminders(remind_at, sent_at)')
+    .select('id, title, status, context, priority, category, due_date, due_time, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, recurrence_rule, recurrence_parent_id, projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(id, full_name), task_reminders(remind_at, sent_at)')
     .or(`assigned_to.eq.${collabId},and(created_by.eq.${collabId},assigned_to.neq.${collabId})`)
     .neq('status', 'cancelled')
     .gte('due_date', start)
@@ -103,7 +103,7 @@ export function Semana() {
   const end = days[days.length - 1];
   const isCurrentWeek = days.includes(today);
   const [createOpen, setCreateOpen] = useState(false);
-  const [rescheduleTask, setRescheduleTask] = useState<Task | null>(null);
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
   // Sprint 22.34m — tabs Trabalho/Pessoal/Delegadas espelhando Hoje.
   type SemanaTab = TaskContext | 'delegated';
@@ -344,13 +344,13 @@ export function Semana() {
                                 disabled={isCancelled || toggleTask.isPending}
                                 onClick={() => !isCancelled && toggleTask.mutate(t)}
                               />
-                              {/* Corpo: clica pra reagendar. */}
+                              {/* Corpo: clica pra editar (completo — inclui data, horário, lembretes). */}
                               {(() => { const remHM = earliestReminderHM(t); return !isDone && !isCancelled ? (
                                 <button
                                   type="button"
-                                  onClick={() => setRescheduleTask(t)}
+                                  onClick={() => setEditingTask(t)}
                                   className="flex-1 min-w-0 text-left rounded-sm hover:bg-bg-elevated px-1 -mx-1 focus-ring"
-                                  title="Reagendar"
+                                  title="Editar tarefa"
                                 >
                                   <div className="text-body-sm text-fg flex items-baseline gap-1.5">
                                     {qcCls && (
@@ -399,7 +399,7 @@ export function Semana() {
 
       <Fab onClick={() => setCreateOpen(true)} label="Novo" ariaLabel="Criar novo item" />
       <QuickCreateSheet open={createOpen} onClose={() => setCreateOpen(false)} defaultDueDate={today} />
-      <RescheduleSheet open={Boolean(rescheduleTask)} task={rescheduleTask} onClose={() => setRescheduleTask(null)} />
+      <EditTaskSheet open={Boolean(editingTask)} task={editingTask} onClose={() => setEditingTask(null)} />
       <EditEventSheet open={Boolean(editingEvent)} event={editingEvent} onClose={() => setEditingEvent(null)} />
     </div>
   );

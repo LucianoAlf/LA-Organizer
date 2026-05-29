@@ -136,6 +136,8 @@ export function TaskRow({
   // gerada (tem recurrence_parent_id). Mostra ícone de repeat pra sinalizar UX.
   const taskRec = task as Task & { recurrence_rule?: string | null; recurrence_parent_id?: string | null };
   const isRecurring = Boolean(taskRec.recurrence_rule || taskRec.recurrence_parent_id);
+  // Sprint 30 — horário-alvo da tarefa (due_time "HH:MM:SS" → "HH:MM").
+  const dueHM = task.due_time ? task.due_time.slice(0, 5) : null;
 
   return (
     <article
@@ -198,6 +200,9 @@ export function TaskRow({
         {/* Linha 2 — data/lembrete */}
         {(effectiveRemindAt || task.due_date) && (
           <div className="mt-1.5 flex items-baseline gap-1.5 text-body-sm">
+            {dueHM && (
+              <span className="text-fg-muted tabular-nums" title={`Horário da tarefa: ${dueHM}`}>🕐 {dueHM}</span>
+            )}
             {effectiveRemindAt ? (
               <>
                 <span aria-hidden>⏰</span>
