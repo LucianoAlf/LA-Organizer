@@ -3337,14 +3337,12 @@ function parsePrefsMarker(text) {
     } else if (k === 'coaching_intensity') {
       if (PREFS_INTENSITY_VALUES.has(v)) update.coaching_intensity = v;
       else dropped.push(`${k}:invalid`);
-    } else if (k === 'do_not_disturb_until') {
-      // ISO timestamp ou null pra despausar
-      if (v === null) update.do_not_disturb_until = null;
-      else if (typeof v === 'string' && !isNaN(new Date(v).getTime())) update.do_not_disturb_until = new Date(v).toISOString();
-      else dropped.push(`${k}:bad_iso`);
-    } else if (k === 'do_not_disturb_reason') {
-      if (v === null || (typeof v === 'string' && v.length <= 200)) update.do_not_disturb_reason = v;
-      else dropped.push(`${k}:invalid`);
+    } else if (k === 'do_not_disturb_until' || k === 'do_not_disturb_reason') {
+      // Pausa temporária (DND) NÃO entra por PREFS_UPDATE — tem marker dedicado
+      // e validado (<<DND_SET>>, cap de 24h). Esse path setava do_not_disturb_until
+      // sem cap nem validação de futuro (bug: Jhonatan ficou pausado até julho).
+      // Fechado: TOM deve usar <<DND_SET>> pra pausar. Logado em dropped p/ observabilidade.
+      dropped.push(`${k}:use_DND_SET_marker_instead`);
     } else if (k === 'quiet_days') {
       // Array de ints 0-6 (0=domingo, 6=sábado). Vazio = limpar.
       if (Array.isArray(v) && v.every(n => Number.isInteger(n) && n >= 0 && n <= 6)) {
