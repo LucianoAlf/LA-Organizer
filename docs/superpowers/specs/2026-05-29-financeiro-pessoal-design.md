@@ -1,0 +1,109 @@
+# Design — Módulo Finanças Pessoais (TOM como Parceiro Financeiro)
+
+> **Data:** 2026-05-29 · **Sprint:** 27 · **Status:** aprovado para escrever plano de implementação
+> **Fonte de verdade do escopo:** `C:\Users\Texeira\Downloads\PRD-financeiro-pessoal-sprint27.md` (v1.1)
+> Este documento **complementa** o PRD: registra as decisões de brainstorm, os deltas vs PRD e os guard-rails. Onde este doc e o PRD divergirem, **este doc vence** (decisões mais recentes).
+
+---
+
+## 1. Resumo
+
+Transforma o TOM em parceiro financeiro pessoal dos colaboradores via WhatsApp + PWA: registro de receitas/despesas em linguagem natural, contas fixas a pagar/receber, metas/sonhos com projeção de juros compostos, orçamento por categoria com alertas em tempo real, carteiras com saldo, rituais automáticos e educação financeira. Dado financeiro é **pessoal e sagrado** (RLS owner-only, nunca exposto a coordenador/diretor).
+
+## 2. Decisões travadas (brainstorm 2026-05-29)
+
+| # | Tema | Decisão |
+|---|---|---|
+| D1 | Fatiamento | **Horizontal por camada**: Fase A (núcleo backend) → Fase B (rituais + educação) → Fase C (PWA). Cada fase testável isolada; valor central (registrar pelo Whats) chega na Fase A. |
+| D2 | Voz do TOM | **Herda do `SOUL.md`** (sempre carregado). A skill financeira NÃO redefine voz — só adiciona princípios do domínio ("pague-se primeiro", "sugiro nunca mando", sem jargão). |
+| D3 | Dedup alertas orçamento | **Detecção de cruzamento, stateless.** O handler calcula total ANTES e DEPOIS da transação; dispara só o threshold cruzado (`prev < limite ≤ novo`). Múltiplos cruzamentos numa transação → mostra só a faixa mais alta. Sem coluna/tabela de estado. |
+| D4 | Selic | **API do Banco Central (SGS) + cache diário + fallback constante.** TOM cita o valor real; se a API cair, usa a constante. Simulação de juros usa a Selic viva como taxa base. |
+| D5 | Carteiras (`pf_accounts`) | **Primeira classe.** v1 inclui gestão completa: 5ª tela no PWA, seletor de carteira em toda transação, saldo por carteira visível. |
+| D6 | Ciclo de contas fixas | **Status derivado de `last_paid_at`.** "Paga este mês" = `last_paid_at` no mês corrente; "atrasada" = `due_day` passou no mês e não paga este mês. Sem job de reset; a coluna `status` vira cache opcional. |
+
+## 3. Deltas vs PRD v1.1
+
+1. **Carteiras de primeira classe (D5):** o PRD tem `pf_accounts` + trigger + `create_account` mas nenhuma tela. Este design adiciona:
+   - Tela PWA `CarteirasPage.tsx` (lista de carteiras, saldo, criar/editar/desativar).
+   - Componente `AccountSheet.tsx` (bottom sheet de carteira).
+   - Seletor de carteira no `TransactionSheet`.
+   - Saldos por carteira no dashboard `FinanceiroPage`.
+   - Rota `/financeiro/carteiras` no menu de sub-rotas.
+2. **Ciclo de contas (D6):** schema `pf_bills` mantém-se, mas handlers/cron usam `last_paid_at` como verdade. `pay_bill` grava `last_paid_at = CURRENT_DATE`. Queries de "pendente/paga/atrasada" derivam do mês corrente, não da coluna `status`.
+3. **Selic (D4):** novo serviço de fetch BCB com cache (Fase B). Não existe no PRD como módulo separado.
+4. **Trigger de saldo endurecido (ver §6):** o PRD usa `SECURITY DEFINER` sem checagem de dono. Este design exige checagem de que `account_id` pertence ao mesmo `collaborator_id`.
+
+## 4. Arquitetura por fase
+
+### Fase A — Núcleo backend
+Objetivo: registrar e consultar finanças pelo WhatsApp, ponta a ponta.
+
+- **Migration** (`_remote/migrations/` — confirmar pasta no plano; aplicar via MCP Supabase, projeto `cesnbnrynvxvgdhfmaua`):
+  - 5 tabelas `pf_accounts`, `pf_transactions`, `pf_bills`, `pf_goals`, `pf_budgets` (schema do PRD §4).
+  - RLS owner-only nas 5 (PRD §4.6).
+  - Indexes (PRD §4.2).
+  - Trigger de saldo **endurecido** (§6 deste doc).
+- **Skill** `_remote/skills/financeiro-pessoal.md`: gatilhos, normalizer de aliases, mapeamento de categorias, regra de ouro (registra direto se veio tudo), princípios do domínio. NÃO redefine voz (D2).
+- **Engine** `_remote/src/engine.js`: parser do marker `<<FINANCE_ACTION>> ... <<END>>` (convenção: abre `<<NOME>>`, fecha `<<END>>`; o parser só reconhece `<<END>>`). Handlers de todas as actions: `register_transaction`, `register_bill`, `pay_bill`, `create_goal`, `update_goal`, `set_budget`, `create_account`, `query_summary`, `query_budget`, `query_goal`.
+- **System prompt** `_remote/src/prompts/system.js`: quando carregar a skill financeiro-pessoal + formato do `FINANCE_ACTION`.
+- **Services** `_remote/src/services/` (novos, CRUD por domínio `pf_*`, seguindo o padrão dos services existentes).
+- **Alerta de orçamento inline** no handler `register_transaction` (D3, cruzamento stateless + sugestões práticas hardcoded por categoria — PRD §6.3).
+
+### Fase B — Rituais + educação
+- **Dispatcher** `_remote/src/rituals/dispatcher.js` (mesmo padrão dos rituais existentes), todos em BRT:
+  - `financeiro_mensal` — dia 10, 18h (PRD §6.1).
+  - `lembrete_conta` — diário, 8h (PRD §6.2), usando `last_paid_at` (D6).
+  - `relatorio_financeiro_mensal` — dia 1, 18h, mês anterior (PRD §6.4).
+  - Registro em `ritual_logs.ritual_type`.
+- **Briefing pessoal** `_remote/skills/rituais-diarios.md`: seção financeira (contas vencendo hoje, emoji 💰) — PRD §6.5.
+- **Educação** `_remote/skills/educacao-financeira.md`: tópicos (PRD §7.1), simulador de juros compostos (fórmula PRD §7.2), regra "sugere nunca manda".
+- **Serviço Selic** (ex. `_remote/src/services/selic.js`): fetch BCB SGS + cache de 1 dia + fallback constante (D4). Consumido pela skill de educação e pelo simulador.
+
+### Fase C — PWA
+- **Dependência:** adicionar `recharts` ao `_remote/web/package.json` (não está instalado).
+- **Telas** em `_remote/web/src/screens/financeiro/`:
+  - `FinanceiroPage.tsx` — dashboard (saldo mensal, saldos por carteira, barras de orçamento, pizza, linha, últimas transações).
+  - `TransacoesPage.tsx` — histórico com filtros.
+  - `ContasFixasPage.tsx` — contas a pagar/receber, status derivado (D6).
+  - `MetasPage.tsx` — metas + simulador.
+  - `CarteirasPage.tsx` — gestão de carteiras (**delta D5**).
+- **Componentes** em `.../financeiro/components/`: `TransactionSheet` (com seletor de carteira), `BillSheet`, `GoalSheet`, `AccountSheet` (**delta D5**), `BudgetBar`, `CompoundInterestSimulator`.
+- **Hooks/services:** `_remote/web/src/hooks/useFinanceiro.ts` (queries + mutations + realtime), `_remote/web/src/services/financeiro-service.ts` (cálculo de juros/projeção).
+- **Navegação:** rotas `/financeiro/*` (incl. `/financeiro/carteiras`) + item "Finanças" no menu (ícone Wallet/💰).
+- **DS obrigatório:** `CustomSelect`, `BottomSheet`, `Fab`, `Field`, tokens `tom`/`bg-bg-surface`/`text-fg`/`border-border`. Componente novo segue tokens antes de usar.
+- **Guardrail mobile/desktop:** telas com versão desktop usam dispatcher por `useBreakpoint` (`XMobile`/`XDesktop`); testar 375px e 1440px; nunca sobrescrever telas existentes.
+
+## 5. Marker e actions
+
+Marker único `<<FINANCE_ACTION>>` com campo `action` discriminador (PRD §5.2/§5.3). Aliases do normalizer e mapeamento de categorias por palavra-chave conforme PRD §5.3. Regra de ouro: se a mensagem já tem tudo, registra e confirma sem perguntar; só pergunta o essencial faltante (valor), uma coisa por vez.
+
+## 6. Segurança e privacidade (guard-rails)
+
+> Contexto: dev single-user hoje, mas dado financeiro é sensível — estes itens são **pré-requisito de produção**, com pushback honesto.
+
+1. **Trigger de saldo NÃO pode confiar cegamente em `account_id`.** A função `pf_sync_account_balance()` roda `SECURITY DEFINER` (ignora RLS). Endurecer: rejeitar/ignorar transação cujo `account_id` aponte para carteira de outro `collaborator_id`. Opções a decidir no plano:
+   - (a) `BEFORE INSERT/UPDATE` em `pf_transactions` que valida `pf_accounts.collaborator_id = NEW.collaborator_id` e rejeita se divergir; ou
+   - (b) a própria `pf_sync_account_balance()` só atualiza saldo quando `pf_accounts.collaborator_id = NEW.collaborator_id`.
+   - Recomendação: (a) — falha barulhenta no insert é melhor que saldo silenciosamente não-sincronizado.
+2. **RLS owner-only** nas 5 tabelas (`collaborator_id = current_collab_id()`), com teste cross-user explícito (User A não enxerga dados de User B — retorna vazio).
+3. **Isolamento de visibilidade:** dado financeiro aparece SÓ no briefing pessoal (7h) e nos rituais financeiros dedicados. NUNCA em dashboard gerencial, relatório de time ou visão de coordenador. Reforçar nos never-dos da skill.
+4. **TOM nunca cruza dado financeiro** entre colaboradores nem reporta ao Alf (já nos never-dos do SOUL; reforçar na skill).
+
+## 7. Plano de testes (além do smoke do PRD §10)
+
+- RLS cross-user nas 5 tabelas → vazio.
+- `account_id` de outra carteira → insert rejeitado, saldo alheio intacto.
+- Dedup (D3): transações levando categoria a 60→72→85% disparam alerta só em 72 (faixa 70) e 85 (faixa 80), 1x cada; nada nas demais.
+- Selic API indisponível → fallback constante, TOM responde normalmente.
+- Conta paga em maio aparece **pendente** em junho (derivação por `last_paid_at`, D6).
+- Saldo de carteira consistente após insert/update/delete de transação (trigger).
+
+## 8. Pontos a confirmar no plano (não bloqueiam design)
+
+- **Localização do `SOUL.md`:** está em `soul/SOUL.md` na raiz, fora de `_remote/`. Confirmar como o engine resolve o caminho antes de editar skills relacionadas.
+- **Pasta da migration:** PRD diz `migrations/`; o projeto tem `_remote/migrations/` e `_remote/supabase/`. Definir qual usar; aplicar via MCP Supabase.
+- **Nomes finais dos arquivos de service** (backend e Selic) seguindo a convenção dos services existentes.
+
+## 9. Out-of-scope (mantém PRD §11)
+
+Integração com API de banco, importação de extrato, financeiro da empresa/DRE (Sprint 28), múltiplas moedas, OCR de comprovante, dashboard gerencial de finanças do time (NUNCA — viola privacidade).
