@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import { DetailDrawer } from '../../../design/primitives/DetailDrawer';
 import { DateInput } from '../../../components/DateInput';
+import { TimeInput } from '../../../components/TimeInput';
 import { Button } from '../../../components/Button';
 import { EisenhowerPicker } from '../../../components/EisenhowerPicker';
 import { RemindersField } from '../../../components/RemindersField';
@@ -33,6 +34,7 @@ interface FormState {
   context: 'work' | 'personal';
   status: Status;
   due_date: string;        // YYYY-MM-DD
+  due_time: string;        // HH:MM ('' = sem horário definido)
   remind_time: string;     // HH:MM ('' = sem lembrete)
   eisenhower_quadrant: number | null;
 }
@@ -47,6 +49,7 @@ function buildInitialForm(t: TaskForPanel): FormState {
     context: t.context,
     status: rawStatus as Status,
     due_date: (t.due_date ?? t.scheduled_date ?? '').slice(0, 10),
+    due_time: (t.due_time ?? '').slice(0, 5),
     remind_time: t.remind_at ? new Date(t.remind_at).toTimeString().slice(0, 5) : '',
     eisenhower_quadrant: t.eisenhower_quadrant ?? null,
   };
@@ -80,6 +83,7 @@ export function TaskEditDrawer(p: TaskEditDrawerProps) {
       context: form.context,
       status: form.status,
       due_date: form.due_date || null,
+      due_time: form.due_time || null,
       remind_at: remindAt,
       eisenhower_quadrant: form.eisenhower_quadrant,
     };
@@ -185,15 +189,23 @@ export function TaskEditDrawer(p: TaskEditDrawerProps) {
         </Field>
 
         <Field label="Para quando">
-          <DateInput value={form.due_date} onChange={(d) => setForm({ ...form, due_date: d })} />
+          <div className="flex items-center gap-2">
+            <div className="flex-1 min-w-0">
+              <DateInput value={form.due_date} onChange={(d) => setForm({ ...form, due_date: d })} />
+            </div>
+            <div className="w-24 shrink-0">
+              {/* Sprint 30 — horário-alvo da tarefa (opcional). Vazio = sem horário. */}
+              <TimeInput value={form.due_time} onChange={(h) => setForm({ ...form, due_time: h })} />
+            </div>
+          </div>
         </Field>
 
         {/* Lembretes — RemindersField shared (multi-select).
             Persistência: task_reminders table via useReminders('task', t.id).
-            Referência pra tasks: 09:00 da due_date (manhã do dia da tarefa).
-            TOM dispatcher já lê task_reminders e envia WhatsApp marcando sent_at. */}
+            Sprint 30 — âncora dos lembretes = horário da tarefa (due_time) quando
+            definido; senão 09:00 (default histórico). TOM dispatcher lê task_reminders. */}
         <RemindersField
-          referenceDateTime={form.due_date ? `${form.due_date}T09:00` : ''}
+          referenceDateTime={form.due_date ? `${form.due_date}T${form.due_time || '09:00'}` : ''}
           value={reminderTimes}
           onChange={setReminderTimes}
         />

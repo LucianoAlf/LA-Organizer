@@ -128,6 +128,8 @@ export interface Task {
   category?: Category | null;
   action_type?: ActionType | null;
   due_date: string | null;
+  /** Sprint 30 — horário-alvo da tarefa (HH:MM[:SS]). Null = sem horário (âncora 09:00). */
+  due_time?: string | null;
   scheduled_date?: string | null;
   remind_at: string | null;
   eisenhower_quadrant: Quadrant;

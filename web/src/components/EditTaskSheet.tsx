@@ -14,6 +14,7 @@ import { todaySP } from '../utils/date';
 import { AdaptiveSheet } from './AdaptiveSheet';
 import { Button } from './Button';
 import { DateInput } from './DateInput';
+import { TimeInput } from './TimeInput';
 import { EisenhowerPicker } from './EisenhowerPicker';
 import { RemindersField } from './RemindersField';
 import { useReminders } from '../screens/agenda/hooks/useReminders';
@@ -45,6 +46,7 @@ export function EditTaskSheet({ open, task, onClose }: Props) {
   const [title, setTitle] = useState('');
   const [context, setContext] = useState<TaskContext>('work');
   const [due, setDue] = useState('');
+  const [dueTime, setDueTime] = useState('');  // HH:MM ('' = sem horário)
   const [quadrant, setQuadrant] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reminderTimes, setReminderTimes] = useState<string[]>([]);
@@ -59,6 +61,7 @@ export function EditTaskSheet({ open, task, onClose }: Props) {
       setTitle(task.title || '');
       setContext(task.context);
       setDue(task.due_date || todaySP());
+      setDueTime((task.due_time ?? '').slice(0, 5));
       setQuadrant((task.eisenhower_quadrant as number | null) ?? null);
       setError(null);
     }
@@ -82,6 +85,7 @@ export function EditTaskSheet({ open, task, onClose }: Props) {
         title: t.slice(0, 200),
         context,
         due_date: due,
+        due_time: dueTime || null,
         remind_at: null,
         eisenhower_quadrant: quadrant,
       };
@@ -195,13 +199,22 @@ export function EditTaskSheet({ open, task, onClose }: Props) {
 
           <div>
             <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Para quando</div>
-            <DateInput value={due} onChange={setDue} />
+            <div className="flex items-center gap-2">
+              <div className="flex-1 min-w-0">
+                <DateInput value={due} onChange={setDue} />
+              </div>
+              <div className="w-28 shrink-0">
+                {/* Sprint 30 — horário-alvo da tarefa (opcional). */}
+                <TimeInput value={dueTime} onChange={setDueTime} />
+              </div>
+            </div>
           </div>
 
-          {/* Lembretes — RemindersField shared. Referência: 09:00 da due_date.
+          {/* Lembretes — RemindersField shared.
+              Sprint 30 — âncora = horário da tarefa (dueTime) quando definido; senão 09:00.
               Persistência: task_reminders table via useReminders('task', id). */}
           <RemindersField
-            referenceDateTime={due ? `${due}T09:00` : ''}
+            referenceDateTime={due ? `${due}T${dueTime || '09:00'}` : ''}
             value={reminderTimes}
             onChange={setReminderTimes}
           />

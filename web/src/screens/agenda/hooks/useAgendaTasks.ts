@@ -20,6 +20,8 @@ export interface TaskForPanel {
   // Sprint 30 — true se a tarefa é recorrente (é o template com regra OU uma
   // instância gerada a partir de um template). Usado pra mostrar ícone de repeat.
   is_recurring?: boolean;
+  // Sprint 30 — horário-alvo da tarefa (HH:MM ou HH:MM:SS). Null = sem horário.
+  due_time?: string | null;
 }
 
 // Sprint Agenda Desktop — tasks no range [from,to]. Espelha padrão de
@@ -39,7 +41,7 @@ export function useAgendaTasks(params: { from: Date; to: Date; filters: AgendaFi
     queryFn: async () => {
       const { data, error } = await supabase
         .from('tasks')
-        .select('id, title, description, context, status, scheduled_date, due_date, assigned_to, created_by, eisenhower_quadrant, remind_at, source, created_at, recurrence_rule, recurrence_parent_id')
+        .select('id, title, description, context, status, scheduled_date, due_date, due_time, assigned_to, created_by, eisenhower_quadrant, remind_at, source, created_at, recurrence_rule, recurrence_parent_id')
         .or(`assigned_to.eq.${collaboratorId},and(created_by.eq.${collaboratorId},assigned_to.neq.${collaboratorId})`)
         .neq('status', 'cancelled')
         // Sprint 29.1 — esconde teste/arquivado
@@ -72,6 +74,7 @@ export function useAgendaTasks(params: { from: Date; to: Date; filters: AgendaFi
         source: t.source ?? null,
         created_at: t.created_at ?? null,
         is_recurring: Boolean(t.recurrence_rule || t.recurrence_parent_id),
+        due_time: t.due_time ?? null,
       };
     });
     return mapped.filter(t => {
