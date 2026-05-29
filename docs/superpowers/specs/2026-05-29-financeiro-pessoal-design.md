@@ -20,6 +20,7 @@ Transforma o TOM em parceiro financeiro pessoal dos colaboradores via WhatsApp +
 | D4 | Selic | **API do Banco Central (SGS) + cache diário + fallback constante.** TOM cita o valor real; se a API cair, usa a constante. Simulação de juros usa a Selic viva como taxa base. |
 | D5 | Carteiras (`pf_accounts`) | **Primeira classe.** v1 inclui gestão completa: 5ª tela no PWA, seletor de carteira em toda transação, saldo por carteira visível. |
 | D6 | Ciclo de contas fixas | **Status derivado de `last_paid_at`.** "Paga este mês" = `last_paid_at` no mês corrente; "atrasada" = `due_day` passou no mês e não paga este mês. Sem job de reset; a coluna `status` vira cache opcional. |
+| D7 | Contribuição de meta ↔ transação | **Contribuição de meta atualiza SÓ `pf_goals.current_amount`; NÃO gera transação no ledger.** Guardar é alocação, não gasto — virar `expense` reduziria o líquido do mês como perda (número errado). "Guardou R$X" no ritual/relatório vem da soma das contribuições do mês (via `update_goal`). Carteira savings é ledger separado; v1 não cria transferência automática (transferência exigiria type novo + trigger de duas contas — fora de escopo). |
 
 ## 3. Deltas vs PRD v1.1
 
@@ -85,7 +86,7 @@ Marker único `<<FINANCE_ACTION>>` com campo `action` discriminador (PRD §5.2/�
    - (a) `BEFORE INSERT/UPDATE` em `pf_transactions` que valida `pf_accounts.collaborator_id = NEW.collaborator_id` e rejeita se divergir; ou
    - (b) a própria `pf_sync_account_balance()` só atualiza saldo quando `pf_accounts.collaborator_id = NEW.collaborator_id`.
    - Recomendação: (a) — falha barulhenta no insert é melhor que saldo silenciosamente não-sincronizado.
-2. **No caminho do TOM (service_role), RLS NÃO protege — o filtro manual por `collaborator_id` é a única blindagem.** O engine escreve via `service_role`, que ignora RLS por completo. O código já admite isso: `system.js:1712` ("Filtra por permissão manualmente (RLS só vale com JWT, aqui usamos service_role)") e `dispatcher.js:4410` ("RLS: assumindo todos visíveis ao service_role"). A RLS owner-only só vale pro PWA (JWT/`current_collab_id()`); o caminho de maior volume de escrita — o WhatsApp — não toca RLS. Para dado financeiro isso exige, sem exceção:
+2. **No caminho do TOM (service_role), RLS NÃO protege — o filtro manual por `collaborator_id` é a única blindagem.** O engine escreve via `service_role`, que ignora RLS por completo. Confirmado no código: o cliente é criado com `serviceRoleKey` em `src/supabase/client.js`, e `src/prompts/system.js:1712` admite "Filtra por permissão manualmente (RLS só vale com JWT, aqui usamos service_role)"; o mesmo padrão de filtro manual aparece nos services (ex. `src/services/inventario-service.js`) e no dispatcher de rituais (`src/services/ritual.js`). A RLS owner-only só vale pro PWA (JWT/`current_collab_id()`); o caminho de maior volume de escrita — o WhatsApp — não toca RLS. Para dado financeiro isso exige, sem exceção:
    - **O `collaborator_id` SEMPRE vem do remetente WhatsApp resolvido server-side — NUNCA do JSON do marker `<<FINANCE_ACTION>>`.** O JSON é gerado pelo LLM; confiar no `collaborator_id` (ou `account_id`) que veio nele permitiria gravar/ler na conta errada. O LLM não escolhe de quem é o dado.
    - **Todo SELECT/UPDATE/DELETE nos services `pf_*` filtra explicitamente pelo `collaborator_id` resolvido do remetente** — não confiar em RLS no caminho service_role.
    - Este guard-rail é o irmão do trigger endurecido (item 1): o trigger cobre `account_id` cross-owner; este cobre o resto das queries.
@@ -101,12 +102,16 @@ Marker único `<<FINANCE_ACTION>>` com campo `action` discriminador (PRD §5.2/�
 - Selic API indisponível → fallback constante, TOM responde normalmente.
 - Conta paga em maio aparece **pendente** em junho (derivação por `last_paid_at`, D6).
 - Saldo de carteira consistente após insert/update/delete de transação (trigger).
+- "Guardei R$500 pro carro" (D7): `pf_goals.current_amount` sobe R$500, NÃO cria transação, NÃO altera despesas/líquido do mês. "Guardou R$X" no relatório bate com a soma das contribuições do mês.
 
-## 8. Pontos a confirmar no plano (não bloqueiam design)
+## 8. Resoluções e pontos abertos
 
-- **Localização do `SOUL.md`:** está em `soul/SOUL.md` na raiz, fora de `_remote/`. Confirmar como o engine resolve o caminho antes de editar skills relacionadas.
-- **Pasta da migration:** PRD diz `migrations/`; o projeto tem `_remote/migrations/` e `_remote/supabase/`. Definir qual usar; aplicar via MCP Supabase.
-- **Nomes finais dos arquivos de service** (backend e Selic) seguindo a convenção dos services existentes.
+Resolvido (confirmado pelo Alf em 2026-05-29):
+- **Migration:** aplicar via MCP `apply_migration` (projeto `cesnbnrynvxvgdhfmaua`) — convenção do projeto. O arquivo `.sql` em pasta é só histórico.
+- **`SOUL.md`:** fica em `soul/SOUL.md` na raiz (fora de `_remote/`), sempre carregado pelo system prompt. A skill financeira **não mexe nele** — só adiciona princípios de domínio (consistente com D2).
+
+Aberto (decidir no plano, não bloqueia):
+- **Nomes finais dos arquivos de service** (backend `pf_*` e Selic) seguindo a convenção dos services existentes.
 
 ## 9. Out-of-scope (mantém PRD §11)
 
