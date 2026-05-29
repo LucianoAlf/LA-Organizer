@@ -9,7 +9,7 @@ const whatsapp = require('./services/whatsapp');
 const metricsService = require('./services/metrics');
 const ai = require('./ai/provider');
 const { buildSystemPrompt, formatMessages } = require('./prompts/system');
-const { safeIsoDate, safeDate } = require('./utils/dates');
+const { safeIsoDate, safeDate, withinConfirmWindow } = require('./utils/dates');
 const { hasCoordLevel, isDirector, canCreateForOther } = require('./utils/roles');
 const supabase = require('./supabase/client');
 const OpenAI = require('openai');
@@ -5763,8 +5763,15 @@ async function processMessage(phone, text, raw = {}) {
     const openIntents = await pendingIntents.listOpenIntents(collab.id, { limit: 3 });
     if (openIntents.length > 0) {
       const userConfirm = pendingIntents.detectUserConfirmation(String(text || ''));
-      if (userConfirm === 'yes') {
-        const target = openIntents[0];  // mais recente
+      const target = openIntents[0];  // mais recente
+      // Janela de confirmação: um "sim/não" cru só resolve a intent se ela foi
+      // perguntada há pouco (~20min). Fora disso NÃO resolve e NÃO apaga — a intent
+      // segue aberta pro fluxo natural/expiração. (Bug: "sim" pra criar meta
+      // confirmava intent stale de horas atrás, ex. "cobrar o Rafinha".)
+      const fresh = withinConfirmWindow(target.asked_at, 20);
+      if (userConfirm && !fresh) {
+        console.log(`[PendingIntents] skip auto-resolve (stale >20min) — intent=${target.id.slice(0,8)} kind=${target.kind} asked=${target.asked_at}`);
+      } else if (userConfirm === 'yes') {
         _pendingIntentToResolve = { intent: target, resolution: 'confirmed' };
         // Injeta contexto inline pra LLM saber o que confirmar.
         const payloadStr = JSON.stringify(target.payload || {}).slice(0, 800);
@@ -5772,7 +5779,6 @@ async function processMessage(phone, text, raw = {}) {
         text = String(text || '') + ctxHint;
         console.log(`[PendingIntents] auto-resolve YES — intent=${target.id.slice(0,8)} kind=${target.kind}`);
       } else if (userConfirm === 'no') {
-        const target = openIntents[0];
         _pendingIntentToResolve = { intent: target, resolution: 'denied' };
         console.log(`[PendingIntents] auto-resolve NO — intent=${target.id.slice(0,8)} kind=${target.kind}`);
       }
@@ -7441,7 +7447,9 @@ async function processMessage(phone, text, raw = {}) {
       try {
         const finReply = await handleFinanceAction(collab, fin.action, fin.params);
         await logMarker(collab.id, 'FINANCE_ACTION', 'executed', fin.action, null);
-        reply = (fin.cleanText ? fin.cleanText + '\n' : '') + (finReply || '');
+        // Bug 3: o engine é a fonte da confirmação. Se o handler respondeu, usa SÓ ela
+        // (descarta a narração do LLM em cleanText, que duplicava/recalculava o número).
+        reply = (finReply && finReply.trim()) ? finReply : (fin.cleanText || reply);
       } catch (err) {
         console.error('[Finance] erro:', err.message);
         await logMarker(collab.id, 'FINANCE_ACTION', 'rejected', `error:${err.message}`, null);

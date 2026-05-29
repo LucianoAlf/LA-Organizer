@@ -776,18 +776,20 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
     return { name: 'onboarding', body: loadSkill('onboarding') };
   }
 
+  // Sprint 27 — Financas pessoais: dinheiro, contas, metas, orcamento, contribuicao.
+  // ANTES de recorrencia: frase de dinheiro/meta tem prioridade (ex: "guardei 500 pro carro"
+  // e "todo dia 10 pagar aluguel" devem ir pro financeiro, nao virar tarefa recorrente).
+  const FINANCE_RE = /\b(gastei|recebi|paguei|sal[áa]rio|comiss[ãa]o|aluguel|ifood|mercado|uber|gasolina|farm[áa]cia|or[çc]amento|meta|guard\w+\s+(?:r\$\s*)?\d+|separ\w+\s+(?:r\$\s*)?\d+|guard\w+\s+(?:dinheiro|grana)|poupan[çc]a|caixinha|investir|selic|juros|sonho|quanto\s+gastei|conta\s+(?:a\s+pagar|vencendo))\b/i;
+  if (FINANCE_RE.test(String(lastUserMessage || ''))) {
+    return { name: 'financeiro-pessoal', body: loadSkill('financeiro-pessoal') };
+  }
+
   // Sprint 29.4 — Skill de recorrência (todos os roles): ativa quando user
   // pede ação que se repete no tempo. Tem prioridade sobre criar-compromisso
   // pra evitar TOM materializar manualmente várias rows.
   const RECURRENCE_RE = /todo\s+(?:dia|m[eê]s|ano|natal)|toda\s+(?:segunda|ter[çc]a|quarta|quinta|sexta|s[aá]bado|domingo|semana)|a\s+cada\s+\d+\s+(?:dia|semana|m[eê]s|ano)|(?:[uú]ltim[ao]|primeir[ao]|segund[ao]|terceir[ao]|quart[ao])\s+(?:segunda|ter[çc]a|quarta|quinta|sexta|s[aá]bado|domingo|dia\s+do\s+m[eê]s)|dia\s+[uú]til|fim\s+de\s+semana|mensal|semanal|di[áa]rio|anual|quinzenal|trimestral|recorrente|que\s+se\s+repete|repete\s+(?:toda|todo|a\s+cada)|todo\s+dia\s+\d+/i;
   if (RECURRENCE_RE.test(String(lastUserMessage || ''))) {
     return { name: 'criar-recorrencia', body: loadSkill('criar-recorrencia') };
-  }
-
-  // Sprint 27 — Financas pessoais: registro/consulta de dinheiro, contas, metas, orcamento.
-  const FINANCE_RE = /\b(gastei|recebi|paguei|sal[áa]rio|comiss[ãa]o|aluguel|ifood|mercado|uber|gasolina|farm[áa]cia|or[çc]amento|meta|guardar|poupan[çc]a|caixinha|investir|selic|juros|quanto\s+gastei|conta\s+(?:a\s+pagar|vencendo))\b/i;
-  if (FINANCE_RE.test(String(lastUserMessage || ''))) {
-    return { name: 'financeiro-pessoal', body: loadSkill('financeiro-pessoal') };
   }
 
   // Sprint 29.2 — Skill briefing-pre-1on1: ativa quando director pergunta

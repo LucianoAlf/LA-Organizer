@@ -50,4 +50,19 @@ function formatRelativeDate(dueDate, todayISO) {
   return `${dd}/${mm} ${wd} (${rel})`;
 }
 
-module.exports = { safeIsoDate, safeDate, formatRelativeDate };
+/**
+ * Sprint 27 — Janela de confirmação para pending_intents.
+ * Retorna true se `askedAt` (ISO/Date) foi há no máximo `windowMinutes` minutos.
+ * Usado pra evitar que um "sim" cru confirme uma intent stale de horas atrás
+ * (bug: "sim" pra criar meta confirmou intent antiga de "cobrar o Rafinha").
+ * Conservador: asked_at ausente/inválido → false (não auto-confirma).
+ */
+function withinConfirmWindow(askedAt, windowMinutes = 20) {
+  const d = safeDate(askedAt);
+  if (!d) return false;
+  const ageMs = Date.now() - d.getTime();
+  if (ageMs < 0) return true; // relógio/skew: trata futuro como recente
+  return ageMs <= windowMinutes * 60 * 1000;
+}
+
+module.exports = { safeIsoDate, safeDate, formatRelativeDate, withinConfirmWindow };
