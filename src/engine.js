@@ -3481,6 +3481,9 @@ async function notifyTaskCreatorOfAction(task, actor, action, detail = null) {
 async function applyTaskActions(collaborator, actions) {
   let okCount = 0;
   let failCount = 0;
+  // Sprint 31.6 (E2) — mensagens claras de falha pro user (ex: tarefa de outro dono).
+  // Quando preenchido, o caller usa no lugar do genérico "não consegui registrar".
+  const failMessages = [];
   const last4 = String(collaborator.phone || '').slice(-4);
   for (const a of actions) {
     if (!a || typeof a.action !== 'string') {
@@ -8133,18 +8136,23 @@ Atualize o perfil. Apenas JSON.`;
 // Decays expired memories: is_active flips to false. Returns count.
 async function decayExpiredMemories() {
   const nowIso = new Date().toISOString();
+  // Sprint 30 — Rede de segurança: memórias importantes (importance high/critical)
+  // NUNCA expiram pelo decay automático, mesmo com decay_at vencido. Protege
+  // contra o LLM marcar por engano um fato/decisão relevante com validade curta.
+  // Só normal/low são elegíveis a esquecimento por validade.
   const { data, error } = await supabase
     .from('collaborator_memory')
     .update({ is_active: false })
     .lt('decay_at', nowIso)
     .eq('is_active', true)
+    .in('importance', ['normal', 'low'])
     .select('id');
   if (error) {
     console.error('[MemDecay] err:', error.message);
     return 0;
   }
   const n = (data || []).length;
-  if (n) console.log(`[MemDecay] ${n} memory rows decayed`);
+  if (n) console.log(`[MemDecay] ${n} memory rows decayed (high/critical preservados)`);
   return n;
 }
 
