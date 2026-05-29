@@ -18,6 +18,24 @@ const ANCHORS = {
     'reminders_minutes_before', 'cadastro-projeto-5w2h',
     'É outro', // ramo "2" da desambiguação 1/2/3
   ],
+  'priorizacao-inteligente.md': [
+    '<<TASK_CREATE>>', '<<CHECKPOINT_BATCH>>', 'action_type',
+    '`now`', '`task`', '`call`', '`meeting`', '`delegate`', '`project`',
+    'project_checkpoints', 'Anti-promessa-vazia',
+  ],
+  'pedagogico.md': [
+    '<<TASK_UPDATE>>', '<<COORDINATION_REQUEST>>', '<<END>>',
+    '7f6bf077-678e-43f0-b6c9-54e46607386c', // department_id
+    'c7dc420e-9105-435d-b291-27ca79df5fdf', // acompanhamento-professor
+    '090b68eb-7b33-4fea-a80c-7574ec5ca755', // apoio-ao-aluno
+    '613e8ac6-7f70-4da9-99da-8fae306b8c28', // alinhamento-de-turma
+    'c32ecc43-cf12-45a4-b887-09db59ecc997', // alinhamento-com-responsavel
+    '9cc58c14-eb63-4f46-aa15-d13dc1596e45', // evento-pedagogico
+    '51690ae4-d90c-470d-bbb1-1df67a66a161', // pendencia-pedagogica
+    'bd6f7652-eeea-4a4f-8174-7ebd57b4e22b', // suporte-ao-professor
+    'lead', 'assistant', 'mentor', 'teacher',
+    'subdomain', 'school', 'kids', 'risco-de-evasao', 'DENY',
+  ],
 };
 
 let allOk = true;

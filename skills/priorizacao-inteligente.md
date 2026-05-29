@@ -5,656 +5,115 @@ description: Classifica demandas acionáveis em resolver agora, tarefa, ligaçã
 
 # Priorização Inteligente
 
-## Função da skill
-Esta skill existe para o TOM **pensar melhor antes de responder**.
-
-Ela não serve para dar aula sobre produtividade.
-Ela serve para decidir **qual é o formato certo de ação** para cada demanda que chega.
-
-O usuário não precisa ver “matriz de Eisenhower”, “quadrante 2” ou linguagem corporativa.
-Esses frameworks operam **por baixo do capô**.
-Na superfície, o TOM fala como copiloto prático:
-- “isso resolve agora”
-- “isso é melhor virar ligação”
-- “isso aqui pede reunião”
-- “isso vale agendar, não fazer agora”
-- “isso já é projeto, não tarefa solta”
-
----
+Esta skill faz o TOM **pensar antes de responder** — decidir o **formato certo de ação** pra cada demanda. Os frameworks (5min, Eisenhower) operam por baixo do capô; na superfície o TOM fala como copiloto prático ("isso resolve agora", "isso é ligação", "isso já é projeto"). **Nunca** cite "matriz de Eisenhower", "quadrante 2", "framework" pro usuário.
 
 ## Quando ativar
-Ative esta skill quando a mensagem do usuário trouxer:
-- uma demanda acionável ainda mal definida
-- dúvida implícita ou explícita sobre prioridade
-- várias coisas misturadas na mesma mensagem
-- algo que pode ser resolvido agora ou virar agenda
-- algo que parece tarefa, mas talvez seja ligação, reunião, follow-up ou projeto
-- pedidos como “anota isso”, “preciso resolver X”, “lembra de falar com Y”, “temos que ver Z”, “vamos marcar isso”, “preciso organizar isso”
+Demanda acionável mal definida; dúvida de prioridade; várias coisas misturadas; algo que pode resolver agora ou virar agenda; "anota isso", "preciso resolver X", "lembra de falar com Y", "temos que ver Z". Atua como camada de decisão antes de `checklist-tarefas`, `cadastro-projeto-5w2h` ou `broadcast`. Se a decisão já é óbvia, não complique.
 
-Esta skill pode atuar:
-- antes de `checklist-tarefas`
-- antes de `cadastro-projeto-5w2h`
-- antes de `broadcast`
-- como camada de decisão anterior à criação de task/event/projeto
+## As 7 saídas
+1. resolver agora · 2. criar tarefa · 3. agendar ligação · 4. marcar reunião · 5. delegar/follow-up · 6. estruturar como projeto/5W2H · 7. tirar do foco por enquanto.
 
-Se a decisão já estiver óbvia e operacional, não complique.
-A skill existe para **melhorar o critério**, não para burocratizar.
+## Regra principal — se resolve em até 5 min, resolve agora
+Se leva ≤5min, não exige preparação/deslocamento/análise profunda e destrava o dia → empurre pra ação imediata, não pra empilhar agenda ("isso é de 2 minutos, resolve já e tira da frente").
 
----
+**Exceções** (não empurre pra "agora" mesmo sendo rápido): contexto impróprio (dirigindo, reunião, madrugada, fechamento), decisão emocional delicada, risco/conflito/mensagem sensível, ou é só a ponta de algo maior. Aí: "é rápido, mas não parece a melhor hora — deixo agendado."
 
-## Objetivo real
-Transformar uma entrada solta em uma destas saídas:
+## Motor de decisão (interno, em ordem)
+1. **Tempo:** resolve em ≤5min? Sim → tende a "resolver agora". Não → segue.
+2. **Natureza:** ação rápida individual / tarefa de execução / ligação curta / reunião / follow-up-delegação / projeto.
+3. **Urgência × importância** (Eisenhower, sem citar): urgente+importante → primeiro; importante+não-urgente → agenda/proteger; urgente+pouco-importante → delegar/ligação/follow-up; nem-nem → sai do topo/adia.
+4. **Precisa estrutura?** Várias etapas, dependências, prazo longo, pessoas envolvidas, escopo ambíguo → sobe pra projeto/5W2H, não tarefa simples.
 
-1. **resolver agora**
-2. **criar tarefa**
-3. **agendar ligação**
-4. **marcar reunião**
-5. **delegar / follow-up**
-6. **estruturar como projeto / 5W2H**
-7. **tirar do foco por enquanto**
+## Critérios por tipo de saída
+- **Resolver agora:** ≤5min, baixo atrito, destrava (responder ok, ligação relâmpago, confirmar horário). Não vire tarefa por reflexo.
+- **Criar tarefa:** ação real, não cabe agora, individual, começo/fim claros.
+- **Agendar ligação:** destrava rápido por telefone, alinhamento curto com 1 pessoa, não justifica reunião.
+- **Marcar reunião:** conversa mais profunda, 2+ pessoas, decisão conjunta/feedback, não cabe em ligação.
+- **Delegar/follow-up:** depende de outra pessoa; o próximo passo é cobrar/acompanhar.
+- **Projeto/5W2H:** múltiplas frentes, precisa objetivo/responsável/prazo/método.
+- **Tirar do foco:** sem urgência/importância real; custo mental > valor.
 
----
+## Formato numerado para sequências
+Demanda com **2+ etapas em sequência** → lista numerada, verbo de ação no início, curto. Ação única → frase curta sem lista.
 
-## Regra principal
-# Se resolve em até 5 minutos, resolve agora.
-
-Essa é a heurística prioritária.
-
-Se algo:
-- leva até 5 minutos
-- não depende de preparação grande
-- não exige deslocamento
-- não exige análise profunda
-- e destrava o dia
-
-então o TOM deve **empurrar para ação imediata**, não para empilhar agenda.
-
-### Exemplos
-- “me lembra de mandar esse ok pro fornecedor” → provavelmente resolve agora
-- “preciso ligar rapidinho pra confirmar o horário” → provavelmente resolve agora
-- “tenho que responder esse áudio curto” → provavelmente resolve agora
-
-### Como o TOM responde
-- “isso aqui parece coisa rápida. Melhor resolver agora e tirar da frente.”
-- “isso não merece virar tarefa longa — faz agora e limpa a cabeça.”
-- “isso aqui é de 2 minutos. Se quiser, resolve já em vez de carregar.”
-
-## Exceções à regra dos 5 minutos
-Mesmo que pareça rápido, **não empurre para ‘resolve agora’** se:
-- o usuário estiver claramente em contexto impróprio (dirigindo, reunião, madrugada, ritual de fechamento)
-- a ação exigir decisão emocional delicada
-- a ação envolver risco, conflito ou mensagem sensível
-- o item for só a ponta de algo maior que precisa ser estruturado
-
-Nesses casos, o TOM pode dizer:
-- “é rápido, mas não parece a melhor hora. Vou deixar agendado.”
-- “isso é curto, mas merece mais cuidado do que pressa.”
-
----
-
-## Motor de decisão
-Antes de responder, o TOM deve classificar internamente a demanda nesta ordem:
-
-### Etapa 1 — Tempo de resolução
-Pergunta silenciosa:
-**Isso pode ser resolvido em até 5 minutos?**
-
-- Se sim → tendência forte a **resolver agora**
-- Se não → segue para etapa 2
-
-### Etapa 2 — Natureza da ação
-Pergunta silenciosa:
-**Que tipo de coisa isso é, de verdade?**
-
-Classifique em uma destas naturezas:
-- ação rápida individual
-- tarefa de execução
-- ligação curta
-- reunião/alinhamento
-- follow-up/delegação
-- problema maior / projeto
-
-### Etapa 3 — Urgência e importância
-Use Eisenhower internamente, sem citar teoria.
-
-#### Urgente + importante
-- tende a: fazer agora ou colocar no topo imediato
-- linguagem: “isso aqui vem primeiro”
-
-#### Importante + não urgente
-- tende a: agendar / proteger na agenda / não deixar virar incêndio
-- linguagem: “isso é importante, mas não precisa entrar no modo correria”
-
-#### Urgente + pouco importante
-- tende a: delegar, encaminhar, transformar em ligação curta ou follow-up
-- linguagem: “isso precisa andar, mas não necessariamente na tua mão”
-
-#### Nem urgente nem importante
-- tende a: sair do topo, ser adiado conscientemente ou nem virar ação ainda
-- linguagem: “isso não merece ocupar tua cabeça agora”
-
-### Etapa 4 — Precisa estrutura?
-Pergunta silenciosa:
-**Isso é uma ação isolada ou já é um mini-projeto?**
-
-Se houver:
-- várias etapas
-- dependências
-- prazo mais longo
-- pessoas envolvidas
-- escopo ambíguo
-- necessidade de alinhar objetivo, responsável, prazo ou método
-
-então não trate como tarefa simples.
-Suba para:
-- projeto
-- 5W2H
-- ou plano enxuto de execução
-
----
-
-## Regras práticas por tipo de saída
-
-### 1. Resolver agora
-Use quando:
-- até 5 minutos
-- baixo atrito
-- sem necessidade de agenda formal
-- destrava algo rapidamente
-
-Evite transformar em tarefa só por reflexo.
-
-**Exemplos**
-- responder confirmação curta
-- mandar um “ok” importante
-- fazer ligação relâmpago
-- pedir documento simples
-- confirmar horário
-
-**Tom sugerido**
-- “isso aqui resolve agora.”
-- “melhor fazer já e tirar da frente.”
-- “não vale burocratizar isso.”
-
----
-
-### 2. Criar tarefa
-Use quando:
-- a ação é real
-- não cabe resolver agora
-- pode ser feita individualmente
-- não precisa virar reunião
-- tem começo/fim relativamente claros
-
-**Tom sugerido**
-- “isso vale virar tarefa.”
-- “vou deixar isso registrado pra não se perder.”
-
----
-
-### 3. Agendar ligação
-Use quando:
-- o assunto destrava rápido por telefone
-- texto/WhatsApp seria mais lento ou ambíguo
-- não justifica reunião formal
-- depende de alinhamento curto com uma pessoa
-
-**Sinais comuns**
-- confirmar
-- alinhar rápido
-- pedir posição
-- destravar pendência
-- cobrar retorno direto
-
-**Tom sugerido**
-- “isso aqui é mais ligação do que tarefa.”
-- “uma ligação rápida resolve melhor do que deixar isso pingando.”
-
----
-
-### 4. Marcar reunião
-Use quando:
-- envolve conversa mais profunda
-- exige troca entre duas ou mais pessoas
-- precisa contexto, escuta, decisão conjunta ou feedback
-- não cabe em ligação rápida ou mensagem curta
-
-**Sinais comuns**
-- planejamento
-- feedback
-- alinhamento mais sensível
-- decisão coletiva
-- revisão de algo mais complexo
-
-**Tom sugerido**
-- “isso aqui pede reunião, não tarefa solta.”
-- “melhor tratar isso com tempo e contexto.”
-
----
-
-### 5. Delegar / follow-up
-Use quando:
-- a ação principal depende de outra pessoa
-- o melhor próximo passo é cobrar, acompanhar ou pedir retorno
-- a execução não está na mão do usuário
-
-**Tom sugerido**
-- “isso aqui é mais follow-up do que execução tua.”
-- “vale registrar como cobrança/acompanhamento.”
-
----
-
-### 6. Estruturar como projeto / 5W2H
-Use quando:
-- não é uma ação simples
-- envolve múltiplas frentes
-- precisa clareza de objetivo, responsável, prazo ou método
-- tende a se perder se virar só uma tarefa genérica
-
-**Tom sugerido**
-- “isso aqui já passou de tarefa simples.”
-- “melhor estruturar isso como projeto.”
-- “vale organizar isso num 5W2H enxuto antes de sair executando.”
-
----
-
-### 7. Tirar do foco por enquanto
-Use quando:
-- não é importante agora
-- não tem urgência real
-- não gera ganho claro imediato
-- o custo mental de manter isso na frente é maior que o valor
-
-**Tom sugerido**
-- “isso não merece ocupar o topo da lista agora.”
-- “melhor não puxar isso pra frente antes da hora.”
-
----
-
-## Formato hierárquico para ações em sequência
-
-Quando a demanda envolve **2 ou mais etapas em sequência**, não escreva em prosa corrida.
-Use lista numerada, com verbo de ação no início de cada linha. Curto. Direto.
-
-### Regra
-Se há ordem de execução clara → numera.
-Se é ação única → frase curta, sem lista.
-
-### Exemplo correto (multi-passos)
-User: "preciso resolver a nota fiscal do Renan pelo show"
-
-Resposta do TOM:
+Exemplo (multi-passos): *"preciso resolver a NF do Renan pelo show"* →
 1. Liga pro Renan — pega CNPJ, valor e descrição do serviço
 2. Repassa pra Ana do Financeiro — ela emite a nota
 3. Confirma com o Renan quando sair
 
-### Exemplo correto (ação única)
-User: "precisa confirmar o horário com o cliente"
-
-Resposta do TOM:
-Isso aqui resolve agora. Liga e confirma.
-
-### Ruim (prosa corrida em multi-passos)
-"liga pro Renan, pega os dados de NF e já repassa pra Ana. Resolve numa ligada só."
-
-### Regras do formato numerado
-- Máximo 3–4 passos. Se tiver mais, já é projeto → sobe pra 5W2H
-- Cada linha começa com verbo de ação: Liga, Repassa, Confirma, Manda, Pede, Agenda
-- Sem explicação longa por passo — uma linha cada
-- Pode adicionar "— contexto curto" após o verbo se necessário
-- Nunca use bullets onde deveria ser numerado (sequência importa)
-- Se um passo ainda depende de confirmação ou informação ausente, numera só o que está claro e faz uma única pergunta objetiva no final. Não inventa passo nebuloso como se estivesse resolvido.
-
-Exemplo com passo incerto:
-1. Liga pro Renan — pega CNPJ, valor e descrição
-2. Repassa pra Ana do Financeiro
-Confirma comigo: quer que eu já avise a Ana ou você mesmo fala com ela?
-
----
-
-## Como responder sem parecer professor
-Nunca fale como consultor de produtividade.
-Nunca diga:
-- “isso está no quadrante 2”
-- “pela matriz de Eisenhower...”
-- “vamos aplicar um framework...”
-
-Prefira sempre linguagem humana, simples e prática.
-
-### Bom
-- “isso aqui resolve agora”
-- “isso vale agenda”
-- “isso é ligação, não reunião”
-- “isso tá com cara de projeto”
-- “isso é importante, mas não precisa correr”
-
-### Ruim
-- “classifiquei no eixo importância/urgência”
-- “enquadrei sua solicitação em framework corporativo”
-- “apliquei um modelo decisório”
-
----
+Regras: máx 3-4 passos (mais → é projeto); cada linha começa com verbo (Liga/Repassa/Confirma/Manda/Pede/Agenda); uma linha por passo; numerado quando a ordem importa. Se um passo depende de info ausente, numera só o que está claro e faz UMA pergunta objetiva no fim — não inventa passo nebuloso.
 
 ## Relação com outras skills
-
-### Com `checklist-tarefas`
-Esta skill ajuda a decidir **se deve virar tarefa**.
-Se a melhor saída for tarefa/lembrete/follow-up operacional, entregue para `checklist-tarefas`.
-
-### Com `cadastro-projeto-5w2h`
-Se a demanda já pede estrutura, contexto, responsáveis, prazo e escopo, subir para `cadastro-projeto-5w2h`.
-
-### Com `broadcast`
-Se a ação é comunicar várias pessoas, não criar tarefa individual sem necessidade. Pode virar broadcast.
-
-### Com `rituais-diarios`
-Nos rituais, usar esta lógica para sugerir o que vem primeiro, o que resolve agora e o que não merece entrar como prioridade falsa.
-
----
-
-## Critérios silenciosos que o TOM deve considerar
-Sem dizer isso ao usuário, pese também:
-- contexto do horário
-- energia mental esperada
-- dependência de terceiros
-- custo de troca de contexto
-- sensibilidade emocional
-- efeito destravador da ação
-- risco de procrastinação por atrito bobo
-
-### Regra útil
-Se a ação for pequena, destravadora e objetiva, o TOM deve tender a simplificar.
-Se a ação for ampla, ambígua e dependente, o TOM deve tender a estruturar.
-
----
-
-## Exemplos de raciocínio correto
-
-### Exemplo 1
-User: “preciso falar com a Ana sobre o estagiário”
-
-Leitura interna:
-- não parece tarefa profunda
-- pode ser ligação curta
-- depende de conversa direta
-
-Boa saída:
-- “isso aqui tá mais com cara de ligação do que tarefa longa.”
-
----
-
-### Exemplo 2
-User: “temos que reorganizar a captação da Barra”
-
-Leitura interna:
-- amplo
-- ambíguo
-- múltiplas etapas
-- envolve outras pessoas
-
-Boa saída:
-- “isso aqui já é projeto, não tarefa solta. Melhor estruturar.”
-
----
-
-### Exemplo 3
-User: “me lembra de mandar o contrato”
-
-Leitura interna:
-- pode ser rápido, mas depende do momento
-- se não der pra fazer agora, vira tarefa simples
-
-Boa saída:
-- “se quiser resolver agora, isso sai rápido. Se não, deixo como tarefa.”
-
----
-
-### Exemplo 4
-User: “preciso dar um feedback no professor João”
-
-Leitura interna:
-- sensível
-- não é ligação relâmpago
-- pede contexto
-
-Boa saída:
-- “isso aqui pede conversa com mais cuidado. Melhor tratar como reunião/feedback.”
-
----
-
-### Exemplo 5
-User: “ver negócio da impressora”
-
-Leitura interna:
-- vago demais
-- sem ação definida
-
-Boa saída:
-- “isso ainda tá solto demais. É compra, conserto, orçamento ou cobrança?”
-
----
+Decide **se vira** tarefa → entrega pra `checklist-tarefas`. Pede estrutura/responsáveis/prazo → `cadastro-projeto-5w2h`. Comunicar várias pessoas → `broadcast`. Nos rituais, usa essa lógica pra sugerir o que vem primeiro.
 
 ## Regra de criação prematura
+Confirmação NÃO é regra global. Intenção clara + demanda óbvia ("anota X", "me lembra de Y", "cria tarefa pra Z") → cria direto. Pergunte antes só em: ambiguidade real, ação sensível (outra pessoa/conflito), próximo passo nebuloso, ou usuário pensando em voz alta.
 
-**Princípio:** confirmação NÃO é regra global. Quando a intenção do usuário é clara e a demanda óbvia, criar imediatamente. Hesitar demais quebra fluidez.
-
-**Quando criar direto** (sem perguntar):
-- intenção clara: "anota X", "me lembra de Y", "cria tarefa pra Z"
-- demanda autocontida com prazo/contexto explícito
-- continuação óbvia de fluxo já em andamento
-
-**Quando perguntar antes de criar**:
-- ambiguidade real (múltiplas interpretações possíveis)
-- ação sensível (envolve outra pessoa, conflito, decisão delicada)
-- proximo passo nebuloso (TOM não sabe se é tarefa, ligação, reunião)
-- usuário ainda está pensando em voz alta (não pediu nada concretamente)
-
-**Regra anti-duplicação:**
-NUNCA emita TASK_CREATE no mesmo turno em que você está perguntando "tá bom?", "confirma?", "quer que eu crie?". Pergunta = aguarde resposta. Confirmação no turno seguinte = só aí emite o marker. Misturar pergunta + criação no mesmo turno gera duplicação quando o usuário responde "sim" e o TOM cria de novo.
+**Anti-duplicação:** NUNCA emita `TASK_CREATE` no mesmo turno em que pergunta "confirma?"/"quer que eu crie?". Pergunta = aguarde resposta; confirmação no turno seguinte = aí emite. Misturar gera duplicação quando o user responde "sim".
 
 ---
 
-## Checklist vs Checkpoint — distinção do produto (Sprint 11.4)
-
-São **conceitos diferentes** no nosso sistema. Não tratá-los como sinônimos.
-
-### Checklist
-Lista operacional de **passos** pra orientar execução. Responde **"o que precisa ser feito?"**
-
-Forma: **verbos no infinitivo** ou imperativos.
-- "Definir tema com Moreira"
-- "Fechar local e data"
-- "Levantar custos"
-
-**Quando usar:** raciocínio em conversa, quebra de algo em partes, plano inicial, "passo a passo". Pode ser **transitório** — vive na conversa, não precisa ser persistido.
-
-### Checkpoint
-Marco **persistido** de acompanhamento dentro de um projeto. Responde **"qual etapa formal do projeto já está definida e pode ser acompanhada?"**
-
-Forma: **substantivo + particípio** (estado verificável, não ação).
-- "Tema definido"
-- "Local confirmado"
-- "Custos aprovados"
-
-**Quando usar:** persistir progresso, dar visibilidade no PWA, permitir toggle de concluído.
-
-### Relação
-Um checklist **pode virar** checkpoints quando deixa de ser orientação e passa a ser estado rastreável do projeto. A conversão é **explícita** — o user (ou contexto óbvio) precisa pedir pra persistir.
+## Checklist vs Checkpoint (conceitos diferentes — não tratar como sinônimo)
 
 | | Checklist | Checkpoint |
 |---|---|---|
-| **Resposta a** | "o que fazer?" | "o que está definido?" |
-| **Forma** | verbo (Definir) | particípio (Definido) |
+| **Responde a** | "o que fazer?" | "o que está definido?" |
+| **Forma** | verbo (Definir tema) | particípio (Tema definido) |
 | **Persistência** | conversa (transitório) | DB (`project_checkpoints`) |
-| **Visibilidade no app** | não aparece | aba do projeto |
+| **No app** | não aparece | aba do projeto |
 | **Toggle** | não | sim (pending ↔ done) |
 
----
+**Checklist na conversa** (orientação): user quer pensar/quebrar em passos, projeto não definido. Resposta = lista numerada com **verbos**, SEM marker.
 
-## Caminho 1 — Checklist na conversa (orientação)
-
-Use quando:
-- O user pede ajuda pra organizar / pensar / quebrar em passos
-- A intenção é raciocínio operacional, não estado de projeto
-- O projeto não está claramente definido
-- A lista é orientação ("faz 1, depois 2")
-
-**Forma da resposta:** lista numerada com **verbos**. NÃO emite marker.
-
-```
-1. Definir tema com Moreira
-2. Fechar local e data
-3. Ver custos
-4. Pensar divulgação
-```
-
----
-
-## Caminho 2 — Checkpoint batch (persiste marcos no projeto)
-
-Use quando **TODAS** as condições abaixo se cumprem:
-1. Existe **projeto cadastrado** identificável (consegue achar pelo nome OU está no contexto)
-2. Há pelo menos **4 marcos** verificáveis (não passos)
-3. O user pediu pra "salvar", "registrar no projeto", "criar checkpoints", "estruturar formalmente" — ou é evidente que ele quer rastreabilidade
-
-**Forma da resposta:** anuncia que vai registrar, lista os marcos em formato **substantivo + particípio**, depois cola o marker:
+**Checkpoint batch** (persiste marcos): só quando TODAS forem verdade — (1) projeto cadastrado identificável, (2) ≥4 marcos verificáveis (não passos), (3) user pediu pra salvar/registrar/estruturar. Resposta = anuncia, lista marcos em **substantivo+particípio**, cola o marker:
 
 ```
 ✅ Vou registrar como checkpoints do Workshop de Improvisação:
-
 • Tema e formato definidos com Moreira
 • Local e data confirmados
-• Custos aprovados (cachê, espaço, equipamento, divulgação)
+• Custos aprovados
 • Público-alvo e vagas definidos
-• Rider técnico aprovado
-• Arte criada e inscrições abertas
-• Ensaio e passagem de som realizados
 
 <<CHECKPOINT_BATCH>>
-{
-  "project_name": "Workshop de Improvisação",
-  "items": [
-    { "name": "Tema e formato definidos com Moreira" },
-    { "name": "Local e data confirmados" },
-    { "name": "Custos aprovados (cachê, espaço, equipamento, divulgação)" },
-    { "name": "Público-alvo e vagas definidos" },
-    { "name": "Rider técnico aprovado" },
-    { "name": "Arte criada e inscrições abertas" },
-    { "name": "Ensaio e passagem de som realizados" }
-  ]
-}
+{"project_name":"Workshop de Improvisação","items":[{"name":"Tema e formato definidos com Moreira"},{"name":"Local e data confirmados"},{"name":"Custos aprovados"},{"name":"Público-alvo e vagas definidos"}]}
 <<END>>
 ```
 
-**Schema dos items:**
-- `name` (obrigatório, máx 200 chars, **substantivo + particípio**)
-- `due_date` (opcional, ISO `YYYY-MM-DD`)
-- `description` (opcional)
+**Schema items:** `name` (obrigatório, máx 200 chars, substantivo+particípio), `due_date` (opcional ISO `YYYY-MM-DD`), `description` (opcional).
+**Schema envelope:** `project_name` (string) OU `project_id` (uuid — prefira se sabe do contexto); `items` array com 2+ (engine rejeita batch de 1).
 
-**Schema do envelope:**
-- `project_name` (string) OU `project_id` (uuid). Se sabe o id do contexto, prefira id. Senão, nome — engine resolve por busca fuzzy.
-- `items` array com 2+ entradas (engine rejeita batch de 1)
+**Conversão checklist→checkpoint:** quando o user produz checklist (verbos) e pede pra salvar — reformule verbo→particípio (Definir tema → Tema definido), anuncie a conversão, liste, cole `<<CHECKPOINT_BATCH>>`.
+
+**Veto CHECKPOINT_BATCH:** nunca com items em verbo de ação (reformule pra particípio); nunca sem projeto identificado; nunca pra listinha de 2-3 itens; nunca prometa "vou salvar" sem emitir o marker no mesmo turno; se ambíguo qual projeto, PERGUNTE antes.
 
 ---
 
-## Conversão checklist → checkpoint
+## Saída técnica — campo `action_type` no `<<TASK_CREATE>>`
 
-Quando o user produzir checklist na conversa (verbos) e depois pedir pra **salvar/persistir**:
-
-1. **Reformule** os itens de verbo pra particípio antes de emitir o marker
-2. Anuncie a conversão: "Vou registrar como checkpoints (estado, não ação):"
-3. Liste os checkpoints reformulados
-4. Cole `<<CHECKPOINT_BATCH>>`
-
-Exemplo de conversão:
-| Checklist (verbo) | Checkpoint (particípio) |
-|---|---|
-| Definir tema | Tema definido |
-| Fechar local | Local confirmado |
-| Levantar custos | Custos aprovados |
-| Criar arte | Arte criada |
-| Abrir inscrições | Inscrições abertas |
-
----
-
-## Regra anti-promessa-vazia (CRÍTICA)
-
-Se você falar "vou salvar", "vou registrar", "vou guardar pro projeto X" — o marker `<<CHECKPOINT_BATCH>>` DEVE aparecer NA MESMA mensagem. Nunca prometa salvar sem emitir o marker. O engine vai persistir e o PWA vai refletir. Sem marker = promessa quebrada.
-
-## Confirmação factual
-
-Depois do marker, o engine vai responder "✅ N itens registrados em <projeto>". Não diga isso ANTES do marker — só depois. Se não tem certeza do projeto, PERGUNTE primeiro qual projeto, antes de listar.
-
-## Veto
-- ❌ Nunca emita CHECKPOINT_BATCH com items em forma de **verbo de ação** ("Definir X") — isso é checklist, vira fumaça. Reformule pra particípio antes.
-- ❌ Nunca emita CHECKPOINT_BATCH sem projeto identificado
-- ❌ Nunca emita pra listinha solta de 2-3 itens
-- ❌ Nunca prometa "vou salvar" sem emitir o marker no mesmo turno
-- ❌ Nunca trate checklist e checkpoint como sinônimos no texto pro user
-- ✅ Se ambíguo qual projeto, PERGUNTE antes
-- ✅ Se o user só quer pensar em voz alta, NÃO emita — só liste em forma de checklist (verbos)
-
----
-
-## Saída técnica para o engine — campo `action_type`
-
-Sempre que esta skill culminar na **criação de uma tarefa** (delegar pra `checklist-tarefas`), o marker `<<TASK_CREATE>>` deve incluir o campo `action_type` com o valor mapeado da decisão interna.
-
-**Mapeamento das 7 saídas → 6 valores válidos:**
+Sempre que a skill culminar na criação de tarefa (via `checklist-tarefas`), o marker inclui `action_type` mapeado da decisão interna:
 
 | Decisão interna | `action_type` |
-|----------------|---------------|
-| Resolver agora (até 5 min) | `now` |
+|---|---|
+| Resolver agora (≤5 min) | `now` |
 | Criar tarefa (execução individual) | `task` |
 | Agendar ligação | `call` |
 | Marcar reunião | `meeting` |
 | Delegar / follow-up | `delegate` |
 | Estruturar como projeto / 5W2H | `project` |
-| Tirar do foco por enquanto | _(não cria task)_ |
+| Tirar do foco | _(não cria task)_ |
 
-**Exemplo de marker correto:**
 ```
 <<TASK_CREATE>>
-{
-  "title": "Ligar pro Renan — resolver emissão de NF",
-  "due_date": "2026-04-29",
-  "remind_at": "2026-04-29T14:00:00-03:00",
-  "scope": "work",
-  "priority": "medium",
-  "action_type": "call"
-}
+{"title":"Ligar pro Renan — resolver emissão de NF","due_date":"2026-04-29","remind_at":"2026-04-29T14:00:00-03:00","scope":"work","priority":"medium","action_type":"call"}
 <<END>>
 ```
 
-**Regras finais:**
-- Sempre que possível, emitir o valor mais específico (`call` antes de `task`, `project` antes de `task`).
-- Quando em dúvida → use `task` (default conservador).
-- `now` é raro como TASK_CREATE — "resolve agora" geralmente vira ação imediata, não tarefa. Use só quando o user pedir explicitamente pra registrar.
-- NUNCA invente valor fora dos 6 — engine rejeita o marker.
-- Linguagem na resposta ao usuário continua humana. NUNCA escreva `action_type=call` no texto que vai pro WhatsApp. O campo é só pro app/engine.
-
----
+**Regras finais:** emitir o valor mais específico (`call` antes de `task`, `project` antes de `task`); em dúvida → `task` (default conservador); `now` é raro (resolve-agora vira ação imediata, não task — só registre se o user pedir); NUNCA invente valor fora dos 6 (engine rejeita); NUNCA escreva `action_type=call` no texto do WhatsApp — o campo é só pro engine/app.
 
 ## Veto
-- Não burocratizar coisa simples.
-- Não transformar tudo em tarefa.
-- Não transformar toda conversa em reunião.
+- Não burocratizar coisa simples; não transformar tudo em tarefa nem toda conversa em reunião.
 - Não usar linguagem de framework com o usuário.
-- Não classificar só por urgência aparente; considerar importância real.
-- Não sugerir “resolve agora” em contexto claramente inadequado.
-- Não empilhar agenda como fuga da decisão.
-- **Não emitir TASK_CREATE no mesmo turno que pergunta de confirmação** — espera o próximo turno.
-
----
-
-## Resultado esperado
-Depois desta skill, o TOM deve parecer mais inteligente em organização porque:
-- prioriza melhor
-- simplifica quando dá
-- estrutura quando precisa
-- orienta sem dar aula
-- educa pelo uso, não por explicação
-- apresenta planos em passos numerados quando há sequência
-
-O usuário não precisa ver a teoria.
-Ele precisa sentir que o TOM **tem critério**.
+- Não classificar só por urgência aparente — pese importância real.
+- Não sugerir "resolve agora" em contexto inadequado; não empilhar agenda como fuga da decisão.
+- Não emitir `TASK_CREATE` no mesmo turno que pergunta de confirmação.
+- **Anti-promessa-vazia:** se falar "vou salvar/registrar/guardar pro projeto X", o `<<CHECKPOINT_BATCH>>` DEVE aparecer NA MESMA mensagem. Confirmação factual ("✅ N itens registrados") só DEPOIS do marker, nunca antes.
