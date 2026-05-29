@@ -2664,6 +2664,12 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     if (fs.existsSync(reactPath)) {
       systemPrompt += '\n\n---\n\n' + fs.readFileSync(reactPath, 'utf-8');
     }
+    // Sprint 31.8 (Pilar 2) — coach-usabilidade.md SEMPRE carregada (cross-cutting):
+    // TOM percebe mau uso e orienta. Guardrail forte dentro da própria skill.
+    const coachPath = path.join(SKILLS_DIR, 'coach-usabilidade.md');
+    if (fs.existsSync(coachPath)) {
+      systemPrompt += '\n\n---\n\n' + fs.readFileSync(coachPath, 'utf-8');
+    }
     // Sprint 28 — skill responder-por-audio.md SEMPRE carregada quando voice
     // estiver enabled. Ensina TOM a escrever de um jeito que funciona BEM
     // se a resposta virar áudio (engine decide automaticamente).
