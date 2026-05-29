@@ -1645,7 +1645,7 @@ async function applyCoordinationRequestAction(collab, parsed) {
     return {
       ok: false,
       reason: 'recipient_not_found',
-      replyText: `Não encontrei ninguém com o nome "${parsed.recipient_name}" ativo no sistema.`,
+      replyText: `Não achei ninguém com o nome "${parsed.recipient_name}" ativo no sistema. Confere o nome completo, ou me avisa se a pessoa ainda não tá cadastrada que eu te oriento.`,
     };
   }
 
@@ -7090,6 +7090,7 @@ async function processMessage(phone, text, raw = {}) {
     } else if (parsedCoord && parsedCoord.items) {
       let okCount = 0, failCount = 0;
       const failedRecipients = [];
+      const failedResults = [];
       for (const item of parsedCoord.items) {
         const result = await applyCoordinationRequestAction(collab, item);
         await logMarker(
@@ -7100,16 +7101,23 @@ async function processMessage(phone, text, raw = {}) {
           null
         );
         if (result.ok) okCount++;
-        else { failCount++; failedRecipients.push(`${item.recipient_name} (${result.reason})`); }
+        else { failCount++; failedRecipients.push(`${item.recipient_name} (${result.reason})`); failedResults.push(result); }
       }
       if (parsedCoord.items.length > 1) {
         console.log(`[CoordinationRequest] batch: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
       }
       // Limpa texto da resposta e, se houver falhas, expõe pro user (não esconde).
       reply = parsedCoord.cleanText || reply;
-      if (failCount > 0 && parsedCoord.items.length > 1) {
-        const failMsg = `\n\n⚠️ Não consegui enviar pra: ${failedRecipients.join(', ')}.`;
-        reply = (reply || '') + failMsg;
+      // Sprint 31.6 (B5) — superficia falha mesmo com 1 destinatário (antes só >1).
+      // Caso real "avisa a Diana": Diana não cadastrada → TOM dizia "Mandando agora" e
+      // o erro era engolido. Agora: 1 destinatário usa a msg específica do handler
+      // (sabe distinguir não-encontrado / sem-alçada / etc); vários, lista resumida.
+      if (failCount > 0) {
+        if (parsedCoord.items.length === 1 && okCount === 0 && failedResults[0]?.replyText) {
+          reply = failedResults[0].replyText; // substitui o texto otimista do LLM
+        } else if (failCount > 0) {
+          reply = (reply || '') + `\n\n⚠️ Não consegui enviar pra: ${failedRecipients.join(', ')}.`;
+        }
       }
     }
   }
@@ -7458,7 +7466,15 @@ async function processMessage(phone, text, raw = {}) {
     const _replyEndsQ = /\?\s*$/.test((reply || '').trim());
     const _replyHasBoldTask = /\*[^*]{3,80}\*/.test(reply || '');
     const _replyIsInfoGathering = _replyEndsQ && !_replyHasBoldTask;
-    if (!_replyIsInfoGathering && (inputActionable || replyHasPromise)) {
+    // Sprint 31.6 (C1) — reduz falso-positivo da métrica ACTIONABLE_NO_MARKER.
+    // O `inputActionable` pegava (a) PERGUNTAS do user ("E o evento que criei?")
+    // e (b) AUTO-RELATO do próprio user ("estou verificando", "eu já criei") —
+    // nenhum é ação pendente PRO TOM. `replyHasPromise` (TOM se comprometeu) sempre
+    // conta. `inputActionable` só conta se NÃO for pergunta nem auto-relato.
+    const _inputIsQuestion = /\?\s*$/.test(String(text || '').trim());
+    const _inputSelfReport = /\b(est(?:ou|á)|t[oô]u?|tava)\s+[a-zà-ú]+ndo\b|\b(?:eu\s+)?j[aá]\s+(?:fiz|criei|terminei|fechei|completei|resolvi|mandei|enviei|verifiquei)\b/i.test(String(text || ''));
+    const _flagActionable = replyHasPromise || (inputActionable && !_inputIsQuestion && !_inputSelfReport);
+    if (!_replyIsInfoGathering && _flagActionable) {
       _metrics.actionable_intent = true;
       const sinceIso = new Date(_t0 - 1000).toISOString();
       const { data: recentMarkers } = await supabase

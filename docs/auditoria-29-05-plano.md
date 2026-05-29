@@ -148,8 +148,8 @@ O "17/26 sem cobrança" era **artefato da auditoria**: (a) rodava 07:00, antes d
 job de cobrança (~08:13); (b) contava TODAS as vencidas, mas o chaser só cobre
 1-5 dias por design (6+ dias → CEO report). Fix: health-check agora mede só a
 janela 1-5d com lookback de 48h. Resultado simulado: 0 sem cobrança.
-| 4 | B5 coordination recipient claro | Média | Baixo | P |
-| 5 | C1 refinar ACTIONABLE detector | Média | Baixo | P |
+| 4 | B5 coordination recipient claro | Média | Baixo | P | ✅ FEITO (superficia falha de 1 destinatário + msg acionável) |
+| 5 | C1 refinar ACTIONABLE detector | Média | Baixo | P | ✅ FEITO (exclui pergunta/auto-relato, 8/8 testes) |
 | 6 | E2 reschedule cross-user | Média | Médio | M (+investigação) |
 | 7 | B3 HABIT_ACTION schema | Média | Baixo | P (+confirmar schema) |
 | 8 | B4 STICKER (remover do prompt) | Baixa | Baixíssimo | P |
