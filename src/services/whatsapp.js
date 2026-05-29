@@ -345,25 +345,4 @@ async function sendReaction(phone, messageId, emoji) {
   }
 }
 
-/**
- * Sprint 31.6 (B4) — Envia figurinha (sticker) via UAZAPI.
- * UAZAPI: POST /send/sticker { number, file (url pública da imagem) }.
- * Fire-and-forget no engine — não bloqueia o pipeline se a UAZAPI falhar.
- */
-async function sendSticker(phone, url) {
-  try {
-    if (!url) {
-      console.warn('[WhatsApp] sendSticker skipped — missing url');
-      return null;
-    }
-    const number = String(phone).includes('@') ? phone : `${phone}@s.whatsapp.net`;
-    const response = await api.post('/send/sticker', { number, file: url });
-    console.log(`[WhatsApp] sticker enviado pra ${String(phone).slice(-4)} (${String(url).slice(-32)})`);
-    return response.data;
-  } catch (err) {
-    console.warn(`[WhatsApp] sendSticker falhou: ${err.message}`);
-    return null;
-  }
-}
-
-module.exports = { sendMessage, sendButtons, sendList, sendMedia, setTyping, sendReaction, sendSticker, sendVoice, isAudioMessage, isImageMessage, isDocumentMessage, isVideoMessage, extractText, extractPhone, extractName, extractMessageId, extractQuotedMessage, isIgnorable };
+module.exports = { sendMessage, sendButtons, sendList, sendMedia, setTyping, sendReaction, sendVoice, isAudioMessage, isImageMessage, isDocumentMessage, isVideoMessage, extractText, extractPhone, extractName, extractMessageId, extractQuotedMessage, isIgnorable };

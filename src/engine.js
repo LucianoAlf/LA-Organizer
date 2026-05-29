@@ -7302,34 +7302,6 @@ async function processMessage(phone, text, raw = {}) {
     console.warn('[Engine] REACT parse/dispatch err (silent):', e.message);
   }
 
-  // ---- Sprint 31.6 (B4) — Parser <<STICKER>>nome<<END>>
-  // TOM manda figurinha do catálogo tom_stickers (coluna name → url). Roda ANTES
-  // do catch-all stripper (senão viraria UNKNOWN_MARKER_STRIPPED, como acontecia).
-  // Fire-and-forget no envio; se o nome não existir no catálogo, só loga e segue.
-  let _stickersSent = 0;
-  try {
-    if (typeof reply === 'string' && /<<STICKER>>/i.test(reply)) {
-      const stickerRe = /<<STICKER>>\s*([\s\S]*?)\s*<<END>>/gi;
-      const names = [...reply.matchAll(stickerRe)].map(m => String(m[1] || '').trim()).filter(Boolean);
-      reply = reply.replace(stickerRe, '').replace(/\n{3,}/g, '\n\n').trim();
-      for (const name of names.slice(0, 2)) {  // no máx 2 figurinhas por resposta
-        const { data: st } = await supabase
-          .from('tom_stickers').select('url').eq('name', name).eq('is_active', true).maybeSingle();
-        if (st && st.url) {
-          whatsapp.sendSticker(phone, st.url)
-            .catch(e => console.warn('[Engine] sendSticker async err:', e.message));
-          _stickersSent++;
-          await logMarker(collab.id, 'STICKER', 'executed', name, null);
-        } else {
-          console.warn(`[Engine] STICKER "${name}" não encontrado no catálogo tom_stickers`);
-          await logMarker(collab.id, 'STICKER', 'rejected', `not_found:${name}`, null);
-        }
-      }
-    }
-  } catch (e) {
-    console.warn('[Engine] STICKER parse/dispatch err (silent):', e.message);
-  }
-
   // STICKER markers — extrai nomes ANTES do catch-all stripar. Envio é feito
   // como follow-up depois do reply de texto. Máx 1 por mensagem (rule no skill
   // figurinhas.md). Slug válido = [a-z][a-z0-9_]{0,40}.
@@ -7342,6 +7314,14 @@ async function processMessage(phone, text, raw = {}) {
         _pendingStickers.push(_sm[1].toLowerCase());
       }
       _pendingStickers = _pendingStickers.slice(0, 1);
+      // Sprint 31.6 (B4) — REMOVE o marker do reply aqui (igual o REACT faz no 7288).
+      // Antes não removia: o catch-all stripper logo abaixo o via e logava como
+      // UNKNOWN_MARKER_STRIPPED — ruído que inflava "markers rejeitados" na auditoria,
+      // mesmo o sticker sendo enviado normalmente no follow-up.
+      if (_pendingStickers.length) {
+        reply = reply.replace(/<<STICKER>>\s*[a-z][a-z0-9_]{0,40}\s*<<END>>/gi, '')
+          .replace(/\n{3,}/g, '\n\n').trim();
+      }
     }
   } catch (_) { /* silent */ }
 

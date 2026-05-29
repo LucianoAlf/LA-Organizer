@@ -150,10 +150,18 @@ job de cobrança (~08:13); (b) contava TODAS as vencidas, mas o chaser só cobre
 janela 1-5d com lookback de 48h. Resultado simulado: 0 sem cobrança.
 | 4 | B5 coordination recipient claro | Média | Baixo | P | ✅ FEITO (superficia falha de 1 destinatário + msg acionável) |
 | 5 | C1 refinar ACTIONABLE detector | Média | Baixo | P | ✅ FEITO (exclui pergunta/auto-relato, 8/8 testes) |
-| 6 | E2 reschedule cross-user | Média | Médio | M (+investigação) |
-| 7 | B3 HABIT_ACTION schema | Média | Baixo | P (+confirmar schema) |
-| 8 | B4 STICKER (remover do prompt) | Baixa | Baixíssimo | P |
-| 9 | D2 realtime log/reconexão | Baixa | Baixo | P |
-| 10 | D3 excluir Admin da métrica | Baixa | Nenhum | P |
+| 6 | E2 reschedule cross-user | Média | Médio | M (+investigação) | ⏳ pendente |
+| 7 | B3 HABIT_ACTION schema | Média | Baixo | P | ✅ FEITO (normaliza title→name, habit_slug→habit_name) |
+| 8 | B4 STICKER | Baixa | Baixíssimo | P | ✅ FEITO (já funcionava via sendMedia; só silenciei ruído UNKNOWN_MARKER) |
+| 9 | D2 realtime log/reconexão | Baixa | Baixo | P | ⏳ pendente |
+| 10 | D3 excluir Admin da métrica | Baixa | Nenhum | P | ✅ FEITO (ignora contas de sistema) |
+
+### Revisão do B4 após investigação
+A implementação de figurinhas **já existia e funciona** (parser `_pendingStickers`
++ envio via `sendMedia type:'sticker'`). Testei ao vivo: a UAZAPI aceitou e enviou
+o `tom_pensando` pro Alf. O único problema era **ruído de log**: o parser extraía o
+nome mas não removia o marker do texto, então o catch-all stripper o logava como
+`UNKNOWN_MARKER_STRIPPED` (inflando "markers rejeitados" na auditoria). Fix: o parser
+agora remove o marker (igual o REACT faz). Quase dupliquei a feature — reverti.
 
 Cada item = 1 fix isolado + validação (smoke/teste) + deploy. Nada em lote.
