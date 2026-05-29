@@ -3639,26 +3639,45 @@ async function applyTaskActions(collaborator, actions) {
         }
       } else if (a.action === 'reschedule') {
         // Sprint 28 — resolução title→id quando TOM não emitiu id numérico.
+        // Sprint 31.6 (E2) — busca tarefa onde o user é ASSIGNEE *ou* CRIADOR
+        // (delegador). Caso real: Krissya delegou "Lembrar Kailane" pro Arthur e
+        // quis remarcar — antes o lookup só via assigned_to e falhava silencioso.
+        let t = null;
         if (!a.id && a.title) {
           const { data: byTitle } = await supabase
             .from('tasks')
-            .select('id')
-            .eq('assigned_to', collaborator.id)
+            .select('id, title, status, due_date, assigned_to, created_by')
+            .or(`assigned_to.eq.${collaborator.id},created_by.eq.${collaborator.id}`)
             .ilike('title', `%${String(a.title).slice(0, 60)}%`)
             .not('status', 'in', '("done","cancelled")')
             .order('created_at', { ascending: false })
             .limit(1)
             .maybeSingle();
           if (byTitle) {
+            t = byTitle;
             a.id = byTitle.id.replace(/-/g, '').slice(0, 8);
-            console.log(`[Task] reschedule title-lookup: "${a.title}" → id=${a.id}`);
+            console.log(`[Task] reschedule title-lookup: "${a.title}" → id=${a.id} (assignee=${byTitle.assigned_to === collaborator.id} creator=${byTitle.created_by === collaborator.id})`);
           } else {
+            // Não é do user (nem responsável nem criador). Se existe pra OUTRA
+            // pessoa, mensagem clara em vez de falha silenciosa (E2).
+            const { data: other } = await supabase
+              .from('tasks').select('title, assigned_to')
+              .ilike('title', `%${String(a.title).slice(0, 60)}%`)
+              .not('status', 'in', '("done","cancelled")')
+              .order('created_at', { ascending: false }).limit(1).maybeSingle();
+            if (other && other.assigned_to) {
+              const { data: ow } = await supabase.from('collaborators').select('full_name').eq('id', other.assigned_to).maybeSingle();
+              const ownerNm = String(ow?.full_name || 'outra pessoa').split(' ')[0];
+              failMessages.push(`A tarefa _"${other.title}"_ é do(a) *${ownerNm}* — como você não criou nem é responsável por ela, não consigo remarcar por você.`);
+            }
             console.warn(`[Task] reschedule title-lookup failed: "${a.title}" not found for ${last4}`);
             failCount++;
             continue;
           }
+        } else {
+          // Veio por id curto — caminho normal (assignee). Mantém defense-in-depth.
+          t = await resolveTaskByShortId(collaborator.id, a.id);
         }
-        const t = await resolveTaskByShortId(collaborator.id, a.id);
         if (!t) {
           console.warn(`[Task] reschedule REJECTED id=${a.id} (not owned by ${last4} or not found)`);
           failCount++;
@@ -3680,11 +3699,13 @@ async function applyTaskActions(collaborator, actions) {
         const { data: fullTaskR } = await supabase
           .from('tasks').select('id, title, created_by, assigned_to')
           .eq('id', t.id).maybeSingle();
+        // Sprint 31.6 (E2) — guard de ownership: assignee OU criador (não mais só
+        // assigned_to), pra o delegador conseguir remarcar a tarefa que delegou.
         const { error } = await supabase
           .from('tasks')
           .update(update)
           .eq('id', t.id)
-          .eq('assigned_to', collaborator.id);
+          .or(`assigned_to.eq.${collaborator.id},created_by.eq.${collaborator.id}`);
         if (error) {
           console.error('[Task] reschedule err:', error.message);
           failCount++;
@@ -3696,6 +3717,22 @@ async function applyTaskActions(collaborator, actions) {
           const note = `${update.due_date ? `Prazo: ${oldDue} → ${newDue}` : 'Lembrete atualizado'}${update.remind_at ? ` (lembrete ${update.remind_at.slice(11, 16)})` : ''}${a.reason ? ` — ${a.reason}` : ''}`;
           await logAgentNote(t.id, note, collaborator.id);
           await notifyTaskCreatorOfAction(fullTaskR, collaborator, 'reschedule', newDue);
+          // Sprint 31.6 (E2) — se quem remarcou foi o CRIADOR (delegador) e a tarefa
+          // é de OUTRO responsável, avisa o responsável que o prazo mudou.
+          try {
+            if (fullTaskR && fullTaskR.assigned_to && fullTaskR.assigned_to !== collaborator.id) {
+              const { data: assignee } = await supabase
+                .from('collaborators').select('phone, full_name')
+                .eq('id', fullTaskR.assigned_to).maybeSingle();
+              if (assignee && assignee.phone) {
+                const quemRemarcou = String(collaborator.full_name || 'Alguém').split(' ')[0];
+                await whatsapp.sendMessage(
+                  assignee.phone,
+                  `📅 *${quemRemarcou}* remarcou uma tarefa sua: _"${fullTaskR.title}"_ — novo prazo *${newDue}*.`,
+                );
+              }
+            }
+          } catch (e) { console.warn('[Task] reschedule notify-assignee err (non-fatal):', e.message); }
           // Sprint 31.1 — fecha pending_followups dessa task (reagendada)
           try {
             const pendingFollowups = require('./services/pending-followups');
@@ -4240,7 +4277,7 @@ async function applyTaskActions(collaborator, actions) {
       failCount++;
     }
   }
-  return { okCount, failCount, integrityPayload: null };
+  return { okCount, failCount, integrityPayload: null, failMessages };
 }
 
 const MEMORY_TYPES = ['fact', 'decision', 'lesson', 'preference', 'context'];
@@ -6213,7 +6250,7 @@ async function processMessage(phone, text, raw = {}) {
       } catch (e) {
         console.error('[Task] date alignment err (non-fatal):', e.message);
       }
-      const { okCount, failCount, integrityPayload } = await applyTaskActions(collab, parsedTask.actions);
+      const { okCount, failCount, integrityPayload, failMessages } = await applyTaskActions(collab, parsedTask.actions);
       console.log(`[Task] batch done: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
       if (integrityPayload) {
         const iType = integrityPayload.type;
@@ -6229,7 +6266,14 @@ async function processMessage(phone, text, raw = {}) {
         await logMarker(collab.id, 'TASK_UPDATE', result, reason, null);
         let base = parsedTask.cleanText || '';
         if (failCount > 0 && okCount === 0) {
-          base = (base ? base + '\n\n' : '') + '_não consegui registrar agora, te aviso depois_';
+          // Sprint 31.6 (E2) — se há msg específica (ex: tarefa de outro dono), usa ela
+          // e SUBSTITUI o texto otimista do LLM (evita "✅ Reagendado" + "não consegui").
+          // O genérico antigo dizia "te aviso depois" — falsa promessa; trocado por honesto.
+          if (failMessages && failMessages.length) {
+            base = failMessages.join('\n');
+          } else {
+            base = (base ? base + '\n\n' : '') + '_não consegui registrar agora. Me passa de novo?_';
+          }
         } else if (failCount > 0 && okCount > 0) {
           // Sprint 21.5 — confirmação parcial honesta. Engine não pode deixar TOM dizer
           // "tudo certo" quando parte falhou. Princípio: fala = persistência.

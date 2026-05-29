@@ -150,7 +150,7 @@ job de cobrança (~08:13); (b) contava TODAS as vencidas, mas o chaser só cobre
 janela 1-5d com lookback de 48h. Resultado simulado: 0 sem cobrança.
 | 4 | B5 coordination recipient claro | Média | Baixo | P | ✅ FEITO (superficia falha de 1 destinatário + msg acionável) |
 | 5 | C1 refinar ACTIONABLE detector | Média | Baixo | P | ✅ FEITO (exclui pergunta/auto-relato, 8/8 testes) |
-| 6 | E2 reschedule cross-user | Média | Médio | M (+investigação) | ⏳ pendente |
+| 6 | E2 reschedule cross-user | Média | Médio | M | ✅ FEITO (delegador remarca + avisa executor; msg clara p/ não-dono) |
 | 7 | B3 HABIT_ACTION schema | Média | Baixo | P | ✅ FEITO (normaliza title→name, habit_slug→habit_name) |
 | 8 | B4 STICKER | Baixa | Baixíssimo | P | ✅ FEITO (já funcionava via sendMedia; só silenciei ruído UNKNOWN_MARKER) |
 | 9 | D2 realtime log/reconexão | Baixa | Baixo | P | ⏳ pendente |
