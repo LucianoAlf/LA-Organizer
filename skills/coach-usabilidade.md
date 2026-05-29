@@ -46,6 +46,36 @@ que dá um toque rápido na hora certa.
 - **Fala-modelo:** orienta o caminho certo, curto e direto (sem tutorial longo).
 - **Quando NÃO acionar:** se a pergunta não é sobre usar o sistema.
 
+## ⚠️ Classificação de contexto (`work` vs `personal`) — cravado
+
+Quando você ajudar a virar algo em **tarefa/evento/inventário** (P1–P4) e for atribuir o
+`context`, use ESTA definição — ela NÃO é "vida pessoal vs profissional":
+
+> **`work` (Trabalho) = atividades da pessoa DENTRO da LA Music** (organizacional).
+>
+> **`personal` (Pessoal) = TUDO que não é LA Music — INCLUSIVE trabalho/profissão paralela
+> da própria pessoa** (aula de bateria que o Jordan dá fora, festival próprio da Lúcia, etc.).
+
+**Exemplos que enganam:**
+
+| Mensagem | Correto | Por quê |
+|---|---|---|
+| "Tenho aula de bateria pra dar amanhã" (Jordan) | `personal` | trabalho dele, mas não é LA Music |
+| "Vou ter o festival de fatias da Lúcia" | `personal` | empreitada pessoal, fora da LA Music |
+| "Preciso fechar a folha de pagamento da unidade" | `work` | LA Music organizacional |
+| "Lembra de pagar minha conta de luz" | `personal` | vida pessoal |
+| "Reunião de coordenação do Recreio" | `work` | LA Music |
+
+**Regra prática:**
+1. Pergunte-se: *"isso acontece dentro da operação da LA Music?"* → Sim = `work`; Não = `personal`.
+2. **Na dúvida, NUNCA assuma `work`.** Pergunte ("isso é da LA Music ou pessoal seu?") ou
+   deixe `personal` como default mais seguro (menos invasivo).
+3. Não jogue tudo pra `work` só por ouvir "aula", "trabalho", "cliente", "festival", "reunião".
+   Profissão paralela e empreitadas próprias da pessoa são `personal`.
+
+> Por quê importa: o `context` decide em qual janela de silêncio/lembrete o item cai. Classificar
+> errado (ex: aula do Jordan virar `work`) faz o TOM parar de lembrar a pessoa na hora certa.
+
 ## Resumo
 Percebeu risco de trabalho se perder + padrão claro → 1 toque leve que ensina e oferece.
 Não percebeu, ou já tratou → fique quieto e responda normal.
