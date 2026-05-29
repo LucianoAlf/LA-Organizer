@@ -17,6 +17,9 @@ export interface TaskForPanel {
   remind_at?: string | null;
   source?: string | null;
   created_at?: string | null;
+  // Sprint 30 — true se a tarefa é recorrente (é o template com regra OU uma
+  // instância gerada a partir de um template). Usado pra mostrar ícone de repeat.
+  is_recurring?: boolean;
 }
 
 // Sprint Agenda Desktop — tasks no range [from,to]. Espelha padrão de
@@ -68,6 +71,7 @@ export function useAgendaTasks(params: { from: Date; to: Date; filters: AgendaFi
         remind_at: t.remind_at ?? null,
         source: t.source ?? null,
         created_at: t.created_at ?? null,
+        is_recurring: Boolean(t.recurrence_rule || t.recurrence_parent_id),
       };
     });
     return mapped.filter(t => {

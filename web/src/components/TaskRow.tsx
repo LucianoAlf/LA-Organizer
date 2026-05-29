@@ -5,7 +5,7 @@
 // Compat: continua usado em Hoje, Semana, PessoaDetalhe. As outras telas
 // herdam o mesmo padrao de card sem mudar API publica.
 
-import { Bot, GripVertical } from 'lucide-react';
+import { Bot, GripVertical, Repeat } from 'lucide-react';
 import { Badge } from './Badge';
 import { ActionTypeBadge } from './ActionTypeBadge';
 import { CategoryTag } from './CategoryTag';
@@ -132,6 +132,10 @@ export function TaskRow({
   const remindRel = effectiveRemindAt ? fmtRelDate(effectiveRemindAt) : '';
   const dueRel = task.due_date ? fmtRelDate(task.due_date) : '';
   const showAssignee = task.assignee?.full_name;
+  // Sprint 30 — tarefa recorrente: template (tem recurrence_rule) ou instância
+  // gerada (tem recurrence_parent_id). Mostra ícone de repeat pra sinalizar UX.
+  const taskRec = task as Task & { recurrence_rule?: string | null; recurrence_parent_id?: string | null };
+  const isRecurring = Boolean(taskRec.recurrence_rule || taskRec.recurrence_parent_id);
 
   return (
     <article
@@ -179,6 +183,11 @@ export function TaskRow({
             )}
             {task.title}
           </span>
+          {isRecurring && (
+            <span className="mt-1 shrink-0 text-fg-muted" title="Tarefa recorrente" aria-label="Tarefa recorrente">
+              <Repeat size={14} />
+            </span>
+          )}
           {fromTom(task.source) && (
             <span className="mt-1 shrink-0 text-tom" title="Criada via TOM" aria-label="Criada via TOM">
               <Bot size={14} />

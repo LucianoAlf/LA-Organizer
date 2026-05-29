@@ -1,4 +1,4 @@
-import { Bell, ArrowRight } from 'lucide-react';
+import { Bell, ArrowRight, Repeat } from 'lucide-react';
 import type { TaskForPanel } from '../../hooks/useAgendaTasks';
 import { useCollaboratorNames } from '../../hooks/useCollaboratorNames';
 
@@ -60,6 +60,11 @@ export function CompactTaskRow({ task, onToggle, onClick, trailingBadge }: Props
       >
         {task.title}
       </button>
+      {task.is_recurring && (
+        <span className="shrink-0 inline-flex items-center text-fg-muted" title="Tarefa recorrente">
+          <Repeat size={11} aria-label="Recorrente" />
+        </span>
+      )}
       {remindHM && (
         <span className="shrink-0 inline-flex items-center gap-0.5 text-[10px] text-tom tabular-nums" title={`Lembrete às ${remindHM}`}>
           <Bell size={10} aria-hidden />

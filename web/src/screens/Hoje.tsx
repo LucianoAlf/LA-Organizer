@@ -81,7 +81,7 @@ async function fetchHabitsToday(collabId: string): Promise<HabitToday[]> {
 // concluídas dentro do dia da view (completed_at no range), independente
 // de due_date. Merge dedup. View "Concluídas" passa a contar correto.
 async function fetchTasksToday(collabId: string, viewDate: string, isToday: boolean): Promise<Task[]> {
-  const baseSelect = 'id, title, status, context, priority, category, action_type, source, due_date, scheduled_date, remind_at, eisenhower_quadrant, sort_position, project_id, assigned_to, created_by, completed_at, projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(full_name), task_reminders(remind_at, sent_at)';
+  const baseSelect = 'id, title, status, context, priority, category, action_type, source, due_date, scheduled_date, remind_at, eisenhower_quadrant, sort_position, project_id, assigned_to, created_by, completed_at, recurrence_rule, recurrence_parent_id, projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(full_name), task_reminders(remind_at, sent_at)';
 
   let q = supabase
     .from('tasks')
@@ -125,7 +125,7 @@ async function fetchTasksToday(collabId: string, viewDate: string, isToday: bool
 }
 
 async function fetchDelegatedTasks(collabId: string, viewDate: string, isToday: boolean): Promise<Task[]> {
-  const baseSelect = 'id, title, status, context, priority, category, action_type, source, due_date, scheduled_date, remind_at, eisenhower_quadrant, sort_position, project_id, assigned_to, created_by, completed_at, projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(full_name), task_reminders(remind_at, sent_at)';
+  const baseSelect = 'id, title, status, context, priority, category, action_type, source, due_date, scheduled_date, remind_at, eisenhower_quadrant, sort_position, project_id, assigned_to, created_by, completed_at, recurrence_rule, recurrence_parent_id, projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(full_name), task_reminders(remind_at, sent_at)';
 
   let q = supabase
     .from('tasks')
