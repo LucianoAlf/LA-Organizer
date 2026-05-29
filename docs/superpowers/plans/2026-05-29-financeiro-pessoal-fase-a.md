@@ -14,7 +14,7 @@
 
 - **NÃO commitar entre tasks.** O CLAUDE.md manda trabalhar tudo local em `_remote/` e fazer 1 commit-bundle no fim. O Stop hook (`auto-deploy.ps1`) commita+pusha `_remote/` no fim do turno automaticamente. **Os passos abaixo NÃO têm "git commit"** — o passo de fechamento de cada task é uma **validação** (`node --check`, `node --test`, ou SQL assert). Exceção: migrations podem ser commitadas à parte, mas aqui são aplicadas via MCP.
 - **Migration via MCP:** aplicar com `mcp__...supabase...__apply_migration` no projeto `cesnbnrynvxvgdhfmaua`. O arquivo `.sql` em `migrations/` é só histórico.
-- **Código é CommonJS** (`require`/`module.exports`), apesar do CLAUDE.md dizer "ES modules". Siga o código real (ver `src/services/inventario-service.js`, `src/supabase/client.js`).
+- **Código é CommonJS** (`require`/`module.exports`), apesar do CLAUDE.md dizer "ES modules". Siga o código real: o modelo de service correto é **`src/services/collaborator.js`** (`const supabase = require('../supabase/client')` — client service_role do projeto principal `cesnbnrynvxvgdhfmaua`). **NÃO use `inventario-service.js` como modelo** — ele importa `laReportClient` (`./la-report-client`), que aponta pra OUTRO projeto Supabase (LA_REPORT). As tabelas `pf_*` ficam no projeto principal, então o client tem que ser `../supabase/client`.
 - **Segurança inegociável (spec §6):** `collaborator_id` SEMPRE vem do remetente resolvido em `engine.js` (`collaborator.id`), NUNCA do JSON do marker. Todo handler passa `collaborator.id` para o service; o service filtra explicitamente por ele.
 - **Atualizar o TOM pra smoke test:** `scp` do arquivo pra `tom:/opt/LA-Organizer/<caminho>` + `ssh tom "pm2 restart tom"` (CLAUDE.md). Validação local de sintaxe: `node --check src/<arquivo>.js`.
 - **Spec de referência:** `docs/superpowers/specs/2026-05-29-financeiro-pessoal-design.md`. Decisões D1–D7 e guard-rails §6 são fonte de verdade.
@@ -606,7 +606,9 @@ Expected: PASS (19 testes no total).
 **Files:**
 - Create: `src/services/financeiro-service.js`
 
-> Padrão seguido: `src/supabase/client.js` (cliente service_role) + filtro manual por `collaborator_id` em TODA query (ver `inventario-service.js`). `collaboratorId` é SEMPRE o 1º parâmetro.
+> Padrão seguido: `const supabase = require('../supabase/client')` (cliente service_role do projeto principal `cesnbnrynvxvgdhfmaua`, como em **`src/services/collaborator.js`**) + filtro manual por `collaborator_id` em TODA query. NÃO copiar `inventario-service.js` (usa `laReportClient` → outro projeto). `collaboratorId` é SEMPRE o 1º parâmetro.
+>
+> ⚠️ Nota local: `src/supabase/client.js` pode não existir no mirror local `_remote/` (só na VPS) — isso é esperado. `node --check` valida sintaxe sem resolver `require`, e os testes `node:test` só tocam os módulos puros (`finance/`), que não importam o service. O service só executa de fato na VPS.
 
 - [ ] **Step 1: Implementar o service**
 
@@ -933,9 +935,9 @@ async function handleFinanceAction(collaborator, action, params) {
 }
 ```
 
-- [ ] **Step 4: Wire no `processMessage` (após receber a resposta do LLM)**
+- [ ] **Step 4: Wire no `processMessage` (após receber a resposta do LLM)** ⚠️ PONTO FRÁGIL
 
-Localizar em `processMessage` o ponto onde os outros markers são parseados a partir de `response.text` (após `ai.chat(...)`). Acrescentar, no mesmo bloco:
+**Antes de colar nada:** abra `src/engine.js`, vá até `processMessage`, e ache a **variável real** que guarda o texto da resposta do LLM após `ai.chat(...)` e onde os outros `parse*Marker` operam. Pode ser `responseText`, `response.text`, ou outro nome. **NÃO assuma** — se o nome estiver errado, o marker nunca é processado e falha em silêncio (sem erro). Use o nome real no bloco abaixo (aqui escrito como `responseText`):
 ```js
 const fin = parseFinanceMarker(responseText);
 if (fin && !fin.malformed) {
