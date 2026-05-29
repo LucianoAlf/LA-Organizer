@@ -4401,6 +4401,15 @@ function parseHabitMarker(text) {
   const dropped = [];
   for (let i = 0; i < rawActions.length; i++) {
     const a = rawActions[i];
+    // Sprint 31.6 (B3) — normaliza aliases que TOM emite (consistente com tasks/events,
+    // que usam `title`). Antes: create com `title` caía em name_missing; log com
+    // `habit_slug` caía em bad_habit_id. Agora aceita ambos.
+    if (a && typeof a === 'object') {
+      if (a.action === 'create' && !a.name && typeof a.title === 'string') a.name = a.title;
+      if (a.action === 'log' && !a.habit_id && !a.habit_name && typeof a.habit_slug === 'string') {
+        a.habit_name = a.habit_slug.replace(/[-_]+/g, ' ').trim();
+      }
+    }
     const why = validateHabitAction(a);
     if (why) { dropped.push(`action[${i}]:${why}`); continue; }
     valid.push(a);
@@ -7291,6 +7300,34 @@ async function processMessage(phone, text, raw = {}) {
     }
   } catch (e) {
     console.warn('[Engine] REACT parse/dispatch err (silent):', e.message);
+  }
+
+  // ---- Sprint 31.6 (B4) — Parser <<STICKER>>nome<<END>>
+  // TOM manda figurinha do catálogo tom_stickers (coluna name → url). Roda ANTES
+  // do catch-all stripper (senão viraria UNKNOWN_MARKER_STRIPPED, como acontecia).
+  // Fire-and-forget no envio; se o nome não existir no catálogo, só loga e segue.
+  let _stickersSent = 0;
+  try {
+    if (typeof reply === 'string' && /<<STICKER>>/i.test(reply)) {
+      const stickerRe = /<<STICKER>>\s*([\s\S]*?)\s*<<END>>/gi;
+      const names = [...reply.matchAll(stickerRe)].map(m => String(m[1] || '').trim()).filter(Boolean);
+      reply = reply.replace(stickerRe, '').replace(/\n{3,}/g, '\n\n').trim();
+      for (const name of names.slice(0, 2)) {  // no máx 2 figurinhas por resposta
+        const { data: st } = await supabase
+          .from('tom_stickers').select('url').eq('name', name).eq('is_active', true).maybeSingle();
+        if (st && st.url) {
+          whatsapp.sendSticker(phone, st.url)
+            .catch(e => console.warn('[Engine] sendSticker async err:', e.message));
+          _stickersSent++;
+          await logMarker(collab.id, 'STICKER', 'executed', name, null);
+        } else {
+          console.warn(`[Engine] STICKER "${name}" não encontrado no catálogo tom_stickers`);
+          await logMarker(collab.id, 'STICKER', 'rejected', `not_found:${name}`, null);
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[Engine] STICKER parse/dispatch err (silent):', e.message);
   }
 
   // STICKER markers — extrai nomes ANTES do catch-all stripar. Envio é feito

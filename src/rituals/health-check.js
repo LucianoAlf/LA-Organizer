@@ -233,8 +233,13 @@ async function checkSilentCollaborators() {
   if (error) throw error;
   const cutoff = isoHoursAgo(7 * 24);
   const silent = [];
+  // Sprint 31.6 (D3) — ignora contas de sistema (não conversam no WhatsApp).
+  // Ex.: Admin tem phone placeholder "00000000000" — cobrar "conversa" dela é ruído.
+  const SYSTEM_NAMES = new Set(['admin', 'sistema', 'system', 'tom']);
   // Tabela correta é `conversation_history` (a antiga `messages` nunca existiu).
   for (const c of (collabs || [])) {
+    if (SYSTEM_NAMES.has(String(c.full_name || '').trim().toLowerCase())) continue;
+    if (/^0+$/.test(String(c.phone || '').replace(/\D/g, ''))) continue;
     const { count } = await supabase
       .from('conversation_history')
       .select('id', { count: 'exact', head: true })
