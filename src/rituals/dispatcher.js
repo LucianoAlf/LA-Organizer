@@ -184,6 +184,20 @@ async function alreadySent(collaboratorId, ritualType, ymd) {
 // of sendRitual (no AI call; deterministic builder).
 async function fireCoordinatorReport(collab, ritualType, ymdRef) {
   const canonical = CANONICAL_BY_RITUAL[ritualType] || ritualType;
+  // Gate: "Resumo do time" pode ser desligado em Configurações (notify_team_summary).
+  // Só aplica ao team_summary — weekly_retrospective é outro relatório, não afetado.
+  if (ritualType === 'team_summary') {
+    const { data: pref } = await supabase
+      .from('user_preferences')
+      .select('notify_team_summary')
+      .eq('collaborator_id', collab.id)
+      .maybeSingle();
+    if (pref && pref.notify_team_summary === false) {
+      console.log(`[CoordReport] team_summary skipped — notify_team_summary=false (${collab.phone.slice(-4)})`);
+      await logRitualEvent(collab.id, canonical, 'skipped', 'notify_team_summary_off', ymdRef);
+      return false;
+    }
+  }
   const dnd = await getDndState(collab.id);
   if (dnd.active) {
     console.log(`[CoordReport] ${ritualType} skipped — DND active until ${dnd.until}`);
