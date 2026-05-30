@@ -6,7 +6,6 @@ import { useAccounts, useDeactivateAccount, useFinanceiroAuth } from '../../hook
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
 import type { PfAccount, PfAccountType } from '../../lib/financeiro';
 import { AccountSheet } from './components/AccountSheet';
-import { FinanceTabs } from './components/FinanceTabs';
 
 const TYPE_LABEL: Record<PfAccountType, string> = {
   checking: 'Conta corrente',
@@ -77,7 +76,6 @@ export function CarteirasPage() {
           ← Voltar
         </button>
       </header>
-      <FinanceTabs current="carteiras" />
 
       {!empty && (
         <section className="rounded-lg border border-border bg-bg-surface px-md py-3 flex items-baseline justify-between tabular-nums">

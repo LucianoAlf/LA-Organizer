@@ -116,7 +116,6 @@ export function MetasPage() {
           ← Voltar
         </button>
       </header>
-      <FinanceTabs current="metas" />
 
       {empty && (
         <section className="rounded-lg border border-dashed border-border bg-bg-surface px-md py-lg text-center">
