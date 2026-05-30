@@ -5888,6 +5888,8 @@ const FINANCE_ACTIONS = [
   'register_transaction', 'register_bill', 'pay_bill', 'create_goal',
   'update_goal', 'set_budget', 'query_summary', 'query_budget', 'query_goal', 'create_account',
   'simulate_interest',
+  // cartão de crédito + transferência
+  'create_card', 'card_purchase', 'query_invoice', 'pay_invoice', 'transfer',
 ];
 const MONTH_TAXA = 0.0083; // ~10,5%/ano (referencia; Fase B troca pela Selic viva)
 
@@ -5915,6 +5917,7 @@ function parseFinanceMarker(text) {
 async function handleFinanceAction(collab, action, params) {
   const cid = collab.id;
   const p = normalizeParams(params || {});
+  const financeFmt = require('./services/finance-format');
 
   switch (action) {
     case 'register_transaction': {

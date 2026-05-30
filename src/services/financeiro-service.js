@@ -219,6 +219,154 @@ async function collaboratorsWithActiveBills() {
   return _enrichCollabs(ids);
 }
 
+// ============ CARTÃO DE CRÉDITO (Sprint cartão) ============
+
+// Competência (1º dia do mês YYYY-MM-01) da fatura de uma compra.
+// day <= closing → fatura que fecha neste mês; senão, próxima.
+function competenciaFor(baseDate, closingDay) {
+  const y = baseDate.getUTCFullYear(), m = baseDate.getUTCMonth(), day = baseDate.getUTCDate();
+  const off = day <= closingDay ? 0 : 1;
+  return new Date(Date.UTC(y, m + off, 1)).toISOString().slice(0, 10);
+}
+function addMonthsToCompetencia(compStr, n) {
+  const d = new Date(compStr + 'T00:00:00Z');
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + n, 1)).toISOString().slice(0, 10);
+}
+function currentCompetencia(card) { return competenciaFor(new Date(), card.closing_day); }
+
+async function createCard(collaboratorId, { name, brand, color, credit_limit, closing_day, due_day, icon }) {
+  const { data, error } = await supabase.from('pf_cards')
+    .insert({ collaborator_id: collaboratorId, name, brand: brand || null, color: color || null,
+              credit_limit, closing_day, due_day, icon: icon || '💳' })
+    .select().single();
+  if (error) throw error;
+  return data;
+}
+async function listCards(collaboratorId) {
+  const { data, error } = await supabase.from('pf_cards')
+    .select('id, name, brand, color, credit_limit, closing_day, due_day, icon, alert_cycle, alert_threshold')
+    .eq('collaborator_id', collaboratorId).eq('is_active', true).order('name');
+  if (error) throw error;
+  return data || [];
+}
+async function findCard(collaboratorId, cardName) {
+  const { data, error } = await supabase.from('pf_cards')
+    .select('id, name, brand, color, credit_limit, closing_day, due_day, icon, alert_cycle, alert_threshold')
+    .eq('collaborator_id', collaboratorId).eq('is_active', true).ilike('name', `%${cardName}%`);
+  if (error) throw error;
+  return data || [];
+}
+
+// Lança compra no cartão. installments>=2 → N parcelas agrupadas por purchase_group.
+// NÃO mexe no saldo (card_id setado, account_id null → trigger trg_pf_sync_balance ignora).
+async function insertCardPurchase(collaboratorId, card, { category, amount, description, transaction_date, installments }) {
+  const baseDate = transaction_date ? new Date(transaction_date + 'T00:00:00Z') : new Date();
+  const n = Math.max(1, parseInt(installments || 1, 10));
+  const baseComp = competenciaFor(baseDate, card.closing_day);
+  const dateStr = baseDate.toISOString().slice(0, 10);
+  if (n === 1) {
+    const { data, error } = await supabase.from('pf_transactions').insert({
+      collaborator_id: collaboratorId, card_id: card.id, type: 'expense', category,
+      amount, description: description || null, transaction_date: dateStr, competencia: baseComp, via: 'tom',
+    }).select().single();
+    if (error) throw error;
+    return [data];
+  }
+  const cents = Math.round(Number(amount) * 100);
+  const per = Math.floor(cents / n);
+  const rows = Array.from({ length: n }, (_, i) => ({
+    collaborator_id: collaboratorId, card_id: card.id, type: 'expense', category,
+    description: description || null, transaction_date: dateStr, via: 'tom',
+    installment_no: i + 1, installments_total: n,
+    competencia: addMonthsToCompetencia(baseComp, i),
+    amount: ((i === n - 1 ? per + (cents - per * n) : per) / 100),
+  }));
+  const ins = await supabase.from('pf_transactions').insert(rows).select();
+  if (ins.error) throw ins.error;
+  const groupId = ins.data.find((d) => d.installment_no === 1)?.id || ins.data[0].id;
+  const upd = await supabase.from('pf_transactions').update({ purchase_group: groupId })
+    .in('id', ins.data.map((d) => d.id));
+  if (upd.error) throw upd.error;
+  return ins.data;
+}
+
+async function cardInvoice(collaboratorId, cardId, competencia) {
+  const { data: items, error } = await supabase.from('pf_transactions')
+    .select('id, description, category, amount, transaction_date, installment_no, installments_total')
+    .eq('collaborator_id', collaboratorId).eq('card_id', cardId).eq('competencia', competencia)
+    .order('transaction_date', { ascending: false });
+  if (error) throw error;
+  const total = (items || []).reduce((s, r) => s + Number(r.amount), 0);
+  const { data: pays, error: e2 } = await supabase.from('pf_card_payments')
+    .select('amount').eq('card_id', cardId).eq('competencia', competencia);
+  if (e2) throw e2;
+  const paid = (pays || []).reduce((s, r) => s + Number(r.amount), 0);
+  return { competencia, items: items || [], total, paid, isPaid: paid >= total && total > 0, remaining: Math.max(total - paid, 0) };
+}
+
+// Limite usado = total lançado no cartão − total já pago (todas as competências não pagas).
+async function cardUsage(collaboratorId, card) {
+  const { data: tx, error } = await supabase.from('pf_transactions')
+    .select('amount').eq('collaborator_id', collaboratorId).eq('card_id', card.id);
+  if (error) throw error;
+  const charged = (tx || []).reduce((s, r) => s + Number(r.amount), 0);
+  const { data: pays, error: e2 } = await supabase.from('pf_card_payments')
+    .select('amount').eq('card_id', card.id);
+  if (e2) throw e2;
+  const paid = (pays || []).reduce((s, r) => s + Number(r.amount), 0);
+  const used = Math.max(charged - paid, 0);
+  const limit = Number(card.credit_limit);
+  return { used, available: limit - used, pct: limit > 0 ? used / limit : 0, limit };
+}
+
+async function payCardInvoice(collaboratorId, card, { competencia, amount, paid_from_account }) {
+  const { data, error } = await supabase.from('pf_card_payments').insert({
+    collaborator_id: collaboratorId, card_id: card.id, competencia,
+    amount, paid_from_account: paid_from_account || null,
+  }).select().single();
+  if (error) throw error; // trigger debita o saldo da conta de origem
+  return data;
+}
+
+async function createTransfer(collaboratorId, { from_account, to_account, amount, description, transfer_date }) {
+  const row = { collaborator_id: collaboratorId, from_account, to_account, amount, description: description || null };
+  if (transfer_date) row.transfer_date = transfer_date;
+  const { data, error } = await supabase.from('pf_transfers').insert(row).select().single();
+  if (error) throw error; // trigger ajusta os dois saldos
+  return data;
+}
+
+const ALERT_BANDS = [50, 70, 80, 90];
+// Retorna { band, usage } a alertar (ou null). Atualiza alert_cycle/alert_threshold no cartão.
+async function checkAndMarkLimitAlert(collaboratorId, card) {
+  const usage = await cardUsage(collaboratorId, card);
+  const pctInt = Math.floor(usage.pct * 100);
+  const cycle = currentCompetencia(card);
+  const threshold = card.alert_cycle === cycle ? (card.alert_threshold || 0) : 0;
+  const crossed = ALERT_BANDS.filter((b) => pctInt >= b && b > threshold);
+  if (!crossed.length) {
+    if (card.alert_cycle !== cycle) {
+      await supabase.from('pf_cards').update({ alert_cycle: cycle, alert_threshold: 0 }).eq('id', card.id);
+    }
+    return null;
+  }
+  const band = Math.max(...crossed);
+  await supabase.from('pf_cards').update({ alert_cycle: cycle, alert_threshold: band }).eq('id', card.id);
+  return { band, usage };
+}
+
+// Todos os cartões ativos + phone/nome do dono (alvo dos rituais de alerta).
+async function cardsForAlerts() {
+  const { data, error } = await supabase.from('pf_cards')
+    .select('id, name, icon, credit_limit, closing_day, due_day, alert_cycle, alert_threshold, collaborator_id')
+    .eq('is_active', true);
+  if (error) throw error;
+  const ids = [...new Set((data || []).map((c) => c.collaborator_id))];
+  const collabs = await _enrichCollabs(ids);
+  const byId = Object.fromEntries(collabs.map((c) => [c.id, c]));
+  return (data || []).map((c) => ({ ...c, collab: byId[c.collaborator_id] })).filter((c) => c.collab);
+}
+
 module.exports = {
   monthBounds,
   createAccount, listAccounts,
@@ -228,4 +376,9 @@ module.exports = {
   createGoal, findGoal, addToGoal, listGoals,
   billsDueWithin, monthlyReport, collaboratorsWithActivity, collaboratorsForFinanceRitual,
   collaboratorsWithActiveBills,
+  // cartão
+  competenciaFor, addMonthsToCompetencia, currentCompetencia,
+  createCard, listCards, findCard, insertCardPurchase,
+  cardInvoice, cardUsage, payCardInvoice, createTransfer,
+  checkAndMarkLimitAlert, cardsForAlerts, ALERT_BANDS,
 };
