@@ -5998,6 +5998,22 @@ async function handleFinanceAction(collab, action, params) {
       return `👛 Suas carteiras:\n${linhas}\n\nTotal: ${financeFmt.money(total)}`;
     }
     case 'create_card': {
+      // Idempotente: se já existe cartão com esse nome (match exato), ATUALIZA em vez de duplicar.
+      const existentes = await financeService.findCard(cid, params.name || '');
+      const exato = existentes.find((c) => c.name.toLowerCase() === String(params.name || '').toLowerCase());
+      if (exato) {
+        const patch = {};
+        if (params.credit_limit != null) patch.credit_limit = params.credit_limit;
+        if (params.closing_day != null) patch.closing_day = params.closing_day;
+        if (params.due_day != null) patch.due_day = params.due_day;
+        if (params.brand != null) patch.brand = params.brand;
+        if (params.color != null) patch.color = params.color;
+        if (Object.keys(patch).length > 0) {
+          const u = await financeService.updateCard(cid, exato.id, patch);
+          return `👽 O cartão *${u.name}* já existia — atualizei: limite ${financeFmt.money(u.credit_limit)}, fecha dia ${u.closing_day}, vence dia ${u.due_day}.`;
+        }
+        return `👽 Você já tem o cartão *${exato.name}* (limite ${financeFmt.money(exato.credit_limit)}, fecha dia ${exato.closing_day}, vence dia ${exato.due_day}). Quer mudar algum dado?`;
+      }
       const c = await financeService.createCard(cid, {
         name: params.name, brand: params.brand, color: params.color,
         credit_limit: params.credit_limit, closing_day: params.closing_day, due_day: params.due_day, icon: params.icon,

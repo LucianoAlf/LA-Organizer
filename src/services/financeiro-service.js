@@ -252,6 +252,17 @@ async function createCard(collaboratorId, { name, brand, color, credit_limit, cl
   if (error) throw error;
   return data;
 }
+async function updateCard(collaboratorId, cardId, patch) {
+  const clean = {};
+  for (const k of ['name', 'brand', 'color', 'credit_limit', 'closing_day', 'due_day', 'icon']) {
+    if (patch[k] !== undefined && patch[k] !== null) clean[k] = patch[k];
+  }
+  clean.updated_at = new Date().toISOString();
+  const { data, error } = await supabase.from('pf_cards')
+    .update(clean).eq('id', cardId).eq('collaborator_id', collaboratorId).select().single();
+  if (error) throw error;
+  return data;
+}
 async function listCards(collaboratorId) {
   const { data, error } = await supabase.from('pf_cards')
     .select('id, name, brand, color, credit_limit, closing_day, due_day, icon, alert_cycle, alert_threshold')
@@ -388,7 +399,7 @@ module.exports = {
   collaboratorsWithActiveBills,
   // cartão
   competenciaFor, addMonthsToCompetencia, currentCompetencia,
-  createCard, listCards, findCard, insertCardPurchase,
+  createCard, updateCard, listCards, findCard, insertCardPurchase,
   cardInvoice, cardUsage, payCardInvoice, createTransfer,
   checkAndMarkLimitAlert, cardsForAlerts, ALERT_BANDS,
 };
