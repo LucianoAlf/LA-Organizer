@@ -84,6 +84,8 @@ Quando há horário, o formato é `⏰ {hora}h{min} — *{título}*`. Ex: `⏰ 8
 ### Regra operacional
 Mensagem ÚNICA com duas seções: `*PESSOAL · hoje:*` e `*TRABALHO · hoje:*`, separadas por `----------`. Saudação `Bom dia, {nick} 👽` aparece apenas UMA vez no topo.
 
+> 💰 **Seção financeira (contas vencendo hoje):** NÃO monte você mesmo. O sistema ANEXA automaticamente a linha `💰 Vence hoje: {conta} (R${valor})` ao fim do briefing, com o número exato do banco. Não invente nem repita valor financeiro.
+
 **Prioridade de montagem dentro de cada seção:**
 1. Atrasadas (`🔴`)
 2. Com horário (`⏰`), em ordem cronológica
