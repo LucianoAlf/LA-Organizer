@@ -62,7 +62,7 @@ export function FinanceSummaryChips() {
         <Link
           key={c.key}
           to={c.to}
-          className={`shrink-0 inline-flex items-center rounded-full border bg-bg-surface px-2.5 py-0.5 text-[11px] font-medium whitespace-nowrap focus-ring ${TONE[c.tone]}`}
+          className={`shrink-0 inline-flex items-center rounded-full border bg-bg-surface px-2.5 py-0.5 text-[10px] font-medium whitespace-nowrap focus-ring ${TONE[c.tone]}`}
         >
           {c.label}
         </Link>
