@@ -3774,25 +3774,33 @@ async function checkOverdueAlerts(ymdToday) {
       await logRitualEvent(collab.id, 'alerta_atraso', 'skipped', `quiet:${q.reason}`, ymdToday);
       continue;
     }
-    if (await alreadyNotifiedToday(collab.id, t.id, 'overdue_alert', ymdToday)) {
-      await logRitualEvent(collab.id, 'alerta_atraso', 'skipped', `ja_notificado:${String(t.id).slice(0,8)}`, ymdToday);
-      continue;
-    }
     const n = daysLate(t.due_date);
     const text = buildOverdueText(t.title, n, false);
+    // CLAIM ATÔMICO antes de enviar — mesmo padrão de checkDeadlineAlerts. O índice
+    // único parcial notifications_alert_daily_uq garante 1 alerta de atraso por
+    // tarefa por dia, imune a race/lag/restart. Se o envio falhar depois do claim,
+    // não re-tenta hoje (re-alerta amanhã) — erra pro lado de NÃO floodar.
+    // NÃO reintroduzir alreadyNotifiedToday aqui.
+    const { data: claim, error: claimErr } = await supabase.from('notifications').insert({
+      collaborator_id: collab.id,
+      notification_type: 'overdue_alert',
+      title: `${t.title} atrasada ${n}d`,
+      body: text,
+      reference_type: 'task',
+      reference_id: t.id,
+      channel: 'whatsapp',
+      status: 'sent',
+      sent_at: new Date().toISOString(),
+      alert_day: ymdToday,
+    }).select('id').single();
+    if (claimErr) {
+      const reason = (claimErr.code === '23505' ? 'ja_notificado:' : `claim_err(${claimErr.code}):`) + String(t.id).slice(0, 8);
+      await logRitualEvent(collab.id, 'alerta_atraso', 'skipped', reason, ymdToday);
+      continue;
+    }
+    void claim;
     try {
       await whatsapp.sendMessage(collab.phone, text);
-      await supabase.from('notifications').insert({
-        collaborator_id: collab.id,
-        notification_type: 'overdue_alert',
-        title: `${t.title} atrasada ${n}d`,
-        body: text,
-        reference_type: 'task',
-        reference_id: t.id,
-        channel: 'whatsapp',
-        status: 'sent',
-        sent_at: new Date().toISOString(),
-      });
       // Sprint 31.1 — rastro pra TASK_UPDATE via id exato
       try {
         const kind = n <= 3 ? 'overdue_check' : 'staleness_check';

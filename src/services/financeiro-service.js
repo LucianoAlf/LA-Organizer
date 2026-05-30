@@ -151,6 +151,50 @@ async function listGoals(collaboratorId) {
   return data || [];
 }
 
+// ---- Queries para rituais (Fase B) ----
+
+// Contas a vencer nos proximos `days` dias OU atrasadas (venceram este mes e nao pagas).
+// status derivado de last_paid_at (D6). EDGE: conta com due_day no comeco do mes seguinte
+// (ex: hoje=30, due_day=2) nao entra como "a vencer" deste ciclo — aceitavel no v1.
+async function billsDueWithin(collaboratorId, days = 5) {
+  const dom = new Date().getUTCDate();
+  const { start } = monthBounds();
+  const { data, error } = await supabase.from('pf_bills')
+    .select('name, amount, due_day, type, last_paid_at, category')
+    .eq('collaborator_id', collaboratorId).eq('is_active', true);
+  if (error) throw error;
+  return (data || []).filter((b) => {
+    const pagoEsteMes = b.last_paid_at && b.last_paid_at >= start;
+    if (pagoEsteMes) return false;
+    const aVencer = b.due_day >= dom && b.due_day <= dom + days;
+    const atrasada = b.due_day < dom; // venceu este mes e nao foi paga (PRD §6.2)
+    return aVencer || atrasada;
+  });
+}
+
+// Relatorio do mes de referencia (default mes corrente): receitas, despesas, saldo, top 3.
+async function monthlyReport(collaboratorId, ref = new Date()) {
+  const { start, end } = monthBounds(ref);
+  const { data, error } = await supabase.from('pf_transactions')
+    .select('type, category, amount')
+    .eq('collaborator_id', collaboratorId).gte('transaction_date', start).lt('transaction_date', end);
+  if (error) throw error;
+  const rows = data || [];
+  const receitas = rows.filter((r) => r.type === 'income').reduce((s, r) => s + Number(r.amount), 0);
+  const despesas = rows.filter((r) => r.type === 'expense').reduce((s, r) => s + Number(r.amount), 0);
+  const porCat = {};
+  for (const r of rows) if (r.type === 'expense') porCat[r.category] = (porCat[r.category] || 0) + Number(r.amount);
+  const top = Object.entries(porCat).sort((a, b) => b[1] - a[1]).slice(0, 3);
+  return { receitas, despesas, saldo: receitas - despesas, top, temAtividade: rows.length > 0 };
+}
+
+// Colaboradores com >=1 transacao (alvo dos rituais financeiros).
+async function collaboratorsWithActivity() {
+  const { data, error } = await supabase.from('pf_transactions').select('collaborator_id');
+  if (error) throw error;
+  return [...new Set((data || []).map((r) => r.collaborator_id))];
+}
+
 module.exports = {
   monthBounds,
   createAccount, listAccounts,
@@ -158,4 +202,5 @@ module.exports = {
   setBudget, getBudget, queryBudget,
   createBill, findBills, payBill,
   createGoal, findGoal, addToGoal, listGoals,
+  billsDueWithin, monthlyReport, collaboratorsWithActivity,
 };

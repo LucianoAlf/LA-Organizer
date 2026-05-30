@@ -35,3 +35,18 @@ test('RECURRENCE_RE não sombreia as mensagens de meta', () => {
   assert.ok(!RECURRENCE_RE.test('quero comprar um carro de 20 mil em 2 anos guardando 500 por mês'));
   assert.ok(!RECURRENCE_RE.test('guardei 500 pro carro'));
 });
+
+// EDU_FIN_RE (cópia do system.js) — roteamento educação vs ação financeira.
+const EDU_FIN_RE = /\b(o\s+que\s+[ée]\s+(?:a\s+)?(?:selic|cdb|tesouro|fgc|caixinha|poupan[çc]a)|como\s+(?:funciona|invisto|come[çc]o\s+a\s+guardar|fa[çc]o\s+pra\s+investir)|me\s+explica\s+(?:juros|selic|investiment)|vale\s+a\s+pena\s+investir|diferen[çc]a\s+entre|tesouro\s+direto|reserva\s+de\s+emerg[êe]ncia|50\/30\/20|juros\s+compost|como\s+investir)\b/i;
+
+test('EDU_FIN_RE casa perguntas conceituais', () => {
+  assert.ok(EDU_FIN_RE.test('o que é selic?'));
+  assert.ok(EDU_FIN_RE.test('como investir meu dinheiro'));
+  assert.ok(EDU_FIN_RE.test('me explica juros compostos'));
+  assert.ok(EDU_FIN_RE.test('vale a pena investir na poupança?'));
+});
+test('EDU_FIN_RE NÃO rouba as ações financeiras (vão pro financeiro)', () => {
+  assert.ok(!EDU_FIN_RE.test('gastei 45 no iFood'));
+  assert.ok(!EDU_FIN_RE.test('guardei 500 pro carro'));
+  assert.ok(!EDU_FIN_RE.test('define orçamento de alimentação 500'));
+});

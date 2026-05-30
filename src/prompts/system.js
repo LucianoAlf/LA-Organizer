@@ -776,6 +776,14 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
     return { name: 'onboarding', body: loadSkill('onboarding') };
   }
 
+  // Sprint 27 — Educacao financeira (ANTES do financeiro): pergunta conceitual sobre
+  // dinheiro/investimento. Escopado a frase de pergunta/conceito, pra nao roubar as
+  // acoes (gastei/guardei) do financeiro-pessoal.
+  const EDU_FIN_RE = /\b(o\s+que\s+[ée]\s+(?:a\s+)?(?:selic|cdb|tesouro|fgc|caixinha|poupan[çc]a)|como\s+(?:funciona|invisto|come[çc]o\s+a\s+guardar|fa[çc]o\s+pra\s+investir)|me\s+explica\s+(?:juros|selic|investiment)|vale\s+a\s+pena\s+investir|diferen[çc]a\s+entre|tesouro\s+direto|reserva\s+de\s+emerg[êe]ncia|50\/30\/20|juros\s+compost|como\s+investir)\b/i;
+  if (EDU_FIN_RE.test(String(lastUserMessage || ''))) {
+    return { name: 'educacao-financeira', body: loadSkill('educacao-financeira') };
+  }
+
   // Sprint 27 — Financas pessoais: dinheiro, contas, metas, orcamento, contribuicao.
   // ANTES de recorrencia: frase de dinheiro/meta tem prioridade (ex: "guardei 500 pro carro"
   // e "todo dia 10 pagar aluguel" devem ir pro financeiro, nao virar tarefa recorrente).

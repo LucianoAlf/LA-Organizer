@@ -45,6 +45,7 @@ Ações disponíveis (campo `action`):
 - `query_summary` — sem params (resumo do mês)
 - `query_budget` — sem params (barras de orçamento)
 - `query_goal` — sem params (progresso das metas)
+- `simulate_interest` — params: monthly, years (simulação de juros compostos; o engine calcula com a Selic viva — NÃO calcule você mesmo)
 
 ## Categorias válidas
 Receitas: salario, comissao, extra.

@@ -5618,6 +5618,7 @@ async function tryDupBypass(collab, text) {
 const FINANCE_ACTIONS = [
   'register_transaction', 'register_bill', 'pay_bill', 'create_goal',
   'update_goal', 'set_budget', 'query_summary', 'query_budget', 'query_goal', 'create_account',
+  'simulate_interest',
 ];
 const MONTH_TAXA = 0.0083; // ~10,5%/ano (referencia; Fase B troca pela Selic viva)
 
@@ -5730,6 +5731,18 @@ async function handleFinanceAction(collab, action, params) {
         return `${g.icon || '🎯'} ${g.name}: ${pct}% (R$${g.current_amount}/R$${g.target_amount})`;
       }).join('\n');
       return `🎯 Suas metas:\n${linhas}`;
+    }
+    case 'simulate_interest': {
+      const monthly = Number(p.monthly || params.monthly || 0);
+      const years = Number(params.years || p.years || 0);
+      if (!monthly || !years) return '❓ Me diz quanto por mês e por quantos anos.';
+      const months = Math.round(years * 12);
+      const annual = await selic.getAnnualRate();
+      const i = Math.pow(1 + annual / 100, 1 / 12) - 1;
+      const semJuros = monthly * months;
+      const comJuros = Math.round(futureValue(monthly, i, months));
+      const ganho = comJuros - semJuros;
+      return `🧮 Simulação: R$${monthly}/mês por ${years} ano(s)\n\nSó guardando: R$${semJuros}\nInvestindo a ${annual}%/ano: R$${comJuros}\n\nDiferença: R$${ganho} que o dinheiro trabalhou pra você. Bora? 💪`;
     }
     default:
       return null;
