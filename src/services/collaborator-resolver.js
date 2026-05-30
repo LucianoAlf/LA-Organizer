@@ -69,13 +69,28 @@ function requesterMatches(candidate, reqDomain) {
   return false;
 }
 
-// Desambigua SÓ por quem-fala. Resolve quando exatamente UM candidato pertence
-// ao domínio do requester; caso contrário (zero, ou ambos) → pergunta.
+// Desambigua SÓ por quem-fala. Localização (unit) é o discriminador mais forte:
+// quem é da mesma unidade que um candidato "dono" dessa unidade ganha de quem
+// casa só por função (ex.: professor do Recreio → Daiana, dona do Recreio, e não
+// a Dai-ped cross-unidade). Se nem unit nem função isolam um único → pergunta.
 function disambiguate(candidates, { requester } = {}) {
   if (!candidates || candidates.length === 0) return { status: 'not_found' };
   if (candidates.length === 1) return { status: 'resolved', collaborator: candidates[0] };
   const reqDomain = domainOf(requester);
-  const hits = reqDomain.size ? candidates.filter(c => requesterMatches(c, reqDomain)) : [];
+  if (!reqDomain.size) return { status: 'ambiguous', candidates };
+
+  // 1) Match por unidade específica (unit:*) — localização ganha de função.
+  const reqUnits = [...reqDomain].filter(t => t.startsWith('unit:'));
+  if (reqUnits.length) {
+    const unitHits = candidates.filter(c => {
+      const dom = domainOf(c);
+      return reqUnits.some(u => dom.has(u));
+    });
+    if (unitHits.length === 1) return { status: 'resolved', collaborator: unitHits[0] };
+  }
+
+  // 2) Senão, match por qualquer token de domínio (função/pedagogico).
+  const hits = candidates.filter(c => requesterMatches(c, reqDomain));
   if (hits.length === 1) return { status: 'resolved', collaborator: hits[0] };
   return { status: 'ambiguous', candidates };
 }

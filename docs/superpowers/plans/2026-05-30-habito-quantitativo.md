@@ -372,7 +372,23 @@ por:
 
 - [ ] **Step 2: Anexar os footers ao `base`**
 
-Em `src/engine.js`, logo após a linha `let base = parsedHab.cleanText || '';` (`:6568`), inserir:
+⚠️ A linha `let base = parsedHab.cleanText || '';` **JÁ EXISTE** em `:6568` — NÃO redeclarar (senão `SyntaxError: Identifier 'base' has already been declared`). Inserir APENAS o `if` logo DEPOIS dessa linha existente:
+
+```javascript
+      // Progresso quantitativo: número vem do engine (não do LLM). Anexa a barra exata.
+      if (Array.isArray(progressFooters) && progressFooters.length) {
+        base = (base ? base.trim() + '\n\n' : '') + progressFooters.join('\n');
+      }
+```
+
+Para garantir a ancoragem única do Edit, casar com o trecho existente:
+
+```javascript
+      let base = parsedHab.cleanText || '';
+      if (failCount > 0 && okCount === 0) {
+```
+
+e trocar por:
 
 ```javascript
       let base = parsedHab.cleanText || '';
@@ -380,6 +396,7 @@ Em `src/engine.js`, logo após a linha `let base = parsedHab.cleanText || '';` (
       if (Array.isArray(progressFooters) && progressFooters.length) {
         base = (base ? base.trim() + '\n\n' : '') + progressFooters.join('\n');
       }
+      if (failCount > 0 && okCount === 0) {
 ```
 
 - [ ] **Step 3: Verificar sintaxe**
@@ -783,6 +800,8 @@ Após o bloco `const doneToday = Boolean(todayLog?.is_completed);` (`:139`), adi
   const quantPct = isQuant && target > 0 ? Math.min(100, Math.round((todayValue / target) * 100)) : 0;
   const remaining = isQuant ? Math.max(0, target - todayValue) : 0;
 
+  // NOTA: recalc_habit_streak(p_habit_id uuid) CONFIRMADA no banco (2026-05-30) —
+  // é a mesma RPC que o toggle binário já usa (Habitos.tsx:176). Espelha calcHabitStreak (JS) via is_completed.
   const addAmount = useMutation({
     mutationFn: async (delta: number) => {
       if (!habit || !collaborator) return;

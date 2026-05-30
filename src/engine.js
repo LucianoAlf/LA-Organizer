@@ -4538,11 +4538,24 @@ function validateHabitAction(a) {
     if (a.reminder_time !== undefined && a.reminder_time !== null
         && (typeof a.reminder_time !== 'string' || !HABIT_TIME_RE.test(a.reminder_time))) return 'bad_reminder_time';
     if (a.custom_days !== undefined && !Array.isArray(a.custom_days)) return 'bad_custom_days';
+    // Quantitativo (opcional): se habit_type='quantitative', exige target_value>0 e unit string.
+    if (a.habit_type !== undefined && a.habit_type !== 'binary' && a.habit_type !== 'quantitative') return 'bad_habit_type';
+    if (a.habit_type === 'quantitative') {
+      if (typeof a.target_value !== 'number' || !(a.target_value > 0)) return 'bad_target_value';
+      if (typeof a.unit !== 'string' || !a.unit.trim()) return 'bad_unit';
+    }
   } else if (a.action === 'log') {
     const hasId = typeof a.habit_id === 'string' && SHORT_ID_RE.test(a.habit_id);
     const hasName = typeof a.habit_name === 'string' && a.habit_name.trim().length > 0;
     if (!hasId && !hasName) return 'bad_habit_id';
     if (a.completed !== undefined && typeof a.completed !== 'boolean') return 'completed_not_bool';
+    // Quantitativo: amount é delta numérico; mode controla add vs set.
+    if (a.amount !== undefined && (typeof a.amount !== 'number' || Number.isNaN(a.amount))) return 'bad_amount';
+    if (a.mode !== undefined && a.mode !== 'add' && a.mode !== 'set') return 'bad_mode';
+  } else if (a.action === 'query_progress') {
+    const hasId = typeof a.habit_id === 'string' && SHORT_ID_RE.test(a.habit_id);
+    const hasName = typeof a.habit_name === 'string' && a.habit_name.trim().length > 0;
+    if (!hasId && !hasName) return 'bad_habit_id';
   } else {
     return 'unknown_action';
   }
@@ -4554,7 +4567,7 @@ async function resolveHabitByShortId(collaboratorId, shortId) {
   if (!shortId || !SHORT_ID_RE.test(String(shortId))) return null;
   const prefix = String(shortId).toLowerCase();
   const { data } = await supabase
-    .from('habits').select('id, name, icon, current_streak, best_streak, is_active')
+    .from('habits').select('id, name, icon, current_streak, best_streak, is_active, habit_type, target_value, unit')
     .eq('collaborator_id', collaboratorId).eq('is_active', true).limit(200);
   if (!data || !data.length) return null;
   const matches = data.filter(h => String(h.id).toLowerCase().startsWith(prefix));
@@ -4569,7 +4582,7 @@ async function resolveHabitByName(collaboratorId, name) {
   const target = norm(name);
   if (!target) return null;
   const { data } = await supabase
-    .from('habits').select('id, name, icon, current_streak, best_streak, is_active')
+    .from('habits').select('id, name, icon, current_streak, best_streak, is_active, habit_type, target_value, unit')
     .eq('collaborator_id', collaboratorId).eq('is_active', true).limit(200);
   if (!data || !data.length) return null;
   const exact = data.filter(h => norm(h.name) === target);
@@ -4609,6 +4622,44 @@ function todayOffsetSP(ymd, days) {
   const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
   const dd = String(dt.getUTCDate()).padStart(2, '0');
   return `${yy}-${mm}-${dd}`;
+}
+
+// ---------- Hábito quantitativo: helpers (NÚMERO vem do código, nunca do LLM) ----------
+
+// Barra visual de 10 blocos (espelha src/finance/ritual-messages.js bar()).
+function habitBar(pct) {
+  const filled = Math.max(0, Math.min(10, Math.round((pct || 0) / 10)));
+  return '█'.repeat(filled) + '░'.repeat(10 - filled);
+}
+
+// Formata número PT-BR sem casas decimais desnecessárias (1150 -> "1.150", 1.5 -> "1,5").
+function fmtQty(n) {
+  const v = Number(n) || 0;
+  const rounded = Math.round(v * 100) / 100;
+  return rounded.toLocaleString('pt-BR', { maximumFractionDigits: 2 });
+}
+
+// Lê o value acumulado de hoje pra um hábito (0 se não houver log).
+async function readHabitTodayValue(habitId, today) {
+  const { data } = await supabase
+    .from('habit_logs').select('value')
+    .eq('habit_id', habitId).eq('log_date', today).maybeSingle();
+  return data && data.value != null ? Number(data.value) : 0;
+}
+
+// Monta o footer de progresso pro WhatsApp. Ex:
+// "💧 Água: ████░░░░░░ 38% — 1.150/3.000 ml · faltam 1.850 ml"
+function buildHabitProgressFooter(habit, value) {
+  const target = Number(habit.target_value) || 0;
+  const unit = habit.unit ? ` ${habit.unit}` : '';
+  const icon = habit.icon || '💧';
+  if (!(target > 0)) {
+    return `${icon} ${habit.name}: ${fmtQty(value)}${unit} hoje`;
+  }
+  const pct = Math.min(100, Math.round((value / target) * 100));
+  const remaining = Math.max(0, target - value);
+  const done = value >= target ? ' ✅ meta batida!' : ` · faltam ${fmtQty(remaining)}${unit}`;
+  return `${icon} ${habit.name}: ${habitBar(pct)} ${pct}% — ${fmtQty(value)}/${fmtQty(target)}${unit}${done}`;
 }
 
 async function applyHabitActions(collaborator, actions) {

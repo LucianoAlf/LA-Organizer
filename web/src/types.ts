@@ -439,7 +439,13 @@ export interface PersonalChecklist {
   icon_emoji: string | null
   created_at: string
   updated_at: string
+  // Recorrência (migration 20260527010000). 'once' = modelo estático (is_done).
+  recurrence_type: 'once' | 'daily' | 'weekly' | 'monthly'
+  days_of_week: number[] | null   // convenção RecurrenceField: 1=Dom … 7=Sáb
+  day_of_month: number | null
   personal_checklist_items?: PersonalChecklistItem[]
+  // Preenchido em runtime pelo fetch de "Hoje" só pra recorrentes (não vem do banco).
+  today_completion_id?: string | null
 }
 
 export const PERSONAL_LIST_TYPE_ICON: Record<PersonalListType, string> = {

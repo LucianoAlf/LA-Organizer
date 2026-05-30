@@ -98,9 +98,15 @@ test('disambiguate: director (sem lado) → ambiguous', () => {
 test('disambiguate: sem requester → ambiguous', () => {
   assert.strictEqual(R.disambiguate([DAI_PED, DAIANA], {}).status, 'ambiguous');
 });
-test('disambiguate: requester que pertence aos DOIS lados (pedagógico no recreio) → ambiguous', () => {
-  const both = { function_role: 'pedagogico', pedagogical_role: 'assistant', unit: 'recreio' };
-  assert.strictEqual(R.disambiguate([DAI_PED, DAIANA], { requester: both }).status, 'ambiguous');
+test('disambiguate: professor DO RECREIO (pedagógico + unit=recreio) → Daiana (localização ganha)', () => {
+  const recProf = { function_role: 'pedagogico', pedagogical_role: 'teacher', unit: 'recreio' };
+  const r = R.disambiguate([DAI_PED, DAIANA], { requester: recProf });
+  assert.strictEqual(r.status, 'resolved');
+  assert.strictEqual(r.collaborator.id, 'farm');
+});
+test('disambiguate: professor de OUTRA unidade (pedagógico + unit=tijuca) → Dai-ped', () => {
+  const tijProf = { function_role: 'pedagogico', pedagogical_role: 'teacher', unit: 'tijuca' };
+  assert.strictEqual(R.disambiguate([DAI_PED, DAIANA], { requester: tijProf }).collaborator.id, 'ped');
 });
 
 // --- buildAmbiguityQuestion ---
