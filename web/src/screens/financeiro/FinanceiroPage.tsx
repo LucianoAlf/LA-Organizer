@@ -8,6 +8,7 @@ import type { PfCategory, PfTransaction } from '../../lib/financeiro';
 import { monthBounds } from '../../lib/financeiro';
 import { BudgetBar } from './components/BudgetBar';
 import { FinanceQuickLinks } from './components/FinanceQuickLinks';
+import { FinanceSummaryChips } from './components/FinanceSummaryChips';
 
 // Recharts lazy: 2 componentes, cada um chunk próprio
 const PieByCategory   = lazy(() => import('./components/FinanceCharts').then(m => ({ default: m.PieByCategory })));
@@ -132,6 +133,8 @@ export function FinanceiroPage() {
         </div>
       </section>
 
+      <FinanceSummaryChips />
+
       <FinanceQuickLinks />
 
       {/* Empty state — só quando NÃO há absolutamente nada */}
@@ -187,7 +190,7 @@ export function FinanceiroPage() {
 
       {/* Pizza + Linha — lazy load Recharts */}
       <section className="grid grid-cols-1 md:grid-cols-2 gap-md">
-        <div className="rounded-lg border border-border bg-bg-surface p-md min-h-[260px]">
+        <div className="rounded-lg border border-border bg-bg-surface p-md md:min-h-[260px]">
           <h3 className="text-label text-fg-muted uppercase tracking-wide mb-3">Gastos por categoria</h3>
           {pieData.length === 0 ? (
             <p className="text-body-sm text-fg-muted">Sem despesas neste mês ainda.</p>

@@ -111,6 +111,14 @@ export function useCards() {
     enabled: !!cid,
   });
 }
+export function useCardsWithUsage() {
+  const cid = useFinanceiroAuth();
+  return useQuery({
+    queryKey: [...KEY, 'cardsUsage', cid],
+    queryFn: () => cartoes.cardsWithUsage(cid!),
+    enabled: !!cid,
+  });
+}
 export function useCardUsage(card?: cartoes.PfCard) {
   const cid = useFinanceiroAuth();
   return useQuery({

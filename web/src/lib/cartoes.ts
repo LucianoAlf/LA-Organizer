@@ -103,3 +103,9 @@ export async function payCardInvoice(collaboratorId: string, args: {
   });
   if (error) throw error; // trigger debita o saldo da conta de origem
 }
+
+// Lista cartões já com o uso de limite calculado (pro chip de resumo do dashboard).
+export async function cardsWithUsage(collaboratorId: string): Promise<{ card: PfCard; usage: CardUsage }[]> {
+  const cards = await listCards(collaboratorId);
+  return Promise.all(cards.map(async (card) => ({ card, usage: await cardUsage(collaboratorId, card) })));
+}
