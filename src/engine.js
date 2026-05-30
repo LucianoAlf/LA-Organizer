@@ -19,6 +19,7 @@ const inventarioValidators = require('./services/inventario-validators');
 const announcementsService = require('./services/announcements');
 const pendingIntents = require('./services/pending-intents');
 const { buildCoordinationResponseNotification } = require('./services/coordination-notify');
+const { isContextQuietField, validateContextQuietField } = require('./services/prefs-quiet-context');
 const financeService = require('./services/financeiro-service');
 const { mapCategory, normalizeParams } = require('./finance/categorize');
 const { crossedThreshold, buildBudgetAlert } = require('./finance/budget-alert');
@@ -3371,6 +3372,12 @@ function parsePrefsMarker(text) {
       if (v === null) update[k] = null;
       else if (typeof v === 'string' && HHMM_RE.test(v)) update[k] = v.length === 5 ? v + ':00' : v;
       else dropped.push(`${k}:bad_time`);
+    } else if (isContextQuietField(k)) {
+      // Silêncio POR CONTEXTO (work/personal) — fonte de verdade do PWA.
+      // O TOM pergunta o contexto antes de emitir; aqui só validamos.
+      const r = validateContextQuietField(k, v);
+      if (r.ok) update[k] = r.value;
+      else dropped.push(`${k}:${r.reason}`);
     } else {
       dropped.push(`${k}:unknown_field`);
     }

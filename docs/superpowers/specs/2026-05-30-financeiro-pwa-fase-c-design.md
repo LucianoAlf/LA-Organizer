@@ -123,7 +123,10 @@ Ao desmontar: `supabase.removeChannel(channel)`. Cada tela passa só as tabelas 
 - **Padrão de cliente Supabase no web:** já existe um cliente único exportado? Como o JWT do colaborador é injetado nas queries? (Confirmar antes de escrever o service.)
 - **Componente de sidebar do desktop:** local exato onde adicionar o item "Finanças".
 - **`StatCard` existe no DS?** Verificar `web/src/components/`. Se não, criar seguindo tokens.
-- **Selic no PWA:** v1 pode usar valor cacheado (ex.: hardcode 10.5 ou ler de uma config), pois o serviço de Selic está no engine TOM. Decidir se vale endpoint público ou cache localStorage com TTL. Não bloqueia v1.
+- **Selic no PWA — coerência com o TOM:** hardcode `10.5` no app diverge do TOM, que cita o valor vivo do BCB (hoje 14,5%). Mesma meta = números diferentes nos 2 canais = mata credibilidade. **v1:** PWA rotula a taxa como **"estimativa ~10,5%/ano"** (não "a Selic é") nas projeções e no simulador — narrativa neutra que não conflita. **Melhoria (v1.1):** o `selic.js` do engine persiste o valor diário numa tabela `app_config` (ou `pf_config`) e o PWA lê dali — fonte única. Decidir e registrar no plano.
+- **`finance-utils.ts` (port de `projection.js`) tem que bater BIT A BIT com o handler.** Se as fórmulas divergem, simulador do PWA vai dar número diferente do que o TOM falou no zap. No plano: porta literal (copiar fórmulas) + teste de paridade (mesmos inputs nos 2, mesmo output).
+- **Mirror TS do service (decorrência de E2/E5).** Duas cópias do mesmo CRUD (`_remote/src/services/financeiro-service.js` e `web/src/services/financeiro-service.ts`) podem driftar nas regras de negócio (D6 status derivado, D7 sem-transação). Mantém o mirror **fino** (CRUD puro) e empurra invariantes pro banco — os triggers de saldo/dono (Fase A §6.1) e a derivação do status (D6) já fazem isso. Comentário literal no topo de cada cópia: "regra mudou aqui? muda na outra cópia também."
+- **`recharts` lazy nas telas `/financeiro`:** as rotas são code-split; manter `import { ... } from 'recharts'` dentro dos componentes de gráfico (e/ou `React.lazy` nas telas) pra não inchar o bundle principal (que já passa de 1,2 MB).
 
 ## 10. Out of scope (futuro)
 
