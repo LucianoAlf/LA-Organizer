@@ -9,7 +9,7 @@ interface Chip { key: string; to: string; label: string; tone: 'danger' | 'warn'
 
 const TONE: Record<Chip['tone'], string> = {
   danger: 'text-danger border-danger/40',
-  warn: 'text-amber-400 border-amber-400/40',
+  warn: 'text-amber-700 border-amber-600/50 dark:text-amber-400 dark:border-amber-400/40',
   muted: 'text-fg-muted border-border',
   tom: 'text-tom border-tom/40',
 };
