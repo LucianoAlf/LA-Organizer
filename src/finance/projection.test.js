@@ -26,3 +26,9 @@ test('formatMonths: 40 meses vira "3 anos e 4 meses"', () => {
 test('formatMonths: 12 meses vira "1 ano"', () => {
   assert.strictEqual(formatMonths(12), '1 ano');
 });
+test('simulação 300/mês 10 anos a 10,5%/ano ~62k (> 36000 sem juros)', () => {
+  const i = Math.pow(1.105, 1 / 12) - 1;
+  const fv = futureValue(300, i, 120);
+  assert.ok(fv > 36000, `com juros deveria passar de 36000, veio ${fv}`);
+  assert.ok(fv > 60000 && fv < 66000, `esperado ~62k, veio ${fv}`);
+});

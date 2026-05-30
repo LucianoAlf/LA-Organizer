@@ -3578,25 +3578,33 @@ async function checkDeadlineAlerts(ymdToday) {
       await logRitualEvent(collab.id, 'alerta_prazo', 'skipped', q.reason, ymdToday);
       continue;
     }
-    if (await alreadyNotifiedToday(collab.id, t.id, 'deadline_alert', ymdToday)) {
-      await logRitualEvent(collab.id, 'alerta_prazo', 'skipped', `ja_notificado:${String(t.id).slice(0,8)}`, ymdToday);
-      continue;
-    }
     const nick = collab.full_name === 'Luciano Alf' ? 'Alf' : (collab.full_name || '').split(' ')[0] || 'amigo';
     const text = `⏳ ${nick}, lembrete: *${t.title}* vence amanhã. Tá encaminhado?`;
+    // CLAIM ATÔMICO antes de enviar: o índice único parcial
+    // notifications_alert_daily_uq (collab,type,ref,alert_day) garante que só UMA
+    // execução vence o claim por dia. Imune a tick-a-cada-minuto, lag de DB,
+    // restart e concorrência. Substitui o check-then-act que floodou o Jhonatan
+    // (12x "vence amanhã" em 30/05). NÃO reintroduzir alreadyNotifiedToday aqui.
+    const { data: claim, error: claimErr } = await supabase.from('notifications').insert({
+      collaborator_id: collab.id,
+      notification_type: 'deadline_alert',
+      title: `${t.title} vence amanhã`,
+      body: text,
+      reference_type: 'task',
+      reference_id: t.id,
+      channel: 'whatsapp',
+      status: 'sent',
+      sent_at: new Date().toISOString(),
+      alert_day: ymdToday,
+    }).select('id').single();
+    if (claimErr) {
+      // 23505 = unique_violation → já avisado hoje. Outro erro → não arrisca duplicar.
+      const reason = (claimErr.code === '23505' ? 'ja_notificado:' : `claim_err(${claimErr.code}):`) + String(t.id).slice(0, 8);
+      await logRitualEvent(collab.id, 'alerta_prazo', 'skipped', reason, ymdToday);
+      continue;
+    }
     try {
       await whatsapp.sendMessage(collab.phone, text);
-      await supabase.from('notifications').insert({
-        collaborator_id: collab.id,
-        notification_type: 'deadline_alert',
-        title: `${t.title} vence amanhã`,
-        body: text,
-        reference_type: 'task',
-        reference_id: t.id,
-        channel: 'whatsapp',
-        status: 'sent',
-        sent_at: new Date().toISOString(),
-      });
       await supabase.from('conversation_history').insert({
         collaborator_id: collab.id,
         direction: 'outbound',
@@ -3618,6 +3626,9 @@ async function checkDeadlineAlerts(ymdToday) {
       await logRitualEvent(collab.id, 'alerta_prazo', 'sent', `task:${String(t.id).slice(0,8)}`, ymdToday);
       sent++;
     } catch (err) {
+      // Envio falhou DEPOIS do claim → rollback pra re-tentar no próximo tick
+      // (sem flood: só re-tenta após falha real de envio, não em todo tick).
+      if (claim && claim.id) await supabase.from('notifications').delete().eq('id', claim.id);
       console.error(`[DeadlineAlert] send err for ${String(t.id).slice(0,8)}:`, err.message);
       await logRitualEvent(collab.id, 'alerta_prazo', 'error', `${String(t.id).slice(0,8)}:${err.message}`, ymdToday);
     }

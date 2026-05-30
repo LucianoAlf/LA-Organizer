@@ -21,7 +21,8 @@ const pendingIntents = require('./services/pending-intents');
 const financeService = require('./services/financeiro-service');
 const { mapCategory, normalizeParams } = require('./finance/categorize');
 const { crossedThreshold, buildBudgetAlert } = require('./finance/budget-alert');
-const { monthsToGoalSimple, monthsToGoalWithInterest, formatMonths } = require('./finance/projection');
+const { monthsToGoalSimple, monthsToGoalWithInterest, formatMonths, futureValue } = require('./finance/projection');
+const selic = require('./services/selic');
 
 const SKILLS_DIR = path.join(__dirname, '..', 'skills');
 
