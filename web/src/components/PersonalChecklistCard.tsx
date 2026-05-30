@@ -26,6 +26,9 @@ import {
   toggleItem, addItem, deleteItem, reorderItems,
   archiveList, deleteList, saveItemNote,
 } from '../lib/personalChecklists'
+import { useAuth } from '../contexts/AuthContext'
+import { ensurePersonalCompletion, togglePersonalCompletionItem } from '../lib/personalCompletions'
+import { PersonalChecklistHistorySheet } from './PersonalChecklistHistorySheet'
 import {
   PERSONAL_LIST_TYPE_ICON,
   type PersonalChecklist,
@@ -74,11 +77,24 @@ export function PersonalChecklistCard({ list }: Props) {
   // Sheet de edição e dialogs de confirmação
   const [editSheetOpen, setEditSheetOpen]   = useState(false)
   const [confirmAction, setConfirmAction]   = useState<'archive' | 'delete' | null>(null)
+  const [historyOpen, setHistoryOpen]       = useState(false)
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['personal-checklists'] })
 
+  const { collaborator } = useAuth()
+  const collabId = collaborator?.id ?? null
+  const isRecurrent = list.recurrence_type && list.recurrence_type !== 'once'
+
   const toggleMutation = useMutation({
-    mutationFn: ({ id, isDone }: { id: string; isDone: boolean }) => toggleItem(id, isDone),
+    mutationFn: async ({ id, isDone }: { id: string; isDone: boolean }) => {
+      if (isRecurrent) {
+        if (!collabId) throw new Error('Sem colaborador no contexto')
+        // get-or-create na hora: 1º toggle do dia cria a completion; demais reusam.
+        const completion = await ensurePersonalCompletion(list.id, collabId)
+        return togglePersonalCompletionItem(completion.id, id, isDone)
+      }
+      return toggleItem(id, isDone) // 'once': modelo estático (is_done)
+    },
     onSuccess: invalidate,
   })
   const addMutation = useMutation({
@@ -124,6 +140,9 @@ export function PersonalChecklistCard({ list }: Props) {
 
   // Menu do card — sem window.prompt/confirm
   const cardMenu: MenuItem[] = [
+    ...(isRecurrent
+      ? [{ label: 'Ver histórico', onClick: () => setHistoryOpen(true) }]
+      : []),
     {
       label: 'Editar',
       onClick: () => setEditSheetOpen(true),
@@ -225,6 +244,15 @@ export function PersonalChecklistCard({ list }: Props) {
         context={list.context}
         editList={list}
       />
+
+      {/* Histórico (só listas recorrentes) */}
+      {isRecurrent && (
+        <PersonalChecklistHistorySheet
+          open={historyOpen}
+          onClose={() => setHistoryOpen(false)}
+          list={list}
+        />
+      )}
 
       {/* Confirmação: arquivar */}
       <ConfirmDialog

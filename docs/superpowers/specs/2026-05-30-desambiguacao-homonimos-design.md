@@ -115,16 +115,23 @@ Clayton (manager Recreio) → `{unit:recreio}` · Fefê → `{farmer, unit:recre
 **Único sinal: o requester** (confiável — vem do phone). O assunto **não** é
 usado (vocabulário compartilhado puxa errado — ver Revisão acima).
 
-Regra (`disambiguate`):
+Regra (`disambiguate`) — **localização (unit) ganha de função**, porque a
+Daiana é a *dona do Recreio* (operação Farmer + ops pedagógicas locais:
+presença de professor, checklist de aluno daquela unidade), enquanto a Dai-ped
+é pedagógica *cross-unidade*:
 - 0 candidatos → `not_found`; 1 candidato → `resolved`.
-- 2+ candidatos: `hits = candidatos cujo domainOf ∩ domainOf(requester) ≠ ∅`.
-  - `hits.length === 1` → `resolved` (esse).
-  - 0 hits (requester sem lado) **ou** 2+ hits (requester pertence aos dois)
-    → `ambiguous` → pergunta.
+- 2+ candidatos:
+  1. **Unit match:** `unitHits = candidatos cujo domainOf compartilha um token
+     `unit:*` com o requester`. Se `unitHits.length === 1` → `resolved`.
+  2. **Senão, função:** `hits = candidatos cujo domainOf ∩ domainOf(requester)
+     ≠ ∅`. Se `hits.length === 1` → `resolved`.
+  3. Senão (sem lado, ou empate irredutível) → `ambiguous` → pergunta.
 
-Casos: Clayton/Fefê (`unit:recreio`) batem só Daiana → Daiana. Professor
-(`pedagogico`) bate só Dai-ped → Dai-ped. Director (`{director}`, sem
-interseção) → pergunta.
+Casos: Clayton/Fefê (`unit:recreio`) → Daiana. **Professor do Recreio**
+(`pedagogico` + `unit:recreio`) → Daiana (unit ganha). Professor de outra
+unidade (`pedagogico` + `unit:tijuca`) → Dai-ped. Director (`{director}`, sem
+interseção) → pergunta. Quem precisa da pedagógica cross-unidade estando no
+Recreio usa o qualificador "Dai Ped".
 
 ### 4. Comportamento por callsite (`src/engine.js`)
 

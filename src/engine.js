@@ -4668,6 +4668,7 @@ async function applyHabitActions(collaborator, actions) {
   const last4 = String(collaborator.phone || '').slice(-4);
   // We collect created/logged habits so caller can append a friendly footer if needed.
   const created = [], logged = [];
+  const progressFooters = []; // strings de barra (quantitativo) anexadas à resposta
   for (const a of actions) {
     try {
       if (a.action === 'create') {
@@ -4700,6 +4701,9 @@ async function applyHabitActions(collaborator, actions) {
           is_active: true,
           current_streak: 0,
           best_streak: 0,
+          habit_type: a.habit_type === 'quantitative' ? 'quantitative' : 'binary',
+          target_value: a.habit_type === 'quantitative' ? a.target_value : null,
+          unit: a.habit_type === 'quantitative' ? a.unit.trim().slice(0, 20) : null,
         };
         const { data, error } = await supabase
           .from('habits').insert(insertRow).select('id, name, icon').single();
@@ -4750,24 +4754,35 @@ async function applyHabitActions(collaborator, actions) {
           failCount++;
           continue;
         }
+        const isQuant = h.habit_type === 'quantitative' && Number(h.target_value) > 0;
+        const hasAmount = typeof a.amount === 'number' && !Number.isNaN(a.amount);
+        // Valor acumulado do dia: add (default) soma ao existente; set substitui.
+        let newValue = 0;
+        if (isQuant) {
+          const prev = await readHabitTodayValue(h.id, today);
+          newValue = a.mode === 'set' ? a.amount : prev + (hasAmount ? a.amount : 0);
+          if (newValue < 0) newValue = 0;
+        }
+        // is_completed: quantitativo fecha quando value>=target; binário usa o flag.
+        const isCompleted = isQuant ? (newValue >= Number(h.target_value)) : completed;
         // Upsert habit_logs (habit_id, log_date) — manual SELECT/UPDATE/INSERT.
         const { data: existing } = await supabase
           .from('habit_logs').select('id')
           .eq('habit_id', h.id).eq('log_date', today).maybeSingle();
+        const row = {
+          is_completed: isCompleted,
+          completed_at: isCompleted ? new Date().toISOString() : null,
+          notes: a.notes || null,
+        };
+        if (isQuant) row.value = newValue;
         if (existing) {
-          await supabase.from('habit_logs').update({
-            is_completed: completed,
-            completed_at: completed ? new Date().toISOString() : null,
-            notes: a.notes || null,
-          }).eq('id', existing.id);
+          await supabase.from('habit_logs').update(row).eq('id', existing.id);
         } else {
           await supabase.from('habit_logs').insert({
             habit_id: h.id,
             collaborator_id: collaborator.id,
             log_date: today,
-            is_completed: completed,
-            completed_at: completed ? new Date().toISOString() : null,
-            notes: a.notes || null,
+            ...row,
           });
         }
         // Recompute streak.
@@ -4777,8 +4792,26 @@ async function applyHabitActions(collaborator, actions) {
           current_streak: newStreak,
           best_streak: newBest,
         }).eq('id', h.id);
-        console.log(`[Habit] log "${h.name}" completed=${completed} streak=${newStreak} (best=${newBest})`);
-        logged.push({ habit: h, streak: newStreak, completed });
+        console.log(`[Habit] log "${h.name}" qty=${isQuant ? newValue : 'n/a'} completed=${isCompleted} streak=${newStreak} (best=${newBest})`);
+        if (isQuant) progressFooters.push(buildHabitProgressFooter(h, newValue));
+        logged.push({ habit: h, streak: newStreak, completed: isCompleted });
+        okCount++;
+      } else if (a.action === 'query_progress') {
+        let h = null;
+        if (typeof a.habit_id === 'string' && SHORT_ID_RE.test(a.habit_id)) {
+          h = await resolveHabitByShortId(collaborator.id, a.habit_id);
+        }
+        if (!h && typeof a.habit_name === 'string' && a.habit_name.trim()) {
+          h = await resolveHabitByName(collaborator.id, a.habit_name);
+        }
+        if (!h) {
+          console.warn(`[Habit] query_progress REJECTED — habit ${a.habit_id || a.habit_name} not owned by ${last4}`);
+          failCount++;
+          continue;
+        }
+        const value = await readHabitTodayValue(h.id, today);
+        progressFooters.push(buildHabitProgressFooter(h, value));
+        console.log(`[Habit] query_progress "${h.name}" value=${value}/${h.target_value}`);
         okCount++;
       }
     } catch (err) {
