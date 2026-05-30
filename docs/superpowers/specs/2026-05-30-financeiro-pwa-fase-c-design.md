@@ -98,8 +98,10 @@ Ao desmontar: `supabase.removeChannel(channel)`. Cada tela passa só as tabelas 
 
 1. **RLS owner-only é a blindagem do PWA.** O cliente Supabase do web usa **JWT autenticado**, então RLS aplica. Teste cross-user obrigatório: User A logado **nunca** vê dado de B (queries retornam vazio).
 2. **Não usar service_role no PWA.** Nem chave anônima sem JWT pra ler `pf_*`.
-3. **Mutations seguem RLS:** insert/update/delete só passam se `collaborator_id = current_collab_id()`. Nada de passar `collaborator_id` explicitamente — RLS preenche/valida via policy `WITH CHECK`.
-4. **Realtime respeita RLS:** Supabase Realtime, com filter por `collaborator_id`, ainda passa pela policy. Garantir que está habilitado nas tabelas `pf_*` (Replication → Source on).
+3. **Mutations passam `collaborator_id` EXPLÍCITO (resolvido do auth context), RLS valida via `WITH CHECK`.** Espelho do TOM, lado PWA: o service resolve o id do colaborador autenticado (`useAuth()` ou equivalente) e envia explícito no insert/update — o `WITH CHECK` da policy valida que bate com `current_collab_id()`. RLS NÃO preenche campo nenhum, só valida. Padrão real do projeto confirmado em `useEventCategories.ts:75` (`collaborator_id: collab.id` no insert). Sem isso, todo `INSERT` viola `NOT NULL` ou é rejeitado pelo `WITH CHECK`.
+4. **Realtime respeita RLS:** Supabase Realtime, com filter por `collaborator_id`, ainda passa pela policy.
+
+   ⚠️ **Pré-requisito crítico (must-verify-early):** habilitar a Replication das 5 tabelas `pf_*` na publication `supabase_realtime` (`ALTER PUBLICATION supabase_realtime ADD TABLE pf_transactions, pf_bills, pf_goals, pf_accounts, pf_budgets;`). Se isso não estiver feito, `postgres_changes` não dispara nada e a bilateralidade (o coração de "vai entrando junto com os gráficos") falha em silêncio — sem erro, sem evento, só refresh manual. **Isso vira a Task 1 do plano** com smoke real (TOM insere via SQL → tela ativa atualiza em ~1s) ANTES de qualquer tela.
 5. **Trigger de checagem de dono (Fase A §6.1)** continua valendo — protege contra `account_id` forjado mesmo se cliente PWA fosse comprometido.
 
 ## 8. Plano de testes (smoke)
