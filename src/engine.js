@@ -5990,6 +5990,13 @@ async function handleFinanceAction(collab, action, params) {
       const a = await financeService.createAccount(cid, { name: params.name, type: params.type, icon: params.icon, goal_monthly: params.goal_monthly });
       return `✅ Carteira criada: ${a.icon || '🏦'} ${a.name}.`;
     }
+    case 'query_accounts': {
+      const accs = await financeService.listAccounts(cid);
+      if (!accs.length) return 'Você ainda não tem carteiras. Quer criar uma? Ex: "cria carteira Nubank".';
+      const linhas = accs.map((a) => `${a.icon || '🏦'} ${a.name}: ${financeFmt.money(Number(a.balance))}`).join('\n');
+      const total = accs.reduce((s, a) => s + Number(a.balance), 0);
+      return `👛 Suas carteiras:\n${linhas}\n\nTotal: ${financeFmt.money(total)}`;
+    }
     case 'create_card': {
       const c = await financeService.createCard(cid, {
         name: params.name, brand: params.brand, color: params.color,
