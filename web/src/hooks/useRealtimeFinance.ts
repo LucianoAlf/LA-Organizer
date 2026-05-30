@@ -5,7 +5,8 @@ import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 
-export type PfTable = 'pf_transactions' | 'pf_bills' | 'pf_goals' | 'pf_accounts' | 'pf_budgets';
+export type PfTable = 'pf_transactions' | 'pf_bills' | 'pf_goals' | 'pf_accounts' | 'pf_budgets'
+  | 'pf_cards' | 'pf_card_payments' | 'pf_transfers';
 
 export function useRealtimeFinance(tables: PfTable[], collaboratorId: string | undefined) {
   const qc = useQueryClient();

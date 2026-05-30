@@ -5,6 +5,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../contexts/AuthContext';
 import * as fin from '../lib/financeiro';
+import * as cartoes from '../lib/cartoes';
 import type { PfBill, PfCategory, PfGoal, PfTxType } from '../lib/financeiro';
 
 const KEY = ['financeiro'] as const;
@@ -97,3 +98,35 @@ export const useAddToGoal         = () => useFinMutation((cid, args: { goal: PfG
 export const useSetBudget         = () => useFinMutation(fin.setBudget);
 export const useCreateAccount     = () => useFinMutation(fin.createAccount);
 export const useDeactivateAccount = () => useFinMutation((cid, id: string) => fin.deactivateAccount(cid, id));
+
+// ---- Cartões de crédito ----
+export function useCards() {
+  const cid = useFinanceiroAuth();
+  return useQuery({
+    queryKey: [...KEY, 'cards', cid],
+    queryFn: () => cartoes.listCards(cid!),
+    enabled: !!cid,
+  });
+}
+export function useCardUsage(card?: cartoes.PfCard) {
+  const cid = useFinanceiroAuth();
+  return useQuery({
+    queryKey: [...KEY, 'cardUsage', cid, card?.id],
+    queryFn: () => cartoes.cardUsage(cid!, card!),
+    enabled: !!cid && !!card,
+  });
+}
+export function useCardInvoice(cardId?: string, competencia?: string) {
+  const cid = useFinanceiroAuth();
+  return useQuery({
+    queryKey: [...KEY, 'cardInvoice', cid, cardId, competencia],
+    queryFn: () => cartoes.cardInvoice(cid!, cardId!, competencia!),
+    enabled: !!cid && !!cardId && !!competencia,
+  });
+}
+export const useCreateCard     = () => useFinMutation(cartoes.createCard);
+export const useDeactivateCard = () => useFinMutation((cid, id: string) => cartoes.deactivateCard(cid, id));
+export const usePayInvoice     = () => useFinMutation(
+  (cid, args: { card: cartoes.PfCard; competencia: string; amount: number; paid_from_account: string | null }) =>
+    cartoes.payCardInvoice(cid, args),
+);
