@@ -22,8 +22,8 @@
 ### Gatilho (heurística)
 Pré-passada SOMENTE quando TODAS forem verdade:
 - `_metrics.message_kind === 'audio'` (texto começa com `[áudio transcrito]`)
-- `text.length >= TOM_DECOMPOSE_MIN_CHARS` (default **600 chars** — ~45-60s de áudio típico)
-- Heurística de múltiplas intenções: `count(/\b(e|também|outra coisa|ah|por favor|preciso|quero|marca|cria|agenda|cobra|manda|avisa|lembra)\b/gi) >= 4` OU `text.split(/[.!?]/).length >= 5`
+- `text.length >= TOM_DECOMPOSE_MIN_CHARS` (default **400 chars** — ~30-45s de áudio típico)
+- Heurística de múltiplas intenções: `count(/\b(e|também|outra coisa|ah|por favor|preciso|quero|marca|cria|agenda|cobra|manda|avisa|lembra)\b/gi) >= 3` OU `text.split(/[.!?]/).length >= 4`
 
 Áudio curto (1-3 itens) → fluxo atual SEM pré-passada (zero regressão).
 
@@ -160,10 +160,10 @@ Expected: FAIL com `Cannot find module './audio-decompose'`
 // uma reescrita estruturada do texto que vai pro pipeline normal.
 let _claude = require('../ai/claude');
 
-const MIN_CHARS = Number(process.env.TOM_DECOMPOSE_MIN_CHARS) || 600;
+const MIN_CHARS = Number(process.env.TOM_DECOMPOSE_MIN_CHARS) || 400;
 const INTENT_REGEX = /\b(e|tamb[ée]m|outra coisa|ah|por favor|preciso|quero|marca|cria|agenda|cobra|manda|avisa|lembra)\b/gi;
-const MIN_INTENT_HITS = 4;
-const MIN_SENTENCES = 5;
+const MIN_INTENT_HITS = 3;
+const MIN_SENTENCES = 4;
 const AUDIO_PREFIX_RE = /^\[áudio transcrito\]/i;
 
 const EXTRACTOR_SYSTEM = `Você é um extrator. Sua ÚNICA tarefa é listar as demandas distintas do colaborador.

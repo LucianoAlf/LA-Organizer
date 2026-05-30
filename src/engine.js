@@ -24,6 +24,7 @@ const { mapCategory, normalizeParams } = require('./finance/categorize');
 const { crossedThreshold, buildBudgetAlert } = require('./finance/budget-alert');
 const { monthsToGoalSimple, monthsToGoalWithInterest, formatMonths, futureValue } = require('./finance/projection');
 const selic = require('./services/selic');
+const audioDecompose = require('./services/audio-decompose');
 
 const SKILLS_DIR = path.join(__dirname, '..', 'skills');
 
@@ -5770,6 +5771,25 @@ async function processMessage(phone, text, raw = {}) {
   const _metrics = {
     message_kind: /^\[áudio transcrito\]/i.test(String(text || '')) ? 'audio' : 'text',
   };
+
+  // Sprint 32 — Decompositor de áudio longo. Quando o transcript é grande e tem
+  // múltiplas intenções, faz uma pré-passada LLM enxuta (sem ~100KB de skills)
+  // só pra extrair a lista. Reescreve `text` com a lista enumerada anexada pra
+  // que o LLM principal não precise extrair sozinho competindo contra o timeout.
+  // Causa-raiz: caso Peterson — áudio com 6+ demandas virava ACTIONABLE_NO_MARKER
+  // porque a chamada única não dava conta de transcrever+decidir+emitir tudo.
+  const _decompose = await audioDecompose.decomposeIfLarge(text);
+  _metrics.decompose_triggered = _decompose.decomposed;
+  _metrics.decompose_items_count = _decompose.decomposed ? _decompose.items.length : null;
+  _metrics.decompose_latency_ms = _decompose.latencyMs || null;
+  _metrics.decompose_skipped_reason = _decompose.reason || null;
+  if (_decompose.decomposed) {
+    console.log(`[Engine] DECOMPOSE_OK items=${_decompose.items.length} latency=${_decompose.latencyMs}ms phone=${_phoneTail}`);
+    text = _decompose.rewrittenText;
+  } else if (_decompose.reason === 'extractor_failed') {
+    console.warn(`[Engine] DECOMPOSE_FAIL — seguindo com texto original phone=${_phoneTail}`);
+  }
+
   const collab = await collaboratorService.findByPhone(phone);
   if (!collab) {
     await whatsapp.sendMessage(phone, 'Nao te encontrei no sistema. Fala com seu coordenador pra te cadastrar.');
@@ -6214,6 +6234,15 @@ async function processMessage(phone, text, raw = {}) {
     if (relayHint) systemPrompt += '\n\n' + relayHint;
   } catch (err) {
     console.warn('[RELAY_LIMIT_HINT] failed:', err.message);
+  }
+
+  if (_decompose.decomposed) {
+    systemPrompt +=
+      `\n\n>>> AVISO INTERNO: o colaborador mandou um áudio longo. ` +
+      `Um decompositor extraiu ${_decompose.items.length} demandas distintas ` +
+      `(estão enumeradas no final da mensagem dele). ` +
+      `Emita o marker correspondente pra CADA demanda. Não perca nenhuma. ` +
+      `Se ficou em dúvida em alguma, salve as que captou e pergunte só sobre a que ficou em dúvida (padrão P5).`;
   }
 
   const onboardingActive = collab.onboarding_completed === false;
