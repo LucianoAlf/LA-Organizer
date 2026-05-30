@@ -11,7 +11,7 @@ const TONE: Record<Chip['tone'], string> = {
   danger: 'text-danger border-danger/40',
   warn: 'text-amber-700 border-amber-600/50 dark:text-amber-400 dark:border-amber-400/40',
   muted: 'text-fg-muted border-border',
-  tom: 'text-tom border-tom/40',
+  tom: 'text-tom-deep border-tom-deep/50 dark:text-tom dark:border-tom/40',
 };
 
 export function FinanceSummaryChips() {
