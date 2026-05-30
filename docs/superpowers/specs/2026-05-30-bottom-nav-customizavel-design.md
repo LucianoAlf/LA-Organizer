@@ -50,10 +50,21 @@ ALTER TABLE user_preferences
 ```
 `DEFAULT` backfilla linhas existentes. Sem regen de RLS — já é owner-only via `collaborator_id`.
 
-**Lib `web/src/lib/navItems.ts`:**
+**Regra (inegociável) — transcrição literal do SidebarV2.** O plano vai **copiar verbatim** do array `sections` em `SidebarV2.tsx:60-110` (linha por linha): `to` (vira `slug`), `label`, `Icon`, `matchPaths` (quando houver) e a condição de gating (vira `when()`). Razão: (a) `slug` precisa bater com a rota real do router pra não 404; (b) `when()` precisa bater com o gating real pra não oferecer módulo que a pessoa não abre nem sumir módulo que ela tem. A lista abaixo é **ilustrativa** — o autoritativo é o que está na SidebarV2 no momento da execução. Inclui também a query `isMentor` com o **mesmo `queryKey: ['is-mentor', collaborator?.id]`** pra compartilhar cache.
+
+**Imports reais (a copiar do SidebarV2):**
 ```ts
-import { CalendarDays, Rocket, ClipboardCheck, Sparkles, Wallet, Wallet, Users, … } from 'lucide-react';
+import {
+  CalendarDays, Rocket, ClipboardCheck, Sparkles, Wallet,
+  Users, BarChart3, Target, Megaphone, Eye, UserCog, ShieldCheck,
+  GraduationCap, Music, Package, ShoppingBag,
+  CalendarRange, History, Settings,
+} from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { useAccess } from '../hooks/useAccess';
+import { hasCoordLevel } from './permissions';
+// (ATENÇÃO: `hasCoordLevel` é util do projeto — `lib/permissions.ts:22` —
+//  NÃO é ícone lucide. `useAccess` é hook do PWA — `hooks/useAccess.ts:6`.)
 
 export interface NavCatalogItem {
   slug: string;              // path da rota — chave da persistência
