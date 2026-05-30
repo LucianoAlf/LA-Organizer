@@ -3650,7 +3650,7 @@ async function checkDeadlineAlerts(ymdToday) {
   if (!ids.length) return;
   const { data: collabs } = await supabase
     .from('collaborators')
-    .select('id, phone, full_name, is_active, user_preferences(notify_deadline_alerts, quiet_weekends, quiet_days, quiet_reason)')
+    .select('id, phone, full_name, is_active, user_preferences(*)')
     .in('id', ids).eq('is_active', true);
   const byId = new Map((collabs || []).map(c => [c.id, c]));
 
@@ -3834,7 +3834,7 @@ async function checkOverdueAlerts(ymdToday) {
   if (!ids.length) return;
   const { data: collabs } = await supabase
     .from('collaborators')
-    .select('id, phone, full_name, is_active, user_preferences(notify_overdue_alerts, quiet_weekends, quiet_days, quiet_reason)')
+    .select('id, phone, full_name, is_active, user_preferences(*)')
     .in('id', ids).eq('is_active', true);
   const byId = new Map((collabs || []).map(c => [c.id, c]));
 
@@ -4598,7 +4598,7 @@ function buildAdherenceText(collab, signals, ymdToday) {
 async function checkAdherenceNudge(ymdToday, filterPhone, { dry = false } = {}) {
   let q = supabase
     .from('collaborators')
-    .select('id, full_name, phone, is_active, onboarding_completed, user_preferences(notify_overdue_alerts, quiet_weekends, quiet_days, quiet_reason)')
+    .select('id, full_name, phone, is_active, onboarding_completed, user_preferences(*)')
     .eq('is_active', true)
     .eq('onboarding_completed', true);
   if (filterPhone) q = q.eq('phone', filterPhone);
