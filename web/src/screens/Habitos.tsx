@@ -265,6 +265,9 @@ export function Habitos() {
                     adherence={h.adherence30}
                     streak={h.current_streak}
                     color={h.color}
+                    progress={h.habit_type === 'quantitative' && Number(h.target_value) > 0
+                      ? Math.min(1, h.today_value / Number(h.target_value))
+                      : undefined}
                   />
                   <div className="min-w-0 flex-1">
                     <div className={['text-body-md flex items-center gap-2', h.done_today ? 'line-through text-fg-muted' : ''].join(' ')}>

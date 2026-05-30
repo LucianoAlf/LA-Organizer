@@ -16,6 +16,7 @@ import { EmptyState } from '../components/EmptyState';
 import { StreakRing } from '../components/StreakRing';
 import { EditHabitSheet } from '../components/EditHabitSheet';
 import { RowMenu } from '../components/RowMenu';
+import { HabitQuantChart, type HabitQuantPoint } from '../components/HabitQuantChart';
 
 type Habit = {
   id: string;
@@ -136,6 +137,15 @@ export function HabitoDetalhe() {
     const done = window.filter(d => doneSet.has(d)).length;
     return done / 30;
   }, [logs]);
+
+  const quantChartData = useMemo<HabitQuantPoint[]>(() => {
+    const tgt = Number(habit?.target_value ?? 0);
+    const valueByDay = new Map(logs.map(l => [l.log_date, Number(l.value ?? 0)]));
+    return lastNDays(14).slice().reverse().map(ymd => {
+      const v = valueByDay.get(ymd) ?? 0;
+      return { label: brShort(ymd), value: v, hit: tgt > 0 && v >= tgt };
+    });
+  }, [logs, habit?.target_value]);
 
   const today = todayBRT();
   const todayLog = logs.find(l => l.log_date === today);
@@ -280,7 +290,8 @@ export function HabitoDetalhe() {
 
       {/* Stats: ring + numbers + toggle hoje */}
       <section className="surface p-md flex items-center gap-md">
-        <StreakRing adherence={adherence30} streak={habit.current_streak} size={88} stroke={7} color={color} />
+        <StreakRing adherence={adherence30} streak={habit.current_streak} size={88} stroke={7} color={color}
+          progress={isQuant ? Math.min(1, todayValue / target) : undefined} />
         <div className="flex-1 min-w-0 space-y-1">
           <div className="text-body-sm text-fg-muted">Aderência 30 dias</div>
           <div className="text-card-title tabular-nums">{Math.round(adherence30 * 100)}%</div>
@@ -349,6 +360,17 @@ export function HabitoDetalhe() {
               + outro
             </button>
           </div>
+        </section>
+      )}
+
+      {/* Histórico quantitativo — valor por dia vs meta (últimos 14 dias). */}
+      {isQuant && (
+        <section className="surface p-md space-y-2">
+          <div className="flex items-baseline justify-between">
+            <div className="text-label uppercase tracking-wide text-fg-muted">Últimos 14 dias</div>
+            <div className="text-body-sm text-fg-muted">meta {target.toLocaleString('pt-BR')} {habit.unit}</div>
+          </div>
+          <HabitQuantChart data={quantChartData} target={target} unit={habit.unit || ''} color={color} />
         </section>
       )}
 

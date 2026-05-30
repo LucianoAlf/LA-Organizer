@@ -12,6 +12,9 @@ interface Props {
   stroke?: number;
   /** Sprint 22.54 — cor do hábito sobrescreve cor por threshold. */
   color?: string | null;
+  /** Quantitativo: progresso de HOJE 0..1 (value/meta). Quando definido, preenche o anel
+   *  com o dia em vez da aderência de 30d. */
+  progress?: number | null;
 }
 
 function toneFor(adherence: number): { ring: string; text: string } {
@@ -21,8 +24,10 @@ function toneFor(adherence: number): { ring: string; text: string } {
   return                       { ring: 'stroke-fg-muted', text: 'text-fg-muted' };
 }
 
-export function StreakRing({ adherence, streak, size = 56, stroke = 5, color }: Props) {
-  const clamped = Math.max(0, Math.min(1, adherence));
+export function StreakRing({ adherence, streak, size = 56, stroke = 5, color, progress }: Props) {
+  // Quantitativo: preenche pelo progresso de hoje; senão pela aderência de 30d.
+  const fillValue = progress != null ? progress : adherence;
+  const clamped = Math.max(0, Math.min(1, fillValue));
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
   const dash = c * clamped;
@@ -32,7 +37,9 @@ export function StreakRing({ adherence, streak, size = 56, stroke = 5, color }: 
     <div
       className="relative shrink-0"
       style={{ width: size, height: size }}
-      aria-label={`aderência ${Math.round(clamped * 100)}% nos últimos 30 dias`}
+      aria-label={progress != null
+        ? `progresso de hoje ${Math.round(clamped * 100)}%`
+        : `aderência ${Math.round(clamped * 100)}% nos últimos 30 dias`}
     >
       <svg width={size} height={size} className="-rotate-90">
         {/* trilha */}
