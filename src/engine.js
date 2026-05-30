@@ -6353,7 +6353,11 @@ async function processMessage(phone, text, raw = {}) {
       // foi rejeitado, o LLM "prometeu" sem persistir. Sobrescreve com aviso honesto.
       // Princípio: TOM nunca confirma sucesso de ação persistente se engine rejeitou o marker.
       let base = parsedTask.cleanText || reply;
-      const optimisticPattern = /\b(registrad|agendad|reagendad|atualizad|salvei|salvo|guardad|marqu(ei|amos)|criad|reagendando|agendando|registrando|feito[!.]?\s|pronto[!.]?\s|bora[!.]?$)/i;
+      // Sprint 31.7 (bug Dai 30/05) — inclui vocabulário de CONCLUSÃO de cobrança
+      // ("✅ Fechado", "Concluí", "Resolvido", "Finalizado"). Antes o regex só
+      // pegava criação/agendamento, então "Fechado" passava batido e a blindagem
+      // não disparava quando o complete era rejeitado (schema_invalid).
+      const optimisticPattern = /\b(registrad|agendad|reagendad|atualizad|salvei|salvo|guardad|marqu(ei|amos)|criad|conclu[ií]|fechad|fechei|resolvid|finalizad|encerrad|reagendando|agendando|registrando|feito[!.*\]]?|pronto[!.]?\s|bora[!.]?$)/i;
       if (optimisticPattern.test(base)) {
         base += '\n\n_⚠️ Tive um problema técnico ao gravar isso. Não confirmei nada no banco — me passa de novo o que você quer registrar?_';
       }
@@ -6728,7 +6732,7 @@ async function processMessage(phone, text, raw = {}) {
       await logMarker(collab.id, 'EVENT_UPDATE', 'rejected', 'schema_invalid', reply);
       // Sprint 21.5.1 — anti-mentira em EVENT_UPDATE também.
       let baseEU = parsedEU.cleanText || reply;
-      const optimisticEUPattern = /\b(reagendad|atualizad|movid|cancelad|conclu[ií]d|registrad|salvei|feito[!.]?\s|pronto[!.]?\s)/i;
+      const optimisticEUPattern = /\b(reagendad|atualizad|movid|cancelad|conclu[ií]d|fechad|fechei|resolvid|finalizad|encerrad|registrad|salvei|feito[!.*\]]?|pronto[!.]?\s)/i;
       if (optimisticEUPattern.test(baseEU)) {
         baseEU += '\n\n_⚠️ Tive um problema técnico ao alterar o compromisso. Nada mudou no banco — me confirma o que você quer?_';
       }
