@@ -8070,19 +8070,20 @@ Regras por tipo de promessa:
 
 2) **Reagendamento** ("marquei pra amanhã", "reagendei pra segunda", "coloquei pra X") → action="reschedule" com new_due_date (e new_remind_at se mencionou hora)
 
-3) **Conclusão** ("tá feito", "concluí", "fechei") → action="complete"
+3) **Criação genérica** ("criei", "abri", "anotei") → action="create" com title
 
-4) **Criação genérica** ("criei", "abri", "anotei") → action="create" com title
+4) **DEMANDA OPERACIONAL** (compras, manutenção, reparo, montagem — vistas em "registrar", "adicionando ao pacote", "crio as duas/três", "juntando", "tá na fila") → action="create" + category="operational" + action_type="task" + priority="medium" + título descritivo extraído da fala do user/TOM (ex: "Comprar 2 lâmpadas 8w — Sala Bateria Kids Recreio"). Se TOM listou N itens, emitir ARRAY com N actions, uma por item.
 
-5) **DEMANDA OPERACIONAL** (compras, manutenção, reparo, montagem — vistas em "registrar", "adicionando ao pacote", "crio as duas/três", "juntando", "tá na fila") → action="create" + category="operational" + action_type="task" + priority="medium" + título descritivo extraído da fala do user/TOM (ex: "Comprar 2 lâmpadas 8w — Sala Bateria Kids Recreio"). Se TOM listou N itens, emitir ARRAY com N actions, uma por item.
-
-6) **Cancelamento** → action="cancel"
+AÇÕES PROIBIDAS NESTE CONTEXTO — retorne NO_MARKER se a promessa for deste tipo:
+- action="complete" — conclusão de tarefa NUNCA é feita por auto-retry. Requer confirmação explícita do usuário no fluxo principal.
+- action="cancel" — cancelamento também requer confirmação explícita.
+- Qualquer action que desfaça ou finalize uma tarefa existente.
 
 IMPORTANTE:
 - Use title (não id) pra referenciar a task — o engine resolve por título
 - Múltiplas demandas → ARRAY com várias actions no MESMO marker
 - Se ambíguo ou faltar dado crítico em TUDO, retorne literalmente: NO_MARKER
-- Se conseguir extrair PELO MENOS UMA ação clara, emita só ela (não retorne NO_MARKER por causa de itens duvidosos)
+- Se conseguir extrair PELO MENOS UMA ação clara (create/reschedule), emita só ela (não retorne NO_MARKER por causa de itens duvidosos)
 
 Formato de saída — exemplo de demanda operacional múltipla:
 <<TASK_UPDATE>>
@@ -8105,11 +8106,26 @@ Output AGORA, apenas o marker:`;
               const parsedRetry = parseTaskUpdateMarker(retryText);
               if (parsedRetry && Array.isArray(parsedRetry.actions) && parsedRetry.actions.length > 0) {
                 try {
+                  // Bug 30/05 (Yuri/Agenda): auto-retry NÃO pode emitir complete/cancel.
+                  // Filtra antes do apply como defesa em profundidade, mesmo que o mini LLM
+                  // ignore a instrução no prompt (camada dupla de proteção).
+                  const safeActions = parsedRetry.actions.filter(a => {
+                    if (a && (a.action === 'complete' || a.action === 'cancel')) {
+                      console.warn(`[Engine] AUTO_RETRY_BLOCKED_ACTION — action=${a.action} title="${a.title || a.id}" (complete/cancel proibido em auto-retry)`);
+                      return false;
+                    }
+                    return true;
+                  });
+                  if (safeActions.length === 0) {
+                    console.warn('[Engine] AUTO_RETRY_ALL_BLOCKED — todas as actions eram complete/cancel, ignorando');
+                    await logMarker(collab.id, 'TASK_UPDATE_AUTO_RETRY', 'rejected',
+                      'all_blocked:complete_cancel_forbidden', retryText.slice(0, 500));
+                  } else {
                   // Sprint 31.2 — telemetria honesta: olha okCount/failCount em vez de
                   // assumir sucesso. Bug observado 28/05/2026 (Yuri): AUTO_RETRY com 4
                   // títulos alucinados logava "executed actions:4" mesmo quando todas
                   // falharam — escondia o problema do health-check.
-                  const retryResult = await applyTaskActions(collab, parsedRetry.actions) || { okCount: 0, failCount: parsedRetry.actions.length };
+                  const retryResult = await applyTaskActions(collab, safeActions) || { okCount: 0, failCount: safeActions.length };
                   const ok = retryResult.okCount || 0;
                   const fail = retryResult.failCount || 0;
                   if (ok > 0) {
@@ -8122,6 +8138,7 @@ Output AGORA, apenas o marker:`;
                     console.warn(`[Engine] AUTO_RETRY_ALL_FAILED — fail=${fail}`);
                     await logMarker(collab.id, 'TASK_UPDATE_AUTO_RETRY', 'rejected',
                       `all_failed:${fail}`, retryText.slice(0, 500));
+                  }
                   }
                 } catch (applyErr) {
                   console.warn(`[Engine] AUTO_RETRY_APPLY_FAILED — ${applyErr.message}`);
