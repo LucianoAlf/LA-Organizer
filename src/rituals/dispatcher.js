@@ -339,7 +339,7 @@ async function checkFinanceBillReminders(now) {
   const { buildBillReminder } = require('../finance/ritual-messages');
   const ymd = now.ymd || nowSaoPaulo().ymd;
   const dom = Number(ymd.slice(8, 10));
-  for (const c of await financeService.collaboratorsForFinanceRitual()) {
+  for (const c of await financeService.collaboratorsWithActiveBills()) {
     if (await alreadySent(c.id, 'lembrete_conta', ymd)) continue;
     const bills = await financeService.billsDueWithin(c.id, 2);
     if (!bills.length) continue;

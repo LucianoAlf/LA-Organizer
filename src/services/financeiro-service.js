@@ -195,15 +195,28 @@ async function collaboratorsWithActivity() {
   return [...new Set((data || []).map((r) => r.collaborator_id))];
 }
 
-// Idem, mas com os dados de envio (phone + nome) dos colaboradores ativos.
-async function collaboratorsForFinanceRitual() {
-  const ids = await collaboratorsWithActivity();
+// Helper: enriquece uma lista de ids com phone+nome dos colaboradores ativos.
+async function _enrichCollabs(ids) {
   if (!ids.length) return [];
   const { data, error } = await supabase.from('collaborators')
     .select('id, full_name, phone')
     .in('id', ids).eq('is_active', true);
   if (error) throw error;
   return data || [];
+}
+
+// Colaboradores com transacao (alvo de financeiro_mensal e relatorio) — com phone+nome.
+async function collaboratorsForFinanceRitual() {
+  return _enrichCollabs(await collaboratorsWithActivity());
+}
+
+// Colaboradores com CONTA ativa (alvo do lembrete_conta, PRD §6.2) — com phone+nome.
+// NAO usa transacao: quem so tem conta cadastrada tambem recebe lembrete.
+async function collaboratorsWithActiveBills() {
+  const { data, error } = await supabase.from('pf_bills').select('collaborator_id').eq('is_active', true);
+  if (error) throw error;
+  const ids = [...new Set((data || []).map((r) => r.collaborator_id))];
+  return _enrichCollabs(ids);
 }
 
 module.exports = {
@@ -214,4 +227,5 @@ module.exports = {
   createBill, findBills, payBill,
   createGoal, findGoal, addToGoal, listGoals,
   billsDueWithin, monthlyReport, collaboratorsWithActivity, collaboratorsForFinanceRitual,
+  collaboratorsWithActiveBills,
 };
