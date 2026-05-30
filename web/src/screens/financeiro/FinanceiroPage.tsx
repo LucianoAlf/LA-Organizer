@@ -190,7 +190,7 @@ export function FinanceiroPage() {
             <p className="text-body-sm text-fg-muted">Sem despesas neste mês ainda.</p>
           ) : (
             <Suspense fallback={<div className="text-body-sm text-fg-muted">Carregando gráfico…</div>}>
-              <FinanceCharts.PieByCategory data={pieData} />
+              <PieByCategory data={pieData} />
             </Suspense>
           )}
         </div>
@@ -200,7 +200,7 @@ export function FinanceiroPage() {
             <p className="text-body-sm text-fg-muted">Carregando histórico…</p>
           ) : (
             <Suspense fallback={<div className="text-body-sm text-fg-muted">Carregando gráfico…</div>}>
-              <FinanceCharts.MonthlyBalance data={monthlySeries} />
+              <MonthlyBalance data={monthlySeries} />
             </Suspense>
           )}
         </div>
