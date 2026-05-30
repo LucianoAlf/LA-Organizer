@@ -65,26 +65,51 @@ function ChartTooltip({ active, payload }: { active?: boolean; payload?: { name?
 }
 
 export function PieByCategory({ data }: { data: { category: PfCategory; value: number }[] }) {
+  const total = data.reduce((s, d) => s + d.value, 0);
   return (
-    <ResponsiveContainer width="100%" height={220}>
-      <PieChart>
-        <Pie
-          data={data}
-          dataKey="value"
-          nameKey="category"
-          innerRadius={45}
-          outerRadius={85}
-          paddingAngle={2}
-          stroke="var(--color-bg-surface, transparent)"
-          strokeWidth={1.5}
-        >
-          {data.map((d, i) => (
-            <Cell key={i} fill={CATEGORY_COLOR[d.category]} />
-          ))}
-        </Pie>
-        <Tooltip content={<ChartTooltip />} />
-      </PieChart>
-    </ResponsiveContainer>
+    <div className="flex items-center gap-3 md:gap-4">
+      {/* Pizza à esquerda — tamanho fixo */}
+      <div className="w-[128px] h-[128px] shrink-0">
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie
+              data={data}
+              dataKey="value"
+              nameKey="category"
+              innerRadius={38}
+              outerRadius={62}
+              paddingAngle={2}
+              stroke="var(--color-bg-surface, transparent)"
+              strokeWidth={1.5}
+            >
+              {data.map((d, i) => (
+                <Cell key={i} fill={CATEGORY_COLOR[d.category]} />
+              ))}
+            </Pie>
+            <Tooltip content={<ChartTooltip />} />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Legenda à direita — bolinha · categoria · % · valor */}
+      <ul className="flex-1 min-w-0 flex flex-col gap-1.5">
+        {data.map((d) => {
+          const pct = total > 0 ? Math.round((d.value / total) * 100) : 0;
+          return (
+            <li key={d.category} className="flex items-center gap-2 text-body-sm">
+              <span
+                className="w-2.5 h-2.5 rounded-full shrink-0"
+                style={{ backgroundColor: CATEGORY_COLOR[d.category] }}
+                aria-hidden
+              />
+              <span className="text-fg truncate flex-1 min-w-0">{CATEGORY_LABEL[d.category]}</span>
+              <span className="text-fg-muted tabular-nums shrink-0">{pct}%</span>
+              <span className="text-fg font-semibold tabular-nums shrink-0 w-[72px] text-right">R$ {brl(d.value)}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 
