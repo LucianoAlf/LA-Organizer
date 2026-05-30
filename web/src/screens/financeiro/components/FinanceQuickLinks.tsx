@@ -24,7 +24,7 @@ export function FinanceQuickLinks() {
         <Link
           key={to}
           to={to}
-          className="shrink-0 w-[64px] flex flex-col items-center gap-1 py-2 px-1 rounded-md bg-bg-elevated hover:bg-bg-surface focus-ring transition-colors border border-border/40"
+          className="shrink-0 w-[56px] flex flex-col items-center gap-1 py-1.5 px-1 rounded-md bg-bg-elevated hover:bg-bg-surface focus-ring transition-colors border border-border/40"
         >
           <Icon size={15} className="text-tom" aria-hidden />
           <span className="text-[10px] font-medium text-fg text-center leading-none">{label}</span>

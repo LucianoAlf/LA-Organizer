@@ -90,8 +90,8 @@ export function PieByCategory({ data }: { data: { category: PfCategory; value: n
           </PieChart>
         </ResponsiveContainer>
         <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-          <span className="text-fg font-bold text-xs tabular-nums leading-none">R$ {brl(total)}</span>
-          <span className="text-[9px] uppercase tracking-wide text-fg-muted mt-0.5">Total</span>
+          <span className="text-fg font-bold text-[11px] tabular-nums leading-none">R$ {brl(total)}</span>
+          <span className="text-[8px] uppercase tracking-wide text-fg-muted mt-1">Total</span>
         </div>
       </div>
 
