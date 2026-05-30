@@ -4552,6 +4552,10 @@ function validateHabitAction(a) {
     const hasId = typeof a.habit_id === 'string' && SHORT_ID_RE.test(a.habit_id);
     const hasName = typeof a.habit_name === 'string' && a.habit_name.trim().length > 0;
     if (!hasId && !hasName) return 'bad_habit_id';
+  } else if (a.action === 'delete') {
+    const hasId = typeof a.habit_id === 'string' && SHORT_ID_RE.test(a.habit_id);
+    const hasName = typeof a.habit_name === 'string' && a.habit_name.trim().length > 0;
+    if (!hasId && !hasName) return 'bad_habit_id';
   } else {
     return 'unknown_action';
   }
@@ -4895,6 +4899,33 @@ async function applyHabitActions(collaborator, actions, userText = '') {
         const value = await readHabitTodayValue(h.id, today);
         progressFooters.push(buildHabitProgressFooter(h, value));
         console.log(`[Habit] query_progress "${h.name}" value=${value}/${h.target_value}`);
+        okCount++;
+      } else if (a.action === 'delete') {
+        // Soft delete — espelha a remove mutation do PWA (HabitoDetalhe.tsx): is_active=false.
+        // Nunca apaga dados de verdade. Scoped a collaborator.id (defense in depth).
+        let h = null;
+        if (typeof a.habit_id === 'string' && SHORT_ID_RE.test(a.habit_id)) {
+          h = await resolveHabitByShortId(collaborator.id, a.habit_id);
+        }
+        if (!h && typeof a.habit_name === 'string' && a.habit_name.trim()) {
+          h = await resolveHabitByName(collaborator.id, a.habit_name);
+        }
+        if (!h) {
+          console.warn(`[Habit] delete REJECTED — habit ${a.habit_id || a.habit_name} not owned by ${last4}`);
+          failCount++;
+          continue;
+        }
+        const { error: delErr } = await supabase
+          .from('habits')
+          .update({ is_active: false })
+          .eq('id', h.id)
+          .eq('collaborator_id', collaborator.id);
+        if (delErr) {
+          console.error('[Habit] delete err:', delErr.message);
+          failCount++;
+          continue;
+        }
+        console.log(`[Habit] delete "${h.name}" id=${String(h.id).slice(0,8)} by ${last4} (soft, is_active=false)`);
         okCount++;
       }
     } catch (err) {

@@ -207,6 +207,26 @@ User: "já bebi 2 litros no total hoje"
 - Schema do `log`: campo `amount` (number, delta), `mode` (`"add"` default | `"set"`).
 - Schema do `query_progress`: `action:"query_progress"` + `habit_id` (ou `habit_name`).
 
+**Excluir hábito (`delete`)** — quando o user pede pra **excluir / apagar / remover / deletar** um hábito (ex: "exclui o hábito ler", "apaga o beber água", "remove esse hábito"):
+
+**REGRA DURA — SEMPRE confirmar antes.** Excluir é destrutivo do ponto de vista do user. NUNCA emita o marker `delete` na mesma mensagem em que ele pediu. Primeiro confirme:
+
+User: "exclui o hábito ler"
+→ Você (SEM marker): "Quer mesmo excluir o hábito *Ler*? 🗑️ Confirma que eu apago."
+
+User: "isso, pode apagar" (confirmou)
+→ Só agora emite o marker:
+```
+<<HABIT_ACTION>>
+[{"action":"delete","habit_name":"Ler"}]
+<<END>>
+```
+
+- Se você tem o `habit_id` (8 chars) na mão, prefira ele: `{"action":"delete","habit_id":"ab12cd34"}`. Senão, use `habit_name`.
+- O engine faz **soft delete** (marca `is_active=false`) — os dados históricos ficam preservados, o hábito só some da lista ativa. Não precisa explicar isso ao user, só confirme "Pronto, excluí o *Ler*. ✅".
+- Schema do `delete`: `action:"delete"` + `habit_id` **ou** `habit_name` (um dos dois obrigatório).
+- Se o user tem hábitos duplicados (ex: vários "Beber água") e pede pra excluir, confirme **qual** antes — peça o `habit_id` ou descreva pra desambiguar, porque o engine só apaga quando há match único.
+
 ### Múltiplos lembretes (Sprint 22.55)
 Quando o user pede múltiplos horários (ex: "me lembra 5x por dia em horários estratégicos", "manhã, almoço, tarde e noite", "8h, 12h, 18h"), use `reminders`:
 
