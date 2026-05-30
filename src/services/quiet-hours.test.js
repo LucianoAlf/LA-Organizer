@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { isQuietNow } = require('./quiet-hours');
+const { isQuietNow, isPartialQuietPrefs, QUIET_PREF_COLUMNS } = require('./quiet-hours');
 
 // Preferências REAIS do Quintela (bfd77b2c), como o SELECT user_preferences(*)
 // devolve: silêncio diário 00:00–11:00 em work e personal; quiet_days=[0] (dom);
@@ -53,4 +53,35 @@ test('domingo continua silencioso via quiet_days mesmo fora da janela horária (
   const q = await isQuietNow(QUINTELA_FULL, sun_1500, 'work');
   assert.strictEqual(q.quiet, true);
   assert.match(q.reason, /quiet_day_work:0/);
+});
+
+// ---- Item 2: trava defensiva contra SELECT parcial ----
+
+test('QUIET_PREF_COLUMNS é a fonte única e inclui as colunas de horário (global + contexto)', () => {
+  for (const col of [
+    'quiet_start_time', 'quiet_end_time',
+    'quiet_start_time_work', 'quiet_end_time_work',
+    'quiet_start_time_personal', 'quiet_end_time_personal',
+  ]) {
+    assert.ok(QUIET_PREF_COLUMNS.includes(col), `faltou coluna canônica: ${col}`);
+  }
+});
+
+test('isPartialQuietPrefs: detecta o SELECT incompleto antigo (quiet flags sem nenhuma coluna de horário)', () => {
+  assert.strictEqual(isPartialQuietPrefs(QUINTELA_PARTIAL_OLD_SELECT), true);
+});
+
+test('isPartialQuietPrefs: objeto completo (*) NÃO é parcial', () => {
+  assert.strictEqual(isPartialQuietPrefs(QUINTELA_FULL), false);
+});
+
+test('isPartialQuietPrefs: select só-global (com quiet_start_time) NÃO é parcial — evita alarme falso', () => {
+  const globalOnly = { quiet_weekends: false, quiet_days: [], quiet_reason: null, quiet_start_time: '00:00:00', quiet_end_time: '10:00:00' };
+  assert.strictEqual(isPartialQuietPrefs(globalOnly), false);
+});
+
+test('isPartialQuietPrefs: não-objeto e objeto sem marcadores de quiet retornam false (sem falso positivo)', () => {
+  assert.strictEqual(isPartialQuietPrefs(null), false);
+  assert.strictEqual(isPartialQuietPrefs('uuid-string'), false);
+  assert.strictEqual(isPartialQuietPrefs({}), false);
 });

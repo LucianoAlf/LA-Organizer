@@ -20,6 +20,31 @@ function getSupabase() {
   return require('../supabase/client');
 }
 
+// FONTE ÚNICA das colunas que isQuietNow precisa. Qualquer caller que pré-busca
+// user_preferences e passa o OBJETO deve trazer estas colunas (ou usar `(*)`),
+// senão a janela horária fica invisível. Bug Quintela 2026-05-30: 3 jobs de
+// alerta buscavam um subset sem as colunas de horário → silêncio desligado.
+const QUIET_PREF_COLUMNS = [
+  'quiet_weekends', 'quiet_days', 'quiet_reason',
+  'quiet_start_time', 'quiet_end_time',
+  'quiet_start_time_work', 'quiet_end_time_work', 'quiet_days_work', 'quiet_weekends_work',
+  'quiet_start_time_personal', 'quiet_end_time_personal', 'quiet_days_personal', 'quiet_weekends_personal',
+];
+
+// Detecta o "footgun": um objeto que parece de preferências (tem marcador de
+// quiet) mas NÃO traz NENHUMA coluna de horário (nem global nem contexto).
+// Nesse estado, windowFor não enxerga a janela e o silêncio é silenciosamente
+// desligado. Usado pra ALERTAR (não falha), tornando o SELECT parcial visível.
+function isPartialQuietPrefs(prefs) {
+  if (!prefs || typeof prefs !== 'object') return false;
+  const hasQuietMarker = ('quiet_weekends' in prefs) || ('quiet_days' in prefs) || ('quiet_reason' in prefs);
+  if (!hasQuietMarker) return false;
+  const hasAnyHourCol = ('quiet_start_time' in prefs)
+    || ('quiet_start_time_work' in prefs)
+    || ('quiet_start_time_personal' in prefs);
+  return !hasAnyHourCol;
+}
+
 // Resolve a janela de silêncio de um contexto.
 // Se o caller buscou as colunas de contexto (presentes no objeto, mesmo que null),
 // elas são AUTORITATIVAS — null = sem silêncio (evita ler global antiga stale após
@@ -62,13 +87,18 @@ async function isQuietNow(collabOrId, now, context = 'work') {
     // UUID: busca as prefs do banco (inclui campos de horário por contexto + globais antigos)
     const { data } = await getSupabase()
       .from('user_preferences')
-      .select('quiet_weekends, quiet_days, quiet_reason, quiet_start_time, quiet_end_time, quiet_start_time_work, quiet_end_time_work, quiet_days_work, quiet_weekends_work, quiet_start_time_personal, quiet_end_time_personal, quiet_days_personal, quiet_weekends_personal')
+      .select(QUIET_PREF_COLUMNS.join(', '))
       .eq('collaborator_id', collabOrId)
       .maybeSingle();
     prefs = data;
   }
 
   if (!prefs) return { quiet: false, reason: null };
+
+  // Trava defensiva: SELECT parcial nunca mais desliga o silêncio EM SILÊNCIO.
+  if (isPartialQuietPrefs(prefs)) {
+    console.warn('[quiet-hours] prefs sem colunas de horário (SELECT parcial?) — janela horária IGNORADA. Caller deve usar user_preferences(*)/QUIET_PREF_COLUMNS ou passar o UUID.');
+  }
 
   const dow = now.dow;
   const w = windowFor(prefs, context);
@@ -109,4 +139,4 @@ async function isQuietNow(collabOrId, now, context = 'work') {
   return { quiet: false, reason: null };
 }
 
-module.exports = { isQuietNow };
+module.exports = { isQuietNow, isPartialQuietPrefs, QUIET_PREF_COLUMNS };
