@@ -52,6 +52,21 @@ nem ao assunto, então hoje é impossível desambiguar por contexto.
    callsites**; quando ainda ambíguo, task/event **também perguntam** (em vez
    de falha silenciosa atual).
 
+### Revisão 2026-05-30 (pós-review do Alf) — desambiguação SÓ por quem-fala
+
+A 1ª versão usava também o **assunto da mensagem** (palavra-chave: `aluno` →
+pedagógico, `estoque` → farmer) como sinal, com peso maior que o requester.
+**Furo apontado pelo Alf:** o vocabulário é **compartilhado** — a Daiana Farmer
+também trata de "o aluno chegou atrasado" no Recreio. Logo "avisa a Dai que o
+aluno Guilherme atrasou", vindo do Clayton (Recreio), cairia errado na Dai-ped.
+
+**Decisão:** **remover o sinal de assunto por completo.** Desambiguar **só por
+quem fala** — o domínio do requester (`unit`/`function_role`/`pedagogical_role`),
+que é confiável (vem do phone). Quem é do Recreio (Clayton `unit=recreio`, Fefê
+`farmer`/`recreio`, e futuros) → Daiana; quem é pedagógico → Dai-ped; quem não
+pertence claramente a um lado (ou pertence aos dois) → **pergunta**, não chuta.
+Lock "por unit/função" auto-inclui gente nova do Recreio sem lista manual.
+
 ## Design
 
 ### 1. Arquitetura do resolvedor
@@ -86,7 +101,7 @@ Senão, monta a união. Com os aliases atuais, "Dai" casa Dai-ped (full_name +
 alias) **e** Daiana (aliases `Dai ADM`/`Dai Recreio` → token `dai`) → 2
 candidatos → entra na desambiguação. Idem "Day" e "Daiana".
 
-### 3. Desambiguação por contexto
+### 3. Desambiguação por quem-fala (revisado — sem assunto)
 
 `domainOf(collab)` → `Set` de tokens de domínio, derivado dos campos
 existentes:
@@ -94,33 +109,34 @@ existentes:
 - `pedagogical_role` presente → adiciona `pedagogico`
 - `unit` ≠ `all`/null → adiciona `unit:<unit>` (ex.: `unit:recreio`)
 
-Dai-ped → `{pedagogico}` · Daiana → `{farmer, unit:recreio}`.
+Dai-ped → `{pedagogico}` · Daiana → `{farmer, unit:recreio}` ·
+Clayton (manager Recreio) → `{unit:recreio}` · Fefê → `{farmer, unit:recreio}`.
 
-**Sinal do assunto** (soft — derivado do texto do LLM). Mapa keyword→domínio:
-- pedagógico: `aluno, aluna, turma, professor, prof, aula, matrícula,
-  pedagóg, ensaio, repertório, lição, prova, nota, responsável, encarregado`
-- farmer/recreio: `estoque, loja, lojinha, produto, inventário, recreio,
-  farm, venda, caixa, mercadoria, reposição, etiqueta, prateleira`
+**Único sinal: o requester** (confiável — vem do phone). O assunto **não** é
+usado (vocabulário compartilhado puxa errado — ver Revisão acima).
 
-**Sinal do requester** (confiável — vem do phone): `domainOf(requester)`.
+Regra (`disambiguate`):
+- 0 candidatos → `not_found`; 1 candidato → `resolved`.
+- 2+ candidatos: `hits = candidatos cujo domainOf ∩ domainOf(requester) ≠ ∅`.
+  - `hits.length === 1` → `resolved` (esse).
+  - 0 hits (requester sem lado) **ou** 2+ hits (requester pertence aos dois)
+    → `ambiguous` → pergunta.
 
-**Score por candidato:** `assunto*2 + requester*1`
-- assunto: nº de domínios do candidato batidos por keyword do assunto
-- requester: 1 se `domainOf(requester) ∩ domainOf(candidato)` ≠ ∅, senão 0
-
-O **assunto** ("o quê") pesa mais que **quem manda** — um coordenador
-pedagógico falando de "estoque" deve resolver para a Daiana. Vencedor **único
-e com score > 0** → `resolved`. Empate ou todos 0 → `ambiguous`.
+Casos: Clayton/Fefê (`unit:recreio`) batem só Daiana → Daiana. Professor
+(`pedagogico`) bate só Dai-ped → Dai-ped. Director (`{director}`, sem
+interseção) → pergunta.
 
 ### 4. Comportamento por callsite (`src/engine.js`)
 
-| Linha | Fluxo | requester | assunto | `resolved` | `ambiguous` | `not_found` |
-|---|---|---|---|---|---|---|
-| ~1660 | COORDINATION (relay/cobrança) | `collab` | `parsed.message_body` | segue | **pergunta** (`replyText`), cria nada | "não achei" (atual) |
-| ~2239 | EVENT create-for-other | `collaborator` | `e.title`+`e.description` | segue | **pergunta** (via `integrityPayload`) | atual (failCount) |
-| ~3778 | TASK create-for-other | `collaborator` | `a.title`+`a.description` | segue | **pergunta** (via `integrityPayload`) | atual (failCount) |
-| ~4228 | TASK delegate | `collaborator` | título da task resolvida | segue | **pergunta** | atual |
-| ~2301 | EVENT related_to (inferência) | `collaborator` | `e.title` | seta | **ignora** (deixa vazio) | ignora |
+Todos passam **só** `{ requester }` (o emissor, vindo do phone). Sem assunto.
+
+| Linha | Fluxo | requester | `resolved` | `ambiguous` | `not_found` |
+|---|---|---|---|---|---|
+| ~1660 | COORDINATION (relay/cobrança) | `collab` | segue | **pergunta** (`replyText`), cria nada | "não achei" (atual) |
+| ~2239 | EVENT create-for-other | `collaborator` | segue | **pergunta** (via `integrityPayload`) | atual (failCount) |
+| ~3778 | TASK create-for-other | `collaborator` | segue | **pergunta** (via `integrityPayload`) | atual (failCount) |
+| ~4228 | TASK delegate | `collaborator` | segue | **pergunta** | atual |
+| ~2301 | EVENT related_to (inferência) | `collaborator` | seta | **ignora** (deixa vazio) | ignora |
 
 Nota de implementação: a fiação exata do "perguntar via `integrityPayload`"
 nos handlers de task/event será detalhada no plano (o canal já existe; os
@@ -163,10 +179,8 @@ Script node que chama `resolveCollaboratorByName` com dados reais:
 Ver [[feedback_sensitive_data_service_role]]. O caminho service_role ignora
 RLS, então identidade nunca pode vir do marker do LLM:
 
-- **requester** vem do **phone** (confiável) → sinal primário.
-- **assunto** é sinal **soft** derivado do texto do LLM, usado **só para
-  escolher entre candidatos já existentes no banco** — nunca para fabricar
-  ou ampliar identidade.
+- **requester** vem do **phone** (confiável) → é o **único** sinal de
+  desambiguação. O assunto da mensagem (texto do LLM) **não** é usado.
 - `recipient_name`/`to_name` do marker são **strings de busca**, não
   identidade. A pessoa resolvida sempre sai de uma row do `collaborators`.
 

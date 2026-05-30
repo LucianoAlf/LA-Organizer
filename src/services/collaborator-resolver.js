@@ -1,7 +1,8 @@
 // Resolve um colaborador por nome coloquial, desambiguando homônimos
-// (ex.: "Dai" pedagógica vs "Daiana" Farmer) por contexto: domínio do
-// requester (CONFIÁVEL — vem do phone) + assunto da mensagem (SOFT — texto do
-// LLM, usado só para escolher entre candidatos do banco, nunca como identidade).
+// (ex.: "Dai" pedagógica vs "Daiana" Farmer) por QUEM FALA: o domínio do
+// requester (unit + função), que é CONFIÁVEL — vem do phone. NÃO usa o assunto
+// da mensagem (vocabulário é compartilhado: "aluno" tanto é pedagógico quanto
+// "aluno atrasou no Recreio" → puxaria errado). Sem lado claro → pergunta.
 // Spec: docs/superpowers/specs/2026-05-30-desambiguacao-homonimos-design.md
 
 function stripDiacritics(s) {
@@ -9,10 +10,9 @@ function stripDiacritics(s) {
 }
 function firstToken(s) { return stripDiacritics(s).split(/\s+/)[0]; }
 
-// Keywords → token de domínio. Mesmo vocabulário que domainOf() emite.
-const PED_KEYWORDS = ['aluno', 'aluna', 'turma', 'professor', 'prof', 'aula', 'matricula', 'pedagog', 'ensaio', 'repertorio', 'licao', 'prova', 'nota', 'responsavel', 'encarregado'];
-const FARM_KEYWORDS = ['estoque', 'loja', 'lojinha', 'produto', 'inventario', 'farm', 'venda', 'caixa', 'mercadoria', 'reposicao', 'etiqueta', 'prateleira'];
-
+// Tokens de domínio de uma pessoa, derivados dos campos existentes.
+// function_role (farmer/pedagogico/...), pedagogical_role → pedagogico,
+// unit ≠ all → unit:<unit>. É o vocabulário que casa requester ↔ candidato.
 function domainOf(collab) {
   const tags = new Set();
   if (!collab) return tags;
@@ -20,16 +20,6 @@ function domainOf(collab) {
   if (collab.pedagogical_role) tags.add('pedagogico');
   const unit = stripDiacritics(collab.unit || '');
   if (unit && unit !== 'all') tags.add('unit:' + unit);
-  return tags;
-}
-
-function subjectDomainTokens(subject) {
-  const tags = new Set();
-  const s = stripDiacritics(subject);
-  if (!s) return tags;
-  for (const k of PED_KEYWORDS) if (s.includes(k)) { tags.add('pedagogico'); break; }
-  for (const k of FARM_KEYWORDS) if (s.includes(k)) { tags.add('farmer'); break; }
-  if (s.includes('recreio')) { tags.add('farmer'); tags.add('unit:recreio'); }
   return tags;
 }
 
@@ -72,25 +62,21 @@ function gatherCandidates(name, rows) {
   return result;
 }
 
-function scoreCandidate(c, subjTokens, reqDomain) {
-  const dom = domainOf(c);
-  let subjHits = 0;
-  for (const t of subjTokens) if (dom.has(t)) subjHits++;
-  let reqHit = 0;
-  for (const t of reqDomain) if (dom.has(t)) { reqHit = 1; break; }
-  return subjHits * 2 + reqHit; // assunto ("o quê") pesa mais que requester ("quem")
+// Candidato compartilha algum token de domínio com o requester?
+function requesterMatches(candidate, reqDomain) {
+  const dom = domainOf(candidate);
+  for (const t of reqDomain) if (dom.has(t)) return true;
+  return false;
 }
 
-function disambiguate(candidates, { requester, subject } = {}) {
+// Desambigua SÓ por quem-fala. Resolve quando exatamente UM candidato pertence
+// ao domínio do requester; caso contrário (zero, ou ambos) → pergunta.
+function disambiguate(candidates, { requester } = {}) {
   if (!candidates || candidates.length === 0) return { status: 'not_found' };
   if (candidates.length === 1) return { status: 'resolved', collaborator: candidates[0] };
-  const subjTokens = subjectDomainTokens(subject);
   const reqDomain = domainOf(requester);
-  const scored = candidates.map(c => ({ c, score: scoreCandidate(c, subjTokens, reqDomain) }));
-  scored.sort((a, b) => b.score - a.score);
-  const top = scored[0];
-  const tiedTop = scored.filter(s => s.score === top.score);
-  if (top.score > 0 && tiedTop.length === 1) return { status: 'resolved', collaborator: top.c };
+  const hits = reqDomain.size ? candidates.filter(c => requesterMatches(c, reqDomain)) : [];
+  if (hits.length === 1) return { status: 'resolved', collaborator: hits[0] };
   return { status: 'ambiguous', candidates };
 }
 
@@ -113,16 +99,15 @@ function buildAmbiguityQuestion(candidates) {
 }
 
 // fetchActive: () => Promise<rows[]> (colaboradores ativos com campos de domínio).
-async function resolveCollaboratorByName(name, { requester = null, subject = null, fetchActive } = {}) {
+async function resolveCollaboratorByName(name, { requester = null, fetchActive } = {}) {
   const rows = await fetchActive();
   if (!rows || !rows.length) return { status: 'not_found' };
   const { exact, union } = gatherCandidates(name, rows);
   if (exact) return { status: 'resolved', collaborator: exact };
-  return disambiguate(union, { requester, subject });
+  return disambiguate(union, { requester });
 }
 
 module.exports = {
-  stripDiacritics, domainOf, subjectDomainTokens, gatherCandidates,
-  scoreCandidate, disambiguate, firstName, domainLabel, buildAmbiguityQuestion,
-  resolveCollaboratorByName,
+  stripDiacritics, domainOf, gatherCandidates, disambiguate,
+  firstName, domainLabel, buildAmbiguityQuestion, resolveCollaboratorByName,
 };

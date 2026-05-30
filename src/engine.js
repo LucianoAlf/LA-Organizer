@@ -1667,7 +1667,6 @@ async function applyCoordinationRequestAction(collab, parsed) {
   //    via phone + assunto do recado). Ambíguo → pergunta 1x, não cria nada.
   const _recRes = await resolveCollaboratorByName(parsed.recipient_name, {
     requester: collab,
-    subject: parsed.message_body,
   });
   if (_recRes.status === 'ambiguous') {
     return {
@@ -2259,7 +2258,6 @@ async function applyEventActions(collaborator, events) {
         } else {
           const _r = await resolveCollaboratorByName(e.to_name, {
             requester: collaborator,
-            subject: `${e.title || ''} ${e.description || ''}`,
           });
           if (_r.status === 'ambiguous') {
             // Não cria; sinaliza payload (var integrityPayload do applyEventActions).
@@ -2335,10 +2333,9 @@ async function applyEventActions(collaborator, events) {
         row.related_to_collaborator_id = e.related_to_collaborator_id;
       } else if (typeof e.related_to_name === 'string' && e.related_to_name.trim()) {
         try {
-          // Inferência soft: usa contexto pra desambiguar; se ambíguo, deixa vazio.
+          // Inferência soft: desambigua por quem-fala; se ambíguo, deixa vazio.
           const _r = await resolveCollaboratorByName(e.related_to_name.trim(), {
             requester: collaborator,
-            subject: `${e.title || ''} ${e.description || ''}`,
           });
           if (_r.status === 'resolved') row.related_to_collaborator_id = _r.collaborator.id;
         } catch (_) { /* silent */ }
@@ -3018,7 +3015,6 @@ async function _fetchActiveCollaborators() {
 async function resolveCollaboratorByName(name, opts = {}) {
   return collabResolver.resolveCollaboratorByName(name, {
     requester: opts.requester || null,
-    subject: opts.subject || null,
     fetchActive: _fetchActiveCollaborators,
   });
 }
@@ -3802,7 +3798,6 @@ async function applyTaskActions(collaborator, actions) {
           } else {
             const _r = await resolveCollaboratorByName(a.to_name, {
               requester: collaborator,
-              subject: `${a.title || ''} ${a.description || ''}`,
             });
             if (_r.status === 'ambiguous') {
               // Espelha o padrão dup_task: não insere, sinaliza payload pro caller.
@@ -4272,7 +4267,6 @@ async function applyTaskActions(collaborator, actions) {
         } else if (a.to_name) {
           const _r = await resolveCollaboratorByName(a.to_name, {
             requester: collaborator,
-            subject: t.title,
           });
           if (_r.status === 'ambiguous') {
             return {
