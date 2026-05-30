@@ -4662,7 +4662,58 @@ function buildHabitProgressFooter(habit, value) {
   return `${icon} ${habit.name}: ${habitBar(pct)} ${pct}% — ${fmtQty(value)}/${fmtQty(target)}${unit}${done}`;
 }
 
-async function applyHabitActions(collaborator, actions) {
+// Parse número PT-BR tolerante: "3.000" -> 3000 (milhar), "2,5" -> 2.5, "650" -> 650.
+function parseQtyNum(raw) {
+  let s = String(raw).trim();
+  if (/^\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, ''); // 3.000 -> 3000
+  s = s.replace(',', '.');
+  const n = parseFloat(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+// Rede determinística: infere {habit_type:'quantitative', target_value, unit} do texto do
+// usuário quando ele menciona "N <unidade>". Normaliza litros->ml. Unidades de TEMPO só
+// disparam se houver palavra de meta ("meta"/"objetivo"/"quantidade"/"por dia") — evita
+// confundir horário de lembrete ("às 6h") com meta de tempo.
+function inferQuantFromText(text) {
+  if (!text || typeof text !== 'string') return null;
+  const t = text.toLowerCase();
+  const hasMetaKw = /\b(meta|objetivo|quantidade)\b|por\s+dia/.test(t);
+  const m = t.match(/(\d[\d.,]*)\s*(litros?|l|ml|mililitros?|p[áa]ginas?|p[áa]g|km|quil[ôo]metros?|copos?|passos?|reps?|repeti[çc][õo]es|minutos?|min|horas?|h)\b/);
+  if (!m) return null;
+  const value = parseQtyNum(m[1]);
+  if (!(value > 0)) return null;
+  const raw = m[2];
+  let unit = null, factor = 1, isTime = false;
+  if (/^(litros?|l)$/.test(raw)) { unit = 'ml'; factor = 1000; }
+  else if (/^(ml|mililitros?)$/.test(raw)) { unit = 'ml'; }
+  else if (/^(p[áa]ginas?|p[áa]g)$/.test(raw)) { unit = 'páginas'; }
+  else if (/^(km|quil[ôo]metros?)$/.test(raw)) { unit = 'km'; }
+  else if (/^copos?$/.test(raw)) { unit = 'copos'; }
+  else if (/^passos?$/.test(raw)) { unit = 'passos'; }
+  else if (/^(reps?|repeti[çc][õo]es)$/.test(raw)) { unit = 'reps'; }
+  else if (/^(minutos?|min)$/.test(raw)) { unit = 'min'; isTime = true; }
+  else if (/^(horas?|h)$/.test(raw)) { unit = 'min'; factor = 60; isTime = true; }
+  else return null;
+  if (isTime && !hasMetaKw) return null; // "às 6h" é lembrete, não meta
+  return { habit_type: 'quantitative', target_value: value * factor, unit };
+}
+
+// Decide tipo/meta/unidade de um create: campos explícitos do TOM têm prioridade
+// (normalizando litros->ml); senão tenta inferir do texto; senão binário.
+function deriveHabitQuant(a, userText) {
+  const explicitUnit = typeof a.unit === 'string' && a.unit.trim() ? a.unit.trim() : null;
+  const explicitTarget = typeof a.target_value === 'number' && a.target_value > 0 ? a.target_value : null;
+  if (explicitTarget && explicitUnit) {
+    if (/^(l|litros?)$/i.test(explicitUnit)) return { habit_type: 'quantitative', target_value: explicitTarget * 1000, unit: 'ml' };
+    return { habit_type: 'quantitative', target_value: explicitTarget, unit: explicitUnit.slice(0, 20) };
+  }
+  const inferred = inferQuantFromText(userText);
+  if (inferred) return inferred;
+  return { habit_type: 'binary', target_value: null, unit: null };
+}
+
+async function applyHabitActions(collaborator, actions, userText = '') {
   const today = todaySaoPaulo();
   let okCount = 0, failCount = 0;
   const last4 = String(collaborator.phone || '').slice(-4);
@@ -4672,6 +4723,8 @@ async function applyHabitActions(collaborator, actions) {
   for (const a of actions) {
     try {
       if (a.action === 'create') {
+        // Tipo/meta/unidade: explícito do TOM > inferência do texto > binário.
+        const quant = deriveHabitQuant(a, userText);
         // Try to enrich from a matching template (icon/color) if name corresponds.
         let icon = a.icon;
         let color = a.color;
@@ -4701,9 +4754,9 @@ async function applyHabitActions(collaborator, actions) {
           is_active: true,
           current_streak: 0,
           best_streak: 0,
-          habit_type: a.habit_type === 'quantitative' ? 'quantitative' : 'binary',
-          target_value: a.habit_type === 'quantitative' ? a.target_value : null,
-          unit: a.habit_type === 'quantitative' ? a.unit.trim().slice(0, 20) : null,
+          habit_type: quant.habit_type,
+          target_value: quant.target_value,
+          unit: quant.unit,
         };
         const { data, error } = await supabase
           .from('habits').insert(insertRow).select('id, name, icon').single();
@@ -4712,7 +4765,7 @@ async function applyHabitActions(collaborator, actions) {
           failCount++;
           continue;
         }
-        console.log(`[Habit] create "${insertRow.name}" freq=${insertRow.frequency} id=${String(data.id).slice(0,8)} by ${last4}`);
+        console.log(`[Habit] create "${insertRow.name}" freq=${insertRow.frequency} type=${insertRow.habit_type}${insertRow.target_value ? `/${insertRow.target_value}${insertRow.unit || ''}` : ''} id=${String(data.id).slice(0,8)} by ${last4}`);
         // Sprint 22.55 — múltiplos lembretes via habit_reminders. Aceita:
         //   - a.reminders: ["08:00","10:30",...] (preferido)
         //   - a.reminder_time: "08:00" (legado, vira 1 row)
