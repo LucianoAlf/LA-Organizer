@@ -27,7 +27,7 @@ export function FinanceQuickLinks() {
           className="flex-1 min-w-0 flex flex-col items-center gap-1.5 py-2.5 px-0.5 rounded-lg bg-bg-elevated hover:bg-bg-surface focus-ring transition-colors border border-border/40"
         >
           <Icon size={17} className="text-tom" aria-hidden />
-          <span className="text-[8px] font-medium text-fg text-center leading-none whitespace-nowrap">{label}</span>
+          <span className="text-[9px] font-medium text-fg text-center leading-none whitespace-nowrap">{label}</span>
         </Link>
       ))}
     </section>
