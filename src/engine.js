@@ -4545,8 +4545,8 @@ function validateHabitAction(a) {
     const hasName = typeof a.habit_name === 'string' && a.habit_name.trim().length > 0;
     if (!hasId && !hasName) return 'bad_habit_id';
     if (a.completed !== undefined && typeof a.completed !== 'boolean') return 'completed_not_bool';
-    // Quantitativo: amount é delta numérico; mode controla add vs set.
-    if (a.amount !== undefined && (typeof a.amount !== 'number' || Number.isNaN(a.amount))) return 'bad_amount';
+    // Quantitativo: amount (número ou string) é tolerado e resolvido no handler
+    // (resolveLogAmount), inclusive inferido do texto. Nunca dropar o log por isso.
     if (a.mode !== undefined && a.mode !== 'add' && a.mode !== 'set') return 'bad_mode';
   } else if (a.action === 'query_progress') {
     const hasId = typeof a.habit_id === 'string' && SHORT_ID_RE.test(a.habit_id);
@@ -4709,6 +4709,38 @@ function deriveHabitQuant(a, userText) {
   return { habit_type: 'binary', target_value: null, unit: null };
 }
 
+// Infere o valor a registrar do texto ("bebi 650ml" -> 650), convertendo pra unidade
+// do hábito (litros->ml, horas->min). Sem unidade no texto, assume a unidade do hábito.
+function inferLogAmountFromText(text, habit) {
+  if (!text || typeof text !== 'string') return null;
+  const t = text.toLowerCase();
+  const m = t.match(/(\d[\d.,]*)\s*(litros?|l|ml|mililitros?|p[áa]ginas?|p[áa]g|km|quil[ôo]metros?|copos?|passos?|reps?|repeti[çc][õo]es|minutos?|min|horas?|h)?\b/);
+  if (!m) return null;
+  const value = parseQtyNum(m[1]);
+  if (!(value > 0)) return null;
+  const u = m[2] || '';
+  const hu = (habit.unit || '').toLowerCase();
+  if (hu === 'ml') {
+    if (/^(litros?|l)$/.test(u)) return value * 1000;
+    return value; // ml ou número solto
+  }
+  if (hu === 'min') {
+    if (/^(horas?|h)$/.test(u)) return value * 60;
+    return value;
+  }
+  return value; // páginas/km/copos/passos/reps ou número solto
+}
+
+// Resolve o delta de um log: numérico explícito > string parseável > inferência do texto.
+function resolveLogAmount(a, habit, userText) {
+  if (typeof a.amount === 'number' && !Number.isNaN(a.amount)) return a.amount;
+  if (typeof a.amount === 'string') {
+    const n = parseQtyNum(a.amount.replace(/[^\d.,]/g, ''));
+    if (n != null && n > 0) return n;
+  }
+  return inferLogAmountFromText(userText, habit);
+}
+
 async function applyHabitActions(collaborator, actions, userText = '') {
   const today = todaySaoPaulo();
   let okCount = 0, failCount = 0;
@@ -4804,12 +4836,14 @@ async function applyHabitActions(collaborator, actions, userText = '') {
           continue;
         }
         const isQuant = h.habit_type === 'quantitative' && Number(h.target_value) > 0;
-        const hasAmount = typeof a.amount === 'number' && !Number.isNaN(a.amount);
+        // amount: explícito do TOM > string > inferido do texto ("bebi 650ml" -> 650).
+        const amount = resolveLogAmount(a, h, userText);
         // Valor acumulado do dia: add (default) soma ao existente; set substitui.
         let newValue = 0;
         if (isQuant) {
           const prev = await readHabitTodayValue(h.id, today);
-          newValue = a.mode === 'set' ? a.amount : prev + (hasAmount ? a.amount : 0);
+          if (a.mode === 'set' && amount != null) newValue = amount;
+          else newValue = prev + (amount != null ? amount : 0);
           if (newValue < 0) newValue = 0;
         }
         // is_completed: quantitativo fecha quando value>=target; binário usa o flag.

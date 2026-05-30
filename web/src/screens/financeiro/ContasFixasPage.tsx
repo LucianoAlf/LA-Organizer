@@ -6,7 +6,6 @@ import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
 import { deriveBillStatus } from '../../lib/financeiro';
 import type { BillStatus, PfBill, PfCategory } from '../../lib/financeiro';
 import { BillSheet } from './components/BillSheet';
-import { FinanceTabs } from './components/FinanceTabs';
 
 const CAT_EMOJI: Record<PfCategory, string> = {
   salario:'💼', comissao:'💰', extra:'💵',
@@ -96,7 +95,6 @@ export function ContasFixasPage() {
           ← Voltar
         </button>
       </header>
-      <FinanceTabs current="contas" />
 
       {empty && (
         <section className="rounded-lg border border-dashed border-border bg-bg-surface px-md py-lg text-center">

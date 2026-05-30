@@ -7,7 +7,7 @@ import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
 import type { PfCategory, PfTransaction } from '../../lib/financeiro';
 import { monthBounds } from '../../lib/financeiro';
 import { BudgetBar } from './components/BudgetBar';
-import { FinanceTabs } from './components/FinanceTabs';
+import { FinanceQuickLinks } from './components/FinanceQuickLinks';
 
 // Recharts lazy: 2 componentes, cada um chunk próprio
 const PieByCategory   = lazy(() => import('./components/FinanceCharts').then(m => ({ default: m.PieByCategory })));
@@ -110,7 +110,7 @@ export function FinanceiroPage() {
         <span className="text-body-sm text-fg-muted tabular-nums">{monthLabel}</span>
       </header>
 
-      <FinanceTabs current="dashboard" />
+      <FinanceQuickLinks />
 
       {/* StatCards — Saldo é o herói */}
       <section className="grid grid-cols-3 gap-2 md:gap-md">

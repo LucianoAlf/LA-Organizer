@@ -7,7 +7,6 @@ import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
 import { MONTHLY_RATE_ESTIMATE, formatMonths, monthsToGoalSimple, monthsToGoalWithInterest } from '../../lib/finance-utils';
 import type { PfGoal } from '../../lib/financeiro';
 import { CompoundInterestSimulator } from './components/CompoundInterestSimulator';
-import { FinanceTabs } from './components/FinanceTabs';
 import { GoalSheet } from './components/GoalSheet';
 
 function brl(n: number) {

@@ -5,7 +5,6 @@ import { Fab } from '../../components/Fab';
 import { useFinanceiroAuth, useTransactions } from '../../hooks/useFinanceiro';
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
 import type { PfCategory, PfTransaction, PfTxType } from '../../lib/financeiro';
-import { FinanceTabs } from './components/FinanceTabs';
 import { TransactionSheet } from './components/TransactionSheet';
 
 const PT_MONTHS = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
@@ -98,7 +97,6 @@ export function TransacoesPage() {
           ← Voltar
         </button>
       </header>
-      <FinanceTabs current="transacoes" />
 
       {/* Resumo da janela filtrada */}
       <section className="rounded-lg border border-border bg-bg-surface px-md py-3 flex items-baseline gap-md tabular-nums">
