@@ -24,10 +24,10 @@ export function FinanceQuickLinks() {
         <Link
           key={to}
           to={to}
-          className="shrink-0 w-[88px] flex flex-col items-center gap-1.5 py-3 px-1 rounded-md bg-bg-elevated hover:bg-bg-surface focus-ring transition-colors border border-border/40"
+          className="shrink-0 w-[64px] flex flex-col items-center gap-1 py-2 px-1 rounded-md bg-bg-elevated hover:bg-bg-surface focus-ring transition-colors border border-border/40"
         >
-          <Icon size={18} className="text-tom" aria-hidden />
-          <span className="text-[12px] font-medium text-fg text-center leading-none">{label}</span>
+          <Icon size={15} className="text-tom" aria-hidden />
+          <span className="text-[10px] font-medium text-fg text-center leading-none">{label}</span>
         </Link>
       ))}
     </section>

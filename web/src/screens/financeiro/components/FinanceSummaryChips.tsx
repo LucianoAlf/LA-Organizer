@@ -56,13 +56,13 @@ export function FinanceSummaryChips() {
   return (
     <section
       aria-label="Resumo financeiro"
-      className="flex gap-2 overflow-x-auto -mx-md px-md [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+      className="flex gap-1.5 overflow-x-auto -mx-md px-md [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
     >
       {chips.map((c) => (
         <Link
           key={c.key}
           to={c.to}
-          className={`shrink-0 inline-flex items-center rounded-full border bg-bg-surface px-3 py-1.5 text-body-sm font-medium whitespace-nowrap focus-ring ${TONE[c.tone]}`}
+          className={`shrink-0 inline-flex items-center rounded-full border bg-bg-surface px-2.5 py-0.5 text-[11px] font-medium whitespace-nowrap focus-ring ${TONE[c.tone]}`}
         >
           {c.label}
         </Link>
