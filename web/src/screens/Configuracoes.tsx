@@ -194,7 +194,10 @@ export function Configuracoes() {
           notify_deadline_alerts: p.notify_deadline_alerts,
           notify_overdue_alerts: p.notify_overdue_alerts,
           notify_team_summary: p.notify_team_summary,
-          task_checkin_times: (p.task_checkin_times || []).filter(Boolean).map(padSec).sort(),
+          // NÃO ordenar: o save é recarregado nas linhas indexadas por posição;
+          // ordenar reembaralha os campos e parece "reverter" pro usuário (bug Gabi 2026-05-30).
+          // A ordem é irrelevante pro dispatcher (itera e checa cada horário).
+          task_checkin_times: (p.task_checkin_times || []).filter(Boolean).map(padSec),
           quiet_weekends: !!p.quiet_weekends,
           quiet_days: Array.isArray(p.quiet_days) ? [...new Set(p.quiet_days.filter(n => n >= 0 && n <= 6))].sort() : [],
           quiet_reason: p.quiet_reason || null,
