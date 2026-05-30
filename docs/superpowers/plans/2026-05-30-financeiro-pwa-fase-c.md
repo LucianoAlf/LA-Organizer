@@ -146,7 +146,18 @@ export function FinanceiroPage() {
 ```
 Confirmar o nome do shell em uso por outras telas (Mais.tsx) e usar o mesmo.
 
-- [ ] **Step 3: Adicionar as 5 rotas em `App.tsx`**
+- [ ] **Step 3: Adicionar as 5 rotas em `App.tsx` (já com React.lazy)**
+
+> Bundle já está em ~1,25 MB; entrar lazy de cara evita inchar pra quem nem usa Finanças. Cada tela vira chunk separado (e arrasta o recharts pro chunk só quando o Dashboard carrega).
+
+No topo de `App.tsx`, junto dos outros `lazy(...)` já existentes (Loja, Inventário, LA Educa):
+```tsx
+const FinanceiroPage   = lazy(() => import('./screens/financeiro/FinanceiroPage').then(m => ({ default: m.FinanceiroPage })));
+const TransacoesPage   = lazy(() => import('./screens/financeiro/TransacoesPage').then(m => ({ default: m.TransacoesPage })));
+const ContasFixasPage  = lazy(() => import('./screens/financeiro/ContasFixasPage').then(m => ({ default: m.ContasFixasPage })));
+const MetasPage        = lazy(() => import('./screens/financeiro/MetasPage').then(m => ({ default: m.MetasPage })));
+const CarteirasPage    = lazy(() => import('./screens/financeiro/CarteirasPage').then(m => ({ default: m.CarteirasPage })));
+```
 
 Localizar o bloco com `<Route path="mais" element={<Mais />} />` e acrescentar (logo após):
 ```tsx
@@ -156,7 +167,7 @@ Localizar o bloco com `<Route path="mais" element={<Mais />} />` e acrescentar (
 <Route path="financeiro/metas" element={<MetasPage />} />
 <Route path="financeiro/carteiras" element={<CarteirasPage />} />
 ```
-Adicionar os 5 imports no topo (não-lazy nesta task — vira lazy na Task 6+).
+O `<Suspense fallback={<LoadingState />}>` já existe no `App.tsx` — cobre os lazies novos.
 
 - [ ] **Step 4: Card no Mais**
 
@@ -381,6 +392,16 @@ export async function deleteTransaction(collaboratorId: string, id: string) {
   const { error } = await supabase.from('pf_transactions').delete()
     .eq('id', id).eq('collaborator_id', collaboratorId);
   if (error) throw error;
+}
+// Range multi-mês — usado pela linha de 6 meses do Dashboard (Task 6).
+// `start`/`end` em YYYY-MM-DD; end exclusivo.
+export async function listTransactionsRange(collaboratorId: string, start: string, end: string) {
+  const { data, error } = await supabase.from('pf_transactions')
+    .select('type, amount, transaction_date')
+    .eq('collaborator_id', collaboratorId)
+    .gte('transaction_date', start).lt('transaction_date', end);
+  if (error) throw error;
+  return (data ?? []) as { type: PfTxType; amount: number; transaction_date: string }[];
 }
 
 // ---- Orçamento ----
@@ -720,3 +741,4 @@ DELETE FROM pf_budgets      WHERE collaborator_id='0576f4b6-183d-4cf1-980e-5c8d5
 - Customização do bottom nav.
 - Selic viva no PWA (v1.1 — `app_config` lida do `selic.js` do engine).
 - Importação de extrato, OCR, integração bancária.
+- **Incremento atômico de meta (`addToGoal`)** — hoje é read-modify-write no cliente (igual o engine). Single-user → risco ~zero. Quando entrar concorrência real, trocar por `rpc('pf_goal_add', { goal_id, delta })` no banco. Dívida v1.1.
