@@ -69,7 +69,7 @@ export async function deactivateAccount(collaboratorId: string, id: string) {
 export async function listTransactions(collaboratorId: string, opts?: { monthYear?: string; category?: PfCategory; type?: PfTxType; limit?: number }) {
   const { start, end } = opts?.monthYear ? monthBoundsFromYYYYMM(opts.monthYear) : monthBounds();
   let q = supabase.from('pf_transactions')
-    .select('id, type, category, amount, description, transaction_date, account_id')
+    .select('id, type, category, amount, description, transaction_date, account_id, card_id')
     .eq('collaborator_id', collaboratorId)
     .gte('transaction_date', start).lt('transaction_date', end)
     .order('transaction_date', { ascending: false });
@@ -98,11 +98,11 @@ export async function deleteTransaction(collaboratorId: string, id: string) {
 // Range multi-mês — usado pela linha de 6 meses do Dashboard.
 export async function listTransactionsRange(collaboratorId: string, start: string, end: string) {
   const { data, error } = await supabase.from('pf_transactions')
-    .select('type, amount, transaction_date')
+    .select('type, amount, transaction_date, card_id')
     .eq('collaborator_id', collaboratorId)
     .gte('transaction_date', start).lt('transaction_date', end);
   if (error) throw error;
-  return (data ?? []) as { type: PfTxType; amount: number; transaction_date: string }[];
+  return (data ?? []) as { type: PfTxType; amount: number; transaction_date: string; card_id: string | null }[];
 }
 
 // ---- Orçamento ----

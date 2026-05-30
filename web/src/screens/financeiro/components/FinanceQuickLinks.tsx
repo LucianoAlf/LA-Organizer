@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { Banknote, Receipt, Target, Wallet, type LucideIcon } from 'lucide-react';
+import { Banknote, CreditCard, Receipt, Target, Wallet, type LucideIcon } from 'lucide-react';
 import { useBills, useGoals } from '../../../hooks/useFinanceiro';
 import { deriveBillStatus, type PfBill, type PfGoal } from '../../../lib/financeiro';
 
@@ -73,6 +73,7 @@ export function FinanceQuickLinks() {
       <QuickLinkCard to="/financeiro/contas"     label="Contas"     hint={billsHint}  Icon={Banknote} />
       <QuickLinkCard to="/financeiro/metas"      label="Metas"      hint={goalsHint}  Icon={Target} />
       <QuickLinkCard to="/financeiro/carteiras"  label="Carteiras"  hint={null}       Icon={Wallet} />
+      <QuickLinkCard to="/financeiro/cartoes"    label="Cartões"    hint={null}       Icon={CreditCard} />
     </section>
   );
 }

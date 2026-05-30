@@ -62,7 +62,8 @@ export function FinanceiroPage() {
   // Linha mensal (6 buckets, oldest → newest)
   const monthlySeries = useMemo(() => {
     if (!txRangeQ.data) return [];
-    const buckets = aggregateByMonth(txRangeQ.data);
+    // Linha de saldo = caixa: exclui compras no cartão (estão na fatura, não no caixa).
+    const buckets = aggregateByMonth(txRangeQ.data.filter((t) => !t.card_id));
     const arr: { mes: string; saldo: number; receitas: number; despesas: number }[] = [];
     for (let i = 0; i < 6; i++) {
       const d = new Date(Date.UTC(r6.startD.getUTCFullYear(), r6.startD.getUTCMonth() + i, 1));
