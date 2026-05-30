@@ -1,8 +1,175 @@
+import { useEffect, useMemo, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { CustomSelect } from '../../components/CustomSelect';
+import { Fab } from '../../components/Fab';
+import { useFinanceiroAuth, useTransactions } from '../../hooks/useFinanceiro';
+import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
+import type { PfCategory, PfTransaction, PfTxType } from '../../lib/financeiro';
+import { FinanceTabs } from './components/FinanceTabs';
+import { TransactionSheet } from './components/TransactionSheet';
+
+const PT_MONTHS = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+const CAT_EMOJI: Record<PfCategory, string> = {
+  salario:'💼', comissao:'💰', extra:'💵',
+  moradia:'🏠', alimentacao:'🍔', transporte:'🚗',
+  saude:'🏥', educacao:'📚', lazer:'🎮', outros:'📦',
+};
+const CAT_LABEL: Record<PfCategory, string> = {
+  salario:'Salário', comissao:'Comissão', extra:'Extra',
+  moradia:'Moradia', alimentacao:'Alimentação', transporte:'Transporte',
+  saude:'Saúde', educacao:'Educação', lazer:'Lazer', outros:'Outros',
+};
+
+function brl(n: number) {
+  return n.toLocaleString('pt-BR', { maximumFractionDigits: 0 });
+}
+
+function recentMonths(n = 6): { value: string; label: string }[] {
+  const now = new Date();
+  const arr: { value: string; label: string }[] = [];
+  for (let i = 0; i < n; i++) {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+    const value = d.toISOString().slice(0, 7); // YYYY-MM
+    arr.push({ value, label: `${PT_MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}` });
+  }
+  return arr;
+}
+
+const TYPE_FILTERS: { value: string; label: string }[] = [
+  { value: '',        label: 'Todos os tipos' },
+  { value: 'expense', label: 'Só despesas' },
+  { value: 'income',  label: 'Só receitas' },
+];
+
 export function TransacoesPage() {
+  const cid = useFinanceiroAuth();
+  useRealtimeFinance(['pf_transactions'], cid);
+
+  const months = useMemo(() => recentMonths(6), []);
+  const [monthYear, setMonthYear] = useState<string>(months[0].value);
+  const [category, setCategory] = useState<string>(''); // '' = todas
+  const [type, setType] = useState<string>('');         // '' = todos
+  const [editing, setEditing] = useState<PfTransaction | null>(null);
+  const [creating, setCreating] = useState(false);
+
+  const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
+
+  // ?new=1 ao chegar abre o sheet de criação (vindo do FAB do dashboard).
+  useEffect(() => {
+    if (params.get('new') === '1') {
+      setCreating(true);
+      const next = new URLSearchParams(params);
+      next.delete('new');
+      setParams(next, { replace: true });
+    }
+  }, [params, setParams]);
+
+  const txQ = useTransactions({
+    monthYear,
+    category: (category || undefined) as PfCategory | undefined,
+    type: (type || undefined) as PfTxType | undefined,
+  });
+
+  const totalIn = useMemo(
+    () => (txQ.data ?? []).filter((t) => t.type === 'income').reduce((s, t) => s + Number(t.amount), 0),
+    [txQ.data],
+  );
+  const totalOut = useMemo(
+    () => (txQ.data ?? []).filter((t) => t.type === 'expense').reduce((s, t) => s + Number(t.amount), 0),
+    [txQ.data],
+  );
+
+  const monthOptions = months;
+  const categoryOptions: { value: string; label: string }[] = [
+    { value: '', label: 'Todas as categorias' },
+    ...Object.entries(CAT_LABEL).map(([v, l]) => ({ value: v, label: `${CAT_EMOJI[v as PfCategory]}  ${l}` })),
+  ];
+
   return (
-    <div className="p-md">
-      <h2 className="text-section-title mb-md">Transações</h2>
-      <p className="text-fg-muted">Em breve.</p>
+    <div className="flex flex-col gap-md p-md pb-32 md:pb-md md:max-w-5xl md:mx-auto">
+      <header className="flex items-baseline justify-between gap-3">
+        <h2 className="text-section-title">Finanças</h2>
+        <button
+          type="button"
+          onClick={() => navigate('/financeiro')}
+          className="text-body-sm text-fg-muted hover:text-fg focus-ring rounded"
+        >
+          ← Voltar
+        </button>
+      </header>
+      <FinanceTabs current="transacoes" />
+
+      {/* Resumo da janela filtrada */}
+      <section className="rounded-lg border border-border bg-bg-surface px-md py-3 flex items-baseline gap-md tabular-nums">
+        <div>
+          <div className="text-label text-fg-muted uppercase tracking-wide">Receitas</div>
+          <div className="text-body-lg font-semibold text-success">+R$ {brl(totalIn)}</div>
+        </div>
+        <div>
+          <div className="text-label text-fg-muted uppercase tracking-wide">Despesas</div>
+          <div className="text-body-lg font-semibold text-danger">−R$ {brl(totalOut)}</div>
+        </div>
+        <div className="ml-auto text-right">
+          <div className="text-label text-fg-muted uppercase tracking-wide">Resultado</div>
+          <div className={`text-body-lg font-semibold ${totalIn - totalOut < 0 ? 'text-danger' : 'text-tom'}`}>
+            {totalIn - totalOut < 0 ? '−' : '+'}R$ {brl(Math.abs(totalIn - totalOut))}
+          </div>
+        </div>
+      </section>
+
+      {/* Filtros */}
+      <section className="grid grid-cols-1 md:grid-cols-3 gap-2">
+        <CustomSelect value={monthYear} options={monthOptions} onChange={setMonthYear} size="sm" />
+        <CustomSelect value={category} options={categoryOptions} onChange={setCategory} size="sm" />
+        <CustomSelect value={type} options={TYPE_FILTERS} onChange={setType} size="sm" />
+      </section>
+
+      {/* Lista */}
+      <section className="rounded-lg border border-border bg-bg-surface overflow-hidden">
+        {txQ.isLoading ? (
+          <div className="px-md py-lg text-center text-body-sm text-fg-muted">Carregando…</div>
+        ) : !txQ.data || txQ.data.length === 0 ? (
+          <div className="px-md py-lg text-center">
+            <div className="text-[36px] leading-none mb-1" aria-hidden>📭</div>
+            <p className="text-body-md text-fg">Nada por aqui ainda.</p>
+            <p className="text-body-sm text-fg-muted mt-0.5">Registra pelo + ou manda um zap pro TOM.</p>
+          </div>
+        ) : (
+          <ul className="divide-y divide-border">
+            {txQ.data.map((t) => (
+              <li key={t.id}>
+                <button
+                  type="button"
+                  onClick={() => setEditing(t)}
+                  className="w-full text-left px-md py-2.5 flex items-center justify-between gap-3 hover:bg-bg-elevated focus-ring transition-colors"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span aria-hidden className="text-base shrink-0">{CAT_EMOJI[t.category]}</span>
+                    <div className="min-w-0">
+                      <div className="text-body-md text-fg truncate">{t.description || CAT_LABEL[t.category]}</div>
+                      <div className="text-body-sm text-fg-muted tabular-nums">
+                        {t.transaction_date} · {CAT_LABEL[t.category]}
+                      </div>
+                    </div>
+                  </div>
+                  <span className={`text-body-md tabular-nums font-semibold shrink-0 ${t.type === 'income' ? 'text-success' : 'text-danger'}`}>
+                    {t.type === 'income' ? '+' : '−'}R$ {brl(Number(t.amount))}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <TransactionSheet
+        open={creating || !!editing}
+        onClose={() => { setCreating(false); setEditing(null); }}
+        initial={editing ?? undefined}
+      />
+
+      <Fab label="Registrar" ariaLabel="Registrar transação" onClick={() => setCreating(true)} />
     </div>
   );
 }
