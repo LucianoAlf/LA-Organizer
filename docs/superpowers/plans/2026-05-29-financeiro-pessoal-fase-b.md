@@ -14,6 +14,7 @@
 - **Sem commit entre tasks** — Stop hook commita `_remote/`. Migrations via MCP (não há migration nesta fase). Deploy do engine via `scp` + `pm2 restart tom`.
 - **CommonJS**, client `require('../supabase/client')`.
 - **Números financeiros = código, nunca LLM.** Todo valor (saldo, %, contas, projeção) vem de builder/handler determinístico.
+- **Quiet hours OBRIGATÓRIO nos 3 rituais.** Finanças é contexto **pessoal** → os 3 (lembrete_conta, financeiro_mensal, relatorio) gateiam em `isQuietNow(cid, now, 'personal')` e, se quiet, fazem `logRitualEvent(..., 'skipped', q.reason, ...)`. NÃO furar o silêncio de quem pediu sossego (não reabrir os vazamentos que o sprint anterior fechou).
 - **Spec:** `docs/superpowers/specs/2026-05-29-financeiro-pessoal-design.md` (D1–D7, §6).
 - **Fase A já entregou:** `src/finance/{categorize,budget-alert,projection}.js`, `financeiro-service.js`, marker `<<FINANCE_ACTION>>`, skill `financeiro-pessoal.md`. Esta fase REUSA `projection.js` e o `financeiro-service`.
 
@@ -207,8 +208,13 @@ async function billsDueWithin(collaboratorId, days = 5) {
   const { start } = monthBounds();
   return (data || []).filter((b) => {
     const pagoEsteMes = b.last_paid_at && b.last_paid_at >= start;
-    return !pagoEsteMes && b.due_day >= dom && b.due_day <= dom + days;
+    if (pagoEsteMes) return false;
+    const aVencer  = b.due_day >= dom && b.due_day <= dom + days; // proximos `days` dias
+    const atrasada = b.due_day < dom;                             // venceu este mes e nao foi paga (PRD §6.2) -> da vida ao mode 'atrasada'
+    return aVencer || atrasada;
   });
+  // EDGE (minor, virada de mes): conta com due_day no comeco do mes seguinte
+  // (ex: dom=30, due_day=2) nao entra como "a vencer" deste ciclo. Aceitavel pro v1 — anotado.
 }
 // Relatorio do mes de referencia (default mes corrente).
 async function monthlyReport(collaboratorId, ref = new Date()) {
@@ -288,6 +294,8 @@ if (currentSlot(now) === timeToSlot('08:00')) {
     if (await alreadySent(cid, 'lembrete_conta', now.ymd)) continue;
     const bills = await financeService.billsDueWithin(cid, 2);
     if (!bills.length) continue;
+    const q = await isQuietNow(cid, now, 'personal'); // pessoal: respeita sossego
+    if (q.quiet) { await logRitualEvent(cid, 'lembrete_conta', 'skipped', q.reason, now.ymd); continue; }
     const collab = await getCollab(cid); // helper existente p/ phone+nome
     for (const b of bills) {
       const dias = b.due_day - now.dom;
@@ -342,6 +350,8 @@ if (now.dom === 1 && currentSlot(now) === timeToSlot('18:00')) {
     if (await alreadySent(cid, 'relatorio_financeiro_mensal', now.ymd)) continue;
     const rep = await financeService.monthlyReport(cid, prevRef);
     if (!rep.temAtividade) continue;
+    const q = await isQuietNow(cid, now, 'personal');
+    if (q.quiet) { await logRitualEvent(cid, 'relatorio_financeiro_mensal', 'skipped', q.reason, now.ymd); continue; }
     const goals = await financeService.listGoals(cid);
     const collab = await getCollab(cid);
     await whatsapp.sendMessage(collab.phone, buildMonthlyReport({ nome: collab.first_name, mes: mesNome(prevRef), ...rep, goals }));
