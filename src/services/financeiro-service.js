@@ -188,11 +188,22 @@ async function monthlyReport(collaboratorId, ref = new Date()) {
   return { receitas, despesas, saldo: receitas - despesas, top, temAtividade: rows.length > 0 };
 }
 
-// Colaboradores com >=1 transacao (alvo dos rituais financeiros).
+// Colaboradores com >=1 transacao (alvo dos rituais financeiros) — so os ids.
 async function collaboratorsWithActivity() {
   const { data, error } = await supabase.from('pf_transactions').select('collaborator_id');
   if (error) throw error;
   return [...new Set((data || []).map((r) => r.collaborator_id))];
+}
+
+// Idem, mas com os dados de envio (phone + nome) dos colaboradores ativos.
+async function collaboratorsForFinanceRitual() {
+  const ids = await collaboratorsWithActivity();
+  if (!ids.length) return [];
+  const { data, error } = await supabase.from('collaborators')
+    .select('id, full_name, phone')
+    .in('id', ids).eq('is_active', true);
+  if (error) throw error;
+  return data || [];
 }
 
 module.exports = {
@@ -202,5 +213,5 @@ module.exports = {
   setBudget, getBudget, queryBudget,
   createBill, findBills, payBill,
   createGoal, findGoal, addToGoal, listGoals,
-  billsDueWithin, monthlyReport, collaboratorsWithActivity,
+  billsDueWithin, monthlyReport, collaboratorsWithActivity, collaboratorsForFinanceRitual,
 };

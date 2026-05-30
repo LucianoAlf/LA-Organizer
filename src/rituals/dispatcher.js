@@ -327,6 +327,94 @@ async function checkMonthlyClosing(now) {
   }
 }
 
+// ===== Sprint 27 — Rituais financeiros pessoais (DETERMINISTICOS) =====
+// Numero (saldo, conta, relatorio) vem do builder/codigo, NUNCA do LLM (licao do Bug 3).
+// Contexto PESSOAL -> gateiam em isQuietNow(..., 'personal'). Idempotentes via ritual_logs.
+
+// Lembrete de contas — diario 8h BRT.
+async function checkFinanceBillReminders(now) {
+  if (currentSlot(now) !== timeToSlot('08:00')) return;
+  const whatsapp = require('../services/whatsapp');
+  const financeService = require('../services/financeiro-service');
+  const { buildBillReminder } = require('../finance/ritual-messages');
+  const ymd = now.ymd || nowSaoPaulo().ymd;
+  const dom = Number(ymd.slice(8, 10));
+  for (const c of await financeService.collaboratorsForFinanceRitual()) {
+    if (await alreadySent(c.id, 'lembrete_conta', ymd)) continue;
+    const bills = await financeService.billsDueWithin(c.id, 2);
+    if (!bills.length) continue;
+    const q = await isQuietNow(c.id, now, 'personal');
+    if (q.quiet) { await logRitualEvent(c.id, 'lembrete_conta', 'skipped', `quiet:${q.reason}`, ymd); continue; }
+    try {
+      const nome = String(c.full_name || '').split(' ')[0];
+      for (const b of bills) {
+        const dias = b.due_day - dom;
+        const mode = dias > 0 ? 'previo' : (dias === 0 ? 'dia' : 'atrasada');
+        await whatsapp.sendMessage(c.phone, buildBillReminder({ nome, bill: b, mode, dias }));
+      }
+      await logRitualEvent(c.id, 'lembrete_conta', 'sent', `${bills.length} conta(s)`, ymd);
+    } catch (err) {
+      console.error('[checkFinanceBillReminders]', c.full_name, err.message);
+      await logRitualEvent(c.id, 'lembrete_conta', 'error', err.message, ymd);
+    }
+  }
+}
+
+// Ritual financeiro mensal — dia 10, 18h BRT.
+async function checkFinanceMonthly(now) {
+  const ymd = now.ymd || nowSaoPaulo().ymd;
+  if (Number(ymd.slice(8, 10)) !== 10 || currentSlot(now) !== timeToSlot('18:00')) return;
+  const whatsapp = require('../services/whatsapp');
+  const financeService = require('../services/financeiro-service');
+  const { buildMonthlyFinance } = require('../finance/ritual-messages');
+  for (const c of await financeService.collaboratorsForFinanceRitual()) {
+    if (await alreadySent(c.id, 'financeiro_mensal', ymd)) continue;
+    const rep = await financeService.monthlyReport(c.id);
+    if (!rep.temAtividade) continue;
+    const q = await isQuietNow(c.id, now, 'personal');
+    if (q.quiet) { await logRitualEvent(c.id, 'financeiro_mensal', 'skipped', `quiet:${q.reason}`, ymd); continue; }
+    try {
+      const goals = await financeService.listGoals(c.id);
+      const bills = await financeService.billsDueWithin(c.id, 5);
+      const nome = String(c.full_name || '').split(' ')[0];
+      await whatsapp.sendMessage(c.phone, buildMonthlyFinance({ nome, receitas: rep.receitas, despesas: rep.despesas, goals, bills }));
+      await logRitualEvent(c.id, 'financeiro_mensal', 'sent', null, ymd);
+    } catch (err) {
+      console.error('[checkFinanceMonthly]', c.full_name, err.message);
+      await logRitualEvent(c.id, 'financeiro_mensal', 'error', err.message, ymd);
+    }
+  }
+}
+
+// Relatorio financeiro mensal — dia 1, 18h BRT (mes anterior).
+async function checkFinanceReport(now) {
+  const ymd = now.ymd || nowSaoPaulo().ymd;
+  if (Number(ymd.slice(8, 10)) !== 1 || currentSlot(now) !== timeToSlot('18:00')) return;
+  const whatsapp = require('../services/whatsapp');
+  const financeService = require('../services/financeiro-service');
+  const { buildMonthlyReport } = require('../finance/ritual-messages');
+  const [yy, mm] = ymd.split('-').map(Number);
+  const prevRef = new Date(Date.UTC(yy, mm - 2, 15)); // mm 1-based -> mm-2 = mes anterior (0-based)
+  const MESES = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+  const mesNome = MESES[(mm - 2 + 12) % 12];
+  for (const c of await financeService.collaboratorsForFinanceRitual()) {
+    if (await alreadySent(c.id, 'relatorio_financeiro_mensal', ymd)) continue;
+    const rep = await financeService.monthlyReport(c.id, prevRef);
+    if (!rep.temAtividade) continue;
+    const q = await isQuietNow(c.id, now, 'personal');
+    if (q.quiet) { await logRitualEvent(c.id, 'relatorio_financeiro_mensal', 'skipped', `quiet:${q.reason}`, ymd); continue; }
+    try {
+      const goals = await financeService.listGoals(c.id);
+      const nome = String(c.full_name || '').split(' ')[0];
+      await whatsapp.sendMessage(c.phone, buildMonthlyReport({ nome, mes: mesNome, receitas: rep.receitas, despesas: rep.despesas, top: rep.top, goals }));
+      await logRitualEvent(c.id, 'relatorio_financeiro_mensal', 'sent', null, ymd);
+    } catch (err) {
+      console.error('[checkFinanceReport]', c.full_name, err.message);
+      await logRitualEvent(c.id, 'relatorio_financeiro_mensal', 'error', err.message, ymd);
+    }
+  }
+}
+
 async function fireRitual(collab, ritualType, ymd) {
   const canonical = CANONICAL_BY_RITUAL[ritualType] || ritualType;
   // DND gate: skip outbound rituals while user is paused. Briefing for the
@@ -3285,6 +3373,11 @@ async function run(opts = {}) {
   // Sprint 21 — Planejamento e Fechamento Mensal (liderança)
   try { await checkMonthlyPlanning(now); } catch (e) { console.error('[run] monthlyPlanning', e); }
   try { await checkMonthlyClosing(now);  } catch (e) { console.error('[run] monthlyClosing', e); }
+
+  // Sprint 27 — Rituais financeiros pessoais (deterministicos, quiet=personal)
+  try { await checkFinanceBillReminders(now); } catch (e) { console.error('[run] financeBillReminders', e); }
+  try { await checkFinanceMonthly(now);        } catch (e) { console.error('[run] financeMonthly', e); }
+  try { await checkFinanceReport(now);         } catch (e) { console.error('[run] financeReport', e); }
 
   // Sprint 15 F4 — Briefing operacional semanal por departamento (segunda 07:30 BRT)
   try {

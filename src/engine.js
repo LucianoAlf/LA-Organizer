@@ -18,6 +18,7 @@ const inventarioService = require('./services/inventario-service');
 const inventarioValidators = require('./services/inventario-validators');
 const announcementsService = require('./services/announcements');
 const pendingIntents = require('./services/pending-intents');
+const { buildCoordinationResponseNotification } = require('./services/coordination-notify');
 const financeService = require('./services/financeiro-service');
 const { mapCategory, normalizeParams } = require('./finance/categorize');
 const { crossedThreshold, buildBudgetAlert } = require('./finance/budget-alert');
@@ -1489,7 +1490,7 @@ function parseCoordinationResponseMarker(text) {
 }
 
 // Sprint 16 — Processa resposta: UPDATE status='responded', notifica requester.
-async function applyCoordinationResponseAction(collab, parsed) {
+async function applyCoordinationResponseAction(collab, parsed, inboundText) {
   const { data: req, error: fetchErr } = await supabase
     .from('coordination_requests')
     .select('id, requester_id, recipient_id, mode, message_body, status')
@@ -1526,7 +1527,14 @@ async function applyCoordinationResponseAction(collab, parsed) {
   const recipientFirstName = _displayName(collab);
 
   if (requester?.phone) {
-    const msg = `Boa! O ${recipientFirstName} respondeu o que você pediu:\n\n"${parsed.response_summary}"`;
+    // Ancorar na fala VERBATIM do recipient (registro real). O resumo do LLM
+    // entra separado/rotulado; sem verbatim, NÃO parafraseia. Ver
+    // services/coordination-notify.js e docs/bugfix-coordination-response-2026-05-29.md.
+    const msg = buildCoordinationResponseNotification({
+      recipientFirstName,
+      inboundText,
+      summary: parsed.response_summary,
+    });
     try {
       await whatsapp.sendMessage(requester.phone, msg);
       await logConversation(requester.id, 'outbound', msg);
@@ -5751,6 +5759,10 @@ async function handleFinanceAction(collab, action, params) {
 
 async function processMessage(phone, text, raw = {}) {
   const _t0 = Date.now();
+  // Snapshot da fala inbound ANTES de qualquer mutação (ex: ctxHint de
+  // pending_intent é anexado a `text` abaixo). Usado para citar verbatim a
+  // resposta do recipient em COORDINATION_RESPONSE, sem vazar scaffolding interno.
+  const inboundVerbatimText = text;
   const _phoneTail = String(phone).slice(-4);
   console.log(`[Engine] processMessage START phone=${_phoneTail} text="${String(text).slice(0, 60).replace(/\n/g, ' ')}"`);
   // Sprint 10: telemetria operacional. Acumulada durante o pipeline e gravada
@@ -7438,7 +7450,7 @@ async function processMessage(phone, text, raw = {}) {
       await logMarker(collab.id, 'COORDINATION_RESPONSE', 'rejected', 'schema_invalid', null);
       reply = parsedCoordResp.cleanText || reply;
     } else if (parsedCoordResp) {
-      const result = await applyCoordinationResponseAction(collab, parsedCoordResp);
+      const result = await applyCoordinationResponseAction(collab, parsedCoordResp, inboundVerbatimText);
       await logMarker(
         collab.id,
         'COORDINATION_RESPONSE',
