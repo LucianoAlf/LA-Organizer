@@ -110,8 +110,6 @@ export function FinanceiroPage() {
         <span className="text-body-sm text-fg-muted tabular-nums">{monthLabel}</span>
       </header>
 
-      <FinanceQuickLinks />
-
       {/* StatCards — Saldo é o herói */}
       <section className="grid grid-cols-3 gap-2 md:gap-md">
         <StatCard
@@ -130,6 +128,8 @@ export function FinanceiroPage() {
           value={<>{summary && summary.saldo < 0 ? '−' : '+'}R$ {brl(Math.abs(summary?.saldo ?? 0))}</>}
         />
       </section>
+
+      <FinanceQuickLinks />
 
       {/* Empty state — só quando NÃO há absolutamente nada */}
       {!isLoading && !hasAnyData && (

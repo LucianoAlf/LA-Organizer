@@ -45,19 +45,16 @@ interface QuickLinkProps {
   Icon: LucideIcon;
 }
 
+// VARIANTE B — strip horizontal única linha, footprint vertical mínimo
 function QuickLinkCard({ to, label, hint, Icon }: QuickLinkProps) {
   return (
     <Link
       to={to}
-      className="flex items-center gap-3 rounded-lg border border-border bg-bg-surface p-md hover:bg-bg-elevated focus-ring transition-colors"
+      className="flex-1 flex flex-col items-center gap-0.5 py-2 px-1 rounded-md bg-bg-elevated hover:bg-bg-surface focus-ring transition-colors border border-border/40 min-w-0"
     >
-      <span className="shrink-0 w-10 h-10 rounded-full bg-bg-elevated grid place-items-center" aria-hidden>
-        <Icon size={20} className="text-tom" />
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block text-body-md font-medium text-fg truncate">{label}</span>
-        <span className="block text-body-sm text-fg-muted truncate">{hint}</span>
-      </span>
+      <Icon size={15} className="text-tom shrink-0" aria-hidden />
+      <span className="text-[11px] font-medium text-fg text-center leading-none truncate w-full text-center">{label}</span>
+      <span className="text-[10px] leading-tight text-fg-muted text-center truncate w-full">{hint}</span>
     </Link>
   );
 }
@@ -85,7 +82,7 @@ export function FinanceQuickLinks() {
     : `R$ ${brl(accountsTotal)} · ${accountsCount} carteira${accountsCount > 1 ? 's' : ''}`;
 
   return (
-    <section className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-md" aria-label="Atalhos do módulo financeiro">
+    <section className="flex gap-1.5 md:gap-md" aria-label="Atalhos do módulo financeiro">
       <QuickLinkCard to="/financeiro/transacoes" label="Transações" hint={txHint}      Icon={Receipt} />
       <QuickLinkCard to="/financeiro/contas"     label="Contas"     hint={billsHint}    Icon={Banknote} />
       <QuickLinkCard to="/financeiro/metas"      label="Metas"      hint={goalsHint}    Icon={Target} />
