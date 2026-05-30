@@ -63,6 +63,26 @@ O item 3 não é "espelhar global→contexto" e pronto. São 3 frentes:
    chat; para tudo fora da lista → "NÃO diga que fez, mostre o caminho no PWA".
    Hoje o prompt manda setar `quiet_start_time/end_time` global — exatamente o bug.
 
-## Aberto pra confirmar no build
-- O PWA escreve global **e** contexto, ou só contexto? (define se o fix do chat
-  também sincroniza global). Grep mostra refs aos dois; confirmar no save de Configuracoes.tsx.
+## Resolvido (save de Configuracoes.tsx)
+- **O PWA grava SÓ contexto** (`quiet_*_work`/`quiet_*_personal`). NÃO escreve nem lê
+  `quiet_start_time`/`quiet_end_time` global (fora do `PREF_COLS`). → **Global é LEGADO.**
+  Fonte de verdade do silêncio = colunas de contexto.
+- **Decisão de produto (Alf):** silêncio via chat → TOM **sempre pergunta o contexto**
+  (Trabalho/Pessoal/ambos) e grava as colunas de contexto. Check-ins → **apontar pro PWA**.
+- **Achado extra (item 4, separado):** jobs de lembrete de evento (`dispatcher.js:782/846/907`)
+  leem o global legado → cegos pra quem configura no PWA. Mesmo fix `(*)`/contexto.
+- **Achado extra 2:** o PWA tem `notify_deadline_alerts_personal` / `notify_overdue_alerts_personal`
+  (toggles de notificação POR CONTEXTO) que o chat também não conhece. Fora do escopo do item 3,
+  mas registrado.
+
+## Plano do item 3 (com as decisões)
+1. **Prompt `prompts/system.js`** — (a) allowlist explícito do que é setável por chat;
+   (b) silêncio: TOM PERGUNTA o contexto antes de emitir o marker, e mapeia pra
+   `quiet_*_work`/`_personal`; (c) tudo fora do allowlist (check-ins etc.) → "não diga
+   que fez, mostre o caminho no PWA". Corrigir a instrução atual (linha ~95) que manda
+   setar global.
+2. **`engine.js` PREFS_UPDATE** — aceitar/validar as colunas de contexto:
+   `quiet_start_time_work/_personal`, `quiet_end_time_work/_personal`,
+   `quiet_days_work/_personal`, `quiet_weekends_work/_personal`.
+3. **TDD** — testar o parser de PREFS_UPDATE pros campos novos (válido/ inválido),
+   no mesmo padrão dos testes existentes.
