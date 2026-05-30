@@ -3729,7 +3729,14 @@ async function applyTaskActions(collaborator, actions) {
         if (typeof a.new_remind_at === 'string' && isValidRemindAt(a.new_remind_at)) {
           update.remind_at = a.new_remind_at;
         }
-        if (t.status === 'overdue') update.status = 'pending';
+        // Bug 30/05 (Yuri): reschedule de task já done deixava status='done' intacto.
+        // Quando user diz "não fiz X, bota pra amanhã", a intenção é REABRIR + REMARCAR.
+        // Incluído 'overdue' que é pseudo-status legado (mesmo comportamento).
+        if (t.status === 'done' || t.status === 'overdue') {
+          update.status = 'pending';
+          update.completed_at = null;
+          update.completed_by = null;
+        }
         const { data: fullTaskR } = await supabase
           .from('tasks').select('id, title, created_by, assigned_to')
           .eq('id', t.id).maybeSingle();

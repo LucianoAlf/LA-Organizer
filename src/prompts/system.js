@@ -389,15 +389,26 @@ function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events
       const sid = String(t.id || '').slice(0, 8);
       let timeBit = '';
       if (t.remind_at) {
-        const day = dayFromAny(t.remind_at);
-        const time = fmtTimeForCtx(t.remind_at);
-        const rel = day === today ? 'hoje' : day === tomorrowOf(today) ? 'amanhã' : day;
-        timeBit = ` ⏰ ${time} (${rel})`;
+        const remDay = dayFromAny(t.remind_at);
+        if (remDay >= today) {
+          // Lembrete futuro — usa como referência principal de hora.
+          const time = fmtTimeForCtx(t.remind_at);
+          const rel = remDay === today ? 'hoje' : remDay === tomorrowOf(today) ? 'amanhã' : remDay;
+          timeBit = ` ⏰ ${time} (${rel})`;
+        } else if (t.due_date) {
+          // Bug 30/05: remind_at no passado (lembrete já disparado, task ainda aberta)
+          // → mostra due_date como referência de prazo, não a data do lembrete vencido.
+          const rel = t.due_date === today ? 'hoje' : t.due_date === tomorrowOf(today) ? 'amanhã' : t.due_date;
+          timeBit = ` 📅 ${rel}`;
+        }
       } else if (t.due_date) {
         const rel = t.due_date === today ? 'hoje' : t.due_date === tomorrowOf(today) ? 'amanhã' : t.due_date;
         timeBit = ` 📅 ${rel}`;
       }
-      const overdue = (t.remind_at ? dayFromAny(t.remind_at) : t.due_date) < today ? '🔴 ' : '';
+      // Bug 30/05 (Kinho): overdue usava remind_at como referência, mas remind_at é
+      // o lembrete — não o prazo. Uma task com remind_at ontem e due_date segunda-feira
+      // NÃO está atrasada. Somente due_date < hoje define atraso real.
+      const overdue = t.due_date && t.due_date < today ? '🔴 ' : '';
       const doneTag = t.status === 'done' ? '✅ ' : '';
       lines.push(`${i + 1}. [id=${sid}] ${overdue}${doneTag}${t.title}${timeBit}`);
       // Descrição (quando houver) — uma linha indentada abaixo do título.
@@ -1230,16 +1241,20 @@ async function fetchCollaboratorContext(collaborator) {
       .eq('assigned_to', id).lte('due_date', next7days).eq('context', 'personal')
       .not('status', 'in', '(done,cancelled)')
       .order('sort_position', { ascending: true, nullsFirst: false })
-      .order('remind_at', { ascending: true, nullsFirst: false })
+      // Bug 30/05 (Juh/Bianca): remind_at antes de due_date fazia tasks com lembrete
+      // futuro ocupar todos os slots do max_daily_tasks, empurrando tasks com
+      // due_date=hoje (sem remind_at) para fora do slice. Correto: due_date define
+      // urgência real; remind_at é tiebreak dentro do mesmo dia.
       .order('due_date', { ascending: true })
+      .order('remind_at', { ascending: true, nullsFirst: false })
       .order('eisenhower_quadrant', { ascending: true, nullsFirst: false }),
     supabase.from('tasks')
       .select(TASK_COLS)
       .eq('assigned_to', id).lte('due_date', next7days).eq('context', 'work')
       .not('status', 'in', '(done,cancelled)')
       .order('sort_position', { ascending: true, nullsFirst: false })
-      .order('remind_at', { ascending: true, nullsFirst: false })
       .order('due_date', { ascending: true })
+      .order('remind_at', { ascending: true, nullsFirst: false })
       .order('eisenhower_quadrant', { ascending: true, nullsFirst: false }),
     supabase.from('project_members').select('project_id').eq('collaborator_id', id),
     supabase.from('notifications')
