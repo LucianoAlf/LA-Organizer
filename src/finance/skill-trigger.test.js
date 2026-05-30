@@ -4,7 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 
 // Pattern CANDIDATO — deve ser idêntico ao FINANCE_RE em src/prompts/system.js.
-const FINANCE_RE = /\b(gastei|recebi|paguei|sal[áa]rio|comiss[ãa]o|aluguel|ifood|mercado|uber|gasolina|farm[áa]cia|or[çc]amento|meta|guard\w+\s+(?:r\$\s*)?\d+|separ\w+\s+(?:r\$\s*)?\d+|guard\w+\s+(?:dinheiro|grana)|poupan[çc]a|caixinha|investir|selic|juros|sonho|quanto\s+gastei|conta\s+(?:a\s+pagar|vencendo))\b/i;
+const FINANCE_RE = /\b(gastei|recebi|paguei|sal[áa]rio|comiss[ãa]o|aluguel|ifood|mercado|uber|gasolina|farm[áa]cia|or[çc]amento|meta|guard\w+\s+(?:r\$\s*)?\d+|separ\w+\s+(?:r\$\s*)?\d+|guard\w+\s+(?:dinheiro|grana)|poupan[çc]a|caixinha|investir|selic|juros|sonho|quanto\s+gastei|conta\s+(?:a\s+pagar|vencendo|fixa|de\s+(?:luz|[áa]gua|internet|telefone|g[áa]s))|cadastr\w*\s+(?:a\s+)?(?:uma\s+)?conta|assinatura|mensalidade|netflix|spotify|disney|academia|condom[íi]nio)\b/i;
 
 // RECURRENCE_RE (cópia do system.js) — pra provar que NÃO sombreia as msgs de meta.
 const RECURRENCE_RE = /todo\s+(?:dia|m[eê]s|ano|natal)|toda\s+(?:segunda|ter[çc]a|quarta|quinta|sexta|s[aá]bado|domingo|semana)|a\s+cada\s+\d+\s+(?:dia|semana|m[eê]s|ano)|(?:[uú]ltim[ao]|primeir[ao]|segund[ao]|terceir[ao]|quart[ao])\s+(?:segunda|ter[çc]a|quarta|quinta|sexta|s[aá]bado|domingo|dia\s+do\s+m[eê]s)|dia\s+[uú]til|fim\s+de\s+semana|mensal|semanal|di[áa]rio|anual|quinzenal|trimestral|recorrente|que\s+se\s+repete|repete\s+(?:toda|todo|a\s+cada)|todo\s+dia\s+\d+/i;
@@ -19,6 +19,10 @@ const MATCH = [
   'define orçamento de alimentação 500',
   'como tá meu orçamento',
   'quanto gastei esse mês?',
+  'cadastra conta Netflix de 40 reais dia 2',
+  'cadastra a conta de luz dia 10',
+  'quero cadastrar uma conta fixa',
+  'assinatura da academia',
 ];
 const NO_MATCH = [
   'guardar o equipamento no armário', // inventário, não finanças

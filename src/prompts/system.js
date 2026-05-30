@@ -787,7 +787,7 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
   // Sprint 27 — Financas pessoais: dinheiro, contas, metas, orcamento, contribuicao.
   // ANTES de recorrencia: frase de dinheiro/meta tem prioridade (ex: "guardei 500 pro carro"
   // e "todo dia 10 pagar aluguel" devem ir pro financeiro, nao virar tarefa recorrente).
-  const FINANCE_RE = /\b(gastei|recebi|paguei|sal[áa]rio|comiss[ãa]o|aluguel|ifood|mercado|uber|gasolina|farm[áa]cia|or[çc]amento|meta|guard\w+\s+(?:r\$\s*)?\d+|separ\w+\s+(?:r\$\s*)?\d+|guard\w+\s+(?:dinheiro|grana)|poupan[çc]a|caixinha|investir|selic|juros|sonho|quanto\s+gastei|conta\s+(?:a\s+pagar|vencendo))\b/i;
+  const FINANCE_RE = /\b(gastei|recebi|paguei|sal[áa]rio|comiss[ãa]o|aluguel|ifood|mercado|uber|gasolina|farm[áa]cia|or[çc]amento|meta|guard\w+\s+(?:r\$\s*)?\d+|separ\w+\s+(?:r\$\s*)?\d+|guard\w+\s+(?:dinheiro|grana)|poupan[çc]a|caixinha|investir|selic|juros|sonho|quanto\s+gastei|conta\s+(?:a\s+pagar|vencendo|fixa|de\s+(?:luz|[áa]gua|internet|telefone|g[áa]s))|cadastr\w*\s+(?:a\s+)?(?:uma\s+)?conta|assinatura|mensalidade|netflix|spotify|disney|academia|condom[íi]nio)\b/i;
   if (FINANCE_RE.test(String(lastUserMessage || ''))) {
     return { name: 'financeiro-pessoal', body: loadSkill('financeiro-pessoal') };
   }
