@@ -18,16 +18,16 @@ export function FinanceQuickLinks() {
   return (
     <section
       aria-label="Atalhos do módulo financeiro"
-      className="flex gap-2 overflow-x-auto -mx-md px-md [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+      className="flex gap-1"
     >
       {LINKS.map(({ to, label, Icon }) => (
         <Link
           key={to}
           to={to}
-          className="shrink-0 w-[56px] flex flex-col items-center gap-1 py-1.5 px-1 rounded-md bg-bg-elevated hover:bg-bg-surface focus-ring transition-colors border border-border/40"
+          className="flex-1 min-w-0 flex flex-col items-center gap-1 py-1.5 px-0.5 rounded-md bg-bg-elevated hover:bg-bg-surface focus-ring transition-colors border border-border/40"
         >
           <Icon size={15} className="text-tom" aria-hidden />
-          <span className="text-[10px] font-medium text-fg text-center leading-none">{label}</span>
+          <span className="text-[10px] font-medium text-fg text-center leading-none whitespace-nowrap">{label}</span>
         </Link>
       ))}
     </section>
