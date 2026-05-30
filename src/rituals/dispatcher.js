@@ -779,7 +779,7 @@ async function remindEventTasks(now = new Date()) {
     .from('tasks')
     .select(`
       id, title, assigned_to, school_event_id,
-      collaborator:assigned_to ( id, phone, full_name, user_preferences(quiet_weekends, quiet_days, quiet_reason, quiet_start_time, quiet_end_time) ),
+      collaborator:assigned_to ( id, phone, full_name, user_preferences(*) ),
       event:school_event_id ( title )
     `)
     .not('school_event_id', 'is', null)
@@ -843,7 +843,7 @@ async function remindOperationalTasks(now = new Date()) {
     .select(`
       id, title, assigned_to, due_date,
       request_type:department_request_types!tasks_request_type_id_fkey(label),
-      collaborator:assigned_to(id, phone, full_name, user_preferences(quiet_weekends, quiet_days, quiet_reason, quiet_start_time, quiet_end_time))
+      collaborator:assigned_to(id, phone, full_name, user_preferences(*))
     `)
     .not('department_id', 'is', null)
     .is('school_event_id', null)
@@ -904,7 +904,7 @@ async function remindPersonalTasks(now = new Date()) {
     .from('tasks')
     .select(`
       id, title, assigned_to, due_date, context,
-      collaborator:assigned_to(id, phone, full_name, user_preferences(quiet_weekends, quiet_days, quiet_reason, quiet_start_time, quiet_end_time))
+      collaborator:assigned_to(id, phone, full_name, user_preferences(*))
     `)
     .is('department_id', null)
     .is('project_id', null)
@@ -1908,7 +1908,7 @@ async function checkOverdueWorkEvents(now = new Date()) {
 
   const { data: stale, error } = await supabase
     .from('events')
-    .select('id, title, end_at, collaborator_id, followup_sent_at, collaborators!events_collaborator_id_fkey(full_name, phone, is_active, user_preferences(quiet_weekends, quiet_days, quiet_reason, quiet_start_time, quiet_end_time))')
+    .select('id, title, end_at, collaborator_id, followup_sent_at, collaborators!events_collaborator_id_fkey(full_name, phone, is_active, user_preferences(*))')
     .eq('context', 'work')
     .not('status', 'in', '("done","cancelled")')
     .lt('end_at', yesterdayEnd)

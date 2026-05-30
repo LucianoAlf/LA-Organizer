@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const collaboratorService = require('./services/collaborator');
+const collabResolver = require('./services/collaborator-resolver');
 const whatsapp = require('./services/whatsapp');
 const metricsService = require('./services/metrics');
 const ai = require('./ai/provider');
@@ -1619,6 +1620,10 @@ const _requesterDisplayName = _displayName;
 // substitui qualquer texto otimista que o LLM possa ter gerado ("✅ Registrado!")
 // por uma microconfirmação clara. Determinístico no engine, não confia no Claude.
 function _buildIntegrityConfirmText(payload) {
+  // Desambiguação de homônimos: payload carrega os candidatos; pergunta direta.
+  if (payload && payload.type === 'ambiguous_recipient') {
+    return collabResolver.buildAmbiguityQuestion(payload.candidates);
+  }
   if (!payload) return '_não consegui registrar agora, te aviso depois_';
   const cand = String(payload.candidateTitle || '').slice(0, 80);
   const conflicts = Array.isArray(payload.conflicts) ? payload.conflicts : [];
@@ -1658,8 +1663,20 @@ function _buildIntegrityConfirmText(payload) {
 //     - recipient existe E é ativo E é diferente do requester
 //     - alçada bloqueou (role_insufficient, cannot_followup_director)
 async function applyCoordinationRequestAction(collab, parsed) {
-  // 1. Lookup recipient — sem row se falhar
-  const recipient = await findCollaboratorByName(parsed.recipient_name);
+  // 1. Lookup recipient — desambigua homônimos por contexto (requester confiável
+  //    via phone + assunto do recado). Ambíguo → pergunta 1x, não cria nada.
+  const _recRes = await resolveCollaboratorByName(parsed.recipient_name, {
+    requester: collab,
+    subject: parsed.message_body,
+  });
+  if (_recRes.status === 'ambiguous') {
+    return {
+      ok: false,
+      reason: 'ambiguous_recipient',
+      replyText: collabResolver.buildAmbiguityQuestion(_recRes.candidates),
+    };
+  }
+  const recipient = _recRes.status === 'resolved' ? _recRes.collaborator : null;
   if (!recipient || !recipient.is_active) {
     return {
       ok: false,
@@ -2237,8 +2254,26 @@ async function applyEventActions(collaborator, events) {
       const wantsForOtherEvent = (typeof e.to_name === 'string' && e.to_name.trim()) ||
                                   (typeof e.to_phone === 'string' && e.to_phone.trim());
       if (wantsForOtherEvent) {
-        if (e.to_phone) eventRecipient = await findCollaboratorByPhone(e.to_phone);
-        else eventRecipient = await findCollaboratorByName(e.to_name);
+        if (e.to_phone) {
+          eventRecipient = await findCollaboratorByPhone(e.to_phone);
+        } else {
+          const _r = await resolveCollaboratorByName(e.to_name, {
+            requester: collaborator,
+            subject: `${e.title || ''} ${e.description || ''}`,
+          });
+          if (_r.status === 'ambiguous') {
+            // Não cria; sinaliza payload (var integrityPayload do applyEventActions).
+            integrityPayload = {
+              severity: 'soft',
+              type: 'ambiguous_recipient',
+              candidates: _r.candidates,
+              candidateTitle: e.title,
+            };
+            failCount++;
+            continue;
+          }
+          eventRecipient = _r.status === 'resolved' ? _r.collaborator : null;
+        }
         if (!eventRecipient || !eventRecipient.is_active) {
           console.warn(`[Event] create-for-other REJECTED — recipient not found/inactive: ${e.to_phone || e.to_name}`);
           failCount++;
@@ -2300,8 +2335,12 @@ async function applyEventActions(collaborator, events) {
         row.related_to_collaborator_id = e.related_to_collaborator_id;
       } else if (typeof e.related_to_name === 'string' && e.related_to_name.trim()) {
         try {
-          const inferred = await findCollaboratorByName(e.related_to_name.trim());
-          if (inferred?.id) row.related_to_collaborator_id = inferred.id;
+          // Inferência soft: usa contexto pra desambiguar; se ambíguo, deixa vazio.
+          const _r = await resolveCollaboratorByName(e.related_to_name.trim(), {
+            requester: collaborator,
+            subject: `${e.title || ''} ${e.description || ''}`,
+          });
+          if (_r.status === 'resolved') row.related_to_collaborator_id = _r.collaborator.id;
         } catch (_) { /* silent */ }
       }
       const { data, error } = await supabase
@@ -2965,54 +3004,30 @@ function _stripDiacritics(s) {
   return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 }
 
-async function findCollaboratorByName(name) {
-  const norm = _stripDiacritics(name);
-  if (!norm) return null;
+// Busca colaboradores ativos com os campos necessários pra resolução + domínio.
+async function _fetchActiveCollaborators() {
   const { data } = await supabase
     .from('collaborators')
     .select('id, full_name, phone, is_active, role, unit, onboarding_completed, pedagogical_role, function_role, function_title, bio, preferred_name, aliases, has_coord_permissions')
     .eq('is_active', true);
-  if (!data || !data.length) return null;
-  const first = norm.split(/\s+/)[0];
+  return data || [];
+}
 
-  // 0) Full-string exact match em preferred_name ou aliases[] — resolve qualificadores
-  //    como "Dai ADM" → Daiana Farmer sem colidir com match de primeiro-token.
-  {
-    const fullCandidates = data.filter(c => {
-      const pn = _stripDiacritics(c.preferred_name || '');
-      const als = Array.isArray(c.aliases) ? c.aliases : [];
-      return (pn && pn === norm) || als.some(a => _stripDiacritics(a) === norm);
-    });
-    if (fullCandidates.length === 1) return fullCandidates[0];
-  }
+// Resolve por nome com desambiguação por contexto. Retorna
+// { status: 'resolved'|'ambiguous'|'not_found', collaborator?|candidates? }.
+async function resolveCollaboratorByName(name, opts = {}) {
+  return collabResolver.resolveCollaboratorByName(name, {
+    requester: opts.requester || null,
+    subject: opts.subject || null,
+    fetchActive: _fetchActiveCollaborators,
+  });
+}
 
-  // 1) Match exato no primeiro nome do full_name
-  let candidates = data.filter(c => _stripDiacritics((c.full_name || '').split(' ')[0]) === first);
-  if (candidates.length === 1) return candidates[0];
-  if (candidates.length === 0) {
-    // 2) Match em preferred_name (exato ou primeiro token)
-    candidates = data.filter(c => {
-      const pn = _stripDiacritics(c.preferred_name);
-      if (!pn) return false;
-      return pn === first || pn.split(' ')[0] === first;
-    });
-    if (candidates.length === 1) return candidates[0];
-  }
-  if (candidates.length === 0) {
-    // 3) Match em aliases[] (cada alias normalizado)
-    candidates = data.filter(c => {
-      const aliases = Array.isArray(c.aliases) ? c.aliases : [];
-      return aliases.some(a => _stripDiacritics(a) === first);
-    });
-    if (candidates.length === 1) return candidates[0];
-  }
-  if (candidates.length === 0) {
-    // 4) Prefix em full_name (fallback original)
-    candidates = data.filter(c => _stripDiacritics(c.full_name).startsWith(first));
-    if (candidates.length === 1) return candidates[0];
-  }
-  // Ambíguo (>1) ou nada encontrado
-  return null;
+// Back-compat: devolve o collaborator se resolvido, senão null (ambíguo → null).
+// Callers sem contexto (requester/subject) continuam funcionando.
+async function findCollaboratorByName(name) {
+  const r = await resolveCollaboratorByName(name);
+  return r.status === 'resolved' ? r.collaborator : null;
 }
 
 async function findCollaboratorByPhone(phone) {
@@ -3782,8 +3797,28 @@ async function applyTaskActions(collaborator, actions) {
         if (wantsForOther) {
           // 26/05 — Gate de role removido. Qualquer collab pode criar task pra
           // outra pessoa (caso real: professor delegando pra coordenador).
-          if (a.to_phone) recipient = await findCollaboratorByPhone(a.to_phone);
-          else recipient = await findCollaboratorByName(a.to_name);
+          if (a.to_phone) {
+            recipient = await findCollaboratorByPhone(a.to_phone);
+          } else {
+            const _r = await resolveCollaboratorByName(a.to_name, {
+              requester: collaborator,
+              subject: `${a.title || ''} ${a.description || ''}`,
+            });
+            if (_r.status === 'ambiguous') {
+              // Espelha o padrão dup_task: não insere, sinaliza payload pro caller.
+              return {
+                okCount,
+                failCount: failCount + 1,
+                integrityPayload: {
+                  severity: 'soft',
+                  type: 'ambiguous_recipient',
+                  candidates: _r.candidates,
+                  candidateTitle: a.title,
+                },
+              };
+            }
+            recipient = _r.status === 'resolved' ? _r.collaborator : null;
+          }
           if (!recipient || !recipient.is_active) {
             console.warn(`[Task] create-for-other REJECTED — recipient not found/inactive: ${a.to_phone || a.to_name}`);
             failCount++;
@@ -4232,8 +4267,27 @@ async function applyTaskActions(collaborator, actions) {
           continue;
         }
         let recipient = null;
-        if (a.to_phone) recipient = await findCollaboratorByPhone(a.to_phone);
-        else if (a.to_name) recipient = await findCollaboratorByName(a.to_name);
+        if (a.to_phone) {
+          recipient = await findCollaboratorByPhone(a.to_phone);
+        } else if (a.to_name) {
+          const _r = await resolveCollaboratorByName(a.to_name, {
+            requester: collaborator,
+            subject: t.title,
+          });
+          if (_r.status === 'ambiguous') {
+            return {
+              okCount,
+              failCount: failCount + 1,
+              integrityPayload: {
+                severity: 'soft',
+                type: 'ambiguous_recipient',
+                candidates: _r.candidates,
+                candidateTitle: t.title,
+              },
+            };
+          }
+          recipient = _r.status === 'resolved' ? _r.collaborator : null;
+        }
         if (!recipient || !recipient.is_active) {
           console.warn(`[Task] delegate REJECTED — recipient not found: ${a.to_phone || a.to_name}`);
           failCount++;

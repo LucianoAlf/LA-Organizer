@@ -40,14 +40,19 @@ function gatherCandidates(name, rows) {
   if (!norm) return result;
   const first = norm.split(/\s+/)[0];
 
-  // 1) Match exato da string completa (full_name|preferred|alias) → qualificador.
-  const exactMatches = rows.filter(c => {
-    const fn = stripDiacritics(c.full_name || '');
-    const pn = stripDiacritics(c.preferred_name || '');
-    const als = Array.isArray(c.aliases) ? c.aliases : [];
-    return fn === norm || (pn && pn === norm) || als.some(a => stripDiacritics(a) === norm);
-  });
-  if (exactMatches.length === 1) { result.exact = exactMatches[0]; return result; }
+  // 1) Qualificador explícito (multi-token: "Dai Recreio", "Dai Ped") → match exato
+  //    da string completa em full_name|preferred|alias ganha precedência.
+  //    Nome cru de 1 token NUNCA entra aqui — vai pra união, pra o homônimo ser
+  //    detectado mesmo quando o nome cru É o full_name de alguém (ex.: "Dai").
+  if (/\s/.test(norm)) {
+    const exactMatches = rows.filter(c => {
+      const fn = stripDiacritics(c.full_name || '');
+      const pn = stripDiacritics(c.preferred_name || '');
+      const als = Array.isArray(c.aliases) ? c.aliases : [];
+      return fn === norm || (pn && pn === norm) || als.some(a => stripDiacritics(a) === norm);
+    });
+    if (exactMatches.length === 1) { result.exact = exactMatches[0]; return result; }
+  }
 
   // 2) União de tiers de token: full_name[0] ∪ preferred ∪ alias[0].
   const seen = new Set();
