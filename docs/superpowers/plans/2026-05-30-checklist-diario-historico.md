@@ -859,3 +859,16 @@ WHERE checklist_id='11ff1cc7-a954-47b1-b40c-a1a3defdb292'
 - **Risco #3 (fuso):** `todaySP()` (web) e `now() AT TIME ZONE 'America/Sao_Paulo'` (SQL). ✅
 - **Guardrail mobile/desktop:** mesma `PersonalChecklistCard` serve os dois; nenhuma rota nova (drawer via BottomSheet). ✅
 - **Out of scope respeitado:** sem streaks, sem cron de lembrete, sem timeline global. ✅
+
+---
+
+## Execução — desvios e achados (2026-05-30)
+
+1. **🔴 Bug crítico achado na validação (RLS/FK identity).** A migration original `20260527010100` criou `personal_checklist_completions.user_id` como `REFERENCES auth.users(id)` + RLS `auth.uid() = user_id`. Mas o módulo pessoal inteiro escreve `user_id = collaborator.id`. Isso só funciona para colaboradores cujo `collaborator.id == auth.users.id` — que são apenas **7 de 24 ativos** (Jhonatan está nesses 7; **17/71% quebrariam**, incluindo o Alf). Sintoma: o 1º toggle de lista recorrente falhava em silêncio (INSERT barrado por FK + RLS).
+   **Correção aplicada — migration `personal_completions_collab_identity`:** trocou a FK de `auth.users(id)` para `collaborators(id)` e a RLS de `auth.uid()=user_id` para `user_id = current_collab_id()` (mesmo padrão de `personal_checklists`, que já funciona pra todos). **Zero mudança de código** (PWA/engine/backfill já usavam `collaborator.id`). Re-validado sob a conta do Alf (caso non-coinciding) → grava certo.
+
+2. **Backfill melhorado:** a versão executada filtra por *aplica-hoje* (CASE por `recurrence_type` com `EXTRACT(DOW)+1`), evitando criar completion de lista weekly em dia que não é dela. Resultado real: Jhonatan **Alimentação 1/6** hoje; Treino (Seg–Sex) corretamente sem completion no Sáb.
+
+3. **Sem framework de teste no repo confirmado.** Validação por `tsc`+`vite build`+Preview (drive autenticado como Alf, com lista de teste descartável já removida).
+
+4. **Heads-up:** `src/engine.js` cresceu ~88 linhas entre duas leituras durante a execução (bloco `toggle_item` migrou de ~6660 p/ ~6748) — possível sessão paralela editando o engine. Edit reaplicado limpo; `node --check` OK no VPS.
