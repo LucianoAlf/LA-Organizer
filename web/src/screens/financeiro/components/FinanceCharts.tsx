@@ -69,15 +69,15 @@ export function PieByCategory({ data }: { data: { category: PfCategory; value: n
   return (
     <div className="flex items-center gap-3 md:gap-4">
       {/* Pizza à esquerda — tamanho fixo, com total no centro do donut */}
-      <div className="relative w-[128px] h-[128px] shrink-0">
+      <div className="relative w-[104px] h-[104px] shrink-0">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
             <Pie
               data={data}
               dataKey="value"
               nameKey="category"
-              innerRadius={38}
-              outerRadius={62}
+              innerRadius={32}
+              outerRadius={50}
               paddingAngle={2}
               stroke="var(--color-bg-surface, transparent)"
               strokeWidth={1.5}
@@ -90,28 +90,24 @@ export function PieByCategory({ data }: { data: { category: PfCategory; value: n
           </PieChart>
         </ResponsiveContainer>
         <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-          <span className="text-fg font-bold text-sm tabular-nums leading-none">R$ {brl(total)}</span>
+          <span className="text-fg font-bold text-xs tabular-nums leading-none">R$ {brl(total)}</span>
           <span className="text-[9px] uppercase tracking-wide text-fg-muted mt-0.5">Total</span>
         </div>
       </div>
 
-      {/* Legenda à direita — bolinha · categoria · % · valor */}
+      {/* Legenda à direita — bolinha · categoria · valor (a proporção já é a fatia da pizza) */}
       <ul className="flex-1 min-w-0 flex flex-col gap-1.5">
-        {data.map((d) => {
-          const pct = total > 0 ? Math.round((d.value / total) * 100) : 0;
-          return (
-            <li key={d.category} className="flex items-center gap-2 text-body-sm">
-              <span
-                className="w-2.5 h-2.5 rounded-full shrink-0"
-                style={{ backgroundColor: CATEGORY_COLOR[d.category] }}
-                aria-hidden
-              />
-              <span className="text-fg truncate flex-1 min-w-0">{CATEGORY_LABEL[d.category]}</span>
-              <span className="text-fg-muted tabular-nums shrink-0">{pct}%</span>
-              <span className="text-fg font-semibold tabular-nums shrink-0 w-[72px] text-right">R$ {brl(d.value)}</span>
-            </li>
-          );
-        })}
+        {data.map((d) => (
+          <li key={d.category} className="flex items-center gap-2 text-xs">
+            <span
+              className="w-2 h-2 rounded-full shrink-0"
+              style={{ backgroundColor: CATEGORY_COLOR[d.category] }}
+              aria-hidden
+            />
+            <span className="text-fg truncate flex-1 min-w-0">{CATEGORY_LABEL[d.category]}</span>
+            <span className="text-fg font-semibold tabular-nums shrink-0 w-[64px] text-right">R$ {brl(d.value)}</span>
+          </li>
+        ))}
       </ul>
     </div>
   );
