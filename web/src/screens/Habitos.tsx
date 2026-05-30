@@ -274,6 +274,11 @@ export function Habitos() {
                       <span>{h.icon ? `${h.icon} ` : ''}{h.name}</span>
                     </div>
                     <div className="mt-0.5 flex items-center gap-3 text-body-sm text-fg-muted">
+                      {h.habit_type === 'quantitative' && Number(h.target_value) > 0 ? (
+                        <span className="tabular-nums text-tom">
+                          {h.today_value.toLocaleString('pt-BR')}/{Number(h.target_value).toLocaleString('pt-BR')} {h.unit}
+                        </span>
+                      ) : null}
                       <span className="tabular-nums">
                         {Math.round(h.adherence30 * 100)}% nos últimos 30d
                       </span>
