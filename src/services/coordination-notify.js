@@ -13,6 +13,15 @@
 
 const AUDIO_PREFIX = /^\[áudio transcrito\]\s*/i;
 
+// Scaffolding de reply/quoted que o webhook PREPENDE (webhook.js ~289/292). A
+// fala REAL da pessoa vem logo depois do ']\n'. Bug 30/05 (Alf respondeu "Sim"
+// CITANDO a msg do Tom): extractVerbatim derrubava a fala por causa do '[' e
+// caía em "não consegui transcrever". Anchorado no formato gerado:
+//   texto:  [O usuário está RESPONDENDO a esta mensagem anterior...: "<snip>"]\n<fala>
+//   mídia:  [O usuário está RESPONDENDO a uma mídia anterior do tipo <t>]\n<fala>
+const REPLY_TEXT_SCAFFOLD = /^\[O usuário está RESPONDENDO a esta mensagem anterior[\s\S]*?"\]\n/;
+const REPLY_MEDIA_SCAFFOLD = /^\[O usuário está RESPONDENDO a uma mídia anterior do tipo [^\]\n]*\]\n/;
+
 /**
  * Extrai a fala literal do recipient a partir do texto inbound que o engine
  * processou (o `text` de processMessage). Retorna null quando NÃO há fala
@@ -28,12 +37,19 @@ const AUDIO_PREFIX = /^\[áudio transcrito\]\s*/i;
  * @returns {string|null}
  */
 function extractVerbatim(inboundText) {
-  const t = String(inboundText || '').trim();
+  let t = String(inboundText || '').trim();
   if (!t) return null;
+  // 1) Tira scaffolding de reply/quoted — a fala real da pessoa vem depois do ']'.
+  //    (só um dos dois casa; replace é inócuo quando não casa.)
+  t = t.replace(REPLY_TEXT_SCAFFOLD, '').replace(REPLY_MEDIA_SCAFFOLD, '').trim();
+  // 2) Tira o prefixo de transcrição de áudio — a transcrição É a fala citável
+  //    (inclusive quando o áudio veio dentro de um reply citado).
   if (AUDIO_PREFIX.test(t)) {
-    const body = t.replace(AUDIO_PREFIX, '').trim();
-    return body || null;
+    t = t.replace(AUDIO_PREFIX, '').trim();
   }
+  if (!t) return null;
+  // 3) O que ainda começa com '[' é scaffolding de MÁQUINA (análise de imagem/
+  //    vídeo/PDF, header de multi-mensagem) — não há fala humana citável.
   if (t.startsWith('[')) return null;
   return t;
 }

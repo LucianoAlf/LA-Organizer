@@ -1,11 +1,13 @@
 import { NavLink, useLocation } from 'react-router-dom';
 import { CalendarDays, Rocket, ClipboardCheck, Sparkles, Menu } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { useNavPreferences } from '../hooks/useNavPreferences';
 
 interface NavItem {
   to: string;
   label: string;
-  Icon: typeof CalendarDays;
+  Icon: LucideIcon;
   /** Rotas adicionais que devem ativar este item (p.ex. Agenda ativa em /hoje e /semana). */
   matchPaths?: string[];
 }
@@ -26,6 +28,14 @@ export function BottomNav() {
   const location = useLocation();
   const showsTime = role === 'coordinator' || role === 'director';
 
+  // Bottom nav mobile customizável (4 slots + "Mais" fixo no 5º).
+  // O 5º slot é client-side; o banco persiste só os 4 customizáveis.
+  const { items: customItems } = useNavPreferences();
+  const mobileItems: NavItem[] = [
+    ...customItems.map((i) => ({ to: i.slug, label: i.label, Icon: i.Icon, matchPaths: i.matchPaths })),
+    { to: '/mais', label: 'Mais', Icon: Menu },
+  ];
+
   function isItemActive(item: NavItem, defaultActive: boolean): boolean {
     if (item.matchPaths) return item.matchPaths.some(p => location.pathname.startsWith(p));
     return defaultActive;
@@ -38,8 +48,9 @@ export function BottomNav() {
       className="fixed bottom-0 inset-x-0 z-30 bg-bg-surface/95 backdrop-blur border-t border-border md:static md:bg-bg-app md:backdrop-blur-0"
       style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
+      {/* Mobile: 4 slots customizáveis + "Mais" fixo (vem de useNavPreferences). */}
       <ul className="grid grid-cols-5 max-w-content mx-auto md:hidden">
-        {items.map(item => {
+        {mobileItems.map(item => {
           const { to, label, Icon } = item;
           return (
             <li key={to}>
@@ -69,7 +80,12 @@ export function BottomNav() {
         })}
       </ul>
 
-      {/* Desktop top-rail (replaces bottom nav at md+) */}
+      {/*
+        Desktop top-rail — CÓDIGO MORTO no shell atual: DesktopShell renderiza
+        SidebarV2 (não BottomNav). Bloco mantido como defesa preventiva caso
+        BottomNav volte ao desktop em refactor futuro. NÃO consome a pref
+        customizada — fica com a lista fixa `items`, intocada.
+      */}
       <ul className="hidden md:flex items-center gap-md max-w-content mx-auto px-md py-2">
         {items.map(item => {
           const { to, label, Icon } = item;

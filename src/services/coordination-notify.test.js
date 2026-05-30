@@ -62,6 +62,38 @@ test('extractVerbatim: texto limpo retorna a fala; placeholder de sistema retorn
   assert.strictEqual(extractVerbatim(''), null);
 });
 
+// --- Regressão 30/05: Alf respondeu "Sim" CITANDO a mensagem do Tom (reply do
+// WhatsApp). O webhook embrulha reply em [O usuário está RESPONDENDO...]\n<fala>.
+// O extractVerbatim derrubava a fala real ("Sim") por causa do prefixo '['.
+const REPLY_SCAFFOLD = '[O usuário está RESPONDENDO a esta mensagem anterior (conteúdo completo do banco): "Oi, Luciano 👋\n\nO Rafinha me pediu pra te avisar: precisa de aprovação..."]\nSim';
+
+test('reply citado (texto): extrai a fala real depois do scaffolding', () => {
+  assert.strictEqual(extractVerbatim(REPLY_SCAFFOLD), 'Sim');
+});
+
+test('reply citado (texto): cita a fala, NÃO cai em "não consegui transcrever"', () => {
+  const msg = buildCoordinationResponseNotification({
+    recipientFirstName: 'Alf', inboundText: REPLY_SCAFFOLD, summary: 'Alf aprovou a compra',
+  });
+  assert.ok(msg.includes('"Sim"'), `fala real não citada: ${msg}`);
+  assert.ok(!/não consegui transcrever/i.test(msg), `caiu no fallback errado: ${msg}`);
+});
+
+test('reply a mídia + texto: extrai a fala real depois do scaffolding', () => {
+  const t = '[O usuário está RESPONDENDO a uma mídia anterior do tipo image]\nPode aprovar';
+  assert.strictEqual(extractVerbatim(t), 'Pode aprovar');
+});
+
+test('reply citado embrulhando áudio: tira os dois scaffoldings e cita a transcrição', () => {
+  const t = '[O usuário está RESPONDENDO a esta mensagem anterior: "Aprova?"]\n[áudio transcrito] pode aprovar sim';
+  assert.strictEqual(extractVerbatim(t), 'pode aprovar sim');
+});
+
+test('reply a mídia (imagem) continua NÃO citável — análise de máquina, não fala', () => {
+  const t = '[O usuário ACABOU DE ENVIAR uma imagem agora — primeira vez vendo este arquivo. Análise automática:]\nfoto de um boleto vencido';
+  assert.strictEqual(extractVerbatim(t), null);
+});
+
 test('resumo idêntico ao verbatim não duplica (sem parêntese redundante)', () => {
   const msg = buildCoordinationResponseNotification({
     recipientFirstName: 'Rafinha', inboundText: 'Consigo verificar sim', summary: 'Consigo verificar sim',

@@ -61,6 +61,33 @@ Qual quer ativar? Ou quer criar um personalizado?
 
 ## Fluxo: CRIAR hábito (wizard)
 
+### REGRA DURA #0 — Binário ou Quantitativo? DECIDA ANTES DE QUALQUER COISA
+
+Antes de pensar em horário, nome ou template, decida o **tipo** do hábito:
+
+- Se o user menciona uma **quantidade-meta com unidade** ("meta de 6L", "3 litros por dia", "2L de água", "ler 50 páginas", "30 minutos", "10 mil passos", "5 km") → é **QUANTITATIVO**. Você TEM que emitir `habit_type:"quantitative"`, `target_value` (número) e `unit` (string). 
+- Caso contrário ("academia", "meditar", "tomar vitamina") → binário (sem esses campos).
+
+**Regras de ferro do quantitativo (NÃO pule nenhuma):**
+
+1. **Nome SEM a quantidade.** "Beber 6L de água" está ERRADO — o nome é só *"Beber água"*; o "6L" vira `target_value`. Mesma coisa: *"Ler"* (não "Ler 50 páginas"), *"Caminhar"* (não "Caminhar 5km").
+2. **Normalize a unidade pra base que o user vai usar ao registrar:**
+   - Volume / água / líquidos → SEMPRE **ml**. 1L = 1000ml. "6 litros" → `target_value:6000, unit:"ml"`. (O user vai mandar "bebi 650ml" — tem que bater.)
+   - Tempo → **min**. "meia hora" → `30`, "1h30" → `90`, unit:"min".
+   - Páginas → `unit:"páginas"`. Distância → **km**. Passos → `unit:"passos"`.
+3. **NUNCA crie quantitativo como binário "porque é mais simples".** Se tem meta com unidade, é quantitativo. Ponto.
+
+Exemplo CERTO:
+User: "Criar hábito beber água, meta de 6L por dia"
+→ Marker:
+```
+<<HABIT_ACTION>>
+[{"action":"create","name":"Beber água","frequency":"daily","icon":"💧","habit_type":"quantitative","target_value":6000,"unit":"ml"}]
+<<END>>
+```
+
+Exemplo ERRADO (NÃO faça): `{"action":"create","name":"Beber 6L de água"}` — virou binário, quantidade no nome, sem meta. É exatamente o bug que quebra a barra de progresso.
+
 ### REGRA DURA — sempre confirmar horário antes de emitir o marker
 **NUNCA emita `<<HABIT_ACTION>>` de criação sem ter perguntado e recebido confirmação do horário do lembrete (ou explícito "sem lembrete").**
 

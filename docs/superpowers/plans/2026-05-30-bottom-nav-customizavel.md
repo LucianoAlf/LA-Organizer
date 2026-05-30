@@ -97,10 +97,12 @@ Criar `migrations/20260530_bottom_nav_items.sql` com o mesmo conteúdo do Step 2
 
 - [ ] **Step 1: Escrever o teste primeiro**
 
+> ⚠️ **Cuidado TDD (aviso explícito do Alf):** os testes travam **apenas invariantes estruturais** (sempre 4, dedup, drop-inválido-recompleta, label "Agenda", defaults disponíveis). Os testes NÃO assertam o gating de nuance (LA Journey ≠ manager, LA Educa mentor, etc.) — esse gating tem que vir VERBATIM do SidebarV2:60-110, não de palpite no teste. Os 2 únicos testes "óbvios e seguros" sobre gating são: (a) director (cobre todos os gated → catálogo inteiro disponível); (b) collaborator pelado (cobre nenhum gated → só os 4 sem `when`). Isso prova que o gating funciona sem codificar regras específicas.
+
 Criar `web/src/lib/navItems.test.ts`:
 ```ts
 import { test, expect } from 'vitest';
-import { NAV_CATALOG, availableNavItems, resolveSlugs, type NavGateContext } from './navItems';
+import { NAV_CATALOG, availableNavItems, resolveSlugs, DEFAULT_NAV_SLUGS, type NavGateContext } from './navItems';
 
 const fullCtx: NavGateContext = {
   role: 'director',
@@ -115,39 +117,44 @@ const minCtx: NavGateContext = {
   isMentor: false,
 };
 
-test('catálogo inclui as 4 entradas default', () => {
-  const slugs = NAV_CATALOG.map((i) => i.slug);
-  expect(slugs).toContain('/hoje');
-  expect(slugs).toContain('/projetos');
-  expect(slugs).toContain('/checklists');
-  expect(slugs).toContain('/habitos');
+// ============ INVARIANTES ESTRUTURAIS ============
+
+test('catálogo inclui exatamente os 4 slugs default (sem when)', () => {
+  for (const slug of DEFAULT_NAV_SLUGS) {
+    const item = NAV_CATALOG.find((i) => i.slug === slug);
+    expect(item).toBeDefined();
+    expect(item!.when).toBeUndefined(); // defaults NUNCA têm gating
+  }
 });
 
-test('/hoje preserva label "Agenda" + matchPaths', () => {
+test('/hoje preserva label "Agenda" + matchPaths corretos', () => {
   const hoje = NAV_CATALOG.find((i) => i.slug === '/hoje')!;
   expect(hoje.label).toBe('Agenda');
   expect(hoje.matchPaths).toEqual(['/hoje', '/semana']);
 });
 
-test('availableNavItems(director) inclui itens gated', () => {
-  const avail = availableNavItems(fullCtx).map((i) => i.slug);
-  expect(avail).toContain('/time');                // role director
-  expect(avail).toContain('/mais/governanca');     // só director
-  expect(avail).toContain('/inventario');          // access
+test('director vê TODO o catálogo (limite máximo do gating)', () => {
+  const avail = availableNavItems(fullCtx);
+  expect(avail).toHaveLength(NAV_CATALOG.length);
 });
 
-test('availableNavItems(collaborator sem nada) NÃO inclui itens gated', () => {
-  const avail = availableNavItems(minCtx).map((i) => i.slug);
-  expect(avail).not.toContain('/time');
-  expect(avail).not.toContain('/mais/governanca');
-  expect(avail).not.toContain('/inventario');
-  expect(avail).toContain('/hoje');                // sempre disponível
+test('collaborator sem permissões só vê os itens SEM when (limite mínimo)', () => {
+  const avail = availableNavItems(minCtx);
+  const slugsSemWhen = NAV_CATALOG.filter((i) => !i.when).map((i) => i.slug);
+  expect(avail.map((i) => i.slug).sort()).toEqual(slugsSemWhen.sort());
 });
+
+// ============ resolveSlugs — sempre 4 válidos ============
 
 test('resolveSlugs sempre devolve EXATAMENTE 4 itens', () => {
   expect(resolveSlugs([], fullCtx)).toHaveLength(4);
   expect(resolveSlugs(['/hoje'], fullCtx)).toHaveLength(4);
   expect(resolveSlugs(['/hoje','/projetos','/checklists','/habitos','/financeiro'], fullCtx)).toHaveLength(4);
+});
+
+test('resolveSlugs([], minCtx) também devolve 4 (defaults bastam)', () => {
+  // mesmo collaborator pelado consegue 4 itens — porque DEFAULT_NAV_SLUGS são todos sem when.
+  expect(resolveSlugs([], minCtx)).toHaveLength(4);
 });
 
 test('resolveSlugs drop slug inválido e recompleta com default', () => {
@@ -157,19 +164,24 @@ test('resolveSlugs drop slug inválido e recompleta com default', () => {
   expect(out).toHaveLength(4);
 });
 
-test('resolveSlugs drop slug sem permissão e recompleta', () => {
-  // /inventario está na pref, mas collaborator sem access → drop + recomplete
-  const out = resolveSlugs(['/inventario','/projetos'], minCtx).map((i) => i.slug);
-  expect(out).not.toContain('/inventario');
+test('resolveSlugs drop slug sem permissão (genérico, sem assumir qual)', () => {
+  // pega o primeiro item com when do catálogo (independe de qual seja)
+  const gatedSlug = NAV_CATALOG.find((i) => i.when)!.slug;
+  const out = resolveSlugs([gatedSlug, '/projetos'], minCtx).map((i) => i.slug);
+  expect(out).not.toContain(gatedSlug); // collaborator pelado nunca passa em when
   expect(out).toContain('/projetos');
   expect(out).toHaveLength(4);
 });
 
 test('resolveSlugs dedup', () => {
   const out = resolveSlugs(['/hoje','/hoje','/projetos'], fullCtx).map((i) => i.slug);
-  // /hoje deve aparecer 1x; os outros completados do default
   expect(out.filter((s) => s === '/hoje')).toHaveLength(1);
   expect(out).toHaveLength(4);
+});
+
+test('resolveSlugs preserva ordem do array de entrada', () => {
+  const out = resolveSlugs(['/projetos','/habitos','/hoje','/checklists'], fullCtx).map((i) => i.slug);
+  expect(out).toEqual(['/projetos','/habitos','/hoje','/checklists']);
 });
 ```
 
@@ -314,7 +326,25 @@ Expected: zero erros (em particular: confirmar que `hasCoordLevel` é importado 
 **Files:** Create `web/src/hooks/useNavPreferences.ts`
 
 > Tolerante a `collaborator` undefined no boot (mesmo padrão de `useFinanceiroAuth`: `enabled: !!collaborator`).
-> Query `isMentor` usa o MESMO `queryKey: ['is-mentor', collaborator?.id]` que o SidebarV2:43 — cache compartilhado.
+>
+> ⚠️ **isMentor — CORPO VERBATIM (não só queryKey).** QueryKey compartilhado com queryFn divergente é armadilha de cache: se as duas montarem com bodies diferentes, retorno fica inconsistente. Tem que ser BYTE-A-BYTE igual ao SidebarV2:43-55. Cópia exata abaixo, confirmada na execução:
+>
+> ```ts
+> const { data: isMentor = false } = useQuery({
+>   queryKey: ['is-mentor', collaborator?.id],
+>   queryFn: async () => {
+>     if (!collaborator) return false;
+>     const { count } = await supabase
+>       .from('la_educa_estagiarios')
+>       .select('id', { count: 'exact', head: true })
+>       .eq('mentor_id', collaborator.id);
+>     return (count ?? 0) > 0;
+>   },
+>   enabled: !!collaborator,
+> });
+> ```
+>
+> Se SidebarV2 mudar essa query no futuro, **as DUAS têm que mudar juntas** (ou cache mente).
 
 - [ ] **Step 1: Implementar**
 

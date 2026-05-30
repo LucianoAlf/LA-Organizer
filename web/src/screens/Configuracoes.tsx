@@ -12,6 +12,7 @@ import { CustomSelect } from '../components/CustomSelect';
 import { TimeInput } from '../components/TimeInput';
 import { DateInput } from '../components/DateInput';
 import { showToast } from '../components/Toast';
+import { NavCustomizer } from '../components/NavCustomizer';
 
 interface Prefs {
   briefing_time: string;
@@ -304,6 +305,11 @@ export function Configuracoes() {
       </div>
 
       <div className="space-y-md">
+        {/* Navegação rápida — customização do bottom nav (4 slots + Mais fixo) */}
+        <Section title="Navegação rápida">
+          <NavCustomizer />
+        </Section>
+
         {/* Rituais diários */}
         <Section title="Rituais diários">
           <Field label="Briefing pessoal" hint="Mensagem da manhã sobre o dia">
