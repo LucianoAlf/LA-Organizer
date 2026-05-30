@@ -167,23 +167,34 @@ export function recurrenceAppliesToday(list: PersonalChecklist, ymd = todaySP())
   }
 }
 
-/** get-or-create da completion do dia. user_id = collabId. Retorna { id }. */
+/**
+ * get-or-create REAL da completion do dia: SELECT primeiro, INSERT só se faltar.
+ * ⚠️ NUNCA chamar no caminho de LEITURA — só no toggle/escrita. Steady-state = 0
+ * escrita (sem isto, o realtime do Task 5 entra em loop refetch→escreve→evento→refetch).
+ * user_id = collabId.
+ */
 export async function ensurePersonalCompletion(
   checklistId: string,
   collabId: string,
   ymd = todaySP(),
 ): Promise<{ id: string }> {
-  // upsert idempotente no UNIQUE(checklist_id,user_id,reference_date)
-  const { data, error } = await supabase
+  const { data: existing, error: e1 } = await supabase
     .from('personal_checklist_completions')
-    .upsert(
-      { checklist_id: checklistId, user_id: collabId, reference_date: ymd, channel: 'pwa' },
-      { onConflict: 'checklist_id,user_id,reference_date', ignoreDuplicates: false },
-    )
+    .select('id')
+    .eq('checklist_id', checklistId)
+    .eq('user_id', collabId)
+    .eq('reference_date', ymd)
+    .maybeSingle()
+  if (e1) throw e1
+  if (existing) return existing as { id: string }
+
+  const { data: created, error: e2 } = await supabase
+    .from('personal_checklist_completions')
+    .insert({ checklist_id: checklistId, user_id: collabId, reference_date: ymd, channel: 'pwa' })
     .select('id')
     .single()
-  if (error) throw error
-  return data as { id: string }
+  if (e2) throw e2
+  return created as { id: string }
 }
 
 /** Marca/desmarca item recorrente no dia (upsert em item_completions). */
@@ -207,11 +218,13 @@ export async function togglePersonalCompletionItem(
 }
 
 /**
- * Busca listas pessoais do dia para o caminho "Hoje".
+ * Busca listas pessoais do dia para o caminho "Hoje". LEITURA PURA — NÃO escreve.
  * - 'once': retorna como está (is_done estático).
  * - recorrente que NÃO vale hoje: filtrada fora.
- * - recorrente que vale hoje: ensure completion + overlay de is_checked em cada
- *   item (sobrescreve is_done na cópia em memória) + anexa today_completion_id.
+ * - recorrente que vale hoje: LÊ a completion de hoje se já existir e faz overlay
+ *   de is_checked em cada item. Se NÃO existir completion → todos os itens caem em
+ *   is_done=false, que é exatamente o reset do dia. (A completion só é criada no
+ *   1º toggle, via ensurePersonalCompletion no card/engine — nunca aqui.)
  */
 export async function fetchPersonalChecklistsHoje(
   collabId: string,
@@ -236,20 +249,25 @@ export async function fetchPersonalChecklistsHoje(
     }
     if (!recurrenceAppliesToday(list, ymd)) continue // não aparece hoje
 
-    const completion = await ensurePersonalCompletion(list.id, collabId, ymd)
-    const { data: checks, error: e2 } = await supabase
-      .from('personal_checklist_item_completions')
-      .select('item_id, is_checked')
-      .eq('completion_id', completion.id)
+    // LEITURA PURA: lê a completion de hoje SE existir (maybeSingle). Não cria.
+    const { data: comp, error: e2 } = await supabase
+      .from('personal_checklist_completions')
+      .select('id, personal_checklist_item_completions ( item_id, is_checked )')
+      .eq('checklist_id', list.id)
+      .eq('user_id', collabId)
+      .eq('reference_date', ymd)
+      .maybeSingle()
     if (e2) throw e2
-    const checkedMap = new Map((checks ?? []).map((c: any) => [c.item_id, !!c.is_checked]))
 
+    const checkedMap = new Map(
+      (comp?.personal_checklist_item_completions ?? []).map((c: any) => [c.item_id, !!c.is_checked]),
+    )
     out.push({
       ...list,
-      today_completion_id: completion.id,
+      today_completion_id: comp?.id ?? null,
       personal_checklist_items: (list.personal_checklist_items ?? []).map((it) => ({
         ...it,
-        is_done: checkedMap.get(it.id) ?? false, // overlay: fonte = item_completions
+        is_done: checkedMap.get(it.id) ?? false, // sem completion → false (reset do dia)
       })),
     })
   }
@@ -323,11 +341,14 @@ export async function fetchPersonalHistory(
 
 ```ts
 import { useState } from 'react' // (já existe useState; garantir)
-import { togglePersonalCompletionItem } from '../lib/personalCompletions'
+import { useAuth } from '../contexts/AuthContext'
+import { ensurePersonalCompletion, togglePersonalCompletionItem } from '../lib/personalCompletions'
 import { PersonalChecklistHistorySheet } from './PersonalChecklistHistorySheet'
 ```
 
-- [ ] **Step 2: Trocar a `toggleMutation` por branch recorrente vs once**
+- [ ] **Step 2: Trocar a `toggleMutation` — recorrente SEMPRE passa pela completion (sem fallback)**
+
+⚠️ Correção de review (bloqueante): o toggle recorrente NÃO depende de `today_completion_id` vir preenchido. Ele faz `ensurePersonalCompletion` (get-or-create) na hora — assim o 1º toggle do dia cria a completion (1 escrita correta) em vez de cair em `is_done`. `is_done` fica SÓ para `once`.
 
 Substituir:
 
@@ -341,15 +362,19 @@ Substituir:
 por:
 
 ```ts
+  const { collaborator } = useAuth()
+  const collabId = collaborator?.id ?? null
   const isRecurrent = list.recurrence_type && list.recurrence_type !== 'once'
-  const completionId = list.today_completion_id ?? null
 
   const toggleMutation = useMutation({
-    mutationFn: ({ id, isDone }: { id: string; isDone: boolean }) => {
-      if (isRecurrent && completionId) {
-        return togglePersonalCompletionItem(completionId, id, isDone)
+    mutationFn: async ({ id, isDone }: { id: string; isDone: boolean }) => {
+      if (isRecurrent) {
+        if (!collabId) throw new Error('Sem colaborador no contexto')
+        // get-or-create na hora: 1º toggle do dia cria a completion; demais reusam.
+        const completion = await ensurePersonalCompletion(list.id, collabId)
+        return togglePersonalCompletionItem(completion.id, id, isDone)
       }
-      return toggleItem(id, isDone) // 'once' (e fallback): modelo estático
+      return toggleItem(id, isDone) // 'once': modelo estático (is_done)
     },
     onSuccess: invalidate,
   })
@@ -593,7 +618,7 @@ E adicionar o mesmo bloco de realtime (canal com nome distinto, ex. `'personal-c
 // Paridade WhatsApp: TOM marcando item de lista pessoal RECORRENTE escreve em
 // personal_checklist_item_completions (não is_done). Write via service_role
 // (bypassa RLS); user_id vem SEMPRE do collab identificado, nunca do LLM.
-const { supabase } = require('../db'); // ajustar para o módulo de client usado no engine
+const supabase = require('../supabase/client'); // mesmo client service_role do engine.js:15 (NÃO laReportClient — outro projeto)
 
 function todaySP() {
   // YYYY-MM-DD em America/Sao_Paulo (mesma intenção do todaySP do PWA)
@@ -626,16 +651,24 @@ function recurrenceAppliesToday(list, ymd = todaySP()) {
 }
 
 async function ensurePersonalCompletion(checklistId, collabId, ymd = todaySP()) {
-  const { data, error } = await supabase
+  // get-or-create REAL (SELECT; INSERT só se faltar). Sem DO UPDATE = sem churn.
+  const { data: existing, error: e1 } = await supabase
     .from('personal_checklist_completions')
-    .upsert(
-      { checklist_id: checklistId, user_id: collabId, reference_date: ymd, channel: 'whatsapp' },
-      { onConflict: 'checklist_id,user_id,reference_date', ignoreDuplicates: false },
-    )
+    .select('id')
+    .eq('checklist_id', checklistId)
+    .eq('user_id', collabId)
+    .eq('reference_date', ymd)
+    .maybeSingle();
+  if (e1) throw e1;
+  if (existing) return existing;
+
+  const { data: created, error: e2 } = await supabase
+    .from('personal_checklist_completions')
+    .insert({ checklist_id: checklistId, user_id: collabId, reference_date: ymd, channel: 'whatsapp' })
     .select('id')
     .single();
-  if (error) throw error;
-  return data;
+  if (e2) throw e2;
+  return created;
 }
 
 async function togglePersonalCompletionItem(completionId, itemId, isChecked) {
@@ -652,7 +685,7 @@ async function togglePersonalCompletionItem(completionId, itemId, isChecked) {
 module.exports = { todaySP, recurrenceAppliesToday, ensurePersonalCompletion, togglePersonalCompletionItem };
 ```
 
-> Ajustar o `require('../db')` para o mesmo client supabase service_role que `engine.js` já usa (confirmar a linha de import do supabase no topo do engine.js antes de editar).
+> Confirmado: `engine.js:15` faz `const supabase = require('./supabase/client');` (client service_role). O service em `src/services/` usa `require('../supabase/client')`. NÃO usar `laReportClient` (projeto Supabase diferente).
 
 - [ ] **Step 2: Branch recorrente no `toggle_item` do engine**
 
@@ -822,6 +855,7 @@ WHERE checklist_id='11ff1cc7-a954-47b1-b40c-a1a3defdb292'
 - **§6 edge cases:** item novo sem row = não marcado (overlay default false) ✅; `is_done` ignorado p/ recorrentes (overlay sobrescreve) ✅; fuso `todaySP()`/SP no SQL ✅.
 - **Risco #1 (days_of_week):** `dowPersonal = getUTCDay()+1` em web e engine, idêntico ao RecurrenceField. ✅
 - **Risco #2 (realtime silencioso):** publication no Task 0 + REPLICA IDENTITY FULL. ✅
+- **Loop de escrita-na-leitura (review do Alf):** leitura é PURA (`fetchPersonalChecklistsHoje` nunca escreve); `ensurePersonalCompletion` é get-or-create real (SELECT→INSERT, sem DO UPDATE) e roda só no toggle. 1º toggle do dia cria a completion (1 escrita→1 refetch, correto); steady-state = 0 escrita → realtime não entra em loop. Mesmo get-or-create no engine (Task 6). ✅
 - **Risco #3 (fuso):** `todaySP()` (web) e `now() AT TIME ZONE 'America/Sao_Paulo'` (SQL). ✅
 - **Guardrail mobile/desktop:** mesma `PersonalChecklistCard` serve os dois; nenhuma rota nova (drawer via BottomSheet). ✅
 - **Out of scope respeitado:** sem streaks, sem cron de lembrete, sem timeline global. ✅
