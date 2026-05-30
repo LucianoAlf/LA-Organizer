@@ -129,8 +129,10 @@ export async function fetchPersonalChecklistsHoje(
       .maybeSingle()
     if (e2) throw e2
 
-    const checkedMap = new Map(
-      ((comp as any)?.personal_checklist_item_completions ?? []).map((c: any) => [c.item_id, !!c.is_checked]),
+    const checkedMap = new Map<string, boolean>(
+      ((comp as any)?.personal_checklist_item_completions ?? []).map(
+        (c: any) => [c.item_id as string, !!c.is_checked] as [string, boolean],
+      ),
     )
     out.push({
       ...list,
@@ -177,8 +179,10 @@ export async function fetchPersonalHistory(
     const allItems = (c.personal_checklists?.personal_checklist_items ?? [])
       .slice()
       .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
-    const checkedMap = new Map(
-      (c.personal_checklist_item_completions ?? []).map((x: any) => [x.item_id, !!x.is_checked]),
+    const checkedMap = new Map<string, boolean>(
+      (c.personal_checklist_item_completions ?? []).map(
+        (x: any) => [x.item_id as string, !!x.is_checked] as [string, boolean],
+      ),
     )
     const items = allItems.map((it: any) => ({
       id: it.id,

@@ -27,6 +27,7 @@ import { EmptyState } from '../../components/EmptyState'
 import { ErrorState } from '../../components/ErrorState'
 import { LoadingState } from '../../components/LoadingState'
 import { fetchPersonalChecklists } from '../../lib/personalChecklists'
+import { fetchPersonalChecklistsHoje } from '../../lib/personalCompletions'
 import type { OpChecklistCompletion, OpChecklistAudit } from '../../types'
 
 type Tab = 'trabalho' | 'pessoal'
@@ -214,14 +215,30 @@ function TrabalhoTab() {
 
 function PessoalTab() {
   const { collaborator } = useAuth()
+  const queryClient = useQueryClient()
   const [sheetOpen, setSheetOpen] = useState(false)
 
   const { data: lists = [], isLoading, error, refetch } = useQuery({
     queryKey: ['personal-checklists', collaborator?.id, 'personal'],
-    queryFn: () => fetchPersonalChecklists(collaborator!.id, 'personal'),
+    queryFn: () => fetchPersonalChecklistsHoje(collaborator!.id, 'personal'),
     enabled: !!collaborator,
     staleTime: 30_000,
   })
+
+  // Realtime: TOM marca item recorrente via WhatsApp → PWA atualiza ao vivo.
+  useEffect(() => {
+    if (!collaborator) return
+    const ch = supabase
+      .channel('personal-completions-realtime')
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'personal_checklist_item_completions' },
+        () => queryClient.invalidateQueries({ queryKey: ['personal-checklists'] }))
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'personal_checklist_completions' },
+        () => queryClient.invalidateQueries({ queryKey: ['personal-checklists'] }))
+      .subscribe()
+    return () => { supabase.removeChannel(ch) }
+  }, [collaborator?.id])
 
   if (isLoading) return <LoadingState rows={2} />
 

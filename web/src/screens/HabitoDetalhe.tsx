@@ -29,9 +29,12 @@ type Habit = {
   current_streak: number | null;
   best_streak: number | null;
   is_active: boolean;
+  habit_type?: 'binary' | 'quantitative' | null;
+  target_value?: number | null;
+  unit?: string | null;
 };
 
-type Log = { id: string; log_date: string; is_completed: boolean; notes: string | null };
+type Log = { id: string; log_date: string; is_completed: boolean; notes: string | null; value?: number | null };
 
 const FREQ_LABEL: Record<Habit['frequency'], string> = {
   daily: 'Todo dia',
@@ -86,7 +89,7 @@ export function HabitoDetalhe() {
       if (!id || !collaborator) return null;
       const { data: habit, error: hErr } = await supabase
         .from('habits')
-        .select('id, name, icon, color, frequency, custom_days, reminder_time, notify_whatsapp, current_streak, best_streak, is_active')
+        .select('id, name, icon, color, frequency, custom_days, reminder_time, notify_whatsapp, current_streak, best_streak, is_active, habit_type, target_value, unit')
         .eq('id', id)
         .eq('collaborator_id', collaborator.id)
         .single();
@@ -94,7 +97,7 @@ export function HabitoDetalhe() {
       const since = lastNDays(HEATMAP_DAYS).slice(-1)[0];
       const [logsRes, remindersRes] = await Promise.all([
         supabase.from('habit_logs')
-          .select('id, log_date, is_completed, notes')
+          .select('id, log_date, is_completed, notes, value')
           .eq('habit_id', id)
           .gte('log_date', since)
           .order('log_date', { ascending: false }),
@@ -137,6 +140,42 @@ export function HabitoDetalhe() {
   const today = todayBRT();
   const todayLog = logs.find(l => l.log_date === today);
   const doneToday = Boolean(todayLog?.is_completed);
+
+  const isQuant = habit?.habit_type === 'quantitative' && Number(habit?.target_value) > 0;
+  const todayValue = Number(todayLog?.value ?? 0);
+  const target = Number(habit?.target_value ?? 0);
+  const quantPct = isQuant && target > 0 ? Math.min(100, Math.round((todayValue / target) * 100)) : 0;
+  const remaining = isQuant ? Math.max(0, target - todayValue) : 0;
+
+  // NOTA: recalc_habit_streak(p_habit_id uuid) CONFIRMADA no banco — mesma RPC do toggle binário.
+  const addAmount = useMutation({
+    mutationFn: async (delta: number) => {
+      if (!habit || !collaborator) return;
+      const newValue = Math.max(0, todayValue + delta);
+      const isCompleted = newValue >= target;
+      if (todayLog) {
+        await supabase.from('habit_logs').update({
+          value: newValue,
+          is_completed: isCompleted,
+          completed_at: isCompleted ? new Date().toISOString() : null,
+        }).eq('id', todayLog.id);
+      } else {
+        await supabase.from('habit_logs').insert({
+          habit_id: habit.id,
+          collaborator_id: collaborator.id,
+          log_date: today,
+          value: newValue,
+          is_completed: isCompleted,
+          completed_at: isCompleted ? new Date().toISOString() : null,
+        });
+      }
+      await supabase.rpc('recalc_habit_streak', { p_habit_id: habit.id });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['habit-detail', id] });
+      qc.invalidateQueries({ queryKey: ['habits'] });
+    },
+  });
 
   const toggleToday = useMutation({
     mutationFn: async () => {
@@ -264,6 +303,54 @@ export function HabitoDetalhe() {
           <Check size={22} strokeWidth={3} />
         </button>
       </section>
+
+      {/* Progresso do dia — só hábito quantitativo. Barra dedicada (não remapeia o anel). */}
+      {isQuant && (
+        <section className="surface p-md space-y-3">
+          <div className="flex items-baseline justify-between">
+            <div className="text-label uppercase tracking-wide text-fg-muted">Hoje</div>
+            <div className="text-body-sm text-fg-muted tabular-nums">
+              {todayValue.toLocaleString('pt-BR')} / {target.toLocaleString('pt-BR')} {habit.unit}
+            </div>
+          </div>
+          <div className="h-3 w-full rounded-full bg-bg-elevated overflow-hidden">
+            <div
+              className="h-full rounded-full transition-all"
+              style={{ width: `${quantPct}%`, backgroundColor: color }}
+            />
+          </div>
+          <div className="text-body-sm text-fg-muted tabular-nums">
+            {remaining > 0
+              ? `Faltam ${remaining.toLocaleString('pt-BR')} ${habit.unit}`
+              : '✅ Meta batida hoje!'}
+          </div>
+          <div className="flex flex-wrap gap-2 pt-1">
+            {[
+              Math.round(target / 12) || 1,
+              Math.round(target / 6) || 1,
+              Math.round(target / 4) || 1,
+            ].map((step, i) => (
+              <button
+                key={i}
+                type="button"
+                onClick={() => addAmount.mutate(step)}
+                disabled={addAmount.isPending}
+                className="px-3 py-1.5 rounded-full text-body-sm border border-border bg-bg-elevated text-fg hover:border-tom focus-ring tabular-nums"
+              >
+                +{step.toLocaleString('pt-BR')} {habit.unit}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => { const v = prompt('Quanto adicionar?'); const n = v ? parseFloat(v.replace(',', '.')) : NaN; if (n > 0) addAmount.mutate(n); }}
+              disabled={addAmount.isPending}
+              className="px-3 py-1.5 rounded-full text-body-sm border border-dashed border-border text-fg-muted hover:text-fg focus-ring"
+            >
+              + outro
+            </button>
+          </div>
+        </section>
+      )}
 
       {/* Heatmap individual — 90 dias, colorido com a cor do hábito. */}
       <section className="surface p-md space-y-2">

@@ -4819,7 +4819,7 @@ async function applyHabitActions(collaborator, actions) {
       failCount++;
     }
   }
-  return { okCount, failCount, created, logged };
+  return { okCount, failCount, created, logged, progressFooters };
 }
 
 // Apply DND marker — persists do_not_disturb_until + reason on user_preferences.
@@ -6644,12 +6644,16 @@ async function processMessage(phone, text, raw = {}) {
       await logMarker(collab.id, 'HABIT_ACTION', 'rejected', 'schema_invalid', reply);
       reply = parsedHab.cleanText || reply;
     } else if (parsedHab) {
-      const { okCount, failCount } = await applyHabitActions(collab, parsedHab.actions);
+      const { okCount, failCount, progressFooters } = await applyHabitActions(collab, parsedHab.actions);
       console.log(`[Habit] batch done: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
       const result = okCount > 0 ? 'executed' : 'rejected';
       const reason = okCount > 0 ? `ok=${okCount} fail=${failCount}` : `all_failed:${failCount}`;
       await logMarker(collab.id, 'HABIT_ACTION', result, reason, null);
       let base = parsedHab.cleanText || '';
+      // Progresso quantitativo: número vem do engine (não do LLM). Anexa a barra exata.
+      if (Array.isArray(progressFooters) && progressFooters.length) {
+        base = (base ? base.trim() + '\n\n' : '') + progressFooters.join('\n');
+      }
       if (failCount > 0 && okCount === 0) {
         base = (base ? base + '\n\n' : '') + '_não consegui registrar agora, te aviso depois_';
       } else if (okCount > 0) {
@@ -6743,19 +6747,28 @@ async function processMessage(phone, text, raw = {}) {
               okCount++;
             } else if (a.action === 'toggle_item') {
               if (!a.item_id) { failCount++; continue; }
-              // Ownership via FK chain: item → list.owner.
+              // Ownership + dados da lista (recurrence) via FK chain: item → list.owner.
               const { data: itemRow } = await supabase
                 .from('personal_checklist_items')
-                .select('id, personal_checklists!inner(owner_collab_id)')
+                .select('id, list_id, personal_checklists!inner(id, owner_collab_id, recurrence_type, days_of_week, day_of_month)')
                 .eq('id', a.item_id).maybeSingle();
               if (!itemRow || !itemRow.personal_checklists || itemRow.personal_checklists.owner_collab_id !== collab.id) {
                 failCount++; continue;
               }
               const isDone = a.is_done === undefined ? true : !!a.is_done;
-              const { error } = await supabase.from('personal_checklist_items')
-                .update({ is_done: isDone }).eq('id', a.item_id);
-              if (error) { failCount++; continue; }
-              okCount++;
+              const pcList = itemRow.personal_checklists;
+              if (pcList.recurrence_type && pcList.recurrence_type !== 'once') {
+                // Recorrente: escreve na completion do dia (não em is_done).
+                const pc = require('./services/personalCompletions');
+                const completion = await pc.ensurePersonalCompletion(pcList.id, collab.id);
+                await pc.togglePersonalCompletionItem(completion.id, a.item_id, isDone);
+                okCount++;
+              } else {
+                const { error } = await supabase.from('personal_checklist_items')
+                  .update({ is_done: isDone }).eq('id', a.item_id);
+                if (error) { failCount++; continue; }
+                okCount++;
+              }
             } else if (a.action === 'rename') {
               if (!a.list_id || !a.name) { failCount++; continue; }
               const { error } = await supabase.from('personal_checklists')

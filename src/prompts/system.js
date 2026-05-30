@@ -525,7 +525,10 @@ function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events
       const sid = String(h.id || '').slice(0, 8);
       const streak = h.current_streak ? ` — streak ${h.current_streak}d` : '';
       const time = h.reminder_time ? ` (${String(h.reminder_time).slice(0,5)})` : '';
-      lines.push(`• [id=${sid}] ${h.icon || '💪'} ${h.name}${streak}${time}`);
+      const meta = (h.habit_type === 'quantitative' && Number(h.target_value) > 0)
+        ? ` 📊 meta ${h.target_value}${h.unit ? ' ' + h.unit : ''}/dia (quantitativo)`
+        : '';
+      lines.push(`• [id=${sid}] ${h.icon || '💪'} ${h.name}${streak}${time}${meta}`);
     });
   }
 
@@ -1249,7 +1252,7 @@ async function fetchCollaboratorContext(collaborator) {
       .eq('collaborator_id', id)
       .order('created_at', { ascending: false }).limit(5),
     supabase.from('habits')
-      .select('id, name, icon, current_streak, frequency, reminder_time')
+      .select('id, name, icon, current_streak, frequency, reminder_time, habit_type, target_value, unit')
       .eq('collaborator_id', id).eq('is_active', true)
       .order('created_at', { ascending: true }).limit(20),
     // Compromissos próximos 7 dias em America/Sao_Paulo (-03:00). Inclui scheduled e done.

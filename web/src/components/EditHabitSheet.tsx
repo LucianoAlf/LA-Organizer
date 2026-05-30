@@ -19,6 +19,9 @@ interface Habit {
   custom_days: number[] | null;
   reminder_time: string | null;
   notify_whatsapp: boolean;
+  habit_type?: 'binary' | 'quantitative' | null;
+  target_value?: number | null;
+  unit?: string | null;
 }
 
 interface Props {
@@ -46,6 +49,7 @@ const FREQUENCY_LABELS: Record<Habit['frequency'], string> = {
 const DOW_LABELS = ['S', 'T', 'Q', 'Q', 'S', 'S', 'D']; // seg, ter, qua, qui, sex, sab, dom (1..7)
 const COLORS = ['#10B981', '#EF4444', '#3B82F6', '#84CC16', '#F97316', '#8B5CF6', '#E91E63', '#F59E0B', '#7C3AED', '#06B6D4'];
 const ICON_SUGGESTIONS = ['💪', '🧘', '📚', '🎸', '💧', '💊', '🚶', '✍️', '✨', '💰', '🏃', '🍎', '😴', '🙏', '🎯', '🐶'];
+const UNIT_PRESETS = ['ml', 'L', 'copos', 'páginas', 'min', 'km', 'reps'];
 
 export function EditHabitSheet({ open, habit, onClose }: Props) {
   const { collaborator } = useAuth();
@@ -61,6 +65,9 @@ export function EditHabitSheet({ open, habit, onClose }: Props) {
   const [reminderTimes, setReminderTimes] = useState<string[]>([]);
   const [originalReminderTimes, setOriginalReminderTimes] = useState<string[]>([]);
   const [notifyWhatsapp, setNotifyWhatsapp] = useState(false);
+  const [habitType, setHabitType] = useState<'binary' | 'quantitative'>('binary');
+  const [targetValue, setTargetValue] = useState<string>(''); // string no input, parse no save
+  const [unit, setUnit] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
 
   // Sprint 22.55 — carrega lembretes existentes do hábito.
@@ -104,6 +111,9 @@ export function EditHabitSheet({ open, habit, onClose }: Props) {
       setFrequency(habit.frequency);
       setCustomDays(Array.isArray(habit.custom_days) ? habit.custom_days : []);
       setNotifyWhatsapp(Boolean(habit.notify_whatsapp));
+      setHabitType(habit.habit_type === 'quantitative' ? 'quantitative' : 'binary');
+      setTargetValue(habit.target_value != null ? String(habit.target_value) : '');
+      setUnit(habit.unit ?? '');
     } else {
       // Modo criar — defaults.
       setName('');
@@ -114,6 +124,9 @@ export function EditHabitSheet({ open, habit, onClose }: Props) {
       setReminderTimes([]);
       setOriginalReminderTimes([]);
       setNotifyWhatsapp(false);
+      setHabitType('binary');
+      setTargetValue('');
+      setUnit('');
     }
     setError(null);
   }, [open, habit?.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -139,6 +152,11 @@ export function EditHabitSheet({ open, habit, onClose }: Props) {
     mutationFn: async () => {
       if (!collaborator) throw new Error('no_user');
       if (!name.trim()) throw new Error('Nome obrigatório.');
+      const tv = parseFloat(targetValue.replace(',', '.'));
+      if (habitType === 'quantitative') {
+        if (!(tv > 0)) throw new Error('Meta tem que ser um número maior que zero.');
+        if (!unit.trim()) throw new Error('Escolha uma unidade (ml, páginas, min…).');
+      }
       const payload: Record<string, unknown> = {
         name: name.trim().slice(0, 100),
         icon,
@@ -150,6 +168,9 @@ export function EditHabitSheet({ open, habit, onClose }: Props) {
         // Sprint 22.55 — reminder_time mantido pra compat: 1º horário se houver.
         reminder_time: reminderTimes.length > 0 ? `${reminderTimes[0]}:00` : null,
         notify_whatsapp: notifyWhatsapp,
+        habit_type: habitType,
+        target_value: habitType === 'quantitative' ? tv : null,
+        unit: habitType === 'quantitative' ? unit.trim().slice(0, 20) : null,
       };
       let habitId = habit?.id;
       if (habit) {
@@ -323,6 +344,67 @@ export function EditHabitSheet({ open, habit, onClose }: Props) {
             {frequency === 'weekly' && customDays.length === 0 && (
               <div className="text-body-sm text-fg-muted mt-1.5">Escolhe pelo menos 1 dia. Default: segunda.</div>
             )}
+          </div>
+        )}
+
+        <div>
+          <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Tipo</div>
+          <div className="grid grid-cols-2 gap-2">
+            {([['binary', 'Feito / não feito'], ['quantitative', 'Quantidade + meta']] as const).map(([val, lbl]) => (
+              <button
+                key={val}
+                type="button"
+                onClick={() => setHabitType(val)}
+                className={[
+                  'h-11 rounded-md border text-body-sm font-semibold transition-colors focus-ring',
+                  habitType === val ? 'bg-tom text-black border-tom' : 'bg-bg-elevated text-fg-secondary border-border',
+                ].join(' ')}
+              >
+                {lbl}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {habitType === 'quantitative' && (
+          <div className="space-y-md rounded-md border border-border bg-bg-elevated/40 p-3">
+            <label className="block">
+              <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Meta por dia</div>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={targetValue}
+                onChange={e => setTargetValue(e.target.value)}
+                placeholder="Ex.: 3000"
+                className="w-full h-12 px-3 rounded-md bg-bg-surface border border-border text-fg focus-ring"
+              />
+            </label>
+            <div>
+              <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Unidade</div>
+              <div className="flex flex-wrap gap-2 mb-2">
+                {UNIT_PRESETS.map(u => (
+                  <button
+                    key={u}
+                    type="button"
+                    onClick={() => setUnit(u)}
+                    className={[
+                      'px-3 py-1 rounded-full text-body-sm border transition-colors focus-ring',
+                      unit === u ? 'bg-tom text-black border-tom' : 'bg-bg-surface text-fg-muted border-border hover:text-fg',
+                    ].join(' ')}
+                  >
+                    {u}
+                  </button>
+                ))}
+              </div>
+              <input
+                type="text"
+                maxLength={20}
+                value={unit}
+                onChange={e => setUnit(e.target.value)}
+                placeholder="Ou escreva (ex.: garrafas)"
+                className="w-full h-11 px-3 rounded-md bg-bg-surface border border-border text-fg focus-ring"
+              />
+            </div>
           </div>
         )}
 

@@ -7,11 +7,12 @@
 // Pessoal: listas pessoais context='personal' (PersonalChecklistCard).
 // Criação: botão "+ Criar lista" inline (não FAB) — mesmo padrão do mobile.
 
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useState, useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { fetchPersonalChecklists } from '../../lib/personalChecklists';
+import { fetchPersonalChecklistsHoje } from '../../lib/personalCompletions';
 import { Button } from '../../components/Button';
 import { PersonalChecklistCard } from '../../components/PersonalChecklistCard';
 import { ChecklistCard } from '../../components/ChecklistCard';
@@ -176,13 +177,29 @@ function TrabalhoView({ onCreateClick }: { onCreateClick: () => void }) {
 function PessoalView({ onCreateClick }: { onCreateClick: () => void }) {
   const { collaborator } = useAuth();
   const collabId = collaborator?.id ?? null;
+  const qc = useQueryClient();
 
   const { data: lists = [], isLoading, error, refetch } = useQuery({
     queryKey: ['personal-checklists', collabId, 'personal'],
     enabled: !!collabId,
-    queryFn: () => fetchPersonalChecklists(collabId!, 'personal'),
+    queryFn: () => fetchPersonalChecklistsHoje(collabId!, 'personal'),
     staleTime: 30_000,
   });
+
+  // Realtime: TOM marca item recorrente via WhatsApp → PWA atualiza ao vivo.
+  useEffect(() => {
+    if (!collabId) return;
+    const ch = supabase
+      .channel('personal-completions-desktop')
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'personal_checklist_item_completions' },
+        () => qc.invalidateQueries({ queryKey: ['personal-checklists'] }))
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'personal_checklist_completions' },
+        () => qc.invalidateQueries({ queryKey: ['personal-checklists'] }))
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [collabId]);
 
   if (isLoading) return <LoadingState rows={2} />;
 

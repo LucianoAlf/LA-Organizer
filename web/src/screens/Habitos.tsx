@@ -27,6 +27,9 @@ type Habit = {
   current_streak: number | null;
   best_streak: number | null;
   is_active: boolean;
+  habit_type?: 'binary' | 'quantitative' | null;
+  target_value?: number | null;
+  unit?: string | null;
 };
 
 type HabitWithLog = Habit & {
@@ -35,6 +38,8 @@ type HabitWithLog = Habit & {
   last30: boolean[];
   /** Sprint 22.54 — aderência 0..1 frequency-aware (denominador = dias esperados na janela). */
   adherence30: number;
+  /** Valor acumulado de hoje (hábito quantitativo); 0 se binário ou sem log. */
+  today_value: number;
 };
 
 // Sprint 22.54 — quantos dias na janela seriam ESPERADOS pra esse hábito.
@@ -89,7 +94,7 @@ function lastNDaysYmd(n: number): string[] {
 async function fetchHabits(collabId: string): Promise<HabitsData> {
   const { data: habits, error } = await supabase
     .from('habits')
-    .select('id, name, icon, color, frequency, custom_days, reminder_time, notify_whatsapp, current_streak, best_streak, is_active')
+    .select('id, name, icon, color, frequency, custom_days, reminder_time, notify_whatsapp, current_streak, best_streak, is_active, habit_type, target_value, unit')
     .eq('collaborator_id', collabId)
     .eq('is_active', true)
     .order('created_at', { ascending: true });
@@ -103,7 +108,7 @@ async function fetchHabits(collabId: string): Promise<HabitsData> {
 
   const { data: logs } = await supabase
     .from('habit_logs')
-    .select('habit_id, log_date, is_completed')
+    .select('habit_id, log_date, is_completed, value')
     .in('habit_id', ids)
     .gte('log_date', sinceYmd);
 
@@ -114,6 +119,10 @@ async function fetchHabits(collabId: string): Promise<HabitsData> {
   }
 
   const today = days[0];
+  const todayValueByHabit = new Map<string, number>();
+  for (const l of (logs || [])) {
+    if (l.log_date === today && l.value != null) todayValueByHabit.set(l.habit_id, Number(l.value));
+  }
   const habitsAug: HabitWithLog[] = list.map(h => {
     const last30 = days.map(ymd => doneSet.has(`${h.id}|${ymd}`));
     const doneCount = last30.filter(Boolean).length;
@@ -125,6 +134,7 @@ async function fetchHabits(collabId: string): Promise<HabitsData> {
       done_today: doneSet.has(`${h.id}|${today}`),
       last30,
       adherence30: adherence,
+      today_value: todayValueByHabit.get(h.id) ?? 0,
     };
   });
 
