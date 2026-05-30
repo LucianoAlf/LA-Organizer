@@ -415,6 +415,56 @@ async function checkFinanceReport(now) {
   }
 }
 
+// Alerta de limite de cartão — safety net 1x/dia 20h (o alerta imediato real é no card_purchase).
+// Idempotência por FAIXA via pf_cards.alert_threshold (não usa ritual_logs).
+async function checkCardLimitAlerts(now) {
+  if (currentSlot(now) !== timeToSlot('20:00')) return;
+  const whatsapp = require('../services/whatsapp');
+  const financeService = require('../services/financeiro-service');
+  const fmt = require('../services/finance-format');
+  for (const card of await financeService.cardsForAlerts()) {
+    try {
+      const q = await isQuietNow(card.collaborator_id, now, 'personal');
+      if (q.quiet) continue;
+      const al = await financeService.checkAndMarkLimitAlert(card.collaborator_id, card);
+      if (al) await whatsapp.sendMessage(card.collab.phone, fmt.limitAlert(card, al.band, al.usage));
+    } catch (err) {
+      console.error('[checkCardLimitAlerts]', card.name, err.message);
+    }
+  }
+}
+
+// Lembrete de vencimento de fatura — diário 8h, até 2 dias antes do vencimento.
+async function checkCardDueReminders(now) {
+  if (currentSlot(now) !== timeToSlot('08:00')) return;
+  const whatsapp = require('../services/whatsapp');
+  const financeService = require('../services/financeiro-service');
+  const fmt = require('../services/finance-format');
+  const ymd = now.ymd || nowSaoPaulo().ymd;
+  const dom = Number(ymd.slice(8, 10));
+  const DAYS_BEFORE = 2;
+  for (const card of await financeService.cardsForAlerts()) {
+    const rtype = 'fatura_vence:' + card.id;
+    try {
+      if (card.due_day < dom || card.due_day > dom + DAYS_BEFORE) continue;
+      if (await alreadySent(card.collaborator_id, rtype, ymd)) continue;
+      // Competência da fatura QUE VENCE (a que fechou), ≠ fatura aberta.
+      const y = Number(ymd.slice(0, 4)), mo = Number(ymd.slice(5, 7));
+      const monthOff = card.due_day >= card.closing_day ? 0 : -1;
+      const dueComp = new Date(Date.UTC(y, (mo - 1) + monthOff, 1)).toISOString().slice(0, 10);
+      const inv = await financeService.cardInvoice(card.collaborator_id, card.id, dueComp);
+      if (inv.isPaid || inv.total <= 0) continue;
+      const q = await isQuietNow(card.collaborator_id, now, 'personal');
+      if (q.quiet) { await logRitualEvent(card.collaborator_id, rtype, 'skipped', `quiet:${q.reason}`, ymd); continue; }
+      await whatsapp.sendMessage(card.collab.phone, fmt.dueReminder(card, inv, card.due_day - dom));
+      await logRitualEvent(card.collaborator_id, rtype, 'sent', `vence dia ${card.due_day}`, ymd);
+    } catch (err) {
+      console.error('[checkCardDueReminders]', card.name, err.message);
+      await logRitualEvent(card.collaborator_id, rtype, 'error', err.message, ymd);
+    }
+  }
+}
+
 async function fireRitual(collab, ritualType, ymd) {
   const canonical = CANONICAL_BY_RITUAL[ritualType] || ritualType;
   // DND gate: skip outbound rituals while user is paused. Briefing for the
@@ -3378,6 +3428,8 @@ async function run(opts = {}) {
   try { await checkFinanceBillReminders(now); } catch (e) { console.error('[run] financeBillReminders', e); }
   try { await checkFinanceMonthly(now);        } catch (e) { console.error('[run] financeMonthly', e); }
   try { await checkFinanceReport(now);         } catch (e) { console.error('[run] financeReport', e); }
+  try { await checkCardLimitAlerts(now);       } catch (e) { console.error('[run] cardLimitAlerts', e); }
+  try { await checkCardDueReminders(now);      } catch (e) { console.error('[run] cardDueReminders', e); }
 
   // Sprint 15 F4 — Briefing operacional semanal por departamento (segunda 07:30 BRT)
   try {

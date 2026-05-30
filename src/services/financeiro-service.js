@@ -27,6 +27,16 @@ async function listAccounts(collaboratorId) {
   if (error) throw error;
   return data || [];
 }
+// Resolve carteira por nome ("gastei 50 no Nubank" → linka account_id). Match parcial, 1ª ativa.
+async function findAccountByName(collaboratorId, name) {
+  if (!name) return null;
+  const { data, error } = await supabase.from('pf_accounts')
+    .select('id, name, balance, icon')
+    .eq('collaborator_id', collaboratorId).eq('is_active', true)
+    .ilike('name', `%${name}%`);
+  if (error) throw error;
+  return (data && data[0]) || null;
+}
 
 // ---- Transacoes ----
 async function insertTransaction(collaboratorId, { type, category, amount, description, transaction_date, account_id }) {
@@ -369,7 +379,7 @@ async function cardsForAlerts() {
 
 module.exports = {
   monthBounds,
-  createAccount, listAccounts,
+  createAccount, listAccounts, findAccountByName,
   insertTransaction, monthCategoryTotal, querySummary,
   setBudget, getBudget, queryBudget,
   createBill, findBills, payBill,

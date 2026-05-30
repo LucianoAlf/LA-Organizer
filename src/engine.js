@@ -5886,7 +5886,7 @@ async function tryDupBypass(collab, text) {
 // ---- Sprint 27 — Financas Pessoais: marker <<FINANCE_ACTION>> + dispatcher ----
 const FINANCE_ACTIONS = [
   'register_transaction', 'register_bill', 'pay_bill', 'create_goal',
-  'update_goal', 'set_budget', 'query_summary', 'query_budget', 'query_goal', 'create_account',
+  'update_goal', 'set_budget', 'query_summary', 'query_budget', 'query_goal', 'query_accounts', 'create_account',
   'simulate_interest',
   // cartão de crédito + transferência
   'create_card', 'card_purchase', 'query_invoice', 'pay_invoice', 'transfer',
@@ -5924,7 +5924,13 @@ async function handleFinanceAction(collab, action, params) {
       if (!p.amount || p.amount <= 0) return '❓ Qual foi o valor?';
       const type = p.type || 'expense';
       const category = p.category || mapCategory(p.description || '');
-      const account_id = p.account_id || null; // trigger BEFORE barra conta de outro dono
+      // Vínculo à carteira por nome ("gastei 50 no Nubank"): resolve nome→id. null = sem carteira.
+      let account_id = p.account_id || null; // trigger BEFORE barra conta de outro dono
+      const acctName = params.account_name || params.account || p.account_name;
+      if (!account_id && acctName) {
+        const acct = await financeService.findAccountByName(cid, acctName);
+        if (acct) account_id = acct.id;
+      }
       const prev = type === 'expense' ? await financeService.monthCategoryTotal(cid, category) : 0;
       await financeService.insertTransaction(cid, { type, category, amount: p.amount, description: p.description, transaction_date: p.date, account_id });
       let reply = `✅ R$${p.amount} em ${category}.`;
@@ -5983,6 +5989,79 @@ async function handleFinanceAction(collab, action, params) {
     case 'create_account': {
       const a = await financeService.createAccount(cid, { name: params.name, type: params.type, icon: params.icon, goal_monthly: params.goal_monthly });
       return `✅ Carteira criada: ${a.icon || '🏦'} ${a.name}.`;
+    }
+    case 'create_card': {
+      const c = await financeService.createCard(cid, {
+        name: params.name, brand: params.brand, color: params.color,
+        credit_limit: params.credit_limit, closing_day: params.closing_day, due_day: params.due_day, icon: params.icon,
+      });
+      return `👽 Cartão *${c.name}* cadastrado! Limite ${financeFmt.money(c.credit_limit)}, fecha dia ${c.closing_day}, vence dia ${c.due_day}.`;
+    }
+    case 'card_purchase': {
+      const cards = await financeService.findCard(cid, params.card || '');
+      if (cards.length === 0) {
+        const all = await financeService.listCards(cid);
+        return `Não achei o cartão "${params.card}". Seus cartões: ${all.map((c) => c.name).join(', ') || 'nenhum cadastrado'}.`;
+      }
+      if (cards.length > 1) return `Tenho mais de um cartão parecido com "${params.card}": ${cards.map((c) => c.name).join(', ')}. Qual?`;
+      const card = cards[0];
+      const amount = Number(params.amount);
+      if (!amount || amount <= 0) return '❓ Qual foi o valor da compra?';
+      const installments = parseInt(params.installments || 1, 10);
+      const category = params.category || mapCategory(params.description || '');
+      const rows = await financeService.insertCardPurchase(cid, card, {
+        category, amount, description: params.description, transaction_date: params.date, installments,
+      });
+      const usage = await financeService.cardUsage(cid, card);
+      let reply = financeFmt.txnRegistered(card, {
+        description: params.description, amount, category, installments, competencia: rows[0].competencia,
+      }, usage);
+      const al = await financeService.checkAndMarkLimitAlert(cid, card);
+      if (al) reply += '\n\n' + financeFmt.limitAlert(card, al.band, al.usage);
+      return reply;
+    }
+    case 'query_invoice': {
+      const cards = await financeService.findCard(cid, params.card || '');
+      if (cards.length !== 1) {
+        const all = await financeService.listCards(cid);
+        return `Qual cartão? Tenho: ${all.map((c) => c.name).join(', ') || 'nenhum'}.`;
+      }
+      const card = cards[0];
+      const comp = params.competencia || financeService.currentCompetencia(card);
+      const inv = await financeService.cardInvoice(cid, card.id, comp);
+      const usage = await financeService.cardUsage(cid, card);
+      return financeFmt.invoiceSummary(card, inv, usage);
+    }
+    case 'pay_invoice': {
+      const cards = await financeService.findCard(cid, params.card || '');
+      if (cards.length !== 1) {
+        const all = await financeService.listCards(cid);
+        return `Qual cartão você pagou? Tenho: ${all.map((c) => c.name).join(', ') || 'nenhum'}.`;
+      }
+      const card = cards[0];
+      const comp = params.competencia || financeService.currentCompetencia(card);
+      const inv = await financeService.cardInvoice(cid, card.id, comp);
+      if (inv.total <= 0) return `A fatura do *${card.name}* está zerada.`;
+      const amount = Number(params.amount) > 0 ? Number(params.amount) : inv.remaining;
+      let fromId = null;
+      if (params.from_account) {
+        const accs = (await financeService.listAccounts(cid)).filter((a) => a.name.toLowerCase().includes(String(params.from_account).toLowerCase()));
+        if (accs.length === 1) fromId = accs[0].id;
+      }
+      await financeService.payCardInvoice(cid, card, { competencia: comp, amount, paid_from_account: fromId });
+      const after = await financeService.cardInvoice(cid, card.id, comp);
+      return `✅ Pagamento de *${financeFmt.money(amount)}* na fatura do *${card.name}* registrado.\n` +
+        (after.isPaid ? '🎉 Fatura quitada!' : `Ainda faltam *${financeFmt.money(after.remaining)}*.`);
+    }
+    case 'transfer': {
+      const accs = await financeService.listAccounts(cid);
+      const from = accs.find((a) => a.name.toLowerCase().includes(String(params.from || '').toLowerCase()));
+      const to = accs.find((a) => a.name.toLowerCase().includes(String(params.to || '').toLowerCase()));
+      if (!from || !to || from.id === to.id) return `Não consegui identificar as contas. Tenho: ${accs.map((a) => a.name).join(', ')}.`;
+      const amount = Number(params.amount);
+      if (!amount || amount <= 0) return '❓ Qual o valor da transferência?';
+      await financeService.createTransfer(cid, { from_account: from.id, to_account: to.id, amount, description: params.description });
+      return `🔁 Transferi *${financeFmt.money(amount)}* de *${from.name}* → *${to.name}*. Saldo total inalterado.`;
     }
     case 'query_summary': {
       const s = await financeService.querySummary(cid);

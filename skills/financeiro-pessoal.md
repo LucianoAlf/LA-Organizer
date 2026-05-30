@@ -6,7 +6,7 @@ description: Skill para registrar e consultar finanças pessoais do colaborador 
 # Finanças Pessoais
 
 ## Quando ativar
-Ative quando o colaborador mencionar: gastei, recebi, paguei, salário, comissão, conta, aluguel, iFood, mercado, uber, gasolina, farmácia, quanto gastei, como tá meu orçamento, meta, guardar dinheiro, poupança, caixinha, investir, Selic, juros — ou quando o dispatcher enviar `[RITUAL: financeiro_mensal]` / `[RITUAL: lembrete_conta]`.
+Ative quando o colaborador mencionar: gastei, recebi, paguei, salário, comissão, conta, aluguel, iFood, mercado, uber, gasolina, farmácia, quanto gastei, como tá meu orçamento, meta, guardar dinheiro, poupança, caixinha, investir, Selic, juros, **cartão, fatura, limite, parcela, parcelei, transferi, transferência, PIX entre contas** — ou quando o dispatcher enviar `[RITUAL: financeiro_mensal]` / `[RITUAL: lembrete_conta]` / `[RITUAL: alerta_cartao]`.
 
 ## Regra de privacidade (inegociável)
 Dado financeiro é 100% privado. NUNCA mencione finanças de um colaborador para outro, nem para o Alf, nem em relatório de time. Esses dados só aparecem pra própria pessoa.
@@ -46,6 +46,18 @@ Ações disponíveis (campo `action`):
 - `query_budget` — sem params (barras de orçamento)
 - `query_goal` — sem params (progresso das metas)
 - `simulate_interest` — params: monthly, years (simulação de juros compostos; o engine calcula com a Selic viva — NÃO calcule você mesmo)
+- `create_card` — params: name, credit_limit, closing_day, due_day, brand(opcional), color(opcional). Ex: "cadastra cartão Nubank limite 5000 fecha dia 6 vence dia 10".
+- `card_purchase` — params: card (nome do cartão), amount, description, category(opcional), installments(opcional, default 1), date(opcional). Ex: "comprei TV 3200 em 10x no nubank" → installments=10, card="nubank".
+- `query_invoice` — params: card, competencia(opcional). Ex: "quanto tá minha fatura do nubank?", "quanto falta de limite?".
+- `pay_invoice` — params: card, amount(opcional; vazio = fatura toda), from_account(opcional), competencia(opcional). Ex: "paguei a fatura do nubank", "paguei 1000 da fatura do itaú".
+- `transfer` — params: from (conta origem), to (conta destino), amount, description(opcional). Ex: "transferi 500 do itaú pro nubank".
+
+## Cartão de crédito (meio de pagamento ≠ categoria)
+- Compra **no cartão** → `card_purchase` (NÃO `register_transaction`). A compra entra na FATURA, não sai do saldo agora. A categoria continua sendo a natureza do gasto (alimentação, lazer…), o cartão é só o meio de pagamento.
+- "comprei/parcelei em Nx" → `card_purchase` com `installments=N`. **NÃO calcule** valor por parcela, competência ("vai na fatura de") nem datas — o ENGINE calcula e confirma. Você só extrai card, valor total, parcelas, descrição.
+- Pagar fatura → `pay_invoice`. Se a pessoa não disser de qual conta saiu e isso importar, pode perguntar UMA vez ("de qual conta? Nubank, Itaú…"). Sem valor = paga a fatura toda; com valor = pagamento parcial.
+- **Transferência** entre contas (`transfer`): move saldo de uma conta pra outra. NÃO é receita nem despesa, não entra em relatório de gastos — não classifique como gasto.
+- Alertas de limite (50/70/80/90%) são disparados pelo ENGINE, não por você.
 
 ## Categorias válidas
 Receitas: salario, comissao, extra.
