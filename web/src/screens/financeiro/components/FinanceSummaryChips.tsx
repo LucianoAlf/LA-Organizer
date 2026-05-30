@@ -56,7 +56,7 @@ export function FinanceSummaryChips() {
   return (
     <section
       aria-label="Resumo financeiro"
-      className="flex gap-1.5 overflow-x-auto -mx-md px-md [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+      className="flex gap-1.5 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
     >
       {chips.map((c) => (
         <Link
