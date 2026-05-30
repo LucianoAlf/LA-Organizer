@@ -9,35 +9,60 @@ import type { PfBill, PfCategory, PfGoal, PfTxType } from '../lib/financeiro';
 
 const KEY = ['financeiro'] as const;
 
-export function useFinanceiroAuth() {
+// Tolerante: retorna undefined enquanto auth carrega ou se não há sessão.
+// ProtectedRoute já bloqueia rotas sem auth; aqui não lançamos pra não quebrar a UI no boot.
+export function useFinanceiroAuth(): string | undefined {
   const { collaborator } = useAuth();
-  if (!collaborator) throw new Error('Finanças exige usuário autenticado');
-  return collaborator.id;
+  return collaborator?.id;
 }
 
 export function useAccounts() {
   const cid = useFinanceiroAuth();
-  return useQuery({ queryKey: [...KEY, 'accounts', cid], queryFn: () => fin.listAccounts(cid) });
+  return useQuery({
+    queryKey: [...KEY, 'accounts', cid],
+    queryFn: () => fin.listAccounts(cid!),
+    enabled: !!cid,
+  });
 }
 export function useTransactions(opts?: { monthYear?: string; category?: PfCategory; type?: PfTxType; limit?: number }) {
   const cid = useFinanceiroAuth();
-  return useQuery({ queryKey: [...KEY, 'tx', cid, opts ?? {}], queryFn: () => fin.listTransactions(cid, opts) });
+  return useQuery({
+    queryKey: [...KEY, 'tx', cid, opts ?? {}],
+    queryFn: () => fin.listTransactions(cid!, opts),
+    enabled: !!cid,
+  });
 }
 export function useTransactionsRange(start: string, end: string) {
   const cid = useFinanceiroAuth();
-  return useQuery({ queryKey: [...KEY, 'txRange', cid, start, end], queryFn: () => fin.listTransactionsRange(cid, start, end) });
+  return useQuery({
+    queryKey: [...KEY, 'txRange', cid, start, end],
+    queryFn: () => fin.listTransactionsRange(cid!, start, end),
+    enabled: !!cid,
+  });
 }
 export function useBills() {
   const cid = useFinanceiroAuth();
-  return useQuery({ queryKey: [...KEY, 'bills', cid], queryFn: () => fin.listBills(cid) });
+  return useQuery({
+    queryKey: [...KEY, 'bills', cid],
+    queryFn: () => fin.listBills(cid!),
+    enabled: !!cid,
+  });
 }
 export function useGoals() {
   const cid = useFinanceiroAuth();
-  return useQuery({ queryKey: [...KEY, 'goals', cid], queryFn: () => fin.listGoals(cid) });
+  return useQuery({
+    queryKey: [...KEY, 'goals', cid],
+    queryFn: () => fin.listGoals(cid!),
+    enabled: !!cid,
+  });
 }
 export function useBudgets() {
   const cid = useFinanceiroAuth();
-  return useQuery({ queryKey: [...KEY, 'budgets', cid], queryFn: () => fin.listBudgets(cid) });
+  return useQuery({
+    queryKey: [...KEY, 'budgets', cid],
+    queryFn: () => fin.listBudgets(cid!),
+    enabled: !!cid,
+  });
 }
 
 // Resumo derivado das transações do mês corrente (puro client-side).
@@ -54,7 +79,13 @@ export function useSummary() {
 function useFinMutation<T, V>(fn: (cid: string, v: V) => Promise<T>) {
   const cid = useFinanceiroAuth();
   const qc = useQueryClient();
-  return useMutation({ mutationFn: (v: V) => fn(cid, v), onSuccess: () => qc.invalidateQueries({ queryKey: KEY }) });
+  return useMutation({
+    mutationFn: (v: V) => {
+      if (!cid) return Promise.reject(new Error('Sem sessão. Faça login.'));
+      return fn(cid, v);
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
 }
 
 export const useCreateTransaction = () => useFinMutation(fin.createTransaction);
