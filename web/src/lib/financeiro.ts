@@ -17,6 +17,7 @@ export interface PfAccount { id: string; name: string; type: PfAccountType; bala
 export interface PfTransaction {
   id: string; type: PfTxType; category: PfCategory; amount: number;
   description: string | null; transaction_date: string; account_id: string | null;
+  card_id?: string | null; // preenchido = compra no cartão (fora do caixa; vive na fatura)
 }
 export interface PfBill {
   id: string; name: string; amount: number; due_day: number; category: PfCategory;

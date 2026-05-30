@@ -68,8 +68,8 @@ export function PieByCategory({ data }: { data: { category: PfCategory; value: n
   const total = data.reduce((s, d) => s + d.value, 0);
   return (
     <div className="flex items-center gap-3 md:gap-4">
-      {/* Pizza à esquerda — tamanho fixo */}
-      <div className="w-[128px] h-[128px] shrink-0">
+      {/* Pizza à esquerda — tamanho fixo, com total no centro do donut */}
+      <div className="relative w-[128px] h-[128px] shrink-0">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
             <Pie
@@ -89,6 +89,10 @@ export function PieByCategory({ data }: { data: { category: PfCategory; value: n
             <Tooltip content={<ChartTooltip />} />
           </PieChart>
         </ResponsiveContainer>
+        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+          <span className="text-fg font-bold text-sm tabular-nums leading-none">R$ {brl(total)}</span>
+          <span className="text-[9px] uppercase tracking-wide text-fg-muted mt-0.5">Total</span>
+        </div>
       </div>
 
       {/* Legenda à direita — bolinha · categoria · % · valor */}
