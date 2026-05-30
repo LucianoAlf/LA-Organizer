@@ -139,3 +139,51 @@ test('resolveCollaboratorByName: nome único Gabi → resolved', async () => {
   const r = await R.resolveCollaboratorByName('Gabi', { fetchActive });
   assert.strictEqual(r.collaborator.id, 'gabi');
 });
+
+// --- 2º par de homônimos: John (Marketing) vs Jhonatan (Farmer) ---
+// Eixo de separação é a FUNÇÃO (marketing vs farmer); ambos unit=all/null.
+// Apelido compartilhado "Jhon" (cadastrado em ambos).
+const JOHN_MKT = {
+  id: 'mkt', full_name: 'John', preferred_name: 'John Silva Marketing',
+  function_role: 'marketing', pedagogical_role: null, unit: 'all',
+  aliases: ['Jhon', 'John Marketing', 'Jhon Marketing'],
+};
+const JHONATAN = {
+  id: 'farmer2', full_name: 'Jhonatan', preferred_name: null,
+  function_role: 'farmer', pedagogical_role: null, unit: null,
+  aliases: ['Jhon', 'Jhon Farmer', 'Jhonatan Farmer'],
+};
+const J_ROWS = [JOHN_MKT, JHONATAN];
+const fetchJ = async () => J_ROWS;
+const MKT_REQ = { function_role: 'marketing', pedagogical_role: null, unit: 'all' };
+const FARMER_REQ = { function_role: 'farmer', pedagogical_role: null, unit: null };
+
+test('Jhon: "Jhon" casa os DOIS via alias compartilhado', () => {
+  assert.deepStrictEqual(R.gatherCandidates('Jhon', J_ROWS).union.map(c => c.id).sort(), ['farmer2', 'mkt']);
+});
+test('Jhon: "John" (grafia exata) → só John Marketing', async () => {
+  const r = await R.resolveCollaboratorByName('John', { requester: null, fetchActive: fetchJ });
+  assert.strictEqual(r.collaborator.id, 'mkt');
+});
+test('Jhon: requester marketing → John', async () => {
+  const r = await R.resolveCollaboratorByName('Jhon', { requester: MKT_REQ, fetchActive: fetchJ });
+  assert.strictEqual(r.collaborator.id, 'mkt');
+});
+test('Jhon: requester farmer → Jhonatan', async () => {
+  const r = await R.resolveCollaboratorByName('Jhon', { requester: FARMER_REQ, fetchActive: fetchJ });
+  assert.strictEqual(r.collaborator.id, 'farmer2');
+});
+test('Jhon: requester neutro (director) → ambiguous', async () => {
+  const r = await R.resolveCollaboratorByName('Jhon', { requester: { function_role: 'director', unit: 'all' }, fetchActive: fetchJ });
+  assert.strictEqual(r.status, 'ambiguous');
+});
+test('Jhon: qualificador "Jhon Marketing" → John; "Jhon Farmer" → Jhonatan', async () => {
+  assert.strictEqual((await R.resolveCollaboratorByName('Jhon Marketing', { fetchActive: fetchJ })).collaborator.id, 'mkt');
+  assert.strictEqual((await R.resolveCollaboratorByName('Jhon Farmer', { fetchActive: fetchJ })).collaborator.id, 'farmer2');
+});
+test('buildAmbiguityQuestion: gênero-neutro (termina em "é qual?")', () => {
+  const q = R.buildAmbiguityQuestion([JOHN_MKT, JHONATAN]);
+  assert.match(q, /é qual\?$/);
+  assert.match(q, /Marketing/);
+  assert.match(q, /Farmer/);
+});

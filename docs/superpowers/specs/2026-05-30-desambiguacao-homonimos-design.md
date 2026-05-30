@@ -162,24 +162,43 @@ duas pessoas + `function_role`/`unit` corretos.
 
 ### 6. ASK stateless
 
-Quando `ambiguous`, TOM pergunta 1x e não cria nada no turno:
+Quando `ambiguous`, TOM pergunta 1x e não cria nada no turno (texto
+**gênero-neutro**, termina em "é qual?" — serve pra homens e mulheres):
 
-> "Tem a Dai do Pedagógico e a Daiana do Recreio — é qual delas?"
+> "Tem a *Dai* do Pedagógico e a *Daiana* do Recreio — é qual?"
+> "Tem o *John* do Marketing e o *Jhonatan* do Farmer — é qual?"
 
-As respostas naturais ("a do Recreio", "Daiana do Recreio", "a do Pedagógico",
-"Dai Ped") resolvem único via os qualifier-aliases da migration. Adicionar um
-nudge curto na skill de coordenação para o TOM re-emitir o nome **qualificado**
-após a escolha do usuário.
+As respostas naturais e os qualifier-aliases da migration resolvem único.
+Adicionar um nudge curto na skill de coordenação para o TOM re-emitir o nome
+**qualificado** após a escolha do usuário.
+
+### 6b. Generalização — N pares de homônimos
+
+O motor é genérico: vale pra qualquer par/grupo. O eixo que separa muda:
+- **Dai / Daiana** — eixo **unidade** (Daiana = dona do Recreio). Migration:
+  aliases `Dai`/`Day` + qualificadores nas duas.
+- **John (Marketing) / Jhonatan (Farmer)** — eixo **função** (ambos `unit=all`
+  /null). Apelido compartilhado **só** `Jhon` (não `John` — esse é o nome real
+  do Marketing e resolve pra ele). Migration: `Jhon` + `Jhon Marketing` no John;
+  `Jhon`/`Jhon Farmer`/`Jhonatan Farmer` no Jhonatan. **Cuidado:** não cadastrar
+  qualificador cujo 1º token colida com o nome cru do outro (ex.: `John Farmer`
+  tornaria "John" ambíguo — foi removido).
+
+Homônimo novo = cadastrar o apelido curto compartilhado nas pessoas + ter
+`function_role`/`unit` corretos. Zero código.
 
 ### 7. Smoke test (read-only contra o banco, antes do deploy)
 
-Script node que chama `resolveCollaboratorByName` com dados reais:
+Script `scripts/smoke-homonimos.js` chama `resolveCollaboratorByName` com dados
+reais (desambigua **só por requester**, sem assunto):
 
-1. requester=Farmer(recreio) · name="Dai" · subject="repor estoque da lojinha" → **Daiana**
-2. requester=assistente pedagógico · name="Dai" · subject="aula do aluno João" → **Dai-ped**
-3. requester=director(neutro) · name="Dai" · subject="" → **ambiguous** (pergunta)
-4. name="Dai Recreio" (qualquer contexto) → **Daiana**
-5. name="Dai Ped" → **Dai-ped**
+1. requester=Recreio (Clayton/Fefê) · "Dai" → **Daiana**
+2. requester=professor do Recreio (pedagógico+unit:recreio) · "Dai" → **Daiana** (unit ganha)
+3. requester=professor de outra unidade · "Dai" → **Dai-ped**
+4. requester=director(neutro) · "Dai" → **ambiguous**
+5. "Dai Recreio" / "Dai Ped" → **Daiana / Dai-ped**
+6. requester=marketing · "Jhon" → **John**; requester=farmer · "Jhon" → **Jhonatan**
+7. requester=director · "Jhon" → **ambiguous**; "John" → **John**; "Jhon Marketing"/"Jhon Farmer" → qualificado
 
 ### 8. Segurança
 

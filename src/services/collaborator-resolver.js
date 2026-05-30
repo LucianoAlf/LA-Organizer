@@ -110,7 +110,7 @@ function buildAmbiguityQuestion(candidates) {
   const list = parts.length === 2
     ? `${parts[0]} e ${parts[1]}`
     : parts.slice(0, -1).join(', ') + ' e ' + parts[parts.length - 1];
-  return `Tem ${list} — é qual delas?`;
+  return `Tem ${list} — é qual?`;
 }
 
 // fetchActive: () => Promise<rows[]> (colaboradores ativos com campos de domínio).
