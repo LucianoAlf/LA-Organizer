@@ -4538,12 +4538,8 @@ function validateHabitAction(a) {
     if (a.reminder_time !== undefined && a.reminder_time !== null
         && (typeof a.reminder_time !== 'string' || !HABIT_TIME_RE.test(a.reminder_time))) return 'bad_reminder_time';
     if (a.custom_days !== undefined && !Array.isArray(a.custom_days)) return 'bad_custom_days';
-    // Quantitativo (opcional): se habit_type='quantitative', exige target_value>0 e unit string.
-    if (a.habit_type !== undefined && a.habit_type !== 'binary' && a.habit_type !== 'quantitative') return 'bad_habit_type';
-    if (a.habit_type === 'quantitative') {
-      if (typeof a.target_value !== 'number' || !(a.target_value > 0)) return 'bad_target_value';
-      if (typeof a.unit !== 'string' || !a.unit.trim()) return 'bad_unit';
-    }
+    // Quantitativo: tipo/meta/unidade são derivados no handler (deriveHabitQuant) — nunca
+    // dropar o create por causa deles. Validação leniente de propósito.
   } else if (a.action === 'log') {
     const hasId = typeof a.habit_id === 'string' && SHORT_ID_RE.test(a.habit_id);
     const hasName = typeof a.habit_name === 'string' && a.habit_name.trim().length > 0;
@@ -6697,7 +6693,7 @@ async function processMessage(phone, text, raw = {}) {
       await logMarker(collab.id, 'HABIT_ACTION', 'rejected', 'schema_invalid', reply);
       reply = parsedHab.cleanText || reply;
     } else if (parsedHab) {
-      const { okCount, failCount, progressFooters } = await applyHabitActions(collab, parsedHab.actions);
+      const { okCount, failCount, progressFooters } = await applyHabitActions(collab, parsedHab.actions, text);
       console.log(`[Habit] batch done: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
       const result = okCount > 0 ? 'executed' : 'rejected';
       const reason = okCount > 0 ? `ok=${okCount} fail=${failCount}` : `all_failed:${failCount}`;
