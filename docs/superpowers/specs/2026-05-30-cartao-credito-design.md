@@ -146,7 +146,7 @@ Compra de `R$ T` em `N×`: cria **N linhas** em `pf_transactions`, todas com o m
 `fatura(card, mês M)` = soma de `pf_transactions` com `card_id = card.id` e `competencia = M`. Itens da fatura = essas transações. Pago? Existe `pf_card_payments` com `card_id` + `competencia = M`.
 
 ### 5.4 Limite usado / disponível
-`usado = soma das competências EM ABERTO` (não pagas) — no v1, somar fatura corrente + futuras não pagas (parcelas já lançadas comprometem limite). `disponivel = credit_limit - usado`. `pct = usado / credit_limit`. (Definir no plano se "usado" inclui só a fatura corrente ou todas as futuras comprometidas — **recomendação: todas as não pagas**, pois parcelas futuras já consomem limite — é como bancos calculam.)
+**Decisão do Alf:** `usado = soma de TODAS as competências não pagas` (fatura corrente + parcelas futuras já lançadas), pois parcelas futuras já comprometem o limite — é como o banco calcula. `disponivel = credit_limit - usado`. `pct = usado / credit_limit`. Uma competência conta como paga quando `soma(pf_card_payments dessa competência) >= total da competência` (ver §10, pagamento parcial).
 
 ---
 
@@ -204,7 +204,8 @@ Mensagens-modelo (validadas no Companion):
 - **Parcelas:** ação de log aceita `installments` + `card_id`; o **service** cria as N linhas e calcula competências (número/datas calculados em código, nunca pelo LLM).
 - **Consulta:** "quanto tá minha fatura do nubank?", "quanto falta de limite?" → query derivada (§5).
 - **Pagar fatura:** "paguei a fatura do nubank" → perguntar de qual carteira saiu → `pf_card_payments` + debitar saldo.
-- **Diferenciar PIX/débito/transferência:** PIX/débito = saída normal de carteira (mexe no saldo agora); cartão = entra na fatura; **transferência entre contas** = move saldo entre carteiras, NÃO é receita nem despesa (não entra em relatório de gastos). Tratar transferência como par de ajustes de saldo (ou tipo próprio) — confirmar no plano se há suporte hoje; se não, mínimo: não classificar como despesa/receita.
+- **Diferenciar PIX/débito/transferência:** PIX/débito = saída normal de carteira (mexe no saldo agora); cartão = entra na fatura.
+- **Transferência entre contas (decisão do Alf):** sai de uma conta e entra em outra **sem impactar o saldo total** — só decrementa o saldo da conta de **origem** e incrementa o da conta de **destino**. **NÃO** é receita nem despesa e **não** entra em relatório de gastos/categorias. Modelar como `pf_transfers (from_account, to_account, amount, transfer_date)` que ajusta os dois saldos atomicamente (ou par de ajustes de saldo origem−/destino+). TOM detecta "transferi 500 do Itaú pro Nubank" → cria a transferência; nunca classifica como despesa. **Verificar no código se já há algum suporte** antes de criar a tabela.
 
 ---
 
@@ -224,7 +225,7 @@ Novo job em `src/rituals/dispatcher.js`, reusando o padrão de `collaboratorsWit
 - Parcela no limite do ciclo (compra no próprio `closing_day`) → regra §5.1 (≤ fecha neste mês).
 - Cartão desativado (`is_active=false`) → some da lista e dos alertas; faturas históricas preservadas.
 - Fuso: sempre America/Sao_Paulo pro "hoje"/competência.
-- Pagamento parcial de fatura (v1): aceitar `amount` < total; "pago" só quando soma dos `pf_card_payments` da competência ≥ total. (Ou simplificar v1 para pagamento total — decidir no plano; **recomendação: aceitar parcial**, é comum.)
+- **Pagamento parcial E total (decisão do Alf):** aceitar `amount` ≤ total restante. A competência só vira "paga" quando `soma(pf_card_payments) >= total da competência`. Antes disso, mostrar "pago parcial: R$ X de R$ Y" na fatura. Cada pagamento debita a `paid_from_account` pelo seu `amount`.
 
 ---
 
