@@ -110,8 +110,8 @@ export function FinanceiroPage() {
         <span className="text-body-sm text-fg-muted tabular-nums">{monthLabel}</span>
       </header>
 
-      {/* StatCards — Saldo é o herói */}
-      <section className="grid grid-cols-3 gap-2 md:gap-md">
+      {/* StatCards — Saldo é o herói (2+1: receitas/despesas em cima, saldo full-width abaixo) */}
+      <section className="grid grid-cols-2 gap-2 md:gap-md">
         <StatCard
           label="Receitas"
           tone="success"
@@ -122,11 +122,13 @@ export function FinanceiroPage() {
           tone="danger"
           value={<>R$ {brl(summary?.despesas ?? 0)}</>}
         />
-        <StatCard
-          label="Saldo"
-          tone={summary && summary.saldo < 0 ? 'danger' : 'tom'}
-          value={<>{summary && summary.saldo < 0 ? '−' : '+'}R$ {brl(Math.abs(summary?.saldo ?? 0))}</>}
-        />
+        <div className="col-span-2">
+          <StatCard
+            label="Saldo"
+            tone={summary && summary.saldo < 0 ? 'danger' : 'tom'}
+            value={<>{summary && summary.saldo < 0 ? '−' : '+'}R$ {brl(Math.abs(summary?.saldo ?? 0))}</>}
+          />
+        </div>
       </section>
 
       <FinanceQuickLinks />
