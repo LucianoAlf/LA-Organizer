@@ -8,7 +8,7 @@ import { useAuth } from '../contexts/AuthContext';
 import * as fin from '../lib/financeiro';
 import * as cartoes from '../lib/cartoes';
 import { listCategories } from '../lib/categorias';
-import type { PfBill, PfCategory, PfGoal, PfTxType } from '../lib/financeiro';
+import type { PfBill, PfCategory, PfTxType } from '../lib/financeiro';
 
 const KEY = ['financeiro'] as const;
 
@@ -124,7 +124,23 @@ export const useUpdateTransaction = () => useFinMutation((cid, args: { id: strin
 export const useCreateBill        = () => useFinMutation(fin.createBill);
 export const usePayBill           = () => useFinMutation((cid, bill: PfBill) => fin.payBill(cid, bill));
 export const useCreateGoal        = () => useFinMutation(fin.createGoal);
-export const useAddToGoal         = () => useFinMutation((cid, args: { goal: PfGoal; amount: number }) => fin.addToGoal(cid, args.goal, args.amount));
+export const useAddToGoal = () => useFinMutation(
+  (cid, args: { goalId: string; amount: number; note?: string | null; date?: string }) =>
+    fin.addToGoal(cid, args.goalId, args.amount, { note: args.note, date: args.date })
+);
+export const useUpdateGoal = () => useFinMutation(
+  (cid, args: { id: string; patch: Parameters<typeof fin.updateGoal>[2] }) => fin.updateGoal(cid, args.id, args.patch)
+);
+export const useDeactivateGoal = () => useFinMutation((cid, id: string) => fin.deactivateGoal(cid, id));
+export const useDeleteGoalContribution = () => useFinMutation((cid, id: string) => fin.deleteGoalContribution(cid, id));
+export function useGoalContributions(goalId: string | undefined) {
+  const cid = useFinanceiroAuth();
+  return useQuery({
+    queryKey: [...KEY, 'goal-contributions', goalId, cid],
+    queryFn: () => fin.listGoalContributions(cid!, goalId!),
+    enabled: !!cid && !!goalId,
+  });
+}
 export const useSetBudget         = () => useFinMutation(fin.setBudget);
 export const useCreateAccount     = () => useFinMutation(fin.createAccount);
 export const useDeactivateAccount = () => useFinMutation((cid, id: string) => fin.deactivateAccount(cid, id));

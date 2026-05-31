@@ -5886,7 +5886,7 @@ async function tryDupBypass(collab, text) {
 // ---- Sprint 27 — Financas Pessoais: marker <<FINANCE_ACTION>> + dispatcher ----
 const FINANCE_ACTIONS = [
   'register_transaction', 'register_bill', 'pay_bill', 'create_goal',
-  'update_goal', 'set_budget', 'query_summary', 'query_budget', 'query_goal', 'query_accounts', 'create_account',
+  'update_goal', 'edit_goal', 'delete_goal', 'set_budget', 'query_summary', 'query_budget', 'query_goal', 'query_accounts', 'create_account',
   'simulate_interest',
   // cartão de crédito + transferência
   'create_card', 'card_purchase', 'query_invoice', 'pay_invoice', 'transfer',
@@ -6133,9 +6133,29 @@ async function handleFinanceAction(collab, action, params) {
     case 'update_goal': {
       const cands = await financeService.findGoal(cid, params.goal_name || params.name || '');
       if (cands.length === 0) return 'Não achei essa meta.';
-      const g = await financeService.addToGoal(cid, cands[0], params.add_amount || 0);
-      const pct = Math.round((g.current_amount / g.target_amount) * 100);
-      return `✅ Guardou R$${params.add_amount} em ${g.name}. Progresso: ${pct}% (R$${g.current_amount}/R$${g.target_amount}).`;
+      const goal = cands[0];
+      const add = Number(params.add_amount || 0);
+      if (!(add > 0)) return 'Quanto você quer guardar?';
+      await financeService.addGoalContribution(cid, goal.id, { amount: add }); // trigger atualiza
+      const novo = Number(goal.current_amount) + add;
+      const pct = Math.round((novo / goal.target_amount) * 100);
+      return `✅ Guardou R$${add} em ${goal.name}. Progresso: ${pct}% (R$${novo}/R$${goal.target_amount}).`;
+    }
+    case 'edit_goal': {
+      const cands = await financeService.findGoal(cid, params.goal_name || params.name || '');
+      if (cands.length === 0) return 'Não achei essa meta.';
+      const patch = {};
+      for (const k of ['name', 'target_amount', 'monthly_contribution', 'deadline', 'icon']) {
+        if (params[k] !== undefined) patch[k] = params[k];
+      }
+      const g = await financeService.updateGoal(cid, cands[0].id, patch);
+      return `✏️ Meta atualizada: ${g.icon || '🎯'} ${g.name} (alvo R$${g.target_amount}).`;
+    }
+    case 'delete_goal': {
+      const cands = await financeService.findGoal(cid, params.goal_name || params.name || '');
+      if (cands.length === 0) return 'Não achei essa meta.';
+      await financeService.deactivateGoal(cid, cands[0].id);
+      return `🗄️ Meta "${cands[0].name}" arquivada.`;
     }
     case 'set_budget': {
       const b = await financeService.setBudget(cid, { category: params.category, monthly_limit: params.monthly_limit });

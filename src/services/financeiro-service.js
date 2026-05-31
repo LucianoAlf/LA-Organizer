@@ -257,20 +257,49 @@ async function findGoal(collaboratorId, goalName) {
   if (error) throw error;
   return data || [];
 }
-async function addToGoal(collaboratorId, goal, addAmount) {
-  const novo = Number(goal.current_amount) + Number(addAmount);
-  const { data, error } = await supabase.from('pf_goals')
-    .update({ current_amount: novo, updated_at: new Date().toISOString() })
-    .eq('id', goal.id).eq('collaborator_id', collaboratorId).select().single();
-  if (error) throw error;
-  return data;
-}
 async function listGoals(collaboratorId) {
   const { data, error } = await supabase.from('pf_goals')
     .select('id, name, target_amount, current_amount, monthly_contribution, deadline, icon')
     .eq('collaborator_id', collaboratorId).eq('is_active', true).order('created_at');
   if (error) throw error;
   return data || [];
+}
+async function addGoalContribution(collaboratorId, goalId, { amount, note = null, date = null }) {
+  const row = { collaborator_id: collaboratorId, goal_id: goalId, amount, note };
+  if (date) row.contributed_at = date;
+  const { data, error } = await supabase.from('pf_goal_contributions').insert(row).select().single();
+  if (error) throw error; // trigger atualiza pf_goals.current_amount
+  return data;
+}
+async function listGoalContributions(collaboratorId, goalId) {
+  const { data, error } = await supabase.from('pf_goal_contributions')
+    .select('id, goal_id, amount, note, contributed_at')
+    .eq('collaborator_id', collaboratorId).eq('goal_id', goalId)
+    .order('contributed_at', { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+async function deleteGoalContribution(collaboratorId, contributionId) {
+  const { error } = await supabase.from('pf_goal_contributions')
+    .delete().eq('id', contributionId).eq('collaborator_id', collaboratorId);
+  if (error) throw error; // trigger reverte
+}
+async function updateGoal(collaboratorId, goalId, patch) {
+  const allowed = {};
+  for (const k of ['name', 'target_amount', 'monthly_contribution', 'deadline', 'icon']) {
+    if (patch[k] !== undefined) allowed[k] = patch[k];
+  }
+  allowed.updated_at = new Date().toISOString();
+  const { data, error } = await supabase.from('pf_goals')
+    .update(allowed).eq('id', goalId).eq('collaborator_id', collaboratorId).select().single();
+  if (error) throw error;
+  return data;
+}
+async function deactivateGoal(collaboratorId, goalId) {
+  const { error } = await supabase.from('pf_goals')
+    .update({ is_active: false, updated_at: new Date().toISOString() })
+    .eq('id', goalId).eq('collaborator_id', collaboratorId);
+  if (error) throw error;
 }
 
 // ---- Queries para rituais (Fase B) ----
@@ -508,7 +537,8 @@ module.exports = {
   monthCategoryTotal, querySummary,
   setBudget, getBudget, queryBudget,
   createBill, findBills, payBill,
-  createGoal, findGoal, addToGoal, listGoals,
+  createGoal, findGoal, listGoals,
+  addGoalContribution, listGoalContributions, deleteGoalContribution, updateGoal, deactivateGoal,
   billsDueWithin, monthlyReport, collaboratorsWithActivity, collaboratorsForFinanceRitual,
   collaboratorsWithActiveBills,
   // cartão

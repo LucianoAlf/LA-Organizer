@@ -26,6 +26,10 @@ export interface PfBill {
 export interface PfGoal {
   id: string; name: string; target_amount: number; current_amount: number;
   monthly_contribution: number | null; deadline: string | null; icon: string | null;
+  is_active?: boolean;
+}
+export interface PfGoalContribution {
+  id: string; goal_id: string; amount: number; note: string | null; contributed_at: string;
 }
 
 // Janela do mês corrente em UTC (start incluso, end excluso).
@@ -214,7 +218,7 @@ export async function deleteTransactionGroup(collaboratorId: string, purchaseGro
 // ---- Metas (D7: contribuição NÃO vira transação) ----
 export async function listGoals(collaboratorId: string) {
   const { data, error } = await supabase.from('pf_goals')
-    .select('id, name, target_amount, current_amount, monthly_contribution, deadline, icon')
+    .select('id, name, target_amount, current_amount, monthly_contribution, deadline, icon, is_active')
     .eq('collaborator_id', collaboratorId).eq('is_active', true).order('created_at');
   if (error) throw error;
   return (data as PfGoal[]) ?? [];
@@ -227,13 +231,38 @@ export async function createGoal(collaboratorId: string, input: { name: string; 
   if (error) throw error;
   return data;
 }
-export async function addToGoal(collaboratorId: string, goal: PfGoal, addAmount: number) {
-  // Read-modify-write no cliente (igual o engine). Dívida v1.1: trocar por rpc('pf_goal_add').
-  const novo = Number(goal.current_amount) + Number(addAmount);
-  const { data, error } = await supabase.from('pf_goals')
-    .update({ current_amount: novo, updated_at: new Date().toISOString() })
-    .eq('id', goal.id).eq('collaborator_id', collaboratorId)
-    .select().single();
+export async function addToGoal(collaboratorId: string, goalId: string, amount: number, opts?: { note?: string | null; date?: string }) {
+  const row: Record<string, unknown> = { collaborator_id: collaboratorId, goal_id: goalId, amount, note: opts?.note ?? null };
+  if (opts?.date) row.contributed_at = opts.date;
+  const { data, error } = await supabase.from('pf_goal_contributions').insert(row).select().single();
   if (error) throw error;
   return data;
+}
+export async function updateGoal(collaboratorId: string, id: string, patch: { name?: string; target_amount?: number; monthly_contribution?: number | null; deadline?: string | null; icon?: string | null }) {
+  const allowed: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  for (const k of ['name', 'target_amount', 'monthly_contribution', 'deadline', 'icon'] as const) {
+    if (patch[k] !== undefined) allowed[k] = patch[k];
+  }
+  const { data, error } = await supabase.from('pf_goals')
+    .update(allowed).eq('id', id).eq('collaborator_id', collaboratorId).select().single();
+  if (error) throw error;
+  return data;
+}
+export async function deactivateGoal(collaboratorId: string, id: string) {
+  const { error } = await supabase.from('pf_goals')
+    .update({ is_active: false }).eq('id', id).eq('collaborator_id', collaboratorId);
+  if (error) throw error;
+}
+export async function listGoalContributions(collaboratorId: string, goalId: string): Promise<PfGoalContribution[]> {
+  const { data, error } = await supabase.from('pf_goal_contributions')
+    .select('id, goal_id, amount, note, contributed_at')
+    .eq('collaborator_id', collaboratorId).eq('goal_id', goalId)
+    .order('contributed_at', { ascending: false });
+  if (error) throw error;
+  return (data as PfGoalContribution[]) ?? [];
+}
+export async function deleteGoalContribution(collaboratorId: string, id: string) {
+  const { error } = await supabase.from('pf_goal_contributions')
+    .delete().eq('id', id).eq('collaborator_id', collaboratorId);
+  if (error) throw error;
 }

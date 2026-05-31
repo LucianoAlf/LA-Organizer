@@ -2,18 +2,27 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '../../components/Button';
 import { Fab } from '../../components/Fab';
-import { useAddToGoal, useFinanceiroAuth, useGoals } from '../../hooks/useFinanceiro';
+import { useFinanceiroAuth, useGoals } from '../../hooks/useFinanceiro';
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
 import { MONTHLY_RATE_ESTIMATE, formatMonths, monthsToGoalSimple, monthsToGoalWithInterest } from '../../lib/finance-utils';
 import type { PfGoal } from '../../lib/financeiro';
 import { CompoundInterestSimulator } from './components/CompoundInterestSimulator';
+import { ContributionSheet } from './components/ContributionSheet';
 import { GoalSheet } from './components/GoalSheet';
 
 function brl(n: number) {
   return n.toLocaleString('pt-BR', { maximumFractionDigits: 0 });
 }
 
-function GoalCard({ goal, onContribute }: { goal: PfGoal; onContribute: (goal: PfGoal) => void }) {
+function GoalCard({
+  goal,
+  onContribute,
+  onOpen,
+}: {
+  goal: PfGoal;
+  onContribute: (goal: PfGoal) => void;
+  onOpen: (id: string) => void;
+}) {
   const current = Number(goal.current_amount);
   const target = Number(goal.target_amount);
   const monthly = goal.monthly_contribution ? Number(goal.monthly_contribution) : 0;
@@ -27,7 +36,10 @@ function GoalCard({ goal, onContribute }: { goal: PfGoal; onContribute: (goal: P
   }
 
   return (
-    <article className="rounded-lg border border-border bg-bg-surface p-md">
+    <article
+      className="rounded-lg border border-border bg-bg-surface p-md cursor-pointer hover:border-tom/50 transition-colors"
+      onClick={() => onOpen(goal.id)}
+    >
       <header className="flex items-center justify-between gap-3 mb-3">
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-2xl shrink-0" aria-hidden>{goal.icon || '🎯'}</span>
@@ -69,7 +81,11 @@ function GoalCard({ goal, onContribute }: { goal: PfGoal; onContribute: (goal: P
       )}
 
       <div className="flex items-center justify-end">
-        <Button size="sm" variant="secondary" onClick={() => onContribute(goal)}>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={(e) => { e.stopPropagation(); onContribute(goal); }}
+        >
           + Adicionar contribuição
         </Button>
       </div>
@@ -79,27 +95,11 @@ function GoalCard({ goal, onContribute }: { goal: PfGoal; onContribute: (goal: P
 
 export function MetasPage() {
   const cid = useFinanceiroAuth();
-  useRealtimeFinance(['pf_goals'], cid);
+  useRealtimeFinance(['pf_goals', 'pf_goal_contributions'], cid);
   const goalsQ = useGoals();
-  const addMut = useAddToGoal();
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
-
-  async function contribute(goal: PfGoal) {
-    const raw = prompt(`Quanto você está guardando agora pra "${goal.name}"?`, '0');
-    if (raw == null) return;
-    const amount = Number(String(raw).replace(',', '.'));
-    if (!isFinite(amount) || amount <= 0) {
-      alert('Valor inválido.');
-      return;
-    }
-    try {
-      // D7: atualiza só a meta — NÃO cria transação.
-      await addMut.mutateAsync({ goal, amount });
-    } catch (e) {
-      alert((e as Error).message);
-    }
-  }
+  const [contribGoal, setContribGoal] = useState<PfGoal | null>(null);
 
   const goals = goalsQ.data ?? [];
   const empty = !goalsQ.isLoading && goals.length === 0;
@@ -131,7 +131,12 @@ export function MetasPage() {
       {goals.length > 0 && (
         <section className="grid grid-cols-1 md:grid-cols-2 gap-md">
           {goals.map((g) => (
-            <GoalCard key={g.id} goal={g} onContribute={contribute} />
+            <GoalCard
+              key={g.id}
+              goal={g}
+              onContribute={(goal) => setContribGoal(goal)}
+              onOpen={(id) => navigate('/financeiro/metas/' + id)}
+            />
           ))}
         </section>
       )}
@@ -139,6 +144,11 @@ export function MetasPage() {
       <CompoundInterestSimulator />
 
       <GoalSheet open={creating} onClose={() => setCreating(false)} />
+      <ContributionSheet
+        open={!!contribGoal}
+        goal={contribGoal}
+        onClose={() => setContribGoal(null)}
+      />
       <Fab label="Nova meta" ariaLabel="Criar meta" onClick={() => setCreating(true)} />
     </div>
   );

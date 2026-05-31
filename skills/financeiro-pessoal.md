@@ -49,7 +49,9 @@ Ações disponíveis (campo `action`):
     - única (vence uma vez): `recurrence: 'once'`, `due_date` (YYYY-MM-DD). Ex.: "boleto do IPVA 800 vence 15/06".
 - `pay_bill` — params: bill_name. Conta única some após paga (não reabre).
 - `create_goal` — params: name, target_amount, monthly_contribution, deadline, icon
-- `update_goal` — params: goal_name, add_amount
+- `update_goal` — aporte: params goal_name, add_amount. (O aporte vira histórico — o app mostra a timeline.)
+- `edit_goal` — params goal_name + os que mudam: name, target_amount, monthly_contribution, deadline, icon. Ex.: "muda o alvo do carro pra 25000".
+- `delete_goal` — params goal_name. Arquiva a meta (reversível). Ex.: "arquiva a meta do carro".
 - `set_budget` — params: category, monthly_limit
 - `create_account` — params: name, type (checking|savings|wallet|investment), icon
 - `query_summary` — sem params (resumo do mês)
