@@ -60,16 +60,22 @@ Quando a conversa contém uma descrição com `COMPROVANTE FINANCEIRO:`, o TOM:
 4. Valor ilegível / ausente → pede pra digitar, **não chuta**.
 5. Valor único por comprovante (total + categoria) — **não itemiza** notas.
 
-## Integração com a fonte-obrigatória (regra crítica)
+## Integração com a fonte-obrigatória (modelo revisado: app = fonte de verdade)
 
 O OCR **só pré-preenche um rascunho**. O `register_transaction` emitido passa
-pelo **mesmo resolver de fonte** que o outro chat está implementando:
+pelo **mesmo resolver de fonte** que o outro chat está implementando — e segue o
+mesmo modelo revisado (cadastro é no app, WhatsApp só lança):
 - forma de pagamento = nome de cartão ou "crédito"/"parcelei" → **compra na fatura**
-- PIX / débito / sem fonte resolvível → TOM **pergunta** a conta antes de gravar
-- "dinheiro"/"espécie" → carteira **Dinheiro**
+- fonte explícita no comprovante (banco/conta) → usa
+- sem fonte + **conta principal** cadastrada → usa a principal, silencioso
+  (a confirmação mostra a fonte)
+- sem fonte + várias contas sem principal → **pergunta** (pending-state)
+- **0 contas cadastradas → NÃO grava** → devolve a mensagem-coach (P6):
+  "li teu comprovante (Posto Shell R$180), mas pra gravar certo cadastra tua
+  conta no app primeiro — Finanças → Carteiras. Lá é a fonte de verdade."
 
-**O OCR nunca fura a regra de fonte.** Se o comprovante não deixa claro de onde
-saiu, o fluxo cai na mesma pergunta "saiu de qual conta?" do fluxo digitado.
+**O OCR nunca fura a regra de fonte e nunca improvisa cadastro por chat.** Mostra
+o que extraiu (bom UX), mas só grava quando há fonte resolvível. Setup é no app.
 
 ### Sequência de entrega
 Depende do resolver de fonte aterrissar (outro chat). Até lá, o OCR funcionaria
@@ -86,11 +92,13 @@ fonte-obrigatória**, nunca antes.
 5. Usuário: "isso" / "não, foi 200" (correção) / "no nubank" (fonte).
 6. Confirmou → `register_transaction` → resolver de fonte → grava.
 
-## Confirmação = stateless
+## Confirmação (alinhada ao pending-state)
 
-Sem tabela de pending. O rascunho vive na conversa; ao confirmar, o LLM re-emite
-`register_transaction` com os dados — mesmo padrão da pergunta de fonte. Correção
-("não, foi 200") é conversa natural antes de gravar.
+O rascunho do comprovante vive na conversa; ao confirmar ("isso"), o LLM re-emite
+`register_transaction` com os dados. Correção ("não, foi 200") é conversa natural
+antes de gravar. Quando o engine precisar perguntar a fonte (várias contas sem
+principal), reusa o **pending-state** do outro chat (mesmo mecanismo da pergunta
+de fonte digitada) — imune a timeout/fabricação. OCR não inventa estado próprio.
 
 ## Tratamento de erro
 
@@ -108,12 +116,15 @@ Sem tabela de pending. O rascunho vive na conversa; ao confirmar, o LLM re-emite
 ## Testes (smoke WhatsApp)
 
 1. Foto de comprovante de **cartão de crédito** → propõe **na fatura**.
-2. **Print de iFood** → propõe despesa alimentação; pergunta fonte se não der.
-3. Foto de **nota de posto (débito)** → pergunta qual conta.
-4. **Foto não-financeira** (cachorro) → não força lançamento.
-5. **Correção**: "não, foi 200" → ajusta antes de gravar.
-6. **Confirmação obrigatória**: nada grava sem "grava?" respondido.
-7. Foto com **valor ilegível** → TOM pede pra digitar.
+2. **Print de iFood** com conta principal cadastrada → propõe despesa
+   alimentação na principal, silencioso.
+3. Foto de **nota de posto (débito)**, várias contas sem principal → **pergunta**
+   qual conta (pending-state).
+4. **0 contas cadastradas** → mostra o que extraiu + **coach pro app** (não grava).
+5. **Foto não-financeira** (cachorro) → não força lançamento.
+6. **Correção**: "não, foi 200" → ajusta antes de gravar.
+7. **Confirmação obrigatória**: nada grava sem "grava?" respondido.
+8. Foto com **valor ilegível** → TOM pede pra digitar.
 
 ## Arquivos
 
