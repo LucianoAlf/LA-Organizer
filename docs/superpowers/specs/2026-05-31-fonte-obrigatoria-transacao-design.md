@@ -19,8 +19,19 @@ transações órfãs** (account_id NULL + card_id NULL). O saldo é ficção.
 
 ## Regra
 
-**Toda transação de caixa TEM fonte:** carteira, cartão ou Dinheiro. Sem fonte
-resolvível, o TOM **pergunta e NÃO grava**.
+**Toda transação TEM fonte — despesa E receita:** carteira, cartão ou Dinheiro.
+Sem fonte resolvível, o TOM **pergunta e NÃO grava**.
+- Despesa sem fonte → "💸 saiu de qual conta?"
+- Receita sem fonte → "💰 caiu em qual conta?" (NUNCA "de onde saiu" — semântica errada)
+
+**A fonte é resolvida pelo que EXISTE, não por palavra-chave.** Se o nome só bate
+cartão → cartão; só bate carteira → carteira; bate nos dois → pergunta. Isto
+**substitui a regra antiga de colisão** que está hoje na `financeiro-pessoal.md`
+("gastei no X sem dizer cartão = sempre carteira") — essa regra sai.
+
+**Métodos de pagamento ≠ fonte.** "pix", "débito", "transferência", "ted" são
+*como* pagou, não *de onde* — resolvem `none` → o TOM pergunta a conta.
+"crédito"/"cartão"/"parcelei"/"em Nx" → roteia pro cartão.
 
 ## Arquitetura
 
@@ -31,22 +42,29 @@ com saldo real, igual qualquer carteira.
 
 ### 2. Resolver unificado `resolveSource(cid, name)`
 Substitui `findAccountByName`. Checa **carteiras E cartões**:
+- vazio / método de pagamento ("pix"/"débito"/"transferência"/"ted") → `{ kind: 'none' }`
+- "dinheiro"/"espécie"/"cash" → `{ kind: 'account', account: ensureDinheiro() }`
 - match só em cartão → `{ kind: 'card', card }`
 - match só em carteira → `{ kind: 'account', account }`
-- "dinheiro"/"espécie"/"cash" → `{ kind: 'account', account: ensureDinheiro() }`
 - match nos dois (ex: carteira "Nubank" + cartão "Nubank") → `{ kind: 'ambiguous', account, card }`
 - nada → `{ kind: 'none' }`
+
+Vale para despesa E receita (receita em cartão = estorno/crédito na fatura é
+fora de escopo v1 → receita só aceita carteira/Dinheiro; cartão numa receita →
+trata como `none` e pergunta a conta).
 
 ### 3. Roteamento no `register_transaction`
 - `card` → vira **compra na fatura** (`insertCardPurchase`, fora do caixa)
 - `account` → transação de caixa com `account_id`
 - `ambiguous` → **pergunta** "foi no cartão ou na conta Nubank?" — não grava
-- `none` → **pergunta** "💸 Gasto de R$X — saiu de qual conta?" + lista
-  numerada (carteiras + cartões + 💵 Dinheiro) — não grava
+- `none` → **pergunta** + lista numerada (carteiras + cartões + 💵 Dinheiro) — não grava
+  - despesa: "💸 Gasto de R$X — saiu de qual conta?"
+  - receita: "💰 Entrada de R$X — caiu em qual conta?"
 
 ### 4. Trava dupla
 - **Skill** (`financeiro-pessoal.md`): instrui o TOM a perguntar a fonte quando
-  falta, e a tratar colisão de nome.
+  falta (despesa e receita), e a tratar colisão de nome. **Remover a regra antiga
+  "sem dizer cartão = sempre carteira"** — fonte agora é pelo que existe (§2).
 - **Engine** (safety-net): se `register_transaction` chega sem fonte resolvível,
   recusa + devolve a pergunta. Garante que nunca grava órfã mesmo se o LLM falhar.
 
@@ -60,9 +78,13 @@ Sem tabela de pending. Quando o TOM pergunta e o usuário responde "no Nubank",
 o LLM re-emite `register_transaction` com a fonte — ele tem o contexto da
 conversa. O safety-net do engine só recusa+pergunta; o follow-up é natural.
 
-### 7. Backfill das 10 órfãs
-Migration de dados: as transações órfãs existentes recebem a carteira
-`Dinheiro` (recalcula saldo). **Sem deletar** dados — backfill seguro.
+### 7. Órfãs existentes = re-registrar limpo (sem backfill)
+As órfãs atuais são **dado de teste** (serão apagadas). Backfillar pra "Dinheiro"
+credita receitas (Salário 5k, Extra 2k) no caixa físico — semanticamente errado e
+sem valor. Decisão: **não fazer backfill**; o Alf re-registra o que importar agora
+com a fonte certa (já valida o fluxo novo de ponta a ponta). Cuidado só na
+contagem: as 10× "TV" / "material" têm `card_id` (parcelas de cartão) — **não são
+órfãs**; órfã = `account_id NULL AND card_id NULL`.
 
 ## Fora de escopo
 - OCR de notas/comprovantes (próxima feature, já mapeada).
@@ -71,8 +93,10 @@ Migration de dados: as transações órfãs existentes recebem a carteira
 
 ## Testes (smoke WhatsApp)
 1. "gastei 45 no nubank com lazer" → reconhece cartão → fatura (não no caixa)
-2. "paguei uber 30 no pix" sem conta dita → pergunta "saiu de qual conta?"
+2. "paguei uber 30 no pix" (método, sem conta) → pergunta "💸 saiu de qual conta?" + lista
 3. responde "do nubank" após pergunta → grava na fonte certa
 4. "gastei 20 em dinheiro" → cria/usa carteira Dinheiro, debita
-5. colisão (criar carteira "Nubank" + cartão) → pergunta cartão vs conta
-6. PWA: saldo bate após cada lançamento (sem órfã)
+5. "recebi 2000 de extra" (receita sem fonte) → pergunta "💰 caiu em qual conta?"
+6. colisão (criar carteira "Nubank" + cartão) → pergunta cartão vs conta
+7. safety-net: forçar marker sem fonte → engine recusa e pergunta (não grava órfã)
+8. PWA: saldo bate após cada lançamento (sem órfã)

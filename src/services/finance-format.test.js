@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { CAT_META, buildTxnFooter, buildTxnConfirmation, SEP } = require('./finance-format');
+const { CAT_META, buildTxnFooter, buildTxnConfirmation, buildSourceQuestion, SEP } = require('./finance-format');
 
 // ---- CAT_META ----
 test('CAT_META cobre todas as categorias do schema com emoji e label', () => {
@@ -78,4 +78,27 @@ test('bloco de orçamento entra na cauda, antes do footer', () => {
   });
   assert.ok(card.indexOf('📊 Alimentação') < card.indexOf('_💡 fim_'));
   assert.strictEqual(card.split(SEP).length, 3, 'orçamento cria a 2ª seção');
+});
+
+// ---- buildSourceQuestion + footer de receita ----
+test('pergunta de fonte (despesa): verbo "saiu", lista carteiras+cartões+Dinheiro', () => {
+  const q = buildSourceQuestion({ type: 'expense', amount: 30, accounts: [{ name: 'Itaú', icon: '🧡' }], cards: [{ name: 'Nubank' }] });
+  assert.match(q, /saiu de qual conta/i);
+  assert.match(q, /1️⃣ 🧡 Itaú/);
+  assert.match(q, /Nubank \(cartão\)/);
+  assert.match(q, /💵 Dinheiro/);
+});
+test('pergunta de fonte (receita): verbo "caiu" e SEM cartão na lista', () => {
+  const q = buildSourceQuestion({ type: 'income', amount: 5000, accounts: [{ name: 'Itaú', icon: '🧡' }], cards: [{ name: 'Nubank' }] });
+  assert.match(q, /caiu em qual conta/i);
+  assert.doesNotMatch(q, /cartão/i);
+});
+test('não duplica Dinheiro se já existe carteira Dinheiro', () => {
+  const q = buildSourceQuestion({ type: 'expense', amount: 10, accounts: [{ name: 'Dinheiro', icon: '💵' }], cards: [] });
+  assert.strictEqual((q.match(/Dinheiro/g) || []).length, 1);
+});
+test('footer educativo de receita não diz "de onde saiu"', () => {
+  const f = buildTxnFooter({ categoryMissing: false, accountLinked: false, tipSeed: 0, type: 'income' });
+  assert.doesNotMatch(f, /de onde saiu/i);
+  assert.match(f, /caiu/i);
 });

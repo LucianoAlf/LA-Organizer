@@ -5913,6 +5913,19 @@ function parseFinanceMarker(text) {
   return { action: json.action, params: json.params || {}, cleanText, malformed: false };
 }
 
+// Compra no cartão (fonte única, usada pelo case card_purchase E pelo roteamento de register_transaction).
+async function recordCardPurchase(cid, card, { amount, description, category, installments, date }) {
+  const financeFmt = require('./services/finance-format');
+  const inst = parseInt(installments || 1, 10) || 1;
+  const cat = category || mapCategory(description || '');
+  const rows = await financeService.insertCardPurchase(cid, card, { category: cat, amount: Number(amount), description, transaction_date: date, installments: inst });
+  const usage = await financeService.cardUsage(cid, card);
+  let reply = financeFmt.txnRegistered(card, { description, amount: Number(amount), category: cat, installments: inst, competencia: rows[0].competencia }, usage);
+  const al = await financeService.checkAndMarkLimitAlert(cid, card);
+  if (al) reply += '\n\n' + financeFmt.limitAlert(card, al.band, al.usage);
+  return reply;
+}
+
 // SEGURANCA (spec §6.2): cid SEMPRE = collab.id (remetente resolvido server-side). NUNCA params.collaborator_id.
 async function handleFinanceAction(collab, action, params) {
   const cid = collab.id;
@@ -5921,20 +5934,29 @@ async function handleFinanceAction(collab, action, params) {
 
   switch (action) {
     case 'register_transaction': {
-      console.log('[FinanceDbg] register_transaction raw params=', JSON.stringify(params || {})); // TEMP diag — remover após root cause
       if (!p.amount || p.amount <= 0) return '❓ Qual foi o valor?';
       const type = p.type || 'expense';
       const category = p.category || mapCategory(p.description || '');
-      // Vínculo à carteira por nome ("gastei 50 no Nubank"): resolve nome→id. null = sem carteira.
-      let account_id = p.account_id || null; // trigger BEFORE barra conta de outro dono
-      let account = null; // {name, icon, balance(pré-insert)}
-      const acctName = params.account_name || params.account || p.account_name;
-      if (!account_id && acctName) {
-        const acct = await financeService.findAccountByName(cid, acctName);
-        if (acct) { account_id = acct.id; account = acct; }
+      const srcName = params.account_name || params.account || params.carteira || params.conta || params.card || p.account_name;
+
+      // FONTE OBRIGATÓRIA: resolve pelo que existe. Sem fonte (ou cartão numa receita) → pergunta e NÃO grava.
+      const src = srcName ? await financeService.resolveSource(cid, srcName) : { kind: 'none' };
+      if (src.kind === 'ambiguous') {
+        return `🤔 *${src.account.name}* é carteira e cartão. Foi no *cartão* ou na *conta*?`;
       }
+      if (src.kind === 'card' && type === 'expense') {
+        return await recordCardPurchase(cid, src.card, { amount: p.amount, description: p.description, category, installments: params.installments, date: p.date });
+      }
+      if (src.kind === 'none' || (src.kind === 'card' && type === 'income')) {
+        const accounts = src.accounts || await financeService.listAccounts(cid);
+        const cards = src.cards || await financeService.listCards(cid);
+        return financeFmt.buildSourceQuestion({ type, amount: Number(p.amount), accounts, cards });
+      }
+
+      // src.kind === 'account' → transação de caixa, fonte garantida
+      const account = src.account;
       const prev = type === 'expense' ? await financeService.monthCategoryTotal(cid, category) : 0;
-      await financeService.insertTransaction(cid, { type, category, amount: p.amount, description: p.description, transaction_date: p.date, account_id });
+      await financeService.insertTransaction(cid, { type, category, amount: p.amount, description: p.description, transaction_date: p.date, account_id: account.id });
 
       // Bloco de orçamento (só despesa com limite), reaproveitando buildBudgetAlert.
       let budgetBlock = null;
@@ -5943,8 +5965,8 @@ async function handleFinanceAction(collab, action, params) {
         if (limit) {
           const novo = prev + Number(p.amount);
           const pct = Math.round((novo / limit) * 100);
-          const meta = financeFmt.CAT_META[category] || { label: category };
-          budgetBlock = `📊 ${meta.label}: ${financeFmt.money(novo)} / ${financeFmt.money(limit)} (${pct}%)`;
+          const m = financeFmt.CAT_META[category] || { label: category };
+          budgetBlock = `📊 ${m.label}: ${financeFmt.money(novo)} / ${financeFmt.money(limit)} (${pct}%)`;
           const cruzou = crossedThreshold(prev, novo, limit);
           if (cruzou) budgetBlock += `\n${buildBudgetAlert(category, novo, limit, cruzou)}`;
         }
@@ -5952,16 +5974,12 @@ async function handleFinanceAction(collab, action, params) {
 
       // Saldo pós-trigger por cálculo determinístico (trigger: income +amount, expense -amount).
       const meta = financeFmt.CAT_META[category] || { emoji: '📦', label: category };
-      const newBalance = account ? Number(account.balance) + (type === 'income' ? Number(p.amount) : -Number(p.amount)) : null;
-      const footer = financeFmt.buildTxnFooter({
-        categoryMissing: category === 'outros',
-        accountLinked: !!account_id,
-        tipSeed: new Date().getUTCDate(),
-      });
+      const newBalance = Number(account.balance) + (type === 'income' ? Number(p.amount) : -Number(p.amount));
+      const footer = financeFmt.buildTxnFooter({ categoryMissing: category === 'outros', accountLinked: true, tipSeed: new Date().getUTCDate(), type });
       return financeFmt.buildTxnConfirmation({
         type, description: p.description, amount: Number(p.amount),
         categoryLabel: meta.label,
-        account: account ? { name: account.name, icon: account.icon } : null,
+        account: { name: account.name, icon: account.icon },
         newBalance, budgetBlock, footer,
       });
     }

@@ -1,6 +1,7 @@
 // Service de Financas Pessoais (pf_*). Client service_role do projeto principal.
 // SEGURANCA: collaboratorId e SEMPRE o 1o parametro e filtra TODA query (RLS nao vale no caminho service_role).
 const supabase = require('../supabase/client');
+const { classifySource } = require('../finance/source');
 
 // Janela do mes corrente: [start, end) e 'YYYY-MM'.
 function monthBounds(date = new Date()) {
@@ -36,6 +37,28 @@ async function findAccountByName(collaboratorId, name) {
     .ilike('name', `%${name}%`);
   if (error) throw error;
   return (data && data[0]) || null;
+}
+// Garante a carteira "Dinheiro" (caixa físico). Idempotente.
+async function ensureDinheiro(collaboratorId) {
+  const existing = (await listAccounts(collaboratorId)).find((a) => String(a.name).toLowerCase() === 'dinheiro');
+  if (existing) return existing;
+  return createAccount(collaboratorId, { name: 'Dinheiro', type: 'wallet', icon: '💵' });
+}
+// Resolve a FONTE de uma transação: {kind, account?, card?, accounts?, cards?}.
+// kind: account | card | ambiguous | none. Faz o I/O e converte nomes→objetos (classifySource é puro).
+async function resolveSource(collaboratorId, name) {
+  const accounts = await listAccounts(collaboratorId);
+  const cards = await listCards(collaboratorId);
+  const cls = classifySource(name, accounts.map((a) => a.name), cards.map((c) => c.name));
+  if (cls.kind === 'cash') return { kind: 'account', account: await ensureDinheiro(collaboratorId) };
+  if (cls.kind === 'account') return { kind: 'account', account: accounts.find((a) => a.name === cls.accountName) };
+  if (cls.kind === 'card') return { kind: 'card', card: cards.find((c) => c.name === cls.cardName) };
+  if (cls.kind === 'ambiguous') return {
+    kind: 'ambiguous',
+    account: accounts.find((a) => a.name === cls.accountName),
+    card: cards.find((c) => c.name === cls.cardName),
+  };
+  return { kind: 'none', accounts, cards };
 }
 
 // ---- Transacoes ----
@@ -390,7 +413,7 @@ async function cardsForAlerts() {
 
 module.exports = {
   monthBounds,
-  createAccount, listAccounts, findAccountByName,
+  createAccount, listAccounts, findAccountByName, ensureDinheiro, resolveSource,
   insertTransaction, monthCategoryTotal, querySummary,
   setBudget, getBudget, queryBudget,
   createBill, findBills, payBill,

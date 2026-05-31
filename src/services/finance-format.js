@@ -80,15 +80,30 @@ const EDU_TIPS = [
 ];
 
 // Rodapé educativo contextual. Prioridade: categoria > carteira > dica rotativa.
-function buildTxnFooter({ categoryMissing, accountLinked, tipSeed = 0 }) {
+function buildTxnFooter({ categoryMissing, accountLinked, tipSeed = 0, type = 'expense' }) {
   if (categoryMissing) {
     return '_💡 Faltou a categoria. Da próxima, diga pra onde foi:_\n'
          + '_"gastei 30 no Nubank com lazer" — assim eu organizo certo._';
   }
   if (!accountLinked) {
-    return '_💡 De onde saiu? Ex: "gastei 30 no Nubank" ou "...no dinheiro"._';
+    return type === 'income'
+      ? '_💡 Em qual conta caiu? Ex: "...no Nubank" ou "...no Itaú"._'
+      : '_💡 De onde saiu? Ex: "gastei 30 no Nubank" ou "...no dinheiro"._';
   }
   return EDU_TIPS[((tipSeed % EDU_TIPS.length) + EDU_TIPS.length) % EDU_TIPS.length];
+}
+
+// Pergunta de fonte quando a transação chega sem origem resolvível. Não grava até responder.
+function buildSourceQuestion({ type, amount, accounts = [], cards = [] }) {
+  const income = type === 'income';
+  const emoji = income ? '💰' : '💸';
+  const head = income ? 'Entrada' : 'Gasto';
+  const verbo = income ? 'caiu em qual conta' : 'saiu de qual conta';
+  const opts = accounts.map((a) => `${a.icon || '🏦'} ${a.name}`);
+  if (!income) cards.forEach((c) => opts.push(`💳 ${c.name} (cartão)`));
+  if (!accounts.some((a) => String(a.name).toLowerCase() === 'dinheiro')) opts.push('💵 Dinheiro');
+  const numbered = opts.map((o, i) => `${i + 1}️⃣ ${o}`).join('\n');
+  return `${emoji} *${head} de ${money(amount)}* — ${verbo}?\n${SEP}\n${numbered}\n\n_Responda o número ou o nome._`;
 }
 
 // Card de confirmação de gasto/receita de carteira. Mesma estrutura do txnRegistered:
@@ -108,4 +123,4 @@ function buildTxnConfirmation({ type, description, amount, categoryLabel, accoun
   return out.join('\n');
 }
 
-module.exports = { money, bar, mesDaComp, txnRegistered, invoiceSummary, limitAlert, dueReminder, SEP, CAT_META, buildTxnFooter, buildTxnConfirmation };
+module.exports = { money, bar, mesDaComp, txnRegistered, invoiceSummary, limitAlert, dueReminder, SEP, CAT_META, buildTxnFooter, buildTxnConfirmation, buildSourceQuestion };

@@ -11,6 +11,7 @@ const pendingIntentsSvc = require('../services/pending-intents');
 // Sprint 31.1 — rastro de cobranças (TOM perguntou "já fechou?") pra fechar
 // no marker com id exato em vez de adivinhar título.
 const pendingFollowupsSvc = require('../services/pending-followups');
+const financeService = require('../services/financeiro-service');
 
 const SKILLS_DIR = path.join(__dirname, '..', '..', 'skills');
 
@@ -804,7 +805,19 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
   // e "todo dia 10 pagar aluguel" devem ir pro financeiro, nao virar tarefa recorrente).
   const FINANCE_RE = /\b(gastei|recebi|paguei|cart[ãa]o|fatura|parcel\w+|transfer[eiêí]\w*|cr[ée]dito|\d+\s*x\b|limite|sal[áa]rio|comiss[ãa]o|aluguel|ifood|mercado|uber|gasolina|farm[áa]cia|or[çc]amento|meta|guard\w+\s+(?:r\$\s*)?\d+|separ\w+\s+(?:r\$\s*)?\d+|guard\w+\s+(?:dinheiro|grana)|poupan[çc]a|caixinha|cofrinho|investir|selic|juros|sonho|quanto\s+gastei|conta\s+(?:a\s+pagar|vencendo|fixa|de\s+(?:luz|[áa]gua|internet|telefone|g[áa]s))|cadastr\w*\s+(?:a\s+)?(?:uma\s+)?conta|(?:cria\w*|nova|abr\w+|cadastr\w*)\s+(?:uma\s+)?carteira|minhas?\s+carteiras?|assinatura|mensalidade|netflix|spotify|disney|academia|condom[íi]nio)\b/i;
   if (FINANCE_RE.test(String(lastUserMessage || ''))) {
-    return { name: 'financeiro-pessoal', body: loadSkill('financeiro-pessoal') };
+    let body = loadSkill('financeiro-pessoal');
+    try {
+      const [accts, cards] = await Promise.all([
+        financeService.listAccounts(collab.id),
+        financeService.listCards(collab.id),
+      ]);
+      const linhas = [
+        ...accts.map((a) => `• ${a.name} (carteira)`),
+        ...cards.map((c) => `• ${c.name} (cartão)`),
+      ];
+      body += `\n\n## Fontes deste usuário (use pra resolver/perguntar a origem — NUNCA cite saldo)\n${linhas.join('\n') || '• (nenhuma cadastrada ainda)'}\n• Dinheiro (carteira)`;
+    } catch { /* contexto opcional — não bloqueia */ }
+    return { name: 'financeiro-pessoal', body };
   }
 
   // Sprint 29.4 — Skill de recorrência (todos os roles): ativa quando user
