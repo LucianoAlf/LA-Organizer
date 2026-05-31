@@ -6,36 +6,42 @@
 ## Objetivo
 
 Expandir as categorias do financeiro de **10 hardcoded** (espalhadas em ~6 lugares)
-para **44 categorias data-driven** (31 despesas + 13 receitas), com ícone/cor/
+para **43 categorias data-driven** (30 despesas + 13 receitas), com ícone/cor/
 keywords/tipo, lidas de uma tabela `pf_categories`. Meta de produto: classificação
 **granular** — o usuário quer ver exatamente onde gasta, **não** ver tudo caindo em
 "Outros". `outros`/`outras_receitas` é último recurso, não destino padrão.
 
 ## Princípios
 
-- **1 fonte de verdade:** as 44 defaults vivem num módulo de dados (engine) + seed
+- **1 fonte de verdade:** as 43 defaults vivem num módulo de dados (engine) + seed
   na tabela `pf_categories` (PWA lê). Mata o espalhamento em 6 lugares.
 - **Keywords fortes:** cada categoria tem palavras-chave pra `mapCategory` rotear
-  certo (ifood→Delivery, salão→Beleza). A skill expõe as 44 ao LLM pra ele
+  certo (salão→Beleza, posto→Combustível). A skill expõe as 43 ao LLM pra ele
   classificar direto.
+- **Plataforma ≠ categoria:** o app/canal (iFood, 99, Uber, Rappi) **não** é a
+  categoria — a categoria é a *natureza* do gasto. A plataforma dá o **palpite-
+  padrão pelo uso dominante**, e o conteúdo da mensagem sobrepõe:
+  - iFood / Rappi → **Alimentação** (padrão). "remédio no iFood" → Farmácia;
+    "mercado no iFood" → Mercado.
+  - Uber / 99 → **Transporte** (padrão; 99 é mais ambíguo, então o conteúdo manda).
+  - **Não existe categoria "Delivery"** — era genérica demais (engolia tudo).
 - **Tipo-aware:** categorias são tipadas (expense/income). `mapCategory`/
   `safeCategory` respeitam o tipo — fallback de despesa = `outros`, de receita =
   `outras_receitas`. Evita colisão de keyword (aluguel pago vs aluguel recebido).
 - **Backward-compatible:** `pf_transactions.category` continua **slug em texto**.
   Sem FK rígida (custom no v2 encaixa). Validação app-level.
 
-## Taxonomia (44 defaults)
+## Taxonomia (43 defaults)
 
-### Despesas (31)
+### Despesas (30)
 | slug | label | emoji | keywords |
 |---|---|---|---|
-| alimentacao | Alimentação | 🍔 | comida, almoço, almoco, lanche, padaria, café, cafe |
+| alimentacao | Alimentação | 🍔 | ifood, rappi, uber eats, ubereats, comida, almoço, almoco, lanche, padaria, café, cafe |
 | assinaturas | Assinaturas | 🔁 | netflix, spotify, disney, hbo, prime, assinatura, mensalidade streaming |
 | beleza | Beleza | 💅 | salão, salao, cabelo, manicure, barbeiro, estética, estetica, maquiagem |
 | combustivel | Combustível | ⛽ | gasolina, etanol, álcool, alcool, diesel, posto, combustível |
 | compras | Compras | 🛍️ | loja, shopping, compra |
 | contas_consumo | Contas de Consumo | 💡 | luz, água, agua, gás, gas, energia, saneamento, conta de luz, internet, telefone |
-| delivery | Delivery | 🛵 | ifood, rappi, uber eats, ubereats, delivery, entrega |
 | educacao | Educação | 📚 | curso, livro, escola, faculdade, material escolar |
 | eletrodomesticos | Eletrodomésticos | 🔌 | geladeira, fogão, fogao, microondas, máquina, maquina, eletrodoméstico |
 | emprestimo | Empréstimo | 💸 | empréstimo, emprestimo, parcela empréstimo |
@@ -91,7 +97,7 @@ no v2), `sort_order int`, `is_active bool default true`.
 - Unicidade: `slug` único por escopo (`unique (collaborator_id, slug)`; defaults têm
   collaborator_id null).
 - RLS: SELECT defaults (collaborator_id null) + próprias; INSERT/UPDATE próprias (v2).
-- Seed: 44 defaults via migration.
+- Seed: 43 defaults via migration.
 
 ### 2. Binding com transações
 `pf_transactions.category` permanece **slug em texto**. **Remove o CHECK restritivo**
@@ -103,14 +109,16 @@ no v2), `sort_order int`, `is_active bool default true`.
 Mesmo tratamento em `pf_budgets`/`pf_bills` se tiverem CHECK de categoria.
 
 ### 3. Engine — módulo de dados único
-`src/finance/categories.data.js` exporta as 44 (`slug→{label,emoji,color,type,keywords}`).
+`src/finance/categories.data.js` exporta as 43 (`slug→{label,emoji,color,type,keywords}`).
 - `categorize.js`: `mapCategory(text, type)` lê os keywords do módulo, filtrando por
   tipo (só income p/ receita, só expense p/ despesa).
 - `engine.js`: `safeCategory`/`PF_VALID_CATEGORIES` derivam do módulo.
 - `finance-format.js`: `CAT_META` deriva do módulo (label+emoji por slug).
-- `skills/financeiro-pessoal.md`: a seção "Categorias válidas" passa a listar as 44
+- `skills/financeiro-pessoal.md`: a seção "Categorias válidas" passa a listar as 43
   (por tipo) pro LLM classificar direto — é assim que o TOM "reconhece" a categoria
-  certa em vez de jogar em Outros.
+  certa em vez de jogar em Outros. **+ regra plataforma≠categoria:** classifique pela
+  *natureza* do gasto, não pelo app. iFood/Rappi→Alimentação por padrão; Uber/99→
+  Transporte; o conteúdo sobrepõe ("remédio no iFood"→Farmácia).
 
 ### 4. PWA — lê da tabela
 - `useCategories()` (novo hook): lê `pf_categories` (cacheado via TanStack Query).
@@ -118,11 +126,11 @@ Mesmo tratamento em `pf_budgets`/`pf_bills` se tiverem CHECK de categoria.
   com a tabela como fonte de label/emoji/cor.
 - `CAT_EMOJI` (FinanceiroPage) e labels saem do hook.
 - Pickers (`TransactionSheet`, `BillSheet`): listam categorias **filtradas por type**
-  (despesa→31, receita→13), com emoji+label.
+  (despesa→30, receita→13), com emoji+label.
 - Charts/labels (`FinanceCharts`, `BudgetBar`): usam o hook pra label/cor.
 
 ### 5. Migration de dados
-- Seed as 44 em `pf_categories`.
+- Seed as 43 em `pf_categories`.
 - `UPDATE pf_transactions SET category='freelance' WHERE category='extra';`
   (único remap — os outros 9 slugs antigos já existem no set novo).
 - Mesmo UPDATE em `pf_budgets`/`pf_bills` se usarem 'extra'.
@@ -141,12 +149,13 @@ fica type-aware.
 
 ## Testes
 **Unit (node:test):**
-- `mapCategory`: ifood→delivery, salão→beleza, mercado→mercado, restaurante→restaurante,
+- `mapCategory`: ifood→alimentacao (plataforma→uso dominante), salão→beleza, mercado→mercado, restaurante→restaurante,
   uber→transporte, posto→combustivel; type-aware (aluguel+income→aluguel_recebido,
   aluguel+expense→moradia); fallback expense→outros, income→outras_receitas.
 - `safeCategory`: slug inválido + type → fallback correto por tipo.
 **Migration:** pós-migrate, `SELECT count(*) WHERE category NOT IN (slugs válidos)` = 0;
 nenhuma transação com category='extra'.
-**PWA:** picker de despesa mostra 31, de receita mostra 13; build+tsc verdes.
-**Smoke WhatsApp:** foto de salão → **Beleza**; iFood → **Delivery** (não mais
-alimentação genérico); nada cai em Outros indevidamente.
+**PWA:** picker de despesa mostra 30, de receita mostra 13; build+tsc verdes.
+**Smoke WhatsApp:** foto de salão → **Beleza**; "gastei 40 no iFood" → **Alimentação**
+(uso dominante); "comprei remédio no iFood" → **Farmácia** (conteúdo sobrepõe);
+nada cai em Outros indevidamente.
