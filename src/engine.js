@@ -6247,14 +6247,18 @@ async function processMessage(phone, text, raw = {}) {
   console.log('[Engine] Mensagem de', collab.full_name);
   await logConversation(collab.id, 'inbound', text);
 
+  // ---- Pending intents: lê UMA vez por mensagem (compartilhado finance_source + Sprint 30.3) ----
+  let _openIntents = [];
+  try { _openIntents = await pendingIntents.listOpenIntents(collab.id, { limit: 3 }); }
+  catch (e) { console.warn('[PendingIntents] list err:', e.message); }
+
   // ---- Fonte obrigatória: resolução determinística do pending finance_source ----
   // Se TOM perguntou "saiu de qual conta?" (intent finance_source aberta) e o user
   // respondeu uma fonte ("2"/"nubank"/"dinheiro"/"cartão"), o ENGINE grava a
   // transação pendente sem passar pelo LLM (não fabrica, não perde no fallback).
   try {
     const { matchSourceReply } = require('./finance/source-match');
-    const finOpen = (await pendingIntents.listOpenIntents(collab.id, { limit: 3 }))
-      .find((i) => i.kind === 'finance_source' && withinConfirmWindow(i.asked_at, 15));
+    const finOpen = _openIntents.find((i) => i.kind === 'finance_source' && withinConfirmWindow(i.asked_at, 15));
     if (finOpen) {
       const hit = matchSourceReply(String(text || ''), finOpen.payload);
       if (hit) {
@@ -6305,7 +6309,7 @@ async function processMessage(phone, text, raw = {}) {
   // o LLM a emitir o marker. A intent é resolvida ao final do turno.
   let _pendingIntentToResolve = null;
   try {
-    const openIntents = await pendingIntents.listOpenIntents(collab.id, { limit: 3 });
+    const openIntents = _openIntents;
     if (openIntents.length > 0) {
       const userConfirm = pendingIntents.detectUserConfirmation(String(text || ''));
       const target = openIntents[0];  // mais recente

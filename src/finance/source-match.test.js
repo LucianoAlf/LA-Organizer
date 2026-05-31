@@ -50,3 +50,26 @@ test('texto vazio/longo não casa', () => {
   assert.strictEqual(matchSourceReply('', listPayload), null);
   assert.strictEqual(matchSourceReply('x'.repeat(250), listPayload), null);
 });
+
+// ---- guardas anti-falso-positivo (mensagem não-financeira com pending aberta) ----
+test('não casa comando de tarefa com número ("marca reunião dia 2")', () => {
+  assert.strictEqual(matchSourceReply('marca reunião dia 2 com o time', listPayload), null);
+});
+test('não casa "cria tarefa comprar 3 pilhas"', () => {
+  assert.strictEqual(matchSourceReply('cria tarefa comprar 3 pilhas', listPayload), null);
+});
+test('não casa "liga pro joão amanhã"', () => {
+  assert.strictEqual(matchSourceReply('liga pro joão amanhã', listPayload), null);
+});
+test('não casa frase longa com número ("to chegando em 2 min")', () => {
+  assert.strictEqual(matchSourceReply('to chegando em 2 min', listPayload), null);
+});
+test('binary: não casa comando ("marca reunião na conta do cliente")', () => {
+  assert.strictEqual(matchSourceReply('marca reunião na conta do cliente', binaryPayload), null);
+});
+test('ainda casa resposta curta com prefixo ("foi o 2")', () => {
+  assert.deepStrictEqual(matchSourceReply('foi o 2', listPayload), { kind: 'card', id: 'c1', name: 'Nubank' });
+});
+test('ainda casa nome em resposta curta ("foi no nubank mesmo")', () => {
+  assert.deepStrictEqual(matchSourceReply('foi no nubank mesmo', listPayload), { kind: 'card', id: 'c1', name: 'Nubank' });
+});
