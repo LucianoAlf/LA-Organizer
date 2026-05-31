@@ -71,8 +71,13 @@ case `register_transaction`:
    - `account` → transação de caixa com `account_id`
    - `ambiguous` (carteira E cartão com mesmo nome) → **pendência** "cartão ou conta?"
    - `none` (método de pagamento / nome desconhecido) → cai no passo 2
-2. **Sem fonte + tem conta principal** (`is_primary`) → grava **silenciosamente**
-   na principal (default que o usuário escolheu no app; sem fricção no dia a dia).
+   - **"dinheiro"/"espécie" → auto-provisiona a carteira Dinheiro** (`ensureDinheiro`)
+     e grava — **única exceção** ao 0-contas→coach (caixa físico é fonte real;
+     ver §1a).
+2. **Sem fonte + tem conta principal** (`is_primary`) → grava na principal e
+   **nomeia a principal assumida na confirmação** ("_lancei na sua conta
+   principal (Itaú)_"). Não é silencioso-mudo: o default é discreto mas **sempre
+   identificado**, senão um default errado passa batido.
 3. **Sem fonte + tem ≥2 contas e nenhuma principal** → **pendência** + pergunta
    com lista numerada (carteiras + cartões¹ + 💵 Dinheiro).
 4. **Sem fonte + 0 contas cadastradas** → **não grava**; dispara o **coaching pro
@@ -80,6 +85,29 @@ case `register_transaction`:
    Finanças → Carteiras. Aí é só mandar 'gastei 45' que eu já sei de onde saiu."
 
 ¹ Receita não aceita cartão (estorno/crédito-em-fatura é fora de escopo v1).
+
+### 1a. Emissão do marker no turno 1 (ponto mole do LLM) — defesa em camadas
+O pending-state (§3) conserta o **turno 2**, mas o **turno 1** ainda depende do
+LLM emitir o marker em vez de perguntar de boca (a falha real dos logs:
+`ACTIONABLE_NO_MARKER` em "paguei uber no pix"). Defesa em 2 camadas:
+
+- **Skill imperativa** (`financeiro-pessoal.md`): "mesmo sem saber a fonte (só
+  'pix'/'débito'/'transferência'/'boleto'), **SEMPRE** emita
+  `register_transaction` **sem** `account_name`; **NUNCA** pergunte de boca nem
+  fabrique confirmação — quem pergunta a fonte é o engine."
+- **Safety-net fraco no engine** (`ACTIONABLE_NO_MARKER`): manter o detector como
+  métrica de regressão **e** avaliar usá-lo como rede — quando a utterance é
+  financeira-acionável (regex de gasto/receita + valor) mas o LLM respondeu sem
+  marker, o engine dispara a pergunta de fonte determinística em vez de deixar a
+  resposta de-boca do LLM passar. Decisão de viabilidade fica no plano (precisa
+  de classificador leve de "acionável"); se entrar, fecha o único furo restante.
+
+### 1b. Carteira Dinheiro como exceção intencional ao 0-contas→coach
+"dinheiro"/"espécie" é fonte **explícita** → auto-provisiona `Dinheiro` e grava,
+mesmo com 0 contas. **Decisão de propósito:** isso permite usar "em dinheiro"
+para sempre sem cadastrar nada no app. É aceitável — o caixa físico é uma fonte
+real e rastreável. O coaching pro app (§1.4) só dispara quando **não há fonte
+nenhuma** (nem explícita "dinheiro", nem conta cadastrada).
 
 ### 2. Conta principal (`is_primary`)
 Migration: coluna `is_primary boolean default false` em `pf_accounts`. No máximo
@@ -95,7 +123,12 @@ type income/expense, candidatos) e **devolve a pergunta determinística**
 (`buildSourceQuestion`). Próxima mensagem do usuário:
 
 - O engine, **antes do LLM**, vê que há pendência financeira aberta e tenta
-  casar a resposta ("nubank" / "2" / "dinheiro") contra os candidatos.
+  casar a resposta contra os candidatos. O matcher cobre **duas formas de
+  pergunta**:
+  - **lista de fontes** (passo 3): casa por número ("2") ou nome ("nubank" /
+    "dinheiro") contra a lista numerada.
+  - **binária cartão-vs-conta** (passo 1-ambiguous): casa "cartão"/"crédito"
+    vs "conta"/"carteira" / o nome.
   - casou → **grava a transação pendente** com a fonte escolhida → confirma
     (`buildTxnConfirmation`). **Determinístico — não passa pelo LLM**, então não
     fabrica nem perde no fallback.
@@ -136,12 +169,25 @@ Antes do broadcast, verificar/garantir no PWA:
 - **Contas fixas** (bills): existem e criam.
 Gaps viram tarefas no plano.
 
-### 8. Órfãs existentes = re-registrar limpo (sem backfill)
+### 8. Órfãs existentes = DELETAR + re-registrar limpo (sem backfill)
 Órfãs atuais são **dado de teste**. Backfillar pra "Dinheiro" creditaria receitas
-(Salário, Extra) no caixa físico — semanticamente errado. **Não fazer backfill**;
-o Alf re-registra o que importar pelo fluxo novo (valida ponta a ponta). Cuidado
-na contagem: parcelas de cartão têm `card_id` → **não são órfãs**; órfã =
-`account_id NULL AND card_id NULL`.
+(Salário, Extra) no caixa físico — semanticamente errado. **Não fazer backfill.**
+
+Mas **não basta ignorar**: se as órfãs ficarem no banco, dobram a contagem quando
+o Alf re-registrar e seguem poluindo saldo/categoria no PWA. Então o plano
+**deleta as órfãs de teste**:
+
+```sql
+DELETE FROM pf_transactions
+WHERE collaborator_id = '<luciano>'
+  AND account_id IS NULL AND card_id IS NULL;
+```
+
+⚠️ **Deletar dado em produção → exige OK explícito do Alf** (CLAUDE.md). O plano
+mostra a contagem antes (SELECT), pede confirmação, então deleta. Cuidado na
+contagem: parcelas de cartão têm `card_id` → **não são órfãs**; órfã =
+`account_id NULL AND card_id NULL`. Depois o Alf re-registra o que importar pelo
+fluxo novo (valida ponta a ponta).
 
 ## Rollout (responsável: Alf)
 Gravar vídeo + disparar broadcast pros 22 usuários ensinando: cadastre suas
@@ -165,12 +211,19 @@ isso via TOM Coach P6 pra quem ainda não cadastrou.
 
 **Smoke WhatsApp:**
 1. "gastei 45 no nubank com lazer" → cartão → fatura (não no caixa)
-2. "paguei uber 30 no pix" + tem conta principal → grava **silencioso** na principal
+2. "paguei uber 30 no pix" + tem conta principal → grava na principal **e a nomeia**
+   na confirmação ("_lancei na sua conta principal (Itaú)_")
 3. "paguei uber 30 no pix" + 2 contas, sem principal → pergunta → responde "2" →
    **engine grava** (sem passar pelo LLM) → confirma
-4. "gastei 20 em dinheiro" → usa carteira Dinheiro, debita
+4. "gastei 20 em dinheiro" **com 0 contas** → auto-provisiona Dinheiro, grava
+   (exceção §1b — NÃO cai no coach)
 5. "recebi 2000 de extra" sem fonte → "💰 caiu em qual conta?" (cartão fora da lista)
-6. colisão (carteira "Nubank" + cartão) → pergunta cartão vs conta
-7. **0 contas**: "gastei 50" → não grava → TOM Coach P6 direciona ao app
+6. colisão (carteira "Nubank" + cartão) → pergunta cartão vs conta → responde
+   "cartão" → **engine grava na fatura** (matcher binário, §3)
+7. **0 contas**: "gastei 50" (sem "dinheiro") → não grava → TOM Coach P6 → app
 8. safety-net: marker sem fonte resolvível nunca grava órfã
-9. PWA: saldo bate após cada lançamento (sem órfã)
+9. **ACTIONABLE_NO_MARKER**: utterance financeira sem marker → engine dispara a
+   pergunta de fonte (não deixa resposta de-boca do LLM passar) — se o safety-net
+   §1a entrar no plano
+10. órfãs deletadas: `SELECT count(*) ... account_id NULL AND card_id NULL` = 0
+11. PWA: saldo bate após cada lançamento (sem órfã)
