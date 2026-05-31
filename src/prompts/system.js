@@ -808,12 +808,21 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
   // comprovante "🧾 ... Grava?"). Nesse turno a resposta é curta ("grava"/"isso"/
   // "não, foi 200") e NÃO casa o FINANCE_RE — sem recarregar a skill, o TOM regredia
   // ("não tenho esse recurso"). Mantém a skill enquanto há proposta de comprovante aberta.
-  const lastBotFinance = (recentHistory || [])
+  const recentOutbound = (recentHistory || [])
     .slice(-3)
     .filter((m) => m && m.direction === 'outbound')
     .map((m) => (m.content || '').toLowerCase())
     .join(' ');
-  const financeProposalOpen = /🧾|comprovante financeiro/i.test(lastBotFinance);
+  const recentInbound = (recentHistory || [])
+    .slice(-3)
+    .filter((m) => m && m.direction !== 'outbound')
+    .map((m) => (m.content || '').toLowerCase())
+    .join(' ');
+  // Sinal estável: o TOM acabou de resumir um lançamento e perguntar "grava?"
+  // (emoji varia 🧾/💰; não dá pra ancorar nele). Ou a conversa recente tem um
+  // comprovante analisado (texto da imagem traz "COMPROVANTE FINANCEIRO").
+  const financeProposalOpen = /grava\?/i.test(recentOutbound)
+    || /comprovante financeiro/i.test(recentInbound);
   const shortReply = String(lastUserMessage || '').trim().length < 40;
   if (FINANCE_RE.test(String(lastUserMessage || '')) || (financeProposalOpen && shortReply)) {
     let body = loadSkill('financeiro-pessoal');
