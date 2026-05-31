@@ -6340,7 +6340,12 @@ async function processMessage(phone, text, raw = {}) {
   // Quando a intenção é clara (query/venda/entrada), pulamos o LLM (que vinha
   // emitindo JSON malformado ou texto humano sem marker) e executamos
   // handleShopAction direto. Resposta em ~1-2s, determinística.
-  if (typeof text === 'string') {
+  // GUARD: não rodar em texto vindo de ANÁLISE DE IMAGEM (foto de comprovante).
+  // O endereço do cupom (ex: "...CAMPO GRANDE...") fazia o bypass achar que era
+  // query de estoque da unidade Campo Grande. Foto não é query de lojinha digitada.
+  const _isImageAnalysis = typeof text === 'string'
+    && /ACABOU DE ENVIAR uma imagem|COMPROVANTE FINANCEIRO/i.test(text);
+  if (typeof text === 'string' && !_isImageAnalysis) {
     const shopBypass = tryShopBypass(text);
     if (shopBypass) {
       console.log(`[ShopBypass] detectado action=${shopBypass.action} params=${JSON.stringify(shopBypass.params)}`);
