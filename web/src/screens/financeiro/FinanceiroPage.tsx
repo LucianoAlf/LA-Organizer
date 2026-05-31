@@ -46,8 +46,8 @@ export function FinanceiroPage() {
   const cid = useFinanceiroAuth();
   useRealtimeFinance(['pf_transactions', 'pf_bills', 'pf_accounts', 'pf_budgets', 'pf_goals'], cid);
 
-  const accountsQ = useAccounts();
   const budgetsQ = useBudgets();
+  const accountsQ = useAccounts();
   const lastTxsQ = useTransactions({ limit: 5 });
   const summaryQ = useSummary();
 
@@ -146,24 +146,6 @@ export function FinanceiroPage() {
             Manda um zap pro TOM (<em>“gastei 45 no iFood”</em>) ou registra direto pelo <strong>+</strong> abaixo.
             Tua conta vai aparecer aqui na hora.
           </p>
-        </section>
-      )}
-
-      {/* Carteiras (chips) */}
-      {accountsQ.data && accountsQ.data.length > 0 && (
-        <section>
-          <h3 className="text-label text-fg-muted uppercase tracking-wide mb-2">Carteiras</h3>
-          <div className="flex flex-wrap gap-2">
-            {accountsQ.data.map((a) => (
-              <div key={a.id} className="rounded-full border border-border bg-bg-surface px-3 py-1.5 flex items-center gap-2">
-                <span aria-hidden="true">{a.icon || '🏦'}</span>
-                <span className="text-body-sm text-fg">{a.name}</span>
-                <span className={`text-body-sm tabular-nums font-semibold ${Number(a.balance) < 0 ? 'text-danger' : 'text-fg'}`}>
-                  R$ {brl(Number(a.balance))}
-                </span>
-              </div>
-            ))}
-          </div>
         </section>
       )}
 
