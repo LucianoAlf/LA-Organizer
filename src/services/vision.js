@@ -23,30 +23,42 @@ function isImageMime(mime) {
  * Analisa uma imagem e retorna descrição textual em pt-BR.
  * Returns { ok: bool, text?: string, reason?: string, error?: string }.
  */
+// Monta o prompt de visão. Quando a imagem for comprovante/nota, pede extração
+// financeira estruturada (transcrição literal) + sinal pra skill financeira carregar.
+function buildVisionPrompt(userCaption = '') {
+  const parts = [];
+  if (userCaption && userCaption.trim()) {
+    parts.push(`O usuário enviou esta imagem com a legenda: "${userCaption.trim()}".`);
+  }
+  parts.push(
+    'Descreve em português, em até 4 frases, o que aparece na imagem ' +
+    '(objetos, pessoas, texto visível, números, contexto). Se houver texto, ' +
+    'transcreve literalmente. Se for um documento ou tabela, lista os campos. ' +
+    'Não comente além da descrição factual.'
+  );
+  parts.push(
+    'IMPORTANTE — se a imagem for uma nota fiscal, cupom fiscal, comprovante de ' +
+    'pagamento, recibo ou tela de compra de app (iFood, Uber, etc.): comece a ' +
+    'resposta com a linha "COMPROVANTE FINANCEIRO:" e logo em seguida transcreve ' +
+    'LITERALMENTE (sem arredondar nem inferir): valor total (R$), estabelecimento/' +
+    'loja/app, data (se visível), forma de pagamento (crédito, débito, PIX, ' +
+    'dinheiro, ou o nome do cartão/banco), e os itens principais resumidos. Se ' +
+    'algum campo não estiver legível, escreve "ilegível" nesse campo — não chute.'
+  );
+  return parts.join(' ');
+}
+
 async function analyzeImage(buffer, mime = 'image/jpeg', userCaption = '') {
   if (!OPENAI_KEY) return { ok: false, reason: 'no_provider' };
   if (!buffer || !buffer.length) return { ok: false, reason: 'empty_buffer' };
   if (!isImageMime(mime)) return { ok: false, reason: 'unsupported_mime', error: mime };
 
   const dataUrl = `data:${mime};base64,${buffer.toString('base64')}`;
-
-  // Prompt curto: pede descrição factual em pt-BR. Inclui a caption do
-  // usuário como contexto quando presente.
-  const userTextParts = [];
-  if (userCaption && userCaption.trim()) {
-    userTextParts.push(`O usuário enviou esta imagem com a legenda: "${userCaption.trim()}".`);
-  }
-  userTextParts.push(
-    'Descreve em português, em até 4 frases, o que aparece na imagem ' +
-    '(objetos, pessoas, texto visível, números, contexto). Se houver texto, ' +
-    'transcreve literalmente. Se for um documento ou tabela, lista os campos. ' +
-    'Não comente além da descrição factual.'
-  );
-  const userText = userTextParts.join(' ');
+  const userText = buildVisionPrompt(userCaption);
 
   const payload = JSON.stringify({
     model: VISION_MODEL,
-    max_completion_tokens: 400,
+    max_completion_tokens: 600,
     messages: [
       {
         role: 'user',
@@ -102,4 +114,4 @@ function isProviderConfigured() {
   return Boolean(OPENAI_KEY);
 }
 
-module.exports = { analyzeImage, isProviderConfigured, isImageMime };
+module.exports = { analyzeImage, isProviderConfigured, isImageMime, buildVisionPrompt };
