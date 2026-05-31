@@ -34,14 +34,15 @@ detector grava nela** (não só `console.log`). Se for só log, o único guarda 
 turno-1 (o caso que quebrou de verdade) fica **invisível** — aí a métrica não
 serve e vale reconsiderar o safety-net no engine.
 
-## 3. [Médio] R2 é redundante — pular
-Não existe a constraint `pending_intents_kind_check` no banco hoje (verificado:
-query vazia; kinds atuais = confirmation/task_creation). Validação é **app-level**
-(`VALID_KINDS`). A mudança load-bearing é **R8-Step1** (add `finance_source` ao
-Set). Criar a CHECK no banco adiciona manutenção dupla (kind nova → migration).
-**Recomendo remover o R2** e manter validação no código. Se quiser a CHECK mesmo
-assim, ela é inofensiva (as 2 kinds existentes estão no array) — mas não é
-necessária.
+## 3. [RETRATADO — eu errei] R2 NÃO é redundante, é obrigatória
+**Correção (2026-05-31):** a constraint `pending_intents_kind_check` **EXISTE** no
+banco com os 4 kinds (`task_creation/event_creation/approval_pending/confirmation`).
+Sem o R2, `openIntent('finance_source')` quebra no INSERT. **R2 fica.**
+
+Meu erro: rodei duas statements numa só `execute_sql`; a ferramenta devolveu só o
+resultado da última (`SELECT DISTINCT kind`) e li o primeiro como "vazio".
+Verificado de novo com query única — a CHECK está lá. O financeiro chat estava
+certo. Lição: uma statement por `execute_sql` ao checar metadados.
 
 ## 4. [Médio] Colisão de `finance_source` pendente antigo
 `listOpenIntents` ordena por `asked_at desc`, então R8 pega o **mais recente** —
