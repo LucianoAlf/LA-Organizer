@@ -57,4 +57,55 @@ function dueReminder(card, inv, days) {
   ].join('\n');
 }
 
-module.exports = { money, bar, mesDaComp, txnRegistered, invoiceSummary, limitAlert, dueReminder, SEP };
+// ---- Transação de carteira/dinheiro (NÃO cartão) — mesma gramática semântica do txnRegistered ----
+const CAT_META = {
+  salario:    { emoji: '💼', label: 'Salário' },
+  comissao:   { emoji: '💰', label: 'Comissão' },
+  extra:      { emoji: '💵', label: 'Extra' },
+  moradia:    { emoji: '🏠', label: 'Moradia' },
+  alimentacao:{ emoji: '🍔', label: 'Alimentação' },
+  transporte: { emoji: '🚗', label: 'Transporte' },
+  saude:      { emoji: '🏥', label: 'Saúde' },
+  educacao:   { emoji: '📚', label: 'Educação' },
+  lazer:      { emoji: '🎮', label: 'Lazer' },
+  outros:     { emoji: '📦', label: 'Outros' },
+};
+
+// Dicas de educação financeira — SÓ comandos que o TOM executa hoje (sem editar/excluir).
+const EDU_TIPS = [
+  '_💡 Já separou algo pra sua meta esse mês?_',
+  '_💡 Quer ver pra onde foi tudo? "quanto gastei esse mês?"_',
+  '_💡 Dá pra pôr um teto: "define orçamento de alimentação 500"._',
+  '_💡 Seus saldos: "quais minhas carteiras?"_',
+];
+
+// Rodapé educativo contextual. Prioridade: categoria > carteira > dica rotativa.
+function buildTxnFooter({ categoryMissing, accountLinked, tipSeed = 0 }) {
+  if (categoryMissing) {
+    return '_💡 Faltou a categoria. Da próxima, diga pra onde foi:_\n'
+         + '_"gastei 30 no Nubank com lazer" — assim eu organizo certo._';
+  }
+  if (!accountLinked) {
+    return '_💡 De onde saiu? Ex: "gastei 30 no Nubank" ou "...no dinheiro"._';
+  }
+  return EDU_TIPS[((tipSeed % EDU_TIPS.length) + EDU_TIPS.length) % EDU_TIPS.length];
+}
+
+// Card de confirmação de gasto/receita de carteira. Mesma estrutura do txnRegistered:
+// título → SEP → atributos → (SEP → saldo/orçamento) → linha em branco → rodapé.
+function buildTxnConfirmation({ type, description, amount, categoryLabel, account, newBalance, budgetBlock, footer }) {
+  const header = type === 'income' ? '💰 *Receita registrada!*' : '💸 *Gasto registrado!*';
+  const out = [header, SEP, `🧾 *${description || categoryLabel}*`, `💰 *${money(amount)}*`, `🗂️ Categoria: ${categoryLabel}`];
+  if (account) out.push(`${account.icon || '🏦'} Carteira: *${account.name}*`);
+  const tail = [];
+  if (account) {
+    const nb = Number(newBalance);
+    tail.push(`💼 Saldo ${account.name}: *${nb < 0 ? '−' : '+'}${money(Math.abs(nb))}*`);
+  }
+  if (budgetBlock) tail.push(budgetBlock);
+  if (tail.length) { out.push(SEP, ...tail); }
+  if (footer) { out.push('', footer); }
+  return out.join('\n');
+}
+
+module.exports = { money, bar, mesDaComp, txnRegistered, invoiceSummary, limitAlert, dueReminder, SEP, CAT_META, buildTxnFooter, buildTxnConfirmation };

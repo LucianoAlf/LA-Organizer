@@ -5926,25 +5926,43 @@ async function handleFinanceAction(collab, action, params) {
       const category = p.category || mapCategory(p.description || '');
       // Vínculo à carteira por nome ("gastei 50 no Nubank"): resolve nome→id. null = sem carteira.
       let account_id = p.account_id || null; // trigger BEFORE barra conta de outro dono
+      let account = null; // {name, icon, balance(pré-insert)}
       const acctName = params.account_name || params.account || p.account_name;
       if (!account_id && acctName) {
         const acct = await financeService.findAccountByName(cid, acctName);
-        if (acct) account_id = acct.id;
+        if (acct) { account_id = acct.id; account = acct; }
       }
       const prev = type === 'expense' ? await financeService.monthCategoryTotal(cid, category) : 0;
       await financeService.insertTransaction(cid, { type, category, amount: p.amount, description: p.description, transaction_date: p.date, account_id });
-      let reply = `✅ R$${p.amount} em ${category}.`;
+
+      // Bloco de orçamento (só despesa com limite), reaproveitando buildBudgetAlert.
+      let budgetBlock = null;
       if (type === 'expense') {
-        const novo = prev + Number(p.amount);
         const limit = await financeService.getBudget(cid, category);
         if (limit) {
+          const novo = prev + Number(p.amount);
           const pct = Math.round((novo / limit) * 100);
-          reply += ` Total do mês: R$${novo}/R$${limit} (${pct}%)`;
+          const meta = financeFmt.CAT_META[category] || { label: category };
+          budgetBlock = `📊 ${meta.label}: ${financeFmt.money(novo)} / ${financeFmt.money(limit)} (${pct}%)`;
           const cruzou = crossedThreshold(prev, novo, limit);
-          if (cruzou) reply += `\n${buildBudgetAlert(category, novo, limit, cruzou)}`;
+          if (cruzou) budgetBlock += `\n${buildBudgetAlert(category, novo, limit, cruzou)}`;
         }
       }
-      return reply;
+
+      // Saldo pós-trigger por cálculo determinístico (trigger: income +amount, expense -amount).
+      const meta = financeFmt.CAT_META[category] || { emoji: '📦', label: category };
+      const newBalance = account ? Number(account.balance) + (type === 'income' ? Number(p.amount) : -Number(p.amount)) : null;
+      const footer = financeFmt.buildTxnFooter({
+        categoryMissing: category === 'outros',
+        accountLinked: !!account_id,
+        tipSeed: new Date().getUTCDate(),
+      });
+      return financeFmt.buildTxnConfirmation({
+        type, description: p.description, amount: Number(p.amount),
+        categoryLabel: meta.label,
+        account: account ? { name: account.name, icon: account.icon } : null,
+        newBalance, budgetBlock, footer,
+      });
     }
     case 'register_bill': {
       const b = await financeService.createBill(cid, {
