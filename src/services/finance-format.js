@@ -108,7 +108,7 @@ function buildSourceQuestion({ type, amount, accounts = [], cards = [] }) {
 
 // Card de confirmação de gasto/receita de carteira. Mesma estrutura do txnRegistered:
 // título → SEP → atributos → (SEP → saldo/orçamento) → linha em branco → rodapé.
-function buildTxnConfirmation({ type, description, amount, categoryLabel, account, newBalance, budgetBlock, footer }) {
+function buildTxnConfirmation({ type, description, amount, categoryLabel, account, newBalance, budgetBlock, assumedSource, footer }) {
   const header = type === 'income' ? '💰 *Receita registrada!*' : '💸 *Gasto registrado!*';
   const out = [header, SEP, `🧾 *${description || categoryLabel}*`, `💰 *${money(amount)}*`, `🗂️ Categoria: ${categoryLabel}`];
   if (account) out.push(`${account.icon || '🏦'} Carteira: *${account.name}*`);
@@ -118,6 +118,10 @@ function buildTxnConfirmation({ type, description, amount, categoryLabel, accoun
     tail.push(`💼 Saldo ${account.name}: *${nb < 0 ? '−' : '+'}${money(Math.abs(nb))}*`);
   }
   if (budgetBlock) tail.push(budgetBlock);
+  if (assumedSource) {
+    const safe = String(assumedSource).replace(/[*_~`]/g, '');
+    tail.push(`_lancei na sua conta principal (${safe})_`);
+  }
   if (tail.length) { out.push(SEP, ...tail); }
   if (footer) { out.push('', footer); }
   return out.join('\n');

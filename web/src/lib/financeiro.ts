@@ -13,7 +13,7 @@ export type PfTxType = 'income' | 'expense';
 export type PfAccountType = 'checking' | 'savings' | 'wallet' | 'investment';
 export type PfBillType = 'expense' | 'income';
 
-export interface PfAccount { id: string; name: string; type: PfAccountType; balance: number; icon: string | null; }
+export interface PfAccount { id: string; name: string; type: PfAccountType; balance: number; icon: string | null; is_primary: boolean; }
 export interface PfTransaction {
   id: string; type: PfTxType; category: PfCategory; amount: number;
   description: string | null; transaction_date: string; account_id: string | null;
@@ -47,7 +47,7 @@ function monthBoundsFromYYYYMM(monthYear: string) {
 // ---- Carteiras ----
 export async function listAccounts(collaboratorId: string): Promise<PfAccount[]> {
   const { data, error } = await supabase.from('pf_accounts')
-    .select('id, name, type, balance, icon')
+    .select('id, name, type, balance, icon, is_primary')
     .eq('collaborator_id', collaboratorId).eq('is_active', true).order('name');
   if (error) throw error;
   return (data as PfAccount[]) ?? [];
@@ -62,6 +62,15 @@ export async function createAccount(collaboratorId: string, input: { name: strin
 export async function deactivateAccount(collaboratorId: string, id: string) {
   const { error } = await supabase.from('pf_accounts').update({ is_active: false })
     .eq('id', id).eq('collaborator_id', collaboratorId);
+  if (error) throw error;
+}
+export async function setPrimaryAccount(collaboratorId: string, id: string) {
+  await supabase.from('pf_accounts')
+    .update({ is_primary: false })
+    .eq('collaborator_id', collaboratorId).eq('is_primary', true);
+  const { error } = await supabase.from('pf_accounts')
+    .update({ is_primary: true })
+    .eq('collaborator_id', collaboratorId).eq('id', id);
   if (error) throw error;
 }
 

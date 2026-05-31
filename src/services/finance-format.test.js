@@ -102,3 +102,20 @@ test('footer educativo de receita não diz "de onde saiu"', () => {
   assert.doesNotMatch(f, /de onde saiu/i);
   assert.match(f, /caiu/i);
 });
+
+test('assumedSource: nomeia a principal assumida antes do footer', () => {
+  const card = buildTxnConfirmation({
+    type:'expense', description:'Uber', amount:30, categoryLabel:'Transporte',
+    account:{name:'Itaú', icon:'🧡'}, newBalance:-30, budgetBlock:null,
+    assumedSource:'Itaú', footer:'_💡 dica_',
+  });
+  assert.match(card, /conta principal \(Itaú\)/i);
+  assert.ok(card.indexOf('conta principal') < card.indexOf('_💡 dica_'), 'nota vem antes do footer');
+});
+test('sem assumedSource: nada de "conta principal"', () => {
+  const card = buildTxnConfirmation({
+    type:'expense', description:'Uber', amount:30, categoryLabel:'Transporte',
+    account:{name:'Itaú', icon:'🧡'}, newBalance:-30, budgetBlock:null, footer:'_x_',
+  });
+  assert.doesNotMatch(card, /conta principal/i);
+});

@@ -5926,6 +5926,37 @@ async function recordCardPurchase(cid, card, { amount, description, category, in
   return reply;
 }
 
+// Escreve transação de caixa + bloco de orçamento + confirmação. Fonte garantida (account).
+// assumedSource: nome da principal quando foi default silencioso (nomeia na confirmação).
+async function writeCashTransaction(cid, { type, category, amount, description, date, account, assumedSource }) {
+  const financeFmt = require('./services/finance-format');
+  const prev = type === 'expense' ? await financeService.monthCategoryTotal(cid, category) : 0;
+  await financeService.insertTransaction(cid, { type, category, amount, description, transaction_date: date, account_id: account.id });
+
+  let budgetBlock = null;
+  if (type === 'expense') {
+    const limit = await financeService.getBudget(cid, category);
+    if (limit) {
+      const novo = prev + Number(amount);
+      const pct = Math.round((novo / limit) * 100);
+      const m = financeFmt.CAT_META[category] || { label: category };
+      budgetBlock = `📊 ${m.label}: ${financeFmt.money(novo)} / ${financeFmt.money(limit)} (${pct}%)`;
+      const cruzou = crossedThreshold(prev, novo, limit);
+      if (cruzou) budgetBlock += `\n${buildBudgetAlert(category, novo, limit, cruzou)}`;
+    }
+  }
+
+  const meta = financeFmt.CAT_META[category] || { emoji: '📦', label: category };
+  const newBalance = Number(account.balance) + (type === 'income' ? Number(amount) : -Number(amount));
+  const footer = financeFmt.buildTxnFooter({ categoryMissing: category === 'outros', accountLinked: true, tipSeed: new Date().getUTCDate(), type });
+  return financeFmt.buildTxnConfirmation({
+    type, description, amount: Number(amount),
+    categoryLabel: meta.label,
+    account: { name: account.name, icon: account.icon },
+    newBalance, budgetBlock, assumedSource, footer,
+  });
+}
+
 // SEGURANCA (spec §6.2): cid SEMPRE = collab.id (remetente resolvido server-side). NUNCA params.collaborator_id.
 async function handleFinanceAction(collab, action, params) {
   const cid = collab.id;
@@ -5939,49 +5970,63 @@ async function handleFinanceAction(collab, action, params) {
       const category = p.category || mapCategory(p.description || '');
       const srcName = params.account_name || params.account || params.carteira || params.conta || params.card || p.account_name;
 
-      // FONTE OBRIGATÓRIA: resolve pelo que existe. Sem fonte (ou cartão numa receita) → pergunta e NÃO grava.
+      // FONTE OBRIGATÓRIA (robusta): engine resolve. Nunca grava órfã, nunca depende do LLM no turno-2.
       const src = srcName ? await financeService.resolveSource(cid, srcName) : { kind: 'none' };
+      const txnPayload = { type, category, amount: Number(p.amount), description: p.description, date: p.date };
+
+      // Colisão carteira×cartão → pendência binária (cartão ou conta?)
       if (src.kind === 'ambiguous') {
+        await pendingIntents.openIntent(cid, 'finance_source', {
+          form: 'binary',
+          txn: txnPayload,
+          account: { kind: 'account', id: src.account.id, name: src.account.name },
+          card: { kind: 'card', id: src.card.id, name: src.card.name },
+        }, `${src.account.name}: cartão ou conta?`);
         return `🤔 *${src.account.name}* é carteira e cartão. Foi no *cartão* ou na *conta*?`;
       }
+
+      // Cartão + despesa → fatura
       if (src.kind === 'card' && type === 'expense') {
         return await recordCardPurchase(cid, src.card, { amount: p.amount, description: p.description, category, installments: params.installments, date: p.date });
       }
-      if (src.kind === 'none' || (src.kind === 'card' && type === 'income')) {
-        const accounts = src.accounts || await financeService.listAccounts(cid);
-        const cards = src.cards || await financeService.listCards(cid);
-        return financeFmt.buildSourceQuestion({ type, amount: Number(p.amount), accounts, cards });
+
+      // Fonte explícita resolvida em carteira → grava
+      if (src.kind === 'account') {
+        return await writeCashTransaction(cid, {
+          type, category, amount: p.amount, description: p.description, date: p.date, account: src.account,
+        });
       }
 
-      // src.kind === 'account' → transação de caixa, fonte garantida
-      const account = src.account;
-      const prev = type === 'expense' ? await financeService.monthCategoryTotal(cid, category) : 0;
-      await financeService.insertTransaction(cid, { type, category, amount: p.amount, description: p.description, transaction_date: p.date, account_id: account.id });
-
-      // Bloco de orçamento (só despesa com limite), reaproveitando buildBudgetAlert.
-      let budgetBlock = null;
-      if (type === 'expense') {
-        const limit = await financeService.getBudget(cid, category);
-        if (limit) {
-          const novo = prev + Number(p.amount);
-          const pct = Math.round((novo / limit) * 100);
-          const m = financeFmt.CAT_META[category] || { label: category };
-          budgetBlock = `📊 ${m.label}: ${financeFmt.money(novo)} / ${financeFmt.money(limit)} (${pct}%)`;
-          const cruzou = crossedThreshold(prev, novo, limit);
-          if (cruzou) budgetBlock += `\n${buildBudgetAlert(category, novo, limit, cruzou)}`;
-        }
+      // Daqui pra baixo: sem fonte resolvível (none, ou cartão numa receita).
+      // 1) Conta principal → grava silencioso MAS nomeia a principal.
+      const primary = await financeService.findPrimaryAccount(cid);
+      if (primary) {
+        return await writeCashTransaction(cid, {
+          type, category, amount: p.amount, description: p.description, date: p.date,
+          account: primary, assumedSource: primary.name,
+        });
       }
 
-      // Saldo pós-trigger por cálculo determinístico (trigger: income +amount, expense -amount).
-      const meta = financeFmt.CAT_META[category] || { emoji: '📦', label: category };
-      const newBalance = Number(account.balance) + (type === 'income' ? Number(p.amount) : -Number(p.amount));
-      const footer = financeFmt.buildTxnFooter({ categoryMissing: category === 'outros', accountLinked: true, tipSeed: new Date().getUTCDate(), type });
-      return financeFmt.buildTxnConfirmation({
-        type, description: p.description, amount: Number(p.amount),
-        categoryLabel: meta.label,
-        account: { name: account.name, icon: account.icon },
-        newBalance, budgetBlock, footer,
-      });
+      // 2) Tem contas (≥2, sem principal) → pergunta + pending-state.
+      const accounts = src.accounts || await financeService.listAccounts(cid);
+      const cards = src.cards || await financeService.listCards(cid);
+      if (accounts.length > 0) {
+        const candidates = [
+          ...accounts.map((a) => ({ kind: 'account', id: a.id, name: a.name })),
+          ...(type === 'expense' ? cards.map((c) => ({ kind: 'card', id: c.id, name: c.name })) : []),
+          { kind: 'cash', id: null, name: 'Dinheiro' },
+        ];
+        const question = financeFmt.buildSourceQuestion({ type, amount: Number(p.amount), accounts, cards });
+        await pendingIntents.openIntent(cid, 'finance_source', {
+          form: 'list',
+          txn: txnPayload,
+          candidates,
+        }, question);
+        return question;
+      }
+
+      // 3) 0 contas cadastradas → NÃO grava → coaching pro app (TOM Coach P6).
+      return `Pra eu manter seu saldo certinho, preciso saber de onde saiu/entrou 💡\n\nCadastra suas contas e cartões no app primeiro — *Finanças → Carteiras / Cartões*. Aí é só me mandar "gastei 45" que eu já sei de onde tirar. (Pra gasto em espécie, é só dizer "em dinheiro".)`;
     }
     case 'register_bill': {
       const b = await financeService.createBill(cid, {
@@ -6201,6 +6246,58 @@ async function processMessage(phone, text, raw = {}) {
   _metrics.collaborator_id = collab.id;
   console.log('[Engine] Mensagem de', collab.full_name);
   await logConversation(collab.id, 'inbound', text);
+
+  // ---- Fonte obrigatória: resolução determinística do pending finance_source ----
+  // Se TOM perguntou "saiu de qual conta?" (intent finance_source aberta) e o user
+  // respondeu uma fonte ("2"/"nubank"/"dinheiro"/"cartão"), o ENGINE grava a
+  // transação pendente sem passar pelo LLM (não fabrica, não perde no fallback).
+  try {
+    const { matchSourceReply } = require('./finance/source-match');
+    const finOpen = (await pendingIntents.listOpenIntents(collab.id, { limit: 3 }))
+      .find((i) => i.kind === 'finance_source' && withinConfirmWindow(i.asked_at, 15));
+    if (finOpen) {
+      const hit = matchSourceReply(String(text || ''), finOpen.payload);
+      if (hit) {
+        const txn = finOpen.payload.txn || {};
+        // Resolve a fonte escolhida em conta/cartão concretos.
+        let account = null;
+        let card = null;
+        if (hit.kind === 'cash') account = await financeService.ensureDinheiro(collab.id);
+        else if (hit.kind === 'account') account = (await financeService.listAccounts(collab.id)).find((a) => a.id === hit.id);
+        else if (hit.kind === 'card') card = (await financeService.listCards(collab.id)).find((c) => c.id === hit.id);
+
+        // Fonte sumiu entre turnos (conta/cartão deletado) → não casa; segue fluxo normal.
+        if (account || card) {
+          // A partir daqui ASSUMIMOS o turno: grava e SEMPRE retorna (nunca cai no LLM,
+          // senão a transação seria gravada de novo). Falha na gravação → avisa e mantém a intent.
+          let reply;
+          try {
+            reply = card
+              ? await recordCardPurchase(collab.id, card, { amount: txn.amount, description: txn.description, category: txn.category, date: txn.date })
+              : await writeCashTransaction(collab.id, { type: txn.type, category: txn.category, amount: txn.amount, description: txn.description, date: txn.date, account });
+          } catch (writeErr) {
+            console.error('[FinanceSource] write err:', writeErr.message);
+            await whatsapp.sendMessage(phone, '⚠️ Não consegui registrar agora. Tenta de novo daqui a pouco?');
+            return; // intent segue aberta pra retry; NÃO cai no LLM
+          }
+          // Transação JÁ persistida: consome o turno de qualquer forma (resolve/envia/loga),
+          // engolindo falhas pós-gravação pra não reprocessar no LLM.
+          try {
+            await pendingIntents.resolveIntent(finOpen.id, 'confirmed', `finance_source matched ${hit.kind}`);
+            await whatsapp.sendMessage(phone, reply);
+            await logConversation(collab.id, 'outbound', reply);
+          } catch (postErr) {
+            console.warn('[FinanceSource] post-write err (txn já gravada):', postErr.message);
+          }
+          console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (finance_source_resolved)`);
+          return;
+        }
+      }
+      // não casou → deixa a intent aberta (expira sozinha); segue fluxo normal.
+    }
+  } catch (e) {
+    console.warn('[FinanceSource] consumer err:', e.message);
+  }
 
   // ---- Sprint 30.3 — Pending Intents: auto-resolve quando user confirma ----
   // Se TOM perguntou "Crio?" turnos atrás (intent aberta) e o user agora

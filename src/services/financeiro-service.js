@@ -14,16 +14,16 @@ function monthBounds(date = new Date()) {
 }
 
 // ---- Carteiras ----
-async function createAccount(collaboratorId, { name, type = 'checking', icon, goal_monthly }) {
+async function createAccount(collaboratorId, { name, type = 'checking', icon, goal_monthly, is_primary = false }) {
   const { data, error } = await supabase.from('pf_accounts')
-    .insert({ collaborator_id: collaboratorId, name, type, icon, goal_monthly })
+    .insert({ collaborator_id: collaboratorId, name, type, icon, goal_monthly, is_primary })
     .select().single();
   if (error) throw error;
   return data;
 }
 async function listAccounts(collaboratorId) {
   const { data, error } = await supabase.from('pf_accounts')
-    .select('id, name, type, balance, icon')
+    .select('id, name, type, balance, icon, is_primary')
     .eq('collaborator_id', collaboratorId).eq('is_active', true).order('name');
   if (error) throw error;
   return data || [];
@@ -44,6 +44,29 @@ async function ensureDinheiro(collaboratorId) {
   if (existing) return existing;
   return createAccount(collaboratorId, { name: 'Dinheiro', type: 'wallet', icon: '💵' });
 }
+// Conta principal (default silencioso pra transações sem fonte explícita).
+async function findPrimaryAccount(collaboratorId) {
+  const accounts = await listAccounts(collaboratorId);
+  const primary = accounts.find((a) => a.is_primary);
+  if (primary) return primary;
+  // Sem principal explícita: se há exatamente 1 carteira, ela é a principal de fato.
+  return accounts.length === 1 ? accounts[0] : null;
+}
+
+// Define `id` como única principal do colaborador (zera as outras antes).
+async function setPrimaryAccount(collaboratorId, id) {
+  const { error: resetErr } = await supabase.from('pf_accounts')
+    .update({ is_primary: false })
+    .eq('collaborator_id', collaboratorId).eq('is_primary', true);
+  if (resetErr) throw resetErr;
+  const { data, error } = await supabase.from('pf_accounts')
+    .update({ is_primary: true })
+    .eq('collaborator_id', collaboratorId).eq('id', id)
+    .select().single();
+  if (error) throw error;
+  return data;
+}
+
 // Resolve a FONTE de uma transação: {kind, account?, card?, accounts?, cards?}.
 // kind: account | card | ambiguous | none. Faz o I/O e converte nomes→objetos (classifySource é puro).
 async function resolveSource(collaboratorId, name) {
@@ -414,6 +437,7 @@ async function cardsForAlerts() {
 module.exports = {
   monthBounds,
   createAccount, listAccounts, findAccountByName, ensureDinheiro, resolveSource,
+  findPrimaryAccount, setPrimaryAccount,
   insertTransaction, monthCategoryTotal, querySummary,
   setBudget, getBudget, queryBudget,
   createBill, findBills, payBill,

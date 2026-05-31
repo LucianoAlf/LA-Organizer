@@ -12,7 +12,7 @@
 
 const supabase = require('../supabase/client');
 
-const VALID_KINDS = new Set(['task_creation','event_creation','approval_pending','confirmation']);
+const VALID_KINDS = new Set(['task_creation','event_creation','approval_pending','confirmation','finance_source']);
 const VALID_RESOLUTIONS = new Set(['confirmed','denied','expired','superseded']);
 const DEFAULT_EXPIRY_HOURS = 24;
 

@@ -101,6 +101,7 @@ export const useAddToGoal         = () => useFinMutation((cid, args: { goal: PfG
 export const useSetBudget         = () => useFinMutation(fin.setBudget);
 export const useCreateAccount     = () => useFinMutation(fin.createAccount);
 export const useDeactivateAccount = () => useFinMutation((cid, id: string) => fin.deactivateAccount(cid, id));
+export const useSetPrimaryAccount = () => useFinMutation((cid, id: string) => fin.setPrimaryAccount(cid, id));
 
 // ---- Cartões de crédito ----
 export function useCards() {

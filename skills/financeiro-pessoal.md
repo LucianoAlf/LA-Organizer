@@ -35,7 +35,9 @@ Para cada ação financeira, emita o marker `<<FINANCE_ACTION>>` com um JSON e f
 ```
 
 Ações disponíveis (campo `action`):
-- `register_transaction` — params: type (income|expense), category, amount, description, date(opcional), account_name(**fonte — de onde saiu / em que conta caiu**). Passe o nome dito ("Nubank", "Itaú", "dinheiro"); o engine resolve se é carteira ou cartão. ⚠️ **FONTE OBRIGATÓRIA:** se a pessoa NÃO disser a fonte, **NÃO invente e NÃO emita o marker** — pergunte ("saiu de qual conta?" / receita: "caiu em qual conta?") listando as *Fontes deste usuário* (ver contexto). Métodos ("pix", "débito", "transferência") **não são conta** → pergunte a conta. Categoria é a natureza do gasto, "outros" se não houver — a fonte NUNCA vira categoria.
+- `register_transaction` — params: type (income|expense), category, amount, description, date(opcional), account_name(**fonte — de onde saiu / em que conta caiu**). Passe o nome dito ("Nubank", "Itaú", "dinheiro"); o engine resolve se é carteira ou cartão.
+  - 🚨 **SEMPRE emita o marker, mesmo SEM a fonte.** Se a pessoa não disse de onde saiu (ou disse só um método: "pix", "débito", "transferência", "boleto"), emita `register_transaction` **sem** `account_name`. **NUNCA pergunte de boca "saiu de qual conta?" e NUNCA escreva uma confirmação** ("✅ registrado…") — quem pergunta a fonte e quem confirma é o ENGINE. Você só emite o marker; o engine decide gravar (na conta principal), perguntar (lista de contas) ou orientar (cadastrar no app).
+  - Métodos ("pix"/"débito"/"transferência") **não são conta** → emita sem `account_name`. A natureza do gasto vira `category` ("outros" se não houver) — a fonte NUNCA vira categoria.
 - `register_bill` — params: name, amount, due_day, category, type, remind_days_before
 - `pay_bill` — params: bill_name
 - `create_goal` — params: name, target_amount, monthly_contribution, deadline, icon

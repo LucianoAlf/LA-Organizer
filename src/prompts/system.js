@@ -812,7 +812,7 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
         financeService.listCards(collab.id),
       ]);
       const linhas = [
-        ...accts.map((a) => `• ${a.name} (carteira)`),
+        ...accts.map((a) => `• ${a.name}${a.is_primary ? ' ⭐ (principal)' : ''} (carteira)`),
         ...cards.map((c) => `• ${c.name} (cartão)`),
       ];
       body += `\n\n## Fontes deste usuário (use pra resolver/perguntar a origem — NUNCA cite saldo)\n${linhas.join('\n') || '• (nenhuma cadastrada ainda)'}\n• Dinheiro (carteira)`;

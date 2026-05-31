@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '../../components/Button';
 import { Fab } from '../../components/Fab';
-import { useAccounts, useDeactivateAccount, useFinanceiroAuth } from '../../hooks/useFinanceiro';
+import { useAccounts, useDeactivateAccount, useSetPrimaryAccount, useFinanceiroAuth } from '../../hooks/useFinanceiro';
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
 import type { PfAccount, PfAccountType } from '../../lib/financeiro';
 import { AccountSheet } from './components/AccountSheet';
@@ -18,7 +18,7 @@ function brl(n: number) {
   return n.toLocaleString('pt-BR', { maximumFractionDigits: 2 });
 }
 
-function AccountCard({ account, onDeactivate }: { account: PfAccount; onDeactivate: (a: PfAccount) => void }) {
+function AccountCard({ account, onDeactivate, onSetPrimary, primaryPending }: { account: PfAccount; onDeactivate: (a: PfAccount) => void; onSetPrimary: (a: PfAccount) => void; primaryPending: boolean }) {
   const balance = Number(account.balance);
   const tone = balance < 0 ? 'text-danger' : balance > 0 ? 'text-tom' : 'text-fg';
   return (
@@ -31,6 +31,16 @@ function AccountCard({ account, onDeactivate }: { account: PfAccount; onDeactiva
             <div className="text-body-sm text-fg-muted">{TYPE_LABEL[account.type]}</div>
           </div>
         </div>
+        <button
+          type="button"
+          onClick={() => onSetPrimary(account)}
+          disabled={primaryPending || account.is_primary}
+          aria-label={account.is_primary ? 'Conta principal' : 'Definir como principal'}
+          title={account.is_primary ? 'Conta principal' : 'Definir como principal'}
+          className="text-lg shrink-0 focus-ring rounded-full px-1"
+        >
+          {account.is_primary ? '⭐' : '☆'}
+        </button>
       </header>
 
       <div className="border-t border-border pt-3 flex items-baseline justify-between">
@@ -52,6 +62,7 @@ export function CarteirasPage() {
   useRealtimeFinance(['pf_accounts', 'pf_transactions'], cid);
   const accountsQ = useAccounts();
   const deactivateMut = useDeactivateAccount();
+  const setPrimaryMut = useSetPrimaryAccount();
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
 
@@ -100,7 +111,7 @@ export function CarteirasPage() {
       {accounts.length > 0 && (
         <section className="grid grid-cols-1 md:grid-cols-2 gap-md">
           {accounts.map((a) => (
-            <AccountCard key={a.id} account={a} onDeactivate={deactivate} />
+            <AccountCard key={a.id} account={a} onDeactivate={deactivate} onSetPrimary={(acc) => setPrimaryMut.mutate(acc.id)} primaryPending={setPrimaryMut.isPending} />
           ))}
         </section>
       )}
