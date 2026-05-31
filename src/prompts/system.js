@@ -804,7 +804,18 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
   // ANTES de recorrencia: frase de dinheiro/meta tem prioridade (ex: "guardei 500 pro carro"
   // e "todo dia 10 pagar aluguel" devem ir pro financeiro, nao virar tarefa recorrente).
   const FINANCE_RE = /\b(comprovante|nota\s+fiscal|cupom\s+fiscal|r\$\s*\d|gastei|recebi|paguei|cart[ãa]o|fatura|parcel\w+|transfer[eiêí]\w*|cr[ée]dito|\d+\s*x\b|limite|sal[áa]rio|comiss[ãa]o|aluguel|ifood|mercado|uber|gasolina|farm[áa]cia|or[çc]amento|meta|guard\w+\s+(?:r\$\s*)?\d+|separ\w+\s+(?:r\$\s*)?\d+|guard\w+\s+(?:dinheiro|grana)|poupan[çc]a|caixinha|cofrinho|investir|selic|juros|sonho|quanto\s+gastei|conta\s+(?:a\s+pagar|vencendo|fixa|de\s+(?:luz|[áa]gua|internet|telefone|g[áa]s))|cadastr\w*\s+(?:a\s+)?(?:uma\s+)?conta|(?:cria\w*|nova|abr\w+|cadastr\w*)\s+(?:uma\s+)?carteira|minhas?\s+carteiras?|assinatura|mensalidade|netflix|spotify|disney|academia|condom[íi]nio)\b/i;
-  if (FINANCE_RE.test(String(lastUserMessage || ''))) {
+  // Confirmação/correção de um lançamento que o TOM acabou de propor (ex: resumo de
+  // comprovante "🧾 ... Grava?"). Nesse turno a resposta é curta ("grava"/"isso"/
+  // "não, foi 200") e NÃO casa o FINANCE_RE — sem recarregar a skill, o TOM regredia
+  // ("não tenho esse recurso"). Mantém a skill enquanto há proposta de comprovante aberta.
+  const lastBotFinance = (recentHistory || [])
+    .slice(-3)
+    .filter((m) => m && m.direction === 'outbound')
+    .map((m) => (m.content || '').toLowerCase())
+    .join(' ');
+  const financeProposalOpen = /🧾|comprovante financeiro/i.test(lastBotFinance);
+  const shortReply = String(lastUserMessage || '').trim().length < 40;
+  if (FINANCE_RE.test(String(lastUserMessage || '')) || (financeProposalOpen && shortReply)) {
     let body = loadSkill('financeiro-pessoal');
     try {
       const [accts, cards] = await Promise.all([
