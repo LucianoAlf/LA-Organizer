@@ -6402,6 +6402,33 @@ async function processMessage(phone, text, raw = {}) {
     console.warn('[FinanceSource] consumer err:', e.message);
   }
 
+  // ---- Correção/exclusão determinística (pré-LLM): "era 25" / "muda a categoria pra lazer" / "apaga a de 30" ----
+  // O LLM às vezes fabrica "corrigido" ou nega a capacidade. Quando o padrão é claro E há
+  // transação recente, o ENGINE executa direto via handleFinanceAction — sem depender do LLM.
+  try {
+    const { detectCorrection } = require('./finance/detect-correction');
+    const corr = detectCorrection(String(text || ''));
+    if (corr) {
+      const recent = await financeService.listRecentTransactions(collab.id, { hours: 2, limit: 1 });
+      if (recent.length) {
+        const action = corr.op === 'delete' ? 'delete_transaction' : 'edit_transaction';
+        const params = corr.op === 'delete'
+          ? { which: corr.ref }
+          : { which: '', amount: corr.amount, category: corr.category };
+        const reply = await handleFinanceAction(collab, action, params);
+        if (reply) {
+          await whatsapp.sendMessage(phone, reply);
+          await logConversation(collab.id, 'outbound', reply);
+          console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (correction_${corr.op})`);
+          return;
+        }
+      }
+      // sem transação recente → não é correção de finança; segue pro LLM.
+    }
+  } catch (e) {
+    console.warn('[Correction] consumer err:', e.message);
+  }
+
   // ---- Sprint 30.3 — Pending Intents: auto-resolve quando user confirma ----
   // Se TOM perguntou "Crio?" turnos atrás (intent aberta) e o user agora
   // respondeu "sim/ok/pode/cria", injeta contexto extra no `text` pra forçar
