@@ -5913,11 +5913,25 @@ function parseFinanceMarker(text) {
   return { action: json.action, params: json.params || {}, cleanText, malformed: false };
 }
 
+// Categorias válidas no banco (pf_transactions_category_check). O LLM às vezes
+// inventa ("cuidados pessoais", "beleza") → CHECK violation → "Deu ruim ao registrar".
+// Garante enum válido: desconhecida → tenta mapear pela descrição, senão "outros".
+const PF_VALID_CATEGORIES = new Set([
+  'salario', 'comissao', 'extra', 'moradia', 'alimentacao',
+  'transporte', 'saude', 'educacao', 'lazer', 'outros',
+]);
+function safeCategory(cat, description) {
+  const c = String(cat || '').toLowerCase().trim().replace(/[\s-]+/g, '_');
+  if (PF_VALID_CATEGORIES.has(c)) return c;
+  const mapped = mapCategory(description || '');
+  return PF_VALID_CATEGORIES.has(mapped) ? mapped : 'outros';
+}
+
 // Compra no cartão (fonte única, usada pelo case card_purchase E pelo roteamento de register_transaction).
 async function recordCardPurchase(cid, card, { amount, description, category, installments, date }) {
   const financeFmt = require('./services/finance-format');
   const inst = parseInt(installments || 1, 10) || 1;
-  const cat = category || mapCategory(description || '');
+  const cat = safeCategory(category, description);
   const rows = await financeService.insertCardPurchase(cid, card, { category: cat, amount: Number(amount), description, transaction_date: date, installments: inst });
   const usage = await financeService.cardUsage(cid, card);
   let reply = financeFmt.txnRegistered(card, { description, amount: Number(amount), category: cat, installments: inst, competencia: rows[0].competencia }, usage);
@@ -5967,7 +5981,7 @@ async function handleFinanceAction(collab, action, params) {
     case 'register_transaction': {
       if (!p.amount || p.amount <= 0) return '❓ Qual foi o valor?';
       const type = p.type || 'expense';
-      const category = p.category || mapCategory(p.description || '');
+      const category = safeCategory(p.category, p.description);
       const srcName = params.account_name || params.account || params.carteira || params.conta || params.card || p.account_name;
 
       // FONTE OBRIGATÓRIA (robusta): engine resolve. Nunca grava órfã, nunca depende do LLM no turno-2.
@@ -6107,7 +6121,7 @@ async function handleFinanceAction(collab, action, params) {
       const amount = Number(params.amount);
       if (!amount || amount <= 0) return '❓ Qual foi o valor da compra?';
       const installments = parseInt(params.installments || 1, 10);
-      const category = params.category || mapCategory(params.description || '');
+      const category = safeCategory(params.category, params.description);
       const cards = await financeService.findCard(cid, params.card || '');
 
       // Cartão não resolvido (não achou OU ambíguo) → pergunta DETERMINÍSTICA com
