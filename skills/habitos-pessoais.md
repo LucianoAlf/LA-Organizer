@@ -177,6 +177,8 @@ TOM: 💧 Boa! *Beber água* com meta de **3.000 ml/dia**. Quer lembrete em algu
 
 **Registrar quantidade (log com `amount`)** — quando o user diz quanto fez/consumiu, use `amount` (delta a somar). Default soma ao que já tem hoje (`mode:"add"`). Use `mode:"set"` só se o user der o TOTAL ("já bebi 2L no total hoje").
 
+> ⚠️ **O alvo do log é SEMPRE o HÁBITO ATIVO — nunca uma task.** Use o `habit_id` do hábito quantitativo ativo, ou `habit_name` quando não tiver o id à mão (o engine resolve pelo nome do hábito ativo). **NUNCA use `task_id`** e **NUNCA mire uma tarefa**, mesmo que apareça no contexto uma task com nome parecido (ex: *"Hábito diário — Beber 6L de água"*). Task ≠ hábito: logar quantidade numa task é rejeitado pelo engine e o registro se perde. Se houver mais de um hábito de nome parecido, prefira `habit_name` (o engine só casa o ATIVO) ou pergunte qual.
+
 User: "bebi 650ml" / "mais 500ml de água" / "li 20 páginas"
 → Marker:
 ```
