@@ -5,6 +5,7 @@ import { Fab } from '../../components/Fab';
 import { useCategories, useCategoryLookup, useFinanceiroAuth, useTransactions } from '../../hooks/useFinanceiro';
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
 import type { PfCategory, PfTransaction, PfTxType } from '../../lib/financeiro';
+import { LancamentoSheet } from './components/LancamentoSheet';
 import { TransactionSheet } from './components/TransactionSheet';
 
 const PT_MONTHS = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
@@ -41,15 +42,15 @@ export function TransacoesPage() {
   const [category, setCategory] = useState<string>(''); // '' = todas
   const [type, setType] = useState<string>('');         // '' = todos
   const [editing, setEditing] = useState<PfTransaction | null>(null);
-  const [creating, setCreating] = useState(false);
+  const [novoLanc, setNovoLanc] = useState(false);
 
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
 
-  // ?new=1 ao chegar abre o sheet de criação (vindo do FAB do dashboard).
+  // ?new=1 ao chegar abre o LancamentoSheet (legado: links externos ainda podem usar esse param).
   useEffect(() => {
     if (params.get('new') === '1') {
-      setCreating(true);
+      setNovoLanc(true);
       const next = new URLSearchParams(params);
       next.delete('new');
       setParams(next, { replace: true });
@@ -153,13 +154,15 @@ export function TransacoesPage() {
         )}
       </section>
 
+      <LancamentoSheet open={novoLanc} onClose={() => setNovoLanc(false)} />
+
       <TransactionSheet
-        open={creating || !!editing}
-        onClose={() => { setCreating(false); setEditing(null); }}
+        open={!!editing}
+        onClose={() => setEditing(null)}
         initial={editing ?? undefined}
       />
 
-      <Fab label="Registrar" ariaLabel="Registrar transação" onClick={() => setCreating(true)} />
+      <Fab label="Registrar" ariaLabel="Registrar transação" onClick={() => setNovoLanc(true)} />
     </div>
   );
 }

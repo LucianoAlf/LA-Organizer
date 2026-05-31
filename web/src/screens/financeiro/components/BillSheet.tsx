@@ -3,18 +3,22 @@ import { AdaptiveSheet } from '../../../components/AdaptiveSheet';
 import { Button } from '../../../components/Button';
 import { CustomSelect } from '../../../components/CustomSelect';
 import { Field } from '../../../components/Field';
-import { useCategories, useCreateBill } from '../../../hooks/useFinanceiro';
-import type { PfBillType, PfCategory } from '../../../lib/financeiro';
+import { useCategories, useCreateBill, useDeactivateBill, useUpdateBill } from '../../../hooks/useFinanceiro';
+import type { PfBill, PfBillType, PfCategory } from '../../../lib/financeiro';
 
 const DAY_OPTIONS = Array.from({ length: 31 }, (_, i) => ({ value: String(i + 1), label: `Dia ${i + 1}` }));
 
 export interface BillSheetProps {
   open: boolean;
   onClose: () => void;
+  initial?: PfBill;
 }
 
-export function BillSheet({ open, onClose }: BillSheetProps) {
+export function BillSheet({ open, onClose, initial }: BillSheetProps) {
+  const isEdit = !!initial;
   const createMut = useCreateBill();
+  const updateMut = useUpdateBill();
+  const deactivateMut = useDeactivateBill();
   const catsQ = useCategories();
   const allCats = useMemo(() => catsQ.data ?? [], [catsQ.data]);
   const expenseCats = useMemo(() => allCats.filter((c) => c.type === 'expense').map((c) => ({ value: c.slug, label: `${c.emoji}  ${c.label}` })), [allCats]);
@@ -28,8 +32,14 @@ export function BillSheet({ open, onClose }: BillSheetProps) {
 
   useEffect(() => {
     if (!open) return;
-    setType('expense'); setName(''); setAmountText(''); setDueDay('10'); setCategory('moradia'); setError(null);
-  }, [open]);
+    setType(initial?.type ?? 'expense');
+    setName(initial?.name ?? '');
+    setAmountText(initial ? String(initial.amount) : '');
+    setDueDay(initial?.due_day != null ? String(initial.due_day) : '10');
+    setCategory(initial?.category ?? 'moradia');
+    setError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, initial]);
 
   function switchType(next: PfBillType) {
     setType(next);
@@ -52,11 +62,38 @@ export function BillSheet({ open, onClose }: BillSheetProps) {
     }
   }
 
+  async function save() {
+    if (!initial) return;
+    setError(null);
+    const amount = Number(amountText.replace(',', '.'));
+    if (!name.trim()) return setError('Dá um nome pra essa conta.');
+    if (!isFinite(amount) || amount <= 0) return setError('Informe um valor válido.');
+    const dd = Number(dueDay);
+    if (!Number.isInteger(dd) || dd < 1 || dd > 31) return setError('Dia precisa ser entre 1 e 31.');
+    try {
+      await updateMut.mutateAsync({ id: initial.id, patch: { name: name.trim(), amount, due_day: dd, category, type } });
+      onClose();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  async function remove() {
+    if (!initial) return;
+    if (!confirm(`Desativar conta "${initial.name}"?`)) return;
+    try {
+      await deactivateMut.mutateAsync(initial.id);
+      onClose();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
   const categoryOptions = type === 'expense' ? expenseCats : incomeCats;
-  const submitting = createMut.isPending;
+  const submitting = createMut.isPending || updateMut.isPending || deactivateMut.isPending;
 
   return (
-    <AdaptiveSheet open={open} onClose={onClose} title="Nova conta fixa" size="sm">
+    <AdaptiveSheet open={open} onClose={onClose} title={isEdit ? 'Editar conta' : 'Nova conta fixa'} size="sm">
       <div className="flex flex-col gap-md p-md">
         <div className="grid grid-cols-2 rounded-full bg-bg-elevated p-1 text-body-sm">
           <button
@@ -116,11 +153,25 @@ export function BillSheet({ open, onClose }: BillSheetProps) {
 
         {error && <p className="text-body-sm text-danger">{error}</p>}
 
-        <div className="flex items-center justify-end gap-2 pt-2">
-          <Button variant="ghost" onClick={onClose} disabled={submitting}>Cancelar</Button>
-          <Button variant="primary" onClick={submit} disabled={submitting || !name.trim() || !amountText.trim()}>
-            {submitting ? 'Salvando…' : 'Cadastrar conta'}
-          </Button>
+        <div className="flex items-center justify-between gap-2 pt-2">
+          {isEdit ? (
+            <Button variant="danger" size="sm" onClick={remove} disabled={submitting}>
+              Excluir
+            </Button>
+          ) : <span />}
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" onClick={onClose} disabled={submitting}>Cancelar</Button>
+            {!isEdit && (
+              <Button variant="primary" onClick={submit} disabled={submitting || !name.trim() || !amountText.trim()}>
+                {submitting ? 'Salvando…' : 'Cadastrar conta'}
+              </Button>
+            )}
+            {isEdit && (
+              <Button variant="primary" onClick={save} disabled={submitting || !name.trim() || !amountText.trim()}>
+                {submitting ? 'Salvando…' : 'Salvar'}
+              </Button>
+            )}
+          </div>
         </div>
       </div>
     </AdaptiveSheet>

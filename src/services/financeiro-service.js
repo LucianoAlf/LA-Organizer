@@ -207,16 +207,22 @@ async function queryBudget(collaboratorId) {
 }
 
 // ---- Contas fixas (status derivado de last_paid_at, D6) ----
-async function createBill(collaboratorId, { name, amount, due_day, category, type = 'expense', remind_days_before = 2 }) {
-  const { data, error } = await supabase.from('pf_bills')
-    .insert({ collaborator_id: collaboratorId, name, amount, due_day, category, type, remind_days_before })
-    .select().single();
+async function createBill(collaboratorId, { name, amount, due_day, category, type = 'expense', remind_days_before = 2, recurrence = 'monthly', due_date = null }) {
+  const row = { collaborator_id: collaboratorId, name, amount, category, type, remind_days_before, recurrence };
+  if (recurrence === 'once') {
+    if (!due_date) throw new Error('conta única exige due_date');
+    row.due_date = due_date;
+    row.due_day = Number(due_date.slice(8, 10)); // dia da data cheia (satisfaz NOT NULL)
+  } else {
+    row.due_day = due_day;
+  }
+  const { data, error } = await supabase.from('pf_bills').insert(row).select().single();
   if (error) throw error;
   return data;
 }
 async function findBills(collaboratorId, billName) {
   const { data, error } = await supabase.from('pf_bills')
-    .select('id, name, amount, category, type')
+    .select('id, name, amount, category, type, recurrence')
     .eq('collaborator_id', collaboratorId).eq('is_active', true)
     .ilike('name', `%${billName}%`);
   if (error) throw error;
@@ -224,8 +230,10 @@ async function findBills(collaboratorId, billName) {
 }
 async function payBill(collaboratorId, bill) {
   const today = new Date().toISOString().slice(0, 10);
+  const patch = { last_paid_at: today, status: 'paid' };
+  if (bill.recurrence === 'once') patch.is_active = false;
   const { error: e1 } = await supabase.from('pf_bills')
-    .update({ last_paid_at: today, status: 'paid' })
+    .update(patch)
     .eq('id', bill.id).eq('collaborator_id', collaboratorId);
   if (e1) throw e1;
   await insertTransaction(collaboratorId, {
@@ -271,19 +279,18 @@ async function listGoals(collaboratorId) {
 // status derivado de last_paid_at (D6). EDGE: conta com due_day no comeco do mes seguinte
 // (ex: hoje=30, due_day=2) nao entra como "a vencer" deste ciclo — aceitavel no v1.
 async function billsDueWithin(collaboratorId, days = 5) {
-  const dom = new Date().getUTCDate();
+  const { isBillDue } = require('../finance/bill-due');
+  const now = new Date();
+  const dom = now.getUTCDate();
+  const todayStr = now.toISOString().slice(0, 10);
+  const horizonStr = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + days)).toISOString().slice(0, 10);
   const { start } = monthBounds();
   const { data, error } = await supabase.from('pf_bills')
-    .select('name, amount, due_day, type, last_paid_at, category')
+    .select('name, amount, due_day, due_date, recurrence, type, last_paid_at, category')
     .eq('collaborator_id', collaboratorId).eq('is_active', true);
   if (error) throw error;
-  return (data || []).filter((b) => {
-    const pagoEsteMes = b.last_paid_at && b.last_paid_at >= start;
-    if (pagoEsteMes) return false;
-    const aVencer = b.due_day >= dom && b.due_day <= dom + days;
-    const atrasada = b.due_day < dom; // venceu este mes e nao foi paga (PRD §6.2)
-    return aVencer || atrasada;
-  });
+  const ctx = { dom, todayStr, horizonStr, monthStart: start };
+  return (data || []).filter((b) => isBillDue(b, ctx));
 }
 
 // Relatorio do mes de referencia (default mes corrente): receitas, despesas, saldo, top 3.

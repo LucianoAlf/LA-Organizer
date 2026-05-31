@@ -18,13 +18,18 @@ function badgeFor(status: BillStatus): { label: string; cls: string } {
   return { label: 'a vencer', cls: 'bg-amber-500/10 text-amber-500 border-amber-500/30' };
 }
 
-function BillRow({ bill, onPay }: { bill: PfBill; onPay: (b: PfBill) => void }) {
+function BillRow({ bill, onPay, onEdit }: { bill: PfBill; onPay: (b: PfBill) => void; onEdit: (b: PfBill) => void }) {
   const status = deriveBillStatus(bill);
   const b = badgeFor(status);
   const catLookup = useCategoryLookup();
   return (
     <li className="px-md py-2.5 flex items-center justify-between gap-3">
-      <div className="flex items-center gap-3 min-w-0">
+      {/* Área clicável para editar (nome + badge + dia) */}
+      <button
+        type="button"
+        onClick={() => onEdit(bill)}
+        className="flex items-center gap-3 min-w-0 flex-1 text-left focus-ring rounded"
+      >
         <span aria-hidden className="text-base shrink-0">{catLookup.emoji(bill.category)}</span>
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
@@ -35,7 +40,8 @@ function BillRow({ bill, onPay }: { bill: PfBill; onPay: (b: PfBill) => void }) 
           </div>
           <div className="text-body-sm text-fg-muted tabular-nums">Dia {bill.due_day}</div>
         </div>
-      </div>
+      </button>
+      {/* Valor + botão Pagar (não propaga para editar) */}
       <div className="flex items-center gap-3 shrink-0">
         <span className={`text-body-md tabular-nums font-semibold ${bill.type === 'income' ? 'text-success' : 'text-fg'}`}>
           R$ {brl(Number(bill.amount))}
@@ -43,7 +49,7 @@ function BillRow({ bill, onPay }: { bill: PfBill; onPay: (b: PfBill) => void }) 
         {status !== 'paga' && bill.type === 'expense' && (
           <button
             type="button"
-            onClick={() => onPay(bill)}
+            onClick={(e) => { e.stopPropagation(); onPay(bill); }}
             className="text-body-sm text-tom hover:underline focus-ring rounded"
           >
             Marcar paga
@@ -62,6 +68,7 @@ export function ContasFixasPage() {
   const payMut = usePayBill();
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<PfBill | null>(null);
 
   const { aPagar, aReceber } = useMemo(() => {
     const list = billsQ.data ?? [];
@@ -96,7 +103,7 @@ export function ContasFixasPage() {
           <div className="text-[44px] leading-none mb-2" aria-hidden>🧾</div>
           <p className="text-body-md text-fg mb-1">Nenhuma conta fixa cadastrada.</p>
           <p className="text-body-sm text-fg-muted mb-md max-w-md mx-auto">
-            Cadastra pelo + ou manda um zap: <em>“cadastra conta Netflix de 40 reais dia 2”</em>. O TOM lembra antes de vencer.
+            Cadastra pelo + ou manda um zap: <em>"cadastra conta Netflix de 40 reais dia 2"</em>. O TOM lembra antes de vencer.
           </p>
         </section>
       )}
@@ -108,7 +115,7 @@ export function ContasFixasPage() {
             <span className="text-body-sm text-fg-muted tabular-nums">{aPagar.length}</span>
           </header>
           <ul className="divide-y divide-border">
-            {aPagar.map((b) => <BillRow key={b.id} bill={b} onPay={pay} />)}
+            {aPagar.map((b) => <BillRow key={b.id} bill={b} onPay={pay} onEdit={setEditing} />)}
           </ul>
         </section>
       )}
@@ -120,12 +127,16 @@ export function ContasFixasPage() {
             <span className="text-body-sm text-fg-muted tabular-nums">{aReceber.length}</span>
           </header>
           <ul className="divide-y divide-border">
-            {aReceber.map((b) => <BillRow key={b.id} bill={b} onPay={pay} />)}
+            {aReceber.map((b) => <BillRow key={b.id} bill={b} onPay={pay} onEdit={setEditing} />)}
           </ul>
         </section>
       )}
 
+      {/* Sheet criar */}
       <BillSheet open={creating} onClose={() => setCreating(false)} />
+      {/* Sheet editar */}
+      <BillSheet open={!!editing} initial={editing ?? undefined} onClose={() => setEditing(null)} />
+
       <Fab label="Nova conta" ariaLabel="Cadastrar conta fixa" onClick={() => setCreating(true)} />
     </div>
   );

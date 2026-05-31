@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo } from 'react';
+import { lazy, Suspense, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { StatCard } from '../../components/StatCard';
 import { Fab } from '../../components/Fab';
@@ -9,6 +9,7 @@ import { monthBounds } from '../../lib/financeiro';
 import { BudgetBar } from './components/BudgetBar';
 import { FinanceQuickLinks } from './components/FinanceQuickLinks';
 import { FinanceSummaryChips } from './components/FinanceSummaryChips';
+import { LancamentoSheet } from './components/LancamentoSheet';
 
 // Recharts lazy: 2 componentes, cada um chunk próprio
 const PieByCategory   = lazy(() => import('./components/FinanceCharts').then(m => ({ default: m.PieByCategory })));
@@ -39,7 +40,7 @@ function aggregateByMonth(txs: { type: 'income'|'expense'; amount: number; trans
 
 export function FinanceiroPage() {
   const cid = useFinanceiroAuth();
-  useRealtimeFinance(['pf_transactions', 'pf_bills', 'pf_accounts', 'pf_budgets', 'pf_goals'], cid);
+  useRealtimeFinance(['pf_transactions', 'pf_bills', 'pf_accounts', 'pf_budgets', 'pf_goals', 'pf_transfers'], cid);
 
   const budgetsQ = useBudgets();
   const catLookup = useCategoryLookup();
@@ -52,6 +53,7 @@ export function FinanceiroPage() {
   const txRangeQ = useTransactionsRange(r6.start, r6.end);
 
   const navigate = useNavigate();
+  const [novoLanc, setNovoLanc] = useState(false);
   const summary = summaryQ.summary;
   const now = new Date();
   const monthLabel = `${PT_MONTHS[now.getMonth()]} de ${now.getFullYear()}`;
@@ -225,8 +227,10 @@ export function FinanceiroPage() {
       <Fab
         label="Registrar"
         ariaLabel="Registrar transação"
-        onClick={() => navigate('/financeiro/transacoes?new=1')}
+        onClick={() => setNovoLanc(true)}
       />
+
+      <LancamentoSheet open={novoLanc} onClose={() => setNovoLanc(false)} />
     </div>
   );
 }

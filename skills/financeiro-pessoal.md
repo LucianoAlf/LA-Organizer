@@ -44,8 +44,10 @@ Ações disponíveis (campo `action`):
 
 ⚠️ Correção/exclusão são **markers**, igual o resto: emita `edit_transaction`/`delete_transaction` JÁ quando o usuário pedir — NUNCA narre "apaguei" sem o marker, NUNCA peça confirmação extra (o engine confirma e, se houver ambiguidade, ele pergunta). "exclui essa"/"era X" SEM contexto → o engine resolve pelo lançamento mais recente.
 
-- `register_bill` — params: name, amount, due_day, category, type, remind_days_before
-- `pay_bill` — params: bill_name
+- `register_bill` — params: name, amount, category, type, remind_days_before, **recurrence** ('monthly'|'once'), e:
+    - recorrente (todo mês): `recurrence: 'monthly'`, `due_day` (1-31). Ex.: "conta de luz todo dia 10".
+    - única (vence uma vez): `recurrence: 'once'`, `due_date` (YYYY-MM-DD). Ex.: "boleto do IPVA 800 vence 15/06".
+- `pay_bill` — params: bill_name. Conta única some após paga (não reabre).
 - `create_goal` — params: name, target_amount, monthly_contribution, deadline, icon
 - `update_goal` — params: goal_name, add_amount
 - `set_budget` — params: category, monthly_limit

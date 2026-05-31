@@ -6097,12 +6097,17 @@ async function handleFinanceAction(collab, action, params) {
       return financeFmt.txnList(cat ? `Seus últimos de ${cat}:` : 'Seus últimos lançamentos:', rows);
     }
     case 'register_bill': {
+      const recurrence = params.recurrence === 'once' ? 'once' : 'monthly';
       const b = await financeService.createBill(cid, {
-        name: params.name, amount: params.amount, due_day: params.due_day,
+        name: params.name, amount: params.amount,
+        due_day: params.due_day,
+        due_date: params.due_date || null,
+        recurrence,
         category: params.category || mapCategory(params.name || ''),
         type: params.type || 'expense', remind_days_before: params.remind_days_before,
       });
-      return `✅ Conta cadastrada: ${b.name} (R$${b.amount}, dia ${b.due_day}).`;
+      const quando = recurrence === 'once' ? `vence ${b.due_date}` : `todo dia ${b.due_day}`;
+      return `✅ Conta cadastrada: ${b.name} (R$${b.amount}, ${quando}).`;
     }
     case 'pay_bill': {
       const cands = await financeService.findBills(cid, params.bill_name || params.name || '');

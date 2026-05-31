@@ -34,6 +34,21 @@ export function mesDaCompetencia(comp: string): string {
   return MES[parseInt(comp.slice(5, 7), 10) - 1] ?? '';
 }
 
+export function addMonthsToCompetencia(compStr: string, n: number): string {
+  const d = new Date(compStr + 'T00:00:00Z');
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + n, 1)).toISOString().slice(0, 10);
+}
+
+// Divide `amount` em `n` parcelas; o resto de centavos vai na última. Espelha o backend.
+export function splitInstallments(amount: number, n: number): number[] {
+  const total = Math.max(1, Math.floor(n));
+  const cents = Math.round(Number(amount) * 100);
+  const per = Math.floor(cents / total);
+  return Array.from({ length: total }, (_, i) =>
+    ((i === total - 1 ? per + (cents - per * total) : per) / 100)
+  );
+}
+
 export async function listCards(collaboratorId: string): Promise<PfCard[]> {
   const { data, error } = await supabase.from('pf_cards')
     .select('id, name, brand, color, credit_limit, closing_day, due_day, icon')
@@ -108,4 +123,33 @@ export async function payCardInvoice(collaboratorId: string, args: {
 export async function cardsWithUsage(collaboratorId: string): Promise<{ card: PfCard; usage: CardUsage }[]> {
   const cards = await listCards(collaboratorId);
   return Promise.all(cards.map(async (card) => ({ card, usage: await cardUsage(collaboratorId, card) })));
+}
+
+export async function createCardPurchase(
+  collaboratorId: string,
+  input: { cardId: string; closingDay: number; amount: number; category: string;
+           description?: string | null; installments?: number; firstDate?: string }
+) {
+  const base = input.firstDate ? new Date(input.firstDate + 'T00:00:00Z') : new Date();
+  const dateStr = base.toISOString().slice(0, 10);
+  const baseComp = competenciaFor(base, input.closingDay);
+  const n = Math.max(1, Math.floor(input.installments ?? 1));
+  const values = splitInstallments(input.amount, n);
+  const rows: Record<string, unknown>[] = values.map((amt, i) => ({
+    collaborator_id: collaboratorId, card_id: input.cardId, type: 'expense' as const,
+    category: input.category, description: input.description ?? null,
+    transaction_date: dateStr, via: 'pwa',
+    ...(n > 1 ? { installment_no: i + 1, installments_total: n } : {}),
+    competencia: addMonthsToCompetencia(baseComp, i),
+    amount: amt,
+  }));
+  const { data, error } = await supabase.from('pf_transactions').insert(rows).select();
+  if (error) throw error;
+  if (n > 1) {
+    const groupId = (data!.find((d: { installment_no?: number }) => d.installment_no === 1)?.id) || data![0].id;
+    const upd = await supabase.from('pf_transactions').update({ purchase_group: groupId })
+      .in('id', data!.map((d: { id: string }) => d.id)).eq('collaborator_id', collaboratorId);
+    if (upd.error) throw upd.error;
+  }
+  return data;
 }

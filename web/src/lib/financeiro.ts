@@ -21,6 +21,7 @@ export interface PfTransaction {
 export interface PfBill {
   id: string; name: string; amount: number; due_day: number; category: PfCategory;
   type: PfBillType; status: 'pending' | 'paid' | 'overdue'; last_paid_at: string | null;
+  recurrence: 'monthly' | 'once'; due_date: string | null;
 }
 export interface PfGoal {
   id: string; name: string; target_amount: number; current_amount: number;
@@ -152,16 +153,26 @@ export function deriveBillStatus(bill: PfBill, today = new Date()): BillStatus {
 }
 export async function listBills(collaboratorId: string) {
   const { data, error } = await supabase.from('pf_bills')
-    .select('id, name, amount, due_day, category, type, status, last_paid_at')
+    .select('id, name, amount, due_day, category, type, status, last_paid_at, recurrence, due_date')
     .eq('collaborator_id', collaboratorId).eq('is_active', true).order('due_day');
   if (error) throw error;
   return (data as PfBill[]) ?? [];
 }
-export async function createBill(collaboratorId: string, input: { name: string; amount: number; due_day: number; category: PfCategory; type?: PfBillType; remind_days_before?: number }) {
-  const { data, error } = await supabase.from('pf_bills')
-    .insert({ collaborator_id: collaboratorId, name: input.name, amount: input.amount, due_day: input.due_day,
-              category: input.category, type: input.type ?? 'expense', remind_days_before: input.remind_days_before ?? 2 })
-    .select().single();
+export async function createBill(collaboratorId: string, input: { name: string; amount: number; due_day?: number; category: PfCategory; type?: PfBillType; remind_days_before?: number; recurrence?: 'monthly' | 'once'; due_date?: string | null }) {
+  const recurrence = input.recurrence === 'once' ? 'once' : 'monthly';
+  const row: Record<string, unknown> = {
+    collaborator_id: collaboratorId, name: input.name, amount: input.amount,
+    category: input.category, type: input.type ?? 'expense',
+    remind_days_before: input.remind_days_before ?? 2, recurrence,
+  };
+  if (recurrence === 'once') {
+    if (!input.due_date) throw new Error('Conta única exige data de vencimento.');
+    row.due_date = input.due_date;
+    row.due_day = Number(input.due_date.slice(8, 10));
+  } else {
+    row.due_day = input.due_day;
+  }
+  const { data, error } = await supabase.from('pf_bills').insert(row).select().single();
   if (error) throw error;
   return data;
 }
@@ -174,6 +185,30 @@ export async function payBill(collaboratorId: string, bill: PfBill) {
   await createTransaction(collaboratorId, {
     type: bill.type, category: bill.category, amount: bill.amount, description: bill.name, transaction_date: today,
   });
+}
+
+export async function updateBill(collaboratorId: string, id: string, patch: { name?: string; amount?: number; due_day?: number; category?: PfCategory; type?: PfBillType; remind_days_before?: number; recurrence?: 'monthly' | 'once'; due_date?: string | null }) {
+  const allowed: Record<string, unknown> = {};
+  for (const k of ['name', 'amount', 'due_day', 'category', 'type', 'remind_days_before', 'recurrence', 'due_date'] as const) {
+    if (patch[k] !== undefined) allowed[k] = patch[k];
+  }
+  const { data, error } = await supabase.from('pf_bills')
+    .update(allowed).eq('id', id).eq('collaborator_id', collaboratorId).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function deactivateBill(collaboratorId: string, id: string) {
+  const { error } = await supabase.from('pf_bills')
+    .update({ is_active: false }).eq('id', id).eq('collaborator_id', collaboratorId);
+  if (error) throw error;
+}
+
+// Apaga TODAS as parcelas de um grupo (compra parcelada).
+export async function deleteTransactionGroup(collaboratorId: string, purchaseGroup: string) {
+  const { error } = await supabase.from('pf_transactions')
+    .delete().eq('purchase_group', purchaseGroup).eq('collaborator_id', collaboratorId);
+  if (error) throw error;
 }
 
 // ---- Metas (D7: contribuição NÃO vira transação) ----

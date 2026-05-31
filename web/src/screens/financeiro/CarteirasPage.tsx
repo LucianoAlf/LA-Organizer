@@ -59,7 +59,7 @@ function AccountCard({ account, onDeactivate, onSetPrimary, primaryPending }: { 
 
 export function CarteirasPage() {
   const cid = useFinanceiroAuth();
-  useRealtimeFinance(['pf_accounts', 'pf_transactions'], cid);
+  useRealtimeFinance(['pf_accounts', 'pf_transactions', 'pf_transfers'], cid);
   const accountsQ = useAccounts();
   const deactivateMut = useDeactivateAccount();
   const setPrimaryMut = useSetPrimaryAccount();

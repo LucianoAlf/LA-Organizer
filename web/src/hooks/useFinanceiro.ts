@@ -169,3 +169,16 @@ export const usePayInvoice     = () => useFinMutation(
   (cid, args: { card: cartoes.PfCard; competencia: string; amount: number; paid_from_account: string | null }) =>
     cartoes.payCardInvoice(cid, args),
 );
+
+export const useCreateCardPurchase    = () => useFinMutation(
+  (cid, args: Parameters<typeof cartoes.createCardPurchase>[1]) => cartoes.createCardPurchase(cid, args)
+);
+export const useUpdateBill            = () => useFinMutation(
+  (cid, args: { id: string; patch: Parameters<typeof fin.updateBill>[2] }) => fin.updateBill(cid, args.id, args.patch)
+);
+export const useDeactivateBill        = () => useFinMutation(
+  (cid, id: string) => fin.deactivateBill(cid, id)
+);
+export const useDeleteTransactionGroup = () => useFinMutation(
+  (cid, purchaseGroup: string) => fin.deleteTransactionGroup(cid, purchaseGroup)
+);
