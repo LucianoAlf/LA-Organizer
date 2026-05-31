@@ -107,6 +107,11 @@ Expected: 1 linha cada.
 
 **Files:** Supabase migration (apply_migration).
 
+> ⚠️ **NÃO pular esta task.** Verificado no banco (2026-05-31): a CHECK
+> `pending_intents_kind_check` EXISTE e lista só os 4 kinds antigos. Sem o ALTER,
+> `openIntent(cid,'finance_source',...)` falha no INSERT (viola a constraint).
+> A validação app-level (`VALID_KINDS`, R8-Step1) é necessária MAS não suficiente.
+
 - [ ] **Step 1: Aplicar a migration**
 
 Via MCP `apply_migration` (name: `pending_intents_add_finance_source`):
@@ -540,7 +545,8 @@ Trocar do `const src = ...` até o fim do ramo `none` (linhas ~5943-5954) por:
       return `Pra eu manter seu saldo certinho, preciso saber de onde saiu/entrou 💡\n\nCadastra suas contas e cartões no app primeiro — *Finanças → Carteiras / Cartões*. Aí é só me mandar "gastei 45" que eu já sei de onde tirar. (Pra gasto em espécie, é só dizer "em dinheiro".)`;
 ```
 
-> Nota: o caso "em dinheiro" com 0 contas NÃO cai aqui — `resolveSource` resolve `cash` → `ensureDinheiro` → `src.kind==='account'` (grava no passo "Fonte explícita"). O coach (passo 3) só dispara sem fonte alguma.
+> Nota 1: o caso "em dinheiro" com 0 contas NÃO cai aqui — `resolveSource` resolve `cash` → `ensureDinheiro` → `src.kind==='account'` (grava no passo "Fonte explícita"). O coach (passo 3) só dispara sem fonte alguma.
+> Nota 2: invariante "1 fonte pendente por pessoa" é **automático** — `openIntent` já supersede qualquer intent aberta do mesmo kind (`finance_source`) do mesmo colaborador antes de inserir a nova (pending-intents.js, supersede same-kind). Não precisa de código extra.
 
 - [ ] **Step 2: Syntax check**
 
@@ -760,18 +766,11 @@ export async function setPrimaryAccount(collaboratorId: string, id: string) {
 
 - [ ] **Step 2: Hook `useSetPrimaryAccount`**
 
-Em `web/src/hooks/useFinanceiro.ts`, espelhando o padrão de `useCreateAccount` (mesma queryKey de contas, invalida no sucesso):
+Em `web/src/hooks/useFinanceiro.ts`, o padrão real é `useFinMutation` (helper que injeta `cid` via `useFinanceiroAuth()` e invalida a KEY `['financeiro']` inteira no sucesso). Adicionar junto das outras mutations de conta (após `useDeactivateAccount`, linha ~103):
 ```ts
-export function useSetPrimaryAccount() {
-  const cid = useCollaboratorId();
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => setPrimaryAccount(cid, id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['pf_accounts', cid] }),
-  });
-}
+export const useSetPrimaryAccount = () => useFinMutation((cid, id: string) => fin.setPrimaryAccount(cid, id));
 ```
-> Use o mesmo nome de `useCollaboratorId`/queryKey que os hooks vizinhos já usam (copie do `useCreateAccount` no mesmo arquivo). Importe `setPrimaryAccount` de `../lib/financeiro`.
+> `fin` é o namespace já importado de `../lib/financeiro` (mesmo usado em `fin.createAccount`). Invalidar a KEY inteira garante que a lista de carteiras re-renderiza com a nova principal.
 
 - [ ] **Step 3: `CarteirasPage.tsx` — botão estrela**
 
@@ -937,6 +936,7 @@ Expected: 0.
 ---
 
 ## Notas de execução
-- **ACTIONABLE_NO_MARKER como safety-net forte** (spec §1a): por ora fica como **métrica de regressão** (R15 Step 2). Promover a ação automática (engine força a pergunta de fonte quando detecta utterance financeira sem marker) só se a bateria mostrar reincidência — evita complexidade especulativa (YAGNI). Decisão registrada aqui de propósito.
+- **ACTIONABLE_NO_MARKER como safety-net forte** (spec §1a): por ora fica como **métrica de regressão** (R15 Step 2). Confirmado (2026-05-31) que o engine persiste via `logMarker(... 'ACTIONABLE_NO_MARKER' ...)` em `marker_logs` (linha ~8184) — logo a métrica é consultável por SQL, não só console. Promover a ação automática (engine força a pergunta de fonte quando detecta utterance financeira sem marker) só se a bateria mostrar reincidência — evita complexidade especulativa (YAGNI).
+- **Símbolos do engine reusados** (verificados no código atual): `srcName` (def. ~5940, NÃO `acctName`), `CAT_META`, `crossedThreshold`, `buildBudgetAlert`, `recordCardPurchase`, `withinConfirmWindow`, `mapCategory`, `normalizeParams` — todos já existem; os helpers novos (`writeCashTransaction`) são declarações `async function` em nível de módulo (hoisted), acessíveis tanto no case quanto no consumidor turno-2.
 - **TTL da pendência:** 15 min (`withinConfirmWindow(asked_at, 15)` no R8). Fora disso a intent fica aberta e expira pelo cron de `expireOldIntents`.
 - **Ordem de deploy:** migrations (R1, R2) ANTES do SCP do engine (R14), senão `is_primary`/`finance_source` quebram em runtime.
