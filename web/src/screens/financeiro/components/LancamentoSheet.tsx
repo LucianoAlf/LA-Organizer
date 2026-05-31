@@ -169,7 +169,7 @@ export function LancamentoSheet({ open, onClose }: LancamentoSheetProps) {
                 key={o.value}
                 type="button"
                 onClick={() => switchTipo(o.value)}
-                className={['h-9 rounded-full transition-colors focus-ring', tipo === o.value ? 'bg-tom text-white font-semibold' : 'text-fg-muted hover:text-fg'].join(' ')}
+                className={['h-9 rounded-full transition-colors focus-ring', tipo === o.value ? 'bg-tom text-black font-semibold' : 'text-fg-muted hover:text-fg'].join(' ')}
               >
                 {o.label}
               </button>
