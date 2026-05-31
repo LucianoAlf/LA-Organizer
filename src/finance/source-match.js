@@ -43,8 +43,16 @@ function matchSourceReply(rawText, payload) {
     if (cash) return cash;
   }
 
-  // 3) nome (substring) — escolhe o candidato cujo nome aparece no texto
-  const byName = cands.find((c) => c.name && t.includes(String(c.name).toLowerCase()));
+  // 3) nome — casa o candidato cujo nome COMPLETO ou cuja 1ª palavra (a marca:
+  //    "c6", "nubank", "itau") aparece como token no texto. "salva no c6" casa "C6 Bank".
+  const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const byName = cands.find((c) => {
+    const name = String(c.name || '').toLowerCase().trim();
+    if (!name) return false;
+    if (t.includes(name)) return true;
+    const first = name.split(/\s+/)[0];
+    return first.length >= 2 && new RegExp(`\\b${escapeRe(first)}\\b`).test(t);
+  });
   return byName || null;
 }
 

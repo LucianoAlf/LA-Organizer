@@ -6103,17 +6103,33 @@ async function handleFinanceAction(collab, action, params) {
       return `👽 Cartão *${c.name}* cadastrado! Limite ${financeFmt.money(c.credit_limit)}, fecha dia ${c.closing_day}, vence dia ${c.due_day}.`;
     }
     case 'card_purchase': {
-      const cards = await financeService.findCard(cid, params.card || '');
-      if (cards.length === 0) {
-        const all = await financeService.listCards(cid);
-        return `Não achei o cartão "${params.card}". Seus cartões: ${all.map((c) => c.name).join(', ') || 'nenhum cadastrado'}.`;
-      }
-      if (cards.length > 1) return `Tenho mais de um cartão parecido com "${params.card}": ${cards.map((c) => c.name).join(', ')}. Qual?`;
-      const card = cards[0];
+      const pendingIntents = require('./services/pending-intents');
       const amount = Number(params.amount);
       if (!amount || amount <= 0) return '❓ Qual foi o valor da compra?';
       const installments = parseInt(params.installments || 1, 10);
       const category = params.category || mapCategory(params.description || '');
+      const cards = await financeService.findCard(cid, params.card || '');
+
+      // Cartão não resolvido (não achou OU ambíguo) → pergunta DETERMINÍSTICA com
+      // pending-state: o consumidor finance_source capta a resposta ("c6") e grava
+      // sozinho, sem depender do LLM no turno seguinte. Reusa a infra de fonte.
+      if (cards.length !== 1) {
+        const all = cards.length > 1 ? cards : await financeService.listCards(cid);
+        if (all.length === 0) {
+          return `Pra eu lançar essa compra, cadastra o cartão no app primeiro — *Finanças → Cartões*. Aí é só mandar de novo.`;
+        }
+        const lista = all.map((c, i) => `${i + 1}. 💳 ${c.name}`).join('\n');
+        const question = cards.length > 1
+          ? `Tenho mais de um cartão parecido com "${params.card}". Em qual foi?\n${lista}`
+          : `Não achei o cartão "${params.card}". Em qual dos seus foi?\n${lista}`;
+        await pendingIntents.openIntent(cid, 'finance_source', {
+          form: 'list',
+          txn: { type: 'expense', category, amount, description: params.description, date: params.date, installments },
+          candidates: all.map((c) => ({ kind: 'card', id: c.id, name: c.name })),
+        }, question);
+        return question;
+      }
+      const card = cards[0];
       const rows = await financeService.insertCardPurchase(cid, card, {
         category, amount, description: params.description, transaction_date: params.date, installments,
       });
@@ -6277,7 +6293,7 @@ async function processMessage(phone, text, raw = {}) {
           let reply;
           try {
             reply = card
-              ? await recordCardPurchase(collab.id, card, { amount: txn.amount, description: txn.description, category: txn.category, date: txn.date })
+              ? await recordCardPurchase(collab.id, card, { amount: txn.amount, description: txn.description, category: txn.category, installments: txn.installments, date: txn.date })
               : await writeCashTransaction(collab.id, { type: txn.type, category: txn.category, amount: txn.amount, description: txn.description, date: txn.date, account });
           } catch (writeErr) {
             console.error('[FinanceSource] write err:', writeErr.message);

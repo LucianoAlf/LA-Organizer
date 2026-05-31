@@ -23,6 +23,13 @@ test('list: "dinheiro" casa o candidato cash', () => {
 test('list: resposta off-topic não casa', () => {
   assert.strictEqual(matchSourceReply('amanhã te falo', listPayload), null);
 });
+test('list: 1ª palavra do nome casa ("salva no c6" → "C6 Bank")', () => {
+  const pay = { form: 'list', candidates: [
+    { kind: 'card', id: 'c6', name: 'C6 Bank' },
+    { kind: 'card', id: 'nu', name: 'Nubank' },
+  ] };
+  assert.deepStrictEqual(matchSourceReply('salva no c6', pay), { kind: 'card', id: 'c6', name: 'C6 Bank' });
+});
 test('list: número fora do range não casa', () => {
   assert.strictEqual(matchSourceReply('9', listPayload), null);
 });
