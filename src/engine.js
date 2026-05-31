@@ -5921,6 +5921,7 @@ async function handleFinanceAction(collab, action, params) {
 
   switch (action) {
     case 'register_transaction': {
+      console.log('[FinanceDbg] register_transaction raw params=', JSON.stringify(params || {})); // TEMP diag — remover após root cause
       if (!p.amount || p.amount <= 0) return '❓ Qual foi o valor?';
       const type = p.type || 'expense';
       const category = p.category || mapCategory(p.description || '');
