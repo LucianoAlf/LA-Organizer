@@ -2,11 +2,13 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { CAT_META, buildTxnFooter, buildTxnConfirmation, buildSourceQuestion, SEP } = require('./finance-format');
 
-// ---- CAT_META ----
-test('CAT_META cobre todas as categorias do schema com emoji e label', () => {
-  for (const k of ['salario','comissao','extra','moradia','alimentacao','transporte','saude','educacao','lazer','outros']) {
-    assert.ok(CAT_META[k] && CAT_META[k].emoji && CAT_META[k].label, `CAT_META[${k}] incompleto`);
+// ---- CAT_META (derivado da fonte única categories.data.js) ----
+const { CATEGORIES } = require('../finance/categories.data');
+test('CAT_META cobre TODAS as 43 categorias com emoji e label', () => {
+  for (const c of CATEGORIES) {
+    assert.ok(CAT_META[c.slug] && CAT_META[c.slug].emoji && CAT_META[c.slug].label, `CAT_META[${c.slug}] incompleto`);
   }
+  assert.strictEqual(Object.keys(CAT_META).length, 43);
 });
 
 // ---- buildTxnFooter (contextual, só comando que funciona) ----

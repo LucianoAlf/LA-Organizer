@@ -1,44 +1,42 @@
-// Mapeamento de categoria por palavra-chave + normalizer de aliases (PRD §5.3). Puro, sem I/O.
+// Mapeamento de categoria por palavra-chave (type-aware) + normalizer de aliases.
+// Keywords e categorias vêm do módulo único categories.data.js. Puro, sem I/O.
+const { CATEGORIES, fallbackSlug } = require('./categories.data');
 
-const CATEGORY_KEYWORDS = [
-  ['salario',    ['salario', 'salário', 'pagamento la']],
-  ['comissao',   ['comissao', 'comissão', 'venda loja']],
-  ['extra',      ['freelance', 'extra', 'bico', 'renda extra']],
-  ['moradia',    ['aluguel', 'condominio', 'condomínio', 'luz', 'agua', 'água', 'internet', 'gas', 'gás', 'iptu']],
-  ['alimentacao',['ifood', 'mercado', 'almoco', 'almoço', 'lanche', 'restaurante', 'padaria', 'cafe', 'café']],
-  ['transporte', ['uber', 'gasolina', 'onibus', 'ônibus', 'estacionamento', 'manutencao carro', 'manutenção carro']],
-  ['saude',      ['farmacia', 'farmácia', 'remedio', 'remédio', 'medico', 'médico', 'dentista', 'plano saude', 'plano saúde', 'consulta']],
-  ['educacao',   ['curso', 'livro', 'material', 'escola', 'faculdade']],
-  ['lazer',      ['cinema', 'bar', 'cerveja', 'streaming', 'netflix', 'jogo', 'viagem']],
-];
+// Categorias genéricas: só casam se NENHUMA específica casar (ex: "Compras" tem
+// keyword "loja"/"compra", greedy — não pode roubar "supermercado"→mercado).
+const GENERIC_SLUGS = new Set(['compras']);
 
-function mapCategory(text) {
+// mapCategory(text, type): casa keyword DENTRO do tipo (income/expense). Sem type,
+// considera todas. 2 passadas: específicas primeiro, genéricas depois. Fallback por
+// tipo (outros / outras_receitas).
+function mapCategory(text, type) {
   const t = String(text || '').toLowerCase();
-  for (const [cat, words] of CATEGORY_KEYWORDS) {
-    if (words.some((w) => t.includes(w))) return cat;
+  const inType = (c) => !type || c.type === type;
+  for (const c of CATEGORIES) {
+    if (!inType(c) || GENERIC_SLUGS.has(c.slug)) continue;
+    if (c.keywords.some((w) => t.includes(w))) return c.slug;
   }
-  return 'outros';
+  for (const c of CATEGORIES) {
+    if (!inType(c) || !GENERIC_SLUGS.has(c.slug)) continue;
+    if (c.keywords.some((w) => t.includes(w))) return c.slug;
+  }
+  return fallbackSlug(type);
 }
 
 function normalizeParams(raw = {}) {
   const out = { ...raw };
   const pick = (...keys) => keys.map((k) => raw[k]).find((v) => v !== undefined);
-
   const amount = pick('amount', 'valor', 'value', 'price');
   if (amount !== undefined) out.amount = Number(amount);
-
   let type = pick('type', 'tipo', 'kind');
   if (raw.gasto || raw.despesa) type = 'expense';
   if (raw.receita || raw.ganho || raw.renda) type = 'income';
   if (type) out.type = type;
-
   const category = pick('category', 'categoria', 'cat');
   if (category) out.category = category;
-
   const description = pick('description', 'desc', 'nota', 'note');
   if (description !== undefined) out.description = description;
-
   return out;
 }
 
-module.exports = { mapCategory, normalizeParams, CATEGORY_KEYWORDS };
+module.exports = { mapCategory, normalizeParams };

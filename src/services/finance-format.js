@@ -58,18 +58,12 @@ function dueReminder(card, inv, days) {
 }
 
 // ---- Transação de carteira/dinheiro (NÃO cartão) — mesma gramática semântica do txnRegistered ----
-const CAT_META = {
-  salario:    { emoji: '💼', label: 'Salário' },
-  comissao:   { emoji: '💰', label: 'Comissão' },
-  extra:      { emoji: '💵', label: 'Extra' },
-  moradia:    { emoji: '🏠', label: 'Moradia' },
-  alimentacao:{ emoji: '🍔', label: 'Alimentação' },
-  transporte: { emoji: '🚗', label: 'Transporte' },
-  saude:      { emoji: '🏥', label: 'Saúde' },
-  educacao:   { emoji: '📚', label: 'Educação' },
-  lazer:      { emoji: '🎮', label: 'Lazer' },
-  outros:     { emoji: '📦', label: 'Outros' },
-};
+// CAT_META: slug → { emoji, label } pra TODAS as 43 categorias (fonte única
+// categories.data.js; era 10 hardcoded).
+const { CATEGORIES: PF_CATEGORIES } = require('../finance/categories.data');
+const CAT_META = Object.fromEntries(
+  PF_CATEGORIES.map((c) => [c.slug, { emoji: c.emoji, label: c.label }])
+);
 
 // Dicas de educação financeira — SÓ comandos que o TOM executa hoje (sem editar/excluir).
 const EDU_TIPS = [
