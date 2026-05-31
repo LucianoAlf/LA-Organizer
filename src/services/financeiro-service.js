@@ -92,6 +92,64 @@ async function insertTransaction(collaboratorId, { type, category, amount, descr
   if (error) throw error;
   return data;
 }
+// Atualiza campos de uma transação. O trigger pf_sync_account_balance reajusta o saldo
+// (reverte OLD, aplica NEW) — inclusive se account_id mudar. NÃO mexe em parcela in-place.
+async function updateTransaction(collaboratorId, id, patch) {
+  const allowed = {};
+  for (const k of ['type', 'category', 'amount', 'description', 'transaction_date', 'account_id']) {
+    if (patch[k] !== undefined) allowed[k] = patch[k];
+  }
+  allowed.updated_at = new Date().toISOString();
+  const { data, error } = await supabase.from('pf_transactions')
+    .update(allowed).eq('id', id).eq('collaborator_id', collaboratorId)
+    .select().single();
+  if (error) throw error;
+  return data;
+}
+
+// Deleta uma transação (trigger reverte saldo). Retorna a linha deletada.
+async function deleteTransaction(collaboratorId, id) {
+  const { data, error } = await supabase.from('pf_transactions')
+    .delete().eq('id', id).eq('collaborator_id', collaboratorId)
+    .select().single();
+  if (error) throw error;
+  return data;
+}
+
+// Deleta todas as parcelas de uma compra de cartão (mesmo purchase_group).
+async function deleteTransactionGroup(collaboratorId, purchaseGroup) {
+  const { data, error } = await supabase.from('pf_transactions')
+    .delete().eq('collaborator_id', collaboratorId).eq('purchase_group', purchaseGroup)
+    .select('id');
+  if (error) throw error;
+  return (data || []).length;
+}
+
+// Transações recentes (janela em horas) pra resolver "essa"/"a do mercado". Mais recente primeiro.
+async function listRecentTransactions(collaboratorId, { hours = 2, limit = 10 } = {}) {
+  const cutoff = new Date(Date.now() - hours * 3600 * 1000).toISOString();
+  const { data, error } = await supabase.from('pf_transactions')
+    .select('id, type, category, amount, description, transaction_date, account_id, card_id, purchase_group, installments_total, created_at')
+    .eq('collaborator_id', collaboratorId)
+    .gte('created_at', cutoff)
+    .order('created_at', { ascending: false }).limit(limit);
+  if (error) throw error;
+  return data || [];
+}
+
+// Consulta de leitura ("últimas", "quanto gastei em X"). Filtra por categoria/tipo opcional.
+async function queryTransactions(collaboratorId, { category, type, limit = 8 } = {}) {
+  let q = supabase.from('pf_transactions')
+    .select('id, type, category, amount, description, transaction_date')
+    .eq('collaborator_id', collaboratorId)
+    .order('transaction_date', { ascending: false }).limit(limit);
+  if (category) q = q.eq('category', category);
+  if (type) q = q.eq('type', type);
+  const { data, error } = await q;
+  if (error) throw error;
+  return data || [];
+}
+
 async function monthCategoryTotal(collaboratorId, category, { excludeId } = {}) {
   const { start, end } = monthBounds();
   const { data, error } = await supabase.from('pf_transactions')
@@ -438,7 +496,9 @@ module.exports = {
   monthBounds,
   createAccount, listAccounts, findAccountByName, ensureDinheiro, resolveSource,
   findPrimaryAccount, setPrimaryAccount,
-  insertTransaction, monthCategoryTotal, querySummary,
+  insertTransaction, updateTransaction, deleteTransaction, deleteTransactionGroup,
+  listRecentTransactions, queryTransactions,
+  monthCategoryTotal, querySummary,
   setBudget, getBudget, queryBudget,
   createBill, findBills, payBill,
   createGoal, findGoal, addToGoal, listGoals,

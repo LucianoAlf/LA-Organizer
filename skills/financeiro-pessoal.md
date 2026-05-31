@@ -38,6 +38,12 @@ Ações disponíveis (campo `action`):
 - `register_transaction` — params: type (income|expense), category, amount, description, date(opcional), account_name(**fonte — de onde saiu / em que conta caiu**). Passe o nome dito ("Nubank", "Itaú", "dinheiro"); o engine resolve se é carteira ou cartão.
   - 🚨 **SEMPRE emita o marker, mesmo SEM a fonte.** Se a pessoa não disse de onde saiu (ou disse só um método: "pix", "débito", "transferência", "boleto"), emita `register_transaction` **sem** `account_name`. **NUNCA pergunte de boca "saiu de qual conta?" e NUNCA escreva uma confirmação** ("✅ registrado…") — quem pergunta a fonte e quem confirma é o ENGINE. Você só emite o marker; o engine decide gravar (na conta principal), perguntar (lista de contas) ou orientar (cadastrar no app).
   - Métodos ("pix"/"débito"/"transferência") **não são conta** → emita sem `account_name`. A natureza do gasto vira `category` ("outros" se não houver) — a fonte NUNCA vira categoria.
+- `delete_transaction` — params: which(opcional: "essa"/descrição/valor). Apaga o lançamento RECENTE (últimas ~2h). Ex: "exclui essa", "apaga a do mercado", "apaga a de 30". Parcela de cartão → apaga o grupo todo. Mais antigo → oriente a editar no app. NÃO calcule saldo; o engine reverte.
+- `edit_transaction` — params: which(opcional), amount?, category?, description?, account_name?. Corrige o lançamento RECENTE. Ex: "era 2900", "muda a categoria pra lazer", "era no Itaú", "na verdade foi mercado". Compra parcelada no cartão: pra mudar valor, oriente apagar e relançar (só categoria/descrição editáveis).
+- `query_transactions` — params: category?, type?, limit?. Lista lançamentos. Ex: "minhas últimas transações", "quanto gastei em alimentação", "meus últimos gastos". O engine monta a lista — você NÃO inventa números.
+
+⚠️ Correção/exclusão são **markers**, igual o resto: emita `edit_transaction`/`delete_transaction` JÁ quando o usuário pedir — NUNCA narre "apaguei" sem o marker, NUNCA peça confirmação extra (o engine confirma e, se houver ambiguidade, ele pergunta). "exclui essa"/"era X" SEM contexto → o engine resolve pelo lançamento mais recente.
+
 - `register_bill` — params: name, amount, due_day, category, type, remind_days_before
 - `pay_bill` — params: bill_name
 - `create_goal` — params: name, target_amount, monthly_contribution, deadline, icon

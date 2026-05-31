@@ -4,7 +4,7 @@ import { Button } from '../../../components/Button';
 import { CustomSelect } from '../../../components/CustomSelect';
 import { DateInput } from '../../../components/DateInput';
 import { Field } from '../../../components/Field';
-import { useAccounts, useCategories, useCreateTransaction, useDeleteTransaction } from '../../../hooks/useFinanceiro';
+import { useAccounts, useCategories, useCreateTransaction, useDeleteTransaction, useUpdateTransaction } from '../../../hooks/useFinanceiro';
 import type { PfCategory, PfTransaction, PfTxType } from '../../../lib/financeiro';
 
 function todayYmd() {
@@ -14,7 +14,7 @@ function todayYmd() {
 export interface TransactionSheetProps {
   open: boolean;
   onClose: () => void;
-  initial?: PfTransaction;     // se presente, modo edição (apenas delete; sem update ainda — v1.1)
+  initial?: PfTransaction;     // se presente, modo edição (editar campos + apagar)
 }
 
 export function TransactionSheet({ open, onClose, initial }: TransactionSheetProps) {
@@ -22,6 +22,8 @@ export function TransactionSheet({ open, onClose, initial }: TransactionSheetPro
   const accountsQ = useAccounts();
   const createMut = useCreateTransaction();
   const deleteMut = useDeleteTransaction();
+  const updateMut = useUpdateTransaction();
+  const isCardTxn = !!initial?.card_id; // compra de cartão: valor/parcelas não editáveis aqui
   const catsQ = useCategories();
   const allCats = useMemo(() => catsQ.data ?? [], [catsQ.data]);
   const expenseCats = useMemo(() => allCats.filter((c) => c.type === 'expense').map((c) => ({ value: c.slug, label: `${c.emoji}  ${c.label}` })), [allCats]);
@@ -76,6 +78,25 @@ export function TransactionSheet({ open, onClose, initial }: TransactionSheetPro
     }
   }
 
+  async function save() {
+    if (!initial) return;
+    setError(null);
+    const amount = Number(amountText.replace(',', '.'));
+    if (!isFinite(amount) || amount <= 0) { setError('Informe um valor maior que zero.'); return; }
+    try {
+      await updateMut.mutateAsync({
+        id: initial.id,
+        patch: {
+          type, category, amount: isCardTxn ? undefined : amount,
+          description: description.trim() || null,
+          transaction_date: date,
+          account_id: isCardTxn ? undefined : (accountId || null),
+        },
+      });
+      onClose();
+    } catch (e) { setError((e as Error).message); }
+  }
+
   async function remove() {
     if (!initial) return;
     if (!confirm(`Apagar transação "${initial.description ?? initial.category}"?`)) return;
@@ -92,7 +113,7 @@ export function TransactionSheet({ open, onClose, initial }: TransactionSheetPro
     { value: '', label: '— sem carteira —' },
     ...(accountsQ.data ?? []).map((a) => ({ value: a.id, label: `${a.icon ?? '🏦'}  ${a.name}` })),
   ];
-  const submitting = createMut.isPending || deleteMut.isPending;
+  const submitting = createMut.isPending || deleteMut.isPending || updateMut.isPending;
 
   return (
     <AdaptiveSheet open={open} onClose={onClose} title={isEdit ? 'Transação' : 'Nova transação'} size="sm">
@@ -130,10 +151,14 @@ export function TransactionSheet({ open, onClose, initial }: TransactionSheetPro
               value={amountText}
               onChange={(e) => setAmountText(e.target.value)}
               placeholder="0,00"
-              className="w-full bg-transparent border-0 border-b border-border focus:border-tom outline-none text-[28px] font-black tabular-nums py-1 text-fg placeholder:text-fg-muted/40"
+              disabled={isCardTxn}
+              className="w-full bg-transparent border-0 border-b border-border focus:border-tom outline-none text-[28px] font-black tabular-nums py-1 text-fg placeholder:text-fg-muted/40 disabled:opacity-50"
             />
           </div>
         </Field>
+        {isCardTxn && (
+          <p className="text-body-sm text-fg-muted">Compra de cartão: pra mudar valor/parcelas, apague e relance. Aqui dá pra ajustar categoria, descrição e data.</p>
+        )}
 
         <Field label="Categoria">
           <CustomSelect value={category} options={categoryOptions} onChange={(v) => setCategory(v as PfCategory)} />
@@ -173,6 +198,11 @@ export function TransactionSheet({ open, onClose, initial }: TransactionSheetPro
             {!isEdit && (
               <Button variant="primary" onClick={submit} disabled={submitting || !amountText.trim()}>
                 {submitting ? 'Salvando…' : 'Registrar'}
+              </Button>
+            )}
+            {isEdit && (
+              <Button variant="primary" onClick={save} disabled={submitting || !amountText.trim()}>
+                {submitting ? 'Salvando…' : 'Salvar'}
               </Button>
             )}
           </div>

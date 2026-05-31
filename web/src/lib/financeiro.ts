@@ -16,6 +16,7 @@ export interface PfTransaction {
   id: string; type: PfTxType; category: PfCategory; amount: number;
   description: string | null; transaction_date: string; account_id: string | null;
   card_id?: string | null; // preenchido = compra no cartão (fora do caixa; vive na fatura)
+  purchase_group?: string | null;
 }
 export interface PfBill {
   id: string; name: string; amount: number; due_day: number; category: PfCategory;
@@ -76,7 +77,7 @@ export async function setPrimaryAccount(collaboratorId: string, id: string) {
 export async function listTransactions(collaboratorId: string, opts?: { monthYear?: string; category?: PfCategory; type?: PfTxType; limit?: number }) {
   const { start, end } = opts?.monthYear ? monthBoundsFromYYYYMM(opts.monthYear) : monthBounds();
   let q = supabase.from('pf_transactions')
-    .select('id, type, category, amount, description, transaction_date, account_id, card_id')
+    .select('id, type, category, amount, description, transaction_date, account_id, card_id, purchase_group')
     .eq('collaborator_id', collaboratorId)
     .gte('transaction_date', start).lt('transaction_date', end)
     .order('transaction_date', { ascending: false });
@@ -101,6 +102,17 @@ export async function deleteTransaction(collaboratorId: string, id: string) {
   const { error } = await supabase.from('pf_transactions').delete()
     .eq('id', id).eq('collaborator_id', collaboratorId);
   if (error) throw error;
+}
+export async function updateTransaction(collaboratorId: string, id: string, patch: { type?: PfTxType; category?: PfCategory; amount?: number; description?: string | null; transaction_date?: string; account_id?: string | null }) {
+  const allowed: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  for (const k of ['type', 'category', 'amount', 'description', 'transaction_date', 'account_id'] as const) {
+    if (patch[k] !== undefined) allowed[k] = patch[k];
+  }
+  const { data, error } = await supabase.from('pf_transactions')
+    .update(allowed).eq('id', id).eq('collaborator_id', collaboratorId)
+    .select().single();
+  if (error) throw error;
+  return data;
 }
 // Range multi-mês — usado pela linha de 6 meses do Dashboard.
 export async function listTransactionsRange(collaboratorId: string, start: string, end: string) {

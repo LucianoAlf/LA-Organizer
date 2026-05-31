@@ -5890,6 +5890,7 @@ const FINANCE_ACTIONS = [
   'simulate_interest',
   // cartão de crédito + transferência
   'create_card', 'card_purchase', 'query_invoice', 'pay_invoice', 'transfer',
+  'edit_transaction', 'delete_transaction', 'query_transactions',
 ];
 const MONTH_TAXA = 0.0083; // ~10,5%/ano (referencia; Fase B troca pela Selic viva)
 
@@ -5943,7 +5944,8 @@ async function recordCardPurchase(cid, card, { amount, description, category, in
 async function writeCashTransaction(cid, { type, category, amount, description, date, account, assumedSource }) {
   const financeFmt = require('./services/finance-format');
   const prev = type === 'expense' ? await financeService.monthCategoryTotal(cid, category) : 0;
-  await financeService.insertTransaction(cid, { type, category, amount, description, transaction_date: date, account_id: account.id });
+  const _txn = await financeService.insertTransaction(cid, { type, category, amount, description, transaction_date: date, account_id: account.id });
+  console.log(`[Finance] txn ${_txn && _txn.id ? _txn.id.slice(0,8) : '?'} registrada cid=${String(cid).slice(0,8)}`);
 
   let budgetBlock = null;
   if (type === 'expense') {
@@ -5974,6 +5976,12 @@ async function handleFinanceAction(collab, action, params) {
   const cid = collab.id;
   const p = normalizeParams(params || {});
   const financeFmt = require('./services/finance-format');
+  // Normaliza categoria vinda do LLM → chave canônica do CAT_META, ou null se não casar.
+  const _normCat = (c) => {
+    if (!c) return null;
+    const k = String(c).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+    return financeFmt.CAT_META[k] ? k : null;
+  };
 
   switch (action) {
     case 'register_transaction': {
@@ -6039,6 +6047,54 @@ async function handleFinanceAction(collab, action, params) {
 
       // 3) 0 contas cadastradas → NÃO grava → coaching pro app (TOM Coach P6).
       return `Pra eu manter seu saldo certinho, preciso saber de onde saiu/entrou 💡\n\nCadastra suas contas e cartões no app primeiro — *Finanças → Carteiras / Cartões*. Aí é só me mandar "gastei 45" que eu já sei de onde tirar. (Pra gasto em espécie, é só dizer "em dinheiro".)`;
+    }
+    case 'delete_transaction': {
+      const { resolveTxnTarget } = require('./finance/txn-target');
+      const recent = await financeService.listRecentTransactions(cid, { hours: 2, limit: 10 });
+      if (!recent.length) return 'Não achei lançamento recente pra apagar — pra coisas mais antigas, edita lá no app 🙂';
+      const r = resolveTxnTarget(String(params.which || params.ref || ''), recent);
+      if (r.kind === 'none') return 'Não achei qual lançamento. Diz o valor ou o nome (ex: "a do mercado").';
+      if (r.kind === 'many') {
+        await pendingIntents.openIntent(cid, 'finance_source', {
+          form: 'txn_pick', op: 'delete',
+          candidates: r.candidates.map((c) => ({ kind: 'txn', id: c.id, name: c.description || c.category, purchase_group: c.purchase_group })),
+        }, 'Qual lançamento?');
+        return financeFmt.txnList('Qual deles?', r.candidates);
+      }
+      const txn = r.txn;
+      let n = 1;
+      if (txn.card_id && txn.purchase_group) n = await financeService.deleteTransactionGroup(cid, txn.purchase_group);
+      else await financeService.deleteTransaction(cid, txn.id);
+      return `🗑️ Apaguei *${txn.description || txn.category}* (${financeFmt.money(Number(txn.amount))})${n > 1 ? ` — ${n} parcelas` : ''}. Saldo reajustado.`;
+    }
+    case 'edit_transaction': {
+      const { resolveTxnTarget } = require('./finance/txn-target');
+      const recent = await financeService.listRecentTransactions(cid, { hours: 2, limit: 10 });
+      if (!recent.length) return 'Não achei lançamento recente pra corrigir — pra coisas mais antigas, edita no app 🙂';
+      const r = resolveTxnTarget(String(params.which || params.ref || ''), recent);
+      if (r.kind !== 'one') return 'Qual lançamento? Diz o valor ou o nome (ex: "a do mercado").';
+      const txn = r.txn;
+      if (txn.card_id && txn.purchase_group && Number(txn.installments_total || 1) > 1 && params.amount !== undefined) {
+        return 'Essa é uma compra parcelada no cartão — pra mudar o valor, melhor apagar ("exclui essa") e relançar. Posso ajustar só categoria/descrição.';
+      }
+      const patch = {};
+      if (params.amount !== undefined) patch.amount = Number(params.amount);
+      if (params.category) { const nc = _normCat(params.category); if (nc) patch.category = nc; }
+      if (params.description !== undefined) patch.description = params.description;
+      if (params.account_name) {
+        const src = await financeService.resolveSource(cid, params.account_name);
+        if (src.kind === 'account') patch.account_id = src.account.id;
+      }
+      if (!Object.keys(patch).length) return 'O que você quer corrigir? (valor, categoria, descrição ou conta)';
+      const updated = await financeService.updateTransaction(cid, txn.id, patch);
+      const meta = financeFmt.CAT_META[updated.category] || { label: updated.category };
+      return `✏️ Corrigido: *${updated.description || meta.label}* — ${financeFmt.money(Number(updated.amount))} · ${meta.label}. Saldo reajustado.`;
+    }
+    case 'query_transactions': {
+      const cat = _normCat(params.category);
+      const rows = await financeService.queryTransactions(cid, { category: cat, type: params.type || null, limit: params.limit || 8 });
+      if (!rows.length) return cat ? `Não achei gastos em ${cat} nesse período.` : 'Não achei lançamentos.';
+      return financeFmt.txnList(cat ? `Seus últimos de ${cat}:` : 'Seus últimos lançamentos:', rows);
     }
     case 'register_bill': {
       const b = await financeService.createBill(cid, {
@@ -6288,6 +6344,21 @@ async function processMessage(phone, text, raw = {}) {
     const { matchSourceReply } = require('./finance/source-match');
     const finOpen = _openIntents.find((i) => i.kind === 'finance_source' && withinConfirmWindow(i.asked_at, 15));
     if (finOpen) {
+      if (finOpen.payload && finOpen.payload.form === 'txn_pick') {
+        const pick = matchSourceReply(String(text || ''), { form: 'list', candidates: finOpen.payload.candidates });
+        if (pick) {
+          let reply;
+          if (finOpen.payload.op === 'delete') {
+            if (pick.purchase_group) { const n = await financeService.deleteTransactionGroup(collab.id, pick.purchase_group); reply = `🗑️ Apaguei *${pick.name}* — ${n} parcelas. Saldo reajustado.`; }
+            else { await financeService.deleteTransaction(collab.id, pick.id); reply = `🗑️ Apaguei *${pick.name}*. Saldo reajustado.`; }
+          }
+          if (reply) {
+            try { await pendingIntents.resolveIntent(finOpen.id, 'confirmed', 'txn_pick'); await whatsapp.sendMessage(phone, reply); await logConversation(collab.id, 'outbound', reply); } catch (e) { console.warn('[TxnPick] post err:', e.message); }
+            console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (txn_pick_resolved)`);
+            return;
+          }
+        }
+      }
       const hit = matchSourceReply(String(text || ''), finOpen.payload);
       if (hit) {
         const txn = finOpen.payload.txn || {};

@@ -30,3 +30,11 @@ test('sem candidatos → none', () => {
 test('texto sem ref → assume o recente', () => {
   assert.deepStrictEqual(resolveTxnTarget('muda a categoria pra lazer', cands), { kind: 'one', txn: cands[0] });
 });
+test('artigo simples casa nome ("exclui o uber")', () => {
+  assert.deepStrictEqual(resolveTxnTarget('exclui o uber', cands), { kind: 'one', txn: cands[0] });
+});
+test('candidato sem descrição não quebra (description null)', () => {
+  const c2 = [{ id: 'x', amount: 12, category: 'outros', description: null, transaction_date: '2026-05-31' }];
+  // "essa" → recente; não estoura no byName apesar de description null
+  assert.deepStrictEqual(resolveTxnTarget('essa', c2), { kind: 'one', txn: c2[0] });
+});

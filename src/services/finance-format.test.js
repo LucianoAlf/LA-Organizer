@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { CAT_META, buildTxnFooter, buildTxnConfirmation, buildSourceQuestion, SEP } = require('./finance-format');
+const { CAT_META, buildTxnFooter, buildTxnConfirmation, buildSourceQuestion, SEP, txnList } = require('./finance-format');
 
 // ---- CAT_META (derivado da fonte única categories.data.js) ----
 const { CATEGORIES } = require('../finance/categories.data');
@@ -120,4 +120,16 @@ test('sem assumedSource: nada de "conta principal"', () => {
     account:{name:'Itaú', icon:'🧡'}, newBalance:-30, budgetBlock:null, footer:'_x_',
   });
   assert.doesNotMatch(card, /conta principal/i);
+});
+
+// ---- txnList ----
+test('txnList: título + linhas numeradas com valor e descrição', () => {
+  const s = txnList('Seus últimos:', [
+    { type: 'expense', amount: 30, category: 'transporte', description: 'Uber', transaction_date: '2026-05-31' },
+    { type: 'expense', amount: 80, category: 'alimentacao', description: null, transaction_date: '2026-05-30' },
+  ]);
+  assert.match(s, /Seus últimos:/);
+  assert.match(s, /Uber/);
+  assert.match(s, /R\$ 30,00/);
+  assert.match(s, /Alimentação/); // usa o label do CAT_META quando description é null
 });

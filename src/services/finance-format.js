@@ -121,4 +121,16 @@ function buildTxnConfirmation({ type, description, amount, categoryLabel, accoun
   return out.join('\n');
 }
 
-module.exports = { money, bar, mesDaComp, txnRegistered, invoiceSummary, limitAlert, dueReminder, SEP, CAT_META, buildTxnFooter, buildTxnConfirmation, buildSourceQuestion };
+// Lista curta de transações (consulta / desambiguação). rows: {type, amount, category, description, transaction_date}.
+const NUM_EMOJI = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟'];
+function txnList(title, rows) {
+  const lines = (rows || []).slice(0, 10).map((r, i) => {
+    const meta = CAT_META[r.category] || { emoji: '📦', label: r.category };
+    const desc = r.description || meta.label;
+    const sign = r.type === 'income' ? '+' : '−';
+    return `${NUM_EMOJI[i] || (i + 1) + '.'} ${meta.emoji} ${desc} — *${sign}${money(Number(r.amount))}* _(${r.transaction_date})_`;
+  });
+  return `${title}\n${SEP}\n${lines.join('\n')}`;
+}
+
+module.exports = { money, bar, mesDaComp, txnRegistered, invoiceSummary, limitAlert, dueReminder, SEP, CAT_META, buildTxnFooter, buildTxnConfirmation, buildSourceQuestion, txnList };

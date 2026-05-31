@@ -120,6 +120,7 @@ function useFinMutation<T, V>(fn: (cid: string, v: V) => Promise<T>) {
 
 export const useCreateTransaction = () => useFinMutation(fin.createTransaction);
 export const useDeleteTransaction = () => useFinMutation((cid, id: string) => fin.deleteTransaction(cid, id));
+export const useUpdateTransaction = () => useFinMutation((cid, args: { id: string; patch: Parameters<typeof fin.updateTransaction>[2] }) => fin.updateTransaction(cid, args.id, args.patch));
 export const useCreateBill        = () => useFinMutation(fin.createBill);
 export const usePayBill           = () => useFinMutation((cid, bill: PfBill) => fin.payBill(cid, bill));
 export const useCreateGoal        = () => useFinMutation(fin.createGoal);
