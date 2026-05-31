@@ -14,6 +14,7 @@
 const fs = require('fs');
 const path = require('path');
 const supabase = require('../supabase/client');
+const { isQuietNow } = require('../services/quiet-hours');
 
 const ERROR_LOG_PATH = '/opt/LA-Organizer/logs/tom-error.log';
 const WARN_THRESHOLDS = {
@@ -40,6 +41,18 @@ function todayBrt() {
 
 function isoHoursAgo(h) {
   return new Date(Date.now() - h * 3600_000).toISOString();
+}
+
+// {hour, minute, dow} em America/Sao_Paulo — formato que isQuietNow espera (dow: 0=domingo).
+function nowBrtParts() {
+  const p = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', weekday: 'short', hour12: false,
+  }).formatToParts(new Date());
+  const hour = parseInt(p.find(x => x.type === 'hour').value, 10) % 24;
+  const minute = parseInt(p.find(x => x.type === 'minute').value, 10);
+  const wd = p.find(x => x.type === 'weekday').value;
+  const dow = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[wd] ?? 0;
+  return { hour, minute, dow };
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -128,7 +141,7 @@ async function checkOverdueTasks() {
   const since48h = isoHoursAgo(48);
   const { data: overdue, error } = await supabase
     .from('tasks')
-    .select('id')
+    .select('id, assigned_to')
     .gte('due_date', oldest)
     .lt('due_date', today)
     .not('status', 'in', '(done,cancelled)');
@@ -145,7 +158,26 @@ async function checkOverdueTasks() {
   const notifiedIds = new Set((notified || []).map(n => n.reference_id));
   const sem_cobranca = overdue.filter(t => !notifiedIds.has(t.id));
   if (sem_cobranca.length === 0) return { status: 'ok', detail: `${overdue.length} tasks vencidas (1-5d), todas cobradas nas últimas 48h` };
-  return { status: 'warning', detail: `${sem_cobranca.length}/${overdue.length} tasks vencidas (1-5d) sem cobrança nas últimas 48h` };
+
+  // Quiet-aware (31/05): NÃO conta como "sem cobrança" a task cujo DONO está em
+  // silêncio AGORA (janela horária ou dia de silêncio) — a cobrança foi adiada
+  // corretamente, não perdida. Mata o falso positivo crônico (domingo, manhãs
+  // com quiet 00:00–11h). O health-check roda 07:00, quando muita gente tá em quiet.
+  const now = nowBrtParts();
+  const quietByOwner = new Map();
+  for (const ownerId of new Set(sem_cobranca.map(t => t.assigned_to).filter(Boolean))) {
+    try {
+      const q = await isQuietNow(ownerId, now, 'work');
+      quietByOwner.set(ownerId, !!q.quiet);
+    } catch { quietByOwner.set(ownerId, false); }
+  }
+  const real = sem_cobranca.filter(t => !quietByOwner.get(t.assigned_to));
+  const adiadas = sem_cobranca.length - real.length;
+  if (real.length === 0) {
+    return { status: 'ok', detail: `${overdue.length} tasks vencidas (1-5d); ${adiadas} em silêncio (cobrança adiada), 0 realmente sem cobrança` };
+  }
+  const suffix = adiadas > 0 ? ` (+${adiadas} em silêncio, adiadas)` : '';
+  return { status: 'warning', detail: `${real.length}/${overdue.length} tasks vencidas (1-5d) sem cobrança nas últimas 48h${suffix}` };
 }
 
 // Sprint 31.6 (D1) — subtrai N dias de um ymd 'YYYY-MM-DD' (timezone-safe via UTC).
