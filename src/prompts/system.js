@@ -818,10 +818,13 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
     .filter((m) => m && m.direction !== 'outbound')
     .map((m) => (m.content || '').toLowerCase())
     .join(' ');
-  // Sinal estável: o TOM acabou de resumir um lançamento e perguntar "grava?"
-  // (emoji varia 🧾/💰; não dá pra ancorar nele). Ou a conversa recente tem um
-  // comprovante analisado (texto da imagem traz "COMPROVANTE FINANCEIRO").
-  const financeProposalOpen = /grava\?/i.test(recentOutbound)
+  // O TOM acabou de fazer uma pergunta de follow-up financeira (resumo "grava?",
+  // "quanto foi?", "qual o valor?", pergunta de fonte) e o user responde curto
+  // ("100"/"grava"/"no nubank") — esse turno NÃO casa o FINANCE_RE, então sem
+  // recarregar a skill o TOM perde o contexto e regride/fabrica. Mantém a skill
+  // enquanto há um follow-up financeiro aberto. (Emoji varia 🧾/💰 — não ancorar.)
+  const financeFollowupRe = /grava\?|quanto\s+foi|qual\s+(?:foi\s+)?o?\s*valor|de\s+qual\s+conta|saiu\s+de\s+qual|caiu\s+em\s+qual|cart[ãa]o\s+ou\s+conta|em\s+qual\s+(?:dos\s+seus|cart)/i;
+  const financeProposalOpen = financeFollowupRe.test(recentOutbound)
     || /comprovante financeiro/i.test(recentInbound);
   const shortReply = String(lastUserMessage || '').trim().length < 40;
   if (FINANCE_RE.test(String(lastUserMessage || '')) || (financeProposalOpen && shortReply)) {
