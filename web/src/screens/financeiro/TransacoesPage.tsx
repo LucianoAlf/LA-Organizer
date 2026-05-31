@@ -2,22 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { CustomSelect } from '../../components/CustomSelect';
 import { Fab } from '../../components/Fab';
-import { useFinanceiroAuth, useTransactions } from '../../hooks/useFinanceiro';
+import { useCategories, useCategoryLookup, useFinanceiroAuth, useTransactions } from '../../hooks/useFinanceiro';
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
 import type { PfCategory, PfTransaction, PfTxType } from '../../lib/financeiro';
 import { TransactionSheet } from './components/TransactionSheet';
 
 const PT_MONTHS = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
-const CAT_EMOJI: Record<PfCategory, string> = {
-  salario:'💼', comissao:'💰', extra:'💵',
-  moradia:'🏠', alimentacao:'🍔', transporte:'🚗',
-  saude:'🏥', educacao:'📚', lazer:'🎮', outros:'📦',
-};
-const CAT_LABEL: Record<PfCategory, string> = {
-  salario:'Salário', comissao:'Comissão', extra:'Extra',
-  moradia:'Moradia', alimentacao:'Alimentação', transporte:'Transporte',
-  saude:'Saúde', educacao:'Educação', lazer:'Lazer', outros:'Outros',
-};
 
 function brl(n: number) {
   return n.toLocaleString('pt-BR', { maximumFractionDigits: 0 });
@@ -43,6 +33,8 @@ const TYPE_FILTERS: { value: string; label: string }[] = [
 export function TransacoesPage() {
   const cid = useFinanceiroAuth();
   useRealtimeFinance(['pf_transactions'], cid);
+  const catsQ = useCategories();
+  const catLookup = useCategoryLookup();
 
   const months = useMemo(() => recentMonths(6), []);
   const [monthYear, setMonthYear] = useState<string>(months[0].value);
@@ -82,7 +74,7 @@ export function TransacoesPage() {
   const monthOptions = months;
   const categoryOptions: { value: string; label: string }[] = [
     { value: '', label: 'Todas as categorias' },
-    ...Object.entries(CAT_LABEL).map(([v, l]) => ({ value: v, label: `${CAT_EMOJI[v as PfCategory]}  ${l}` })),
+    ...(catsQ.data ?? []).map((c) => ({ value: c.slug, label: `${c.emoji}  ${c.label}` })),
   ];
 
   return (
@@ -143,11 +135,11 @@ export function TransacoesPage() {
                   className="w-full text-left px-md py-2.5 flex items-center justify-between gap-3 hover:bg-bg-elevated focus-ring transition-colors"
                 >
                   <div className="flex items-center gap-3 min-w-0">
-                    <span aria-hidden className="text-base shrink-0">{CAT_EMOJI[t.category]}</span>
+                    <span aria-hidden className="text-base shrink-0">{catLookup.emoji(t.category)}</span>
                     <div className="min-w-0">
-                      <div className="text-body-md text-fg truncate">{t.description || CAT_LABEL[t.category]}</div>
+                      <div className="text-body-md text-fg truncate">{t.description || catLookup.label(t.category)}</div>
                       <div className="text-body-sm text-fg-muted tabular-nums">
-                        {t.transaction_date} · {CAT_LABEL[t.category]}
+                        {t.transaction_date} · {catLookup.label(t.category)}
                       </div>
                     </div>
                   </div>

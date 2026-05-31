@@ -5,10 +5,8 @@
 
 import { supabase } from './supabase';
 
-export type PfCategory =
-  | 'salario' | 'comissao' | 'extra'
-  | 'moradia' | 'alimentacao' | 'transporte'
-  | 'saude' | 'educacao' | 'lazer' | 'outros';
+// Categoria = slug data-driven (tabela pf_categories). Era union fechada de 10.
+export type PfCategory = string;
 export type PfTxType = 'income' | 'expense';
 export type PfAccountType = 'checking' | 'savings' | 'wallet' | 'investment';
 export type PfBillType = 'expense' | 'income';

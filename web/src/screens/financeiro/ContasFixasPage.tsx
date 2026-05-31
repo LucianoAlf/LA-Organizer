@@ -1,17 +1,11 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Fab } from '../../components/Fab';
-import { useBills, useFinanceiroAuth, usePayBill } from '../../hooks/useFinanceiro';
+import { useBills, useCategoryLookup, useFinanceiroAuth, usePayBill } from '../../hooks/useFinanceiro';
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
 import { deriveBillStatus } from '../../lib/financeiro';
-import type { BillStatus, PfBill, PfCategory } from '../../lib/financeiro';
+import type { BillStatus, PfBill } from '../../lib/financeiro';
 import { BillSheet } from './components/BillSheet';
-
-const CAT_EMOJI: Record<PfCategory, string> = {
-  salario:'💼', comissao:'💰', extra:'💵',
-  moradia:'🏠', alimentacao:'🍔', transporte:'🚗',
-  saude:'🏥', educacao:'📚', lazer:'🎮', outros:'📦',
-};
 
 function brl(n: number) {
   return n.toLocaleString('pt-BR', { maximumFractionDigits: 0 });
@@ -27,10 +21,11 @@ function badgeFor(status: BillStatus): { label: string; cls: string } {
 function BillRow({ bill, onPay }: { bill: PfBill; onPay: (b: PfBill) => void }) {
   const status = deriveBillStatus(bill);
   const b = badgeFor(status);
+  const catLookup = useCategoryLookup();
   return (
     <li className="px-md py-2.5 flex items-center justify-between gap-3">
       <div className="flex items-center gap-3 min-w-0">
-        <span aria-hidden className="text-base shrink-0">{CAT_EMOJI[bill.category]}</span>
+        <span aria-hidden className="text-base shrink-0">{catLookup.emoji(bill.category)}</span>
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-body-md text-fg">{bill.name}</span>

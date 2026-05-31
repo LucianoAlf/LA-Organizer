@@ -8,39 +8,21 @@ import {
   AreaChart, Area, XAxis, Tooltip,
 } from 'recharts';
 import type { PfCategory } from '../../../lib/financeiro';
-
-// Paleta sólida e harmoniosa (não arco-íris). Hex direto pra atravessar o Recharts.
-const CATEGORY_COLOR: Record<PfCategory, string> = {
-  salario:     '#10b981', // emerald — só aparece se misturar income
-  comissao:    '#10b981',
-  extra:       '#10b981',
-  alimentacao: '#f59e0b', // amber
-  moradia:     '#64748b', // slate (sólido)
-  transporte:  '#0ea5e9', // sky
-  saude:       '#f43f5e', // rose
-  educacao:    '#8b5cf6', // violet
-  lazer:       '#06b6d4', // cyan
-  outros:      '#a8a29e', // stone
-};
-const CATEGORY_LABEL: Record<PfCategory, string> = {
-  salario:'Salário', comissao:'Comissão', extra:'Extra',
-  moradia:'Moradia', alimentacao:'Alimentação', transporte:'Transporte',
-  saude:'Saúde', educacao:'Educação', lazer:'Lazer', outros:'Outros',
-};
+import { useCategoryLookup } from '../../../hooks/useFinanceiro';
 
 function brl(n: number) {
   return n.toLocaleString('pt-BR', { maximumFractionDigits: 0 });
 }
 
 // Tooltip discreta usando tokens do DS.
-function ChartTooltip({ active, payload }: { active?: boolean; payload?: { name?: string; value?: number; payload?: { category?: PfCategory; mes?: string; saldo?: number; receitas?: number; despesas?: number } }[] }) {
+function ChartTooltip({ active, payload }: { active?: boolean; payload?: { name?: string; value?: number; payload?: { category?: PfCategory; label?: string; mes?: string; saldo?: number; receitas?: number; despesas?: number } }[] }) {
   if (!active || !payload || payload.length === 0) return null;
   const p = payload[0];
   const data = p.payload;
   if (data?.category != null) {
     return (
       <div className="rounded-md border border-border bg-bg-surface shadow-card px-2.5 py-1.5 text-body-sm">
-        <span className="text-fg">{CATEGORY_LABEL[data.category]}</span>
+        <span className="text-fg">{data.label ?? data.category}</span>
         <span className="ml-2 tabular-nums font-semibold text-fg">R$ {brl(p.value ?? 0)}</span>
       </div>
     );
@@ -65,7 +47,10 @@ function ChartTooltip({ active, payload }: { active?: boolean; payload?: { name?
 }
 
 export function PieByCategory({ data }: { data: { category: PfCategory; value: number }[] }) {
+  const catLookup = useCategoryLookup();
   const total = data.reduce((s, d) => s + d.value, 0);
+  // enriquece com label/cor da tabela (a tooltip lê data.label do payload).
+  const rows = data.map((d) => ({ ...d, label: catLookup.label(d.category), color: catLookup.color(d.category) }));
   return (
     <div className="flex items-center gap-3 md:gap-4">
       {/* Pizza à esquerda — tamanho fixo, com total no centro do donut */}
@@ -73,7 +58,7 @@ export function PieByCategory({ data }: { data: { category: PfCategory; value: n
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
             <Pie
-              data={data}
+              data={rows}
               dataKey="value"
               nameKey="category"
               innerRadius={32}
@@ -82,8 +67,8 @@ export function PieByCategory({ data }: { data: { category: PfCategory; value: n
               stroke="var(--color-bg-surface, transparent)"
               strokeWidth={1.5}
             >
-              {data.map((d, i) => (
-                <Cell key={i} fill={CATEGORY_COLOR[d.category]} />
+              {rows.map((d, i) => (
+                <Cell key={i} fill={d.color} />
               ))}
             </Pie>
             <Tooltip content={<ChartTooltip />} />
@@ -97,14 +82,14 @@ export function PieByCategory({ data }: { data: { category: PfCategory; value: n
 
       {/* Legenda à direita — bolinha · categoria · valor (a proporção já é a fatia da pizza) */}
       <ul className="flex-1 min-w-0 flex flex-col gap-1.5">
-        {data.map((d) => (
+        {rows.map((d) => (
           <li key={d.category} className="flex items-center gap-2 text-xs">
             <span
               className="w-2 h-2 rounded-full shrink-0"
-              style={{ backgroundColor: CATEGORY_COLOR[d.category] }}
+              style={{ backgroundColor: d.color }}
               aria-hidden
             />
-            <span className="text-fg truncate flex-1 min-w-0">{CATEGORY_LABEL[d.category]}</span>
+            <span className="text-fg truncate flex-1 min-w-0">{d.label}</span>
             <span className="text-fg font-semibold tabular-nums shrink-0 w-[64px] text-right">R$ {brl(d.value)}</span>
           </li>
         ))}

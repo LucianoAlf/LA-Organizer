@@ -2,7 +2,7 @@ import { lazy, Suspense, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { StatCard } from '../../components/StatCard';
 import { Fab } from '../../components/Fab';
-import { useAccounts, useBudgets, useFinanceiroAuth, useSummary, useTransactions, useTransactionsRange } from '../../hooks/useFinanceiro';
+import { useAccounts, useBudgets, useCategoryLookup, useFinanceiroAuth, useSummary, useTransactions, useTransactionsRange } from '../../hooks/useFinanceiro';
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
 import type { PfCategory, PfTransaction } from '../../lib/financeiro';
 import { monthBounds } from '../../lib/financeiro';
@@ -15,11 +15,6 @@ const PieByCategory   = lazy(() => import('./components/FinanceCharts').then(m =
 const MonthlyBalance  = lazy(() => import('./components/FinanceCharts').then(m => ({ default: m.MonthlyBalance })));
 
 const PT_MONTHS = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
-const CAT_EMOJI: Record<PfCategory, string> = {
-  salario: '💼', comissao: '💰', extra: '💵',
-  moradia: '🏠', alimentacao: '🍔', transporte: '🚗',
-  saude: '🏥', educacao: '📚', lazer: '🎮', outros: '📦',
-};
 
 function brl(n: number) {
   return n.toLocaleString('pt-BR', { maximumFractionDigits: 0 });
@@ -47,6 +42,7 @@ export function FinanceiroPage() {
   useRealtimeFinance(['pf_transactions', 'pf_bills', 'pf_accounts', 'pf_budgets', 'pf_goals'], cid);
 
   const budgetsQ = useBudgets();
+  const catLookup = useCategoryLookup();
   const accountsQ = useAccounts();
   const lastTxsQ = useTransactions({ limit: 5 });
   const summaryQ = useSummary();
@@ -211,7 +207,7 @@ export function FinanceiroPage() {
             {lastTxsQ.data.map((t: PfTransaction) => (
               <li key={t.id} className="px-md py-2.5 flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3 min-w-0">
-                  <span aria-hidden="true" className="text-base shrink-0">{CAT_EMOJI[t.category]}</span>
+                  <span aria-hidden="true" className="text-base shrink-0">{catLookup.emoji(t.category)}</span>
                   <div className="min-w-0">
                     <div className="text-body-md text-fg truncate">{t.description || t.category}</div>
                     <div className="text-body-sm text-fg-muted tabular-nums">{t.transaction_date}</div>

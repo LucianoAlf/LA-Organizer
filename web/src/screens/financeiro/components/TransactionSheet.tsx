@@ -1,26 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AdaptiveSheet } from '../../../components/AdaptiveSheet';
 import { Button } from '../../../components/Button';
 import { CustomSelect } from '../../../components/CustomSelect';
 import { DateInput } from '../../../components/DateInput';
 import { Field } from '../../../components/Field';
-import { useAccounts, useCreateTransaction, useDeleteTransaction } from '../../../hooks/useFinanceiro';
+import { useAccounts, useCategories, useCreateTransaction, useDeleteTransaction } from '../../../hooks/useFinanceiro';
 import type { PfCategory, PfTransaction, PfTxType } from '../../../lib/financeiro';
-
-const EXPENSE_CATEGORIES: { value: PfCategory; label: string }[] = [
-  { value: 'alimentacao', label: '🍔  Alimentação' },
-  { value: 'moradia',     label: '🏠  Moradia' },
-  { value: 'transporte',  label: '🚗  Transporte' },
-  { value: 'saude',       label: '🏥  Saúde' },
-  { value: 'educacao',    label: '📚  Educação' },
-  { value: 'lazer',       label: '🎮  Lazer' },
-  { value: 'outros',      label: '📦  Outros' },
-];
-const INCOME_CATEGORIES: { value: PfCategory; label: string }[] = [
-  { value: 'salario',  label: '💼  Salário' },
-  { value: 'comissao', label: '💰  Comissão' },
-  { value: 'extra',    label: '💵  Extra' },
-];
 
 function todayYmd() {
   return new Date().toISOString().slice(0, 10);
@@ -37,6 +22,10 @@ export function TransactionSheet({ open, onClose, initial }: TransactionSheetPro
   const accountsQ = useAccounts();
   const createMut = useCreateTransaction();
   const deleteMut = useDeleteTransaction();
+  const catsQ = useCategories();
+  const allCats = useMemo(() => catsQ.data ?? [], [catsQ.data]);
+  const expenseCats = useMemo(() => allCats.filter((c) => c.type === 'expense').map((c) => ({ value: c.slug, label: `${c.emoji}  ${c.label}` })), [allCats]);
+  const incomeCats = useMemo(() => allCats.filter((c) => c.type === 'income').map((c) => ({ value: c.slug, label: `${c.emoji}  ${c.label}` })), [allCats]);
 
   const [type, setType] = useState<PfTxType>(initial?.type ?? 'expense');
   const [category, setCategory] = useState<PfCategory>(initial?.category ?? 'alimentacao');
@@ -63,8 +52,8 @@ export function TransactionSheet({ open, onClose, initial }: TransactionSheetPro
   // Ajusta a categoria quando troca o tipo (se a categoria atual não bate).
   function switchType(next: PfTxType) {
     setType(next);
-    const list = next === 'expense' ? EXPENSE_CATEGORIES : INCOME_CATEGORIES;
-    if (!list.find((o) => o.value === category)) setCategory(list[0].value);
+    const list = next === 'expense' ? expenseCats : incomeCats;
+    if (list.length && !list.find((o) => o.value === category)) setCategory(list[0].value);
   }
 
   async function submit() {
@@ -98,7 +87,7 @@ export function TransactionSheet({ open, onClose, initial }: TransactionSheetPro
     }
   }
 
-  const categoryOptions = type === 'expense' ? EXPENSE_CATEGORIES : INCOME_CATEGORIES;
+  const categoryOptions = type === 'expense' ? expenseCats : incomeCats;
   const accountOptions = [
     { value: '', label: '— sem carteira —' },
     ...(accountsQ.data ?? []).map((a) => ({ value: a.id, label: `${a.icon ?? '🏦'}  ${a.name}` })),

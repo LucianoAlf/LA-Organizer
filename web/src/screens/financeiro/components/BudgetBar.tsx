@@ -1,17 +1,5 @@
 import type { PfCategory } from '../../../lib/financeiro';
-
-const CATEGORY_LABEL: Record<PfCategory, { label: string; emoji: string }> = {
-  salario:     { label: 'Salário',     emoji: '💼' },
-  comissao:    { label: 'Comissão',    emoji: '💰' },
-  extra:       { label: 'Extra',       emoji: '💵' },
-  moradia:     { label: 'Moradia',     emoji: '🏠' },
-  alimentacao: { label: 'Alimentação', emoji: '🍔' },
-  transporte:  { label: 'Transporte',  emoji: '🚗' },
-  saude:       { label: 'Saúde',       emoji: '🏥' },
-  educacao:    { label: 'Educação',    emoji: '📚' },
-  lazer:       { label: 'Lazer',       emoji: '🎮' },
-  outros:      { label: 'Outros',      emoji: '📦' },
-};
+import { useCategoryLookup } from '../../../hooks/useFinanceiro';
 
 export interface BudgetBarProps {
   category: PfCategory;
@@ -28,7 +16,8 @@ function toneClass(pct: number): { fill: string; text: string } {
 }
 
 export function BudgetBar({ category, spent, limit }: BudgetBarProps) {
-  const meta = CATEGORY_LABEL[category];
+  const catLookup = useCategoryLookup();
+  const meta = { emoji: catLookup.emoji(category), label: catLookup.label(category) };
   const pct = limit > 0 ? Math.round((spent / limit) * 100) : 0;
   const clampedPct = Math.min(100, pct);
   const { fill, text } = toneClass(pct);

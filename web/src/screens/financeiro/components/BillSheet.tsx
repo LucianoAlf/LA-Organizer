@@ -1,25 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AdaptiveSheet } from '../../../components/AdaptiveSheet';
 import { Button } from '../../../components/Button';
 import { CustomSelect } from '../../../components/CustomSelect';
 import { Field } from '../../../components/Field';
-import { useCreateBill } from '../../../hooks/useFinanceiro';
+import { useCategories, useCreateBill } from '../../../hooks/useFinanceiro';
 import type { PfBillType, PfCategory } from '../../../lib/financeiro';
-
-const EXPENSE_CATEGORIES: { value: PfCategory; label: string }[] = [
-  { value: 'moradia',     label: '🏠  Moradia' },
-  { value: 'alimentacao', label: '🍔  Alimentação' },
-  { value: 'transporte',  label: '🚗  Transporte' },
-  { value: 'saude',       label: '🏥  Saúde' },
-  { value: 'educacao',    label: '📚  Educação' },
-  { value: 'lazer',       label: '🎮  Lazer' },
-  { value: 'outros',      label: '📦  Outros' },
-];
-const INCOME_CATEGORIES: { value: PfCategory; label: string }[] = [
-  { value: 'salario',  label: '💼  Salário' },
-  { value: 'comissao', label: '💰  Comissão' },
-  { value: 'extra',    label: '💵  Extra' },
-];
 
 const DAY_OPTIONS = Array.from({ length: 31 }, (_, i) => ({ value: String(i + 1), label: `Dia ${i + 1}` }));
 
@@ -30,6 +15,10 @@ export interface BillSheetProps {
 
 export function BillSheet({ open, onClose }: BillSheetProps) {
   const createMut = useCreateBill();
+  const catsQ = useCategories();
+  const allCats = useMemo(() => catsQ.data ?? [], [catsQ.data]);
+  const expenseCats = useMemo(() => allCats.filter((c) => c.type === 'expense').map((c) => ({ value: c.slug, label: `${c.emoji}  ${c.label}` })), [allCats]);
+  const incomeCats = useMemo(() => allCats.filter((c) => c.type === 'income').map((c) => ({ value: c.slug, label: `${c.emoji}  ${c.label}` })), [allCats]);
   const [type, setType] = useState<PfBillType>('expense');
   const [name, setName] = useState('');
   const [amountText, setAmountText] = useState('');
@@ -44,8 +33,8 @@ export function BillSheet({ open, onClose }: BillSheetProps) {
 
   function switchType(next: PfBillType) {
     setType(next);
-    if (next === 'expense' && !EXPENSE_CATEGORIES.find((o) => o.value === category)) setCategory('moradia');
-    if (next === 'income' && !INCOME_CATEGORIES.find((o) => o.value === category)) setCategory('salario');
+    if (next === 'expense' && !expenseCats.find((o) => o.value === category)) setCategory('moradia');
+    if (next === 'income' && !incomeCats.find((o) => o.value === category)) setCategory('salario');
   }
 
   async function submit() {
@@ -63,7 +52,7 @@ export function BillSheet({ open, onClose }: BillSheetProps) {
     }
   }
 
-  const categoryOptions = type === 'expense' ? EXPENSE_CATEGORIES : INCOME_CATEGORIES;
+  const categoryOptions = type === 'expense' ? expenseCats : incomeCats;
   const submitting = createMut.isPending;
 
   return (

@@ -2,13 +2,39 @@
 // SEGURANÇA: `collaboratorId` resolvido de useAuth().collaborator.id; nunca confiar em params externos.
 // Mutations invalidam ['financeiro'] inteira (idem ao realtime).
 
+import { useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../contexts/AuthContext';
 import * as fin from '../lib/financeiro';
 import * as cartoes from '../lib/cartoes';
+import { listCategories } from '../lib/categorias';
 import type { PfBill, PfCategory, PfGoal, PfTxType } from '../lib/financeiro';
 
 const KEY = ['financeiro'] as const;
+
+// Categorias data-driven (pf_categories): defaults globais + custom do usuário.
+// staleTime longo — defaults raramente mudam.
+export function useCategories() {
+  return useQuery({
+    queryKey: ['pf_categories'],
+    queryFn: listCategories,
+    staleTime: 1000 * 60 * 30,
+  });
+}
+
+// Lookup por slug pra emoji/label/cor (fallback pra slug desconhecido). Usado nas
+// listas/gráficos no lugar dos mapas estáticos de 10 categorias.
+export function useCategoryLookup() {
+  const { data } = useCategories();
+  return useMemo(() => {
+    const by = new Map((data ?? []).map((c) => [c.slug, c]));
+    return {
+      emoji: (slug: string) => by.get(slug)?.emoji ?? '📦',
+      label: (slug: string) => by.get(slug)?.label ?? slug,
+      color: (slug: string) => by.get(slug)?.color ?? '#9CA3AF',
+    };
+  }, [data]);
+}
 
 // Tolerante: retorna undefined enquanto auth carrega ou se não há sessão.
 // ProtectedRoute já bloqueia rotas sem auth; aqui não lançamos pra não quebrar a UI no boot.
