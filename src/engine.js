@@ -6415,13 +6415,29 @@ async function processMessage(phone, text, raw = {}) {
         const params = corr.op === 'delete'
           ? { which: corr.ref }
           : { which: '', amount: corr.amount, category: corr.category };
-        const reply = await handleFinanceAction(collab, action, params);
+        // A ESCRITA fica isolada: se ela lançar, nada foi mutado (op atômica + trigger);
+        // mandamos desculpa e retornamos — NÃO caímos no LLM (que é justo quem fabrica/nega).
+        let reply;
+        try {
+          reply = await handleFinanceAction(collab, action, params);
+        } catch (writeErr) {
+          console.error(`[Correction] action err (${corr.op}):`, writeErr.message);
+          await whatsapp.sendMessage(phone, '⚠️ Não consegui ajustar agora. Tenta de novo daqui a pouco?');
+          return;
+        }
         if (reply) {
-          await whatsapp.sendMessage(phone, reply);
-          await logConversation(collab.id, 'outbound', reply);
+          // Ação JÁ aplicada no banco: consome o turno de qualquer forma (envia/loga),
+          // engolindo falhas pós-escrita pra NÃO reprocessar no LLM (evita double-apply).
+          try {
+            await whatsapp.sendMessage(phone, reply);
+            await logConversation(collab.id, 'outbound', reply);
+          } catch (postErr) {
+            console.warn(`[Correction] post-write err (ação já aplicada, ${corr.op}):`, postErr.message);
+          }
           console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (correction_${corr.op})`);
           return;
         }
+        // reply vazio (alvo não resolvido) → segue pro LLM.
       }
       // sem transação recente → não é correção de finança; segue pro LLM.
     }

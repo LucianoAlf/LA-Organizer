@@ -133,6 +133,27 @@ registros é no app.
 
 Cada fase produz software funcional e testável por si. **Fase 1 primeiro.**
 
+### Fase 5 — Robustez da rota de registro multi-elemento (achado de smoke 2026-05-31)
+
+**Sintoma observado:** "comprei remédio no ifood **no cartão Nubank**" → o LLM se confundiu
+com a frase de 3 elementos (produto + estabelecimento + fonte), perguntou de boca pelo valor,
+e na rodada do "100" ainda perguntou se era "no **Itaú**", terminando por gravar como **gasto
+de caixa no Itaú** em vez de **compra na fatura do cartão Nubank**. Corrigido manualmente
+(transação `405c8c18` movida pra fatura do Nubank; Itau estornado −160→−135).
+
+**Classe do bug:** mesma família "LLM não-confiável no registro" que já blindamos com consumers
+determinísticos (fonte obrigatória, txn_pick, correção). NÃO é bug de CRUD — edit/delete/correção
+estão validados (saldo nunca fura). É a **rota de registro** que vacila quando a frase tem cartão
++ estabelecimento + produto juntos.
+
+**Direção (não-gambiarra, mesma linha dos outros consumers):** detector determinístico pré-LLM
+que reconhece "no cartão X" / "pelo cartão X" / "no crédito do X" na frase de registro e fixa
+`card_id` antes de cair no LLM — espelhando `source-match.js`/`detect-correction.js`. Casa o nome
+do cartão entre os cartões ativos do usuário; só dispara com âncora financeira clara (verbo de
+compra + valor) pra zero falso-positivo. Quando casa cartão → vira `card_purchase` direto.
+
+Fora de escopo desta fase (1–4); produz spec/plano próprios quando priorizada.
+
 ## Fora de escopo
 - Edição de campo arbitrária de qualquer registro pelo TOM (só corrige o recente).
 - Histórico/auditoria de edições (além do `updated_at`).
