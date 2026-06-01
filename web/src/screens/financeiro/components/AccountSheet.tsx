@@ -3,7 +3,7 @@ import { AdaptiveSheet } from '../../../components/AdaptiveSheet';
 import { Button } from '../../../components/Button';
 import { CustomSelect } from '../../../components/CustomSelect';
 import { Field } from '../../../components/Field';
-import { useCreateAccount, useDeactivateAccount, useUpdateAccount } from '../../../hooks/useFinanceiro';
+import { useCreateAccount, useCreateTransaction, useDeactivateAccount, useUpdateAccount } from '../../../hooks/useFinanceiro';
 import { BANKS } from '../../../lib/banks';
 import type { PfAccount, PfAccountType } from '../../../lib/financeiro';
 import { BankLogo } from './BankLogo';
@@ -30,6 +30,7 @@ export function AccountSheet({
   const createMut = useCreateAccount();
   const updateMut = useUpdateAccount();
   const deactivateMut = useDeactivateAccount();
+  const createTx = useCreateTransaction();
 
   const [name, setName] = useState('');
   const [type, setType] = useState<PfAccountType>('checking');
@@ -37,6 +38,7 @@ export function AccountSheet({
   const [bankSlug, setBankSlug] = useState<string | null>(null);
   const [color, setColor] = useState<string | null>(null);
   const [goalText, setGoalText] = useState('');
+  const [saldoText, setSaldoText] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -48,6 +50,7 @@ export function AccountSheet({
       setBankSlug(initial.bank_slug ?? null);
       setColor(initial.color ?? null);
       setGoalText(initial.goal_monthly != null ? String(initial.goal_monthly) : '');
+      setSaldoText(String(initial.balance ?? 0));
     } else {
       setName('');
       setType('checking');
@@ -55,15 +58,31 @@ export function AccountSheet({
       setBankSlug(null);
       setColor(null);
       setGoalText('');
+      setSaldoText('');
     }
     setError(null);
   }, [open, initial]);
+
+  async function ajustarSaldo(accountId: string, alvoText: string, currentBalance: number, isCreate: boolean) {
+    const alvo = Number(String(alvoText).replace(',', '.'));
+    if (!isFinite(alvo)) return;
+    const delta = Math.round((alvo - currentBalance) * 100) / 100;
+    if (delta === 0) return;
+    await createTx.mutateAsync({
+      type: delta > 0 ? 'income' : 'expense',
+      category: 'outros',
+      amount: Math.abs(delta),
+      description: isCreate ? 'Saldo inicial' : 'Ajuste de saldo',
+      transaction_date: new Date().toISOString().slice(0, 10),
+      account_id: accountId,
+    });
+  }
 
   async function submit() {
     setError(null);
     if (!name.trim()) return setError('Dá um nome pra carteira.');
     try {
-      await createMut.mutateAsync({
+      const created: any = await createMut.mutateAsync({
         name: name.trim(),
         type,
         icon,
@@ -71,6 +90,12 @@ export function AccountSheet({
         color,
         goal_monthly: goalText.trim() ? Number(goalText.replace(',', '.')) : null,
       });
+      if (saldoText.trim()) {
+        const alvo = Number(String(saldoText).replace(',', '.'));
+        if (isFinite(alvo) && alvo !== 0) {
+          await ajustarSaldo(created.id, saldoText, 0, true);
+        }
+      }
       onClose();
     } catch (e) {
       setError((e as Error).message);
@@ -93,6 +118,7 @@ export function AccountSheet({
           goal_monthly: goalText.trim() ? Number(goalText.replace(',', '.')) : null,
         },
       });
+      await ajustarSaldo(initial.id, saldoText, Number(initial.balance), false);
       onClose();
     } catch (e) {
       setError((e as Error).message);
@@ -110,7 +136,7 @@ export function AccountSheet({
     }
   }
 
-  const submitting = createMut.isPending || updateMut.isPending || deactivateMut.isPending;
+  const submitting = createMut.isPending || updateMut.isPending || deactivateMut.isPending || createTx.isPending;
   const bankSlugs = Object.keys(BANKS);
 
   return (
@@ -216,6 +242,23 @@ export function AccountSheet({
                 style={{ background: color }}
               />
             )}
+          </div>
+        </Field>
+
+        {/* Saldo atual */}
+        <Field
+          label="Saldo atual"
+          sub={isEdit ? 'Mudar aqui cria um lançamento de ajuste no extrato.' : 'Quanto você já tem nessa conta hoje. Opcional.'}
+        >
+          <div className="flex items-baseline gap-1 border-b border-border">
+            <span className="text-fg-muted">R$</span>
+            <input
+              inputMode="decimal"
+              value={saldoText}
+              onChange={(e) => setSaldoText(e.target.value)}
+              placeholder="0,00"
+              className="w-full bg-transparent text-[24px] font-bold tabular-nums text-fg focus:outline-none"
+            />
           </div>
         </Field>
 
