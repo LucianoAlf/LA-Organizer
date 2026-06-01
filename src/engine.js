@@ -5886,7 +5886,7 @@ async function tryDupBypass(collab, text) {
 // ---- Sprint 27 — Financas Pessoais: marker <<FINANCE_ACTION>> + dispatcher ----
 const FINANCE_ACTIONS = [
   'register_transaction', 'register_bill', 'pay_bill', 'create_goal',
-  'update_goal', 'edit_goal', 'delete_goal', 'set_budget', 'query_summary', 'query_budget', 'query_goal', 'query_accounts', 'create_account',
+  'update_goal', 'edit_goal', 'delete_goal', 'set_budget', 'query_summary', 'query_budget', 'query_goal', 'query_accounts', 'create_account', 'edit_account',
   'simulate_interest',
   // cartão de crédito + transferência
   'create_card', 'card_purchase', 'query_invoice', 'pay_invoice', 'transfer',
@@ -6162,8 +6162,19 @@ async function handleFinanceAction(collab, action, params) {
       return `✅ Orçamento de ${b.category}: R$${b.monthly_limit}/mês.`;
     }
     case 'create_account': {
-      const a = await financeService.createAccount(cid, { name: params.name, type: params.type, icon: params.icon, goal_monthly: params.goal_monthly });
+      const slug = financeService.matchBankSlug(params.name || '');
+      const color = slug ? financeService.bankColor(slug) : null;
+      const a = await financeService.createAccount(cid, { name: params.name, type: params.type, icon: params.icon, goal_monthly: params.goal_monthly, bank_slug: slug, color });
       return `✅ Carteira criada: ${a.icon || '🏦'} ${a.name}.`;
+    }
+    case 'edit_account': {
+      const acc = await financeService.findAccountByName(cid, params.account_name || params.name || '');
+      if (!acc) return 'Não achei essa carteira.';
+      const patch = {};
+      for (const k of ['name','type','icon','goal_monthly']) if (params[k] !== undefined) patch[k] = params[k];
+      if (params.bank !== undefined) { const s = financeService.matchBankSlug(params.bank); if (s) { patch.bank_slug = s; patch.color = financeService.bankColor(s); } }
+      const a = await financeService.updateAccount(cid, acc.id, patch);
+      return `✏️ Carteira atualizada: ${a.icon || '🏦'} ${a.name}.`;
     }
     case 'query_accounts': {
       const accs = await financeService.listAccounts(cid);

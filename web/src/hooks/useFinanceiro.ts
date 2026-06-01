@@ -145,6 +145,20 @@ export const useSetBudget         = () => useFinMutation(fin.setBudget);
 export const useCreateAccount     = () => useFinMutation(fin.createAccount);
 export const useDeactivateAccount = () => useFinMutation((cid, id: string) => fin.deactivateAccount(cid, id));
 export const useSetPrimaryAccount = () => useFinMutation((cid, id: string) => fin.setPrimaryAccount(cid, id));
+export const useUpdateAccount = () => useFinMutation(
+  (cid, args: { id: string; patch: Parameters<typeof fin.updateAccount>[2] }) => fin.updateAccount(cid, args.id, args.patch)
+);
+export const useCreateTransfer = () => useFinMutation(
+  (cid, args: Parameters<typeof fin.createTransfer>[1]) => fin.createTransfer(cid, args)
+);
+export function useAccountTransactions(accountId: string | undefined) {
+  const cid = useFinanceiroAuth();
+  return useQuery({
+    queryKey: [...KEY, 'account-tx', accountId, cid],
+    queryFn: () => fin.listAccountTransactions(cid!, accountId!),
+    enabled: !!cid && !!accountId,
+  });
+}
 
 // ---- Cartões de crédito ----
 export function useCards() {

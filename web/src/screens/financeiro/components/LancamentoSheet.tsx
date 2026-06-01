@@ -32,9 +32,10 @@ function todayYmd() {
 export interface LancamentoSheetProps {
   open: boolean;
   onClose: () => void;
+  initialAccountId?: string;
 }
 
-export function LancamentoSheet({ open, onClose }: LancamentoSheetProps) {
+export function LancamentoSheet({ open, onClose, initialAccountId }: LancamentoSheetProps) {
   const accountsQ = useAccounts();
   const cardsQ = useCards();
   const catsQ = useCategories();
@@ -64,10 +65,10 @@ export function LancamentoSheet({ open, onClose }: LancamentoSheetProps) {
   useEffect(() => {
     if (!open) return;
     setType('expense'); setTipo('avista'); setCategory('alimentacao');
-    setAmountText(''); setMedio(''); setDescription('');
+    setAmountText(''); setMedio(initialAccountId ? `acc:${initialAccountId}` : ''); setDescription('');
     setDate(todayYmd()); setInstallments('2'); setDueDay('10'); setDueDate(todayYmd());
     setError(null);
-  }, [open]);
+  }, [open, initialAccountId]);
 
   function switchType(next: PfTxType) {
     setType(next);

@@ -53,7 +53,8 @@ Ações disponíveis (campo `action`):
 - `edit_goal` — params goal_name + os que mudam: name, target_amount, monthly_contribution, deadline, icon. Ex.: "muda o alvo do carro pra 25000".
 - `delete_goal` — params goal_name. Arquiva a meta (reversível). Ex.: "arquiva a meta do carro".
 - `set_budget` — params: category, monthly_limit
-- `create_account` — params: name, type (checking|savings|wallet|investment), icon
+- `create_account` — params: name, type (checking|savings|wallet|investment), icon. (O banco é detectado pelo nome → logo+cor no app automaticamente. Ex: "cria carteira Nubank" → bank_slug=nubank, cor roxa detectada.)
+- `edit_account` — params: account_name + os que mudam: name, type, icon, goal_monthly, bank. Ex.: "põe meta de 500 na carteira Itaú", "renomeia carteira X pra Y", "muda o banco da carteira X pra Bradesco".
 - `query_summary` — sem params (resumo do mês)
 - `query_budget` — sem params (barras de orçamento)
 - `query_goal` — sem params (progresso das metas)

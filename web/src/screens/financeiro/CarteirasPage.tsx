@@ -6,6 +6,8 @@ import { useAccounts, useDeactivateAccount, useSetPrimaryAccount, useFinanceiroA
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
 import type { PfAccount, PfAccountType } from '../../lib/financeiro';
 import { AccountSheet } from './components/AccountSheet';
+import { BankLogo } from './components/BankLogo';
+import { BANKS } from '../../lib/banks';
 
 const TYPE_LABEL: Record<PfAccountType, string> = {
   checking: 'Conta corrente',
@@ -18,14 +20,21 @@ function brl(n: number) {
   return n.toLocaleString('pt-BR', { maximumFractionDigits: 2 });
 }
 
-function AccountCard({ account, onDeactivate, onSetPrimary, primaryPending }: { account: PfAccount; onDeactivate: (a: PfAccount) => void; onSetPrimary: (a: PfAccount) => void; primaryPending: boolean }) {
+function AccountCard({ account, onDeactivate, onSetPrimary, primaryPending, onOpen }: { account: PfAccount; onDeactivate: (a: PfAccount) => void; onSetPrimary: (a: PfAccount) => void; primaryPending: boolean; onOpen: (id: string) => void }) {
   const balance = Number(account.balance);
   const tone = balance < 0 ? 'text-danger' : balance > 0 ? 'text-tom' : 'text-fg';
+  const borderColor = account.color || (account.bank_slug ? BANKS[account.bank_slug]?.color : '') || 'transparent';
   return (
-    <article className="rounded-lg border border-border bg-bg-surface p-md flex flex-col gap-2">
+    <article
+      className="rounded-lg border border-border bg-bg-surface p-md flex flex-col gap-2 cursor-pointer"
+      style={{ borderLeft: `4px solid ${borderColor}` }}
+      onClick={() => onOpen(account.id)}
+    >
       <header className="flex items-center justify-between gap-2 min-w-0">
         <div className="flex items-center gap-2 min-w-0">
-          <span className="text-2xl shrink-0" aria-hidden>{account.icon || '🏦'}</span>
+          <span className="shrink-0" aria-hidden>
+            <BankLogo slug={account.bank_slug} name={account.name} color={account.color} size={40} />
+          </span>
           <div className="min-w-0">
             <div className="text-body-md font-semibold text-fg truncate">{account.name}</div>
             <div className="text-body-sm text-fg-muted">{TYPE_LABEL[account.type]}</div>
@@ -33,7 +42,7 @@ function AccountCard({ account, onDeactivate, onSetPrimary, primaryPending }: { 
         </div>
         <button
           type="button"
-          onClick={() => onSetPrimary(account)}
+          onClick={(e) => { e.stopPropagation(); onSetPrimary(account); }}
           disabled={primaryPending || account.is_primary}
           aria-label={account.is_primary ? 'Conta principal' : 'Definir como principal'}
           title={account.is_primary ? 'Conta principal' : 'Definir como principal'}
@@ -51,7 +60,7 @@ function AccountCard({ account, onDeactivate, onSetPrimary, primaryPending }: { 
       </div>
 
       <div className="flex items-center justify-end">
-        <Button size="sm" variant="ghost" onClick={() => onDeactivate(account)}>Desativar</Button>
+        <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); onDeactivate(account); }}>Desativar</Button>
       </div>
     </article>
   );
@@ -111,7 +120,7 @@ export function CarteirasPage() {
       {accounts.length > 0 && (
         <section className="grid grid-cols-1 md:grid-cols-2 gap-md">
           {accounts.map((a) => (
-            <AccountCard key={a.id} account={a} onDeactivate={deactivate} onSetPrimary={(acc) => setPrimaryMut.mutate(acc.id)} primaryPending={setPrimaryMut.isPending} />
+            <AccountCard key={a.id} account={a} onDeactivate={deactivate} onSetPrimary={(acc) => setPrimaryMut.mutate(acc.id)} primaryPending={setPrimaryMut.isPending} onOpen={(id) => navigate('/financeiro/carteiras/' + id)} />
           ))}
         </section>
       )}

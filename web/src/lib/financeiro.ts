@@ -11,7 +11,10 @@ export type PfTxType = 'income' | 'expense';
 export type PfAccountType = 'checking' | 'savings' | 'wallet' | 'investment';
 export type PfBillType = 'expense' | 'income';
 
-export interface PfAccount { id: string; name: string; type: PfAccountType; balance: number; icon: string | null; is_primary: boolean; }
+export interface PfAccount {
+  id: string; name: string; type: PfAccountType; balance: number; icon: string | null; is_primary: boolean;
+  bank_slug: string | null; color: string | null; goal_monthly: number | null; is_active?: boolean;
+}
 export interface PfTransaction {
   id: string; type: PfTxType; category: PfCategory; amount: number;
   description: string | null; transaction_date: string; account_id: string | null;
@@ -51,18 +54,53 @@ function monthBoundsFromYYYYMM(monthYear: string) {
 // ---- Carteiras ----
 export async function listAccounts(collaboratorId: string): Promise<PfAccount[]> {
   const { data, error } = await supabase.from('pf_accounts')
-    .select('id, name, type, balance, icon, is_primary')
+    .select('id, name, type, balance, icon, is_primary, bank_slug, color, goal_monthly')
     .eq('collaborator_id', collaboratorId).eq('is_active', true).order('name');
   if (error) throw error;
   return (data as PfAccount[]) ?? [];
 }
-export async function createAccount(collaboratorId: string, input: { name: string; type?: PfAccountType; icon?: string | null; goal_monthly?: number | null }) {
+export async function createAccount(collaboratorId: string, input: { name: string; type?: PfAccountType; icon?: string | null; goal_monthly?: number | null; bank_slug?: string | null; color?: string | null }) {
   const { data, error } = await supabase.from('pf_accounts')
-    .insert({ collaborator_id: collaboratorId, name: input.name, type: input.type ?? 'checking', icon: input.icon ?? null, goal_monthly: input.goal_monthly ?? null })
+    .insert({ collaborator_id: collaboratorId, name: input.name, type: input.type ?? 'checking',
+              icon: input.icon ?? null, goal_monthly: input.goal_monthly ?? null,
+              bank_slug: input.bank_slug ?? null, color: input.color ?? null })
     .select().single();
   if (error) throw error;
   return data;
 }
+export async function updateAccount(collaboratorId: string, id: string, patch: { name?: string; type?: PfAccountType; icon?: string | null; goal_monthly?: number | null; bank_slug?: string | null; color?: string | null }) {
+  const allowed: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  for (const k of ['name', 'type', 'icon', 'goal_monthly', 'bank_slug', 'color'] as const) {
+    if (patch[k] !== undefined) allowed[k] = patch[k];
+  }
+  const { data, error } = await supabase.from('pf_accounts')
+    .update(allowed).eq('id', id).eq('collaborator_id', collaboratorId).select().single();
+  if (error) throw error;
+  return data;
+}
+
+// Transferência: insere em pf_transfers; TRIGGER no banco ajusta os 2 saldos (sem math manual).
+export async function createTransfer(collaboratorId: string, input: { from_account: string; to_account: string; amount: number; description?: string | null; transfer_date?: string }) {
+  const row: Record<string, unknown> = {
+    collaborator_id: collaboratorId, from_account: input.from_account, to_account: input.to_account,
+    amount: input.amount, description: input.description ?? null,
+  };
+  if (input.transfer_date) row.transfer_date = input.transfer_date;
+  const { data, error } = await supabase.from('pf_transfers').insert(row).select().single();
+  if (error) throw error;
+  return data;
+}
+
+// Extrato da carteira: lançamentos (caixa) dessa conta, recentes primeiro.
+export async function listAccountTransactions(collaboratorId: string, accountId: string, limit = 50): Promise<PfTransaction[]> {
+  const { data, error } = await supabase.from('pf_transactions')
+    .select('id, type, category, amount, description, transaction_date, account_id, card_id, purchase_group')
+    .eq('collaborator_id', collaboratorId).eq('account_id', accountId)
+    .order('transaction_date', { ascending: false }).limit(limit);
+  if (error) throw error;
+  return (data as PfTransaction[]) ?? [];
+}
+
 export async function deactivateAccount(collaboratorId: string, id: string) {
   const { error } = await supabase.from('pf_accounts').update({ is_active: false })
     .eq('id', id).eq('collaborator_id', collaboratorId);

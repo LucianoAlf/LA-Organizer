@@ -14,12 +14,35 @@ function monthBounds(date = new Date()) {
 }
 
 // ---- Carteiras ----
-async function createAccount(collaboratorId, { name, type = 'checking', icon, goal_monthly, is_primary = false }) {
+// ---- Catálogo de bancos (auto-detecção por nome) ----
+const BANK_CATALOG = {
+  nubank:{color:'#820ad1',name:'nubank'}, itau:{color:'#ec7000',name:'itau'}, bradesco:{color:'#cc092f',name:'bradesco'},
+  santander:{color:'#ec0000',name:'santander'}, bb:{color:'#fcbf00',name:'banco do brasil'}, caixa:{color:'#005ca9',name:'caixa'},
+  c6:{color:'#242424',name:'c6 bank'}, inter:{color:'#ff7a00',name:'inter'}, mercadopago:{color:'#00b1ea',name:'mercado pago'},
+  picpay:{color:'#21c25e',name:'picpay'}, neon:{color:'#00e5a0',name:'neon'}, will:{color:'#ff0066',name:'will bank'},
+  pagbank:{color:'#00a651',name:'pagbank'}, btg:{color:'#00263a',name:'btg'}, next:{color:'#00dc5a',name:'next'}, original:{color:'#00a868',name:'original'},
+};
+function _normBank(s){ return String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,' ').trim(); }
+function matchBankSlug(name){
+  const n=_normBank(name); if(!n) return null;
+  for (const slug of Object.keys(BANK_CATALOG)){ if (n===slug || n.includes(slug) || n.includes(BANK_CATALOG[slug].name)) return slug; }
+  return null;
+}
+function bankColor(slug){ return (BANK_CATALOG[slug]||{}).color || null; }
+
+async function createAccount(collaboratorId, { name, type = 'checking', icon, goal_monthly, is_primary = false, bank_slug, color }) {
   const { data, error } = await supabase.from('pf_accounts')
-    .insert({ collaborator_id: collaboratorId, name, type, icon, goal_monthly, is_primary })
+    .insert({ collaborator_id: collaboratorId, name, type, icon, goal_monthly, is_primary, bank_slug, color })
     .select().single();
   if (error) throw error;
   return data;
+}
+
+async function updateAccount(collaboratorId, accountId, patch){
+  const allowed={}; for (const k of ['name','type','icon','goal_monthly','bank_slug','color']) if (patch[k]!==undefined) allowed[k]=patch[k];
+  allowed.updated_at=new Date().toISOString();
+  const { data, error } = await supabase.from('pf_accounts').update(allowed).eq('id',accountId).eq('collaborator_id',collaboratorId).select().single();
+  if (error) throw error; return data;
 }
 async function listAccounts(collaboratorId) {
   const { data, error } = await supabase.from('pf_accounts')
@@ -530,8 +553,8 @@ async function cardsForAlerts() {
 
 module.exports = {
   monthBounds,
-  createAccount, listAccounts, findAccountByName, ensureDinheiro, resolveSource,
-  findPrimaryAccount, setPrimaryAccount,
+  createAccount, updateAccount, listAccounts, findAccountByName, ensureDinheiro, resolveSource,
+  findPrimaryAccount, setPrimaryAccount, matchBankSlug, bankColor,
   insertTransaction, updateTransaction, deleteTransaction, deleteTransactionGroup,
   listRecentTransactions, queryTransactions,
   monthCategoryTotal, querySummary,
