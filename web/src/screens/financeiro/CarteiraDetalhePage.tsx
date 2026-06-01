@@ -8,10 +8,11 @@ import {
 } from '../../hooks/useFinanceiro';
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
 import { BANKS } from '../../lib/banks';
-import type { PfAccountType } from '../../lib/financeiro';
+import type { PfAccountType, PfTransaction } from '../../lib/financeiro';
 import { AccountSheet } from './components/AccountSheet';
 import { BankLogo } from './components/BankLogo';
 import { LancamentoSheet } from './components/LancamentoSheet';
+import { TransactionSheet } from './components/TransactionSheet';
 import { TransferSheet } from './components/TransferSheet';
 
 const fmtBRL = (v: number) =>
@@ -35,6 +36,7 @@ export function CarteiraDetalhePage() {
   const [editOpen, setEditOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [lancarOpen, setLancarOpen] = useState(false);
+  const [editingTx, setEditingTx] = useState<PfTransaction | null>(null);
 
   if (!acc) {
     return (
@@ -128,7 +130,12 @@ export function CarteiraDetalhePage() {
         {txs.map((t) => {
           const isIncome = t.type === 'income';
           return (
-            <div key={t.id} className="flex items-center gap-3 p-3 rounded-md bg-bg-surface border border-border">
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setEditingTx(t)}
+              className="w-full text-left flex items-center gap-3 p-3 rounded-md bg-bg-surface border border-border hover:bg-bg-elevated focus-ring transition-colors"
+            >
               <span className="w-7 h-7 rounded-md bg-bg-elevated flex items-center justify-center text-sm shrink-0">
                 {cat.emoji(t.category)}
               </span>
@@ -141,7 +148,7 @@ export function CarteiraDetalhePage() {
               <div className={`font-semibold tabular-nums ${isIncome ? 'text-tom' : 'text-danger'}`}>
                 {isIncome ? '+ ' : '− '}{fmtBRL(Number(t.amount))}
               </div>
-            </div>
+            </button>
           );
         })}
       </section>
@@ -149,6 +156,7 @@ export function CarteiraDetalhePage() {
       <AccountSheet open={editOpen} initial={acc} onClose={() => setEditOpen(false)} />
       <TransferSheet open={transferOpen} fromAccountId={acc.id} onClose={() => setTransferOpen(false)} />
       <LancamentoSheet open={lancarOpen} initialAccountId={acc.id} onClose={() => setLancarOpen(false)} />
+      <TransactionSheet open={!!editingTx} initial={editingTx ?? undefined} onClose={() => setEditingTx(null)} />
     </div>
   );
 }
