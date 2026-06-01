@@ -23,7 +23,7 @@ function brl(n: number) {
 function AccountCard({ account, onDeactivate, onSetPrimary, primaryPending, onOpen }: { account: PfAccount; onDeactivate: (a: PfAccount) => void; onSetPrimary: (a: PfAccount) => void; primaryPending: boolean; onOpen: (id: string) => void }) {
   const balance = Number(account.balance);
   const tone = balance < 0 ? 'text-danger' : balance > 0 ? 'text-tom' : 'text-fg';
-  const borderColor = account.color || (account.bank_slug ? BANKS[account.bank_slug]?.color : '') || 'transparent';
+  const borderColor = account.color || (account.bank_slug ? BANKS[account.bank_slug]?.color : '') || '#16a34a';
   return (
     <article
       className="rounded-lg border border-border bg-bg-surface p-md flex flex-col gap-2 cursor-pointer"
