@@ -38,28 +38,29 @@
 - Permite também **ligar** recorrência numa tarefa que era "Não repete".
 - **Prompt de 2 vias** ao salvar (só se a tarefa pertence a uma série OU passou a ter regra): um `AdaptiveSheet`/diálogo pequeno com **"Só este dia"** e **"Esta e as próximas"** (default destacado). Cancelar volta sem salvar.
 
-### 2. Backend — RPC `edit_task_series`
-Função Postgres (SECURITY DEFINER, valida `auth`/ownership) numa transação:
-```
-edit_task_series(
-  p_anchor_id uuid,        -- a ocorrência/tarefa aberta
-  p_scope text,            -- 'only_this' | 'this_and_future'
-  p_patch jsonb,           -- campos alterados: title, due_time, priority, context, eisenhower_quadrant, description
-  p_new_rule text,         -- RRULE nova OU null pra desligar OU '__unchanged__' pra não mexer
-  p_reminders jsonb        -- lista de horários (HH:MM) da série, ou null = não mexer
-)
-```
-Comportamento:
-- **`only_this`**: aplica `p_patch` (e `p_reminders`, se vier) só na linha `p_anchor_id`. Não toca regra. (Marca a ocorrência como "exceção" — ver Edge.)
-- **`this_and_future`**:
-  - Resolve `série_id`. Aplica `p_patch` em todas as futuras pendentes (`due_date >= anchor.due_date`) + no template.
-  - Se `p_reminders` veio: substitui os `task_reminders` das futuras pendentes (apaga os pendentes não enviados e recria nos horários novos, preservando HH:MM por dia).
-  - Se `p_new_rule != '__unchanged__'`: cancela futuras pendentes (`due_date > today`), grava a regra no template, e **re-materializa** do dia seguinte em diante com a nova regra (reusa a lógica de materialização). `null` = desliga (não re-materializa; template vira tarefa simples mantendo a ocorrência de hoje).
-- Nunca altera linhas `status IN ('done','cancelled')` nem `due_date < today`.
-- Retorna `{ updated, cancelled, created }` pra UI dar feedback.
+### 2. Orquestração client-side (NÃO RPC)
+**Decisão revista:** a materialização vive 100% em JS (`rrule`) — `materializeSeriesClient` (PWA) e `recurrence-engine.js` (servidor). NÃO há materializador em SQL. Uma RPC plpgsql exigiria reimplementar o `rrule` em SQL (duplicação arriscada). Então a edição de série é orquestrada **client-side**, espelhando o padrão de criação que já existe. Rede de segurança: o **ritual noturno 00:30** re-materializa do template se uma etapa cliente falhar no meio.
 
-### 3. Cliente
-- `EditTaskSheet`/`TaskEditDrawer` chamam a RPC via `supabase.rpc('edit_task_series', {...})` com o scope escolhido no prompt; depois invalidam as queries (react-query) pra atualizar a lista. Substitui o `update` direto atual quando a tarefa é de série.
+Nova função em `web/src/lib/editTaskSeries.ts`, dividida em duas partes:
+- **Planejador puro** `planSeriesEdit({ anchor, scope, newRule, todayYmd })` → `{ seriesId, applyFutureFilter, cancelFuture: boolean, rematerialize: boolean, disable: boolean }`. Sem I/O, testável via `node:test`.
+- **Executor** `editTaskSeries(anchor, scope, patch, newRule, reminderTimes)` → roda as chamadas supabase na ordem segura abaixo.
+
+Assinatura/contrato:
+- `scope`: `'only_this' | 'this_and_future'`.
+- `newRule`: RRULE nova, `null` (desliga) ou `undefined` (regra não mudou — não mexe).
+- `patch`: campos alterados (`title`, `due_time`, `priority`, `context`, `eisenhower_quadrant`, `description`).
+- `reminderTimes`: `string[]` de "HH:MM" da série, ou `undefined` (não mexe nos lembretes).
+
+Comportamento:
+- **`only_this`**: aplica `patch` (+ reminders, se vier) só na linha `anchor.id`. Não toca regra. Seta `recurrence_excluded = true` pra não ser sobrescrita por re-materialização.
+- **`this_and_future`** (`seriesId = anchor.recurrence_parent_id ?? anchor.id`):
+  1. Atualiza `patch` nas futuras pendentes (`due_date >= anchor.due_date`, `status='pending'`, da série) + no template.
+  2. Se `reminderTimes` veio: apaga `task_reminders` pendentes (`sent_at IS NULL`) das futuras e recria nos horários novos (preserva HH:MM por dia).
+  3. Se `newRule !== undefined`: cancela futuras pendentes (`due_date > todayYmd`), grava `newRule` no template; se `newRule` não é `null`, chama `materializeSeriesClient` pra recriar. `null` = desliga (não recria; mantém a de hoje).
+- Nunca altera `status IN ('done','cancelled')` nem `due_date < todayYmd`.
+
+### 3. Cliente (sheets)
+- `EditTaskSheet`/`TaskEditDrawer` adicionam o `RecurrencePicker` (regra da série; se a tarefa é instância, busca a regra do template via `recurrence_parent_id`). Ao salvar: se a tarefa é de série (tem regra OU `recurrence_parent_id`) OU passou a ter regra, abre o **prompt 2-vias** e chama `editTaskSeries(...)`; senão, mantém o `update` direto atual. Depois invalida as queries (react-query).
 
 ---
 
@@ -68,10 +69,11 @@ Comportamento:
 - **Desligar recorrência** ("Não repete"): cancela futuras pendentes, zera `recurrence_rule` do template, mantém a ocorrência de hoje/passado.
 - **Editar ocorrência passada/de hoje**: `this_and_future` parte da data da ocorrência aberta; se for hoje, inclui hoje em diante.
 - **Re-materialização vs eager existente**: cancelar antes de recriar evita duplicatas; idempotência por (série_id, due_date).
-- **Conflito com guardrail anti-bomba**: a RPC materializa internamente (não passa por `applyTaskActions`), então o teto de 10 não interfere.
+- **Conflito com guardrail anti-bomba**: a materialização usa `materializeSeriesClient` (insert direto), não passa por `applyTaskActions`, então o teto de 10 não interfere.
 
 ## Testes
-- **RPC (pgTAP ou node+service_role):** `this_and_future` propaga título só pra futuras pendentes (passado/concluídas intactas); troca de regra cancela futuras + recria certo; `only_this` não vaza; desligar mantém a de hoje; reminders substituídos preservam HH:MM.
+- **Planejador puro `planSeriesEdit` (node:test):** `this_and_future` com regra nova → `cancelFuture=true, rematerialize=true`; `newRule=null` → `disable=true, rematerialize=false`; `newRule=undefined` → não mexe na regra; `only_this` → só a âncora, sem cancelar/recriar; `seriesId` resolve do parent quando é instância.
+- **Executor (node + service_role, dados de teste):** `this_and_future` propaga título só pra futuras pendentes (passado/concluídas intactas); troca de regra cancela futuras + recria certo; `only_this` não vaza; desligar mantém a de hoje; reminders substituídos preservam HH:MM.
 - **UI:** picker popula da regra da série (inclusive quando abre instância); prompt 2-vias só em série; ligar recorrência em tarefa simples funciona; mobile 375 + desktop 1440 intactos.
 
 ## Fora de escopo
