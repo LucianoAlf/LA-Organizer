@@ -3,7 +3,7 @@ export interface BankInfo { name: string; color: string; }
 // Cores semeadas do material do Alf (bank-logos.tsx). Logos oficiais em /banks/<slug>.svg.
 export const BANKS: Record<string, BankInfo> = {
   nubank:      { name: 'Nubank',          color: '#820ad1' },
-  itau:        { name: 'Itaú',            color: '#ec7000' },
+  itau:        { name: 'Itaú',            color: '#003399' },
   bradesco:    { name: 'Bradesco',        color: '#cc092f' },
   santander:   { name: 'Santander',       color: '#ec0000' },
   bb:          { name: 'Banco do Brasil', color: '#fcbf00' },
