@@ -107,7 +107,7 @@ export function MetasPage() {
   return (
     <div className="flex flex-col gap-md p-md pb-32 md:pb-md md:max-w-5xl md:mx-auto">
       <header className="flex items-baseline justify-between gap-3">
-        <h2 className="text-section-title">Finanças</h2>
+        <h2 className="text-section-title">Metas</h2>
         <button
           type="button"
           onClick={() => navigate('/financeiro')}
