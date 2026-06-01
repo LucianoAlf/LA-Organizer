@@ -130,7 +130,7 @@ export function CartoesPage() {
       <header className="flex items-center justify-between">
         <div>
           <Link to="/financeiro" className="text-label text-fg-muted">← Finanças</Link>
-          <h1 className="text-xl font-bold text-fg">Cartões</h1>
+          <h1 className="text-xl font-bold text-fg">Cartões de Crédito</h1>
         </div>
       </header>
 
