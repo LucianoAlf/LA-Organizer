@@ -105,7 +105,7 @@ export function CartaoDetalhePage() {
   const color = card.color || '#820ad1';
 
   return (
-    <div className="flex flex-col gap-md p-md pb-32 md:pb-md md:max-w-3xl md:mx-auto">
+    <div className="flex flex-col gap-md pb-32 md:pb-md">
       <header>
         <Link to="/financeiro/cartoes" className="text-label text-fg-muted">← Cartões</Link>
         <h1 className="text-xl font-bold text-fg">{card.name}</h1>

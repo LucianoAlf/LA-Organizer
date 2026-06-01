@@ -86,7 +86,7 @@ export function ContasFixasPage() {
   const empty = !billsQ.isLoading && (billsQ.data?.length ?? 0) === 0;
 
   return (
-    <div className="flex flex-col gap-md p-md pb-32 md:pb-md md:max-w-5xl md:mx-auto">
+    <div className="flex flex-col gap-md pb-32 md:pb-md">
       <header className="flex items-baseline justify-between gap-3">
         <h2 className="text-section-title">Contas fixas</h2>
         <button

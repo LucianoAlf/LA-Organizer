@@ -65,7 +65,7 @@ export function CarteiraDetalhePage() {
   }
 
   return (
-    <div className="flex flex-col gap-md p-md pb-32 md:pb-md md:max-w-3xl md:mx-auto">
+    <div className="flex flex-col gap-md pb-32 md:pb-md">
       <header className="flex items-center justify-between gap-3">
         <Link to="/financeiro/carteiras" className="text-label text-fg-muted">← Carteiras</Link>
         <div className="flex items-center gap-1">

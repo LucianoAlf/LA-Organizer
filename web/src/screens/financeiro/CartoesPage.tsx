@@ -126,7 +126,7 @@ export function CartoesPage() {
   const [creating, setCreating] = useState(false);
 
   return (
-    <div className="flex flex-col gap-md p-md pb-32 md:pb-md md:max-w-5xl md:mx-auto">
+    <div className="flex flex-col gap-md pb-32 md:pb-md">
       <header className="flex items-baseline justify-between gap-3">
         <h2 className="text-section-title">Cartões de Crédito</h2>
         <Link to="/financeiro" className="text-body-sm text-fg-muted hover:text-fg focus-ring rounded">← Voltar</Link>
