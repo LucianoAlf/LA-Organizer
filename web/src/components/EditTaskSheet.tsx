@@ -20,6 +20,9 @@ import { RemindersField } from './RemindersField';
 import { useReminders } from '../screens/agenda/hooks/useReminders';
 import { notifyTaskUpdated } from '../lib/tomEngine';
 import { showToast } from './Toast';
+import { RecurrencePicker } from './RecurrencePicker';
+import { RecurrenceScopeDialog } from './RecurrenceScopeDialog';
+import { editTaskSeries, type TaskPatch } from '../lib/editTaskSeries';
 import type { Task, TaskContext } from '../types';
 
 interface Props {
@@ -52,6 +55,16 @@ export function EditTaskSheet({ open, task, onClose }: Props) {
   const [reminderTimes, setReminderTimes] = useState<string[]>([]);
   const reminders = useReminders('task', task?.id);
 
+  // Sprint 23 — recorrência. recurrenceRule = regra atual editável; seriesRuleOriginal =
+  // regra da série ao abrir (pra detectar mudança). Ocorrências materializadas não têm
+  // recurrence_rule próprio — buscamos o template via recurrence_parent_id.
+  const [recurrenceRule, setRecurrenceRule] = useState<string | null>(task?.recurrence_rule ?? null);
+  const [seriesRuleOriginal, setSeriesRuleOriginal] = useState<string | null>(task?.recurrence_rule ?? null);
+  const [scopeOpen, setScopeOpen] = useState(false);
+  // reminderDirty: o user mexeu nos lembretes? Só passamos reminderTimes pro editTaskSeries
+  // quando true, pra não apagar lembretes que o user não tocou.
+  const [reminderDirty, setReminderDirty] = useState(false);
+
   // Sprint 22.31 — dep eh task?.id (nao task ref). Evita reset de state quando
   // queryClient refetcha em background e a referencia muda mas o id eh o mesmo.
   // Bug observado: usuario mudava data, refetch chegava, state era resetado pro
@@ -70,8 +83,35 @@ export function EditTaskSheet({ open, task, onClose }: Props) {
   // Sincroniza lembretes do servidor quando task muda ou data chega.
   useEffect(() => {
     setReminderTimes(reminders.localTimes);
+    setReminderDirty(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task?.id, reminders.localTimes.length]);
+
+  // Sprint 23 — busca a regra da série ao abrir. Se a task é o próprio template
+  // (recurrence_rule), usa direto; se é ocorrência (recurrence_parent_id), busca o pai.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (task?.recurrence_rule) {
+        setRecurrenceRule(task.recurrence_rule);
+        setSeriesRuleOriginal(task.recurrence_rule);
+        return;
+      }
+      if (task?.recurrence_parent_id) {
+        const { data } = await supabase
+          .from('tasks')
+          .select('recurrence_rule')
+          .eq('id', task.recurrence_parent_id)
+          .single();
+        const r = (data as { recurrence_rule: string | null } | null)?.recurrence_rule ?? null;
+        if (!cancelled) { setRecurrenceRule(r); setSeriesRuleOriginal(r); }
+      } else {
+        setRecurrenceRule(null);
+        setSeriesRuleOriginal(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [task?.id, task?.recurrence_rule, task?.recurrence_parent_id]);
 
   const update = useMutation({
     mutationFn: async () => {
@@ -131,13 +171,54 @@ export function EditTaskSheet({ open, task, onClose }: Props) {
     },
   });
 
+  // Sprint 23 — série = task tem rule/parent OU o user acabou de ligar recorrência.
+  const isSeries = Boolean(task?.recurrence_parent_id || task?.recurrence_rule) || (recurrenceRule != null);
+  const ruleChanged = (recurrenceRule ?? null) !== (seriesRuleOriginal ?? null);
+
   const onSave = (e: FormEvent) => {
     e.preventDefault();
     setError(null);
+    if (isSeries) { setScopeOpen(true); return; }
     update.mutate(undefined, {
       onError: (err) => setError(err instanceof Error ? err.message : String(err)),
     });
   };
+
+  async function doSaveSeries(scope: 'only_this' | 'this_and_future') {
+    setScopeOpen(false);
+    setError(null);
+    if (!task || !collaborator) return;
+    const t = title.trim();
+    if (t.length < 2) { setError('Título curto demais.'); return; }
+    if (!due) { setError('Coloca uma data válida.'); return; }
+
+    const patch: TaskPatch = {
+      title: t.slice(0, 200),
+      context,
+      due_time: dueTime || null,
+      eisenhower_quadrant: quadrant != null ? String(quadrant) : null,
+    };
+    const newRule = ruleChanged ? recurrenceRule : undefined;
+    // reminderTimes são datetime-local "YYYY-MM-DDTHH:MM"; editTaskSeries espera ["HH:MM"]
+    // (re-ancora a cada ocorrência). Converte pegando a parte após "T". Só envia se o user
+    // mexeu (senão undefined = preserva lembretes existentes).
+    const reminderArg = reminderDirty
+      ? reminderTimes.map(local => local.split('T')[1]?.slice(0, 5)).filter((s): s is string => Boolean(s))
+      : undefined;
+
+    const res = await editTaskSeries(
+      { id: task.id, recurrence_parent_id: task.recurrence_parent_id ?? null, due_date: due },
+      scope, patch, newRule, reminderArg,
+    );
+    if (!res.ok) { setError('Não consegui salvar: ' + (res.error ?? '')); return; }
+    await qc.invalidateQueries({ queryKey: ['tasks'] });
+    await qc.refetchQueries({ queryKey: ['tasks'], type: 'active' });
+    if (task.created_by && task.assigned_to && task.created_by !== task.assigned_to && task.created_by === collaborator.id) {
+      try { await notifyTaskUpdated(task.id, 'edited'); } catch { /* notificação best-effort */ }
+    }
+    showToast({ kind: 'success', title: 'Tarefa atualizada' });
+    onClose();
+  }
 
   return (
     <AdaptiveSheet open={open && Boolean(task)} onClose={onClose} title="Editar tarefa" size="md">
@@ -216,8 +297,16 @@ export function EditTaskSheet({ open, task, onClose }: Props) {
           <RemindersField
             referenceDateTime={due ? `${due}T${dueTime || '09:00'}` : ''}
             value={reminderTimes}
-            onChange={setReminderTimes}
+            onChange={(v) => { setReminderTimes(v); setReminderDirty(true); }}
           />
+
+          {/* Sprint 23 — recorrência (logo abaixo de "Para quando" + lembretes). */}
+          <div>
+            <RecurrencePicker value={recurrenceRule} onChange={setRecurrenceRule} startDate={due} />
+            {(task.recurrence_rule || task.recurrence_parent_id) && (
+              <p className="text-[11px] text-fg-muted mt-1">🔁 Tarefa recorrente — alterações valem desta data em diante.</p>
+            )}
+          </div>
 
           <div>
             <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5 flex items-baseline gap-2">
@@ -237,6 +326,11 @@ export function EditTaskSheet({ open, task, onClose }: Props) {
           </div>
         </form>
       )}
+      <RecurrenceScopeDialog
+        open={scopeOpen}
+        onClose={() => setScopeOpen(false)}
+        onChoose={doSaveSeries}
+      />
     </AdaptiveSheet>
   );
 }

@@ -22,6 +22,10 @@ export interface TaskForPanel {
   is_recurring?: boolean;
   // Sprint 30 — horário-alvo da tarefa (HH:MM ou HH:MM:SS). Null = sem horário.
   due_time?: string | null;
+  // Sprint 23 — recorrência: regra do template (se for o próprio template) e id do
+  // pai (se for ocorrência materializada). Usados pelo editor de série.
+  recurrence_rule?: string | null;
+  recurrence_parent_id?: string | null;
 }
 
 // Sprint Agenda Desktop — tasks no range [from,to]. Espelha padrão de
@@ -75,6 +79,8 @@ export function useAgendaTasks(params: { from: Date; to: Date; filters: AgendaFi
         created_at: t.created_at ?? null,
         is_recurring: Boolean(t.recurrence_rule || t.recurrence_parent_id),
         due_time: t.due_time ?? null,
+        recurrence_rule: t.recurrence_rule ?? null,
+        recurrence_parent_id: t.recurrence_parent_id ?? null,
       };
     });
     return mapped.filter(t => {

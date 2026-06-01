@@ -147,6 +147,10 @@ export interface Task {
   // Sprint 22.5 — origem da task (mostra ícone se ≠ manual) + nome do assignee (delegadas)
   source?: string | null;
   assignee?: { full_name: string } | null;
+  // Sprint 23 — recorrência. recurrence_rule no template (série-mãe); recurrence_parent_id
+  // nas ocorrências materializadas (aponta pro template).
+  recurrence_rule?: string | null;
+  recurrence_parent_id?: string | null;
 }
 
 export type EventStatus = 'scheduled' | 'done' | 'cancelled';

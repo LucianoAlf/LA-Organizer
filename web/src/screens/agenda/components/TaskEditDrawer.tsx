@@ -4,6 +4,7 @@
 // modal = ação focada de criação; drawer = inspecionar+editar contexto).
 
 import { useEffect, useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Trash2 } from 'lucide-react';
 import { DetailDrawer } from '../../../design/primitives/DetailDrawer';
 import { DateInput } from '../../../components/DateInput';
@@ -11,6 +12,12 @@ import { TimeInput } from '../../../components/TimeInput';
 import { Button } from '../../../components/Button';
 import { EisenhowerPicker } from '../../../components/EisenhowerPicker';
 import { RemindersField } from '../../../components/RemindersField';
+import { RecurrencePicker } from '../../../components/RecurrencePicker';
+import { RecurrenceScopeDialog } from '../../../components/RecurrenceScopeDialog';
+import { editTaskSeries, type TaskPatch } from '../../../lib/editTaskSeries';
+import { notifyTaskUpdated } from '../../../lib/tomEngine';
+import { showToast } from '../../../components/Toast';
+import { supabase } from '../../../lib/supabase';
 import { useCollaboratorNames } from '../hooks/useCollaboratorNames';
 import { useReminders } from '../hooks/useReminders';
 import type { TaskForPanel } from '../hooks/useAgendaTasks';
@@ -57,10 +64,21 @@ function buildInitialForm(t: TaskForPanel): FormState {
 
 export function TaskEditDrawer(p: TaskEditDrawerProps) {
   const t = p.task;
+  const qc = useQueryClient();
   const [form, setForm] = useState<FormState | null>(t ? buildInitialForm(t) : null);
   const [reminderTimes, setReminderTimes] = useState<string[]>([]);
   const names = useCollaboratorNames();
   const reminders = useReminders('task', t?.id);
+
+  // Sprint 23 — recorrência. recurrenceRule = regra atual editável; seriesRuleOriginal =
+  // regra da série ao abrir (pra detectar mudança). Ocorrências materializadas não têm
+  // recurrence_rule próprio — buscamos o template via recurrence_parent_id.
+  const [recurrenceRule, setRecurrenceRule] = useState<string | null>(t?.recurrence_rule ?? null);
+  const [seriesRuleOriginal, setSeriesRuleOriginal] = useState<string | null>(t?.recurrence_rule ?? null);
+  const [scopeOpen, setScopeOpen] = useState(false);
+  // reminderDirty: o user mexeu nos lembretes? Só passamos reminderTimes pro editTaskSeries
+  // quando true, pra não apagar lembretes que o user não tocou.
+  const [reminderDirty, setReminderDirty] = useState(false);
 
   // Resetar quando trocar de task.
   useEffect(() => {
@@ -69,8 +87,35 @@ export function TaskEditDrawer(p: TaskEditDrawerProps) {
   // Sincroniza lembretes do servidor quando task muda ou data chega.
   useEffect(() => {
     setReminderTimes(reminders.localTimes);
+    setReminderDirty(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [t?.id, reminders.localTimes.length]);
+
+  // Sprint 23 — busca a regra da série ao abrir. Se a task é o próprio template
+  // (recurrence_rule), usa direto; se é ocorrência (recurrence_parent_id), busca o pai.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (t?.recurrence_rule) {
+        setRecurrenceRule(t.recurrence_rule);
+        setSeriesRuleOriginal(t.recurrence_rule);
+        return;
+      }
+      if (t?.recurrence_parent_id) {
+        const { data } = await supabase
+          .from('tasks')
+          .select('recurrence_rule')
+          .eq('id', t.recurrence_parent_id)
+          .single();
+        const r = (data as { recurrence_rule: string | null } | null)?.recurrence_rule ?? null;
+        if (!cancelled) { setRecurrenceRule(r); setSeriesRuleOriginal(r); }
+      } else {
+        setRecurrenceRule(null);
+        setSeriesRuleOriginal(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [t?.id, t?.recurrence_rule, t?.recurrence_parent_id]);
 
   const patch = useMemo(() => {
     if (!form || !t) return null;
@@ -95,13 +140,55 @@ export function TaskEditDrawer(p: TaskEditDrawerProps) {
 
   const error = validate(form);
 
+  // Sprint 23 — série = task tem rule/parent OU o user acabou de ligar recorrência.
+  const isSeries = Boolean(t.recurrence_parent_id || t.recurrence_rule) || (recurrenceRule != null);
+  const ruleChanged = (recurrenceRule ?? null) !== (seriesRuleOriginal ?? null);
+
   const handleSave = async () => {
     if (error || !patch) return;
+    if (isSeries) { setScopeOpen(true); return; }
     await p.onSave(t.id, patch);
     // Sincroniza lembretes em task_reminders (DELETE-all + INSERT-new).
     try { await reminders.sync(reminderTimes); } catch (e) { console.warn('[TaskEditDrawer] reminders sync err:', e); }
     p.onClose();
   };
+
+  async function doSaveSeries(scope: 'only_this' | 'this_and_future') {
+    setScopeOpen(false);
+    if (!t || !form) return;
+    if (validate(form)) return;
+
+    const seriesPatch: TaskPatch = {
+      title: form.title.trim().slice(0, 200),
+      description: form.description.trim() || null,
+      context: form.context,
+      due_time: form.due_time || null,
+      eisenhower_quadrant: form.eisenhower_quadrant != null ? String(form.eisenhower_quadrant) : null,
+    };
+    const newRule = ruleChanged ? recurrenceRule : undefined;
+    // reminderTimes são datetime-local "YYYY-MM-DDTHH:MM"; editTaskSeries espera ["HH:MM"]
+    // (re-ancora a cada ocorrência). Converte pegando a parte após "T". Só envia se o user
+    // mexeu (senão undefined = preserva lembretes existentes).
+    const reminderArg = reminderDirty
+      ? reminderTimes.map(local => local.split('T')[1]?.slice(0, 5)).filter((s): s is string => Boolean(s))
+      : undefined;
+
+    const res = await editTaskSeries(
+      { id: t.id, recurrence_parent_id: t.recurrence_parent_id ?? null, due_date: form.due_date },
+      scope, seriesPatch, newRule, reminderArg,
+    );
+    if (!res.ok) {
+      showToast({ kind: 'error', title: 'Tarefa', msg: 'Não consegui salvar: ' + (res.error ?? '') });
+      return;
+    }
+    await qc.invalidateQueries({ queryKey: ['tasks'] });
+    await qc.invalidateQueries({ queryKey: ['agenda-tasks'] });
+    if (t.delegated_to) {
+      try { await notifyTaskUpdated(t.id, 'edited'); } catch { /* notificação best-effort */ }
+    }
+    showToast({ kind: 'success', title: 'Tarefa atualizada' });
+    p.onClose();
+  }
 
   const handleDelete = async () => {
     if (!confirm('Deletar essa tarefa? Essa ação não pode ser desfeita.')) return;
@@ -115,6 +202,7 @@ export function TaskEditDrawer(p: TaskEditDrawerProps) {
     : null;
 
   return (
+    <>
     <DetailDrawer
       open={p.open}
       onClose={p.onClose}
@@ -207,8 +295,17 @@ export function TaskEditDrawer(p: TaskEditDrawerProps) {
         <RemindersField
           referenceDateTime={form.due_date ? `${form.due_date}T${form.due_time || '09:00'}` : ''}
           value={reminderTimes}
-          onChange={setReminderTimes}
+          onChange={(v) => { setReminderTimes(v); setReminderDirty(true); }}
         />
+
+        {/* Sprint 23 — recorrência (logo abaixo de "Para quando" + lembretes).
+            RecurrencePicker renderiza seu próprio label "Repetição". */}
+        <div>
+          <RecurrencePicker value={recurrenceRule} onChange={setRecurrenceRule} startDate={form.due_date} />
+          {(t.recurrence_rule || t.recurrence_parent_id) && (
+            <p className="text-[11px] text-fg-muted mt-1">🔁 Tarefa recorrente — alterações valem desta data em diante.</p>
+          )}
+        </div>
 
         <Field label="Prioridade">
           <EisenhowerPicker
@@ -234,6 +331,12 @@ export function TaskEditDrawer(p: TaskEditDrawerProps) {
         {error && <div className="text-[12px] text-danger">{error}</div>}
       </div>
     </DetailDrawer>
+    <RecurrenceScopeDialog
+      open={scopeOpen}
+      onClose={() => setScopeOpen(false)}
+      onChoose={doSaveSeries}
+    />
+    </>
   );
 }
 
