@@ -127,11 +127,9 @@ export function CartoesPage() {
 
   return (
     <div className="flex flex-col gap-md p-md pb-32 md:pb-md md:max-w-5xl md:mx-auto">
-      <header className="flex items-center justify-between">
-        <div>
-          <Link to="/financeiro" className="text-label text-fg-muted">← Finanças</Link>
-          <h1 className="text-xl font-bold text-fg">Cartões de Crédito</h1>
-        </div>
+      <header className="flex items-baseline justify-between gap-3">
+        <h2 className="text-section-title">Cartões de Crédito</h2>
+        <Link to="/financeiro" className="text-body-sm text-fg-muted hover:text-fg focus-ring rounded">← Voltar</Link>
       </header>
 
       {cardsQ.isLoading && <p className="text-fg-muted">Carregando…</p>}
