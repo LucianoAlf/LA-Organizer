@@ -5,7 +5,7 @@
 const METHODS = ['pix', 'debito', 'débito', 'transferencia', 'transferência', 'ted', 'doc', 'boleto'];
 const CASH_RE = /\b(dinheiro|esp[ée]cie|cash|grana|vivo)\b/i;
 
-function classifySource(rawName, accountNames = [], cardNames = []) {
+function classifySource(rawName, accountNames = [], cardNames = [], opts = {}) {
   const name = String(rawName || '').trim().toLowerCase();
   if (!name) return { kind: 'none' };
   if (CASH_RE.test(name)) return { kind: 'cash' };
@@ -16,7 +16,22 @@ function classifySource(rawName, accountNames = [], cardNames = []) {
   });
   const a = hit(accountNames);
   const c = hit(cardNames);
-  if (a && c) return { kind: 'ambiguous', accountName: a, cardName: c };
+  const type = opts.type === 'income' ? 'income' : 'expense';
+  const method = String(opts.method || '').toLowerCase();
+  const wantsCard = /cr[ée]dito|cart|fatura|parcel/.test(method);
+  const wantsAcct = /d[ée]bito|pix|transfer|ted|doc|boleto|conta/.test(method);
+
+  // Receita NUNCA vai pro cartão: colapsa pra conta; se só casou cartão, vira none.
+  if (type === 'income') {
+    if (a) return { kind: 'account', accountName: a };
+    return { kind: 'none' };
+  }
+  // Despesa
+  if (a && c) {
+    if (wantsCard) return { kind: 'card', cardName: c };
+    if (wantsAcct) return { kind: 'account', accountName: a };
+    return { kind: 'ambiguous', accountName: a, cardName: c };
+  }
   if (c) return { kind: 'card', cardName: c };
   if (a) return { kind: 'account', accountName: a };
   return { kind: 'none' };

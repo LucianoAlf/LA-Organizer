@@ -92,10 +92,10 @@ async function setPrimaryAccount(collaboratorId, id) {
 
 // Resolve a FONTE de uma transação: {kind, account?, card?, accounts?, cards?}.
 // kind: account | card | ambiguous | none. Faz o I/O e converte nomes→objetos (classifySource é puro).
-async function resolveSource(collaboratorId, name) {
+async function resolveSource(collaboratorId, name, opts = {}) {
   const accounts = await listAccounts(collaboratorId);
   const cards = await listCards(collaboratorId);
-  const cls = classifySource(name, accounts.map((a) => a.name), cards.map((c) => c.name));
+  const cls = classifySource(name, accounts.map((a) => a.name), cards.map((c) => c.name), opts);
   if (cls.kind === 'cash') return { kind: 'account', account: await ensureDinheiro(collaboratorId) };
   if (cls.kind === 'account') return { kind: 'account', account: accounts.find((a) => a.name === cls.accountName) };
   if (cls.kind === 'card') return { kind: 'card', card: cards.find((c) => c.name === cls.cardName) };

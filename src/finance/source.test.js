@@ -31,3 +31,35 @@ test('match nos dois → ambiguous', () => {
   assert.strictEqual(r.cardName, 'Nubank');
 });
 test('desconhecido → none', () => assert.strictEqual(classifySource('xpto', A, C).kind, 'none'));
+
+// ---- Novos testes: type/method-aware ----
+const ACC = ['Nubank', 'Itau'];
+const CARD = ['Nubank'];
+
+// receita nunca vai pro cartão
+test('income + nome colidente → account (sem ambiguidade)', () => {
+  const r = classifySource('nubank', ACC, CARD, { type: 'income' });
+  assert.deepStrictEqual(r, { kind: 'account', accountName: 'Nubank' });
+});
+test('income + nome só de cartão → none (engine pergunta/usa principal)', () => {
+  const r = classifySource('nubank', ['Itau'], CARD, { type: 'income' });
+  assert.deepStrictEqual(r, { kind: 'none' });
+});
+// gasto com sinal explícito resolve direto
+test('expense + colidente + method credito → card', () => {
+  const r = classifySource('nubank', ACC, CARD, { type: 'expense', method: 'credito' });
+  assert.deepStrictEqual(r, { kind: 'card', cardName: 'Nubank' });
+});
+test('expense + colidente + method debito → account', () => {
+  const r = classifySource('nubank', ACC, CARD, { type: 'expense', method: 'debito' });
+  assert.deepStrictEqual(r, { kind: 'account', accountName: 'Nubank' });
+});
+test('expense + colidente + method pix → account', () => {
+  const r = classifySource('nubank', ACC, CARD, { type: 'expense', method: 'pix' });
+  assert.deepStrictEqual(r, { kind: 'account', accountName: 'Nubank' });
+});
+// gasto sem sinal continua ambíguo (comportamento atual preservado)
+test('expense + colidente + sem method → ambiguous', () => {
+  const r = classifySource('nubank', ACC, CARD, { type: 'expense' });
+  assert.deepStrictEqual(r, { kind: 'ambiguous', accountName: 'Nubank', cardName: 'Nubank' });
+});

@@ -6008,9 +6008,10 @@ async function handleFinanceAction(collab, action, params) {
       const type = p.type || 'expense';
       const category = safeCategory(p.category, p.description, type);
       const srcName = params.account_name || params.account || params.carteira || params.conta || params.card || p.account_name;
+      const srcMethod = params.method || params.metodo || params.via || p.method || '';
 
-      // FONTE OBRIGATÓRIA (robusta): engine resolve. Nunca grava órfã, nunca depende do LLM no turno-2.
-      const src = srcName ? await financeService.resolveSource(cid, srcName) : { kind: 'none' };
+      // FONTE OBRIGATÓRIA (robusta): engine resolve, type-aware. Nunca grava órfã, nunca depende do LLM no turno-2.
+      const src = srcName ? await financeService.resolveSource(cid, srcName, { type, method: srcMethod }) : { kind: 'none' };
       const txnPayload = { type, category, amount: Number(p.amount), description: p.description, date: p.date };
 
       // Colisão carteira×cartão → pendência binária (cartão ou conta?)
@@ -6021,7 +6022,7 @@ async function handleFinanceAction(collab, action, params) {
           account: { kind: 'account', id: src.account.id, name: src.account.name },
           card: { kind: 'card', id: src.card.id, name: src.card.name },
         }, `${src.account.name}: cartão ou conta?`);
-        return `🤔 *${src.account.name}* é carteira e cartão. Foi no *cartão* ou na *conta*?`;
+        return `🤔 *${src.account.name}* é carteira e cartão. Foi no *cartão* ou na *conta*?\n_(dica: diz "no crédito" ou "no débito/pix" que eu já anoto direto 😉)_`;
       }
 
       // Cartão + despesa → fatura
@@ -6430,7 +6431,9 @@ async function processMessage(phone, text, raw = {}) {
           // senão a transação seria gravada de novo). Falha na gravação → avisa e mantém a intent.
           let reply;
           try {
-            reply = card
+            // Receita nunca grava em cartão (defesa em profundidade): se o pendente for income, força conta.
+            const useCard = !!card && txn.type !== 'income';
+            reply = useCard
               ? await recordCardPurchase(collab.id, card, { amount: txn.amount, description: txn.description, category: txn.category, installments: txn.installments, date: txn.date })
               : await writeCashTransaction(collab.id, { type: txn.type, category: txn.category, amount: txn.amount, description: txn.description, date: txn.date, account });
           } catch (writeErr) {
