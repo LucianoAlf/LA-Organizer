@@ -21,12 +21,29 @@ bloqueia via guardrail) e polui a lista do usuário.
 A recorrência clona os lembretes pra cada dia automaticamente. Domingo/sábado
 ficam de fora se a regra for "dias úteis".
 
-## SEMPRE confirme antes de gravar
-Monte o resumo e pergunte antes de emitir o marker (use o fluxo de pending_intents
-"Confirmo?"). Ex.:
+## Fluxo de 2 turnos: confirma, depois grava
+**Turno 1 (o pedido):** NÃO emita marker ainda. Monte o resumo e pergunte. Ex.:
 "Vou criar UMA tarefa recorrente *Dar presença dos alunos*, seg a sex, com lembrete
 de hora em hora das 13h às 20h (8 avisos/dia). Domingo fica de fora. Confirma?"
-Só emita o marker após o "sim".
+
+**Turno 2 (o usuário confirmou — "sim"/"confirmo"/"pode"/"isso"/"fechado"):** AGORA
+emita IMEDIATAMENTE o marker estruturado completo, com `recurrence_rule` + o ARRAY
+`reminders_at` (todos os horários). NÃO pergunte de novo, NÃO crie tarefa simples.
+Os parâmetros (dias da semana, janela de horas) estão na SUA própria mensagem
+anterior do resumo — releia o histórico e converta em marker. Exemplo do marker do
+turno 2 para "seg a sex, 13h às 20h, de hora em hora":
+```
+<<TASK_UPDATE>>
+[{"action":"create","title":"Dar presença dos alunos","context":"work",
+  "recurrence_rule":"FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR",
+  "due_date":"<data da próxima ocorrência YYYY-MM-DD>",
+  "reminders_at":["<data>T13:00:00-03:00","<data>T14:00:00-03:00","<data>T15:00:00-03:00","<data>T16:00:00-03:00","<data>T17:00:00-03:00","<data>T18:00:00-03:00","<data>T19:00:00-03:00","<data>T20:00:00-03:00"],
+  "reminders_labels":["13h","14h","15h","16h","17h","18h","19h","20h"]}]
+<<END>>
+```
+REGRA CRÍTICA: confirmação SEM o marker estruturado = falha grave. Se você só
+escrever "Criado!" sem emitir o `<<TASK_UPDATE>>` com `recurrence_rule` e
+`reminders_at`, a tarefa NÃO é criada de verdade — nunca faça isso.
 
 ## O que NÃO fazer
 - Não emita N markers de create.

@@ -848,7 +848,13 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
   // dia). Tem prioridade sobre criar-recorrencia pra montar UMA tarefa
   // recorrente com MÚLTIPLOS reminders, nunca N tarefas iguais.
   const HOURLY_REMINDER_RE = /de\s+hora\s+em\s+hora|a\s+cada\s+hora|v[áa]rios\s+lembretes|me\s+(?:lembra|cobra|avisa)\s+.*\b(?:todo\s+dia|de\s+hora\s+em\s+hora|a\s+cada\s+hora|v[áa]rios|das?\s+\d{1,2}\s*h?\s*[àa]s?\s+\d{1,2})|\bdas?\s+\d{1,2}\s*h?\s*[àa]s?\s+\d{1,2}\s*h?\b.*(?:lembr|cobr|avis|hora\s+em\s+hora|a\s+cada)/i;
-  if (HOURLY_REMINDER_RE.test(String(lastUserMessage || ''))) {
+  // Confirmação de uma proposta de lembrete recorrente que o TOM acabou de fazer
+  // (ex: "Vou criar UMA tarefa recorrente ... de hora em hora ... Confirma?"). Nesse
+  // turno a resposta é curta ("confirmo"/"sim"/"pode") e NÃO casa o HOURLY_REMINDER_RE
+  // — sem recarregar a skill, o TOM regredia e criava UMA tarefa simples (sem
+  // recurrence_rule nem reminders). Mesmo padrão do financeProposalOpen acima.
+  const recurringReminderProposalOpen = /tarefa\s+recorrente|de\s+hora\s+em\s+hora|\d+\s*avisos?\s*\/?\s*dia|lembrete\s+de\s+hora\s+em\s+hora|recorrente.*lembrete/i.test(recentOutbound);
+  if (HOURLY_REMINDER_RE.test(String(lastUserMessage || '')) || (recurringReminderProposalOpen && shortReply)) {
     return { name: 'lembrete-recorrente', body: loadSkill('lembrete-recorrente') };
   }
 
