@@ -843,6 +843,15 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
     return { name: 'financeiro-pessoal', body };
   }
 
+  // Sprint 30 — Skill lembrete-recorrente: ativa quando user pede pra ser
+  // lembrado REPETIDAMENTE de uma rotina (hora em hora / vários horários por
+  // dia). Tem prioridade sobre criar-recorrencia pra montar UMA tarefa
+  // recorrente com MÚLTIPLOS reminders, nunca N tarefas iguais.
+  const HOURLY_REMINDER_RE = /de\s+hora\s+em\s+hora|a\s+cada\s+hora|v[áa]rios\s+lembretes|me\s+(?:lembra|cobra|avisa)\s+.*\b(?:todo\s+dia|de\s+hora\s+em\s+hora|a\s+cada\s+hora|v[áa]rios|das?\s+\d{1,2}\s*h?\s*[àa]s?\s+\d{1,2})|\bdas?\s+\d{1,2}\s*h?\s*[àa]s?\s+\d{1,2}\s*h?\b.*(?:lembr|cobr|avis|hora\s+em\s+hora|a\s+cada)/i;
+  if (HOURLY_REMINDER_RE.test(String(lastUserMessage || ''))) {
+    return { name: 'lembrete-recorrente', body: loadSkill('lembrete-recorrente') };
+  }
+
   // Sprint 29.4 — Skill de recorrência (todos os roles): ativa quando user
   // pede ação que se repete no tempo. Tem prioridade sobre criar-compromisso
   // pra evitar TOM materializar manualmente várias rows.

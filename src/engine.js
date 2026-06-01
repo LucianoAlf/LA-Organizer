@@ -25,6 +25,7 @@ const financeService = require('./services/financeiro-service');
 const { mapCategory, normalizeParams } = require('./finance/categorize');
 const { crossedThreshold, buildBudgetAlert } = require('./finance/budget-alert');
 const { monthsToGoalSimple, monthsToGoalWithInterest, formatMonths, futureValue } = require('./finance/projection');
+const { splitBulkIdenticalCreates } = require('./task-guardrail');
 const selic = require('./services/selic');
 const audioDecompose = require('./services/audio-decompose');
 
@@ -3519,6 +3520,24 @@ async function applyTaskActions(collaborator, actions) {
   // Quando preenchido, o caller usa no lugar do genérico "não consegui registrar".
   const failMessages = [];
   const last4 = String(collaborator.phone || '').slice(-4);
+  // Guardrail anti-bomba (BULK-RECUR): se o lote tem >10 creates de título
+  // idêntico, bloqueia esse grupo e orienta o caminho recorrente. Backstop
+  // independente da skill (mesmo se o LLM ignorar a orientação).
+  {
+    const { allowed, blocked } = splitBulkIdenticalCreates(actions, 10);
+    if (blocked.length > 0) {
+      const exemplo = (blocked[0].title || '').trim().slice(0, 60);
+      console.warn(`[Task] BULK_CREATE_BLOCKED — ${blocked.length} creates idênticos "${exemplo}" (collab ${last4})`);
+      try {
+        await logMarker(collaborator.id, 'BULK_CREATE_BLOCKED', 'rejected',
+          `count=${blocked.length} title=${exemplo}`, null);
+      } catch (_) { /* não-fatal */ }
+      failMessages.push(
+        `Isso parece uma rotina que se repete ("${exemplo}"). Em vez de criar ${blocked.length} tarefas iguais, melhor 1 tarefa recorrente com lembretes nos horários. Quer que eu monte assim?`
+      );
+      actions = allowed;
+    }
+  }
   for (const a of actions) {
     if (!a || typeof a.action !== 'string') {
       failCount++;

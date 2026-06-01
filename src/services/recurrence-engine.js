@@ -16,6 +16,7 @@
 
 const { RRule, rrulestr } = require('rrule');
 const supabase = require('../supabase/client');
+const { shiftReminderToInstance } = require('./recurrence-time');
 
 const MATERIALIZE_HORIZON_DAYS = 30;
 const MAX_INSTANCES_PER_RUN = 50;
@@ -280,4 +281,4 @@ async function materializeAll() {
   return totals;
 }
 
-module.exports = { parseRule, nextOccurrences, materializeSeries, materializeAll };
+module.exports = { parseRule, nextOccurrences, materializeSeries, materializeAll, shiftReminderToInstance };

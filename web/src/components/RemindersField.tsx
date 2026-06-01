@@ -14,6 +14,10 @@
 // TOM dispatcher já lê AMBAS as tabelas (event_reminders + task_reminders)
 // e envia WhatsApp marcando sent_at quando entrega.
 
+import { useState } from 'react';
+import { generateIntervalTimes } from '../lib/reminderInterval';
+import { TimeInput } from './TimeInput';
+import { CustomSelect } from './CustomSelect';
 import { DateTimeInput } from './DateTimeInput';
 
 const PRESETS = [
@@ -51,6 +55,18 @@ function dateToLocal(d: Date): string {
 export function RemindersField({ referenceDateTime, value, onChange, disabled }: Props) {
   const hasRef = Boolean(referenceDateTime);
   const refMs = hasRef ? localToDate(referenceDateTime).getTime() : 0;
+
+  const baseYmd = (referenceDateTime || '').slice(0, 10) || new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10);
+  const [intStart, setIntStart] = useState('13:00');
+  const [intEnd, setIntEnd] = useState('20:00');
+  const [intStep, setIntStep] = useState('60');
+
+  function applyInterval() {
+    const gen = generateIntervalTimes(baseYmd, intStart, intEnd, Number(intStep));
+    if (!gen.length) return;
+    const merged = Array.from(new Set([...value, ...gen])).sort();
+    onChange(merged);
+  }
 
   function computePresetLocal(minutes: number): string {
     if (!hasRef) return '';
@@ -120,6 +136,32 @@ export function RemindersField({ referenceDateTime, value, onChange, disabled }:
             Limpar
           </button>
         )}
+      </div>
+
+      {/* Gerador de intervalo — "de hora em hora" */}
+      <div className="flex flex-wrap items-end gap-2 mb-3 p-2 rounded-md bg-bg-elevated border border-border">
+        <span className="text-[10px] uppercase tracking-wider text-fg-muted font-semibold w-full">
+          De hora em hora
+        </span>
+        <div className="flex items-center gap-1">
+          <TimeInput value={intStart} onChange={setIntStart} />
+          <span className="text-[12px] text-fg-muted">às</span>
+          <TimeInput value={intEnd} onChange={setIntEnd} />
+        </div>
+        <CustomSelect
+          value={intStep}
+          onChange={setIntStep}
+          options={[{ value: '60', label: 'a cada 1h' }, { value: '30', label: 'a cada 30min' }]}
+          size="sm"
+        />
+        <button
+          type="button"
+          onClick={applyInterval}
+          disabled={disabled}
+          className="px-3 py-1 rounded-full text-[12px] border border-tom bg-tom text-black font-semibold hover:opacity-90 focus-ring disabled:opacity-40"
+        >
+          Gerar
+        </button>
       </div>
 
       {/* Lista de lembretes (customizáveis) */}
