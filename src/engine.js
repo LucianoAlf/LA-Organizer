@@ -8438,12 +8438,19 @@ async function processMessage(phone, text, raw = {}) {
     // - "registrar/registrei/anotando/criando/adicionando/crio as/juntando/no pacote/na lista" → create operacional
     const REPLY_PROMISE_RE = /(?:lembrete|lembro|te\s+(?:aviso|cobro|lembro))\s+(?:hoje\s+|amanh[aã]\s+|j[aá]\s+|de\s+novo\s+|mais\s+tarde\s+)?(?:[aà]s?\s+|nas?\s+)?\d{1,2}\s*[h:]|(?:reagendei|reagendo|reagendado|reagendamento|marquei\s+(?:pra|para)|agendei\s+(?:pra|para)|coloquei\s+(?:pra|para)|movi\s+(?:pra|para))\s+(?:hoje|amanh[aã]|segunda|terça|quarta|quinta|sexta|sábado|domingo|próxima|semana\s+que\s+vem|\d{1,2}\/\d{1,2})|\b(?:registr(?:ar|ei|ando|o)|anot(?:ar|ei|ando|ado)|adicion(?:ar|ei|ando|ado|o)|juntando|criando|criei|vou\s+criar|crio\s+as?|colocando\s+(?:na|no)\s+(?:lista|pacote|fila)|(?:t[oô]|estou)\s+(?:adicionando|registrando|anotando|criando)|adicionando\s+ao\s+pacote)\b/i;
     const inputActionable = ACTIONABLE_RE.test(String(text || ''));
-    const replyHasPromise = REPLY_PROMISE_RE.test(String(reply || ''));
-    // Sprint 31 — pula quando TOM está coletando info (pergunta sem tarefa bold)
-    // ex: "Claro! De que é o lembrete?" → info-gathering, não promessa quebrada
+    let replyHasPromise = REPLY_PROMISE_RE.test(String(reply || ''));
+    // Bug 01/06 (Esfera/Grava?): pergunta de confirmação é SEMPRE info-gathering,
+    // mesmo com *negrito*. Antes exigia "sem bold", mas confirmação cita a entidade
+    // em negrito ("...com a *Esfera*... Certo?", "🧾 *Sabor do Mar*... Grava?") e
+    // escapava do filtro, inflando a métrica e disparando auto-retry em pergunta.
+    // Se o TOM está PERGUNTANDO, ele não prometeu nada — não há ação a persistir.
     const _replyEndsQ = /\?\s*$/.test((reply || '').trim());
-    const _replyHasBoldTask = /\*[^*]{3,80}\*/.test(reply || '');
-    const _replyIsInfoGathering = _replyEndsQ && !_replyHasBoldTask;
+    const _replyIsInfoGathering = _replyEndsQ;
+    // Bug 01/06: RECUSA não é promessa. "não consigo registrar", "não tem como
+    // criar", "não dá pra anotar por aqui" casavam REPLY_PROMISE_RE pelo verbo e
+    // disparavam auto-retry numa negação. Se o TOM recusou, zera a flag de promessa.
+    const _replyIsDecline = /\bn[ãa]o\s+(?:consigo|d[áa]|tem\s+como|rola|posso|consegue)\b[^.!?]{0,60}\b(?:registr|anot|cri|adicion|salv|marc|guard|lembr)/i.test(String(reply || ''));
+    if (_replyIsDecline) replyHasPromise = false;
     // Sprint 31.6 (C1) — reduz falso-positivo da métrica ACTIONABLE_NO_MARKER.
     // O `inputActionable` pegava (a) PERGUNTAS do user ("E o evento que criei?")
     // e (b) AUTO-RELATO do próprio user ("estou verificando", "eu já criei") —
@@ -8488,28 +8495,24 @@ Contexto:
 - User disse: "${String(text || '').slice(0, 500)}"
 - TOM respondeu verbalizando promessa: "${String(reply || '').slice(0, 900)}"
 
-TOM prometeu uma ação mas esqueceu de emitir o marker. Sua tarefa: emitir o marker correto. PODE EMITIR ARRAY com várias actions se TOM prometeu múltiplas coisas (ex: "adicionando ao pacote" com 3 itens).
+TOM verbalizou um LEMBRETE COM HORÁRIO mas esqueceu de emitir o marker. Sua tarefa: emitir o marker SÓ se houver um horário/data explícito na promessa.
 
-Regras por tipo de promessa:
+ESCOPO RESTRITO — este retry só cobre lembretes e reagendamentos com tempo explícito:
 
-1) **Lembrete/aviso** ("lembrete às X", "te aviso às X", "te cobro às X") → action="reschedule" (se task existe) ou "create" (se nova) com remind_at ISO BRT "YYYY-MM-DDTHH:mm:ss-03:00"
+1) **Lembrete/aviso COM HORA** ("lembrete às 15h", "te aviso amanhã às 9h", "te cobro segunda às X") → action="reschedule" (se task existe) ou "create" com remind_at ISO BRT "YYYY-MM-DDTHH:mm:ss-03:00". SÓ emita se houver hora/dia concretos.
 
-2) **Reagendamento** ("marquei pra amanhã", "reagendei pra segunda", "coloquei pra X") → action="reschedule" com new_due_date (e new_remind_at se mencionou hora)
+2) **Reagendamento COM DATA** ("marquei pra amanhã", "reagendei pra segunda", "coloquei pra 05/06") → action="reschedule" com new_due_date (e new_remind_at se mencionou hora).
 
-3) **Criação genérica** ("criei", "abri", "anotei") → action="create" com title
-
-4) **DEMANDA OPERACIONAL** (compras, manutenção, reparo, montagem — vistas em "registrar", "adicionando ao pacote", "crio as duas/três", "juntando", "tá na fila") → action="create" + category="operational" + action_type="task" + priority="medium" + título descritivo extraído da fala do user/TOM (ex: "Comprar 2 lâmpadas 8w — Sala Bateria Kids Recreio"). Se TOM listou N itens, emitir ARRAY com N actions, uma por item.
-
-AÇÕES PROIBIDAS NESTE CONTEXTO — retorne NO_MARKER se a promessa for deste tipo:
-- action="complete" — conclusão de tarefa NUNCA é feita por auto-retry. Requer confirmação explícita do usuário no fluxo principal.
-- action="cancel" — cancelamento também requer confirmação explícita.
-- Qualquer action que desfaça ou finalize uma tarefa existente.
+PROIBIDO NESTE CONTEXTO — retorne NO_MARKER se a promessa for qualquer um destes:
+- Criar tarefa nova sem horário (action="create" sem remind_at/data concreta). Bug 01/06: o retry transformava PERGUNTA do TOM ("grava o quê?"), AULA de uso do app ("vá em Finanças → cadastrar") e CONVERSA TÉCNICA ("vou olhar o código") em tarefas-fantasma. Criação de tarefa só acontece no fluxo principal, nunca aqui.
+- action="complete" / action="cancel" — concluir ou cancelar exige confirmação explícita do usuário.
+- Demanda operacional genérica sem horário (compras, reparos) — vai pelo fluxo principal.
+- Qualquer dúvida sobre se o user realmente PEDIU a ação → NO_MARKER.
 
 IMPORTANTE:
 - Use title (não id) pra referenciar a task — o engine resolve por título
-- Múltiplas demandas → ARRAY com várias actions no MESMO marker
-- Se ambíguo ou faltar dado crítico em TUDO, retorne literalmente: NO_MARKER
-- Se conseguir extrair PELO MENOS UMA ação clara (create/reschedule), emita só ela (não retorne NO_MARKER por causa de itens duvidosos)
+- Se NÃO houver horário/data explícito na promessa, retorne literalmente: NO_MARKER
+- Na dúvida, sempre NO_MARKER. É melhor não persistir do que criar lixo.
 
 Formato de saída — exemplo de demanda operacional múltipla:
 <<TASK_UPDATE>>
@@ -8532,20 +8535,29 @@ Output AGORA, apenas o marker:`;
               const parsedRetry = parseTaskUpdateMarker(retryText);
               if (parsedRetry && Array.isArray(parsedRetry.actions) && parsedRetry.actions.length > 0) {
                 try {
-                  // Bug 30/05 (Yuri/Agenda): auto-retry NÃO pode emitir complete/cancel.
-                  // Filtra antes do apply como defesa em profundidade, mesmo que o mini LLM
-                  // ignore a instrução no prompt (camada dupla de proteção).
+                  // Defesa em profundidade — o auto-retry só pode persistir o que é
+                  // seguro e verificável, mesmo que o mini LLM ignore o prompt:
+                  // - Bug 30/05 (Yuri): complete/cancel proibido (exige confirmação).
+                  // - Bug 01/06 (Jhonatan/Alf): create SEM remind_at proibido — o retry
+                  //   transformava pergunta/aula/conversa-técnica em tarefa-fantasma.
+                  //   Só passa create se tiver lembrete com hora (intenção inequívoca) ou
+                  //   reschedule (task já existe, o user só mudou data/hora).
                   const safeActions = parsedRetry.actions.filter(a => {
-                    if (a && (a.action === 'complete' || a.action === 'cancel')) {
+                    if (!a || typeof a.action !== 'string') return false;
+                    if (a.action === 'complete' || a.action === 'cancel') {
                       console.warn(`[Engine] AUTO_RETRY_BLOCKED_ACTION — action=${a.action} title="${a.title || a.id}" (complete/cancel proibido em auto-retry)`);
+                      return false;
+                    }
+                    if (a.action === 'create' && !a.remind_at) {
+                      console.warn(`[Engine] AUTO_RETRY_BLOCKED_CREATE — create sem remind_at title="${a.title || ''}" (criação de tarefa nova não passa por auto-retry)`);
                       return false;
                     }
                     return true;
                   });
                   if (safeActions.length === 0) {
-                    console.warn('[Engine] AUTO_RETRY_ALL_BLOCKED — todas as actions eram complete/cancel, ignorando');
+                    console.warn('[Engine] AUTO_RETRY_ALL_BLOCKED — nenhuma action segura (create sem hora / complete / cancel), ignorando');
                     await logMarker(collab.id, 'TASK_UPDATE_AUTO_RETRY', 'rejected',
-                      'all_blocked:complete_cancel_forbidden', retryText.slice(0, 500));
+                      'all_blocked:unsafe_actions', retryText.slice(0, 500));
                   } else {
                   // Sprint 31.2 — telemetria honesta: olha okCount/failCount em vez de
                   // assumir sucesso. Bug observado 28/05/2026 (Yuri): AUTO_RETRY com 4
