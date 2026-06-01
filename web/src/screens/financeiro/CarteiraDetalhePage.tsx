@@ -54,6 +54,7 @@ export function CarteiraDetalhePage() {
   const ym = new Date().toISOString().slice(0, 7);
   const savedThisMonth = (txQ.data ?? []).reduce((sum, t) => {
     if (t.transaction_date.slice(0, 7) !== ym) return sum;
+    if (t.is_adjustment) return sum; // acerto de caixa não conta como "guardado no mês"
     return sum + (t.type === 'income' ? Number(t.amount) : -Number(t.amount));
   }, 0);
   const txs = txQ.data ?? [];

@@ -28,7 +28,7 @@ function rangeLast6Months() {
   return { start: startD.toISOString().slice(0, 10), end: endD.toISOString().slice(0, 10), startD, endD };
 }
 
-function aggregateByMonth(txs: { type: 'income'|'expense'; amount: number; transaction_date: string }[]) {
+function aggregateByMonth(txs: { type: 'income'|'expense'; amount: number; transaction_date: string; is_adjustment?: boolean }[]) {
   const buckets: Record<string, { income: number; expense: number }> = {};
   for (const t of txs) {
     const ym = t.transaction_date.slice(0, 7);
@@ -62,7 +62,7 @@ export function FinanceiroPage() {
   const monthlySeries = useMemo(() => {
     if (!txRangeQ.data) return [];
     // Linha de saldo = caixa: exclui compras no cartão (estão na fatura, não no caixa).
-    const buckets = aggregateByMonth(txRangeQ.data.filter((t) => !t.card_id));
+    const buckets = aggregateByMonth(txRangeQ.data.filter((t) => !t.card_id && !t.is_adjustment));
     const arr: { mes: string; saldo: number; receitas: number; despesas: number }[] = [];
     for (let i = 0; i < 6; i++) {
       const d = new Date(Date.UTC(r6.startD.getUTCFullYear(), r6.startD.getUTCMonth() + i, 1));

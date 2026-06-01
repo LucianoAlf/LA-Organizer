@@ -96,13 +96,13 @@ export function useBudgets() {
 export function useSummary() {
   const tx = useTransactions();
   if (!tx.data) return { ...tx, summary: undefined };
-  // Caixa (receitas/despesas/saldo): EXCLUI compras no cartão (vivem na fatura, não no caixa).
-  const cash = tx.data.filter((r) => !r.card_id);
+  // Caixa (receitas/despesas/saldo): EXCLUI compras no cartão (vivem na fatura) E ajustes de saldo (acerto de caixa, não é receita/despesa real).
+  const cash = tx.data.filter((r) => !r.card_id && !r.is_adjustment);
   const receitas = cash.filter((r) => r.type === 'income').reduce((s, r) => s + Number(r.amount), 0);
   const despesas = cash.filter((r) => r.type === 'expense').reduce((s, r) => s + Number(r.amount), 0);
-  // Gastos por categoria: INCLUI cartão (você quer ver onde gasta, independente do meio).
+  // Gastos por categoria: INCLUI cartão (você quer ver onde gasta), mas EXCLUI ajustes.
   const porCat: Record<string, number> = {};
-  for (const r of tx.data) if (r.type === 'expense') porCat[r.category] = (porCat[r.category] || 0) + Number(r.amount);
+  for (const r of tx.data) if (r.type === 'expense' && !r.is_adjustment) porCat[r.category] = (porCat[r.category] || 0) + Number(r.amount);
   return { ...tx, summary: { receitas, despesas, saldo: receitas - despesas, porCat } };
 }
 

@@ -64,11 +64,11 @@ export function TransacoesPage() {
   });
 
   const totalIn = useMemo(
-    () => (txQ.data ?? []).filter((t) => t.type === 'income').reduce((s, t) => s + Number(t.amount), 0),
+    () => (txQ.data ?? []).filter((t) => t.type === 'income' && !t.is_adjustment).reduce((s, t) => s + Number(t.amount), 0),
     [txQ.data],
   );
   const totalOut = useMemo(
-    () => (txQ.data ?? []).filter((t) => t.type === 'expense').reduce((s, t) => s + Number(t.amount), 0),
+    () => (txQ.data ?? []).filter((t) => t.type === 'expense' && !t.is_adjustment).reduce((s, t) => s + Number(t.amount), 0),
     [txQ.data],
   );
 

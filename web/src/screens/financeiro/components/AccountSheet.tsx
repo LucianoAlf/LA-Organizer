@@ -75,6 +75,7 @@ export function AccountSheet({
       description: isCreate ? 'Saldo inicial' : 'Ajuste de saldo',
       transaction_date: new Date().toISOString().slice(0, 10),
       account_id: accountId,
+      is_adjustment: true,
     });
   }
 

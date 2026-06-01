@@ -20,6 +20,7 @@ export interface PfTransaction {
   description: string | null; transaction_date: string; account_id: string | null;
   card_id?: string | null; // preenchido = compra no cartão (fora do caixa; vive na fatura)
   purchase_group?: string | null;
+  is_adjustment?: boolean; // true = acerto de caixa; conta no saldo, mas fora dos relatórios
 }
 export interface PfBill {
   id: string; name: string; amount: number; due_day: number; category: PfCategory;
@@ -94,7 +95,7 @@ export async function createTransfer(collaboratorId: string, input: { from_accou
 // Extrato da carteira: lançamentos (caixa) dessa conta, recentes primeiro.
 export async function listAccountTransactions(collaboratorId: string, accountId: string, limit = 50): Promise<PfTransaction[]> {
   const { data, error } = await supabase.from('pf_transactions')
-    .select('id, type, category, amount, description, transaction_date, account_id, card_id, purchase_group')
+    .select('id, type, category, amount, description, transaction_date, account_id, card_id, purchase_group, is_adjustment')
     .eq('collaborator_id', collaboratorId).eq('account_id', accountId)
     .order('transaction_date', { ascending: false }).limit(limit);
   if (error) throw error;
@@ -120,7 +121,7 @@ export async function setPrimaryAccount(collaboratorId: string, id: string) {
 export async function listTransactions(collaboratorId: string, opts?: { monthYear?: string; category?: PfCategory; type?: PfTxType; limit?: number }) {
   const { start, end } = opts?.monthYear ? monthBoundsFromYYYYMM(opts.monthYear) : monthBounds();
   let q = supabase.from('pf_transactions')
-    .select('id, type, category, amount, description, transaction_date, account_id, card_id, purchase_group')
+    .select('id, type, category, amount, description, transaction_date, account_id, card_id, purchase_group, is_adjustment')
     .eq('collaborator_id', collaboratorId)
     .gte('transaction_date', start).lt('transaction_date', end)
     .order('transaction_date', { ascending: false });
@@ -131,10 +132,11 @@ export async function listTransactions(collaboratorId: string, opts?: { monthYea
   if (error) throw error;
   return (data as PfTransaction[]) ?? [];
 }
-export async function createTransaction(collaboratorId: string, input: { type: PfTxType; category: PfCategory; amount: number; description?: string | null; transaction_date?: string; account_id?: string | null }) {
+export async function createTransaction(collaboratorId: string, input: { type: PfTxType; category: PfCategory; amount: number; description?: string | null; transaction_date?: string; account_id?: string | null; is_adjustment?: boolean }) {
   const row = {
     collaborator_id: collaboratorId, type: input.type, category: input.category, amount: input.amount,
     description: input.description ?? null, account_id: input.account_id ?? null,
+    is_adjustment: input.is_adjustment ?? false,
     via: 'pwa', ...(input.transaction_date ? { transaction_date: input.transaction_date } : {}),
   };
   const { data, error } = await supabase.from('pf_transactions').insert(row).select().single();
@@ -160,11 +162,11 @@ export async function updateTransaction(collaboratorId: string, id: string, patc
 // Range multi-mês — usado pela linha de 6 meses do Dashboard.
 export async function listTransactionsRange(collaboratorId: string, start: string, end: string) {
   const { data, error } = await supabase.from('pf_transactions')
-    .select('type, amount, transaction_date, card_id')
+    .select('type, amount, transaction_date, card_id, is_adjustment')
     .eq('collaborator_id', collaboratorId)
     .gte('transaction_date', start).lt('transaction_date', end);
   if (error) throw error;
-  return (data ?? []) as { type: PfTxType; amount: number; transaction_date: string; card_id: string | null }[];
+  return (data ?? []) as { type: PfTxType; amount: number; transaction_date: string; card_id: string | null; is_adjustment?: boolean }[];
 }
 
 // ---- Orçamento ----
