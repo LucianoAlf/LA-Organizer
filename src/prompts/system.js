@@ -3154,6 +3154,10 @@ async function buildSystemPrompt(collaborator, opts = {}) {
       console.warn('[InvCtx] erro lookup sala recente:', e.message);
     }
     console.log(`[InvCtx] item=${mencionaItemInv} hist=${hist.length} salaRecentePersistida=${salaRecentePersistida ? salaRecentePersistida.sala_nome : 'NENHUMA'}`);
+    // Expõe a sala travada pro engine (trava determinística de cadastro). null = sem sessão.
+    ctx.invSalaContext = salaRecentePersistida
+      ? { sala_id: salaRecentePersistida.sala_id ?? null, sala_nome: salaRecentePersistida.sala_nome ?? null }
+      : null;
   }
   const querConsultaSala = !!(querSalaMatch && (verbosConsultaSala.test(lowerMsg) || mencionaItemInv));
   const matchInv = cmdsInv || matchInvForte || (matchUnidadeInv && matchVerboInv) || querConsultaSala || mencionaItemInv;

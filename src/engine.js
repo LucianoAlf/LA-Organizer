@@ -22,6 +22,7 @@ const pendingIntents = require('./services/pending-intents');
 const { buildCoordinationResponseNotification } = require('./services/coordination-notify');
 const { isContextQuietField, validateContextQuietField } = require('./services/prefs-quiet-context');
 const pendingInventoryPhoto = require('./services/pending-inventory-photo');
+const { salaConfirmada } = require('./services/inventory-sala-guard');
 const financeService = require('./services/financeiro-service');
 const { mapCategory, normalizeParams } = require('./finance/categorize');
 const { crossedThreshold, buildBudgetAlert } = require('./finance/budget-alert');
@@ -7824,6 +7825,17 @@ async function processMessage(phone, text, raw = {}) {
                       foto_url: p.foto_url || null,
                       observacoes: p.observacoes || null,
                     };
+                    // TRAVA DE SALA (determinística): não cadastra na sala herdada
+                    // do histórico (bug Sala 13). Confirmada = sessão travada OU sala
+                    // dita no turno atual. Senão, pergunta (engine = fonte da verdade).
+                    if (!salaConfirmada({
+                      markerSalaNome: p.sala_nome,
+                      markerSalaId: p.sala_id || salaId,
+                      persisted: ctx && ctx.invSalaContext,
+                      inboundText: inboundVerbatimText,
+                    })) {
+                      reply = `Em qual *unidade* e *sala* você quer cadastrar a *${String(p.nome || itemPayload.nome || 'item').trim()}*? (ex: Sala 13 — Campo Grande)`;
+                    } else {
                     const item = await inventarioService.inserirItem(itemPayload, userName);
                     // Anexa a foto que a pessoa mandou por WhatsApp (capturada no
                     // webhook, pode ter vindo turnos antes). Upload server-side →
@@ -7844,6 +7856,7 @@ async function processMessage(phone, text, raw = {}) {
                       }
                     }
                     reply = (reply ? reply + '\n\n' : '') + `✅ Item adicionado: ${item.nome}${item.codigo_patrimonio ? ` (${item.codigo_patrimonio})` : ''}${_fotoMsg}`;
+                    }
                   }
                 }
               }
