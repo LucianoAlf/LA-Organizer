@@ -30,16 +30,21 @@ export async function editTaskSeries(
       if (hasPatch) {
         const { error } = await supabase.from('tasks')
           .update({ ...patch, recurrence_excluded: true }).eq('id', anchor.id);
-        if (error) throw error;
+        if (error) throw new Error(`only_this update: ${error.message}`);
       }
       if (reminderTimes) await replaceReminders(anchor.id, anchor.due_date, reminderTimes);
       return { ok: true };
     }
 
+    // this_and_future — alvos: futuras pendentes da série (template + filhas) a
+    // partir da data da âncora.
     const ids = await futurePendingIds(plan.seriesId, plan.applyFutureFromYmd as string);
     if (hasPatch && ids.length) {
-      const { error } = await supabase.from('tasks').update(patch).in('id', ids);
-      if (error) throw error;
+      const { data: pRows, error } = await supabase.from('tasks').update(patch).in('id', ids).select('id');
+      if (error) throw new Error(`future patch update (${ids.length} ids): ${error.message}`);
+      if (!pRows || pRows.length === 0) {
+        throw new Error(`future patch update afetou 0 de ${ids.length} linhas (RLS bloqueou?)`);
+      }
     }
     if (reminderTimes && ids.length) {
       for (const id of ids) {
@@ -48,48 +53,83 @@ export async function editTaskSeries(
       }
     }
     if (newRule !== undefined) {
+      // cancela futuras pendentes estritamente após hoje
       const cancelIds = await futurePendingIds(plan.seriesId, addDay(todayYmd));
       if (cancelIds.length) {
         const { error } = await supabase.from('tasks')
           .update({ status: 'cancelled' }).in('id', cancelIds);
-        if (error) throw error;
+        if (error) throw new Error(`cancel futures (${cancelIds.length}): ${error.message}`);
       }
-      const { error: upErr } = await supabase.from('tasks')
-        .update({ recurrence_rule: newRule }).eq('id', plan.seriesId);
-      if (upErr) throw upErr;
+      // Sprint 26 pattern — .select('id') + checagem de linha pra pegar silent
+      // fail de RLS (update sem erro mas que afeta 0 linhas).
+      const { data: upRows, error: upErr } = await supabase.from('tasks')
+        .update({ recurrence_rule: newRule }).eq('id', plan.seriesId).select('id');
+      if (upErr) throw new Error(`template rule update: ${upErr.message}`);
+      if (!upRows || upRows.length === 0) {
+        throw new Error(`template rule update afetou 0 linhas (RLS bloqueou? id=${plan.seriesId})`);
+      }
       if (plan.rematerialize && newRule) {
-        const { data: tpl } = await supabase.from('tasks')
+        const { data: tpl, error: tErr } = await supabase.from('tasks')
           .select('id, recurrence_rule, due_date').eq('id', plan.seriesId).single();
-        if (tpl) await materializeSeriesClient('tasks', tpl as { id: string; recurrence_rule: string; due_date: string });
+        if (tErr) throw new Error(`reload template: ${tErr.message}`);
+        if (tpl) {
+          const r = await materializeSeriesClient('tasks', tpl as { id: string; recurrence_rule: string; due_date: string });
+          if (r.error) throw new Error(`rematerialize: ${r.error}`);
+        }
       }
     }
     return { ok: true };
   } catch (e) {
+    // Sprint 23 — NUNCA falhar em silêncio (bug 01/06: erro engolido fazia o save
+    // "dar certo" sem gravar nada). Loga no console e devolve o motivo pra UI.
+    console.error('[editTaskSeries] FAIL:', e, { scope, newRule, anchor });
     return { ok: false, error: (e as Error).message };
   }
 }
 
+// Futuras pendentes da série (template id=seriesId + filhas parent=seriesId) com
+// due_date >= fromYmd. Bug 01/06: usava `.or(id.eq,parent.eq)` que retornava vazio
+// silenciosamente → save não gravava nada. Trocado por 2 queries explícitas com
+// checagem de erro.
 async function futurePendingIds(seriesId: string, fromYmd: string): Promise<string[]> {
-  const { data } = await supabase.from('tasks')
+  const { data: kids, error: e1 } = await supabase.from('tasks')
     .select('id')
-    .or(`id.eq.${seriesId},recurrence_parent_id.eq.${seriesId}`)
+    .eq('recurrence_parent_id', seriesId)
     .eq('status', 'pending')
     .gte('due_date', fromYmd);
-  return (data ?? []).map((r) => (r as { id: string }).id);
+  if (e1) throw new Error(`futurePendingIds kids: ${e1.message}`);
+  const { data: tpl, error: e2 } = await supabase.from('tasks')
+    .select('id')
+    .eq('id', seriesId)
+    .eq('status', 'pending')
+    .gte('due_date', fromYmd);
+  if (e2) throw new Error(`futurePendingIds tpl: ${e2.message}`);
+  const out: string[] = [];
+  for (const r of (kids ?? [])) out.push((r as { id: string }).id);
+  for (const r of (tpl ?? [])) out.push((r as { id: string }).id);
+  return out;
 }
+
 async function dueOf(id: string): Promise<string> {
-  const { data } = await supabase.from('tasks').select('due_date').eq('id', id).single();
+  const { data, error } = await supabase.from('tasks').select('due_date').eq('id', id).single();
+  if (error) throw new Error(`dueOf: ${error.message}`);
   return String((data as { due_date: string } | null)?.due_date ?? todaySP());
 }
+
 async function replaceReminders(taskId: string, dueYmd: string, times: string[]): Promise<void> {
-  await supabase.from('task_reminders').delete().eq('task_id', taskId).is('sent_at', null);
+  const { error: delErr } = await supabase.from('task_reminders').delete().eq('task_id', taskId).is('sent_at', null);
+  if (delErr) throw new Error(`reminders delete: ${delErr.message}`);
   const rows = times.map((hhmm) => ({
     task_id: taskId,
     remind_at: `${dueYmd}T${hhmm}:00-03:00`,
     label: hhmm.replace(':00', 'h'),
   }));
-  if (rows.length) await supabase.from('task_reminders').insert(rows);
+  if (rows.length) {
+    const { error: insErr } = await supabase.from('task_reminders').insert(rows);
+    if (insErr) throw new Error(`reminders insert: ${insErr.message}`);
+  }
 }
+
 function addDay(ymd: string): string {
   const d = new Date(`${ymd}T12:00:00-03:00`); d.setDate(d.getDate() + 1);
   return d.toISOString().slice(0, 10);
