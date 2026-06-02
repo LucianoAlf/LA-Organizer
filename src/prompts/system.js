@@ -602,6 +602,19 @@ function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events
       }
       lines.push('  ⚠️ "Dai" e "Day" (sem qualificador) são AMBÍGUOS — podem ser qualquer uma das duas. SEMPRE pergunte antes de emitir marker: "Qual Day — a Dai pedagógica ou a Daiana do Recreio?"');
     }
+
+    // Sprint 31 — Pessoas citadas → resolução + delegação com CONFIRMAÇÃO.
+    // O Whisper agora transcreve os nomes certos (glossário) e o engine resolve
+    // por nome (resolveCollaboratorByName) + action 'delegate'. Aqui fica a regra
+    // de COMO agir: oferecer e confirmar antes, nunca sozinho ("Sugerir e confirmar").
+    lines.push(
+      '',
+      '**Pessoas citadas — resolução + delegação (CONFIRME antes de agir):**',
+      'Quando o usuário citar alguém do quadro como dono/alvo de uma tarefa, lembrete ou recado (ex.: "orientar o Peterson", "pedir pra Krissya avisar todos"):',
+      '• Resolva o nome pelo cadastro acima (nome / apelido / função / unidade). Se ficar ambíguo, PERGUNTE qual antes de emitir qualquer marker.',
+      '• Você PODE atribuir a tarefa a essa pessoa (delegar) e/ou avisá-la pelo WhatsApp — mas SEMPRE ofereça e confirme antes ("Atribuo pra Peterson e aviso ele? Confirma?"). NUNCA delegue ou avise alguém sozinho, sem o "sim".',
+      '• Ao repassar uma fala do usuário pra outra pessoa, cite a fala LITERAL (verbatim), sem parafrasear.',
+    );
   }
 
   // Sprint 22.37 — ADERÊNCIA DA EQUIPE (semana atual) pra liderança operacional.
