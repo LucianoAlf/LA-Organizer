@@ -1,6 +1,7 @@
 // _remote/web/src/lib/lareport-mutations.ts
 // Wrappers fetch para os endpoints serverless /api/lareport/*
 import { supabase } from './supabase';
+import { compressImage } from './compressImage';
 
 async function authHeader() {
   const { data: sess } = await supabase.auth.getSession();
@@ -8,16 +9,18 @@ async function authHeader() {
 }
 
 export async function uploadFoto(file: File): Promise<string> {
+  // Comprime ANTES de virar base64 — evita o 413 (cap de ~4.5MB da serverless).
+  const compressed = await compressImage(file);
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result as string);
     reader.onerror = () => reject(reader.error || new Error('FileReader error'));
-    reader.readAsDataURL(file);
+    reader.readAsDataURL(compressed);
   });
   const res = await fetch('/api/lareport/upload', {
     method: 'POST',
     headers: { ...(await authHeader()), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ dataUrl, filename: file.name }),
+    body: JSON.stringify({ dataUrl, filename: compressed.name }),
   });
   if (!res.ok) {
     const j = await res.json().catch(() => ({}));
