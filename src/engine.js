@@ -3518,6 +3518,7 @@ async function notifyTaskCreatorOfAction(task, actor, action, detail = null) {
 async function applyTaskActions(collaborator, actions) {
   let okCount = 0;
   let failCount = 0;
+  let integrityPayload = null; // Sprint 31 — acumula o 1º soft-dup sem abortar o lote
   // Sprint 31.6 (E2) — mensagens claras de falha pro user (ex: tarefa de outro dono).
   // Quando preenchido, o caller usa no lugar do genérico "não consegui registrar".
   const failMessages = [];
@@ -3999,9 +4000,12 @@ async function applyTaskActions(collaborator, actions) {
           console.warn('[IntegrityCheck] task dup detector err (non-fatal):', _detErr.message);
         }
         if (_taskIntegrityPayload) {
-          // Não insere. Sinaliza para applyTaskActions retornar payload.
-          // Usa mecanismo de objeto retornado — ver return abaixo.
-          return { okCount, failCount: failCount + 1, integrityPayload: _taskIntegrityPayload };
+          // Sprint 31 — NÃO aborta o lote: guarda o 1º conflito e SEGUE pros
+          // outros itens da descarga (antes: o return matava os demais — era o
+          // bug "tudo junto perde itens" no caminho do dedup).
+          if (!integrityPayload) integrityPayload = _taskIntegrityPayload;
+          failCount++;
+          continue;
         }
 
         // Sprint 11.2 hotfix — Dedupe defensivo. Bug observado: TOM emite TASK_CREATE
@@ -4376,7 +4380,7 @@ async function applyTaskActions(collaborator, actions) {
       failCount++;
     }
   }
-  return { okCount, failCount, integrityPayload: null, failMessages };
+  return { okCount, failCount, integrityPayload, failMessages };
 }
 
 const MEMORY_TYPES = ['fact', 'decision', 'lesson', 'preference', 'context'];
@@ -7160,9 +7164,14 @@ async function processMessage(phone, text, raw = {}) {
         const logReason = `integrity_${iType}:candidate="${String(integrityPayload.candidateTitle).slice(0,40)}"`;
         await logMarker(collab.id, 'TASK_UPDATE', 'rejected', logReason, null);
         console.warn(`[IntegrityCheck] TASK_UPDATE blocked by ${iType} — "${String(integrityPayload.candidateTitle).slice(0,40)}"`);
-        // Bug B2 fix (Radar pós-Sprint19): TOM não pode dizer "Registrado!" quando integrity bloqueia.
-        // Sobrescreve o cleanText (que pode conter "✅ Registrado!" alucinado) por microconfirmação.
-        reply = _buildIntegrityConfirmText(integrityPayload);
+        // Sprint 31 — NÃO engole a resposta inteira da descarga: preserva o que o
+        // TOM resolveu/perguntou nos OUTROS itens (cleanText) e ANEXA o aviso de
+        // duplicata no fim. Antes, sobrescrever apagava todos os demais itens do turno.
+        {
+          const _dupQ = _buildIntegrityConfirmText(integrityPayload);
+          const _prev = (parsedTask.cleanText || '').trim();
+          reply = _prev ? `${_prev}\n\n${_dupQ}` : _dupQ;
+        }
       } else {
         const result = okCount > 0 ? 'executed' : 'rejected';
         const reason = okCount > 0 ? `ok=${okCount} fail=${failCount}` : `all_failed:${failCount}`;
@@ -7458,8 +7467,13 @@ async function processMessage(phone, text, raw = {}) {
         const logReason = `integrity_${iType}:severity=${iSeverity}:candidate="${String(integrityPayload.candidateTitle).slice(0,40)}"`;
         await logMarker(collab.id, 'EVENT_CREATE', 'rejected', logReason, null);
         console.warn(`[IntegrityCheck] EVENT_CREATE blocked by ${iType} (${iSeverity}) — "${String(integrityPayload.candidateTitle).slice(0,40)}"`);
-        // Bug B2 fix: força microconfirmação em vez de aceitar texto que TOM gerou.
-        reply = _buildIntegrityConfirmText(integrityPayload);
+        // Sprint 31 — NÃO engole a resposta inteira: preserva o que o TOM já
+        // resolveu/perguntou (parsedEv.cleanText) e ANEXA o aviso de duplicata.
+        {
+          const _dupQ = _buildIntegrityConfirmText(integrityPayload);
+          const _prev = (parsedEv.cleanText || '').trim();
+          reply = _prev ? `${_prev}\n\n${_dupQ}` : _dupQ;
+        }
       } else {
         const result = okCount > 0 ? 'executed' : 'rejected';
         const reason = okCount > 0 ? `ok=${okCount} fail=${failCount}` : `all_failed:${failCount}`;
