@@ -21,6 +21,69 @@ const https = require('https');
 const http = require('http');
 
 const PROVIDER_KEY = process.env.OPENAI_API_KEY || process.env.TRANSCRIPTION_API_KEY || '';
+
+// Sprint 31 — glossário de domínio pro Whisper. Bug 01/06: sem o param `prompt`,
+// o Whisper ouviu "Drum Games" como "Drone Games" (e arrisca errar Emusys,
+// Sonoramente, nomes de pessoas etc.). O `prompt` enviesa o reconhecimento pros
+// termos/grafias certos; `language=pt` trava o idioma. Glossário = termos fixos
+// da marca + primeiros nomes dos colaboradores (do banco, cacheado 30min).
+const STATIC_GLOSSARY = [
+  'Drum Games', 'Emusys Academy', 'Sonoramente', 'LA Music', 'LA Organizer',
+  'LA Journey', 'LA Educa', 'Barra World', 'Time Center', 'NotebookLM',
+  'Brené Brown', 'A Coragem para Liderar', 'O Mito do Empreendedor',
+  'Corpus Christi', 'Barra', 'Recreio', 'Campo Grande',
+];
+let _namesCache = { ts: 0, names: [] };
+
+async function getCollaboratorNames() {
+  const THIRTY_MIN = 30 * 60 * 1000;
+  if (_namesCache.names.length && (Date.now() - _namesCache.ts) < THIRTY_MIN) {
+    return _namesCache.names;
+  }
+  try {
+    const supabase = require('../supabase/client'); // lazy: evita init no load (testes)
+    const { data } = await supabase.from('collaborators').select('full_name').eq('is_active', true);
+    const firsts = [...new Set(
+      (data || [])
+        .map(c => String(c.full_name || '').trim().split(/\s+/)[0])
+        .filter(Boolean)
+    )];
+    _namesCache = { ts: Date.now(), names: firsts };
+    return firsts;
+  } catch (e) {
+    console.warn('[Audio] glossário: fetch de nomes falhou:', e.message);
+    return _namesCache.names; // stale (ou vazio) — segue só com o glossário fixo
+  }
+}
+
+// Puro/testável. Monta o `prompt` do Whisper (glossário fixo + nomes), dedupado
+// e truncado (limite prático do Whisper ~224 tokens).
+function buildTranscriptionPrompt(names = [], maxChars = 900) {
+  const terms = [...new Set([
+    ...STATIC_GLOSSARY,
+    ...names.map(n => String(n).trim()).filter(Boolean),
+  ])];
+  let prompt = `Português do Brasil. Nomes e termos próprios da LA Music: ${terms.join(', ')}.`;
+  if (prompt.length > maxChars) prompt = prompt.slice(0, maxChars);
+  return prompt;
+}
+
+// Puro/testável. Monta o corpo multipart/form-data do Whisper. language/prompt
+// são opcionais (omitidos do corpo se vazios).
+function buildMultipart({ boundary, model, language, prompt, buffer, filename, mime }) {
+  const field = (name, val) =>
+    `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${val}\r\n`;
+  let headStr = field('model', model);
+  if (language) headStr += field('language', language);
+  if (prompt) headStr += field('prompt', prompt);
+  headStr +=
+    `--${boundary}\r\n` +
+    `Content-Disposition: form-data; name="file"; filename="${filename}"\r\n` +
+    `Content-Type: ${mime}\r\n\r\n`;
+  const head = Buffer.from(headStr);
+  const tail = Buffer.from(`\r\n--${boundary}--\r\n`);
+  return { body: Buffer.concat([head, buffer, tail]), boundary };
+}
 const UAZAPI_URL = (process.env.UAZAPI_URL || '').replace(/\/+$/, '');
 const UAZAPI_TOKEN = process.env.UAZAPI_TOKEN || '';
 
@@ -155,19 +218,19 @@ async function fetchBuffer(url, timeoutMs = 20000) {
   });
 }
 
-async function whisperTranscribe(buffer, filename = 'audio.mp3', mime = 'audio/mpeg') {
+async function whisperTranscribe(buffer, filename = 'audio.mp3', mime = 'audio/mpeg', opts = {}) {
   // Build multipart/form-data manually (no external dep).
+  // Sprint 31 — agora com language=pt + prompt (glossário) pra não errar nomes próprios.
   const boundary = '----TOM-' + Math.random().toString(36).slice(2);
-  const head = Buffer.from(
-    `--${boundary}\r\n` +
-    `Content-Disposition: form-data; name="model"\r\n\r\n` +
-    `whisper-1\r\n` +
-    `--${boundary}\r\n` +
-    `Content-Disposition: form-data; name="file"; filename="${filename}"\r\n` +
-    `Content-Type: ${mime}\r\n\r\n`
-  );
-  const tail = Buffer.from(`\r\n--${boundary}--\r\n`);
-  const body = Buffer.concat([head, buffer, tail]);
+  const { body } = buildMultipart({
+    boundary,
+    model: 'whisper-1',
+    language: opts.language || 'pt',
+    prompt: opts.prompt || '',
+    buffer,
+    filename,
+    mime,
+  });
 
   return new Promise((resolve, reject) => {
     const req = https.request({
@@ -254,7 +317,11 @@ async function transcribeAudio(body) {
   if (!buf || !buf.length) return { ok: false, reason: 'empty_audio' };
 
   try {
-    const text = await whisperTranscribe(buf, filename, mime);
+    // Sprint 31 — glossário de domínio (marca + nomes) pra reduzir erro de ASR
+    // em nomes próprios (ex.: "Drum Games" virava "Drone Games").
+    const names = await getCollaboratorNames();
+    const prompt = buildTranscriptionPrompt(names);
+    const text = await whisperTranscribe(buf, filename, mime, { prompt, language: 'pt' });
     if (!text || !text.trim()) return { ok: false, reason: 'transcription_empty' };
     return { ok: true, text: text.trim() };
   } catch (err) {
@@ -274,4 +341,8 @@ async function downloadMediaFromUazapi(messageId, opts = {}) {
   return downloadFromUazapi(messageId, opts.timeoutMs || 30000);
 }
 
-module.exports = { transcribeAudio, findAudioUrl, isProviderConfigured, downloadMediaFromUazapi, extractMessageId };
+module.exports = {
+  transcribeAudio, findAudioUrl, isProviderConfigured, downloadMediaFromUazapi, extractMessageId,
+  // Sprint 31 — exportados pra teste (glossário/multipart da transcrição).
+  buildTranscriptionPrompt, buildMultipart, getCollaboratorNames,
+};
