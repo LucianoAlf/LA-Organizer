@@ -3,6 +3,8 @@ import type { ReportInventarioItem } from '../../../lib/lareport-types';
 import { CustomSelect } from '../../../components/CustomSelect';
 import { DateInput } from '../../../components/DateInput';
 import { AdaptiveSheet } from '../../../components/AdaptiveSheet';
+import { showToast } from '../../../components/Toast';
+import { writeErrorMsg } from '../../../lib/lareport-mutations';
 
 interface Props {
   open: boolean; onClose: () => void;
@@ -45,7 +47,7 @@ export function ManutencaoSheet({ open, onClose, item, onSubmit }: Props) {
               data_proxima_revisao: form.data_proxima_revisao || undefined,
             });
             onClose();
-          } finally { setSaving(false); }
+          } catch (e) { showToast({ kind: 'error', title: 'Não foi possível registrar', msg: writeErrorMsg(e) }); } finally { setSaving(false); }
         }} className="w-full bg-tom text-black font-bold py-3 rounded-md disabled:opacity-50">
           {saving ? 'Registrando...' : 'Registrar'}
         </button>

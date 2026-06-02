@@ -3,6 +3,8 @@ import { useReportSalas } from '../../../hooks/useLaReport';
 import type { ReportInventarioItem } from '../../../lib/lareport-types';
 import { CustomSelect } from '../../../components/CustomSelect';
 import { AdaptiveSheet } from '../../../components/AdaptiveSheet';
+import { showToast } from '../../../components/Toast';
+import { writeErrorMsg } from '../../../lib/lareport-mutations';
 
 interface Props {
   open: boolean; onClose: () => void;
@@ -29,7 +31,7 @@ export function MoverItemSheet({ open, onClose, item, onSubmit }: Props) {
           }))}
         />
         <input className="w-full bg-bg-app border border-border rounded-md p-2" placeholder="Motivo (opcional)" value={motivo} onChange={e => setMotivo(e.target.value)} />
-        <button disabled={!destino || saving} onClick={async () => { setSaving(true); try { await onSubmit(destino as number, motivo || undefined); onClose(); } finally { setSaving(false); } }} className="w-full bg-tom text-black font-bold py-3 rounded-md disabled:opacity-50">
+        <button disabled={!destino || saving} onClick={async () => { setSaving(true); try { await onSubmit(destino as number, motivo || undefined); onClose(); } catch (e) { showToast({ kind: 'error', title: 'Não foi possível mover', msg: writeErrorMsg(e) }); } finally { setSaving(false); } }} className="w-full bg-tom text-black font-bold py-3 rounded-md disabled:opacity-50">
           {saving ? 'Movendo...' : 'Mover'}
         </button>
       </div>

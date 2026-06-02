@@ -5,6 +5,7 @@ import { FotoUploader } from './FotoUploader';
 import { CustomSelect } from '../../../components/CustomSelect';
 import { DateInput } from '../../../components/DateInput';
 import { AdaptiveSheet } from '../../../components/AdaptiveSheet';
+import { writeErrorMsg } from '../../../lib/lareport-mutations';
 
 interface Props {
   open: boolean;
@@ -41,7 +42,7 @@ export function ItemSheet({ open, onClose, onSubmit, item, defaultSalaId, defaul
       await onSubmit(form);
       onClose();
     } catch (e: any) {
-      setErro(e.message || 'Erro ao salvar');
+      setErro(writeErrorMsg(e));
     } finally {
       setSaving(false);
     }

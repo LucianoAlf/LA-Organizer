@@ -4,8 +4,25 @@ import { supabase } from './supabase';
 import { compressImage } from './compressImage';
 
 async function authHeader() {
-  const { data: sess } = await supabase.auth.getSession();
-  return { Authorization: `Bearer ${sess.session?.access_token ?? ''}` };
+  let { data: { session } } = await supabase.auth.getSession();
+  // Token de acesso vive ~1h. Se já venceu (ou vence em <60s), renova ANTES de
+  // gravar — senão o PWA aberto por horas manda token morto e a escrita toma 401
+  // silencioso (leitura usa cliente anon separado, por isso só a escrita sofria).
+  const expMs = (session?.expires_at ?? 0) * 1000;
+  if (!session || expMs < Date.now() + 60_000) {
+    const { data } = await supabase.auth.refreshSession();
+    if (data.session) session = data.session;
+  }
+  return { Authorization: `Bearer ${session?.access_token ?? ''}` };
+}
+
+/** Mensagem amigável p/ falhas de escrita — converte erro de sessão em instrução clara. */
+export function writeErrorMsg(e: unknown): string {
+  const m = e instanceof Error ? e.message : String(e || '');
+  if (/no_auth|invalid_token|jwt|expired|\b401\b/i.test(m)) {
+    return 'Sua sessão expirou. Recarregue a página (Ctrl+Shift+R) e tente de novo.';
+  }
+  return m || 'Erro ao salvar. Tente de novo.';
 }
 
 export async function uploadFoto(file: File): Promise<string> {
