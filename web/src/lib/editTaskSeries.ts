@@ -68,6 +68,20 @@ export async function editTaskSeries(
       if (!upRows || upRows.length === 0) {
         throw new Error(`template rule update afetou 0 linhas (RLS bloqueou? id=${plan.seriesId})`);
       }
+      // Sprint 23 — DESLIGAR a série (newRule === null): as ocorrências que
+      // sobrevivem (hoje + passado, não-canceladas) viram tarefas AVULSAS.
+      // Sem zerar recurrence_parent_id elas continuam "filhas" de um template
+      // sem regra, e o card segue mostrando o selo 🔁 (isRecurring = rule ||
+      // parent_id) — dando a impressão de que "nada mudou". Causa raiz do bug
+      // de 02/06: o backend desligava certo, mas a UI continuava recorrente.
+      // 0 linhas aqui é OK (série pode não ter filhas vivas) — não estoura.
+      if (newRule === null) {
+        const { error: unlinkErr } = await supabase.from('tasks')
+          .update({ recurrence_parent_id: null })
+          .eq('recurrence_parent_id', plan.seriesId)
+          .neq('status', 'cancelled');
+        if (unlinkErr) throw new Error(`unlink survivors: ${unlinkErr.message}`);
+      }
       if (plan.rematerialize && newRule) {
         const { data: tpl, error: tErr } = await supabase.from('tasks')
           .select('id, recurrence_rule, due_date').eq('id', plan.seriesId).single();
