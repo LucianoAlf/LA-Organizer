@@ -7663,7 +7663,7 @@ async function processMessage(phone, text, raw = {}) {
         if (payload.params && typeof payload.params === 'object') {
           const fieldAliases = {
             item_name: 'nome', itemname: 'nome', item: 'nome', name: 'nome',
-            room: 'sala_nome', sala: 'sala_nome', room_name: 'sala_nome', roomname: 'sala_nome',
+            room: 'sala_nome', sala: 'sala_nome', room_name: 'sala_nome', roomname: 'sala_nome', location: 'sala_nome', local: 'sala_nome',
             unit: 'unidade_nome', unidade: 'unidade_nome', unit_name: 'unidade_nome', unitname: 'unidade_nome',
             quantity: 'quantidade', qty: 'quantidade', qtd: 'quantidade',
             category: 'categoria',
