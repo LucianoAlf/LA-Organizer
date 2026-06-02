@@ -143,6 +143,28 @@ export function RecurrencePicker({ value, onChange, startDate, hidePreview }: Pr
   const [customInterval, setCustomInterval] = useState<number>(initCustom.interval);
   const [customByday, setCustomByday] = useState<string[]>(initCustom.byday);
 
+  // Sprint 23 — sincroniza o preset exibido quando `value` muda POR FORA. Bug:
+  // numa OCORRÊNCIA, o EditTaskSheet busca a regra do template async (fetch do
+  // pai) DEPOIS do mount; `value` vira FREQ=DAILY mas `preset` (useState init)
+  // ficava preso em 'none' → o select mostrava "Não repete" numa série diária
+  // (o "sumiu o select de recorrência"). Pior: o user clicava "Não repete" pra
+  // desligar, mas como o select já achava que era 'none', não disparava onChange
+  // e nada acontecia. rruleToPreset é o inverso de presetToRrule, então
+  // re-derivar é seguro; só atua quando o preset derivado difere (sem loop).
+  useEffect(() => {
+    const p = rruleToPreset(value);
+    if (p !== preset) {
+      setPreset(p);
+      if (p === 'custom') {
+        const c = rruleToCustomState(value);
+        setCustomUnit(c.unit);
+        setCustomInterval(c.interval);
+        setCustomByday(c.byday);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
   // Quando o user mexe no form custom, emite RRULE
   useEffect(() => {
     if (preset !== 'custom') return;
