@@ -7113,7 +7113,11 @@ async function processMessage(phone, text, raw = {}) {
       // antes de persistir. Defesa de modelo.
       try {
         const userTextLC = String(text || '').toLowerCase();
-        const wantsTomorrow = /\b(amanh[ãa])\b/.test(userTextLC);
+        // \b final após "ã" (não-ASCII) falha sem flag unicode → "amanhã" nunca
+        // casava. Quando o user dizia "hoje" (de passagem) + "amanhã" (intenção),
+        // só "hoje" pegava e o auto-align forçava a data errada pra hoje. Caso
+        // Union Suites 02/06: Claude emitiu 03/06 certo, align jogou pra 02/06.
+        const wantsTomorrow = /\bamanh[ãa]/.test(userTextLC);
         const wantsToday = /\b(hoje)\b/.test(userTextLC) && !wantsTomorrow;
         // Sprint 28 — auto-align SÓ quando há 1 action no marker. Em batch
         // (vários itens), o user disse "hoje/amanhã" sobre UMA das tasks, e o
