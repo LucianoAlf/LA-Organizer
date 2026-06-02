@@ -14,6 +14,7 @@ const vision = require('./services/vision');
 const gemini = require('./services/gemini');
 const shutdown = require('./services/shutdown');
 const webhookPersistence = require('./services/webhook-persistence');
+const pendingInventoryPhoto = require('./services/pending-inventory-photo');
 
 const router = express.Router();
 
@@ -166,6 +167,9 @@ async function processWebhookBody(body) {
         whatsapp.sendMessage(phone, 'recebi sua imagem mas não consegui baixar. Tenta enviar de novo?').catch(() => {});
         return;
       }
+      // Guarda a foto pra eventual anexo no inventário — o insert costuma vir
+      // turnos depois ("qual sala?"). Consumida no handler <<INVENTORY_ACTION>>.
+      try { pendingInventoryPhoto.set(phone, buf.toString('base64'), mime); } catch (e) { /* não-fatal */ }
       const r = await vision.analyzeImage(buf, mime, caption);
       if (r.ok) {
         const captionLine = caption ? `Legenda enviada pelo usuário: "${caption}"\n` : '';

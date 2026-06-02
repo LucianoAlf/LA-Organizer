@@ -4092,6 +4092,33 @@ async function checkSilentCollaboratorsCheckin(ymdToday) {
   if (sent) console.log(`[CheckinSilent] fired ${sent} silent check-in(s)`);
 }
 
+// Sprint 31 — rótulo de dia relativo (America/Sao_Paulo) pros lembretes não
+// virem "soltos". Bug 02/06: lembrete de "1 dia antes" chegava só com a hora
+// ("08:30"), sem dizer o dia → não dava pra saber se era hoje ou amanhã.
+// Recebe YYYY-MM-DD (data-local) e devolve "hoje"/"amanhã"/"ontem"/"qua, 03/06".
+// Usa T12:00:00Z nos dois lados pra evitar drift de fuso (Brasil não tem DST).
+function relativeDayFromYmd(targetYmd, now = new Date()) {
+  try {
+    if (!targetYmd) return '';
+    const nowYmd = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
+    const diff = Math.round((Date.parse(`${targetYmd}T12:00:00Z`) - Date.parse(`${nowYmd}T12:00:00Z`)) / 86400000);
+    if (diff === 0) return 'hoje';
+    if (diff === 1) return 'amanhã';
+    if (diff === -1) return 'ontem';
+    const d = new Date(`${targetYmd}T12:00:00Z`);
+    const wd = new Intl.DateTimeFormat('pt-BR', { weekday: 'short', timeZone: 'UTC' }).format(d).replace('.', '');
+    const dm = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit', timeZone: 'UTC' }).format(d);
+    return `${wd}, ${dm}`;
+  } catch { return ''; }
+}
+
+// Deriva o YYYY-MM-DD local (America/Sao_Paulo) de um timestamptz (ex: start_at).
+function spYmdLocal(tsLike) {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(tsLike));
+  } catch { return ''; }
+}
+
 // Multi-reminder: dispara linhas de task_reminders pendentes (sent_at IS NULL,
 // remind_at <= now). Cada linha vira um WA "⏰ <label>: *<task title>*". A tarefa
 // fica intacta (status, due_date) — esses são alertas pré-evento, não one-shots.
@@ -4099,7 +4126,7 @@ async function checkTaskReminders() {
   const nowIso = new Date().toISOString();
   const { data: due, error } = await supabase
     .from('task_reminders')
-    .select('id, task_id, remind_at, label, tasks(id, title, assigned_to, status)')
+    .select('id, task_id, remind_at, label, tasks(id, title, assigned_to, status, due_date, due_time)')
     .is('sent_at', null)
     .lte('remind_at', nowIso)
     .limit(50);
@@ -4143,7 +4170,11 @@ async function checkTaskReminders() {
       continue;
     }
     const labelStr = r.label ? `${r.label}: ` : 'Lembrete: ';
-    const text = `⏰ ${labelStr}*${t.title}*`;
+    // Sprint 31 — inclui dia/hora do prazo pra não vir "solto" (bug 02/06).
+    const dayLabel = relativeDayFromYmd(t.due_date);
+    const hm = (t.due_time || '').slice(0, 5);
+    const whenStr = [dayLabel, hm].filter(Boolean).join(' ');
+    const text = `⏰ ${labelStr}*${t.title}*${whenStr ? ` — ${whenStr}` : ''}`;
     try {
       await whatsapp.sendMessage(collab.phone, text);
       await supabase.from('task_reminders').update({ sent_at: new Date().toISOString() }).eq('id', r.id);
@@ -4320,8 +4351,12 @@ async function checkEventReminders() {
         return fmt.format(d);
       } catch { return ''; }
     })();
+    // Sprint 31 — dia relativo (hoje/amanhã/data) ANTES da hora, pra lembrete de
+    // "1 dia antes" não chegar "solto" (bug 02/06: vinha só "08:30" sem o dia).
+    const evDayLabel = relativeDayFromYmd(spYmdLocal(ev.start_at));
     const metaParts = [];
-    if (startHm) metaParts.push(`⏰ ${startHm}`);
+    if (startHm) metaParts.push(`⏰ ${evDayLabel ? `${evDayLabel} ` : ''}${startHm}`);
+    else if (evDayLabel) metaParts.push(`⏰ ${evDayLabel}`);
     if (ev.modality === 'online') metaParts.push('💻 online');
     else if (ev.modality === 'hibrido') metaParts.push('🏢 híbrido');
     else if (ev.modality === 'presencial') metaParts.push('📍 presencial');
