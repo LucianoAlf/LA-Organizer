@@ -7640,6 +7640,10 @@ async function processMessage(phone, text, raw = {}) {
 
   // LA REPORT — <<INVENTORY_ACTION>> — operações de inventário e lojinha.
   {
+    // Engine = fonte da verdade no inventário (ANTI-MENTIRA): a prosa do LLM
+    // pode afirmar "✅ registrado" mesmo quando a ação FALHA. Guardamos a prosa
+    // limpa e zeramos reply ao processar; cada branch seta o texto REAL do engine.
+    let _invLeadText = '';
     const invActionMatch = reply.match(/<<INVENTORY_ACTION>>([\s\S]*?)<<END>>/i);
     if (invActionMatch) {
       let payload;
@@ -7651,6 +7655,11 @@ async function processMessage(phone, text, raw = {}) {
         payload = null;
       }
       if (payload) {
+        // Captura a prosa do LLM (sem o marker e sem fences ```) e ZERA reply —
+        // o engine assume a confirmação. Cada branch abaixo seta o texto real;
+        // fallback no fim do bloco evita resposta vazia.
+        _invLeadText = reply.replace(/<<INVENTORY_ACTION>>[\s\S]*?<<END>>/gi, '').replace(/`{3,}/g, '').trim();
+        reply = '';
         // Normaliza: aceita payload "flat" (sem `params` aninhado). O LLM frequentemente esquece.
         if (payload && typeof payload === 'object' && payload.action && !payload.params) {
           const { action, ...rest } = payload;
@@ -8015,6 +8024,10 @@ async function processMessage(phone, text, raw = {}) {
         }
       }
     }
+    // Fallback: se nenhum branch do inventário produziu texto, cai de volta na
+    // prosa limpa do LLM (nunca resposta vazia). Em sucesso/falha o texto já é o
+    // do engine — não o "✅" otimista que o LLM possa ter escrito (anti-mentira).
+    if (!reply || !reply.trim()) reply = _invLeadText;
   }
 
   // Sprint Fase B — <<SHOP_ACTION>> — venda, entrada, ajuste e consulta da lojinha.
