@@ -138,10 +138,11 @@ async function checkOverdueTasks() {
   //     cobrança roda ~08:13; com 24h o check via sempre o buraco da madrugada.
   const today = todayBrt();
   const oldest = ymdMinus(today, 5);       // limite inferior = 5 dias atrás (cap do chaser)
+  const yesterday = ymdMinus(today, 1);    // Sprint 31.12 — fronteira "venceu ontem"
   const since48h = isoHoursAgo(48);
   const { data: overdue, error } = await supabase
     .from('tasks')
-    .select('id, assigned_to')
+    .select('id, assigned_to, due_date')
     .gte('due_date', oldest)
     .lt('due_date', today)
     .not('status', 'in', '(done,cancelled)');
@@ -171,13 +172,27 @@ async function checkOverdueTasks() {
       quietByOwner.set(ownerId, !!q.quiet);
     } catch { quietByOwner.set(ownerId, false); }
   }
-  const real = sem_cobranca.filter(t => !quietByOwner.get(t.assigned_to));
-  const adiadas = sem_cobranca.length - real.length;
+  const notQuiet = sem_cobranca.filter(t => !quietByOwner.get(t.assigned_to));
+  const adiadas = sem_cobranca.length - notQuiet.length;
+  // Sprint 31.12 — não conta como "negligenciada" a task que venceu ONTEM: o chaser
+  // diário roda ~08:13, DEPOIS desta auditoria (~05-07h), então ela ainda terá a 1ª
+  // cobrança do dia. Só é "sem cobrança" de verdade quem venceu há 2+ dias E mesmo
+  // assim passou 48h sem chase (aí o chaser realmente falhou). Mata o FP recorrente
+  // das 5h (caso 03/06: 8 "sem cobrança" = 8 venceram ontem, 0 negligência real).
+  const real = notQuiet.filter(t => t.due_date < yesterday);
+  const aguardando = notQuiet.length - real.length;
   if (real.length === 0) {
-    return { status: 'ok', detail: `${overdue.length} tasks vencidas (1-5d); ${adiadas} em silêncio (cobrança adiada), 0 realmente sem cobrança` };
+    const extras = [];
+    if (aguardando > 0) extras.push(`${aguardando} venceram ontem (chase ~08:13)`);
+    if (adiadas > 0) extras.push(`${adiadas} em silêncio (adiadas)`);
+    const suf = extras.length ? ` — ${extras.join(', ')}` : '';
+    return { status: 'ok', detail: `${overdue.length} tasks vencidas (1-5d), 0 realmente sem cobrança${suf}` };
   }
-  const suffix = adiadas > 0 ? ` (+${adiadas} em silêncio, adiadas)` : '';
-  return { status: 'warning', detail: `${real.length}/${overdue.length} tasks vencidas (1-5d) sem cobrança nas últimas 48h${suffix}` };
+  const extras = [];
+  if (aguardando > 0) extras.push(`${aguardando} venceram ontem`);
+  if (adiadas > 0) extras.push(`${adiadas} em silêncio`);
+  const suffix = extras.length ? ` (+${extras.join(', ')})` : '';
+  return { status: 'warning', detail: `${real.length}/${overdue.length} tasks vencidas (2+ dias) sem cobrança nas últimas 48h${suffix}` };
 }
 
 // Sprint 31.6 (D1) — subtrai N dias de um ymd 'YYYY-MM-DD' (timezone-safe via UTC).
