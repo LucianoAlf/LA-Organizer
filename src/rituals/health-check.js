@@ -192,15 +192,24 @@ function ymdMinus(ymd, days) {
 // CHECK 5 — Markers rejeitados últimas 24h
 // ─────────────────────────────────────────────────────────────────
 async function checkRejectedMarkers() {
-  const { count, error } = await supabase
+  // Sprint 31.10 — conta só rejeições que indicam FALHA REAL. Exclui:
+  //  (a) ACTIONABLE_NO_MARKER → tem check dedicado (checkActionableNoMarker). Contar
+  //      aqui também era dupla-contagem (o "14 rejeitados" = 10 actionable + 4 outros).
+  //  (b) reason 'integrity_*' → é a confirmação de duplicata "1/2/3" (by-design, TOM
+  //      perguntando qual tarefa), não falha. Volume baixo → filtra em JS (robusto a null).
+  const { data, error } = await supabase
     .from('marker_logs')
-    .select('id', { count: 'exact', head: true })
+    .select('marker_type, reason')
     .eq('result', 'rejected')
     .gte('created_at', isoHoursAgo(24));
   if (error) throw error;
-  if (count === 0) return { status: 'ok', detail: '0 markers rejeitados nas últimas 24h' };
-  if (count <= WARN_THRESHOLDS.rejectedMarkers) return { status: 'ok', detail: `${count} markers rejeitados (abaixo do threshold)` };
-  return { status: 'warning', detail: `${count} markers rejeitados nas últimas 24h (threshold ${WARN_THRESHOLDS.rejectedMarkers})` };
+  const real = (data || []).filter(r =>
+    r.marker_type !== 'ACTIONABLE_NO_MARKER' &&
+    !/^integrity_/i.test(String(r.reason || '')));
+  const count = real.length;
+  if (count === 0) return { status: 'ok', detail: '0 markers rejeitados (falha real) nas últimas 24h' };
+  if (count <= WARN_THRESHOLDS.rejectedMarkers) return { status: 'ok', detail: `${count} markers rejeitados (falha real, abaixo do threshold)` };
+  return { status: 'warning', detail: `${count} markers rejeitados (falha real) nas últimas 24h (threshold ${WARN_THRESHOLDS.rejectedMarkers})` };
 }
 
 // ─────────────────────────────────────────────────────────────────

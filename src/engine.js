@@ -16,6 +16,7 @@ const supabase = require('./supabase/client');
 const OpenAI = require('openai');
 const openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const inventarioService = require('./services/inventario-service');
+const { hasTrailingQuestion, isInfoGatheringReply } = require('./services/reply-classify');
 const inventarioValidators = require('./services/inventario-validators');
 const announcementsService = require('./services/announcements');
 const pendingIntents = require('./services/pending-intents');
@@ -7197,6 +7198,10 @@ async function processMessage(phone, text, raw = {}) {
           const _dupQ = _buildIntegrityConfirmText(integrityPayload);
           const _prev = (parsedTask.cleanText || '').trim();
           reply = _prev ? `${_prev}\n\n${_dupQ}` : _dupQ;
+          // Sprint 31.10 — ESTE turno terminou pedindo confirmação de duplicata
+          // (1/2/3). O detector ACTIONABLE_NO_MARKER lê esse flag e NÃO acusa:
+          // pedir confirmação ≠ deixar de persistir (era falso positivo de C1).
+          _metrics.awaiting_user_confirm = true;
         }
       } else {
         const result = okCount > 0 ? 'executed' : 'rejected';
@@ -7499,6 +7504,9 @@ async function processMessage(phone, text, raw = {}) {
           const _dupQ = _buildIntegrityConfirmText(integrityPayload);
           const _prev = (parsedEv.cleanText || '').trim();
           reply = _prev ? `${_prev}\n\n${_dupQ}` : _dupQ;
+          // Sprint 31.10 — mesmo flag do caminho TASK: turno pediu confirmação de
+          // duplicata, não é ACTIONABLE_NO_MARKER.
+          _metrics.awaiting_user_confirm = true;
         }
       } else {
         const result = okCount > 0 ? 'executed' : 'rejected';
@@ -8541,7 +8549,7 @@ async function processMessage(phone, text, raw = {}) {
   // Conservador: só dispara em gatilhos cristalinos. Reply visual NÃO muda;
   // apenas os efeitos colaterais (persistência) são corrigidos.
   try {
-    const ACTIONABLE_RE = /\b(anota|me\s+lembra|lembra\s+(?:de|do|da)\b|lembrete|me\s+chama|preciso|surgiu|p[oó]e\s+na\s+lista|adiciona|paguei|fiz|terminei|fechei|completei|delega|marca\s+(?:reuni|m[eé]dico|consulta|ensaio|encontro|aula)|compr(?:a|ar|e)\s|consert(?:a|ar)|trocar?|reparar?|montar?|instalar?|limpar?|verificar?|vai\s+criando|vai\s+anotando|vou\s+te\s+mandar|t[eô]\s+(?:te\s+)?mandando\s+as?\s+(?:pend|demanda|tarefa)|tem\s+(?:que|pra)\s+(?:fazer|comprar|consertar|trocar))/i;
+    const ACTIONABLE_RE = /\b(anota|me\s+lembra|lembra\s+(?:de|do|da)\b|lembrete|me\s+chama|preciso|surgiu|p[oó]e\s+na\s+lista|adiciona|paguei|fiz|terminei|fechei|completei|delega|marca\s+(?:reuni|m[eé]dico|consulta|ensaio|encontro|aula)|compr(?:a|ar|e)\s|consert(?:a|ar)|trocar?|reparar?|montar?|instalar?|limpar?|vai\s+criando|vai\s+anotando|vou\s+te\s+mandar|t[eô]\s+(?:te\s+)?mandando\s+as?\s+(?:pend|demanda|tarefa)|tem\s+(?:que|pra)\s+(?:fazer|comprar|consertar|trocar))/i;
     // Detector de promessa EXPLÍCITA na reply do TOM (gatilhos conservadores).
     // Cobre casos onde TOM verbaliza intenção de persistir sem emitir o marker:
     // - "lembrete às X" / "te aviso às X" → cron/remind
@@ -8555,8 +8563,11 @@ async function processMessage(phone, text, raw = {}) {
     // em negrito ("...com a *Esfera*... Certo?", "🧾 *Sabor do Mar*... Grava?") e
     // escapava do filtro, inflando a métrica e disparando auto-retry em pergunta.
     // Se o TOM está PERGUNTANDO, ele não prometeu nada — não há ação a persistir.
-    const _replyEndsQ = /\?\s*$/.test((reply || '').trim());
-    const _replyIsInfoGathering = _replyEndsQ;
+    // Sprint 31.10 — pergunta robusta a pontuação/emoji após "?" ("Que horas?
+    // (14h, 15h?)") + reply que pede insumo ao user ("me manda", "vai listando")
+    // = info-gathering. Lógica em services/reply-classify.js (testada) — tira o
+    // falso positivo reincidente de C1 sem empilhar mais um exclude inline.
+    const _replyIsInfoGathering = hasTrailingQuestion(reply) || isInfoGatheringReply(reply);
     // Bug 01/06: RECUSA não é promessa. "não consigo registrar", "não tem como
     // criar", "não dá pra anotar por aqui" casavam REPLY_PROMISE_RE pelo verbo e
     // disparavam auto-retry numa negação. Se o TOM recusou, zera a flag de promessa.
@@ -8570,7 +8581,7 @@ async function processMessage(phone, text, raw = {}) {
     const _inputIsQuestion = /\?\s*$/.test(String(text || '').trim());
     const _inputSelfReport = /\b(est(?:ou|á)|t[oô]u?|tava)\s+[a-zà-ú]+ndo\b|\b(?:eu\s+)?j[aá]\s+(?:fiz|criei|terminei|fechei|completei|resolvi|mandei|enviei|verifiquei)\b/i.test(String(text || ''));
     const _flagActionable = replyHasPromise || (inputActionable && !_inputIsQuestion && !_inputSelfReport);
-    if (!_replyIsInfoGathering && _flagActionable) {
+    if (!_metrics.awaiting_user_confirm && !_replyIsInfoGathering && _flagActionable) {
       _metrics.actionable_intent = true;
       const sinceIso = new Date(_t0 - 1000).toISOString();
       const { data: recentMarkers } = await supabase
