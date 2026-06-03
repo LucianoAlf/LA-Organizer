@@ -5939,6 +5939,28 @@ function parseFinanceMarker(text) {
   return { action: json.action, params: json.params || {}, cleanText, malformed: false };
 }
 
+// Multi-marker: o usuário pode listar VÁRIOS lançamentos numa mensagem só → o LLM emite
+// vários <<FINANCE_ACTION>>. Pega TODOS (parseFinanceMarker pegava só o 1º → só o 1º item
+// era registrado; caso Luciano 03/06 "Estacionamento ... / Ifood ...").
+function parseFinanceMarkers(text) {
+  if (!text) return { actions: [], malformed: 0, cleanText: text || '' };
+  const re = /<<FINANCE_ACTION>>\s*([\s\S]*?)\s*<<END>>/gi;
+  const actions = [];
+  let malformed = 0;
+  let mm;
+  while ((mm = re.exec(text)) !== null) {
+    let json;
+    try { json = JSON.parse(mm[1].trim()); }
+    catch (err) { logSchemaErr('FINANCE_ACTION', ['invalid_json: ' + err.message], mm[1]); malformed++; continue; }
+    if (!json || !FINANCE_ACTIONS.includes(json.action)) {
+      logSchemaErr('FINANCE_ACTION', ['action_invalida: ' + (json && json.action)], mm[1]); malformed++; continue;
+    }
+    actions.push({ action: json.action, params: json.params || {} });
+  }
+  const cleanText = text.replace(/<<FINANCE_ACTION>>\s*[\s\S]*?\s*<<END>>/gi, '').trim();
+  return { actions, malformed, cleanText };
+}
+
 // Categorias válidas vêm do módulo único (categories.data.js). safeCategory é
 // type-aware: slug inválido → tenta mapCategory(desc, type) → fallback por tipo
 // (outros / outras_receitas). Garante slug válido (o CHECK do banco foi removido;
@@ -8281,23 +8303,27 @@ async function processMessage(phone, text, raw = {}) {
 
   // 2.9) Finance action (Sprint 27). SEGURANCA: collab.id (remetente), nunca o id do marker.
   {
-    const fin = parseFinanceMarker(reply);
-    if (fin && fin.malformed) {
+    const finParsed = parseFinanceMarkers(reply);
+    if (finParsed.actions.length > 0) {
+      // Despacha CADA marker (lista de gastos numa msg só) e concatena as confirmações.
+      const finReplies = [];
+      for (const a of finParsed.actions) {
+        try {
+          const finReply = await handleFinanceAction(collab, a.action, a.params);
+          await logMarker(collab.id, 'FINANCE_ACTION', 'executed', a.action, null);
+          // Bug 3: o engine é a fonte da confirmação (descarta narração do LLM que duplicaria).
+          if (finReply && finReply.trim()) finReplies.push(finReply.trim());
+        } catch (err) {
+          console.error('[Finance] erro:', err.message);
+          await logMarker(collab.id, 'FINANCE_ACTION', 'rejected', `error:${err.message}`, null);
+          finReplies.push('Deu ruim ao registrar um dos itens — tenta de novo?');
+        }
+      }
+      reply = finReplies.length ? finReplies.join('\n\n') : (finParsed.cleanText || reply);
+    } else if (finParsed.malformed > 0) {
       console.warn('[Finance] WARN: malformed marker');
       await logMarker(collab.id, 'FINANCE_ACTION', 'rejected', 'schema_invalid', reply);
-      reply = fin.cleanText || reply;
-    } else if (fin) {
-      try {
-        const finReply = await handleFinanceAction(collab, fin.action, fin.params);
-        await logMarker(collab.id, 'FINANCE_ACTION', 'executed', fin.action, null);
-        // Bug 3: o engine é a fonte da confirmação. Se o handler respondeu, usa SÓ ela
-        // (descarta a narração do LLM em cleanText, que duplicava/recalculava o número).
-        reply = (finReply && finReply.trim()) ? finReply : (fin.cleanText || reply);
-      } catch (err) {
-        console.error('[Finance] erro:', err.message);
-        await logMarker(collab.id, 'FINANCE_ACTION', 'rejected', `error:${err.message}`, null);
-        reply = (fin.cleanText || '') + '\nDeu ruim ao registrar isso aqui — tenta de novo?';
-      }
+      reply = finParsed.cleanText || reply;
     }
   }
 
