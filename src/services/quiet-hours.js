@@ -45,6 +45,31 @@ function isPartialQuietPrefs(prefs) {
   return !hasAnyHourCol;
 }
 
+// True se o objeto traz ALGUMA coluna de contexto (_work/_personal). Quando traz,
+// windowFor a usa como autoritativa (null = sem silêncio). Quando NÃO traz, o
+// windowFor cai pro legado global — e aí janelas configuradas só por contexto somem.
+function hasContextCols(prefs) {
+  if (!prefs || typeof prefs !== 'object') return false;
+  return ('quiet_start_time_work' in prefs) || ('quiet_end_time_work' in prefs)
+      || ('quiet_days_work' in prefs) || ('quiet_weekends_work' in prefs)
+      || ('quiet_start_time_personal' in prefs) || ('quiet_end_time_personal' in prefs)
+      || ('quiet_days_personal' in prefs) || ('quiet_weekends_personal' in prefs);
+}
+
+// O footgun de verdade (Juliana 03/06): objeto TEM cara de prefs (algum marcador de
+// quiet) MAS não traz as colunas de contexto. Nesse estado a janela por contexto
+// (ex.: 00:00–11:00 só em _work) fica invisível e o silêncio é desligado em silêncio.
+// Quando isto é true E o objeto carrega o collaborator_id, isQuietNow re-busca o
+// conjunto canônico (QUIET_PREF_COLUMNS) e cura o vazamento — vale pra TODOS os
+// callers que passam objeto, sem ter que caçar cada SELECT incompleto.
+function needsContextRefetch(prefs) {
+  if (!prefs || typeof prefs !== 'object') return false;
+  const hasQuietMarker = ('quiet_weekends' in prefs) || ('quiet_days' in prefs)
+    || ('quiet_reason' in prefs) || ('quiet_start_time' in prefs);
+  if (!hasQuietMarker) return false;
+  return !hasContextCols(prefs);
+}
+
 // Resolve a janela de silêncio de um contexto.
 // Se o caller buscou as colunas de contexto (presentes no objeto, mesmo que null),
 // elas são AUTORITATIVAS — null = sem silêncio (evita ler global antiga stale após
@@ -83,6 +108,28 @@ async function isQuietNow(collabOrId, now, context = 'work') {
   if (collabOrId && typeof collabOrId === 'object') {
     // Aceita: objeto user_preferences direto, ou colaborador com .user_preferences
     prefs = collabOrId.user_preferences || collabOrId;
+    // Sprint 31.11 — AUTO-HEAL do footgun Quintela. Se o caller passou um objeto
+    // com cara de prefs MAS sem as colunas de contexto (_work/_personal), a janela
+    // horária por contexto fica invisível (windowFor cai no legado, que costuma ser
+    // null → silêncio desligado). Caso Juliana 03/06: janela 00:00–11:00 só em _work;
+    // briefing (dispatcher.js:2865) e checkpoint (checkpoint-deadlines.js:170)
+    // passavam objeto parcial → cobravam 7-9h. Re-busca o conjunto canônico pelo
+    // collaborator_id que o objeto carrega → conserta TODOS os callers de objeto.
+    if (needsContextRefetch(prefs)) {
+      const cid = prefs.collaborator_id || collabOrId.collaborator_id || collabOrId.id || null;
+      if (cid) {
+        try {
+          const { data } = await getSupabase()
+            .from('user_preferences')
+            .select(QUIET_PREF_COLUMNS.join(', '))
+            .eq('collaborator_id', cid)
+            .maybeSingle();
+          if (data) prefs = data;
+        } catch (e) {
+          console.warn('[quiet-hours] auto-heal refetch falhou (mantém objeto parcial):', e.message);
+        }
+      }
+    }
   } else if (typeof collabOrId === 'string') {
     // UUID: busca as prefs do banco (inclui campos de horário por contexto + globais antigos)
     const { data } = await getSupabase()
@@ -139,4 +186,4 @@ async function isQuietNow(collabOrId, now, context = 'work') {
   return { quiet: false, reason: null };
 }
 
-module.exports = { isQuietNow, isPartialQuietPrefs, QUIET_PREF_COLUMNS };
+module.exports = { isQuietNow, isPartialQuietPrefs, needsContextRefetch, hasContextCols, QUIET_PREF_COLUMNS };
