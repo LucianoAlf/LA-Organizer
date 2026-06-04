@@ -18,6 +18,7 @@ const openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const inventarioService = require('./services/inventario-service');
 const { hasTrailingQuestion, isInfoGatheringReply } = require('./services/reply-classify');
 const { shiftRemindersByReschedule, shiftTaskRemindAt } = require('./services/reschedule-reminders');
+const { matchRowsByShortId } = require('./services/short-id-match');
 const inventarioValidators = require('./services/inventario-validators');
 const announcementsService = require('./services/announcements');
 const pendingIntents = require('./services/pending-intents');
@@ -2732,7 +2733,7 @@ async function resolveEventByShortId(collaboratorId, shortId) {
     return null;
   }
   if (!data || data.length === 0) return null;
-  const matches = data.filter(e => String(e.id).toLowerCase().startsWith(prefix));
+  const matches = matchRowsByShortId(data, shortId); // tolerante a UUID alucinado (Sprint 31.14)
   if (matches.length === 0) return null;
   if (matches.length > 1) {
     console.warn(`[Event] short_id ambíguo ${shortId} (${matches.length} matches) — rejeitando`);
@@ -3082,7 +3083,7 @@ async function resolveTaskByShortId(collaboratorId, shortId) {
     return null;
   }
   if (!data || data.length === 0) return null;
-  const matches = data.filter(t => String(t.id).toLowerCase().startsWith(prefix));
+  const matches = matchRowsByShortId(data, shortId); // tolerante a UUID alucinado (Sprint 31.14)
   if (matches.length === 0) return null;
   if (matches.length > 1) {
     console.warn(`[Task] short_id ambíguo ${shortId} (${matches.length} matches) — rejeitando`);
@@ -4265,8 +4266,7 @@ async function applyTaskActions(collaborator, actions) {
           .select('id, title, due_date, assigned_to, projects(name)')
           .gte('due_date', sinceIso)
           .limit(500);
-        const prefix = String(shortId).toLowerCase();
-        const candidate = (tasksMatching || []).find(t => String(t.id).toLowerCase().startsWith(prefix));
+        const candidate = matchRowsByShortId(tasksMatching, shortId)[0]; // tolerante a UUID alucinado (Sprint 31.14)
         if (!candidate) {
           console.warn(`[Task] extension_decision REJECTED — task ${shortId} not found`);
           failCount++;
@@ -4639,7 +4639,7 @@ async function resolveHabitByShortId(collaboratorId, shortId) {
     .from('habits').select('id, name, icon, current_streak, best_streak, is_active, habit_type, target_value, unit')
     .eq('collaborator_id', collaboratorId).eq('is_active', true).limit(200);
   if (!data || !data.length) return null;
-  const matches = data.filter(h => String(h.id).toLowerCase().startsWith(prefix));
+  const matches = matchRowsByShortId(data, shortId); // tolerante a UUID alucinado (Sprint 31.14)
   if (matches.length !== 1) return null;
   return matches[0];
 }
