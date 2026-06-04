@@ -118,6 +118,22 @@ const pendingDupTasks  = new Map(); // collabId → { task, timestamp }
 // Sprint 22.26 — VALID_EVENT_CATEGORIES era set fixo; agora a validacao acontece
 // em runtime via lookupEventCategoryBySlug (tabela event_categories). Removido.
 const VALID_EVENT_UPDATE_ACTIONS = new Set(['reschedule', 'cancel', 'complete', 'update']);
+// Sprint 31.15 (Quintela/Luciano 03/06) — verbos naturais de RSVP que o LLM emite no lugar
+// do canônico action:rsvp. Em vez de rejeitar (action:invalid → "Sim, confirmo" virava
+// confabulação "presença confirmada"), são roteados pro applyRsvp (lookup GLOBAL do evento,
+// já que o convidado não é dono do evento). Valor = status; null em 'rsvp' (usa campo status).
+const RSVP_ALIASES = new Map([
+  ['rsvp', null],
+  ['confirm', 'confirmed'], ['confirmar', 'confirmed'], ['confirmado', 'confirmed'], ['confirmed', 'confirmed'],
+  ['accept', 'confirmed'], ['aceitar', 'confirmed'], ['aceito', 'confirmed'], ['going', 'confirmed'], ['attend', 'confirmed'],
+  ['decline', 'declined'], ['recusar', 'declined'], ['recusado', 'declined'], ['declined', 'declined'], ['reject', 'declined'],
+  ['tentative', 'tentative'], ['maybe', 'tentative'], ['talvez', 'tentative'],
+]);
+function rsvpStatusFor(action, statusField) {
+  const mapped = RSVP_ALIASES.get(action);
+  if (mapped) return mapped;
+  return ['confirmed', 'declined', 'tentative'].includes(statusField) ? statusField : 'confirmed';
+}
 const ISO_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})$/;
 
 function logSchemaErr(marker, errors, raw) {
@@ -2155,39 +2171,11 @@ async function applyEventActions(collaborator, events) {
       // Sprint 29.x — RSVP: confirmar/recusar presença num compromisso existente.
       // TOM emite <<EVENT>>{"action":"rsvp","event_id":"<8chars ou uuid>","status":"confirmed|declined|tentative"}<<END>>
       // O event_id vem do [ev:xxxxxxxx] embedado nas mensagens de convite.
-      if (e.action === 'rsvp') {
-        const evId   = typeof e.event_id === 'string' ? e.event_id.trim() : null;
-        const status = ['confirmed', 'declined', 'tentative'].includes(e.status) ? e.status : 'confirmed';
-        if (!evId) {
-          console.warn('[Event][RSVP] event_id ausente — ignorado');
-          failCount++;
-          continue;
-        }
-        // Resolve UUID completo (pode vir como prefixo de 8 chars)
-        let resolvedEventId = evId;
-        if (evId.length < 36) {
-          const { data: evRows } = await supabase
-            .from('events').select('id').ilike('id', `${evId}%`).limit(1);
-          if (!evRows || evRows.length === 0) {
-            console.warn(`[Event][RSVP] prefix "${evId}" não resolveu para nenhum evento`);
-            failCount++;
-            continue;
-          }
-          resolvedEventId = evRows[0].id;
-        }
-        const { error: rsvpErr } = await supabase.from('event_participants').upsert({
-          event_id: resolvedEventId,
-          collaborator_id: collaborator.id,
-          status,
-          responded_at: new Date().toISOString(),
-        }, { onConflict: 'event_id,collaborator_id' });
-        if (rsvpErr) {
-          console.error('[Event][RSVP] upsert err:', rsvpErr.message);
-          failCount++;
-        } else {
-          console.log(`[Event][RSVP] ${String(collaborator.id).slice(0,8)} → event ${String(resolvedEventId).slice(0,8)} status=${status}`);
-          okCount++;
-        }
+      if (RSVP_ALIASES.has(e.action)) {
+        // Sprint 31.15 — aceita action:rsvp E verbos naturais (confirm/aceito/recuso...).
+        const evId = typeof e.event_id === 'string' ? e.event_id.trim() : null;
+        const r = await applyRsvp(collaborator, evId, rsvpStatusFor(e.action, e.status));
+        if (r.ok) okCount++; else failCount++;
         continue;
       }
       // Sprint 18 — pre-check de integridade (fail-open: erros nos detectores não bloqueiam)
@@ -2484,7 +2472,15 @@ async function applyEventActions(collaborator, events) {
 //   { "action": "complete",   "id": "<8-char>" }
 function validateEventUpdateAction(a) {
   if (!a || typeof a !== 'object') return 'not_object';
-  if (!VALID_EVENT_UPDATE_ACTIONS.has(a.action)) return 'action:invalid';
+  if (!VALID_EVENT_UPDATE_ACTIONS.has(a.action)) {
+    // Sprint 31.15 — verbo de RSVP (confirm/aceito/recuso...) não é EVENT_UPDATE real;
+    // é roteado pro applyRsvp no applyEventUpdates. Aceita aqui se houver event_id/id.
+    if (RSVP_ALIASES.has(a.action)) {
+      const ref = (typeof a.event_id === 'string' && a.event_id) || (typeof a.id === 'string' && a.id);
+      return ref ? null : 'rsvp_needs_event_id';
+    }
+    return 'action:invalid';
+  }
   // Sprint 28 — aceitar "latest" como id especial (handler já resolve via DB lookup).
   if (typeof a.id !== 'string' || (a.id !== 'latest' && !SHORT_ID_RE.test(a.id))) return 'id:invalid';
   if (a.action === 'reschedule') {
@@ -2742,11 +2738,50 @@ async function resolveEventByShortId(collaboratorId, shortId) {
   return matches[0];
 }
 
+// Sprint 31.15 — upsert de PRESENÇA (RSVP). Resolve o evento por id GLOBAL (o convidado
+// NÃO é dono — resolveEventByShortId, escopado por owner, não acharia). Compartilhado entre
+// o marker <<EVENT>> action:rsvp e o reroute de verbos naturais no <<EVENT_UPDATE>>.
+async function applyRsvp(collaborator, eventIdRef, status) {
+  const evId = typeof eventIdRef === 'string' ? eventIdRef.trim() : null;
+  const st = ['confirmed', 'declined', 'tentative'].includes(status) ? status : 'confirmed';
+  if (!evId) { console.warn('[Event][RSVP] event_id ausente — ignorado'); return { ok: false }; }
+  let resolvedEventId = evId;
+  if (evId.length < 36) {
+    // ⚠️ ilike NÃO funciona em coluna uuid (Postgres não casa uuid ILIKE text) — o prefixo
+    // [ev:8char] NUNCA resolvia (root cause do item 5). Busca os eventos do colaborador
+    // (é participante — o convite cria a linha) e casa o prefixo em JS.
+    const head = evId.replace(/-/g, '').toLowerCase();
+    const { data: parts } = await supabase.from('event_participants')
+      .select('event_id').eq('collaborator_id', collaborator.id);
+    const { data: own } = await supabase.from('events')
+      .select('id').eq('collaborator_id', collaborator.id)
+      .gte('start_at', new Date(Date.now() - 90 * 864e5).toISOString()).limit(500);
+    const ids = [...new Set([...(parts || []).map(p => p.event_id), ...(own || []).map(e => e.id)])];
+    const matches = ids.filter(id => String(id).replace(/-/g, '').toLowerCase().startsWith(head));
+    if (matches.length === 0) { console.warn(`[Event][RSVP] prefix "${evId}" não resolveu p/ evento do colaborador`); return { ok: false }; }
+    if (matches.length > 1) { console.warn(`[Event][RSVP] prefix "${evId}" ambíguo (${matches.length}) — rejeitando`); return { ok: false }; }
+    resolvedEventId = matches[0];
+  }
+  const { error } = await supabase.from('event_participants').upsert({
+    event_id: resolvedEventId, collaborator_id: collaborator.id, status: st, responded_at: new Date().toISOString(),
+  }, { onConflict: 'event_id,collaborator_id' });
+  if (error) { console.error('[Event][RSVP] upsert err:', error.message); return { ok: false }; }
+  console.log(`[Event][RSVP] ${String(collaborator.id).slice(0, 8)} → event ${String(resolvedEventId).slice(0, 8)} status=${st}`);
+  return { ok: true, eventId: resolvedEventId };
+}
+
 async function applyEventUpdates(collaborator, actions) {
   let okCount = 0, failCount = 0;
   const last4 = String(collaborator.phone || '').slice(-4);
   for (const a of actions) {
     try {
+      // Sprint 31.15 — verbo de RSVP veio (erroneamente) como EVENT_UPDATE: roteia pro
+      // applyRsvp (lookup global) em vez de resolveEventByShortId (owner-scoped, não acharia).
+      if (RSVP_ALIASES.has(a.action)) {
+        const r = await applyRsvp(collaborator, a.event_id || a.id, rsvpStatusFor(a.action, a.status));
+        if (r.ok) okCount++; else failCount++;
+        continue;
+      }
       const ev = await resolveEventByShortId(collaborator.id, a.id);
       if (!ev) {
         console.warn(`[Event] ${a.action} REJECTED id=${a.id} (not owned by ${last4} or not found)`);
@@ -10443,4 +10478,4 @@ async function applyMonthlyPlan(collaborator, plan) {
   return { id: created?.id, action: 'created' };
 }
 
-module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamSummary, buildWeeklyRetrospective, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseWeeklyPlanMarker, parseHabitMarker, parseDndMarker, parseDataClassifyMarker, applyDataClassify, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, applyHabitActions, applyDnd, getDndState, consolidateMemoryFor, decayExpiredMemories, generateWeeklySummaryFor, updateCollaboratorProfile, looksLikeMemory, resolveTaskByShortId, applyAnnouncementAction, parseAnnouncementApprovalMarker, applyAnnouncementApproval, applyCoordinationRequestAction, parseCoordinationResponseMarker, applyCoordinationResponseAction, computeProgress, getRitualIntroDecision, countRecentRelaysToRecipient, buildRelayLimitHint, parseMonthlyPlanMarker, applyMonthlyPlan };
+module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamSummary, buildWeeklyRetrospective, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseWeeklyPlanMarker, parseHabitMarker, parseDndMarker, parseDataClassifyMarker, applyDataClassify, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, applyHabitActions, applyDnd, getDndState, consolidateMemoryFor, decayExpiredMemories, generateWeeklySummaryFor, updateCollaboratorProfile, looksLikeMemory, resolveTaskByShortId, applyEventUpdates, applyRsvp, applyAnnouncementAction, parseAnnouncementApprovalMarker, applyAnnouncementApproval, applyCoordinationRequestAction, parseCoordinationResponseMarker, applyCoordinationResponseAction, computeProgress, getRitualIntroDecision, countRecentRelaysToRecipient, buildRelayLimitHint, parseMonthlyPlanMarker, applyMonthlyPlan };
