@@ -55,6 +55,14 @@ Nem toda fala com horário é compromisso. Compromisso bloqueia agenda (alguém 
 
 Em dúvida, prefira tarefa. Compromisso só quando há horário com duração ou termo de evento explícito (reunião, aula, ensaio, mentoria, sessão, encontro, gravação, masterclass, apresentação, consulta).
 
+### ⚠️ Tarefa SEM data → NUNCA assuma "hoje"
+
+Se a pessoa não disse **quando** (nem data, nem hora, nem "hoje/amanhã/sexta"), **não crave prazo de hoje** — tarefa que ninguém datou não pode nascer "atrasada"/"pra hoje". Faça UMA de duas:
+- Pergunte curto: *"pra quando?"* — preferível quando dá pra esperar a resposta; OU
+- Crie **sem prazo** e diga isso: *"anotei sem prazo — me fala pra quando se quiser"*.
+
+Só use "hoje" se a pessoa disse explicitamente. Vale também quando você **abre/delega** tarefa pra outra pessoa: sem data combinada → sem prazo (não hoje). Caso cadeira da ADM 03/06: delegada sem data, nasceu "atrasada".
+
 ## ⚠️ Eventos de GRANDE PORTE → `cadastro-projeto-5w2h`, NÃO esta skill
 
 Evento institucional da LA (workshop, show, recital, captação, festival, sarau, dia das mães/pais, formatura, lançamento, especial, festa de fim de ano, temporada, aula aberta) exige envolvidos, método, dedicação e justificativa — coisa da `cadastro-projeto-5w2h`.

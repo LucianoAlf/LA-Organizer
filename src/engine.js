@@ -3076,7 +3076,7 @@ async function resolveTaskByShortId(collaboratorId, shortId) {
     .from('tasks')
     .select('id, title, status, due_date, assigned_to')
     .eq('assigned_to', collaboratorId)
-    .gte('due_date', sinceIso)
+    .or(`due_date.gte.${sinceIso},due_date.is.null`) // Item 2: inclui tarefas SEM prazo (null)
     .limit(500);
   if (error) {
     console.error('[Task] resolveTaskByShortId err:', error.message);
@@ -3995,7 +3995,11 @@ async function applyTaskActions(collaborator, actions) {
             ? a.due_date
             : _remindAtToYmdBrt(a.remind_at) || todaySaoPaulo();
         } else {
-          insertRow.due_date = isValidISODate(a.due_date) ? a.due_date : todaySaoPaulo();
+          // Item 2 (cadeira ADM 03/06) — sem remind_at E sem due_date: NÃO cravar hoje.
+          // Cravar hoje fazia a tarefa nascer "PRA HOJE/atrasada" sem ninguém ter datado
+          // (ex.: Clayton delegou sem data → virou atrasada). null = "sem prazo" (estado já
+          // suportado; resolveTaskByShortId passou a incluir null pra continuar gerenciável).
+          insertRow.due_date = isValidISODate(a.due_date) ? a.due_date : null;
         }
         // Sprint 18 — pre-check de duplicidade semântica (A1: nunca bloqueia auto)
         // Ocorre APÓS validações de role/requestTypeId, ANTES do dedupe defensivo de 60s.
