@@ -532,7 +532,11 @@ function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events
       const reminders = pendingReminders.length
         ? ` · ⏰ lembretes: ${pendingReminders.join(', ')}`
         : '';
-      lines.push(`• [id=${sid}] ${datePrefix}${start}–${end} ${mod} ${e.title}${statusTag}${cat}${where}${reminders}`);
+      // Item 5 (Quintela/Luciano) — convite aguardando resposta: instrui o RSVP explícito.
+      const rsvpTag = e._rsvpPending
+        ? ` ⏳ *CONVITE AGUARDANDO SUA RESPOSTA* — se a pessoa disser sim/vou/confirmo → \`<<EVENT>>{"action":"rsvp","event_id":"${sid}","status":"confirmed"}<<END>>\`; não/recuso → "declined". NUNCA diga "confirmada" sem emitir esse marker.`
+        : '';
+      lines.push(`• [id=${sid}] ${datePrefix}${start}–${end} ${mod} ${e.title}${statusTag}${cat}${where}${reminders}${rsvpTag}`);
     });
   }
 
@@ -1369,7 +1373,7 @@ async function fetchCollaboratorContext(collaborator) {
           .eq('collaborator_id', id).gte('start_at', lo).lte('start_at', hi)
           .neq('status', 'cancelled').order('start_at', { ascending: true }).limit(30),
         supabase.from('event_participants')
-          .select(`event:events(${SELECT_COLS})`)
+          .select(`status, responded_at, event:events(${SELECT_COLS})`)
           .eq('collaborator_id', id).neq('status', 'declined'),
       ]);
       const map = new Map();
@@ -1379,7 +1383,11 @@ async function fetchCollaboratorContext(collaborator) {
         if (!e || map.has(e.id)) continue;
         if (e.status === 'cancelled') continue;
         const t = new Date(e.start_at).getTime();
-        if (t >= new Date(lo).getTime() && t <= new Date(hi).getTime()) map.set(e.id, e);
+        if (t >= new Date(lo).getTime() && t <= new Date(hi).getTime()) {
+          // Item 5 — convite ainda não respondido: flag pra TOM reconhecer "sim/não" como RSVP.
+          if (p.status === 'invited' && !p.responded_at) e._rsvpPending = true;
+          map.set(e.id, e);
+        }
       }
       const merged = [...map.values()].sort((a, b) => String(a.start_at).localeCompare(String(b.start_at))).slice(0, 30);
       return { data: merged, error: own.error || parts.error };
