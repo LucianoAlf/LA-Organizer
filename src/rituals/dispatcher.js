@@ -1860,33 +1860,13 @@ async function askEndOfDayEventFollowup(now = new Date()) {
 // Sprint 23.11: APENAS context='personal'. Eventos do time NUNCA são auto-fechados
 // — vão pro relatório CEO pra governança/direcionamento.
 async function autoCloseStaleEventFollowups(now = new Date()) {
-  const cutoff6h = new Date(now.getTime() - 6 * 3600_000).toISOString();
-  const { data: stale, error } = await supabase
-    .from('events')
-    .select('id, title, collaborator_id')
-    .eq('context', 'personal')
-    .not('status', 'in', '("done","cancelled")')
-    .lt('followup_sent_at', cutoff6h)
-    .limit(100);
-  if (error) {
-    console.error('[EventAutoClose] query err:', error.message);
-    return;
-  }
-  if (!stale || stale.length === 0) return;
-
-  for (const ev of stale) {
-    const { error: uErr } = await supabase
-      .from('events')
-      .update({ status: 'done', source: 'auto-close' })
-      .eq('id', ev.id)
-      .eq('context', 'personal')
-      .not('status', 'in', '("done","cancelled")'); // race-safe
-    if (uErr) {
-      console.error(`[EventAutoClose] update err ${ev.id.slice(0, 8)}:`, uErr.message);
-    } else {
-      console.log(`[EventAutoClose] ${ev.id.slice(0, 8)} "${String(ev.title).slice(0, 40)}" → done (sem resposta 6h)`);
-    }
-  }
+  // Sprint 31.12 — DESLIGADO. Marcar evento como 'done' automaticamente (6h sem
+  // resposta), sem o usuário confirmar, é CONFABULAÇÃO: o TOM passava a afirmar
+  // "concluído" sem saber se rolou. Caso Yuri/karaoke 03/06. Princípio inviolável:
+  // nunca dar algo como feito sem confirmação humana. O followup já parou de cobrar
+  // (followup_sent_at setado), então o evento fica aberto até o humano confirmar —
+  // não re-incomoda. Mantido como no-op pra não mexer no agendador (tick).
+  return;
 }
 
 // Sprint 23.12 — Resolve líder responsável por cobrar fechamento de um evento.
