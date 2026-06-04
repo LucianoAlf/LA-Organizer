@@ -17,6 +17,7 @@ const OpenAI = require('openai');
 const openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const inventarioService = require('./services/inventario-service');
 const { hasTrailingQuestion, isInfoGatheringReply } = require('./services/reply-classify');
+const { shiftRemindersByReschedule } = require('./services/reschedule-reminders');
 const inventarioValidators = require('./services/inventario-validators');
 const announcementsService = require('./services/announcements');
 const pendingIntents = require('./services/pending-intents');
@@ -2783,6 +2784,25 @@ async function applyEventUpdates(collaborator, actions) {
       }
       console.log(`[Event] ${a.action} ${a.id} by ${last4}${a.action === 'reschedule' ? ` to ${a.new_start_at.slice(0, 16)}` : ''}`);
       okCount++;
+      // Sprint 31.12 — reschedule precisa MOVER os lembretes junto. Antes só mudava
+      // start_at e os event_reminders velhos disparavam no horário antigo (caso
+      // Matheus/Bia 03/06: evento foi pra segunda, lembrete tocou hoje).
+      if (a.action === 'reschedule') {
+        try {
+          const { data: rems } = await supabase
+            .from('event_reminders')
+            .select('id, remind_at')
+            .eq('event_id', ev.id)
+            .is('sent_at', null);
+          const shifted = shiftRemindersByReschedule(rems || [], ev.start_at, a.new_start_at);
+          for (const s of shifted) {
+            await supabase.from('event_reminders').update({ remind_at: s.remind_at }).eq('id', s.id);
+          }
+          if (shifted.length) console.log(`[Event] reschedule: ${shifted.length} lembrete(s) deslocado(s) p/ ${String(ev.id).slice(0, 8)}`);
+        } catch (e) {
+          console.warn('[Event] reschedule reminders resync falhou (não-fatal):', e.message);
+        }
+      }
       // Sprint 31.1 — fecha qualquer pending_followup aberto pra esse evento
       try {
         const pendingFollowups = require('./services/pending-followups');

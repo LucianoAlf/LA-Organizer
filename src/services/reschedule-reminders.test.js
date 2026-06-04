@@ -1,0 +1,61 @@
+// src/services/reschedule-reminders.test.js
+// Sprint 31.12 — ao reagendar um evento, os lembretes não-enviados precisam acompanhar
+// o novo horário. Encoda o caso REAL Matheus/Bia 03/06 (reschedule deixava o lembrete
+// velho disparar no horário antigo).
+//
+// Rodar: node --test src/services/reschedule-reminders.test.js
+
+const { test } = require('node:test');
+const assert = require('node:assert');
+const { shiftRemindersByReschedule } = require('./reschedule-reminders');
+
+test('caso Bia 03/06: reschedule 06-03 13:30 → 06-08 13:00 desloca o lembrete T-15 junto', () => {
+  const out = shiftRemindersByReschedule(
+    [{ id: 'r1', remind_at: '2026-06-03T13:15:00-03:00' }],
+    '2026-06-03T13:30:00-03:00',
+    '2026-06-08T13:00:00-03:00'
+  );
+  assert.strictEqual(out.length, 1);
+  assert.strictEqual(out[0].id, 'r1');
+  // T-15 do novo horário (13:00 BRT − 15min = 12:45 BRT = 15:45Z)
+  assert.strictEqual(out[0].remind_at, '2026-06-08T15:45:00.000Z');
+});
+
+test('preserva offsets distintos (T-15 e T-60) ao mover +1 dia', () => {
+  const out = shiftRemindersByReschedule(
+    [
+      { id: 'a', remind_at: '2026-06-03T13:45:00-03:00' }, // T-15
+      { id: 'b', remind_at: '2026-06-03T13:00:00-03:00' }, // T-60
+    ],
+    '2026-06-03T14:00:00-03:00',
+    '2026-06-04T14:00:00-03:00' // +1 dia exato
+  );
+  assert.strictEqual(out.length, 2);
+  assert.strictEqual(out[0].remind_at, '2026-06-04T16:45:00.000Z'); // 13:45 BRT +1d
+  assert.strictEqual(out[1].remind_at, '2026-06-04T16:00:00.000Z'); // 13:00 BRT +1d
+});
+
+test('start antigo/novo inválido → [] (não mexe em nada)', () => {
+  assert.deepStrictEqual(shiftRemindersByReschedule([{ id: 'x', remind_at: '2026-06-03T13:00:00-03:00' }], 'lixo', '2026-06-08T13:00:00-03:00'), []);
+  assert.deepStrictEqual(shiftRemindersByReschedule([{ id: 'x', remind_at: '2026-06-03T13:00:00-03:00' }], '2026-06-03T13:00:00-03:00', null), []);
+});
+
+test('delta zero (mesmo horário) → [] (nada a fazer)', () => {
+  const same = '2026-06-03T13:00:00-03:00';
+  assert.deepStrictEqual(shiftRemindersByReschedule([{ id: 'x', remind_at: same }], same, same), []);
+});
+
+test('reminder com remind_at inválido é ignorado, válidos passam', () => {
+  const out = shiftRemindersByReschedule(
+    [{ id: 'ok', remind_at: '2026-06-03T13:45:00-03:00' }, { id: 'bad', remind_at: 'nope' }],
+    '2026-06-03T14:00:00-03:00',
+    '2026-06-04T14:00:00-03:00'
+  );
+  assert.strictEqual(out.length, 1);
+  assert.strictEqual(out[0].id, 'ok');
+});
+
+test('lista vazia / nula → []', () => {
+  assert.deepStrictEqual(shiftRemindersByReschedule([], '2026-06-03T13:00:00-03:00', '2026-06-04T13:00:00-03:00'), []);
+  assert.deepStrictEqual(shiftRemindersByReschedule(null, '2026-06-03T13:00:00-03:00', '2026-06-04T13:00:00-03:00'), []);
+});
