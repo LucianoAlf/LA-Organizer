@@ -107,6 +107,18 @@ async function resolveSource(collaboratorId, name, opts = {}) {
   return { kind: 'none', accounts, cards };
 }
 
+// ---- Categorias ----
+// Categorias válidas pro usuário: defaults (collaborator_id null) + custom ativas dele.
+async function listCategorySlugs(collaboratorId, type) {
+  let q = supabase.from('pf_categories').select('slug, label, type, collaborator_id, is_active')
+    .or(`collaborator_id.is.null,collaborator_id.eq.${collaboratorId}`)
+    .eq('is_active', true);
+  if (type) q = q.eq('type', type);
+  const { data, error } = await q;
+  if (error) throw error;
+  return data || [];
+}
+
 // ---- Transacoes ----
 async function insertTransaction(collaboratorId, { type, category, amount, description, transaction_date, account_id }) {
   const row = { collaborator_id: collaboratorId, type, category, amount, description: description || null, account_id: account_id || null };
@@ -558,6 +570,7 @@ module.exports = {
   monthBounds,
   createAccount, updateAccount, listAccounts, findAccountByName, ensureDinheiro, resolveSource,
   findPrimaryAccount, setPrimaryAccount, matchBankSlug, bankColor,
+  listCategorySlugs,
   insertTransaction, updateTransaction, deleteTransaction, deleteTransactionGroup,
   listRecentTransactions, queryTransactions,
   monthCategoryTotal, querySummary,

@@ -4185,7 +4185,7 @@ async function checkReminders() {
   const cooldownCutoff = new Date(Date.now() - 6 * 3600_000).toISOString();
   const { data: due, error } = await supabase
     .from('tasks')
-    .select('id, title, assigned_to, remind_at, status, context, reminded_at')
+    .select('id, title, assigned_to, remind_at, status, context, reminded_at, due_date')
     .not('remind_at', 'is', null)
     .lte('remind_at', nowIso)
     .not('status', 'in', '(done,cancelled)')
@@ -4243,15 +4243,23 @@ async function checkReminders() {
       // Marca reminded_at IMEDIATAMENTE após envio — previne re-disparo mesmo se
       // o mark-done falhar (padrão de remindEventTasks / remindOperationalTasks).
       await supabase.from('tasks').update({ reminded_at: nowIso }).eq('id', t.id);
-      const { error: upErr } = await supabase.from('tasks').update({
-        status: 'done',
-        completed_at: nowIso,
-        completed_by: collab.id,
-      }).eq('id', t.id);
-      if (upErr) {
-        console.error(`[Reminders] mark-done err for ${String(t.id).slice(0,8)}:`, upErr.message);
+      // Sprint 31.13 (Yuri/Kinho 30/05) — só auto-concluir se for lembrete ONE-SHOT puro
+      // (SEM due_date). Task com due_date é um afazer real: o lembrete CUTUCA, mas NÃO
+      // conclui — senão vira "concluída sem confirmação" (mesma classe do AC-COMPLETE).
+      // reminded_at já foi gravado acima, então não re-dispara de qualquer forma.
+      if (!t.due_date) {
+        const { error: upErr } = await supabase.from('tasks').update({
+          status: 'done',
+          completed_at: nowIso,
+          completed_by: collab.id,
+        }).eq('id', t.id);
+        if (upErr) {
+          console.error(`[Reminders] mark-done err for ${String(t.id).slice(0,8)}:`, upErr.message);
+        } else {
+          console.log(`[Reminders] fired+done ${String(t.id).slice(0,8)} "${t.title.slice(0,40)}" (one-shot s/ prazo) → ${collab.phone.slice(-4)}`);
+        }
       } else {
-        console.log(`[Reminders] fired ${String(t.id).slice(0,8)} "${t.title.slice(0,40)}" → ${collab.phone.slice(-4)}`);
+        console.log(`[Reminders] fired ${String(t.id).slice(0,8)} "${t.title.slice(0,40)}" → ${collab.phone.slice(-4)} (mantida pending — tem prazo, não one-shot)`);
       }
       // Registra no notifications pra cooldown e auditoria de cobranças.
       await supabase.from('notifications').insert({

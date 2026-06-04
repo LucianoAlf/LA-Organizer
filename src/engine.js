@@ -17,7 +17,7 @@ const OpenAI = require('openai');
 const openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const inventarioService = require('./services/inventario-service');
 const { hasTrailingQuestion, isInfoGatheringReply } = require('./services/reply-classify');
-const { shiftRemindersByReschedule } = require('./services/reschedule-reminders');
+const { shiftRemindersByReschedule, shiftTaskRemindAt } = require('./services/reschedule-reminders');
 const inventarioValidators = require('./services/inventario-validators');
 const announcementsService = require('./services/announcements');
 const pendingIntents = require('./services/pending-intents');
@@ -3772,6 +3772,22 @@ async function applyTaskActions(collaborator, actions) {
         if (typeof a.new_remind_at === 'string' && isValidRemindAt(a.new_remind_at)) {
           update.remind_at = a.new_remind_at;
         }
+        // Sprint 31.13 (Yuri/Kinho 30/05) — reschedule SÓ com new_due_date (sem lembrete
+        // novo no marker): o remind_at antigo ficava congelado no passado. O cron disparava
+        // no horário velho e marcava a task como done (one-shot). Espelha RESCHED-REMINDER
+        // dos events: desloca o remind_at pelo delta de dias do due_date e re-arma o
+        // reminded_at pra ele poder tocar no horário novo.
+        if (update.due_date && !update.remind_at) {
+          const { data: cur } = await supabase
+            .from('tasks').select('due_date, remind_at').eq('id', t.id).maybeSingle();
+          if (cur && cur.remind_at) {
+            const shifted = shiftTaskRemindAt(cur.due_date, update.due_date, cur.remind_at);
+            if (shifted) {
+              update.remind_at = shifted;
+              update.reminded_at = null; // re-arma o lembrete no horário deslocado
+            }
+          }
+        }
         // Bug 30/05 (Yuri): reschedule de task já done deixava status='done' intacto.
         // Quando user diz "não fiz X, bota pra amanhã", a intenção é REABRIR + REMARCAR.
         // Incluído 'overdue' que é pseudo-status legado (mesmo comportamento).
@@ -5987,9 +6003,10 @@ function parseFinanceMarkers(text) {
 // (outros / outras_receitas). Garante slug válido (o CHECK do banco foi removido;
 // o LLM às vezes inventa "cuidados pessoais"/"beleza fora do tipo").
 const { validSlugs: pfValidSlugs, fallbackSlug: pfFallbackSlug } = require('./finance/categories.data');
-function safeCategory(cat, description, type) {
+function safeCategory(cat, description, type, extraSlugs) {
   const c = String(cat || '').toLowerCase().trim().replace(/[\s-]+/g, '_');
   if (pfValidSlugs(type).has(c)) return c;
+  if (extraSlugs && extraSlugs.has(c)) return c;       // categoria custom do usuário
   const mapped = mapCategory(description || '', type);
   return pfValidSlugs(type).has(mapped) ? mapped : pfFallbackSlug(type);
 }
@@ -5998,7 +6015,9 @@ function safeCategory(cat, description, type) {
 async function recordCardPurchase(cid, card, { amount, description, category, installments, date }) {
   const financeFmt = require('./services/finance-format');
   const inst = parseInt(installments || 1, 10) || 1;
-  const cat = safeCategory(category, description, 'expense');
+  const _cats = await financeService.listCategorySlugs(cid).catch(() => []);
+  const _extra = new Set(_cats.filter((r) => r.collaborator_id).map((r) => r.slug));
+  const cat = safeCategory(category, description, 'expense', _extra);
   const rows = await financeService.insertCardPurchase(cid, card, { category: cat, amount: Number(amount), description, transaction_date: date, installments: inst });
   const usage = await financeService.cardUsage(cid, card);
   let reply = financeFmt.txnRegistered(card, { description, amount: Number(amount), category: cat, installments: inst, competencia: rows[0].competencia }, usage);
@@ -6055,7 +6074,9 @@ async function handleFinanceAction(collab, action, params) {
     case 'register_transaction': {
       if (!p.amount || p.amount <= 0) return '❓ Qual foi o valor?';
       const type = p.type || 'expense';
-      const category = safeCategory(p.category, p.description, type);
+      const _cats = await financeService.listCategorySlugs(cid).catch(() => []);
+      const _extra = new Set(_cats.filter((r) => r.collaborator_id).map((r) => r.slug));
+      const category = safeCategory(p.category, p.description, type, _extra);
       const srcName = params.account_name || params.account || params.carteira || params.conta || params.card || p.account_name;
       const srcMethod = params.method || params.metodo || params.via || p.method || '';
 
@@ -6280,7 +6301,9 @@ async function handleFinanceAction(collab, action, params) {
       const amount = Number(params.amount);
       if (!amount || amount <= 0) return '❓ Qual foi o valor da compra?';
       const installments = parseInt(params.installments || 1, 10);
-      const category = safeCategory(params.category, params.description, 'expense');
+      const _cats = await financeService.listCategorySlugs(cid).catch(() => []);
+      const _extra = new Set(_cats.filter((r) => r.collaborator_id).map((r) => r.slug));
+      const category = safeCategory(params.category, params.description, 'expense', _extra);
       const cards = await financeService.findCard(cid, params.card || '');
 
       // Cartão não resolvido (não achou OU ambíguo) → pergunta DETERMINÍSTICA com

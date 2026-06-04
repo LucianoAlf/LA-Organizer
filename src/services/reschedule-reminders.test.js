@@ -7,7 +7,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { shiftRemindersByReschedule } = require('./reschedule-reminders');
+const { shiftRemindersByReschedule, shiftTaskRemindAt } = require('./reschedule-reminders');
 
 test('caso Bia 03/06: reschedule 06-03 13:30 → 06-08 13:00 desloca o lembrete T-15 junto', () => {
   const out = shiftRemindersByReschedule(
@@ -58,4 +58,40 @@ test('reminder com remind_at inválido é ignorado, válidos passam', () => {
 test('lista vazia / nula → []', () => {
   assert.deepStrictEqual(shiftRemindersByReschedule([], '2026-06-03T13:00:00-03:00', '2026-06-04T13:00:00-03:00'), []);
   assert.deepStrictEqual(shiftRemindersByReschedule(null, '2026-06-03T13:00:00-03:00', '2026-06-04T13:00:00-03:00'), []);
+});
+
+// ── shiftTaskRemindAt (Sprint 31.13 — caso Kinho/Yuri) ──────────────────────────
+test('caso Kinho: due 06-01 → 06-06 (+5d) desloca o remind_at +5 dias, mantendo a hora', () => {
+  // remind_at 29/05 15:00 BRT = 18:00Z; +5 dias = 03/06 18:00Z (hora preservada)
+  const out = shiftTaskRemindAt('2026-06-01', '2026-06-06', '2026-05-29T18:00:00.000Z');
+  assert.strictEqual(out, '2026-06-03T18:00:00.000Z');
+});
+
+test('mover +1 dia preserva o horário do dia', () => {
+  assert.strictEqual(
+    shiftTaskRemindAt('2026-06-03', '2026-06-04', '2026-06-03T12:30:00.000Z'),
+    '2026-06-04T12:30:00.000Z'
+  );
+});
+
+test('reagendar pra trás (delta negativo) também desloca', () => {
+  assert.strictEqual(
+    shiftTaskRemindAt('2026-06-10', '2026-06-08', '2026-06-10T09:00:00.000Z'),
+    '2026-06-08T09:00:00.000Z'
+  );
+});
+
+test('sem due antigo, sem due novo ou sem remind_at → null (nada a fazer)', () => {
+  assert.strictEqual(shiftTaskRemindAt(null, '2026-06-06', '2026-05-29T18:00:00.000Z'), null);
+  assert.strictEqual(shiftTaskRemindAt('2026-06-01', null, '2026-05-29T18:00:00.000Z'), null);
+  assert.strictEqual(shiftTaskRemindAt('2026-06-01', '2026-06-06', null), null);
+});
+
+test('delta zero (mesmo due) → null', () => {
+  assert.strictEqual(shiftTaskRemindAt('2026-06-06', '2026-06-06', '2026-06-06T12:00:00.000Z'), null);
+});
+
+test('datas inválidas → null', () => {
+  assert.strictEqual(shiftTaskRemindAt('lixo', '2026-06-06', '2026-05-29T18:00:00.000Z'), null);
+  assert.strictEqual(shiftTaskRemindAt('2026-06-01', '2026-06-06', 'nope'), null);
 });

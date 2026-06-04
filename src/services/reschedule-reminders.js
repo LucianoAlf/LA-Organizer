@@ -28,4 +28,29 @@ function shiftRemindersByReschedule(reminders, oldStartIso, newStartIso) {
   return out;
 }
 
-module.exports = { shiftRemindersByReschedule };
+/**
+ * Sprint 31.13 (Yuri/Kinho 30/05) — versão TAREFA do shift acima.
+ * Uma task tem UM `remind_at` (timestamp) e um `due_date` (date-only). Ao REAGENDAR
+ * sem informar um lembrete novo, o `remind_at` antigo ficava congelado no passado —
+ * o cron de lembrete (`checkReminders`) disparava no horário velho e, pior, marcava a
+ * task como done (one-shot). Aqui deslocamos o `remind_at` pelo MESMO número de DIAS
+ * que o due_date andou, preservando o horário do dia escolhido pelo usuário.
+ *
+ * @param {string} oldDueDate — due_date ANTES (YYYY-MM-DD) ou null
+ * @param {string} newDueDate — due_date DEPOIS (YYYY-MM-DD)
+ * @param {string} remindAtIso — remind_at atual (ISO) ou null
+ * @returns {string|null} novo remind_at (ISO UTC), ou null se não há o que deslocar
+ */
+function shiftTaskRemindAt(oldDueDate, newDueDate, remindAtIso) {
+  if (!oldDueDate || !newDueDate || !remindAtIso) return null;
+  // Datas date-only viram meia-noite UTC — delta em dias inteiros é exato.
+  const oldMs = Date.parse(`${oldDueDate}T00:00:00Z`);
+  const newMs = Date.parse(`${newDueDate}T00:00:00Z`);
+  const remMs = Date.parse(remindAtIso);
+  if (!Number.isFinite(oldMs) || !Number.isFinite(newMs) || !Number.isFinite(remMs)) return null;
+  const deltaDays = Math.round((newMs - oldMs) / 86400000);
+  if (deltaDays === 0) return null;
+  return new Date(remMs + deltaDays * 86400000).toISOString();
+}
+
+module.exports = { shiftRemindersByReschedule, shiftTaskRemindAt };

@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { Banknote, CreditCard, Receipt, Target, Wallet, type LucideIcon } from 'lucide-react';
+import { Banknote, CreditCard, Receipt, Tag, Target, Wallet, type LucideIcon } from 'lucide-react';
 
 // Atalhos do financeiro: UMA linha, arrastável pro lado (estilo Nubank), SEM barra de
 // scroll visível. Label inteiro (sem abreviar). Sinais/alertas ficam na faixa de resumo
@@ -12,6 +12,7 @@ const LINKS: QuickLink[] = [
   { to: '/financeiro/metas',      label: 'Metas',      Icon: Target },
   { to: '/financeiro/carteiras',  label: 'Carteiras',  Icon: Wallet },
   { to: '/financeiro/cartoes',    label: 'Cartões',    Icon: CreditCard },
+  { to: '/financeiro/categorias', label: 'Categorias', Icon: Tag },
 ];
 
 export function FinanceQuickLinks() {

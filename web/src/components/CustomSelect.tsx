@@ -26,6 +26,8 @@ interface Props {
   prefer?: 'up' | 'down' | 'auto';
   /** sm = h-9 (inline edits), md = h-12 (forms standard). Default md. */
   size?: 'sm' | 'md';
+  /** Ação fixa no rodapé do dropdown (ex: "Incluir categoria"). */
+  footerAction?: { label: string; onClick: () => void };
 }
 
 export function CustomSelect({
@@ -35,6 +37,7 @@ export function CustomSelect({
   placeholder,
   prefer = 'auto',
   size = 'md',
+  footerAction,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [openUpward, setOpenUpward] = useState(prefer === 'up');
@@ -125,6 +128,15 @@ export function CustomSelect({
                 </button>
               );
             })
+          )}
+          {footerAction && (
+            <button
+              type="button"
+              onClick={() => { setOpen(false); footerAction.onClick(); }}
+              className="w-full px-3 py-2 text-left text-body-sm text-tom border-t border-border hover:bg-bg-elevated focus-ring"
+            >
+              {footerAction.label}
+            </button>
           )}
         </div>
       )}

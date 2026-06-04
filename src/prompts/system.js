@@ -868,6 +868,12 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
         ...cards.map((c) => `• ${c.name} (cartão)`),
       ];
       body += `\n\n## Fontes deste usuário (use pra resolver/perguntar a origem — NUNCA cite saldo)\n${linhas.join('\n') || '• (nenhuma cadastrada ainda)'}\n• Dinheiro (carteira)`;
+      const _cats = await financeService.listCategorySlugs(collab.id).catch(() => []);
+      const _custom = _cats.filter((c) => c.collaborator_id);
+      if (_custom.length) {
+        body += `\n\n## Categorias personalizadas deste usuário (use quando casar; NUNCA invente/crie categoria)\n`
+          + _custom.map((c) => `• ${c.label} (${c.type === 'income' ? 'receita' : 'despesa'}) → slug "${c.slug}"`).join('\n');
+      }
     } catch { /* contexto opcional — não bloqueia */ }
     return { name: 'financeiro-pessoal', body };
   }

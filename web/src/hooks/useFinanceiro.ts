@@ -7,6 +7,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../contexts/AuthContext';
 import * as fin from '../lib/financeiro';
 import * as cartoes from '../lib/cartoes';
+import * as cat from '../lib/categorias';
 import { listCategories } from '../lib/categorias';
 import type { PfBill, PfCategory, PfTxType } from '../lib/financeiro';
 
@@ -211,4 +212,28 @@ export const useDeactivateBill        = () => useFinMutation(
 );
 export const useDeleteTransactionGroup = () => useFinMutation(
   (cid, purchaseGroup: string) => fin.deleteTransactionGroup(cid, purchaseGroup)
+);
+
+// useFinMutation invalida KEY=['financeiro']; categorias têm queryKey separado ['pf_categories'].
+// Estas mutations invalidam ambas pra o picker e lookup reflectirem imediatamente.
+function useFinMutationWithCats<T, V>(fn: (cid: string, v: V) => Promise<T>) {
+  const cid = useFinanceiroAuth();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: V) => {
+      if (!cid) return Promise.reject(new Error('Sem sessão. Faça login.'));
+      return fn(cid, v);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEY });
+      qc.invalidateQueries({ queryKey: ['pf_categories'] });
+    },
+  });
+}
+
+export const useCreateCategory = () => useFinMutationWithCats(
+  (cid, input: { label: string; emoji: string; type: 'expense' | 'income' }) => cat.createCategory(cid, input)
+);
+export const useDeactivateCategory = () => useFinMutationWithCats(
+  (cid, id: string) => cat.deactivateCategory(cid, id)
 );

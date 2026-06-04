@@ -75,7 +75,7 @@ export function TransacoesPage() {
   const monthOptions = months;
   const categoryOptions: { value: string; label: string }[] = [
     { value: '', label: 'Todas as categorias' },
-    ...(catsQ.data ?? []).map((c) => ({ value: c.slug, label: `${c.emoji}  ${c.label}` })),
+    ...(catsQ.data ?? []).filter((c) => c.is_active).map((c) => ({ value: c.slug, label: `${c.emoji}  ${c.label}` })),
   ];
 
   return (

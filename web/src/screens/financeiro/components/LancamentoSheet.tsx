@@ -11,6 +11,7 @@ import {
   useAccounts, useCategories, useCards,
   useCreateTransaction, useCreateCardPurchase, useCreateBill,
 } from '../../../hooks/useFinanceiro';
+import { NovaCategoriaSheet } from './NovaCategoriaSheet';
 import { splitInstallments } from '../../../lib/cartoes';
 import type { PfCategory, PfTxType } from '../../../lib/financeiro';
 
@@ -44,11 +45,13 @@ export function LancamentoSheet({ open, onClose, initialAccountId }: LancamentoS
   const createBill = useCreateBill();
 
   const allCats = useMemo(() => catsQ.data ?? [], [catsQ.data]);
-  const expenseCats = useMemo(() => allCats.filter((c) => c.type === 'expense').map((c) => ({ value: c.slug, label: `${c.emoji}  ${c.label}` })), [allCats]);
-  const incomeCats = useMemo(() => allCats.filter((c) => c.type === 'income').map((c) => ({ value: c.slug, label: `${c.emoji}  ${c.label}` })), [allCats]);
+  // Filtra is_active: categorias desativadas ficam no lookup (labels históricos) mas não no picker.
+  const expenseCats = useMemo(() => allCats.filter((c) => c.type === 'expense' && c.is_active).map((c) => ({ value: c.slug, label: `${c.emoji}  ${c.label}` })), [allCats]);
+  const incomeCats = useMemo(() => allCats.filter((c) => c.type === 'income' && c.is_active).map((c) => ({ value: c.slug, label: `${c.emoji}  ${c.label}` })), [allCats]);
   const cards = useMemo(() => cardsQ.data ?? [], [cardsQ.data]);
   const accounts = useMemo(() => accountsQ.data ?? [], [accountsQ.data]);
 
+  const [novaCat, setNovaCat] = useState(false);
   const [type, setType] = useState<PfTxType>('expense');
   const [tipo, setTipo] = useState<Tipo>('avista');
   const [category, setCategory] = useState<PfCategory>('alimentacao');
@@ -193,7 +196,8 @@ export function LancamentoSheet({ open, onClose, initialAccountId }: LancamentoS
         </Field>
 
         <Field label="Categoria">
-          <CustomSelect value={category} options={categoryOptions} onChange={(v) => setCategory(v as PfCategory)} />
+          <CustomSelect value={category} options={categoryOptions} onChange={(v) => setCategory(v as PfCategory)}
+            footerAction={{ label: '➕ Incluir categoria', onClick: () => setNovaCat(true) }} />
         </Field>
 
         {showMedio && (
@@ -253,6 +257,8 @@ export function LancamentoSheet({ open, onClose, initialAccountId }: LancamentoS
           </Button>
         </div>
       </div>
+      <NovaCategoriaSheet open={novaCat} type={type} onClose={() => setNovaCat(false)}
+        onCreated={(slug) => setCategory(slug as PfCategory)} />
     </AdaptiveSheet>
   );
 }
