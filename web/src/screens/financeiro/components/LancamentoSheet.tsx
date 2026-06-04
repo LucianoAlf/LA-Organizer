@@ -197,7 +197,12 @@ export function LancamentoSheet({ open, onClose, initialAccountId }: LancamentoS
         </Field>
 
         {showMedio && (
-          <Field label="Meio de pagamento">
+          <Field
+            label="Meio de pagamento"
+            sub={accounts.length === 0 && cards.length === 0
+              ? 'Você ainda não tem carteiras nem cartões. Cadastre em Finanças → Carteiras / Cartões pra vincular (dá pra registrar sem isso também).'
+              : undefined}
+          >
             <CustomSelect value={medio} options={medioOptions} onChange={setMedio} />
           </Field>
         )}

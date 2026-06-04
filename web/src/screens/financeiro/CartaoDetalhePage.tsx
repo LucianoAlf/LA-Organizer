@@ -7,6 +7,7 @@ import { CustomSelect } from '../../components/CustomSelect';
 import { Button } from '../../components/Button';
 import {
   useCards, useCardUsage, useCardInvoice, useAccounts, usePayInvoice, useFinanceiroAuth,
+  useCreateCardPurchase,
 } from '../../hooks/useFinanceiro';
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
 import { currentCompetencia, mesDaCompetencia, type CardInvoiceItem } from '../../lib/cartoes';
@@ -81,6 +82,55 @@ function PagarSheet({ open, onClose, cardId }: { open: boolean; onClose: () => v
   );
 }
 
+// Ajustar fatura: espelho do "Saldo atual" da carteira. O usuário diz quanto está a fatura
+// hoje e o engine lança a DIFERENÇA como "Ajuste de fatura" na competência corrente.
+function AjustarFaturaSheet({ open, onClose, cardId }: { open: boolean; onClose: () => void; cardId: string }) {
+  const cardsQ = useCards();
+  const card = cardsQ.data?.find((c) => c.id === cardId);
+  const comp = card ? currentCompetencia(card) : undefined;
+  const inv = useCardInvoice(cardId, comp);
+  const createPurchase = useCreateCardPurchase();
+  const [target, setTarget] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const current = inv.data?.total ?? 0;
+  const inputCls = 'w-full bg-bg-surface border border-border rounded-md p-2 text-fg focus:outline-none focus:border-tom';
+
+  async function submit() {
+    setError(null);
+    if (!card) return;
+    const alvo = Number(String(target).replace(',', '.'));
+    if (!isFinite(alvo) || alvo < 0) { setError('Informe um valor válido.'); return; }
+    const delta = Math.round((alvo - current) * 100) / 100;
+    if (delta === 0) { onClose(); return; }
+    if (delta < 0) { setError('Pra reduzir a fatura, apague um lançamento dela — aqui eu só somo a diferença.'); return; }
+    try {
+      await createPurchase.mutateAsync({
+        cardId: card.id, closingDay: card.closing_day, amount: delta,
+        category: 'outros', description: 'Ajuste de fatura', installments: 1,
+      });
+      setTarget('');
+      onClose();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  return (
+    <BottomSheet open={open} onClose={onClose} title="Ajustar fatura">
+      <div className="flex flex-col gap-md">
+        <p className="text-fg-muted text-body-sm">Fatura atual no app: <b className="text-fg">{fmtBRL(current)}</b></p>
+        <Field label="Quanto está sua fatura hoje? (R$)" sub="Eu lanço a diferença como “Ajuste de fatura” na fatura deste mês.">
+          <input className={inputCls} inputMode="decimal" value={target} onChange={(e) => setTarget(e.target.value)} placeholder="900,00" />
+        </Field>
+        {error && <p className="text-body-sm text-danger">{error}</p>}
+        <Button variant="primary" fullWidth loading={createPurchase.isPending} onClick={submit}>
+          Ajustar fatura
+        </Button>
+      </div>
+    </BottomSheet>
+  );
+}
+
 export function CartaoDetalhePage() {
   const { id = '' } = useParams();
   const cid = useFinanceiroAuth();
@@ -91,6 +141,7 @@ export function CartaoDetalhePage() {
   const comp = card ? currentCompetencia(card) : undefined;
   const inv = useCardInvoice(id, comp);
   const [paying, setPaying] = useState(false);
+  const [ajustando, setAjustando] = useState(false);
 
   if (!card) {
     return (
@@ -166,7 +217,12 @@ export function CartaoDetalhePage() {
         </div>
       )}
 
+      <Button variant="secondary" fullWidth onClick={() => setAjustando(true)}>
+        Ajustar fatura
+      </Button>
+
       <PagarSheet open={paying} onClose={() => setPaying(false)} cardId={card.id} />
+      <AjustarFaturaSheet open={ajustando} onClose={() => setAjustando(false)} cardId={card.id} />
     </div>
   );
 }
