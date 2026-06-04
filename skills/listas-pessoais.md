@@ -118,13 +118,23 @@ Campos:
 
 ### Adicionar item a lista existente
 
+Um item:
 ```
 <<PERSONAL_LIST_ACTION>>
-{"action":"add_item","list_id":"<uuid completo da lista>","description":"queijo"}
+{"action":"add_item","list_id":"<id da lista>","description":"queijo"}
 <<END>>
 ```
 
-> **Nota:** `list_id` deve ser o uuid COMPLETO. Se você só tem o prefixo do contexto, peça confirmação antes ("Qual lista? A do Mercado?") e use o id que estiver disponível na sessão. Se não tiver, busque criando uma RPC `<<MEMORY_SAVE>>` com a pergunta como gatilho de retomada.
+Vários de uma vez (use `items`):
+```
+<<PERSONAL_LIST_ACTION>>
+{"action":"add_item","list_id":"<id da lista>","items":["Refrigerante","Suco","Bolo","Carne"]}
+<<END>>
+```
+
+> **Nota:** use o `list_id` que aparece no contexto (`[list_id=...]`) — o engine resolve por id completo OU prefixo. Se houver mais de uma lista possível, pergunte qual ("A do Mercado?") antes de gravar.
+
+> ⚠️ **VETO ANTI-MENTIRA (lista):** o engine SABE adicionar item em lista (`add_item`) — **NUNCA** diga que "não dá pra adicionar" ou que "falta a funcionalidade". E **NUNCA** diga "adicionei / aparece no app" sem ter emitido o marker `add_item` e ele ter dado certo. Sem marker = nada foi salvo: então não afirme que salvou.
 
 ### Marcar item como feito (ou desfazer)
 

@@ -2770,6 +2770,106 @@ async function applyRsvp(collaborator, eventIdRef, status) {
   return { ok: true, eventId: resolvedEventId };
 }
 
+// Sprint 22.38 / 31.16 — aplica ações de lista pessoal (create|add_item|toggle_item|rename|
+// archive). Extraído de processMessage pra ser testável (smoke). Retorna { okCount, failCount }.
+async function applyPersonalListActions(collab, actions) {
+  let okCount = 0, failCount = 0;
+  for (const a of actions) {
+    try {
+      if (!a || typeof a !== 'object') { console.warn('[PersonalList] FAIL: not object'); failCount++; continue; }
+      console.log('[PersonalList] action:', a.action, 'name:', a.name);
+      if (a.action === 'create' || a.action === 'create_list') {
+        const name = String(a.name || a.title || '').trim();
+        if (!name) { console.warn('[PersonalList] FAIL: no name'); failCount++; continue; }
+        const listType = ['shopping', 'travel', 'meds', 'general'].includes(a.list_type) ? a.list_type : 'general';
+        const context = ['work', 'personal'].includes(a.context) ? a.context : 'personal';
+        const { data: list, error: e1 } = await supabase
+          .from('personal_checklists')
+          .insert({ owner_collab_id: collab.id, name, list_type: listType, context })
+          .select('id').single();
+        if (e1) { console.error('[PersonalList] FAIL list insert:', e1.message); failCount++; continue; }
+        const items = Array.isArray(a.items) ? a.items.filter(x => typeof x === 'string' && x.trim()) : [];
+        if (items.length) {
+          const rows = items.map((d, i) => ({ list_id: list.id, description: d.trim(), sort_order: i + 1 }));
+          const { error: e2 } = await supabase.from('personal_checklist_items').insert(rows);
+          if (e2) { console.error('[PersonalList] FAIL items insert:', e2.message); failCount++; continue; }
+        }
+        okCount++;
+      } else if (a.action === 'add_item' || a.action === 'add_items') {
+        // Sprint 31.16 (Mercado/Luciano 03/06) — TOLERANTE ao que o LLM naturalmente emite.
+        // Antes só {list_id, description} único → LLM mandou `text`, `items[]`, `add_items`
+        // → 4/4 rejeitados por nome/formato → o TOM confabulou. Agora: description|text|item;
+        // items[] pra múltiplos; add_items alias; list_id por id OU prefixo (escopo dono).
+        const listRef = typeof a.list_id === 'string' ? a.list_id.trim() : '';
+        if (!listRef) { console.warn('[PersonalList] add_item: sem list_id'); failCount++; continue; }
+        const { data: ownedLists } = await supabase
+          .from('personal_checklists').select('id')
+          .eq('owner_collab_id', collab.id).eq('is_active', true);
+        const head = listRef.replace(/-/g, '').toLowerCase();
+        const lm = (ownedLists || []).filter(l => String(l.id).replace(/-/g, '').toLowerCase().startsWith(head));
+        if (lm.length !== 1) { console.warn(`[PersonalList] add_item: list_id "${listRef}" ${lm.length === 0 ? 'não encontrado/owned' : 'ambíguo'}`); failCount++; continue; }
+        const listId = lm[0].id;
+        let descs = Array.isArray(a.items) ? a.items
+                  : Array.isArray(a.descriptions) ? a.descriptions
+                  : [a.description ?? a.text ?? a.item];
+        descs = descs.filter(d => typeof d === 'string' && d.trim()).map(d => d.trim().slice(0, 300));
+        if (!descs.length) { console.warn('[PersonalList] add_item: sem descrição'); failCount++; continue; }
+        const { data: maxRow } = await supabase
+          .from('personal_checklist_items').select('sort_order')
+          .eq('list_id', listId).order('sort_order', { ascending: false }).limit(1).maybeSingle();
+        let nextOrder = (maxRow && maxRow.sort_order ? maxRow.sort_order : 0) + 1;
+        const rows = descs.map(d => ({ list_id: listId, description: d, sort_order: nextOrder++ }));
+        const { error } = await supabase.from('personal_checklist_items').insert(rows);
+        if (error) { console.error('[PersonalList] add_item insert err:', error.message); failCount++; continue; }
+        console.log(`[PersonalList] add_item: +${rows.length} item(s) na lista ${String(listId).slice(0, 8)}`);
+        okCount++;
+      } else if (a.action === 'toggle_item') {
+        if (!a.item_id) { failCount++; continue; }
+        const { data: itemRow } = await supabase
+          .from('personal_checklist_items')
+          .select('id, list_id, personal_checklists!inner(id, owner_collab_id, recurrence_type, days_of_week, day_of_month)')
+          .eq('id', a.item_id).maybeSingle();
+        if (!itemRow || !itemRow.personal_checklists || itemRow.personal_checklists.owner_collab_id !== collab.id) {
+          failCount++; continue;
+        }
+        const isDone = a.is_done === undefined ? true : !!a.is_done;
+        const pcList = itemRow.personal_checklists;
+        if (pcList.recurrence_type && pcList.recurrence_type !== 'once') {
+          const pc = require('./services/personalCompletions');
+          const completion = await pc.ensurePersonalCompletion(pcList.id, collab.id);
+          await pc.togglePersonalCompletionItem(completion.id, a.item_id, isDone);
+          okCount++;
+        } else {
+          const { error } = await supabase.from('personal_checklist_items')
+            .update({ is_done: isDone }).eq('id', a.item_id);
+          if (error) { failCount++; continue; }
+          okCount++;
+        }
+      } else if (a.action === 'rename') {
+        if (!a.list_id || !a.name) { failCount++; continue; }
+        const { error } = await supabase.from('personal_checklists')
+          .update({ name: String(a.name).trim() })
+          .eq('id', a.list_id).eq('owner_collab_id', collab.id);
+        if (error) { failCount++; continue; }
+        okCount++;
+      } else if (a.action === 'archive') {
+        if (!a.list_id) { failCount++; continue; }
+        const { error } = await supabase.from('personal_checklists')
+          .update({ is_active: false })
+          .eq('id', a.list_id).eq('owner_collab_id', collab.id);
+        if (error) { failCount++; continue; }
+        okCount++;
+      } else {
+        failCount++;
+      }
+    } catch (e) {
+      console.error('[PersonalList] action err:', e.message);
+      failCount++;
+    }
+  }
+  return { okCount, failCount };
+}
+
 async function applyEventUpdates(collaborator, actions) {
   let okCount = 0, failCount = 0;
   const last4 = String(collaborator.phone || '').slice(-4);
@@ -7395,95 +7495,7 @@ async function processMessage(phone, text, raw = {}) {
       if (parsed) {
         console.log('[PersonalList] raw parsed:', JSON.stringify(parsed).slice(0, 300));
         const actions = Array.isArray(parsed) ? parsed : [parsed];
-        let okCount = 0, failCount = 0;
-        for (const a of actions) {
-          try {
-            if (!a || typeof a !== 'object') { console.warn('[PersonalList] FAIL: not object'); failCount++; continue; }
-            console.log('[PersonalList] action:', a.action, 'name:', a.name);
-            if (a.action === 'create' || a.action === 'create_list') {
-              // aceita 'title' como alias de 'name' (TOM às vezes gera title em vez de name)
-              const name = String(a.name || a.title || '').trim();
-              if (!name) { console.warn('[PersonalList] FAIL: no name'); failCount++; continue; }
-              const listType = ['shopping', 'travel', 'meds', 'general'].includes(a.list_type) ? a.list_type : 'general';
-              const context = ['work', 'personal'].includes(a.context) ? a.context : 'personal';
-              console.log('[PersonalList] inserting list:', { name, listType, context });
-              const { data: list, error: e1 } = await supabase
-                .from('personal_checklists')
-                .insert({ owner_collab_id: collab.id, name, list_type: listType, context })
-                .select('id').single();
-              if (e1) { console.error('[PersonalList] FAIL list insert:', e1.message); failCount++; continue; }
-              console.log('[PersonalList] list created id:', list?.id);
-              const items = Array.isArray(a.items) ? a.items.filter(x => typeof x === 'string' && x.trim()) : [];
-              console.log('[PersonalList] items count:', items.length);
-              if (items.length) {
-                const rows = items.map((d, i) => ({ list_id: list.id, description: d.trim(), sort_order: i + 1 }));
-                const { error: e2 } = await supabase.from('personal_checklist_items').insert(rows);
-                if (e2) { console.error('[PersonalList] FAIL items insert:', e2.message); failCount++; continue; }
-              }
-              okCount++;
-            } else if (a.action === 'add_item') {
-              if (!a.list_id || !a.description) { failCount++; continue; }
-              // Validar ownership: lista pertence ao collab.
-              const { data: owned } = await supabase
-                .from('personal_checklists').select('id')
-                .eq('id', a.list_id).eq('owner_collab_id', collab.id).maybeSingle();
-              if (!owned) { failCount++; continue; }
-              const { data: maxRow } = await supabase
-                .from('personal_checklist_items').select('sort_order')
-                .eq('list_id', a.list_id)
-                .order('sort_order', { ascending: false }).limit(1).maybeSingle();
-              const nextOrder = (maxRow && maxRow.sort_order ? maxRow.sort_order : 0) + 1;
-              const { error } = await supabase.from('personal_checklist_items').insert({
-                list_id: a.list_id, description: String(a.description).trim(), sort_order: nextOrder,
-              });
-              if (error) { failCount++; continue; }
-              okCount++;
-            } else if (a.action === 'toggle_item') {
-              if (!a.item_id) { failCount++; continue; }
-              // Ownership + dados da lista (recurrence) via FK chain: item → list.owner.
-              const { data: itemRow } = await supabase
-                .from('personal_checklist_items')
-                .select('id, list_id, personal_checklists!inner(id, owner_collab_id, recurrence_type, days_of_week, day_of_month)')
-                .eq('id', a.item_id).maybeSingle();
-              if (!itemRow || !itemRow.personal_checklists || itemRow.personal_checklists.owner_collab_id !== collab.id) {
-                failCount++; continue;
-              }
-              const isDone = a.is_done === undefined ? true : !!a.is_done;
-              const pcList = itemRow.personal_checklists;
-              if (pcList.recurrence_type && pcList.recurrence_type !== 'once') {
-                // Recorrente: escreve na completion do dia (não em is_done).
-                const pc = require('./services/personalCompletions');
-                const completion = await pc.ensurePersonalCompletion(pcList.id, collab.id);
-                await pc.togglePersonalCompletionItem(completion.id, a.item_id, isDone);
-                okCount++;
-              } else {
-                const { error } = await supabase.from('personal_checklist_items')
-                  .update({ is_done: isDone }).eq('id', a.item_id);
-                if (error) { failCount++; continue; }
-                okCount++;
-              }
-            } else if (a.action === 'rename') {
-              if (!a.list_id || !a.name) { failCount++; continue; }
-              const { error } = await supabase.from('personal_checklists')
-                .update({ name: String(a.name).trim() })
-                .eq('id', a.list_id).eq('owner_collab_id', collab.id);
-              if (error) { failCount++; continue; }
-              okCount++;
-            } else if (a.action === 'archive') {
-              if (!a.list_id) { failCount++; continue; }
-              const { error } = await supabase.from('personal_checklists')
-                .update({ is_active: false })
-                .eq('id', a.list_id).eq('owner_collab_id', collab.id);
-              if (error) { failCount++; continue; }
-              okCount++;
-            } else {
-              failCount++;
-            }
-          } catch (e) {
-            console.error('[PersonalList] action err:', e.message);
-            failCount++;
-          }
-        }
+        const { okCount, failCount } = await applyPersonalListActions(collab, actions);
         const result = okCount > 0 ? 'executed' : 'rejected';
         const reason = okCount > 0 ? `ok=${okCount} fail=${failCount}` : `all_failed:${failCount}`;
         await logMarker(collab.id, 'PERSONAL_LIST_ACTION', result, reason, null);
@@ -10478,4 +10490,4 @@ async function applyMonthlyPlan(collaborator, plan) {
   return { id: created?.id, action: 'created' };
 }
 
-module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamSummary, buildWeeklyRetrospective, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseWeeklyPlanMarker, parseHabitMarker, parseDndMarker, parseDataClassifyMarker, applyDataClassify, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, applyHabitActions, applyDnd, getDndState, consolidateMemoryFor, decayExpiredMemories, generateWeeklySummaryFor, updateCollaboratorProfile, looksLikeMemory, resolveTaskByShortId, applyEventUpdates, applyRsvp, applyAnnouncementAction, parseAnnouncementApprovalMarker, applyAnnouncementApproval, applyCoordinationRequestAction, parseCoordinationResponseMarker, applyCoordinationResponseAction, computeProgress, getRitualIntroDecision, countRecentRelaysToRecipient, buildRelayLimitHint, parseMonthlyPlanMarker, applyMonthlyPlan };
+module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamSummary, buildWeeklyRetrospective, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseWeeklyPlanMarker, parseHabitMarker, parseDndMarker, parseDataClassifyMarker, applyDataClassify, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, applyHabitActions, applyDnd, getDndState, consolidateMemoryFor, decayExpiredMemories, generateWeeklySummaryFor, updateCollaboratorProfile, looksLikeMemory, resolveTaskByShortId, applyEventUpdates, applyRsvp, applyPersonalListActions, applyAnnouncementAction, parseAnnouncementApprovalMarker, applyAnnouncementApproval, applyCoordinationRequestAction, parseCoordinationResponseMarker, applyCoordinationResponseAction, computeProgress, getRitualIntroDecision, countRecentRelaysToRecipient, buildRelayLimitHint, parseMonthlyPlanMarker, applyMonthlyPlan };
