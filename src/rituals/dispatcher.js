@@ -3322,10 +3322,14 @@ async function run(opts = {}) {
     }
   }
 
-  // Deadline + overdue alerts — fire at most once per task per day, gated by
-  // hour window so we don't spam at 3am. Window: 8h-19h, América/Sao_Paulo.
-  // Override with --force-alerts for tests/manual triggers.
-  if (opts['force-alerts'] || (now.hour >= 8 && now.hour < 19)) {
+  // Deadline + overdue alerts — fire at most once per task per day, gated por janela horária.
+  // Sprint 31.17 (anti-redundância, Alf 05/06): ANTES era 8h-19h → colava no briefing matinal
+  // (~7-9h), então a MESMA atrasada aparecia no resumo E como cobrança individual 3min depois
+  // = spam. Agora janela da TARDE (13h-19h): manhã = SÓ o briefing (que já lista as atrasadas +
+  // CTA da principal); a cobrança individual vem à tarde e só pra quem NÃO mexeu (o filtro
+  // updated_at < 6h já pula quem reagendou/concluiu de manhã). Separa os dois toques no tempo.
+  // Override com --force-alerts pra testes/manual.
+  if (opts['force-alerts'] || (now.hour >= 13 && now.hour < 19)) {
     try {
       await checkDeadlineAlerts(now.ymd);
     } catch (err) {
