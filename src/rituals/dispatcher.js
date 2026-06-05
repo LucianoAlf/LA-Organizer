@@ -2874,7 +2874,11 @@ async function run(opts = {}) {
   try {
     const tsSlot = timeToSlot(TEAM_SUMMARY_DEFAULT_TIME);
     const wrSlot = timeToSlot(WEEKLY_RETRO_DEFAULT_TIME);
-    if (!isWeekend && tsSlot !== null && tsSlot === slotNow) {
+    // Sprint 31.18 (Alf 05/06): "Resumo do time" das 19:30 CORTADO — redundante com os blocos
+    // de Governança (compromissos em aberto + tarefas atrasadas), que já entregam a supervisão
+    // ACIONÁVEL do time. O resumo só re-levantava "time atrasado" como agregado ansiogênico,
+    // sem veredito novo. buildTeamSummary segue no código (reversível) — só não dispara mais.
+    if (false && !isWeekend && tsSlot !== null && tsSlot === slotNow) {
       const coords = await listCoordinators();
       for (const c of coords) await fireCoordinatorReport(c, 'team_summary', now.ymd);
     }
