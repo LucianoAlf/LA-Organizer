@@ -8421,6 +8421,15 @@ async function processMessage(phone, text, raw = {}) {
           finReplies.push('Deu ruim ao registrar um dos itens — tenta de novo?');
         }
       }
+      // Defesa: se houve markers válidos E malformados na MESMA resposta (ex: lista
+      // onde um item veio embolado), NUNCA engula o que falhou em silêncio — loga e avisa.
+      if (finParsed.malformed > 0) {
+        console.warn(`[Finance] WARN: ${finParsed.malformed} malformed marker(s) junto de ${finParsed.actions.length} válido(s)`);
+        await logMarker(collab.id, 'FINANCE_ACTION', 'rejected', `schema_invalid_partial:${finParsed.malformed}`, reply);
+        finReplies.push(finParsed.malformed === 1
+          ? '⚠️ Registrei o que deu, mas um item veio embolado e não entrou. Me manda de novo só esse?'
+          : `⚠️ Registrei o que deu, mas ${finParsed.malformed} itens vieram embolados e não entraram. Me manda de novo só esses?`);
+      }
       reply = finReplies.length ? finReplies.join('\n\n') : (finParsed.cleanText || reply);
     } else if (finParsed.malformed > 0) {
       console.warn('[Finance] WARN: malformed marker');

@@ -34,7 +34,13 @@ Para cada ação financeira, emita o marker `<<FINANCE_ACTION>>` com um JSON e f
 <<END>>
 ```
 
-**Vários lançamentos numa mensagem só:** se o usuário listar mais de um gasto/recebimento numa mensagem (ex: "Estacionamento 90 no Itaú / Ifood 100 no crédito do Nubank"), emita UM `<<FINANCE_ACTION>>...<<END>>` para CADA item — vários markers seguidos na mesma resposta. O engine registra todos. NUNCA registre só o primeiro nem resuma os demais em texto.
+**Vários lançamentos numa mensagem só (REGRA CRÍTICA — processe a mensagem INTEIRA):** se a mensagem tiver mais de um item, trate TODOS, um por um, de cima pra baixo:
+- Emita UM `<<FINANCE_ACTION>>...<<END>>` para CADA item — vários markers seguidos na mesma resposta. O engine registra todos.
+- **Um item pode precisar de MAIS DE UM marker.** Se uma linha for um gasto que TAMBÉM se declara conta fixa/recorrente (ex: "60 no débito — Telefone, é uma conta fixa"), emita DOIS markers pra essa linha: `register_transaction` (o gasto deste mês) **E** `register_bill` (a recorrência, `recurrence: 'monthly'` + `due_day`). O mesmo vale pra qualquer item que case com mais de uma ação.
+- Itens podem ser de TIPOS diferentes na mesma lista (um gasto, uma receita, uma compra no cartão, uma conta fixa). Trate cada um pela sua natureza — NÃO force tudo em `register_transaction`.
+- **Checklist antes de enviar:** toda linha que tem um valor virou pelo menos um marker? Se faltou alguma, emita agora.
+- NUNCA pare no primeiro item. NUNCA resuma os demais em texto. NUNCA deixe um item de fora por dúvida — na dúvida, registre o gasto E, se ele se declarar recorrente, também a conta fixa.
+- Exemplo: "23,50 no débito — Estacionamento shopping / 60 no débito — Telefone, é uma conta fixa" → TRÊS markers: `register_transaction` (Estacionamento), `register_transaction` (Telefone, gasto do mês) e `register_bill` (Telefone, recorrente).
 
 Ações disponíveis (campo `action`):
 - `register_transaction` — params: type (income|expense), category, amount, description, date(opcional), account_name(**fonte — de onde saiu / em que conta caiu**), method(opcional). Passe o nome dito ("Nubank", "Itaú", "dinheiro"); o engine resolve se é carteira ou cartão. Quando o usuário disser EXPLICITAMENTE a forma de pagamento, passe `method` ("credito"/"cartao"/"debito"/"pix"/"conta"/"transferencia") — assim o engine resolve sem perguntar quando o nome é carteira E cartão ao mesmo tempo (ex. "Nubank"). Receita (income) o engine sempre joga na conta, nunca no cartão.
