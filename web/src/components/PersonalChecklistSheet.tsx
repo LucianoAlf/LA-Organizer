@@ -245,11 +245,19 @@ export function PersonalChecklistSheet({ open, onClose, context = 'personal', ed
           </div>
         )}
 
-        {mutation.isError && (
-          <p className="text-danger text-caption">
-            Erro ao salvar. Verifique sua conexão e tente novamente.
-          </p>
-        )}
+        {mutation.isError && (() => {
+          // Mostra o erro REAL do banco (ex.: violação de constraint) em vez do
+          // genérico de "conexão" — que mascarava bugs como o list_type inválido.
+          const e = mutation.error as { message?: string; details?: string; hint?: string } | null
+          const real = (e && (e.message || e.details || e.hint)) || ''
+          return (
+            <p className="text-danger text-caption">
+              {real
+                ? `Não consegui salvar: ${real}`
+                : 'Erro ao salvar. Verifique sua conexão e tente novamente.'}
+            </p>
+          )
+        })()}
 
         <Button
           variant="primary"
