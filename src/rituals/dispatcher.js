@@ -2367,12 +2367,17 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
 // GovLeader (06/06) — digest POR LÍDER. Cada gerente/coordenador recebe a fatia do
 // time DELE: tarefas atrasadas cujo DONO o tem como líder (via resolveLeadersOf —
 // unidade→gerente, pedagógico→coordenadores, fan-out). O CEO segue recebendo o
-// digest COMPLETO em ceoTeamUnclosedTasksReport. Roda 09:00 BRT (após o do CEO).
+// digest COMPLETO em ceoTeamUnclosedTasksReport. Horário (pedido pelo CEO 06/06):
+// Seg–Sex às 14:00 BRT, Sábado às 09:00 BRT, Domingo desligado.
 // Idempotente por líder via ritual_logs. opts.dryRun NÃO envia nada: retorna o plano
 // [{leaderId, leaderName, phone, count, msg}] pra smoke/preview seguro antes de ligar.
 async function perLeaderUnclosedTasksReport(now = new Date(), opts = {}) {
   const sp = nowSaoPaulo();
-  if (!opts.force && !opts.dryRun && currentSlot(sp) !== timeToSlot('09:00')) return;
+  // dow: 0=dom, 1=seg … 6=sáb. Seg–Sex → 14:00; Sáb → 09:00; Dom → não roda.
+  const targetSlot = sp.dow === 6
+    ? timeToSlot('09:00')
+    : (sp.dow >= 1 && sp.dow <= 5 ? timeToSlot('14:00') : null);
+  if (!opts.force && !opts.dryRun && (targetSlot === null || currentSlot(sp) !== targetSlot)) return;
 
   const whatsapp = require('../services/whatsapp');
   const { resolveLeadersOf } = require('../services/leader-routing');
@@ -3552,11 +3557,19 @@ async function run(opts = {}) {
   }
 
   // Relatório CEO 08:45 BRT: tarefas do time atrasadas (espelha o de eventos).
-  // Regra: 3+ dias = direto pro CEO; 1-2 dias = roteado pelo líder de categoria.
+  // Regra: 3+ dias = direto pro CEO; 1-2 dias = agrupado pelo líder do dono.
   try {
     await ceoTeamUnclosedTasksReport(new Date());
   } catch (err) {
     console.error('[Dispatcher] ceoTeamUnclosedTasksReport erro:', err.message);
+  }
+
+  // GovLeader (06/06) — digest POR LÍDER: cada gerente/coordenador recebe a fatia do
+  // time dele. Seg–Sex 14:00 BRT, Sáb 09:00 BRT (gate interno por dow). Idempotente.
+  try {
+    await perLeaderUnclosedTasksReport(new Date());
+  } catch (err) {
+    console.error('[Dispatcher] perLeaderUnclosedTasksReport erro:', err.message);
   }
 
   // Relatório semanal de engajamento dos líderes (segunda 08h BRT).
