@@ -295,6 +295,24 @@ export function EditEventSheet({ open, event, onClose }: Props) {
 
   const endBeforeStart = startAt && endAt && new Date(endAt).getTime() <= new Date(startAt).getTime();
 
+  // RSVP "checkzinho" — mostra quem confirmou / aguarda / recusou cada convite.
+  // event_participants.status já vem da query existingParticipants (id, collaborator_id, status).
+  const rsvpLabel = (status: string | null | undefined) => {
+    switch (status) {
+      case 'confirmed': return { icon: '✅', text: 'confirmou', cls: 'text-tom' };
+      case 'declined': return { icon: '❌', text: 'recusou', cls: 'text-danger' };
+      case 'tentative': return { icon: '🤔', text: 'talvez', cls: 'text-fg' };
+      default: return { icon: '⏳', text: 'aguardando', cls: 'text-fg-muted' };
+    }
+  };
+  const collabName = (id: string) =>
+    collaborators.find(c => c.id === id)?.full_name?.split(' ')[0] ?? `${id.slice(0, 6)}…`;
+  const confCounts = {
+    confirmed: existingParticipants.filter(p => p.status === 'confirmed').length,
+    declined: existingParticipants.filter(p => p.status === 'declined').length,
+    pending: existingParticipants.filter(p => !['confirmed', 'declined'].includes(p.status)).length,
+  };
+
   return (
     <AdaptiveSheet open={open && Boolean(event)} onClose={onClose} title="Editar compromisso" size="md">
       {event && (
@@ -405,6 +423,33 @@ export function EditEventSheet({ open, event, onClose }: Props) {
                 ? 'Sem convidados.'
                 : `${participantIds.length} pessoa${participantIds.length > 1 ? 's' : ''} convidada${participantIds.length > 1 ? 's' : ''}.`}
             </div>
+
+            {/* Confirmações (RSVP) — quem já respondeu o convite. */}
+            {existingParticipants.length > 0 && (
+              <div className="mt-3 rounded-md border border-border bg-bg-elevated/40 p-3">
+                <div className="text-label uppercase tracking-wide text-fg-muted mb-2 flex items-center justify-between">
+                  <span>Confirmações</span>
+                  <span className="normal-case tracking-normal text-body-sm">
+                    <span className="text-tom">✅ {confCounts.confirmed}</span>
+                    {' · '}
+                    <span className="text-fg-muted">⏳ {confCounts.pending}</span>
+                    {' · '}
+                    <span className="text-danger">❌ {confCounts.declined}</span>
+                  </span>
+                </div>
+                <ul className="space-y-1">
+                  {existingParticipants.map(p => {
+                    const s = rsvpLabel(p.status);
+                    return (
+                      <li key={p.id} className="flex items-center justify-between text-body-sm">
+                        <span className="text-fg">{collabName(p.collaborator_id)}</span>
+                        <span className={s.cls}>{s.icon} {s.text}</span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
           </div>
 
           {update.error && (

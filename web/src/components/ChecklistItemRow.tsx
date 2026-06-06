@@ -25,6 +25,8 @@ interface Props {
   onSaveNote?: (note: string) => void
   onCreateTask?: () => void
   onDelete?: () => void
+  /** Edição inline do texto do item — quando passado, mostra "Editar item" no menu. */
+  onRename?: (name: string) => void
   /**
    * Sprint 22.38 — quando true, "Apagar item" aparece independentemente de isAdHoc.
    * Usado por listas pessoais (todo item é deletável). Default: undefined.
@@ -44,14 +46,21 @@ export function ChecklistItemRow({
   onSaveNote,
   onCreateTask,
   onDelete,
+  onRename,
   canDelete,
 }: Props) {
   const [editingNote, setEditingNote] = useState(false)
   const [draft, setDraft] = useState(note)
+  const [editingName, setEditingName] = useState(false)
+  const [nameDraft, setNameDraft] = useState(name)
 
   useEffect(() => {
     setDraft(note)
   }, [note])
+
+  useEffect(() => {
+    setNameDraft(name)
+  }, [name])
 
   const hasNote = !!note.trim()
 
@@ -87,8 +96,26 @@ export function ChecklistItemRow({
     setEditingNote(false)
   }
 
+  function handleSaveName() {
+    if (!onRename) return
+    const v = nameDraft.trim()
+    if (v && v !== name) onRename(v)
+    setEditingName(false)
+  }
+
+  function handleCancelName() {
+    setNameDraft(name)
+    setEditingName(false)
+  }
+
   // Build row menu
   const menu: MenuItem[] = []
+  if (onRename && !readonly) {
+    menu.push({
+      label: 'Editar item',
+      onClick: () => { setNameDraft(name); setEditingName(true) },
+    })
+  }
   if (onSaveNote) {
     menu.push({
       label: hasNote ? 'Editar observação' : 'Adicionar observação',
@@ -136,35 +163,66 @@ export function ChecklistItemRow({
           ariaLabel={done ? 'Desmarcar item' : 'Marcar item'}
         />
 
-        {/* Label clicável também marca/desmarca */}
-        <button
-          type="button"
-          className={[
-            'flex-1 flex items-center gap-2 px-2 py-2 rounded-lg text-left transition-colors min-w-0',
-            readonly
-              ? 'cursor-default opacity-70'
-              : 'hover:bg-bg-app cursor-pointer active:opacity-80',
-          ].join(' ')}
-          onClick={readonly ? undefined : onToggle}
-          disabled={readonly}
-          aria-pressed={done}
-        >
-          <span className="flex-1 min-w-0">
-            <span
-              className={[
-                'text-body-sm',
-                done ? 'line-through text-fg-muted' : 'text-fg',
-              ].join(' ')}
+        {/* Label clicável também marca/desmarca — ou input de edição do texto */}
+        {editingName ? (
+          <div className="flex-1 flex items-center gap-1 min-w-0 px-1 py-1">
+            <input
+              value={nameDraft}
+              onChange={e => setNameDraft(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') { e.preventDefault(); handleSaveName() }
+                if (e.key === 'Escape') { e.preventDefault(); handleCancelName() }
+              }}
+              className="flex-1 min-w-0 text-body-sm bg-bg-app border border-border rounded-md px-2 py-1.5 text-fg placeholder:text-fg-muted focus:outline-none focus:border-tom"
+              autoFocus
+            />
+            <button
+              type="button"
+              onClick={handleCancelName}
+              className="p-1.5 rounded-md text-fg-muted hover:bg-bg-app hover:text-fg transition-colors flex-shrink-0"
+              aria-label="Cancelar"
             >
-              {index}. {name}
-            </span>
-            {isAdHoc && (
-              <span className="ml-2 inline-flex items-center text-[10px] px-1.5 py-0.5 rounded bg-tom/10 text-tom font-medium">
-                +ad-hoc
+              <X size={14} />
+            </button>
+            <button
+              type="button"
+              onClick={handleSaveName}
+              className="p-1.5 rounded-md text-success hover:bg-bg-app transition-colors flex-shrink-0"
+              aria-label="Salvar item"
+            >
+              <Check size={14} />
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            className={[
+              'flex-1 flex items-center gap-2 px-2 py-2 rounded-lg text-left transition-colors min-w-0',
+              readonly
+                ? 'cursor-default opacity-70'
+                : 'hover:bg-bg-app cursor-pointer active:opacity-80',
+            ].join(' ')}
+            onClick={readonly ? undefined : onToggle}
+            disabled={readonly}
+            aria-pressed={done}
+          >
+            <span className="flex-1 min-w-0">
+              <span
+                className={[
+                  'text-body-sm',
+                  done ? 'line-through text-fg-muted' : 'text-fg',
+                ].join(' ')}
+              >
+                {index}. {name}
               </span>
-            )}
-          </span>
-        </button>
+              {isAdHoc && (
+                <span className="ml-2 inline-flex items-center text-[10px] px-1.5 py-0.5 rounded bg-tom/10 text-tom font-medium">
+                  +ad-hoc
+                </span>
+              )}
+            </span>
+          </button>
+        )}
 
         {/* RowMenu (always rendered if any menu item) */}
         {menu.length > 0 && (

@@ -24,7 +24,7 @@ import { PersonalChecklistSheet } from './PersonalChecklistSheet'
 import { ConfirmDialog } from './ConfirmDialog'
 import {
   toggleItem, addItem, deleteItem, reorderItems,
-  archiveList, deleteList, saveItemNote,
+  archiveList, deleteList, saveItemNote, updateItemDescription,
 } from '../lib/personalChecklists'
 import { useAuth } from '../contexts/AuthContext'
 import { ensurePersonalCompletion, togglePersonalCompletionItem } from '../lib/personalCompletions'
@@ -106,6 +106,10 @@ export function PersonalChecklistCard({ list }: Props) {
   })
   const noteMutation = useMutation({
     mutationFn: ({ id, note }: { id: string; note: string }) => saveItemNote(id, note),
+    onSuccess: invalidate,
+  })
+  const renameMutation = useMutation({
+    mutationFn: ({ id, description }: { id: string; description: string }) => updateItemDescription(id, description),
     onSuccess: invalidate,
   })
   const deleteMutation = useMutation({
@@ -224,6 +228,7 @@ export function PersonalChecklistCard({ list }: Props) {
                   canDelete
                   onToggle={() => toggleMutation.mutate({ id: it.id, isDone: !it.is_done })}
                   onSaveNote={(note) => noteMutation.mutate({ id: it.id, note })}
+                  onRename={(description) => renameMutation.mutate({ id: it.id, description })}
                   onDelete={() => deleteMutation.mutate(it.id)}
                 />
               ))}
