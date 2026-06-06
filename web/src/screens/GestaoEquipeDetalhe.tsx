@@ -7,7 +7,7 @@ import { PageHeader } from '../components/PageHeader';
 import { LoadingState } from '../components/LoadingState';
 import { showToast } from '../components/Toast';
 import type { Role } from '../types';
-import { ROLES, ROLE_RANK, ROLE_LABELS, ALL_FUNCTION_TITLES } from '../lib/roles';
+import { ROLES, ROLE_RANK, ROLE_LABELS, JOB_TITLES } from '../lib/roles';
 const UNIT_OPTIONS = [
   { value: 'barra',        label: 'Barra' },
   { value: 'recreio',      label: 'Recreio' },
@@ -72,8 +72,8 @@ export function GestaoEquipeDetalhe() {
   const myRank = ROLE_RANK[(myRole as Role) ?? 'collaborator'] ?? 0;
   const allowedRoles = ROLES.filter(r => ROLE_RANK[r] <= myRank);
 
-  // Cargo é INDEPENDENTE do nível de acesso — lista plana de todos os cargos.
-  const titleOptions = ALL_FUNCTION_TITLES;
+  // Cargo é INDEPENDENTE do nível de acesso — só cargos reais (sem Coord/Gerente/Diretor).
+  const titleOptions = JOB_TITLES;
   // Se o valor salvo no banco não está na lista, inclui para não quebrar a edição
   const allTitleOptions =
     functionTitle && !titleOptions.includes(functionTitle)

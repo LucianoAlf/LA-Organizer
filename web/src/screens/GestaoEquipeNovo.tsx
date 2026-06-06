@@ -5,7 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { PageHeader } from '../components/PageHeader';
 import { showToast } from '../components/Toast';
 import type { Role } from '../types';
-import { ROLES, ROLE_RANK, ROLE_LABELS, ALL_FUNCTION_TITLES } from '../lib/roles';
+import { ROLES, ROLE_RANK, ROLE_LABELS, JOB_TITLES } from '../lib/roles';
 const UNIT_OPTIONS = [
   { value: 'barra',        label: 'Barra' },
   { value: 'recreio',      label: 'Recreio' },
@@ -112,7 +112,7 @@ export function GestaoEquipeNovo() {
           <div className="space-y-md">
             <label className="text-body-sm text-fg-muted">Cargo (opcional)</label>
             <div className="flex flex-wrap gap-2">
-              {ALL_FUNCTION_TITLES.map(t => (
+              {JOB_TITLES.map(t => (
                 <button
                   key={t}
                   type="button"

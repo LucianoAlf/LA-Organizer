@@ -45,3 +45,10 @@ export const FUNCTION_TITLES: Record<Role, string[]> = {
 
 /** Lista flat de todos os cargos (uso em filtros gerais). */
 export const ALL_FUNCTION_TITLES: string[] = Object.values(FUNCTION_TITLES).flat();
+
+/**
+ * Cargos REAIS (a função/job da pessoa), independentes do nível de acesso.
+ * Usado nos forms de colaborador: o Cargo NÃO deve repetir Coordenador/Gerente/Diretor
+ * (esses já são o "Nível de acesso"). Ex.: RH de cargo + Gerente de acesso.
+ */
+export const JOB_TITLES: string[] = FUNCTION_TITLES.collaborator;
