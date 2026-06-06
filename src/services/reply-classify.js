@@ -31,15 +31,23 @@ function hasTrailingQuestion(reply) {
 // NÃO agiu (não há o que persistir neste turno). Não confundir com "já registrei".
 const _INFO_GATHERING_RE = /\b(?:me\s+(?:manda|mande|envia|envie|diz|diga|passa|passe)|vai\s+(?:mandando|listando))\b/i;
 
+// Sprint 31.19 (caso Dai 05/06) — TOM PEDINDO CONFIRMAÇÃO antes de agir ("Certo? Se
+// confirmar, fecho...") NÃO é promessa quebrada — é o comportamento CERTO (perguntar →
+// agir só após "Confirmo"). O hasTrailingQuestion só olha o FINAL; aqui o "Certo?" e o
+// "Se confirmar" vêm no MEIO e a frase termina em ponto, então escapavam → falso positivo
+// no radar ACTIONABLE_NO_MARKER. Detecta o condicional "se confirmar/ok/aprovar/topar" e
+// a pergunta de confirmação em qualquer posição.
+const _CONFIRM_SEEKING_RE = /\bse\s+(?:voc[êe]\s+)?(?:confirmar|confirma|ok|aprovar|topar|fechar)\b|\b(?:certo|confirma|confirmo|confirmar)\s*\?/i;
+
 /**
- * A reply pede um insumo ao user pra prosseguir (convite/futuro), logo não é uma
- * ação concluída. Ex.: "Vai listando que eu vou registrando", "Me manda de novo",
- * "Me diz a unidade e a sala que eu registro".
+ * A reply pede um insumo ao user pra prosseguir (convite/futuro) OU pede confirmação
+ * antes de agir — logo não é ação concluída. Ex.: "Vai listando que eu registro",
+ * "Me manda de novo", "Certo? Se confirmar, fecho a tarefa antiga".
  */
 function isInfoGatheringReply(reply) {
   const s = String(reply == null ? '' : reply);
   if (!s.trim()) return false;
-  return _INFO_GATHERING_RE.test(s);
+  return _INFO_GATHERING_RE.test(s) || _CONFIRM_SEEKING_RE.test(s);
 }
 
 module.exports = { hasTrailingQuestion, isInfoGatheringReply };

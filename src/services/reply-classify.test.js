@@ -10,6 +10,26 @@ const assert = require('node:assert');
 const { hasTrailingQuestion, isInfoGatheringReply } = require('./reply-classify');
 
 // ─────────────────────────────────────────────────────────────────
+// Sprint 31.19 — pedido de CONFIRMAÇÃO no meio da msg não é promessa quebrada (caso Dai 05/06)
+// ─────────────────────────────────────────────────────────────────
+test('isInfoGatheringReply: caso Dai — "Certo? Se confirmar, fecho a tarefa antiga..." → true', () => {
+  const reply = 'Entendi do áudio:\n\n• ✅ Plano mudou — vai fazer um *kit* de comida (não mais a lista avulsa)\n• 🗓️ Compra do kit: segunda, 08/06, a partir das 14h — já registrada no app\n\nCerto? Se confirmar, fecho a tarefa antiga da "lista de comida" que tava em atraso.';
+  assert.strictEqual(isInfoGatheringReply(reply), true);
+});
+test('isInfoGatheringReply: "Marco pra terça. Certo? Aí confirmo." (certo? no meio) → true', () => {
+  assert.strictEqual(isInfoGatheringReply('Marco pra terça. Certo? Aí confirmo.'), true);
+});
+test('isInfoGatheringReply: "Se você ok eu arquivo a lista." → true', () => {
+  assert.strictEqual(isInfoGatheringReply('Se você ok eu arquivo a lista.'), true);
+});
+test('isInfoGatheringReply: confabulação real "✅ Fechado! Lista antiga encerrada." → false (deve seguir flagável)', () => {
+  assert.strictEqual(isInfoGatheringReply('✅ Fechado! Lista antiga encerrada.'), false);
+});
+test('isInfoGatheringReply: "Criei a tarefa e marquei pra amanhã." → false (afirmação de ação)', () => {
+  assert.strictEqual(isInfoGatheringReply('Criei a tarefa e marquei pra amanhã.'), false);
+});
+
+// ─────────────────────────────────────────────────────────────────
 // hasTrailingQuestion — pergunta É info-gathering mesmo com lixo após o "?"
 // ─────────────────────────────────────────────────────────────────
 test('hasTrailingQuestion: pergunta terminando em ")" (caso Anne 03:27)', () => {
