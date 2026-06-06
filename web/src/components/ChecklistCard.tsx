@@ -337,6 +337,30 @@ export function ChecklistCard({ completion }: Props) {
     },
   })
 
+  // Edit ad-hoc item description (só ad-hoc; item de template muda via "Editar template")
+  const renameItemMutation = useMutation({
+    mutationFn: async ({ uid, description }: { uid: string; description: string }) => {
+      if (!uid.startsWith('adhoc:')) throw new Error('Apenas items ad-hoc podem ser editados')
+      const exId = uid.slice(6)
+      const trimmed = description.trim()
+      if (!trimmed) throw new Error('Descrição vazia')
+      const { error } = await supabase
+        .from('op_checklist_completion_extra_items')
+        .update({ description: trimmed })
+        .eq('id', exId)
+      if (error) throw error
+    },
+    onSuccess: () => {
+      showToast({ kind: 'success', title: 'Item atualizado' })
+    },
+    onError: (err: Error) => {
+      showToast({ kind: 'error', title: 'Não consegui editar', msg: err.message })
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['checklists'] })
+    },
+  })
+
   // Reorder per-user via DnD
   const reorderMutation = useMutation({
     mutationFn: async (orderedIds: string[]) => {
@@ -477,6 +501,7 @@ export function ChecklistCard({ completion }: Props) {
                     createTaskMutation.mutate({ title: u.description })
                   }
                   onDelete={() => deleteItemMutation.mutate(u.id)}
+                  onRename={u.isAdHoc ? (description) => renameItemMutation.mutate({ uid: u.id, description }) : undefined}
                 />
               ))}
             </SortableContext>
