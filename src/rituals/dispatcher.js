@@ -2150,13 +2150,14 @@ async function ceoTeamUnclosedEventsReport(now = new Date(), opts = {}) {
 
 // Espelha ceoTeamUnclosedEventsReport mas pra tasks: lista tasks pending do time
 // com due_date no passado. Regra explícita (pedida pelo CEO):
-//   1-2 dias de atraso → agrupado pelo líder mapeado (event_category_leaders)
+//   1-2 dias de atraso → agrupado pelo LÍDER DO DONO da tarefa (resolveLeadersOf)
 //   3+ dias de atraso → bloco separado "🚨 Pra você decidir — 3+ dias", direto pro CEO
 // Roda 08:45 BRT (15min após o de eventos pra não inundar). Idempotente via ritual_logs.
 //
-// Reusa event_category_leaders por enquanto: a maioria das tasks têm category
-// 'operational' (sem leader mapeado) e cai no bucket "Sem líder". Quando houver
-// necessidade de roteamento mais fino, criar task_category_leaders separada.
+// GovLeader (06/06): o agrupamento ANTES reusava event_category_leaders (mapa por
+// CATEGORIA do evento), quase sempre vazio → tudo caía em "Sem líder". Agora agrupa
+// pelo líder do DONO via src/services/leader-routing.js (unidade→gerente,
+// pedagógico→coordenadores, etc.). O envio POR líder fica em perLeaderUnclosedTasksReport.
 async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
   const sp = nowSaoPaulo();
   if (!opts.force && currentSlot(sp) !== timeToSlot('08:45')) return;
@@ -2172,6 +2173,15 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
     .not('phone', 'is', null);
   if (!ceos || ceos.length === 0) return;
 
+  // GovLeader — carrega todos os colaboradores ativos uma vez pra resolver o líder
+  // do DONO de cada tarefa (substitui o roteamento por categoria, que era vazio).
+  const { resolveLeadersOf } = require('../services/leader-routing');
+  const { data: allCollabs } = await supabase
+    .from('collaborators')
+    .select('id, full_name, role, function_role, unit, is_ceo, is_active, supervisor_id')
+    .eq('is_active', true);
+  const collabById = new Map((allCollabs || []).map((c) => [c.id, c]));
+
   function daysOverdue(dueYmd) {
     const today = sp.ymd;
     const [y1, m1, d1] = today.split('-').map(Number);
@@ -2179,24 +2189,6 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
     const a = Date.UTC(y1, m1 - 1, d1);
     const b = Date.UTC(y2, m2 - 1, d2);
     return Math.max(1, Math.round((a - b) / 86400000));
-  }
-
-  // Normalização: tasks.category usa 'operational' (en); event_category_leaders usa 'operacional' (pt)
-  const CATEGORY_NORMALIZE = { operational: 'operacional' };
-  async function resolveLeaderForTaskCategory(rawCat) {
-    const cat = CATEGORY_NORMALIZE[rawCat] || rawCat || 'sem_categoria';
-    const { data: mapping } = await supabase
-      .from('event_category_leaders')
-      .select('leader_collaborator_id')
-      .eq('category_slug', cat)
-      .maybeSingle();
-    if (!mapping || !mapping.leader_collaborator_id) return null;
-    const { data: leader } = await supabase
-      .from('collaborators')
-      .select('id, full_name')
-      .eq('id', mapping.leader_collaborator_id)
-      .maybeSingle();
-    return leader || null;
   }
 
   for (const ceo of ceos) {
@@ -2257,7 +2249,10 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
         ceoBucket.push({ ...t, days });
         continue;
       }
-      const leader = await resolveLeaderForTaskCategory(t.category);
+      // GovLeader — líder = líder do DONO da tarefa (1º não-CEO). Tarefas cujo
+      // único líder é o próprio CEO caem em '__unassigned__' (= direto com você).
+      const owner = collabById.get(t.assigned_to);
+      const leader = resolveLeadersOf(owner, allCollabs).find((l) => !l.is_ceo) || null;
       const key = leader?.id || '__unassigned__';
       if (!byLeader[key]) byLeader[key] = { leader, items: [] };
       byLeader[key].items.push({ ...t, days });
@@ -2291,7 +2286,7 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
       if (lines.length > 0) lines.push('─────────────────────');
       const label = leader
         ? `⚠️ *${leader.full_name.split(' ')[0]} — ${items.length} tarefa${items.length > 1 ? 's' : ''}*`
-        : `❓ *Sem líder — ${items.length} tarefa${items.length > 1 ? 's' : ''} (você decide)*`;
+        : `❓ *Direto com você — ${items.length} tarefa${items.length > 1 ? 's' : ''}*`;
       lines.push(label);
       for (const t of items.slice(0, 5)) lines.push(fmtItem(t));
       if (items.length > 5) lines.push(`  _+${items.length - 5} outras_`);
@@ -2367,6 +2362,88 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
       await logRitualEvent(ceo.id, 'ceo_team_unclosed_tasks', 'error', err.message, ymdRef);
     }
   }
+}
+
+// GovLeader (06/06) — digest POR LÍDER. Cada gerente/coordenador recebe a fatia do
+// time DELE: tarefas atrasadas cujo DONO o tem como líder (via resolveLeadersOf —
+// unidade→gerente, pedagógico→coordenadores, fan-out). O CEO segue recebendo o
+// digest COMPLETO em ceoTeamUnclosedTasksReport. Roda 09:00 BRT (após o do CEO).
+// Idempotente por líder via ritual_logs. opts.dryRun NÃO envia nada: retorna o plano
+// [{leaderId, leaderName, phone, count, msg}] pra smoke/preview seguro antes de ligar.
+async function perLeaderUnclosedTasksReport(now = new Date(), opts = {}) {
+  const sp = nowSaoPaulo();
+  if (!opts.force && !opts.dryRun && currentSlot(sp) !== timeToSlot('09:00')) return;
+
+  const whatsapp = require('../services/whatsapp');
+  const { resolveLeadersOf } = require('../services/leader-routing');
+  const ymdRef = sp.ymd;
+  const today = sp.ymd;
+
+  const { data: allCollabs } = await supabase
+    .from('collaborators')
+    .select('id, full_name, phone, role, function_role, unit, is_ceo, is_active, supervisor_id')
+    .eq('is_active', true);
+  const collabById = new Map((allCollabs || []).map((c) => [c.id, c]));
+
+  function daysOverdue(dueYmd) {
+    const [y1, m1, d1] = today.split('-').map(Number);
+    const [y2, m2, d2] = dueYmd.split('-').map(Number);
+    return Math.max(1, Math.round((Date.UTC(y1, m1 - 1, d1) - Date.UTC(y2, m2 - 1, d2)) / 86400000));
+  }
+
+  const { data: stale, error } = await supabase
+    .from('tasks')
+    .select('id, title, due_date, assigned_to, coordination_request_count, collaborators!tasks_assigned_to_fkey(full_name)')
+    .eq('context', 'work')
+    .eq('data_classification', 'real')
+    .eq('status', 'pending')
+    .lt('due_date', today)
+    .order('due_date', { ascending: true })
+    .limit(200);
+  if (error) { console.error('[LeaderTasksReport] query err:', error.message); return opts.dryRun ? [] : undefined; }
+  if (!stale || stale.length === 0) return opts.dryRun ? [] : undefined;
+
+  // Agrupa por líder (fan-out): cada task entra no balde de CADA líder não-CEO do dono.
+  const byLeader = new Map(); // leaderId -> { leader, items: [] }
+  for (const t of stale) {
+    const owner = collabById.get(t.assigned_to);
+    const leaders = resolveLeadersOf(owner, allCollabs).filter((l) => !l.is_ceo);
+    for (const L of leaders) {
+      if (!byLeader.has(L.id)) byLeader.set(L.id, { leader: L, items: [] });
+      byLeader.get(L.id).items.push({ ...t, days: daysOverdue(t.due_date) });
+    }
+  }
+
+  const dateLabel = new Date(now).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: 'short' });
+  const plan = [];
+  for (const { leader, items } of byLeader.values()) {
+    if (!leader.phone) continue;
+    items.sort((a, b) => b.days - a.days);
+    const fmtItem = (t) => {
+      const owner = t.collaborators?.full_name?.split(' ')[0] || '—';
+      const stuck = (t.coordination_request_count || 0) >= 3 ? ' 🔒' : '';
+      return `  • _${String(t.title).slice(0, 55)}_ — ${t.days}d (${owner})${stuck}`;
+    };
+    const top = items.slice(0, 12).map(fmtItem);
+    const extra = items.length > 12 ? `\n  _+${items.length - 12} outras_` : '';
+    const msg = `👥 *Seu time — tarefas atrasadas*\n_${dateLabel} · ${items.length} tarefa${items.length > 1 ? 's' : ''}_\n━━━━━━━━━━━━━━━━━━━━━\n\n${top.join('\n')}${extra}\n\n━━━━━━━━━━━━━━━━━━━━━\n_Pra cobrar alguém: "cobra [nome] sobre [tarefa]"_`;
+    plan.push({ leaderId: leader.id, leaderName: leader.full_name.split(' ')[0], phone: leader.phone, count: items.length, msg });
+  }
+
+  if (opts.dryRun) return plan;
+
+  for (const p of plan) {
+    if (!opts.force && await alreadySent(p.leaderId, 'leader_unclosed_tasks', ymdRef)) continue;
+    try {
+      await whatsapp.sendMessage(p.phone, p.msg);
+      await logRitualEvent(p.leaderId, 'leader_unclosed_tasks', 'sent', `count=${p.count}`, ymdRef);
+      console.log(`[LeaderTasksReport] ${p.leaderName}: ${p.count} → ${String(p.phone).slice(-4)}`);
+    } catch (err) {
+      console.error(`[LeaderTasksReport] ${p.leaderName} err:`, err.message);
+      await logRitualEvent(p.leaderId, 'leader_unclosed_tasks', 'error', err.message, ymdRef);
+    }
+  }
+  return plan;
 }
 
 // Relatório semanal de engajamento dos líderes (segunda 08h BRT). CEO recebe
@@ -4887,4 +4964,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { run, dispatchChecklists, dispatchPersonalRecurrentes, dispatchAnnouncements, remindUnconfirmedAnnouncements, notifyCoordinators, remindEventTasks, remindOperationalTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined, isFirstMondayOfMonth, isLastFridayOfMonth, listLeadership, checkMonthlyPlanning, checkMonthlyClosing, dispatchMonthlyAgenda, expirarReservasVencidas, ceoTeamUnclosedEventsReport, ceoTeamUnclosedTasksReport };
+module.exports = { run, dispatchChecklists, dispatchPersonalRecurrentes, dispatchAnnouncements, remindUnconfirmedAnnouncements, notifyCoordinators, remindEventTasks, remindOperationalTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined, isFirstMondayOfMonth, isLastFridayOfMonth, listLeadership, checkMonthlyPlanning, checkMonthlyClosing, dispatchMonthlyAgenda, expirarReservasVencidas, ceoTeamUnclosedEventsReport, ceoTeamUnclosedTasksReport, perLeaderUnclosedTasksReport };
