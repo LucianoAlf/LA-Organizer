@@ -62,8 +62,6 @@ export function ChecklistCard({ completion }: Props) {
   const sensors = useSortableSensors()
 
   const template = completion.op_checklists
-  const isLeadership =
-    collaborator?.role === 'coordinator' || collaborator?.role === 'director'
 
   // ─── Build unified item list (template + ad-hoc) sorted by user_sort_order ?? sort_order
   const itemCompletions: OpChecklistItemCompletion[] =
@@ -415,14 +413,14 @@ export function ChecklistCard({ completion }: Props) {
     reorderMutation.mutate(next)
   }
 
-  // ─── Card menu items
+  // ─── Card menu items — edição de template liberada a TODOS os colaboradores
+  // (decisão Alf 02/06; RLS op_checklists/op_checklist_items abertas p/ qualquer collaborator).
+  // Path corrigido: a rota real é /checklists/templates (o antigo /mais/... não existia → estava quebrado).
   const cardMenu: MenuItem[] = []
-  if (isLeadership) {
-    cardMenu.push({
-      label: 'Editar template',
-      onClick: () => navigate('/mais/checklists-templates'),
-    })
-  }
+  cardMenu.push({
+    label: 'Editar template',
+    onClick: () => navigate('/checklists/templates'),
+  })
 
   return (
     <div className="bg-bg-surface rounded-xl shadow-sm border border-border">
