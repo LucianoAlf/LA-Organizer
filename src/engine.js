@@ -2767,6 +2767,38 @@ async function applyRsvp(collaborator, eventIdRef, status) {
   }, { onConflict: 'event_id,collaborator_id' });
   if (error) { console.error('[Event][RSVP] upsert err:', error.message); return { ok: false }; }
   console.log(`[Event][RSVP] ${String(collaborator.id).slice(0, 8)} → event ${String(resolvedEventId).slice(0, 8)} status=${st}`);
+
+  // RSVP-NOTIFY-OWNER (06/06) — avisa o DONO do evento, no WhatsApp, quando um
+  // convidado confirma/recusa/talvez. Antes o applyRsvp só gravava no banco e o dono
+  // não sabia que alguém respondeu. Inclui contador (X/Y confirmaram). Nunca quebra o
+  // RSVP (try/catch isolado). Não notifica se quem respondeu é o próprio dono.
+  try {
+    const { data: ev } = await supabase.from('events')
+      .select('title, start_at, collaborator_id')
+      .eq('id', resolvedEventId).maybeSingle();
+    if (ev && ev.collaborator_id && ev.collaborator_id !== collaborator.id) {
+      const { data: owner } = await supabase.from('collaborators')
+        .select('full_name, phone').eq('id', ev.collaborator_id).maybeSingle();
+      if (owner && owner.phone) {
+        const { data: allParts } = await supabase.from('event_participants')
+          .select('status').eq('event_id', resolvedEventId);
+        const total = (allParts || []).length;
+        const confCount = (allParts || []).filter((p) => p.status === 'confirmed').length;
+        const tally = total ? ` (${confCount}/${total} confirmaram)` : '';
+        const emoji = st === 'confirmed' ? '✅' : (st === 'declined' ? '❌' : '🤔');
+        const verbo = st === 'confirmed' ? 'confirmou presença' : (st === 'declined' ? 'recusou' : 'marcou como talvez');
+        const who = (collaborator.full_name || 'Alguém').split(' ')[0];
+        const quando = ev.start_at
+          ? new Date(ev.start_at).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+          : '';
+        const titulo = ev.title || 'compromisso';
+        const msg = `${emoji} *${who}* ${verbo} em _"${titulo}"_${tally}${quando ? `\n🗓️ ${quando}` : ''}`;
+        await whatsapp.sendMessage(owner.phone, msg);
+        console.log(`[Event][RSVP] dono avisado ...${String(owner.phone).slice(-4)} status=${st} ${confCount}/${total}`);
+      }
+    }
+  } catch (e) { console.error('[Event][RSVP] notify owner err:', e.message); }
+
   return { ok: true, eventId: resolvedEventId };
 }
 
