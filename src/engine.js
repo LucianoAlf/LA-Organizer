@@ -6918,6 +6918,37 @@ async function processMessage(phone, text, raw = {}) {
     console.warn('[Correction] consumer err:', e.message);
   }
 
+  // ---- Roteador determinístico de RELATÓRIO financeiro (pré-LLM) ----
+  // Frases curtas/estereotipadas ("saldo do nubank", "fechamento de maio", "gastos da semana")
+  // o LLM erra ao escolher entre 11 query_* parecidas (FIN-REPORT-ACTION-ALIAS fase 2: caiu em
+  // checkup/extrato/query_transactions). Roteamos DIRETO via handleFinanceAction, sem depender
+  // do LLM. Conservador: só alta-confiança; null → segue fluxo normal pro LLM.
+  try {
+    const { detectReportIntent } = require('./finance/detect-report-intent');
+    const _intent = detectReportIntent(String(text || ''), new Date().toISOString().slice(0, 10));
+    if (_intent && _intent.action) {
+      let reply;
+      try {
+        reply = await handleFinanceAction(collab, _intent.action, _intent.params || {});
+      } catch (rptErr) {
+        console.error(`[ReportRouter] action err (${_intent.action}):`, rptErr.message);
+        reply = null; // falha → cai no LLM
+      }
+      if (reply) {
+        try {
+          await whatsapp.sendMessage(phone, reply);
+          await logConversation(collab.id, 'outbound', reply);
+        } catch (postErr) {
+          console.warn('[ReportRouter] post-send err:', postErr.message);
+        }
+        console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now() - _t0}ms (report_router:${_intent.action})`);
+        return;
+      }
+    }
+  } catch (e) {
+    console.warn('[ReportRouter] err:', e.message);
+  }
+
   // ---- Sprint 30.3 — Pending Intents: auto-resolve quando user confirma ----
   // Se TOM perguntou "Crio?" turnos atrás (intent aberta) e o user agora
   // respondeu "sim/ok/pode/cria", injeta contexto extra no `text` pra forçar
