@@ -113,4 +113,21 @@ function renderBalances(model) {
   ]);
 }
 
-module.exports = { header, sep, totalHighlight, tomTip, quickActions, severityTiers, billItem, assemble, money, SEP, renderFixedBills, renderBillsToPay, balanceLine, positionBlock, renderBalances };
+function _checkupItem(b) {
+  const valor = b.hasValue ? money(b.amount) : 'não informado';
+  return `⚠️ *${b.name}*\n💰 ${valor}\n📅 Vence: ${b.dueLabel}\n💬 ${b.message}`;
+}
+function renderCheckup(model) {
+  if (!model.count) return `🩺 *Checkup das contas*\n${model.headline}`;
+  const blocks = [`🩺 *Checkup das contas*\n${model.headline}`];
+  if (model.tiers.urgente.length) {
+    blocks.push(`🔴 *Mais urgentes* (${model.tiers.urgente.length})\n` + model.tiers.urgente.map(_checkupItem).join('\n\n'));
+  }
+  if (model.tiers.importante.length) {
+    blocks.push(`🟠 *Importantes* (${model.tiers.importante.length})\n` + model.tiers.importante.map(_checkupItem).join('\n\n'));
+  }
+  blocks.push('_Quer ajuda com a mais urgente? Me chama._');
+  return blocks.join('\n\n');
+}
+
+module.exports = { header, sep, totalHighlight, tomTip, quickActions, severityTiers, billItem, assemble, money, SEP, renderFixedBills, renderBillsToPay, balanceLine, positionBlock, renderBalances, renderCheckup };

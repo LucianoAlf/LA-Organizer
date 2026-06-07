@@ -6118,7 +6118,7 @@ async function tryDupBypass(collab, text) {
 
 // ---- Sprint 27 — Financas Pessoais: marker <<FINANCE_ACTION>> + dispatcher ----
 const FINANCE_ACTIONS = [
-  'register_transaction', 'register_bill', 'pay_bill', 'query_fixed_bills', 'query_bills_to_pay', 'create_goal',
+  'register_transaction', 'register_bill', 'pay_bill', 'query_fixed_bills', 'query_bills_to_pay', 'query_checkup', 'create_goal',
   'update_goal', 'edit_goal', 'delete_goal', 'set_budget', 'query_summary', 'query_budget', 'query_goal', 'query_accounts', 'create_account', 'edit_account',
   'simulate_interest',
   // cartão de crédito + transferência
@@ -6552,6 +6552,13 @@ async function handleFinanceAction(collab, action, params) {
       if (!amount || amount <= 0) return '❓ Qual o valor da transferência?';
       await financeService.createTransfer(cid, { from_account: from.id, to_account: to.id, amount, description: params.description });
       return `🔁 Transferi *${financeFmt.money(amount)}* de *${from.name}* → *${to.name}*. Saldo total inalterado.`;
+    }
+    case 'query_checkup': {
+      const { buildCheckup } = require('./finance/reports/checkup');
+      const wa = require('./finance/wa-format');
+      const today = new Date().toISOString().slice(0, 10);
+      const bills = await financeService.listActiveBills(cid);
+      return wa.renderCheckup(buildCheckup(bills, today));
     }
     case 'query_fixed_bills': {
       const { buildFixedBills } = require('./finance/reports/bills');

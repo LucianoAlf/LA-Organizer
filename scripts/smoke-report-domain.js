@@ -39,4 +39,10 @@ assert.strictEqual(billDueDeltaDays({ recurrence:'once', due_date:null }, '2026-
 assert.strictEqual(billRelativeLabel({ recurrence:'once', due_date:null }, '2026-04-10'), '');
 assert.strictEqual(classifyBillSeverity({ recurrence:'once', due_date:null, amount:100, last_paid_at:null }, '2026-04-10'), 'importante');
 
+const { billDueDateLabel } = require('../src/finance/report-domain');
+assert.strictEqual(billDueDateLabel({ recurrence:'monthly', due_day:5 }, '2026-04-10'), '05/04');
+assert.strictEqual(billDueDateLabel({ recurrence:'monthly', due_day:31 }, '2026-02-10'), '28/02'); // clampa fev
+assert.strictEqual(billDueDateLabel({ recurrence:'once', due_date:'2026-06-15' }, '2026-04-10'), '15/06');
+assert.strictEqual(billDueDateLabel({ recurrence:'once', due_date:null }, '2026-04-10'), '—');
+
 console.log('PASS — report-domain datas/label OK.');

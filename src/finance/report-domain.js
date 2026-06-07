@@ -53,4 +53,17 @@ function classifyBillSeverity(bill, today, opts = {}) {
   return 'ok';
 }
 
-module.exports = { diasRestantesDoMes, billDueDeltaDays, billRelativeLabel, classifyBillSeverity, isBillPaidThisCycle, billDueDom };
+// Rótulo DD/MM do vencimento (monthly = due_day no mês de today, clampado; once = due_date).
+function billDueDateLabel(bill, today) {
+  if (bill.recurrence === 'once') {
+    if (!bill.due_date) return '—';
+    return String(bill.due_date).slice(8, 10) + '/' + String(bill.due_date).slice(5, 7);
+  }
+  const m = Number(String(today).slice(5, 7));
+  const y = Number(String(today).slice(0, 4));
+  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const dd = Math.min(Number(bill.due_day), lastDay);
+  return String(dd).padStart(2, '0') + '/' + String(m).padStart(2, '0');
+}
+
+module.exports = { diasRestantesDoMes, billDueDeltaDays, billRelativeLabel, classifyBillSeverity, isBillPaidThisCycle, billDueDom, billDueDateLabel };

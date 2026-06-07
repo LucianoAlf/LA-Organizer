@@ -67,4 +67,21 @@ assert.ok(rb.includes('💰 *Total: R$ 10.041,00*'));
 assert.ok(rb.includes('💳 Limite disponível: R$ 1.000,00'));
 assert.ok(renderBalances({ accounts:[], totalSaldo:0, limiteDisponivel:0, totalDisponivel:0 }).includes('ainda não tem'));
 
+const { renderCheckup } = require('../src/finance/wa-format');
+const cm = {
+  tiers: {
+    urgente: [{ name:'Celular', amount:99, hasValue:true, dueLabel:'05/04', message:"A conta 'Celular' venceu em 05/04 e ainda não tem pagamento registrado." }],
+    importante: [{ name:'Gas', amount:0, hasValue:false, dueLabel:'25/04', message:"A conta 'Gas' (vence 25/04) está com valor não informado." }],
+    atencao: [], ok: [],
+  }, totalRelevante:99, headline:'Encontrei 2 pontos que merecem atenção:', count:2,
+};
+const rc = renderCheckup(cm);
+assert.ok(rc.startsWith('🩺 *Checkup das contas*'));
+assert.ok(rc.includes('🔴 *Mais urgentes* (1)'));
+assert.ok(rc.includes('🟠 *Importantes* (1)'));
+assert.ok(rc.includes('💰 R$ 99,00'));
+assert.ok(rc.includes('💰 não informado'));
+assert.ok(rc.includes('💬'));
+assert.ok(renderCheckup({ tiers:{urgente:[],importante:[],atencao:[],ok:[]}, totalRelevante:0, headline:'Suas contas estão em ordem — nada vencido ou pendente de atenção agora. 👍', count:0 }).includes('em ordem'));
+
 console.log('PASS — wa-format kit OK.');
