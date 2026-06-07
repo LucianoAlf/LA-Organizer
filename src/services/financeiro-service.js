@@ -369,6 +369,20 @@ async function listActiveBills(collaboratorId) {
   return data || [];
 }
 
+// Faturas de cartão EM ABERTO (competência corrente, com saldo a pagar) — pra entrar no "a pagar".
+async function pendingCardInvoices(collaboratorId) {
+  const cards = await listCards(collaboratorId);
+  const out = [];
+  for (const card of cards) {
+    const comp = currentCompetencia(card);
+    const inv = await cardInvoice(collaboratorId, card.id, comp);
+    if (inv && Number(inv.remaining) > 0 && !inv.isPaid) {
+      out.push({ cardName: card.name, remaining: Number(inv.remaining), dueDay: card.due_day });
+    }
+  }
+  return out;
+}
+
 // Relatorio do mes de referencia (default mes corrente): receitas, despesas, saldo, top 3.
 async function monthlyReport(collaboratorId, ref = new Date()) {
   const { start, end } = monthBounds(ref);
@@ -588,7 +602,7 @@ module.exports = {
   createBill, findBills, payBill,
   createGoal, findGoal, listGoals,
   addGoalContribution, listGoalContributions, deleteGoalContribution, updateGoal, deactivateGoal,
-  billsDueWithin, listActiveBills, monthlyReport, collaboratorsWithActivity, collaboratorsForFinanceRitual,
+  billsDueWithin, listActiveBills, pendingCardInvoices, monthlyReport, collaboratorsWithActivity, collaboratorsForFinanceRitual,
   collaboratorsWithActiveBills,
   // cartão
   competenciaFor, addMonthsToCompetencia, currentCompetencia,

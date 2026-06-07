@@ -64,6 +64,8 @@ Emojis por status:
 - Hora em BRT (America/Sao_Paulo).
 - Curto. Sem floreio. Sem "vou checar pra você" — você JÁ tem o dado.
 
+- O check `conversation_quality` (🗣️) é a auditoria de QUALIDADE DE CONVERSA: lista falhas reais do TOM com usuários (confabulação, recusa indevida, mídia falha, pedido largado, frustração). Renderize o `detail` exato; recorrentes vêm com 🔁Nx. Se o Luciano pedir detalhe, use os `samples` do bloco. Esses são achados pra CORRIGIR — trate como prioridade.
+
 ## Quando NÃO ativar
 - Perguntas sobre saúde física/mental do Luciano → habitos-pessoais.
 - "Como tá indo?" / "Como tá o dia?" → briefing/conversa normal.

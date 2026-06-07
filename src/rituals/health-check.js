@@ -472,6 +472,43 @@ async function checkProviderHealth() {
 // ─────────────────────────────────────────────────────────────────
 // Runner
 // ─────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────
+// CHECK 14 — Qualidade das conversas (findings abertos do analisador do Dream)
+// ─────────────────────────────────────────────────────────────────
+const CONV_CAT_LABEL = {
+  confabulation: 'confabulação/contradição',
+  wrong_refusal: 'recusa indevida',
+  media_fail: 'mídia falha',
+  dropped_request: 'pedido largado',
+  frustration: 'frustração',
+};
+async function checkConversationQuality() {
+  const { data, error } = await supabase
+    .from('tom_audit_findings')
+    .select('category, severity, summary, occurrences, collaborator_id, collaborators:collaborator_id(full_name)')
+    .in('status', ['novo', 'confirmado'])
+    .order('occurrences', { ascending: false })
+    .limit(50);
+  if (error) throw error;
+  const findings = data || [];
+  if (findings.length === 0) {
+    return { status: 'ok', detail: '🗣️ 0 falhas nas conversas (24h)' };
+  }
+  const top = findings.slice(0, 5).map(f => {
+    const who = f.collaborators?.full_name?.split(' ')[0] || '—';
+    const rec = (f.occurrences || 1) >= 2 ? `🔁${f.occurrences}× ` : '';
+    return `  • ${rec}[${CONV_CAT_LABEL[f.category] || f.category}] ${String(f.summary).slice(0, 60)} (${who})`;
+  });
+  const samples = findings.slice(0, 5).map(f => ({
+    category: f.category, severity: f.severity, summary: f.summary, occurrences: f.occurrences,
+  }));
+  return {
+    status: 'warning',
+    detail: `🗣️ ${findings.length} falha(s) de conversa pra revisar:\n${top.join('\n')}`,
+    samples,
+  };
+}
+
 const ALL_CHECKS = [
   ['dream_recent',           checkDreamRecent],
   ['weekly_summary',         checkWeeklySummary],
@@ -486,6 +523,7 @@ const ALL_CHECKS = [
   ['recurring_errors',       checkRecurringErrors],
   ['known_issues_regression', checkKnownIssuesRegression],
   ['provider_health',        checkProviderHealth],
+  ['conversation_quality',   checkConversationQuality],
 ];
 
 async function runHealthCheck() {

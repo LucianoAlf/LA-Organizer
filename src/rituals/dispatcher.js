@@ -19,6 +19,9 @@ loadDotEnv(path.join(process.cwd(), '.env'));
 const supabase = require('../supabase/client');
 const announcementsService = require('../services/announcements');
 const { sendRitual, sendCoordinatorReport, getDndState, consolidateMemoryFor, decayExpiredMemories, generateWeeklySummaryFor, getRitualIntroDecision } = require('../engine');
+// GovQuality — auditoria de qualidade de conversa acoplada ao Dream (03h).
+const { auditConversation, upsertFinding } = require('../services/conversation-audit');
+const { chat: aiChat } = require('../ai/provider');
 const { runLaEducaLembretes, processarFilaNotificacoes, processarNotificacoesAtribuicao, runLaEducaEscalation, runLaEducaBriefingSexta } = require('./la-educa-lembretes');
 const {
   runLaJourneyLembreteSemanal,
@@ -3021,6 +3024,15 @@ async function run(opts = {}) {
           dreamOk++;
           // Log p/ ritual_logs — health check usa pra detectar "Dream não rodou".
           await logRitualEvent(c.id, 'daily_dream', 'sent', null, now.ymd);
+          // GovQuality — auditoria de qualidade de conversa (mesma janela do Dream).
+          // Isolada: erro aqui nunca afeta o Dream. Grava em tom_audit_findings.
+          try {
+            const findings = await auditConversation(supabase, aiChat, c, 24);
+            for (const f of findings) await upsertFinding(supabase, c, f);
+            if (findings.length > 0) console.log(`[ConvAudit] ${c.full_name}: ${findings.length} achado(s)`);
+          } catch (qErr) {
+            console.error(`[ConvAudit] falha p/ ${c.full_name}:`, qErr.message);
+          }
         }
         catch (err) {
           console.error(`[Dream] err for ${c.full_name}:`, err.message);

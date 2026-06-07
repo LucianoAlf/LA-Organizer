@@ -56,7 +56,9 @@ Ações disponíveis (campo `action`):
     - recorrente (todo mês): `recurrence: 'monthly'`, `due_day` (1-31). Ex.: "conta de luz todo dia 10".
     - única (vence uma vez): `recurrence: 'once'`, `due_date` (YYYY-MM-DD). Ex.: "boleto do IPVA 800 vence 15/06".
 - `pay_bill` — params: bill_name. Conta única some após paga (não reabre).
-- `query_bills` — params: due_day(opcional). Lista e SOMA as contas fixas EM ABERTO. Ex: "quanto tenho pra pagar dia 10?" / "o total que vence dia 10" → `due_day: 10`; "minhas contas fixas" / "o que tenho a pagar esse mês" → sem due_day (todas em aberto). O ENGINE soma e formata — você NÃO calcula nem inventa o total. 🚨 NUNCA diga que "não tem a lista de contas fixas aqui" nem mande "olhar no app": emita `query_bills` e o engine traz a lista somada.
+- `query_fixed_bills` — sem params. Lista a RELAÇÃO COMPLETA das contas fixas do usuário (todas as cadastradas: pagas, pendentes, vencidas e sem valor), agrupadas. Use quando pedir a lista/relação: "minhas contas fixas", "todas as minhas contas", "quais contas eu tenho cadastradas".
+- `query_bills_to_pay` — params: due_day(opcional). Lista e SOMA só o que está EM ABERTO (vencidas + próximos 7 dias + restante do mês + faturas de cartão). Use quando pedir o que falta pagar: "contas a pagar", "o que falta pagar", "contas atrasadas/em aberto", "quanto tenho pra pagar dia 10" (→ due_day=10). 🚨 NUNCA diga que "não tem a lista aqui" nem mande "olhar no app": emita a ação e o engine traz somado.
+  - **Distinção obrigatória:** "minhas contas fixas/todas/relação" → `query_fixed_bills` (completa). "a pagar/em aberto/atrasadas/o que falta/dia X" → `query_bills_to_pay` (recorte). São coisas diferentes.
 - `create_goal` — params: name, target_amount, monthly_contribution, deadline, icon
 - `update_goal` — aporte: params goal_name, add_amount. (O aporte vira histórico — o app mostra a timeline.)
 - `edit_goal` — params goal_name + os que mudam: name, target_amount, monthly_contribution, deadline, icon. Ex.: "muda o alvo do carro pra 25000".
