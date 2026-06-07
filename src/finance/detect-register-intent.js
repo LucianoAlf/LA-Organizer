@@ -34,16 +34,20 @@ function normalize(str) {
   return stripAccents(str).toLowerCase();
 }
 
-// Número brasileiro: "300,00"→300, "1.234,56"→1234.56, "1.200"→1200, "300"→300.
+// Número brasileiro: "300,00"→300, "1.234,56"→1234.56, "1.200"→1200, "300"→300,
+// "1k"→1000, "1,5k"→1500, "200 mil"→200000 (gíria de WhatsApp: k/mil = milhar).
 function parseAmount(raw) {
-  let s = String(raw).replace(/r\$\s*/gi, '').trim();
+  let s = String(raw).replace(/r\$\s*/gi, '').trim().toLowerCase();
+  let mult = 1;
+  const km = s.match(/\s*(k|mil)\s*$/);                   // sufixo k/mil = ×1000
+  if (km) { mult = 1000; s = s.slice(0, km.index).trim(); }
   if (s.includes(',')) {
     s = s.replace(/\./g, '').replace(',', '.');          // dot = milhar, vírgula = decimal
   } else if (/^\d{1,3}(\.\d{3})+$/.test(s)) {
     s = s.replace(/\./g, '');                             // "1.200" → milhar puro
   }
   const n = parseFloat(s);
-  return Number.isFinite(n) ? n : null;
+  return Number.isFinite(n) ? n * mult : null;
 }
 
 // Remove ruído temporal pra não contar data/hora como "valor". ORDEM IMPORTA:
@@ -54,24 +58,27 @@ function stripTemporal(t) {
     .replace(/\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/g, ' ')              // 05/06, 05/06/2026
     .replace(/\bdia\s+(?:3[01]|[12]\d|0?[1-9])\b/g, ' ')             // dia 1..31
     .replace(/\b\d{1,2}h\d{0,2}\b/g, ' ')                            // 20h, 20h30
-    .replace(/\b[àa]s\s+\d{1,2}\b/g, ' ');                           // às 8
+    .replace(/\b[àa]s\s+\d{1,2}\b/g, ' ')                            // às 8
+    .replace(/\b\d\s*[ªa]?\s*feira\b/g, ' ');                        // 4 feira, 4ª feira (dia da semana)
 }
 
 // Token de valor monetário (após remover ruído temporal). Ordem na alternância importa.
-const AMOUNT_RE = /(?:r\$\s*)?(\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+,\d{1,2}|\d+)/g;
+// Sufixo opcional k/mil (×1000) capturado junto: "1k", "1,5k", "200 mil". \b após k/mil
+// evita comer "km" (100 km) ou "milho".
+const AMOUNT_RE = /(?:r\$\s*)?(\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+(?:,\d{1,2})?)(?:\s*(?:k|mil)\b)?/g;
 
 // Substantivo de CONTAGEM logo DEPOIS do número → quantidade, não dinheiro
 // ("3 alunos", "50 cópias"). reais/conto/pila NÃO entram (são dinheiro).
-const COUNT_NOUN_AFTER = /^\s*(alunos?|caras?|pessoas?|lugares?|cordas?|vezes|anos?|horas?|minutos?|itens|unidades?|amigos?|convidados?|semanas?|gols?|pontos?|faltas?|aulas?|c[óo]pias?|m[úu]sicas?)\b/;
+const COUNT_NOUN_AFTER = /^\s*(alunos?|caras?|pessoas?|lugares?|cordas?|vezes|anos?|horas?|minutos?|itens|unidades?|amigos?|convidados?|semanas?|gols?|pontos?|faltas?|aulas?|c[óo]pias?|m[úu]sicas?|ingressos?|cadernos?|v[íi]deos?|caixas?|pacotes?|garrafas?|copos?)\b/;
 // Substantivo de CONTAGEM logo ANTES do número → também é quantidade/índice, não dinheiro
 // ("turma 2", "nota 8", "turma das 8"). O (d[ao]s? )? cobre "turma das 8".
 const COUNT_NOUN_BEFORE = /\b(turmas?|salas?|grupos?|n[íi]vel|n[íi]veis|p[áa]ginas?|quest[õoãa]es?|notas?|faixas?|etapas?|m[óo]dulos?|cap[íi]tulos?|treinos?|vagas?|quartos?)\s*(d[ao]s?\s*)?$/;
 
 // Verbos/sinais
 const RE_REGISTER_VERB = /\b(lanc(?:a|ar|o|ei|e)?|anot(?:a|ar|e|ei)?|registr(?:a|ar|e|ei|o)?|adicion(?:a|ar|e|ei)?)\b/;
-const RE_INCOME_VERB = /\b(entrou|entra|receb(?:i|ido|imento)|caiu|ganhei|ganho|vendi|rendeu|me deu|me deram)\b/;
+const RE_INCOME_VERB = /\b(entrou|entra|receb(?:i|ido|imento)|caiu|ganhei|ganho|vendi|rendeu|pingou|pingaram|embolsei|embolsou|me deu|me deram)\b/;
 const RE_INCOME_NOUN = /\b(entrada|receita|comiss[aã]o|sal[aá]rio|gorjeta|cach[eê]|b[ôo]nus|gratifica\w*|venda)\b/;
-const RE_EXPENSE_VERB = /\b(gast(?:ei|o|ar|ando)|pag(?:uei|o|ar)|compr(?:ei|a|ar|inha)|torrei|custou|saiu)\b/;
+const RE_EXPENSE_VERB = /\b(gast(?:ei|o|ar|ando)|pag(?:uei|o|ar)|compr(?:ei|a|ar|inha)|torrei|custou|saiu|desembolsei|desembolsou)\b/;
 const RE_EXPENSE_NOUN = /\b(despesa|sa[ií]da|gasto)\b/;
 
 // Complexidade fora do escopo da rede determinística → bail.
@@ -79,7 +86,9 @@ const RE_EXPENSE_NOUN = /\b(despesa|sa[ií]da|gasto)\b/;
 const RE_INSTALLMENT = /\b\d+\s*x\b|\bparcel|\bvezes\b|\bem\s+\d+\s*(x|vezes|parcelas)\b|\bno\s+carn[eê]\b|presta[cç][aãoõ]\w*/;
 const RE_TRANSFER = /\btransfer/;
 // Pergunta / dúvida / recall / agregado → não é comando de registro NOVO.
-const RE_DOUBT = /\?|\bn[ãa]o lembro\b|\bacho que\b|\bsei l[áa]\b|\bser[áa] que\b|\bn[ée]\b|\bconfer\w*|\bfoi isso\b|\btem certeza\b|\bcerto\s*$|\blembr\w*|\bque\s+(paguei|recebi|gastei|comprei|ganhei)\b|\bm[êe]s passado\b|\bm[êe]s inteiro\b|\bsomando\b|\bno total\b|\bno geral\b|\bpassad[oa]\b/;
+// NÃO inclui "que <verbo>" nem "certo" soltos: matavam registros válidos coloquiais
+// ("registra 90 que ganhei", "gastei 200 no rolê certo"). Recall real cai em lembr/confer/?/mês passado.
+const RE_DOUBT = /\?|\bn[ãa]o lembro\b|\bacho que\b|\bsei l[áa]\b|\bser[áa] que\b|\bn[ée]\b|\bconfer\w*|\bfoi isso\b|\btem certeza\b|\blembr\w*|\bm[êe]s passado\b|\bm[êe]s inteiro\b|\bsomando\b|\bno total\b|\bno geral\b|\bpassad[oa]\b/;
 // Intenção FUTURA (ainda não aconteceu) → não registra.
 const RE_FUTURE = /\b(preciso|quero|vou|pretendo|tenho que|tenho de|bora)\b[^?.!]*\b(comprar|pagar|gastar|lan[çc]ar|guardar)\b/;
 // Queries/consultas.
@@ -96,9 +105,13 @@ const SOURCE_STOP = /^(que|com|sem|por|pra|seu|sua|meu|minha|total|m[êe]s|dia|s
 function looksLikeFinanceConfirmation(text) {
   if (!text || typeof text !== 'string') return false;
   const t = normalize(text);
-  const hasRegistered = /\bregistrad[oa]\b/.test(t);          // "registrada"/"registrado" (NÃO "registrou")
+  // Assinatura ESTREITA do template buildTxnConfirmation que o LLM imita: a palavra de
+  // tipo COLADA em "registrad[ao]" ("Entrada/Receita/Gasto/Saída/Despesa registrada!").
+  // Estreito de propósito: "...não foi registrado nada" (fala do usuário, NEGADA) não casa,
+  // pois não tem o tipo grudado em "registrado".
+  const hasConfirmHeader = /\b(entrada|receita|renda|gasto|despesa|sa[íi]da|lan[çc]amento|transa[çc][ãa]o)\s+registrad[oa]\b/.test(t);
   const hasMoneyOrBalance = /\bsaldo\b/.test(t) || /r\$\s*\d/.test(t);
-  return hasRegistered && hasMoneyOrBalance;
+  return hasConfirmHeader && hasMoneyOrBalance;
 }
 
 // Extrai valores monetários, excluindo quantidades (nº cercado de substantivo de contagem).

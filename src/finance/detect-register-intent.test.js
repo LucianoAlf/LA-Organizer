@@ -154,7 +154,41 @@ test('"no total" não vira conta fantasma', () => {
   if (r && r.account_name) assert.notStrictEqual(r.account_name, 'total');
 });
 
+// ── Round 3 adversarial: sufixo k/mil, gírias de caixa, que-clause, negação ──
+test('sufixo "k"/"mil" = milhar (gíria WhatsApp)', () => {
+  assert.strictEqual(detectRegisterIntent('paguei 1k no aluguel').amount, 1000);
+  assert.strictEqual(detectRegisterIntent('recebi 1,5k de freela').amount, 1500);
+  assert.strictEqual(detectRegisterIntent('lança 200 mil de entrada').amount, 200000);
+});
+test('"que <verbo>" NÃO mata registro válido', () => {
+  assert.strictEqual(detectRegisterIntent('registra 90 que ganhei').type, 'income');
+  assert.strictEqual(detectRegisterIntent('lança 90 que recebi do aluno').amount, 90);
+});
+test('"certo" como filler de gíria → registra', () => {
+  const r = detectRegisterIntent('gastei 200 conto no rolê certo');
+  assert.ok(r); assert.strictEqual(r.amount, 200); assert.strictEqual(r.type, 'expense');
+});
+test('gírias de caixa: pingou/embolsei/desembolsei', () => {
+  assert.strictEqual(detectRegisterIntent('pingou 400 na conta agora').type, 'income');
+  assert.strictEqual(detectRegisterIntent('embolsei 600 do show').type, 'income');
+  assert.strictEqual(detectRegisterIntent('desembolsei 320 na farmácia').type, 'expense');
+});
+test('venda com quantidade + preço ("3 ingressos por 150")', () => {
+  const r = detectRegisterIntent('vendi 3 ingressos por 150');
+  assert.ok(r); assert.strictEqual(r.amount, 150); assert.strictEqual(r.type, 'income');
+});
+test('recebimento de ITENS (não dinheiro) → null', () => {
+  assert.strictEqual(detectRegisterIntent('recebi os 40 cadernos de partitura que pedi'), null);
+  assert.strictEqual(detectRegisterIntent('me deu uma ideia de gravar 4 vídeos pro instagram'), null);
+});
+test('"N feira" (dia da semana) → null', () => {
+  assert.strictEqual(detectRegisterIntent('anota aí que o ensaio mudou pra 4 feira'), null);
+});
+
 // ── Assinatura de confirmação FABRICADA ──
+test('looksLike: "registrado" NEGADO (fala do usuário) → false', () => {
+  assert.strictEqual(looksLikeFinanceConfirmation('paguei R$ 100 e ainda não foi registrado nada'), false);
+});
 test('confirmação fabricada (Entrada registrada + Saldo R$) casa', () => {
   assert.strictEqual(looksLikeFinanceConfirmation('💰 *Entrada registrada!*\n🎤 Show — Dom Costela\n💼 Saldo NUBANK: +R$ 2.258,03'), true);
 });
