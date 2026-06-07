@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Settings, PauseCircle } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { Button } from '../components/Button';
@@ -463,6 +464,20 @@ export function Configuracoes() {
             value={voiceEnabled}
             onChange={v => voiceMutation.mutate(v)}
           />
+        </Section>
+
+        {/* Finanças — gerenciamento de categorias personalizadas (saiu do dashboard do financeiro) */}
+        <Section title="Finanças">
+          <Link
+            to="/financeiro/categorias"
+            className="flex items-center justify-between gap-3 rounded-md bg-bg-elevated border border-border px-3 py-3 hover:border-tom/40 focus-ring transition-colors"
+          >
+            <div className="min-w-0">
+              <div className="text-body-md text-fg">Categorias personalizadas</div>
+              <div className="text-body-sm text-fg-muted">Criar e remover suas categorias de gastos e receitas.</div>
+            </div>
+            <span className="text-fg-muted text-lg shrink-0" aria-hidden>›</span>
+          </Link>
         </Section>
 
       </div>

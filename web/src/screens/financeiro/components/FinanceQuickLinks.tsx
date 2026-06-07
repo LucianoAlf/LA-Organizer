@@ -1,9 +1,9 @@
 import { Link } from 'react-router-dom';
-import { Banknote, CreditCard, Receipt, Tag, Target, Wallet, type LucideIcon } from 'lucide-react';
+import { Banknote, CreditCard, Receipt, Target, Wallet, type LucideIcon } from 'lucide-react';
 
-// Atalhos do financeiro: UMA linha, arrastável pro lado (estilo Nubank), SEM barra de
-// scroll visível. Label inteiro (sem abreviar). Sinais/alertas ficam na faixa de resumo
-// (FinanceSummaryChips), não dentro destes tiles.
+// Atalhos do financeiro: 5 tiles confortáveis numa grade par (col-5). "Categorias" saiu daqui
+// (2026-06-07): criar categoria já acontece no seletor do lançamento; gerenciar fica em
+// Configurações → Categorias + no próprio seletor. 6 tiles apertavam a linha.
 interface QuickLink { to: string; label: string; Icon: LucideIcon; }
 
 const LINKS: QuickLink[] = [
@@ -12,23 +12,22 @@ const LINKS: QuickLink[] = [
   { to: '/financeiro/metas',      label: 'Metas',      Icon: Target },
   { to: '/financeiro/carteiras',  label: 'Carteiras',  Icon: Wallet },
   { to: '/financeiro/cartoes',    label: 'Cartões',    Icon: CreditCard },
-  { to: '/financeiro/categorias', label: 'Categorias', Icon: Tag },
 ];
 
 export function FinanceQuickLinks() {
   return (
     <section
       aria-label="Atalhos do módulo financeiro"
-      className="flex gap-1"
+      className="grid grid-cols-5 gap-1.5"
     >
       {LINKS.map(({ to, label, Icon }) => (
         <Link
           key={to}
           to={to}
-          className="flex-1 min-w-0 flex flex-col items-center gap-1.5 py-2.5 px-0.5 rounded-lg bg-bg-elevated border border-border hover:bg-bg-elevated2 hover:border-tom/30 active:border-tom/50 focus-ring transition-colors"
+          className="flex flex-col items-center gap-1.5 py-3 px-1 rounded-xl bg-bg-elevated border border-border hover:bg-bg-elevated2 hover:border-tom/30 active:border-tom/50 focus-ring transition-colors"
         >
-          <Icon size={17} className="text-tom" aria-hidden />
-          <span className="text-[9px] font-medium text-fg text-center leading-none whitespace-nowrap">{label}</span>
+          <Icon size={19} className="text-tom" aria-hidden />
+          <span className="text-[10px] font-medium text-fg text-center leading-none whitespace-nowrap">{label}</span>
         </Link>
       ))}
     </section>

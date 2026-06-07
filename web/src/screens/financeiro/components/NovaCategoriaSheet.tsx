@@ -3,11 +3,14 @@ import { BottomSheet } from '../../../components/BottomSheet';
 import { Field } from '../../../components/Field';
 import { Button } from '../../../components/Button';
 import { useCreateCategory } from '../../../hooks/useFinanceiro';
+import { CustomCategoryList } from './CustomCategoryList';
 
 const EMOJIS = ['🏷️','🎤','🎸','🎵','🎬','🎨','📚','💼','🏆','🎁','🍔','🛒','🚗','🏠','💊','✈️','🐾','💡','🔧','💰','📈','🤝'];
 
-export function NovaCategoriaSheet({ open, onClose, type, onCreated }: {
-  open: boolean; onClose: () => void; type: 'expense' | 'income'; onCreated: (slug: string) => void;
+// showManage: quando true (padrão), mostra também "suas categorias" com excluir — usado ao abrir
+// pelo seletor do lançamento (cria + gerencia sem sair). A CategoriasPage passa false (já lista).
+export function NovaCategoriaSheet({ open, onClose, type, onCreated, showManage = true }: {
+  open: boolean; onClose: () => void; type: 'expense' | 'income'; onCreated: (slug: string) => void; showManage?: boolean;
 }) {
   const createMut = useCreateCategory();
   const [label, setLabel] = useState('');
@@ -44,6 +47,15 @@ export function NovaCategoriaSheet({ open, onClose, type, onCreated }: {
         <Button variant="primary" fullWidth loading={createMut.isPending} onClick={submit} disabled={!label.trim()}>
           Criar categoria
         </Button>
+
+        {showManage && (
+          <div className="border-t border-border pt-md">
+            <h3 className="text-label uppercase tracking-wide text-fg-muted mb-2">
+              Suas categorias de {type === 'income' ? 'receita' : 'despesa'}
+            </h3>
+            <CustomCategoryList type={type} />
+          </div>
+        )}
       </div>
     </BottomSheet>
   );
