@@ -51,7 +51,8 @@ foreach ($name in $tomRootFiles) {
 #     envio proativo em src/ ficou sem gate de silencio. Exit 2 = violacao (bloqueia);
 #     0 = limpo; 1/outros = erro interno do guard -> fail-open (nao bloqueia deploy).
 $guard = Join-Path $workDir "scripts\check-quiet-gates.js"
-if (Test-Path $guard) {
+$nodeExe = Get-Command node -ErrorAction SilentlyContinue
+if ($nodeExe -and (Test-Path $guard)) {
     $guardOut = & node $guard 2>&1 | Out-String
     if ($LASTEXITCODE -eq 2) {
         Write-Output "=== DEPLOY BLOQUEADO: trava de silencio (quiet hours) ==="
