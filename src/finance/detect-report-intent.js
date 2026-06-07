@@ -14,7 +14,7 @@ const MES = 'janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outu
 const Y = '(?:\\s+de\\s+20\\d\\d)?';
 const LEAD = '(?:(?:oi|ola|e|ai|tom|por|favor|pf|me|qual|quais|quanto|quantos|quanta|onde|o|que|como|cade|mostra|mostrar|manda|mandar|envia|enviar|ve|ver|diz|dizer|fala|falar|traz|trazer|da|de|a|os|as|do|eh|meu|minha|meus|minhas|um|uns|sao|sera|quero|preciso|saber|gostaria|consultar|consulta)\\s+)*';
 // substantivos que NÃO são conta financeira (inclui outros módulos do app: estoque/inventário/agenda/alunos)
-const DENY = /\b(projetos?|times?|contratos?|obras?|reuni\w*|trabalho|sistemas?|equipes?|clientes?|vendas?|relacionamento|horas?|dias?|semanas?|mes|meses|m[êe]s|anos?|trimestres?|atividades?|carros?|tarefas?|shows?|lojas?|aulas?|vida|energia|tempo|alunos?|estoques?|inventario|agenda|agendas|listas?|compras|pedidos?|reposicao)\b/;
+const DENY = /\b(projetos?|times?|contratos?|obras?|reuni\w*|trabalho|sistemas?|equipes?|clientes?|vendas?|relacionamento|horas?|dias?|semanas?|mes|meses|m[êe]s|anos?|trimestres?|atividades?|carros?|tarefas?|shows?|lojas?|aulas?|vida|energia|tempo|alunos?|estoques?|inventario|agenda|agendas|listas?|compras|pedidos?|reposicao|jogos?|campeonatos?|treinos?|dietas?|partidas?|jogador\w*)\b/;
 const TAIL = /\b(diminuiu|aumentou|subiu|baixou|caiu|acabou|zerou|mudou|virou|ficou|sumiu|rendeu|some|ta|esta|eh|foi|vai|paguei|pagou|recebi|gastei|quitei|conferi|conferido|debitado|creditado|transferi|transferiu|comprei|comprou|vendi|vendeu|depositei|saquei|investi|registra|registrei|cadastrei|bloqueado|duplicado|pendente|errado|errados|certo|negativo|positivo|pago|pagos|pagas|pra|para|com|sem|mais|menos|ja|tudo|eu|no|na|em)\b/;
 const VERBEND = /(?:ou|eu|iu|ei|aram|eram|iram|amos|ado|ido|ada|ida)$/;
 
@@ -63,11 +63,11 @@ function detectReportIntent(text, today) {
     return { action: 'query_statement', params: { month: _monthFrom(t, today) }, confidence: 'high' };
 
   // 2) DIÁRIO
-  if (_re('gastos de hoje|gastos do dia|quanto (?:eu )?gastei hoje').test(t))
+  if (_re('gastos de hoje|gastos do dia|quanto (?:eu )?(?:ja )?gastei hoje').test(t))
     return { action: 'query_daily_summary', params: {}, confidence: 'high' };
 
   // 3) SEMANAL
-  if (_re('gastos da semana|quanto (?:eu )?gastei (?:essa|esta|nessa|na) semana|resumo financeiro da semana').test(t))
+  if (_re('gastos da semana|quanto (?:eu )?(?:ja )?gastei (?:essa|esta|nessa|na) semana|resumo financeiro da semana').test(t))
     return { action: 'query_weekly_summary', params: {}, confidence: 'high' };
 
   // 4) RELATÓRIO DE MÊS NOMEADO → analysis (mês corrente) ou closing (mês fechado)
@@ -93,9 +93,10 @@ function detectReportIntent(text, today) {
   if (_re('meus saldos|todos os (?:meus )?saldos|minhas carteiras|posicao atual|quanto (?:eu )?tenho no total|saldo de todas as contas|saldo total|saldo da (?:minha )?conta|saldo na conta|saldo(?: atual)?').test(t))
     return { action: 'query_accounts', params: {}, confidence: 'high' };
 
-  // 7) SALDO de UMA conta
+  // 7) SALDO de UMA conta ("conta"/"minha conta" genérico → saldos consolidados)
   if ((m = t.match(new RegExp('^' + LEAD + 'saldo(?:\\s+(?:atual|disponivel|atualizado))?\\s+(?:do|da|no|na)\\s+(.+)$')))) {
     const acc = _account(m[1]);
+    if (acc && /^(?:minha )?conta$/.test(acc)) return { action: 'query_accounts', params: {}, confidence: 'high' };
     if (acc) return { action: 'query_account_detail', params: { account: acc }, confidence: 'high' };
   }
 
@@ -103,8 +104,8 @@ function detectReportIntent(text, today) {
   if (_re('onde (?:eu )?gasto mais').test(t)
     || _re('gastos (?:do|desse|deste|nesse|neste) mes').test(t)
     || _re('gastos de (?:' + MES + ')' + Y).test(t)
-    || _re('quanto (?:eu )?gastei em (?:' + MES + ')' + Y).test(t)
-    || _re('quanto (?:eu )?gastei(?: (?:esse|este|neste|nesse|no) mes)?').test(t)) {
+    || _re('quanto (?:eu )?(?:ja )?gastei em (?:' + MES + ')' + Y).test(t)
+    || _re('quanto (?:eu )?(?:ja )?gastei(?: ate agora)?(?: (?:esse|este|neste|nesse|no) mes)?').test(t)) {
     const mo = _monthFrom(t, today);
     return { action: 'query_period_expenses', params: mo ? { month: mo } : {}, confidence: 'high' };
   }

@@ -6927,12 +6927,22 @@ async function processMessage(phone, text, raw = {}) {
     const { detectReportIntent } = require('./finance/detect-report-intent');
     const _intent = detectReportIntent(String(text || ''), new Date().toISOString().slice(0, 10));
     if (_intent && _intent.action) {
-      let reply;
-      try {
-        reply = await handleFinanceAction(collab, _intent.action, _intent.params || {});
-      } catch (rptErr) {
-        console.error(`[ReportRouter] action err (${_intent.action}):`, rptErr.message);
-        reply = null; // falha → cai no LLM
+      // Relatório de UMA conta: só roteia determinístico se a conta EXISTIR. Senão ("saldo do
+      // jogo/treino", "saldo do nubank deleta") a conta não resolve → deixa o LLM tratar. Mata a
+      // classe inteira de noun-desconhecido sem precisar de denylist infinita.
+      let _route = true;
+      if ((_intent.action === 'query_account_detail' || _intent.action === 'query_statement') && _intent.params && _intent.params.account) {
+        const _acc = await financeService.findAccountByName(collab.id, _intent.params.account).catch(() => null);
+        _route = !!_acc;
+      }
+      let reply = null;
+      if (_route) {
+        try {
+          reply = await handleFinanceAction(collab, _intent.action, _intent.params || {});
+        } catch (rptErr) {
+          console.error(`[ReportRouter] action err (${_intent.action}):`, rptErr.message);
+          reply = null; // falha → cai no LLM
+        }
       }
       if (reply) {
         try {

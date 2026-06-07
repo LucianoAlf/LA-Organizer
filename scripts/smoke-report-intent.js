@@ -174,5 +174,19 @@ for (const s of [
   'saldo do aluno', 'saldo do estoque', 'saldo do inventario', 'extrato da agenda', 'extrato do estoque',
 ]) none(s);
 
+// ===== Rodada adversarial 6 — "já/até agora" + conta genérica + nouns não-finanças =====
+must('quanto ja gastei esse mes', 'query_period_expenses');
+must('quanto ja gastei', 'query_period_expenses');
+must('quanto ja gastei hoje', 'query_daily_summary');
+must('quanto ja gastei essa semana', 'query_weekly_summary');
+must('quanto gastei ate agora', 'query_period_expenses');
+must('quanto gastei ate agora esse mes', 'query_period_expenses');
+must('saldo da conta atual', 'query_accounts');
+must('saldo da conta hoje', 'query_accounts');
+must('saldo da minha conta atual', 'query_accounts');
+// nouns não-finanças (DENY) → null. (Verbo-comando "saldo do nubank deleta" é filtrado no ENGINE
+// pelo check de existência da conta, não aqui no módulo puro.)
+for (const s of ['saldo do jogo', 'extrato do jogo', 'saldo do treino', 'saldo da dieta', 'saldo do campeonato', 'extrato da partida']) none(s);
+
 if (fail) { console.error(`\nFALHOU: ${fail} caso(s).`); process.exit(1); }
-console.log('PASS — smoke-report-intent (must + 190+ regressões adversariais OK).');
+console.log('PASS — smoke-report-intent (must + 200+ regressões adversariais OK).');
