@@ -120,5 +120,26 @@ for (const s of [
   'extrato da reunião', 'saldo da reunião',
 ]) none(s);
 
+// ===== Rodada adversarial 3 — misses corrigidos (MUST) =====
+must('fechamento do mês de maio', 'query_monthly_closing', { month: '2026-05' });
+must('como fechou o mês de maio', 'query_monthly_closing', { month: '2026-05' });
+must('resumo financeiro de maio', 'query_monthly_closing', { month: '2026-05' });
+must('resumo financeiro do mês de maio', 'query_monthly_closing', { month: '2026-05' });
+must('saldo do nubank hoje', 'query_account_detail', { account: 'nubank' });
+must('saldo do nubank agora', 'query_account_detail', { account: 'nubank' });
+must('saldo do nubank por favor', 'query_account_detail', { account: 'nubank' });
+must('me ve o extrato do nubank', 'query_statement', { account: 'nubank' });
+
+// ===== Rodada adversarial 3 — prefixos não-consulta (NONE) =====
+for (const s of [
+  'ja paguei o que vence hoje', 'ja paguei as contas a pagar', 'ja paguei minhas contas fixas', 'ja quitei as contas a pagar',
+  'nao tenho contas a pagar', 'lembra que vence dia 10', 'essa conta vence dia 10', 'o boleto vence dia 15',
+  'cadastra minhas contas fixas', 'cadastrar minhas contas fixas', 'quero cadastrar minhas contas fixas', 'vou cadastrar minhas contas fixas',
+  'ja conferi meus saldos', 'meus saldos estao errados', 'ja vi o extrato do nubank', 'ja fiz o fechamento de maio',
+  'tenho ideia de quanto gastei', 'to assustado com quanto gastei', 'me arrependi do quanto gastei', 'deus sabe quanto gastei esse mes',
+  'nem sei quanto gastei essa semana', 'nem quero saber quanto gastei essa semana', 'nao acredito no quanto gastei essa semana',
+  'perdi a conta de quanto gastei hoje', 'esqueci quanto gastei hoje', 'ja sei quanto gastei',
+]) none(s);
+
 if (fail) { console.error(`\nFALHOU: ${fail} caso(s).`); process.exit(1); }
-console.log('PASS — smoke-report-intent (must + 120+ regressões adversariais OK).');
+console.log('PASS — smoke-report-intent (must + 150+ regressões adversariais OK).');
