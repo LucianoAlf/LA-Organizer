@@ -13,11 +13,16 @@
 //      finança? (assinatura do template buildTxnConfirmation que o LLM imita)
 //   2) detectRegisterIntent(text, {typeHint}) — extrai {type, amount, description,
 //      account_name, method} de uma mensagem de registro, CONSERVADOR: só alta
-//      confiança em caso simples (1 valor, sem parcela/transferência); senão null.
+//      confiança em caso simples (1 valor, sem parcela/transferência/pergunta);
+//      senão null.
 //
 // O engine usa: se NENHUM marker de finança rodou no turno E looksLike...()==true,
 // é fabricação → NÃO manda a mentira; tenta registrar de verdade via
 // detectRegisterIntent (pipeline real, com insert) ou pede pra repetir.
+//
+// Endurecido por workflow adversarial (6 agentes, 145 casos, 07/06): bail em
+// pergunta/dúvida, quantidade-vs-dinheiro, multi-item de valor igual, sinal misto,
+// léxico income ampliado (gorjeta/cachê), ordem do strip temporal, typeHint receb\w*.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function stripAccents(str) {
@@ -39,35 +44,45 @@ function parseAmount(raw) {
   return Number.isFinite(n) ? n : null;
 }
 
-// Remove ruído temporal pra não contar data/hora como "valor" ("dia 10", "10/06", "20h").
+// Remove ruído temporal pra não contar data/hora como "valor". ORDEM IMPORTA:
+// dd/mm ANTES de "dia N" (senão "dia 05/06" deixa o órfão "/06" virar 2º valor).
 function stripTemporal(t) {
   return t
-    .replace(/\bdia\s+\d{1,2}\b/g, ' ')
-    .replace(/\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/g, ' ')
-    .replace(/\b\d{1,2}h\d{0,2}\b/g, ' ')
-    .replace(/\b[àa]s\s+\d{1,2}\b/g, ' ');
+    .replace(/\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/g, ' ')   // 05/06, 05/06/2026
+    .replace(/\bdia\s+\d{1,2}\b/g, ' ')                    // dia 10
+    .replace(/\b\d{1,2}h\d{0,2}\b/g, ' ')                  // 20h, 20h30
+    .replace(/\b[àa]s\s+\d{1,2}\b/g, ' ');                 // às 8
 }
 
-// Tokens de valor monetário (após remover ruído temporal). Ordem importa na alternância.
+// Token de valor monetário (após remover ruído temporal). Ordem na alternância importa.
 const AMOUNT_RE = /(?:r\$\s*)?(\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+,\d{1,2}|\d+)/g;
+
+// Substantivo de CONTAGEM logo após o número → é quantidade, não dinheiro
+// ("3 alunos", "2 cordas", "2 caras"). reais/conto/pila NÃO entram (são dinheiro).
+const COUNT_NOUN_AFTER = /^\s*(alunos?|caras?|pessoas?|lugares?|cordas?|vezes|dias?|meses|m[êe]s|anos?|horas?|minutos?|itens|unidades?|amigos?|convidados?|semanas?|gols?|pontos?|faltas?)\b/;
 
 // Verbos/sinais
 const RE_REGISTER_VERB = /\b(lanc(?:a|ar|o|ei|e)?|anot(?:a|ar|e|ei)?|registr(?:a|ar|e|ei|o)?|adicion(?:a|ar|e|ei)?)\b/;
-const RE_INCOME = /\b(entrada|entrou|entra|receb(?:i|ido|imento)|receita|caiu|ganhei|ganho|vendi|venda|sal[aá]rio|comiss[aã]o|rendeu|pix recebido)\b/;
-const RE_EXPENSE = /\b(gast(?:ei|o|ar|ando)|pag(?:uei|o|ar)|compr(?:ei|a|ar)|despesa|sa[ií]da|saiu|torrei|custou|comprinha)\b/;
+// income por VERBO (ação de entrada de caixa) vs por SUBSTANTIVO (natureza)
+const RE_INCOME_VERB = /\b(entrou|entra|receb(?:i|ido|imento)|caiu|ganhei|ganho|vendi|rendeu|me deu|me deram)\b/;
+const RE_INCOME_NOUN = /\b(entrada|receita|comiss[aã]o|sal[aá]rio|gorjeta|cach[eê]|b[ôo]nus|gratifica\w*|venda)\b/;
+const RE_EXPENSE_VERB = /\b(gast(?:ei|o|ar|ando)|pag(?:uei|o|ar)|compr(?:ei|a|ar|inha)|torrei|custou|saiu)\b/;
+const RE_EXPENSE_NOUN = /\b(despesa|sa[ií]da|gasto)\b/;
 
-// Complexidade fora do escopo da rede determinística → bail (usuário refaz / LLM faz).
+// Complexidade fora do escopo da rede determinística → bail.
 const RE_INSTALLMENT = /\b\d+\s*x\b|\bparcel|\bvezes\b|\bem\s+\d+\s*(x|vezes|parcelas)\b/;
-const RE_TRANSFER = /\btransfer|\bpra\s+(conta|carteira)\b.*\b(do|da)\b/;
-
-// Queries/perguntas (não são registro).
+const RE_TRANSFER = /\btransfer/;
+// Pergunta / dúvida / recall → não é comando de registro.
+const RE_DOUBT = /\?|\bn[ãa]o lembro\b|\bacho que\b|\bsei l[áa]\b|\bser[áa] que\b|\bn[ée]\s*$|\bcerto\s*$|\bconfere\b|\bfoi isso\b|\btem certeza\b/;
+// Intenção FUTURA (ainda não aconteceu) → não registra.
+const RE_FUTURE = /\b(preciso|quero|vou|pretendo|tenho que|tenho de|bora)\b[^?.!]*\b(comprar|pagar|gastar|lan[çc]ar|guardar)\b/;
+// Queries/consultas.
 const RE_QUERY = /\b(qual|quais|quanto|quanta|cad[êe]|quando|extrato|fechamento|resumo|relat[óo]rio|saldo de|me manda|me mostra|mostra a[íi])\b/;
 
 // Método/fonte explícitos.
 const RE_CASH = /\b(em\s+)?dinheiro\b|\bespecie\b|\bcash\b/;
 const RE_CREDIT = /\b(no\s+)?(cr[ée]dito|cart[ãa]o)\b/;
 const RE_DEBIT = /\b(no\s+)?(d[ée]bito|pix)\b/;
-// "no/na/pelo/pela <nome>" → candidato a conta (o handler resolve; lixo cai na principal).
 const RE_SOURCE_NAMED = /\b(?:no|na|pelo|pela|via)\s+([a-z0-9][a-z0-9\s]{1,24}?)(?:\s*$|[,.;])/;
 
 function looksLikeFinanceConfirmation(text) {
@@ -78,12 +93,28 @@ function looksLikeFinanceConfirmation(text) {
   return hasRegistered && hasMoneyOrBalance;
 }
 
+// Extrai valores monetários, excluindo quantidades (nº + substantivo de contagem).
+function extractAmounts(normCleaned) {
+  const re = new RegExp(AMOUNT_RE.source, 'g');
+  const out = [];
+  let m;
+  while ((m = re.exec(normCleaned)) !== null) {
+    const token = m[0];
+    const after = normCleaned.slice(m.index + token.length);
+    if (COUNT_NOUN_AFTER.test(after)) continue;            // "3 alunos" → quantidade, pula
+    const v = parseAmount(token);
+    if (v === null || v <= 0) continue;
+    out.push({ token, value: v });
+  }
+  return out;
+}
+
 // Limpa a descrição: tira filler, verbo, valor e palavras de tipo; mantém o "miolo".
 function buildDescription(raw, amountToken) {
   let d = ' ' + raw + ' ';
   d = d.replace(/^\s*(e\s+outra\s+coisa|olha|[óo]|ent[ãa]o|ah|ei)\s*[,:]?\s*/i, ' ');
   d = d.replace(RE_REGISTER_VERB, ' ');
-  d = d.replace(/\b(gast(?:ei|o|ando)|pag(?:uei|o)|compr(?:ei|a)|receb(?:i|ido)|entrou|caiu|ganhei|vendi)\b/i, ' ');
+  d = d.replace(/\b(gast(?:ei|o|ando)|pag(?:uei|o)|compr(?:ei|a)|receb(?:i|ido)|entrou|caiu|ganhei|vendi|me deram|me deu)\b/i, ' ');
   d = d.replace(/\b(a[íi]|aqui|pra\s+mim|pra\s+eu|de\s+novo)\b/i, ' ');
   if (amountToken) d = d.replace(amountToken, ' ');
   d = d.replace(/\br\$\s*/gi, ' ').replace(/\b(reais|conto|contos|pila|pilas)\b/gi, ' ');
@@ -104,41 +135,41 @@ function detectRegisterIntent(text, opts = {}) {
   const raw = text.trim();
   const norm = normalize(raw);
 
-  // Bail: query, parcela, transferência.
+  // Bail: pergunta/dúvida, query, intenção futura, parcela, transferência.
+  if (RE_DOUBT.test(norm)) return null;
   if (RE_QUERY.test(norm)) return null;
+  if (RE_FUTURE.test(norm)) return null;
   if (RE_INSTALLMENT.test(norm)) return null;
   if (RE_TRANSFER.test(norm)) return null;
 
-  // Gate de intenção: precisa de um verbo de registro OU de ação (income/expense).
+  // Sinais de tipo
+  const incomeVerb = RE_INCOME_VERB.test(norm);
+  const incomeNoun = RE_INCOME_NOUN.test(norm);
+  const expenseVerb = RE_EXPENSE_VERB.test(norm);
+  const expenseNoun = RE_EXPENSE_NOUN.test(norm);
   const hasRegister = RE_REGISTER_VERB.test(norm);
-  const isIncome = RE_INCOME.test(norm);
-  const isExpense = RE_EXPENSE.test(norm);
-  if (!hasRegister && !isIncome && !isExpense) return null;
 
-  // Valor: exatamente UM (sem contar data/hora). 0 ou ≥2 → null.
-  const cleaned = stripTemporal(norm);
-  const tokens = cleaned.match(AMOUNT_RE) || [];
-  // dedup por valor numérico (evita "300" e "300,00" contarem como 2)
-  const seen = new Set();
-  const amounts = [];
-  for (const tk of tokens) {
-    const v = parseAmount(tk);
-    if (v === null || v <= 0) continue;
-    if (seen.has(v)) continue;
-    seen.add(v); amounts.push({ token: tk, value: v });
-  }
+  // Gate de intenção: precisa de verbo de registro OU sinal income/expense.
+  if (!hasRegister && !incomeVerb && !incomeNoun && !expenseVerb && !expenseNoun) return null;
+
+  // Sinal MISTO genuíno (recebi X E paguei Y) → ambíguo demais p/ rede determinística.
+  if (incomeVerb && expenseVerb) return null;
+
+  // Valor: exatamente UM (sem contar data/hora/quantidade). 0 ou ≥2 → null.
+  const amounts = extractAmounts(stripTemporal(norm));
   if (amounts.length !== 1) return null;
   const amount = amounts[0].value;
 
-  // Tipo: verbo de ação > hint (texto fabricado) > default expense.
+  // Tipo: verbo de gasto > verbo de receita > substantivo > hint > default expense.
   let type;
-  if (isIncome && !isExpense) type = 'income';
-  else if (isExpense && !isIncome) type = 'expense';
+  if (expenseVerb) type = 'expense';
+  else if (incomeVerb) type = 'income';
+  else if (incomeNoun && !expenseNoun) type = 'income';
+  else if (expenseNoun) type = 'expense';
   else {
     const hint = normalize(opts.typeHint || '');
-    if (/\b(entrada|receita|receb|caiu|ganho|ganhei|entrou)\b/.test(hint)) type = 'income';
-    else if (/\b(gasto|despesa|sa[ií]da|pago|gastou)\b/.test(hint)) type = 'expense';
-    else if (isIncome) type = 'income';
+    if (/(entrada|receita|receb\w*|caiu|ganho|ganhei|entrou|recebimento|gorjeta|cach[eê])/.test(hint)) type = 'income';
+    else if (/(gasto|despesa|sa[ií]da|pag\w*|gastou)/.test(hint)) type = 'expense';
     else type = 'expense';
   }
 
@@ -151,7 +182,6 @@ function detectRegisterIntent(text, opts = {}) {
     const m = norm.match(RE_SOURCE_NAMED);
     if (m && m[1]) {
       const cand = m[1].trim();
-      // ignora candidatos que claramente NÃO são fonte (preposições soltas / muito curtos)
       if (cand.length >= 3 && !/^(que|com|sem|por|pra|seu|sua|meu|minha)\b/.test(cand)) out.account_name = cand;
     }
   }

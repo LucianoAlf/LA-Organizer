@@ -79,6 +79,43 @@ test('vazio/nulo → null', () => {
   assert.strictEqual(detectRegisterIntent(null), null);
 });
 
+// ── Endurecimento adversarial (workflow 6-agentes, 145 casos) ──
+test('pergunta com "?" → null (não registra)', () => {
+  assert.strictEqual(detectRegisterIntent('já paguei o aluguel de 1200 esse mês?'), null);
+  assert.strictEqual(detectRegisterIntent('recebi 300, certo?'), null);
+  assert.strictEqual(detectRegisterIntent('entrou os 250 da comissao hoje?'), null);
+  assert.strictEqual(detectRegisterIntent('tem certeza que paguei os 200 do cartao?'), null);
+});
+test('incerteza/recall sem "?" → null', () => {
+  assert.strictEqual(detectRegisterIntent('comprei algo de 90 reais e nao lembro o que'), null);
+  assert.strictEqual(detectRegisterIntent('acho que gastei uns 80 com isso'), null);
+});
+test('quantidade não é dinheiro → null', () => {
+  assert.strictEqual(detectRegisterIntent('preciso comprar 2 cordas de nylon pro aluno'), null);
+  assert.strictEqual(detectRegisterIntent('recebi 3 alunos novos essa semana pra avaliar'), null);
+  assert.strictEqual(detectRegisterIntent('entrou 2 caras atrasados no meio da aula'), null);
+});
+test('multi-item com valores IGUAIS → null', () => {
+  assert.strictEqual(detectRegisterIntent('gastei 40 no uber e mais 40 no almoco'), null);
+  assert.strictEqual(detectRegisterIntent('recebi 200 do cliente e paguei 200 de comissao'), null);
+});
+test('gorjeta/cachê/me deram → income (léxico do Matheus)', () => {
+  assert.strictEqual(detectRegisterIntent('me deram 100 de gorjeta, registra ai').type, 'income');
+  assert.strictEqual(detectRegisterIntent('caiu o cachê de 800').type, 'income');
+});
+test('data dd/mm não conta como 2º valor', () => {
+  const r = detectRegisterIntent('recebi 1500 no dia 05/06');
+  assert.ok(r); assert.strictEqual(r.type, 'income'); assert.strictEqual(r.amount, 1500);
+});
+test('typeHint "recebimento" → income (receb\\w*)', () => {
+  const r = detectRegisterIntent('lança 75 do show', { typeHint: 'recebimento confirmado' });
+  assert.ok(r); assert.strictEqual(r.type, 'income'); assert.strictEqual(r.amount, 75);
+});
+test('verbo de gasto + substantivo "entrada" (ingresso) → expense, não bail', () => {
+  const r = detectRegisterIntent('comprei 50 de entrada pro show');
+  assert.ok(r); assert.strictEqual(r.type, 'expense'); assert.strictEqual(r.amount, 50);
+});
+
 // ── Assinatura de confirmação FABRICADA ──
 test('confirmação fabricada (Entrada registrada + Saldo R$) casa', () => {
   assert.strictEqual(looksLikeFinanceConfirmation('💰 *Entrada registrada!*\n🎤 Show — Dom Costela\n💼 Saldo NUBANK: +R$ 2.258,03'), true);

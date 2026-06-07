@@ -6363,7 +6363,11 @@ async function handleFinanceAction(collab, action, params) {
       }
       const patch = {};
       if (params.amount !== undefined) patch.amount = Number(params.amount);
-      if (params.category) { const nc = _normCat(params.category); if (nc) patch.category = nc; }
+      if (params.category) {
+        const _cats = await financeService.listCategorySlugs(cid).catch(() => []);
+        const nc = resolveCategorySlug(params.category, _cats.filter((r) => r.collaborator_id));
+        if (nc) patch.category = nc;
+      }
       if (params.description !== undefined) patch.description = params.description;
       if (params.account_name) {
         const src = await financeService.resolveSource(cid, params.account_name);
