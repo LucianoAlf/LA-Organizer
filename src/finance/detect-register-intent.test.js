@@ -116,6 +116,44 @@ test('verbo de gasto + substantivo "entrada" (ingresso) → expense, não bail',
   assert.ok(r); assert.strictEqual(r.type, 'expense'); assert.strictEqual(r.amount, 50);
 });
 
+// ── Round 2 adversarial: recall/agregado, parcelado coloquial, quantidade-antes ──
+test('"né" no meio (desabafo) → null', () => {
+  assert.strictEqual(detectRegisterIntent('gastei demais né, uns 1000'), null);
+});
+test('recall "lembra que paguei... mês passado" → null', () => {
+  assert.strictEqual(detectRegisterIntent('lembra que paguei 800 de luz mês passado'), null);
+});
+test('"conferir os 300 que paguei" (auditar) → null', () => {
+  assert.strictEqual(detectRegisterIntent('conferir os 300 que paguei'), null);
+});
+test('agregado do mês → null', () => {
+  assert.strictEqual(detectRegisterIntent('recebi 1500 esse mês inteiro somando tudo'), null);
+  assert.strictEqual(detectRegisterIntent('no mês passado gastei tipo 2000 no total'), null);
+});
+test('parcelado coloquial (carnê/prestações) → null', () => {
+  assert.strictEqual(detectRegisterIntent('comprei tv 1200 no carnê'), null);
+  assert.strictEqual(detectRegisterIntent('comprei celular 1500 em suaves prestações'), null);
+});
+test('"carne" (comida) NÃO é parcelado → registra', () => {
+  const r = detectRegisterIntent('gastei 50 de carne no mercado');
+  assert.ok(r); assert.strictEqual(r.amount, 50); assert.strictEqual(r.type, 'expense');
+});
+test('quantidade ANTES do número (turma/nota/aulas) → null', () => {
+  assert.strictEqual(detectRegisterIntent('anota a nota 8 do aluno na planilha'), null);
+  assert.strictEqual(detectRegisterIntent('lança o resultado do treino na turma 2'), null);
+  assert.strictEqual(detectRegisterIntent('adiciona o João na turma das 8'), null);
+  assert.strictEqual(detectRegisterIntent('me deu uma ideia pra 2 aulas novas'), null);
+  assert.strictEqual(detectRegisterIntent('anota 50 cópias da apostila pra imprimir'), null);
+});
+test('"dia 50 reais" (dia>31) não engole o 2º valor → null', () => {
+  assert.strictEqual(detectRegisterIntent('paguei 100 dia 50 reais'), null);
+});
+test('"no total" não vira conta fantasma', () => {
+  // mesmo que passasse, account_name não pode ser "total"
+  const r = detectRegisterIntent('lança 90 no total geral');
+  if (r && r.account_name) assert.notStrictEqual(r.account_name, 'total');
+});
+
 // ── Assinatura de confirmação FABRICADA ──
 test('confirmação fabricada (Entrada registrada + Saldo R$) casa', () => {
   assert.strictEqual(looksLikeFinanceConfirmation('💰 *Entrada registrada!*\n🎤 Show — Dom Costela\n💼 Saldo NUBANK: +R$ 2.258,03'), true);

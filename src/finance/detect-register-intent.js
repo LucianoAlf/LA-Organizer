@@ -13,16 +13,18 @@
 //      finança? (assinatura do template buildTxnConfirmation que o LLM imita)
 //   2) detectRegisterIntent(text, {typeHint}) — extrai {type, amount, description,
 //      account_name, method} de uma mensagem de registro, CONSERVADOR: só alta
-//      confiança em caso simples (1 valor, sem parcela/transferência/pergunta);
-//      senão null.
+//      confiança em caso simples (1 valor, sem parcela/transferência/pergunta/
+//      recall/agregado); senão null.
 //
 // O engine usa: se NENHUM marker de finança rodou no turno E looksLike...()==true,
 // é fabricação → NÃO manda a mentira; tenta registrar de verdade via
 // detectRegisterIntent (pipeline real, com insert) ou pede pra repetir.
 //
-// Endurecido por workflow adversarial (6 agentes, 145 casos, 07/06): bail em
-// pergunta/dúvida, quantidade-vs-dinheiro, multi-item de valor igual, sinal misto,
-// léxico income ampliado (gorjeta/cachê), ordem do strip temporal, typeHint receb\w*.
+// Endurecido por 2 rounds de workflow adversarial (6 agentes, ~320 casos, 07/06):
+// bail em pergunta/dúvida/recall/agregado, quantidade-vs-dinheiro (antes E depois
+// do número), multi-item de valor igual, sinal misto, parcelado coloquial
+// (carnê/prestações), léxico income ampliado (gorjeta/cachê), ordem/limite do
+// strip temporal, typeHint receb\w*, stoplist de fonte fantasma.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function stripAccents(str) {
@@ -46,34 +48,38 @@ function parseAmount(raw) {
 
 // Remove ruído temporal pra não contar data/hora como "valor". ORDEM IMPORTA:
 // dd/mm ANTES de "dia N" (senão "dia 05/06" deixa o órfão "/06" virar 2º valor).
+// "dia N" limitado a 1–31 (senão "dia 50 reais" engoliria um valor real).
 function stripTemporal(t) {
   return t
-    .replace(/\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/g, ' ')   // 05/06, 05/06/2026
-    .replace(/\bdia\s+\d{1,2}\b/g, ' ')                    // dia 10
-    .replace(/\b\d{1,2}h\d{0,2}\b/g, ' ')                  // 20h, 20h30
-    .replace(/\b[àa]s\s+\d{1,2}\b/g, ' ');                 // às 8
+    .replace(/\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/g, ' ')              // 05/06, 05/06/2026
+    .replace(/\bdia\s+(?:3[01]|[12]\d|0?[1-9])\b/g, ' ')             // dia 1..31
+    .replace(/\b\d{1,2}h\d{0,2}\b/g, ' ')                            // 20h, 20h30
+    .replace(/\b[àa]s\s+\d{1,2}\b/g, ' ');                           // às 8
 }
 
 // Token de valor monetário (após remover ruído temporal). Ordem na alternância importa.
 const AMOUNT_RE = /(?:r\$\s*)?(\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+,\d{1,2}|\d+)/g;
 
-// Substantivo de CONTAGEM logo após o número → é quantidade, não dinheiro
-// ("3 alunos", "2 cordas", "2 caras"). reais/conto/pila NÃO entram (são dinheiro).
-const COUNT_NOUN_AFTER = /^\s*(alunos?|caras?|pessoas?|lugares?|cordas?|vezes|dias?|meses|m[êe]s|anos?|horas?|minutos?|itens|unidades?|amigos?|convidados?|semanas?|gols?|pontos?|faltas?)\b/;
+// Substantivo de CONTAGEM logo DEPOIS do número → quantidade, não dinheiro
+// ("3 alunos", "50 cópias"). reais/conto/pila NÃO entram (são dinheiro).
+const COUNT_NOUN_AFTER = /^\s*(alunos?|caras?|pessoas?|lugares?|cordas?|vezes|anos?|horas?|minutos?|itens|unidades?|amigos?|convidados?|semanas?|gols?|pontos?|faltas?|aulas?|c[óo]pias?|m[úu]sicas?)\b/;
+// Substantivo de CONTAGEM logo ANTES do número → também é quantidade/índice, não dinheiro
+// ("turma 2", "nota 8", "turma das 8"). O (d[ao]s? )? cobre "turma das 8".
+const COUNT_NOUN_BEFORE = /\b(turmas?|salas?|grupos?|n[íi]vel|n[íi]veis|p[áa]ginas?|quest[õoãa]es?|notas?|faixas?|etapas?|m[óo]dulos?|cap[íi]tulos?|treinos?|vagas?|quartos?)\s*(d[ao]s?\s*)?$/;
 
 // Verbos/sinais
 const RE_REGISTER_VERB = /\b(lanc(?:a|ar|o|ei|e)?|anot(?:a|ar|e|ei)?|registr(?:a|ar|e|ei|o)?|adicion(?:a|ar|e|ei)?)\b/;
-// income por VERBO (ação de entrada de caixa) vs por SUBSTANTIVO (natureza)
 const RE_INCOME_VERB = /\b(entrou|entra|receb(?:i|ido|imento)|caiu|ganhei|ganho|vendi|rendeu|me deu|me deram)\b/;
 const RE_INCOME_NOUN = /\b(entrada|receita|comiss[aã]o|sal[aá]rio|gorjeta|cach[eê]|b[ôo]nus|gratifica\w*|venda)\b/;
 const RE_EXPENSE_VERB = /\b(gast(?:ei|o|ar|ando)|pag(?:uei|o|ar)|compr(?:ei|a|ar|inha)|torrei|custou|saiu)\b/;
 const RE_EXPENSE_NOUN = /\b(despesa|sa[ií]da|gasto)\b/;
 
 // Complexidade fora do escopo da rede determinística → bail.
-const RE_INSTALLMENT = /\b\d+\s*x\b|\bparcel|\bvezes\b|\bem\s+\d+\s*(x|vezes|parcelas)\b/;
+// Parcelado: "10x", "parcel*", "vezes", e coloquiais "no carnê", "prestações".
+const RE_INSTALLMENT = /\b\d+\s*x\b|\bparcel|\bvezes\b|\bem\s+\d+\s*(x|vezes|parcelas)\b|\bno\s+carn[eê]\b|presta[cç][aãoõ]\w*/;
 const RE_TRANSFER = /\btransfer/;
-// Pergunta / dúvida / recall → não é comando de registro.
-const RE_DOUBT = /\?|\bn[ãa]o lembro\b|\bacho que\b|\bsei l[áa]\b|\bser[áa] que\b|\bn[ée]\s*$|\bcerto\s*$|\bconfere\b|\bfoi isso\b|\btem certeza\b/;
+// Pergunta / dúvida / recall / agregado → não é comando de registro NOVO.
+const RE_DOUBT = /\?|\bn[ãa]o lembro\b|\bacho que\b|\bsei l[áa]\b|\bser[áa] que\b|\bn[ée]\b|\bconfer\w*|\bfoi isso\b|\btem certeza\b|\bcerto\s*$|\blembr\w*|\bque\s+(paguei|recebi|gastei|comprei|ganhei)\b|\bm[êe]s passado\b|\bm[êe]s inteiro\b|\bsomando\b|\bno total\b|\bno geral\b|\bpassad[oa]\b/;
 // Intenção FUTURA (ainda não aconteceu) → não registra.
 const RE_FUTURE = /\b(preciso|quero|vou|pretendo|tenho que|tenho de|bora)\b[^?.!]*\b(comprar|pagar|gastar|lan[çc]ar|guardar)\b/;
 // Queries/consultas.
@@ -84,6 +90,8 @@ const RE_CASH = /\b(em\s+)?dinheiro\b|\bespecie\b|\bcash\b/;
 const RE_CREDIT = /\b(no\s+)?(cr[ée]dito|cart[ãa]o)\b/;
 const RE_DEBIT = /\b(no\s+)?(d[ée]bito|pix)\b/;
 const RE_SOURCE_NAMED = /\b(?:no|na|pelo|pela|via)\s+([a-z0-9][a-z0-9\s]{1,24}?)(?:\s*$|[,.;])/;
+// Palavras que NÃO são nome de conta (evita "no total"→conta fantasma).
+const SOURCE_STOP = /^(que|com|sem|por|pra|seu|sua|meu|minha|total|m[êe]s|dia|semana|ano|geral|tudo|isso|final|momento)\b/;
 
 function looksLikeFinanceConfirmation(text) {
   if (!text || typeof text !== 'string') return false;
@@ -93,7 +101,7 @@ function looksLikeFinanceConfirmation(text) {
   return hasRegistered && hasMoneyOrBalance;
 }
 
-// Extrai valores monetários, excluindo quantidades (nº + substantivo de contagem).
+// Extrai valores monetários, excluindo quantidades (nº cercado de substantivo de contagem).
 function extractAmounts(normCleaned) {
   const re = new RegExp(AMOUNT_RE.source, 'g');
   const out = [];
@@ -101,7 +109,9 @@ function extractAmounts(normCleaned) {
   while ((m = re.exec(normCleaned)) !== null) {
     const token = m[0];
     const after = normCleaned.slice(m.index + token.length);
-    if (COUNT_NOUN_AFTER.test(after)) continue;            // "3 alunos" → quantidade, pula
+    const before = normCleaned.slice(0, m.index);
+    if (COUNT_NOUN_AFTER.test(after)) continue;            // "3 alunos" / "50 cópias"
+    if (COUNT_NOUN_BEFORE.test(before)) continue;          // "turma 2" / "nota 8" / "turma das 8"
     const v = parseAmount(token);
     if (v === null || v <= 0) continue;
     out.push({ token, value: v });
@@ -135,7 +145,7 @@ function detectRegisterIntent(text, opts = {}) {
   const raw = text.trim();
   const norm = normalize(raw);
 
-  // Bail: pergunta/dúvida, query, intenção futura, parcela, transferência.
+  // Bail: pergunta/dúvida/recall/agregado, query, intenção futura, parcela, transferência.
   if (RE_DOUBT.test(norm)) return null;
   if (RE_QUERY.test(norm)) return null;
   if (RE_FUTURE.test(norm)) return null;
@@ -182,7 +192,7 @@ function detectRegisterIntent(text, opts = {}) {
     const m = norm.match(RE_SOURCE_NAMED);
     if (m && m[1]) {
       const cand = m[1].trim();
-      if (cand.length >= 3 && !/^(que|com|sem|por|pra|seu|sua|meu|minha)\b/.test(cand)) out.account_name = cand;
+      if (cand.length >= 3 && !SOURCE_STOP.test(cand)) out.account_name = cand;
     }
   }
   return out;

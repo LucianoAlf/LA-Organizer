@@ -13,6 +13,9 @@
 //   • --strict-mcp-config + --mcp-config '{"mcpServers":{}}' + --tools ""
 //     continuam (Sprint 7) pra desabilitar execução de tools.
 const { spawn } = require('child_process');
+const os = require('os');
+const fs = require('fs');
+const path = require('path');
 
 const CLAUDE_BIN = process.env.CLAUDE_BIN || '/usr/bin/claude';
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'sonnet';  // alias do CLI → Sonnet 4.6 atual
@@ -50,6 +53,22 @@ function buildEnv() {
  * @param {Array<{role:string,content:string}>} messages - Histórico + mensagem atual.
  * @returns {Promise<{text:string, provider:string}>}
  */
+let _tmpCounter = 0;
+
+// Monta o array de args do CLI. PURA (sem I/O) → testável. O system prompt vai por
+// --append-system-prompt-file (arquivo), NÃO por argv, pra não estourar ARG_MAX (E2BIG).
+function buildArgs(userPrompt, sysPromptFile) {
+  return [
+    '-p', userPrompt,
+    '--model', CLAUDE_MODEL,
+    '--append-system-prompt-file', sysPromptFile,
+    '--output-format', 'json',
+    '--strict-mcp-config',
+    '--mcp-config', '{"mcpServers":{}}',
+    '--tools', '',
+  ];
+}
+
 // Wrapper público: enfileira na _claudeQueue pra serializar acesso ao .claude.json.
 async function chat(systemPrompt, messages, maxTokens) {
   const job = _claudeQueue.then(() => _chatInner(systemPrompt, messages, maxTokens));
@@ -70,7 +89,19 @@ async function _chatInner(systemPrompt, messages /*, maxTokens */) {
     ? `Conversa recente:\n${history}\n\nMensagem atual do usuário:\n${lastUser}`
     : lastUser;
 
+  // Anti-E2BIG: grava o system prompt (~90KB) num arquivo temp e passa por
+  // --append-system-prompt-file, tirando o gigante do argv (estourava ARG_MAX).
+  const tmpFile = path.join(os.tmpdir(), `tom-sysprompt-${process.pid}-${Date.now()}-${_tmpCounter++}.txt`);
+  try {
+    fs.writeFileSync(tmpFile, systemPrompt, 'utf8');
+  } catch (e) {
+    const err = new Error('Claude: falha ao gravar system prompt temporário: ' + e.message);
+    err.kind = 'spawn'; err.provider = 'claude';
+    throw err;
+  }
+
   return new Promise((resolve, reject) => {
+    const cleanup = () => { try { fs.unlinkSync(tmpFile); } catch (_) {} };
     // --append-system-prompt mantém o system prompt separado do user prompt,
     // permitindo que o Claude trate identidade/contexto como instrução de sistema.
     //
@@ -84,15 +115,7 @@ async function _chatInner(systemPrompt, messages /*, maxTokens */) {
     // sem essa restrição, Claude CLI improvisava tool calls quando a skill
     // não dava direção suficiente, vazando "preciso de permissão pra Supabase"
     // ao usuário e estourando latência (58s vs 4s típico).
-    const args = [
-      '-p', userPrompt,
-      '--model', CLAUDE_MODEL,
-      '--append-system-prompt', systemPrompt,
-      '--output-format', 'json',
-      '--strict-mcp-config',
-      '--mcp-config', '{"mcpServers":{}}',
-      '--tools', '',
-    ];
+    const args = buildArgs(userPrompt, tmpFile);
 
     const child = spawn(CLAUDE_BIN, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -105,6 +128,7 @@ async function _chatInner(systemPrompt, messages /*, maxTokens */) {
     let settled = false;
 
     const reject_ = (kind, msg) => {
+      cleanup();
       const e = new Error(msg);
       e.kind = kind;
       e.provider = 'claude';
@@ -190,6 +214,7 @@ async function _chatInner(systemPrompt, messages /*, maxTokens */) {
       if (!text) {
         return reject_('empty', `Claude result vazio. parsed.subtype=${parsed.subtype} stop_reason=${parsed.stop_reason}`);
       }
+      cleanup();
       resolve({
         text,
         provider: 'claude',
@@ -207,4 +232,4 @@ async function _chatInner(systemPrompt, messages /*, maxTokens */) {
   });
 }
 
-module.exports = { chat };
+module.exports = { chat, buildArgs };
