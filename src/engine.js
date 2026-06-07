@@ -6118,7 +6118,7 @@ async function tryDupBypass(collab, text) {
 
 // ---- Sprint 27 — Financas Pessoais: marker <<FINANCE_ACTION>> + dispatcher ----
 const FINANCE_ACTIONS = [
-  'register_transaction', 'register_bill', 'pay_bill', 'query_fixed_bills', 'query_bills_to_pay', 'query_checkup', 'create_goal',
+  'register_transaction', 'register_bill', 'pay_bill', 'query_fixed_bills', 'query_bills_to_pay', 'query_checkup', 'query_month_analysis', 'create_goal',
   'update_goal', 'edit_goal', 'delete_goal', 'set_budget', 'query_summary', 'query_budget', 'query_goal', 'query_accounts', 'create_account', 'edit_account',
   'simulate_interest',
   // cartão de crédito + transferência
@@ -6552,6 +6552,32 @@ async function handleFinanceAction(collab, action, params) {
       if (!amount || amount <= 0) return '❓ Qual o valor da transferência?';
       await financeService.createTransfer(cid, { from_account: from.id, to_account: to.id, amount, description: params.description });
       return `🔁 Transferi *${financeFmt.money(amount)}* de *${from.name}* → *${to.name}*. Saldo total inalterado.`;
+    }
+    case 'query_month_analysis': {
+      const { buildMonthAnalysis } = require('./finance/reports/month');
+      const { buildBillsToPay } = require('./finance/reports/bills');
+      const wa = require('./finance/wa-format');
+      const now = new Date();
+      const today = now.toISOString().slice(0, 10);
+      const cur = await financeService.monthCategoryBreakdown(cid, now);
+      const prevRef = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const prev = await financeService.monthCategoryBreakdown(cid, prevRef);
+      const accounts = await financeService.listAccounts(cid);
+      const saldoAtual = accounts.reduce((s, a) => s + Number(a.balance || 0), 0);
+      const bills = await financeService.listActiveBills(cid);
+      const toPay = buildBillsToPay(bills, [], today);
+      const goalsRaw = await financeService.listGoals(cid);
+      const goals = goalsRaw.map((g) => ({
+        name: g.name, current: Number(g.current_amount) || 0, target: Number(g.target_amount) || 0,
+        pct: Number(g.target_amount) > 0 ? Math.round((Number(g.current_amount) / Number(g.target_amount)) * 100) : 0,
+      }));
+      const model = buildMonthAnalysis({
+        monthLabel: financeFmt.mesDaComp(today.slice(0, 7) + '-01'),
+        despesas: cur.despesas, receitas: cur.receitas, despesasPrev: prev.despesas,
+        byCategory: cur.byCategory, saldoAtual, aPagar: toPay.totalPendente,
+        overdueCount: toPay.vencidas.length, goals,
+      });
+      return wa.renderMonthAnalysis(model);
     }
     case 'query_checkup': {
       const { buildCheckup } = require('./finance/reports/checkup');

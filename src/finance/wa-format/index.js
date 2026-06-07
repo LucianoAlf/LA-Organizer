@@ -130,4 +130,36 @@ function renderCheckup(model) {
   return blocks.join('\n\n');
 }
 
-module.exports = { header, sep, totalHighlight, tomTip, quickActions, severityTiers, billItem, assemble, money, SEP, renderFixedBills, renderBillsToPay, balanceLine, positionBlock, renderBalances, renderCheckup };
+const _MEDALS = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣'];
+function rankingTopN(items) {
+  return (items || []).map((it, i) => `${_MEDALS[i] || '•'} ${it.label}: ${money(it.total)} (${it.pct}%)`).join('\n');
+}
+function comparison(c) {
+  return `📈 *Comparativo*\n• Este mês: ${money(c.atual)}\n• Mês anterior: ${money(c.anterior)}\n• Variação: ${c.variation.label}`;
+}
+function goalsBlock(goals) {
+  if (!goals || !goals.length) return '';
+  const lines = goals.slice(0, 3).map((g) => `• ${g.name}: ${g.pct}%\n  ${money(g.current)} / ${money(g.target)}`).join('\n');
+  return `🎯 *Metas*\n${lines}`;
+}
+function analysisProjection(p) {
+  const ok = p.saldoProjetado >= 0 ? '✅' : '🔴';
+  return `💰 *Projeção do mês*\n• Saldo atual: ${money(p.saldoAtual)}\n• A pagar: ${money(p.aPagar)}\n• Projetado: ${money(p.saldoProjetado)} ${ok}`;
+}
+function analysisByType(t) {
+  return `🏷️ *Por tipo*\n🏠 Essenciais: ${t.essPct}% (${money(t.essenciais)})\n🎯 Estilo de vida: ${t.estiloPct}% (${money(t.estilo)})`;
+}
+function renderMonthAnalysis(m) {
+  return assemble([
+    header('📊', `Análise de ${m.monthLabel}`),
+    comparison(m.comparativo),
+    (m.ranking && m.ranking.length) ? `🏆 *Top gastos*\n${rankingTopN(m.ranking)}` : '',
+    (m.porTipo && (m.porTipo.essenciais || m.porTipo.estilo)) ? analysisByType(m.porTipo) : '',
+    analysisProjection(m.projecao),
+    goalsBlock(m.metas),
+    tomTip(m.tip),
+    quickActions(m.acoes),
+  ]);
+}
+
+module.exports = { header, sep, totalHighlight, tomTip, quickActions, severityTiers, billItem, assemble, money, SEP, renderFixedBills, renderBillsToPay, balanceLine, positionBlock, renderBalances, renderCheckup, rankingTopN, comparison, goalsBlock, analysisProjection, analysisByType, renderMonthAnalysis };

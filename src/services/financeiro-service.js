@@ -400,6 +400,27 @@ async function monthlyReport(collaboratorId, ref = new Date()) {
   return { receitas, despesas, saldo: receitas - despesas, top, temAtividade: rows.length > 0 };
 }
 
+// Quebra do mês: receitas, despesas e por categoria (total + contagem). Base pf_transactions
+// (mesma fonte de querySummary/monthlyReport). ref = qualquer Date dentro do mês desejado.
+async function monthCategoryBreakdown(collaboratorId, ref = new Date()) {
+  const { start, end } = monthBounds(ref);
+  const { data, error } = await supabase.from('pf_transactions')
+    .select('type, category, amount')
+    .eq('collaborator_id', collaboratorId).gte('transaction_date', start).lt('transaction_date', end)
+    .neq('is_adjustment', true);
+  if (error) throw error;
+  const rows = data || [];
+  const receitas = rows.filter((r) => r.type === 'income').reduce((s, r) => s + Number(r.amount), 0);
+  const despesas = rows.filter((r) => r.type === 'expense').reduce((s, r) => s + Number(r.amount), 0);
+  const by = {};
+  for (const r of rows) if (r.type === 'expense') {
+    by[r.category] = by[r.category] || { total: 0, count: 0 };
+    by[r.category].total += Number(r.amount); by[r.category].count += 1;
+  }
+  const byCategory = Object.entries(by).map(([slug, v]) => ({ slug, total: v.total, count: v.count }));
+  return { receitas, despesas, byCategory };
+}
+
 // Colaboradores com >=1 transacao (alvo dos rituais financeiros) — so os ids.
 async function collaboratorsWithActivity() {
   const { data, error } = await supabase.from('pf_transactions').select('collaborator_id');
@@ -602,7 +623,7 @@ module.exports = {
   createBill, findBills, payBill,
   createGoal, findGoal, listGoals,
   addGoalContribution, listGoalContributions, deleteGoalContribution, updateGoal, deactivateGoal,
-  billsDueWithin, listActiveBills, pendingCardInvoices, monthlyReport, collaboratorsWithActivity, collaboratorsForFinanceRitual,
+  billsDueWithin, listActiveBills, pendingCardInvoices, monthlyReport, monthCategoryBreakdown, collaboratorsWithActivity, collaboratorsForFinanceRitual,
   collaboratorsWithActiveBills,
   // cartão
   competenciaFor, addMonthsToCompetencia, currentCompetencia,

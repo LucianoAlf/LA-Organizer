@@ -84,4 +84,23 @@ assert.ok(rc.includes('💰 não informado'));
 assert.ok(rc.includes('💬'));
 assert.ok(renderCheckup({ tiers:{urgente:[],importante:[],atencao:[],ok:[]}, totalRelevante:0, headline:'Suas contas estão em ordem — nada vencido ou pendente de atenção agora. 👍', count:0 }).includes('em ordem'));
 
+const { renderMonthAnalysis } = require('../src/finance/wa-format');
+const mm = {
+  monthLabel:'abril', receitas:8000,
+  comparativo:{ atual:2759, anterior:2000, variation:{ delta:759, pct:38, label:'⬆️ +38%' } },
+  ranking:[{label:'Alimentação',total:2239,count:8,pct:81},{label:'Transporte',total:320,count:4,pct:12}],
+  porTipo:{ essenciais:2559, estilo:200, essPct:93, estiloPct:7 },
+  projecao:{ saldoAtual:10161, aPagar:4329, saldoProjetado:5832 },
+  metas:[{name:'Europa',pct:3,current:500,target:15000}],
+  tip:'Saldo saudável!', acoes:['quanto gastei esse mês','extrato'],
+};
+const rm = renderMonthAnalysis(mm);
+assert.ok(rm.startsWith('📊 *Análise de abril*'));
+assert.ok(rm.includes('⬆️ +38%'));
+assert.ok(rm.includes('🥇 Alimentação: R$ 2.239,00 (81%)'));
+assert.ok(rm.includes('🏠 Essenciais: 93%'));
+assert.ok(rm.includes('Projetado: R$ 5.832,00 ✅'));
+assert.ok(rm.includes('🎯 *Metas*'));
+assert.ok(rm.includes('💡 *Dica do TOM*'));
+
 console.log('PASS — wa-format kit OK.');
