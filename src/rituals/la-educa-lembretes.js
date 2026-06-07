@@ -8,6 +8,7 @@
 // Delegação: la_educa_responsaveis_pilar define instrutores responsáveis por pilar específico.
 const supabase = require('../supabase/client');
 const whatsapp = require('../services/whatsapp');
+const { isQuietNow, nowBrtParts } = require('../services/quiet-hours');
 
 const SEMI_WEEK_MS = 6 * 86400 * 1000;
 
@@ -139,6 +140,7 @@ ${linhasPilares}
     }
 
     try {
+      if ((await isQuietNow(responsavel.id, nowBrtParts(), 'work')).quiet) continue; // silêncio trabalho → defer
       await whatsapp.sendMessage(responsavel.phone, msg);
       await logEnvio('avaliacao_pendente', estagiario.id, responsavel.id, msg);
       console.log(`[la-educa] pendente enviado pra ${responsavel.full_name} (${ehMentor ? 'mentor' : 'instrutor'}) sobre ${estagiario.nome}`);
@@ -165,6 +167,7 @@ Progresso: ${Math.round(estagiario.percentual)}% (${estagiario.checkpoints_ancor
 
 Verifique no LA Organizer.`;
     try {
+      if ((await isQuietNow(coord.id, nowBrtParts(), 'work')).quiet) continue; // silêncio trabalho → defer
       await whatsapp.sendMessage(coord.phone, msg);
       await logEnvio('avaliacao_atrasada', estagiario.id, coord.id, msg);
     } catch (err) {
@@ -188,6 +191,7 @@ Mentor: ${estagiario.mentor_nome || '—'}
 
 Emita o Certificado Alfa no LA Organizer ✅`;
     try {
+      if ((await isQuietNow(coord.id, nowBrtParts(), 'work')).quiet) continue; // silêncio trabalho → defer
       await whatsapp.sendMessage(coord.phone, msg);
       await logEnvio('certificado_pronto', estagiario.id, coord.id, msg);
     } catch (err) {
@@ -311,6 +315,7 @@ async function enviarResumoSemanalMentores() {
     const primeiroNome = mentor.full_name.split(' ')[0];
     const msg = `📊 LA EDUCA — Resumo semanal\n\nOlá ${primeiroNome}! Aqui está o resumo dos estagiários sob sua coordenação:\n\n${linhasEstagiarios.join('\n\n')}\n\nAcesse o LA Organizer pra acompanhar 🎵`;
     try {
+      if ((await isQuietNow(mentor.id, nowBrtParts(), 'work')).quiet) continue; // silêncio trabalho → defer
       await whatsapp.sendMessage(mentor.phone, msg);
       await supabase.from('ritual_logs').insert({
         collaborator_id: mentor.id,
@@ -441,6 +446,7 @@ async function processarFilaNotificacoes() {
       }
       if (!msg) { await marcarSkip(p.id, 'tipo desconhecido ou dados insuficientes'); continue; }
 
+      if ((await isQuietNow(destinatario.id, nowBrtParts(), 'work')).quiet) continue; // silêncio trabalho → defer (fila reprocessa)
       await whatsapp.sendMessage(destinatario.phone, msg);
       await supabase.from('la_educa_lembretes_log')
         .update({ mensagem: msg, enviado_em: new Date().toISOString() })
@@ -500,6 +506,7 @@ async function runLaEducaEscalation() {
       if (await jaEnviouRecente('escalation', e.id, c.id)) continue;
       const msg = `🚨 LA EDUCA — Escalation\n\nEstagiário ${e.nome} está parado há ${dias} dias.\nMentor (${e.mentor_nome || '—'}) recebeu lembrete mas não houve avaliação.\nProgresso: ${Math.round(e.percentual || 0)}%\n\nCobre o mentor ou reatribua o estagiário no LA Organizer.`;
       try {
+        if ((await isQuietNow(c.id, nowBrtParts(), 'work')).quiet) continue; // silêncio trabalho → defer
         await whatsapp.sendMessage(c.phone, msg);
         await logEnvio('escalation', e.id, c.id, msg);
         enviados++;
@@ -546,6 +553,7 @@ async function runLaEducaBriefingSexta() {
     const msg = `Olá ${primeiroNome}! 👋\n\nFinal de semana chegando. Estagiários sob sua coordenação com pendências:\n\n${linhas}\n\nDá uma força e marca as próximas avaliações 🎵`;
 
     try {
+      if ((await isQuietNow(mentor.id, nowBrtParts(), 'work')).quiet) continue; // silêncio trabalho → defer
       await whatsapp.sendMessage(mentor.phone, msg);
       await supabase.from('ritual_logs').insert({
         collaborator_id: mentor.id,

@@ -2455,6 +2455,9 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   }
 
   const skill = await pickSkill(collaborator, lastUserMessage, hist);
+  // Fatia J: expõe a skill ativa pro engine gravar em tom_metrics.skill_active (era coluna 100% morta).
+  // Out-param no opts existente (sem mudar a assinatura de retorno). 'none' distingue "rodou sem skill" de "sem dado".
+  opts.activeSkill = (skill && skill.name) ? skill.name : 'none';
 
   // Organograma — injetado quando skill de governança ativa OU keyword de hierarquia.
   const _orgChartKeywordRe = /\b(organograma|quem\s+(?:é|cuida|coordena|reporta|escala|delega)|quem\s+(?:é\s+)?o?\s*(?:respons[áa]vel|gerente|coordenador|l[íi]der|supervisor)|reporta\s+pra\s+quem|escalar?\s+(?:pra|para)\s+quem|delegar?\s+(?:pra|para)\s+quem|hierarquia)\b/i;

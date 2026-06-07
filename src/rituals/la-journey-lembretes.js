@@ -3,6 +3,7 @@
 
 const supabase = require('../supabase/client');
 const whatsapp = require('../services/whatsapp');
+const { isQuietNow, nowBrtParts } = require('../services/quiet-hours');
 
 async function runLaJourneyLembreteSemanal() {
   const { data: programas } = await supabase.from('la_journey_programas').select('id');
@@ -113,6 +114,12 @@ async function processarFilaLaJourney() {
           mensagem: (item.mensagem || '[sem msg]') + ' [SKIP: sem phone ou opt-out]',
         }).eq('id', item.id);
         continue;
+      }
+      // Silêncio (LA Journey = trabalho). Se o destinatário está em quiet (dia/hora),
+      // DEFERE: não marca enviado_em → reentrega no próximo drain fora da janela.
+      if (item.destinatario_id) {
+        const q = await isQuietNow(item.destinatario_id, nowBrtParts(), 'work');
+        if (q.quiet) continue;
       }
       const msg = item.mensagem || montarMsgPadrao(item.tipo);
       await whatsapp.sendMessage(phone, msg);

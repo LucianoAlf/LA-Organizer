@@ -212,6 +212,13 @@ async function fireCoordinatorReport(collab, ritualType, ymdRef) {
     await logRitualEvent(collab.id, canonical, 'skipped', 'ja_enviado_hoje', ymdRef);
     return false;
   }
+  // Silêncio: relatório de coordenação = trabalho. UUID → fetch canônico (à prova de
+  // footgun de objeto parcial). Causa do vazamento da retrospectiva semanal domingo 18h.
+  const qCR = await isQuietNow(collab.id, nowSaoPaulo(), 'work');
+  if (qCR.quiet) {
+    await logRitualEvent(collab.id, canonical, 'skipped', `quiet:${qCR.reason}`, ymdRef);
+    return false;
+  }
   try {
     const ok = await sendCoordinatorReport(collab.id, ritualType, ymdRef);
     if (!ok) {
@@ -768,6 +775,7 @@ async function notifyCoordinators() {
       msg = `❌ Seu comunicado foi rejeitado${reviewer?.full_name ? ' por ' + reviewer.full_name : ''}. ${motivoStr}`;
     }
 
+    // isenção quiet: transacional (resposta a ação no PWA).
     try {
       await whatsapp.sendMessage(author.phone, msg);
       await supabase
@@ -808,6 +816,7 @@ async function handleCancellations(whatsapp) {
       .eq('status', 'sent');
 
     for (const job of (sentJobs || [])) {
+      // isenção quiet: transacional (resposta a ação no PWA).
       try {
         await whatsapp.sendMessage(job.phone, '[LA Music] — O comunicado anterior foi cancelado. Por favor, desconsidere.');
       } catch (err) {
@@ -1170,6 +1179,9 @@ async function checkChecklistEscalations(now = new Date()) {
       const body =
         `Oi ${collabName}, vi que faltam ${stats.pending} ${stats.pending === 1 ? 'item' : 'itens'} ` +
         `no checklist *${tplName}* de hoje. Tudo certo? Conseguiu fazer?`;
+      // Silêncio (checklist = trabalho). UUID → fetch canônico. Defere: NÃO marca
+      // reminded_at → retenta no próximo tick fora do quiet. Candidato à cobrança domingo 13h.
+      if ((await isQuietNow(c.collaborator.id, nowSaoPaulo(), 'work')).quiet) continue;
       try {
         await whatsapp.sendMessage(c.collaborator.phone, body);
         await supabase.from('op_checklist_completions')
@@ -1239,6 +1251,8 @@ async function checkChecklistEscalations(now = new Date()) {
       `⚠️ *${collabName}* não fechou o checklist *${tplName}* ` +
       `(faltaram ${stats.pending} ${stats.pending === 1 ? 'item' : 'itens'}) ` +
       `e não respondeu cobrança em 20min.`;
+    // Silêncio (trabalho) do gerente/líder. Defere: NÃO marca escalated_at → retenta fora do quiet.
+    if ((await isQuietNow(escalationTarget.id, nowSaoPaulo(), 'work')).quiet) continue;
     try {
       await whatsapp.sendMessage(escalationTarget.phone, body);
       await supabase.from('op_checklist_completions')
@@ -1328,6 +1342,10 @@ async function checkDepartmentOperational(now = new Date()) {
       if (counts[t.priority] !== undefined) counts[t.priority]++;
     }
 
+    // Quiet-hours gate (work): silêncio = DEFER (sem marcar enviado) → reentregue no próximo tick fora do quiet.
+    const _qDept = await isQuietNow(resp.id, nowSaoPaulo(), 'work');
+    if (_qDept.quiet) { continue; }
+
     const firstName = (resp.full_name || '').split(' ')[0];
     const greeting = firstName ? `Bom dia, ${firstName}!` : 'Bom dia!';
 
@@ -1395,6 +1413,12 @@ async function checkCoordinationTimeouts(now = new Date()) {
   }
 
   for (const req of (expired || [])) {
+    // Quiet-hours gate (work): destinatário do heads-up é o requester. Gate ANTES do
+    // update status:'timeout' pra que silêncio = DEFER — a request continua 'sent' e é
+    // reprocessada no próximo tick fora do quiet (nunca perde o heads-up).
+    const _qCoord = await isQuietNow(req.requester_id, nowSaoPaulo(), 'work');
+    if (_qCoord.quiet) { continue; }
+
     const { error: updErr } = await supabase
       .from('coordination_requests')
       .update({ status: 'timeout', updated_at: now.toISOString() })
@@ -1519,6 +1543,7 @@ async function dispatchAnnouncements(now = new Date()) {
         ? `\n\n_${ann.confirmation_question || 'Responde "ok" pra confirmar que recebeu.'}_`
         : '';
       const finalBody = ann.body + confirmTail;
+      // isenção quiet: broadcast humano (comunicado).
       try {
         if (ann.attachment_url && ann.attachment_type) {
           await whatsapp.sendMedia(job.phone, {
@@ -1585,7 +1610,7 @@ async function remindUnconfirmedAnnouncements(now = new Date()) {
   const { data: jobs, error } = await supabase
     .from('announcement_jobs')
     .select(`
-      id, announcement_id, phone, sent_at,
+      id, announcement_id, phone, sent_at, recipient_id,
       announcements!inner(body, requires_confirmation, confirmation_question, status)
     `)
     .eq('status', 'sent')
@@ -1605,6 +1630,12 @@ async function remindUnconfirmedAnnouncements(now = new Date()) {
 
   const nowIso = now.toISOString();
   for (const j of jobs) {
+    // Quiet-hours gate (work): destinatário = recipient_id (collaborator UUID do job).
+    // Silêncio = DEFER: não marca reminder_sent_at → reenviado no próximo tick fora do quiet.
+    // (recipient_id null em jobs antigos → isQuietNow retorna {quiet:false}, sem silenciar errado.)
+    const _qRemind = await isQuietNow(j.recipient_id, nowSaoPaulo(), 'work');
+    if (_qRemind.quiet) { continue; }
+
     const annBody = j.announcements?.body || '';
     const preview = annBody.slice(0, 80) + (annBody.length > 80 ? '…' : '');
     const msg = `⏰ Lembrete: você recebeu um comunicado e ainda não confirmou.\n\n"${preview}"\n\n_Responde "ok" pra confirmar que recebeu._`;
@@ -2021,6 +2052,11 @@ async function ceoTeamUnclosedEventsReport(now = new Date(), opts = {}) {
   for (const ceo of ceos) {
     if (!opts.force && await alreadySent(ceo.id, 'ceo_team_unclosed_events', ymdRef)) continue;
 
+    // Quiet-hours gate (work): silêncio = DEFER ANTES de qualquer side-effect/marca de enviado
+    // (staleness/logRitualEvent) → relatório reentregue no próximo tick fora do quiet.
+    const _qCeoEv = await isQuietNow(ceo.id, nowSaoPaulo(), 'work');
+    if (_qCeoEv.quiet) { continue; }
+
     // Eventos do TIME passados sem fechamento — NÃO filtra por dono
     // (relatório é global pra CEO ver tudo).
     // Filtra eventos 1-5d que JÁ foram cobrados nas últimas 24h (donos receberam
@@ -2196,6 +2232,11 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
 
   for (const ceo of ceos) {
     if (!opts.force && await alreadySent(ceo.id, 'ceo_team_unclosed_tasks', ymdRef)) continue;
+
+    // Quiet-hours gate (work): silêncio = DEFER ANTES de qualquer side-effect/marca de enviado
+    // (staleness/logRitualEvent) → relatório reentregue no próximo tick fora do quiet.
+    const _qCeoTk = await isQuietNow(ceo.id, nowSaoPaulo(), 'work');
+    if (_qCeoTk.quiet) { continue; }
 
     const today = sp.ymd;
     // Sprint 29.1 — filtra data_classification='real' pra esconder teste/arquivado.
@@ -2442,6 +2483,10 @@ async function perLeaderUnclosedTasksReport(now = new Date(), opts = {}) {
 
   for (const p of plan) {
     if (!opts.force && await alreadySent(p.leaderId, 'leader_unclosed_tasks', ymdRef)) continue;
+    // Quiet-hours gate (work): destinatário = líder (p.leaderId). Silêncio = DEFER ANTES de
+    // enviar/logRitualEvent → digest reentregue no próximo tick fora do quiet.
+    const _qLeader = await isQuietNow(p.leaderId, nowSaoPaulo(), 'work');
+    if (_qLeader.quiet) { continue; }
     try {
       await whatsapp.sendMessage(p.phone, p.msg);
       await logRitualEvent(p.leaderId, 'leader_unclosed_tasks', 'sent', `count=${p.count}`, ymdRef);
@@ -2515,6 +2560,11 @@ async function weeklyLeaderEngagementReport(now = new Date()) {
 
   for (const ceo of ceos) {
     if (await alreadySent(ceo.id, 'leader_engagement_weekly', ymdRef)) continue;
+
+    // Quiet-hours gate (work): silêncio = DEFER ANTES de montar/enviar/logRitualEvent →
+    // relatório reentregue no próximo tick fora do quiet.
+    const _qEngage = await isQuietNow(ceo.id, nowSaoPaulo(), 'work');
+    if (_qEngage.quiet) { continue; }
 
     const blocks = [];
     for (const leader of leaders) {
@@ -2678,6 +2728,11 @@ async function remindPendingProjectApprovals(opts = {}) {
 
   const whatsapp = require('../services/whatsapp');
   for (const [, { sup, projects }] of bySupervisor) {
+    // Quiet-hours gate (work): destinatário = aprovador (sup.id). Silêncio = DEFER → como não há
+    // marca de "enviado", a cobrança reaparece no próximo tick fora do quiet (próximo slot 9h/15h).
+    const _qApprov = await isQuietNow(sup.id, nowSaoPaulo(), 'work');
+    if (_qApprov.quiet) { continue; }
+
     const lines = [`👀 *${projects.length} projeto(s) aguardando sua aprovação:*\n`];
     for (const { project, creator } of projects) {
       const hours = Math.floor((Date.now() - new Date(project.created_at).getTime()) / 3600000);
@@ -2938,14 +2993,18 @@ async function run(opts = {}) {
       if (!isWeekend) {
         const cSlot = timeToSlot(p.closing_time);
         if (cSlot !== null && cSlot === slotNow) {
-          await fireRitual(c, 'daily_closing', now.ymd);
+          const qC = await isQuietNow(p, now, 'work');
+          if (qC.quiet) await logRitualEvent(c.id, 'daily_closing', 'skipped', qC.reason, now.ymd);
+          else await fireRitual(c, 'daily_closing', now.ymd);
         }
       }
       // Planejamento semanal — só no dia configurado (default domingo=0) no horário configurado.
       if (Number.isInteger(p.planning_day) && p.planning_day === now.dow) {
         const wpSlot = timeToSlot(p.planning_time);
         if (wpSlot !== null && wpSlot === slotNow) {
-          await fireRitual(c, 'weekly_planning', now.ymd);
+          const qWp = await isQuietNow(p, now, 'work');
+          if (qWp.quiet) await logRitualEvent(c.id, 'weekly_planning', 'skipped', qWp.reason, now.ymd);
+          else await fireRitual(c, 'weekly_planning', now.ymd);
         }
       }
     } catch (err) {
@@ -3954,6 +4013,7 @@ async function checkLojaReposicao(ymdToday) {
       `• ${l.loja_produtos.nome}: ${l.quantidade} (mín ${l.loja_produtos.estoque_minimo ?? 5})`
     ).join('\n');
     const msg = `📦 *Reposição lojinha — ${nome}*\n\n${linhas}`;
+    // isenção quiet: destinatário pode não ser collaborator (sem user_preferences) — não gateável sem mapear origem.
     for (const r of (resp || [])) {
       if (r.whatsapp) {
         try { await whatsapp.sendMessage(r.whatsapp, msg); totalSent++; }
@@ -4183,14 +4243,13 @@ async function checkSilentCollaboratorsCheckin(ymdToday) {
     const dnd = await getDndState(c.id);
     if (dnd.active) continue;
 
-    // Quiet day/weekend? skip (check-in é gentileza, silêncio supera).
-    const { data: pref } = await supabase
-      .from('user_preferences')
-      .select('quiet_weekends, quiet_days, quiet_reason')
-      .eq('collaborator_id', c.id)
-      .maybeSingle();
-    const q = await isQuietNow(pref, nowSaoPaulo());
-    if (q.quiet) continue;
+    // Quiet day/weekend/hours? skip (check-in é gentileza, silêncio supera).
+    // Passa UUID → fetch canônico. O SELECT parcial antigo (sem _work/_personal e sem id)
+    // NÃO era curado pelo auto-heal → quiet_days_work=[0] ficava invisível e vazava no domingo.
+    // Checa os DOIS contextos: silêncio em trabalho OU pessoal → não incomoda.
+    const qW = await isQuietNow(c.id, nowSaoPaulo(), 'work');
+    const qP = await isQuietNow(c.id, nowSaoPaulo(), 'personal');
+    if (qW.quiet || qP.quiet) continue;
 
     const nick = c.full_name === 'Luciano Alf' ? 'Alf' : (c.full_name || '').split(' ')[0] || 'amigo';
     const text = `Oi ${nick}, aqui é o TOM. Faz uns dias que a gente não conversa — tudo certo aí? Se precisar de algo (organizar a semana, criar tarefa, marcar reunião), é só falar.`;
@@ -5008,6 +5067,7 @@ async function sendHealthReport(refYmd = null) {
   // 3. Formata + envia
   const msg = formatHealthReport(run);
   const whatsapp = require('../services/whatsapp');
+  // isenção quiet: relatório admin do sistema.
   await whatsapp.sendMessage(director.phone, msg);
   console.log(`[health-report] enviado pra ${director.full_name} (${String(director.phone).slice(-4)})`);
   // Idempotência: marca em ritual_logs pra dispatcher não reenviar no próximo tick.

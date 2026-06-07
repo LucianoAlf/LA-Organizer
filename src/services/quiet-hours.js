@@ -186,4 +186,20 @@ async function isQuietNow(collabOrId, now, context = 'work') {
   return { quiet: false, reason: null };
 }
 
-module.exports = { isQuietNow, isPartialQuietPrefs, needsContextRefetch, hasContextCols, QUIET_PREF_COLUMNS };
+// Helper: {hour, minute, dow} em America/Sao_Paulo (dow 0=domingo) — formato que
+// isQuietNow espera. Fonte ÚNICA pros callers fora do dispatcher (que já tem nowSaoPaulo()).
+// Usar SEMPRE este (ou nowSaoPaulo) — NUNCA new Date() cru (UTC) — senão o dow vaza na
+// virada do dia (ex.: domingo 23h BRT = segunda UTC → cobrança de domingo escaparia).
+function nowBrtParts() {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Sao_Paulo', hour12: false,
+    weekday: 'short', hour: '2-digit', minute: '2-digit',
+  }).formatToParts(new Date());
+  const get = (t) => (parts.find(p => p.type === t) || {}).value;
+  const DOW = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  let hour = parseInt(get('hour'), 10);
+  if (hour === 24) hour = 0; // en-US 2-digit às vezes devolve "24" à meia-noite
+  return { hour, minute: parseInt(get('minute'), 10), dow: DOW[get('weekday')] ?? 0 };
+}
+
+module.exports = { isQuietNow, isPartialQuietPrefs, needsContextRefetch, hasContextCols, QUIET_PREF_COLUMNS, nowBrtParts };

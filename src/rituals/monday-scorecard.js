@@ -9,6 +9,7 @@
 const supabase = require('../supabase/client');
 const whatsapp = require('../services/whatsapp');
 const builder = require('../services/scorecard-builder');
+const { isQuietNow, nowBrtParts } = require('../services/quiet-hours');
 
 const RITUAL_TYPE_DIR = 'monday_scorecard_director';
 const RITUAL_TYPE_LEADER = 'monday_scorecard_leader';
@@ -111,6 +112,10 @@ async function sendToDirector(opts = {}) {
     const msg = builder.renderForDirector(scRows, leadersById);
     if (!msg) continue;
 
+    // Silêncio (trabalho): defere se o director está em quiet agora (não marca sent → retenta no próximo tick da janela de segunda).
+    const qDir = await isQuietNow(dir.id, nowBrtParts(), 'work');
+    if (qDir.quiet) { console.log(`[monday-scorecard] director=${dir.full_name} em quiet (${qDir.reason}) — defer`); continue; }
+
     try {
       await whatsapp.sendMessage(dir.phone, msg);
       await supabase.from('leader_scorecards')
@@ -165,6 +170,9 @@ async function sendToEachLeader(opts = {}) {
     if (!leader?.phone) continue;
 
     try {
+      // Silêncio (trabalho): defere se o líder está em quiet (não marca sent_to_leader → retenta).
+      const qL = await isQuietNow(leader.id, nowBrtParts(), 'work');
+      if (qL.quiet) { console.log(`[monday-scorecard] leader=${leader.full_name} em quiet (${qL.reason}) — defer`); continue; }
       const msg = builder.renderForLeader(sc, leader);
       await whatsapp.sendMessage(leader.phone, msg);
       await supabase.from('leader_scorecards')

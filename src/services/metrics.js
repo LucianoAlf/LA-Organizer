@@ -24,6 +24,7 @@ async function recordMessage(payload) {
       marker_result: payload.marker_result || null,
       error_kind: payload.error_kind || null,
       skill_active: payload.skill_active || null,
+      actionable_intent: !!payload.actionable_intent, // Fatia J: era OMITIDO no insert → coluna ficava sempre no DEFAULT false (dashboard ACTIONABLE_NO_MARKER cego)
     });
   } catch (e) {
     // Nunca quebrar o fluxo principal por causa de telemetria.

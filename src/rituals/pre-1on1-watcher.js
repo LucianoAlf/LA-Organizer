@@ -11,6 +11,7 @@
 const supabase = require('../supabase/client');
 const whatsapp = require('../services/whatsapp');
 const { buildLeaderBriefing } = require('../services/leader-briefing');
+const { isQuietNow, nowBrtParts } = require('../services/quiet-hours');
 
 const RITUAL_TYPE = 'pre_1on1_briefing';
 const WINDOW_START_MIN = 25;  // pega quem começa em 25min
@@ -66,6 +67,10 @@ async function tick(opts = {}) {
     try {
       const briefing = await buildLeaderBriefing(ev.related_to_collaborator_id);
       if (!briefing) { skipped++; continue; }
+
+      // Silêncio (trabalho): se o destinatário está em quiet, não manda o briefing pré-1on1.
+      const qB = await isQuietNow(recipient.id, nowBrtParts(), 'work');
+      if (qB.quiet) { skipped++; continue; }
 
       await whatsapp.sendMessage(recipient.phone, briefing);
       await supabase.from('ritual_logs').insert({

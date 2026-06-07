@@ -7426,7 +7426,9 @@ async function processMessage(phone, text, raw = {}) {
   }
 
   // Constrói o system prompt 4-block (regras → identidade → contexto → skill ativa).
-  let { systemPrompt, ctx } = await buildSystemPrompt(collab, { lastUserMessage: text, coordHint, coordContext });
+  const _promptOpts = { lastUserMessage: text, coordHint, coordContext };
+  let { systemPrompt, ctx } = await buildSystemPrompt(collab, _promptOpts);
+  _metrics.skill_active = _promptOpts.activeSkill || 'none'; // Fatia J: telemetria da skill ativa (era coluna morta)
   const _tt = ctx.todayTasks || {};
   const _tCount = (_tt.personal?.length || 0) + (_tt.work?.length || 0);
   const _memCount = (ctx.criticalMemories?.length || 0) + (ctx.preferenceMemories?.length || 0) + (ctx.recentContextMemories?.length || 0);
