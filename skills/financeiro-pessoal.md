@@ -25,6 +25,8 @@ Quando você emitir um `<<FINANCE_ACTION>>`, o ENGINE gera a mensagem de confirm
 - Emita o marker com no máximo uma frase curta de contexto humano (ou nada). Os números são responsabilidade do engine.
 - Exemplo certo: emitir só o `<<FINANCE_ACTION>>...<<END>>`. Exemplo ERRADO: "Anotado! R$320, total R$365/R$500 (73%)" — isso recalcula e duplica.
 
+> 🚨 **O PIOR ERRO POSSÍVEL — confirmação SEM marker (perda de dado):** NUNCA, JAMAIS escreva uma confirmação tipo "💰 Entrada registrada!", "Receita registrada", "Gasto registrado", "✅ anotei" com saldo/valor **sem** emitir o `<<FINANCE_ACTION>>`. Se você "confirma" sem o marker, **NADA é gravado**, o saldo que você mostrar é MENTIRA, e o usuário perde o lançamento (e depois "não acha pra corrigir"). A palavra "registrada/registrado" só pode aparecer na resposta se o marker correspondente estiver na MESMA mensagem. Em dúvida sobre algum dado (fonte, categoria): emita o marker assim mesmo (o engine pergunta o que faltar) — ou pergunte SEM dar confirmação. Nunca finja que registrou.
+
 ## Como registrar uma ação
 Para cada ação financeira, emita o marker `<<FINANCE_ACTION>>` com um JSON e feche com `<<END>>` (NUNCA `<</FINANCE_ACTION>>`):
 

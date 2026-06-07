@@ -6187,6 +6187,24 @@ function safeCategory(cat, description, type, extraSlugs) {
   return pfValidSlugs(type).has(mapped) ? mapped : pfFallbackSlug(type);
 }
 
+// Resolve um rótulo/slug de categoria (vindo do LLM) p/ um slug VÁLIDO: canônica (CAT_META)
+// OU categoria CUSTOM do usuário (casando por slug ou por label). Usado no edit_transaction
+// p/ honrar categorias salvas pelo usuário (ex: "shows") — antes o _normCat só conhecia as 43
+// canônicas e descartava a custom em silêncio (bug FIN-EDIT-CUSTOMCAT, caso Matheus 07/06).
+function resolveCategorySlug(raw, customCats) {
+  if (!raw) return null;
+  const financeFmt = require('./services/finance-format');
+  const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+  const key = norm(raw).replace(/[\s-]+/g, '_');
+  if (financeFmt.CAT_META[key]) return key;                              // canônica
+  const cats = Array.isArray(customCats) ? customCats : [];
+  const bySlug = cats.find((c) => c.slug === key);
+  if (bySlug) return bySlug.slug;                                        // custom por slug
+  const rawNorm = norm(raw);
+  const byLabel = cats.find((c) => norm(c.label) === rawNorm || norm(c.label).replace(/[\s-]+/g, '_') === key);
+  return byLabel ? byLabel.slug : null;                                  // custom por label
+}
+
 // Compra no cartão (fonte única, usada pelo case card_purchase E pelo roteamento de register_transaction).
 async function recordCardPurchase(cid, card, { amount, description, category, installments, date }) {
   const financeFmt = require('./services/finance-format');
@@ -8649,9 +8667,11 @@ async function processMessage(phone, text, raw = {}) {
   }
 
   // 2.9) Finance action (Sprint 27). SEGURANCA: collab.id (remetente), nunca o id do marker.
+  let _finActionRan = false;
   {
     const finParsed = parseFinanceMarkers(reply);
     if (finParsed.actions.length > 0) {
+      _finActionRan = true;
       // Despacha CADA marker (lista de gastos numa msg só) e concatena as confirmações.
       const finReplies = [];
       for (const a of finParsed.actions) {
@@ -8680,6 +8700,45 @@ async function processMessage(phone, text, raw = {}) {
       console.warn('[Finance] WARN: malformed marker');
       await logMarker(collab.id, 'FINANCE_ACTION', 'rejected', 'schema_invalid', reply);
       reply = finParsed.cleanText || reply;
+    }
+  }
+
+  // 2.95) GUARDA ANTI-FABRICAÇÃO de finança (caso Matheus 07/06 — FIN-FAKE-CONFIRM).
+  // O LLM às vezes NARRA "💰 Entrada registrada! ... Saldo R$ X" como texto livre SEM emitir
+  // <<FINANCE_ACTION>>: nada persiste, o saldo mostrado é mentira e a correção seguinte "não
+  // acha lançamento". Se NENHUM marker de finança rodou E o texto tem assinatura de confirmação,
+  // NÃO mandamos a mentira: registramos de verdade (pipeline real) a partir da msg original,
+  // ou pedimos pra repetir. Determinístico, sem 2ª chamada ao LLM.
+  if (!_finActionRan && typeof reply === 'string') {
+    try {
+      const { detectRegisterIntent, looksLikeFinanceConfirmation } = require('./finance/detect-register-intent');
+      if (looksLikeFinanceConfirmation(reply)) {
+        const _origMsg = String(inboundVerbatimText || text || '');
+        const _det = detectRegisterIntent(_origMsg, { typeHint: reply });
+        console.warn(`[Finance] ANTI-FABRICAÇÃO: confirmação sem marker (det=${_det ? _det.type + '/' + _det.amount : 'null'}) phone=${_phoneTail}`);
+        await logMarker(collab.id, 'FINANCE_ACTION', 'rejected', 'fabricated_no_marker', reply);
+        const _askAgain = 'Opa! Quase anotei, mas me perdi 😅 Me confirma rapidinho numa frase: *quanto* foi, se é *entrada ou saída*, e de onde saiu/entrou. Ex: _"entrou 300 no Nubank — show"_.';
+        if (_det) {
+          const _params = { type: _det.type, amount: _det.amount, description: _det.description };
+          if (_det.account_name) _params.account_name = _det.account_name;
+          if (_det.method) _params.method = _det.method;
+          try {
+            const _real = await handleFinanceAction(collab, 'register_transaction', _params);
+            reply = (_real && _real.trim()) ? _real : _askAgain;
+            if (_real && _real.trim()) {
+              await logMarker(collab.id, 'FINANCE_ACTION', 'executed', `register_transaction(anti_fabric:${_det.type})`, null);
+              console.log(`[Finance] ANTI-FABRICAÇÃO: re-registrado deterministicamente (${_det.type} ${_det.amount}) phone=${_phoneTail}`);
+            }
+          } catch (_e) {
+            console.error('[Finance] ANTI-FABRICAÇÃO re-registro err:', _e.message);
+            reply = _askAgain;
+          }
+        } else {
+          reply = _askAgain;
+        }
+      }
+    } catch (_e) {
+      console.warn('[Finance] ANTI-FABRICAÇÃO guard err (silent):', _e.message);
     }
   }
 
