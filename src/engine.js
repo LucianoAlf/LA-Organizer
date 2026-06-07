@@ -5577,7 +5577,7 @@ function _accBuildBlock(collabId, q1, q2, q3, q4, focusCandidate, focusConfidenc
     }
     if (q3) {
       const min = _accMinutesAgo(q3.responded_at);
-      lines.push(`- Última resposta recebida: ${_accShort(q3.id)} | de=${_accFirstName(q3.responder_name)} | "${_accTrunc(q3.response_summary, 60)}" | há ${min}min`);
+      lines.push(`- Última resposta recebida (PARÁFRASE do que entendi, NÃO é a fala literal — não repasse como citação): ${_accShort(q3.id)} | de=${_accFirstName(q3.responder_name)} | "${_accTrunc(q3.response_summary, 60)}" | há ${min}min`);
     }
     if (openRequests && openRequests.length > 0) {
       lines.push('- Requests abertos:');
@@ -8510,7 +8510,16 @@ async function processMessage(phone, text, raw = {}) {
     if (parsedCoord && parsedCoord.malformed) {
       console.warn('[CoordinationRequest] WARN: all markers malformed, dropping block', parsedCoord.reasons);
       await logMarker(collab.id, 'COORDINATION_REQUEST', 'rejected', 'schema_invalid', null);
-      reply = parsedCoord.cleanText || reply;
+      // Fatia B — anti-mentira (espelha o guard de TASK_UPDATE/EVENT_CREATE): marker
+      // rejeitado por schema_invalid NÃO entregou recado nenhum. Se o texto limpo do
+      // LLM afirma envio ("avisei/mandei/repassei..."), troca por aviso honesto —
+      // o recipient NUNCA recebeu. Caso Daiana 05/06 ("📨 Avisei a Anne" + rejeição).
+      let baseCoord = parsedCoord.cleanText || reply;
+      const optimisticCoordPattern = /\b(avis(ei|ado|ada|amos)|mand(ei|ado|ada|ando|amos)|repass(ei|ado|ada|ando|amos)|encaminh(ei|ado|ada|ando|amos)|envi(ei|ado|ada|ados|adas)|transmit(i|ido)|comuniqu(ei|ado|ada)|j[áa]\s+(mandei|avisei|enviei|repassei))\b/i;
+      if (optimisticCoordPattern.test(baseCoord)) {
+        baseCoord += '\n\n_⚠️ Tive um problema técnico e não consegui enviar o recado — ninguém foi avisado ainda. Me passa de novo pra quem e o quê você quer mandar?_';
+      }
+      reply = baseCoord;
     } else if (parsedCoord && parsedCoord.items) {
       let okCount = 0, failCount = 0;
       const failedRecipients = [];
