@@ -185,6 +185,25 @@ test('"N feira" (dia da semana) → null', () => {
   assert.strictEqual(detectRegisterIntent('anota aí que o ensaio mudou pra 4 feira'), null);
 });
 
+// ── Round 4 adversarial: comparativa, "será se", futuro-registrar, aula=receita ──
+test('pergunta comparativa "ou não" → null', () => {
+  assert.strictEqual(detectRegisterIntent('gastei mais que 500 esse mês ou não'), null);
+});
+test('"será se já registrei" (checagem) → null', () => {
+  assert.strictEqual(detectRegisterIntent('será se já registrei os 300 de hoje'), null);
+});
+test('futuro "quero registrar depois" → null', () => {
+  assert.strictEqual(detectRegisterIntent('quero registrar depois uns 100 que entrou'), null);
+});
+test('"150 aula particular" = receita (não quantidade)', () => {
+  const r = detectRegisterIntent('anota 150 aula particular', { typeHint: 'Entrada registrada Saldo +R$' });
+  assert.ok(r); assert.strictEqual(r.amount, 150); assert.strictEqual(r.type, 'income');
+});
+test('"já paguei 50 anota" (ação concluída) ainda registra', () => {
+  const r = detectRegisterIntent('já paguei 50 anota aí');
+  assert.ok(r); assert.strictEqual(r.amount, 50); assert.strictEqual(r.type, 'expense');
+});
+
 // ── Assinatura de confirmação FABRICADA ──
 test('looksLike: "registrado" NEGADO (fala do usuário) → false', () => {
   assert.strictEqual(looksLikeFinanceConfirmation('paguei R$ 100 e ainda não foi registrado nada'), false);

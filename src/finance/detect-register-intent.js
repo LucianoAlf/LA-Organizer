@@ -89,10 +89,11 @@ const RE_INSTALLMENT = /\b\d+\s*x\b|\bparcel|\bvezes\b|\bem\s+\d+\s*(x|vezes|par
 const RE_TRANSFER = /\btransfer/;
 // Pergunta / dúvida / recall / agregado → não é comando de registro NOVO.
 // NÃO inclui "que <verbo>" nem "certo" soltos: matavam registros válidos coloquiais
-// ("registra 90 que ganhei", "gastei 200 no rolê certo"). Recall real cai em lembr/confer/?/mês passado.
-const RE_DOUBT = /\?|\bn[ãa]o lembro\b|\bacho que\b|\bsei l[áa]\b|\bser[áa] que\b|\bn[ée]\b|\bconfer\w*|\bfoi isso\b|\btem certeza\b|\blembr\w*|\bm[êe]s passado\b|\bm[êe]s inteiro\b|\bsomando\b|\bno total\b|\bno geral\b|\bpassad[oa]\b/;
-// Intenção FUTURA (ainda não aconteceu) → não registra.
-const RE_FUTURE = /\b(preciso|quero|vou|pretendo|tenho que|tenho de|bora)\b[^?.!]*\b(comprar|pagar|gastar|lan[çc]ar|guardar)\b/;
+// ("registra 90 que ganhei", "gastei 200 no rolê certo"). Recall real cai em lembr/confer/?/etc.
+// "já registrei/lancei" = checagem ("será se já registrei") — mas NÃO "já paguei 50" (registro válido).
+const RE_DOUBT = /\?|\bn[ãa]o lembro\b|\bacho que\b|\bsei l[áa]\b|\bser[áa]\s+(que|se)\b|\bn[ée]\b|\bconfer\w*|\bfoi isso\b|\btem certeza\b|\blembr\w*|\bou n[ãa]o\b|\bdeu uma ideia\b|\bj[áa]\s+(registr|lanc)\w*|\bm[êe]s passado\b|\bm[êe]s inteiro\b|\bsomando\b|\bno total\b|\bno geral\b|\bpassad[oa]\b/;
+// Intenção FUTURA (ainda não aconteceu) → não registra. Inclui registrar/anotar ("quero registrar depois").
+const RE_FUTURE = /\b(preciso|quero|vou|pretendo|tenho que|tenho de|bora)\b[^?.!]*\b(comprar|pagar|gastar|lan[çc]ar|guardar|registrar|anotar|adicionar)\b/;
 // Queries/consultas.
 const RE_QUERY = /\b(qual|quais|quanto|quanta|cad[êe]|quando|extrato|fechamento|resumo|relat[óo]rio|saldo de|me manda|me mostra|mostra a[íi])\b/;
 
