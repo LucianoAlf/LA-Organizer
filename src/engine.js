@@ -6206,13 +6206,14 @@ function resolveCategorySlug(raw, customCats) {
 }
 
 // Compra no cartão (fonte única, usada pelo case card_purchase E pelo roteamento de register_transaction).
-async function recordCardPurchase(cid, card, { amount, description, category, installments, date }) {
+async function recordCardPurchase(cid, card, { amount, description, category, installments, date }, outcome = {}) {
   const financeFmt = require('./services/finance-format');
   const inst = parseInt(installments || 1, 10) || 1;
   const _cats = await financeService.listCategorySlugs(cid).catch(() => []);
   const _extra = new Set(_cats.filter((r) => r.collaborator_id).map((r) => r.slug));
   const cat = safeCategory(category, description, 'expense', _extra);
   const rows = await financeService.insertCardPurchase(cid, card, { category: cat, amount: Number(amount), description, transaction_date: date, installments: inst });
+  outcome.persisted = true; // Fatia C: marca persistência real (compra no cartão gravada)
   const usage = await financeService.cardUsage(cid, card);
   let reply = financeFmt.txnRegistered(card, { description, amount: Number(amount), category: cat, installments: inst, competencia: rows[0].competencia }, usage);
   const al = await financeService.checkAndMarkLimitAlert(cid, card);
@@ -6222,10 +6223,11 @@ async function recordCardPurchase(cid, card, { amount, description, category, in
 
 // Escreve transação de caixa + bloco de orçamento + confirmação. Fonte garantida (account).
 // assumedSource: nome da principal quando foi default silencioso (nomeia na confirmação).
-async function writeCashTransaction(cid, { type, category, amount, description, date, account, assumedSource }) {
+async function writeCashTransaction(cid, { type, category, amount, description, date, account, assumedSource }, outcome = {}) {
   const financeFmt = require('./services/finance-format');
   const prev = type === 'expense' ? await financeService.monthCategoryTotal(cid, category) : 0;
   const _txn = await financeService.insertTransaction(cid, { type, category, amount, description, transaction_date: date, account_id: account.id });
+  outcome.persisted = true; // Fatia C: marca persistência real (transação de caixa gravada)
   console.log(`[Finance] txn ${_txn && _txn.id ? _txn.id.slice(0,8) : '?'} registrada cid=${String(cid).slice(0,8)}`);
 
   let budgetBlock = null;
@@ -6253,7 +6255,7 @@ async function writeCashTransaction(cid, { type, category, amount, description, 
 }
 
 // SEGURANCA (spec §6.2): cid SEMPRE = collab.id (remetente resolvido server-side). NUNCA params.collaborator_id.
-async function handleFinanceAction(collab, action, params) {
+async function handleFinanceAction(collab, action, params, outcome = {}) {
   const cid = collab.id;
   const p = normalizeParams(params || {});
   const financeFmt = require('./services/finance-format');
@@ -6291,14 +6293,14 @@ async function handleFinanceAction(collab, action, params) {
 
       // Cartão + despesa → fatura
       if (src.kind === 'card' && type === 'expense') {
-        return await recordCardPurchase(cid, src.card, { amount: p.amount, description: p.description, category, installments: params.installments, date: p.date });
+        return await recordCardPurchase(cid, src.card, { amount: p.amount, description: p.description, category, installments: params.installments, date: p.date }, outcome);
       }
 
       // Fonte explícita resolvida em carteira → grava
       if (src.kind === 'account') {
         return await writeCashTransaction(cid, {
           type, category, amount: p.amount, description: p.description, date: p.date, account: src.account,
-        });
+        }, outcome);
       }
 
       // Daqui pra baixo: sem fonte resolvível (none, ou cartão numa receita).
@@ -6308,7 +6310,7 @@ async function handleFinanceAction(collab, action, params) {
         return await writeCashTransaction(cid, {
           type, category, amount: p.amount, description: p.description, date: p.date,
           account: primary, assumedSource: primary.name,
-        });
+        }, outcome);
       }
 
       // 2) Tem contas (≥2, sem principal) → pergunta + pending-state.
@@ -6349,6 +6351,7 @@ async function handleFinanceAction(collab, action, params) {
       let n = 1;
       if (txn.card_id && txn.purchase_group) n = await financeService.deleteTransactionGroup(cid, txn.purchase_group);
       else await financeService.deleteTransaction(cid, txn.id);
+      outcome.persisted = true; // Fatia C
       return `🗑️ Apaguei *${txn.description || txn.category}* (${financeFmt.money(Number(txn.amount))})${n > 1 ? ` — ${n} parcelas` : ''}. Saldo reajustado.`;
     }
     case 'edit_transaction': {
@@ -6375,6 +6378,7 @@ async function handleFinanceAction(collab, action, params) {
       }
       if (!Object.keys(patch).length) return 'O que você quer corrigir? (valor, categoria, descrição ou conta)';
       const updated = await financeService.updateTransaction(cid, txn.id, patch);
+      outcome.persisted = true; // Fatia C
       const meta = financeFmt.CAT_META[updated.category] || { label: updated.category };
       return `✏️ Corrigido: *${updated.description || meta.label}* — ${financeFmt.money(Number(updated.amount))} · ${meta.label}. Saldo reajustado.`;
     }
@@ -6394,6 +6398,7 @@ async function handleFinanceAction(collab, action, params) {
         category: params.category || mapCategory(params.name || ''),
         type: params.type || 'expense', remind_days_before: params.remind_days_before,
       });
+      outcome.persisted = true; // Fatia C
       const quando = recurrence === 'once' ? `vence ${b.due_date}` : `todo dia ${b.due_day}`;
       return `✅ Conta cadastrada: ${b.name} (R$${b.amount}, ${quando}).`;
     }
@@ -6402,6 +6407,7 @@ async function handleFinanceAction(collab, action, params) {
       if (cands.length === 0) return 'Não achei conta com esse nome.';
       if (cands.length > 1) return 'Achei mais de uma: ' + cands.map((c, i) => `${i + 1}) ${c.name}`).join(', ') + '. Qual delas?';
       const paid = await financeService.payBill(cid, cands[0]);
+      outcome.persisted = true; // Fatia C
       return `✅ ${paid.name} marcada como paga (R$${paid.amount}).`;
     }
     case 'create_goal': {
@@ -6409,6 +6415,7 @@ async function handleFinanceAction(collab, action, params) {
         name: params.name, target_amount: params.target_amount,
         monthly_contribution: params.monthly_contribution, deadline: params.deadline, icon: params.icon,
       });
+      outcome.persisted = true; // Fatia C
       let reply = `${g.icon || '🎯'} Meta criada: ${g.name} (R$${g.target_amount}).`;
       if (g.monthly_contribution) {
         const ms = monthsToGoalSimple(g.target_amount, g.current_amount, g.monthly_contribution);
@@ -6425,6 +6432,7 @@ async function handleFinanceAction(collab, action, params) {
       const add = Number(params.add_amount || 0);
       if (!(add > 0)) return 'Quanto você quer guardar?';
       await financeService.addGoalContribution(cid, goal.id, { amount: add }); // trigger atualiza
+      outcome.persisted = true; // Fatia C
       const novo = Number(goal.current_amount) + add;
       const pct = Math.round((novo / goal.target_amount) * 100);
       return `✅ Guardou R$${add} em ${goal.name}. Progresso: ${pct}% (R$${novo}/R$${goal.target_amount}).`;
@@ -6437,22 +6445,26 @@ async function handleFinanceAction(collab, action, params) {
         if (params[k] !== undefined) patch[k] = params[k];
       }
       const g = await financeService.updateGoal(cid, cands[0].id, patch);
+      outcome.persisted = true; // Fatia C
       return `✏️ Meta atualizada: ${g.icon || '🎯'} ${g.name} (alvo R$${g.target_amount}).`;
     }
     case 'delete_goal': {
       const cands = await financeService.findGoal(cid, params.goal_name || params.name || '');
       if (cands.length === 0) return 'Não achei essa meta.';
       await financeService.deactivateGoal(cid, cands[0].id);
+      outcome.persisted = true; // Fatia C
       return `🗄️ Meta "${cands[0].name}" arquivada.`;
     }
     case 'set_budget': {
       const b = await financeService.setBudget(cid, { category: params.category, monthly_limit: params.monthly_limit });
+      outcome.persisted = true; // Fatia C
       return `✅ Orçamento de ${b.category}: R$${b.monthly_limit}/mês.`;
     }
     case 'create_account': {
       const slug = financeService.matchBankSlug(params.name || '');
       const color = slug ? financeService.bankColor(slug) : null;
       const a = await financeService.createAccount(cid, { name: params.name, type: params.type, icon: params.icon, goal_monthly: params.goal_monthly, bank_slug: slug, color });
+      outcome.persisted = true; // Fatia C
       return `✅ Carteira criada: ${a.icon || '🏦'} ${a.name}.`;
     }
     case 'edit_account': {
@@ -6462,6 +6474,7 @@ async function handleFinanceAction(collab, action, params) {
       for (const k of ['name','type','icon','goal_monthly']) if (params[k] !== undefined) patch[k] = params[k];
       if (params.bank !== undefined) { const s = financeService.matchBankSlug(params.bank); if (s) { patch.bank_slug = s; patch.color = financeService.bankColor(s); } }
       const a = await financeService.updateAccount(cid, acc.id, patch);
+      outcome.persisted = true; // Fatia C
       return `✏️ Carteira atualizada: ${a.icon || '🏦'} ${a.name}.`;
     }
     case 'query_accounts': {
@@ -6486,6 +6499,7 @@ async function handleFinanceAction(collab, action, params) {
         if (params.color != null) patch.color = params.color;
         if (Object.keys(patch).length > 0) {
           const u = await financeService.updateCard(cid, exato.id, patch);
+          outcome.persisted = true; // Fatia C
           return `👽 O cartão *${u.name}* já existia — atualizei: limite ${financeFmt.money(u.credit_limit)}, fecha dia ${u.closing_day}, vence dia ${u.due_day}.`;
         }
         return `👽 Você já tem o cartão *${exato.name}* (limite ${financeFmt.money(exato.credit_limit)}, fecha dia ${exato.closing_day}, vence dia ${exato.due_day}). Quer mudar algum dado?`;
@@ -6494,6 +6508,7 @@ async function handleFinanceAction(collab, action, params) {
         name: params.name, brand: params.brand, color: params.color,
         credit_limit: params.credit_limit, closing_day: params.closing_day, due_day: params.due_day, icon: params.icon,
       });
+      outcome.persisted = true; // Fatia C
       return `👽 Cartão *${c.name}* cadastrado! Limite ${financeFmt.money(c.credit_limit)}, fecha dia ${c.closing_day}, vence dia ${c.due_day}.`;
     }
     case 'card_purchase': {
@@ -6529,6 +6544,7 @@ async function handleFinanceAction(collab, action, params) {
       const rows = await financeService.insertCardPurchase(cid, card, {
         category, amount, description: params.description, transaction_date: params.date, installments,
       });
+      outcome.persisted = true; // Fatia C
       const usage = await financeService.cardUsage(cid, card);
       let reply = financeFmt.txnRegistered(card, {
         description: params.description, amount, category, installments, competencia: rows[0].competencia,
@@ -6566,6 +6582,7 @@ async function handleFinanceAction(collab, action, params) {
         if (accs.length === 1) fromId = accs[0].id;
       }
       await financeService.payCardInvoice(cid, card, { competencia: comp, amount, paid_from_account: fromId });
+      outcome.persisted = true; // Fatia C
       const after = await financeService.cardInvoice(cid, card.id, comp);
       return `✅ Pagamento de *${financeFmt.money(amount)}* na fatura do *${card.name}* registrado.\n` +
         (after.isPaid ? '🎉 Fatura quitada!' : `Ainda faltam *${financeFmt.money(after.remaining)}*.`);
@@ -6578,6 +6595,7 @@ async function handleFinanceAction(collab, action, params) {
       const amount = Number(params.amount);
       if (!amount || amount <= 0) return '❓ Qual o valor da transferência?';
       await financeService.createTransfer(cid, { from_account: from.id, to_account: to.id, amount, description: params.description });
+      outcome.persisted = true; // Fatia C
       return `🔁 Transferi *${financeFmt.money(amount)}* de *${from.name}* → *${to.name}*. Saldo total inalterado.`;
     }
     case 'query_month_analysis': {
@@ -8453,16 +8471,32 @@ async function processMessage(phone, text, raw = {}) {
   }
 
   // Sprint Fase B — <<SHOP_ACTION>> — venda, entrada, ajuste e consulta da lojinha.
+  // Fatia C — markers honestos: SHOP_ACTION agora SEMPRE registra em marker_logs (antes: ZERO
+  // observabilidade — ação da lojinha era invisível ao health-check/auditoria). WRITE que não
+  // persistiu (pergunta/"não achei") → 'skipped'; ação desconhecida (handler retorna null) →
+  // 'rejected' + aviso (antes vazava o marker cru ou sumia em silêncio).
   {
+    const _shopStrip = /<<SHOP_ACTION>>[\s\S]*?<<(?:\/?SHOP_ACTION|END)>>/g;
+    const SHOP_WRITE = new Set(['shop_sale', 'shop_entry', 'shop_adjust', 'shop_estorno', 'shop_reserve', 'shop_pendencia']);
     const shop = parseShopAction(reply);
     if (shop) {
       const _userName = (collab && collab.full_name) ? collab.full_name : 'usuário';
       try {
-        const shopResult = await handleShopAction(shop, collab, _userName);
-        if (shopResult) reply = (reply.replace(/<<SHOP_ACTION>>[\s\S]*?<<(?:\/?SHOP_ACTION|END)>>/g, '') + '\n\n' + shopResult).trim();
+        const _shopOutcome = { persisted: false };
+        const shopResult = await handleShopAction(shop, collab, _userName, _shopOutcome);
+        if (shopResult) {
+          reply = (reply.replace(_shopStrip, '') + '\n\n' + shopResult).trim();
+          const _r = (SHOP_WRITE.has(shop.action) && !_shopOutcome.persisted) ? 'skipped' : 'executed';
+          await logMarker(collab.id, 'SHOP_ACTION', _r, _r === 'skipped' ? `no_persist:${shop.action}` : shop.action, null);
+        } else {
+          // handler retornou null → ação não reconhecida: nunca vaza o marker cru nem some calado.
+          reply = (reply.replace(_shopStrip, '') + '\n\n⚠️ Não entendi essa ação da lojinha — pode reformular?').trim();
+          await logMarker(collab.id, 'SHOP_ACTION', 'rejected', `unknown_action:${shop.action}`, reply);
+        }
       } catch (e) {
         console.error('[ShopAction] handler err:', e.message);
-        reply = (reply.replace(/<<SHOP_ACTION>>[\s\S]*?<<(?:\/?SHOP_ACTION|END)>>/g, '') + '\n\n⚠️ Não consegui registrar: ' + e.message).trim();
+        reply = (reply.replace(_shopStrip, '') + '\n\n⚠️ Não consegui registrar: ' + e.message).trim();
+        await logMarker(collab.id, 'SHOP_ACTION', 'rejected', `error:${e.message}`, null);
       }
     }
   }
@@ -8681,6 +8715,13 @@ async function processMessage(phone, text, raw = {}) {
 
   // 2.9) Finance action (Sprint 27). SEGURANCA: collab.id (remetente), nunca o id do marker.
   let _finActionRan = false;
+  // Fatia C — markers honestos: só ações de ESCRITA podem virar 'skipped' quando o handler
+  // não persistiu (pediu fonte / "não achei" / coaching). query_* sempre 'executed'.
+  const FIN_WRITE = new Set([
+    'register_transaction', 'card_purchase', 'delete_transaction', 'edit_transaction',
+    'register_bill', 'pay_bill', 'create_goal', 'update_goal', 'edit_goal', 'delete_goal',
+    'set_budget', 'create_account', 'edit_account', 'create_card', 'pay_invoice', 'transfer',
+  ]);
   {
     const finParsed = parseFinanceMarkers(reply);
     if (finParsed.actions.length > 0) {
@@ -8689,8 +8730,12 @@ async function processMessage(phone, text, raw = {}) {
       const finReplies = [];
       for (const a of finParsed.actions) {
         try {
-          const finReply = await handleFinanceAction(collab, a.action, a.params);
-          await logMarker(collab.id, 'FINANCE_ACTION', 'executed', a.action, null);
+          const _outcome = { persisted: false };
+          const finReply = await handleFinanceAction(collab, a.action, a.params, _outcome);
+          // Fatia C: WRITE sem persistência (pergunta/não-achei) → 'skipped', não 'executed'.
+          const _result = (FIN_WRITE.has(a.action) && !_outcome.persisted) ? 'skipped' : 'executed';
+          const _reason = (_result === 'skipped') ? `no_persist:${a.action}` : a.action;
+          await logMarker(collab.id, 'FINANCE_ACTION', _result, _reason, null);
           // Bug 3: o engine é a fonte da confirmação (descarta narração do LLM que duplicaria).
           if (finReply && finReply.trim()) finReplies.push(finReply.trim());
         } catch (err) {
@@ -10427,7 +10472,7 @@ async function resolveProfessorIndicadorId(nome) {
   }
 }
 
-async function handleShopAction(shop, collab, userName) {
+async function handleShopAction(shop, collab, userName, outcome = {}) {
   const { laReportClient: _lrc } = require('./services/la-report-client');
   const p = normalizeShopParams(shop.params);
   const viaAudit = `via TOM por ${userName}`;
@@ -10470,6 +10515,7 @@ async function handleShopAction(shop, collab, userName) {
     if (error) return `⚠️ ${error.message}`;
     const r = data?.[0];
     if (!r) return '⚠️ Venda não retornou resultado.';
+    outcome.persisted = true; // Fatia C: venda gravada via RPC
 
     const total = produto.preco * p.quantidade;
     let msg = `✅ Venda registrada — ${produto.nome} ×${p.quantidade} (R$${total.toFixed(2)}, ${p.forma_pagamento}). Estoque ${p.unidade}: ${r.saldo_apos}.`;
@@ -10520,6 +10566,7 @@ async function handleShopAction(shop, collab, userName) {
       p_observacoes: p.observacoes,
     });
     if (error) return `⚠️ ${error.message}`;
+    outcome.persisted = true; // Fatia C: entrada de estoque gravada
     return `📦 Entrada registrada — ${produto.nome} +${p.quantidade}. Saldo ${p.unidade}: ${data?.[0]?.saldo_apos}.`;
   }
 
@@ -10549,6 +10596,7 @@ async function handleShopAction(shop, collab, userName) {
       p_via_audit: viaAudit,
     });
     if (error) return `⚠️ ${error.message}`;
+    outcome.persisted = true; // Fatia C: ajuste de estoque gravado
     const sinal = p.delta > 0 ? '+' : '';
     return `🔧 Ajuste aplicado — ${produto.nome} ${sinal}${p.delta}. Saldo ${p.unidade}: ${data?.[0]?.saldo_apos}.`;
   }
@@ -10621,6 +10669,7 @@ async function handleShopAction(shop, collab, userName) {
     const det = data && (Array.isArray(data) ? data[0] : data) || {};
     const comissao = det.comissao_debitada || det.comissao_estornada || 0;
     const extra = comissao > 0 ? `, R$${Number(comissao).toFixed(2)} debitado da carteira do professor` : '';
+    outcome.persisted = true; // Fatia C: estorno gravado
     return `✅ Venda #${vendaId} estornada. Estoque devolvido${extra}.`;
   }
 
@@ -10695,6 +10744,7 @@ async function handleShopAction(shop, collab, userName) {
       .select('id, prazo')
       .single();
     if (rErr) return `❌ Erro ao reservar: ${rErr.message}`;
+    outcome.persisted = true; // Fatia C: reserva gravada
     return `✅ Reserva #${reserva.id} criada: ${qtd}x ${prod.nome} pra ${cliente} até ${reserva.prazo}.`;
   }
 
@@ -10772,6 +10822,7 @@ async function handleShopAction(shop, collab, userName) {
       .single();
 
     if (insErr) return `❌ Erro ao registrar pendência: ${insErr.message}`;
+    outcome.persisted = true; // Fatia C: pendência de inventário gravada
 
     const emoji = prioridade === 'urgente' ? '🔴' : prioridade === 'futuramente' ? '🟡' : '🟠';
     const unidadeNome = sala.unidades?.nome ? ` · ${sala.unidades.nome}` : '';

@@ -3771,6 +3771,33 @@ async function alreadyNotifiedToday(collaboratorId, taskId, type, ymdToday) {
 // criada/reagendada recentemente. Bug observado: Jereh reagendou pra amanhã
 // às 16:32, dispatcher rodou às 16:35 e mandou lembrete "vence amanhã" em loop.
 // Cooldown garante que TOM não cobre o que ele acabou de avisar.
+// Fatia D — backoff por silêncio (decisão CEO 07/06: "backoff + sobe pro líder").
+// "Cronicamente em silêncio" = recebeu cobrança (overdue/deadline) em 3+ dias DISTINTOS
+// anteriores E não respondeu NADA (0 inbound) nas últimas 72h. Nesse caso o TOM para de
+// cobrar INDIVIDUALMENTE — a pendência segue visível pro líder via perLeaderUnclosedTasksReport
+// (rota de governança subida hoje). NÃO toca no claim atômico por TAREFA (1/dia); só ADICIONA
+// um gate por PESSOA. Quando a pessoa responde algo, sai do silêncio e a cobrança volta sozinha.
+async function isChronicallySilent(collaboratorId, ymdToday) {
+  const since72 = new Date(Date.now() - 72 * 3600 * 1000).toISOString();
+  const { data: inb } = await supabase
+    .from('conversation_history')
+    .select('id')
+    .eq('collaborator_id', collaboratorId)
+    .eq('direction', 'inbound')
+    .gte('created_at', since72)
+    .limit(1);
+  if (inb && inb.length) return false; // respondeu algo em 72h → não está em silêncio
+  const { data: alerts } = await supabase
+    .from('notifications')
+    .select('alert_day')
+    .eq('collaborator_id', collaboratorId)
+    .in('notification_type', ['overdue_alert', 'deadline_alert'])
+    .neq('alert_day', ymdToday)                 // só dias ANTERIORES
+    .gte('alert_day', ymdOffset(ymdToday, -3));  // janela dos 3 dias prévios
+  const days = new Set((alerts || []).map(a => a.alert_day).filter(Boolean));
+  return days.size >= 3; // cobrado nos 3 dias anteriores sem responder → backoff
+}
+
 async function checkDeadlineAlerts(ymdToday) {
   const tomorrow = ymdOffset(ymdToday, 1);
   const cooldownCutoff = new Date(Date.now() - 6 * 3600 * 1000).toISOString();
@@ -3836,6 +3863,12 @@ async function checkDeadlineAlerts(ymdToday) {
       // 23505 = unique_violation → já avisado hoje. Outro erro → não arrisca duplicar.
       const reason = (claimErr.code === '23505' ? 'ja_notificado:' : `claim_err(${claimErr.code}):`) + String(t.id).slice(0, 8);
       await logRitualEvent(collab.id, 'alerta_prazo', 'skipped', reason, ymdToday);
+      continue;
+    }
+    // Fatia D — backoff por silêncio: claim já garantiu 1x/dia/tarefa; aqui paramos de
+    // martelar quem está em silêncio crônico (claim fica como dedup do dia, só não envia).
+    if (await isChronicallySilent(collab.id, ymdToday)) {
+      await logRitualEvent(collab.id, 'alerta_prazo', 'skipped', 'silence_backoff:3d', ymdToday);
       continue;
     }
     try {
@@ -4034,6 +4067,12 @@ async function checkOverdueAlerts(ymdToday) {
       continue;
     }
     void claim;
+    // Fatia D — backoff por silêncio: claim já garantiu 1x/dia/tarefa; aqui paramos de
+    // martelar quem está em silêncio crônico (claim fica como dedup do dia, só não envia).
+    if (await isChronicallySilent(collab.id, ymdToday)) {
+      await logRitualEvent(collab.id, 'alerta_atraso', 'skipped', 'silence_backoff:3d', ymdToday);
+      continue;
+    }
     try {
       await whatsapp.sendMessage(collab.phone, text);
       // Sprint 31.1 — rastro pra TASK_UPDATE via id exato
