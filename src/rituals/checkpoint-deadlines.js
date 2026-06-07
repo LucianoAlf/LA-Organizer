@@ -99,7 +99,7 @@ async function logSent(collaboratorId, refKey, ymd) {
 async function getCollab(collaboratorId) {
   const { data } = await supabase
     .from('collaborators')
-    .select('id, phone, full_name, is_active, user_preferences(quiet_weekends, quiet_days, quiet_reason, quiet_start_time, quiet_end_time)')
+    .select('id, phone, full_name, is_active')
     .eq('id', collaboratorId)
     .maybeSingle();
   return data;
@@ -166,8 +166,11 @@ async function runCheckProjectDeadlines(opts = {}) {
     const collab = await getCollab(responsavelId);
     if (!collab?.phone || !collab.is_active) { skipped++; continue; }
 
-    // Respeita quiet_hours recorrente (quiet_start_time / quiet_end_time) e quiet_days/weekends.
-    const q = await isQuietNow(collab, spNow());
+    // Silêncio (trabalho): passa o UUID → isQuietNow faz a busca CANÔNICA no banco
+    // (caminho infalível, igual aos demais jobs). Antes passava o objeto `collab`
+    // com SELECT parcial (só colunas globais legadas) e só funcionava por causa do
+    // auto-heal — frágil. Checkpoint de prazo é contexto de TRABALHO.
+    const q = await isQuietNow(responsavelId, spNow(), 'work');
     if (q.quiet) {
       console.log(`[checkpoint_deadline] skip cp=${cp.id.slice(0,8)} — quiet (${q.reason})`);
       skipped++;

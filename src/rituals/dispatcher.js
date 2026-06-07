@@ -798,7 +798,7 @@ async function notifyCoordinators() {
       msg = `❌ Seu comunicado foi rejeitado${reviewer?.full_name ? ' por ' + reviewer.full_name : ''}. ${motivoStr}`;
     }
 
-    // isenção quiet: transacional (resposta a ação no PWA).
+    // quiet-exempt: transacional — resultado da aprovação/rejeição do comunicado do próprio autor (não é cobrança proativa).
     try {
       await whatsapp.sendMessage(author.phone, msg);
       await supabase
@@ -839,7 +839,7 @@ async function handleCancellations(whatsapp) {
       .eq('status', 'sent');
 
     for (const job of (sentJobs || [])) {
-      // isenção quiet: transacional (resposta a ação no PWA).
+      // quiet-exempt: transacional — retratação de comunicado já entregue (correção, não cobrança proativa).
       try {
         await whatsapp.sendMessage(job.phone, '[LA Music] — O comunicado anterior foi cancelado. Por favor, desconsidere.');
       } catch (err) {
@@ -1566,7 +1566,7 @@ async function dispatchAnnouncements(now = new Date()) {
         ? `\n\n_${ann.confirmation_question || 'Responde "ok" pra confirmar que recebeu.'}_`
         : '';
       const finalBody = ann.body + confirmTail;
-      // isenção quiet: broadcast humano (comunicado).
+      // quiet-exempt: broadcast de comunicado aprovado por liderança (decisão editorial humana, distribuição imediata).
       try {
         if (ann.attachment_url && ann.attachment_type) {
           await whatsapp.sendMedia(job.phone, {
@@ -4036,7 +4036,7 @@ async function checkLojaReposicao(ymdToday) {
       `• ${l.loja_produtos.nome}: ${l.quantidade} (mín ${l.loja_produtos.estoque_minimo ?? 5})`
     ).join('\n');
     const msg = `📦 *Reposição lojinha — ${nome}*\n\n${linhas}`;
-    // isenção quiet: destinatário pode não ser collaborator (sem user_preferences) — não gateável sem mapear origem.
+    // quiet-exempt: destinatário é telefone da loja (LA Report), sem collaborator_id/user_preferences — não gateável sem mapear telefone→colaborador.
     for (const r of (resp || [])) {
       if (r.whatsapp) {
         try { await whatsapp.sendMessage(r.whatsapp, msg); totalSent++; }
@@ -5090,7 +5090,7 @@ async function sendHealthReport(refYmd = null) {
   // 3. Formata + envia
   const msg = formatHealthReport(run);
   const whatsapp = require('../services/whatsapp');
-  // isenção quiet: relatório admin do sistema.
+  // quiet-exempt: relatório admin de saúde do sistema para o próprio dono (Luciano).
   await whatsapp.sendMessage(director.phone, msg);
   console.log(`[health-report] enviado pra ${director.full_name} (${String(director.phone).slice(-4)})`);
   // Idempotência: marca em ritual_logs pra dispatcher não reenviar no próximo tick.

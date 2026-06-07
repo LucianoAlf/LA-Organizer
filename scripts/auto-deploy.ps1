@@ -47,6 +47,19 @@ foreach ($name in $tomRootFiles) {
     }
 }
 
+# 2.5 TRAVA DE SILENCIO (anti-regressao quiet hours) — bloqueia o deploy se algum
+#     envio proativo em src/ ficou sem gate de silencio. Exit 2 = violacao (bloqueia);
+#     0 = limpo; 1/outros = erro interno do guard -> fail-open (nao bloqueia deploy).
+$guard = Join-Path $workDir "scripts\check-quiet-gates.js"
+if (Test-Path $guard) {
+    $guardOut = & node $guard 2>&1 | Out-String
+    if ($LASTEXITCODE -eq 2) {
+        Write-Output "=== DEPLOY BLOQUEADO: trava de silencio (quiet hours) ==="
+        Write-Output $guardOut
+        exit 1
+    }
+}
+
 # 3. Nada mudou -> sai sem fazer nada
 $status = git -C $workDir status --porcelain 2>$null
 if ([string]::IsNullOrWhiteSpace($status)) { exit 0 }
