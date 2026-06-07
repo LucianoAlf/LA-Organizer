@@ -69,7 +69,9 @@ const AMOUNT_RE = /(?:r\$\s*)?(\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+(?:,\d{1,2})?
 
 // Substantivo de CONTAGEM logo DEPOIS do número → quantidade, não dinheiro
 // ("3 alunos", "50 cópias"). reais/conto/pila NÃO entram (são dinheiro).
-const COUNT_NOUN_AFTER = /^\s*(alunos?|caras?|pessoas?|lugares?|cordas?|vezes|anos?|horas?|minutos?|itens|unidades?|amigos?|convidados?|semanas?|gols?|pontos?|faltas?|aulas?|c[óo]pias?|m[úu]sicas?|ingressos?|cadernos?|v[íi]deos?|caixas?|pacotes?|garrafas?|copos?)\b/;
+// "aula(s)" NÃO entra: numa escola de música "150 aula particular" é RECEITA (R$150), não
+// quantidade. Quantidade de aulas vira raro; o caso "me deu uma ideia pra 2 aulas" cai no RE_DOUBT.
+const COUNT_NOUN_AFTER = /^\s*(alunos?|caras?|pessoas?|lugares?|cordas?|vezes|anos?|horas?|minutos?|itens|unidades?|amigos?|convidados?|semanas?|gols?|pontos?|faltas?|c[óo]pias?|m[úu]sicas?|ingressos?|cadernos?|v[íi]deos?|caixas?|pacotes?|garrafas?|copos?)\b/;
 // Substantivo de CONTAGEM logo ANTES do número → também é quantidade/índice, não dinheiro
 // ("turma 2", "nota 8", "turma das 8"). O (d[ao]s? )? cobre "turma das 8".
 const COUNT_NOUN_BEFORE = /\b(turmas?|salas?|grupos?|n[íi]vel|n[íi]veis|p[áa]ginas?|quest[õoãa]es?|notas?|faixas?|etapas?|m[óo]dulos?|cap[íi]tulos?|treinos?|vagas?|quartos?)\s*(d[ao]s?\s*)?$/;

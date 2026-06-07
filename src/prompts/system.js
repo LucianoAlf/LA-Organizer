@@ -151,6 +151,7 @@ Diretor > Gerente > Coordenador > Líder-de-projeto > Colaborador. Pessoal é pr
 `;
 
 // ---------- skill cache ----------
+const { capSkill } = require('./skill-cap');
 const _skillCache = {};
 function loadSkill(name) {
   if (!name) return null;
@@ -163,8 +164,9 @@ function loadSkill(name) {
       _skillCache[name] = '';
     }
   }
-  // Truncate to 8KB if oversize.
-  return _skillCache[name].slice(0, 8192);
+  // Fatia A — teto generoso (32KB cobre todas as skills atuais) + WARN se cortar
+  // de verdade. Antes era slice(0,8192) silencioso, que decapitava 6 skills core.
+  return capSkill(_skillCache[name], name);
 }
 
 // ---------- helpers ----------
