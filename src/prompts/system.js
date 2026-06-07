@@ -830,7 +830,8 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
   // Sprint 27 — Financas pessoais: dinheiro, contas, metas, orcamento, contribuicao.
   // ANTES de recorrencia: frase de dinheiro/meta tem prioridade (ex: "guardei 500 pro carro"
   // e "todo dia 10 pagar aluguel" devem ir pro financeiro, nao virar tarefa recorrente).
-  const FINANCE_RE = /\b(comprovante|nota\s+fiscal|cupom\s+fiscal|r\$\s*\d+|gastei|recebi|paguei|cart[ãa]o|fatura|parcel\w+|transfer[eiêí]\w*|cr[ée]dito|\d+\s*x\b|limite|sal[áa]rio|comiss[ãa]o|aluguel|ifood|mercado|uber|gasolina|farm[áa]cia|or[çc]amento|meta|guard\w+\s+(?:r\$\s*)?\d+|separ\w+\s+(?:r\$\s*)?\d+|guard\w+\s+(?:dinheiro|grana)|poupan[çc]a|caixinha|cofrinho|investir|selic|juros|sonho|quanto\s+gastei|conta\s+(?:a\s+pagar|vencendo|fixa|de\s+(?:luz|[áa]gua|internet|telefone|g[áa]s))|cadastr\w*\s+(?:a\s+)?(?:uma\s+)?conta|(?:cria\w*|nova|abr\w+|cadastr\w*)\s+(?:uma\s+)?carteira|minhas?\s+carteiras?|assinatura|mensalidade|netflix|spotify|disney|academia|condom[íi]nio)\b/i;
+  // FINANCE_RE extraído pra ./finance-gate.js (módulo testável — já regrediu 2x).
+  const { FINANCE_RE } = require('./finance-gate');
   // Confirmação/correção de um lançamento que o TOM acabou de propor (ex: resumo de
   // comprovante "🧾 ... Grava?"). Nesse turno a resposta é curta ("grava"/"isso"/
   // "não, foi 200") e NÃO casa o FINANCE_RE — sem recarregar a skill, o TOM regredia
