@@ -9325,7 +9325,7 @@ Output AGORA, apenas o marker:`;
   console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${_metrics.latency_ms}ms`);
 }
 
-async function sendRitual(collaboratorId, ritualType) {
+async function sendRitual(collaboratorId, ritualType, opts = {}) {
   const { data: collab } = await supabase
     .from('collaborators')
     .select('*, user_preferences(*), collaborator_profiles(*)')
@@ -9365,15 +9365,21 @@ async function sendRitual(collaboratorId, ritualType) {
   await logConversation(collab.id, 'outbound', finalText);
 
   const today = todaySaoPaulo();
-  // Insert (was upsert) — idempotency enforced at dispatcher.alreadySent(); UNIQUE
-  // constraint dropped to allow per-event observability rows (alerts, reminders).
-  await supabase.from('ritual_logs').insert({
-    collaborator_id: collaboratorId,
-    ritual_type: ritualType,
-    reference_date: today,
-    status: 'sent',
-    sent_at: new Date().toISOString(),
-  });
+  // Fatia G (RITUAL-NO-RETRY): quando chamado pelo dispatcher.fireRitual, o claim
+  // atômico (índice ritual_logs_sent_daily_uq) JÁ gravou a linha 'sent' ANTES do
+  // envio — opts.skipLog evita a 2ª escrita (que colidiria 23505 no índice e
+  // duplicaria a linha). Chamadores diretos (rituais mensais) NÃO passam skipLog e
+  // continuam gravando aqui. Erro do insert agora é logado (antes era descartado).
+  if (!opts.skipLog) {
+    const { error: logErr } = await supabase.from('ritual_logs').insert({
+      collaborator_id: collaboratorId,
+      ritual_type: ritualType,
+      reference_date: today,
+      status: 'sent',
+      sent_at: new Date().toISOString(),
+    });
+    if (logErr) console.error(`[Ritual] ritual_logs insert err (${ritualType}):`, logErr.message);
+  }
   console.log(`[Ritual] ${ritualType} enviado pra ${collab.phone.slice(-4)}`);
   return response.text;
 }

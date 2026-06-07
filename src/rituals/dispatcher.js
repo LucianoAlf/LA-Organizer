@@ -41,6 +41,9 @@ const { isQuietNow } = require('../services/quiet-hours');
 // Sprint 31.1 — Pending Followups: rastro de "TOM cobrou X" pra que respostas
 // curtas ("Feito") sejam aplicadas ao target certo via id exato.
 const pendingFollowups = require('../services/pending-followups');
+// Fatia G (RITUAL-NO-RETRY) — claim atômico idempotente p/ envio de rituais
+// (substitui o check-then-act do fireRitual). Ver src/rituals/ritual-claim.js.
+const { claimRitualSend, rollbackRitualClaim, isTransientRitualError } = require('./ritual-claim');
 
 const RITUAL_BY_DIRECTIVE = {
   briefing_pessoal: 'personal_briefing',
@@ -486,17 +489,37 @@ async function fireRitual(collab, ritualType, ymd) {
     await logRitualEvent(collab.id, canonical, 'skipped', `dnd_active until=${dnd.until}`, ymd);
     return false;
   }
-  if (await alreadySent(collab.id, ritualType, ymd)) {
-    console.log(`[Ritual] ${ritualType} already sent today for ${collab.phone.slice(-4)}, skipping`);
-    await logRitualEvent(collab.id, canonical, 'skipped', 'ja_enviado_hoje', ymd);
+  // Fatia G (RITUAL-NO-RETRY): CLAIM ATÔMICO antes de enviar (substitui o
+  // check-then-act alreadySent + gravar 'sent' PÓS-envio). O claim usa a chave RAW
+  // (collab, ritual_type, reference_date) — a MESMA que alreadySent consultava e que
+  // engine.sendRitual gravava — apoiada no índice parcial ritual_logs_sent_daily_uq.
+  // Só UMA execução vence por dia; em erro transitório (pré-entrega) o rollback
+  // libera o re-envio no próximo tick. Ver src/rituals/ritual-claim.js.
+  const claim = await claimRitualSend(supabase, collab.id, ritualType, ymd);
+  if (!claim.won) {
+    if (claim.duplicate) {
+      console.log(`[Ritual] ${ritualType} already sent today for ${collab.phone.slice(-4)}, skipping`);
+      await logRitualEvent(collab.id, canonical, 'skipped', 'ja_enviado_hoje', ymd);
+    } else {
+      // Erro de claim != 23505 → não arrisca enviar; re-tenta no próximo tick.
+      console.error(`[Ritual] claim falhou (${claim.code}) p/ ${ritualType} ${collab.phone.slice(-4)}`);
+      await logRitualEvent(collab.id, canonical, 'error', `claim_err:${claim.code || ''}`, ymd);
+    }
     return false;
   }
   try {
-    await sendRitual(collab.id, ritualType);
+    // skipLog: o claim acima JÁ gravou a linha 'sent' — sendRitual não regrava
+    // (evitaria 23505 no índice e duplicaria a linha).
+    await sendRitual(collab.id, ritualType, { skipLog: true });
     await logRitualEvent(collab.id, canonical, 'sent', null, ymd);
     return true;
   } catch (err) {
     console.error(`[Ritual] Falha ao enviar ${ritualType} pra ${collab.full_name}:`, err.message);
+    if (isTransientRitualError(err)) {
+      // Falha transitória (pré-entrega) → libera o claim p/ re-tentar no próximo tick.
+      // 23505/08* NÃO são transitórios (podem ser pós-entrega) → claim mantido, sem reenvio.
+      await rollbackRitualClaim(supabase, claim.id);
+    }
     await logRitualEvent(collab.id, canonical, 'error', err.message, ymd);
     return false;
   }
@@ -3000,7 +3023,7 @@ async function run(opts = {}) {
       }
       // Planejamento semanal — só no dia configurado (default domingo=0) no horário configurado.
       if (Number.isInteger(p.planning_day) && p.planning_day === now.dow) {
-        const wpSlot = timeToSlot(p.planning_time);
+        const wpSlot = timeToSlot(p.planning_time || '19:00'); // Fatia L: fallback defensivo (coluna é NOT NULL DEFAULT 19:00; blinda contra import futuro sem planning_time)
         if (wpSlot !== null && wpSlot === slotNow) {
           const qWp = await isQuietNow(p, now, 'work');
           if (qWp.quiet) await logRitualEvent(c.id, 'weekly_planning', 'skipped', qWp.reason, now.ymd);
