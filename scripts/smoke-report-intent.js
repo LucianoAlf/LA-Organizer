@@ -160,5 +160,19 @@ must('saldo da minha conta', 'query_accounts');
 must('saldo na conta', 'query_accounts');
 for (const s of ['extrato do nubank transferi', 'saldo do nubank comprei', 'extrato do nubank ja paguei']) none(s);
 
+// ===== Rodada adversarial 5 — outros módulos + morfologia + financeir[ao] =====
+must('atrasadas', 'query_bills_to_pay');
+must('resumo financeiro do mes', 'query_month_analysis');
+must('resumo financeiro deste mes', 'query_month_analysis');
+must('analise financeira de maio', 'query_monthly_closing', { month: '2026-05' });
+must('analise financeira de junho', 'query_month_analysis');
+must('saldo do nubank em maio', 'query_account_detail', { account: 'nubank' });
+must('extrato do nubank em maio', 'query_statement', { account: 'nubank', month: '2026-05' });
+for (const s of [
+  'saldo do nubank sumiu', 'saldo da poupanca rendeu', 'saldo do cartao bloqueado', 'saldo do nubank atualizei',
+  'saldo do nubank pendente', 'saldo do nubank duplicado', 'extrato do nubank some', 'saldo do nubank registra',
+  'saldo do aluno', 'saldo do estoque', 'saldo do inventario', 'extrato da agenda', 'extrato do estoque',
+]) none(s);
+
 if (fail) { console.error(`\nFALHOU: ${fail} caso(s).`); process.exit(1); }
-console.log('PASS — smoke-report-intent (must + 170+ regressões adversariais OK).');
+console.log('PASS — smoke-report-intent (must + 190+ regressões adversariais OK).');
