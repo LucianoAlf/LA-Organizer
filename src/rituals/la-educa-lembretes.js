@@ -104,7 +104,8 @@ async function buscarResponsavel(estagiarioId, pilarId, fallbackMentorId) {
 
 async function enviarPendente(estagiario) {
   const pendencias = await buscarPendenciasPorPilar(estagiario.id);
-  if (pendencias.length === 0) return;
+  if (pendencias.length === 0) return 0;
+  let falhas = 0; // Task 9: conta falhas de envio p/ o gate decidir retry intra-slot
 
   // Agrupar por responsável: { collab_id: [pilar1, pilar2, ...] }
   const porResponsavel = {};
@@ -159,13 +160,16 @@ ${linhasPilares}
       console.log(`[la-educa] pendente enviado pra ${responsavel.full_name} (${ehMentor ? 'mentor' : 'instrutor'}) sobre ${estagiario.nome}`);
     } catch (err) {
       console.error(`[la-educa] falha pendente ${estagiario.nome} → ${responsavel.full_name}: ${err.message}`);
+      falhas++;
     }
   }
+  return falhas;
 }
 
 async function enviarAtrasado(estagiario) {
   const coords = await buscarCoordsDaUnidade(estagiario.unidade);
-  if (coords.length === 0) return;
+  if (coords.length === 0) return 0;
+  let falhas = 0; // Task 9
   const dias = Math.floor((Date.now() - new Date(estagiario.ultima_atualizacao).getTime()) / 86400000);
   for (const coord of coords) {
     if (!coord.phone) continue;
@@ -185,12 +189,15 @@ Verifique no LA Organizer.`;
       await logEnvio('avaliacao_atrasada', estagiario.id, coord.id, msg);
     } catch (err) {
       console.error(`[la-educa] falha atrasado: ${err.message}`);
+      falhas++;
     }
   }
+  return falhas;
 }
 
 async function enviarProntoCert(estagiario) {
   const coords = await buscarCoordsDaUnidade(estagiario.unidade);
+  let falhas = 0; // Task 9
   for (const coord of coords) {
     if (!coord.phone) continue;
     if (await jaEnviouRecente('certificado_pronto', estagiario.id, coord.id)) continue;
@@ -209,8 +216,10 @@ Emita o Certificado Alfa no LA Organizer ✅`;
       await logEnvio('certificado_pronto', estagiario.id, coord.id, msg);
     } catch (err) {
       console.error(`[la-educa] falha cert: ${err.message}`);
+      falhas++;
     }
   }
+  return falhas;
 }
 
 async function runLaEducaLembretes() {
@@ -222,17 +231,18 @@ async function runLaEducaLembretes() {
     .select('id, nome, unidade, modalidade, mentor_id, mentor_nome, checkpoints_ancorados, checkpoints_total, percentual, certificado_emitido, ultima_atualizacao');
   if (error) {
     console.error('[la-educa] erro ao buscar progresso:', error.message);
-    return;
+    return 1; // Task 9: erro de leitura → falha (gate não marca, retry no próximo tick)
   }
 
   const stats = { pendente: 0, atrasado: 0, pronto: 0 };
+  let falhasTotais = 0; // Task 9: soma falhas de envio das funções por-destinatário
   for (const e of lista || []) {
     const dias = e.ultima_atualizacao
       ? Math.floor((Date.now() - new Date(e.ultima_atualizacao).getTime()) / 86400000)
       : Infinity;
 
     if (Number(e.percentual) === 100 && !e.certificado_emitido) {
-      await enviarProntoCert(e);
+      falhasTotais += (await enviarProntoCert(e)) || 0;
       stats.pronto++;
       continue;
     }
@@ -240,17 +250,18 @@ async function runLaEducaLembretes() {
     if (Number(e.percentual) >= 100) continue;
 
     if (dias > 14) {
-      await enviarAtrasado(e);
+      falhasTotais += (await enviarAtrasado(e)) || 0;
       stats.atrasado++;
     } else if (dias > 7 && e.mentor_id) {
-      await enviarPendente(e);
+      falhasTotais += (await enviarPendente(e)) || 0;
       stats.pendente++;
     }
   }
 
-  console.log(`[la-educa] fim em ${Date.now() - inicio}ms — pendente:${stats.pendente} atrasado:${stats.atrasado} pronto:${stats.pronto}`);
+  console.log(`[la-educa] fim em ${Date.now() - inicio}ms — pendente:${stats.pendente} atrasado:${stats.atrasado} pronto:${stats.pronto} falhas:${falhasTotais}`);
 
-  await enviarResumoSemanalMentores();
+  const fResumo = (await enviarResumoSemanalMentores()) || 0; // Task 8 já retorna failures
+  return falhasTotais + fResumo;
 }
 
 // ── Feature 1: Resumo semanal pro mentor ─────────────────────────────────────
@@ -478,10 +489,11 @@ async function runLaEducaEscalation() {
     .eq('tipo', 'avaliacao_pendente')
     .lt('enviado_em', limite)
     .order('enviado_em', { ascending: false });
-  if (!silenciosos) return;
+  if (!silenciosos) return 0;
 
   const seen = new Set();
   let enviados = 0;
+  let falhas = 0; // Task 9
   for (const s of silenciosos) {
     if (seen.has(s.estagiario_id)) continue;
     seen.add(s.estagiario_id);
@@ -515,10 +527,12 @@ async function runLaEducaEscalation() {
         enviados++;
       } catch (err) {
         console.error(`[la-educa escalation] falha: ${err.message}`);
+        falhas++;
       }
     }
   }
-  console.log(`[la-educa] escalation: ${enviados} avisos em ${Date.now() - inicio}ms`);
+  console.log(`[la-educa] escalation: ${enviados} avisos em ${Date.now() - inicio}ms (falhas:${falhas})`);
+  return falhas;
 }
 
 // ── G7: Briefing sexta — sexta 14:00 ─────────────────────────────────────────

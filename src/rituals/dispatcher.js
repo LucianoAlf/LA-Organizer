@@ -3228,7 +3228,7 @@ async function run(opts = {}) {
   // Gate: dow=1 (segunda) + minuto=0 + slot bate.
   // Idempotência interna: la_educa_lembretes_log (não reenvia <6d).
   if (opts.force === 'la_educa_lembretes' ||
-      (now.dow === 1 && now.minute === 0 && timeToSlot(LA_EDUCA_LEMBRETES_TIME) === slotNow)) {
+      (now.dow === 1 && timeToSlot(LA_EDUCA_LEMBRETES_TIME) === slotNow)) {
     const { data: jaRodou } = await supabase
       .from('ritual_logs')
       .select('id')
@@ -3239,24 +3239,30 @@ async function run(opts = {}) {
       console.log('[la-educa-dispatch] já rodou hoje, skip');
     } else {
       try {
-        await runLaEducaLembretes();
-        // ritual_logs.collaborator_id é NOT NULL → usar 1º director ativo como
-        // placeholder (la_educa_lembretes é system-level, não per-collab).
-        const { data: dir } = await supabase
-          .from('collaborators')
-          .select('id')
-          .eq('role', 'director')
-          .eq('is_active', true)
-          .order('full_name')
-          .limit(1)
-          .single();
-        await supabase.from('ritual_logs').insert({
-          collaborator_id: dir?.id,
-          ritual_type: 'la_educa_lembretes',
-          reference_date: now.ymd,
-          status: 'sent',
-          sent_at: new Date().toISOString(),
-        });
+        // Task 9 (follow-up): gate relaxado p/ slot (3 ticks) + marca SÓ se zero falhas,
+        // dando retry intra-slot às funções por-destinatário (que já dedupam via la_educa_lembretes_log).
+        const falhas = await runLaEducaLembretes();
+        if (falhas === 0) {
+          // ritual_logs.collaborator_id é NOT NULL → usar 1º director ativo como
+          // placeholder (la_educa_lembretes é system-level, não per-collab).
+          const { data: dir } = await supabase
+            .from('collaborators')
+            .select('id')
+            .eq('role', 'director')
+            .eq('is_active', true)
+            .order('full_name')
+            .limit(1)
+            .single();
+          await supabase.from('ritual_logs').insert({
+            collaborator_id: dir?.id,
+            ritual_type: 'la_educa_lembretes',
+            reference_date: now.ymd,
+            status: 'sent',
+            sent_at: new Date().toISOString(),
+          });
+        } else {
+          console.log(`[la-educa-dispatch] ${falhas} falha(s) → gate não marcado, retry no próximo tick`);
+        }
       } catch (err) {
         console.error('[la-educa-dispatch] erro:', err.message);
       }
@@ -3278,26 +3284,32 @@ async function run(opts = {}) {
 
   // G6 — LA EDUCA Escalation: quarta 10:00 (dow=3).
   const LA_EDUCA_ESCALATION_TIME = '10:00';
-  if (now.dow === 3 && now.minute === 0 && timeToSlot(LA_EDUCA_ESCALATION_TIME) === slotNow) {
+  if (now.dow === 3 && timeToSlot(LA_EDUCA_ESCALATION_TIME) === slotNow) {
     const { data: jaRodouEsc } = await supabase
       .from('ritual_logs').select('id')
       .eq('ritual_type', 'la_educa_escalation').eq('reference_date', now.ymd).limit(1);
     if (!jaRodouEsc || jaRodouEsc.length === 0) {
       try {
-        await runLaEducaEscalation();
-        const { data: dir } = await supabase.from('collaborators')
-          .select('id').eq('role', 'director').eq('is_active', true).limit(1).single();
-        await supabase.from('ritual_logs').insert({
-          collaborator_id: dir?.id, ritual_type: 'la_educa_escalation',
-          reference_date: now.ymd, status: 'sent', sent_at: new Date().toISOString(),
-        });
+        // Task 9 (follow-up): gate relaxado p/ slot + marca só sem falha (retry intra-slot).
+        const falhas = await runLaEducaEscalation();
+        if (falhas === 0) {
+          const { data: dir } = await supabase.from('collaborators')
+            .select('id').eq('role', 'director').eq('is_active', true).limit(1).single();
+          await supabase.from('ritual_logs').insert({
+            collaborator_id: dir?.id, ritual_type: 'la_educa_escalation',
+            reference_date: now.ymd, status: 'sent', sent_at: new Date().toISOString(),
+          });
+        } else {
+          console.log(`[la-educa escalation-dispatch] ${falhas} falha(s) → gate não marcado, retry no próximo tick`);
+        }
       } catch (err) { console.error('[la-educa escalation-dispatch] erro:', err.message); }
     }
   }
 
   // G7 — LA EDUCA Briefing Sexta: sexta 14:00 (dow=5).
   const LA_EDUCA_BRIEFING_SEXTA_TIME = '14:00';
-  if (now.dow === 5 && now.minute === 0 && timeToSlot(LA_EDUCA_BRIEFING_SEXTA_TIME) === slotNow) {
+  if (now.dow === 5 && timeToSlot(LA_EDUCA_BRIEFING_SEXTA_TIME) === slotNow) {
+    // Task 9 (follow-up): gate relaxado p/ slot (tira minute===0); o claim por-mentor já dá idempotência + retry intra-slot.
     try {
       await runLaEducaBriefingSexta();
     } catch (err) { console.error('[la-educa briefing-sexta-dispatch] erro:', err.message); }
