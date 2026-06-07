@@ -98,5 +98,27 @@ for (const s of ['50 de combustível no débito', 'gastei 30 no ifood', 'recebi 
   'comprei TV 3200 em 10x no nubank', 'minhas últimas transações', 'bom dia, tom!', 'marca a reunião amanhã às 10h',
   'me lembra de estudar pro simulado', 'cria carteira nubank', 'transferi 500 do itau pro nubank', 'comprovante']) none(s);
 
+// ===== Rodada adversarial 2 — misses corrigidos (MUST) =====
+must('saldo atual do nubank', 'query_account_detail', { account: 'nubank' });
+must('saldo atual da conta corrente', 'query_account_detail', { account: 'conta corrente' });
+must('qual o saldo atual do nubank', 'query_account_detail', { account: 'nubank' });
+must('saldo disponivel do nubank', 'query_account_detail', { account: 'nubank' });
+must('me ve o saldo do nubank', 'query_account_detail', { account: 'nubank' });
+must('ve o saldo do nubank', 'query_account_detail', { account: 'nubank' });
+must('saldo do c6', 'query_account_detail', { account: 'c6' });
+
+// ===== Rodada adversarial 2 — over-matches (NONE) =====
+for (const s of [
+  'meu saldo do nubank diminuiu', 'saldo do nubank subiu', 'saldo do nubank zerou', 'saldo da poupanca caiu', 'saldo da carteira acabou',
+  'ver extrato do nubank pra pagar', 'extrato do nubank ta errado', 'extrato do nubank ja paguei', 'extrato do itau foi debitado',
+  'extrato de maio eu ja conferi', 'lancamentos de maio foram pagos', 'extrato de junho ja conferido',
+  'fechamento de maio paguei tudo', 'fechamento de abril ja quitei', 'fechamento de maio ja recebi',
+  'paga minhas contas fixas', 'quita todas as contas',
+  'onde gasto mais no nubank', 'onde gasto mais no ifood', 'onde gasto mais com uber', 'onde gasto mais em alimentacao', 'onde gasto mais tempo', 'onde gasto mais minha energia',
+  'fechamento de maio do projeto', 'fechamento de maio do contrato', 'fechamento de junho do show', 'como fechou maio no projeto', 'como fechou o mês de maio do projeto',
+  'resumo do mês de maio do projeto', 'resumo do mês de junho do time',
+  'extrato da reunião', 'saldo da reunião',
+]) none(s);
+
 if (fail) { console.error(`\nFALHOU: ${fail} caso(s).`); process.exit(1); }
-console.log('PASS — smoke-report-intent (must + 90 regressões adversariais OK).');
+console.log('PASS — smoke-report-intent (must + 120+ regressões adversariais OK).');
