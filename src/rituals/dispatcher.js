@@ -293,16 +293,30 @@ async function checkMonthlyPlanning(now) {
     if (qmp.quiet) { await logRitualEvent(c.id, 'monthly_planning', 'skipped', `quiet:${qmp.reason}`, ymdToday); continue; }
     try {
       const decision = await getRitualIntroDecision(c.id, 'monthly_planning');
-      if (decision === 'show_intro') {
-        await sendRitual(c.id, 'monthly_planning_intro');
-        await logRitualEvent(c.id, 'monthly_planning', 'intro_shown', null, ymdToday);
-        fired++;
-      } else if (decision === 'send_ritual') {
-        await sendRitual(c.id, 'monthly_planning');
-        await logRitualEvent(c.id, 'monthly_planning', 'sent', null, ymdToday);
-        fired++;
-      } else { // 'skip_saturated'
+      if (decision === 'skip_saturated') {
         await logRitualEvent(c.id, 'monthly_planning', 'skipped', 'saturated', ymdToday);
+        continue;
+      }
+      // Fatia G fase 2: claim atômico antes de enviar (era log 'sent' pós-envio →
+      // perdia o MÊS em erro transitório). O ramo intro claima sob 'monthly_planning_intro'
+      // p/ NÃO mexer na máquina de estado do intro (getRitualIntroDecision lê 'monthly_planning'
+      // e decide por status='sent'). Ambos os tipos estão no índice ritual_logs_sent_daily_uq.
+      const rawType = decision === 'show_intro' ? 'monthly_planning_intro' : 'monthly_planning';
+      const claim = await claimRitualSend(supabase, c.id, rawType, ymdToday);
+      if (!claim.won) {
+        if (!claim.duplicate) console.error(`[checkMonthlyPlanning] claim_err(${claim.code}) ${c.full_name}`);
+        continue;
+      }
+      try {
+        // skipLog: o claim já gravou a linha 'sent' (evita 2ª escrita → 23505 no índice).
+        await sendRitual(c.id, rawType, { skipLog: true });
+        if (decision === 'show_intro') await logRitualEvent(c.id, 'monthly_planning', 'intro_shown', null, ymdToday);
+        fired++;
+      } catch (errSend) {
+        // Transitório (pré-entrega) → rollback libera re-tentativa no próximo tick do slot.
+        // SEM logRitualEvent('error') sob 'monthly_planning': alreadySent bloquearia o retry.
+        if (isTransientRitualError(errSend)) await rollbackRitualClaim(supabase, claim.id);
+        console.error('[checkMonthlyPlanning] send', c.full_name, errSend.message);
       }
     } catch (err) {
       console.error('[checkMonthlyPlanning]', c.full_name, err.message);
@@ -325,14 +339,23 @@ async function checkMonthlyClosing(now) {
     if (qmc.quiet) { await logRitualEvent(c.id, 'monthly_closing', 'skipped', `quiet:${qmc.reason}`, ymdToday); continue; }
     try {
       const decision = await getRitualIntroDecision(c.id, 'monthly_closing');
-      if (decision === 'show_intro') {
-        await sendRitual(c.id, 'monthly_closing_intro');
-        await logRitualEvent(c.id, 'monthly_closing', 'intro_shown', null, ymdToday);
-      } else if (decision === 'send_ritual') {
-        await sendRitual(c.id, 'monthly_closing');
-        await logRitualEvent(c.id, 'monthly_closing', 'sent', null, ymdToday);
-      } else { // 'skip_saturated'
+      if (decision === 'skip_saturated') {
         await logRitualEvent(c.id, 'monthly_closing', 'skipped', 'saturated', ymdToday);
+        continue;
+      }
+      // Fatia G fase 2: claim atômico antes de enviar (espelha checkMonthlyPlanning).
+      const rawType = decision === 'show_intro' ? 'monthly_closing_intro' : 'monthly_closing';
+      const claim = await claimRitualSend(supabase, c.id, rawType, ymdToday);
+      if (!claim.won) {
+        if (!claim.duplicate) console.error(`[checkMonthlyClosing] claim_err(${claim.code}) ${c.full_name}`);
+        continue;
+      }
+      try {
+        await sendRitual(c.id, rawType, { skipLog: true });
+        if (decision === 'show_intro') await logRitualEvent(c.id, 'monthly_closing', 'intro_shown', null, ymdToday);
+      } catch (errSend) {
+        if (isTransientRitualError(errSend)) await rollbackRitualClaim(supabase, claim.id);
+        console.error('[checkMonthlyClosing] send', c.full_name, errSend.message);
       }
     } catch (err) {
       console.error('[checkMonthlyClosing]', c.full_name, err.message);
@@ -2191,30 +2214,39 @@ async function ceoTeamUnclosedEventsReport(now = new Date(), opts = {}) {
         `  • _${String(ev.title).slice(0, 50)}_`
       ).join('\n');
       staleCheckBlock = `\n\n─────────────────────\n⏳ *${toStaleCheck.length} item${toStaleCheck.length > 1 ? 's' : ''} parado${toStaleCheck.length > 1 ? 's' : ''} 5+ dias — já rolou?*\n${top3}${toStaleCheck.length > 3 ? `\n  _+${toStaleCheck.length - 3} outros_` : ''}\n_Sem resposta até amanhã → arquivo automático_`;
-      // Marca staleness_check_sent_at pra não repetir amanhã
-      // Sprint 31 fix: SDK Supabase retorna {error} sem lançar — checar explicitamente
-      const { error: staleEvErr } = await supabase.from('events')
-        .update({ staleness_check_sent_at: now.toISOString() })
-        .in('id', toStaleCheck.map(ev => ev.id))
-        .select('id');
-      if (staleEvErr) {
-        console.error(`[CEOReport] staleness mark FAILED: ${staleEvErr.message}`);
-      } else {
-        console.log(`[CEOReport] staleness marcou ${toStaleCheck.length} evento(s)`);
-      }
+      // Fatia G fase 2 (bug fix): NÃO marca staleness_check_sent_at aqui (era ANTES do
+      // envio → se o envio falhasse, os itens ficavam marcados e sumiam do report de
+      // amanhã). A marcação foi movida p/ DEPOIS do envio confirmado (try abaixo).
     }
 
     const dateLabel = new Date(now).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: 'short' });
     const hiddenSuffixEv = hiddenCount > 0 ? ` · ${hiddenCount} já cobrado${hiddenCount > 1 ? 's' : ''} hoje` : '';
     const msg = `🎖️ *Governança — Compromissos em aberto*\n_${dateLabel} · ${filteredStale.length} parado${filteredStale.length > 1 ? 's' : ''}_\n━━━━━━━━━━━━━━━━━━━━━\n\n${lines.join('\n').trim()}${staleCheckBlock}\n\n━━━━━━━━━━━━━━━━━━━━━\n_${filteredStale.length} compromisso${filteredStale.length > 1 ? 's' : ''} parado${filteredStale.length > 1 ? 's' : ''}${hiddenSuffixEv}. Pra cobrar: "cobra [nome] sobre [assunto]"_`;
 
+    // Fatia G fase 2: claim atômico antes de enviar (1/CEO/dia → claim-safe). Substitui
+    // o logRitualEvent('sent') pós-envio. Mantém alreadySent (pre-skip) + quiet DEFER.
+    const claim = await claimRitualSend(supabase, ceo.id, 'ceo_team_unclosed_events', ymdRef);
+    if (!claim.won) {
+      if (!claim.duplicate) console.error(`[CEOReport] claim_err(${claim.code}) ${String(ceo.phone).slice(-4)}`);
+      continue;
+    }
     try {
       await whatsapp.sendMessage(ceo.phone, msg);
-      await logRitualEvent(ceo.id, 'ceo_team_unclosed_events', 'sent', `count=${filteredStale.length} hidden=${hiddenCount}`, ymdRef);
+      // Marca staleness SÓ após envio confirmado (bug fix — era antes do envio).
+      if (toStaleCheck.length > 0) {
+        const { error: staleEvErr } = await supabase.from('events')
+          .update({ staleness_check_sent_at: now.toISOString() })
+          .in('id', toStaleCheck.map(ev => ev.id))
+          .select('id');
+        if (staleEvErr) console.error(`[CEOReport] staleness mark FAILED: ${staleEvErr.message}`);
+        else console.log(`[CEOReport] staleness marcou ${toStaleCheck.length} evento(s)`);
+      }
       console.log(`[CEOReport] sent ${filteredStale.length} (${hiddenCount} hidden) → ${String(ceo.phone).slice(-4)}`);
     } catch (err) {
       console.error(`[CEOReport] send err ${String(ceo.phone).slice(-4)}:`, err.message);
-      await logRitualEvent(ceo.id, 'ceo_team_unclosed_events', 'error', err.message, ymdRef);
+      // Transitório → rollback libera reentrega no próximo tick. SEM linha 'error'
+      // sob o tipo do claim (alreadySent bloquearia o retry).
+      if (isTransientRitualError(err)) await rollbackRitualClaim(supabase, claim.id);
     }
   }
 }
@@ -2383,16 +2415,8 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
         `  • _${String(t.title).slice(0, 50)}_`
       ).join('\n');
       staleCheckBlock = `\n\n─────────────────────\n⏳ *${toStaleCheck.length} tarefa${toStaleCheck.length > 1 ? 's' : ''} parada${toStaleCheck.length > 1 ? 's' : ''} 5+ dias — já rolou?*\n${top3}${toStaleCheck.length > 3 ? `\n  _+${toStaleCheck.length - 3} outras_` : ''}\n_Sem resposta até amanhã → arquivo automático_`;
-      // Sprint 31 fix: SDK Supabase retorna {error} sem lançar — checar explicitamente
-      const { error: staleTaskErr } = await supabase.from('tasks')
-        .update({ staleness_check_sent_at: now.toISOString() })
-        .in('id', toStaleCheck.map(t => t.id))
-        .select('id');
-      if (staleTaskErr) {
-        console.error(`[CEOTasksReport] staleness mark FAILED: ${staleTaskErr.message}`);
-      } else {
-        console.log(`[CEOTasksReport] staleness marcou ${toStaleCheck.length} task(s)`);
-      }
+      // Fatia G fase 2 (bug fix): marcação de staleness movida p/ DEPOIS do envio
+      // confirmado (era antes → falha de envio escondia as tarefas do report de amanhã).
     }
 
     // Sprint 29.1 — diagnóstico inteligente por DONO (não por líder).
@@ -2429,13 +2453,27 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
     const diagSection = diagnosticsBlock ? `\n\n─────────────────────\n🔍 *Diagnóstico*\n${diagnosticsBlock.trim()}` : '';
     const msg = `📋 *Governança — Tarefas atrasadas*\n_${dateLabelT} · ${filteredStale.length} tarefa${filteredStale.length > 1 ? 's' : ''}_\n━━━━━━━━━━━━━━━━━━━━━\n\n${lines.join('\n').trim()}${diagSection}${stuckSection}${staleCheckBlock}\n\n━━━━━━━━━━━━━━━━━━━━━\n_${filteredStale.length} atrasada${filteredStale.length > 1 ? 's' : ''}${hiddenSuffixT}. Pra cobrar: "cobra [nome] sobre [tarefa]"_`;
 
+    // Fatia G fase 2: claim atômico antes de enviar (1/CEO/dia → claim-safe).
+    const claim = await claimRitualSend(supabase, ceo.id, 'ceo_team_unclosed_tasks', ymdRef);
+    if (!claim.won) {
+      if (!claim.duplicate) console.error(`[CEOTasksReport] claim_err(${claim.code}) ${String(ceo.phone).slice(-4)}`);
+      continue;
+    }
     try {
       await whatsapp.sendMessage(ceo.phone, msg);
-      await logRitualEvent(ceo.id, 'ceo_team_unclosed_tasks', 'sent', `count=${filteredStale.length} ceo=${ceoBucket.length} hidden=${hiddenCount}`, ymdRef);
+      // Marca staleness SÓ após envio confirmado (bug fix).
+      if (toStaleCheck.length > 0) {
+        const { error: staleTaskErr } = await supabase.from('tasks')
+          .update({ staleness_check_sent_at: now.toISOString() })
+          .in('id', toStaleCheck.map(t => t.id))
+          .select('id');
+        if (staleTaskErr) console.error(`[CEOTasksReport] staleness mark FAILED: ${staleTaskErr.message}`);
+        else console.log(`[CEOTasksReport] staleness marcou ${toStaleCheck.length} task(s)`);
+      }
       console.log(`[CEOTasksReport] sent ${stale.length} (${ceoBucket.length} CEO direto) → ${String(ceo.phone).slice(-4)}`);
     } catch (err) {
       console.error(`[CEOTasksReport] send err ${String(ceo.phone).slice(-4)}:`, err.message);
-      await logRitualEvent(ceo.id, 'ceo_team_unclosed_tasks', 'error', err.message, ymdRef);
+      if (isTransientRitualError(err)) await rollbackRitualClaim(supabase, claim.id);
     }
   }
 }
@@ -2519,13 +2557,18 @@ async function perLeaderUnclosedTasksReport(now = new Date(), opts = {}) {
     // enviar/logRitualEvent → digest reentregue no próximo tick fora do quiet.
     const _qLeader = await isQuietNow(p.leaderId, nowSaoPaulo(), 'work');
     if (_qLeader.quiet) { continue; }
+    // Fatia G fase 2: claim atômico por líder (1/líder/dia → claim-safe; cada líder é collab distinto).
+    const claim = await claimRitualSend(supabase, p.leaderId, 'leader_unclosed_tasks', ymdRef);
+    if (!claim.won) {
+      if (!claim.duplicate) console.error(`[LeaderTasksReport] claim_err(${claim.code}) ${p.leaderName}`);
+      continue;
+    }
     try {
       await whatsapp.sendMessage(p.phone, p.msg);
-      await logRitualEvent(p.leaderId, 'leader_unclosed_tasks', 'sent', `count=${p.count}`, ymdRef);
       console.log(`[LeaderTasksReport] ${p.leaderName}: ${p.count} → ${String(p.phone).slice(-4)}`);
     } catch (err) {
       console.error(`[LeaderTasksReport] ${p.leaderName} err:`, err.message);
-      await logRitualEvent(p.leaderId, 'leader_unclosed_tasks', 'error', err.message, ymdRef);
+      if (isTransientRitualError(err)) await rollbackRitualClaim(supabase, claim.id);
     }
   }
   return plan;
@@ -2649,13 +2692,18 @@ async function weeklyLeaderEngagementReport(now = new Date()) {
 
     const msg = `📊 *Engajamento dos líderes — semana passada*\n\n${blocks.join('\n\n')}\n\n_Cobranças contam só as feitas via TOM (coordination_requests). Conversas diretas no WhatsApp não aparecem aqui._`;
 
+    // Fatia G fase 2: claim atômico antes de enviar (1/CEO/segunda → claim-safe).
+    const claim = await claimRitualSend(supabase, ceo.id, 'leader_engagement_weekly', ymdRef);
+    if (!claim.won) {
+      if (!claim.duplicate) console.error(`[LeaderEngagement] claim_err(${claim.code}) ${String(ceo.phone).slice(-4)}`);
+      continue;
+    }
     try {
       await whatsapp.sendMessage(ceo.phone, msg);
-      await logRitualEvent(ceo.id, 'leader_engagement_weekly', 'sent', `leaders=${blocks.length}`, ymdRef);
       console.log(`[LeaderEngagement] sent ${blocks.length} leader blocks → ${String(ceo.phone).slice(-4)}`);
     } catch (err) {
       console.error(`[LeaderEngagement] send err ${String(ceo.phone).slice(-4)}:`, err.message);
-      await logRitualEvent(ceo.id, 'leader_engagement_weekly', 'error', err.message, ymdRef);
+      if (isTransientRitualError(err)) await rollbackRitualClaim(supabase, claim.id);
     }
   }
 }

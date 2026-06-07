@@ -9,8 +9,21 @@
 const supabase = require('../supabase/client');
 const whatsapp = require('../services/whatsapp');
 const { isQuietNow, nowBrtParts } = require('../services/quiet-hours');
+// Fatia G fase 2: claim atômico idempotente reutilizável (ver src/rituals/ritual-claim.js).
+const { claimRitualSend, rollbackRitualClaim, isTransientRitualError } = require('./ritual-claim');
 
 const SEMI_WEEK_MS = 6 * 86400 * 1000;
+
+// Segunda-feira da semana atual como YYYY-MM-DD — chave estável p/ o claim 1/mentor/semana.
+// Usa UTC, consistente com o `today` (new Date().toISOString().slice(0,10)) que estas
+// funções já usavam como reference_date.
+function weekStartYmd() {
+  const dt = new Date();
+  const dow = dt.getUTCDay();            // 0=dom..6=sáb
+  const off = dow === 0 ? -6 : 1 - dow;  // → segunda
+  dt.setUTCDate(dt.getUTCDate() + off);
+  return dt.toISOString().slice(0, 10);
+}
 
 async function jaEnviouRecente(tipo, estagiarioId, destinatarioId) {
   const since = new Date(Date.now() - SEMI_WEEK_MS).toISOString();
@@ -293,15 +306,7 @@ async function enviarResumoSemanalMentores() {
       .eq('mentor_id', mentor.id);
     if (!estags || estags.length === 0) continue;
 
-    const today = new Date().toISOString().slice(0, 10);
-    const { data: jaEnviou } = await supabase
-      .from('ritual_logs')
-      .select('id')
-      .eq('ritual_type', 'la_educa_resumo_mentor')
-      .eq('collaborator_id', mentor.id)
-      .eq('reference_date', today)
-      .limit(1);
-    if (jaEnviou && jaEnviou.length > 0) continue;
+    const refWeek = weekStartYmd();
 
     const linhasEstagiarios = [];
     for (const e of estags) {
@@ -314,19 +319,17 @@ async function enviarResumoSemanalMentores() {
 
     const primeiroNome = mentor.full_name.split(' ')[0];
     const msg = `📊 LA EDUCA — Resumo semanal\n\nOlá ${primeiroNome}! Aqui está o resumo dos estagiários sob sua coordenação:\n\n${linhasEstagiarios.join('\n\n')}\n\nAcesse o LA Organizer pra acompanhar 🎵`;
+    if ((await isQuietNow(mentor.id, nowBrtParts(), 'work')).quiet) continue; // silêncio trabalho → defer
+    // Fatia G fase 2: claim atômico (1/mentor/semana) antes de enviar — substitui o
+    // check-then-act (query jaEnviou + insert pós-envio). O claim grava a linha 'sent'.
+    const claim = await claimRitualSend(supabase, mentor.id, 'la_educa_resumo_mentor', refWeek);
+    if (!claim.won) { if (!claim.duplicate) console.error(`[la-educa resumo] claim_err(${claim.code}) ${mentor.full_name}`); continue; }
     try {
-      if ((await isQuietNow(mentor.id, nowBrtParts(), 'work')).quiet) continue; // silêncio trabalho → defer
       await whatsapp.sendMessage(mentor.phone, msg);
-      await supabase.from('ritual_logs').insert({
-        collaborator_id: mentor.id,
-        ritual_type: 'la_educa_resumo_mentor',
-        reference_date: today,
-        status: 'sent',
-        sent_at: new Date().toISOString(),
-      });
       enviados++;
     } catch (err) {
       console.error(`[la-educa resumo] falha pra ${mentor.full_name}: ${err.message}`);
+      if (isTransientRitualError(err)) await rollbackRitualClaim(supabase, claim.id);
     }
   }
 
@@ -529,18 +532,9 @@ async function runLaEducaBriefingSexta() {
     .not('phone', 'is', null);
   if (!mentores) return;
 
-  const today = new Date().toISOString().slice(0, 10);
+  const refWeek = weekStartYmd();
   let enviados = 0;
   for (const mentor of mentores) {
-    const { data: jaEnviou } = await supabase
-      .from('ritual_logs')
-      .select('id')
-      .eq('ritual_type', 'la_educa_briefing_sexta')
-      .eq('collaborator_id', mentor.id)
-      .eq('reference_date', today)
-      .limit(1);
-    if (jaEnviou && jaEnviou.length > 0) continue;
-
     const { data: pend } = await supabase
       .from('la_educa_progresso')
       .select('nome, percentual, checkpoints_ancorados, checkpoints_total')
@@ -552,19 +546,16 @@ async function runLaEducaBriefingSexta() {
     const linhas = pend.map(e => `• ${e.nome} (${e.checkpoints_ancorados}/${e.checkpoints_total} = ${Math.round(e.percentual)}%)`).join('\n');
     const msg = `Olá ${primeiroNome}! 👋\n\nFinal de semana chegando. Estagiários sob sua coordenação com pendências:\n\n${linhas}\n\nDá uma força e marca as próximas avaliações 🎵`;
 
+    if ((await isQuietNow(mentor.id, nowBrtParts(), 'work')).quiet) continue; // silêncio trabalho → defer
+    // Fatia G fase 2: claim atômico (1/mentor/semana) antes de enviar.
+    const claim = await claimRitualSend(supabase, mentor.id, 'la_educa_briefing_sexta', refWeek);
+    if (!claim.won) { if (!claim.duplicate) console.error(`[la-educa briefing-sexta] claim_err(${claim.code}) ${mentor.full_name}`); continue; }
     try {
-      if ((await isQuietNow(mentor.id, nowBrtParts(), 'work')).quiet) continue; // silêncio trabalho → defer
       await whatsapp.sendMessage(mentor.phone, msg);
-      await supabase.from('ritual_logs').insert({
-        collaborator_id: mentor.id,
-        ritual_type: 'la_educa_briefing_sexta',
-        reference_date: today,
-        status: 'sent',
-        sent_at: new Date().toISOString(),
-      });
       enviados++;
     } catch (err) {
       console.error(`[la-educa briefing-sexta] ${mentor.full_name}: ${err.message}`);
+      if (isTransientRitualError(err)) await rollbackRitualClaim(supabase, claim.id);
     }
   }
   console.log(`[la-educa] briefing sexta: ${enviados} mentores em ${Date.now() - inicio}ms`);

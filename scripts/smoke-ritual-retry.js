@@ -9,8 +9,15 @@
 
 const { claimRitualSend, rollbackRitualClaim, isTransientRitualError } = require('../src/rituals/ritual-claim');
 
-// Escopo do índice parcial real (igual à migration e ao fireRitual).
-const SCOPE = new Set(['daily_briefing', 'personal_briefing', 'daily_closing', 'weekly_planning']);
+// Escopo do índice parcial real (igual à migration). Fase 1 (briefing) + finance +
+// fase 2 final (mensais dual-type + reports CEO/líderes + 2 LA EDUCA por-mentor).
+const SCOPE = new Set([
+  'daily_briefing', 'personal_briefing', 'daily_closing', 'weekly_planning',
+  'lembrete_conta', 'financeiro_mensal', 'relatorio_financeiro_mensal',
+  'monthly_planning', 'monthly_planning_intro', 'monthly_closing', 'monthly_closing_intro',
+  'ceo_team_unclosed_events', 'ceo_team_unclosed_tasks', 'leader_unclosed_tasks',
+  'leader_engagement_weekly', 'la_educa_resumo_mentor', 'la_educa_briefing_sexta',
+]);
 
 // Fake supabase: emula .insert(row).select('id').single() e .delete().eq('id', val)
 // para a tabela ritual_logs, aplicando a colisão 23505 do índice parcial.
@@ -85,13 +92,13 @@ const YMD = '2026-06-07';
     check(c3.won === true, '1.5 após rollback, novo tick RE-CLAIMA e vence (ritual recuperado)');
   }
 
-  // ── 2) Tipo FORA do escopo: degrada sem dedup (sem 23505) ──────────────────
-  console.log('\n=== 2) Tipo fora do escopo (monthly_planning) — sem constraint ===');
+  // ── 2) Tipo FORA do escopo (N/dia: daily_dream/cartões) — degrada sem dedup ──
+  console.log('\n=== 2) Tipo fora do escopo (daily_dream) — sem constraint ===');
   {
     const db = makeFakeSupabase();
-    const a = await claimRitualSend(db, COLLAB, 'monthly_planning', YMD);
-    const b = await claimRitualSend(db, COLLAB, 'monthly_planning', YMD);
-    check(a.won && b.won, '2.1 ambos vencem (sem índice p/ esse tipo — comportamento de hoje)');
+    const a = await claimRitualSend(db, COLLAB, 'daily_dream', YMD);
+    const b = await claimRitualSend(db, COLLAB, 'daily_dream', YMD);
+    check(a.won && b.won, '2.1 ambos vencem (fora do índice — N/dia, claim por-ref vive noutro lugar)');
   }
 
   // ── 3) Classificação de erro transitório ───────────────────────────────────
@@ -148,6 +155,30 @@ const YMD = '2026-06-07';
     const db = makeFakeSupabase();
     const r = await fireSim(db, null);
     check(r === 'sent' && db._rows.length === 1, '4.3 sucesso direto → 1 sent');
+  }
+
+  // ── 5) Fase 2: mensal dual-type + dedup dos tipos novos ─────────────────────
+  console.log('\n=== 5) Fase 2: dual-type mensal e dedup dos tipos claim-safe novos ===');
+  {
+    const db = makeFakeSupabase();
+    // intro e ritual do mesmo mês são CHAVES DISTINTAS (tipos diferentes) → ambos vencem.
+    const i1 = await claimRitualSend(db, COLLAB, 'monthly_planning_intro', YMD);
+    const r1 = await claimRitualSend(db, COLLAB, 'monthly_planning', YMD);
+    check(i1.won && r1.won, '5.1 intro e ritual mensal coexistem (chaves distintas no mesmo dia)');
+    const i2 = await claimRitualSend(db, COLLAB, 'monthly_planning_intro', YMD);
+    check(i2.won === false && i2.duplicate, '5.2 2º claim do intro mensal no mesmo dia → 23505 (dedup)');
+    // Reports CEO/líderes: 1/destinatário/período.
+    const ev1 = await claimRitualSend(db, COLLAB, 'ceo_team_unclosed_events', YMD);
+    const ev2 = await claimRitualSend(db, COLLAB, 'ceo_team_unclosed_events', YMD);
+    check(ev1.won && ev2.won === false && ev2.duplicate, '5.3 ceo_team_unclosed_events dedup 1/dia');
+    const lt1 = await claimRitualSend(db, COLLAB, 'leader_unclosed_tasks', YMD);
+    const lt2 = await claimRitualSend(db, COLLAB, 'leader_unclosed_tasks', YMD);
+    check(lt1.won && lt2.won === false && lt2.duplicate, '5.4 leader_unclosed_tasks dedup 1/líder/dia');
+    // LA EDUCA por-mentor: 1/mentor/semana.
+    const le1 = await claimRitualSend(db, COLLAB, 'la_educa_resumo_mentor', YMD);
+    const le2 = await claimRitualSend(db, COLLAB, 'la_educa_resumo_mentor', YMD);
+    check(le1.won && le2.won === false && le2.duplicate, '5.5 la_educa_resumo_mentor dedup 1/mentor/semana');
+    check(db._rows.filter(r => r.status === 'sent').length === 5, '5.6 exatamente 5 linhas sent (zero duplicada)');
   }
 
   console.log(ok ? '\n🟢 SMOKE PASS' : '\n🔴 SMOKE FAIL');
