@@ -359,6 +359,16 @@ async function billsDueWithin(collaboratorId, days = 5) {
   return (data || []).filter((b) => isBillDue(b, ctx));
 }
 
+// Todas as contas fixas ativas (sem filtro de vencimento) — pra action query_bills.
+// O recorte ("a pagar dia X" / "em aberto") é feito na lógica pura bills-query.js.
+async function listActiveBills(collaboratorId) {
+  const { data, error } = await supabase.from('pf_bills')
+    .select('name, amount, due_day, due_date, recurrence, type, last_paid_at, category')
+    .eq('collaborator_id', collaboratorId).eq('is_active', true);
+  if (error) throw error;
+  return data || [];
+}
+
 // Relatorio do mes de referencia (default mes corrente): receitas, despesas, saldo, top 3.
 async function monthlyReport(collaboratorId, ref = new Date()) {
   const { start, end } = monthBounds(ref);
@@ -578,7 +588,7 @@ module.exports = {
   createBill, findBills, payBill,
   createGoal, findGoal, listGoals,
   addGoalContribution, listGoalContributions, deleteGoalContribution, updateGoal, deactivateGoal,
-  billsDueWithin, monthlyReport, collaboratorsWithActivity, collaboratorsForFinanceRitual,
+  billsDueWithin, listActiveBills, monthlyReport, collaboratorsWithActivity, collaboratorsForFinanceRitual,
   collaboratorsWithActiveBills,
   // cartão
   competenciaFor, addMonthsToCompetencia, currentCompetencia,

@@ -6118,7 +6118,7 @@ async function tryDupBypass(collab, text) {
 
 // ---- Sprint 27 — Financas Pessoais: marker <<FINANCE_ACTION>> + dispatcher ----
 const FINANCE_ACTIONS = [
-  'register_transaction', 'register_bill', 'pay_bill', 'create_goal',
+  'register_transaction', 'register_bill', 'pay_bill', 'query_bills', 'create_goal',
   'update_goal', 'edit_goal', 'delete_goal', 'set_budget', 'query_summary', 'query_budget', 'query_goal', 'query_accounts', 'create_account', 'edit_account',
   'simulate_interest',
   // cartão de crédito + transferência
@@ -6550,6 +6550,16 @@ async function handleFinanceAction(collab, action, params) {
       if (!amount || amount <= 0) return '❓ Qual o valor da transferência?';
       await financeService.createTransfer(cid, { from_account: from.id, to_account: to.id, amount, description: params.description });
       return `🔁 Transferi *${financeFmt.money(amount)}* de *${from.name}* → *${to.name}*. Saldo total inalterado.`;
+    }
+    case 'query_bills': {
+      // "o que pago dia 10?" (due_day) ou "minhas contas fixas" (sem filtro). Engine soma; LLM não.
+      const { billsToPay } = require('./finance/bills-query');
+      const _now = new Date();
+      const monthStart = new Date(Date.UTC(_now.getUTCFullYear(), _now.getUTCMonth(), 1)).toISOString().slice(0, 10);
+      const dueDay = params.due_day != null && String(params.due_day).trim() !== '' ? parseInt(params.due_day, 10) : null;
+      const allBills = await financeService.listActiveBills(cid);
+      const { items, total } = billsToPay(allBills, { dueDay, monthStart });
+      return financeFmt.billsToPaySummary(items, total, dueDay);
     }
     case 'query_summary': {
       const s = await financeService.querySummary(cid);

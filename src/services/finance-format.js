@@ -133,4 +133,21 @@ function txnList(title, rows) {
   return `${title}\n${SEP}\n${lines.join('\n')}`;
 }
 
-module.exports = { money, bar, mesDaComp, txnRegistered, invoiceSummary, limitAlert, dueReminder, SEP, CAT_META, buildTxnFooter, buildTxnConfirmation, buildSourceQuestion, txnList };
+// Resumo "contas a pagar" (action query_bills). items: [{name, amount, due_day, ...}]; total já somado.
+// dueDay != null = filtrado por um dia ("o que vence dia 10"); null = todas as contas fixas em aberto.
+function billsToPaySummary(items, total, dueDay) {
+  if (!items || items.length === 0) {
+    return dueDay != null
+      ? `📅 Você não tem conta em aberto vencendo dia ${dueDay}. 🎉`
+      : '📅 Você não tem contas fixas em aberto agora. 🎉';
+  }
+  const header = dueDay != null
+    ? `📅 *Contas que vencem dia ${dueDay}* — ${items.length} ${items.length === 1 ? 'conta' : 'contas'}`
+    : `📅 *Suas contas fixas em aberto* — ${items.length} ${items.length === 1 ? 'conta' : 'contas'}`;
+  const linhas = items
+    .map((b) => `• ${b.name} — ${money(b.amount)}${dueDay == null && b.due_day != null ? ` (dia ${b.due_day})` : ''}`)
+    .join('\n');
+  return `${header}\n${linhas}\n\n💰 *Total: ${money(total)}*`;
+}
+
+module.exports = { money, bar, mesDaComp, txnRegistered, invoiceSummary, limitAlert, dueReminder, SEP, CAT_META, buildTxnFooter, buildTxnConfirmation, buildSourceQuestion, txnList, billsToPaySummary };
