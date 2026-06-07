@@ -6438,11 +6438,13 @@ async function handleFinanceAction(collab, action, params) {
       return `✏️ Carteira atualizada: ${a.icon || '🏦'} ${a.name}.`;
     }
     case 'query_accounts': {
-      const accs = await financeService.listAccounts(cid);
-      if (!accs.length) return 'Você ainda não tem carteiras. Quer criar uma? Ex: "cria carteira Nubank".';
-      const linhas = accs.map((a) => `${a.icon || '🏦'} ${a.name}: ${financeFmt.money(Number(a.balance))}`).join('\n');
-      const total = accs.reduce((s, a) => s + Number(a.balance), 0);
-      return `👛 Suas carteiras:\n${linhas}\n\nTotal: ${financeFmt.money(total)}`;
+      const { buildBalances } = require('./finance/reports/balances');
+      const wa = require('./finance/wa-format');
+      const accounts = await financeService.listAccounts(cid);
+      const cards = await financeService.listCards(cid);
+      const cardsUsage = await Promise.all(
+        cards.map(async (c) => ({ card: c, usage: await financeService.cardUsage(cid, c) })));
+      return wa.renderBalances(buildBalances(accounts, cardsUsage));
     }
     case 'create_card': {
       // Idempotente: se já existe cartão com esse nome (match exato), ATUALIZA em vez de duplicar.

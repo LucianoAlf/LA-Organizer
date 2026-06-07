@@ -2,10 +2,11 @@ import { lazy, Suspense, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { StatCard } from '../../components/StatCard';
 import { Fab } from '../../components/Fab';
-import { useAccounts, useBudgets, useCategoryLookup, useFinanceiroAuth, useSummary, useTransactions, useTransactionsRange } from '../../hooks/useFinanceiro';
+import { useAccounts, useBudgets, useCategoryLookup, useFinanceiroAuth, useSummary, useTransactions, useTransactionsRange, useCardsWithUsage } from '../../hooks/useFinanceiro';
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
 import type { PfCategory, PfTransaction } from '../../lib/financeiro';
 import { monthBounds } from '../../lib/financeiro';
+import { computePosition } from '../../lib/cartoes';
 import { BudgetBar } from './components/BudgetBar';
 import { FinanceQuickLinks } from './components/FinanceQuickLinks';
 import { FinanceSummaryChips } from './components/FinanceSummaryChips';
@@ -45,8 +46,15 @@ export function FinanceiroPage() {
   const budgetsQ = useBudgets();
   const catLookup = useCategoryLookup();
   const accountsQ = useAccounts();
+  const cardsUsageQ = useCardsWithUsage();
   const lastTxsQ = useTransactions({ limit: 5 });
   const summaryQ = useSummary();
+
+  // F2 — posição consolidada
+  const pos = useMemo(
+    () => computePosition(accountsQ.data ?? [], cardsUsageQ.data ?? []),
+    [accountsQ.data, cardsUsageQ.data],
+  );
 
   // 6 meses pra a linha
   const r6 = useMemo(rangeLast6Months, []);
@@ -130,6 +138,33 @@ export function FinanceiroPage() {
           />
         </div>
       </section>
+
+      {/* Card Posição — F2: saldo em contas + limite disponível nos cartões */}
+      {(accountsQ.data?.length || cardsUsageQ.data?.length) ? (
+        <section className="rounded-lg border border-border bg-bg-surface p-md">
+          <h3 className="text-label text-fg-muted uppercase tracking-wide mb-3">Posição</h3>
+          <ul className="flex flex-col gap-2">
+            <li className="flex items-center justify-between gap-2">
+              <span className="text-body-md text-fg-muted flex items-center gap-1.5">
+                <span aria-hidden="true">🏦</span> Saldo em contas
+              </span>
+              <span className="text-body-md tabular-nums text-fg">R$ {brl(pos.totalSaldo)}</span>
+            </li>
+            <li className="flex items-center justify-between gap-2">
+              <span className="text-body-md text-fg-muted flex items-center gap-1.5">
+                <span aria-hidden="true">💳</span> Limite disponível
+              </span>
+              <span className="text-body-md tabular-nums text-fg">R$ {brl(pos.limiteDisponivel)}</span>
+            </li>
+            <li className="flex items-center justify-between gap-2 pt-2 border-t border-border">
+              <span className="text-body-md text-fg flex items-center gap-1.5">
+                <span aria-hidden="true">📈</span> Total disponível
+              </span>
+              <span className="text-body-md tabular-nums font-semibold text-fg">R$ {brl(pos.totalDisponivel)}</span>
+            </li>
+          </ul>
+        </section>
+      ) : null}
 
       <FinanceSummaryChips />
 

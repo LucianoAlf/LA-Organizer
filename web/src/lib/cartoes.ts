@@ -125,6 +125,17 @@ export async function cardsWithUsage(collaboratorId: string): Promise<{ card: Pf
   return Promise.all(cards.map(async (card) => ({ card, usage: await cardUsage(collaboratorId, card) })));
 }
 
+// F2 — Saldos consolidados: posição financeira agregada (contas + limite de cartões).
+export interface Position { totalSaldo: number; limiteDisponivel: number; totalDisponivel: number; }
+export function computePosition(
+  accounts: { balance: number }[],
+  cardsUsage: { usage: { available: number } }[],
+): Position {
+  const totalSaldo = accounts.reduce((s, a) => s + Number(a.balance || 0), 0);
+  const limiteDisponivel = cardsUsage.reduce((s, c) => s + Math.max(0, Number(c.usage?.available || 0)), 0);
+  return { totalSaldo, limiteDisponivel, totalDisponivel: totalSaldo + limiteDisponivel };
+}
+
 export async function createCardPurchase(
   collaboratorId: string,
   input: { cardId: string; closingDay: number; amount: number; category: string;

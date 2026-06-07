@@ -88,4 +88,29 @@ function renderBillsToPay(model) {
   ]);
 }
 
-module.exports = { header, sep, totalHighlight, tomTip, quickActions, severityTiers, billItem, assemble, money, SEP, renderFixedBills, renderBillsToPay };
+function _semaforo(balance) { return Number(balance) < 0 ? '🔴' : '✅'; }
+function balanceLine(acc) {
+  const st = acc.status || _semaforo(acc.balance);
+  return `${acc.icon || '🏦'} *${acc.name}* ${money(Number(acc.balance) || 0)} ${st}`;
+}
+function positionBlock(p) {
+  return ['📊 *Posição*',
+    `🏦 Saldo em contas: ${money(p.totalSaldo)}`,
+    `💳 Limite disponível: ${money(p.limiteDisponivel)}`,
+    `📈 Total disponível: ${money(p.totalDisponivel)}`].join('\n');
+}
+function renderBalances(model) {
+  if ((!model.accounts || !model.accounts.length) && !model.limiteDisponivel) {
+    return 'Você ainda não tem carteiras nem cartões. Quer criar? Ex: _"cria carteira Nubank"_.';
+  }
+  const linhas = model.accounts.map(balanceLine).join('\n');
+  return assemble([
+    header('💰', 'Seus Saldos'),
+    linhas,
+    totalHighlight('', model.totalSaldo),
+    positionBlock(model),
+    quickActions(['extrato', 'minhas contas a pagar', 'quanto gastei esse mês']),
+  ]);
+}
+
+module.exports = { header, sep, totalHighlight, tomTip, quickActions, severityTiers, billItem, assemble, money, SEP, renderFixedBills, renderBillsToPay, balanceLine, positionBlock, renderBalances };

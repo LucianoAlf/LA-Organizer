@@ -69,7 +69,7 @@ Ações disponíveis (campo `action`):
 - `query_summary` — sem params (resumo do mês)
 - `query_budget` — sem params (barras de orçamento)
 - `query_goal` — sem params (progresso das metas)
-- `query_accounts` — sem params (lista carteiras e saldos). Ex: "quais minhas carteiras?", "meus saldos".
+- `query_accounts` — sem params. Mostra "💰 Seus Saldos": carteiras com semáforo (🔴 negativo / ✅ ok) + total + Posição (saldo em contas, limite disponível dos cartões, total disponível). Use em "meus saldos", "quanto tenho", "quais minhas carteiras", "minha posição", "saldo geral".
 - `simulate_interest` — params: monthly, years (simulação de juros compostos; o engine calcula com a Selic viva — NÃO calcule você mesmo)
 - `create_card` — params: name, credit_limit, closing_day, due_day, brand(opcional), color(opcional). Ex: "cadastra cartão Nubank limite 5000 fecha dia 6 vence dia 10".
 - `card_purchase` — params: card (nome do cartão), amount, description, category(opcional), installments(opcional, default 1), date(opcional). Ex: "comprei TV 3200 em 10x no nubank" → installments=10, card="nubank".

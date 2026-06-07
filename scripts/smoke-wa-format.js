@@ -55,4 +55,16 @@ assert.ok(renderBillsToPay({ vencidas:[],proximos7:[],restanteMes:[],cards:[],to
 // Fix C: empty-state de renderFixedBills.
 assert.ok(renderFixedBills({ groups:{ vencidas:[],pendentes:[],pagas:[],semValor:[] }, totals:{ aPagar:0 }, count:0 }).includes('ainda não cadastrou'));
 
+const { balanceLine, positionBlock, renderBalances } = require('../src/finance/wa-format');
+assert.strictEqual(balanceLine({ name:'Nubank', icon:'💜', balance:5221, status:'✅' }), '💜 *Nubank* R$ 5.221,00 ✅');
+assert.strictEqual(balanceLine({ name:'Cheque', balance:-30 }), '🏦 *Cheque* R$ -30,00 🔴'); // sem status → deriva 🔴 p/ negativo
+assert.ok(positionBlock({ totalSaldo:10161, limiteDisponivel:60121, totalDisponivel:70282 }).includes('Total disponível: R$ 70.282,00'));
+const bm = { accounts:[{name:'Nubank',icon:'💜',balance:5221,status:'✅'},{name:'Itau',icon:'🧡',balance:4820,status:'✅'}], totalSaldo:10041, limiteDisponivel:1000, totalDisponivel:11041 };
+const rb = renderBalances(bm);
+assert.ok(rb.startsWith('💰 *Seus Saldos*'));
+assert.ok(rb.includes('💜 *Nubank* R$ 5.221,00 ✅'));
+assert.ok(rb.includes('💰 *Total: R$ 10.041,00*'));
+assert.ok(rb.includes('💳 Limite disponível: R$ 1.000,00'));
+assert.ok(renderBalances({ accounts:[], totalSaldo:0, limiteDisponivel:0, totalDisponivel:0 }).includes('ainda não tem'));
+
 console.log('PASS — wa-format kit OK.');
