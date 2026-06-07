@@ -195,6 +195,19 @@ export function deriveBillStatus(bill: PfBill, today = new Date()): BillStatus {
   const dom = today.getUTCDate();
   return bill.due_day < dom ? 'atrasada' : 'a-vencer';
 }
+export interface ExpenseBillGroups { atrasadas: PfBill[]; aVencer: PfBill[]; pagas: PfBill[]; }
+// Agrupa as contas de DESPESA por status (relação completa). today injetável p/ teste.
+export function groupExpenseBillsByStatus(bills: PfBill[], today = new Date()): ExpenseBillGroups {
+  const g: ExpenseBillGroups = { atrasadas: [], aVencer: [], pagas: [] };
+  for (const b of bills.filter((x) => x.type === 'expense')) {
+    const s = deriveBillStatus(b, today);
+    if (s === 'paga') g.pagas.push(b);
+    else if (s === 'atrasada') g.atrasadas.push(b);
+    else g.aVencer.push(b);
+  }
+  return g;
+}
+
 export async function listBills(collaboratorId: string) {
   const { data, error } = await supabase.from('pf_bills')
     .select('id, name, amount, due_day, category, type, status, last_paid_at, recurrence, due_date')

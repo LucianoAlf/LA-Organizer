@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Fab } from '../../components/Fab';
+import { Tabs } from '../../components/Tabs';
 import { useBills, useCategoryLookup, useFinanceiroAuth, usePayBill } from '../../hooks/useFinanceiro';
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
-import { deriveBillStatus } from '../../lib/financeiro';
+import { deriveBillStatus, groupExpenseBillsByStatus } from '../../lib/financeiro';
 import type { BillStatus, PfBill } from '../../lib/financeiro';
 import { BillSheet } from './components/BillSheet';
 
@@ -60,6 +61,33 @@ function BillRow({ bill, onPay, onEdit }: { bill: PfBill; onPay: (b: PfBill) => 
   );
 }
 
+type TabId = 'todas' | 'apagar';
+
+const TABS: { id: TabId; label: string }[] = [
+  { id: 'todas', label: 'Todas' },
+  { id: 'apagar', label: 'A pagar' },
+];
+
+function BillSection({ title, bills, onPay, onEdit }: {
+  title: string;
+  bills: PfBill[];
+  onPay: (b: PfBill) => void;
+  onEdit: (b: PfBill) => void;
+}) {
+  if (bills.length === 0) return null;
+  return (
+    <section className="rounded-lg border border-border bg-bg-surface overflow-hidden">
+      <header className="px-md pt-md pb-2 flex items-baseline justify-between">
+        <h3 className="text-label text-fg-muted uppercase tracking-wide">{title}</h3>
+        <span className="text-body-sm text-fg-muted tabular-nums">{bills.length}</span>
+      </header>
+      <ul className="divide-y divide-border">
+        {bills.map((b) => <BillRow key={b.id} bill={b} onPay={onPay} onEdit={onEdit} />)}
+      </ul>
+    </section>
+  );
+}
+
 export function ContasFixasPage() {
   const cid = useFinanceiroAuth();
   useRealtimeFinance(['pf_bills', 'pf_transactions'], cid);
@@ -69,11 +97,12 @@ export function ContasFixasPage() {
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<PfBill | null>(null);
+  const [activeTab, setActiveTab] = useState<TabId>('todas');
 
-  const { aPagar, aReceber } = useMemo(() => {
+  const { groups, aReceber } = useMemo(() => {
     const list = billsQ.data ?? [];
     return {
-      aPagar: list.filter((b) => b.type === 'expense'),
+      groups: groupExpenseBillsByStatus(list),
       aReceber: list.filter((b) => b.type === 'income'),
     };
   }, [billsQ.data]);
@@ -84,6 +113,13 @@ export function ContasFixasPage() {
   }
 
   const empty = !billsQ.isLoading && (billsQ.data?.length ?? 0) === 0;
+
+  const totalAPagar = groups.atrasadas.length + groups.aVencer.length;
+
+  const tabs = TABS.map((t) => ({
+    ...t,
+    badge: t.id === 'apagar' && totalAPagar > 0 ? totalAPagar : undefined,
+  }));
 
   return (
     <div className="flex flex-col gap-md pb-32 md:pb-md">
@@ -98,6 +134,8 @@ export function ContasFixasPage() {
         </button>
       </header>
 
+      <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
+
       {empty && (
         <section className="rounded-lg border border-dashed border-border bg-bg-surface px-md py-lg text-center">
           <div className="text-[44px] leading-none mb-2" aria-hidden>🧾</div>
@@ -108,28 +146,27 @@ export function ContasFixasPage() {
         </section>
       )}
 
-      {aPagar.length > 0 && (
-        <section className="rounded-lg border border-border bg-bg-surface overflow-hidden">
-          <header className="px-md pt-md pb-2 flex items-baseline justify-between">
-            <h3 className="text-label text-fg-muted uppercase tracking-wide">A pagar</h3>
-            <span className="text-body-sm text-fg-muted tabular-nums">{aPagar.length}</span>
-          </header>
-          <ul className="divide-y divide-border">
-            {aPagar.map((b) => <BillRow key={b.id} bill={b} onPay={pay} onEdit={setEditing} />)}
-          </ul>
-        </section>
+      {activeTab === 'todas' && (
+        <>
+          <BillSection title="🔴 Atrasadas" bills={groups.atrasadas} onPay={pay} onEdit={setEditing} />
+          <BillSection title="🟡 A vencer" bills={groups.aVencer} onPay={pay} onEdit={setEditing} />
+          <BillSection title="✅ Pagas" bills={groups.pagas} onPay={pay} onEdit={setEditing} />
+          <BillSection title="A receber" bills={aReceber} onPay={pay} onEdit={setEditing} />
+        </>
       )}
 
-      {aReceber.length > 0 && (
-        <section className="rounded-lg border border-border bg-bg-surface overflow-hidden">
-          <header className="px-md pt-md pb-2 flex items-baseline justify-between">
-            <h3 className="text-label text-fg-muted uppercase tracking-wide">A receber</h3>
-            <span className="text-body-sm text-fg-muted tabular-nums">{aReceber.length}</span>
-          </header>
-          <ul className="divide-y divide-border">
-            {aReceber.map((b) => <BillRow key={b.id} bill={b} onPay={pay} onEdit={setEditing} />)}
-          </ul>
-        </section>
+      {activeTab === 'apagar' && (
+        <>
+          {groups.atrasadas.length === 0 && groups.aVencer.length === 0 && (
+            <section className="rounded-lg border border-dashed border-border bg-bg-surface px-md py-lg text-center">
+              <div className="text-[44px] leading-none mb-2" aria-hidden>✅</div>
+              <p className="text-body-md text-fg mb-1">Tudo em dia!</p>
+              <p className="text-body-sm text-fg-muted">Nenhuma conta pendente ou atrasada.</p>
+            </section>
+          )}
+          <BillSection title="🔴 Atrasadas" bills={groups.atrasadas} onPay={pay} onEdit={setEditing} />
+          <BillSection title="🟡 A vencer" bills={groups.aVencer} onPay={pay} onEdit={setEditing} />
+        </>
       )}
 
       {/* Sheet criar */}
