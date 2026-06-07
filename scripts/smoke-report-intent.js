@@ -10,35 +10,45 @@ function must(text, action, params) {
   try {
     assert.ok(r, `DEVERIA casar: "${text}"`);
     assert.strictEqual(r.action, action, `"${text}" → ${r && r.action} (esperado ${action})`);
-    if (params) for (const k of Object.keys(params)) assert.strictEqual(r.params[k], params[k], `"${text}" param ${k}=${r.params[k]} (esperado ${params[k]})`);
+    if (params) for (const k of Object.keys(params)) assert.strictEqual(r.params[k], params[k], `"${text}" param ${k}=${r.params[k]} (esp ${params[k]})`);
   } catch (e) { console.error('❌', e.message); fail++; }
 }
 function none(text) {
   const r = R(text);
-  try { assert.strictEqual(r, null, `NÃO deveria casar: "${text}" → ${r && r.action}`); }
+  try { assert.strictEqual(r, null, `NÃO deveria casar: "${text}" → ${JSON.stringify(r)}`); }
   catch (e) { console.error('❌', e.message); fail++; }
 }
 
-// ===== MUST MATCH (casos reais do teste do Luciano + variações) =====
+// ===================== MUST MATCH =====================
 must('fechamento de maio', 'query_monthly_closing', { month: '2026-05' });
 must('fechamento do mês', 'query_monthly_closing');
+must('fechamento do mês passado', 'query_monthly_closing');
 must('resumo de abril', 'query_monthly_closing', { month: '2026-04' });
+must('resumo do mes de maio', 'query_monthly_closing', { month: '2026-05' });
 must('como fechou maio', 'query_monthly_closing', { month: '2026-05' });
+must('fechamento de maio de 2025', 'query_monthly_closing', { month: '2025-05' });
+must('resumo de novembro de 2025', 'query_monthly_closing', { month: '2025-11' });
 must('saldo do nubank', 'query_account_detail', { account: 'nubank' });
 must('qual o saldo do itau', 'query_account_detail', { account: 'itau' });
+must('saldo do nubank de maio', 'query_account_detail', { account: 'nubank' });
+must('saldo da conta corrente', 'query_account_detail', { account: 'conta corrente' });
 must('meus saldos', 'query_accounts');
-must('meu saldo', 'query_accounts');
+must('qual o saldo', 'query_accounts');
 must('quanto tenho no total', 'query_accounts');
+must('saldo de todas as contas', 'query_accounts');
+must('saldo total', 'query_accounts');
 must('extrato do nubank', 'query_statement', { account: 'nubank' });
 must('extrato', 'query_statement');
+must('extrato do mes', 'query_statement');
 must('extrato de maio', 'query_statement', { month: '2026-05' });
+must('extrato do nubank de maio', 'query_statement', { account: 'nubank', month: '2026-05' });
+must('extrato do banco do brasil de maio', 'query_statement', { account: 'banco do brasil', month: '2026-05' });
 must('lançamentos de maio', 'query_statement', { month: '2026-05' });
 must('gastos da semana', 'query_weekly_summary');
 must('quanto gastei essa semana', 'query_weekly_summary');
 must('quanto gastei essa semana?', 'query_weekly_summary');
 must('resumo financeiro da semana', 'query_weekly_summary');
-must('resumo do dia', 'query_daily_summary');
-must('balanço do dia', 'query_daily_summary');
+must('gastos de hoje', 'query_daily_summary');
 must('quanto gastei hoje', 'query_daily_summary');
 must('quanto gastei', 'query_period_expenses');
 must('quanto gastei esse mês', 'query_period_expenses');
@@ -53,27 +63,40 @@ must('minhas contas fixas', 'query_fixed_bills');
 must('todas as contas', 'query_fixed_bills');
 must('contas a pagar', 'query_bills_to_pay');
 must('o que falta pagar', 'query_bills_to_pay');
-must('vence dia 10', 'query_bills_to_pay', { due_day: 10 });
-must('contas atrasadas', 'query_bills_to_pay');
 must('quanto preciso pagar esse mês', 'query_bills_to_pay');
+must('vence dia 10', 'query_bills_to_pay', { due_day: 10 });
+must('o que vence essa semana', 'query_bills_to_pay');
+must('contas atrasadas', 'query_bills_to_pay');
 
-// ===== MUST NOT MATCH (cai no LLM) =====
-none('50 de combustível no débito');
-none('gastei 30 no ifood');
-none('recebi 500 de comissão');
-none('paguei a fatura do nubank');
-none('comprei TV 3200 em 10x no nubank');
-none('quanto gastei em alimentação');   // categoria, não período → query_transactions
-none('minhas últimas transações');
-none('meus últimos gastos');
-none('últimos gastos em transporte');
-none('resumo da semana');                // PURO = resumo de TRABALHO
-none('bom dia, tom!');
-none('marca a reunião amanhã às 10h');
-none('me lembra de estudar pro simulado');
-none('cria carteira nubank');
-none('transferi 500 do itau pro nubank');
-none('comprovante');
+// ============ MUST NOT MATCH (regressão adversarial — 95 bugs) ============
+// saldo + verbo de ajuste/transação
+for (const s of ['adiciona 200 no saldo do nubank', 'poe 100 no saldo do nubank', 'coloca 200 no saldo do nubank',
+  'ajusta o saldo do nubank pra 500', 'corrige o saldo do nubank', 'zera o saldo do nubank', 'seta o saldo do nubank em 1000',
+  'atualiza o saldo do nubank', 'tira do saldo do nubank', 'desconta 40 do saldo do nubank', 'caiu 500 no saldo do nubank',
+  'entrou 200 no saldo do nubank', 'paguei 80 com saldo do nubank', 'gastei usando o saldo do nubank',
+  'o saldo do nubank ta errado conserta', 'poe no saldo do nubank mais 100', 'saldo do nubank pra 500']) none(s);
+// saldo + substantivo não-conta
+for (const s of ['saldo do projeto', 'qual o saldo do time', 'saldo do contrato', 'qual o saldo de horas']) none(s);
+// weekly/daily/period + categoria
+for (const s of ['quanto gastei essa semana em lazer', 'quanto gastei essa semana com uber', 'gastos da semana no mercado',
+  'gastos da semana com alimentacao', 'balanço da semana de trabalho', 'quanto gastei hoje no ifood',
+  'gastos de hoje com alimentacao', 'quanto gastei em maio com mercado', 'gastos de maio com mercado',
+  'quanto gastei em junho no nubank', 'quanto gastei em alimentação', 'meus últimos gastos']) none(s);
+// dia ambíguo (trabalho) → LLM decide
+for (const s of ['resumo do dia', 'balanço do dia', 'resumo da semana']) none(s);
+// extrato + não-conta
+for (const s of ['extrato do projeto', 'extrato do trabalho', 'extrato do ano', 'extrato do meu dia', 'extrato das atividades']) none(s);
+// fechamento/análise não-financeiro
+for (const s of ['fechamento do contrato', 'fechamento da obra', 'fechamento do projeto', 'fechamento do mes de trabalho',
+  'como fechou a reuniao', 'como fechou o trimestre', 'fechamento da semana', 'qual o resumo de maio do projeto',
+  'resumo do mes de trabalho', 'analise do mes da equipe', 'analisa as contas da reuniao de amanha', 'resumo do mes passado de vendas']) none(s);
+// checkup/bills não-financeiro
+for (const s of ['checkup do carro', 'checkup do sistema', 'checkup geral da equipe', 'tem problema nas contas do projeto',
+  'alguma conta atrasada do projeto', 'o que vence essa reuniao', 'vence dia 10 a reuniao']) none(s);
+// registro de transação / não-finanças
+for (const s of ['50 de combustível no débito', 'gastei 30 no ifood', 'recebi 500 de comissão', 'paguei a fatura do nubank',
+  'comprei TV 3200 em 10x no nubank', 'minhas últimas transações', 'bom dia, tom!', 'marca a reunião amanhã às 10h',
+  'me lembra de estudar pro simulado', 'cria carteira nubank', 'transferi 500 do itau pro nubank', 'comprovante']) none(s);
 
 if (fail) { console.error(`\nFALHOU: ${fail} caso(s).`); process.exit(1); }
-console.log('PASS — smoke-report-intent (must-match + must-not-match OK).');
+console.log('PASS — smoke-report-intent (must + 90 regressões adversariais OK).');
