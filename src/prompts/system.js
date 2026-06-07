@@ -536,7 +536,7 @@ function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events
         : '';
       // Item 5 (Quintela/Luciano) — convite aguardando resposta: instrui o RSVP explícito.
       const rsvpTag = e._rsvpPending
-        ? ` ⏳ *CONVITE AGUARDANDO SUA RESPOSTA* — se a pessoa disser sim/vou/confirmo → \`<<EVENT>>{"action":"rsvp","event_id":"${sid}","status":"confirmed"}<<END>>\`; não/recuso → "declined". NUNCA diga "confirmada" sem emitir esse marker.`
+        ? ` ⏳ *CONVITE AGUARDANDO SUA RESPOSTA* — se a pessoa disser sim/vou/confirmo → \`<<EVENT_UPDATE>>{"action":"rsvp","event_id":"${sid}","status":"confirmed"}<<END>>\`; não/recuso → "declined". NUNCA diga "confirmada" sem emitir esse marker.`
         : '';
       lines.push(`• [id=${sid}] ${datePrefix}${start}–${end} ${mod} ${e.title}${statusTag}${cat}${where}${reminders}${rsvpTag}`);
     });

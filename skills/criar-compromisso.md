@@ -246,7 +246,7 @@ Quando alguém recebeu convite (via `to_name` ou `/internal/event-invites`) e re
 Identifique o evento pelo `[ev:xxxxxxxx]` (8 chars do UUID) na mensagem de convite ou no histórico. Mais de um convite pendente → pergunte qual.
 
 ```text
-<<EVENT>>
+<<EVENT_UPDATE>>
 {"action": "rsvp", "event_id": "xxxxxxxx", "status": "confirmed"}
 <<END>>
 ```
