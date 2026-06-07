@@ -71,7 +71,8 @@ const AMOUNT_RE = /(?:r\$\s*)?(\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?|\d+(?:,\d{1,2})?
 // ("3 alunos", "50 cópias"). reais/conto/pila NÃO entram (são dinheiro).
 // "aula(s)" NÃO entra: numa escola de música "150 aula particular" é RECEITA (R$150), não
 // quantidade. Quantidade de aulas vira raro; o caso "me deu uma ideia pra 2 aulas" cai no RE_DOUBT.
-const COUNT_NOUN_AFTER = /^\s*(alunos?|caras?|pessoas?|lugares?|cordas?|vezes|anos?|horas?|minutos?|itens|unidades?|amigos?|convidados?|semanas?|gols?|pontos?|faltas?|c[óo]pias?|m[úu]sicas?|ingressos?|cadernos?|v[íi]deos?|caixas?|pacotes?|garrafas?|copos?)\b/;
+// "aulas" só no PLURAL (quantidade); "aula" singular fica de fora (= receita "150 aula particular").
+const COUNT_NOUN_AFTER = /^\s*(alunos?|caras?|pessoas?|lugares?|cordas?|vezes|anos?|horas?|minutos?|itens|unidades?|amigos?|convidados?|semanas?|gols?|pontos?|faltas?|c[óo]pias?|m[úu]sicas?|m[úu]sicos?|ingressos?|cadernos?|v[íi]deos?|caixas?|pacotes?|garrafas?|copos?|aulas|partituras?|tarefas?|monitores?|professores?|instrumentos?)\b/;
 // Substantivo de CONTAGEM logo ANTES do número → também é quantidade/índice, não dinheiro
 // ("turma 2", "nota 8", "turma das 8"). O (d[ao]s? )? cobre "turma das 8".
 const COUNT_NOUN_BEFORE = /\b(turmas?|salas?|grupos?|n[íi]vel|n[íi]veis|p[áa]ginas?|quest[õoãa]es?|notas?|faixas?|etapas?|m[óo]dulos?|cap[íi]tulos?|treinos?|vagas?|quartos?)\s*(d[ao]s?\s*)?$/;
@@ -91,7 +92,9 @@ const RE_TRANSFER = /\btransfer/;
 // NÃO inclui "que <verbo>" nem "certo" soltos: matavam registros válidos coloquiais
 // ("registra 90 que ganhei", "gastei 200 no rolê certo"). Recall real cai em lembr/confer/?/etc.
 // "já registrei/lancei" = checagem ("será se já registrei") — mas NÃO "já paguei 50" (registro válido).
-const RE_DOUBT = /\?|\bn[ãa]o lembro\b|\bacho que\b|\bsei l[áa]\b|\bser[áa]\s+(que|se)\b|\bn[ée]\b|\bconfer\w*|\bfoi isso\b|\btem certeza\b|\blembr\w*|\bou n[ãa]o\b|\bdeu uma ideia\b|\bj[áa]\s+(registr|lanc)\w*|\bm[êe]s passado\b|\bm[êe]s inteiro\b|\bsomando\b|\bno total\b|\bno geral\b|\bpassad[oa]\b/;
+// Agregados/estatística/comparação/superlativo (resumo, não lançamento novo): fechou (3ª pessoa,
+// ≠ "fechei" 1ª), maior/menor/média, acumulei, até agora, comparado, mais/menos que, no fim deu.
+const RE_DOUBT = /\?|\bn[ãa]o lembro\b|\bacho que\b|\bsei l[áa]\b|\bser[áa]\s+(que|se)\b|\bn[ée]\b|\bconfer\w*|\bfoi isso\b|\btem certeza\b|\blembr\w*|\bou n[ãa]o\b|\bdeu uma ideia\b|\bj[áa]\s+(registr|lanc)\w*|\bm[êe]s passado\b|\bm[êe]s inteiro\b|\bsomando\b|\bno total\b|\bno geral\b|\bpassad[oa]\b|\bmaior\b|\bmenor\b|\bm[ée]dia\b|\bfechou\b|\bacumul\w*|\bat[ée] agora\b|\bcomparado\b|\bmais que\b|\bmenos que\b|\bno fim deu\b/;
 // Intenção FUTURA (ainda não aconteceu) → não registra. Inclui registrar/anotar ("quero registrar depois").
 const RE_FUTURE = /\b(preciso|quero|vou|pretendo|tenho que|tenho de|bora)\b[^?.!]*\b(comprar|pagar|gastar|lan[çc]ar|guardar|registrar|anotar|adicionar)\b/;
 // Queries/consultas.

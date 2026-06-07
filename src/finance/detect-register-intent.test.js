@@ -204,6 +204,25 @@ test('"já paguei 50 anota" (ação concluída) ainda registra', () => {
   assert.ok(r); assert.strictEqual(r.amount, 50); assert.strictEqual(r.type, 'expense');
 });
 
+// ── Round 5 adversarial: agregados/estatística/comparação + quantidade de domínio ──
+test('agregado/resumo/estatística → null', () => {
+  assert.strictEqual(detectRegisterIntent('esse mês fechou em 2000 de gasto'), null);
+  assert.strictEqual(detectRegisterIntent('meu maior gasto foi 700 com a banda'), null);
+  assert.strictEqual(detectRegisterIntent('minha média de gasto é 400 por mês'), null);
+  assert.strictEqual(detectRegisterIntent('no fim deu 1200 de despesa'), null);
+  assert.strictEqual(detectRegisterIntent('acumulei 5000 de receita até agora'), null);
+  assert.strictEqual(detectRegisterIntent('comparado com abril gastei mais que 800'), null);
+});
+test('"fechei um cachê" (1ª pessoa, fechar negócio) ≠ "fechou" → registra income', () => {
+  const r = detectRegisterIntent('fechei um cachê de 1k');
+  assert.ok(r); assert.strictEqual(r.type, 'income'); assert.strictEqual(r.amount, 1000);
+});
+test('quantidade de domínio (partituras/monitores/aulas-plural) → null', () => {
+  assert.strictEqual(detectRegisterIntent('compra 12 partituras novas pra biblioteca'), null);
+  assert.strictEqual(detectRegisterIntent('registra a presença dos 4 monitores'), null);
+  assert.strictEqual(detectRegisterIntent('adiciona mais 2 aulas na grade da semana'), null);
+});
+
 // ── Assinatura de confirmação FABRICADA ──
 test('looksLike: "registrado" NEGADO (fala do usuário) → false', () => {
   assert.strictEqual(looksLikeFinanceConfirmation('paguei R$ 100 e ainda não foi registrado nada'), false);
