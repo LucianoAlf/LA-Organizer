@@ -10,6 +10,17 @@ function stripDiacritics(s) {
 }
 function firstToken(s) { return stripDiacritics(s).split(/\s+/)[0]; }
 
+// Fatia K — PT-BR: o LLM costuma emitir o destinatário com artigo/preposição
+// ("o Alf", "pro Alf", "pra Dai", "para o Rafinha", "ao Hugo"). Esses prefixos viram
+// o token líder e quebram o match (união vazia → not_found). Removemos só prefixos de
+// FALA (o/a/os/as + pro/pra/ao + "para o/a") — NUNCA partículas de sobrenome
+// (do/da/dos/das), pra não tocar "Daiana da Silva". Só remove se sobrar conteúdo.
+const LEADING_ARTICLE_RE = /^(?:para\s+(?:o|a|os|as)\s+|pros?\s+|pras?\s+|aos?\s+|[oa]s?\s+)/;
+function stripLeadingArticle(normalized) {
+  const stripped = String(normalized || '').replace(LEADING_ARTICLE_RE, '').trim();
+  return stripped.length ? stripped : normalized;
+}
+
 // Tokens de domínio de uma pessoa, derivados dos campos existentes.
 // function_role (farmer/pedagogico/...), pedagogical_role → pedagogico,
 // unit ≠ all → unit:<unit>. É o vocabulário que casa requester ↔ candidato.
@@ -26,7 +37,7 @@ function domainOf(collab) {
 // Retorna { exact: collab|null, union: collab[] }.
 function gatherCandidates(name, rows) {
   const result = { exact: null, union: [] };
-  const norm = stripDiacritics(name);
+  const norm = stripLeadingArticle(stripDiacritics(name));
   if (!norm) return result;
   const first = norm.split(/\s+/)[0];
 
