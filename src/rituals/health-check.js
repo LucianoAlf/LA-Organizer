@@ -287,11 +287,12 @@ async function checkUnknownMarkers() {
 async function checkSilentCollaborators() {
   const { data: collabs, error } = await supabase
     .from('collaborators')
-    .select('id, full_name, phone')
+    .select('id, full_name, phone, created_at')
     .eq('is_active', true)
     .eq('onboarding_completed', true);
   if (error) throw error;
   const cutoff = isoHoursAgo(7 * 24);
+  const cutoffMs = Date.parse(cutoff);
   const silent = [];
   // Sprint 31.6 (D3) — ignora contas de sistema (não conversam no WhatsApp).
   // Ex.: Admin tem phone placeholder "00000000000" — cobrar "conversa" dela é ruído.
@@ -300,6 +301,9 @@ async function checkSilentCollaborators() {
   for (const c of (collabs || [])) {
     if (SYSTEM_NAMES.has(String(c.full_name || '').trim().toLowerCase())) continue;
     if (/^0+$/.test(String(c.phone || '').replace(/\D/g, ''))) continue;
+    // Sprint 31.20 — recém-criado (< janela de 7d) não pode ter "7+ dias sem conversa";
+    // flagar quem entrou ontem é falso positivo. Caso Ana Paula/Jéssica 07/06.
+    if (c.created_at && Date.parse(c.created_at) > cutoffMs) continue;
     const { count } = await supabase
       .from('conversation_history')
       .select('id', { count: 'exact', head: true })
