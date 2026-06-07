@@ -134,8 +134,9 @@ const _MEDALS = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣'];
 function rankingTopN(items) {
   return (items || []).map((it, i) => `${_MEDALS[i] || '•'} ${it.label}: ${money(it.total)} (${it.pct}%)`).join('\n');
 }
-function comparison(c) {
-  return `📈 *Comparativo*\n• Este mês: ${money(c.atual)}\n• Mês anterior: ${money(c.anterior)}\n• Variação: ${c.variation.label}`;
+function comparison(c, labels) {
+  const L = labels || { atual: 'Este mês', anterior: 'Mês anterior' };
+  return `📈 *Comparativo*\n• ${L.atual}: ${money(c.atual)}\n• ${L.anterior}: ${money(c.anterior)}\n• Variação: ${c.variation.label}`;
 }
 function goalsBlock(goals) {
   if (!goals || !goals.length) return '';
@@ -162,4 +163,106 @@ function renderMonthAnalysis(m) {
   ]);
 }
 
-module.exports = { header, sep, totalHighlight, tomTip, quickActions, severityTiers, billItem, assemble, money, SEP, renderFixedBills, renderBillsToPay, balanceLine, positionBlock, renderBalances, renderCheckup, rankingTopN, comparison, goalsBlock, analysisProjection, analysisByType, renderMonthAnalysis };
+// ---- F5: data curta + blocos B14/B16 + renders ----
+function _ddmm(d) { const s = String(d || ''); return s.length >= 10 ? `${s.slice(8, 10)}/${s.slice(5, 7)}` : s; }
+function _accStatus(b) { b = Number(b) || 0; return b < 0 ? '🔴' : (b === 0 ? '🟡' : '✅'); }
+
+// B16 — resumo de período (gastos)
+function periodSummary(r) {
+  const n = Number(r.count) || 0;
+  return `📊 *${r.label}* — *${money(r.total)}*\n_${n} ${n === 1 ? 'lançamento' : 'lançamentos'} · ${money(r.mediaDiaria)}/dia_`;
+}
+
+// B14 — movimentação recente (última entrada/saída + variação 7d)
+function recentMovement(m) {
+  const lines = ['🔄 *Movimentação recente*'];
+  if (m && m.lastIn) lines.push(`🟢 Entrou: ${m.lastIn.desc} +${money(m.lastIn.amount)} _(${_ddmm(m.lastIn.date)})_`);
+  if (m && m.lastOut) lines.push(`🔴 Saiu: ${m.lastOut.desc} −${money(m.lastOut.amount)} _(${_ddmm(m.lastOut.date)})_`);
+  if (!m || (!m.lastIn && !m.lastOut)) lines.push('_Sem movimentação registrada._');
+  const net = Number(m && m.var7d && m.var7d.net) || 0;
+  lines.push(`📈 7 dias: ${net >= 0 ? '+' : '−'}${money(Math.abs(net))}`);
+  return lines.join('\n');
+}
+
+function renderPeriodExpenses(m) {
+  if (!m.total) return `📊 *${m.label}*\nNenhum gasto nesse período. 🎉`;
+  return assemble([
+    periodSummary({ label: m.label, total: m.total, count: m.count, mediaDiaria: m.mediaDiaria }),
+    (m.top5 && m.top5.length) ? `🏆 *Top gastos*\n${rankingTopN(m.top5)}` : '',
+    (m.porTipo && (m.porTipo.essenciais || m.porTipo.estilo)) ? analysisByType(m.porTipo) : '',
+    m.comparativo ? comparison(m.comparativo, { atual: 'Neste período', anterior: 'Período anterior' }) : '',
+    m.tip ? tomTip(m.tip) : '',
+    quickActions(m.acoes),
+  ]);
+}
+
+function renderAccountDetail(m) {
+  return assemble([
+    header(m.icon || '🏦', m.name),
+    `💼 Saldo atual: *${money(m.balance)}* ${m.status || _accStatus(m.balance)}`,
+    recentMovement(m.movement),
+    quickActions([`extrato ${String(m.name).toLowerCase()}`, 'meus saldos', 'quanto gastei esse mês']),
+  ]);
+}
+
+function _stmtLine(it) {
+  const sign = it.type === 'income' ? '+' : '−';
+  const src = it.source ? ` _·${it.source}_` : '';
+  return `${_ddmm(it.date)} ${it.emoji} ${it.desc} *${sign}${money(it.amount)}*${src}`;
+}
+function renderStatement(m) {
+  const titulo = `${m.label}${m.name ? ` · ${m.name}` : ''}`;
+  if (!m.items || !m.items.length) return `${m.icon || '🧾'} *${titulo}*\nNenhum lançamento nesse período.`;
+  const lines = m.items.map(_stmtLine).join('\n');
+  const more = m.hasMore ? `\n_+${m.count - m.shown} lançamentos — diga "completo" pra ver todos_` : '';
+  return assemble([
+    header(m.icon || '🧾', titulo, `${m.count} ${m.count === 1 ? 'lançamento' : 'lançamentos'}`),
+    lines + more,
+    `🟢 Entradas: ${money(m.totalIn)}\n🔴 Saídas: ${money(m.totalOut)}`,
+    quickActions(['quanto gastei esse mês', 'meus saldos']),
+  ]);
+}
+
+// B13 — balanço (entrou/saiu/resultado)
+function dayBalance(inV, outV, res) {
+  const r = Number(res) || 0;
+  return `📊 *Balanço*\n🟢 Entrou: ${money(inV)}\n🔴 Saiu: ${money(outV)}\n💵 Resultado: *${r < 0 ? '−' : '+'}${money(Math.abs(r))}* ${r >= 0 ? '🟢' : '🔴'}`;
+}
+
+function renderDailySummary(m) {
+  if (!m.temAtividade) return `📅 *${m.label}*\nSem movimentação hoje. 😌\n🏦 Saldo total: *${money(m.saldoTotal)}*`;
+  return assemble([
+    header('📅', m.label),
+    dayBalance(m.receitas, m.despesas, m.resultado),
+    (m.top && m.top.length) ? `🏆 *Top do dia*\n${rankingTopN(m.top)}` : '',
+    `🏦 Saldo total: *${money(m.saldoTotal)}*`,
+    quickActions(['quanto gastei esse mês', 'meus saldos']),
+  ]);
+}
+
+function renderWeeklySummary(m) {
+  if (!m.temAtividade) return `🗓️ *${m.label}*\nSemana sem movimentação. 😌`;
+  return assemble([
+    header('🗓️', m.label),
+    dayBalance(m.receitas, m.despesas, m.resultado),
+    (m.top && m.top.length) ? `🏆 *Top gastos*\n${rankingTopN(m.top)}` : '',
+    (m.porTipo && (m.porTipo.essenciais || m.porTipo.estilo)) ? analysisByType(m.porTipo) : '',
+    m.comparativo ? comparison(m.comparativo, { atual: 'Esta semana', anterior: 'Semana anterior' }) : '',
+    quickActions(m.acoes),
+  ]);
+}
+
+function renderMonthlyClosing(m) {
+  return assemble([
+    header('📆', m.label),
+    dayBalance(m.receitas, m.despesas, m.resultado),
+    (m.top && m.top.length) ? `🏆 *Onde foi o dinheiro*\n${rankingTopN(m.top)}` : '',
+    (m.porTipo && (m.porTipo.essenciais || m.porTipo.estilo)) ? analysisByType(m.porTipo) : '',
+    m.comparativo ? comparison(m.comparativo, { atual: 'Este mês', anterior: 'Mês anterior' }) : '',
+    goalsBlock(m.metas),
+    m.tip ? tomTip(m.tip) : '',
+    quickActions(m.acoes),
+  ]);
+}
+
+module.exports = { header, sep, totalHighlight, tomTip, quickActions, severityTiers, billItem, assemble, money, SEP, renderFixedBills, renderBillsToPay, balanceLine, positionBlock, renderBalances, renderCheckup, rankingTopN, comparison, goalsBlock, analysisProjection, analysisByType, renderMonthAnalysis, periodSummary, recentMovement, renderPeriodExpenses, renderAccountDetail, renderStatement, dayBalance, renderDailySummary, renderWeeklySummary, renderMonthlyClosing };

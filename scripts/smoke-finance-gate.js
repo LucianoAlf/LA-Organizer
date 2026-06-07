@@ -27,6 +27,16 @@ const NO_MATCH = [
   'manda um zap pro Yuri',
 ];
 
+// Frases novas — Task 5 (R-DIARIO, R-SEMANA, R-MENSAL/fechamento):
+for (const msg of ['resumo do dia', 'balanço do dia', 'resumo da semana', 'fechamento do mês', 'resumo de maio', 'como fechou abril']) assert.ok(financeGateMatches(msg), `gate F6: ${msg}`);
+
+// Frases novas — Task 7 (R-GASTOS, R-CONTA, R-EXTRATO):
+for (const msg of [
+  'quanto gastei em abril', 'meus gastos do mês', 'onde gasto mais',
+  'extrato do nubank', 'lançamentos de maio',
+  'saldo do nubank', 'como está o itaú',
+]) assert.ok(financeGateMatches(msg), `gate deve pegar: ${msg}`);
+
 let fail = 0;
 for (const m of MATCH) {
   try { assert.ok(financeGateMatches(m), `DEVERIA casar: "${m}"`); }

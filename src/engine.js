@@ -6124,6 +6124,8 @@ const FINANCE_ACTIONS = [
   // cartão de crédito + transferência
   'create_card', 'card_purchase', 'query_invoice', 'pay_invoice', 'transfer',
   'edit_transaction', 'delete_transaction', 'query_transactions',
+  'query_period_expenses', 'query_account_detail', 'query_statement',
+  'query_daily_summary', 'query_weekly_summary', 'query_monthly_closing',
 ];
 const MONTH_TAXA = 0.0083; // ~10,5%/ano (referencia; Fase B troca pela Selic viva)
 
@@ -6602,6 +6604,121 @@ async function handleFinanceAction(collab, action, params) {
       const cardInvoices = await financeService.pendingCardInvoices(cid).catch(() => []);
       const model = buildBillsToPay(bills, cardInvoices, today, dueDay != null ? { dueDay } : {});
       return wa.renderBillsToPay(model);
+    }
+    case 'query_period_expenses': {
+      const { buildPeriodExpenses } = require('./finance/reports/expenses');
+      const wa = require('./finance/wa-format');
+      const now = new Date();
+      const todayStr = now.toISOString().slice(0, 10);
+      let from, to, label, prevReport = null;
+      if (params.from && params.to) {
+        from = params.from; to = params.to; label = 'Gastos do período';
+      } else {
+        let ref = now;
+        if (params.month && /^\d{4}-\d{2}$/.test(params.month)) ref = new Date(`${params.month}-15T12:00:00Z`);
+        const mb = financeService.monthBounds(ref);
+        const lastDay = new Date(new Date(`${mb.end}T12:00:00Z`).getTime() - 86400000).toISOString().slice(0, 10);
+        const isCurrent = ref.getUTCFullYear() === now.getUTCFullYear() && ref.getUTCMonth() === now.getUTCMonth();
+        from = mb.start; to = isCurrent ? todayStr : lastDay;
+        label = `Gastos de ${financeFmt.mesDaComp(mb.start)}`;
+        const prevRef = new Date(Date.UTC(ref.getUTCFullYear(), ref.getUTCMonth() - 1, 15));
+        const pmb = financeService.monthBounds(prevRef);
+        const pLast = new Date(new Date(`${pmb.end}T12:00:00Z`).getTime() - 86400000).toISOString().slice(0, 10);
+        prevReport = await financeService.queryPeriodReport(cid, pmb.start, pLast);
+      }
+      const report = await financeService.queryPeriodReport(cid, from, to);
+      report.label = label;
+      return wa.renderPeriodExpenses(buildPeriodExpenses(report, prevReport));
+    }
+    case 'query_account_detail': {
+      const { buildAccountDetail } = require('./finance/reports/account');
+      const wa = require('./finance/wa-format');
+      const today = new Date().toISOString().slice(0, 10);
+      const acc = await financeService.findAccountByName(cid, params.account || params.name || '');
+      if (!acc) {
+        const accs = await financeService.listAccounts(cid);
+        return accs.length
+          ? `Não achei essa carteira. Tenho: ${accs.map((a) => a.name).join(', ')}.`
+          : 'Você ainda não tem carteiras. Quer criar uma? Ex: _"cria carteira Nubank"_.';
+      }
+      const txns = await financeService.queryTransactions(cid, { account_id: acc.id, limit: 40 });
+      return wa.renderAccountDetail(buildAccountDetail(acc, txns, today));
+    }
+    case 'query_statement': {
+      const { buildStatement } = require('./finance/reports/statement');
+      const wa = require('./finance/wa-format');
+      const now = new Date();
+      const todayStr = now.toISOString().slice(0, 10);
+      let from, to, label;
+      if (params.from && params.to) { from = params.from; to = params.to; label = 'Extrato'; }
+      else {
+        let ref = now;
+        if (params.month && /^\d{4}-\d{2}$/.test(params.month)) ref = new Date(`${params.month}-15T12:00:00Z`);
+        const mb = financeService.monthBounds(ref);
+        const lastDay = new Date(new Date(`${mb.end}T12:00:00Z`).getTime() - 86400000).toISOString().slice(0, 10);
+        const isCurrent = ref.getUTCFullYear() === now.getUTCFullYear() && ref.getUTCMonth() === now.getUTCMonth();
+        from = mb.start; to = isCurrent ? todayStr : lastDay;
+        label = `Extrato de ${financeFmt.mesDaComp(mb.start)}`;
+      }
+      const full = params.full === true || /completo/i.test(String(params.detail || ''));
+      let acc = null;
+      if (params.account || params.name) acc = await financeService.findAccountByName(cid, params.account || params.name);
+      const sourceMap = {};
+      if (!acc) {
+        for (const a of await financeService.listAccounts(cid)) sourceMap[a.id] = a.name;
+        for (const c of await financeService.listCards(cid)) sourceMap[c.id] = c.name;
+      }
+      const rows = await financeService.queryTransactions(cid, {
+        account_id: acc ? acc.id : undefined, dateFrom: from, dateTo: to, limit: 60,
+      });
+      const model = buildStatement(acc, rows, { label, limit: full ? 60 : 12, sourceMap: acc ? null : sourceMap });
+      return wa.renderStatement(model);
+    }
+    case 'query_daily_summary': {
+      const { buildDailySummary } = require('./finance/reports/summaries');
+      const wa = require('./finance/wa-format');
+      const now = new Date();
+      const todayStr = now.toISOString().slice(0, 10);
+      const day = (params.date && /^\d{4}-\d{2}-\d{2}$/.test(params.date)) ? params.date : todayStr;
+      const report = await financeService.queryPeriodReport(cid, day, day);
+      const accounts = await financeService.listAccounts(cid);
+      const saldoTotal = accounts.reduce((s, a) => s + Number(a.balance || 0), 0);
+      const label = day === todayStr ? 'Balanço de hoje' : `Balanço de ${day.slice(8, 10)}/${day.slice(5, 7)}`;
+      return wa.renderDailySummary(buildDailySummary({ label, report, saldoTotal }));
+    }
+    case 'query_weekly_summary': {
+      const { buildWeeklySummary } = require('./finance/reports/summaries');
+      const { weekBounds, shiftDays } = require('./finance/report-domain');
+      const wa = require('./finance/wa-format');
+      const now = new Date();
+      const todayStr = now.toISOString().slice(0, 10);
+      const wb = weekBounds(now);
+      const to = todayStr < wb.end ? todayStr : wb.end; // semana corrente até hoje
+      const report = await financeService.queryPeriodReport(cid, wb.start, to);
+      const prev = await financeService.queryPeriodReport(cid, shiftDays(wb.start, -7), shiftDays(wb.start, -1));
+      return wa.renderWeeklySummary(buildWeeklySummary({ label: 'Resumo da semana', report, prev }));
+    }
+    case 'query_monthly_closing': {
+      const { buildMonthlyClosing } = require('./finance/reports/summaries');
+      const wa = require('./finance/wa-format');
+      const now = new Date();
+      let ref;
+      if (params.month && /^\d{4}-\d{2}$/.test(params.month)) ref = new Date(`${params.month}-15T12:00:00Z`);
+      else ref = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 15)); // default: mês anterior (fechado)
+      const mb = financeService.monthBounds(ref);
+      const lastDay = new Date(new Date(`${mb.end}T12:00:00Z`).getTime() - 86400000).toISOString().slice(0, 10);
+      const report = await financeService.queryPeriodReport(cid, mb.start, lastDay);
+      const prevRef = new Date(Date.UTC(ref.getUTCFullYear(), ref.getUTCMonth() - 1, 15));
+      const pmb = financeService.monthBounds(prevRef);
+      const pLast = new Date(new Date(`${pmb.end}T12:00:00Z`).getTime() - 86400000).toISOString().slice(0, 10);
+      const prev = await financeService.queryPeriodReport(cid, pmb.start, pLast);
+      const goalsRaw = await financeService.listGoals(cid);
+      const goals = goalsRaw.map((g) => ({
+        name: g.name, current: Number(g.current_amount) || 0, target: Number(g.target_amount) || 0,
+        pct: Number(g.target_amount) > 0 ? Math.round((Number(g.current_amount) / Number(g.target_amount)) * 100) : 0,
+      }));
+      const label = `Fechamento de ${financeFmt.mesDaComp(mb.start)}`;
+      return wa.renderMonthlyClosing(buildMonthlyClosing({ label, report, prev, goals }));
     }
     case 'query_summary': {
       const s = await financeService.querySummary(cid);
@@ -10583,4 +10700,4 @@ async function applyMonthlyPlan(collaborator, plan) {
   return { id: created?.id, action: 'created' };
 }
 
-module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamSummary, buildWeeklyRetrospective, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseWeeklyPlanMarker, parseHabitMarker, parseDndMarker, parseDataClassifyMarker, applyDataClassify, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, applyHabitActions, applyDnd, getDndState, consolidateMemoryFor, decayExpiredMemories, generateWeeklySummaryFor, updateCollaboratorProfile, looksLikeMemory, resolveTaskByShortId, applyEventUpdates, applyRsvp, applyPersonalListActions, applyAnnouncementAction, parseAnnouncementApprovalMarker, applyAnnouncementApproval, applyCoordinationRequestAction, parseCoordinationResponseMarker, applyCoordinationResponseAction, computeProgress, getRitualIntroDecision, countRecentRelaysToRecipient, buildRelayLimitHint, parseMonthlyPlanMarker, applyMonthlyPlan };
+module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamSummary, buildWeeklyRetrospective, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseWeeklyPlanMarker, parseHabitMarker, parseDndMarker, parseDataClassifyMarker, applyDataClassify, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, applyHabitActions, applyDnd, getDndState, consolidateMemoryFor, decayExpiredMemories, generateWeeklySummaryFor, updateCollaboratorProfile, looksLikeMemory, resolveTaskByShortId, applyEventUpdates, applyRsvp, applyPersonalListActions, applyAnnouncementAction, parseAnnouncementApprovalMarker, applyAnnouncementApproval, applyCoordinationRequestAction, parseCoordinationResponseMarker, applyCoordinationResponseAction, computeProgress, getRitualIntroDecision, countRecentRelaysToRecipient, buildRelayLimitHint, parseMonthlyPlanMarker, applyMonthlyPlan, handleFinanceAction };

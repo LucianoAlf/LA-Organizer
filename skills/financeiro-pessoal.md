@@ -68,11 +68,47 @@ Ações disponíveis (campo `action`):
 - `set_budget` — params: category, monthly_limit
 - `create_account` — params: name, type (checking|savings|wallet|investment), icon. (O banco é detectado pelo nome → logo+cor no app automaticamente. Ex: "cria carteira Nubank" → bank_slug=nubank, cor roxa detectada.)
 - `edit_account` — params: account_name + os que mudam: name, type, icon, goal_monthly, bank. Ex.: "põe meta de 500 na carteira Itaú", "renomeia carteira X pra Y", "muda o banco da carteira X pra Bradesco".
+- `query_period_expenses` — **R-GASTOS** (relatório agregado de gastos do período)
+- `query_account_detail` — **R-CONTA** (painel de uma carteira: saldo + movimentação)
+- `query_statement` — **R-EXTRATO** (lista cronológica de lançamentos)
 - `query_summary` — sem params (resumo do mês)
 - `query_budget` — sem params (barras de orçamento)
 - `query_goal` — sem params (progresso das metas)
 - `query_accounts` — sem params. Mostra "💰 Seus Saldos": carteiras com semáforo (🔴 negativo / ✅ ok) + total + Posição (saldo em contas, limite disponível dos cartões, total disponível). Use em "meus saldos", "quanto tenho", "quais minhas carteiras", "minha posição", "saldo geral".
 - `simulate_interest` — params: monthly, years (simulação de juros compostos; o engine calcula com a Selic viva — NÃO calcule você mesmo)
+
+### query_period_expenses — "quanto gastei" / gastos do período (R-GASTOS)
+Gatilhos: "quanto gastei", "gastos de abril", "onde gasto mais", "meus gastos do mês".
+Params: `{ month?: "YYYY-MM", from?: "YYYY-MM-DD", to?: "YYYY-MM-DD" }`. Sem params = mês corrente até hoje.
+Mostra: total + média diária, top 5 categorias (%), essencial×estilo, comparativo vs período anterior, Dica do TOM.
+
+### query_account_detail — painel de UMA carteira (R-CONTA)
+Gatilhos: "saldo do nubank", "como está o itaú", "minha carteira nubank".
+Params: `{ account: "<nome>" }` (obrigatório). Mostra: saldo + semáforo, última entrada/saída, variação 7 dias.
+
+### query_statement — extrato cronológico (R-EXTRATO)
+Gatilhos: "extrato do nubank", "lançamentos de maio", "extrato".
+Params: `{ account?: "<nome>", month?/from?/to?, full?: true }`. Sem account = todas as contas (mostra a fonte por linha). Sem janela = mês corrente. Lista cronológica (12 itens, "completo" expande).
+
+**Distinção obrigatória:**
+- **query_account_detail** (painel: saldo + saúde da conta) ≠ **query_statement** (lista de lançamentos).
+- **query_period_expenses** (agregado por categoria, olha gastos) ≠ **query_statement** (linha a linha).
+- "saldo do nubank" → account_detail; "extrato do nubank" → statement; "quanto gastei" → period_expenses.
+
+### query_daily_summary — balanço do dia (R-DIARIO)
+Gatilhos: "resumo do dia", "balanço do dia". Params: `{ date?: "YYYY-MM-DD" }` (default hoje). Mostra: entrou/saiu/resultado, top do dia, saldo total.
+
+### query_weekly_summary — resumo da semana (R-SEMANA)
+Gatilhos: "resumo da semana". Sem params (semana corrente seg→hoje). Mostra: balanço, top 5, essencial×estilo, comparativo vs semana anterior.
+
+### query_monthly_closing — fechamento mensal (R-MENSAL)
+Gatilhos: "fechamento do mês", "resumo de maio", "como fechou abril". Params: `{ month?: "YYYY-MM" }` (default mês anterior FECHADO). Mostra: balanço do mês, onde foi o dinheiro, essencial×estilo, comparativo, metas, Dica do TOM. SEM projeção.
+
+**Distinção obrigatória R-MES × R-MENSAL:**
+- `query_month_analysis` = mês CORRENTE, COM projeção, olha pra FRENTE ("resumo do mês", "analisa minhas contas").
+- `query_monthly_closing` = mês FECHADO, SEM projeção, olha pra TRÁS ("fechamento", "resumo de maio", "como fechou X").
+- Na dúvida: cita mês passado pelo nome → closing; fala do mês atual/futuro → month_analysis.
+
 - `create_card` — params: name, credit_limit, closing_day, due_day, brand(opcional), color(opcional). Ex: "cadastra cartão Nubank limite 5000 fecha dia 6 vence dia 10".
 - `card_purchase` — params: card (nome do cartão), amount, description, category(opcional), installments(opcional, default 1), date(opcional). Ex: "comprei TV 3200 em 10x no nubank" → installments=10, card="nubank".
 - `query_invoice` — params: card, competencia(opcional). Ex: "quanto tá minha fatura do nubank?", "quanto falta de limite?".

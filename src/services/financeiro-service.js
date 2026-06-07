@@ -172,14 +172,21 @@ async function listRecentTransactions(collaboratorId, { hours = 2, limit = 10 } 
   return data || [];
 }
 
-// Consulta de leitura ("últimas", "quanto gastei em X"). Filtra por categoria/tipo opcional.
-async function queryTransactions(collaboratorId, { category, type, limit = 8 } = {}) {
+// Consulta de leitura. Filtros opcionais: category, type, account_id, card_id, dateFrom, dateTo (YYYY-MM-DD).
+async function queryTransactions(collaboratorId, { category, type, account_id, card_id, dateFrom, dateTo, limit = 8 } = {}) {
   let q = supabase.from('pf_transactions')
-    .select('id, type, category, amount, description, transaction_date')
+    .select('id, type, category, amount, description, transaction_date, account_id, card_id, via')
     .eq('collaborator_id', collaboratorId)
-    .order('transaction_date', { ascending: false }).limit(limit);
+    .neq('is_adjustment', true)
+    .order('transaction_date', { ascending: false })
+    .order('created_at', { ascending: false })
+    .limit(limit);
   if (category) q = q.eq('category', category);
   if (type) q = q.eq('type', type);
+  if (account_id) q = q.eq('account_id', account_id);
+  if (card_id) q = q.eq('card_id', card_id);
+  if (dateFrom) q = q.gte('transaction_date', dateFrom);
+  if (dateTo) q = q.lte('transaction_date', dateTo);
   const { data, error } = await q;
   if (error) throw error;
   return data || [];
@@ -421,6 +428,30 @@ async function monthCategoryBreakdown(collaboratorId, ref = new Date()) {
   return { receitas, despesas, byCategory };
 }
 
+// Relatório de período arbitrário [from, to] INCLUSIVE: receitas, despesas, byCategory (total+count), count de gastos, days.
+async function queryPeriodReport(collaboratorId, from, to) {
+  const { data, error } = await supabase.from('pf_transactions')
+    .select('type, category, amount')
+    .eq('collaborator_id', collaboratorId)
+    .gte('transaction_date', from).lte('transaction_date', to)
+    .neq('is_adjustment', true);
+  if (error) throw error;
+  const rows = data || [];
+  let receitas = 0, despesas = 0, count = 0;
+  const byCat = {};
+  for (const r of rows) {
+    const amt = Number(r.amount) || 0;
+    if (r.type === 'income') { receitas += amt; continue; }
+    despesas += amt; count += 1;
+    const k = r.category || 'outros';
+    if (!byCat[k]) byCat[k] = { total: 0, count: 0 };
+    byCat[k].total += amt; byCat[k].count += 1;
+  }
+  const byCategory = Object.entries(byCat).map(([slug, v]) => ({ slug, total: v.total, count: v.count }));
+  const days = Math.max(1, Math.round((new Date(`${to}T12:00:00Z`) - new Date(`${from}T12:00:00Z`)) / 86400000) + 1);
+  return { from, to, days, receitas, despesas, byCategory, count };
+}
+
 // Colaboradores com >=1 transacao (alvo dos rituais financeiros) — so os ids.
 async function collaboratorsWithActivity() {
   const { data, error } = await supabase.from('pf_transactions').select('collaborator_id');
@@ -617,7 +648,7 @@ module.exports = {
   findPrimaryAccount, setPrimaryAccount, matchBankSlug, bankColor,
   listCategorySlugs,
   insertTransaction, updateTransaction, deleteTransaction, deleteTransactionGroup,
-  listRecentTransactions, queryTransactions,
+  listRecentTransactions, queryTransactions, queryPeriodReport,
   monthCategoryTotal, querySummary,
   setBudget, getBudget, queryBudget,
   createBill, findBills, payBill,

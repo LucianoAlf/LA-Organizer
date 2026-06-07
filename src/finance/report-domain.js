@@ -66,4 +66,21 @@ function billDueDateLabel(bill, today) {
   return String(dd).padStart(2, '0') + '/' + String(m).padStart(2, '0');
 }
 
-module.exports = { diasRestantesDoMes, billDueDeltaDays, billRelativeLabel, classifyBillSeverity, isBillPaidThisCycle, billDueDom, billDueDateLabel };
+// Soma n dias (pode ser negativo) a uma data 'YYYY-MM-DD' e devolve 'YYYY-MM-DD'.
+function shiftDays(ymd, n) {
+  const d = new Date(`${ymd}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + Number(n || 0));
+  return d.toISOString().slice(0, 10);
+}
+
+// Semana segunda→domingo. Aceita 'YYYY-MM-DD' ou Date. Devolve {start, end} em 'YYYY-MM-DD'.
+function weekBounds(date) {
+  const base = typeof date === 'string' ? date : new Date(date).toISOString().slice(0, 10);
+  const d = new Date(`${base}T12:00:00Z`);
+  const dow = (d.getUTCDay() + 6) % 7; // 0=segunda ... 6=domingo
+  const start = new Date(d.getTime() - dow * 86400000).toISOString().slice(0, 10);
+  const end = new Date(d.getTime() + (6 - dow) * 86400000).toISOString().slice(0, 10);
+  return { start, end };
+}
+
+module.exports = { diasRestantesDoMes, billDueDeltaDays, billRelativeLabel, classifyBillSeverity, isBillPaidThisCycle, billDueDom, billDueDateLabel, shiftDays, weekBounds };
