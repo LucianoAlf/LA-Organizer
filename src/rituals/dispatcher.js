@@ -358,6 +358,9 @@ async function checkFinanceBillReminders(now) {
     if (!bills.length) continue;
     const q = await isQuietNow(c.id, now, 'personal');
     if (q.quiet) { await logRitualEvent(c.id, 'lembrete_conta', 'skipped', `quiet:${q.reason}`, ymd); continue; }
+    // Fatia G fase 2: claim atômico antes de enviar (era log 'sent' pós-envio → perdia em erro transitório).
+    const claim = await claimRitualSend(supabase, c.id, 'lembrete_conta', ymd);
+    if (!claim.won) { if (!claim.duplicate) await logRitualEvent(c.id, 'lembrete_conta', 'error', `claim_err:${claim.code || ''}`, ymd); continue; }
     try {
       const nome = String(c.full_name || '').split(' ')[0];
       for (const b of bills) {
@@ -365,9 +368,9 @@ async function checkFinanceBillReminders(now) {
         const mode = dias > 0 ? 'previo' : (dias === 0 ? 'dia' : 'atrasada');
         await whatsapp.sendMessage(c.phone, buildBillReminder({ nome, bill: b, mode, dias }));
       }
-      await logRitualEvent(c.id, 'lembrete_conta', 'sent', `${bills.length} conta(s)`, ymd);
     } catch (err) {
       console.error('[checkFinanceBillReminders]', c.full_name, err.message);
+      if (isTransientRitualError(err)) await rollbackRitualClaim(supabase, claim.id);
       await logRitualEvent(c.id, 'lembrete_conta', 'error', err.message, ymd);
     }
   }
@@ -386,14 +389,17 @@ async function checkFinanceMonthly(now) {
     if (!rep.temAtividade) continue;
     const q = await isQuietNow(c.id, now, 'personal');
     if (q.quiet) { await logRitualEvent(c.id, 'financeiro_mensal', 'skipped', `quiet:${q.reason}`, ymd); continue; }
+    // Fatia G fase 2: claim atômico antes de enviar (perda = mês inteiro se erro transitório).
+    const claim = await claimRitualSend(supabase, c.id, 'financeiro_mensal', ymd);
+    if (!claim.won) { if (!claim.duplicate) await logRitualEvent(c.id, 'financeiro_mensal', 'error', `claim_err:${claim.code || ''}`, ymd); continue; }
     try {
       const goals = await financeService.listGoals(c.id);
       const bills = await financeService.billsDueWithin(c.id, 5);
       const nome = String(c.full_name || '').split(' ')[0];
       await whatsapp.sendMessage(c.phone, buildMonthlyFinance({ nome, receitas: rep.receitas, despesas: rep.despesas, goals, bills }));
-      await logRitualEvent(c.id, 'financeiro_mensal', 'sent', null, ymd);
     } catch (err) {
       console.error('[checkFinanceMonthly]', c.full_name, err.message);
+      if (isTransientRitualError(err)) await rollbackRitualClaim(supabase, claim.id);
       await logRitualEvent(c.id, 'financeiro_mensal', 'error', err.message, ymd);
     }
   }
@@ -416,13 +422,16 @@ async function checkFinanceReport(now) {
     if (!rep.temAtividade) continue;
     const q = await isQuietNow(c.id, now, 'personal');
     if (q.quiet) { await logRitualEvent(c.id, 'relatorio_financeiro_mensal', 'skipped', `quiet:${q.reason}`, ymd); continue; }
+    // Fatia G fase 2: claim atômico antes de enviar (perda = mês inteiro se erro transitório).
+    const claim = await claimRitualSend(supabase, c.id, 'relatorio_financeiro_mensal', ymd);
+    if (!claim.won) { if (!claim.duplicate) await logRitualEvent(c.id, 'relatorio_financeiro_mensal', 'error', `claim_err:${claim.code || ''}`, ymd); continue; }
     try {
       const goals = await financeService.listGoals(c.id);
       const nome = String(c.full_name || '').split(' ')[0];
       await whatsapp.sendMessage(c.phone, buildMonthlyReport({ nome, mes: mesNome, receitas: rep.receitas, despesas: rep.despesas, top: rep.top, goals }));
-      await logRitualEvent(c.id, 'relatorio_financeiro_mensal', 'sent', null, ymd);
     } catch (err) {
       console.error('[checkFinanceReport]', c.full_name, err.message);
+      if (isTransientRitualError(err)) await rollbackRitualClaim(supabase, claim.id);
       await logRitualEvent(c.id, 'relatorio_financeiro_mensal', 'error', err.message, ymd);
     }
   }
