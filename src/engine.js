@@ -6127,6 +6127,7 @@ const FINANCE_ACTIONS = [
   'query_period_expenses', 'query_account_detail', 'query_statement',
   'query_daily_summary', 'query_weekly_summary', 'query_monthly_closing',
 ];
+const { canonFinanceAction } = require('./finance/action-aliases');
 const MONTH_TAXA = 0.0083; // ~10,5%/ano (referencia; Fase B troca pela Selic viva)
 
 function parseFinanceMarker(text) {
@@ -6142,11 +6143,12 @@ function parseFinanceMarker(text) {
     logSchemaErr('FINANCE_ACTION', ['invalid_json: ' + err.message], m[1]);
     return { malformed: true, cleanText };
   }
-  if (!json || !FINANCE_ACTIONS.includes(json.action)) {
+  const act = json && canonFinanceAction(json.action, json.params, FINANCE_ACTIONS);
+  if (!json || !FINANCE_ACTIONS.includes(act)) {
     logSchemaErr('FINANCE_ACTION', ['action_invalida: ' + (json && json.action)], m[1]);
     return { malformed: true, cleanText };
   }
-  return { action: json.action, params: json.params || {}, cleanText, malformed: false };
+  return { action: act, params: json.params || {}, cleanText, malformed: false };
 }
 
 // Multi-marker: o usuário pode listar VÁRIOS lançamentos numa mensagem só → o LLM emite
@@ -6162,10 +6164,11 @@ function parseFinanceMarkers(text) {
     let json;
     try { json = JSON.parse(mm[1].trim()); }
     catch (err) { logSchemaErr('FINANCE_ACTION', ['invalid_json: ' + err.message], mm[1]); malformed++; continue; }
-    if (!json || !FINANCE_ACTIONS.includes(json.action)) {
+    const act = canonFinanceAction(json && json.action, json && json.params, FINANCE_ACTIONS);
+    if (!json || !FINANCE_ACTIONS.includes(act)) {
       logSchemaErr('FINANCE_ACTION', ['action_invalida: ' + (json && json.action)], mm[1]); malformed++; continue;
     }
-    actions.push({ action: json.action, params: json.params || {} });
+    actions.push({ action: act, params: json.params || {} });
   }
   const cleanText = text.replace(/<<FINANCE_ACTION>>\s*[\s\S]*?\s*<<END>>/gi, '').trim();
   return { actions, malformed, cleanText };
@@ -6634,7 +6637,7 @@ async function handleFinanceAction(collab, action, params) {
       const { buildAccountDetail } = require('./finance/reports/account');
       const wa = require('./finance/wa-format');
       const today = new Date().toISOString().slice(0, 10);
-      const acc = await financeService.findAccountByName(cid, params.account || params.name || '');
+      const acc = await financeService.findAccountByName(cid, params.account || params.account_name || params.name || '');
       if (!acc) {
         const accs = await financeService.listAccounts(cid);
         return accs.length
@@ -6662,7 +6665,7 @@ async function handleFinanceAction(collab, action, params) {
       }
       const full = params.full === true || /completo/i.test(String(params.detail || ''));
       let acc = null;
-      if (params.account || params.name) acc = await financeService.findAccountByName(cid, params.account || params.name);
+      if (params.account || params.account_name || params.name) acc = await financeService.findAccountByName(cid, params.account || params.account_name || params.name);
       const sourceMap = {};
       if (!acc) {
         for (const a of await financeService.listAccounts(cid)) sourceMap[a.id] = a.name;
@@ -10700,4 +10703,4 @@ async function applyMonthlyPlan(collaborator, plan) {
   return { id: created?.id, action: 'created' };
 }
 
-module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamSummary, buildWeeklyRetrospective, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseWeeklyPlanMarker, parseHabitMarker, parseDndMarker, parseDataClassifyMarker, applyDataClassify, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, applyHabitActions, applyDnd, getDndState, consolidateMemoryFor, decayExpiredMemories, generateWeeklySummaryFor, updateCollaboratorProfile, looksLikeMemory, resolveTaskByShortId, applyEventUpdates, applyRsvp, applyPersonalListActions, applyAnnouncementAction, parseAnnouncementApprovalMarker, applyAnnouncementApproval, applyCoordinationRequestAction, parseCoordinationResponseMarker, applyCoordinationResponseAction, computeProgress, getRitualIntroDecision, countRecentRelaysToRecipient, buildRelayLimitHint, parseMonthlyPlanMarker, applyMonthlyPlan, handleFinanceAction };
+module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamSummary, buildWeeklyRetrospective, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseWeeklyPlanMarker, parseHabitMarker, parseDndMarker, parseDataClassifyMarker, applyDataClassify, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, applyHabitActions, applyDnd, getDndState, consolidateMemoryFor, decayExpiredMemories, generateWeeklySummaryFor, updateCollaboratorProfile, looksLikeMemory, resolveTaskByShortId, applyEventUpdates, applyRsvp, applyPersonalListActions, applyAnnouncementAction, parseAnnouncementApprovalMarker, applyAnnouncementApproval, applyCoordinationRequestAction, parseCoordinationResponseMarker, applyCoordinationResponseAction, computeProgress, getRitualIntroDecision, countRecentRelaysToRecipient, buildRelayLimitHint, parseMonthlyPlanMarker, applyMonthlyPlan, handleFinanceAction, parseFinanceMarkers };
