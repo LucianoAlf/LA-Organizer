@@ -52,4 +52,7 @@ assert.ok(rpDia.includes('💰 *Total: R$ 1.500,00*'));
 // vazio
 assert.ok(renderBillsToPay({ vencidas:[],proximos7:[],restanteMes:[],cards:[],totalPendente:0 }).includes('Tá tudo pago'));
 
+// Fix C: empty-state de renderFixedBills.
+assert.ok(renderFixedBills({ groups:{ vencidas:[],pendentes:[],pagas:[],semValor:[] }, totals:{ aPagar:0 }, count:0 }).includes('ainda não cadastrou'));
+
 console.log('PASS — wa-format kit OK.');

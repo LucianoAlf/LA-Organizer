@@ -32,4 +32,11 @@ assert.strictEqual(classifyBillSeverity({ recurrence:'monthly', due_day:23, amou
 assert.strictEqual(classifyBillSeverity({ recurrence:'monthly', due_day:10, amount:99, last_paid_at:'2026-04-03' }, T), 'ok');
 assert.strictEqual(classifyBillSeverity({ recurrence:'monthly', due_day:28, amount:100, last_paid_at:null }, T), 'ok');
 
+// Fix A: clamp due_day > fim do mês (fev tem 28 dias em 2026 → 31 vira 28).
+assert.strictEqual(billDueDeltaDays({ recurrence:'monthly', due_day:31 }, '2026-02-10'), 18);
+// Fix A: once sem due_date → null (sem NaN).
+assert.strictEqual(billDueDeltaDays({ recurrence:'once', due_date:null }, '2026-04-10'), null);
+assert.strictEqual(billRelativeLabel({ recurrence:'once', due_date:null }, '2026-04-10'), '');
+assert.strictEqual(classifyBillSeverity({ recurrence:'once', due_date:null, amount:100, last_paid_at:null }, '2026-04-10'), 'importante');
+
 console.log('PASS — report-domain datas/label OK.');

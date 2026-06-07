@@ -47,6 +47,9 @@ function assemble(blocks) {
 const _ACOES_CONTAS = ['minhas contas a pagar', 'quanto gastei esse mês', 'meus saldos'];
 
 function renderFixedBills(model) {
+  if (!model.count) {
+    return '📋 *Suas Contas Fixas*\nVocê ainda não cadastrou nenhuma conta fixa. Quer adicionar? Ex: _"conta de luz 250 todo dia 10"_.';
+  }
   const g = model.groups;
   const tiers = severityTiers(g, {
     vencidas: '🔴 *Vencidas*', pendentes: '⏳ *Pendentes*', pagas: '✅ *Pagas*', semValor: '⚠️ *Sem valor*',

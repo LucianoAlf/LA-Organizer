@@ -53,8 +53,8 @@ function buildBillsToPay(bills, cardInvoices, today, opts = {}) {
   for (const b of open) {
     const item = _item(b, today);
     const delta = billDueDeltaDays(b, today);
-    if (delta <= 0) vencidas.push(item);
-    else if (delta <= 7) proximos7.push(item);
+    if (delta != null && delta <= 0) vencidas.push(item);
+    else if (delta != null && delta <= 7) proximos7.push(item);
     else restanteMes.push(item);
   }
   vencidas.sort(_byDueDay); proximos7.sort(_byDueDay); restanteMes.sort(_byDueDay);

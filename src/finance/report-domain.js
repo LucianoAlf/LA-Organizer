@@ -19,17 +19,22 @@ function diasRestantesDoMes(today) {
 function billDueDeltaDays(bill, today) {
   const todayMs = _ymdMs(today);
   let dueMs;
-  if (bill.recurrence === 'once' && bill.due_date) {
+  if (bill.recurrence === 'once') {
+    if (!bill.due_date) return null;            // once sem data → sem vencimento definido
     dueMs = _ymdMs(bill.due_date);
   } else {
     const [y, m] = String(today).split('-').map(Number);
-    dueMs = Date.UTC(y, m - 1, Number(bill.due_day));
+    const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    const dd = Math.min(Number(bill.due_day), lastDay); // clampa due_day > fim do mês (ex: 31 em fev)
+    dueMs = Date.UTC(y, m - 1, dd);
   }
+  if (Number.isNaN(dueMs)) return null;
   return Math.round((dueMs - todayMs) / 86400000);
 }
 
 function billRelativeLabel(bill, today) {
   const delta = billDueDeltaDays(bill, today);
+  if (delta == null) return '';
   if (delta === 0) return 'vence hoje';
   return delta > 0 ? `em ${delta}d` : `há ${-delta}d`;
 }
@@ -41,6 +46,7 @@ function classifyBillSeverity(bill, today, opts = {}) {
   const hasValue = Number(bill.amount) > 0;
   if (!hasValue) return opts.zeroValueTier || 'importante'; // valor zerado = dado incompleto
   const delta = billDueDeltaDays(bill, today);
+  if (delta == null) return 'importante';   // sem vencimento definido = dado incompleto
   if (delta <= 0) return 'urgente';   // vencida ou vence hoje
   if (delta <= 7) return 'importante';
   if (delta <= 15) return 'atencao';
