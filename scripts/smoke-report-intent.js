@@ -141,5 +141,24 @@ for (const s of [
   'perdi a conta de quanto gastei hoje', 'esqueci quanto gastei hoje', 'ja sei quanto gastei',
 ]) none(s);
 
+// ===== Rodada adversarial 4 — mês corrente + ano + strips =====
+// today=2026-06-07 → junho = mês CORRENTE → analysis; meses passados → closing
+must('resumo de junho', 'query_month_analysis');
+must('como fechou junho', 'query_month_analysis');
+must('analise de junho', 'query_month_analysis');
+must('analise de maio', 'query_monthly_closing', { month: '2026-05' });
+must('resumo do mes atual', 'query_month_analysis');
+must('resumo do mês anterior', 'query_monthly_closing');
+must('resumo do mês passado', 'query_monthly_closing');
+must('quanto gastei em maio de 2025', 'query_period_expenses', { month: '2025-05' });
+must('gastos de maio de 2026', 'query_period_expenses', { month: '2026-05' });
+must('extrato do nubank maio', 'query_statement', { account: 'nubank', month: '2026-05' });
+must('saldo do nubank ontem', 'query_account_detail', { account: 'nubank' });
+must('extrato do nubank de ontem', 'query_statement', { account: 'nubank' });
+must('saldo da conta', 'query_accounts');
+must('saldo da minha conta', 'query_accounts');
+must('saldo na conta', 'query_accounts');
+for (const s of ['extrato do nubank transferi', 'saldo do nubank comprei', 'extrato do nubank ja paguei']) none(s);
+
 if (fail) { console.error(`\nFALHOU: ${fail} caso(s).`); process.exit(1); }
-console.log('PASS — smoke-report-intent (must + 150+ regressões adversariais OK).');
+console.log('PASS — smoke-report-intent (must + 170+ regressões adversariais OK).');
