@@ -41,6 +41,9 @@ const { isQuietNow } = require('../services/quiet-hours');
 // Sprint 31.1 — Pending Followups: rastro de "TOM cobrou X" pra que respostas
 // curtas ("Feito") sejam aplicadas ao target certo via id exato.
 const pendingFollowups = require('../services/pending-followups');
+// Achado #79 — fonte única da definição de "evento work passado sem fechamento",
+// compartilhada com o planejador semanal (system.js). Ver src/services/open-pendencies.js.
+const { getStaleWorkEvents } = require('../services/open-pendencies');
 // Fatia G (RITUAL-NO-RETRY) — claim atômico idempotente p/ envio de rituais
 // (substitui o check-then-act do fireRitual). Ver src/rituals/ritual-claim.js.
 const { claimRitualSend, rollbackRitualClaim, isTransientRitualError } = require('./ritual-claim');
@@ -2019,25 +2022,16 @@ async function checkOverdueWorkEvents(now = new Date()) {
   if (currentSlot(sp) !== timeToSlot('08:00')) return;
 
   const whatsapp = require('../services/whatsapp');
-  // Janela: end_at entre 5 dias atrás e ontem (00h BRT)
-  const yesterdayEnd = new Date(sp.ymd + 'T00:00:00-03:00').toISOString();
-  const fiveDaysAgo = new Date(new Date(sp.ymd + 'T00:00:00-03:00').getTime() - 5 * 24 * 3600_000).toISOString();
   // Cooldown 24h via followup_sent_at
   const cooldownIso = new Date(now.getTime() - 24 * 3600_000).toISOString();
 
-  const { data: stale, error } = await supabase
-    .from('events')
-    .select('id, title, end_at, collaborator_id, followup_sent_at, collaborators!events_collaborator_id_fkey(full_name, phone, is_active, user_preferences(*))')
-    .eq('context', 'work')
-    .not('status', 'in', '("done","cancelled")')
-    .lt('end_at', yesterdayEnd)
-    .gte('end_at', fiveDaysAgo)
-    .or(`followup_sent_at.is.null,followup_sent_at.lt.${cooldownIso}`)
-    .limit(100);
-  if (error) {
-    console.error('[OverdueWorkEvents] query err:', error.message);
-    return;
-  }
+  // Achado #79 — query extraída p/ fonte única (open-pendencies.getStaleWorkEvents),
+  // compartilhada com o planejador semanal. Aqui: TODOS os donos + cooldown + join
+  // de collaborators (mesma janela/filtros/limit de antes). Comportamento IDÊNTICO.
+  const stale = await getStaleWorkEvents(supabase, {
+    sinceCooldownIso: cooldownIso,
+    withCollaborator: true,
+  });
   if (!stale || !stale.length) return;
 
   for (const ev of stale) {

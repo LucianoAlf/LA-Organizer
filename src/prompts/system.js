@@ -12,6 +12,9 @@ const pendingIntentsSvc = require('../services/pending-intents');
 // no marker com id exato em vez de adivinhar título.
 const pendingFollowupsSvc = require('../services/pending-followups');
 const financeService = require('../services/financeiro-service');
+// Achado #79 — mesma fonte da escalação diária (dispatcher). No planejamento semanal,
+// o LLM precisa VER eventos work passados sem fechamento, senão diz "semana limpa".
+const { getStaleWorkEvents } = require('../services/open-pendencies');
 
 const SKILLS_DIR = path.join(__dirname, '..', '..', 'skills');
 
@@ -2906,6 +2909,29 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     const historicalBlock = await buildHistoricalContext(collaborator.id, rt);
     if (historicalBlock) {
       systemPrompt += historicalBlock;
+    }
+  }
+
+  // Achado #79 — pendência aberta unificada. SÓ no planejamento semanal e SÓ quando
+  // houver: lista eventos work passados sem fechamento DO PRÓPRIO colaborador, usando
+  // a MESMA fonte da escalação diária (open-pendencies.getStaleWorkEvents). É o dado que
+  // faltava pro LLM — sem ele, dizia "semana limpa" enquanto a escalação cobrava.
+  // Aditivo (não trunca nada) e gated por ritual pra não inflar todo prompt.
+  if (collaborator && collaborator.id && (rt === 'planejamento_semanal' || rt === 'weekly_planning')) {
+    try {
+      const staleWork = await getStaleWorkEvents(supabase, { collabId: collaborator.id });
+      if (staleWork && staleWork.length) {
+        const fmtDia = (iso) => new Intl.DateTimeFormat('pt-BR', {
+          timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit',
+        }).format(new Date(iso));
+        const linhas = staleWork.map((ev) => {
+          const dias = Math.max(1, Math.floor((Date.now() - new Date(ev.end_at).getTime()) / 86400000));
+          return `- *${ev.title}* (era ${fmtDia(ev.end_at)}, há ${dias}d sem fechamento)`;
+        });
+        systemPrompt += `\n\n---\n\n## ⏳ Compromissos passados sem fechamento\n${linhas.join('\n')}\n\n> Compromissos de trabalho que JÁ passaram e seguem ABERTOS (sem "feito"/cancelado). Contam como pendência: NÃO diga "semana limpa" enquanto existirem — puxe-os no planejamento.`;
+      }
+    } catch (err) {
+      console.warn('[Prompt] staleWorkEvents err:', err.message);
     }
   }
 

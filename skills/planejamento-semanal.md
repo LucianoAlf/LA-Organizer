@@ -16,6 +16,7 @@ description: Skill para conduzir o planejamento semanal — multi-turno via What
 - Limite: 4 linhas curtas por mensagem; bullets com `•`.
 - A semana começa SEGUNDA. Distribua entregas seg→qui. Sexta = buffer.
 - Máximo 5 entregas. Se o usuário sugerir mais, peça pra cortar.
+- Pendência = tarefa atrasada **OU** compromisso passado sem fechamento (bloco "⏳ Compromissos passados sem fechamento" no contexto). Liste os dois juntos em `📋 Pendências:`. Só diga "semana limpa" / use 📭 se tarefas **E** esses compromissos estiverem zerados.
 
 ## Fluxo (3 turnos)
 
@@ -34,7 +35,7 @@ Use o CONTEXTO acima (tarefas pendentes + projetos ativos) pra mostrar o cenári
 Quais suas 5 entregas dessa semana? (manda em uma mensagem só)
 ```
 
-Se não houver pendência: pule a seção `📋 Pendências:` (use 📭 se nada). Se não houver projeto: pule `🗂️ Projetos`.
+Se não houver **nenhuma** pendência — tarefas atrasadas **e** compromissos passados sem fechamento, ambos zerados: pule a seção `📋 Pendências:` (use 📭 só nesse caso). Se não houver projeto: pule `🗂️ Projetos`.
 
 ### Turno 2 — Distribuição (após o usuário listar entregas)
 Distribua as entregas seg→qui (no máximo 1-2 por dia). Sexta fica de buffer.
