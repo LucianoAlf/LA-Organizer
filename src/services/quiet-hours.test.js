@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { isQuietNow, isPartialQuietPrefs, needsContextRefetch, QUIET_PREF_COLUMNS } = require('./quiet-hours');
+const { isQuietNow, isPartialQuietPrefs, needsContextRefetch, QUIET_PREF_COLUMNS, nowBrtParts } = require('./quiet-hours');
 
 // Preferências REAIS do Quintela (bfd77b2c), como o SELECT user_preferences(*)
 // devolve: silêncio diário 00:00–11:00 em work e personal; quiet_days=[0] (dom);
@@ -134,4 +134,43 @@ test('Juliana: domingo 18h (retrospectiva vazou) = silêncio de TRABALHO via qui
 test('Juliana: 11:01 (depois da janela) NÃO silencia em dia útil — não pode sobre-silenciar', async () => {
   const q = await isQuietNow(JULIANA_WORK_ONLY, { hour: 11, minute: 1, dow: 3 }, 'work');
   assert.strictEqual(q.quiet, false);
+});
+
+// ---- Regressão domingo 07/06: jobs SEM gate vazavam (retrospectiva, cobrança checklist, filas) ----
+// Config REAL do Arthur (68fb3ea0): domingo silencioso SÓ em TRABALHO (quiet_days_work=[0]);
+// legado e personal vazios. O fix gateia cada job por isQuietNow(uuid, ..., 'work').
+const ARTHUR_WORK_SUNDAY = {
+  collaborator_id: '68fb3ea0-af61-4eb4-aade-882d26ad5385',
+  quiet_reason: null,
+  quiet_start_time: null, quiet_end_time: null, quiet_days: [], quiet_weekends: false,
+  quiet_start_time_work: null, quiet_end_time_work: null, quiet_days_work: [0], quiet_weekends_work: false,
+  quiet_start_time_personal: null, quiet_end_time_personal: null, quiet_days_personal: [], quiet_weekends_personal: false,
+};
+
+test('REGRESSÃO Arthur: domingo 13h TRABALHO = silêncio (quiet_days_work=[0]) — cobrança não vaza', async () => {
+  const q = await isQuietNow(ARTHUR_WORK_SUNDAY, { hour: 13, minute: 0, dow: 0 }, 'work');
+  assert.strictEqual(q.quiet, true, `esperava silêncio domingo work, veio: ${JSON.stringify(q)}`);
+  assert.match(q.reason, /quiet_day_work:0/);
+});
+
+test('REGRESSÃO Arthur: domingo 18h TRABALHO = silêncio (retrospectiva semanal não vaza)', async () => {
+  const q = await isQuietNow(ARTHUR_WORK_SUNDAY, { hour: 18, minute: 1, dow: 0 }, 'work');
+  assert.strictEqual(q.quiet, true);
+});
+
+test('ANTI-OVER-SILENCE Arthur: quarta 13h TRABALHO = ENVIA (não silencia dia útil)', async () => {
+  const q = await isQuietNow(ARTHUR_WORK_SUNDAY, { hour: 13, minute: 0, dow: 3 }, 'work');
+  assert.strictEqual(q.quiet, false, `quarta não pode silenciar, veio: ${JSON.stringify(q)}`);
+});
+
+test('CONTEXTO CRUZADO Arthur: domingo 13h PESSOAL = ENVIA (silêncio de trabalho não vaza pro pessoal)', async () => {
+  const q = await isQuietNow(ARTHUR_WORK_SUNDAY, { hour: 13, minute: 0, dow: 0 }, 'personal');
+  assert.strictEqual(q.quiet, false, `silêncio de trabalho não pode silenciar pessoal, veio: ${JSON.stringify(q)}`);
+});
+
+test('nowBrtParts: retorna {hour,minute,dow} em faixa válida (dow 0-6 BRT)', () => {
+  const n = nowBrtParts();
+  assert.ok(Number.isInteger(n.hour) && n.hour >= 0 && n.hour <= 23, `hour inválido: ${n.hour}`);
+  assert.ok(Number.isInteger(n.minute) && n.minute >= 0 && n.minute <= 59, `minute inválido: ${n.minute}`);
+  assert.ok(Number.isInteger(n.dow) && n.dow >= 0 && n.dow <= 6, `dow inválido: ${n.dow}`);
 });
