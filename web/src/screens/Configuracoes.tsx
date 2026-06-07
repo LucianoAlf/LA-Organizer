@@ -227,6 +227,44 @@ export function Configuracoes() {
     },
   });
 
+  // Sprint SaveOnLeave — o auto-save tem debounce de 800ms. Se a pessoa marcava
+  // (ex.: "domingo em silêncio") e SAÍA da tela / fechava o app antes disso, o
+  // save pendente era cancelado pelo cleanup do debounce e PERDIDO — sem erro,
+  // sem aviso. Era a causa de "marquei o silêncio e o TOM continuou mandando".
+  // Aqui forçamos o flush do pendente ao sair: unmount (trocou de tela),
+  // visibilitychange=hidden (trocou de app/aba) e pagehide (fechou — PWA/celular).
+  const latestFormRef = useRef<Prefs | null>(null);
+  useEffect(() => { latestFormRef.current = form; }, [form]);
+
+  useEffect(() => {
+    const HHMM = /^([01]?\d|2[0-3]):[0-5]\d$/;
+    const TIME_FIELDS: (keyof Prefs)[] = [
+      'briefing_time', 'personal_briefing_time', 'closing_time',
+      'planning_time', 'monthly_planning_time', 'monthly_closing_time',
+    ];
+    const flush = () => {
+      const f = latestFormRef.current;
+      if (!f || initialFormJson.current === null) return;
+      const formJson = JSON.stringify(f);
+      if (formJson === initialFormJson.current) return;            // nada mudou vs baseline
+      // mesma validação leve do debounce: não salva time parcial ("08:0")
+      if (TIME_FIELDS.some(k => { const v = (f as any)[k]; return v && !HHMM.test(v); })) return;
+      if ((f.task_checkin_times || []).some(t => t && !HHMM.test(t))) return;
+      if (debounceTimer.current) { clearTimeout(debounceTimer.current); debounceTimer.current = null; }
+      initialFormJson.current = formJson;                          // baseline atualizada → não re-salva
+      save.mutate(f);                                              // dispara já (fire-and-forget, sem setState)
+    };
+    const onVisibility = () => { if (document.visibilityState === 'hidden') flush(); };
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', onVisibility);
+      flush();                                                     // saiu da tela → salva o pendente
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Sprint VoiceToggle — carrega voice_enabled de collaborators (separado de user_preferences)
   const voiceQuery = useQuery({
     queryKey: ['collab-voice', collaborator?.id],
