@@ -2108,7 +2108,8 @@ async function checkOverdueWorkEvents(now = new Date()) {
 
 async function ceoTeamUnclosedEventsReport(now = new Date(), opts = {}) {
   const sp = nowSaoPaulo();
-  if (!opts.force && currentSlot(sp) !== timeToSlot('08:30')) return;
+  // returnText (modo seção do digest) ignora o portão de horário — quem agenda é o orquestrador.
+  if (!opts.returnText && !opts.force && currentSlot(sp) !== timeToSlot('08:30')) return;
 
   const whatsapp = require('../services/whatsapp');
   const ymdRef = sp.ymd;
@@ -2124,11 +2125,11 @@ async function ceoTeamUnclosedEventsReport(now = new Date(), opts = {}) {
   if (!ceos || ceos.length === 0) return;
 
   for (const ceo of ceos) {
-    if (!opts.force && await alreadySent(ceo.id, 'ceo_team_unclosed_events', ymdRef)) continue;
+    if (!opts.returnText && !opts.force && await alreadySent(ceo.id, 'ceo_team_unclosed_events', ymdRef)) continue;
 
-    // Quiet-hours gate (work): silêncio = DEFER ANTES de qualquer side-effect/marca de enviado
-    // (staleness/logRitualEvent) → relatório reentregue no próximo tick fora do quiet.
-    const _qCeoEv = await isQuietNow(ceo.id, nowSaoPaulo(), 'work');
+    // Quiet-hours gate (work): silêncio = DEFER ANTES de qualquer side-effect/marca de enviado.
+    // Em returnText (modo seção do digest / dry-run) não aplica — quem decide envio é o orquestrador.
+    const _qCeoEv = opts.returnText ? { quiet: false } : await isQuietNow(ceo.id, nowSaoPaulo(), 'work');
     if (_qCeoEv.quiet) { continue; }
 
     // Eventos do TIME passados sem fechamento — NÃO filtra por dono
@@ -2240,6 +2241,29 @@ async function ceoTeamUnclosedEventsReport(now = new Date(), opts = {}) {
 
     const dateLabel = new Date(now).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: 'short' });
     const hiddenSuffixEv = hiddenCount > 0 ? ` · ${hiddenCount} já cobrado${hiddenCount > 1 ? 's' : ''} hoje` : '';
+
+    // Fase 6a — modo SEÇÃO p/ o digest único: retorna a seção rica (com diagnóstico,
+    // mesmo nível das tarefas) sem banners/rodapé próprios — o orquestrador monta tudo.
+    if (opts.returnText) {
+      const byOwnerEv = new Map();
+      for (const ev of filteredStale) {
+        const on = ev.collaborators?.full_name?.split(' ')[0] || 'Sem dono';
+        if (!byOwnerEv.has(on)) byOwnerEv.set(on, []);
+        const d = Math.floor((now.getTime() - new Date(ev.end_at).getTime()) / (24 * 3600_000));
+        byOwnerEv.get(on).push({ title: ev.title, daysOverdue: Math.max(1, d) });
+      }
+      const { analyzePersonBacklog } = require('../services/governance-analyzer');
+      const diagsEv = [];
+      for (const [on, items] of byOwnerEv.entries()) {
+        if (items.length >= 3) {
+          try { const dg = await analyzePersonBacklog({ ownerName: on, items }); if (dg) diagsEv.push(dg); }
+          catch (e) { /* nunca quebra */ }
+        }
+      }
+      const diagBlkEv = diagsEv.length > 0 ? `\n\n─────────────────────\n🔍 *Diagnóstico*\n${diagsEv.join('\n\n')}` : '';
+      return `🎖️ *Compromissos em aberto · ${filteredStale.length}*\n\n${lines.join('\n').trim()}${diagBlkEv}${staleCheckBlock}`;
+    }
+
     const msg = `🎖️ *Governança — Compromissos em aberto*\n_${dateLabel} · ${filteredStale.length} parado${filteredStale.length > 1 ? 's' : ''}_\n━━━━━━━━━━━━━━━━━━━━━\n\n${lines.join('\n').trim()}${staleCheckBlock}\n\n━━━━━━━━━━━━━━━━━━━━━\n_${filteredStale.length} compromisso${filteredStale.length > 1 ? 's' : ''} parado${filteredStale.length > 1 ? 's' : ''}${hiddenSuffixEv}. Pra cobrar: "cobra [nome] sobre [assunto]"_`;
 
     // Fatia G fase 2: claim atômico antes de enviar (1/CEO/dia → claim-safe). Substitui
@@ -2282,7 +2306,8 @@ async function ceoTeamUnclosedEventsReport(now = new Date(), opts = {}) {
 // pedagógico→coordenadores, etc.). O envio POR líder fica em perLeaderUnclosedTasksReport.
 async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
   const sp = nowSaoPaulo();
-  if (!opts.force && currentSlot(sp) !== timeToSlot('08:45')) return;
+  // returnText (modo seção do digest) ignora o portão de horário — quem agenda é o orquestrador.
+  if (!opts.returnText && !opts.force && currentSlot(sp) !== timeToSlot('08:45')) return;
 
   const whatsapp = require('../services/whatsapp');
   const ymdRef = sp.ymd;
@@ -2314,11 +2339,10 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
   }
 
   for (const ceo of ceos) {
-    if (!opts.force && await alreadySent(ceo.id, 'ceo_team_unclosed_tasks', ymdRef)) continue;
+    if (!opts.returnText && !opts.force && await alreadySent(ceo.id, 'ceo_team_unclosed_tasks', ymdRef)) continue;
 
-    // Quiet-hours gate (work): silêncio = DEFER ANTES de qualquer side-effect/marca de enviado
-    // (staleness/logRitualEvent) → relatório reentregue no próximo tick fora do quiet.
-    const _qCeoTk = await isQuietNow(ceo.id, nowSaoPaulo(), 'work');
+    // Quiet-hours gate (work). Em returnText (modo seção do digest / dry-run) não aplica.
+    const _qCeoTk = opts.returnText ? { quiet: false } : await isQuietNow(ceo.id, nowSaoPaulo(), 'work');
     if (_qCeoTk.quiet) { continue; }
 
     const today = sp.ymd;
@@ -2470,6 +2494,13 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
     const hiddenSuffixT = hiddenCount > 0 ? ` · ${hiddenCount} já cobrada${hiddenCount > 1 ? 's' : ''} hoje` : '';
     const stuckSection = stuckTasks.length > 0 ? `\n\n_⚠️ ${stuckTasks.length} task${stuckTasks.length > 1 ? 's' : ''} com 3+ cobranças — cobrar mais não resolve. Considera 1:1, ligar ou redistribuir._` : '';
     const diagSection = diagnosticsBlock ? `\n\n─────────────────────\n🔍 *Diagnóstico*\n${diagnosticsBlock.trim()}` : '';
+
+    // Fase 6a — modo SEÇÃO p/ o digest único: retorna a seção rica VERBATIM
+    // (lista + 🔍 diagnóstico + ⚠️ stuck + ⏳ staleness) sem banners/rodapé próprios.
+    if (opts.returnText) {
+      return `📋 *Tarefas atrasadas · ${filteredStale.length}*\n\n${lines.join('\n').trim()}${diagSection}${stuckSection}${staleCheckBlock}`;
+    }
+
     const msg = `📋 *Governança — Tarefas atrasadas*\n_${dateLabelT} · ${filteredStale.length} tarefa${filteredStale.length > 1 ? 's' : ''}_\n━━━━━━━━━━━━━━━━━━━━━\n\n${lines.join('\n').trim()}${diagSection}${stuckSection}${staleCheckBlock}\n\n━━━━━━━━━━━━━━━━━━━━━\n_${filteredStale.length} atrasada${filteredStale.length > 1 ? 's' : ''}${hiddenSuffixT}. Pra cobrar: "cobra [nome] sobre [tarefa]"_`;
 
     // Fatia G fase 2: claim atômico antes de enviar (1/CEO/dia → claim-safe).
@@ -2591,6 +2622,84 @@ async function perLeaderUnclosedTasksReport(now = new Date(), opts = {}) {
     }
   }
   return plan;
+}
+
+// ── Fase 6a — DIGEST ÚNICO de governança ────────────────────────────────────
+// Monta a seção 🏆 Scorecard (enxuta + badges) dos LÍDERES DE VERDADE (têm time —
+// alinhado ao dashboard). '' fora de segunda / sem scorecard da semana.
+async function buildScorecardDigestSection(now) {
+  const { resolveLeaderIdsOf } = require('../services/leader-routing');
+  const { formatScorecardSection } = require('./governance-digest');
+  try {
+    const { data: latest } = await supabase
+      .from('leader_scorecards').select('week_start')
+      .order('week_start', { ascending: false }).limit(1).maybeSingle();
+    if (!latest || !latest.week_start) return '';
+    const { data: rows } = await supabase
+      .from('leader_scorecards')
+      .select('leader_id, closure_rate, tasks_closed, tasks_overdue, tasks_stuck, collaborators!leader_id(full_name, is_ceo)')
+      .eq('week_start', latest.week_start);
+    if (!rows || rows.length === 0) return '';
+    const { data: allCollabs } = await supabase
+      .from('collaborators').select('id, role, function_role, unit, is_ceo, is_active, supervisor_id').eq('is_active', true);
+    const hasTeam = (leaderId) =>
+      (allCollabs || []).some((c) => c.id !== leaderId && resolveLeaderIdsOf(c, allCollabs).includes(leaderId));
+    const sc = rows
+      .filter((r) => r.collaborators && !r.collaborators.is_ceo && hasTeam(r.leader_id))
+      .map((r) => ({
+        leader_name: r.collaborators.full_name,
+        closure_rate: r.closure_rate, tasks_overdue: r.tasks_overdue,
+        tasks_stuck: r.tasks_stuck, tasks_closed: r.tasks_closed, delta_closure: null,
+      }));
+    return formatScorecardSection(sc);
+  } catch (e) { console.error('[GovDigest] scorecard section err:', e.message); return ''; }
+}
+
+// Consolida scorecard + compromissos + tarefas (riqueza total das seções) numa
+// mensagem hierárquica (divide se passar de ~4000). Substitui os 4 envios da
+// manhã PRO CEO. opts.dryRun = monta e RETORNA sem enviar (smoke-test seguro).
+async function sendGovernanceDigest(now = new Date(), opts = {}) {
+  const { assembleDigest } = require('./governance-digest');
+  const whatsapp = require('../services/whatsapp');
+  const sp = nowSaoPaulo();
+  const ymdRef = sp.ymd;
+
+  const { data: ceos } = await supabase
+    .from('collaborators').select('id, full_name, phone')
+    .eq('is_active', true).eq('is_ceo', true).not('phone', 'is', null);
+  if (!ceos || ceos.length === 0) return opts.dryRun ? { results: [] } : undefined;
+
+  const dryResults = [];
+  for (const ceo of ceos) {
+    const scorecardSec = await buildScorecardDigestSection(now);
+    const eventsSec = await ceoTeamUnclosedEventsReport(now, { returnText: true });
+    const tasksSec = await ceoTeamUnclosedTasksReport(now, { returnText: true });
+    if (!scorecardSec && !eventsSec && !tasksSec) continue;
+
+    const dateLabel = new Date(now).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: 'short' });
+    const header = `🌅 *Governança · ${dateLabel}*\n_Visão da empresa_`;
+    const footer = `_Abre a dashboard 📊 · pra cobrar: "cobra [nome] sobre [tarefa]"_`;
+    const { messages, parts } = assembleDigest({
+      header,
+      sections: [{ text: scorecardSec }, { text: eventsSec }, { text: tasksSec }],
+      footer,
+    });
+
+    if (opts.dryRun) { dryResults.push({ ceo: ceo.full_name, parts, messages }); continue; }
+
+    const _q = await isQuietNow(ceo.id, nowSaoPaulo(), 'work');
+    if (_q.quiet) continue;
+    const claim = await claimRitualSend(supabase, ceo.id, 'governance_digest', ymdRef);
+    if (!claim.won) { if (!claim.duplicate) console.error(`[GovDigest] claim_err(${claim.code})`); continue; }
+    try {
+      for (const m of messages) await whatsapp.sendMessage(ceo.phone, m);
+      console.log(`[GovDigest] sent ${parts} part(s) → ${String(ceo.phone).slice(-4)}`);
+    } catch (err) {
+      console.error('[GovDigest] send err:', err.message);
+      if (isTransientRitualError(err)) await rollbackRitualClaim(supabase, claim.id);
+    }
+  }
+  return opts.dryRun ? { results: dryResults } : undefined;
 }
 
 // Relatório semanal de engajamento dos líderes (segunda 08h BRT). CEO recebe
@@ -5200,4 +5309,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { run, dispatchChecklists, dispatchPersonalRecurrentes, dispatchAnnouncements, remindUnconfirmedAnnouncements, notifyCoordinators, remindEventTasks, remindOperationalTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined, isFirstMondayOfMonth, isLastFridayOfMonth, listLeadership, checkMonthlyPlanning, checkMonthlyClosing, dispatchMonthlyAgenda, expirarReservasVencidas, ceoTeamUnclosedEventsReport, ceoTeamUnclosedTasksReport, perLeaderUnclosedTasksReport };
+module.exports = { run, dispatchChecklists, dispatchPersonalRecurrentes, dispatchAnnouncements, remindUnconfirmedAnnouncements, notifyCoordinators, remindEventTasks, remindOperationalTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined, isFirstMondayOfMonth, isLastFridayOfMonth, listLeadership, checkMonthlyPlanning, checkMonthlyClosing, dispatchMonthlyAgenda, expirarReservasVencidas, ceoTeamUnclosedEventsReport, ceoTeamUnclosedTasksReport, perLeaderUnclosedTasksReport, sendGovernanceDigest, buildScorecardDigestSection };
