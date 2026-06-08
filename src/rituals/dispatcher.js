@@ -2664,6 +2664,12 @@ async function sendGovernanceDigest(now = new Date(), opts = {}) {
   const sp = nowSaoPaulo();
   const ymdRef = sp.ymd;
 
+  // Gate (CEO): digest às 9h BRT, seg–sáb. Domingo sem governança. force/dryRun ignoram.
+  if (!opts.force && !opts.dryRun) {
+    if (sp.dow === 0) return;
+    if (currentSlot(sp) !== timeToSlot('09:00')) return;
+  }
+
   const { data: ceos } = await supabase
     .from('collaborators').select('id, full_name, phone')
     .eq('is_active', true).eq('is_ceo', true).not('phone', 'is', null);
@@ -2687,7 +2693,7 @@ async function sendGovernanceDigest(now = new Date(), opts = {}) {
 
     if (opts.dryRun) { dryResults.push({ ceo: ceo.full_name, parts, messages }); continue; }
 
-    const _q = await isQuietNow(ceo.id, nowSaoPaulo(), 'work');
+    const _q = opts.force ? { quiet: false } : await isQuietNow(ceo.id, nowSaoPaulo(), 'work');
     if (_q.quiet) continue;
     const claim = await claimRitualSend(supabase, ceo.id, 'governance_digest', ymdRef);
     if (!claim.won) { if (!claim.duplicate) console.error(`[GovDigest] claim_err(${claim.code})`); continue; }
@@ -3834,11 +3840,15 @@ async function run(opts = {}) {
     console.error('[Dispatcher] autoCloseStaleEventFollowups erro:', err.message);
   }
 
-  // Sprint 23.11 — Relatório CEO 08:30 BRT: compromissos do time sem fechamento
+  // Fase 6a — DIGEST ÚNICO de governança (CEO, 9h BRT seg–sáb): consolida
+  // 🏆 scorecard + 🎖️ compromissos + 📋 tarefas (riqueza total) numa mensagem.
+  // Substitui os envios separados ceoTeamUnclosedEventsReport (8h30) +
+  // ceoTeamUnclosedTasksReport (8h45) — agora chamados em modo seção (returnText)
+  // DENTRO do digest. As funções seguem existindo só pro modo seção.
   try {
-    await ceoTeamUnclosedEventsReport(new Date());
+    await sendGovernanceDigest(new Date());
   } catch (err) {
-    console.error('[Dispatcher] ceoTeamUnclosedEventsReport erro:', err.message);
+    console.error('[Dispatcher] sendGovernanceDigest erro:', err.message);
   }
 
   // Cobrança escalada (1-5d) do dono de eventos work antes do CEO report.
@@ -3848,13 +3858,9 @@ async function run(opts = {}) {
     console.error('[Dispatcher] checkOverdueWorkEvents erro:', err.message);
   }
 
-  // Relatório CEO 08:45 BRT: tarefas do time atrasadas (espelha o de eventos).
-  // Regra: 3+ dias = direto pro CEO; 1-2 dias = agrupado pelo líder do dono.
-  try {
-    await ceoTeamUnclosedTasksReport(new Date());
-  } catch (err) {
-    console.error('[Dispatcher] ceoTeamUnclosedTasksReport erro:', err.message);
-  }
+  // Fase 6a — ceoTeamUnclosedTasksReport NÃO é mais enviado separado: entrou
+  // DENTRO do digest único acima (sendGovernanceDigest). Função mantida só pro
+  // modo seção (returnText). Os 4 pings da manhã viraram 1.
 
   // GovLeader (06/06) — digest POR LÍDER: cada gerente/coordenador recebe a fatia do
   // time dele. Seg–Sex 14:00 BRT, Sáb 09:00 BRT (gate interno por dow). Idempotente.

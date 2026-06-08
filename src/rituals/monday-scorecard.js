@@ -117,7 +117,11 @@ async function sendToDirector(opts = {}) {
     if (qDir.quiet) { console.log(`[monday-scorecard] director=${dir.full_name} em quiet (${qDir.reason}) — defer`); continue; }
 
     try {
-      await whatsapp.sendMessage(dir.phone, msg);
+      // Fase 6a — o scorecard do director agora vai DENTRO do digest único
+      // (sendGovernanceDigest, 9h). Mantém geração+persistência (digest e líderes
+      // leem leader_scorecards), mas NÃO envia mais a mensagem separada pro director.
+      // await whatsapp.sendMessage(dir.phone, msg);
+      void msg;
       await supabase.from('leader_scorecards')
         .update({ sent_to_director: true, sent_to_director_at: new Date().toISOString() })
         .in('id', scorecards.map(s => s.scorecardId).filter(Boolean));
