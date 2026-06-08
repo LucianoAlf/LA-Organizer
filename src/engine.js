@@ -2756,18 +2756,18 @@ async function resolvePendingInviteEventId(collaboratorId) {
     .limit(30);
   if (error || !data || data.length === 0) return null;
   const now = Date.now();
-  const rows = data
+  // só convites de eventos FUTUROS e não cancelados (não faz sentido RSVP em evento
+  // passado). data já vem invited_at DESC → o convite MAIS RECENTE é o que a pessoa
+  // está respondendo (o que ela acabou de receber), não o de data mais próxima.
+  const candidates = data
     .map(p => ({ event_id: p.event_id, ev: Array.isArray(p.events) ? p.events[0] : p.events }))
-    .filter(p => p.ev && p.ev.status !== 'cancelled');
-  if (rows.length === 0) return null;
-  const upcoming = rows
-    .filter(p => p.ev.start_at && new Date(p.ev.start_at).getTime() >= now - 3600e3)
-    .sort((a, b) => new Date(a.ev.start_at) - new Date(b.ev.start_at));
-  if (upcoming.length > 1) {
-    console.warn(`[Event][RSVP] ${String(collaboratorId).slice(0, 8)} tem ${upcoming.length} convites pendentes futuros — usando o mais próximo`);
+    .filter(p => p.ev && p.ev.status !== 'cancelled'
+              && p.ev.start_at && new Date(p.ev.start_at).getTime() >= now - 3600e3);
+  if (candidates.length === 0) return null;
+  if (candidates.length > 1) {
+    console.warn(`[Event][RSVP] ${String(collaboratorId).slice(0, 8)} tem ${candidates.length} convites pendentes futuros — usando o convite MAIS RECENTE`);
   }
-  if (upcoming.length) return upcoming[0].event_id;
-  return rows[0].event_id; // sem futuros → convite pendente mais recente
+  return candidates[0].event_id; // convite mais recente (invited_at desc)
 }
 
 // Sprint 31.15 — upsert de PRESENÇA (RSVP). Resolve o evento por id GLOBAL (o convidado

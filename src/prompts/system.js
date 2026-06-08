@@ -540,6 +540,10 @@ function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events
       // Item 5 (Quintela/Luciano) — convite aguardando resposta: instrui o RSVP explícito.
       const rsvpTag = e._rsvpPending
         ? ` ⏳ *CONVITE AGUARDANDO SUA RESPOSTA* — se a pessoa disser sim/vou/confirmo → \`<<EVENT_UPDATE>>{"action":"rsvp","event_id":"${sid}","status":"confirmed"}<<END>>\`; não/recuso → "declined". NUNCA diga "confirmada" sem emitir esse marker.`
+        : e._rsvpConfirmed
+        ? ` ✅ *VOCÊ JÁ CONFIRMOU PRESENÇA* — NÃO peça confirmação de novo nem escreva "(confirma presença?)" pra este evento.`
+        : e._rsvpTentative
+        ? ` 🤔 você marcou "talvez" aqui — só pergunte se já decidiu se a pessoa tocar no assunto.`
         : '';
       lines.push(`• [id=${sid}] ${datePrefix}${start}–${end} ${mod} ${e.title}${statusTag}${cat}${where}${reminders}${rsvpTag}`);
     });
@@ -1392,6 +1396,12 @@ async function fetchCollaboratorContext(collaborator) {
         if (t >= new Date(lo).getTime() && t <= new Date(hi).getTime()) {
           // Item 5 — convite ainda não respondido: flag pra TOM reconhecer "sim/não" como RSVP.
           if (p.status === 'invited' && !p.responded_at) e._rsvpPending = true;
+          // EV-LEAK (08/06) — RSVP JÁ respondido precisa aparecer no contexto, senão a IA
+          // re-pede "(confirma presença?)" num evento já confirmado e confunde o "sim" do
+          // usuário com o convite errado (caso Clayton 08/06: Love Song já confirmado 05/06
+          // foi re-perguntado no briefing e roubou o "sim" da Reunião Governança).
+          else if (p.status === 'confirmed') e._rsvpConfirmed = true;
+          else if (p.status === 'tentative') e._rsvpTentative = true;
           map.set(e.id, e);
         }
       }
