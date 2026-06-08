@@ -23,11 +23,17 @@ describe('resolveScope', () => {
     expect(s.scopeIds).toBeNull();
   });
 
-  it('líder com time (Quintela) → mode leader + memberIds = pedagógicos', () => {
+  it('líder com time (Quintela) → guarda-chuva (Leo), NÃO o exclusivo da Juliana (Dai)', () => {
     const s = resolveScope('qt', all);
     expect(s.mode).toBe('leader');
-    expect(s.memberIds.sort()).toEqual(['dai', 'leo']);
+    expect(s.memberIds.sort()).toEqual(['leo']);
     expect(s.scopeIds).toEqual(s.memberIds);
+  });
+
+  it('líder com time (Juliana) → inclui o exclusivo dela (Dai) + guarda-chuva (Leo)', () => {
+    const s = resolveScope('ju', all);
+    expect(s.mode).toBe('leader');
+    expect(s.memberIds.sort()).toEqual(['dai', 'leo']);
   });
 
   it('líder sem liderados (Hugo) → mode none', () => {

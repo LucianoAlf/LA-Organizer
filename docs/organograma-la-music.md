@@ -1,6 +1,32 @@
 # Organograma LA Music — Referência de Governança
 > Documento de referência para o TOM e o sistema de governança do LA Organizer.
-> Atualizado em: 15/05/2026
+> Atualizado em: 15/05/2026 · **Realinhamento de governança: 08/06/2026 (chat Alf)**
+
+---
+
+## ⚙️ Decisões de governança — 08/06/2026 (fonte canônica da dashboard + TOM)
+
+Validadas com o Alf no chat. A tela `/time` e o roteamento do TOM (`leader-routing.js` / `team-routing.ts`) seguem ISTO.
+
+**1. Líderes DE VERDADE (têm time → aparecem no semáforo, recebem digest, têm a view de líder):**
+Juliana, Quintela (pedagógico) · Jereh (Campo Grande) · Clayton (Recreio, interino) · Krissya (Barra + Comercial) · Yuri (Marketing).
+
+**2. Reportam DIRETO ao Luciano (sem time → NÃO são líderes, não entram no semáforo):**
+Rafinha (Ops Técnicas), Jéssica (Sucesso do Cliente), Fabi (licença), Ana (RH), Rose (Financeiro — *a entrar*). Quando o Dudu/estagiário entrar no sistema, Rafinha passa a ter time.
+
+**3. Pedagógico — exclusividade + guarda-chuva:**
+- **Dai → só Juliana** · **Matheus → só Quintela** (assistentes exclusivos, via `supervisor_id`).
+- **Jordan, Peterson, Ramon, Rodrigo, Leo → nos DOIS** (Juliana E Quintela — "um lembra o outro").
+- **Leo** também → **Krissya** (representante pedagógico operacional da Barra).
+- Regra técnica: pedagógico cujo `supervisor_id` já é coordenador pedagógico = exclusivo a ele; senão = guarda-chuva (ambas).
+
+**4. Anne Susan (sócia, mesma autoridade):** TEM o poder/visão de diretora, **MAS o TOM NUNCA envia governança pra ela** (digest/cobrança/alerta). Ela usa o LA Organizer só pra coisas pessoais; tudo de empresa chega no Luciano, que repassa.
+
+**5. Hugo (Coord. de Tecnologia):** mantém `role=director` (acesso máximo aos sistemas), **mas NÃO recebe nada de governança** e **não é líder** (sem time).
+
+**6. Admin:** conta de sistema → **fora da governança** (não é pessoa).
+
+> **Não-recebem-governança-do-TOM:** Anne, Hugo, Admin. **(implementar no digest — Fase 6.)**
 
 ---
 

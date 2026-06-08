@@ -18,6 +18,7 @@ import { NeedsYouToday } from '../components/team/NeedsYouToday';
 import { LeaderSemaphore } from '../components/team/LeaderSemaphore';
 import { TeamDrillPanel } from '../components/team/TeamDrillPanel';
 import { LeaderDesktop } from './LeaderDesktop';
+import { membersOf } from '../lib/team-routing';
 import { todaySP, startOfWeekMonday, brShort } from '../utils/date';
 
 export function DashboardTimeDesktop() {
@@ -50,6 +51,14 @@ export function DashboardTimeDesktop() {
     return <LeaderDesktop snapshot={snapshot} scorecards={scorecards} weekStart={weekStart} />;
   }
 
+  // Semáforo = só LÍDERES DE VERDADE (têm time). Tira "líder-fantasma":
+  // Rafinha/Hugo/Ana/Admin/Anne têm scorecard mas não lideram ninguém ativo →
+  // reportam direto ao CEO, não entram no semáforo de líderes (organograma 08/06).
+  const leaderScorecards = scorecards.filter(sc => {
+    const lc = snapshot.allCollabs.find(c => c.id === sc.leader_id);
+    return !!lc && membersOf(lc, snapshot.allCollabs).length > 0;
+  });
+
   // Selo de semana: só aparece se o scorecard não for da semana corrente
   // (cron de segunda ainda não rodou → mostra a última fechada, honestamente).
   const currentWeek = startOfWeekMonday(todaySP());
@@ -64,7 +73,7 @@ export function DashboardTimeDesktop() {
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_minmax(360px,42%)] gap-md items-start">
         {/* Master — esquerda */}
         <div className="space-y-md min-w-0">
-          <NeedsYouToday snapshot={snapshot} scorecards={scorecards} />
+          <NeedsYouToday snapshot={snapshot} scorecards={leaderScorecards} />
 
           {showWeekBadge && (
             <div className="text-body-sm text-fg-muted">
@@ -72,7 +81,7 @@ export function DashboardTimeDesktop() {
             </div>
           )}
 
-          <LeaderSemaphore scorecards={scorecards} selected={sel} onSelect={setSel} />
+          <LeaderSemaphore scorecards={leaderScorecards} selected={sel} onSelect={setSel} />
         </div>
 
         {/* Detail — direita */}
@@ -80,7 +89,7 @@ export function DashboardTimeDesktop() {
           leaderId={sel}
           allCollabs={snapshot.allCollabs}
           snapshot={snapshot}
-          scorecards={scorecards}
+          scorecards={leaderScorecards}
         />
       </div>
     </div>
