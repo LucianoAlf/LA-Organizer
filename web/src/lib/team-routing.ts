@@ -18,6 +18,7 @@ export interface Collab {
   supervisor_id: string | null;
   is_ceo: boolean;
   is_active?: boolean;
+  explicit_leader_ids?: string[];
 }
 
 const UNITS = new Set(['barra', 'campo_grande', 'recreio']);
@@ -42,9 +43,11 @@ export function resolveLeadersOf(collab: Collab, allCollabs: Collab[]): Collab[]
     if (fr === 'pedagogico') for (const c of active) if (c.role === 'coordinator' && c.function_role === 'pedagogico') add(c);
     if (fr === 'marketing') for (const c of active) if (c.role === 'manager' && c.function_role === 'marketing') add(c);
   }
-  if (collab.supervisor_id && byId.has(collab.supervisor_id)) {
-    const sup = byId.get(collab.supervisor_id);
-    if (sup && !sup.is_ceo) add(sup);
+  // Override manual (matriz editável) — aditivo às regras. Pula CEO: ele já recebe
+  // o digest completo (entra só pelo fallback de órfão, abaixo).
+  for (const lid of (collab.explicit_leader_ids ?? [])) {
+    const L = byId.get(lid);
+    if (L && !L.is_ceo) add(L);
   }
   if (leaders.size === 0) for (const c of active) if (c.is_ceo) add(c);
   return [...leaders.values()];

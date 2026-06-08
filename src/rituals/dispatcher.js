@@ -2332,10 +2332,8 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
   // GovLeader — carrega todos os colaboradores ativos uma vez pra resolver o líder
   // do DONO de cada tarefa (substitui o roteamento por categoria, que era vazio).
   const { resolveLeadersOf } = require('../services/leader-routing');
-  const { data: allCollabs } = await supabase
-    .from('collaborators')
-    .select('id, full_name, role, function_role, unit, is_ceo, is_active, supervisor_id')
-    .eq('is_active', true);
+  const { loadCollabsWithEdges } = require('../services/governance-edges');
+  const allCollabs = await loadCollabsWithEdges(supabase);
   const collabById = new Map((allCollabs || []).map((c) => [c.id, c]));
 
   function daysOverdue(dueYmd) {
@@ -2566,10 +2564,8 @@ async function perLeaderUnclosedTasksReport(now = new Date(), opts = {}) {
   const ymdRef = sp.ymd;
   const today = sp.ymd;
 
-  const { data: allCollabs } = await supabase
-    .from('collaborators')
-    .select('id, full_name, phone, role, function_role, unit, is_ceo, is_active, supervisor_id')
-    .eq('is_active', true);
+  const { loadCollabsWithEdges } = require('../services/governance-edges');
+  const allCollabs = await loadCollabsWithEdges(supabase);
   const collabById = new Map((allCollabs || []).map((c) => [c.id, c]));
 
   function daysOverdue(dueYmd) {
@@ -2680,8 +2676,8 @@ async function buildScorecardDigestSection(now) {
       .select('leader_id, closure_rate, tasks_closed, tasks_overdue, tasks_stuck, collaborators!leader_id(full_name, is_ceo)')
       .eq('week_start', latest.week_start);
     if (!rows || rows.length === 0) return '';
-    const { data: allCollabs } = await supabase
-      .from('collaborators').select('id, role, function_role, unit, is_ceo, is_active, supervisor_id').eq('is_active', true);
+    const { loadCollabsWithEdges } = require('../services/governance-edges');
+    const allCollabs = await loadCollabsWithEdges(supabase);
     const hasTeam = (leaderId) =>
       (allCollabs || []).some((c) => c.id !== leaderId && resolveLeaderIdsOf(c, allCollabs).includes(leaderId));
     const sc = rows
@@ -2774,11 +2770,9 @@ async function sendLeaderGovernanceDigest(now = new Date(), opts = {}) {
   const defaultLeaderTime = sp.dow === 6 ? '09:00' : '14:00';
   if (!opts.force && !opts.dryRun && sp.dow === 0) return;
 
-  const { data: allCollabs } = await supabase
-    .from('collaborators')
-    .select('id, full_name, phone, role, function_role, unit, is_ceo, is_active, supervisor_id')
-    .eq('is_active', true);
-  if (!allCollabs) return opts.dryRun ? { results: [] } : undefined;
+  const { loadCollabsWithEdges } = require('../services/governance-edges');
+  const allCollabs = await loadCollabsWithEdges(supabase);
+  if (!allCollabs.length) return opts.dryRun ? { results: [] } : undefined;
 
   // leader -> Set(memberIds) (membersOf via inversa do resolveLeaderIdsOf)
   const teamOf = new Map();

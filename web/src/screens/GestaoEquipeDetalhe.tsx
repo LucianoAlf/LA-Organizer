@@ -8,11 +8,20 @@ import { LoadingState } from '../components/LoadingState';
 import { showToast } from '../components/Toast';
 import type { Role } from '../types';
 import { ROLES, ROLE_RANK, ROLE_LABELS, JOB_TITLES } from '../lib/roles';
+import { resolveLeadersOf, membersOf, type Collab } from '../lib/team-routing';
+import { fetchGovernanceEdges, addGovernanceEdge, removeGovernanceEdge } from '../lib/governance-edges';
 const UNIT_OPTIONS = [
   { value: 'barra',        label: 'Barra' },
   { value: 'recreio',      label: 'Recreio' },
   { value: 'campo_grande', label: 'Campo Grande' },
   { value: 'all',          label: 'Geral' },
+] as const;
+const FUNCTION_ROLE_OPTIONS = [
+  { value: 'pedagogico',   label: 'Pedagógico' },
+  { value: 'marketing',    label: 'Marketing' },
+  { value: 'ops_tecnicas', label: 'Operações' },
+  { value: 'farmer',       label: 'Farmer' },
+  { value: 'tech',         label: 'Tech' },
 ] as const;
 
 type CollabFull = {
@@ -23,6 +32,7 @@ type CollabFull = {
   role: Role;
   unit: string | null;
   function_title: string | null;
+  function_role: string | null;
   is_active: boolean;
   onboarding_completed: boolean;
   avatar_url: string | null;
@@ -56,6 +66,24 @@ export function GestaoEquipeDetalhe() {
   const [selectedRole,  setSelectedRole]  = useState<Role>('collaborator');
   const [selectedUnit,  setSelectedUnit]  = useState('');
   const [isActive,      setIsActive]      = useState(true);
+  const [functionRole,  setFunctionRole]  = useState<string>('');
+  const isDirector = myRole === 'director';
+
+  const { data: roster = [] } = useQuery({
+    queryKey: ['gov-roster'],
+    queryFn: async () => {
+      const { data } = await supabase.from('collaborators')
+        .select('id, full_name, preferred_name, role, function_role, unit, supervisor_id, is_ceo, is_active')
+        .eq('is_active', true);
+      return (data ?? []) as Array<Collab & { full_name: string; preferred_name: string | null }>;
+    },
+    enabled: isDirector,
+  });
+  const { data: edges = [], refetch: refetchEdges } = useQuery({
+    queryKey: ['gov-edges'],
+    queryFn: fetchGovernanceEdges,
+    enabled: isDirector,
+  });
 
   useEffect(() => {
     if (collab) {
@@ -65,6 +93,7 @@ export function GestaoEquipeDetalhe() {
       setFunctionTitle(collab.function_title ?? '');
       setSelectedRole(collab.role);
       setSelectedUnit(collab.unit ?? '');
+      setFunctionRole(collab.function_role ?? '');
       setIsActive(collab.is_active);
     }
   }, [collab]);
@@ -109,6 +138,7 @@ export function GestaoEquipeDetalhe() {
           phone:          phone.replace(/\D/g, '') || null,
           email:          newEmail,
           function_title: functionTitle.trim() || null,
+          function_role:  functionRole || null,
           role:           selectedRole,
           unit:           selectedUnit || null,
           is_active:      isActive,
@@ -170,6 +200,34 @@ export function GestaoEquipeDetalhe() {
     `px-3 py-1.5 rounded-lg text-body-sm font-medium border transition-colors ${
       active ? 'bg-tom text-white border-tom' : 'bg-bg-elevated border-border text-fg'
     }`;
+
+  const myEdgeLeaderIds = edges.filter(e => e.member_id === id).map(e => e.leader_id);
+
+  // "draft" = este colab com o estado ATUAL do form + arestas atuais, pra prever o
+  // efeito antes de salvar. Usa as MESMAS funções puras do roteamento.
+  const draftAll: Collab[] = roster.map(c => {
+    const explicit = edges.filter(e => e.member_id === c.id).map(e => e.leader_id);
+    if (c.id === id) {
+      return { ...c, role: selectedRole, function_role: functionRole || null, unit: selectedUnit || null, explicit_leader_ids: explicit };
+    }
+    return { ...c, explicit_leader_ids: explicit };
+  });
+  const draftMe = draftAll.find(c => c.id === id);
+  const nameOf = (cid: string) =>
+    roster.find(c => c.id === cid)?.preferred_name || roster.find(c => c.id === cid)?.full_name || cid;
+  const previewLeaders = draftMe ? resolveLeadersOf(draftMe, draftAll).map(c => nameOf(c.id)) : [];
+  const previewMembers = draftMe ? membersOf(draftMe, draftAll).map(c => nameOf(c.id)) : [];
+
+  async function toggleEdge(leaderId: string) {
+    if (!id) return;
+    try {
+      if (myEdgeLeaderIds.includes(leaderId)) await removeGovernanceEdge(id, leaderId);
+      else await addGovernanceEdge(id, leaderId);
+      await refetchEdges();
+    } catch {
+      showToast({ kind: 'error', title: 'Erro ao salvar vínculo (só Diretor pode).' });
+    }
+  }
 
   return (
     <div className="space-y-lg pb-xl">
@@ -272,6 +330,48 @@ export function GestaoEquipeDetalhe() {
             ))}
           </div>
         </section>
+
+        {isDirector && (
+          <section className="surface p-lg space-y-md">
+            <h2 className="text-label text-fg-muted uppercase tracking-wide">Governança</h2>
+
+            <div className="space-y-md">
+              <label className="text-body-sm text-fg-muted">Grupo de governança (define a regra automática)</label>
+              <div className="flex flex-wrap gap-2">
+                {FUNCTION_ROLE_OPTIONS.map(f => (
+                  <button key={f.value} type="button"
+                    onClick={() => setFunctionRole(functionRole === f.value ? '' : f.value)}
+                    className={chipCls(functionRole === f.value)}>
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-md">
+              <label className="text-body-sm text-fg-muted">Reporta a (líderes explícitos — soma às regras)</label>
+              <div className="flex flex-wrap gap-2">
+                {roster.filter(c => c.id !== id && !c.is_ceo).map(c => (
+                  <button key={c.id} type="button" onClick={() => toggleEdge(c.id)}
+                    className={chipCls(myEdgeLeaderIds.includes(c.id))}>
+                    {c.preferred_name || c.full_name}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-lg bg-bg-elevated border border-border p-3 space-y-1">
+              <div className="text-body-sm">
+                <span className="text-fg-muted">Líderes resolvidos: </span>
+                <span className="text-fg">{previewLeaders.length ? previewLeaders.join(', ') : '—'}</span>
+              </div>
+              <div className="text-body-sm">
+                <span className="text-fg-muted">Liderados diretos: </span>
+                <span className="text-fg">{previewMembers.length ? previewMembers.join(', ') : '—'}</span>
+              </div>
+            </div>
+          </section>
+        )}
 
         <button type="submit" disabled={saveMutation.isPending}
           className="w-full py-3 rounded-xl bg-tom text-white font-semibold text-body-md disabled:opacity-50 hover:opacity-90 transition-opacity">

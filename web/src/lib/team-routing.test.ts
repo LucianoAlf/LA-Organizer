@@ -54,3 +54,28 @@ describe('membersOf (inversa)', () => {
     expect(membersOf(ceo, all).map(c => c.id)).toContain('fabi');
   });
 });
+
+describe('explicit_leader_ids (override manual N:N)', () => {
+  const rafinha = C({ id: 'raf', role: 'collaborator', function_role: 'ops_tecnicas', unit: 'all' });
+  const dudu = C({ id: 'dudu', role: 'collaborator', function_role: 'ops_tecnicas', unit: 'all' });
+  dudu.explicit_leader_ids = ['raf'];
+  const base = [ceo, juliana, quintela, krissya, rafinha, dudu];
+
+  it('aresta explícita define o líder (Dudu → Rafinha, não cai no CEO)', () => {
+    expect(resolveLeaderIdsOf(dudu, base)).toEqual(['raf']);
+  });
+  it('membersOf enxerga a aresta (Rafinha tem Dudu)', () => {
+    expect(membersOf(rafinha, base).map(c => c.id)).toContain('dudu');
+  });
+  it('aresta soma às regras e deduplica (pedagógico + aresta p/ Juliana = ju+qt)', () => {
+    const daiX = C({ id: 'daiX', function_role: 'pedagogico' });
+    daiX.explicit_leader_ids = ['ju'];
+    const arr = [ceo, juliana, quintela, daiX];
+    expect(resolveLeaderIdsOf(daiX, arr).sort()).toEqual(['ju', 'qt']);
+  });
+  it('aresta apontando o CEO é ignorada → fallback CEO (sem duplicar)', () => {
+    const x = C({ id: 'x', function_role: 'ops_tecnicas', unit: 'all' });
+    x.explicit_leader_ids = ['ceo'];
+    expect(resolveLeaderIdsOf(x, [ceo, x])).toEqual(['ceo']);
+  });
+});

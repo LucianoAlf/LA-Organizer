@@ -24,7 +24,7 @@ const UNITS = new Set(['barra', 'campo_grande', 'recreio']);
 const LEADER_ROLES = new Set(['manager', 'coordinator', 'director']);
 
 /**
- * @param {object} collab  colaborador dono da tarefa (precisa de id, role, function_role, unit, supervisor_id)
+ * @param {object} collab  colaborador dono da tarefa (precisa de id, role, function_role, unit, explicit_leader_ids)
  * @param {object[]} allCollabs  todos os colaboradores (pra achar os líderes)
  * @returns {object[]}  lista de líderes (objetos de allCollabs), em ordem de prioridade, deduplicada
  */
@@ -72,13 +72,12 @@ function resolveLeadersOf(collab, allCollabs) {
     }
   }
 
-  // 4) supervisor_id explícito (override/exceção) — soma sem dominar a ordem.
-  // EXCETO quando o supervisor é o próprio CEO: ele já recebe o digest COMPLETO,
-  // então não deve poluir o fan-out por-líder (senão todo pedagógico que reporta
-  // "ao topo" duplicaria o CEO). O CEO entra só pelo fallback de órfão real (passo 5).
-  if (collab.supervisor_id && byId.has(collab.supervisor_id)) {
-    const sup = byId.get(collab.supervisor_id);
-    if (sup && !sup.is_ceo) add(sup);
+  // 4) override manual (matriz editável, governance_edges) — soma sem dominar a ordem.
+  // EXCETO quando o líder explícito é o próprio CEO: ele já recebe o digest COMPLETO,
+  // então não deve poluir o fan-out por-líder. O CEO entra só pelo fallback (passo 5).
+  for (const lid of (Array.isArray(collab.explicit_leader_ids) ? collab.explicit_leader_ids : [])) {
+    const L = byId.get(lid);
+    if (L && !L.is_ceo) add(L);
   }
 
   // 5) fallback: ninguém resolveu (órfão ou ele-mesmo líder) → CEO

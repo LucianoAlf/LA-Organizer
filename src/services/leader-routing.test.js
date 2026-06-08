@@ -94,3 +94,19 @@ test('entradas inválidas não quebram', () => {
   assert.deepStrictEqual(resolveLeadersOf(ARTHUR, null), []);
   assert.deepStrictEqual(resolveLeadersOf(undefined, undefined), []);
 });
+
+// ── Override manual (explicit_leader_ids) ───────────────────────────────────
+test('aresta explícita define o líder (Dudu → Rafinha, não cai no CEO)', () => {
+  const RAF  = { id: 'raf',  role: 'collaborator', function_role: 'ops_tecnicas', unit: 'all', is_ceo: false, is_active: true };
+  const DUDU = { id: 'dudu', role: 'collaborator', function_role: 'ops_tecnicas', unit: 'all', is_ceo: false, is_active: true, explicit_leader_ids: ['raf'] };
+  const arr = [CEO, RAF, DUDU];
+  assert.deepStrictEqual(resolveLeaderIdsOf(DUDU, arr), ['raf']);
+});
+test('aresta soma às regras e deduplica (pedagógico + aresta Juliana = ju+qt)', () => {
+  const X = { id: 'x', role: 'collaborator', function_role: 'pedagogico', unit: 'all', is_ceo: false, is_active: true, explicit_leader_ids: ['juliana'] };
+  assert.deepStrictEqual(resolveLeaderIdsOf(X, [...ALL, X]).sort(), ['juliana', 'quintela']);
+});
+test('aresta apontando o CEO é ignorada → fallback CEO', () => {
+  const X = { id: 'x2', role: 'collaborator', function_role: 'ops_tecnicas', unit: 'all', is_ceo: false, is_active: true, explicit_leader_ids: ['ceo'] };
+  assert.deepStrictEqual(resolveLeaderIdsOf(X, [CEO, X]), ['ceo']);
+});
