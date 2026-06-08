@@ -44,11 +44,11 @@ test('Kailane (comercial/Barra, sem function_role) → Krissya', () => {
   assert.deepStrictEqual(ids(KAILANE), ['krissya']);
 });
 
-// ── Pedagógicos: EXCLUSIVO (sup=coord) vs guarda-chuva (sup≠coord) ───────────
-test('Dai (pedagógico, supervisor=Juliana) → EXCLUSIVO Juliana', () => {
-  assert.deepStrictEqual(ids(DAI), ['juliana']);
+// ── Pedagógicos → AMBOS coordenadores (os dois veem todos) ───────────────────
+test('Dai (pedagógico, supervisor=Juliana) → Juliana + Quintela (os dois veem)', () => {
+  assert.deepStrictEqual(ids(DAI), ['juliana', 'quintela']);
 });
-test('Peterson (pedagógico, supervisor=CEO) → guarda-chuva Juliana + Quintela', () => {
+test('Peterson (pedagógico, supervisor=CEO) → Juliana + Quintela', () => {
   assert.deepStrictEqual(ids(PETERSON), ['juliana', 'quintela']);
 });
 

@@ -19,16 +19,16 @@ const fabi = C({ id: 'fabi', function_role: 'farmer', unit: 'all' });
 const all = [ceo, juliana, quintela, krissya, yuri, dai, matheus, jordan, leo, john, fabi];
 
 describe('resolveLeaderIdsOf', () => {
-  it('pedagógico EXCLUSIVO (supervisor = coord. pedag.) → só ela (Dai→Juliana)', () => {
-    expect(resolveLeaderIdsOf(dai, all)).toEqual(['ju']);
+  it('pedagógico cai nos DOIS coordenadores — Dai (mesmo com supervisor=Juliana)', () => {
+    expect(resolveLeaderIdsOf(dai, all).sort()).toEqual(['ju', 'qt']);
   });
-  it('pedagógico EXCLUSIVO (Matheus→Quintela)', () => {
-    expect(resolveLeaderIdsOf(matheus, all)).toEqual(['qt']);
+  it('pedagógico cai nos DOIS coordenadores — Matheus (mesmo com supervisor=Quintela)', () => {
+    expect(resolveLeaderIdsOf(matheus, all).sort()).toEqual(['ju', 'qt']);
   });
-  it('pedagógico guarda-chuva (supervisor não-coord.) → AMBAS as coordenadoras', () => {
+  it('pedagógico (supervisor=CEO) também → AMBAS', () => {
     expect(resolveLeaderIdsOf(jordan, all).sort()).toEqual(['ju', 'qt']);
   });
-  it('Leo (pedagógico guarda-chuva + Barra) = Krissya + Juliana + Quintela', () => {
+  it('Leo (pedagógico + Barra) = Krissya + Juliana + Quintela', () => {
     expect(new Set(resolveLeaderIdsOf(leo, all))).toEqual(new Set(['kr', 'ju', 'qt']));
   });
   it('marketing → Yuri', () => {
@@ -43,14 +43,12 @@ describe('resolveLeaderIdsOf', () => {
 });
 
 describe('membersOf (inversa)', () => {
-  it('time da Quintela: guarda-chuva (Jordan, Leo) + exclusivo dela (Matheus), NÃO o exclusivo da Juliana (Dai)', () => {
-    const ids = membersOf(quintela, all).map(c => c.id).sort();
-    expect(ids).toContain('jordan'); expect(ids).toContain('leo'); expect(ids).toContain('mat');
-    expect(ids).not.toContain('dai');
-  });
-  it('time da Juliana inclui o exclusivo dela (Dai), não o do Quintela (Matheus)', () => {
-    const ids = membersOf(juliana, all).map(c => c.id);
-    expect(ids).toContain('dai'); expect(ids).not.toContain('mat');
+  it('os DOIS coordenadores veem todos os pedagógicos (Dai, Matheus, Jordan, Leo)', () => {
+    const qt = membersOf(quintela, all).map(c => c.id).sort();
+    const ju = membersOf(juliana, all).map(c => c.id).sort();
+    for (const id of ['dai', 'mat', 'jordan', 'leo']) {
+      expect(qt).toContain(id); expect(ju).toContain(id);
+    }
   });
   it('time do CEO inclui os órfãos (Fabi)', () => {
     expect(membersOf(ceo, all).map(c => c.id)).toContain('fabi');

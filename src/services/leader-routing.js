@@ -7,8 +7,8 @@
 // nada chegava ao gerente da unidade. Causa-raiz GovLeader (caso Krissya 06/06).
 //
 // Regra definida pelo CEO (08/06, organograma):
-//   • pedagógico EXCLUSIVO (supervisor já é coord. pedag.) → só ela (Dai→Juliana, Matheus→Quintela)
-//   • pedagógico guarda-chuva (supervisor não-coord.) → AMBAS as coordenadoras (Juliana + Quintela)
+//   • pedagógico (collaborator) → AMBOS os coordenadores pedagógicos (Juliana + Quintela);
+//     os DOIS veem todos ("tudo que a Quintela vê, a Juliana vê"). SEM exclusividade.
 //   • marketing  (collaborator) → managers de marketing (Yuri)
 //   • lotado numa unidade (barra/campo_grande/recreio) → gerente daquela unidade
 //   • supervisor_id explícito → SEMPRE incluído (override de exceção)
@@ -56,18 +56,12 @@ function resolveLeadersOf(collab, allCollabs) {
         if (c.role === 'manager' && c.unit === unit) add(c);
       }
     }
-    // 2) pedagógico → exclusivo OU guarda-chuva.
-    // Exclusividade (organograma 08/06): se o supervisor já é coordenador
-    // pedagógico (Dai→Juliana, Matheus→Quintela), fica EXCLUSIVO a ele (entra
-    // pelo passo 4 do supervisor). Senão (sup = CEO/gerente/nada) → guarda-chuva:
-    // cai nas DUAS coordenadoras (Jordan/Peterson/Ramon/Rodrigo/Leo).
+    // 2) pedagógico → AMBOS os coordenadores pedagógicos (Juliana + Quintela).
+    // Os dois veem TODOS os pedagógicos — "tudo que a Quintela vê, a Juliana vê"
+    // (um lembra o outro). SEM exclusividade (decisão CEO 08/06).
     if (fr === 'pedagogico') {
-      const sup = collab.supervisor_id ? byId.get(collab.supervisor_id) : null;
-      const supIsPedCoord = !!sup && sup.role === 'coordinator' && sup.function_role === 'pedagogico';
-      if (!supIsPedCoord) {
-        for (const c of active) {
-          if (c.role === 'coordinator' && c.function_role === 'pedagogico') add(c);
-        }
+      for (const c of active) {
+        if (c.role === 'coordinator' && c.function_role === 'pedagogico') add(c);
       }
     }
     // 3) marketing → managers de marketing

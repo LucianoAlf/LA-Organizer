@@ -23,14 +23,14 @@ describe('resolveScope', () => {
     expect(s.scopeIds).toBeNull();
   });
 
-  it('líder com time (Quintela) → guarda-chuva (Leo), NÃO o exclusivo da Juliana (Dai)', () => {
+  it('líder com time (Quintela) → todos os pedagógicos (Dai + Leo), os dois coords veem todos', () => {
     const s = resolveScope('qt', all);
     expect(s.mode).toBe('leader');
-    expect(s.memberIds.sort()).toEqual(['leo']);
+    expect(s.memberIds.sort()).toEqual(['dai', 'leo']);
     expect(s.scopeIds).toEqual(s.memberIds);
   });
 
-  it('líder com time (Juliana) → inclui o exclusivo dela (Dai) + guarda-chuva (Leo)', () => {
+  it('líder com time (Juliana) → também vê todos os pedagógicos (Dai + Leo)', () => {
     const s = resolveScope('ju', all);
     expect(s.mode).toBe('leader');
     expect(s.memberIds.sort()).toEqual(['dai', 'leo']);

@@ -14,11 +14,11 @@ Juliana, Quintela (pedagógico) · Jereh (Campo Grande) · Clayton (Recreio, int
 **2. Reportam DIRETO ao Luciano (sem time → NÃO são líderes, não entram no semáforo):**
 Rafinha (Ops Técnicas), Jéssica (Sucesso do Cliente), Fabi (licença), Ana (RH), Rose (Financeiro — *a entrar*). Quando o Dudu/estagiário entrar no sistema, Rafinha passa a ter time.
 
-**3. Pedagógico — exclusividade + guarda-chuva:**
-- **Dai → só Juliana** · **Matheus → só Quintela** (assistentes exclusivos, via `supervisor_id`).
-- **Jordan, Peterson, Ramon, Rodrigo, Leo → nos DOIS** (Juliana E Quintela — "um lembra o outro").
+**3. Pedagógico — os DOIS coordenadores veem TODOS (sem exclusividade):**
+- **Todo pedagógico cai em Juliana E Quintela.** "Tudo que a Quintela vê, a Juliana vê" — um lembra o outro. Dai, Matheus, Jordan, Peterson, Ramon, Rodrigo, Leo → **os dois**.
+- `supervisor_id` (ex.: Dai→Juliana, Matheus→Quintela) indica o assistente principal de cada um, **mas não restringe a visão**: ambos veem todos.
 - **Leo** também → **Krissya** (representante pedagógico operacional da Barra).
-- Regra técnica: pedagógico cujo `supervisor_id` já é coordenador pedagógico = exclusivo a ele; senão = guarda-chuva (ambas).
+- Regra técnica: `function_role='pedagogico'` → adiciona TODOS os coordenadores pedagógicos. Sem filtro de exclusividade.
 
 **4. Anne Susan (sócia, mesma autoridade):** TEM o poder/visão de diretora, **MAS o TOM NUNCA envia governança pra ela** (digest/cobrança/alerta). Ela usa o LA Organizer só pra coisas pessoais; tudo de empresa chega no Luciano, que repassa.
 
