@@ -12,6 +12,9 @@ const VALID_CATEGORIES = new Set([
   'proactive_overreach',
 ]);
 const VALID_SEVERITY = new Set(['alto', 'medio', 'baixo']);
+// Status "fechados": um finding triado como um destes NUNCA deve re-surgir como novo.
+const CLOSED_STATUSES = new Set(['resolvido', 'falso_positivo', 'wontfix', 'corrigido']);
+const SEV_RANK = { alto: 0, medio: 1, baixo: 2 };
 
 /** Normaliza o resumo pra assinatura: sem acento/pontuação/número, minúsculo, colapsado, 60 chars. */
 function normalizeSummary(s) {
@@ -84,19 +87,69 @@ async function auditConversation(sb, chat, collaborator, hours = 24) {
   }
 }
 
-/** Grava 1 finding com dedupe por assinatura (open = novo/confirmado). NUNCA lança. */
+/**
+ * Ordena findings por severidade (alto→baixo) e ocorrências, e amostra com
+ * DIVERSIDADE: até `perPerson` por colaborador na 1ª passada, depois preenche
+ * até `max` com os mais graves restantes. Pura — não toca DB. Evita o relatório
+ * ser dominado por 1 pessoa (caso 08/06: 5 amostras todas do mesmo chat).
+ * @param {Array} findings linhas {severity, occurrences, collaborator_id, ...}
+ * @param {{perPerson?:number, max?:number}} [opts]
+ * @returns {{sample:Array, byPerson:Object, bySeverity:Object}}
+ */
+function rankFindings(findings, opts = {}) {
+  const perPerson = opts.perPerson != null ? opts.perPerson : 2;
+  const max = opts.max != null ? opts.max : 7;
+  const sevOf = f => (f && SEV_RANK[f.severity] != null) ? f.severity : 'medio';
+  const list = (Array.isArray(findings) ? findings.slice() : []).sort((a, b) => {
+    const d = SEV_RANK[sevOf(a)] - SEV_RANK[sevOf(b)];
+    return d !== 0 ? d : (b.occurrences || 1) - (a.occurrences || 1);
+  });
+  const byPerson = {};
+  const bySeverity = {};
+  for (const f of list) {
+    bySeverity[sevOf(f)] = (bySeverity[sevOf(f)] || 0) + 1;
+    const pid = (f && f.collaborator_id) || 'unknown';
+    byPerson[pid] = (byPerson[pid] || 0) + 1;
+  }
+  const seen = {};
+  const sample = [];
+  for (const f of list) {              // 1ª passada: diversifica (teto por pessoa)
+    if (sample.length >= max) break;
+    const pid = (f && f.collaborator_id) || 'unknown';
+    if ((seen[pid] || 0) >= perPerson) continue;
+    seen[pid] = (seen[pid] || 0) + 1;
+    sample.push(f);
+  }
+  for (const f of list) {              // 2ª passada: preenche até max com os mais graves
+    if (sample.length >= max) break;
+    if (!sample.includes(f)) sample.push(f);
+  }
+  return { sample, byPerson, bySeverity };
+}
+
+/** Grava 1 finding com dedupe por assinatura. Triado/fechado NÃO re-surge. NUNCA lança. */
 async function upsertFinding(sb, collaborator, finding) {
   try {
     const sig = signatureFor(finding.category, collaborator.id, finding.summary);
-    const { data: existing } = await sb.from('tom_audit_findings')
-      .select('id, occurrences')
-      .eq('signature', sig)
-      .in('status', ['novo', 'confirmado'])
-      .limit(1);
-    if (existing && existing.length > 0) {
+    const { data: rows } = await sb.from('tom_audit_findings')
+      .select('id, occurrences, status')
+      .eq('signature', sig);
+    const all = rows || [];
+    // Já triado como fechado (resolvido/falso_positivo/...) → NÃO re-surge: só
+    // registra a reincidência no last_seen e mantém o status fechado.
+    const closed = all.find(r => CLOSED_STATUSES.has(r.status));
+    if (closed) {
       await sb.from('tom_audit_findings')
-        .update({ occurrences: (existing[0].occurrences || 1) + 1, last_seen: new Date().toISOString() })
-        .eq('id', existing[0].id);
+        .update({ last_seen: new Date().toISOString() })
+        .eq('id', closed.id);
+      return 'suppressed_closed';
+    }
+    // Já aberto (novo/confirmado) → incrementa ocorrências.
+    const open = all.find(r => r.status === 'novo' || r.status === 'confirmado');
+    if (open) {
+      await sb.from('tom_audit_findings')
+        .update({ occurrences: (open.occurrences || 1) + 1, last_seen: new Date().toISOString() })
+        .eq('id', open.id);
       return 'incremented';
     }
     await sb.from('tom_audit_findings').insert({
@@ -117,6 +170,7 @@ async function upsertFinding(sb, collaborator, finding) {
 }
 
 module.exports = {
-  normalizeSummary, signatureFor, parseFindings,
+  normalizeSummary, signatureFor, parseFindings, rankFindings,
   loadConversation, auditConversation, upsertFinding,
+  CLOSED_STATUSES, SEV_RANK,
 };

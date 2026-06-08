@@ -481,6 +481,7 @@ const CONV_CAT_LABEL = {
   media_fail: 'mídia falha',
   dropped_request: 'pedido largado',
   frustration: 'frustração',
+  proactive_overreach: 'cobrança indevida',
 };
 async function checkConversationQuality() {
   const { data, error } = await supabase
@@ -494,17 +495,32 @@ async function checkConversationQuality() {
   if (findings.length === 0) {
     return { status: 'ok', detail: '🗣️ 0 falhas nas conversas (24h)' };
   }
-  const top = findings.slice(0, 5).map(f => {
-    const who = f.collaborators?.full_name?.split(' ')[0] || '—';
+  // Amostragem honesta: prioriza ALTO + diversifica por pessoa (não enterra os
+  // graves sob 5 do mesmo chat — caso 08/06). rankFindings é puro/testado.
+  const { rankFindings } = require('../services/conversation-audit');
+  const { sample, byPerson, bySeverity } = rankFindings(findings, { perPerson: 2, max: 7 });
+  const SEV_EMOJI = { alto: '🔴', medio: '🟠', baixo: '🟡' };
+  const nameById = {};
+  for (const f of findings) nameById[f.collaborator_id] = f.collaborators?.full_name?.split(' ')[0] || '—';
+  const top = sample.map(f => {
+    const who = nameById[f.collaborator_id] || '—';
     const rec = (f.occurrences || 1) >= 2 ? `🔁${f.occurrences}× ` : '';
-    return `  • ${rec}[${CONV_CAT_LABEL[f.category] || f.category}] ${String(f.summary).slice(0, 60)} (${who})`;
+    const sev = SEV_EMOJI[f.severity] || '';
+    return `  • ${sev} ${rec}[${CONV_CAT_LABEL[f.category] || f.category}] ${String(f.summary).slice(0, 60)} (${who})`;
   });
-  const samples = findings.slice(0, 5).map(f => ({
+  const sevLine = ['alto', 'medio', 'baixo'].filter(s => bySeverity[s]).map(s => `${bySeverity[s]} ${s}`).join(' · ');
+  const personLine = Object.entries(byPerson)
+    .sort((a, b) => b[1] - a[1])
+    .map(([pid, n]) => `${nameById[pid] || '—'} ${n}`)
+    .slice(0, 8).join(', ');
+  const hiddenN = findings.length - sample.length;
+  const samples = sample.map(f => ({
     category: f.category, severity: f.severity, summary: f.summary, occurrences: f.occurrences,
   }));
   return {
     status: 'warning',
-    detail: `🗣️ ${findings.length} falha(s) de conversa pra revisar:\n${top.join('\n')}`,
+    detail: `🗣️ ${findings.length} falha(s) de conversa pra revisar (${sevLine}):\n${top.join('\n')}` +
+      (hiddenN > 0 ? `\n  …+${hiddenN} (por pessoa: ${personLine})` : ''),
     samples,
   };
 }

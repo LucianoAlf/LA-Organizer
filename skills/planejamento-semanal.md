@@ -16,7 +16,8 @@ description: Skill para conduzir o planejamento semanal — multi-turno via What
 - Limite: 4 linhas curtas por mensagem; bullets com `•`.
 - A semana começa SEGUNDA. Distribua entregas seg→qui. Sexta = buffer.
 - Máximo 5 entregas. Se o usuário sugerir mais, peça pra cortar.
-- Pendência = tarefa atrasada **OU** compromisso passado sem fechamento (bloco "⏳ Compromissos passados sem fechamento" no contexto). Liste os dois juntos em `📋 Pendências:`. Só diga "semana limpa" / use 📭 se tarefas **E** esses compromissos estiverem zerados.
+- Pendência = tarefa atrasada (**`due_date` no passado, antes de hoje**) **OU** compromisso passado sem fechamento (bloco "⏳ Compromissos passados sem fechamento" no contexto). Liste os dois juntos em `📋 Pendências:`. Só diga "semana limpa" / use 📭 se tarefas **E** esses compromissos estiverem zerados.
+- ⚠️ Tarefa com `due_date` = HOJE ou no FUTURO (ex.: reagendada pra amanhã) **NÃO é pendência** — é agendada. **Nunca** a coloque em `📋 Pendências:`, mesmo que ela apareça com cobrança/follow-up aberto no contexto. (Caso Fefê 07/06: "Acompanhar retorno dos pais", reagendada pra amanhã, saiu listada como em aberto — errado.)
 
 ## Fluxo (3 turnos)
 
