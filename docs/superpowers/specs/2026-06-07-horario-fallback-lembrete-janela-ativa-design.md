@@ -48,7 +48,7 @@ Regra nova "**lembrete sem hora**":
 - **Deploy no rito:** `node --check`, `scp` path absoluto com md5 VPS==local, `pm2 restart tom`, verificar online/unstable=0, ledger em `tom_known_issues`.
 
 ## Escopo / não-fazer (YAGNI)
-- Uma janela por pessoa; **sem** split trabalho×pessoal (decisão do Alf). Se um dia pesar, adiciona a camada de categoria com dado real.
+- Uma janela por pessoa; **sem** split trabalho×pessoal (decisão do Alf, reconfirmada 2026-06-07 após o caso Gabi). Racional: não dá pra *aprender* duas janelas do histórico (mensagens em `conversation_history` não vêm marcadas trabalho/pessoal); um work-window confiável precisaria de horário de trabalho configurado. A janela única se auto-corrige: quem trabalha à tarde (Gabi 14h+) vê a janela migrar pra ~14h conforme usa o TOM, e o "afirma, quer outra hora?" cobre os primeiros dias. **Gatilho pra reabrir o split:** dado real mostrando lembrete de trabalho caindo de manhã mesmo com histórico acumulado.
 - **Sem** tabela/coluna nova; **sem** ritual novo. Cálculo on-the-fly.
 - **Sem** clamp de quiet-hours no cálculo — o gate de `checkReminders` no fire-time já cobre.
 - Não mexe na lógica de compromisso/evento (só adiciona a regra de lembrete).
