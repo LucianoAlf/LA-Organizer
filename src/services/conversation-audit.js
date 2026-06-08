@@ -9,6 +9,7 @@ const crypto = require('crypto');
 
 const VALID_CATEGORIES = new Set([
   'confabulation', 'wrong_refusal', 'media_fail', 'dropped_request', 'frustration',
+  'proactive_overreach',
 ]);
 const VALID_SEVERITY = new Set(['alto', 'medio', 'baixo']);
 

@@ -54,3 +54,24 @@ test('parseFindings: null/undefined → []', () => {
   assert.deepStrictEqual(parseFindings(null), []);
   assert.deepStrictEqual(parseFindings(undefined), []);
 });
+
+// ── proactive_overreach (categoria nova) ────────────────────────────
+test('parseFindings: aceita proactive_overreach (cobrança em dia indevido)', () => {
+  const raw = '{"findings":[{"category":"proactive_overreach","severity":"medio",' +
+    '"summary":"cobrou tarefa no domingo","evidence":"USUÁRIO: Tom hj é domingo"}]}';
+  const out = parseFindings(raw);
+  assert.strictEqual(out.length, 1);
+  assert.strictEqual(out[0].category, 'proactive_overreach');
+});
+
+// ── prompt: trava da regra (Quintela/Arthur) + anti-falso-positivo ──
+test('SYSTEM prompt: cobre proactive_overreach com exceção do "desculpa"', () => {
+  const { SYSTEM } = require('../prompts/conversation-audit-prompt');
+  assert.match(SYSTEM, /proactive_overreach/);
+  assert.match(SYSTEM, /desculp/i); // exceção: emite mesmo se o TOM se desculpar
+});
+test('SYSTEM prompt: guarda anti-falso-positivo de confabulation (ritual posterior + nomes parecidos)', () => {
+  const { SYSTEM } = require('../prompts/conversation-audit-prompt');
+  assert.match(SYSTEM, /MESMA troca reativa/);
+  assert.match(SYSTEM, /simulado de TCC/); // exemplo dos nomes parecidos
+});

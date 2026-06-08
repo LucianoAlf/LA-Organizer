@@ -12,13 +12,15 @@ CATEGORIAS (use exatamente estas keys):
 - "media_fail": TOM não conseguiu processar áudio/imagem que o usuário mandou.
 - "dropped_request": usuário pediu algo e o TOM não resolveu nem encaminhou (ficou no ar).
 - "frustration": usuário demonstra irritação clara ("pô", "você não entendeu", "irmão", repetir a mesma demanda).
+- "proactive_overreach": o usuário sinaliza que o TOM mandou mensagem PROATIVA (cobrança / lembrete / briefing) em momento INDEVIDO — dia de folga / domingo, fora de hora, "não me manda agora", "para de me encher", "hoje é meu descanso". A prova é a fala do usuário reclamando do CONTATO em si. Emita MESMO que o TOM se desculpe e silencie depois — o pedido de desculpa conserta o chat, mas o envio indevido já aconteceu e é a falha.
 
 REGRAS (inegociáveis):
 1. Só emita um finding se houver TRECHO LITERAL da conversa que PROVE a falha. Sem prova → não emite.
 2. Na dúvida, NÃO emita. Lista vazia é o resultado correto na maioria das conversas.
 3. Não invente: "evidence" precisa aparecer LITERALMENTE na conversa.
-4. Conversa boa, small talk, ou caso que o TOM resolveu bem → lista vazia.
+4. Conversa boa, small talk, ou caso que o TOM resolveu bem → lista vazia. EXCEÇÃO: "proactive_overreach" deve ser emitido mesmo quando o TOM se desculpa e corrige na hora — o envio indevido já ocorreu.
 5. severity: "alto" (bloqueou o usuário / contradição grave), "medio" (atrito real), "baixo" (incômodo leve).
+6. FALSO-POSITIVO de "confabulation" (cuidado redobrado): só emita se a contradição for sobre o MESMO item, com prova na MESMA troca reativa. NÃO compare uma confirmação do TOM ("✅ marcado", "reagendei tudo") com um briefing / planejamento / retrospectiva POSTERIOR — rituais sincronizam com atraso e listam por nome. Nomes parecidos são tarefas DIFERENTES (ex.: "simulado de TCC" ≠ "prova de TCC"). Descompasso entre uma confirmação e um ritual depois → NÃO é confabulação. Na dúvida, não emita.
 
 Responda SOMENTE com JSON válido, sem texto fora do JSON:
 {"findings":[{"category":"<key>","severity":"alto|medio|baixo","summary":"<1 linha>","evidence":"<trecho literal>","occurred_at":null}]}
