@@ -48,46 +48,44 @@ test('scorecard section: ordena pior→melhor e mostra nome/pct', () => {
   assert.ok(out.includes('20%')); assert.ok(out.includes('95%'));
 });
 
-// ── assembleDigest ──────────────────────────────────────────────────────────
-test('assemble: dentro do limite → header + seções + footer com separador', () => {
-  const { message, dropped } = assembleDigest({
+// ── assembleDigest (preserva tudo; divide se estourar) ──────────────────────
+test('assemble: dentro do limite → 1 mensagem com header + seções + footer', () => {
+  const { messages, parts } = assembleDigest({
     header: 'HEAD',
     sections: [{ text: 'A' }, { text: 'B' }],
     footer: 'FOOT',
     maxChars: 4000,
   });
-  assert.strictEqual(dropped.length, 0);
-  assert.ok(message.startsWith('HEAD'));
-  assert.ok(message.includes('A')); assert.ok(message.includes('B'));
-  assert.ok(message.trim().endsWith('FOOT'));
+  assert.strictEqual(parts, 1);
+  assert.ok(messages[0].startsWith('HEAD'));
+  assert.ok(messages[0].includes('A')); assert.ok(messages[0].includes('B'));
+  assert.ok(messages[0].trim().endsWith('FOOT'));
 });
 test('assemble: seção vazia é ignorada', () => {
-  const { message } = assembleDigest({ header: 'H', sections: [{ text: '' }, { text: 'X' }], footer: 'F' });
-  assert.ok(message.includes('X'));
+  const { messages } = assembleDigest({ header: 'H', sections: [{ text: '' }, { text: 'X' }], footer: 'F' });
+  assert.ok(messages[0].includes('X'));
 });
-test('assemble: estoura → corta seção droppable da cauda + nota na dashboard', () => {
-  const big = 'x'.repeat(3000);
-  const { message, dropped } = assembleDigest({
-    header: 'H',
-    sections: [
-      { text: big, droppable: false },              // essencial, fica
-      { text: 'CAUDA ' + 'y'.repeat(3000), droppable: true }, // some
-    ],
-    footer: 'F',
-    maxChars: 4000,
+test('assemble: estoura → DIVIDE em várias mensagens, NADA é perdido', () => {
+  const a = 'AAAA' + 'x'.repeat(3000);
+  const b = 'BBBB' + 'y'.repeat(3000);
+  const { messages, parts } = assembleDigest({
+    header: 'H', sections: [{ text: a }, { text: b }], footer: 'F', maxChars: 4000,
   });
-  assert.strictEqual(dropped.length, 1);
-  assert.ok(!message.includes('CAUDA'));
-  assert.ok(message.includes('na dashboard'));
-  assert.ok(message.length <= 4000);
+  assert.ok(parts >= 2);
+  const joined = messages.join('');
+  // riqueza preservada: os dois blocos aparecem inteiros em algum chunk
+  assert.ok(joined.includes(a)); assert.ok(joined.includes(b));
+  for (const m of messages) assert.ok(m.length <= 4000, `chunk ${m.length} > 4000`);
+  assert.ok(messages.some(m => /\(1\/\d\)/.test(m)));
 });
-test('assemble: header e footer NUNCA são cortados', () => {
-  const { message } = assembleDigest({
+test('assemble: header e footer presentes mesmo dividindo', () => {
+  const { messages } = assembleDigest({
     header: 'HEADER_KEEP',
-    sections: [{ text: 'z'.repeat(5000), droppable: true }],
+    sections: [{ text: 'z'.repeat(3500) }, { text: 'w'.repeat(3500) }],
     footer: 'FOOTER_KEEP',
     maxChars: 4000,
   });
-  assert.ok(message.includes('HEADER_KEEP'));
-  assert.ok(message.includes('FOOTER_KEEP'));
+  const joined = messages.join('');
+  assert.ok(joined.includes('HEADER_KEEP'));
+  assert.ok(joined.includes('FOOTER_KEEP'));
 });

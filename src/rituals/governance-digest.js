@@ -59,36 +59,42 @@ function formatScorecardSection(scorecards) {
   return `🏆 *Scorecard da semana*\n${lines.join('\n')}`;
 }
 
-// ── Montagem do digest com guard de tamanho ─────────────────────────────────
-// header/footer: strings (sempre mantidos). sections: [{ text, droppable? }] na
-// ORDEM de exibição. Se estourar maxChars, corta da CAUDA as seções droppable=true
-// (uma a uma) e adiciona uma nota "+ mais na dashboard". Retorna { message, dropped }.
+// ── Montagem do digest — PRESERVA toda a riqueza, divide se precisar ─────────
+// header/footer: strings (sempre mantidos). sections: [{ text }] na ORDEM de
+// exibição, JÁ formatadas e ricas (a de tarefas é a atual, intacta). NADA é
+// resumido nem cortado. Se o total estourar maxChars (limite do WhatsApp),
+// DIVIDE em mensagens sequenciais nos limites das seções (nunca no meio de uma)
+// e marca "(i/n)". Retorna { messages: string[], parts }.
 function assembleDigest({ header, sections, footer, maxChars = DEFAULT_MAX } = {}) {
-  const all = (sections || []).filter((s) => s && s.text && String(s.text).trim());
-  const render = (list) => [header, ...list.map((s) => s.text), footer]
-    .filter((x) => x && String(x).trim())
-    .join(`\n\n${HR}\n\n`);
+  const secTexts = (sections || [])
+    .filter((s) => s && s.text && String(s.text).trim())
+    .map((s) => String(s.text).trim());
+  const blocks = [header, ...secTexts, footer].filter((x) => x && String(x).trim());
+  const sep = `\n\n${HR}\n\n`;
 
-  let full = render(all);
-  if (full.length <= maxChars) return { message: full, dropped: [] };
+  const full = blocks.join(sep);
+  if (full.length <= maxChars) return { messages: [full], parts: 1 };
 
-  // Estourou: tira as droppable da cauda até caber.
-  const kept = all.slice();
-  const dropped = [];
-  for (let i = kept.length - 1; i >= 0 && render(withNote(kept, dropped)).length > maxChars; i--) {
-    if (kept[i].droppable) {
-      dropped.unshift(kept[i]);
-      kept.splice(i, 1);
+  // Estourou: empacota blocos (atômicos) em chunks ≤ maxChars. Nada se perde.
+  const chunks = [];
+  let cur = [];
+  let curLen = 0;
+  for (const b of blocks) {
+    const add = (cur.length ? sep.length : 0) + b.length;
+    if (curLen + add > maxChars && cur.length) {
+      chunks.push(cur.join(sep));
+      cur = [b];
+      curLen = b.length;
+    } else {
+      cur.push(b);
+      curLen += add;
     }
   }
-  return { message: render(withNote(kept, dropped)), dropped };
-}
+  if (cur.length) chunks.push(cur.join(sep));
 
-// Acrescenta a nota de cauda cortada (se houve corte) como uma "seção" final leve.
-function withNote(kept, dropped) {
-  if (!dropped.length) return kept;
-  const n = dropped.length;
-  return [...kept, { text: `_+ ${n} bloco${n > 1 ? 's' : ''} a mais na dashboard 📊_` }];
+  const n = chunks.length;
+  const messages = n > 1 ? chunks.map((c, i) => `${c}\n\n_(${i + 1}/${n})_`) : chunks;
+  return { messages, parts: n };
 }
 
 module.exports = { badgeForScorecard, formatScorecardSection, assembleDigest, HR, DEFAULT_MAX };
