@@ -177,8 +177,12 @@ async function sendToEachLeader(opts = {}) {
       // Silêncio (trabalho): defere se o líder está em quiet (não marca sent_to_leader → retenta).
       const qL = await isQuietNow(leader.id, nowBrtParts(), 'work');
       if (qL.quiet) { console.log(`[monday-scorecard] leader=${leader.full_name} em quiet (${qL.reason}) — defer`); continue; }
+      // Fase 6a — o scorecard do líder agora vai DENTRO do digest do líder
+      // (sendLeaderGovernanceDigest, 14h/9h-sáb) como "🏆 Seu scorecard".
+      // Mantém persistência+idempotência, mas NÃO envia mais a mensagem separada.
       const msg = builder.renderForLeader(sc, leader);
-      await whatsapp.sendMessage(leader.phone, msg);
+      void msg;
+      // await whatsapp.sendMessage(leader.phone, msg);
       await supabase.from('leader_scorecards')
         .update({ sent_to_leader: true, sent_to_leader_at: new Date().toISOString() })
         .eq('id', sc.id);

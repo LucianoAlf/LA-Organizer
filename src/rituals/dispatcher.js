@@ -2139,7 +2139,7 @@ async function ceoTeamUnclosedEventsReport(now = new Date(), opts = {}) {
     const cutoff24h = new Date(now.getTime() - 24 * 3600_000).toISOString();
     const sixDaysAgo = new Date(now.getTime() - 6 * 24 * 3600_000).toISOString();
     // Sprint 29.1 — filtra data_classification='real' pra esconder testes/arquivados.
-    const { data: stale, error } = await supabase
+    let _evQ = supabase
       .from('events')
       .select('id, title, start_at, end_at, category, collaborator_id, followup_sent_at, staleness_check_sent_at, data_classification, coordination_request_count, collaborators!events_collaborator_id_fkey(full_name)')
       .eq('context', 'work')
@@ -2148,6 +2148,9 @@ async function ceoTeamUnclosedEventsReport(now = new Date(), opts = {}) {
       .lt('end_at', cutoff24h)
       .order('end_at', { ascending: true })
       .limit(50);
+    // Fase 6a — escopo por time (digest do líder): filtra pelos donos do time dele.
+    if (opts.scopeIds) _evQ = _evQ.in('collaborator_id', opts.scopeIds);
+    const { data: stale, error } = await _evQ;
     const allStale = stale || [];
     // Apenas mantém: eventos com 6+d OU sem cobrança nas últimas 24h
     const filteredStale = allStale.filter(ev => {
@@ -2175,7 +2178,10 @@ async function ceoTeamUnclosedEventsReport(now = new Date(), opts = {}) {
     // (não por categoria), pra deixar claro PRA QUEM cobrar.
     const enriched = [];
     for (const ev of filteredStale) {
-      const leader = await resolveLeaderForEvent(ev);
+      // groupByOwner (digest do líder): agrupa pela PESSOA dona do compromisso.
+      const leader = opts.groupByOwner
+        ? { id: ev.collaborator_id, full_name: ev.collaborators?.full_name || '—' }
+        : await resolveLeaderForEvent(ev);
       enriched.push({ ...ev, leader });
     }
 
@@ -2350,7 +2356,7 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
 
     const today = sp.ymd;
     // Sprint 29.1 — filtra data_classification='real' pra esconder teste/arquivado.
-    const { data: stale, error } = await supabase
+    let _tkQ = supabase
       .from('tasks')
       .select('id, title, due_date, category, assigned_to, staleness_check_sent_at, data_classification, coordination_request_count, collaborators!tasks_assigned_to_fkey(full_name)')
       .eq('context', 'work')
@@ -2359,6 +2365,9 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
       .lt('due_date', today)
       .order('due_date', { ascending: true })
       .limit(80);
+    // Fase 6a — escopo por time (digest do líder): filtra pelos donos do time dele.
+    if (opts.scopeIds) _tkQ = _tkQ.in('assigned_to', opts.scopeIds);
+    const { data: stale, error } = await _tkQ;
 
     if (error) {
       console.error('[CEOTasksReport] query err:', error.message);
@@ -2405,8 +2414,11 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
       }
       // GovLeader — líder = líder do DONO da tarefa (1º não-CEO). Tarefas cujo
       // único líder é o próprio CEO caem em '__unassigned__' (= direto com você).
+      // groupByOwner (digest do líder): agrupa pela PESSOA dona, não pelo sub-líder.
       const owner = collabById.get(t.assigned_to);
-      const leader = resolveLeadersOf(owner, allCollabs).find((l) => !l.is_ceo) || null;
+      const leader = opts.groupByOwner
+        ? (owner || null)
+        : (resolveLeadersOf(owner, allCollabs).find((l) => !l.is_ceo) || null);
       const key = leader?.id || '__unassigned__';
       if (!byLeader[key]) byLeader[key] = { leader, items: [] };
       byLeader[key].items.push({ ...t, days });
@@ -2716,6 +2728,106 @@ async function sendGovernanceDigest(now = new Date(), opts = {}) {
       console.log(`[GovDigest] sent ${parts} part(s) → ${String(ceo.phone).slice(-4)}`);
     } catch (err) {
       console.error('[GovDigest] send err:', err.message);
+      if (isTransientRitualError(err)) await rollbackRitualClaim(supabase, claim.id);
+    }
+  }
+  return opts.dryRun ? { results: dryResults } : undefined;
+}
+
+// Fase 6a — DIGEST ÚNICO de cada LÍDER (o do seu time). Mesmo padrão rico do CEO,
+// escopado por membersOf, agrupado por PESSOA. 14h seg–sex / 9h sáb. Domingo não.
+// opts.dryRun monta e retorna sem enviar. Substitui perLeaderUnclosedTasksReport
+// + o scorecard-do-líder de segunda.
+async function sendLeaderGovernanceDigest(now = new Date(), opts = {}) {
+  const { assembleDigest, formatScorecardSection } = require('./governance-digest');
+  const { resolveLeaderIdsOf } = require('../services/leader-routing');
+  const whatsapp = require('../services/whatsapp');
+  const sp = nowSaoPaulo();
+  const ymdRef = sp.ymd;
+
+  // Gate: 14h seg–sex / 9h sáb. Domingo não. force/dryRun ignoram.
+  const targetSlot = sp.dow === 6 ? timeToSlot('09:00') : (sp.dow >= 1 && sp.dow <= 5 ? timeToSlot('14:00') : null);
+  if (!opts.force && !opts.dryRun) {
+    if (targetSlot === null || currentSlot(sp) !== targetSlot) return opts.dryRun ? { results: [] } : undefined;
+  }
+
+  const { data: allCollabs } = await supabase
+    .from('collaborators')
+    .select('id, full_name, phone, role, function_role, unit, is_ceo, is_active, supervisor_id')
+    .eq('is_active', true);
+  if (!allCollabs) return opts.dryRun ? { results: [] } : undefined;
+
+  // leader -> Set(memberIds) (membersOf via inversa do resolveLeaderIdsOf)
+  const teamOf = new Map();
+  for (const c of allCollabs) {
+    if (c.is_ceo) continue;
+    for (const lid of resolveLeaderIdsOf(c, allCollabs)) {
+      const L = allCollabs.find((x) => x.id === lid);
+      if (!L || L.is_ceo) continue;
+      if (!teamOf.has(lid)) teamOf.set(lid, new Set());
+      teamOf.get(lid).add(c.id);
+    }
+  }
+
+  // Scorecards da semana (linha "Seu scorecard").
+  const scByLeader = new Map();
+  const { data: latest } = await supabase
+    .from('leader_scorecards').select('week_start').order('week_start', { ascending: false }).limit(1).maybeSingle();
+  if (latest && latest.week_start) {
+    const { data: scRows } = await supabase
+      .from('leader_scorecards')
+      .select('leader_id, closure_rate, tasks_closed, tasks_overdue, tasks_stuck, collaborators!leader_id(full_name)')
+      .eq('week_start', latest.week_start);
+    for (const r of (scRows || [])) scByLeader.set(r.leader_id, r);
+  }
+
+  const dryResults = [];
+  for (const [leaderId, memberSet] of teamOf.entries()) {
+    const leader = allCollabs.find((c) => c.id === leaderId);
+    if (!leader || !leader.phone) continue;
+    const teamIds = [...memberSet];
+    if (teamIds.length === 0) continue;
+
+    const eventsR = await ceoTeamUnclosedEventsReport(now, { returnText: true, scopeIds: teamIds, groupByOwner: true });
+    const tasksR = await ceoTeamUnclosedTasksReport(now, { returnText: true, scopeIds: teamIds, groupByOwner: true });
+    const eventsSec = (eventsR && eventsR.text) || '';
+    const tasksSec = (tasksR && tasksR.text) || '';
+
+    let scoreSec = '';
+    const myScore = scByLeader.get(leaderId);
+    if (myScore) {
+      scoreSec = formatScorecardSection([{
+        leader_name: myScore.collaborators?.full_name || leader.full_name,
+        closure_rate: myScore.closure_rate, tasks_overdue: myScore.tasks_overdue,
+        tasks_stuck: myScore.tasks_stuck, tasks_closed: myScore.tasks_closed, delta_closure: null,
+      }]).replace('🏆 *Scorecard da semana*', '🏆 *Seu scorecard*');
+    }
+
+    if (!eventsSec && !tasksSec && !scoreSec) continue;
+
+    const firstName = (leader.full_name || '').split(' ')[0];
+    const dateLabel = new Date(now).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: 'short' });
+    const header = `🌅 *Governança · ${dateLabel}*\n_Seu time, ${firstName}_`;
+    const footer = `_Abre a dashboard 📊 · pra cobrar: "cobra [nome] sobre [tarefa]"_`;
+    const { messages, parts } = assembleDigest({
+      header, sections: [{ text: scoreSec }, { text: eventsSec }, { text: tasksSec }], footer,
+    });
+
+    if (opts.dryRun) { dryResults.push({ leader: leader.full_name, team: teamIds.length, parts, messages }); continue; }
+
+    const _q = opts.force ? { quiet: false } : await isQuietNow(leaderId, nowSaoPaulo(), 'work');
+    if (_q.quiet) continue;
+    const claim = await claimRitualSend(supabase, leaderId, 'governance_digest_leader', ymdRef);
+    if (!claim.won) { if (!claim.duplicate) console.error(`[GovDigestLeader] claim_err(${claim.code}) ${firstName}`); continue; }
+    try {
+      for (const m of messages) await whatsapp.sendMessage(leader.phone, m);
+      const evStale = (eventsR && eventsR.staleIds) || [];
+      const tkStale = (tasksR && tasksR.staleIds) || [];
+      if (evStale.length) await supabase.from('events').update({ staleness_check_sent_at: now.toISOString() }).in('id', evStale);
+      if (tkStale.length) await supabase.from('tasks').update({ staleness_check_sent_at: now.toISOString() }).in('id', tkStale);
+      console.log(`[GovDigestLeader] ${firstName}: ${parts} part(s) team=${teamIds.length} → ${String(leader.phone).slice(-4)}`);
+    } catch (err) {
+      console.error(`[GovDigestLeader] ${firstName} err:`, err.message);
       if (isTransientRitualError(err)) await rollbackRitualClaim(supabase, claim.id);
     }
   }
@@ -3876,12 +3988,13 @@ async function run(opts = {}) {
   // DENTRO do digest único acima (sendGovernanceDigest). Função mantida só pro
   // modo seção (returnText). Os 4 pings da manhã viraram 1.
 
-  // GovLeader (06/06) — digest POR LÍDER: cada gerente/coordenador recebe a fatia do
-  // time dele. Seg–Sex 14:00 BRT, Sáb 09:00 BRT (gate interno por dow). Idempotente.
+  // Fase 6a — DIGEST ÚNICO de cada LÍDER (14h seg–sex / 9h sáb): scorecard próprio +
+  // compromissos + tarefas do TIME dele (riqueza total, agrupado por pessoa).
+  // Substitui perLeaderUnclosedTasksReport (14h) + o scorecard-do-líder de segunda.
   try {
-    await perLeaderUnclosedTasksReport(new Date());
+    await sendLeaderGovernanceDigest(new Date());
   } catch (err) {
-    console.error('[Dispatcher] perLeaderUnclosedTasksReport erro:', err.message);
+    console.error('[Dispatcher] sendLeaderGovernanceDigest erro:', err.message);
   }
 
   // Relatório semanal de engajamento dos líderes (segunda 08h BRT).
@@ -5329,4 +5442,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { run, dispatchChecklists, dispatchPersonalRecurrentes, dispatchAnnouncements, remindUnconfirmedAnnouncements, notifyCoordinators, remindEventTasks, remindOperationalTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined, isFirstMondayOfMonth, isLastFridayOfMonth, listLeadership, checkMonthlyPlanning, checkMonthlyClosing, dispatchMonthlyAgenda, expirarReservasVencidas, ceoTeamUnclosedEventsReport, ceoTeamUnclosedTasksReport, perLeaderUnclosedTasksReport, sendGovernanceDigest, buildScorecardDigestSection };
+module.exports = { run, dispatchChecklists, dispatchPersonalRecurrentes, dispatchAnnouncements, remindUnconfirmedAnnouncements, notifyCoordinators, remindEventTasks, remindOperationalTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined, isFirstMondayOfMonth, isLastFridayOfMonth, listLeadership, checkMonthlyPlanning, checkMonthlyClosing, dispatchMonthlyAgenda, expirarReservasVencidas, ceoTeamUnclosedEventsReport, ceoTeamUnclosedTasksReport, perLeaderUnclosedTasksReport, sendGovernanceDigest, buildScorecardDigestSection, sendLeaderGovernanceDigest };
