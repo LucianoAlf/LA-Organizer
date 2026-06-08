@@ -27,7 +27,7 @@ Fonte ÚNICA do horário-padrão. `supabase` injetado (testável sem DB).
 - `computeStartHour(hoursBrt)` — **função pura**, sem DB. Recebe array de horas (0–23) das mensagens inbound e devolve `{hour, minute}` do **início típico do dia** = percentil ~20 das horas ativas (não a mediana: "me lembra amanhã" quer o lembrete quando a pessoa começa o dia, não no meio da tarde). Arredonda pra hora cheia. Retorna `null` se a amostra for insuficiente.
 - `getActiveWindow(supabase, collabId, now)` — lê inbound dos últimos **30 dias**, converte cada `created_at` pra hora **BRT** (-03:00), aplica `computeStartHour`. Exige mínimo de **15 mensagens em ≥ 5 dias distintos**; abaixo disso → cold-start. Retorna `{hour, minute, confident:boolean, source:'learned'|'cold_start'}`.
 - **Cold-start:** sem dado suficiente → **09:00 BRT** (default global).
-- **Guardrail quiet-hours:** se o horário calculado cair dentro do quiet-hours da pessoa, clampa pra borda da janela permitida. O `sendProativo` continua sendo a rede de segurança no disparo.
+- **Guardrail quiet-hours:** dispensa clamp ativo. O percentil-20 já cai em horário de vigília (é exatamente quando a pessoa texta). E `checkReminders` (dispatcher.js:4514) já tem gate `isQuietNow` **no disparo**: se o `remind_at` cair em quiet, defere e re-tenta no próximo tick fora da janela. A rede de segurança já existe — não recalcular nada no cálculo.
 
 ### 2. Injeção no contexto — `src/prompts/system.js`
 O engine chama `getActiveWindow` **uma vez por mensagem** e passa o horário resolvido pro `buildContext`. O `system.js` injeta **uma linha**:
@@ -50,6 +50,7 @@ Regra nova "**lembrete sem hora**":
 ## Escopo / não-fazer (YAGNI)
 - Uma janela por pessoa; **sem** split trabalho×pessoal (decisão do Alf). Se um dia pesar, adiciona a camada de categoria com dado real.
 - **Sem** tabela/coluna nova; **sem** ritual novo. Cálculo on-the-fly.
+- **Sem** clamp de quiet-hours no cálculo — o gate de `checkReminders` no fire-time já cobre.
 - Não mexe na lógica de compromisso/evento (só adiciona a regra de lembrete).
 - Performance: 1 query agregada indexada por mensagem. Se pesar, memoiza por processo ou evolui pra Abordagem B. Não fazer agora.
 
