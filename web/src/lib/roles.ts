@@ -37,7 +37,7 @@ export const ROLES: Role[] = [
  * Quando o admin muda o role, o select de function_title filtra por aqui.
  */
 export const FUNCTION_TITLES: Record<Role, string[]> = {
-  collaborator: ['Farmer', 'Hunter', 'Professor', 'Assistente Pedagógico', 'Financeiro', 'RH', 'Coordenador de Tecnologia', 'Marketing'],
+  collaborator: ['Farmer', 'Hunter', 'Professor', 'Assistente Pedagógico', 'Financeiro', 'RH', 'Coordenador de Tecnologia', 'Marketing', 'Operações'],
   coordinator:  ['Coordenador'],
   manager:      ['Gerente'],
   director:     ['Diretor'],
