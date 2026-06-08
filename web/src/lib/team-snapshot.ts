@@ -10,6 +10,7 @@ import {
   dedupeRecurringOverdue, filterActiveAssignees, countDistinctOverdue,
   overdueByPerson as computeOverdueByPerson, type OverdueRow,
 } from './governance-metrics';
+import { resolveScope } from './team-scope';
 import type { CalendarEvent } from '../types';
 
 export interface TeamCollab {
@@ -35,6 +36,11 @@ export interface TeamSnapshot {
   overdueByPerson: Array<{ assigned_to: string; count: number }>;
   events: CalendarEvent[];
   eventsByCollab: Record<string, number>;
+  // Fase 3 — multi-tenant: escopo do viewer.
+  scope: 'company' | 'team';
+  isCeo: boolean;
+  viewerId: string;
+  memberIds: string[];
 }
 
 const COLLAB_COLS = 'id, full_name, preferred_name, role, function_role, unit, supervisor_id, is_ceo, is_active';
@@ -47,7 +53,16 @@ export async function fetchTeamSnapshot(myId: string): Promise<TeamSnapshot> {
     .eq('is_active', true)
     .eq('onboarding_completed', true);
   const allCollabs = (teamRaw ?? []) as unknown as TeamCollab[];
-  const team = allCollabs.filter(c => c.id !== myId);
+
+  // Escopo do viewer (Fase 3): CEO = empresa inteira; líder = só o time dele.
+  const scope = resolveScope(myId, allCollabs);
+  const isCeo = scope.mode === 'ceo';
+  const memberSet = new Set(scope.memberIds);
+  const team = isCeo
+    ? allCollabs.filter(c => c.id !== myId)
+    : allCollabs.filter(c => memberSet.has(c.id));
+  // scopeIds: null = sem filtro (CEO); [] = ninguém (líder sem time); [...] = time.
+  const scopeIds = scope.scopeIds;
 
   const { data: briefings } = await supabase
     .from('ritual_logs')
@@ -71,16 +86,22 @@ export async function fetchTeamSnapshot(myId: string): Promise<TeamSnapshot> {
 
   const todayStart = today + 'T00:00:00-03:00';
   const todayEnd = today + 'T23:59:59-03:00';
-  const { count: completedToday = 0 } = await supabase
+
+  let completedQ = supabase
     .from('tasks').select('id', { count: 'exact', head: true })
     .eq('context', 'work').eq('status', 'done')
     .gte('completed_at', todayStart).lte('completed_at', todayEnd);
-  const { count: dueToday = 0 } = await supabase
+  if (scopeIds) completedQ = completedQ.in('assigned_to', scopeIds);
+  const { count: completedToday = 0 } = await completedQ;
+
+  let dueQ = supabase
     .from('tasks').select('id', { count: 'exact', head: true })
     .eq('context', 'work').eq('due_date', today)
     .not('status', 'in', '(done,cancelled)');
+  if (scopeIds) dueQ = dueQ.in('assigned_to', scopeIds);
+  const { count: dueToday = 0 } = await dueQ;
 
-  const { data: overdueRaw } = await supabase
+  let overdueQ = supabase
     .from('tasks')
     .select('id, title, assigned_to, due_date')
     .eq('context', 'work')
@@ -88,13 +109,19 @@ export async function fetchTeamSnapshot(myId: string): Promise<TeamSnapshot> {
     .not('status', 'in', '(done,cancelled)')
     .order('due_date', { ascending: true })
     .limit(1000);
+  if (scopeIds) overdueQ = overdueQ.in('assigned_to', scopeIds);
+  const { data: overdueRaw } = await overdueQ;
 
   // Honestidade (Fase 1): tira inativo, colapsa recorrência, conta distinto.
   const activeIds = new Set(allCollabs.map(c => c.id));
   const overdueActive = filterActiveAssignees((overdueRaw ?? []) as OverdueRow[], activeIds);
   const dedupedOverdue = dedupeRecurringOverdue(overdueActive);
 
-  const events = await fetchEventsForTeamDay(today, 'work');
+  const allEvents = await fetchEventsForTeamDay(today, 'work');
+  // Líder vê só os eventos do time dele; CEO vê todos.
+  const events = isCeo
+    ? allEvents
+    : allEvents.filter(e => e.collaborator_id != null && memberSet.has(e.collaborator_id));
   const eventsByCollab: Record<string, number> = {};
   for (const e of events) {
     if (!e.collaborator_id) continue;
@@ -112,6 +139,10 @@ export async function fetchTeamSnapshot(myId: string): Promise<TeamSnapshot> {
     overdueByPerson: computeOverdueByPerson(dedupedOverdue),
     events,
     eventsByCollab,
+    scope: isCeo ? 'company' : 'team',
+    isCeo,
+    viewerId: myId,
+    memberIds: scope.memberIds,
   };
 }
 

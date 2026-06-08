@@ -24,12 +24,29 @@ export function DashboardTimeMobile() {
 
   const { team, allCollabs, responded, noResponse, completedToday, dueToday, overdueCount, overdueByPerson, events, eventsByCollab } = data;
 
+  // Fase 3 — multi-tenant: rótulo de escopo (CEO = empresa; líder = só o time dele).
+  const subtitle = data.scope === 'team' ? 'Seu time · só trabalho' : 'Visão geral · só trabalho';
+
+  // Líder sem liderados mapeados → empty-state honesto em vez de cards zerados.
+  if (!data.isCeo && team.length === 0) {
+    return (
+      <div className="space-y-lg">
+        <PageHeader title="Time" subtitle={subtitle} backTo="/mais" />
+        <EmptyState
+          icon={<Users size={32} />}
+          title="Você não tem liderados diretos"
+          description="O TOM ainda não mapeou um time pra você. Fala com o Alf pra ajustar os papéis."
+        />
+      </div>
+    );
+  }
+
   const nameOf = (id: string) => allCollabs.find(t => t.id === id)?.full_name?.split(' ')[0] ?? id.slice(0, 6);
   const evCount = (id: string) => eventsByCollab[id] ?? 0;
 
   return (
     <div className="space-y-lg">
-      <PageHeader title="Time" subtitle="Visão de coordenação · só dados de trabalho" backTo="/mais" />
+      <PageHeader title="Time" subtitle={subtitle} backTo="/mais" />
 
       {/* Fase D2 — 5 stats: 3 cols no mobile, 5 cols no desktop pra uma unica linha. */}
       <div className="grid grid-cols-3 lg:grid-cols-5 gap-sm">

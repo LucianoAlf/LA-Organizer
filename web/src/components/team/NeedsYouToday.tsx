@@ -27,6 +27,9 @@ const MAX_ITEMS = 4;
 
 export function NeedsYouToday({ snapshot, scorecards }: Props) {
   const { allCollabs, overdueByPerson, noResponse } = snapshot;
+  // Escopo (Fase 3): no view do líder, só consideramos sinais do próprio time —
+  // o sinal de "líder travado" (abaixo) não pode vazar OUTROS líderes.
+  const memberSet = new Set(snapshot.memberIds);
 
   const firstName = (id: string) =>
     allCollabs.find(c => c.id === id)?.preferred_name?.split(' ')[0] ||
@@ -51,8 +54,11 @@ export function NeedsYouToday({ snapshot, scorecards }: Props) {
   }
 
   // 2) Líderes em atenção com travadas — sinaliza o gargalo de ensino.
+  //    Só vale pro CEO (vê todos) ou p/ liderado-líder dentro do escopo;
+  //    nunca surface OUTROS líderes no painel de um líder.
   for (const sc of scorecards) {
     if (!sc.leader) continue;
+    if (!snapshot.isCeo && !memberSet.has(sc.leader.id)) continue;
     if (classifyScorecard(sc) === 'atencao' && sc.tasks_stuck >= 2) {
       bump(sc.leader.id, `${sc.tasks_stuck} tarefas travadas no time`, 100 + sc.tasks_stuck);
     }

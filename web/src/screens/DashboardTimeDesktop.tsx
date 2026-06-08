@@ -17,6 +17,7 @@ import { CeoKpiStrip } from '../components/team/CeoKpiStrip';
 import { NeedsYouToday } from '../components/team/NeedsYouToday';
 import { LeaderSemaphore } from '../components/team/LeaderSemaphore';
 import { TeamDrillPanel } from '../components/team/TeamDrillPanel';
+import { LeaderDesktop } from './LeaderDesktop';
 import { todaySP, startOfWeekMonday, brShort } from '../utils/date';
 
 export function DashboardTimeDesktop() {
@@ -42,6 +43,12 @@ export function DashboardTimeDesktop() {
   if (snapLoading || scLoading) return <LoadingState rows={5} />;
   if (snapError) return <EmptyState title="Erro" description={(snapError as Error).message} />;
   if (!snapshot) return null;
+
+  // Multi-tenant (Fase 3): só o CEO vê o semáforo de TODOS os líderes + drill.
+  // Líder (ou diretor com time) vê a view escopada ao próprio time.
+  if (!snapshot.isCeo) {
+    return <LeaderDesktop snapshot={snapshot} scorecards={scorecards} weekStart={weekStart} />;
+  }
 
   // Selo de semana: só aparece se o scorecard não for da semana corrente
   // (cron de segunda ainda não rodou → mostra a última fechada, honestamente).
