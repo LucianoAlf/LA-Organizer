@@ -7,7 +7,7 @@ import { PageHeader } from '../components/PageHeader';
 import { LoadingState } from '../components/LoadingState';
 import { showToast } from '../components/Toast';
 import type { Role } from '../types';
-import { ROLES, ROLE_RANK, ROLE_LABELS, JOB_TITLES } from '../lib/roles';
+import { ROLES, ROLE_RANK, ROLE_LABELS, JOB_TITLES, FUNCTION_ROLE_OPTIONS } from '../lib/roles';
 import { resolveLeadersOf, membersOf, groupLeaderIdsFor, type Collab } from '../lib/team-routing';
 import { fetchGovernanceEdges, addGovernanceEdge, removeGovernanceEdge, fetchGroupLeaders } from '../lib/governance-edges';
 const UNIT_OPTIONS = [
@@ -15,15 +15,6 @@ const UNIT_OPTIONS = [
   { value: 'recreio',      label: 'Recreio' },
   { value: 'campo_grande', label: 'Campo Grande' },
   { value: 'all',          label: 'Geral' },
-] as const;
-const FUNCTION_ROLE_OPTIONS = [
-  { value: 'pedagogico',      label: 'Pedagógico' },
-  { value: 'comercial',       label: 'Comercial' },
-  { value: 'marketing',       label: 'Marketing' },
-  { value: 'financeiro',      label: 'Financeiro' },
-  { value: 'ops_tecnicas',    label: 'Operações' },
-  { value: 'sucesso_cliente', label: 'Sucesso do Cliente' },
-  { value: 'farmer',          label: 'Farmer' },
 ] as const;
 
 type CollabFull = {

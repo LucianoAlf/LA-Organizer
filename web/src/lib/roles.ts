@@ -52,3 +52,17 @@ export const ALL_FUNCTION_TITLES: string[] = Object.values(FUNCTION_TITLES).flat
  * (esses já são o "Nível de acesso"). Ex.: RH de cargo + Gerente de acesso.
  */
 export const JOB_TITLES: string[] = FUNCTION_TITLES.collaborator;
+
+/**
+ * Grupos de governança (function_role) — o departamento que define o líder automático.
+ * Distinto do Cargo (function_title). Usado na seção Governança (criar + editar colaborador).
+ */
+export const FUNCTION_ROLE_OPTIONS = [
+  { value: 'pedagogico',      label: 'Pedagógico' },
+  { value: 'comercial',       label: 'Comercial' },
+  { value: 'marketing',       label: 'Marketing' },
+  { value: 'financeiro',      label: 'Financeiro' },
+  { value: 'ops_tecnicas',    label: 'Operações' },
+  { value: 'sucesso_cliente', label: 'Sucesso do Cliente' },
+  { value: 'farmer',          label: 'Farmer' },
+] as const;
