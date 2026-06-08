@@ -2261,7 +2261,7 @@ async function ceoTeamUnclosedEventsReport(now = new Date(), opts = {}) {
         }
       }
       const diagBlkEv = diagsEv.length > 0 ? `\n\n─────────────────────\n🔍 *Diagnóstico*\n${diagsEv.join('\n\n')}` : '';
-      return `🎖️ *Compromissos em aberto · ${filteredStale.length}*\n\n${lines.join('\n').trim()}${diagBlkEv}${staleCheckBlock}`;
+      return `🎖️ *Compromissos em aberto*\n_${filteredStale.length} parado${filteredStale.length > 1 ? 's' : ''}${hiddenSuffixEv}_\n\n${lines.join('\n').trim()}${diagBlkEv}${staleCheckBlock}`;
     }
 
     const msg = `🎖️ *Governança — Compromissos em aberto*\n_${dateLabel} · ${filteredStale.length} parado${filteredStale.length > 1 ? 's' : ''}_\n━━━━━━━━━━━━━━━━━━━━━\n\n${lines.join('\n').trim()}${staleCheckBlock}\n\n━━━━━━━━━━━━━━━━━━━━━\n_${filteredStale.length} compromisso${filteredStale.length > 1 ? 's' : ''} parado${filteredStale.length > 1 ? 's' : ''}${hiddenSuffixEv}. Pra cobrar: "cobra [nome] sobre [assunto]"_`;
@@ -2498,7 +2498,7 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
     // Fase 6a — modo SEÇÃO p/ o digest único: retorna a seção rica VERBATIM
     // (lista + 🔍 diagnóstico + ⚠️ stuck + ⏳ staleness) sem banners/rodapé próprios.
     if (opts.returnText) {
-      return `📋 *Tarefas atrasadas · ${filteredStale.length}*\n\n${lines.join('\n').trim()}${diagSection}${stuckSection}${staleCheckBlock}`;
+      return `📋 *Tarefas atrasadas*\n_${filteredStale.length} tarefa${filteredStale.length > 1 ? 's' : ''}${hiddenSuffixT}_\n\n${lines.join('\n').trim()}${diagSection}${stuckSection}${staleCheckBlock}`;
     }
 
     const msg = `📋 *Governança — Tarefas atrasadas*\n_${dateLabelT} · ${filteredStale.length} tarefa${filteredStale.length > 1 ? 's' : ''}_\n━━━━━━━━━━━━━━━━━━━━━\n\n${lines.join('\n').trim()}${diagSection}${stuckSection}${staleCheckBlock}\n\n━━━━━━━━━━━━━━━━━━━━━\n_${filteredStale.length} atrasada${filteredStale.length > 1 ? 's' : ''}${hiddenSuffixT}. Pra cobrar: "cobra [nome] sobre [tarefa]"_`;
