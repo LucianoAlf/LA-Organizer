@@ -4,7 +4,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { resolveLeadersOf, resolveLeaderIdsOf } = require('./leader-routing');
+const { resolveLeadersOf, resolveLeaderIdsOf, groupLeaderIdsFor } = require('./leader-routing');
 
 // ── Fixtures (subset do org real) ───────────────────────────────────────────
 const CEO       = { id: 'ceo',      full_name: 'Luciano Alf', role: 'director',    function_role: null,          unit: 'all',          is_ceo: true,  is_active: true };
@@ -27,6 +27,14 @@ const RAFINHA   = { id: 'rafinha',  full_name: 'Rafinha',     role: 'collaborato
 const KINHO_OFF = { id: 'kinho',    full_name: 'Kinho',       role: 'collaborator', function_role: 'pedagogico',  unit: null,           is_ceo: false, is_active: false, supervisor_id: null };
 
 const ALL = [CEO, KRISSYA, JEREH, CLAYTON, YURI, JULIANA, QUINTELA, ARTHUR, GABI, JHONATAN, KAILANE, LEO, DAI, PETERSON, JOHN, RAFINHA, KINHO_OFF];
+
+// Líderes de grupo (governance_leaders) — anexa group_leader_ids como o loader real faz.
+const GROUP_LEADERS = [
+  { group_key: 'pedagogico', unit: 'all', leader_id: 'juliana' },
+  { group_key: 'pedagogico', unit: 'all', leader_id: 'quintela' },
+  { group_key: 'marketing',  unit: 'all', leader_id: 'yuri' },
+];
+for (const c of ALL) c.group_leader_ids = groupLeaderIdsFor(c, GROUP_LEADERS);
 
 const ids = (collab) => resolveLeaderIdsOf(collab, ALL).sort();
 
@@ -61,10 +69,22 @@ test('Leo (pedagógico/Barra) → Juliana + Quintela + Krissya (3 líderes)', ()
 test('John (marketing) → Yuri', () => {
   assert.deepStrictEqual(ids(JOHN), ['yuri']);
 });
-test('grupo genérico (self-service): comercial cai no gerente comercial', () => {
+test('grupo via tabela: comercial (global) cai no líder comercial', () => {
+  const GL = [{ group_key: 'comercial', unit: 'all', leader_id: 'cm' }];
   const CM = { id: 'cm', role: 'manager', function_role: 'comercial', unit: 'all', is_ceo: false, is_active: true };
-  const CC = { id: 'cc', role: 'collaborator', function_role: 'comercial', unit: 'all', is_ceo: false, is_active: true };
+  const CC = { id: 'cc', role: 'collaborator', function_role: 'comercial', unit: 'all', is_ceo: false, is_active: true, group_leader_ids: groupLeaderIdsFor({ function_role: 'comercial', unit: 'all' }, GL) };
   assert.deepStrictEqual(resolveLeaderIdsOf(CC, [CEO, CM, CC]), ['cm']);
+});
+test('groupLeaderIdsFor: farmer por unidade casa só a unidade; global casa todas', () => {
+  const GL = [
+    { group_key: 'farmer', unit: 'campo_grande', leader_id: 'gabi' },
+    { group_key: 'farmer', unit: 'recreio', leader_id: 'fefe' },
+    { group_key: 'comercial', unit: 'all', leader_id: 'kr' },
+  ];
+  assert.deepStrictEqual(groupLeaderIdsFor({ function_role: 'farmer', unit: 'campo_grande' }, GL), ['gabi']);
+  assert.deepStrictEqual(groupLeaderIdsFor({ function_role: 'farmer', unit: 'recreio' }, GL), ['fefe']);
+  assert.deepStrictEqual(groupLeaderIdsFor({ function_role: 'comercial', unit: 'barra' }, GL), ['kr']);
+  assert.deepStrictEqual(groupLeaderIdsFor({ function_role: null, unit: 'barra' }, GL), []);
 });
 
 // ── Órfãos / ops / líderes → CEO ────────────────────────────────────────────
@@ -107,8 +127,9 @@ test('aresta explícita define o líder (Dudu → Rafinha, não cai no CEO)', ()
   const arr = [CEO, RAF, DUDU];
   assert.deepStrictEqual(resolveLeaderIdsOf(DUDU, arr), ['raf']);
 });
-test('aresta soma às regras e deduplica (pedagógico + aresta Juliana = ju+qt)', () => {
-  const X = { id: 'x', role: 'collaborator', function_role: 'pedagogico', unit: 'all', is_ceo: false, is_active: true, explicit_leader_ids: ['juliana'] };
+test('aresta soma aos líderes de grupo e deduplica (pedagógico + aresta Juliana = ju+qt)', () => {
+  const X = { id: 'x', role: 'collaborator', function_role: 'pedagogico', unit: 'all', is_ceo: false, is_active: true,
+    explicit_leader_ids: ['juliana'], group_leader_ids: groupLeaderIdsFor({ function_role: 'pedagogico', unit: 'all' }, GROUP_LEADERS) };
   assert.deepStrictEqual(resolveLeaderIdsOf(X, [...ALL, X]).sort(), ['juliana', 'quintela']);
 });
 test('aresta apontando o CEO é ignorada → fallback CEO', () => {

@@ -8,8 +8,8 @@ import { LoadingState } from '../components/LoadingState';
 import { showToast } from '../components/Toast';
 import type { Role } from '../types';
 import { ROLES, ROLE_RANK, ROLE_LABELS, JOB_TITLES } from '../lib/roles';
-import { resolveLeadersOf, membersOf, type Collab } from '../lib/team-routing';
-import { fetchGovernanceEdges, addGovernanceEdge, removeGovernanceEdge } from '../lib/governance-edges';
+import { resolveLeadersOf, membersOf, groupLeaderIdsFor, type Collab } from '../lib/team-routing';
+import { fetchGovernanceEdges, addGovernanceEdge, removeGovernanceEdge, fetchGroupLeaders } from '../lib/governance-edges';
 const UNIT_OPTIONS = [
   { value: 'barra',        label: 'Barra' },
   { value: 'recreio',      label: 'Recreio' },
@@ -84,6 +84,11 @@ export function GestaoEquipeDetalhe() {
   const { data: edges = [], refetch: refetchEdges } = useQuery({
     queryKey: ['gov-edges'],
     queryFn: fetchGovernanceEdges,
+    enabled: isDirector,
+  });
+  const { data: groupLeaders = [] } = useQuery({
+    queryKey: ['gov-leaders'],
+    queryFn: fetchGroupLeaders,
     enabled: isDirector,
   });
 
@@ -209,17 +214,22 @@ export function GestaoEquipeDetalhe() {
   // efeito antes de salvar. Usa as MESMAS funções puras do roteamento.
   const draftAll: Collab[] = roster.map(c => {
     const explicit = edges.filter(e => e.member_id === c.id).map(e => e.leader_id);
-    if (c.id === id) {
-      return { ...c, role: selectedRole, function_role: functionRole || null, unit: selectedUnit || null, explicit_leader_ids: explicit };
-    }
-    return { ...c, explicit_leader_ids: explicit };
+    const base: Collab = c.id === id
+      ? { ...c, role: selectedRole, function_role: functionRole || null, unit: selectedUnit || null }
+      : c;
+    return { ...base, explicit_leader_ids: explicit, group_leader_ids: groupLeaderIdsFor(base, groupLeaders) };
   });
   const draftMe = draftAll.find(c => c.id === id);
   const nameOf = (cid: string) =>
     roster.find(c => c.id === cid)?.preferred_name || roster.find(c => c.id === cid)?.full_name || cid;
-  const leadersOfGroup = (fr: string) => roster
-    .filter(c => (c.role === 'manager' || c.role === 'coordinator') && c.function_role === fr)
-    .map(c => c.preferred_name || c.full_name);
+  const unitLabel = (u: string) => UNIT_OPTIONS.find(x => x.value === u)?.label || u;
+  const leadersOfGroup = (fr: string) => groupLeaders
+    .filter(g => g.group_key === fr)
+    .map(g => {
+      const c = roster.find(x => x.id === g.leader_id);
+      const nm = c?.preferred_name || c?.full_name || '?';
+      return g.unit === 'all' ? nm : `${nm} (${unitLabel(g.unit)})`;
+    });
   const previewLeaders = draftMe ? resolveLeadersOf(draftMe, draftAll).map(c => nameOf(c.id)) : [];
   const previewMembers = draftMe ? membersOf(draftMe, draftAll).map(c => nameOf(c.id)) : [];
 

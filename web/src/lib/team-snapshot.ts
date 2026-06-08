@@ -11,7 +11,7 @@ import {
   overdueByPerson as computeOverdueByPerson, type OverdueRow,
 } from './governance-metrics';
 import { resolveScope } from './team-scope';
-import { fetchGovernanceEdges, attachExplicitLeaders } from './governance-edges';
+import { fetchGovernanceEdges, attachExplicitLeaders, fetchGroupLeaders, attachGroupLeaders } from './governance-edges';
 import type { CalendarEvent } from '../types';
 
 export interface TeamCollab {
@@ -25,6 +25,7 @@ export interface TeamCollab {
   is_ceo: boolean;
   is_active?: boolean;
   explicit_leader_ids?: string[];
+  group_leader_ids?: string[];
 }
 
 export interface TeamSnapshot {
@@ -56,6 +57,7 @@ export async function fetchTeamSnapshot(myId: string): Promise<TeamSnapshot> {
     .eq('onboarding_completed', true);
   const allCollabs = (teamRaw ?? []) as unknown as TeamCollab[];
   attachExplicitLeaders(allCollabs, await fetchGovernanceEdges());
+  attachGroupLeaders(allCollabs, await fetchGroupLeaders());
 
   // Escopo do viewer (Fase 3): CEO = empresa inteira; líder = só o time dele.
   const scope = resolveScope(myId, allCollabs);

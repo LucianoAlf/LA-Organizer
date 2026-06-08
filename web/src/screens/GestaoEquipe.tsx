@@ -8,6 +8,7 @@ import { ROLE_COLOR, ROLE_LABELS } from '../lib/roles';
 import { PageHeader } from '../components/PageHeader';
 import { LoadingState } from '../components/LoadingState';
 import { EmptyState } from '../components/EmptyState';
+import { useAuth } from '../contexts/AuthContext';
 
 type CollabRow = {
   id: string;
@@ -28,6 +29,8 @@ type Filter = 'all' | 'active' | 'inactive';
 export function GestaoEquipe() {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
+  const { role } = useAuth();
+  const isDirector = role === 'director';
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['admin-collaborators'],
@@ -58,6 +61,17 @@ export function GestaoEquipe() {
         subtitle="Cadastre e gerencie o acesso da equipe."
         backTo="/mais"
       />
+
+      {isDirector && (
+        <div className="px-md">
+          <Link
+            to="/mais/lideres-departamento"
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-tom text-tom text-body-sm font-medium hover:bg-tom/10 transition-colors"
+          >
+            👑 Líderes de departamento
+          </Link>
+        </div>
+      )}
 
       {/* Busca + botão novo */}
       <div className="px-md flex gap-2">

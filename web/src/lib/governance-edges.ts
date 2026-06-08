@@ -2,6 +2,7 @@
 // Arestas da matriz de governança (override manual N:N). Fetch/attach pro roteamento
 // + CRUD (director-only via RLS) pra UI da Gestão equipe.
 import { supabase } from './supabase';
+import { groupLeaderIdsFor, type GroupLeader, type Collab } from './team-routing';
 
 export interface GovEdge { member_id: string; leader_id: string; }
 
@@ -32,5 +33,27 @@ export async function addGovernanceEdge(memberId: string, leaderId: string): Pro
 export async function removeGovernanceEdge(memberId: string, leaderId: string): Promise<void> {
   const { error } = await supabase.from('governance_edges')
     .delete().eq('member_id', memberId).eq('leader_id', leaderId);
+  if (error) throw error;
+}
+
+export async function fetchGroupLeaders(): Promise<GroupLeader[]> {
+  const { data } = await supabase.from('governance_leaders').select('group_key, unit, leader_id');
+  return (data ?? []) as GroupLeader[];
+}
+
+/** Anexa group_leader_ids (líder do grupo via tabela governance_leaders) a cada collab. */
+export function attachGroupLeaders<T extends Collab>(collabs: T[], groupLeaders: GroupLeader[]): T[] {
+  for (const c of collabs) c.group_leader_ids = groupLeaderIdsFor(c, groupLeaders);
+  return collabs;
+}
+
+export async function addGroupLeader(groupKey: string, unit: string, leaderId: string): Promise<void> {
+  const { error } = await supabase.from('governance_leaders').insert({ group_key: groupKey, unit, leader_id: leaderId });
+  if (error) throw error;
+}
+
+export async function removeGroupLeader(groupKey: string, unit: string, leaderId: string): Promise<void> {
+  const { error } = await supabase.from('governance_leaders')
+    .delete().eq('group_key', groupKey).eq('unit', unit).eq('leader_id', leaderId);
   if (error) throw error;
 }

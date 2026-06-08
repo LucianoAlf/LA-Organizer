@@ -41,10 +41,21 @@ describe('resolveLeaderIdsOf', () => {
   it('marketing → Yuri', () => {
     expect(resolveLeaderIdsOf(john, all)).toEqual(['yu']);
   });
-  it('grupo genérico (self-service): comercial cai no gerente comercial', () => {
+  it('grupo via tabela: comercial (global) cai no líder comercial', () => {
+    const GL = [{ group_key: 'comercial', unit: 'all', leader_id: 'cm' }];
     const cmgr = C({ id: 'cm', role: 'manager', function_role: 'comercial' });
     const ccol = C({ id: 'cc', function_role: 'comercial' });
+    ccol.group_leader_ids = groupLeaderIdsFor(ccol, GL);
     expect(resolveLeaderIdsOf(ccol, [ceo, cmgr, ccol])).toEqual(['cm']);
+  });
+  it('groupLeaderIdsFor: farmer por unidade casa só a unidade; global casa todas', () => {
+    const GL = [
+      { group_key: 'farmer', unit: 'campo_grande', leader_id: 'gabi' },
+      { group_key: 'comercial', unit: 'all', leader_id: 'kr' },
+    ];
+    expect(groupLeaderIdsFor(C({ id: 'x', function_role: 'farmer', unit: 'campo_grande' }), GL)).toEqual(['gabi']);
+    expect(groupLeaderIdsFor(C({ id: 'y', function_role: 'farmer', unit: 'barra' }), GL)).toEqual([]);
+    expect(groupLeaderIdsFor(C({ id: 'z', function_role: 'comercial', unit: 'barra' }), GL)).toEqual(['kr']);
   });
   it('órfão (farmer unit=all, sem supervisor) → CEO', () => {
     expect(resolveLeaderIdsOf(fabi, all)).toEqual(['ceo']);
@@ -82,6 +93,7 @@ describe('explicit_leader_ids (override manual N:N)', () => {
   it('aresta soma às regras e deduplica (pedagógico + aresta p/ Juliana = ju+qt)', () => {
     const daiX = C({ id: 'daiX', function_role: 'pedagogico' });
     daiX.explicit_leader_ids = ['ju'];
+    daiX.group_leader_ids = groupLeaderIdsFor(daiX, GROUP_LEADERS);
     const arr = [ceo, juliana, quintela, daiX];
     expect(resolveLeaderIdsOf(daiX, arr).sort()).toEqual(['ju', 'qt']);
   });
