@@ -19,6 +19,23 @@ export interface Collab {
   is_ceo: boolean;
   is_active?: boolean;
   explicit_leader_ids?: string[];
+  group_leader_ids?: string[];
+}
+
+/** Linha da tabela governance_leaders: quem lidera <group_key> em <unit> ('all'=global). */
+export interface GroupLeader { group_key: string; unit: string; leader_id: string; }
+
+/**
+ * Líderes do grupo de um colaborador: casa o function_role (grupo) dele contra a tabela,
+ * com unit 'all' (global) OU a unidade da pessoa (farmer por-loja). Função PURA.
+ */
+export function groupLeaderIdsFor(collab: Collab, groupLeaders: GroupLeader[]): string[] {
+  const fr = collab?.function_role || null;
+  if (!fr) return [];
+  const unit = collab.unit || null;
+  return (groupLeaders ?? [])
+    .filter(g => g.group_key === fr && (g.unit === 'all' || g.unit === unit))
+    .map(g => g.leader_id);
 }
 
 const UNITS = new Set(['barra', 'campo_grande', 'recreio']);
@@ -34,15 +51,14 @@ export function resolveLeadersOf(collab: Collab, allCollabs: Collab[]): Collab[]
     if (!c || c.id === collab.id || c.is_active === false) return;
     if (!leaders.has(c.id)) leaders.set(c.id, c);
   };
-  const fr = collab.function_role || null;
   const unit = collab.unit || null;
   const isSelfLeader = LEADER_ROLES.has(collab.role);
   if (!isSelfLeader) {
     if (unit && UNITS.has(unit)) for (const c of active) if (c.role === 'manager' && c.unit === unit) add(c);
-    // Grupo funcional → líderes (gerente/coord) do MESMO grupo. Generalizado p/ qualquer
-    // grupo (pedagógico, comercial, marketing, financeiro, operações, sucesso_cliente…) sem
-    // hardcode. Pedagógico cai nos 2 coords porque os dois têm function_role='pedagogico'.
-    if (fr) for (const c of active) if ((c.role === 'coordinator' || c.role === 'manager') && c.function_role === fr) add(c);
+    // Líderes do grupo vêm da tabela governance_leaders (group+unit), anexados no load como
+    // group_leader_ids via groupLeaderIdsFor. Desacoplado do nível de acesso (uma farmer
+    // pode liderar farmers da unidade dela sem ser gerente).
+    for (const lid of (collab.group_leader_ids ?? [])) { const L = byId.get(lid); if (L) add(L); }
   }
   // Override manual (matriz editável) — aditivo às regras. Pula CEO: ele já recebe
   // o digest completo (entra só pelo fallback de órfão, abaixo).

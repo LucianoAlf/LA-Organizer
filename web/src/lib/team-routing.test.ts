@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveLeaderIdsOf, membersOf, type Collab } from './team-routing';
+import { resolveLeaderIdsOf, membersOf, groupLeaderIdsFor, type Collab } from './team-routing';
 
 const C = (p: Partial<Collab> & { id: string }): Collab => ({
   id: p.id, role: p.role ?? 'collaborator', function_role: p.function_role ?? null,
@@ -17,6 +17,13 @@ const leo = C({ id: 'leo', function_role: 'pedagogico', unit: 'barra', superviso
 const john = C({ id: 'john', function_role: 'marketing', unit: 'all' });
 const fabi = C({ id: 'fabi', function_role: 'farmer', unit: 'all' });
 const all = [ceo, juliana, quintela, krissya, yuri, dai, matheus, jordan, leo, john, fabi];
+// Líderes de grupo (governance_leaders) — anexa group_leader_ids como o loader real faz.
+const GROUP_LEADERS = [
+  { group_key: 'pedagogico', unit: 'all', leader_id: 'ju' },
+  { group_key: 'pedagogico', unit: 'all', leader_id: 'qt' },
+  { group_key: 'marketing',  unit: 'all', leader_id: 'yu' },
+];
+all.forEach(c => { c.group_leader_ids = groupLeaderIdsFor(c, GROUP_LEADERS); });
 
 describe('resolveLeaderIdsOf', () => {
   it('pedagógico cai nos DOIS coordenadores — Dai (mesmo com supervisor=Juliana)', () => {

@@ -42,7 +42,6 @@ function resolveLeadersOf(collab, allCollabs) {
     if (!leaders.has(c.id)) leaders.set(c.id, c);
   };
 
-  const fr = collab.function_role || null;
   const unit = collab.unit || null;
   const isSelfLeader = LEADER_ROLES.has(collab.role);
 
@@ -56,14 +55,12 @@ function resolveLeadersOf(collab, allCollabs) {
         if (c.role === 'manager' && c.unit === unit) add(c);
       }
     }
-    // 2) grupo funcional (function_role) → líderes (gerente/coord) do MESMO grupo.
-    // Generalizado p/ qualquer grupo (pedagógico, comercial, marketing, financeiro,
-    // operações, sucesso_cliente…) sem hardcode. Pedagógico cai nos 2 coords porque os
-    // dois têm function_role='pedagogico'. SEM exclusividade (decisão CEO 08/06).
-    if (fr) {
-      for (const c of active) {
-        if ((c.role === 'coordinator' || c.role === 'manager') && c.function_role === fr) add(c);
-      }
+    // 2) líderes do grupo vêm da tabela governance_leaders (group+unit), anexados no load
+    // como group_leader_ids via groupLeaderIdsFor. Desacoplado do nível de acesso (uma
+    // farmer pode liderar farmers da unidade dela sem ser gerente).
+    for (const lid of (Array.isArray(collab.group_leader_ids) ? collab.group_leader_ids : [])) {
+      const L = byId.get(lid);
+      if (L) add(L);
     }
   }
 
@@ -92,4 +89,17 @@ function resolveLeaderIdsOf(collab, allCollabs) {
   return resolveLeadersOf(collab, allCollabs).map((c) => c.id);
 }
 
-module.exports = { resolveLeadersOf, resolveLeaderIdsOf, UNITS, LEADER_ROLES };
+/**
+ * Líderes do grupo de um colaborador: casa o function_role (grupo) dele contra a tabela
+ * governance_leaders, com unit 'all' (global) OU a unidade da pessoa (farmer por-loja). PURA.
+ */
+function groupLeaderIdsFor(collab, groupLeaders) {
+  const fr = (collab && collab.function_role) || null;
+  if (!fr) return [];
+  const unit = collab.unit || null;
+  return (Array.isArray(groupLeaders) ? groupLeaders : [])
+    .filter((g) => g.group_key === fr && (g.unit === 'all' || g.unit === unit))
+    .map((g) => g.leader_id);
+}
+
+module.exports = { resolveLeadersOf, resolveLeaderIdsOf, groupLeaderIdsFor, UNITS, LEADER_ROLES };
