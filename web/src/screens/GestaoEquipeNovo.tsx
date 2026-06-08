@@ -5,7 +5,10 @@ import { useAuth } from '../contexts/AuthContext';
 import { PageHeader } from '../components/PageHeader';
 import { showToast } from '../components/Toast';
 import type { Role } from '../types';
-import { ROLES, ROLE_RANK, ROLE_LABELS, JOB_TITLES } from '../lib/roles';
+import { useQuery } from '@tanstack/react-query';
+import { ROLES, ROLE_RANK, ROLE_LABELS, JOB_TITLES, FUNCTION_ROLE_OPTIONS } from '../lib/roles';
+import { resolveLeadersOf, groupLeaderIdsFor, type Collab } from '../lib/team-routing';
+import { fetchGroupLeaders, addGovernanceEdge } from '../lib/governance-edges';
 const UNIT_OPTIONS = [
   { value: 'barra',        label: 'Barra' },
   { value: 'recreio',      label: 'Recreio' },
@@ -24,6 +27,25 @@ export function GestaoEquipeNovo() {
   const [functionTitle, setFunctionTitle] = useState('');
   const [selectedRole,  setSelectedRole]  = useState<Role>('collaborator');
   const [selectedUnit,  setSelectedUnit]  = useState('');
+  const [functionRole,  setFunctionRole]  = useState('');
+  const [selectedLeaders, setSelectedLeaders] = useState<string[]>([]);
+  const isDirector = myRole === 'director';
+
+  const { data: roster = [] } = useQuery({
+    queryKey: ['gov-roster'],
+    queryFn: async () => {
+      const { data } = await supabase.from('collaborators')
+        .select('id, full_name, preferred_name, role, function_role, unit, supervisor_id, is_ceo, is_active')
+        .eq('is_active', true);
+      return (data ?? []) as Array<Collab & { full_name: string; preferred_name: string | null }>;
+    },
+    enabled: isDirector,
+  });
+  const { data: groupLeaders = [] } = useQuery({
+    queryKey: ['gov-leaders'],
+    queryFn: fetchGroupLeaders,
+    enabled: isDirector,
+  });
 
   // Admins só podem criar roles até o seu próprio nível
   const myRank = ROLE_RANK[(myRole as Role) ?? 'collaborator'] ?? 0;
@@ -61,6 +83,16 @@ export function GestaoEquipeNovo() {
         showToast({ kind: 'error', title: msg });
         return;
       }
+      // Governança (só Diretor): grava grupo + arestas no novo colaborador (id volta no response).
+      const newId = data.collaborator_id as string | undefined;
+      if (isDirector && newId) {
+        try {
+          if (functionRole) await supabase.from('collaborators').update({ function_role: functionRole }).eq('id', newId);
+          for (const leaderId of selectedLeaders) await addGovernanceEdge(newId, leaderId);
+        } catch {
+          showToast({ kind: 'error', title: 'Criado, mas falhou ao salvar a governança — ajuste na edição.' });
+        }
+      }
       const extra = data.whatsapp_sent ? '' : ' (link WhatsApp não enviado — verifique o número)';
       showToast({ kind: 'success', title: `Colaborador criado!${extra}` });
       navigate('/mais/gestao-equipe');
@@ -74,6 +106,31 @@ export function GestaoEquipeNovo() {
     `px-3 py-1.5 rounded-lg text-body-sm font-medium border transition-colors ${
       active ? 'bg-tom text-white border-tom' : 'bg-bg-elevated border-border text-fg'
     }`;
+
+  const draftMe: Collab = {
+    id: '__new__', role: selectedRole, function_role: functionRole || null, unit: selectedUnit || null,
+    supervisor_id: null, is_ceo: false, is_active: true,
+    explicit_leader_ids: selectedLeaders,
+    group_leader_ids: groupLeaderIdsFor(
+      { id: '__new__', role: selectedRole, function_role: functionRole || null, unit: selectedUnit || null, supervisor_id: null, is_ceo: false } as Collab,
+      groupLeaders,
+    ),
+  };
+  const draftAll: Collab[] = [...roster, draftMe];
+  const nameOf = (cid: string) => {
+    const c = roster.find(x => x.id === cid);
+    return c?.preferred_name || c?.full_name || cid;
+  };
+  const previewLeaders = resolveLeadersOf(draftMe, draftAll).filter(c => c.id !== '__new__').map(c => nameOf(c.id));
+  const unitLabelOf = (u: string) => UNIT_OPTIONS.find(x => x.value === u)?.label || u;
+  const leadersOfGroup = (fr: string) => groupLeaders.filter(g => g.group_key === fr).map(g => {
+    const c = roster.find(x => x.id === g.leader_id);
+    const nm = c?.preferred_name || c?.full_name || '?';
+    return g.unit === 'all' ? nm : `${nm} (${unitLabelOf(g.unit)})`;
+  });
+  function toggleLeader(idv: string) {
+    setSelectedLeaders(prev => prev.includes(idv) ? prev.filter(x => x !== idv) : [...prev, idv]);
+  }
 
   return (
     <div className="space-y-lg pb-xl">
@@ -152,6 +209,59 @@ export function GestaoEquipeNovo() {
             ))}
           </div>
         </section>
+
+        {/* Governança (só Diretor) — já cria subordinado */}
+        {isDirector && (
+          <section className="surface p-lg space-y-md">
+            <h2 className="text-label text-fg-muted uppercase tracking-wide">Governança</h2>
+
+            <div className="space-y-md">
+              <label className="text-body-sm text-fg-muted">Grupo de governança</label>
+              <p className="text-body-sm text-fg-muted">
+                Quem for Gerente/Coordenador do mesmo grupo vira líder automático — já cria subordinado.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {FUNCTION_ROLE_OPTIONS.map(f => (
+                  <button key={f.value} type="button"
+                    onClick={() => setFunctionRole(functionRole === f.value ? '' : f.value)}
+                    className={chipCls(functionRole === f.value)}>
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+              <div className="rounded-lg bg-bg-elevated border border-border p-3 text-body-sm space-y-0.5">
+                {FUNCTION_ROLE_OPTIONS.map(f => {
+                  const ls = leadersOfGroup(f.value);
+                  return (
+                    <div key={f.value}>
+                      <span className="text-fg-muted">{f.label} → </span>
+                      {ls.length
+                        ? <span className="text-fg">{ls.join(', ')}</span>
+                        : <span className="text-fg-muted italic">sem líder ainda</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="space-y-md">
+              <label className="text-body-sm text-fg-muted">Reporta a (líderes explícitos — soma às regras)</label>
+              <div className="flex flex-wrap gap-2">
+                {roster.filter(c => !c.is_ceo).map(c => (
+                  <button key={c.id} type="button" onClick={() => toggleLeader(c.id)}
+                    className={chipCls(selectedLeaders.includes(c.id))}>
+                    {c.preferred_name || c.full_name}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-lg bg-bg-elevated border border-border p-3 text-body-sm">
+              <span className="text-fg-muted">Vai reportar a: </span>
+              <span className="text-fg">{previewLeaders.length ? previewLeaders.join(', ') : '—'}</span>
+            </div>
+          </section>
+        )}
 
         <button
           type="submit"
