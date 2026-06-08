@@ -78,3 +78,18 @@ Abrir a página (ou ler o digest) e ela dizer **com quem falar e por quê** (nom
 - **Isolamento RLS** cosmético (v1 dev) vs `is_my_report` (prod) — confirmar o momento de virar real.
 - **Times canônicos:** confirmar os rosters reais (Jereh/Quintela/Yuri/…) pra popular `leader-routing`.
 - **Cobrar pelo TOM da UI:** confirmar reaproveitar o fluxo de cobrança existente (não criar novo marker).
+
+## 13. Fase 6 — decisões de timing/config (CEO, 08/06)
+**Horário de envio do digest (work):**
+- **CEO (Luciano):** seu horário já definido (cedo, ~9h), **seg–sáb**.
+- **Cada líder:** **14h seg–sex** e **09h sábado**. **Domingo:** sem governança.
+- **SEMPRE respeitar o quiet-hours/janela de trabalho de cada pessoa** (`isQuietNow(collab,'work')`): nunca enviar antes do horário que a pessoa configurou começar a receber trabalho. O horário acima é o *alvo*; se em quiet, defer pro próximo tick fora do silêncio.
+- Briefing **pessoal** (7h ou custom) é separado e continua — não fundir com o digest de governança.
+
+**Conjunto de líderes do digest = "líder de verdade" (tem time):** mesma regra do dashboard (membersOf não-vazio). Tira líder-fantasma (Ana manager s/ time, etc.). Os 6: Juliana, Quintela, Jereh, Clayton, Krissya, Yuri. Anne/Hugo/Admin nunca recebem governança (já garantido por `is_ceo`/role, mais o filtro de time).
+
+**Config de governança (PWA) = visível a TODOS os líderes:** cada líder abre e ajusta o **próprio** envio (horário default 9h, liga/desliga seções, on/off). Não é só do CEO. Auto-save (padrão de Configurações).
+
+**Estrutura da Fase 6 (2 partes):**
+- **6a — Digest único (backend):** `sendGovernanceDigest` consolida scorecard(+badges, seg) + compromissos + tarefas(intacto) + rodapé numa msg; CEO no horário dele, líderes 14h/9h-sáb; guard 4000 chars → "+N na dashboard"; desliga os 4 envios antigos; reusa `claimRitualSend` + `isQuietNow('work')`.
+- **6b — Config de governança (PWA):** página visível a todos os líderes; horário/seções/on-off por pessoa; persistência + wire no dispatcher (lê o horário configurado em vez de hardcode).
