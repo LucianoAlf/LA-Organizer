@@ -227,6 +227,7 @@ export function ProjetoDetalhe() {
           onToggleTask={handleToggleTask}
           onRenameCheckpoint={(cpId, name) => checkpointsApi.rename({ id: cpId, name })}
           onEditCheckpointDate={(cpId, date) => checkpointsApi.update({ id: cpId, due_date: date })}
+          onEditCheckpointRationale={(cpId, rationale) => checkpointsApi.update({ id: cpId, rationale })}
           onDeleteCheckpoint={(cpId) => checkpointsApi.remove(cpId)}
           onRenameTask={(tId, title) => tasksApi.rename({ id: tId, title })}
           onDeleteTask={(tId) => tasksApi.remove(tId)}

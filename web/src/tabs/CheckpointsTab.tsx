@@ -54,6 +54,8 @@ interface CheckpointsTabProps {
   onRenameCheckpoint: (cpId: string, name: string) => void;
   /** Editar o prazo (due_date) do checkpoint — YYYY-MM-DD ou null pra limpar. */
   onEditCheckpointDate?: (cpId: string, date: string | null) => void;
+  /** Editar o contexto/porquê (rationale) do checkpoint — texto ou null pra limpar. */
+  onEditCheckpointRationale?: (cpId: string, rationale: string | null) => void;
   onDeleteCheckpoint: (cpId: string) => void;
   onRenameTask: (tId: string, title: string) => void;
   onDeleteTask: (tId: string) => void;
@@ -87,6 +89,7 @@ export function CheckpointsTab(props: CheckpointsTabProps) {
     onToggleTask,
     onRenameCheckpoint,
     onEditCheckpointDate,
+    onEditCheckpointRationale,
     onDeleteCheckpoint,
     onRenameTask,
     onDeleteTask,
@@ -164,6 +167,7 @@ export function CheckpointsTab(props: CheckpointsTabProps) {
               onToggleTask={onToggleTask}
               onRenameCheckpoint={onRenameCheckpoint}
               onEditCheckpointDate={onEditCheckpointDate}
+              onEditCheckpointRationale={onEditCheckpointRationale}
               onDeleteCheckpoint={onDeleteCheckpoint}
               onRenameTask={onRenameTask}
               onDeleteTask={onDeleteTask}
@@ -217,6 +221,7 @@ function CheckpointCard({
   onToggleTask,
   onRenameCheckpoint,
   onEditDate,
+  onEditRationale,
   onDeleteCheckpoint,
   onRenameTask,
   onDeleteTask,
@@ -242,6 +247,7 @@ function CheckpointCard({
   onToggleTask: (t: Task) => void;
   onRenameCheckpoint: (name: string) => void;
   onEditDate?: (date: string | null) => void;
+  onEditRationale?: (rationale: string | null) => void;
   onDeleteCheckpoint: () => void;
   onRenameTask: (taskId: string, title: string) => void;
   onDeleteTask: (taskId: string) => void;
@@ -266,6 +272,8 @@ function CheckpointCard({
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(checkpoint.name);
   const [editingDate, setEditingDate] = useState(false);
+  const [editingRationale, setEditingRationale] = useState(false);
+  const [rationaleValue, setRationaleValue] = useState(checkpoint.rationale ?? '');
   const total = tasks.length;
   const done = tasks.filter(t => t.status === 'done').length;
 
@@ -373,6 +381,37 @@ function CheckpointCard({
               </button>
             </div>
           )}
+          {/* Editar contexto/porquê (rationale) — o "por quê" também é gerado pela IA, então editável */}
+          {!editing && editingRationale && onEditRationale && (
+            <div className="mt-2 space-y-1" data-no-nav>
+              <span className="text-body-sm text-fg-muted">Contexto (por quê deste checkpoint):</span>
+              <textarea
+                autoFocus
+                value={rationaleValue}
+                maxLength={500}
+                rows={3}
+                onChange={e => setRationaleValue(e.target.value)}
+                placeholder="Contexto pro time entender o porquê..."
+                className="w-full px-2 py-1.5 rounded-md bg-bg-elevated border border-border text-body-sm text-fg placeholder:text-fg-muted focus-ring resize-none"
+              />
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => { onEditRationale(rationaleValue.trim() || null); setEditingRationale(false); }}
+                  className="h-8 px-3 rounded-md bg-tom text-black text-body-sm font-semibold focus-ring"
+                >
+                  Salvar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditingRationale(false)}
+                  className="h-8 px-3 rounded-md text-body-sm text-fg-muted hover:text-fg focus-ring"
+                >
+                  cancelar
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="shrink-0 flex items-center gap-1">
@@ -380,6 +419,7 @@ function CheckpointCard({
             items={[
               { label: 'Editar nome', onClick: () => { setEditValue(checkpoint.name); setEditing(true); } },
               ...(onEditDate ? [{ label: 'Editar prazo', onClick: () => setEditingDate(true) }] : []),
+              ...(onEditRationale ? [{ label: checkpoint.rationale ? 'Editar contexto' : 'Adicionar contexto', onClick: () => { setRationaleValue(checkpoint.rationale ?? ''); setEditingRationale(true); } }] : []),
               {
                 label: 'Excluir checkpoint',
                 danger: true,
@@ -576,6 +616,7 @@ function CheckpointSortableList({
   onToggleTask,
   onRenameCheckpoint,
   onEditCheckpointDate,
+  onEditCheckpointRationale,
   onDeleteCheckpoint,
   onRenameTask,
   onDeleteTask,
@@ -597,6 +638,7 @@ function CheckpointSortableList({
   onToggleTask: (t: Task) => void;
   onRenameCheckpoint: (cpId: string, name: string) => void;
   onEditCheckpointDate?: (cpId: string, date: string | null) => void;
+  onEditCheckpointRationale?: (cpId: string, rationale: string | null) => void;
   onDeleteCheckpoint: (cpId: string) => void;
   onRenameTask: (taskId: string, title: string) => void;
   onDeleteTask: (taskId: string) => void;
@@ -639,6 +681,7 @@ function CheckpointSortableList({
                 onToggleTask={onToggleTask}
                 onRenameCheckpoint={(name) => onRenameCheckpoint(cp.id, name)}
                 onEditDate={onEditCheckpointDate ? (date) => onEditCheckpointDate(cp.id, date) : undefined}
+                onEditRationale={onEditCheckpointRationale ? (r) => onEditCheckpointRationale(cp.id, r) : undefined}
                 onDeleteCheckpoint={() => onDeleteCheckpoint(cp.id)}
                 onRenameTask={onRenameTask}
                 onDeleteTask={onDeleteTask}
@@ -672,6 +715,7 @@ function SortableCheckpointWrapper(props: {
   onToggleTask: (t: Task) => void;
   onRenameCheckpoint: (name: string) => void;
   onEditDate?: (date: string | null) => void;
+  onEditRationale?: (rationale: string | null) => void;
   onDeleteCheckpoint: () => void;
   onRenameTask: (taskId: string, title: string) => void;
   onDeleteTask: (taskId: string) => void;
