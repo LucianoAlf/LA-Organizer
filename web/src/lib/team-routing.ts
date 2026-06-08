@@ -39,9 +39,10 @@ export function resolveLeadersOf(collab: Collab, allCollabs: Collab[]): Collab[]
   const isSelfLeader = LEADER_ROLES.has(collab.role);
   if (!isSelfLeader) {
     if (unit && UNITS.has(unit)) for (const c of active) if (c.role === 'manager' && c.unit === unit) add(c);
-    // pedagógico → AMBOS os coordenadores pedagógicos (os dois veem todos).
-    if (fr === 'pedagogico') for (const c of active) if (c.role === 'coordinator' && c.function_role === 'pedagogico') add(c);
-    if (fr === 'marketing') for (const c of active) if (c.role === 'manager' && c.function_role === 'marketing') add(c);
+    // Grupo funcional → líderes (gerente/coord) do MESMO grupo. Generalizado p/ qualquer
+    // grupo (pedagógico, comercial, marketing, financeiro, operações, sucesso_cliente…) sem
+    // hardcode. Pedagógico cai nos 2 coords porque os dois têm function_role='pedagogico'.
+    if (fr) for (const c of active) if ((c.role === 'coordinator' || c.role === 'manager') && c.function_role === fr) add(c);
   }
   // Override manual (matriz editável) — aditivo às regras. Pula CEO: ele já recebe
   // o digest completo (entra só pelo fallback de órfão, abaixo).

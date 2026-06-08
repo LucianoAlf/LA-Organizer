@@ -56,18 +56,13 @@ function resolveLeadersOf(collab, allCollabs) {
         if (c.role === 'manager' && c.unit === unit) add(c);
       }
     }
-    // 2) pedagógico → AMBOS os coordenadores pedagógicos (Juliana + Quintela).
-    // Os dois veem TODOS os pedagógicos — "tudo que a Quintela vê, a Juliana vê"
-    // (um lembra o outro). SEM exclusividade (decisão CEO 08/06).
-    if (fr === 'pedagogico') {
+    // 2) grupo funcional (function_role) → líderes (gerente/coord) do MESMO grupo.
+    // Generalizado p/ qualquer grupo (pedagógico, comercial, marketing, financeiro,
+    // operações, sucesso_cliente…) sem hardcode. Pedagógico cai nos 2 coords porque os
+    // dois têm function_role='pedagogico'. SEM exclusividade (decisão CEO 08/06).
+    if (fr) {
       for (const c of active) {
-        if (c.role === 'coordinator' && c.function_role === 'pedagogico') add(c);
-      }
-    }
-    // 3) marketing → managers de marketing
-    if (fr === 'marketing') {
-      for (const c of active) {
-        if (c.role === 'manager' && c.function_role === 'marketing') add(c);
+        if ((c.role === 'coordinator' || c.role === 'manager') && c.function_role === fr) add(c);
       }
     }
   }

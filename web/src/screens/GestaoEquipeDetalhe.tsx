@@ -17,11 +17,13 @@ const UNIT_OPTIONS = [
   { value: 'all',          label: 'Geral' },
 ] as const;
 const FUNCTION_ROLE_OPTIONS = [
-  { value: 'pedagogico',   label: 'Pedagógico' },
-  { value: 'marketing',    label: 'Marketing' },
-  { value: 'ops_tecnicas', label: 'Operações' },
-  { value: 'farmer',       label: 'Farmer' },
-  { value: 'tech',         label: 'Tech' },
+  { value: 'pedagogico',      label: 'Pedagógico' },
+  { value: 'comercial',       label: 'Comercial' },
+  { value: 'marketing',       label: 'Marketing' },
+  { value: 'financeiro',      label: 'Financeiro' },
+  { value: 'ops_tecnicas',    label: 'Operações' },
+  { value: 'sucesso_cliente', label: 'Sucesso do Cliente' },
+  { value: 'farmer',          label: 'Farmer' },
 ] as const;
 
 type CollabFull = {
@@ -215,6 +217,9 @@ export function GestaoEquipeDetalhe() {
   const draftMe = draftAll.find(c => c.id === id);
   const nameOf = (cid: string) =>
     roster.find(c => c.id === cid)?.preferred_name || roster.find(c => c.id === cid)?.full_name || cid;
+  const leadersOfGroup = (fr: string) => roster
+    .filter(c => (c.role === 'manager' || c.role === 'coordinator') && c.function_role === fr)
+    .map(c => c.preferred_name || c.full_name);
   const previewLeaders = draftMe ? resolveLeadersOf(draftMe, draftAll).map(c => nameOf(c.id)) : [];
   const previewMembers = draftMe ? membersOf(draftMe, draftAll).map(c => nameOf(c.id)) : [];
 
@@ -336,7 +341,10 @@ export function GestaoEquipeDetalhe() {
             <h2 className="text-label text-fg-muted uppercase tracking-wide">Governança</h2>
 
             <div className="space-y-md">
-              <label className="text-body-sm text-fg-muted">Grupo de governança (define a regra automática)</label>
+              <label className="text-body-sm text-fg-muted">Grupo de governança</label>
+              <p className="text-body-sm text-fg-muted">
+                O departamento da pessoa. Quem for Gerente/Coordenador do mesmo grupo vira líder automático dela — sem precisar marcar no "Reporta a".
+              </p>
               <div className="flex flex-wrap gap-2">
                 {FUNCTION_ROLE_OPTIONS.map(f => (
                   <button key={f.value} type="button"
@@ -345,6 +353,19 @@ export function GestaoEquipeDetalhe() {
                     {f.label}
                   </button>
                 ))}
+              </div>
+              <div className="rounded-lg bg-bg-elevated border border-border p-3 text-body-sm space-y-0.5">
+                {FUNCTION_ROLE_OPTIONS.map(f => {
+                  const ls = leadersOfGroup(f.value);
+                  return (
+                    <div key={f.value}>
+                      <span className="text-fg-muted">{f.label} → </span>
+                      {ls.length
+                        ? <span className="text-fg">{ls.join(', ')}</span>
+                        : <span className="text-fg-muted italic">sem líder ainda</span>}
+                    </div>
+                  );
+                })}
               </div>
             </div>
 

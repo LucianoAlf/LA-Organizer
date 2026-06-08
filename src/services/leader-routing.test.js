@@ -61,6 +61,11 @@ test('Leo (pedagógico/Barra) → Juliana + Quintela + Krissya (3 líderes)', ()
 test('John (marketing) → Yuri', () => {
   assert.deepStrictEqual(ids(JOHN), ['yuri']);
 });
+test('grupo genérico (self-service): comercial cai no gerente comercial', () => {
+  const CM = { id: 'cm', role: 'manager', function_role: 'comercial', unit: 'all', is_ceo: false, is_active: true };
+  const CC = { id: 'cc', role: 'collaborator', function_role: 'comercial', unit: 'all', is_ceo: false, is_active: true };
+  assert.deepStrictEqual(resolveLeaderIdsOf(CC, [CEO, CM, CC]), ['cm']);
+});
 
 // ── Órfãos / ops / líderes → CEO ────────────────────────────────────────────
 test('Rafinha (ops_tecnicas) → CEO', () => {

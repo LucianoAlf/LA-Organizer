@@ -34,6 +34,11 @@ describe('resolveLeaderIdsOf', () => {
   it('marketing → Yuri', () => {
     expect(resolveLeaderIdsOf(john, all)).toEqual(['yu']);
   });
+  it('grupo genérico (self-service): comercial cai no gerente comercial', () => {
+    const cmgr = C({ id: 'cm', role: 'manager', function_role: 'comercial' });
+    const ccol = C({ id: 'cc', function_role: 'comercial' });
+    expect(resolveLeaderIdsOf(ccol, [ceo, cmgr, ccol])).toEqual(['cm']);
+  });
   it('órfão (farmer unit=all, sem supervisor) → CEO', () => {
     expect(resolveLeaderIdsOf(fabi, all)).toEqual(['ceo']);
   });
