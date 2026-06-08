@@ -9,6 +9,10 @@ import { LoadingState } from '../components/LoadingState';
 import { EmptyState } from '../components/EmptyState';
 import { PageHeader } from '../components/PageHeader';
 import { fetchEventsForTeamDay, formatEventTimeRange } from '../lib/events';
+import {
+  dedupeRecurringOverdue, filterActiveAssignees, countDistinctOverdue, overdueByPerson as computeOverdueByPerson,
+  type OverdueRow,
+} from '../lib/governance-metrics';
 import type { CalendarEvent } from '../types';
 
 interface TeamSnapshot {
@@ -18,7 +22,8 @@ interface TeamSnapshot {
   noResponse: string[];
   completedToday: number;
   dueToday: number;
-  overdue: { id: string; title: string; assigned_to: string; due_date: string }[];
+  overdueCount: number;
+  overdueByPerson: Array<{ assigned_to: string; count: number }>;
   events: CalendarEvent[];
   eventsByCollab: Record<string, number>;
 }
@@ -70,7 +75,8 @@ async function fetchTeamSnapshot(myId: string): Promise<TeamSnapshot> {
     .gte('completed_at', todayStart).lte('completed_at', todayEnd);
   const { count: dueToday = 0 } = await supabase
     .from('tasks').select('id', { count: 'exact', head: true })
-    .eq('context', 'work').eq('due_date', today);
+    .eq('context', 'work').eq('due_date', today)
+    .not('status', 'in', '(done,cancelled)');
 
   const { data: overdueRaw } = await supabase
     .from('tasks')
@@ -78,7 +84,13 @@ async function fetchTeamSnapshot(myId: string): Promise<TeamSnapshot> {
     .eq('context', 'work')
     .lt('due_date', today)
     .not('status', 'in', '(done,cancelled)')
-    .limit(50);
+    .order('due_date', { ascending: true })
+    .limit(1000);
+
+  // Honestidade (spec §4): tira inativo, colapsa fan-out de recorrência, conta distinto.
+  const activeIds = new Set(allCollabs.map(c => c.id));
+  const overdueActive = filterActiveAssignees((overdueRaw ?? []) as OverdueRow[], activeIds);
+  const dedupedOverdue = dedupeRecurringOverdue(overdueActive);
 
   // Events do time hoje — RLS filtra para coord/director apenas work.
   const events = await fetchEventsForTeamDay(today, 'work');
@@ -95,7 +107,8 @@ async function fetchTeamSnapshot(myId: string): Promise<TeamSnapshot> {
     noResponse,
     completedToday: completedToday ?? 0,
     dueToday: dueToday ?? 0,
-    overdue: overdueRaw ?? [],
+    overdueCount: countDistinctOverdue(dedupedOverdue),
+    overdueByPerson: computeOverdueByPerson(dedupedOverdue),
     events,
     eventsByCollab,
   };
@@ -119,9 +132,7 @@ export function DashboardTime() {
   if (error) return <EmptyState title="Erro" description={(error as Error).message} />;
   if (!data) return null;
 
-  const { team, allCollabs, responded, noResponse, completedToday, dueToday, overdue, events, eventsByCollab } = data;
-  const overdueByPerson = new Map<string, number>();
-  for (const t of overdue) overdueByPerson.set(t.assigned_to, (overdueByPerson.get(t.assigned_to) ?? 0) + 1);
+  const { team, allCollabs, responded, noResponse, completedToday, dueToday, overdueCount, overdueByPerson, events, eventsByCollab } = data;
 
   const nameOf = (id: string) => allCollabs.find(t => t.id === id)?.full_name?.split(' ')[0] ?? id.slice(0, 6);
   const evCount = (id: string) => eventsByCollab[id] ?? 0;
@@ -135,7 +146,7 @@ export function DashboardTime() {
         <StatCard label="No time" value={team.length} />
         <StatCard label="Concluídas" value={completedToday} tone={completedToday ? 'success' : 'neutral'} />
         <StatCard label="Pra hoje" value={dueToday} tone={dueToday ? 'tom' : 'neutral'} />
-        <StatCard label="Atrasadas" value={overdue.length} tone={overdue.length ? 'danger' : 'neutral'} />
+        <StatCard label="Atrasadas" value={overdueCount} tone={overdueCount ? 'danger' : 'neutral'} />
         <StatCard label="Compromissos" value={events.length} tone={events.length ? 'tom' : 'neutral'} />
       </div>
 
@@ -205,16 +216,16 @@ export function DashboardTime() {
         </div>
       </section>
 
-      {overdue.length > 0 && (
+      {overdueByPerson.length > 0 && (
         <section className="surface p-md">
           <div className="flex items-center gap-2 text-label uppercase tracking-wide text-fg-muted">
             <AlertTriangle size={14} /> Atrasos por pessoa
           </div>
           <ul className="mt-md flex flex-wrap gap-2">
-            {[...overdueByPerson.entries()].sort((a, b) => b[1] - a[1]).map(([id, n]) => (
-              <li key={id}>
-                <Link to={`/time/${id}`} className="inline-block">
-                  <Badge tone="danger">{nameOf(id)}: {n}</Badge>
+            {overdueByPerson.map(({ assigned_to, count }) => (
+              <li key={assigned_to}>
+                <Link to={`/time/${assigned_to}`} className="inline-block">
+                  <Badge tone="danger">{nameOf(assigned_to)}: {count}</Badge>
                 </Link>
               </li>
             ))}
