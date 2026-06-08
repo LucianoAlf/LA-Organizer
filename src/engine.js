@@ -19,6 +19,7 @@ const inventarioService = require('./services/inventario-service');
 const { hasTrailingQuestion, isInfoGatheringReply } = require('./services/reply-classify');
 const { shiftRemindersByReschedule, shiftTaskRemindAt } = require('./services/reschedule-reminders');
 const { matchRowsByShortId } = require('./services/short-id-match');
+const { getActiveWindow } = require('./services/active-window');
 const inventarioValidators = require('./services/inventario-validators');
 const announcementsService = require('./services/announcements');
 const pendingIntents = require('./services/pending-intents');
@@ -7426,7 +7427,9 @@ async function processMessage(phone, text, raw = {}) {
   }
 
   // Constrói o system prompt 4-block (regras → identidade → contexto → skill ativa).
-  const _promptOpts = { lastUserMessage: text, coordHint, coordContext };
+  // Horário-padrão de lembrete: janela ativa aprendida do uso (cold-start 09h). Degrada gracioso — nunca lança.
+  const _activeWin = await getActiveWindow(supabase, collab.id, new Date());
+  const _promptOpts = { lastUserMessage: text, coordHint, coordContext, reminderDefaultHour: _activeWin.hour };
   let { systemPrompt, ctx } = await buildSystemPrompt(collab, _promptOpts);
   _metrics.skill_active = _promptOpts.activeSkill || 'none'; // Fatia J: telemetria da skill ativa (era coluna morta)
   const _tt = ctx.todayTasks || {};

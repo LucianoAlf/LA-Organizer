@@ -2572,7 +2572,12 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     eventsForCtx = eventsForCtx.filter(e => e.context === 'work');
   }
   // briefing_diario / daily_briefing: mantém todos os events (sem filtro).
-  const baseCtx = buildContext(collaborator, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx, ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || [], ctx.teamTodayChecklists || [], ctx.teamExpectedTemplates || [], ctx.schoolEvents || [], ctx.eventTypes || [], ctx.doneFutureTasks || [], monthlyCtxBlock, ctx.orgChart || [], ctx.criticalMemories || [], ctx.preferenceMemories || [], ctx.weeklySummary || null, ctx.recentContextMemories || [], ctx.openTasksNoDue || []);
+  // Horário-padrão de lembrete (Abordagem A): janela ativa aprendida do uso, resolvida
+  // no engine e passada via opts.reminderDefaultHour (0-23). Cold-start → 09h.
+  const _reminderHour = (opts && Number.isInteger(opts.reminderDefaultHour)) ? opts.reminderDefaultHour : 9;
+  const _reminderHourLabel = `${String(_reminderHour).padStart(2, '0')}h`;
+  const reminderDefaultBlock = `\n\n**⏰ Horário-padrão de lembrete:** quando ${nameFor(collaborator)} pedir um lembrete dando o DIA mas SEM a HORA ("me lembra amanhã/sexta"), use ${_reminderHourLabel} e AFIRME ("fechou, te lembro às ${_reminderHourLabel} — quer outra hora?"); NÃO pergunte que horas (perguntar trava a conversa). Vale só p/ lembrete/tarefa — compromisso com terceiros (reunião/aula/mentoria) sem hora continua pedindo a hora.`;
+  const baseCtx = buildContext(collaborator, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx, ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || [], ctx.teamTodayChecklists || [], ctx.teamExpectedTemplates || [], ctx.schoolEvents || [], ctx.eventTypes || [], ctx.doneFutureTasks || [], monthlyCtxBlock, ctx.orgChart || [], ctx.criticalMemories || [], ctx.preferenceMemories || [], ctx.weeklySummary || null, ctx.recentContextMemories || [], ctx.openTasksNoDue || []) + reminderDefaultBlock;
 
   // Histórico completo dos últimos 7 dias — agrupado por dia
   let pastEventsBlock = '';

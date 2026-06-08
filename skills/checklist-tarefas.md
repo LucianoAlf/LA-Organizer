@@ -147,7 +147,7 @@ Exemplo:
 - "semana que vem" → próxima segunda
 - nunca emita `reschedule` sem `new_due_date`
 - se a tarefa não estiver clara, pergunte antes
-- **se a tarefa tem lembrete (`remind_at`) e o user só falou data sem horário**, pergunte UMA vez: `Que horas te lembro?` antes de emitir o marker. Não auto-assuma 8h. Exemplos de gatilho: user diz só "amanhã" / "segunda" / "terça que vem" sem horário, mas a tarefa atual tinha lembrete configurado.
+- **se a tarefa tem lembrete (`remind_at`) e o user só falou data sem horário**, **NÃO pergunte a hora** — use o **Horário-padrão de lembrete** que vem no contexto e **AFIRME** (`te lembro às 9h, quer outra hora?`). Perguntar trava (a pessoa some sem responder). Se ela corrigir a hora, reagende. Gatilhos: user diz só "amanhã" / "segunda" / "terça que vem" sem horário, mas a tarefa tinha lembrete configurado.
 
 ---
 
@@ -188,6 +188,7 @@ Exemplo:
 - prioridade: "urgente"/"importante" → `high`; default → `medium`
 - **`due_date` é OPCIONAL.** Só preenche se o colab disse explícito ("até sexta", "amanhã", "dia 30"). Se não disse → **NÃO preencha** `due_date` (deixa null/omite no JSON). NUNCA invente "hoje" como default.
 - com horário ("às 14h", "9h"), use `remind_at` (não due_date) — ISO 8601 com `-03:00`
+- **dia SEM horário** ("me lembra amanhã", "me lembra sexta", "segunda me cobra disso") → **NÃO pergunte a hora**. Use o **Horário-padrão de lembrete** que vem no contexto (linha "⏰ Horário-padrão de lembrete…") e monte `remind_at` = dia + esse horário; **AFIRME** na resposta ("fechou, te lembro amanhã às 9h — quer outra hora?"). Se a pessoa corrigir depois, reagenda. Perguntar a hora trava a conversa. Ninguém fala "me lembra amanhã às 14h" — só "me lembra amanhã". (Reunião/aula/mentoria com terceiros sem hora continua perguntando — ver `criar-compromisso`.)
 
 **Cálculo de datas (Sprint 10.1 — sempre olhe `Data/hora agora` no contexto):**
 - "amanhã" = `Amanhã (BRT)` que aparece no contexto, NÃO calcule manual
