@@ -52,6 +52,8 @@ interface CheckpointsTabProps {
   onToggleCheckpoint: (cp: CheckpointFull) => void;
   onToggleTask: (t: Task) => void;
   onRenameCheckpoint: (cpId: string, name: string) => void;
+  /** Editar o prazo (due_date) do checkpoint — YYYY-MM-DD ou null pra limpar. */
+  onEditCheckpointDate?: (cpId: string, date: string | null) => void;
   onDeleteCheckpoint: (cpId: string) => void;
   onRenameTask: (tId: string, title: string) => void;
   onDeleteTask: (tId: string) => void;
@@ -84,6 +86,7 @@ export function CheckpointsTab(props: CheckpointsTabProps) {
     onToggleCheckpoint,
     onToggleTask,
     onRenameCheckpoint,
+    onEditCheckpointDate,
     onDeleteCheckpoint,
     onRenameTask,
     onDeleteTask,
@@ -160,6 +163,7 @@ export function CheckpointsTab(props: CheckpointsTabProps) {
               onToggleCheckpoint={onToggleCheckpoint}
               onToggleTask={onToggleTask}
               onRenameCheckpoint={onRenameCheckpoint}
+              onEditCheckpointDate={onEditCheckpointDate}
               onDeleteCheckpoint={onDeleteCheckpoint}
               onRenameTask={onRenameTask}
               onDeleteTask={onDeleteTask}
@@ -212,6 +216,7 @@ function CheckpointCard({
   onToggleCheckpoint,
   onToggleTask,
   onRenameCheckpoint,
+  onEditDate,
   onDeleteCheckpoint,
   onRenameTask,
   onDeleteTask,
@@ -236,6 +241,7 @@ function CheckpointCard({
   onToggleCheckpoint: () => void;
   onToggleTask: (t: Task) => void;
   onRenameCheckpoint: (name: string) => void;
+  onEditDate?: (date: string | null) => void;
   onDeleteCheckpoint: () => void;
   onRenameTask: (taskId: string, title: string) => void;
   onDeleteTask: (taskId: string) => void;
@@ -259,6 +265,7 @@ function CheckpointCard({
   const [expanded, setExpanded] = useState(!isDone);
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(checkpoint.name);
+  const [editingDate, setEditingDate] = useState(false);
   const total = tasks.length;
   const done = tasks.filter(t => t.status === 'done').length;
 
@@ -349,12 +356,30 @@ function CheckpointCard({
               />
             </div>
           )}
+          {/* Editar prazo inline (DS DateInput) — fora do button de expandir pra não aninhar interativos */}
+          {!editing && editingDate && onEditDate && (
+            <div className="mt-2 inline-flex items-center gap-2" data-no-nav>
+              <span className="text-body-sm text-fg-muted">Prazo:</span>
+              <DateInput
+                value={checkpoint.due_date ?? ''}
+                onChange={(d) => { onEditDate(d || null); setEditingDate(false); }}
+              />
+              <button
+                type="button"
+                onClick={() => setEditingDate(false)}
+                className="text-body-sm text-fg-muted hover:text-fg focus-ring rounded-sm"
+              >
+                cancelar
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="shrink-0 flex items-center gap-1">
           <RowMenu
             items={[
               { label: 'Editar nome', onClick: () => { setEditValue(checkpoint.name); setEditing(true); } },
+              ...(onEditDate ? [{ label: 'Editar prazo', onClick: () => setEditingDate(true) }] : []),
               {
                 label: 'Excluir checkpoint',
                 danger: true,
@@ -550,6 +575,7 @@ function CheckpointSortableList({
   onToggleCheckpoint,
   onToggleTask,
   onRenameCheckpoint,
+  onEditCheckpointDate,
   onDeleteCheckpoint,
   onRenameTask,
   onDeleteTask,
@@ -570,6 +596,7 @@ function CheckpointSortableList({
   onToggleCheckpoint: (cp: CheckpointFull) => void;
   onToggleTask: (t: Task) => void;
   onRenameCheckpoint: (cpId: string, name: string) => void;
+  onEditCheckpointDate?: (cpId: string, date: string | null) => void;
   onDeleteCheckpoint: (cpId: string) => void;
   onRenameTask: (taskId: string, title: string) => void;
   onDeleteTask: (taskId: string) => void;
@@ -611,6 +638,7 @@ function CheckpointSortableList({
                 onToggleCheckpoint={() => onToggleCheckpoint(cp)}
                 onToggleTask={onToggleTask}
                 onRenameCheckpoint={(name) => onRenameCheckpoint(cp.id, name)}
+                onEditDate={onEditCheckpointDate ? (date) => onEditCheckpointDate(cp.id, date) : undefined}
                 onDeleteCheckpoint={() => onDeleteCheckpoint(cp.id)}
                 onRenameTask={onRenameTask}
                 onDeleteTask={onDeleteTask}
@@ -643,6 +671,7 @@ function SortableCheckpointWrapper(props: {
   onToggleCheckpoint: () => void;
   onToggleTask: (t: Task) => void;
   onRenameCheckpoint: (name: string) => void;
+  onEditDate?: (date: string | null) => void;
   onDeleteCheckpoint: () => void;
   onRenameTask: (taskId: string, title: string) => void;
   onDeleteTask: (taskId: string) => void;

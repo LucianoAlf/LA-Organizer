@@ -1,6 +1,6 @@
 // src/rituals/checkpoint-deadlines.js
 // Lembrete proativo de prazo de checkpoint. Disparado pelo dispatcher 1x/dia (09:00 BRT).
-// Para cada checkpoint nao-done/cancelled com due_date em D-3, D-1, D0, D+1,
+// Para cada checkpoint nao-done/cancelled com due_date em D-3, D-1, D0 (NUNCA D+1/antes do prazo),
 // manda mensagem WhatsApp pro responsavel (project_checkpoints.assigned_to) ou,
 // no fallback, pro dono do projeto (projects.created_by).
 //
@@ -126,7 +126,10 @@ async function runCheckProjectDeadlines(opts = {}) {
     today = `${parts.year}-${parts.month}-${parts.day}`;
   }
 
-  const marcos = [addDays(today, -3), addDays(today, -1), today, addDays(today, 1)];
+  // PRAZO-FIX (08/06, decisão do CEO): NÃO avisar ANTES do prazo. O D+1 (due amanhã)
+  // foi removido — aviso na véspera parecia "cobrança dentro do prazo" (caso Juliana/
+  // repertório). Só lembra no DIA do prazo (D0) e quando JÁ venceu (D-1, D-3).
+  const marcos = [addDays(today, -3), addDays(today, -1), today];
   console.log(`[checkpoint_deadline] varrendo marcos: ${marcos.join(', ')}`);
 
   const { data: cps, error } = await supabase
