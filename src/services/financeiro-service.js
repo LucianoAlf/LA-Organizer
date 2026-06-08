@@ -642,6 +642,37 @@ async function cardsForAlerts() {
   return (data || []).map((c) => ({ ...c, collab: byId[c.collaborator_id] })).filter((c) => c.collab);
 }
 
+// Junta numa só chamada o que entra no digest financeiro matinal: contas (atrasadas/hoje/
+// em ≤2 dias) + faturas de cartão a vencer (≤2 dias, não pagas), classificadas por urgência.
+// SEGURANÇA: tudo filtrado por collaboratorId (service_role ignora RLS).
+// Item: { name, amount, dia, isCard }. Retorno: { atrasadas, hoje, emBreve }.
+async function dueItemsForDigest(collaboratorId, { dom, ymd }) {
+  const out = { atrasadas: [], hoje: [], emBreve: [] };
+  // Contas fixas vencendo em ≤2 dias (inclui atrasadas, mesma janela do ritual antigo).
+  const bills = await billsDueWithin(collaboratorId, 2);
+  for (const b of bills) {
+    const dias = b.due_day - dom;
+    const item = { name: b.name, amount: Number(b.amount), dia: b.due_day, isCard: false };
+    if (dias < 0) out.atrasadas.push(item);
+    else if (dias === 0) out.hoje.push(item);
+    else out.emBreve.push(item);
+  }
+  // Faturas de cartão (mesma lógica do antigo checkCardDueReminders).
+  const DAYS_BEFORE = 2;
+  const y = Number(ymd.slice(0, 4)), mo = Number(ymd.slice(5, 7));
+  const cards = (await cardsForAlerts()).filter((c) => c.collaborator_id === collaboratorId);
+  for (const card of cards) {
+    if (card.due_day < dom || card.due_day > dom + DAYS_BEFORE) continue;
+    const monthOff = card.due_day >= card.closing_day ? 0 : -1;
+    const dueComp = new Date(Date.UTC(y, (mo - 1) + monthOff, 1)).toISOString().slice(0, 10);
+    const inv = await cardInvoice(collaboratorId, card.id, dueComp);
+    if (inv.isPaid || inv.total <= 0) continue;
+    const item = { name: 'Fatura ' + card.name, amount: inv.remaining, dia: card.due_day, isCard: true };
+    if (card.due_day - dom === 0) out.hoje.push(item); else out.emBreve.push(item);
+  }
+  return out;
+}
+
 module.exports = {
   monthBounds,
   createAccount, updateAccount, listAccounts, findAccountByName, ensureDinheiro, resolveSource,
@@ -661,4 +692,5 @@ module.exports = {
   createCard, updateCard, listCards, findCard, insertCardPurchase,
   cardInvoice, cardUsage, payCardInvoice, createTransfer,
   checkAndMarkLimitAlert, cardsForAlerts, ALERT_BANDS,
+  dueItemsForDigest,
 };
