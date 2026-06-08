@@ -12,7 +12,11 @@ Validadas com o Alf no chat. A tela `/time` e o roteamento do TOM (`leader-routi
 Juliana, Quintela (pedagógico) · Jereh (Campo Grande) · Clayton (Recreio, interino) · Krissya (Barra + Comercial) · Yuri (Marketing).
 
 **2. Reportam DIRETO ao Luciano (sem time → NÃO são líderes, não entram no semáforo):**
-Rafinha (Ops Técnicas), Jéssica (Sucesso do Cliente), Fabi (licença), Ana (RH), Rose (Financeiro — *a entrar*). Quando o Dudu/estagiário entrar no sistema, Rafinha passa a ter time.
+Rafinha (Ops Técnicas), Jéssica (Sucesso do Cliente), Fabi (licença), Ana (RH), Rose (Financeiro — *a entrar*).
+
+**Transições futuras (viram líderes quando o time entrar no sistema):**
+- **Rafinha** → quando o **Dudu** (estagiário) entrar, passa a liderá-lo.
+- **Ana + Rose** → vão liderar as **Farmers (todas)** futuramente.
 
 **3. Pedagógico — os DOIS coordenadores veem TODOS (sem exclusividade):**
 - **Todo pedagógico cai em Juliana E Quintela.** "Tudo que a Quintela vê, a Juliana vê" — um lembra o outro. Dai, Matheus, Jordan, Peterson, Ramon, Rodrigo, Leo → **os dois**.
