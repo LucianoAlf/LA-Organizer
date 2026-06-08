@@ -2642,6 +2642,28 @@ async function perLeaderUnclosedTasksReport(now = new Date(), opts = {}) {
   return plan;
 }
 
+// ── Fase 6b — config de governança por pessoa (governance_prefs) ─────────────
+// Cada líder/CEO ajusta o próprio digest (horário, on/off, seções). Sem linha =
+// defaults (ligado, todas as seções, horário padrão da função).
+async function getGovernancePrefs(collabId) {
+  try {
+    const { data } = await supabase
+      .from('governance_prefs')
+      .select('digest_enabled, send_time, show_scorecard, show_compromissos, show_tarefas')
+      .eq('collaborator_id', collabId)
+      .maybeSingle();
+    return {
+      digest_enabled: data ? data.digest_enabled : true,
+      send_time: data ? data.send_time : null,
+      show_scorecard: data ? data.show_scorecard : true,
+      show_compromissos: data ? data.show_compromissos : true,
+      show_tarefas: data ? data.show_tarefas : true,
+    };
+  } catch (e) {
+    return { digest_enabled: true, send_time: null, show_scorecard: true, show_compromissos: true, show_tarefas: true };
+  }
+}
+
 // ── Fase 6a — DIGEST ÚNICO de governança ────────────────────────────────────
 // Monta a seção 🏆 Scorecard (enxuta + badges) dos LÍDERES DE VERDADE (têm time —
 // alinhado ao dashboard). '' fora de segunda / sem scorecard da semana.
@@ -2682,11 +2704,8 @@ async function sendGovernanceDigest(now = new Date(), opts = {}) {
   const sp = nowSaoPaulo();
   const ymdRef = sp.ymd;
 
-  // Gate (CEO): digest às 9h BRT, seg–sáb. Domingo sem governança. force/dryRun ignoram.
-  if (!opts.force && !opts.dryRun) {
-    if (sp.dow === 0) return;
-    if (currentSlot(sp) !== timeToSlot('09:00')) return;
-  }
+  // Domingo: sem governança (force/dryRun ignoram). O horário é POR PESSOA (governance_prefs).
+  if (!opts.force && !opts.dryRun && sp.dow === 0) return;
 
   const { data: ceos } = await supabase
     .from('collaborators').select('id, full_name, phone')
@@ -2695,9 +2714,15 @@ async function sendGovernanceDigest(now = new Date(), opts = {}) {
 
   const dryResults = [];
   for (const ceo of ceos) {
-    const scorecardSec = await buildScorecardDigestSection(now);
-    const eventsR = await ceoTeamUnclosedEventsReport(now, { returnText: true });
-    const tasksR = await ceoTeamUnclosedTasksReport(now, { returnText: true });
+    // Fase 6b — config por pessoa: liga/desliga + horário + seções.
+    const prefs = await getGovernancePrefs(ceo.id);
+    if (!opts.force && !opts.dryRun) {
+      if (!prefs.digest_enabled) continue;
+      if (currentSlot(sp) !== timeToSlot(prefs.send_time || '09:00')) continue;
+    }
+    const scorecardSec = prefs.show_scorecard ? await buildScorecardDigestSection(now) : '';
+    const eventsR = prefs.show_compromissos ? await ceoTeamUnclosedEventsReport(now, { returnText: true }) : null;
+    const tasksR = prefs.show_tarefas ? await ceoTeamUnclosedTasksReport(now, { returnText: true }) : null;
     const eventsSec = (eventsR && eventsR.text) || '';
     const tasksSec = (tasksR && tasksR.text) || '';
     if (!scorecardSec && !eventsSec && !tasksSec) continue;
@@ -2745,11 +2770,9 @@ async function sendLeaderGovernanceDigest(now = new Date(), opts = {}) {
   const sp = nowSaoPaulo();
   const ymdRef = sp.ymd;
 
-  // Gate: 14h seg–sex / 9h sáb. Domingo não. force/dryRun ignoram.
-  const targetSlot = sp.dow === 6 ? timeToSlot('09:00') : (sp.dow >= 1 && sp.dow <= 5 ? timeToSlot('14:00') : null);
-  if (!opts.force && !opts.dryRun) {
-    if (targetSlot === null || currentSlot(sp) !== targetSlot) return opts.dryRun ? { results: [] } : undefined;
-  }
+  // Domingo: sem governança. Horário é POR PESSOA; default 14h seg–sex / 9h sáb.
+  const defaultLeaderTime = sp.dow === 6 ? '09:00' : '14:00';
+  if (!opts.force && !opts.dryRun && sp.dow === 0) return;
 
   const { data: allCollabs } = await supabase
     .from('collaborators')
@@ -2788,14 +2811,21 @@ async function sendLeaderGovernanceDigest(now = new Date(), opts = {}) {
     const teamIds = [...memberSet];
     if (teamIds.length === 0) continue;
 
-    const eventsR = await ceoTeamUnclosedEventsReport(now, { returnText: true, scopeIds: teamIds, groupByOwner: true });
-    const tasksR = await ceoTeamUnclosedTasksReport(now, { returnText: true, scopeIds: teamIds, groupByOwner: true });
+    // Fase 6b — config por pessoa: liga/desliga + horário + seções.
+    const prefs = await getGovernancePrefs(leaderId);
+    if (!opts.force && !opts.dryRun) {
+      if (!prefs.digest_enabled) continue;
+      if (currentSlot(sp) !== timeToSlot(prefs.send_time || defaultLeaderTime)) continue;
+    }
+
+    const eventsR = prefs.show_compromissos ? await ceoTeamUnclosedEventsReport(now, { returnText: true, scopeIds: teamIds, groupByOwner: true }) : null;
+    const tasksR = prefs.show_tarefas ? await ceoTeamUnclosedTasksReport(now, { returnText: true, scopeIds: teamIds, groupByOwner: true }) : null;
     const eventsSec = (eventsR && eventsR.text) || '';
     const tasksSec = (tasksR && tasksR.text) || '';
 
     let scoreSec = '';
     const myScore = scByLeader.get(leaderId);
-    if (myScore) {
+    if (prefs.show_scorecard && myScore) {
       scoreSec = formatScorecardSection([{
         leader_name: myScore.collaborators?.full_name || leader.full_name,
         closure_rate: myScore.closure_rate, tasks_overdue: myScore.tasks_overdue,

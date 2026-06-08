@@ -46,6 +46,14 @@ interface Prefs {
   notify_overdue_alerts_personal: boolean;
 }
 
+interface GovPrefs {
+  digest_enabled: boolean;
+  send_time: string | null;
+  show_scorecard: boolean;
+  show_compromissos: boolean;
+  show_tarefas: boolean;
+}
+
 const DOWS = [
   { v: 0, label: 'Domingo' },
   { v: 1, label: 'Segunda' },
@@ -302,6 +310,53 @@ export function Configuracoes() {
     onError: (err: Error) => showToast({ kind: 'error', title: 'Erro ao salvar', msg: err.message }),
   });
 
+  // Fase 6b — config de governança (tabela governance_prefs, separada). Padrão se sem linha.
+  const govQuery = useQuery({
+    queryKey: ['governance_prefs', collaborator?.id],
+    queryFn: async (): Promise<GovPrefs> => {
+      if (!collaborator?.id) return { digest_enabled: true, send_time: null, show_scorecard: true, show_compromissos: true, show_tarefas: true };
+      const { data } = await supabase
+        .from('governance_prefs')
+        .select('digest_enabled, send_time, show_scorecard, show_compromissos, show_tarefas')
+        .eq('collaborator_id', collaborator.id)
+        .maybeSingle();
+      return (data as GovPrefs) ?? { digest_enabled: true, send_time: null, show_scorecard: true, show_compromissos: true, show_tarefas: true };
+    },
+    enabled: Boolean(collaborator?.id && supabaseConfigured && isLeadership),
+  });
+  const [govForm, setGovForm] = useState<GovPrefs | null>(null);
+  useEffect(() => {
+    if (govQuery.data) setGovForm({ ...govQuery.data, send_time: govQuery.data.send_time ? trimSec(govQuery.data.send_time) : null });
+  }, [govQuery.data]);
+
+  const govMutation = useMutation({
+    mutationFn: async (p: GovPrefs) => {
+      if (!collaborator) throw new Error('no_session');
+      const { error } = await supabase.from('governance_prefs').upsert({
+        collaborator_id: collaborator.id,
+        digest_enabled: p.digest_enabled,
+        send_time: p.send_time ? padSec(p.send_time) : null,
+        show_scorecard: p.show_scorecard,
+        show_compromissos: p.show_compromissos,
+        show_tarefas: p.show_tarefas,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'collaborator_id' });
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['governance_prefs'] }),
+    onError: (err: Error) => showToast({ kind: 'error', title: 'Erro ao salvar', msg: err.message }),
+  });
+
+  // Atualiza local + salva (horário só salva quando completo HH:MM ou vazio).
+  const updateGov = (patch: Partial<GovPrefs>) => {
+    setGovForm(prev => {
+      const next = { ...(prev as GovPrefs), ...patch };
+      const t = next.send_time || '';
+      if (t === '' || /^([01]?\d|2[0-3]):[0-5]\d$/.test(t)) govMutation.mutate(next);
+      return next;
+    });
+  };
+
   const dndMutation = useMutation({
     mutationFn: async ({ untilIso, reason }: { untilIso: string | null; reason: string | null }) => {
       if (!collaborator) throw new Error('no_session');
@@ -503,6 +558,39 @@ export function Configuracoes() {
             onChange={v => voiceMutation.mutate(v)}
           />
         </Section>
+
+        {/* Governança — digest do time (Fase 6b). Visível pra liderança. */}
+        {isLeadership && govForm && (
+          <Section title="Governança (digest do time)" subtitle="O resumo diário do seu time que o TOM te manda no WhatsApp — scorecard + compromissos + tarefas numa mensagem só.">
+            <Toggle
+              label="Receber o digest de governança"
+              hint="Desligado = o TOM não te manda o resumo do time."
+              value={govForm.digest_enabled}
+              onChange={v => updateGov({ digest_enabled: v })}
+            />
+            {govForm.digest_enabled && (
+              <>
+                <Field label="Horário de envio" hint="Vazio = padrão (9h pro CEO; 14h pros líderes / 9h no sábado).">
+                  <div className="flex items-center gap-2">
+                    <TimeInput value={govForm.send_time || ''} onChange={v => updateGov({ send_time: v })} />
+                    {govForm.send_time && (
+                      <button type="button" onClick={() => updateGov({ send_time: '' })}
+                        className="text-body-sm text-fg-muted hover:text-fg underline underline-offset-2">
+                        usar padrão
+                      </button>
+                    )}
+                  </div>
+                </Field>
+                <Toggle label="🏆 Scorecard" hint="Semáforo dos líderes + badges."
+                  value={govForm.show_scorecard} onChange={v => updateGov({ show_scorecard: v })} />
+                <Toggle label="🎖️ Compromissos" hint="Compromissos do time em aberto."
+                  value={govForm.show_compromissos} onChange={v => updateGov({ show_compromissos: v })} />
+                <Toggle label="📋 Tarefas" hint="Tarefas atrasadas do time + diagnóstico."
+                  value={govForm.show_tarefas} onChange={v => updateGov({ show_tarefas: v })} />
+              </>
+            )}
+          </Section>
+        )}
 
         {/* Finanças — gerenciamento de categorias personalizadas (saiu do dashboard do financeiro) */}
         <Section title="Finanças">
