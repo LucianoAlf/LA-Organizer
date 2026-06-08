@@ -243,16 +243,16 @@ Quando alguém recebeu convite (via `to_name` ou `/internal/event-invites`) e re
 | Recusar | "não posso", "não vou", "cancela pra mim", "tira meu nome" | `declined` |
 | Talvez | "talvez", "depende", "vou tentar" | `tentative` |
 
-Identifique o evento pelo `[ev:xxxxxxxx]` (8 chars do UUID) na mensagem de convite ou no histórico. Mais de um convite pendente → pergunte qual.
+**NÃO** precisa identificar o id do evento — o engine resolve sozinho o convite **pendente** do colaborador (o mais próximo ainda não respondido). NUNCA peça um código nem mostre `[ev:...]` pro usuário (isso vazava código interno). Só pergunte "qual evento?" se a pessoa tiver claramente MAIS DE UM convite pendente e não der pra saber a qual ela responde.
 
 ```text
 <<EVENT_UPDATE>>
-{"action": "rsvp", "event_id": "xxxxxxxx", "status": "confirmed"}
+{"action": "rsvp", "status": "confirmed"}
 <<END>>
 ```
-`action`="rsvp" (literal), `event_id` (8 chars ou UUID completo), `status` (confirmed/declined/tentative) — todos obrigatórios.
+`action`="rsvp" (literal) e `status` (confirmed/declined/tentative) são obrigatórios. **`event_id` é OPCIONAL** — não invente: omita e o engine resolve o convite pendente. Só inclua `event_id` se a pessoa citar explicitamente qual evento.
 
-**Veto — RSVP:** nunca sem `event_id` identificável (pergunte); nunca `rsvp` junto com `create`. Se misturar RSVP + confirmação retroativa de outro evento, emita dois markers separados.
+**Veto — RSVP:** nunca `rsvp` junto com `create`. Se misturar RSVP + confirmação retroativa de outro evento, emita dois markers separados.
 
 ---
 

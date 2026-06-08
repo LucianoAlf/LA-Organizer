@@ -900,16 +900,16 @@ router.post('/internal/event-invites', requireInternalSecret, async (req, res) =
     ? (event.meeting_url ? `🔗 Link da reunião:\n${event.meeting_url}` : '🌐 Online')
     : event.location_text || (event.modality === 'hibrido' ? '🏠/🌐 Híbrido' : '📍 Presencial');
 
-  // Sprint 29.x — inclui ref do event_id (8 chars) para que TOM possa
-  // identificar o evento ao processar RSVP via WhatsApp.
-  const evRef = `[ev:${String(eventId).slice(0, 8)}]`;
+  // Sprint EV-LEAK (08/06) — SEM [ev:...] visível: o marcador vazava código interno
+  // pro usuário. O RSVP agora é resolvido pelo engine via convite pendente do
+  // colaborador (applyRsvp → resolvePendingInviteEventId), sem token na mensagem.
   for (const r of recipients) {
     const body =
       `📅 *${creator?.full_name || 'Alguém'}* te convidou pra um compromisso:\n\n` +
       `*${event.title}*\n` +
       `🕐 ${startStr} — ${endTime}\n` +
       `${where}\n\n` +
-      `Confirma presença respondendo "sim" ou "não" aqui. ${evRef}`;
+      `Confirma presença respondendo "sim" ou "não" aqui.`;
     whatsapp.sendMessage(r.phone, body).catch(e =>
       console.error(`[InternalAPI] event-invite WA send err pra ${r.id}: ${e.message}`),
     );

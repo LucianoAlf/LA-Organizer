@@ -2170,8 +2170,9 @@ async function applyEventActions(collaborator, events) {
   for (const e of events) {
     try {
       // Sprint 29.x — RSVP: confirmar/recusar presença num compromisso existente.
-      // TOM emite <<EVENT>>{"action":"rsvp","event_id":"<8chars ou uuid>","status":"confirmed|declined|tentative"}<<END>>
-      // O event_id vem do [ev:xxxxxxxx] embedado nas mensagens de convite.
+      // TOM emite <<EVENT_UPDATE>>{"action":"rsvp","status":"confirmed|declined|tentative"}<<END>>.
+      // event_id é OPCIONAL (Sprint EV-LEAK 08/06): sem ele, applyRsvp resolve o
+      // convite PENDENTE do colaborador — antes vinha do [ev:xxxx] que vazava pro usuário.
       if (RSVP_ALIASES.has(e.action)) {
         // Sprint 31.15 — aceita action:rsvp E verbos naturais (confirm/aceito/recuso...).
         const evId = typeof e.event_id === 'string' ? e.event_id.trim() : null;
@@ -2406,9 +2407,9 @@ async function applyEventActions(collaborator, events) {
           const locPart = e.location_text ? `\n📍 ${String(e.location_text).slice(0, 80)}` : '';
           // Sprint 23.6 — URL em linha própria pra WhatsApp linkar.
           const modPart = e.modality === 'online' && e.meeting_url ? `\n🔗 Link:\n${String(e.meeting_url).slice(0, 120)}` : '';
-          // Sprint 29.x — [ev:short_id] para RSVP via WhatsApp.
-          const evShortRef = data?.id ? ` [ev:${String(data.id).slice(0, 8)}]` : '';
-          const msg = `📅 *${senderName}* marcou um compromisso na sua agenda:\n\n*${row.title}*\n🗓️ ${whenStr}${locPart}${modPart}\n\nSe não puder, fala com ${senderName} pra remarcar.${evShortRef}`;
+          // Sprint EV-LEAK (08/06) — sem [ev:short_id] visível (vazava código). RSVP
+          // resolvido pelo engine via convite pendente do colaborador (applyRsvp).
+          const msg = `📅 *${senderName}* marcou um compromisso na sua agenda:\n\n*${row.title}*\n🗓️ ${whenStr}${locPart}${modPart}\n\nSe não puder, fala com ${senderName} pra remarcar.`;
           whatsapp.sendMessage(eventRecipient.phone, msg).catch(err =>
             console.error(`[Event] notify recipient err: ${err.message}`));
           await logConversation(eventRecipient.id, 'outbound', `[event criado por ${senderName}: ${row.title}]`);
@@ -2477,8 +2478,10 @@ function validateEventUpdateAction(a) {
     // Sprint 31.15 — verbo de RSVP (confirm/aceito/recuso...) não é EVENT_UPDATE real;
     // é roteado pro applyRsvp no applyEventUpdates. Aceita aqui se houver event_id/id.
     if (RSVP_ALIASES.has(a.action)) {
-      const ref = (typeof a.event_id === 'string' && a.event_id) || (typeof a.id === 'string' && a.id);
-      return ref ? null : 'rsvp_needs_event_id';
+      // Sprint EV-LEAK (08/06) — event_id é OPCIONAL. Antes exigia o ref vindo do
+      // [ev:xxxx] visível na mensagem de convite, que vazava código pro usuário.
+      // Sem ref, o applyRsvp resolve o convite PENDENTE do colaborador.
+      return null;
     }
     return 'action:invalid';
   }
@@ -2739,18 +2742,47 @@ async function resolveEventByShortId(collaboratorId, shortId) {
   return matches[0];
 }
 
+// Sprint EV-LEAK (08/06) — resolve o convite PENDENTE mais provável de um colaborador,
+// para RSVP sem event_id explícito (o token [ev:xxxx] foi removido das mensagens por
+// vazar código pro usuário). Regra: participações ainda NÃO respondidas (responded_at
+// NULL), preferindo o evento futuro mais próximo (não cancelado); desempate pelo convite
+// mais recente. Retorna o event_id (uuid) ou null.
+async function resolvePendingInviteEventId(collaboratorId) {
+  const { data, error } = await supabase.from('event_participants')
+    .select('event_id, invited_at, events:event_id(start_at, status)')
+    .eq('collaborator_id', collaboratorId)
+    .is('responded_at', null)
+    .order('invited_at', { ascending: false })
+    .limit(30);
+  if (error || !data || data.length === 0) return null;
+  const now = Date.now();
+  const rows = data
+    .map(p => ({ event_id: p.event_id, ev: Array.isArray(p.events) ? p.events[0] : p.events }))
+    .filter(p => p.ev && p.ev.status !== 'cancelled');
+  if (rows.length === 0) return null;
+  const upcoming = rows
+    .filter(p => p.ev.start_at && new Date(p.ev.start_at).getTime() >= now - 3600e3)
+    .sort((a, b) => new Date(a.ev.start_at) - new Date(b.ev.start_at));
+  if (upcoming.length > 1) {
+    console.warn(`[Event][RSVP] ${String(collaboratorId).slice(0, 8)} tem ${upcoming.length} convites pendentes futuros — usando o mais próximo`);
+  }
+  if (upcoming.length) return upcoming[0].event_id;
+  return rows[0].event_id; // sem futuros → convite pendente mais recente
+}
+
 // Sprint 31.15 — upsert de PRESENÇA (RSVP). Resolve o evento por id GLOBAL (o convidado
 // NÃO é dono — resolveEventByShortId, escopado por owner, não acharia). Compartilhado entre
 // o marker <<EVENT>> action:rsvp e o reroute de verbos naturais no <<EVENT_UPDATE>>.
 async function applyRsvp(collaborator, eventIdRef, status) {
   const evId = typeof eventIdRef === 'string' ? eventIdRef.trim() : null;
   const st = ['confirmed', 'declined', 'tentative'].includes(status) ? status : 'confirmed';
-  if (!evId) { console.warn('[Event][RSVP] event_id ausente — ignorado'); return { ok: false }; }
-  let resolvedEventId = evId;
-  if (evId.length < 36) {
-    // ⚠️ ilike NÃO funciona em coluna uuid (Postgres não casa uuid ILIKE text) — o prefixo
-    // [ev:8char] NUNCA resolvia (root cause do item 5). Busca os eventos do colaborador
-    // (é participante — o convite cria a linha) e casa o prefixo em JS.
+  let resolvedEventId = null;
+  if (evId && evId.length >= 36) {
+    resolvedEventId = evId;
+  } else if (evId) {
+    // prefixo 8char (back-compat) → casa contra os eventos do colaborador em JS
+    // (ilike não funciona em coluna uuid). 1 match usa; 0/ambíguo cai pro resolver
+    // de convite pendente abaixo.
     const head = evId.replace(/-/g, '').toLowerCase();
     const { data: parts } = await supabase.from('event_participants')
       .select('event_id').eq('collaborator_id', collaborator.id);
@@ -2759,10 +2791,16 @@ async function applyRsvp(collaborator, eventIdRef, status) {
       .gte('start_at', new Date(Date.now() - 90 * 864e5).toISOString()).limit(500);
     const ids = [...new Set([...(parts || []).map(p => p.event_id), ...(own || []).map(e => e.id)])];
     const matches = ids.filter(id => String(id).replace(/-/g, '').toLowerCase().startsWith(head));
-    if (matches.length === 0) { console.warn(`[Event][RSVP] prefix "${evId}" não resolveu p/ evento do colaborador`); return { ok: false }; }
-    if (matches.length > 1) { console.warn(`[Event][RSVP] prefix "${evId}" ambíguo (${matches.length}) — rejeitando`); return { ok: false }; }
-    resolvedEventId = matches[0];
+    if (matches.length === 1) resolvedEventId = matches[0];
+    else if (matches.length > 1) console.warn(`[Event][RSVP] prefix "${evId}" ambíguo (${matches.length}) — tentando convite pendente`);
+    else console.warn(`[Event][RSVP] prefix "${evId}" não resolveu — tentando convite pendente`);
   }
+  // Sprint EV-LEAK — sem id resolvido (LLM não mandou event_id porque o token foi
+  // removido das mensagens): resolve o convite pendente do colaborador.
+  if (!resolvedEventId) {
+    resolvedEventId = await resolvePendingInviteEventId(collaborator.id);
+  }
+  if (!resolvedEventId) { console.warn('[Event][RSVP] não resolveu evento (sem id e sem convite pendente)'); return { ok: false }; }
   const { error } = await supabase.from('event_participants').upsert({
     event_id: resolvedEventId, collaborator_id: collaborator.id, status: st, responded_at: new Date().toISOString(),
   }, { onConflict: 'event_id,collaborator_id' });
