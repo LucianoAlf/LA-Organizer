@@ -17,7 +17,8 @@ function fmtMoney(v) {
 function buildFinanceDigest({ nome, atrasadas = [], hoje = [], emBreve = [] }) {
   if (atrasadas.length + hoje.length + emBreve.length === 0) return '';
   const tag = (it) => (it.isCard ? '💳 ' : '') + it.name + ' · *' + fmtMoney(it.amount) + '*';
-  const out = [`👽 *Financeiro de hoje, ${nome}*`, SEP];
+  const saud = nome ? `Financeiro de hoje, ${nome}` : 'Financeiro de hoje';
+  const out = [`👽 *${saud}*`, SEP];
   if (atrasadas.length) {
     out.push('🔴 *Atrasada*');
     for (const it of atrasadas) out.push('   ' + tag(it) + `  _(venceu dia ${it.dia})_`);

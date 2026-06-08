@@ -513,6 +513,31 @@ async function checkCardDueReminders(now) {
   }
 }
 
+// Digest financeiro consolidado — enviado LOGO APÓS o briefing (substitui os rituais
+// fragmentados checkFinanceBillReminders + checkCardDueReminders). 1 msg, formato Opção A.
+// Spec: docs/superpowers/specs/2026-06-08-digest-financeiro-matinal-design.md
+async function sendFinanceDigest(collab, now) {
+  const whatsapp = require('../services/whatsapp');
+  const financeService = require('../services/financeiro-service');
+  const { buildFinanceDigest } = require('../finance/finance-digest');
+  const ymd = now.ymd || nowSaoPaulo().ymd;
+  const dom = Number(ymd.slice(8, 10));
+  try {
+    if (await alreadySent(collab.id, 'financeiro_digest', ymd)) return;
+    const items = await financeService.dueItemsForDigest(collab.id, { dom, ymd });
+    if (items.atrasadas.length + items.hoje.length + items.emBreve.length === 0) return; // nada → sem msg
+    const q = await isQuietNow(collab.id, now, 'personal');
+    if (q.quiet) { await logRitualEvent(collab.id, 'financeiro_digest', 'skipped', `quiet:${q.reason}`, ymd); return; }
+    const claim = await claimRitualSend(supabase, collab.id, 'financeiro_digest', ymd);
+    if (!claim.won) { if (!claim.duplicate) await logRitualEvent(collab.id, 'financeiro_digest', 'error', `claim_err:${claim.code || ''}`, ymd); return; }
+    const nome = String(collab.full_name || '').split(' ')[0];
+    await whatsapp.sendMessage(collab.phone, buildFinanceDigest({ nome, ...items }));
+  } catch (err) {
+    console.error('[sendFinanceDigest]', collab.full_name, err.message);
+    await logRitualEvent(collab.id, 'financeiro_digest', 'error', err.message, ymd);
+  }
+}
+
 async function fireRitual(collab, ritualType, ymd) {
   const canonical = CANONICAL_BY_RITUAL[ritualType] || ritualType;
   // DND gate: skip outbound rituals while user is paused. Briefing for the
@@ -3061,6 +3086,7 @@ async function run(opts = {}) {
           await logRitualEvent(c.id, 'daily_briefing', 'skipped', q.reason, now.ymd);
         } else {
           await fireRitual(c, 'daily_briefing', now.ymd);
+          await sendFinanceDigest(c, now);   // digest financeiro consolidado, logo depois do briefing
         }
       }
       // Fechamento — dias úteis
@@ -3652,11 +3678,11 @@ async function run(opts = {}) {
   try { await checkMonthlyClosing(now);  } catch (e) { console.error('[run] monthlyClosing', e); }
 
   // Sprint 27 — Rituais financeiros pessoais (deterministicos, quiet=personal)
-  try { await checkFinanceBillReminders(now); } catch (e) { console.error('[run] financeBillReminders', e); }
+  // checkFinanceBillReminders + checkCardDueReminders APOSENTADOS: consolidados em
+  // sendFinanceDigest (enviado logo após o briefing). Spec: 2026-06-08-digest-financeiro-matinal-design.md
   try { await checkFinanceMonthly(now);        } catch (e) { console.error('[run] financeMonthly', e); }
   try { await checkFinanceReport(now);         } catch (e) { console.error('[run] financeReport', e); }
   try { await checkCardLimitAlerts(now);       } catch (e) { console.error('[run] cardLimitAlerts', e); }
-  try { await checkCardDueReminders(now);      } catch (e) { console.error('[run] cardDueReminders', e); }
 
   // Sprint 15 F4 — Briefing operacional semanal por departamento (segunda 07:30 BRT)
   try {

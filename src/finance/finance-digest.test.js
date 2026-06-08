@@ -49,6 +49,12 @@ test('rodapé cita 1 conta + 1 fatura', () => {
   assert.match(msg, /"paguei a fatura do nubank"/);
 });
 
+test('sem nome → saudação sem vírgula', () => {
+  const msg = buildFinanceDigest({ nome: '', hoje: [{ name: 'Internet', amount: 120, dia: 8, isCard: false }] });
+  assert.match(msg, /👽 \*Financeiro de hoje\*/);
+  assert.doesNotMatch(msg, /Financeiro de hoje,/);
+});
+
 test('só cartão → rodapé sem exemplo de conta', () => {
   const msg = buildFinanceDigest({ nome: 'Alf', hoje: [{ name: 'Fatura Nubank', amount: 650, dia: 8, isCard: true }] });
   assert.match(msg, /"paguei a fatura do nubank"/);

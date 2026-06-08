@@ -9349,20 +9349,9 @@ async function sendRitual(collaboratorId, ritualType, opts = {}) {
   const directive = ritualToDirective(ritualType);
   const response = await ai.chat(systemPrompt, [{ role: 'user', content: directive }]);
 
-  // Sprint 27 — seção financeira no briefing pessoal/diário (PRD §6.5).
-  // DETERMINÍSTICO: a linha "💰 Vence hoje" é montada em código e ANEXADA ao texto do LLM,
-  // pra o número nunca depender do LLM (lição do Bug 3).
+  // Contas NÃO entram mais no briefing — saem no digest financeiro consolidado, enviado
+  // logo depois pelo dispatcher (sendFinanceDigest). Spec: docs/superpowers/specs/2026-06-08-digest-financeiro-matinal-design.md
   let finalText = response.text;
-  if (ritualType === 'daily_briefing' || ritualType === 'personal_briefing') {
-    try {
-      const financeService = require('./services/financeiro-service');
-      const { buildBriefingFinanceLine } = require('./finance/ritual-messages');
-      const dom = Number(todaySaoPaulo().slice(8, 10));
-      const billsToday = (await financeService.billsDueWithin(collaboratorId, 0)).filter((b) => b.due_day === dom);
-      const finLine = buildBriefingFinanceLine(billsToday);
-      if (finLine) finalText = `${finalText}\n\n${finLine}`;
-    } catch (e) { console.error('[Briefing finance line]', e.message); }
-  }
 
   await whatsapp.sendMessage(collab.phone, finalText);
   await logConversation(collab.id, 'outbound', finalText);

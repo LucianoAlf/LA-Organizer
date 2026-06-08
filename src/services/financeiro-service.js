@@ -651,6 +651,7 @@ async function dueItemsForDigest(collaboratorId, { dom, ymd }) {
   // Contas fixas vencendo em ≤2 dias (inclui atrasadas, mesma janela do ritual antigo).
   const bills = await billsDueWithin(collaboratorId, 2);
   for (const b of bills) {
+    if (b.type === 'income') continue; // digest é "contas a PAGAR"; receitas previstas (ex: Salário) não entram
     const dias = b.due_day - dom;
     const item = { name: b.name, amount: Number(b.amount), dia: b.due_day, isCard: false };
     if (dias < 0) out.atrasadas.push(item);
