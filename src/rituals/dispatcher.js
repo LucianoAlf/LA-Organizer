@@ -2261,7 +2261,10 @@ async function ceoTeamUnclosedEventsReport(now = new Date(), opts = {}) {
         }
       }
       const diagBlkEv = diagsEv.length > 0 ? `\n\n─────────────────────\n🔍 *Diagnóstico*\n${diagsEv.join('\n\n')}` : '';
-      return `🎖️ *Compromissos em aberto*\n_${filteredStale.length} parado${filteredStale.length > 1 ? 's' : ''}${hiddenSuffixEv}_\n\n${lines.join('\n').trim()}${diagBlkEv}${staleCheckBlock}`;
+      return {
+        text: `🎖️ *Compromissos em aberto*\n_${filteredStale.length} parado${filteredStale.length > 1 ? 's' : ''}${hiddenSuffixEv}_\n\n${lines.join('\n').trim()}${diagBlkEv}${staleCheckBlock}`,
+        staleIds: toStaleCheck.map(ev => ev.id),
+      };
     }
 
     const msg = `🎖️ *Governança — Compromissos em aberto*\n_${dateLabel} · ${filteredStale.length} parado${filteredStale.length > 1 ? 's' : ''}_\n━━━━━━━━━━━━━━━━━━━━━\n\n${lines.join('\n').trim()}${staleCheckBlock}\n\n━━━━━━━━━━━━━━━━━━━━━\n_${filteredStale.length} compromisso${filteredStale.length > 1 ? 's' : ''} parado${filteredStale.length > 1 ? 's' : ''}${hiddenSuffixEv}. Pra cobrar: "cobra [nome] sobre [assunto]"_`;
@@ -2498,7 +2501,10 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
     // Fase 6a — modo SEÇÃO p/ o digest único: retorna a seção rica VERBATIM
     // (lista + 🔍 diagnóstico + ⚠️ stuck + ⏳ staleness) sem banners/rodapé próprios.
     if (opts.returnText) {
-      return `📋 *Tarefas atrasadas*\n_${filteredStale.length} tarefa${filteredStale.length > 1 ? 's' : ''}${hiddenSuffixT}_\n\n${lines.join('\n').trim()}${diagSection}${stuckSection}${staleCheckBlock}`;
+      return {
+        text: `📋 *Tarefas atrasadas*\n_${filteredStale.length} tarefa${filteredStale.length > 1 ? 's' : ''}${hiddenSuffixT}_\n\n${lines.join('\n').trim()}${diagSection}${stuckSection}${staleCheckBlock}`,
+        staleIds: toStaleCheck.map(t => t.id),
+      };
     }
 
     const msg = `📋 *Governança — Tarefas atrasadas*\n_${dateLabelT} · ${filteredStale.length} tarefa${filteredStale.length > 1 ? 's' : ''}_\n━━━━━━━━━━━━━━━━━━━━━\n\n${lines.join('\n').trim()}${diagSection}${stuckSection}${staleCheckBlock}\n\n━━━━━━━━━━━━━━━━━━━━━\n_${filteredStale.length} atrasada${filteredStale.length > 1 ? 's' : ''}${hiddenSuffixT}. Pra cobrar: "cobra [nome] sobre [tarefa]"_`;
@@ -2678,8 +2684,10 @@ async function sendGovernanceDigest(now = new Date(), opts = {}) {
   const dryResults = [];
   for (const ceo of ceos) {
     const scorecardSec = await buildScorecardDigestSection(now);
-    const eventsSec = await ceoTeamUnclosedEventsReport(now, { returnText: true });
-    const tasksSec = await ceoTeamUnclosedTasksReport(now, { returnText: true });
+    const eventsR = await ceoTeamUnclosedEventsReport(now, { returnText: true });
+    const tasksR = await ceoTeamUnclosedTasksReport(now, { returnText: true });
+    const eventsSec = (eventsR && eventsR.text) || '';
+    const tasksSec = (tasksR && tasksR.text) || '';
     if (!scorecardSec && !eventsSec && !tasksSec) continue;
 
     const dateLabel = new Date(now).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: 'short' });
@@ -2699,6 +2707,12 @@ async function sendGovernanceDigest(now = new Date(), opts = {}) {
     if (!claim.won) { if (!claim.duplicate) console.error(`[GovDigest] claim_err(${claim.code})`); continue; }
     try {
       for (const m of messages) await whatsapp.sendMessage(ceo.phone, m);
+      // Fase 6a — marca ⏳ staleness DEPOIS do envio confirmado, preservando o
+      // fluxo "sem resposta até amanhã → arquivo automático" que o relatório antigo fazia.
+      const evStale = (eventsR && eventsR.staleIds) || [];
+      const tkStale = (tasksR && tasksR.staleIds) || [];
+      if (evStale.length) await supabase.from('events').update({ staleness_check_sent_at: now.toISOString() }).in('id', evStale);
+      if (tkStale.length) await supabase.from('tasks').update({ staleness_check_sent_at: now.toISOString() }).in('id', tkStale);
       console.log(`[GovDigest] sent ${parts} part(s) → ${String(ceo.phone).slice(-4)}`);
     } catch (err) {
       console.error('[GovDigest] send err:', err.message);
