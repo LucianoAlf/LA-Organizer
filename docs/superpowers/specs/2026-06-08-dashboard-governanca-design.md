@@ -91,5 +91,11 @@ Abrir a página (ou ler o digest) e ela dizer **com quem falar e por quê** (nom
 **Config de governança (PWA) = visível a TODOS os líderes:** cada líder abre e ajusta o **próprio** envio (horário default 9h, liga/desliga seções, on/off). Não é só do CEO. Auto-save (padrão de Configurações).
 
 **Estrutura da Fase 6 (2 partes):**
-- **6a — Digest único (backend):** `sendGovernanceDigest` consolida scorecard(+badges, seg) + compromissos + tarefas(intacto) + rodapé numa msg; CEO no horário dele, líderes 14h/9h-sáb; guard 4000 chars → "+N na dashboard"; desliga os 4 envios antigos; reusa `claimRitualSend` + `isQuietNow('work')`.
+- **6a — Digest único (backend):** `sendGovernanceDigest` consolida scorecard + compromissos + tarefas + rodapé numa msg; CEO no horário dele, líderes 14h/9h-sáb; desliga os 4 envios antigos; reusa `claimRitualSend` + `isQuietNow('work')`.
 - **6b — Config de governança (PWA):** página visível a todos os líderes; horário/seções/on-off por pessoa; persistência + wire no dispatcher (lê o horário configurado em vez de hardcode).
+
+**Formato do digest (CONFIRMADO CEO 08/06 — NÃO resumir, preservar riqueza):**
+- **🏆 Scorecard:** ENXUTO — semáforo 1 linha/líder (🔴🟡🟢 + % + atrasadas) + **badges/gamificação** (🥇 topo, 📈 subindo). Sem insights pesados aqui. (CEO vê os 6 líderes; cada líder vê a própria linha.)
+- **🎖️ Compromissos:** RIQUEZA TOTAL — sobe pro mesmo nível das tarefas: lista completa agrupada por líder + **🔍 diagnóstico + 💡 recomendação** (novo p/ compromissos) + ⏳ staleness + contagens.
+- **📋 Tarefas:** INTACTA — reusa o builder atual de `ceoTeamUnclosedTasksReport`/`perLeaderUnclosedTasksReport` VERBATIM (Pra você decidir / por líder / direto com você + 🔍 diagnóstico + 💡 recomendações + ⚠️ stuck + ⏳ staleness + contagens).
+- **Montagem:** `governance-digest.js::assembleDigest` empilha as seções ricas sob 1 header hierárquico; **NUNCA corta detalhe** — se passar de ~4000 chars, **divide em mensagens sequenciais (i/n)** nos limites das seções. (12 testes node:test ✅.)
