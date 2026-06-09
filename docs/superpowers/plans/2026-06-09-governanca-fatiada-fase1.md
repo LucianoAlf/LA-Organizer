@@ -346,6 +346,10 @@ INSERT em `tom_known_issues` (area `dispatcher`, status `corrigido`) documentand
 
 ---
 
+## STATUS: ✅ ENTREGUE (09/06/2026)
+
+Todas as 5 tasks completas via subagent-driven-development (Sonnet impl / Opus review). Migration aplicada (48/907 backfill). Função pura JS 28/28 + TS 23/23. Digest fatiado deployado na VPS (SCP+restart). Provado na VPS: tarefa delegada → viewer = delegador; mesma solta → gerente da unidade; CEO vê tudo. Registrado `GOV-FATIA-DELEG-F2S1` em tom_known_issues. Code review: aprovado-com-ressalvas → ressalvas aplicadas (Array.isArray guard, +2 testes de edge, comentário staleness, require consolidado).
+
 ## Self-Review (feito)
 
 - **Cobertura da spec:** coluna+trigger+backfill (Task 1) ✓; função pura JS (Task 2) + TS (Task 3) ✓; digest fatiado (Task 4) ✓; CEO vê tudo (Task 4/5) ✓; catch-all gerente + arestas (Task 2/3) ✓; edge sem unidade→CEO (Task 2 caso 6) ✓. Captura automática na criação = trigger (Task 1) cobre TOM+PWA. Re-delegação por voz (TOM) e UI do PWA = **sub-fases 2 e 3** (fora deste plano, por decisão de rollout da spec).
