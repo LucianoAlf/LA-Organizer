@@ -18,6 +18,7 @@ const openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const inventarioService = require('./services/inventario-service');
 const { hasTrailingQuestion, isInfoGatheringReply } = require('./services/reply-classify');
 const { shiftRemindersByReschedule, shiftTaskRemindAt } = require('./services/reschedule-reminders');
+const { buildEventReminderRows } = require('./services/event-reminders');
 const { matchRowsByShortId } = require('./services/short-id-match');
 const { getActiveWindow } = require('./services/active-window');
 const inventarioValidators = require('./services/inventario-validators');
@@ -2520,7 +2521,11 @@ function validateEventUpdateAction(a) {
     // local, link, modalidade). Exige ao menos 1 campo editável presente.
     const editable = ['title', 'description', 'notes', 'location_text', 'meeting_url', 'modality'];
     const hasField = editable.some(f => typeof a[f] === 'string' && a[f].trim());
-    if (!hasField) return 'update:no_editable_field';
+    // Sprint 31.x — lembrete do evento também é editável. reminders_minutes_before é um
+    // ARRAY (minutos antes do início; [] = remover), não string, então tem check próprio.
+    // Antes era rejeitado como no_editable_field (caso Rose/ADM 09/06, evento 6778d729).
+    const hasReminders = Array.isArray(a.reminders_minutes_before);
+    if (!hasField && !hasReminders) return 'update:no_editable_field';
     if (typeof a.modality === 'string' && a.modality.trim() && !VALID_EVENT_MODALITIES.has(a.modality)) return 'modality:invalid';
   }
   return null;
@@ -2983,6 +2988,9 @@ async function applyEventUpdates(collaborator, actions) {
         continue;
       }
       let patch = {};
+      // Sprint 31.x — edição de lembrete do evento (reminders_minutes_before). É um array,
+      // pode vir SOZINHO (sem metadados) e até vazio ([] = remover). Tratado fora do `patch`.
+      const remindersEdit = (a.action === 'update' && Array.isArray(a.reminders_minutes_before));
       if (a.action === 'reschedule') {
         patch = { start_at: a.new_start_at, end_at: a.new_end_at };
         if (ev.status === 'cancelled') patch.status = 'scheduled';
@@ -3000,17 +3008,22 @@ async function applyEventUpdates(collaborator, actions) {
         if (typeof a.location_text === 'string' && a.location_text.trim()) patch.location_text = a.location_text.trim().slice(0, 200);
         if (typeof a.meeting_url === 'string' && a.meeting_url.trim()) patch.meeting_url = a.meeting_url.trim().slice(0, 500);
         if (typeof a.modality === 'string' && VALID_EVENT_MODALITIES.has(a.modality)) patch.modality = a.modality;
-        if (Object.keys(patch).length === 0) { failCount++; continue; }
+        // edição só-de-lembrete é válida mesmo sem metadados no patch.
+        if (Object.keys(patch).length === 0 && !remindersEdit) { failCount++; continue; }
       }
-      const { error } = await supabase
-        .from('events')
-        .update(patch)
-        .eq('id', ev.id)
-        .eq('collaborator_id', collaborator.id);
-      if (error) {
-        console.error(`[Event] ${a.action} err:`, error.message);
-        failCount++;
-        continue;
+      // events update só roda se há coluna a mudar (cancel/complete/reschedule sempre têm;
+      // update só-de-lembrete tem patch vazio → pula a escrita em events, mexe só nos reminders).
+      if (Object.keys(patch).length > 0) {
+        const { error } = await supabase
+          .from('events')
+          .update(patch)
+          .eq('id', ev.id)
+          .eq('collaborator_id', collaborator.id);
+        if (error) {
+          console.error(`[Event] ${a.action} err:`, error.message);
+          failCount++;
+          continue;
+        }
       }
       console.log(`[Event] ${a.action} ${a.id} by ${last4}${a.action === 'reschedule' ? ` to ${a.new_start_at.slice(0, 16)}` : ''}`);
       okCount++;
@@ -3031,6 +3044,23 @@ async function applyEventUpdates(collaborator, actions) {
           if (shifted.length) console.log(`[Event] reschedule: ${shifted.length} lembrete(s) deslocado(s) p/ ${String(ev.id).slice(0, 8)}`);
         } catch (e) {
           console.warn('[Event] reschedule reminders resync falhou (não-fatal):', e.message);
+        }
+      }
+      // Sprint 31.x — edição de lembrete: substitui os event_reminders NÃO-ENVIADOS pelo
+      // novo conjunto computado de reminders_minutes_before (relativo ao start_at atual).
+      // [] = remover todos os pendentes. Os já enviados (sent_at != null) ficam como
+      // histórico. Caso Rose/ADM 09/06: ajuste pra T-30/T-0 era rejeitado e sumia.
+      if (remindersEdit) {
+        try {
+          await supabase.from('event_reminders').delete().eq('event_id', ev.id).is('sent_at', null);
+          const rows = buildEventReminderRows(ev.id, ev.start_at, a.reminders_minutes_before);
+          if (rows.length) {
+            const { error: insErr } = await supabase.from('event_reminders').insert(rows);
+            if (insErr) console.error('[Event] update reminders insert err:', insErr.message);
+          }
+          console.log(`[Event] update reminders ${a.id}: ${rows.length} lembrete(s) pendente(s) (substituídos)`);
+        } catch (e) {
+          console.warn('[Event] update reminders falhou (não-fatal):', e.message);
         }
       }
       // Sprint 31.1 — fecha qualquer pending_followup aberto pra esse evento
@@ -10928,4 +10958,4 @@ async function applyMonthlyPlan(collaborator, plan) {
   return { id: created?.id, action: 'created' };
 }
 
-module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamSummary, buildWeeklyRetrospective, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseWeeklyPlanMarker, parseHabitMarker, parseDndMarker, parseDataClassifyMarker, applyDataClassify, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, applyHabitActions, applyDnd, getDndState, consolidateMemoryFor, decayExpiredMemories, generateWeeklySummaryFor, updateCollaboratorProfile, looksLikeMemory, resolveTaskByShortId, applyEventUpdates, applyRsvp, applyPersonalListActions, applyAnnouncementAction, parseAnnouncementApprovalMarker, applyAnnouncementApproval, applyCoordinationRequestAction, parseCoordinationResponseMarker, applyCoordinationResponseAction, computeProgress, getRitualIntroDecision, countRecentRelaysToRecipient, buildRelayLimitHint, parseMonthlyPlanMarker, applyMonthlyPlan, handleFinanceAction, parseFinanceMarkers };
+module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamSummary, buildWeeklyRetrospective, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseEventUpdateMarker, parseWeeklyPlanMarker, parseHabitMarker, parseDndMarker, parseDataClassifyMarker, applyDataClassify, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, applyHabitActions, applyDnd, getDndState, consolidateMemoryFor, decayExpiredMemories, generateWeeklySummaryFor, updateCollaboratorProfile, looksLikeMemory, resolveTaskByShortId, applyEventUpdates, applyRsvp, applyPersonalListActions, applyAnnouncementAction, parseAnnouncementApprovalMarker, applyAnnouncementApproval, applyCoordinationRequestAction, parseCoordinationResponseMarker, applyCoordinationResponseAction, computeProgress, getRitualIntroDecision, countRecentRelaysToRecipient, buildRelayLimitHint, parseMonthlyPlanMarker, applyMonthlyPlan, handleFinanceAction, parseFinanceMarkers };
