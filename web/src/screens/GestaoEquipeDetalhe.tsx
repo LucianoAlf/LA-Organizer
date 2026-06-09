@@ -387,14 +387,18 @@ export function GestaoEquipeDetalhe() {
             </div>
 
             <div className="rounded-lg bg-bg-elevated border border-border p-3 space-y-1">
+              <div className="text-body-sm text-fg-muted">Resumo (calculado automático — não dá pra clicar aqui):</div>
               <div className="text-body-sm">
-                <span className="text-fg-muted">Líderes resolvidos: </span>
+                <span className="text-fg-muted">↑ Reporta a: </span>
                 <span className="text-fg">{previewLeaders.length ? previewLeaders.join(', ') : '—'}</span>
               </div>
               <div className="text-body-sm">
-                <span className="text-fg-muted">Liderados diretos: </span>
+                <span className="text-fg-muted">↓ Quem reporta a esta pessoa: </span>
                 <span className="text-fg">{previewMembers.length ? previewMembers.join(', ') : '—'}</span>
               </div>
+              <p className="text-body-sm text-fg-muted pt-1">
+                Pra trocar quem esta pessoa reporta, use os chips acima. Pra adicionar alguém que reporta a ela, abra a página dessa pessoa e marque esta no “Reporta a”.
+              </p>
             </div>
           </section>
         )}
