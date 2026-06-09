@@ -31,6 +31,9 @@ export interface TaskEditDrawerProps {
    *  TaskForPanel (tipo de display) filtra esse status. */
   onSave: (id: string, patch: Record<string, unknown>) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+  onTransformToEvent?: (task: TaskForPanel) => void;
+  onDelegate?: (task: TaskForPanel) => void;
+  canDelegate?: boolean;
 }
 
 type Status = 'pending' | 'in_progress' | 'done' | 'cancelled';
@@ -321,6 +324,26 @@ export function TaskEditDrawer(p: TaskEditDrawerProps) {
               <span className="text-[10px] text-fg-muted">(pra mudar pessoa, deletar e recriar via Delegar)</span>
             </div>
           </Field>
+        )}
+
+        {(p.onTransformToEvent || p.onDelegate)
+          && !t.delegated_to
+          && t.status !== 'done' && t.status !== 'delegated' && (
+          <div className="border-t border-border pt-3">
+            <div className="text-[10px] uppercase tracking-wider text-fg-muted font-semibold mb-2">Transformar em</div>
+            <div className="flex gap-2">
+              {p.onTransformToEvent && (
+                <Button variant="secondary" size="sm" onClick={() => p.onTransformToEvent!(t)}>
+                  📆 Compromisso
+                </Button>
+              )}
+              {p.onDelegate && p.canDelegate && (
+                <Button variant="secondary" size="sm" onClick={() => p.onDelegate!(t)}>
+                  👥 Delegar
+                </Button>
+              )}
+            </div>
+          </div>
         )}
 
         <div className="text-[10px] text-fg-muted pt-2 border-t border-border">

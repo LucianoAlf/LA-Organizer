@@ -26,6 +26,7 @@ export interface TaskForPanel {
   // pai (se for ocorrência materializada). Usados pelo editor de série.
   recurrence_rule?: string | null;
   recurrence_parent_id?: string | null;
+  project_id?: string | null;
 }
 
 // Sprint Agenda Desktop — tasks no range [from,to]. Espelha padrão de
@@ -45,7 +46,7 @@ export function useAgendaTasks(params: { from: Date; to: Date; filters: AgendaFi
     queryFn: async () => {
       const { data, error } = await supabase
         .from('tasks')
-        .select('id, title, description, context, status, scheduled_date, due_date, due_time, assigned_to, created_by, eisenhower_quadrant, remind_at, source, created_at, recurrence_rule, recurrence_parent_id')
+        .select('id, title, description, context, status, scheduled_date, due_date, due_time, assigned_to, created_by, eisenhower_quadrant, remind_at, source, created_at, recurrence_rule, recurrence_parent_id, project_id')
         .or(`assigned_to.eq.${collaboratorId},and(created_by.eq.${collaboratorId},assigned_to.neq.${collaboratorId})`)
         .neq('status', 'cancelled')
         // Sprint 29.1 — esconde teste/arquivado
@@ -81,6 +82,7 @@ export function useAgendaTasks(params: { from: Date; to: Date; filters: AgendaFi
         due_time: t.due_time ?? null,
         recurrence_rule: t.recurrence_rule ?? null,
         recurrence_parent_id: t.recurrence_parent_id ?? null,
+        project_id: t.project_id ?? null,
       };
     });
     return mapped.filter(t => {

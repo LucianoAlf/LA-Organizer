@@ -13,11 +13,11 @@ import { CustomSelect } from './CustomSelect';
 import { useEventCategories } from '../hooks/useEventCategories';
 import { showToast } from './Toast';
 import { MODALITY_LABELS, type EventModality } from '../types';
-import type { Task } from '../types';
+import type { TransformableTask } from '../types';
 
 const MODALITIES: EventModality[] = ['presencial', 'online', 'hibrido'];
 
-interface Props { open: boolean; task: Task | null; onClose: () => void; }
+interface Props { open: boolean; task: TransformableTask | null; onClose: () => void; }
 
 export function ConvertToEventSheet({ open, task, onClose }: Props) {
   const { collaborator } = useAuth();
@@ -96,6 +96,7 @@ export function ConvertToEventSheet({ open, task, onClose }: Props) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['events'] });
       qc.invalidateQueries({ queryKey: ['tasks'] });
+      qc.invalidateQueries({ queryKey: ['agenda-tasks'] });
       showToast({ kind: 'success', title: 'Tarefa virou compromisso' });
       onClose();
     },

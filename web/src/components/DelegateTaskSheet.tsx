@@ -12,9 +12,9 @@ import { DateInput } from './DateInput';
 import { useDelegableMembers } from '../hooks/useDelegableMembers';
 import { notifyTaskDelegated } from '../lib/tomEngine';
 import { showToast } from './Toast';
-import type { Task } from '../types';
+import type { TransformableTask } from '../types';
 
-interface Props { open: boolean; task: Task | null; onClose: () => void; }
+interface Props { open: boolean; task: TransformableTask | null; onClose: () => void; }
 
 export function DelegateTaskSheet({ open, task, onClose }: Props) {
   const { collaborator } = useAuth();
@@ -56,6 +56,7 @@ export function DelegateTaskSheet({ open, task, onClose }: Props) {
     },
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ['tasks'] });
+      qc.invalidateQueries({ queryKey: ['agenda-tasks'] });
       if (r.ok) showToast({ kind: 'success', title: 'Tarefa delegada', msg: 'TOM mandou WhatsApp pra pessoa.' });
       else showToast({ kind: 'error', title: 'WhatsApp não enviado', msg: `Tarefa delegada, mas a notificação falhou (${r.reason}).` });
       onClose();

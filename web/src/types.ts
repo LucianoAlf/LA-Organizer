@@ -157,6 +157,18 @@ export interface Task {
   converted_to_event_id?: string | null;
 }
 
+// Subconjunto de campos que os sheets de transformação (Delegar/Compromisso) leem.
+// Tanto `Task` quanto `TaskForPanel` (agenda) são compatíveis com este shape.
+export interface TransformableTask {
+  id: string;
+  title: string;
+  description?: string | null;
+  due_date: string | null;
+  project_id?: string | null;
+  // Aceita tanto Quadrant (string: 'q1'…'q4') quanto o número usado em TaskForPanel.
+  eisenhower_quadrant?: Quadrant | number | null;
+}
+
 export type EventStatus = 'scheduled' | 'done' | 'cancelled';
 export type EventModality = 'online' | 'presencial' | 'hibrido';
 

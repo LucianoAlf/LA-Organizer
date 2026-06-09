@@ -13,6 +13,9 @@ import { QuickCreateSheet } from '../components/QuickCreateSheet';
 import { Fab } from '../components/Fab';
 import { EventEditDrawer } from './agenda/components/EventEditDrawer';
 import { TaskEditDrawer } from './agenda/components/TaskEditDrawer';
+import { DelegateTaskSheet } from '../components/DelegateTaskSheet';
+import { ConvertToEventSheet } from '../components/ConvertToEventSheet';
+import { hasCoordLevel } from '../lib/permissions';
 import { useAgendaFilters } from './agenda/hooks/useAgendaFilters';
 import { useAgendaEvents, type EventForGrid } from './agenda/hooks/useAgendaEvents';
 import { useAgendaTasks, type TaskForPanel } from './agenda/hooks/useAgendaTasks';
@@ -82,6 +85,9 @@ export function AgendaDesktop() {
   const [quickCreate, setQuickCreate] = useState<{ open: boolean; dueDate?: string }>({ open: false });
   const [editingEvent, setEditingEvent] = useState<EventForGrid | null>(null);
   const [editingTask, setEditingTask] = useState<TaskForPanel | null>(null);
+  const [delegateTask, setDelegateTask] = useState<TaskForPanel | null>(null);
+  const [convertTask, setConvertTask] = useState<TaskForPanel | null>(null);
+  const canDelegate = collaborator ? hasCoordLevel(collaborator) : false;
 
   const { from, to } = useMemo(() => {
     if (view === 'day') return { from: startOfDay(currentDate), to: endOfDay(currentDate) };
@@ -390,7 +396,13 @@ export function AgendaDesktop() {
             toast.error('Não foi possível deletar a tarefa.');
           }
         }}
+        onTransformToEvent={(t) => { setEditingTask(null); setConvertTask(t); }}
+        onDelegate={(t) => { setEditingTask(null); setDelegateTask(t); }}
+        canDelegate={canDelegate}
       />
+
+      <DelegateTaskSheet open={Boolean(delegateTask)} task={delegateTask} onClose={() => setDelegateTask(null)} />
+      <ConvertToEventSheet open={Boolean(convertTask)} task={convertTask} onClose={() => setConvertTask(null)} />
 
     </>
   );
