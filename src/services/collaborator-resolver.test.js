@@ -187,3 +187,48 @@ test('buildAmbiguityQuestion: gênero-neutro (termina em "é qual?")', () => {
   assert.match(q, /Marketing/);
   assert.match(q, /Farmer/);
 });
+
+// --- Normalização apelido ↔ nome formal (prefixo bidirecional) ---
+// Caso real: a pessoa é cadastrada como "Fabi" (sem alias "Fabíola"); ao escreverem
+// "Fabíola" (nome formal, mais longo), o cadastro "Fabi" deve casar mesmo assim.
+const FABI = {
+  id: 'fabi', full_name: 'Fabi', preferred_name: null,
+  function_role: 'sucesso_cliente', pedagogical_role: null, unit: 'all', aliases: [],
+};
+const ANA = {
+  id: 'ana', full_name: 'Ana', preferred_name: null,
+  function_role: 'comercial', pedagogical_role: null, unit: 'all', aliases: [],
+};
+const NORM_ROWS = [FABI, ANA, GABI];
+const fetchNorm = async () => NORM_ROWS;
+
+test('norm: "Fabíola" (formal) casa cadastro "Fabi" (cadastro é prefixo do digitado)', () => {
+  assert.deepStrictEqual(R.gatherCandidates('Fabíola', NORM_ROWS).union.map(c => c.id), ['fabi']);
+});
+test('norm: "Fabi" (apelido exato) continua casando — sem regressão', () => {
+  assert.deepStrictEqual(R.gatherCandidates('Fabi', NORM_ROWS).union.map(c => c.id), ['fabi']);
+});
+test('norm: "Fabíola" resolve direto (1 candidato)', async () => {
+  const r = await R.resolveCollaboratorByName('Fabíola', { requester: null, fetchActive: fetchNorm });
+  assert.strictEqual(r.status, 'resolved');
+  assert.strictEqual(r.collaborator.id, 'fabi');
+});
+test('norm: legado preservado — "Leo" casa cadastro "Leonardo" (digitado é prefixo)', () => {
+  const LEO = { id: 'leo', full_name: 'Leonardo', preferred_name: null, function_role: 'marketing', unit: 'all', aliases: [] };
+  assert.deepStrictEqual(R.gatherCandidates('Leo', [LEO]).union.map(c => c.id), ['leo']);
+});
+test('norm: guarda de tamanho — apelido curto "Ana" NÃO engole "Anabela" (3<4 chars)', () => {
+  // 'Anabela' não casa 'Ana' pelo inverso (token cadastrado tem 3 chars < MIN_REVERSE=4).
+  assert.deepStrictEqual(R.gatherCandidates('Anabela', NORM_ROWS).union.map(c => c.id), []);
+});
+test('norm: prefixo bidirecional preserva ambiguidade quando 2 casam (director → ambiguous)', async () => {
+  // Dois cadastros que são AMBOS prefixo de "Fabíola" ("Fabi" e "Fabio") → sem lado
+  // claro, deve PERGUNTAR, não chutar.
+  const FABIO = { id: 'fabio', full_name: 'Fabio', preferred_name: null, function_role: 'farmer', unit: 'tijuca', aliases: [] };
+  const r = await R.resolveCollaboratorByName('Fabíola', {
+    requester: { function_role: 'director', unit: 'all' },
+    fetchActive: async () => [FABI, FABIO],
+  });
+  assert.strictEqual(r.status, 'ambiguous');
+  assert.deepStrictEqual(r.candidates.map(c => c.id).sort(), ['fabi', 'fabio']);
+});
