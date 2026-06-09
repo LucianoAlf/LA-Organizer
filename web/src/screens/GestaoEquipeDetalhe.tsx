@@ -374,7 +374,7 @@ export function GestaoEquipeDetalhe() {
               <label className="text-body-sm text-fg-muted">Reporta a (líderes explícitos — soma às regras)</label>
               <p className="text-body-sm text-fg-muted">Toque pra marcar; toque de novo (no chip verde com ✕) pra remover.</p>
               <div className="flex flex-wrap gap-2">
-                {roster.filter(c => c.id !== id && !c.is_ceo).map(c => {
+                {roster.filter(c => c.id !== id).map(c => {
                   const active = myEdgeLeaderIds.includes(c.id);
                   return (
                     <button key={c.id} type="button" onClick={() => toggleEdge(c.id)}

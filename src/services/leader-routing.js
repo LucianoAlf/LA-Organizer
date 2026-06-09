@@ -65,11 +65,12 @@ function resolveLeadersOf(collab, allCollabs) {
   }
 
   // 4) override manual (matriz editável, governance_edges) — soma sem dominar a ordem.
-  // EXCETO quando o líder explícito é o próprio CEO: ele já recebe o digest COMPLETO,
-  // então não deve poluir o fan-out por-líder. O CEO entra só pelo fallback (passo 5).
+  // O CEO PODE ser líder explícito (opt-in do Diretor: "Ana reporta a mim e à Rose").
+  // As regras AUTOMÁTICAS (1-2) nunca adicionam o CEO; o ENVIO do digest por-líder
+  // também o pula (dispatcher ~L.2610/2797), pois ele já tem o report completo.
   for (const lid of (Array.isArray(collab.explicit_leader_ids) ? collab.explicit_leader_ids : [])) {
     const L = byId.get(lid);
-    if (L && !L.is_ceo) add(L);
+    if (L) add(L);
   }
 
   // 5) fallback: ninguém resolveu (órfão ou ele-mesmo líder) → CEO
@@ -123,7 +124,7 @@ function governanceViewerIdsOf(task, owner, allCollabs) {
   }
   for (const lid of ((owner && owner.explicit_leader_ids) || [])) {
     const L = list.find((c) => c.id === lid);
-    if (L && !L.is_ceo) ids.add(lid);
+    if (L) ids.add(lid);
   }
   return [...ids];
 }

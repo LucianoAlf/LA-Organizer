@@ -132,9 +132,11 @@ test('aresta soma aos líderes de grupo e deduplica (pedagógico + aresta Julian
     explicit_leader_ids: ['juliana'], group_leader_ids: groupLeaderIdsFor({ function_role: 'pedagogico', unit: 'all' }, GROUP_LEADERS) };
   assert.deepStrictEqual(resolveLeaderIdsOf(X, [...ALL, X]).sort(), ['juliana', 'quintela']);
 });
-test('aresta apontando o CEO é ignorada → fallback CEO', () => {
-  const X = { id: 'x2', role: 'collaborator', function_role: 'ops_tecnicas', unit: 'all', is_ceo: false, is_active: true, explicit_leader_ids: ['ceo'] };
-  assert.deepStrictEqual(resolveLeaderIdsOf(X, [CEO, X]), ['ceo']);
+test('aresta explícita ao CEO é HONRADA (N:N opt-in: reporta ao CEO + outro líder = ambos)', () => {
+  // Diretor pode marcar o CEO de propósito ("Ana reporta a mim e à Rose"). O ENVIO do
+  // digest por-líder ainda pula o CEO (dispatcher), então isso não duplica cobrança.
+  const X = { id: 'x2', role: 'collaborator', function_role: null, unit: 'all', is_ceo: false, is_active: true, explicit_leader_ids: ['juliana', 'ceo'] };
+  assert.deepStrictEqual(resolveLeaderIdsOf(X, [CEO, JULIANA, X]), ['juliana', 'ceo']);
 });
 
 // ── governanceViewerIdsOf ────────────────────────────────────────────────────

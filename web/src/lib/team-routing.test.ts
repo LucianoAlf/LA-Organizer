@@ -97,10 +97,10 @@ describe('explicit_leader_ids (override manual N:N)', () => {
     const arr = [ceo, juliana, quintela, daiX];
     expect(resolveLeaderIdsOf(daiX, arr).sort()).toEqual(['ju', 'qt']);
   });
-  it('aresta apontando o CEO é ignorada → fallback CEO (sem duplicar)', () => {
-    const x = C({ id: 'x', function_role: 'ops_tecnicas', unit: 'all' });
-    x.explicit_leader_ids = ['ceo'];
-    expect(resolveLeaderIdsOf(x, [ceo, x])).toEqual(['ceo']);
+  it('aresta explícita ao CEO é HONRADA (N:N opt-in: reporta ao CEO + outro líder = ambos)', () => {
+    const x = C({ id: 'x' });
+    x.explicit_leader_ids = ['ju', 'ceo'];
+    expect(resolveLeaderIdsOf(x, [ceo, juliana, x])).toEqual(['ju', 'ceo']);
   });
 });
 

@@ -60,11 +60,12 @@ export function resolveLeadersOf(collab: Collab, allCollabs: Collab[]): Collab[]
     // pode liderar farmers da unidade dela sem ser gerente).
     for (const lid of (collab.group_leader_ids ?? [])) { const L = byId.get(lid); if (L) add(L); }
   }
-  // Override manual (matriz editável) — aditivo às regras. Pula CEO: ele já recebe
-  // o digest completo (entra só pelo fallback de órfão, abaixo).
+  // Override manual (matriz editável) — aditivo às regras. O CEO PODE entrar como líder
+  // explícito (opt-in do Diretor: "Ana reporta a mim e à Rose"). As regras AUTOMÁTICAS
+  // nunca adicionam o CEO; o ENVIO do digest por-líder também o pula (ele tem o report completo).
   for (const lid of (collab.explicit_leader_ids ?? [])) {
     const L = byId.get(lid);
-    if (L && !L.is_ceo) add(L);
+    if (L) add(L);
   }
   if (leaders.size === 0) for (const c of active) if (c.is_ceo) add(c);
   return [...leaders.values()];
@@ -95,7 +96,7 @@ export function governanceViewerIdsOf(
   }
   for (const lid of ((owner && owner.explicit_leader_ids) || [])) {
     const L = list.find((c) => c.id === lid);
-    if (L && !L.is_ceo) ids.add(lid);
+    if (L) ids.add(lid);
   }
   return [...ids];
 }

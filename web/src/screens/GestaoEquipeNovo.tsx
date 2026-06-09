@@ -248,7 +248,7 @@ export function GestaoEquipeNovo() {
               <label className="text-body-sm text-fg-muted">Reporta a (líderes explícitos — soma às regras)</label>
               <p className="text-body-sm text-fg-muted">Toque pra marcar; toque de novo (no chip verde com ✕) pra remover.</p>
               <div className="flex flex-wrap gap-2">
-                {roster.filter(c => !c.is_ceo).map(c => {
+                {roster.map(c => {
                   const active = selectedLeaders.includes(c.id);
                   return (
                     <button key={c.id} type="button" onClick={() => toggleLeader(c.id)}
