@@ -8,6 +8,10 @@ import { useState, useEffect } from 'react';
 import { useRegisterSW } from 'virtual:pwa-register/react';
 import { RefreshCw } from 'lucide-react';
 
+// Idempotente entre remounts do shell (mobile↔desktop no resize): só instala
+// UM checker por sessão de página, senão acumula intervalos/listeners duplicados.
+let checkerInstalled = false;
+
 export function PWAUpdatePrompt() {
   const [show, setShow] = useState(false);
   const {
@@ -16,13 +20,19 @@ export function PWAUpdatePrompt() {
   } = useRegisterSW({
     immediate: true,
     onRegisteredSW(_swUrl, registration) {
-      // Polling a cada 60min — checa servidor por nova versão sem precisar
-      // navegação. Garante que o user descobre update mesmo se ficar com aba aberta.
-      if (registration) {
-        setInterval(() => {
-          registration.update().catch(() => { /* offline-tolerant */ });
-        }, 60 * 60 * 1000);
-      }
+      // Detecta nova versão SEM precisar navegar/fechar abas. Antes era polling de
+      // 60min → lento demais pro fluxo "deployei agora, quero ver". Aí o user ia no
+      // DevTools e dava "Clear site data" — que apaga o localStorage e DESLOGA
+      // (a sessão do Supabase mora lá). Resolver o cache direito mata os dois.
+      if (!registration || checkerInstalled) return;
+      checkerInstalled = true;
+      const check = () => registration.update().catch(() => { /* offline-tolerant */ });
+      // 1) a cada 60s (sw.js é minúsculo — custo desprezível)
+      setInterval(check, 60 * 1000);
+      // 2) IMEDIATO quando a aba volta a ficar visível (alt-tab pós-deploy → vê na hora)
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') check();
+      });
     },
   });
 
