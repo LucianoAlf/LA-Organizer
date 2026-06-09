@@ -256,6 +256,10 @@ Run: `cd /d/la-organizer/_remote/web && npx tsc --noEmit && npx vite build` → 
 
 ---
 
+## STATUS: ✅ ENTREGUE (09/06/2026)
+
+Sub-fase 2 (TOM) e Sub-fase 3 (PWA) implementadas via subagent-driven (Sonnet impl / verificação Opus+controlador). TOM deployado por SCP+restart; PWA sobe no auto-deploy (Vercel). **Bug crítico pego e corrigido:** o handler usava `.ilike('id',...)`/`.filter('id::text',...)` numa coluna uuid → erro `operator does not exist: uuid ~~*` no PostgREST. Fix: resolver short-id via `matchRowsByShortId` (busca pending+work, filtra em JS — padrão canônico de `resolveTaskByShortId`). Validado na VPS: short-id match OK; `resolveCollaboratorByName` resolve Krissya/Jereh/Gabi. **Pendência de CONTEÚDO (não-código):** Rose e o grupo `financeiro` não estão cadastrados → "isso é da Rose"/"manda pro financeiro" dão not_found até cadastrar. Demo: usar nomes que existem.
+
 ## Self-Review (feito)
 - **Cobertura da spec:** re-delegação por voz (TOM, sub-fase 2) = Tasks 1-3; PWA filtro + botão (sub-fase 3) = Tasks 4-6. ✓
 - **Autorização (segurança):** o handler só permite reassign por director / dono atual da cobrança / gerente da unidade (posse NULL). Evita um liderado qualquer reassign. `assigned_to` nunca muda (só `governance_owner_id`). ✓

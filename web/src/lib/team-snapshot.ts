@@ -12,6 +12,7 @@ import {
 } from './governance-metrics';
 import { resolveScope } from './team-scope';
 import { fetchGovernanceEdges, attachExplicitLeaders, fetchGroupLeaders, attachGroupLeaders } from './governance-edges';
+import { governanceViewerIdsOf } from './team-routing';
 import type { CalendarEvent } from '../types';
 
 export interface TeamCollab {
@@ -108,7 +109,7 @@ export async function fetchTeamSnapshot(myId: string): Promise<TeamSnapshot> {
 
   let overdueQ = supabase
     .from('tasks')
-    .select('id, title, assigned_to, due_date')
+    .select('id, title, assigned_to, due_date, governance_owner_id')
     .eq('context', 'work')
     .lt('due_date', today)
     .not('status', 'in', '(done,cancelled)')
@@ -121,6 +122,17 @@ export async function fetchTeamSnapshot(myId: string): Promise<TeamSnapshot> {
   const activeIds = new Set(allCollabs.map(c => c.id));
   const overdueActive = filterActiveAssignees((overdueRaw ?? []) as OverdueRow[], activeIds);
   const dedupedOverdue = dedupeRecurringOverdue(overdueActive);
+
+  // Fase 3 (Governança PWA): CEO vê tudo; líder vê só as tarefas cuja posse o inclui.
+  const scopedOverdue = isCeo
+    ? dedupedOverdue
+    : dedupedOverdue.filter((t) =>
+        governanceViewerIdsOf(
+          { governance_owner_id: (t as any).governance_owner_id ?? null, assigned_to: t.assigned_to },
+          allCollabs.find((c) => c.id === t.assigned_to),
+          allCollabs,
+        ).includes(myId),
+      );
 
   const allEvents = await fetchEventsForTeamDay(today, 'work');
   // Líder vê só os eventos do time dele; CEO vê todos.
@@ -140,8 +152,8 @@ export async function fetchTeamSnapshot(myId: string): Promise<TeamSnapshot> {
     noResponse,
     completedToday: completedToday ?? 0,
     dueToday: dueToday ?? 0,
-    overdueCount: countDistinctOverdue(dedupedOverdue),
-    overdueByPerson: computeOverdueByPerson(dedupedOverdue),
+    overdueCount: countDistinctOverdue(scopedOverdue),
+    overdueByPerson: computeOverdueByPerson(scopedOverdue),
     events,
     eventsByCollab,
     scope: isCeo ? 'company' : 'team',

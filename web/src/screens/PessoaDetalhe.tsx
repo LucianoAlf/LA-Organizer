@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { CalendarClock, ListTodo, Activity, User } from 'lucide-react';
@@ -6,11 +6,14 @@ import { PageHeader } from '../components/PageHeader';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { todaySP, ymdAddDays, dowShort } from '../utils/date';
 import { fetchEventsForCollabRange } from '../lib/events';
+import { fetchMyTeamSnapshot } from '../lib/team-snapshot';
 import { StatCard } from '../components/StatCard';
 import { TaskRow } from '../components/TaskRow';
 import { EventRow } from '../components/EventRow';
+import { Button } from '../components/Button';
 import { LoadingState } from '../components/LoadingState';
 import { EmptyState } from '../components/EmptyState';
+import { TransferGovernanceSheet } from '../components/team/TransferGovernanceSheet';
 import type { Task } from '../types';
 
 interface PersonProfile {
@@ -87,11 +90,19 @@ async function fetchPersonDetail(id: string) {
 
 export function PessoaDetalhe() {
   const { id } = useParams<{ id: string }>();
+  const [transferTask, setTransferTask] = useState<{ id: string; title: string } | null>(null);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['pessoaDetalhe', id],
     queryFn: () => fetchPersonDetail(id!),
     enabled: Boolean(id && supabaseConfigured),
+  });
+
+  const { data: snapshot } = useQuery({
+    queryKey: ['team-snapshot'],
+    queryFn: fetchMyTeamSnapshot,
+    enabled: supabaseConfigured,
+    staleTime: 5 * 60 * 1000,
   });
 
   // 7 dias: para cada dia, contar rituals.status='sent'.
@@ -157,8 +168,22 @@ export function PessoaDetalhe() {
         {tasks.length === 0 ? (
           <p className="mt-md text-body-sm text-fg-muted">Sem tarefas em aberto.</p>
         ) : (
-          <div className="mt-2">
-            {tasks.map(t => <TaskRow key={t.id} task={t} readOnly />)}
+          <div className="mt-2 space-y-1">
+            {tasks.map(t => (
+              <div key={t.id} className="flex items-start gap-2">
+                <div className="flex-1 min-w-0">
+                  <TaskRow task={t} readOnly />
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setTransferTask({ id: t.id, title: t.title })}
+                >
+                  Passar cobrança
+                </Button>
+              </div>
+            ))}
           </div>
         )}
       </section>
@@ -201,6 +226,13 @@ export function PessoaDetalhe() {
           })}
         </div>
       </section>
+
+      <TransferGovernanceSheet
+        open={Boolean(transferTask)}
+        onClose={() => setTransferTask(null)}
+        task={transferTask}
+        allCollabs={snapshot?.allCollabs ?? []}
+      />
     </div>
   );
 }
