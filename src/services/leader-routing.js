@@ -102,4 +102,29 @@ function groupLeaderIdsFor(collab, groupLeaders) {
     .map((g) => g.leader_id);
 }
 
-module.exports = { resolveLeadersOf, resolveLeaderIdsOf, groupLeaderIdsFor, UNITS, LEADER_ROLES };
+/**
+ * Quem VÊ a tarefa na governança = o delegador explícito (governance_owner_id),
+ * OU, se a tarefa é solta (NULL), o gerente da unidade do dono + arestas manuais.
+ * Retorna array de collaborator ids. Vazio → caller cai no CEO.
+ * @param {{governance_owner_id?: string|null, assigned_to: string}} task
+ * @param {{id:string, unit?:string|null, explicit_leader_ids?:string[]}} owner
+ * @param {Array} allCollabs
+ * @returns {string[]}
+ */
+function governanceViewerIdsOf(task, owner, allCollabs) {
+  if (task && task.governance_owner_id) return [task.governance_owner_id];
+  const ids = new Set();
+  const unit = owner && owner.unit ? owner.unit : null;
+  if (unit) {
+    for (const c of (allCollabs || [])) {
+      if (c.role === 'manager' && c.unit === unit && c.is_active !== false && !c.is_ceo) ids.add(c.id);
+    }
+  }
+  for (const lid of ((owner && owner.explicit_leader_ids) || [])) {
+    const L = (allCollabs || []).find((c) => c.id === lid);
+    if (L && !L.is_ceo) ids.add(lid);
+  }
+  return [...ids];
+}
+
+module.exports = { resolveLeadersOf, resolveLeaderIdsOf, groupLeaderIdsFor, governanceViewerIdsOf, UNITS, LEADER_ROLES };

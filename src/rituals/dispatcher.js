@@ -2356,7 +2356,7 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
     // Sprint 29.1 — filtra data_classification='real' pra esconder teste/arquivado.
     let _tkQ = supabase
       .from('tasks')
-      .select('id, title, due_date, category, assigned_to, staleness_check_sent_at, data_classification, coordination_request_count, collaborators!tasks_assigned_to_fkey(full_name)')
+      .select('id, title, due_date, category, assigned_to, governance_owner_id, staleness_check_sent_at, data_classification, coordination_request_count, collaborators!tasks_assigned_to_fkey(full_name)')
       .eq('context', 'work')
       .eq('data_classification', 'real')
       .eq('status', 'pending')
@@ -2364,7 +2364,9 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
       .order('due_date', { ascending: true })
       .limit(80);
     // Fase 6a — escopo por time (digest do líder): filtra pelos donos do time dele.
-    if (opts.scopeIds) _tkQ = _tkQ.in('assigned_to', opts.scopeIds);
+    // Quando leaderId está presente, pegamos tudo e filtramos pela função pura (posse
+    // pode ser de alguém fora da unidade). scopeIds só se aplica quando NÃO há leaderId.
+    if (opts.scopeIds && !opts.leaderId) _tkQ = _tkQ.in('assigned_to', opts.scopeIds);
     const { data: stale, error } = await _tkQ;
 
     if (error) {
@@ -2374,6 +2376,22 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
     }
     if (!stale || stale.length === 0) {
       await logRitualEvent(ceo.id, 'ceo_team_unclosed_tasks', 'skipped', 'none_found', ymdRef);
+      if (opts.returnText) return { text: '', staleIds: [] };
+      continue;
+    }
+
+    // Task 4 — digest do líder filtra pela posse: cada tarefa só aparece para quem
+    // é viewer dela (governanceViewerIdsOf = delegador ou, se NULL, gerente da unidade).
+    const { governanceViewerIdsOf } = require('../services/leader-routing');
+    let scoped = stale;
+    if (opts.leaderId) {
+      scoped = stale.filter((t) =>
+        governanceViewerIdsOf(t, collabById.get(t.assigned_to), allCollabs).includes(opts.leaderId),
+      );
+    }
+    if (opts.leaderId && scoped.length === 0) {
+      // Fatia vazia para este líder: retorna silenciosamente (modo returnText).
+      if (opts.returnText) return { text: '', staleIds: [] };
       continue;
     }
 
@@ -2381,8 +2399,8 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
     // últimas 24h via checkOverdueAlerts. Só sobem pro CEO: 6+d OU sem cobrança
     // recente. (checkOverdueAlerts só cobra individual até 5d; após isso é só
     // o CEO que age.)
-    const totalCount = stale.length;
-    const ids = stale.map(t => t.id);
+    const totalCount = scoped.length;
+    const ids = scoped.map(t => t.id);
     const cutoff24h = new Date(now.getTime() - 24 * 3600_000).toISOString();
     const { data: notified } = await supabase
       .from('notifications')
@@ -2391,7 +2409,7 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
       .in('notification_type', ['overdue_alert', 'deadline_alert'])
       .gte('sent_at', cutoff24h);
     const cobradas24h = new Set((notified || []).map(n => n.reference_id));
-    const filteredStale = stale.filter(t => {
+    const filteredStale = scoped.filter(t => {
       const days = daysOverdue(t.due_date);
       return days >= 6 || !cobradas24h.has(t.id);
     });
@@ -2536,7 +2554,7 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
         if (staleTaskErr) console.error(`[CEOTasksReport] staleness mark FAILED: ${staleTaskErr.message}`);
         else console.log(`[CEOTasksReport] staleness marcou ${toStaleCheck.length} task(s)`);
       }
-      console.log(`[CEOTasksReport] sent ${stale.length} (${ceoBucket.length} CEO direto) → ${String(ceo.phone).slice(-4)}`);
+      console.log(`[CEOTasksReport] sent ${scoped.length} (${ceoBucket.length} CEO direto) → ${String(ceo.phone).slice(-4)}`);
     } catch (err) {
       console.error(`[CEOTasksReport] send err ${String(ceo.phone).slice(-4)}:`, err.message);
       if (isTransientRitualError(err)) await rollbackRitualClaim(supabase, claim.id);
@@ -2813,7 +2831,9 @@ async function sendLeaderGovernanceDigest(now = new Date(), opts = {}) {
     }
 
     const eventsR = prefs.show_compromissos ? await ceoTeamUnclosedEventsReport(now, { returnText: true, scopeIds: teamIds, groupByOwner: true }) : null;
-    const tasksR = prefs.show_tarefas ? await ceoTeamUnclosedTasksReport(now, { returnText: true, scopeIds: teamIds, groupByOwner: true }) : null;
+    // Fase 2 (fatiamento por delegação): tarefas filtram pela POSSE (governanceViewerIdsOf),
+    // não pelo time inteiro. Passa leaderId (scopeIds é ignorado quando há leaderId).
+    const tasksR = prefs.show_tarefas ? await ceoTeamUnclosedTasksReport(now, { returnText: true, leaderId, groupByOwner: true }) : null;
     const eventsSec = (eventsR && eventsR.text) || '';
     const tasksSec = (tasksR && tasksR.text) || '';
 

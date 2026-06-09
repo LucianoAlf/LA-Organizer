@@ -136,3 +136,52 @@ test('aresta apontando o CEO é ignorada → fallback CEO', () => {
   const X = { id: 'x2', role: 'collaborator', function_role: 'ops_tecnicas', unit: 'all', is_ceo: false, is_active: true, explicit_leader_ids: ['ceo'] };
   assert.deepStrictEqual(resolveLeaderIdsOf(X, [CEO, X]), ['ceo']);
 });
+
+// ── governanceViewerIdsOf ────────────────────────────────────────────────────
+const { governanceViewerIdsOf } = require('./leader-routing');
+
+// Fixtures mínimas para a nova função
+const govJereh = { id: 'jereh', role: 'manager', unit: 'campo_grande', is_active: true };
+const govRose  = { id: 'rose',  role: 'manager', unit: 'all',          is_active: true };
+const govKris  = { id: 'kris',  role: 'manager', unit: 'all',          is_active: true };
+const govGabi  = { id: 'gabi',  unit: 'campo_grande', explicit_leader_ids: [] };
+const govVit   = { id: 'vit',   unit: 'campo_grande', explicit_leader_ids: [] };
+const allGovCollabs = [govJereh, govRose, govKris, govGabi, govVit];
+
+test('governanceViewerIdsOf: Rose delegou → só a Rose vê (Jereh não)', () => {
+  assert.deepStrictEqual(
+    governanceViewerIdsOf({ governance_owner_id: 'rose', assigned_to: 'gabi' }, govGabi, allGovCollabs),
+    ['rose']
+  );
+});
+test('governanceViewerIdsOf: Jereh delegou tarefa → Jereh vê (tema ignorado)', () => {
+  assert.deepStrictEqual(
+    governanceViewerIdsOf({ governance_owner_id: 'jereh', assigned_to: 'gabi' }, govGabi, allGovCollabs),
+    ['jereh']
+  );
+});
+test('governanceViewerIdsOf: tarefa solta da Gabi (NULL) → gerente da unidade (Jereh)', () => {
+  assert.deepStrictEqual(
+    governanceViewerIdsOf({ governance_owner_id: null, assigned_to: 'gabi' }, govGabi, allGovCollabs),
+    ['jereh']
+  );
+});
+test('governanceViewerIdsOf: tarefa solta da Vitória (NULL) → Jereh, NÃO Krissya', () => {
+  assert.deepStrictEqual(
+    governanceViewerIdsOf({ governance_owner_id: null, assigned_to: 'vit' }, govVit, allGovCollabs),
+    ['jereh']
+  );
+});
+test('governanceViewerIdsOf: Krissya delegou → Krissya', () => {
+  assert.deepStrictEqual(
+    governanceViewerIdsOf({ governance_owner_id: 'kris', assigned_to: 'vit' }, govVit, allGovCollabs),
+    ['kris']
+  );
+});
+test('governanceViewerIdsOf: solta sem unidade → vazio (caller cai no CEO)', () => {
+  const semUnit = { id: 'x', unit: null, explicit_leader_ids: [] };
+  assert.deepStrictEqual(
+    governanceViewerIdsOf({ governance_owner_id: null, assigned_to: 'x' }, semUnit, [...allGovCollabs, semUnit]),
+    []
+  );
+});

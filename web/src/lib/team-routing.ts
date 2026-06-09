@@ -74,6 +74,31 @@ export function resolveLeaderIdsOf(collab: Collab, allCollabs: Collab[]): string
   return resolveLeadersOf(collab, allCollabs).map(c => c.id);
 }
 
+/** Espelho de src/services/leader-routing.js governanceViewerIdsOf — manter idêntico.
+ * Quem VÊ a tarefa na governança = o delegador explícito (governance_owner_id),
+ * OU, se a tarefa é solta (NULL), o gerente da unidade do dono + arestas manuais.
+ * Retorna array de collaborator ids. Vazio → caller cai no CEO.
+ */
+export function governanceViewerIdsOf(
+  task: { governance_owner_id?: string | null; assigned_to: string },
+  owner: Collab | undefined,
+  allCollabs: Collab[],
+): string[] {
+  if (task && task.governance_owner_id) return [task.governance_owner_id];
+  const ids = new Set<string>();
+  const unit = owner && owner.unit ? owner.unit : null;
+  if (unit) {
+    for (const c of (allCollabs || [])) {
+      if (c.role === 'manager' && c.unit === unit && (c as any).is_active !== false && !c.is_ceo) ids.add(c.id);
+    }
+  }
+  for (const lid of ((owner && owner.explicit_leader_ids) || [])) {
+    const L = (allCollabs || []).find((c) => c.id === lid);
+    if (L && !L.is_ceo) ids.add(lid);
+  }
+  return [...ids];
+}
+
 /** Inversa: todos os colaboradores ativos cujo conjunto de líderes inclui `leader`. */
 export function membersOf(leader: Collab, allCollabs: Collab[]): Collab[] {
   return (allCollabs ?? [])

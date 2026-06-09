@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveLeaderIdsOf, membersOf, groupLeaderIdsFor, type Collab } from './team-routing';
+import { resolveLeaderIdsOf, membersOf, groupLeaderIdsFor, governanceViewerIdsOf, type Collab } from './team-routing';
 
 const C = (p: Partial<Collab> & { id: string }): Collab => ({
   id: p.id, role: p.role ?? 'collaborator', function_role: p.function_role ?? null,
@@ -101,5 +101,35 @@ describe('explicit_leader_ids (override manual N:N)', () => {
     const x = C({ id: 'x', function_role: 'ops_tecnicas', unit: 'all' });
     x.explicit_leader_ids = ['ceo'];
     expect(resolveLeaderIdsOf(x, [ceo, x])).toEqual(['ceo']);
+  });
+});
+
+// ── governanceViewerIdsOf (espelho de leader-routing.js) ────────────────────
+describe('governanceViewerIdsOf', () => {
+  const govJereh: Collab = { id: 'jereh', role: 'manager', function_role: null, unit: 'campo_grande', supervisor_id: null, is_ceo: false, is_active: true };
+  const govRose:  Collab = { id: 'rose',  role: 'manager', function_role: null, unit: 'all',          supervisor_id: null, is_ceo: false, is_active: true };
+  const govKris:  Collab = { id: 'kris',  role: 'manager', function_role: null, unit: 'all',          supervisor_id: null, is_ceo: false, is_active: true };
+  const govGabi:  Collab = { id: 'gabi',  role: 'collaborator', function_role: null, unit: 'campo_grande', supervisor_id: null, is_ceo: false, explicit_leader_ids: [] };
+  const govVit:   Collab = { id: 'vit',   role: 'collaborator', function_role: null, unit: 'campo_grande', supervisor_id: null, is_ceo: false, explicit_leader_ids: [] };
+  const allGov = [govJereh, govRose, govKris, govGabi, govVit];
+
+  it('Rose delegou → só a Rose vê (Jereh não)', () => {
+    expect(governanceViewerIdsOf({ governance_owner_id: 'rose', assigned_to: 'gabi' }, govGabi, allGov)).toEqual(['rose']);
+  });
+  it('Jereh delegou tarefa → Jereh vê (tema ignorado)', () => {
+    expect(governanceViewerIdsOf({ governance_owner_id: 'jereh', assigned_to: 'gabi' }, govGabi, allGov)).toEqual(['jereh']);
+  });
+  it('tarefa solta da Gabi (NULL, unit campo_grande) → gerente da unidade (Jereh)', () => {
+    expect(governanceViewerIdsOf({ governance_owner_id: null, assigned_to: 'gabi' }, govGabi, allGov)).toEqual(['jereh']);
+  });
+  it('tarefa solta da Vitória (NULL) → Jereh, NÃO Krissya', () => {
+    expect(governanceViewerIdsOf({ governance_owner_id: null, assigned_to: 'vit' }, govVit, allGov)).toEqual(['jereh']);
+  });
+  it('Krissya delegou → Krissya', () => {
+    expect(governanceViewerIdsOf({ governance_owner_id: 'kris', assigned_to: 'vit' }, govVit, allGov)).toEqual(['kris']);
+  });
+  it('solta sem unidade → vazio (caller cai no CEO)', () => {
+    const semUnit: Collab = { id: 'x', role: 'collaborator', function_role: null, unit: null, supervisor_id: null, is_ceo: false, explicit_leader_ids: [] };
+    expect(governanceViewerIdsOf({ governance_owner_id: null, assigned_to: 'x' }, semUnit, [...allGov, semUnit])).toEqual([]);
   });
 });
