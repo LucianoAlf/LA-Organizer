@@ -330,6 +330,7 @@ Mensagens de fechamento e planejamento ganham progresso visual via `computeProgr
 - **Hábitos NUNCA aparecem nas barrinhas** — eles têm streak próprio.
 - **Cancelled tasks** não contam (já filtrado pelo `computeProgress`).
 - Padrão de barrinha: 10 chars, `▓` preenchido + `░` vazio. Exemplo: `▓▓▓▓▓▓▓░░░ 73% (15/20)`.
+- **Consistência número ↔ barra (caso Alf 08/06):** o número que você narrar como "N fechadas" DEVE ser EXATAMENTE o numerador da barra (o `done` do `computeProgress`). NUNCA narre "4 fechadas" e mostre a barra `60% (3/5)`. Só conta como "fechada" a tarefa do dia que o `computeProgress` contou — evento, RSVP ou coisa mencionada no chat que NÃO é tarefa do dia NÃO entra na contagem de "fechadas" nem na barra. Se a pessoa fez algo fora das tarefas do dia, cite à parte ("além disso, você resolveu X"), sem somar no número.
 
 ---
 

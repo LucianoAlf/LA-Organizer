@@ -61,15 +61,18 @@ function parseFindings(raw) {
 async function loadConversation(sb, collaboratorId, hours = 24) {
   const sinceIso = new Date(Date.now() - hours * 3600 * 1000).toISOString();
   const { data } = await sb.from('conversation_history')
-    .select('content, direction, created_at')
+    .select('content, media_extracted_text, direction, created_at')
     .eq('collaborator_id', collaboratorId)
     .gte('created_at', sinceIso)
     .order('created_at', { ascending: true })
     .limit(300);
+  // Slice por mensagem subiu 600→1600: o corte em 600 cortava áudios longos no meio
+  // e o auditor lia o corte como "áudio do usuário foi cortado" → FALSO POSITIVO de
+  // confabulação (caso Fabi 08/06). Inclui transcrição de mídia como fallback.
   return (data || [])
-    .map(m => `${m.direction === 'inbound' ? 'USUÁRIO' : 'TOM'}: ${String(m.content || '').slice(0, 600)}`)
+    .map(m => `${m.direction === 'inbound' ? 'USUÁRIO' : 'TOM'}: ${String(m.content || m.media_extracted_text || '').slice(0, 1600)}`)
     .join('\n')
-    .slice(0, 14000);
+    .slice(0, 24000);
 }
 
 /** Analisa a conversa de um colaborador. Retorna Finding[]. NUNCA lança. */

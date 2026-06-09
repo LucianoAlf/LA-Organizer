@@ -489,38 +489,50 @@ async function checkConversationQuality() {
     .select('category, severity, summary, occurrences, collaborator_id, collaborators:collaborator_id(full_name)')
     .in('status', ['novo', 'confirmado'])
     .order('occurrences', { ascending: false })
-    .limit(50);
+    .limit(200);
   if (error) throw error;
   const findings = data || [];
   if (findings.length === 0) {
     return { status: 'ok', detail: '🗣️ 0 falhas nas conversas (24h)' };
   }
-  // Amostragem honesta: prioriza ALTO + diversifica por pessoa (não enterra os
-  // graves sob 5 do mesmo chat — caso 08/06). rankFindings é puro/testado.
-  const { rankFindings } = require('../services/conversation-audit');
-  const { sample, byPerson, bySeverity } = rankFindings(findings, { perPerson: 2, max: 7 });
+  // Lista HONESTA e COMPLETA (Alf 09/06): agrupa por pessoa e lista TODOS os
+  // findings — sem corte "…+N". Compactar escondia justamente o que importa pra
+  // auditar (caso 09/06). Continuação do fix AUDIT-CONV-RUIDO-AMOSTRAGEM.
   const SEV_EMOJI = { alto: '🔴', medio: '🟠', baixo: '🟡' };
+  const SEV_RANK = { alto: 0, medio: 1, baixo: 2 };
+  const sevRk = f => (SEV_RANK[f.severity] != null ? SEV_RANK[f.severity] : 1);
+  const bySeverity = {};
+  for (const f of findings) bySeverity[f.severity] = (bySeverity[f.severity] || 0) + 1;
   const nameById = {};
   for (const f of findings) nameById[f.collaborator_id] = f.collaborators?.full_name?.split(' ')[0] || '—';
-  const top = sample.map(f => {
-    const who = nameById[f.collaborator_id] || '—';
-    const rec = (f.occurrences || 1) >= 2 ? `🔁${f.occurrences}× ` : '';
-    const sev = SEV_EMOJI[f.severity] || '';
-    return `  • ${sev} ${rec}[${CONV_CAT_LABEL[f.category] || f.category}] ${String(f.summary).slice(0, 60)} (${who})`;
+  // Agrupa por pessoa
+  const groups = {};
+  for (const f of findings) {
+    const pid = f.collaborator_id || 'unknown';
+    (groups[pid] = groups[pid] || []).push(f);
+  }
+  // Ordena pessoas pelo PIOR severity, depois por nº de findings
+  const worstOf = arr => Math.min(...arr.map(sevRk));
+  const orderedPids = Object.keys(groups).sort((a, b) => {
+    const d = worstOf(groups[a]) - worstOf(groups[b]);
+    return d !== 0 ? d : groups[b].length - groups[a].length;
+  });
+  const blocks = orderedPids.map(pid => {
+    const arr = groups[pid].slice().sort((x, y) => sevRk(x) - sevRk(y));
+    const lines = arr.map(f => {
+      const rec = (f.occurrences || 1) >= 2 ? `🔁${f.occurrences}× ` : '';
+      const sev = SEV_EMOJI[f.severity] || '';
+      return `  • ${sev} ${rec}[${CONV_CAT_LABEL[f.category] || f.category}] ${String(f.summary).slice(0, 120)}`;
+    });
+    return `*${nameById[pid] || '—'}* (${arr.length}):\n${lines.join('\n')}`;
   });
   const sevLine = ['alto', 'medio', 'baixo'].filter(s => bySeverity[s]).map(s => `${bySeverity[s]} ${s}`).join(' · ');
-  const personLine = Object.entries(byPerson)
-    .sort((a, b) => b[1] - a[1])
-    .map(([pid, n]) => `${nameById[pid] || '—'} ${n}`)
-    .slice(0, 8).join(', ');
-  const hiddenN = findings.length - sample.length;
-  const samples = sample.map(f => ({
+  const samples = findings.map(f => ({
     category: f.category, severity: f.severity, summary: f.summary, occurrences: f.occurrences,
   }));
   return {
     status: 'warning',
-    detail: `🗣️ ${findings.length} falha(s) de conversa pra revisar (${sevLine}):\n${top.join('\n')}` +
-      (hiddenN > 0 ? `\n  …+${hiddenN} (por pessoa: ${personLine})` : ''),
+    detail: `🗣️ ${findings.length} falha(s) de conversa pra revisar (${sevLine}):\n${blocks.join('\n\n')}`,
     samples,
   };
 }

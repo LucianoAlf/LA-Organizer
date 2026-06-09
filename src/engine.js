@@ -1639,6 +1639,29 @@ function _displayName(person) {
 // Alias legacy pra calls existentes.
 const _requesterDisplayName = _displayName;
 
+// Krissya 08/06 (AUDIT-DUP-CONFIRM): quando o IntegrityCheck BLOQUEIA a criação
+// (dup_task / dup_event), o engine preserva o cleanText do LLM e anexa o microconfirm
+// 1/2/3 (Sprint 31, pra não engolir outros itens do lote). Mas se o LLM já cantou
+// "Criado! ✅" pro item bloqueado, sobra uma contradição ("Criado!" + "é duplicata?").
+// Como o insert FOI bloqueado, qualquer linha de sucesso de criação é falsa por definição
+// → stripar. Mantém perguntas/itens legítimos; remove só o falso "criado/registrado".
+function _stripPrematureCreateConfirm(text) {
+  if (!text) return '';
+  return String(text)
+    .split('\n')
+    .filter((line) => {
+      const t = line.trim();
+      if (!t) return true;
+      if (/^[✅☑️✔️🎉👍🙌]*\s*(criad[oa]|registrad[oa]|anotad[oa]|anotei|pronto|feito|agendad[oa]|t[aá]\s+(criada|agendada|anotada)|tarefa\s+criada|lembrete\s+criado|recorrente\s+criada)\b/i.test(t)) return false;
+      if (/voc[êe]\s+recebe\s+o\s+lembrete/i.test(t)) return false;
+      if (/^todo\s+dia\s+\d+/i.test(t)) return false;
+      return true;
+    })
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 // Bug B2 fix (Radar pós-Sprint19): quando IntegrityCheck bloqueia criação,
 // substitui qualquer texto otimista que o LLM possa ter gerado ("✅ Registrado!")
 // por uma microconfirmação clara. Determinístico no engine, não confia no Claude.
@@ -7706,7 +7729,7 @@ async function processMessage(phone, text, raw = {}) {
         // duplicata no fim. Antes, sobrescrever apagava todos os demais itens do turno.
         {
           const _dupQ = _buildIntegrityConfirmText(integrityPayload);
-          const _prev = (parsedTask.cleanText || '').trim();
+          const _prev = _stripPrematureCreateConfirm((parsedTask.cleanText || '').trim());
           reply = _prev ? `${_prev}\n\n${_dupQ}` : _dupQ;
           // Sprint 31.10 — ESTE turno terminou pedindo confirmação de duplicata
           // (1/2/3). O detector ACTIONABLE_NO_MARKER lê esse flag e NÃO acusa:
@@ -7924,7 +7947,7 @@ async function processMessage(phone, text, raw = {}) {
         // resolveu/perguntou (parsedEv.cleanText) e ANEXA o aviso de duplicata.
         {
           const _dupQ = _buildIntegrityConfirmText(integrityPayload);
-          const _prev = (parsedEv.cleanText || '').trim();
+          const _prev = _stripPrematureCreateConfirm((parsedEv.cleanText || '').trim());
           reply = _prev ? `${_prev}\n\n${_dupQ}` : _dupQ;
           // Sprint 31.10 — mesmo flag do caminho TASK: turno pediu confirmação de
           // duplicata, não é ACTIONABLE_NO_MARKER.
