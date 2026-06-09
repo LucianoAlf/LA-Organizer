@@ -196,7 +196,7 @@ export function GestaoEquipeDetalhe() {
   const inputCls = 'w-full bg-bg-elevated border border-border rounded-lg px-3 py-2.5 text-body-md focus-ring outline-none';
   const chipCls  = (active: boolean) =>
     `px-3 py-1.5 rounded-lg text-body-sm font-medium border transition-colors ${
-      active ? 'bg-tom text-white border-tom' : 'bg-bg-elevated border-border text-fg'
+      active ? 'bg-tom text-black border-tom' : 'bg-bg-elevated border-border text-fg'
     }`;
 
   const myEdgeLeaderIds = edges.filter(e => e.member_id === id).map(e => e.leader_id);
@@ -372,13 +372,17 @@ export function GestaoEquipeDetalhe() {
 
             <div className="space-y-md">
               <label className="text-body-sm text-fg-muted">Reporta a (líderes explícitos — soma às regras)</label>
+              <p className="text-body-sm text-fg-muted">Toque pra marcar; toque de novo (no chip verde com ✕) pra remover.</p>
               <div className="flex flex-wrap gap-2">
-                {roster.filter(c => c.id !== id && !c.is_ceo).map(c => (
-                  <button key={c.id} type="button" onClick={() => toggleEdge(c.id)}
-                    className={chipCls(myEdgeLeaderIds.includes(c.id))}>
-                    {c.preferred_name || c.full_name}
-                  </button>
-                ))}
+                {roster.filter(c => c.id !== id && !c.is_ceo).map(c => {
+                  const active = myEdgeLeaderIds.includes(c.id);
+                  return (
+                    <button key={c.id} type="button" onClick={() => toggleEdge(c.id)}
+                      className={chipCls(active)}>
+                      {c.preferred_name || c.full_name}{active ? ' ✕' : ''}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -396,7 +400,7 @@ export function GestaoEquipeDetalhe() {
         )}
 
         <button type="submit" disabled={saveMutation.isPending}
-          className="w-full py-3 rounded-xl bg-tom text-white font-semibold text-body-md disabled:opacity-50 hover:opacity-90 transition-opacity">
+          className="w-full py-3 rounded-xl bg-tom text-black font-semibold text-body-md disabled:opacity-50 hover:opacity-90 transition-opacity">
           {saveMutation.isPending ? 'Salvando...' : 'Salvar alterações'}
         </button>
       </form>
