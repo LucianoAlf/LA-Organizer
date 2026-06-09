@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useTaskTransform } from '../hooks/useTaskTransform';
 import { CalendarDays } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase, supabaseConfigured } from '../lib/supabase';
@@ -95,6 +96,7 @@ async function toggleEventStatus(event: CalendarEvent): Promise<void> {
 export function Semana() {
   const { collaborator } = useAuth();
   const qc = useQueryClient();
+  const tt = useTaskTransform();
   const today = todaySP();
   // Sprint 22.49 — viewYmd navegavel: chevrons (-7/+7 dias) + date picker.
   const [viewYmd, setViewYmd] = useState(today);
@@ -399,8 +401,9 @@ export function Semana() {
 
       <Fab onClick={() => setCreateOpen(true)} label="Novo" ariaLabel="Criar novo item" />
       <QuickCreateSheet open={createOpen} onClose={() => setCreateOpen(false)} defaultDueDate={today} />
-      <EditTaskSheet open={Boolean(editingTask)} task={editingTask} onClose={() => setEditingTask(null)} />
+      <EditTaskSheet open={Boolean(editingTask)} task={editingTask} onClose={() => setEditingTask(null)} onTransform={tt.onEditSheetTransform} canDelegate={tt.canDelegateAny} />
       <EditEventSheet open={Boolean(editingEvent)} event={editingEvent} onClose={() => setEditingEvent(null)} />
+      {tt.sheets}
     </div>
   );
 }

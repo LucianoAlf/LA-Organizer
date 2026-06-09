@@ -33,6 +33,10 @@ interface Props {
   onReschedule?: (task: Task) => void;
   /** Sprint 22.28 — Excluir tarefa (RowMenu confirm inline cuida do "tem certeza"). */
   onDelete?: (task: Task) => void;
+  /** Transformar em compromisso (abre ConvertToEventSheet no parent). */
+  onTransformToEvent?: (task: Task) => void;
+  /** Delegar a alguém (abre DelegateTaskSheet no parent). Só passar quando o user pode delegar a tarefa. */
+  onDelegate?: (task: Task) => void;
   /** Sprint 22.29 — Sortable props (passadas pelo wrapper SortableTaskItem). */
   sortableRef?: (node: HTMLElement | null) => void;
   sortableStyle?: React.CSSProperties;
@@ -110,7 +114,7 @@ function fmtSuffix(rel: string, dayIso: string): string {
 }
 
 export function TaskRow({
-  task, onToggle, readOnly, onEdit, onReschedule, onDelete,
+  task, onToggle, readOnly, onEdit, onReschedule, onDelete, onTransformToEvent, onDelegate,
   sortableRef, sortableStyle, sortableAttributes, sortableListeners, isDragging,
 }: Props) {
   const { tone, label } = statusOf(task);
@@ -236,10 +240,12 @@ export function TaskRow({
       {/* Sprint 22.29 (Bucket 4) — menu independente de readOnly: em delegadas
           o checkbox some (readOnly) mas reagendar/excluir continuam disponiveis
           pra quem delegou (created_by). */}
-      {(onEdit || onReschedule || onDelete) && (() => {
+      {(onEdit || onReschedule || onDelete || onTransformToEvent || onDelegate) && (() => {
         const items: MenuItem[] = [];
         if (onEdit) items.push({ label: 'Editar', onClick: () => onEdit(task) });
         if (onReschedule) items.push({ label: 'Reagendar', onClick: () => onReschedule(task) });
+        if (onTransformToEvent) items.push({ label: '📆 Transformar em compromisso', onClick: () => onTransformToEvent(task) });
+        if (onDelegate) items.push({ label: '👥 Delegar', onClick: () => onDelegate(task) });
         if (onDelete) items.push({
           label: 'Excluir tarefa',
           danger: true,

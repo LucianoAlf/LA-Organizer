@@ -29,6 +29,10 @@ interface Props {
   open: boolean;
   task: Task | null;
   onClose: () => void;
+  /** Abre o fluxo de transformação no parent (delegar / compromisso). */
+  onTransform?: (task: Task, kind: 'event' | 'delegate') => void;
+  /** Se o user pode delegar esta tarefa (controla o botão "Delegar"). */
+  canDelegate?: boolean;
 }
 
 function timeFromIso(iso: string | null | undefined): string {
@@ -42,7 +46,7 @@ function timeFromIso(iso: string | null | undefined): string {
   return fmt.format(d);  // "HH:MM"
 }
 
-export function EditTaskSheet({ open, task, onClose }: Props) {
+export function EditTaskSheet({ open, task, onClose, onTransform, canDelegate }: Props) {
   const { collaborator } = useAuth();
   const qc = useQueryClient();
 
@@ -318,6 +322,23 @@ export function EditTaskSheet({ open, task, onClose }: Props) {
 
           {error && (
             <p role="alert" className="text-body-sm text-danger">{error}</p>
+          )}
+
+          {onTransform && task.assigned_to === collaborator?.id
+            && task.status !== 'done' && task.status !== 'cancelled' && task.status !== 'delegated' && (
+            <div className="border-t border-border pt-3">
+              <div className="text-label uppercase tracking-wide text-fg-muted mb-2">Transformar em</div>
+              <div className="flex gap-2">
+                <Button type="button" variant="secondary" onClick={() => onTransform(task, 'event')}>
+                  📆 Compromisso
+                </Button>
+                {canDelegate && (
+                  <Button type="button" variant="secondary" onClick={() => onTransform(task, 'delegate')}>
+                    👥 Delegar
+                  </Button>
+                )}
+              </div>
+            </div>
           )}
 
           <div className="flex items-center gap-md pt-2">

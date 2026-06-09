@@ -683,7 +683,7 @@ router.post('/internal/task-delegated', requireInternalSecret, async (req, res) 
   // Carrega task + creator + assignee (com phone/is_active)
   const { data: task, error: taskErr } = await supabase
     .from('tasks')
-    .select('id, title, due_date, remind_at, context, eisenhower_quadrant, created_by, assigned_to')
+    .select('id, title, description, due_date, remind_at, context, eisenhower_quadrant, created_by, assigned_to')
     .eq('id', taskId)
     .single();
   if (taskErr || !task) return res.status(404).json({ error: 'task_not_found' });
@@ -733,8 +733,9 @@ router.post('/internal/task-delegated', requireInternalSecret, async (req, res) 
 
   const body =
     `📌 *${creator?.full_name || 'Alguém'}* delegou uma tarefa pra você:\n\n` +
-    `*${task.title}*${whenLine ? `\n\nPra${whenLine}.` : ''}\n\n` +
-    `Quando concluir, marca aqui ou no app.`;
+    `*${task.title}*${whenLine ? `\n\nPra${whenLine}.` : ''}` +
+    (task.description ? `\n\n💬 "${String(task.description).slice(0, 300)}"` : '') +
+    `\n\nQuando concluir, marca aqui ou no app.`;
 
   whatsapp.sendMessage(assignee.phone, body).catch(e =>
     console.error(`[InternalAPI] task-delegated WA send err pra ${assignee.id}: ${e.message}`),

@@ -151,6 +151,10 @@ export interface Task {
   // nas ocorrências materializadas (aponta pro template).
   recurrence_rule?: string | null;
   recurrence_parent_id?: string | null;
+  // Descrição livre da tarefa (coluna `description`; TOM consome). Usada como "recado" ao delegar.
+  description?: string | null;
+  // Quando a tarefa virou compromisso: aponta pro events.id criado (status='cancelled' nesse caso).
+  converted_to_event_id?: string | null;
 }
 
 export type EventStatus = 'scheduled' | 'done' | 'cancelled';

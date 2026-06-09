@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useTaskTransform } from '../hooks/useTaskTransform';
 import { ListTodo, CalendarClock, Check, Flame } from 'lucide-react';
 import { DndContext, closestCenter, type DragEndEvent } from '@dnd-kit/core';
 import {
@@ -172,6 +173,7 @@ type TabKey = TaskContext | 'delegated';
 export function Hoje() {
   const { collaborator } = useAuth();
   const qc = useQueryClient();
+  const tt = useTaskTransform();
   const [tab, setTab] = useState<TabKey>('work');
   // Sprint 12 Bloco D: filtro opcional por categoria de execução. null = todas.
   const [actionFilter, setActionFilter] = useState<ActionType | null>(null);
@@ -644,6 +646,10 @@ export function Hoje() {
                 onReschedule={setReschedulingTask}
                 onDelete={(task) => deleteTask.mutate(task)}
                 onReorder={(ids) => reorderTasks.mutate(ids)}
+                onTransformToEvent={tt.openConvert}
+                onDelegate={tt.openDelegate}
+                canConvert={tt.canConvert}
+                canDelegate={tt.canDelegate}
               />
             </section>
           )}
@@ -660,6 +666,10 @@ export function Hoje() {
                 onReschedule={setReschedulingTask}
                 onDelete={(task) => deleteTask.mutate(task)}
                 onReorder={(ids) => reorderTasks.mutate(ids)}
+                onTransformToEvent={tt.openConvert}
+                onDelegate={tt.openDelegate}
+                canConvert={tt.canConvert}
+                canDelegate={tt.canDelegate}
               />
             </section>
           )}
@@ -676,6 +686,10 @@ export function Hoje() {
                 onReschedule={setReschedulingTask}
                 onDelete={(task) => deleteTask.mutate(task)}
                 onReorder={(ids) => reorderTasks.mutate(ids)}
+                onTransformToEvent={tt.openConvert}
+                onDelegate={tt.openDelegate}
+                canConvert={tt.canConvert}
+                canDelegate={tt.canDelegate}
               />
             </section>
           )}
@@ -691,6 +705,10 @@ export function Hoje() {
                 onReschedule={setReschedulingTask}
                 onDelete={(task) => deleteTask.mutate(task)}
                 onReorder={(ids) => reorderTasks.mutate(ids)}
+                onTransformToEvent={tt.openConvert}
+                onDelegate={tt.openDelegate}
+                canConvert={tt.canConvert}
+                canDelegate={tt.canDelegate}
               />
             </section>
           )}
@@ -714,6 +732,8 @@ export function Hoje() {
                   onToggle={(task) => toggleTask.mutate(task)}
                   onReschedule={setReschedulingTask}
                   onDelete={(task) => deleteTask.mutate(task)}
+                  onTransformToEvent={tt.canConvert(t) ? tt.openConvert : undefined}
+                  onDelegate={tt.canDelegate(t) ? tt.openDelegate : undefined}
                 />
               ))}
             </section>
@@ -736,7 +756,8 @@ export function Hoje() {
       <QuickCreateSheet open={sheetOpen} onClose={() => setSheetOpen(false)} defaultDueDate={today} />
       <EditEventSheet open={Boolean(editingEvent)} event={editingEvent} onClose={() => setEditingEvent(null)} />
       <RescheduleSheet open={Boolean(reschedulingTask)} task={reschedulingTask} onClose={() => setReschedulingTask(null)} />
-      <EditTaskSheet open={Boolean(editingTask)} task={editingTask} onClose={() => setEditingTask(null)} />
+      <EditTaskSheet open={Boolean(editingTask)} task={editingTask} onClose={() => setEditingTask(null)} onTransform={tt.onEditSheetTransform} canDelegate={tt.canDelegateAny} />
+      {tt.sheets}
     </div>
   );
 }
@@ -750,6 +771,10 @@ function SortableTaskList({
   onReschedule,
   onDelete,
   onReorder,
+  onTransformToEvent,
+  onDelegate,
+  canConvert,
+  canDelegate,
 }: {
   tasks: Task[];
   onToggle: (task: Task) => void;
@@ -757,6 +782,10 @@ function SortableTaskList({
   onReschedule: (task: Task) => void;
   onDelete: (task: Task) => void;
   onReorder: (orderedIds: string[]) => void;
+  onTransformToEvent?: (task: Task) => void;
+  onDelegate?: (task: Task) => void;
+  canConvert?: (task: Task) => boolean;
+  canDelegate?: (task: Task) => boolean;
 }) {
   const sensors = useSortableSensors();
   const ids = tasks.map(t => t.id);
@@ -782,6 +811,8 @@ function SortableTaskList({
               onEdit={onEdit}
               onReschedule={onReschedule}
               onDelete={onDelete}
+              onTransformToEvent={canConvert?.(t) ? onTransformToEvent : undefined}
+              onDelegate={canDelegate?.(t) ? onDelegate : undefined}
             />
           ))}
         </div>
@@ -796,12 +827,16 @@ function SortableTaskItem({
   onEdit,
   onReschedule,
   onDelete,
+  onTransformToEvent,
+  onDelegate,
 }: {
   task: Task;
   onToggle: (task: Task) => void;
   onEdit: (task: Task) => void;
   onReschedule: (task: Task) => void;
   onDelete: (task: Task) => void;
+  onTransformToEvent?: (task: Task) => void;
+  onDelegate?: (task: Task) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: task.id,
@@ -822,6 +857,8 @@ function SortableTaskItem({
       sortableAttributes={attributes}
       sortableListeners={listeners}
       isDragging={isDragging}
+      onTransformToEvent={onTransformToEvent}
+      onDelegate={onDelegate}
     />
   );
 }
