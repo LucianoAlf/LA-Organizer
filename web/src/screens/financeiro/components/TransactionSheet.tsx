@@ -15,9 +15,10 @@ export interface TransactionSheetProps {
   open: boolean;
   onClose: () => void;
   initial?: PfTransaction;     // se presente, modo edição (editar campos + apagar)
+  cardName?: string;           // nome do cartão quando editando uma compra de cartão (mostra chip)
 }
 
-export function TransactionSheet({ open, onClose, initial }: TransactionSheetProps) {
+export function TransactionSheet({ open, onClose, initial, cardName }: TransactionSheetProps) {
   const isEdit = !!initial;
   const accountsQ = useAccounts();
   const createMut = useCreateTransaction();
@@ -119,29 +120,37 @@ export function TransactionSheet({ open, onClose, initial }: TransactionSheetPro
   return (
     <AdaptiveSheet open={open} onClose={onClose} title={isEdit ? 'Transação' : 'Nova transação'} size="sm">
       <div className="flex flex-col gap-md p-md">
-        {/* Toggle income/expense — pill segmentado */}
-        <div className="grid grid-cols-2 rounded-full bg-bg-elevated p-1 text-body-sm">
-          <button
-            type="button"
-            onClick={() => switchType('expense')}
-            className={[
-              'h-9 rounded-full transition-colors focus-ring',
-              type === 'expense' ? 'bg-danger/10 text-danger font-semibold' : 'text-fg-muted hover:text-fg',
-            ].join(' ')}
-          >
-            − Despesa
-          </button>
-          <button
-            type="button"
-            onClick={() => switchType('income')}
-            className={[
-              'h-9 rounded-full transition-colors focus-ring',
-              type === 'income' ? 'bg-success/10 text-success font-semibold' : 'text-fg-muted hover:text-fg',
-            ].join(' ')}
-          >
-            + Receita
-          </button>
-        </div>
+        {/* Compra de cartão: chip identificando o cartão (sem toggle — é sempre despesa). */}
+        {isCardTxn ? (
+          <div className="flex items-center gap-2 rounded-md bg-bg-elevated px-3 py-2.5 text-body-sm">
+            <span className="text-base">💳</span>
+            <span className="text-fg font-medium">Compra no cartão{cardName ? ` ${cardName}` : ''}</span>
+          </div>
+        ) : (
+          /* Toggle income/expense — pill segmentado */
+          <div className="grid grid-cols-2 rounded-full bg-bg-elevated p-1 text-body-sm">
+            <button
+              type="button"
+              onClick={() => switchType('expense')}
+              className={[
+                'h-9 rounded-full transition-colors focus-ring',
+                type === 'expense' ? 'bg-danger/10 text-danger font-semibold' : 'text-fg-muted hover:text-fg',
+              ].join(' ')}
+            >
+              − Despesa
+            </button>
+            <button
+              type="button"
+              onClick={() => switchType('income')}
+              className={[
+                'h-9 rounded-full transition-colors focus-ring',
+                type === 'income' ? 'bg-success/10 text-success font-semibold' : 'text-fg-muted hover:text-fg',
+              ].join(' ')}
+            >
+              + Receita
+            </button>
+          </div>
+        )}
 
         <Field label="Valor">
           <div className="flex items-baseline gap-2">
@@ -188,7 +197,7 @@ export function TransactionSheet({ open, onClose, initial }: TransactionSheetPro
           <Field label="Data">
             <DateInput value={date} onChange={setDate} />
           </Field>
-          {accountsQ.data && accountsQ.data.length > 0 && (
+          {!isCardTxn && accountsQ.data && accountsQ.data.length > 0 && (
             <Field label="Carteira" sub="Opcional. Vincular pra atualizar o saldo dela.">
               <ComboBox value={accountId} options={accountOptions} onChange={setAccountId} placeholder="Buscar carteira…" />
             </Field>

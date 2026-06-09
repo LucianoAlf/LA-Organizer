@@ -277,7 +277,7 @@ export function CartaoDetalhePage() {
       <PagarSheet open={paying} onClose={() => setPaying(false)} cardId={card.id} />
       <AjustarFaturaSheet open={ajustando} onClose={() => setAjustando(false)} cardId={card.id} />
       <CartaoSheet open={editando} onClose={() => setEditando(false)} card={card} />
-      <TransactionSheet open={!!editItem} onClose={() => setEditItem(null)} initial={editItem ?? undefined} />
+      <TransactionSheet open={!!editItem} onClose={() => setEditItem(null)} initial={editItem ?? undefined} cardName={card.name} />
     </div>
   );
 }
