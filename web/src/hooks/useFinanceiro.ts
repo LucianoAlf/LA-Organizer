@@ -196,6 +196,9 @@ export function useCardInvoice(cardId?: string, competencia?: string) {
 }
 export const useCreateCard     = () => useFinMutation(cartoes.createCard);
 export const useDeactivateCard = () => useFinMutation((cid, id: string) => cartoes.deactivateCard(cid, id));
+export const useUpdateCard      = () => useFinMutation(
+  (cid, input: { id: string; patch: Parameters<typeof cartoes.updateCard>[2] }) => cartoes.updateCard(cid, input.id, input.patch)
+);
 export const usePayInvoice     = () => useFinMutation(
   (cid, args: { card: cartoes.PfCard; competencia: string; amount: number; paid_from_account: string | null }) =>
     cartoes.payCardInvoice(cid, args),

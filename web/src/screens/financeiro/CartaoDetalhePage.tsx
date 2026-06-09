@@ -1,16 +1,20 @@
 // Detalhe do cartão: cartão "herói" + fatura corrente + pagar fatura (parcial/total).
 import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useNavigate } from 'react-router-dom';
+import { Pencil, Trash2 } from 'lucide-react';
 import { BottomSheet } from '../../components/BottomSheet';
 import { Field } from '../../components/Field';
 import { CustomSelect } from '../../components/CustomSelect';
 import { Button } from '../../components/Button';
 import {
   useCards, useCardUsage, useCardInvoice, useAccounts, usePayInvoice, useFinanceiroAuth,
-  useCreateCardPurchase,
+  useCreateCardPurchase, useDeactivateCard, useDeleteTransaction,
 } from '../../hooks/useFinanceiro';
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
 import { currentCompetencia, mesDaCompetencia, type CardInvoiceItem } from '../../lib/cartoes';
+import type { PfTransaction } from '../../lib/financeiro';
+import { CartaoSheet } from './components/CartaoSheet';
+import { TransactionSheet } from './components/TransactionSheet';
 
 const fmtBRL = (v: number) =>
   'R$ ' + Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -20,19 +24,28 @@ const CAT_ICON: Record<string, string> = {
   educacao: '📚', lazer: '🎬', salario: '💼', comissao: '💰', extra: '✨', outros: '🗂️',
 };
 
-function ItemRow({ it }: { it: CardInvoiceItem }) {
+function ItemRow({ it, onEdit, onDelete }: {
+  it: CardInvoiceItem; onEdit: (it: CardInvoiceItem) => void; onDelete: (it: CardInvoiceItem) => void;
+}) {
   const parc = it.installments_total && it.installments_total > 1
     ? ` (${it.installment_no}/${it.installments_total})` : '';
   return (
-    <div className="flex items-center gap-3 p-3 rounded-md bg-bg-surface border border-border">
-      <span className="w-7 h-7 rounded-md bg-bg-elevated flex items-center justify-center text-sm">
-        {CAT_ICON[it.category] ?? '🗂️'}
-      </span>
-      <div className="flex-1 min-w-0">
-        <div className="text-fg font-medium truncate">{(it.description || 'Compra') + parc}</div>
-        <div className="text-label text-fg-muted">{it.category} · {it.transaction_date.slice(8, 10)}/{it.transaction_date.slice(5, 7)}</div>
-      </div>
-      <div className="font-semibold text-fg">{fmtBRL(it.amount)}</div>
+    <div className="flex items-center gap-1 p-1 pr-2 rounded-md bg-bg-surface border border-border">
+      <button type="button" onClick={() => onEdit(it)} aria-label="Editar lançamento"
+        className="flex items-center gap-3 flex-1 min-w-0 text-left p-2 rounded-md hover:bg-bg-elevated/60 focus-ring">
+        <span className="w-7 h-7 rounded-md bg-bg-elevated flex items-center justify-center text-sm shrink-0">
+          {CAT_ICON[it.category] ?? '🗂️'}
+        </span>
+        <div className="flex-1 min-w-0">
+          <div className="text-fg font-medium truncate">{(it.description || 'Compra') + parc}</div>
+          <div className="text-label text-fg-muted">{it.category} · {it.transaction_date.slice(8, 10)}/{it.transaction_date.slice(5, 7)}</div>
+        </div>
+        <div className="font-semibold text-fg">{fmtBRL(it.amount)}</div>
+      </button>
+      <button type="button" onClick={() => onDelete(it)} aria-label="Apagar lançamento"
+        className="shrink-0 h-8 w-8 grid place-items-center rounded-md text-fg-muted hover:text-danger hover:bg-danger/10 focus-ring">
+        <Trash2 size={15} />
+      </button>
     </div>
   );
 }
@@ -142,6 +155,34 @@ export function CartaoDetalhePage() {
   const inv = useCardInvoice(id, comp);
   const [paying, setPaying] = useState(false);
   const [ajustando, setAjustando] = useState(false);
+  const [editando, setEditando] = useState(false);
+  const [editItem, setEditItem] = useState<PfTransaction | null>(null);
+  const navigate = useNavigate();
+  const deactivateCard = useDeactivateCard();
+  const deleteTxn = useDeleteTransaction();
+
+  async function excluirCartao() {
+    if (!card) return;
+    if (!confirm(`Excluir o cartão "${card.name}"? Os lançamentos já feitos continuam no histórico.`)) return;
+    await deactivateCard.mutateAsync(card.id);
+    navigate('/financeiro/cartoes');
+  }
+  function editarItem(it: CardInvoiceItem) {
+    if (!card) return;
+    // Compra de cartão: TransactionSheet trava valor/parcelas (card_id setado), libera categoria/descrição/data.
+    setEditItem({
+      id: it.id, type: 'expense', category: it.category, amount: it.amount,
+      description: it.description, transaction_date: it.transaction_date,
+      account_id: null, card_id: card.id,
+    });
+  }
+  async function apagarItem(it: CardInvoiceItem) {
+    const aviso = it.installments_total && it.installments_total > 1
+      ? `Apagar a parcela ${it.installment_no}/${it.installments_total} de "${it.description || 'Compra'}"? (só esta parcela)`
+      : `Apagar "${it.description || 'Compra'}" (${fmtBRL(it.amount)}) desta fatura?`;
+    if (!confirm(aviso)) return;
+    await deleteTxn.mutateAsync(it.id);
+  }
 
   if (!card) {
     return (
@@ -157,13 +198,21 @@ export function CartaoDetalhePage() {
 
   return (
     <div className="flex flex-col gap-md pb-32 md:pb-md">
-      <header>
-        <Link to="/financeiro/cartoes" className="text-label text-fg-muted">← Cartões</Link>
-        <h1 className="text-xl font-bold text-fg">{card.name}</h1>
+      <header className="flex items-start justify-between gap-3">
+        <div>
+          <Link to="/financeiro/cartoes" className="text-label text-fg-muted">← Cartões</Link>
+          <h1 className="text-xl font-bold text-fg">{card.name}</h1>
+        </div>
+        <button type="button" onClick={() => setEditando(true)} aria-label="Editar cartão"
+          className="h-9 w-9 grid place-items-center rounded-md text-fg-muted hover:bg-bg-elevated focus-ring">
+          <Pencil size={18} />
+        </button>
       </header>
 
-      {/* Cartão herói */}
-      <div className="rounded-lg p-md text-white shadow-soft" style={{ background: `linear-gradient(135deg, ${color}, ${color}cc)` }}>
+      {/* Cartão herói — toque abre edição (limite/fechamento/vencimento/nome/bandeira) */}
+      <button type="button" onClick={() => setEditando(true)} aria-label="Editar cartão"
+        className="block w-full text-left rounded-lg p-md text-white shadow-soft focus-ring active:scale-[0.99] transition-transform"
+        style={{ background: `linear-gradient(135deg, ${color}, ${color}cc)` }}>
         <div className="flex justify-between text-body-sm opacity-90">
           <span>{card.name}</span><span>{(card.brand || '').toUpperCase()}</span>
         </div>
@@ -176,7 +225,7 @@ export function CartaoDetalhePage() {
           <span>{fmtBRL(usage.data?.used ?? 0)} de {fmtBRL(card.credit_limit)} · {pct}%</span>
           <span>livre {fmtBRL(usage.data?.available ?? card.credit_limit)}</span>
         </div>
-      </div>
+      </button>
 
       {/* Fecha / Vence */}
       <div className="grid grid-cols-2 gap-md">
@@ -202,7 +251,7 @@ export function CartaoDetalhePage() {
         <p className="text-fg-muted text-body-sm">Sem lançamentos nesta fatura.</p>
       )}
       <div className="flex flex-col gap-2">
-        {inv.data?.items.map((it) => <ItemRow key={it.id} it={it} />)}
+        {inv.data?.items.map((it) => <ItemRow key={it.id} it={it} onEdit={editarItem} onDelete={apagarItem} />)}
       </div>
 
       {inv.data && inv.data.total > 0 && (
@@ -221,8 +270,14 @@ export function CartaoDetalhePage() {
         Ajustar fatura
       </Button>
 
+      <Button variant="ghost" fullWidth onClick={excluirCartao} loading={deactivateCard.isPending}>
+        <span className="text-danger">Excluir cartão</span>
+      </Button>
+
       <PagarSheet open={paying} onClose={() => setPaying(false)} cardId={card.id} />
       <AjustarFaturaSheet open={ajustando} onClose={() => setAjustando(false)} cardId={card.id} />
+      <CartaoSheet open={editando} onClose={() => setEditando(false)} card={card} />
+      <TransactionSheet open={!!editItem} onClose={() => setEditItem(null)} initial={editItem ?? undefined} />
     </div>
   );
 }

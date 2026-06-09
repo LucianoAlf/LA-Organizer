@@ -3,13 +3,11 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { CreditCard, Plus } from 'lucide-react';
-import { BottomSheet } from '../../components/BottomSheet';
-import { Field } from '../../components/Field';
-import { CustomSelect } from '../../components/CustomSelect';
 import { Button } from '../../components/Button';
 import { Fab } from '../../components/Fab';
+import { CartaoSheet } from './components/CartaoSheet';
 import {
-  useCards, useCardUsage, useCardInvoice, useCreateCard,
+  useCards, useCardUsage, useCardInvoice,
 } from '../../hooks/useFinanceiro';
 import { useFinanceiroAuth } from '../../hooks/useFinanceiro';
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
@@ -17,15 +15,6 @@ import { currentCompetencia, type PfCard } from '../../lib/cartoes';
 
 const fmtBRL = (v: number) =>
   'R$ ' + Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-const BRANDS = [
-  { value: 'roxo', label: 'Nubank (roxo)', color: '#820ad1' },
-  { value: 'visa', label: 'Visa (azul)', color: '#1a1f71' },
-  { value: 'master', label: 'Mastercard (laranja)', color: '#eb5b1e' },
-  { value: 'elo', label: 'Elo (preto)', color: '#1c1c1c' },
-  { value: 'amex', label: 'Amex (verde)', color: '#2e7d32' },
-  { value: 'outro', label: 'Outro', color: '#3f3f46' },
-];
 
 function daysUntil(day: number): number {
   const today = new Date();
@@ -65,57 +54,6 @@ function CardTile({ card }: { card: PfCard }) {
         <span>disponível {fmtBRL(usage.data?.available ?? card.credit_limit)}</span>
       </div>
     </button>
-  );
-}
-
-function CartaoSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const createMut = useCreateCard();
-  const [name, setName] = useState('');
-  const [brand, setBrand] = useState('roxo');
-  const [limit, setLimit] = useState('');
-  const [closing, setClosing] = useState('');
-  const [due, setDue] = useState('');
-
-  const valid = name.trim() && Number(limit) > 0 &&
-    Number(closing) >= 1 && Number(closing) <= 31 && Number(due) >= 1 && Number(due) <= 31;
-
-  async function submit() {
-    if (!valid) return;
-    const b = BRANDS.find((x) => x.value === brand);
-    await createMut.mutateAsync({
-      name: name.trim(), brand, color: b?.color ?? null,
-      credit_limit: Number(limit), closing_day: Number(closing), due_day: Number(due),
-    });
-    setName(''); setLimit(''); setClosing(''); setDue(''); setBrand('roxo');
-    onClose();
-  }
-
-  const inputCls = 'w-full bg-bg-surface border border-border rounded-md p-2 text-fg focus:outline-none focus:border-tom';
-  return (
-    <BottomSheet open={open} onClose={onClose} title="Novo cartão">
-      <div className="flex flex-col gap-md">
-        <Field label="Nome do cartão">
-          <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex: Nubank" />
-        </Field>
-        <Field label="Bandeira / cor">
-          <CustomSelect value={brand} options={BRANDS.map((b) => ({ value: b.value, label: b.label }))} onChange={setBrand} />
-        </Field>
-        <Field label="Limite (R$)">
-          <input className={inputCls} inputMode="decimal" value={limit} onChange={(e) => setLimit(e.target.value)} placeholder="5000" />
-        </Field>
-        <div className="grid grid-cols-2 gap-md">
-          <Field label="Dia de fechamento">
-            <input className={inputCls} inputMode="numeric" value={closing} onChange={(e) => setClosing(e.target.value)} placeholder="6" />
-          </Field>
-          <Field label="Dia de vencimento">
-            <input className={inputCls} inputMode="numeric" value={due} onChange={(e) => setDue(e.target.value)} placeholder="10" />
-          </Field>
-        </div>
-        <Button variant="primary" fullWidth loading={createMut.isPending} onClick={submit}>
-          Cadastrar cartão
-        </Button>
-      </div>
-    </BottomSheet>
   );
 }
 

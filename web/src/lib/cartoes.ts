@@ -78,6 +78,17 @@ export async function deactivateCard(collaboratorId: string, id: string): Promis
   if (error) throw error;
 }
 
+export async function updateCard(collaboratorId: string, id: string, patch: {
+  name?: string; brand?: string | null; color?: string | null;
+  credit_limit?: number; closing_day?: number; due_day?: number; icon?: string | null;
+}): Promise<PfCard> {
+  const { data, error } = await supabase.from('pf_cards')
+    .update(patch).eq('id', id).eq('collaborator_id', collaboratorId)
+    .select().single();
+  if (error) throw error;
+  return data as PfCard;
+}
+
 // Limite usado = total lançado no cartão − total já pago (todas as competências não pagas).
 export async function cardUsage(collaboratorId: string, card: PfCard): Promise<CardUsage> {
   const [txRes, payRes] = await Promise.all([
