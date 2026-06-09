@@ -107,7 +107,7 @@ const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const SHORT_ID_RE = /^([a-f0-9]{4,12}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 const VALID_TASK_ACTIONS = new Set([
   'complete', 'cancel', 'reschedule', 'create', 'delegate',
-  'extension_request', 'extension_decision',
+  'extension_request', 'extension_decision', 'governance_reassign',
 ]);
 const VALID_COACHING = ['light', 'normal', 'hard'];
 const VALID_EVENT_MODALITIES = new Set(['online', 'presencial', 'hibrido']);
@@ -3241,6 +3241,11 @@ function validateTaskAction(a) {
     if (typeof a.approved !== 'boolean' && a.approved !== 'true' && a.approved !== 'false') return 'approved_not_bool';
     const isApproved = a.approved === true || a.approved === 'true';
     if (isApproved && (typeof a.new_due_date !== 'string' || !ISO_DATE_RE.test(a.new_due_date))) return 'approved_needs_date';
+  } else if (a.action === 'governance_reassign') {
+    if (typeof a.id !== 'string' || !SHORT_ID_RE.test(a.id)) return 'bad_id';
+    const hasName = typeof a.to_name === 'string' && a.to_name.trim();
+    const hasPhone = typeof a.to_phone === 'string' && a.to_phone.trim();
+    if (!hasName && !hasPhone) return 'recipient_missing';
   }
   // Sprint 29.4 — recurrence_rule (opcional em create, ignorado em outras actions)
   if (a.recurrence_rule !== undefined && a.recurrence_rule !== null && a.recurrence_rule !== '') {
@@ -3321,6 +3326,21 @@ async function findCollaboratorByPhone(phone) {
     .eq('phone', cleaned)
     .maybeSingle();
   return data;
+}
+
+// Normaliza sinônimos coloquiais de departamento para group_key canônico da tabela governance_leaders.
+// Retorna null se não reconhecer.
+function normalizeGroupKey(name) {
+  if (!name || typeof name !== 'string') return null;
+  const n = String(name).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+  if (/financ/.test(n)) return 'financeiro';
+  if (/comerci/.test(n)) return 'comercial';
+  if (/pedag/.test(n)) return 'pedagogico';
+  if (/market/.test(n)) return 'marketing';
+  if (/opera/.test(n)) return 'ops_tecnicas';
+  if (/sucesso.*(cliente|aluno)|cs\b/.test(n)) return 'sucesso_cliente';
+  if (/farmer/.test(n)) return 'farmer';
+  return null;
 }
 
 // Resolve o prefixo de 8 chars (ou similar) pra UUID completo, RESTRITO ao colaborador.
@@ -4671,6 +4691,129 @@ async function applyTaskActions(collaborator, actions) {
           await logAgentNote(t.id, `Delegada de ${nameForCollab(collaborator)} para ${recipient.full_name}`, collaborator.id);
           okCount++;
         }
+      } else if (a.action === 'governance_reassign') {
+        // Sub-fase 2 — Re-delegação de cobrança por voz.
+        // Muda governance_owner_id (quem COBRA) sem tocar assigned_to (quem EXECUTA).
+        // Autorizado para: director, dono atual da cobrança, ou gerente da unidade
+        // quando a cobrança ainda não tem dono.
+
+        // 1. Resolver tarefa por short-id SEM filtrar por assigned_to (o re-delegador
+        //    é o dono da COBRANÇA, não o executor). uuid não suporta LIKE no PostgREST —
+        //    busca as tarefas ativas de trabalho e filtra em JS com matchRowsByShortId
+        //    (mesmo matcher tolerante usado por resolveTaskByShortId).
+        if (!a.id || !SHORT_ID_RE.test(String(a.id))) {
+          console.warn(`[Task] governance_reassign — short-id inválido: ${a.id}`);
+          failCount++;
+          continue;
+        }
+        const { data: tkCandidates, error: tkErr } = await supabase
+          .from('tasks')
+          .select('id, title, assigned_to, governance_owner_id, context, status')
+          .eq('status', 'pending')
+          .eq('context', 'work')
+          .limit(1000);
+        if (tkErr) {
+          console.error('[Task] governance_reassign resolve err:', tkErr.message);
+          failCount++;
+          continue;
+        }
+        const tkData = matchRowsByShortId(tkCandidates || [], a.id);
+        if (!tkData || tkData.length === 0) {
+          console.warn(`[Task] governance_reassign — tarefa não encontrada: ${a.id}`);
+          failCount++;
+          continue;
+        }
+        if (tkData.length > 1) {
+          console.warn(`[Task] governance_reassign — id ambíguo: ${a.id} (${tkData.length} matches)`);
+          failCount++;
+          continue;
+        }
+        const govTask = tkData[0];
+
+        // 2. Autorização
+        const isDirector = collaborator.role === 'director';
+        const isCurrentOwner = govTask.governance_owner_id === collaborator.id;
+        let isUnitManager = false;
+        if (!isDirector && !isCurrentOwner && !govTask.governance_owner_id && collaborator.role === 'manager') {
+          // Sem dono: gerente da unidade do executor pode assumir
+          if (govTask.assigned_to) {
+            const { data: execCollab } = await supabase
+              .from('collaborators')
+              .select('unit')
+              .eq('id', govTask.assigned_to)
+              .maybeSingle();
+            if (execCollab && execCollab.unit === collaborator.unit) isUnitManager = true;
+          }
+        }
+        if (!isDirector && !isCurrentOwner && !isUnitManager) {
+          console.warn(`[Task] governance_reassign REJECTED — ${last4} não tem posse da cobrança de ${govTask.id}`);
+          failCount++;
+          continue;
+        }
+
+        // 3. Resolver novo dono
+        let newOwnerId = null;
+        let newOwnerName = null;
+
+        const nameToResolve = a.to_name || a.to_phone;
+        if (a.to_phone) {
+          const byPhone = await findCollaboratorByPhone(a.to_phone);
+          if (byPhone && byPhone.is_active) { newOwnerId = byPhone.id; newOwnerName = byPhone.full_name; }
+        } else if (a.to_name) {
+          const _r = await resolveCollaboratorByName(a.to_name, { requester: collaborator });
+          if (_r.status === 'ambiguous') {
+            return {
+              okCount,
+              failCount: failCount + 1,
+              integrityPayload: {
+                severity: 'soft',
+                type: 'ambiguous_recipient',
+                candidates: _r.candidates,
+                candidateTitle: govTask.title,
+              },
+            };
+          }
+          if (_r.status === 'resolved' && _r.collaborator && _r.collaborator.is_active) {
+            newOwnerId = _r.collaborator.id;
+            newOwnerName = _r.collaborator.full_name;
+          } else {
+            // Fallback: tentar resolver como departamento/group_key
+            const grp = normalizeGroupKey(a.to_name);
+            if (grp) {
+              const { data: glData } = await supabase
+                .from('governance_leaders')
+                .select('leader_id, collaborators!governance_leaders_leader_id_fkey(full_name)')
+                .eq('group_key', grp)
+                .limit(1);
+              if (glData && glData.length > 0) {
+                newOwnerId = glData[0].leader_id;
+                newOwnerName = glData[0].collaborators?.full_name || a.to_name;
+              }
+            }
+          }
+        }
+
+        if (!newOwnerId) {
+          console.warn(`[Task] governance_reassign — não achei "${nameToResolve}" pra repassar`);
+          failCount++;
+          continue;
+        }
+
+        // 4. Atualizar governance_owner_id
+        const { error: updErr } = await supabase
+          .from('tasks')
+          .update({ governance_owner_id: newOwnerId })
+          .eq('id', govTask.id);
+        if (updErr) {
+          console.error('[Task] governance_reassign update err:', updErr.message);
+          failCount++;
+          continue;
+        }
+
+        // 5. Audit trail + confirmação
+        await logAgentNote(govTask.id, `Cobrança repassada de ${nameForCollab(collaborator)} para ${newOwnerName}`, collaborator.id);
+        console.log(`[Task] governance_reassign ${a.id} ${last4} → ${newOwnerName}`);
+        okCount++;
       } else {
         console.warn(`[Task] unknown action: ${a.action}`);
         failCount++;

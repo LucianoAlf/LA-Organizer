@@ -938,12 +938,13 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
   // Empilhamos as 3 num único body porque pickSkill retorna 1 skill.
   if (collab && collab.role === 'director') {
     const msgLower = String(lastUserMessage || '').toLowerCase();
-    const GOV_RE = /governan[çc]a|enrolando|atrasad[ao]|cobra(?:r|nça)?\b|panor[aâ]ma|me\s+d[áa]\s+um\s+resumo|como\s+t[áa]\s+(?:o\s+|meu\s+|a\s+)?(?:time|equipe)|(?:é|s[ãa]o|aí\s+é)\s+teste|tira[r]?\s+da\s+lista|arquiv[ao]r?\s|j[aá]\s+rolou|j[aá]\s+aconteceu|descarta|ignora\s+isso|j[aá]\s+(?:fechou|terminei|conclu[ií])|esquece\s+(?:essa|esse|isso)/i;
+    const GOV_RE = /governan[çc]a|enrolando|atrasad[ao]|cobra(?:r|nça)?\b|panor[aâ]ma|me\s+d[áa]\s+um\s+resumo|como\s+t[áa]\s+(?:o\s+|meu\s+|a\s+)?(?:time|equipe)|(?:é|s[ãa]o|aí\s+é)\s+teste|tira[r]?\s+da\s+lista|arquiv[ao]r?\s|j[aá]\s+rolou|j[aá]\s+aconteceu|descarta|ignora\s+isso|j[aá]\s+(?:fechou|terminei|conclu[ií])|esquece\s+(?:essa|esse|isso)|(?:isso|essa|esse)\s+[eé]\s+(?:d[ao]|do)\s+\w+|manda\s+pr[oa]\s+\w+\s+cobrar|quem\s+cobra\s+(?:isso|essa|esse)|repassa\s+(?:pra|para)\s+\w+/i;
     if (GOV_RE.test(msgLower)) {
       const parts = [
         loadSkill('governanca-sanitizar'),
         loadSkill('governanca-diagnosticar'),
         loadSkill('governanca-escalar'),
+        loadSkill('governanca-redelegacao'),
       ].filter(Boolean);
       if (parts.length > 0) {
         return { name: 'governanca-completa', body: parts.join('\n\n---\n\n') };
