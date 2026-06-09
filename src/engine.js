@@ -7150,6 +7150,50 @@ async function processMessage(phone, text, raw = {}) {
     console.warn('[FinanceSource] consumer err:', e.message);
   }
 
+  // ---- RSVP determinístico (pré-LLM): "sim/não/talvez" cru → resolve o CONVITE pendente ----
+  // Causa-raiz RSVP-WRONG-EVENT-BARE (Luciano 09/06): um "Sim" solto, com vários eventos no
+  // contexto, fazia o LLM confabular o evento ERRADO e NÃO emitir o marker rsvp → presença nunca
+  // gravava. Aqui o ENGINE resolve direto: msg é RSVP cru (detectBareRsvpReply) E existe convite
+  // pendente futuro (applyRsvp(…, null, …) → resolvePendingInviteEventId) → aplica e confirma
+  // NOMEANDO o evento (mata a confusão). Guardas: (1) sem convite pendente, applyRsvp dá ok:false
+  // e cai no LLM (um "sim" a outra pergunta segue normal); (2) se há pergunta FRESCA do TOM
+  // (pending_intent < 20min), o "sim" responde ELA, não o convite — deixa o fluxo de intents tratar.
+  try {
+    const { detectBareRsvpReply } = require('./events/detect-rsvp-reply');
+    const rsvp = detectBareRsvpReply(text);
+    const hasFreshQuestion = _openIntents.some((i) => withinConfirmWindow(i.asked_at, 20));
+    if (rsvp && !hasFreshQuestion) {
+      const r = await applyRsvp(collab, null, rsvp.status);
+      if (r && r.ok) {
+        let quando = '';
+        let titulo = 'o compromisso';
+        try {
+          const { data: ev } = await supabase.from('events')
+            .select('title, start_at').eq('id', r.eventId).maybeSingle();
+          if (ev) {
+            titulo = ev.title || titulo;
+            if (ev.start_at) quando = new Date(ev.start_at).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+          }
+        } catch (_) { /* confirmação genérica se o fetch do evento falhar */ }
+        const verbo = rsvp.status === 'confirmed' ? '✅ Presença confirmada'
+          : rsvp.status === 'declined' ? '❌ Presença recusada'
+          : '🤔 Anotado como *talvez*';
+        const reply = `${verbo} em _"${titulo}"_${quando ? `\n🗓️ ${quando}` : ''}`;
+        try {
+          await whatsapp.sendMessage(phone, reply);
+          await logConversation(collab.id, 'outbound', reply);
+        } catch (postErr) {
+          console.warn('[RSVP-bare] post-write err (RSVP já aplicado):', postErr.message);
+        }
+        console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (rsvp_bare_${rsvp.status})`);
+        return;
+      }
+      // applyRsvp ok:false → sem convite pendente → o "sim/não" é de outra coisa; segue pro LLM.
+    }
+  } catch (e) {
+    console.warn('[RSVP-bare] consumer err:', e.message);
+  }
+
   // ---- Correção/exclusão determinística (pré-LLM): "era 25" / "muda a categoria pra lazer" / "apaga a de 30" ----
   // O LLM às vezes fabrica "corrigido" ou nega a capacidade. Quando o padrão é claro E há
   // transação recente, o ENGINE executa direto via handleFinanceAction — sem depender do LLM.
