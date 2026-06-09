@@ -66,9 +66,26 @@ function gatherCandidates(name, rows) {
     if (als.some(a => firstToken(a) === first)) { add(c); continue; }
   }
 
-  // 3) Fallback prefixo (legado) só se a união veio vazia — não cria ambiguidade nova.
+  // 3) Fallback prefixo BIDIRECIONAL, só se a união veio vazia — não cria ambiguidade
+  //    nova no caminho comum. Casa apelido ↔ nome formal em full_name|preferred|aliases:
+  //    - legado (digitado é prefixo do cadastro): "Leo"→"Leonardo", "Dai"→"Daiana". Sem guarda.
+  //    - inverso (cadastro é prefixo do digitado): "Fabíola"→"Fabi", "Gabriela"→"Gabi". Só
+  //      quando o token cadastrado tem ≥ MIN_REVERSE chars, pra um apelido curto ("Ana", "Al")
+  //      não engolir um nome mais longo por engano. Apelidos de 1-3 letras → cadastrar alias.
   if (result.union.length === 0) {
-    for (const c of rows) if (stripDiacritics(c.full_name || '').startsWith(first)) add(c);
+    const MIN_REVERSE = 4;
+    for (const c of rows) {
+      const cTokens = [
+        firstToken(c.full_name || ''),
+        firstToken(c.preferred_name || ''),
+        ...(Array.isArray(c.aliases) ? c.aliases.map((a) => firstToken(a)) : []),
+      ].filter(Boolean);
+      const hit = cTokens.some((t) =>
+        t.startsWith(first) // legado: digitado é prefixo do cadastro
+        || (first.startsWith(t) && t.length >= MIN_REVERSE), // inverso: cadastro é prefixo do digitado
+      );
+      if (hit) add(c);
+    }
   }
   return result;
 }

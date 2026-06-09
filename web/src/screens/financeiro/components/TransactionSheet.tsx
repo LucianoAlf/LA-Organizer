@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AdaptiveSheet } from '../../../components/AdaptiveSheet';
 import { Button } from '../../../components/Button';
-import { CustomSelect } from '../../../components/CustomSelect';
+import { ComboBox } from '../../../components/ComboBox';
 import { DateInput } from '../../../components/DateInput';
 import { Field } from '../../../components/Field';
-import { useAccounts, useCategories, useCreateTransaction, useDeleteTransaction, useUpdateTransaction } from '../../../hooks/useFinanceiro';
+import { useAccounts, useCategories, useCreateTransaction, useDeleteTransaction, useUpdateTransaction, useCreateCategory } from '../../../hooks/useFinanceiro';
 import type { PfCategory, PfTransaction, PfTxType } from '../../../lib/financeiro';
 
 function todayYmd() {
@@ -23,6 +23,7 @@ export function TransactionSheet({ open, onClose, initial }: TransactionSheetPro
   const createMut = useCreateTransaction();
   const deleteMut = useDeleteTransaction();
   const updateMut = useUpdateTransaction();
+  const createCategory = useCreateCategory();
   const isCardTxn = !!initial?.card_id; // compra de cartão: valor/parcelas não editáveis aqui
   const catsQ = useCategories();
   const allCats = useMemo(() => catsQ.data ?? [], [catsQ.data]);
@@ -161,7 +162,16 @@ export function TransactionSheet({ open, onClose, initial }: TransactionSheetPro
         )}
 
         <Field label="Categoria">
-          <CustomSelect value={category} options={categoryOptions} onChange={(v) => setCategory(v as PfCategory)} />
+          <ComboBox
+            value={category}
+            options={categoryOptions}
+            onChange={(v) => setCategory(v as PfCategory)}
+            placeholder="Buscar ou criar…"
+            onCreate={async (text) => {
+              const r = await createCategory.mutateAsync({ label: text, emoji: '🏷️', type });
+              return (r as { slug: string }).slug;
+            }}
+          />
         </Field>
 
         <Field label="Descrição" sub="Opcional. Ex.: iFood, Mercado.">
@@ -180,7 +190,7 @@ export function TransactionSheet({ open, onClose, initial }: TransactionSheetPro
           </Field>
           {accountsQ.data && accountsQ.data.length > 0 && (
             <Field label="Carteira" sub="Opcional. Vincular pra atualizar o saldo dela.">
-              <CustomSelect value={accountId} options={accountOptions} onChange={setAccountId} />
+              <ComboBox value={accountId} options={accountOptions} onChange={setAccountId} placeholder="Buscar carteira…" />
             </Field>
           )}
         </div>

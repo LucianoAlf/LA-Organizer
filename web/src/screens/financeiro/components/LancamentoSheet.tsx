@@ -5,11 +5,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { AdaptiveSheet } from '../../../components/AdaptiveSheet';
 import { Button } from '../../../components/Button';
 import { CustomSelect } from '../../../components/CustomSelect';
+import { ComboBox } from '../../../components/ComboBox';
 import { DateInput } from '../../../components/DateInput';
 import { Field } from '../../../components/Field';
 import {
   useAccounts, useCategories, useCards,
-  useCreateTransaction, useCreateCardPurchase, useCreateBill,
+  useCreateTransaction, useCreateCardPurchase, useCreateBill, useCreateCategory,
 } from '../../../hooks/useFinanceiro';
 import { NovaCategoriaSheet } from './NovaCategoriaSheet';
 import { splitInstallments } from '../../../lib/cartoes';
@@ -43,6 +44,7 @@ export function LancamentoSheet({ open, onClose, initialAccountId }: LancamentoS
   const createTransaction = useCreateTransaction();
   const createCardPurchase = useCreateCardPurchase();
   const createBill = useCreateBill();
+  const createCategory = useCreateCategory();
 
   const allCats = useMemo(() => catsQ.data ?? [], [catsQ.data]);
   // Filtra is_active: categorias desativadas ficam no lookup (labels históricos) mas não no picker.
@@ -196,8 +198,17 @@ export function LancamentoSheet({ open, onClose, initialAccountId }: LancamentoS
         </Field>
 
         <Field label="Categoria">
-          <CustomSelect value={category} options={categoryOptions} onChange={(v) => setCategory(v as PfCategory)}
-            footerAction={{ label: '➕ Incluir categoria', onClick: () => setNovaCat(true) }} />
+          <ComboBox
+            value={category}
+            options={categoryOptions}
+            onChange={(v) => setCategory(v as PfCategory)}
+            placeholder="Buscar ou criar…"
+            onCreate={async (text) => {
+              const r = await createCategory.mutateAsync({ label: text, emoji: '🏷️', type });
+              return (r as { slug: string }).slug;
+            }}
+            footerAction={{ label: '➕ Criar com emoji…', onClick: () => setNovaCat(true) }}
+          />
         </Field>
 
         {showMedio && (
@@ -207,7 +218,7 @@ export function LancamentoSheet({ open, onClose, initialAccountId }: LancamentoS
               ? 'Você ainda não tem carteiras nem cartões. Cadastre em Finanças → Carteiras / Cartões pra vincular (dá pra registrar sem isso também).'
               : undefined}
           >
-            <CustomSelect value={medio} options={medioOptions} onChange={setMedio} />
+            <ComboBox value={medio} options={medioOptions} onChange={setMedio} placeholder="Buscar carteira/cartão…" />
           </Field>
         )}
 
