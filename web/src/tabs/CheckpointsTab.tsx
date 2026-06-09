@@ -306,7 +306,7 @@ function CheckpointCard({
           className={[
             'mt-0.5 h-7 w-7 shrink-0 rounded-md border-2 grid place-items-center transition-colors focus-ring',
             isDone
-              ? 'bg-tom border-tom text-white hover:bg-tom-shade'
+              ? 'bg-tom border-tom text-black hover:bg-tom-shade'
               : 'bg-tom/10 border-tom/40 text-transparent hover:border-tom hover:bg-tom/20',
           ].join(' ')}
         >

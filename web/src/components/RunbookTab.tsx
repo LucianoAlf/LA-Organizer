@@ -960,7 +960,7 @@ function RunbookItemRow({
         aria-label={item.done ? 'Desmarcar item' : 'Marcar item'}
         className={[
           'h-5 w-5 shrink-0 rounded-md border-2 grid place-items-center transition-colors focus-ring',
-          item.done ? 'bg-tom border-tom text-white' : 'border-fg-muted text-transparent hover:border-tom',
+          item.done ? 'bg-tom border-tom text-black' : 'border-fg-muted text-transparent hover:border-tom',
         ].join(' ')}
       >
         {item.done && <Check size={12} strokeWidth={3} />}

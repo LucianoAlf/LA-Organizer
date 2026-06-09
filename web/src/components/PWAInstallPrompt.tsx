@@ -128,7 +128,7 @@ export function PWAInstallPrompt() {
             <button
               type="button"
               onClick={handleInstall}
-              className="h-9 px-3 rounded-md bg-tom text-white text-body-sm font-semibold focus-ring"
+              className="h-9 px-3 rounded-md bg-tom text-black text-body-sm font-semibold focus-ring"
             >
               Instalar
             </button>

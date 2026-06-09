@@ -84,7 +84,7 @@ export function GestaoEquipe() {
         />
         <Link
           to="/mais/gestao-equipe/novo"
-          className="h-10 w-10 grid place-items-center rounded-lg bg-tom text-white focus-ring"
+          className="h-10 w-10 grid place-items-center rounded-lg bg-tom text-black focus-ring"
           aria-label="Novo colaborador"
         >
           <Plus size={18} />
@@ -100,7 +100,7 @@ export function GestaoEquipe() {
             onClick={() => setFilter(f)}
             className={`text-body-sm px-3 py-1 rounded-full border transition-colors ${
               filter === f
-                ? 'bg-tom text-white border-tom'
+                ? 'bg-tom text-black border-tom'
                 : 'bg-bg-elevated border-border text-fg-muted'
             }`}
           >

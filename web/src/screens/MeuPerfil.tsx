@@ -142,7 +142,7 @@ export function MeuPerfil() {
         type="button"
         onClick={handleSave}
         disabled={saving}
-        className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-tom text-white font-semibold text-body-md disabled:opacity-50 hover:opacity-90 transition-opacity"
+        className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-tom text-black font-semibold text-body-md disabled:opacity-50 hover:opacity-90 transition-opacity"
       >
         <Save size={18} /> {saving ? 'Salvando…' : 'Salvar perfil'}
       </button>

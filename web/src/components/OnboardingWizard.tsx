@@ -81,7 +81,7 @@ export function OnboardingWizard({ onDismiss }: Props) {
           <button
             type="button"
             onClick={() => setStep(s => s + 1)}
-            className="w-full h-12 rounded-xl bg-tom text-white font-semibold text-body-md focus-ring"
+            className="w-full h-12 rounded-xl bg-tom text-black font-semibold text-body-md focus-ring"
           >
             Próximo →
           </button>

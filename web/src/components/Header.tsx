@@ -242,7 +242,7 @@ export function Header() {
               type="button"
               onClick={handlePasswordChange}
               disabled={pwLoading}
-              className="flex-1 py-2.5 rounded-lg bg-tom text-white text-body-sm font-semibold disabled:opacity-50 hover:opacity-90 transition-opacity"
+              className="flex-1 py-2.5 rounded-lg bg-tom text-black text-body-sm font-semibold disabled:opacity-50 hover:opacity-90 transition-opacity"
             >
               {pwLoading ? 'Salvando…' : 'Salvar senha'}
             </button>

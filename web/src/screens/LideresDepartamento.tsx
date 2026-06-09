@@ -75,7 +75,7 @@ export function LideresDepartamento() {
     catch { showToast({ kind: 'error', title: 'Erro ao remover.' }); }
   }
 
-  const chipCls = 'inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-body-sm font-medium bg-tom text-white';
+  const chipCls = 'inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-body-sm font-medium bg-tom text-black';
 
   function renderRow(group: string, unit: string) {
     const current = leadersFor(group, unit);

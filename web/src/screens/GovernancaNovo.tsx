@@ -253,7 +253,7 @@ export function GovernancaNovo() {
         <button
           type="submit"
           disabled={saving}
-          className="w-full py-3 rounded-xl bg-tom text-white font-semibold text-body-md disabled:opacity-50 hover:opacity-90 transition-opacity"
+          className="w-full py-3 rounded-xl bg-tom text-black font-semibold text-body-md disabled:opacity-50 hover:opacity-90 transition-opacity"
         >
           {saving ? 'Salvando...' : 'Salvar credencial'}
         </button>
