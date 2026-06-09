@@ -132,4 +132,12 @@ describe('governanceViewerIdsOf', () => {
     const semUnit: Collab = { id: 'x', role: 'collaborator', function_role: null, unit: null, supervisor_id: null, is_ceo: false, explicit_leader_ids: [] };
     expect(governanceViewerIdsOf({ governance_owner_id: null, assigned_to: 'x' }, semUnit, [...allGov, semUnit])).toEqual([]);
   });
+  it('manager inativo na unidade é excluído (joff não aparece)', () => {
+    const jerehOff: Collab = { id: 'joff', role: 'manager', function_role: null, unit: 'campo_grande', supervisor_id: null, is_ceo: false, is_active: false };
+    const collab = [...allGov, jerehOff];
+    expect(governanceViewerIdsOf({ governance_owner_id: null, assigned_to: 'gabi' }, govGabi, collab)).toEqual(['jereh']);
+  });
+  it('owner undefined (pessoa deletada) → []', () => {
+    expect(governanceViewerIdsOf({ governance_owner_id: null, assigned_to: 'ghost' }, undefined, allGov)).toEqual([]);
+  });
 });

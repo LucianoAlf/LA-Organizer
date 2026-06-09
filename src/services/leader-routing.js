@@ -113,15 +113,16 @@ function groupLeaderIdsFor(collab, groupLeaders) {
  */
 function governanceViewerIdsOf(task, owner, allCollabs) {
   if (task && task.governance_owner_id) return [task.governance_owner_id];
+  const list = Array.isArray(allCollabs) ? allCollabs : [];
   const ids = new Set();
   const unit = owner && owner.unit ? owner.unit : null;
   if (unit) {
-    for (const c of (allCollabs || [])) {
+    for (const c of list) {
       if (c.role === 'manager' && c.unit === unit && c.is_active !== false && !c.is_ceo) ids.add(c.id);
     }
   }
   for (const lid of ((owner && owner.explicit_leader_ids) || [])) {
-    const L = (allCollabs || []).find((c) => c.id === lid);
+    const L = list.find((c) => c.id === lid);
     if (L && !L.is_ceo) ids.add(lid);
   }
   return [...ids];

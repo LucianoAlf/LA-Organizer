@@ -185,3 +185,17 @@ test('governanceViewerIdsOf: solta sem unidade → vazio (caller cai no CEO)', (
     []
   );
 });
+test('governanceViewerIdsOf: manager inativo na unidade é excluído (joff não aparece)', () => {
+  const jerehOff = { id: 'joff', role: 'manager', unit: 'campo_grande', is_active: false };
+  const collab = [...allGovCollabs, jerehOff];
+  assert.deepStrictEqual(
+    governanceViewerIdsOf({ governance_owner_id: null, assigned_to: 'gabi' }, govGabi, collab),
+    ['jereh']
+  );
+});
+test('governanceViewerIdsOf: owner undefined (pessoa deletada) → []', () => {
+  assert.deepStrictEqual(
+    governanceViewerIdsOf({ governance_owner_id: null, assigned_to: 'ghost' }, undefined, allGovCollabs),
+    []
+  );
+});

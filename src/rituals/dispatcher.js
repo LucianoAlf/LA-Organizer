@@ -2331,7 +2331,7 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
 
   // GovLeader — carrega todos os colaboradores ativos uma vez pra resolver o líder
   // do DONO de cada tarefa (substitui o roteamento por categoria, que era vazio).
-  const { resolveLeadersOf } = require('../services/leader-routing');
+  const { resolveLeadersOf, governanceViewerIdsOf } = require('../services/leader-routing');
   const { loadCollabsWithEdges } = require('../services/governance-edges');
   const allCollabs = await loadCollabsWithEdges(supabase);
   const collabById = new Map((allCollabs || []).map((c) => [c.id, c]));
@@ -2382,7 +2382,6 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
 
     // Task 4 — digest do líder filtra pela posse: cada tarefa só aparece para quem
     // é viewer dela (governanceViewerIdsOf = delegador ou, se NULL, gerente da unidade).
-    const { governanceViewerIdsOf } = require('../services/leader-routing');
     let scoped = stale;
     if (opts.leaderId) {
       scoped = stale.filter((t) =>
@@ -2868,6 +2867,10 @@ async function sendLeaderGovernanceDigest(now = new Date(), opts = {}) {
       const evStale = (eventsR && eventsR.staleIds) || [];
       const tkStale = (tasksR && tasksR.staleIds) || [];
       if (evStale.length) await supabase.from('events').update({ staleness_check_sent_at: now.toISOString() }).in('id', evStale);
+      // Nota (Fase 2): staleness é da TAREFA, não do líder. Se 2 co-líderes virem a
+      // mesma tarefa solta, o 1º envio marca a staleness globalmente e o 2º não verá
+      // o aviso "5+ dias". Aceito de propósito (a marca é fato da tarefa). Hoje as
+      // unidades têm 1 gerente, então o caso é raro.
       if (tkStale.length) await supabase.from('tasks').update({ staleness_check_sent_at: now.toISOString() }).in('id', tkStale);
       console.log(`[GovDigestLeader] ${firstName}: ${parts} part(s) team=${teamIds.length} → ${String(leader.phone).slice(-4)}`);
     } catch (err) {
