@@ -111,6 +111,8 @@ async function listOpenIntents(collaboratorId, opts = {}) {
  */
 async function expireOldIntents(expiryHours = DEFAULT_EXPIRY_HOURS) {
   const cutoff = new Date(Date.now() - expiryHours * 3600 * 1000).toISOString();
+  // approval_pending tem janela PRÓPRIA (7 dias — F1 APROVACAO-SEM-FUNIL): aprovação
+  // vive mais que 24h e o cron de 6h re-fresca. Expirar junto mataria o funil.
   const { data, error } = await supabase
     .from('pending_intents')
     .update({
@@ -119,14 +121,32 @@ async function expireOldIntents(expiryHours = DEFAULT_EXPIRY_HOURS) {
       resolution_note: `auto-expired after ${expiryHours}h`,
     })
     .is('resolved_at', null)
+    .neq('kind', 'approval_pending')
     .lt('asked_at', cutoff)
     .select('id');
   if (error) {
     console.warn('[PendingIntents] expireOldIntents err:', error.message);
     return 0;
   }
-  const n = (data || []).length;
-  if (n > 0) console.log(`[PendingIntents] expired ${n} intent(s) older than ${expiryHours}h`);
+  let n = (data || []).length;
+  try {
+    const cutoff7d = new Date(Date.now() - 7 * 864e5).toISOString();
+    const { data: dataAp } = await supabase
+      .from('pending_intents')
+      .update({
+        resolved_at: new Date().toISOString(),
+        resolution: 'expired',
+        resolution_note: 'approval auto-expired after 7d',
+      })
+      .is('resolved_at', null)
+      .eq('kind', 'approval_pending')
+      .lt('asked_at', cutoff7d)
+      .select('id');
+    n += (dataAp || []).length;
+  } catch (e) {
+    console.warn('[PendingIntents] expire approvals err:', e.message);
+  }
+  if (n > 0) console.log(`[PendingIntents] expired ${n} intent(s)`);
   return n;
 }
 

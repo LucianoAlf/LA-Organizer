@@ -3132,6 +3132,16 @@ async function remindPendingProjectApprovals(opts = {}) {
     try {
       await whatsapp.sendMessage(sup.phone, msg);
       console.log(`[PendingApproval] cobrança enviada a ${sup.full_name} (${projects.length} projetos)`);
+      // F1 (APROVACAO-SEM-FUNIL): a cobrança é uma re-pergunta — (re)abre a intent de
+      // aprovação de cada projeto no nome do aprovador (supersede same-ref + insert =
+      // re-fresca a janela E backfilla projetos criados antes da F1).
+      try {
+        const approvalsService = require('../services/approvals');
+        for (const { project } of projects) {
+          const token = await extractApprovalTokenSmart(project.name, project.id);
+          await approvalsService.openProjectApproval(supabase, { approverId: sup.id, projectId: project.id, token });
+        }
+      } catch (e) { console.warn('[PendingApproval] approval state err:', e.message); }
     } catch (err) {
       console.error(`[PendingApproval] WA falhou pra ${sup.full_name}:`, err.message);
     }

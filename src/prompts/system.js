@@ -1075,7 +1075,10 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
   // Gate por role acontece dentro da skill também (defense in depth).
   if (hasCoordLevel(collab)) {
     const lm = (lastUserMessage || '').trim();
-    if (/^(APROVA|REJEITA)\b/i.test(lm) || /^(aprov[oa]|rejeit[oa])\s*$/i.test(lm)) {
+    // F2 (APROVACAO-SEM-FUNIL): gate alargado — "Aprovado"/"Aprovar"/"rejeitado" não
+    // casavam /aprov[oa]$/ (mesma família regex do ALIGN-AMANHA) e a skill nem entrava.
+    // O intercept determinístico do engine resolve antes; isto é fallback do LLM.
+    if (/^(APROVA|REJEITA)\b/i.test(lm) || /^(aprov|rejeit)\w*\s*$/i.test(lm)) {
       return { name: 'aprovar-projeto', body: loadSkill('aprovar-projeto') };
     }
   }

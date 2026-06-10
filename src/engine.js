@@ -24,6 +24,8 @@ const { getActiveWindow } = require('./services/active-window');
 const inventarioValidators = require('./services/inventario-validators');
 const announcementsService = require('./services/announcements');
 const pendingIntents = require('./services/pending-intents');
+const approvalsService = require('./services/approvals');
+const { detectApprovalReply, stripReplyScaffold } = require('./events/detect-approval-reply');
 const { buildCoordinationResponseNotification } = require('./services/coordination-notify');
 const { isContextQuietField, validateContextQuietField } = require('./services/prefs-quiet-context');
 const pendingInventoryPhoto = require('./services/pending-inventory-photo');
@@ -927,6 +929,9 @@ async function applyAnnouncementApproval(collaborator, parsed) {
       return { ok: false, reason: 'Erro ao aprovar o comunicado.' };
     }
 
+    // F1 (APROVACAO-SEM-FUNIL) — fecha as intents de aprovação deste comunicado.
+    try { await approvalsService.resolveApprovalByRef(supabase, ann.id, 'confirmed', `aprovado por ${collaborator.full_name}`); } catch (_) { /* não quebra */ }
+
     const jobsResult = await createAnnouncementJobs(ann);
     if (jobsResult.error) {
       console.error('[applyAnnouncementApproval] erro criando jobs após aprovação:', jobsResult.error);
@@ -951,6 +956,9 @@ async function applyAnnouncementApproval(collaborator, parsed) {
       console.error('[applyAnnouncementApproval] erro UPDATE reject:', updErr.message);
       return { ok: false, reason: 'Erro ao rejeitar o comunicado.' };
     }
+
+    // F1 (APROVACAO-SEM-FUNIL) — fecha as intents de aprovação deste comunicado.
+    try { await approvalsService.resolveApprovalByRef(supabase, ann.id, 'denied', `rejeitado por ${collaborator.full_name}`); } catch (_) { /* não quebra */ }
 
     await notifyCoordinatorOfDecision(ann, collaborator, 'reject', reason);
 
@@ -1081,15 +1089,25 @@ async function applyAnnouncementAction(collaborator, parsed) {
       }
 
       for (const director of directors) {
+        // F1 (APROVACAO-SEM-FUNIL): card volta a ter o ID curto (era computado e descartado —
+        // GAP do Incidente B) e o pedido vira ESTADO: intent no aprovador + card no histórico
+        // (reply-quote passa a enriquecer; intercept e prompt enxergam a pendência).
+        const cardText = [
+          '📋 *Comunicado pendente de aprovação*',
+          `De: ${collaborator.full_name} (${collaborator.role}${collaborator.function_role ? ` · ${collaborator.function_role}` : ''})`,
+          `Para: ${audienceDetail}${missingWarning}`,
+          `Mensagem: "${bodyPreview}"`,
+          ``,
+          `Responda *APROVAR ${shortId}* ou *REJEITAR ${shortId} [motivo opcional]*.`,
+        ].join('\n');
         try {
-          await whatsapp.sendMessage(director.phone, [
-            '📋 *Comunicado pendente de aprovação*',
-            `De: ${collaborator.full_name} (${collaborator.role}${collaborator.function_role ? ` · ${collaborator.function_role}` : ''})`,
-            `Para: ${audienceDetail}${missingWarning}`,
-            `Mensagem: "${bodyPreview}"`,
-            ``,
-            `Responda *APROVAR* ou *REJEITAR [motivo opcional]*.`,
-          ].join('\n'));
+          await whatsapp.sendMessage(director.phone, cardText);
+          try {
+            await approvalsService.openAnnouncementApproval(supabase, { approverId: director.id, announcementId: ann.id, shortId });
+            await logConversation(director.id, 'outbound', cardText);
+          } catch (stateErr) {
+            console.warn('[applyAnnouncementAction] approval state err:', stateErr.message);
+          }
         } catch (err) {
           console.error(`[applyAnnouncementAction] Falha ao notificar director ${director.id}:`, err.message);
         }
@@ -2702,6 +2720,9 @@ async function applyProjectApprove(collab, body) {
     .eq('id', project.id);
   if (upErr) return { ok: false, reason: `update_error:${upErr.message}`, userMsg: '_não consegui salvar a aprovação, tenta de novo_' };
 
+  // F1 (APROVACAO-SEM-FUNIL) — fecha as intents de aprovação deste projeto (todos os notificados).
+  try { await approvalsService.resolveApprovalByRef(supabase, project.id, 'confirmed', `aprovado por ${collab.full_name}`); } catch (_) { /* não quebra a aprovação */ }
+
   // Notifica criador
   const { data: creator } = await supabase
     .from('collaborators').select('phone, full_name').eq('id', project.created_by).single();
@@ -2734,6 +2755,9 @@ async function applyProjectReject(collab, body) {
     })
     .eq('id', project.id);
   if (upErr) return { ok: false, reason: `update_error:${upErr.message}`, userMsg: '_não consegui salvar a rejeição, tenta de novo_' };
+
+  // F1 (APROVACAO-SEM-FUNIL) — fecha as intents de aprovação deste projeto.
+  try { await approvalsService.resolveApprovalByRef(supabase, project.id, 'denied', `rejeitado por ${collab.full_name}: ${reason}`); } catch (_) { /* não quebra a rejeição */ }
 
   const { data: creator } = await supabase
     .from('collaborators').select('phone, full_name').eq('id', project.created_by).single();
@@ -7163,7 +7187,8 @@ async function processMessage(phone, text, raw = {}) {
   try {
     const { detectBareRsvpReply } = require('./events/detect-rsvp-reply');
     const rsvp = detectBareRsvpReply(text);
-    const hasFreshQuestion = _openIntents.some((i) => withinConfirmWindow(i.asked_at, 20));
+    // approval_pending não bloqueia RSVP: aprovação nunca consome "sim" (funil próprio).
+    const hasFreshQuestion = _openIntents.some((i) => i.kind !== 'approval_pending' && withinConfirmWindow(i.asked_at, 20));
     if (rsvp && !hasFreshQuestion) {
       const r = await applyRsvp(collab, null, rsvp.status);
       if (r && r.ok) {
@@ -7194,6 +7219,83 @@ async function processMessage(phone, text, raw = {}) {
     }
   } catch (e) {
     console.warn('[RSVP-bare] consumer err:', e.message);
+  }
+
+  // ---- Aprovação determinística (pré-LLM): "Aprovado/Aprovar/APROVA X" → funil de aprovação ----
+  // Fase F2 (APROVACAO-SEM-FUNIL, auditoria 09/06): o vocabulário de aprovação tem dono.
+  // Caso real: "Aprovado" (resposta ao card do projeto) caía no LLM, que casava com a
+  // pendência errada visível (completou EVENTO). Aqui: detector PURO + estado (intents
+  // approval_pending da F1) decidem o alvo — LLM só pega o caso genuinamente ambíguo.
+  try {
+    const scaffold = stripReplyScaffold(String(text || ''));
+    const apr = detectApprovalReply(scaffold.userText);
+    if (apr && hasCoordLevel(collab)) {
+      const openApprovals = await approvalsService.listOpenApprovals(supabase, collab.id);
+      // reply-quote no card identifica o ref mesmo sem token digitado
+      let target = null;
+      if (scaffold.quotedText) {
+        target = openApprovals.find((i) =>
+          (i.payload.token && scaffold.quotedText.includes(`APROVA ${i.payload.token}`))
+          || (i.payload.short_id && scaffold.quotedText.includes(i.payload.short_id))
+          || (i.payload.domain === 'announcement' && /Comunicado pendente de aprova/i.test(scaffold.quotedText)));
+      }
+      if (!target && apr.token) target = openApprovals.find((i) => (i.payload.token || '').toUpperCase() === apr.token);
+      const candidates = target ? [target]
+        : apr.domainHint ? openApprovals.filter((i) => i.payload.domain === apr.domainHint)
+        : openApprovals;
+      let aprReply = null;
+      if (apr.token && !target) {
+        // Token digitado sem intent correspondente (projeto pré-F1) → caminho global legado.
+        const body = { token: apr.token, reason: apr.reason || 'sem motivo informado' };
+        const r = apr.decision === 'approve' ? await applyProjectApprove(collab, body) : await applyProjectReject(collab, body);
+        aprReply = r.ok
+          ? (apr.decision === 'approve' ? `✅ *${r.project.name}* aprovado. Avisei quem criou.` : `❌ *${r.project.name}* rejeitado. Avisei quem criou.`)
+          : (r.userMsg || '_não consegui processar a aprovação agora_');
+      } else if (candidates.length === 1) {
+        const it = candidates[0];
+        if (it.payload.domain === 'project') {
+          const body = { token: it.payload.token, reason: apr.reason || 'sem motivo informado' };
+          const r = apr.decision === 'approve' ? await applyProjectApprove(collab, body) : await applyProjectReject(collab, body);
+          aprReply = r.ok
+            ? (apr.decision === 'approve' ? `✅ *${r.project.name}* aprovado. Avisei quem criou.` : `❌ *${r.project.name}* rejeitado. Avisei quem criou.`)
+            : (r.userMsg || '_não consegui processar agora_');
+        } else {
+          const r = await applyAnnouncementApproval(collab, { action: apr.decision === 'approve' ? 'approve' : 'reject', announcement_id: it.payload.ref_id, reason: apr.reason });
+          aprReply = r.ok
+            ? (apr.decision === 'approve'
+              ? `✅ Comunicado \`${it.payload.short_id || String(it.payload.ref_id).slice(0, 4)}\` aprovado. Mensagens na fila de envio.`
+              : `❌ Comunicado \`${it.payload.short_id || String(it.payload.ref_id).slice(0, 4)}\` rejeitado. Avisei quem criou.`)
+            : (r.reason || '_não consegui processar agora_');
+        }
+      } else if (candidates.length > 1) {
+        // Ambiguidade REAL → lista numerada com os comandos exatos (nunca chuta).
+        const lines = candidates.map((i, idx) => {
+          const cmd = i.payload.domain === 'project'
+            ? `*APROVA ${i.payload.token}*`
+            : `*APROVAR ${i.payload.short_id || String(i.payload.ref_id).slice(0, 4)}*`;
+          return `${idx + 1}) ${i.question_text || i.payload.domain} → ${cmd}`;
+        });
+        aprReply = `Você tem ${candidates.length} aprovações pendentes — qual delas?\n${lines.join('\n')}`;
+      }
+      if (aprReply) {
+        try {
+          await whatsapp.sendMessage(phone, aprReply);
+          await logConversation(collab.id, 'outbound', aprReply);
+        } catch (postErr) {
+          console.warn('[Approval-bare] post err (ação possivelmente aplicada):', postErr.message);
+        }
+        console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (approval_${apr.decision})`);
+        return;
+      }
+      // bare + 0 pendências → NÃO consome o turno; hint negativo anti-Incidente-A:
+      // sem isso o LLM trataria "aprovado" como confirmação de outra pendência visível.
+      if (apr.bare && openApprovals.length === 0) {
+        text = String(text || '') + `\n\n[CONTEXTO INTERNO — não verbalize ao usuário]\nO usuário disse "${scaffold.userText.slice(0, 40)}", que parece APROVAÇÃO, mas NÃO há nenhuma aprovação pendente para ele. NÃO trate como confirmação de outra pendência (tarefa/evento/pergunta antiga). Pergunte a que ele se refere.`;
+        console.log('[Approval-bare] sem pendência — hint negativo injetado');
+      }
+    }
+  } catch (e) {
+    console.warn('[Approval-bare] consumer err:', e.message);
   }
 
   // ---- Correção/exclusão determinística (pré-LLM): "era 25" / "muda a categoria pra lazer" / "apaga a de 30" ----
@@ -7289,13 +7391,17 @@ async function processMessage(phone, text, raw = {}) {
     const openIntents = _openIntents;
     if (openIntents.length > 0) {
       const userConfirm = pendingIntents.detectUserConfirmation(String(text || ''));
-      const target = openIntents[0];  // mais recente
+      // approval_pending NUNCA resolve por sim/não genérico — aprovação tem funil
+      // próprio (detect-approval-reply, acima). Pega a mais recente não-aprovação.
+      const target = openIntents.find((i) => i.kind !== 'approval_pending');
       // Janela de confirmação: um "sim/não" cru só resolve a intent se ela foi
       // perguntada há pouco (~20min). Fora disso NÃO resolve e NÃO apaga — a intent
       // segue aberta pro fluxo natural/expiração. (Bug: "sim" pra criar meta
       // confirmava intent stale de horas atrás, ex. "cobrar o Rafinha".)
-      const fresh = withinConfirmWindow(target.asked_at, 20);
-      if (userConfirm && !fresh) {
+      const fresh = target ? withinConfirmWindow(target.asked_at, 20) : false;
+      if (!target) {
+        // só aprovações abertas — o funil próprio (Approval-bare, acima) cuida delas
+      } else if (userConfirm && !fresh) {
         console.log(`[PendingIntents] skip auto-resolve (stale >20min) — intent=${target.id.slice(0,8)} kind=${target.kind} asked=${target.asked_at}`);
       } else if (userConfirm === 'yes') {
         _pendingIntentToResolve = { intent: target, resolution: 'confirmed' };
@@ -7823,8 +7929,15 @@ async function processMessage(phone, text, raw = {}) {
     if (parsedAp && parsedAp.malformed) {
       console.warn('[Project] WARN: malformed PROJECT_APPROVE marker');
       await logMarker(collab.id, 'PROJECT_APPROVE', 'rejected', 'schema_invalid', reply);
-      // Não vaza o texto "aprovado" alucinado — substitui por erro claro.
-      reply = '_tive um problema técnico processando a aprovação. Manda de novo no formato:_ *APROVA <NOME-DO-PROJETO>*';
+      // Não vaza o texto "aprovado" alucinado — substitui por erro claro, com o(s)
+      // comando(s) CONCRETO(s) das pendências reais (fim do placeholder <NOME-DO-PROJETO>).
+      let cmdHintAp = '*APROVA <NOME-DO-PROJETO>*';
+      try {
+        const openAp = await approvalsService.listOpenApprovals(supabase, collab.id);
+        const prj = openAp.filter((i) => i.payload.domain === 'project' && i.payload.token);
+        if (prj.length) cmdHintAp = prj.map((i) => `*APROVA ${i.payload.token}*`).join(' ou ');
+      } catch (_) { /* mantém genérico */ }
+      reply = `_tive um problema técnico processando a aprovação. Manda de novo:_ ${cmdHintAp}`;
     } else if (parsedAp) {
       const r = await applyProjectApprove(collab, parsedAp);
       if (!r.ok) {
@@ -7845,8 +7958,14 @@ async function processMessage(phone, text, raw = {}) {
     if (parsedRj && parsedRj.malformed) {
       console.warn('[Project] WARN: malformed PROJECT_REJECT marker');
       await logMarker(collab.id, 'PROJECT_REJECT', 'rejected', 'schema_invalid', reply);
-      // Não vaza o texto "rejeitado" alucinado — substitui por erro claro.
-      reply = '_tive um problema técnico processando a rejeição. Manda de novo no formato:_ *REJEITA <NOME-DO-PROJETO> motivo*';
+      // Não vaza o texto "rejeitado" alucinado — substitui por erro claro com comando concreto.
+      let cmdHintRj = '*REJEITA <NOME-DO-PROJETO> motivo*';
+      try {
+        const openRj = await approvalsService.listOpenApprovals(supabase, collab.id);
+        const prjR = openRj.filter((i) => i.payload.domain === 'project' && i.payload.token);
+        if (prjR.length) cmdHintRj = prjR.map((i) => `*REJEITA ${i.payload.token} motivo*`).join(' ou ');
+      } catch (_) { /* mantém genérico */ }
+      reply = `_tive um problema técnico processando a rejeição. Manda de novo:_ ${cmdHintRj}`;
     } else if (parsedRj) {
       const r = await applyProjectReject(collab, parsedRj);
       if (!r.ok) {

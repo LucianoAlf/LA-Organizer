@@ -465,6 +465,15 @@ router.post('/internal/project-created', requireInternalSecret, async (req, res)
       whatsapp.sendMessage(supervisor.phone, supMsg).catch(e =>
         console.error(`[InternalAPI] WA supervisor falhou: ${e.message}`));
       console.log(`[InternalAPI] approval notif → ${supervisor.full_name} (${supervisor.role}) for project ${projectId}`);
+      // F1 (APROVACAO-SEM-FUNIL): o pedido vira ESTADO — intent no aprovador + card no
+      // histórico (reply-quote enriquece; intercept Approval-bare e prompt enxergam).
+      try {
+        const approvalsService = require('./services/approvals');
+        await approvalsService.openProjectApproval(supabase, { approverId: supervisor.id, projectId: project.id, token });
+        await supabase.from('conversation_history').insert({
+          collaborator_id: supervisor.id, direction: 'outbound', message_type: 'text', content: supMsg,
+        });
+      } catch (e) { console.warn('[InternalAPI] approval state err:', e.message); }
     } else {
       console.warn(`[InternalAPI] supervisor não encontrado pra projeto ${projectId} (creator=${creator.full_name})`);
     }
