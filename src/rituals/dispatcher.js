@@ -634,6 +634,7 @@ async function dispatchChecklists(now = new Date(), { dry = false, filterPhone =
 
     // Task 6 — Routing: se template tem responsible_id, usa diretamente; senão fallback por função.
     let collabs = [];
+    let usedFallback = false;
     if (template.responsible_id) {
       let personQ = supabase
         .from('collaborators')
@@ -671,6 +672,9 @@ async function dispatchChecklists(now = new Date(), { dry = false, filterPhone =
       collabs = matched ?? [];
 
       // Fallback: nenhum collab com function_role/shift configurado → envia pra manager da unidade.
+      // Caso Rose 10/06: template unit='all' sem ninguém na função ia pra TODOS os managers,
+      // inclusive os de área (financeiro/marketing, unit='all'). Fallback agora é só manager
+      // DE UNIDADE — quem de fato responde pela operação física da escola.
       if (collabs.length === 0) {
         let fallbackQ = supabase
           .from('collaborators')
@@ -679,6 +683,7 @@ async function dispatchChecklists(now = new Date(), { dry = false, filterPhone =
           .not('phone', 'is', null)
           .eq('role', 'manager');
         if (template.unit !== 'all') fallbackQ = fallbackQ.eq('unit', template.unit);
+        else fallbackQ = fallbackQ.neq('unit', 'all');
         if (filterPhone) fallbackQ = fallbackQ.eq('phone', filterPhone);
         const { data: fallback } = await fallbackQ;
         if (!fallback || fallback.length === 0) {
@@ -686,7 +691,8 @@ async function dispatchChecklists(now = new Date(), { dry = false, filterPhone =
           continue;
         }
         collabs = fallback;
-        console.log(`[dispatchChecklists] ${template.name}: sem collabs com function_role=${template.function_role} — fallback ${collabs.length} manager(s)`);
+        usedFallback = true;
+        console.log(`[dispatchChecklists] ${template.name}: sem collabs com function_role=${template.function_role} — fallback ${collabs.length} manager(s) de unidade`);
       }
     }
 
@@ -760,7 +766,10 @@ async function dispatchChecklists(now = new Date(), { dry = false, filterPhone =
       const msg =
         `📋 *Checklist: ${template.name}*\n` +
         `Marque os itens concluídos:\n${sortedItems}\n\n` +
-        `Responda com os números (ex: *1 3 5*) ou *feito tudo*.`;
+        `Responda com os números (ex: *1 3 5*) ou *feito tudo*.` +
+        (usedFallback
+          ? `\n\n_Você recebeu porque ninguém está cadastrado como responsável por esse checklist. Se não é com você, avisa o diretor pra configurar o responsável certo._`
+          : '');
 
       // Checklist operacional = trabalho (LA Music). Respeita o silêncio de trabalho.
       const qChk = await isQuietNow(collab.id, nowSaoPaulo(), 'work');
