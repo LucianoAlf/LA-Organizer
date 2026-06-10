@@ -135,8 +135,8 @@ export function NotaDetalhe() {
             className="w-full bg-bg-surface border border-border rounded-md p-3 text-fg text-body-md leading-relaxed focus:outline-none focus:border-tom resize-y"
           />
           {isOwner && lines.some((l) => l.actionable) && (
-            <Button variant="primary" size="sm" onClick={() => { setAgir(true); setSelLines(new Set()); }}>
-              <Zap size={14} className="mr-1" /> Virar tarefas
+            <Button variant="primary" size="md" leadingIcon={<Zap size={16} />} onClick={() => { setAgir(true); setSelLines(new Set()); }}>
+              Virar tarefas
             </Button>
           )}
         </>
@@ -173,10 +173,10 @@ export function NotaDetalhe() {
             );
           })}
           <div className="flex items-center gap-2 pt-2">
-            <Button variant="primary" size="sm" disabled={selecionadas.length === 0} onClick={() => setSheetOpen(true)}>
+            <Button variant="primary" size="md" disabled={selecionadas.length === 0} onClick={() => setSheetOpen(true)}>
               Criar {selecionadas.length} tarefa{selecionadas.length === 1 ? '' : 's'} →
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => setAgir(false)}>Cancelar</Button>
+            <Button variant="ghost" size="md" onClick={() => setAgir(false)}>Cancelar</Button>
           </div>
         </div>
       )}

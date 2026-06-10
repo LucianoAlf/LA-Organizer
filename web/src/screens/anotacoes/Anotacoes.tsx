@@ -61,7 +61,7 @@ export function Anotacoes() {
         <div className="flex items-center gap-3 shrink-0">
           <span className="text-body-sm text-fg-muted">{notes.length} anotaç{notes.length === 1 ? 'ão' : 'ões'}</span>
           {bp !== 'mobile' && (
-            <Button variant="primary" size="sm" onClick={novaAnotacao}>+ Nova anotação</Button>
+            <Button variant="primary" size="md" onClick={novaAnotacao}>+ Nova anotação</Button>
           )}
         </div>
       </header>

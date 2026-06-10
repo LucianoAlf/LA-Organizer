@@ -164,8 +164,8 @@ export function VirarTarefasSheet({ open, onClose, note, lines, onDone }: Props)
           })}
         </div>
 
-        <Button variant="primary" disabled={criar.isPending || drafts.length === 0} onClick={() => criar.mutate()}>
-          {criar.isPending ? 'Criando…' : 'Criar'}
+        <Button variant="primary" size="md" fullWidth loading={criar.isPending} disabled={drafts.length === 0} onClick={() => criar.mutate()}>
+          {criar.isPending ? 'Criando…' : `Criar ${drafts.length} tarefa${drafts.length === 1 ? '' : 's'}`}
         </Button>
       </div>
     </BottomSheet>
