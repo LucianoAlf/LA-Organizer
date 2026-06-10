@@ -15,6 +15,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useAuth } from '../contexts/AuthContext';
+import { useMyGroupIds } from '../hooks/useWorkGroups';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { todaySP } from '../utils/date';
 import { useSortableSensors } from '../lib/sortableSensors';
@@ -85,10 +86,11 @@ async function fetchHabitsToday(collabId: string): Promise<HabitToday[]> {
 // Quando done, caía fora dos dois braços. Adiciona segundo query: tasks
 // concluídas dentro do dia da view (completed_at no range), independente
 // de due_date. Merge dedup. View "Concluídas" passa a contar correto.
-async function fetchTasksToday(collabId: string, viewDate: string, isToday: boolean): Promise<Task[]> {
+async function fetchTasksToday(collabId: string, viewDate: string, isToday: boolean, groupIds: string[] = []): Promise<Task[]> {
   // Grupos de tarefas (2026-06-09): parent_task_id/is_group adicionados ao select;
   // filhas e mães ficam fora das listas soltas (entram pelo TaskGroupCard).
-  const baseSelect = 'id, title, status, context, priority, category, action_type, source, due_date, due_time, scheduled_date, remind_at, eisenhower_quadrant, sort_position, project_id, assigned_to, created_by, completed_at, recurrence_rule, recurrence_parent_id, parent_task_id, is_group, projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(full_name), task_reminders(remind_at, sent_at)';
+  // Grupos de TRABALHO (2026-06-10): work_group embed pro badge 👥 + pool nas listas.
+  const baseSelect = 'id, title, status, context, priority, category, action_type, source, due_date, due_time, scheduled_date, remind_at, eisenhower_quadrant, sort_position, project_id, assigned_to, assigned_group_id, created_by, completed_at, recurrence_rule, recurrence_parent_id, parent_task_id, is_group, projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(full_name), work_group:work_groups!tasks_assigned_group_id_fkey(name), task_reminders(remind_at, sent_at)';
 
   let q = supabase
     .from('tasks')
@@ -132,7 +134,31 @@ async function fetchTasksToday(collabId: string, viewDate: string, isToday: bool
 
   const seen = new Set<string>(rows.map(r => r.id));
   const extras = ((doneData ?? []) as unknown as Task[]).filter(t => !seen.has(t.id));
-  return rows.concat(extras);
+  let all = rows.concat(extras);
+
+  // Grupos de trabalho (2026-06-10): tarefas do POOL dos meus grupos entram na
+  // lista do dia (mesmos filtros de data; sem-prazo aparece em Hoje). Qualquer
+  // membro vê e conclui — badge 👥 via work_group embed.
+  if (groupIds.length) {
+    let gq = supabase
+      .from('tasks')
+      .select(baseSelect)
+      .in('assigned_group_id', groupIds)
+      .neq('status', 'cancelled')
+      .is('parent_task_id', null)
+      .eq('is_group', false);
+    if (isToday) {
+      gq = gq.or(`due_date.eq.${viewDate},and(due_date.lt.${viewDate},status.not.in.(done,cancelled)),and(due_date.is.null,status.not.in.(done,cancelled))`);
+    } else {
+      gq = gq.eq('due_date', viewDate);
+    }
+    const { data: gData, error: gErr } = await gq;
+    if (!gErr) {
+      const seen2 = new Set<string>(all.map(r => r.id));
+      all = all.concat(((gData ?? []) as unknown as Task[]).filter(t => !seen2.has(t.id)));
+    }
+  }
+  return all;
 }
 
 async function fetchDelegatedTasks(collabId: string, viewDate: string, isToday: boolean): Promise<Task[]> {
@@ -202,9 +228,12 @@ export function Hoje() {
   const today = viewDate;
   const isViewingToday = viewDate === realToday;
 
+  // Grupos de trabalho (2026-06-10): tarefas do pool dos meus grupos entram na lista.
+  const myGroupIds = useMyGroupIds();
+
   const { data: tasks = [], isLoading: tLoading, error: tError } = useQuery({
-    queryKey: ['tasks', 'hoje', collaborator?.id, viewDate],
-    queryFn: () => collaborator ? fetchTasksToday(collaborator.id, viewDate, isViewingToday) : Promise.resolve([]),
+    queryKey: ['tasks', 'hoje', collaborator?.id, viewDate, (myGroupIds.data ?? []).join(',')],
+    queryFn: () => collaborator ? fetchTasksToday(collaborator.id, viewDate, isViewingToday, myGroupIds.data ?? []) : Promise.resolve([]),
     enabled: Boolean(collaborator?.id && supabaseConfigured),
   });
 

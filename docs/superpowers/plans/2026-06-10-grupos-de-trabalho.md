@@ -1,5 +1,17 @@
 # Grupos de Trabalho — Plano de Implementação
 
+> **STATUS (10/06 ~14h BRT): MVP ENTREGUE (T1–T8 + deploy + seed).** Migration+RLS+CHECK+trigger ✓ ·
+> service 5/5 ✓ (134/134 geral) · engine: create pro grupo (nome validado server-side), resolveTaskByShortId
+> com pool, complete anti-corrida ("já concluída por X"), notificações com histórico ✓ · prompt: bloco
+> 👥 grupos + tasks do pool do remetente ✓ · dispatcher: remindGroupTasks (fan-out T-1) + fan-out nos
+> 2 check*Reminders; 3 T-1 por pessoa excluem grupo ✓ · PWA: tela Grupos (Mais+sidebar), Eu|Grupo no
+> QuickCreate, Hoje inclui pool + badge 👥 ✓ · grupo Financeiro (Rose ★ + Ana) seedado ✓.
+> Bug pego na validação: work_group_members tem 2 FKs pra collaborators → embeds exigem FK explícita
+> (corrigido nos 3 pontos; mesma família do event_participants).
+> **PENDÊNCIAS (fase imediata):** escalação de task de grupo travada → líder (hoje não escala);
+> relatórios buildTeamSummary/leader-briefing com linha por grupo; view Semana/Agenda incluir pool
+> (só Hoje cobre); validação RLS com login non-coinciding real (piloto cobre); e2e real Rose→Ana.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Pool de tarefas por grupo nomeado (Financeiro = Rose ★ + Ana): grupo é dono da tarefa (`assigned_group_id`), qualquer membro vê e conclui, lembretes pra todos, escalação só pra líder — spec aprovada em `docs/superpowers/specs/2026-06-10-grupos-de-trabalho-design.md`.

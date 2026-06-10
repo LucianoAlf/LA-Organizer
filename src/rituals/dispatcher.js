@@ -927,6 +927,55 @@ async function handleCancellations(whatsapp) {
   }
 }
 
+// Grupos de trabalho (spec 2026-06-10) — lembrete T-1 de tasks de GRUPO com
+// fan-out pra TODOS os membros (decisão de brainstorm: lembrete pra todos;
+// escalação só pra líder). Janela 09:00-09:10 BRT, idempotente via reminded_at.
+// Cobre QUALQUER task de grupo (as 3 funções T-1 por pessoa excluem grupo).
+async function remindGroupTasks(now = new Date()) {
+  const whatsapp = require('../services/whatsapp');
+  const wg = require('../services/work-groups');
+  const utcH = now.getUTCHours();
+  const utcM = now.getUTCMinutes();
+  if (!(utcH === 12 && utcM >= 0 && utcM <= 10)) return;
+
+  const brtMs = now.getTime() - 3 * 60 * 60 * 1000;
+  const tomorrowYmd = new Date(brtMs + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+  const { data: tasks, error } = await supabase
+    .from('tasks')
+    .select('id, title, due_date, assigned_group_id, group:work_groups!tasks_assigned_group_id_fkey(name)')
+    .not('assigned_group_id', 'is', null)
+    .is('reminded_at', null)
+    .in('status', ['pending', 'in_progress'])
+    .eq('due_date', tomorrowYmd);
+  if (error) { console.error('[remindGroupTasks] query err:', error.message); return; }
+  if (!tasks || !tasks.length) return;
+
+  const nowIso = now.toISOString();
+  for (const task of tasks) {
+    let members = [];
+    try { members = await wg.membersWithPhones(supabase, task.assigned_group_id); }
+    catch (e) { console.warn('[remindGroupTasks] members err:', e.message); }
+    const gName = task.group ? task.group.name : 'grupo';
+    const msg = `⏰ Lembrete do grupo *${gName}*: *${task.title}* vence amanhã. Qualquer pessoa do grupo pode concluir — quem pegar, avisa por aqui. 😉`;
+    let sent = 0;
+    for (const m of members) {
+      const q = await isQuietNow(m.collaborator_id, nowSaoPaulo(), 'work');
+      if (q.quiet) { console.log(`[remindGroupTasks] skip member ${String(m.collaborator_id).slice(0,8)} — quiet (${q.reason})`); continue; }
+      try {
+        await whatsapp.sendMessage(m.phone, msg);
+        await supabase.from('conversation_history').insert({
+          collaborator_id: m.collaborator_id, direction: 'outbound', message_type: 'text', content: msg,
+        });
+        sent++;
+      } catch (e) { console.error(`[remindGroupTasks] send err ${String(m.collaborator_id).slice(0,8)}:`, e.message); }
+    }
+    // Marca SEMPRE (janela é 1x/dia; evitar loop > evitar perder 1 membro em quiet).
+    await supabase.from('tasks').update({ reminded_at: nowIso }).eq('id', task.id);
+    console.log(`[remindGroupTasks] task=${String(task.id).slice(0,8)} grupo="${gName}" sent=${sent}/${members.length}`);
+  }
+}
+
 // Sprint 14 Fatia 2 — lembretes T-1 para tasks de evento
 async function remindEventTasks(now = new Date()) {
   const whatsapp = require('../services/whatsapp');
@@ -940,6 +989,7 @@ async function remindEventTasks(now = new Date()) {
       event:school_event_id ( title )
     `)
     .not('school_event_id', 'is', null)
+    .is('assigned_group_id', null) // tasks de GRUPO têm fan-out próprio (remindGroupTasks)
     .in('status', ['pending', 'in_progress'])
     .lte('remind_at', nowIso)
     .is('reminded_at', null);
@@ -1004,6 +1054,7 @@ async function remindOperationalTasks(now = new Date()) {
     `)
     .not('department_id', 'is', null)
     .is('school_event_id', null)
+    .is('assigned_group_id', null) // tasks de GRUPO têm fan-out próprio (remindGroupTasks)
     .is('reminded_at', null)
     .in('status', ['pending', 'in_progress'])
     .eq('due_date', tomorrowYmd);
@@ -1066,6 +1117,7 @@ async function remindPersonalTasks(now = new Date()) {
     .is('department_id', null)
     .is('project_id', null)
     .is('school_event_id', null)
+    .is('assigned_group_id', null) // tasks de GRUPO têm fan-out próprio (remindGroupTasks)
     .is('reminded_at', null)
     .in('status', ['pending', 'in_progress'])
     .eq('due_date', tomorrowYmd);
@@ -3965,6 +4017,13 @@ async function run(opts = {}) {
     console.error('[Dispatcher] remindPersonalTasks erro:', err.message);
   }
 
+  // Grupos de trabalho — lembretes T-1 de tasks de GRUPO (fan-out pra membros)
+  try {
+    await remindGroupTasks(new Date());
+  } catch (err) {
+    console.error('[Dispatcher] remindGroupTasks erro:', err.message);
+  }
+
   // Sprint 15 F4 — Checklist com consequência (gera tasks automáticas)
   try {
     await checkChecklistConsequences(new Date());
@@ -4733,7 +4792,7 @@ async function checkTaskReminders() {
   const nowIso = new Date().toISOString();
   const { data: due, error } = await supabase
     .from('task_reminders')
-    .select('id, task_id, remind_at, label, created_at, tasks(id, title, assigned_to, status, due_date, due_time)')
+    .select('id, task_id, remind_at, label, created_at, tasks(id, title, assigned_to, assigned_group_id, status, due_date, due_time)')
     .is('sent_at', null)
     .lte('remind_at', nowIso)
     .limit(50);
@@ -4751,6 +4810,33 @@ async function checkTaskReminders() {
   let fired = 0;
   for (const r of due) {
     const t = r.tasks;
+    // Task de GRUPO (spec 2026-06-10): fan-out do alerta pra todos os membros.
+    if (t && t.assigned_group_id && t.status !== 'done' && t.status !== 'cancelled') {
+      try {
+        const wg = require('../services/work-groups');
+        const members = await wg.membersWithPhones(supabase, t.assigned_group_id);
+        const labelG = r.label ? `${r.label}: ` : 'Lembrete: ';
+        const dayG = relativeDayFromYmd(t.due_date);
+        const whenG = [dayG, (t.due_time || '').slice(0, 5)].filter(Boolean).join(' ');
+        const textG = `⏰ ${labelG}*${t.title}* (grupo)${whenG ? ` — ${whenG}` : ''}`;
+        let sentG = 0;
+        for (const m of members) {
+          const qM = await isQuietNow(m.collaborator_id, nowSaoPaulo(), 'work', { defaultNightGate: false });
+          if (qM.quiet) continue;
+          try {
+            await whatsapp.sendMessage(m.phone, textG);
+            await supabase.from('conversation_history').insert({
+              collaborator_id: m.collaborator_id, direction: 'outbound', message_type: 'text', content: textG,
+            });
+            sentG++;
+          } catch (eS) { console.error(`[TaskReminders] group send err:`, eS.message); }
+        }
+        await supabase.from('task_reminders').update({ sent_at: new Date().toISOString() }).eq('id', r.id);
+        console.log(`[TaskReminders] group fan-out ${String(r.id).slice(0,8)} task=${String(t.id).slice(0,8)} sent=${sentG}/${members.length}`);
+        if (sentG) fired++;
+      } catch (eG) { console.error('[TaskReminders] group branch err:', eG.message); }
+      continue;
+    }
     const collab = t && byId.get(t.assigned_to);
     if (!collab || !collab.is_active || !collab.phone) {
       console.warn(`[TaskReminders] skip ${String(r.id).slice(0,8)} — no active collaborator`);
@@ -4824,7 +4910,7 @@ async function checkReminders() {
   const cooldownCutoff = new Date(Date.now() - 6 * 3600_000).toISOString();
   const { data: due, error } = await supabase
     .from('tasks')
-    .select('id, title, assigned_to, remind_at, status, context, reminded_at, due_date')
+    .select('id, title, assigned_to, assigned_group_id, remind_at, status, context, reminded_at, due_date')
     .not('remind_at', 'is', null)
     .lte('remind_at', nowIso)
     .not('status', 'in', '(done,cancelled)')
@@ -4845,6 +4931,31 @@ async function checkReminders() {
 
   const whatsapp = require('../services/whatsapp');
   for (const t of due) {
+    // Task de GRUPO (spec 2026-06-10): fan-out pra todos os membros; marca reminded_at
+    // (NÃO marca done — pool fica aberto pra quem pegar).
+    if (t.assigned_group_id) {
+      try {
+        const wg = require('../services/work-groups');
+        const whatsapp = require('../services/whatsapp'); // escopo local (função pode não ter o require)
+        const members = await wg.membersWithPhones(supabase, t.assigned_group_id);
+        const textG = `🔔 *Lembrete (grupo):* ${t.title} — quem puder, pega essa.`;
+        let sentG = 0;
+        for (const m of members) {
+          const qM = await isQuietNow(m.collaborator_id, nowSaoPaulo(), 'work', { defaultNightGate: false });
+          if (qM.quiet) continue;
+          try {
+            await whatsapp.sendMessage(m.phone, textG);
+            await supabase.from('conversation_history').insert({
+              collaborator_id: m.collaborator_id, direction: 'outbound', message_type: 'text', content: textG,
+            });
+            sentG++;
+          } catch (eS) { console.error('[Reminders] group send err:', eS.message); }
+        }
+        await supabase.from('tasks').update({ reminded_at: new Date().toISOString() }).eq('id', t.id);
+        console.log(`[Reminders] group fan-out task=${String(t.id).slice(0,8)} sent=${sentG}/${members.length}`);
+      } catch (eG) { console.error('[Reminders] group branch err:', eG.message); }
+      continue;
+    }
     const collab = byId.get(t.assigned_to);
     if (!collab || !collab.is_active || !collab.phone) {
       console.warn(`[Reminders] task ${String(t.id).slice(0,8)} skipped — no active collaborator/phone`);

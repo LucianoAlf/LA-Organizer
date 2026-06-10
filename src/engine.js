@@ -27,6 +27,7 @@ const pendingIntents = require('./services/pending-intents');
 const approvalsService = require('./services/approvals');
 const noteMarker = require('./services/note-marker');
 const notesService = require('./services/notes');
+const workGroups = require('./services/work-groups');
 const { detectApprovalReply, stripReplyScaffold } = require('./events/detect-approval-reply');
 const { isFutureCompletion } = require('./utils/complete-guards');
 const { buildCoordinationResponseNotification } = require('./services/coordination-notify');
@@ -3454,7 +3455,7 @@ async function resolveTaskByShortId(collaboratorId, shortId) {
   const sinceIso = new Date(Date.now() - 60 * 24 * 3600 * 1000).toISOString().slice(0, 10);
   const { data, error } = await supabase
     .from('tasks')
-    .select('id, title, status, due_date, assigned_to')
+    .select('id, title, status, due_date, assigned_to, assigned_group_id')
     .eq('assigned_to', collaboratorId)
     .or(`due_date.gte.${sinceIso},due_date.is.null`) // Item 2: inclui tarefas SEM prazo (null)
     .limit(500);
@@ -3462,8 +3463,25 @@ async function resolveTaskByShortId(collaboratorId, shortId) {
     console.error('[Task] resolveTaskByShortId err:', error.message);
     return null;
   }
-  if (!data || data.length === 0) return null;
-  const matches = matchRowsByShortId(data, shortId); // tolerante a UUID alucinado (Sprint 31.14)
+  // Grupos de trabalho (spec 2026-06-10): membro também gerencia tarefas do POOL
+  // dos seus grupos via WhatsApp. Mesma defesa-em-profundidade: só grupos em que
+  // o remetente é membro de verdade (work_group_members), nunca o id do marker.
+  let rows = data || [];
+  try {
+    const gids = await workGroups.groupIdsOfCollaborator(supabase, collaboratorId);
+    if (gids.length) {
+      const { data: gTasks } = await supabase
+        .from('tasks')
+        .select('id, title, status, due_date, assigned_to, assigned_group_id')
+        .in('assigned_group_id', gids)
+        .or(`due_date.gte.${sinceIso},due_date.is.null`)
+        .limit(200);
+      const seen = new Set(rows.map((t) => t.id));
+      for (const t of gTasks || []) if (!seen.has(t.id)) rows.push(t);
+    }
+  } catch (eG) { console.warn('[Task] group tasks fetch err (segue só pessoais):', eG.message); }
+  if (!rows || rows.length === 0) return null;
+  const matches = matchRowsByShortId(rows, shortId); // tolerante a UUID alucinado (Sprint 31.14)
   if (matches.length === 0) return null;
   if (matches.length > 1) {
     console.warn(`[Task] short_id ambíguo ${shortId} (${matches.length} matches) — rejeitando`);
@@ -4005,20 +4023,79 @@ async function applyTaskActions(collaborator, actions) {
           failCount++;
           continue;
         }
-        const { error } = await supabase
-          .from('tasks')
-          .update({
-            status: 'done',
-            completed_at: new Date().toISOString(),
-            completed_by: collaborator.id,
-          })
-          .eq('id', t.id)
-          .eq('assigned_to', collaborator.id);
+        let error = null;
+        if (t.assigned_group_id) {
+          // Tarefa de GRUPO (spec 2026-06-10): membro conclui (resolveTaskByShortId já
+          // validou a filiação). Anti-corrida Rose×Ana: só completa se ainda não está
+          // done; 0 rows = outra pessoa fechou antes → avisa em vez de fingir sucesso.
+          const rG = await supabase
+            .from('tasks')
+            .update({ status: 'done', completed_at: new Date().toISOString(), completed_by: collaborator.id })
+            .eq('id', t.id)
+            .eq('assigned_group_id', t.assigned_group_id)
+            .neq('status', 'done')
+            .select('id');
+          error = rG.error;
+          if (!error && (!rG.data || rG.data.length === 0)) {
+            let quem = 'alguém do grupo';
+            try {
+              const { data: cur } = await supabase.from('tasks').select('completed_by').eq('id', t.id).maybeSingle();
+              if (cur && cur.completed_by) {
+                const { data: cb } = await supabase.from('collaborators').select('full_name').eq('id', cur.completed_by).maybeSingle();
+                if (cb && cb.full_name) quem = cb.full_name.split(' ')[0];
+              }
+            } catch (_) { /* nome é cosmético */ }
+            failMessages.push(`✋ *${t.title}* já tinha sido concluída por *${quem}* — tá fechada, não precisou de novo.`);
+            console.log(`[Task][Group] complete RACE id=${a.id} — já done (by=${quem})`);
+            failCount++;
+            continue;
+          }
+        } else {
+          const rP = await supabase
+            .from('tasks')
+            .update({
+              status: 'done',
+              completed_at: new Date().toISOString(),
+              completed_by: collaborator.id,
+            })
+            .eq('id', t.id)
+            .eq('assigned_to', collaborator.id);
+          error = rP.error;
+        }
         if (error) {
           console.error('[Task] complete err:', error.message);
           failCount++;
         } else {
           console.log(`[Task] complete ${a.id} by ${last4}`);
+          // Grupo: avisa criador e demais membros do fechamento (com histórico —
+          // lição RSVP-HISTORY-MISSING).
+          if (t.assigned_group_id) {
+            try {
+              const { data: gRow } = await supabase.from('work_groups').select('name').eq('id', t.assigned_group_id).maybeSingle();
+              const { data: mems } = await supabase
+                .from('work_group_members')
+                .select('collaborator_id, collaborator:collaborators!work_group_members_collaborator_id_fkey(full_name, phone, is_active)')
+                .eq('group_id', t.assigned_group_id);
+              const quemFez = (collaborator.full_name || 'alguém').split(' ')[0];
+              const msgC = `✅ *${t.title}* (grupo *${gRow ? gRow.name : 'de trabalho'}*) — concluída por *${quemFez}*.`;
+              const targets = new Map();
+              for (const m of mems || []) {
+                if (m.collaborator_id !== collaborator.id && m.collaborator && m.collaborator.phone && m.collaborator.is_active !== false) {
+                  targets.set(m.collaborator_id, m.collaborator.phone);
+                }
+              }
+              if (fullTask && fullTask.created_by && fullTask.created_by !== collaborator.id && !targets.has(fullTask.created_by)) {
+                const { data: cb } = await supabase.from('collaborators').select('phone').eq('id', fullTask.created_by).maybeSingle();
+                if (cb && cb.phone) targets.set(fullTask.created_by, cb.phone);
+              }
+              for (const [cid, ph] of targets) {
+                await whatsapp.sendMessage(ph, msgC);
+                await supabase.from('conversation_history').insert({
+                  collaborator_id: cid, direction: 'outbound', message_type: 'text', content: msgC,
+                });
+              }
+            } catch (eGC) { console.warn('[Task][Group] notify complete err:', eGC.message); }
+          }
           // Sprint 29.1 — task fechou: zera contador de cobrança pra não
           // poluir a próxima vez que a task voltar (reopen) ou pra historico.
           try {
@@ -4316,6 +4393,30 @@ async function applyTaskActions(collaborator, actions) {
             recipient = null; // treat as normal self-create
           }
         }
+        // Grupos de trabalho (spec 2026-06-10) — "cria tarefa pro financeiro".
+        // Nome resolvido server-side contra work_groups ativos; id NUNCA vem do LLM.
+        // Grupo é dono EXCLUSIVO (CHECK exatamente-um-dono no banco).
+        let assignedGroup = null;
+        if (typeof a.assigned_group === 'string' && a.assigned_group.trim()) {
+          try {
+            const allGroups = await workGroups.loadActiveGroups(supabase);
+            const rg = workGroups.resolveGroupByName(allGroups, a.assigned_group);
+            if (!rg.group) {
+              const nomes = (rg.candidates.length ? rg.candidates : allGroups).map((g) => g.name).join(', ');
+              failMessages.push(rg.candidates.length
+                ? `⚠️ Mais de um grupo combina com "${a.assigned_group}": ${nomes}. Me diz qual.`
+                : `⚠️ Não achei o grupo "${a.assigned_group}". Grupos ativos: ${nomes || 'nenhum cadastrado ainda'}.`);
+              failCount++;
+              continue;
+            }
+            assignedGroup = rg.group;
+          } catch (eWG) {
+            console.error('[Task][Group] resolve err:', eWG.message);
+            failMessages.push('⚠️ Não consegui verificar o grupo agora — tenta de novo?');
+            failCount++;
+            continue;
+          }
+        }
         // Sprint 15 F2 — operational layer fields (department_id, request_type_id)
         const UUID_RE_TASK = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
         let departmentId = (typeof a.department_id === 'string' && UUID_RE_TASK.test(a.department_id))
@@ -4347,7 +4448,8 @@ async function applyTaskActions(collaborator, actions) {
           if (rt.requires_approval) initialStatus = 'awaiting_confirmation';
         }
 
-        const context = a.context === 'personal' ? 'personal' : 'work';
+        // Tarefa de grupo é SEMPRE work (decisão de spec).
+        const context = assignedGroup ? 'work' : (a.context === 'personal' ? 'personal' : 'work');
         const priority = VALID_PRIORITIES.includes(a.priority) ? a.priority : 'medium';
         // Sprint 12 Bloco D — action_type vem da skill priorizacao-inteligente.
         // Quando ausente/inválido fica NULL (TaskRow no PWA mostra sem badge).
@@ -4356,7 +4458,8 @@ async function applyTaskActions(collaborator, actions) {
           : null;
         const insertRow = {
           title: a.title.trim().slice(0, 200),
-          assigned_to: assignedTo,
+          // Dono é UM: pessoa OU grupo (CHECK tasks_exactly_one_owner).
+          assigned_to: assignedGroup ? null : assignedTo,
           created_by: collaborator.id,
           source: 'manual',
           status: initialStatus,
@@ -4364,6 +4467,7 @@ async function applyTaskActions(collaborator, actions) {
           priority,
           action_type: actionType,
         };
+        if (assignedGroup) insertRow.assigned_group_id = assignedGroup.id;
         // Sprint 29.4 — task com recorrência vira TEMPLATE (engine materializa próximas)
         if (typeof a.recurrence_rule === 'string' && a.recurrence_rule.trim()) {
           insertRow.recurrence_rule = a.recurrence_rule.trim().replace(/^RRULE:/i, '');
@@ -4474,13 +4578,15 @@ async function applyTaskActions(collaborator, actions) {
         // este dedupe é o cinto de segurança.
         try {
           const dedupeCutoff = new Date(Date.now() - 60_000).toISOString();
-          const { data: dupes } = await supabase
+          let _dq = supabase
             .from('tasks')
             .select('id, created_at, remind_at, due_date')
-            .eq('assigned_to', assignedTo)
             .eq('title', insertRow.title)
             .gte('created_at', dedupeCutoff)
             .limit(3);
+          // Dono do dedupe acompanha o dono da task (grupo ou pessoa).
+          _dq = assignedGroup ? _dq.eq('assigned_group_id', assignedGroup.id) : _dq.eq('assigned_to', assignedTo);
+          const { data: dupes } = await _dq;
           const dup = (dupes || []).find(d =>
             (d.remind_at || null) === (insertRow.remind_at || null) &&
             (d.due_date || null) === (insertRow.due_date || null)
@@ -4536,6 +4642,27 @@ async function applyTaskActions(collaborator, actions) {
             }
           } catch (e) {
             console.warn('[Task] recurrence initial materialize failed:', e.message);
+          }
+        }
+        // Grupos de trabalho — avisa os demais membros, com registro no histórico
+        // (lição RSVP-HISTORY-MISSING: send sem conversation_history deixa o LLM cego).
+        if (assignedGroup && taskId) {
+          const _diaG = insertRow.due_date
+            ? ` — pra ${String(insertRow.due_date).slice(0, 10).split('-').reverse().slice(0, 2).join('/')}`
+            : '';
+          const _quem = (collaborator.full_name || 'colega').split(' ')[0];
+          const msgG = `📋 Tarefa nova do grupo *${assignedGroup.name}*: *${insertRow.title}*${_diaG}\n_criada por ${_quem} — qualquer pessoa do grupo pode concluir._`;
+          for (const m of (assignedGroup.members || [])) {
+            if (m.collaborator_id === collaborator.id || !m.phone) continue;
+            try {
+              await whatsapp.sendMessage(m.phone, msgG);
+              await supabase.from('conversation_history').insert({
+                collaborator_id: m.collaborator_id,
+                direction: 'outbound',
+                message_type: 'text',
+                content: msgG,
+              });
+            } catch (eNG) { console.warn('[Task][Group] notify member err:', eNG.message); }
           }
         }
         // Notify recipient when created-for-other (best-effort).

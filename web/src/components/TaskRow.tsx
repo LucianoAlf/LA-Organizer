@@ -231,6 +231,10 @@ export function TaskRow({
           <ActionTypeBadge type={task.action_type} />
           <CategoryTag project={task.projects as { name: string; category?: string } | null | undefined} />
           {task.context === 'personal' && <span>· pessoal</span>}
+          {/* Grupos de trabalho (2026-06-10): badge do pool — qualquer membro conclui. */}
+          {(task as Task & { work_group?: { name: string } | null }).work_group?.name && (
+            <Badge tone="success">👥 {(task as Task & { work_group?: { name: string } | null }).work_group!.name}</Badge>
+          )}
           {showAssignee && (
             <span>→ <span className="text-fg">{task.assignee!.full_name.split(' ')[0]}</span></span>
           )}

@@ -17,6 +17,7 @@ import { EisenhowerPicker } from './EisenhowerPicker';
 import { ParticipantsPicker } from './ParticipantsPicker';
 import { RemindersField } from './RemindersField';
 import { useEventCategories } from '../hooks/useEventCategories';
+import { useWorkGroups } from '../hooks/useWorkGroups';
 import { notifyTaskDelegated, notifyEventInvites } from '../lib/tomEngine';
 import { showToast } from './Toast';
 import {
@@ -66,6 +67,10 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
 
   // task
   const [taskCtx, setTaskCtx] = useState<TaskContext>('work');
+  // Grupos de trabalho (spec 2026-06-10): tarefa pode ter GRUPO como dono (pool).
+  const [taskGroupMode, setTaskGroupMode] = useState(false);
+  const [taskGroupId, setTaskGroupId] = useState<string>('');
+  const workGroups = useWorkGroups();
   const [due, setDue] = useState(today);
   // Sprint 22.27 — hora opcional pra Tarefa. Quando preenchida, vira `remind_at`
   // (NAO compromisso). Comportamento: lembrete em horario X, sem bloquear agenda.
@@ -128,6 +133,8 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
       setRecurrenceRule(null);
       setDescription('');
       setTaskCtx('work');
+      setTaskGroupMode(false);
+      setTaskGroupId('');
       setDue(today);
       setTaskTime('');
       setTaskReminderTimes([]);
@@ -195,14 +202,17 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
       const remindAt = (taskReminderTimes.length === 0 && taskTime)
         ? `${due}T${taskTime}:00-03:00`
         : null;
+      // Grupos de trabalho: grupo como dono exclusivo (CHECK exatamente-um-dono).
+      const gid = taskGroupMode && taskGroupId ? taskGroupId : null;
       const { data, error: e } = await supabase.from('tasks').insert({
         title: title.trim().slice(0, 200),
         description: description.trim() || null,
-        assigned_to: collab.id,
+        assigned_to: gid ? null : collab.id,
+        assigned_group_id: gid,
         created_by: collab.id,
         source: 'manual',
         status: 'pending',
-        context: taskCtx,
+        context: gid ? 'work' : taskCtx,
         priority: 'medium',
         due_date: due,
         remind_at: remindAt,
@@ -641,6 +651,58 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
                 })}
               </div>
             </fieldset>
+            {taskCtx === 'work' && (workGroups.list.data ?? []).length > 0 && (
+              <fieldset>
+                <legend className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Responsável</legend>
+                <div role="radiogroup" className="grid grid-cols-2 gap-2">
+                  {([
+                    { v: false, label: 'Eu' },
+                    { v: true, label: '👥 Grupo' },
+                  ] as const).map(o => {
+                    const active = taskGroupMode === o.v;
+                    return (
+                      <button
+                        key={String(o.v)}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        onClick={() => {
+                          setTaskGroupMode(o.v);
+                          if (o.v && !taskGroupId && (workGroups.list.data ?? []).length === 1) {
+                            setTaskGroupId(workGroups.list.data![0].id);
+                          }
+                        }}
+                        className={[
+                          'h-11 rounded-md border text-body-md font-semibold transition-colors focus-ring',
+                          active
+                            ? 'bg-tom text-black border-tom'
+                            : 'bg-bg-subtle text-fg-secondary border-border',
+                        ].join(' ')}
+                      >{o.label}</button>
+                    );
+                  })}
+                </div>
+                {taskGroupMode && (
+                  <div className="mt-2 space-y-1.5">
+                    <CustomSelect
+                      value={taskGroupId}
+                      options={(workGroups.list.data ?? []).map(g => ({ value: g.id, label: g.name }))}
+                      onChange={(v) => setTaskGroupId(String(v))}
+                      placeholder="Escolhe o grupo…"
+                    />
+                    {taskGroupId && (() => {
+                      const g = (workGroups.list.data ?? []).find(x => x.id === taskGroupId);
+                      if (!g) return null;
+                      return (
+                        <div className="text-body-sm text-fg-muted">
+                          👥 {g.members.map(m => m.full_name.split(' ')[0]).join(', ')} — todo mundo vê; qualquer um conclui.
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+              </fieldset>
+            )}
             <div>
               <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5 flex items-baseline gap-2">
                 <span>Para quando</span>
