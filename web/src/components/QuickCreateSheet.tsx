@@ -85,6 +85,8 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
   // reminders = offsets em MINUTOS antes do prazo da subtarefa (mesmos presets do RemindersField).
   const [groupChildren, setGroupChildren] = useState<Array<{ title: string; day: string; time: string; reminders: number[] }>>([]);
   const [draftChild, setDraftChild] = useState<{ title: string; day: string; time: string; reminders: number[] }>({ title: '', day: '', time: '', reminders: [] });
+  // Clicar numa subtarefa adicionada carrega ela no box de edição; "Adicionar" vira "Salvar".
+  const [editingChildIdx, setEditingChildIdx] = useState<number | null>(null);
 
   // event
   const [categoryId, setCategoryId] = useState<string>('');
@@ -146,6 +148,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
       setGroupDueDate('');
       setGroupChildren([]);
       setDraftChild({ title: '', day: '', time: '', reminders: [] });
+      setEditingChildIdx(null);
     }
   }, [open, today]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -764,14 +767,24 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
                 <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">cada uma com seu prazo</span>
               </div>
               {groupChildren.map((c, i) => (
-                <div key={i} className="flex items-center gap-2 rounded-md border border-border bg-bg-elevated px-3 py-2 mb-1.5">
-                  <span className="inline-block h-4 w-4 rounded-full border-2 border-fg-muted shrink-0" aria-hidden />
-                  <span className="text-body-sm min-w-0 flex-1 truncate">{c.title}</span>
-                  {c.day && <span className="text-[11px] px-2 py-0.5 rounded-full bg-bg-elevated text-tom">dia {c.day}</span>}
-                  {c.time && <span className="text-[11px] px-2 py-0.5 rounded-full bg-bg-elevated text-fg-secondary">🕐 {c.time}</span>}
-                  {c.reminders.length > 0 && <span className="text-[11px] px-2 py-0.5 rounded-full bg-bg-elevated text-fg-secondary">🔔 {c.reminders.length}</span>}
+                <div key={i} className={['flex items-center gap-2 rounded-md border px-3 py-2 mb-1.5 bg-bg-elevated',
+                  editingChildIdx === i ? 'border-tom' : 'border-border'].join(' ')}>
+                  {/* Clicar abre a subtarefa no box de edição abaixo (pedido Alf 10/06). */}
+                  <button type="button"
+                    onClick={() => { setDraftChild({ ...c }); setEditingChildIdx(i); }}
+                    className="flex items-center gap-2 min-w-0 flex-1 text-left focus-ring rounded-sm">
+                    <span className="inline-block h-4 w-4 rounded-full border-2 border-fg-muted shrink-0" aria-hidden />
+                    <span className="text-body-sm min-w-0 flex-1 truncate">{c.title}</span>
+                    {c.day && <span className="text-[11px] px-2 py-0.5 rounded-full bg-bg-elevated text-tom shrink-0">dia {c.day}</span>}
+                    {c.time && <span className="text-[11px] px-2 py-0.5 rounded-full bg-bg-elevated text-fg-secondary shrink-0">🕐 {c.time}</span>}
+                    {c.reminders.length > 0 && <span className="text-[11px] px-2 py-0.5 rounded-full bg-bg-elevated text-fg-secondary shrink-0">🔔 {c.reminders.length}</span>}
+                  </button>
                   <button type="button" aria-label="Remover"
-                    onClick={() => setGroupChildren(prev => prev.filter((_, j) => j !== i))}
+                    onClick={() => {
+                      setGroupChildren(prev => prev.filter((_, j) => j !== i));
+                      if (editingChildIdx === i) { setEditingChildIdx(null); setDraftChild({ title: '', day: '', time: '', reminders: [] }); }
+                      else if (editingChildIdx != null && editingChildIdx > i) setEditingChildIdx(editingChildIdx - 1);
+                    }}
                     className="text-fg-muted hover:text-danger p-0.5">✕</button>
                 </div>
               ))}
@@ -789,10 +802,25 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
                     placeholder="📅 dia"
                     className="w-20 h-8 px-2 rounded-full border border-border bg-bg-surface text-body-sm text-fg focus:outline-none focus:border-tom" />
                   <div className="w-24"><TimeInput value={draftChild.time} onChange={(t) => setDraftChild(d => ({ ...d, time: t }))} /></div>
+                  {editingChildIdx != null && (
+                    <button type="button"
+                      onClick={() => { setEditingChildIdx(null); setDraftChild({ title: '', day: '', time: '', reminders: [] }); }}
+                      className="ml-auto h-8 px-3 rounded-full border border-border text-fg-muted hover:text-fg text-body-sm focus-ring">
+                      Cancelar
+                    </button>
+                  )}
                   <button type="button" disabled={!draftChild.title.trim()}
-                    onClick={() => { setGroupChildren(prev => [...prev, draftChild]); setDraftChild({ title: '', day: '', time: '', reminders: [] }); }}
-                    className="ml-auto h-8 px-4 rounded-full bg-tom text-black text-body-sm font-semibold disabled:opacity-50 focus-ring">
-                    Adicionar
+                    onClick={() => {
+                      if (editingChildIdx != null) {
+                        setGroupChildren(prev => prev.map((c, j) => (j === editingChildIdx ? draftChild : c)));
+                        setEditingChildIdx(null);
+                      } else {
+                        setGroupChildren(prev => [...prev, draftChild]);
+                      }
+                      setDraftChild({ title: '', day: '', time: '', reminders: [] });
+                    }}
+                    className={[(editingChildIdx != null ? '' : 'ml-auto'), 'h-8 px-4 rounded-full bg-tom text-black text-body-sm font-semibold disabled:opacity-50 focus-ring'].join(' ')}>
+                    {editingChildIdx != null ? 'Salvar' : 'Adicionar'}
                   </button>
                 </div>
                 {/* Lembretes da subtarefa — mesmos presets do RemindersField das tarefas. */}
