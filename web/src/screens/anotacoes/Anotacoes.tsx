@@ -1,12 +1,15 @@
 // Módulo Anotações — LISTA (spec 2026-06-10, mockup aprovado no brainstorm).
-// Tela NOVA e responsiva (sem versão mobile pré-existente — guardrail preservado:
-// nenhuma rota antiga foi tocada). Detalhe em NotaDetalhe.tsx.
+// Tela NOVA e responsiva (sem versão mobile pré-existente — guardrail preservado).
+// 100% nos tokens do DS (§5.3 tipografia, §5.4 spacing, §5.5 radius): tipografia só
+// da escala (section-title/body-lg/md/sm/label), spacing xs/sm/md/lg/2xl, Badge pra
+// metadados, receita canônica de input (CLAUDE.md), max-w-content.
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Pin, Lock, Users, MessageCircle, Monitor } from 'lucide-react';
 import { useNotes, useCollabRoster, type Note } from '../../hooks/useNotes';
 import { Fab } from '../../components/Fab';
 import { Button } from '../../components/Button';
+import { Badge } from '../../components/Badge';
 import { LoadingState } from '../../components/LoadingState';
 import { useBreakpoint } from '../../hooks/useBreakpoint';
 
@@ -50,15 +53,15 @@ export function Anotacoes() {
   if (list.isLoading) return <LoadingState />;
 
   return (
-    <div className="space-y-lg max-w-3xl mx-auto w-full pb-24">
-      <header className="flex items-end justify-between">
+    <div className="space-y-lg max-w-content mx-auto w-full pb-2xl">
+      <header className="flex items-end justify-between gap-md">
         <div>
           <h2 className="text-section-title">📒 Anotações</h2>
-          <p className="text-body-sm text-fg-muted mt-1">
+          <p className="text-body-sm text-fg-muted mt-xs">
             Dita pro TOM ("anota aí…") ou escreve aqui — e vira tarefas com um toque.
           </p>
         </div>
-        <div className="flex items-center gap-3 shrink-0">
+        <div className="flex items-center gap-md shrink-0">
           <span className="text-body-sm text-fg-muted">{notes.length} anotaç{notes.length === 1 ? 'ão' : 'ões'}</span>
           {bp !== 'mobile' && (
             <Button variant="primary" size="md" onClick={novaAnotacao}>+ Nova anotação</Button>
@@ -74,7 +77,7 @@ export function Anotacoes() {
       />
 
       {notes.length === 0 ? (
-        <div className="surface p-lg text-center text-fg-muted text-body-md">
+        <div className="surface p-lg rounded-md text-center text-body-md text-fg-muted">
           Nenhuma anotação ainda. Manda um <em>"TOM, anota aí…"</em> no WhatsApp ou toca no + pra criar a primeira.
         </div>
       ) : (
@@ -85,27 +88,27 @@ export function Anotacoes() {
               <li key={n.id}>
                 <button
                   onClick={() => navigate(`/anotacoes/${n.id}`)}
-                  className={`w-full text-left surface p-md rounded-lg border ${n.pinned ? 'border-tom' : 'border-border'} hover:bg-bg-elevated focus-ring`}
+                  className={`w-full text-left surface p-md rounded-md border ${n.pinned ? 'border-tom' : 'border-border'} hover:bg-bg-elevated focus-ring`}
                 >
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-sm">
                     {n.pinned && <Pin size={14} className="text-tom shrink-0" />}
-                    <span className="text-body-md font-semibold truncate">{n.title || 'Sem título'}</span>
+                    <span className="text-body-lg truncate">{n.title || 'Sem título'}</span>
                   </div>
-                  {n.body && <p className="text-body-sm text-fg-muted mt-1 line-clamp-2">{preview(n.body)}</p>}
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-[11px] text-fg-muted">
+                  {n.body && <p className="text-body-sm text-fg-muted mt-xs line-clamp-2">{preview(n.body)}</p>}
+                  <div className="flex flex-wrap items-center gap-sm mt-sm">
                     {minha ? (
                       n.shared_with.length > 0 ? (
-                        <span className="inline-flex items-center gap-1 text-tom"><Users size={12} /> compartilhada ({n.shared_with.length})</span>
+                        <Badge tone="success"><Users size={10} /> compartilhada ({n.shared_with.length})</Badge>
                       ) : (
-                        <span className="inline-flex items-center gap-1"><Lock size={12} /> privada</span>
+                        <Badge><Lock size={10} /> privada</Badge>
                       )
                     ) : (
-                      <span className="inline-flex items-center gap-1 text-tom"><Users size={12} /> de {nameOf(n.collaborator_id)}</span>
+                      <Badge tone="info"><Users size={10} /> de {nameOf(n.collaborator_id)}</Badge>
                     )}
-                    <span className="inline-flex items-center gap-1">
-                      {n.source === 'tom' ? <><MessageCircle size={12} /> via TOM</> : <><Monitor size={12} /> criada no app</>}
-                    </span>
-                    <span>{relAge(n.updated_at)}</span>
+                    {n.source === 'tom'
+                      ? <Badge><MessageCircle size={10} /> via TOM</Badge>
+                      : <Badge><Monitor size={10} /> criada no app</Badge>}
+                    <span className="text-body-sm text-fg-muted">{relAge(n.updated_at)}</span>
                   </div>
                 </button>
               </li>

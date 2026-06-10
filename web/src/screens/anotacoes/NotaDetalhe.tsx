@@ -1,12 +1,15 @@
 // Módulo Anotações — DETALHE/EDITOR + modo "⚡ Virar tarefas" (opção B do brainstorm).
-// Autosave com debounce (padrão Configurações); compartilhar via lista de pessoas;
-// dono edita, compartilhado lê. Linha já convertida mostra "✓ criada".
+// 100% nos tokens do DS: tipografia da escala (card-title/body-md/sm/label), spacing
+// xs/sm/md/lg/2xl, radius sm/md, Badge pra chips, Button pra ações, receita canônica
+// de input (CLAUDE.md). Autosave debounce (padrão Configurações); dono edita,
+// compartilhado lê; linha já convertida mostra Badge "✓ criada".
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Pin, Users, Archive, Trash2, Zap, Check } from 'lucide-react';
 import { useNotes, useNoteTaskLinks, useCollabRoster } from '../../hooks/useNotes';
 import { splitNoteLines } from '../../lib/noteLines';
 import { Button } from '../../components/Button';
+import { Badge } from '../../components/Badge';
 import { BottomSheet } from '../../components/BottomSheet';
 import { LoadingState } from '../../components/LoadingState';
 import { VirarTarefasSheet } from './VirarTarefasSheet';
@@ -61,9 +64,9 @@ export function NotaDetalhe() {
   if (list.isLoading) return <LoadingState />;
   if (!note) {
     return (
-      <div className="max-w-3xl mx-auto w-full space-y-md">
+      <div className="max-w-content mx-auto w-full space-y-md">
         <p className="text-body-md text-fg-muted">Anotação não encontrada (pode ter sido excluída).</p>
-        <Button variant="secondary" size="sm" onClick={() => navigate('/anotacoes')}>← Voltar</Button>
+        <Button variant="secondary" size="md" onClick={() => navigate('/anotacoes')}>← Voltar</Button>
       </div>
     );
   }
@@ -86,32 +89,32 @@ export function NotaDetalhe() {
   }
 
   return (
-    <div className="space-y-md max-w-3xl mx-auto w-full pb-28">
-      <div className="flex items-center justify-between gap-2">
-        <button onClick={() => navigate('/anotacoes')} className="inline-flex items-center gap-1 text-body-sm text-fg-muted hover:text-fg focus-ring rounded-md p-1">
+    <div className="space-y-md max-w-content mx-auto w-full pb-2xl">
+      <div className="flex items-center justify-between gap-sm">
+        <button onClick={() => navigate('/anotacoes')} className="inline-flex items-center gap-xs text-body-sm text-fg-muted hover:text-fg focus-ring rounded-sm p-xs">
           <ArrowLeft size={16} /> Anotações
         </button>
-        <div className="flex items-center gap-1">
-          {saved && <span className="text-[11px] text-tom mr-1">salvo ✓</span>}
+        <div className="flex items-center gap-xs">
+          {saved && <span className="text-label text-tom">salvo ✓</span>}
           {isOwner && (
             <>
               <button
                 onClick={() => updateNote.mutate({ id: note.id, patch: { pinned: !note.pinned } })}
-                className={`p-2 rounded-md focus-ring ${note.pinned ? 'text-tom' : 'text-fg-muted hover:text-fg'}`}
+                className={`p-sm rounded-sm focus-ring ${note.pinned ? 'text-tom' : 'text-fg-muted hover:text-fg'}`}
                 aria-label="Fixar"
               ><Pin size={16} /></button>
-              <button onClick={() => setShareOpen(true)} className={`p-2 rounded-md focus-ring ${note.shared_with.length ? 'text-tom' : 'text-fg-muted hover:text-fg'}`} aria-label="Compartilhar">
+              <button onClick={() => setShareOpen(true)} className={`p-sm rounded-sm focus-ring ${note.shared_with.length ? 'text-tom' : 'text-fg-muted hover:text-fg'}`} aria-label="Compartilhar">
                 <Users size={16} />
               </button>
-              <button onClick={arquivar} className="p-2 rounded-md text-fg-muted hover:text-fg focus-ring" aria-label="Arquivar"><Archive size={16} /></button>
-              <button onClick={excluir} className="p-2 rounded-md text-fg-muted hover:text-danger focus-ring" aria-label="Excluir"><Trash2 size={16} /></button>
+              <button onClick={arquivar} className="p-sm rounded-sm text-fg-muted hover:text-fg focus-ring" aria-label="Arquivar"><Archive size={16} /></button>
+              <button onClick={excluir} className="p-sm rounded-sm text-fg-muted hover:text-danger focus-ring" aria-label="Excluir"><Trash2 size={16} /></button>
             </>
           )}
         </div>
       </div>
 
       {!isOwner && (
-        <p className="text-[11px] text-fg-muted">
+        <p className="text-body-sm text-fg-muted">
           👥 Anotação de {(roster.data ?? []).find((c) => c.id === note.collaborator_id)?.full_name ?? 'colega'} — somente leitura.
         </p>
       )}
@@ -121,7 +124,7 @@ export function NotaDetalhe() {
         onChange={(e) => { setTitle(e.target.value); setDirty(true); }}
         readOnly={!isOwner}
         placeholder="Título da anotação"
-        className="w-full bg-transparent text-lg font-bold text-fg focus:outline-none border-b border-border focus:border-tom pb-1"
+        className="w-full bg-transparent text-card-title text-fg focus:outline-none border-b border-border focus:border-tom pb-xs"
       />
 
       {!agir ? (
@@ -132,7 +135,7 @@ export function NotaDetalhe() {
             readOnly={!isOwner}
             placeholder="Escreve aqui… (ou dita pro TOM no WhatsApp)"
             rows={Math.max(10, body.split('\n').length + 2)}
-            className="w-full bg-bg-surface border border-border rounded-md p-3 text-fg text-body-md leading-relaxed focus:outline-none focus:border-tom resize-y"
+            className="w-full bg-bg-surface border border-border rounded-md p-2 text-fg text-body-md focus:outline-none focus:border-tom resize-y"
           />
           {isOwner && lines.some((l) => l.actionable) && (
             <Button variant="primary" size="md" leadingIcon={<Zap size={16} />} onClick={() => { setAgir(true); setSelLines(new Set()); }}>
@@ -141,16 +144,16 @@ export function NotaDetalhe() {
           )}
         </>
       ) : (
-        <div className="space-y-1">
+        <div className="space-y-xs">
           <p className="text-body-sm text-fg-muted">Marca as linhas que viram tarefa:</p>
           {lines.map((l) => {
-            if (!l.text) return <div key={l.lineNo} className="h-2" />;
+            if (!l.text) return <div key={l.lineNo} className="h-sm" />;
             const linked = linkedLines.has(l.lineNo);
             if (!l.actionable || linked) {
               return (
-                <div key={l.lineNo} className="flex items-center justify-between py-1 px-2 text-body-sm text-fg-muted">
-                  <span className={l.actionable ? '' : 'font-semibold text-fg'}>{l.text}</span>
-                  {linked && <span className="inline-flex items-center gap-1 text-[11px] bg-tom text-black rounded px-1.5 py-0.5 font-semibold"><Check size={11} /> criada</span>}
+                <div key={l.lineNo} className="flex items-center justify-between gap-sm py-xs px-sm">
+                  <span className={l.actionable ? 'text-body-md text-fg-muted' : 'text-body-md text-fg'}>{l.text}</span>
+                  {linked && <Badge tone="success"><Check size={10} /> criada</Badge>}
                 </div>
               );
             }
@@ -163,16 +166,16 @@ export function NotaDetalhe() {
                   if (on) next.delete(l.lineNo); else next.add(l.lineNo);
                   setSelLines(next);
                 }}
-                className={`w-full text-left flex items-center gap-2 py-1.5 px-2 rounded-md focus-ring ${on ? 'bg-bg-elevated' : ''}`}
+                className={`w-full text-left flex items-center gap-sm py-xs px-sm rounded-sm focus-ring ${on ? 'bg-bg-elevated' : ''}`}
               >
-                <span className={`w-4 h-4 rounded border inline-flex items-center justify-center shrink-0 ${on ? 'bg-tom border-tom' : 'border-border'}`}>
+                <span className={`h-5 w-5 rounded-sm border inline-flex items-center justify-center shrink-0 ${on ? 'bg-tom border-tom' : 'border-border'}`}>
                   {on && <Check size={12} className="text-black" />}
                 </span>
-                <span className="text-body-sm text-fg">{l.text}</span>
+                <span className="text-body-md text-fg">{l.text}</span>
               </button>
             );
           })}
-          <div className="flex items-center gap-2 pt-2">
+          <div className="flex items-center gap-sm pt-sm">
             <Button variant="primary" size="md" disabled={selecionadas.length === 0} onClick={() => setSheetOpen(true)}>
               Criar {selecionadas.length} tarefa{selecionadas.length === 1 ? '' : 's'} →
             </Button>
@@ -182,18 +185,18 @@ export function NotaDetalhe() {
       )}
 
       <BottomSheet open={shareOpen} onClose={() => setShareOpen(false)} title="Compartilhar com">
-        <div className="space-y-1 max-h-80 overflow-y-auto">
+        <div className="space-y-xs max-h-80 overflow-y-auto">
           {(roster.data ?? []).filter((c) => c.id !== meuId).map((c) => {
             const on = shareSel.includes(c.id);
             return (
-              <button key={c.id} onClick={() => toggleShare(c.id)} className={`w-full text-left flex items-center justify-between p-2 rounded-md focus-ring ${on ? 'bg-bg-elevated' : ''}`}>
+              <button key={c.id} onClick={() => toggleShare(c.id)} className={`w-full text-left flex items-center justify-between p-sm rounded-sm focus-ring ${on ? 'bg-bg-elevated' : ''}`}>
                 <span className="text-body-md">{c.full_name}</span>
                 {on && <Check size={16} className="text-tom" />}
               </button>
             );
           })}
         </div>
-        <p className="text-[11px] text-fg-muted mt-2">Quem você marcar passa a VER esta anotação (somente leitura).</p>
+        <p className="text-body-sm text-fg-muted mt-sm">Quem você marcar passa a VER esta anotação (somente leitura).</p>
       </BottomSheet>
 
       <VirarTarefasSheet
