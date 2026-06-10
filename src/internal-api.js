@@ -411,47 +411,15 @@ router.post('/internal/project-created', requireInternalSecret, async (req, res)
 
   // 4) WhatsApp pro supervisor (se requires_approval)
   if (project.requires_approval) {
+    // F4 (GOV-APROVADOR-DIVERGENTE): aprovador = LÍDER de quem criou, pela matriz de
+    // governança. A cascata legada (supervisor_id → director ALFABÉTICO → coordinator)
+    // só acertava o Alf por dado legado e, vazia, mandaria pro "Admin". supervisor_id
+    // deixa de ser lido (consistente com a matriz de 08/06).
     let supervisor = null;
-
-    // 1ª tentativa: supervisor_id direto do criador (organograma)
-    const { data: creatorWithSup } = await supabase
-      .from('collaborators')
-      .select('supervisor_id')
-      .eq('id', creator.id)
-      .maybeSingle();
-    if (creatorWithSup?.supervisor_id) {
-      const { data: sup } = await supabase
-        .from('collaborators')
-        .select('id, full_name, phone, role')
-        .eq('id', creatorWithSup.supervisor_id)
-        .eq('is_active', true)
-        .maybeSingle();
-      if (sup && sup.phone) supervisor = sup;
-    }
-
-    // 2ª tentativa: primeiro director ativo (não coordinator)
-    if (!supervisor) {
-      const { data: directors } = await supabase
-        .from('collaborators')
-        .select('id, full_name, phone, role')
-        .eq('role', 'director')
-        .eq('is_active', true)
-        .neq('id', creator.id)
-        .order('full_name');
-      supervisor = (directors || []).find(d => d.phone) || null;
-    }
-
-    // 3ª tentativa: primeiro coordinator (último fallback)
-    if (!supervisor) {
-      const { data: coords } = await supabase
-        .from('collaborators')
-        .select('id, full_name, phone, role')
-        .eq('role', 'coordinator')
-        .eq('is_active', true)
-        .neq('id', creator.id)
-        .order('full_name');
-      supervisor = (coords || []).find(c => c.phone) || null;
-    }
+    try {
+      const approvalsService = require('./services/approvals');
+      supervisor = await approvalsService.resolveApproverFor(supabase, creator.id);
+    } catch (e) { console.warn('[InternalAPI] resolveApproverFor err:', e.message); }
 
     if (supervisor && supervisor.phone) {
       const token = await extractApprovalTokenSmart(project.name, project.id);

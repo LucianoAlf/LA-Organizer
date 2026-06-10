@@ -3076,35 +3076,21 @@ async function remindPendingProjectApprovals(opts = {}) {
   // Agrupa por supervisor pra não spamar
   const bySupervisor = new Map();
   for (const p of pending) {
-    // Resolve supervisor: supervisor_id → director → coordinator
+    // F4 (GOV-APROVADOR-DIVERGENTE): MESMA fonte do 1º card (resolveApproverFor =
+    // matriz de governança). Antes a cobrança usava cascata DIFERENTE do internal-api
+    // (supervisor_id→is_ceo vs supervisor_id→director alfabético) — podiam divergir.
     const { data: creator } = await supabase
       .from('collaborators')
-      .select('id, full_name, supervisor_id')
+      .select('id, full_name')
       .eq('id', p.created_by)
       .maybeSingle();
     if (!creator) continue;
 
     let supervisor = null;
-    if (creator.supervisor_id) {
-      const { data: sup } = await supabase
-        .from('collaborators')
-        .select('id, full_name, phone, role')
-        .eq('id', creator.supervisor_id)
-        .eq('is_active', true)
-        .maybeSingle();
-      if (sup && sup.phone) supervisor = sup;
-    }
-    if (!supervisor) {
-      // Sprint 30 — fallback de aprovador: só o CEO (não Anne/Admin).
-      const { data: directors } = await supabase
-        .from('collaborators')
-        .select('id, full_name, phone')
-        .eq('is_ceo', true)
-        .eq('is_active', true)
-        .neq('id', creator.id)
-        .order('full_name');
-      supervisor = (directors || []).find(d => d.phone) || null;
-    }
+    try {
+      const approvalsService = require('../services/approvals');
+      supervisor = await approvalsService.resolveApproverFor(supabase, creator.id);
+    } catch (e) { console.warn('[PendingApproval] resolveApproverFor err:', e.message); }
     if (!supervisor) continue;
 
     if (!bySupervisor.has(supervisor.id)) {

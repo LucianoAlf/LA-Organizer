@@ -871,7 +871,18 @@ async function applyAnnouncementApproval(collaborator, parsed) {
   // Usado quando o CEO responde só "APROVAR"/"REJEITAR" sem citar ID (UI nova
   // omite o ID na notificação — aproveita o comportamento natural de reply).
   if (idValue === 'latest') {
-    // sem filtro de id; .order().limit(1) abaixo pega o mais recente
+    // F4: "latest" escopado ao que foi NOTIFICADO a este aprovador (intents da F1) —
+    // antes era o pending_approval mais recente GLOBAL (qualquer director aprovava
+    // comunicado que nunca lhe foi mostrado). Sem intent: CEO mantém o global
+    // (compat com pendências pré-F1); os demais recebem erro claro.
+    try {
+      const mineAp = await approvalsService.listOpenApprovals(supabase, collaborator.id);
+      const refs = mineAp.filter((i) => i.payload.domain === 'announcement').map((i) => i.payload.ref_id);
+      if (refs.length) query = query.in('id', refs);
+      else if (!collaborator.is_ceo) {
+        return { ok: false, reason: 'Nenhum comunicado aguardando SUA aprovação.' };
+      }
+    } catch (e) { console.warn('[applyAnnouncementApproval] scope err (segue global):', e.message); }
   } else if (idValue.length === 4) {
     query = query.filter('id::text', 'ilike', `${idValue}%`);
   } else {
@@ -917,16 +928,23 @@ async function applyAnnouncementApproval(collaborator, parsed) {
       return { ok: false, reason: 'audience_resolves_to_zero_at_approval', announcement_id: ann.id };
     }
 
-    const { error: updErr } = await supabase
+    // F4: guarda de status no UPDATE (anti-corrida) — dupla aprovação simultânea não
+    // gera jobs em dobro: só a primeira transição pending_approval→scheduled passa.
+    const { data: updRows, error: updErr } = await supabase
       .from('announcements')
       .update({
         status: 'scheduled',
         reviewed_by: collaborator.id,
       })
-      .eq('id', ann.id);
+      .eq('id', ann.id)
+      .eq('status', 'pending_approval')
+      .select('id');
     if (updErr) {
       console.error('[applyAnnouncementApproval] erro UPDATE approve:', updErr.message);
       return { ok: false, reason: 'Erro ao aprovar o comunicado.' };
+    }
+    if (!updRows || updRows.length === 0) {
+      return { ok: false, reason: 'Esse comunicado já foi aprovado/rejeitado por outra pessoa.' };
     }
 
     // F1 (APROVACAO-SEM-FUNIL) — fecha as intents de aprovação deste comunicado.
@@ -1054,16 +1072,18 @@ async function applyAnnouncementAction(collaborator, parsed) {
     if (annErr) return { ok: false, reason: annErr.message };
 
     if (needsApproval) {
-      // Sprint 30 — só o CEO recebe aprovação. Outros directors (Anne, Admin)
-      // usam o TOM como usuários, não como aprovadores.
-      const { data: directors, error: dirErr } = await supabase
-        .from('collaborators')
-        .select('id, full_name, phone')
-        .eq('is_ceo', true)
-        .not('phone', 'is', null);
+      // F4 (GOV-APROVADOR-DIVERGENTE): aprovador = líder de quem criou (matriz de
+      // governança), não mais hardcode is_ceo. Pro org atual dá no mesmo (fallback CEO),
+      // mas agora é REGRA — e acompanha a matriz quando ela mudar (Rafinha→Alf por regra).
+      let directors = [];
+      let dirErr = null;
+      try {
+        const approver = await approvalsService.resolveApproverFor(supabase, collaborator.id);
+        directors = approver ? [approver] : [];
+      } catch (e) { dirErr = e; }
 
       if (dirErr) {
-        console.error('[applyAnnouncementAction] Falha ao buscar CEO:', dirErr.message);
+        console.error('[applyAnnouncementAction] Falha ao resolver aprovador:', dirErr.message);
         // Don't compensating-delete the announcement — it's still valid in pending_approval and CEO can approve via PWA later.
         return { ok: false, reason: dirErr.message, announcement_id: ann.id };
       }
@@ -2709,6 +2729,20 @@ async function applyProjectApprove(collab, body) {
     return { ok: false, reason: `ambiguous_token:${body.token}`, userMsg: `_tenho mais de um projeto começando com "${body.token}". responde com o token completo:_\n${opts}` };
   }
   const project = r.match;
+  // F4 (GOV-APROVADOR-DIVERGENTE): anti-auto-aprovação (paridade com comunicado) +
+  // execução escopada — quem não é director só aprova o que foi NOTIFICADO a ele (intent F1).
+  if (project.created_by === collab.id) {
+    return { ok: false, reason: 'self_approval_blocked', userMsg: '_você não pode aprovar o próprio projeto — quem aprova é seu líder_' };
+  }
+  if (collab.role !== 'director') {
+    try {
+      const openAp = await approvalsService.listOpenApprovals(supabase, collab.id);
+      const assigned = openAp.some((i) => i.payload.domain === 'project' && i.payload.ref_id === project.id);
+      if (!assigned) {
+        return { ok: false, reason: 'not_assigned_approver', userMsg: '_essa aprovação não está com você — quem aprova é o líder de quem criou o projeto_' };
+      }
+    } catch (e) { console.warn('[Project] approver scope check err (deixa passar):', e.message); }
+  }
   const { error: upErr } = await supabase
     .from('projects')
     .update({
@@ -2745,6 +2779,19 @@ async function applyProjectReject(collab, body) {
     return { ok: false, reason: `ambiguous_token:${body.token}`, userMsg: `_tenho mais de um projeto começando com "${body.token}". responde com o token completo:_\n${opts}` };
   }
   const project = r.match;
+  // F4: mesmas guardas da aprovação (anti-self + escopo ao notificado).
+  if (project.created_by === collab.id) {
+    return { ok: false, reason: 'self_approval_blocked', userMsg: '_você não pode rejeitar o próprio projeto — fala com seu líder_' };
+  }
+  if (collab.role !== 'director') {
+    try {
+      const openRj = await approvalsService.listOpenApprovals(supabase, collab.id);
+      const assigned = openRj.some((i) => i.payload.domain === 'project' && i.payload.ref_id === project.id);
+      if (!assigned) {
+        return { ok: false, reason: 'not_assigned_approver', userMsg: '_essa aprovação não está com você — quem decide é o líder de quem criou o projeto_' };
+      }
+    } catch (e) { console.warn('[Project] approver scope check err (deixa passar):', e.message); }
+  }
   const reason = String(body.reason || '').slice(0, 1000);
   const { error: upErr } = await supabase
     .from('projects')

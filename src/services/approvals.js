@@ -83,4 +83,23 @@ async function resolveApprovalByRef(supabase, refId, resolution, note = null) {
   return n;
 }
 
-module.exports = { openProjectApproval, openAnnouncementApproval, listOpenApprovals, resolveApprovalByRef, APPROVAL_EXPIRY_DAYS };
+// F4 (GOV-APROVADOR-DIVERGENTE): aprovador = LÍDER de quem criou, pela MATRIZ de
+// governança (resolveLeadersOf: unidade→gerente, grupo→governance_leaders, arestas N:N,
+// fallback CEO). Substitui as cascatas legadas que divergiam entre si (internal-api:
+// supervisor_id→director ALFABÉTICO; dispatcher: supervisor_id→is_ceo) e que só
+// acertavam o Alf por dado legado. Retorna o aprovador PRIMÁRIO (1º líder com phone).
+async function resolveApproverFor(supabase, creatorId) {
+  if (!creatorId) return null;
+  const { loadCollabsWithEdges } = require('./governance-edges');
+  const { resolveLeadersOf } = require('./leader-routing');
+  const all = await loadCollabsWithEdges(supabase);
+  const creator = all.find((c) => c.id === creatorId);
+  if (!creator) return null;
+  const leaders = resolveLeadersOf(creator, all).filter((l) => l.phone);
+  const approver = leaders[0] || null;
+  if (approver) console.log(`[Approvals] approver resolved: ${approver.full_name} for creator ${creator.full_name} (matriz)`);
+  else console.warn(`[Approvals] nenhum aprovador com phone para ${creator.full_name}`);
+  return approver;
+}
+
+module.exports = { openProjectApproval, openAnnouncementApproval, listOpenApprovals, resolveApprovalByRef, resolveApproverFor, APPROVAL_EXPIRY_DAYS };

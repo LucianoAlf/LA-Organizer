@@ -1,5 +1,11 @@
 # Plano de correção raiz — família "resposta curta cai na pendência errada"
 
+> **STATUS (09/06 23h):** F0 ✅ (projeto aprovado pelo Alf via PWA; 2 tasks ADM revertidas; 3 known issues registrados) ·
+> **F1 ✅ ENTREGUE** (approvals.js + intents + card com ID + e2e 6/6) · **F2 ✅ ENTREGUE** (detect-approval-reply 38 testes +
+> intercept Approval-bare no engine) · **F4 ✅ ENTREGUE** (resolveApproverFor pela matriz — prova VPS: Rafinha→Luciano Alf;
+> execução escopada + anti-self + anti-corrida) · **F3/F5/F6 PENDENTES** (inbox no prompt, âncora+guarda temporal, higiene).
+> Bônus descoberto: aprovação via PWA (botão ✓) NÃO notifica o criador — entra no escopo F4-bis/F3.
+
 > Origem: auditoria multi-agente 09/06/2026 (18 agentes, verificação adversarial 2 lentes/causa).
 > Incidentes-gatilho: A) "Aprovado" do Alf completou evento errado (projeto Rafinha seguiu pendente);
 > B) "Aprovar" não achou o comunicado 0f5a; C) "Reunião ok tbm" da Ana fechou a Reunião ADM de AMANHÃ.
