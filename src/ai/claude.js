@@ -202,8 +202,13 @@ async function _chatInner(systemPrompt, messages /*, maxTokens */) {
         .replace(/^.*\b(Based on|Now let me|Let me (?:update|read|write|check|create|save|run|verify|now)|I.ll (?:update|read|write|check|create|save|run|now)|I need to (?:update|read|write|check|create|save|run))\b.*$/gim, '')
         // 3) Linhas que referenciam filesystem do Claude CLI (memória, projects, paths)
         .replace(/^.*\b(MEMORY\.md|memory\/[\w-]+\.md|\/root\/\.claude|\.claude\/projects|\/opt\/LA-Organizer\/(?!docs\b))\b.*$/gim, '')
-        // 4) "Vou salvar isso na memória" / "Saving to memory" — promessa falsa de tool
+        // 4) "Vou salvar isso na memória" / "Saving to memory" — promessa falsa de tool.
+        //    EN-LEAK-SANITIZER (caso Rose 10/06): "Saving the audio preference to local
+        //    memory." escapava porque a regra exigia "saving to memory" contíguo. Agora
+        //    qualquer linha com sav(e|ing|ando)…memór(ia|y) na MESMA linha cai inteira.
         .replace(/^.*\b(?:vou\s+salvar\s+isso\s+na\s+mem[óo]ria|salvando\s+na\s+mem[óo]ria|saving\s+to\s+memory)\b.*$/gim, '')
+        .replace(/^.*\bsav(?:e[ds]?|ing)\b.*\bmemor(?:y|ies|[óo]ria)\b.*$/gim, '')
+        .replace(/^.*\bsalv(?:o|a|ei|ando)\b.*\bmem[óo]ria\s+local\b.*$/gim, '')
         // 5) Limpa linhas em branco múltiplas resultantes
         .replace(/\n{3,}/g, '\n\n');
       const text = sanitized.trim();

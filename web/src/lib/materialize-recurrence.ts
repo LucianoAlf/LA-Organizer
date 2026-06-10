@@ -63,6 +63,17 @@ export async function materializeSeriesClient(
     const dayKey = typeof ts === 'string' ? ts.slice(0, 10) : new Date(String(ts)).toISOString().slice(0, 10);
     existingDays.add(dayKey);
   }
+  // RECUR-TEMPLATE-DUP (caso Conciliação/Rose 10/06): o dia do PRÓPRIO template já está
+  // coberto por ele — rule.between(now, horizon, true) inclui a ocorrência do dia do pai
+  // quando o template é criado antes do horário do DTSTART (ex.: criado 23:44 pra 12:00
+  // do dia seguinte... ou do MESMO dia). Sem isso, nasce um filho duplicado.
+  {
+    const tplTs = (template as Record<string, unknown>)[tsCol];
+    if (tplTs) {
+      const tplKey = typeof tplTs === 'string' ? tplTs.slice(0, 10) : new Date(String(tplTs)).toISOString().slice(0, 10);
+      existingDays.add(tplKey);
+    }
+  }
 
   const toInsert: Array<Record<string, unknown>> = [];
   let skipped = 0;

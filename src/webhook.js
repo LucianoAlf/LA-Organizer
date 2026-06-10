@@ -18,6 +18,21 @@ const pendingInventoryPhoto = require('./services/pending-inventory-photo');
 
 const router = express.Router();
 
+// INFLIGHT-LOST-ON-RESTART (caso Rose 09/06 21:45): payloads de mensagens de user
+// aceitos mas ainda não CONCLUÍDOS (no buffer 3.5s, na fila per-user ou dentro do
+// processMessage). No graceful shutdown, o drain hook salva o que sobrou na fila de
+// replay — a mensagem sobrevive ao pm2 restart em vez de evaporar com "digitando…".
+const inFlightBodies = new Set();
+shutdown.registerDrainHook(async () => {
+  if (!inFlightBodies.size) return;
+  console.log(`[Webhook] drain: salvando ${inFlightBodies.size} payload(s) in-flight pra replay`);
+  for (const b of inFlightBodies) {
+    try { await webhookPersistence.saveToQueue(b); }
+    catch (e) { console.error('[Webhook] drain save err:', e.message); }
+  }
+  inFlightBodies.clear();
+});
+
 // ---------- Autenticação do webhook ----------
 // Modos (controlados por env):
 //   - disabled:   WEBHOOK_SECRET vazio → não valida (estado pré-Sprint 4).
@@ -313,6 +328,7 @@ async function processWebhookBody(body) {
     // viram UMA chamada processMessage com texto concatenado.
     // - per-user-queue continua serializando o flush.
     // - shutdown.withTracking ainda protege em SIGTERM.
+    inFlightBodies.add(body); // sai do registro no finally do flush (abaixo)
     messageBuffer.add(phone, text, body, (items) => {
       let combinedText;
       let latestRaw;
@@ -329,7 +345,14 @@ async function processWebhookBody(body) {
         latestRaw = items[items.length - 1].raw;
         console.log(`[Webhook] buffer flush phone=${phone.slice(-4)} items=${items.length} combinedLen=${combinedText.length}`);
       }
-      queue.enqueue(phone, () => shutdown.withTracking(() => processMessage(phone, combinedText, latestRaw)));
+      queue.enqueue(phone, () => shutdown.withTracking(async () => {
+        try {
+          await processMessage(phone, combinedText, latestRaw);
+        } finally {
+          // Concluiu (ou falhou no app, não em restart): não precisa de replay.
+          for (const it of items) inFlightBodies.delete(it.raw);
+        }
+      }));
     });
 
   } catch (err) {

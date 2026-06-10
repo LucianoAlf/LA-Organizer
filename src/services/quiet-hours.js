@@ -98,11 +98,19 @@ function windowFor(prefs, context) {
   };
 }
 
+// Janela noturna DEFAULT pra quem NUNCA configurou silêncio (caso Rose 10/06:
+// quiet_* tudo null → lembretes às 23:55/00:00). Proativo de madrugada é spam
+// por default; quem QUISER receber configura janela própria.
+const DEFAULT_NIGHT_END_MIN = 7 * 60; // 00:00–06:59 BRT
+
 /**
  * Retorna { quiet: boolean, reason: string|null }.
  * quiet=true significa: TOM não deve enviar mensagem proativa agora pra esse contexto.
+ * opts.defaultNightGate=false: desliga a janela noturna default — usar SÓ em envios
+ * com horário escolhido pelo PRÓPRIO usuário (ex.: task_reminders), onde pedido
+ * explícito > política.
  */
-async function isQuietNow(collabOrId, now, context = 'work') {
+async function isQuietNow(collabOrId, now, context = 'work', opts = {}) {
   let prefs = null;
 
   if (collabOrId && typeof collabOrId === 'object') {
@@ -180,6 +188,18 @@ async function isQuietNow(collabOrId, now, context = 'work') {
     if (inQuiet) {
       const label = `${String(w.start).slice(0, 5)}-${String(w.end).slice(0, 5)}`;
       return { quiet: true, reason: `quiet_hours_${tag}:${label}` };
+    }
+  }
+
+  // 4. Janela noturna DEFAULT — só quando a pessoa NUNCA configurou nada neste
+  //    contexto (sem janela, sem dias, sem fins de semana). Quem configurou
+  //    explicitamente já disse o que quer; quem não configurou não deve receber
+  //    proativo de madrugada (00:00–06:59 BRT).
+  const hasConfigured = !!(w.start && w.end) || (Array.isArray(w.days) && w.days.length > 0) || w.weekends === true;
+  if (!hasConfigured && opts.defaultNightGate !== false) {
+    const nowMins = now.hour * 60 + now.minute;
+    if (nowMins < DEFAULT_NIGHT_END_MIN) {
+      return { quiet: true, reason: `default_night_${tag}:00-07` };
     }
   }
 

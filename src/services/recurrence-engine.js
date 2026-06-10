@@ -98,6 +98,16 @@ async function materializeSeries(table, template) {
     const dayKey = typeof ts === 'string' ? ts.slice(0, 10) : new Date(ts).toISOString().slice(0, 10);
     existingDays.add(dayKey);
   }
+  // RECUR-TEMPLATE-DUP (caso Conciliação/Rose 10/06): o dia do PRÓPRIO template já
+  // está coberto por ele — sem semear aqui, nextOccurrences materializa um filho na
+  // MESMA data do pai (template criado à noite → dup no briefing do dia seguinte).
+  {
+    const tplTs = template[tsCol];
+    if (tplTs) {
+      const tplKey = typeof tplTs === 'string' ? tplTs.slice(0, 10) : new Date(tplTs).toISOString().slice(0, 10);
+      existingDays.add(tplKey);
+    }
+  }
 
   const toInsert = [];
   let skipped = 0;

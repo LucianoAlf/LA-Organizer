@@ -142,7 +142,10 @@ function nowSaoPaulo() {
     return acc;
   }, {});
   const dowMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
-  const hour = parseInt(parts.hour, 10);
+  // HOUR24-NOWSAOPAULO: Intl com hour12:false (sem hourCycle h23) devolve "24" à
+  // meia-noite em alguns ICU (visto no rituals.log da VPS: "now=... 24:00") —
+  // corrompia qualquer gate de horário. Normaliza 24→0.
+  const hour = parseInt(parts.hour, 10) % 24;
   const minute = parseInt(parts.minute, 10);
   const dow = dowMap[parts.weekday] ?? 0;
   const ymd = `${parts.year}-${parts.month}-${parts.day}`;
@@ -3374,21 +3377,31 @@ async function run(opts = {}) {
       const briefingTime = p.briefing_time || p.personal_briefing_time || PERSONAL_BRIEFING_DEFAULT;
       const bSlot = timeToSlot(briefingTime);
       if (bSlot !== null && bSlot === slotNow) {
-        const q = await isQuietNow(p, now);
-        if (q.quiet) {
-          await logRitualEvent(c.id, 'daily_briefing', 'skipped', q.reason, now.ymd);
+        // Fatia 1 (caso Rose): briefing_enabled=false = ritual DESLIGADO de verdade
+        // (antes não existia OFF em camada nenhuma — o fallback '07:00' garantia envio).
+        if (p.briefing_enabled === false) {
+          await logRitualEvent(c.id, 'daily_briefing', 'skipped', 'briefing_disabled', now.ymd);
         } else {
-          await fireRitual(c, 'daily_briefing', now.ymd);
-          await sendFinanceDigest(c, now);   // digest financeiro consolidado, logo depois do briefing
+          const q = await isQuietNow(p, now);
+          if (q.quiet) {
+            await logRitualEvent(c.id, 'daily_briefing', 'skipped', q.reason, now.ymd);
+          } else {
+            await fireRitual(c, 'daily_briefing', now.ymd);
+            await sendFinanceDigest(c, now);   // digest financeiro consolidado, logo depois do briefing
+          }
         }
       }
       // Fechamento — dias úteis
       if (!isWeekend) {
         const cSlot = timeToSlot(p.closing_time);
         if (cSlot !== null && cSlot === slotNow) {
-          const qC = await isQuietNow(p, now, 'work');
-          if (qC.quiet) await logRitualEvent(c.id, 'daily_closing', 'skipped', qC.reason, now.ymd);
-          else await fireRitual(c, 'daily_closing', now.ymd);
+          if (p.closing_enabled === false) {
+            await logRitualEvent(c.id, 'daily_closing', 'skipped', 'closing_disabled', now.ymd);
+          } else {
+            const qC = await isQuietNow(p, now, 'work');
+            if (qC.quiet) await logRitualEvent(c.id, 'daily_closing', 'skipped', qC.reason, now.ymd);
+            else await fireRitual(c, 'daily_closing', now.ymd);
+          }
         }
       }
       // Planejamento semanal — só no dia configurado (default domingo=0) no horário configurado.
@@ -4720,7 +4733,7 @@ async function checkTaskReminders() {
   const nowIso = new Date().toISOString();
   const { data: due, error } = await supabase
     .from('task_reminders')
-    .select('id, task_id, remind_at, label, tasks(id, title, assigned_to, status, due_date, due_time)')
+    .select('id, task_id, remind_at, label, created_at, tasks(id, title, assigned_to, status, due_date, due_time)')
     .is('sent_at', null)
     .lte('remind_at', nowIso)
     .limit(50);
@@ -4750,6 +4763,16 @@ async function checkTaskReminders() {
       await supabase.from('task_reminders').update({ sent_at: new Date().toISOString() }).eq('id', r.id);
       continue;
     }
+    // REMINDER-STALE-PAST (caso Geraldo/Rose 10/06): reminder que JÁ NASCEU vencido
+    // (remind_at anterior à própria criação — task retroativa criada no PWA) não é
+    // alerta pré-evento, é artefato. Consome em silêncio, nunca envia de madrugada
+    // um lembrete de prazo que já passou há dias.
+    if (r.created_at && r.remind_at
+        && new Date(r.remind_at).getTime() < new Date(r.created_at).getTime() - 60_000) {
+      await supabase.from('task_reminders').update({ sent_at: new Date().toISOString() }).eq('id', r.id);
+      console.log(`[TaskReminders] skip stale ${String(r.id).slice(0,8)} — remind_at (${r.remind_at}) anterior à criação do reminder`);
+      continue;
+    }
     const dnd = await getDndState(collab.id);
     if (dnd.active) {
       // Não consome o reminder — sent_at fica null, vai retry no próximo tick após DND.
@@ -4758,7 +4781,9 @@ async function checkTaskReminders() {
     }
     // Respeita quiet_days/quiet_weekends — mesmo lembrete criado pelo user
     // não dispara em dia marcado como silêncio. Não consome (retry no próximo).
-    const q = await isQuietNow(collab.id, nowSaoPaulo());
+    // defaultNightGate:false — o HORÁRIO deste reminder foi escolhido pelo próprio
+    // user; pedido explícito > janela noturna default (que vale só pra proativos).
+    const q = await isQuietNow(collab.id, nowSaoPaulo(), 'work', { defaultNightGate: false });
     if (q.quiet) {
       console.log(`[TaskReminders] defer ${String(r.id).slice(0,8)} — quiet (${q.reason})`);
       continue;
@@ -4831,7 +4856,9 @@ async function checkReminders() {
       continue; // don't mark task done; will fire on next tick after DND
     }
     const ctxR = t.context === 'personal' ? 'personal' : 'work';
-    const qR = await isQuietNow(collab.id, nowSaoPaulo(), ctxR);
+    // defaultNightGate:false — remind_at foi escolhido pelo próprio user (pedido
+    // explícito > janela noturna default, que vale só pra proativos do sistema).
+    const qR = await isQuietNow(collab.id, nowSaoPaulo(), ctxR, { defaultNightGate: false });
     if (qR.quiet) {
       console.log(`[Reminders] defer ${String(t.id).slice(0,8)} — quiet ${ctxR} (${qR.reason})`);
       continue; // não marca reminded_at; volta no próximo tick fora do quiet

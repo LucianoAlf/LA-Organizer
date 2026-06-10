@@ -25,6 +25,14 @@
 let isShuttingDown = false;
 let activeProcesses = 0;
 
+// INFLIGHT-LOST-ON-RESTART (caso Rose/Ana Paula 09/06 21:45): mensagens JÁ em
+// processMessage no SIGTERM eram perdidas em silêncio no timeout ("serão perdidos").
+// Módulos registram um drain hook (ex.: webhook.js salva payloads in-flight na fila
+// de replay) que roda SEMPRE antes do exit — inclusive quando active=0, pra cobrir
+// mensagens ainda no buffer de agregação.
+const drainHooks = [];
+function registerDrainHook(fn) { if (typeof fn === 'function') drainHooks.push(fn); }
+
 function isInShutdown() { return isShuttingDown; }
 function active() { return activeProcesses; }
 
@@ -59,9 +67,15 @@ function installGracefulShutdown(server, timeoutMs = 30000) {
     }
 
     if (activeProcesses > 0) {
-      console.log(`[TOM] timeout graceful (${timeoutMs}ms) — ${activeProcesses} processo(s) ainda ativo(s) serão perdidos`);
+      console.log(`[TOM] timeout graceful (${timeoutMs}ms) — ${activeProcesses} processo(s) ainda ativo(s); salvando in-flight pra replay`);
     } else {
       console.log('[TOM] fila vazia — encerrando limpo');
+    }
+    // Drena SEMPRE (mesmo com active=0): cobre msgs no buffer de agregação (3.5s)
+    // que ainda nem viraram processMessage. Hook idempotente: só salva o que não
+    // terminou (o finally do processMessage remove os concluídos do registro).
+    for (const hook of drainHooks) {
+      try { await hook(); } catch (e) { console.error('[TOM] drain hook err:', e.message); }
     }
     process.exit(0);
   };
@@ -77,4 +91,5 @@ module.exports = {
   trackEnd,
   withTracking,
   active,
+  registerDrainHook,
 };

@@ -18,6 +18,13 @@ Frases gatilho — **DESLIGAR** áudio:
 - "TOM, sem áudio"
 - "desativa os áudios"
 - "para com os áudios"
+- "me pergunta antes de mandar áudio" / "pergunta antes" / "posso não conseguir ouvir"
+
+> **"Pergunta antes de mandar áudio" = DESLIGAR.** O sistema não tem como "perguntar
+> antes" — mas com `voice_enabled:false` o TOM nunca manda áudio espontâneo e **ainda
+> atende quando a pessoa pede explicitamente** ("manda um áudio"). É exatamente o
+> comportamento que ela quer. Confirme assim: *"Fechou — só mando áudio se você pedir."*
+> NUNCA prometa "vou perguntar antes" sem emitir o marker (caso Rose 10/06).
 
 Frases gatilho — **LIGAR** áudio:
 - "pode voltar a mandar áudio"

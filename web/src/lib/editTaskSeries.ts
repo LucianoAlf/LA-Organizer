@@ -133,7 +133,13 @@ async function dueOf(id: string): Promise<string> {
 async function replaceReminders(taskId: string, dueYmd: string, times: string[]): Promise<void> {
   const { error: delErr } = await supabase.from('task_reminders').delete().eq('task_id', taskId).is('sent_at', null);
   if (delErr) throw new Error(`reminders delete: ${delErr.message}`);
-  const rows = times.map((hhmm) => ({
+  // REMINDER-STALE-PAST (caso Geraldo/Rose 10/06): task retroativa (due no passado)
+  // gerava remind_at já vencido que o dispatcher disparava NA HORA, de madrugada.
+  // O dispatcher tem guarda própria; aqui evitamos nem criar a linha morta.
+  const nowMs = Date.now();
+  const rows = times
+    .filter((hhmm) => new Date(`${dueYmd}T${hhmm}:00-03:00`).getTime() > nowMs)
+    .map((hhmm) => ({
     task_id: taskId,
     remind_at: `${dueYmd}T${hhmm}:00-03:00`,
     label: hhmm.replace(':00', 'h'),

@@ -190,7 +190,12 @@ function resolveTemporalRef(userMsg, todayISO, tomorrowISO) {
   const SEP = '(?:^|[\\s.,!?;:¡¿\\(\\)])';
   const SEP_END = '(?:$|[\\s.,!?;:¡¿\\(\\)])';
   if (new RegExp(SEP + 'amanh(?:ã|a)' + SEP_END, 'i').test(lc)) {
-    targetDay = tomorrowISO; dayWord = 'amanhã';
+    // AMANHA-POS-MEIA-NOITE (caso Rose 10/06 00:57): na madrugada (00–04h59 BRT),
+    // "amanhã" da pessoa = o dia civil EM CURSO (a manhã que vai amanhecer).
+    const hourBRT = parseInt(new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'America/Sao_Paulo', hour: '2-digit', hourCycle: 'h23',
+    }).format(new Date()), 10) % 24;
+    targetDay = hourBRT < 5 ? todayISO : tomorrowISO; dayWord = 'amanhã';
   } else if (new RegExp(SEP + 'hoje' + SEP_END, 'i').test(lc)) {
     targetDay = todayISO; dayWord = 'hoje';
   }
@@ -277,6 +282,13 @@ function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events
   const tomorrowWD = weekdays[new Date(tomorrowISO + 'T15:00:00.000Z').getUTCDay()];
   lines.push(`**Data/hora agora (BRT):** ${todayISO} ${nowHHMM} (${todayWD})`);
   lines.push(`**Amanhã (BRT):** ${tomorrowISO} (${tomorrowWD})`);
+  // AMANHA-POS-MEIA-NOITE: na madrugada, "amanhã" falado quase sempre = HOJE civil.
+  {
+    const _h = parseInt(nowHHMM.slice(0, 2), 10) % 24;
+    if (_h < 5) {
+      lines.push(`**⚠️ MADRUGADA (${nowHHMM}):** quando a pessoa disser "amanhã" agora, ela quase sempre quer dizer HOJE ${todayISO} (${todayWD} — a manhã que vai amanhecer). Use ${todayISO}, a menos que ela diga data ou dia da semana explícitos.`);
+    }
+  }
 
   // Sprint 17 — âncora semanal explícita (spec §2.6)
   {
@@ -548,7 +560,19 @@ function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events
         : e._rsvpTentative
         ? ` 🤔 você marcou "talvez" aqui — só pergunte se já decidiu se a pessoa tocar no assunto.`
         : '';
-      lines.push(`• [id=${sid}] ${datePrefix}${start}–${end} ${mod} ${e.title}${statusTag}${cat}${where}${reminders}${rsvpTag}`);
+      // RSVP-OWNER-BLIND: evento que ESTE user criou e tem convidados → contador +
+      // quem falta. Responde "falta quem confirmar?" sem inventar e sem dizer "não sei".
+      let partTag = '';
+      if (e.collaborator_id === collab.id && Array.isArray(e.event_participants) && e.event_participants.length > 0) {
+        const tot = e.event_participants.length;
+        const conf = e.event_participants.filter(p => p.status === 'confirmed').length;
+        const waiting = e.event_participants
+          .filter(p => p.status !== 'confirmed' && p.status !== 'declined')
+          .map(p => (p.collaborator && p.collaborator.full_name || '').split(' ')[0])
+          .filter(Boolean);
+        partTag = ` · 👥 ${conf}/${tot} confirmaram${waiting.length ? ` — aguardando: ${waiting.join(', ')}` : ''}`;
+      }
+      lines.push(`• [id=${sid}] ${datePrefix}${start}–${end} ${mod} ${e.title}${statusTag}${cat}${where}${reminders}${partTag}${rsvpTag}`);
     });
   }
 
@@ -1383,10 +1407,14 @@ async function fetchCollaboratorContext(collaborator) {
     // do contexto e TOM se confundia com lembretes/datas.
     (async () => {
       const SELECT_COLS = 'id, collaborator_id, title, start_at, end_at, modality, category, context, location_text, meeting_url, status, event_reminders(remind_at, sent_at)';
+      // RSVP-OWNER-BLIND (caso Rose 09/06): o DONO do evento precisa ver quem
+      // confirmou/falta — sem isso o TOM dizia "não tenho a lista" com 5/7 no banco.
+      // Embed só no caminho owned (FK explícita: a tabela tem 2 FKs pra collaborators).
+      const OWN_COLS = SELECT_COLS + ', event_participants(status, collaborator:collaborators!event_participants_collaborator_id_fkey(full_name))';
       const lo = `${today}T00:00:00-03:00`;
       const hi = `${next7days}T23:59:59-03:00`;
       const [own, parts] = await Promise.all([
-        supabase.from('events').select(SELECT_COLS)
+        supabase.from('events').select(OWN_COLS)
           .eq('collaborator_id', id).gte('start_at', lo).lte('start_at', hi)
           .neq('status', 'cancelled').order('start_at', { ascending: true }).limit(30),
         supabase.from('event_participants')

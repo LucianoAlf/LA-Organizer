@@ -19,13 +19,6 @@ const VOICE_DAILY_CAP = 10;
 
 function shouldSendVoice(collab, userText, replyText, context = {}) {
   // ---- Gates ----
-  // Sprint VoiceToggle: opt-out individual. Quando a pessoa desliga (via PWA
-  // Configurações ou comando "para de mandar áudio"), TOM passa a responder
-  // só por texto. Curto-circuita antes dos outros gates.
-  if (collab && collab.voice_enabled === false) {
-    return { send: false, reason: 'user_opt_out' };
-  }
-
   const enabled = String(process.env.TOM_VOICE_ENABLED || '').toLowerCase() === 'true';
   if (!enabled) return { send: false, reason: 'feature_disabled' };
 
@@ -36,12 +29,24 @@ function shouldSendVoice(collab, userText, replyText, context = {}) {
     return { send: false, reason: 'not_in_allowlist' };
   }
 
+  const reply = String(replyText || '');
+  const user = String(userText || '').toLowerCase();
+
+  // Pedido explícito vem ANTES do opt-out (caso Rose 10/06): voice_enabled=false
+  // significa "nunca áudio ESPONTÂNEO", mas se a pessoa PEDIU áudio neste turno,
+  // atende — equivale funcionalmente a "me pergunta antes de mandar áudio".
+  const userAskedVoice = /\b(responde\s+por\s+[aá]udio|manda\s+um\s+[aá]udio|me\s+manda\s+(?:um\s+)?[aá]udio|fala\s+pra\s+mim|com\s+a\s+sua\s+voz|gostaria\s+de\s+ouvir)\b/i.test(user);
+
+  // Sprint VoiceToggle: opt-out individual. Quando a pessoa desliga (via PWA
+  // Configurações ou comando "para de mandar áudio"), TOM passa a responder
+  // só por texto — exceto pedido explícito acima.
+  if (collab && collab.voice_enabled === false && !userAskedVoice) {
+    return { send: false, reason: 'user_opt_out' };
+  }
+
   if ((context.voiceCountToday || 0) >= VOICE_DAILY_CAP) {
     return { send: false, reason: 'daily_cap_reached' };
   }
-
-  const reply = String(replyText || '');
-  const user = String(userText || '').toLowerCase();
 
   // ---- NUNCA ----
 
@@ -74,16 +79,21 @@ function shouldSendVoice(collab, userText, replyText, context = {}) {
 
   // ---- SEMPRE ----
 
-  // User pediu explícito
-  if (/\b(responde\s+por\s+[aá]udio|manda\s+um\s+[aá]udio|me\s+manda\s+(?:um\s+)?[aá]udio|fala\s+pra\s+mim|com\s+a\s+sua\s+voz|gostaria\s+de\s+ouvir)\b/i.test(user)) {
+  // User pediu explícito (regex computada lá em cima, antes do opt-out)
+  if (userAskedVoice) {
     return { send: true, reason: 'user_requested', prob: 1.0 };
   }
 
   // ---- PROBABILÍSTICO ----
 
-  // Celebração (palavras de conquista no reply do TOM)
-  const celebRe = /\b(parab[eé]ns|incr[ií]vel|arrasou|mandou\s+bem|que\s+show|que\s+demais|sensacional|fechou|bateu\s+a\s+meta|conseguiu|vit[oó]ria|conquistou)\b|🎉|🏆|🚀|🔥/i;
-  if (celebRe.test(reply) || celebRe.test(user)) {
+  // Celebração — VOICE-CELEBRATION-FP (caso Rose 10/06): "parabéns" de passagem numa
+  // resposta biográfica disparava áudio às 00:59. Agora exige DOIS sinais no reply
+  // (palavra de conquista + emoji de festa) e NUNCA dispara quando o user fez uma
+  // pergunta informativa (resposta a pergunta = informação, não celebração).
+  const celebWordRe = /\b(parab[eé]ns|incr[ií]vel|arrasou|mandou\s+bem|que\s+show|que\s+demais|sensacional|fechou|bateu\s+a\s+meta|conseguiu|vit[oó]ria|conquistou)\b/i;
+  const celebEmojiRe = /🎉|🏆|🚀|🔥|🥳|👏/;
+  const userAskedInfo = /\?\s*$/.test(user.trim()) || /^(o\s+que|que|quem|qual|quais|quando|onde|como|por\s*qu[eê]|cad[eê])\b/i.test(user.trim());
+  if (celebWordRe.test(reply) && celebEmojiRe.test(reply) && !userAskedInfo) {
     if (Math.random() < 0.7) return { send: true, reason: 'celebration', prob: 0.7 };
     return { send: false, reason: 'celebration_dice_lost' };
   }

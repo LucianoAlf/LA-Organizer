@@ -2933,6 +2933,15 @@ async function applyRsvp(collaborator, eventIdRef, status) {
         const titulo = ev.title || 'compromisso';
         const msg = `${emoji} *${who}* ${verbo} em _"${titulo}"_${tally}${quando ? `\n🗓️ ${quando}` : ''}`;
         await whatsapp.sendMessage(owner.phone, msg);
+        // RSVP-HISTORY-MISSING (caso Rose 09/06): sem persistir, o LLM nunca "vê" os
+        // repasses e responde "não tenho a lista" com 5/7 confirmados no banco.
+        // collaborator_id = dono vindo do BANCO (ev.collaborator_id), nunca de marker.
+        await supabase.from('conversation_history').insert({
+          collaborator_id: ev.collaborator_id,
+          direction: 'outbound',
+          message_type: 'text',
+          content: msg,
+        });
         console.log(`[Event][RSVP] dono avisado ...${String(owner.phone).slice(-4)} status=${st} ${confCount}/${total}`);
       }
     }
@@ -3712,7 +3721,7 @@ const PREFS_TIME_FIELDS = new Set([
   'monthly_planning_time', 'monthly_closing_time',
 ]);
 const PREFS_INT_FIELDS = new Set(['planning_day', 'max_daily_tasks']);
-const PREFS_BOOL_FIELDS = new Set(['notify_deadline_alerts', 'notify_overdue_alerts', 'notify_team_summary', 'quiet_weekends']);
+const PREFS_BOOL_FIELDS = new Set(['notify_deadline_alerts', 'notify_overdue_alerts', 'notify_team_summary', 'quiet_weekends', 'briefing_enabled', 'closing_enabled']);
 // Sprint VoiceToggle — campos que vão pra tabela `collaborators`, NÃO user_preferences.
 const COLLAB_BOOL_FIELDS = new Set(['voice_enabled']);
 const PREFS_INTENSITY_VALUES = new Set(['light', 'normal', 'hard']);
@@ -3737,8 +3746,16 @@ function parsePrefsMarker(text) {
   const dropped = [];
   for (const [k, v] of Object.entries(parsed)) {
     if (PREFS_TIME_FIELDS.has(k)) {
-      if (typeof v === 'string' && HHMM_RE.test(v)) {
+      if (v === null && (k === 'briefing_time' || k === 'closing_time')) {
+        // PREFS-NULL-FEITO-FALSO (caso Rose 10/06): null = DESLIGAR o ritual. Não
+        // zera a coluna time (null lá = "usa default 07:00" pra quem nunca configurou);
+        // vira flag *_enabled=false que o dispatcher respeita.
+        update[k === 'briefing_time' ? 'briefing_enabled' : 'closing_enabled'] = false;
+      } else if (typeof v === 'string' && HHMM_RE.test(v)) {
         update[k] = v.length === 5 ? v + ':00' : v;
+        // Setar horário re-liga o ritual (a pessoa claramente quer recebê-lo).
+        if (k === 'briefing_time') update.briefing_enabled = true;
+        if (k === 'closing_time') update.closing_enabled = true;
       } else dropped.push(`${k}:bad_time`);
     } else if (PREFS_INT_FIELDS.has(k)) {
       const n = Number(v);
@@ -7521,7 +7538,16 @@ async function processMessage(phone, text, raw = {}) {
         _pendingIntentToResolve = { intent: target, resolution: 'confirmed' };
         // Injeta contexto inline pra LLM saber o que confirmar.
         const payloadStr = JSON.stringify(target.payload || {}).slice(0, 800);
-        const ctxHint = `\n\n[CONTEXTO INTERNO — não verbalize ao usuário]\nVocê tinha aberto uma intent (${target.kind}) com a pergunta: "${(target.question_text || '').slice(0, 200)}".\nPayload pendente: ${payloadStr}\nO usuário CONFIRMOU. Emita o marker apropriado AGORA (ex: <<TASK_UPDATE>> com action=create para cada draft).`;
+        // Caso Conciliação 10/06: o hint mandava "emita o marker AGORA" mesmo quando o
+        // payload não tinha NENHUM item concreto — o LLM escolhia alvos sozinho e
+        // reagendou 2 tasks que a Rose nunca pediu. Marker só com item concreto no
+        // payload, e SÓ sobre esses itens.
+        const _p = target.payload || {};
+        const hasConcrete = !!(_p.draft || _p.drafts || _p.anchor || _p.task_id || _p.event_id || _p.items);
+        const markerRule = hasConcrete
+          ? 'Emita o marker apropriado APENAS para os itens do payload acima (ex: <<TASK_UPDATE>> com action=create para cada draft). NÃO crie, edite ou reagende NENHUM item que não esteja no payload.'
+          : 'O payload NÃO tem item concreto (sem draft/ids) — apenas confirme em texto e feche o assunto. NÃO emita marker nenhum; NÃO toque em tasks/eventos existentes.';
+        const ctxHint = `\n\n[CONTEXTO INTERNO — não verbalize ao usuário]\nVocê tinha aberto uma intent (${target.kind}) com a pergunta: "${(target.question_text || '').slice(0, 200)}".\nPayload pendente: ${payloadStr}\nO usuário CONFIRMOU. ${markerRule}`;
         text = String(text || '') + ctxHint;
         console.log(`[PendingIntents] auto-resolve YES — intent=${target.id.slice(0,8)} kind=${target.kind}`);
       } else if (userConfirm === 'no') {
@@ -8144,7 +8170,12 @@ async function processMessage(phone, text, raw = {}) {
           const tmrw = new Date(todayBRT + 'T03:00:00.000Z');
           tmrw.setUTCDate(tmrw.getUTCDate() + 1);
           const tomorrowBRT = tmrw.toISOString().slice(0, 10);
-          const targetDay = wantsTomorrow ? tomorrowBRT : todayBRT;
+          // AMANHA-POS-MEIA-NOITE (caso Rose 10/06 00:57): na madrugada (00–04h59 BRT),
+          // "amanhã" da pessoa = o dia civil EM CURSO (a manhã que vai amanhecer), não D+1.
+          const hourBRT = parseInt(new Intl.DateTimeFormat('en-GB', {
+            timeZone: 'America/Sao_Paulo', hour: '2-digit', hourCycle: 'h23',
+          }).format(new Date()), 10) % 24;
+          const targetDay = wantsTomorrow ? (hourBRT < 5 ? todayBRT : tomorrowBRT) : todayBRT;
           let alignedCount = 0;
           for (const a of (parsedTask.actions || [])) {
             if (a.action !== 'create' && a.action !== 'reschedule') continue;
@@ -8225,7 +8256,13 @@ async function processMessage(phone, text, raw = {}) {
     if (parsedPrefs && parsedPrefs.malformed) {
       console.warn('[Prefs] WARN: malformed marker, dropping block');
       await logMarker(collab.id, 'PREFS_UPDATE', 'rejected', 'schema_invalid', reply);
-      reply = parsedPrefs.cleanText || reply;
+      // PREFS-NULL-FEITO-FALSO: nunca deixar o "Feito!" do LLM sair quando o engine
+      // rejeitou o bloco — a Rose ouviu "Tirei o briefing" e o briefing disparou no
+      // dia seguinte. Anexa aviso honesto, espelhando o branch all_failed abaixo.
+      {
+        const baseM = (parsedPrefs.cleanText || '').trim();
+        reply = (baseM ? baseM + '\n\n' : '') + '_⚠️ não consegui aplicar essa configuração agora — me diz de novo o que você quer mudar?_';
+      }
     } else if (parsedPrefs) {
       const { okCount, failCount } = await applyPrefsUpdate(collab, parsedPrefs.update);
       const result = okCount > 0 ? 'executed' : 'rejected';
@@ -9799,7 +9836,9 @@ Output AGORA, apenas o marker:`;
               duration_chars: ttsText.length,
             });
             await logMarker(collab.id, 'VOICE_SENT', 'executed', decision.reason, null);
-            await logConversation(collab.id, 'outbound', `[áudio TOM: ${ttsText.slice(0, 200)}]`);
+            // Histórico fiel: o áudio inteiro (shouldSendVoice já capa reply em 600 chars).
+            // O slice(0,200) antigo perdia o final e o auditor lia como "áudio cortado".
+            await logConversation(collab.id, 'outbound', `[áudio TOM: ${ttsText}]`);
             _voiceSent = true;
           } catch (e) {
             console.warn(`[Voice] TTS/sendVoice falhou (${e.message}) — fallback pra texto`);
