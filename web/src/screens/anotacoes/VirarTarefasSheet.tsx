@@ -113,8 +113,8 @@ export function VirarTarefasSheet({ open, onClose, note, lines, onDone }: Props)
           <CustomSelect value={batchAssignee} options={rosterOpts} onChange={(v) => setBatchAssignee(String(v))} />
         </Field>
         <Field label="Pra quando" sub="Em branco = sem prazo">
-          <div className="space-y-2">
-            <div className="flex gap-2 flex-wrap">
+          <div className="space-y-sm">
+            <div className="flex gap-sm flex-wrap">
               <Button variant={batchDue === todaySP() ? 'primary' : 'secondary'} size="sm" onClick={() => setBatchDue(todaySP())}>Hoje</Button>
               <Button variant={batchDue === addDaysSP(1) ? 'primary' : 'secondary'} size="sm" onClick={() => setBatchDue(addDaysSP(1))}>Amanhã</Button>
               <Button variant={batchDue === nextFridaySP() ? 'primary' : 'secondary'} size="sm" onClick={() => setBatchDue(nextFridaySP())}>Sexta</Button>
@@ -124,29 +124,30 @@ export function VirarTarefasSheet({ open, onClose, note, lines, onDone }: Props)
           </div>
         </Field>
 
-        <div className="space-y-2">
+        <div className="space-y-sm">
           {drafts.map((d, i) => {
             const tuned = fineTune.has(d.lineNo);
             return (
-              <div key={d.lineNo} className="surface p-2 rounded-md border border-border space-y-2">
-                <div className="flex items-center gap-2">
+              <div key={d.lineNo} className="surface p-sm rounded-md border border-border space-y-sm">
+                <div className="flex items-center gap-sm">
                   <input
                     value={d.title}
                     onChange={(e) => setDrafts((prev) => prev.map((x, j) => (j === i ? { ...x, title: e.target.value } : x)))}
-                    className="flex-1 bg-bg-surface border border-border rounded-md p-2 text-fg text-body-sm focus:outline-none focus:border-tom"
+                    className="flex-1 bg-bg-surface border border-border rounded-md p-2 text-fg focus:outline-none focus:border-tom"
                   />
-                  <button
+                  <Button
+                    variant={tuned ? 'primary' : 'ghost'}
+                    size="sm"
                     onClick={() => {
                       const next = new Set(fineTune);
                       if (tuned) { next.delete(d.lineNo); setDrafts((prev) => prev.map((x, j) => (j === i ? { ...x, assignee: null, due: null } : x))); }
                       else next.add(d.lineNo);
                       setFineTune(next);
                     }}
-                    className={`text-[11px] shrink-0 rounded px-2 py-1 focus-ring ${tuned ? 'bg-tom text-black font-semibold' : 'text-fg-muted border border-border'}`}
-                  >ajustar</button>
+                  >ajustar</Button>
                 </div>
                 {tuned && (
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-2 gap-sm">
                     <CustomSelect
                       value={d.assignee ?? batchAssignee}
                       options={rosterOpts}
