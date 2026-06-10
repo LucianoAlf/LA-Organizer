@@ -1,5 +1,13 @@
 # Módulo Anotações — Plano de Implementação
 
+> **STATUS (10/06 ~12h BRT): T1–T10 ENTREGUES.** Migration + RLS ✓ (3 policies) · parser 7/7 ✓ ·
+> service 5/5 ✓ · engine NOTE_ACTION ✓ · skill+gatilho+bloco 📒 no prompt ✓ · ata da Rose migrada
+> (note 5a133e3b) ✓ · backend deployado (pm2 online) ✓ · PWA lista/detalhe/compartilhar/⚡vira-tarefas ✓
+> (tsc+build ok; validado no preview 375px e 1440px; e2e real: task criada com link e descrição
+> "📒 Da anotação", depois limpa; RLS provado — Alf não vê a nota da Rose). PENDENTE: T7.2 (Alf ditar
+> anotação real pro TOM no WhatsApp) e T11.3 (avisar a Rose). Ajuste extra: FAB só no mobile;
+> desktop usa botão "+ Nova anotação" no header.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Caderninho pessoal (ditado pro TOM ou criado no PWA) com compartilhamento e modo "⚡ Virar tarefas" em lote — spec aprovada em `docs/superpowers/specs/2026-06-10-anotacoes-design.md`.

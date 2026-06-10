@@ -255,7 +255,7 @@ function nameFor(collab) {
 // Sprint 22.36 Fatia 2 — Adicionado: delegatedTasks (tarefas que ESTE user atribuiu
 // pra outros), todayChecklists (checklists operacionais de hoje com %).
 // Antes ficavam fora do contexto e TOM dizia "não tenho esse dato" no relatório.
-function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events, delegatedTasks, todayChecklists, teamAdherence, personalChecklists, teamTodayChecklists, teamExpectedTemplates, schoolEvents = [], eventTypes = [], doneFutureTasks = [], monthlyCtxBlock = null, orgChart = [], criticalMemories = [], preferenceMemories = [], weeklySummary = null, recentContextMemories = [], openTasksNoDue = []) {
+function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events, delegatedTasks, todayChecklists, teamAdherence, personalChecklists, teamTodayChecklists, teamExpectedTemplates, schoolEvents = [], eventTypes = [], doneFutureTasks = [], monthlyCtxBlock = null, orgChart = [], criticalMemories = [], preferenceMemories = [], weeklySummary = null, recentContextMemories = [], openTasksNoDue = [], recentNotes = []) {
   const nickname = nameFor(collab);
   const lines = ['# 📌 CONTEXTO DESTA INTERAÇÃO', ''];
   const { ROLE_LABELS: ROLE_LABELS_PT } = require('../lib/roles');
@@ -497,6 +497,23 @@ function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events
     });
   } else {
     lines.push('_nenhuma_');
+  }
+
+  // 📒 Anotações (spec 2026-06-10) — caderninho do usuário (tabela notes). O TOM lê
+  // daqui pra responder "me lê a anotação X"; anexa/compartilha via <<NOTE_ACTION>>.
+  if (recentNotes && recentNotes.length) {
+    lines.push('', `## 📒 Anotações recentes (${recentNotes.length} — app: Mais → Anotações)`);
+    recentNotes.forEach((n, i) => {
+      const sid = String(n.id || '').slice(0, 8);
+      const first = String(n.body || '').split('\n').find((l) => l.trim()) || '';
+      const shared = (n.shared_with || []).length ? ` · 👥 ${n.shared_with.length}` : '';
+      lines.push(`• [id=${sid}] *${n.title}*${shared} — ${first.slice(0, 80)}`);
+      if (i === 0) {
+        const bodyCap = String(n.body || '').slice(0, 600);
+        lines.push(`  ↳ conteúdo: ${bodyCap}${String(n.body || '').length > 600 ? '…' : ''}`);
+      }
+    });
+    lines.push('_Pra anexar/compartilhar, emita <<NOTE_ACTION>> (skill anotacoes). Pra ler, cite o conteúdo acima — não invente o que não está aqui._');
   }
 
   // Bloco mensal (injetado quando keyword mensal detectada ou últimos 7 dias do mês).
@@ -1066,6 +1083,12 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
   // (DND temporário) nem "manda menos áudio" (não tem setting intermediário).
   if (/\b(?:(?:para|chega|sem|desativ|desliga|n[aã]o\s+(?:quero|manda|mande))\s+(?:de\s+(?:mandar|enviar)\s+)?(?:os?\s+)?[aá]udios?|s[oó]\s+texto|prefiro\s+texto|desliga\s+(?:a\s+)?voz|(?:pode\s+)?(?:volta(?:r)?|liga(?:r)?|ativa)\s+(?:a\s+)?(?:voz|com\s+)?(?:os?\s+)?[aá]udios?|saudad(?:es)?\s+(?:da\s+|dos?\s+)?(?:voz|[aá]udios?)|[aá]udio\s+(?:de\s+volta|liberad[oa]|sim)|quero\s+[aá]udio\s+de\s+volta)/i.test(lastUserMessage || '')) {
     return { name: 'preferencias-voz', body: loadSkill('preferencias-voz') };
+  }
+
+  // Trigger: skill de anotações (caderninho do usuário, spec 2026-06-10) —
+  // "cria uma anotação", "anota aí", "adiciona na anotação", "compartilha a anotação".
+  if (/\banota(?:[çc][ãa]o|[çc][õo]es)\b|\banota\s+(?:a[ií]|isso|essa|pra\s+mim)|\bfa(?:z|ça)\s+uma\s+anota|adiciona\s+na\s+anota|compartilha\s+a\s+anota|cria(?:r)?\s+uma\s+anota/i.test(lastUserMessage || '')) {
+    return { name: 'anotacoes', body: loadSkill('anotacoes') };
   }
 
   // Trigger: skill de ajuda — usuário pergunta como o sistema funciona
@@ -1658,6 +1681,12 @@ async function fetchCollaboratorContext(collaborator) {
     );
   } catch (_) { /* não bloqueia se falhar */ }
 
+  // 📒 Anotações recentes (spec 2026-06-10) — limit 5, não bloqueia se falhar.
+  let recentNotes = [];
+  try {
+    recentNotes = await require('../services/notes').listRecentNotes(supabase, id, 5);
+  } catch (_) { /* sem anotações no contexto */ }
+
   // Sprint 22.X — respeita max_daily_tasks (default 3) limitando o briefing de
   // trabalho. Hoje sem cap, TOM lista 12+ tasks e quebra o foco. User-side a
   // pref já existia mas nada limitava. Preferência default 3 reflete princípio
@@ -1679,6 +1708,7 @@ async function fetchCollaboratorContext(collaborator) {
     workTasks,
     doneFutureTasks,
     openTasksNoDue,
+    recentNotes,
     activeProjects,
     notifications: notificationsRes.data || [],
     recentMessages: (historyRes.data || []).reverse(),
@@ -2644,7 +2674,7 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   const _reminderHour = (opts && Number.isInteger(opts.reminderDefaultHour)) ? opts.reminderDefaultHour : 9;
   const _reminderHourLabel = `${String(_reminderHour).padStart(2, '0')}h`;
   const reminderDefaultBlock = `\n\n**⏰ Horário-padrão de lembrete:** quando ${nameFor(collaborator)} pedir um lembrete dando o DIA mas SEM a HORA ("me lembra amanhã/sexta"), use ${_reminderHourLabel} e AFIRME ("fechou, te lembro às ${_reminderHourLabel} — quer outra hora?"); NÃO pergunte que horas (perguntar trava a conversa). Vale só p/ lembrete/tarefa — compromisso com terceiros (reunião/aula/mentoria) sem hora continua pedindo a hora.`;
-  const baseCtx = buildContext(collaborator, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx, ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || [], ctx.teamTodayChecklists || [], ctx.teamExpectedTemplates || [], ctx.schoolEvents || [], ctx.eventTypes || [], ctx.doneFutureTasks || [], monthlyCtxBlock, ctx.orgChart || [], ctx.criticalMemories || [], ctx.preferenceMemories || [], ctx.weeklySummary || null, ctx.recentContextMemories || [], ctx.openTasksNoDue || []) + reminderDefaultBlock;
+  const baseCtx = buildContext(collaborator, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx, ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || [], ctx.teamTodayChecklists || [], ctx.teamExpectedTemplates || [], ctx.schoolEvents || [], ctx.eventTypes || [], ctx.doneFutureTasks || [], monthlyCtxBlock, ctx.orgChart || [], ctx.criticalMemories || [], ctx.preferenceMemories || [], ctx.weeklySummary || null, ctx.recentContextMemories || [], ctx.openTasksNoDue || [], ctx.recentNotes || []) + reminderDefaultBlock;
 
   // Histórico completo dos últimos 7 dias — agrupado por dia
   let pastEventsBlock = '';

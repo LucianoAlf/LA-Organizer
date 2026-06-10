@@ -21,6 +21,7 @@ interface Item {
 }
 
 const personalItems: Item[] = [
+  { to: '/anotacoes', label: 'Anotações', hint: 'Seu caderninho — dita pro TOM ou escreve aqui' },
   { to: '/financeiro', label: 'Finanças', hint: 'Suas finanças pessoais (TOM + PWA)' },
   { to: '/mais/agenda-escolar', label: 'Agenda LA Music', hint: 'Calendário institucional de eventos' },
   { to: '/configuracoes', label: 'Configurações', hint: 'Horários e intensidade do TOM' },

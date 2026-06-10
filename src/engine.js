@@ -25,6 +25,8 @@ const inventarioValidators = require('./services/inventario-validators');
 const announcementsService = require('./services/announcements');
 const pendingIntents = require('./services/pending-intents');
 const approvalsService = require('./services/approvals');
+const noteMarker = require('./services/note-marker');
+const notesService = require('./services/notes');
 const { detectApprovalReply, stripReplyScaffold } = require('./events/detect-approval-reply');
 const { isFutureCompletion } = require('./utils/complete-guards');
 const { buildCoordinationResponseNotification } = require('./services/coordination-notify');
@@ -8536,6 +8538,48 @@ async function processMessage(phone, text, raw = {}) {
           : (base ? base + '\n\n' : '') + '_não consegui atualizar o compromisso, me confirma o que você quer?_';
       }
       reply = base || reply;
+    }
+  }
+
+  // <<NOTE_ACTION>> — anotações do usuário (spec 2026-06-10). collaborator_id = REMETENTE,
+  // nunca do marker; share_with chega como NOMES e é resolvido contra o banco.
+  {
+    const parsedNote = noteMarker.parseNoteActionMarker(reply);
+    if (parsedNote && parsedNote.malformed) {
+      console.warn('[Note] WARN: malformed marker, dropping block');
+      await logMarker(collab.id, 'NOTE_ACTION', 'rejected', 'schema_invalid', reply);
+      // fala = persistência: nunca deixar o "Anotado!" sair com o bloco rejeitado.
+      const baseN = (parsedNote.cleanText || '').trim();
+      reply = (baseN ? baseN + '\n\n' : '') + '_⚠️ não consegui salvar a anotação — me manda de novo?_';
+    } else if (parsedNote) {
+      const a = parsedNote.action;
+      let res;
+      let shareNotice = '';
+      try {
+        if (a.action === 'create' || a.action === 'share') {
+          const { ids, unresolved } = await notesService.resolveShareNames(supabase, a.share_with || []);
+          if (unresolved.length) {
+            shareNotice = `\n\n_⚠️ não achei "${unresolved.join('", "')}" pra compartilhar — confere o nome?_`;
+          }
+          if (a.action === 'create') {
+            res = await notesService.createNote(supabase, collab.id, { title: a.title, body: a.body, source: 'tom', sharedWith: ids });
+          } else {
+            res = await notesService.shareNote(supabase, collab.id, a.note, ids);
+          }
+        } else {
+          res = await notesService.appendToNote(supabase, collab.id, a.note, a.body);
+        }
+      } catch (eNote) {
+        res = { ok: false, error: eNote.message };
+      }
+      await logMarker(collab.id, 'NOTE_ACTION', res.ok ? 'executed' : 'rejected', `${a.action}:${res.ok ? 'ok' : String(res.error).slice(0, 120)}`, null);
+      let baseN = parsedNote.cleanText || '';
+      if (!res.ok) {
+        baseN = (baseN ? baseN + '\n\n' : '') + (res.error === 'note_not_found'
+          ? '_não achei essa anotação. Me diz o título que eu procuro._'
+          : '_⚠️ não consegui salvar a anotação agora — tenta de novo?_');
+      }
+      reply = (baseN || reply) + shareNotice;
     }
   }
 
