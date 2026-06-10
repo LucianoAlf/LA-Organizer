@@ -3913,6 +3913,8 @@ async function applyTaskActions(collaborator, actions) {
   // Sprint 31.6 (E2) — mensagens claras de falha pro user (ex: tarefa de outro dono).
   // Quando preenchido, o caller usa no lugar do genérico "não consegui registrar".
   const failMessages = [];
+  // Avisos de sucesso de grupos (cascata) — anexados à resposta no caminho de SUCESSO.
+  const groupNotices = [];
   const last4 = String(collaborator.phone || '').slice(-4);
   // Guardrail anti-bomba (BULK-RECUR): se o lote tem >10 creates de título
   // idêntico, bloqueia esse grupo e orienta o caminho recorrente. Backstop
@@ -4041,6 +4043,15 @@ async function applyTaskActions(collaborator, actions) {
               action: 'completed',
               via: 'marker:TASK_UPDATE',
             });
+          } catch (e) { /* não-fatal */ }
+          // Task 13 — Grupos: se era a última filha aberta, conclui a mãe (paridade com PWA).
+          try {
+            const tg = require('./services/task-groups');
+            const cascade = await tg.maybeCompleteParentGroup(t.id);
+            if (cascade.groupCompleted && cascade.groupTitle) {
+              console.log(`[Task] cascade group complete → "${cascade.groupTitle}" (via complete ${a.id})`);
+              groupNotices.push(`🎉 Com essa, o grupo *${cascade.groupTitle}* fechou completo!`);
+            }
           } catch (e) { /* não-fatal */ }
           okCount++;
         }
@@ -4928,7 +4939,7 @@ async function applyTaskActions(collaborator, actions) {
       failCount++;
     }
   }
-  return { okCount, failCount, integrityPayload, failMessages };
+  return { okCount, failCount, integrityPayload, failMessages, groupNotices };
 }
 
 const MEMORY_TYPES = ['fact', 'decision', 'lesson', 'preference', 'context'];
@@ -8161,7 +8172,7 @@ async function processMessage(phone, text, raw = {}) {
       } catch (e) {
         console.error('[Task] date alignment err (non-fatal):', e.message);
       }
-      const { okCount, failCount, integrityPayload, failMessages } = await applyTaskActions(collab, parsedTask.actions);
+      const { okCount, failCount, integrityPayload, failMessages, groupNotices } = await applyTaskActions(collab, parsedTask.actions);
       console.log(`[Task] batch done: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
       if (integrityPayload) {
         const iType = integrityPayload.type;
@@ -8198,6 +8209,10 @@ async function processMessage(phone, text, raw = {}) {
           // Sprint 21.5 — confirmação parcial honesta. Engine não pode deixar TOM dizer
           // "tudo certo" quando parte falhou. Princípio: fala = persistência.
           base = (base ? base + '\n\n' : '') + `_⚠️ Registrei ${okCount} de ${okCount + failCount}. Algumas falharam — me chama se algo ficar faltando._`;
+        }
+        // Cascata de grupo — só no caminho de sucesso (okCount > 0).
+        if (groupNotices && groupNotices.length > 0 && okCount > 0) {
+          base = (base ? base + '\n\n' : '') + groupNotices.join('\n');
         }
         reply = base || reply;
       }

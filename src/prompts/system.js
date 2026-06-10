@@ -426,7 +426,10 @@ function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events
       // NÃO está atrasada. Somente due_date < hoje define atraso real.
       const overdue = t.due_date && t.due_date < today ? '🔴 ' : '';
       const doneTag = t.status === 'done' ? '✅ ' : '';
-      lines.push(`${i + 1}. [id=${sid}] ${overdue}${doneTag}${t.title}${timeBit}`);
+      // Task 13 — selos de grupo: mãe recebe prefixo 🗂️ e sufixo (grupo); filha recebe sufixo · 🗂️ grupo
+      const groupPrefix = t.is_group ? '🗂️ ' : '';
+      const groupSuffix = t.is_group ? ' (grupo)' : (t.parent_task_id ? ' · 🗂️ grupo' : '');
+      lines.push(`${i + 1}. [id=${sid}] ${overdue}${doneTag}${groupPrefix}${t.title}${groupSuffix}${timeBit}`);
       // Descrição (quando houver) — uma linha indentada abaixo do título.
       // Mantém lista escaneável mas expõe contexto pro TOM responder perguntas
       // tipo "pra que é essa ligação?" sem precisar abrir o detalhe.
@@ -1303,7 +1306,7 @@ async function fetchCollaboratorContext(collaborator) {
   const today = todaySaoPaulo();
   const next7days = (() => { const d = new Date(today + 'T15:00:00.000Z'); d.setDate(d.getDate() + 7); return d.toISOString().slice(0, 10); })();
   const past7days = (() => { const d = new Date(today + 'T15:00:00.000Z'); d.setDate(d.getDate() - 7); return d.toISOString().slice(0, 10); })();
-  const TASK_COLS = 'id, title, description, status, priority, eisenhower_quadrant, due_date, context, remind_at, project_id, projects(name)';
+  const TASK_COLS = 'id, title, description, status, priority, eisenhower_quadrant, due_date, context, remind_at, project_id, projects(name), parent_task_id, is_group';
 
   const isLeadership = collaborator.role === 'director' || collaborator.role === 'coordinator' ||
     collaborator.role === 'manager' || collaborator.role === 'leader';
@@ -1568,8 +1571,26 @@ async function fetchCollaboratorContext(collaborator) {
     activeProjects = data || [];
   }
 
-  const personalTasks = personalRes.data || [];
-  const workRaw = workRes.data || [];
+  // Task 13 — filtro anti-template: filhas de mães-template (is_group=true + recurrence_rule)
+  // não devem aparecer no contexto como tarefas normais (confundem o TOM com datas aleatórias).
+  // As queries principais não filtram recurrence_rule, então excluímos em JS pós-fetch.
+  let templateGroupIds = new Set();
+  try {
+    const { data: templateGroups } = await supabase
+      .from('tasks')
+      .select('id')
+      .eq('assigned_to', id)
+      .eq('is_group', true)
+      .not('recurrence_rule', 'is', null);
+    for (const g of (templateGroups || [])) templateGroupIds.add(g.id);
+  } catch (_) { /* não-fatal */ }
+
+  const personalTasks = (personalRes.data || []).filter(
+    (t) => !(t.is_group && t.recurrence_rule != null) && !templateGroupIds.has(t.parent_task_id)
+  );
+  const workRaw = (workRes.data || []).filter(
+    (t) => !(t.is_group && t.recurrence_rule != null) && !templateGroupIds.has(t.parent_task_id)
+  );
 
   // Fix (2026-05-15): tasks done com due_date >= hoje — permite TOM responder
   // "o que eu tinha pra amanhã?" mesmo após marcar como feito.
@@ -1584,7 +1605,9 @@ async function fetchCollaboratorContext(collaborator) {
       .lte('due_date', next7days)
       .order('due_date', { ascending: true })
       .limit(15);
-    doneFutureTasks = doneFuture || [];
+    doneFutureTasks = (doneFuture || []).filter(
+      (t) => !templateGroupIds.has(t.parent_task_id) && !(t.is_group && t.recurrence_rule != null)
+    );
   } catch (_) { /* não bloqueia se falhar */ }
 
   // Sprint 31.2 — Tarefas PENDENTES sem prazo definido (due_date IS NULL).
@@ -1602,7 +1625,9 @@ async function fetchCollaboratorContext(collaborator) {
       .is('due_date', null)
       .order('created_at', { ascending: false })
       .limit(20);
-    openTasksNoDue = noDue || [];
+    openTasksNoDue = (noDue || []).filter(
+      (t) => !templateGroupIds.has(t.parent_task_id) && !(t.is_group && t.recurrence_rule != null)
+    );
   } catch (_) { /* não bloqueia se falhar */ }
 
   // Sprint 22.X — respeita max_daily_tasks (default 3) limitando o briefing de

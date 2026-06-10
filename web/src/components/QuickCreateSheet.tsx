@@ -2,7 +2,7 @@ import { useState, useEffect, FormEvent } from 'react';
 import { RecurrencePicker } from './RecurrencePicker';
 import { materializeSeriesClient } from '../lib/materialize-recurrence';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ListTodo, CalendarClock, UserPlus } from 'lucide-react';
+import { ListTodo, CalendarClock, UserPlus, FolderKanban } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { todaySP } from '../utils/date';
@@ -23,6 +23,8 @@ import {
   type EventModality,
   type TaskContext,
 } from '../types';
+import { createGroup } from '../lib/taskGroups';
+import { dayOfMonthToYmd } from '../lib/taskGroupDates';
 
 interface Props {
   open: boolean;
@@ -31,7 +33,7 @@ interface Props {
   defaultDueDate?: string;
 }
 
-type Kind = 'task' | 'event' | 'delegated';
+type Kind = 'task' | 'event' | 'delegated' | 'group';
 
 const MODALITIES: EventModality[] = ['presencial', 'online', 'hibrido'];
 // Sentinel value usado no CustomSelect pra acionar "criar nova categoria pessoal".
@@ -65,6 +67,13 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
   const [taskQuadrant, setTaskQuadrant] = useState<number | null>(null);
   // Sprint 22.31 — Delegada: a quem atribuir (collaborator id). Quando kind='delegated'.
   const [delegateTo, setDelegateTo] = useState<string>('');
+
+  // Grupo (2026-06-09)
+  const [groupMonthly, setGroupMonthly] = useState(true);
+  const [groupDueDay, setGroupDueDay] = useState('');           // dia 1-31 (mensal)
+  const [groupDueDate, setGroupDueDate] = useState('');         // YMD (sem repetição)
+  const [groupChildren, setGroupChildren] = useState<Array<{ title: string; day: string; time: string; reminder: boolean }>>([]);
+  const [draftChild, setDraftChild] = useState({ title: '', day: '', time: '', reminder: false });
 
   // event
   const [categoryId, setCategoryId] = useState<string>('');
@@ -120,6 +129,12 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
       setMeetingUrl('');
       setEventQuadrant(null);
       setParticipantIds([]);
+      // Grupo
+      setGroupMonthly(true);
+      setGroupDueDay('');
+      setGroupDueDate('');
+      setGroupChildren([]);
+      setDraftChild({ title: '', day: '', time: '', reminder: false });
     }
   }, [open, today]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -369,6 +384,38 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
     },
   });
 
+  const createGroupMut = useMutation({
+    mutationFn: async () => {
+      const collab = collaborator ?? await ensureSession();
+      if (!collab) throw new Error('no_session');
+      const children = groupChildren.map((c) => {
+        const dayN = c.day ? Number(c.day) : null;
+        const dueYmd = groupMonthly
+          ? null
+          : (dayN ? dayOfMonthToYmd(dayN, today) : null);
+        const reminderTimes = c.reminder
+          ? [`${groupMonthly ? dayOfMonthToYmd(dayN ?? 1, today) : (dueYmd ?? today)}T${c.time || '09:00'}`]
+          : [];
+        return {
+          title: c.title, dayOfMonth: dayN, due_date: dueYmd,
+          due_time: c.time || null, reminderTimes,
+        };
+      });
+      return createGroup({
+        title: title.trim(), context: taskCtx, monthly: groupMonthly,
+        groupDueDay: groupDueDay ? Number(groupDueDay) : null,
+        groupDueDate: groupDueDate || null,
+        children, collabId: collab.id,
+      });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tasks'] });
+      qc.invalidateQueries({ queryKey: ['task-groups'] });
+      showToast({ kind: 'success', title: 'Grupo criado', msg: `${groupChildren.length} subtarefa${groupChildren.length === 1 ? '' : 's'}.` });
+      onClose();
+    },
+  });
+
   // Sprint 22.26 — cria categoria pessoal nova e seleciona automaticamente.
   async function handleCreateNewCategory() {
     const label = newCatLabel.trim();
@@ -434,6 +481,9 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
         return;
       }
       createDelegated.mutate();
+    } else if (kind === 'group') {
+      if (groupChildren.length === 0) { setError('Adiciona pelo menos uma subtarefa.'); return; }
+      createGroupMut.mutate();
     } else {
       if (creatingCat) {
         setError('Termina de criar a categoria antes (ou cancela).');
@@ -470,8 +520,8 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
     createEvent.mutate();
   };
 
-  const submitting = createTask.isPending || createEvent.isPending || createDelegated.isPending;
-  const submitError = (createTask.error || createEvent.error || createDelegated.error) as Error | null;
+  const submitting = createTask.isPending || createEvent.isPending || createDelegated.isPending || createGroupMut.isPending;
+  const submitError = (createTask.error || createEvent.error || createDelegated.error || createGroupMut.error) as Error | null;
   // Sprint 22.28 — categorizar erro de submit pra mensagem amigavel.
   function friendlyError(err: Error | null): string | null {
     if (!err) return null;
@@ -496,10 +546,11 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
   return (
     <AdaptiveSheet open={open} onClose={onClose} title="Novo" size="sm">
       {/* Kind selector */}
-      <div role="tablist" className="grid grid-cols-3 gap-2 mb-md">
+      <div role="tablist" className="grid grid-cols-4 gap-2 mb-md">
         <KindButton active={kind === 'task'} onClick={() => setKind('task')} icon={<ListTodo size={20} />} label="Tarefa" hint="algo a fazer" />
         <KindButton active={kind === 'event'} onClick={() => setKind('event')} icon={<CalendarClock size={20} />} label="Compromisso" hint="com horário" />
         <KindButton active={kind === 'delegated'} onClick={() => setKind('delegated')} icon={<UserPlus size={20} />} label="Delegar" hint="pra alguém do time" />
+        <KindButton active={kind === 'group'} onClick={() => setKind('group')} icon={<FolderKanban size={20} />} label="Grupo" hint="com subtarefas" />
       </div>
 
       <form onSubmit={onSubmit} className="space-y-md">
@@ -516,6 +567,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
             placeholder={
               kind === 'task' ? 'Ex.: Ligar pro pai do aluno X'
               : kind === 'delegated' ? 'Ex.: Buscar material no Megadisconildo'
+              : kind === 'group' ? 'Ex.: Conciliação Cartões'
               : 'Ex.: Reunião com Henrique'
             }
             className="w-full h-12 px-3 rounded-md bg-bg-elevated border border-border text-fg placeholder:text-fg-muted focus-ring"
@@ -674,6 +726,95 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
                 <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">opcional</span>
               </div>
               <EisenhowerPicker value={taskQuadrant} onChange={setTaskQuadrant} />
+            </div>
+          </>
+        ) : kind === 'group' ? (
+          <>
+            <fieldset>
+              <legend className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Tipo</legend>
+              <div role="radiogroup" className="grid grid-cols-2 gap-2">
+                {([{ v: 'work', label: 'Trabalho' }, { v: 'personal', label: 'Pessoal' }] as const).map(o => (
+                  <button key={o.v} type="button" role="radio" aria-checked={taskCtx === o.v}
+                    onClick={() => setTaskCtx(o.v)}
+                    className={['h-11 rounded-md border text-body-md font-semibold transition-colors focus-ring',
+                      taskCtx === o.v ? 'bg-tom text-black border-tom' : 'bg-bg-subtle text-fg-secondary border-border'].join(' ')}
+                  >{o.label}</button>
+                ))}
+              </div>
+            </fieldset>
+
+            <div>
+              <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5 flex items-baseline gap-2">
+                <span>Subtarefas</span>
+                <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">cada uma com seu prazo</span>
+              </div>
+              {groupChildren.map((c, i) => (
+                <div key={i} className="flex items-center gap-2 rounded-md border border-border bg-bg-elevated px-3 py-2 mb-1.5">
+                  <span className="inline-block h-4 w-4 rounded-full border-2 border-fg-muted shrink-0" aria-hidden />
+                  <span className="text-body-sm min-w-0 flex-1 truncate">{c.title}</span>
+                  {c.day && <span className="text-[11px] px-2 py-0.5 rounded-full bg-bg-elevated text-tom">dia {c.day}</span>}
+                  {c.time && <span className="text-[11px] px-2 py-0.5 rounded-full bg-bg-elevated text-fg-secondary">🕐 {c.time}</span>}
+                  {c.reminder && <span className="text-[11px] px-2 py-0.5 rounded-full bg-bg-elevated text-fg-secondary">🔔</span>}
+                  <button type="button" aria-label="Remover"
+                    onClick={() => setGroupChildren(prev => prev.filter((_, j) => j !== i))}
+                    className="text-fg-muted hover:text-danger p-0.5">✕</button>
+                </div>
+              ))}
+              <div className="rounded-md border border-dashed border-border p-3 space-y-2 bg-bg-elevated/40">
+                <div className="flex items-center gap-2">
+                  <span className="inline-block h-4 w-4 rounded-full border-2 border-fg-muted shrink-0" aria-hidden />
+                  <input type="text" maxLength={200} value={draftChild.title}
+                    onChange={e => setDraftChild(d => ({ ...d, title: e.target.value }))}
+                    placeholder="Ex.: Cartão Mercado Pago"
+                    className="flex-1 min-w-0 bg-transparent text-body-sm text-fg placeholder:text-fg-muted focus:outline-none" />
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <input type="text" inputMode="numeric" maxLength={2} value={draftChild.day}
+                    onChange={e => setDraftChild(d => ({ ...d, day: e.target.value.replace(/\D/g, '') }))}
+                    placeholder="📅 dia"
+                    className="w-20 h-8 px-2 rounded-full border border-border bg-bg-surface text-body-sm text-fg focus:outline-none focus:border-tom" />
+                  <div className="w-24"><TimeInput value={draftChild.time} onChange={(t) => setDraftChild(d => ({ ...d, time: t }))} /></div>
+                  <button type="button" onClick={() => setDraftChild(d => ({ ...d, reminder: !d.reminder }))}
+                    className={['h-8 px-3 rounded-full border text-[11px] focus-ring',
+                      draftChild.reminder ? 'border-tom text-tom' : 'border-border text-fg-muted'].join(' ')}>
+                    🔔 lembrete
+                  </button>
+                  <button type="button" disabled={!draftChild.title.trim()}
+                    onClick={() => { setGroupChildren(prev => [...prev, draftChild]); setDraftChild({ title: '', day: '', time: '', reminder: false }); }}
+                    className="ml-auto h-8 px-4 rounded-full bg-tom text-black text-body-sm font-semibold disabled:opacity-50 focus-ring">
+                    Adicionar
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <fieldset>
+              <legend className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Repetição</legend>
+              <div role="radiogroup" className="grid grid-cols-2 gap-2">
+                {([{ v: true, label: '🔁 Mensal' }, { v: false, label: 'Não repete' }] as const).map(o => (
+                  <button key={String(o.v)} type="button" role="radio" aria-checked={groupMonthly === o.v}
+                    onClick={() => setGroupMonthly(o.v)}
+                    className={['h-11 rounded-md border text-body-sm font-semibold transition-colors focus-ring',
+                      groupMonthly === o.v ? 'bg-tom text-black border-tom' : 'bg-bg-subtle text-fg-secondary border-border'].join(' ')}
+                  >{o.label}</button>
+                ))}
+              </div>
+              {groupMonthly && <p className="text-body-sm text-fg-muted mt-1.5">Renasce todo mês com os mesmos dias.</p>}
+            </fieldset>
+
+            <div>
+              <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5 flex items-baseline gap-2">
+                <span>Prazo do grupo</span>
+                <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">opcional · quando tudo deve estar pronto</span>
+              </div>
+              {groupMonthly ? (
+                <input type="text" inputMode="numeric" maxLength={2} value={groupDueDay}
+                  onChange={e => setGroupDueDay(e.target.value.replace(/\D/g, ''))}
+                  placeholder="dia do mês (1-31)"
+                  className="w-full h-12 px-3 rounded-md bg-bg-elevated border border-border text-fg placeholder:text-fg-muted focus-ring" />
+              ) : (
+                <DateInput value={groupDueDate} onChange={setGroupDueDate} />
+              )}
             </div>
           </>
         ) : (

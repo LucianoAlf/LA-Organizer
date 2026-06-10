@@ -76,7 +76,7 @@ Ciclo anterior inacabado **não fecha sozinho**: filhas atrasadas de junho conti
 
 Regra nova nas queries de lista (Hoje, Semana, useAgendaTasks, briefing): **filha nunca aparece como linha solta** — `parent_task_id IS NULL` no filtro base. Filhas entram **pelo card do grupo** (nested select). Isso também esconde as filhas-template de graça (a mãe-template já é escondida pelo filtro de template atual).
 
-Busca do Hoje (modelo A): além das tasks soltas do dia, buscar **mães-instância relevantes pro dia** = mães com (alguma filha `due_date<=dia` não concluída) OU (filha concluída no dia) OU (mãe `due_date=dia`), com filhas embutidas (`tasks!parent_task_id(...)` ordenadas por `sort_position`). O card destaca as filhas do dia/atrasadas e resume o resto ("+N no mês").
+Busca do Hoje (modelo A): além das tasks soltas do dia, buscar **mães-instância relevantes pro dia** = (alguma filha `due_date<=dia` não concluída) OU (filha concluída no dia) OU (**ciclo do mês corrente/atrasado**: mãe aberta com `due_date` no mês do dia ou anterior — visível o mês todo, ciclos futuros já materializados ficam fora) OU (grupo simples sem prazo criado no dia) OU (mãe concluída no dia), com filhas embutidas (`tasks!parent_task_id(...)` ordenadas por `sort_position`). O card destaca as filhas do dia/atrasadas e resume o resto ("+N no mês"). *(Regra refinada no E2E de 10/06 — a original escondia o grupo recém-criado e vazava o ciclo futuro.)*
 
 ---
 

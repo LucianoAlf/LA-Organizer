@@ -24,6 +24,11 @@ interface Props {
   onToggleHabit: (h: Habit) => void;
 
   onPickDay: (d: Date) => void;
+
+  // Grupos de tarefas (2026-06-09)
+  groups?: (TaskForPanel & { subtasks?: TaskForPanel[] })[];
+  onOpenGroup?: (groupId: string) => void;
+  onToggleGroupChild?: (child: TaskForPanel, done: boolean) => void;
 }
 
 export function AgendaDesktopLeftPanel(p: Props) {
@@ -40,6 +45,9 @@ export function AgendaDesktopLeftPanel(p: Props) {
           onEventClick={p.onEventClick}
           onToggleEventDone={p.onToggleEventDone}
           onToggleHabit={p.onToggleHabit}
+          groups={p.groups}
+          onOpenGroup={p.onOpenGroup}
+          onToggleGroupChild={p.onToggleGroupChild}
         />
       )}
       {p.view === 'week' && (

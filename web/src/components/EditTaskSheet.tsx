@@ -228,6 +228,11 @@ export function EditTaskSheet({ open, task, onClose, onTransform, canDelegate }:
     <AdaptiveSheet open={open && Boolean(task)} onClose={onClose} title="Editar tarefa" size="md">
       {task && (
         <form onSubmit={onSave} className="space-y-md">
+          {task.parent_task_id && (
+            <div className="rounded-md border border-border bg-bg-elevated px-3 py-2 text-body-sm text-fg-muted">
+              🗂️ Subtarefa de grupo — prazo e lembretes valem só pra ela.
+            </div>
+          )}
           <label className="block">
             <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Título</div>
             <input
@@ -325,7 +330,8 @@ export function EditTaskSheet({ open, task, onClose, onTransform, canDelegate }:
           )}
 
           {onTransform && task.assigned_to === collaborator?.id
-            && task.status !== 'done' && task.status !== 'cancelled' && task.status !== 'delegated' && (
+            && task.status !== 'done' && task.status !== 'cancelled' && task.status !== 'delegated'
+            && !task.is_group && !task.parent_task_id && (
             <div className="border-t border-border pt-3">
               <div className="text-label uppercase tracking-wide text-fg-muted mb-2">Transformar em</div>
               <div className="flex gap-2">

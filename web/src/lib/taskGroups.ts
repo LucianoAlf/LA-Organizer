@@ -28,7 +28,7 @@ export interface CreateGroupInput {
 
 const GROUP_SELECT =
   'id, title, status, context, due_date, due_time, is_group, parent_task_id, ' +
-  'recurrence_rule, recurrence_parent_id, sort_position, assigned_to, created_by, completed_at, ' +
+  'recurrence_rule, recurrence_parent_id, sort_position, assigned_to, created_by, completed_at, created_at, ' +
   'subtasks:tasks!parent_task_id(id, title, status, due_date, due_time, sort_position, ' +
   'parent_task_id, recurrence_parent_id, assigned_to, created_by, completed_at, ' +
   'task_reminders(remind_at, sent_at))';
@@ -151,9 +151,16 @@ export async function fetchGroupsForDay(collabId: string, ymd: string): Promise<
       (k.status !== 'done' && k.status !== 'cancelled' && k.due_date && k.due_date <= ymd) ||
       (k.status === 'done' && (k.completed_at ?? '').slice(0, 10) === ymd)
     );
-    const motherToday = g.due_date === ymd && g.status !== 'done';
+    // Ciclo do MÊS corrente (ou atrasado de meses anteriores) fica visível o mês todo;
+    // ciclos futuros já materializados (ex.: julho criado em junho) ficam fora.
+    // (E2E 10/06: o critério "criada hoje" vazava o ciclo de julho → card duplicado.)
+    const motherActiveCycle = g.status !== 'done' && g.due_date != null
+      && g.due_date.slice(0, 7) <= ymd.slice(0, 7);
+    // Grupo simples SEM prazo recém-criado aparece no dia da criação ("cadê meu grupo?").
+    const motherCreatedToday = g.status !== 'done' && g.due_date == null
+      && (g.created_at ?? '').slice(0, 10) === ymd;
     const motherDoneToday = g.status === 'done' && (g.completed_at ?? '').slice(0, 10) === ymd;
-    return kidRelevant || motherToday || motherDoneToday;
+    return kidRelevant || motherActiveCycle || motherCreatedToday || motherDoneToday;
   });
 }
 
@@ -253,6 +260,39 @@ export async function reorderSubtasks(ordered: Array<{ id: string; sort_position
   await Promise.all(ordered.map((o) =>
     supabase.from('tasks').update({ sort_position: o.sort_position }).eq('id', o.id)
   ));
+}
+
+/** Renomeia o grupo (instância); escopo 'this_and_future' renomeia o template também. */
+export async function renameGroup(group: Task, newTitle: string, scope: 'only_this' | 'this_and_future'): Promise<void> {
+  const title = newTitle.trim().slice(0, 200);
+  if (!title) return;
+  const { error } = await supabase.from('tasks').update({ title }).eq('id', group.id);
+  if (error) throw error;
+  if (scope === 'this_and_future' && group.recurrence_parent_id) {
+    await supabase.from('tasks').update({ title }).eq('id', group.recurrence_parent_id);
+  }
+}
+
+/**
+ * Apaga o grupo. 'only_this' = só a instância (cascade remove filhas).
+ * 'this_and_future' = também o template (cascade remove filhas-template) e as
+ * instâncias FUTURAS não concluídas da série.
+ */
+export async function deleteGroup(group: Task, scope: 'only_this' | 'this_and_future'): Promise<void> {
+  if (scope === 'this_and_future' && group.recurrence_parent_id) {
+    // Instâncias futuras não concluídas da série (exceto a corrente, apagada abaixo).
+    const { data: futureInstances } = await supabase
+      .from('tasks').select('id, status')
+      .eq('recurrence_parent_id', group.recurrence_parent_id)
+      .neq('id', group.id)
+      .neq('status', 'done');
+    for (const inst of futureInstances ?? []) {
+      await supabase.from('tasks').delete().eq('id', inst.id);
+    }
+    await supabase.from('tasks').delete().eq('id', group.recurrence_parent_id); // template (cascade filhas-template)
+  }
+  const { error } = await supabase.from('tasks').delete().eq('id', group.id); // instância corrente (cascade filhas)
+  if (error) throw error;
 }
 
 export { cycleLabel };

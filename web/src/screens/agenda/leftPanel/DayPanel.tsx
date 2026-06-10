@@ -3,6 +3,7 @@ import { Clock, ListTodo, Flame, CheckCheck, AlertTriangle, AlarmClock, Pin } fr
 import { StatCard } from '../../../components/StatCard';
 import { CompactEventRow } from './rows/CompactEventRow';
 import { CompactTaskRow } from './rows/CompactTaskRow';
+import { GroupRow } from './rows/GroupRow';
 import { CollapsibleSection } from './CollapsibleSection';
 import type { TaskForPanel } from '../hooks/useAgendaTasks';
 import type { EventForGrid } from '../hooks/useAgendaEvents';
@@ -24,6 +25,10 @@ interface Props {
   onEventClick: (e: EventForGrid) => void;
   onToggleEventDone: (e: EventForGrid) => void;
   onToggleHabit: (h: Habit) => void;
+  // Grupos de tarefas (2026-06-09) — opcionais, aditivos
+  groups?: (TaskForPanel & { subtasks?: TaskForPanel[] })[];
+  onOpenGroup?: (groupId: string) => void;
+  onToggleGroupChild?: (child: TaskForPanel, done: boolean) => void;
 }
 
 function classifyOverdue(dueIso: string, todayIso: string): 'plus4' | 'd2_3' | 'd1' | 'today' | 'future' {
@@ -47,6 +52,10 @@ function overdueDays(dueIso: string | null | undefined, todayIso: string): numbe
 
 export function DayPanel(p: Props) {
   const todayIso = p.currentDate.toISOString().slice(0, 10);
+  const dayGroups = (p.groups ?? []).filter(g =>
+    g.due_date === todayIso ||
+    (g.subtasks ?? []).some(k => k.due_date && k.due_date <= todayIso && k.status !== 'done')
+  );
 
   const inWindow = useMemo(() => p.tasks.filter(t => {
     const d = t.scheduled_date ?? t.due_date;
@@ -200,6 +209,23 @@ export function DayPanel(p: Props) {
           title="Tarefas"
           meta={pending.length > 0 ? String(pending.length) : undefined}
         >
+          {/* Grupos de tarefas (2026-06-09): aparecem antes das tasks soltas */}
+          {dayGroups.length > 0 && (
+            <>
+              <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-fg-muted font-semibold px-1 pt-1 pb-0.5">
+                Grupos
+              </div>
+              {dayGroups.map(g => (
+                <GroupRow
+                  key={g.id}
+                  group={g}
+                  dayYmd={todayIso}
+                  onToggleChild={(child, done) => p.onToggleGroupChild?.(child, done)}
+                  onOpen={() => p.onOpenGroup?.(g.id)}
+                />
+              ))}
+            </>
+          )}
           {/* Grupo: +4 dias atrasadas */}
           {groups.plus4.length > 0 && (
             <>

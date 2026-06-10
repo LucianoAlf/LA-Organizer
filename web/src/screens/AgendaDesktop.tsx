@@ -13,9 +13,11 @@ import { QuickCreateSheet } from '../components/QuickCreateSheet';
 import { Fab } from '../components/Fab';
 import { EventEditDrawer } from './agenda/components/EventEditDrawer';
 import { TaskEditDrawer } from './agenda/components/TaskEditDrawer';
+import { TaskGroupSheet } from '../components/TaskGroupSheet';
 import { DelegateTaskSheet } from '../components/DelegateTaskSheet';
 import { ConvertToEventSheet } from '../components/ConvertToEventSheet';
 import { hasCoordLevel } from '../lib/permissions';
+import { toggleChildWithCascade } from '../lib/taskGroups';
 import { useAgendaFilters } from './agenda/hooks/useAgendaFilters';
 import { useAgendaEvents, type EventForGrid } from './agenda/hooks/useAgendaEvents';
 import { useAgendaTasks, type TaskForPanel } from './agenda/hooks/useAgendaTasks';
@@ -87,6 +89,7 @@ export function AgendaDesktop() {
   const [editingTask, setEditingTask] = useState<TaskForPanel | null>(null);
   const [delegateTask, setDelegateTask] = useState<TaskForPanel | null>(null);
   const [convertTask, setConvertTask] = useState<TaskForPanel | null>(null);
+  const [openGroupId, setOpenGroupId] = useState<string | null>(null);
   const canDelegate = collaborator ? hasCoordLevel(collaborator) : false;
 
   const { from, to } = useMemo(() => {
@@ -96,7 +99,7 @@ export function AgendaDesktop() {
   }, [view, currentDate]);
 
   const { events } = useAgendaEvents({ from, to, filters });
-  const { tasks } = useAgendaTasks({ from, to, filters });
+  const { tasks, groups } = useAgendaTasks({ from, to, filters });
 
   // Contagens por contexto — refletem a janela visível do painel atual.
   const contextCounts = useMemo(() => {
@@ -294,6 +297,7 @@ export function AgendaDesktop() {
             events={eventsFiltered}
             habitsDay={[]}
             habitsWeek={[]}
+            groups={groups}
             onTaskClick={(t) => setEditingTask(t)}
             onToggleTaskDone={(t) =>
               updateTask.mutate({
@@ -310,6 +314,16 @@ export function AgendaDesktop() {
             }
             onToggleHabit={() => {}}
             onPickDay={(d) => { setDate(d); setView('day'); }}
+            onOpenGroup={(id) => setOpenGroupId(id)}
+            onToggleGroupChild={async (child, done) => {
+              try {
+                await toggleChildWithCascade(child as unknown as Parameters<typeof toggleChildWithCascade>[0], done);
+                qc.invalidateQueries({ queryKey: ['agenda-tasks'] });
+                qc.invalidateQueries({ queryKey: ['task-groups'] });
+              } catch (e) {
+                console.error('[AgendaDesktop] toggleChildWithCascade err:', e);
+              }
+            }}
           />
         }
         rightRail={null}
@@ -403,6 +417,12 @@ export function AgendaDesktop() {
 
       <DelegateTaskSheet open={Boolean(delegateTask)} task={delegateTask} onClose={() => setDelegateTask(null)} />
       <ConvertToEventSheet open={Boolean(convertTask)} task={convertTask} onClose={() => setConvertTask(null)} />
+      <TaskGroupSheet
+        open={Boolean(openGroupId)}
+        groupId={openGroupId}
+        onClose={() => setOpenGroupId(null)}
+        onEditChild={(child) => { setOpenGroupId(null); setEditingTask(child as unknown as TaskForPanel); }}
+      />
 
     </>
   );

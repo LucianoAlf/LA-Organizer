@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase, supabaseConfigured } from '../../../lib/supabase';
 import { useAuth } from '../../../contexts/AuthContext';
+import { fetchGroupsForDay } from '../../../lib/taskGroups';
 import type { AgendaFilters } from './useAgendaFilters';
 
 export interface TaskForPanel {
@@ -27,6 +28,9 @@ export interface TaskForPanel {
   recurrence_rule?: string | null;
   recurrence_parent_id?: string | null;
   project_id?: string | null;
+  // Grupos de tarefas (2026-06-09)
+  is_group?: boolean;
+  subtasks?: TaskForPanel[];
 }
 
 // Sprint Agenda Desktop — tasks no range [from,to]. Espelha padrão de
@@ -44,15 +48,20 @@ export function useAgendaTasks(params: { from: Date; to: Date; filters: AgendaFi
     queryKey: ['agenda-tasks', collaboratorId, fromYmd, toYmd],
     enabled: Boolean(collaboratorId && supabaseConfigured),
     queryFn: async () => {
+      // Grupos de tarefas (2026-06-09): parent_task_id/is_group no select; filhas e mães
+      // ficam fora da lista solta (entram pelo GroupRow via hook de grupos).
       const { data, error } = await supabase
         .from('tasks')
-        .select('id, title, description, context, status, scheduled_date, due_date, due_time, assigned_to, created_by, eisenhower_quadrant, remind_at, source, created_at, recurrence_rule, recurrence_parent_id, project_id')
+        .select('id, title, description, context, status, scheduled_date, due_date, due_time, assigned_to, created_by, eisenhower_quadrant, remind_at, source, created_at, recurrence_rule, recurrence_parent_id, project_id, parent_task_id, is_group')
         .or(`assigned_to.eq.${collaboratorId},and(created_by.eq.${collaboratorId},assigned_to.neq.${collaboratorId})`)
         .neq('status', 'cancelled')
         // Sprint 29.1 — esconde teste/arquivado
         .eq('data_classification', 'real')
         // Sprint 29.4 — esconde TEMPLATES recorrentes (mostra só instâncias + não-recorrentes)
         .or('recurrence_rule.is.null,recurrence_parent_id.not.is.null')
+        // Grupos (2026-06-09): exclui filhas (parent_task_id != null) e mães (is_group=true)
+        .is('parent_task_id', null)
+        .eq('is_group', false)
         .gte('due_date', fromYmd)
         .lte('due_date', toYmd)
         .order('due_date', { ascending: true });
@@ -93,5 +102,47 @@ export function useAgendaTasks(params: { from: Date; to: Date; filters: AgendaFi
     });
   }, [data, collaboratorId, params.filters]);
 
-  return { tasks, isLoading, error };
+  // Grupos de tarefas (2026-06-09): query separada de grupos relevantes pro dia corrente.
+  // O DayPanel mostra grupos do fromYmd (dia selecionado em view=day).
+  const { data: groupsData } = useQuery({
+    queryKey: ['task-groups', collaboratorId, fromYmd],
+    enabled: Boolean(collaboratorId && supabaseConfigured),
+    queryFn: () => fetchGroupsForDay(collaboratorId!, fromYmd),
+  });
+
+  const groups = useMemo<TaskForPanel[]>(() => {
+    if (!groupsData) return [];
+    // Converte Task[] (do taskGroups) em TaskForPanel[] para o DayPanel
+    return (groupsData as Array<{
+      id: string; title: string; context: 'work' | 'personal'; status: string;
+      due_date: string | null; due_time: string | null; scheduled_date?: string | null;
+      recurrence_rule?: string | null; recurrence_parent_id?: string | null;
+      subtasks?: TaskForPanel[];
+    }>).map(g => ({
+      id: g.id,
+      title: g.title,
+      context: g.context,
+      status: g.status as TaskForPanel['status'],
+      scheduled_date: g.scheduled_date ?? null,
+      due_date: g.due_date,
+      due_time: g.due_time ?? null,
+      delegated_to: null,
+      is_group: true,
+      recurrence_rule: g.recurrence_rule ?? null,
+      recurrence_parent_id: g.recurrence_parent_id ?? null,
+      subtasks: (g.subtasks ?? []).map(k => ({
+        id: k.id,
+        title: k.title,
+        context: g.context,
+        status: k.status as TaskForPanel['status'],
+        scheduled_date: null,
+        due_date: (k as unknown as { due_date?: string | null }).due_date ?? null,
+        due_time: (k as unknown as { due_time?: string | null }).due_time ?? null,
+        delegated_to: null,
+        is_group: false,
+      })),
+    }));
+  }, [groupsData]);
+
+  return { tasks, isLoading, error, groups };
 }

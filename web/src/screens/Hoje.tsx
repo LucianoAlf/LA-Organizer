@@ -1,5 +1,9 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { fetchGroupsForDay, toggleChildWithCascade } from '../lib/taskGroups';
+import { TaskGroupCard } from '../components/TaskGroupCard';
+import { TaskGroupSheet } from '../components/TaskGroupSheet';
+import { showToast } from '../components/Toast';
 import { useTaskTransform } from '../hooks/useTaskTransform';
 import { ListTodo, CalendarClock, Check, Flame } from 'lucide-react';
 import { DndContext, closestCenter, type DragEndEvent } from '@dnd-kit/core';
@@ -82,13 +86,17 @@ async function fetchHabitsToday(collabId: string): Promise<HabitToday[]> {
 // concluídas dentro do dia da view (completed_at no range), independente
 // de due_date. Merge dedup. View "Concluídas" passa a contar correto.
 async function fetchTasksToday(collabId: string, viewDate: string, isToday: boolean): Promise<Task[]> {
-  const baseSelect = 'id, title, status, context, priority, category, action_type, source, due_date, due_time, scheduled_date, remind_at, eisenhower_quadrant, sort_position, project_id, assigned_to, created_by, completed_at, recurrence_rule, recurrence_parent_id, projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(full_name), task_reminders(remind_at, sent_at)';
+  // Grupos de tarefas (2026-06-09): parent_task_id/is_group adicionados ao select;
+  // filhas e mães ficam fora das listas soltas (entram pelo TaskGroupCard).
+  const baseSelect = 'id, title, status, context, priority, category, action_type, source, due_date, due_time, scheduled_date, remind_at, eisenhower_quadrant, sort_position, project_id, assigned_to, created_by, completed_at, recurrence_rule, recurrence_parent_id, parent_task_id, is_group, projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(full_name), task_reminders(remind_at, sent_at)';
 
   let q = supabase
     .from('tasks')
     .select(baseSelect)
     .eq('assigned_to', collabId)
-    .neq('status', 'cancelled');
+    .neq('status', 'cancelled')
+    .is('parent_task_id', null)
+    .eq('is_group', false);
   if (isToday) {
     q = q.or(`due_date.eq.${viewDate},and(due_date.lt.${viewDate},status.not.in.(done,cancelled))`);
   } else {
@@ -116,6 +124,8 @@ async function fetchTasksToday(collabId: string, viewDate: string, isToday: bool
     .select(baseSelect)
     .eq('assigned_to', collabId)
     .eq('status', 'done')
+    .is('parent_task_id', null)
+    .eq('is_group', false)
     .gte('completed_at', startUtc)
     .lt('completed_at', endUtc);
   if (doneErr) throw doneErr;
@@ -183,6 +193,9 @@ export function Hoje() {
   const [reschedulingTask, setReschedulingTask] = useState<Task | null>(null);
   const [doneOpen, setDoneOpen] = useState(false);
 
+  // Grupos de tarefas (2026-06-09).
+  const [openGroupId, setOpenGroupId] = useState<string | null>(null);
+
   const realToday = todaySP();
   // Sprint 22.49 — viewDate navegavel: chevrons + date picker no header.
   const [viewDate, setViewDate] = useState(realToday);
@@ -207,6 +220,22 @@ export function Hoje() {
     queryKey: ['habits', 'hoje', collaborator?.id],
     queryFn: () => collaborator ? fetchHabitsToday(collaborator.id) : Promise.resolve([] as HabitToday[]),
     enabled: Boolean(collaborator?.id && supabaseConfigured),
+  });
+
+  // Grupos de tarefas (2026-06-09): grupos relevantes pro dia visualizado.
+  const groupsQ = useQuery({
+    queryKey: ['task-groups', collaborator?.id, viewDate],
+    enabled: Boolean(collaborator?.id),
+    queryFn: () => fetchGroupsForDay(collaborator!.id, viewDate),
+  });
+
+  const toggleChildMut = useMutation({
+    mutationFn: ({ child, done }: { child: Task; done: boolean }) => toggleChildWithCascade(child, done),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ['task-groups'] });
+      qc.invalidateQueries({ queryKey: ['tasks'] });
+      if (r.groupCompleted) showToast({ kind: 'success', title: '🎉 Grupo concluído!' });
+    },
   });
 
   const toggleHabit = useMutation({
@@ -633,6 +662,12 @@ export function Hoje() {
         </section>
       ) : (
         <div className="space-y-lg">
+          {/* Grupos de tarefas (2026-06-09): só nas abas Trabalho/Pessoal, não Delegadas. */}
+          {tab !== 'delegated' && (groupsQ.data ?? []).filter(g => g.context === tab).map(g => (
+            <TaskGroupCard key={g.id} group={g} viewYmd={viewDate}
+              onToggleChild={(child, done) => toggleChildMut.mutate({ child, done })}
+              onOpen={(grp) => setOpenGroupId(grp.id)} />
+          ))}
           {overdue4plus.length > 0 && (
             <section className="space-y-sm">
               <div className="px-1 text-label uppercase tracking-wide text-danger flex items-center gap-1">
@@ -757,6 +792,13 @@ export function Hoje() {
       <EditEventSheet open={Boolean(editingEvent)} event={editingEvent} onClose={() => setEditingEvent(null)} />
       <RescheduleSheet open={Boolean(reschedulingTask)} task={reschedulingTask} onClose={() => setReschedulingTask(null)} />
       <EditTaskSheet open={Boolean(editingTask)} task={editingTask} onClose={() => setEditingTask(null)} onTransform={tt.onEditSheetTransform} canDelegate={tt.canDelegateAny} />
+      {/* Grupos de tarefas (2026-06-09): sheet de detalhe do grupo. */}
+      <TaskGroupSheet
+        open={Boolean(openGroupId)}
+        groupId={openGroupId}
+        onClose={() => setOpenGroupId(null)}
+        onEditChild={(child) => { setOpenGroupId(null); setEditingTask(child); }}
+      />
       {tt.sheets}
     </div>
   );

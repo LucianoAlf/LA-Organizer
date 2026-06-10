@@ -6,11 +6,14 @@ import { useAuth } from '../contexts/AuthContext';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { todaySP, weekDaysMonSat, dowShort, brShort } from '../utils/date';
 import { fetchEventsForRange, formatEventTimeRange, eventLocalYmd } from '../lib/events';
+import { fetchGroupsForDay, toggleChildWithCascade } from '../lib/taskGroups';
 import { LoadingState } from '../components/LoadingState';
 import { EmptyState } from '../components/EmptyState';
 import { EmptyDay } from '../components/EmptyDay';
 import { CategoryTag } from '../components/CategoryTag';
 import { TaskCheckbox } from '../components/TaskCheckbox';
+import { TaskGroupCard } from '../components/TaskGroupCard';
+import { TaskGroupSheet } from '../components/TaskGroupSheet';
 import { Fab } from '../components/Fab';
 import { QuickCreateSheet } from '../components/QuickCreateSheet';
 import { EditTaskSheet } from '../components/EditTaskSheet';
@@ -31,11 +34,15 @@ type WeekTask = Task & {
 async function fetchWeekTasks(collabId: string, start: string, end: string): Promise<WeekTask[]> {
   // Sprint 22.34m — Semana inclui delegadas (criadas por mim com assignee !== eu).
   // OR no Supabase: tasks atribuídas a mim OU criadas por mim e atribuídas a outro.
+  // Grupos de tarefas (2026-06-09): parent_task_id/is_group no select; filhas e mães
+  // ficam fora das listas soltas (entram pelo TaskGroupCard).
   const { data, error } = await supabase
     .from('tasks')
-    .select('id, title, status, context, priority, category, due_date, due_time, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, recurrence_rule, recurrence_parent_id, projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(id, full_name), task_reminders(remind_at, sent_at)')
+    .select('id, title, status, context, priority, category, due_date, due_time, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, recurrence_rule, recurrence_parent_id, parent_task_id, is_group, projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(id, full_name), task_reminders(remind_at, sent_at)')
     .or(`assigned_to.eq.${collabId},and(created_by.eq.${collabId},assigned_to.neq.${collabId})`)
     .neq('status', 'cancelled')
+    .is('parent_task_id', null)
+    .eq('is_group', false)
     .gte('due_date', start)
     .lte('due_date', end)
     .order('remind_at', { ascending: true, nullsFirst: false })
@@ -178,6 +185,34 @@ export function Semana() {
     },
   });
 
+  // Grupos de tarefas (2026-06-09): busca grupos de todos os dias da semana visível.
+  const [openGroupId, setOpenGroupId] = useState<string | null>(null);
+
+  const groupsQ = useQuery({
+    queryKey: ['task-groups', 'semana', collaborator?.id, start, end],
+    enabled: Boolean(collaborator?.id),
+    queryFn: async () => {
+      const entries = await Promise.all(
+        days.map(async d => [d, await fetchGroupsForDay(collaborator!.id, d)] as [string, Task[]])
+      );
+      return Object.fromEntries(entries) as Record<string, Task[]>;
+    },
+  });
+
+  const groupsByDay = useMemo(() => {
+    const map = new Map<string, Task[]>();
+    for (const d of days) map.set(d, groupsQ.data?.[d] ?? []);
+    return map;
+  }, [groupsQ.data, days]);
+
+  const toggleChildMut = useMutation({
+    mutationFn: ({ child, done }: { child: Task; done: boolean }) => toggleChildWithCascade(child, done),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['task-groups'] });
+      qc.invalidateQueries({ queryKey: ['tasks', 'semana'] });
+    },
+  });
+
   return (
     <div className="space-y-md">
       {/* Sprint 22.49 — navegacao por semana (-7/+7 dias). */}
@@ -241,10 +276,11 @@ export function Semana() {
           {days.map(d => {
             const dayTasks = tasksByDay.get(d) ?? [];
             const dayEvents = eventsByDay.get(d) ?? [];
+            const dayGroups = (tab === 'work' || tab === 'personal') ? (groupsByDay.get(d) ?? []) : [];
             const isToday = d === today;
             const isPast = d < today;
             const { total, done, overdue } = dayCounts(dayTasks, dayEvents, today);
-            const isEmpty = dayEvents.length === 0 && dayTasks.length === 0;
+            const isEmpty = dayEvents.length === 0 && dayTasks.length === 0 && dayGroups.length === 0;
 
             return (
               <section
@@ -286,6 +322,15 @@ export function Semana() {
                   <EmptyDay />
                 ) : (
                   <div className="mt-3 space-y-2">
+                    {dayGroups.map(g => (
+                      <TaskGroupCard
+                        key={g.id}
+                        group={g}
+                        viewYmd={d}
+                        onToggleChild={(child, done) => toggleChildMut.mutate({ child, done })}
+                        onOpen={(grp) => setOpenGroupId(grp.id)}
+                      />
+                    ))}
                     {dayEvents.length > 0 && (
                       <ul className="space-y-2">
                         {dayEvents.map(e => {
@@ -403,6 +448,12 @@ export function Semana() {
       <QuickCreateSheet open={createOpen} onClose={() => setCreateOpen(false)} defaultDueDate={today} />
       <EditTaskSheet open={Boolean(editingTask)} task={editingTask} onClose={() => setEditingTask(null)} onTransform={tt.onEditSheetTransform} canDelegate={tt.canDelegateAny} />
       <EditEventSheet open={Boolean(editingEvent)} event={editingEvent} onClose={() => setEditingEvent(null)} />
+      <TaskGroupSheet
+        open={Boolean(openGroupId)}
+        groupId={openGroupId}
+        onClose={() => setOpenGroupId(null)}
+        onEditChild={(child) => setEditingTask(child)}
+      />
       {tt.sheets}
     </div>
   );
