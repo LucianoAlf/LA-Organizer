@@ -767,81 +767,54 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
                 <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">cada uma com seu prazo</span>
               </div>
               {groupChildren.map((c, i) => (
-                <div key={i} className={['flex items-center gap-2 rounded-md border px-3 py-2 mb-1.5 bg-bg-elevated',
-                  editingChildIdx === i ? 'border-tom' : 'border-border'].join(' ')}>
-                  {/* Clicar abre a subtarefa no box de edição abaixo (pedido Alf 10/06). */}
-                  <button type="button"
-                    onClick={() => { setDraftChild({ ...c }); setEditingChildIdx(i); }}
-                    className="flex items-center gap-2 min-w-0 flex-1 text-left focus-ring rounded-sm">
-                    <span className="inline-block h-4 w-4 rounded-full border-2 border-fg-muted shrink-0" aria-hidden />
-                    <span className="text-body-sm min-w-0 flex-1 truncate">{c.title}</span>
-                    {c.day && <span className="text-[11px] px-2 py-0.5 rounded-full bg-bg-elevated text-tom shrink-0">dia {c.day}</span>}
-                    {c.time && <span className="text-[11px] px-2 py-0.5 rounded-full bg-bg-elevated text-fg-secondary shrink-0">🕐 {c.time}</span>}
-                    {c.reminders.length > 0 && <span className="text-[11px] px-2 py-0.5 rounded-full bg-bg-elevated text-fg-secondary shrink-0">🔔 {c.reminders.length}</span>}
-                  </button>
-                  <button type="button" aria-label="Remover"
-                    onClick={() => {
-                      setGroupChildren(prev => prev.filter((_, j) => j !== i));
-                      if (editingChildIdx === i) { setEditingChildIdx(null); setDraftChild({ title: '', day: '', time: '', reminders: [] }); }
-                      else if (editingChildIdx != null && editingChildIdx > i) setEditingChildIdx(editingChildIdx - 1);
-                    }}
-                    className="text-fg-muted hover:text-danger p-0.5">✕</button>
-                </div>
-              ))}
-              <div className="rounded-md border border-dashed border-border p-3 space-y-2 bg-bg-elevated/40">
-                <div className="flex items-center gap-2">
-                  <span className="inline-block h-4 w-4 rounded-full border-2 border-fg-muted shrink-0" aria-hidden />
-                  <input type="text" maxLength={200} value={draftChild.title}
-                    onChange={e => setDraftChild(d => ({ ...d, title: e.target.value }))}
-                    placeholder="Ex.: Cartão Mercado Pago"
-                    className="flex-1 min-w-0 bg-transparent text-body-sm text-fg placeholder:text-fg-muted focus:outline-none" />
-                </div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <input type="text" inputMode="numeric" maxLength={2} value={draftChild.day}
-                    onChange={e => setDraftChild(d => ({ ...d, day: e.target.value.replace(/\D/g, '') }))}
-                    placeholder="📅 dia"
-                    className="w-20 h-8 px-2 rounded-full border border-border bg-bg-surface text-body-sm text-fg focus:outline-none focus:border-tom" />
-                  <div className="w-24"><TimeInput value={draftChild.time} onChange={(t) => setDraftChild(d => ({ ...d, time: t }))} /></div>
-                  {editingChildIdx != null && (
-                    <button type="button"
-                      onClick={() => { setEditingChildIdx(null); setDraftChild({ title: '', day: '', time: '', reminders: [] }); }}
-                      className="ml-auto h-8 px-3 rounded-full border border-border text-fg-muted hover:text-fg text-body-sm focus-ring">
-                      Cancelar
-                    </button>
-                  )}
-                  <button type="button" disabled={!draftChild.title.trim()}
-                    onClick={() => {
-                      if (editingChildIdx != null) {
-                        setGroupChildren(prev => prev.map((c, j) => (j === editingChildIdx ? draftChild : c)));
+                editingChildIdx === i ? (
+                  /* Edição NO LUGAR: a própria linha vira o editor (Alf 10/06 — sem item duplicado). */
+                  <div key={i} className="mb-1.5">
+                    <GroupChildEditor
+                      draft={draftChild}
+                      onDraft={setDraftChild}
+                      editing
+                      submitLabel="Salvar"
+                      onSubmit={() => {
+                        setGroupChildren(prev => prev.map((cc, j) => (j === i ? draftChild : cc)));
                         setEditingChildIdx(null);
-                      } else {
-                        setGroupChildren(prev => [...prev, draftChild]);
-                      }
-                      setDraftChild({ title: '', day: '', time: '', reminders: [] });
-                    }}
-                    className={[(editingChildIdx != null ? '' : 'ml-auto'), 'h-8 px-4 rounded-full bg-tom text-black text-body-sm font-semibold disabled:opacity-50 focus-ring'].join(' ')}>
-                    {editingChildIdx != null ? 'Salvar' : 'Adicionar'}
-                  </button>
-                </div>
-                {/* Lembretes da subtarefa — mesmos presets do RemindersField das tarefas. */}
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-[10px] uppercase tracking-wide text-fg-muted mr-0.5">🔔 Lembretes</span>
-                  {GROUP_REMINDER_PRESETS.map(p => {
-                    const on = draftChild.reminders.includes(p.min);
-                    return (
-                      <button key={p.min} type="button"
-                        onClick={() => setDraftChild(d => ({
-                          ...d,
-                          reminders: on ? d.reminders.filter(m => m !== p.min) : [...d.reminders, p.min],
-                        }))}
-                        className={['h-7 px-2.5 rounded-full border text-[11px] focus-ring transition-colors',
-                          on ? 'border-tom text-tom bg-tom/10' : 'border-border text-fg-muted hover:text-fg'].join(' ')}>
-                        {p.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
+                        setDraftChild({ title: '', day: '', time: '', reminders: [] });
+                      }}
+                      onCancel={() => {
+                        setEditingChildIdx(null);
+                        setDraftChild({ title: '', day: '', time: '', reminders: [] });
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <div key={i} className="flex items-center gap-2 rounded-md border border-border px-3 py-2 mb-1.5 bg-bg-elevated">
+                    <button type="button"
+                      onClick={() => { setDraftChild({ ...c }); setEditingChildIdx(i); }}
+                      className="flex items-center gap-2 min-w-0 flex-1 text-left focus-ring rounded-sm">
+                      <span className="inline-block h-4 w-4 rounded-full border-2 border-fg-muted shrink-0" aria-hidden />
+                      <span className="text-body-sm min-w-0 flex-1 truncate">{c.title}</span>
+                      {c.day && <span className="text-[11px] px-2 py-0.5 rounded-full bg-bg-elevated text-tom shrink-0">dia {c.day}</span>}
+                      {c.time && <span className="text-[11px] px-2 py-0.5 rounded-full bg-bg-elevated text-fg-secondary shrink-0">🕐 {c.time}</span>}
+                      {c.reminders.length > 0 && <span className="text-[11px] px-2 py-0.5 rounded-full bg-bg-elevated text-fg-secondary shrink-0">🔔 {c.reminders.length}</span>}
+                    </button>
+                    <button type="button" aria-label="Remover"
+                      onClick={() => setGroupChildren(prev => prev.filter((_, j) => j !== i))}
+                      className="text-fg-muted hover:text-danger p-0.5">✕</button>
+                  </div>
+                )
+              ))}
+              {/* Box de ADICIONAR só aparece fora do modo edição (evita dois editores na tela). */}
+              {editingChildIdx == null && (
+                <GroupChildEditor
+                  draft={draftChild}
+                  onDraft={setDraftChild}
+                  submitLabel="Adicionar"
+                  onSubmit={() => {
+                    setGroupChildren(prev => [...prev, draftChild]);
+                    setDraftChild({ title: '', day: '', time: '', reminders: [] });
+                  }}
+                />
+              )}
             </div>
 
             <fieldset>
@@ -1121,5 +1094,71 @@ function KindButton({
       </div>
       <div className="text-[9.5px] text-fg-muted leading-tight truncate max-w-full">{hint}</div>
     </button>
+  );
+}
+
+// Editor de subtarefa do GRUPO — usado em DOIS contextos sem duplicar JSX:
+// (a) box tracejado de ADICIONAR (fim da lista); (b) edição NO LUGAR quando o
+// usuário clica numa subtarefa já adicionada (borda verde, Salvar/Cancelar).
+type GroupChildDraft = { title: string; day: string; time: string; reminders: number[] };
+function GroupChildEditor({
+  draft, onDraft, submitLabel, onSubmit, onCancel, editing,
+}: {
+  draft: GroupChildDraft;
+  onDraft: React.Dispatch<React.SetStateAction<GroupChildDraft>>;
+  submitLabel: string;
+  onSubmit: () => void;
+  onCancel?: () => void;
+  editing?: boolean;
+}) {
+  return (
+    <div className={[
+      'rounded-md p-3 space-y-2',
+      editing ? 'border border-tom bg-bg-elevated/60' : 'border border-dashed border-border bg-bg-elevated/40',
+    ].join(' ')}>
+      <div className="flex items-center gap-2">
+        <span className="inline-block h-4 w-4 rounded-full border-2 border-fg-muted shrink-0" aria-hidden />
+        <input type="text" maxLength={200} value={draft.title}
+          onChange={e => onDraft(d => ({ ...d, title: e.target.value }))}
+          placeholder="Ex.: Cartão Mercado Pago"
+          autoFocus={editing}
+          className="flex-1 min-w-0 bg-transparent text-body-sm text-fg placeholder:text-fg-muted focus:outline-none" />
+      </div>
+      <div className="flex items-center gap-2 flex-wrap">
+        <input type="text" inputMode="numeric" maxLength={2} value={draft.day}
+          onChange={e => onDraft(d => ({ ...d, day: e.target.value.replace(/\D/g, '') }))}
+          placeholder="📅 dia"
+          className="w-20 h-8 px-2 rounded-full border border-border bg-bg-surface text-body-sm text-fg focus:outline-none focus:border-tom" />
+        <div className="w-24"><TimeInput value={draft.time} onChange={(t) => onDraft(d => ({ ...d, time: t }))} /></div>
+        {onCancel && (
+          <button type="button" onClick={onCancel}
+            className="ml-auto h-8 px-3 rounded-full border border-border text-fg-muted hover:text-fg text-body-sm focus-ring">
+            Cancelar
+          </button>
+        )}
+        <button type="button" disabled={!draft.title.trim()} onClick={onSubmit}
+          className={[(onCancel ? '' : 'ml-auto'), 'h-8 px-4 rounded-full bg-tom text-black text-body-sm font-semibold disabled:opacity-50 focus-ring'].join(' ')}>
+          {submitLabel}
+        </button>
+      </div>
+      {/* Lembretes — mesmos presets do RemindersField das tarefas. */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className="text-[10px] uppercase tracking-wide text-fg-muted mr-0.5">🔔 Lembretes</span>
+        {GROUP_REMINDER_PRESETS.map(p => {
+          const on = draft.reminders.includes(p.min);
+          return (
+            <button key={p.min} type="button"
+              onClick={() => onDraft(d => ({
+                ...d,
+                reminders: on ? d.reminders.filter(m => m !== p.min) : [...d.reminders, p.min],
+              }))}
+              className={['h-7 px-2.5 rounded-full border text-[11px] focus-ring transition-colors',
+                on ? 'border-tom text-tom bg-tom/10' : 'border-border text-fg-muted hover:text-fg'].join(' ')}>
+              {p.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
