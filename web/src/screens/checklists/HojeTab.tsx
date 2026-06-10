@@ -11,7 +11,6 @@ import { useState, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../lib/supabase';
-import { fetchPersonalChecklists } from '../../lib/personalChecklists';
 import { fetchPersonalChecklistsHoje } from '../../lib/personalCompletions';
 import { Button } from '../../components/Button';
 import { PersonalChecklistCard } from '../../components/PersonalChecklistCard';
@@ -116,7 +115,10 @@ function TrabalhoView({ onCreateClick }: { onCreateClick: () => void }) {
   const lists = useQuery({
     queryKey: ['personal-checklists', collabId, 'work'],
     enabled: !!collabId,
-    queryFn: () => fetchPersonalChecklists(collabId!, 'work'),
+    // Fetch HOJE (overlay de completions por ciclo) — o estático lia is_done da tabela
+    // enquanto o toggle de lista recorrente gravava em item_completions (caso Rose:
+    // clique "não funcionava" porque display ≠ write). Mesma fonte da aba Pessoal.
+    queryFn: () => fetchPersonalChecklistsHoje(collabId!, 'work'),
     staleTime: 30_000,
   });
 

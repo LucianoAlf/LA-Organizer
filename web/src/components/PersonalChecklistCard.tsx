@@ -89,8 +89,10 @@ export function PersonalChecklistCard({ list }: Props) {
     mutationFn: async ({ id, isDone }: { id: string; isDone: boolean }) => {
       if (isRecurrent) {
         if (!collabId) throw new Error('Sem colaborador no contexto')
-        // get-or-create na hora: 1º toggle do dia cria a completion; demais reusam.
-        const completion = await ensurePersonalCompletion(list.id, collabId)
+        // get-or-create na hora: 1º toggle do CICLO cria a completion; demais reusam.
+        // cycle_anchor vem do fetch (mesma âncora da leitura) — sem ela, gravar em
+        // "hoje" enquanto a tela lê o ciclo reabriria o bug da Rose (display≠write).
+        const completion = await ensurePersonalCompletion(list.id, collabId, list.cycle_anchor ?? undefined)
         return togglePersonalCompletionItem(completion.id, id, isDone)
       }
       return toggleItem(id, isDone) // 'once': modelo estático (is_done)

@@ -26,7 +26,6 @@ import { PersonalChecklistSheet } from '../../components/PersonalChecklistSheet'
 import { EmptyState } from '../../components/EmptyState'
 import { ErrorState } from '../../components/ErrorState'
 import { LoadingState } from '../../components/LoadingState'
-import { fetchPersonalChecklists } from '../../lib/personalChecklists'
 import { fetchPersonalChecklistsHoje } from '../../lib/personalCompletions'
 import type { OpChecklistCompletion, OpChecklistAudit } from '../../types'
 
@@ -109,7 +108,9 @@ function TrabalhoTab() {
 
   const { data: workLists = [], isLoading: loadingWork, error: errorWork } = useQuery({
     queryKey: ['personal-checklists', collaborator?.id, 'work'],
-    queryFn: () => fetchPersonalChecklists(collaborator!.id, 'work'),
+    // Fetch HOJE (overlay por ciclo) — o estático fazia display ≠ write em lista
+    // recorrente (caso Rose). Mesma fonte da aba Pessoal.
+    queryFn: () => fetchPersonalChecklistsHoje(collaborator!.id, 'work'),
     enabled: !!collaborator,
     staleTime: 30_000,
   })

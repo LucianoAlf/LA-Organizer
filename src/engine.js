@@ -2935,7 +2935,9 @@ async function applyPersonalListActions(collab, actions) {
         const pcList = itemRow.personal_checklists;
         if (pcList.recurrence_type && pcList.recurrence_type !== 'once') {
           const pc = require('./services/personalCompletions');
-          const completion = await pc.ensurePersonalCompletion(pcList.id, collab.id);
+          // Âncora do CICLO (não "hoje"): paridade com o PWA — marcar lista mensal
+          // fora do dia-alvo grava no ciclo corrente (caso Rose 09/06).
+          const completion = await pc.ensurePersonalCompletion(pcList.id, collab.id, pc.cycleAnchor(pcList));
           await pc.togglePersonalCompletionItem(completion.id, a.item_id, isDone);
           okCount++;
         } else {

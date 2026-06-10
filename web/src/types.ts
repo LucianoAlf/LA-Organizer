@@ -466,6 +466,8 @@ export interface PersonalChecklist {
   personal_checklist_items?: PersonalChecklistItem[]
   // Preenchido em runtime pelo fetch de "Hoje" só pra recorrentes (não vem do banco).
   today_completion_id?: string | null
+  // Data-âncora (YMD) do ciclo corrente — toggle e leitura usam a MESMA âncora.
+  cycle_anchor?: string
 }
 
 export const PERSONAL_LIST_TYPE_ICON: Record<PersonalListType, string> = {

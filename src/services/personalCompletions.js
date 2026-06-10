@@ -20,6 +20,41 @@ function lastDayOfMonth(ymd) {
   return new Date(Date.UTC(y, m, 0)).getUTCDate();
 }
 
+function addDaysYmd(ymd, n) {
+  const [y, m, d] = ymd.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n, 12)).toISOString().slice(0, 10);
+}
+
+// Data-âncora do CICLO corrente (ESPELHO de web/src/lib/personalCompletions.ts —
+// manter em paridade). Toggle e leitura usam a MESMA âncora: marcar uma lista
+// mensal fora do dia-alvo grava no ciclo do mês, não na completion volátil de hoje.
+function cycleAnchor(list, ymd = todaySP()) {
+  switch (list.recurrence_type) {
+    case 'daily': return ymd;
+    case 'weekly': {
+      const days = list.days_of_week || [];
+      if (!days.length) return ymd;
+      for (let i = 0; i < 7; i++) {
+        const d = addDaysYmd(ymd, -i);
+        if (days.includes(dowPersonal(d))) return d;
+      }
+      return ymd;
+    }
+    case 'monthly': {
+      const target = list.day_of_month || 1;
+      const [y, m, dom] = ymd.split('-').map(Number);
+      const pad = (n) => String(n).padStart(2, '0');
+      const anchorDay = (yy, mm) => Math.min(target, new Date(Date.UTC(yy, mm, 0)).getUTCDate());
+      const cur = anchorDay(y, m);
+      if (dom >= cur) return `${y}-${pad(m)}-${pad(cur)}`;
+      const py = m === 1 ? y - 1 : y;
+      const pm = m === 1 ? 12 : m - 1;
+      return `${py}-${pad(pm)}-${pad(anchorDay(py, pm))}`;
+    }
+    default: return ymd;
+  }
+}
+
 function recurrenceAppliesToday(list, ymd = todaySP()) {
   switch (list.recurrence_type) {
     case 'daily': return true;
@@ -66,4 +101,4 @@ async function togglePersonalCompletionItem(completionId, itemId, isChecked) {
   if (error) throw error;
 }
 
-module.exports = { todaySP, recurrenceAppliesToday, ensurePersonalCompletion, togglePersonalCompletionItem };
+module.exports = { todaySP, cycleAnchor, recurrenceAppliesToday, ensurePersonalCompletion, togglePersonalCompletionItem };

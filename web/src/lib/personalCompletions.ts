@@ -18,6 +18,56 @@ function lastDayOfMonth(ymd: string): number {
   return new Date(Date.UTC(y, m, 0)).getUTCDate()
 }
 
+/** YMD ± n dias (meio-dia UTC evita drift de fuso). */
+function addDaysYmd(ymd: string, n: number): string {
+  const [y, m, d] = ymd.split('-').map(Number)
+  return new Date(Date.UTC(y, m - 1, d + n, 12)).toISOString().slice(0, 10)
+}
+
+/**
+ * Data-âncora do CICLO corrente de uma lista recorrente (caso Rose 09/06).
+ * O progresso de uma recorrente vale pelo ciclo, não pelo dia do clique:
+ * - daily   → o próprio dia (ciclo = dia)
+ * - weekly  → a ocorrência mais recente ≤ hoje dentre days_of_week
+ * - monthly → o day_of_month do mês corrente se já passou; senão o do mês anterior
+ *             (clampado pro último dia em meses curtos)
+ * Toggle e leitura usam a MESMA âncora → marcar fora do dia-alvo persiste até o
+ * próximo ciclo (não reseta no dia seguinte, não some da tela).
+ */
+export function cycleAnchor(
+  list: Pick<PersonalChecklist, 'recurrence_type' | 'days_of_week' | 'day_of_month'>,
+  ymd = todaySP(),
+): string {
+  switch (list.recurrence_type) {
+    case 'daily':
+      return ymd
+    case 'weekly': {
+      const days = list.days_of_week ?? []
+      if (days.length === 0) return ymd
+      for (let i = 0; i < 7; i++) {
+        const d = addDaysYmd(ymd, -i)
+        if (days.includes(dowPersonal(d))) return d
+      }
+      return ymd
+    }
+    case 'monthly': {
+      const target = list.day_of_month ?? 1
+      const [y, m, dom] = ymd.split('-').map(Number)
+      const pad = (n: number) => String(n).padStart(2, '0')
+      // Clampa o alvo pro último dia do mês (alvo 31 em junho → 30).
+      const anchorDay = (yy: number, mm: number) =>
+        Math.min(target, new Date(Date.UTC(yy, mm, 0)).getUTCDate())
+      const cur = anchorDay(y, m)
+      if (dom >= cur) return `${y}-${pad(m)}-${pad(cur)}`
+      const py = m === 1 ? y - 1 : y
+      const pm = m === 1 ? 12 : m - 1
+      return `${py}-${pad(pm)}-${pad(anchorDay(py, pm))}`
+    }
+    default:
+      return ymd
+  }
+}
+
 /** A lista recorrente "vale" para o YMD informado? 'once' nunca usa este caminho. */
 export function recurrenceAppliesToday(list: PersonalChecklist, ymd = todaySP()): boolean {
   switch (list.recurrence_type) {
@@ -117,15 +167,19 @@ export async function fetchPersonalChecklistsHoje(
       out.push(list)
       continue
     }
-    if (!recurrenceAppliesToday(list, ymd)) continue // não aparece hoje
+    // Recorrente é SEMPRE visível; o progresso vale pelo CICLO corrente (cycleAnchor).
+    // Antes: filtrava fora-do-dia (lista sumia/ineditável) e lia a completion de HOJE
+    // enquanto o toggle gravava nela também — mas a aba Trabalho lia o fetch estático,
+    // e o reset diário fazia lista mensal "desmarcar sozinha". Caso Rose 09/06.
+    const anchor = cycleAnchor(list, ymd)
 
-    // LEITURA PURA: lê a completion de hoje SE existir (maybeSingle). Não cria.
+    // LEITURA PURA: lê a completion do ciclo SE existir (maybeSingle). Não cria.
     const { data: comp, error: e2 } = await supabase
       .from('personal_checklist_completions')
       .select('id, personal_checklist_item_completions ( item_id, is_checked )')
       .eq('checklist_id', list.id)
       .eq('user_id', collabId)
-      .eq('reference_date', ymd)
+      .eq('reference_date', anchor)
       .maybeSingle()
     if (e2) throw e2
 
@@ -137,9 +191,10 @@ export async function fetchPersonalChecklistsHoje(
     out.push({
       ...list,
       today_completion_id: (comp as any)?.id ?? null,
+      cycle_anchor: anchor,
       personal_checklist_items: (list.personal_checklist_items ?? []).map((it) => ({
         ...it,
-        is_done: checkedMap.get(it.id) ?? false, // sem completion → false (reset do dia)
+        is_done: checkedMap.get(it.id) ?? false, // sem completion → false (reset do ciclo)
       })),
     })
   }
