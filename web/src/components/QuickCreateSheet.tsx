@@ -12,6 +12,7 @@ import { CustomSelect } from './CustomSelect';
 import { DateInput } from './DateInput';
 import { DateTimeInput } from './DateTimeInput';
 import { TimeInput } from './TimeInput';
+import { DayOfMonthInput } from './DayOfMonthInput';
 import { EisenhowerPicker } from './EisenhowerPicker';
 import { ParticipantsPicker } from './ParticipantsPicker';
 import { RemindersField } from './RemindersField';
@@ -837,10 +838,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
                 <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">opcional · quando tudo deve estar pronto</span>
               </div>
               {groupMonthly ? (
-                <input type="text" inputMode="numeric" maxLength={2} value={groupDueDay}
-                  onChange={e => setGroupDueDay(e.target.value.replace(/\D/g, ''))}
-                  placeholder="dia do mês (1-31)"
-                  className="w-full h-12 px-3 rounded-md bg-bg-elevated border border-border text-fg placeholder:text-fg-muted focus-ring" />
+                <DayOfMonthInput value={groupDueDay} onChange={setGroupDueDay} placeholder="dia do mês" />
               ) : (
                 <DateInput value={groupDueDate} onChange={setGroupDueDate} />
               )}
@@ -1125,11 +1123,8 @@ function GroupChildEditor({
           className="flex-1 min-w-0 bg-transparent text-body-sm text-fg placeholder:text-fg-muted focus:outline-none" />
       </div>
       <div className="flex items-center gap-2 flex-wrap">
-        <input type="text" inputMode="numeric" maxLength={2} value={draft.day}
-          onChange={e => onDraft(d => ({ ...d, day: e.target.value.replace(/\D/g, '') }))}
-          placeholder="📅 dia"
-          className="w-20 h-8 px-2 rounded-full border border-border bg-bg-surface text-body-sm text-fg focus:outline-none focus:border-tom" />
-        <div className="w-24"><TimeInput value={draft.time} onChange={(t) => onDraft(d => ({ ...d, time: t }))} /></div>
+        <DayOfMonthInput value={draft.day} onChange={(v) => onDraft(d => ({ ...d, day: v }))} />
+        <TimeInput value={draft.time} onChange={(t) => onDraft(d => ({ ...d, time: t }))} />
         {onCancel && (
           <button type="button" onClick={onCancel}
             className="ml-auto h-8 px-3 rounded-full border border-border text-fg-muted hover:text-fg text-body-sm focus-ring">
