@@ -1,10 +1,12 @@
 # Plano de correção raiz — família "resposta curta cai na pendência errada"
 
-> **STATUS (09/06 23h):** F0 ✅ (projeto aprovado pelo Alf via PWA; 2 tasks ADM revertidas; 3 known issues registrados) ·
-> **F1 ✅ ENTREGUE** (approvals.js + intents + card com ID + e2e 6/6) · **F2 ✅ ENTREGUE** (detect-approval-reply 38 testes +
-> intercept Approval-bare no engine) · **F4 ✅ ENTREGUE** (resolveApproverFor pela matriz — prova VPS: Rafinha→Luciano Alf;
-> execução escopada + anti-self + anti-corrida) · **F3/F5/F6 PENDENTES** (inbox no prompt, âncora+guarda temporal, higiene).
-> Bônus descoberto: aprovação via PWA (botão ✓) NÃO notifica o criador — entra no escopo F4-bis/F3.
+> **STATUS FINAL (10/06 00h): PLANO 100% ENTREGUE.** F0 ✅ · F1 ✅ · F2 ✅ · F3 ✅ (inbox único no prompt com
+> idade + flag FRESCA/ANTIGA, rollback INBOX_BLOCK=off) · F4 ✅ (resolveApproverFor pela matriz — prova VPS
+> Rafinha→Luciano Alf; execução escopada + anti-self + anti-corrida) · F5 ✅ (isFutureCompletion bloqueia
+> complete de item futuro + intent ANCORADA + auto-resolve ancorado sem LLM + detectUserConfirmation ≤4
+> palavras) · F6 ✅ (FRESH_WINDOW_MIN único; marker_emitted honesto; confirmação de leitura usa texto
+> original; ✓ do PWA notifica criador via realtime watcher; skills alinhadas). 112/112 testes; known issues
+> APROVACAO-SEM-FUNIL, GOV-APROVADOR-DIVERGENTE e ALVO-FUTURO-RESPOSTA-CURTA = corrigido.
 
 > Origem: auditoria multi-agente 09/06/2026 (18 agentes, verificação adversarial 2 lentes/causa).
 > Incidentes-gatilho: A) "Aprovado" do Alf completou evento errado (projeto Rafinha seguiu pendente);

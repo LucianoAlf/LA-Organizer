@@ -26,6 +26,7 @@ const announcementsService = require('./services/announcements');
 const pendingIntents = require('./services/pending-intents');
 const approvalsService = require('./services/approvals');
 const { detectApprovalReply, stripReplyScaffold } = require('./events/detect-approval-reply');
+const { isFutureCompletion } = require('./utils/complete-guards');
 const { buildCoordinationResponseNotification } = require('./services/coordination-notify');
 const { isContextQuietField, validateContextQuietField } = require('./services/prefs-quiet-context');
 const pendingInventoryPhoto = require('./services/pending-inventory-photo');
@@ -3044,6 +3045,7 @@ async function applyPersonalListActions(collab, actions) {
 
 async function applyEventUpdates(collaborator, actions) {
   let okCount = 0, failCount = 0;
+  const failMessages = []; // F5 — perguntas/avisos da guarda temporal sobem pro caller
   const last4 = String(collaborator.phone || '').slice(-4);
   for (const a of actions) {
     try {
@@ -3070,6 +3072,21 @@ async function applyEventUpdates(collaborator, actions) {
       } else if (a.action === 'cancel') {
         patch = { status: 'cancelled' };
       } else if (a.action === 'complete') {
+        // F5 (ALVO-FUTURO-RESPOSTA-CURTA): concluir evento de data FUTURA exige confirmação.
+        if (isFutureCompletion({ startAt: ev.start_at })) {
+          const diaEv = ev.start_at
+            ? new Date(ev.start_at).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit' })
+            : 'data futura';
+          failMessages.push(`⚠️ *${ev.title}* está marcado pra *${diaEv}* (ainda não chegou). Confirma que já aconteceu mesmo assim?`);
+          try {
+            await pendingIntents.openIntent(collaborator.id, 'confirmation',
+              { anchor: { type: 'event', id: ev.id, title: ev.title }, action: 'complete' },
+              `⚠️ ${ev.title} está marcado pra ${diaEv} — confirma que já aconteceu?`);
+          } catch (_) { /* best-effort */ }
+          console.warn(`[Event] complete BLOQUEADO (start futura ${ev.start_at}) — pedindo confirmação id=${String(ev.id).slice(0, 8)}`);
+          failCount++;
+          continue;
+        }
         patch = { status: 'done' };
       } else if (a.action === 'update') {
         // Sprint 31.6 (B1) — edita metadados. Só seta os campos presentes.
@@ -3153,7 +3170,7 @@ async function applyEventUpdates(collaborator, actions) {
       failCount++;
     }
   }
-  return { okCount, failCount };
+  return { okCount, failCount, failMessages };
 }
 
 // Parse <<WEEKLY_PLAN>>{...}<<END>> — weekly planning marker.
@@ -3950,8 +3967,23 @@ async function applyTaskActions(collaborator, actions) {
         }
         // Buscar created_by ANTES do UPDATE pra saber se é task delegada
         const { data: fullTask } = await supabase
-          .from('tasks').select('id, title, created_by, assigned_to')
+          .from('tasks').select('id, title, created_by, assigned_to, due_date')
           .eq('id', t.id).maybeSingle();
+        // F5 (ALVO-FUTURO-RESPOSTA-CURTA): completar tarefa datada NO FUTURO exige
+        // confirmação — Incidente C (Ana): "Reunião ok tbm" fechou a Reunião ADM de AMANHÃ.
+        // Abre intent ANCORADA: o "sim" seguinte completa direto o id certo (sem LLM).
+        if (fullTask && isFutureCompletion({ dueDate: fullTask.due_date })) {
+          const diaT = String(fullTask.due_date).slice(0, 10).split('-').reverse().slice(0, 2).join('/');
+          failMessages.push(`⚠️ *${fullTask.title}* está marcado pra *${diaT}* (ainda não chegou). Confirma que já foi feito mesmo assim?`);
+          try {
+            await pendingIntents.openIntent(collaborator.id, 'confirmation',
+              { anchor: { type: 'task', id: fullTask.id, title: fullTask.title }, action: 'complete' },
+              `⚠️ ${fullTask.title} está marcado pra ${diaT} — confirma que já foi feito?`);
+          } catch (_) { /* intent é best-effort */ }
+          console.warn(`[Task] complete BLOQUEADO (due futura ${fullTask.due_date}) — pedindo confirmação id=${String(fullTask.id).slice(0, 8)}`);
+          failCount++;
+          continue;
+        }
         const { error } = await supabase
           .from('tasks')
           .update({
@@ -7450,6 +7482,30 @@ async function processMessage(phone, text, raw = {}) {
         // só aprovações abertas — o funil próprio (Approval-bare, acima) cuida delas
       } else if (userConfirm && !fresh) {
         console.log(`[PendingIntents] skip auto-resolve (stale >20min) — intent=${target.id.slice(0,8)} kind=${target.kind} asked=${target.asked_at}`);
+      } else if (userConfirm === 'yes' && target.payload && target.payload.anchor && target.payload.anchor.id) {
+        // F5 (ALVO-FUTURO): intent ANCORADA (a guarda temporal abriu com o id certo) —
+        // o ENGINE aplica o complete direto no item ancorado, sem LLM (sem chute de alvo).
+        const anc = target.payload.anchor;
+        let okAnc = false;
+        try {
+          if (anc.type === 'task') {
+            const { error: ancErr } = await supabase.from('tasks')
+              .update({ status: 'done', completed_at: new Date().toISOString(), completed_by: collab.id })
+              .eq('id', anc.id);
+            okAnc = !ancErr;
+          } else if (anc.type === 'event') {
+            const { error: ancErr } = await supabase.from('events').update({ status: 'done' }).eq('id', anc.id);
+            okAnc = !ancErr;
+          }
+        } catch (ancEx) { console.warn('[PendingIntents] anchored complete err:', ancEx.message); }
+        if (okAnc) {
+          await pendingIntents.resolveIntent(target.id, 'confirmed', 'anchored complete (engine)');
+          const msgAnc = `✅ *${anc.title || 'Item'}* concluído.`;
+          try { await whatsapp.sendMessage(phone, msgAnc); await logConversation(collab.id, 'outbound', msgAnc); } catch (_) { /* já persistiu */ }
+          console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (anchored_complete_${anc.type})`);
+          return;
+        }
+        // escrita falhou → segue fluxo normal (LLM vê a intent e tenta pelo marker)
       } else if (userConfirm === 'yes') {
         _pendingIntentToResolve = { intent: target, resolution: 'confirmed' };
         // Injeta contexto inline pra LLM saber o que confirmar.
@@ -7804,7 +7860,10 @@ async function processMessage(phone, text, raw = {}) {
   // Se o user respondeu "ok/sim/confirmo/recebi/etc" e tem um announcement_jobs
   // entregue recentemente (com requires_confirmation=true) e não confirmado,
   // marca confirmação. Curto-circuita o pipeline pra não rodar skills.
-  const confirmed = await tryHandleAnnouncementConfirmation(collab, String(text || ''));
+  // F6 (G7): confirmação de leitura de comunicado avalia o texto ORIGINAL do usuário
+  // (sem o ctxHint do auto-resolve e sem scaffold de reply) — o hint anexado ao `text`
+  // quebrava o matcher do "ok" e o confirmed_at nunca gravava.
+  const confirmed = await tryHandleAnnouncementConfirmation(collab, stripReplyScaffold(String(inboundVerbatimText || '')).userText);
   if (confirmed) {
     console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (announcement_confirmed)`);
     return;
@@ -8368,14 +8427,18 @@ async function processMessage(phone, text, raw = {}) {
       }
       reply = baseEU;
     } else if (parsedEU) {
-      const { okCount, failCount } = await applyEventUpdates(collab, parsedEU.actions);
+      const { okCount, failCount, failMessages: evFailMessages } = await applyEventUpdates(collab, parsedEU.actions);
       console.log(`[Event] update batch: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
       const result = okCount > 0 ? 'executed' : 'rejected';
       const reason = okCount > 0 ? `ok=${okCount} fail=${failCount}` : `all_failed:${failCount}`;
       await logMarker(collab.id, 'EVENT_UPDATE', result, reason, null);
       let base = parsedEU.cleanText || '';
       if (failCount > 0 && okCount === 0) {
-        base = (base ? base + '\n\n' : '') + '_não consegui atualizar o compromisso, te aviso depois_';
+        // F5: se a "falha" foi a guarda temporal, ela é uma PERGUNTA de confirmação —
+        // mostra ELA e descarta o cleanText otimista do LLM ("Fechado!" sem ter fechado).
+        base = (evFailMessages && evFailMessages.length)
+          ? evFailMessages.join('\n')
+          : (base ? base + '\n\n' : '') + '_não consegui atualizar o compromisso, me confirma o que você quer?_';
       }
       reply = base || reply;
     }
@@ -9497,17 +9560,26 @@ async function processMessage(phone, text, raw = {}) {
     const _inputIsQuestion = /\?\s*$/.test(String(text || '').trim());
     const _inputSelfReport = /\b(est(?:ou|á)|t[oô]u?|tava)\s+[a-zà-ú]+ndo\b|\b(?:eu\s+)?j[aá]\s+(?:fiz|criei|terminei|fechei|completei|resolvi|mandei|enviei|verifiquei)\b/i.test(String(text || ''));
     const _flagActionable = replyHasPromise || (inputActionable && !_inputIsQuestion && !_inputSelfReport);
+    // F6 (auditoria 09/06) — métrica HONESTA: marker_emitted é computado SEMPRE.
+    // Antes só era setado dentro do branch actionable; reply terminando em pergunta
+    // (_replyIsInfoGathering) pulava o bloco e `noMarkerEmitted` mentia mesmo com
+    // EVENT_UPDATE executado (Incidente A: abriu intent nova por cima da ação real,
+    // supersedendo a pergunta legítima).
+    const sinceIso = new Date(_t0 - 1000).toISOString();
+    const { data: recentMarkers } = await supabase
+      .from('marker_logs')
+      .select('marker_type')
+      .eq('collaborator_id', collab.id)
+      .eq('result', 'executed')
+      .gte('created_at', sinceIso);
+    const fired = (recentMarkers || []).map(r => r.marker_type).filter(t =>
+      t && !['LEAK_BLOCKED','UNKNOWN_MARKER_STRIPPED','TOOL_CALL_STRIPPED','PROVIDER'].includes(t));
+    if (fired.length > 0) {
+      _metrics.marker_emitted = fired.join(',').slice(0, 100);
+      _metrics.marker_result = 'executed';
+    }
     if (!_metrics.awaiting_user_confirm && !_replyIsInfoGathering && _flagActionable) {
       _metrics.actionable_intent = true;
-      const sinceIso = new Date(_t0 - 1000).toISOString();
-      const { data: recentMarkers } = await supabase
-        .from('marker_logs')
-        .select('marker_type')
-        .eq('collaborator_id', collab.id)
-        .eq('result', 'executed')
-        .gte('created_at', sinceIso);
-      const fired = (recentMarkers || []).map(r => r.marker_type).filter(t =>
-        t && !['LEAK_BLOCKED','UNKNOWN_MARKER_STRIPPED','TOOL_CALL_STRIPPED','PROVIDER'].includes(t));
       if (fired.length === 0) {
         console.warn(`[Engine] ACTIONABLE_NO_MARKER — text="${String(text).slice(0,80)}" reply="${String(reply).slice(0,100)}"`);
         await logMarker(collab.id, 'ACTIONABLE_NO_MARKER', 'rejected',
@@ -9633,9 +9705,6 @@ Output AGORA, apenas o marker:`;
             console.warn(`[Engine] AUTO_RETRY_ERR — ${retryErr.message}`);
           }
         }
-      } else {
-        _metrics.marker_emitted = fired.join(',').slice(0, 100);
-        _metrics.marker_result = 'executed';
       }
     }
   } catch (e) { /* metric never breaks main flow */ }

@@ -161,6 +161,44 @@ function startRealtime(sendWhatsApp, supabaseMain) {
       }
     })
 
+    // F6 (auditoria 09/06) — Aprovação pelo PWA (botão ✓): o app grava direto no banco
+    // (pending_approval → planning) SEM passar pelo applyProjectApprove → o criador nunca
+    // era avisado. Aqui espelhamos a notificação do engine e fechamos as intents (F1).
+    // Dedup com o caminho WhatsApp: o engine seta requires_approval=false NO MESMO update;
+    // o PWA deixa true → só notificamos quando requires_approval ainda é true.
+    .on('postgres_changes', {
+      event: 'UPDATE',
+      schema: 'public',
+      table: 'projects',
+    }, async (payload) => {
+      const old = payload.old;
+      const novo = payload.new;
+      if (old?.status !== 'pending_approval' || novo?.status !== 'planning') return;
+      if (novo?.requires_approval !== true) return; // veio do engine (já notificou)
+      const key = `project:${novo.id}:approved`;
+      if (!shouldProcess(key)) return;
+      try {
+        const approvalsService = require('../services/approvals');
+        await approvalsService.resolveApprovalByRef(supabaseMain, novo.id, 'confirmed', 'aprovado via PWA');
+        // normaliza o flag (consistência com o caminho do engine)
+        await supabaseMain.from('projects').update({ requires_approval: false }).eq('id', novo.id);
+        let approverName = 'seu líder';
+        if (novo.approved_by) {
+          const { data: ap } = await supabaseMain.from('collaborators')
+            .select('full_name').eq('id', novo.approved_by).maybeSingle();
+          if (ap?.full_name) approverName = ap.full_name;
+        }
+        const { data: creator } = await supabaseMain.from('collaborators')
+          .select('phone, full_name').eq('id', novo.created_by).maybeSingle();
+        if (creator?.phone) {
+          await sendWhatsApp(creator.phone, `🎉 *${novo.name}* foi aprovado por *${approverName}*!\n\nO TOM já vai começar a estruturar e distribuir as tarefas.`);
+          console.log(`[Realtime] aprovação via PWA → criador de "${novo.name}" avisado`);
+        }
+      } catch (e) {
+        console.error('[Realtime] erro notif aprovação PWA:', e.message);
+      }
+    })
+
     .subscribe((status, err) => {
       if (status === 'SUBSCRIBED') {
         console.log('[Realtime] Conectado ao Supabase Realtime');

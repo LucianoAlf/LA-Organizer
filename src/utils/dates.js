@@ -57,7 +57,11 @@ function formatRelativeDate(dueDate, todayISO) {
  * (bug: "sim" pra criar meta confirmou intent antiga de "cobrar o Rafinha").
  * Conservador: asked_at ausente/inválido → false (não auto-confirma).
  */
-function withinConfirmWindow(askedAt, windowMinutes = 20) {
+// F6 — janela ÚNICA de frescor pra confirmações curtas (engine auto-resolve, RSVP-bare,
+// inbox do prompt). Mudar aqui muda em todos — fim das cópias de "20" espalhadas.
+const FRESH_WINDOW_MIN = 20;
+
+function withinConfirmWindow(askedAt, windowMinutes = FRESH_WINDOW_MIN) {
   const d = safeDate(askedAt);
   if (!d) return false;
   const ageMs = Date.now() - d.getTime();
@@ -65,4 +69,4 @@ function withinConfirmWindow(askedAt, windowMinutes = 20) {
   return ageMs <= windowMinutes * 60 * 1000;
 }
 
-module.exports = { safeIsoDate, safeDate, formatRelativeDate, withinConfirmWindow };
+module.exports = { safeIsoDate, safeDate, formatRelativeDate, withinConfirmWindow, FRESH_WINDOW_MIN };

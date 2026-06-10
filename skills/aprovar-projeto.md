@@ -49,7 +49,7 @@ NÃO emita marker. NÃO improvise.
 
 ⚠️ **REGRA INVIOLÁVEL**: sempre que o supervisor enviar `APROVA <TOKEN>` (qualquer token, qualquer projeto), você **DEVE emitir o marker**. NÃO tente verificar se o projeto existe pelo seu contexto — o engine faz a validação, e se o token não bater com nenhum projeto pendente, o engine responde por você com mensagem amigável ("não tenho projeto pendente com esse nome…").
 
-**Você não tem visibilidade dos projetos pending_approval no system prompt** — só dos `planning`. Não confie no que você "vê" — confie no engine.
+**Aprovações pendentes aparecem no bloco "Pendências em aberto" do seu contexto** (com o comando exato, ex.: APROVA PROGRAMA). Mesmo assim, NÃO valide o token você mesmo — confie no engine. Respostas curtas ("Aprovado"/"Aprovar") são resolvidas pelo engine ANTES de você; se a mensagem chegou até você, emita o marker com o token do bloco de pendências.
 
 Liberdade na resposta texto, contrato no marker.
 

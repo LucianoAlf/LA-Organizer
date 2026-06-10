@@ -179,13 +179,17 @@ function detectUserConfirmation(userText) {
   if (typeof userText !== 'string') return null;
   const t = userText.toLowerCase().trim();
   if (!t || t.length > 200) return null;  // só pegamos respostas curtas
+  // F5 (ALVO-FUTURO, auditoria 09/06) — confirmação/negação só em resposta ESSENCIALMENTE
+  // curta (≤4 palavras). "Não foi a ADM, foi a de hoje, de governança" começa com "não"
+  // mas é CONTEÚDO — negava às cegas uma intent não-relacionada (caso Ana 227b8689).
+  if (t.split(/\s+/).length > 4) return null;
 
   // Negativas primeiro (mais específicas pra evitar falso positivo)
   const NO_RE = /^(n[aã]o\b|nao\b|deixa\s+pra\s+l[aá]|esquece|cancela|n[aã]o\s+precisa|desconsidera)/;
   if (NO_RE.test(t)) return 'no';
 
   // Afirmativas
-  const YES_RE = /^(sim\b|s[i]m\b|ok\b|okay\b|pode\b|cria\b|cri[ae]m?\b|manda\b|manda\s+ver|fechou\b|fechado\b|beleza\b|blz\b|isso\b|isso\s+mesmo|claro\b|t[áa]\b|t[áa]\s+certo|vai\b|vai\s+(?:criando|criar|fazendo)|bora\b|perfeito\b|exato\b|👍)/;
+  const YES_RE = /^(sim\b|s[i]m\b|ok\b|okay\b|pode\b|cria\b|cri[ae]m?\b|manda\b|manda\s+ver|fechou\b|fechado\b|beleza\b|blz\b|isso\b|isso\s+mesmo|claro\b|t[áa]\b|t[áa]\s+certo|vai\b(?!\s+dar)|vai\s+(?:criando|criar|fazendo)|bora\b|perfeito\b|exato\b|👍)/;
   if (YES_RE.test(t)) return 'yes';
   // "vai criando aí"
   if (/vai\s+criando\s+a[íi]?/i.test(userText)) return 'yes';

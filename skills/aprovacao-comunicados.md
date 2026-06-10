@@ -12,10 +12,10 @@ Esta skill ensina o TOM a coordenar o fluxo de aprovação de comunicados quando
 
 ## Fluxo do coordinator (criando comunicado)
 
-Após confirmação do coordinator e emissão do marker `<<ANNOUNCEMENT_ACTION>>`, o engine criará o comunicado em `pending_approval` e notificará todos os directors via WhatsApp.
+Após confirmação do coordinator e emissão do marker `<<ANNOUNCEMENT_ACTION>>`, o engine criará o comunicado em `pending_approval` e notificará **o líder de quem criou** (pela matriz de governança — em geral o CEO). NUNCA diga "todos os diretores".
 
 **Resposta do TOM ao coordinator (após criação):**
-> "Comunicado registrado e enviado para aprovação dos diretores. Vou te avisar aqui quando for aprovado ou rejeitado. ID: `abc1`"
+> "Comunicado registrado e enviado pra aprovação do seu líder. Vou te avisar aqui quando for aprovado ou rejeitado. ID: `abc1`"
 
 Não emita o marker `<<ANNOUNCEMENT_ACTION>>` para coordinator se ele não confirmar — sempre confirme antes (igual ao fluxo já existente).
 
@@ -90,4 +90,4 @@ Se o director ou coordinator perguntar "quais comunicados aguardam aprovação?"
 
 - **NUNCA** emita `<<ANNOUNCEMENT_APPROVAL>>` se o usuário não for director (engine vai bloquear de qualquer forma, mas evite ruído).
 - **SEMPRE** use o ID exato fornecido pelo director — não invente, não complete.
-- Se o director escrever apenas "aprovo" ou "rejeito" sem ID, peça o ID antes: "Qual o ID do comunicado? (4 letras/números)".
+- Se o director escrever apenas "aprovo"/"aprovado"/"rejeito" sem ID, o ENGINE resolve sozinho pela pendência aberta dele (lista se houver mais de uma) — normalmente você nem verá essa mensagem. Se mesmo assim chegar, use o ID do bloco "Pendências em aberto"; só pergunte o ID se não houver pendência listada.

@@ -2667,22 +2667,58 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   const activeThread = await inferActiveThread(hist, allTasks, collaborator?.id);
   const activeThreadBlock = renderActiveThreadHint(activeThread, _todayForMonth);
 
-  // Sprint 30.3 — Pending Intents: bloco de LEITURA (não regra dura).
-  // TOM vê o que ele mesmo perguntou em turnos anteriores e ainda não resolveu.
-  // Quando o usuário responder, TOM tem contexto pra fechar naturalmente
-  // emitindo o marker certo — sem precisar reperguntar.
+  // F3 (inbox de pendências — APROVACAO-SEM-FUNIL/INTENT-STALE-IMA, auditoria 09/06):
+  // bloco ÚNICO com aprovações + perguntas abertas, cada item com IDADE e regra de
+  // frescor ALINHADA à janela de 20min do engine. Antes: intents ficavam 24h no prompt
+  // com a ordem "feche o loop — não repergunte" → viravam ímã de resposta curta
+  // (Incidente A: "Aprovado" completou evento da pergunta stale de 1h24 atrás).
+  // Rollback: INBOX_BLOCK=off volta ao formato antigo (Sprint 30.3).
   let pendingIntentsBlock = '';
   try {
     const openIntents = await pendingIntentsSvc.listOpenIntents(collaborator.id, { limit: 3 });
-    if (openIntents.length > 0) {
-      const lines = openIntents.map((i, idx) => {
+    if (process.env.INBOX_BLOCK === 'off') {
+      if (openIntents.length > 0) {
+        const lines = openIntents.map((i, idx) => {
+          const q = (i.question_text || '').replace(/\s+/g, ' ').slice(0, 160);
+          const when = i.asked_at ? new Date(i.asked_at).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : '';
+          const drafts = (i.payload?.drafts && Array.isArray(i.payload.drafts))
+            ? ` (${i.payload.drafts.length} item(s) pendente(s))` : '';
+          return `${idx + 1}. [${i.kind}${drafts}, ${when}] "${q}"`;
+        }).join('\n');
+        pendingIntentsBlock = `\n\n## 🕘 Coisas que você perguntou e ainda não resolveu\n\n${lines}\n\n_Se o usuário responder algo confirmando (sim/ok/pode/cria) ou negando, feche o loop emitindo o marker apropriado — não repergunte._`;
+      }
+    } else {
+      const { withinConfirmWindow } = require('../utils/dates');
+      const approvalsSvc = require('../services/approvals');
+      const fmtWhen = (ts) => ts ? new Date(ts).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : '';
+      const ageLabel = (ts) => {
+        const m = Math.max(0, Math.round((Date.now() - new Date(ts).getTime()) / 60000));
+        return m < 60 ? `há ${m}min` : `há ${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}`;
+      };
+      const items = [];
+      try {
+        const approvals = await approvalsSvc.listOpenApprovals(supabase, collaborator.id);
+        for (const ap of approvals) {
+          const cmd = ap.payload.domain === 'project'
+            ? `APROVA ${ap.payload.token}`
+            : `APROVAR ${ap.payload.short_id || String(ap.payload.ref_id).slice(0, 4)}`;
+          items.push(`• 🔏 [aprovação, ${fmtWhen(ap.asked_at)} · ${ageLabel(ap.asked_at)}] ${ap.question_text} — comando: *${cmd}*. O engine resolve "aprovado/rejeitado" sozinho; NUNCA trate "aprovado" como confirmação de OUTRA pendência.`);
+        }
+      } catch (_) { /* aprovações são best-effort no prompt */ }
+      for (const i of openIntents) {
+        if (i.kind === 'approval_pending') continue; // já renderizada acima com comando
         const q = (i.question_text || '').replace(/\s+/g, ' ').slice(0, 160);
-        const when = i.asked_at ? new Date(i.asked_at).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : '';
         const drafts = (i.payload?.drafts && Array.isArray(i.payload.drafts))
-          ? ` (${i.payload.drafts.length} item(s) pendente(s))` : '';
-        return `${idx + 1}. [${i.kind}${drafts}, ${when}] "${q}"`;
-      }).join('\n');
-      pendingIntentsBlock = `\n\n## 🕘 Coisas que você perguntou e ainda não resolveu\n\n${lines}\n\n_Se o usuário responder algo confirmando (sim/ok/pode/cria) ou negando, feche o loop emitindo o marker apropriado — não repergunte._`;
+          ? ` (${i.payload.drafts.length} item(s))` : '';
+        const fresh = withinConfirmWindow(i.asked_at, 20);
+        const inst = fresh
+          ? 'FRESCA — se o usuário confirmar/negar, feche o loop com o marker apropriado.'
+          : '⏳ ANTIGA — NÃO assuma que uma resposta curta ("sim/ok/aprovado") se refere a isto; re-confirme explicitamente O QUE está sendo confirmado antes de agir.';
+        items.push(`• [${i.kind}${drafts}, ${fmtWhen(i.asked_at)} · ${ageLabel(i.asked_at)}] "${q}" — ${inst}`);
+      }
+      if (items.length > 0) {
+        pendingIntentsBlock = `\n\n## 🕘 Pendências em aberto (com idade)\n\n${items.slice(0, 5).join('\n')}\n\n_Regra: item FRESCO fecha com a confirmação do usuário; item ANTIGO exige re-confirmação explícita do alvo._`;
+      }
     }
   } catch (e) {
     // never break prompt build
