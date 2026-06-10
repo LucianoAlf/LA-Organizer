@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { resolveScope } from './team-scope';
-import type { Collab } from './team-routing';
+import { groupLeaderIdsFor, type Collab, type GroupLeader } from './team-routing';
 
 const C = (p: Partial<Collab> & { id: string }): Collab => ({
   id: p.id, role: p.role ?? 'collaborator', function_role: p.function_role ?? null,
@@ -11,10 +11,19 @@ const ceo = C({ id: 'ceo', role: 'director', is_ceo: true });
 const juliana = C({ id: 'ju', role: 'coordinator', function_role: 'pedagogico' });
 const quintela = C({ id: 'qt', role: 'coordinator', function_role: 'pedagogico' });
 const hugo = C({ id: 'hugo', role: 'director', function_role: 'tech' }); // líder sem liderados
-const dai = C({ id: 'dai', function_role: 'pedagogico', supervisor_id: 'ju' });
+const dai = C({ id: 'dai', function_role: 'pedagogico' });
 const leo = C({ id: 'leo', function_role: 'pedagogico', unit: 'barra' });
 const fabi = C({ id: 'fabi', function_role: 'farmer', unit: 'all' }); // colaborador comum
 const all = [ceo, juliana, quintela, hugo, dai, leo, fabi];
+
+// Matriz de governança (08/06): "pedagógico → ambos os coords" vem da tabela
+// governance_leaders, anexada no load como group_leader_ids (governance-edges.ts);
+// supervisor_id não é mais lido pelo roteamento.
+const GROUP_LEADERS: GroupLeader[] = [
+  { group_key: 'pedagogico', unit: 'all', leader_id: 'ju' },
+  { group_key: 'pedagogico', unit: 'all', leader_id: 'qt' },
+];
+all.forEach(c => { c.group_leader_ids = groupLeaderIdsFor(c, GROUP_LEADERS); });
 
 describe('resolveScope', () => {
   it('CEO → mode ceo, scopeIds null (vê tudo)', () => {

@@ -819,7 +819,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
             <fieldset>
               <legend className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Repetição</legend>
               <div role="radiogroup" className="grid grid-cols-2 gap-2">
-                {([{ v: true, label: '🔁 Mensal' }, { v: false, label: 'Não repete' }] as const).map(o => (
+                {([{ v: true, label: 'Mensal' }, { v: false, label: 'Não repete' }] as const).map(o => (
                   <button key={String(o.v)} type="button" role="radio" aria-checked={groupMonthly === o.v}
                     onClick={() => setGroupMonthly(o.v)}
                     className={['h-11 rounded-md border text-body-sm font-semibold transition-colors focus-ring',
@@ -1087,7 +1087,8 @@ function KindButton({
       ].join(' ')}
     >
       <span className={active ? 'text-tom' : 'text-fg-muted'}>{icon}</span>
-      <div className={['text-[12px] font-semibold leading-tight truncate max-w-full', active ? 'text-tom' : 'text-fg'].join(' ')}>
+      {/* 11px: "Compromisso" (11 chars) cabe inteiro no card de ~73px úteis a 375px — sem truncate. */}
+      <div className={['text-[11px] font-semibold leading-tight', active ? 'text-tom' : 'text-fg'].join(' ')}>
         {label}
       </div>
       <div className="text-[9.5px] text-fg-muted leading-tight truncate max-w-full">{hint}</div>
