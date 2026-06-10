@@ -17,6 +17,7 @@
 const { RRule, rrulestr } = require('rrule');
 const supabase = require('../supabase/client');
 const { shiftReminderToInstance } = require('./recurrence-time');
+const { childDueDateForCycle } = require('./task-group-dates');
 
 const MATERIALIZE_HORIZON_DAYS = 30;
 const MAX_INSTANCES_PER_RUN = 50;
@@ -128,6 +129,15 @@ async function materializeSeries(table, template) {
     );
   }
 
+  // Grupos (2026-06-09): mãe-template com is_group materializa a ÁRVORE —
+  // pra cada mãe-instância criada, clona as filhas-template preservando o
+  // dia-do-mês de cada filha no mês do ciclo. Idempotente.
+  if (table === 'tasks' && template.is_group && inserted && inserted.length > 0) {
+    await _materializeGroupChildren(template, inserted).catch((e) =>
+      console.error(`[recurrence] groupChildren unhandled series=${template.id}:`, e.message)
+    );
+  }
+
   return { created: (inserted || toInsert).length, skipped };
 }
 
@@ -154,6 +164,18 @@ async function _cloneRemindersForInstances(table, template, instances) {
   }
   if (!templateReminders || templateReminders.length === 0) return;
 
+  // Idempotência REAL (review 09/06): busca reminders já existentes nas instâncias
+  // e pula os pares (instância, remind_at) presentes — re-execução não duplica e
+  // instância que ficou sem reminders (insert falhou) é completada na próxima rodada.
+  const instIds = instances.map((i) => i.id);
+  const { data: existingRows } = await supabase
+    .from(reminderTable)
+    .select(`${fkColumn}, remind_at`)
+    .in(fkColumn, instIds);
+  const existingPairs = new Set(
+    (existingRows || []).map((r) => `${r[fkColumn]}:${new Date(r.remind_at).toISOString()}`)
+  );
+
   // 2. Anchor do template (00:00 BRT pra tasks; start_at pra events)
   const tplAnchor = table === 'tasks'
     ? new Date(String(template.due_date) + 'T00:00:00-03:00')
@@ -173,6 +195,7 @@ async function _cloneRemindersForInstances(table, template, instances) {
       if (isNaN(tmplRemind.getTime())) continue;
       const delta = tmplRemind.getTime() - tplAnchor.getTime();
       const newRemind = new Date(instAnchor.getTime() + delta).toISOString();
+      if (existingPairs.has(`${inst.id}:${newRemind}`)) continue;
       toInsert.push({ [fkColumn]: inst.id, remind_at: newRemind, label: tr.label || null });
     }
   }
@@ -185,6 +208,81 @@ async function _cloneRemindersForInstances(table, template, instances) {
   } else {
     console.log(`[recurrence] cloned ${toInsert.length} reminders for ${instances.length} instances (series=${template.id})`);
   }
+}
+
+/**
+ * Grupos: clona as filhas-template pra cada mãe-instância recém-criada.
+ * Filha-instância: parent_task_id = mãe-instância; recurrence_parent_id = filha-template;
+ * due_date = dia-do-mês da filha no mês do ciclo (clamp); reminders com delta.
+ * Idempotência: pula se já existe instância da filha-template apontando pra mãe-instância.
+ *
+ * @param {Object} motherTemplate — template da mãe (is_group=true)
+ * @param {Array<{id:string, due_date:string}>} motherInstances — mães recém-inseridas
+ */
+async function _materializeGroupChildren(motherTemplate, motherInstances) {
+  const { data: childTemplates, error: ctErr } = await supabase
+    .from('tasks')
+    .select('*')
+    .eq('parent_task_id', motherTemplate.id)
+    .order('sort_position', { ascending: true, nullsFirst: false });
+  if (ctErr) {
+    console.error(`[recurrence] childTemplates query err:`, ctErr.message);
+    return;
+  }
+  if (!childTemplates || childTemplates.length === 0) return;
+
+  // Idempotência: instâncias existentes das filhas-template → set de "tplId:motherId"
+  const tplIds = childTemplates.map((c) => c.id);
+  const { data: existingKids } = await supabase
+    .from('tasks')
+    .select('id, due_date, recurrence_parent_id, parent_task_id')
+    .in('recurrence_parent_id', tplIds)
+    .not('parent_task_id', 'is', null);
+  const existingByKey = new Map(
+    (existingKids || []).map((k) => [`${k.recurrence_parent_id}:${k.parent_task_id}`, k])
+  );
+
+  for (const mother of motherInstances) {
+    for (const childTpl of childTemplates) {
+      const existingKid = existingByKey.get(`${childTpl.id}:${mother.id}`);
+      if (existingKid) {
+        // Filha já existe — só garante os reminders (idempotente após FIX 1).
+        await _cloneRemindersForInstances('tasks', childTpl, [existingKid]).catch((e) =>
+          console.error(`[recurrence] child reminders (ensure) err:`, e.message)
+        );
+        continue;
+      }
+      const row = buildGroupChildRow(childTpl, mother);
+      const { data: insertedKid, error: insErr } = await supabase
+        .from('tasks')
+        .insert(row)
+        .select('id, due_date')
+        .single();
+      if (insErr) {
+        console.error(`[recurrence] child insert err tpl=${String(childTpl.id).slice(0, 8)}:`, insErr.message);
+        continue;
+      }
+      // Lembretes da filha: mesmo mecanismo de delta do motor.
+      await _cloneRemindersForInstances('tasks', childTpl, [insertedKid]).catch((e) =>
+        console.error(`[recurrence] child reminders err:`, e.message)
+      );
+    }
+  }
+  console.log(`[recurrence] group children materialized series=${motherTemplate.id} mothers=${motherInstances.length} childTpls=${childTemplates.length}`);
+}
+
+/**
+ * Row da filha-instância (PURA — testável). Usa _cloneTemplate com a data do ciclo
+ * e corrige os ponteiros: parent → mãe-instância (não a mãe-template).
+ */
+function buildGroupChildRow(childTemplate, motherInstance) {
+  const childDueYmd = childDueDateForCycle(String(childTemplate.due_date), String(motherInstance.due_date));
+  const occ = new Date(childDueYmd + 'T12:00:00-03:00');
+  const row = _cloneTemplate('tasks', childTemplate, occ);
+  row.parent_task_id = motherInstance.id;        // filha pendura na mãe-INSTÂNCIA
+  row.recurrence_parent_id = childTemplate.id;   // instância-de (idempotência/série)
+  row.is_group = false;
+  return row;
 }
 
 /**
@@ -281,4 +379,4 @@ async function materializeAll() {
   return totals;
 }
 
-module.exports = { parseRule, nextOccurrences, materializeSeries, materializeAll, shiftReminderToInstance };
+module.exports = { parseRule, nextOccurrences, materializeSeries, materializeAll, shiftReminderToInstance, buildGroupChildRow };

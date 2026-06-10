@@ -155,6 +155,13 @@ export interface Task {
   description?: string | null;
   // Quando a tarefa virou compromisso: aponta pro events.id criado (status='cancelled' nesse caso).
   converted_to_event_id?: string | null;
+  // Grupos de tarefas (2026-06-09): mãe agrupa subtarefas (filhas têm parent_task_id).
+  parent_task_id?: string | null;
+  is_group?: boolean;
+  // Posição manual (DnD) — coluna já existia no banco; exposta pro ordenamento de filhas.
+  sort_position?: number | null;
+  // Preenchido em runtime pelo fetch de grupos (nested select) — não vem solto do banco.
+  subtasks?: Task[];
 }
 
 // Subconjunto de campos que os sheets de transformação (Delegar/Compromisso) leem.

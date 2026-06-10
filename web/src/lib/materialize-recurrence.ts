@@ -9,6 +9,7 @@
 
 import { rrulestr } from 'rrule';
 import { supabase } from './supabase';
+import { childDueDateForCycle } from './taskGroupDates';
 
 const HORIZON_DAYS = 30;
 const MAX_INSTANCES = 50;
@@ -73,9 +74,77 @@ export async function materializeSeriesClient(
 
   if (toInsert.length === 0) return { created: 0, skipped };
 
-  const { error } = await supabase.from(table).insert(toInsert);
+  const selectCols = table === 'tasks' ? 'id, due_date' : 'id, start_at';
+  const { data: inserted, error } = await supabase.from(table).insert(toInsert).select(selectCols);
   if (error) return { created: 0, skipped, error: error.message };
+
+  // Grupos: mãe-template com is_group materializa a árvore (espelho do backend).
+  if (table === 'tasks' && (template as Record<string, unknown>).is_group && inserted && inserted.length > 0) {
+    await materializeGroupChildrenClient(template, inserted as Array<{ id: string; due_date: string }>);
+  }
   return { created: toInsert.length, skipped };
+}
+
+// Grupos (2026-06-09) — espelho de _materializeGroupChildren do backend.
+// Mantém paridade: idempotência por (recurrence_parent_id filha-template + parent_task_id mãe-instância).
+async function materializeGroupChildrenClient(
+  motherTemplate: Template,
+  motherInstances: Array<{ id: string; due_date: string }>
+): Promise<void> {
+  const { data: childTemplates } = await supabase
+    .from('tasks')
+    .select('*')
+    .eq('parent_task_id', motherTemplate.id)
+    .order('sort_position', { ascending: true, nullsFirst: false });
+  if (!childTemplates || childTemplates.length === 0) return;
+
+  const tplIds = childTemplates.map((c: { id: string }) => c.id);
+  const { data: existingKids } = await supabase
+    .from('tasks')
+    .select('recurrence_parent_id, parent_task_id')
+    .in('recurrence_parent_id', tplIds)
+    .not('parent_task_id', 'is', null);
+  const existingKeys = new Set(
+    ((existingKids ?? []) as Array<{ recurrence_parent_id: string; parent_task_id: string }>)
+      .map((k) => `${k.recurrence_parent_id}:${k.parent_task_id}`)
+  );
+
+  for (const mother of motherInstances) {
+    for (const childTpl of childTemplates as Array<Record<string, unknown> & { id: string; due_date: string }>) {
+      if (existingKeys.has(`${childTpl.id}:${mother.id}`)) continue;
+      const childDueYmd = childDueDateForCycle(String(childTpl.due_date), String(mother.due_date));
+      const occ = new Date(childDueYmd + 'T12:00:00-03:00');
+      const row = cloneTemplate('tasks', childTpl as unknown as Template, occ);
+      row.parent_task_id = mother.id;
+      row.recurrence_parent_id = childTpl.id;
+      row.is_group = false;
+      const { data: kid, error: insErr } = await supabase.from('tasks').insert(row).select('id, due_date').single();
+      if (insErr || !kid) continue;
+      // Lembretes da filha-template → instância (delta a partir do due 00:00 BRT).
+      // Idempotência (review 09/06): busca remind_at já existentes do kid e pula os presentes.
+      const { data: tplReminders } = await supabase
+        .from('task_reminders').select('remind_at, label').eq('task_id', childTpl.id);
+      if (tplReminders && tplReminders.length > 0) {
+        const { data: kidExisting } = await supabase
+          .from('task_reminders').select('remind_at').eq('task_id', kid.id);
+        const kidPairs = new Set(
+          ((kidExisting ?? []) as Array<{ remind_at: string }>).map(r => new Date(r.remind_at).toISOString())
+        );
+        const tplAnchor = new Date(String(childTpl.due_date) + 'T00:00:00-03:00').getTime();
+        const instAnchor = new Date(String(kid.due_date) + 'T00:00:00-03:00').getTime();
+        const rows = tplReminders
+          .map((r: { remind_at: string; label: string | null }) => ({
+            task_id: kid.id,
+            remind_at: new Date(instAnchor + (new Date(r.remind_at).getTime() - tplAnchor)).toISOString(),
+            label: r.label ?? null,
+          }))
+          .filter((r: { remind_at: string }) => !kidPairs.has(r.remind_at));
+        if (rows.length > 0) {
+          await supabase.from('task_reminders').insert(rows);
+        }
+      }
+    }
+  }
 }
 
 function cloneTemplate(
