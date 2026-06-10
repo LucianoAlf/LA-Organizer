@@ -38,6 +38,16 @@ type Kind = 'task' | 'event' | 'delegated' | 'group';
 const MODALITIES: EventModality[] = ['presencial', 'online', 'hibrido'];
 // Sentinel value usado no CustomSelect pra acionar "criar nova categoria pessoal".
 const NEW_CATEGORY_VALUE = '__new__';
+// Presets de lembrete por subtarefa de grupo (minutos antes do prazo) — paridade
+// com os chips do RemindersField das tarefas.
+const GROUP_REMINDER_PRESETS = [
+  { min: 0, label: 'Na hora' },
+  { min: 15, label: '15min antes' },
+  { min: 30, label: '30min antes' },
+  { min: 60, label: '1h antes' },
+  { min: 120, label: '2h antes' },
+  { min: 1440, label: '1 dia antes' },
+] as const;
 
 export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
   const { collaborator, ensureSession } = useAuth();
@@ -72,8 +82,9 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
   const [groupMonthly, setGroupMonthly] = useState(true);
   const [groupDueDay, setGroupDueDay] = useState('');           // dia 1-31 (mensal)
   const [groupDueDate, setGroupDueDate] = useState('');         // YMD (sem repetição)
-  const [groupChildren, setGroupChildren] = useState<Array<{ title: string; day: string; time: string; reminder: boolean }>>([]);
-  const [draftChild, setDraftChild] = useState({ title: '', day: '', time: '', reminder: false });
+  // reminders = offsets em MINUTOS antes do prazo da subtarefa (mesmos presets do RemindersField).
+  const [groupChildren, setGroupChildren] = useState<Array<{ title: string; day: string; time: string; reminders: number[] }>>([]);
+  const [draftChild, setDraftChild] = useState<{ title: string; day: string; time: string; reminders: number[] }>({ title: '', day: '', time: '', reminders: [] });
 
   // event
   const [categoryId, setCategoryId] = useState<string>('');
@@ -134,7 +145,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
       setGroupDueDay('');
       setGroupDueDate('');
       setGroupChildren([]);
-      setDraftChild({ title: '', day: '', time: '', reminder: false });
+      setDraftChild({ title: '', day: '', time: '', reminders: [] });
     }
   }, [open, today]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -393,9 +404,13 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
         const dueYmd = groupMonthly
           ? null
           : (dayN ? dayOfMonthToYmd(dayN, today) : null);
-        const reminderTimes = c.reminder
-          ? [`${groupMonthly ? dayOfMonthToYmd(dayN ?? 1, today) : (dueYmd ?? today)}T${c.time || '09:00'}`]
-          : [];
+        // Offsets (min antes do prazo) → datetime-local SP. Âncora = dia da subtarefa
+        // às HH:MM (ou 09:00). Offset fixo -03:00 (sem DST no Brasil atual).
+        const baseYmd = groupMonthly ? dayOfMonthToYmd(dayN ?? 1, today) : (dueYmd ?? today);
+        const baseMs = new Date(`${baseYmd}T${c.time || '09:00'}:00-03:00`).getTime();
+        const reminderTimes = c.reminders.map((m) =>
+          new Date(baseMs - m * 60000 - 3 * 3600000).toISOString().slice(0, 16)
+        );
         return {
           title: c.title, dayOfMonth: dayN, due_date: dueYmd,
           due_time: c.time || null, reminderTimes,
@@ -547,10 +562,10 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
     <AdaptiveSheet open={open} onClose={onClose} title="Novo" size="sm">
       {/* Kind selector */}
       <div role="tablist" className="grid grid-cols-4 gap-2 mb-md">
-        <KindButton active={kind === 'task'} onClick={() => setKind('task')} icon={<ListTodo size={20} />} label="Tarefa" hint="algo a fazer" />
-        <KindButton active={kind === 'event'} onClick={() => setKind('event')} icon={<CalendarClock size={20} />} label="Compromisso" hint="com horário" />
-        <KindButton active={kind === 'delegated'} onClick={() => setKind('delegated')} icon={<UserPlus size={20} />} label="Delegar" hint="pra alguém do time" />
-        <KindButton active={kind === 'group'} onClick={() => setKind('group')} icon={<FolderKanban size={20} />} label="Grupo" hint="com subtarefas" />
+        <KindButton active={kind === 'task'} onClick={() => setKind('task')} icon={<ListTodo size={18} />} label="Tarefa" hint="algo a fazer" />
+        <KindButton active={kind === 'event'} onClick={() => setKind('event')} icon={<CalendarClock size={18} />} label="Compromisso" hint="com horário" />
+        <KindButton active={kind === 'delegated'} onClick={() => setKind('delegated')} icon={<UserPlus size={18} />} label="Delegar" hint="pra alguém" />
+        <KindButton active={kind === 'group'} onClick={() => setKind('group')} icon={<FolderKanban size={18} />} label="Grupo" hint="subtarefas" />
       </div>
 
       <form onSubmit={onSubmit} className="space-y-md">
@@ -754,7 +769,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
                   <span className="text-body-sm min-w-0 flex-1 truncate">{c.title}</span>
                   {c.day && <span className="text-[11px] px-2 py-0.5 rounded-full bg-bg-elevated text-tom">dia {c.day}</span>}
                   {c.time && <span className="text-[11px] px-2 py-0.5 rounded-full bg-bg-elevated text-fg-secondary">🕐 {c.time}</span>}
-                  {c.reminder && <span className="text-[11px] px-2 py-0.5 rounded-full bg-bg-elevated text-fg-secondary">🔔</span>}
+                  {c.reminders.length > 0 && <span className="text-[11px] px-2 py-0.5 rounded-full bg-bg-elevated text-fg-secondary">🔔 {c.reminders.length}</span>}
                   <button type="button" aria-label="Remover"
                     onClick={() => setGroupChildren(prev => prev.filter((_, j) => j !== i))}
                     className="text-fg-muted hover:text-danger p-0.5">✕</button>
@@ -774,16 +789,29 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
                     placeholder="📅 dia"
                     className="w-20 h-8 px-2 rounded-full border border-border bg-bg-surface text-body-sm text-fg focus:outline-none focus:border-tom" />
                   <div className="w-24"><TimeInput value={draftChild.time} onChange={(t) => setDraftChild(d => ({ ...d, time: t }))} /></div>
-                  <button type="button" onClick={() => setDraftChild(d => ({ ...d, reminder: !d.reminder }))}
-                    className={['h-8 px-3 rounded-full border text-[11px] focus-ring',
-                      draftChild.reminder ? 'border-tom text-tom' : 'border-border text-fg-muted'].join(' ')}>
-                    🔔 lembrete
-                  </button>
                   <button type="button" disabled={!draftChild.title.trim()}
-                    onClick={() => { setGroupChildren(prev => [...prev, draftChild]); setDraftChild({ title: '', day: '', time: '', reminder: false }); }}
+                    onClick={() => { setGroupChildren(prev => [...prev, draftChild]); setDraftChild({ title: '', day: '', time: '', reminders: [] }); }}
                     className="ml-auto h-8 px-4 rounded-full bg-tom text-black text-body-sm font-semibold disabled:opacity-50 focus-ring">
                     Adicionar
                   </button>
+                </div>
+                {/* Lembretes da subtarefa — mesmos presets do RemindersField das tarefas. */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[10px] uppercase tracking-wide text-fg-muted mr-0.5">🔔 Lembretes</span>
+                  {GROUP_REMINDER_PRESETS.map(p => {
+                    const on = draftChild.reminders.includes(p.min);
+                    return (
+                      <button key={p.min} type="button"
+                        onClick={() => setDraftChild(d => ({
+                          ...d,
+                          reminders: on ? d.reminders.filter(m => m !== p.min) : [...d.reminders, p.min],
+                        }))}
+                        className={['h-7 px-2.5 rounded-full border text-[11px] focus-ring transition-colors',
+                          on ? 'border-tom text-tom bg-tom/10' : 'border-border text-fg-muted hover:text-fg'].join(' ')}>
+                        {p.label}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -1042,8 +1070,8 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
 function KindButton({
   active, onClick, icon, label, hint,
 }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string; hint: string }) {
-  // Sprint 22.32 — layout vertical (icone -> label -> hint) pra acomodar 3 kinds
-  // (Tarefa, Compromisso, Delegar) sem texto se atropelar em telas estreitas.
+  // Sprint 22.32 — layout vertical (icone -> label -> hint). Com 4 kinds (grid-cols-4,
+  // 10/06) a tipografia caiu um degrau pra caber em 375px sem quebrar linha.
   return (
     <button
       type="button"
@@ -1051,18 +1079,18 @@ function KindButton({
       aria-selected={active}
       onClick={onClick}
       className={[
-        'rounded-md border px-2 py-3 text-center transition-colors focus-ring',
-        'flex flex-col items-center gap-1.5',
+        'rounded-md border px-1 py-2.5 text-center transition-colors focus-ring',
+        'flex flex-col items-center gap-1 min-w-0',
         active
           ? 'border-tom bg-tom/10'
           : 'border-border bg-bg-subtle hover:bg-bg-elevated',
       ].join(' ')}
     >
       <span className={active ? 'text-tom' : 'text-fg-muted'}>{icon}</span>
-      <div className={['text-body-md font-semibold leading-tight', active ? 'text-tom' : 'text-fg'].join(' ')}>
+      <div className={['text-[12px] font-semibold leading-tight truncate max-w-full', active ? 'text-tom' : 'text-fg'].join(' ')}>
         {label}
       </div>
-      <div className="text-body-sm text-fg-muted leading-tight">{hint}</div>
+      <div className="text-[9.5px] text-fg-muted leading-tight truncate max-w-full">{hint}</div>
     </button>
   );
 }
