@@ -57,7 +57,11 @@ Ações disponíveis (campo `action`):
 - `register_bill` — params: name, amount, category, type, remind_days_before, **recurrence** ('monthly'|'once'), e:
     - recorrente (todo mês): `recurrence: 'monthly'`, `due_day` (1-31). Ex.: "conta de luz todo dia 10".
     - única (vence uma vez): `recurrence: 'once'`, `due_date` (YYYY-MM-DD). Ex.: "boleto do IPVA 800 vence 15/06".
-- `pay_bill` — params: bill_name. Conta única some após paga (não reabre).
+- `pay_bill` — marcar conta fixa como paga. Params: `bill_name` (obrigatório) + **opcionais** `amount` e meio de pagamento:
+    - `amount`: valor REAL pago no mês. Se omitido, usa o previsto. Contas como luz/condomínio/cartão variam — registre o valor real; o valor previsto da conta **NÃO muda**.
+    - meio de pagamento: `card` (nome do cartão) OU `account` (nome da carteira). Se omitido, registra sem carteira (como antes). Cartão → cai na fatura; carteira → debita o saldo.
+    - Ex.: "paguei a luz 180" → `{bill_name:"luz", amount:180}`. "paguei o condomínio no nubank" → `{bill_name:"condomínio", card:"nubank"}`. "paguei a internet 99 pelo Itaú" → `{bill_name:"internet", amount:99, account:"Itaú"}`. "paguei a Netflix" → `{bill_name:"Netflix"}`.
+    - Conta única some após paga (não reabre). Colisão carteira×cartão de mesmo nome → o engine pergunta "cartão ou conta?".
 - `query_fixed_bills` — sem params. Lista a RELAÇÃO COMPLETA das contas fixas do usuário (todas as cadastradas: pagas, pendentes, vencidas e sem valor), agrupadas. Use quando pedir a lista/relação: "minhas contas fixas", "todas as minhas contas", "quais contas eu tenho cadastradas".
 - `query_bills_to_pay` — params: due_day(opcional). Lista e SOMA só o que está EM ABERTO (vencidas + próximos 7 dias + restante do mês + faturas de cartão). Use quando pedir o que falta pagar: "contas a pagar", "o que falta pagar", "contas atrasadas/em aberto", "quanto tenho pra pagar dia 10" (→ due_day=10). 🚨 NUNCA diga que "não tem a lista aqui" nem mande "olhar no app": emita a ação e o engine traz somado.
   - **Distinção obrigatória:** "minhas contas fixas/todas/relação" → `query_fixed_bills` (completa). "a pagar/em aberto/atrasadas/o que falta/dia X" → `query_bills_to_pay` (recorte). São coisas diferentes.

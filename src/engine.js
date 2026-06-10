@@ -6774,9 +6774,43 @@ async function handleFinanceAction(collab, action, params, outcome = {}) {
       const cands = await financeService.findBills(cid, params.bill_name || params.name || '');
       if (cands.length === 0) return 'Não achei conta com esse nome.';
       if (cands.length > 1) return 'Achei mais de uma: ' + cands.map((c, i) => `${i + 1}) ${c.name}`).join(', ') + '. Qual delas?';
-      const paid = await financeService.payBill(cid, cands[0]);
-      outcome.persisted = true; // Fatia C
-      return `✅ ${paid.name} marcada como paga (R$${paid.amount}).`;
+      const bill = cands[0];
+      const date = p.date || undefined;
+      const amount = (p.amount != null && Number(p.amount) > 0) ? Number(p.amount) : Number(bill.amount);
+      const srcName = params.account_name || params.account || params.carteira || params.conta || params.card || p.account_name;
+      const srcMethod = params.method || params.metodo || params.via || p.method || '';
+      const src = srcName ? await financeService.resolveSource(cid, srcName, { type: bill.type, method: srcMethod }) : { kind: 'none' };
+
+      // Colisão carteira×cartão (ex.: "Nubank" é os dois) → pendência binária carregando a conta.
+      if (src.kind === 'ambiguous') {
+        await pendingIntents.openIntent(cid, 'finance_source', {
+          form: 'binary',
+          txn: { type: bill.type, category: bill.category, amount, description: bill.name, date },
+          bill: { id: bill.id, name: bill.name, recurrence: bill.recurrence, type: bill.type },
+          account: { kind: 'account', id: src.account.id, name: src.account.name },
+          card: { kind: 'card', id: src.card.id, name: src.card.name },
+        }, `${src.account.name}: cartão ou conta?`);
+        return `🤔 *${src.account.name}* é carteira e cartão. Foi no *cartão* ou na *conta*?\n_(dica: diz "no crédito" ou "no débito/pix" que eu já anoto direto 😉)_`;
+      }
+
+      let reply;
+      if (src.kind === 'card' && bill.type !== 'income') {
+        reply = await recordCardPurchase(cid, src.card, { amount, description: bill.name, category: bill.category, installments: 1, date }, outcome);
+        reply = `✅ *${bill.name}* paga.\n\n` + reply;
+      } else if (src.kind === 'account') {
+        reply = await writeCashTransaction(cid, { type: bill.type, category: bill.category, amount, description: bill.name, date, account: src.account }, outcome);
+        reply = `✅ *${bill.name}* paga.\n\n` + reply;
+      } else {
+        // none: caixa sem carteira (comportamento atual), no valor REAL.
+        await financeService.insertTransaction(cid, { type: bill.type, category: bill.category, amount, description: bill.name, transaction_date: date });
+        outcome.persisted = true;
+        reply = `✅ *${bill.name}* paga (${financeFmt.money(amount)}).`;
+      }
+      await financeService.markBillPaid(cid, bill, date);
+      if (Math.round(amount * 100) !== Math.round(Number(bill.amount) * 100)) {
+        reply += `\n_(previu ${financeFmt.money(Number(bill.amount))} · pagou ${financeFmt.money(amount)})_`;
+      }
+      return reply;
     }
     case 'create_goal': {
       const g = await financeService.createGoal(cid, {
@@ -7259,6 +7293,15 @@ async function processMessage(phone, text, raw = {}) {
             reply = useCard
               ? await recordCardPurchase(collab.id, card, { amount: txn.amount, description: txn.description, category: txn.category, installments: txn.installments, date: txn.date })
               : await writeCashTransaction(collab.id, { type: txn.type, category: txn.category, amount: txn.amount, description: txn.description, date: txn.date, account });
+            // pay_bill via pendência: marca a conta paga + headline (o lançamento já foi gravado acima).
+            if (finOpen.payload.bill) {
+              try {
+                await financeService.markBillPaid(collab.id, finOpen.payload.bill, txn.date);
+                reply = `✅ *${finOpen.payload.bill.name}* paga.\n\n` + reply;
+              } catch (markErr) {
+                console.warn('[PayBill] mark err:', markErr.message);
+              }
+            }
           } catch (writeErr) {
             console.error('[FinanceSource] write err:', writeErr.message);
             await whatsapp.sendMessage(phone, '⚠️ Não consegui registrar agora. Tenta de novo daqui a pouco?');

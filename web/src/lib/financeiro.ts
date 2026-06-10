@@ -233,15 +233,31 @@ export async function createBill(collaboratorId: string, input: { name: string; 
   if (error) throw error;
   return data;
 }
-export async function payBill(collaboratorId: string, bill: PfBill) {
-  const today = new Date().toISOString().slice(0, 10);
-  const { error: e1 } = await supabase.from('pf_bills')
-    .update({ last_paid_at: today, status: 'paid' })
-    .eq('id', bill.id).eq('collaborator_id', collaboratorId);
-  if (e1) throw e1;
-  await createTransaction(collaboratorId, {
-    type: bill.type, category: bill.category, amount: bill.amount, description: bill.name, transaction_date: today,
-  });
+// Paga a conta no valor REAL (default = previsto), por método (cartão/carteira/nenhum).
+// NUNCA altera bill.amount (previsto). card = { id, closing_day } pra calcular a competência.
+export async function payBill(
+  collaboratorId: string,
+  bill: PfBill,
+  opts: { amount?: number; account_id?: string | null; card?: { id: string; closing_day: number } | null; date?: string } = {},
+) {
+  const date = opts.date || new Date().toISOString().slice(0, 10);
+  const amount = (opts.amount != null && opts.amount > 0) ? opts.amount : Number(bill.amount);
+  if (opts.card && bill.type !== 'income') {
+    const { createCardPurchase } = await import('./cartoes'); // import dinâmico evita ciclo cartoes↔financeiro
+    await createCardPurchase(collaboratorId, {
+      cardId: opts.card.id, closingDay: opts.card.closing_day, amount,
+      category: bill.category, description: bill.name, installments: 1, firstDate: date,
+    });
+  } else if (opts.account_id) {
+    await createTransaction(collaboratorId, { type: bill.type, category: bill.category, amount, description: bill.name, transaction_date: date, account_id: opts.account_id });
+  } else {
+    await createTransaction(collaboratorId, { type: bill.type, category: bill.category, amount, description: bill.name, transaction_date: date });
+  }
+  const patch: Record<string, unknown> = { last_paid_at: date, status: 'paid' };
+  if (bill.recurrence === 'once') patch.is_active = false;
+  const { error } = await supabase.from('pf_bills')
+    .update(patch).eq('id', bill.id).eq('collaborator_id', collaboratorId);
+  if (error) throw error;
 }
 
 export async function updateBill(collaboratorId: string, id: string, patch: { name?: string; amount?: number; due_day?: number; category?: PfCategory; type?: PfBillType; remind_days_before?: number; recurrence?: 'monthly' | 'once'; due_date?: string | null }) {

@@ -123,7 +123,10 @@ export const useCreateTransaction = () => useFinMutation(fin.createTransaction);
 export const useDeleteTransaction = () => useFinMutation((cid, id: string) => fin.deleteTransaction(cid, id));
 export const useUpdateTransaction = () => useFinMutation((cid, args: { id: string; patch: Parameters<typeof fin.updateTransaction>[2] }) => fin.updateTransaction(cid, args.id, args.patch));
 export const useCreateBill        = () => useFinMutation(fin.createBill);
-export const usePayBill           = () => useFinMutation((cid, bill: PfBill) => fin.payBill(cid, bill));
+export const usePayBill           = () => useFinMutation(
+  (cid, args: { bill: PfBill; amount?: number; account_id?: string | null; card?: { id: string; closing_day: number } | null; date?: string }) =>
+    fin.payBill(cid, args.bill, { amount: args.amount, account_id: args.account_id, card: args.card, date: args.date })
+);
 export const useCreateGoal        = () => useFinMutation(fin.createGoal);
 export const useAddToGoal = () => useFinMutation(
   (cid, args: { goalId: string; amount: number; note?: string | null; date?: string }) =>

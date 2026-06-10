@@ -2,11 +2,12 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Fab } from '../../components/Fab';
 import { Tabs } from '../../components/Tabs';
-import { useBills, useCategoryLookup, useFinanceiroAuth, usePayBill } from '../../hooks/useFinanceiro';
+import { useBills, useCategoryLookup, useFinanceiroAuth } from '../../hooks/useFinanceiro';
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
 import { deriveBillStatus, groupExpenseBillsByStatus } from '../../lib/financeiro';
 import type { BillStatus, PfBill } from '../../lib/financeiro';
 import { BillSheet } from './components/BillSheet';
+import { PagarContaSheet } from './components/PagarContaSheet';
 
 function brl(n: number) {
   return n.toLocaleString('pt-BR', { maximumFractionDigits: 0 });
@@ -93,10 +94,10 @@ export function ContasFixasPage() {
   useRealtimeFinance(['pf_bills', 'pf_transactions'], cid);
 
   const billsQ = useBills();
-  const payMut = usePayBill();
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<PfBill | null>(null);
+  const [payingBill, setPayingBill] = useState<PfBill | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>('todas');
 
   const { groups, aReceber } = useMemo(() => {
@@ -107,9 +108,8 @@ export function ContasFixasPage() {
     };
   }, [billsQ.data]);
 
-  async function pay(bill: PfBill) {
-    if (!confirm(`Marcar "${bill.name}" como paga (R$${brl(Number(bill.amount))})?`)) return;
-    try { await payMut.mutateAsync(bill); } catch (e) { alert((e as Error).message); }
+  function pay(bill: PfBill) {
+    setPayingBill(bill);
   }
 
   const empty = !billsQ.isLoading && (billsQ.data?.length ?? 0) === 0;
@@ -173,6 +173,8 @@ export function ContasFixasPage() {
       <BillSheet open={creating} onClose={() => setCreating(false)} />
       {/* Sheet editar */}
       <BillSheet open={!!editing} initial={editing ?? undefined} onClose={() => setEditing(null)} />
+      {/* Sheet pagar */}
+      <PagarContaSheet open={!!payingBill} bill={payingBill} onClose={() => setPayingBill(null)} />
 
       <Fab label="Nova conta" ariaLabel="Cadastrar conta fixa" onClick={() => setCreating(true)} />
     </div>

@@ -272,18 +272,41 @@ async function findBills(collaboratorId, billName) {
   if (error) throw error;
   return data || [];
 }
-async function payBill(collaboratorId, bill) {
-  const today = new Date().toISOString().slice(0, 10);
-  const patch = { last_paid_at: today, status: 'paid' };
+// Só marca a conta como paga (não insere lançamento). Usado quando o lançamento é
+// gravado à parte (ex.: pay_bill no engine via recordCardPurchase/writeCashTransaction).
+async function markBillPaid(collaboratorId, bill, date) {
+  const day = date || new Date().toISOString().slice(0, 10);
+  const patch = { last_paid_at: day, status: 'paid' };
   if (bill.recurrence === 'once') patch.is_active = false;
-  const { error: e1 } = await supabase.from('pf_bills')
+  const { error } = await supabase.from('pf_bills')
     .update(patch)
     .eq('id', bill.id).eq('collaborator_id', collaboratorId);
-  if (e1) throw e1;
-  await insertTransaction(collaboratorId, {
-    type: bill.type, category: bill.category, amount: bill.amount, description: bill.name, transaction_date: today,
-  });
-  return { ...bill, last_paid_at: today };
+  if (error) throw error;
+  return { ...bill, last_paid_at: day };
+}
+
+// Paga a conta: marca paga + insere o lançamento no valor REAL (default = previsto),
+// roteando por método. NUNCA altera bill.amount (previsto). opts:
+//   { amount?, account_id?, card_id?, date? }
+async function payBill(collaboratorId, bill, opts = {}) {
+  const date = opts.date || new Date().toISOString().slice(0, 10);
+  const amount = (opts.amount != null && Number(opts.amount) > 0) ? Number(opts.amount) : Number(bill.amount);
+  if (opts.card_id && bill.type !== 'income') {
+    const card = (await listCards(collaboratorId)).find((c) => c.id === opts.card_id);
+    if (card) {
+      await insertCardPurchase(collaboratorId, card, {
+        category: bill.category, amount, description: bill.name, transaction_date: date, installments: 1,
+      });
+    } else {
+      await insertTransaction(collaboratorId, { type: bill.type, category: bill.category, amount, description: bill.name, transaction_date: date });
+    }
+  } else if (opts.account_id) {
+    await insertTransaction(collaboratorId, { type: bill.type, category: bill.category, amount, description: bill.name, transaction_date: date, account_id: opts.account_id });
+  } else {
+    await insertTransaction(collaboratorId, { type: bill.type, category: bill.category, amount, description: bill.name, transaction_date: date });
+  }
+  const marked = await markBillPaid(collaboratorId, bill, date);
+  return { ...marked, paid_amount: amount };
 }
 
 // ---- Metas (contribuicao NAO vira transacao, D7) ----
@@ -683,7 +706,7 @@ module.exports = {
   listRecentTransactions, queryTransactions, queryPeriodReport,
   monthCategoryTotal, querySummary,
   setBudget, getBudget, queryBudget,
-  createBill, findBills, payBill,
+  createBill, findBills, payBill, markBillPaid,
   createGoal, findGoal, listGoals,
   addGoalContribution, listGoalContributions, deleteGoalContribution, updateGoal, deactivateGoal,
   billsDueWithin, listActiveBills, pendingCardInvoices, monthlyReport, monthCategoryBreakdown, collaboratorsWithActivity, collaboratorsForFinanceRitual,
