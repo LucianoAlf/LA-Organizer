@@ -25,6 +25,8 @@ async function openApproval(supabase, { approverId, domain, refId, token = null,
 
   const question = domain === 'project'
     ? `Projeto aguardando sua aprovação — responda APROVA ${token || '<token>'}`
+    : domain === 'maintenance'
+    ? `Manutenção aguardando aprovação — responda APROVA ${shortId || '<token>'}`.trim()
     : `Comunicado aguardando sua aprovação — responda APROVAR ${shortId || ''}`.trim();
   const { data, error } = await supabase.from('pending_intents')
     .insert({
@@ -45,6 +47,35 @@ function openProjectApproval(supabase, { approverId, projectId, token }) {
 
 function openAnnouncementApproval(supabase, { approverId, announcementId, shortId }) {
   return openApproval(supabase, { approverId, domain: 'announcement', refId: announcementId, shortId });
+}
+
+// BUG-8 (11/06): abre pedido de aprovação de manutenção para o aprovador da matriz.
+// Guarda todos os params de execução no payload para que o dispatcher possa executar
+// registrarManutencao quando o aprovador responder APROVA <token>.
+async function openMaintenanceApproval(supabase, { approverId, shortId, requesterName, requesterPhone, itemId, itemNome, tipo, descricao, custo, fornecedor_servico }) {
+  if (!approverId || !shortId) return null;
+  try {
+    await supabase.from('pending_intents')
+      .update({ resolved_at: new Date().toISOString(), resolution: 'superseded', resolution_note: 'novo pedido (mesmo token)' })
+      .eq('collaborator_id', approverId).eq('kind', KIND).is('resolved_at', null).eq('payload->>ref_id', shortId);
+  } catch (e) { console.warn('[Approvals] supersede maintenance err:', e.message); }
+  const { data, error } = await supabase.from('pending_intents')
+    .insert({
+      collaborator_id: approverId,
+      kind: KIND,
+      payload: {
+        domain: 'maintenance', ref_id: shortId, short_id: shortId,
+        requester_phone: requesterPhone, requester_name: requesterName,
+        item_id: itemId, item_nome: itemNome,
+        tipo: tipo || 'corretiva', descricao: descricao || null,
+        custo: custo ?? null, fornecedor_servico: fornecedor_servico || null,
+      },
+      question_text: `Manutenção aguardando aprovação — responda APROVA ${shortId}`,
+    })
+    .select('id').single();
+  if (error) { console.error('[Approvals] open maintenance err:', error.message); return null; }
+  console.log(`[Approvals] opened maintenance ${shortId} for ${String(approverId).slice(0, 8)}`);
+  return data.id;
 }
 
 // Aprovações ABERTAS do colaborador (janela própria de 7 dias), mais recente primeiro.
@@ -102,4 +133,4 @@ async function resolveApproverFor(supabase, creatorId) {
   return approver;
 }
 
-module.exports = { openProjectApproval, openAnnouncementApproval, listOpenApprovals, resolveApprovalByRef, resolveApproverFor, APPROVAL_EXPIRY_DAYS };
+module.exports = { openProjectApproval, openAnnouncementApproval, openMaintenanceApproval, listOpenApprovals, resolveApprovalByRef, resolveApproverFor, APPROVAL_EXPIRY_DAYS };

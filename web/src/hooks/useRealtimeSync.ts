@@ -39,6 +39,7 @@ const WATCHED_TABLES = [
   'personal_checklists',
   'personal_checklist_items',
   'coordination_requests',
+  'group_chat_messages',
   // LA EDUCA
   'la_educa_estagiarios',
   'la_educa_avaliacoes',

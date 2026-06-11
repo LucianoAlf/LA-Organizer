@@ -7607,6 +7607,31 @@ async function processMessage(phone, text, raw = {}) {
           aprReply = r.ok
             ? (apr.decision === 'approve' ? `✅ *${r.project.name}* aprovado. Avisei quem criou.` : `❌ *${r.project.name}* rejeitado. Avisei quem criou.`)
             : (r.userMsg || '_não consegui processar agora_');
+        } else if (it.payload.domain === 'maintenance') {
+          // BUG-8 (11/06): executa registrarManutencao ao aprovar; notifica rejeição ao solicitante.
+          try {
+            const mp = it.payload;
+            if (apr.decision === 'approve') {
+              await inventarioService.registrarManutencao({
+                item_id: mp.item_id, tipo: mp.tipo, descricao: mp.descricao,
+                custo: mp.custo, fornecedor_servico: mp.fornecedor_servico,
+              }, collab.full_name);
+              await approvalsService.resolveApprovalByRef(supabase, mp.ref_id, 'confirmed', `aprovado por ${collab.full_name}`);
+              if (mp.requester_phone) {
+                try { await whatsapp.sendMessage(mp.requester_phone, `✅ Sua solicitação de manutenção em *${mp.item_nome || 'item'}* foi aprovada por ${collab.full_name}.`); } catch (_) {}
+              }
+              aprReply = `✅ Manutenção em *${mp.item_nome || 'item'}* registrada. Avisei quem solicitou.`;
+            } else {
+              await approvalsService.resolveApprovalByRef(supabase, mp.ref_id, 'denied', `rejeitado por ${collab.full_name}: ${apr.reason || ''}`);
+              if (mp.requester_phone) {
+                try { await whatsapp.sendMessage(mp.requester_phone, `❌ Solicitação de manutenção em *${mp.item_nome || 'item'}* rejeitada por ${collab.full_name}${apr.reason ? `: ${apr.reason}` : ''}.`); } catch (_) {}
+              }
+              aprReply = `❌ Manutenção *${mp.item_nome || 'item'}* rejeitada. Avisei quem solicitou.`;
+            }
+          } catch (_maintErr) {
+            console.error('[Maintenance] approval execution err:', _maintErr.message);
+            aprReply = `_Erro ao processar manutenção: ${_maintErr.message}_`;
+          }
         } else {
           const r = await applyAnnouncementApproval(collab, { action: apr.decision === 'approve' ? 'approve' : 'reject', announcement_id: it.payload.ref_id, reason: apr.reason });
           aprReply = r.ok
@@ -7620,6 +7645,8 @@ async function processMessage(phone, text, raw = {}) {
         const lines = candidates.map((i, idx) => {
           const cmd = i.payload.domain === 'project'
             ? `*APROVA ${i.payload.token}*`
+            : i.payload.domain === 'maintenance'
+            ? `*APROVA ${i.payload.short_id}*`
             : `*APROVAR ${i.payload.short_id || String(i.payload.ref_id).slice(0, 4)}*`;
           return `${idx + 1}) ${i.question_text || i.payload.domain} → ${cmd}`;
         });
@@ -9218,19 +9245,47 @@ async function processMessage(phone, text, raw = {}) {
               if (!vc.ok) { reply = (reply ? reply + '\n\n' : '') + `Faltam dados: ${vc.errors.join(', ')}`; }
               else {
                 let itemId = p.item_id;
+                let _maintItemNome = p.item_nome || null;
                 if (!itemId && p.item_nome) {
                   const { laReportClient } = require('./services/la-report-client');
                   const { data } = await laReportClient.from('inventario').select('id, nome').ilike('nome', `%${p.item_nome}%`).eq('ativo', true).limit(5);
                   if (!data || data.length === 0) { reply = (reply ? reply + '\n\n' : '') + `Item "${p.item_nome}" não encontrado.`; itemId = null; }
                   else if (data.length > 1) { reply = (reply ? reply + '\n\n' : '') + `Mais de um item: ${data.map(x => x.nome).join(', ')}. Qual?`; itemId = null; }
-                  else itemId = data[0].id;
+                  else { itemId = data[0].id; _maintItemNome = data[0].nome; }
                 }
                 if (itemId) {
-                  await inventarioService.registrarManutencao({
-                    item_id: itemId, tipo: p.tipo, descricao: p.descricao, custo: p.custo,
-                    fornecedor_servico: p.fornecedor_servico,
-                  }, userName);
-                  reply = (reply ? reply + '\n\n' : '') + `🔧 Manutenção registrada.`;
+                  // BUG-8 (11/06): directors registram direto; demais passam pelo fluxo de aprovação.
+                  const _canDirectMaint = collab && collab.role === 'director';
+                  if (_canDirectMaint) {
+                    await inventarioService.registrarManutencao({
+                      item_id: itemId, tipo: p.tipo, descricao: p.descricao, custo: p.custo,
+                      fornecedor_servico: p.fornecedor_servico,
+                    }, userName);
+                    reply = (reply ? reply + '\n\n' : '') + `🔧 Manutenção registrada.`;
+                  } else {
+                    const _maintApprover = await approvalsService.resolveApproverFor(supabase, collab.id);
+                    if (!_maintApprover) {
+                      // Sem aprovador na matriz → registra direto (fail-open)
+                      await inventarioService.registrarManutencao({
+                        item_id: itemId, tipo: p.tipo, descricao: p.descricao, custo: p.custo,
+                        fornecedor_servico: p.fornecedor_servico,
+                      }, userName);
+                      reply = (reply ? reply + '\n\n' : '') + `🔧 Manutenção registrada.`;
+                    } else {
+                      const _maintToken = `MANUT-${require('crypto').randomBytes(2).toString('hex').toUpperCase()}`;
+                      await approvalsService.openMaintenanceApproval(supabase, {
+                        approverId: _maintApprover.id, shortId: _maintToken,
+                        requesterName: userName, requesterPhone: phone,
+                        itemId, itemNome: _maintItemNome,
+                        tipo: p.tipo || 'corretiva', descricao: p.descricao,
+                        custo: p.custo ?? null, fornecedor_servico: p.fornecedor_servico,
+                      });
+                      const _custoStr = p.custo ? ` — R$${p.custo}` : '';
+                      const _maintNotif = `🔧 *${userName}* quer registrar manutenção em *${_maintItemNome || 'item'}*${_custoStr}: ${p.descricao || p.tipo || 'sem descrição'}.\n\n*APROVA ${_maintToken}* ou *REJEITA ${_maintToken}*`;
+                      try { await whatsapp.sendMessage(_maintApprover.phone, _maintNotif); } catch (_) {}
+                      reply = (reply ? reply + '\n\n' : '') + `🔧 Pedido enviado para *${_maintApprover.full_name}* aprovar. Você será avisado.`;
+                    }
+                  }
                 }
               }
             } else if (payload.action === 'edit_item') {

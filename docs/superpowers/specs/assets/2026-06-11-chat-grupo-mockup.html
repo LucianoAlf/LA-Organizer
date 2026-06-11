@@ -1,0 +1,167 @@
+<style>
+  .la { font-family: Inter, system-ui, sans-serif; background:#F4F4F4; color:#111; border-radius:16px; overflow:hidden; border:1px solid #E0E0E0; }
+  .la * { box-sizing:border-box; margin:0; }
+  .la-surface { background:#FFF; border:1px solid #E0E0E0; border-radius:16px; }
+  .scr-title { font-size:1.5rem; line-height:1.2; font-weight:700; }
+  .card-title { font-size:1.125rem; font-weight:600; }
+  .b-lg { font-size:1rem; font-weight:500; } .b-md{font-size:.9375rem;} .b-sm{font-size:.8125rem;}
+  .lbl { font-size:.75rem; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:#7A7A7A; }
+  .muted{color:#7A7A7A;} .sec{color:#424242;}
+  .chip{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;font-size:.72rem;font-weight:600;background:#E8E8E8;color:#424242;}
+  .chip-tom{background:#A3BE50;color:#000;}
+  .bdg-ok{background:rgba(34,197,94,.12);color:#15803d;padding:2px 8px;border-radius:999px;font-size:.7rem;font-weight:600;}
+  .bdg-warn{background:rgba(245,158,11,.14);color:#b45309;padding:2px 8px;border-radius:999px;font-size:.7rem;font-weight:600;}
+  .stat{flex:1;background:#FFF;border:1px solid #E0E0E0;border-radius:10px;padding:6px 10px;}
+  .stat b{font-size:1.05rem;font-weight:700;display:block;}
+  .av{width:26px;height:26px;border-radius:999px;display:grid;place-items:center;font-size:.7rem;font-weight:700;color:#fff;flex:none;}
+  .devbar{font-size:.7rem;color:#7A7A7A;padding:6px 10px;background:#E8E8E8;border-bottom:1px solid #E0E0E0;display:flex;justify-content:space-between;}
+  /* chat */
+  .bub{max-width:78%;padding:8px 11px;border-radius:14px;font-size:.85rem;line-height:1.4;}
+  .me{background:#A3BE50;color:#000;border-bottom-right-radius:4px;}
+  .them{background:#FFF;border:1px solid #E0E0E0;border-bottom-left-radius:4px;}
+  .tom{background:#E8F0CF;border:1px solid #A3BE50;border-bottom-left-radius:4px;}
+  .row{display:flex;gap:8px;margin-bottom:10px;align-items:flex-end;}
+  .row.right{flex-direction:row-reverse;}
+  .nm{font-size:.68rem;font-weight:700;color:#728538;margin-bottom:2px;}
+  .composer{display:flex;align-items:center;gap:6px;border-top:1px solid #E0E0E0;padding:8px;background:#FFF;}
+  .cbtn{width:32px;height:32px;border-radius:999px;display:grid;place-items:center;background:#E8E8E8;color:#424242;font-size:.95rem;flex:none;}
+  .cinput{flex:1;background:#F4F4F4;border:1px solid #E0E0E0;border-radius:999px;padding:7px 12px;font-size:.85rem;color:#7A7A7A;}
+  .send{width:32px;height:32px;border-radius:999px;display:grid;place-items:center;background:#A3BE50;color:#000;font-weight:700;flex:none;}
+  /* report card rendered by TOM */
+  .report{background:#FFF;border:1px solid #A3BE50;border-radius:12px;overflow:hidden;}
+  .report h4{background:#A3BE50;color:#000;padding:7px 10px;font-size:.78rem;font-weight:700;}
+  .report .body{padding:9px 11px;font-size:.78rem;line-height:1.5;}
+  .report li{margin:2px 0;}
+  .flow-label{font-size:.8rem;font-weight:700;color:#A3BE50;text-transform:uppercase;letter-spacing:.06em;margin:22px 0 8px;}
+  .pair{display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;}
+</style>
+
+<h2>Chat do grupo — TOM na casa dele 🏠</h2>
+<p class="subtitle">Drawer no workspace (empurra o conteúdo pra esquerda) + tela cheia + mobile. Conversa real do Financeiro: TOM ouve tudo, só fala quando chamado, e no fim da sessão oferece o resumo em HTML. Clica se curtiu, ou comenta o que ajustar.</p>
+
+<div class="flow-label">Desktop · workspace com o chat aberto na direita (380px)</div>
+<div class="la" style="width:100%;">
+  <div class="devbar"><span>/grupos/financeiro · chat aberto</span><span>1440px</span></div>
+  <div style="display:flex; min-height:520px;">
+    <!-- conteúdo empurrado p/ esquerda -->
+    <div style="flex:1; padding:18px; min-width:0; background:#F4F4F4;">
+      <div class="b-sm muted">‹ Grupos</div>
+      <div class="scr-title">👥 Financeiro</div>
+      <div class="b-sm muted" style="margin:2px 0 12px;">★ Rose · Ana — qualquer um conclui</div>
+      <div style="display:flex; gap:8px; margin-bottom:12px;">
+        <div class="stat"><b>4</b><span class="lbl" style="font-size:.6rem;">Abertas</span></div>
+        <div class="stat"><b style="color:#b45309;">1</b><span class="lbl" style="font-size:.6rem;">Vence</span></div>
+        <div class="stat"><b>0</b><span class="lbl" style="font-size:.6rem;">Atrasadas</span></div>
+        <div class="stat"><b style="color:#15803d;">2</b><span class="lbl" style="font-size:.6rem;">Feitas</span></div>
+      </div>
+      <div class="lbl" style="margin-bottom:6px;">⏰ Vence em breve</div>
+      <div class="la-surface" style="padding:9px 11px; display:flex; align-items:center; gap:8px;">
+        <span style="width:16px;height:16px;border:2px solid #9E9E9E;border-radius:999px;"></span>
+        <span class="b-md" style="flex:1;">Conferir os cheques no sistema</span>
+        <span class="bdg-warn">sexta 12/06</span>
+      </div>
+      <div class="b-sm muted" style="margin-top:14px; text-align:center;">↩ o conteúdo do workspace fica aqui, só mais estreito enquanto o chat tá aberto</div>
+    </div>
+    <!-- drawer do chat -->
+    <aside style="width:380px; flex:none; border-left:1px solid #E0E0E0; background:#FFF; display:flex; flex-direction:column;">
+      <div style="display:flex; align-items:center; gap:8px; padding:10px 12px; border-bottom:1px solid #E0E0E0;">
+        <span class="av" style="background:#A3BE50; color:#000;">F</span>
+        <div style="flex:1; min-width:0;">
+          <div class="b-md" style="font-weight:600;">Financeiro · chat</div>
+          <div class="b-sm muted">Rose, Ana e TOM 👽</div>
+        </div>
+        <span class="cbtn" title="Tela cheia">⛶</span>
+        <span class="cbtn" title="Fechar">✕</span>
+      </div>
+      <div style="flex:1; overflow:y:auto; padding:12px; background:#F4F4F4;">
+        <div style="text-align:center; margin-bottom:10px;"><span class="chip">hoje</span></div>
+
+        <div class="row"><span class="av" style="background:#8B5CF6;">A</span><div><div class="nm">Ana</div><div class="bub them">Vi os cheques, tão na pasta. Faltou conferir no sistema ainda</div></div></div>
+
+        <div class="row right"><div><div class="bub me">TOM, cria uma tarefa pro grupo: conferir os cheques no sistema, pra sexta</div></div></div>
+
+        <div class="row"><span class="av" style="background:#728538;">👽</span><div style="max-width:82%;">
+          <div class="nm">TOM</div>
+          <div class="bub tom">✅ Criei pro grupo <b>Financeiro</b>: <b>Conferir os cheques no sistema</b> — pra <b>sexta 12/06</b>. Qualquer uma pode concluir 😉
+          <div class="la-surface" style="margin-top:6px; padding:6px 8px; display:flex; align-items:center; gap:6px; background:#fff;">
+            <span style="width:14px;height:14px;border:2px solid #9E9E9E;border-radius:999px;"></span>
+            <span class="b-sm" style="flex:1;">Conferir os cheques no sistema</span><span class="bdg-warn">12/06</span>
+          </div></div>
+        </div></div>
+
+        <div class="row right"><div><div class="bub me">valeu Tom! 🙏</div></div></div>
+        <div style="text-align:center; margin:8px 0;"><span class="chip" style="background:transparent;border:1px dashed #9E9E9E;">TOM saiu da conversa · só ouvindo</span></div>
+
+        <div class="row"><span class="av" style="background:#E91451;">R</span><div><div class="nm">Rose</div><div class="bub them">acho que era isso por hoje, valeu Ana 👏</div></div></div>
+        <div class="row"><span class="av" style="background:#8B5CF6;">A</span><div><div class="nm">Ana</div><div class="bub them">fechou, até amanhã!</div></div></div>
+
+        <!-- proativo de fim de sessão -->
+        <div class="row"><span class="av" style="background:#728538;">👽</span><div style="max-width:86%;">
+          <div class="nm">TOM</div>
+          <div class="bub tom">Boa reunião, meninas! 👋 Antes de fecharem — ficou alguma tarefa pra registrar? Quer que eu gere um <b>resumo do que vocês conversaram</b>?
+          <div style="display:flex; gap:6px; margin-top:8px; flex-wrap:wrap;">
+            <span class="chip chip-tom">📄 Gerar resumo</span><span class="chip">➕ Criar tarefa</span><span class="chip">Tá tranquilo</span>
+          </div></div>
+        </div></div>
+      </div>
+      <div class="composer">
+        <span class="cbtn" title="Anexar imagem/PDF">📎</span>
+        <span class="cinput">Mensagem pro grupo…</span>
+        <span class="cbtn" title="Gravar áudio">🎤</span>
+        <span class="send">➤</span>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<div class="flow-label">O super-poder: TOM renderiza o resumo em HTML bonito (clicou em "Gerar resumo")</div>
+<div class="pair">
+  <div style="width:400px;">
+    <div class="la" style="padding:12px;">
+      <div class="row"><span class="av" style="background:#728538;">👽</span><div style="max-width:100%;">
+        <div class="nm">TOM</div>
+        <div class="bub tom" style="max-width:100%;">Prontinho! Resumo da conversa de hoje 👇
+          <div class="report" style="margin-top:8px;">
+            <h4>📋 Financeiro · Resumo — 11/06</h4>
+            <div class="body">
+              <b>Conversaram sobre:</b>
+              <ul><li>• Cheques que chegaram hoje (na pasta, falta o sistema)</li><li>• Repasse dos cartões da maquininha</li></ul>
+              <b style="display:block;margin-top:6px;">Tarefa criada:</b>
+              <ul><li>✅ Conferir os cheques no sistema — <span class="bdg-warn">sexta 12/06</span></li></ul>
+              <b style="display:block;margin-top:6px;">Em aberto:</b>
+              <ul><li>• Repasse dos cartões — sem responsável definido</li></ul>
+            </div>
+          </div>
+          <div style="display:flex; gap:6px; margin-top:8px;"><span class="chip">⬇ Baixar</span><span class="chip">↗ Compartilhar</span></div>
+        </div>
+      </div></div>
+    </div>
+  </div>
+  <div style="flex:1; min-width:240px;">
+    <h3>Por que isso é o pulo do gato</h3>
+    <ul style="line-height:1.7;">
+      <li>No WhatsApp o TOM manda texto cru. <b>Aqui ele renderiza HTML</b> — tabela, cores, badge de prazo, botão de baixar.</li>
+      <li>O resumo é uma <b>mensagem do chat</b> (fica no histórico, pesquisável) — não some no scroll do zap.</li>
+      <li>Tudo que rola no chat vira <b>memória de longo prazo</b> daquele grupo: o TOM lembra do que foi falado semana passada.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="flow-label">Mobile · tela cheia (no celular o chat abre inteiro, sem drawer)</div>
+<div class="la" style="width:330px;">
+  <div class="devbar"><span>Financeiro · chat</span><span>375px</span></div>
+  <div style="display:flex; flex-direction:column; height:480px;">
+    <div style="display:flex; align-items:center; gap:8px; padding:10px 12px; border-bottom:1px solid #E0E0E0;">
+      <span class="b-md">‹</span><span class="av" style="background:#A3BE50;color:#000;">F</span>
+      <div style="flex:1;"><div class="b-md" style="font-weight:600;">Financeiro</div><div class="b-sm muted">Rose, Ana, TOM 👽</div></div>
+    </div>
+    <div style="flex:1; overflow:hidden; padding:12px; background:#F4F4F4;">
+      <div class="row"><span class="av" style="background:#8B5CF6;">A</span><div><div class="nm">Ana</div><div class="bub them">Faltou conferir os cheques no sistema</div></div></div>
+      <div class="row right"><div><div class="bub me">TOM, cria isso pra sexta</div></div></div>
+      <div class="row"><span class="av" style="background:#728538;">👽</span><div><div class="nm">TOM</div><div class="bub tom">✅ Criei pro grupo — <b>sexta 12/06</b> 😉</div></div></div>
+    </div>
+    <div class="composer">
+      <span class="cbtn">📎</span><span class="cinput">Mensagem…</span><span class="cbtn">🎤</span><span class="send">➤</span>
+    </div>
+  </div>
+</div>
