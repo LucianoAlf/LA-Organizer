@@ -2,12 +2,15 @@
 // Workspace do grupo (spec 2026-06-10) — o "escritório" do time: stats, pool por
 // urgência, pacotes do mês e feitas recentes. Rota /grupos/:groupId (Task 6 liga).
 // Fiel ao mockup aprovado (docs/superpowers/specs/assets/2026-06-10-workspace-grupos-mockup.html §2).
-import { useState, type ReactNode } from 'react';
+import { useState, useCallback, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ChevronLeft, Plus, Settings } from 'lucide-react';
+import { ChevronLeft, Plus, Settings, MessageSquare } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useWorkGroups, useMyGroupIds } from '../../hooks/useWorkGroups';
 import { useGroupWorkspace, type PoolTaskRow } from '../../hooks/useGroupWorkspace';
+import { useGroupChat } from '../../hooks/useGroupChat';
+import { unreadCount } from '../../lib/groupChat';
+import { GroupChatDrawer } from './chat/GroupChatDrawer';
 import { doneWhenLabel } from '../../lib/groupWorkspace';
 import { toggleChildWithCascade } from '../../lib/taskGroups';
 import { todaySP, brShort } from '../../utils/date';
@@ -103,6 +106,19 @@ export function GrupoWorkspace() {
   const [configOpen, setConfigOpen] = useState(false);
   const [rowBusy, setRowBusy] = useState<string | null>(null);
   const [childBusy, setChildBusy] = useState<string | null>(null);
+
+  // Chat de grupo (Fase 1): drawer + badge de não-lidas (last_read em localStorage).
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatFull, setChatFull] = useState(false);
+  const chatPeek = useGroupChat(groupId);
+  const lastReadKey = `chat-read-${groupId ?? ''}`;
+  const [lastRead, setLastRead] = useState<string | null>(() => localStorage.getItem(lastReadKey));
+  const unread = unreadCount(chatPeek.messages.data ?? [], lastRead, chatPeek.meId);
+  const markSeen = useCallback(() => {
+    const iso = new Date().toISOString();
+    localStorage.setItem(lastReadKey, iso);
+    setLastRead(iso);
+  }, [lastReadKey]);
 
   const today = todaySP();
 
@@ -215,7 +231,9 @@ export function GrupoWorkspace() {
   const surfaceCls = 'rounded-md border bg-bg-surface shadow-card dark:shadow-none overflow-hidden';
 
   return (
-    <div className="space-y-lg w-full max-w-screen-2xl pb-2xl">
+    <div className="flex gap-lg w-full max-w-screen-2xl">
+      {/* coluna de conteúdo — encolhe (flex-1) quando o chat abre na direita */}
+      <div className="flex-1 min-w-0 space-y-lg pb-2xl">
       {/* header */}
       <header className="flex items-start gap-md">
         <div className="min-w-0 flex-1">
@@ -228,11 +246,30 @@ export function GrupoWorkspace() {
           </button>
           <div className="flex items-center gap-sm">
             <h1 className="text-screen-title truncate">👥 {group.name}</h1>
-            {canManage && <div className="md:hidden ml-auto">{gearBtn('h-9 w-9')}</div>}
+            <button
+              type="button"
+              onClick={() => setChatOpen(true)}
+              aria-label={`Abrir chat${unread > 0 ? ` · ${unread} não lidas` : ''}`}
+              className="md:hidden ml-auto relative grid place-items-center h-9 w-9 rounded-md border border-border bg-bg-surface text-fg hover:bg-bg-elevated focus-ring"
+            >
+              <MessageSquare size={18} />
+              {unread > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 grid place-items-center rounded-full bg-tom text-black text-[10px] font-bold">{unread}</span>
+              )}
+            </button>
+            {canManage && <div className="md:hidden">{gearBtn('h-9 w-9')}</div>}
           </div>
           <p className="text-body-sm text-fg-muted mt-xs">{membersLine} — qualquer um conclui</p>
         </div>
         <div className="max-md:hidden flex items-center gap-sm shrink-0 pt-md">
+          <Button
+            variant={chatOpen ? 'primary' : 'secondary'}
+            size="md"
+            leadingIcon={<MessageSquare size={16} />}
+            onClick={() => setChatOpen(v => !v)}
+          >
+            Chat{unread > 0 ? ` · ${unread}` : ''}
+          </Button>
           <Button variant="secondary" size="md" onClick={() => openCreate('group')}>
             🗂️ + Pacote mensal
           </Button>
@@ -411,6 +448,20 @@ export function GrupoWorkspace() {
         }}
       />
       {canManage && <GroupConfigPanel open={configOpen} group={group} onClose={() => setConfigOpen(false)} />}
+      </div>{/* fim da coluna de conteúdo */}
+
+      {/* Chat do grupo (Fase 1) — drawer 380px que empurra o conteúdo; tela cheia/mobile via overlay. */}
+      {chatOpen && groupId && (
+        <GroupChatDrawer
+          groupId={groupId}
+          groupName={group.name}
+          membersLine={membersLine}
+          fullscreen={chatFull}
+          onToggleFullscreen={() => setChatFull(v => !v)}
+          onClose={() => { setChatFull(false); setChatOpen(false); }}
+          onSeen={markSeen}
+        />
+      )}
     </div>
   );
 }

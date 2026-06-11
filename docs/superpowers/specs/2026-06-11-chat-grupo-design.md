@@ -1,5 +1,17 @@
 # Chat de Grupo (TOM na casa dele) — Design
 
+> **STATUS Fase 1 (11/06 ~22h30 BRT): ENTREGUE + validada.** Tabela `group_chat_messages` + RLS de membro
+> (membro só insere kinds normais; `report` é exclusivo do TOM/service_role) + bucket público `group-chat`.
+> lib pura `groupChat.ts` (3/3 vitest) + `useGroupChat` (query/send/upload) + realtime registrado. Render
+> seguro (DOMPurify — guard de `javascript:` URL, `rel=noreferrer` em links do TOM, `class` fora do allowlist).
+> Avatar real `/tom-avatar.png`. `GroupChatDrawer` (380px empurra o conteúdo no desktop, sticky/rolável;
+> tela cheia; mobile tela cheia) + `MessageList`/`Composer` (texto, 📎 imagem/PDF, 🎤 áudio MediaRecorder) +
+> botão Chat com badge de não-lidas. tsc/build/vitest limpos. **Validado no preview (Alf membro temporário
+> do Financeiro):** drawer empurra (1440px), report do TOM renderiza, ordem cronológica, envio real +
+> realtime, mobile tela cheia (375). Seed e membership-de-teste do Alf REMOVIDOS (Financeiro = Ana+Rose).
+> **Pendente:** Fase 2 (TOM engajado — backend/engine, valida na VPS) + Fase 3 (proativo de fim de sessão).
+
+
 **Data:** 2026-06-11 · **Aprovado por:** Alf (mockup + faseamento) · **Origem:** Alf quer trazer as conversas das equipes pra DENTRO do app, onde o TOM tem poderes de renderização HTML muito além do WhatsApp. App-first; WhatsApp vira espelho FUTURO na mesma tabela.
 
 **Mockup canônico (UI fiel):** `docs/superpowers/specs/assets/2026-06-11-chat-grupo-mockup.html` (copiar do companion antes do plano).
