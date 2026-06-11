@@ -72,11 +72,13 @@ export function useGroupWorkspace(groupId: string | undefined, collabId: string 
   const pool = useQuery({
     queryKey: ['group-workspace', groupId, today],
     enabled: Boolean(groupId),
+    staleTime: 30_000,
     queryFn: () => fetchPool(groupId!, today),
   });
   const packages = useQuery({
     queryKey: ['group-workspace-pkgs', groupId, today],
     enabled: Boolean(groupId),
+    staleTime: 30_000,
     queryFn: () => fetchPackages(groupId!, today),
   });
 
@@ -108,7 +110,7 @@ export function useGroupWorkspace(groupId: string | undefined, collabId: string 
       } else {
         const { error } = await supabase.from('tasks')
           .update({ status: 'pending', completed_at: null, completed_by: null })
-          .eq('id', task.id);
+          .eq('id', task.id).eq('status', 'done');
         if (error) throw error;
       }
     },
@@ -133,9 +135,10 @@ export function useGroupWorkspace(groupId: string | undefined, collabId: string 
       if (input.dueChanged || input.reminderIsos.length > 0) {
         const { error: de } = await supabase.from('task_reminders').delete().eq('task_id', input.id).is('sent_at', null);
         if (de) throw de;
-        if (input.reminderIsos.length > 0) {
+        const futureIsos = input.reminderIsos.filter(r => r > new Date().toISOString());
+        if (futureIsos.length > 0) {
           const { error: ie } = await supabase.from('task_reminders')
-            .insert(input.reminderIsos.map(r => ({ task_id: input.id, remind_at: r })));
+            .insert(futureIsos.map(r => ({ task_id: input.id, remind_at: r })));
           if (ie) throw ie;
         }
       }
@@ -158,10 +161,12 @@ export function useGroupWorkspace(groupId: string | undefined, collabId: string 
 // Lista /grupos: counts por grupo (1 query leve agregada em JS).
 export interface GroupCounts { abertas: number; atrasadas: number; venceEmBreve: number; feitasNoMes: number; totalMes: number; }
 
+type OverviewRow = { id: string; assigned_group_id: string; status: string; due_date: string | null; completed_at: string | null };
+
 export function useGroupsOverview(groupIds: string[]) {
   const today = todaySP();
   return useQuery({
-    queryKey: ['groups-overview', groupIds.join(','), today],
+    queryKey: ['groups-overview', [...groupIds].sort().join(','), today],
     enabled: groupIds.length > 0,
     queryFn: async (): Promise<Record<string, GroupCounts>> => {
       const { data, error } = await supabase
@@ -177,7 +182,7 @@ export function useGroupsOverview(groupIds: string[]) {
       const horizon = addDaysYmd(today, 7);
       const out: Record<string, GroupCounts> = {};
       for (const gid of groupIds) out[gid] = { abertas: 0, atrasadas: 0, venceEmBreve: 0, feitasNoMes: 0, totalMes: 0 };
-      for (const t of (data ?? []) as any[]) {
+      for (const t of (data ?? []) as OverviewRow[]) {
         const c = out[t.assigned_group_id]; if (!c) continue;
         if (t.status === 'done') { if ((t.completed_at ?? '') >= monthStart) c.feitasNoMes++; continue; }
         c.abertas++;
