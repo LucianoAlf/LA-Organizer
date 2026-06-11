@@ -1,0 +1,227 @@
+<style>
+  /* ===== Tokens do DS LA Organizer (light) — valores exatos de tailwind.config.js + index.css ===== */
+  .la { font-family: Inter, system-ui, sans-serif; background:#F4F4F4; color:#111111; border-radius:16px; overflow:hidden; border:1px solid #E0E0E0; }
+  .la * { box-sizing:border-box; margin:0; }
+  .la-surface { background:#FFFFFF; border:1px solid #E0E0E0; border-radius:16px; box-shadow:0 1px 2px rgba(15,15,15,.04), 0 2px 6px rgba(15,15,15,.06); }
+  .la-screen-title { font-size:1.5rem; line-height:1.2; font-weight:700; }
+  .la-card-title { font-size:1.125rem; line-height:1.3; font-weight:600; }
+  .la-body-lg { font-size:1rem; line-height:1.5; font-weight:500; }
+  .la-body-md { font-size:.9375rem; line-height:1.5; font-weight:400; }
+  .la-body-sm { font-size:.8125rem; line-height:1.45; font-weight:400; }
+  .la-label { font-size:.75rem; line-height:1.2; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:#7A7A7A; }
+  .la-muted { color:#7A7A7A; } .la-sec { color:#424242; }
+  .la-btn { display:inline-flex; align-items:center; gap:8px; height:40px; padding:0 16px; border-radius:10px; font-size:.9375rem; font-weight:600; border:1px solid transparent; cursor:default; }
+  .la-btn-primary { background:#A3BE50; color:#000; }
+  .la-btn-secondary { background:#FFFFFF; color:#111; border-color:#E0E0E0; }
+  .la-btn-ghost { background:transparent; color:#7A7A7A; }
+  .la-chip { display:inline-flex; align-items:center; gap:4px; padding:3px 10px; border-radius:999px; font-size:.75rem; font-weight:600; background:#E8E8E8; color:#424242; }
+  .la-chip-tom { background:#A3BE50; color:#000; }
+  .la-badge-success { background:rgba(34,197,94,.12); color:#15803d; padding:2px 8px; border-radius:999px; font-size:.72rem; font-weight:600; }
+  .la-badge-warn { background:rgba(245,158,11,.14); color:#b45309; padding:2px 8px; border-radius:999px; font-size:.72rem; font-weight:600; }
+  .la-stat { flex:1; background:#FFFFFF; border:1px solid #E0E0E0; border-radius:10px; padding:8px 12px; }
+  .la-stat b { font-size:1.25rem; font-weight:700; display:block; }
+  .la-row { display:flex; align-items:center; gap:10px; padding:10px 12px; border-bottom:1px solid #E0E0E0; background:#fff; }
+  .la-row:last-child { border-bottom:0; }
+  .la-cb { width:18px; height:18px; border-radius:999px; border:2px solid #9E9E9E; flex:none; }
+  .la-cb.done { background:#A3BE50; border-color:#A3BE50; position:relative; }
+  .la-cb.done::after { content:'✓'; color:#000; font-size:11px; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-weight:700; }
+  .la-strike { text-decoration:line-through; color:#7A7A7A; }
+  .la-prog { height:4px; background:#E8E8E8; border-radius:999px; overflow:hidden; }
+  .la-prog > i { display:block; height:100%; background:#A3BE50; }
+  .la-fab { width:48px; height:48px; border-radius:999px; background:#A3BE50; color:#000; font-size:1.4rem; font-weight:700; display:flex; align-items:center; justify-content:center; box-shadow:0 6px 20px rgba(0,0,0,.22); }
+  .frame-desk { width:100%; }
+  .frame-mob { width:330px; flex:none; }
+  .pair { display:flex; gap:20px; flex-wrap:wrap; align-items:flex-start; margin-top:12px; }
+  .pair .col1 { flex:1; min-width:480px; }
+  .devbar { font-size:.7rem; color:#7A7A7A; padding:6px 10px; background:#E8E8E8; border-bottom:1px solid #E0E0E0; display:flex; justify-content:space-between; }
+  .kbar { display:flex; gap:10px; overflow:hidden; }
+  .kcol { flex:1; background:#E8E8E8; border-radius:10px; padding:8px; min-width:0; }
+  .kcard { background:#fff; border:1px solid #E0E0E0; border-radius:10px; padding:8px 10px; margin-bottom:8px; }
+  .tabbar { display:flex; gap:4px; border-bottom:1px solid #E0E0E0; background:#fff; padding:0 12px; }
+  .tabbar span { padding:10px 12px; font-size:.875rem; font-weight:600; color:#7A7A7A; }
+  .tabbar span.on { color:#111; border-bottom:2px solid #A3BE50; }
+</style>
+
+<h2>Qual estrutura pro workspace do grupo?</h2>
+<p class="subtitle">As 3 opções abaixo usam os tokens do DS e dados reais do Financeiro (Rose ★, Ana). Cada uma mostra desktop e mobile. Clica na que te agrada — ou comenta no chat o que misturar.</p>
+
+<!-- ============ OPÇÃO A ============ -->
+<div class="section">
+  <div class="options">
+    <div class="option" data-choice="a" onclick="toggleSelect(this)">
+      <div class="letter">A</div>
+      <div class="content" style="width:100%">
+        <h3>Painel do grupo — seções por urgência (recomendada)</h3>
+        <p>Uma página viva por grupo: stats no topo, tarefas agrupadas por "vence/atrasou → semana → pacote do mês → feitas". Config vira engrenagem discreta. É o "escritório": bate o olho e sabe o que pegar.</p>
+        <div class="pair">
+          <div class="col1"><div class="la frame-desk">
+            <div class="devbar"><span>DESKTOP · /grupos/financeiro</span><span>1366px</span></div>
+            <div style="padding:24px; display:flex; flex-direction:column; gap:16px;">
+              <div style="display:flex; align-items:center; gap:16px;">
+                <div>
+                  <div class="la-screen-title">👥 Financeiro</div>
+                  <div class="la-body-sm la-muted" style="margin-top:4px;">★ Rose (líder) · Ana · Luciano — todo mundo vê; qualquer um conclui</div>
+                </div>
+                <div style="margin-left:auto; display:flex; gap:8px;">
+                  <span class="la-btn la-btn-secondary">🗂️ + Pacote mensal</span>
+                  <span class="la-btn la-btn-primary">+ Nova tarefa</span>
+                  <span class="la-btn la-btn-ghost">⚙</span>
+                </div>
+              </div>
+              <div style="display:flex; gap:8px;">
+                <div class="la-stat"><b>3</b><span class="la-label">Abertas</span></div>
+                <div class="la-stat"><b style="color:#b45309">1</b><span class="la-label">Vence hoje</span></div>
+                <div class="la-stat"><b>0</b><span class="la-label">Atrasadas</span></div>
+                <div class="la-stat"><b style="color:#15803d">4</b><span class="la-label">Feitas no mês</span></div>
+              </div>
+              <div>
+                <div class="la-label" style="margin-bottom:6px;">⏰ Vence em breve</div>
+                <div class="la-surface" style="overflow:hidden;">
+                  <div class="la-row"><span class="la-cb"></span><span class="la-body-md" style="flex:1">Conferir os cheques do sistema</span><span class="la-badge-warn">sexta 12/06</span><span class="la-body-sm la-muted">criada por Luciano</span><span class="la-muted">⋮</span></div>
+                </div>
+              </div>
+              <div>
+                <div class="la-label" style="margin-bottom:6px;">🗂️ Pacote do mês — Fechamento Junho</div>
+                <div class="la-surface" style="padding:12px;">
+                  <div style="display:flex; align-items:center; gap:10px;">
+                    <span class="la-body-lg" style="font-weight:600;">Fechamento do mês</span>
+                    <span class="la-chip">mensal · renasce dia 1</span>
+                    <span class="la-body-sm la-muted" style="margin-left:auto;">2/3</span>
+                  </div>
+                  <div class="la-prog" style="margin:8px 0;"><i style="width:66%"></i></div>
+                  <div class="la-row" style="border:0; padding:6px 0;"><span class="la-cb done"></span><span class="la-body-md la-strike" style="flex:1">Conciliação Bancária</span><span class="la-body-sm la-muted">dia 1 · por Rose</span></div>
+                  <div class="la-row" style="border:0; padding:6px 0;"><span class="la-cb done"></span><span class="la-body-md la-strike" style="flex:1">Enviar faturamento pro Geraldo</span><span class="la-body-sm la-muted">dia 5 · por Rose</span></div>
+                  <div class="la-row" style="border:0; padding:6px 0;"><span class="la-cb"></span><span class="la-body-md" style="flex:1">Conferência dos cartões</span><span class="la-body-sm la-muted">dia 15</span></div>
+                </div>
+              </div>
+              <div>
+                <div class="la-label" style="margin-bottom:6px;">✅ Feitas recentemente</div>
+                <div class="la-surface" style="overflow:hidden; opacity:.85;">
+                  <div class="la-row"><span class="la-cb done"></span><span class="la-body-md la-strike" style="flex:1">Recarga Wp Secretaria Barra</span><span class="la-badge-success">por Ana · hoje 14:02</span></div>
+                </div>
+              </div>
+            </div>
+          </div></div>
+          <div class="frame-mob"><div class="la">
+            <div class="devbar"><span>MOBILE · Mais → Grupos</span><span>375px</span></div>
+            <div style="padding:16px; display:flex; flex-direction:column; gap:12px; position:relative; min-height:430px;">
+              <div class="la-screen-title" style="font-size:1.25rem;">👥 Financeiro</div>
+              <div style="display:flex; gap:6px;">
+                <div class="la-stat" style="padding:6px 8px;"><b style="font-size:1rem;">3</b><span class="la-label" style="font-size:.62rem;">Abertas</span></div>
+                <div class="la-stat" style="padding:6px 8px;"><b style="font-size:1rem; color:#b45309;">1</b><span class="la-label" style="font-size:.62rem;">Hoje</span></div>
+                <div class="la-stat" style="padding:6px 8px;"><b style="font-size:1rem; color:#15803d;">4</b><span class="la-label" style="font-size:.62rem;">Feitas</span></div>
+              </div>
+              <div class="la-label">⏰ Vence em breve</div>
+              <div class="la-surface"><div class="la-row"><span class="la-cb"></span><span class="la-body-sm" style="flex:1">Conferir os cheques do sistema</span><span class="la-badge-warn">12/06</span></div></div>
+              <div class="la-label">🗂️ Fechamento do mês <span style="float:right; text-transform:none;">2/3</span></div>
+              <div class="la-surface" style="padding:10px;">
+                <div class="la-prog" style="margin-bottom:8px;"><i style="width:66%"></i></div>
+                <div class="la-row" style="border:0; padding:4px 0;"><span class="la-cb done"></span><span class="la-body-sm la-strike" style="flex:1">Conciliação Bancária</span></div>
+                <div class="la-row" style="border:0; padding:4px 0;"><span class="la-cb"></span><span class="la-body-sm" style="flex:1">Conferência dos cartões</span><span class="la-body-sm la-muted">dia 15</span></div>
+              </div>
+              <div class="la-fab" style="position:absolute; right:16px; bottom:16px;">+</div>
+            </div>
+          </div></div>
+        </div>
+      </div>
+    </div>
+
+<!-- ============ OPÇÃO B ============ -->
+    <div class="option" data-choice="b" onclick="toggleSelect(this)">
+      <div class="letter">B</div>
+      <div class="content" style="width:100%">
+        <h3>Quadro por status (kanban leve)</h3>
+        <p>Colunas "A fazer / Vence hoje / Feitas". Visual de "ambiente de trabalho", arrastável no futuro — mas tarefa com data se espalha mal em coluna, e o pacote mensal vira um card deslocado.</p>
+        <div class="pair">
+          <div class="col1"><div class="la frame-desk">
+            <div class="devbar"><span>DESKTOP · /grupos/financeiro</span><span>1366px</span></div>
+            <div style="padding:24px; display:flex; flex-direction:column; gap:16px;">
+              <div style="display:flex; align-items:center; gap:16px;">
+                <div class="la-screen-title">👥 Financeiro</div>
+                <span class="la-btn la-btn-primary" style="margin-left:auto;">+ Nova tarefa</span>
+              </div>
+              <div class="kbar">
+                <div class="kcol">
+                  <div class="la-label" style="margin-bottom:6px;">A fazer · 2</div>
+                  <div class="kcard"><div class="la-body-sm">Conferência dos cartões</div><div class="la-body-sm la-muted">dia 15 · Fechamento</div></div>
+                  <div class="kcard"><div class="la-body-sm">Atualizar planilha Naturgy</div><div class="la-body-sm la-muted">sem prazo</div></div>
+                </div>
+                <div class="kcol" style="outline:2px solid #F59E0B; outline-offset:-2px;">
+                  <div class="la-label" style="margin-bottom:6px;">Vence em breve · 1</div>
+                  <div class="kcard"><div class="la-body-sm">Conferir os cheques do sistema</div><div class="la-body-sm la-muted">sexta 12/06 · por Luciano</div></div>
+                </div>
+                <div class="kcol">
+                  <div class="la-label" style="margin-bottom:6px;">Feitas no mês · 4</div>
+                  <div class="kcard" style="opacity:.7;"><div class="la-body-sm la-strike">Conciliação Bancária</div><div class="la-body-sm la-muted">por Rose · 10/06</div></div>
+                  <div class="kcard" style="opacity:.7;"><div class="la-body-sm la-strike">Faturamento Geraldo</div><div class="la-body-sm la-muted">por Rose · 10/06</div></div>
+                </div>
+              </div>
+            </div>
+          </div></div>
+          <div class="frame-mob"><div class="la">
+            <div class="devbar"><span>MOBILE</span><span>375px</span></div>
+            <div style="padding:16px; display:flex; flex-direction:column; gap:12px; min-height:300px;">
+              <div class="la-screen-title" style="font-size:1.25rem;">👥 Financeiro</div>
+              <div style="display:flex; gap:6px;">
+                <span class="la-chip la-chip-tom">A fazer 2</span><span class="la-chip">Vence 1</span><span class="la-chip">Feitas 4</span>
+              </div>
+              <div class="la-surface" style="padding:10px;"><div class="la-body-sm">Conferência dos cartões</div><div class="la-body-sm la-muted">dia 15</div></div>
+              <div class="la-surface" style="padding:10px;"><div class="la-body-sm">Atualizar planilha Naturgy</div><div class="la-body-sm la-muted">sem prazo</div></div>
+              <div class="la-body-sm la-muted" style="text-align:center;">colunas viram abas (chips) no mobile</div>
+            </div>
+          </div></div>
+        </div>
+      </div>
+    </div>
+
+<!-- ============ OPÇÃO C ============ -->
+    <div class="option" data-choice="c" onclick="toggleSelect(this)">
+      <div class="letter">C</div>
+      <div class="content" style="width:100%">
+        <h3>Abas internas (Tarefas / Pacotes / Histórico / Config)</h3>
+        <p>Cada coisa na sua aba — organizadíssimo, mas o dia-a-dia exige 2-3 cliques pra ver o todo, e o "bate o olho e sabe o que pegar" se perde entre abas.</p>
+        <div class="pair">
+          <div class="col1"><div class="la frame-desk">
+            <div class="devbar"><span>DESKTOP · /grupos/financeiro</span><span>1366px</span></div>
+            <div style="display:flex; flex-direction:column;">
+              <div style="padding:24px 24px 0;"><div class="la-screen-title">👥 Financeiro</div></div>
+              <div class="tabbar" style="margin-top:12px;"><span class="on">Tarefas</span><span>Pacotes do mês</span><span>Histórico</span><span>⚙ Config</span></div>
+              <div style="padding:16px 24px 24px; display:flex; flex-direction:column; gap:8px; background:#F4F4F4;">
+                <div class="la-surface" style="overflow:hidden;">
+                  <div class="la-row"><span class="la-cb"></span><span class="la-body-md" style="flex:1">Conferir os cheques do sistema</span><span class="la-badge-warn">12/06</span></div>
+                  <div class="la-row"><span class="la-cb"></span><span class="la-body-md" style="flex:1">Conferência dos cartões</span><span class="la-body-sm la-muted">dia 15</span></div>
+                  <div class="la-row"><span class="la-cb"></span><span class="la-body-md" style="flex:1">Atualizar planilha Naturgy</span><span class="la-body-sm la-muted">sem prazo</span></div>
+                </div>
+              </div>
+            </div>
+          </div></div>
+          <div class="frame-mob"><div class="la">
+            <div class="devbar"><span>MOBILE</span><span>375px</span></div>
+            <div style="display:flex; flex-direction:column; min-height:300px;">
+              <div style="padding:16px 16px 0;"><div class="la-screen-title" style="font-size:1.25rem;">👥 Financeiro</div></div>
+              <div class="tabbar" style="margin-top:10px;"><span class="on" style="font-size:.78rem;">Tarefas</span><span style="font-size:.78rem;">Pacotes</span><span style="font-size:.78rem;">Histórico</span><span style="font-size:.78rem;">⚙</span></div>
+              <div style="padding:12px 16px; background:#F4F4F4; flex:1;">
+                <div class="la-surface"><div class="la-row"><span class="la-cb"></span><span class="la-body-sm" style="flex:1">Conferir os cheques…</span><span class="la-badge-warn">12/06</span></div></div>
+              </div>
+            </div>
+          </div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Como leio as três</h3>
+  <div class="pros-cons">
+    <div class="pros"><h4>Por que recomendo a A</h4><ul>
+      <li>Espelha a linguagem que Rose e Ana já usam no Hoje (seções por urgência), só que do grupo</li>
+      <li>Pacote mensal com barra de progresso ganha um lar de verdade</li>
+      <li>"Feitas recentemente · por Ana" dá o pulso do grupo sem virar dashboard de vigilância</li>
+    </ul></div>
+    <div class="cons"><h4>Quando B/C fariam sentido</h4><ul>
+      <li>B se um dia houver fluxo com etapas (ex.: triagem → fazendo → revisão) — hoje não há status intermediário no banco</li>
+      <li>C se o volume por grupo crescer muito (50+ tarefas) — aí histórico e pacotes merecem aba própria</li>
+    </ul></div>
+  </div>
+</div>
