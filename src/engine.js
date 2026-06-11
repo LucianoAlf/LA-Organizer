@@ -3085,19 +3085,26 @@ async function applyEventUpdates(collaborator, actions) {
         patch = { status: 'cancelled' };
       } else if (a.action === 'complete') {
         // F5 (ALVO-FUTURO-RESPOSTA-CURTA): concluir evento de data FUTURA exige confirmação.
+        // GUARD-CONFIRM-LOOP (Matheus 10/06): pergunta UMA vez por item por janela —
+        // ver guarda de task (applyTaskUpdates) pro racional completo.
         if (isFutureCompletion({ startAt: ev.start_at })) {
-          const diaEv = ev.start_at
-            ? new Date(ev.start_at).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit' })
-            : 'data futura';
-          failMessages.push(`⚠️ *${ev.title}* está marcado pra *${diaEv}* (ainda não chegou). Confirma que já aconteceu mesmo assim?`);
-          try {
-            await pendingIntents.openIntent(collaborator.id, 'confirmation',
-              { anchor: { type: 'event', id: ev.id, title: ev.title }, action: 'complete' },
-              `⚠️ ${ev.title} está marcado pra ${diaEv} — confirma que já aconteceu?`);
-          } catch (_) { /* best-effort */ }
-          console.warn(`[Event] complete BLOQUEADO (start futura ${ev.start_at}) — pedindo confirmação id=${String(ev.id).slice(0, 8)}`);
-          failCount++;
-          continue;
+          const askedRecentlyEv = await pendingIntents.wasAnchorAskedRecently(collaborator.id, ev.id, 20);
+          if (!askedRecentlyEv) {
+            const diaEv = ev.start_at
+              ? new Date(ev.start_at).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit' })
+              : 'data futura';
+            failMessages.push(`⚠️ *${ev.title}* está marcado pra *${diaEv}* (ainda não chegou). Confirma que já aconteceu mesmo assim?`);
+            try {
+              await pendingIntents.openIntent(collaborator.id, 'confirmation',
+                { anchor: { type: 'event', id: ev.id, title: ev.title }, action: 'complete' },
+                `⚠️ ${ev.title} está marcado pra ${diaEv} — confirma que já aconteceu?`);
+            } catch (_) { /* best-effort */ }
+            console.warn(`[Event] complete BLOQUEADO (start futura ${ev.start_at}) — pedindo confirmação id=${String(ev.id).slice(0, 8)}`);
+            failCount++;
+            continue;
+          }
+          console.log(`[Event] complete LIBERADO pós-confirmação (start futura ${ev.start_at}) id=${String(ev.id).slice(0, 8)}`);
+          try { await pendingIntents.resolveAnchoredIntents(collaborator.id, ev.id, 'confirmed', 'guard pass-through (asked recently)'); } catch (_) { /* best-effort */ }
         }
         patch = { status: 'done' };
       } else if (a.action === 'update') {
@@ -4011,17 +4018,25 @@ async function applyTaskActions(collaborator, actions) {
         // F5 (ALVO-FUTURO-RESPOSTA-CURTA): completar tarefa datada NO FUTURO exige
         // confirmação — Incidente C (Ana): "Reunião ok tbm" fechou a Reunião ADM de AMANHÃ.
         // Abre intent ANCORADA: o "sim" seguinte completa direto o id certo (sem LLM).
+        // GUARD-CONFIRM-LOOP (Matheus 10/06): pergunta UMA vez por item por janela.
+        // Se já perguntamos sobre ESTE item há <20min (e não houve "não"), o complete
+        // novo é a própria confirmação do usuário — deixa passar em vez de re-perguntar.
         if (fullTask && isFutureCompletion({ dueDate: fullTask.due_date })) {
-          const diaT = String(fullTask.due_date).slice(0, 10).split('-').reverse().slice(0, 2).join('/');
-          failMessages.push(`⚠️ *${fullTask.title}* está marcado pra *${diaT}* (ainda não chegou). Confirma que já foi feito mesmo assim?`);
-          try {
-            await pendingIntents.openIntent(collaborator.id, 'confirmation',
-              { anchor: { type: 'task', id: fullTask.id, title: fullTask.title }, action: 'complete' },
-              `⚠️ ${fullTask.title} está marcado pra ${diaT} — confirma que já foi feito?`);
-          } catch (_) { /* intent é best-effort */ }
-          console.warn(`[Task] complete BLOQUEADO (due futura ${fullTask.due_date}) — pedindo confirmação id=${String(fullTask.id).slice(0, 8)}`);
-          failCount++;
-          continue;
+          const askedRecently = await pendingIntents.wasAnchorAskedRecently(collaborator.id, fullTask.id, 20);
+          if (!askedRecently) {
+            const diaT = String(fullTask.due_date).slice(0, 10).split('-').reverse().slice(0, 2).join('/');
+            failMessages.push(`⚠️ *${fullTask.title}* está marcado pra *${diaT}* (ainda não chegou). Confirma que já foi feito mesmo assim?`);
+            try {
+              await pendingIntents.openIntent(collaborator.id, 'confirmation',
+                { anchor: { type: 'task', id: fullTask.id, title: fullTask.title }, action: 'complete' },
+                `⚠️ ${fullTask.title} está marcado pra ${diaT} — confirma que já foi feito?`);
+            } catch (_) { /* intent é best-effort */ }
+            console.warn(`[Task] complete BLOQUEADO (due futura ${fullTask.due_date}) — pedindo confirmação id=${String(fullTask.id).slice(0, 8)}`);
+            failCount++;
+            continue;
+          }
+          console.log(`[Task] complete LIBERADO pós-confirmação (due futura ${fullTask.due_date}) id=${String(fullTask.id).slice(0, 8)}`);
+          try { await pendingIntents.resolveAnchoredIntents(collaborator.id, fullTask.id, 'confirmed', 'guard pass-through (asked recently)'); } catch (_) { /* best-effort */ }
         }
         let error = null;
         if (t.assigned_group_id) {
@@ -7669,10 +7684,18 @@ async function processMessage(phone, text, raw = {}) {
   try {
     const openIntents = _openIntents;
     if (openIntents.length > 0) {
-      const userConfirm = pendingIntents.detectUserConfirmation(String(text || ''));
       // approval_pending NUNCA resolve por sim/não genérico — aprovação tem funil
       // próprio (detect-approval-reply, acima). Pega a mais recente não-aprovação.
       const target = openIntents.find((i) => i.kind !== 'approval_pending');
+      // GUARD-CONFIRM-LOOP (Matheus 10/06): reply-quote chegava CRU no detector —
+      // o scaffold "[O usuário está RESPONDENDO...]" estourava o limite de resposta
+      // curta e "Já conclui!" nunca casava. Strip primeiro (paridade c/ Approval-bare).
+      const _confirmText = stripReplyScaffold(String(text || '')).userText;
+      // Vocabulário de conclusão ("já fiz", "feito") SÓ vale quando o alvo é intent
+      // ANCORADA de complete — a pergunta foi "confirma que já foi feito?".
+      const _anchoredComplete = !!(target && target.payload && target.payload.anchor
+        && target.payload.anchor.id && target.payload.action === 'complete');
+      const userConfirm = pendingIntents.detectUserConfirmation(_confirmText, { allowDone: _anchoredComplete });
       // Janela de confirmação: um "sim/não" cru só resolve a intent se ela foi
       // perguntada há pouco (~20min). Fora disso NÃO resolve e NÃO apaga — a intent
       // segue aberta pro fluxo natural/expiração. (Bug: "sim" pra criar meta

@@ -175,7 +175,7 @@ function detectConfirmationQuestion(reply) {
  * ou negativa ("não", "deixa pra lá", "esquece").
  * Retorna 'yes' | 'no' | null.
  */
-function detectUserConfirmation(userText) {
+function detectUserConfirmation(userText, opts = {}) {
   if (typeof userText !== 'string') return null;
   const t = userText.toLowerCase().trim();
   if (!t || t.length > 200) return null;  // só pegamos respostas curtas
@@ -185,7 +185,7 @@ function detectUserConfirmation(userText) {
   if (t.split(/\s+/).length > 4) return null;
 
   // Negativas primeiro (mais específicas pra evitar falso positivo)
-  const NO_RE = /^(n[aã]o\b|nao\b|deixa\s+pra\s+l[aá]|esquece|cancela|n[aã]o\s+precisa|desconsidera)/;
+  const NO_RE = /^(n[aã]o\b|nao\b|deixa\s+pra\s+l[aá]|esquece|cancela|n[aã]o\s+precisa|desconsidera|ainda\s+n[aã]o)/;
   if (NO_RE.test(t)) return 'no';
 
   // Afirmativas
@@ -193,7 +193,93 @@ function detectUserConfirmation(userText) {
   if (YES_RE.test(t)) return 'yes';
   // "vai criando aí"
   if (/vai\s+criando\s+a[íi]?/i.test(userText)) return 'yes';
+  // GUARD-CONFIRM-LOOP (Matheus 10/06): vocabulário de CONCLUSÃO ("já conclui",
+  // "já foi feito", "feito", "fiz") — SÓ quando o chamador indica intent ancorada
+  // de complete (opts.allowDone): a pergunta foi "confirma que já foi feito?" e
+  // essas são as respostas literais. NUNCA entra no YES genérico — "feito" solto
+  // confirmaria intent não-relacionada (família de risco do "aprovado"/APROVACAO-SEM-FUNIL).
+  if (opts.allowDone) {
+    const DONE_RE = /^(j[áa]\s+)?(foi\s+|t[áa]\s+|est[áa]\s+)?(conclu[ií](?:d[oa])?|fiz\b|feit[oa]\b|finalizei|finalizad[oa]|terminei|terminad[oa]|pront[oa]\b|resolvi\b|resolvid[oa]|fechei\b)/;
+    if (DONE_RE.test(t)) return 'yes';
+  }
   return null;
+}
+
+/* ----------------------------------------------------------------------
+ * GUARD-CONFIRM-LOOP (10/06) — helpers de intent ANCORADA (payload.anchor).
+ * A guarda temporal (isFutureCompletion) abre intent com {anchor:{type,id,title},
+ * action:'complete'}. Estes helpers protegem o ciclo pergunta→confirmação.
+ * ----------------------------------------------------------------------*/
+
+/**
+ * Há intent ABERTA com âncora criada há menos de `minutes`?
+ * Usado pelo registrador genérico de fim-de-turno: se a guarda abriu âncora
+ * NESTE turno, não se abre intent genérica por cima (openIntent supersede
+ * same-kind e matava a âncora 0,4s depois de criada).
+ */
+async function hasFreshAnchoredIntent(collaboratorId, minutes = 2) {
+  if (!collaboratorId) return false;
+  try {
+    const sinceIso = new Date(Date.now() - minutes * 60 * 1000).toISOString();
+    const { data, error } = await supabase
+      .from('pending_intents')
+      .select('id')
+      .eq('collaborator_id', collaboratorId)
+      .is('resolved_at', null)
+      .gte('asked_at', sinceIso)
+      .not('payload->anchor', 'is', null)
+      .limit(1);
+    if (error) { console.warn('[PendingIntents] hasFreshAnchoredIntent err:', error.message); return false; }
+    return !!(data && data.length);
+  } catch (e) { console.warn('[PendingIntents] hasFreshAnchoredIntent err:', e.message); return false; }
+}
+
+/**
+ * A guarda JÁ perguntou sobre ESTE item (anchor.id) há menos de `minutes`?
+ * Conta qualquer resolution exceto 'denied' (a âncora pode ter sido superseded —
+ * o que importa é que o usuário FOI perguntado e não negou). Se sim, o complete
+ * seguinte é a confirmação do usuário: a guarda deixa passar em vez de re-perguntar.
+ */
+async function wasAnchorAskedRecently(collaboratorId, anchorId, minutes = 20) {
+  if (!collaboratorId || !anchorId) return false;
+  try {
+    const sinceIso = new Date(Date.now() - minutes * 60 * 1000).toISOString();
+    const { data, error } = await supabase
+      .from('pending_intents')
+      .select('id')
+      .eq('collaborator_id', collaboratorId)
+      .eq('kind', 'confirmation')
+      .gte('asked_at', sinceIso)
+      .eq('payload->anchor->>id', String(anchorId))
+      .or('resolution.is.null,resolution.neq.denied')
+      .limit(1);
+    if (error) { console.warn('[PendingIntents] wasAnchorAskedRecently err:', error.message); return false; }
+    return !!(data && data.length);
+  } catch (e) { console.warn('[PendingIntents] wasAnchorAskedRecently err:', e.message); return false; }
+}
+
+/**
+ * Fecha TODAS as intents abertas ancoradas neste item (pós pass-through da guarda),
+ * pra não sobrar intent-zumbi depois que o complete foi aplicado.
+ */
+async function resolveAnchoredIntents(collaboratorId, anchorId, resolution = 'confirmed', note = null) {
+  if (!collaboratorId || !anchorId) return false;
+  if (!VALID_RESOLUTIONS.has(resolution)) return false;
+  try {
+    const { error } = await supabase
+      .from('pending_intents')
+      .update({
+        resolved_at: new Date().toISOString(),
+        resolution,
+        resolution_note: note ? String(note).slice(0, 500) : null,
+      })
+      .eq('collaborator_id', collaboratorId)
+      .eq('kind', 'confirmation')
+      .is('resolved_at', null)
+      .eq('payload->anchor->>id', String(anchorId));
+    if (error) { console.warn('[PendingIntents] resolveAnchoredIntents err:', error.message); return false; }
+    return true;
+  } catch (e) { console.warn('[PendingIntents] resolveAnchoredIntents err:', e.message); return false; }
 }
 
 module.exports = {
@@ -203,4 +289,7 @@ module.exports = {
   expireOldIntents,
   detectConfirmationQuestion,
   detectUserConfirmation,
+  hasFreshAnchoredIntent,
+  wasAnchorAskedRecently,
+  resolveAnchoredIntents,
 };
