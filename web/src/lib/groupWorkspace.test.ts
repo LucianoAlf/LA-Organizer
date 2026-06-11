@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { bucketizeGroupTasks, doneWhenLabel, packageInMonth, addDaysYmd, type PoolTask } from './groupWorkspace';
+import { bucketizeGroupTasks, doneWhenLabel, packageInMonth, addDaysYmd, type PoolTask, type PoolTaskStatus } from './groupWorkspace';
+
+// Ensure PoolTaskStatus is used (type-check only)
+type _CheckStatus = PoolTaskStatus;
 
 const t = (p: Partial<PoolTask>): PoolTask => ({
   id: Math.random().toString(36).slice(2), title: 'x', status: 'pending',
@@ -37,6 +40,13 @@ describe('bucketizeGroupTasks (hoje=2026-06-10)', () => {
     ], '2026-06-10');
     expect(r.later.map(x => x.id)).toEqual(['q', 'p']);
   });
+  it('done sem completed_at NÃO aparece em nenhum bucket', () => {
+    const r = bucketizeGroupTasks([
+      t({ id: 'z', status: 'done', completed_at: null }),
+    ], '2026-06-10');
+    const allIds = [...r.overdue, ...r.dueSoon, ...r.later, ...r.doneRecent].map(x => x.id);
+    expect(allIds).not.toContain('z');
+  });
 });
 
 describe('doneWhenLabel (BRT)', () => {
@@ -59,6 +69,9 @@ describe('packageInMonth (ym=2026-06)', () => {
     expect(packageInMonth(m({ due_date: '2026-07-01' }), '2026-06')).toBe(false);
   });
   it('sem prazo aberto entra', () => expect(packageInMonth(m({}), '2026-06')).toBe(true));
+  it('done sem due_date fica fora', () => {
+    expect(packageInMonth({ status: 'done', due_date: null }, '2026-06')).toBe(false);
+  });
 });
 
 describe('addDaysYmd', () => {

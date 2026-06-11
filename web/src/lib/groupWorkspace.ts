@@ -3,9 +3,11 @@
 // Buckets por urgência espelham o mockup aprovado: Atrasadas → Vence em breve
 // (hoje..+7d) → Mais pra frente/sem prazo → Feitas recentemente (mês, máx 10).
 
+export type PoolTaskStatus = 'pending' | 'in_progress' | 'done' | 'cancelled';
+
 export interface PoolTask {
   id: string; title: string; description: string | null;
-  status: string; due_date: string | null; due_time: string | null;
+  status: PoolTaskStatus; due_date: string | null; due_time: string | null;
   completed_at: string | null; created_by: string | null;
   creator_name: string | null; completed_by_name: string | null;
 }
@@ -20,13 +22,15 @@ export function addDaysYmd(ymd: string, n: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+const NO_DUE_SENTINEL = '9999-12-31'; // sem prazo ordena por último
+
 const byDueAsc = (a: PoolTask, b: PoolTask) =>
-  (a.due_date ?? '9999').localeCompare(b.due_date ?? '9999');
+  (a.due_date ?? NO_DUE_SENTINEL).localeCompare(b.due_date ?? NO_DUE_SENTINEL);
 
 export function bucketizeGroupTasks(tasks: PoolTask[], todayYmd: string): PoolBuckets {
   const horizon = addDaysYmd(todayYmd, 7);
   const open = tasks.filter(t => t.status !== 'done' && t.status !== 'cancelled');
-  const done = tasks.filter(t => t.status === 'done');
+  const done = tasks.filter(t => t.status === 'done' && t.completed_at != null);
   return {
     overdue: open.filter(t => t.due_date && t.due_date < todayYmd).sort(byDueAsc),
     dueSoon: open.filter(t => t.due_date && t.due_date >= todayYmd && t.due_date <= horizon).sort(byDueAsc),
@@ -58,6 +62,7 @@ export function doneWhenLabel(completedAtIso: string, nowIso: string): string {
 export function packageInMonth(m: { status: string; due_date: string | null }, ym: string): boolean {
   if (m.status === 'cancelled') return false;
   if (m.due_date && m.due_date.slice(0, 7) === ym) return true;
+  // done SEM due_date fica fora — sem ancora de mês, só o ciclo aberto interessa.
   if (m.status !== 'done' && (!m.due_date || m.due_date.slice(0, 7) < ym)) return true;
   return false;
 }
