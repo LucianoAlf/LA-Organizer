@@ -2820,11 +2820,15 @@ async function applyProjectReject(collab, body) {
 }
 
 // Defesa-em-profundidade na resolução de short_id: filtra eventos do colaborador.
+// BUG-1 (11/06): fallback via event_participants — convidados (Jereh, Leo, Daiana, Clayton,
+// Krissya) tentavam completar eventos onde não eram dono → all_failed:1 silencioso.
+// O retorno { ...ev, fromParticipant: true } sinaliza ao caller que só 'complete' é permitido.
 async function resolveEventByShortId(collaboratorId, shortId) {
   if (!shortId || !SHORT_ID_RE.test(String(shortId))) return null;
-  const prefix = String(shortId).toLowerCase();
   // Janela ampla — eventos cancelados ou já feitos podem precisar ser referenciados.
   const sinceIso = new Date(Date.now() - 60 * 24 * 3600 * 1000).toISOString();
+
+  // 1) Owner lookup (caminho original)
   const { data, error } = await supabase
     .from('events')
     .select('id, title, status, start_at, end_at, collaborator_id')
@@ -2835,14 +2839,42 @@ async function resolveEventByShortId(collaboratorId, shortId) {
     console.error('[Event] resolveEventByShortId err:', error.message);
     return null;
   }
-  if (!data || data.length === 0) return null;
-  const matches = matchRowsByShortId(data, shortId); // tolerante a UUID alucinado (Sprint 31.14)
-  if (matches.length === 0) return null;
-  if (matches.length > 1) {
-    console.warn(`[Event] short_id ambíguo ${shortId} (${matches.length} matches) — rejeitando`);
+  if (data && data.length > 0) {
+    const matches = matchRowsByShortId(data, shortId); // tolerante a UUID alucinado (Sprint 31.14)
+    if (matches.length === 1) return matches[0];
+    if (matches.length > 1) {
+      console.warn(`[Event] short_id ambíguo ${shortId} (${matches.length} matches owner) — rejeitando`);
+      return null;
+    }
+  }
+
+  // 2) Participant fallback — convidado tenta completar evento de outro dono
+  try {
+    const { data: parts } = await supabase
+      .from('event_participants')
+      .select('event_id')
+      .eq('collaborator_id', collaboratorId);
+    if (!parts || parts.length === 0) return null;
+    const eventIds = parts.map(p => p.event_id);
+    const { data: evts } = await supabase
+      .from('events')
+      .select('id, title, status, start_at, end_at, collaborator_id')
+      .in('id', eventIds)
+      .gte('start_at', sinceIso)
+      .limit(500);
+    if (!evts || evts.length === 0) return null;
+    const pmatches = matchRowsByShortId(evts, shortId);
+    if (pmatches.length === 0) return null;
+    if (pmatches.length > 1) {
+      console.warn(`[Event] short_id ambíguo ${shortId} (${pmatches.length} matches participant) — rejeitando`);
+      return null;
+    }
+    console.log(`[Event] resolveEventByShortId: participante encontrou evento ${pmatches[0].id.slice(0,8)} (dono ${pmatches[0].collaborator_id.slice(0,8)})`);
+    return { ...pmatches[0], fromParticipant: true };
+  } catch (e) {
+    console.warn('[Event] resolveEventByShortId participant fallback err:', e.message);
     return null;
   }
-  return matches[0];
 }
 
 // Sprint EV-LEAK (08/06) — resolve o convite PENDENTE mais provável de um colaborador,
@@ -3074,6 +3106,12 @@ async function applyEventUpdates(collaborator, actions) {
         failCount++;
         continue;
       }
+      // BUG-1: participante só pode completar; cancel/reschedule/update são do dono
+      if (ev.fromParticipant && a.action !== 'complete') {
+        console.warn(`[Event] ${a.action} REJECTED — participante só pode completar, não ${a.action} id=${a.id}`);
+        failCount++;
+        continue;
+      }
       let patch = {};
       // Sprint 31.x — edição de lembrete do evento (reminders_minutes_before). É um array,
       // pode vir SOZINHO (sem metadados) e até vazio ([] = remover). Tratado fora do `patch`.
@@ -3123,11 +3161,10 @@ async function applyEventUpdates(collaborator, actions) {
       // events update só roda se há coluna a mudar (cancel/complete/reschedule sempre têm;
       // update só-de-lembrete tem patch vazio → pula a escrita em events, mexe só nos reminders).
       if (Object.keys(patch).length > 0) {
-        const { error } = await supabase
-          .from('events')
-          .update(patch)
-          .eq('id', ev.id)
-          .eq('collaborator_id', collaborator.id);
+        // BUG-1: participante não é dono — filtrar só por id (owner já checado acima)
+        let upQuery = supabase.from('events').update(patch).eq('id', ev.id);
+        if (!ev.fromParticipant) upQuery = upQuery.eq('collaborator_id', collaborator.id);
+        const { error } = await upQuery;
         if (error) {
           console.error(`[Event] ${a.action} err:`, error.message);
           failCount++;

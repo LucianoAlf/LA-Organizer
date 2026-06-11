@@ -1,5 +1,18 @@
 # Workspace de Grupos de Trabalho — Implementation Plan
 
+> **STATUS (11/06 ~03h BRT): ENTREGUE (T1–T8).** Subagent-driven (Sonnet nas mecânicas, Opus/sessão nas de UI),
+> 2 reviews por task (spec + qualidade) com fixes aplicados. lib pura groupWorkspace.ts (13/13 vitest) +
+> hook useGroupWorkspace/useGroupsOverview (anti-corrida, re-arm de lembrete só quando muda, undo com guard) +
+> GroupTaskSheet (CRUD do pool, readOnly p/ não-membro) + GrupoWorkspace + GroupConfigPanel + GruposLista
+> (auto-skip 1-grupo) + QuickCreate defaultKind/defaultGroupId + rotas /grupos e /grupos/:id (redirect do
+> caminho antigo) + sidebar movida pra PRINCIPAL + tela antiga apagada. tsc 0 / build OK.
+> **Validado no preview (Alf, director):** /grupos fiel ao mockup §1; workspace §2 (stats 4/1/0/2, seções
+> Vence/Mais-pra-frente/Feitas com "por X · ontem"); sheet abre em modo leitura pro Alf (não-membro do
+> Financeiro = Rose+Ana) — gate readOnly correto; redirect OK; mobile 375px com Fab + barra desktop oculta.
+> Fix pós-review: criador "por X" não duplica mais com o badge de conclusão.
+> **PENDÊNCIA:** save/cancel ao vivo por MEMBRO (Rose/Ana) — não dá pra impersonar; lógica coberta por
+> review + gate readOnly provado. Piloto Rose/Ana fecha. Radar inalterado (badge 👥 clicável, claim, realtime).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Transformar a página de Grupos de trabalho no ambiente de trabalho do grupo (lista → workspace → edição de tarefa do pool), fiel ao mockup aprovado.
