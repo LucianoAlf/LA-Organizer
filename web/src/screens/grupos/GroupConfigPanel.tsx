@@ -34,9 +34,15 @@ export function GroupConfigPanel({ open, group, onClose }: Props) {
     c => !group.members.some(m => m.collaborator_id === c.id),
   );
 
+  const handleClose = () => {
+    setAddOpen(false);
+    setConfirmOff(false);
+    onClose();
+  };
+
   return (
     <>
-      <BottomSheet open={open} onClose={onClose} title={`Configurações — ${group.name}`}>
+      <BottomSheet open={open} onClose={handleClose} title={`Configurações — ${group.name}`}>
         <div className="space-y-md">
           <div className="flex flex-wrap items-center gap-sm">
             {group.members.map(m => {
@@ -53,13 +59,14 @@ export function GroupConfigPanel({ open, group, onClose }: Props) {
                   {podeEditar && !isLeader && (
                     <button
                       type="button"
+                      disabled={removeMember.isPending}
                       onClick={() =>
                         removeMember.mutate(
                           { groupId: group.id, collaboratorId: m.collaborator_id },
                           { onError: () => showToast({ kind: 'error', title: 'Não consegui remover' }) },
                         )
                       }
-                      className="focus-ring rounded-full text-fg-muted hover:text-danger"
+                      className="focus-ring rounded-full text-fg-muted hover:text-danger disabled:opacity-40 disabled:cursor-not-allowed"
                       aria-label={`Remover ${m.full_name}`}
                     >
                       <X size={12} />
@@ -114,6 +121,7 @@ export function GroupConfigPanel({ open, group, onClose }: Props) {
             <button
               key={c.id}
               type="button"
+              disabled={addMember.isPending}
               onClick={async () => {
                 try {
                   await addMember.mutateAsync({ groupId: group.id, collaboratorId: c.id });
@@ -131,7 +139,7 @@ export function GroupConfigPanel({ open, group, onClose }: Props) {
       </BottomSheet>
 
       <ConfirmDialog
-        open={confirmOff}
+        open={open && confirmOff}
         title={`Desativar "${group.name}"?`}
         description="O grupo some das listas (tarefas abertas bloqueiam a desativação)."
         confirmLabel="Desativar"

@@ -148,12 +148,21 @@ export function GrupoWorkspace() {
     );
   }
 
-  const group = (list.data ?? []).find(g => g.id === groupId);
   const backBtn = (
     <Button variant="secondary" size="md" onClick={() => navigate('/grupos')}>
-      ‹ Voltar pros grupos
+      <ChevronLeft size={14} aria-hidden /> Voltar pros grupos
     </Button>
   );
+
+  if (list.isError) {
+    return (
+      <div className="space-y-lg max-w-content mx-auto w-full pb-2xl">
+        <EmptyState title="Não consegui carregar o grupo" description="Confere a conexão e tenta de novo." action={backBtn} />
+      </div>
+    );
+  }
+
+  const group = (list.data ?? []).find(g => g.id === groupId);
 
   if (!group) {
     return (
@@ -188,8 +197,9 @@ export function GrupoWorkspace() {
   const { buckets, stats } = ws;
   const pkgs = ws.packages.data ?? [];
   const wsLoading = ws.pool.isLoading || ws.packages.isLoading;
+  const wsError = ws.pool.isError || ws.packages.isError;
   const isEmpty =
-    !wsLoading && (ws.pool.data ?? []).length === 0 && pkgs.length === 0;
+    !wsLoading && !wsError && (ws.pool.data ?? []).length === 0 && pkgs.length === 0;
 
   const gearBtn = (extra: string) => (
     <button
@@ -242,6 +252,13 @@ export function GrupoWorkspace() {
       </div>
 
       {wsLoading && <LoadingState rows={3} />}
+
+      {wsError && (
+        <EmptyState
+          title="Não consegui carregar as tarefas do grupo"
+          description="Recarrega a página ou tenta de novo já já."
+        />
+      )}
 
       {isEmpty && (
         <EmptyState
