@@ -33,6 +33,9 @@ interface Props {
   onClose: () => void;
   /** Pre-fill date (e.g., from /semana when adding to a specific day). Defaults to today. */
   defaultDueDate?: string;
+  /** Workspace de grupos (2026-06-10): abre já no kind certo com o grupo travado. */
+  defaultKind?: 'task' | 'group';
+  defaultGroupId?: string;
 }
 
 type Kind = 'task' | 'event' | 'delegated' | 'group';
@@ -51,7 +54,7 @@ const GROUP_REMINDER_PRESETS = [
   { min: 1440, label: '1 dia antes' },
 ] as const;
 
-export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
+export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, defaultGroupId }: Props) {
   const { collaborator, ensureSession } = useAuth();
   const qc = useQueryClient();
   const today = defaultDueDate || todaySP();
@@ -128,13 +131,13 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
   useEffect(() => {
     if (open) {
       setError(null);
-      setKind('task');
+      setKind(defaultKind ?? 'task');
       setTitle('');
       setRecurrenceRule(null);
       setDescription('');
       setTaskCtx('work');
-      setTaskGroupMode(false);
-      setTaskGroupId('');
+      setTaskGroupMode(Boolean(defaultGroupId));
+      setTaskGroupId(defaultGroupId ?? '');
       setDue(today);
       setTaskTime('');
       setTaskReminderTimes([]);
@@ -158,7 +161,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
       setDraftChild({ title: '', day: '', time: '', reminders: [] });
       setEditingChildIdx(null);
     }
-  }, [open, today]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, today, defaultKind, defaultGroupId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-extend end_at to start_at + 60min if user changes start_at past end_at
   useEffect(() => {
