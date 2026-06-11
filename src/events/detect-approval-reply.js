@@ -29,6 +29,15 @@ function stripReplyScaffold(text) {
 // Palavras de enchimento que podem orbitar o verbo sem mudar o sentido.
 // "nao" NUNCA é filler (negação muda tudo).
 const FILLERS = new Set(['o', 'a', 'os', 'as', 'esse', 'essa', 'este', 'esta', 'isso', 'ai', 'la', 'ja', 'sim', 'agora', 'por', 'favor', 'pf', 'pfv', 'pra', 'para', 'mim', 'tom', 'tudo', 'pode', 'ta', 'que', 'qual', 'ne', 'meu', 'do', 'da', 'de']);
+
+// BUG-10 (11/06): "Aprovo a ideia" extraía token=IDEIA e ativava funil de aprovação indevido.
+// Substantivos genéricos não são tokens de aprovação; retornar null deixa o LLM tratar.
+const GENERIC_WORDS = new Set([
+  'ideia', 'ele', 'ela', 'eles', 'elas', 'coisa', 'jeito',
+  'forma', 'modo', 'tipo', 'parte', 'ponto', 'tema', 'nome', 'valor',
+  'hora', 'dia', 'vez', 'lado', 'base', 'prazo', 'plano', 'texto',
+  'foto', 'video', 'aquilo', 'lance', 'negocio',
+]);
 const DOMAIN_WORDS = new Map([
   ['projeto', 'project'], ['projetos', 'project'],
   ['comunicado', 'announcement'], ['comunicados', 'announcement'],
@@ -82,6 +91,8 @@ function detectApprovalReply(text) {
     rest = after; // "aprova o projeto PROGRAMA" → token PROGRAMA
   }
   if (!rest.length) return { decision, token: null, reason: null, bare: true, domainHint: null };
+  // BUG-10: substantivo genérico não é token de aprovação → null (LLM trata com contexto)
+  if (GENERIC_WORDS.has(rest[0])) return null;
   const token = rest[0].toUpperCase();
   if (token.length < 3) return { decision, token: null, reason: null, bare: true, domainHint: null };
   // Motivo só faz sentido na rejeição (vai pro criador; norm tira acento — aceitável).

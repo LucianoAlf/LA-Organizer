@@ -7520,7 +7520,11 @@ async function processMessage(phone, text, raw = {}) {
     const rsvp = detectBareRsvpReply(text);
     // approval_pending não bloqueia RSVP: aprovação nunca consome "sim" (funil próprio).
     const hasFreshQuestion = _openIntents.some((i) => i.kind !== 'approval_pending' && withinConfirmWindow(i.asked_at, 20));
-    if (rsvp && !hasFreshQuestion) {
+    // BUG-JORDAN (11/06): intent confirmation aberta (mesmo fora dos 20min) bloqueia RSVP-bare.
+    // Caso: Jordan respondeu "Sim" 97min após TOM perguntar sobre lembrete → hasFreshQuestion=false
+    // → "Sim" confirmou RSVP de reunião não relacionada. Intent de confirmation dura 24h no máximo.
+    const hasOpenConfirmation = _openIntents.some((i) => i.kind === 'confirmation');
+    if (rsvp && !hasFreshQuestion && !hasOpenConfirmation) {
       const r = await applyRsvp(collab, null, rsvp.status);
       if (r && r.ok) {
         let quando = '';
