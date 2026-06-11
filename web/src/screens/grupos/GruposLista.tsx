@@ -69,7 +69,7 @@ export function GruposLista() {
 
   if (list.isLoading || myIds.isLoading) {
     return (
-      <div className="space-y-lg max-w-content mx-auto w-full pb-2xl">
+      <div className="space-y-lg w-full max-w-screen-2xl pb-2xl">
         <LoadingState rows={3} label="Carregando os grupos…" />
       </div>
     );
@@ -77,14 +77,14 @@ export function GruposLista() {
 
   if (list.isError) {
     return (
-      <div className="space-y-lg max-w-content mx-auto w-full pb-2xl">
+      <div className="space-y-lg w-full max-w-screen-2xl pb-2xl">
         <EmptyState title="Não consegui carregar os grupos" description="Confere a conexão e tenta de novo." />
       </div>
     );
   }
 
   return (
-    <div className="space-y-lg max-w-content mx-auto w-full pb-2xl">
+    <div className="space-y-lg w-full max-w-screen-2xl pb-2xl">
       <header className="flex items-end justify-between gap-md">
         <div className="min-w-0">
           <h2 className="text-section-title">👥 Grupos de trabalho</h2>
