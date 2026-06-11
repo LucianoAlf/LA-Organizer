@@ -1493,6 +1493,19 @@ function parseCoordinationRequestMarker(text) {
       malformedReasons.push(`marker[${i}]:not_object`);
       continue;
     }
+    // BUG-5 (11/06): normaliza aliases de campos e mode antes da validação.
+    // LLM varia: recipient/to/name em vez de recipient_name; relay/literal em vez de relay_literal, etc.
+    parsed.recipient_name = parsed.recipient_name || parsed.recipient || parsed.to || parsed.name;
+    parsed.message_body   = parsed.message_body   || parsed.message  || parsed.body || parsed.content || parsed.text;
+    if (parsed.mode) {
+      const _modeAliases = {
+        relay: 'relay_literal', literal: 'relay_literal',
+        assisted: 'relay_assisted',
+        'follow-up': 'followup', follow_up: 'followup', follow: 'followup',
+      };
+      const _modeKey = String(parsed.mode).toLowerCase();
+      if (_modeAliases[_modeKey]) parsed.mode = _modeAliases[_modeKey];
+    }
     if (!parsed.recipient_name || typeof parsed.recipient_name !== 'string') {
       logSchemaErr('COORDINATION_REQUEST', [`marker[${i}]:recipient_name:missing`], parsed);
       malformedReasons.push(`marker[${i}]:recipient_name`);
@@ -6306,7 +6319,7 @@ async function detectTemporalConflict(collab, candidate) {
 async function detectDuplicateSemanticEvent(collab, candidate) {
   try {
     if (!candidate.title) return { probable: [], possible: [] };
-    const candDate = candidate.start_at ? candidate.start_at.slice(0, 10) : null;
+    const candDate = candidate.start_at ? brtDateOf(candidate.start_at) : null;
     const candAnchor = safeDate(candDate);
     const windowStart = candAnchor ? safeIsoDate(candAnchor.getTime() - 48 * 3600_000) : null;
     const windowEnd   = candAnchor ? safeIsoDate(candAnchor.getTime() + 48 * 3600_000) : null;
@@ -6335,7 +6348,7 @@ async function detectDuplicateSemanticEvent(collab, candidate) {
     for (const ev of (candidates || [])) {
       const evCore = stripVerbPrefix(ev.title);
       let score = jaroWinkler(candTitleNorm, normalizeForSim(evCore));
-      const evDate = ev.start_at ? ev.start_at.slice(0, 10) : null;
+      const evDate = ev.start_at ? brtDateOf(ev.start_at) : null; // BUG-11: UTC→BRT
       if (candDate && evDate && candDate === evDate) score = Math.min(score + 0.3, 1.0);
       if (candidate.category && ev.category === candidate.category) score = Math.min(score + 0.1, 1.0);
       if (candidate.location_text && ev.location_text &&
@@ -8911,27 +8924,25 @@ async function processMessage(phone, text, raw = {}) {
   }
 
   // LA REPORT — <<INVENTORY_ACTION>> — operações de inventário e lojinha.
+  // BUG-7 (11/06): antes só o 1º marker era processado (.match não-global); o 2º
+  // sumia → falso-sucesso (ex: Rodrigo CT-X3000+PX-160: 2º item nunca inserido).
   {
-    // Engine = fonte da verdade no inventário (ANTI-MENTIRA): a prosa do LLM
-    // pode afirmar "✅ registrado" mesmo quando a ação FALHA. Guardamos a prosa
-    // limpa e zeramos reply ao processar; cada branch seta o texto REAL do engine.
+    const _allInvMatches = [...reply.matchAll(/<<INVENTORY_ACTION>>([\s\S]*?)<<END>>/gi)];
     let _invLeadText = '';
-    const invActionMatch = reply.match(/<<INVENTORY_ACTION>>([\s\S]*?)<<END>>/i);
-    if (invActionMatch) {
-      let payload;
-      try { payload = JSON.parse(invActionMatch[1].trim()); }
-      catch (e) {
-        console.warn('[InventoryAction] JSON inválido:', e.message);
-        reply = reply.replace(/<<INVENTORY_ACTION>>[\s\S]*?<<END>>/gi, '').trim();
-        reply = (reply ? reply + '\n\n' : '') + 'Não consegui interpretar o pedido. Pode reformular?';
-        payload = null;
-      }
-      if (payload) {
-        // Captura a prosa do LLM (sem o marker e sem fences ```) e ZERA reply —
-        // o engine assume a confirmação. Cada branch abaixo seta o texto real;
-        // fallback no fim do bloco evita resposta vazia.
-        _invLeadText = reply.replace(/<<INVENTORY_ACTION>>[\s\S]*?<<END>>/gi, '').replace(/`{3,}/g, '').trim();
+    if (_allInvMatches.length > 0) {
+      // Engine = fonte da verdade (ANTI-MENTIRA): captura prosa LLM antes de processar.
+      _invLeadText = reply.replace(/<<INVENTORY_ACTION>>[\s\S]*?<<END>>/gi, '').replace(/`{3,}/g, '').trim();
+      const _invReplies = [];
+      let _hasSalaPending = false;
+      for (const _invMatch of _allInvMatches) {
         reply = '';
+        let payload;
+        try { payload = JSON.parse(_invMatch[1].trim()); }
+        catch (e) {
+          console.warn('[InventoryAction] JSON inválido:', e.message);
+          _invReplies.push('Não consegui interpretar o pedido. Pode reformular?');
+          continue;
+        }
         // Normaliza: aceita payload "flat" (sem `params` aninhado). O LLM frequentemente esquece.
         if (payload && typeof payload === 'object' && payload.action && !payload.params) {
           const { action, ...rest } = payload;
@@ -9021,10 +9032,10 @@ async function processMessage(phone, text, raw = {}) {
         const baseCheck = inventarioValidators.validateAction(payload);
         if (!baseCheck.ok) {
           console.warn('[InventoryAction] validateAction failed:', baseCheck.errors);
-          reply = reply.replace(/<<INVENTORY_ACTION>>[\s\S]*?<<END>>/gi, '').trim();
-          reply = (reply ? reply + '\n\n' : '') + `Pedido inválido: ${baseCheck.errors.join(', ')}`;
-        } else {
-          reply = reply.replace(/<<INVENTORY_ACTION>>[\s\S]*?<<END>>/gi, '').trim();
+          _invReplies.push(`Pedido inválido: ${baseCheck.errors.join(', ')}`);
+          continue;
+        }
+        {
           const userName = (collab && collab.full_name) ? collab.full_name : 'usuário';
           const p = payload.params;
 
@@ -9303,15 +9314,22 @@ async function processMessage(phone, text, raw = {}) {
             }
           } catch (e) {
             console.error('[engine] INVENTORY_ACTION execução:', e);
-            reply = (reply ? reply + '\n\n' : '') + `Erro ao executar: ${e.message}`;
+            reply = `Erro ao executar: ${e.message}`;
           }
-        }
+        }  // close bloco de ação
+        // BUG-7: coletar resultado; detectar pergunta de sala para suprimir falso-sucesso
+        if (reply && reply.includes('qual *unidade* e *sala*')) _hasSalaPending = true;
+        _invReplies.push(reply);
+      }  // close for loop de markers
+      // Combinar: pergunta de sala suprime qualquer mensagem de sucesso anterior
+      if (_hasSalaPending) {
+        reply = _invReplies.filter(r => r && r.includes('qual *unidade* e *sala*')).join('\n\n');
+      } else {
+        reply = _invReplies.filter(Boolean).join('\n\n');
       }
+      // Fallback anti-mentira: se engine não produziu texto, usa prosa limpa do LLM.
+      if (!reply || !reply.trim()) reply = _invLeadText;
     }
-    // Fallback: se nenhum branch do inventário produziu texto, cai de volta na
-    // prosa limpa do LLM (nunca resposta vazia). Em sucesso/falha o texto já é o
-    // do engine — não o "✅" otimista que o LLM possa ter escrito (anti-mentira).
-    if (!reply || !reply.trim()) reply = _invLeadText;
   }
 
   // Sprint Fase B — <<SHOP_ACTION>> — venda, entrada, ajuste e consulta da lojinha.
@@ -9543,7 +9561,10 @@ async function processMessage(phone, text, raw = {}) {
     if (parsedCoordResp && parsedCoordResp.malformed) {
       console.warn('[CoordinationResponse] WARN: malformed marker, dropping block');
       await logMarker(collab.id, 'COORDINATION_RESPONSE', 'rejected', 'schema_invalid', null);
-      reply = parsedCoordResp.cleanText || reply;
+      // BUG-4 (11/06): anti-confab — cleanText pode conter prosa otimista como "Transmiti sua
+      // resposta ao João!" quando a ação NÃO foi executada (marker malformado). Trocar por
+      // mensagem neutra evita que o remetente acredite que a resposta chegou ao destinatário.
+      reply = 'Recebi sua resposta, mas encontrei um problema técnico ao processá-la. Pode tentar novamente?';
     } else if (parsedCoordResp) {
       const result = await applyCoordinationResponseAction(collab, parsedCoordResp, inboundVerbatimText);
       await logMarker(
@@ -10248,6 +10269,17 @@ function todaySaoPaulo() {
     year: 'numeric', month: '2-digit', day: '2-digit',
   });
   return fmt.format(new Date());
+}
+
+// BUG-11 (11/06): start_at no DB é UTC — slice(0,10) dá a data UTC, que pode ser 1 dia à
+// frente após 21h BRT. Usar brtDateOf() para extrair o dia em horário de Brasília.
+function brtDateOf(isoStr) {
+  if (!isoStr) return null;
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  });
+  return fmt.format(new Date(isoStr));
 }
 
 async function logConversation(collaboratorId, direction, content) {
