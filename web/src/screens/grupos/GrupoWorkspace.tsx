@@ -81,7 +81,7 @@ function PoolRow({ t, today, busy, onToggle, onOpen }: {
         {t.title}
       </button>
       {badge}
-      {t.creator_name && (
+      {!done && t.creator_name && (
         <span className="text-body-sm text-fg-muted whitespace-nowrap max-md:hidden">por {first(t.creator_name)}</span>
       )}
     </div>
