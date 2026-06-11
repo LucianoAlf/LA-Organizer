@@ -10016,14 +10016,24 @@ Output AGORA, apenas o marker:`;
     if (reply && typeof reply === 'string' && noMarkerEmitted) {
       const detected = pendingIntents.detectConfirmationQuestion(reply);
       if (detected) {
-        // Payload mínimo: salva o user_text e a reply pra recuperação no próximo turno.
-        // O LLM lê isso no hook inicial e gera o marker certo.
-        const payload = {
-          last_user_text: String(text || '').slice(0, 600),
-          last_tom_reply: reply.slice(0, 900),
-        };
-        await pendingIntents.openIntent(collab.id, detected.kind, payload, reply.slice(0, 500));
-        _metrics.pending_intent_opened = detected.kind;
+        // GUARD-CONFIRM-LOOP (Matheus 10/06): se a guarda temporal abriu intent
+        // ANCORADA neste turno (complete bloqueado vira pergunta "Confirma...?"),
+        // NÃO abre genérica por cima — openIntent supersede same-kind e matava a
+        // âncora 0,4s depois de criada (o "sim" seguinte ficava sem id pra completar
+        // e o LLM re-emitia o complete → a guarda re-perguntava → loop infinito).
+        const anchoredFresh = await pendingIntents.hasFreshAnchoredIntent(collab.id, 2);
+        if (anchoredFresh) {
+          console.log('[PendingIntents] skip generic open — anchored intent fresh (guard turn)');
+        } else {
+          // Payload mínimo: salva o user_text e a reply pra recuperação no próximo turno.
+          // O LLM lê isso no hook inicial e gera o marker certo.
+          const payload = {
+            last_user_text: String(text || '').slice(0, 600),
+            last_tom_reply: reply.slice(0, 900),
+          };
+          await pendingIntents.openIntent(collab.id, detected.kind, payload, reply.slice(0, 500));
+          _metrics.pending_intent_opened = detected.kind;
+        }
       }
     }
   } catch (e) {
