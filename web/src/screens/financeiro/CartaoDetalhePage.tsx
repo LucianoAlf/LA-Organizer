@@ -1,7 +1,7 @@
 // Detalhe do cartão: cartão "herói" + fatura corrente + pagar fatura (parcial/total).
 import { useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { Pencil, Trash2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Pencil, Trash2 } from 'lucide-react';
 import { BottomSheet } from '../../components/BottomSheet';
 import { Field } from '../../components/Field';
 import { CustomSelect } from '../../components/CustomSelect';
@@ -11,7 +11,7 @@ import {
   useCreateCardPurchase, useDeactivateCard, useDeleteTransaction,
 } from '../../hooks/useFinanceiro';
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
-import { currentCompetencia, mesDaCompetencia, type CardInvoiceItem } from '../../lib/cartoes';
+import { addMonthsToCompetencia, currentCompetencia, mesDaCompetencia, type CardInvoiceItem } from '../../lib/cartoes';
 import type { PfTransaction } from '../../lib/financeiro';
 import { CartaoSheet } from './components/CartaoSheet';
 import { TransactionSheet } from './components/TransactionSheet';
@@ -50,10 +50,10 @@ function ItemRow({ it, onEdit, onDelete }: {
   );
 }
 
-function PagarSheet({ open, onClose, cardId }: { open: boolean; onClose: () => void; cardId: string }) {
+function PagarSheet({ open, onClose, cardId, competencia }: { open: boolean; onClose: () => void; cardId: string; competencia?: string }) {
   const cardsQ = useCards();
   const card = cardsQ.data?.find((c) => c.id === cardId);
-  const comp = card ? currentCompetencia(card) : undefined;
+  const comp = competencia ?? (card ? currentCompetencia(card) : undefined);
   const inv = useCardInvoice(cardId, comp);
   const accountsQ = useAccounts();
   const payMut = usePayInvoice();
@@ -73,7 +73,7 @@ function PagarSheet({ open, onClose, cardId }: { open: boolean; onClose: () => v
   }
 
   return (
-    <BottomSheet open={open} onClose={onClose} title="Pagar fatura">
+    <BottomSheet open={open} onClose={onClose} title={`Pagar fatura de ${mesDaCompetencia(comp ?? '')}`}>
       <div className="flex flex-col gap-md">
         <p className="text-fg-muted text-body-sm">Fatura atual: <b className="text-fg">{fmtBRL(inv.data?.total ?? 0)}</b> · falta <b className="text-fg">{fmtBRL(remaining)}</b></p>
         <Field label="Valor a pagar" sub="Vazio = paga a fatura toda">
@@ -151,7 +151,10 @@ export function CartaoDetalhePage() {
   const cardsQ = useCards();
   const card = cardsQ.data?.find((c) => c.id === id);
   const usage = useCardUsage(card);
-  const comp = card ? currentCompetencia(card) : undefined;
+  // Navegação entre competências: offset em meses a partir da fatura corrente.
+  const [compOffset, setCompOffset] = useState(0);
+  const baseComp = card ? currentCompetencia(card) : undefined;
+  const comp = baseComp ? addMonthsToCompetencia(baseComp, compOffset) : undefined;
   const inv = useCardInvoice(id, comp);
   const [paying, setPaying] = useState(false);
   const [ajustando, setAjustando] = useState(false);
@@ -239,12 +242,33 @@ export function CartaoDetalhePage() {
         </div>
       </div>
 
-      {/* Fatura */}
+      {/* Fatura — navegação entre competências (parcelas passadas/futuras) */}
       <div className="flex items-center justify-between mt-2">
-        <h2 className="text-label uppercase tracking-wide text-fg-muted font-bold">Fatura de {mesDaCompetencia(comp ?? '')}</h2>
-        {inv.data && inv.data.paid > 0 && !inv.data.isPaid && (
-          <span className="text-label text-fg-muted">pago {fmtBRL(inv.data.paid)}</span>
-        )}
+        <div className="flex items-center gap-1">
+          <button type="button" onClick={() => setCompOffset((o) => o - 1)} aria-label="Fatura anterior"
+            className="h-7 w-7 grid place-items-center rounded-md text-fg-muted hover:bg-bg-elevated focus-ring">
+            <ChevronLeft size={16} />
+          </button>
+          <h2 className="text-label uppercase tracking-wide text-fg-muted font-bold">
+            Fatura de {mesDaCompetencia(comp ?? '')}
+            {comp && baseComp && comp.slice(0, 4) !== baseComp.slice(0, 4) ? `/${comp.slice(0, 4)}` : ''}
+          </h2>
+          <button type="button" onClick={() => setCompOffset((o) => o + 1)} aria-label="Próxima fatura"
+            className="h-7 w-7 grid place-items-center rounded-md text-fg-muted hover:bg-bg-elevated focus-ring">
+            <ChevronRight size={16} />
+          </button>
+        </div>
+        <div className="flex items-center gap-2">
+          {compOffset !== 0 && (
+            <button type="button" onClick={() => setCompOffset(0)}
+              className="text-label text-tom hover:underline focus-ring rounded">
+              fatura atual
+            </button>
+          )}
+          {inv.data && inv.data.paid > 0 && !inv.data.isPaid && (
+            <span className="text-label text-fg-muted">pago {fmtBRL(inv.data.paid)}</span>
+          )}
+        </div>
       </div>
 
       {inv.data && inv.data.items.length === 0 && (
@@ -266,15 +290,17 @@ export function CartaoDetalhePage() {
         </div>
       )}
 
-      <Button variant="secondary" fullWidth onClick={() => setAjustando(true)}>
-        Ajustar fatura
-      </Button>
+      {compOffset === 0 && (
+        <Button variant="secondary" fullWidth onClick={() => setAjustando(true)}>
+          Ajustar fatura
+        </Button>
+      )}
 
       <Button variant="ghost" fullWidth onClick={excluirCartao} loading={deactivateCard.isPending}>
         <span className="text-danger">Excluir cartão</span>
       </Button>
 
-      <PagarSheet open={paying} onClose={() => setPaying(false)} cardId={card.id} />
+      <PagarSheet open={paying} onClose={() => setPaying(false)} cardId={card.id} competencia={comp} />
       <AjustarFaturaSheet open={ajustando} onClose={() => setAjustando(false)} cardId={card.id} />
       <CartaoSheet open={editando} onClose={() => setEditando(false)} card={card} />
       <TransactionSheet open={!!editItem} onClose={() => setEditItem(null)} initial={editItem ?? undefined} cardName={card.name} />
