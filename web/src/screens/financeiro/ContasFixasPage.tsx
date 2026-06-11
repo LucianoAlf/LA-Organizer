@@ -76,11 +76,12 @@ function BillSection({ title, bills, onPay, onEdit }: {
   onEdit: (b: PfBill) => void;
 }) {
   if (bills.length === 0) return null;
+  const total = bills.reduce((s, b) => s + Number(b.amount), 0);
   return (
     <section className="rounded-lg border border-border bg-bg-surface overflow-hidden">
       <header className="px-md pt-md pb-2 flex items-baseline justify-between">
         <h3 className="text-label text-fg-muted uppercase tracking-wide">{title}</h3>
-        <span className="text-body-sm text-fg-muted tabular-nums">{bills.length}</span>
+        <span className="text-body-sm text-fg-muted tabular-nums">{bills.length} · R$ {brl(total)}</span>
       </header>
       <ul className="divide-y divide-border">
         {bills.map((b) => <BillRow key={b.id} bill={b} onPay={onPay} onEdit={onEdit} />)}
@@ -157,6 +158,14 @@ export function ContasFixasPage() {
 
       {activeTab === 'apagar' && (
         <>
+          {(groups.atrasadas.length > 0 || groups.aVencer.length > 0) && (
+            <section className="rounded-lg border border-border bg-bg-surface px-md py-3 flex items-baseline justify-between">
+              <span className="text-body-sm text-fg-muted">Total a pagar</span>
+              <span className="text-body-md font-bold text-fg tabular-nums">
+                R$ {brl([...groups.atrasadas, ...groups.aVencer].reduce((s, b) => s + Number(b.amount), 0))}
+              </span>
+            </section>
+          )}
           {groups.atrasadas.length === 0 && groups.aVencer.length === 0 && (
             <section className="rounded-lg border border-dashed border-border bg-bg-surface px-md py-lg text-center">
               <div className="text-[44px] leading-none mb-2" aria-hidden>✅</div>
