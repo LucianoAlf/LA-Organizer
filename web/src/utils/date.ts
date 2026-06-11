@@ -3,11 +3,18 @@
 
 const SP = 'America/Sao_Paulo';
 
+const ymdFmtSP = new Intl.DateTimeFormat('en-CA', {
+  timeZone: SP, year: 'numeric', month: '2-digit', day: '2-digit',
+});
+
 export function todaySP(): string {
-  const fmt = new Intl.DateTimeFormat('en-CA', {
-    timeZone: SP, year: 'numeric', month: '2-digit', day: '2-digit',
-  });
-  return fmt.format(new Date());
+  return ymdFmtSP.format(new Date());
+}
+
+/** YMD (YYYY-MM-DD) de um Date no fuso SP. Nunca usar toISOString().slice(0, 10)
+ *  pra isso: é UTC e desloca o dia civil a partir das 21h BRT. */
+export function localYmd(d: Date): string {
+  return ymdFmtSP.format(d);
 }
 
 /** YYYY-MM-DD + days (positive or negative). */

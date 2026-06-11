@@ -5,6 +5,7 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { useMyGroupIds } from '../../../hooks/useWorkGroups';
 import { fetchGroupsForDay } from '../../../lib/taskGroups';
 import type { AgendaFilters } from './useAgendaFilters';
+import { localYmd } from '../../../utils/date';
 
 export interface TaskForPanel {
   id: string;
@@ -47,8 +48,9 @@ export interface TaskForPanel {
 export function useAgendaTasks(params: { from: Date; to: Date; filters: AgendaFilters }) {
   const { collaborator } = useAuth();
   const collaboratorId = collaborator?.id;
-  const fromYmd = params.from.toISOString().slice(0, 10);
-  const toYmd = params.to.toISOString().slice(0, 10);
+  // localYmd: from/to são Date locais (endOfDay 23:59 BRT virava dia+1 em UTC).
+  const fromYmd = localYmd(params.from);
+  const toYmd = localYmd(params.to);
 
   // Pool dos grupos de trabalho (2026-06-10): tarefa de grupo tem assigned_to NULL,
   // então a cláusula antiga assigned_to.neq nunca casava — membro não via o pool.

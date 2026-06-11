@@ -4,6 +4,7 @@ import { CompactEventRow } from './rows/CompactEventRow';
 import { CompactTaskRow } from './rows/CompactTaskRow';
 import { CollapsibleSection } from './CollapsibleSection';
 import { HabitWeekHeatmap } from './HabitWeekHeatmap';
+import { localYmd, todaySP } from '../../../utils/date';
 import type { TaskForPanel } from '../hooks/useAgendaTasks';
 import type { EventForGrid } from '../hooks/useAgendaEvents';
 
@@ -39,17 +40,14 @@ function buildWeekDays(weekStart: Date): Date[] {
   });
 }
 
-function toIso(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
-
 export function WeekPanel(p: Props) {
-  const todayIso = toIso(p.currentDate);
+  // Hoje REAL em SP — não o dia navegado: o chip "hoje" só aparece na semana atual.
+  const todayIso = todaySP();
 
   const days = useMemo(() => buildWeekDays(p.weekStart), [p.weekStart]);
 
-  const weekStartIso = toIso(days[0]);
-  const weekEndIso = toIso(days[6]);
+  const weekStartIso = localYmd(days[0]);
+  const weekEndIso = localYmd(days[6]);
 
   // Totais da semana
   const { totalCount, overdueCount, doneCount } = useMemo(() => {
@@ -73,7 +71,7 @@ export function WeekPanel(p: Props) {
 
   // todayIndex: índice do dia atual no array days (0-6), ou null
   const todayIndex = useMemo(() => {
-    const idx = days.findIndex(d => toIso(d) === todayIso);
+    const idx = days.findIndex(d => localYmd(d) === todayIso);
     return idx >= 0 ? idx : null;
   }, [days, todayIso]);
 
@@ -143,7 +141,7 @@ export function WeekPanel(p: Props) {
           title="📅 Por dia"
         >
           {days.map((day, i) => {
-            const dayIso = toIso(day);
+            const dayIso = localYmd(day);
             const isToday = dayIso === todayIso;
 
             const dayEvents = p.events

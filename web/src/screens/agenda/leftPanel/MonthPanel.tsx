@@ -4,6 +4,7 @@ import { StatCard } from '../../../components/StatCard';
 import { CompactEventRow } from './rows/CompactEventRow';
 import { CompactTaskRow } from './rows/CompactTaskRow';
 import { CollapsibleSection } from './CollapsibleSection';
+import { localYmd, todaySP } from '../../../utils/date';
 import type { TaskForPanel } from '../hooks/useAgendaTasks';
 import type { EventForGrid } from '../hooks/useAgendaEvents';
 
@@ -15,10 +16,6 @@ interface Props {
   onToggleTaskDone: (t: TaskForPanel) => void;
   onEventClick: (e: EventForGrid) => void;
   onToggleEventDone: (e: EventForGrid) => void;
-}
-
-function isoOf(d: Date): string {
-  return d.toISOString().slice(0, 10);
 }
 
 function daysSince(dueIso: string, todayIso: string): number {
@@ -36,13 +33,13 @@ function overdueDays(dueIso: string | null | undefined, todayIso: string): numbe
 }
 
 export function MonthPanel(p: Props) {
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = todaySP();
 
   // ── Derived values ────────────────────────────────────────────────────────
   const monthStart = new Date(p.monthDate.getFullYear(), p.monthDate.getMonth(), 1);
   const monthEnd = new Date(p.monthDate.getFullYear(), p.monthDate.getMonth() + 1, 0);
-  const startIso = isoOf(monthStart);
-  const endIso = isoOf(monthEnd);
+  const startIso = localYmd(monthStart);
+  const endIso = localYmd(monthEnd);
 
   const monthTasks = useMemo(
     () =>

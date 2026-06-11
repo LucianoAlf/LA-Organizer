@@ -5,6 +5,7 @@ import { CompactEventRow } from './rows/CompactEventRow';
 import { CompactTaskRow } from './rows/CompactTaskRow';
 import { GroupRow } from './rows/GroupRow';
 import { CollapsibleSection } from './CollapsibleSection';
+import { localYmd } from '../../../utils/date';
 import type { TaskForPanel } from '../hooks/useAgendaTasks';
 import type { EventForGrid } from '../hooks/useAgendaEvents';
 
@@ -51,7 +52,8 @@ function overdueDays(dueIso: string | null | undefined, todayIso: string): numbe
 }
 
 export function DayPanel(p: Props) {
-  const todayIso = p.currentDate.toISOString().slice(0, 10);
+  // "todayIso" = o dia EXIBIDO (currentDate), em SP — não necessariamente hoje.
+  const todayIso = localYmd(p.currentDate);
   const dayGroups = (p.groups ?? []).filter(g =>
     g.due_date === todayIso ||
     (g.subtasks ?? []).some(k => k.due_date && k.due_date <= todayIso && k.status !== 'done')

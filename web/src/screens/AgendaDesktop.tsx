@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { localYmd, todaySP } from '../utils/date';
 
 import { AgendaShell, type AgendaView } from './agenda/AgendaShell';
 import { AgendaDesktopLeftPanel } from './agenda/leftPanel/AgendaDesktopLeftPanel';
@@ -79,7 +80,8 @@ export function AgendaDesktop() {
   const collabId = collaborator?.id;
 
   const view = (params.get('view') as AgendaView) || 'day';
-  const dateIso = params.get('date') ?? new Date().toISOString().slice(0, 10);
+  // todaySP, não toISOString: depois das 21h BRT o dia UTC já é o seguinte.
+  const dateIso = params.get('date') ?? todaySP();
   const currentDate = useMemo(() => new Date(`${dateIso}T00:00:00`), [dateIso]);
 
   const { filters, toggle, currentContext, changeContext } = useAgendaFilters();
@@ -103,19 +105,19 @@ export function AgendaDesktop() {
 
   // Contagens por contexto — refletem a janela visível do painel atual.
   const contextCounts = useMemo(() => {
-    const todayIso = currentDate.toISOString().slice(0, 10);
+    const todayIso = localYmd(currentDate);
     let inRange: (iso: string) => boolean;
     if (view === 'day') {
       inRange = (iso) => iso <= todayIso;
     } else if (view === 'week') {
       const s = startOfWeek(currentDate);
       const e = new Date(s); e.setDate(s.getDate() + 6);
-      const sIso = s.toISOString().slice(0, 10);
-      const eIso = e.toISOString().slice(0, 10);
+      const sIso = localYmd(s);
+      const eIso = localYmd(e);
       inRange = (iso) => iso >= sIso && iso <= eIso;
     } else {
-      const sIso = new Date(miniMonth.getFullYear(), miniMonth.getMonth(), 1).toISOString().slice(0, 10);
-      const eIso = new Date(miniMonth.getFullYear(), miniMonth.getMonth() + 1, 0).toISOString().slice(0, 10);
+      const sIso = localYmd(new Date(miniMonth.getFullYear(), miniMonth.getMonth(), 1));
+      const eIso = localYmd(new Date(miniMonth.getFullYear(), miniMonth.getMonth() + 1, 0));
       inRange = (iso) => iso >= sIso && iso <= eIso;
     }
     const tInRange = (t: typeof tasks[number]) => {
@@ -140,8 +142,6 @@ export function AgendaDesktop() {
     if (currentContext === 'delegated') return [];
     return events.filter(e => e.context === currentContext);
   }, [events, currentContext]);
-
-  const todayIso = currentDate.toISOString().slice(0, 10);
 
   // Mutations — update/delete events e update tasks (create event/task vem do QuickCreateSheet).
   const updateEvent = useMutation({
@@ -184,7 +184,7 @@ export function AgendaDesktop() {
 
   const setDate = useCallback((d: Date) => {
     const next = new URLSearchParams(params);
-    next.set('date', d.toISOString().slice(0, 10));
+    next.set('date', localYmd(d));
     navigate(`/agenda?${next.toString()}`, { replace: true });
   }, [params, navigate]);
 
@@ -332,7 +332,7 @@ export function AgendaDesktop() {
           <DayView
             date={currentDate}
             events={events}
-            onSlotClick={(d) => setQuickCreate({ open: true, dueDate: d.toISOString().slice(0, 10) })}
+            onSlotClick={(d) => setQuickCreate({ open: true, dueDate: localYmd(d) })}
             onEventClick={setEditingEvent}
             onEventDrop={onEventDrop}
             onEventResize={onEventResize}
@@ -342,7 +342,7 @@ export function AgendaDesktop() {
           <WeekView
             weekStart={startOfWeek(currentDate)}
             events={events}
-            onSlotClick={(d) => setQuickCreate({ open: true, dueDate: d.toISOString().slice(0, 10) })}
+            onSlotClick={(d) => setQuickCreate({ open: true, dueDate: localYmd(d) })}
             onEventClick={setEditingEvent}
             onEventDrop={onEventDrop}
             onEventResize={onEventResize}
@@ -367,7 +367,7 @@ export function AgendaDesktop() {
       {/* FAB "+ Novo" no canto inf-direito — paridade com mobile, abre o QuickCreateSheet
           (que tem 3 segmented: Tarefa / Compromisso / Delegar). */}
       <Fab
-        onClick={() => setQuickCreate({ open: true, dueDate: currentDate.toISOString().slice(0, 10) })}
+        onClick={() => setQuickCreate({ open: true, dueDate: localYmd(currentDate) })}
         label="Novo"
         ariaLabel="Criar tarefa, compromisso ou delegar"
       />
