@@ -24,11 +24,15 @@ export interface CreateGroupInput {
   groupDueDate?: string | null;     // sem repetição: prazo YMD (opcional)
   children: GroupChildInput[];
   collabId: string;
+  /** Grupo de TRABALHO como dono (pool, 2026-06-10): mãe+filhas nascem com
+   *  assigned_to NULL + assigned_group_id (CHECK tasks_exactly_one_owner). */
+  assignedGroupId?: string | null;
 }
 
 const GROUP_SELECT =
   'id, title, status, context, due_date, due_time, is_group, parent_task_id, ' +
   'recurrence_rule, recurrence_parent_id, sort_position, assigned_to, created_by, completed_at, created_at, ' +
+  'assigned_group_id, work_group:work_groups!tasks_assigned_group_id_fkey(name), ' +
   'subtasks:tasks!parent_task_id(id, title, status, due_date, due_time, sort_position, ' +
   'parent_task_id, recurrence_parent_id, assigned_to, created_by, completed_at, ' +
   'task_reminders(remind_at, sent_at))';
@@ -54,12 +58,14 @@ async function insertReminders(taskId: string, localTimes: string[] | undefined)
  */
 export async function createGroup(input: CreateGroupInput): Promise<{ groupId: string }> {
   const today = todaySP();
+  const gid = input.assignedGroupId ?? null;
   const base = {
-    context: input.context,
+    context: gid ? ('work' as const) : input.context,
     status: 'pending' as const,
     priority: 'medium' as const,
     source: 'manual' as const,
-    assigned_to: input.collabId,
+    assigned_to: gid ? null : input.collabId,
+    assigned_group_id: gid,
     created_by: input.collabId,
   };
 
@@ -129,11 +135,15 @@ export async function createGroup(input: CreateGroupInput): Promise<{ groupId: s
  * concluída no dia, OU mãe com due no dia. Filtragem final em JS (volume é baixo).
  * Nota: .neq().neq() usado em vez de .not('status','in',...) — padrão seguro no supabase-js do projeto.
  */
-export async function fetchGroupsForDay(collabId: string, ymd: string): Promise<Task[]> {
+export async function fetchGroupsForDay(collabId: string, ymd: string, workGroupIds: string[] = []): Promise<Task[]> {
+  // Pool (2026-06-10): grupo atribuído a um grupo de TRABALHO tem assigned_to NULL —
+  // visível pra qualquer membro (assigned_group_id) e pro criador (created_by).
+  const vis = [`assigned_to.eq.${collabId}`, `created_by.eq.${collabId}`];
+  if (workGroupIds.length > 0) vis.push(`assigned_group_id.in.(${workGroupIds.join(',')})`);
   const { data, error } = await supabase
     .from('tasks')
     .select(GROUP_SELECT)
-    .eq('assigned_to', collabId)
+    .or(vis.join(','))
     .eq('is_group', true)
     .is('recurrence_rule', null)          // esconde mãe-TEMPLATE
     .neq('status', 'cancelled')
@@ -225,10 +235,14 @@ export async function addSubtask(
   const kids = group.subtasks ?? [];
   const nextPos = kids.length ? Math.max(...kids.map((k) => k.sort_position ?? 0)) + 1 : 1;
   const due = dayOfMonth && group.due_date ? dayOfMonthToYmd(dayOfMonth, group.due_date) : null;
+  // Grupo-pool (2026-06-10): assigned_to é NULL — filha nova herda o grupo de
+  // trabalho da mãe e o created_by cai pro criador da mãe.
+  const groupWorkId = (group as unknown as { assigned_group_id?: string | null }).assigned_group_id ?? null;
   const base = {
     title: title.trim().slice(0, 200), context: group.context, status: 'pending',
     priority: 'medium', source: 'manual',
-    assigned_to: group.assigned_to, created_by: group.assigned_to,
+    assigned_to: group.assigned_to, assigned_group_id: groupWorkId,
+    created_by: group.assigned_to ?? (group as unknown as { created_by?: string | null }).created_by ?? null,
   };
   let tplChildId: string | null = null;
   if (scope === 'this_and_future' && group.recurrence_parent_id) {

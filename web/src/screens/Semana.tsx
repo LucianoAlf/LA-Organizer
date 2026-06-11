@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTaskTransform } from '../hooks/useTaskTransform';
 import { CalendarDays } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { useMyGroupIds } from '../hooks/useWorkGroups';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { todaySP, weekDaysMonSat, dowShort, brShort } from '../utils/date';
 import { fetchEventsForRange, formatEventTimeRange, eventLocalYmd } from '../lib/events';
@@ -31,15 +32,18 @@ type WeekTask = Task & {
   task_reminders?: Array<{ remind_at: string; sent_at: string | null }>;
 };
 
-async function fetchWeekTasks(collabId: string, start: string, end: string): Promise<WeekTask[]> {
+async function fetchWeekTasks(collabId: string, start: string, end: string, groupIds: string[] = []): Promise<WeekTask[]> {
   // Sprint 22.34m — Semana inclui delegadas (criadas por mim com assignee !== eu).
-  // OR no Supabase: tasks atribuídas a mim OU criadas por mim e atribuídas a outro.
   // Grupos de tarefas (2026-06-09): parent_task_id/is_group no select; filhas e mães
   // ficam fora das listas soltas (entram pelo TaskGroupCard).
+  // Grupos de TRABALHO (2026-06-10): pool dos meus grupos entra (assigned_to é NULL
+  // nessas — a cláusula neq antiga nunca casava) + badge 👥 via work_group embed.
+  const vis = [`assigned_to.eq.${collabId}`, `created_by.eq.${collabId}`];
+  if (groupIds.length > 0) vis.push(`assigned_group_id.in.(${groupIds.join(',')})`);
   const { data, error } = await supabase
     .from('tasks')
-    .select('id, title, status, context, priority, category, due_date, due_time, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, recurrence_rule, recurrence_parent_id, parent_task_id, is_group, projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(id, full_name), task_reminders(remind_at, sent_at)')
-    .or(`assigned_to.eq.${collabId},and(created_by.eq.${collabId},assigned_to.neq.${collabId})`)
+    .select('id, title, status, context, priority, category, due_date, due_time, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, recurrence_rule, recurrence_parent_id, parent_task_id, is_group, assigned_group_id, work_group:work_groups!tasks_assigned_group_id_fkey(name), projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(id, full_name), task_reminders(remind_at, sent_at)')
+    .or(vis.join(','))
     .neq('status', 'cancelled')
     .is('parent_task_id', null)
     .eq('is_group', false)
@@ -118,9 +122,12 @@ export function Semana() {
   type SemanaTab = TaskContext | 'delegated';
   const [tab, setTab] = useState<SemanaTab>('work');
 
+  // Grupos de trabalho (2026-06-10): pool dos meus grupos entra na semana.
+  const myGroupIds = useMyGroupIds();
+
   const { data: tasks = [], isLoading: tLoading, error } = useQuery({
-    queryKey: ['tasks', 'semana', collaborator?.id, start, end],
-    queryFn: () => collaborator ? fetchWeekTasks(collaborator.id, start, end) : Promise.resolve([]),
+    queryKey: ['tasks', 'semana', collaborator?.id, start, end, (myGroupIds.data ?? []).join(',')],
+    queryFn: () => collaborator ? fetchWeekTasks(collaborator.id, start, end, myGroupIds.data ?? []) : Promise.resolve([]),
     enabled: Boolean(collaborator?.id && supabaseConfigured),
   });
 
@@ -134,6 +141,11 @@ export function Semana() {
   // delegated mostra tasks criadas por mim com assignee !== eu.
   const taskMatchesTab = (t: WeekTask): boolean => {
     if (!collaborator) return false;
+    // Tarefa de grupo de trabalho (assigned_to NULL) entra no contexto, nunca em
+    // Delegadas — é pool: qualquer membro vê e conclui (2026-06-10).
+    if (t.assigned_group_id) {
+      return tab !== 'delegated' && t.context === tab;
+    }
     if (tab === 'delegated') {
       return t.created_by === collaborator.id && t.assigned_to !== collaborator.id;
     }
@@ -189,11 +201,11 @@ export function Semana() {
   const [openGroupId, setOpenGroupId] = useState<string | null>(null);
 
   const groupsQ = useQuery({
-    queryKey: ['task-groups', 'semana', collaborator?.id, start, end],
+    queryKey: ['task-groups', 'semana', collaborator?.id, start, end, (myGroupIds.data ?? []).join(',')],
     enabled: Boolean(collaborator?.id),
     queryFn: async () => {
       const entries = await Promise.all(
-        days.map(async d => [d, await fetchGroupsForDay(collaborator!.id, d)] as [string, Task[]])
+        days.map(async d => [d, await fetchGroupsForDay(collaborator!.id, d, myGroupIds.data ?? [])] as [string, Task[]])
       );
       return Object.fromEntries(entries) as Record<string, Task[]>;
     },
@@ -406,6 +418,11 @@ export function Semana() {
                                       </span>
                                     )}
                                     <span className="flex-1 min-w-0 truncate">{t.title}</span>
+                                    {t.work_group?.name && (
+                                      <span className="shrink-0 text-[10px] text-tom" title={`Grupo de trabalho ${t.work_group.name} — qualquer membro pode concluir`}>
+                                        👥 {t.work_group.name}
+                                      </span>
+                                    )}
                                     {remHM && (
                                       <span className="shrink-0 inline-flex items-center gap-0.5 text-[10px] text-tom tabular-nums" title={`Lembrete às ${remHM}`}>
                                         <span aria-hidden>🔔</span>{remHM}
@@ -420,6 +437,11 @@ export function Semana() {
                                 <div className="flex-1 min-w-0">
                                   <div className={['text-body-sm flex items-baseline gap-1.5', isDone ? 'line-through text-fg-muted' : 'text-fg'].join(' ')}>
                                     <span className="flex-1 min-w-0 truncate">{t.title}</span>
+                                    {t.work_group?.name && (
+                                      <span className="shrink-0 text-[10px] text-fg-muted" title={`Grupo de trabalho ${t.work_group.name}`}>
+                                        👥 {t.work_group.name}
+                                      </span>
+                                    )}
                                     {remHM && (
                                       <span className="shrink-0 inline-flex items-center gap-0.5 text-[10px] text-fg-muted tabular-nums" title={`Lembrete às ${remHM}`}>
                                         <span aria-hidden>🔔</span>{remHM}

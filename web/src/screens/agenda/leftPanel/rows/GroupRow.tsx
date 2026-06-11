@@ -25,6 +25,11 @@ export function GroupRow({ group, dayYmd, onToggleChild, onOpen }: Props) {
         <button type="button" onClick={onOpen} className="flex items-center gap-1.5 min-w-0 flex-1 text-left">
           <span aria-hidden>🗂️</span>
           <span className="text-[12px] font-semibold truncate">{group.title}</span>
+          {group.work_group_name && (
+            <span className="text-[10px] text-tom shrink-0" title={`Grupo de trabalho ${group.work_group_name} — qualquer membro pode concluir`}>
+              👥 {group.work_group_name}
+            </span>
+          )}
         </button>
         <span className="w-12 h-[3px] bg-bg-elevated rounded-full overflow-hidden shrink-0">
           <span className="block h-full bg-tom" style={{ width: `${total ? Math.round((done / total) * 100) : 0}%` }} />

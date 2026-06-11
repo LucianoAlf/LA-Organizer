@@ -58,6 +58,8 @@ export function DayPanel(p: Props) {
   );
 
   const inWindow = useMemo(() => p.tasks.filter(t => {
+    // Filha de grupo de tarefas entra pelo GroupRow no Dia (flat só na Semana/Mês).
+    if (t.parent_task_id) return false;
     const d = t.scheduled_date ?? t.due_date;
     if (!d) return false;
     return d.slice(0, 10) <= todayIso;

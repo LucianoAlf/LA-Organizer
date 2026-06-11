@@ -8,9 +8,18 @@
 > QuickCreate, Hoje inclui pool + badge 👥 ✓ · grupo Financeiro (Rose ★ + Ana) seedado ✓.
 > Bug pego na validação: work_group_members tem 2 FKs pra collaborators → embeds exigem FK explícita
 > (corrigido nos 3 pontos; mesma família do event_participants).
+> **UPDATE (10/06 ~23h BRT — feedback Rose no piloto):** ✅ Agenda DESKTOP (dia/semana/mês) e Semana
+> mobile agora incluem o pool + criadas-por-mim + badge 👥 (or de visibilidade reescrito — assigned_to
+> NULL nunca casava com o neq antigo); ✅ templates recorrentes voltaram a aparecer no desktop (Sprint
+> 29.4 os escondia; pós RECUR-TEMPLATE-DUP o template É a 1ª ocorrência — 5 filhos same-day pré-fix
+> cancelados); ✅ aba Grupo (subtarefas) do QuickCreate ganhou Responsável Eu|👥 Grupo (createGroup
+> grava assigned_group_id em mãe/filhas/template/instância; clones por spread herdam); ✅ filhas de
+> grupo-de-tarefas aparecem flat na Semana/Mês (Dia segue via GroupRow; filtro de filha-de-template
+> por 2ª query — self-embed por constraint dá PGRST200). Known issues: DESKTOP-RECUR-TEMPLATE-HIDDEN
+> + DESKTOP-GROUP-POOL-BLIND. Validado no preview (semana Alf 0→8; mês 38; sheet Grupo ok).
 > **PENDÊNCIAS (fase imediata):** escalação de task de grupo travada → líder (hoje não escala);
-> relatórios buildTeamSummary/leader-briefing com linha por grupo; view Semana/Agenda incluir pool
-> (só Hoje cobre); validação RLS com login non-coinciding real (piloto cobre); e2e real Rose→Ana.
+> relatórios buildTeamSummary/leader-briefing com linha por grupo; validação RLS com login
+> non-coinciding real (piloto cobre); e2e real Rose→Ana (Ana concluir task do pool).
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

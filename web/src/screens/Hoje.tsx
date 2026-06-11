@@ -252,10 +252,11 @@ export function Hoje() {
   });
 
   // Grupos de tarefas (2026-06-09): grupos relevantes pro dia visualizado.
+  // (2026-06-10) inclui grupos-pool dos meus grupos de trabalho.
   const groupsQ = useQuery({
-    queryKey: ['task-groups', collaborator?.id, viewDate],
+    queryKey: ['task-groups', collaborator?.id, viewDate, (myGroupIds.data ?? []).join(',')],
     enabled: Boolean(collaborator?.id),
-    queryFn: () => fetchGroupsForDay(collaborator!.id, viewDate),
+    queryFn: () => fetchGroupsForDay(collaborator!.id, viewDate, myGroupIds.data ?? []),
   });
 
   const toggleChildMut = useMutation({

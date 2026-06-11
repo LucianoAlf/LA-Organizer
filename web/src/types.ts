@@ -162,6 +162,10 @@ export interface Task {
   sort_position?: number | null;
   // Preenchido em runtime pelo fetch de grupos (nested select) — não vem solto do banco.
   subtasks?: Task[];
+  // Grupos de TRABALHO — pool por equipe (2026-06-10): dono é o grupo (assigned_to vem NULL).
+  assigned_group_id?: string | null;
+  // Embed work_groups!tasks_assigned_group_id_fkey(name) — badge 👥 nas listas.
+  work_group?: { name: string } | null;
 }
 
 // Subconjunto de campos que os sheets de transformação (Delegar/Compromisso) leem.

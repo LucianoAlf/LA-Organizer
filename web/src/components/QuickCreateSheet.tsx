@@ -435,6 +435,8 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
         groupDueDay: groupDueDay ? Number(groupDueDay) : null,
         groupDueDate: groupDueDate || null,
         children, collabId: collab.id,
+        // Grupos de trabalho (2026-06-10): pool por equipe como dono.
+        assignedGroupId: (taskCtx === 'work' && taskGroupMode && taskGroupId) ? taskGroupId : null,
       });
     },
     onSuccess: () => {
@@ -572,6 +574,61 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
 
   const showMeetingUrl = kind === 'event' && (modality === 'online' || modality === 'hibrido');
 
+  // Grupos de trabalho (2026-06-10): fieldset Responsável (Eu | 👥 Grupo) compartilhado
+  // entre as abas Tarefa e Grupo — pool por equipe como dono.
+  const responsavelFieldset = taskCtx === 'work' && (workGroups.list.data ?? []).length > 0 ? (
+    <fieldset>
+      <legend className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Responsável</legend>
+      <div role="radiogroup" className="grid grid-cols-2 gap-2">
+        {([
+          { v: false, label: 'Eu' },
+          { v: true, label: '👥 Grupo' },
+        ] as const).map(o => {
+          const active = taskGroupMode === o.v;
+          return (
+            <button
+              key={String(o.v)}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              onClick={() => {
+                setTaskGroupMode(o.v);
+                if (o.v && !taskGroupId && (workGroups.list.data ?? []).length === 1) {
+                  setTaskGroupId(workGroups.list.data![0].id);
+                }
+              }}
+              className={[
+                'h-11 rounded-md border text-body-md font-semibold transition-colors focus-ring',
+                active
+                  ? 'bg-tom text-black border-tom'
+                  : 'bg-bg-subtle text-fg-secondary border-border',
+              ].join(' ')}
+            >{o.label}</button>
+          );
+        })}
+      </div>
+      {taskGroupMode && (
+        <div className="mt-2 space-y-1.5">
+          <CustomSelect
+            value={taskGroupId}
+            options={(workGroups.list.data ?? []).map(g => ({ value: g.id, label: g.name }))}
+            onChange={(v) => setTaskGroupId(String(v))}
+            placeholder="Escolhe o grupo…"
+          />
+          {taskGroupId && (() => {
+            const g = (workGroups.list.data ?? []).find(x => x.id === taskGroupId);
+            if (!g) return null;
+            return (
+              <div className="text-body-sm text-fg-muted">
+                👥 {g.members.map(m => m.full_name.split(' ')[0]).join(', ')} — todo mundo vê; qualquer um conclui.
+              </div>
+            );
+          })()}
+        </div>
+      )}
+    </fieldset>
+  ) : null;
+
   return (
     <AdaptiveSheet open={open} onClose={onClose} title="Novo" size="sm">
       {/* Kind selector */}
@@ -651,58 +708,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
                 })}
               </div>
             </fieldset>
-            {taskCtx === 'work' && (workGroups.list.data ?? []).length > 0 && (
-              <fieldset>
-                <legend className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Responsável</legend>
-                <div role="radiogroup" className="grid grid-cols-2 gap-2">
-                  {([
-                    { v: false, label: 'Eu' },
-                    { v: true, label: '👥 Grupo' },
-                  ] as const).map(o => {
-                    const active = taskGroupMode === o.v;
-                    return (
-                      <button
-                        key={String(o.v)}
-                        type="button"
-                        role="radio"
-                        aria-checked={active}
-                        onClick={() => {
-                          setTaskGroupMode(o.v);
-                          if (o.v && !taskGroupId && (workGroups.list.data ?? []).length === 1) {
-                            setTaskGroupId(workGroups.list.data![0].id);
-                          }
-                        }}
-                        className={[
-                          'h-11 rounded-md border text-body-md font-semibold transition-colors focus-ring',
-                          active
-                            ? 'bg-tom text-black border-tom'
-                            : 'bg-bg-subtle text-fg-secondary border-border',
-                        ].join(' ')}
-                      >{o.label}</button>
-                    );
-                  })}
-                </div>
-                {taskGroupMode && (
-                  <div className="mt-2 space-y-1.5">
-                    <CustomSelect
-                      value={taskGroupId}
-                      options={(workGroups.list.data ?? []).map(g => ({ value: g.id, label: g.name }))}
-                      onChange={(v) => setTaskGroupId(String(v))}
-                      placeholder="Escolhe o grupo…"
-                    />
-                    {taskGroupId && (() => {
-                      const g = (workGroups.list.data ?? []).find(x => x.id === taskGroupId);
-                      if (!g) return null;
-                      return (
-                        <div className="text-body-sm text-fg-muted">
-                          👥 {g.members.map(m => m.full_name.split(' ')[0]).join(', ')} — todo mundo vê; qualquer um conclui.
-                        </div>
-                      );
-                    })()}
-                  </div>
-                )}
-              </fieldset>
-            )}
+            {responsavelFieldset}
             <div>
               <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5 flex items-baseline gap-2">
                 <span>Para quando</span>
@@ -823,6 +829,9 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate }: Props) {
                 ))}
               </div>
             </fieldset>
+
+            {/* Grupos de trabalho (2026-06-10): grupo+subtarefas também pode ser do pool. */}
+            {responsavelFieldset}
 
             <div>
               <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5 flex items-baseline gap-2">

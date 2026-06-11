@@ -2,6 +2,7 @@
 // Card do grupo nas listas do dia (Hoje/Semana) — tela aprovada no Companion.
 // Mostra filhas relevantes do dia (due<=hoje não-done + done hoje) e resume o resto.
 import { TaskCheckbox } from './TaskCheckbox';
+import { Badge } from './Badge';
 import { cycleLabel } from '../lib/taskGroups';
 import type { Task } from '../types';
 
@@ -38,6 +39,9 @@ export function TaskGroupCard({ group, viewYmd, onToggleChild, onOpen }: Props) 
         <div className="flex items-center gap-2">
           <span aria-hidden>🗂️</span>
           <span className="text-body-md font-semibold min-w-0 flex-1 truncate">{group.title}</span>
+          {group.work_group?.name && (
+            <Badge tone="success">👥 {group.work_group.name}</Badge>
+          )}
           <span className="text-body-sm text-fg-muted tabular-nums shrink-0">
             {done}/{total}{ciclo ? ` · ${ciclo}` : ''}{group.due_date ? ` · prazo ${brDay(group.due_date)}` : ''}
           </span>

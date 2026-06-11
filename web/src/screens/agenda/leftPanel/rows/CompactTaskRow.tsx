@@ -85,6 +85,12 @@ export function CompactTaskRow({ task, onToggle, onClick, trailingBadge }: Props
           <span className="truncate">{delegatedToName}</span>
         </span>
       )}
+      {task.work_group_name && (
+        <span className="shrink-0 inline-flex items-center gap-0.5 text-[10px] text-tom max-w-[90px]" title={`Grupo de trabalho ${task.work_group_name} — qualquer membro pode concluir`}>
+          <span aria-hidden>👥</span>
+          <span className="truncate">{task.work_group_name}</span>
+        </span>
+      )}
       {trailingBadge && (
         <span className={`shrink-0 text-[9px] px-1.5 py-0.5 rounded border tabular-nums ${BADGE_TONE[trailingBadge.tone]}`}>
           {trailingBadge.text}
