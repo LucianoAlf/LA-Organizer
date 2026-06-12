@@ -75,9 +75,12 @@ async function extractMediaText({ supabase, message }) {
   try {
     if (!message || !message.media_url) return null;
 
-    // Monta URL pública via Supabase Storage
-    const { data: pub } = supabase.storage.from('group-chat').getPublicUrl(message.media_url);
-    const url = pub?.publicUrl;
+    // media_url já vem como URL pública COMPLETA (o frontend salva getPublicUrl().publicUrl).
+    // Chamar getPublicUrl de novo embrulharia a URL duas vezes → download quebra → sem extração.
+    // Só resolve via getPublicUrl se vier um path relativo (defensivo p/ chamadas legadas).
+    const url = /^https?:\/\//i.test(message.media_url || '')
+      ? message.media_url
+      : supabase.storage.from('group-chat').getPublicUrl(message.media_url).data?.publicUrl;
     if (!url) return null;
 
     let extracted = null;

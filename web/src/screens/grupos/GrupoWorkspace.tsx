@@ -158,7 +158,7 @@ export function GrupoWorkspace() {
   // —— guards (depois de TODOS os hooks) ——
   if (list.isLoading || myIds.isLoading) {
     return (
-      <div className="space-y-lg w-full max-w-screen-2xl pb-2xl">
+      <div className="space-y-lg w-full pb-2xl">
         <LoadingState rows={4} label="Carregando o grupo…" />
       </div>
     );
@@ -172,7 +172,7 @@ export function GrupoWorkspace() {
 
   if (list.isError) {
     return (
-      <div className="space-y-lg w-full max-w-screen-2xl pb-2xl">
+      <div className="space-y-lg w-full pb-2xl">
         <EmptyState title="Não consegui carregar o grupo" description="Confere a conexão e tenta de novo." action={backBtn} />
       </div>
     );
@@ -182,7 +182,7 @@ export function GrupoWorkspace() {
 
   if (!group) {
     return (
-      <div className="space-y-lg w-full max-w-screen-2xl pb-2xl">
+      <div className="space-y-lg w-full pb-2xl">
         <EmptyState title="Grupo não encontrado" description="Esse grupo não existe ou foi desativado." action={backBtn} />
       </div>
     );
@@ -194,7 +194,7 @@ export function GrupoWorkspace() {
 
   if (!isMember && !canManage) {
     return (
-      <div className="space-y-lg w-full max-w-screen-2xl pb-2xl">
+      <div className="space-y-lg w-full pb-2xl">
         <EmptyState
           title="Você não está neste grupo"
           description="Pede pro líder ou pra direção te adicionar pela engrenagem do grupo."
@@ -231,7 +231,7 @@ export function GrupoWorkspace() {
   const surfaceCls = 'rounded-md border bg-bg-surface shadow-card dark:shadow-none overflow-hidden';
 
   return (
-    <div className="flex gap-lg w-full max-w-screen-2xl">
+    <div className="flex gap-lg w-full">
       {/* coluna de conteúdo — reserva espaço à direita (pr) quando o chat (fixo na viewport) abre */}
       <div className={`flex-1 min-w-0 space-y-lg pb-2xl ${chatOpen ? 'md:pr-[404px]' : ''}`}>
       {/* header */}

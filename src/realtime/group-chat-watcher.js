@@ -32,10 +32,13 @@ async function processOne(supabase, msg) {
     .eq('id', msg.id).is('tom_seen_at', null).select('id');
   if (!claimed || !claimed.length) return;
 
-  // Mídia → extrai texto pro contexto.
-  if (['image', 'audio', 'pdf'].includes(msg.kind)) await extractMediaText({ supabase, message: msg });
-
-  const text = msg.content || '';
+  // Mídia → extrai texto (áudio→Whisper, imagem→Vision) e USA como texto efetivo:
+  // sem isso o gatilho ("fala tom" dito no áudio) e o engine recebiam string vazia → TOM mudo.
+  let text = msg.content || '';
+  if (['image', 'audio', 'pdf'].includes(msg.kind)) {
+    const extracted = await extractMediaText({ supabase, message: msg });
+    if (extracted) text = text ? `${text}\n${extracted}` : extracted;
+  }
   const senderCollabId = msg.sender_id;
   if (!senderCollabId) return;
 
