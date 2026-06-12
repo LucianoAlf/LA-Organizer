@@ -345,4 +345,4 @@ async function sendReaction(phone, messageId, emoji) {
   }
 }
 
-module.exports = { sendMessage, sendButtons, sendList, sendMedia, setTyping, sendReaction, sendVoice, isAudioMessage, isImageMessage, isDocumentMessage, isVideoMessage, extractText, extractPhone, extractName, extractMessageId, extractQuotedMessage, isIgnorable };
+module.exports = { sendMessage, sendButtons, sendList, sendMedia, setTyping, sendReaction, sendVoice, isAudioMessage, isImageMessage, isDocumentMessage, isVideoMessage, extractText, extractPhone, extractName, extractMessageId, extractQuotedMessage, isIgnorable, getData };

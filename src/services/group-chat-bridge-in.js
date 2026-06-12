@@ -3,15 +3,27 @@
 // GRUPO LINKADO (work_groups.wa_group_jid). Insere em group_chat_messages como role='member',
 // channel='whatsapp' — o watcher (Fase 3) aciona o TOM normalmente.
 
+// Normaliza o payload p/ o MESMO objeto que o whatsapp.getData() usa. O formato real da
+// UAZAPI entrega { EventType, message:{...} } — NÃO body.data. Cobre os dois (e o
+// formato {data:{...}} dos testes puros). Mantido local pra não puxar config/axios.
+function getData(body) {
+  if (body?.EventType && body?.messages?.length > 0) return body.messages[0];
+  if (body?.EventType && body?.message) return body.message;
+  if (body?.data) return body.data;
+  return body;
+}
+
 function isGroupMessage(body) {
-  return body?.data?.isGroup === true;
+  return getData(body)?.isGroup === true;
 }
 function extractGroupJid(body) {
-  return body?.data?.chatid || null;
+  return getData(body)?.chatid || null;
 }
 // Número do PARTICIPANTE que mandou (no grupo, o remetente é data.sender, não o chatid).
+// Em @lid (id linkado do WhatsApp) os dígitos não casam com telefone → cai no fallback
+// wa_sender_name lá embaixo (sender_id=null). Aceitável no v1.
 function extractSenderPhone(body) {
-  const raw = String(body?.data?.sender || '').replace(/\D/g, '');
+  const raw = String(getData(body)?.sender || '').replace(/\D/g, '');
   return raw || null;
 }
 
@@ -19,7 +31,8 @@ function extractSenderPhone(body) {
 async function maybeHandleGroupMessage(supabase, body, helpers) {
   try {
     if (!isGroupMessage(body)) return { handled: false };
-    if (body?.data?.fromMe === true) return { handled: true }; // eco do bot — ignora
+    const data = getData(body) || {};
+    if (data.fromMe === true) return { handled: true }; // eco do bot — ignora
     const jid = extractGroupJid(body);
     if (!jid) return { handled: false };
 
@@ -44,7 +57,7 @@ async function maybeHandleGroupMessage(supabase, body, helpers) {
         .select('id').or(`phone.eq.${phone},phone.eq.${phone.replace(/^55/, '')}`).maybeSingle();
       sender_id = collab?.id || null;
     }
-    const waName = body?.data?.senderName || body?.data?.pushName || null;
+    const waName = data.senderName || data.pushName || null;
 
     await supabase.from('group_chat_messages').insert({
       group_id: group.id,
