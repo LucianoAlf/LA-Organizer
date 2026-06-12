@@ -31,6 +31,7 @@ const notesService = require('./services/notes');
 const workGroups = require('./services/work-groups');
 const { detectApprovalReply, stripReplyScaffold } = require('./events/detect-approval-reply');
 const { isFutureCompletion } = require('./utils/complete-guards');
+const { buildClosingItems, parseClosingReply } = require('./utils/closing-reply');
 const { buildCoordinationResponseNotification } = require('./services/coordination-notify');
 const { isContextQuietField, validateContextQuietField } = require('./services/prefs-quiet-context');
 const pendingInventoryPhoto = require('./services/pending-inventory-photo');
@@ -10369,8 +10370,23 @@ async function sendRitual(collaboratorId, ritualType, opts = {}) {
     : ritualType === 'personal_briefing' ? 'briefing_pessoal'
     : ritualType;
   collab._ritualType = ritualKey;
-  let { systemPrompt } = await buildSystemPrompt(collab);
+  let { systemPrompt, ctx } = await buildSystemPrompt(collab);
   console.log(`[Engine] ritual=${ritualType} system prompt size: ${systemPrompt.length} chars`);
+
+  // FECHAMENTO-ITEM-NO-ANCHOR (caso Yuri 09/06): ancora as "3 coisas" do fechamento por
+  // ITEM. Computa a lista numerada determinística (engine), injeta no prompt pra o LLM
+  // usar EXATAMENTE essa numeração, e abre a intent ancorada (payload.closing.items) logo
+  // após o envio — assim a resposta "1" mapeia pro id certo, sem o LLM chutar alvo.
+  let _closingItems = [];
+  if (ritualKey === 'fechamento') {
+    try {
+      _closingItems = buildClosingItems(ctx && ctx.workTasks, { today: todaySaoPaulo() });
+    } catch (e) { console.warn('[Closing] buildClosingItems err:', e.message); }
+    if (_closingItems.length) {
+      const lista = _closingItems.map((it) => `${it.index}. ${it.title}`).join('\n');
+      systemPrompt += `\n\n---\n\n### 🔢 ITENS DO FECHAMENTO (USE EXATAMENTE esta numeração e títulos)\n${lista}\n\nAo perguntar "fez?", liste estas ${_closingItems.length} tarefa(s) com EXATAMENTE estes números e títulos. Não reordene, não renumere, não invente outras. Eventos (🗓️) seguem as regras de ✅/rolou à parte, FORA desta numeração.`;
+    }
+  }
 
   const directive = ritualToDirective(ritualType);
   const response = await ai.chat(systemPrompt, [{ role: 'user', content: directive }]);
