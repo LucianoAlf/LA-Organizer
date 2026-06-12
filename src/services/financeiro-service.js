@@ -23,6 +23,8 @@ const BANK_CATALOG = {
   pagbank:{color:'#00a651',name:'pagbank'}, btg:{color:'#00263a',name:'btg'}, next:{color:'#00dc5a',name:'next'}, original:{color:'#00a868',name:'original'},
 };
 function _normBank(s){ return String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,' ').trim(); }
+// Normaliza competência explícita ("fatura de maio" → o LLM emite YYYY-MM ou YYYY-MM-DD) → YYYY-MM-01; senão null.
+function _normCompetencia(c){ const m=String(c||'').match(/^(\d{4})-(\d{2})/); return m?`${m[1]}-${m[2]}-01`:null; }
 function matchBankSlug(name){
   const n=_normBank(name); if(!n) return null;
   for (const slug of Object.keys(BANK_CATALOG)){ if (n===slug || n.includes(slug) || n.includes(BANK_CATALOG[slug].name)) return slug; }
@@ -563,10 +565,11 @@ async function findCard(collaboratorId, cardName) {
 
 // Lança compra no cartão. installments>=2 → N parcelas agrupadas por purchase_group.
 // NÃO mexe no saldo (card_id setado, account_id null → trigger trg_pf_sync_balance ignora).
-async function insertCardPurchase(collaboratorId, card, { category, amount, description, transaction_date, installments }) {
+async function insertCardPurchase(collaboratorId, card, { category, amount, description, transaction_date, installments, competencia }) {
   const baseDate = transaction_date ? new Date(transaction_date + 'T00:00:00Z') : new Date();
   const n = Math.max(1, parseInt(installments || 1, 10));
-  const baseComp = competenciaFor(baseDate, card.closing_day);
+  // Override explícito da fatura ("põe na fatura de maio") vence o cálculo por data+fechamento.
+  const baseComp = _normCompetencia(competencia) || competenciaFor(baseDate, card.closing_day);
   const dateStr = baseDate.toISOString().slice(0, 10);
   if (n === 1) {
     const { data, error } = await supabase.from('pf_transactions').insert({

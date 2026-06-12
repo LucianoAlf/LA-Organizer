@@ -7139,6 +7139,7 @@ async function handleFinanceAction(collab, action, params, outcome = {}) {
       const card = cards[0];
       const rows = await financeService.insertCardPurchase(cid, card, {
         category, amount, description: params.description, transaction_date: params.date, installments,
+        competencia: params.competencia, // "põe na fatura de maio" → override explícito (engine ignora se vazio/inválido)
       });
       outcome.persisted = true; // Fatia C
       const usage = await financeService.cardUsage(cid, card);

@@ -9,7 +9,21 @@
 > botão Chat com badge de não-lidas. tsc/build/vitest limpos. **Validado no preview (Alf membro temporário
 > do Financeiro):** drawer empurra (1440px), report do TOM renderiza, ordem cronológica, envio real +
 > realtime, mobile tela cheia (375). Seed e membership-de-teste do Alf REMOVIDOS (Financeiro = Ana+Rose).
-> **Pendente:** Fase 2 (TOM engajado — backend/engine, valida na VPS) + Fase 3 (proativo de fim de sessão).
+> **STATUS Fase 2 (12/06 ~07h40 BRT): ENTREGUE + validada na VPS.** TOM engaja no chat: ouve sempre
+> (memória), responde quando chamado ("fala tom"/@tom), cria/conclui tarefa **no pool do grupo**,
+> extrai texto de mídia (imagem→Vision, áudio→Whisper) pro contexto, e desengaja na despedida
+> ("valeu tom"). Arquivos novos: `group-chat-{triggers,prompt,tasks,engine,media}.js` (+ `group-chat-watcher.js`).
+> `processMessage` do WhatsApp **intacto** (tudo aditivo). e2e validado no Financeiro: criar tarefa
+> (pool+resposta role='tom'), engajar→desengajar (`tom_chat_engaged_at` volta a NULL), e **silêncio**
+> (msg sem menção, desengajado → TOM não responde, só memoriza). Dados de teste limpos.
+> **DESVIO ARQUITETURAL importante:** o plano previa watcher por **Supabase Realtime** (`postgres_changes`,
+> espelhando `tom-realtime.js`). Na prática o realtime **não entregava** os INSERTs à conexão anon do
+> backend pra `group_chat_messages` (RLS member-only) — nem após `add table` na publicação +
+> `REPLICA IDENTITY FULL`. Pivot pra **POLL com service_role** (`group-chat-watcher.js`, 4s, claim atômico
+> via coluna `tom_seen_at`): ignora RLS/publicação/replica-identity, à prova de falha no engine vivo.
+> Known issue `GROUPCHAT-RT-ANON-NODELIVER`. As migrations de publicação+FULL foram mantidas (ajudam o
+> realtime do PWA — o chat ao vivo dos membros, que provavelmente não disparava na Fase 1).
+> **Pendente:** Fase 3 (proativo de fim de sessão — detecção de fechamento + resumo HTML `kind='report'`).
 
 
 **Data:** 2026-06-11 · **Aprovado por:** Alf (mockup + faseamento) · **Origem:** Alf quer trazer as conversas das equipes pra DENTRO do app, onde o TOM tem poderes de renderização HTML muito além do WhatsApp. App-first; WhatsApp vira espelho FUTURO na mesma tabela.
