@@ -54,6 +54,25 @@ function formatarCardItem(it) {
   return `🎵 *${it.nome}* (${sala}${unid ? ` · ${unid}` : ''})\n• Condição: ${cond}\n• ${valor}${proxRev}`;
 }
 
+// LA Report — rótulo de desambiguação (bug INVENTORY-DUP-DISAMBIG-LOOP).
+// Quando vários itens batem o MESMO nome, repetir só o nome ("PX-160, PX-160. Qual?")
+// é insuficiente: o usuário escolhe e o TOM repete a mesma pergunta → loop infinito.
+// Aqui mostramos um atributo diferenciador (sala · unidade · patrimônio) + o id estável,
+// que sempre desambigua — inclusive quando dois itens dividem nome E sala (id é único).
+// Aceita linhas vindas com join `salas(nome, unidades(nome))` ou com sala_nome/unidade_nome flat.
+function rotularItensAmbiguos(itens) {
+  return (itens || []).map((x) => {
+    const sala = (x.salas && x.salas.nome) || x.sala_nome || null;
+    const unid = (x.salas && x.salas.unidades && x.salas.unidades.nome) || x.unidade_nome || null;
+    const partes = [];
+    if (sala) partes.push(sala);
+    if (unid) partes.push(unid);
+    if (x.codigo_patrimonio) partes.push(`patrim. ${x.codigo_patrimonio}`);
+    const detalhe = partes.length ? ` — ${partes.join(' · ')}` : '';
+    return `• ${x.nome}${detalhe} (id ${x.id})`;
+  }).join('\n');
+}
+
 // Sprint 13 F3 T3 — Helper: converte objeto audience em string legível para humanos.
 function describeAudience(audience) {
   if (!audience) return 'sem público';
@@ -9182,7 +9201,7 @@ async function processMessage(phone, text, raw = {}) {
                   if (!produtoId) {
                     const prods = await inventarioService.buscarProdutoPorNome(p.produto_nome);
                     if (prods.length === 0) { reply = (reply ? reply + '\n\n' : '') + `Produto "${p.produto_nome}" não cadastrado na lojinha.`; produtoId = null; }
-                    else if (prods.length > 1) { reply = (reply ? reply + '\n\n' : '') + `Mais de um produto: ${prods.map(x => x.nome).join(', ')}. Qual?`; produtoId = null; }
+                    else if (prods.length > 1) { reply = (reply ? reply + '\n\n' : '') + `Mais de um produto bate "${p.produto_nome}". Qual?\n${prods.map(x => `• ${x.nome}${x.sku ? ` — SKU ${x.sku}` : ''} (id ${x.id})`).join('\n')}`; produtoId = null; }
                     else produtoId = prods[0].id;
                   }
                   if (produtoId) {
@@ -9215,7 +9234,7 @@ async function processMessage(phone, text, raw = {}) {
                 let itemId = p.item_id;
                 if (!itemId && p.item_nome) {
                   const { laReportClient } = require('./services/la-report-client');
-                  let q = laReportClient.from('inventario').select('id, nome, sala_id').ilike('nome', `%${p.item_nome}%`).eq('ativo', true);
+                  let q = laReportClient.from('inventario').select('id, nome, sala_id, codigo_patrimonio, salas(nome, unidades(nome))').ilike('nome', `%${p.item_nome}%`).eq('ativo', true);
                   // Se a origem foi dita, filtra por ela pra desambiguar
                   if (p.sala_origem_nome) {
                     const ro = await inventarioService.buscarSalaPorNome(p.sala_origem_nome);
@@ -9223,7 +9242,7 @@ async function processMessage(phone, text, raw = {}) {
                   }
                   const { data } = await q.limit(5);
                   if (!data || data.length === 0) { reply = (reply ? reply + '\n\n' : '') + `Item "${p.item_nome}" não encontrado.`; itemId = null; }
-                  else if (data.length > 1) { reply = (reply ? reply + '\n\n' : '') + `Mais de um item: ${data.map(x => x.nome).join(', ')}. Qual?`; itemId = null; }
+                  else if (data.length > 1) { reply = (reply ? reply + '\n\n' : '') + `Mais de um item bate "${p.item_nome}". Qual?\n${rotularItensAmbiguos(data)}\n\n(responde a sala ou o id)`; itemId = null; }
                   else itemId = data[0].id;
                 }
                 if (itemId) {
@@ -9250,9 +9269,9 @@ async function processMessage(phone, text, raw = {}) {
                 let _maintItemNome = p.item_nome || null;
                 if (!itemId && p.item_nome) {
                   const { laReportClient } = require('./services/la-report-client');
-                  const { data } = await laReportClient.from('inventario').select('id, nome').ilike('nome', `%${p.item_nome}%`).eq('ativo', true).limit(5);
+                  const { data } = await laReportClient.from('inventario').select('id, nome, codigo_patrimonio, salas(nome, unidades(nome))').ilike('nome', `%${p.item_nome}%`).eq('ativo', true).limit(5);
                   if (!data || data.length === 0) { reply = (reply ? reply + '\n\n' : '') + `Item "${p.item_nome}" não encontrado.`; itemId = null; }
-                  else if (data.length > 1) { reply = (reply ? reply + '\n\n' : '') + `Mais de um item: ${data.map(x => x.nome).join(', ')}. Qual?`; itemId = null; }
+                  else if (data.length > 1) { reply = (reply ? reply + '\n\n' : '') + `Mais de um item bate "${p.item_nome}". Qual?\n${rotularItensAmbiguos(data)}\n\n(responde a sala ou o id)`; itemId = null; }
                   else { itemId = data[0].id; _maintItemNome = data[0].nome; }
                 }
                 if (itemId) {
@@ -9295,14 +9314,14 @@ async function processMessage(phone, text, raw = {}) {
               // Resolve item por id ou nome (+ sala opcional)
               let itemId = p.item_id;
               if (!itemId && p.nome) {
-                let q = laReportClient.from('inventario').select('id, nome, sala_id, unidade_id').ilike('nome', `%${p.nome}%`).eq('ativo', true);
+                let q = laReportClient.from('inventario').select('id, nome, sala_id, unidade_id, codigo_patrimonio, salas(nome, unidades(nome))').ilike('nome', `%${p.nome}%`).eq('ativo', true);
                 if (p.sala_nome) {
                   const r = await inventarioService.buscarSalaPorNome(p.sala_nome);
                   if (r.length === 1) q = q.eq('sala_id', r[0].id);
                 }
                 const { data } = await q.limit(5);
                 if (!data || data.length === 0) { reply = (reply ? reply + '\n\n' : '') + `Item "${p.nome}" não encontrado${p.sala_nome ? ` na sala ${p.sala_nome}` : ''}.`; itemId = null; }
-                else if (data.length > 1) { reply = (reply ? reply + '\n\n' : '') + `Mais de um item bate "${p.nome}": ${data.map(x => x.nome).join(', ')}. Qual?`; itemId = null; }
+                else if (data.length > 1) { reply = (reply ? reply + '\n\n' : '') + `Mais de um item bate "${p.nome}". Qual?\n${rotularItensAmbiguos(data)}\n\n(responde a sala ou o id)`; itemId = null; }
                 else itemId = data[0].id;
               }
               if (itemId) {
@@ -9326,14 +9345,14 @@ async function processMessage(phone, text, raw = {}) {
               const { laReportClient } = require('./services/la-report-client');
               let itemId = p.item_id;
               if (!itemId && p.nome) {
-                let q = laReportClient.from('inventario').select('id, nome').ilike('nome', `%${p.nome}%`).eq('ativo', true);
+                let q = laReportClient.from('inventario').select('id, nome, codigo_patrimonio, salas(nome, unidades(nome))').ilike('nome', `%${p.nome}%`).eq('ativo', true);
                 if (p.sala_nome) {
                   const r = await inventarioService.buscarSalaPorNome(p.sala_nome);
                   if (r.length === 1) q = q.eq('sala_id', r[0].id);
                 }
                 const { data } = await q.limit(5);
                 if (!data || data.length === 0) { reply = (reply ? reply + '\n\n' : '') + `Item "${p.nome}" não encontrado.`; itemId = null; }
-                else if (data.length > 1) { reply = (reply ? reply + '\n\n' : '') + `Mais de um item bate: ${data.map(x => x.nome).join(', ')}. Qual?`; itemId = null; }
+                else if (data.length > 1) { reply = (reply ? reply + '\n\n' : '') + `Mais de um item bate "${p.nome}". Qual?\n${rotularItensAmbiguos(data)}\n\n(responde a sala ou o id)`; itemId = null; }
                 else itemId = data[0].id;
               }
               if (itemId) {
