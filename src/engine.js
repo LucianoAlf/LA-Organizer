@@ -8659,11 +8659,15 @@ async function processMessage(phone, text, raw = {}) {
           if (failMessages && failMessages.length) {
             base = failMessages.join('\n');
           } else {
+            // AUDIT-OPTIMISTIC-CONFIRM (caso Fefê): remove "✅ Criado!" antes do honesto.
+            base = sanitizeOptimisticConfirm(base, 'failed');
             base = (base ? base + '\n\n' : '') + '_não consegui registrar agora. Me passa de novo?_';
           }
         } else if (failCount > 0 && okCount > 0) {
           // Sprint 21.5 — confirmação parcial honesta. Engine não pode deixar TOM dizer
           // "tudo certo" quando parte falhou. Princípio: fala = persistência.
+          // AUDIT-OPTIMISTIC-CONFIRM (caso Anne): rebaixa "fechei todas" → "a maioria".
+          base = sanitizeOptimisticConfirm(base, 'partial');
           base = (base ? base + '\n\n' : '') + `_⚠️ Registrei ${okCount} de ${okCount + failCount}. Algumas falharam — me chama se algo ficar faltando._`;
         }
         // Cascata de grupo — só no caminho de sucesso (okCount > 0).
@@ -8850,8 +8854,9 @@ async function processMessage(phone, text, raw = {}) {
       // tudo rejeitado, mas TOM disse "vou criar os eventos agora" no chat — mentira.
       let baseEv = parsedEv.cleanText || reply;
       const optimisticEvPattern = /\b(criad|registrad|agendad|marqu(ei|amos)|salvei|salvo|guardad|reagendad|atualizad|registrando|criando|agendando|marcando|feito[!.]?\s|pronto[!.]?\s|bora[!.]?$)/i;
-      if (optimisticEvPattern.test(baseEv)) {
-        baseEv += '\n\n_⚠️ Tive um problema técnico ao gravar o(s) compromisso(s). Não confirmei nada no banco — me passa de novo?_';
+      if (optimisticEvPattern.test(baseEv) || hasOptimisticConfirm(baseEv)) {
+        baseEv = sanitizeOptimisticConfirm(baseEv, 'failed');
+        baseEv += (baseEv ? '\n\n' : '') + '_⚠️ Tive um problema técnico ao gravar o(s) compromisso(s). Não confirmei nada no banco — me passa de novo?_';
       }
       reply = baseEv;
     } else if (parsedEv && parsedEv.events && parsedEv.events.length > 0) {
