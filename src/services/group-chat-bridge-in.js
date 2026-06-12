@@ -53,6 +53,39 @@ function matchMemberByName(senderName, members) {
   return best;
 }
 
+function firstName(name) {
+  return String(name || '').trim().split(/\s+/)[0] || '';
+}
+
+// Troca menções @<lid> pelo @<PrimeiroNome>. lidToName: { '61087554768984': 'Rose' }.
+// Não-resolvidas ficam como estão (cosmético, nunca quebra).
+function resolveMentions(text, lidToName) {
+  if (!text || !lidToName) return text;
+  return String(text).replace(/@(\d{5,})/g, (m, lid) => (lidToName[lid] ? `@${lidToName[lid]}` : m));
+}
+
+// Cache curto dos participantes por JID (evita bater /group/info a cada menção).
+const _partCache = new Map(); // jid -> { at, parts }
+async function getParticipantsCached(fetchFn, jid) {
+  const hit = _partCache.get(jid);
+  const now = Date.now();
+  if (hit && now - hit.at < 5 * 60 * 1000) return hit.parts;
+  const parts = await fetchFn(jid);
+  _partCache.set(jid, { at: now, parts });
+  return parts;
+}
+
+// Colaboradores que são membros do grupo (id, nomes, phone) — reusado p/ identidade e menções.
+async function loadGroupMembers(supabase, groupId) {
+  const { data: mem } = await supabase.from('work_group_members')
+    .select('collaborator_id').eq('group_id', groupId);
+  const ids = (mem || []).map((r) => r.collaborator_id).filter(Boolean);
+  if (!ids.length) return [];
+  const { data: cols } = await supabase.from('collaborators')
+    .select('id, full_name, preferred_name, phone').in('id', ids);
+  return cols || [];
+}
+
 // Retorna { handled: boolean }. handled=true => o webhook deve PARAR (não seguir pro 1:1).
 async function maybeHandleGroupMessage(supabase, body, helpers) {
   try {
@@ -73,11 +106,13 @@ async function maybeHandleGroupMessage(supabase, body, helpers) {
       if (dup) return { handled: true }; // já espelhada
     }
 
-    const text = helpers.extractText(body);
+    let text = helpers.extractText(body);
     if (!text || !String(text).trim()) return { handled: true }; // v1: só texto
+    text = String(text).trim();
 
     const waName = data.senderName || data.pushName || null;
     const phone = extractSenderPhone(body);
+    const hasMention = /@\d{5,}/.test(text);
     let sender_id = null;
     // 1) por telefone (1:1 normal). Em grupo o participante quase sempre vem em @lid → falha.
     if (phone) {
@@ -85,18 +120,24 @@ async function maybeHandleGroupMessage(supabase, body, helpers) {
         .select('id').or(`phone.eq.${phone},phone.eq.${phone.replace(/^55/, '')}`).maybeSingle();
       sender_id = collab?.id || null;
     }
-    // 2) fallback por NOME, restrito aos membros do grupo (resolve avatar/nome no app +
-    //    destrava o watcher, que ignora mensagem sem sender_id). Identidade = perfil real
-    //    do WhatsApp do remetente, nunca do LLM.
-    if (!sender_id && waName) {
-      const { data: mem } = await supabase.from('work_group_members')
-        .select('collaborator_id').eq('group_id', group.id);
-      const ids = (mem || []).map((r) => r.collaborator_id).filter(Boolean);
-      if (ids.length) {
-        const { data: cols } = await supabase.from('collaborators')
-          .select('id, full_name, preferred_name').in('id', ids);
-        sender_id = matchMemberByName(waName, cols || []);
-      }
+    // Membros do grupo (carregados 1x) — p/ match de identidade por nome E p/ resolver menções.
+    let members = null;
+    if ((!sender_id && waName) || hasMention) members = await loadGroupMembers(supabase, group.id);
+    // 2) fallback de identidade por NOME (resolve avatar/nome no app + destrava o watcher, que
+    //    ignora mensagem sem sender_id). Identidade = perfil real do WhatsApp, nunca do LLM.
+    if (!sender_id && waName && members) sender_id = matchMemberByName(waName, members);
+
+    // 3) menções: @<lid> → @<PrimeiroNome>. lid→telefone via /group/info; telefone→membro.
+    if (hasMention && helpers.getGroupParticipants && members && members.length) {
+      try {
+        const parts = await getParticipantsCached(helpers.getGroupParticipants, jid);
+        const phoneToName = new Map(members
+          .filter((m) => m.phone)
+          .map((m) => [String(m.phone).replace(/\D/g, ''), firstName(m.preferred_name || m.full_name)]));
+        const lidToName = {};
+        for (const p of parts) { const nm = phoneToName.get(p.phone); if (nm) lidToName[p.lid] = nm; }
+        text = resolveMentions(text, lidToName);
+      } catch (e) { /* menção é cosmética — segue com o texto cru */ }
     }
 
     await supabase.from('group_chat_messages').insert({
@@ -104,7 +145,7 @@ async function maybeHandleGroupMessage(supabase, body, helpers) {
       sender_id,
       role: 'member',
       kind: 'text',
-      content: String(text).trim(),
+      content: text,
       channel: 'whatsapp',
       wa_message_id: waId,
       wa_sender_name: sender_id ? null : waName,
@@ -117,4 +158,4 @@ async function maybeHandleGroupMessage(supabase, body, helpers) {
   }
 }
 
-module.exports = { maybeHandleGroupMessage, isGroupMessage, extractGroupJid, extractSenderPhone, matchMemberByName, normalizeName };
+module.exports = { maybeHandleGroupMessage, isGroupMessage, extractGroupJid, extractSenderPhone, matchMemberByName, normalizeName, resolveMentions, firstName };

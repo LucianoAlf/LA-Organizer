@@ -16,6 +16,7 @@ const shutdown = require('./services/shutdown');
 const webhookPersistence = require('./services/webhook-persistence');
 const pendingInventoryPhoto = require('./services/pending-inventory-photo');
 const groupBridgeIn = require('./services/group-chat-bridge-in');
+const uazapiGroups = require('./services/uazapi-groups');
 
 const router = express.Router();
 
@@ -130,6 +131,7 @@ async function processWebhookBody(body) {
     const grp = await groupBridgeIn.maybeHandleGroupMessage(supabase, body, {
       extractText: whatsapp.extractText,
       extractMessageId: audio.extractMessageId,
+      getGroupParticipants: uazapiGroups.getGroupParticipants,
     });
     if (grp.handled) return;
 

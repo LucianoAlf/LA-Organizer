@@ -1,7 +1,22 @@
 // src/services/group-chat-bridge-in.test.js
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { extractGroupJid, extractSenderPhone, isGroupMessage, matchMemberByName, normalizeName } = require('./group-chat-bridge-in');
+const { extractGroupJid, extractSenderPhone, isGroupMessage, matchMemberByName, normalizeName, resolveMentions } = require('./group-chat-bridge-in');
+
+test('resolveMentions troca @lid pelo @PrimeiroNome', () => {
+  const map = { '61087554768984': 'Rose', '83245123301394': 'Ana' };
+  assert.equal(
+    resolveMentions('Ai @61087554768984 @83245123301394 kkk', map),
+    'Ai @Rose @Ana kkk'
+  );
+});
+test('resolveMentions deixa @lid desconhecido como está', () => {
+  assert.equal(resolveMentions('oi @99999999999 tudo bem', { '11111': 'X' }), 'oi @99999999999 tudo bem');
+});
+test('resolveMentions sem mapa/texto não quebra', () => {
+  assert.equal(resolveMentions('texto sem mencao', null), 'texto sem mencao');
+  assert.equal(resolveMentions('', { a: 'b' }), '');
+});
 
 const MEMBERS = [
   { id: 'alf', full_name: 'Luciano Alf', preferred_name: 'Alf' },

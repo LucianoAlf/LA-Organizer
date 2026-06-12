@@ -33,6 +33,20 @@ async function sendGroupText(jid, text) {
   return d.messageid || d.id || (d.key && d.key.id) || null;
 }
 
+// Participantes do grupo (resolve menções @lid). Doc UAZAPI: POST /group/info { groupjid }
+// → Group { Participants:[{ LID:"...@lid", PhoneNumber:"...@s.whatsapp.net" }] }.
+// Retorna [{ lid, phone }] só com dígitos (sem @lid / @s.whatsapp.net).
+async function getGroupParticipants(jid) {
+  const resp = await api.post('/group/info', { groupjid: jid });
+  const parts = resp.data?.Participants || resp.data?.participants || [];
+  return parts
+    .map((p) => ({
+      lid: String(p.LID || p.JID || '').replace(/\D/g, ''),
+      phone: String(p.PhoneNumber || '').replace(/\D/g, ''),
+    }))
+    .filter((p) => p.lid && p.phone);
+}
+
 // Mostra "Tom escrevendo…" no grupo durante o tempo em que o TOM "pensa".
 // Fire-and-forget: nunca lança. Manda o JID completo (@g.us) como number — o setTyping
 // do whatsapp.js corta o sufixo (serve pro 1:1), por isso este é separado pra grupos.
@@ -43,4 +57,4 @@ async function sendGroupTyping(jid) {
   } catch (_) { /* presença é cosmética — silencia */ }
 }
 
-module.exports = { listGroups, getGroupJidByInvite, sendGroupText, sendGroupTyping };
+module.exports = { listGroups, getGroupJidByInvite, sendGroupText, sendGroupTyping, getGroupParticipants };
