@@ -67,7 +67,7 @@ export function GroupChatDrawer({ groupId, groupName, membersLine, fullscreen, o
           // bottom-0. Encosta nas 3 bordas por definição (sem cálculo de altura/dvh, sem sobrar
           // pedaço embaixo/na lateral). A coluna de conteúdo reserva o espaço via padding-right.
           // Mobile = tela cheia (inset-0).
-          : 'w-full md:w-[380px] md:fixed md:top-14 md:right-0 md:bottom-0 md:z-30 max-md:fixed max-md:inset-0 max-md:z-50',
+          : 'w-full md:w-[400px] xl:w-[460px] 2xl:w-[520px] md:fixed md:top-14 md:right-0 md:bottom-0 md:z-30 max-md:fixed max-md:inset-0 max-md:z-50',
       ].join(' ')}
     >
       {/* ── Header ─────────────────────────────────────────────────────────── */}
