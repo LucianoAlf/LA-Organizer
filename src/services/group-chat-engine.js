@@ -9,6 +9,7 @@
 const ai = require('../ai/provider');
 const { buildGroupChatPrompt, loadGroupChatSoul } = require('./group-chat-prompt');
 const { applyGroupChatTaskActions } = require('./group-chat-tasks');
+const { buildGroupReport } = require('./group-report-builder');
 
 const HISTORY_LIMIT = 30;
 const POOL_LIMIT = 30;
@@ -84,6 +85,33 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
       stripBlock(/<<TASK_UPDATE>>[\s\S]*?<<END>>/i);
     }
   } catch (e) { console.error('[GroupChat] task err:', e.message); }
+
+  // ─── RELATÓRIO DO GRUPO (sob demanda, B1) ─────────────────────────────────
+  // O LLM emite só o marker; o código monta a lista EXATA e insere um card kind='report'
+  // separado (nunca trunca/inventa). Mesmo formato do card de fechamento → app + bridge-out.
+  const reportMatch = reply.match(/<<GROUP_REPORT>>([\s\S]*?)<<END>>/i);
+  if (reportMatch) {
+    stripBlock(/<<GROUP_REPORT>>[\s\S]*?<<END>>/i);
+    let scope = 'tudo', window = 'mes';
+    try {
+      const p = JSON.parse(reportMatch[1].trim());
+      const SCOPES = ['agenda', 'tarefas', 'anotacoes', 'checklists', 'tudo'];
+      const WINDOWS = ['hoje', 'semana', 'mes'];
+      if (SCOPES.includes(p.scope)) scope = p.scope;
+      if (WINDOWS.includes(p.window)) window = p.window;
+    } catch (_) { /* default tudo/mes */ }
+    try {
+      const { html } = await buildGroupReport({ supabase, groupId, scope, window });
+      await supabase.from('group_chat_messages').insert({
+        group_id: groupId, sender_id: null, role: 'tom', kind: 'report', content: html, channel: 'app',
+      });
+      actions.push({ kind: 'report', status: 'ok', label: 'Relatório gerado' });
+      console.log(`[GroupChat] relatório grupo=${groupId} scope=${scope} window=${window}`);
+    } catch (e) {
+      console.error('[GroupChat] relatório falhou:', e.message);
+      actions.push({ kind: 'report', status: 'fail', label: 'Relatório', detail: 'não consegui montar' });
+    }
+  }
 
   // ─── PROJETO ──────────────────────────────────────────────────────────────
   try {

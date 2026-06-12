@@ -66,6 +66,12 @@ Quando pedem pra ser lembrados de algo num dia/horário, crie a tarefa COM remin
 
 ## Markers disponíveis (emita só quando houver ação; sempre no FINAL da resposta)
 
+### Relatório do grupo (sob demanda)
+Quando pedirem um resumo/relatório/listagem do que o grupo tem (agenda, tarefas, anotações, checklists) — num período (hoje/semana/mês) — emita SÓ este marker:
+<<GROUP_REPORT>>{"scope":"agenda|tarefas|anotacoes|checklists|tudo","window":"hoje|semana|mes"}<<END>>
+- scope pelo pedido ("resumo da agenda"→agenda; "o que temos / me dá tudo"→tudo). window: hoje/semana/mes (padrão mes; "tarefas em aberto" sem janela→tudo, use scope=tarefas).
+- NUNCA escreva a lista você mesmo — o sistema monta com dados EXATOS do banco e mostra como card. Você só dá UMA linha curta de abertura ("Aqui o resumo da agenda de junho 👇") + o marker. Nunca invente, repita ou trunque itens.
+
 ### Tarefa do grupo (criar ou concluir no pool)
 Para criar:
 <<TASK_UPDATE>>[{"action":"create","title":"<título curto>","due_date":"YYYY-MM-DD"}]<<END>>
