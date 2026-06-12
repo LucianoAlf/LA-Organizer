@@ -65,14 +65,16 @@ function esc(s) {
 }
 
 // Card HTML. sections: [{ emoji, title, items: [string] }]. Seção vazia → "(nada no período)".
-function renderReportHtml({ groupName, windowLabel, sections }) {
+// heading opcional sobrescreve o título padrão (usado pelos rituais proativos da B2).
+function renderReportHtml({ groupName, windowLabel, sections, heading }) {
   const blocks = (sections || []).map((s) => {
     const body = (s.items && s.items.length)
       ? `<ul>${s.items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>`
       : `<p>(nada no período)</p>`;
     return `<h3>${s.emoji} ${esc(s.title)}</h3>${body}`;
   }).join('');
-  return `<div><h3>📊 Relatório do ${esc(groupName)} — ${esc(windowLabel)}</h3>${blocks}</div>`;
+  const title = heading ? esc(heading) : `📊 Relatório do ${esc(groupName)} — ${esc(windowLabel)}`;
+  return `<div><h3>${title}</h3>${blocks}</div>`;
 }
 
 // ── I/O ──────────────────────────────────────────────────────────────────────
@@ -107,7 +109,7 @@ function taskLine(t, todayYmd) {
 }
 
 // Monta o relatório. scope ∈ agenda|tarefas|anotacoes|checklists|tudo. Degrada gracioso.
-async function buildGroupReport({ supabase, groupId, scope = 'tudo', window = 'mes', now = new Date() }) {
+async function buildGroupReport({ supabase, groupId, scope = 'tudo', window = 'mes', now = new Date(), heading = null, onlyOverdue = false }) {
   const bounds = windowBounds(window, now);
   const todayYmd = spYmd(now);
   const { data: g } = await supabase.from('work_groups').select('name').eq('id', groupId).maybeSingle();
@@ -115,6 +117,18 @@ async function buildGroupReport({ supabase, groupId, scope = 'tudo', window = 'm
 
   let tasks = [];
   try { tasks = await queryGroupTasks(supabase, groupId); } catch (e) { console.error('[Report] tasks err:', e.message); }
+
+  // Modo cobrança de atrasadas (B2): só tarefas com due_date < hoje. isEmpty controla o
+  // short-circuit do cron (não envia se não há atrasadas).
+  if (onlyOverdue) {
+    const overdue = (tasks || [])
+      .filter((t) => t.due_date && t.due_date < todayYmd)
+      .sort((a, b) => String(a.due_date).localeCompare(String(b.due_date)));
+    const sections = [{ emoji: '⏰', title: 'Tarefas atrasadas', items: overdue.map((t) => taskLine(t, todayYmd)) }];
+    const html = renderReportHtml({ groupName, windowLabel: bounds.label, sections, heading });
+    return { html, isEmpty: overdue.length === 0 };
+  }
+
   const { comPrazo, semPrazo } = splitTasks(tasks);
   const startYmd = bounds.start.slice(0, 10);
   const endYmd = bounds.end.slice(0, 10);
@@ -144,7 +158,8 @@ async function buildGroupReport({ supabase, groupId, scope = 'tudo', window = 'm
     if (cl.length) sections.push({ emoji: '☑️', title: 'Checklists', items: cl });
   }
   if (!sections.length) sections.push({ emoji: '🎉', title: 'Tudo limpo', items: [] });
-  return { html: renderReportHtml({ groupName, windowLabel: bounds.label, sections }) };
+  const itemCount = sections.reduce((n, s) => n + (s.items ? s.items.length : 0), 0);
+  return { html: renderReportHtml({ groupName, windowLabel: bounds.label, sections, heading }), isEmpty: itemCount === 0 };
 }
 
 module.exports = {

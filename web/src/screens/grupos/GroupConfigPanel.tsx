@@ -14,6 +14,7 @@ import { CustomSelect } from '../../components/CustomSelect';
 import { BottomSheet } from '../../components/BottomSheet';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { showToast } from '../../components/Toast';
+import { GroupNotificationsSection } from './config/GroupNotificationsSection';
 
 interface Props {
   open: boolean;
@@ -101,6 +102,10 @@ export function GroupConfigPanel({ open, group, onClose }: Props) {
               />
             </Field>
           )}
+
+          <div className="border-t border-border pt-md">
+            <GroupNotificationsSection groupId={group.id} />
+          </div>
 
           {podeEditar && (
             <div className="flex justify-end">

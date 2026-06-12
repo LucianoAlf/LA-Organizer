@@ -47,6 +47,8 @@ const { getStaleWorkEvents } = require('../services/open-pendencies');
 // Fatia G (RITUAL-NO-RETRY) — claim atômico idempotente p/ envio de rituais
 // (substitui o check-then-act do fireRitual). Ver src/rituals/ritual-claim.js.
 const { claimRitualSend, rollbackRitualClaim, isTransientRitualError } = require('./ritual-claim');
+// B2 — rituais proativos do grupo (bom dia/semanal/mensal/atrasadas → card no chat).
+const { dispatchGroupReports } = require('./group-reports');
 
 const RITUAL_BY_DIRECTIVE = {
   briefing_pessoal: 'personal_briefing',
@@ -4029,6 +4031,13 @@ async function run(opts = {}) {
     await remindGroupTasks(new Date());
   } catch (err) {
     console.error('[Dispatcher] remindGroupTasks erro:', err.message);
+  }
+
+  // B2 — Rituais proativos do grupo (bom dia/semanal/mensal/atrasadas → card no chat)
+  try {
+    await dispatchGroupReports({ now: nowSaoPaulo(), supabase });
+  } catch (err) {
+    console.error('[Dispatcher] dispatchGroupReports erro:', err.message);
   }
 
   // Sprint 15 F4 — Checklist com consequência (gera tasks automáticas)

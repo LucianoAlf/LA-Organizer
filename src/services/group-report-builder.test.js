@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { windowBounds, dueFlag, splitTasks, renderReportHtml } = require('./group-report-builder');
+const { windowBounds, dueFlag, splitTasks, renderReportHtml, buildGroupReport } = require('./group-report-builder');
 
 // 12/06/2026 é uma SEXTA. now = 2026-06-12 15:00 BRT = 18:00Z.
 const NOW = new Date('2026-06-12T18:00:00Z');
@@ -55,4 +55,52 @@ test('renderReportHtml monta card com h3+emoji e (nada) em seção vazia', () =>
   assert.match(html, /<h3>📝 Anotações/);
   assert.match(html, /\(nada no período\)/);
   assert.ok(!/undefined/.test(html));
+});
+
+// ── B2: heading custom + onlyOverdue ──────────────────────────────────────────
+// supabase fake: tasks fixas + work_groups.name. queryGroupTasks faz
+// .select().eq().neq().order() e devolve {data}; work_groups faz .select().eq().maybeSingle().
+function fakeSupabase(tasks) {
+  const chain = {
+    select() { return chain; },
+    eq() { return chain; },
+    neq() { return chain; },
+    order() { return Promise.resolve({ data: tasks }); },
+    maybeSingle() { return Promise.resolve({ data: { name: 'Financeiro' } }); },
+  };
+  return { from() { return chain; } };
+}
+
+test('buildGroupReport: heading custom sobrescreve o título padrão', async () => {
+  const sb = fakeSupabase([]);
+  const { html } = await buildGroupReport({
+    supabase: sb, groupId: 'g1', scope: 'agenda', window: 'hoje',
+    heading: '☀️ Bom dia, Financeiro! Hoje vocês têm:', now: new Date('2026-06-15T12:00:00-03:00'),
+  });
+  assert.ok(html.includes('☀️ Bom dia, Financeiro! Hoje vocês têm:'));
+  assert.ok(!html.includes('📊 Relatório do'));
+});
+
+test('buildGroupReport: onlyOverdue lista só atrasadas e isEmpty=false', async () => {
+  const sb = fakeSupabase([
+    { title: 'Conciliar cartões', due_date: '2026-06-01', status: 'pending', creator: { preferred_name: 'Rose' } },
+    { title: 'Tarefa futura', due_date: '2026-12-31', status: 'pending', creator: { preferred_name: 'Alf' } },
+  ]);
+  const { html, isEmpty } = await buildGroupReport({
+    supabase: sb, groupId: 'g1', scope: 'tarefas', onlyOverdue: true,
+    heading: '⏰ Financeiro: tarefas atrasadas', now: new Date('2026-06-15T12:00:00-03:00'),
+  });
+  assert.strictEqual(isEmpty, false);
+  assert.ok(html.includes('Conciliar cartões'));
+  assert.ok(!html.includes('Tarefa futura'));
+});
+
+test('buildGroupReport: onlyOverdue sem atrasadas → isEmpty=true', async () => {
+  const sb = fakeSupabase([
+    { title: 'Tarefa futura', due_date: '2026-12-31', status: 'pending', creator: { preferred_name: 'Alf' } },
+  ]);
+  const { isEmpty } = await buildGroupReport({
+    supabase: sb, groupId: 'g1', scope: 'tarefas', onlyOverdue: true, now: new Date('2026-06-15T12:00:00-03:00'),
+  });
+  assert.strictEqual(isEmpty, true);
 });

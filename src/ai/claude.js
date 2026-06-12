@@ -120,8 +120,15 @@ async function _chatInner(systemPrompt, messages /*, maxTokens */) {
 
     const child = spawn(CLAUDE_BIN, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
+      // GROUPCHAT-INFRA-LEAK (caso Rose 12/06): com cwd=/opt/LA-Organizer o CLI
+      // auto-carregava o /opt/LA-Organizer/CLAUDE.md (instruções de DevOps: ssh tom,
+      // cat .env, setup-vps-key, /mnt/d/...) como "project memory" e o LLM regurgitava
+      // esses comandos no chat de grupo. cwd FORA da árvore do projeto mata o
+      // carregamento de CLAUDE.md (o CLI sobe pelos ancestrais do cwd — um subdir de
+      // /opt/LA-Organizer não resolveria). sysprompt e tmp são absolutos; tools/MCP já
+      // estão off → o cwd não importa pra mais nada.
       env: buildEnv(),
-      cwd: '/opt/LA-Organizer',
+      cwd: os.tmpdir(),
     });
 
     let stdout = '';
@@ -200,6 +207,11 @@ async function _chatInner(systemPrompt, messages /*, maxTokens */) {
         .replace(/<\/?details\b[^>]*>/gi, '')
         .replace(/<summary[\s\S]*?<\/summary>/gi, '')
         .replace(/<\/?summary\b[^>]*>/gi, '')
+        // GROUPCHAT-INFRA-LEAK (caso Rose 12/06): tags de tool-call que o Claude CLI
+        // emite ao tentar agir como agente de terminal (mesmo com --tools ""). Esqueleto
+        // XML interno — NUNCA vai pro usuário. Remove o bloco invoke inteiro e as tags soltas.
+        .replace(/<(?:antml:)?invoke\b[\s\S]*?<\/(?:antml:)?invoke>/gi, '')
+        .replace(/<\/?(?:antml:)?(?:function_calls|invoke|parameter)\b[^>]*>/gi, '')
         // Linhas residuais de "feedback memory" / "memory hint" (caso textual)
         .replace(/^.*\b(?:feedback\s+memory|memory\s+hint|saving\s+feedback)\b.*$/gim, '')
         // 2) Linhas de narração em inglês (Claude é treinado em EN; quando tenta
@@ -214,7 +226,15 @@ async function _chatInner(systemPrompt, messages /*, maxTokens */) {
         .replace(/^.*\b(?:vou\s+salvar\s+isso\s+na\s+mem[óo]ria|salvando\s+na\s+mem[óo]ria|saving\s+to\s+memory)\b.*$/gim, '')
         .replace(/^.*\bsav(?:e[ds]?|ing)\b.*\bmemor(?:y|ies|[óo]ria)\b.*$/gim, '')
         .replace(/^.*\bsalv(?:o|a|ei|ando)\b.*\bmem[óo]ria\s+local\b.*$/gim, '')
-        // 5) Limpa linhas em branco múltiplas resultantes
+        // 5) GROUPCHAT-INFRA-LEAK (caso Rose 12/06): o LLM cuspia comandos de shell e
+        //    paths de infra (lidos do CLAUDE.md do projeto) no chat de grupo. Defesa em
+        //    profundidade — o assistente de negócio NUNCA manda bloco de código nem
+        //    comando de terminal. Remove cercas de código inteiras e linhas com
+        //    comando/infra. A regra (3) antiga só pegava /opt/LA-Organizer COM barra
+        //    final → "(/opt/LA-Organizer)" e "/mnt/d/..." escapavam.
+        .replace(/```[\s\S]*?```/g, '')
+        .replace(/^.*(?:\bssh\s+tom\b|\bscp\b|\bpm2\b|cat\s+\.env|grep\s+SUPABASE|setup-vps-key|connection\s+string|service_role|\/mnt\/[a-z]\/|\/opt\/LA-Organizer|\bsudo\s|\bnpm\s+run\b|node\s+--).*$/gim, '')
+        // 6) Limpa linhas em branco múltiplas resultantes
         .replace(/\n{3,}/g, '\n\n');
       const text = sanitized.trim();
       const sanitizedDelta = rawResult.length - text.length;
