@@ -16,6 +16,7 @@ const { spawn } = require('child_process');
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
+const { classifyClaudeExit } = require('./classify-claude-exit');
 
 const CLAUDE_BIN = process.env.CLAUDE_BIN || '/usr/bin/claude';
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'sonnet';  // alias do CLI → Sonnet 4.6 atual
@@ -158,7 +159,11 @@ async function _chatInner(systemPrompt, messages /*, maxTokens */) {
       clearTimeout(killTimer);
       const raw = stdout.trim();
       if (code !== 0) {
-        return reject_('exit', `Claude saiu com código ${code}. stderr: ${stderr.trim().slice(0, 500) || '(vazio)'}`);
+        // ANTHROPIC-API-EXIT-1: o CLI costuma emitir o payload de erro (429/529/5xx)
+        // no STDOUT com STDERR vazio. Classifica o motivo p/ log/marker em vez de
+        // engolir tudo como "exit" genérico. Fallback Codex dispara igual.
+        const { kind, message } = classifyClaudeExit(code, stdout, stderr);
+        return reject_(kind, message);
       }
       if (!raw) {
         return reject_('empty', `Claude retornou vazio. stderr: ${stderr.trim().slice(0, 500) || '(vazio)'}`);
