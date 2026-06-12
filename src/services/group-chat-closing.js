@@ -110,7 +110,10 @@ ${histText}
       return;
     }
 
-    const cardHtml = (response.text || '').trim();
+    // Tira cerca de código markdown (```html … ```) que a IA às vezes embrulha — senão o
+    // card mostra literalmente "```html" no topo (no app E no espelho do WhatsApp).
+    const cardHtml = (response.text || '').trim()
+      .replace(/^```[a-z]*\s*/i, '').replace(/\s*```\s*$/i, '').trim();
     if (!cardHtml) {
       console.warn(`[GroupChat][closing] IA retornou vazio para grupo=${group.id}`);
       return;

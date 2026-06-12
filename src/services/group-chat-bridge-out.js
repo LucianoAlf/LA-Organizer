@@ -12,6 +12,8 @@ function firstName(name) {
 // básicas que o card usa (h3/strong/em/li/p/br). Mantém hierarquia visual (não vira corrido).
 function htmlToWhatsapp(html) {
   let t = String(html || '');
+  // Tira cerca de código markdown (```html ... ```) que a IA às vezes embrulha no card.
+  t = t.replace(/^```[a-z]*\s*/i, '').replace(/\s*```\s*$/i, '');
   t = t
     .replace(/<\s*h[1-6][^>]*>/gi, '\n*').replace(/<\s*\/\s*h[1-6]\s*>/gi, '*\n')
     .replace(/<\s*(strong|b)[^>]*>/gi, '*').replace(/<\s*\/\s*(strong|b)\s*>/gi, '*')
@@ -22,7 +24,7 @@ function htmlToWhatsapp(html) {
     .replace(/<[^>]+>/g, ''); // tira o resto das tags
   t = t.replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<')
     .replace(/&gt;/gi, '>').replace(/&quot;/gi, '"').replace(/&#39;/gi, "'");
-  return t.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  return t.split('\n').map((l) => l.trim()).join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 // Converte uma row de group_chat_messages (channel='app') no texto a postar no WhatsApp.

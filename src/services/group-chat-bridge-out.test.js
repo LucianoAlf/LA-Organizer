@@ -28,6 +28,10 @@ test('report (card HTML) → espelha como texto formatado WhatsApp', () => {
   assert.match(out, /• Conferir caixa/);
   assert.ok(!/[<>]/.test(out), 'não pode sobrar tag HTML');
 });
+test('report com cerca ```html é limpo (sem markdown fence no zap)', () => {
+  const out = buildWhatsappText({ role: 'tom', kind: 'report', content: '```html\n<h3>Resumo</h3>\n```' }, '');
+  assert.equal(out, '*Resumo*');
+});
 test('report vazio → null', () => {
   assert.equal(buildWhatsappText({ role: 'tom', kind: 'report', content: '   ' }, ''), null);
 });
