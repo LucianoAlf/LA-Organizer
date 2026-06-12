@@ -170,8 +170,14 @@ async function runDeleteSyncOnce(supabase, deps, limit = 10) {
       await supabase.from('group_chat_messages').update({ deleted_synced: true }).eq('id', r.id);
       done++;
     } catch (e) {
-      console.error(`[Bridge-del] revoke falhou msg=${r.id}: ${e.response?.status || ''} ${e.message}`);
-      // não marca synced → re-tenta. (janela de revoke do WhatsApp é curta; se persistir, some só no app.)
+      const st = e.response?.status;
+      console.error(`[Bridge-del] revoke falhou msg=${r.id}: ${st || ''} ${e.message}`);
+      if (st && st !== 503) {
+        // Erro DEFINITIVO (ex.: 403 do WhatsApp = msg não é do bot, não dá pra revogar msg
+        // de outro remetente). Marca synced p/ não martelar a cada tick — já some no app.
+        await supabase.from('group_chat_messages').update({ deleted_synced: true }).eq('id', r.id);
+      }
+      // 503 (hibernação) → deixa pra re-tentar no próximo tick.
     }
   }
   return done;
