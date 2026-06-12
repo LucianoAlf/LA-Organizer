@@ -3585,20 +3585,27 @@ async function run(opts = {}) {
   }
 
   // Relatório do health check pro director (Luciano) — 7h BRT.
-  // Mesma proteção de idempotência: now.minute === 0 + gate por ritual_logs.
+  // AUDIT-7H-503-NO-RETRY (12/06): o gate antigo era `now.minute === 0 && slot===07:00` —
+  // disparava UMA vez só, às 07:00 em ponto. Se o envio falhava (ex.: UAZAPI 503/hibernado),
+  // o catch engolia o erro, logRitualEvent('sent') nunca gravava, e no tick seguinte
+  // (minute!==0) nunca retentava → relatório perdido no dia. Agora: JANELA de retry
+  // 07:00–11:00 BRT. O gate `sentToday` (só grava em sucesso) garante idempotência: retenta
+  // a cada tick (5min) até entregar, então para. Depois das 11h desiste por hoje (sem spam).
+  const _hrSlot = timeToSlot(HEALTH_REPORT_TIME);   // 420 (07:00)
+  const _hrCutoff = _hrSlot + 4 * 60;               // 660 (11:00) — fim da janela de retry
   if (opts.force === 'health_report' ||
-      (now.minute === 0 && timeToSlot(HEALTH_REPORT_TIME) === slotNow)) {
+      (slotNow >= _hrSlot && slotNow < _hrCutoff)) {
     try {
       const { data: sentToday } = await supabase.from('ritual_logs')
         .select('id').eq('ritual_type', 'health_report').eq('reference_date', now.ymd)
         .eq('status', 'sent').limit(1);
       if (opts.force !== 'health_report' && sentToday && sentToday.length > 0) {
-        console.log('[Dispatcher] health-report: já enviado hoje, skip');
+        // já entregue hoje — silencioso (não loga a cada tick da janela pra não poluir)
       } else {
         await sendHealthReport(now.ymd);
       }
     } catch (err) {
-      console.error('[Dispatcher] health-report erro:', err.message);
+      console.error('[Dispatcher] health-report erro (retenta no próximo tick até 11h):', err.message);
     }
   }
 
