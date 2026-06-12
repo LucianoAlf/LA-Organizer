@@ -11,7 +11,8 @@ import { parsePayMethod } from '../../../lib/payMethod';
 import type { PfBill } from '../../../lib/financeiro';
 
 function todayYmd() {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 const fmtBRL = (v: number) =>
   'R$ ' + Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -33,11 +34,24 @@ export function PagarContaSheet({ open, onClose, bill }: { open: boolean; onClos
     setError(null);
   }, [open, bill]);
 
-  const methodOptions = useMemo(() => [
-    { value: 'none', label: 'Só registrar (sem carteira)' },
-    ...(accountsQ.data ?? []).map((a) => ({ value: `acc:${a.id}`, label: `🏦  ${a.name}` })),
-    ...(bill?.type !== 'income' ? (cardsQ.data ?? []).map((c) => ({ value: `card:${c.id}`, label: `💳  ${c.name}` })) : []),
-  ], [accountsQ.data, cardsQ.data, bill?.type]);
+  const methodOptions = useMemo(() => {
+    const accounts = accountsQ.data ?? [];
+    const cards = bill?.type !== 'income' ? (cardsQ.data ?? []) : [];
+    const cardNames = new Set(cards.map((c) => c.name.toLowerCase()));
+    const acctNames = new Set(accounts.map((a) => a.name.toLowerCase()));
+    const collision = (name: string) => cardNames.has(name.toLowerCase()) && acctNames.has(name.toLowerCase());
+    return [
+      { value: 'none', label: 'Só registrar (sem carteira)' },
+      ...accounts.map((a) => ({
+        value: `acc:${a.id}`,
+        label: `🏦  ${a.name}${collision(a.name) ? ' — conta' : ''}`,
+      })),
+      ...cards.map((c) => ({
+        value: `card:${c.id}`,
+        label: `💳  ${c.name}${collision(c.name) ? ' — cartão' : ''}`,
+      })),
+    ];
+  }, [accountsQ.data, cardsQ.data, bill?.type]);
 
   if (!bill) return null;
 
