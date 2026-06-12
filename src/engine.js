@@ -1718,28 +1718,11 @@ function _displayName(person) {
 // Alias legacy pra calls existentes.
 const _requesterDisplayName = _displayName;
 
-// Krissya 08/06 (AUDIT-DUP-CONFIRM): quando o IntegrityCheck BLOQUEIA a criação
-// (dup_task / dup_event), o engine preserva o cleanText do LLM e anexa o microconfirm
-// 1/2/3 (Sprint 31, pra não engolir outros itens do lote). Mas se o LLM já cantou
-// "Criado! ✅" pro item bloqueado, sobra uma contradição ("Criado!" + "é duplicata?").
-// Como o insert FOI bloqueado, qualquer linha de sucesso de criação é falsa por definição
-// → stripar. Mantém perguntas/itens legítimos; remove só o falso "criado/registrado".
-function _stripPrematureCreateConfirm(text) {
-  if (!text) return '';
-  return String(text)
-    .split('\n')
-    .filter((line) => {
-      const t = line.trim();
-      if (!t) return true;
-      if (/^[✅☑️✔️🎉👍🙌]*\s*(criad[oa]|registrad[oa]|anotad[oa]|anotei|pronto|feito|agendad[oa]|t[aá]\s+(criada|agendada|anotada)|tarefa\s+criada|lembrete\s+criado|recorrente\s+criada)\b/i.test(t)) return false;
-      if (/voc[êe]\s+recebe\s+o\s+lembrete/i.test(t)) return false;
-      if (/^todo\s+dia\s+\d+/i.test(t)) return false;
-      return true;
-    })
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
+// Krissya 08/06 (AUDIT-DUP-CONFIRM) + AUDIT-OPTIMISTIC-CONFIRM (12/06): a remoção
+// de confirmação otimista falsa (quando o IntegrityCheck/falha bloqueia a criação)
+// foi unificada em src/lib/optimistic-confirm.js → sanitizeOptimisticConfirm().
+// O strip antigo (_stripPrematureCreateConfirm) só pegava VERBO logo após o emoji,
+// deixando "✅ *Título*" passar — agora coberto pelo sanitizador.
 
 // Bug B2 fix (Radar pós-Sprint19): quando IntegrityCheck bloqueia criação,
 // substitui qualquer texto otimista que o LLM possa ter gerado ("✅ Registrado!")
@@ -6583,10 +6566,12 @@ async function tryHandleAnnouncementConfirmation(collab, text) {
 // ou null se deve seguir fluxo normal (chamar LLM).
 async function tryDupBypass(collab, text) {
   const lm = (text || '').trim();
-  // Aceita "2", "2.", "2 - texto..." (user às vezes inclui contexto junto)
-  const choiceMatch = lm.match(/^([123])[.\-\s]?/);
-  if (!choiceMatch) return null;
-  const choice = choiceMatch[1];
+  // Aceita dígito ("2", "2.", "2 - texto...") E linguagem natural ("são duas
+  // tarefas diferentes" = 2, "é a mesma" = 1, "cancela" = 3). AUDIT-OPTIMISTIC-CONFIRM
+  // caso Juliana: resposta NL não casava o regex antigo → caía no LLM → menu re-exibido.
+  // Só age se houver dup pendente (gate abaixo), então NL não tratado é inócuo.
+  const choice = classifyDupChoice(lm);
+  if (!choice) return null;
   const EXP_MS = 10 * 60 * 1000;
   const pendingEv = pendingDupEvents.get(collab.id);
   let pendingTk = pendingDupTasks.get(collab.id);
@@ -8873,7 +8858,8 @@ async function processMessage(phone, text, raw = {}) {
         // resolveu/perguntou (parsedEv.cleanText) e ANEXA o aviso de duplicata.
         {
           const _dupQ = _buildIntegrityConfirmText(integrityPayload);
-          const _prev = _stripPrematureCreateConfirm((parsedEv.cleanText || '').trim());
+          // AUDIT-OPTIMISTIC-CONFIRM: integrity bloqueou = nada persistiu → rebaixa o ✅.
+          const _prev = sanitizeOptimisticConfirm((parsedEv.cleanText || '').trim(), 'failed');
           reply = _prev ? `${_prev}\n\n${_dupQ}` : _dupQ;
           // Sprint 31.10 — mesmo flag do caminho TASK: turno pediu confirmação de
           // duplicata, não é ACTIONABLE_NO_MARKER.
@@ -8885,9 +8871,13 @@ async function processMessage(phone, text, raw = {}) {
         await logMarker(collab.id, 'EVENT_CREATE', result, reason, null);
         let base = parsedEv.cleanText || '';
         if (failCount > 0 && okCount === 0) {
+          // AUDIT-OPTIMISTIC-CONFIRM: remove "✅ Agendado!" antes do honesto.
+          base = sanitizeOptimisticConfirm(base, 'failed');
           base = (base ? base + '\n\n' : '') + '_não consegui salvar o compromisso, te aviso depois_';
         } else if (failCount > 0 && okCount > 0) {
           // Sprint 21.5.1 — confirmação parcial honesta também em EVENT_CREATE.
+          // AUDIT-OPTIMISTIC-CONFIRM: rebaixa "agendei todos" → "a maioria".
+          base = sanitizeOptimisticConfirm(base, 'partial');
           base = (base ? base + '\n\n' : '') + `_⚠️ Salvei ${okCount} de ${okCount + failCount} compromissos. Algum falhou — me chama se algo ficar faltando._`;
         }
         reply = base || reply;
@@ -8904,8 +8894,9 @@ async function processMessage(phone, text, raw = {}) {
       // Sprint 21.5.1 — anti-mentira em EVENT_UPDATE também.
       let baseEU = parsedEU.cleanText || reply;
       const optimisticEUPattern = /\b(reagendad|atualizad|movid|cancelad|conclu[ií]d|fechad|fechei|resolvid|finalizad|encerrad|registrad|salvei|feito[!.*\]]?|pronto[!.]?\s)/i;
-      if (optimisticEUPattern.test(baseEU)) {
-        baseEU += '\n\n_⚠️ Tive um problema técnico ao alterar o compromisso. Nada mudou no banco — me confirma o que você quer?_';
+      if (optimisticEUPattern.test(baseEU) || hasOptimisticConfirm(baseEU)) {
+        baseEU = sanitizeOptimisticConfirm(baseEU, 'failed');
+        baseEU += (baseEU ? '\n\n' : '') + '_⚠️ Tive um problema técnico ao alterar o compromisso. Nada mudou no banco — me confirma o que você quer?_';
       }
       reply = baseEU;
     } else if (parsedEU) {
@@ -8918,9 +8909,10 @@ async function processMessage(phone, text, raw = {}) {
       if (failCount > 0 && okCount === 0) {
         // F5: se a "falha" foi a guarda temporal, ela é uma PERGUNTA de confirmação —
         // mostra ELA e descarta o cleanText otimista do LLM ("Fechado!" sem ter fechado).
+        // AUDIT-OPTIMISTIC-CONFIRM: descarta "✅ Fechado!" otimista quando nada mudou.
         base = (evFailMessages && evFailMessages.length)
           ? evFailMessages.join('\n')
-          : (base ? base + '\n\n' : '') + '_não consegui atualizar o compromisso, me confirma o que você quer?_';
+          : (() => { const b = sanitizeOptimisticConfirm(base, 'failed'); return (b ? b + '\n\n' : '') + '_não consegui atualizar o compromisso, me confirma o que você quer?_'; })();
       }
       reply = base || reply;
     }
