@@ -95,7 +95,9 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
         if (result && !result.error) {
           confirmLines.push(`✅ Projeto "${projName}" criado.`);
         } else {
-          confirmLines.push(`⚠️ Não consegui criar o projeto "${projName}" agora — tente de novo.`);
+          // Motivo real do engine (ex.: gate de permissão) — não "tente de novo" genérico.
+          const motivo = (result && result.userFacingReply) ? result.userFacingReply : 'não rolou agora.';
+          confirmLines.push(`⚠️ Projeto "${projName}" não criado: ${motivo}`);
         }
       } else {
         reply = (parsedProject.cleanText || '').trim();
@@ -184,9 +186,15 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
     confirmLines.push('_marker de checklist malformado — não atualizei nada._');
   }
 
-  // Anexa confirmações ao reply
+  // Anexa confirmações ao reply — ANTI-MENTIRA (fala = persistência):
+  // se HOUVE falha em alguma ação, NÃO confiar na prosa otimista do LLM (ele pode ter
+  // dito "criei" pro que falhou). Nesse caso o status determinístico do engine é a verdade
+  // e a prosa do LLM é descartada. Sem falha, mantém a prosa (warmth) + os ✅.
   if (confirmLines.length) {
-    reply = (reply ? reply + '\n\n' : '') + confirmLines.join('\n');
+    const hasFailure = confirmLines.some((l) =>
+      /⚠️|não consegui|malformado|não criei|não atualizei/i.test(l));
+    const head = hasFailure ? '' : reply.trim();
+    reply = [head, confirmLines.join('\n')].filter(Boolean).join('\n\n').trim();
   }
 
   // ─── SILÊNCIO ─────────────────────────────────────────────────────────────

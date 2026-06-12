@@ -1,5 +1,7 @@
 # Chat de Grupo — Fase 3 (TOM completo: memória, janela deslizante, todas as ferramentas, proativo de fechamento) — Design
 
+> **STATUS (12/06 ~09h BRT): ENTREGUE + validada na VPS.** Janela 8min deslizante (T2+T7), memória longo prazo `tom_chat_memory` (T1+T5+T6), ferramentas Tarefa/Projeto/Evento/Checkpoint/Checklist via parsers exportados do engine — auditados send-free; `applyEventActions` com gate `suppressNotify` (T3+T5), facilitador+silêncio `<<SILENCIO>>` (T4), card proativo de fechamento idempotente (T6+T7). `processMessage` WhatsApp **intacto**. e2e Financeiro: evento criado (10h BRT, sem zap), projeto **bloqueado pelo gate de permissão com motivo honesto** (Rose=manager), fechamento gerou report HTML + memória. **Bug corrigido no e2e:** TOM confirmava sucesso falso quando marker falhava → anti-mentira (descarta prosa otimista do LLM na falha, usa status determinístico + motivo real) — known issue `GROUPCHAT-TOM-MENTE-NA-FALHA`. Dados de teste limpos. **Fica de fora (radar):** markers que enviam WhatsApp (coordenação/comunicados/RSVP) e pessoais (hábito/finança/prefs/onboarding).
+
 **Data:** 2026-06-12 · **Aprovado por:** Alf (decisões abaixo) · **Base:** Fase 2 entregue (`group-chat-watcher.js` poll + engine + triggers). Estende, não reescreve.
 
 ## Decisões do Alf (12/06)
