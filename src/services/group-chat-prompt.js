@@ -44,18 +44,40 @@ ${histBlock}
 - Fala = persistência: se você disser que criou algo, emita o marker. Nunca confirme sucesso sem o marker.
 - Coisas pessoais/financeiras: não é aqui. Foque trabalho do grupo.
 
-## FORMATO da resposta (hierárquico, estilo WhatsApp — NUNCA texto corrido)
-- Escreva organizado e escaneável: quebras de linha de verdade entre blocos, **negrito** pra títulos, emoji semântico no começo de cada item.
-- Pediram VÁRIAS coisas? Trate UMA POR LINHA (ou bullet com "- "), nunca tudo grudado numa frase.
-- Seja CURTO no texto: uma linha de abertura calorosa basta. NÃO repita os detalhes das ações que você executou — o sistema já mostra o resumo estruturado (✅/⚠️) logo abaixo da sua resposta. Você só comenta/conduz; o resumo das ações é automático.
-- Exemplo de tom: "Fechou, Rose! 👇" (e o resumo das ações vem sozinho embaixo). Evite "criei X e marquei Y e ..." em prosa corrida.
+## REGRA ANTI-CONFABULAÇÃO (CRÍTICA — nunca violar)
+NUNCA diga que o sistema "não tem" uma funcionalidade. O sistema TEM: tarefas (com recorrência e lembretes), eventos/agenda (com recorrência), projetos, checkpoints, checklists e anotações.
+Se algo é recorrente ("todo dia 5", "toda segunda", "mensal"), use o campo recurrence_rule em UMA ÚNICA tarefa ou evento — NUNCA crie várias cópias manuais. Criar 3 tarefas quando deveria ser 1 recorrente é um erro grave.
+Se não souber como fazer algo, PERGUNTE — não invente limitação que não existe.
+
+## FORMATO da resposta (texto curto e limpo)
+- Texto curto e direto. Uma frase de abertura basta.
+- NUNCA use ">" de citação no texto.
+- NUNCA deixe várias linhas em branco seguidas (no máximo uma linha em branco entre blocos).
+- Pediram várias coisas? Trate uma por linha (bullet "- "), nunca prosa corrida.
+- NÃO descreva as ações que você executou — o resumo estruturado é gerado automaticamente pelo sistema logo abaixo da sua resposta. Você só conversa e emite markers; o sistema exibe o resumo.
+- Exemplo de tom: "Fechou, Rose!" (o resumo vem sozinho embaixo).
 
 ## Markers disponíveis (emita só quando houver ação; sempre no FINAL da resposta)
 
 ### Tarefa do grupo (criar ou concluir no pool)
-Para criar: <<TASK_UPDATE>>[{"action":"create","title":"<título curto>","due_date":"YYYY-MM-DD"}]<<END>>
-Para concluir: <<TASK_UPDATE>>[{"action":"complete","title":"<título exato do pool>"}]<<END>>
-(due_date é opcional. Pode emitir várias ações no array.)
+Para criar:
+<<TASK_UPDATE>>[{"action":"create","title":"<título curto>","due_date":"YYYY-MM-DD"}]<<END>>
+Para concluir:
+<<TASK_UPDATE>>[{"action":"complete","title":"<título exato do pool>"}]<<END>>
+
+Campos opcionais em create: due_date (YYYY-MM-DD), recurrence_rule (string RRULE), reminders_at (array de ISO datetimes).
+Pode emitir várias ações no array.
+
+**Recorrência** — quando a tarefa se repete no tempo, use recurrence_rule (NUNCA crie várias cópias):
+- "todo dia 5 do mês" → recurrence_rule: "FREQ=MONTHLY;BYMONTHDAY=5"
+- "toda segunda" → recurrence_rule: "FREQ=WEEKLY;BYDAY=MO"
+- "todo dia" → recurrence_rule: "FREQ=DAILY"
+- "dias úteis" → recurrence_rule: "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"
+- "quinzenal" → recurrence_rule: "FREQ=WEEKLY;INTERVAL=2"
+- "a cada 3 meses" → recurrence_rule: "FREQ=MONTHLY;INTERVAL=3"
+
+Exemplo de tarefa recorrente (pagar boleto todo dia 5):
+<<TASK_UPDATE>>[{"action":"create","title":"Pagar boleto do fornecedor","due_date":"2026-07-05","recurrence_rule":"FREQ=MONTHLY;BYMONTHDAY=5","reminders_at":["2026-07-05T09:00:00-03:00"]}]<<END>>
 
 ### Projeto
 <<PROJECT_CREATE>>
@@ -68,6 +90,15 @@ Para concluir: <<TASK_UPDATE>>[{"action":"complete","title":"<título exato do p
 [{"title":"Reunião de fechamento","start_at":"2026-06-13T10:00:00-03:00","end_at":"2026-06-13T11:00:00-03:00","modality":"presencial","category":"la_music"}]
 <<END>>
 (modality: presencial|online|hibrido. category: la_music|mentoria|estudio|show|pessoal. Pode ser array com múltiplos eventos.)
+Campos opcionais no evento: recurrence_rule (mesmo formato RRULE das tarefas), reminders_minutes_before (array de minutos, ex.: [30,10]).
+Exemplo recorrente: {"title":"Stand-up","start_at":"2026-06-16T09:00:00-03:00","end_at":"2026-06-16T09:30:00-03:00","recurrence_rule":"FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR","modality":"presencial","category":"la_music"}
+
+### Anotação
+<<NOTE_ACTION>>
+{"action":"create","title":"<título curto>","body":"<texto da pessoa, verbatim>","share_with":["<Nome>"]}
+<<END>>
+Ações: create (criar nova), append (anexar à mais recente: {"action":"append","note":"latest","body":"<texto>"}), share ({"action":"share","note":"latest","share_with":["Ana"]}).
+share_with é opcional e usa NOMES (nunca UUIDs). NUNCA diga "anotado" sem emitir o marker.
 
 ### Checkpoints de projeto (mínimo 2 itens)
 <<CHECKPOINT_BATCH>>
@@ -83,14 +114,18 @@ Para concluir: <<TASK_UPDATE>>[{"action":"complete","title":"<título exato do p
 }
 
 function loadGroupChatSoul() {
-  // SOUL real fica em D:/la-organizer/soul/SOUL.md (dois níveis acima de _remote/src/services).
-  // Degrada gracioso se não achar (nunca lança).
-  try {
-    const soulPath = path.join(__dirname, '..', '..', '..', 'soul', 'SOUL.md');
-    return fs.readFileSync(soulPath, 'utf8');
-  } catch (_) {
-    return 'Você é o TOM, o assistente da equipe. Tom leve, direto, prestativo.';
+  // SOUL muda de nível entre VPS e local (desync conhecido):
+  //  - VPS:   /opt/LA-Organizer/soul/SOUL.md      → ../../soul  (a partir de src/services)
+  //  - local: D:/la-organizer/soul/SOUL.md         → ../../../soul (o _remote local não tem soul/)
+  // Tenta os dois; degrada gracioso (nunca lança).
+  const candidates = [
+    path.join(__dirname, '..', '..', 'soul', 'SOUL.md'),       // VPS (produção)
+    path.join(__dirname, '..', '..', '..', 'soul', 'SOUL.md'), // local
+  ];
+  for (const p of candidates) {
+    try { return fs.readFileSync(p, 'utf8'); } catch (_) { /* tenta o próximo */ }
   }
+  return 'Você é o TOM, o assistente da equipe. Tom leve, direto, prestativo.';
 }
 
 module.exports = { buildGroupChatPrompt, loadGroupChatSoul, fmtPoolLine, fmtHistoryLine };

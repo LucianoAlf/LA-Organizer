@@ -15,6 +15,7 @@ const financeService = require('../services/financeiro-service');
 // Achado #79 — mesma fonte da escalação diária (dispatcher). No planejamento semanal,
 // o LLM precisa VER eventos work passados sem fechamento, senão diz "semana limpa".
 const { getStaleWorkEvents } = require('../services/open-pendencies');
+const { renderRecentMediaBlock } = require('../utils/media-context');
 
 const SKILLS_DIR = path.join(__dirname, '..', '..', 'skills');
 
@@ -1405,6 +1406,7 @@ async function fetchCollaboratorContext(collaborator) {
     critRes,
     prefRes,
     weeklyRes,
+    recentMediaRes,
   ] = await Promise.all([
     supabase.from('collaborator_profiles').select('*').eq('collaborator_id', id).maybeSingle(),
     supabase.from('user_preferences').select('*').eq('collaborator_id', id).maybeSingle(),
@@ -1631,6 +1633,16 @@ async function fetchCollaboratorContext(collaborator) {
       .select('summary, week_start')
       .eq('collaborator_id', id)
       .order('week_start', { ascending: false }).limit(1).maybeSingle(),
+    // MEDIA-IMG-CONTEXT-LOST (Rose 11/06): mídias recentes que o usuário enviou, com a
+    // análise persistida (media_extracted_text). Sobrevive à janela de 5 msgs do histórico
+    // — repinado no system prompt pra o TOM não dizer "não recebi a imagem" turnos depois.
+    supabase.from('conversation_history')
+      .select('media_type, media_extracted_text, created_at')
+      .eq('collaborator_id', id)
+      .eq('direction', 'inbound')
+      .not('media_extracted_text', 'is', null)
+      .gte('created_at', new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString())
+      .order('created_at', { ascending: false }).limit(3),
   ]);
 
   let activeProjects = [];
@@ -1754,6 +1766,7 @@ async function fetchCollaboratorContext(collaborator) {
     activeProjects,
     notifications: notificationsRes.data || [],
     recentMessages: (historyRes.data || []).reverse(),
+    recentMedia: recentMediaRes.data || [],
     habits: habitsRes.data || [],
     todayEvents: eventsRes.data || [],
     pastEvents: pastEventsRes.data || [],
@@ -2871,7 +2884,11 @@ async function buildSystemPrompt(collaborator, opts = {}) {
     // never break prompt build
   }
 
-  const ctxBlock = (pending ? baseCtx + '\n' + pending : baseCtx) + pastEventsBlock + resolutionBlock + activeThreadBlock + pendingIntentsBlock + pendingFollowupsBlock;
+  // MEDIA-IMG-CONTEXT-LOST (Rose 11/06): repina as mídias recentes (com análise) pra
+  // sobreviverem à janela curta de histórico — o TOM não nega ter recebido a imagem.
+  const recentMediaBlock = renderRecentMediaBlock(ctx.recentMedia);
+
+  const ctxBlock = (pending ? baseCtx + '\n' + pending : baseCtx) + pastEventsBlock + resolutionBlock + activeThreadBlock + recentMediaBlock + pendingIntentsBlock + pendingFollowupsBlock;
 
   const blocks = [
     BLOCK_RULES,

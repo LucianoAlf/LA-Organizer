@@ -1,13 +1,18 @@
 // src/services/group-chat-engine.js
-// Chat de grupo Fase 3 — núcleo: monta prompt do grupo, chama IA, aplica markers de
-// tarefa/projeto/evento/checkpoint/checklist no pool, grava a resposta do TOM (role='tom').
-// Reusa os parsers/appliers exportados do engine. Lazy require para evitar ciclo de carga.
+// Chat de grupo Fase 3 — núcleo: monta prompt do grupo, chama IA, aplica TODOS os markers
+// operacionais (tarefa/projeto/evento/checkpoint/checklist/anotação), grava a resposta do TOM.
+// Reusa os parsers/appliers exportados do engine (lazy require para evitar ciclo de carga).
+//
+// Hierarquia de render: além da prosa (markdown), o engine emite um bloco ESTRUTURADO de ações
+// `‹‹ACTIONS››[json]` no fim do content. O MessageBubble parseia e renderiza com ícones Lucide.
+// Isso garante a quebra de linha/hierarquia (não depende de markdown) e dá a riqueza visual.
 const ai = require('../ai/provider');
 const { buildGroupChatPrompt, loadGroupChatSoul } = require('./group-chat-prompt');
 const { applyGroupChatTaskActions } = require('./group-chat-tasks');
 
 const HISTORY_LIMIT = 30;
 const POOL_LIMIT = 30;
+const ACTIONS_DELIM = '‹‹ACTIONS››'; // separador prosa ↔ ações estruturadas (parseado no front)
 
 function displayName(c) {
   return (c?.preferred_name || c?.full_name || '').split(' ')[0] || 'alguém';
@@ -19,7 +24,6 @@ async function loadContext(supabase, groupId, senderCollabId) {
     supabase.from('work_group_members').select('collaborators(full_name, preferred_name)').eq('group_id', groupId),
     supabase.from('tasks').select('title, status, due_date').eq('assigned_group_id', groupId).order('created_at', { ascending: false }).limit(POOL_LIMIT),
     supabase.from('group_chat_messages').select('role, content, media_extracted_text, sender_id, created_at, sender:collaborators!group_chat_messages_sender_id_fkey(full_name, preferred_name)').eq('group_id', groupId).order('created_at', { ascending: false }).limit(HISTORY_LIMIT),
-    // Carrega objeto COMPLETO do remetente — appliers esperam o registro, não só o id
     supabase.from('collaborators').select('*').eq('id', senderCollabId).maybeSingle(),
   ]);
 
@@ -31,10 +35,7 @@ async function loadContext(supabase, groupId, senderCollabId) {
     content: m.media_extracted_text ? `${m.content || ''} [mídia: ${m.media_extracted_text}]`.trim() : (m.content || ''),
   }));
 
-  // collab = objeto completo do remetente (necessário para persistProject, applyEventActions, etc.)
-  const collab = senderRow || null;
-
-  return { group, members, pool, history, senderName: displayName(senderRow), collab };
+  return { group, members, pool, history, senderName: displayName(senderRow), collab: senderRow || null };
 }
 
 async function processGroupChatMessage({ supabase, groupId, senderCollabId, text }) {
@@ -56,169 +57,148 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
     response = await ai.chat(systemPrompt, [{ role: 'user', content: text }]);
   } catch (err) {
     console.error(`[GroupChat] IA falhou grupo=${groupId}: ${err.message?.slice(0, 200)}`);
-    return null; // não grava nada; silêncio é melhor que erro vazado no chat
+    return null; // silêncio é melhor que erro vazado no chat
   }
 
   let reply = response.text || '';
+  const actions = []; // { kind, status, label, detail } → render rico no MessageBubble
+  const collab = ctx.collab;
+  const engine = require('../engine'); // lazy: engine já carregado no processo; evita ciclo na carga
 
-  // Acumula confirmações de markers — padrão da Fase 2
-  const confirmLines = [];
+  const stripBlock = (re) => { reply = (reply || '').replace(re, '').trim(); };
+  const noCollab = (kind, label) => actions.push({ kind, status: 'fail', label: label || '', detail: 'não identifiquei quem pediu' });
 
-  // ─── TASK_UPDATE (Fase 2, mantido) ───────────────────────────────────────
-  const { parseTaskUpdateMarker } = require('../engine');
-  const parsedTask = parseTaskUpdateMarker(reply);
-  if (parsedTask && !parsedTask.malformed && Array.isArray(parsedTask.actions) && parsedTask.actions.length) {
-    const { created, completed, failed } = await applyGroupChatTaskActions({
-      supabase, groupId, senderCollabId, actions: parsedTask.actions,
-    });
-    reply = (parsedTask.cleanText || '').trim();
-    if (created.length) confirmLines.push(`✅ **Tarefa(s) no pool:** ${created.map((t) => t.title).join(', ')}`);
-    if (completed.length) confirmLines.push(`✔️ **Concluída(s):** ${completed.map((t) => t.title).join(', ')}`);
-    if (failed.length && !created.length && !completed.length) {
-      confirmLines.push('_não consegui registrar agora — me confirma de novo?_');
+  // ─── TAREFA (pool do grupo) ───────────────────────────────────────────────
+  try {
+    const parsed = engine.parseTaskUpdateMarker(reply);
+    if (parsed && !parsed.malformed && Array.isArray(parsed.actions) && parsed.actions.length) {
+      reply = (parsed.cleanText || '').trim();
+      const { created, completed, failed } = await applyGroupChatTaskActions({ supabase, groupId, senderCollabId, actions: parsed.actions });
+      // detecta recorrência pra rotular
+      const recurMap = new Set(parsed.actions.filter((a) => a.recurrence_rule).map((a) => (a.title || '').toLowerCase()));
+      created.forEach((t) => actions.push({ kind: 'task', status: 'ok', label: t.title, detail: recurMap.has((t.title || '').toLowerCase()) ? 'recorrente' : '' }));
+      completed.forEach((t) => actions.push({ kind: 'task', status: 'ok', label: t.title, detail: 'concluída' }));
+      if (failed.length && !created.length && !completed.length) actions.push({ kind: 'task', status: 'fail', label: 'Tarefa', detail: 'não consegui registrar' });
+      console.log(`[GroupChat] task grupo=${groupId}: created=${created.length} completed=${completed.length} failed=${failed.length}`);
+    } else if (parsed && parsed.malformed) {
+      stripBlock(/<<TASK_UPDATE>>[\s\S]*?<<END>>/i);
     }
-    console.log(`[GroupChat] task actions grupo=${groupId}: created=${created.length} completed=${completed.length} failed=${failed.length}`);
-  } else if (parsedTask && parsedTask.malformed) {
-    reply = (parsedTask.cleanText || reply).replace(/<<TASK_UPDATE>>[\s\S]*?<<END>>/i, '').trim();
-  }
+  } catch (e) { console.error('[GroupChat] task err:', e.message); }
 
-  // ─── PROJECT_CREATE ───────────────────────────────────────────────────────
-  const { parseProjectMarker, persistProject } = require('../engine');
-  const parsedProject = parseProjectMarker(reply);
-  if (parsedProject && !parsedProject.malformed && parsedProject.project) {
-    try {
-      const collab = ctx.collab;
-      if (collab) {
-        const result = await persistProject(collab, parsedProject.project);
-        reply = (parsedProject.cleanText || '').trim();
-        const projName = parsedProject.project.name || 'projeto';
-        if (result && !result.error) {
-          confirmLines.push(`📁 **Projeto criado:** ${projName}`);
-        } else {
-          // Motivo real do engine (ex.: gate de permissão) — não "tente de novo" genérico.
-          const motivo = (result && result.userFacingReply) ? result.userFacingReply : 'não rolou agora.';
-          confirmLines.push(`⚠️ Projeto "${projName}" não criado: ${motivo}`);
-        }
-      } else {
-        reply = (parsedProject.cleanText || '').trim();
-        confirmLines.push('⚠️ Não consegui identificar o colaborador para criar o projeto.');
+  // ─── PROJETO ──────────────────────────────────────────────────────────────
+  try {
+    const parsed = engine.parseProjectMarker(reply);
+    if (parsed && !parsed.malformed && parsed.project) {
+      reply = (parsed.cleanText || '').trim();
+      const name = parsed.project.name || 'projeto';
+      if (!collab) { noCollab('project', name); }
+      else {
+        const r = await engine.persistProject(collab, parsed.project);
+        if (r && !r.error) actions.push({ kind: 'project', status: 'ok', label: name });
+        else actions.push({ kind: 'project', status: 'fail', label: name, detail: (r && r.userFacingReply) ? r.userFacingReply : 'não rolou agora' });
       }
-    } catch (err) {
-      console.error(`[GroupChat] persistProject falhou grupo=${groupId}: ${err.message?.slice(0, 200)}`);
-      reply = (parsedProject.cleanText || '').trim();
-      confirmLines.push('⚠️ Erro ao criar o projeto — tente de novo.');
+    } else if (parsed && parsed.malformed) {
+      stripBlock(/<<PROJECT_CREATE>>[\s\S]*?<<END>>/i);
+      actions.push({ kind: 'project', status: 'fail', label: 'Projeto', detail: 'marker malformado' });
     }
-  } else if (parsedProject && parsedProject.malformed) {
-    reply = (parsedProject.cleanText || reply).replace(/<<PROJECT_CREATE>>[\s\S]*?<<END>>/i, '').trim();
-    confirmLines.push('_marker de projeto malformado — não criei nada._');
-  }
+  } catch (e) { console.error('[GroupChat] project err:', e.message); }
 
-  // ─── EVENT_CREATE ─────────────────────────────────────────────────────────
-  const { parseEventCreateMarker, applyEventActions } = require('../engine');
-  const parsedEvent = parseEventCreateMarker(reply);
-  if (parsedEvent && !parsedEvent.malformed && Array.isArray(parsedEvent.events) && parsedEvent.events.length) {
-    try {
-      const collab = ctx.collab;
-      if (collab) {
-        await applyEventActions(collab, parsedEvent.events, { suppressNotify: true });
-        reply = (parsedEvent.cleanText || '').trim();
-        const evTitles = parsedEvent.events.map((e) => e.title).filter(Boolean).join(', ') || 'compromisso';
-        confirmLines.push(`📅 **Evento criado:** ${evTitles}`);
-      } else {
-        reply = (parsedEvent.cleanText || '').trim();
-        confirmLines.push('⚠️ Não consegui identificar o colaborador para criar o evento.');
+  // ─── EVENTO / AGENDA (com recorrência) ────────────────────────────────────
+  try {
+    const parsed = engine.parseEventCreateMarker(reply);
+    if (parsed && !parsed.malformed && Array.isArray(parsed.events) && parsed.events.length) {
+      reply = (parsed.cleanText || '').trim();
+      if (!collab) { noCollab('event', parsed.events[0]?.title); }
+      else {
+        await engine.applyEventActions(collab, parsed.events, { suppressNotify: true }); // suppressNotify: NUNCA dispara zap
+        parsed.events.forEach((ev) => actions.push({ kind: 'event', status: 'ok', label: ev.title || 'compromisso', detail: ev.recurrence_rule ? 'recorrente' : '' }));
       }
-    } catch (err) {
-      console.error(`[GroupChat] applyEventActions falhou grupo=${groupId}: ${err.message?.slice(0, 200)}`);
-      reply = (parsedEvent.cleanText || '').trim();
-      confirmLines.push('⚠️ Erro ao criar o evento — tente de novo.');
+    } else if (parsed && parsed.malformed) {
+      stripBlock(/<<EVENT_CREATE>>[\s\S]*?<<END>>/i);
+      actions.push({ kind: 'event', status: 'fail', label: 'Evento', detail: 'marker malformado' });
     }
-  } else if (parsedEvent && parsedEvent.malformed) {
-    reply = (parsedEvent.cleanText || reply).replace(/<<EVENT_CREATE>>[\s\S]*?<<END>>/i, '').trim();
-    confirmLines.push('_marker de evento malformado — não criei nada._');
-  }
+  } catch (e) { console.error('[GroupChat] event err:', e.message); }
 
-  // ─── CHECKPOINT_BATCH ─────────────────────────────────────────────────────
-  const { parseCheckpointBatchMarker, applyCheckpointBatch } = require('../engine');
-  const parsedCheckpoint = parseCheckpointBatchMarker(reply);
-  if (parsedCheckpoint && !parsedCheckpoint.malformed) {
-    try {
-      const collab = ctx.collab;
-      if (collab) {
-        await applyCheckpointBatch(collab, parsedCheckpoint);
-        reply = (parsedCheckpoint.cleanText || '').trim();
-        const count = (parsedCheckpoint.items || []).length;
-        confirmLines.push(`🎯 **${count} checkpoint(s) criado(s)**`);
-      } else {
-        reply = (parsedCheckpoint.cleanText || '').trim();
-        confirmLines.push('⚠️ Não consegui identificar o colaborador para criar checkpoints.');
+  // ─── CHECKPOINTS de projeto ───────────────────────────────────────────────
+  try {
+    const parsed = engine.parseCheckpointBatchMarker(reply);
+    if (parsed && !parsed.malformed) {
+      reply = (parsed.cleanText || '').trim();
+      if (!collab) { noCollab('checkpoint', 'Checkpoints'); }
+      else {
+        await engine.applyCheckpointBatch(collab, parsed);
+        actions.push({ kind: 'checkpoint', status: 'ok', label: `${(parsed.items || []).length} checkpoint(s)`, detail: parsed.project_name || '' });
       }
-    } catch (err) {
-      console.error(`[GroupChat] applyCheckpointBatch falhou grupo=${groupId}: ${err.message?.slice(0, 200)}`);
-      reply = (parsedCheckpoint.cleanText || '').trim();
-      confirmLines.push('⚠️ Erro ao criar checkpoints — tente de novo.');
+    } else if (parsed && parsed.malformed) {
+      stripBlock(/<<CHECKPOINT_BATCH>>[\s\S]*?<<END>>/i);
+      actions.push({ kind: 'checkpoint', status: 'fail', label: 'Checkpoints', detail: 'marker malformado' });
     }
-  } else if (parsedCheckpoint && parsedCheckpoint.malformed) {
-    reply = (parsedCheckpoint.cleanText || reply).replace(/<<CHECKPOINT_BATCH>>[\s\S]*?<<END>>/i, '').trim();
-    confirmLines.push('_marker de checkpoint malformado — não criei nada._');
-  }
+  } catch (e) { console.error('[GroupChat] checkpoint err:', e.message); }
 
-  // ─── CHECKLIST_ACTION ─────────────────────────────────────────────────────
-  const { parseChecklistActionMarker, applyChecklistAction } = require('../engine');
-  const parsedChecklist = parseChecklistActionMarker(reply);
-  if (parsedChecklist && !parsedChecklist.malformed) {
-    try {
-      const collab = ctx.collab;
-      if (collab) {
-        await applyChecklistAction(collab, parsedChecklist);
-        reply = (parsedChecklist.cleanText || '').trim();
-        confirmLines.push('☑️ **Checklist atualizado**');
-      } else {
-        reply = (parsedChecklist.cleanText || '').trim();
-        confirmLines.push('⚠️ Não consegui identificar o colaborador para atualizar o checklist.');
+  // ─── CHECKLIST ────────────────────────────────────────────────────────────
+  try {
+    const parsed = engine.parseChecklistActionMarker(reply);
+    if (parsed && !parsed.malformed) {
+      reply = (parsed.cleanText || '').trim();
+      if (!collab) { noCollab('checklist', 'Checklist'); }
+      else {
+        await engine.applyChecklistAction(collab, parsed);
+        actions.push({ kind: 'checklist', status: 'ok', label: 'Checklist atualizado' });
       }
-    } catch (err) {
-      console.error(`[GroupChat] applyChecklistAction falhou grupo=${groupId}: ${err.message?.slice(0, 200)}`);
-      reply = (parsedChecklist.cleanText || '').trim();
-      confirmLines.push('⚠️ Erro ao atualizar checklist — tente de novo.');
+    } else if (parsed && parsed.malformed) {
+      stripBlock(/<<CHECKLIST_ACTION>>[\s\S]*?<<END>>/i);
     }
-  } else if (parsedChecklist && parsedChecklist.malformed) {
-    reply = (parsedChecklist.cleanText || reply).replace(/<<CHECKLIST_ACTION>>[\s\S]*?<<END>>/i, '').trim();
-    confirmLines.push('_marker de checklist malformado — não atualizei nada._');
-  }
+  } catch (e) { console.error('[GroupChat] checklist err:', e.message); }
 
-  // Anexa confirmações ao reply — ANTI-MENTIRA (fala = persistência):
-  // se HOUVE falha em alguma ação, NÃO confiar na prosa otimista do LLM (ele pode ter
-  // dito "criei" pro que falhou). Nesse caso o status determinístico do engine é a verdade
-  // e a prosa do LLM é descartada. Sem falha, mantém a prosa (warmth) + os ✅.
-  if (confirmLines.length) {
-    const hasFailure = confirmLines.some((l) =>
-      /⚠️|não consegui|malformado|não criei|não atualizei/i.test(l));
-    const head = hasFailure ? '' : reply.trim();
-    reply = [head, confirmLines.join('\n')].filter(Boolean).join('\n\n').trim();
-  }
+  // ─── ANOTAÇÃO ─────────────────────────────────────────────────────────────
+  try {
+    const noteMarker = require('./note-marker');
+    const notesService = require('./notes');
+    const parsed = noteMarker.parseNoteActionMarker(reply);
+    if (parsed && parsed.malformed) {
+      stripBlock(/<<NOTE_ACTION>>[\s\S]*?<<END>>/i);
+      actions.push({ kind: 'note', status: 'fail', label: 'Anotação', detail: 'marker malformado' });
+    } else if (parsed && parsed.action) {
+      reply = (parsed.cleanText || '').trim();
+      const a = parsed.action;
+      if (!collab) { noCollab('note', a.title || 'Anotação'); }
+      else {
+        let res;
+        try {
+          if (a.action === 'create') {
+            const { ids } = await notesService.resolveShareNames(supabase, a.share_with || []);
+            res = await notesService.createNote(supabase, collab.id, { title: a.title, body: a.body, source: 'tom', sharedWith: ids });
+          } else if (a.action === 'share') {
+            const { ids } = await notesService.resolveShareNames(supabase, a.share_with || []);
+            res = await notesService.shareNote(supabase, collab.id, a.note, ids);
+          } else {
+            res = await notesService.appendToNote(supabase, collab.id, a.note, a.body);
+          }
+        } catch (eNote) { res = { ok: false, error: eNote.message }; }
+        if (res && res.ok) actions.push({ kind: 'note', status: 'ok', label: a.title || 'Anotação salva' });
+        else actions.push({ kind: 'note', status: 'fail', label: a.title || 'Anotação', detail: res?.error === 'note_not_found' ? 'não achei essa anotação' : 'não consegui salvar' });
+      }
+    }
+  } catch (e) { console.error('[GroupChat] note err:', e.message); }
 
-  // ─── SILÊNCIO ─────────────────────────────────────────────────────────────
-  // Se após strip de markers o reply for vazio ou apenas <<SILENCIO>>, retornar null sem inserir
-  const replyStripped = reply.replace(/<<SILENCIO>>/gi, '').trim();
-  if (!replyStripped) return null;
+  // ─── SILÊNCIO + MONTAGEM ──────────────────────────────────────────────────
+  reply = (reply || '').replace(/<<SILENCIO>>/gi, '').trim();
 
-  // Remove a tag <<SILENCIO>> do reply antes de gravar (nos demais casos)
-  reply = reply.replace(/<<SILENCIO>>/gi, '').trim();
+  // Anti-mentira (fala = persistência): se ALGUMA ação falhou, descarta a prosa otimista do
+  // LLM — a lista estruturada de ações carrega a verdade (linha vermelha + motivo real).
+  const hasFailure = actions.some((a) => a.status === 'fail');
+  let prose = hasFailure ? '' : reply;
 
-  if (!reply.trim()) return null; // nada a dizer
+  let content = prose.trim();
+  if (actions.length) content = (content ? content + '\n' : '') + ACTIONS_DELIM + JSON.stringify(actions);
+  if (!content.trim()) return null; // nada a dizer (silêncio)
 
   const { data: inserted, error } = await supabase.from('group_chat_messages').insert({
-    group_id: groupId,
-    sender_id: null,
-    role: 'tom',
-    kind: 'text',
-    content: reply,
-    channel: 'app',
+    group_id: groupId, sender_id: null, role: 'tom', kind: 'text', content, channel: 'app',
   }).select('id').single();
   if (error) { console.error(`[GroupChat] falha ao gravar resposta TOM: ${error.message}`); return null; }
 
   return inserted;
 }
 
-module.exports = { processGroupChatMessage, loadContext };
+module.exports = { processGroupChatMessage, loadContext, ACTIONS_DELIM };

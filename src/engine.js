@@ -11,6 +11,7 @@ const metricsService = require('./services/metrics');
 const ai = require('./ai/provider');
 const { buildSystemPrompt, formatMessages } = require('./prompts/system');
 const { safeIsoDate, safeDate, withinConfirmWindow } = require('./utils/dates');
+const { extractMediaAnalysis } = require('./utils/media-context');
 const { hasCoordLevel, isDirector, canCreateForOther } = require('./utils/roles');
 const supabase = require('./supabase/client');
 const OpenAI = require('openai');
@@ -6972,6 +6973,37 @@ async function handleFinanceAction(collab, action, params, outcome = {}) {
     }
     case 'register_bill': {
       const recurrence = params.recurrence === 'once' ? 'once' : 'monthly';
+      // CARD-DUE-RECURRING-GAP (Rose 11/06): guarda determinística ANTES do insert.
+      // pf_bills.amount é NOT NULL; "lembrete de vencimento de cartão" não tem valor → o LLM
+      // emitia register_bill sem amount e o insert estourava NOT NULL → throw "Deu ruim" 3x sem
+      // criar nada. Vencimento de cartão = pf_cards.due_day (lembrado no digest financeiro da
+      // manhã). Aqui: sem amount válido → roteia pro cartão (se casar) ou pede o valor — nunca crasha.
+      {
+        const { classifyRegisterBill, hasValidAmount } = require('./finance/register-bill-classify');
+        if (!hasValidAmount(params.amount)) {
+          const _cardName = params.card || params.name || '';
+          const _cards = _cardName ? await financeService.findCard(cid, _cardName) : [];
+          const _match = _cards.find((c) => c.name.toLowerCase() === String(_cardName).toLowerCase())
+            || (_cards.length === 1 ? _cards[0] : null);
+          const _d = classifyRegisterBill(params, _match);
+          if (_d.kind === 'card_confirm') {
+            outcome.persisted = true;
+            return `✅ Pode deixar! Já te lembro do vencimento do cartão *${_d.card.name}* (dia ${_d.dueDay}) no resumo financeiro da manhã, 2 dias antes. 👽`;
+          }
+          if (_d.kind === 'card_set') {
+            await financeService.updateCard(cid, _d.card.id, { due_day: _d.dueDay });
+            outcome.persisted = true;
+            return `✅ Configurado! Vou te lembrar do vencimento do cartão *${_d.card.name}* (dia ${_d.dueDay}) no resumo financeiro da manhã, 2 dias antes. 👽`;
+          }
+          if (_d.kind === 'card_ask_day') {
+            outcome.persisted = false; // honesto: nada persistido → marker vira 'skipped', não 'rejected'
+            return `Pra te lembrar do vencimento do cartão *${_d.card.name}*, me diz só o *dia do vencimento* (ex.: "vence dia 10") que eu já configuro. 👽`;
+          }
+          // ask_value: não é cartão e não tem valor → pede o valor, sem cadastrar nem crashar.
+          outcome.persisted = false;
+          return `Pra cadastrar a conta${params.name ? ' *' + params.name + '*' : ''} eu preciso do *valor*. Me manda quanto é (ex.: "R$ 120 todo dia 10") que eu anoto. 👽`;
+        }
+      }
       const b = await financeService.createBill(cid, {
         name: params.name, amount: params.amount,
         due_day: params.due_day,
@@ -8208,8 +8240,22 @@ async function processMessage(phone, text, raw = {}) {
   // resposta de hoje 07:47 porque o LLM viu a request fantasma de 11h atrás.
   // 2h cobre o uso real (resposta no mesmo turno de conversa) sem expor o
   // LLM a requests velhas que devem ser tratadas pelo auto-close cron.
+  // COORD-RESPONSE-STATE-STUCK (12/06) — ver src/coordination/detect-relay-request.js.
+  // Se a msg atual é um relay explícito ("avisa o X que Y"), NÃO injeta a pressão de
+  // RESPONSE do COORD_HINT: ela faz o LLM malformar um <<COORDINATION_RESPONSE>> e
+  // PERDER o recado embutido; pior, a request fica 'sent' e o hint re-injeta na
+  // próxima msg → loop de "problema técnico" (casos Daiana/Fefê 11/06). Aqui força
+  // a interpretação como REQUEST — "do zero", sem passar pela pressão do RESPONSE.
+  const { detectExplicitRelayRequest } = require('./coordination/detect-relay-request');
+  const relayIntent = detectExplicitRelayRequest(
+    stripReplyScaffold(String(inboundVerbatimText || '')).userText
+  );
+
   let coordHint = null;
-  {
+  if (relayIntent) {
+    coordHint = `[RELAY_OVERRIDE] A mensagem atual é um PEDIDO para você (TOM) repassar um recado a OUTRA pessoa (relay), NÃO uma resposta a um recado pendente. Emita <<COORDINATION_REQUEST>> (recipient_name + message_body). NUNCA emita <<COORDINATION_RESPONSE>> neste turn.`;
+    console.log(`[COORD] relay explícito (hint=${relayIntent.recipientHint}) — COORD_HINT suprimido, forçando REQUEST`);
+  } else {
     const cutoff2h = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
     const { data: openRequests } = await supabase
       .from('coordination_requests')
@@ -9166,6 +9212,19 @@ async function processMessage(phone, text, raw = {}) {
                     })) {
                       reply = `Em qual *unidade* e *sala* você quer cadastrar a *${String(p.nome || itemPayload.nome || 'item').trim()}*? (ex: Sala 13 — Campo Grande)`;
                     } else {
+                    // Pré-check de duplicata nome+sala — defesa em profundidade com o índice
+                    // inventario_nome_sala_ativo_uq. Resposta amigável em vez de vazar erro 23505.
+                    // Raiz do INVENTORY-DUP-DISAMBIG-LOOP: id 134 foi recriação do PX-160 na mesma sala.
+                    const { laReportClient: _lrcDup } = require('./services/la-report-client');
+                    const _nomeKeyDup = String(itemPayload.nome).trim().toLowerCase();
+                    const { data: _possiveisDup } = await _lrcDup
+                      .from('inventario').select('id, nome, condicao')
+                      .eq('sala_id', salaId).eq('ativo', true)
+                      .ilike('nome', itemPayload.nome).limit(5);
+                    const _dupItem = (_possiveisDup || []).find(r => String(r.nome).trim().toLowerCase() === _nomeKeyDup);
+                    if (_dupItem) {
+                      reply = (reply ? reply + '\n\n' : '') + `⚠️ Já existe *${_dupItem.nome}* nessa sala (id ${_dupItem.id}, condição ${_dupItem.condicao || '?'}). Não dupliquei. Quer *atualizar* esse (condição/quantidade) ou é outro aparelho? Se for outro, me passa o nº de série ou patrimônio pra distinguir.`;
+                    } else {
                     const item = await inventarioService.inserirItem(itemPayload, userName);
                     // Anexa a foto que a pessoa mandou por WhatsApp (capturada no
                     // webhook, pode ter vindo turnos antes). Upload server-side →
@@ -9186,6 +9245,7 @@ async function processMessage(phone, text, raw = {}) {
                       }
                     }
                     reply = (reply ? reply + '\n\n' : '') + `✅ Item adicionado: ${item.nome}${item.codigo_patrimonio ? ` (${item.codigo_patrimonio})` : ''}${_fotoMsg}`;
+                    }
                     }
                   }
                 }
@@ -9475,6 +9535,10 @@ async function processMessage(phone, text, raw = {}) {
     }
   }
 
+  // COORD-RESPONSE-STATE-STUCK (12/06): rastreia se um relay foi efetivamente enviado
+  // neste turn — usado abaixo pra NÃO sobrescrever a confirmação com "problema técnico"
+  // quando o mesmo turn também trouxe um <<COORDINATION_RESPONSE>> malformado (msg mista).
+  let coordRequestHandledThisTurn = false;
   // Sprint 16 → revisão 26/05 — <<COORDINATION_REQUEST>>: processa TODOS os
   // markers (antes só o primeiro). Caso real: broadcast pra 4 pessoas em 1 turn.
   {
@@ -9508,6 +9572,7 @@ async function processMessage(phone, text, raw = {}) {
         if (result.ok) okCount++;
         else { failCount++; failedRecipients.push(`${item.recipient_name} (${result.reason})`); failedResults.push(result); }
       }
+      if (okCount > 0) coordRequestHandledThisTurn = true;
       if (parsedCoord.items.length > 1) {
         console.log(`[CoordinationRequest] batch: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
       }
@@ -9637,10 +9702,17 @@ async function processMessage(phone, text, raw = {}) {
     if (parsedCoordResp && parsedCoordResp.malformed) {
       console.warn('[CoordinationResponse] WARN: malformed marker, dropping block');
       await logMarker(collab.id, 'COORDINATION_RESPONSE', 'rejected', 'schema_invalid', null);
-      // BUG-4 (11/06): anti-confab — cleanText pode conter prosa otimista como "Transmiti sua
-      // resposta ao João!" quando a ação NÃO foi executada (marker malformado). Trocar por
-      // mensagem neutra evita que o remetente acredite que a resposta chegou ao destinatário.
-      reply = 'Recebi sua resposta, mas encontrei um problema técnico ao processá-la. Pode tentar novamente?';
+      if (coordRequestHandledThisTurn) {
+        // COORD-RESPONSE-STATE-STUCK (12/06): um <<COORDINATION_REQUEST>> JÁ foi enviado
+        // neste mesmo turn (mensagem mista). NÃO sobrescrever a confirmação do relay com
+        // "problema técnico" — o recado FOI entregue. Só remove o marker RESPONSE malformado.
+        reply = parsedCoordResp.cleanText || reply;
+      } else {
+        // BUG-4 (11/06): anti-confab — cleanText pode conter prosa otimista como "Transmiti sua
+        // resposta ao João!" quando a ação NÃO foi executada (marker malformado). Trocar por
+        // mensagem neutra evita que o remetente acredite que a resposta chegou ao destinatário.
+        reply = 'Recebi sua resposta, mas encontrei um problema técnico ao processá-la. Pode tentar novamente?';
+      }
     } else if (parsedCoordResp) {
       const result = await applyCoordinationResponseAction(collab, parsedCoordResp, inboundVerbatimText);
       await logMarker(
@@ -10359,12 +10431,26 @@ function brtDateOf(isoStr) {
 }
 
 async function logConversation(collaboratorId, direction, content) {
-  await supabase.from('conversation_history').insert({
+  const row = {
     collaborator_id: collaboratorId,
     direction,
     message_type: 'text',
     content,
-  });
+  };
+  // MEDIA-IMG-CONTEXT-LOST (Rose 11/06): a análise de imagem/vídeo/PDF é injetada no
+  // `content` da inbound pelo webhook, mas `media_extracted_text` ficava NULL — então a
+  // análise sumia quando a msg saía da janela de 5 do contexto reconstruído. Persiste a
+  // análise no campo dedicado pra que o system prompt possa repiná-la (renderRecentMediaBlock).
+  if (direction === 'inbound') {
+    try {
+      const media = extractMediaAnalysis(content);
+      if (media) {
+        row.media_type = media.media_type;
+        row.media_extracted_text = media.media_extracted_text;
+      }
+    } catch (_) { /* nunca quebra o log */ }
+  }
+  await supabase.from('conversation_history').insert(row);
 }
 
 // ==================== WEEKLY MEMORY CONSOLIDATION ====================
