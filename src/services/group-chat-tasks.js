@@ -21,6 +21,13 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
         if (typeof a.due_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(a.due_date)) {
           row.due_date = a.due_date;
         }
+        // Lembrete agendado ("me lembra segunda…"): grava remind_at (o cron de deadlines
+        // dispara o aviso quando remind_at <= now e ainda não foi enviado). Sem isso, "te
+        // lembro" vira promessa vazia. Aceita ISO datetime; ignora se inválido.
+        if (typeof a.remind_at === 'string' && a.remind_at.trim()) {
+          const d = new Date(a.remind_at.trim());
+          if (!Number.isNaN(d.getTime())) row.remind_at = d.toISOString();
+        }
         // Recorrência (Sprint 4): armazena a RRULE e materializa as instâncias logo após —
         // espelha o caminho do engine (applyTaskActions). NUNCA criar várias cópias manuais.
         if (typeof a.recurrence_rule === 'string' && a.recurrence_rule.trim()) {
