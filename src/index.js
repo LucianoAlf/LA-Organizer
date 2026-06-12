@@ -5,6 +5,7 @@ const internalApi = require('./internal-api');
 const { startCrons } = require('./services/ritual');
 const shutdown = require('./services/shutdown');
 const { startRealtime } = require('./realtime/tom-realtime');
+const { startGroupChatRealtime } = require('./realtime/group-chat-realtime');
 const whatsapp = require('./services/whatsapp');
 const supabase = require('./supabase/client');
 const webhookPersistence = require('./services/webhook-persistence');
@@ -30,6 +31,8 @@ const server = app.listen(config.port, '127.0.0.1', () => {
   startCrons();
   // Sprint 34 — Realtime subscriber (event-driven, complementa o cron de 15min)
   startRealtime((phone, msg) => whatsapp.sendMessage(phone, msg), supabase);
+  // Fase 2 — TOM engaja no chat de grupo (escuta role='member', responde role='tom')
+  startGroupChatRealtime(supabase);
   console.log('✅ TOM pronto. Aguardando mensagens...');
   // Sinaliza ready pro PM2 (ecosystem.config.js usa wait_ready:true)
   if (typeof process.send === 'function') process.send('ready');

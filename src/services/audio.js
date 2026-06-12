@@ -345,4 +345,7 @@ module.exports = {
   transcribeAudio, findAudioUrl, isProviderConfigured, downloadMediaFromUazapi, extractMessageId,
   // Sprint 31 — exportados pra teste (glossário/multipart da transcrição).
   buildTranscriptionPrompt, buildMultipart, getCollaboratorNames,
+  // Chat de grupo Fase 2 — transcrição de baixo nível a partir de buffer (áudio do bucket,
+  // não-encriptado, sem message_id UAZAPI). Reusa o mesmo Whisper + glossário de domínio.
+  whisperTranscribe,
 };

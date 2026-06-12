@@ -1,0 +1,49 @@
+// src/services/group-chat-prompt.test.js
+const assert = require('node:assert');
+const { test } = require('node:test');
+const { buildGroupChatPrompt } = require('./group-chat-prompt');
+
+const base = {
+  soulText: 'Eu sou o TOM.',
+  groupName: 'Financeiro',
+  members: [{ name: 'Ana Paula' }, { name: 'Rose' }],
+  pool: [
+    { title: 'Fechar caixa', status: 'pending', due_date: '2026-06-13' },
+    { title: 'Conferir NF', status: 'done', due_date: null },
+  ],
+  history: [
+    { who: 'Ana Paula', role: 'member', content: 'gente, fechamos o caixa?' },
+    { who: 'Rose', role: 'member', content: 'ainda não' },
+  ],
+  senderName: 'Rose',
+};
+
+test('inclui identidade, nome do grupo e membros', () => {
+  const p = buildGroupChatPrompt(base);
+  assert.match(p, /Eu sou o TOM\./);
+  assert.match(p, /Financeiro/);
+  assert.match(p, /Ana Paula/);
+  assert.match(p, /Rose/);
+});
+
+test('inclui o pool e o marker TASK_UPDATE', () => {
+  const p = buildGroupChatPrompt(base);
+  assert.match(p, /Fechar caixa/);
+  assert.match(p, /<<TASK_UPDATE>>/);
+});
+
+test('inclui o histórico do chat com quem falou', () => {
+  const p = buildGroupChatPrompt(base);
+  assert.match(p, /Ana Paula.*fechamos o caixa/s);
+});
+
+test('marca quem é o remetente atual', () => {
+  const p = buildGroupChatPrompt(base);
+  assert.match(p, /Rose/);
+});
+
+test('robusto a dados vazios', () => {
+  const p = buildGroupChatPrompt({ soulText: 'X', groupName: 'G', members: [], pool: [], history: [], senderName: 'Y' });
+  assert.equal(typeof p, 'string');
+  assert.ok(p.length > 0);
+});
