@@ -30,6 +30,24 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
 
 type TomAction = { kind: string; status: 'ok' | 'fail'; label: string; detail?: string };
 
+// Baixa o relatório como um documento HTML COMPLETO e estilizado (abre bonito no celular),
+// não um fragmento cru. Espelha o visual do card (cabeçalho verde, cartão).
+function downloadReportHtml(rawContent: string) {
+  const safe = DOMPurify.sanitize(rawContent, PURIFY);
+  const doc = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8">`
+    + `<meta name="viewport" content="width=device-width, initial-scale=1"><title>Resumo TOM</title><style>`
+    + `body{font-family:-apple-system,'Segoe UI',Roboto,sans-serif;margin:0;background:#eef1e6;color:#1a1a1a}`
+    + `.card{max-width:640px;margin:20px auto;background:#fff;border:1px solid #A3BE50;border-radius:16px;overflow:hidden;box-shadow:0 2px 14px rgba(0,0,0,.08)}`
+    + `.bd{padding:18px 4px}h3,h4{background:#A3BE50;color:#1a1a1a;margin:0 0 14px;padding:10px 16px;font-size:16px}`
+    + `p{line-height:1.55;margin:0 0 12px;padding:0 16px}ul{margin:0 0 12px;padding:0 16px 0 38px}li{margin:5px 0}em{color:#5a5a5a}strong{color:#1a1a1a}`
+    + `</style></head><body><div class="card"><div class="bd">${safe}</div></div></body></html>`;
+  const blob = new Blob([doc], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'resumo-tom.html'; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1500);
+}
+
 const KIND_ICON: Record<string, typeof Calendar> = {
   task: ListTodo, event: Calendar, project: FolderKanban,
   checkpoint: Target, checklist: ListChecks, note: StickyNote,
@@ -115,7 +133,7 @@ export function MessageBubble({ msg, showAvatar, mine }: { msg: ChatMsg; showAva
         </div>
         {msg.kind === 'report' && (
           <div className="flex gap-xs mt-xs">
-            <a href={`data:text/html;charset=utf-8,${encodeURIComponent(msg.content ?? '')}`} download="resumo.html" className="text-label text-fg-muted hover:text-fg">⬇ Baixar</a>
+            <button type="button" onClick={() => downloadReportHtml(msg.content ?? '')} className="text-label text-fg-muted hover:text-fg">⬇ Baixar HTML</button>
           </div>
         )}
       </div>
