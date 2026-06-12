@@ -43,7 +43,7 @@ export function Composer({ onSend, upload }: Props) {
 
   if (rec.recording) {
     return (
-      <div className="flex items-center gap-sm border-t border-border p-sm bg-bg-surface">
+      <div className="shrink-0 flex items-center gap-sm border-t border-border p-sm bg-bg-surface">
         <button type="button" onClick={rec.cancel} className="w-8 h-8 grid place-items-center rounded-full text-danger" aria-label="Cancelar"><X size={18} /></button>
         <div className="flex-1 text-body-sm text-danger animate-pulse">● Gravando… {String(Math.floor(rec.seconds / 60)).padStart(2, '0')}:{String(rec.seconds % 60).padStart(2, '0')}</div>
         <button type="button" onClick={stopAudio} className="w-8 h-8 grid place-items-center rounded-full bg-tom text-black" aria-label="Enviar áudio"><Send size={16} /></button>
@@ -51,7 +51,7 @@ export function Composer({ onSend, upload }: Props) {
     );
   }
   return (
-    <div className="flex items-center gap-xs border-t border-border p-sm bg-bg-surface">
+    <div className="shrink-0 flex items-center gap-xs border-t border-border p-sm bg-bg-surface">
       <input ref={fileRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={onFile} />
       <button type="button" onClick={() => fileRef.current?.click()} disabled={busy} className="w-8 h-8 grid place-items-center rounded-full bg-bg-elevated text-fg-muted disabled:opacity-50" aria-label="Anexar"><Paperclip size={18} /></button>
       <input value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendText(); } }}
