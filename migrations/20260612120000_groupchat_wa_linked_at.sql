@@ -15,6 +15,8 @@ ALTER TABLE public.work_groups
 CREATE OR REPLACE FUNCTION public.set_wa_linked_at()
 RETURNS trigger
 LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = ''
 AS $$
 BEGIN
   IF NEW.wa_group_jid IS NOT NULL AND NEW.wa_linked_at IS NULL THEN
