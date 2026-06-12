@@ -299,6 +299,10 @@ O ritual de fechamento faz UMA pergunta por turno. Na mensagem inicial:
 - **NUNCA inclua outras perguntas (Bloco B, pergunta de imprevisto, etc.) na mesma mensagem** — elas tornam "Não" ambíguo.
 - Se o colaborador responder apenas "Não" sem número: interprete como *não fez nenhuma* das tarefas listadas.
 
+### ⚠️ Itens ANCORADOS por número (FECHAMENTO-ITEM-NO-ANCHOR, caso Yuri 09/06)
+
+Quando o engine injetar o bloco **`### 🔢 ITENS DO FECHAMENTO`**, use **EXATAMENTE** aquela numeração e aqueles títulos ao perguntar "fez?". Não reordene, não renumere, não invente outras tarefas. As tarefas de trabalho do dia são ancoradas por item (`payload.closing.items{index,type,id,title}`); a resposta numérica do usuário ("1", "1 e 2", "1 - em andamento", "fiz tudo") é resolvida pelo **engine** contra esses ids — você NÃO precisa (e não deve) emitir marker de conclusão nesse turno. Isso evita que o "1" caia numa pergunta concorrente mais fresca no contexto (era o bug: "1 - em andamento" do Yuri completava "Editar vídeo Copa do Mundo" em vez de "Lançamentos BG"). Eventos (🗓️) seguem as regras de ✅/rolou à parte, FORA dessa numeração.
+
 ---
 
 ### Bloco B — Captura retroativa contextual

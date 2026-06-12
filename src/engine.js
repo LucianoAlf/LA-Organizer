@@ -31,6 +31,8 @@ const notesService = require('./services/notes');
 const workGroups = require('./services/work-groups');
 const { detectApprovalReply, stripReplyScaffold } = require('./events/detect-approval-reply');
 const { isFutureCompletion } = require('./utils/complete-guards');
+const { sanitizeOptimisticConfirm, hasOptimisticConfirm } = require('./lib/optimistic-confirm');
+const { classifyDupChoice } = require('./lib/dup-choice');
 const { buildClosingItems, parseClosingReply } = require('./utils/closing-reply');
 const { buildCoordinationResponseNotification } = require('./services/coordination-notify');
 const { isContextQuietField, validateContextQuietField } = require('./services/prefs-quiet-context');
@@ -7574,6 +7576,79 @@ async function processMessage(phone, text, raw = {}) {
     console.warn('[FinanceSource] consumer err:', e.message);
   }
 
+  // ---- FECHAMENTO-ITEM-NO-ANCHOR (caso Yuri 09/06): resposta numerada do fechamento ----
+  // O fechamento abriu UMA intent ancorada com os itens numerados (payload.closing.items).
+  // Aqui o ENGINE resolve a resposta ("1", "1 e 2", "1 - em andamento", "fiz tudo") contra
+  // ESSES ids — sem o LLM chutar contra a intent concorrente mais fresca. Espelha o
+  // ALVO-FUTURO-RESPOSTA-CURTA, no caminho do fechamento. Short-circuit: o estado fica
+  // determinístico e a mensagem é montada pelo engine (com a barrinha Bloco C).
+  try {
+    const closingIntent = _openIntents.find((i) =>
+      i.kind === 'confirmation' && i.payload && i.payload.closing &&
+      Array.isArray(i.payload.closing.items) && i.payload.closing.items.length &&
+      withinConfirmWindow(i.asked_at, 16 * 60));
+    if (closingIntent) {
+      const items = closingIntent.payload.closing.items;
+      const _closingReplyText = stripReplyScaffold(String(text || '')).userText;
+      const parsed = parseClosingReply(_closingReplyText, items.length);
+      if (parsed.matched) {
+        const completed = [];
+        const progressItems = [];
+        const noneItems = [];
+        for (let k = 0; k < items.length; k++) {
+          const it = items[k];
+          const st = parsed.statuses[k];
+          if (st === 'done') {
+            let ok = false;
+            try {
+              if (it.type === 'event') {
+                const { error } = await supabase.from('events').update({ status: 'done' }).eq('id', it.id);
+                ok = !error;
+              } else {
+                const { error } = await supabase.from('tasks')
+                  .update({ status: 'done', completed_at: new Date().toISOString(), completed_by: collab.id })
+                  .eq('id', it.id);
+                ok = !error;
+              }
+            } catch (cEx) { console.warn('[Closing] complete err:', cEx.message); }
+            if (ok) completed.push(it); else noneItems.push(it); // falhou a escrita → não mente "feito"
+          } else if (st === 'progress') {
+            progressItems.push(it);
+          } else {
+            noneItems.push(it);
+          }
+        }
+        await pendingIntents.resolveIntent(closingIntent.id, 'confirmed', `closing reply: ${completed.length}/${items.length} done`);
+
+        const nick = collab.nickname || String(collab.full_name || '').split(' ')[0] || 'você';
+        const mkBar = (done, total) => {
+          const pct = total ? Math.round((done / total) * 100) : 0;
+          const fill = Math.round((pct / 100) * 10);
+          return `${'▓'.repeat(fill)}${'░'.repeat(10 - fill)} ${pct}% (${done}/${total})`;
+        };
+        const parts = [`Fechamento, ${nick} 👽`, ''];
+        if (completed.length) parts.push(`✅ Fechei: ${completed.map((c) => `*${c.title}*`).join(', ')}`);
+        if (progressItems.length) parts.push(`⏳ Em andamento: ${progressItems.map((c) => `*${c.title}*`).join(', ')}`);
+        if (noneItems.length) parts.push(`⭕ Faltou: ${noneItems.map((c) => `*${c.title}*`).join(', ')}`);
+        parts.push('');
+        parts.push(mkBar(completed.length, items.length));
+        if (completed.length === items.length) parts.push('\nDia fechado, mandou bem! 💪');
+        else if (!completed.length) parts.push('\nMe diz: o que travou hoje?');
+        else parts.push('\nBora fechar o resto amanhã.');
+        const reply = parts.join('\n');
+
+        try {
+          await whatsapp.sendMessage(phone, reply);
+          await logConversation(collab.id, 'outbound', reply);
+        } catch (postErr) { console.warn('[Closing] post-send err:', postErr.message); }
+        console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now() - _t0}ms (closing_anchored:${completed.length}/${items.length})`);
+        return;
+      }
+    }
+  } catch (e) {
+    console.warn('[Closing] interceptor err:', e.message);
+  }
+
   // ---- RSVP determinístico (pré-LLM): "sim/não/talvez" cru → resolve o CONVITE pendente ----
   // Causa-raiz RSVP-WRONG-EVENT-BARE (Luciano 09/06): um "Sim" solto, com vários eventos no
   // contexto, fazia o LLM confabular o evento ERRADO e NÃO emitir o marker rsvp → presença nunca
@@ -8482,8 +8557,11 @@ async function processMessage(phone, text, raw = {}) {
       // pegava criação/agendamento, então "Fechado" passava batido e a blindagem
       // não disparava quando o complete era rejeitado (schema_invalid).
       const optimisticPattern = /\b(registrad|agendad|reagendad|atualizad|salvei|salvo|guardad|marqu(ei|amos)|criad|conclu[ií]|fechad|fechei|resolvid|finalizad|encerrad|reagendando|agendando|registrando|feito[!.*\]]?|pronto[!.]?\s|bora[!.]?$)/i;
-      if (optimisticPattern.test(base)) {
-        base += '\n\n_⚠️ Tive um problema técnico ao gravar isso. Não confirmei nada no banco — me passa de novo o que você quer registrar?_';
+      if (optimisticPattern.test(base) || hasOptimisticConfirm(base)) {
+        // AUDIT-OPTIMISTIC-CONFIRM: rebaixa a confirmação otimista ANTES do aviso
+        // (antes só anexava o aviso e a frase "✅ Criado!" continuava acima dele).
+        base = sanitizeOptimisticConfirm(base, 'failed');
+        base += (base ? '\n\n' : '') + '_⚠️ Tive um problema técnico ao gravar isso. Não confirmei nada no banco — me passa de novo o que você quer registrar?_';
       }
       reply = base;
     } else if (parsedTask) {
@@ -8559,7 +8637,10 @@ async function processMessage(phone, text, raw = {}) {
         // duplicata no fim. Antes, sobrescrever apagava todos os demais itens do turno.
         {
           const _dupQ = _buildIntegrityConfirmText(integrityPayload);
-          const _prev = _stripPrematureCreateConfirm((parsedTask.cleanText || '').trim());
+          // AUDIT-OPTIMISTIC-CONFIRM (caso Juliana): integrity bloqueou = NADA persistiu.
+          // Rebaixa o "✅ <título>" otimista (o strip antigo só pegava VERBO após o emoji,
+          // deixava "✅ *Conversar com a Dai*" passar contradizendo o menu logo abaixo).
+          const _prev = sanitizeOptimisticConfirm((parsedTask.cleanText || '').trim(), 'failed');
           reply = _prev ? `${_prev}\n\n${_dupQ}` : _dupQ;
           // Sprint 31.10 — ESTE turno terminou pedindo confirmação de duplicata
           // (1/2/3). O detector ACTIONABLE_NO_MARKER lê esse flag e NÃO acusa:
@@ -10397,6 +10478,20 @@ async function sendRitual(collaboratorId, ritualType, opts = {}) {
 
   await whatsapp.sendMessage(collab.phone, finalText);
   await logConversation(collab.id, 'outbound', finalText);
+
+  // FECHAMENTO-ITEM-NO-ANCHOR: abre UMA intent ancorada com os itens numerados. A
+  // resposta numérica do usuário ("1", "1 e 2", "1 - em andamento") é resolvida pelo
+  // engine contra estes ids (parseClosingReply), sem o LLM chutar alvo concorrente.
+  if (ritualKey === 'fechamento' && _closingItems.length) {
+    try {
+      await pendingIntents.openIntent(
+        collab.id,
+        'confirmation',
+        { action: 'complete', closing: { ref_date: todaySaoPaulo(), items: _closingItems } },
+        finalText.slice(0, 500)
+      );
+    } catch (e) { console.warn('[Closing] openIntent err:', e.message); }
+  }
 
   const today = todaySaoPaulo();
   // Fatia G (RITUAL-NO-RETRY): quando chamado pelo dispatcher.fireRitual, o claim
