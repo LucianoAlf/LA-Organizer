@@ -38,10 +38,12 @@ export function MessageBubble({ msg, showAvatar, mine }: { msg: ChatMsg; showAva
       ? <img src={msg.sender_avatar} alt="" className="w-7 h-7 rounded-full object-cover shrink-0" />
       : <span className="w-7 h-7 rounded-full bg-bg-elevated grid place-items-center text-label text-fg-muted shrink-0">{firstName(msg.sender_name)[0]}</span>;
 
+  // tom-tint é creme FIXO (não muda no dark mode), então o texto da bolha do TOM precisa
+  // ser sempre escuro — senão herda text-fg (branco no dark) e fica ilegível sobre o creme.
   const bubbleCls = mine
     ? 'bg-tom text-black rounded-2xl rounded-br-sm'
     : isTom
-      ? 'bg-tom-tint border border-tom rounded-2xl rounded-bl-sm'
+      ? 'bg-tom-tint text-black border border-tom rounded-2xl rounded-bl-sm'
       : 'bg-bg-surface border border-border rounded-2xl rounded-bl-sm';
 
   return (
@@ -64,7 +66,7 @@ export function MessageBubble({ msg, showAvatar, mine }: { msg: ChatMsg; showAva
               ? <div className="rounded-md border border-tom overflow-hidden text-body-sm break-words [&_h4]:bg-tom [&_h4]:text-black [&_h4]:px-sm [&_h4]:py-xs [&_h4]:font-bold [&>div]:p-sm [&_li]:my-0.5" dangerouslySetInnerHTML={{ __html: html }} />
               : <div className="text-body-sm leading-relaxed break-words [&_a]:underline [&_ul]:list-disc [&_ul]:pl-4" dangerouslySetInnerHTML={{ __html: html }} />
           )}
-          <div className={`text-[10px] mt-0.5 ${mine ? 'text-black/60' : 'text-fg-muted'}`}>{hm(msg.created_at)}</div>
+          <div className={`text-[10px] mt-0.5 ${mine || isTom ? 'text-black/60' : 'text-fg-muted'}`}>{hm(msg.created_at)}</div>
         </div>
         {msg.kind === 'report' && (
           <div className="flex gap-xs mt-xs">
