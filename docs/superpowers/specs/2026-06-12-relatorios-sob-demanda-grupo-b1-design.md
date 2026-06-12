@@ -39,7 +39,7 @@ Núcleo determinístico. Funções:
 - **`windowBounds(window, now)`** (pura) → `{ start, end, label }` para `hoje | semana | mes`, em America/Sao_Paulo. Usa os helpers de data locais (`todaySP`/`localYmd` de `utils/date.ts` no front; no backend, equivalente já usado pelos services) — **nunca** `toISOString().slice(0,10)` (bug de UTC após 21h BRT, known issue `LOCALYMD-UTC-SHIFT`). `semana` = segunda a domingo da semana corrente; `mes` = 1º ao último dia do mês corrente.
 
 - **Queries por fonte** (cada uma traz a lista COMPLETA do período, sem `limit` artificial que trunque):
-  - `queryAgenda(supabase, groupId, bounds)` → eventos do grupo com `start_at` no período: `{ title, start_at, end_at, location, modality }`. Ordena por `start_at`.
+  - `queryAgenda(supabase, groupId, bounds)` → **a "agenda do grupo" = TAREFAS do grupo com `due_date` no período** (decisão de design: `events` não é group-scoped no banco; só `tasks.assigned_group_id` é). Tarefas `assigned_group_id=groupId`, `status != 'done'`, `due_date` entre bounds.start e bounds.end, **ordenadas por `due_date`** (visão cronológica/timeline). Campos: `{ title, due_date, responsável }`. (Difere de `queryTasks`, que lista o pool inteiro por baldes; aqui é a fatia DATADA em ordem de data.)
   - `queryTasks(supabase, groupId, bounds)` → tarefas `assigned_group_id=groupId`, `status != 'done'`, agrupadas em 3 baldes: **com prazo no período**, **vence em breve / esta semana** (due_date entre hoje e +7d), **sem prazo**. Campos: `{ title, due_date, responsável (completed_by/created_by→nome) }`.
   - `queryNotes(supabase, groupId, bounds)` → anotações compartilhadas com o grupo, recentes/no período: `{ title, snippet }`.
   - `queryChecklists(supabase, groupId, bounds)` → checklists operacionais do grupo no período + progresso (X/Y) e, quando houver, subtarefas/itens de checklist das tarefas do grupo.
@@ -96,5 +96,6 @@ No parser de markers do chat de grupo, adicionar o caso `<<GROUP_REPORT>>`:
 
 ## Riscos conhecidos
 
-1. **Fonte de "anotações do grupo" e "checklists do grupo":** confirmar na implementação as tabelas/colunas exatas (notas compartilhadas com grupo; checklists operacionais por grupo) — o builder degrada gracioso se uma fonte não existir/retornar vazio, então não bloqueia o v1 (agenda+tarefas já entregam o valor central).
-2. **Janela "semana":** decidir segunda–domingo (padrão BR) e documentar; testar a virada de semana.
+1. **Agenda = tarefas datadas (resolvido):** `events` não é group-scoped no banco, então a agenda do grupo é definida como as tarefas do grupo com `due_date` no período. Eventos de calendário pessoais ficam fora (revisitar em projeto futuro se criarmos eventos de grupo).
+2. **Fonte de "anotações do grupo" e "checklists do grupo":** confirmar na implementação as tabelas/colunas exatas (notas compartilhadas com grupo; checklists operacionais por grupo) — o builder degrada gracioso se uma fonte não existir/retornar vazio, então não bloqueia o v1 (agenda+tarefas já entregam o valor central).
+3. **Janela "semana":** segunda–domingo (padrão BR); testar a virada de semana.
