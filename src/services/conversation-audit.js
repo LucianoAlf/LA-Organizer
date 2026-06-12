@@ -35,8 +35,11 @@ function signatureFor(category, collaboratorId, summary) {
     .digest('hex');
 }
 
-/** Extrai o bloco {...} da saída do LLM e valida cada finding. Nunca lança. */
-function parseFindings(raw) {
+/** Extrai o bloco {...} da saída do LLM e valida cada finding. Nunca lança.
+ * fallbackOccurredAt (AUDIT-NO-OCCURRED-AT, 12/06): quando o LLM não devolve occurred_at,
+ * usa o timestamp da última msg da janela analisada como proxy — assim o achado tem QUANDO
+ * aconteceu e a triagem pode comparar com corrigido_em dos known-issues (auto-supressão). */
+function parseFindings(raw, fallbackOccurredAt = null) {
   const s = String(raw == null ? '' : raw);
   const start = s.indexOf('{');
   const end = s.lastIndexOf('}');
@@ -53,7 +56,7 @@ function parseFindings(raw) {
     severity: VALID_SEVERITY.has(f.severity) ? f.severity : 'medio',
     summary: String(f.summary).slice(0, 200),
     evidence: String(f.evidence).slice(0, 1000),
-    occurred_at: f.occurred_at || null,
+    occurred_at: f.occurred_at || fallbackOccurredAt || null,
   }));
 }
 
@@ -69,21 +72,25 @@ async function loadConversation(sb, collaboratorId, hours = 24) {
   // Slice por mensagem subiu 600→1600: o corte em 600 cortava áudios longos no meio
   // e o auditor lia o corte como "áudio do usuário foi cortado" → FALSO POSITIVO de
   // confabulação (caso Fabi 08/06). Inclui transcrição de mídia como fallback.
-  return (data || [])
+  const rows = data || [];
+  // lastAt: created_at da última msg da janela — vira fallback de occurred_at dos findings.
+  const lastAt = rows.length ? rows[rows.length - 1].created_at : null;
+  const text = rows
     .map(m => `${m.direction === 'inbound' ? 'USUÁRIO' : 'TOM'}: ${String(m.content || m.media_extracted_text || '').slice(0, 1600)}`)
     .join('\n')
     .slice(0, 24000);
+  return { text, lastAt };
 }
 
 /** Analisa a conversa de um colaborador. Retorna Finding[]. NUNCA lança. */
 async function auditConversation(sb, chat, collaborator, hours = 24) {
   try {
-    const convo = await loadConversation(sb, collaborator.id, hours);
+    const { text: convo, lastAt } = await loadConversation(sb, collaborator.id, hours);
     if (convo.length < 80) return []; // conversa fina demais
     const { buildAuditMessages } = require('../prompts/conversation-audit-prompt');
     const { system, messages } = buildAuditMessages(convo);
     const r = await chat(system, messages, 1200);
-    return parseFindings(r && r.text);
+    return parseFindings(r && r.text, lastAt);
   } catch (err) {
     console.error(`[ConvAudit] erro p/ ${collaborator.full_name}:`, err.message);
     return [];

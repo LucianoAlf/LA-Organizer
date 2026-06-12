@@ -33,10 +33,10 @@ test('disengage: NÃO aciona em fala normal', () => {
   assert.equal(detectDisengageTrigger(''), false);
 });
 
-test('isEngaged: janela de 10 min', () => {
+test('isEngaged: janela de 8 min', () => {
   const now = new Date('2026-06-12T12:00:00Z');
-  assert.equal(isEngaged('2026-06-12T11:55:00Z', now), true);   // 5 min atrás
-  assert.equal(isEngaged('2026-06-12T11:49:00Z', now), false);  // 11 min atrás
+  assert.equal(isEngaged('2026-06-12T11:53:00Z', now), true);   // 7 min atrás — dentro da janela
+  assert.equal(isEngaged('2026-06-12T11:51:00Z', now), false);  // 9 min atrás — fora da janela
   assert.equal(isEngaged(null, now), false);
   assert.equal(isEngaged(undefined, now), false);
 });

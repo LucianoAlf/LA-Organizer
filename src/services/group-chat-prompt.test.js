@@ -47,3 +47,34 @@ test('robusto a dados vazios', () => {
   assert.equal(typeof p, 'string');
   assert.ok(p.length > 0);
 });
+
+test('inclui marker PROJECT_CREATE', () => {
+  const p = buildGroupChatPrompt(base);
+  assert.match(p, /<<PROJECT_CREATE>>/);
+});
+
+test('inclui marker EVENT_CREATE', () => {
+  const p = buildGroupChatPrompt(base);
+  assert.match(p, /<<EVENT_CREATE>>/);
+});
+
+test('inclui tag de silencio <<SILENCIO>>', () => {
+  const p = buildGroupChatPrompt(base);
+  assert.match(p, /<<SILENCIO>>/);
+});
+
+test('inclui bloco de memória de longo prazo quando passado', () => {
+  const p = buildGroupChatPrompt({ ...base, longTermMemory: 'Resumo da semana passada.' });
+  assert.match(p, /Resumo da semana passada\./);
+  assert.match(p, /Memória de longo prazo/);
+});
+
+test('mostra placeholder de memória quando longTermMemory é null', () => {
+  const p = buildGroupChatPrompt({ ...base, longTermMemory: null });
+  assert.match(p, /ainda construindo/);
+});
+
+test('exibe papel de facilitador', () => {
+  const p = buildGroupChatPrompt(base);
+  assert.match(p, /FACILITADOR/);
+});

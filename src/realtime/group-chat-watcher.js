@@ -15,6 +15,7 @@
 const { detectEngageTrigger, detectDisengageTrigger, isEngaged } = require('../services/group-chat-triggers');
 const { processGroupChatMessage } = require('../services/group-chat-engine');
 const { extractMediaText } = require('../services/group-chat-media');
+const { processGroupChatClosing } = require('../services/group-chat-closing');
 
 const POLL_MS = 4000;
 const BATCH = 10;
@@ -42,7 +43,10 @@ async function processOne(supabase, msg) {
 
   // 3) Estado de engajamento.
   const { data: group } = await supabase
-    .from('work_groups').select('tom_chat_engaged_at').eq('id', msg.group_id).maybeSingle();
+    .from('work_groups')
+    .select('tom_chat_engaged_at, tom_chat_closed_session_at, tom_chat_memory')
+    .eq('id', msg.group_id)
+    .maybeSingle();
   const engaged = isEngaged(group?.tom_chat_engaged_at, new Date());
 
   let shouldRun = false;
@@ -57,6 +61,13 @@ async function processOne(supabase, msg) {
       .update({ tom_chat_engaged_at: new Date().toISOString() }).eq('id', msg.group_id);
   }
   // else: silêncio — já está salvo (memória)
+
+  // Slide da janela: se engajado (mesmo em silêncio), renova tom_chat_engaged_at
+  // para que o idle de 8min seja medido a partir da ÚLTIMA mensagem, não do engajamento inicial.
+  if (engaged && !clearAfter) {
+    await supabase.from('work_groups')
+      .update({ tom_chat_engaged_at: new Date().toISOString() }).eq('id', msg.group_id);
+  }
 
   if (!shouldRun) return;
 
@@ -84,6 +95,20 @@ async function tick(supabaseMain) {
     for (const msg of rows || []) {
       try { await processOne(supabaseMain, msg); }
       catch (e) { console.error(`[GroupChat] erro msg=${msg.id}:`, e.message); }
+    }
+
+    // Varredura de silêncio: grupos engajados com idle >= 8min → card de fechamento.
+    // Barata: 1 select filtrando apenas os grupos com engajamento ativo.
+    const { data: idleGroups } = await supabaseMain
+      .from('work_groups')
+      .select('id, name, tom_chat_engaged_at, tom_chat_closed_session_at, tom_chat_memory')
+      .not('tom_chat_engaged_at', 'is', null);
+    for (const g of idleGroups || []) {
+      const idleMs = Date.now() - new Date(g.tom_chat_engaged_at).getTime();
+      if (idleMs >= 8 * 60 * 1000) {
+        try { await processGroupChatClosing({ supabase: supabaseMain, group: g }); }
+        catch (e) { console.error('[GroupChat] closing err:', e.message); }
+      }
     }
   } finally {
     _ticking = false;

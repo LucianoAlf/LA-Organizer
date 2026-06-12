@@ -2240,7 +2240,7 @@ function parseEventCreateMarker(text) {
   return { events: valid, cleanText, malformed: false, droppedItems };
 }
 
-async function applyEventActions(collaborator, events) {
+async function applyEventActions(collaborator, events, opts = {}) {
   let okCount = 0, failCount = 0;
   let integrityPayload = null;
   const last4 = String(collaborator.phone || '').slice(-4);
@@ -2474,7 +2474,8 @@ async function applyEventActions(collaborator, events) {
         }
       }
       // Sprint 28 — Notifica destinatário quando evento foi criado pra outra agenda.
-      if (eventRecipient && eventRecipient.phone && eventRecipient.id !== collaborator.id) {
+      // Fase 3 chat de grupo: opts.suppressNotify trava o zap (TOM cria evento no chat sem notificar).
+      if (!opts.suppressNotify && eventRecipient && eventRecipient.phone && eventRecipient.id !== collaborator.id) {
         try {
           const whenStr = (() => {
             try {
@@ -11812,4 +11813,8 @@ async function applyMonthlyPlan(collaborator, plan) {
   return { id: created?.id, action: 'created' };
 }
 
-module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamSummary, buildWeeklyRetrospective, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseEventUpdateMarker, parseWeeklyPlanMarker, parseHabitMarker, parseDndMarker, parseDataClassifyMarker, applyDataClassify, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, applyHabitActions, applyDnd, getDndState, consolidateMemoryFor, decayExpiredMemories, generateWeeklySummaryFor, updateCollaboratorProfile, looksLikeMemory, resolveTaskByShortId, applyEventUpdates, applyRsvp, applyPersonalListActions, applyAnnouncementAction, parseAnnouncementApprovalMarker, applyAnnouncementApproval, applyCoordinationRequestAction, parseCoordinationResponseMarker, applyCoordinationResponseAction, computeProgress, getRitualIntroDecision, countRecentRelaysToRecipient, buildRelayLimitHint, parseMonthlyPlanMarker, applyMonthlyPlan, handleFinanceAction, parseFinanceMarkers };
+module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamSummary, buildWeeklyRetrospective, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseEventUpdateMarker, parseWeeklyPlanMarker, parseHabitMarker, parseDndMarker, parseDataClassifyMarker, applyDataClassify, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, applyHabitActions, applyDnd, getDndState, consolidateMemoryFor, decayExpiredMemories, generateWeeklySummaryFor, updateCollaboratorProfile, looksLikeMemory, resolveTaskByShortId, applyEventUpdates, applyRsvp, applyPersonalListActions, applyAnnouncementAction, parseAnnouncementApprovalMarker, applyAnnouncementApproval, applyCoordinationRequestAction, parseCoordinationResponseMarker, applyCoordinationResponseAction, computeProgress, getRitualIntroDecision, countRecentRelaysToRecipient, buildRelayLimitHint, parseMonthlyPlanMarker, applyMonthlyPlan, handleFinanceAction, parseFinanceMarkers,
+  // Fase 3 chat de grupo — parsers/appliers de trabalho reusados no chat (auditados send-free;
+  // applyEventActions gateia o único send via opts.suppressNotify). WhatsApp inalterado.
+  parseEventCreateMarker, applyEventActions, parseCheckpointBatchMarker, applyCheckpointBatch,
+  parseChecklistActionMarker, applyChecklistAction };

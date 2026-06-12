@@ -2,7 +2,7 @@
 // Chat de grupo Fase 2 — gatilhos de engajamento (funções puras, sem I/O).
 // O TOM fica em silêncio até menção direta; despedida ao TOM o devolve ao silêncio.
 
-const ENGAGE_WINDOW_MIN = 10;
+const ENGAGE_WINDOW_MIN = 8;
 
 // Menção direta ao TOM. `tom` é ASCII → \btom\b é seguro (não casa "automático"/"tombou").
 // Cobre "@tom", "fala tom", "tom,", "tom?" e o nome isolado.
