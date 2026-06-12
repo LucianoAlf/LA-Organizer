@@ -28,7 +28,9 @@ export function MessageBubble({ msg, showAvatar, mine }: { msg: ChatMsg; showAva
   const isTom = msg.role === 'tom';
   const html = useMemo(() => {
     if (!msg.content) return '';
-    const raw = msg.kind === 'report' ? msg.content : (marked.parse(msg.content, { async: false }) as string);
+    // breaks:true → cada \n vira <br> (estilo WhatsApp: quebras de linha do TOM são literais,
+    // preservando a hierarquia semântica em vez de virar texto corrido).
+    const raw = msg.kind === 'report' ? msg.content : (marked.parse(msg.content, { async: false, breaks: true }) as string);
     return DOMPurify.sanitize(raw, PURIFY);
   }, [msg.content, msg.kind]);
 

@@ -72,8 +72,8 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
       supabase, groupId, senderCollabId, actions: parsedTask.actions,
     });
     reply = (parsedTask.cleanText || '').trim();
-    if (created.length) confirmLines.push(`✅ Criei no pool: ${created.map((t) => t.title).join(', ')}`);
-    if (completed.length) confirmLines.push(`✔️ Concluí: ${completed.map((t) => t.title).join(', ')}`);
+    if (created.length) confirmLines.push(`✅ **Tarefa(s) no pool:** ${created.map((t) => t.title).join(', ')}`);
+    if (completed.length) confirmLines.push(`✔️ **Concluída(s):** ${completed.map((t) => t.title).join(', ')}`);
     if (failed.length && !created.length && !completed.length) {
       confirmLines.push('_não consegui registrar agora — me confirma de novo?_');
     }
@@ -93,7 +93,7 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
         reply = (parsedProject.cleanText || '').trim();
         const projName = parsedProject.project.name || 'projeto';
         if (result && !result.error) {
-          confirmLines.push(`✅ Projeto "${projName}" criado.`);
+          confirmLines.push(`📁 **Projeto criado:** ${projName}`);
         } else {
           // Motivo real do engine (ex.: gate de permissão) — não "tente de novo" genérico.
           const motivo = (result && result.userFacingReply) ? result.userFacingReply : 'não rolou agora.';
@@ -122,7 +122,8 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
       if (collab) {
         await applyEventActions(collab, parsedEvent.events, { suppressNotify: true });
         reply = (parsedEvent.cleanText || '').trim();
-        confirmLines.push(`✅ Evento criado no calendário.`);
+        const evTitles = parsedEvent.events.map((e) => e.title).filter(Boolean).join(', ') || 'compromisso';
+        confirmLines.push(`📅 **Evento criado:** ${evTitles}`);
       } else {
         reply = (parsedEvent.cleanText || '').trim();
         confirmLines.push('⚠️ Não consegui identificar o colaborador para criar o evento.');
@@ -147,7 +148,7 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
         await applyCheckpointBatch(collab, parsedCheckpoint);
         reply = (parsedCheckpoint.cleanText || '').trim();
         const count = (parsedCheckpoint.items || []).length;
-        confirmLines.push(`✅ ${count} checkpoint(s) criado(s).`);
+        confirmLines.push(`🎯 **${count} checkpoint(s) criado(s)**`);
       } else {
         reply = (parsedCheckpoint.cleanText || '').trim();
         confirmLines.push('⚠️ Não consegui identificar o colaborador para criar checkpoints.');
@@ -171,7 +172,7 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
       if (collab) {
         await applyChecklistAction(collab, parsedChecklist);
         reply = (parsedChecklist.cleanText || '').trim();
-        confirmLines.push('✅ Checklist atualizado.');
+        confirmLines.push('☑️ **Checklist atualizado**');
       } else {
         reply = (parsedChecklist.cleanText || '').trim();
         confirmLines.push('⚠️ Não consegui identificar o colaborador para atualizar o checklist.');
