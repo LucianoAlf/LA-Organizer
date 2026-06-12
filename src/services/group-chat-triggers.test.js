@@ -33,10 +33,11 @@ test('disengage: NÃO aciona em fala normal', () => {
   assert.equal(detectDisengageTrigger(''), false);
 });
 
-test('isEngaged: janela de 8 min', () => {
+test('isEngaged: sessão aberta enquanto engaged_at setado (cap 12h)', () => {
   const now = new Date('2026-06-12T12:00:00Z');
-  assert.equal(isEngaged('2026-06-12T11:53:00Z', now), true);   // 7 min atrás — dentro da janela
-  assert.equal(isEngaged('2026-06-12T11:51:00Z', now), false);  // 9 min atrás — fora da janela
+  assert.equal(isEngaged('2026-06-12T11:53:00Z', now), true);   // 7 min — sessão aberta
+  assert.equal(isEngaged('2026-06-12T11:30:00Z', now), true);   // 30 min — ainda aberta (ocioso = sweep)
+  assert.equal(isEngaged('2026-06-11T23:00:00Z', now), false);  // 13h — trava de segurança
   assert.equal(isEngaged(null, now), false);
   assert.equal(isEngaged(undefined, now), false);
 });

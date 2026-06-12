@@ -3388,6 +3388,40 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   // Se não tem sala explícita mas menciona item de inventário, busca "sala consultada recentemente"
   // persistida em collaborator_memory (TTL 2h) — mais confiável que regex em histórico.
   let salaRecentePersistida = null;
+  let pendingRoomResolved = false;
+  // STATEFUL: se o TOM acabou de perguntar "qual sala?" (múltiplas), resolve aqui a
+  // resposta curta do usuário ("8 teclas", "a segunda", "2") contra as opções que ele
+  // ofereceu (persistidas em inventario_sala_pending). Antes era stateless → a resposta
+  // caía no vazio e o TOM dizia "não tenho no contexto" (bug Rafinha 2026-06-12).
+  const _isShortReply = (lastUserMessage || '').trim().split(/\s+/).filter(Boolean).length <= 6;
+  if (!querSalaMatch && _isShortReply && collaborator && collaborator.id) {
+    try {
+      const { resolveRoomChoice } = require('./room-disambig');
+      const { data: memPend } = await supabase.from('collaborator_memory')
+        .select('content')
+        .eq('collaborator_id', collaborator.id)
+        .eq('memory_type', 'inventario_sala_pending')
+        .eq('is_active', true)
+        .gt('decay_at', new Date().toISOString())
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (memPend && memPend.content) {
+        const opts = JSON.parse(memPend.content);
+        const chosen = resolveRoomChoice(lastUserMessage, opts);
+        if (chosen && chosen.id) {
+          salaRecentePersistida = { sala_id: chosen.id, sala_nome: chosen.nome };
+          querSalaMatch = [`sala ${chosen.nome}`, chosen.nome];
+          pendingRoomResolved = true;
+          ctx.invSalaContext = { sala_id: chosen.id, sala_nome: chosen.nome };
+          await supabase.from('collaborator_memory').update({ is_active: false })
+            .eq('collaborator_id', collaborator.id)
+            .eq('memory_type', 'inventario_sala_pending').eq('is_active', true);
+          console.log(`[InvCtx] pending resolvido: "${lastUserMessage}" -> ${chosen.nome} (id=${chosen.id})`);
+        }
+      }
+    } catch (e) { console.warn('[InvCtx] pending resolve erro:', e.message); }
+  }
   if (!querSalaMatch && mencionaItemInv && collaborator) {
     try {
       const { data: memRec } = await supabase
@@ -3418,7 +3452,7 @@ async function buildSystemPrompt(collaborator, opts = {}) {
       ? { sala_id: salaRecentePersistida.sala_id ?? null, sala_nome: salaRecentePersistida.sala_nome ?? null }
       : null;
   }
-  const querConsultaSala = !!(querSalaMatch && (verbosConsultaSala.test(lowerMsg) || mencionaItemInv));
+  const querConsultaSala = !!(pendingRoomResolved || (querSalaMatch && (verbosConsultaSala.test(lowerMsg) || mencionaItemInv)));
   const matchInv = cmdsInv || matchInvForte || (matchUnidadeInv && matchVerboInv) || querConsultaSala || mencionaItemInv;
 
   if (matchInv) {
@@ -3440,14 +3474,19 @@ async function buildSystemPrompt(collaborator, opts = {}) {
         systemPrompt += `- "move_item" — registrar movimentação entre salas (params: item_nome, tipo, sala_destino_nome, [motivo])\n`;
         systemPrompt += `- "maintenance" — registrar manutenção (params: item_nome, tipo, descricao, [custo], [fornecedor_servico])\n`;
         systemPrompt += `- "shop_movement" — movimentação de estoque da lojinha (params: produto_nome, unidade_nome, tipo, quantidade)\n`;
-        systemPrompt += `- "ver" — consultar item por nome (params: nome)\n\n`;
+        systemPrompt += `- "ver" — consultar UM item específico por nome (params: nome). NÃO use pra sala.\n`;
+        systemPrompt += `- "query_room" — LISTAR os itens de uma sala (params: sala_nome, [unidade_nome]). Use quando pedirem "o que tem na sala X", "ver inventário da sala X", "lista a sala X".\n`;
+        systemPrompt += `- "query_rooms" — listar as salas de uma unidade (params: unidade_nome)\n\n`;
         systemPrompt += `REGRAS:\n`;
         systemPrompt += `- SEMPRE aninhe os dados em "params". NUNCA mande flat.\n`;
         systemPrompt += `- Use os nomes exatos das actions acima. NÃO invente "create", "update", "update_item", "remove" etc.\n`;
-        systemPrompt += `- Use os nomes PT dos campos (nome, sala_nome, unidade_nome, quantidade, condicao). NÃO use item_name, room, unit, quantity, etc.\n\n`;
+        systemPrompt += `- Use os nomes PT dos campos (nome, sala_nome, unidade_nome, quantidade, condicao). NÃO use item_name, room, unit, quantity, etc.\n`;
+        systemPrompt += `- Pra mostrar o CONTEÚDO de uma sala, use query_room (NUNCA "ver", que é só item). NUNCA diga "não tenho no contexto" nem mande "ver no app" — você CONSEGUE listar via query_room.\n`;
+        systemPrompt += `- Se você perguntou "qual sala?" e o user respondeu curto ("8 teclas", "a segunda"), RE-EMITA query_room com a sala escolhida (sala_nome completo, ex.: "Sala 8 Teclas").\n\n`;
         systemPrompt += `EXEMPLO de "edit_item":\n<<INVENTORY_ACTION>>\n{"action":"edit_item","params":{"nome":"Cadeiras","sala_nome":"Amy","quantidade":3}}\n<<END>>\n\n`;
         systemPrompt += `EXEMPLO de "delete_item":\n<<INVENTORY_ACTION>>\n{"action":"delete_item","params":{"nome":"Microfone 2","sala_nome":"Amy","motivo":"quebrou"}}\n<<END>>\n\n`;
-        systemPrompt += `EXEMPLO de "ver":\n<<INVENTORY_ACTION>>\n{"action":"ver","params":{"nome":"piano"}}\n<<END>>`;
+        systemPrompt += `EXEMPLO de "ver":\n<<INVENTORY_ACTION>>\n{"action":"ver","params":{"nome":"piano"}}\n<<END>>\n\n`;
+        systemPrompt += `EXEMPLO de "query_room":\n<<INVENTORY_ACTION>>\n{"action":"query_room","params":{"sala_nome":"Sala 8 Teclas","unidade_nome":"Campo Grande"}}\n<<END>>`;
 
         // Se usuário perguntou sobre uma sala específica, busca e injeta o detalhe
         if (querConsultaSala && querSalaMatch) {
@@ -3461,9 +3500,27 @@ async function buildSystemPrompt(collaborator, opts = {}) {
               const u = (unidadesCat || []).find(x => x.nome.toLowerCase().includes(unidadeMencionada.toLowerCase()));
               if (u) unidadeId = u.id;
             }
+            // Anti-truncamento: o regex /\bsala\s+(token)/ captura só "8" de "sala 8
+            // teclas" → falsa ambiguidade. Se o texto contém o NOME COMPLETO de uma sala
+            // do catálogo, usa ela direto (resolve "sala 8 teclas"). Bug Rafinha 2026-06-12.
+            let salaFullHit = null;
+            if (!(salaRecentePersistida && salaRecentePersistida.sala_id)) {
+              try {
+                const { normalize } = require('./room-disambig');
+                const msgNorm = normalize(lastUserMessage);
+                for (const sc of (salasCat || [])) {
+                  const nNorm = normalize(sc.nome);
+                  if (nNorm.length >= 4 && msgNorm.includes(nNorm)) {
+                    if (!salaFullHit || sc.nome.length > salaFullHit.nome.length) salaFullHit = sc;
+                  }
+                }
+              } catch (_) { /* normalize falhou — ignora, cai no fluxo normal */ }
+            }
             // Se veio de memória persistida, usa direto o sala_id (sem ambiguidade)
             let matches;
-            if (salaRecentePersistida && salaRecentePersistida.sala_id) {
+            if (salaFullHit) {
+              matches = [salaFullHit];
+            } else if (salaRecentePersistida && salaRecentePersistida.sala_id) {
               const { data: salaDireta } = await laReportClient
                 .from('salas').select('id, nome, tipo_sala, unidade_id, ativo')
                 .eq('id', salaRecentePersistida.sala_id).maybeSingle();
@@ -3475,6 +3532,23 @@ async function buildSystemPrompt(collaborator, opts = {}) {
               systemPrompt += `\n\n[SALA_CONSULTADA: "${nomeBuscado}" — nenhuma sala encontrada${unidadeMencionada ? ` na unidade ${unidadeMencionada}` : ''}]\n`;
             } else if (matches.length > 1) {
               systemPrompt += `\n\n[SALA_CONSULTADA: múltiplas salas "${nomeBuscado}" → ${matches.map(s => `${s.nome} (uid=${s.unidade_id}, id=${s.id})`).join(', ')}]\nPergunta ao usuário qual.\n`;
+              // STATEFUL: persiste as opções pra resolver a resposta curta do user no
+              // próximo turno ("8 teclas" → Sala 8 Teclas). TTL 12 min. Bug Rafinha.
+              if (collaborator && collaborator.id) {
+                try {
+                  const opts = matches.map(s => ({ id: s.id, nome: s.nome, unidade_id: s.unidade_id }));
+                  const decayIso = new Date(Date.now() + 12 * 60 * 1000).toISOString();
+                  await supabase.from('collaborator_memory').update({ is_active: false })
+                    .eq('collaborator_id', collaborator.id)
+                    .eq('memory_type', 'inventario_sala_pending').eq('is_active', true);
+                  await supabase.from('collaborator_memory').insert({
+                    collaborator_id: collaborator.id,
+                    memory_type: 'inventario_sala_pending',
+                    content: JSON.stringify(opts),
+                    importance: 'low', is_active: true, decay_at: decayIso,
+                  });
+                } catch (ePend) { console.warn('[InvCtx] erro persistir pending:', ePend.message); }
+              }
             } else {
               const detalhe = await inventarioService.detalheSala(matches[0].id, collaborator);
               const sala = detalhe.sala;

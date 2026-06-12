@@ -7729,7 +7729,8 @@ async function processMessage(phone, text, raw = {}) {
               await inventarioService.registrarManutencao({
                 item_id: mp.item_id, tipo: mp.tipo, descricao: mp.descricao,
                 custo: mp.custo, fornecedor_servico: mp.fornecedor_servico,
-              }, collab.full_name);
+                responsavel: mp.requester_name || null,  // MANUT-APPROVAL-NO-REQUESTER-NAME: persiste o solicitante no registro
+              }, `solicitado por ${mp.requester_name || 'desconhecido'}, aprovado por ${collab.full_name}`);
               await approvalsService.resolveApprovalByRef(supabase, mp.ref_id, 'confirmed', `aprovado por ${collab.full_name}`);
               if (mp.requester_phone) {
                 try { await whatsapp.sendMessage(mp.requester_phone, `✅ Sua solicitação de manutenção em *${mp.item_nome || 'item'}* foi aprovada por ${collab.full_name}.`); } catch (_) {}
@@ -9522,8 +9523,62 @@ async function processMessage(phone, text, raw = {}) {
                   }
                 }
               }
-            } else if (['query_room', 'query_shop', 'query_rooms'].includes(payload.action)) {
-              // Query handled by system prompt snapshot — reply already set by LLM
+            } else if (payload.action === 'query_room') {
+              // LISTA os itens de uma sala. Era no-op (dependia do snapshot do prompt,
+              // que só tem NOMES de sala, não os itens) → o TOM desviava pro app
+              // ("não tenho no contexto") ou tratava o nome da sala como item via 'ver'
+              // ("Nenhum item com 'Sala 8 Teclas'"). Bug Rafinha 2026-06-12. Agora o
+              // engine resolve a sala e lista de verdade (fonte da verdade = engine).
+              try {
+                const salaNome = p.sala_nome || p.nome || null;
+                let salaId = p.sala_id || null;
+                if (!salaId) {
+                  if (!salaNome) {
+                    reply = (reply ? reply + '\n\n' : '') + 'Qual sala você quer ver? (ex: "Sala 8 Teclas, Campo Grande")';
+                  } else {
+                    const unidadeId = await resolverUnidadeId(p.unidade_nome);
+                    const salas = await inventarioService.buscarSalaPorNome(salaNome, unidadeId);
+                    if (!salas.length) { reply = (reply ? reply + '\n\n' : '') + `Sala "${salaNome}" não encontrada${p.unidade_nome ? ` em ${p.unidade_nome}` : ''}.`; }
+                    else if (salas.length > 1) { reply = (reply ? reply + '\n\n' : '') + `Mais de uma sala bate "${salaNome}". Qual?\n${salas.map(s => `• ${s.nome}${s.unidades && s.unidades.nome ? ' · ' + s.unidades.nome : ''} (id ${s.id})`).join('\n')}`; }
+                    else salaId = salas[0].id;
+                  }
+                }
+                if (salaId) {
+                  const det = await inventarioService.detalheSala(salaId, collab);
+                  const s = det.sala; const itens = det.itens || [];
+                  const uNome = (s.unidades && s.unidades.nome) || '';
+                  const head = `📋 *${s.nome}*${uNome ? ` — ${uNome}` : ''}${s.tipo_sala ? ` · ${s.tipo_sala}` : ''}`;
+                  if (!itens.length) { reply = (reply ? reply + '\n\n' : '') + `${head}\n\n_Nenhum item ativo cadastrado nessa sala._`; }
+                  else {
+                    const linhas = itens.map(it => {
+                      const cond = it.condicao && it.condicao !== 'bom' ? ` — ${it.condicao}` : '';
+                      const qtd = it.quantidade && it.quantidade > 1 ? ` (x${it.quantidade})` : '';
+                      const st = it.status && it.status !== 'ativo' ? ` [${it.status}]` : '';
+                      return `• ${it.nome}${qtd}${cond}${st}`;
+                    }).join('\n');
+                    reply = (reply ? reply + '\n\n' : '') + `${head} · ${itens.length} ${itens.length === 1 ? 'item' : 'itens'}\n${linhas}`;
+                  }
+                }
+              } catch (e) {
+                if (e.code === 'ACCESS_DENIED') reply = (reply ? reply + '\n\n' : '') + e.message;
+                else throw e;
+              }
+            } else if (payload.action === 'query_rooms') {
+              // LISTA as salas de uma unidade (com contagem de itens). Era no-op.
+              try {
+                const unidadeId = await resolverUnidadeId(p.unidade_nome);
+                if (!unidadeId) { reply = (reply ? reply + '\n\n' : '') + 'De qual unidade? (Barra / Recreio / Campo Grande)'; }
+                else {
+                  const salas = await inventarioService.listarSalasPorUnidade(unidadeId);
+                  if (!salas.length) { reply = (reply ? reply + '\n\n' : '') + 'Nenhuma sala cadastrada nessa unidade.'; }
+                  else reply = (reply ? reply + '\n\n' : '') + `🏫 Salas:\n${salas.map(s => `• ${s.nome}${s.itens_count != null ? ` — ${s.itens_count} ${s.itens_count === 1 ? 'item' : 'itens'}` : ''}`).join('\n')}`;
+                }
+              } catch (e) {
+                if (e.code === 'ACCESS_DENIED') reply = (reply ? reply + '\n\n' : '') + e.message;
+                else throw e;
+              }
+            } else if (payload.action === 'query_shop') {
+              // Lojinha — ainda via snapshot do system prompt (reply já setado pelo LLM)
             } else {
               reply = (reply ? reply + '\n\n' : '') + `Ação ${payload.action} ainda não suportada.`;
             }

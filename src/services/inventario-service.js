@@ -55,7 +55,7 @@ async function listarSalasPorUnidade(unidadeId) {
 async function buscarSalaPorNome(nome, unidadeId) {
   let query = laReportClient
     .from('salas')
-    .select('id, nome, tipo_sala, unidade_id, ativo')
+    .select('id, nome, tipo_sala, unidade_id, ativo, unidades(nome)')
     .ilike('nome', `%${nome}%`)
     .eq('ativo', true);
   if (unidadeId) query = query.eq('unidade_id', unidadeId);

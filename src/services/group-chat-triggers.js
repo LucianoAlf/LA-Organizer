@@ -25,11 +25,15 @@ function detectDisengageTrigger(text) {
   return FAREWELL_RE.test(text);
 }
 
-function isEngaged(engagedAt, now = new Date(), windowMin = ENGAGE_WINDOW_MIN) {
+// Engajado = sessão ABERTA. `engaged_at` é o INÍCIO da sessão (não desliza). A sessão
+// fica aberta até o watcher fechá-la por ociosidade (silêncio >= 8min, medido pela última
+// mensagem real) ou despedida. O cap de horas é só uma trava de segurança contra estado preso.
+const ENGAGE_MAX_HOURS = 12;
+function isEngaged(engagedAt, now = new Date(), maxHours = ENGAGE_MAX_HOURS) {
   if (!engagedAt) return false;
   const t = new Date(engagedAt).getTime();
   if (Number.isNaN(t)) return false;
-  return now.getTime() - t < windowMin * 60 * 1000;
+  return now.getTime() - t < maxHours * 60 * 60 * 1000;
 }
 
-module.exports = { detectEngageTrigger, detectDisengageTrigger, isEngaged, ENGAGE_WINDOW_MIN };
+module.exports = { detectEngageTrigger, detectDisengageTrigger, isEngaged, ENGAGE_WINDOW_MIN, ENGAGE_MAX_HOURS };

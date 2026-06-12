@@ -49,10 +49,25 @@ async function processGroupChatClosing({ supabase, group }) {
       return;
     }
 
-    const histText = (histRows || [])
+    // ── Substance guard ───────────────────────────────────────────────────────
+    // Só vale postar card de fechamento se a sessão teve TRABALHO real (alguma ação do TOM,
+    // marcada por ‹‹ACTIONS›› no content) OU discussão substancial (>=4 mensagens de membro).
+    // Sessão trivial ("fala tom"/"oi") → desengaja em SILÊNCIO, sem poluir o chat com card vazio.
+    const rows = histRows || [];
+    const hadActions = rows.some((m) => m.role === 'tom' && (m.content || '').includes('‹‹ACTIONS››'));
+    const memberMsgs = rows.filter((m) => m.role === 'member').length;
+    if (!hadActions && memberMsgs < 4) {
+      await supabase.from('work_groups')
+        .update({ tom_chat_engaged_at: null, tom_chat_closed_session_at: new Date().toISOString() })
+        .eq('id', group.id);
+      console.log(`[GroupChat][closing] sessão sem substância — desengajado em silêncio grupo=${group.id}`);
+      return;
+    }
+
+    const histText = rows
       .map((m) => {
         const who = m.role === 'tom' ? 'TOM' : ((m.sender?.preferred_name || m.sender?.full_name || '').split(' ')[0] || 'alguém');
-        return `${who}: ${m.content || ''}`;
+        return `${who}: ${(m.content || '').replace('‹‹ACTIONS››', ' [ações: ')}`;
       })
       .join('\n') || '(sem mensagens nesta sessão)';
 
