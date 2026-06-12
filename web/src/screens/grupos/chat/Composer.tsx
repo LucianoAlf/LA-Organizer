@@ -32,6 +32,21 @@ export function Composer({ onSend, upload }: Props) {
     catch { showToast({ kind: 'error', title: 'Falha no anexo' }); }
     finally { setBusy(false); }
   }
+  async function startAudio() {
+    try {
+      await rec.start();
+    } catch (e: unknown) {
+      const err = e as { name?: string };
+      const negado = err?.name === 'NotAllowedError' || err?.name === 'SecurityError';
+      showToast({
+        kind: 'error',
+        title: negado ? 'Microfone bloqueado' : 'Não consegui acessar o microfone',
+        msg: negado
+          ? 'Libere o microfone no cadeado da barra de endereço e tente de novo.'
+          : 'Verifique se há um microfone disponível neste dispositivo.',
+      });
+    }
+  }
   async function stopAudio() {
     const blob = await rec.stop();
     if (!blob) return;
@@ -58,7 +73,7 @@ export function Composer({ onSend, upload }: Props) {
         placeholder="Mensagem pro grupo…" className="flex-1 bg-bg-app border border-border rounded-full px-md py-1.5 text-body-sm text-fg focus:outline-none focus:border-tom" />
       {text.trim()
         ? <button type="button" onClick={sendText} disabled={busy} className="w-8 h-8 grid place-items-center rounded-full bg-tom text-black disabled:opacity-50" aria-label="Enviar"><Send size={16} /></button>
-        : <button type="button" onClick={rec.start} disabled={busy} className="w-8 h-8 grid place-items-center rounded-full bg-bg-elevated text-fg-muted disabled:opacity-50" aria-label="Gravar áudio"><Mic size={18} /></button>}
+        : <button type="button" onClick={startAudio} disabled={busy} className="w-8 h-8 grid place-items-center rounded-full bg-bg-elevated text-fg-muted disabled:opacity-50" aria-label="Gravar áudio"><Mic size={18} /></button>}
     </div>
   );
 }
