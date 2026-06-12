@@ -109,7 +109,7 @@ export function GrupoWorkspace() {
 
   // Chat de grupo (Fase 1): drawer + badge de não-lidas (last_read em localStorage).
   const [chatOpen, setChatOpen] = useState(false);
-  const [chatFull, setChatFull] = useState(false);
+  const [chatCollapsed, setChatCollapsed] = useState(false);
   const chatPeek = useGroupChat(groupId);
   const lastReadKey = `chat-read-${groupId ?? ''}`;
   const [lastRead, setLastRead] = useState<string | null>(() => localStorage.getItem(lastReadKey));
@@ -233,7 +233,7 @@ export function GrupoWorkspace() {
   return (
     <div className="flex gap-lg w-full">
       {/* coluna de conteúdo — reserva espaço à direita (pr) quando o chat (fixo na viewport) abre */}
-      <div className={`flex-1 min-w-0 space-y-lg pb-2xl ${chatOpen ? 'md:pr-[424px] xl:pr-[484px] 2xl:pr-[544px]' : ''}`}>
+      <div className={`flex-1 min-w-0 space-y-lg pb-2xl ${chatOpen ? (chatCollapsed ? 'md:pr-[68px]' : 'md:pr-[386px] xl:pr-[446px] 2xl:pr-[506px]') : ''}`}>
       {/* header */}
       <header className="flex items-start gap-md">
         <div className="min-w-0 flex-1">
@@ -248,7 +248,7 @@ export function GrupoWorkspace() {
             <h1 className="text-screen-title truncate">👥 {group.name}</h1>
             <button
               type="button"
-              onClick={() => setChatOpen(true)}
+              onClick={() => { setChatOpen(true); setChatCollapsed(false); }}
               aria-label={`Abrir chat${unread > 0 ? ` · ${unread} não lidas` : ''}`}
               className="md:hidden ml-auto relative grid place-items-center h-9 w-9 rounded-md border border-border bg-bg-surface text-fg hover:bg-bg-elevated focus-ring"
             >
@@ -266,7 +266,7 @@ export function GrupoWorkspace() {
             variant={chatOpen ? 'primary' : 'secondary'}
             size="md"
             leadingIcon={<MessageSquare size={16} />}
-            onClick={() => setChatOpen(v => !v)}
+            onClick={() => { setChatOpen(v => !v); setChatCollapsed(false); }}
           >
             Chat{unread > 0 ? ` · ${unread}` : ''}
           </Button>
@@ -456,9 +456,9 @@ export function GrupoWorkspace() {
           groupId={groupId}
           groupName={group.name}
           membersLine={membersLine}
-          fullscreen={chatFull}
-          onToggleFullscreen={() => setChatFull(v => !v)}
-          onClose={() => { setChatFull(false); setChatOpen(false); }}
+          collapsed={chatCollapsed}
+          onToggleCollapse={() => setChatCollapsed(v => !v)}
+          onClose={() => { setChatCollapsed(false); setChatOpen(false); }}
           onSeen={markSeen}
         />
       )}

@@ -1,8 +1,9 @@
 // web/src/screens/grupos/chat/GroupChatDrawer.tsx
-// Drawer do chat do grupo (Fase 1): desktop empurra o conteúdo (380px), tela cheia
-// (overlay) e mobile sempre tela cheia. Lista + composer; realtime cobre a sync.
+// Drawer do chat do grupo: fixo na viewport (desktop) empurrando o conteúdo, ou tela cheia (mobile).
+// Recolhível: o chevron na beira vira o painel numa faixa fina (igual a sidebar recolhe) e expande
+// de volta — "drawer de verdade". Fechar de vez (desktop) é pelo botão "Chat" do topo do workspace.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { X, Maximize2, Minimize2 } from 'lucide-react';
+import { X, ChevronRight, ChevronLeft } from 'lucide-react';
 import { useGroupChat } from '../../../hooks/useGroupChat';
 import { MessageList } from './MessageList';
 import { Composer } from './Composer';
@@ -14,13 +15,13 @@ interface Props {
   groupId: string;
   groupName: string;
   membersLine: string;
-  fullscreen: boolean;
-  onToggleFullscreen: () => void;
+  collapsed: boolean;
+  onToggleCollapse: () => void;
   onClose: () => void;
   onSeen: () => void;
 }
 
-export function GroupChatDrawer({ groupId, groupName, membersLine, fullscreen, onToggleFullscreen, onClose, onSeen }: Props) {
+export function GroupChatDrawer({ groupId, groupName, membersLine, collapsed, onToggleCollapse, onClose, onSeen }: Props) {
   const chat = useGroupChat(groupId);
   const msgs = chat.messages.data ?? [];
 
@@ -57,19 +58,28 @@ export function GroupChatDrawer({ groupId, groupName, membersLine, fullscreen, o
   // Marca como lido quando a query resolve e quando chega mensagem nova (chat aberto).
   useEffect(() => { if (chat.messages.isSuccess) onSeen(); }, [msgs.length, chat.messages.isSuccess, onSeen]);
 
+  // ── Recolhido (desktop): faixa fina na beira, clicável para expandir ─────────
+  if (collapsed) {
+    return (
+      <aside className="hidden md:flex md:fixed md:top-14 md:right-0 md:bottom-0 md:z-30 w-12 flex-col items-center gap-3 bg-bg-surface border-l border-border py-sm">
+        <button
+          type="button"
+          onClick={onToggleCollapse}
+          className="w-9 h-9 grid place-items-center rounded-full text-fg-muted hover:bg-bg-elevated hover:text-fg transition-colors focus-ring"
+          aria-label="Expandir chat"
+          title="Expandir chat"
+        >
+          <ChevronLeft size={18} />
+        </button>
+        <button type="button" onClick={onToggleCollapse} className="focus-ring rounded-full" aria-label="Expandir chat">
+          <img src="/tom-avatar.png" alt="" className="w-8 h-8 rounded-full object-cover" />
+        </button>
+      </aside>
+    );
+  }
+
   return (
-    <aside
-      className={[
-        'flex flex-col bg-bg-surface border-l border-border min-h-0',
-        fullscreen
-          ? 'fixed inset-0 z-50'
-          // Desktop: painel FIXO na viewport — top na topbar do shell (top-14=3.5rem), right-0 e
-          // bottom-0. Encosta nas 3 bordas por definição (sem cálculo de altura/dvh, sem sobrar
-          // pedaço embaixo/na lateral). A coluna de conteúdo reserva o espaço via padding-right.
-          // Mobile = tela cheia (inset-0).
-          : 'w-full md:w-[400px] xl:w-[460px] 2xl:w-[520px] md:fixed md:top-14 md:right-0 md:bottom-0 md:z-30 max-md:fixed max-md:inset-0 max-md:z-50',
-      ].join(' ')}
-    >
+    <aside className="flex flex-col bg-bg-surface border-l border-border min-h-0 w-full md:w-[400px] xl:w-[460px] 2xl:w-[520px] md:fixed md:top-14 md:right-0 md:bottom-0 md:z-30 max-md:fixed max-md:inset-0 max-md:z-50">
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <header className="flex items-center gap-2 px-md py-sm border-b border-border shrink-0">
         <img src="/tom-avatar.png" alt="" className="w-7 h-7 rounded-full object-cover shrink-0" />
@@ -77,20 +87,21 @@ export function GroupChatDrawer({ groupId, groupName, membersLine, fullscreen, o
           <div className="text-body-md font-semibold truncate">{groupName} · chat</div>
           <div className="text-body-sm text-fg-muted truncate">{membersLine} e TOM</div>
         </div>
-        {/* Botão tela cheia (oculto no mobile) */}
+        {/* Recolher (desktop) — vira faixa fina; fechar de vez é pelo botão "Chat" do topo */}
         <button
           type="button"
-          onClick={onToggleFullscreen}
+          onClick={onToggleCollapse}
           className="w-8 h-8 grid place-items-center rounded-full text-fg-muted hover:bg-bg-elevated hover:text-fg transition-colors max-md:hidden focus-ring shrink-0"
-          aria-label={fullscreen ? 'Sair da tela cheia' : 'Tela cheia'}
+          aria-label="Recolher chat"
+          title="Recolher"
         >
-          {fullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+          <ChevronRight size={18} />
         </button>
-        {/* Botão fechar */}
+        {/* Fechar (mobile, tela cheia) */}
         <button
           type="button"
           onClick={onClose}
-          className="w-8 h-8 grid place-items-center rounded-full text-fg-muted hover:bg-bg-elevated hover:text-fg transition-colors focus-ring shrink-0"
+          className="w-8 h-8 grid place-items-center rounded-full text-fg-muted hover:bg-bg-elevated hover:text-fg transition-colors md:hidden focus-ring shrink-0"
           aria-label="Fechar chat"
         >
           <X size={18} />
