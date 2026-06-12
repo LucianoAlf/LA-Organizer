@@ -21,8 +21,20 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
         if (typeof a.due_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(a.due_date)) {
           row.due_date = a.due_date;
         }
+        // Recorrência (Sprint 4): armazena a RRULE e materializa as instâncias logo após —
+        // espelha o caminho do engine (applyTaskActions). NUNCA criar várias cópias manuais.
+        if (typeof a.recurrence_rule === 'string' && a.recurrence_rule.trim()) {
+          row.recurrence_rule = a.recurrence_rule.trim().replace(/^RRULE:/i, '');
+        }
         const { data, error } = await supabase.from('tasks').insert(row).select('id, title').single();
         if (error) { failed.push({ action: a, why: error.message }); continue; }
+        if (row.recurrence_rule && data?.id) {
+          try {
+            const { materializeSeries } = require('./recurrence-engine');
+            const { data: fullTpl } = await supabase.from('tasks').select('*').eq('id', data.id).maybeSingle();
+            if (fullTpl) await materializeSeries('tasks', fullTpl);
+          } catch (e) { console.warn('[GroupChat] materialize recorrência falhou:', e.message); }
+        }
         created.push(data);
       } else if (a.action === 'complete') {
         const title = (a.title || '').trim();

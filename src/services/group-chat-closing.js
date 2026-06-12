@@ -79,7 +79,8 @@ ${histText}
   2. <strong>Tarefas / decisões em aberto</strong> seguido de <ul><li>...</li></ul> — liste o que ficou pendente (se nada, escreva "(nenhuma pendência identificada)").
   3. <p><em>Quer transformar algum item em tarefa? É só me chamar.</em></p>
 - Seja conciso: o card inteiro não deve passar de 400 palavras.
-- Tom: leve, direto, sem jargão corporativo.`;
+- Tom: leve, direto, sem jargão corporativo.
+- ANTI-CONFABULAÇÃO: NUNCA afirme que o sistema "não tem" uma funcionalidade. O sistema TEM recorrência (tarefas/eventos), lembretes, projetos, checklists e anotações. Se a conversa antiga sugeriu o contrário, NÃO repita esse erro no resumo.`;
 
     // ── Chamar IA ─────────────────────────────────────────────────────────────
     let response;
