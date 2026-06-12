@@ -41,6 +41,18 @@ export function MessageList({ messages, meId, tomTyping = false }: Props) {
 
   return (
     <div ref={containerRef} className="flex-1 min-h-0 overflow-y-auto px-md py-sm bg-bg-app">
+      {/* Estado vazio: enquanto não há mensagens, ocupa o miolo com um convite — evita
+          o vazião entre o cabeçalho e o composer. */}
+      {messages.length === 0 && !tomTyping && (
+        <div className="h-full flex flex-col items-center justify-center text-center gap-sm px-lg">
+          <img src="/tom-avatar.png" alt="" className="w-14 h-14 rounded-full object-cover opacity-90" />
+          <div className="text-body-md font-semibold text-fg">Chat do grupo</div>
+          <p className="text-body-sm text-fg-muted max-w-[16rem]">
+            Manda a primeira mensagem pra equipe — ou chama o TOM escrevendo <span className="font-medium text-fg">fala tom</span>.
+          </p>
+        </div>
+      )}
+
       {rows.map(r => r.type === 'day'
         ? <div key={r.key} className="text-center my-sm"><span className="text-label text-fg-muted bg-bg-elevated rounded-full px-sm py-0.5">{r.label}</span></div>
         : <MessageBubble key={r.key} msg={r.msg} showAvatar={r.showAvatar} mine={r.mine} />
