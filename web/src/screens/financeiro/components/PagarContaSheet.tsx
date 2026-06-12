@@ -79,10 +79,12 @@ export function PagarContaSheet({ open, onClose, bill }: { open: boolean; onClos
     }
   }
 
+  const isIncome = bill.type === 'income';
+
   return (
-    <AdaptiveSheet open={open} onClose={onClose} title={`Pagar ${bill.name}`} size="sm">
+    <AdaptiveSheet open={open} onClose={onClose} title={isIncome ? `Receber ${bill.name}` : `Pagar ${bill.name}`} size="sm">
       <div className="flex flex-col gap-md p-md">
-        <Field label="Valor pago">
+        <Field label={isIncome ? 'Valor recebido' : 'Valor pago'}>
           <div className="flex items-baseline gap-2">
             <span className="text-fg-muted text-body-md">R$</span>
             <input
@@ -99,7 +101,7 @@ export function PagarContaSheet({ open, onClose, bill }: { open: boolean; onClos
           <p className="text-body-sm text-fg-muted -mt-2">previu {fmtBRL(previsto)} · paga {fmtBRL(amount)}</p>
         )}
 
-        <Field label="Pago com">
+        <Field label={isIncome ? 'Recebido em' : 'Pago com'}>
           <ComboBox value={method} options={methodOptions} onChange={setMethod} placeholder="Buscar carteira/cartão…" />
         </Field>
 
@@ -112,7 +114,7 @@ export function PagarContaSheet({ open, onClose, bill }: { open: boolean; onClos
         <div className="flex items-center justify-end gap-2 pt-2">
           <Button variant="ghost" onClick={onClose} disabled={payMut.isPending}>Cancelar</Button>
           <Button variant="primary" onClick={submit} disabled={payMut.isPending || !amountText.trim()}>
-            {payMut.isPending ? 'Pagando…' : 'Confirmar pagamento'}
+            {payMut.isPending ? (isIncome ? 'Registrando…' : 'Pagando…') : (isIncome ? 'Confirmar recebimento' : 'Confirmar pagamento')}
           </Button>
         </div>
       </div>

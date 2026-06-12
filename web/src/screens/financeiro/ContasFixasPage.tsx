@@ -48,13 +48,13 @@ function BillRow({ bill, onPay, onEdit }: { bill: PfBill; onPay: (b: PfBill) => 
         <span className={`text-body-md tabular-nums font-semibold ${bill.type === 'income' ? 'text-success' : 'text-fg'}`}>
           R$ {brl(Number(bill.amount))}
         </span>
-        {status !== 'paga' && bill.type === 'expense' && (
+        {status !== 'paga' && (
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onPay(bill); }}
             className="text-body-sm text-tom hover:underline focus-ring rounded"
           >
-            Marcar paga
+            {bill.type === 'income' ? 'Marcar recebido' : 'Marcar paga'}
           </button>
         )}
       </div>
