@@ -15,11 +15,13 @@ function fmtHistoryLine(m) {
   return `${who}: ${m.content || ''}`;
 }
 
-function buildGroupChatPrompt({ soulText, groupName, members, pool, history, senderName, longTermMemory }) {
+function buildGroupChatPrompt({ soulText, groupName, members, pool, history, senderName, longTermMemory, dateAnchor }) {
   const memberNames = (members || []).map((m) => m.name).filter(Boolean).join(', ') || '—';
   const poolBlock = (pool || []).length ? (pool || []).map(fmtPoolLine).join('\n') : '(nenhuma tarefa ainda)';
   const histBlock = (history || []).length ? (history || []).map(fmtHistoryLine).join('\n') : '(sem histórico)';
   const memoryBlock = longTermMemory ? longTermMemory : '(ainda construindo)';
+  // Âncora de data SEMPRE presente — sem ela o LLM erra "segunda-feira" → data (BUG weekday).
+  const dateBlock = dateAnchor ? `\n## Hoje (âncora temporal — leia ANTES de gerar qualquer due_date/remind_at/start_at)\n${dateAnchor}\n` : '';
 
   return `${soulText}
 
@@ -27,6 +29,7 @@ function buildGroupChatPrompt({ soulText, groupName, members, pool, history, sen
 Esta é a SUA casa — aqui você renderiza melhor que no WhatsApp. Você está conversando com a equipe ${groupName}.
 Membros do grupo: ${memberNames}.
 Quem acabou de falar com você: ${senderName}.
+${dateBlock}
 
 ## Memória de longo prazo deste grupo
 ${memoryBlock}

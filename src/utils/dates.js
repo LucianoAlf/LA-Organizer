@@ -69,4 +69,53 @@ function withinConfirmWindow(askedAt, windowMinutes = FRESH_WINDOW_MIN) {
   return ageMs <= windowMinutes * 60 * 1000;
 }
 
-module.exports = { safeIsoDate, safeDate, formatRelativeDate, withinConfirmWindow, FRESH_WINDOW_MIN };
+/**
+ * Âncora temporal em BRT para o LLM nunca calcular dia-da-semana e errar.
+ * Espelha o bloco do prompt do WhatsApp (system.js): "hoje + weekday" e uma
+ * TABELA DE DATAS de 16 dias (weekday → data). Sem isto, o LLM resolve
+ * "segunda-feira" por conta própria e erra +1 dia (caso GROUPCHAT-TASK-DUP-WEEKDAY,
+ * 12/06: pediram segunda 15/06, TOM agendou 16/06).
+ *
+ * Tudo em America/Sao_Paulo (-03:00) — robusto à timezone do servidor e ao
+ * deslocamento UTC pós-21h (ver LOCALYMD-UTC-SHIFT): o YMD de "hoje" sai via
+ * Intl no fuso de SP, nunca de toISOString().slice(0,10).
+ *
+ * @param {Date} [now=new Date()] — instante de referência (injetável p/ teste).
+ * @returns {string} bloco multilinha pronto pra colar no system prompt.
+ */
+const _WEEKDAY_FULL = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+
+function buildBrtDateAnchor(now = new Date()) {
+  const tzFmt = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+  const parts = tzFmt.formatToParts(now);
+  const get = (k) => (parts.find((p) => p.type === k) || {}).value;
+  const todayISO = `${get('year')}-${get('month')}-${get('day')}`;
+  const nowHHMM = `${get('hour')}:${get('minute')}`;
+  // Âncora ao meio-dia BRT (15:00Z) — fixa o dia civil sem ambiguidade de fuso.
+  const anchor = new Date(todayISO + 'T15:00:00.000Z');
+  const todayWD = _WEEKDAY_FULL[anchor.getUTCDay()];
+
+  const calParts = [];
+  for (let i = 0; i <= 15; i++) {
+    const d = new Date(anchor);
+    d.setUTCDate(d.getUTCDate() + i);
+    const dd = String(d.getUTCDate()).padStart(2, '0');
+    const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const wd = _WEEKDAY_FULL[d.getUTCDay()];
+    const tag = i === 0 ? ' (HOJE)' : i === 1 ? ' (amanhã)' : '';
+    calParts.push(`${wd} ${dd}/${mm}${tag}`);
+  }
+
+  return [
+    `**Data/hora agora (BRT):** ${todayISO} ${nowHHMM} (${todayWD})`,
+    `**TABELA DE DATAS — Use SEMPRE esta tabela para converter dia-da-semana em data. NUNCA calcule mentalmente. "segunda" = a PRÓXIMA segunda desta tabela. Se pedirem além do último dia, pergunte a data exata.**`,
+    calParts.join(' | '),
+    `**Timezone para markers:** America/Sao_Paulo. Sempre ISO -03:00 em due_date/remind_at/start_at (ex.: remind_at "${todayISO}T09:00:00-03:00").`,
+  ].join('\n');
+}
+
+module.exports = { safeIsoDate, safeDate, formatRelativeDate, withinConfirmWindow, FRESH_WINDOW_MIN, buildBrtDateAnchor };
