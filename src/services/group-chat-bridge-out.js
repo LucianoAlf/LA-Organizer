@@ -7,10 +7,34 @@ function firstName(name) {
   return String(name || '').trim().split(/\s+/)[0] || '';
 }
 
+// Converte o HTML do card de fechamento na formatação do WhatsApp (*negrito*, _itálico_,
+// "• " em listas, quebras de linha entre blocos). Sem parser pesado: regex sobre as tags
+// básicas que o card usa (h3/strong/em/li/p/br). Mantém hierarquia visual (não vira corrido).
+function htmlToWhatsapp(html) {
+  let t = String(html || '');
+  t = t
+    .replace(/<\s*h[1-6][^>]*>/gi, '\n*').replace(/<\s*\/\s*h[1-6]\s*>/gi, '*\n')
+    .replace(/<\s*(strong|b)[^>]*>/gi, '*').replace(/<\s*\/\s*(strong|b)\s*>/gi, '*')
+    .replace(/<\s*(em|i)[^>]*>/gi, '_').replace(/<\s*\/\s*(em|i)\s*>/gi, '_')
+    .replace(/<\s*li[^>]*>/gi, '\n• ').replace(/<\s*\/\s*li\s*>/gi, '')
+    .replace(/<\s*br\s*\/?\s*>/gi, '\n')
+    .replace(/<\s*\/\s*p\s*>/gi, '\n').replace(/<\s*\/\s*(ul|ol|div)\s*>/gi, '\n')
+    .replace(/<[^>]+>/g, ''); // tira o resto das tags
+  t = t.replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>').replace(/&quot;/gi, '"').replace(/&#39;/gi, "'");
+  return t.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 // Converte uma row de group_chat_messages (channel='app') no texto a postar no WhatsApp.
-// Retorna string, ou null quando NÃO deve espelhar (mídia, report, ou TOM sem prosa).
+// Retorna string, ou null quando NÃO deve espelhar (mídia, ou TOM sem prosa).
 function buildWhatsappText(msg, senderName) {
-  if (!msg || (msg.kind && msg.kind !== 'text')) return null; // v1: só texto
+  if (!msg) return null;
+  // Card de fechamento (kind='report', HTML): espelha como TEXTO formatado (Alf pediu o
+  // resumo também no WhatsApp, não só no app).
+  if (msg.role === 'tom' && msg.kind === 'report') {
+    return htmlToWhatsapp(msg.content || '') || null;
+  }
+  if (msg.kind && msg.kind !== 'text') return null; // outras mídias: v1 não espelha
   if (msg.role === 'tom') {
     const prose = String(msg.content || '').split(ACTIONS_DELIM)[0].trim();
     return prose || null;
@@ -26,9 +50,23 @@ function buildWhatsappText(msg, senderName) {
 // no próximo ciclo (deixa wa_message_id null). Marca 'skipped' o que não se espelha (mídia/report).
 async function runOutboundOnce(supabase, deps, limit = 10) {
   const { data: groups } = await supabase.from('work_groups')
-    .select('id, wa_group_jid').not('wa_group_jid', 'is', null);
+    .select('id, wa_group_jid, wa_linked_at').not('wa_group_jid', 'is', null);
   const byId = new Map((groups || []).map((g) => [g.id, g.wa_group_jid]));
   if (!byId.size) return 0;
+
+  // Guard anti-flood (GROUPCHAT-FASE4-BACKLOG-FLOOD): ao linkar um grupo ao WhatsApp, todo o
+  // histórico do app (Fase 3) fica com wa_message_id NULL e seria despejado de uma vez no grupo
+  // real. wa_linked_at (carimbado por trigger no momento do link) é o corte: tudo criado ANTES
+  // do link é drenado como 'skipped' em massa (1 UPDATE/grupo, idempotente — 0 linhas após drenar)
+  // ANTES do SELECT abaixo, então nem o 1º tick floda. Só o pós-link (created_at >= wa_linked_at)
+  // segue pro envio. Sem wa_linked_at → não drena (preserva comportamento).
+  for (const g of groups || []) {
+    if (!g.wa_linked_at) continue;
+    await supabase.from('group_chat_messages')
+      .update({ wa_message_id: 'skipped' })
+      .eq('group_id', g.id).eq('channel', 'app')
+      .is('wa_message_id', null).lt('created_at', g.wa_linked_at);
+  }
 
   const { data: rows } = await supabase.from('group_chat_messages')
     .select('id, group_id, role, kind, content, sender_id, wa_sender_name, ' +

@@ -89,11 +89,15 @@ ${histText}
 ## Instruções do card
 - Retorne APENAS o HTML, sem markdown, sem explicações fora da tag.
 - Use somente tags básicas: <div>, <p>, <ul>, <li>, <strong>, <em>, <h3>.
-- Estrutura obrigatória:
-  1. <h3>Resumo da sessão</h3> — 2 a 4 frases do que foi discutido.
-  2. <strong>Tarefas / decisões em aberto</strong> seguido de <ul><li>...</li></ul> — liste o que ficou pendente (se nada, escreva "(nenhuma pendência identificada)").
-  3. <p><em>Quer transformar algum item em tarefa? É só me chamar.</em></p>
-- Seja conciso: o card inteiro não deve passar de 400 palavras.
+- Estrutura obrigatória (com emoji no título de cada bloco pra dar HIERARQUIA visual):
+  1. <h3>📋 Resumo da sessão</h3> seguido de <ul> com 2 a 4 <li> CURTOS — UMA ideia por item.
+     NUNCA um parágrafo corrido/denso: quebre em itens curtos e escaneáveis.
+  2. <h3>✅ Em aberto</h3> seguido de <ul><li>...</li></ul> — o que ficou pendente
+     (se nada, <p>(nenhuma pendência identificada)</p>).
+  3. <p><em>Quer transformar algum item em tarefa? É só me chamar. 👋</em></p>
+- FORMATAÇÃO É OBRIGATÓRIA: cada item em sua própria linha (<li>), frases curtas, sem
+  blocão de texto. O leitor tem que bater o olho e entender — nada de maçaroca.
+- Seja conciso: o card inteiro não deve passar de 250 palavras.
 - Tom: leve, direto, sem jargão corporativo.
 - ANTI-CONFABULAÇÃO: NUNCA afirme que o sistema "não tem" uma funcionalidade. O sistema TEM recorrência (tarefas/eventos), lembretes, projetos, checklists e anotações. Se a conversa antiga sugeriu o contrário, NÃO repita esse erro no resumo.`;
 

@@ -19,8 +19,17 @@ test('TOM manda só a prosa, sem o bloco de ACTIONS', () => {
 test('TOM sem prosa (só ACTIONS) → null (não espelha)', () => {
   assert.equal(buildWhatsappText({ role: 'tom', kind: 'text', content: '‹‹ACTIONS››[{"x":1}]' }, ''), null);
 });
-test('report (card HTML) → null', () => {
-  assert.equal(buildWhatsappText({ role: 'tom', kind: 'report', content: '<div>x</div>' }, ''), null);
+test('report (card HTML) → espelha como texto formatado WhatsApp', () => {
+  const html = '<div><h3>Resumo da sessão</h3><p>Rose pediu lembrete.</p><strong>Em aberto</strong><ul><li>Conferir caixa</li></ul></div>';
+  const out = buildWhatsappText({ role: 'tom', kind: 'report', content: html }, '');
+  assert.match(out, /\*Resumo da sessão\*/);
+  assert.match(out, /Rose pediu lembrete\./);
+  assert.match(out, /\*Em aberto\*/);
+  assert.match(out, /• Conferir caixa/);
+  assert.ok(!/[<>]/.test(out), 'não pode sobrar tag HTML');
+});
+test('report vazio → null', () => {
+  assert.equal(buildWhatsappText({ role: 'tom', kind: 'report', content: '   ' }, ''), null);
 });
 test('mídia (kind != text) → null no v1', () => {
   assert.equal(buildWhatsappText({ role: 'member', kind: 'image', content: '' }, 'Ana'), null);
