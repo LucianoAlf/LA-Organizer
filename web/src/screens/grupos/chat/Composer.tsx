@@ -42,7 +42,7 @@ export function Composer({ onSend, upload }: Props) {
         kind: 'error',
         title: negado ? 'Microfone bloqueado' : 'Não consegui acessar o microfone',
         msg: negado
-          ? 'Libere o microfone no cadeado da barra de endereço e tente de novo.'
+          ? 'Este navegador bloqueou o microfone. Grave pelo app no celular, ou abra numa aba normal do Chrome e permita no cadeado.'
           : 'Verifique se há um microfone disponível neste dispositivo.',
       });
     }
