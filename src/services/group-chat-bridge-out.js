@@ -47,6 +47,23 @@ function buildWhatsappText(msg, senderName) {
   return nm ? `💬 *${nm}*: ${body}` : `💬 ${body}`;
 }
 
+const KIND_TO_WA_TYPE = { image: 'image', pdf: 'document', audio: 'audio' };
+
+// Converte uma row de mídia (channel='app') no payload de /send/media. null se não for
+// mídia mirável ou se media_url ainda não existe (arquivo subindo). caption carrega a autoria.
+function buildWhatsappMedia(msg, senderName) {
+  if (!msg) return null;
+  const type = KIND_TO_WA_TYPE[msg.kind];
+  if (!type) return null;
+  if (!msg.media_url) return null;
+  const nm = firstName(senderName);
+  const body = String(msg.content || '').trim();
+  const caption = nm ? `💬 *${nm}*${body ? ': ' + body : ''}` : (body || '');
+  const out = { type, url: msg.media_url, caption };
+  if (msg.media_filename) out.filename = msg.media_filename;
+  return out;
+}
+
 // Espelha pro WhatsApp as mensagens nascidas no app (channel='app') ainda não enviadas.
 // deps.sendGroupText(jid, text) injetado (uazapi-groups). Degrada gracioso: 503 → re-tenta
 // no próximo ciclo (deixa wa_message_id null). Marca 'skipped' o que não se espelha (mídia/report).
@@ -71,7 +88,7 @@ async function runOutboundOnce(supabase, deps, limit = 10) {
   }
 
   const { data: rows } = await supabase.from('group_chat_messages')
-    .select('id, group_id, role, kind, content, sender_id, wa_sender_name, ' +
+    .select('id, group_id, role, kind, content, media_url, media_mime, media_filename, sender_id, wa_sender_name, ' +
             'sender:collaborators!group_chat_messages_sender_id_fkey(full_name, preferred_name)')
     .in('group_id', [...byId.keys()])
     .eq('channel', 'app').is('wa_message_id', null)
@@ -81,6 +98,22 @@ async function runOutboundOnce(supabase, deps, limit = 10) {
   for (const m of rows || []) {
     const jid = byId.get(m.group_id);
     const senderName = m.sender?.preferred_name || m.sender?.full_name || m.wa_sender_name || '';
+
+    // MÍDIA (image/audio/pdf): manda via /send/media. Se media_url ainda não existe, deixa
+    // pendente (não marca) — re-tenta quando o upload terminar.
+    if (['image', 'audio', 'pdf'].includes(m.kind)) {
+      const media = buildWhatsappMedia(m, senderName);
+      if (!media) { continue; } // sem media_url ainda → re-tenta próximo tick
+      try {
+        const waId = await deps.sendGroupMedia(jid, { ...media, mimetype: m.media_mime || '' });
+        await supabase.from('group_chat_messages').update({ wa_message_id: waId || 'sent' }).eq('id', m.id);
+        sent++;
+      } catch (e) {
+        console.error(`[Bridge-out] mídia falhou msg=${m.id} (re-tenta): ${e.response?.status || ''} ${e.message}`);
+      }
+      continue;
+    }
+
     const text = buildWhatsappText(m, senderName);
     if (!text) {
       // nada a espelhar → marca pra não reprocessar todo ciclo
@@ -99,4 +132,4 @@ async function runOutboundOnce(supabase, deps, limit = 10) {
   return sent;
 }
 
-module.exports = { buildWhatsappText, firstName, runOutboundOnce };
+module.exports = { buildWhatsappText, buildWhatsappMedia, firstName, runOutboundOnce };

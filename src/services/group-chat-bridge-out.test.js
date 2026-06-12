@@ -1,7 +1,31 @@
 // src/services/group-chat-bridge-out.test.js
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { buildWhatsappText } = require('./group-chat-bridge-out');
+const { buildWhatsappText, buildWhatsappMedia } = require('./group-chat-bridge-out');
+
+test('imagem de membro vira payload type=image com autoria na caption', () => {
+  const r = buildWhatsappMedia(
+    { role: 'member', kind: 'image', media_url: 'https://x/y.jpg', media_filename: 'y.jpg', content: 'olha o comprovante' },
+    'Rose Silva'
+  );
+  assert.deepEqual(r, { type: 'image', url: 'https://x/y.jpg', caption: '💬 *Rose*: olha o comprovante', filename: 'y.jpg' });
+});
+test('pdf vira type=document', () => {
+  const r = buildWhatsappMedia({ role: 'member', kind: 'pdf', media_url: 'https://x/b.pdf', media_filename: 'boleto.pdf' }, 'Ana');
+  assert.equal(r.type, 'document');
+  assert.equal(r.caption, '💬 *Ana*');
+});
+test('audio vira type=audio', () => {
+  const r = buildWhatsappMedia({ role: 'member', kind: 'audio', media_url: 'https://x/a.webm' }, 'Ana');
+  assert.equal(r.type, 'audio');
+});
+test('mídia sem media_url → null (ainda subindo)', () => {
+  assert.equal(buildWhatsappMedia({ role: 'member', kind: 'image', media_url: null }, 'Ana'), null);
+});
+test('texto/report não é mídia → null', () => {
+  assert.equal(buildWhatsappMedia({ role: 'member', kind: 'text', content: 'oi' }, 'Ana'), null);
+  assert.equal(buildWhatsappMedia({ role: 'tom', kind: 'report', content: '<div/>' }, ''), null);
+});
 
 test('membro vira "💬 *Nome*: texto"', () => {
   assert.equal(

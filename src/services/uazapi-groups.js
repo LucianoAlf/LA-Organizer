@@ -57,4 +57,22 @@ async function sendGroupTyping(jid) {
   } catch (_) { /* presença é cosmética — silencia */ }
 }
 
-module.exports = { listGroups, getGroupJidByInvite, sendGroupText, sendGroupTyping, getGroupParticipants };
+// Posta MÍDIA num grupo. type: 'image' | 'document' | 'audio'. `url` é pública (bucket).
+// Doc UAZAPI: POST /send/media { number, type, file(url), text(caption), docName, mimetype }.
+// number aceita @g.us (confirmado no v1). Retorna o messageid.
+async function sendGroupMedia(jid, { url, type, caption = '', filename = '', mimetype = '' }) {
+  const payload = { number: jid, type, file: url, text: caption || '', readchat: true };
+  if (filename) payload.docName = filename;
+  if (mimetype) payload.mimetype = mimetype;
+  const resp = await api.post('/send/media', payload);
+  const d = resp.data || {};
+  return d.messageid || d.id || (d.key && d.key.id) || null;
+}
+
+// Apaga uma mensagem do WhatsApp PRA TODOS. Doc UAZAPI: POST /message/delete { id }.
+async function deleteWaMessage(id) {
+  const resp = await api.post('/message/delete', { id });
+  return resp.data || null;
+}
+
+module.exports = { listGroups, getGroupJidByInvite, sendGroupText, sendGroupTyping, getGroupParticipants, sendGroupMedia, deleteWaMessage };
