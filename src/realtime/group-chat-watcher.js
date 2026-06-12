@@ -15,6 +15,8 @@ const { detectEngageTrigger, detectDisengageTrigger, isEngaged } = require('../s
 const { processGroupChatMessage } = require('../services/group-chat-engine');
 const { extractMediaText } = require('../services/group-chat-media');
 const { processGroupChatClosing } = require('../services/group-chat-closing');
+const { runOutboundOnce } = require('../services/group-chat-bridge-out');
+const { sendGroupText } = require('../services/uazapi-groups');
 
 const POLL_MS = 4000;
 const BATCH = 10;
@@ -111,6 +113,8 @@ async function tick(supabaseMain) {
       catch (e) { console.error(`[GroupChat] erro msg=${msg.id}:`, e.message); }
     }
     await sweepEngaged(supabaseMain);
+    try { await runOutboundOnce(supabaseMain, { sendGroupText }); }
+    catch (e) { console.error('[Bridge-out] tick err:', e.message); }
   } finally { _ticking = false; }
 }
 

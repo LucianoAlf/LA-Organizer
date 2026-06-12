@@ -15,6 +15,7 @@ const gemini = require('./services/gemini');
 const shutdown = require('./services/shutdown');
 const webhookPersistence = require('./services/webhook-persistence');
 const pendingInventoryPhoto = require('./services/pending-inventory-photo');
+const groupBridgeIn = require('./services/group-chat-bridge-in');
 
 const router = express.Router();
 
@@ -123,6 +124,14 @@ async function processWebhookBody(body) {
       console.log(`[Webhook] SKIP duplicate event key=${dedupe.eventKey(body)}`);
       return;
     }
+
+    // Fase 4 — espelho de grupo: se a mensagem é de um grupo LINKADO, trata aqui e para.
+    // (Grupos não-linkados continuam caindo no isIgnorable abaixo e sendo descartados.)
+    const grp = await groupBridgeIn.maybeHandleGroupMessage(supabase, body, {
+      extractText: whatsapp.extractText,
+      extractMessageId: audio.extractMessageId,
+    });
+    if (grp.handled) return;
 
     // Ignorar mensagens de status, grupo, e do próprio bot
     if (whatsapp.isIgnorable(body)) {
