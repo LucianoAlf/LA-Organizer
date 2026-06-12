@@ -33,4 +33,14 @@ async function sendGroupText(jid, text) {
   return d.messageid || d.id || (d.key && d.key.id) || null;
 }
 
-module.exports = { listGroups, getGroupJidByInvite, sendGroupText };
+// Mostra "Tom escrevendo…" no grupo durante o tempo em que o TOM "pensa".
+// Fire-and-forget: nunca lança. Manda o JID completo (@g.us) como number — o setTyping
+// do whatsapp.js corta o sufixo (serve pro 1:1), por isso este é separado pra grupos.
+async function sendGroupTyping(jid) {
+  try {
+    if (!jid) return;
+    await api.post('/message/presence', { number: jid, presence: 'composing' }, { timeout: 5000 });
+  } catch (_) { /* presença é cosmética — silencia */ }
+}
+
+module.exports = { listGroups, getGroupJidByInvite, sendGroupText, sendGroupTyping };

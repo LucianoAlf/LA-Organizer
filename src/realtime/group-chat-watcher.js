@@ -16,7 +16,7 @@ const { processGroupChatMessage } = require('../services/group-chat-engine');
 const { extractMediaText } = require('../services/group-chat-media');
 const { processGroupChatClosing } = require('../services/group-chat-closing');
 const { runOutboundOnce } = require('../services/group-chat-bridge-out');
-const { sendGroupText } = require('../services/uazapi-groups');
+const { sendGroupText, sendGroupTyping } = require('../services/uazapi-groups');
 
 const POLL_MS = 4000;
 const BATCH = 10;
@@ -45,7 +45,7 @@ async function processOne(supabase, msg) {
   if (!senderCollabId) return;
 
   const { data: group } = await supabase.from('work_groups')
-    .select('tom_chat_engaged_at').eq('id', msg.group_id).maybeSingle();
+    .select('tom_chat_engaged_at, wa_group_jid').eq('id', msg.group_id).maybeSingle();
   const engaged = isEngaged(group?.tom_chat_engaged_at, new Date());
 
   let shouldRun = false, clearAfter = false;
@@ -59,6 +59,10 @@ async function processOne(supabase, msg) {
       .eq('id', msg.group_id);
   }
   if (!shouldRun) return; // silêncio — já memorizado
+
+  // "Tom escrevendo…" no grupo do WhatsApp enquanto o engine pensa (espelho linkado).
+  // Fire-and-forget; a presença encerra quando o bridge-out posta a resposta.
+  if (group?.wa_group_jid) sendGroupTyping(group.wa_group_jid);
 
   await processGroupChatMessage({ supabase, groupId: msg.group_id, senderCollabId, text });
 

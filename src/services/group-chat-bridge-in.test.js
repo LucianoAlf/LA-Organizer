@@ -1,7 +1,30 @@
 // src/services/group-chat-bridge-in.test.js
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { extractGroupJid, extractSenderPhone, isGroupMessage } = require('./group-chat-bridge-in');
+const { extractGroupJid, extractSenderPhone, isGroupMessage, matchMemberByName, normalizeName } = require('./group-chat-bridge-in');
+
+const MEMBERS = [
+  { id: 'alf', full_name: 'Luciano Alf', preferred_name: 'Alf' },
+  { id: 'rose', full_name: 'Rose', preferred_name: 'Rose' },
+  { id: 'ana', full_name: 'Ana Paula', preferred_name: 'Ana' },
+];
+
+test('matchMemberByName: nome exato do WhatsApp casa pelo full_name', () => {
+  assert.equal(matchMemberByName('Luciano Alf', MEMBERS), 'alf');
+});
+test('matchMemberByName: "Rose_Gerente Recreio" casa pelo começo', () => {
+  assert.equal(matchMemberByName('Rose_Gerente Recreio', MEMBERS), 'rose');
+});
+test('matchMemberByName: "Ana Paula Recepção/ADM" pega o nome mais longo (ana paula > ana)', () => {
+  assert.equal(matchMemberByName('Ana Paula Recepção/ADM', MEMBERS), 'ana');
+});
+test('matchMemberByName: nome de fora do grupo → null', () => {
+  assert.equal(matchMemberByName('Fulano de Tal', MEMBERS), null);
+  assert.equal(matchMemberByName('', MEMBERS), null);
+});
+test('normalizeName tira acento e símbolos', () => {
+  assert.equal(normalizeName('Ana Paula Recepção/ADM'), 'ana paula recepcao adm');
+});
 
 test('isGroupMessage true só quando data.isGroup === true', () => {
   assert.equal(isGroupMessage({ data: { isGroup: true } }), true);
