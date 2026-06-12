@@ -86,6 +86,14 @@ async function loadGroupMembers(supabase, groupId) {
   return cols || [];
 }
 
+// Detecta o tipo de mídia do payload usando os detectores do whatsapp.js (injetados).
+function mediaKindFromBody(body, d) {
+  if (d.isAudioMessage(body)) return 'audio';
+  if (d.isImageMessage(body)) return 'image';
+  if (d.isDocumentMessage(body)) return 'pdf';
+  return null;
+}
+
 // Retorna { handled: boolean }. handled=true => o webhook deve PARAR (não seguir pro 1:1).
 async function maybeHandleGroupMessage(supabase, body, helpers) {
   try {
@@ -106,9 +114,11 @@ async function maybeHandleGroupMessage(supabase, body, helpers) {
       if (dup) return { handled: true }; // já espelhada
     }
 
-    let text = helpers.extractText(body);
-    if (!text || !String(text).trim()) return { handled: true }; // v1: só texto
-    text = String(text).trim();
+    // Detecta mídia (image/audio/pdf). v2: mídia espelhada; texto segue como v1.
+    const mkind = helpers.mediaDetectors ? mediaKindFromBody(body, helpers.mediaDetectors) : null;
+    let text = helpers.extractText(body); // em imagem/doc, devolve a caption
+    if (!mkind && (!text || !String(text).trim())) return { handled: true }; // texto vazio e sem mídia
+    text = text ? String(text).trim() : '';
 
     const waName = data.senderName || data.pushName || null;
     const phone = extractSenderPhone(body);
@@ -123,11 +133,36 @@ async function maybeHandleGroupMessage(supabase, body, helpers) {
     // Membros do grupo (carregados 1x) — p/ match de identidade por nome E p/ resolver menções.
     let members = null;
     if ((!sender_id && waName) || hasMention) members = await loadGroupMembers(supabase, group.id);
-    // 2) fallback de identidade por NOME (resolve avatar/nome no app + destrava o watcher, que
-    //    ignora mensagem sem sender_id). Identidade = perfil real do WhatsApp, nunca do LLM.
+    // 2) fallback de identidade por NOME (resolve avatar/nome no app + destrava o watcher).
     if (!sender_id && waName && members) sender_id = matchMemberByName(waName, members);
 
-    // 3) menções: @<lid> → @<PrimeiroNome>. lid→telefone via /group/info; telefone→membro.
+    // MÍDIA: baixa da UAZAPI → sobe no bucket group-chat → insere. O watcher (extractMediaText)
+    // transcreve áudio / analisa imagem → TOM entende. Degrada gracioso: falha → loga e pula.
+    if (mkind) {
+      let media_url = null, media_mime = null, media_filename = null;
+      try {
+        const dl = await helpers.downloadMedia(body); // { buffer, mime }
+        if (!dl || !dl.buffer) { console.warn('[Bridge-in] download de mídia vazio — pula'); return { handled: true }; }
+        media_mime = dl.mime || null;
+        const ext = (media_mime && media_mime.includes('/')) ? media_mime.split('/')[1].split(';')[0]
+          : (mkind === 'pdf' ? 'pdf' : mkind === 'audio' ? 'ogg' : 'jpg');
+        media_filename = dl.filename || `${mkind}.${ext}`;
+        const path = `${group.id}/wa-${waId || Date.now()}.${ext}`;
+        const up = await supabase.storage.from('group-chat').upload(path, dl.buffer, { contentType: media_mime || undefined, upsert: true });
+        if (up.error) { console.error('[Bridge-in] upload falhou:', up.error.message); return { handled: true }; }
+        media_url = supabase.storage.from('group-chat').getPublicUrl(path).data.publicUrl;
+      } catch (e) { console.error('[Bridge-in] erro mídia (pula):', e.message); return { handled: true }; }
+
+      await supabase.from('group_chat_messages').insert({
+        group_id: group.id, sender_id, role: 'member', kind: mkind,
+        content: text || null, media_url, media_mime, media_filename,
+        channel: 'whatsapp', wa_message_id: waId, wa_sender_name: sender_id ? null : waName,
+      });
+      console.log(`[Bridge-in] WA→app MÍDIA(${mkind}) grupo=${group.id}`);
+      return { handled: true };
+    }
+
+    // Menções no texto: @<lid> → @<PrimeiroNome>.
     if (hasMention && helpers.getGroupParticipants && members && members.length) {
       try {
         const parts = await getParticipantsCached(helpers.getGroupParticipants, jid);
@@ -158,4 +193,4 @@ async function maybeHandleGroupMessage(supabase, body, helpers) {
   }
 }
 
-module.exports = { maybeHandleGroupMessage, isGroupMessage, extractGroupJid, extractSenderPhone, matchMemberByName, normalizeName, resolveMentions, firstName };
+module.exports = { maybeHandleGroupMessage, isGroupMessage, extractGroupJid, extractSenderPhone, matchMemberByName, normalizeName, resolveMentions, firstName, mediaKindFromBody };

@@ -67,6 +67,13 @@ export function MonthPanel(p: Props) {
   );
 
   const monthDone = useMemo(() => monthTasks.filter(t => t.status === 'done'), [monthTasks]);
+  // TASK-FEITAS-IGNORA-EVENTOS: "Feitas" tem que contar compromissos concluídos também —
+  // TOTAL já soma tarefas + eventos, então contar só tarefas em Feitas subnotifica o trabalho
+  // (caso Juliana 12/06: 11 feitas reais — 5 tarefas + 6 compromissos — apareciam como 5).
+  const monthDoneCount = useMemo(
+    () => monthDone.length + monthEvents.filter(e => e.status === 'done').length,
+    [monthDone, monthEvents],
+  );
 
   const groups = useMemo(() => {
     const g = { plus15: [] as TaskForPanel[], d5_14: [] as TaskForPanel[] };
@@ -102,8 +109,8 @@ export function MonthPanel(p: Props) {
           />
           <StatCard
             label="Feitas"
-            value={monthDone.length}
-            tone={monthDone.length > 0 ? 'success' : 'neutral'}
+            value={monthDoneCount}
+            tone={monthDoneCount > 0 ? 'success' : 'neutral'}
             className="flex-1"
           />
         </div>

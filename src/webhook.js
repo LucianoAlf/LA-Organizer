@@ -132,6 +132,17 @@ async function processWebhookBody(body) {
       extractText: whatsapp.extractText,
       extractMessageId: audio.extractMessageId,
       getGroupParticipants: uazapiGroups.getGroupParticipants,
+      mediaDetectors: {
+        isAudioMessage: whatsapp.isAudioMessage,
+        isImageMessage: whatsapp.isImageMessage,
+        isDocumentMessage: whatsapp.isDocumentMessage,
+      },
+      downloadMedia: async (b) => {
+        const mid = audio.extractMessageId(b);
+        if (!mid) return null;
+        const r = await audio.downloadMediaFromUazapi(mid); // { buffer, mime }
+        return r ? { buffer: r.buffer, mime: r.mime } : null;
+      },
     });
     if (grp.handled) return;
 

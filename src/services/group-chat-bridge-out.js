@@ -109,7 +109,16 @@ async function runOutboundOnce(supabase, deps, limit = 10) {
         await supabase.from('group_chat_messages').update({ wa_message_id: waId || 'sent' }).eq('id', m.id);
         sent++;
       } catch (e) {
-        console.error(`[Bridge-out] mídia falhou msg=${m.id} (re-tenta): ${e.response?.status || ''} ${e.message}`);
+        const st = e.response?.status;
+        if (st && st !== 503) {
+          // Erro DEFINITIVO da API (ex.: URL não-baixável, mídia inválida) → re-tentar não
+          // resolve. Marca 'skipped' pra não martelar a UAZAPI a cada tick (loop infinito).
+          console.error(`[Bridge-out] mídia DESCARTADA msg=${m.id} (${st}): ${JSON.stringify(e.response?.data || '').slice(0, 150)}`);
+          await supabase.from('group_chat_messages').update({ wa_message_id: 'skipped' }).eq('id', m.id);
+        } else {
+          // Transitório (503 hibernação / timeout / rede) → re-tenta no próximo tick.
+          console.error(`[Bridge-out] mídia falhou msg=${m.id} (re-tenta): ${st || 'net'} ${e.message}`);
+        }
       }
       continue;
     }
