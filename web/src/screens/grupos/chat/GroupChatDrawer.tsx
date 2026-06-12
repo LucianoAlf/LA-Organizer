@@ -64,8 +64,10 @@ export function GroupChatDrawer({ groupId, groupName, membersLine, fullscreen, o
         fullscreen
           ? 'fixed inset-0 z-50'
           // Desktop in-flow: gruda no topo do <main> (top-14 do shell) e ocupa a altura
-          // da viewport menos o topbar, pra MessageList rolar por dentro. Mobile = tela cheia.
-          : 'w-full md:w-[380px] shrink-0 md:self-start md:sticky md:top-0 md:h-[calc(100vh-3.5rem)] max-md:fixed max-md:inset-0 max-md:z-50',
+          // da viewport menos o topbar, pra MessageList rolar por dentro. O `-mt-6` cancela
+          // o `py-6` (24px) do wrapper de scroll, encostando o drawer embaixo da topbar — sem
+          // isso a altura calc(100vh-3.5rem) estoura embaixo e corta o composer. Mobile = tela cheia.
+          : 'w-full md:w-[380px] shrink-0 md:self-start md:sticky md:top-0 md:-mt-6 md:h-[calc(100vh-3.5rem)] max-md:fixed max-md:inset-0 max-md:z-50',
       ].join(' ')}
     >
       {/* ── Header ─────────────────────────────────────────────────────────── */}
