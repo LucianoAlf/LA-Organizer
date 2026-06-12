@@ -6,6 +6,7 @@ export interface ChatMsg {
   kind: 'text' | 'image' | 'pdf' | 'audio' | 'report';
   content: string | null; media_url: string | null; media_mime: string | null; media_filename: string | null;
   sender_name: string | null; sender_avatar: string | null; created_at: string;
+  deleted_at?: string | null;
 }
 export interface DayRow { type: 'day'; key: string; label: string; }
 export interface MsgRow { type: 'msg'; key: string; msg: ChatMsg; showAvatar: boolean; mine: boolean; }

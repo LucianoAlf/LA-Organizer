@@ -108,7 +108,11 @@ export function GroupChatDrawer({ groupId, groupName, membersLine, collapsed, on
         </button>
       </header>
 
-      <MessageList messages={msgs} meId={chat.meId} tomTyping={tomTyping} />
+      <MessageList
+        messages={msgs} meId={chat.meId} tomTyping={tomTyping}
+        meIsDirector={chat.meIsDirector}
+        onDelete={(id) => chat.deleteMessage.mutate(id)}
+      />
       <Composer onSend={handleSend} upload={chat.uploadAttachment} />
     </aside>
   );

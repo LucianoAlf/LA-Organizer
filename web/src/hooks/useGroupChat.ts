@@ -6,7 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 import type { ChatMsg } from '../lib/groupChat';
 
 const SELECT =
-  'id, group_id, sender_id, role, kind, content, media_url, media_mime, media_filename, created_at, ' +
+  'id, group_id, sender_id, role, kind, content, media_url, media_mime, media_filename, created_at, deleted_at, ' +
   'sender:collaborators!group_chat_messages_sender_id_fkey(full_name, avatar_url)';
 
 function mapRow(r: any): ChatMsg {
@@ -14,7 +14,7 @@ function mapRow(r: any): ChatMsg {
     id: r.id, group_id: r.group_id, sender_id: r.sender_id, role: r.role, kind: r.kind,
     content: r.content, media_url: r.media_url, media_mime: r.media_mime, media_filename: r.media_filename,
     sender_name: r.sender?.full_name ?? (r.role === 'tom' ? 'TOM' : null),
-    sender_avatar: r.sender?.avatar_url ?? null, created_at: r.created_at,
+    sender_avatar: r.sender?.avatar_url ?? null, created_at: r.created_at, deleted_at: r.deleted_at ?? null,
   };
 }
 
@@ -61,5 +61,20 @@ export function useGroupChat(groupId: string | undefined) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['group-chat', groupId] }),
   });
 
-  return { messages, send, uploadAttachment, meId: collaborator?.id ?? '' };
+  // Soft-delete (Fase 4 v2): marca deleted_at. RLS permite no próprio (autor) ou Diretor.
+  // O bridge-out revoga no WhatsApp; o WhatsApp→app vem pelo webhook (messages_update).
+  const deleteMessage = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from('group_chat_messages')
+        .update({ deleted_at: new Date().toISOString(), deleted_origin: 'app', deleted_synced: false })
+        .eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['group-chat', groupId] }),
+  });
+
+  return {
+    messages, send, uploadAttachment, deleteMessage,
+    meId: collaborator?.id ?? '', meIsDirector: collaborator?.role === 'director',
+  };
 }

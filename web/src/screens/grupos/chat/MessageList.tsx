@@ -11,9 +11,12 @@ interface Props {
   meId: string;
   /** Quando true, mostra a bolha "TOM está digitando…" */
   tomTyping?: boolean;
+  /** Diretor pode apagar qualquer mensagem; membro só as próprias. */
+  meIsDirector?: boolean;
+  onDelete?: (id: string) => void;
 }
 
-export function MessageList({ messages, meId, tomTyping = false }: Props) {
+export function MessageList({ messages, meId, tomTyping = false, meIsDirector = false, onDelete }: Props) {
   const rows = groupMessages(messages, meId);
   const containerRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -55,7 +58,11 @@ export function MessageList({ messages, meId, tomTyping = false }: Props) {
 
       {rows.map(r => r.type === 'day'
         ? <div key={r.key} className="text-center my-sm"><span className="text-label text-fg-muted bg-bg-elevated rounded-full px-sm py-0.5">{r.label}</span></div>
-        : <MessageBubble key={r.key} msg={r.msg} showAvatar={r.showAvatar} mine={r.mine} />
+        : <MessageBubble
+            key={r.key} msg={r.msg} showAvatar={r.showAvatar} mine={r.mine}
+            canDelete={!!onDelete && ((!!r.msg.sender_id && r.msg.sender_id === meId) || meIsDirector)}
+            onDelete={onDelete ? () => onDelete(r.msg.id) : undefined}
+          />
       )}
 
       {/* Indicador "TOM está digitando…" */}

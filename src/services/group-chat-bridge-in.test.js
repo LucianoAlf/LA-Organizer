@@ -1,7 +1,27 @@
 // src/services/group-chat-bridge-in.test.js
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { extractGroupJid, extractSenderPhone, isGroupMessage, matchMemberByName, normalizeName, resolveMentions } = require('./group-chat-bridge-in');
+const { extractGroupJid, extractSenderPhone, isGroupMessage, matchMemberByName, normalizeName, resolveMentions, mediaKindFromBody } = require('./group-chat-bridge-in');
+
+const { parseDeletedWaIds } = require('./group-chat-bridge-in');
+test('parseDeletedWaIds extrai ids só quando há sinal de deleção', () => {
+  assert.deepEqual(parseDeletedWaIds({ EventType: 'messages_update', message: { messageid: 'AAA', status: 'Deleted' } }), ['AAA']);
+  assert.deepEqual(parseDeletedWaIds({ EventType: 'messages_update', messages: [{ messageid: 'BBB', wasDeleted: true }] }), ['BBB']);
+  assert.deepEqual(parseDeletedWaIds({ EventType: 'messages_update', message: { messageid: 'CCC', status: 'Read' } }), []);
+  assert.deepEqual(parseDeletedWaIds({ EventType: 'messages', message: { messageid: 'D' } }), []);
+});
+
+test('mediaKindFromBody detecta image/audio/pdf/null', () => {
+  const detectors = {
+    isAudioMessage: (b) => b.t === 'audio',
+    isImageMessage: (b) => b.t === 'image',
+    isDocumentMessage: (b) => b.t === 'doc',
+  };
+  assert.equal(mediaKindFromBody({ t: 'audio' }, detectors), 'audio');
+  assert.equal(mediaKindFromBody({ t: 'image' }, detectors), 'image');
+  assert.equal(mediaKindFromBody({ t: 'doc' }, detectors), 'pdf');
+  assert.equal(mediaKindFromBody({ t: 'text' }, detectors), null);
+});
 
 test('resolveMentions troca @lid pelo @PrimeiroNome', () => {
   const map = { '61087554768984': 'Rose', '83245123301394': 'Ana' };

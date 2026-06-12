@@ -5,7 +5,7 @@
 import { useMemo } from 'react';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
-import { Calendar, FolderKanban, ListTodo, ListChecks, Target, StickyNote, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { Calendar, FolderKanban, ListTodo, ListChecks, Target, StickyNote, CheckCircle2, AlertTriangle, Ban, Trash2 } from 'lucide-react';
 import type { ChatMsg } from '../../../lib/groupChat';
 
 const ACTIONS_DELIM = '‹‹ACTIONS››';
@@ -67,8 +67,22 @@ function ActionRow({ a }: { a: TomAction }) {
   );
 }
 
-export function MessageBubble({ msg, showAvatar, mine }: { msg: ChatMsg; showAvatar: boolean; mine: boolean }) {
+export function MessageBubble({ msg, showAvatar, mine, canDelete, onDelete }: { msg: ChatMsg; showAvatar: boolean; mine: boolean; canDelete?: boolean; onDelete?: () => void }) {
   const isTom = msg.role === 'tom';
+
+  // Apagada (Fase 4 v2): placeholder estilo WhatsApp, ignora conteúdo/mídia/ações.
+  if (msg.deleted_at) {
+    return (
+      <div className={`flex gap-sm mb-xs ${mine ? 'flex-row-reverse' : ''}`}>
+        <div className="w-7 shrink-0" />
+        <div className={`max-w-[78%] min-w-0 flex flex-col ${mine ? 'items-end' : 'items-start'}`}>
+          <div className="px-md py-sm rounded-2xl bg-bg-surface border border-border text-body-sm italic text-fg-muted flex items-center gap-1">
+            <Ban size={13} className="shrink-0" /> Mensagem apagada
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // Separa prosa (markdown) do bloco estruturado de ações.
   const { html, actions } = useMemo(() => {
@@ -104,7 +118,7 @@ export function MessageBubble({ msg, showAvatar, mine }: { msg: ChatMsg; showAva
   const nameLabel = isTom ? 'TOM' : (mine ? 'Você' : firstName(msg.sender_name));
 
   return (
-    <div className={`flex gap-sm mb-xs ${mine ? 'flex-row-reverse' : ''}`}>
+    <div className={`group flex gap-sm mb-xs ${mine ? 'flex-row-reverse' : ''}`}>
       {/* Avatar agora aparece também nas mensagens próprias (Alf pediu — num grupo confunde sem) */}
       <div className="w-7 shrink-0">{showAvatar && avatar}</div>
       <div className={`max-w-[78%] min-w-0 flex flex-col ${mine ? 'items-end' : 'items-start'}`}>
@@ -131,11 +145,21 @@ export function MessageBubble({ msg, showAvatar, mine }: { msg: ChatMsg; showAva
           )}
           <div className={`text-[10px] mt-0.5 ${mine || isTom ? 'text-black/60' : 'text-fg-muted'}`}>{hm(msg.created_at)}</div>
         </div>
-        {msg.kind === 'report' && (
-          <div className="flex gap-xs mt-xs">
+        <div className="flex gap-xs mt-xs items-center">
+          {msg.kind === 'report' && (
             <button type="button" onClick={() => downloadReportHtml(msg.content ?? '')} className="text-label text-fg-muted hover:text-fg">⬇ Baixar HTML</button>
-          </div>
-        )}
+          )}
+          {canDelete && onDelete && (
+            <button
+              type="button"
+              onClick={onDelete}
+              aria-label="Apagar mensagem"
+              className="opacity-0 group-hover:opacity-100 focus:opacity-100 transition text-fg-muted hover:text-red-600 p-0.5"
+            >
+              <Trash2 size={14} />
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

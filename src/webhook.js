@@ -126,6 +126,10 @@ async function processWebhookBody(body) {
       return;
     }
 
+    // Fase 4 v2 — deleção vinda do WhatsApp (messages_update): trata e para (não é msg nova).
+    const del = await groupBridgeIn.maybeHandleGroupDelete(supabase, body);
+    if (del.handled) return;
+
     // Fase 4 — espelho de grupo: se a mensagem é de um grupo LINKADO, trata aqui e para.
     // (Grupos não-linkados continuam caindo no isIgnorable abaixo e sendo descartados.)
     const grp = await groupBridgeIn.maybeHandleGroupMessage(supabase, body, {

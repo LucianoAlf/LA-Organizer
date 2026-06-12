@@ -49,6 +49,15 @@ function buildWhatsappText(msg, senderName) {
 
 const KIND_TO_WA_TYPE = { image: 'image', pdf: 'document', audio: 'audio' };
 
+const WA_PLACEHOLDER_IDS = new Set(['sent', 'skipped']);
+// Rows cuja deleção (feita no app) precisa ser revogada no WhatsApp: origem app, não
+// sincronizada, com wa_message_id REAL (não placeholder/null).
+function selectRevocable(rows) {
+  return (rows || []).filter((r) =>
+    r.deleted_origin === 'app' && r.deleted_synced === false &&
+    r.wa_message_id && !WA_PLACEHOLDER_IDS.has(r.wa_message_id));
+}
+
 // Converte uma row de mídia (channel='app') no payload de /send/media. null se não for
 // mídia mirável ou se media_url ainda não existe (arquivo subindo). caption carrega a autoria.
 function buildWhatsappMedia(msg, senderName) {
@@ -141,4 +150,31 @@ async function runOutboundOnce(supabase, deps, limit = 10) {
   return sent;
 }
 
-module.exports = { buildWhatsappText, buildWhatsappMedia, firstName, runOutboundOnce };
+// Revoga no WhatsApp as mensagens apagadas no app (deleted_origin='app', não sincronizadas).
+// deps.deleteWaMessage(id) injetado. Após revogar (ou nada a revogar), marca deleted_synced=true.
+async function runDeleteSyncOnce(supabase, deps, limit = 10) {
+  const { data: rows } = await supabase.from('group_chat_messages')
+    .select('id, wa_message_id, deleted_origin, deleted_synced')
+    .not('deleted_at', 'is', null).eq('deleted_synced', false).eq('deleted_origin', 'app')
+    .limit(limit);
+  const revocable = selectRevocable(rows);
+  let done = 0;
+  for (const r of rows || []) {
+    if (!revocable.includes(r)) {
+      // placeholder/sem wa_id → nada a revogar no WhatsApp; marca sincronizado (só some no app).
+      await supabase.from('group_chat_messages').update({ deleted_synced: true }).eq('id', r.id);
+      continue;
+    }
+    try {
+      await deps.deleteWaMessage(r.wa_message_id);
+      await supabase.from('group_chat_messages').update({ deleted_synced: true }).eq('id', r.id);
+      done++;
+    } catch (e) {
+      console.error(`[Bridge-del] revoke falhou msg=${r.id}: ${e.response?.status || ''} ${e.message}`);
+      // não marca synced → re-tenta. (janela de revoke do WhatsApp é curta; se persistir, some só no app.)
+    }
+  }
+  return done;
+}
+
+module.exports = { buildWhatsappText, buildWhatsappMedia, firstName, runOutboundOnce, selectRevocable, runDeleteSyncOnce };

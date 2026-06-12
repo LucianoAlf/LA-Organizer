@@ -86,6 +86,39 @@ async function loadGroupMembers(supabase, groupId) {
   return cols || [];
 }
 
+// Extrai os wa_message_id apagados de um evento messages_update. DEFENSIVO: só retorna id
+// quando há sinal explícito de deleção (status 'Deleted'/'Revoked' OU wasDeleted/isDeleted/deleted).
+// Sem sinal → []. Assim um update de leitura/edição NUNCA apaga por engano.
+function parseDeletedWaIds(body) {
+  if (!body || body.EventType !== 'messages_update') return [];
+  const arr = Array.isArray(body.messages) ? body.messages : (body.message ? [body.message] : []);
+  const isDel = (m) => {
+    const st = String(m.status || m.messageStatus || '').toLowerCase();
+    return st === 'deleted' || st === 'revoked' || m.wasDeleted === true || m.isDeleted === true || m.deleted === true;
+  };
+  return arr.filter(isDel).map((m) => m.messageid || m.id || (m.key && m.key.id)).filter(Boolean);
+}
+
+// Trata o evento messages_update (deleção feita no WhatsApp). Marca deleted_at nas rows
+// cujo wa_message_id casa, em grupos LINKADOS. deleted_synced=true (não re-ecoa pro zap).
+async function maybeHandleGroupDelete(supabase, body) {
+  try {
+    if (!body || body.EventType !== 'messages_update') return { handled: false };
+    const ids = parseDeletedWaIds(body);
+    if (!ids.length) return { handled: true }; // update sem deleção → consome e ignora
+    for (const waId of ids) {
+      await supabase.from('group_chat_messages')
+        .update({ deleted_at: new Date().toISOString(), deleted_origin: 'whatsapp', deleted_synced: true })
+        .eq('wa_message_id', waId).is('deleted_at', null);
+    }
+    console.log(`[Bridge-in] WA delete espelhado: ${ids.length} msg(s)`);
+    return { handled: true };
+  } catch (e) {
+    console.error('[Bridge-in] erro delete:', e.message);
+    return { handled: true };
+  }
+}
+
 // Detecta o tipo de mídia do payload usando os detectores do whatsapp.js (injetados).
 function mediaKindFromBody(body, d) {
   if (d.isAudioMessage(body)) return 'audio';
@@ -193,4 +226,4 @@ async function maybeHandleGroupMessage(supabase, body, helpers) {
   }
 }
 
-module.exports = { maybeHandleGroupMessage, isGroupMessage, extractGroupJid, extractSenderPhone, matchMemberByName, normalizeName, resolveMentions, firstName, mediaKindFromBody };
+module.exports = { maybeHandleGroupMessage, isGroupMessage, extractGroupJid, extractSenderPhone, matchMemberByName, normalizeName, resolveMentions, firstName, mediaKindFromBody, parseDeletedWaIds, maybeHandleGroupDelete };

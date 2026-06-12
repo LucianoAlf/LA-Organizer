@@ -1,7 +1,17 @@
 // src/services/group-chat-bridge-out.test.js
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { buildWhatsappText, buildWhatsappMedia } = require('./group-chat-bridge-out');
+const { buildWhatsappText, buildWhatsappMedia, selectRevocable } = require('./group-chat-bridge-out');
+
+test('selectRevocable: só rows app-origin, não sincronizadas, com wa_message_id real', () => {
+  const rows = [
+    { id: 1, deleted_origin: 'app', deleted_synced: false, wa_message_id: '3EBXYZ' },
+    { id: 2, deleted_origin: 'app', deleted_synced: false, wa_message_id: 'sent' },
+    { id: 3, deleted_origin: 'app', deleted_synced: false, wa_message_id: null },
+    { id: 4, deleted_origin: 'whatsapp', deleted_synced: false, wa_message_id: '3EB' },
+  ];
+  assert.deepEqual(selectRevocable(rows).map((r) => r.id), [1]);
+});
 
 test('imagem de membro vira payload type=image com autoria na caption', () => {
   const r = buildWhatsappMedia(

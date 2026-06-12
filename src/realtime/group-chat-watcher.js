@@ -15,8 +15,8 @@ const { detectEngageTrigger, detectDisengageTrigger, isEngaged } = require('../s
 const { processGroupChatMessage } = require('../services/group-chat-engine');
 const { extractMediaText } = require('../services/group-chat-media');
 const { processGroupChatClosing } = require('../services/group-chat-closing');
-const { runOutboundOnce } = require('../services/group-chat-bridge-out');
-const { sendGroupText, sendGroupTyping, sendGroupMedia } = require('../services/uazapi-groups');
+const { runOutboundOnce, runDeleteSyncOnce } = require('../services/group-chat-bridge-out');
+const { sendGroupText, sendGroupTyping, sendGroupMedia, deleteWaMessage } = require('../services/uazapi-groups');
 
 const POLL_MS = 4000;
 const BATCH = 10;
@@ -119,6 +119,8 @@ async function tick(supabaseMain) {
     await sweepEngaged(supabaseMain);
     try { await runOutboundOnce(supabaseMain, { sendGroupText, sendGroupMedia }); }
     catch (e) { console.error('[Bridge-out] tick err:', e.message); }
+    try { await runDeleteSyncOnce(supabaseMain, { deleteWaMessage }); }
+    catch (e) { console.error('[Bridge-del] tick err:', e.message); }
   } finally { _ticking = false; }
 }
 
