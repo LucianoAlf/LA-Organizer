@@ -4,11 +4,11 @@ const assert = require('node:assert');
 const { extractGroupJid, extractSenderPhone, isGroupMessage, matchMemberByName, normalizeName, resolveMentions, mediaKindFromBody } = require('./group-chat-bridge-in');
 
 const { parseDeletedWaIds } = require('./group-chat-bridge-in');
-test('parseDeletedWaIds extrai ids só quando há sinal de deleção', () => {
-  assert.deepEqual(parseDeletedWaIds({ EventType: 'messages_update', message: { messageid: 'AAA', status: 'Deleted' } }), ['AAA']);
-  assert.deepEqual(parseDeletedWaIds({ EventType: 'messages_update', messages: [{ messageid: 'BBB', wasDeleted: true }] }), ['BBB']);
-  assert.deepEqual(parseDeletedWaIds({ EventType: 'messages_update', message: { messageid: 'CCC', status: 'Read' } }), []);
-  assert.deepEqual(parseDeletedWaIds({ EventType: 'messages', message: { messageid: 'D' } }), []);
+test('parseDeletedWaIds extrai MessageIDs só com sinal de deleção (formato real UAZAPI)', () => {
+  assert.deepEqual(parseDeletedWaIds({ EventType: 'messages_update', type: 'DeletedMessage', event: { MessageIDs: ['AAA'], Type: 'Deleted' } }), ['AAA']);
+  assert.deepEqual(parseDeletedWaIds({ EventType: 'messages_update', state: 'Deleted', event: { MessageIDs: ['BBB', 'CCC'] } }), ['BBB', 'CCC']);
+  assert.deepEqual(parseDeletedWaIds({ EventType: 'messages_update', event: { MessageIDs: ['X'], Type: 'Read' } }), []);
+  assert.deepEqual(parseDeletedWaIds({ EventType: 'messages', event: { MessageIDs: ['D'] } }), []);
 });
 
 test('mediaKindFromBody detecta image/audio/pdf/null', () => {

@@ -91,12 +91,15 @@ async function loadGroupMembers(supabase, groupId) {
 // Sem sinal → []. Assim um update de leitura/edição NUNCA apaga por engano.
 function parseDeletedWaIds(body) {
   if (!body || body.EventType !== 'messages_update') return [];
-  const arr = Array.isArray(body.messages) ? body.messages : (body.message ? [body.message] : []);
-  const isDel = (m) => {
-    const st = String(m.status || m.messageStatus || '').toLowerCase();
-    return st === 'deleted' || st === 'revoked' || m.wasDeleted === true || m.isDeleted === true || m.deleted === true;
-  };
-  return arr.filter(isDel).map((m) => m.messageid || m.id || (m.key && m.key.id)).filter(Boolean);
+  const ev = body.event || {};
+  // Sinal de deleção (formato real UAZAPI): type='DeletedMessage' / state='Deleted' / event.Type='Deleted'.
+  const isDel = body.type === 'DeletedMessage'
+    || String(body.state || '').toLowerCase() === 'deleted'
+    || String(ev.Type || '').toLowerCase() === 'deleted';
+  if (!isDel) return [];
+  const ids = Array.isArray(ev.MessageIDs) ? ev.MessageIDs
+    : (ev.MessageID ? [ev.MessageID] : []);
+  return ids.filter(Boolean);
 }
 
 // Trata o evento messages_update (deleção feita no WhatsApp). Marca deleted_at nas rows
@@ -107,9 +110,11 @@ async function maybeHandleGroupDelete(supabase, body) {
     const ids = parseDeletedWaIds(body);
     if (!ids.length) return { handled: true }; // update sem deleção → consome e ignora
     for (const waId of ids) {
+      // O id do evento vem SEM prefixo; o stored (msg vinda do zap) pode ter 'sender:'.
+      // Casa por sufixo (termina com o id). waId é hex → sem caractere especial de LIKE.
       await supabase.from('group_chat_messages')
         .update({ deleted_at: new Date().toISOString(), deleted_origin: 'whatsapp', deleted_synced: true })
-        .eq('wa_message_id', waId).is('deleted_at', null);
+        .like('wa_message_id', `%${waId}`).is('deleted_at', null);
     }
     console.log(`[Bridge-in] WA delete espelhado: ${ids.length} msg(s)`);
     return { handled: true };
