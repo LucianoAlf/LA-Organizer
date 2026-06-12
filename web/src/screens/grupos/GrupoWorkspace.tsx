@@ -232,8 +232,8 @@ export function GrupoWorkspace() {
 
   return (
     <div className="flex gap-lg w-full max-w-screen-2xl">
-      {/* coluna de conteúdo — encolhe (flex-1) quando o chat abre na direita */}
-      <div className="flex-1 min-w-0 space-y-lg pb-2xl">
+      {/* coluna de conteúdo — reserva espaço à direita (pr) quando o chat (fixo na viewport) abre */}
+      <div className={`flex-1 min-w-0 space-y-lg pb-2xl ${chatOpen ? 'md:pr-[404px]' : ''}`}>
       {/* header */}
       <header className="flex items-start gap-md">
         <div className="min-w-0 flex-1">
