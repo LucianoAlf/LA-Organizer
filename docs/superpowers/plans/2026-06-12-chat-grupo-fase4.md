@@ -92,24 +92,30 @@ const api = axios.create({
   timeout: 15000,
 });
 
-// Lista os grupos da instância. Retorna [{ jid, name }].
-// OBS: o endpoint exato pode variar na UAZAPI — o smoke da Task 3 confirma e ajusta aqui.
+// Lista os grupos da instância. Doc UAZAPI: GET /group/list → { groups: [Group] };
+// Group tem JID ("...@g.us") + Name. Retorna [{ jid, name }].
 async function listGroups() {
   const resp = await api.get('/group/list');
-  const raw = Array.isArray(resp.data) ? resp.data : (resp.data?.groups || resp.data?.chats || []);
-  return raw
-    .map((g) => ({ jid: g.id || g.jid || g.JID || g.chatid, name: g.subject || g.name || g.title || '' }))
-    .filter((g) => g.jid);
+  const raw = resp.data?.groups || [];
+  return raw.map((g) => ({ jid: g.JID, name: g.Name || '' })).filter((g) => g.jid);
 }
 
-// Posta texto num grupo. `jid` = "xxxxxxxx@g.us". Retorna o id da msg enviada (string) ou null.
+// Resolve o JID pelo código de convite (a parte depois de chat.whatsapp.com/).
+// Doc UAZAPI: POST /group/inviteInfo { invitecode } → Group { JID: "...@g.us" }.
+async function getGroupJidByInvite(invitecode) {
+  const resp = await api.post('/group/inviteInfo', { invitecode });
+  return resp.data?.JID || null;
+}
+
+// Posta texto num grupo. `jid` = "xxxxxxxx@g.us" — o campo `number` do /send/text aceita
+// @g.us (confirmado na doc). Resposta = schema Message → campo `messageid`.
 async function sendGroupText(jid, text) {
   const resp = await api.post('/send/text', { number: jid, text, readchat: true });
   const d = resp.data || {};
-  return d.id || d.messageid || d.messageId || (d.key && d.key.id) || null;
+  return d.messageid || d.id || (d.key && d.key.id) || null;
 }
 
-module.exports = { listGroups, sendGroupText };
+module.exports = { listGroups, getGroupJidByInvite, sendGroupText };
 ```
 
 - [ ] **Step 2: Syntax check + deploy**
@@ -131,22 +137,28 @@ scp src/services/uazapi-groups.js tom:/opt/LA-Organizer/src/services/uazapi-grou
 
 ```js
 // scripts/link-wa-group.js — roda na VPS: node --env-file=.env scripts/link-wa-group.js
-const { listGroups } = require('../src/services/uazapi-groups');
+// Resolve o JID direto pelo código de convite; lista todos como conferência.
+const { getGroupJidByInvite, listGroups } = require('../src/services/uazapi-groups');
+const INVITE = 'KDjz7skJhjzAwzzI1eXB1b'; // a parte depois de chat.whatsapp.com/
 (async () => {
-  const groups = await listGroups();
-  console.log('GRUPOS DA INSTÂNCIA:');
-  for (const g of groups) console.log(`  ${g.jid}  ::  ${g.name}`);
+  try {
+    const jid = await getGroupJidByInvite(INVITE);
+    console.log('>>> JID do Financeiro (pelo convite):', jid);
+  } catch (e) { console.error('inviteInfo falhou:', e.response?.status, e.message); }
+  console.log('--- todos os grupos (conferência) ---');
+  try { for (const g of await listGroups()) console.log(`  ${g.jid}  ::  ${g.name}`); }
+  catch (e) { console.error('listGroups falhou:', e.response?.status, e.message); }
 })().catch((e) => { console.error('ERRO:', e.response?.status, e.message); process.exit(1); });
 ```
 
-- [ ] **Step 2: Rodar na VPS e ler a lista**
+- [ ] **Step 2: Rodar na VPS e capturar o JID**
 
 ```bash
 scp scripts/link-wa-group.js tom:/opt/LA-Organizer/scripts/link-wa-group.js
 ssh tom "cd /opt/LA-Organizer && node --env-file=.env scripts/link-wa-group.js"
 ```
-Esperado: lista `JID :: nome`. Achar o grupo Financeiro (nome "Financeiro Grupo LA Music").
-**Se der 404/erro de endpoint:** o caminho `/group/list` está errado — consultar a doc UAZAPI da instância (`https://lamusic.uazapi.com` / docs.uazapi.com), corrigir o endpoint em `uazapi-groups.js` Step 1, re-deployar (`scp`) e repetir.
+Esperado: linha `>>> JID do Financeiro (pelo convite): 1203...@g.us`. Se o convite tiver expirado/trocado, pegar o JID do grupo "Financeiro Grupo LA Music" na lista de conferência.
+**Se der 503/timeout:** a instância UAZAPI pode estar hibernando (known issue `project_uazapi_hibernation`) — checar `instance.status` no painel e re-tentar.
 
 - [ ] **Step 3: Gravar o JID no work_group Financeiro**
 
@@ -574,5 +586,5 @@ Apagar via MCP `execute_sql` as mensagens de teste criadas nesta validação (ma
 ## Self-Review (preenchido pelo autor do plano)
 
 - **Cobertura da spec:** schema (T1) ✓; uazapi-groups (T2) ✓; JID/link (T3) ✓; saída pura+runner (T4/T5) ✓; entrada (T6) + webhook (T7) ✓; config webhook (T8) ✓; anti-loop (T6 dedup + T5 marca wa_message_id + T8 wasSentByApi) ✓; identidade (T6 phone→collab + wa_sender_name) ✓; erro 503 (T5 re-tenta) ✓; memória única (T9 Step 2) ✓; validação (T9) ✓.
-- **Sem placeholders:** os únicos pontos "a confirmar" são campos/endpoint específicos da UAZAPI (`/group/list`, id de retorno do send, `data.sender`/`senderName`) — todos com default defensivo no código + step explícito de verificação no smoke/e2e. Não há "TODO/depois".
+- **Sem placeholders:** endpoints e campos da UAZAPI **confirmados na doc oficial** (OpenAPI): `GET /group/list` → `{groups:[{JID,Name}]}`; `POST /group/inviteInfo {invitecode}` → `{JID}`; `/send/text` aceita `number=@g.us` e responde com `messageid`; payload de webhook tem `chatid/sender/senderName/isGroup/fromMe/messageid/text`. Nada "a confirmar"; sem "TODO/depois".
 - **Consistência de nomes:** `buildWhatsappText`, `runOutboundOnce(supabase, deps, limit)`, `sendGroupText(jid,text)`, `maybeHandleGroupMessage(supabase, body, helpers)` usados de forma idêntica entre tasks. `channel='app'|'whatsapp'`, `wa_message_id`, `wa_sender_name`, `wa_group_jid` consistentes.
