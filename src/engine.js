@@ -7872,6 +7872,45 @@ async function processMessage(phone, text, raw = {}) {
     console.warn('[ReportRouter] err:', e.message);
   }
 
+  // ---- TASK-QUERY-NO-FULL-LIST (caso Alf 12/06): consulta de tarefas pré-LLM ----
+  // A barrinha/scorecard varrem o banco inteiro e dão o número exato, mas o contexto do
+  // LLM só recebe um RECORTE das tarefas (workTasks cortado em max_daily_tasks + due<=+7d).
+  // Quando o user tem 15 abertas e pergunta "minhas atrasadas / o que tenho esse mês / lista
+  // minhas pendentes", o LLM via parcial e mandava "abre o app". Aqui interceptamos ANTES do
+  // LLM: detector determinístico → query da lista COMPLETA → render com contagem exata.
+  // Conservador (message-anchored): só dispara quando a mensagem É a consulta; senão null.
+  // Roda DEPOIS do roteador de finanças (finanças vence "o que tenho pra pagar esse mês").
+  try {
+    const { detectTaskQuery, filterTasksByScope, renderTaskQueryReply } = require('./utils/task-query');
+    const _tq = detectTaskQuery(String(text || ''));
+    if (_tq && _tq.scope) {
+      const { data: _openRows, error: _tqErr } = await supabase.from('tasks')
+        .select('id, title, due_date, status, is_group, recurrence_rule, parent_task_id, context')
+        .eq('assigned_to', collab.id)
+        .eq('data_classification', 'real')
+        .not('status', 'in', '(done,cancelled)');
+      if (_tqErr) throw _tqErr;
+      // Exclui containers de grupo recorrente (templates), igual ao filtro do openTasksNoDue
+      // em system.js. Os demais (inclusive instâncias materializadas) são tarefas reais.
+      const _allOpen = (_openRows || []).filter((t) => !(t.is_group && t.recurrence_rule != null));
+      const _scoped = filterTasksByScope(_allOpen, _tq.scope, todaySaoPaulo());
+      const _firstName = (collab.preferred_name || collab.full_name || '').split(' ')[0];
+      const reply = renderTaskQueryReply(_scoped, _tq.scope, { today: todaySaoPaulo(), firstName: _firstName });
+      if (reply) {
+        try {
+          await whatsapp.sendMessage(phone, reply);
+          await logConversation(collab.id, 'outbound', reply);
+        } catch (postErr) {
+          console.warn('[TaskQuery] post-send err:', postErr.message);
+        }
+        console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now() - _t0}ms (task_query:${_tq.scope} n=${_scoped.length})`);
+        return;
+      }
+    }
+  } catch (e) {
+    console.warn('[TaskQuery] err:', e.message);
+  }
+
   // ---- Sprint 30.3 — Pending Intents: auto-resolve quando user confirma ----
   // Se TOM perguntou "Crio?" turnos atrás (intent aberta) e o user agora
   // respondeu "sim/ok/pode/cria", injeta contexto extra no `text` pra forçar

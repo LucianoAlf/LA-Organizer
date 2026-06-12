@@ -207,6 +207,14 @@ test('render escopo vazio → mensagem positiva, sem "abre o app"', () => {
   assert.ok(reply.length > 0);
 });
 
+test('render concorda número: 1 tarefa → "Sua tarefa", N → "Suas tarefas"', () => {
+  const um = renderTaskQueryReply([{ id: '1', title: 'Só uma', due_date: '2026-06-05' }], 'overdue', { today: TODAY });
+  assert.match(um, /Sua tarefa atrasada \(1\)/);
+  assert.doesNotMatch(um, /Suas tarefa /);
+  const varios = renderTaskQueryReply(filterTasksByScope(TASKS, 'overdue', TODAY), 'overdue', { today: TODAY });
+  assert.match(varios, /Suas tarefas atrasadas \(2\)/);
+});
+
 test('render é determinístico (mesma entrada → mesma saída)', () => {
   const a = renderTaskQueryReply(TASKS, 'month', { today: TODAY, firstName: 'Alf' });
   const b = renderTaskQueryReply(TASKS, 'month', { today: TODAY, firstName: 'Alf' });

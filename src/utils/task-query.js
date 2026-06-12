@@ -37,6 +37,7 @@ function _norm(s) {
   return String(s || '')
     .toLowerCase()
     .normalize('NFD').replace(/[̀-ͯ]/g, '') // tira acento
+    .replace(/[,;]/g, ' ')                    // vírgula/ponto-e-vírgula viram espaço
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -55,6 +56,7 @@ function detectTaskQuery(text) {
   if (
     _re(MINHAS + TAREFAS + '\\s+(?:atrasad\\w+|vencid\\w+)').test(t) ||
     _re(MINHAS + '(?:atrasad\\w+|vencid\\w+)').test(t) ||
+    _re('quais\\s+(?:sao\\s+)?' + MINHAS + '(?:' + TAREFAS + '\\s+)?(?:atrasad\\w+|vencid\\w+)').test(t) ||
     _re('(?:o\\s+que|oq|tudo\\s+que|o\\s+que\\s+e\\s+que)\\s+(?:eu\\s+)?(?:tenho|ta|esta|tem)\\s+(?:de\\s+)?atrasad\\w*').test(t) ||
     _re('(?:o\\s+que|oq)\\s+(?:eu\\s+)?(?:tenho\\s+)?(?:que\\s+)?(?:ta|esta)?\\s*(?:atrasad\\w+|vencid\\w+)').test(t) ||
     _re('(?:o\\s+que|oq)\\s+passou\\s+(?:do|da)\\s+prazo').test(t) ||
@@ -193,9 +195,10 @@ function renderTaskQueryReply(tasks, scope, opts = {}) {
     return `✅ Você não tem nenhuma tarefa em aberto${firstName ? ', ' + firstName : ''} — tudo concluído! 🎯`;
   }
 
-  const noun = total === 1 ? 'tarefa' : 'tarefas';
+  const possNoun = total === 1 ? 'Sua tarefa' : 'Suas tarefas';
+  const lbl = total === 1 ? hdr.label : hdr.labelPl;
   const lines = [];
-  lines.push(`${hdr.emoji} *Suas ${noun} ${hdr.labelPl} (${total}):*`);
+  lines.push(`${hdr.emoji} *${possNoun} ${lbl} (${total}):*`);
 
   // Para overdue, todas já são atrasadas → uma lista só, sem sub-cabeçalhos.
   if (scope === 'overdue') {
