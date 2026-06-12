@@ -29,7 +29,7 @@ export function Composer({ onSend, upload }: Props) {
     if (file.size > 15 * 1024 * 1024) { showToast({ kind: 'error', title: 'Arquivo grande demais (máx 15MB)' }); return; }
     setBusy(true);
     try { const a = await upload(file, file.name, file.type); await onSend({ attachment: a }); }
-    catch { showToast({ kind: 'error', title: 'Falha no anexo' }); }
+    catch (e) { showToast({ kind: 'error', title: 'Falha no anexo', msg: (e as Error)?.message?.slice(0, 120) }); }
     finally { setBusy(false); }
   }
   async function startAudio() {
@@ -52,7 +52,7 @@ export function Composer({ onSend, upload }: Props) {
     if (!blob) return;
     setBusy(true);
     try { const a = await upload(blob, `audio-${Date.now()}.webm`, 'audio/webm'); await onSend({ attachment: a }); }
-    catch { showToast({ kind: 'error', title: 'Falha no áudio' }); }
+    catch (e) { showToast({ kind: 'error', title: 'Falha no áudio', msg: (e as Error)?.message?.slice(0, 120) }); }
     finally { setBusy(false); }
   }
 
