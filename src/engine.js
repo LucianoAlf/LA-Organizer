@@ -7734,13 +7734,13 @@ async function processMessage(phone, text, raw = {}) {
               if (mp.requester_phone) {
                 try { await whatsapp.sendMessage(mp.requester_phone, `✅ Sua solicitação de manutenção em *${mp.item_nome || 'item'}* foi aprovada por ${collab.full_name}.`); } catch (_) {}
               }
-              aprReply = `✅ Manutenção em *${mp.item_nome || 'item'}* registrada. Avisei quem solicitou.`;
+              aprReply = `✅ Manutenção em *${mp.item_nome || 'item'}* registrada (pedido de *${mp.requester_name || 'quem solicitou'}*). ${mp.requester_phone ? `Avisei o *${mp.requester_name || 'solicitante'}*.` : 'Solicitante sem WhatsApp pra avisar.'}`;
             } else {
               await approvalsService.resolveApprovalByRef(supabase, mp.ref_id, 'denied', `rejeitado por ${collab.full_name}: ${apr.reason || ''}`);
               if (mp.requester_phone) {
                 try { await whatsapp.sendMessage(mp.requester_phone, `❌ Solicitação de manutenção em *${mp.item_nome || 'item'}* rejeitada por ${collab.full_name}${apr.reason ? `: ${apr.reason}` : ''}.`); } catch (_) {}
               }
-              aprReply = `❌ Manutenção *${mp.item_nome || 'item'}* rejeitada. Avisei quem solicitou.`;
+              aprReply = `❌ Manutenção *${mp.item_nome || 'item'}* rejeitada (pedido de *${mp.requester_name || 'quem solicitou'}*). ${mp.requester_phone ? `Avisei o *${mp.requester_name || 'solicitante'}*.` : ''}`.trim();
             }
           } catch (_maintErr) {
             console.error('[Maintenance] approval execution err:', _maintErr.message);
