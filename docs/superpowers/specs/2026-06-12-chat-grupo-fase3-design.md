@@ -47,6 +47,8 @@ Arquitetura: **aditivo, reusando os parsers/appliers já EXPORTADOS do `engine.j
 
 **Confirmação honesta:** como na Fase 2, a fala do TOM = persistência. Marker rejeitado → não confirma sucesso falso; anexa aviso honesto.
 
+**TOM facilitador (Alf 12/06):** o TOM não é só executor — ele **conduz e ENSINA**. Como está dentro do sistema, o prompt o instrui a: guiar a equipe ("posso já criar isso como tarefa do grupo, quer?"), explicar como usar as ferramentas ("é só me falar 'cria projeto X'"), e conduzir a conversa quando fizer sentido. Grupos são **semânticos** (Financeiro, Agenda, Tarefas, Projetos) → o TOM usa o nome/tema do grupo como contexto do que provavelmente faz sentido ali. **Sem coisa pessoal, sem finança** (é pessoal/sensível) nesta fase.
+
 ## 4. Proativo de fechamento (o coração da Fase 3)
 
 Disparado pela varredura de silêncio (seção 1) quando um grupo engajado fica idle ≥ 8 min, **uma única vez** por sessão:
