@@ -32,6 +32,16 @@ test('match nos dois → ambiguous', () => {
 });
 test('desconhecido → none', () => assert.strictEqual(classifySource('xpto', A, C).kind, 'none'));
 
+// ---- Acento: match deve ignorar diacríticos (caso Rose 11/06: "Itaú" digitado vs "Itáu" salvo) ----
+test('cartão com acento trocado casa (Itaú digitado vs Itáu salvo)', () => {
+  const r = classifySource('Cartão Itaú Matheus', [], ['Cartão Itáu Matheus']);
+  assert.strictEqual(r.kind, 'card');
+  assert.strictEqual(r.cardName, 'Cartão Itáu Matheus');
+});
+test('carteira com acento casa nos dois sentidos', () => {
+  assert.strictEqual(classifySource('itau', A, C).kind, 'account'); // sem acento digitado, salvo "Itaú"
+});
+
 // ---- Novos testes: type/method-aware ----
 const ACC = ['Nubank', 'Itau'];
 const CARD = ['Nubank'];

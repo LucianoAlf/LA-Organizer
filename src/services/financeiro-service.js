@@ -548,11 +548,17 @@ async function listCards(collaboratorId) {
   return data || [];
 }
 async function findCard(collaboratorId, cardName) {
+  // Match acento-INSENSÍVEL (caso Rose 11/06: "Cartão Itaú Matheus" digitado vs "Cartão Itáu
+  // Matheus" salvo). ILIKE do Postgres é acento-sensível → não casava. Busca todos os ativos
+  // e filtra em JS com NFD-strip, bidirecional (espelha classifySource).
   const { data, error } = await supabase.from('pf_cards')
     .select('id, name, brand, color, credit_limit, closing_day, due_day, icon, alert_cycle, alert_threshold')
-    .eq('collaborator_id', collaboratorId).eq('is_active', true).ilike('name', `%${cardName}%`);
+    .eq('collaborator_id', collaboratorId).eq('is_active', true);
   if (error) throw error;
-  return data || [];
+  const all = data || [];
+  const q = _normBank(cardName);
+  if (!q) return all; // sem nome → devolve todos (engine pergunta qual)
+  return all.filter((c) => { const x = _normBank(c.name); return x.includes(q) || q.includes(x); });
 }
 
 // Lança compra no cartão. installments>=2 → N parcelas agrupadas por purchase_group.

@@ -5,13 +5,19 @@
 const METHODS = ['pix', 'debito', 'débito', 'transferencia', 'transferência', 'ted', 'doc', 'boleto'];
 const CASH_RE = /\b(dinheiro|esp[ée]cie|cash|grana|vivo)\b/i;
 
+// Normaliza p/ match tolerante: minúsculas + remove acentos (NFD strip). Caso Rose 11/06:
+// cartão salvo "Itáu" vs digitado "Itaú" — sem isto, o substring não casa (ú≠á em bytes).
+function _normSrc(s) {
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+}
+
 function classifySource(rawName, accountNames = [], cardNames = [], opts = {}) {
-  const name = String(rawName || '').trim().toLowerCase();
+  const name = _normSrc(rawName);
   if (!name) return { kind: 'none' };
   if (CASH_RE.test(name)) return { kind: 'cash' };
   if (METHODS.includes(name)) return { kind: 'none' };
   const hit = (list) => list.find((n) => {
-    const x = String(n).toLowerCase();
+    const x = _normSrc(n);
     return x.includes(name) || name.includes(x);
   });
   const a = hit(accountNames);
