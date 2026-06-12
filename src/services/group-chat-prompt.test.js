@@ -78,3 +78,16 @@ test('exibe papel de facilitador', () => {
   const p = buildGroupChatPrompt(base);
   assert.match(p, /FACILITADOR/);
 });
+
+test('injeta a âncora de data quando passada (BUG weekday)', () => {
+  const p = buildGroupChatPrompt({ ...base, dateAnchor: '**Data/hora agora (BRT):** 2026-06-12 18:00 (sexta)\nsegunda 15/06' });
+  assert.match(p, /âncora temporal/);
+  assert.match(p, /2026-06-12 18:00 \(sexta\)/);
+  assert.match(p, /segunda 15\/06/);
+});
+
+test('instrui a NÃO duplicar tarefa em correção (atualiza no lugar)', () => {
+  const p = buildGroupChatPrompt(base);
+  assert.match(p, /NUNCA duplique/);
+  assert.match(p, /ATUALIZA no lugar/);
+});

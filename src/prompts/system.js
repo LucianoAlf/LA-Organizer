@@ -1725,17 +1725,22 @@ async function fetchCollaboratorContext(collaborator) {
   let workGroupsCtx = { groups: [], myGroupTasks: [] };
   try {
     const wg = require('../services/work-groups');
+    const { filterVisibleGroupTasks } = require('../utils/group-task-visibility');
     const groups = await wg.loadActiveGroups(supabase);
     let myGroupTasks = [];
     const myGids = groups.filter((g) => wg.isMember(g, id)).map((g) => g.id);
     if (myGids.length) {
+      // GROUP-RECUR-TEMPLATE-VISIBLE-TO-TOM (caso Rose 12/06): a query precisa de
+      // is_group/recurrence_rule/parent_task_id pra esconder a mãe-template recorrente +
+      // filhas-template (paridade com o PWA fetchGroupsForDay), senão o TOM conta o ciclo
+      // de grupo em dobro (template + instância). Busca com margem e filtra pós-fetch.
       const { data: gt } = await supabase.from('tasks')
-        .select('id, title, due_date, status, assigned_group_id')
+        .select('id, title, due_date, status, assigned_group_id, is_group, recurrence_rule, parent_task_id')
         .in('assigned_group_id', myGids)
         .eq('status', 'pending')
         .order('due_date', { ascending: true, nullsFirst: false })
-        .limit(10);
-      myGroupTasks = gt || [];
+        .limit(24);
+      myGroupTasks = filterVisibleGroupTasks(gt || []).slice(0, 12);
     }
     workGroupsCtx = { groups, myGroupTasks };
   } catch (_) { /* sem grupos no contexto */ }

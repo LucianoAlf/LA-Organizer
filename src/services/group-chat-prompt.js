@@ -84,6 +84,8 @@ Para concluir:
 Campos opcionais em create: due_date (YYYY-MM-DD), recurrence_rule (string RRULE), remind_at (UM ISO datetime com fuso -03:00 = quando avisar a pessoa).
 Pode emitir várias ações no array.
 
+**UMA tarefa por assunto — NUNCA duplique:** se a pessoa CORRIGE algo da tarefa que você ACABOU de criar (a data — "é dia 15 e não 16", o horário, pra quem é, um detalhe) ou só acrescenta contexto sobre ela, reemita UM create com o MESMO título-núcleo e o campo corrigido. NÃO crie uma segunda tarefa pro mesmo assunto. O sistema reconhece a tarefa existente e ATUALIZA no lugar (a data nova substitui a antiga). Duas tarefas quase-iguais no grupo é erro grave. Só crie tarefa nova quando for REALMENTE outra coisa.
+
 **Recorrência** — quando a tarefa se repete no tempo, use recurrence_rule (NUNCA crie várias cópias):
 - "todo dia 5 do mês" → recurrence_rule: "FREQ=MONTHLY;BYMONTHDAY=5"
 - "toda segunda" → recurrence_rule: "FREQ=WEEKLY;BYDAY=MO"

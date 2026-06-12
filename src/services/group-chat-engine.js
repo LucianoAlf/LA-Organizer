@@ -10,6 +10,7 @@ const ai = require('../ai/provider');
 const { buildGroupChatPrompt, loadGroupChatSoul } = require('./group-chat-prompt');
 const { applyGroupChatTaskActions } = require('./group-chat-tasks');
 const { buildGroupReport } = require('./group-report-builder');
+const { buildBrtDateAnchor } = require('../utils/dates');
 
 const HISTORY_LIMIT = 30;
 const POOL_LIMIT = 30;
@@ -51,6 +52,7 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
     history: ctx.history,
     senderName: ctx.senderName,
     longTermMemory: ctx.group.tom_chat_memory,
+    dateAnchor: buildBrtDateAnchor(), // hoje + tabela de datas (BRT) — LLM não calcula weekday e erra
   });
 
   let response;
@@ -74,13 +76,15 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
     const parsed = engine.parseTaskUpdateMarker(reply);
     if (parsed && !parsed.malformed && Array.isArray(parsed.actions) && parsed.actions.length) {
       reply = (parsed.cleanText || '').trim();
-      const { created, completed, failed } = await applyGroupChatTaskActions({ supabase, groupId, senderCollabId, actions: parsed.actions });
+      const { created, updated, completed, failed } = await applyGroupChatTaskActions({ supabase, groupId, senderCollabId, actions: parsed.actions });
       // detecta recorrência pra rotular
       const recurMap = new Set(parsed.actions.filter((a) => a.recurrence_rule).map((a) => (a.title || '').toLowerCase()));
       created.forEach((t) => actions.push({ kind: 'task', status: 'ok', label: t.title, detail: recurMap.has((t.title || '').toLowerCase()) ? 'recorrente' : '' }));
+      // Dedup: tarefa existente atualizada no lugar (data corrigida etc.) — não é tarefa nova.
+      (updated || []).forEach((t) => actions.push({ kind: 'task', status: 'ok', label: t.title, detail: (t.changed && t.changed.due_date) ? 'data atualizada' : 'atualizada' }));
       completed.forEach((t) => actions.push({ kind: 'task', status: 'ok', label: t.title, detail: 'concluída' }));
-      if (failed.length && !created.length && !completed.length) actions.push({ kind: 'task', status: 'fail', label: 'Tarefa', detail: 'não consegui registrar' });
-      console.log(`[GroupChat] task grupo=${groupId}: created=${created.length} completed=${completed.length} failed=${failed.length}`);
+      if (failed.length && !created.length && !(updated || []).length && !completed.length) actions.push({ kind: 'task', status: 'fail', label: 'Tarefa', detail: 'não consegui registrar' });
+      console.log(`[GroupChat] task grupo=${groupId}: created=${created.length} updated=${(updated || []).length} completed=${completed.length} failed=${failed.length}`);
     } else if (parsed && parsed.malformed) {
       stripBlock(/<<TASK_UPDATE>>[\s\S]*?<<END>>/i);
     }
