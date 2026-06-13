@@ -9,13 +9,14 @@ export type FormatAction = 'format' | 'summarize' | 'fix' | 'tone';
 export async function formatNote(
   action: FormatAction,
   html: string,
+  opts?: { instruction?: string; emoji?: boolean },
 ): Promise<{ ok: true; html: string } | { ok: false; reason: string }> {
   if (!INTERNAL_SECRET) return { ok: false, reason: 'no_secret' };
   try {
     const res = await fetch(`${TOM_BASE}/internal/format-note`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-internal-secret': INTERNAL_SECRET },
-      body: JSON.stringify({ action, html }),
+      body: JSON.stringify({ action, html, instruction: opts?.instruction, emoji: opts?.emoji }),
     });
     if (!res.ok) return { ok: false, reason: `http_${res.status}` };
     const data = await res.json();

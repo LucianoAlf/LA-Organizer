@@ -128,7 +128,11 @@ export function AccountSheet({
 
   async function deactivate() {
     if (!initial) return;
-    if (!confirm(`Desativar a carteira "${initial.name}"? Ela some da lista mas o histórico fica.`)) return;
+    const saldo = Number(initial.balance);
+    const aviso = Math.abs(saldo) > 0.005
+      ? `Atenção: a carteira "${initial.name}" tem saldo de R$ ${saldo.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}.\n\nAo arquivar, ela some da lista, mas o saldo NÃO é zerado — fica guardado e volta se você reativar. Se você paga faturas/contas com essa carteira, estornos voltarão pra ela mesmo arquivada.\n\nArquivar mesmo assim?`
+      : `Desativar a carteira "${initial.name}"? Ela some da lista mas o histórico fica.`;
+    if (!confirm(aviso)) return;
     try {
       await deactivateMut.mutateAsync(initial.id);
       onClose();

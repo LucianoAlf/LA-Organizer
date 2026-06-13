@@ -76,7 +76,11 @@ export function CarteirasPage() {
   const [creating, setCreating] = useState(false);
 
   async function deactivate(account: PfAccount) {
-    if (!confirm(`Desativar carteira "${account.name}"? Ela some da lista, mas as transações vinculadas seguem no histórico.`)) return;
+    const saldo = Number(account.balance);
+    const aviso = Math.abs(saldo) > 0.005
+      ? `Atenção: a carteira "${account.name}" tem saldo de R$ ${saldo.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}.\n\nAo arquivar, ela some da lista, mas o saldo NÃO é zerado — fica guardado e volta se você reativar. Estornos de fatura voltarão pra ela mesmo arquivada.\n\nArquivar mesmo assim?`
+      : `Desativar carteira "${account.name}"? Ela some da lista, mas as transações vinculadas seguem no histórico.`;
+    if (!confirm(aviso)) return;
     try { await deactivateMut.mutateAsync(account.id); } catch (e) { alert((e as Error).message); }
   }
 

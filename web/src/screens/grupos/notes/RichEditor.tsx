@@ -11,8 +11,9 @@ import { formatNote, type FormatAction } from '../../../lib/formatNote';
 import { FormatPreview } from './FormatPreview';
 import { showToast } from '../../../components/Toast';
 
+// "Organizar" (format) é o padrão e fica destacado no topo do menu; estes são os
+// modificadores secundários (todos herdam a formatação semântica no motor).
 const IA_ACTIONS: { key: FormatAction; label: string }[] = [
-  { key: 'format', label: 'Auto-formatar' },
   { key: 'summarize', label: 'Resumir' },
   { key: 'fix', label: 'Corrigir ortografia' },
   { key: 'tone', label: 'Deixar mais claro' },
@@ -26,6 +27,19 @@ export function RichEditor({ valueHtml, onChange }: { valueHtml: string; onChang
   const [linkUrl, setLinkUrl] = useState('');
   const [preview, setPreview] = useState<{ before: string; after: string } | null>(null);
   const [loadingIa, setLoadingIa] = useState(false);
+  const [instrOpen, setInstrOpen] = useState(false);
+  const [instrText, setInstrText] = useState('');
+  // Toggle de emojis (default ligado), persistido — afeta toda execução de IA.
+  const [useEmoji, setUseEmoji] = useState<boolean>(() => {
+    try { return localStorage.getItem('tom_notes_emoji') !== '0'; } catch { return true; }
+  });
+  function toggleEmoji() {
+    setUseEmoji((v) => {
+      const next = !v;
+      try { localStorage.setItem('tom_notes_emoji', next ? '1' : '0'); } catch { /* ignore */ }
+      return next;
+    });
+  }
 
   const editor = useEditor({
     extensions: [StarterKit, TextStyle, Color, Link.configure({ openOnClick: false })],
@@ -40,12 +54,13 @@ export function RichEditor({ valueHtml, onChange }: { valueHtml: string; onChang
 
   if (!editor) return null;
 
-  async function runIa(action: FormatAction) {
+  async function runIa(action: FormatAction, instruction?: string) {
     setMenuOpen(false);
+    setInstrOpen(false);
     const before = editor!.getHTML();
     setLoadingIa(true);
     setPreview({ before, after: '' });
-    const r = await formatNote(action, before);
+    const r = await formatNote(action, before, { instruction, emoji: useEmoji });
     setLoadingIa(false);
     if (r.ok) {
       setPreview({ before, after: r.html });
@@ -133,14 +148,45 @@ export function RichEditor({ valueHtml, onChange }: { valueHtml: string; onChang
         </div>
 
         <div className="w-full sm:w-auto sm:ml-auto relative">
-          <button type="button" onClick={() => { setColorOpen(false); setLinkOpen(false); setMenuOpen((o) => !o); }} className="w-full sm:w-auto justify-center inline-flex items-center gap-1 text-body-sm text-tom font-medium px-2 py-1.5 rounded-md hover:bg-tom/10 focus-ring">
+          <button type="button" onClick={() => { setColorOpen(false); setLinkOpen(false); setInstrOpen(false); setMenuOpen((o) => !o); }} className="w-full sm:w-auto justify-center inline-flex items-center gap-1 text-body-sm text-tom font-medium px-2 py-1.5 rounded-md hover:bg-tom/10 focus-ring">
             <Sparkles size={15} /> Formatar com o TOM
           </button>
           {menuOpen && (
-            <div className="absolute right-0 top-full mt-1 z-30 w-48 bg-bg-elevated border border-border rounded-md shadow-lg py-1">
+            <div className="absolute right-0 top-full mt-1 z-30 w-64 bg-bg-elevated border border-border rounded-md shadow-lg py-1">
+              <button type="button" onClick={() => runIa('format')} className="w-full text-left px-3 py-2 text-body-sm font-medium text-tom hover:bg-bg-surface flex items-center gap-1.5">
+                <Sparkles size={14} /> Organizar <span className="text-caption text-fg-muted font-normal">recomendado</span>
+              </button>
+              <div className="h-px bg-border mx-2 my-1" />
               {IA_ACTIONS.map((a) => (
                 <button key={a.key} type="button" onClick={() => runIa(a.key)} className="w-full text-left px-3 py-2 text-body-sm text-fg hover:bg-bg-surface">{a.label}</button>
               ))}
+              <div className="h-px bg-border mx-2 my-1" />
+              {!instrOpen ? (
+                <button type="button" onClick={() => setInstrOpen(true)} className="w-full text-left px-3 py-2 text-body-sm text-fg hover:bg-bg-surface">Formatar do meu jeito…</button>
+              ) : (
+                <div className="px-3 py-2">
+                  <textarea
+                    value={instrText}
+                    onChange={(e) => setInstrText(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && instrText.trim()) { e.preventDefault(); runIa('format', instrText.trim()); } }}
+                    placeholder="Diz pro TOM como quer: ex. 'separa por loja e põe o total no fim'"
+                    rows={3}
+                    autoFocus
+                    className="w-full bg-bg-surface border border-border rounded-md p-2 text-body-sm text-fg focus:outline-none focus:border-tom resize-none"
+                  />
+                  <div className="flex items-center justify-end gap-2 mt-1">
+                    <button type="button" onClick={() => { setInstrOpen(false); setInstrText(''); }} className="text-caption text-fg-muted px-2 py-1 focus-ring rounded">Cancelar</button>
+                    <button type="button" disabled={!instrText.trim()} onClick={() => runIa('format', instrText.trim())} className="text-caption text-tom font-medium px-2 py-1 disabled:opacity-40 focus-ring rounded">Aplicar</button>
+                  </div>
+                </div>
+              )}
+              <div className="h-px bg-border mx-2 my-1" />
+              <button type="button" onClick={toggleEmoji} aria-pressed={useEmoji} className="w-full text-left px-3 py-2 text-body-sm text-fg hover:bg-bg-surface flex items-center justify-between">
+                <span>Usar emojis</span>
+                <span className={`inline-flex items-center h-5 w-9 rounded-full transition-colors shrink-0 ${useEmoji ? 'bg-tom' : 'bg-border'}`}>
+                  <span className={`h-4 w-4 rounded-full bg-white transition-transform ${useEmoji ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                </span>
+              </button>
             </div>
           )}
         </div>
