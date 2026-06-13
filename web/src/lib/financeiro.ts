@@ -139,6 +139,19 @@ export async function listTransactions(collaboratorId: string, opts?: { monthYea
   if (error) throw error;
   return (data as PfTransaction[]) ?? [];
 }
+// Meses (YYYY-MM) que têm lançamento, pelo mês de FLUXO DE CAIXA (cartão = fatura). Alimenta o
+// seletor da tela Transações — inclui faturas futuras (parcelas) sem precisar de horizonte fixo.
+export async function listTransactionMonths(collaboratorId: string): Promise<string[]> {
+  const { data, error } = await supabase.from('pf_transactions')
+    .select('cashflow_competencia')
+    .eq('collaborator_id', collaboratorId);
+  if (error) throw error;
+  const set = new Set<string>();
+  for (const r of (data ?? []) as { cashflow_competencia: string | null }[]) {
+    if (r.cashflow_competencia) set.add(r.cashflow_competencia.slice(0, 7));
+  }
+  return [...set];
+}
 export async function createTransaction(collaboratorId: string, input: { type: PfTxType; category: PfCategory; amount: number; description?: string | null; transaction_date?: string; account_id?: string | null; is_adjustment?: boolean }) {
   const row = {
     collaborator_id: collaboratorId, type: input.type, category: input.category, amount: input.amount,

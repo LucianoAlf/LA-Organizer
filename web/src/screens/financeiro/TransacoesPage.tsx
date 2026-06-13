@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { CustomSelect } from '../../components/CustomSelect';
 import { Fab } from '../../components/Fab';
-import { useCategories, useCategoryLookup, useFinanceiroAuth, useTransactions } from '../../hooks/useFinanceiro';
+import { useCategories, useCategoryLookup, useFinanceiroAuth, useTransactionMonths, useTransactions } from '../../hooks/useFinanceiro';
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
 import type { PfCategory, PfTransaction, PfTxType } from '../../lib/financeiro';
 import { LancamentoSheet } from './components/LancamentoSheet';
@@ -48,6 +48,7 @@ export function TransacoesPage() {
 
   const months = useMemo(() => recentMonths(6), []);
   const [monthYear, setMonthYear] = useState<string>(months[0].value);
+  const monthsWithDataQ = useTransactionMonths();
   const [category, setCategory] = useState<string>(''); // '' = todas
   const [type, setType] = useState<string>('');         // '' = todos
   const [editing, setEditing] = useState<PfTransaction | null>(null);
@@ -81,7 +82,15 @@ export function TransacoesPage() {
     [txQ.data],
   );
 
-  const monthOptions = months;
+  // Seletor = últimos 6 meses (sempre) ∪ meses com lançamento (inclui faturas futuras de parcelas), desc.
+  const monthOptions = useMemo(() => {
+    const values = new Set<string>(months.map((m) => m.value));
+    for (const ym of (monthsWithDataQ.data ?? [])) values.add(ym);
+    return [...values].sort().reverse().map((value) => {
+      const [y, m] = value.split('-').map(Number);
+      return { value, label: `${PT_MONTHS[m - 1]} ${y}` };
+    });
+  }, [months, monthsWithDataQ.data]);
   const categoryOptions: { value: string; label: string }[] = [
     { value: '', label: 'Todas as categorias' },
     ...(catsQ.data ?? []).filter((c) => c.is_active).map((c) => ({ value: c.slug, label: `${c.emoji}  ${c.label}` })),

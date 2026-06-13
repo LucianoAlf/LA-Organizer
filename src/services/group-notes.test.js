@@ -34,6 +34,25 @@ test('createGroupNote insere com category/tags/created_by', async () => {
   assert.deepStrictEqual(ins.tags, ['Zoho']); assert.strictEqual(ins.created_by, 'u1');
 });
 
+test('createGroupNote grava type + fields sanitizados', async () => {
+  const { sb, ev } = fakeDb();
+  await createGroupNote({ supabase: sb, groupId: 'g1', createdBy: 'u1', note: {
+    title: 'Acesso Zoho', type: 'acesso',
+    fields: [{ label: 'Login', value: 'a@b' }, { label: 'Senha', value: '123', secret: true, kind: 'password' }, { label: '', value: '' }],
+  } });
+  const ins = ev.find((e) => e[0] === 'insert')[1];
+  assert.strictEqual(ins.type, 'acesso');
+  assert.strictEqual(ins.fields.length, 2);            // a linha vazia foi descartada
+  assert.strictEqual(ins.fields[1].secret, true);
+  assert.strictEqual(ins.fields[1].kind, 'password');
+});
+
+test('createGroupNote: type inválido vira livre', async () => {
+  const { sb, ev } = fakeDb();
+  await createGroupNote({ supabase: sb, groupId: 'g1', createdBy: 'u1', note: { title: 'X', type: 'hackzor' } });
+  assert.strictEqual(ev.find((e) => e[0] === 'insert')[1].type, 'livre');
+});
+
 test('appendGroupNote concatena no body por título', async () => {
   const notes = [{ id: 'n1', group_id: 'g1', title: 'Contas', body: 'linha 1' }];
   const { sb, ev } = fakeDb({ notes });

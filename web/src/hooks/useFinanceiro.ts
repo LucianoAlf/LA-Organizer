@@ -68,6 +68,14 @@ export function useTransactionsRange(start: string, end: string) {
     enabled: !!cid,
   });
 }
+export function useTransactionMonths() {
+  const cid = useFinanceiroAuth();
+  return useQuery({
+    queryKey: [...KEY, 'txMonths', cid],
+    queryFn: () => fin.listTransactionMonths(cid!),
+    enabled: !!cid,
+  });
+}
 export function useBills() {
   const cid = useFinanceiroAuth();
   return useQuery({
