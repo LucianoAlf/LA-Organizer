@@ -5,7 +5,7 @@ import { TextStyle } from '@tiptap/extension-text-style';
 import Color from '@tiptap/extension-color';
 import Link from '@tiptap/extension-link';
 import DOMPurify from 'dompurify';
-import { Bold, Italic, Heading2, List, Link2, Palette, Sparkles } from 'lucide-react';
+import { Bold, Italic, Heading2, List, Link2, Palette, Sparkles, Wand2 } from 'lucide-react';
 import { bodyToHtml, NOTE_COLORS } from '../../../lib/groupNotes';
 import { formatNote, type FormatAction } from '../../../lib/formatNote';
 import { FormatPreview } from './FormatPreview';
@@ -152,36 +152,39 @@ export function RichEditor({ valueHtml, onChange }: { valueHtml: string; onChang
             <Sparkles size={15} /> Formatar com o TOM
           </button>
           {menuOpen && (
-            <div className="absolute right-0 top-full mt-1 z-30 w-64 bg-bg-elevated border border-border rounded-md shadow-lg py-1">
-              <button type="button" onClick={() => runIa('format')} className="w-full text-left px-3 py-2 text-body-sm font-medium text-tom hover:bg-bg-surface flex items-center gap-1.5">
-                <Sparkles size={14} /> Organizar <span className="text-caption text-fg-muted font-normal">recomendado</span>
+            <div className="absolute right-0 top-full mt-1 z-30 w-64 bg-bg-elevated border border-border rounded-md shadow-lg p-1.5">
+              {/* Ação principal: botão CTA claro (não parecer título) */}
+              <button type="button" onClick={() => runIa('format')} className="w-full inline-flex items-center justify-center gap-1.5 text-body-sm font-semibold text-black bg-tom hover:brightness-95 rounded-md px-3 py-2 focus-ring">
+                <Sparkles size={15} /> Organizar
               </button>
-              <div className="h-px bg-border mx-2 my-1" />
+              <p className="text-caption text-fg-muted text-center mt-1 mb-1">separa e agrupa tudo · recomendado</p>
+              <div className="h-px bg-border my-1" />
+              <div className="text-caption uppercase tracking-wide text-fg-muted px-2 pt-1 pb-0.5">Outras ações</div>
               {IA_ACTIONS.map((a) => (
-                <button key={a.key} type="button" onClick={() => runIa(a.key)} className="w-full text-left px-3 py-2 text-body-sm text-fg hover:bg-bg-surface">{a.label}</button>
+                <button key={a.key} type="button" onClick={() => runIa(a.key)} className="w-full text-left px-3 py-2 text-body-sm text-fg hover:bg-bg-surface rounded-md">{a.label}</button>
               ))}
-              <div className="h-px bg-border mx-2 my-1" />
               {!instrOpen ? (
-                <button type="button" onClick={() => setInstrOpen(true)} className="w-full text-left px-3 py-2 text-body-sm text-fg hover:bg-bg-surface">Formatar do meu jeito…</button>
+                <button type="button" onClick={() => setInstrOpen(true)} className="w-full text-left px-3 py-2 text-body-sm text-fg hover:bg-bg-surface rounded-md inline-flex items-center gap-1.5"><Wand2 size={14} className="text-tom shrink-0" /> Formatar do meu jeito…</button>
               ) : (
-                <div className="px-3 py-2">
+                <div className="px-2 py-2">
+                  <div className="text-caption text-fg-muted mb-1">Diz pro TOM como quer:</div>
                   <textarea
                     value={instrText}
                     onChange={(e) => setInstrText(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && instrText.trim()) { e.preventDefault(); runIa('format', instrText.trim()); } }}
-                    placeholder="Diz pro TOM como quer: ex. 'separa por loja e põe o total no fim'"
+                    placeholder="ex.: separa por loja e põe o total no fim"
                     rows={3}
                     autoFocus
                     className="w-full bg-bg-surface border border-border rounded-md p-2 text-body-sm text-fg focus:outline-none focus:border-tom resize-none"
                   />
                   <div className="flex items-center justify-end gap-2 mt-1">
                     <button type="button" onClick={() => { setInstrOpen(false); setInstrText(''); }} className="text-caption text-fg-muted px-2 py-1 focus-ring rounded">Cancelar</button>
-                    <button type="button" disabled={!instrText.trim()} onClick={() => runIa('format', instrText.trim())} className="text-caption text-tom font-medium px-2 py-1 disabled:opacity-40 focus-ring rounded">Aplicar</button>
+                    <button type="button" disabled={!instrText.trim()} onClick={() => runIa('format', instrText.trim())} className="text-caption text-black bg-tom font-medium px-3 py-1 rounded-md disabled:opacity-40 focus-ring">Formatar</button>
                   </div>
                 </div>
               )}
-              <div className="h-px bg-border mx-2 my-1" />
-              <button type="button" onClick={toggleEmoji} aria-pressed={useEmoji} className="w-full text-left px-3 py-2 text-body-sm text-fg hover:bg-bg-surface flex items-center justify-between">
+              <div className="h-px bg-border my-1" />
+              <button type="button" onClick={toggleEmoji} aria-pressed={useEmoji} className="w-full text-left px-3 py-2 text-body-sm text-fg hover:bg-bg-surface rounded-md flex items-center justify-between">
                 <span>Usar emojis</span>
                 <span className={`inline-flex items-center h-5 w-9 rounded-full transition-colors shrink-0 ${useEmoji ? 'bg-tom' : 'bg-border'}`}>
                   <span className={`h-4 w-4 rounded-full bg-white transition-transform ${useEmoji ? 'translate-x-4' : 'translate-x-0.5'}`} />

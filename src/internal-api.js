@@ -1100,7 +1100,10 @@ router.post('/internal/format-note', requireInternalSecret, async (req, res) => 
   const v = validateFormatRequest(req.body || {});
   if (!v.ok) return res.status(400).json({ ok: false, error: v.error });
 
-  const RACE_MS = 30000;
+  // 90s: o motor semântico (Fatia D) gera HTML estruturado longo em textos grandes
+  // (descarga mental real) e estourava os 30s antigos → "fechou e não fez nada".
+  // CLI tem timeout próprio de 120s; 90s dá folga e ainda responde antes dele.
+  const RACE_MS = 90000;
   const logFmt = (result, reason) => {
     supabase.from('marker_logs').insert({
       marker_type: 'NOTE_FORMATTED', result, reason: String(reason).slice(0, 200), raw_excerpt: v.action,

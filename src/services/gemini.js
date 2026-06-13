@@ -233,8 +233,32 @@ async function analyzeMedia(buffer, mime, caption = '') {
   }
 }
 
+// Analisa um PDF de fatura e retorna JSON estruturado. Se não for fatura, retorna { ok:true, isInvoice:false }.
+async function analyzeInvoice(buffer, caption = '') {
+  if (!GEMINI_API_KEY) return { ok: false, reason: 'no_provider' };
+  if (!buffer || !buffer.length) return { ok: false, reason: 'empty_buffer' };
+  const prompt = [
+    'Analise este PDF. Se for uma FATURA DE CARTÃO DE CRÉDITO ou extrato, retorne SOMENTE um JSON válido (sem markdown, sem cercas) no formato:',
+    '{"isInvoice":true,"emissor":"<banco/cartão>","vencimento":"YYYY-MM-DD","total":<number>,"itens":[{"descricao":"<loja>","valor":<number>,"data":"YYYY-MM-DD","parcela_atual":<int>,"parcela_total":<int>}]}',
+    'Liste TODAS as transações, uma a uma, sem resumir nem omitir, até a última. valor em número (ponto decimal). Compra à vista = parcela_atual:1, parcela_total:1.',
+    'Se NÃO for fatura/extrato, retorne {"isInvoice":false}.',
+    caption ? `Legenda do usuário: "${caption}".` : '',
+  ].join('\n');
+  try {
+    const mediaPart = { inlineData: { mimeType: 'application/pdf', data: buffer.toString('base64') } };
+    const raw = await callGenerateContent(mediaPart, prompt);
+    const clean = raw.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
+    const json = JSON.parse(clean);
+    if (!json.isInvoice || !Array.isArray(json.itens)) return { ok: true, isInvoice: false };
+    return { ok: true, isInvoice: true, invoice: json };
+  } catch (err) {
+    console.error('[Gemini] analyzeInvoice err:', err.message);
+    return { ok: false, reason: 'gemini_error', error: err.message };
+  }
+}
+
 function isProviderConfigured() {
   return Boolean(GEMINI_API_KEY);
 }
 
-module.exports = { analyzeMedia, isProviderConfigured };
+module.exports = { analyzeMedia, analyzeInvoice, isProviderConfigured };
