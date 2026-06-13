@@ -2,12 +2,14 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Fab } from '../../components/Fab';
 import { Tabs } from '../../components/Tabs';
-import { useBills, useCategoryLookup, useFinanceiroAuth } from '../../hooks/useFinanceiro';
+import { useBills, useCategoryLookup, useClosedUnpaidInvoices, useFinanceiroAuth } from '../../hooks/useFinanceiro';
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
 import { deriveBillStatus, groupExpenseBillsByStatus } from '../../lib/financeiro';
 import type { BillStatus, PfBill } from '../../lib/financeiro';
+import { mesDaCompetencia, type ClosedInvoice } from '../../lib/cartoes';
 import { BillSheet } from './components/BillSheet';
 import { PagarContaSheet } from './components/PagarContaSheet';
+import { PagarFaturaSheet } from './components/PagarFaturaSheet';
 
 function brl(n: number) {
   return n.toLocaleString('pt-BR', { maximumFractionDigits: 0 });
@@ -69,6 +71,44 @@ const TABS: { id: TabId; label: string }[] = [
   { id: 'apagar', label: 'A pagar' },
 ];
 
+function FaturasSection({ invoices, onPay }: { invoices: ClosedInvoice[]; onPay: (inv: ClosedInvoice) => void }) {
+  if (invoices.length === 0) return null;
+  const total = invoices.reduce((s, i) => s + i.remaining, 0);
+  return (
+    <section className="rounded-lg border border-border bg-bg-surface overflow-hidden">
+      <header className="px-md pt-md pb-2 flex items-baseline justify-between">
+        <h3 className="text-label text-fg-muted uppercase tracking-wide">💳 Faturas de cartão</h3>
+        <span className="text-body-sm text-fg-muted tabular-nums">{invoices.length} · R$ {brl(total)}</span>
+      </header>
+      <ul className="divide-y divide-border">
+        {invoices.map((inv) => (
+          <li key={inv.card.id + inv.competencia} className="px-md py-2.5 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <span aria-hidden className="text-base shrink-0">💳</span>
+              <div className="min-w-0">
+                <div className="text-body-md text-fg truncate">{inv.card.name}</div>
+                <div className="text-body-sm text-fg-muted tabular-nums">
+                  fatura {mesDaCompetencia(inv.competencia)} · vence dia {inv.card.due_day}
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 shrink-0">
+              <span className="text-body-md tabular-nums font-semibold text-fg">R$ {brl(inv.remaining)}</span>
+              <button
+                type="button"
+                onClick={() => onPay(inv)}
+                className="text-body-sm text-tom hover:underline focus-ring rounded"
+              >
+                Pagar
+              </button>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function BillSection({ title, bills, onPay, onEdit }: {
   title: string;
   bills: PfBill[];
@@ -92,13 +132,15 @@ function BillSection({ title, bills, onPay, onEdit }: {
 
 export function ContasFixasPage() {
   const cid = useFinanceiroAuth();
-  useRealtimeFinance(['pf_bills', 'pf_transactions'], cid);
+  useRealtimeFinance(['pf_bills', 'pf_transactions', 'pf_card_payments'], cid);
 
   const billsQ = useBills();
+  const invoicesQ = useClosedUnpaidInvoices();
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<PfBill | null>(null);
   const [payingBill, setPayingBill] = useState<PfBill | null>(null);
+  const [payingInvoice, setPayingInvoice] = useState<{ cardId: string; competencia: string } | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>('todas');
 
   const { groups, aReceber } = useMemo(() => {
@@ -109,13 +151,19 @@ export function ContasFixasPage() {
     };
   }, [billsQ.data]);
 
+  const faturas = invoicesQ.data ?? [];
+  const faturasTotal = faturas.reduce((s, i) => s + i.remaining, 0);
+
   function pay(bill: PfBill) {
     setPayingBill(bill);
+  }
+  function payInvoice(inv: ClosedInvoice) {
+    setPayingInvoice({ cardId: inv.card.id, competencia: inv.competencia });
   }
 
   const empty = !billsQ.isLoading && (billsQ.data?.length ?? 0) === 0;
 
-  const totalAPagar = groups.atrasadas.length + groups.aVencer.length;
+  const totalAPagar = groups.atrasadas.length + groups.aVencer.length + faturas.length;
 
   const tabs = TABS.map((t) => ({
     ...t,
@@ -151,6 +199,7 @@ export function ContasFixasPage() {
         <>
           <BillSection title="🔴 Atrasadas" bills={groups.atrasadas} onPay={pay} onEdit={setEditing} />
           <BillSection title="🟡 A vencer" bills={groups.aVencer} onPay={pay} onEdit={setEditing} />
+          <FaturasSection invoices={faturas} onPay={payInvoice} />
           <BillSection title="✅ Pagas" bills={groups.pagas} onPay={pay} onEdit={setEditing} />
           <BillSection title="A receber" bills={aReceber} onPay={pay} onEdit={setEditing} />
         </>
@@ -158,15 +207,15 @@ export function ContasFixasPage() {
 
       {activeTab === 'apagar' && (
         <>
-          {(groups.atrasadas.length > 0 || groups.aVencer.length > 0) && (
+          {(groups.atrasadas.length > 0 || groups.aVencer.length > 0 || faturas.length > 0) && (
             <section className="rounded-lg border border-border bg-bg-surface px-md py-3 flex items-baseline justify-between">
               <span className="text-body-sm text-fg-muted">Total a pagar</span>
               <span className="text-body-md font-bold text-fg tabular-nums">
-                R$ {brl([...groups.atrasadas, ...groups.aVencer].reduce((s, b) => s + Number(b.amount), 0))}
+                R$ {brl([...groups.atrasadas, ...groups.aVencer].reduce((s, b) => s + Number(b.amount), 0) + faturasTotal)}
               </span>
             </section>
           )}
-          {groups.atrasadas.length === 0 && groups.aVencer.length === 0 && (
+          {groups.atrasadas.length === 0 && groups.aVencer.length === 0 && faturas.length === 0 && (
             <section className="rounded-lg border border-dashed border-border bg-bg-surface px-md py-lg text-center">
               <div className="text-[44px] leading-none mb-2" aria-hidden>✅</div>
               <p className="text-body-md text-fg mb-1">Tudo em dia!</p>
@@ -175,6 +224,7 @@ export function ContasFixasPage() {
           )}
           <BillSection title="🔴 Atrasadas" bills={groups.atrasadas} onPay={pay} onEdit={setEditing} />
           <BillSection title="🟡 A vencer" bills={groups.aVencer} onPay={pay} onEdit={setEditing} />
+          <FaturasSection invoices={faturas} onPay={payInvoice} />
         </>
       )}
 
@@ -184,6 +234,13 @@ export function ContasFixasPage() {
       <BillSheet open={!!editing} initial={editing ?? undefined} onClose={() => setEditing(null)} />
       {/* Sheet pagar */}
       <PagarContaSheet open={!!payingBill} bill={payingBill} onClose={() => setPayingBill(null)} />
+      {/* Sheet pagar fatura de cartão */}
+      <PagarFaturaSheet
+        open={!!payingInvoice}
+        cardId={payingInvoice?.cardId ?? ''}
+        competencia={payingInvoice?.competencia}
+        onClose={() => setPayingInvoice(null)}
+      />
 
       <Fab label="Nova conta" ariaLabel="Cadastrar conta fixa" onClick={() => setCreating(true)} />
     </div>

@@ -7,13 +7,14 @@ import { Field } from '../../components/Field';
 import { CustomSelect } from '../../components/CustomSelect';
 import { Button } from '../../components/Button';
 import {
-  useCards, useCardUsage, useCardInvoice, useAccounts, usePayInvoice, useFinanceiroAuth,
+  useCards, useCardUsage, useCardInvoice, useAccounts, useFinanceiroAuth,
   useCreateCardPurchase, useDeactivateCard, useDeleteTransaction,
 } from '../../hooks/useFinanceiro';
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
 import { addMonthsToCompetencia, currentCompetencia, mesDaCompetencia, type CardInvoiceItem } from '../../lib/cartoes';
 import type { PfTransaction } from '../../lib/financeiro';
 import { CartaoSheet } from './components/CartaoSheet';
+import { PagarFaturaSheet } from './components/PagarFaturaSheet';
 import { TransactionSheet } from './components/TransactionSheet';
 
 const fmtBRL = (v: number) =>
@@ -50,50 +51,7 @@ function ItemRow({ it, onEdit, onDelete }: {
   );
 }
 
-function PagarSheet({ open, onClose, cardId, competencia }: { open: boolean; onClose: () => void; cardId: string; competencia?: string }) {
-  const cardsQ = useCards();
-  const card = cardsQ.data?.find((c) => c.id === cardId);
-  const comp = competencia ?? (card ? currentCompetencia(card) : undefined);
-  const inv = useCardInvoice(cardId, comp);
-  const accountsQ = useAccounts();
-  const payMut = usePayInvoice();
-  const [amount, setAmount] = useState('');
-  const [fromAcc, setFromAcc] = useState('');
-
-  const remaining = inv.data?.remaining ?? 0;
-  const inputCls = 'w-full bg-bg-surface border border-border rounded-md p-2 text-fg focus:outline-none focus:border-tom';
-
-  async function submit() {
-    if (!card || !comp) return;
-    const value = Number(amount) > 0 ? Number(amount) : remaining;
-    if (value <= 0) return;
-    await payMut.mutateAsync({ card, competencia: comp, amount: value, paid_from_account: fromAcc || null });
-    setAmount(''); setFromAcc('');
-    onClose();
-  }
-
-  return (
-    <BottomSheet open={open} onClose={onClose} title={`Pagar fatura de ${mesDaCompetencia(comp ?? '')}`}>
-      <div className="flex flex-col gap-md">
-        <p className="text-fg-muted text-body-sm">Fatura atual: <b className="text-fg">{fmtBRL(inv.data?.total ?? 0)}</b> · falta <b className="text-fg">{fmtBRL(remaining)}</b></p>
-        <Field label="Valor a pagar" sub="Vazio = paga a fatura toda">
-          <input className={inputCls} inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={fmtBRL(remaining)} />
-        </Field>
-        <Field label="Sai de qual carteira?">
-          <CustomSelect
-            value={fromAcc}
-            options={(accountsQ.data ?? []).map((a) => ({ value: a.id, label: a.name }))}
-            onChange={setFromAcc}
-            placeholder="Selecione a conta"
-          />
-        </Field>
-        <Button variant="primary" fullWidth loading={payMut.isPending} onClick={submit}>
-          Registrar pagamento
-        </Button>
-      </div>
-    </BottomSheet>
-  );
-}
+// PagarSheet extraído → components/PagarFaturaSheet.tsx (reusado na tela Contas a pagar / Faturas de cartão).
 
 // Ajustar fatura: espelho do "Saldo atual" da carteira. O usuário diz quanto está a fatura
 // hoje e o engine lança a DIFERENÇA como "Ajuste de fatura" na competência corrente.
@@ -300,7 +258,7 @@ export function CartaoDetalhePage() {
         <span className="text-danger">Excluir cartão</span>
       </Button>
 
-      <PagarSheet open={paying} onClose={() => setPaying(false)} cardId={card.id} competencia={comp} />
+      <PagarFaturaSheet open={paying} onClose={() => setPaying(false)} cardId={card.id} competencia={comp} />
       <AjustarFaturaSheet open={ajustando} onClose={() => setAjustando(false)} cardId={card.id} />
       <CartaoSheet open={editando} onClose={() => setEditando(false)} card={card} />
       <TransactionSheet open={!!editItem} onClose={() => setEditItem(null)} initial={editItem ?? undefined} cardName={card.name} />

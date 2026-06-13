@@ -130,6 +130,44 @@ export async function payCardInvoice(collaboratorId: string, args: {
   if (error) throw error; // trigger debita o saldo da conta de origem
 }
 
+export interface ClosedInvoice {
+  card: PfCard; competencia: string; total: number; paid: number; remaining: number;
+}
+// Faturas FECHADAS e não pagas de todos os cartões ativos: competência ANTERIOR à corrente
+// (currentCompetencia, que é a fatura aberta) e com saldo (total lançado − pago > 0). Virtual —
+// deriva de pf_transactions + pf_card_payments, não materializa pf_bills. Sug Rose 5b.
+export async function listClosedUnpaidInvoices(collaboratorId: string): Promise<ClosedInvoice[]> {
+  const cards = await listCards(collaboratorId);
+  const out: ClosedInvoice[] = [];
+  for (const card of cards) {
+    const curr = currentCompetencia(card); // fatura aberta (corrente) — excluída
+    const [txRes, payRes] = await Promise.all([
+      supabase.from('pf_transactions').select('competencia, amount')
+        .eq('collaborator_id', collaboratorId).eq('card_id', card.id)
+        .not('competencia', 'is', null).lt('competencia', curr),
+      supabase.from('pf_card_payments').select('competencia, amount')
+        .eq('collaborator_id', collaboratorId).eq('card_id', card.id).lt('competencia', curr),
+    ]);
+    if (txRes.error) throw txRes.error;
+    if (payRes.error) throw payRes.error;
+    const totals = new Map<string, number>();
+    for (const r of (txRes.data ?? []) as { competencia: string; amount: number }[]) {
+      totals.set(r.competencia, (totals.get(r.competencia) ?? 0) + Number(r.amount));
+    }
+    const paids = new Map<string, number>();
+    for (const r of (payRes.data ?? []) as { competencia: string; amount: number }[]) {
+      paids.set(r.competencia, (paids.get(r.competencia) ?? 0) + Number(r.amount));
+    }
+    for (const [competencia, total] of totals) {
+      const paid = paids.get(competencia) ?? 0;
+      const remaining = total - paid;
+      if (remaining > 0.005) out.push({ card, competencia, total, paid, remaining });
+    }
+  }
+  out.sort((a, b) => (a.competencia < b.competencia ? 1 : -1)); // mais recente primeiro
+  return out;
+}
+
 // Lista cartões já com o uso de limite calculado (pro chip de resumo do dashboard).
 export async function cardsWithUsage(collaboratorId: string): Promise<{ card: PfCard; usage: CardUsage }[]> {
   const cards = await listCards(collaboratorId);

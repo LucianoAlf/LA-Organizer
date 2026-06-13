@@ -213,6 +213,14 @@ export function useCardInvoice(cardId?: string, competencia?: string) {
     enabled: !!cid && !!cardId && !!competencia,
   });
 }
+export function useClosedUnpaidInvoices() {
+  const cid = useFinanceiroAuth();
+  return useQuery({
+    queryKey: [...KEY, 'closedInvoices', cid],
+    queryFn: () => cartoes.listClosedUnpaidInvoices(cid!),
+    enabled: !!cid,
+  });
+}
 export const useCreateCard     = () => useFinMutation(cartoes.createCard);
 export const useDeactivateCard = () => useFinMutation((cid, id: string) => cartoes.deactivateCard(cid, id));
 export const useUpdateCard      = () => useFinMutation(
