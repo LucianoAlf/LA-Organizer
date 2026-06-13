@@ -199,7 +199,7 @@ async function monthCategoryTotal(collaboratorId, category, { excludeId } = {}) 
   const { data, error } = await supabase.from('pf_transactions')
     .select('amount, id')
     .eq('collaborator_id', collaboratorId).eq('type', 'expense').eq('category', category)
-    .gte('transaction_date', start).lt('transaction_date', end)
+    .eq('cashflow_competencia', start)
     .neq('is_adjustment', true);
   if (error) throw error;
   return (data || []).filter((r) => r.id !== excludeId).reduce((s, r) => s + Number(r.amount), 0);
@@ -208,7 +208,7 @@ async function querySummary(collaboratorId) {
   const { start, end } = monthBounds();
   const { data, error } = await supabase.from('pf_transactions')
     .select('type, category, amount')
-    .eq('collaborator_id', collaboratorId).gte('transaction_date', start).lt('transaction_date', end)
+    .eq('collaborator_id', collaboratorId).eq('cashflow_competencia', start)
     .neq('is_adjustment', true);
   if (error) throw error;
   const rows = data || [];
@@ -425,7 +425,7 @@ async function monthlyReport(collaboratorId, ref = new Date()) {
   const { start, end } = monthBounds(ref);
   const { data, error } = await supabase.from('pf_transactions')
     .select('type, category, amount')
-    .eq('collaborator_id', collaboratorId).gte('transaction_date', start).lt('transaction_date', end)
+    .eq('collaborator_id', collaboratorId).eq('cashflow_competencia', start)
     .neq('is_adjustment', true);
   if (error) throw error;
   const rows = data || [];
@@ -443,7 +443,7 @@ async function monthCategoryBreakdown(collaboratorId, ref = new Date()) {
   const { start, end } = monthBounds(ref);
   const { data, error } = await supabase.from('pf_transactions')
     .select('type, category, amount')
-    .eq('collaborator_id', collaboratorId).gte('transaction_date', start).lt('transaction_date', end)
+    .eq('collaborator_id', collaboratorId).eq('cashflow_competencia', start)
     .neq('is_adjustment', true);
   if (error) throw error;
   const rows = data || [];

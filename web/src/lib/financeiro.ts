@@ -19,6 +19,8 @@ export interface PfTransaction {
   id: string; type: PfTxType; category: PfCategory; amount: number;
   description: string | null; transaction_date: string; account_id: string | null;
   card_id?: string | null; // preenchido = compra no cartão (fora do caixa; vive na fatura)
+  competencia?: string | null; // YYYY-MM-01: fatura que a parcela cai (só cartão)
+  cashflow_competencia?: string; // mês de fluxo de caixa: competencia (cartão) OU mês do transaction_date (caixa)
   purchase_group?: string | null;
   is_adjustment?: boolean; // true = acerto de caixa; conta no saldo, mas fora dos relatórios
 }
@@ -119,12 +121,17 @@ export async function setPrimaryAccount(collaboratorId: string, id: string) {
 
 // ---- Transações ----
 export async function listTransactions(collaboratorId: string, opts?: { monthYear?: string; category?: PfCategory; type?: PfTxType; limit?: number }) {
-  const { start, end } = opts?.monthYear ? monthBoundsFromYYYYMM(opts.monthYear) : monthBounds();
   let q = supabase.from('pf_transactions')
-    .select('id, type, category, amount, description, transaction_date, account_id, card_id, purchase_group, is_adjustment')
+    .select('id, type, category, amount, description, transaction_date, account_id, card_id, competencia, cashflow_competencia, purchase_group, is_adjustment')
     .eq('collaborator_id', collaboratorId)
-    .gte('transaction_date', start).lt('transaction_date', end)
     .order('transaction_date', { ascending: false });
+  // Mês = fluxo de caixa: cartão pela COMPETÊNCIA (fatura), caixa pelo mês do transaction_date.
+  // cashflow_competencia (coluna gerada) unifica os dois → uma parcela aparece no mês da sua fatura.
+  // Sem monthYear (ex.: "últimas N") não filtra por mês. FIN-CARTAO-CASHFLOW-COMPETENCIA.
+  if (opts?.monthYear || !opts?.limit) {
+    const { start } = opts?.monthYear ? monthBoundsFromYYYYMM(opts.monthYear) : monthBounds();
+    q = q.eq('cashflow_competencia', start);
+  }
   if (opts?.category) q = q.eq('category', opts.category);
   if (opts?.type) q = q.eq('type', opts.type);
   if (opts?.limit) q = q.limit(opts.limit);

@@ -14,6 +14,15 @@ function brl(n: number) {
   return n.toLocaleString('pt-BR', { maximumFractionDigits: 0 });
 }
 
+// Item de cartão é bucketizado pela FATURA (competência), não pela data da compra → mostra "fatura mês/ano".
+function cashflowLabel(t: PfTransaction): string {
+  if (t.card_id && t.competencia) {
+    const m = parseInt(t.competencia.slice(5, 7), 10) - 1;
+    return `fatura ${PT_MONTHS[m]}/${t.competencia.slice(0, 4)}`;
+  }
+  return t.transaction_date;
+}
+
 function recentMonths(n = 6): { value: string; label: string }[] {
   const now = new Date();
   const arr: { value: string; label: string }[] = [];
@@ -140,7 +149,7 @@ export function TransacoesPage() {
                     <div className="min-w-0">
                       <div className="text-body-md text-fg truncate">{t.description || catLookup.label(t.category)}</div>
                       <div className="text-body-sm text-fg-muted tabular-nums">
-                        {t.transaction_date} · {catLookup.label(t.category)}
+                        {cashflowLabel(t)} · {catLookup.label(t.category)}
                       </div>
                     </div>
                   </div>
