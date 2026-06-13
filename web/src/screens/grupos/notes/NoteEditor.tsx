@@ -68,9 +68,11 @@ export function NoteEditor({ note, onSave, onDone, onBack, typeIndex }: Props) {
         className={`${inputCls} text-body-lg font-semibold mb-sm`} />
 
       <div className="flex items-center gap-sm mb-md">
-        <span className="text-body-sm text-fg-muted">Tipo</span>
-        <CustomSelect value={draft.type || 'acesso'} options={typeOpts} onChange={(v) => changeType(v)} size="sm"
-          footerAction={{ label: '➕ Novo tipo…', onClick: () => setShowTypeForm(true) }} />
+        <span className="text-body-sm text-fg-muted shrink-0">Tipo</span>
+        <div className="flex-1 min-w-0 max-w-[280px]">
+          <CustomSelect value={draft.type || 'acesso'} options={typeOpts} onChange={(v) => changeType(v)} size="sm"
+            footerAction={{ label: '➕ Novo tipo…', onClick: () => setShowTypeForm(true) }} />
+        </div>
       </div>
 
       <div className="text-label uppercase tracking-wide text-fg-muted mb-xs">Aparência</div>
