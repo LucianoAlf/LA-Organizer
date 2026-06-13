@@ -152,6 +152,15 @@ export async function payCardInvoice(collaboratorId: string, args: {
   if (error) throw error; // trigger debita o saldo da conta de origem
 }
 
+// Estorna o pagamento de uma fatura: apaga TODOS os pagamentos daquela competência → a fatura
+// volta a "em aberto". O trigger pf_sync_balance_on_card_payment devolve o valor à conta de origem
+// (balance += amount no DELETE). Sug Rose 13/06: "paguei e quis cancelar, tirar de quitada pra em aberto".
+export async function cancelCardInvoicePayment(collaboratorId: string, cardId: string, competencia: string): Promise<void> {
+  const { error } = await supabase.from('pf_card_payments').delete()
+    .eq('collaborator_id', collaboratorId).eq('card_id', cardId).eq('competencia', competencia);
+  if (error) throw error;
+}
+
 export interface ClosedInvoice {
   card: PfCard; competencia: string; total: number; paid: number; remaining: number;
 }

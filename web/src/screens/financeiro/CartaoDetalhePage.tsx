@@ -8,7 +8,7 @@ import { CustomSelect } from '../../components/CustomSelect';
 import { Button } from '../../components/Button';
 import {
   useCards, useCardUsage, useCardInvoice, useAccounts, useFinanceiroAuth,
-  useCreateCardPurchase, useDeactivateCard, useDeleteTransaction,
+  useCreateCardPurchase, useDeactivateCard, useDeleteTransaction, useCancelInvoicePayment,
 } from '../../hooks/useFinanceiro';
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
 import { addMonthsToCompetencia, currentCompetencia, dueLabelForCompetencia, mesDaCompetencia, type CardInvoiceItem } from '../../lib/cartoes';
@@ -121,6 +121,7 @@ export function CartaoDetalhePage() {
   const navigate = useNavigate();
   const deactivateCard = useDeactivateCard();
   const deleteTxn = useDeleteTransaction();
+  const cancelPay = useCancelInvoicePayment();
 
   async function excluirCartao() {
     if (!card) return;
@@ -143,6 +144,11 @@ export function CartaoDetalhePage() {
       : `Apagar "${it.description || 'Compra'}" (${fmtBRL(it.amount)}) desta fatura?`;
     if (!confirm(aviso)) return;
     await deleteTxn.mutateAsync(it.id);
+  }
+  async function estornarPagamento() {
+    if (!card || !comp || !inv.data) return;
+    if (!confirm(`Estornar o pagamento de ${fmtBRL(inv.data.paid)} da fatura de ${mesDaCompetencia(comp)}? A fatura volta pra "em aberto" e o valor volta pra conta de origem.`)) return;
+    await cancelPay.mutateAsync({ cardId: card.id, competencia: comp });
   }
 
   if (!card) {
@@ -249,6 +255,12 @@ export function CartaoDetalhePage() {
             {inv.data.isPaid ? 'Fatura quitada ✓' : 'Pagar fatura'}
           </Button>
         </div>
+      )}
+
+      {inv.data && inv.data.paid > 0 && (
+        <Button variant="ghost" fullWidth onClick={estornarPagamento} loading={cancelPay.isPending}>
+          <span className="text-danger">↩︎ Estornar pagamento ({fmtBRL(inv.data.paid)})</span>
+        </Button>
       )}
 
       {compOffset === 0 && (

@@ -255,6 +255,10 @@ export const usePayInvoice     = () => useFinMutation(
   (cid, args: { card: cartoes.PfCard; competencia: string; amount: number; paid_from_account: string | null }) =>
     cartoes.payCardInvoice(cid, args),
 );
+export const useCancelInvoicePayment = () => useFinMutation(
+  (cid, args: { cardId: string; competencia: string }) =>
+    cartoes.cancelCardInvoicePayment(cid, args.cardId, args.competencia),
+);
 
 export const useCreateCardPurchase    = () => useFinMutation(
   (cid, args: Parameters<typeof cartoes.createCardPurchase>[1]) => cartoes.createCardPurchase(cid, args)
