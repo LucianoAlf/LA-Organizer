@@ -4,7 +4,7 @@ import { Button } from '../../../components/Button';
 import { CustomSelect } from '../../../components/CustomSelect';
 import { DateInput } from '../../../components/DateInput';
 import { Field } from '../../../components/Field';
-import { useCategories, useCreateBill, useDeactivateBill, useUpdateBill } from '../../../hooks/useFinanceiro';
+import { useAccounts, useBillPayments, useCards, useCategories, useCreateBill, useDeactivateBill, useUpdateBill } from '../../../hooks/useFinanceiro';
 import type { PfBill, PfBillType, PfCategory } from '../../../lib/financeiro';
 
 function todayYmd() {
@@ -12,6 +12,48 @@ function todayYmd() {
 }
 
 const DAY_OPTIONS = Array.from({ length: 31 }, (_, i) => ({ value: String(i + 1), label: `Dia ${i + 1}` }));
+
+function fmtPayDate(d: string) {
+  return `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}`;
+}
+function fmtMoney(n: number) {
+  return Number(n).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Histórico de pagamentos da conta (lançamentos vinculados por bill_id). Nome do método
+// resolvido client-side via contas/cartões. Só popula com pagamentos feitos após o vínculo existir.
+function BillPaymentHistory({ billId }: { billId: string }) {
+  const q = useBillPayments(billId);
+  const accountsQ = useAccounts();
+  const cardsQ = useCards();
+  const items = q.data ?? [];
+  const acctName = (id: string | null) => (id ? accountsQ.data?.find((a) => a.id === id)?.name : undefined);
+  const cardName = (id: string | null) => (id ? cardsQ.data?.find((c) => c.id === id)?.name : undefined);
+  return (
+    <div className="pt-3 border-t border-border">
+      <h4 className="text-label text-fg-muted uppercase tracking-wide mb-2">Histórico de pagamentos</h4>
+      {q.isLoading ? (
+        <p className="text-body-sm text-fg-muted">Carregando…</p>
+      ) : items.length === 0 ? (
+        <p className="text-body-sm text-fg-muted">Nenhum pagamento registrado ainda.</p>
+      ) : (
+        <ul className="flex flex-col gap-1.5">
+          {items.map((p) => {
+            const metodo = p.card_id ? `💳 ${cardName(p.card_id) ?? 'cartão'}`
+              : p.account_id ? `🏦 ${acctName(p.account_id) ?? 'conta'}` : '— sem método';
+            return (
+              <li key={p.id} className="flex items-center justify-between gap-2 text-body-sm">
+                <span className="text-fg-muted tabular-nums shrink-0">{fmtPayDate(p.transaction_date)}</span>
+                <span className="text-fg-muted truncate flex-1 text-right">{metodo}</span>
+                <span className="text-fg tabular-nums font-medium shrink-0 w-24 text-right">R$ {fmtMoney(p.amount)}</span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 export interface BillSheetProps {
   open: boolean;

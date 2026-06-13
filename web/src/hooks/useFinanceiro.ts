@@ -84,6 +84,14 @@ export function useBills() {
     enabled: !!cid,
   });
 }
+export function useBillPayments(billId: string | undefined) {
+  const cid = useFinanceiroAuth();
+  return useQuery({
+    queryKey: [...KEY, 'bill-payments', billId, cid],
+    queryFn: () => fin.listBillPayments(cid!, billId!),
+    enabled: !!cid && !!billId,
+  });
+}
 export function useGoals() {
   const cid = useFinanceiroAuth();
   return useQuery({
@@ -92,18 +100,18 @@ export function useGoals() {
     enabled: !!cid,
   });
 }
-export function useBudgets() {
+export function useBudgets(monthYear?: string) {
   const cid = useFinanceiroAuth();
   return useQuery({
-    queryKey: [...KEY, 'budgets', cid],
-    queryFn: () => fin.listBudgets(cid!),
+    queryKey: [...KEY, 'budgets', cid, monthYear ?? null],
+    queryFn: () => fin.listBudgets(cid!, monthYear),
     enabled: !!cid,
   });
 }
 
 // Resumo derivado das transações do mês corrente (puro client-side).
-export function useSummary() {
-  const tx = useTransactions();
+export function useSummary(monthYear?: string) {
+  const tx = useTransactions(monthYear ? { monthYear } : undefined);
   if (!tx.data) return { ...tx, summary: undefined };
   // Caixa (receitas/despesas/saldo): EXCLUI compras no cartão (vivem na fatura) E ajustes de saldo (acerto de caixa, não é receita/despesa real).
   const cash = tx.data.filter((r) => !r.card_id && !r.is_adjustment);
@@ -163,11 +171,11 @@ export const useUpdateAccount = () => useFinMutation(
 export const useCreateTransfer = () => useFinMutation(
   (cid, args: Parameters<typeof fin.createTransfer>[1]) => fin.createTransfer(cid, args)
 );
-export function useAccountTransactions(accountId: string | undefined) {
+export function useAccountTransactions(accountId: string | undefined, monthYear?: string) {
   const cid = useFinanceiroAuth();
   return useQuery({
-    queryKey: [...KEY, 'account-tx', accountId, cid],
-    queryFn: () => fin.listAccountTransactions(cid!, accountId!),
+    queryKey: [...KEY, 'account-tx', accountId, cid, monthYear ?? null],
+    queryFn: () => fin.listAccountTransactions(cid!, accountId!, { monthYear }),
     enabled: !!cid && !!accountId,
   });
 }

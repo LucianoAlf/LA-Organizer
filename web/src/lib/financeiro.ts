@@ -95,11 +95,18 @@ export async function createTransfer(collaboratorId: string, input: { from_accou
 }
 
 // Extrato da carteira: lançamentos (caixa) dessa conta, recentes primeiro.
-export async function listAccountTransactions(collaboratorId: string, accountId: string, limit = 50): Promise<PfTransaction[]> {
-  const { data, error } = await supabase.from('pf_transactions')
+// monthYear (YYYY-MM) → filtra pelo mês do transaction_date (navegação mês a mês na carteira).
+export async function listAccountTransactions(collaboratorId: string, accountId: string, opts: { monthYear?: string; limit?: number } = {}): Promise<PfTransaction[]> {
+  let q = supabase.from('pf_transactions')
     .select('id, type, category, amount, description, transaction_date, account_id, card_id, purchase_group, is_adjustment')
     .eq('collaborator_id', collaboratorId).eq('account_id', accountId)
-    .order('transaction_date', { ascending: false }).limit(limit);
+    .order('transaction_date', { ascending: false });
+  if (opts.monthYear) {
+    const { start, end } = monthBoundsFromYYYYMM(opts.monthYear);
+    q = q.gte('transaction_date', start).lt('transaction_date', end);
+  }
+  q = q.limit(opts.limit ?? 50);
+  const { data, error } = await q;
   if (error) throw error;
   return (data as PfTransaction[]) ?? [];
 }
@@ -152,11 +159,11 @@ export async function listTransactionMonths(collaboratorId: string): Promise<str
   }
   return [...set];
 }
-export async function createTransaction(collaboratorId: string, input: { type: PfTxType; category: PfCategory; amount: number; description?: string | null; transaction_date?: string; account_id?: string | null; is_adjustment?: boolean }) {
+export async function createTransaction(collaboratorId: string, input: { type: PfTxType; category: PfCategory; amount: number; description?: string | null; transaction_date?: string; account_id?: string | null; is_adjustment?: boolean; bill_id?: string | null }) {
   const row = {
     collaborator_id: collaboratorId, type: input.type, category: input.category, amount: input.amount,
     description: input.description ?? null, account_id: input.account_id ?? null,
-    is_adjustment: input.is_adjustment ?? false,
+    is_adjustment: input.is_adjustment ?? false, bill_id: input.bill_id ?? null,
     via: 'pwa', ...(input.transaction_date ? { transaction_date: input.transaction_date } : {}),
   };
   const { data, error } = await supabase.from('pf_transactions').insert(row).select().single();
@@ -276,12 +283,12 @@ export async function payBill(
     const { createCardPurchase } = await import('./cartoes'); // import dinâmico evita ciclo cartoes↔financeiro
     await createCardPurchase(collaboratorId, {
       cardId: opts.card.id, closingDay: opts.card.closing_day, amount,
-      category: bill.category, description: bill.name, installments: 1, firstDate: txnDate,
+      category: bill.category, description: bill.name, installments: 1, firstDate: txnDate, billId: bill.id,
     });
   } else if (opts.account_id) {
-    await createTransaction(collaboratorId, { type: bill.type, category: bill.category, amount, description: bill.name, transaction_date: txnDate, account_id: opts.account_id });
+    await createTransaction(collaboratorId, { type: bill.type, category: bill.category, amount, description: bill.name, transaction_date: txnDate, account_id: opts.account_id, bill_id: bill.id });
   } else {
-    await createTransaction(collaboratorId, { type: bill.type, category: bill.category, amount, description: bill.name, transaction_date: txnDate });
+    await createTransaction(collaboratorId, { type: bill.type, category: bill.category, amount, description: bill.name, transaction_date: txnDate, bill_id: bill.id });
   }
   const patch: Record<string, unknown> = { last_paid_at: paidAt, status: 'paid' };
   if (bill.recurrence === 'once') patch.is_active = false;
@@ -305,6 +312,22 @@ export async function deactivateBill(collaboratorId: string, id: string) {
   const { error } = await supabase.from('pf_bills')
     .update({ is_active: false }).eq('id', id).eq('collaborator_id', collaboratorId);
   if (error) throw error;
+}
+
+// Histórico de pagamentos de uma conta: lançamentos vinculados (bill_id), recentes primeiro.
+// Nome de conta/cartão é resolvido no componente (via useAccounts/useCards). Depende do
+// vínculo bill_id (FIN-BILL-DELETE-REVERT) → só lista pagamentos feitos após o vínculo existir.
+export interface BillPayment {
+  id: string; amount: number; transaction_date: string;
+  account_id: string | null; card_id: string | null;
+}
+export async function listBillPayments(collaboratorId: string, billId: string): Promise<BillPayment[]> {
+  const { data, error } = await supabase.from('pf_transactions')
+    .select('id, amount, transaction_date, account_id, card_id')
+    .eq('collaborator_id', collaboratorId).eq('bill_id', billId)
+    .order('transaction_date', { ascending: false });
+  if (error) throw error;
+  return (data as BillPayment[]) ?? [];
 }
 
 // Apaga TODAS as parcelas de um grupo (compra parcelada).

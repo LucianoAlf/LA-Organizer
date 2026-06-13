@@ -150,7 +150,7 @@ export function computePosition(
 export async function createCardPurchase(
   collaboratorId: string,
   input: { cardId: string; closingDay: number; amount: number; category: string;
-           description?: string | null; installments?: number; firstDate?: string }
+           description?: string | null; installments?: number; firstDate?: string; billId?: string | null }
 ) {
   const base = input.firstDate ? new Date(input.firstDate + 'T00:00:00Z') : new Date();
   const dateStr = base.toISOString().slice(0, 10);
@@ -160,7 +160,7 @@ export async function createCardPurchase(
   const rows: Record<string, unknown>[] = values.map((amt, i) => ({
     collaborator_id: collaboratorId, card_id: input.cardId, type: 'expense' as const,
     category: input.category, description: input.description ?? null,
-    transaction_date: dateStr, via: 'pwa',
+    transaction_date: dateStr, via: 'pwa', bill_id: input.billId ?? null,
     ...(n > 1 ? { installment_no: i + 1, installments_total: n } : {}),
     competencia: addMonthsToCompetencia(baseComp, i),
     amount: amt,

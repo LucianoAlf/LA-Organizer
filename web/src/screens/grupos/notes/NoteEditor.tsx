@@ -5,7 +5,7 @@ import { NOTE_TYPES, NOTE_TYPE_META, templateFor, type GroupNote, type NoteField
 
 interface Props {
   note: Partial<GroupNote>;
-  onSave: (patch: Partial<GroupNote> & { id?: string }) => void;
+  onSave: (patch: Partial<GroupNote> & { id?: string }) => void | Promise<unknown>;
   onDone: () => void; onBack?: () => void;
 }
 
@@ -18,12 +18,17 @@ export function NoteEditor({ note, onSave, onDone, onBack }: Props) {
     tags: note.tags || [], body: note.body || '',
   }));
   const timer = useRef<ReturnType<typeof setTimeout>>();
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
 
   useEffect(() => () => clearTimeout(timer.current), []);
 
   function commit(next: Partial<GroupNote>) {
     clearTimeout(timer.current);
-    timer.current = setTimeout(() => onSave({ ...next, id: note.id }), 600);
+    setSaveState('saving');
+    timer.current = setTimeout(async () => {
+      try { await onSave({ ...next, id: note.id }); setSaveState('saved'); }
+      catch { setSaveState('idle'); }
+    }, 600);
   }
   function patch(p: Partial<GroupNote>) {
     setDraft(d => { const next = { ...d, ...p }; commit(next); return next; });
@@ -46,6 +51,7 @@ export function NoteEditor({ note, onSave, onDone, onBack }: Props) {
       <div className="flex items-center gap-sm mb-md">
         {onBack && <button className="md:hidden text-fg-muted p-1 -ml-1 focus-ring rounded-sm" onClick={() => { onDone(); onBack(); }} aria-label="Voltar"><ArrowLeft size={18} /></button>}
         <span className="text-label uppercase tracking-wide text-fg-muted flex-1">{note.id ? 'Editando ficha' : 'Nova ficha'}</span>
+        <span className="text-caption text-fg-muted">{saveState === 'saving' ? 'Salvando…' : saveState === 'saved' ? 'Salvo ✓' : ''}</span>
         <button onClick={onDone} className="inline-flex items-center gap-1 text-body-sm text-tom font-medium focus-ring rounded-sm px-2 py-1"><Check size={15} /> Pronto</button>
       </div>
 

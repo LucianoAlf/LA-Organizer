@@ -6777,13 +6777,13 @@ function resolveCategorySlug(raw, customCats) {
 }
 
 // Compra no cartão (fonte única, usada pelo case card_purchase E pelo roteamento de register_transaction).
-async function recordCardPurchase(cid, card, { amount, description, category, installments, date }, outcome = {}) {
+async function recordCardPurchase(cid, card, { amount, description, category, installments, date, bill_id }, outcome = {}) {
   const financeFmt = require('./services/finance-format');
   const inst = parseInt(installments || 1, 10) || 1;
   const _cats = await financeService.listCategorySlugs(cid).catch(() => []);
   const _extra = new Set(_cats.filter((r) => r.collaborator_id).map((r) => r.slug));
   const cat = safeCategory(category, description, 'expense', _extra);
-  const rows = await financeService.insertCardPurchase(cid, card, { category: cat, amount: Number(amount), description, transaction_date: date, installments: inst });
+  const rows = await financeService.insertCardPurchase(cid, card, { category: cat, amount: Number(amount), description, transaction_date: date, installments: inst, bill_id });
   outcome.persisted = true; // Fatia C: marca persistência real (compra no cartão gravada)
   const usage = await financeService.cardUsage(cid, card);
   let reply = financeFmt.txnRegistered(card, { description, amount: Number(amount), category: cat, installments: inst, competencia: rows[0].competencia }, usage);
@@ -6794,10 +6794,10 @@ async function recordCardPurchase(cid, card, { amount, description, category, in
 
 // Escreve transação de caixa + bloco de orçamento + confirmação. Fonte garantida (account).
 // assumedSource: nome da principal quando foi default silencioso (nomeia na confirmação).
-async function writeCashTransaction(cid, { type, category, amount, description, date, account, assumedSource }, outcome = {}) {
+async function writeCashTransaction(cid, { type, category, amount, description, date, account, assumedSource, bill_id }, outcome = {}) {
   const financeFmt = require('./services/finance-format');
   const prev = type === 'expense' ? await financeService.monthCategoryTotal(cid, category) : 0;
-  const _txn = await financeService.insertTransaction(cid, { type, category, amount, description, transaction_date: date, account_id: account.id });
+  const _txn = await financeService.insertTransaction(cid, { type, category, amount, description, transaction_date: date, account_id: account.id, bill_id });
   outcome.persisted = true; // Fatia C: marca persistência real (transação de caixa gravada)
   console.log(`[Finance] txn ${_txn && _txn.id ? _txn.id.slice(0,8) : '?'} registrada cid=${String(cid).slice(0,8)}`);
 
@@ -7029,14 +7029,14 @@ async function handleFinanceAction(collab, action, params, outcome = {}) {
 
       let reply;
       if (src.kind === 'card' && bill.type !== 'income') {
-        reply = await recordCardPurchase(cid, src.card, { amount, description: bill.name, category: bill.category, installments: 1, date }, outcome);
+        reply = await recordCardPurchase(cid, src.card, { amount, description: bill.name, category: bill.category, installments: 1, date, bill_id: bill.id }, outcome);
         reply = `✅ *${bill.name}* paga.\n\n` + reply;
       } else if (src.kind === 'account') {
-        reply = await writeCashTransaction(cid, { type: bill.type, category: bill.category, amount, description: bill.name, date, account: src.account }, outcome);
+        reply = await writeCashTransaction(cid, { type: bill.type, category: bill.category, amount, description: bill.name, date, account: src.account, bill_id: bill.id }, outcome);
         reply = `✅ *${bill.name}* paga.\n\n` + reply;
       } else {
         // none: caixa sem carteira (comportamento atual), no valor REAL.
-        await financeService.insertTransaction(cid, { type: bill.type, category: bill.category, amount, description: bill.name, transaction_date: date });
+        await financeService.insertTransaction(cid, { type: bill.type, category: bill.category, amount, description: bill.name, transaction_date: date, bill_id: bill.id });
         outcome.persisted = true;
         reply = `✅ *${bill.name}* paga (${financeFmt.money(amount)}).`;
       }
@@ -7528,8 +7528,8 @@ async function processMessage(phone, text, raw = {}) {
             // Receita nunca grava em cartão (defesa em profundidade): se o pendente for income, força conta.
             const useCard = !!card && txn.type !== 'income';
             reply = useCard
-              ? await recordCardPurchase(collab.id, card, { amount: txn.amount, description: txn.description, category: txn.category, installments: txn.installments, date: txn.date })
-              : await writeCashTransaction(collab.id, { type: txn.type, category: txn.category, amount: txn.amount, description: txn.description, date: txn.date, account });
+              ? await recordCardPurchase(collab.id, card, { amount: txn.amount, description: txn.description, category: txn.category, installments: txn.installments, date: txn.date, bill_id: finOpen.payload.bill?.id })
+              : await writeCashTransaction(collab.id, { type: txn.type, category: txn.category, amount: txn.amount, description: txn.description, date: txn.date, account, bill_id: finOpen.payload.bill?.id });
             // pay_bill via pendência: marca a conta paga + headline (o lançamento já foi gravado acima).
             if (finOpen.payload.bill) {
               try {

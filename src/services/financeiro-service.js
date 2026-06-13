@@ -122,9 +122,10 @@ async function listCategorySlugs(collaboratorId, type) {
 }
 
 // ---- Transacoes ----
-async function insertTransaction(collaboratorId, { type, category, amount, description, transaction_date, account_id }) {
+async function insertTransaction(collaboratorId, { type, category, amount, description, transaction_date, account_id, bill_id }) {
   const row = { collaborator_id: collaboratorId, type, category, amount, description: description || null, account_id: account_id || null };
   if (transaction_date) row.transaction_date = transaction_date;
+  if (bill_id) row.bill_id = bill_id; // vínculo p/ reverter status da conta ao deletar (FIN-BILL-DELETE-REVERT)
   const { data, error } = await supabase.from('pf_transactions').insert(row).select().single();
   if (error) throw error;
   return data;
@@ -300,15 +301,15 @@ async function payBill(collaboratorId, bill, opts = {}) {
     const card = (await listCards(collaboratorId)).find((c) => c.id === opts.card_id);
     if (card) {
       await insertCardPurchase(collaboratorId, card, {
-        category: bill.category, amount, description: bill.name, transaction_date: date, installments: 1,
+        category: bill.category, amount, description: bill.name, transaction_date: date, installments: 1, bill_id: bill.id,
       });
     } else {
-      await insertTransaction(collaboratorId, { type: bill.type, category: bill.category, amount, description: bill.name, transaction_date: date });
+      await insertTransaction(collaboratorId, { type: bill.type, category: bill.category, amount, description: bill.name, transaction_date: date, bill_id: bill.id });
     }
   } else if (opts.account_id) {
-    await insertTransaction(collaboratorId, { type: bill.type, category: bill.category, amount, description: bill.name, transaction_date: date, account_id: opts.account_id });
+    await insertTransaction(collaboratorId, { type: bill.type, category: bill.category, amount, description: bill.name, transaction_date: date, account_id: opts.account_id, bill_id: bill.id });
   } else {
-    await insertTransaction(collaboratorId, { type: bill.type, category: bill.category, amount, description: bill.name, transaction_date: date });
+    await insertTransaction(collaboratorId, { type: bill.type, category: bill.category, amount, description: bill.name, transaction_date: date, bill_id: bill.id });
   }
   // Quitação = HOJE (markBillPaid default), desacoplado de `date` (data do lançamento/fatura,
   // que pode mirar um mês passado). FIN-PAYBILL-DATE-COUPLING.
@@ -570,7 +571,7 @@ async function findCard(collaboratorId, cardName) {
 
 // Lança compra no cartão. installments>=2 → N parcelas agrupadas por purchase_group.
 // NÃO mexe no saldo (card_id setado, account_id null → trigger trg_pf_sync_balance ignora).
-async function insertCardPurchase(collaboratorId, card, { category, amount, description, transaction_date, installments, competencia }) {
+async function insertCardPurchase(collaboratorId, card, { category, amount, description, transaction_date, installments, competencia, bill_id }) {
   const baseDate = transaction_date ? new Date(transaction_date + 'T00:00:00Z') : new Date();
   const n = Math.max(1, parseInt(installments || 1, 10));
   // Override explícito da fatura ("põe na fatura de maio") vence o cálculo por data+fechamento.
@@ -580,6 +581,7 @@ async function insertCardPurchase(collaboratorId, card, { category, amount, desc
     const { data, error } = await supabase.from('pf_transactions').insert({
       collaborator_id: collaboratorId, card_id: card.id, type: 'expense', category,
       amount, description: description || null, transaction_date: dateStr, competencia: baseComp, via: 'tom',
+      ...(bill_id ? { bill_id } : {}),
     }).select().single();
     if (error) throw error;
     return [data];
@@ -592,6 +594,7 @@ async function insertCardPurchase(collaboratorId, card, { category, amount, desc
     installment_no: i + 1, installments_total: n,
     competencia: addMonthsToCompetencia(baseComp, i),
     amount: ((i === n - 1 ? per + (cents - per * n) : per) / 100),
+    ...(bill_id ? { bill_id } : {}),
   }));
   const ins = await supabase.from('pf_transactions').insert(rows).select();
   if (ins.error) throw ins.error;

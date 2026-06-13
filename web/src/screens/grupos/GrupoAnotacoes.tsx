@@ -37,6 +37,9 @@ export function GrupoAnotacoes() {
   const [selected, setSelected] = useState<GroupNote | null>(null);
   const [editing, setEditing] = useState(false);
   const [pane, setPane] = useState<'list' | 'doc'>('list');
+  // key do editor: muda a cada abertura (nova/existente) → remonta limpo (evita draft preso
+  // do React reusar a instância). NÃO muda quando uma ficha nova ganha id (sem remount ao digitar).
+  const [editorKey, setEditorKey] = useState('none');
 
   const filtered = useMemo(
     () => filterNotes(notes, { type: typeFilter || undefined, query }),
@@ -63,8 +66,8 @@ export function GrupoAnotacoes() {
     return m ? first(m.full_name) : undefined;
   }
 
-  function openNew() { const n = blankNote(groupId!); setSelected(n); setEditing(true); setPane('doc'); }
-  function openNote(n: GroupNote) { setSelected(n); setEditing(false); setPane('doc'); }
+  function openNew() { const n = blankNote(groupId!); setSelected(n); setEditing(true); setPane('doc'); setEditorKey('new:' + Date.now()); }
+  function openNote(n: GroupNote) { setSelected(n); setEditing(false); setPane('doc'); setEditorKey('note:' + n.id); }
   function backToList() { setSelected(null); setEditing(false); setPane('list'); }
 
   async function handleSave(patch: Partial<GroupNote> & { id?: string }) {
@@ -117,7 +120,7 @@ export function GrupoAnotacoes() {
           {!current ? (
             <div className="flex-1 hidden md:flex items-center justify-center text-fg-muted text-body-sm">Selecione uma ficha ou crie uma nova.</div>
           ) : editing ? (
-            <NoteEditor note={current} onSave={handleSave} onDone={() => setEditing(false)} onBack={backToList} />
+            <NoteEditor key={editorKey} note={current} onSave={handleSave} onDone={() => setEditing(false)} onBack={backToList} />
           ) : (
             <NoteDetail
               note={current}

@@ -22,6 +22,19 @@ const TYPE_LABEL: Record<PfAccountType, string> = {
   checking: 'Conta corrente', savings: 'Poupança', wallet: 'Carteira', investment: 'Investimento',
 };
 
+const PT_MONTHS = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+
+// YYYY-MM local (sem UTC shift no fim do mês após 21h BRT).
+function localYm(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+function shiftMonth(ym: string, delta: number): string {
+  const [y, m] = ym.split('-').map(Number);
+  const d = new Date(Date.UTC(y, m - 1 + delta, 1));
+  return d.toISOString().slice(0, 7);
+}
+
 export function CarteiraDetalhePage() {
   const { id = '' } = useParams();
   const cid = useFinanceiroAuth();
@@ -29,7 +42,8 @@ export function CarteiraDetalhePage() {
 
   const accountsQ = useAccounts();
   const acc = accountsQ.data?.find((a) => a.id === id);
-  const txQ = useAccountTransactions(id);
+  const [monthYear, setMonthYear] = useState(localYm());
+  const txQ = useAccountTransactions(id, monthYear);
   const cat = useCategoryLookup();
   const setPrimary = useSetPrimaryAccount();
 
@@ -50,14 +64,14 @@ export function CarteiraDetalhePage() {
   const color = acc.color || (acc.bank_slug ? BANKS[acc.bank_slug]?.color : undefined) || '#2dbe7e';
   const balance = Number(acc.balance);
 
-  // guardado no mês = soma (receita − despesa) das transações do mês corrente, clamp ≥ 0.
-  const ym = new Date().toISOString().slice(0, 7);
-  const savedThisMonth = (txQ.data ?? []).reduce((sum, t) => {
-    if (t.transaction_date.slice(0, 7) !== ym) return sum;
-    if (t.is_adjustment) return sum; // acerto de caixa não conta como "guardado no mês"
+  const txs = txQ.data ?? [];
+  // "Guardado no mês" = soma (receita − despesa) do mês selecionado (txs já vêm filtrados por mês).
+  const savedThisMonth = txs.reduce((sum, t) => {
+    if (t.is_adjustment) return sum; // acerto de caixa não conta
     return sum + (t.type === 'income' ? Number(t.amount) : -Number(t.amount));
   }, 0);
-  const txs = txQ.data ?? [];
+  const [my, mm] = monthYear.split('-').map(Number);
+  const monthLabel = `${PT_MONTHS[mm - 1]} ${my}`;
 
   async function tornarPrincipal() {
     try {
@@ -121,12 +135,21 @@ export function CarteiraDetalhePage() {
         <Button variant="secondary" onClick={() => setLancarOpen(true)}>Lançar aqui</Button>
       </div>
 
-      {/* Extrato */}
+      {/* Extrato — navegação mês a mês */}
       <section className="flex flex-col gap-2">
-        <h2 className="text-label uppercase tracking-wide text-fg-muted font-bold">Lançamentos</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-label uppercase tracking-wide text-fg-muted font-bold">Lançamentos</h2>
+          <div className="flex items-center gap-1">
+            <button type="button" onClick={() => setMonthYear((m) => shiftMonth(m, -1))} aria-label="Mês anterior"
+              className="w-7 h-7 rounded-md border border-border bg-bg-surface text-fg hover:bg-bg-elevated focus-ring">‹</button>
+            <span className="text-body-sm text-fg tabular-nums w-24 text-center">{monthLabel}</span>
+            <button type="button" onClick={() => setMonthYear((m) => shiftMonth(m, 1))} aria-label="Próximo mês"
+              className="w-7 h-7 rounded-md border border-border bg-bg-surface text-fg hover:bg-bg-elevated focus-ring">›</button>
+          </div>
+        </div>
         {txQ.isLoading && <p className="text-fg-muted text-body-sm">Carregando…</p>}
         {!txQ.isLoading && txs.length === 0 && (
-          <p className="text-fg-muted text-body-sm">Sem lançamentos nesta carteira ainda.</p>
+          <p className="text-fg-muted text-body-sm">Sem lançamentos em {monthLabel}.</p>
         )}
         {txs.map((t) => {
           const isIncome = t.type === 'income';

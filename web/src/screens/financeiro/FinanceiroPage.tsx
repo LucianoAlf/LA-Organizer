@@ -2,7 +2,8 @@ import { lazy, Suspense, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { StatCard } from '../../components/StatCard';
 import { Fab } from '../../components/Fab';
-import { useAccounts, useBudgets, useCategoryLookup, useFinanceiroAuth, useSummary, useTransactions, useTransactionsRange, useCardsWithUsage } from '../../hooks/useFinanceiro';
+import { CustomSelect } from '../../components/CustomSelect';
+import { useAccounts, useBudgets, useCategoryLookup, useFinanceiroAuth, useSummary, useTransactions, useTransactionsRange, useTransactionMonths, useCardsWithUsage } from '../../hooks/useFinanceiro';
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
 import type { PfCategory, PfTransaction } from '../../lib/financeiro';
 import { monthBounds } from '../../lib/financeiro';
@@ -43,12 +44,14 @@ export function FinanceiroPage() {
   const cid = useFinanceiroAuth();
   useRealtimeFinance(['pf_transactions', 'pf_bills', 'pf_accounts', 'pf_budgets', 'pf_goals', 'pf_transfers'], cid);
 
-  const budgetsQ = useBudgets();
+  const [monthYear, setMonthYear] = useState(monthBounds().monthYear);
+  const monthsWithDataQ = useTransactionMonths();
+  const budgetsQ = useBudgets(monthYear);
   const catLookup = useCategoryLookup();
   const accountsQ = useAccounts();
   const cardsUsageQ = useCardsWithUsage();
   const lastTxsQ = useTransactions({ limit: 5 });
-  const summaryQ = useSummary();
+  const summaryQ = useSummary(monthYear);
 
   // F2 — posição consolidada
   const pos = useMemo(
@@ -63,8 +66,21 @@ export function FinanceiroPage() {
   const navigate = useNavigate();
   const [novoLanc, setNovoLanc] = useState(false);
   const summary = summaryQ.summary;
-  const now = new Date();
-  const monthLabel = `${PT_MONTHS[now.getMonth()]} de ${now.getFullYear()}`;
+
+  // Seletor de mês = últimos 6 meses ∪ meses com lançamento (inclui faturas futuras de cartão), desc.
+  const monthOptions = useMemo(() => {
+    const now = new Date();
+    const set = new Set<string>();
+    for (let i = 0; i < 6; i++) {
+      const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+      set.add(d.toISOString().slice(0, 7));
+    }
+    for (const ym of (monthsWithDataQ.data ?? [])) set.add(ym);
+    return [...set].sort().reverse().map((value) => {
+      const [y, m] = value.split('-').map(Number);
+      return { value, label: `${PT_MONTHS[m - 1]} ${y}` };
+    });
+  }, [monthsWithDataQ.data]);
 
   // Linha mensal (6 buckets, oldest → newest)
   const monthlySeries = useMemo(() => {
@@ -115,7 +131,9 @@ export function FinanceiroPage() {
       {/* Header */}
       <header className="flex items-baseline justify-between gap-3">
         <h2 className="text-section-title">Finanças</h2>
-        <span className="text-body-sm text-fg-muted tabular-nums">{monthLabel}</span>
+        <div className="w-40">
+          <CustomSelect value={monthYear} options={monthOptions} onChange={setMonthYear} size="sm" />
+        </div>
       </header>
 
       {/* StatCards — Saldo é o herói (2+1: receitas/despesas em cima, saldo full-width abaixo) */}
