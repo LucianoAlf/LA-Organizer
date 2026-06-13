@@ -390,10 +390,10 @@ export function GrupoWorkspace() {
         </section>
       )}
 
-      {/* 📅 mais pra frente */}
+      {/* 📅 mais pra frente — "· sem prazo" só quando há tarefa sem data de fato */}
       {buckets.later.length > 0 && (
         <section>
-          <SectionLabel>📅 Mais pra frente · sem prazo</SectionLabel>
+          <SectionLabel>📅 Mais pra frente{buckets.later.some(t => !t.due_date) ? ' · sem prazo' : ''}</SectionLabel>
           <div className={`${surfaceCls} border-border`}>
             {buckets.later.map(t => (
               <PoolRow key={t.id} t={t as PoolTaskRow} today={today} busy={rowBusy === t.id} onToggle={onToggle} onOpen={setEditing} />
