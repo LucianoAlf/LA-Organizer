@@ -22,6 +22,8 @@ const IA_ACTIONS: { key: FormatAction; label: string }[] = [
 export function RichEditor({ valueHtml, onChange }: { valueHtml: string; onChange: (html: string) => void }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [colorOpen, setColorOpen] = useState(false);
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkUrl, setLinkUrl] = useState('');
   const [preview, setPreview] = useState<{ before: string; after: string } | null>(null);
   const [loadingIa, setLoadingIa] = useState(false);
 
@@ -79,6 +81,26 @@ export function RichEditor({ valueHtml, onChange }: { valueHtml: string; onChang
     }
   }
 
+  // Aplica o link do campo inline (sem window.prompt, que é bloqueado no PWA).
+  function applyLink() {
+    const url = linkUrl.trim();
+    if (!url) { setLinkOpen(false); return; }
+    const href = /^[a-z]+:\/\//i.test(url) || url.startsWith('mailto:') ? url : `https://${url}`;
+    ensureSelection();
+    const { from, to } = editor!.state.selection;
+    if (from === to) editor!.chain().focus().insertContent(`<a href="${href}">${url}</a>`).run();
+    else editor!.chain().focus().extendMarkRange('link').setLink({ href }).run();
+    setLinkUrl('');
+    setLinkOpen(false);
+  }
+
+  function openLink() {
+    setLinkUrl((editor!.getAttributes('link').href as string) || '');
+    setColorOpen(false);
+    setMenuOpen(false);
+    setLinkOpen((o) => !o);
+  }
+
   const btn = (active: boolean) =>
     `grid place-items-center w-8 h-8 rounded-md border shrink-0 focus-ring ${active ? 'border-tom text-tom' : 'border-border text-fg-muted hover:text-fg'}`;
 
@@ -89,20 +111,29 @@ export function RichEditor({ valueHtml, onChange }: { valueHtml: string; onChang
         <button type="button" aria-label="Itálico" className={btn(editor.isActive('italic'))} onClick={() => editor.chain().focus().toggleItalic().run()}><Italic size={15} /></button>
         <button type="button" aria-label="Título" className={btn(editor.isActive('heading', { level: 2 }))} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}><Heading2 size={15} /></button>
         <button type="button" aria-label="Lista" className={btn(editor.isActive('bulletList'))} onClick={() => editor.chain().focus().toggleBulletList().run()}><List size={15} /></button>
-        <button type="button" aria-label="Cor do texto" className={btn(colorOpen)} onClick={() => setColorOpen((o) => !o)}><Palette size={15} /></button>
-        <button type="button" aria-label="Link" className={btn(editor.isActive('link'))} onClick={() => {
-          const prev = editor.getAttributes('link').href as string | undefined;
-          const url = window.prompt('URL do link:', prev || '');
-          if (url === null) return;                 // cancelou
-          if (url === '') { editor.chain().focus().extendMarkRange('link').unsetLink().run(); return; }
-          ensureSelection();
-          const { from, to } = editor.state.selection;
-          if (from === to) editor.chain().focus().insertContent(`<a href="${url}">${url}</a>`).run();
-          else editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run();
-        }}><Link2 size={15} /></button>
+        <button type="button" aria-label="Cor do texto" className={btn(colorOpen)} onClick={() => { setLinkOpen(false); setMenuOpen(false); setColorOpen((o) => !o); }}><Palette size={15} /></button>
+        <div className="relative">
+          <button type="button" aria-label="Link" className={btn(editor.isActive('link') || linkOpen)} onClick={openLink}><Link2 size={15} /></button>
+          {linkOpen && (
+            <div className="absolute left-0 top-full mt-1 z-30 flex items-center gap-1 p-2 bg-bg-elevated border border-border rounded-md shadow-lg w-64">
+              <input
+                value={linkUrl}
+                onChange={(e) => setLinkUrl(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); applyLink(); } if (e.key === 'Escape') setLinkOpen(false); }}
+                placeholder="https://…"
+                autoFocus
+                className="flex-1 min-w-0 bg-bg-surface border border-border rounded p-1 text-body-sm text-fg focus:outline-none focus:border-tom"
+              />
+              <button type="button" onClick={applyLink} className="text-caption text-tom px-1 shrink-0 focus-ring rounded">Aplicar</button>
+              {editor.isActive('link') && (
+                <button type="button" onClick={() => { editor.chain().focus().extendMarkRange('link').unsetLink().run(); setLinkOpen(false); }} className="text-caption text-fg-muted px-1 shrink-0 focus-ring rounded">Remover</button>
+              )}
+            </div>
+          )}
+        </div>
 
-        <div className="ml-auto relative">
-          <button type="button" onClick={() => setMenuOpen((o) => !o)} className="inline-flex items-center gap-1 text-body-sm text-tom font-medium px-2 py-1.5 rounded-md hover:bg-tom/10 focus-ring">
+        <div className="w-full sm:w-auto sm:ml-auto relative">
+          <button type="button" onClick={() => { setColorOpen(false); setLinkOpen(false); setMenuOpen((o) => !o); }} className="w-full sm:w-auto justify-center inline-flex items-center gap-1 text-body-sm text-tom font-medium px-2 py-1.5 rounded-md hover:bg-tom/10 focus-ring">
             <Sparkles size={15} /> Formatar com o TOM
           </button>
           {menuOpen && (
