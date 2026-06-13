@@ -7,7 +7,7 @@ export type FieldKind = 'text' | 'url' | 'password';
 export interface NoteField { label: string; value: string; kind?: FieldKind; secret?: boolean }
 
 export interface GroupNote {
-  id: string; group_id: string; type: NoteType; category: string; tags: string[];
+  id: string; group_id: string; type: string; category: string; tags: string[];
   title: string; body: string; fields: NoteField[]; pinned: boolean;
   sort_order: number; color: string | null; icon: string | null;
   created_by: string | null; updated_by: string | null; created_at: string; updated_at: string;
@@ -49,9 +49,37 @@ export const NOTE_COLORS = [
 ];
 export const NOTE_ICONS = ['KeyRound', 'Building2', 'BuildingStore', 'Banknote', 'CreditCard', 'NotebookPen', 'FileText', 'IdCard', 'CalendarDays', 'Landmark', 'Receipt', 'Lock', 'Mail', 'Phone', 'MapPin', 'Star'];
 
-// Cor/ícone efetivos: override da ficha, senão o padrão do tipo.
-export const resolveColor = (n: Pick<GroupNote, 'type' | 'color'>): string => n.color ?? TYPE_DEFAULTS[n.type].color;
-export const resolveIcon = (n: Pick<GroupNote, 'type' | 'icon'>): string => n.icon ?? TYPE_DEFAULTS[n.type].icon;
+// ── Tipos customizados por grupo (Fatia C) ──────────────────────────────────
+export interface GroupNoteType {
+  id: string; group_id: string; key: string; label: string;
+  color: string | null; icon: string | null; fields: NoteField[];
+}
+export type TypeMeta = { label: string; color: string; icon: string; fields: NoteField[] };
+export type TypeIndex = Record<string, TypeMeta>;
+
+// 5 base globais + custom do grupo (custom sobrepõe se mesma key).
+export function buildTypeIndex(custom: GroupNoteType[] = []): TypeIndex {
+  const idx: TypeIndex = {};
+  for (const t of NOTE_TYPES) idx[t] = { label: NOTE_TYPE_META[t].label, color: TYPE_DEFAULTS[t].color, icon: TYPE_DEFAULTS[t].icon, fields: TEMPLATES[t] };
+  for (const c of custom) idx[c.key] = { label: c.label, color: c.color ?? '#5F5E5A', icon: c.icon ?? 'FileText', fields: Array.isArray(c.fields) ? c.fields : [] };
+  return idx;
+}
+export const typeLabel = (type: string, idx?: TypeIndex): string =>
+  idx?.[type]?.label ?? NOTE_TYPE_META[type as NoteType]?.label ?? type;
+export function templateForType(type: string, idx?: TypeIndex): NoteField[] {
+  const f = idx?.[type]?.fields ?? TEMPLATES[type as NoteType] ?? [];
+  return f.map((x) => ({ ...x }));
+}
+export function slugifyType(label: string): string {
+  return (label || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'tipo';
+}
+
+// Cor/ícone/label efetivos: override da ficha → tipo (índice) → padrão base → fallback.
+export const resolveColor = (n: Pick<GroupNote, 'type' | 'color'>, idx?: TypeIndex): string =>
+  n.color ?? idx?.[n.type]?.color ?? TYPE_DEFAULTS[n.type as NoteType]?.color ?? '#5F5E5A';
+export const resolveIcon = (n: Pick<GroupNote, 'type' | 'icon'>, idx?: TypeIndex): string =>
+  n.icon ?? idx?.[n.type]?.icon ?? TYPE_DEFAULTS[n.type as NoteType]?.icon ?? 'FileText';
 
 // Renumera uma lista (na ordem visual) → sort_order 1..N. Menor = mais acima.
 export const renumber = (list: { id: string }[]): Array<{ id: string; sort_order: number }> =>
@@ -95,7 +123,7 @@ export function cardSubtitle(n: GroupNote): string {
   return f ? f.value : (n.body || '').replace(/\s+/g, ' ').trim();
 }
 
-export function filterNotes(notes: GroupNote[], f: { type?: NoteType; tag?: string; query?: string }): GroupNote[] {
+export function filterNotes(notes: GroupNote[], f: { type?: string; tag?: string; query?: string }): GroupNote[] {
   const q = (f.query || '').trim().toLowerCase();
   return notes.filter((n) => {
     if (f.type && n.type !== f.type) return false;
@@ -108,8 +136,12 @@ export function filterNotes(notes: GroupNote[], f: { type?: NoteType; tag?: stri
   });
 }
 
-export function typesWithCount(notes: GroupNote[]): Array<{ type: NoteType; count: number }> {
-  return NOTE_TYPES.map((type) => ({ type, count: notes.filter((n) => n.type === type).length })).filter((t) => t.count > 0);
+export function typesWithCount(notes: GroupNote[]): Array<{ type: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const n of notes) counts.set(n.type, (counts.get(n.type) || 0) + 1);
+  const ordered = NOTE_TYPES.filter((t) => counts.has(t));
+  const custom = [...counts.keys()].filter((t) => !NOTE_TYPES.includes(t as NoteType));
+  return [...ordered, ...custom].map((type) => ({ type, count: counts.get(type)! }));
 }
 
 export function allTags(notes: GroupNote[]): string[] {
@@ -168,5 +200,27 @@ export async function deleteGroupNote(id: string): Promise<void> {
 }
 export async function togglePin(id: string, pinned: boolean): Promise<void> {
   const { error } = await supabase.from('group_notes').update({ pinned }).eq('id', id);
+  if (error) throw error;
+}
+
+// ── I/O dos tipos customizados (group_note_types) ──
+export async function loadGroupNoteTypes(groupId: string): Promise<GroupNoteType[]> {
+  const { data, error } = await supabase.from('group_note_types').select('*').eq('group_id', groupId).order('label', { ascending: true });
+  if (error) throw error;
+  return (data ?? []).map((t) => ({ ...t, fields: Array.isArray(t.fields) ? t.fields : [] })) as GroupNoteType[];
+}
+export async function upsertGroupNoteType(groupId: string, createdBy: string, t: Partial<GroupNoteType> & { id?: string }): Promise<GroupNoteType> {
+  const payload: Record<string, unknown> = {
+    group_id: groupId, key: t.key || slugifyType(t.label || ''), label: (t.label || '').trim() || 'Tipo',
+    color: t.color ?? null, icon: t.icon ?? null, fields: t.fields || [],
+  };
+  if (t.id) payload.id = t.id; else payload.created_by = createdBy;
+  const { data, error } = await supabase.from('group_note_types').upsert(payload).select('*').single();
+  if (error) throw error;
+  const row = data as GroupNoteType;
+  return { ...row, fields: Array.isArray(row.fields) ? row.fields : [] };
+}
+export async function deleteGroupNoteType(id: string): Promise<void> {
+  const { error } = await supabase.from('group_note_types').delete().eq('id', id);
   if (error) throw error;
 }

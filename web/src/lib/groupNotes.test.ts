@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { filterNotes, typesWithCount, allTags, noteExcerpt, templateFor, cardSubtitle, TEMPLATES, resolveColor, resolveIcon, renumber, TYPE_DEFAULTS, bodyToHtml, type GroupNote } from './groupNotes';
+import { filterNotes, typesWithCount, allTags, noteExcerpt, templateFor, cardSubtitle, TEMPLATES, resolveColor, resolveIcon, renumber, TYPE_DEFAULTS, bodyToHtml, buildTypeIndex, typeLabel, templateForType, slugifyType, type GroupNote, type GroupNoteType } from './groupNotes';
 
 const N = (o: Partial<GroupNote>): GroupNote => ({ id: 'x', group_id: 'g', type: 'livre', category: 'Geral', tags: [], title: '', body: '', fields: [], pinned: false, sort_order: 0, color: null, icon: null, created_by: null, updated_by: null, created_at: '', updated_at: '', ...o });
 
@@ -53,6 +53,39 @@ describe('aparência + reorder (Fatia A)', () => {
     expect(renumber([N({ id: 'a' }), N({ id: 'b' }), N({ id: 'c' })])).toEqual([
       { id: 'a', sort_order: 1 }, { id: 'b', sort_order: 2 }, { id: 'c', sort_order: 3 },
     ]);
+  });
+});
+
+const T = (o: Partial<GroupNoteType>): GroupNoteType => ({ id: 't', group_id: 'g', key: 'fornecedor', label: 'Fornecedor', color: '#1D9E75', icon: 'BuildingStore', fields: [{ label: 'CNPJ', value: '', kind: 'text' }], ...o });
+
+describe('tipos customizados (Fatia C)', () => {
+  const idx = buildTypeIndex([T({})]);
+  it('buildTypeIndex tem as 5 base + a custom', () => {
+    expect(idx.acesso.label).toBe('Acesso');
+    expect(idx.fornecedor.label).toBe('Fornecedor');
+    expect(idx.fornecedor.color).toBe('#1D9E75');
+  });
+  it('resolveColor/Icon usam o índice pra tipo custom', () => {
+    expect(resolveColor({ type: 'fornecedor', color: null }, idx)).toBe('#1D9E75');
+    expect(resolveIcon({ type: 'fornecedor', icon: null }, idx)).toBe('BuildingStore');
+  });
+  it('override da ficha vence o tipo', () => {
+    expect(resolveColor({ type: 'fornecedor', color: '#E24B4A' }, idx)).toBe('#E24B4A');
+  });
+  it('tipo custom sem cor cai no fallback cinza/FileText', () => {
+    const i2 = buildTypeIndex([T({ key: 'x', color: null, icon: null })]);
+    expect(resolveColor({ type: 'x', color: null }, i2)).toBe('#5F5E5A');
+    expect(resolveIcon({ type: 'x', icon: null }, i2)).toBe('FileText');
+  });
+  it('typeLabel e templateForType (custom e base)', () => {
+    expect(typeLabel('fornecedor', idx)).toBe('Fornecedor');
+    expect(typeLabel('acesso', idx)).toBe('Acesso');
+    expect(templateForType('fornecedor', idx).map((f) => f.label)).toEqual(['CNPJ']);
+    expect(templateForType('acesso', idx).length).toBeGreaterThan(0);
+  });
+  it('slugifyType normaliza acento/espaço', () => {
+    expect(slugifyType('Conta a Pagar')).toBe('conta_a_pagar');
+    expect(slugifyType('Cartão')).toBe('cartao');
   });
 });
 

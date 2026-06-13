@@ -1,6 +1,6 @@
 import DOMPurify from 'dompurify';
 import { Pin, PinOff, Pencil, Trash2, ArrowLeft, MessageSquare } from 'lucide-react';
-import { NOTE_TYPE_META, resolveColor, resolveIcon, bodyToHtml, type GroupNote } from '../../../lib/groupNotes';
+import { resolveColor, resolveIcon, bodyToHtml, typeLabel, type GroupNote, type TypeIndex } from '../../../lib/groupNotes';
 import { NoteGlyph } from './IconRegistry';
 import { FieldRow } from './FieldRow';
 
@@ -15,12 +15,11 @@ function whenLabel(iso: string): string {
 }
 
 interface Props {
-  note: GroupNote; editorName?: string;
+  note: GroupNote; editorName?: string; idx?: TypeIndex;
   onEdit: () => void; onDelete: (id: string) => void; onPin: (id: string, pinned: boolean) => void; onBack?: () => void;
 }
 
-export function NoteDetail({ note, editorName, onEdit, onDelete, onPin, onBack }: Props) {
-  const meta = NOTE_TYPE_META[note.type];
+export function NoteDetail({ note, editorName, idx, onEdit, onDelete, onPin, onBack }: Props) {
   const fields = (note.fields || []).filter(f => f.label || f.value);
   const bodyHtml = note.body ? DOMPurify.sanitize(bodyToHtml(note.body)) : '';
 
@@ -28,7 +27,7 @@ export function NoteDetail({ note, editorName, onEdit, onDelete, onPin, onBack }
     <div className="flex-1 min-w-0 p-lg overflow-y-auto">
       <div className="flex items-center gap-sm mb-xs">
         {onBack && <button className="md:hidden text-fg-muted p-1 -ml-1 focus-ring rounded-sm" onClick={onBack} aria-label="Voltar"><ArrowLeft size={18} /></button>}
-        <NoteGlyph name={resolveIcon(note)} color={resolveColor(note)} size={20} className="shrink-0" />
+        <NoteGlyph name={resolveIcon(note, idx)} color={resolveColor(note, idx)} size={20} className="shrink-0" />
         <h2 className="flex-1 min-w-0 truncate text-h3 text-fg">{note.title}</h2>
         <div className="flex items-center gap-1 shrink-0 text-fg-muted">
           <button onClick={() => onPin(note.id, !note.pinned)} aria-label={note.pinned ? 'Desafixar' : 'Fixar'} className="p-1.5 rounded-sm hover:text-fg focus-ring">{note.pinned ? <Pin size={17} className="text-tom" /> : <PinOff size={17} />}</button>
@@ -41,7 +40,7 @@ export function NoteDetail({ note, editorName, onEdit, onDelete, onPin, onBack }
         <span>👥 do grupo</span>
         {note.updated_at && <span>· editado{editorName ? ` por ${editorName}` : ''} {whenLabel(note.updated_at)}</span>}
         {note.created_at && <span>· criado em {new Date(note.created_at).toLocaleDateString('pt-BR')}</span>}
-        <span className="px-sm py-[2px] rounded-full bg-tom/10 text-tom">{meta.label}</span>
+        <span className="px-sm py-[2px] rounded-full bg-tom/10 text-tom">{typeLabel(note.type, idx)}</span>
       </div>
 
       {fields.length > 0 && (

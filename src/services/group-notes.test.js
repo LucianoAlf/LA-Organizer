@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { createGroupNote, appendGroupNote, groupNotesContext, htmlToPlain, renderNoteContent } = require('./group-notes');
+const { createGroupNote, appendGroupNote, groupNotesContext, htmlToPlain, renderNoteContent, pickType, renderTypesBlock } = require('./group-notes');
 
 function fakeDb({ notes = [] } = {}) {
   const ev = [];
@@ -103,4 +103,18 @@ test('renderNoteContent: usa htmlToPlain no body (sem tags no prompt)', () => {
   assert.ok(out.includes('Login: a@b'));
   assert.ok(out.includes('obs x'));
   assert.ok(!out.includes('<'), 'nenhuma tag HTML no prompt');
+});
+
+// Fatia C — tipos customizados: validação da key + bloco de tipos no prompt.
+test('pickType: aceita base e key custom permitida; coage o resto', () => {
+  const allowed = new Set(['acesso', 'cnpj', 'conta', 'reuniao', 'livre', 'fornecedor']);
+  assert.strictEqual(pickType('fornecedor', allowed), 'fornecedor');
+  assert.strictEqual(pickType('acesso', allowed), 'acesso');
+  assert.strictEqual(pickType('xpto', allowed), 'livre');
+});
+test('renderTypesBlock lista key — label e instrui não inventar', () => {
+  const b = renderTypesBlock([{ key: 'fornecedor', label: 'Fornecedor' }]);
+  assert.ok(b.includes('fornecedor') && b.includes('Fornecedor'));
+  assert.ok(b.includes('acesso'));
+  assert.ok(/n[ãa]o invente/i.test(b));
 });

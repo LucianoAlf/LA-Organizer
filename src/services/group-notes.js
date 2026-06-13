@@ -19,11 +19,32 @@ function sanitizeFields(raw) {
     .filter((f) => f.label || f.value);
 }
 
+// Tipo é válido se for base OU existir em group_note_types do grupo; senão 'livre'.
+function pickType(type, allowedSet) {
+  return allowedSet && allowedSet.has(type) ? type : 'livre';
+}
+// Bloco do prompt: lista os tipos do grupo (base + custom) pro TOM escolher (sem inventar).
+function renderTypesBlock(types) {
+  const base = [['acesso', 'Acesso'], ['cnpj', 'CNPJ'], ['conta', 'Conta'], ['reuniao', 'Reunião'], ['livre', 'Livre']];
+  const all = [...base, ...((types || []).map((t) => [t.key, t.label]))];
+  const lines = all.map(([k, l]) => `- ${k} — ${l}`).join('\n');
+  return `Tipos de ficha disponíveis (use o mais adequado; NÃO invente tipo novo):\n${lines}`;
+}
+async function allowedTypeSet(supabase, groupId) {
+  let custom = [];
+  try {
+    const { data } = await supabase.from('group_note_types').select('key').eq('group_id', groupId);
+    custom = (data || []).map((r) => r.key).filter(Boolean);
+  } catch (_) { /* sem tipos custom */ }
+  return new Set([...NOTE_TYPES, ...custom]);
+}
+
 async function createGroupNote({ supabase, groupId, createdBy, note }) {
+  const allowed = await allowedTypeSet(supabase, groupId);
   const row = {
     group_id: groupId, created_by: createdBy, updated_by: createdBy,
     title: String(note.title || '').trim().slice(0, 200),
-    type: NOTE_TYPES.includes(note.type) ? note.type : 'livre',
+    type: pickType(note.type, allowed),
     category: (note.category && String(note.category).trim()) || 'Geral',
     tags: Array.isArray(note.tags) ? note.tags.map((t) => String(t).trim()).filter(Boolean) : [],
     fields: sanitizeFields(note.fields),
@@ -66,15 +87,18 @@ function renderNoteContent(n) {
 
 // Bloco pro prompt do grupo: índice (título · tipo · tags) de TODAS + conteúdo das fixadas.
 async function groupNotesContext({ supabase, groupId }) {
-  const { data } = await supabase.from('group_notes')
-    .select('title, type, category, tags, fields, body, pinned').eq('group_id', groupId).order('pinned', { ascending: false });
-  const notes = data || [];
-  if (!notes.length) return '';
+  const [notesRes, typesRes] = await Promise.all([
+    supabase.from('group_notes').select('title, type, category, tags, fields, body, pinned').eq('group_id', groupId).order('pinned', { ascending: false }),
+    supabase.from('group_note_types').select('key, label').eq('group_id', groupId),
+  ]);
+  const notes = notesRes.data || [];
+  const typesBlock = renderTypesBlock(typesRes.data || []);
+  if (!notes.length) return typesBlock;
   const idx = notes.map((n) => `- ${n.title} (${n.type || 'livre'})${(n.tags || []).length ? ' · ' + n.tags.map((t) => '#' + t).join(' ') : ''}`).join('\n');
   const pinned = notes.filter((n) => n.pinned).map((n) => `### ${n.title}\n${renderNoteContent(n)}`).join('\n\n');
   let out = `## Anotações do grupo (base de conhecimento)\n${idx}`;
   if (pinned) out += `\n\n### Fixadas (conteúdo):\n${pinned}`;
-  return out;
+  return `${typesBlock}\n\n${out}`;
 }
 
-module.exports = { createGroupNote, appendGroupNote, groupNotesContext, NOTE_TYPES, sanitizeFields, htmlToPlain, renderNoteContent };
+module.exports = { createGroupNote, appendGroupNote, groupNotesContext, NOTE_TYPES, sanitizeFields, htmlToPlain, renderNoteContent, pickType, renderTypesBlock, allowedTypeSet };
