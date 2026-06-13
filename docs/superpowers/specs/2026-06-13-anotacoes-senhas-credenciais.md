@@ -51,7 +51,8 @@ begin
   if k is null then return ciphertext; end if;
   return pgp_sym_decrypt(decode(substr(ciphertext,8),'base64'), k);
 end; $$;
-revoke all on function public.gn_decrypt(text) from public, anon, authenticated; -- só service_role/definer
+revoke all on function public.gn_decrypt(text) from public, anon, authenticated;
+grant execute on function public.gn_decrypt(text) to service_role; -- só o TOM (service_role) decifra direto
 ```
 
 ### 3. Trigger que cifra campos `secret` no write
@@ -105,7 +106,7 @@ grant execute on function public.reveal_note_secret(uuid,int) to authenticated;
   - **Copiar**: busca via RPC e copia o texto (não o ciphertext).
   - Erro (forbidden/falha) → toast "Não consegui revelar".
 - **`NoteDetail.tsx`**: passa `noteId={note.id}` + `index` ao `FieldRow`.
-- **Editor (`NoteEditor`/`NoteTypeForm`)**: ao **editar** uma ficha, um campo secret já cifrado não deve aparecer como `enc:v1:…` no input. Regra: no editor, campo secret vem **vazio com placeholder "•••• (inalterado)"**; só sobrescreve se o usuário digitar algo novo (string vazia = mantém o atual). Evita regravar/expor o ciphertext.
+- **Editor (`NoteEditor`)**: ao **editar** uma ficha, um campo secret já cifrado não pode aparecer como `enc:v1:…` nem ser apagado sem querer. Regra de **preservação** (evita perda de dado): o `draft` **mantém o ciphertext** no value; o input renderiza **em branco com placeholder "•••• (inalterado)"** via flag `touched` por campo; só quando o usuário digita (`touched=true`) o value vira o texto novo. No save: campo não tocado → vai o **ciphertext original** (trigger é idempotente, não recifra); campo tocado com texto → vai plaintext (trigger cifra); campo tocado e limpo → vira vazio (apaga de propósito). **Nunca** mandar `''` por um campo apenas não-editado.
 - **Visão "🔑 Senhas"**: novo filtro no `NotesTypeFilter`/topo — mostra só fichas com ≥1 campo `secret` (`notes.filter(n => n.fields.some(f => f.secret))`). Pura `notesWithSecrets(notes)` em `groupNotes.ts`.
 
 ---
