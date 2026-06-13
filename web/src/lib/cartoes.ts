@@ -42,6 +42,20 @@ export function nextDueLabel(dueDay: number, today = new Date()): string {
   return `${String(due.getDate()).padStart(2, '0')}/${String(due.getMonth() + 1).padStart(2, '0')}`;
 }
 
+// Vencimento REAL da fatura de uma competência (YYYY-MM-01), dado fechamento + vencimento do cartão.
+// Regra de cartão (espelha pf_tx_compute_cashflow no banco): vence no MESMO mês da competência se
+// due_day >= closing_day (fecha dia 4, vence dia 10); senão no mês SEGUINTE (fecha dia 30, vence dia 6).
+// UTC puro — sem shift de fuso (o dia de vencimento é fixo).
+export function dueDateForCompetencia(comp: string, closingDay: number, dueDay: number): Date {
+  const d = new Date(comp + 'T00:00:00Z');
+  const offset = dueDay >= closingDay ? 0 : 1;
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + offset, dueDay));
+}
+export function dueLabelForCompetencia(comp: string, closingDay: number, dueDay: number): string {
+  const due = dueDateForCompetencia(comp, closingDay, dueDay);
+  return `${String(due.getUTCDate()).padStart(2, '0')}/${String(due.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
 export function addMonthsToCompetencia(compStr: string, n: number): string {
   const d = new Date(compStr + 'T00:00:00Z');
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + n, 1)).toISOString().slice(0, 10);

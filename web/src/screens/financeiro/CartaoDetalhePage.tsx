@@ -11,7 +11,7 @@ import {
   useCreateCardPurchase, useDeactivateCard, useDeleteTransaction,
 } from '../../hooks/useFinanceiro';
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
-import { addMonthsToCompetencia, currentCompetencia, mesDaCompetencia, nextDueLabel, type CardInvoiceItem } from '../../lib/cartoes';
+import { addMonthsToCompetencia, currentCompetencia, dueLabelForCompetencia, mesDaCompetencia, type CardInvoiceItem } from '../../lib/cartoes';
 import type { PfTransaction } from '../../lib/financeiro';
 import { CartaoSheet } from './components/CartaoSheet';
 import { PagarFaturaSheet } from './components/PagarFaturaSheet';
@@ -177,7 +177,10 @@ export function CartaoDetalhePage() {
         <div className="flex justify-between text-body-sm opacity-90">
           <span>{card.name}</span><span>{(card.brand || '').toUpperCase()}</span>
         </div>
-        <div className="mt-4 text-body-sm opacity-90">Fatura de {mesDaCompetencia(comp ?? '')}</div>
+        <div className="mt-4 text-body-sm opacity-90">
+          Fatura de {mesDaCompetencia(comp ?? '')}
+          {comp ? ` · vence ${dueLabelForCompetencia(comp, card.closing_day, card.due_day)}` : ''}
+        </div>
         <div className="text-3xl font-bold">{fmtBRL(inv.data?.total ?? 0)}</div>
         <div className="mt-3 h-2 rounded-full bg-white/25 overflow-hidden">
           <div className="h-full rounded-full bg-white" style={{ width: `${Math.min(pct, 100)}%` }} />
@@ -195,8 +198,8 @@ export function CartaoDetalhePage() {
           <div className="font-semibold text-fg">{card.closing_day}</div>
         </div>
         <div className="rounded-md border border-border bg-bg-surface p-3">
-          <div className="text-label text-fg-muted">Vencimento</div>
-          <div className="font-semibold text-fg">{nextDueLabel(card.due_day)}</div>
+          <div className="text-label text-fg-muted">Vence dia</div>
+          <div className="font-semibold text-fg">{card.due_day}</div>
         </div>
       </div>
 
