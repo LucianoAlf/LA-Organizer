@@ -101,4 +101,44 @@ async function groupNotesContext({ supabase, groupId }) {
   return `${typesBlock}\n\n${out}`;
 }
 
-module.exports = { createGroupNote, appendGroupNote, groupNotesContext, NOTE_TYPES, sanitizeFields, htmlToPlain, renderNoteContent, pickType, renderTypesBlock, allowedTypeSet };
+// ── Recuperação de credencial sob demanda (senhas) ──
+function stripAccent(s) { return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(); }
+function looksLikeCredentialRequest(text) { return /\b(senha|login|usu[áa]rio|usuario|acesso|credencial|c[óo]digo|pin)\b/i.test(String(text || '')); }
+function credTokenize(text) { return [...new Set(stripAccent(text).split(/[^a-z0-9]+/).filter((t) => t.length >= 3))]; }
+function scoreNoteMatch(note, tokens) {
+  const parts = [note.title, ...((note.tags) || []), ...((note.fields) || []).flatMap((f) => [f.label, f.secret ? '' : f.value])];
+  const hay = stripAccent(parts.join(' '));
+  return tokens.reduce((s, t) => s + (hay.includes(t) ? 1 : 0), 0);
+}
+function buildCredentialBlock(matches) {
+  if (!matches || !matches.length) return '';
+  const blocks = matches.map((m) => `### ${m.title} (${m.type || 'livre'})\n` +
+    (m.fields || []).filter((f) => f.label || f.value).map((f) => `${f.label || '—'}: ${f.value || ''}`).join('\n')).join('\n\n');
+  return `## Credencial(is) que casam com o pedido\n(responda só o que foi perguntado; NÃO despeje outras senhas)\n${blocks}`;
+}
+// Busca fichas do grupo que casam com o pedido, decifra os secrets (service_role) e devolve o bloco.
+async function credentialLookupContext({ supabase, groupId, text }) {
+  if (!looksLikeCredentialRequest(text)) return '';
+  const tokens = credTokenize(text);
+  if (!tokens.length) return '';
+  const { data } = await supabase.from('group_notes').select('id, title, type, tags, fields').eq('group_id', groupId);
+  const scored = (data || []).map((n) => ({ n, score: scoreNoteMatch(n, tokens) }))
+    .filter((x) => x.score >= 1).sort((a, b) => b.score - a.score).slice(0, 2);
+  if (!scored.length) return '';
+  const matches = [];
+  for (const { n } of scored) {
+    const fields = [];
+    for (const f of (n.fields || [])) {
+      if (!f.label && !f.value) continue;
+      let value = f.value;
+      if (f.secret && typeof value === 'string' && value.startsWith('enc:v1:')) {
+        try { const { data: dec } = await supabase.rpc('gn_decrypt', { ciphertext: value }); if (dec != null) value = dec; } catch (_) {}
+      }
+      fields.push({ label: f.label, value });
+    }
+    matches.push({ title: n.title, type: n.type, fields });
+  }
+  return buildCredentialBlock(matches);
+}
+
+module.exports = { createGroupNote, appendGroupNote, groupNotesContext, NOTE_TYPES, sanitizeFields, htmlToPlain, renderNoteContent, pickType, renderTypesBlock, allowedTypeSet, looksLikeCredentialRequest, scoreNoteMatch, buildCredentialBlock, credentialLookupContext };

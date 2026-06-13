@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { filterNotes, typesWithCount, allTags, noteExcerpt, templateFor, cardSubtitle, TEMPLATES, resolveColor, resolveIcon, renumber, TYPE_DEFAULTS, bodyToHtml, buildTypeIndex, typeLabel, templateForType, slugifyType, type GroupNote, type GroupNoteType } from './groupNotes';
+import { filterNotes, typesWithCount, allTags, noteExcerpt, templateFor, cardSubtitle, TEMPLATES, resolveColor, resolveIcon, renumber, TYPE_DEFAULTS, bodyToHtml, buildTypeIndex, typeLabel, templateForType, slugifyType, isEncrypted, notesWithSecrets, type GroupNote, type GroupNoteType } from './groupNotes';
 
 const N = (o: Partial<GroupNote>): GroupNote => ({ id: 'x', group_id: 'g', type: 'livre', category: 'Geral', tags: [], title: '', body: '', fields: [], pinned: false, sort_order: 0, color: null, icon: null, created_by: null, updated_by: null, created_at: '', updated_at: '', ...o });
 
@@ -86,6 +86,19 @@ describe('tipos customizados (Fatia C)', () => {
   it('slugifyType normaliza acento/espaço', () => {
     expect(slugifyType('Conta a Pagar')).toBe('conta_a_pagar');
     expect(slugifyType('Cartão')).toBe('cartao');
+  });
+});
+
+describe('senhas (cripto)', () => {
+  it('isEncrypted detecta o prefixo enc:v1:', () => {
+    expect(isEncrypted('enc:v1:abc')).toBe(true);
+    expect(isEncrypted('1234')).toBe(false);
+    expect(isEncrypted('')).toBe(false);
+  });
+  it('notesWithSecrets filtra fichas com campo secret', () => {
+    const a = N({ id: 'a', fields: [{ label: 'Senha', value: 'x', secret: true }] });
+    const b = N({ id: 'b', fields: [{ label: 'Obs', value: 'y' }] });
+    expect(notesWithSecrets([a, b]).map((n) => n.id)).toEqual(['a']);
   });
 });
 

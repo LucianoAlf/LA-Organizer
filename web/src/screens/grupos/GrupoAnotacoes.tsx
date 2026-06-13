@@ -12,7 +12,7 @@ import { useWorkGroups, useMyGroupIds } from '../../hooks/useWorkGroups';
 import { useGroupNotes } from '../../hooks/useGroupNotes';
 import { useGroupNoteTypes } from '../../hooks/useGroupNoteTypes';
 import { useSortableSensors } from '../../lib/sortableSensors';
-import { filterNotes, renumber, templateFor, buildTypeIndex, type GroupNote, type TypeIndex } from '../../lib/groupNotes';
+import { filterNotes, renumber, templateFor, buildTypeIndex, notesWithSecrets, type GroupNote, type TypeIndex } from '../../lib/groupNotes';
 import { Button } from '../../components/Button';
 import { EmptyState } from '../../components/EmptyState';
 import { LoadingState } from '../../components/LoadingState';
@@ -58,6 +58,7 @@ export function GrupoAnotacoes() {
   const sensors = useSortableSensors();
 
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
+  const [secretsOnly, setSecretsOnly] = useState(false);
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<GroupNote | null>(null);
   const [editing, setEditing] = useState(false);
@@ -66,13 +67,14 @@ export function GrupoAnotacoes() {
   // do React reusar a instância). NÃO muda quando uma ficha nova ganha id (sem remount ao digitar).
   const [editorKey, setEditorKey] = useState('none');
 
-  const filtered = useMemo(
+  const filtered0 = useMemo(
     () => filterNotes(notes, { type: typeFilter || undefined, query }),
     [notes, typeFilter, query],
   );
+  const filtered = secretsOnly ? notesWithSecrets(filtered0) : filtered0;
   const current = selected ? notes.find(n => n.id === selected.id) ?? selected : null;
   // Arrastar só na visão "Todas" (sem filtro de tipo nem busca) — ordem global não-ambígua.
-  const dragEnabled = !typeFilter && !query.trim();
+  const dragEnabled = !typeFilter && !query.trim() && !secretsOnly;
   const pinned = filtered.filter(n => n.pinned);
   const rest = filtered.filter(n => !n.pinned);
 
@@ -138,7 +140,7 @@ export function GrupoAnotacoes() {
       </header>
 
       <div className="shrink-0 mt-md"><NotesSummary notes={notes} /></div>
-      <div className="shrink-0 mt-md"><NotesTypeFilter notes={notes} value={typeFilter} onChange={setTypeFilter} idx={typeIndex} /></div>
+      <div className="shrink-0 mt-md"><NotesTypeFilter notes={notes} value={typeFilter} onChange={setTypeFilter} idx={typeIndex} secretsOnly={secretsOnly} onToggleSecrets={() => setSecretsOnly(v => !v)} /></div>
 
       <div className="flex-1 min-h-0 mt-md rounded-md border border-border bg-bg-surface overflow-hidden flex">
         <div className={`${pane === 'doc' ? 'max-md:hidden' : ''} w-full md:w-72 shrink-0 md:border-r border-border flex flex-col`}>

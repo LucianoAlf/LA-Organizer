@@ -224,3 +224,15 @@ export async function deleteGroupNoteType(id: string): Promise<void> {
   const { error } = await supabase.from('group_note_types').delete().eq('id', id);
   if (error) throw error;
 }
+
+// ── Senhas/credenciais (cripto em repouso) ──
+export const isEncrypted = (v: string): boolean => typeof v === 'string' && v.startsWith('enc:v1:');
+export function notesWithSecrets(notes: GroupNote[]): GroupNote[] {
+  return notes.filter((n) => (n.fields || []).some((f) => f.secret));
+}
+// Revela o valor de um campo secret via RPC member-checked (decifra server-side).
+export async function revealNoteSecret(noteId: string, fieldIndex: number): Promise<string> {
+  const { data, error } = await supabase.rpc('reveal_note_secret', { p_note_id: noteId, p_field_index: fieldIndex });
+  if (error) throw error;
+  return (data as string) ?? '';
+}

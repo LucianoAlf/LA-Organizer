@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Plus, X, ArrowLeft, Check } from 'lucide-react';
 import { CustomSelect } from '../../../components/CustomSelect';
-import { NOTE_COLORS, NOTE_ICONS, templateForType, resolveColor, resolveIcon, type GroupNote, type NoteField, type TypeIndex } from '../../../lib/groupNotes';
+import { NOTE_COLORS, NOTE_ICONS, templateForType, resolveColor, resolveIcon, isEncrypted, type GroupNote, type NoteField, type TypeIndex } from '../../../lib/groupNotes';
 import { NoteGlyph } from './IconRegistry';
 import { RichEditor } from './RichEditor';
 import { NoteTypeForm } from './NoteTypeForm';
@@ -98,7 +98,8 @@ export function NoteEditor({ note, onSave, onDone, onBack, typeIndex }: Props) {
           <div key={i} className="flex items-center gap-xs">
             <input value={f.label} onChange={e => setField(i, { label: e.target.value })} placeholder="Rótulo"
               className="w-28 shrink-0 bg-bg-surface border border-border rounded-md p-1.5 text-body-sm text-fg focus:outline-none focus:border-tom" />
-            <input value={f.value} onChange={e => setField(i, { value: e.target.value })} placeholder="Valor"
+            <input value={f.secret && isEncrypted(f.value || '') ? '' : f.value} onChange={e => setField(i, { value: e.target.value })}
+              placeholder={f.secret && isEncrypted(f.value || '') ? '•••• (inalterado)' : 'Valor'}
               type={f.secret ? 'password' : 'text'}
               className="flex-1 min-w-0 bg-bg-surface border border-border rounded-md p-1.5 text-body-sm text-fg focus:outline-none focus:border-tom" />
             <button type="button" onClick={() => setField(i, { secret: !f.secret, kind: !f.secret ? 'password' : 'text' })}

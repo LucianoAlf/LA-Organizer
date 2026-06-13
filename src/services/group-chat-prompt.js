@@ -15,7 +15,7 @@ function fmtHistoryLine(m) {
   return `${who}: ${m.content || ''}`;
 }
 
-function buildGroupChatPrompt({ soulText, groupName, members, pool, history, senderName, longTermMemory, notesContext, dateAnchor }) {
+function buildGroupChatPrompt({ soulText, groupName, members, pool, history, senderName, longTermMemory, notesContext, credentialContext, dateAnchor }) {
   const memberNames = (members || []).map((m) => m.name).filter(Boolean).join(', ') || '—';
   const poolBlock = (pool || []).length ? (pool || []).map(fmtPoolLine).join('\n') : '(nenhuma tarefa ainda)';
   const histBlock = (history || []).length ? (history || []).map(fmtHistoryLine).join('\n') : '(sem histórico)';
@@ -34,6 +34,7 @@ ${dateBlock}
 ## Memória de longo prazo deste grupo
 ${memoryBlock}
 ${notesContext ? `\n${notesContext}\n` : ''}
+${credentialContext ? `\n${credentialContext}\n` : ''}
 ## Tarefas do grupo (lista atual — NUNCA chame isso de "pool" na fala)
 ${poolBlock}
 

@@ -1,9 +1,9 @@
 import { typesWithCount, typeLabel, resolveColor, resolveIcon, type GroupNote, type TypeIndex } from '../../../lib/groupNotes';
 import { NoteGlyph } from './IconRegistry';
 
-interface Props { notes: GroupNote[]; value: string | null; onChange: (t: string | null) => void; idx?: TypeIndex }
+interface Props { notes: GroupNote[]; value: string | null; onChange: (t: string | null) => void; idx?: TypeIndex; secretsOnly?: boolean; onToggleSecrets?: () => void }
 
-export function NotesTypeFilter({ notes, value, onChange, idx }: Props) {
+export function NotesTypeFilter({ notes, value, onChange, idx, secretsOnly, onToggleSecrets }: Props) {
   const types = typesWithCount(notes);
   const chip = (active: boolean) =>
     `inline-flex items-center gap-1.5 text-body-sm px-md py-1.5 rounded-full border transition-colors focus-ring ${
@@ -17,6 +17,9 @@ export function NotesTypeFilter({ notes, value, onChange, idx }: Props) {
           <NoteGlyph name={resolveIcon({ type, icon: null }, idx)} color={value === type ? undefined : resolveColor({ type, color: null }, idx)} size={14} /> {typeLabel(type, idx)} {count}
         </button>
       ))}
+      {onToggleSecrets && notes.some((n) => (n.fields || []).some((f) => f.secret)) && (
+        <button type="button" className={chip(!!secretsOnly)} onClick={onToggleSecrets}>🔑 Senhas</button>
+      )}
     </div>
   );
 }

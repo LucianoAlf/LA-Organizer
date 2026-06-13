@@ -49,6 +49,10 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
   let notesCtx = '';
   try { notesCtx = await groupNotes.groupNotesContext({ supabase, groupId }); } catch (_) { notesCtx = ''; }
 
+  // Senha sob demanda: se a mensagem pede credencial, acha a ficha que casa, decifra e injeta só ela.
+  let credCtx = '';
+  try { credCtx = await groupNotes.credentialLookupContext({ supabase, groupId, text }); } catch (_) { credCtx = ''; }
+
   const systemPrompt = buildGroupChatPrompt({
     soulText: loadGroupChatSoul(),
     groupName: ctx.group.name,
@@ -58,6 +62,7 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
     senderName: ctx.senderName,
     longTermMemory: ctx.group.tom_chat_memory,
     notesContext: notesCtx, // base de conhecimento do grupo (índice + body das fixadas)
+    credentialContext: credCtx, // credenciais que casam com o pedido deste turno (secrets decifrados)
     dateAnchor: buildBrtDateAnchor(), // hoje + tabela de datas (BRT) — LLM não calcula weekday e erra
   });
 

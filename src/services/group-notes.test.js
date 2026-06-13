@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { createGroupNote, appendGroupNote, groupNotesContext, htmlToPlain, renderNoteContent, pickType, renderTypesBlock } = require('./group-notes');
+const { createGroupNote, appendGroupNote, groupNotesContext, htmlToPlain, renderNoteContent, pickType, renderTypesBlock, looksLikeCredentialRequest, scoreNoteMatch, buildCredentialBlock } = require('./group-notes');
 
 function fakeDb({ notes = [] } = {}) {
   const ev = [];
@@ -117,4 +117,24 @@ test('renderTypesBlock lista key — label e instrui não inventar', () => {
   assert.ok(b.includes('fornecedor') && b.includes('Fornecedor'));
   assert.ok(b.includes('acesso'));
   assert.ok(/n[ãa]o invente/i.test(b));
+});
+
+// Senhas — recuperação sob demanda
+test('looksLikeCredentialRequest: detecta intenção de credencial', () => {
+  assert.ok(looksLikeCredentialRequest('qual a senha do cartão Santander'));
+  assert.ok(looksLikeCredentialRequest('me passa o login do Zoho'));
+  assert.ok(!looksLikeCredentialRequest('bom dia, tudo certo com as tarefas?'));
+});
+test('scoreNoteMatch: casa por título/rótulo/tag, ignora valor secreto', () => {
+  const n = { title: 'Cartão Santander', tags: ['banco'], fields: [{ label: 'Final', value: '8443' }, { label: 'Senha', value: 'segredo', secret: true }] };
+  assert.ok(scoreNoteMatch(n, ['santander']) >= 1);
+  assert.ok(scoreNoteMatch(n, ['8443']) >= 1);
+  assert.strictEqual(scoreNoteMatch(n, ['segredo']), 0);
+  assert.strictEqual(scoreNoteMatch(n, ['inexistente']), 0);
+});
+test('buildCredentialBlock: formata e instrui; vazio→""', () => {
+  assert.strictEqual(buildCredentialBlock([]), '');
+  const b = buildCredentialBlock([{ title: 'Cartão Santander', type: 'cartao', fields: [{ label: 'Senha', value: '1234' }] }]);
+  assert.ok(b.includes('Cartão Santander') && b.includes('Senha: 1234'));
+  assert.ok(/n[ãa]o despeje/i.test(b));
 });

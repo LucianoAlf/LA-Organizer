@@ -20,7 +20,7 @@ interface Props {
 }
 
 export function NoteDetail({ note, editorName, idx, onEdit, onDelete, onPin, onBack }: Props) {
-  const fields = (note.fields || []).filter(f => f.label || f.value);
+  const hasFields = (note.fields || []).some(f => f.label || f.value);
   const bodyHtml = note.body ? DOMPurify.sanitize(bodyToHtml(note.body)) : '';
 
   return (
@@ -43,9 +43,11 @@ export function NoteDetail({ note, editorName, idx, onEdit, onDelete, onPin, onB
         <span className="px-sm py-[2px] rounded-full bg-tom/10 text-tom">{typeLabel(note.type, idx)}</span>
       </div>
 
-      {fields.length > 0 && (
+      {hasFields && (
         <div className="border-b border-border mb-lg">
-          {fields.map((f, i) => <FieldRow key={i} field={f} />)}
+          {(note.fields || []).map((f, i) => (f.label || f.value)
+            ? <FieldRow key={i} field={f} noteId={note.id} index={i} />
+            : null)}
         </div>
       )}
 
@@ -59,7 +61,7 @@ export function NoteDetail({ note, editorName, idx, onEdit, onDelete, onPin, onB
         </div>
       )}
 
-      {fields.length === 0 && !bodyHtml && (
+      {!hasFields && !bodyHtml && (
         <p className="text-body-sm text-fg-muted">Ficha vazia — toque em editar pra preencher.</p>
       )}
 

@@ -1,25 +1,40 @@
 import { useState } from 'react';
-import { Copy, Eye, EyeOff, ExternalLink, Check } from 'lucide-react';
-import type { NoteField } from '../../../lib/groupNotes';
+import { Copy, Eye, EyeOff, ExternalLink, Check, Loader2 } from 'lucide-react';
+import { revealNoteSecret, isEncrypted, type NoteField } from '../../../lib/groupNotes';
 
 function normalizeUrl(v: string) {
   return /^https?:\/\//i.test(v) ? v : `https://${v}`;
 }
 
-// Linha rótulo: valor do detalhe da ficha. secret → mascarado + olho; kind=url → abrir; sempre copiar.
-export function FieldRow({ field }: { field: NoteField }) {
+// Linha rótulo: valor. secret cifrado → mascarado; revelar/copiar via RPC (decifra server-side).
+export function FieldRow({ field, noteId, index }: { field: NoteField; noteId?: string; index: number }) {
   const [shown, setShown] = useState(false);
+  const [plain, setPlain] = useState<string | null>(null); // segredo revelado (só em memória)
+  const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const isSecret = field.secret === true;
   const isUrl = field.kind === 'url' && !!field.value;
-  const display = field.value ? (isSecret && !shown ? '••••••••' : field.value) : '—';
+  const secretEnc = isSecret && isEncrypted(field.value);
+  const display = !field.value ? '—' : isSecret ? (shown && plain != null ? plain : '••••••••') : field.value;
 
-  function copy() {
-    if (!field.value) return;
-    navigator.clipboard?.writeText(field.value).then(() => {
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1200);
-    });
+  async function ensurePlain(): Promise<string | null> {
+    if (plain != null) return plain;
+    if (!secretEnc) { setPlain(field.value); return field.value; } // secret legado/texto puro
+    if (!noteId) return null;
+    setBusy(true);
+    try { const v = await revealNoteSecret(noteId, index); setPlain(v); return v; }
+    catch { return null; } finally { setBusy(false); }
+  }
+  async function toggle() {
+    if (shown) { setShown(false); return; }
+    const v = await ensurePlain();
+    if (v == null && secretEnc) return; // falha ao revelar → não abre
+    setShown(true);
+  }
+  async function copy() {
+    const v = isSecret ? await ensurePlain() : field.value;
+    if (!v) return;
+    navigator.clipboard?.writeText(v).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1200); });
   }
 
   return (
@@ -31,8 +46,8 @@ export function FieldRow({ field }: { field: NoteField }) {
       {field.value && (
         <div className="flex items-center gap-xs shrink-0 text-fg-muted">
           {isSecret && (
-            <button type="button" onClick={() => setShown(v => !v)} aria-label={shown ? 'Esconder' : 'Mostrar'} className="p-1 rounded-sm hover:text-fg focus-ring">
-              {shown ? <EyeOff size={15} /> : <Eye size={15} />}
+            <button type="button" onClick={toggle} aria-label={shown ? 'Esconder' : 'Mostrar'} className="p-1 rounded-sm hover:text-fg focus-ring">
+              {busy ? <Loader2 size={15} className="animate-spin" /> : shown ? <EyeOff size={15} /> : <Eye size={15} />}
             </button>
           )}
           {isUrl && (
