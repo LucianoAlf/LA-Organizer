@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Button } from '../../components/Button';
 import {
-  useAccounts, useAccountTransactions, useCategoryLookup, useFinanceiroAuth, useSetPrimaryAccount,
+  useAccounts, useAccountLedger, useCategoryLookup, useFinanceiroAuth, useSetPrimaryAccount,
 } from '../../hooks/useFinanceiro';
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
 import { BANKS } from '../../lib/banks';
@@ -38,12 +38,12 @@ function shiftMonth(ym: string, delta: number): string {
 export function CarteiraDetalhePage() {
   const { id = '' } = useParams();
   const cid = useFinanceiroAuth();
-  useRealtimeFinance(['pf_accounts', 'pf_transactions', 'pf_transfers'], cid);
+  useRealtimeFinance(['pf_accounts', 'pf_transactions', 'pf_transfers', 'pf_card_payments'], cid);
 
   const accountsQ = useAccounts();
   const acc = accountsQ.data?.find((a) => a.id === id);
   const [monthYear, setMonthYear] = useState(localYm());
-  const txQ = useAccountTransactions(id, monthYear);
+  const ledgerQ = useAccountLedger(id, monthYear);
   const cat = useCategoryLookup();
   const setPrimary = useSetPrimaryAccount();
 
@@ -64,12 +64,12 @@ export function CarteiraDetalhePage() {
   const color = acc.color || (acc.bank_slug ? BANKS[acc.bank_slug]?.color : undefined) || '#2dbe7e';
   const balance = Number(acc.balance);
 
-  const txs = txQ.data ?? [];
-  // "Guardado no mês" = soma (receita − despesa) do mês selecionado (txs já vêm filtrados por mês).
-  const savedThisMonth = txs.reduce((sum, t) => {
-    if (t.is_adjustment) return sum; // acerto de caixa não conta
-    return sum + (t.type === 'income' ? Number(t.amount) : -Number(t.amount));
-  }, 0);
+  const items = ledgerQ.data ?? [];
+  // Resumo do mês (conciliação): entrou (+), saiu (−), resultado. Ignora acerto de caixa.
+  const entrou = items.filter((i) => i.direction === 'in' && !i.txn?.is_adjustment).reduce((s, i) => s + i.amount, 0);
+  const saiu = items.filter((i) => i.direction === 'out' && !i.txn?.is_adjustment).reduce((s, i) => s + i.amount, 0);
+  const resultado = entrou - saiu;
+  const savedThisMonth = resultado; // "guardado no mês" = resultado líquido (inclui transferências)
   const [my, mm] = monthYear.split('-').map(Number);
   const monthLabel = `${PT_MONTHS[mm - 1]} ${my}`;
 
@@ -138,7 +138,7 @@ export function CarteiraDetalhePage() {
       {/* Extrato — navegação mês a mês */}
       <section className="flex flex-col gap-2">
         <div className="flex items-center justify-between">
-          <h2 className="text-label uppercase tracking-wide text-fg-muted font-bold">Lançamentos</h2>
+          <h2 className="text-label uppercase tracking-wide text-fg-muted font-bold">Movimentações</h2>
           <div className="flex items-center gap-1">
             <button type="button" onClick={() => setMonthYear((m) => shiftMonth(m, -1))} aria-label="Mês anterior"
               className="w-7 h-7 rounded-md border border-border bg-bg-surface text-fg hover:bg-bg-elevated focus-ring">‹</button>
@@ -147,32 +147,50 @@ export function CarteiraDetalhePage() {
               className="w-7 h-7 rounded-md border border-border bg-bg-surface text-fg hover:bg-bg-elevated focus-ring">›</button>
           </div>
         </div>
-        {txQ.isLoading && <p className="text-fg-muted text-body-sm">Carregando…</p>}
-        {!txQ.isLoading && txs.length === 0 && (
-          <p className="text-fg-muted text-body-sm">Sem lançamentos em {monthLabel}.</p>
+        {ledgerQ.isLoading && <p className="text-fg-muted text-body-sm">Carregando…</p>}
+        {!ledgerQ.isLoading && items.length === 0 && (
+          <p className="text-fg-muted text-body-sm">Sem movimentações em {monthLabel}.</p>
         )}
-        {txs.map((t) => {
-          const isIncome = t.type === 'income';
-          return (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => setEditingTx(t)}
-              className="w-full text-left flex items-center gap-3 p-3 rounded-md bg-bg-surface border border-border hover:bg-bg-elevated focus-ring transition-colors"
-            >
-              <span className="w-7 h-7 rounded-md bg-bg-elevated flex items-center justify-center text-sm shrink-0">
-                {cat.emoji(t.category)}
-              </span>
+        {!ledgerQ.isLoading && items.length > 0 && (
+          <div className="grid grid-cols-3 gap-2 mb-1">
+            <div className="rounded-md bg-bg-elevated border border-border px-2 py-1.5 text-center">
+              <div className="text-label text-fg-muted uppercase tracking-wide">Entrou</div>
+              <div className="text-body-sm font-semibold text-tom tabular-nums">{fmtBRL(entrou)}</div>
+            </div>
+            <div className="rounded-md bg-bg-elevated border border-border px-2 py-1.5 text-center">
+              <div className="text-label text-fg-muted uppercase tracking-wide">Saiu</div>
+              <div className="text-body-sm font-semibold text-danger tabular-nums">{fmtBRL(saiu)}</div>
+            </div>
+            <div className="rounded-md bg-bg-elevated border border-border px-2 py-1.5 text-center">
+              <div className="text-label text-fg-muted uppercase tracking-wide">Resultado</div>
+              <div className={`text-body-sm font-semibold tabular-nums ${resultado < 0 ? 'text-danger' : 'text-tom'}`}>{fmtBRL(resultado)}</div>
+            </div>
+          </div>
+        )}
+        {items.map((it) => {
+          const icon = it.txn ? cat.emoji(it.txn.category) : it.kind === 'card_payment' ? '💳' : '🔄';
+          const label = it.txn ? (it.txn.description || cat.label(it.txn.category)) : it.label;
+          const inner = (
+            <>
+              <span className="w-7 h-7 rounded-md bg-bg-elevated flex items-center justify-center text-sm shrink-0">{icon}</span>
               <div className="flex-1 min-w-0">
-                <div className="text-fg font-medium truncate">{t.description || cat.label(t.category)}</div>
-                <div className="text-label text-fg-muted">
-                  {t.transaction_date.slice(8, 10)}/{t.transaction_date.slice(5, 7)}
-                </div>
+                <div className="text-fg font-medium truncate">{label}</div>
+                <div className="text-label text-fg-muted">{it.date.slice(8, 10)}/{it.date.slice(5, 7)}</div>
               </div>
-              <div className={`font-semibold tabular-nums ${isIncome ? 'text-tom' : 'text-danger'}`}>
-                {isIncome ? '+ ' : '− '}{fmtBRL(Number(t.amount))}
+              <div className={`font-semibold tabular-nums shrink-0 ${it.direction === 'in' ? 'text-tom' : 'text-danger'}`}>
+                {it.direction === 'in' ? '+ ' : '− '}{fmtBRL(it.amount)}
               </div>
+            </>
+          );
+          return it.txn ? (
+            <button key={it.id} type="button" onClick={() => setEditingTx(it.txn!)}
+              className="w-full text-left flex items-center gap-3 p-3 rounded-md bg-bg-surface border border-border hover:bg-bg-elevated focus-ring transition-colors">
+              {inner}
             </button>
+          ) : (
+            <div key={it.id} className="w-full flex items-center gap-3 p-3 rounded-md bg-bg-surface border border-border">
+              {inner}
+            </div>
           );
         })}
       </section>

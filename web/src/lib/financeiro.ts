@@ -111,6 +111,63 @@ export async function listAccountTransactions(collaboratorId: string, accountId:
   return (data as PfTransaction[]) ?? [];
 }
 
+// Extrato UNIFICADO da carteira no mês: lançamentos (caixa) + transferências (entrada/saída entre
+// contas) + pagamentos de fatura que saíram da conta. Resolve "não aparece" quando o saldo veio de
+// transferência (Sug Rose). Transferências/pagamentos filtrados por mês em JS (a data pode vir nula).
+export interface AccountLedgerItem {
+  id: string;            // chave única (prefixada por fonte)
+  date: string;          // YYYY-MM-DD (data efetiva da movimentação)
+  kind: 'txn' | 'transfer_in' | 'transfer_out' | 'card_payment';
+  label: string;
+  amount: number;        // sempre positivo
+  direction: 'in' | 'out';
+  txn?: PfTransaction;   // presente só em lançamentos (linha editável)
+}
+export async function listAccountLedger(collaboratorId: string, accountId: string, monthYear: string): Promise<AccountLedgerItem[]> {
+  const { start, end } = monthBoundsFromYYYYMM(monthYear);
+  const inMonth = (d: string) => !!d && d >= start && d < end;
+  const dayOf = (primary: string | null, fallbackTs: string | null) => primary || (fallbackTs ? fallbackTs.slice(0, 10) : '');
+
+  const [txRes, trRes, payRes, accRes, cardRes] = await Promise.all([
+    supabase.from('pf_transactions')
+      .select('id, type, category, amount, description, transaction_date, account_id, card_id, competencia, is_adjustment, bill_id')
+      .eq('collaborator_id', collaboratorId).eq('account_id', accountId)
+      .gte('transaction_date', start).lt('transaction_date', end),
+    supabase.from('pf_transfers')
+      .select('id, amount, transfer_date, created_at, description, from_account, to_account')
+      .eq('collaborator_id', collaboratorId).or(`from_account.eq.${accountId},to_account.eq.${accountId}`),
+    supabase.from('pf_card_payments')
+      .select('id, amount, paid_at, created_at, card_id')
+      .eq('collaborator_id', collaboratorId).eq('paid_from_account', accountId),
+    supabase.from('pf_accounts').select('id, name').eq('collaborator_id', collaboratorId),
+    supabase.from('pf_cards').select('id, name').eq('collaborator_id', collaboratorId),
+  ]);
+  for (const r of [txRes, trRes, payRes, accRes, cardRes]) if (r.error) throw r.error;
+  const accName = new Map<string, string>((accRes.data ?? []).map((a) => [(a as { id: string; name: string }).id, (a as { id: string; name: string }).name]));
+  const cardName = new Map<string, string>((cardRes.data ?? []).map((c) => [(c as { id: string; name: string }).id, (c as { id: string; name: string }).name]));
+
+  const items: AccountLedgerItem[] = [];
+  for (const t of (txRes.data ?? []) as PfTransaction[]) {
+    items.push({ id: `t_${t.id}`, date: t.transaction_date, kind: 'txn', label: t.description || t.category, amount: Number(t.amount), direction: t.type === 'income' ? 'in' : 'out', txn: t });
+  }
+  for (const tr of (trRes.data ?? []) as { id: string; amount: number; transfer_date: string | null; created_at: string | null; description: string | null; from_account: string; to_account: string }[]) {
+    const d = dayOf(tr.transfer_date, tr.created_at);
+    if (!inMonth(d)) continue;
+    if (tr.to_account === accountId) {
+      items.push({ id: `ti_${tr.id}`, date: d, kind: 'transfer_in', label: tr.description || `Transferência de ${accName.get(tr.from_account) ?? 'outra conta'}`, amount: Number(tr.amount), direction: 'in' });
+    } else {
+      items.push({ id: `to_${tr.id}`, date: d, kind: 'transfer_out', label: tr.description || `Transferência para ${accName.get(tr.to_account) ?? 'outra conta'}`, amount: Number(tr.amount), direction: 'out' });
+    }
+  }
+  for (const p of (payRes.data ?? []) as { id: string; amount: number; paid_at: string | null; created_at: string | null; card_id: string }[]) {
+    const d = dayOf(p.paid_at, p.created_at);
+    if (!inMonth(d)) continue;
+    items.push({ id: `p_${p.id}`, date: d, kind: 'card_payment', label: `Pagamento fatura ${cardName.get(p.card_id) ?? ''}`.trim(), amount: Number(p.amount), direction: 'out' });
+  }
+  items.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  return items;
+}
+
 export async function deactivateAccount(collaboratorId: string, id: string) {
   const { error } = await supabase.from('pf_accounts').update({ is_active: false })
     .eq('id', id).eq('collaborator_id', collaboratorId);

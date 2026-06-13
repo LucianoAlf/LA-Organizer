@@ -179,6 +179,14 @@ export function useAccountTransactions(accountId: string | undefined, monthYear?
     enabled: !!cid && !!accountId,
   });
 }
+export function useAccountLedger(accountId: string | undefined, monthYear: string) {
+  const cid = useFinanceiroAuth();
+  return useQuery({
+    queryKey: [...KEY, 'account-ledger', accountId, cid, monthYear],
+    queryFn: () => fin.listAccountLedger(cid!, accountId!, monthYear),
+    enabled: !!cid && !!accountId,
+  });
+}
 
 // ---- Cartões de crédito ----
 export function useCards() {
