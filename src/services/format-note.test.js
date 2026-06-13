@@ -68,6 +68,9 @@ test('systemPromptFor: few-shot (ENTRADA:/SAÍDA:) presente nas 4 ações', () =
     assert.ok(/ENTRADA:/.test(p) && /SAÍDA:/.test(p), `few-shot ausente em ${a}`);
   }
 });
+test('systemPromptFor: regra anti-inferência de datas presente nas 4 ações', () => {
+  for (const a of ACTIONS) assert.ok(/calcule, infira/i.test(systemPromptFor(a)), `regra de datas ausente em ${a}`);
+});
 test('systemPromptFor: verbo certo por ação', () => {
   assert.ok(/CORRIGIR ortografia/i.test(systemPromptFor('fix')));
   assert.ok(/condense/i.test(systemPromptFor('summarize')));

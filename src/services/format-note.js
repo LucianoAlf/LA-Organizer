@@ -22,7 +22,7 @@ Regras obrigatórias (não são opcionais):
 2. CADA item é um <li> próprio dentro da <ul> da sua seção. NUNCA junte dois itens na mesma linha — cada conta, cada tarefa, cada senha é um <li> separado.
 3. DESTAQUE em <strong> o que identifica o item (nome + valor).
 4. A sub-informação do item (forma de pagamento, código de barras, contato, vencimento, observação) entra DENTRO do mesmo <li>, como continuação separada por <br>. NUNCA vira item solto e NUNCA some.
-5. PRESERVE 100% dos dados: números, valores, códigos de barras, e-mails e telefones saem idênticos ao original. Não invente, não remova.
+5. PRESERVE 100% dos dados: números, valores, códigos de barras, e-mails, telefones e DATAS saem idênticos ao original. NÃO calcule, infira nem expanda datas ou dias da semana — se está escrito "até sexta", mantenha "até sexta" (nunca vire "sexta (20/06)"). Não invente, não remova.
 
 Exemplo de transformação:
 
