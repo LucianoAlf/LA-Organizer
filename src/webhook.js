@@ -278,14 +278,23 @@ async function processWebhookBody(body) {
         whatsapp.sendMessage(phone, 'recebi seu documento. Me conta em texto o que precisa que eu faça com ele?').catch(() => {});
         return;
       }
-      const r = await gemini.analyzeMedia(buf, mime, caption);
-      if (r.ok) {
+      // ---- Import de fatura de cartão: tenta extrair JSON estruturado antes do fallback genérico ----
+      const inv = await gemini.analyzeInvoice(buf, caption);
+      if (inv.ok && inv.isInvoice && inv.invoice.itens.length > 0) {
         const captionLine = caption ? `Legenda enviada pelo usuário: "${caption}"\n` : '';
-        text = `[O usuário ACABOU DE ENVIAR um PDF agora — primeira vez vendo este arquivo. Conteúdo extraído:]\n${captionLine}${r.text}`;
-        console.log(`[Webhook] PDF analyzed (${r.text.length} chars)`);
+        const resumo = `Fatura ${inv.invoice.emissor || ''} · ${inv.invoice.itens.length} compras · total R$ ${Number(inv.invoice.total || 0).toFixed(2)}`;
+        text = `[FATURA_JSON]${JSON.stringify(inv.invoice)}[/FATURA_JSON]\n${captionLine}${resumo}`;
+        console.log(`[Webhook] fatura detectada: ${inv.invoice.itens.length} itens, emissor=${inv.invoice.emissor || '?'}`);
       } else {
-        whatsapp.sendMessage(phone, 'recebi seu PDF mas tive um problema pra ler. Me conta em texto o que precisa?').catch(() => {});
-        return;
+        const r = await gemini.analyzeMedia(buf, mime, caption);
+        if (r.ok) {
+          const captionLine = caption ? `Legenda enviada pelo usuário: "${caption}"\n` : '';
+          text = `[O usuário ACABOU DE ENVIAR um PDF agora — primeira vez vendo este arquivo. Conteúdo extraído:]\n${captionLine}${r.text}`;
+          console.log(`[Webhook] PDF analyzed (${r.text.length} chars)`);
+        } else {
+          whatsapp.sendMessage(phone, 'recebi seu PDF mas tive um problema pra ler. Me conta em texto o que precisa?').catch(() => {});
+          return;
+        }
       }
     }
 

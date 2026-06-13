@@ -42,6 +42,7 @@ const financeService = require('./services/financeiro-service');
 const { mapCategory, normalizeParams } = require('./finance/categorize');
 const { crossedThreshold, buildBudgetAlert } = require('./finance/budget-alert');
 const { monthsToGoalSimple, monthsToGoalWithInterest, formatMonths, futureValue } = require('./finance/projection');
+const invoiceImport = require('./finance/invoice-import');
 const { splitBulkIdenticalCreates } = require('./task-guardrail');
 const selic = require('./services/selic');
 const audioDecompose = require('./services/audio-decompose');
@@ -7911,6 +7912,82 @@ async function processMessage(phone, text, raw = {}) {
     }
   } catch (e) {
     console.warn('[TaskQuery] err:', e.message);
+  }
+
+  // === Intercept A: proposta de import de fatura (texto tem [FATURA_JSON]) ===
+  try {
+    const _invParsed = invoiceImport.parseInvoiceBlock(text);
+    if (_invParsed.found && _invParsed.invoice && _invParsed.invoice.itens.length > 0) {
+      const _inv = _invParsed.invoice;
+      const _cards = await financeService.findCard(collab.id, _inv.emissor);
+      const _card = (_cards && _cards.length) ? _cards[0] : null;
+      const _fmtTot = Number(_inv.total || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+      if (!_card) {
+        await whatsapp.sendMessage(phone, `📄 Li ${_inv.itens.length} compras (total R$ ${_fmtTot}), mas não identifiquei o cartão "${_inv.emissor}" nos seus cadastrados. Me diz de qual cartão é essa fatura (ou cadastra ele) que aí eu lanço.`);
+        return;
+      }
+      // safeCategory real = (cat, description, type, extraSlugs); carrega slugs custom do user (paridade c/ recordCardPurchase).
+      const _catRows = await financeService.listCategorySlugs(collab.id).catch(() => []);
+      const _extraSlugs = new Set((_catRows || []).filter((r) => r.collaborator_id).map((r) => r.slug));
+      const _itensCat = _inv.itens.map((it) => ({ ...it, categoria: safeCategory(it.descricao, it.descricao, 'expense', _extraSlugs) }));
+      const _preview = invoiceImport.buildInvoicePreview({
+        emissor: _inv.emissor, vencimento: _inv.vencimento, total: _inv.total,
+        cardName: _card.name, itens: _itensCat, dupWarning: null,
+      });
+      await pendingIntents.openIntent(collab.id, 'invoice_import',
+        { stage: 'awaiting_confirm', card_id: _card.id, card_name: _card.name, emissor: _inv.emissor,
+          vencimento: _inv.vencimento, total: _inv.total, itens: _itensCat }, 'lançar fatura?');
+      await whatsapp.sendMessage(phone, _preview);
+      return;
+    }
+  } catch (e) {
+    console.warn('[Fatura] intercept A err:', e.message);
+  }
+
+  // === Intercept B: resposta ao preview de fatura (intent invoice_import aberta) ===
+  try {
+    const _invIntent = (_openIntents || []).find((i) => i.kind === 'invoice_import' && i.payload && i.payload.stage === 'awaiting_confirm');
+    if (_invIntent) {
+      const _decision = invoiceImport.detectInvoiceReply(text);
+      if (_decision) {
+        const _pay = _invIntent.payload;
+        if (_decision === 'cancel') {
+          await pendingIntents.resolveIntent(_invIntent.id, 'denied', 'user cancelou');
+          await whatsapp.sendMessage(phone, 'Beleza, cancelei — não lancei nada. 👍');
+          return;
+        }
+        if (_decision === 'commit_anotacoes') {
+          const _body = invoiceImport.buildInvoicePreview({ ..._pay, cardName: _pay.card_name || _pay.emissor });
+          await notesService.createNote(supabase, collab.id, { title: `Fatura ${_pay.emissor || ''} ${_pay.vencimento || ''}`.trim(), body: _body, source: 'tom', sharedWith: [] });
+          await pendingIntents.resolveIntent(_invIntent.id, 'confirmed', 'salvou em anotacoes');
+          await whatsapp.sendMessage(phone, `📝 Salvei a fatura nas suas anotações (${_pay.itens.length} compras). Não lancei no financeiro.`);
+          return;
+        }
+        if (_decision === 'commit_financeiro') {
+          const _cards = await financeService.findCard(collab.id, _pay.emissor);
+          const _card = (_cards || []).find((c) => c.id === _pay.card_id) || (_cards || [])[0];
+          if (!_card) { await whatsapp.sendMessage(phone, 'Não achei mais o cartão dessa fatura. Me diz qual é?'); return; }
+          let _okN = 0;
+          for (const it of _pay.itens) {
+            try {
+              await financeService.insertCardPurchase(collab.id, _card, {
+                category: it.categoria, amount: it.valor,
+                description: it.parcela_total > 1 ? `${it.descricao} (${it.parcela_atual}/${it.parcela_total})` : it.descricao,
+                transaction_date: it.data || _pay.vencimento || undefined,
+                installments: 1,
+              });
+              _okN++;
+            } catch (e) { console.error('[Fatura] item falhou:', it.descricao, e.message); }
+          }
+          await pendingIntents.resolveIntent(_invIntent.id, 'confirmed', `lancou ${_okN} itens`);
+          await whatsapp.sendMessage(phone, `✅ Lancei ${_okN} de ${_pay.itens.length} compras no *${_card.name}*. Confere na tela de Cartões!`);
+          return;
+        }
+      }
+      // sem decisão clara → não short-circuita; deixa o fluxo normal (LLM) responder
+    }
+  } catch (e) {
+    console.warn('[Fatura] intercept B err:', e.message);
   }
 
   // ---- Sprint 30.3 — Pending Intents: auto-resolve quando user confirma ----

@@ -5,18 +5,19 @@ import { TextStyle } from '@tiptap/extension-text-style';
 import Color from '@tiptap/extension-color';
 import Link from '@tiptap/extension-link';
 import DOMPurify from 'dompurify';
-import { Bold, Italic, Heading2, List, Link2, Palette, Sparkles, Wand2 } from 'lucide-react';
+import { Bold, Italic, Heading2, List, Link2, Palette, Sparkles, Wand2, AlignLeft, SpellCheck, Feather, Smile, type LucideIcon } from 'lucide-react';
 import { bodyToHtml, NOTE_COLORS } from '../../../lib/groupNotes';
 import { formatNote, type FormatAction } from '../../../lib/formatNote';
 import { FormatPreview } from './FormatPreview';
 import { showToast } from '../../../components/Toast';
 
-// "Organizar" (format) é o padrão e fica destacado no topo do menu; estes são os
-// modificadores secundários (todos herdam a formatação semântica no motor).
-const IA_ACTIONS: { key: FormatAction; label: string }[] = [
-  { key: 'summarize', label: 'Resumir' },
-  { key: 'fix', label: 'Corrigir ortografia' },
-  { key: 'tone', label: 'Deixar mais claro' },
+// Lista única de ações — cada uma com seu ícone. "Organizar" (format) é a primeira,
+// sem destaque exagerado. Todas herdam a formatação semântica no motor.
+const IA_ACTIONS: { key: FormatAction; label: string; Icon: LucideIcon }[] = [
+  { key: 'format', label: 'Organizar', Icon: Sparkles },
+  { key: 'summarize', label: 'Resumir', Icon: AlignLeft },
+  { key: 'fix', label: 'Corrigir ortografia', Icon: SpellCheck },
+  { key: 'tone', label: 'Deixar mais claro', Icon: Feather },
 ];
 
 // Editor visual (TipTap) do corpo livre da ficha + botão "✨ Formatar com o TOM".
@@ -152,19 +153,14 @@ export function RichEditor({ valueHtml, onChange }: { valueHtml: string; onChang
             <Sparkles size={15} /> Formatar com o TOM
           </button>
           {menuOpen && (
-            <div className="absolute right-0 top-full mt-1 z-30 w-64 bg-bg-elevated border border-border rounded-md shadow-lg p-1.5">
-              {/* Ação principal: botão CTA claro (não parecer título) */}
-              <button type="button" onClick={() => runIa('format')} className="w-full inline-flex items-center justify-center gap-1.5 text-body-sm font-semibold text-black bg-tom hover:brightness-95 rounded-md px-3 py-2 focus-ring">
-                <Sparkles size={15} /> Organizar
-              </button>
-              <p className="text-caption text-fg-muted text-center mt-1 mb-1">separa e agrupa tudo · recomendado</p>
-              <div className="h-px bg-border my-1" />
-              <div className="text-caption uppercase tracking-wide text-fg-muted px-2 pt-1 pb-0.5">Outras ações</div>
+            <div className="absolute right-0 top-full mt-1 z-30 w-60 bg-bg-elevated border border-border rounded-md shadow-lg p-1">
               {IA_ACTIONS.map((a) => (
-                <button key={a.key} type="button" onClick={() => runIa(a.key)} className="w-full text-left px-3 py-2 text-body-sm text-fg hover:bg-bg-surface rounded-md">{a.label}</button>
+                <button key={a.key} type="button" onClick={() => runIa(a.key)} className="w-full text-left px-3 py-2 text-body-sm text-fg hover:bg-bg-surface rounded-md flex items-center gap-2">
+                  <a.Icon size={15} className="text-tom shrink-0" /> {a.label}
+                </button>
               ))}
               {!instrOpen ? (
-                <button type="button" onClick={() => setInstrOpen(true)} className="w-full text-left px-3 py-2 text-body-sm text-fg hover:bg-bg-surface rounded-md inline-flex items-center gap-1.5"><Wand2 size={14} className="text-tom shrink-0" /> Formatar do meu jeito…</button>
+                <button type="button" onClick={() => setInstrOpen(true)} className="w-full text-left px-3 py-2 text-body-sm text-fg hover:bg-bg-surface rounded-md flex items-center gap-2"><Wand2 size={15} className="text-tom shrink-0" /> Formatar do meu jeito…</button>
               ) : (
                 <div className="px-2 py-2">
                   <div className="text-caption text-fg-muted mb-1">Diz pro TOM como quer:</div>
@@ -185,7 +181,7 @@ export function RichEditor({ valueHtml, onChange }: { valueHtml: string; onChang
               )}
               <div className="h-px bg-border my-1" />
               <button type="button" onClick={toggleEmoji} aria-pressed={useEmoji} className="w-full text-left px-3 py-2 text-body-sm text-fg hover:bg-bg-surface rounded-md flex items-center justify-between">
-                <span>Usar emojis</span>
+                <span className="flex items-center gap-2"><Smile size={15} className="text-tom shrink-0" /> Usar emojis</span>
                 <span className={`inline-flex items-center h-5 w-9 rounded-full transition-colors shrink-0 ${useEmoji ? 'bg-tom' : 'bg-border'}`}>
                   <span className={`h-4 w-4 rounded-full bg-white transition-transform ${useEmoji ? 'translate-x-4' : 'translate-x-0.5'}`} />
                 </span>
