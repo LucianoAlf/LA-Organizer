@@ -8,6 +8,7 @@ export interface NoteField { label: string; value: string; kind?: FieldKind; sec
 export interface GroupNote {
   id: string; group_id: string; type: NoteType; category: string; tags: string[];
   title: string; body: string; fields: NoteField[]; pinned: boolean;
+  sort_order: number; color: string | null; icon: string | null;
   created_by: string | null; updated_by: string | null; created_at: string; updated_at: string;
 }
 
@@ -20,6 +21,26 @@ export const NOTE_TYPE_META: Record<NoteType, { label: string; icon: string }> =
   livre: { label: 'Livre', icon: 'FileText' },
 };
 export const NOTE_TYPES: NoteType[] = ['acesso', 'cnpj', 'conta', 'reuniao', 'livre'];
+
+// Aparência padrão por tipo (cor de destaque + ícone). Ícone derivado do NOTE_TYPE_META (DRY).
+export const TYPE_DEFAULTS: Record<NoteType, { color: string; icon: string }> = {
+  acesso: { color: '#185FA5', icon: NOTE_TYPE_META.acesso.icon },
+  cnpj: { color: '#3B6D11', icon: NOTE_TYPE_META.cnpj.icon },
+  conta: { color: '#854F0B', icon: NOTE_TYPE_META.conta.icon },
+  reuniao: { color: '#993556', icon: NOTE_TYPE_META.reuniao.icon },
+  livre: { color: '#5F5E5A', icon: NOTE_TYPE_META.livre.icon },
+};
+// Paleta curada (cores do DS) + ícones curados (nomes Lucide, resolvidos no IconRegistry).
+export const NOTE_COLORS = ['#185FA5', '#0F6E56', '#854F0B', '#993556', '#534AB7', '#993C1D', '#3B6D11', '#5F5E5A'];
+export const NOTE_ICONS = ['KeyRound', 'Building2', 'BuildingStore', 'Banknote', 'CreditCard', 'NotebookPen', 'FileText', 'IdCard', 'CalendarDays', 'Landmark', 'Receipt', 'Lock', 'Mail', 'Phone', 'MapPin', 'Star'];
+
+// Cor/ícone efetivos: override da ficha, senão o padrão do tipo.
+export const resolveColor = (n: Pick<GroupNote, 'type' | 'color'>): string => n.color ?? TYPE_DEFAULTS[n.type].color;
+export const resolveIcon = (n: Pick<GroupNote, 'type' | 'icon'>): string => n.icon ?? TYPE_DEFAULTS[n.type].icon;
+
+// Renumera uma lista (na ordem visual) → sort_order 1..N. Menor = mais acima.
+export const renumber = (list: { id: string }[]): Array<{ id: string; sort_order: number }> =>
+  list.map((n, i) => ({ id: n.id, sort_order: i + 1 }));
 
 // Template de campos por tipo — pré-semeia os rótulos certos ao criar uma ficha nova.
 export const TEMPLATES: Record<NoteType, NoteField[]> = {
@@ -88,21 +109,33 @@ export function noteExcerpt(body: string, max = 120): string {
 // ── I/O ──
 export async function loadGroupNotes(groupId: string): Promise<GroupNote[]> {
   const { data, error } = await supabase.from('group_notes')
-    .select('*').eq('group_id', groupId).order('pinned', { ascending: false }).order('updated_at', { ascending: false });
+    .select('*').eq('group_id', groupId)
+    .order('pinned', { ascending: false }).order('sort_order', { ascending: true }).order('created_at', { ascending: false });
   if (error) throw error;
-  return (data ?? []).map((n) => ({ ...n, fields: Array.isArray(n.fields) ? n.fields : [] })) as GroupNote[];
+  return (data ?? []).map((n) => ({
+    ...n, fields: Array.isArray(n.fields) ? n.fields : [],
+    sort_order: n.sort_order ?? 0, color: n.color ?? null, icon: n.icon ?? null,
+  })) as GroupNote[];
 }
 export async function upsertGroupNote(groupId: string, updatedBy: string, note: Partial<GroupNote> & { id?: string }): Promise<string> {
   const payload: Record<string, unknown> = {
     group_id: groupId, title: (note.title || '').trim() || 'Sem título',
     type: note.type || 'livre', category: (note.category || 'Geral').trim(),
     tags: note.tags || [], fields: note.fields || [], body: note.body || '',
+    color: note.color ?? null, icon: note.icon ?? null,
     pinned: note.pinned ?? false, updated_by: updatedBy, updated_at: new Date().toISOString(),
   };
   if (note.id) payload.id = note.id; else payload.created_by = updatedBy;
   const { data, error } = await supabase.from('group_notes').upsert(payload).select('id').single();
   if (error) throw error;
   return (data as { id: string }).id;
+}
+
+// Persiste a nova ordem (sort_order inteiro por ficha). Updates individuais (anti-reshuffle).
+export async function reorderGroupNotes(updates: Array<{ id: string; sort_order: number }>): Promise<void> {
+  const results = await Promise.all(updates.map((u) => supabase.from('group_notes').update({ sort_order: u.sort_order }).eq('id', u.id)));
+  const err = results.find((r) => r.error);
+  if (err?.error) throw err.error;
 }
 export async function deleteGroupNote(id: string): Promise<void> {
   const { error } = await supabase.from('group_notes').delete().eq('id', id);

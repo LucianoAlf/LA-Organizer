@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { filterNotes, typesWithCount, allTags, noteExcerpt, templateFor, cardSubtitle, TEMPLATES, type GroupNote } from './groupNotes';
+import { filterNotes, typesWithCount, allTags, noteExcerpt, templateFor, cardSubtitle, TEMPLATES, resolveColor, resolveIcon, renumber, TYPE_DEFAULTS, type GroupNote } from './groupNotes';
 
-const N = (o: Partial<GroupNote>): GroupNote => ({ id: 'x', group_id: 'g', type: 'livre', category: 'Geral', tags: [], title: '', body: '', fields: [], pinned: false, created_by: null, updated_by: null, created_at: '', updated_at: '', ...o });
+const N = (o: Partial<GroupNote>): GroupNote => ({ id: 'x', group_id: 'g', type: 'livre', category: 'Geral', tags: [], title: '', body: '', fields: [], pinned: false, sort_order: 0, color: null, icon: null, created_by: null, updated_by: null, created_at: '', updated_at: '', ...o });
 
 describe('groupNotes puras (v2 fichas tipadas)', () => {
   const notes = [
@@ -37,5 +37,21 @@ describe('groupNotes puras (v2 fichas tipadas)', () => {
   });
   it('noteExcerpt corta', () => {
     expect(noteExcerpt('# Título\nlinha de corpo aqui').length).toBeLessThanOrEqual(120);
+  });
+});
+
+describe('aparência + reorder (Fatia A)', () => {
+  it('resolveColor usa override, senão default do tipo', () => {
+    expect(resolveColor(N({ type: 'acesso', color: null }))).toBe(TYPE_DEFAULTS.acesso.color);
+    expect(resolveColor(N({ type: 'acesso', color: '#123456' }))).toBe('#123456');
+  });
+  it('resolveIcon usa override, senão default do tipo', () => {
+    expect(resolveIcon(N({ type: 'conta', icon: null }))).toBe(TYPE_DEFAULTS.conta.icon);
+    expect(resolveIcon(N({ type: 'conta', icon: 'Star' }))).toBe('Star');
+  });
+  it('renumber devolve {id,sort_order} 1..N na ordem da lista', () => {
+    expect(renumber([N({ id: 'a' }), N({ id: 'b' }), N({ id: 'c' })])).toEqual([
+      { id: 'a', sort_order: 1 }, { id: 'b', sort_order: 2 }, { id: 'c', sort_order: 3 },
+    ]);
   });
 });

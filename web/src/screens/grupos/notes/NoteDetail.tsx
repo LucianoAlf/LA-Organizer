@@ -1,8 +1,8 @@
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { Pin, PinOff, Pencil, Trash2, ArrowLeft, MessageSquare } from 'lucide-react';
-import { NOTE_TYPE_META, type GroupNote } from '../../../lib/groupNotes';
-import { TypeIcon } from './TypeIcon';
+import { NOTE_TYPE_META, resolveColor, resolveIcon, type GroupNote } from '../../../lib/groupNotes';
+import { NoteGlyph } from './IconRegistry';
 import { FieldRow } from './FieldRow';
 
 function whenLabel(iso: string): string {
@@ -29,7 +29,7 @@ export function NoteDetail({ note, editorName, onEdit, onDelete, onPin, onBack }
     <div className="flex-1 min-w-0 p-lg overflow-y-auto">
       <div className="flex items-center gap-sm mb-xs">
         {onBack && <button className="md:hidden text-fg-muted p-1 -ml-1 focus-ring rounded-sm" onClick={onBack} aria-label="Voltar"><ArrowLeft size={18} /></button>}
-        <TypeIcon type={note.type} size={20} className="text-tom shrink-0" />
+        <NoteGlyph name={resolveIcon(note)} color={resolveColor(note)} size={20} className="shrink-0" />
         <h2 className="flex-1 min-w-0 truncate text-h3 text-fg">{note.title}</h2>
         <div className="flex items-center gap-1 shrink-0 text-fg-muted">
           <button onClick={() => onPin(note.id, !note.pinned)} aria-label={note.pinned ? 'Desafixar' : 'Fixar'} className="p-1.5 rounded-sm hover:text-fg focus-ring">{note.pinned ? <Pin size={17} className="text-tom" /> : <PinOff size={17} />}</button>

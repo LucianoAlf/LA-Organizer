@@ -1,6 +1,6 @@
 import { Pin } from 'lucide-react';
-import { cardSubtitle, type GroupNote } from '../../../lib/groupNotes';
-import { TypeIcon } from './TypeIcon';
+import { cardSubtitle, resolveColor, resolveIcon, type GroupNote } from '../../../lib/groupNotes';
+import { NoteGlyph } from './IconRegistry';
 import { brShort } from '../../../utils/date';
 
 function whenLabel(iso: string): string {
@@ -22,12 +22,13 @@ export function NoteCard({ note, active, onClick }: { note: GroupNote; active: b
     <button
       type="button"
       onClick={onClick}
+      style={{ borderLeftColor: resolveColor(note), borderLeftWidth: 3 }}
       className={`w-full text-left rounded-md border p-md transition-colors focus-ring ${
         active ? 'border-tom bg-tom/5' : 'border-border bg-bg-surface hover:bg-bg-elevated'
       }`}
     >
       <div className="flex items-center gap-sm">
-        <TypeIcon type={note.type} size={15} className="text-fg-muted shrink-0" />
+        <NoteGlyph name={resolveIcon(note)} color={resolveColor(note)} size={15} className="shrink-0" />
         <span className="flex-1 min-w-0 truncate text-body-md font-medium text-fg">{note.title || 'Sem título'}</span>
         {note.pinned && <Pin size={13} className="text-fg-muted shrink-0" aria-label="Fixada" />}
       </div>

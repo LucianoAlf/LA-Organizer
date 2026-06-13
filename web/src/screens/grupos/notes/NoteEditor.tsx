@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Plus, X, ArrowLeft, Check } from 'lucide-react';
 import { CustomSelect } from '../../../components/CustomSelect';
-import { NOTE_TYPES, NOTE_TYPE_META, templateFor, type GroupNote, type NoteField, type NoteType } from '../../../lib/groupNotes';
+import { NOTE_TYPES, NOTE_TYPE_META, NOTE_COLORS, NOTE_ICONS, templateFor, resolveColor, resolveIcon, type GroupNote, type NoteField, type NoteType } from '../../../lib/groupNotes';
+import { NoteGlyph } from './IconRegistry';
 
 interface Props {
   note: Partial<GroupNote>;
@@ -15,8 +16,11 @@ export function NoteEditor({ note, onSave, onDone, onBack }: Props) {
   const [draft, setDraft] = useState<Partial<GroupNote>>(() => ({
     title: note.title || '', type: note.type || 'acesso',
     fields: note.fields && note.fields.length ? note.fields.map(f => ({ ...f })) : templateFor((note.type as NoteType) || 'acesso'),
-    tags: note.tags || [], body: note.body || '',
+    tags: note.tags || [], body: note.body || '', color: note.color ?? null, icon: note.icon ?? null,
   }));
+  const draftType = (draft.type as NoteType) || 'acesso';
+  const activeColor = resolveColor({ type: draftType, color: draft.color ?? null });
+  const activeIcon = resolveIcon({ type: draftType, icon: draft.icon ?? null });
   const timer = useRef<ReturnType<typeof setTimeout>>();
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
 
@@ -61,6 +65,23 @@ export function NoteEditor({ note, onSave, onDone, onBack }: Props) {
       <div className="flex items-center gap-sm mb-md">
         <span className="text-body-sm text-fg-muted">Tipo</span>
         <CustomSelect value={draft.type || 'acesso'} options={typeOpts} onChange={v => changeType(v as NoteType)} size="sm" />
+      </div>
+
+      <div className="text-label uppercase tracking-wide text-fg-muted mb-xs">Aparência</div>
+      <div className="flex flex-wrap gap-xs mb-sm">
+        {NOTE_COLORS.map(c => (
+          <button key={c} type="button" onClick={() => patch({ color: c })} aria-label={`Cor ${c}`}
+            className="w-6 h-6 rounded-full focus-ring shrink-0"
+            style={{ background: c, outline: activeColor === c ? '2px solid var(--color-fg, currentColor)' : 'none', outlineOffset: 2 }} />
+        ))}
+      </div>
+      <div className="flex flex-wrap gap-xs mb-md">
+        {NOTE_ICONS.map(ic => (
+          <button key={ic} type="button" onClick={() => patch({ icon: ic })} aria-label={ic}
+            className={`grid place-items-center w-8 h-8 rounded-md border shrink-0 ${activeIcon === ic ? 'border-tom text-tom' : 'border-border text-fg-muted'}`}>
+            <NoteGlyph name={ic} size={16} color={activeIcon === ic ? activeColor : undefined} />
+          </button>
+        ))}
       </div>
 
       <div className="text-label uppercase tracking-wide text-fg-muted mb-xs">Campos</div>

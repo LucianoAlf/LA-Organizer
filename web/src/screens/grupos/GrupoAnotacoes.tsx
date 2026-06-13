@@ -1,13 +1,17 @@
 // web/src/screens/grupos/GrupoAnotacoes.tsx
 // Base de conhecimento do grupo (v2) — módulo de tela cheia: fichas tipadas (campos
 // rótulo:valor + copiar), lista + detalhe. Rota /grupos/:groupId/anotacoes.
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type CSSProperties } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ChevronLeft, Plus, Search, NotebookText } from 'lucide-react';
+import { ChevronLeft, Plus, Search, NotebookText, GripVertical } from 'lucide-react';
+import { DndContext, closestCenter, type DragEndEvent } from '@dnd-kit/core';
+import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { useAuth } from '../../contexts/AuthContext';
 import { useWorkGroups, useMyGroupIds } from '../../hooks/useWorkGroups';
 import { useGroupNotes } from '../../hooks/useGroupNotes';
-import { filterNotes, templateFor, type GroupNote, type NoteType } from '../../lib/groupNotes';
+import { useSortableSensors } from '../../lib/sortableSensors';
+import { filterNotes, renumber, templateFor, type GroupNote, type NoteType } from '../../lib/groupNotes';
 import { Button } from '../../components/Button';
 import { EmptyState } from '../../components/EmptyState';
 import { LoadingState } from '../../components/LoadingState';
@@ -21,8 +25,25 @@ import { NoteEditor } from './notes/NoteEditor';
 const first = (name: string | null | undefined) => (name ?? '').split(' ')[0];
 
 function blankNote(groupId: string): GroupNote {
-  return { id: '', group_id: groupId, type: 'acesso', category: 'Geral', tags: [], title: '', body: '', fields: templateFor('acesso'), pinned: false, created_by: null, updated_by: null, created_at: '', updated_at: '' };
+  return { id: '', group_id: groupId, type: 'acesso', category: 'Geral', tags: [], title: '', body: '', fields: templateFor('acesso'), pinned: false, sort_order: 0, color: null, icon: null, created_by: null, updated_by: null, created_at: '', updated_at: '' };
 }
+
+// Card arrastável: grip = activator (handle-only); o card abre no clique normal.
+function SortableNoteCard({ note, active, onClick }: { note: GroupNote; active: boolean; onClick: () => void }) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: note.id });
+  const style: CSSProperties = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1, zIndex: isDragging ? 20 : undefined, position: 'relative' };
+  return (
+    <div ref={setNodeRef} style={style} className="flex items-stretch gap-1">
+      <button ref={setActivatorNodeRef} {...attributes} {...listeners} aria-label="Arrastar pra reordenar"
+        className="shrink-0 px-0.5 grid place-items-center text-fg-muted hover:text-fg cursor-grab touch-none focus-ring rounded-sm">
+        <GripVertical size={16} />
+      </button>
+      <div className="flex-1 min-w-0"><NoteCard note={note} active={active} onClick={onClick} /></div>
+    </div>
+  );
+}
+
+const sectionLabel = 'text-caption uppercase tracking-wide text-fg-muted px-xs pt-xs pb-[2px]';
 
 export function GrupoAnotacoes() {
   const { groupId } = useParams<{ groupId: string }>();
@@ -30,7 +51,8 @@ export function GrupoAnotacoes() {
   const { role } = useAuth();
   const { list, meuId } = useWorkGroups();
   const myIds = useMyGroupIds();
-  const { notes, loading, save, remove, pin } = useGroupNotes(groupId || '');
+  const { notes, loading, save, remove, pin, reorder } = useGroupNotes(groupId || '');
+  const sensors = useSortableSensors();
 
   const [typeFilter, setTypeFilter] = useState<NoteType | null>(null);
   const [query, setQuery] = useState('');
@@ -46,6 +68,10 @@ export function GrupoAnotacoes() {
     [notes, typeFilter, query],
   );
   const current = selected ? notes.find(n => n.id === selected.id) ?? selected : null;
+  // Arrastar só na visão "Todas" (sem filtro de tipo nem busca) — ordem global não-ambígua.
+  const dragEnabled = !typeFilter && !query.trim();
+  const pinned = filtered.filter(n => n.pinned);
+  const rest = filtered.filter(n => !n.pinned);
 
   if (list.isLoading || myIds.isLoading) {
     return <div className="space-y-lg w-full pb-2xl"><LoadingState rows={4} label="Carregando anotações…" /></div>;
@@ -77,6 +103,16 @@ export function GrupoAnotacoes() {
     } catch {
       showToast({ kind: 'error', title: 'Não consegui salvar a ficha' });
     }
+  }
+
+  function onDragEnd(section: 'pinned' | 'rest', e: DragEndEvent) {
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+    const arr = section === 'pinned' ? pinned : rest;
+    const oldI = arr.findIndex(n => n.id === active.id);
+    const newI = arr.findIndex(n => n.id === over.id);
+    if (oldI < 0 || newI < 0) return;
+    reorder.mutate(renumber(arrayMove(arr, oldI, newI)));
   }
 
   return (
@@ -112,7 +148,24 @@ export function GrupoAnotacoes() {
             {!loading && filtered.length === 0 && (
               <p className="text-body-sm text-fg-muted p-sm">{notes.length === 0 ? 'Nenhuma ficha ainda. Crie a primeira em "Nova ficha".' : 'Nada encontrado com esse filtro.'}</p>
             )}
-            {filtered.map(n => <NoteCard key={n.id} note={n} active={current?.id === n.id} onClick={() => openNote(n)} />)}
+            {!loading && filtered.length > 0 && (dragEnabled ? (
+              <>
+                {pinned.length > 0 && <div className={sectionLabel}>📌 Fixadas</div>}
+                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={e => onDragEnd('pinned', e)}>
+                  <SortableContext items={pinned.map(n => n.id)} strategy={verticalListSortingStrategy}>
+                    {pinned.map(n => <SortableNoteCard key={n.id} note={n} active={current?.id === n.id} onClick={() => openNote(n)} />)}
+                  </SortableContext>
+                </DndContext>
+                {rest.length > 0 && pinned.length > 0 && <div className={sectionLabel}>Demais</div>}
+                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={e => onDragEnd('rest', e)}>
+                  <SortableContext items={rest.map(n => n.id)} strategy={verticalListSortingStrategy}>
+                    {rest.map(n => <SortableNoteCard key={n.id} note={n} active={current?.id === n.id} onClick={() => openNote(n)} />)}
+                  </SortableContext>
+                </DndContext>
+              </>
+            ) : (
+              filtered.map(n => <NoteCard key={n.id} note={n} active={current?.id === n.id} onClick={() => openNote(n)} />)
+            ))}
           </div>
         </div>
 
