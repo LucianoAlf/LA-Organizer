@@ -10,9 +10,13 @@ const KINDS: { value: FieldKind; label: string }[] = [
   { value: 'text', label: 'Texto' }, { value: 'password', label: 'Senha' }, { value: 'url', label: 'Link' },
 ];
 
-// Cria um tipo de ficha custom do grupo (nome + cor + ícone + campos do modelo).
-export function NoteTypeForm({ groupId, onSaved, onClose }: { groupId: string; onSaved: (key: string) => void; onClose: () => void }) {
-  const { saveType } = useGroupNoteTypes(groupId);
+// Cria um tipo de ficha custom (nome + cor + ícone + campos do modelo).
+// Grupo: passa groupId (usa useGroupNoteTypes). Pessoal: passa onCreate (salva via note_types).
+export function NoteTypeForm({ groupId, onSaved, onClose, onCreate }: {
+  groupId?: string; onSaved: (key: string) => void; onClose: () => void;
+  onCreate?: (t: { key: string; label: string; color: string; icon: string; fields: NoteField[] }) => Promise<string>;
+}) {
+  const { saveType } = useGroupNoteTypes(groupId ?? '');
   const [label, setLabel] = useState('');
   const [color, setColor] = useState<string>(NOTE_COLORS[5]);
   const [icon, setIcon] = useState<string>('FileText');
@@ -29,8 +33,9 @@ export function NoteTypeForm({ groupId, onSaved, onClose }: { groupId: string; o
     setSaving(true);
     try {
       const cleanFields = fields.filter((f) => f.label.trim()).map((f) => ({ label: f.label.trim(), value: '', kind: f.kind || 'text', secret: f.kind === 'password' }));
-      const created = await saveType.mutateAsync({ key: slugifyType(name), label: name, color, icon, fields: cleanFields });
-      onSaved(created.key);
+      const payload = { key: slugifyType(name), label: name, color, icon, fields: cleanFields };
+      const key = onCreate ? await onCreate(payload) : (await saveType.mutateAsync(payload)).key;
+      onSaved(key);
     } catch {
       showToast({ kind: 'error', title: 'Não consegui criar o tipo' });
     } finally { setSaving(false); }

@@ -1,7 +1,7 @@
 import { StatCard } from '../../../components/StatCard';
-import type { GroupNote } from '../../../lib/groupNotes';
+import type { NoteLike } from '../../../lib/groupNotes';
 
-export function NotesSummary({ notes }: { notes: GroupNote[] }) {
+export function NotesSummary({ notes }: { notes: NoteLike[] }) {
   const acessos = notes.filter(n => n.type === 'acesso').length;
   const contas = notes.filter(n => n.type === 'conta').length;
   const fixadas = notes.filter(n => n.pinned).length;

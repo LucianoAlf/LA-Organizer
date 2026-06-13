@@ -81,4 +81,47 @@ async function listRecentNotes(supabase, collaboratorId, n = 5) {
   return data || [];
 }
 
-module.exports = { resolveShareNames, createNote, appendToNote, shareNote, listRecentNotes, findNoteRef };
+// ── Recuperação de senha/credencial pelo TOM no WhatsApp 1:1 ──────────────────
+// Espelha o group-notes: detecta intenção, acha a anotação DO DONO que casa, decifra
+// (service_role via gn_decrypt) e devolve um bloco pro prompt. Escopo = o próprio
+// colaborador (id do REMETENTE, nunca do LLM). Reusa a mesma key do Vault.
+const stripAccent = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+function looksLikeCredentialRequest(text) { return /\b(senha|login|usu[áa]rio|usuario|acesso|credencial|c[óo]digo|pin)\b/i.test(String(text || '')); }
+function credTokenize(text) { return [...new Set(stripAccent(text).split(/[^a-z0-9]+/).filter((t) => t.length >= 3))]; }
+function scoreNoteMatch(note, tokens) {
+  const parts = [note.title, ...((note.tags) || []), ...((note.fields) || []).flatMap((f) => [f.label, f.secret ? '' : f.value])];
+  const hay = stripAccent(parts.join(' '));
+  return tokens.reduce((s, t) => s + (hay.includes(t) ? 1 : 0), 0);
+}
+function buildCredentialBlock(matches) {
+  if (!matches || !matches.length) return '';
+  const blocks = matches.map((m) => `### ${m.title} (${m.type || 'livre'})\n` +
+    (m.fields || []).filter((f) => f.label || f.value).map((f) => `${f.label || '—'}: ${f.value || ''}`).join('\n')).join('\n\n');
+  return `## Credencial(is) que casam com o pedido\n(responda só o que foi perguntado; NÃO despeje outras senhas)\n${blocks}`;
+}
+async function credentialLookupContext({ supabase, collaboratorId, text }) {
+  if (!collaboratorId || !looksLikeCredentialRequest(text)) return '';
+  const tokens = credTokenize(text);
+  if (!tokens.length) return '';
+  const { data } = await supabase.from('notes').select('id, title, type, tags, fields')
+    .eq('collaborator_id', collaboratorId).eq('archived', false);
+  const scored = (data || []).map((n) => ({ n, score: scoreNoteMatch(n, tokens) }))
+    .filter((x) => x.score >= 1).sort((a, b) => b.score - a.score).slice(0, 2);
+  if (!scored.length) return '';
+  const matches = [];
+  for (const { n } of scored) {
+    const fields = [];
+    for (const f of (n.fields || [])) {
+      if (!f.label && !f.value) continue;
+      let value = f.value;
+      if (f.secret && typeof value === 'string' && value.startsWith('enc:v1:')) {
+        try { const { data: dec } = await supabase.rpc('gn_decrypt', { ciphertext: value }); if (dec != null) value = dec; } catch (_) {}
+      }
+      fields.push({ label: f.label, value });
+    }
+    matches.push({ title: n.title, type: n.type, fields });
+  }
+  return buildCredentialBlock(matches);
+}
+
+module.exports = { resolveShareNames, createNote, appendToNote, shareNote, listRecentNotes, findNoteRef, looksLikeCredentialRequest, scoreNoteMatch, buildCredentialBlock, credentialLookupContext };

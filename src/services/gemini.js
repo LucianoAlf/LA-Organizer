@@ -125,7 +125,7 @@ async function callGenerateContent(mediaPart, promptText) {
         { text: promptText },
       ],
     }],
-    generationConfig: { maxOutputTokens: 1024 },
+    generationConfig: { maxOutputTokens: 8192 },
   });
 
   return new Promise((resolve, reject) => {
@@ -174,9 +174,8 @@ function buildPrompt(mime, caption) {
       : 'Descreva o que acontece neste vídeo: pessoas, ações, texto visível, áudio se houver. Responda em português, de forma direta e útil.';
   }
   if (isPdf) {
-    return caption
-      ? `O usuário enviou este PDF com a legenda: "${caption}". Extraia e resuma o conteúdo principal. Responda em português.`
-      : 'Extraia e resuma o conteúdo principal deste PDF. Responda em português, de forma direta.';
+    const base = 'Extraia o conteúdo COMPLETO deste PDF. Se for fatura, extrato bancário ou lista de transações, liste TODAS as linhas uma a uma (data · descrição · valor · e a parcela X/Y se houver) — NÃO resuma, NÃO agrupe, NÃO omita nenhuma, vá até a ÚLTIMA transação da última página. Inclua também o total e o vencimento se aparecerem. Responda em português.';
+    return caption ? `O usuário enviou este PDF com a legenda: "${caption}". ${base}` : base;
   }
   if (isAudio) {
     return 'Transcreva o áudio para português. Se já estiver em português, transcreva literalmente. Se estiver em outro idioma, transcreva e traduza.';

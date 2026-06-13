@@ -7,7 +7,8 @@ function normalizeUrl(v: string) {
 }
 
 // Linha rótulo: valor. secret cifrado → mascarado; revelar/copiar via RPC (decifra server-side).
-export function FieldRow({ field, noteId, index }: { field: NoteField; noteId?: string; index: number }) {
+// onReveal: como decifrar um secret (default = RPC de grupo). O pessoal passa o seu.
+export function FieldRow({ field, noteId, index, onReveal }: { field: NoteField; noteId?: string; index: number; onReveal?: (noteId: string, index: number) => Promise<string> }) {
   const [shown, setShown] = useState(false);
   const [plain, setPlain] = useState<string | null>(null); // segredo revelado (só em memória)
   const [busy, setBusy] = useState(false);
@@ -22,7 +23,7 @@ export function FieldRow({ field, noteId, index }: { field: NoteField; noteId?: 
     if (!secretEnc) { setPlain(field.value); return field.value; } // secret legado/texto puro
     if (!noteId) return null;
     setBusy(true);
-    try { const v = await revealNoteSecret(noteId, index); setPlain(v); return v; }
+    try { const v = await (onReveal ?? revealNoteSecret)(noteId, index); setPlain(v); return v; }
     catch { return null; } finally { setBusy(false); }
   }
   async function toggle() {

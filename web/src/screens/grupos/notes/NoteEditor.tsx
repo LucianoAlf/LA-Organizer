@@ -11,11 +11,13 @@ interface Props {
   onSave: (patch: Partial<GroupNote> & { id?: string }) => void | Promise<unknown>;
   onDone: () => void; onBack?: () => void;
   typeIndex: TypeIndex;
+  // Pessoal passa como criar um tipo custom (note_types). Sem ela, usa o grupo (note.group_id).
+  onCreateType?: (t: { key: string; label: string; color: string; icon: string; fields: NoteField[] }) => Promise<string>;
 }
 
-// typeOpts é montado no componente a partir do typeIndex (5 base + custom do grupo).
+// typeOpts é montado no componente a partir do typeIndex (5 base + custom do grupo/usuário).
 
-export function NoteEditor({ note, onSave, onDone, onBack, typeIndex }: Props) {
+export function NoteEditor({ note, onSave, onDone, onBack, typeIndex, onCreateType }: Props) {
   const [draft, setDraft] = useState<Partial<GroupNote>>(() => ({
     title: note.title || '', type: note.type || 'acesso',
     fields: note.fields && note.fields.length ? note.fields.map(f => ({ ...f })) : templateForType(note.type || 'acesso', typeIndex),
@@ -118,8 +120,8 @@ export function NoteEditor({ note, onSave, onDone, onBack, typeIndex }: Props) {
       <div className="text-label uppercase tracking-wide text-fg-muted mb-xs">Anotações livres</div>
       <RichEditor valueHtml={draft.body || ''} onChange={(html) => patch({ body: html })} />
 
-      {showTypeForm && note.group_id && (
-        <NoteTypeForm groupId={note.group_id} onClose={() => setShowTypeForm(false)}
+      {showTypeForm && (note.group_id || onCreateType) && (
+        <NoteTypeForm groupId={note.group_id} onCreate={onCreateType} onClose={() => setShowTypeForm(false)}
           onSaved={(key) => { setShowTypeForm(false); changeType(key); }} />
       )}
     </div>

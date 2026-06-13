@@ -1,9 +1,9 @@
 import { Pin } from 'lucide-react';
-import { resolveColor, resolveIcon, type GroupNote, type TypeIndex } from '../../../lib/groupNotes';
+import { resolveColor, resolveIcon, type NoteLike, type TypeIndex } from '../../../lib/groupNotes';
 import { NoteGlyph } from './IconRegistry';
 
 // Card compacto: só o ícone + título (sem data). Accent colorido à esquerda.
-export function NoteCard({ note, active, onClick, idx }: { note: GroupNote; active: boolean; onClick: () => void; idx?: TypeIndex }) {
+export function NoteCard({ note, active, onClick, idx }: { note: NoteLike; active: boolean; onClick: () => void; idx?: TypeIndex }) {
   return (
     <button
       type="button"

@@ -1,7 +1,7 @@
-import { typesWithCount, typeLabel, resolveColor, resolveIcon, type GroupNote, type TypeIndex } from '../../../lib/groupNotes';
+import { typesWithCount, typeLabel, resolveColor, resolveIcon, type NoteLike, type TypeIndex } from '../../../lib/groupNotes';
 import { NoteGlyph } from './IconRegistry';
 
-interface Props { notes: GroupNote[]; value: string | null; onChange: (t: string | null) => void; idx?: TypeIndex; secretsOnly?: boolean; onToggleSecrets?: () => void }
+interface Props { notes: NoteLike[]; value: string | null; onChange: (t: string | null) => void; idx?: TypeIndex; secretsOnly?: boolean; onToggleSecrets?: () => void }
 
 export function NotesTypeFilter({ notes, value, onChange, idx, secretsOnly, onToggleSecrets }: Props) {
   const types = typesWithCount(notes);

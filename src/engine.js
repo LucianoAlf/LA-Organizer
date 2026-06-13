@@ -8420,6 +8420,14 @@ async function processMessage(phone, text, raw = {}) {
     console.warn('[RELAY_LIMIT_HINT] failed:', err.message);
   }
 
+  // Recuperação de senha/credencial pessoal (anotações) — injeta no turno SÓ na intenção
+  // ("qual minha senha do X?"). Escopo = o próprio remetente (collab.id, nunca do LLM);
+  // decifra via service_role (gn_decrypt). Degrada gracioso.
+  try {
+    const credBlock = await require('./services/notes').credentialLookupContext({ supabase, collaboratorId: collab.id, text });
+    if (credBlock) systemPrompt += '\n\n' + credBlock;
+  } catch (err) { console.warn('[NOTE_CRED_LOOKUP] failed:', err.message); }
+
   if (_decompose.decomposed) {
     systemPrompt +=
       `\n\n>>> AVISO INTERNO: o colaborador mandou um áudio longo. ` +

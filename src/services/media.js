@@ -94,9 +94,10 @@ async function callOpenAIVision(mediaUrl, mime, caption, base64Data) {
     throw new Error(`MIME não suportado para visão: ${mime}`);
   }
 
+  const base = 'Descreva o conteúdo desta mídia e extraia TODO o texto visível. Se for uma fatura, extrato ou lista de transações, liste TODAS as linhas uma a uma (data · descrição · valor · parcela X/Y se houver), sem resumir nem omitir nenhuma. Responda em português, direto e útil.';
   const promptText = caption
-    ? `O usuário enviou esta mídia com a legenda: "${caption}". Descreva o conteúdo e extraia todo texto visível. Responda em português, direto e útil.`
-    : 'Descreva o conteúdo desta mídia e extraia todo texto visível. Responda em português, direto e útil.';
+    ? `O usuário enviou esta mídia com a legenda: "${caption}". ${base}`
+    : base;
 
   let imageContent;
   if (isImage && mediaUrl) {
@@ -112,7 +113,7 @@ async function callOpenAIVision(mediaUrl, mime, caption, base64Data) {
 
   const body = JSON.stringify({
     model: VISION_MODEL,
-    max_tokens: 1024,
+    max_tokens: 4096,
     messages: [{
       role: 'user',
       content: [

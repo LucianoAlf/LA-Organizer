@@ -13,6 +13,10 @@ export interface GroupNote {
   created_by: string | null; updated_by: string | null; created_at: string; updated_at: string;
 }
 
+// Campos comuns às fichas (grupo OU pessoal) — o que os componentes de apresentação usam.
+// Permite reusar NoteCard/Summary/TypeFilter/filterNotes nas anotações pessoais (tabela notes).
+export type NoteLike = Pick<GroupNote, 'id' | 'type' | 'title' | 'body' | 'fields' | 'tags' | 'pinned' | 'sort_order' | 'color' | 'icon'>;
+
 // Metadados por tipo: rótulo curto + ícone (nome Lucide, resolvido no componente) + ordem dos chips.
 export const NOTE_TYPE_META: Record<NoteType, { label: string; icon: string }> = {
   acesso: { label: 'Acesso', icon: 'KeyRound' },
@@ -124,7 +128,7 @@ export function cardSubtitle(n: GroupNote): string {
   return f ? f.value : (n.body || '').replace(/\s+/g, ' ').trim();
 }
 
-export function filterNotes(notes: GroupNote[], f: { type?: string; tag?: string; query?: string }): GroupNote[] {
+export function filterNotes<T extends NoteLike>(notes: T[], f: { type?: string; tag?: string; query?: string }): T[] {
   const q = (f.query || '').trim().toLowerCase();
   return notes.filter((n) => {
     if (f.type && n.type !== f.type) return false;
@@ -137,7 +141,7 @@ export function filterNotes(notes: GroupNote[], f: { type?: string; tag?: string
   });
 }
 
-export function typesWithCount(notes: GroupNote[]): Array<{ type: string; count: number }> {
+export function typesWithCount(notes: Array<Pick<GroupNote, 'type'>>): Array<{ type: string; count: number }> {
   const counts = new Map<string, number>();
   for (const n of notes) counts.set(n.type, (counts.get(n.type) || 0) + 1);
   const ordered = NOTE_TYPES.filter((t) => counts.has(t));
@@ -228,7 +232,7 @@ export async function deleteGroupNoteType(id: string): Promise<void> {
 
 // ── Senhas/credenciais (cripto em repouso) ──
 export const isEncrypted = (v: string): boolean => typeof v === 'string' && v.startsWith('enc:v1:');
-export function notesWithSecrets(notes: GroupNote[]): GroupNote[] {
+export function notesWithSecrets<T extends Pick<GroupNote, 'fields'>>(notes: T[]): T[] {
   return notes.filter((n) => (n.fields || []).some((f) => f.secret));
 }
 // Revela o valor de um campo secret via RPC member-checked (decifra server-side).

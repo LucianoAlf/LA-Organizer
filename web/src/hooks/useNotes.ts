@@ -3,12 +3,19 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { loadNoteTypes, upsertNoteType, deleteNoteType, reorderNotes, type NoteField, type PersonalNoteType } from '../lib/personalNotes';
 
 export interface Note {
   id: string;
   collaborator_id: string;
   title: string;
   body: string;
+  type: string;
+  fields: NoteField[];
+  color: string | null;
+  icon: string | null;
+  sort_order: number;
+  tags: string[];
   pinned: boolean;
   archived: boolean;
   source: 'tom' | 'pwa';
@@ -38,10 +45,15 @@ export function useNotes() {
         supabase.from('notes').select('*').contains('shared_with', [meuId]).eq('archived', false),
       ]);
       if (mine.error) throw mine.error;
+      const norm = (n: Note): Note => ({
+        ...n, type: n.type ?? 'livre', fields: Array.isArray(n.fields) ? n.fields : [],
+        tags: Array.isArray(n.tags) ? n.tags : [], sort_order: n.sort_order ?? 0,
+        color: n.color ?? null, icon: n.icon ?? null,
+      });
       const all = new Map<string, Note>();
-      [...((mine.data ?? []) as Note[]), ...((shared.data ?? []) as Note[])].forEach((n) => all.set(n.id, n));
+      [...((mine.data ?? []) as Note[]), ...((shared.data ?? []) as Note[])].forEach((n) => all.set(n.id, norm(n)));
       return [...all.values()].sort(
-        (a, b) => Number(b.pinned) - Number(a.pinned) || b.updated_at.localeCompare(a.updated_at)
+        (a, b) => Number(b.pinned) - Number(a.pinned) || (a.sort_order - b.sort_order) || b.updated_at.localeCompare(a.updated_at)
       );
     },
   });
@@ -49,12 +61,13 @@ export function useNotes() {
   const invalidate = () => qc.invalidateQueries({ queryKey: ['notes'] });
 
   const createNote = useMutation({
-    mutationFn: async (): Promise<Note> => {
-      const { data, error } = await supabase
-        .from('notes')
-        .insert({ collaborator_id: meuId, title: '', body: '', source: 'pwa' })
-        .select('*')
-        .single();
+    mutationFn: async (patch?: Partial<Note>): Promise<Note> => {
+      const insert: Record<string, unknown> = {
+        collaborator_id: meuId, title: patch?.title ?? '', body: patch?.body ?? '', source: 'pwa',
+        type: patch?.type ?? 'livre', fields: patch?.fields ?? [],
+        color: patch?.color ?? null, icon: patch?.icon ?? null, tags: patch?.tags ?? [],
+      };
+      const { data, error } = await supabase.from('notes').insert(insert).select('*').single();
       if (error) throw error;
       return data as Note;
     },
@@ -62,7 +75,7 @@ export function useNotes() {
   });
 
   const updateNote = useMutation({
-    mutationFn: async ({ id, patch }: { id: string; patch: Partial<Pick<Note, 'title' | 'body' | 'pinned' | 'archived' | 'shared_with'>> }) => {
+    mutationFn: async ({ id, patch }: { id: string; patch: Partial<Pick<Note, 'title' | 'body' | 'pinned' | 'archived' | 'shared_with' | 'type' | 'fields' | 'color' | 'icon' | 'sort_order' | 'tags'>> }) => {
       const { error } = await supabase
         .from('notes')
         .update({ ...patch, updated_at: new Date().toISOString() })
@@ -80,7 +93,38 @@ export function useNotes() {
     onSuccess: invalidate,
   });
 
-  return { list, createNote, updateNote, deleteNote, meuId };
+  // Reorder (sort_order 1..N) — update otimista + persiste por ficha (anti-reshuffle).
+  const reorder = useMutation({
+    mutationFn: (updates: Array<{ id: string; sort_order: number }>) => reorderNotes(updates),
+    onMutate: async (updates) => {
+      await qc.cancelQueries({ queryKey: ['notes', meuId] });
+      const prev = qc.getQueryData<Note[]>(['notes', meuId]);
+      if (prev) {
+        const map = new Map(updates.map((u) => [u.id, u.sort_order]));
+        qc.setQueryData<Note[]>(['notes', meuId], prev
+          .map((n) => (map.has(n.id) ? { ...n, sort_order: map.get(n.id)! } : n))
+          .sort((a, b) => Number(b.pinned) - Number(a.pinned) || (a.sort_order - b.sort_order) || b.updated_at.localeCompare(a.updated_at)));
+      }
+      return { prev };
+    },
+    onError: (_e, _v, ctx) => { if (ctx?.prev) qc.setQueryData(['notes', meuId], ctx.prev); },
+    onSettled: invalidate,
+  });
+
+  return { list, createNote, updateNote, deleteNote, reorder, meuId };
+}
+
+// Tipos de ficha customizados POR USUÁRIO (note_types) — espelha useGroupNoteTypes.
+export function useNoteTypes() {
+  const { collaborator } = useAuth();
+  const qc = useQueryClient();
+  const meId = collaborator?.id ?? '';
+  const key = ['note-types', meId];
+  const list = useQuery({ queryKey: key, queryFn: () => loadNoteTypes(meId), enabled: !!meId });
+  const inval = () => qc.invalidateQueries({ queryKey: key });
+  const saveType = useMutation({ mutationFn: (t: Partial<PersonalNoteType> & { id?: string }) => upsertNoteType(meId, t), onSuccess: inval });
+  const removeType = useMutation({ mutationFn: (id: string) => deleteNoteType(id), onSuccess: inval });
+  return { types: list.data ?? [], loading: list.isLoading, saveType, removeType };
 }
 
 export function useNoteTaskLinks(noteId: string | undefined) {

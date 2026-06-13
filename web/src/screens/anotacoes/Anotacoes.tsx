@@ -1,123 +1,157 @@
-// Módulo Anotações — LISTA (spec 2026-06-10, mockup aprovado no brainstorm).
-// Tela NOVA e responsiva (sem versão mobile pré-existente — guardrail preservado).
-// 100% nos tokens do DS (§5.3 tipografia, §5.4 spacing, §5.5 radius): tipografia só
-// da escala (section-title/body-lg/md/sm/label), spacing xs/sm/md/lg/2xl, Badge pra
-// metadados, receita canônica de input (CLAUDE.md), max-w-content.
-import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Pin, Lock, Users, MessageCircle, Monitor } from 'lucide-react';
-import { useNotes, useCollabRoster, type Note } from '../../hooks/useNotes';
-import { Fab } from '../../components/Fab';
+// Módulo Anotações pessoais (tabela notes) — two-pane igual ao grupo: fichas tipadas,
+// editor rico + IA semântica, cor/ícone, reorder, tipos custom por usuário, senhas
+// cifradas. Preserva o que é do pessoal (virar-tarefas, compartilhar, arquivar) no
+// NotaDetalhe. Reusa os componentes agnósticos de screens/grupos/notes/.
+import { useMemo, useState, type CSSProperties } from 'react';
+import { useParams } from 'react-router-dom';
+import { Plus, Search, NotebookText, GripVertical } from 'lucide-react';
+import { DndContext, closestCenter, type DragEndEvent } from '@dnd-kit/core';
+import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { useNotes, useNoteTypes, type Note } from '../../hooks/useNotes';
+import { useSortableSensors } from '../../lib/sortableSensors';
+import { filterNotes, renumber, buildTypeIndex, notesWithSecrets, templateForType, type TypeIndex } from '../../lib/personalNotes';
 import { Button } from '../../components/Button';
-import { Badge } from '../../components/Badge';
 import { LoadingState } from '../../components/LoadingState';
-import { useBreakpoint } from '../../hooks/useBreakpoint';
+import { showToast } from '../../components/Toast';
+import { NotesSummary } from '../grupos/notes/NotesSummary';
+import { NotesTypeFilter } from '../grupos/notes/NotesTypeFilter';
+import { NoteCard } from '../grupos/notes/NoteCard';
+import { NoteEditor } from '../grupos/notes/NoteEditor';
+import { NotaDetalhe } from './NotaDetalhe';
 
-function relAge(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  const min = Math.floor(ms / 60_000);
-  if (min < 60) return `há ${Math.max(1, min)}min`;
-  const h = Math.floor(min / 60);
-  if (h < 24) return `há ${h}h`;
-  const d = Math.floor(h / 24);
-  return d === 1 ? 'ontem' : `há ${d} dias`;
-}
+const sectionLabel = 'text-caption uppercase tracking-wide text-fg-muted px-xs pt-xs pb-[2px]';
 
-function preview(body: string): string {
-  const flat = String(body || '').split('\n').map((l) => l.trim()).filter(Boolean).join(' · ');
-  return flat.length > 140 ? flat.slice(0, 140) + '…' : flat;
+// Card arrastável: grip = activator (handle-only); o card abre no clique normal.
+function SortableNoteCard({ note, active, onClick, idx }: { note: Note; active: boolean; onClick: () => void; idx?: TypeIndex }) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: note.id });
+  const style: CSSProperties = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1, zIndex: isDragging ? 20 : undefined, position: 'relative' };
+  return (
+    <div ref={setNodeRef} style={style} className="flex items-stretch gap-1">
+      <button ref={setActivatorNodeRef} {...attributes} {...listeners} aria-label="Arrastar pra reordenar"
+        className="shrink-0 px-0.5 grid place-items-center text-fg-muted hover:text-fg cursor-grab touch-none focus-ring rounded-sm">
+        <GripVertical size={16} />
+      </button>
+      <div className="flex-1 min-w-0"><NoteCard note={note} active={active} onClick={onClick} idx={idx} /></div>
+    </div>
+  );
 }
 
 export function Anotacoes() {
-  const navigate = useNavigate();
-  const { list, createNote, meuId } = useNotes();
-  const roster = useCollabRoster();
-  const [busca, setBusca] = useState('');
-  const bp = useBreakpoint();
+  const { id: routeId } = useParams<{ id?: string }>();
+  const { list, createNote, updateNote, deleteNote, reorder, meuId } = useNotes();
+  const { types, saveType } = useNoteTypes();
+  const typeIndex = useMemo(() => buildTypeIndex(types), [types]);
+  const sensors = useSortableSensors();
 
-  const nameOf = (id: string) =>
-    (roster.data ?? []).find((c) => c.id === id)?.full_name.split(' ')[0] ?? 'colega';
+  const [typeFilter, setTypeFilter] = useState<string | null>(null);
+  const [secretsOnly, setSecretsOnly] = useState(false);
+  const [query, setQuery] = useState('');
+  const [selectedId, setSelectedId] = useState<string | null>(routeId ?? null);
+  const [editing, setEditing] = useState(false);
+  const [pane, setPane] = useState<'list' | 'doc'>(routeId ? 'doc' : 'list');
+  // key do editor: muda a cada abertura → remonta limpo (evita draft preso).
+  const [editorKey, setEditorKey] = useState('none');
 
-  const notes = useMemo(() => {
-    const all = list.data ?? [];
-    const q = busca.trim().toLowerCase();
-    if (!q) return all;
-    return all.filter((n) => (n.title + '\n' + n.body).toLowerCase().includes(q));
-  }, [list.data, busca]);
+  const notes = list.data ?? [];
+  const onlyMine = useMemo(() => notes.filter((n) => n.collaborator_id === meuId), [notes, meuId]);
+  const filtered0 = useMemo(() => filterNotes(notes, { type: typeFilter || undefined, query }), [notes, typeFilter, query]);
+  const filtered = secretsOnly ? notesWithSecrets(filtered0) : filtered0;
+  const current = selectedId ? notes.find((n) => n.id === selectedId) ?? null : null;
+  const dragEnabled = !typeFilter && !query.trim() && !secretsOnly;
+  const pinned = filtered.filter((n) => n.pinned);
+  const rest = filtered.filter((n) => !n.pinned);
 
-  async function novaAnotacao() {
-    const n = await createNote.mutateAsync();
-    navigate(`/anotacoes/${n.id}`);
+  if (list.isLoading) return <div className="space-y-lg w-full pb-2xl"><LoadingState rows={4} label="Carregando anotações…" /></div>;
+
+  async function openNew() {
+    try {
+      const n = await createNote.mutateAsync({ type: 'livre', fields: templateForType('livre', typeIndex) });
+      setSelectedId(n.id); setEditing(true); setPane('doc'); setEditorKey('note:' + n.id);
+    } catch { showToast({ kind: 'error', title: 'Não consegui criar a ficha' }); }
+  }
+  function openNote(n: Note) { setSelectedId(n.id); setEditing(false); setPane('doc'); setEditorKey('note:' + n.id); }
+  function backToList() { setSelectedId(null); setEditing(false); setPane('list'); }
+
+  async function handleSave(patch: Partial<Note> & { id?: string }) {
+    if (!patch.id) return;
+    const { id, ...rest } = patch;
+    try { await updateNote.mutateAsync({ id, patch: rest }); }
+    catch { showToast({ kind: 'error', title: 'Não consegui salvar a ficha' }); }
   }
 
-  if (list.isLoading) return <LoadingState />;
+  function onDragEnd(section: 'pinned' | 'rest', e: DragEndEvent) {
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+    const arr = section === 'pinned' ? pinned : rest;
+    const oldI = arr.findIndex((n) => n.id === active.id);
+    const newI = arr.findIndex((n) => n.id === over.id);
+    if (oldI < 0 || newI < 0) return;
+    reorder.mutate(renumber(arrayMove(arr, oldI, newI)));
+  }
 
   return (
-    <div className="space-y-lg max-w-content mx-auto w-full pb-2xl">
-      <header className="flex items-end justify-between gap-md">
-        <div>
-          <h2 className="text-section-title">📒 Anotações</h2>
-          <p className="text-body-sm text-fg-muted mt-xs">
-            Dita pro TOM ("anota aí…") ou escreve aqui — e vira tarefas com um toque.
-          </p>
+    <div className="flex flex-col h-full w-full min-h-0">
+      <header className="shrink-0">
+        <div className="flex items-center gap-md">
+          <h1 className="text-screen-title flex items-center gap-sm"><NotebookText size={22} className="text-tom" /> Anotações</h1>
+          <div className="ml-auto flex items-center gap-sm">
+            <div className="relative max-sm:hidden">
+              <Search size={15} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-muted" />
+              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar…"
+                className="w-44 bg-bg-surface border border-border rounded-md pl-8 pr-2 py-2 text-body-sm text-fg focus:outline-none focus:border-tom" />
+            </div>
+            <Button variant="primary" size="md" leadingIcon={<Plus size={16} />} onClick={openNew}>Nova ficha</Button>
+          </div>
         </div>
-        <div className="flex items-center gap-md shrink-0">
-          <span className="text-body-sm text-fg-muted">{notes.length} anotaç{notes.length === 1 ? 'ão' : 'ões'}</span>
-          {bp !== 'mobile' && (
-            <Button variant="primary" size="md" onClick={novaAnotacao}>+ Nova anotação</Button>
-          )}
-        </div>
+        <p className="text-body-sm text-fg-muted mt-xs">Dita pro TOM ("anota aí…") ou cria aqui — fichas tipadas, senhas e "virar tarefas".</p>
       </header>
 
-      <input
-        value={busca}
-        onChange={(e) => setBusca(e.target.value)}
-        placeholder="🔍 Buscar nas anotações…"
-        className="w-full bg-bg-surface border border-border rounded-md p-2 text-fg focus:outline-none focus:border-tom"
-      />
+      <div className="shrink-0 mt-md"><NotesSummary notes={onlyMine} /></div>
+      <div className="shrink-0 mt-md"><NotesTypeFilter notes={notes} value={typeFilter} onChange={setTypeFilter} idx={typeIndex} secretsOnly={secretsOnly} onToggleSecrets={() => setSecretsOnly((v) => !v)} /></div>
 
-      {notes.length === 0 ? (
-        <div className="surface p-lg rounded-md text-center text-body-md text-fg-muted">
-          Nenhuma anotação ainda. Manda um <em>"TOM, anota aí…"</em> no WhatsApp ou toca no + pra criar a primeira.
+      <div className="flex-1 min-h-0 mt-md rounded-md border border-border bg-bg-surface overflow-hidden flex">
+        <div className={`${pane === 'doc' ? 'max-md:hidden' : ''} w-full md:w-72 shrink-0 md:border-r border-border flex flex-col`}>
+          <div className="md:hidden p-sm border-b border-border">
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="🔍 Buscar…"
+              className="w-full bg-bg-app border border-border rounded-md p-2 text-body-sm text-fg focus:outline-none focus:border-tom" />
+          </div>
+          <div className="flex-1 overflow-y-auto p-sm space-y-sm">
+            {filtered.length === 0 && (
+              <p className="text-body-sm text-fg-muted p-sm">{notes.length === 0 ? 'Nenhuma ficha ainda. Crie a primeira em "Nova ficha".' : 'Nada encontrado com esse filtro.'}</p>
+            )}
+            {filtered.length > 0 && (dragEnabled ? (
+              <>
+                {pinned.length > 0 && <div className={sectionLabel}>📌 Fixadas</div>}
+                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={(e) => onDragEnd('pinned', e)}>
+                  <SortableContext items={pinned.map((n) => n.id)} strategy={verticalListSortingStrategy}>
+                    {pinned.map((n) => <SortableNoteCard key={n.id} note={n} active={current?.id === n.id} onClick={() => openNote(n)} idx={typeIndex} />)}
+                  </SortableContext>
+                </DndContext>
+                {rest.length > 0 && pinned.length > 0 && <div className={sectionLabel}>Demais</div>}
+                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={(e) => onDragEnd('rest', e)}>
+                  <SortableContext items={rest.map((n) => n.id)} strategy={verticalListSortingStrategy}>
+                    {rest.map((n) => <SortableNoteCard key={n.id} note={n} active={current?.id === n.id} onClick={() => openNote(n)} idx={typeIndex} />)}
+                  </SortableContext>
+                </DndContext>
+              </>
+            ) : (
+              filtered.map((n) => <NoteCard key={n.id} note={n} active={current?.id === n.id} onClick={() => openNote(n)} idx={typeIndex} />)
+            ))}
+          </div>
         </div>
-      ) : (
-        <ul className="space-y-sm">
-          {notes.map((n: Note) => {
-            const minha = n.collaborator_id === meuId;
-            return (
-              <li key={n.id}>
-                <button
-                  onClick={() => navigate(`/anotacoes/${n.id}`)}
-                  className={`w-full text-left surface p-md rounded-md border ${n.pinned ? 'border-tom' : 'border-border'} hover:bg-bg-elevated focus-ring`}
-                >
-                  <div className="flex items-center gap-sm">
-                    {n.pinned && <Pin size={14} className="text-tom shrink-0" />}
-                    <span className="text-body-lg truncate">{n.title || 'Sem título'}</span>
-                  </div>
-                  {n.body && <p className="text-body-sm text-fg-muted mt-xs line-clamp-2">{preview(n.body)}</p>}
-                  <div className="flex flex-wrap items-center gap-sm mt-sm">
-                    {minha ? (
-                      n.shared_with.length > 0 ? (
-                        <Badge tone="success"><Users size={10} /> compartilhada ({n.shared_with.length})</Badge>
-                      ) : (
-                        <Badge><Lock size={10} /> privada</Badge>
-                      )
-                    ) : (
-                      <Badge tone="info"><Users size={10} /> de {nameOf(n.collaborator_id)}</Badge>
-                    )}
-                    {n.source === 'tom'
-                      ? <Badge><MessageCircle size={10} /> via TOM</Badge>
-                      : <Badge><Monitor size={10} /> criada no app</Badge>}
-                    <span className="text-body-sm text-fg-muted">{relAge(n.updated_at)}</span>
-                  </div>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
 
-      {bp === 'mobile' && <Fab onClick={novaAnotacao} ariaLabel="Nova anotação" />}
+        <div className={`${pane === 'list' ? 'max-md:hidden' : ''} flex-1 min-w-0 flex bg-bg-app/30`}>
+          {!current ? (
+            <div className="flex-1 hidden md:flex items-center justify-center text-fg-muted text-body-sm">Selecione uma ficha ou crie uma nova.</div>
+          ) : editing && current.collaborator_id === meuId ? (
+            <NoteEditor key={editorKey} note={current} onSave={handleSave} onDone={() => setEditing(false)} onBack={backToList} typeIndex={typeIndex}
+              onCreateType={async (t) => { const c = await saveType.mutateAsync(t); return c.key; }} />
+          ) : (
+            <NotaDetalhe note={current} idx={typeIndex} onEdit={() => setEditing(true)} onBack={backToList} onDeleted={backToList} />
+          )}
+        </div>
+      </div>
     </div>
   );
 }

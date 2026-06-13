@@ -9,9 +9,19 @@ import { slugifyType, type NoteField } from './groupNotes';
 export {
   NOTE_TYPE_META, NOTE_TYPES, TYPE_DEFAULTS, NOTE_COLORS, NOTE_ICONS, TEMPLATES,
   buildTypeIndex, typeLabel, templateForType, resolveColor, resolveIcon, renumber,
-  bodyToHtml, isEncrypted,
+  bodyToHtml, isEncrypted, filterNotes, notesWithSecrets, typesWithCount,
 } from './groupNotes';
 export type { NoteType, FieldKind, NoteField, TypeMeta, TypeIndex } from './groupNotes';
+
+// HTML do corpo → texto multi-linha (pro "Virar tarefas" via splitNoteLines).
+export function htmlToLines(html: string): string {
+  return String(html || '')
+    .replace(/<\/(p|div|li|h[1-6])>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
+    .replace(/\n{2,}/g, '\n').trim();
+}
 
 // Tipo de ficha customizado POR USUÁRIO (tabela note_types).
 export interface PersonalNoteType {
