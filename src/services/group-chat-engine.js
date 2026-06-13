@@ -149,7 +149,7 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
     } else {
       try {
         if (p.action === 'create') {
-          await groupNotes.createGroupNote({ supabase, groupId, createdBy: senderCollabId, note: { title: p.title, category: p.category, tags: p.tags, body: p.body } });
+          await groupNotes.createGroupNote({ supabase, groupId, createdBy: senderCollabId, note: { title: p.title, type: p.type, category: p.category, tags: p.tags, fields: p.fields, body: p.body } });
           actions.push({ kind: 'note', status: 'ok', label: p.title, detail: '📒 anotação do grupo' });
           console.log(`[GroupChat] group_note create grupo=${groupId}: "${p.title}"`);
         } else {

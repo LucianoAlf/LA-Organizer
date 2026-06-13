@@ -61,14 +61,25 @@ test('appendGroupNote concatena no body por título', async () => {
   assert.ok(up[2].body.includes('linha 1') && up[2].body.includes('linha 2'));
 });
 
-test('groupNotesContext: índice de todas + body só das pinned', async () => {
+test('groupNotesContext: índice de todas + conteúdo só das pinned', async () => {
   const notes = [
-    { id: 'n1', group_id: 'g1', title: 'CNPJs', category: 'Fiscal', tags: ['fiscal'], body: 'X', pinned: true },
-    { id: 'n2', group_id: 'g1', title: 'Reunião', category: 'Reuniões', tags: [], body: 'Y', pinned: false },
+    { id: 'n1', group_id: 'g1', title: 'CNPJs', type: 'cnpj', tags: ['fiscal'], fields: [], body: 'X', pinned: true },
+    { id: 'n2', group_id: 'g1', title: 'Reunião', type: 'reuniao', tags: [], fields: [], body: 'Y', pinned: false },
   ];
   const { sb } = fakeDb({ notes });
   const ctx = await groupNotesContext({ supabase: sb, groupId: 'g1' });
   assert.ok(ctx.includes('CNPJs') && ctx.includes('Reunião'));     // índice tem as duas
-  assert.ok(ctx.includes('X'));                                     // body da pinned
-  assert.ok(!ctx.includes('Y'));                                    // body da não-pinned fica fora
+  assert.ok(ctx.includes('X'));                                     // conteúdo da pinned
+  assert.ok(!ctx.includes('Y'));                                    // conteúdo da não-pinned fica fora
+});
+
+test('groupNotesContext: fields da fixada entram (TOM lê a senha)', async () => {
+  const notes = [
+    { id: 'n1', group_id: 'g1', title: 'Acesso Zoho', type: 'acesso', tags: [], pinned: true,
+      fields: [{ label: 'Login', value: 'a@b' }, { label: 'Senha', value: 'segredo123', secret: true }], body: '' },
+  ];
+  const { sb } = fakeDb({ notes });
+  const ctx = await groupNotesContext({ supabase: sb, groupId: 'g1' });
+  assert.ok(ctx.includes('Login: a@b'));
+  assert.ok(ctx.includes('Senha: segredo123'));   // secret NÃO é mascarado no prompt server-side
 });
