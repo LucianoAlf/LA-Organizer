@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Fab } from '../../components/Fab';
 import { Tabs } from '../../components/Tabs';
-import { useBills, useCategoryLookup, useClosedUnpaidInvoices, useFinanceiroAuth } from '../../hooks/useFinanceiro';
+import { useBills, useCategoryLookup, useClosedUnpaidInvoices, useInvoicesByCompetencia, useFinanceiroAuth } from '../../hooks/useFinanceiro';
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
 import { deriveBillStatus, groupExpenseBillsByStatus } from '../../lib/financeiro';
 import type { BillStatus, PfBill } from '../../lib/financeiro';
@@ -14,6 +14,19 @@ import { PagarFaturaSheet } from './components/PagarFaturaSheet';
 function brl(n: number) {
   return n.toLocaleString('pt-BR', { maximumFractionDigits: 0 });
 }
+
+const PT_MONTHS = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+// YYYY-MM local (sem UTC shift no fim do mês após 21h BRT).
+function localYm(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+function shiftMonth(ym: string, delta: number): string {
+  const [y, m] = ym.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1 + delta, 1)).toISOString().slice(0, 7);
+}
+function ymToCompetencia(ym: string): string { return `${ym}-01`; }
+function ymLabel(ym: string): string { const [y, m] = ym.split('-').map(Number); return `${PT_MONTHS[m - 1]} ${y}`; }
 
 function badgeFor(status: BillStatus): { label: string; cls: string } {
   if (status === 'paga') return { label: 'paga', cls: 'bg-success/10 text-success border-success/30' };
@@ -109,6 +122,34 @@ function FaturasSection({ invoices, onPay }: { invoices: ClosedInvoice[]; onPay:
   );
 }
 
+// Lista somente-leitura usada na PREVISÃO de outro mês (sem status/ação — é projeção).
+function PrevisaoSection({ title, items }: { title: string; items: { key: string; emoji: string; name: string; sub: string; amount: number }[] }) {
+  if (items.length === 0) return null;
+  const total = items.reduce((s, i) => s + i.amount, 0);
+  return (
+    <section className="rounded-lg border border-border bg-bg-surface overflow-hidden">
+      <header className="px-md pt-md pb-2 flex items-baseline justify-between">
+        <h3 className="text-label text-fg-muted uppercase tracking-wide">{title}</h3>
+        <span className="text-body-sm text-fg-muted tabular-nums">{items.length} · R$ {brl(total)}</span>
+      </header>
+      <ul className="divide-y divide-border">
+        {items.map((it) => (
+          <li key={it.key} className="px-md py-2.5 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <span aria-hidden className="text-base shrink-0">{it.emoji}</span>
+              <div className="min-w-0">
+                <div className="text-body-md text-fg truncate">{it.name}</div>
+                <div className="text-body-sm text-fg-muted tabular-nums">{it.sub}</div>
+              </div>
+            </div>
+            <span className="text-body-md tabular-nums font-semibold text-fg">R$ {brl(it.amount)}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function BillSection({ title, bills, onPay, onEdit }: {
   title: string;
   bills: PfBill[];
@@ -134,8 +175,14 @@ export function ContasFixasPage() {
   const cid = useFinanceiroAuth();
   useRealtimeFinance(['pf_bills', 'pf_transactions', 'pf_card_payments'], cid);
 
+  const monthNow = localYm();
+  const [monthYear, setMonthYear] = useState(monthNow);
+  const isCurrentMonth = monthYear === monthNow;
+
   const billsQ = useBills();
   const invoicesQ = useClosedUnpaidInvoices();
+  const prevInvoicesQ = useInvoicesByCompetencia(isCurrentMonth ? undefined : ymToCompetencia(monthYear));
+  const catLookup = useCategoryLookup();
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<PfBill | null>(null);
@@ -153,6 +200,15 @@ export function ContasFixasPage() {
 
   const faturas = invoicesQ.data ?? [];
   const faturasTotal = faturas.reduce((s, i) => s + i.remaining, 0);
+
+  // Previsão de OUTRO mês: contas que se aplicam (recorrentes + únicas que vencem nele)
+  // + faturas daquela competência. Total = bruto do mês (planejamento).
+  const billsDoMes = useMemo(() => {
+    const list = (billsQ.data ?? []).filter((b) => b.type === 'expense');
+    return list.filter((b) => b.recurrence === 'monthly' || (b.recurrence === 'once' && (b.due_date ?? '').slice(0, 7) === monthYear));
+  }, [billsQ.data, monthYear]);
+  const faturasDoMes = prevInvoicesQ.data ?? [];
+  const totalPrevisto = billsDoMes.reduce((s, b) => s + Number(b.amount), 0) + faturasDoMes.reduce((s, f) => s + f.total, 0);
 
   function pay(bill: PfBill) {
     setPayingBill(bill);
@@ -183,48 +239,86 @@ export function ContasFixasPage() {
         </button>
       </header>
 
-      <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
+      {/* Stepper de mês — navega a previsão pra frente/trás (Sug Rose 5b+) */}
+      <div className="flex items-center justify-between rounded-lg border border-border bg-bg-surface px-md py-2">
+        <button type="button" onClick={() => setMonthYear((m) => shiftMonth(m, -1))} aria-label="Mês anterior"
+          className="w-8 h-8 rounded-md border border-border bg-bg-surface text-fg hover:bg-bg-elevated focus-ring">‹</button>
+        <span className="text-body-md text-fg font-semibold tabular-nums">
+          {ymLabel(monthYear)}{isCurrentMonth ? ' · este mês' : ''}
+        </span>
+        <button type="button" onClick={() => setMonthYear((m) => shiftMonth(m, 1))} aria-label="Próximo mês"
+          className="w-8 h-8 rounded-md border border-border bg-bg-surface text-fg hover:bg-bg-elevated focus-ring">›</button>
+      </div>
 
-      {empty && (
-        <section className="rounded-lg border border-dashed border-border bg-bg-surface px-md py-lg text-center">
-          <div className="text-[44px] leading-none mb-2" aria-hidden>🧾</div>
-          <p className="text-body-md text-fg mb-1">Nenhuma conta fixa cadastrada.</p>
-          <p className="text-body-sm text-fg-muted mb-md max-w-md mx-auto">
-            Cadastra pelo + ou manda um zap: <em>"cadastra conta Netflix de 40 reais dia 2"</em>. O TOM lembra antes de vencer.
-          </p>
-        </section>
-      )}
-
-      {activeTab === 'todas' && (
+      {!isCurrentMonth ? (
         <>
-          <BillSection title="🔴 Atrasadas" bills={groups.atrasadas} onPay={pay} onEdit={setEditing} />
-          <BillSection title="🟡 A vencer" bills={groups.aVencer} onPay={pay} onEdit={setEditing} />
-          <FaturasSection invoices={faturas} onPay={payInvoice} />
-          <BillSection title="✅ Pagas" bills={groups.pagas} onPay={pay} onEdit={setEditing} />
-          <BillSection title="A receber" bills={aReceber} onPay={pay} onEdit={setEditing} />
-        </>
-      )}
-
-      {activeTab === 'apagar' && (
-        <>
-          {(groups.atrasadas.length > 0 || groups.aVencer.length > 0 || faturas.length > 0) && (
-            <section className="rounded-lg border border-border bg-bg-surface px-md py-3 flex items-baseline justify-between">
-              <span className="text-body-sm text-fg-muted">Total a pagar</span>
-              <span className="text-body-md font-bold text-fg tabular-nums">
-                R$ {brl([...groups.atrasadas, ...groups.aVencer].reduce((s, b) => s + Number(b.amount), 0) + faturasTotal)}
-              </span>
-            </section>
-          )}
-          {groups.atrasadas.length === 0 && groups.aVencer.length === 0 && faturas.length === 0 && (
+          {/* Previsão do mês — total bruto (contas + faturas da competência) */}
+          <section className="rounded-lg border border-border bg-bg-surface px-md py-3 flex items-baseline justify-between">
+            <span className="text-body-sm text-fg-muted">Total previsto · {ymLabel(monthYear)}</span>
+            <span className="text-body-lg font-bold text-fg tabular-nums">R$ {brl(totalPrevisto)}</span>
+          </section>
+          <PrevisaoSection
+            title="Contas do mês"
+            items={billsDoMes.map((b) => ({ key: b.id, emoji: catLookup.emoji(b.category), name: b.name, sub: `Dia ${b.due_day}`, amount: Number(b.amount) }))}
+          />
+          <PrevisaoSection
+            title="💳 Faturas de cartão"
+            items={faturasDoMes.map((f) => ({ key: f.card.id + f.competencia, emoji: '💳', name: f.card.name, sub: `vence dia ${f.card.due_day}`, amount: f.total }))}
+          />
+          {billsDoMes.length === 0 && faturasDoMes.length === 0 && (
             <section className="rounded-lg border border-dashed border-border bg-bg-surface px-md py-lg text-center">
-              <div className="text-[44px] leading-none mb-2" aria-hidden>✅</div>
-              <p className="text-body-md text-fg mb-1">Tudo em dia!</p>
-              <p className="text-body-sm text-fg-muted">Nenhuma conta pendente ou atrasada.</p>
+              <div className="text-[44px] leading-none mb-2" aria-hidden>🗓️</div>
+              <p className="text-body-md text-fg mb-1">Nada previsto pra {ymLabel(monthYear)}.</p>
+              <p className="text-body-sm text-fg-muted">Sem contas ou faturas caindo nesse mês.</p>
             </section>
           )}
-          <BillSection title="🔴 Atrasadas" bills={groups.atrasadas} onPay={pay} onEdit={setEditing} />
-          <BillSection title="🟡 A vencer" bills={groups.aVencer} onPay={pay} onEdit={setEditing} />
-          <FaturasSection invoices={faturas} onPay={payInvoice} />
+        </>
+      ) : (
+        <>
+          <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
+
+          {empty && (
+            <section className="rounded-lg border border-dashed border-border bg-bg-surface px-md py-lg text-center">
+              <div className="text-[44px] leading-none mb-2" aria-hidden>🧾</div>
+              <p className="text-body-md text-fg mb-1">Nenhuma conta fixa cadastrada.</p>
+              <p className="text-body-sm text-fg-muted mb-md max-w-md mx-auto">
+                Cadastra pelo + ou manda um zap: <em>"cadastra conta Netflix de 40 reais dia 2"</em>. O TOM lembra antes de vencer.
+              </p>
+            </section>
+          )}
+
+          {activeTab === 'todas' && (
+            <>
+              <BillSection title="🔴 Atrasadas" bills={groups.atrasadas} onPay={pay} onEdit={setEditing} />
+              <BillSection title="🟡 A vencer" bills={groups.aVencer} onPay={pay} onEdit={setEditing} />
+              <FaturasSection invoices={faturas} onPay={payInvoice} />
+              <BillSection title="✅ Pagas" bills={groups.pagas} onPay={pay} onEdit={setEditing} />
+              <BillSection title="A receber" bills={aReceber} onPay={pay} onEdit={setEditing} />
+            </>
+          )}
+
+          {activeTab === 'apagar' && (
+            <>
+              {(groups.atrasadas.length > 0 || groups.aVencer.length > 0 || faturas.length > 0) && (
+                <section className="rounded-lg border border-border bg-bg-surface px-md py-3 flex items-baseline justify-between">
+                  <span className="text-body-sm text-fg-muted">Total a pagar</span>
+                  <span className="text-body-md font-bold text-fg tabular-nums">
+                    R$ {brl([...groups.atrasadas, ...groups.aVencer].reduce((s, b) => s + Number(b.amount), 0) + faturasTotal)}
+                  </span>
+                </section>
+              )}
+              {groups.atrasadas.length === 0 && groups.aVencer.length === 0 && faturas.length === 0 && (
+                <section className="rounded-lg border border-dashed border-border bg-bg-surface px-md py-lg text-center">
+                  <div className="text-[44px] leading-none mb-2" aria-hidden>✅</div>
+                  <p className="text-body-md text-fg mb-1">Tudo em dia!</p>
+                  <p className="text-body-sm text-fg-muted">Nenhuma conta pendente ou atrasada.</p>
+                </section>
+              )}
+              <BillSection title="🔴 Atrasadas" bills={groups.atrasadas} onPay={pay} onEdit={setEditing} />
+              <BillSection title="🟡 A vencer" bills={groups.aVencer} onPay={pay} onEdit={setEditing} />
+              <FaturasSection invoices={faturas} onPay={payInvoice} />
+            </>
+          )}
         </>
       )}
 

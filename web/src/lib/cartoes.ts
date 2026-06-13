@@ -168,6 +168,29 @@ export async function listClosedUnpaidInvoices(collaboratorId: string): Promise<
   return out;
 }
 
+// Faturas de uma competência específica (YYYY-MM-01), de todos os cartões ativos — usado na
+// previsão mensal das Contas a pagar (navegar mês a mês). Inclui faturas abertas/futuras
+// (parcelas já têm competência futura), por isso não filtra por "fechada". total = lançado;
+// remaining = total − pago.
+export async function listInvoicesByCompetencia(collaboratorId: string, competencia: string): Promise<ClosedInvoice[]> {
+  const cards = await listCards(collaboratorId);
+  const out: ClosedInvoice[] = [];
+  for (const card of cards) {
+    const [txRes, payRes] = await Promise.all([
+      supabase.from('pf_transactions').select('amount')
+        .eq('collaborator_id', collaboratorId).eq('card_id', card.id).eq('competencia', competencia),
+      supabase.from('pf_card_payments').select('amount')
+        .eq('collaborator_id', collaboratorId).eq('card_id', card.id).eq('competencia', competencia),
+    ]);
+    if (txRes.error) throw txRes.error;
+    if (payRes.error) throw payRes.error;
+    const total = (txRes.data ?? []).reduce((s, r) => s + Number((r as { amount: number }).amount), 0);
+    const paid = (payRes.data ?? []).reduce((s, r) => s + Number((r as { amount: number }).amount), 0);
+    if (total > 0.005) out.push({ card, competencia, total, paid, remaining: total - paid });
+  }
+  return out;
+}
+
 // Lista cartões já com o uso de limite calculado (pro chip de resumo do dashboard).
 export async function cardsWithUsage(collaboratorId: string): Promise<{ card: PfCard; usage: CardUsage }[]> {
   const cards = await listCards(collaboratorId);
