@@ -1,7 +1,6 @@
-import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { Pin, PinOff, Pencil, Trash2, ArrowLeft, MessageSquare } from 'lucide-react';
-import { NOTE_TYPE_META, resolveColor, resolveIcon, type GroupNote } from '../../../lib/groupNotes';
+import { NOTE_TYPE_META, resolveColor, resolveIcon, bodyToHtml, type GroupNote } from '../../../lib/groupNotes';
 import { NoteGlyph } from './IconRegistry';
 import { FieldRow } from './FieldRow';
 
@@ -23,7 +22,7 @@ interface Props {
 export function NoteDetail({ note, editorName, onEdit, onDelete, onPin, onBack }: Props) {
   const meta = NOTE_TYPE_META[note.type];
   const fields = (note.fields || []).filter(f => f.label || f.value);
-  const bodyHtml = note.body ? DOMPurify.sanitize(marked.parse(note.body, { async: false, breaks: true }) as string) : '';
+  const bodyHtml = note.body ? DOMPurify.sanitize(bodyToHtml(note.body)) : '';
 
   return (
     <div className="flex-1 min-w-0 p-lg overflow-y-auto">

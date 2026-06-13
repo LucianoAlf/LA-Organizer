@@ -262,4 +262,89 @@ async function _chatInner(systemPrompt, messages /*, maxTokens */) {
   });
 }
 
-module.exports = { chat, buildArgs };
+// ─────────────────────────────────────────────────────────────────────────────
+// chatRaw — CLI OAuth pra saída HTML (ex.: "Formatar com o TOM" das anotações).
+// Caminho SEPARADO do chat() de WhatsApp: NÃO passa pelo sanitizer anti-leak (que
+// destruiria HTML legítimo) e NÃO tem fallback OpenAI. Reusa a fila _claudeQueue
+// (anti-race do .claude.json) e os mesmos flags (buildArgs). O spawn é duplicado de
+// propósito pra NÃO tocar no caminho de produção do WhatsApp (claude.js é crítico).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Limpeza leve da saída HTML: tira cercas de código que o modelo às vezes embute.
+// NÃO é o sanitizer de WhatsApp.
+function stripModelHtml(raw) {
+  return String(raw || '')
+    .replace(/^```(?:html)?\s*/i, '')
+    .replace(/```\s*$/i, '')
+    .trim();
+}
+
+// Spawn + parse → { rawResult, meta }. SEM sanitizer. Mesma mecânica do _chatInner.
+function _spawnRaw(systemPrompt, userPrompt) {
+  const tmpFile = path.join(os.tmpdir(), `tom-fmt-${process.pid}-${Date.now()}-${_tmpCounter++}.txt`);
+  try {
+    fs.writeFileSync(tmpFile, systemPrompt, 'utf8');
+  } catch (e) {
+    const err = new Error('Claude(raw): falha ao gravar system prompt temporário: ' + e.message);
+    err.kind = 'spawn'; err.provider = 'claude';
+    return Promise.reject(err);
+  }
+  return new Promise((resolve, reject) => {
+    const cleanup = () => { try { fs.unlinkSync(tmpFile); } catch (_) {} };
+    const args = buildArgs(userPrompt, tmpFile);
+    const child = spawn(CLAUDE_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'], env: buildEnv(), cwd: os.tmpdir() });
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const reject_ = (kind, msg) => { cleanup(); const e = new Error(msg); e.kind = kind; e.provider = 'claude'; reject(e); };
+    const killTimer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try { child.kill('SIGKILL'); } catch (_) {}
+      reject_('timeout', `Claude(raw) timeout após ${CLAUDE_TIMEOUT_MS}ms. stderr: ${stderr.slice(0, 300)}`);
+    }, CLAUDE_TIMEOUT_MS);
+    child.stdout.on('data', d => { stdout += d.toString(); });
+    child.stderr.on('data', d => { stderr += d.toString(); });
+    child.on('error', err => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(killTimer);
+      reject_('spawn', 'Claude(raw) spawn falhou: ' + err.message);
+    });
+    child.on('close', code => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(killTimer);
+      const raw = stdout.trim();
+      if (code !== 0) {
+        const { kind, message } = classifyClaudeExit(code, stdout, stderr);
+        return reject_(kind, message);
+      }
+      if (!raw) return reject_('empty', `Claude(raw) retornou vazio. stderr: ${stderr.trim().slice(0, 500) || '(vazio)'}`);
+      let parsed;
+      try { parsed = JSON.parse(raw); } catch (err) {
+        return reject_('bad_json', `Claude(raw) JSON inválido: ${err.message}. raw[0..200]: ${raw.slice(0, 200)}`);
+      }
+      if (parsed.is_error) return reject_('cli_error', `Claude(raw) is_error=true subtype=${parsed.subtype}`);
+      const rawResult = typeof parsed.result === 'string' ? parsed.result : '';
+      cleanup();
+      resolve({ rawResult, meta: {
+        duration_ms: parsed.duration_ms,
+        input_tokens: parsed.usage?.input_tokens,
+        output_tokens: parsed.usage?.output_tokens,
+      } });
+    });
+  });
+}
+
+// chatRaw(systemPrompt, userPrompt) → { text, provider, meta }. Enfileira igual ao chat().
+async function chatRaw(systemPrompt, userPrompt) {
+  const job = _claudeQueue.then(() => _spawnRaw(systemPrompt, userPrompt));
+  _claudeQueue = job.catch(() => {});
+  const { rawResult, meta } = await job;
+  const text = stripModelHtml(rawResult);
+  if (!text) { const e = new Error('Claude chatRaw vazio'); e.kind = 'empty'; e.provider = 'claude'; throw e; }
+  return { text, provider: 'claude', meta };
+}
+
+module.exports = { chat, chatRaw, buildArgs, stripModelHtml };

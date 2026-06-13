@@ -32,3 +32,16 @@ test('buildArgs: nenhum argumento carrega conteúdo gigante (prova anti-E2BIG)',
   const total = args.join('').length;
   assert.ok(total < 200, `argv pequeno (${total} chars), nada de prompt gigante`);
 });
+
+// Fatia B — chatRaw: limpeza leve da saída HTML (sem o sanitizer de WhatsApp).
+const { stripModelHtml } = require('./claude');
+
+test('stripModelHtml: remove cerca ```html ... ```', () => {
+  assert.strictEqual(stripModelHtml('```html\n<p>oi</p>\n```'), '<p>oi</p>');
+});
+test('stripModelHtml: remove cerca ``` simples', () => {
+  assert.strictEqual(stripModelHtml('```\n<p>oi</p>\n```'), '<p>oi</p>');
+});
+test('stripModelHtml: HTML puro passa intacto (trim)', () => {
+  assert.strictEqual(stripModelHtml('  <p>oi</p>  '), '<p>oi</p>');
+});

@@ -15,6 +15,8 @@ const express = require('express');
 const supabase = require('./supabase/client');
 const whatsapp = require('./services/whatsapp');
 const ai = require('./ai/provider');
+const claude = require('./ai/claude');
+const { validateFormatRequest, systemPromptFor } = require('./services/format-note');
 const inventarioService = require('./services/inventario-service');
 
 const router = express.Router();
@@ -1086,6 +1088,37 @@ router.post('/internal/checklist-completed', requireInternalSecret, async (req, 
   } catch (err) {
     console.error('[InternalAPI] checklist-completed err:', err.message);
     res.status(500).json({ error: 'internal_error', message: err.message });
+  }
+});
+
+// Fatia B — IA "Formatar com o TOM" das anotações de grupo. Assinatura OAuth (CLI
+// claude.chatRaw), SEM API key e SEM fallback OpenAI. Body: { action, html }.
+// action ∈ format|summarize|fix|tone. Auth via x-internal-secret (mesma porta /internal/).
+router.post('/internal/format-note', requireInternalSecret, async (req, res) => {
+  const v = validateFormatRequest(req.body || {});
+  if (!v.ok) return res.status(400).json({ ok: false, error: v.error });
+
+  const RACE_MS = 30000;
+  const logFmt = (result, reason) => {
+    supabase.from('marker_logs').insert({
+      marker_type: 'NOTE_FORMATTED', result, reason: String(reason).slice(0, 200), raw_excerpt: v.action,
+    }).then(() => {}, () => {});
+  };
+  try {
+    const aiPromise = claude.chatRaw(systemPromptFor(v.action), v.html);
+    const timeoutPromise = new Promise((_, rej) => setTimeout(() => rej(new Error('format_timeout_30s')), RACE_MS));
+    const r = await Promise.race([aiPromise, timeoutPromise]);
+    const html = (r && r.text ? r.text : '').trim();
+    if (!html) {
+      logFmt('rejected', `empty action=${v.action}`);
+      return res.status(502).json({ ok: false, error: 'tom_unavailable' });
+    }
+    logFmt('executed', `action=${v.action} chars=${html.length}`);
+    return res.json({ ok: true, html });
+  } catch (err) {
+    console.warn(`[InternalAPI] format-note falhou action=${v.action}: ${err.message?.slice(0, 200)}`);
+    logFmt('rejected', err.message);
+    return res.status(502).json({ ok: false, error: 'tom_unavailable' });
   }
 });
 

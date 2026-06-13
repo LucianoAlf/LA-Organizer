@@ -56,13 +56,47 @@ export default defineConfig(({ mode }) => {
     }
   };
 
+  // Proxy local de /internal/* → VPS (dev + preview). Em produção quem faz isso é o
+  // rewrite do vercel.json. Encaminha o x-internal-secret que o PWA já manda (fallback no env).
+  const internalProxyHandler = async (req: IncomingMessage, res: ServerResponse, next: () => void) => {
+    if (!req.url || !req.url.startsWith('/internal/')) return next();
+    const url = `${TOM_API_BASE}${req.url}`;
+    const method = req.method || 'GET';
+    try {
+      const secret = String(req.headers['x-internal-secret'] || TOM_INTERNAL_SECRET);
+      const fetchInit: RequestInit = {
+        method,
+        headers: {
+          'x-internal-secret': secret,
+          ...(req.headers['content-type'] ? { 'Content-Type': String(req.headers['content-type']) } : {}),
+        },
+      };
+      if (method !== 'GET' && method !== 'HEAD') {
+        const body = await readBody(req);
+        if (body.length) fetchInit.body = body.toString('utf8');
+      }
+      const upstream = await fetch(url, fetchInit);
+      const text = await upstream.text();
+      res.statusCode = upstream.status;
+      res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/json');
+      res.end(text);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      res.statusCode = 502;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ ok: false, error: 'upstream_failed', detail: msg }));
+    }
+  };
+
   const lareportProxyPlugin = () => ({
     name: 'lareport-local-proxy',
     configureServer(server: { middlewares: { use: (handler: (req: IncomingMessage, res: ServerResponse, next: () => void) => void) => void } }) {
+      if (TOM_API_BASE) server.middlewares.use(internalProxyHandler);
       if (!TOM_API_BASE || !TOM_INTERNAL_SECRET) return;
       server.middlewares.use(proxyHandler);
     },
     configurePreviewServer(server: { middlewares: { use: (handler: (req: IncomingMessage, res: ServerResponse, next: () => void) => void) => void } }) {
+      if (TOM_API_BASE) server.middlewares.use(internalProxyHandler);
       if (!TOM_API_BASE || !TOM_INTERNAL_SECRET) return;
       server.middlewares.use(proxyHandler);
     },

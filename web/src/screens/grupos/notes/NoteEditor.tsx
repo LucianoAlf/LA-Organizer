@@ -3,6 +3,7 @@ import { Plus, X, ArrowLeft, Check } from 'lucide-react';
 import { CustomSelect } from '../../../components/CustomSelect';
 import { NOTE_TYPES, NOTE_TYPE_META, NOTE_COLORS, NOTE_ICONS, templateFor, resolveColor, resolveIcon, type GroupNote, type NoteField, type NoteType } from '../../../lib/groupNotes';
 import { NoteGlyph } from './IconRegistry';
+import { RichEditor } from './RichEditor';
 
 interface Props {
   note: Partial<GroupNote>;
@@ -106,9 +107,8 @@ export function NoteEditor({ note, onSave, onDone, onBack }: Props) {
       <input value={(draft.tags || []).join(', ')} onChange={e => patch({ tags: e.target.value.split(',').map(t => t.trim()).filter(Boolean) })}
         placeholder="Recreio, Zoho" className={`${inputCls} text-body-sm mb-md`} />
 
-      <div className="text-label uppercase tracking-wide text-fg-muted mb-xs">Anotações livres (markdown)</div>
-      <textarea value={draft.body || ''} onChange={e => patch({ body: e.target.value })} rows={6} placeholder="Observações, contexto, lista…"
-        className={`${inputCls} text-body-sm font-mono`} />
+      <div className="text-label uppercase tracking-wide text-fg-muted mb-xs">Anotações livres</div>
+      <RichEditor valueHtml={draft.body || ''} onChange={(html) => patch({ body: html })} />
     </div>
   );
 }
