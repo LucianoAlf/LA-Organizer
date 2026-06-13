@@ -38,9 +38,10 @@ export function NoteDetail({ note, editorName, onEdit, onDelete, onPin, onBack }
         </div>
       </div>
 
-      <div className="flex items-center gap-xs text-caption text-fg-muted mb-lg">
+      <div className="flex items-center gap-xs flex-wrap text-caption text-fg-muted mb-lg">
         <span>👥 do grupo</span>
         {note.updated_at && <span>· editado{editorName ? ` por ${editorName}` : ''} {whenLabel(note.updated_at)}</span>}
+        {note.created_at && <span>· criado em {new Date(note.created_at).toLocaleDateString('pt-BR')}</span>}
         <span className="px-sm py-[2px] rounded-full bg-tom/10 text-tom">{meta.label}</span>
       </div>
 

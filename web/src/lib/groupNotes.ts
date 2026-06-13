@@ -24,14 +24,28 @@ export const NOTE_TYPES: NoteType[] = ['acesso', 'cnpj', 'conta', 'reuniao', 'li
 
 // Aparência padrão por tipo (cor de destaque + ícone). Ícone derivado do NOTE_TYPE_META (DRY).
 export const TYPE_DEFAULTS: Record<NoteType, { color: string; icon: string }> = {
-  acesso: { color: '#185FA5', icon: NOTE_TYPE_META.acesso.icon },
-  cnpj: { color: '#3B6D11', icon: NOTE_TYPE_META.cnpj.icon },
-  conta: { color: '#854F0B', icon: NOTE_TYPE_META.conta.icon },
-  reuniao: { color: '#993556', icon: NOTE_TYPE_META.reuniao.icon },
-  livre: { color: '#5F5E5A', icon: NOTE_TYPE_META.livre.icon },
+  acesso: { color: '#185FA5', icon: NOTE_TYPE_META.acesso.icon },   // azul
+  cnpj: { color: '#1D9E75', icon: NOTE_TYPE_META.cnpj.icon },       // esmeralda
+  conta: { color: '#BA7517', icon: NOTE_TYPE_META.conta.icon },     // mostarda
+  reuniao: { color: '#993556', icon: NOTE_TYPE_META.reuniao.icon }, // vinho
+  livre: { color: '#5F5E5A', icon: NOTE_TYPE_META.livre.icon },     // cinza
 };
-// Paleta curada (cores do DS) + ícones curados (nomes Lucide, resolvidos no IconRegistry).
-export const NOTE_COLORS = ['#185FA5', '#0F6E56', '#854F0B', '#993556', '#534AB7', '#993C1D', '#3B6D11', '#5F5E5A'];
+// Paleta curada — 13 cores distintas cobrindo o espectro (DS ramps, stops vívidos).
+export const NOTE_COLORS = [
+  '#E24B4A', // vermelho
+  '#D85A30', // laranja
+  '#EF9F27', // amarelo
+  '#BA7517', // mostarda
+  '#639922', // verde-limão
+  '#1D9E75', // esmeralda
+  '#378ADD', // azul claro
+  '#185FA5', // azul
+  '#7F77DD', // violeta
+  '#534AB7', // roxo
+  '#D4537E', // rosa
+  '#993556', // vinho
+  '#5F5E5A', // cinza
+];
 export const NOTE_ICONS = ['KeyRound', 'Building2', 'BuildingStore', 'Banknote', 'CreditCard', 'NotebookPen', 'FileText', 'IdCard', 'CalendarDays', 'Landmark', 'Receipt', 'Lock', 'Mail', 'Phone', 'MapPin', 'Star'];
 
 // Cor/ícone efetivos: override da ficha, senão o padrão do tipo.
