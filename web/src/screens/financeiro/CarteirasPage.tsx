@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '../../components/Button';
 import { Fab } from '../../components/Fab';
-import { useAccounts, useDeactivateAccount, useSetPrimaryAccount, useFinanceiroAuth } from '../../hooks/useFinanceiro';
+import { useAccounts, useDeactivateAccount, useReactivateAccount, useInactiveAccounts, useSetPrimaryAccount, useFinanceiroAuth } from '../../hooks/useFinanceiro';
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
 import type { PfAccount, PfAccountType } from '../../lib/financeiro';
 import { AccountSheet } from './components/AccountSheet';
@@ -71,9 +71,12 @@ export function CarteirasPage() {
   useRealtimeFinance(['pf_accounts', 'pf_transactions', 'pf_transfers'], cid);
   const accountsQ = useAccounts();
   const deactivateMut = useDeactivateAccount();
+  const reactivateMut = useReactivateAccount();
+  const inactiveQ = useInactiveAccounts();
   const setPrimaryMut = useSetPrimaryAccount();
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
 
   async function deactivate(account: PfAccount) {
     const saldo = Number(account.balance);
@@ -82,6 +85,10 @@ export function CarteirasPage() {
       : `Desativar carteira "${account.name}"? Ela some da lista, mas as transações vinculadas seguem no histórico.`;
     if (!confirm(aviso)) return;
     try { await deactivateMut.mutateAsync(account.id); } catch (e) { alert((e as Error).message); }
+  }
+
+  async function reactivate(account: PfAccount) {
+    try { await reactivateMut.mutateAsync(account.id); } catch (e) { alert((e as Error).message); }
   }
 
   const accounts = accountsQ.data ?? [];
@@ -126,6 +133,43 @@ export function CarteirasPage() {
           {accounts.map((a) => (
             <AccountCard key={a.id} account={a} onDeactivate={deactivate} onSetPrimary={(acc) => setPrimaryMut.mutate(acc.id)} primaryPending={setPrimaryMut.isPending} onOpen={(id) => navigate('/financeiro/carteiras/' + id)} />
           ))}
+        </section>
+      )}
+
+      {/* Carteiras arquivadas — ver e reativar (o saldo fica guardado quando arquiva) */}
+      {(inactiveQ.data?.length ?? 0) > 0 && (
+        <section className="mt-1">
+          <button
+            type="button"
+            onClick={() => setShowArchived((v) => !v)}
+            className="w-full flex items-center justify-between px-md py-2 text-label uppercase tracking-wide text-fg-muted font-bold hover:text-fg focus-ring rounded"
+          >
+            <span>🗄️ Arquivadas ({inactiveQ.data!.length})</span>
+            <span aria-hidden>{showArchived ? '▲' : '▼'}</span>
+          </button>
+          {showArchived && (
+            <div className="flex flex-col gap-2 mt-1">
+              {inactiveQ.data!.map((a) => {
+                const bal = Number(a.balance);
+                return (
+                  <div key={a.id} className="rounded-lg border border-border bg-bg-surface px-md py-3 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="shrink-0 opacity-70"><BankLogo slug={a.bank_slug} name={a.name} color={a.color} size={32} /></span>
+                      <div className="min-w-0">
+                        <div className="text-body-md text-fg truncate">{a.name}</div>
+                        <div className={`text-body-sm tabular-nums ${bal < 0 ? 'text-danger' : 'text-fg-muted'}`}>
+                          {bal < 0 ? '−' : ''}R$ {brl(Math.abs(bal))}
+                        </div>
+                      </div>
+                    </div>
+                    <Button size="sm" variant="secondary" onClick={() => reactivate(a)} disabled={reactivateMut.isPending}>
+                      Reativar
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </section>
       )}
 

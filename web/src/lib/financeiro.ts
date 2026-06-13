@@ -199,6 +199,19 @@ export async function deactivateAccount(collaboratorId: string, id: string) {
     .eq('id', id).eq('collaborator_id', collaboratorId);
   if (error) throw error;
 }
+// Carteiras arquivadas (is_active=false) — pra ver/reativar o que foi desativado (saldo segue guardado).
+export async function listInactiveAccounts(collaboratorId: string): Promise<PfAccount[]> {
+  const { data, error } = await supabase.from('pf_accounts')
+    .select('id, name, type, balance, icon, is_primary, bank_slug, color, goal_monthly')
+    .eq('collaborator_id', collaboratorId).eq('is_active', false).order('name');
+  if (error) throw error;
+  return (data as PfAccount[]) ?? [];
+}
+export async function reactivateAccount(collaboratorId: string, id: string) {
+  const { error } = await supabase.from('pf_accounts').update({ is_active: true })
+    .eq('id', id).eq('collaborator_id', collaboratorId);
+  if (error) throw error;
+}
 export async function setPrimaryAccount(collaboratorId: string, id: string) {
   await supabase.from('pf_accounts')
     .update({ is_primary: false })

@@ -165,6 +165,15 @@ export function useGoalContributions(goalId: string | undefined) {
 export const useSetBudget         = () => useFinMutation(fin.setBudget);
 export const useCreateAccount     = () => useFinMutation(fin.createAccount);
 export const useDeactivateAccount = () => useFinMutation((cid, id: string) => fin.deactivateAccount(cid, id));
+export const useReactivateAccount = () => useFinMutation((cid, id: string) => fin.reactivateAccount(cid, id));
+export function useInactiveAccounts() {
+  const cid = useFinanceiroAuth();
+  return useQuery({
+    queryKey: [...KEY, 'inactiveAccounts', cid],
+    queryFn: () => fin.listInactiveAccounts(cid!),
+    enabled: !!cid,
+  });
+}
 export const useSetPrimaryAccount = () => useFinMutation((cid, id: string) => fin.setPrimaryAccount(cid, id));
 export const useUpdateAccount = () => useFinMutation(
   (cid, args: { id: string; patch: Parameters<typeof fin.updateAccount>[2] }) => fin.updateAccount(cid, args.id, args.patch)
