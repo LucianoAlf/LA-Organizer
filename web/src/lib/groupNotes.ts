@@ -57,8 +57,9 @@ export interface GroupNoteType {
 export type TypeMeta = { label: string; color: string; icon: string; fields: NoteField[] };
 export type TypeIndex = Record<string, TypeMeta>;
 
-// 5 base globais + custom do grupo (custom sobrepõe se mesma key).
-export function buildTypeIndex(custom: GroupNoteType[] = []): TypeIndex {
+// 5 base globais + custom (do grupo OU do usuário — só usa key/label/color/icon/fields,
+// então aceita tanto GroupNoteType quanto o tipo pessoal). Custom sobrepõe se mesma key.
+export function buildTypeIndex(custom: Array<Pick<GroupNoteType, 'key' | 'label' | 'color' | 'icon' | 'fields'>> = []): TypeIndex {
   const idx: TypeIndex = {};
   for (const t of NOTE_TYPES) idx[t] = { label: NOTE_TYPE_META[t].label, color: TYPE_DEFAULTS[t].color, icon: TYPE_DEFAULTS[t].icon, fields: TEMPLATES[t] };
   for (const c of custom) idx[c.key] = { label: c.label, color: c.color ?? '#5F5E5A', icon: c.icon ?? 'FileText', fields: Array.isArray(c.fields) ? c.fields : [] };
