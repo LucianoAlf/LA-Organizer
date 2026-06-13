@@ -40,6 +40,7 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
   const created = [];
   const updated = [];
   const completed = [];
+  const cancelled = [];
   const failed = [];
 
   // Candidatas a dedup: pool recente (24h) não-concluído do grupo. Falha → sem dedup
@@ -82,9 +83,30 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
           ? a.recurrence_rule.trim().replace(/^RRULE:/i, '') : null;
 
         // ── Dedup: já existe tarefa quase-igual recente? Atualiza no lugar. ──
-        // (recorrente NUNCA entra no dedup-update: materialização é caminho próprio.)
-        const dup = recur ? null : findDuplicate(title);
-        if (dup) {
+        const dup = findDuplicate(title);
+        // (A) Recorrente: correção do mesmo assunto recente ("ajusta o lembrete dos Depósitos")
+        // ATUALIZA a RRULE/due/remind da série existente e re-materializa, em vez de criar
+        // outra série quase-idêntica (caso Rose 12/06). Caso GROUPCHAT-TASK-DUP-WEEKDAY estendido.
+        if (dup && recur) {
+          const patch = { recurrence_rule: recur };
+          if (wantsDue) patch.due_date = wantsDue;
+          if (remindISO) patch.remind_at = remindISO;
+          const { data: upd } = await supabase.from('tasks').update(patch).eq('id', dup.id).select('id, title').maybeSingle();
+          if (upd) {
+            try {
+              // limpa instâncias futuras não-concluídas e re-materializa com a regra nova.
+              const todayYmd = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+              await supabase.from('tasks').update({ status: 'cancelled' })
+                .eq('recurrence_parent_id', dup.id).neq('status', 'done').gte('due_date', todayYmd);
+              const { materializeSeries } = require('./recurrence-engine');
+              const { data: full } = await supabase.from('tasks').select('*').eq('id', dup.id).maybeSingle();
+              if (full && full.recurrence_rule) await materializeSeries('tasks', full);
+            } catch (e) { console.warn('[GroupChat] re-materialize:', e.message); }
+            updated.push({ ...upd, changed: patch });
+            continue;
+          }
+        }
+        if (dup && !recur) {
           const patch = {};
           if (wantsDue && wantsDue !== dup.due_date) patch.due_date = wantsDue;
           if (remindISO) patch.remind_at = remindISO;
@@ -140,6 +162,27 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
           .select('id, title');
         if (!upd || !upd.length) { failed.push({ action: a, why: 'race_lost' }); continue; }
         completed.push(target);
+      } else if (a.action === 'cancel') {
+        // (B) O TOM cancela a PRÓPRIA duplicata/erro — escopo seguro: só tarefa/pacote do
+        // grupo, criado nas últimas 24h, ainda não-done. Mãe de grupo → cancela as filhas.
+        const title = (a.title || '').trim();
+        if (!title) { failed.push({ action: a, why: 'title_missing' }); continue; }
+        const sinceISO = new Date(Date.now() - RECENT_WINDOW_MS).toISOString();
+        const { data: hit } = await supabase
+          .from('tasks')
+          .select('id, title, is_group')
+          .eq('assigned_group_id', groupId)
+          .neq('status', 'done')
+          .gte('created_at', sinceISO)
+          .ilike('title', title)
+          .limit(1);
+        const target = (hit || [])[0];
+        if (!target) { failed.push({ action: a, why: 'not_found_or_too_old' }); continue; }
+        await supabase.from('tasks').update({ status: 'cancelled' }).eq('id', target.id);
+        if (target.is_group) {
+          await supabase.from('tasks').update({ status: 'cancelled' }).eq('parent_task_id', target.id).neq('status', 'done');
+        }
+        cancelled.push({ id: target.id, title: target.title });
       } else {
         failed.push({ action: a, why: 'unsupported_action' });
       }
@@ -148,7 +191,7 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
     }
   }
 
-  return { created, updated, completed, failed };
+  return { created, updated, completed, cancelled, failed };
 }
 
 module.exports = { applyGroupChatTaskActions, titleSimilarity };

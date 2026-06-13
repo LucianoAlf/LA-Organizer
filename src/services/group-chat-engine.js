@@ -9,6 +9,7 @@
 const ai = require('../ai/provider');
 const { buildGroupChatPrompt, loadGroupChatSoul } = require('./group-chat-prompt');
 const { applyGroupChatTaskActions } = require('./group-chat-tasks');
+const { createTaskGroup, addSubtasksToGroup } = require('./task-groups');
 const { buildGroupReport } = require('./group-report-builder');
 const { buildBrtDateAnchor } = require('../utils/dates');
 
@@ -89,6 +90,48 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
       stripBlock(/<<TASK_UPDATE>>[\s\S]*?<<END>>/i);
     }
   } catch (e) { console.error('[GroupChat] task err:', e.message); }
+
+  // ─── PACOTE / GRUPO DE TAREFAS (pai + subtarefas) ─────────────────────────
+  // <<TASK_GROUP>>{action:create|add_subtasks,...}<<END>> → motor src/services/task-groups.js
+  const tgMatch = reply.match(/<<TASK_GROUP>>([\s\S]*?)<<END>>/i);
+  if (tgMatch) {
+    stripBlock(/<<TASK_GROUP>>[\s\S]*?<<END>>/i);
+    let payload = null;
+    try { payload = JSON.parse(tgMatch[1].trim()); } catch (_) { payload = null; }
+    if (!payload || (payload.action !== 'create' && payload.action !== 'add_subtasks')) {
+      actions.push({ kind: 'task', status: 'fail', label: 'Pacote', detail: 'marker malformado' });
+    } else {
+      try {
+        if (payload.action === 'create') {
+          const subtasks = (payload.subtasks || []).map((s) => ({ title: s.title, day: s.day, dueDate: s.due_date, remindAt: s.remind_at }));
+          const r = await createTaskGroup({
+            supabase, groupId, createdBy: senderCollabId,
+            input: { title: payload.title, recurrence: payload.recurrence === 'monthly' ? 'monthly' : null,
+              groupDay: payload.group_day, weekendAdjust: payload.weekend_adjust, subtasks },
+          });
+          actions.push({ kind: 'task', status: 'ok', label: payload.title, detail: `pacote · ${r.childIds.length} ${r.childIds.length === 1 ? 'item' : 'itens'}` });
+          console.log(`[GroupChat] task_group create grupo=${groupId}: "${payload.title}" filhas=${r.childIds.length}`);
+        } else {
+          const { data: mom } = await supabase.from('tasks')
+            .select('id').eq('assigned_group_id', groupId).eq('is_group', true)
+            .is('recurrence_rule', null).neq('status', 'cancelled')
+            .ilike('title', payload.group).limit(1);
+          const motherId = (mom || [])[0]?.id;
+          if (!motherId) {
+            actions.push({ kind: 'task', status: 'fail', label: payload.group || 'Pacote', detail: 'não achei esse pacote' });
+          } else {
+            const subtasks = (payload.subtasks || []).map((s) => ({ title: s.title, day: s.day, dueDate: s.due_date, remindAt: s.remind_at }));
+            const r = await addSubtasksToGroup({ supabase, groupId: motherId, subtasks });
+            actions.push({ kind: 'task', status: 'ok', label: payload.group, detail: `+${r.added.length} no pacote` });
+            console.log(`[GroupChat] task_group add grupo=${groupId}: "${payload.group}" +${r.added.length}`);
+          }
+        }
+      } catch (e) {
+        console.error('[GroupChat] TASK_GROUP erro:', e.message);
+        actions.push({ kind: 'task', status: 'fail', label: payload.title || payload.group || 'Pacote', detail: 'não consegui montar o pacote' });
+      }
+    }
+  }
 
   // ─── RELATÓRIO DO GRUPO (sob demanda, B1) ─────────────────────────────────
   // O LLM emite só o marker; o código monta a lista EXATA e insere um card kind='report'
