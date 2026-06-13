@@ -276,6 +276,9 @@ async function findBills(collaboratorId, billName) {
 }
 // Só marca a conta como paga (não insere lançamento). Usado quando o lançamento é
 // gravado à parte (ex.: pay_bill no engine via recordCardPurchase/writeCashTransaction).
+// `date` = data da QUITAÇÃO (last_paid_at, dirige o status do mês). NUNCA a competência da
+// fatura: pagar mirando a fatura de maio não pode deixar a conta atrasada em junho. Default
+// = hoje (a quitação acontece agora). FIN-PAYBILL-DATE-COUPLING (caso Rose 13/06).
 async function markBillPaid(collaboratorId, bill, date) {
   const day = date || new Date().toISOString().slice(0, 10);
   const patch = { last_paid_at: day, status: 'paid' };
@@ -307,7 +310,9 @@ async function payBill(collaboratorId, bill, opts = {}) {
   } else {
     await insertTransaction(collaboratorId, { type: bill.type, category: bill.category, amount, description: bill.name, transaction_date: date });
   }
-  const marked = await markBillPaid(collaboratorId, bill, date);
+  // Quitação = HOJE (markBillPaid default), desacoplado de `date` (data do lançamento/fatura,
+  // que pode mirar um mês passado). FIN-PAYBILL-DATE-COUPLING.
+  const marked = await markBillPaid(collaboratorId, bill);
   return { ...marked, paid_amount: amount };
 }
 

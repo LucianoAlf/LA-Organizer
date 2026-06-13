@@ -4,13 +4,14 @@
 // Fiel ao mockup aprovado (docs/superpowers/specs/assets/2026-06-10-workspace-grupos-mockup.html §2).
 import { useState, useCallback, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ChevronLeft, Plus, Settings, MessageSquare } from 'lucide-react';
+import { ChevronLeft, Plus, Settings, MessageSquare, NotebookText, X } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useWorkGroups, useMyGroupIds } from '../../hooks/useWorkGroups';
 import { useGroupWorkspace, type PoolTaskRow } from '../../hooks/useGroupWorkspace';
 import { useGroupChat } from '../../hooks/useGroupChat';
 import { unreadCount } from '../../lib/groupChat';
 import { GroupChatDrawer } from './chat/GroupChatDrawer';
+import { GroupNotesEnv } from './notes/GroupNotesEnv';
 import { doneWhenLabel } from '../../lib/groupWorkspace';
 import { toggleChildWithCascade } from '../../lib/taskGroups';
 import { todaySP, brShort } from '../../utils/date';
@@ -104,6 +105,7 @@ export function GrupoWorkspace() {
   const [editing, setEditing] = useState<PoolTaskRow | null>(null);
   const [openPkgId, setOpenPkgId] = useState<string | null>(null);
   const [configOpen, setConfigOpen] = useState(false);
+  const [notesOpen, setNotesOpen] = useState(false);
   const [rowBusy, setRowBusy] = useState<string | null>(null);
   const [childBusy, setChildBusy] = useState<string | null>(null);
 
@@ -257,6 +259,14 @@ export function GrupoWorkspace() {
                 <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 grid place-items-center rounded-full bg-tom text-black text-[10px] font-bold">{unread}</span>
               )}
             </button>
+            <button
+              type="button"
+              onClick={() => setNotesOpen(true)}
+              aria-label="Abrir anotações do grupo"
+              className="md:hidden grid place-items-center h-9 w-9 rounded-md border border-border bg-bg-surface text-fg hover:bg-bg-elevated focus-ring"
+            >
+              <NotebookText size={18} />
+            </button>
             {canManage && <div className="md:hidden">{gearBtn('h-9 w-9')}</div>}
           </div>
           <p className="text-body-sm text-fg-muted mt-xs">{membersLine} — qualquer um conclui</p>
@@ -269,6 +279,14 @@ export function GrupoWorkspace() {
             onClick={() => { setChatOpen(v => !v); setChatCollapsed(false); }}
           >
             Chat{unread > 0 ? ` · ${unread}` : ''}
+          </Button>
+          <Button
+            variant={notesOpen ? 'primary' : 'secondary'}
+            size="md"
+            leadingIcon={<NotebookText size={16} />}
+            onClick={() => setNotesOpen(v => !v)}
+          >
+            Anotações
           </Button>
           <Button variant="secondary" size="md" onClick={() => openCreate('group')}>
             🗂️ + Pacote mensal
@@ -461,6 +479,25 @@ export function GrupoWorkspace() {
           onClose={() => { setChatCollapsed(false); setChatOpen(false); }}
           onSeen={markSeen}
         />
+      )}
+
+      {/* 📒 Anotações do grupo (base de conhecimento) — overlay full no mobile, painel à direita no desktop */}
+      {notesOpen && groupId && (
+        <div className="fixed inset-0 z-40 bg-bg-app flex flex-col md:left-auto md:w-[680px] md:border-l md:border-border md:shadow-2xl">
+          <div className="flex items-center gap-sm px-md py-sm border-b border-border shrink-0">
+            <NotebookText size={18} className="text-tom" />
+            <span className="font-semibold text-fg truncate">Anotações · {group.name}</span>
+            <button
+              type="button"
+              onClick={() => setNotesOpen(false)}
+              aria-label="Fechar anotações"
+              className="ml-auto grid place-items-center h-9 w-9 rounded-md text-fg-muted hover:bg-bg-elevated focus-ring"
+            >
+              <X size={18} />
+            </button>
+          </div>
+          <div className="flex-1 min-h-0"><GroupNotesEnv groupId={groupId} /></div>
+        </div>
       )}
     </div>
   );

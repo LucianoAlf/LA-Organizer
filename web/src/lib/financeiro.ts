@@ -233,27 +233,37 @@ export async function createBill(collaboratorId: string, input: { name: string; 
   if (error) throw error;
   return data;
 }
+// YMD local (BRT) — NUNCA toISOString().slice(0,10) (desloca o dia após 21h BRT). Ver utils/date.
+function localYmd(d = new Date()): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 // Paga a conta no valor REAL (default = previsto), por método (cartão/carteira/nenhum).
 // NUNCA altera bill.amount (previsto). card = { id, closing_day } pra calcular a competência.
+// IMPORTANTE: `date` = ONDE o lançamento cai (transação/competência da fatura — pode ser backdated
+// pra mirar uma fatura passada). `last_paid_at` = QUANDO a conta foi QUITADA (hoje), e dirige o
+// status do mês. Os dois são SEPARADOS: pagar mirando a fatura de maio não pode deixar a conta
+// eternamente "atrasada" em junho (caso Rose 13/06 — FIN-PAYBILL-DATE-COUPLING).
 export async function payBill(
   collaboratorId: string,
   bill: PfBill,
-  opts: { amount?: number; account_id?: string | null; card?: { id: string; closing_day: number } | null; date?: string } = {},
+  opts: { amount?: number; account_id?: string | null; card?: { id: string; closing_day: number } | null; date?: string; paid_at?: string } = {},
 ) {
-  const date = opts.date || new Date().toISOString().slice(0, 10);
+  const today = localYmd();
+  const txnDate = opts.date || today;     // lançamento/fatura (pode mirar mês passado)
+  const paidAt = opts.paid_at || today;   // quitação da conta (status do mês)
   const amount = (opts.amount != null && opts.amount > 0) ? opts.amount : Number(bill.amount);
   if (opts.card && bill.type !== 'income') {
     const { createCardPurchase } = await import('./cartoes'); // import dinâmico evita ciclo cartoes↔financeiro
     await createCardPurchase(collaboratorId, {
       cardId: opts.card.id, closingDay: opts.card.closing_day, amount,
-      category: bill.category, description: bill.name, installments: 1, firstDate: date,
+      category: bill.category, description: bill.name, installments: 1, firstDate: txnDate,
     });
   } else if (opts.account_id) {
-    await createTransaction(collaboratorId, { type: bill.type, category: bill.category, amount, description: bill.name, transaction_date: date, account_id: opts.account_id });
+    await createTransaction(collaboratorId, { type: bill.type, category: bill.category, amount, description: bill.name, transaction_date: txnDate, account_id: opts.account_id });
   } else {
-    await createTransaction(collaboratorId, { type: bill.type, category: bill.category, amount, description: bill.name, transaction_date: date });
+    await createTransaction(collaboratorId, { type: bill.type, category: bill.category, amount, description: bill.name, transaction_date: txnDate });
   }
-  const patch: Record<string, unknown> = { last_paid_at: date, status: 'paid' };
+  const patch: Record<string, unknown> = { last_paid_at: paidAt, status: 'paid' };
   if (bill.recurrence === 'once') patch.is_active = false;
   const { error } = await supabase.from('pf_bills')
     .update(patch).eq('id', bill.id).eq('collaborator_id', collaboratorId);

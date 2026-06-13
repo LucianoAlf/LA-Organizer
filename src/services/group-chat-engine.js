@@ -11,6 +11,7 @@ const { buildGroupChatPrompt, loadGroupChatSoul } = require('./group-chat-prompt
 const { applyGroupChatTaskActions } = require('./group-chat-tasks');
 const { createTaskGroup, addSubtasksToGroup } = require('./task-groups');
 const { buildGroupReport } = require('./group-report-builder');
+const groupNotes = require('./group-notes');
 const { buildBrtDateAnchor } = require('../utils/dates');
 
 const HISTORY_LIMIT = 30;
@@ -45,6 +46,9 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
   const ctx = await loadContext(supabase, groupId, senderCollabId);
   if (!ctx.group) { console.warn(`[GroupChat] grupo ${groupId} não encontrado`); return null; }
 
+  let notesCtx = '';
+  try { notesCtx = await groupNotes.groupNotesContext({ supabase, groupId }); } catch (_) { notesCtx = ''; }
+
   const systemPrompt = buildGroupChatPrompt({
     soulText: loadGroupChatSoul(),
     groupName: ctx.group.name,
@@ -53,6 +57,7 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
     history: ctx.history,
     senderName: ctx.senderName,
     longTermMemory: ctx.group.tom_chat_memory,
+    notesContext: notesCtx, // base de conhecimento do grupo (índice + body das fixadas)
     dateAnchor: buildBrtDateAnchor(), // hoje + tabela de datas (BRT) — LLM não calcula weekday e erra
   });
 
@@ -130,6 +135,28 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
         console.error('[GroupChat] TASK_GROUP erro:', e.message);
         actions.push({ kind: 'task', status: 'fail', label: payload.title || payload.group || 'Pacote', detail: 'não consegui montar o pacote' });
       }
+    }
+  }
+
+  // ─── ANOTAÇÃO DO GRUPO (base de conhecimento) ─────────────────────────────
+  // <<GROUP_NOTE>>{action:create|append,...}<<END>> → src/services/group-notes.js
+  const gnMatch = reply.match(/<<GROUP_NOTE>>([\s\S]*?)<<END>>/i);
+  if (gnMatch) {
+    stripBlock(/<<GROUP_NOTE>>[\s\S]*?<<END>>/i);
+    let p = null; try { p = JSON.parse(gnMatch[1].trim()); } catch (_) { p = null; }
+    if (!p || (p.action !== 'create' && p.action !== 'append')) {
+      actions.push({ kind: 'note', status: 'fail', label: 'Anotação', detail: 'marker malformado' });
+    } else {
+      try {
+        if (p.action === 'create') {
+          await groupNotes.createGroupNote({ supabase, groupId, createdBy: senderCollabId, note: { title: p.title, category: p.category, tags: p.tags, body: p.body } });
+          actions.push({ kind: 'note', status: 'ok', label: p.title, detail: '📒 anotação do grupo' });
+          console.log(`[GroupChat] group_note create grupo=${groupId}: "${p.title}"`);
+        } else {
+          const r = await groupNotes.appendGroupNote({ supabase, groupId, updatedBy: senderCollabId, title: p.title, body: p.body });
+          actions.push({ kind: 'note', status: r.appended ? 'ok' : 'fail', label: p.title, detail: r.appended ? '📒 atualizada' : 'não achei essa anotação' });
+        }
+      } catch (e) { console.error('[GroupChat] GROUP_NOTE:', e.message); actions.push({ kind: 'note', status: 'fail', label: p.title || 'Anotação', detail: 'não consegui salvar' }); }
     }
   }
 

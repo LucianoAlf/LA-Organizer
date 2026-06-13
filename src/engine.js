@@ -7040,7 +7040,9 @@ async function handleFinanceAction(collab, action, params, outcome = {}) {
         outcome.persisted = true;
         reply = `✅ *${bill.name}* paga (${financeFmt.money(amount)}).`;
       }
-      await financeService.markBillPaid(cid, bill, date);
+      // Quitação = HOJE, desacoplado de `date` (data do lançamento/fatura — pode mirar mês
+      // passado). Senão a conta fica eternamente "atrasada". FIN-PAYBILL-DATE-COUPLING.
+      await financeService.markBillPaid(cid, bill);
       if (Math.round(amount * 100) !== Math.round(Number(bill.amount) * 100)) {
         reply += `\n_(previu ${financeFmt.money(Number(bill.amount))} · pagou ${financeFmt.money(amount)})_`;
       }
@@ -7531,7 +7533,7 @@ async function processMessage(phone, text, raw = {}) {
             // pay_bill via pendência: marca a conta paga + headline (o lançamento já foi gravado acima).
             if (finOpen.payload.bill) {
               try {
-                await financeService.markBillPaid(collab.id, finOpen.payload.bill, txn.date);
+                await financeService.markBillPaid(collab.id, finOpen.payload.bill); // quitação=hoje, não a data da fatura (FIN-PAYBILL-DATE-COUPLING)
                 reply = `✅ *${finOpen.payload.bill.name}* paga.\n\n` + reply;
               } catch (markErr) {
                 console.warn('[PayBill] mark err:', markErr.message);

@@ -15,7 +15,7 @@ function fmtHistoryLine(m) {
   return `${who}: ${m.content || ''}`;
 }
 
-function buildGroupChatPrompt({ soulText, groupName, members, pool, history, senderName, longTermMemory, dateAnchor }) {
+function buildGroupChatPrompt({ soulText, groupName, members, pool, history, senderName, longTermMemory, notesContext, dateAnchor }) {
   const memberNames = (members || []).map((m) => m.name).filter(Boolean).join(', ') || '—';
   const poolBlock = (pool || []).length ? (pool || []).map(fmtPoolLine).join('\n') : '(nenhuma tarefa ainda)';
   const histBlock = (history || []).length ? (history || []).map(fmtHistoryLine).join('\n') : '(sem histórico)';
@@ -33,7 +33,7 @@ ${dateBlock}
 
 ## Memória de longo prazo deste grupo
 ${memoryBlock}
-
+${notesContext ? `\n${notesContext}\n` : ''}
 ## Tarefas do grupo (lista atual — NUNCA chame isso de "pool" na fala)
 ${poolBlock}
 
@@ -74,6 +74,13 @@ Quando pedirem um resumo/relatório/listagem do que o grupo tem (agenda, tarefas
 <<GROUP_REPORT>>{"scope":"agenda|tarefas|anotacoes|checklists|tudo","window":"hoje|semana|mes"}<<END>>
 - scope pelo pedido ("resumo da agenda"→agenda; "o que temos / me dá tudo"→tudo). window: hoje/semana/mes (padrão mes; "tarefas em aberto" sem janela→tudo, use scope=tarefas).
 - NUNCA escreva a lista você mesmo — o sistema monta com dados EXATOS do banco e mostra como card. Você só dá UMA linha curta de abertura ("Aqui o resumo da agenda de junho 👇") + o marker. Nunca invente, repita ou trunque itens.
+
+### Anotação do grupo (base de conhecimento compartilhada)
+Quando pedirem pra GUARDAR/REGISTRAR algo do grupo (acesso, senha, CNPJ, contas, resumo de reunião — coisa que o time precisa consultar depois), crie uma anotação DO GRUPO (visível a todos os membros):
+<<GROUP_NOTE>>{"action":"create","title":"<título>","category":"<Acessos|CNPJs|Contas|Reuniões|…>","tags":["<tag>"],"body":"<conteúdo em markdown>"}<<END>>
+Pra acrescentar a uma anotação que já existe: <<GROUP_NOTE>>{"action":"append","title":"<título exato>","body":"<texto novo>"}<<END>>.
+- Anotação PESSOAL (privada da pessoa) continua sendo <<NOTE_ACTION>> no privado — NUNCA use share_with pra simular anotação de grupo.
+- As anotações do grupo aparecem no seu contexto acima ("Anotações do grupo"): use pra responder ("tá na anotação X", e se estiver fixada, dê o valor). NUNCA diga "anotei pro grupo" sem emitir <<GROUP_NOTE>>.
 
 ### Pacote / grupo de tarefas (tarefa-pai + subtarefas)
 Quando o pedido tem um TEMA-PAI e VÁRIOS sub-itens (ex.: "Conciliação de Cartões" com cada cartão; "Planilha do financeiro" com Recreio/Barra/CG; uma rotina com etapas), crie um PACOTE — NUNCA várias tarefas soltas:
