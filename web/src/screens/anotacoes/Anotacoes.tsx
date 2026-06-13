@@ -40,7 +40,7 @@ function SortableNoteCard({ note, active, onClick, idx }: { note: Note; active: 
 export function Anotacoes() {
   const { id: routeId } = useParams<{ id?: string }>();
   const { list, createNote, updateNote, deleteNote, reorder, meuId } = useNotes();
-  const { types, saveType } = useNoteTypes();
+  const { types, saveType, removeType } = useNoteTypes();
   const typeIndex = useMemo(() => buildTypeIndex(types), [types]);
   const sensors = useSortableSensors();
 
@@ -146,7 +146,8 @@ export function Anotacoes() {
             <div className="flex-1 hidden md:flex items-center justify-center text-fg-muted text-body-sm">Selecione uma ficha ou crie uma nova.</div>
           ) : editing && current.collaborator_id === meuId ? (
             <NoteEditor key={editorKey} note={current} onSave={handleSave} onDone={() => setEditing(false)} onBack={backToList} typeIndex={typeIndex}
-              onCreateType={async (t) => { const c = await saveType.mutateAsync(t); return c.key; }} />
+              onSaveType={async (t) => { const c = await saveType.mutateAsync(t); return c.key; }}
+              onDeleteType={async (id) => { await removeType.mutateAsync(id); }} />
           ) : (
             <NotaDetalhe note={current} idx={typeIndex} onEdit={() => setEditing(true)} onBack={backToList} onDeleted={backToList} />
           )}

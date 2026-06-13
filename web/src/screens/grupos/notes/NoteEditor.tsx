@@ -1,29 +1,31 @@
 import { useEffect, useRef, useState } from 'react';
-import { Plus, X, ArrowLeft, Check } from 'lucide-react';
+import { Plus, X, ArrowLeft, Check, Pencil } from 'lucide-react';
 import { CustomSelect } from '../../../components/CustomSelect';
 import { NOTE_COLORS, NOTE_ICONS, templateForType, resolveColor, resolveIcon, isEncrypted, type GroupNote, type NoteField, type TypeIndex } from '../../../lib/groupNotes';
 import { NoteGlyph } from './IconRegistry';
 import { RichEditor } from './RichEditor';
-import { NoteTypeForm } from './NoteTypeForm';
+import { NoteTypeForm, type EditingType } from './NoteTypeForm';
 
 interface Props {
   note: Partial<GroupNote>;
   onSave: (patch: Partial<GroupNote> & { id?: string }) => void | Promise<unknown>;
   onDone: () => void; onBack?: () => void;
   typeIndex: TypeIndex;
-  // Pessoal passa como criar um tipo custom (note_types). Sem ela, usa o grupo (note.group_id).
-  onCreateType?: (t: { key: string; label: string; color: string; icon: string; fields: NoteField[] }) => Promise<string>;
+  // Pessoal passa como salvar/excluir um tipo custom (note_types). Sem elas, usa o grupo (note.group_id).
+  onSaveType?: (t: { id?: string; key: string; label: string; color: string; icon: string; fields: NoteField[] }) => Promise<string>;
+  onDeleteType?: (id: string) => Promise<void>;
 }
 
 // typeOpts é montado no componente a partir do typeIndex (5 base + custom do grupo/usuário).
 
-export function NoteEditor({ note, onSave, onDone, onBack, typeIndex, onCreateType }: Props) {
+export function NoteEditor({ note, onSave, onDone, onBack, typeIndex, onSaveType, onDeleteType }: Props) {
   const [draft, setDraft] = useState<Partial<GroupNote>>(() => ({
     title: note.title || '', type: note.type || 'acesso',
     fields: note.fields && note.fields.length ? note.fields.map(f => ({ ...f })) : templateForType(note.type || 'acesso', typeIndex),
     tags: note.tags || [], body: note.body || '', color: note.color ?? null, icon: note.icon ?? null,
   }));
   const [showTypeForm, setShowTypeForm] = useState(false);
+  const [editingType, setEditingType] = useState<EditingType | null>(null);
   const typeOpts = Object.entries(typeIndex).map(([value, m]) => ({ value, label: m.label }));
   const draftType = draft.type || 'acesso';
   const activeColor = resolveColor({ type: draftType, color: draft.color ?? null }, typeIndex);
@@ -73,8 +75,13 @@ export function NoteEditor({ note, onSave, onDone, onBack, typeIndex, onCreateTy
         <span className="text-body-sm text-fg-muted shrink-0">Tipo</span>
         <div className="flex-1 min-w-0 max-w-[280px]">
           <CustomSelect value={draft.type || 'acesso'} options={typeOpts} onChange={(v) => changeType(v)} size="sm"
-            footerAction={{ label: '➕ Novo tipo…', onClick: () => setShowTypeForm(true) }} />
+            footerAction={{ label: '➕ Novo tipo…', onClick: () => { setEditingType(null); setShowTypeForm(true); } }} />
         </div>
+        {typeIndex[draftType]?.custom && (
+          <button type="button" aria-label="Editar tipo"
+            onClick={() => { const m = typeIndex[draftType]; setEditingType({ id: m.id, key: draftType, label: m.label, color: m.color, icon: m.icon, fields: m.fields }); setShowTypeForm(true); }}
+            className="shrink-0 text-fg-muted hover:text-tom p-1.5 rounded-sm focus-ring"><Pencil size={15} /></button>
+        )}
       </div>
 
       <div className="text-label uppercase tracking-wide text-fg-muted mb-xs">Aparência</div>
@@ -120,9 +127,12 @@ export function NoteEditor({ note, onSave, onDone, onBack, typeIndex, onCreateTy
       <div className="text-label uppercase tracking-wide text-fg-muted mb-xs">Anotações livres</div>
       <RichEditor valueHtml={draft.body || ''} onChange={(html) => patch({ body: html })} />
 
-      {showTypeForm && (note.group_id || onCreateType) && (
-        <NoteTypeForm groupId={note.group_id} onCreate={onCreateType} onClose={() => setShowTypeForm(false)}
-          onSaved={(key) => { setShowTypeForm(false); changeType(key); }} />
+      {showTypeForm && (note.group_id || onSaveType) && (
+        <NoteTypeForm groupId={note.group_id} editing={editingType}
+          onSaveType={onSaveType} onDeleteType={onDeleteType}
+          onClose={() => setShowTypeForm(false)}
+          onSaved={(key) => { setShowTypeForm(false); changeType(key); }}
+          onDeleted={() => { setShowTypeForm(false); if (draftType === editingType?.key) changeType('livre'); }} />
       )}
     </div>
   );

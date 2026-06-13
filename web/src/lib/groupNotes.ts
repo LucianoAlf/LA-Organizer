@@ -58,15 +58,15 @@ export interface GroupNoteType {
   id: string; group_id: string; key: string; label: string;
   color: string | null; icon: string | null; fields: NoteField[];
 }
-export type TypeMeta = { label: string; color: string; icon: string; fields: NoteField[] };
+export type TypeMeta = { label: string; color: string; icon: string; fields: NoteField[]; id?: string; custom?: boolean };
 export type TypeIndex = Record<string, TypeMeta>;
 
 // 5 base globais + custom (do grupo OU do usuário — só usa key/label/color/icon/fields,
 // então aceita tanto GroupNoteType quanto o tipo pessoal). Custom sobrepõe se mesma key.
-export function buildTypeIndex(custom: Array<Pick<GroupNoteType, 'key' | 'label' | 'color' | 'icon' | 'fields'>> = []): TypeIndex {
+export function buildTypeIndex(custom: Array<Pick<GroupNoteType, 'key' | 'label' | 'color' | 'icon' | 'fields'> & { id?: string }> = []): TypeIndex {
   const idx: TypeIndex = {};
-  for (const t of NOTE_TYPES) idx[t] = { label: NOTE_TYPE_META[t].label, color: TYPE_DEFAULTS[t].color, icon: TYPE_DEFAULTS[t].icon, fields: TEMPLATES[t] };
-  for (const c of custom) idx[c.key] = { label: c.label, color: c.color ?? '#5F5E5A', icon: c.icon ?? 'FileText', fields: Array.isArray(c.fields) ? c.fields : [] };
+  for (const t of NOTE_TYPES) idx[t] = { label: NOTE_TYPE_META[t].label, color: TYPE_DEFAULTS[t].color, icon: TYPE_DEFAULTS[t].icon, fields: TEMPLATES[t], custom: false };
+  for (const c of custom) idx[c.key] = { label: c.label, color: c.color ?? '#5F5E5A', icon: c.icon ?? 'FileText', fields: Array.isArray(c.fields) ? c.fields : [], id: c.id, custom: true };
   return idx;
 }
 export const typeLabel = (type: string, idx?: TypeIndex): string =>

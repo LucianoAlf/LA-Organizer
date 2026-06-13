@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { X, Plus } from 'lucide-react';
+import { X, Plus, Pencil, Trash2 } from 'lucide-react';
 import { NOTE_COLORS, NOTE_ICONS, slugifyType, type NoteField, type FieldKind } from '../../../lib/groupNotes';
 import { useGroupNoteTypes } from '../../../hooks/useGroupNoteTypes';
+import { CustomSelect } from '../../../components/CustomSelect';
 import { NoteGlyph } from './IconRegistry';
 import { Button } from '../../../components/Button';
 import { showToast } from '../../../components/Toast';
@@ -10,18 +11,28 @@ const KINDS: { value: FieldKind; label: string }[] = [
   { value: 'text', label: 'Texto' }, { value: 'password', label: 'Senha' }, { value: 'url', label: 'Link' },
 ];
 
-// Cria um tipo de ficha custom (nome + cor + ícone + campos do modelo).
-// Grupo: passa groupId (usa useGroupNoteTypes). Pessoal: passa onCreate (salva via note_types).
-export function NoteTypeForm({ groupId, onSaved, onClose, onCreate }: {
-  groupId?: string; onSaved: (key: string) => void; onClose: () => void;
-  onCreate?: (t: { key: string; label: string; color: string; icon: string; fields: NoteField[] }) => Promise<string>;
+export interface EditingType { id?: string; key: string; label: string; color: string | null; icon: string | null; fields: NoteField[] }
+
+// Cria OU edita um tipo de ficha custom (nome + cor + ícone + campos do modelo).
+// Grupo: passa groupId (usa useGroupNoteTypes). Pessoal: passa onSaveType/onDeleteType.
+// editing → modo edição (form preenchido) + botão Excluir. A KEY não muda ao editar
+// (senão as fichas que usam o tipo ficariam órfãs).
+export function NoteTypeForm({ groupId, editing, onSaved, onClose, onDeleted, onSaveType, onDeleteType }: {
+  groupId?: string; editing?: EditingType | null;
+  onSaved: (key: string) => void; onClose: () => void; onDeleted?: () => void;
+  onSaveType?: (t: { id?: string; key: string; label: string; color: string; icon: string; fields: NoteField[] }) => Promise<string>;
+  onDeleteType?: (id: string) => Promise<void>;
 }) {
-  const { saveType } = useGroupNoteTypes(groupId ?? '');
-  const [label, setLabel] = useState('');
-  const [color, setColor] = useState<string>(NOTE_COLORS[5]);
-  const [icon, setIcon] = useState<string>('FileText');
-  const [fields, setFields] = useState<NoteField[]>([{ label: '', value: '', kind: 'text' }]);
+  const { saveType, removeType } = useGroupNoteTypes(groupId ?? '');
+  const isEdit = !!(editing && editing.id);
+  const [label, setLabel] = useState(editing?.label || '');
+  const [color, setColor] = useState<string>(editing?.color || NOTE_COLORS[5]);
+  const [icon, setIcon] = useState<string>(editing?.icon || 'FileText');
+  const [fields, setFields] = useState<NoteField[]>(
+    editing?.fields && editing.fields.length ? editing.fields.map((f) => ({ ...f })) : [{ label: '', value: '', kind: 'text' }],
+  );
   const [saving, setSaving] = useState(false);
+  const [removing, setRemoving] = useState(false);
 
   function setField(i: number, p: Partial<NoteField>) { setFields((fs) => fs.map((f, idx) => (idx === i ? { ...f, ...p } : f))); }
   function addField() { setFields((fs) => [...fs, { label: '', value: '', kind: 'text' }]); }
@@ -33,12 +44,26 @@ export function NoteTypeForm({ groupId, onSaved, onClose, onCreate }: {
     setSaving(true);
     try {
       const cleanFields = fields.filter((f) => f.label.trim()).map((f) => ({ label: f.label.trim(), value: '', kind: f.kind || 'text', secret: f.kind === 'password' }));
-      const payload = { key: slugifyType(name), label: name, color, icon, fields: cleanFields };
-      const key = onCreate ? await onCreate(payload) : (await saveType.mutateAsync(payload)).key;
-      onSaved(key);
+      const key = isEdit ? editing!.key : slugifyType(name); // edição: mantém a key
+      const payload = { id: editing?.id, key, label: name, color, icon, fields: cleanFields };
+      const savedKey = onSaveType ? await onSaveType(payload) : (await saveType.mutateAsync(payload)).key;
+      onSaved(savedKey);
     } catch {
-      showToast({ kind: 'error', title: 'Não consegui criar o tipo' });
+      showToast({ kind: 'error', title: isEdit ? 'Não consegui salvar o tipo' : 'Não consegui criar o tipo' });
     } finally { setSaving(false); }
+  }
+
+  async function excluir() {
+    if (!editing?.id) return;
+    if (!window.confirm(`Excluir o tipo "${editing.label}"? Não dá pra desfazer.`)) return;
+    setRemoving(true);
+    try {
+      if (onDeleteType) await onDeleteType(editing.id); else await removeType.mutateAsync(editing.id);
+      onDeleted?.();
+      onClose();
+    } catch {
+      showToast({ kind: 'error', title: 'Não consegui excluir o tipo' });
+    } finally { setRemoving(false); }
   }
 
   const inputCls = 'w-full bg-bg-surface border border-border rounded-md p-2 text-fg focus:outline-none focus:border-tom';
@@ -47,8 +72,8 @@ export function NoteTypeForm({ groupId, onSaved, onClose, onCreate }: {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div className="bg-bg-app border border-border rounded-lg w-full max-w-md max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-sm p-md border-b border-border shrink-0">
-          <Plus size={18} className="text-tom" />
-          <h3 className="text-body-lg font-semibold text-fg flex-1">Novo tipo de ficha</h3>
+          {isEdit ? <Pencil size={18} className="text-tom" /> : <Plus size={18} className="text-tom" />}
+          <h3 className="text-body-lg font-semibold text-fg flex-1">{isEdit ? 'Editar tipo de ficha' : 'Novo tipo de ficha'}</h3>
           <button onClick={onClose} aria-label="Fechar" className="text-fg-muted hover:text-fg p-1 focus-ring rounded-sm"><X size={18} /></button>
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto p-md space-y-md">
@@ -83,10 +108,9 @@ export function NoteTypeForm({ groupId, onSaved, onClose, onCreate }: {
                 <div key={i} className="flex items-center gap-xs">
                   <input value={f.label} onChange={(e) => setField(i, { label: e.target.value })} placeholder="Rótulo do campo"
                     className="flex-1 min-w-0 bg-bg-surface border border-border rounded-md p-1.5 text-body-sm text-fg focus:outline-none focus:border-tom" />
-                  <select value={f.kind || 'text'} onChange={(e) => setField(i, { kind: e.target.value as FieldKind })}
-                    className="shrink-0 bg-bg-surface border border-border rounded-md p-1.5 text-body-sm text-fg focus:outline-none focus:border-tom">
-                    {KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
-                  </select>
+                  <div className="w-28 shrink-0">
+                    <CustomSelect value={f.kind || 'text'} options={KINDS} onChange={(v) => setField(i, { kind: v as FieldKind })} size="sm" />
+                  </div>
                   <button type="button" onClick={() => removeField(i)} aria-label="Remover campo" className="text-fg-muted hover:text-danger p-1 shrink-0 focus-ring rounded-sm"><X size={15} /></button>
                 </div>
               ))}
@@ -94,9 +118,14 @@ export function NoteTypeForm({ groupId, onSaved, onClose, onCreate }: {
             <button type="button" onClick={addField} className="inline-flex items-center gap-1 text-body-sm text-tom mt-xs focus-ring rounded-sm"><Plus size={14} /> Adicionar campo</button>
           </div>
         </div>
-        <div className="flex items-center justify-end gap-sm p-md border-t border-border shrink-0">
-          <Button variant="secondary" size="md" onClick={onClose}>Cancelar</Button>
-          <Button variant="primary" size="md" onClick={save} loading={saving}>Criar tipo</Button>
+        <div className="flex items-center justify-between gap-sm p-md border-t border-border shrink-0">
+          {isEdit
+            ? <Button variant="ghost" size="md" onClick={excluir} loading={removing} leadingIcon={<Trash2 size={15} />}>Excluir</Button>
+            : <span />}
+          <div className="flex items-center gap-sm">
+            <Button variant="secondary" size="md" onClick={onClose}>Cancelar</Button>
+            <Button variant="primary" size="md" onClick={save} loading={saving}>{isEdit ? 'Salvar' : 'Criar tipo'}</Button>
+          </div>
         </div>
       </div>
     </div>
