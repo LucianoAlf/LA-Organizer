@@ -18,15 +18,22 @@ if (-not (Test-Path (Join-Path $workDir ".git"))) {
     git -C $workDir reset --hard origin/main --quiet 2>$null
 }
 
-# 2. Sincronizar diretorios de _remote para o clone
-#    Usa /E (recursivo sem /MIR) para nao deletar arquivos so existentes no repo.
+# 2. Sincronizar diretorios de _remote para o clone.
+#    /E (sem deletar) para a maioria: src/skills/etc. podem ter arquivos so-no-repo/VPS
+#    (ver project_local_vps_desync, ex.: src/supabase/client.js) que NAO devem sumir.
+#    /MIR (espelha delecoes) SO para web/src: e 100% fonte-de-verdade local e e o que o
+#    `tsc -b` da Vercel compila — sem /MIR, arquivo deletado local fica orfao no repo e
+#    quebra o build (caso GROUPCHAT-GROUP-NOTES-V2 / DEPLOY-ORPHAN-TSC). Seguro porque o
+#    web/src local compila sozinho: nada local depende de arquivo so-no-repo.
 $dirs = @("web/src", "web/public", "web/api", "skills", "src", "migrations", "docs", "scripts")
+$mirrorDirs = @("web/src")
 
 foreach ($d in $dirs) {
     $src = Join-Path $srcRoot ($d -replace "/", "\")
     $dst = Join-Path $workDir ($d -replace "/", "\")
     if (Test-Path $src) {
-        robocopy $src $dst /E /XD node_modules .git dist /NFL /NDL /NJH /NJS /nc /ns /np 2>$null | Out-Null
+        $mode = if ($mirrorDirs -contains $d) { "/MIR" } else { "/E" }
+        robocopy $src $dst $mode /XD node_modules .git dist /NFL /NDL /NJH /NJS /nc /ns /np 2>$null | Out-Null
     }
 }
 
