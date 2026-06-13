@@ -262,6 +262,8 @@ export function BillSheet({ open, onClose, initial }: BillSheetProps) {
             )}
           </div>
         </div>
+
+        {isEdit && initial && <BillPaymentHistory billId={initial.id} />}
       </div>
     </AdaptiveSheet>
   );
