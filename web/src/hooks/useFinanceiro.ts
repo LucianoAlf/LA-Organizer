@@ -113,10 +113,11 @@ export function useBudgets(monthYear?: string) {
 export function useSummary(monthYear?: string) {
   const tx = useTransactions(monthYear ? { monthYear } : undefined);
   if (!tx.data) return { ...tx, summary: undefined };
-  // Caixa (receitas/despesas/saldo): EXCLUI compras no cartão (vivem na fatura) E ajustes de saldo (acerto de caixa, não é receita/despesa real).
-  const cash = tx.data.filter((r) => !r.card_id && !r.is_adjustment);
-  const receitas = cash.filter((r) => r.type === 'income').reduce((s, r) => s + Number(r.amount), 0);
-  const despesas = cash.filter((r) => r.type === 'expense').reduce((s, r) => s + Number(r.amount), 0);
+  // Regime de caixa (Rose): INCLUI cartão — o gasto conta no mês do VENCIMENTO da fatura
+  // (cashflow_competencia já = vencimento). Exclui só ajustes de saldo (acerto de caixa, não é despesa real).
+  const real = tx.data.filter((r) => !r.is_adjustment);
+  const receitas = real.filter((r) => r.type === 'income').reduce((s, r) => s + Number(r.amount), 0);
+  const despesas = real.filter((r) => r.type === 'expense').reduce((s, r) => s + Number(r.amount), 0);
   // Gastos por categoria: INCLUI cartão (você quer ver onde gasta), mas EXCLUI ajustes.
   const porCat: Record<string, number> = {};
   for (const r of tx.data) if (r.type === 'expense' && !r.is_adjustment) porCat[r.category] = (porCat[r.category] || 0) + Number(r.amount);

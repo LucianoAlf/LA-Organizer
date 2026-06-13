@@ -61,6 +61,24 @@ export function RichEditor({ valueHtml, onChange }: { valueHtml: string; onChang
     setPreview(null);
   }
 
+  // Se nada está selecionado, seleciona a palavra sob o cursor — assim cor/link aplicam
+  // numa palavra com um clique só (sem precisar selecionar manualmente antes).
+  function ensureSelection() {
+    const sel = editor!.state.selection;
+    if (!sel.empty) return;
+    const { from } = sel;
+    const $pos = editor!.state.doc.resolve(from);
+    const text = $pos.parent.textContent || '';
+    const off = $pos.parentOffset;
+    let start = off, end = off;
+    while (start > 0 && /\S/.test(text[start - 1])) start--;
+    while (end < text.length && /\S/.test(text[end])) end++;
+    if (end > start) {
+      const base = from - off;
+      editor!.chain().setTextSelection({ from: base + start, to: base + end }).run();
+    }
+  }
+
   const btn = (active: boolean) =>
     `grid place-items-center w-8 h-8 rounded-md border shrink-0 focus-ring ${active ? 'border-tom text-tom' : 'border-border text-fg-muted hover:text-fg'}`;
 
@@ -73,9 +91,14 @@ export function RichEditor({ valueHtml, onChange }: { valueHtml: string; onChang
         <button type="button" aria-label="Lista" className={btn(editor.isActive('bulletList'))} onClick={() => editor.chain().focus().toggleBulletList().run()}><List size={15} /></button>
         <button type="button" aria-label="Cor do texto" className={btn(colorOpen)} onClick={() => setColorOpen((o) => !o)}><Palette size={15} /></button>
         <button type="button" aria-label="Link" className={btn(editor.isActive('link'))} onClick={() => {
-          const url = window.prompt('URL do link:');
-          if (url) editor.chain().focus().setLink({ href: url }).run();
-          else editor.chain().focus().unsetLink().run();
+          const prev = editor.getAttributes('link').href as string | undefined;
+          const url = window.prompt('URL do link:', prev || '');
+          if (url === null) return;                 // cancelou
+          if (url === '') { editor.chain().focus().extendMarkRange('link').unsetLink().run(); return; }
+          ensureSelection();
+          const { from, to } = editor.state.selection;
+          if (from === to) editor.chain().focus().insertContent(`<a href="${url}">${url}</a>`).run();
+          else editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run();
         }}><Link2 size={15} /></button>
 
         <div className="ml-auto relative">
@@ -94,7 +117,7 @@ export function RichEditor({ valueHtml, onChange }: { valueHtml: string; onChang
         {colorOpen && (
           <div className="absolute left-0 top-full mt-1 z-30 flex flex-wrap items-center gap-xs p-2 bg-bg-elevated border border-border rounded-md shadow-lg w-60">
             {NOTE_COLORS.map((c) => (
-              <button key={c} type="button" aria-label={`Cor ${c}`} onClick={() => { editor.chain().focus().setColor(c).run(); setColorOpen(false); }} className="w-6 h-6 rounded-full focus-ring shrink-0" style={{ background: c }} />
+              <button key={c} type="button" aria-label={`Cor do texto ${c}`} onClick={() => { ensureSelection(); editor.chain().focus().setColor(c).run(); setColorOpen(false); }} className="w-6 h-6 rounded-full focus-ring shrink-0" style={{ background: c }} />
             ))}
             <button type="button" onClick={() => { editor.chain().focus().unsetColor().run(); setColorOpen(false); }} className="text-caption text-fg-muted px-2">limpar</button>
           </div>

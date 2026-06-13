@@ -11,7 +11,7 @@ import {
 } from '../../hooks/useFinanceiro';
 import { useFinanceiroAuth } from '../../hooks/useFinanceiro';
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
-import { currentCompetencia, type PfCard } from '../../lib/cartoes';
+import { currentCompetencia, nextDueLabel, type PfCard } from '../../lib/cartoes';
 
 const fmtBRL = (v: number) =>
   'R$ ' + Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -39,7 +39,7 @@ function CardTile({ card }: { card: PfCard }) {
           <span className="w-8 h-8 rounded-md flex items-center justify-center text-sm" style={{ background: color }}>💳</span>
           <div>
             <div className="font-semibold text-fg">{card.name}</div>
-            <div className="text-label text-fg-muted">vence dia {card.due_day} · fecha em {daysUntil(card.closing_day)}d</div>
+            <div className="text-label text-fg-muted">vence {nextDueLabel(card.due_day)} · fecha em {daysUntil(card.closing_day)}d</div>
           </div>
         </div>
         <span className="text-label px-2 py-0.5 rounded-full bg-bg-elevated text-fg-muted">{pct}%</span>

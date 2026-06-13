@@ -14,11 +14,11 @@ function brl(n: number) {
   return n.toLocaleString('pt-BR', { maximumFractionDigits: 0 });
 }
 
-// Item de cartão é bucketizado pela FATURA (competência), não pela data da compra → mostra "fatura mês/ano".
+// Item de cartão cai no mês do VENCIMENTO da fatura (cashflow_competencia = competência+1) → "vence mês/ano".
 function cashflowLabel(t: PfTransaction): string {
-  if (t.card_id && t.competencia) {
-    const m = parseInt(t.competencia.slice(5, 7), 10) - 1;
-    return `fatura ${PT_MONTHS[m]}/${t.competencia.slice(0, 4)}`;
+  if (t.card_id && t.cashflow_competencia) {
+    const m = parseInt(t.cashflow_competencia.slice(5, 7), 10) - 1;
+    return `vence ${PT_MONTHS[m]}/${t.cashflow_competencia.slice(0, 4)}`;
   }
   return t.transaction_date;
 }

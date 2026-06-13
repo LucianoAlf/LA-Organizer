@@ -11,7 +11,7 @@ import {
   useCreateCardPurchase, useDeactivateCard, useDeleteTransaction,
 } from '../../hooks/useFinanceiro';
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
-import { addMonthsToCompetencia, currentCompetencia, mesDaCompetencia, type CardInvoiceItem } from '../../lib/cartoes';
+import { addMonthsToCompetencia, currentCompetencia, mesDaCompetencia, nextDueLabel, type CardInvoiceItem } from '../../lib/cartoes';
 import type { PfTransaction } from '../../lib/financeiro';
 import { CartaoSheet } from './components/CartaoSheet';
 import { PagarFaturaSheet } from './components/PagarFaturaSheet';
@@ -195,8 +195,8 @@ export function CartaoDetalhePage() {
           <div className="font-semibold text-fg">{card.closing_day}</div>
         </div>
         <div className="rounded-md border border-border bg-bg-surface p-3">
-          <div className="text-label text-fg-muted">Vence dia</div>
-          <div className="font-semibold text-fg">{card.due_day}</div>
+          <div className="text-label text-fg-muted">Vencimento</div>
+          <div className="font-semibold text-fg">{nextDueLabel(card.due_day)}</div>
         </div>
       </div>
 

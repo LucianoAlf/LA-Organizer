@@ -34,6 +34,14 @@ export function mesDaCompetencia(comp: string): string {
   return MES[parseInt(comp.slice(5, 7), 10) - 1] ?? '';
 }
 
+// Próximo vencimento (DD/MM) a partir de hoje, dado o dia de vencimento do cartão (data local,
+// sem UTC shift). Resolve "vence dia 6 — mas é 6 de junho ou julho?" mostrando a data cheia.
+export function nextDueLabel(dueDay: number, today = new Date()): string {
+  const d = today.getDate();
+  const due = new Date(today.getFullYear(), d <= dueDay ? today.getMonth() : today.getMonth() + 1, dueDay);
+  return `${String(due.getDate()).padStart(2, '0')}/${String(due.getMonth() + 1).padStart(2, '0')}`;
+}
+
 export function addMonthsToCompetencia(compStr: string, n: number): string {
   const d = new Date(compStr + 'T00:00:00Z');
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + n, 1)).toISOString().slice(0, 10);
