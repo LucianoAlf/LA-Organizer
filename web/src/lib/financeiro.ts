@@ -168,6 +168,32 @@ export async function listAccountLedger(collaboratorId: string, accountId: strin
   return items;
 }
 
+// Saldo no FIM do mês selecionado (âncora de conciliação) = saldo ATUAL − movimentos APÓS o mês.
+// Inclui lançamentos (com ajustes, que mexem no saldo), transferências e pagamentos de fatura —
+// as 3 fontes que o trigger de saldo considera. Mês atual ≈ saldo atual (sem movimentos futuros).
+export async function accountBalanceAtMonthEnd(collaboratorId: string, accountId: string, monthYear: string, currentBalance: number): Promise<number> {
+  const { end } = monthBoundsFromYYYYMM(monthYear);
+  const dayOf = (primary: string | null, fallbackTs: string | null) => primary || (fallbackTs ? fallbackTs.slice(0, 10) : '');
+  const [txRes, trRes, payRes] = await Promise.all([
+    supabase.from('pf_transactions').select('type, amount, transaction_date')
+      .eq('collaborator_id', collaboratorId).eq('account_id', accountId).gte('transaction_date', end),
+    supabase.from('pf_transfers').select('amount, transfer_date, created_at, from_account, to_account')
+      .eq('collaborator_id', collaboratorId).or(`from_account.eq.${accountId},to_account.eq.${accountId}`),
+    supabase.from('pf_card_payments').select('amount, paid_at, created_at')
+      .eq('collaborator_id', collaboratorId).eq('paid_from_account', accountId),
+  ]);
+  for (const r of [txRes, trRes, payRes]) if (r.error) throw r.error;
+  let net = 0; // soma assinada dos movimentos com data >= fim do mês (que ainda estão no saldo atual)
+  for (const t of (txRes.data ?? []) as { type: PfTxType; amount: number }[]) net += t.type === 'income' ? Number(t.amount) : -Number(t.amount);
+  for (const tr of (trRes.data ?? []) as { amount: number; transfer_date: string | null; created_at: string | null; from_account: string; to_account: string }[]) {
+    if (dayOf(tr.transfer_date, tr.created_at) >= end) net += tr.to_account === accountId ? Number(tr.amount) : -Number(tr.amount);
+  }
+  for (const p of (payRes.data ?? []) as { amount: number; paid_at: string | null; created_at: string | null }[]) {
+    if (dayOf(p.paid_at, p.created_at) >= end) net -= Number(p.amount);
+  }
+  return currentBalance - net;
+}
+
 export async function deactivateAccount(collaboratorId: string, id: string) {
   const { error } = await supabase.from('pf_accounts').update({ is_active: false })
     .eq('id', id).eq('collaborator_id', collaboratorId);

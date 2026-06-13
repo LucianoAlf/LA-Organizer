@@ -1,3 +1,4 @@
+import { marked } from 'marked';
 import { supabase } from './supabase';
 
 export type NoteType = 'acesso' | 'cnpj' | 'conta' | 'reuniao' | 'livre';
@@ -118,6 +119,16 @@ export function allTags(notes: GroupNote[]): string[] {
 export function noteExcerpt(body: string, max = 120): string {
   const plain = (body || '').replace(/[#*`>_\-]/g, '').replace(/\s+/g, ' ').trim();
   return plain.length > max ? plain.slice(0, max - 1) + '…' : plain;
+}
+
+// Render compatível: se o body já é HTML (editor TipTap), usa direto; senão trata como
+// markdown (notas legadas + o que o TOM escreve em texto). Retorna HTML NÃO sanitizado —
+// o caller aplica DOMPurify (NoteDetail/RichEditor/FormatPreview já fazem).
+export function bodyToHtml(body: string): string {
+  const s = body || '';
+  if (!s.trim()) return '';
+  const looksHtml = /<[a-z][\s\S]*>/i.test(s);
+  return looksHtml ? s : (marked.parse(s, { async: false, breaks: true }) as string);
 }
 
 // ── I/O ──

@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Button } from '../../components/Button';
 import {
-  useAccounts, useAccountLedger, useCategoryLookup, useFinanceiroAuth, useSetPrimaryAccount,
+  useAccounts, useAccountLedger, useAccountBalanceAtMonthEnd, useCategoryLookup, useFinanceiroAuth, useSetPrimaryAccount,
 } from '../../hooks/useFinanceiro';
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
 import { BANKS } from '../../lib/banks';
@@ -44,6 +44,7 @@ export function CarteiraDetalhePage() {
   const acc = accountsQ.data?.find((a) => a.id === id);
   const [monthYear, setMonthYear] = useState(localYm());
   const ledgerQ = useAccountLedger(id, monthYear);
+  const saldoFimQ = useAccountBalanceAtMonthEnd(id, monthYear, acc ? Number(acc.balance) : undefined);
   const cat = useCategoryLookup();
   const setPrimary = useSetPrimaryAccount();
 
@@ -147,6 +148,12 @@ export function CarteiraDetalhePage() {
               className="w-7 h-7 rounded-md border border-border bg-bg-surface text-fg hover:bg-bg-elevated focus-ring">›</button>
           </div>
         </div>
+        {saldoFimQ.data != null && (
+          <div className="rounded-md bg-bg-elevated border border-border px-3 py-2 flex items-baseline justify-between">
+            <span className="text-label text-fg-muted uppercase tracking-wide">🏦 Saldo no fim de {monthLabel}</span>
+            <span className="text-body-md font-semibold text-fg tabular-nums">{fmtBRL(saldoFimQ.data)}</span>
+          </div>
+        )}
         {ledgerQ.isLoading && <p className="text-fg-muted text-body-sm">Carregando…</p>}
         {!ledgerQ.isLoading && items.length === 0 && (
           <p className="text-fg-muted text-body-sm">Sem movimentações em {monthLabel}.</p>

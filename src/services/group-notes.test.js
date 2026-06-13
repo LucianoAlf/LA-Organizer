@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { createGroupNote, appendGroupNote, groupNotesContext } = require('./group-notes');
+const { createGroupNote, appendGroupNote, groupNotesContext, htmlToPlain, renderNoteContent } = require('./group-notes');
 
 function fakeDb({ notes = [] } = {}) {
   const ev = [];
@@ -82,4 +82,25 @@ test('groupNotesContext: fields da fixada entram (TOM lê a senha)', async () =>
   const ctx = await groupNotesContext({ supabase: sb, groupId: 'g1' });
   assert.ok(ctx.includes('Login: a@b'));
   assert.ok(ctx.includes('Senha: segredo123'));   // secret NÃO é mascarado no prompt server-side
+});
+
+// Fatia B — body vira HTML (editor TipTap); htmlToPlain limpa antes de ir pro prompt.
+test('htmlToPlain: tira tags e mantém o texto', () => {
+  assert.strictEqual(htmlToPlain('<p>Senha: <strong>123</strong></p>'), 'Senha: 123');
+});
+test('htmlToPlain: <br> e </p> viram quebra de linha', () => {
+  assert.strictEqual(htmlToPlain('<p>a</p><p>b</p>'), 'a\nb');
+  assert.strictEqual(htmlToPlain('a<br>b'), 'a\nb');
+});
+test('htmlToPlain: decodifica entidades básicas', () => {
+  assert.strictEqual(htmlToPlain('a &amp; b &lt;x&gt;'), 'a & b <x>');
+});
+test('htmlToPlain: texto puro (sem tags) passa intacto', () => {
+  assert.strictEqual(htmlToPlain('só texto'), 'só texto');
+});
+test('renderNoteContent: usa htmlToPlain no body (sem tags no prompt)', () => {
+  const out = renderNoteContent({ fields: [{ label: 'Login', value: 'a@b' }], body: '<p>obs <strong>x</strong></p>' });
+  assert.ok(out.includes('Login: a@b'));
+  assert.ok(out.includes('obs x'));
+  assert.ok(!out.includes('<'), 'nenhuma tag HTML no prompt');
 });

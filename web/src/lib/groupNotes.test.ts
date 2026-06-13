@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { filterNotes, typesWithCount, allTags, noteExcerpt, templateFor, cardSubtitle, TEMPLATES, resolveColor, resolveIcon, renumber, TYPE_DEFAULTS, type GroupNote } from './groupNotes';
+import { filterNotes, typesWithCount, allTags, noteExcerpt, templateFor, cardSubtitle, TEMPLATES, resolveColor, resolveIcon, renumber, TYPE_DEFAULTS, bodyToHtml, type GroupNote } from './groupNotes';
 
 const N = (o: Partial<GroupNote>): GroupNote => ({ id: 'x', group_id: 'g', type: 'livre', category: 'Geral', tags: [], title: '', body: '', fields: [], pinned: false, sort_order: 0, color: null, icon: null, created_by: null, updated_by: null, created_at: '', updated_at: '', ...o });
 
@@ -53,5 +53,21 @@ describe('aparência + reorder (Fatia A)', () => {
     expect(renumber([N({ id: 'a' }), N({ id: 'b' }), N({ id: 'c' })])).toEqual([
       { id: 'a', sort_order: 1 }, { id: 'b', sort_order: 2 }, { id: 'c', sort_order: 3 },
     ]);
+  });
+});
+
+describe('bodyToHtml (compat HTML/markdown)', () => {
+  it('HTML já formatado passa direto', () => {
+    expect(bodyToHtml('<p>oi <strong>Rose</strong></p>')).toBe('<p>oi <strong>Rose</strong></p>');
+  });
+  it('markdown legado vira HTML', () => {
+    expect(bodyToHtml('**oi**')).toContain('<strong>oi</strong>');
+  });
+  it('texto puro com quebra vira HTML com <br> (breaks)', () => {
+    expect(bodyToHtml('linha 1\nlinha 2')).toContain('<br');
+  });
+  it('vazio ou só espaço → string vazia', () => {
+    expect(bodyToHtml('')).toBe('');
+    expect(bodyToHtml('   ')).toBe('');
   });
 });

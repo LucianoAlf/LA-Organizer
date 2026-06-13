@@ -43,6 +43,16 @@ async function appendGroupNote({ supabase, groupId, updatedBy, title, body }) {
   return { appended: true, id: hit.id };
 }
 
+// Converte HTML em texto plano pro prompt (body agora pode ser HTML do editor TipTap).
+function htmlToPlain(s) {
+  return String(s || '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|li|h[1-6])>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 // Renderiza o conteúdo de uma ficha pro prompt: campos (label: value) + observações livres.
 // Sem mascarar secret — é o prompt server-side; é justamente onde o TOM lê a senha pra responder.
 function renderNoteContent(n) {
@@ -50,7 +60,7 @@ function renderNoteContent(n) {
   for (const f of n.fields || []) {
     if (f && (f.label || f.value)) lines.push(`${f.label || '—'}: ${f.value || ''}`.trim());
   }
-  if (n.body) lines.push(String(n.body).trim());
+  if (n.body) lines.push(htmlToPlain(n.body));
   return lines.join('\n');
 }
 
@@ -67,4 +77,4 @@ async function groupNotesContext({ supabase, groupId }) {
   return out;
 }
 
-module.exports = { createGroupNote, appendGroupNote, groupNotesContext, NOTE_TYPES, sanitizeFields };
+module.exports = { createGroupNote, appendGroupNote, groupNotesContext, NOTE_TYPES, sanitizeFields, htmlToPlain, renderNoteContent };

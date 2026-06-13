@@ -187,6 +187,14 @@ export function useAccountLedger(accountId: string | undefined, monthYear: strin
     enabled: !!cid && !!accountId,
   });
 }
+export function useAccountBalanceAtMonthEnd(accountId: string | undefined, monthYear: string, currentBalance: number | undefined) {
+  const cid = useFinanceiroAuth();
+  return useQuery({
+    queryKey: [...KEY, 'acct-bal-end', accountId, cid, monthYear, currentBalance ?? null],
+    queryFn: () => fin.accountBalanceAtMonthEnd(cid!, accountId!, monthYear, currentBalance ?? 0),
+    enabled: !!cid && !!accountId && currentBalance != null,
+  });
+}
 
 // ---- Cartões de crédito ----
 export function useCards() {
