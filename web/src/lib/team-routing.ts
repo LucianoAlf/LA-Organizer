@@ -76,9 +76,10 @@ export function resolveLeaderIdsOf(collab: Collab, allCollabs: Collab[]): string
 }
 
 /** Espelho de src/services/leader-routing.js governanceViewerIdsOf — manter idêntico.
- * Quem VÊ a tarefa na governança = o delegador explícito (governance_owner_id),
- * OU, se a tarefa é solta (NULL), o gerente da unidade do dono + arestas manuais.
- * Retorna array de collaborator ids. Vazio → caller cai no CEO.
+ * DELEGADA (governance_owner_id) → só o delegador. SOLTA (NULL) → os líderes do DONO pela
+ * MESMA regra de evento/time (resolveLeaderIdsOf): unidade REAL→gerente + group_leaders +
+ * arestas + CEO. NÃO tratar o sentinel unit='all' como unidade real (vazamento 14/06: Yuri
+ * unit='all' herdava a atrasada de todo unit='all'). Vazio → caller cai no CEO.
  */
 export function governanceViewerIdsOf(
   task: { governance_owner_id?: string | null; assigned_to: string },
@@ -86,19 +87,8 @@ export function governanceViewerIdsOf(
   allCollabs: Collab[],
 ): string[] {
   if (task && task.governance_owner_id) return [task.governance_owner_id];
-  const list = Array.isArray(allCollabs) ? allCollabs : [];
-  const ids = new Set<string>();
-  const unit = owner && owner.unit ? owner.unit : null;
-  if (unit) {
-    for (const c of list) {
-      if (c.role === 'manager' && c.unit === unit && c.is_active !== false && !c.is_ceo) ids.add(c.id);
-    }
-  }
-  for (const lid of ((owner && owner.explicit_leader_ids) || [])) {
-    const L = list.find((c) => c.id === lid);
-    if (L) ids.add(lid);
-  }
-  return [...ids];
+  if (!owner) return [];
+  return resolveLeaderIdsOf(owner, allCollabs);
 }
 
 /** Inversa: todos os colaboradores ativos cujo conjunto de líderes inclui `leader`. */
