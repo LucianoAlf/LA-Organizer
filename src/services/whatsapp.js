@@ -14,24 +14,51 @@ const api = axios.create({
   timeout: 15000,
 });
 
+const SEND_RETRIES = 2;             // tentativas EXTRA além da 1ª (total 3)
+const SEND_RETRY_DELAY_MS = 1500;   // backoff: 1.5s, depois 3s
+const _sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// A UAZAPI dá 404 INTERMITENTE no /send/text (resolução de número/chat) — visto desde 22/05 com
+// vários números. 404/408/429/5xx e falhas de rede (sem status) são transitórios → re-tentar entrega.
+// 400/401/403 (payload/token inválido) NÃO: re-tentar não muda. Em 404 a UAZAPI respondeu "não enviei",
+// então o retry não duplica.
+function isRetriableSendError(err) {
+  const status = err.response && err.response.status;
+  if (!status) return true; // timeout/ECONNRESET/DNS — sem resposta
+  if (status === 404 || status === 408 || status === 429) return true;
+  if (status >= 500 && status < 600) return true;
+  return false;
+}
+
 /**
- * Envia mensagem de texto via WhatsApp
+ * Envia mensagem de texto via WhatsApp (com retry em falha transitória da UAZAPI).
  */
 async function sendMessage(phone, text) {
-  try {
-    // QA log — capped at 200 chars to avoid log spam, helps catch leaks in pm2 logs.
-    console.log('[OUT]', String(text || '').substring(0, 200));
-    const response = await api.post('/send/text', {
-      number: phone,
-      text: text,
-      readchat: true,
-    });
-    console.log(`[WhatsApp] Mensagem enviada pra ${phone.slice(-4)}`);
-    return response.data;
-  } catch (err) {
-    console.error(`[WhatsApp] Erro ao enviar pra ${phone}: ${err.message}`);
-    throw err;
+  // QA log — capped at 200 chars to avoid log spam, helps catch leaks in pm2 logs.
+  console.log('[OUT]', String(text || '').substring(0, 200));
+  let lastErr;
+  for (let attempt = 0; attempt <= SEND_RETRIES; attempt++) {
+    try {
+      const response = await api.post('/send/text', {
+        number: phone,
+        text: text,
+        readchat: true,
+      });
+      console.log(`[WhatsApp] Mensagem enviada pra ${phone.slice(-4)}${attempt ? ` (tentativa ${attempt + 1})` : ''}`);
+      return response.data;
+    } catch (err) {
+      lastErr = err;
+      const status = (err.response && err.response.status) || 'none';
+      const body = err.response && err.response.data ? JSON.stringify(err.response.data).slice(0, 300) : '';
+      console.error(`[WhatsApp] Erro ao enviar pra ${phone} (tentativa ${attempt + 1}/${SEND_RETRIES + 1}): status=${status} ${err.message} ${body}`);
+      if (attempt < SEND_RETRIES && isRetriableSendError(err)) {
+        await _sleep(SEND_RETRY_DELAY_MS * (attempt + 1));
+        continue;
+      }
+      throw err;
+    }
   }
+  throw lastErr;
 }
 
 /**
