@@ -1,6 +1,7 @@
 // src/services/pluggy-reconcile.js — classifica o staging pending: matched/internal/noise/pending.
 // require supabase LAZY. (Fase D / D2)
 const { classify } = require('../finance/reconcile');
+const { emojiForPluggyCat, cleanLabel, ddmm } = require('../finance/reconcile-report');
 
 async function reconcileStaging(collaboratorId) {
   const supabase = require('../supabase/client');
@@ -31,4 +32,23 @@ async function reconcileStaging(collaboratorId) {
   }
   return counts;
 }
-module.exports = { reconcileStaging };
+// Dados do relatório: contagem de conciliados + top-N pendentes recentes (já formatados) + backlog.
+async function reconcileReportData(collaboratorId, { topN = 6 } = {}) {
+  const supabase = require('../supabase/client');
+  const cnt = async (status) => (await supabase.from('pf_pluggy_transactions')
+    .select('*', { count: 'exact', head: true }).eq('collaborator_id', collaboratorId).eq('status', status)).count || 0;
+  const conciliadoCount = await cnt('matched');
+  const pendingTotal = await cnt('pending');
+  const { data: top } = await supabase.from('pf_pluggy_transactions')
+    .select('amount, direction, posted_date, description, pluggy_category')
+    .eq('collaborator_id', collaboratorId).eq('status', 'pending')
+    .order('posted_date', { ascending: false }).limit(topN);
+  const pendentes = (top || []).map((r) => ({
+    emoji: emojiForPluggyCat(r.pluggy_category, r.direction),
+    amount: Number(r.amount), direction: r.direction,
+    label: cleanLabel(r.description), date: ddmm(r.posted_date),
+  }));
+  return { conciliadoCount, pendentes, pendingTotal, backlogExtra: Math.max(0, pendingTotal - pendentes.length) };
+}
+
+module.exports = { reconcileStaging, reconcileReportData };

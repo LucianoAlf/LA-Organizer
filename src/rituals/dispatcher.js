@@ -456,6 +456,69 @@ async function checkFinanceProactive(now) {
   }
 }
 
+// Quem conectou Pluggy (tem item ativo) — alvo dos rituais de conciliação.
+async function collaboratorsWithPluggy() {
+  const { data: items } = await supabase.from('pf_pluggy_items').select('collaborator_id').eq('is_active', true);
+  const ids = [...new Set((items || []).map((i) => i.collaborator_id))];
+  if (!ids.length) return [];
+  const { data: collabs } = await supabase.from('collaborators').select('id, full_name, phone').in('id', ids);
+  return (collabs || []).filter((c) => c.phone);
+}
+
+// Conciliação proativa Pluggy — 12h (toque leve, só pendente gordo) e 18h (relatório completo + coaching).
+async function checkPluggyReconcile(now) {
+  const ymd = now.ymd || nowSaoPaulo().ymd;
+  const isNoon = currentSlot(now) === timeToSlot('12:00');
+  const isEvening = currentSlot(now) === timeToSlot('18:00');
+  if (!isNoon && !isEvening) return;
+  const ritualType = isNoon ? 'pluggy_reconcile_noon' : 'pluggy_reconcile_daily';
+  const whatsapp = require('../services/whatsapp');
+  const financeService = require('../services/financeiro-service');
+  const { syncPluggy } = require('../services/pluggy-sync');
+  const { reconcileStaging, reconcileReportData } = require('../services/pluggy-reconcile');
+  const { sumBankBalances } = require('../services/pluggy-query');
+  const { buildReconcileReport, buildNoonNudge } = require('../finance/reconcile-report');
+  const { computeHealthScore } = require('../finance/health-score');
+  const { buildHealthScoreLine } = require('../finance/ritual-messages');
+
+  for (const c of await collaboratorsWithPluggy()) {
+    if (await alreadySent(c.id, ritualType, ymd)) continue;
+    let msg = '';
+    try {
+      await syncPluggy(c.id);
+      await reconcileStaging(c.id);
+      const data = await reconcileReportData(c.id, { topN: isNoon ? 3 : 6 });
+      const nome = String(c.full_name || '').split(' ')[0];
+      if (isNoon) {
+        const gordos = data.pendentes.filter((p) => p.amount >= 200);
+        msg = buildNoonNudge({ nome, pendentes: gordos });
+      } else {
+        const rep = await financeService.monthlyReport(c.id);
+        const goals = await financeService.listGoals(c.id);
+        const credit = await financeService.creditUtilization(c.id);
+        const hs = computeHealthScore({ receitas: rep.receitas, despesas: rep.despesas, credit, goals });
+        const saldoReal = await sumBankBalances(c.id).catch(() => null);
+        msg = buildReconcileReport({
+          nome, conciliadoCount: data.conciliadoCount, pendentes: data.pendentes,
+          backlogExtra: data.backlogExtra, healthLine: buildHealthScoreLine(hs), saldoReal,
+        });
+      }
+    } catch (e) { console.error('[checkPluggyReconcile] build', c.full_name, e.message); continue; }
+    if (!msg) continue; // nada relevante → silêncio (sem spam)
+    const q = await isQuietNow(c.id, now, 'personal');
+    if (q.quiet) { await logRitualEvent(c.id, ritualType, 'skipped', `quiet:${q.reason}`, ymd); continue; }
+    const claim = await claimRitualSend(supabase, c.id, ritualType, ymd);
+    if (!claim.won) { if (!claim.duplicate) await logRitualEvent(c.id, ritualType, 'error', `claim_err:${claim.code || ''}`, ymd); continue; }
+    try {
+      await whatsapp.sendMessage(c.phone, msg);
+    } catch (err) {
+      console.error('[checkPluggyReconcile]', c.full_name, err.message);
+      if (isTransientRitualError(err)) await rollbackRitualClaim(supabase, claim.id);
+      await logRitualEvent(c.id, ritualType, 'error', err.message, ymd);
+    }
+  }
+}
+
 // Ritual financeiro mensal — dia 10, 18h BRT.
 async function checkFinanceMonthly(now) {
   const ymd = now.ymd || nowSaoPaulo().ymd;
@@ -4116,6 +4179,7 @@ async function run(opts = {}) {
   try { await checkFinanceMonthly(now);        } catch (e) { console.error('[run] financeMonthly', e); }
   try { await checkFinanceReport(now);         } catch (e) { console.error('[run] financeReport', e); }
   try { await checkFinanceProactive(now);      } catch (e) { console.error('[run] financeProactive', e); }
+  try { await checkPluggyReconcile(now);       } catch (e) { console.error('[run] pluggyReconcile', e); }
   try { await checkCardLimitAlerts(now);       } catch (e) { console.error('[run] cardLimitAlerts', e); }
 
   // Sprint 15 F4 — Briefing operacional semanal por departamento (segunda 07:30 BRT)
