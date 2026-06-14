@@ -104,29 +104,27 @@ function groupLeaderIdsFor(collab, groupLeaders) {
 }
 
 /**
- * Quem VÊ a tarefa na governança = o delegador explícito (governance_owner_id),
- * OU, se a tarefa é solta (NULL), o gerente da unidade do dono + arestas manuais.
+ * Quem VÊ a tarefa na governança:
+ *   • DELEGADA (governance_owner_id) → SÓ o delegador (fatiamento por delegação).
+ *   • SOLTA (NULL) → os LÍDERES DO DONO pela MESMA regra que roteia eventos e define
+ *     o time (resolveLeaderIdsOf: unidade REAL→gerente + group_leaders + arestas + CEO).
+ *
+ * Antes esta função tinha lógica PRÓPRIA de "gerente da unidade" com `if (unit)` que
+ * tratava o sentinel unit='all' (= sem unidade física) como unidade real → todo manager
+ * unit='all' (Yuri/Rose/Ana) herdava a atrasada de QUALQUER pessoa unit='all', e o próprio
+ * dono-gerente aparecia como viewer de si. Caso 14/06 (Yuri/marketing via pedagógico).
+ * Unificar com resolveLeaderIdsOf mata o vazamento, o sub-escopo (faltava group_leaders)
+ * e a auto-inclusão — e garante tasks×eventos×time SEMPRE coerentes (uma fonte de verdade).
  * Retorna array de collaborator ids. Vazio → caller cai no CEO.
  * @param {{governance_owner_id?: string|null, assigned_to: string}} task
- * @param {{id:string, unit?:string|null, explicit_leader_ids?:string[]}} owner
+ * @param {{id:string, role?:string, unit?:string|null, explicit_leader_ids?:string[], group_leader_ids?:string[]}} owner
  * @param {Array} allCollabs
  * @returns {string[]}
  */
 function governanceViewerIdsOf(task, owner, allCollabs) {
   if (task && task.governance_owner_id) return [task.governance_owner_id];
-  const list = Array.isArray(allCollabs) ? allCollabs : [];
-  const ids = new Set();
-  const unit = owner && owner.unit ? owner.unit : null;
-  if (unit) {
-    for (const c of list) {
-      if (c.role === 'manager' && c.unit === unit && c.is_active !== false && !c.is_ceo) ids.add(c.id);
-    }
-  }
-  for (const lid of ((owner && owner.explicit_leader_ids) || [])) {
-    const L = list.find((c) => c.id === lid);
-    if (L) ids.add(lid);
-  }
-  return [...ids];
+  if (!owner) return [];
+  return resolveLeaderIdsOf(owner, allCollabs);
 }
 
 module.exports = { resolveLeadersOf, resolveLeaderIdsOf, groupLeaderIdsFor, governanceViewerIdsOf, UNITS, LEADER_ROLES };

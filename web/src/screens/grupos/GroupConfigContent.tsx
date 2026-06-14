@@ -36,16 +36,21 @@ export function GroupConfigContent({ group }: { group: WorkGroup }) {
       <div className="space-y-lg">
         {/* Faixa de cima (full-width) — Time: cabeçalho + Membros | Líder */}
         <section className="rounded-md border border-border bg-bg-surface">
-          {/* Cabeçalho da faixa */}
-          <div className="flex items-center justify-between gap-md border-b border-border px-md py-sm">
-            <span className="inline-flex items-center gap-xs text-label uppercase tracking-wide text-fg-muted">
-              <Users size={13} aria-hidden /> Time
-            </span>
-            {podeEditar && (
-              <Button variant="ghost" size="sm" onClick={() => setConfirmOff(true)}>
-                <span className="text-danger">desativar grupo</span>
-              </Button>
-            )}
+          {/* Cabeçalho da faixa — título + legenda que explica o comportamento da seção */}
+          <div className="border-b border-border px-md py-sm">
+            <div className="flex items-center justify-between gap-md">
+              <span className="inline-flex items-center gap-xs text-label uppercase tracking-wide text-fg-muted">
+                <Users size={13} aria-hidden /> Time
+              </span>
+              {podeEditar && (
+                <Button variant="ghost" size="sm" onClick={() => setConfirmOff(true)}>
+                  <span className="text-danger">desativar grupo</span>
+                </Button>
+              )}
+            </div>
+            <p className="mt-xs text-caption text-fg-muted">
+              O líder recebe as escalações de tarefa travada · lembretes vão pra todos.
+            </p>
           </div>
 
           {/* Corpo: 2 colunas (membros flexível · líder fixo) com divisória */}
@@ -112,9 +117,6 @@ export function GroupConfigContent({ group }: { group: WorkGroup }) {
                   <Star size={12} className="text-tom" aria-hidden /> {leaderName}
                 </span>
               )}
-              <p className="text-caption text-fg-muted leading-snug">
-                Recebe as escalações de tarefa travada · lembretes vão pra todos.
-              </p>
             </div>
           </div>
         </section>

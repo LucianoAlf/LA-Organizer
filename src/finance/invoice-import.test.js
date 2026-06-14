@@ -67,3 +67,24 @@ test('looksLikeInvoiceText detecta fatura colada, ignora msg comum e lista crua'
   assert.equal(looksLikeInvoiceText('Amazon 30,74\nShopee 56,48\nPrezunic 176,77 mercado'), false);
   assert.equal(looksLikeInvoiceText('paguei 50 no ifood'), false);
 });
+
+test('normalizeItems descarta saldo rolado/pagamento mas mantém encargos reais (Alf 14/06)', () => {
+  const items = normalizeItems([
+    { descricao: 'Saldo em atraso', valor: 10004.71, data: '2026-05-21' },
+    { descricao: 'Pagamento recebido', valor: 500, data: '2026-05-10' },
+    { descricao: 'Saldo anterior', valor: 1234, data: '2026-05-01' },
+    { descricao: 'Multa de atraso', valor: 200.86, data: '2026-05-22' },
+    { descricao: 'Juros de dívida encerrada', valor: 239.84, data: '2026-05-22' },
+    { descricao: 'IOF de atraso', valor: 38.98, data: '2026-05-22' },
+    { descricao: 'Anthropic', valor: 25.42, data: '2026-05-14' },
+  ]);
+  const descs = items.map((i) => i.descricao);
+  assert.ok(!descs.includes('Saldo em atraso'), 'saldo em atraso deve sair');
+  assert.ok(!descs.includes('Pagamento recebido'), 'pagamento deve sair');
+  assert.ok(!descs.includes('Saldo anterior'), 'saldo anterior deve sair');
+  assert.ok(descs.includes('Multa de atraso'), 'multa de atraso fica (encargo real)');
+  assert.ok(descs.includes('Juros de dívida encerrada'), 'juros fica (encargo real)');
+  assert.ok(descs.includes('IOF de atraso'), 'IOF de atraso fica (encargo real)');
+  assert.ok(descs.includes('Anthropic'), 'compra normal fica');
+  assert.equal(items.length, 4);
+});

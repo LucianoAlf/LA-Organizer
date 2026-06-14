@@ -8016,6 +8016,11 @@ async function processMessage(phone, text, raw = {}) {
           const _cards = await financeService.findCard(collab.id, _pay.emissor);
           const _card = (_cards || []).find((c) => c.id === _pay.card_id) || (_cards || [])[0];
           if (!_card) { await whatsapp.sendMessage(phone, 'Não achei mais o cartão dessa fatura. Me diz qual é?'); return; }
+          // Fatura importada = UMA competência (a do vencimento do PDF). Sem isso, cada item
+          // era recolocado por data de compra (closing_day do cadastro) e a fatura se partia em
+          // 2 meses (caso Alf 14/06: 6 compras foram pra julho). O vencimento do PDF manda.
+          const _faturaComp = (_pay.vencimento && /^\d{4}-\d{2}/.test(_pay.vencimento))
+            ? _pay.vencimento.slice(0, 7) + '-01' : undefined;
           let _okN = 0;
           for (const it of _pay.itens) {
             try {
@@ -8024,6 +8029,7 @@ async function processMessage(phone, text, raw = {}) {
                 description: it.parcela_total > 1 ? `${it.descricao} (${it.parcela_atual}/${it.parcela_total})` : it.descricao,
                 transaction_date: it.data || _pay.vencimento || undefined,
                 installments: 1,
+                competencia: _faturaComp,
               });
               _okN++;
             } catch (e) { console.error('[Fatura] item falhou:', it.descricao, e.message); }

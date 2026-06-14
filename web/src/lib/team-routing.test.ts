@@ -141,3 +141,32 @@ describe('governanceViewerIdsOf', () => {
     expect(governanceViewerIdsOf({ governance_owner_id: null, assigned_to: 'ghost' }, undefined, allGov)).toEqual([]);
   });
 });
+
+// ── REGRESSÃO 14/06: unit='all' não é unidade real (espelho do fix backend) ──
+// Tarefa solta segue a MESMA regra de líder (resolveLeaderIdsOf): nada de tratar o
+// sentinel 'all' como unidade física e casar todo manager unit='all' (Yuri vazava).
+describe('governanceViewerIdsOf — unit=all não vaza', () => {
+  it('solta de Fabi (farmer, unit=all, órfã) → CEO, NÃO Yuri', () => {
+    const v = governanceViewerIdsOf({ governance_owner_id: null, assigned_to: 'fabi' }, fabi, all);
+    expect(v).toEqual(['ceo']);
+    expect(v).not.toContain('yu');
+  });
+  it('solta de John (marketing, unit=all) → Yuri', () => {
+    expect(governanceViewerIdsOf({ governance_owner_id: null, assigned_to: 'john' }, john, all)).toEqual(['yu']);
+  });
+  it('solta de Dai (pedagógico) → coordenadores, nunca Yuri', () => {
+    const v = governanceViewerIdsOf({ governance_owner_id: null, assigned_to: 'dai' }, dai, all).sort();
+    expect(v).toEqual(['ju', 'qt']);
+    expect(v).not.toContain('yu');
+  });
+  it('delegação curto-circuita (governance_owner_id manda mesmo com unit=all)', () => {
+    expect(governanceViewerIdsOf({ governance_owner_id: 'yu', assigned_to: 'fabi' }, fabi, all)).toEqual(['yu']);
+  });
+  it('viewer(solta) === resolveLeaderIdsOf(dono) p/ todos — uma fonte de verdade', () => {
+    for (const c of all.filter(x => !x.is_ceo && x.is_active !== false)) {
+      const viewers = governanceViewerIdsOf({ governance_owner_id: null, assigned_to: c.id }, c, all).sort();
+      const leaders = resolveLeaderIdsOf(c, all).sort();
+      expect(viewers).toEqual(leaders);
+    }
+  });
+});

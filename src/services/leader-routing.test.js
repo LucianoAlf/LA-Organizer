@@ -201,3 +201,37 @@ test('governanceViewerIdsOf: owner undefined (pessoa deletada) → []', () => {
     []
   );
 });
+
+// ── REGRESSÃO 14/06 — unit='all' NÃO é unidade real (vazamento de governança) ───
+// Yuri (marketing, unit='all') recebia as atrasadas de TODO mundo unit='all' (Dai,
+// Juliana, Rose…), porque a função tratava o sentinel 'all' como unidade física e
+// casava todo manager unit='all'. Agora a posse de tarefa SOLTA segue a MESMA regra
+// que roteia eventos/define o time: resolveLeaderIdsOf (unidade REAL→gerente +
+// group_leaders + arestas + CEO). Fixtures: reusa o org real ALL (com group_leader_ids).
+test('governanceViewerIdsOf: solta de dono unit=all (Dai pedagógico) → coordenadores, NUNCA Yuri', () => {
+  const v = governanceViewerIdsOf({ governance_owner_id: null, assigned_to: 'dai' }, DAI, ALL).sort();
+  assert.deepStrictEqual(v, ['juliana', 'quintela']);
+  assert.ok(!v.includes('yuri'), 'Yuri (marketing) não pode ver atrasada de pedagógico');
+});
+test('governanceViewerIdsOf: marketing solto (John, unit=all) → Yuri e só ele', () => {
+  assert.deepStrictEqual(governanceViewerIdsOf({ governance_owner_id: null, assigned_to: 'john' }, JOHN, ALL), ['yuri']);
+});
+test('governanceViewerIdsOf: solta de manager unit=all (Yuri) NÃO vaza p/ outros managers all → CEO', () => {
+  const v = governanceViewerIdsOf({ governance_owner_id: null, assigned_to: 'yuri' }, YURI, ALL);
+  assert.deepStrictEqual(v, ['ceo']);
+  assert.ok(!v.includes('yuri'), 'não roteia pra si');
+});
+test('governanceViewerIdsOf: unidade REAL segue indo pro gerente (Arthur/Barra → Krissya)', () => {
+  assert.deepStrictEqual(governanceViewerIdsOf({ governance_owner_id: null, assigned_to: 'arthur' }, ARTHUR, ALL).sort(), ['krissya']);
+});
+test('governanceViewerIdsOf: delegação ainda manda (governance_owner_id curto-circuita unit=all)', () => {
+  assert.deepStrictEqual(governanceViewerIdsOf({ governance_owner_id: 'yuri', assigned_to: 'dai' }, DAI, ALL), ['yuri']);
+});
+// GARANTIA ESTRUTURAL — "nunca mais": viewer de tarefa solta == líderes do dono (uma fonte de verdade).
+test('governanceViewerIdsOf(solta) === resolveLeaderIdsOf(dono) p/ TODOS (sem divergência tasks×eventos)', () => {
+  for (const c of ALL.filter((x) => !x.is_ceo && x.is_active)) {
+    const viewers = governanceViewerIdsOf({ governance_owner_id: null, assigned_to: c.id }, c, ALL).sort();
+    const leaders = resolveLeaderIdsOf(c, ALL).sort();
+    assert.deepStrictEqual(viewers, leaders, `${c.full_name}: viewers(${viewers}) != líderes(${leaders})`);
+  }
+});

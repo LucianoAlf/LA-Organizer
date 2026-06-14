@@ -94,4 +94,4 @@ function looksLikeInvoiceText(text) {
   return valueMatches.length >= 4;
 }
 
-module.exports = { parseInvoiceBlock, normalizeItems, buildInvoicePreview, detectInvoiceReply, looksLikeInvoiceText };
+module.exports = { parseInvoiceBlock, normalizeItems, buildInvoicePreview, detectInvoiceReply, looksLikeInvoiceText, isPurchasableLine };
