@@ -4,6 +4,8 @@
 //
 // OFX é padrão da indústria (SGML ou XML). CSV é variável → detecção tolerante de colunas.
 
+const crypto = require('crypto');
+
 // --- valores: aceita "1.234,56" (BR), "1234.56" (US), "-14.64", "R$ 50,00", "(12,34)" (= negativo) ---
 function parseAmount(raw) {
   if (raw == null) return NaN;
@@ -62,6 +64,7 @@ function parseOfx(text) {
       amount,
       descricao: ofxTag(blk, 'MEMO') || ofxTag(blk, 'NAME') || 'Lançamento',
       trntype: (ofxTag(blk, 'TRNTYPE') || '').toUpperCase(),
+      fitid: ofxTag(blk, 'FITID') || null,
     });
   }
   return { kind, org, periodEnd, transactions };
@@ -159,6 +162,7 @@ function buildCardInvoiceFromStatement(parsed, filename) {
   }
   const itens = txns.filter(isExpense).map((t) => ({
     descricao: t.descricao, valor: Math.abs(t.amount), data: t.date, parcela_atual: 1, parcela_total: 1,
+    import_ref: t.fitid || null,
   }));
   return {
     emissor: issuerFromFilename(filename) || (parsed && parsed.org) || '',
@@ -183,7 +187,45 @@ function statementToInvoice({ filename, text }) {
   return { ok: true, format, kind: parsed.kind, invoice };
 }
 
+// Decodifica o buffer do arquivo respeitando o encoding declarado no header OFX.
+// Bancos BR mandam CHARSET:1252 / latin1 (não UTF-8) → acento quebra se ler como utf8. (Alf 14/06)
+function decodeBuffer(buf) {
+  if (!Buffer.isBuffer(buf)) return String(buf || '');
+  const head = buf.toString('latin1', 0, 400).toUpperCase();
+  const m = head.match(/CHARSET[:=]\s*"?([\w-]+)/) || head.match(/ENCODING[:=]\s*"?([\w-]+)/);
+  const declared = m ? m[1] : '';
+  if (/UTF-?8/.test(declared)) return buf.toString('utf8');
+  if (/1252|8859|LATIN|ANSI|WINDOWS-12/.test(declared)) return buf.toString('latin1');
+  // sem declaração clara: tenta utf8; se vier caractere de replacement (), relê como latin1
+  const asUtf = buf.toString('utf8');
+  return asUtf.includes('�') ? buf.toString('latin1') : asUtf;
+}
+
+// Chave idempotente por item, pra NÃO duplicar quando a mesma fatura é reimportada (Alf/Rose 14/06:
+// apagamos lançamento na mão 2×). OFX: FITID (único por transação). Sem FITID (PDF/CSV): hash de
+// (cardId|competencia|data|valor|descricao|ocorrência) — a ocorrência distingue 2 compras idênticas
+// legítimas no mesmo dia, mas casa quando a mesma fatura é reimportada.
+function importKeyFor(it, ctx, occ) {
+  if (it && it.import_ref) return `ofx:${(ctx && ctx.cardId) || ''}:${it.import_ref}`;
+  const base = [
+    ctx.cardId || '', ctx.competencia || '', (it && it.data) || '',
+    Number((it && it.valor) || 0).toFixed(2), String((it && it.descricao) || '').toLowerCase().trim(), occ,
+  ].join('|');
+  return `h:${crypto.createHash('sha1').update(base).digest('hex').slice(0, 24)}`;
+}
+
+function buildImportKeys(itens, ctx = {}) {
+  const seen = new Map();
+  return (itens || []).map((it) => {
+    if (it && it.import_ref) return importKeyFor(it, ctx, 1);
+    const sig = [(it && it.data) || '', Number((it && it.valor) || 0).toFixed(2), String((it && it.descricao) || '').toLowerCase().trim()].join('|');
+    const n = (seen.get(sig) || 0) + 1; seen.set(sig, n);
+    return importKeyFor(it, ctx, n);
+  });
+}
+
 module.exports = {
   parseAmount, ofxDateToIso, ofxTag, parseOfx, detectDelimiter, splitCsvLine, csvDateToIso, parseCsv,
   issuerFromFilename, competenciaFromFilename, buildCardInvoiceFromStatement, statementToInvoice,
+  decodeBuffer, buildImportKeys, importKeyFor,
 };

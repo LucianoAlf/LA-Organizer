@@ -43,6 +43,7 @@ const { mapCategory, normalizeParams } = require('./finance/categorize');
 const { crossedThreshold, buildBudgetAlert } = require('./finance/budget-alert');
 const { monthsToGoalSimple, monthsToGoalWithInterest, formatMonths, futureValue } = require('./finance/projection');
 const invoiceImport = require('./finance/invoice-import');
+const statementParse = require('./finance/statement-parse');
 const { reconcileInstallments } = require('./finance/parse-installments');
 const gemini = require('./services/gemini');
 const { splitBulkIdenticalCreates } = require('./task-guardrail');
@@ -8024,21 +8025,38 @@ async function processMessage(phone, text, raw = {}) {
           // 2 meses (caso Alf 14/06: 6 compras foram pra julho). O vencimento do PDF manda.
           const _faturaComp = (_pay.vencimento && /^\d{4}-\d{2}/.test(_pay.vencimento))
             ? _pay.vencimento.slice(0, 7) + '-01' : undefined;
-          let _okN = 0;
-          for (const it of _pay.itens) {
+          // Dedup idempotente: chave por item (FITID no OFX; hash data+valor+desc+ocorrência no resto).
+          // Reimportar a MESMA fatura não duplica (Alf/Rose 14/06 apagaram lançamento na mão 2×).
+          const _impKeys = statementParse.buildImportKeys(_pay.itens, { cardId: _card.id, competencia: _faturaComp || '' });
+          const _existing = new Set();
+          try {
+            const _ks = _impKeys.filter(Boolean);
+            if (_ks.length) {
+              const { data: _ex } = await supabase.from('pf_transactions')
+                .select('import_key').eq('collaborator_id', collab.id).in('import_key', _ks);
+              (_ex || []).forEach((r) => _existing.add(r.import_key));
+            }
+          } catch (e) { console.warn('[Fatura] dedup check err:', e.message); }
+          let _okN = 0, _dupN = 0;
+          for (let _i = 0; _i < _pay.itens.length; _i++) {
+            const it = _pay.itens[_i];
+            const _ik = _impKeys[_i];
+            if (_ik && _existing.has(_ik)) { _dupN++; continue; }
             try {
-              await financeService.insertCardPurchase(collab.id, _card, {
+              const _r = await financeService.insertCardPurchase(collab.id, _card, {
                 category: it.categoria, amount: it.valor,
                 description: it.parcela_total > 1 ? `${it.descricao} (${it.parcela_atual}/${it.parcela_total})` : it.descricao,
                 transaction_date: it.data || _pay.vencimento || undefined,
                 installments: 1,
                 competencia: _faturaComp,
+                import_key: _ik,
               });
-              _okN++;
+              if (Array.isArray(_r) && _r.length === 0) _dupN++; else _okN++;
             } catch (e) { console.error('[Fatura] item falhou:', it.descricao, e.message); }
           }
-          await pendingIntents.resolveIntent(_invIntent.id, 'confirmed', `lancou ${_okN} itens`);
-          await whatsapp.sendMessage(phone, `✅ Lancei ${_okN} de ${_pay.itens.length} compras no *${_card.name}*. Confere na tela de Cartões!`);
+          await pendingIntents.resolveIntent(_invIntent.id, 'confirmed', `lancou ${_okN} itens${_dupN ? ', ' + _dupN + ' dup' : ''}`);
+          const _dupMsg = _dupN ? ` (${_dupN} já estava${_dupN > 1 ? 'm' : ''} lançada${_dupN > 1 ? 's' : ''}, ignorei pra não duplicar)` : '';
+          await whatsapp.sendMessage(phone, `✅ Lancei ${_okN} de ${_pay.itens.length} compras no *${_card.name}*${_dupMsg}. Confere na tela de Cartões!`);
           return;
         }
       }

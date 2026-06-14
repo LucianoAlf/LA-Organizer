@@ -287,7 +287,7 @@ async function processWebhookBody(body) {
       const isPdf = mime === 'application/pdf' || /\.pdf$/.test(lowerName) || /^%PDF/.test(head);
       // ---- OFX / CSV: fatura estruturada, parser determinístico (sem LLM). Alf 14/06 ----
       if (isOfx || isCsv) {
-        const content = buf.toString('utf8');
+        const content = statementParse.decodeBuffer(buf);
         const st = statementParse.statementToInvoice({ filename: fileName, text: content });
         console.log(`[Webhook] statement ${st.ok ? 'OK' : 'FAIL:' + st.reason} fmt=${st.format || '?'} kind=${st.kind || '?'} itens=${st.ok ? st.invoice.itens.length : 0} emissor=${st.ok ? st.invoice.emissor : '?'}`);
         if (st.ok && st.kind === 'account') {

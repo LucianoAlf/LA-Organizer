@@ -39,6 +39,9 @@ test('categorize: atrasada / hoje / semana / futura / sem_prazo', () => {
   assert.equal(categorize('2026-06-18', hoje), 'semana');
   assert.equal(categorize('2026-06-25', hoje), 'futura');
   assert.equal(categorize(null, hoje), 'sem_prazo');
+  // lançamento retroativo: criada DEPOIS do prazo não é atraso real
+  assert.equal(categorize('2026-06-10', hoje, '2026-06-13'), 'retroativa');
+  assert.equal(categorize('2026-06-10', hoje, '2026-06-05'), 'atrasada'); // criada antes do prazo = atrasada de verdade
 });
 
 test('dedupeTasks remove gêmeas (mesmo título+data+responsável), mantém dias/itens distintos', () => {
@@ -152,6 +155,20 @@ test('buildGroupReport: mensal separa em blocos por urgência, com contagem e se
   assert.match(html, /<hr>/);
   assert.ok(!html.includes('Julho fora'));     // tarefa de julho não vaza pro mês de junho
   assert.ok(!/<li>[^<]*🔴/.test(html));        // flag não se repete nas linhas (só no título do bloco)
+});
+
+test('buildGroupReport: tarefa lançada retroativa (criada após o prazo) NÃO vira atrasada', async () => {
+  const sb = fakeSupabase([
+    { title: 'Retroativa', due_date: '2026-06-01', status: 'pending', created_at: '2026-06-13T10:00:00Z', creator: { preferred_name: 'Rose' } },
+    { title: 'Atrasada real', due_date: '2026-06-01', status: 'pending', created_at: '2026-05-20T10:00:00Z', creator: { preferred_name: 'Rose' } },
+  ]);
+  const { html } = await buildGroupReport({
+    supabase: sb, groupId: 'g1', scope: 'tudo', window: 'mes',
+    heading: '🗓️ Mês', now: new Date('2026-06-14T12:00:00-03:00'),
+  });
+  assert.ok(html.includes('Atrasada real'));   // criada antes do prazo → aparece
+  assert.ok(!html.includes('Retroativa'));      // lançada já vencida → some
+  assert.match(html, /🔴 Atrasadas · 1/);
 });
 
 test('buildGroupReport: diário (window=hoje) mostra só Atrasadas + Para hoje', async () => {

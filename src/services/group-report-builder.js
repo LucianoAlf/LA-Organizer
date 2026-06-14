@@ -63,9 +63,15 @@ const CATEGORIES = [
 ];
 
 // Categoriza uma tarefa pela data de vencimento relativa a hoje (YMD lexicográfico = cronológico).
-function categorize(dueYmd, todayYmd) {
+// createdYmd (opcional): se a tarefa foi CRIADA depois do vencimento (lançamento retroativo),
+// NÃO é atraso de verdade — ninguém deixou vencer, foi cadastrada já vencida → 'retroativa'
+// (categoria não-exibida; some do relatório de cobrança).
+function categorize(dueYmd, todayYmd, createdYmd) {
   if (!dueYmd) return 'sem_prazo';
-  if (dueYmd < todayYmd) return 'atrasada';
+  if (dueYmd < todayYmd) {
+    if (createdYmd && createdYmd > dueYmd) return 'retroativa';
+    return 'atrasada';
+  }
   if (dueYmd === todayYmd) return 'hoje';
   if (dueYmd <= addDaysYmd(todayYmd, 7)) return 'semana';
   return 'futura';
@@ -143,7 +149,7 @@ function dedupeTasks(tasks) {
 // e faz dedup defensivo contra instâncias gêmeas (materialização duplicada).
 async function queryGroupTasks(supabase, groupId) {
   const { data } = await supabase.from('tasks')
-    .select('id, title, due_date, status, created_by, ' +
+    .select('id, title, due_date, status, created_by, created_at, ' +
             'creator:collaborators!tasks_created_by_fkey(preferred_name, full_name)')
     .eq('assigned_group_id', groupId)
     .neq('status', 'done')
@@ -153,6 +159,7 @@ async function queryGroupTasks(supabase, groupId) {
   return dedupeTasks((data || []).map((t) => ({
     title: t.title,
     due_date: t.due_date,
+    created_ymd: t.created_at ? spYmd(new Date(t.created_at)) : null,
     responsavel: t.creator?.preferred_name || t.creator?.full_name || null,
   })));
 }
@@ -174,7 +181,7 @@ async function buildGroupReport({ supabase, groupId, scope = 'tudo', window = 'm
 
   // Cobrança de atrasadas (B2 overdue): bloco único, short-circuit se vazio.
   if (onlyOverdue) {
-    const overdue = (tasks || []).filter((t) => t.due_date && t.due_date < todayYmd)
+    const overdue = (tasks || []).filter((t) => categorize(t.due_date, todayYmd, t.created_ymd) === 'atrasada')
       .sort((a, b) => String(a.due_date).localeCompare(String(b.due_date)));
     const sections = [{ emoji: '🔴', title: 'Tarefas atrasadas', items: overdue.map(taskLineItem) }];
     return { html: renderReportHtml({ groupName, windowLabel: bounds.label, sections, heading }), isEmpty: overdue.length === 0 };
@@ -185,8 +192,8 @@ async function buildGroupReport({ supabase, groupId, scope = 'tudo', window = 'm
   const endYmd = bounds.end.slice(0, 10);
   const buckets = Object.fromEntries(wanted.map((c) => [c, []]));
   for (const t of (tasks || [])) {
-    const cat = categorize(t.due_date, todayYmd);
-    if (!wanted.includes(cat)) continue;
+    const cat = categorize(t.due_date, todayYmd, t.created_ymd);
+    if (!wanted.includes(cat)) continue; // 'retroativa' (lançada já vencida) cai aqui → fora do relatório
     if (cat === 'futura' && t.due_date > endYmd) continue; // não vaza além da janela (ex.: próximo mês)
     buckets[cat].push(t);
   }

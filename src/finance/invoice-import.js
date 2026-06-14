@@ -26,7 +26,7 @@ function parseInvoiceBlock(text) {
 // créditos/estornos. Lançar como despesa DUPLICA a dívida e estoura o limite (caso Alf
 // 14/06: "Saldo em atraso" R$10.004,71 virou compra → fatura inflou pra 408%). Encargos
 // REAIS (multa de atraso, juros, IOF) NÃO casam aqui — são custos legítimos e seguem lançados.
-const RE_NON_PURCHASE = /\bsaldo\s+(em\s+atraso|anterior|rotativo|restante|financiado|devedor|parcelado|da\s+fatura)\b|\bpagamento\s+(recebido|efetuado|de\s+fatura|m[íi]nimo|fatura)\b|\bpgto\s+(recebido|fatura)\b|\bfatura\s+anterior\b|\bcr[ée]dito\s+de\s+(atraso|fatura)\b|\bestorno\b/i;
+const RE_NON_PURCHASE = /\bsaldo\s+(em\s+atraso|anterior|rotativo|restante|financiado|devedor|parcelado|da\s+fatura)\b|\bvalor\s+pendente\b|\b(saldo|valor)\s+(pendente\s+)?do\s+m[êe]s\s+anterior\b|\bpend[êe]ncia\s+(do\s+m[êe]s\s+)?anterior\b|\bpagamento\s+(recebido|efetuado|de\s+fatura|m[íi]nimo|fatura)\b|\bpgto\s+(recebido|fatura)\b|\bfatura\s+anterior\b|\bcr[ée]dito\s+de\s+(atraso|fatura)\b|\bestorno\b/i;
 
 function isPurchasableLine(descricao) {
   return !RE_NON_PURCHASE.test(String(descricao || ''));

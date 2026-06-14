@@ -88,3 +88,18 @@ test('normalizeItems descarta saldo rolado/pagamento mas mantém encargos reais 
   assert.ok(descs.includes('Anthropic'), 'compra normal fica');
   assert.equal(items.length, 4);
 });
+
+test('normalizeItems descarta "Valor pendente do mês anterior" (saldo rolado do OFX) — Alf 14/06', () => {
+  const items = normalizeItems([
+    { descricao: 'Valor pendente do mês anterior', valor: 10004.70, data: '2026-05-21' },
+    { descricao: 'IOF por fatura atrasada', valor: 38.98, data: '2026-05-22' },
+    { descricao: 'Multa por fatura atrasada', valor: 200.85, data: '2026-05-22' },
+    { descricao: 'Movida Rac Flap', valor: 14.64, data: '2026-05-14' },
+  ]);
+  const descs = items.map((i) => i.descricao);
+  assert.ok(!descs.includes('Valor pendente do mês anterior'), 'saldo rolado do OFX deve sair');
+  assert.ok(descs.includes('IOF por fatura atrasada'), 'IOF atrasada fica (encargo real)');
+  assert.ok(descs.includes('Multa por fatura atrasada'), 'multa atrasada fica (encargo real)');
+  assert.ok(descs.includes('Movida Rac Flap'), 'compra normal fica');
+  assert.equal(items.length, 3);
+});

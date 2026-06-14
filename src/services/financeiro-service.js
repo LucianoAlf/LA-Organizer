@@ -586,7 +586,7 @@ async function findCard(collaboratorId, cardName) {
 
 // Lança compra no cartão. installments>=2 → N parcelas agrupadas por purchase_group.
 // NÃO mexe no saldo (card_id setado, account_id null → trigger trg_pf_sync_balance ignora).
-async function insertCardPurchase(collaboratorId, card, { category, amount, description, transaction_date, installments, competencia, bill_id }) {
+async function insertCardPurchase(collaboratorId, card, { category, amount, description, transaction_date, installments, competencia, bill_id, import_key }) {
   const baseDate = transaction_date ? new Date(transaction_date + 'T00:00:00Z') : new Date();
   const n = Math.max(1, parseInt(installments || 1, 10));
   // Override explícito da fatura ("põe na fatura de maio") vence o cálculo por data+fechamento.
@@ -597,8 +597,12 @@ async function insertCardPurchase(collaboratorId, card, { category, amount, desc
       collaborator_id: collaboratorId, card_id: card.id, type: 'expense', category,
       amount, description: description || null, transaction_date: dateStr, competencia: baseComp, via: 'tom',
       ...(bill_id ? { bill_id } : {}),
+      ...(import_key ? { import_key } : {}),
     }).select().single();
-    if (error) throw error;
+    if (error) {
+      if (error.code === '23505') return []; // import_key já existe → reimport idempotente, pula
+      throw error;
+    }
     return [data];
   }
   const cents = Math.round(Number(amount) * 100);

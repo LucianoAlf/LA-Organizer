@@ -3,6 +3,7 @@ const assert = require('node:assert');
 const {
   parseAmount, ofxDateToIso, parseOfx, parseCsv,
   issuerFromFilename, competenciaFromFilename, buildCardInvoiceFromStatement, statementToInvoice,
+  decodeBuffer, buildImportKeys,
 } = require('./statement-parse');
 
 const OFX_CARD = `OFXHEADER:100
@@ -138,4 +139,41 @@ test('statementToInvoice E2E (CSV → invoice)', () => {
 test('statementToInvoice: sem transações → ok=false', () => {
   const r = statementToInvoice({ filename: 'x.ofx', text: '<OFX><CCSTMTRS></CCSTMTRS></OFX>' });
   assert.equal(r.ok, false);
+});
+
+test('parseOfx extrai FITID de cada transação', () => {
+  const r = parseOfx(OFX_CARD);
+  assert.equal(r.transactions[0].fitid, 'a1');
+  assert.equal(r.transactions[2].fitid, 'a3');
+});
+
+test('decodeBuffer respeita CHARSET 1252 (latin1) e UTF-8 (acento não quebra)', () => {
+  const latinBuf = Buffer.concat([
+    Buffer.from('OFXHEADER:100\nCHARSET:1252\n', 'ascii'),
+    Buffer.from('Comissão Anônima', 'latin1'),
+  ]);
+  assert.match(decodeBuffer(latinBuf), /Comissão Anônima/);
+  const utfBuf = Buffer.concat([
+    Buffer.from('OFXHEADER:100\nENCODING:UTF-8\n', 'ascii'),
+    Buffer.from('Comissão Anônima', 'utf8'),
+  ]);
+  assert.match(decodeBuffer(utfBuf), /Comissão Anônima/);
+});
+
+test('buildImportKeys: OFX usa FITID; PDF/CSV usa hash com ocorrência (idempotente)', () => {
+  const ofxKeys = buildImportKeys([{ import_ref: 'ABC123', valor: 10, data: '2026-05-14', descricao: 'X' }], { cardId: 'c1', competencia: '2026-06-01' });
+  assert.equal(ofxKeys[0], 'ofx:c1:ABC123');
+  // 2 compras idênticas no mesmo dia → chaves DIFERENTES (ocorrência)
+  const items = [
+    { valor: 5, data: '2026-05-14', descricao: 'Cafe' },
+    { valor: 5, data: '2026-05-14', descricao: 'Cafe' },
+  ];
+  const k1 = buildImportKeys(items, { cardId: 'c1', competencia: '2026-06-01' });
+  assert.notEqual(k1[0], k1[1], 'duas compras iguais no mesmo dia → chaves distintas');
+  // reimport da MESMA fatura → MESMAS chaves (dedup funciona)
+  const k2 = buildImportKeys(items, { cardId: 'c1', competencia: '2026-06-01' });
+  assert.deepEqual(k1, k2, 'reimport gera as mesmas chaves');
+  // cartão/competência diferente → chave diferente
+  const k3 = buildImportKeys(items, { cardId: 'c2', competencia: '2026-06-01' });
+  assert.notEqual(k1[0], k3[0]);
 });
