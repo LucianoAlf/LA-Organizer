@@ -21,6 +21,17 @@ test('parseInvoiceBlock tolera JSON malformado (found=false, malformed=true)', (
   assert.equal(r.malformed, true);
 });
 
+test('parseInvoiceBlock: total = soma dos itens lançados, ignorando saldo rolado (Alf 14/06)', () => {
+  const raw = '[FATURA_JSON]{"emissor":"Nubank","total":16645.50,"itens":[' +
+    '{"descricao":"Valor pendente do mês anterior","valor":10004.70,"data":"2026-05-21"},' +
+    '{"descricao":"Compra X","valor":100,"data":"2026-05-14"},' +
+    '{"descricao":"Compra Y","valor":40.80,"data":"2026-05-15"}' +
+    ']}[/FATURA_JSON]';
+  const r = parseInvoiceBlock(raw);
+  assert.equal(r.invoice.itens.length, 2);        // saldo rolado filtrado
+  assert.equal(r.invoice.total, 140.80);          // soma dos 2, NÃO o 16645.50 declarado
+});
+
 test('normalizeItems descarta item sem valor e preenche parcela default', () => {
   const items = normalizeItems([
     { descricao: 'A', valor: 10, data: '2026-05-07' },

@@ -10,14 +10,19 @@ function parseInvoiceBlock(text) {
   try { json = JSON.parse(m[1].trim()); }
   catch { return { found: false, malformed: true, cleanText }; }
   if (!json || !Array.isArray(json.itens)) return { found: false, malformed: true, cleanText };
+  const itens = normalizeItems(json.itens);
+  // total = SOMA dos itens que SERÃO lançados (após filtrar saldo rolado/pagamentos). O total
+  // declarado (json.total) inclui meta-linhas filtradas → mostrava R$16.645 com a lista somando
+  // ~R$6.640 (Alf 14/06, OFX). O número exibido tem que bater com a lista.
+  const total = itens.reduce((s, it) => s + Number(it.valor || 0), 0);
   return {
     found: true,
     cleanText,
     invoice: {
       emissor: String(json.emissor || '').trim(),
       vencimento: json.vencimento || null,
-      total: Number(json.total) || 0,
-      itens: normalizeItems(json.itens),
+      total,
+      itens,
     },
   };
 }
