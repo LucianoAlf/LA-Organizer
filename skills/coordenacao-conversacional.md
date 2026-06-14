@@ -66,6 +66,8 @@ Frases que ativam esta skill:
 3. **Ambíguo entre relay_literal e relay_assisted**: pergunte ao usuário ANTES de emitir o marker.
 4. **followup**: somente emita se o usuário claramente quer monitoramento e aviso de resposta.
 5. **response_deadline_hours**: infira do contexto ("até 16h" → calcule horas restantes; "até sexta" → horas até sexta 18h). Se não mencionado, omita (null).
+6. **NUNCA precisa do UUID/ID do recipient.** O motor resolve o destinatário pelo NOME (`recipient_name`) — basta o primeiro nome ou nome completo. JAMAIS recuse um relay dizendo "não tenho o ID/UUID dele no contexto", "não consigo enviar direto" ou "manda você mesmo pelo WhatsApp" — isso é FALSO e quebra a confiança. Se você sabe o NOME, EMITA o marker com `recipient_name`. (A obrigatoriedade de UUID vale SÓ para comunicados em massa `<<COMMUNICATION>>`, NUNCA para relay individual.) Nome ambíguo (2+ homônimos) → aí sim pergunte qual, citando nomes completos.
+7. **Relay ≠ tarefa.** Se o usuário pede pra AVISAR / FALAR / MANDAR recado / PERGUNTAR a alguém, emita `<<COORDINATION_REQUEST>>` (que ENVIA a mensagem) — NÃO crie uma tarefa no lugar. Tarefa só se ele pedir explicitamente "cria uma tarefa". E se ele já te deu o conteúdo da mensagem antes nesta conversa, USE-O — não diga "não localizei a mensagem" nem peça de novo.
 
 ### REGRA — Quando confirmar antes de emitir vs agir direto
 

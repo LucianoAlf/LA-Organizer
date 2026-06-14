@@ -8,12 +8,13 @@ import {
 } from '../../hooks/useFinanceiro';
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
 import { BANKS } from '../../lib/banks';
-import type { PfAccountType, PfTransaction } from '../../lib/financeiro';
+import type { PfAccountType, PfTransaction, PfTransfer } from '../../lib/financeiro';
 import { AccountSheet } from './components/AccountSheet';
 import { BankLogo } from './components/BankLogo';
 import { LancamentoSheet } from './components/LancamentoSheet';
 import { TransactionSheet } from './components/TransactionSheet';
 import { TransferSheet } from './components/TransferSheet';
+import { EditTransferSheet } from './components/EditTransferSheet';
 
 const fmtBRL = (v: number) =>
   'R$ ' + Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -52,6 +53,7 @@ export function CarteiraDetalhePage() {
   const [transferOpen, setTransferOpen] = useState(false);
   const [lancarOpen, setLancarOpen] = useState(false);
   const [editingTx, setEditingTx] = useState<PfTransaction | null>(null);
+  const [editingTransfer, setEditingTransfer] = useState<PfTransfer | null>(null);
 
   if (!acc) {
     return (
@@ -189,12 +191,23 @@ export function CarteiraDetalhePage() {
               </div>
             </>
           );
-          return it.txn ? (
-            <button key={it.id} type="button" onClick={() => setEditingTx(it.txn!)}
-              className="w-full text-left flex items-center gap-3 p-3 rounded-md bg-bg-surface border border-border hover:bg-bg-elevated focus-ring transition-colors">
-              {inner}
-            </button>
-          ) : (
+          if (it.txn) {
+            return (
+              <button key={it.id} type="button" onClick={() => setEditingTx(it.txn!)}
+                className="w-full text-left flex items-center gap-3 p-3 rounded-md bg-bg-surface border border-border hover:bg-bg-elevated focus-ring transition-colors">
+                {inner}
+              </button>
+            );
+          }
+          if (it.transfer) {
+            return (
+              <button key={it.id} type="button" onClick={() => setEditingTransfer(it.transfer!)}
+                className="w-full text-left flex items-center gap-3 p-3 rounded-md bg-bg-surface border border-border hover:bg-bg-elevated focus-ring transition-colors">
+                {inner}
+              </button>
+            );
+          }
+          return (
             <div key={it.id} className="w-full flex items-center gap-3 p-3 rounded-md bg-bg-surface border border-border">
               {inner}
             </div>
@@ -206,6 +219,7 @@ export function CarteiraDetalhePage() {
       <TransferSheet open={transferOpen} fromAccountId={acc.id} onClose={() => setTransferOpen(false)} />
       <LancamentoSheet open={lancarOpen} initialAccountId={acc.id} onClose={() => setLancarOpen(false)} />
       <TransactionSheet open={!!editingTx} initial={editingTx ?? undefined} onClose={() => setEditingTx(null)} />
+      <EditTransferSheet open={!!editingTransfer} transfer={editingTransfer ?? undefined} onClose={() => setEditingTransfer(null)} />
     </div>
   );
 }

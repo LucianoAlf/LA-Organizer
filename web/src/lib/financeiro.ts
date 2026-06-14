@@ -298,6 +298,13 @@ export async function deleteTransaction(collaboratorId: string, id: string) {
     .eq('id', id).eq('collaborator_id', collaboratorId);
   if (error) throw error;
 }
+// Exclusão em massa (Sug Rose 14/06). Uma query .in(); o trigger de saldo reverte cada linha (FOR EACH ROW).
+export async function deleteManyTransactions(collaboratorId: string, ids: string[]) {
+  if (!ids.length) return;
+  const { error } = await supabase.from('pf_transactions').delete()
+    .in('id', ids).eq('collaborator_id', collaboratorId);
+  if (error) throw error;
+}
 export async function updateTransaction(collaboratorId: string, id: string, patch: { type?: PfTxType; category?: PfCategory; amount?: number; description?: string | null; transaction_date?: string; account_id?: string | null }) {
   const allowed: Record<string, unknown> = { updated_at: new Date().toISOString() };
   for (const k of ['type', 'category', 'amount', 'description', 'transaction_date', 'account_id'] as const) {

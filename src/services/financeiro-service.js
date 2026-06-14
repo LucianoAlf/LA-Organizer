@@ -261,7 +261,15 @@ async function createBill(collaboratorId, { name, amount, due_day, category, typ
     row.due_date = due_date;
     row.due_day = Number(due_date.slice(8, 10)); // dia da data cheia (satisfaz NOT NULL)
   } else {
-    row.due_day = due_day;
+    // DUE_DAY-NULL (Rose 14/06): conta fixa recorrente sem dia estourava NOT NULL no insert.
+    // Rede final — valida aqui (o handler já pede o dia antes via bill_ask_day). Erro tratável.
+    const dd = Number(due_day);
+    if (!Number.isInteger(dd) || dd < 1 || dd > 31) {
+      const e = new Error('conta fixa recorrente exige due_day válido (1-31)');
+      e.code = 'BILL_NO_DUE_DAY';
+      throw e;
+    }
+    row.due_day = dd;
   }
   const { data, error } = await supabase.from('pf_bills').insert(row).select().single();
   if (error) throw error;

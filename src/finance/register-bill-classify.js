@@ -31,10 +31,22 @@ function validDueDay(d) {
 //   'card_confirm' → casou cartão que JÁ tem due_day → só confirma a entrega (NÃO altera). { card, dueDay }
 //   'card_set'     → casou cartão SEM due_day e o LLM informou o dia → setar due_day. { card, dueDay }
 //   'card_ask_day' → casou cartão SEM due_day e sem dia informado → pedir o dia. { card }
+//   'bill_ask_day' → conta fixa recorrente COM valor mas SEM dia de vencimento → pedir o dia
+//                    (sem crashar). { name, amount }  ← raiz do crash due_day NULL (Rose 14/06)
 //   'ask_value'    → não é cartão e não tem valor → pedir o valor (sem crashar). { name }
 function classifyRegisterBill(params, matchedCard) {
-  if (hasValidAmount(params && params.amount)) return { kind: 'bill' };
   const due = validDueDay(params && params.due_day);
+  if (hasValidAmount(params && params.amount)) {
+    // Conta fixa RECORRENTE (monthly) exige dia de vencimento — pf_bills.due_day é NOT NULL.
+    // Sem o dia, createBill inseria NULL → crash (caso Rose 14/06: "Assinatura Mercado Livre"
+    // da fatura virou register_bill sem dia). 'once' deriva o dia do due_date no createBill.
+    const isOnce = params && params.recurrence === 'once';
+    const hasDueDate = !!(params && params.due_date);
+    if (!isOnce && due == null && !hasDueDate) {
+      return { kind: 'bill_ask_day', name: (params && params.name) || null, amount: Number(params.amount) };
+    }
+    return { kind: 'bill' };
+  }
   if (matchedCard) {
     if (matchedCard.due_day != null) {
       return { kind: 'card_confirm', card: matchedCard, dueDay: matchedCard.due_day };

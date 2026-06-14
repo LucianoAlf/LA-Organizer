@@ -6970,28 +6970,39 @@ async function handleFinanceAction(collab, action, params, outcome = {}) {
       // manhã). Aqui: sem amount válido → roteia pro cartão (se casar) ou pede o valor — nunca crasha.
       {
         const { classifyRegisterBill, hasValidAmount } = require('./finance/register-bill-classify');
+        // Resolve cartão só quando NÃO há valor (roteia "lembrete de vencimento de cartão").
+        let _match = null;
         if (!hasValidAmount(params.amount)) {
           const _cardName = params.card || params.name || '';
           const _cards = _cardName ? await financeService.findCard(cid, _cardName) : [];
-          const _match = _cards.find((c) => c.name.toLowerCase() === String(_cardName).toLowerCase())
+          _match = _cards.find((c) => c.name.toLowerCase() === String(_cardName).toLowerCase())
             || (_cards.length === 1 ? _cards[0] : null);
-          const _d = classifyRegisterBill(params, _match);
-          if (_d.kind === 'card_confirm') {
-            outcome.persisted = true;
-            return `✅ Pode deixar! Já te lembro do vencimento do cartão *${_d.card.name}* (dia ${_d.dueDay}) no resumo financeiro da manhã, 2 dias antes. 👽`;
-          }
-          if (_d.kind === 'card_set') {
-            await financeService.updateCard(cid, _d.card.id, { due_day: _d.dueDay });
-            outcome.persisted = true;
-            return `✅ Configurado! Vou te lembrar do vencimento do cartão *${_d.card.name}* (dia ${_d.dueDay}) no resumo financeiro da manhã, 2 dias antes. 👽`;
-          }
-          if (_d.kind === 'card_ask_day') {
-            outcome.persisted = false; // honesto: nada persistido → marker vira 'skipped', não 'rejected'
-            return `Pra te lembrar do vencimento do cartão *${_d.card.name}*, me diz só o *dia do vencimento* (ex.: "vence dia 10") que eu já configuro. 👽`;
-          }
-          // ask_value: não é cartão e não tem valor → pede o valor, sem cadastrar nem crashar.
+        }
+        const _d = classifyRegisterBill(params, _match);
+        if (_d.kind === 'card_confirm') {
+          outcome.persisted = true;
+          return `✅ Pode deixar! Já te lembro do vencimento do cartão *${_d.card.name}* (dia ${_d.dueDay}) no resumo financeiro da manhã, 2 dias antes. 👽`;
+        }
+        if (_d.kind === 'card_set') {
+          await financeService.updateCard(cid, _d.card.id, { due_day: _d.dueDay });
+          outcome.persisted = true;
+          return `✅ Configurado! Vou te lembrar do vencimento do cartão *${_d.card.name}* (dia ${_d.dueDay}) no resumo financeiro da manhã, 2 dias antes. 👽`;
+        }
+        if (_d.kind === 'card_ask_day') {
+          outcome.persisted = false; // honesto: nada persistido → marker vira 'skipped', não 'rejected'
+          return `Pra te lembrar do vencimento do cartão *${_d.card.name}*, me diz só o *dia do vencimento* (ex.: "vence dia 10") que eu já configuro. 👽`;
+        }
+        if (_d.kind === 'ask_value') {
+          // não é cartão e não tem valor → pede o valor, sem cadastrar nem crashar.
           outcome.persisted = false;
           return `Pra cadastrar a conta${params.name ? ' *' + params.name + '*' : ''} eu preciso do *valor*. Me manda quanto é (ex.: "R$ 120 todo dia 10") que eu anoto. 👽`;
+        }
+        if (_d.kind === 'bill_ask_day') {
+          // DUE_DAY-NULL (Rose 14/06): conta fixa recorrente com valor mas SEM dia de
+          // vencimento — antes ia direto pro createBill e estourava NOT NULL (due_day).
+          // Pede o dia em vez de crashar (espelha card_ask_day).
+          outcome.persisted = false;
+          return `Pra cadastrar a conta fixa${_d.name ? ' *' + _d.name + '*' : ''} (R$${_d.amount}) eu preciso do *dia do vencimento*. Me diz o dia (ex.: "vence dia 10") que eu cadastro. 👽`;
         }
       }
       const b = await financeService.createBill(cid, {
