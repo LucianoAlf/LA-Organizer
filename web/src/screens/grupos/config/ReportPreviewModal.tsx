@@ -18,7 +18,8 @@ interface Props {
 // Estiliza o HTML determinístico do builder (h3 / ul / li / p).
 const proseCls =
   '[overflow-wrap:anywhere] [&_h3]:font-semibold [&_h3]:text-fg [&_h3]:mt-sm [&_h3]:mb-xs ' +
-  '[&_ul]:list-disc [&_ul]:pl-5 [&_ul]:space-y-0.5 [&_li]:text-fg [&_p]:text-fg-muted';
+  '[&_ul]:list-disc [&_ul]:pl-5 [&_ul]:space-y-0.5 [&_li]:text-fg [&_p]:text-fg-muted ' +
+  '[&_hr]:border-border [&_hr]:my-sm';
 
 export function ReportPreviewModal({ title, loading, html, isEmpty, error, sending, onSendNow, onClose }: Props) {
   return (

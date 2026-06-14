@@ -237,6 +237,24 @@ function extractName(webhookBody) {
 }
 
 /**
+ * Extrai o nome original do arquivo de um documento (DocumentMessage).
+ * UAZAPI varia o campo: content.fileName / documentMessage.fileName / title. Best-effort. (Alf 14/06)
+ */
+function extractFileName(body) {
+  const m = getData(body);
+  if (!m || typeof m !== 'object') return null;
+  const c = (m.content && typeof m.content === 'object') ? m.content : {};
+  const dm = (m.documentMessage && typeof m.documentMessage === 'object') ? m.documentMessage
+    : (c.documentMessage && typeof c.documentMessage === 'object') ? c.documentMessage : {};
+  return (
+    c.fileName || c.filename || c.title || c.docName ||
+    dm.fileName || dm.title ||
+    m.fileName || m.filename || m.title || m.docName ||
+    null
+  );
+}
+
+/**
  * Verifica se a mensagem deve ser ignorada
  */
 function isIgnorable(body) {
@@ -372,4 +390,4 @@ async function sendReaction(phone, messageId, emoji) {
   }
 }
 
-module.exports = { sendMessage, sendButtons, sendList, sendMedia, setTyping, sendReaction, sendVoice, isAudioMessage, isImageMessage, isDocumentMessage, isVideoMessage, extractText, extractPhone, extractName, extractMessageId, extractQuotedMessage, isIgnorable, getData };
+module.exports = { sendMessage, sendButtons, sendList, sendMedia, setTyping, sendReaction, sendVoice, isAudioMessage, isImageMessage, isDocumentMessage, isVideoMessage, extractText, extractPhone, extractName, extractFileName, extractMessageId, extractQuotedMessage, isIgnorable, getData };

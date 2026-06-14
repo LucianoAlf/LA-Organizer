@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { windowBounds, dueFlag, splitTasks, renderReportHtml, buildGroupReport } = require('./group-report-builder');
+const { windowBounds, dueFlag, categorize, splitTasks, renderReportHtml, buildGroupReport } = require('./group-report-builder');
 
 // 12/06/2026 é uma SEXTA. now = 2026-06-12 15:00 BRT = 18:00Z.
 const NOW = new Date('2026-06-12T18:00:00Z');
@@ -32,6 +32,15 @@ test('dueFlag marca atrasada / esta semana / vazio', () => {
   assert.equal(dueFlag(null, '2026-06-12'), '');
 });
 
+test('categorize: atrasada / hoje / semana / futura / sem_prazo', () => {
+  const hoje = '2026-06-14';
+  assert.equal(categorize('2026-06-10', hoje), 'atrasada');
+  assert.equal(categorize('2026-06-14', hoje), 'hoje');
+  assert.equal(categorize('2026-06-18', hoje), 'semana');
+  assert.equal(categorize('2026-06-25', hoje), 'futura');
+  assert.equal(categorize(null, hoje), 'sem_prazo');
+});
+
 test('splitTasks separa com prazo (ordenado) e sem prazo', () => {
   const tasks = [
     { title: 'B', due_date: '2026-06-20', responsavel: 'Rose' },
@@ -42,29 +51,36 @@ test('splitTasks separa com prazo (ordenado) e sem prazo', () => {
   assert.deepEqual(r.comPrazo.map((t) => t.title), ['A', 'B']);
   assert.deepEqual(r.semPrazo.map((t) => t.title), ['C']);
 });
-test('renderReportHtml monta card com h3+emoji e (nada) em seção vazia', () => {
+
+test('renderReportHtml: blocos com contagem, <hr> entre eles, seção vazia some', () => {
   const html = renderReportHtml({
-    groupName: 'Financeiro', windowLabel: 'junho',
+    groupName: 'Financeiro', windowLabel: 'junho', heading: '🗓️ Mês do Financeiro',
     sections: [
-      { emoji: '📅', title: 'Agenda', items: ['10/06 — Pagar boleto (Rose)'] },
-      { emoji: '📝', title: 'Anotações', items: [] },
+      { emoji: '🔴', title: 'Atrasadas', items: ['01/06 — Pagar boleto (Rose)'] },
+      { emoji: '⏰', title: 'Esta semana', items: ['15/06 — Ligar contador (Ana)'] },
+      { emoji: '📝', title: 'Sem prazo definido', items: [] }, // vazia → não aparece
     ],
   });
-  assert.match(html, /<h3>📅 Agenda/);
-  assert.match(html, /<li>10\/06 — Pagar boleto \(Rose\)<\/li>/);
-  assert.match(html, /<h3>📝 Anotações/);
-  assert.match(html, /\(nada no período\)/);
+  assert.match(html, /🔴 Atrasadas · 1/);
+  assert.match(html, /⏰ Esta semana · 1/);
+  assert.match(html, /<hr>/);
+  assert.match(html, /<li>01\/06 — Pagar boleto \(Rose\)<\/li>/);
+  assert.ok(!/Sem prazo definido/.test(html)); // bloco vazio sumiu
   assert.ok(!/undefined/.test(html));
 });
+test('renderReportHtml: tudo vazio → "Tudo limpo" e sem <hr>', () => {
+  const html = renderReportHtml({ groupName: 'Financeiro', sections: [], heading: '🗓️ Mês do Financeiro' });
+  assert.match(html, /Tudo limpo/);
+  assert.ok(!/<hr>/.test(html));
+});
 
-// ── B2: heading custom + onlyOverdue ──────────────────────────────────────────
-// supabase fake: tasks fixas + work_groups.name. queryGroupTasks faz
-// .select().eq().neq().order() e devolve {data}; work_groups faz .select().eq().maybeSingle().
+// ── buildGroupReport — supabase fake (chain .select().eq().neq().is().order()) ──
 function fakeSupabase(tasks) {
   const chain = {
     select() { return chain; },
     eq() { return chain; },
     neq() { return chain; },
+    is() { return chain; },
     order() { return Promise.resolve({ data: tasks }); },
     maybeSingle() { return Promise.resolve({ data: { name: 'Financeiro' } }); },
   };
@@ -103,4 +119,43 @@ test('buildGroupReport: onlyOverdue sem atrasadas → isEmpty=true', async () =>
     supabase: sb, groupId: 'g1', scope: 'tarefas', onlyOverdue: true, now: new Date('2026-06-15T12:00:00-03:00'),
   });
   assert.strictEqual(isEmpty, true);
+});
+
+test('buildGroupReport: mensal separa em blocos por urgência, com contagem e sem flag na linha', async () => {
+  const sb = fakeSupabase([
+    { title: 'Atrasada A', due_date: '2026-06-01', status: 'pending', creator: { preferred_name: 'Rose' } },
+    { title: 'Hoje B', due_date: '2026-06-14', status: 'pending', creator: { preferred_name: 'Ana' } },
+    { title: 'Semana C', due_date: '2026-06-18', status: 'pending', creator: { preferred_name: 'Rose' } },
+    { title: 'Futura D', due_date: '2026-06-25', status: 'pending', creator: { preferred_name: 'Ana' } },
+    { title: 'Julho fora', due_date: '2026-07-10', status: 'pending', creator: { preferred_name: 'Ana' } },
+    { title: 'SemPrazo E', due_date: null, status: 'pending', creator: { preferred_name: 'Rose' } },
+  ]);
+  const { html } = await buildGroupReport({
+    supabase: sb, groupId: 'g1', scope: 'tudo', window: 'mes',
+    heading: '🗓️ Mês do Financeiro', now: new Date('2026-06-14T12:00:00-03:00'),
+  });
+  assert.match(html, /🔴 Atrasadas · 1/);
+  assert.match(html, /📌 Para hoje · 1/);
+  assert.match(html, /⏰ Esta semana · 1/);
+  assert.match(html, /📅 Mais pra frente · 1/);
+  assert.match(html, /📝 Sem prazo definido · 1/);
+  assert.match(html, /<hr>/);
+  assert.ok(!html.includes('Julho fora'));     // tarefa de julho não vaza pro mês de junho
+  assert.ok(!/<li>[^<]*🔴/.test(html));        // flag não se repete nas linhas (só no título do bloco)
+});
+
+test('buildGroupReport: diário (window=hoje) mostra só Atrasadas + Para hoje', async () => {
+  const sb = fakeSupabase([
+    { title: 'Atrasada A', due_date: '2026-06-01', status: 'pending', creator: { preferred_name: 'Rose' } },
+    { title: 'Hoje B', due_date: '2026-06-14', status: 'pending', creator: { preferred_name: 'Ana' } },
+    { title: 'Semana C', due_date: '2026-06-18', status: 'pending', creator: { preferred_name: 'Rose' } },
+  ]);
+  const { html } = await buildGroupReport({
+    supabase: sb, groupId: 'g1', scope: 'agenda', window: 'hoje',
+    heading: '☀️ Bom dia!', now: new Date('2026-06-14T12:00:00-03:00'),
+  });
+  assert.match(html, /🔴 Atrasadas · 1/);
+  assert.match(html, /📌 Para hoje · 1/);
+  assert.ok(!/Esta semana/.test(html));
+  assert.ok(!html.includes('Semana C'));
 });

@@ -21,6 +21,7 @@ function htmlToWhatsapp(html) {
     .replace(/<\s*li[^>]*>/gi, '\n• ').replace(/<\s*\/\s*li\s*>/gi, '')
     .replace(/<\s*br\s*\/?\s*>/gi, '\n')
     .replace(/<\s*\/\s*p\s*>/gi, '\n').replace(/<\s*\/\s*(ul|ol|div)\s*>/gi, '\n')
+    .replace(/<\s*hr\s*\/?\s*>/gi, '\n──────────\n') // separador de blocos vira linha
     .replace(/<[^>]+>/g, ''); // tira o resto das tags
   t = t.replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<')
     .replace(/&gt;/gi, '>').replace(/&quot;/gi, '"').replace(/&#39;/gi, "'");

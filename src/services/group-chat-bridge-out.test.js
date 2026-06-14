@@ -66,6 +66,14 @@ test('report com cerca ```html é limpo (sem markdown fence no zap)', () => {
   const out = buildWhatsappText({ role: 'tom', kind: 'report', content: '```html\n<h3>Resumo</h3>\n```' }, '');
   assert.equal(out, '*Resumo*');
 });
+test('report com <hr> entre blocos vira linha separadora no WhatsApp', () => {
+  const html = '<div><h3>🔴 Atrasadas · 1</h3><ul><li>01/06 — X</li></ul><hr><h3>⏰ Esta semana · 1</h3><ul><li>15/06 — Y</li></ul></div>';
+  const out = buildWhatsappText({ role: 'tom', kind: 'report', content: html }, '');
+  assert.match(out, /──────────/);              // <hr> virou linha de traços
+  assert.match(out, /\*🔴 Atrasadas · 1\*/);
+  assert.match(out, /\*⏰ Esta semana · 1\*/);
+  assert.ok(!/[<>]/.test(out), 'não pode sobrar tag HTML');
+});
 test('report vazio → null', () => {
   assert.equal(buildWhatsappText({ role: 'tom', kind: 'report', content: '   ' }, ''), null);
 });
