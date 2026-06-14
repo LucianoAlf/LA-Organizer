@@ -6797,6 +6797,39 @@ function anomalyNoteFrom(preHistory, amount) {
   } catch (e) { console.warn('[Anomaly] err:', e.message); return ''; }
 }
 
+// Lança uma LISTA DE ESTORNOS direto via card_refund (valor negativo abate a fatura), de forma
+// determinística — sem preview de "compras" nem LLM derrotista. Regressão Rose 14/06.
+async function commitRefundList(cid, invoice) {
+  const itens = (invoice.itens || []).filter((it) => it && (it.descricao || it.description));
+  if (!itens.length) return null;
+  const cards = await financeService.findCard(cid, invoice.emissor || '');
+  if (!cards || cards.length !== 1) {
+    const all = await financeService.listCards(cid);
+    if (!all.length) return `Pra lançar o estorno, cadastra o cartão no app primeiro — *Finanças → Cartões*.`;
+    return `Em qual cartão entr${itens.length > 1 ? 'aram esses estornos' : 'ou esse estorno'}? Tenho: ${all.map((c) => c.name).join(', ')}.`;
+  }
+  const card = cards[0];
+  // competência: SEMPRE a fatura ABERTA atual. O parser às vezes chuta data/vencimento com ano
+  // errado (Gemini pôs 2024); estorno "de agora" abate a fatura corrente, não uma fantasma.
+  let _comp = null;
+  try { _comp = financeService.currentCompetencia(card); } catch (e) { _comp = null; }
+  let abated = 0, n = 0;
+  for (const it of itens) {
+    const valor = Math.abs(Number(it.valor != null ? it.valor : it.value) || 0);
+    if (!valor) continue;
+    const desc = String(it.descricao || it.description || 'Estorno');
+    const finalDesc = /estorn|devolu|reembol/i.test(desc) ? desc : `Estorno ${desc}`;
+    await financeService.insertCardPurchase(cid, card, {
+      category: 'outros', amount: -valor, description: finalDesc,
+      transaction_date: it.data || it.date || null, installments: 1, competencia: _comp,
+    });
+    abated += valor; n++;
+  }
+  if (!n) return null;
+  const fmt = (x) => Number(x).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return `↩️ Lancei ${n} estorno${n > 1 ? 's' : ''} no *${card.name}* — abati *R$ ${fmt(abated)}* da sua fatura. 💚`;
+}
+
 // Após um lançamento, tenta casar um pendente Pluggy equivalente → nota de conciliação (ou ''). (D3b)
 async function matchPluggyNote(cid, info) {
   try {
@@ -8022,6 +8055,16 @@ async function processMessage(phone, text, raw = {}) {
     if (!invoiceImport.parseInvoiceBlock(text).found && invoiceImport.looksLikeInvoiceText(text)) {
       const _struct = await gemini.analyzeInvoiceText(text);
       if (_struct && _struct.ok && _struct.isInvoice && _struct.invoice && (_struct.invoice.itens || []).length > 0) {
+        // Lista 100% estornos → card_refund determinístico (não import-compras, não LLM). Regressão Rose 14/06.
+        if (invoiceImport.allItemsRefund(_struct.invoice.itens)) {
+          const _refundReply = await commitRefundList(collab.id, _struct.invoice);
+          if (_refundReply) {
+            await whatsapp.sendMessage(phone, _refundReply);
+            await logConversation(collab.id, 'outbound', _refundReply);
+            console.log(`[Engine] estorno-lista: ${_struct.invoice.itens.length} itens → card_refund determinístico`);
+            return;
+          }
+        }
         const _resumo = `Fatura ${_struct.invoice.emissor || ''} · ${_struct.invoice.itens.length} compras`;
         text = `[FATURA_JSON]${JSON.stringify(_struct.invoice)}[/FATURA_JSON]\n${_resumo}`;
         console.log(`[Engine] fatura-texto detectada: ${_struct.invoice.itens.length} itens, emissor=${_struct.invoice.emissor || '?'}`);

@@ -43,6 +43,14 @@ function isRefundLine(descricao) {
   return RE_REFUND.test(String(descricao || ''));
 }
 
+// A "fatura-texto" é na verdade uma LISTA DE ESTORNOS? (todos os itens negativos ou com cara de estorno).
+// Roteia pro card_refund determinístico em vez do import-compras. (regressão Rose 14/06)
+function allItemsRefund(itens) {
+  const arr = Array.isArray(itens) ? itens : [];
+  if (!arr.length) return false;
+  return arr.every((it) => Number(it.valor != null ? it.valor : it.value) < 0 || isRefundLine(it.descricao || it.description || ''));
+}
+
 function normalizeItems(itens) {
   if (!Array.isArray(itens)) return [];
   return itens
@@ -111,4 +119,4 @@ function looksLikeInvoiceText(text) {
   return valueMatches.length >= 4;
 }
 
-module.exports = { parseInvoiceBlock, normalizeItems, buildInvoicePreview, detectInvoiceReply, looksLikeInvoiceText, isPurchasableLine };
+module.exports = { parseInvoiceBlock, normalizeItems, buildInvoicePreview, detectInvoiceReply, looksLikeInvoiceText, isPurchasableLine, isRefundLine, allItemsRefund };

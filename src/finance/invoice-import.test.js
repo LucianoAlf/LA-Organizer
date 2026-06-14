@@ -1,6 +1,14 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { parseInvoiceBlock, normalizeItems, buildInvoicePreview, detectInvoiceReply, looksLikeInvoiceText } = require('./invoice-import');
+const { parseInvoiceBlock, normalizeItems, buildInvoicePreview, detectInvoiceReply, looksLikeInvoiceText, allItemsRefund } = require('./invoice-import');
+
+test('allItemsRefund: lista 100% estornos → true; mistura ou compras → false (regressão Rose)', () => {
+  assert.equal(allItemsRefund([{ descricao: 'Estorno Pg *Lac', valor: -16.58 }, { descricao: 'Estorno Amazonmktplc', valor: -34.76 }]), true);
+  assert.equal(allItemsRefund([{ descricao: 'Estorno X', valor: 16.58 }]), true); // detecta por descrição mesmo se vier positivo
+  assert.equal(allItemsRefund([{ descricao: 'Compra mercado', valor: 50 }, { descricao: 'Estorno Y', valor: -10 }]), false);
+  assert.equal(allItemsRefund([{ descricao: 'Compra TV', valor: 3200 }]), false);
+  assert.equal(allItemsRefund([]), false);
+});
 
 test('parseInvoiceBlock extrai o JSON e limpa o texto', () => {
   const raw = '[FATURA_JSON]{"emissor":"Nubank","vencimento":"2026-06-15","total":3643.53,"itens":[{"descricao":"Shopee","valor":136.28,"data":"2026-05-07","parcela_atual":12,"parcela_total":12}]}[/FATURA_JSON]\nResumo legível aqui.';
