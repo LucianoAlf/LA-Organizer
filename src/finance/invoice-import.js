@@ -51,6 +51,45 @@ function allItemsRefund(itens) {
   return arr.every((it) => Number(it.valor != null ? it.valor : it.value) < 0 || isRefundLine(it.descricao || it.description || ''));
 }
 
+// Competência (YYYY-MM-01) — espelha financeiro-service.competenciaFor (replicado aqui p/ manter
+// este módulo PURO/testável, sem puxar o service que importa supabase). day <= fechamento → fatura
+// do mês; senão a seguinte.
+function _competenciaFor(baseDate, closingDay) {
+  const y = baseDate.getUTCFullYear(), m = baseDate.getUTCMonth(), day = baseDate.getUTCDate();
+  const off = day <= closingDay ? 0 : 1;
+  return new Date(Date.UTC(y, m + off, 1)).toISOString().slice(0, 10);
+}
+
+// Parseia a data do estorno tolerando "YYYY-MM-DD", "DD/MM" e "DD/MM/YYYY", e CORRIGE ano
+// implausível (o Gemini às vezes crava 2024) pro ano de referência. Retorna Date UTC ou null.
+function parseRefundDate(raw, refYear) {
+  if (!raw) return null;
+  const s = String(raw).trim();
+  let y, mo, d;
+  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(s);            // YYYY-MM-DD
+  if (m) { y = +m[1]; mo = +m[2]; d = +m[3]; }
+  else {
+    m = /^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/.exec(s);    // DD/MM[/YYYY]
+    if (!m) return null;
+    d = +m[1]; mo = +m[2]; y = m[3] ? +m[3] : refYear;
+    if (y < 100) y += 2000;                                   // "24" → 2024
+  }
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  if (!(y >= refYear - 1 && y <= refYear + 1)) y = refYear;   // ano-chute do Gemini → ano corrente
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  return Number.isNaN(dt.getTime()) ? null : dt;
+}
+
+// Competência de um ESTORNO: deriva da DATA do estorno (a fatura onde a compra ORIGINAL caiu),
+// NÃO da fatura aberta hoje. closing_day=7 + estorno de 14/05 → junho; usar a fatura corrente
+// jogava em julho (Rose 14/06: "vc lançou na fatura de julho, é junho"). Se a data for
+// inutilizável, cai na fatura corrente (today + closing). today e closingDay injetados (testável).
+function refundCompetencia(rawDate, closingDay, today) {
+  const ref = today.getUTCFullYear();
+  const d = parseRefundDate(rawDate, ref) || today;
+  return _competenciaFor(d, closingDay);
+}
+
 function normalizeItems(itens) {
   if (!Array.isArray(itens)) return [];
   return itens
@@ -119,4 +158,4 @@ function looksLikeInvoiceText(text) {
   return valueMatches.length >= 4;
 }
 
-module.exports = { parseInvoiceBlock, normalizeItems, buildInvoicePreview, detectInvoiceReply, looksLikeInvoiceText, isPurchasableLine, isRefundLine, allItemsRefund };
+module.exports = { parseInvoiceBlock, normalizeItems, buildInvoicePreview, detectInvoiceReply, looksLikeInvoiceText, isPurchasableLine, isRefundLine, allItemsRefund, refundCompetencia, parseRefundDate };

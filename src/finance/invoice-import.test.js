@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { parseInvoiceBlock, normalizeItems, buildInvoicePreview, detectInvoiceReply, looksLikeInvoiceText, allItemsRefund } = require('./invoice-import');
+const { parseInvoiceBlock, normalizeItems, buildInvoicePreview, detectInvoiceReply, looksLikeInvoiceText, allItemsRefund, refundCompetencia } = require('./invoice-import');
 
 test('allItemsRefund: lista 100% estornos → true; mistura ou compras → false (regressão Rose)', () => {
   assert.equal(allItemsRefund([{ descricao: 'Estorno Pg *Lac', valor: -16.58 }, { descricao: 'Estorno Amazonmktplc', valor: -34.76 }]), true);
@@ -121,6 +121,30 @@ test('normalizeItems descarta "Valor pendente do mês anterior" (saldo rolado do
   assert.ok(descs.includes('Multa por fatura atrasada'), 'multa atrasada fica (encargo real)');
   assert.ok(descs.includes('Movida Rac Flap'), 'compra normal fica');
   assert.equal(items.length, 3);
+});
+
+test('refundCompetencia: estorno datado em maio cai na fatura da compra (junho), NÃO na aberta (julho) — Rose closing 7', () => {
+  const today = new Date(Date.UTC(2026, 5, 14)); // 14/06/2026 — fatura aberta hoje = julho (dia 14 > closing 7)
+  assert.equal(refundCompetencia('2026-05-14', 7, today), '2026-06-01'); // estorno Amazonmktplc
+  assert.equal(refundCompetencia('18/05', 7, today), '2026-06-01');      // estorno Pg Lac (DD/MM, sem ano)
+});
+
+test('refundCompetencia: corrige ano-chute do Gemini (2024 → ano corrente)', () => {
+  const today = new Date(Date.UTC(2026, 5, 14));
+  assert.equal(refundCompetencia('2024-05-14', 7, today), '2026-06-01');
+  assert.equal(refundCompetencia('14/05/24', 7, today), '2026-06-01');
+});
+
+test('refundCompetencia: data ausente/lixo → fatura corrente (fallback currentCompetencia)', () => {
+  const today = new Date(Date.UTC(2026, 5, 14)); // 14 > closing 7 → julho
+  assert.equal(refundCompetencia(null, 7, today), '2026-07-01');
+  assert.equal(refundCompetencia('sei lá', 7, today), '2026-07-01');
+});
+
+test('refundCompetencia: respeita a borda do fechamento (day <= closing fica no mês)', () => {
+  const today = new Date(Date.UTC(2026, 5, 14));
+  assert.equal(refundCompetencia('2026-05-05', 7, today), '2026-05-01'); // dia 5 <= 7 → maio
+  assert.equal(refundCompetencia('2026-05-08', 7, today), '2026-06-01'); // dia 8 > 7 → junho
 });
 
 test('normalizeItems mantém estorno/devolução como crédito NEGATIVO, mas pagamento fica fora (Fase B)', () => {

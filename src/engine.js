@@ -6810,19 +6810,23 @@ async function commitRefundList(cid, invoice) {
     return `Em qual cartão entr${itens.length > 1 ? 'aram esses estornos' : 'ou esse estorno'}? Tenho: ${all.map((c) => c.name).join(', ')}.`;
   }
   const card = cards[0];
-  // competência: SEMPRE a fatura ABERTA atual. O parser às vezes chuta data/vencimento com ano
-  // errado (Gemini pôs 2024); estorno "de agora" abate a fatura corrente, não uma fantasma.
-  let _comp = null;
-  try { _comp = financeService.currentCompetencia(card); } catch (e) { _comp = null; }
+  // competência: deriva da DATA do estorno (a fatura onde a compra ORIGINAL caiu), POR ITEM —
+  // não a fatura aberta hoje. closing 7 + estorno 14/05 → junho; currentCompetencia jogava em
+  // julho (Rose 14/06: "vc lançou na fatura de julho, é junho"). refundCompetencia corrige o
+  // ano-chute do Gemini e só cai na fatura corrente se a data for inutilizável.
+  const _today = new Date();
   let abated = 0, n = 0;
   for (const it of itens) {
     const valor = Math.abs(Number(it.valor != null ? it.valor : it.value) || 0);
     if (!valor) continue;
     const desc = String(it.descricao || it.description || 'Estorno');
     const finalDesc = /estorn|devolu|reembol/i.test(desc) ? desc : `Estorno ${desc}`;
+    const _date = it.data || it.date || null;
+    let _comp = null;
+    try { _comp = invoiceImport.refundCompetencia(_date, card.closing_day, _today); } catch (e) { _comp = null; }
     await financeService.insertCardPurchase(cid, card, {
       category: 'outros', amount: -valor, description: finalDesc,
-      transaction_date: it.data || it.date || null, installments: 1, competencia: _comp,
+      transaction_date: _date, installments: 1, competencia: _comp,
     });
     abated += valor; n++;
   }
