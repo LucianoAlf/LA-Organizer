@@ -181,6 +181,12 @@ export const useUpdateAccount = () => useFinMutation(
 export const useCreateTransfer = () => useFinMutation(
   (cid, args: Parameters<typeof fin.createTransfer>[1]) => fin.createTransfer(cid, args)
 );
+export const useUpdateTransfer = () => useFinMutation(
+  (cid, args: { id: string; patch: Parameters<typeof fin.updateTransfer>[2] }) => fin.updateTransfer(cid, args.id, args.patch)
+);
+export const useDeleteTransfer = () => useFinMutation(
+  (cid, id: string) => fin.deleteTransfer(cid, id)
+);
 export function useAccountTransactions(accountId: string | undefined, monthYear?: string) {
   const cid = useFinanceiroAuth();
   return useQuery({

@@ -94,6 +94,27 @@ export async function createTransfer(collaboratorId: string, input: { from_accou
   return data;
 }
 
+// Edita uma transferência. O trigger pf_sync_balance_on_transfer (AFTER UPDATE) reajusta os 2 saldos
+// (reverte os valores antigos nas contas antigas, aplica os novos) — cobre mudança de valor e de contas.
+export async function updateTransfer(collaboratorId: string, id: string, patch: { from_account?: string; to_account?: string; amount?: number; transfer_date?: string; description?: string | null }) {
+  const row: Record<string, unknown> = {};
+  if (patch.from_account !== undefined) row.from_account = patch.from_account;
+  if (patch.to_account !== undefined) row.to_account = patch.to_account;
+  if (patch.amount !== undefined) row.amount = patch.amount;
+  if (patch.transfer_date !== undefined) row.transfer_date = patch.transfer_date;
+  if (patch.description !== undefined) row.description = patch.description;
+  const { data, error } = await supabase.from('pf_transfers').update(row)
+    .eq('collaborator_id', collaboratorId).eq('id', id).select().single();
+  if (error) throw error;
+  return data;
+}
+// Apaga uma transferência. O trigger (AFTER DELETE) devolve o valor à conta de origem e tira do destino.
+export async function deleteTransfer(collaboratorId: string, id: string) {
+  const { error } = await supabase.from('pf_transfers').delete()
+    .eq('collaborator_id', collaboratorId).eq('id', id);
+  if (error) throw error;
+}
+
 // Extrato da carteira: lançamentos (caixa) dessa conta, recentes primeiro.
 // monthYear (YYYY-MM) → filtra pelo mês do transaction_date (navegação mês a mês na carteira).
 export async function listAccountTransactions(collaboratorId: string, accountId: string, opts: { monthYear?: string; limit?: number } = {}): Promise<PfTransaction[]> {
@@ -114,6 +135,10 @@ export async function listAccountTransactions(collaboratorId: string, accountId:
 // Extrato UNIFICADO da carteira no mês: lançamentos (caixa) + transferências (entrada/saída entre
 // contas) + pagamentos de fatura que saíram da conta. Resolve "não aparece" quando o saldo veio de
 // transferência (Sug Rose). Transferências/pagamentos filtrados por mês em JS (a data pode vir nula).
+export interface PfTransfer {
+  id: string; from_account: string; to_account: string;
+  amount: number; transfer_date: string; description: string | null;
+}
 export interface AccountLedgerItem {
   id: string;            // chave única (prefixada por fonte)
   date: string;          // YYYY-MM-DD (data efetiva da movimentação)
@@ -121,7 +146,8 @@ export interface AccountLedgerItem {
   label: string;
   amount: number;        // sempre positivo
   direction: 'in' | 'out';
-  txn?: PfTransaction;   // presente só em lançamentos (linha editável)
+  txn?: PfTransaction;        // presente só em lançamentos (linha editável)
+  transfer?: PfTransfer;     // presente em transfer_in/out (editável/apagável)
 }
 export async function listAccountLedger(collaboratorId: string, accountId: string, monthYear: string): Promise<AccountLedgerItem[]> {
   const { start, end } = monthBoundsFromYYYYMM(monthYear);
@@ -153,10 +179,11 @@ export async function listAccountLedger(collaboratorId: string, accountId: strin
   for (const tr of (trRes.data ?? []) as { id: string; amount: number; transfer_date: string | null; created_at: string | null; description: string | null; from_account: string; to_account: string }[]) {
     const d = dayOf(tr.transfer_date, tr.created_at);
     if (!inMonth(d)) continue;
+    const trRaw: PfTransfer = { id: tr.id, from_account: tr.from_account, to_account: tr.to_account, amount: Number(tr.amount), transfer_date: tr.transfer_date ?? d, description: tr.description };
     if (tr.to_account === accountId) {
-      items.push({ id: `ti_${tr.id}`, date: d, kind: 'transfer_in', label: tr.description || `Transferência de ${accName.get(tr.from_account) ?? 'outra conta'}`, amount: Number(tr.amount), direction: 'in' });
+      items.push({ id: `ti_${tr.id}`, date: d, kind: 'transfer_in', label: tr.description || `Transferência de ${accName.get(tr.from_account) ?? 'outra conta'}`, amount: Number(tr.amount), direction: 'in', transfer: trRaw });
     } else {
-      items.push({ id: `to_${tr.id}`, date: d, kind: 'transfer_out', label: tr.description || `Transferência para ${accName.get(tr.to_account) ?? 'outra conta'}`, amount: Number(tr.amount), direction: 'out' });
+      items.push({ id: `to_${tr.id}`, date: d, kind: 'transfer_out', label: tr.description || `Transferência para ${accName.get(tr.to_account) ?? 'outra conta'}`, amount: Number(tr.amount), direction: 'out', transfer: trRaw });
     }
   }
   for (const p of (payRes.data ?? []) as { id: string; amount: number; paid_at: string | null; created_at: string | null; card_id: string }[]) {
