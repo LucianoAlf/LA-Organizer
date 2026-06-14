@@ -7975,9 +7975,17 @@ async function processMessage(phone, text, raw = {}) {
         emissor: _inv.emissor, vencimento: _inv.vencimento, total: _inv.total,
         cardName: _card.name, itens: _itensCat, dupWarning: null,
       });
-      await pendingIntents.openIntent(collab.id, 'invoice_import',
+      const _invIntentId = await pendingIntents.openIntent(collab.id, 'invoice_import',
         { stage: 'awaiting_confirm', card_id: _card.id, card_name: _card.name, emissor: _inv.emissor,
           vencimento: _inv.vencimento, total: _inv.total, itens: _itensCat }, 'lançar fatura?');
+      // Defense-in-depth: se o intent NÃO persistiu (ex.: constraint/erro de insert), o "lançar"
+      // do próximo turno não terá nada pra casar (Intercept B) e cai no LLM derrotista. Falha
+      // silenciosa escondeu esse bug por semanas (Alf/Rose 14/06). Loga ALTO e não promete confirmar.
+      if (!_invIntentId) {
+        console.error('[Fatura] CRÍTICO: openIntent invoice_import retornou null — confirmação NÃO vai funcionar. Checar pending_intents_kind_check / erro de insert.');
+        await whatsapp.sendMessage(phone, `📄 Li ${_inv.itens.length} compras da fatura *${_card.name}* (total R$ ${_fmtTot}), mas tive um problema técnico pra abrir a confirmação aqui. Já avisei o time — tenta de novo daqui a pouco ou lança pelo app em Finanças → Cartões.`);
+        return;
+      }
       await whatsapp.sendMessage(phone, _preview);
       return;
     }

@@ -41,22 +41,26 @@ test('PRESETS na ordem da tela', () => {
 });
 
 // ── orquestradora (supabase fake + builder fake) ──────────────────────────────
-function fakeDb({ settings, claimFails = false }) {
+function fakeDb({ settings, claimFails = false, failInsert = false }) {
   const inserted = [];
   const claims = [];
+  const rolledBack = [];
   const db = {
-    inserted, claims,
+    inserted, claims, rolledBack,
     from(tbl) {
       if (tbl === 'group_notification_settings') {
         return { select() { return { eq() { return Promise.resolve({ data: settings }); } }; } };
       }
       if (tbl === 'group_ritual_logs') {
-        return { insert(row) { claims.push(row); return { select() { return { single() {
-          return claimFails ? Promise.resolve({ error: { code: '23505' } }) : Promise.resolve({ data: { id: 'c1' } });
-        } }; } }; } };
+        return {
+          insert(row) { claims.push(row); return { select() { return { single() {
+            return claimFails ? Promise.resolve({ error: { code: '23505' } }) : Promise.resolve({ data: { id: 'c1' } });
+          } }; } }; },
+          delete() { return { eq(_col, id) { rolledBack.push(id); return Promise.resolve({ error: null }); } }; },
+        };
       }
       if (tbl === 'group_chat_messages') {
-        return { insert(row) { inserted.push(row); return Promise.resolve({ error: null }); } };
+        return { insert(row) { inserted.push(row); return Promise.resolve({ error: failInsert ? { message: 'boom transitório' } : null }); } };
       }
       return { select() { return { eq() { return Promise.resolve({ data: [] }); } }; } };
     },
@@ -84,6 +88,16 @@ test('dispatchGroupReports: overdue vazio não claima nem insere', async () => {
   await dispatchGroupReports({ now, supabase: db, deps: { buildGroupReport: async () => ({ html: '', isEmpty: true }) } });
   assert.strictEqual(db.inserted.length, 0);
   assert.strictEqual(db.claims.length, 0);
+});
+
+test('dispatchGroupReports: insert transitório reverte o claim p/ retry (RITUAL-NO-RETRY)', async () => {
+  const now = { hour: 8, minute: 0, dow: 1, ymd: '2026-06-15' };
+  const db = fakeDb({ failInsert: true, settings: [
+    { group_id: 'g1', preset: 'daily_morning', enabled: true, weekdays: [1, 2, 3, 4, 5], day_of_month: null, time_local: '08:00', group: { name: 'Financeiro' } },
+  ] });
+  await dispatchGroupReports({ now, supabase: db, deps: { buildGroupReport: async () => ({ html: '<div>x</div>', isEmpty: false }) } });
+  assert.strictEqual(db.claims.length, 1);        // venceu o claim
+  assert.deepStrictEqual(db.rolledBack, ['c1']);  // mas reverteu pra re-tentar no próximo tick
 });
 
 test('dispatchGroupReports: fora do slot não faz nada', async () => {

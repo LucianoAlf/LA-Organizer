@@ -5,6 +5,8 @@
 // (bridge-out espelha pro WhatsApp; app renderiza). Conteúdo = buildGroupReport (B1).
 'use strict';
 
+const { isTransientRitualError } = require('./ritual-claim');
+
 const PRESETS = ['daily_morning', 'weekly', 'monthly', 'overdue'];
 
 const PRESET_CONFIG = {
@@ -48,6 +50,14 @@ async function claimGroupRitual(supabase, groupId, preset, ymd) {
   return { won: true, id: data.id };
 }
 
+// Rollback do claim (RITUAL-NO-RETRY) — libera o re-envio no próximo tick quando o
+// envio falhou com erro transitório (pré-entrega). Falha de rollback nunca derruba o tick.
+async function rollbackGroupRitual(supabase, claimId) {
+  if (!claimId) return;
+  const { error } = await supabase.from('group_ritual_logs').delete().eq('id', claimId);
+  if (error) console.error('[GroupReports] rollback err:', error.message);
+}
+
 // Insere o card kind='report' (mesma forma do card da B1/closing). channel='app'
 // faz o bridge-out espelhar pro WhatsApp; o app renderiza via realtime.
 async function insertReportCard(supabase, groupId, html) {
@@ -78,6 +88,7 @@ async function dispatchGroupReports({ now, supabase, deps }) {
     if (!cfg) continue;
     const groupName = s.group ? s.group.name : 'grupo';
     const heading = cfg.headingTemplate.replace('{grupo}', groupName);
+    let claimId = null;
     try {
       if (cfg.onlyOverdue) {
         // overdue: checa atrasadas ANTES; só claima/envia se houver.
@@ -88,12 +99,14 @@ async function dispatchGroupReports({ now, supabase, deps }) {
         if (isEmpty) { console.log(`[GroupReports] ${groupName}/overdue: sem atrasadas, skip`); continue; }
         const claim = await claimGroupRitual(supabase, s.group_id, s.preset, ymd);
         if (!claim.won) { if (!claim.duplicate) console.error(`[GroupReports] claim_err ${groupName}/overdue ${claim.code}`); continue; }
+        claimId = claim.id;
         await insertReportCard(supabase, s.group_id, html);
         console.log(`[GroupReports] sent ${groupName}/overdue`);
       } else {
         // demais: claim ANTES (sempre enviam), evita corrida entre ticks.
         const claim = await claimGroupRitual(supabase, s.group_id, s.preset, ymd);
         if (!claim.won) { if (!claim.duplicate) console.error(`[GroupReports] claim_err ${groupName}/${s.preset} ${claim.code}`); continue; }
+        claimId = claim.id;
         const { html } = await buildGroupReport({
           supabase, groupId: s.group_id, scope: cfg.scope, window: cfg.window, heading, now: new Date(),
         });
@@ -101,9 +114,16 @@ async function dispatchGroupReports({ now, supabase, deps }) {
         console.log(`[GroupReports] sent ${groupName}/${s.preset}`);
       }
     } catch (err) {
-      console.error(`[GroupReports] err ${groupName}/${s.preset}:`, err.message);
+      // RITUAL-NO-RETRY: claim já vencido + erro transitório (pré-entrega) → reverte o
+      // claim pra re-tentar no próximo tick; senão o relatório do dia some em silêncio.
+      if (claimId && isTransientRitualError(err)) {
+        await rollbackGroupRitual(supabase, claimId);
+        console.error(`[GroupReports] transient ${groupName}/${s.preset} — claim revertido p/ retry:`, err.message);
+      } else {
+        console.error(`[GroupReports] err ${groupName}/${s.preset}:`, err.message);
+      }
     }
   }
 }
 
-module.exports = { PRESETS, presetConfig, matchSchedule, timeToSlot, currentSlot, isoDow, claimGroupRitual, insertReportCard, dispatchGroupReports };
+module.exports = { PRESETS, presetConfig, matchSchedule, timeToSlot, currentSlot, isoDow, claimGroupRitual, rollbackGroupRitual, insertReportCard, dispatchGroupReports };
