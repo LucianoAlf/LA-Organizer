@@ -13,6 +13,7 @@ import { FieldRow } from '../grupos/notes/FieldRow';
 import { Button } from '../../components/Button';
 import { Badge } from '../../components/Badge';
 import { BottomSheet } from '../../components/BottomSheet';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { VirarTarefasSheet } from './VirarTarefasSheet';
 
 interface Props { note: Note; idx?: TypeIndex; onEdit: () => void; onBack?: () => void; onDeleted?: () => void }
@@ -24,6 +25,7 @@ export function NotaDetalhe({ note, idx, onEdit, onBack, onDeleted }: Props) {
   const isOwner = note.collaborator_id === meuId;
 
   const [shareOpen, setShareOpen] = useState(false);
+  const [confirmDel, setConfirmDel] = useState(false);
   const [agir, setAgir] = useState(false);
   const [selLines, setSelLines] = useState<Set<number>>(new Set());
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -40,7 +42,7 @@ export function NotaDetalhe({ note, idx, onEdit, onBack, onDeleted }: Props) {
     await updateNote.mutateAsync({ id: note.id, patch: { shared_with: next } });
   }
   async function arquivar() { await updateNote.mutateAsync({ id: note.id, patch: { archived: true } }); onDeleted?.(); }
-  async function excluir() { if (!window.confirm('Excluir esta anotação? Não dá pra desfazer.')) return; await deleteNote.mutateAsync(note.id); onDeleted?.(); }
+  async function excluir() { await deleteNote.mutateAsync(note.id); onDeleted?.(); }
 
   return (
     <div className="flex-1 min-w-0 p-lg overflow-y-auto">
@@ -54,7 +56,7 @@ export function NotaDetalhe({ note, idx, onEdit, onBack, onDeleted }: Props) {
             <button onClick={() => setShareOpen(true)} aria-label="Compartilhar" className={`p-1.5 rounded-sm hover:text-fg focus-ring ${note.shared_with.length ? 'text-tom' : ''}`}><Users size={17} /></button>
             <button onClick={onEdit} aria-label="Editar" className="p-1.5 rounded-sm hover:text-fg focus-ring"><Pencil size={17} /></button>
             <button onClick={arquivar} aria-label="Arquivar" className="p-1.5 rounded-sm hover:text-fg focus-ring"><Archive size={17} /></button>
-            <button onClick={excluir} aria-label="Excluir" className="p-1.5 rounded-sm hover:text-danger focus-ring"><Trash2 size={17} /></button>
+            <button onClick={() => setConfirmDel(true)} aria-label="Excluir" className="p-1.5 rounded-sm hover:text-danger focus-ring"><Trash2 size={17} /></button>
           </div>
         )}
       </div>
@@ -137,6 +139,9 @@ export function NotaDetalhe({ note, idx, onEdit, onBack, onDeleted }: Props) {
       </BottomSheet>
 
       <VirarTarefasSheet open={sheetOpen} onClose={() => setSheetOpen(false)} note={note} lines={selecionadas} onDone={() => { setSheetOpen(false); setAgir(false); setSelLines(new Set()); }} />
+
+      <ConfirmDialog open={confirmDel} title="Excluir anotação?" description="Não dá pra desfazer." confirmLabel="Excluir" confirmVariant="danger"
+        isPending={deleteNote.isPending} onConfirm={excluir} onClose={() => setConfirmDel(false)} />
     </div>
   );
 }

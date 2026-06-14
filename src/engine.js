@@ -43,6 +43,7 @@ const { mapCategory, normalizeParams } = require('./finance/categorize');
 const { crossedThreshold, buildBudgetAlert } = require('./finance/budget-alert');
 const { monthsToGoalSimple, monthsToGoalWithInterest, formatMonths, futureValue } = require('./finance/projection');
 const invoiceImport = require('./finance/invoice-import');
+const { reconcileInstallments } = require('./finance/parse-installments');
 const { splitBulkIdenticalCreates } = require('./task-guardrail');
 const selic = require('./services/selic');
 const audioDecompose = require('./services/audio-decompose');
@@ -10003,6 +10004,16 @@ async function processMessage(phone, text, raw = {}) {
       const finReplies = [];
       for (const a of finParsed.actions) {
         try {
+          // REDE DE SEGURANÇA (parcela): o LLM às vezes lança "comprei em Nx" como 1x à vista.
+          // Se o texto do usuário indica parcelas e o marker veio sem (ou com 1), corrige aqui —
+          // determinístico, pega o caso mesmo quando o LLM erra a extração. (Rose 13/06)
+          if (a.action === 'card_purchase') {
+            const _rec = reconcileInstallments(a.params && a.params.installments, text);
+            if (_rec.corrected) {
+              a.params = { ...(a.params || {}), installments: _rec.installments };
+              console.log(`[Finance] installments rede-de-seguranca: LLM<=1 -> "${String(text).slice(0, 60)}" -> ${_rec.installments}`);
+            }
+          }
           const _outcome = { persisted: false };
           const finReply = await handleFinanceAction(collab, a.action, a.params, _outcome);
           // Fatia C: WRITE sem persistência (pergunta/não-achei) → 'skipped', não 'executed'.

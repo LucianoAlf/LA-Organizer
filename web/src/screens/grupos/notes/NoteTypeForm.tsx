@@ -5,6 +5,7 @@ import { useGroupNoteTypes } from '../../../hooks/useGroupNoteTypes';
 import { CustomSelect } from '../../../components/CustomSelect';
 import { NoteGlyph } from './IconRegistry';
 import { Button } from '../../../components/Button';
+import { ConfirmDialog } from '../../../components/ConfirmDialog';
 import { showToast } from '../../../components/Toast';
 
 const KINDS: { value: FieldKind; label: string }[] = [
@@ -33,6 +34,7 @@ export function NoteTypeForm({ groupId, editing, onSaved, onClose, onDeleted, on
   );
   const [saving, setSaving] = useState(false);
   const [removing, setRemoving] = useState(false);
+  const [confirmDel, setConfirmDel] = useState(false);
 
   function setField(i: number, p: Partial<NoteField>) { setFields((fs) => fs.map((f, idx) => (idx === i ? { ...f, ...p } : f))); }
   function addField() { setFields((fs) => [...fs, { label: '', value: '', kind: 'text' }]); }
@@ -55,7 +57,6 @@ export function NoteTypeForm({ groupId, editing, onSaved, onClose, onDeleted, on
 
   async function excluir() {
     if (!editing?.id) return;
-    if (!window.confirm(`Excluir o tipo "${editing.label}"? Não dá pra desfazer.`)) return;
     setRemoving(true);
     try {
       if (onDeleteType) await onDeleteType(editing.id); else await removeType.mutateAsync(editing.id);
@@ -69,6 +70,7 @@ export function NoteTypeForm({ groupId, editing, onSaved, onClose, onDeleted, on
   const inputCls = 'w-full bg-bg-surface border border-border rounded-md p-2 text-fg focus:outline-none focus:border-tom';
 
   return (
+    <>
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div className="bg-bg-app border border-border rounded-lg w-full max-w-md max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-sm p-md border-b border-border shrink-0">
@@ -120,7 +122,7 @@ export function NoteTypeForm({ groupId, editing, onSaved, onClose, onDeleted, on
         </div>
         <div className="flex items-center justify-between gap-sm p-md border-t border-border shrink-0">
           {isEdit
-            ? <Button variant="ghost" size="md" onClick={excluir} loading={removing} leadingIcon={<Trash2 size={15} />}>Excluir</Button>
+            ? <Button variant="ghost" size="md" onClick={() => setConfirmDel(true)} leadingIcon={<Trash2 size={15} />}>Excluir</Button>
             : <span />}
           <div className="flex items-center gap-sm">
             <Button variant="secondary" size="md" onClick={onClose}>Cancelar</Button>
@@ -129,5 +131,8 @@ export function NoteTypeForm({ groupId, editing, onSaved, onClose, onDeleted, on
         </div>
       </div>
     </div>
+    <ConfirmDialog open={confirmDel} title={`Excluir o tipo "${editing?.label || ''}"?`} description="Não dá pra desfazer." confirmLabel="Excluir" confirmVariant="danger"
+      isPending={removing} onConfirm={excluir} onClose={() => setConfirmDel(false)} />
+    </>
   );
 }
