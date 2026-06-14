@@ -2,14 +2,16 @@
 // preset desligado = só título + toggle; ligado = revela dia(s) + horário + próximo
 // disparo. Linha inteira clicável. Auto-save com debounce — sem botão Salvar.
 import { useEffect, useRef, useState } from 'react';
+import { Eye } from 'lucide-react';
 import { CustomSelect } from '../../../components/CustomSelect';
 import { TimeInput } from '../../../components/TimeInput';
 import { showToast } from '../../../components/Toast';
 import {
   PRESETS, defaultSetting, validateSetting, nextRunLabel,
-  loadGroupNotifications, upsertGroupNotification,
+  loadGroupNotifications, upsertGroupNotification, previewGroupReport,
   type GroupNotificationSetting, type Preset,
 } from '../../../lib/groupNotifications';
+import { ReportPreviewModal } from './ReportPreviewModal';
 
 const WD = [
   { v: 1, l: 'S' }, { v: 2, l: 'T' }, { v: 3, l: 'Q' }, { v: 4, l: 'Q' },
@@ -25,6 +27,9 @@ export function GroupNotificationsSection({ groupId }: { groupId: string }) {
     overdue: { ...defaultSetting('overdue'), enabled: false },
   }));
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const [preview, setPreview] = useState<
+    { preset: Preset; title: string; loading: boolean; html: string; isEmpty: boolean; error: string | null } | null
+  >(null);
 
   useEffect(() => {
     loadGroupNotifications(groupId).then((rows) => {
@@ -47,6 +52,17 @@ export function GroupNotificationsSection({ groupId }: { groupId: string }) {
       }, 600);
       return next;
     });
+  }
+
+  // "Pré-visualizar" (#3): monta o relatório desse preset só pra ver (não dispara pro grupo).
+  async function testarAgora(meta: (typeof PRESETS)[number]) {
+    setPreview({ preset: meta.preset, title: meta.label, loading: true, html: '', isEmpty: false, error: null });
+    const r = await previewGroupReport(groupId, meta.preset);
+    setPreview((p) => (p && p.preset === meta.preset
+      ? (r.ok
+          ? { ...p, loading: false, html: r.html, isEmpty: r.isEmpty, error: null }
+          : { ...p, loading: false, error: r.reason })
+      : p));
   }
 
   return (
