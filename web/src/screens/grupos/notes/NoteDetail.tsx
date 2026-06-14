@@ -1,8 +1,10 @@
+import { useState } from 'react';
 import DOMPurify from 'dompurify';
 import { Pin, PinOff, Pencil, Trash2, ArrowLeft, MessageSquare } from 'lucide-react';
 import { resolveColor, resolveIcon, bodyToHtml, typeLabel, type GroupNote, type TypeIndex } from '../../../lib/groupNotes';
 import { NoteGlyph } from './IconRegistry';
 import { FieldRow } from './FieldRow';
+import { ConfirmDialog } from '../../../components/ConfirmDialog';
 
 function whenLabel(iso: string): string {
   if (!iso) return '';
@@ -22,6 +24,7 @@ interface Props {
 export function NoteDetail({ note, editorName, idx, onEdit, onDelete, onPin, onBack }: Props) {
   const hasFields = (note.fields || []).some(f => f.label || f.value);
   const bodyHtml = note.body ? DOMPurify.sanitize(bodyToHtml(note.body)) : '';
+  const [confirmDel, setConfirmDel] = useState(false);
 
   return (
     <div className="flex-1 min-w-0 p-lg overflow-y-auto">
@@ -32,7 +35,7 @@ export function NoteDetail({ note, editorName, idx, onEdit, onDelete, onPin, onB
         <div className="flex items-center gap-1 shrink-0 text-fg-muted">
           <button onClick={() => onPin(note.id, !note.pinned)} aria-label={note.pinned ? 'Desafixar' : 'Fixar'} className="p-1.5 rounded-sm hover:text-fg focus-ring">{note.pinned ? <Pin size={17} className="text-tom" /> : <PinOff size={17} />}</button>
           <button onClick={onEdit} aria-label="Editar" className="p-1.5 rounded-sm hover:text-fg focus-ring"><Pencil size={17} /></button>
-          <button onClick={() => onDelete(note.id)} aria-label="Excluir" className="p-1.5 rounded-sm hover:text-danger focus-ring"><Trash2 size={17} /></button>
+          <button onClick={() => setConfirmDel(true)} aria-label="Excluir" className="p-1.5 rounded-sm hover:text-danger focus-ring"><Trash2 size={17} /></button>
         </div>
       </div>
 
@@ -69,6 +72,9 @@ export function NoteDetail({ note, editorName, idx, onEdit, onDelete, onPin, onB
         <MessageSquare size={16} className="text-tom shrink-0" aria-hidden />
         <span className="text-caption text-fg-muted">Fixe a ficha (📌) pro TOM responder com esses dados quando alguém perguntar no chat do grupo.</span>
       </div>
+
+      <ConfirmDialog open={confirmDel} title="Excluir ficha?" description="Não dá pra desfazer." confirmLabel="Excluir" confirmVariant="danger"
+        onConfirm={() => { setConfirmDel(false); onDelete(note.id); }} onClose={() => setConfirmDel(false)} />
     </div>
   );
 }
