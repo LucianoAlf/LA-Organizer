@@ -25,7 +25,6 @@ import { showToast } from '../../components/Toast';
 import { QuickCreateSheet } from '../../components/QuickCreateSheet';
 import { TaskGroupSheet } from '../../components/TaskGroupSheet';
 import { GroupTaskSheet } from './GroupTaskSheet';
-import { GroupConfigPanel } from './GroupConfigPanel';
 import type { Task } from '../../types';
 
 const first = (name: string | null | undefined) => (name ?? '').split(' ')[0];
@@ -103,7 +102,6 @@ export function GrupoWorkspace() {
   const [createKind, setCreateKind] = useState<'task' | 'group'>('task');
   const [editing, setEditing] = useState<PoolTaskRow | null>(null);
   const [openPkgId, setOpenPkgId] = useState<string | null>(null);
-  const [configOpen, setConfigOpen] = useState(false);
   const [rowBusy, setRowBusy] = useState<string | null>(null);
   const [childBusy, setChildBusy] = useState<string | null>(null);
 
@@ -220,7 +218,7 @@ export function GrupoWorkspace() {
   const gearBtn = (extra: string) => (
     <button
       type="button"
-      onClick={() => setConfigOpen(true)}
+      onClick={() => navigate(`/grupos/${groupId}/config`)}
       aria-label="Configurações do grupo"
       className={`grid place-items-center rounded-md border border-border bg-bg-surface text-fg hover:bg-bg-elevated focus-ring ${extra}`}
     >
@@ -463,7 +461,6 @@ export function GrupoWorkspace() {
           ws.invalidate();
         }}
       />
-      {canManage && <GroupConfigPanel open={configOpen} group={group} onClose={() => setConfigOpen(false)} />}
       </div>{/* fim da coluna de conteúdo */}
 
       {/* Chat do grupo (Fase 1) — drawer 380px que empurra o conteúdo; tela cheia/mobile via overlay. */}
