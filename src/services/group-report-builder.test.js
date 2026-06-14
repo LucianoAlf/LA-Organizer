@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { windowBounds, dueFlag, categorize, splitTasks, renderReportHtml, buildGroupReport } = require('./group-report-builder');
+const { windowBounds, dueFlag, categorize, splitTasks, dedupeTasks, renderReportHtml, buildGroupReport } = require('./group-report-builder');
 
 // 12/06/2026 é uma SEXTA. now = 2026-06-12 15:00 BRT = 18:00Z.
 const NOW = new Date('2026-06-12T18:00:00Z');
@@ -39,6 +39,16 @@ test('categorize: atrasada / hoje / semana / futura / sem_prazo', () => {
   assert.equal(categorize('2026-06-18', hoje), 'semana');
   assert.equal(categorize('2026-06-25', hoje), 'futura');
   assert.equal(categorize(null, hoje), 'sem_prazo');
+});
+
+test('dedupeTasks remove gêmeas (mesmo título+data+responsável), mantém dias/itens distintos', () => {
+  const r = dedupeTasks([
+    { title: 'Cartão 8641', due_date: '2026-06-17', responsavel: 'Rose' },
+    { title: 'Cartão 8641', due_date: '2026-06-17', responsavel: 'Rose' }, // gêmea → cai
+    { title: 'Cartão 8641', due_date: '2026-06-18', responsavel: 'Rose' }, // outro dia → fica
+    { title: 'Barra', due_date: '2026-06-17', responsavel: 'Rose' },       // outro título → fica
+  ]);
+  assert.equal(r.length, 3);
 });
 
 test('splitTasks separa com prazo (ordenado) e sem prazo', () => {

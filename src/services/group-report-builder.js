@@ -127,8 +127,20 @@ function renderReportHtml({ groupName, windowLabel, sections, heading }) {
 
 // ── I/O ──────────────────────────────────────────────────────────────────────
 
-// Tarefas ABERTAS do grupo. Exclui done E cancelled (cancelada não é "atrasada"), e esconde
-// os MOLDES de recorrência (recurrence_rule != null) — mostra só instâncias e tarefas normais.
+// Remove duplicatas EXATAS (mesma tarefa materializada 2x): título + due_date + responsável.
+function dedupeTasks(tasks) {
+  const seen = new Set();
+  return (tasks || []).filter((t) => {
+    const k = `${t.title}|${t.due_date || ''}|${t.responsavel || ''}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+// Tarefas ABERTAS do grupo. Exclui done E cancelled (cancelada não é "atrasada"), esconde
+// os MOLDES de recorrência (recurrence_rule != null) — mostra só instâncias/tarefas normais —
+// e faz dedup defensivo contra instâncias gêmeas (materialização duplicada).
 async function queryGroupTasks(supabase, groupId) {
   const { data } = await supabase.from('tasks')
     .select('id, title, due_date, status, created_by, ' +
@@ -138,11 +150,11 @@ async function queryGroupTasks(supabase, groupId) {
     .neq('status', 'cancelled')
     .is('recurrence_rule', null)
     .order('due_date', { ascending: true, nullsFirst: false });
-  return (data || []).map((t) => ({
+  return dedupeTasks((data || []).map((t) => ({
     title: t.title,
     due_date: t.due_date,
     responsavel: t.creator?.preferred_name || t.creator?.full_name || null,
-  }));
+  })));
 }
 
 // v1: notes e op_checklists NÃO têm vínculo de grupo no schema. Retornam vazio (degrada gracioso).
@@ -192,7 +204,7 @@ async function buildGroupReport({ supabase, groupId, scope = 'tudo', window = 'm
 }
 
 module.exports = {
-  windowBounds, dueFlag, categorize, catsForWindow, spYmd, addDaysYmd, splitTasks,
+  windowBounds, dueFlag, categorize, catsForWindow, spYmd, addDaysYmd, splitTasks, dedupeTasks,
   renderReportHtml, queryGroupTasks, queryGroupNotes, queryGroupChecklists,
   taskLine, taskLineItem, buildGroupReport, CATEGORIES,
 };
