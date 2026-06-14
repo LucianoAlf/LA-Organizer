@@ -33,4 +33,5 @@ async function fetchTransactions(accountId, { from } = {}) {
   }
   return out;
 }
-module.exports = { getApiKey, fetchItem, fetchAccounts, fetchTransactions };
+async function fetchInvestments(itemId) { return (await _get(`/investments?itemId=${itemId}`)).results || []; }
+module.exports = { getApiKey, fetchItem, fetchAccounts, fetchTransactions, fetchInvestments };

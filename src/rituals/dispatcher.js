@@ -476,7 +476,7 @@ async function checkPluggyReconcile(now) {
   const financeService = require('../services/financeiro-service');
   const { syncPluggy } = require('../services/pluggy-sync');
   const { reconcileStaging, reconcileReportData } = require('../services/pluggy-reconcile');
-  const { sumBankBalances } = require('../services/pluggy-query');
+  const { sumBankBalances, autoLinkBankAccounts, balanceDivergences } = require('../services/pluggy-query');
   const { buildReconcileReport, buildNoonNudge } = require('../finance/reconcile-report');
   const { computeHealthScore } = require('../finance/health-score');
   const { buildHealthScoreLine } = require('../finance/ritual-messages');
@@ -498,9 +498,11 @@ async function checkPluggyReconcile(now) {
         const credit = await financeService.creditUtilization(c.id);
         const hs = computeHealthScore({ receitas: rep.receitas, despesas: rep.despesas, credit, goals });
         const saldoReal = await sumBankBalances(c.id).catch(() => null);
+        await autoLinkBankAccounts(c.id).catch(() => {});
+        const divergencias = await balanceDivergences(c.id).catch(() => []);
         msg = buildReconcileReport({
           nome, conciliadoCount: data.conciliadoCount, pendentes: data.pendentes,
-          backlogExtra: data.backlogExtra, healthLine: buildHealthScoreLine(hs), saldoReal,
+          backlogExtra: data.backlogExtra, healthLine: buildHealthScoreLine(hs), saldoReal, divergencias,
         });
       }
     } catch (e) { console.error('[checkPluggyReconcile] build', c.full_name, e.message); continue; }

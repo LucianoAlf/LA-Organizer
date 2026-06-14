@@ -9,9 +9,10 @@ function pendLine(p) {
 }
 
 // Relatório completo das 18h.
-function buildReconcileReport({ nome, conciliadoCount = 0, pendentes = [], backlogExtra = 0, healthLine = '', saldoReal = null }) {
+function buildReconcileReport({ nome, conciliadoCount = 0, pendentes = [], backlogExtra = 0, healthLine = '', saldoReal = null, divergencias = [] }) {
   const pend = pendentes || [];
-  if (!conciliadoCount && !pend.length) return '';
+  const divs = divergencias || [];
+  if (!conciliadoCount && !pend.length && !divs.length) return '';
   let m = `👽 ${nome}, fechamento do dia 👇`;
   if (conciliadoCount) m += `\n\n✅ Tá tudo certo: *${conciliadoCount}* movimento${conciliadoCount > 1 ? 's' : ''} bateram com o que você lançou.`;
   if (pend.length) {
@@ -20,6 +21,12 @@ function buildReconcileReport({ nome, conciliadoCount = 0, pendentes = [], backl
   }
   if (healthLine) m += `\n\n${healthLine}`;
   if (saldoReal != null) m += `\n💰 Saldo real das contas hoje: *R$ ${brl(saldoReal)}*`;
+  if (divs.length) {
+    m += `\n\n⚖️ *Saldo não bate com o app:*\n` + divs.map((d) => {
+      const obs = d.diff > 0 ? `app tem R$ ${brl(d.diff)} a mais` : `faltam R$ ${brl(-d.diff)} no app`;
+      return `• ${d.conta}: app R$ ${brl(d.saldoApp)} · real R$ ${brl(d.saldoReal)} (${obs})`;
+    }).join('\n');
+  }
   if (pend.length) m += `\n\nResponde o que foi cada um que eu lanço pra você. 👇`;
   return m;
 }

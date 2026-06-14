@@ -51,4 +51,23 @@ async function reconcileReportData(collaboratorId, { topN = 6 } = {}) {
   return { conciliadoCount, pendentes, pendingTotal, backlogExtra: Math.max(0, pendingTotal - pendentes.length) };
 }
 
-module.exports = { reconcileStaging, reconcileReportData };
+// Após um lançamento no app, casa um pendente Pluggy equivalente (mesmo valor/direção, ±5d) → matched.
+// É o "elo de volta" (D3b): o usuário responde o relatório lançando, e o pendente fecha sozinho.
+async function tryMatchPluggyPending(collaboratorId, { amount, direction, date, pfTxnId } = {}) {
+  const supabase = require('../supabase/client');
+  const amt = Math.abs(Number(amount) || 0);
+  if (!amt || !direction) return null;
+  const ymd = (date && String(date).slice(0, 10)) || new Date().toISOString().slice(0, 10);
+  const { data: cands } = await supabase.from('pf_pluggy_transactions')
+    .select('id, amount, posted_date').eq('collaborator_id', collaboratorId)
+    .eq('status', 'pending').eq('direction', direction);
+  const { daysBetween } = require('../finance/reconcile');
+  const hit = (cands || []).find((c) => Math.abs(Number(c.amount) - amt) < 0.01 && Math.abs(daysBetween(c.posted_date, ymd)) <= 5);
+  if (!hit) return null;
+  await supabase.from('pf_pluggy_transactions')
+    .update({ status: 'matched', matched_pf_transaction_id: pfTxnId || null, resolved_at: new Date().toISOString() })
+    .eq('id', hit.id);
+  return hit;
+}
+
+module.exports = { reconcileStaging, reconcileReportData, tryMatchPluggyPending };

@@ -6703,6 +6703,7 @@ const FINANCE_ACTIONS = [
   'simulate_interest',
   // cartão de crédito + transferência
   'create_card', 'card_purchase', 'card_refund', 'query_invoice', 'pay_invoice', 'transfer',
+  'pluggy_query', // Pluggy / Open Finance — consulta realtime (saldo/fatura/investimento)
   'edit_transaction', 'delete_transaction', 'query_transactions',
   'query_period_expenses', 'query_account_detail', 'query_statement',
   'query_daily_summary', 'query_weekly_summary', 'query_monthly_closing',
@@ -6796,6 +6797,16 @@ function anomalyNoteFrom(preHistory, amount) {
   } catch (e) { console.warn('[Anomaly] err:', e.message); return ''; }
 }
 
+// Após um lançamento, tenta casar um pendente Pluggy equivalente → nota de conciliação (ou ''). (D3b)
+async function matchPluggyNote(cid, info) {
+  try {
+    const { tryMatchPluggyPending } = require('./services/pluggy-reconcile');
+    const hit = await tryMatchPluggyPending(cid, info);
+    if (hit) return `\n\n🔗 Conciliei com o movimento de R$ ${Number(hit.amount).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} da sua conta real.`;
+  } catch (e) { console.warn('[matchPluggyNote]', e.message); }
+  return '';
+}
+
 async function recordCardPurchase(cid, card, { amount, description, category, installments, date, bill_id }, outcome = {}) {
   const financeFmt = require('./services/finance-format');
   const inst = parseInt(installments || 1, 10) || 1;
@@ -6810,6 +6821,7 @@ async function recordCardPurchase(cid, card, { amount, description, category, in
   const al = await financeService.checkAndMarkLimitAlert(cid, card);
   if (al) reply += '\n\n' + financeFmt.limitAlert(card, al.band, al.usage);
   reply += anomalyNoteFrom(_preHist, amount);
+  reply += await matchPluggyNote(cid, { amount, direction: 'out', date, pfTxnId: rows[0] && rows[0].id });
   return reply;
 }
 
@@ -6839,12 +6851,13 @@ async function writeCashTransaction(cid, { type, category, amount, description, 
   const meta = financeFmt.CAT_META[category] || { emoji: '📦', label: category };
   const newBalance = Number(account.balance) + (type === 'income' ? Number(amount) : -Number(amount));
   const footer = financeFmt.buildTxnFooter({ categoryMissing: category === 'outros', accountLinked: true, tipSeed: new Date().getUTCDate(), type });
-  return financeFmt.buildTxnConfirmation({
+  const _reply = financeFmt.buildTxnConfirmation({
     type, description, amount: Number(amount),
     categoryLabel: meta.label,
     account: { name: account.name, icon: account.icon },
     newBalance, budgetBlock, assumedSource, footer,
   }) + (type === 'expense' ? anomalyNoteFrom(_preHist, amount) : '');
+  return _reply + await matchPluggyNote(cid, { amount, direction: type === 'income' ? 'in' : 'out', date, pfTxnId: _txn && _txn.id });
 }
 
 // SEGURANCA (spec §6.2): cid SEMPRE = collab.id (remetente resolvido server-side). NUNCA params.collaborator_id.
@@ -6860,6 +6873,21 @@ async function handleFinanceAction(collab, action, params, outcome = {}) {
   };
 
   switch (action) {
+    case 'pluggy_query': {
+      // Consulta realtime à conta real (Pluggy) — saldo / fatura / investimento. Fetch fresh.
+      const kind = String(params.kind || params.tipo || 'saldo');
+      const banco = params.banco || params.bank || params.conta || params.cartao || null;
+      const pq = require('./services/pluggy-query');
+      const fmt = require('./finance/pluggy-query-format');
+      try {
+        if (/fatura|cart[aã]o|invoice/i.test(kind)) return fmt.buildFaturaMsg(await pq.cardInvoices(cid, banco));
+        if (/invest|caix|rendiment|poupan|cdb/i.test(kind)) return fmt.buildInvestMsg(await pq.investments(cid, banco));
+        return fmt.buildSaldoMsg(await pq.bankBalances(cid, banco));
+      } catch (e) {
+        console.error('[pluggy_query]', e.message);
+        return 'Não consegui consultar sua conta real agora (o banco pode estar reconectando). Tenta de novo daqui a pouco? 🙏';
+      }
+    }
     case 'register_transaction': {
       if (!p.amount || p.amount <= 0) return '❓ Qual foi o valor?';
       const type = p.type || 'expense';

@@ -46,6 +46,13 @@ test('só conciliados (nada pendente) → mostra ✅, sem a seção ❌ nem "Res
   assert.doesNotMatch(m, /Responde/);
 });
 
+test('relatório mostra divergência de saldo (app × real)', () => {
+  const m = buildReconcileReport({ nome: 'Alf', conciliadoCount: 0, pendentes: [], divergencias: [{ conta: 'Nubank', saldoApp: 1000, saldoReal: 1200, diff: -200 }] });
+  assert.match(m, /Saldo não bate/);
+  assert.match(m, /Nubank/);
+  assert.match(m, /faltam R\$ 200,00 no app/);
+});
+
 test('buildNoonNudge: com pendentes lista; sem → vazio', () => {
   const m = buildNoonNudge({ nome: 'Alf', pendentes: [{ emoji: '💸', amount: 500, direction: 'out', label: 'Loja X', date: '14/06' }] });
   assert.match(m, /500,00/);
