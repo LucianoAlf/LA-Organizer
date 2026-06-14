@@ -18,6 +18,7 @@ const ai = require('./ai/provider');
 const claude = require('./ai/claude');
 const { validateFormatRequest, systemPromptFor } = require('./services/format-note');
 const inventarioService = require('./services/inventario-service');
+const { PRESETS: GROUP_REPORT_PRESETS, buildPresetPreview } = require('./rituals/group-reports');
 
 const router = express.Router();
 
@@ -1124,6 +1125,24 @@ router.post('/internal/format-note', requireInternalSecret, async (req, res) => 
     console.warn(`[InternalAPI] format-note falhou action=${v.action}: ${err.message?.slice(0, 200)}`);
     logFmt('rejected', err.message);
     return res.status(502).json({ ok: false, error: 'tom_unavailable' });
+  }
+});
+
+// Grupos B2 — "Pré-visualizar" o relatório de um preset SEM enviar pro grupo (read-only).
+// Reutiliza buildPresetPreview (mesma montagem dos rituais proativos), mas não claima em
+// group_ritual_logs nem insere card. Body: { group_id, preset }. Auth via x-internal-secret.
+router.post('/internal/group-report-preview', requireInternalSecret, async (req, res) => {
+  const groupId = String(req.body?.group_id || '').trim();
+  const preset = String(req.body?.preset || '').trim();
+  if (!groupId) return res.status(400).json({ ok: false, error: 'missing_group_id' });
+  if (!GROUP_REPORT_PRESETS.includes(preset)) return res.status(400).json({ ok: false, error: 'invalid_preset' });
+  try {
+    const r = await buildPresetPreview({ supabase, groupId, preset, now: new Date() });
+    if (!r.ok) return res.status(r.error === 'group_not_found' ? 404 : 400).json({ ok: false, error: r.error });
+    return res.json({ ok: true, html: r.html, isEmpty: r.isEmpty, heading: r.heading });
+  } catch (err) {
+    console.warn(`[InternalAPI] group-report-preview falhou group=${groupId} preset=${preset}: ${err.message?.slice(0, 200)}`);
+    return res.status(502).json({ ok: false, error: 'preview_failed' });
   }
 });
 

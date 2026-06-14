@@ -126,4 +126,22 @@ async function dispatchGroupReports({ now, supabase, deps }) {
   }
 }
 
-module.exports = { PRESETS, presetConfig, matchSchedule, timeToSlot, currentSlot, isoDow, claimGroupRitual, rollbackGroupRitual, insertReportCard, dispatchGroupReports };
+// Monta o relatório de UM preset SEM enviar — usado pelo "Pré-visualizar" (#3 das
+// notificações). Reutiliza presetConfig + heading do ritual; READ-ONLY: não claima em
+// group_ritual_logs nem insere card. Retorna { ok:true, html, isEmpty, heading } ou { ok:false, error }.
+async function buildPresetPreview({ supabase, groupId, preset, now = new Date(), deps }) {
+  const cfg = presetConfig(preset);
+  if (!cfg) return { ok: false, error: 'invalid_preset' };
+  const buildGroupReport = deps && deps.buildGroupReport
+    ? deps.buildGroupReport
+    : require('../services/group-report-builder').buildGroupReport;
+  const { data: g } = await supabase.from('work_groups').select('name').eq('id', groupId).maybeSingle();
+  if (!g) return { ok: false, error: 'group_not_found' };
+  const heading = cfg.headingTemplate.replace('{grupo}', g.name || 'grupo');
+  const { html, isEmpty } = await buildGroupReport({
+    supabase, groupId, scope: cfg.scope, window: cfg.window, onlyOverdue: cfg.onlyOverdue, heading, now,
+  });
+  return { ok: true, html, isEmpty, heading };
+}
+
+module.exports = { PRESETS, presetConfig, matchSchedule, timeToSlot, currentSlot, isoDow, claimGroupRitual, rollbackGroupRitual, insertReportCard, dispatchGroupReports, buildPresetPreview };

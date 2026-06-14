@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { matchSchedule, presetConfig, PRESETS, dispatchGroupReports } = require('./group-reports');
+const { matchSchedule, presetConfig, PRESETS, dispatchGroupReports, buildPresetPreview } = require('./group-reports');
 
 // now = { hour, minute, dow (0=dom..6=sab), ymd }
 const seg08 = { hour: 8, minute: 2, dow: 1, ymd: '2026-06-15' }; // segunda 08:02 → slot 08:00
@@ -107,4 +107,45 @@ test('dispatchGroupReports: fora do slot não faz nada', async () => {
   ] });
   await dispatchGroupReports({ now, supabase: db, deps: { buildGroupReport: async () => ({ html: '<div>x</div>', isEmpty: false }) } });
   assert.strictEqual(db.inserted.length, 0);
+});
+
+// ── buildPresetPreview (read-only, usado pelo "Pré-visualizar") ────────────────
+function fakeGroupDb(name) {
+  return {
+    from(tbl) {
+      if (tbl === 'work_groups') {
+        return { select() { return { eq() { return { maybeSingle() { return Promise.resolve({ data: name == null ? null : { name } }); } }; } }; } };
+      }
+      return { select() { return { eq() { return Promise.resolve({ data: [] }); } }; } };
+    },
+  };
+}
+
+test('buildPresetPreview: monta heading do preset e devolve html sem enviar', async () => {
+  let captured = null;
+  const r = await buildPresetPreview({
+    supabase: fakeGroupDb('Financeiro'), groupId: 'g1', preset: 'daily_morning', now: new Date('2026-06-15T11:00:00Z'),
+    deps: { buildGroupReport: async (args) => { captured = args; return { html: '<div>card</div>', isEmpty: false }; } },
+  });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.html, '<div>card</div>');
+  assert.strictEqual(r.isEmpty, false);
+  assert.strictEqual(r.heading, '☀️ Bom dia, Financeiro! Hoje vocês têm:');
+  assert.strictEqual(captured.scope, 'agenda');   // herdou do presetConfig
+  assert.strictEqual(captured.window, 'hoje');
+});
+
+test('buildPresetPreview: preset inválido → ok:false', async () => {
+  const r = await buildPresetPreview({ supabase: fakeGroupDb('X'), groupId: 'g1', preset: 'nope' });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.error, 'invalid_preset');
+});
+
+test('buildPresetPreview: grupo inexistente → ok:false', async () => {
+  const r = await buildPresetPreview({
+    supabase: fakeGroupDb(null), groupId: 'gX', preset: 'weekly',
+    deps: { buildGroupReport: async () => ({ html: '', isEmpty: true }) },
+  });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.error, 'group_not_found');
 });

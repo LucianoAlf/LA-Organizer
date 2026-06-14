@@ -5072,8 +5072,11 @@ async function applyTaskActions(collaborator, actions) {
         const isCurrentOwner = govTask.governance_owner_id === collaborator.id;
         let isUnitManager = false;
         if (!isDirector && !isCurrentOwner && !govTask.governance_owner_id && collaborator.role === 'manager') {
-          // Sem dono: gerente da unidade do executor pode assumir
-          if (govTask.assigned_to) {
+          // Sem dono: gerente da unidade REAL do executor pode assumir. O sentinel unit='all'
+          // (= sem unidade física) NÃO conta como unidade — senão um manager unit='all' (Yuri)
+          // assumiria a cobrança de QUALQUER pessoa unit='all'. Caso 14/06 (vazamento governança).
+          const { UNITS } = require('./services/leader-routing');
+          if (govTask.assigned_to && collaborator.unit && UNITS.has(collaborator.unit)) {
             const { data: execCollab } = await supabase
               .from('collaborators')
               .select('unit')

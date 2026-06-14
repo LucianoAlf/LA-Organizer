@@ -105,3 +105,30 @@ export async function upsertGroupNotification(groupId: string, s: GroupNotificat
     .upsert({ group_id: groupId, ...v, updated_at: new Date().toISOString() }, { onConflict: 'group_id,preset' });
   if (error) throw error;
 }
+
+// "Pré-visualizar" (#3): monta o relatório do preset SÓ pra ver — não dispara pro grupo.
+// Chama /internal/group-report-preview (read-only no backend), mesmo padrão do formatNote.ts.
+const TOM_BASE = import.meta.env.VITE_TOM_API_BASE || '';
+const INTERNAL_SECRET = import.meta.env.VITE_INTERNAL_API_SECRET || '';
+
+export type ReportPreview =
+  | { ok: true; html: string; isEmpty: boolean; heading: string }
+  | { ok: false; reason: string };
+
+export async function previewGroupReport(groupId: string, preset: Preset): Promise<ReportPreview> {
+  if (!INTERNAL_SECRET) return { ok: false, reason: 'no_secret' };
+  try {
+    const res = await fetch(`${TOM_BASE}/internal/group-report-preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-secret': INTERNAL_SECRET },
+      body: JSON.stringify({ group_id: groupId, preset }),
+    });
+    if (!res.ok) return { ok: false, reason: `http_${res.status}` };
+    const data = await res.json();
+    return data?.ok
+      ? { ok: true, html: String(data.html || ''), isEmpty: !!data.isEmpty, heading: String(data.heading || '') }
+      : { ok: false, reason: String(data?.error || 'unknown') };
+  } catch (e) {
+    return { ok: false, reason: (e as Error).message };
+  }
+}
