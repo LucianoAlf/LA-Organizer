@@ -44,6 +44,8 @@ const { crossedThreshold, buildBudgetAlert } = require('./finance/budget-alert')
 const { monthsToGoalSimple, monthsToGoalWithInterest, formatMonths, futureValue } = require('./finance/projection');
 const invoiceImport = require('./finance/invoice-import');
 const statementParse = require('./finance/statement-parse');
+const spendingAnomaly = require('./finance/spending-anomaly');
+const proactiveMsg = require('./finance/proactive-messages');
 const { reconcileInstallments } = require('./finance/parse-installments');
 const gemini = require('./services/gemini');
 const { splitBulkIdenticalCreates } = require('./task-guardrail');
@@ -6784,18 +6786,30 @@ function resolveCategorySlug(raw, customCats) {
 }
 
 // Compra no cartão (fonte única, usada pelo case card_purchase E pelo roteamento de register_transaction).
+// Fase C — nota inline de "gasto fora do padrão". preHistory = gastos do mesmo merchant buscados
+// ANTES de inserir (pra não contar a transação atual). Nunca quebra o registro (try/catch). (Alf 14/06)
+function anomalyNoteFrom(preHistory, amount) {
+  try {
+    if (!(Number(amount) > 0)) return '';
+    const note = proactiveMsg.buildAnomalyNote(spendingAnomaly.detectAnomaly({ amount: Number(amount), history: preHistory || [] }));
+    return note ? '\n\n' + note : '';
+  } catch (e) { console.warn('[Anomaly] err:', e.message); return ''; }
+}
+
 async function recordCardPurchase(cid, card, { amount, description, category, installments, date, bill_id }, outcome = {}) {
   const financeFmt = require('./services/finance-format');
   const inst = parseInt(installments || 1, 10) || 1;
   const _cats = await financeService.listCategorySlugs(cid).catch(() => []);
   const _extra = new Set(_cats.filter((r) => r.collaborator_id).map((r) => r.slug));
   const cat = safeCategory(category, description, 'expense', _extra);
+  const _preHist = await financeService.merchantSpendHistory(cid, description).catch(() => []);
   const rows = await financeService.insertCardPurchase(cid, card, { category: cat, amount: Number(amount), description, transaction_date: date, installments: inst, bill_id });
   outcome.persisted = true; // Fatia C: marca persistência real (compra no cartão gravada)
   const usage = await financeService.cardUsage(cid, card);
   let reply = financeFmt.txnRegistered(card, { description, amount: Number(amount), category: cat, installments: inst, competencia: rows[0].competencia }, usage);
   const al = await financeService.checkAndMarkLimitAlert(cid, card);
   if (al) reply += '\n\n' + financeFmt.limitAlert(card, al.band, al.usage);
+  reply += anomalyNoteFrom(_preHist, amount);
   return reply;
 }
 
@@ -6804,6 +6818,7 @@ async function recordCardPurchase(cid, card, { amount, description, category, in
 async function writeCashTransaction(cid, { type, category, amount, description, date, account, assumedSource, bill_id }, outcome = {}) {
   const financeFmt = require('./services/finance-format');
   const prev = type === 'expense' ? await financeService.monthCategoryTotal(cid, category) : 0;
+  const _preHist = type === 'expense' ? await financeService.merchantSpendHistory(cid, description).catch(() => []) : [];
   const _txn = await financeService.insertTransaction(cid, { type, category, amount, description, transaction_date: date, account_id: account.id, bill_id });
   outcome.persisted = true; // Fatia C: marca persistência real (transação de caixa gravada)
   console.log(`[Finance] txn ${_txn && _txn.id ? _txn.id.slice(0,8) : '?'} registrada cid=${String(cid).slice(0,8)}`);
@@ -6829,7 +6844,7 @@ async function writeCashTransaction(cid, { type, category, amount, description, 
     categoryLabel: meta.label,
     account: { name: account.name, icon: account.icon },
     newBalance, budgetBlock, assumedSource, footer,
-  });
+  }) + (type === 'expense' ? anomalyNoteFrom(_preHist, amount) : '');
 }
 
 // SEGURANCA (spec §6.2): cid SEMPRE = collab.id (remetente resolvido server-side). NUNCA params.collaborator_id.
@@ -7208,6 +7223,7 @@ async function handleFinanceAction(collab, action, params, outcome = {}) {
         return question;
       }
       const card = cards[0];
+      const _preHist = await financeService.merchantSpendHistory(cid, params.description).catch(() => []);
       const rows = await financeService.insertCardPurchase(cid, card, {
         category, amount, description: params.description, transaction_date: params.date, installments,
         competencia: params.competencia, // "põe na fatura de maio" → override explícito (engine ignora se vazio/inválido)
@@ -7219,6 +7235,7 @@ async function handleFinanceAction(collab, action, params, outcome = {}) {
       }, usage);
       const al = await financeService.checkAndMarkLimitAlert(cid, card);
       if (al) reply += '\n\n' + financeFmt.limitAlert(card, al.band, al.usage);
+      reply += anomalyNoteFrom(_preHist, amount);
       return reply;
     }
     case 'card_refund': {

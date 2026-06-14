@@ -733,6 +733,48 @@ async function dueItemsForDigest(collaboratorId, { dom, ymd }) {
   return out;
 }
 
+// === Fase C (proativo) — queries de suporte aos alertas ===
+function _firstDayMonthsAgo(n) {
+  const d = new Date();
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - n, 1)).toISOString().slice(0, 10);
+}
+// Totais das n faturas FECHADAS anteriores à competência aberta (p/ previsão de fatura).
+async function lastClosedInvoiceTotals(collaboratorId, card, n = 3) {
+  const cur = currentCompetencia(card);
+  const totals = [];
+  for (let i = 1; i <= n; i++) {
+    const inv = await cardInvoice(collaboratorId, card.id, addMonthsToCompetencia(cur, -i));
+    if (inv && inv.total > 0) totals.push(inv.total);
+  }
+  return totals;
+}
+// Valores de gastos passados no MESMO merchant (descrição normalizada), p/ anomalia.
+async function merchantSpendHistory(collaboratorId, descricao, { months = 6 } = {}) {
+  const { normalizeMerchant } = require('../finance/recurring-detect');
+  const target = normalizeMerchant(descricao);
+  if (!target || target.length < 3) return [];
+  const { data, error } = await supabase.from('pf_transactions')
+    .select('amount, description')
+    .eq('collaborator_id', collaboratorId).eq('type', 'expense')
+    .gte('transaction_date', _firstDayMonthsAgo(months))
+    .limit(800);
+  if (error) return [];
+  return (data || [])
+    .filter((r) => Number(r.amount) > 0 && normalizeMerchant(r.description) === target)
+    .map((r) => Number(r.amount));
+}
+// Transações de despesa dos últimos N meses (p/ detecção de recorrência/assinaturas).
+async function recurringTxns(collaboratorId, { months = 4 } = {}) {
+  const { data, error } = await supabase.from('pf_transactions')
+    .select('description, amount, transaction_date')
+    .eq('collaborator_id', collaboratorId).eq('type', 'expense')
+    .gte('transaction_date', _firstDayMonthsAgo(months))
+    .order('transaction_date', { ascending: true })
+    .limit(2000);
+  if (error) return [];
+  return (data || []).map((r) => ({ descricao: r.description, valor: r.amount, data: r.transaction_date }));
+}
+
 module.exports = {
   monthBounds,
   createAccount, updateAccount, listAccounts, findAccountByName, ensureDinheiro, resolveSource,
@@ -753,4 +795,6 @@ module.exports = {
   cardInvoice, cardUsage, payCardInvoice, createTransfer,
   checkAndMarkLimitAlert, cardsForAlerts, ALERT_BANDS,
   dueItemsForDigest,
+  // Fase C — proativo
+  lastClosedInvoiceTotals, merchantSpendHistory, recurringTxns,
 };

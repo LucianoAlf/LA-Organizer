@@ -407,6 +407,55 @@ async function checkFinanceBillReminders(now) {
   }
 }
 
+// Fase C — alertas financeiros PROATIVOS (previsão de fatura + assinaturas/aumento). Manhã (08h);
+// SÓ envia se houver ao menos 1 alerta (sem spam diário). Quiet + claim como os demais rituais. (Alf 14/06)
+function daysUntilClose(closingDay, ymd) {
+  const today = Number(ymd.slice(8, 10));
+  const [y, m] = ymd.split('-').map(Number);
+  const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  let d = Number(closingDay) - today;
+  if (d < 0) d += daysInMonth;
+  return d;
+}
+
+async function checkFinanceProactive(now) {
+  const ymd = now.ymd || nowSaoPaulo().ymd;
+  if (currentSlot(now) !== timeToSlot('08:00')) return;
+  const whatsapp = require('../services/whatsapp');
+  const financeService = require('../services/financeiro-service');
+  const { forecastInvoiceAlert } = require('../finance/forecast-invoice');
+  const { detectRecurring } = require('../finance/recurring-detect');
+  const { buildForecastLine, buildRecurringLines } = require('../finance/proactive-messages');
+  for (const c of await financeService.collaboratorsForFinanceRitual()) {
+    if (await alreadySent(c.id, 'financeiro_proativo', ymd)) continue;
+    let lines = [];
+    try {
+      for (const card of await financeService.listCards(c.id)) {
+        const openInv = await financeService.cardInvoice(c.id, card.id, financeService.currentCompetencia(card));
+        const closed = await financeService.lastClosedInvoiceTotals(c.id, card, 3);
+        const line = buildForecastLine(card.name, forecastInvoiceAlert({
+          openTotal: openInv.total, closedTotals: closed, daysToClose: daysUntilClose(card.closing_day, ymd),
+        }));
+        if (line) lines.push(line);
+      }
+      lines = lines.concat(buildRecurringLines(detectRecurring(await financeService.recurringTxns(c.id, { months: 4 }))));
+    } catch (e) { console.error('[checkFinanceProactive] build', c.full_name, e.message); continue; }
+    if (!lines.length) continue; // nada relevante hoje → silêncio (sem spam)
+    const q = await isQuietNow(c.id, now, 'personal');
+    if (q.quiet) { await logRitualEvent(c.id, 'financeiro_proativo', 'skipped', `quiet:${q.reason}`, ymd); continue; }
+    const claim = await claimRitualSend(supabase, c.id, 'financeiro_proativo', ymd);
+    if (!claim.won) { if (!claim.duplicate) await logRitualEvent(c.id, 'financeiro_proativo', 'error', `claim_err:${claim.code || ''}`, ymd); continue; }
+    try {
+      const nome = String(c.full_name || '').split(' ')[0];
+      await whatsapp.sendMessage(c.phone, `👋 Bom dia, ${nome}! Fica de olho 👀\n\n${lines.join('\n')}`);
+    } catch (err) {
+      console.error('[checkFinanceProactive]', c.full_name, err.message);
+      if (isTransientRitualError(err)) await rollbackRitualClaim(supabase, claim.id);
+      await logRitualEvent(c.id, 'financeiro_proativo', 'error', err.message, ymd);
+    }
+  }
+}
+
 // Ritual financeiro mensal — dia 10, 18h BRT.
 async function checkFinanceMonthly(now) {
   const ymd = now.ymd || nowSaoPaulo().ymd;
@@ -4063,6 +4112,7 @@ async function run(opts = {}) {
   // sendFinanceDigest (enviado logo após o briefing). Spec: 2026-06-08-digest-financeiro-matinal-design.md
   try { await checkFinanceMonthly(now);        } catch (e) { console.error('[run] financeMonthly', e); }
   try { await checkFinanceReport(now);         } catch (e) { console.error('[run] financeReport', e); }
+  try { await checkFinanceProactive(now);      } catch (e) { console.error('[run] financeProactive', e); }
   try { await checkCardLimitAlerts(now);       } catch (e) { console.error('[run] cardLimitAlerts', e); }
 
   // Sprint 15 F4 — Briefing operacional semanal por departamento (segunda 07:30 BRT)
