@@ -212,14 +212,18 @@ async function checkRejectedMarkers() {
   //      aqui também era dupla-contagem (o "14 rejeitados" = 10 actionable + 4 outros).
   //  (b) reason 'integrity_*' → é a confirmação de duplicata "1/2/3" (by-design, TOM
   //      perguntando qual tarefa), não falha. Volume baixo → filtra em JS (robusto a null).
+  //  (c) UNKNOWN_MARKER_STRIPPED → tem check dedicado (checkUnknownMarkers) → dupla-contagem.
+  //  (d) LEAK_BLOCKED → é o sanitizador BLOQUEANDO um vazamento (resultado DESEJADO, proteção
+  //      ativa), não uma falha. Auditoria 14/06: inflavam o "12 markers rejeitados".
   const { data, error } = await supabase
     .from('marker_logs')
     .select('marker_type, reason')
     .eq('result', 'rejected')
     .gte('created_at', isoHoursAgo(24));
   if (error) throw error;
+  const BENIGN_TYPES = new Set(['ACTIONABLE_NO_MARKER', 'UNKNOWN_MARKER_STRIPPED', 'LEAK_BLOCKED']);
   const real = (data || []).filter(r =>
-    r.marker_type !== 'ACTIONABLE_NO_MARKER' &&
+    !BENIGN_TYPES.has(r.marker_type) &&
     !/^integrity_/i.test(String(r.reason || '')));
   const count = real.length;
   if (count === 0) return { status: 'ok', detail: '0 markers rejeitados (falha real) nas últimas 24h' };
@@ -232,28 +236,34 @@ async function checkRejectedMarkers() {
 // Sprint 30.1: detecta casos onde TOM falou "registrei/criei/anotei" mas o
 // engine não viu marker correspondente. Retorna amostras pro relatório 7h.
 // ─────────────────────────────────────────────────────────────────
+// Benigno = NÃO é "ação verbalizada sem persistir". Auditoria 14/06: dos 15 ACTIONABLE,
+// a maioria eram confirmações curtas ("Ok"/"Sim"/"Confirma"/"👍") e o scaffold de intent
+// interno ("[CONTEXTO INTERNO — não verbalize"), que o user disparou ao confirmar algo.
+function _isBenignActionable(reasonOrText) {
+  let t = String(reasonOrText || '').replace(/^text:/i, '').trim();
+  if (/\[CONTEXTO INTERNO|não verbalize ao usu/i.test(t)) return true; // scaffold de intent
+  const firstLine = (t.split('\n')[0] || '').trim();
+  if (!firstLine) return true;
+  // só emoji/pontuação (👍🏼, 👍, …)
+  if (firstLine.replace(/[\s\p{P}\p{S}\p{Emoji_Presentation}\p{Extended_Pictographic}]/gu, '') === '') return true;
+  // confirmação/ack de uma palavra ("Ok", "Sim", "Confirma", "Beleza")
+  if (firstLine.split(/\s+/).filter(Boolean).length <= 1) return true;
+  return false;
+}
+
 async function checkActionableNoMarker() {
-  const { count, error } = await supabase
+  // Carrega tudo das 24h e filtra benignos em JS (head:true não permitia inspecionar o texto).
+  const { data: rows, error } = await supabase
     .from('marker_logs')
-    .select('id', { count: 'exact', head: true })
+    .select('created_at, reason, raw_excerpt, collaborator_id, collaborators:collaborator_id(full_name)')
     .eq('marker_type', 'ACTIONABLE_NO_MARKER')
     .eq('result', 'rejected')
-    .gte('created_at', isoHoursAgo(24));
+    .gte('created_at', isoHoursAgo(24))
+    .order('created_at', { ascending: false });
   if (error) throw error;
-
-  // Sempre carrega amostras pra incluir no relatório (mesmo quando count<=threshold)
-  let samples = [];
-  if (count > 0) {
-    const { data } = await supabase
-      .from('marker_logs')
-      .select('created_at, reason, raw_excerpt, collaborator_id, collaborators:collaborator_id(full_name)')
-      .eq('marker_type', 'ACTIONABLE_NO_MARKER')
-      .eq('result', 'rejected')
-      .gte('created_at', isoHoursAgo(24))
-      .order('created_at', { ascending: false })
-      .limit(5);
-    samples = data || [];
-  }
+  const real = (rows || []).filter(r => !_isBenignActionable(r.reason || r.raw_excerpt || ''));
+  const count = real.length;
+  const samples = real.slice(0, 5);
 
   if (count === 0) return { status: 'ok', detail: '0 ACTIONABLE_NO_MARKER (TOM fiel ao banco)', samples };
   if (count <= WARN_THRESHOLDS.actionableNoMarker) {
@@ -387,11 +397,15 @@ async function checkRecurringErrors() {
   const procStart = lastProcessStartMs();
   const cutoff = Math.max(win24h, procStart);
   const lines = fs.readFileSync(ERROR_LOG_PATH, 'utf8').split('\n').slice(-5000); // últimos 5k linhas
+  // Padrões BENIGNOS que não são erro: scaffold de contexto interno injetado no prompt
+  // ("[CONTEXTO INTERNO — não verbalize"), não uma falha. Auditoria 14/06: contava 3x como erro.
+  const BENIGN_LOG_RE = /\[CONTEXTO INTERNO|não verbalize ao usu/i;
   const tally = new Map();
   for (const line of lines) {
     // formato esperado: "2026-05-15T19:39:30: ..."
     const m = line.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}):/);
     if (!m) continue;
+    if (BENIGN_LOG_RE.test(line)) continue; // scaffold interno, não erro
     const ts = new Date(m[1] + 'Z').getTime();
     if (isNaN(ts) || ts < cutoff) continue;
     // padrão = mensagem normalizada (remove números/uuids)
