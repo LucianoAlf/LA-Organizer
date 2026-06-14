@@ -132,3 +132,28 @@ export async function previewGroupReport(groupId: string, preset: Preset): Promi
     return { ok: false, reason: (e as Error).message };
   }
 }
+
+// "Enviar pro grupo agora" (#3 — disparo manual): manda o relatório AGORA pro chat do
+// grupo (app + espelho WhatsApp). Read-write — diferente do preview. sent=false quando é
+// overdue sem atrasadas (nada a enviar).
+export type ReportSendResult =
+  | { ok: true; sent: boolean; isEmpty: boolean }
+  | { ok: false; reason: string };
+
+export async function sendGroupReportNow(groupId: string, preset: Preset): Promise<ReportSendResult> {
+  if (!INTERNAL_SECRET) return { ok: false, reason: 'no_secret' };
+  try {
+    const res = await fetch(`${TOM_BASE}/internal/group-report-send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-secret': INTERNAL_SECRET },
+      body: JSON.stringify({ group_id: groupId, preset }),
+    });
+    if (!res.ok) return { ok: false, reason: `http_${res.status}` };
+    const data = await res.json();
+    return data?.ok
+      ? { ok: true, sent: !!data.sent, isEmpty: !!data.isEmpty }
+      : { ok: false, reason: String(data?.error || 'unknown') };
+  } catch (e) {
+    return { ok: false, reason: (e as Error).message };
+  }
+}

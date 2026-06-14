@@ -18,7 +18,7 @@ const ai = require('./ai/provider');
 const claude = require('./ai/claude');
 const { validateFormatRequest, systemPromptFor } = require('./services/format-note');
 const inventarioService = require('./services/inventario-service');
-const { PRESETS: GROUP_REPORT_PRESETS, buildPresetPreview } = require('./rituals/group-reports');
+const { PRESETS: GROUP_REPORT_PRESETS, buildPresetPreview, sendPresetNow } = require('./rituals/group-reports');
 
 const router = express.Router();
 
@@ -1143,6 +1143,24 @@ router.post('/internal/group-report-preview', requireInternalSecret, async (req,
   } catch (err) {
     console.warn(`[InternalAPI] group-report-preview falhou group=${groupId} preset=${preset}: ${err.message?.slice(0, 200)}`);
     return res.status(502).json({ ok: false, error: 'preview_failed' });
+  }
+});
+
+// Grupos B2 — "Enviar pro grupo agora": dispara o relatório do preset NA HORA (manual).
+// Read-WRITE: insere o card no chat (app) + espelho WhatsApp via bridge-out. Sem claim
+// diário (ação explícita). overdue sem atrasadas → sent:false. Body: { group_id, preset }.
+router.post('/internal/group-report-send', requireInternalSecret, async (req, res) => {
+  const groupId = String(req.body?.group_id || '').trim();
+  const preset = String(req.body?.preset || '').trim();
+  if (!groupId) return res.status(400).json({ ok: false, error: 'missing_group_id' });
+  if (!GROUP_REPORT_PRESETS.includes(preset)) return res.status(400).json({ ok: false, error: 'invalid_preset' });
+  try {
+    const r = await sendPresetNow({ supabase, groupId, preset, now: new Date() });
+    if (!r.ok) return res.status(r.error === 'group_not_found' ? 404 : 400).json({ ok: false, error: r.error });
+    return res.json({ ok: true, sent: r.sent, isEmpty: r.isEmpty });
+  } catch (err) {
+    console.warn(`[InternalAPI] group-report-send falhou group=${groupId} preset=${preset}: ${err.message?.slice(0, 200)}`);
+    return res.status(502).json({ ok: false, error: 'send_failed' });
   }
 });
 

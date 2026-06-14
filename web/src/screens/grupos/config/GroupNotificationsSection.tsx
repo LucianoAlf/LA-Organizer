@@ -5,10 +5,11 @@ import { useEffect, useRef, useState } from 'react';
 import { Eye } from 'lucide-react';
 import { CustomSelect } from '../../../components/CustomSelect';
 import { TimeInput } from '../../../components/TimeInput';
+import { ConfirmDialog } from '../../../components/ConfirmDialog';
 import { showToast } from '../../../components/Toast';
 import {
   PRESETS, defaultSetting, validateSetting, nextRunLabel,
-  loadGroupNotifications, upsertGroupNotification, previewGroupReport,
+  loadGroupNotifications, upsertGroupNotification, previewGroupReport, sendGroupReportNow,
   type GroupNotificationSetting, type Preset,
 } from '../../../lib/groupNotifications';
 import { ReportPreviewModal } from './ReportPreviewModal';
@@ -28,8 +29,9 @@ export function GroupNotificationsSection({ groupId }: { groupId: string }) {
   }));
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const [preview, setPreview] = useState<
-    { preset: Preset; title: string; loading: boolean; html: string; isEmpty: boolean; error: string | null } | null
+    { preset: Preset; title: string; loading: boolean; html: string; isEmpty: boolean; error: string | null; sending: boolean } | null
   >(null);
+  const [confirmSend, setConfirmSend] = useState(false);
 
   useEffect(() => {
     loadGroupNotifications(groupId).then((rows) => {
@@ -56,13 +58,31 @@ export function GroupNotificationsSection({ groupId }: { groupId: string }) {
 
   // "Pré-visualizar" (#3): monta o relatório desse preset só pra ver (não dispara pro grupo).
   async function testarAgora(meta: (typeof PRESETS)[number]) {
-    setPreview({ preset: meta.preset, title: meta.label, loading: true, html: '', isEmpty: false, error: null });
+    setPreview({ preset: meta.preset, title: meta.label, loading: true, html: '', isEmpty: false, error: null, sending: false });
     const r = await previewGroupReport(groupId, meta.preset);
     setPreview((p) => (p && p.preset === meta.preset
       ? (r.ok
           ? { ...p, loading: false, html: r.html, isEmpty: r.isEmpty, error: null }
           : { ...p, loading: false, error: r.reason })
       : p));
+  }
+
+  // "Enviar pro grupo agora": dispara de verdade (app + WhatsApp). Confirmado via ConfirmDialog.
+  async function enviarAgora() {
+    if (!preview) return;
+    const preset = preview.preset;
+    setPreview((p) => (p ? { ...p, sending: true } : p));
+    const r = await sendGroupReportNow(groupId, preset);
+    setConfirmSend(false);
+    if (r.ok) {
+      showToast(r.sent
+        ? { kind: 'success', title: 'Relatório enviado pro grupo' }
+        : { kind: 'info', title: 'Sem atrasadas — nada pra enviar agora' });
+      setPreview(null);
+    } else {
+      setPreview((p) => (p ? { ...p, sending: false } : p));
+      showToast({ kind: 'error', title: 'Não consegui enviar', msg: r.reason });
+    }
   }
 
   return (
@@ -173,9 +193,20 @@ export function GroupNotificationsSection({ groupId }: { groupId: string }) {
         html={preview.html}
         isEmpty={preview.isEmpty}
         error={preview.error}
+        sending={preview.sending}
+        onSendNow={() => setConfirmSend(true)}
         onClose={() => setPreview(null)}
       />
     )}
+    <ConfirmDialog
+      open={confirmSend}
+      title="Enviar agora pro grupo?"
+      description="O relatório vai pro chat do grupo e é espelhado no WhatsApp — todo mundo do grupo vê na hora."
+      confirmLabel="Enviar agora"
+      isPending={!!preview?.sending}
+      onConfirm={enviarAgora}
+      onClose={() => setConfirmSend(false)}
+    />
     </>
   );
 }

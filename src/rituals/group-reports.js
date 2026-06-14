@@ -144,4 +144,18 @@ async function buildPresetPreview({ supabase, groupId, preset, now = new Date(),
   return { ok: true, html, isEmpty, heading };
 }
 
-module.exports = { PRESETS, presetConfig, matchSchedule, timeToSlot, currentSlot, isoDow, claimGroupRitual, rollbackGroupRitual, insertReportCard, dispatchGroupReports, buildPresetPreview };
+// Dispara AGORA, sob demanda manual (botão "Enviar pro grupo agora") — monta via
+// buildPresetPreview e insere o card (app renderiza + espelho WhatsApp via bridge-out).
+// NÃO usa o claim diário (é ação explícita do usuário, pode coexistir com o agendado).
+// overdue vazio não envia (mesma regra do ritual). Retorna { ok, sent, isEmpty }.
+async function sendPresetNow({ supabase, groupId, preset, now = new Date(), deps }) {
+  const r = await buildPresetPreview({ supabase, groupId, preset, now, deps });
+  if (!r.ok) return r;
+  const cfg = presetConfig(preset);
+  if (cfg.onlyOverdue && r.isEmpty) return { ok: true, sent: false, isEmpty: true };
+  const insert = deps && deps.insertReportCard ? deps.insertReportCard : insertReportCard;
+  await insert(supabase, groupId, r.html);
+  return { ok: true, sent: true, isEmpty: r.isEmpty };
+}
+
+module.exports = { PRESETS, presetConfig, matchSchedule, timeToSlot, currentSlot, isoDow, claimGroupRitual, rollbackGroupRitual, insertReportCard, dispatchGroupReports, buildPresetPreview, sendPresetNow };

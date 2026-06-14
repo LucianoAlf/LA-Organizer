@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { matchSchedule, presetConfig, PRESETS, dispatchGroupReports, buildPresetPreview } = require('./group-reports');
+const { matchSchedule, presetConfig, PRESETS, dispatchGroupReports, buildPresetPreview, sendPresetNow } = require('./group-reports');
 
 // now = { hour, minute, dow (0=dom..6=sab), ymd }
 const seg08 = { hour: 8, minute: 2, dow: 1, ymd: '2026-06-15' }; // segunda 08:02 → slot 08:00
@@ -148,4 +148,35 @@ test('buildPresetPreview: grupo inexistente → ok:false', async () => {
   });
   assert.strictEqual(r.ok, false);
   assert.strictEqual(r.error, 'group_not_found');
+});
+
+// ── sendPresetNow (disparo manual "Enviar agora") ─────────────────────────────
+test('sendPresetNow: monta e INSERE o card (envia de verdade)', async () => {
+  const inserted = [];
+  const r = await sendPresetNow({
+    supabase: fakeGroupDb('Financeiro'), groupId: 'g1', preset: 'daily_morning', now: new Date('2026-06-15T11:00:00Z'),
+    deps: {
+      buildGroupReport: async () => ({ html: '<div>card</div>', isEmpty: false }),
+      insertReportCard: async (_s, gid, html) => { inserted.push({ gid, html }); },
+    },
+  });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.sent, true);
+  assert.strictEqual(inserted.length, 1);
+  assert.strictEqual(inserted[0].html, '<div>card</div>');
+});
+
+test('sendPresetNow: overdue vazio NÃO insere (sent:false)', async () => {
+  const inserted = [];
+  const r = await sendPresetNow({
+    supabase: fakeGroupDb('Financeiro'), groupId: 'g1', preset: 'overdue', now: new Date('2026-06-15T11:00:00Z'),
+    deps: {
+      buildGroupReport: async () => ({ html: '<div></div>', isEmpty: true }),
+      insertReportCard: async () => { inserted.push(1); },
+    },
+  });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.sent, false);
+  assert.strictEqual(r.isEmpty, true);
+  assert.strictEqual(inserted.length, 0);
 });
