@@ -6,25 +6,41 @@ function bar(pct) {
   return '█'.repeat(filled) + '░'.repeat(10 - filled);
 }
 
-// Ritual mensal (dia 10) — panorama do mes + meta + conta vencendo.
-function buildMonthlyFinance({ nome, receitas, despesas, goals = [], bills = [] }) {
+// Formata como moeda BR (1234.5 → "1.234,50"). Evita float cru no WhatsApp.
+function brl(n) {
+  return Number(n || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Bloco do Financial Health Score (Fase E). score null → '' (nao anexa). Numero vem do codigo.
+function buildHealthScoreLine(hs) {
+  if (!hs || hs.score == null) return '';
+  let m = `🩺 *Saúde financeira: ${hs.score}/100* ${hs.band}`;
+  if (hs.topLever) m += `\nMaior alavanca: ${hs.topLever.hint}.`;
+  else m += `\nTá redondo, segue assim! 🚀`;
+  return m;
+}
+
+// Ritual mensal (dia 10) — panorama do mes + meta + conta vencendo + saude financeira.
+function buildMonthlyFinance({ nome, receitas, despesas, goals = [], bills = [], health = null }) {
   const saldo = Number(receitas) - Number(despesas);
-  const sinal = saldo >= 0 ? '+' : '';
-  let m = `👽 E aí, ${nome}. Papo financeiro rápido.\n\n💰 *Seu mês até agora:*\n📈 Receitas: R$${receitas}\n📉 Despesas: R$${despesas}\n💵 Saldo: ${sinal}R$${saldo}`;
+  const saldoFmt = `${saldo >= 0 ? '+' : '-'}R$${brl(Math.abs(saldo))}`;
+  let m = `👽 E aí, ${nome}. Papo financeiro rápido.\n\n💰 *Seu mês até agora:*\n📈 Receitas: R$${brl(receitas)}\n📉 Despesas: R$${brl(despesas)}\n💵 Saldo: ${saldoFmt}`;
   const g = (goals || [])[0];
   if (g) {
     const pct = Math.round((Number(g.current_amount) / Number(g.target_amount)) * 100);
-    m += `\n\n🎯 *Meta: ${g.name}*\n${bar(pct)} ${pct}% (R$${g.current_amount}/R$${g.target_amount})`;
+    m += `\n\n🎯 *Meta: ${g.name}*\n${bar(pct)} ${pct}% (R$${brl(g.current_amount)}/R$${brl(g.target_amount)})`;
   }
   const b = (bills || [])[0];
-  if (b) m += `\n\n⚠️ Vence em breve: ${b.name} (R$${b.amount}, dia ${b.due_day})`;
+  if (b) m += `\n\n⚠️ Vence em breve: ${b.name} (R$${brl(b.amount)}, dia ${b.due_day})`;
+  const hl = buildHealthScoreLine(health);
+  if (hl) m += `\n\n${hl}`;
   m += `\n\nLembra: pague-se primeiro. Bora! 💪`;
   return m;
 }
 
 // Lembrete de conta (diario 8h) — modes: previo | dia | atrasada (PRD §6.2).
 function buildBillReminder({ nome, bill, mode, dias }) {
-  const v = `R$${bill.amount}`;
+  const v = `R$${brl(bill.amount)}`;
   if (mode === 'previo') return `💰 ${nome}, lembrete: ${bill.name} (${v}) vence em ${dias} dias (dia ${bill.due_day}).`;
   if (mode === 'dia') return `💰 Hoje vence: ${bill.name} (${v}). Já pagou? Responde "paguei ${bill.name}" pra eu marcar.`;
   return `⚠️ ${bill.name} (${v}) venceu dia ${bill.due_day} e tá pendente. Resolve isso hoje se puder!`;
@@ -33,9 +49,9 @@ function buildBillReminder({ nome, bill, mode, dias }) {
 // Relatorio mensal (dia 1, mes anterior).
 function buildMonthlyReport({ nome, mes, receitas, despesas, top = [], goals = [] }) {
   const saldo = Number(receitas) - Number(despesas);
-  const sinal = saldo >= 0 ? '+' : '';
-  let m = `👽 ${nome}, fechou ${mes}! Teu resumo:\n\n📈 Receitas: R$${receitas}\n📉 Despesas: R$${despesas}\n💵 Saldo: ${sinal}R$${saldo}`;
-  if (top && top.length) m += `\n\n📊 *Onde foi o dinheiro:*\n` + top.map(([c, val]) => `${c}: R$${val}`).join('\n');
+  const saldoFmt = `${saldo >= 0 ? '+' : '-'}R$${brl(Math.abs(saldo))}`;
+  let m = `👽 ${nome}, fechou ${mes}! Teu resumo:\n\n📈 Receitas: R$${brl(receitas)}\n📉 Despesas: R$${brl(despesas)}\n💵 Saldo: ${saldoFmt}`;
+  if (top && top.length) m += `\n\n📊 *Onde foi o dinheiro:*\n` + top.map(([c, val]) => `${c}: R$${brl(val)}`).join('\n');
   const g = (goals || [])[0];
   if (g) {
     const pct = Math.round((Number(g.current_amount) / Number(g.target_amount)) * 100);
@@ -48,7 +64,7 @@ function buildMonthlyReport({ nome, mes, receitas, despesas, top = [], goals = [
 // Linha pronta pro briefing pessoal (contas vencendo hoje). Vazio se nao houver.
 function buildBriefingFinanceLine(bills) {
   if (!bills || !bills.length) return '';
-  return bills.map((b) => `💰 Vence hoje: ${b.name} (R$${b.amount})`).join('\n');
+  return bills.map((b) => `💰 Vence hoje: ${b.name} (R$${brl(b.amount)})`).join('\n');
 }
 
-module.exports = { buildMonthlyFinance, buildBillReminder, buildMonthlyReport, buildBriefingFinanceLine, bar };
+module.exports = { buildMonthlyFinance, buildBillReminder, buildMonthlyReport, buildBriefingFinanceLine, buildHealthScoreLine, bar };

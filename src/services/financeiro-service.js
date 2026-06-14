@@ -774,6 +774,17 @@ async function recurringTxns(collaboratorId, { months = 4 } = {}) {
   if (error) return [];
   return (data || []).map((r) => ({ descricao: r.description, valor: r.amount, data: r.transaction_date }));
 }
+// Fase E — uso de crédito AGREGADO de todos os cartões ativos (p/ health score).
+async function creditUtilization(collaboratorId) {
+  const cards = await listCards(collaboratorId);
+  let used = 0, limit = 0;
+  for (const card of cards) {
+    const u = await cardUsage(collaboratorId, card);
+    used += u.used;
+    limit += u.limit;
+  }
+  return { used, limit, pct: limit > 0 ? used / limit : 0 };
+}
 
 module.exports = {
   monthBounds,
@@ -797,4 +808,6 @@ module.exports = {
   dueItemsForDigest,
   // Fase C — proativo
   lastClosedInvoiceTotals, merchantSpendHistory, recurringTxns,
+  // Fase E — health score
+  creditUtilization,
 };

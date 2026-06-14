@@ -1,6 +1,7 @@
 // Mapeamento de categoria por palavra-chave (type-aware) + normalizer de aliases.
 // Keywords e categorias vêm do módulo único categories.data.js. Puro, sem I/O.
 const { CATEGORIES, fallbackSlug } = require('./categories.data');
+const { categorizeMerchant } = require('./merchant-category');
 
 // Categorias genéricas: só casam se NENHUMA específica casar (ex: "Compras" tem
 // keyword "loja"/"compra", greedy — não pode roubar "supermercado"→mercado).
@@ -11,6 +12,10 @@ const GENERIC_SLUGS = new Set(['compras']);
 // tipo (outros / outras_receitas).
 function mapCategory(text, type) {
   const t = String(text || '').toLowerCase();
+  // Passada de alta precisão (Fase E): merchant BR por nome próprio. Cobre fatura "suja"
+  // (PAG*IPIRANGA, MERCPAGO*DROGASIL) e desambigua (MERCADOLIVRE tem "mercado" mas é compras).
+  const byMerchant = categorizeMerchant(text, type);
+  if (byMerchant) return byMerchant;
   const inType = (c) => !type || c.type === type;
   for (const c of CATEGORIES) {
     if (!inType(c) || GENERIC_SLUGS.has(c.slug)) continue;

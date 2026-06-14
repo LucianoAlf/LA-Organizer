@@ -463,6 +463,7 @@ async function checkFinanceMonthly(now) {
   const whatsapp = require('../services/whatsapp');
   const financeService = require('../services/financeiro-service');
   const { buildMonthlyFinance } = require('../finance/ritual-messages');
+  const { computeHealthScore } = require('../finance/health-score');
   for (const c of await financeService.collaboratorsForFinanceRitual()) {
     if (await alreadySent(c.id, 'financeiro_mensal', ymd)) continue;
     const rep = await financeService.monthlyReport(c.id);
@@ -475,8 +476,10 @@ async function checkFinanceMonthly(now) {
     try {
       const goals = await financeService.listGoals(c.id);
       const bills = await financeService.billsDueWithin(c.id, 5);
+      const credit = await financeService.creditUtilization(c.id);
+      const health = computeHealthScore({ receitas: rep.receitas, despesas: rep.despesas, credit, goals });
       const nome = String(c.full_name || '').split(' ')[0];
-      await whatsapp.sendMessage(c.phone, buildMonthlyFinance({ nome, receitas: rep.receitas, despesas: rep.despesas, goals, bills }));
+      await whatsapp.sendMessage(c.phone, buildMonthlyFinance({ nome, receitas: rep.receitas, despesas: rep.despesas, goals, bills, health }));
     } catch (err) {
       console.error('[checkFinanceMonthly]', c.full_name, err.message);
       if (isTransientRitualError(err)) await rollbackRitualClaim(supabase, claim.id);

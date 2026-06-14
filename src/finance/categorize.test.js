@@ -30,6 +30,18 @@ test('sem type: considera todas, fallback outros', () => {
   assert.strictEqual(mapCategory('comprei um negocio aleatorio'), 'outros');
 });
 
+// ---- merchant BR por nome próprio (Fase E) ----
+test('merchant lookup: fatura "suja" cai na categoria certa, não em outros', () => {
+  assert.strictEqual(mapCategory('PAG*IPIRANGA', 'expense'), 'combustivel');
+  assert.strictEqual(mapCategory('MERCPAGO*DROGASIL', 'expense'), 'farmacia');
+  assert.strictEqual(mapCategory('CARREFOUR SAO PAULO', 'expense'), 'mercado');
+  assert.strictEqual(mapCategory('AMAZON BR', 'expense'), 'compras');
+});
+test('merchant lookup desambigua: MERCADOLIVRE→compras (não mercado), AMAZON PRIME→assinaturas', () => {
+  assert.strictEqual(mapCategory('MERCADOLIVRE*123', 'expense'), 'compras');
+  assert.strictEqual(mapCategory('AMAZON PRIME', 'expense'), 'assinaturas');
+});
+
 // ---- normalizeParams (aliases) ----
 test('normalizeParams: aliases valor/tipo/categoria', () => {
   const out = normalizeParams({ valor: 45, gasto: true, cat: 'alimentacao', nota: 'iFood' });
