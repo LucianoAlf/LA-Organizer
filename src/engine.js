@@ -6700,7 +6700,7 @@ const FINANCE_ACTIONS = [
   'update_goal', 'edit_goal', 'delete_goal', 'set_budget', 'query_summary', 'query_budget', 'query_goal', 'query_accounts', 'create_account', 'edit_account',
   'simulate_interest',
   // cartão de crédito + transferência
-  'create_card', 'card_purchase', 'query_invoice', 'pay_invoice', 'transfer',
+  'create_card', 'card_purchase', 'card_refund', 'query_invoice', 'pay_invoice', 'transfer',
   'edit_transaction', 'delete_transaction', 'query_transactions',
   'query_period_expenses', 'query_account_detail', 'query_statement',
   'query_daily_summary', 'query_weekly_summary', 'query_monthly_closing',
@@ -7220,6 +7220,33 @@ async function handleFinanceAction(collab, action, params, outcome = {}) {
       const al = await financeService.checkAndMarkLimitAlert(cid, card);
       if (al) reply += '\n\n' + financeFmt.limitAlert(card, al.band, al.usage);
       return reply;
+    }
+    case 'card_refund': {
+      // Estorno/devolução/reembolso = CRÉDITO no cartão (valor NEGATIVO) que ABATE a fatura.
+      // NÃO é compra (card_purchase rejeitava amount<=0 → loop "qual o valor?") nem apagar. (Rose 14/06)
+      const amount = Math.abs(Number(params.amount) || 0);
+      if (!amount) return '❓ Qual o valor do estorno?';
+      const cards = await financeService.findCard(cid, params.card || '');
+      if (cards.length !== 1) {
+        const all = await financeService.listCards(cid);
+        if (all.length === 0) return `Pra lançar o estorno, cadastra o cartão no app primeiro — *Finanças → Cartões*.`;
+        return `Em qual cartão entrou o estorno? Tenho: ${all.map((c) => c.name).join(', ')}.`;
+      }
+      const card = cards[0];
+      const _cats = await financeService.listCategorySlugs(cid).catch(() => []);
+      const _extra = new Set(_cats.filter((r) => r.collaborator_id).map((r) => r.slug));
+      const category = safeCategory(params.category, params.description, 'expense', _extra);
+      const desc = params.description
+        ? (/estorn|devolu|reembol/i.test(params.description) ? params.description : `Estorno ${params.description}`)
+        : 'Estorno';
+      const rows = await financeService.insertCardPurchase(cid, card, {
+        category, amount: -amount, description: desc, transaction_date: params.date, installments: 1,
+        competencia: params.competencia,
+      });
+      outcome.persisted = true;
+      const _comp = (rows[0] && rows[0].competencia) || params.competencia || '';
+      const _mes = /^\d{4}-\d{2}/.test(_comp) ? `${_comp.slice(5, 7)}/${_comp.slice(0, 4)}` : '';
+      return `↩️ Estorno de *R$ ${Number(amount).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}* lançado no *${card.name}*${_mes ? ` (fatura ${_mes})` : ''}. Abati da fatura. 👍`;
     }
     case 'query_invoice': {
       const cards = await financeService.findCard(cid, params.card || '');
@@ -10067,7 +10094,7 @@ async function processMessage(phone, text, raw = {}) {
   // Fatia C — markers honestos: só ações de ESCRITA podem virar 'skipped' quando o handler
   // não persistiu (pediu fonte / "não achei" / coaching). query_* sempre 'executed'.
   const FIN_WRITE = new Set([
-    'register_transaction', 'card_purchase', 'delete_transaction', 'edit_transaction',
+    'register_transaction', 'card_purchase', 'card_refund', 'delete_transaction', 'edit_transaction',
     'register_bill', 'delete_bill', 'pay_bill', 'create_goal', 'update_goal', 'edit_goal', 'delete_goal',
     'set_budget', 'create_account', 'edit_account', 'create_card', 'pay_invoice', 'transfer',
   ]);

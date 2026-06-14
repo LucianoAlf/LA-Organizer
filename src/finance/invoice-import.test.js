@@ -114,3 +114,20 @@ test('normalizeItems descarta "Valor pendente do mês anterior" (saldo rolado do
   assert.ok(descs.includes('Movida Rac Flap'), 'compra normal fica');
   assert.equal(items.length, 3);
 });
+
+test('normalizeItems mantém estorno/devolução como crédito NEGATIVO, mas pagamento fica fora (Fase B)', () => {
+  const items = normalizeItems([
+    { descricao: 'Compra X', valor: 100, data: '2026-05-14' },
+    { descricao: 'Estorno Pg Lac', valor: -16.58, data: '2026-05-14' },
+    { descricao: 'Devolução Loja Y', valor: 34.76, data: '2026-05-18' }, // positivo → forçado negativo
+    { descricao: 'Pagamento recebido', valor: -500, data: '2026-05-10' }, // pagamento NÃO entra
+  ]);
+  const x = items.find((i) => i.descricao === 'Compra X');
+  const est = items.find((i) => /Estorno/i.test(i.descricao));
+  const dev = items.find((i) => /Devolu/i.test(i.descricao));
+  assert.equal(x.valor, 100);
+  assert.equal(est.valor, -16.58);
+  assert.equal(dev.valor, -34.76);
+  assert.ok(!items.some((i) => /Pagamento/i.test(i.descricao)), 'pagamento de fatura fica fora');
+  assert.equal(items.length, 3);
+});

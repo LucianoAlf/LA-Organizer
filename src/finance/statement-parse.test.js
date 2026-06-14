@@ -177,3 +177,17 @@ test('buildImportKeys: OFX usa FITID; PDF/CSV usa hash com ocorrência (idempote
   const k3 = buildImportKeys(items, { cardId: 'c2', competencia: '2026-06-01' });
   assert.notEqual(k1[0], k3[0]);
 });
+
+test('buildCardInvoiceFromStatement: estorno (CREDIT) entra negativo; pagamento fica fora (Fase B)', () => {
+  const parsed = { transactions: [
+    { amount: -100, descricao: 'Compra X', date: '2026-05-14', trntype: 'DEBIT' },
+    { amount: 16.58, descricao: 'Estorno Pg Lac', date: '2026-05-14', trntype: 'CREDIT' },
+    { amount: 500, descricao: 'Pagamento recebido', date: '2026-05-10', trntype: 'CREDIT' },
+  ] };
+  const inv = buildCardInvoiceFromStatement(parsed, 'Nubank_2026-06-21.ofx');
+  const compra = inv.itens.find((i) => i.descricao === 'Compra X');
+  const est = inv.itens.find((i) => /Estorno/i.test(i.descricao));
+  assert.equal(compra.valor, 100);
+  assert.equal(est.valor, -16.58);
+  assert.ok(!inv.itens.some((i) => /Pagamento/i.test(i.descricao)), 'pagamento de fatura fica fora');
+});

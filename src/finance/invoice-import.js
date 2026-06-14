@@ -31,24 +31,36 @@ function parseInvoiceBlock(text) {
 // créditos/estornos. Lançar como despesa DUPLICA a dívida e estoura o limite (caso Alf
 // 14/06: "Saldo em atraso" R$10.004,71 virou compra → fatura inflou pra 408%). Encargos
 // REAIS (multa de atraso, juros, IOF) NÃO casam aqui — são custos legítimos e seguem lançados.
-const RE_NON_PURCHASE = /\bsaldo\s+(em\s+atraso|anterior|rotativo|restante|financiado|devedor|parcelado|da\s+fatura)\b|\bvalor\s+pendente\b|\b(saldo|valor)\s+(pendente\s+)?do\s+m[êe]s\s+anterior\b|\bpend[êe]ncia\s+(do\s+m[êe]s\s+)?anterior\b|\bpagamento\s+(recebido|efetuado|de\s+fatura|m[íi]nimo|fatura)\b|\bpgto\s+(recebido|fatura)\b|\bfatura\s+anterior\b|\bcr[ée]dito\s+de\s+(atraso|fatura)\b|\bestorno\b/i;
+const RE_NON_PURCHASE = /\bsaldo\s+(em\s+atraso|anterior|rotativo|restante|financiado|devedor|parcelado|da\s+fatura)\b|\bvalor\s+pendente\b|\b(saldo|valor)\s+(pendente\s+)?do\s+m[êe]s\s+anterior\b|\bpend[êe]ncia\s+(do\s+m[êe]s\s+)?anterior\b|\bpagamento\s+(recebido|efetuado|de\s+fatura|m[íi]nimo|fatura)\b|\bpgto\s+(recebido|fatura)\b|\bfatura\s+anterior\b|\bcr[ée]dito\s+de\s+(atraso|fatura)\b/i;
+// Estorno/devolução/reembolso = CRÉDITO que ABATE a fatura (valor negativo) — NÃO é ruído nem despesa. (Rose 14/06)
+const RE_REFUND = /\bestorn|\bdevolu[çc]|\breembols|\bchargeback/i;
 
 function isPurchasableLine(descricao) {
   return !RE_NON_PURCHASE.test(String(descricao || ''));
 }
 
+function isRefundLine(descricao) {
+  return RE_REFUND.test(String(descricao || ''));
+}
+
 function normalizeItems(itens) {
   if (!Array.isArray(itens)) return [];
   return itens
-    .map((it) => ({
-      descricao: String(it.descricao || it.description || 'Compra').trim(),
-      valor: Number(it.valor) || 0,
-      data: it.data || it.date || null,
-      parcela_atual: Number(it.parcela_atual) || 1,
-      parcela_total: Number(it.parcela_total) || 1,
-    }))
-    .filter((it) => it.valor > 0)
-    .filter((it) => isPurchasableLine(it.descricao));
+    .map((it) => {
+      const descricao = String(it.descricao || it.description || 'Compra').trim();
+      let valor = Number(it.valor) || 0;
+      // estorno é crédito que abate a fatura: garante sinal negativo
+      if (isRefundLine(descricao) && valor > 0) valor = -valor;
+      return {
+        descricao, valor,
+        data: it.data || it.date || null,
+        parcela_atual: Number(it.parcela_atual) || 1,
+        parcela_total: Number(it.parcela_total) || 1,
+      };
+    })
+    .filter((it) => it.valor !== 0)
+    .filter((it) => it.valor > 0 || isRefundLine(it.descricao)) // crédito só se for estorno (abate)
+    .filter((it) => isPurchasableLine(it.descricao));            // saldo rolado/pagamento fora
 }
 
 function brl(n) {

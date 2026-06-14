@@ -110,6 +110,18 @@ test('buildGroupReport: heading custom sobrescreve o título padrão', async () 
   assert.ok(!html.includes('📊 Relatório do'));
 });
 
+test('buildGroupReport: vazio com emptyMessage usa a mensagem calorosa (não o genérico)', async () => {
+  const sb = fakeSupabase([]);
+  const { html, isEmpty } = await buildGroupReport({
+    supabase: sb, groupId: 'g1', scope: 'agenda', window: 'hoje',
+    heading: '☀️ Bom dia!', emptyMessage: '☀️ Bom dia, pessoal!<br>🎉 Tudo limpo<br>manda aqui que eu organizo 🚀',
+    now: new Date('2026-06-14T12:00:00-03:00'),
+  });
+  assert.strictEqual(isEmpty, true);
+  assert.ok(html.includes('manda aqui que eu organizo'));
+  assert.ok(!html.includes('Tudo limpo por aqui — nada pendente'));
+});
+
 test('buildGroupReport: onlyOverdue lista só atrasadas e isEmpty=false', async () => {
   const sb = fakeSupabase([
     { title: 'Conciliar cartões', due_date: '2026-06-01', status: 'pending', creator: { preferred_name: 'Rose' } },

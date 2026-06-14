@@ -118,10 +118,13 @@ function taskLine(t, todayYmd) {
 
 // Card HTML por BLOCOS. sections: [{ emoji, title, items: [string] }]. Blocos vazios somem;
 // blocos separados por <hr> (vira linha de traços no WhatsApp). Título de bloco leva a contagem.
-function renderReportHtml({ groupName, windowLabel, sections, heading }) {
+function renderReportHtml({ groupName, windowLabel, sections, heading, emptyMessage }) {
   const title = heading ? heading : `📊 Relatório do ${groupName}${windowLabel ? ' — ' + windowLabel : ''}`;
   const visible = (sections || []).filter((s) => s.items && s.items.length);
   if (!visible.length) {
+    // Vazio: mensagem calorosa do preset (já é HTML) que ainda convida a lançar pendências
+    // esquecidas. Sem ela (B1 sob demanda), cai no genérico.
+    if (emptyMessage) return `<div>${emptyMessage}</div>`;
     return `<div><h3>${esc(title)}</h3><p>🎉 Tudo limpo por aqui — nada pendente.</p></div>`;
   }
   const blocks = visible.map((s) =>
@@ -170,7 +173,7 @@ async function queryGroupChecklists(_supabase, _groupId) { return []; }
 
 // Monta o relatório em blocos por urgência. scope ∈ agenda|tarefas|tudo (agenda = sem bloco
 // "sem prazo"). window ∈ hoje|semana|mes controla até onde vai. onlyOverdue = só atrasadas.
-async function buildGroupReport({ supabase, groupId, scope = 'tudo', window = 'mes', now = new Date(), heading = null, onlyOverdue = false }) {
+async function buildGroupReport({ supabase, groupId, scope = 'tudo', window = 'mes', now = new Date(), heading = null, onlyOverdue = false, emptyMessage = null }) {
   const bounds = windowBounds(window, now);
   const todayYmd = spYmd(now);
   const { data: g } = await supabase.from('work_groups').select('name').eq('id', groupId).maybeSingle();
@@ -207,7 +210,7 @@ async function buildGroupReport({ supabase, groupId, scope = 'tudo', window = 'm
     .filter((c) => wanted.includes(c.key) && buckets[c.key].length)
     .map((c) => ({ emoji: c.emoji, title: c.title, items: buckets[c.key].map(taskLineItem) }));
   const itemCount = sections.reduce((n, s) => n + s.items.length, 0);
-  return { html: renderReportHtml({ groupName, windowLabel: bounds.label, sections, heading }), isEmpty: itemCount === 0 };
+  return { html: renderReportHtml({ groupName, windowLabel: bounds.label, sections, heading, emptyMessage }), isEmpty: itemCount === 0 };
 }
 
 module.exports = {

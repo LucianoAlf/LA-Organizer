@@ -44,6 +44,11 @@ const ALIASES = {
   // Excluir conta fixa → delete_bill
   remove_bill: 'delete_bill', deactivate_bill: 'delete_bill', cancel_bill: 'delete_bill',
   delete_fixed_bill: 'delete_bill', remove_fixed_bill: 'delete_bill', deletar_conta: 'delete_bill',
+  // Estorno/devolução/reembolso de cartão → card_refund (Rose 14/06: "estornar" virava apagar/loop)
+  estorno: 'card_refund', estornar: 'card_refund', estorno_cartao: 'card_refund',
+  card_credit: 'card_refund', credit_card_refund: 'card_refund', refund: 'card_refund',
+  devolucao: 'card_refund', devolução: 'card_refund', reembolso: 'card_refund', chargeback: 'card_refund',
+  lancar_estorno: 'card_refund', register_refund: 'card_refund', card_chargeback: 'card_refund',
 };
 
 // "saldo/balance" é ambíguo: 1 conta (painel) vs todas (saldos consolidados) → decide pelo param.

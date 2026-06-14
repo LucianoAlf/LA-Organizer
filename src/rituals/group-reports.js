@@ -9,11 +9,26 @@ const { isTransientRitualError } = require('./ritual-claim');
 
 const PRESETS = ['daily_morning', 'weekly', 'monthly', 'overdue'];
 
+// headingTemplate = título quando HÁ tarefas. emptyTemplate = mensagem (HTML) quando o
+// período está vazio — calorosa e com gancho pra lembrarem de pendências não lançadas.
+// overdue não tem emptyTemplate: fica em silêncio quando não há atrasada (a descrição já diz isso).
 const PRESET_CONFIG = {
-  daily_morning: { scope: 'agenda', window: 'hoje', onlyOverdue: false, headingTemplate: '☀️ Bom dia, {grupo}! Hoje vocês têm:' },
-  weekly:        { scope: 'tudo',   window: 'semana', onlyOverdue: false, headingTemplate: '📅 Semana do {grupo}' },
-  monthly:       { scope: 'tudo',   window: 'mes',  onlyOverdue: false, headingTemplate: '🗓️ Mês do {grupo}' },
-  overdue:       { scope: 'tarefas', window: 'mes', onlyOverdue: true,  headingTemplate: '⏰ {grupo}: tarefas atrasadas' },
+  daily_morning: {
+    scope: 'agenda', window: 'hoje', onlyOverdue: false,
+    headingTemplate: '☀️ Bom dia, {grupo}! Hoje vocês têm:',
+    emptyTemplate: '☀️ Bom dia, pessoal!<br><br>🎉 Tudo limpo por aqui — sem tarefas atrasadas e nada agendado pra hoje.<br><br>Se tiver alguma pendência que ainda não foi lançada aqui, é só me mandar que eu organizo pra vocês! 🚀',
+  },
+  weekly: {
+    scope: 'tudo', window: 'semana', onlyOverdue: false,
+    headingTemplate: '📅 Semana do {grupo}',
+    emptyTemplate: '📅 Semana do {grupo}<br><br>🎉 Tudo limpo — nada atrasado e nada agendado pra essa semana.<br><br>Se tiver algo pendente que ainda não está aqui, manda que eu cuido pra vocês! 🚀',
+  },
+  monthly: {
+    scope: 'tudo', window: 'mes', onlyOverdue: false,
+    headingTemplate: '🗓️ Mês do {grupo}',
+    emptyTemplate: '🗓️ Mês do {grupo}<br><br>🎉 Tudo limpo — nada atrasado e nada agendado esse mês.<br><br>Se tiver alguma pendência fora do sistema, é só me mandar que eu organizo! 🚀',
+  },
+  overdue: { scope: 'tarefas', window: 'mes', onlyOverdue: true, headingTemplate: '⏰ {grupo}: tarefas atrasadas' },
 };
 
 function presetConfig(preset) { return PRESET_CONFIG[preset]; }
@@ -107,8 +122,9 @@ async function dispatchGroupReports({ now, supabase, deps }) {
         const claim = await claimGroupRitual(supabase, s.group_id, s.preset, ymd);
         if (!claim.won) { if (!claim.duplicate) console.error(`[GroupReports] claim_err ${groupName}/${s.preset} ${claim.code}`); continue; }
         claimId = claim.id;
+        const emptyMessage = cfg.emptyTemplate ? cfg.emptyTemplate.split('{grupo}').join(groupName) : null;
         const { html } = await buildGroupReport({
-          supabase, groupId: s.group_id, scope: cfg.scope, window: cfg.window, heading, now: new Date(),
+          supabase, groupId: s.group_id, scope: cfg.scope, window: cfg.window, heading, emptyMessage, now: new Date(),
         });
         await insertReportCard(supabase, s.group_id, html);
         console.log(`[GroupReports] sent ${groupName}/${s.preset}`);
@@ -138,8 +154,9 @@ async function buildPresetPreview({ supabase, groupId, preset, now = new Date(),
   const { data: g } = await supabase.from('work_groups').select('name').eq('id', groupId).maybeSingle();
   if (!g) return { ok: false, error: 'group_not_found' };
   const heading = cfg.headingTemplate.replace('{grupo}', g.name || 'grupo');
+  const emptyMessage = cfg.emptyTemplate ? cfg.emptyTemplate.split('{grupo}').join(g.name || 'grupo') : null;
   const { html, isEmpty } = await buildGroupReport({
-    supabase, groupId, scope: cfg.scope, window: cfg.window, onlyOverdue: cfg.onlyOverdue, heading, now,
+    supabase, groupId, scope: cfg.scope, window: cfg.window, onlyOverdue: cfg.onlyOverdue, heading, emptyMessage, now,
   });
   return { ok: true, html, isEmpty, heading };
 }

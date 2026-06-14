@@ -160,10 +160,19 @@ function buildCardInvoiceFromStatement(parsed, filename) {
     const dominNeg = negCount >= txns.length / 2;
     isExpense = (t) => (dominNeg ? t.amount < 0 : t.amount > 0);
   }
-  const itens = txns.filter(isExpense).map((t) => ({
-    descricao: t.descricao, valor: Math.abs(t.amount), data: t.date, parcela_atual: 1, parcela_total: 1,
-    import_ref: t.fitid || null,
-  }));
+  // estorno/devolução/reembolso = crédito que ABATE (valor negativo); despesa = positivo; pagamento de fatura = fora.
+  const RE_REFUND = /\bestorn|\bdevolu[çc]|\breembols|\bchargeback/i;
+  const itens = txns
+    .filter((t) => isExpense(t) || RE_REFUND.test(t.descricao || ''))
+    .map((t) => {
+      const isRef = !isExpense(t) && RE_REFUND.test(t.descricao || '');
+      return {
+        descricao: t.descricao,
+        valor: isRef ? -Math.abs(t.amount) : Math.abs(t.amount),
+        data: t.date, parcela_atual: 1, parcela_total: 1,
+        import_ref: t.fitid || null,
+      };
+    });
   return {
     emissor: issuerFromFilename(filename) || (parsed && parsed.org) || '',
     vencimento: competenciaFromFilename(filename) || (parsed && parsed.periodEnd) || null,

@@ -29,7 +29,7 @@ export function GroupNotificationsSection({ groupId }: { groupId: string }) {
   }));
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const [preview, setPreview] = useState<
-    { preset: Preset; title: string; loading: boolean; html: string; isEmpty: boolean; error: string | null; sending: boolean } | null
+    { preset: Preset; title: string; loading: boolean; html: string; wontSend: boolean; error: string | null; sending: boolean } | null
   >(null);
   const [confirmSend, setConfirmSend] = useState(false);
 
@@ -58,11 +58,11 @@ export function GroupNotificationsSection({ groupId }: { groupId: string }) {
 
   // "Pré-visualizar" (#3): monta o relatório desse preset só pra ver (não dispara pro grupo).
   async function testarAgora(meta: (typeof PRESETS)[number]) {
-    setPreview({ preset: meta.preset, title: meta.label, loading: true, html: '', isEmpty: false, error: null, sending: false });
+    setPreview({ preset: meta.preset, title: meta.label, loading: true, html: '', wontSend: false, error: null, sending: false });
     const r = await previewGroupReport(groupId, meta.preset);
     setPreview((p) => (p && p.preset === meta.preset
       ? (r.ok
-          ? { ...p, loading: false, html: r.html, isEmpty: r.isEmpty, error: null }
+          ? { ...p, loading: false, html: r.html, wontSend: (meta.preset === 'overdue' && r.isEmpty), error: null }
           : { ...p, loading: false, error: r.reason })
       : p));
   }
@@ -191,7 +191,7 @@ export function GroupNotificationsSection({ groupId }: { groupId: string }) {
         title={preview.title}
         loading={preview.loading}
         html={preview.html}
-        isEmpty={preview.isEmpty}
+        wontSend={preview.wontSend}
         error={preview.error}
         sending={preview.sending}
         onSendNow={() => setConfirmSend(true)}

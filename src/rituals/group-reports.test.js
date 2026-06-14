@@ -30,7 +30,12 @@ test('matchSchedule: monthly casa day_of_month + slot', () => {
 });
 
 test('presetConfig: mapeia os 4 presets', () => {
-  assert.deepStrictEqual(presetConfig('daily_morning'), { scope: 'agenda', window: 'hoje', onlyOverdue: false, headingTemplate: '☀️ Bom dia, {grupo}! Hoje vocês têm:' });
+  const d = presetConfig('daily_morning');
+  assert.strictEqual(d.scope, 'agenda');
+  assert.strictEqual(d.window, 'hoje');
+  assert.strictEqual(d.onlyOverdue, false);
+  assert.match(d.headingTemplate, /Bom dia/);
+  assert.match(d.emptyTemplate, /Se tiver alguma pend/); // mensagem calorosa de vazio
   assert.strictEqual(presetConfig('weekly').window, 'semana');
   assert.strictEqual(presetConfig('monthly').window, 'mes');
   assert.strictEqual(presetConfig('overdue').onlyOverdue, true);
