@@ -58,20 +58,27 @@ export function GroupNotificationsSection({ groupId }: { groupId: string }) {
         const s = byPreset[meta.preset];
         return (
           <div key={meta.preset} className="rounded-md border border-border bg-bg-surface p-sm">
-            <div className="flex items-center gap-sm">
-              <span className="text-lg" aria-hidden>{meta.emoji}</span>
-              <span className="flex-1 text-body-sm font-medium text-fg">{meta.label}</span>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={s.enabled}
-                aria-label={`${s.enabled ? 'Desligar' : 'Ligar'} ${meta.label}`}
-                onClick={() => save(meta.preset, { enabled: !s.enabled })}
-                className={`relative h-5 w-9 rounded-full transition-colors ${s.enabled ? 'bg-tom' : 'bg-bg-elevated'}`}
+            {/* Linha inteira clicável (não só o toggle) — liga/desliga e revela os campos. */}
+            <button
+              type="button"
+              role="switch"
+              aria-checked={s.enabled}
+              aria-label={`${s.enabled ? 'Desligar' : 'Ligar'} ${meta.label}`}
+              onClick={() => save(meta.preset, { enabled: !s.enabled })}
+              className="flex w-full items-center gap-sm text-left focus-ring rounded-sm"
+            >
+              <span className="text-lg shrink-0" aria-hidden>{meta.emoji}</span>
+              <span className="flex-1 min-w-0">
+                <span className="block text-body-sm font-medium text-fg truncate">{meta.label}</span>
+                <span className="block text-caption text-fg-muted truncate">{meta.desc}</span>
+              </span>
+              <span
+                aria-hidden
+                className={`relative h-5 w-9 shrink-0 rounded-full border transition-colors ${s.enabled ? 'bg-tom border-tom' : 'bg-bg-elevated border-border'}`}
               >
-                <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${s.enabled ? 'right-0.5' : 'left-0.5'}`} />
-              </button>
-            </div>
+                <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${s.enabled ? 'right-0.5' : 'left-0.5'}`} />
+              </span>
+            </button>
 
             {s.enabled && (
               <div className="mt-sm space-y-sm pl-7">
