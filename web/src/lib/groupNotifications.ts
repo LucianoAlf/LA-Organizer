@@ -51,6 +51,43 @@ export function validateSetting(s: GroupNotificationSetting): GroupNotificationS
   return { ...s, weekdays, day_of_month, time_local: normTime(s.time_local) };
 }
 
+// ── Próximo disparo (rótulo pra UI) ───────────────────────────────────────────
+const WEEKDAY_PT = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb']; // JS getDay: 0=dom
+
+// "Agora" com os CAMPOS no fuso de São Paulo (pra cálculo de dia/hora, não instante exato).
+function spNow(): Date {
+  return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+}
+
+function fmtNextRun(d: Date, now: Date): string {
+  const hhmm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const dm = `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const a = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const b = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const diff = Math.round((b - a) / 86400000);
+  if (diff === 0) return `hoje · ${hhmm}`;
+  if (diff === 1) return `amanhã · ${hhmm}`;
+  return `${WEEKDAY_PT[d.getDay()]}, ${dm} · ${hhmm}`;
+}
+
+// Texto do próximo disparo de um setting habilitado (BRT). null se desligado/sem agenda.
+// `now` injetável pra teste. Casa a mesma regra do motor (group-reports.matchSchedule).
+export function nextRunLabel(s: GroupNotificationSetting, now: Date = spNow()): string | null {
+  if (!s.enabled) return null;
+  const [hh, mm] = (s.time_local || '08:00').split(':').map(Number);
+  for (let i = 0; i < 62; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i, hh, mm, 0, 0);
+    if (d.getTime() < now.getTime()) continue; // horário de hoje já passou
+    if (s.preset === 'monthly') {
+      if (s.day_of_month != null && d.getDate() === s.day_of_month) return fmtNextRun(d, now);
+    } else {
+      const iso = d.getDay() === 0 ? 7 : d.getDay();
+      if ((s.weekdays || []).includes(iso)) return fmtNextRun(d, now);
+    }
+  }
+  return null;
+}
+
 // I/O — RLS garante que só membros leem/editam.
 export async function loadGroupNotifications(groupId: string): Promise<GroupNotificationSetting[]> {
   const { data, error } = await supabase

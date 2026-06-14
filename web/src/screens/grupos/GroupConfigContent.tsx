@@ -1,7 +1,9 @@
 // web/src/screens/grupos/GroupConfigContent.tsx
-// Conteúdo de Configurações do grupo (membros / líder / 🔔 notificações / desativar).
-// Renderiza dentro da PÁGINA GrupoConfig (rota /grupos/:id/config) — não é mais modal.
-// Os sheets de "adicionar membro" e o ConfirmDialog seguem como overlays irmãos.
+// Conteúdo de Configurações do grupo — layout EMPILHADO (escolha do Alf 14/06):
+// faixa de cima full-width = Time (membros / líder / desativar, na horizontal);
+// faixa de baixo full-width = 🔔 Notificações (grade 2×2). Empilha tudo no mobile.
+// Renderiza dentro da PÁGINA GrupoConfig (rota /grupos/:id/config).
+// Sheets de "adicionar membro" e ConfirmDialog seguem como overlays irmãos.
 import { useState } from 'react';
 import { Star, X, Plus, Users } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -31,76 +33,87 @@ export function GroupConfigContent({ group }: { group: WorkGroup }) {
 
   return (
     <>
-      <div className="space-y-md">
-        <div className="flex flex-wrap items-center gap-sm">
-          {group.members.map(m => {
-            const isLeader = m.collaborator_id === group.leader_id;
-            return (
-              <span
-                key={m.collaborator_id}
-                className={`inline-flex items-center gap-xs rounded-full border px-sm py-xs text-body-sm ${
-                  isLeader ? 'bg-tom text-black border-tom' : 'bg-bg-elevated text-fg border-border'
-                }`}
-              >
-                {isLeader && <Star size={12} aria-hidden />}
-                {m.full_name.split(' ')[0]}
-                {podeEditar && !isLeader && (
-                  <button
-                    type="button"
-                    disabled={removeMember.isPending}
-                    onClick={() =>
-                      removeMember.mutate(
-                        { groupId: group.id, collaboratorId: m.collaborator_id },
-                        { onError: () => showToast({ kind: 'error', title: 'Não consegui remover' }) },
+      <div className="space-y-lg">
+        {/* Faixa de cima (full-width) — Time, na horizontal */}
+        <section className="rounded-md border border-border bg-bg-surface p-md">
+          <div className="flex items-center justify-between gap-md">
+            <div className="text-label uppercase tracking-wide text-fg-muted">👥 Time</div>
+            {podeEditar && (
+              <Button variant="ghost" size="sm" onClick={() => setConfirmOff(true)}>
+                <span className="text-danger">desativar grupo</span>
+              </Button>
+            )}
+          </div>
+
+          <div className="mt-md flex flex-wrap items-end justify-between gap-lg">
+            {/* Membros */}
+            <div className="flex flex-wrap items-center gap-sm">
+              {group.members.map(m => {
+                const isLeader = m.collaborator_id === group.leader_id;
+                return (
+                  <span
+                    key={m.collaborator_id}
+                    className={`inline-flex items-center gap-xs rounded-full border px-sm py-xs text-body-sm ${
+                      isLeader ? 'bg-tom text-black border-tom' : 'bg-bg-elevated text-fg border-border'
+                    }`}
+                  >
+                    {isLeader && <Star size={12} aria-hidden />}
+                    {m.full_name.split(' ')[0]}
+                    {podeEditar && !isLeader && (
+                      <button
+                        type="button"
+                        disabled={removeMember.isPending}
+                        onClick={() =>
+                          removeMember.mutate(
+                            { groupId: group.id, collaboratorId: m.collaborator_id },
+                            { onError: () => showToast({ kind: 'error', title: 'Não consegui remover' }) },
+                          )
+                        }
+                        className="focus-ring rounded-full text-fg-muted hover:text-danger disabled:opacity-40 disabled:cursor-not-allowed"
+                        aria-label={`Remover ${m.full_name}`}
+                      >
+                        <X size={12} />
+                      </button>
+                    )}
+                  </span>
+                );
+              })}
+              {podeEditar && (
+                <Button variant="ghost" size="sm" leadingIcon={<Plus size={14} />} onClick={() => setAddOpen(true)}>
+                  membro
+                </Button>
+              )}
+            </div>
+
+            {/* Líder (só director) */}
+            {role === 'director' && (
+              <div className="w-full sm:w-56">
+                <Field label="Líder" sub="Recebe as escalações de tarefa travada">
+                  <CustomSelect
+                    value={group.leader_id}
+                    options={group.members.map(m => ({ value: m.collaborator_id, label: m.full_name }))}
+                    onChange={v =>
+                      updateGroup.mutate(
+                        { id: group.id, leaderId: v },
+                        { onError: () => showToast({ kind: 'error', title: 'Não consegui trocar o líder' }) },
                       )
                     }
-                    className="focus-ring rounded-full text-fg-muted hover:text-danger disabled:opacity-40 disabled:cursor-not-allowed"
-                    aria-label={`Remover ${m.full_name}`}
-                  >
-                    <X size={12} />
-                  </button>
-                )}
-              </span>
-            );
-          })}
-          {podeEditar && (
-            <Button variant="ghost" size="sm" leadingIcon={<Plus size={14} />} onClick={() => setAddOpen(true)}>
-              membro
-            </Button>
-          )}
-        </div>
-
-        <p className="text-body-sm text-fg-muted inline-flex items-center gap-xs">
-          <Users size={12} aria-hidden /> ★ líder recebe as escalações · lembretes vão pra todos
-        </p>
-
-        {role === 'director' && (
-          <Field label="Líder" sub="Recebe as escalações de tarefa travada">
-            <CustomSelect
-              value={group.leader_id}
-              options={group.members.map(m => ({ value: m.collaborator_id, label: m.full_name }))}
-              onChange={v =>
-                updateGroup.mutate(
-                  { id: group.id, leaderId: v },
-                  { onError: () => showToast({ kind: 'error', title: 'Não consegui trocar o líder' }) },
-                )
-              }
-              size="sm"
-            />
-          </Field>
-        )}
-
-        <div className="border-t border-border pt-md">
-          <GroupNotificationsSection groupId={group.id} />
-        </div>
-
-        {podeEditar && (
-          <div className="flex justify-end pt-sm">
-            <Button variant="ghost" size="sm" onClick={() => setConfirmOff(true)}>
-              <span className="text-danger">desativar grupo</span>
-            </Button>
+                    size="sm"
+                  />
+                </Field>
+              </div>
+            )}
           </div>
-        )}
+
+          <p className="text-body-sm text-fg-muted inline-flex items-center gap-xs mt-sm">
+            <Users size={12} aria-hidden /> ★ líder recebe as escalações · lembretes vão pra todos
+          </p>
+        </section>
+
+        {/* Faixa de baixo (full-width) — Notificações em grade */}
+        <section className="min-w-0">
+          <GroupNotificationsSection groupId={group.id} />
+        </section>
       </div>
 
       <BottomSheet open={addOpen} onClose={() => setAddOpen(false)} title={`Adicionar membro — ${group.name}`}>
