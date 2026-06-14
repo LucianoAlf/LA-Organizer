@@ -6704,6 +6704,7 @@ const FINANCE_ACTIONS = [
   // cartão de crédito + transferência
   'create_card', 'card_purchase', 'card_refund', 'query_invoice', 'pay_invoice', 'transfer',
   'pluggy_query', // Pluggy / Open Finance — consulta realtime (saldo/fatura/investimento)
+  'reconcile_resolve', // conciliação: ignorar / marcar interno um pendente do extrato real
   'edit_transaction', 'delete_transaction', 'query_transactions',
   'query_period_expenses', 'query_account_detail', 'query_statement',
   'query_daily_summary', 'query_weekly_summary', 'query_monthly_closing',
@@ -6920,6 +6921,18 @@ async function handleFinanceAction(collab, action, params, outcome = {}) {
         console.error('[pluggy_query]', e.message);
         return 'Não consegui consultar sua conta real agora (o banco pode estar reconectando). Tenta de novo daqui a pouco? 🙏';
       }
+    }
+    case 'reconcile_resolve': {
+      // Conciliação: usuário mandou IGNORAR ou marcar INTERNO um pendente (não lança, tira da lista).
+      const ref = params.ref || params.descricao || params.valor || params.amount || params.desc;
+      const acao = params.action || params.acao || 'ignorar';
+      const pr = require('./services/pluggy-reconcile');
+      const hit = await pr.resolvePendingByRef(cid, { ref, action: acao });
+      if (!hit) return 'Não achei esse movimento na sua lista de pendências — me diz o valor exato que eu resolvo.';
+      outcome.persisted = true;
+      return hit.status === 'internal'
+        ? '✅ Marquei como transferência sua / interno — não lanço e tirei da lista. 👍'
+        : '✅ Ignorei esse movimento e tirei da lista de pendências. 👍';
     }
     case 'register_transaction': {
       if (!p.amount || p.amount <= 0) return '❓ Qual foi o valor?';
@@ -10185,6 +10198,7 @@ async function processMessage(phone, text, raw = {}) {
     'register_transaction', 'card_purchase', 'card_refund', 'delete_transaction', 'edit_transaction',
     'register_bill', 'delete_bill', 'pay_bill', 'create_goal', 'update_goal', 'edit_goal', 'delete_goal',
     'set_budget', 'create_account', 'edit_account', 'create_card', 'pay_invoice', 'transfer',
+    'reconcile_resolve',
   ]);
   {
     const finParsed = parseFinanceMarkers(reply);

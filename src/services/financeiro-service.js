@@ -785,6 +785,12 @@ async function creditUtilization(collaboratorId) {
   }
   return { used, limit, pct: limit > 0 ? used / limit : 0 };
 }
+// Fase D — usuário tem Open Finance (Pluggy) conectado? (gatilho da skill conta-real)
+async function hasPluggyItems(collaboratorId) {
+  const { count } = await supabase.from('pf_pluggy_items').select('*', { count: 'exact', head: true })
+    .eq('collaborator_id', collaboratorId).eq('is_active', true);
+  return (count || 0) > 0;
+}
 
 module.exports = {
   monthBounds,
@@ -810,4 +816,6 @@ module.exports = {
   lastClosedInvoiceTotals, merchantSpendHistory, recurringTxns,
   // Fase E — health score
   creditUtilization,
+  // Fase D — Open Finance / Pluggy
+  hasPluggyItems,
 };

@@ -961,6 +961,9 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
           + _custom.map((c) => `• ${c.label} (${c.type === 'income' ? 'receita' : 'despesa'}) → slug "${c.slug}"`).join('\n');
       }
     } catch { /* contexto opcional — não bloqueia */ }
+    // Blindagem Open Finance: se o usuário tem Pluggy conectado, anexa a skill conta-real
+    // (o que vê/não vê, conciliação, vetos anti-alucinação). (Fase D)
+    try { if (await financeService.hasPluggyItems(collab.id)) body += `\n\n${loadSkill('conta-real')}`; } catch { /* opcional */ }
     return { name: 'financeiro-pessoal', body };
   }
 

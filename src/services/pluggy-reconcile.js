@@ -70,4 +70,23 @@ async function tryMatchPluggyPending(collaboratorId, { amount, direction, date, 
   return hit;
 }
 
-module.exports = { reconcileStaging, reconcileReportData, tryMatchPluggyPending };
+// Resolve um pendente que o usuário mandou IGNORAR ou marcar INTERNO (não lança, só tira da lista).
+// ref = valor (ex "8350") OU trecho da descrição (ex "Anne") — o relatório já está no histórico. (D3b)
+async function resolvePendingByRef(collaboratorId, { ref, action } = {}) {
+  const supabase = require('../supabase/client');
+  const status = /intern|transfer|pr[óo]pri/i.test(String(action || '')) ? 'internal' : 'ignored';
+  const { data: pend } = await supabase.from('pf_pluggy_transactions')
+    .select('id, amount, description').eq('collaborator_id', collaboratorId).eq('status', 'pending');
+  if (!pend || !pend.length) return null;
+  const refStr = String(ref || '').toLowerCase().trim();
+  const refNum = Number(String(ref || '').replace(/[^\d,.-]/g, '').replace(/\./g, '').replace(',', '.'));
+  let hit = null;
+  if (refNum && !Number.isNaN(refNum)) hit = pend.find((p) => Math.abs(Number(p.amount) - Math.abs(refNum)) < 0.01);
+  if (!hit && refStr.length >= 3) hit = pend.find((p) => String(p.description || '').toLowerCase().includes(refStr));
+  if (!hit) return null;
+  await supabase.from('pf_pluggy_transactions')
+    .update({ status, resolved_at: new Date().toISOString() }).eq('id', hit.id);
+  return { ...hit, status };
+}
+
+module.exports = { reconcileStaging, reconcileReportData, tryMatchPluggyPending, resolvePendingByRef };
