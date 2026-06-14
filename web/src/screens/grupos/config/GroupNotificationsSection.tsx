@@ -66,6 +66,7 @@ export function GroupNotificationsSection({ groupId }: { groupId: string }) {
   }
 
   return (
+    <>
     <div className="space-y-sm">
       <h3 className="text-body font-semibold text-fg">🔔 Notificações</h3>
       <p className="text-body-sm text-fg-muted">O TOM avisa o grupo automaticamente.</p>
@@ -146,9 +147,18 @@ export function GroupNotificationsSection({ groupId }: { groupId: string }) {
                     <TimeInput value={s.time_local} onChange={(v) => save(meta.preset, { time_local: v })} />
                   </div>
 
-                  {proximo && (
-                    <p className="text-caption text-tom">📅 Próximo: {proximo}</p>
-                  )}
+                  <div className="flex items-center justify-between gap-sm pt-xs">
+                    {proximo
+                      ? <span className="text-caption text-tom">📅 Próximo: {proximo}</span>
+                      : <span aria-hidden />}
+                    <button
+                      type="button"
+                      onClick={() => testarAgora(meta)}
+                      className="inline-flex items-center gap-xs text-caption text-fg-muted hover:text-tom focus-ring rounded-sm"
+                    >
+                      <Eye size={12} aria-hidden /> Pré-visualizar
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -156,5 +166,16 @@ export function GroupNotificationsSection({ groupId }: { groupId: string }) {
         })}
       </div>
     </div>
+    {preview && (
+      <ReportPreviewModal
+        title={preview.title}
+        loading={preview.loading}
+        html={preview.html}
+        isEmpty={preview.isEmpty}
+        error={preview.error}
+        onClose={() => setPreview(null)}
+      />
+    )}
+    </>
   );
 }
