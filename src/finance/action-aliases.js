@@ -41,6 +41,9 @@ const ALIASES = {
   bills_to_pay: 'query_bills_to_pay', open_bills: 'query_bills_to_pay', due_bills: 'query_bills_to_pay',
   // Contas fixas (relação completa) → query_fixed_bills
   fixed_bills: 'query_fixed_bills', all_bills: 'query_fixed_bills',
+  // Excluir conta fixa → delete_bill
+  remove_bill: 'delete_bill', deactivate_bill: 'delete_bill', cancel_bill: 'delete_bill',
+  delete_fixed_bill: 'delete_bill', remove_fixed_bill: 'delete_bill', deletar_conta: 'delete_bill',
 };
 
 // "saldo/balance" é ambíguo: 1 conta (painel) vs todas (saldos consolidados) → decide pelo param.

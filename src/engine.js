@@ -6691,7 +6691,7 @@ async function tryDupBypass(collab, text) {
 
 // ---- Sprint 27 — Financas Pessoais: marker <<FINANCE_ACTION>> + dispatcher ----
 const FINANCE_ACTIONS = [
-  'register_transaction', 'register_bill', 'pay_bill', 'query_fixed_bills', 'query_bills_to_pay', 'query_checkup', 'query_month_analysis', 'create_goal',
+  'register_transaction', 'register_bill', 'pay_bill', 'delete_bill', 'query_fixed_bills', 'query_bills_to_pay', 'query_checkup', 'query_month_analysis', 'create_goal',
   'update_goal', 'edit_goal', 'delete_goal', 'set_budget', 'query_summary', 'query_budget', 'query_goal', 'query_accounts', 'create_account', 'edit_account',
   'simulate_interest',
   // cartão de crédito + transferência
@@ -7016,6 +7016,17 @@ async function handleFinanceAction(collab, action, params, outcome = {}) {
       outcome.persisted = true; // Fatia C
       const quando = recurrence === 'once' ? `vence ${b.due_date}` : `todo dia ${b.due_day}`;
       return `✅ Conta cadastrada: ${b.name} (R$${b.amount}, ${quando}).`;
+    }
+    case 'delete_bill': {
+      // Excluir conta fixa pelo chat (gap descoberto no teste do Alf 14/06: o LLM emitia
+      // delete_bill, action_invalida → o engine rejeitava e o LLM narrava "removendo agora" SEM remover).
+      const cands = await financeService.findBills(cid, params.bill_name || params.name || '');
+      if (cands.length === 0) return 'Não achei conta fixa com esse nome pra excluir. 🤔';
+      if (cands.length > 1) return 'Achei mais de uma: ' + cands.map((c, i) => `${i + 1}) ${c.name}`).join(', ') + '. Qual delas?';
+      const bill = cands[0];
+      await financeService.deactivateBill(cid, bill.id);
+      outcome.persisted = true;
+      return `🗑️ Conta fixa *${bill.name}* removida.`;
     }
     case 'pay_bill': {
       const cands = await financeService.findBills(cid, params.bill_name || params.name || '');
@@ -10004,7 +10015,7 @@ async function processMessage(phone, text, raw = {}) {
   // não persistiu (pediu fonte / "não achei" / coaching). query_* sempre 'executed'.
   const FIN_WRITE = new Set([
     'register_transaction', 'card_purchase', 'delete_transaction', 'edit_transaction',
-    'register_bill', 'pay_bill', 'create_goal', 'update_goal', 'edit_goal', 'delete_goal',
+    'register_bill', 'delete_bill', 'pay_bill', 'create_goal', 'update_goal', 'edit_goal', 'delete_goal',
     'set_budget', 'create_account', 'edit_account', 'create_card', 'pay_invoice', 'transfer',
   ]);
   {

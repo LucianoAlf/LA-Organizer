@@ -283,6 +283,13 @@ async function findBills(collaboratorId, billName) {
   if (error) throw error;
   return data || [];
 }
+// Remove (desativa) uma conta fixa. Soft-delete (is_active=false) — pf_bills não tem updated_at.
+async function deactivateBill(collaboratorId, billId) {
+  const { error } = await supabase.from('pf_bills')
+    .update({ is_active: false })
+    .eq('id', billId).eq('collaborator_id', collaboratorId);
+  if (error) throw error;
+}
 // Só marca a conta como paga (não insere lançamento). Usado quando o lançamento é
 // gravado à parte (ex.: pay_bill no engine via recordCardPurchase/writeCashTransaction).
 // `date` = data da QUITAÇÃO (last_paid_at, dirige o status do mês). NUNCA a competência da
@@ -731,7 +738,7 @@ module.exports = {
   listRecentTransactions, queryTransactions, queryPeriodReport,
   monthCategoryTotal, querySummary,
   setBudget, getBudget, queryBudget,
-  createBill, findBills, payBill, markBillPaid,
+  createBill, findBills, deactivateBill, payBill, markBillPaid,
   createGoal, findGoal, listGoals,
   addGoalContribution, listGoalContributions, deleteGoalContribution, updateGoal, deactivateGoal,
   billsDueWithin, listActiveBills, pendingCardInvoices, monthlyReport, monthCategoryBreakdown, collaboratorsWithActivity, collaboratorsForFinanceRitual,
