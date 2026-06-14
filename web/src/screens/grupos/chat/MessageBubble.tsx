@@ -135,7 +135,7 @@ export function MessageBubble({ msg, showAvatar, mine, canDelete, onDelete }: { 
           )}
           {html && (
             msg.kind === 'report'
-              ? <div className="rounded-md border border-tom overflow-hidden text-body-sm break-words [&_h4]:bg-tom [&_h4]:text-black [&_h4]:px-sm [&_h4]:py-xs [&_h4]:font-bold [&>div]:p-sm [&_li]:my-0.5" dangerouslySetInnerHTML={{ __html: html }} />
+              ? <div className="rounded-md border border-tom overflow-hidden text-body-sm break-words [&>div]:p-sm [&_h4]:bg-tom [&_h4]:text-black [&_h4]:px-sm [&_h4]:py-xs [&_h4]:font-bold [&_h3]:font-semibold [&_h3]:mt-sm [&_h3]:mb-xs [&_h3:first-child]:mt-0 [&_ul]:list-disc [&_ul]:pl-5 [&_li]:my-0.5 [&_hr]:border-tom/40 [&_hr]:my-sm" dangerouslySetInnerHTML={{ __html: html }} />
               : <div className="text-body-sm leading-relaxed break-words [&_a]:underline [&_ul]:list-disc [&_ul]:pl-4" dangerouslySetInnerHTML={{ __html: html }} />
           )}
           {actions.length > 0 && (
