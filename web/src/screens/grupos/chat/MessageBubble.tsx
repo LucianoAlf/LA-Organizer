@@ -20,7 +20,7 @@ function firstName(n: string | null) { return (n ?? '').split(' ')[0] || '—'; 
 function safeSrc(url: string | null): string | undefined {
   return url && /^https?:\/\//i.test(url) ? url : undefined;
 }
-const PURIFY = { ALLOWED_TAGS: ['b','strong','i','em','u','a','p','br','ul','ol','li','h3','h4','table','thead','tbody','tr','th','td','span','div','code','pre','blockquote'], ALLOWED_ATTR: ['href','target','rel'] };
+const PURIFY = { ALLOWED_TAGS: ['b','strong','i','em','u','a','p','br','hr','ul','ol','li','h3','h4','table','thead','tbody','tr','th','td','span','div','code','pre','blockquote'], ALLOWED_ATTR: ['href','target','rel'] };
 
 DOMPurify.addHook('afterSanitizeAttributes', (node) => {
   if (node.tagName === 'A' && node.getAttribute('target') === '_blank') {
