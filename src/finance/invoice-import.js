@@ -56,7 +56,7 @@ function buildInvoicePreview({ emissor, vencimento, total, cardName, itens, dupW
   return partes.join('\n');
 }
 
-const RE_COMMIT_FIN = /\b(lan[çc]ar?|lan[çc]a|pode lan[çc]ar|manda|confirmo?|confirma|isso|pode ser|sim|ok|beleza)\b/i;
+const RE_COMMIT_FIN = /\b(lan[çc]ar?|lan[çc]a|pode lan[çc]ar|pode ir|bora|manda ver|manda|segue|confirmo?|confirma|isso|pode ser|sim|ok|beleza)\b/i;
 const RE_ANOTAR = /\b(anota[çc][õo]es?|anota|s[óo] salva|salva.*anota|guarda.*anota|nota)\b/i;
 const RE_CANCEL = /\b(cancela|cancelar|n[ãa]o|esquece|para)(?![a-zA-ZÀ-ú])|deixa pra l[áa]/i;
 

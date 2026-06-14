@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { parseInvoiceBlock, normalizeItems, buildInvoicePreview, detectInvoiceReply } = require('./invoice-import');
+const { parseInvoiceBlock, normalizeItems, buildInvoicePreview, detectInvoiceReply, looksLikeInvoiceText } = require('./invoice-import');
 
 test('parseInvoiceBlock extrai o JSON e limpa o texto', () => {
   const raw = '[FATURA_JSON]{"emissor":"Nubank","vencimento":"2026-06-15","total":3643.53,"itens":[{"descricao":"Shopee","valor":136.28,"data":"2026-05-07","parcela_atual":12,"parcela_total":12}]}[/FATURA_JSON]\nResumo legível aqui.';
@@ -54,4 +54,16 @@ test('detectInvoiceReply roteia lançar / anotações / cancelar', () => {
   assert.equal(detectInvoiceReply('cancela'), 'cancel');
   assert.equal(detectInvoiceReply('deixa pra lá'), 'cancel');
   assert.equal(detectInvoiceReply('e a agenda de amanhã?'), null);
+  // formas reais da Rose de confirmar (sem dizer "lançar")
+  assert.equal(detectInvoiceReply('pode ir com os 40'), 'commit_financeiro');
+  assert.equal(detectInvoiceReply('segue o lançamento dos 40'), 'commit_financeiro');
+});
+
+test('looksLikeInvoiceText detecta fatura colada, ignora msg comum e lista crua', () => {
+  const fatura = '📋 FATURA NUBANK — ROSE\nVencimento: 15/06/2026\nTotal a pagar: R$ 3.643,53\nCompras:\n1. 07/05 Shopee R$ 136,28\n2. 07/05 Kiwify R$ 6,92 parcela 1/10\n3. 07/05 Shein R$ 80,70\n4. 07/05 Lojas Riachuelo R$ 41,97';
+  assert.equal(looksLikeInvoiceText(fatura), true);
+  assert.equal(looksLikeInvoiceText('oi tom, tudo bem? quanto gastei esse mês?'), false);
+  // lista de gastos crus SEM header de fatura → não casa (segue fluxo normal de markers)
+  assert.equal(looksLikeInvoiceText('Amazon 30,74\nShopee 56,48\nPrezunic 176,77 mercado'), false);
+  assert.equal(looksLikeInvoiceText('paguei 50 no ifood'), false);
 });
