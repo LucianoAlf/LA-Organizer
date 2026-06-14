@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { TextStyle } from '@tiptap/extension-text-style';
@@ -30,6 +30,7 @@ export function RichEditor({ valueHtml, onChange }: { valueHtml: string; onChang
   const [loadingIa, setLoadingIa] = useState(false);
   const [instrOpen, setInstrOpen] = useState(false);
   const [instrText, setInstrText] = useState('');
+  const toolbarRef = useRef<HTMLDivElement>(null);
   // Toggle de emojis (default ligado), persistido — afeta toda execução de IA.
   const [useEmoji, setUseEmoji] = useState<boolean>(() => {
     try { return localStorage.getItem('tom_notes_emoji') !== '0'; } catch { return true; }
@@ -41,6 +42,23 @@ export function RichEditor({ valueHtml, onChange }: { valueHtml: string; onChang
       return next;
     });
   }
+
+  // Fecha os popovers da barra (link / cor / menu do TOM) ao clicar fora dela.
+  // Padrão "click-outside": só anexa o listener enquanto algum está aberto.
+  // pointerdown cobre mouse + toque (PWA) num único evento.
+  useEffect(() => {
+    if (!linkOpen && !colorOpen && !menuOpen) return;
+    function onDocPointerDown(e: PointerEvent) {
+      if (toolbarRef.current && !toolbarRef.current.contains(e.target as Node)) {
+        setLinkOpen(false);
+        setColorOpen(false);
+        setMenuOpen(false);
+        setInstrOpen(false);
+      }
+    }
+    document.addEventListener('pointerdown', onDocPointerDown);
+    return () => document.removeEventListener('pointerdown', onDocPointerDown);
+  }, [linkOpen, colorOpen, menuOpen]);
 
   const editor = useEditor({
     extensions: [StarterKit, TextStyle, Color, Link.configure({ openOnClick: false })],
@@ -122,7 +140,7 @@ export function RichEditor({ valueHtml, onChange }: { valueHtml: string; onChang
 
   return (
     <div className="border border-border rounded-md">
-      <div className="flex items-center gap-1 flex-wrap p-1.5 border-b border-border bg-bg-surface relative">
+      <div ref={toolbarRef} className="flex items-center gap-1 flex-wrap p-1.5 border-b border-border bg-bg-surface relative">
         <button type="button" aria-label="Negrito" className={btn(editor.isActive('bold'))} onClick={() => editor.chain().focus().toggleBold().run()}><Bold size={15} /></button>
         <button type="button" aria-label="Itálico" className={btn(editor.isActive('italic'))} onClick={() => editor.chain().focus().toggleItalic().run()}><Italic size={15} /></button>
         <button type="button" aria-label="Título" className={btn(editor.isActive('heading', { level: 2 }))} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}><Heading2 size={15} /></button>
