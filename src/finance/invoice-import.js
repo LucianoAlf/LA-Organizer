@@ -69,4 +69,18 @@ function detectInvoiceReply(text) {
   return null;
 }
 
-module.exports = { parseInvoiceBlock, normalizeItems, buildInvoicePreview, detectInvoiceReply };
+// Heurística: a mensagem é uma FATURA colada como TEXTO (não PDF)? (Rose 14/06)
+// Conservador: precisa de cara de fatura (header) + vários itens com valor. Lista de gastos
+// crus (sem header de fatura) NÃO casa — segue no fluxo normal de markers.
+function looksLikeInvoiceText(text) {
+  if (!text || typeof text !== 'string') return false;
+  const t = text.toLowerCase();
+  if (t.length < 80) return false; // fatura tem corpo; msg curta não é
+  const hasHeader = /\bfatura\b/.test(t) || (/\bvencimento\b/.test(t) && /\btotal\b/.test(t)) || /compras?\s*:/.test(t);
+  if (!hasHeader) return false;
+  // vários valores monetários (R$ 1.234,56 / 136,28 / R$ 30) → corpo de fatura, não menção solta
+  const valueMatches = text.match(/\d{1,3}(?:\.\d{3})*,\d{2}|R\$\s*\d/gi) || [];
+  return valueMatches.length >= 4;
+}
+
+module.exports = { parseInvoiceBlock, normalizeItems, buildInvoicePreview, detectInvoiceReply, looksLikeInvoiceText };

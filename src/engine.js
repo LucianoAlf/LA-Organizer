@@ -44,6 +44,7 @@ const { crossedThreshold, buildBudgetAlert } = require('./finance/budget-alert')
 const { monthsToGoalSimple, monthsToGoalWithInterest, formatMonths, futureValue } = require('./finance/projection');
 const invoiceImport = require('./finance/invoice-import');
 const { reconcileInstallments } = require('./finance/parse-installments');
+const gemini = require('./services/gemini');
 const { splitBulkIdenticalCreates } = require('./task-guardrail');
 const selic = require('./services/selic');
 const audioDecompose = require('./services/audio-decompose');
@@ -7935,6 +7936,23 @@ async function processMessage(phone, text, raw = {}) {
     }
   } catch (e) {
     console.warn('[TaskQuery] err:', e.message);
+  }
+
+  // === Intercept A0: fatura colada como TEXTO (não PDF) → estrutura via Gemini e injeta [FATURA_JSON] ===
+  // Rose 14/06: mandou a fatura como texto; sem isso caía no LLM-puro, que narrava "lancei/missão
+  // cumprida" SEM emitir markers (nada lançava), lia "dos 40" como R$40 e largava itens (24 de 40).
+  // Aqui a fatura-texto entra no MESMO fluxo determinístico do PDF (Intercept A logo abaixo).
+  try {
+    if (!invoiceImport.parseInvoiceBlock(text).found && invoiceImport.looksLikeInvoiceText(text)) {
+      const _struct = await gemini.analyzeInvoiceText(text);
+      if (_struct && _struct.ok && _struct.isInvoice && _struct.invoice && (_struct.invoice.itens || []).length > 0) {
+        const _resumo = `Fatura ${_struct.invoice.emissor || ''} · ${_struct.invoice.itens.length} compras`;
+        text = `[FATURA_JSON]${JSON.stringify(_struct.invoice)}[/FATURA_JSON]\n${_resumo}`;
+        console.log(`[Engine] fatura-texto detectada: ${_struct.invoice.itens.length} itens, emissor=${_struct.invoice.emissor || '?'}`);
+      }
+    }
+  } catch (e) {
+    console.warn('[Fatura] intercept A0 (texto) err:', e.message);
   }
 
   // === Intercept A: proposta de import de fatura (texto tem [FATURA_JSON]) ===

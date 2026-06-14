@@ -257,8 +257,31 @@ async function analyzeInvoice(buffer, caption = '') {
   }
 }
 
+// Estrutura uma fatura colada como TEXTO (não PDF) no MESMO JSON do analyzeInvoice. (Rose 14/06)
+// Reusa callGenerateContent passando o texto da fatura como um text-part (sem mídia).
+async function analyzeInvoiceText(invoiceText) {
+  if (!GEMINI_API_KEY) return { ok: false, reason: 'no_provider' };
+  if (!invoiceText || !String(invoiceText).trim()) return { ok: false, reason: 'empty' };
+  const prompt = [
+    'O texto a seguir é uma FATURA DE CARTÃO colada pelo usuário. Retorne SOMENTE um JSON válido (sem markdown, sem cercas) no formato:',
+    '{"isInvoice":true,"emissor":"<banco/cartão>","vencimento":"YYYY-MM-DD","total":<number>,"itens":[{"descricao":"<loja>","valor":<number>,"data":"YYYY-MM-DD","parcela_atual":<int>,"parcela_total":<int>}]}',
+    'Liste TODAS as transações, uma a uma, sem resumir nem omitir, até a última. valor em número (ponto decimal, ex 136.28). Compra à vista = parcela_atual:1, parcela_total:1. Se a data do item não tiver ano, use o ano do vencimento.',
+    'Se NÃO for uma fatura de cartão, retorne {"isInvoice":false}.',
+  ].join('\n');
+  try {
+    const raw = await callGenerateContent({ text: 'FATURA:\n' + invoiceText }, prompt);
+    const clean = raw.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
+    const json = JSON.parse(clean);
+    if (!json.isInvoice || !Array.isArray(json.itens)) return { ok: true, isInvoice: false };
+    return { ok: true, isInvoice: true, invoice: json };
+  } catch (err) {
+    console.error('[Gemini] analyzeInvoiceText err:', err.message);
+    return { ok: false, reason: 'gemini_error', error: err.message };
+  }
+}
+
 function isProviderConfigured() {
   return Boolean(GEMINI_API_KEY);
 }
 
-module.exports = { analyzeMedia, analyzeInvoice, isProviderConfigured };
+module.exports = { analyzeMedia, analyzeInvoice, analyzeInvoiceText, isProviderConfigured };
