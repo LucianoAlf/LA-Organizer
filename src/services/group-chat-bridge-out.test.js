@@ -74,6 +74,12 @@ test('report com <hr> entre blocos vira linha separadora no WhatsApp', () => {
   assert.match(out, /\*⏰ Esta semana · 1\*/);
   assert.ok(!/[<>]/.test(out), 'não pode sobrar tag HTML');
 });
+test('report com <br><br> vira quebras (não confunde <br> com a tag <b> de negrito)', () => {
+  const html = '<div>Linha 1<br><br>Linha 2</div>';
+  const out = buildWhatsappText({ role: 'tom', kind: 'report', content: html }, '');
+  assert.match(out, /Linha 1\n\nLinha 2/);
+  assert.ok(!out.includes('*'), 'não pode virar asterisco de <b> falso: ' + JSON.stringify(out));
+});
 test('report vazio → null', () => {
   assert.equal(buildWhatsappText({ role: 'tom', kind: 'report', content: '   ' }, ''), null);
 });

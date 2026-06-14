@@ -16,8 +16,8 @@ function htmlToWhatsapp(html) {
   t = t.replace(/^```[a-z]*\s*/i, '').replace(/\s*```\s*$/i, '');
   t = t
     .replace(/<\s*h[1-6][^>]*>/gi, '\n*').replace(/<\s*\/\s*h[1-6]\s*>/gi, '*\n')
-    .replace(/<\s*(strong|b)[^>]*>/gi, '*').replace(/<\s*\/\s*(strong|b)\s*>/gi, '*')
-    .replace(/<\s*(em|i)[^>]*>/gi, '_').replace(/<\s*\/\s*(em|i)\s*>/gi, '_')
+    .replace(/<\s*(strong|b)\b[^>]*>/gi, '*').replace(/<\s*\/\s*(strong|b)\s*>/gi, '*')
+    .replace(/<\s*(em|i)\b[^>]*>/gi, '_').replace(/<\s*\/\s*(em|i)\s*>/gi, '_')
     .replace(/<\s*li[^>]*>/gi, '\n• ').replace(/<\s*\/\s*li\s*>/gi, '')
     .replace(/<\s*br\s*\/?\s*>/gi, '\n')
     .replace(/<\s*\/\s*p\s*>/gi, '\n').replace(/<\s*\/\s*(ul|ol|div)\s*>/gi, '\n')
