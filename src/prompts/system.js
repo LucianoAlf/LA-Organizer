@@ -1445,10 +1445,13 @@ async function fetchCollaboratorContext(collaborator) {
       .eq('collaborator_id', id)
       .in('status', ['pending', 'sent'])
       .order('created_at', { ascending: false }).limit(8),
+    // Histórico no contexto do LLM. limit(5) era baixo demais → o TOM "esquecia" o que foi
+    // combinado >5 msgs atrás em conversas longas (Rose 14/06, lançar fatura). 30 cobre ~15
+    // turnos; formatMessages trunca mensagens longas (cards/listas) pra não pesar o custo.
     supabase.from('conversation_history')
       .select('direction, content, created_at')
       .eq('collaborator_id', id)
-      .order('created_at', { ascending: false }).limit(5),
+      .order('created_at', { ascending: false }).limit(30),
     supabase.from('habits')
       .select('id, name, icon, current_streak, frequency, reminder_time, habit_type, target_value, unit')
       .eq('collaborator_id', id).eq('is_active', true)
@@ -3729,9 +3732,16 @@ function formatMessages(recent, currentText) {
   // Combate history poisoning: se TOM canonizou data errada num turno
   // anterior ("Amanhã (30/04)..."), aquilo NÃO chega como fato pra Claude
   // no próximo turno.
+  // Trunca mensagens MUITO longas do HISTÓRICO (cards de fatura, listas) pra carregar mais
+  // turnos sem inflar o custo de cada chamada. A mensagem ATUAL nunca é truncada.
+  const HIST_MSG_MAX = 1000;
+  const _trunc = (s) => {
+    const str = String(s || '');
+    return str.length > HIST_MSG_MAX ? str.slice(0, HIST_MSG_MAX) + ' …[mensagem longa truncada no histórico]' : str;
+  };
   const msgs = (recent || []).map(m => ({
     role: m.direction === 'inbound' ? 'user' : 'assistant',
-    content: m.direction === 'outbound' ? sanitizeAssistantContent(m.content) : m.content,
+    content: _trunc(m.direction === 'outbound' ? sanitizeAssistantContent(m.content) : m.content),
   }));
   msgs.push({ role: 'user', content: currentText });
   return msgs;
