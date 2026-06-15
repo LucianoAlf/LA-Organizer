@@ -4013,7 +4013,7 @@ async function notifyTaskCreatorOfAction(task, actor, action, detail = null) {
   }
 }
 
-async function applyTaskActions(collaborator, actions) {
+async function applyTaskActions(collaborator, actions, opts = {}) {
   let okCount = 0;
   let failCount = 0;
   let integrityPayload = null; // Sprint 31 — acumula o 1º soft-dup sem abortar o lote
@@ -4041,6 +4041,40 @@ async function applyTaskActions(collaborator, actions) {
       actions = allowed;
     }
   }
+
+  // A2 (CLOSING-INTERCEPTOR-OVERCAPTURE / caso Leo): complete em LOTE (2+) onde o usuário
+  // NÃO citou nenhuma das tarefas = provável sequestro pelo contexto de briefing (o LLM
+  // "fecha" atrasadas salientes em vez de tratar o pedido real). Confirma antes de fechar,
+  // usando a MESMA plumbing do guard de data-futura (failMessages + failCount). Só roda no
+  // caminho de mensagem do usuário (opts.inboundText presente); AUTO_RETRY não passa → pula.
+  if (opts && opts.inboundText) {
+    try {
+      const { batchCompleteNeedsConfirm } = require('./utils/closing-reply');
+      const completes = actions.filter((a) => a && a.action === 'complete');
+      if (completes.length >= 2) {
+        const titles = [];
+        for (const c of completes) {
+          if (c.title) { titles.push(c.title); continue; }
+          const tt = await resolveTaskByShortId(collaborator.id, c.id).catch(() => null);
+          if (tt && tt.title) titles.push(tt.title);
+        }
+        if (batchCompleteNeedsConfirm({ completedTitles: titles, inboundText: opts.inboundText })) {
+          const lista = titles.map((t) => `*${t}*`).join(', ');
+          const plural = titles.length > 1;
+          failMessages.push(`Você quer que eu feche ${titles.length} tarefa${plural ? 's' : ''} (${lista})? Não vi você citar ela${plural ? 's' : ''} na mensagem.`);
+          try {
+            await pendingIntents.openIntent(collaborator.id, 'confirmation',
+              { batch_complete: completes.map((c) => c.id).filter(Boolean) },
+              `Confirmar fechamento em lote: ${lista}?`);
+          } catch (_) { /* intent best-effort */ }
+          actions = actions.filter((a) => !(a && a.action === 'complete'));
+          failCount += completes.length;
+          console.warn(`[Task] A2 batch-complete nao-ancorado (${titles.length}) -> pediu confirmacao, removido do lote`);
+        }
+      }
+    } catch (e) { console.warn('[Task] A2 guard err:', e.message); }
+  }
+
   for (const a of actions) {
     if (!a || typeof a.action !== 'string') {
       failCount++;
@@ -8981,7 +9015,7 @@ async function processMessage(phone, text, raw = {}) {
       } catch (e) {
         console.error('[Task] date alignment err (non-fatal):', e.message);
       }
-      const { okCount, failCount, integrityPayload, failMessages, groupNotices } = await applyTaskActions(collab, parsedTask.actions);
+      const { okCount, failCount, integrityPayload, failMessages, groupNotices } = await applyTaskActions(collab, parsedTask.actions, { inboundText: text });
       console.log(`[Task] batch done: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
       if (integrityPayload) {
         const iType = integrityPayload.type;

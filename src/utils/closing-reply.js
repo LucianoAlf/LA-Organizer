@@ -166,4 +166,23 @@ function shouldClosingInterceptorFire(args = {}) {
   return { fire: true, reason: 'ok' };
 }
 
-module.exports = { buildClosingItems, parseClosingReply, shouldClosingInterceptorFire, _brtDay: brtDay };
+/**
+ * A2 (CLOSING-INTERCEPTOR-OVERCAPTURE / caso Leo): complete em LOTE (2+ tarefas) onde o
+ * usuário NÃO citou nenhuma das tarefas = sinal de sequestro pelo contexto de briefing
+ * (o LLM "fecha" tarefas atrasadas salientes em vez de tratar o pedido real). Retorna true
+ * → o engine deve CONFIRMAR antes de fechar (princípio (b): não fechar tarefa no escuro).
+ * Lote de 1 nunca confirma; se o usuário citou ao menos uma tarefa, é legítimo.
+ * @param {{completedTitles?:string[], inboundText?:string}} args
+ * @returns {boolean}
+ */
+function batchCompleteNeedsConfirm(args = {}) {
+  const titles = (args.completedTitles || []).filter(Boolean);
+  if (titles.length < 2) return false;
+  const txt = String(args.inboundText || '').toLowerCase();
+  if (!txt.trim()) return true; // sem inbound → não dá pra confirmar referência → pede confirmação
+  const referenced = titles.some((title) =>
+    String(title).toLowerCase().split(/\s+/).filter((w) => w.length >= 4).some((w) => txt.includes(w)));
+  return !referenced;
+}
+
+module.exports = { buildClosingItems, parseClosingReply, shouldClosingInterceptorFire, batchCompleteNeedsConfirm, _brtDay: brtDay };

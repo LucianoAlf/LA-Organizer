@@ -193,3 +193,23 @@ test('shouldClosingInterceptorFire: sem candidato / payload inválido → no_clo
   assert.strictEqual(shouldClosingInterceptorFire({ closingIntent: null }).fire, false);
   assert.strictEqual(shouldClosingInterceptorFire({ closingIntent: { payload: {} } }).reason, 'no_closing');
 });
+
+// Task 4 (A2): batchCompleteNeedsConfirm — complete em LOTE não citado → confirmar antes.
+const { batchCompleteNeedsConfirm } = require('./closing-reply');
+
+test('batchCompleteNeedsConfirm: 2+ tarefas NÃO citadas → true (caso Leo)', () => {
+  assert.strictEqual(batchCompleteNeedsConfirm({
+    completedTitles: ['Definir repertório do show', 'Alinhar com produção'],
+    inboundText: 'criar 2 eventos pedagógicos pra semana que vem' }), true);
+});
+test('batchCompleteNeedsConfirm: usuário citou as tarefas → false (legítimo)', () => {
+  assert.strictEqual(batchCompleteNeedsConfirm({
+    completedTitles: ['Repertório do show', 'Produção do evento'],
+    inboundText: 'fechei o repertório e a produção' }), false);
+});
+test('batchCompleteNeedsConfirm: 1 tarefa só → false (não é lote)', () => {
+  assert.strictEqual(batchCompleteNeedsConfirm({ completedTitles: ['Qualquer coisa'], inboundText: 'xpto' }), false);
+});
+test('batchCompleteNeedsConfirm: inbound vazio + lote → true (defensivo)', () => {
+  assert.strictEqual(batchCompleteNeedsConfirm({ completedTitles: ['A B C', 'D E F'], inboundText: '' }), true);
+});
