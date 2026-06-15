@@ -24,10 +24,14 @@ const TOM_CLAUDE_HOME = process.env.TOM_CLAUDE_HOME || '/opt/LA-Organizer/.claud
 const CLAUDE_HOME = process.env.CLAUDE_HOME || `${TOM_CLAUDE_HOME}/.claude`;
 const CLAUDE_USER_HOME = process.env.TOM_CLAUDE_HOME || TOM_CLAUDE_HOME;
 const CLAUDE_PATH = process.env.PATH || '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
-// Sprint 27 — 60s era apertado: tasks normais já estavam em 38-59s.
-// Subindo pra 120s pra dar folga em prompts pesados (criar_compromisso com
-// validação cruzada, leitura de inventário grande, etc).
-const CLAUDE_TIMEOUT_MS = Number(process.env.CLAUDE_TIMEOUT_MS) || 120000;
+// LATÊNCIA (15/06): medido na VPS — floor do CLI = 2.4s e chamadas reais de
+// produção = 8-12s (o "38-59s" do Sprint 27 era de versão/prompt antigos, hoje
+// obsoleto). O timeout de 120s só ESCONDIA hang da Anthropic (429/5xx): a msg
+// travava 2min e, como o acesso ao CLI é serializado (_claudeQueue), TODA msg
+// atrás travava junto → "TOM escrevendo a vida toda / às vezes não responde".
+// 60s dá ~5-6x de folga sobre a chamada real e corta o hang pela metade,
+// disparando o fallback (Codex) muito mais cedo. Override via CLAUDE_TIMEOUT_MS.
+const CLAUDE_TIMEOUT_MS = Number(process.env.CLAUDE_TIMEOUT_MS) || 60000;
 
 // Sprint 26 — Mutex serializa chamadas ao CLI pra impedir race no .claude.json.
 // Causa-raiz: dois `claude -p` em paralelo abriam o mesmo arquivo de config e

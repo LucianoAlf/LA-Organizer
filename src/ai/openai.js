@@ -1,5 +1,8 @@
 const { spawn } = require('child_process');
-const CODEX_TIMEOUT_MS = Number(process.env.CODEX_TIMEOUT_MS) || 120000;
+// LATÊNCIA (15/06): Codex é a REDE de segurança (só roda quando o Claude falha/hang).
+// 120s→60s pra manter o TETO total em ~120s (Claude 60s + Codex 60s) e não deixar
+// o usuário "escrevendo a vida toda". Override via CODEX_TIMEOUT_MS.
+const CODEX_TIMEOUT_MS = Number(process.env.CODEX_TIMEOUT_MS) || 60000;
 
 async function chat(systemPrompt, messages /*, maxTokens */) {
   const lastUser = messages.filter(m => m.role === 'user').pop()?.content || '';
