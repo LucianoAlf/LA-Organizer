@@ -6915,8 +6915,30 @@ async function handleFinanceAction(collab, action, params, outcome = {}) {
       // Consulta realtime à conta real (Pluggy) — saldo / fatura / investimento. Fetch fresh.
       const kind = String(params.kind || params.tipo || 'saldo');
       const banco = params.banco || params.bank || params.conta || params.cartao || null;
-      const pq = require('./services/pluggy-query');
       const fmt = require('./finance/pluggy-query-format');
+      // Blindagem multi-usuário: a instrução de pluggy_query mora SÓ na skill conta-real (carrega
+      // apenas com Pluggy). Se ainda assim cair aqui SEM Open Finance conectado (ex.: Rose/Matheus),
+      // responde com o APP — NUNCA "não achei conta conectada", que confundiria quem não usa Pluggy.
+      let _temPluggy = false;
+      try { _temPluggy = await financeService.hasPluggyItems(cid); } catch { _temPluggy = false; }
+      if (!_temPluggy) {
+        const _brl = (n) => Number(n || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        if (/invest|caix|rendiment|poupan|cdb/i.test(kind)) {
+          return 'Pra ver investimento/caixinha em tempo real eu preciso do seu banco conectado (Open Finance) — isso ainda não tá ligado na sua conta. 🙂';
+        }
+        if (/fatura|cart[aã]o|invoice/i.test(kind)) {
+          const _invs = await financeService.pendingCardInvoices(cid).catch(() => []);
+          if (!_invs.length) return 'Você não tem fatura de cartão em aberto no app agora. 🙂';
+          return _invs.map((i) => `💳 *${i.cardName}*: R$ ${_brl(i.remaining)}${i.dueDay ? ` · vence dia ${i.dueDay}` : ''}`).join('\n');
+        }
+        const _accs = await financeService.listAccounts(cid).catch(() => []);
+        if (!_accs.length) return 'Você ainda não cadastrou carteira no app. 🙂';
+        const _tot = _accs.reduce((s, a) => s + (Number(a.balance) || 0), 0);
+        let _m = '💰 *Seus saldos:*\n' + _accs.map((a) => `• ${a.name}: R$ ${_brl(a.balance)}`).join('\n');
+        if (_accs.length > 1) _m += `\n\n*Total: R$ ${_brl(_tot)}*`;
+        return _m;
+      }
+      const pq = require('./services/pluggy-query');
       try {
         if (/fatura|cart[aã]o|invoice/i.test(kind)) return fmt.buildFaturaMsg(await pq.cardInvoices(cid, banco));
         if (/invest|caix|rendiment|poupan|cdb/i.test(kind)) return fmt.buildInvestMsg(await pq.investments(cid, banco));
