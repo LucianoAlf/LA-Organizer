@@ -26,6 +26,9 @@ export function GruposLista() {
   const myIds = useMyGroupIds();
   const roster = useCollabRoster();
   const canManage = role === 'director' || role === 'coordinator' || role === 'manager';
+  // Criar grupo liberado pra TODO colaborador (decisão do Alf 15/06). canManage segue valendo
+  // só pra VISIBILIDADE (gestão vê todos os grupos; membro vê só os seus).
+  const canCreate = Boolean(collaborator);
 
   const visible = useMemo(() => {
     const all = list.data ?? [];
@@ -92,7 +95,7 @@ export function GruposLista() {
             O ambiente da equipe: todo membro vê e qualquer um conclui. "TOM, cria tarefa pro financeiro" também funciona.
           </p>
         </div>
-        {canManage && (
+        {canCreate && (
           <Button
             variant="primary"
             size="md"
@@ -107,8 +110,8 @@ export function GruposLista() {
       {visible.length === 0 ? (
         <EmptyState
           title={canManage ? 'Nenhum grupo ainda' : 'Você ainda não está em nenhum grupo'}
-          description={canManage ? 'Cria o primeiro — ex.: Financeiro.' : 'Pede pro seu líder te adicionar.'}
-          action={canManage ? (
+          description={canManage ? 'Cria o primeiro — ex.: Financeiro.' : 'Crie o seu ou peça pro seu líder te adicionar.'}
+          action={canCreate ? (
             <Button variant="primary" size="md" onClick={() => { setLider(collaborator?.id ?? ''); setNovoOpen(true); }}>
               + Novo grupo
             </Button>

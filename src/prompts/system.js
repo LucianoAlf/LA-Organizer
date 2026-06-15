@@ -3737,14 +3737,13 @@ function formatMessages(recent, currentText) {
   // no próximo turno.
   // Trunca mensagens MUITO longas do HISTÓRICO (cards de fatura, listas) pra carregar mais
   // turnos sem inflar o custo de cada chamada. A mensagem ATUAL nunca é truncada.
-  const HIST_MSG_MAX = 1000;
-  const _trunc = (s) => {
-    const str = String(s || '');
-    return str.length > HIST_MSG_MAX ? str.slice(0, HIST_MSG_MAX) + ' …[mensagem longa truncada no histórico]' : str;
-  };
+  // Trunca mensagens longas do histórico, MAS preserva blocos estruturados (fatura) inteiros.
+  // HIST-TRUNC-FATURA-BLIND (audit 15/06): regressão do TOM-SHORT-MEMORY-HISTORY5 decapitava o
+  // [FATURA_JSON] em 1000 chars → TOM cego ao resto da fatura (Rose). Ver utils/history-truncate.
+  const { truncateHistoryMsg } = require('../utils/history-truncate');
   const msgs = (recent || []).map(m => ({
     role: m.direction === 'inbound' ? 'user' : 'assistant',
-    content: _trunc(m.direction === 'outbound' ? sanitizeAssistantContent(m.content) : m.content),
+    content: truncateHistoryMsg(m.direction === 'outbound' ? sanitizeAssistantContent(m.content) : m.content),
   }));
   msgs.push({ role: 'user', content: currentText });
   return msgs;

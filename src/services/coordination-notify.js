@@ -82,4 +82,19 @@ function buildCoordinationResponseNotification({ recipientFirstName, inboundText
   return msg;
 }
 
-module.exports = { buildCoordinationResponseNotification, extractVerbatim };
+/**
+ * response_summary a PERSISTIR no coordination_requests: só confia na paráfrase do LLM
+ * quando houve fala REAL capturada (extractVerbatim != null). Áudio/imagem não transcrita
+ * → null, pra NÃO envenenar o _accQ3 (que reinjeta o summary e faz o LLM confabular
+ * "Fulano autorizou" o que ninguém disse). Caso Dudu/Rafinha 12/06 (VERBATIM-SUMMARY-POISON).
+ * Espelha a mesma regra que protege a NOTIFICAÇÃO (buildCoordinationResponseNotification).
+ * @param {string} inboundText  o texto inbound que o engine processou (o `text`)
+ * @param {string} llmSummary   parsed.response_summary do marker
+ * @returns {string|null}
+ */
+function safeResponseSummary(inboundText, llmSummary) {
+  if (extractVerbatim(inboundText) == null) return null;
+  return llmSummary == null ? null : String(llmSummary);
+}
+
+module.exports = { buildCoordinationResponseNotification, extractVerbatim, safeResponseSummary };

@@ -100,3 +100,28 @@ test('resumo idêntico ao verbatim não duplica (sem parêntese redundante)', ()
   });
   assert.ok(!msg.includes('como entendi:'), `não deveria ter resumo redundante: ${msg}`);
 });
+
+// VERBATIM-SUMMARY-POISON (audit 15/06, caso Dudu/Rafinha) — Lote B
+// O response_summary do LLM NÃO pode ser persistido quando não houve fala real capturada
+// (áudio/imagem não transcrita): senão o _accQ3 reinjeta a paráfrase e o LLM confabula
+// "Fulano autorizou". safeResponseSummary suprime (null) quando extractVerbatim é null.
+const { safeResponseSummary } = require('./coordination-notify');
+
+test('safeResponseSummary: áudio não transcrito → null (não envenena o _accQ3) [Dudu]', () => {
+  assert.strictEqual(safeResponseSummary('[O usuário ACABOU DE ENVIAR um áudio]', 'Rafinha autorizou arrumar o lounge'), null);
+});
+test('safeResponseSummary: imagem (análise de máquina) → null', () => {
+  assert.strictEqual(safeResponseSummary('[O usuário ACABOU DE ENVIAR uma imagem agora]\nfoto', 'resumo qualquer'), null);
+});
+test('safeResponseSummary: inbound vazio → null', () => {
+  assert.strictEqual(safeResponseSummary('', 'resumo'), null);
+});
+test('safeResponseSummary: fala real (texto) → mantém o resumo do LLM', () => {
+  assert.strictEqual(safeResponseSummary('Consigo verificar sim', 'Vai verificar'), 'Vai verificar');
+});
+test('safeResponseSummary: áudio TRANSCRITO (fala real) → mantém', () => {
+  assert.strictEqual(safeResponseSummary('[áudio transcrito] pode arrumar sim', 'Autorizou arrumar'), 'Autorizou arrumar');
+});
+test('safeResponseSummary: verbatim ok mas summary nulo → null', () => {
+  assert.strictEqual(safeResponseSummary('Pode sim', null), null);
+});

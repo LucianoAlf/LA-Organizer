@@ -34,7 +34,7 @@ const { isFutureCompletion } = require('./utils/complete-guards');
 const { sanitizeOptimisticConfirm, hasOptimisticConfirm } = require('./lib/optimistic-confirm');
 const { classifyDupChoice } = require('./lib/dup-choice');
 const { buildClosingItems, parseClosingReply } = require('./utils/closing-reply');
-const { buildCoordinationResponseNotification } = require('./services/coordination-notify');
+const { buildCoordinationResponseNotification, safeResponseSummary } = require('./services/coordination-notify');
 const { isContextQuietField, validateContextQuietField } = require('./services/prefs-quiet-context');
 const pendingInventoryPhoto = require('./services/pending-inventory-photo');
 const { salaConfirmada } = require('./services/inventory-sala-guard');
@@ -1620,7 +1620,7 @@ async function applyCoordinationResponseAction(collab, parsed, inboundText) {
     .update({
       status:           'responded',
       responded_at:     new Date().toISOString(),
-      response_summary: parsed.response_summary,
+      response_summary: safeResponseSummary(inboundText, parsed.response_summary),
     })
     .eq('id', req.id);
 
@@ -1678,7 +1678,7 @@ async function applyCoordinationResponseAction(collab, parsed, inboundText) {
           .update({
             status: 'responded',
             responded_at: new Date().toISOString(),
-            response_summary: parsed.response_summary,
+            response_summary: safeResponseSummary(inboundText, parsed.response_summary),
             cancelled_reason: `cascade_from:${req.id.slice(0,8)}`,
           })
           .eq('id', sib.id);
@@ -6036,6 +6036,7 @@ async function _accQ3(collabId) {
     `)
     .eq('requester_id', collabId)
     .eq('status', 'responded')
+    .not('response_summary', 'is', null)
     .gte('responded_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
     .order('responded_at', { ascending: false })
     .limit(1)
