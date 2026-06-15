@@ -13,6 +13,26 @@ const audio = require('./services/audio');
 const vision = require('./services/vision');
 const gemini = require('./services/gemini');
 const statementParse = require('./finance/statement-parse');
+const pdfCrypt = require('./finance/pdf-crypt');
+const pendingPdf = require('./services/pending-pdf');
+
+// PDF → texto pro engine: extrai fatura estruturada (Gemini) ou conteúdo cru. null se não leu.
+async function pdfToText(buf, mime, caption) {
+  const inv = await gemini.analyzeInvoice(buf, caption);
+  if (inv.ok && inv.isInvoice && inv.invoice.itens.length > 0) {
+    const captionLine = caption ? `Legenda enviada pelo usuário: "${caption}"\n` : '';
+    const resumo = `Fatura ${inv.invoice.emissor || ''} · ${inv.invoice.itens.length} compras · total R$ ${Number(inv.invoice.total || 0).toFixed(2)}`;
+    console.log(`[Webhook] fatura detectada: ${inv.invoice.itens.length} itens, emissor=${inv.invoice.emissor || '?'}`);
+    return `[FATURA_JSON]${JSON.stringify(inv.invoice)}[/FATURA_JSON]\n${captionLine}${resumo}`;
+  }
+  const r = await gemini.analyzeMedia(buf, mime || 'application/pdf', caption);
+  if (r.ok) {
+    const captionLine = caption ? `Legenda enviada pelo usuário: "${caption}"\n` : '';
+    console.log(`[Webhook] PDF analyzed (${r.text.length} chars)`);
+    return `[O usuário ACABOU DE ENVIAR um PDF agora — primeira vez vendo este arquivo. Conteúdo extraído:]\n${captionLine}${r.text}`;
+  }
+  return null;
+}
 const shutdown = require('./services/shutdown');
 const webhookPersistence = require('./services/webhook-persistence');
 const pendingInventoryPhoto = require('./services/pending-inventory-photo');
@@ -191,6 +211,27 @@ async function processWebhookBody(body) {
       }
     }
 
+    // ---- PDF protegido aguardando senha: a senha veio numa mensagem SEPARADA (Rose 14/06). ----
+    // Se há um PDF travado e chegou um texto com cara de senha, decifra com qpdf e processa.
+    if (text && typeof text === 'string' && pendingPdf.has(phone)
+        && !whatsapp.isImageMessage(body) && !whatsapp.isVideoMessage(body) && !whatsapp.isDocumentMessage(body)) {
+      const senha = pdfCrypt.extractPassword(text);
+      if (senha) {
+        const pend = pendingPdf.get(phone);
+        console.log(`[Webhook] PDF pendente + senha de ${phone.slice(-4)} — decifrando com qpdf`);
+        const dec = await pdfCrypt.decryptPdf(pend.buffer, senha);
+        if (dec.ok) {
+          pendingPdf.clear(phone);
+          const t = await pdfToText(dec.buffer, pend.mime, '');
+          if (t) { text = t; }
+          else { whatsapp.sendMessage(phone, 'Abri o PDF com a senha, mas tive problema pra ler o conteúdo. Cola os lançamentos aqui?').catch(() => {}); return; }
+        } else {
+          whatsapp.sendMessage(phone, '🔒 Essa senha não abriu o PDF. Confere e me manda de novo (ou cola os lançamentos aqui).').catch(() => {});
+          return;
+        }
+      }
+    }
+
     // ---- Sprint 22.X — Imagem: análise via vision e injeção como texto ----
     if (whatsapp.isImageMessage(body)) {
       const caption = (typeof text === 'string' && text.trim()) ? text.trim() : '';
@@ -304,25 +345,23 @@ async function processWebhookBody(body) {
           return;
         }
       }
-      // ---- PDF: análise via Gemini (fluxo existente) ----
+      // ---- PDF: se protegido por SENHA, decifra antes (qpdf); depois análise via Gemini. ----
       else if (isPdf) {
-        const inv = await gemini.analyzeInvoice(buf, caption);
-        if (inv.ok && inv.isInvoice && inv.invoice.itens.length > 0) {
-          const captionLine = caption ? `Legenda enviada pelo usuário: "${caption}"\n` : '';
-          const resumo = `Fatura ${inv.invoice.emissor || ''} · ${inv.invoice.itens.length} compras · total R$ ${Number(inv.invoice.total || 0).toFixed(2)}`;
-          text = `[FATURA_JSON]${JSON.stringify(inv.invoice)}[/FATURA_JSON]\n${captionLine}${resumo}`;
-          console.log(`[Webhook] fatura detectada: ${inv.invoice.itens.length} itens, emissor=${inv.invoice.emissor || '?'}`);
-        } else {
-          const r = await gemini.analyzeMedia(buf, mime || 'application/pdf', caption);
-          if (r.ok) {
-            const captionLine = caption ? `Legenda enviada pelo usuário: "${caption}"\n` : '';
-            text = `[O usuário ACABOU DE ENVIAR um PDF agora — primeira vez vendo este arquivo. Conteúdo extraído:]\n${captionLine}${r.text}`;
-            console.log(`[Webhook] PDF analyzed (${r.text.length} chars)`);
-          } else {
-            whatsapp.sendMessage(phone, 'recebi seu PDF mas tive um problema pra ler. Me conta em texto o que precisa?').catch(() => {});
+        if (pdfCrypt.isEncryptedPdf(buf)) {
+          // tenta a senha do caption; senão guarda o PDF e pede (a senha costuma vir separada). Rose 14/06.
+          let okBuf = null;
+          const senhaCaption = pdfCrypt.extractPassword(caption);
+          if (senhaCaption) { const dec = await pdfCrypt.decryptPdf(buf, senhaCaption); if (dec.ok) okBuf = dec.buffer; }
+          if (!okBuf) {
+            pendingPdf.put(phone, { buffer: buf, mime, fileName });
+            whatsapp.sendMessage(phone, '🔒 Esse PDF tá protegido por senha. Me manda a senha (pode ser só o número) que eu abro e leio certinho.').catch(() => {});
             return;
           }
+          buf = okBuf; // segue com o PDF aberto
         }
+        const t = await pdfToText(buf, mime, caption);
+        if (t) { text = t; }
+        else { whatsapp.sendMessage(phone, 'recebi seu PDF mas tive um problema pra ler. Me conta em texto o que precisa?').catch(() => {}); return; }
       } else {
         whatsapp.sendMessage(phone, 'recebi seu documento. Me conta em texto o que precisa que eu faça com ele?').catch(() => {});
         return;
