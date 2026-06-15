@@ -85,9 +85,20 @@ async function cardInvoices(collaboratorId, banco) {
   const out = [];
   for (const it of await _itemsFor(collaboratorId, banco)) {
     try {
-      for (const ac of await pluggy.fetchAccounts(it.pluggy_item_id)) if (String(ac.type).toUpperCase() === 'CREDIT') {
+      for (const ac of await pluggy.fetchAccounts(it.pluggy_item_id)) {
+        if (String(ac.type).toUpperCase() !== 'CREDIT') continue;
         const cd = ac.creditData || {};
-        out.push({ banco: it.connector_name, nome: ac.name, fatura: Number(ac.balance) || 0, vencimento: cd.balanceDueDate || null, minimo: Number(cd.minimumPayment) || null, disponivel: cd.availableCreditLimit != null ? Number(cd.availableCreditLimit) : null });
+        // fatura REAL via /bills (totalAmount + dueDate). ac.balance = saldo devedor TOTAL (NÃO a fatura).
+        let bills = [];
+        try { bills = await pluggy.fetchBills(ac.id); } catch (e) { bills = []; }
+        out.push({
+          banco: it.connector_name, nome: ac.name,
+          saldoDevedor: Number(ac.balance) || 0,
+          minimo: Number(cd.minimumPayment) || null,
+          disponivel: cd.availableCreditLimit != null ? Number(cd.availableCreditLimit) : null,
+          bills: (bills || []).filter((b) => b && b.dueDate)
+            .map((b) => ({ valor: Number(b.totalAmount) || 0, vencimento: String(b.dueDate).slice(0, 10) })),
+        });
       }
     } catch (e) { /* skip */ }
   }

@@ -34,4 +34,7 @@ async function fetchTransactions(accountId, { from } = {}) {
   return out;
 }
 async function fetchInvestments(itemId) { return (await _get(`/investments?itemId=${itemId}`)).results || []; }
-module.exports = { getApiKey, fetchItem, fetchAccounts, fetchTransactions, fetchInvestments };
+// Faturas (bills) do cartão = a fatura REAL a pagar (totalAmount + dueDate), diferente de
+// account.balance (saldo devedor TOTAL). O Open Finance pode atrasar 1-3d na virada. (D5 fatura)
+async function fetchBills(accountId) { return (await _get(`/bills?accountId=${accountId}`)).results || []; }
+module.exports = { getApiKey, fetchItem, fetchAccounts, fetchTransactions, fetchInvestments, fetchBills };

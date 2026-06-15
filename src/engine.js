@@ -6940,7 +6940,10 @@ async function handleFinanceAction(collab, action, params, outcome = {}) {
       }
       const pq = require('./services/pluggy-query');
       try {
-        if (/fatura|cart[aã]o|invoice/i.test(kind)) return fmt.buildFaturaMsg(await pq.cardInvoices(cid, banco));
+        if (/fatura|cart[aã]o|invoice/i.test(kind)) {
+          const _todayYmd = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+          return fmt.buildFaturaMsg(await pq.cardInvoices(cid, banco), _todayYmd);
+        }
         if (/invest|caix|rendiment|poupan|cdb/i.test(kind)) return fmt.buildInvestMsg(await pq.investments(cid, banco));
         return fmt.buildSaldoMsg(await pq.bankBalances(cid, banco));
       } catch (e) {
