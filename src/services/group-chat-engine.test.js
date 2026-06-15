@@ -48,8 +48,8 @@ test('prosa vazia e sem ação → null', () => {
   assert.equal(buildTomContent('   ', []), null);
 });
 
-test('friendlyTaskFail: tarefa antiga vira explicação útil; motivo desconhecido cai no genérico', () => {
-  assert.match(friendlyTaskFail('not_found_or_too_old'), /antiga|recentes|app/);
+test('friendlyTaskFail: not_found vira explicação útil; motivo desconhecido cai no genérico', () => {
+  assert.match(friendlyTaskFail('not_found_in_group'), /não achei.*grupo/);
   assert.match(friendlyTaskFail('not_found_in_pool'), /não achei/);
   assert.equal(friendlyTaskFail('xpto-desconhecido'), 'não consegui registrar');
 });

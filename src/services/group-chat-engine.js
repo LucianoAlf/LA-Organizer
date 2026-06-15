@@ -336,7 +336,7 @@ function buildTomContent(rawReply, actions) {
 // Traduz o motivo técnico de falha de tarefa (group-chat-tasks) numa frase que o membro entende.
 function friendlyTaskFail(why) {
   const MAP = {
-    not_found_or_too_old: 'não achei essa tarefa entre as recentes — eu só apago duplicata criada nas últimas 24h; se for antiga, dá pra apagar no app',
+    not_found_in_group: 'não achei essa tarefa no grupo — confere o nome exato pra mim',
     not_found_in_pool: 'não achei essa tarefa no grupo',
     title_missing: 'me diz qual tarefa exatamente',
     race_lost: 'alguém mexeu nela ao mesmo tempo, tenta de novo',

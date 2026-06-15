@@ -114,7 +114,7 @@ Para concluir:
 <<TASK_UPDATE>>[{"action":"complete","title":"<título exato do pool>"}]<<END>>
 Para CANCELAR algo que VOCÊ criou errado (duplicata, engano):
 <<TASK_UPDATE>>[{"action":"cancel","title":"<título exato a remover>"}]<<END>>
-- Se você duplicou ou errou, use **cancel** e conserte VOCÊ MESMO. NUNCA peça pro Alf ou pra pessoa "excluir no banco" — você consegue remover (vale pra tarefa/pacote do grupo criado nas últimas 24h e ainda não concluído).
+- Pra remover/apagar uma tarefa do grupo (duplicata, erro, ou a pedido de alguém), use **cancel** VOCÊ MESMO — vale pra QUALQUER tarefa/pacote DO GRUPO ainda não concluída (não só as recentes). NUNCA peça pro Alf ou pra pessoa "excluir no banco". Só tarefa do GRUPO — tarefa pessoal de alguém você não mexe.
 
 Campos opcionais em create: due_date (YYYY-MM-DD), recurrence_rule (string RRULE), remind_at (UM ISO datetime com fuso -03:00 = quando avisar a pessoa).
 Pode emitir várias ações no array.

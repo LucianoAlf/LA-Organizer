@@ -163,21 +163,22 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
         if (!upd || !upd.length) { failed.push({ action: a, why: 'race_lost' }); continue; }
         completed.push(target);
       } else if (a.action === 'cancel') {
-        // (B) O TOM cancela a PRÓPRIA duplicata/erro — escopo seguro: só tarefa/pacote do
-        // grupo, criado nas últimas 24h, ainda não-done. Mãe de grupo → cancela as filhas.
+        // TOM cancela tarefa do grupo a pedido. Alf LIBEROU (15/06) remover tarefa ANTIGA também
+        // (antes só <24h). Escopo de segurança que PERMANECE: só tarefa do GRUPO (NUNCA pessoal) e
+        // ainda aberta. Mãe de grupo → cancela as filhas. Cancel é soft (status=cancelled, reversível).
         const title = (a.title || '').trim();
         if (!title) { failed.push({ action: a, why: 'title_missing' }); continue; }
-        const sinceISO = new Date(Date.now() - RECENT_WINDOW_MS).toISOString();
         const { data: hit } = await supabase
           .from('tasks')
           .select('id, title, is_group')
           .eq('assigned_group_id', groupId)
           .neq('status', 'done')
-          .gte('created_at', sinceISO)
+          .neq('status', 'cancelled')
           .ilike('title', title)
+          .order('created_at', { ascending: false })
           .limit(1);
         const target = (hit || [])[0];
-        if (!target) { failed.push({ action: a, why: 'not_found_or_too_old' }); continue; }
+        if (!target) { failed.push({ action: a, why: 'not_found_in_group' }); continue; }
         await supabase.from('tasks').update({ status: 'cancelled' }).eq('id', target.id);
         if (target.is_group) {
           await supabase.from('tasks').update({ status: 'cancelled' }).eq('parent_task_id', target.id).neq('status', 'done');
