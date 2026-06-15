@@ -1,7 +1,7 @@
 // src/services/group-chat-engine.test.js — foco no buildTomContent (montagem prosa+ações).
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { buildTomContent, ACTIONS_DELIM } = require('./group-chat-engine');
+const { buildTomContent, ACTIONS_DELIM, friendlyTaskFail } = require('./group-chat-engine');
 
 const prose = (c) => String(c).split(ACTIONS_DELIM)[0].trim();
 
@@ -46,4 +46,10 @@ test('só <<SILENCIO>> e sem ação → null (silêncio real)', () => {
 
 test('prosa vazia e sem ação → null', () => {
   assert.equal(buildTomContent('   ', []), null);
+});
+
+test('friendlyTaskFail: tarefa antiga vira explicação útil; motivo desconhecido cai no genérico', () => {
+  assert.match(friendlyTaskFail('not_found_or_too_old'), /antiga|recentes|app/);
+  assert.match(friendlyTaskFail('not_found_in_pool'), /não achei/);
+  assert.equal(friendlyTaskFail('xpto-desconhecido'), 'não consegui registrar');
 });
