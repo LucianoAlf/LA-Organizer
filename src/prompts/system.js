@@ -346,6 +346,12 @@ function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events
 
   const roleDisplay = ROLE_LABELS_PT[collab.role] || collab.role || '—';
   lines.push(`**Pessoa:** ${nickname} (${collab.full_name}) — ${roleDisplay}${fn}`);
+  // PROJECT-PERM-SKILL-DESYNC (audit 15/06, Rafinha): o engine libera criar projeto/delegar
+  // por hasCoordLevel (inclui has_coord_permissions), mas a skill gateava só por Role literal
+  // → recusava quem tem permissão concedida. Expõe a permissão real pra os gates das skills.
+  if (hasCoordLevel(collab) && collab.role !== 'coordinator' && collab.role !== 'director') {
+    lines.push(`**Permissão operacional:** tem nível de COORDENAÇÃO (pode criar projeto, delegar tarefa pra outros, ver relatórios de equipe) — mesmo com o cargo acima. Use isso nos gates de permissão das skills.`);
+  }
   lines.push(`⚠️ **Você está falando com ${nickname} agora. Trate SEMPRE esta pessoa por _${nickname}_ — nunca por outro nome.** Só use "Alf" se o nome acima em "Pessoa:" for o próprio Luciano Alf.`);
   if (collab.bio) {
     lines.push(`**Bio (${nickname} escreveu sobre si mesmo — leia com atenção):** ${collab.bio}`);

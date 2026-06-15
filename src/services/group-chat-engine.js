@@ -87,15 +87,20 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
     const parsed = engine.parseTaskUpdateMarker(reply);
     if (parsed && !parsed.malformed && Array.isArray(parsed.actions) && parsed.actions.length) {
       reply = (parsed.cleanText || '').trim();
-      const { created, updated, completed, failed } = await applyGroupChatTaskActions({ supabase, groupId, senderCollabId, actions: parsed.actions });
+      const { created, updated, completed, cancelled, failed } = await applyGroupChatTaskActions({ supabase, groupId, senderCollabId, actions: parsed.actions });
       // detecta recorrência pra rotular
       const recurMap = new Set(parsed.actions.filter((a) => a.recurrence_rule).map((a) => (a.title || '').toLowerCase()));
       created.forEach((t) => actions.push({ kind: 'task', status: 'ok', label: t.title, detail: recurMap.has((t.title || '').toLowerCase()) ? 'recorrente' : '' }));
       // Dedup: tarefa existente atualizada no lugar (data corrigida etc.) — não é tarefa nova.
       (updated || []).forEach((t) => actions.push({ kind: 'task', status: 'ok', label: t.title, detail: (t.changed && t.changed.due_date) ? 'data atualizada' : 'atualizada' }));
       completed.forEach((t) => actions.push({ kind: 'task', status: 'ok', label: t.title, detail: 'concluída' }));
-      if (failed.length && !created.length && !(updated || []).length && !completed.length) actions.push({ kind: 'task', status: 'fail', label: 'Tarefa', detail: 'não consegui registrar' });
-      console.log(`[GroupChat] task grupo=${groupId}: created=${created.length} updated=${(updated || []).length} completed=${completed.length} failed=${failed.length}`);
+      // Cancel bem-sucedido também vira chip 'ok' (antes `cancelled` nem era lido → ficava invisível).
+      (cancelled || []).forEach((t) => actions.push({ kind: 'task', status: 'ok', label: t.title, detail: '🗑️ cancelada' }));
+      // Falha: mostra o MOTIVO amigável (antes era sempre genérico → membro não entendia o porquê).
+      if ((failed || []).length && !created.length && !(updated || []).length && !completed.length && !(cancelled || []).length) {
+        actions.push({ kind: 'task', status: 'fail', label: 'Tarefa', detail: friendlyTaskFail((failed[0] || {}).why) });
+      }
+      console.log(`[GroupChat] task grupo=${groupId}: created=${created.length} updated=${(updated || []).length} completed=${completed.length} cancelled=${(cancelled || []).length} failed=${(failed || []).length}`);
     } else if (parsed && parsed.malformed) {
       stripBlock(/<<TASK_UPDATE>>[\s\S]*?<<END>>/i);
     }
@@ -289,16 +294,8 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
   } catch (e) { console.error('[GroupChat] note err:', e.message); }
 
   // ─── SILÊNCIO + MONTAGEM ──────────────────────────────────────────────────
-  reply = (reply || '').replace(/<<SILENCIO>>/gi, '').trim();
-
-  // Anti-mentira (fala = persistência): se ALGUMA ação falhou, descarta a prosa otimista do
-  // LLM — a lista estruturada de ações carrega a verdade (linha vermelha + motivo real).
-  const hasFailure = actions.some((a) => a.status === 'fail');
-  let prose = hasFailure ? '' : reply;
-
-  let content = prose.trim();
-  if (actions.length) content = (content ? content + '\n' : '') + ACTIONS_DELIM + JSON.stringify(actions);
-  if (!content.trim()) return null; // nada a dizer (silêncio)
+  const content = buildTomContent(reply, actions);
+  if (!content) return null; // nada a dizer (silêncio real — sem prosa e sem ação)
 
   const { data: inserted, error } = await supabase.from('group_chat_messages').insert({
     group_id: groupId, sender_id: null, role: 'tom', kind: 'text', content, channel: 'app',
@@ -308,4 +305,38 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
   return inserted;
 }
 
-module.exports = { processGroupChatMessage, loadContext, ACTIONS_DELIM };
+// Monta o conteúdo final da mensagem do TOM (prosa + bloco ‹‹ACTIONS››). Pura/testável.
+// Regra ANTI-MENTIRA: se ALGUMA ação falhou, NÃO usa a prosa otimista do LLM (pode dizer
+// "pronto!" sem ter feito) — a lista estruturada carrega a verdade. MAS na falha não pode ficar
+// MUDO: o bloco ACTIONS é stripado no espelho do WhatsApp (bridge-out), então sem prosa o membro
+// acha que o TOM o ignorou (caso Rose 15/06, GROUPCHAT-FAIL-NOPROSE-SILENT). Por isso, na FALHA
+// troca a prosa otimista por uma HONESTA (com o motivo). Sucesso fica INALTERADO (zero regressão
+// no fluxo normal/relatório, que já tem prosa do LLM ou espelha o próprio card).
+function buildTomContent(rawReply, actions) {
+  const acts = Array.isArray(actions) ? actions : [];
+  const cleaned = String(rawReply || '').replace(/<<SILENCIO>>/gi, '').trim();
+  const hasFailure = acts.some((a) => a && a.status === 'fail');
+  let prose = hasFailure ? '' : cleaned;
+  if (hasFailure) {
+    const motivos = acts.filter((a) => a && a.status === 'fail')
+      .map((a) => `${a.label || 'ação'}${a.detail ? ': ' + a.detail : ''}`).join(' · ');
+    prose = `Opa, tentei mas não consegui concluir agora — ${motivos}. Dá uma conferida ou me explica de outro jeito que eu tento de novo. 🙏`;
+  }
+  let content = prose.trim();
+  if (acts.length) content = (content ? content + '\n' : '') + ACTIONS_DELIM + JSON.stringify(acts);
+  return content.trim() || null;
+}
+
+// Traduz o motivo técnico de falha de tarefa (group-chat-tasks) numa frase que o membro entende.
+function friendlyTaskFail(why) {
+  const MAP = {
+    not_found_or_too_old: 'não achei essa tarefa entre as recentes — eu só apago duplicata criada nas últimas 24h; se for antiga, dá pra apagar no app',
+    not_found_in_pool: 'não achei essa tarefa no grupo',
+    title_missing: 'me diz qual tarefa exatamente',
+    race_lost: 'alguém mexeu nela ao mesmo tempo, tenta de novo',
+    unsupported_action: 'essa ação eu ainda não faço por aqui',
+  };
+  return MAP[why] || 'não consegui registrar';
+}
+
+module.exports = { processGroupChatMessage, loadContext, ACTIONS_DELIM, buildTomContent, friendlyTaskFail };

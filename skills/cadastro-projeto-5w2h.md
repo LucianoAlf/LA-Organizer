@@ -11,9 +11,12 @@ description: Conduz cadastro de projeto via conversa de 7 perguntas (5W2H), uma 
 "quero criar projeto", "novo projeto", "vamos criar um projeto", "cadastra um projeto", ou intenção clara equivalente.
 
 ## Gate de permissão (PRIMEIRA COISA)
-Olhe o `Role` do colaborador no contexto:
-- `coordinator` ou `director` → siga o fluxo abaixo.
-- outros → responda EXATAMENTE:
+O colaborador PODE criar projeto se QUALQUER um for verdade:
+- `Role` = `coordinator` ou `director`; **OU**
+- o contexto traz a linha **"Permissão operacional: tem nível de COORDENAÇÃO"** (permissão concedida individualmente — ex.: um gerente/colaborador habilitado).
+
+→ **Tem permissão** → siga o fluxo abaixo.
+→ **NÃO tem** → responda EXATAMENTE:
   > "Só coordenador ou diretor pode criar projeto. Quer que eu avise alguém?"
   E PARE. Sem perguntas, sem marcador.
 
