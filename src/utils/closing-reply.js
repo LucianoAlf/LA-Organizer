@@ -117,12 +117,53 @@ function parseClosingReply(userText, count) {
     return { matched: true, statuses };
   }
 
-  // 4) Bare "não"/"nenhuma"/"nada" sem números → não fez nenhuma (regra BUG-6 da skill).
-  if (/^(n[ãa]o|nao|nenhuma|nada)\b/.test(t)) {
+  // 4) Bare "não/nada/nenhuma" SOZINHO → não fez nenhuma. ESTREITADO
+  //    (CLOSING-INTERCEPTOR-OVERCAPTURE, audit 15/06): só quando a mensagem é
+  //    ESSENCIALMENTE só a negação. Antes `^não\b` capturava QUALQUER frase iniciada por
+  //    "não" ("não foi a ADM, foi a de hoje" virava "não fiz nenhuma"). Frase longa agora
+  //    cai no LLM (fail-safe). "não fiz nada" segue coberto pela regra #2; "1 não fiz" pela #3.
+  const bare = t.replace(/[\s.!,]+$/g, '');
+  if (/^(n[ãa]o|nao|nada|nenhuma)$/.test(bare)) {
     return { matched: true, statuses };
   }
 
   return { matched: false, statuses };
 }
 
-module.exports = { buildClosingItems, parseClosingReply, _brtDay: brtDay };
+/**
+ * Decide se o atalho determinístico de fechamento pode disparar para ESTA mensagem.
+ * Princípio (CLOSING-INTERCEPTOR-OVERCAPTURE, audit 15/06): a mensagem real do usuário
+ * vence o ritual. Fail-safe: qualquer dúvida → { fire:false } (cai no fluxo normal/LLM,
+ * preservando 100% do comportamento atual fora dos casos de sobre-captura).
+ *
+ * Bloqueia 3 sobre-capturas confirmadas:
+ *   • not_today        — fechamento de ontem ainda "aberto" pega a msg de hoje (Fabi).
+ *   • reply_quote_elsewhere — você citou OUTRA mensagem, não o fechamento (Juliana/Yuri).
+ *   • fresher_intent   — há uma intent aberta mais recente que o fechamento.
+ *
+ * @param {{closingIntent:object, openIntents?:object[], replyParsed?:{userText?:string,quotedText?:string}, now?:Date}} args
+ * @returns {{fire:boolean, reason:string}}
+ */
+function shouldClosingInterceptorFire(args = {}) {
+  const { closingIntent, openIntents = [], replyParsed = {}, now = new Date() } = args;
+  if (!closingIntent || !closingIntent.payload || !closingIntent.payload.closing) return { fire: false, reason: 'no_closing' };
+  const items = closingIntent.payload.closing.items;
+  if (!Array.isArray(items) || items.length === 0) return { fire: false, reason: 'no_items' };
+  // (today) fechamento é de HOJE em BRT — substitui a janela de 16h corridas.
+  if (!closingIntent.asked_at || brtDay(closingIntent.asked_at) !== brtDay(now)) return { fire: false, reason: 'not_today' };
+  // (reply-quote elsewhere) citou mensagem que NÃO é o fechamento.
+  const quoted = replyParsed && replyParsed.quotedText ? String(replyParsed.quotedText).toLowerCase() : '';
+  if (quoted.trim()) {
+    const matchesClosing = /fechamento/.test(quoted)
+      || items.some((it) => it && it.title && quoted.includes(String(it.title).toLowerCase().slice(0, 18)));
+    if (!matchesClosing) return { fire: false, reason: 'reply_quote_elsewhere' };
+  }
+  // (fresher) há intent aberta mais recente que o fechamento → prefere a mais fresca.
+  const closingAt = new Date(closingIntent.asked_at).getTime();
+  const hasFresher = (openIntents || []).some((i) =>
+    i && i.id !== closingIntent.id && i.asked_at && new Date(i.asked_at).getTime() > closingAt);
+  if (hasFresher) return { fire: false, reason: 'fresher_intent' };
+  return { fire: true, reason: 'ok' };
+}
+
+module.exports = { buildClosingItems, parseClosingReply, shouldClosingInterceptorFire, _brtDay: brtDay };

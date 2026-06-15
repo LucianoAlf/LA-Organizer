@@ -7746,13 +7746,24 @@ async function processMessage(phone, text, raw = {}) {
   // ALVO-FUTURO-RESPOSTA-CURTA, no caminho do fechamento. Short-circuit: o estado fica
   // determinístico e a mensagem é montada pelo engine (com a barrinha Bloco C).
   try {
-    const closingIntent = _openIntents.find((i) =>
+    // CLOSING-INTERCEPTOR-OVERCAPTURE (audit 15/06): o gate puro decide se o atalho pode
+    // disparar (fechamento de HOJE + não é reply-quote a outra coisa + sem intent mais
+    // fresca). Fail-safe: !fire → não short-circuita, segue o fluxo normal (comportamento atual).
+    const { shouldClosingInterceptorFire } = require('./utils/closing-reply');
+    const closingCandidate = _openIntents.find((i) =>
       i.kind === 'confirmation' && i.payload && i.payload.closing &&
-      Array.isArray(i.payload.closing.items) && i.payload.closing.items.length &&
-      withinConfirmWindow(i.asked_at, 16 * 60));
-    if (closingIntent) {
+      Array.isArray(i.payload.closing.items) && i.payload.closing.items.length);
+    const _replyParsed = stripReplyScaffold(String(text || ''));
+    const _closingGate = closingCandidate
+      ? shouldClosingInterceptorFire({ closingIntent: closingCandidate, openIntents: _openIntents, replyParsed: _replyParsed, now: new Date() })
+      : { fire: false, reason: 'no_candidate' };
+    if (closingCandidate && !_closingGate.fire) {
+      console.log(`[Closing] gate skip (${_closingGate.reason}) phone=${_phoneTail}`);
+    }
+    if (closingCandidate && _closingGate.fire) {
+      const closingIntent = closingCandidate;
       const items = closingIntent.payload.closing.items;
-      const _closingReplyText = stripReplyScaffold(String(text || '')).userText;
+      const _closingReplyText = _replyParsed.userText;
       const parsed = parseClosingReply(_closingReplyText, items.length);
       if (parsed.matched) {
         const completed = [];

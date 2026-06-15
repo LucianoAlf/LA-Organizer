@@ -137,3 +137,59 @@ test('parseClosingReply: defensivo — count 0, texto vazio, texto longo', () =>
   assert.strictEqual(parseClosingReply('1 '.repeat(150), 3).matched, false);
   assert.strictEqual(parseClosingReply(null, 3).matched, false);
 });
+
+// ---------------------------------------------------------------------------
+// CLOSING-INTERCEPTOR-OVERCAPTURE (audit 15/06 — Lote A)
+// ---------------------------------------------------------------------------
+
+// Task 1: rule #4 estreitada — frase LONGA iniciada por "não" NÃO casa (caso Ana/ADM).
+// Antes `^não\b` capturava qualquer frase começando com "não" → "não fiz nenhuma".
+test('parseClosingReply: "não foi a ADM, foi a de hoje" NÃO casa (rule #4 estreitada)', () => {
+  assert.strictEqual(parseClosingReply('não foi a ADM, foi a de hoje', 3).matched, false);
+});
+test('parseClosingReply: "nada." (pontuação à direita) ainda casa como nenhuma', () => {
+  const r = parseClosingReply('nada.', 2);
+  assert.strictEqual(r.matched, true);
+  assert.deepStrictEqual(r.statuses, ['none', 'none']);
+});
+
+// Task 2: shouldClosingInterceptorFire — gate de sobre-captura do interceptor de fechamento.
+const { shouldClosingInterceptorFire } = require('./closing-reply');
+const NOW_FIRE = new Date('2026-06-15T18:00:00Z'); // 15:00 BRT
+const mkClosing = (askedAt) => ({
+  id: 'c1', kind: 'confirmation', asked_at: askedAt,
+  payload: { closing: { items: [
+    { index: 1, type: 'task', id: 't1', title: 'Lançamentos BG' },
+    { index: 2, type: 'task', id: 't2', title: 'Editar vídeo Copa' },
+  ] } },
+});
+
+test('shouldClosingInterceptorFire: fechamento de HOJE, sem quote/fresher → fire (Yuri+)', () => {
+  const r = shouldClosingInterceptorFire({ closingIntent: mkClosing('2026-06-15T11:00:00Z'),
+    openIntents: [], replyParsed: { userText: '1 - em andamento' }, now: NOW_FIRE });
+  assert.strictEqual(r.fire, true);
+});
+test('shouldClosingInterceptorFire: fechamento de ONTEM 23h → not_today (Fabi overnight)', () => {
+  const r = shouldClosingInterceptorFire({ closingIntent: mkClosing('2026-06-14T23:00:00Z'), now: NOW_FIRE });
+  assert.deepStrictEqual([r.fire, r.reason], [false, 'not_today']);
+});
+test('shouldClosingInterceptorFire: reply-quote a menu de duplicata → reply_quote_elsewhere (Juliana)', () => {
+  const r = shouldClosingInterceptorFire({ closingIntent: mkClosing('2026-06-15T11:00:00Z'),
+    replyParsed: { userText: '2', quotedText: 'Qual desses? 1) Reunião ADM 2) Reunião DM' }, now: NOW_FIRE });
+  assert.deepStrictEqual([r.fire, r.reason], [false, 'reply_quote_elsewhere']);
+});
+test('shouldClosingInterceptorFire: reply-quote AO PRÓPRIO fechamento → fire (caso 7 positivo)', () => {
+  const r = shouldClosingInterceptorFire({ closingIntent: mkClosing('2026-06-15T11:00:00Z'),
+    replyParsed: { userText: '1,2', quotedText: 'Fechamento de hoje: 1) Lançamentos BG 2) Editar vídeo Copa' }, now: NOW_FIRE });
+  assert.strictEqual(r.fire, true);
+});
+test('shouldClosingInterceptorFire: intent mais fresca aberta → fresher_intent', () => {
+  const c = mkClosing('2026-06-15T11:00:00Z');
+  const r = shouldClosingInterceptorFire({ closingIntent: c,
+    openIntents: [c, { id: 'i2', asked_at: '2026-06-15T17:00:00Z' }], now: NOW_FIRE });
+  assert.deepStrictEqual([r.fire, r.reason], [false, 'fresher_intent']);
+});
+test('shouldClosingInterceptorFire: sem candidato / payload inválido → no_closing', () => {
+  assert.strictEqual(shouldClosingInterceptorFire({ closingIntent: null }).fire, false);
+  assert.strictEqual(shouldClosingInterceptorFire({ closingIntent: { payload: {} } }).reason, 'no_closing');
+});
