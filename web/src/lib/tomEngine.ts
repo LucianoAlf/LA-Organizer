@@ -104,6 +104,31 @@ export async function notifyTaskDelegated(taskId: string): Promise<NotifyResult>
   }
 }
 
+// Dashboard de time — botão "Cobrar agora": TOM dá um toque IMEDIATO no responsável da
+// tarefa, em nome de quem clicou. sent=false quando não havia pra quem mandar (sem zap/inativo
+// ou tarefa sem responsável); reason explica.
+export type CobrarResult =
+  | { ok: true; sent: boolean; reason?: string }
+  | { ok: false; reason: string };
+
+export async function cobrarTask(taskId: string, requesterId?: string | null): Promise<CobrarResult> {
+  if (!INTERNAL_SECRET) return { ok: false, reason: 'no_secret' };
+  try {
+    const r = await fetch(`${TOM_BASE}/internal/task-cobrar`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-secret': INTERNAL_SECRET },
+      body: JSON.stringify({ task_id: taskId, requester_id: requesterId ?? null }),
+    });
+    if (!r.ok) return { ok: false, reason: `http_${r.status}` };
+    const json = (await r.json().catch(() => null)) as { sent?: boolean; reason?: string } | null;
+    return { ok: true, sent: Boolean(json?.sent), reason: json?.reason };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn(`[tomEngine] task-cobrar falhou: ${msg}`);
+    return { ok: false, reason: msg };
+  }
+}
+
 // Sprint 22.34m — notifica TOM pra avisar o assignee quando user reagenda/edita
 // tarefa delegada. Backend so dispara se assigned_to !== created_by.
 export async function notifyTaskUpdated(

@@ -19,6 +19,7 @@ const claude = require('./ai/claude');
 const { validateFormatRequest, systemPromptFor } = require('./services/format-note');
 const inventarioService = require('./services/inventario-service');
 const { PRESETS: GROUP_REPORT_PRESETS, buildPresetPreview, sendPresetNow } = require('./rituals/group-reports');
+const { buildCobrancaMessage } = require('./services/cobranca');
 
 const router = express.Router();
 
@@ -798,6 +799,68 @@ router.post('/internal/task-updated', requireInternalSecret, async (req, res) =>
   });
   console.log(`[InternalAPI] task-updated ${taskId} (${changeType}) → ${assignee.full_name}`);
   return res.json({ status: 'ok', sent: 1 });
+});
+
+// Dashboard de time — botão "Cobrar agora": cobrança MANUAL disparada pelo líder/CEO. Manda
+// WhatsApp IMEDIATO pro responsável da tarefa, em nome de quem clicou. Transacional (ação do
+// líder, não job proativo) → envia na hora, sem gate de quiet-hours (mesma classe do task-delegated).
+// Body: { task_id, requester_id? }. Resposta: { ok, sent, reason? }.
+router.post('/internal/task-cobrar', requireInternalSecret, async (req, res) => {
+  const taskId = String(req.body?.task_id || '').trim();
+  const requesterId = req.body?.requester_id ? String(req.body.requester_id).trim() : null;
+  if (!taskId) return res.status(400).json({ error: 'missing_task_id' });
+
+  const { data: task, error: tErr } = await supabase
+    .from('tasks')
+    .select('id, title, due_date, status, assigned_to')
+    .eq('id', taskId)
+    .maybeSingle();
+  if (tErr) { console.error('[InternalAPI] task-cobrar task err:', tErr.message); return res.status(500).json({ error: tErr.message }); }
+  if (!task) return res.status(404).json({ error: 'task_not_found' });
+  if (!task.assigned_to) return res.json({ ok: true, sent: false, reason: 'no_assignee' });
+
+  const { data: assignee } = await supabase
+    .from('collaborators')
+    .select('id, full_name, phone, is_active')
+    .eq('id', task.assigned_to)
+    .maybeSingle();
+  if (!assignee || !assignee.phone || assignee.is_active === false) {
+    return res.json({ ok: true, sent: false, reason: 'no_phone_or_inactive' });
+  }
+
+  let requesterName = null;
+  if (requesterId) {
+    const { data: rq } = await supabase.from('collaborators').select('full_name').eq('id', requesterId).maybeSingle();
+    requesterName = rq?.full_name || null;
+  }
+
+  const todayYmd = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date());
+  const body = buildCobrancaMessage({
+    assigneeName: assignee.full_name, taskTitle: task.title,
+    dueYmd: task.due_date, todayYmd, requesterName,
+  });
+
+  try {
+    await whatsapp.sendMessage(assignee.phone, body); // quiet-exempt: cobrança manual disparada pelo líder (transacional, igual task-delegated)
+  } catch (e) {
+    console.error(`[InternalAPI] task-cobrar WA falhou task=${taskId}: ${e.message}`);
+    return res.status(502).json({ ok: false, error: 'send_failed', message: e.message });
+  }
+
+  try {
+    await supabase.from('marker_logs').insert({
+      collaborator_id: requesterId || null,
+      marker_type: 'TASK_COBRADA',
+      result: 'executed',
+      reason: `cobrou ${assignee.full_name} sobre ${String(task.title).slice(0, 60)}`,
+      raw_excerpt: String(taskId).slice(0, 500),
+    });
+  } catch (e) { console.error('[InternalAPI] task-cobrar log err:', e.message); }
+
+  console.log(`[InternalAPI] task-cobrar ${taskId} → ${assignee.full_name}`);
+  return res.json({ ok: true, sent: true });
 });
 
 // Sprint 22.33 — convidados em compromisso → notifica cada participant.

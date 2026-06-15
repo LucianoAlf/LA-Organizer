@@ -6,14 +6,16 @@ import { PageHeader } from '../components/PageHeader';
 import { supabase, supabaseConfigured } from '../lib/supabase';
 import { todaySP, ymdAddDays, dowShort } from '../utils/date';
 import { fetchEventsForCollabRange } from '../lib/events';
-import { fetchMyTeamSnapshot } from '../lib/team-snapshot';
 import { StatCard } from '../components/StatCard';
 import { TaskRow } from '../components/TaskRow';
 import { EventRow } from '../components/EventRow';
 import { Button } from '../components/Button';
 import { LoadingState } from '../components/LoadingState';
 import { EmptyState } from '../components/EmptyState';
-import { TransferGovernanceSheet } from '../components/team/TransferGovernanceSheet';
+import { ConfirmDialog } from '../components/ConfirmDialog';
+import { showToast } from '../components/Toast';
+import { useAuth } from '../contexts/AuthContext';
+import { cobrarTask } from '../lib/tomEngine';
 import type { Task } from '../types';
 
 interface PersonProfile {
@@ -90,19 +92,14 @@ async function fetchPersonDetail(id: string) {
 
 export function PessoaDetalhe() {
   const { id } = useParams<{ id: string }>();
-  const [transferTask, setTransferTask] = useState<{ id: string; title: string } | null>(null);
+  const { collaborator } = useAuth();
+  const [cobrarFor, setCobrarFor] = useState<{ id: string; title: string } | null>(null);
+  const [cobrando, setCobrando] = useState(false);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['pessoaDetalhe', id],
     queryFn: () => fetchPersonDetail(id!),
     enabled: Boolean(id && supabaseConfigured),
-  });
-
-  const { data: snapshot } = useQuery({
-    queryKey: ['team-snapshot'],
-    queryFn: fetchMyTeamSnapshot,
-    enabled: supabaseConfigured,
-    staleTime: 5 * 60 * 1000,
   });
 
   // 7 dias: para cada dia, contar rituals.status='sent'.
@@ -120,6 +117,26 @@ export function PessoaDetalhe() {
     }
     return [...map.entries()].map(([ymd, n]) => ({ ymd, count: n }));
   }, [data]);
+
+  async function handleCobrar() {
+    if (!cobrarFor) return;
+    const nome = data?.profile?.full_name?.split(' ')[0] || 'a pessoa';
+    setCobrando(true);
+    const r = await cobrarTask(cobrarFor.id, collaborator?.id ?? null);
+    setCobrando(false);
+    if (r.ok && r.sent) {
+      showToast({ kind: 'success', title: 'Cobrança enviada', msg: `${nome} recebeu no WhatsApp.` });
+      setCobrarFor(null);
+    } else if (r.ok) {
+      const motivo = r.reason === 'no_phone_or_inactive'
+        ? 'essa pessoa não tem WhatsApp ativo'
+        : 'a tarefa não tem responsável';
+      showToast({ kind: 'info', title: 'Não dá pra cobrar', msg: `Não enviei — ${motivo}.` });
+      setCobrarFor(null);
+    } else {
+      showToast({ kind: 'error', title: 'Falha ao cobrar', msg: r.reason });
+    }
+  }
 
   if (!supabaseConfigured) return <EmptyState icon={<User size={32} />} title="Configure Supabase" />;
   if (isLoading) return <LoadingState rows={4} />;
@@ -178,9 +195,9 @@ export function PessoaDetalhe() {
                   type="button"
                   variant="ghost"
                   size="sm"
-                  onClick={() => setTransferTask({ id: t.id, title: t.title })}
+                  onClick={() => setCobrarFor({ id: t.id, title: t.title })}
                 >
-                  Passar cobrança
+                  Cobrar agora
                 </Button>
               </div>
             ))}
@@ -227,11 +244,14 @@ export function PessoaDetalhe() {
         </div>
       </section>
 
-      <TransferGovernanceSheet
-        open={Boolean(transferTask)}
-        onClose={() => setTransferTask(null)}
-        task={transferTask}
-        allCollabs={snapshot?.allCollabs ?? []}
+      <ConfirmDialog
+        open={Boolean(cobrarFor)}
+        title="Cobrar agora?"
+        description={cobrarFor ? `O TOM vai mandar um WhatsApp na hora pra ${profile.full_name.split(' ')[0]} sobre "${cobrarFor.title}".` : ''}
+        confirmLabel="Cobrar"
+        isPending={cobrando}
+        onConfirm={handleCobrar}
+        onClose={() => setCobrarFor(null)}
       />
     </div>
   );
