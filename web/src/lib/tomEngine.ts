@@ -129,6 +129,28 @@ export async function cobrarTask(taskId: string, requesterId?: string | null): P
   }
 }
 
+// Dashboard de time — status das cobranças por tarefa (já cobrado / quando / respondeu),
+// pra UI mostrar o estado e não re-enviar às cegas. Degrada pra {} em qualquer erro.
+export interface CobrancaTaskStatus { sentCount: number; lastSentAt: string | null; responded: boolean; }
+export async function fetchCobrancaStatus(
+  taskIds: string[],
+  assigneeId?: string | null,
+): Promise<Record<string, CobrancaTaskStatus>> {
+  if (!INTERNAL_SECRET || taskIds.length === 0) return {};
+  try {
+    const r = await fetch(`${TOM_BASE}/internal/cobranca-status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-secret': INTERNAL_SECRET },
+      body: JSON.stringify({ task_ids: taskIds, assignee_id: assigneeId ?? null }),
+    });
+    if (!r.ok) return {};
+    const json = (await r.json().catch(() => null)) as { statuses?: Record<string, CobrancaTaskStatus> } | null;
+    return json?.statuses ?? {};
+  } catch {
+    return {};
+  }
+}
+
 // Sprint 22.34m — notifica TOM pra avisar o assignee quando user reagenda/edita
 // tarefa delegada. Backend so dispara se assigned_to !== created_by.
 export async function notifyTaskUpdated(

@@ -15,7 +15,7 @@ import { EmptyState } from '../components/EmptyState';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { showToast } from '../components/Toast';
 import { useAuth } from '../contexts/AuthContext';
-import { cobrarTask } from '../lib/tomEngine';
+import { cobrarTask, fetchCobrancaStatus, type CobrancaTaskStatus } from '../lib/tomEngine';
 import type { Task } from '../types';
 
 interface PersonProfile {
@@ -40,6 +40,26 @@ function maskPhone(phone: string | null): string {
   const digits = String(phone).replace(/\D/g, '');
   if (digits.length < 4) return '—';
   return '••••' + digits.slice(-4);
+}
+
+// Carimbo curto de quando a cobrança saiu, em SP: "hoje 14:30" / "ontem 09:05" / "13/06 14:30".
+function fmtCobranca(iso: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const ymd = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+  const hm = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', hour12: false }).format(d);
+  const today = todaySP();
+  if (ymd === today) return `hoje ${hm}`;
+  if (ymd === ymdAddDays(today, -1)) return `ontem ${hm}`;
+  return `${ymd.slice(8, 10)}/${ymd.slice(5, 7)} ${hm}`;
+}
+
+// Texto do ConfirmDialog: avisa quando já houve cobrança (pra re-envio ser consciente).
+function cobrarDescription(fullName: string, target: { title: string }, cs?: CobrancaTaskStatus): string {
+  const nome = (fullName || '').split(' ')[0];
+  let base = `O TOM vai mandar um WhatsApp na hora pra ${nome} sobre "${target.title}".`;
+  if (cs && cs.sentCount > 0) base += ` Já cobrado ${cs.sentCount}× — última ${fmtCobranca(cs.lastSentAt)}.`;
+  return base;
 }
 
 async function fetchPersonDetail(id: string) {
@@ -102,6 +122,14 @@ export function PessoaDetalhe() {
     enabled: Boolean(id && supabaseConfigured),
   });
 
+  const taskIds = useMemo(() => (data?.tasks ?? []).map((t) => t.id), [data]);
+  const { data: cobrancaStatus, refetch: refetchCobranca } = useQuery({
+    queryKey: ['cobranca-status', id, taskIds],
+    queryFn: () => fetchCobrancaStatus(taskIds, id),
+    enabled: Boolean(id && supabaseConfigured && taskIds.length > 0),
+    staleTime: 30 * 1000,
+  });
+
   // 7 dias: para cada dia, contar rituals.status='sent'.
   const ritualByDay = useMemo(() => {
     if (!data) return [];
@@ -127,6 +155,7 @@ export function PessoaDetalhe() {
     if (r.ok && r.sent) {
       showToast({ kind: 'success', title: 'Cobrança enviada', msg: `${nome} recebeu no WhatsApp.` });
       setCobrarFor(null);
+      void refetchCobranca();
     } else if (r.ok) {
       const motivo = r.reason === 'no_phone_or_inactive'
         ? 'essa pessoa não tem WhatsApp ativo'
@@ -186,21 +215,33 @@ export function PessoaDetalhe() {
           <p className="mt-md text-body-sm text-fg-muted">Sem tarefas em aberto.</p>
         ) : (
           <div className="mt-2 space-y-1">
-            {tasks.map(t => (
-              <div key={t.id} className="flex items-start gap-2">
-                <div className="flex-1 min-w-0">
-                  <TaskRow task={t} readOnly />
+            {tasks.map(t => {
+              const cs = cobrancaStatus?.[t.id];
+              const cobrado = !!cs && cs.sentCount > 0;
+              return (
+                <div key={t.id} className="flex items-start gap-2">
+                  <div className="flex-1 min-w-0">
+                    <TaskRow task={t} readOnly />
+                    {cs && cs.sentCount > 0 && (
+                      <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-caption">
+                        <span className="text-tom">📨 Cobrado {fmtCobranca(cs.lastSentAt)}{cs.sentCount > 1 ? ` · ${cs.sentCount}×` : ''}</span>
+                        <span className={cs.responded ? 'text-success' : 'text-fg-muted'}>
+                          {cs.responded ? '· 💬 respondeu' : '· ⏳ sem resposta'}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setCobrarFor({ id: t.id, title: t.title })}
+                  >
+                    {cobrado ? 'Cobrar de novo' : 'Cobrar agora'}
+                  </Button>
                 </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setCobrarFor({ id: t.id, title: t.title })}
-                >
-                  Cobrar agora
-                </Button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </section>
@@ -247,7 +288,7 @@ export function PessoaDetalhe() {
       <ConfirmDialog
         open={Boolean(cobrarFor)}
         title="Cobrar agora?"
-        description={cobrarFor ? `O TOM vai mandar um WhatsApp na hora pra ${profile.full_name.split(' ')[0]} sobre "${cobrarFor.title}".` : ''}
+        description={cobrarFor ? cobrarDescription(profile.full_name, cobrarFor, cobrancaStatus?.[cobrarFor.id]) : ''}
         confirmLabel="Cobrar"
         isPending={cobrando}
         onConfirm={handleCobrar}

@@ -863,6 +863,55 @@ router.post('/internal/task-cobrar', requireInternalSecret, async (req, res) => 
   return res.json({ ok: true, sent: true });
 });
 
+// Dashboard de time — status das cobranças por tarefa, pra UI mostrar "já cobrado / quando /
+// respondeu" e evitar re-envio às cegas. Lê marker_logs TASK_COBRADA (quando/quantas) + o ÚLTIMO
+// inbound do responsável (SÓ timestamp, sem conteúdo — privacidade) pra inferir resposta.
+// Body: { task_ids: [], assignee_id? }. Resposta: { statuses: { [taskId]: {sentCount,lastSentAt,responded} } }.
+router.post('/internal/cobranca-status', requireInternalSecret, async (req, res) => {
+  const taskIds = Array.isArray(req.body?.task_ids) ? req.body.task_ids.filter((x) => typeof x === 'string') : [];
+  const assigneeId = req.body?.assignee_id ? String(req.body.assignee_id).trim() : null;
+  if (!taskIds.length) return res.json({ statuses: {} });
+
+  const { data: logs } = await supabase
+    .from('marker_logs')
+    .select('raw_excerpt, created_at')
+    .eq('marker_type', 'TASK_COBRADA')
+    .in('raw_excerpt', taskIds);
+  const byTask = {};
+  for (const l of (logs || [])) {
+    const k = l.raw_excerpt;
+    if (!byTask[k]) byTask[k] = { sentCount: 0, lastSentAt: null };
+    byTask[k].sentCount += 1;
+    if (!byTask[k].lastSentAt || l.created_at > byTask[k].lastSentAt) byTask[k].lastSentAt = l.created_at;
+  }
+
+  // "Respondeu" = o responsável mandou ALGO depois da última cobrança (sinal de engajamento;
+  // não amarra à tarefa específica). Só o timestamp do último inbound — nunca o conteúdo.
+  let lastInboundAt = null;
+  if (assigneeId) {
+    const { data: inb } = await supabase
+      .from('conversation_history')
+      .select('created_at')
+      .eq('collaborator_id', assigneeId)
+      .eq('direction', 'inbound')
+      .order('created_at', { ascending: false })
+      .limit(1);
+    lastInboundAt = inb && inb[0] ? inb[0].created_at : null;
+  }
+
+  const statuses = {};
+  for (const id of taskIds) {
+    const s = byTask[id];
+    if (!s) { statuses[id] = { sentCount: 0, lastSentAt: null, responded: false }; continue; }
+    statuses[id] = {
+      sentCount: s.sentCount,
+      lastSentAt: s.lastSentAt,
+      responded: Boolean(lastInboundAt && s.lastSentAt && lastInboundAt > s.lastSentAt),
+    };
+  }
+  return res.json({ statuses });
+});
+
 // Sprint 22.33 — convidados em compromisso → notifica cada participant.
 // PWA envia { event_id } depois do INSERT (evento + participants).
 router.post('/internal/event-invites', requireInternalSecret, async (req, res) => {
