@@ -3884,6 +3884,13 @@ function parsePrefsMarker(text) {
       if (v === null) update[k] = null;
       else if (typeof v === 'string' && HHMM_RE.test(v)) update[k] = v.length === 5 ? v + ':00' : v;
       else dropped.push(`${k}:bad_time`);
+    } else if (k === 'task_checkin_times') {
+      // Check-ins de tarefa por horário (array "HH:MM"). [] = DESLIGAR. Espelha quiet_days.
+      // O usuário PODE desligar/ajustar pelo chat — NÃO é ritual fixo (PROJECT-PERM caso
+      // Quintela 15/06: TOM dizia "não consigo desligar, vai no app", falso).
+      if (Array.isArray(v) && v.every((s) => typeof s === 'string' && HHMM_RE.test(s))) {
+        update.task_checkin_times = v.map((s) => (s.length === 5 ? s + ':00' : s));
+      } else dropped.push(`${k}:bad_time_array`);
     } else if (isContextQuietField(k)) {
       // Silêncio POR CONTEXTO (work/personal) — fonte de verdade do PWA.
       // O TOM pergunta o contexto antes de emitir; aqui só validamos.

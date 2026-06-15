@@ -26,7 +26,13 @@ async function loadContext(supabase, groupId, senderCollabId) {
   const [{ data: group }, { data: memberRows }, { data: poolRows }, { data: histRows }, { data: senderRow }] = await Promise.all([
     supabase.from('work_groups').select('id, name, tom_chat_engaged_at, tom_chat_memory').eq('id', groupId).maybeSingle(),
     supabase.from('work_group_members').select('collaborators(full_name, preferred_name)').eq('group_id', groupId),
-    supabase.from('tasks').select('title, status, due_date').eq('assigned_group_id', groupId).order('created_at', { ascending: false }).limit(POOL_LIMIT),
+    // Pool = SÓ tarefa REAL ativa (igual ao builder determinístico): exclui done/cancelled e os
+    // moldes de recorrência. Sem isso o LLM via tarefa cancelada como "pendente" e cobrava/concluía
+    // tarefa fantasma (GROUPCHAT-PHANTOM-POOL, caso Rose/Conciliação 15/06).
+    supabase.from('tasks').select('title, status, due_date')
+      .eq('assigned_group_id', groupId)
+      .neq('status', 'done').neq('status', 'cancelled').is('recurrence_rule', null)
+      .order('created_at', { ascending: false }).limit(POOL_LIMIT),
     supabase.from('group_chat_messages').select('role, content, media_extracted_text, sender_id, created_at, sender:collaborators!group_chat_messages_sender_id_fkey(full_name, preferred_name)').eq('group_id', groupId).order('created_at', { ascending: false }).limit(HISTORY_LIMIT),
     supabase.from('collaborators').select('*').eq('id', senderCollabId).maybeSingle(),
   ]);

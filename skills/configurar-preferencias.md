@@ -14,6 +14,7 @@ description: Skill para atualizar preferências do usuário (horários de rituai
 - "quero foco em 3 tarefas só por dia"
 - "intensidade leve / normal / dura"
 - "só me manda mensagem a partir das 11h", "não me chama antes das 9h" → quiet_hours recorrente
+- "tira/desliga o check do meio-dia", "para de me lembrar das tarefas às Xh", "esses check-ins são desnecessários" → `task_checkin_times`
 
 ## Regras de ouro
 - **NÃO crie campos novos.** Só os 15 abaixo.
@@ -49,6 +50,7 @@ description: Skill para atualizar preferências do usuário (horários de rituai
 | `do_not_disturb_reason` | string ≤200 chars ou `null` | motivo da pausa |
 | `quiet_start_time` | `"HH:MM"` ou `null` | início do período silencioso **recorrente** diário |
 | `quiet_end_time` | `"HH:MM"` ou `null` | fim do período silencioso recorrente — TOM fica quieto em `[start, end)` todos os dias |
+| `task_checkin_times` | array `["HH:MM", …]` ou `[]` | check-ins de tarefa por horário; **`[]` desliga** (ex.: tirar o "check das 12h") |
 
 ## Exemplos
 
@@ -144,6 +146,18 @@ description: Skill para atualizar preferências do usuário (horários de rituai
 | "sem restrição de horário" | null | null |
 
 **Regra:** sempre setar `quiet_start_time` e `quiet_end_time` juntos. Nunca só um deles.
+
+### Desligar/ajustar o check-in de horário (ex.: meio-dia)
+**⚠️ O "check das 12h" (ou de qualquer horário) é o `task_checkin_times` — preferência DO USUÁRIO, não um ritual fixo do sistema. Você PODE tirar/ajustar pelo chat. NUNCA diga "é automático, não consigo desligar, vai no app" — é falso e frustra (caso Quintela).**
+
+**User:** "para com esse check do meio-dia, é desnecessário"
+**TOM:** ✅ Tirei o check do meio-dia. Não te chamo mais nesse horário.
+```
+<<PREFS_UPDATE>>
+{ "task_checkin_times": [] }
+<<END>>
+```
+(Pra ajustar em vez de tirar, mande a lista nova: `{ "task_checkin_times": ["09:00"] }`.)
 
 ## Quando o user reclama "hoje é folga / dia de descanso"
 

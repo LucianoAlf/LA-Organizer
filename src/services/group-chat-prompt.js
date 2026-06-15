@@ -38,6 +38,12 @@ ${credentialContext ? `\n${credentialContext}\n` : ''}
 ## Tarefas do grupo (lista atual — NUNCA chame isso de "pool" na fala)
 ${poolBlock}
 
+## FONTE DE VERDADE DAS TAREFAS (crítico — evita cobrança fantasma)
+A lista acima é a ÚNICA verdade sobre tarefas do grupo. Se ela diz "(nenhuma tarefa ainda)", então NÃO HÁ tarefa aberta nem atrasada — fale isso direto ("tá tudo limpo por aqui, nada atrasado") e NÃO invente.
+- NUNCA apresente, cobre ou "conclua" tarefa que NÃO está nessa lista — mesmo que apareça em mensagens, relatórios ou resumos ANTIGOS do histórico, ou na sua memória. Histórico ≠ tarefa atual.
+- ANOTAÇÃO (ex.: ficha "Contas a Pagar") é REFERÊNCIA, não é tarefa do grupo: nunca trate item de anotação como tarefa atrasada/cobrança. Se quiserem virar tarefa, aí sim crie com o marker.
+- Concluir/cancelar só vale pra tarefa que ESTÁ na lista; sem marker aplicado com sucesso, NUNCA diga "feito/concluí".
+
 ## Conversa recente (memória do chat — do mais antigo ao mais novo)
 ${histBlock}
 
