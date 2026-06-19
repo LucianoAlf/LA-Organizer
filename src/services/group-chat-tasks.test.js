@@ -4,7 +4,7 @@
 // e registra inserts/updates (necessário p/ testar o cancel, que é await terminal).
 const assert = require('node:assert');
 const { test } = require('node:test');
-const { applyGroupChatTaskActions, titleSimilarity, pickInstanceTarget, findDuplicatePackage, resolveVisibleInstance, filterNewSubtasks } = require('./group-chat-tasks');
+const { applyGroupChatTaskActions, titleSimilarity, pickInstanceTarget, findDuplicatePackage, resolveVisibleInstance, filterNewSubtasks, resolveSeriesTemplate, endSeries, reviveSeries } = require('./group-chat-tasks');
 
 function makeDb({ tasks = [], events = [] } = {}) {
   function builder() {
@@ -203,4 +203,54 @@ test('filterNewSubtasks: só os que ainda não existem como filha', () => {
   assert.strictEqual(novos.length, 1);
   assert.strictEqual(novos[0].title, 'Cartão 1074 (Kids CG)');
   assert.strictEqual(filterNewSubtasks(existing, []).length, 0);
+});
+
+// ── Parte 2 do Grupo-CRUD: reschedule + ciclo de série (encerrar/religar) ──
+
+test('resolveSeriesTemplate: retorna o MOLDE (recurrence_rule), senão null', () => {
+  const tpl = { id: 't', recurrence_rule: 'FREQ=MONTHLY' };
+  const inst = { id: 'i', recurrence_rule: null };
+  assert.strictEqual(resolveSeriesTemplate([inst, tpl]).id, 't');
+  assert.strictEqual(resolveSeriesTemplate([inst]), null);
+  assert.strictEqual(resolveSeriesTemplate([]), null);
+});
+
+test('reschedule: muda due da INSTÂNCIA visível (nunca o molde) + not_found', async () => {
+  const events = [];
+  const tpl = G({ id: 'tpl', title: 'Planilha mensal', recurrence_rule: 'FREQ=MONTHLY;BYMONTHDAY=5' });
+  const inst = G({ id: 'inst', title: 'Planilha mensal', recurrence_parent_id: 'tpl', due_date: '2026-06-05' });
+  const r = await applyGroupChatTaskActions({
+    supabase: makeDb({ tasks: [tpl, inst], events }), groupId: 'g1', senderCollabId: 'c1',
+    actions: [{ action: 'reschedule', title: 'Planilha mensal', new_due_date: '2026-06-08' }],
+  });
+  assert.ok(events.find((e) => e.kind === 'update' && e.id === 'inst' && e.patch.due_date === '2026-06-08'), 'instância reagendada');
+  assert.strictEqual(tpl.status, 'pending', 'molde intocado');
+  assert.strictEqual(r.updated.length, 1);
+
+  const r2 = await applyGroupChatTaskActions({
+    supabase: makeDb({ tasks: [], events: [] }), groupId: 'g1', senderCollabId: 'c1',
+    actions: [{ action: 'reschedule', title: 'Nada', new_due_date: '2026-06-08' }],
+  });
+  assert.ok(r2.failed.some((f) => f.why === 'not_found_in_pool'));
+});
+
+test('endSeries: cancela molde + instâncias não-done; preserva done', async () => {
+  const events = [];
+  const tpl = G({ id: 'tpl', title: 'Conciliação', recurrence_rule: 'FREQ=MONTHLY' });
+  const jun = G({ id: 'jun', title: 'Conciliação', recurrence_parent_id: 'tpl', due_date: '2026-06-01' });
+  const jul = G({ id: 'jul', title: 'Conciliação', recurrence_parent_id: 'tpl', due_date: '2026-07-01' });
+  const maiDone = { id: 'mai', title: 'Conciliação', status: 'done', assigned_group_id: 'g1', recurrence_parent_id: 'tpl', created_at: new Date().toISOString() };
+  await endSeries({ supabase: makeDb({ tasks: [tpl, jun, jul, maiDone], events }), templateId: 'tpl' });
+  assert.strictEqual(tpl.status, 'cancelled', 'molde cancelado');
+  assert.strictEqual(jun.status, 'cancelled');
+  assert.strictEqual(jul.status, 'cancelled');
+  assert.strictEqual(maiDone.status, 'done', 'done preservado');
+});
+
+test('reviveSeries: sem molde cancelado casando → not_found (sem mutação)', async () => {
+  const events = [];
+  const r = await reviveSeries({ supabase: makeDb({ tasks: [], events }), groupId: 'g1', title: 'Nada' });
+  assert.strictEqual(r.revived, false);
+  assert.strictEqual(r.reason, 'not_found');
+  assert.strictEqual(events.length, 0);
 });

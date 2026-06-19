@@ -8,6 +8,8 @@ const WINDOW_DAYS = 7;              // janela de atividade do relatório (last_s
 const KI_LOOKBACK_DAYS = 45;       // recorte de known-issues corrigidos candidatos
 const MATCH_MIN_CONFIDENCE = 0.7;  // abaixo disso, trata como "não casou"
 const MARGIN_MS = 12 * 3600 * 1000; // borda de segurança na comparação temporal
+const KI_MAX = 40;          // teto de known-issues candidatos (corrigidos mais recentes) — fix antigo não casa com finding ativo; evita prompt gigante (spawn E2BIG no CLI)
+const BATCH_FINDINGS = 20;  // findings por chamada ao LLM — prompt pequeno + resposta cabe em maxTokens
 
 /** Decide o destino de um finding casado com um known-issue. Pura: sem DB/LLM.
  * Ordem importa: regressão é avaliada ANTES de supressão (last_seen pós-fix vence). */
@@ -78,19 +80,27 @@ async function triageOpenFindings(sb, chat, opts = {}) {
     const open = findings || [];
     if (!open.length) return out;
 
+    // Known-issues corrigidos: mais recentes primeiro, teto KI_MAX. Fix antigo raramente
+    // casa com finding ainda ativo, e mandar TODOS (centenas) estourava o arg do CLI (E2BIG).
     const { data: kis } = await sb.from('tom_known_issues')
-      .select('codigo, titulo, area, causa_raiz, fix_resumo, status, corrigido_em')
+      .select('codigo, titulo, area, causa_raiz, status, corrigido_em')
       .eq('status', 'corrigido')
-      .gte('corrigido_em', kiSinceIso);
+      .gte('corrigido_em', kiSinceIso)
+      .order('corrigido_em', { ascending: false })
+      .limit(opts.kiMax || KI_MAX);
     const known = kis || [];
     const byCode = {};
     for (const k of known) byCode[k.codigo] = k;
 
-    let matchById = {};
+    // Casa em LOTES de findings → prompt pequeno por chamada (sem E2BIG) e resposta curta.
+    const matchById = {};
     if (known.length) {
-      const { system, messages } = buildMatchMessages(open, known);
-      const r = await chat(system, messages, 1500);
-      for (const mm of parseMatches(r && r.text)) matchById[mm.finding_id] = mm;
+      const batch = opts.batchFindings || BATCH_FINDINGS;
+      for (let i = 0; i < open.length; i += batch) {
+        const { system, messages } = buildMatchMessages(open.slice(i, i + batch), known);
+        const r = await chat(system, messages, 1500);
+        for (const mm of parseMatches(r && r.text)) matchById[mm.finding_id] = mm;
+      }
     }
 
     for (const f of open) {
@@ -118,6 +128,6 @@ async function triageOpenFindings(sb, chat, opts = {}) {
 }
 
 module.exports = {
-  WINDOW_DAYS, KI_LOOKBACK_DAYS, MATCH_MIN_CONFIDENCE, MARGIN_MS,
+  WINDOW_DAYS, KI_LOOKBACK_DAYS, MATCH_MIN_CONFIDENCE, MARGIN_MS, KI_MAX, BATCH_FINDINGS,
   decideTriage, parseMatches, triageOpenFindings,
 };

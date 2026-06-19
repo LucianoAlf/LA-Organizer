@@ -16,10 +16,10 @@ const SYSTEM = [
 /** Monta as mensagens do casamento. Retorna {system, messages}. */
 function buildMatchMessages(findings, knownIssues) {
   const fLines = (findings || []).map(f =>
-    `- id=${f.id} [${f.category}] ${String(f.summary || '').slice(0, 200)} | evidência: ${String(f.evidence || '').slice(0, 400)}`,
+    `- id=${f.id} [${f.category}] ${String(f.summary || '').slice(0, 160)} | evidência: ${String(f.evidence || '').slice(0, 250)}`,
   ).join('\n');
   const kLines = (knownIssues || []).map(k =>
-    `- ${k.codigo} [${k.area}] ${k.titulo} | causa: ${String(k.causa_raiz || '').slice(0, 200)} | fix: ${String(k.fix_resumo || '').slice(0, 200)} | corrigido_em: ${k.corrigido_em}`,
+    `- ${k.codigo} [${k.area}] ${k.titulo} | causa: ${String(k.causa_raiz || '').slice(0, 120)} | corrigido_em: ${k.corrigido_em}`,
   ).join('\n');
   const user =
     `FALHAS (A):\n${fLines || '(nenhuma)'}\n\nBUGS CONHECIDOS CORRIGIDOS (B):\n${kLines || '(nenhum)'}\n\n` +

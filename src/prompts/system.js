@@ -2598,16 +2598,30 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   if (_includeMonthly && collaborator) {
     monthlyCtxBlock = await buildMonthlyContextBlock(collaborator.id);
   }
+  // Build async (19/06): o getEmbedding (OpenAI) é a parte lenta — dispara ANTES,
+  // em paralelo ao fetchCollaboratorContext, com timeout curto. Se demorar/falhar,
+  // segue sem o "contexto recente" semântico (degradação graciosa).
+  const { promiseWithTimeout } = require('../utils/async');
+  const _embeddingPromise = (lastUserMessage && process.env.OPENAI_API_KEY)
+    ? promiseWithTimeout(
+        require('../services/embeddings').getEmbedding(lastUserMessage).catch((err) => {
+          console.warn('[Prompt] embedding err:', err.message);
+          return null;
+        }),
+        1500,
+        null,
+      )
+    : Promise.resolve(null);
+
   const ctx = await fetchCollaboratorContext(collaborator);
+  const _embedding = await _embeddingPromise;
 
   // Busca semântica para "Contexto recente" — top 5 que não sejam crítico nem preference.
-  if (lastUserMessage && process.env.OPENAI_API_KEY) {
+  if (_embedding) {
     try {
-      const { getEmbedding } = require('../services/embeddings');
-      const embedding = await getEmbedding(lastUserMessage);
       const { data: semanticMems } = await supabase.rpc('match_memories', {
         p_collaborator_id: collaborator.id,
-        p_embedding: embedding,
+        p_embedding: _embedding,
         p_match_count: 15,
         p_threshold: 0.6,
       });

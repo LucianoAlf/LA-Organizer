@@ -7,7 +7,7 @@ async function chat(systemPrompt, messages, maxTokens = 2048) {
   let claudeErr = null;
   try {
     const r = await claude.chat(systemPrompt, messages, maxTokens);
-    console.log(`[AI] Claude respondeu em ${r.meta?.duration_ms ?? '?'}ms`);
+    console.log(`[AI] Claude ok dur=${r.meta?.duration_ms ?? '?'}ms api=${r.meta?.duration_api_ms ?? '?'}ms fila=${r.meta?.queue_wait_ms ?? '?'}ms out=${r.meta?.output_tokens ?? '?'}tok`);
     return r;
   } catch (err) {
     claudeErr = err;

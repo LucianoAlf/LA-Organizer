@@ -29,9 +29,11 @@ const CLAUDE_PATH = process.env.PATH || '/usr/local/sbin:/usr/local/bin:/usr/sbi
 // obsoleto). O timeout de 120s só ESCONDIA hang da Anthropic (429/5xx): a msg
 // travava 2min e, como o acesso ao CLI é serializado (_claudeQueue), TODA msg
 // atrás travava junto → "TOM escrevendo a vida toda / às vezes não responde".
-// 60s dá ~5-6x de folga sobre a chamada real e corta o hang pela metade,
-// disparando o fallback (Codex) muito mais cedo. Override via CLAUDE_TIMEOUT_MS.
-const CLAUDE_TIMEOUT_MS = Number(process.env.CLAUDE_TIMEOUT_MS) || 60000;
+// Fail-fast (19/06): 45s — Claude é o padrão; em overload cai pro Codex "só no
+// extremo". p95 real da chamada ≈ 42s, então 45s quase não corta caso legítimo.
+// O .env da VPS DEVE estar alinhado (estava em 120000 — fix no mesmo deploy).
+// Override via CLAUDE_TIMEOUT_MS.
+const CLAUDE_TIMEOUT_MS = Number(process.env.CLAUDE_TIMEOUT_MS) || 45000;
 
 // Sprint 26 — Mutex serializa chamadas ao CLI pra impedir race no .claude.json.
 // Causa-raiz: dois `claude -p` em paralelo abriam o mesmo arquivo de config e
@@ -76,13 +78,16 @@ function buildArgs(userPrompt, sysPromptFile) {
 
 // Wrapper público: enfileira na _claudeQueue pra serializar acesso ao .claude.json.
 async function chat(systemPrompt, messages, maxTokens) {
-  const job = _claudeQueue.then(() => _chatInner(systemPrompt, messages, maxTokens));
+  const enqueuedAt = Date.now();
+  const job = _claudeQueue.then(() => _chatInner(systemPrompt, messages, enqueuedAt));
   // Mantém a cadeia viva mesmo se este job rejeitar (catch silencioso só pra fila).
   _claudeQueue = job.catch(() => {});
   return job;
 }
 
-async function _chatInner(systemPrompt, messages /*, maxTokens */) {
+async function _chatInner(systemPrompt, messages, enqueuedAt) {
+  const startedAt = Date.now();
+  const queueWaitMs = enqueuedAt ? (startedAt - enqueuedAt) : 0;
   const lastUser = messages.filter(m => m.role === 'user').pop()?.content || '';
 
   // Histórico recente como contexto na mensagem do usuário (para Claude ver o turno anterior).
@@ -260,6 +265,7 @@ async function _chatInner(systemPrompt, messages /*, maxTokens */) {
           input_tokens: parsed.usage?.input_tokens,
           output_tokens: parsed.usage?.output_tokens,
           sanitized_chars: sanitizedDelta,
+          queue_wait_ms: queueWaitMs,
         },
       });
     });

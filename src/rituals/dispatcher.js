@@ -17,6 +17,7 @@ process.chdir(path.join(__dirname, '..', '..'));
 loadDotEnv(path.join(process.cwd(), '.env'));
 
 const supabase = require('../supabase/client');
+const proactiveLink = require('../services/proactive-link'); // LOTE D: vínculo proativo→tarefa
 const announcementsService = require('../services/announcements');
 const { sendRitual, sendCoordinatorReport, getDndState, consolidateMemoryFor, decayExpiredMemories, generateWeeklySummaryFor, getRitualIntroDecision } = require('../engine');
 // GovQuality — auditoria de qualidade de conversa acoplada ao Dream (03h).
@@ -1082,10 +1083,7 @@ async function remindGroupTasks(now = new Date()) {
       const q = await isQuietNow(m.collaborator_id, nowSaoPaulo(), 'work');
       if (q.quiet) { console.log(`[remindGroupTasks] skip member ${String(m.collaborator_id).slice(0,8)} — quiet (${q.reason})`); continue; }
       try {
-        await whatsapp.sendMessage(m.phone, msg);
-        await supabase.from('conversation_history').insert({
-          collaborator_id: m.collaborator_id, direction: 'outbound', message_type: 'text', content: msg,
-        });
+        await proactiveLink.sendAndLink(supabase, { phone: m.phone, content: msg, collaboratorId: m.collaborator_id, refType: 'task', refId: task.id });
         sent++;
       } catch (e) { console.error(`[remindGroupTasks] send err ${String(m.collaborator_id).slice(0,8)}:`, e.message); }
     }
@@ -1138,7 +1136,7 @@ async function remindEventTasks(now = new Date()) {
     const msg = `⏰ ${greeting}lembrete: *${task.title}* (evento *${eventTitle}*) é amanhã. Tudo certo da sua parte?`;
 
     try {
-      await whatsapp.sendMessage(phone, msg);
+      await proactiveLink.sendAndLink(supabase, { phone, content: msg, collaboratorId: task.assigned_to, refType: 'task', refId: task.id });
       await supabase.from('tasks').update({ reminded_at: nowIso }).eq('id', task.id);
       console.log(`[remindEventTasks] sent task=${task.id.slice(0, 8)} → ${phone.slice(-4)}`);
     } catch (err) {
@@ -1202,7 +1200,7 @@ async function remindOperationalTasks(now = new Date()) {
     const msg = `⏰ ${greeting}lembrete: *${task.title}*${rtype} vence amanhã. Tudo certo da sua parte?`;
 
     try {
-      await whatsapp.sendMessage(phone, msg);
+      await proactiveLink.sendAndLink(supabase, { phone, content: msg, collaboratorId: task.assigned_to, refType: 'task', refId: task.id });
       await supabase.from('tasks').update({ reminded_at: nowIso }).eq('id', task.id);
       console.log(`[remindOperationalTasks] sent task=${task.id.slice(0, 8)} → ${phone.slice(-4)}`);
     } catch (err) {
@@ -1265,7 +1263,7 @@ async function remindPersonalTasks(now = new Date()) {
     const msg = `📌 ${greeting}amanhã está marcado: *${task.title}*. Se rolar antes ou se quiser remarcar, é só me dizer.`;
 
     try {
-      await whatsapp.sendMessage(phone, msg);
+      await proactiveLink.sendAndLink(supabase, { phone, content: msg, collaboratorId: task.assigned_to, refType: 'task', refId: task.id });
       await supabase.from('tasks').update({ reminded_at: nowIso }).eq('id', task.id);
       console.log(`[remindPersonalTasks] sent task=${task.id.slice(0, 8)} → ${phone.slice(-4)}`);
     } catch (err) {
@@ -4959,10 +4957,7 @@ async function checkTaskReminders() {
           const qM = await isQuietNow(m.collaborator_id, nowSaoPaulo(), 'work', { defaultNightGate: false });
           if (qM.quiet) continue;
           try {
-            await whatsapp.sendMessage(m.phone, textG);
-            await supabase.from('conversation_history').insert({
-              collaborator_id: m.collaborator_id, direction: 'outbound', message_type: 'text', content: textG,
-            });
+            await proactiveLink.sendAndLink(supabase, { phone: m.phone, content: textG, collaboratorId: m.collaborator_id, refType: 'task', refId: t.id });
             sentG++;
           } catch (eS) { console.error(`[TaskReminders] group send err:`, eS.message); }
         }
@@ -5016,14 +5011,8 @@ async function checkTaskReminders() {
     const whenStr = [dayLabel, hm].filter(Boolean).join(' ');
     const text = `⏰ ${labelStr}*${t.title}*${whenStr ? ` — ${whenStr}` : ''}`;
     try {
-      await whatsapp.sendMessage(collab.phone, text);
+      await proactiveLink.sendAndLink(supabase, { phone: collab.phone, content: text, collaboratorId: collab.id, refType: 'task', refId: t.id });
       await supabase.from('task_reminders').update({ sent_at: new Date().toISOString() }).eq('id', r.id);
-      await supabase.from('conversation_history').insert({
-        collaborator_id: collab.id,
-        direction: 'outbound',
-        message_type: 'text',
-        content: text,
-      });
       await logRitualEvent(collab.id, 'lembrete', 'sent', `reminder:${String(r.id).slice(0,8)} task:${String(t.id).slice(0,8)}`);
       fired++;
     } catch (err) {
@@ -5079,10 +5068,7 @@ async function checkReminders() {
           const qM = await isQuietNow(m.collaborator_id, nowSaoPaulo(), 'work', { defaultNightGate: false });
           if (qM.quiet) continue;
           try {
-            await whatsapp.sendMessage(m.phone, textG);
-            await supabase.from('conversation_history').insert({
-              collaborator_id: m.collaborator_id, direction: 'outbound', message_type: 'text', content: textG,
-            });
+            await proactiveLink.sendAndLink(supabase, { phone: m.phone, content: textG, collaboratorId: m.collaborator_id, refType: 'task', refId: t.id });
             sentG++;
           } catch (eS) { console.error('[Reminders] group send err:', eS.message); }
         }
@@ -5126,7 +5112,7 @@ async function checkReminders() {
     const reminderEmoji = t.context === 'personal' ? '👉' : '🔔';
     const text = `${reminderEmoji} *Lembrete:* ${t.title}`;
     try {
-      await whatsapp.sendMessage(collab.phone, text);
+      await proactiveLink.sendAndLink(supabase, { phone: collab.phone, content: text, collaboratorId: collab.id, refType: 'task', refId: t.id });
       // Marca reminded_at IMEDIATAMENTE após envio — previne re-disparo mesmo se
       // o mark-done falhar (padrão de remindEventTasks / remindOperationalTasks).
       await supabase.from('tasks').update({ reminded_at: nowIso }).eq('id', t.id);
@@ -5159,13 +5145,6 @@ async function checkReminders() {
         channel: 'whatsapp',
         status: 'sent',
         sent_at: new Date().toISOString(),
-      });
-      // Log to conversation_history (outbound).
-      await supabase.from('conversation_history').insert({
-        collaborator_id: collab.id,
-        direction: 'outbound',
-        message_type: 'text',
-        content: text,
       });
     } catch (err) {
       console.error(`[Reminders] send err for ${String(t.id).slice(0,8)}:`, err.message);
@@ -5242,19 +5221,13 @@ async function checkEventReminders() {
     const labelPrefix = r.label ? `(${r.label}) ` : '';
     const text = `📅 *Lembrete:* ${labelPrefix}${ev.title}${meta}${linkLine}`;
     try {
-      await whatsapp.sendMessage(collab.phone, text);
+      await proactiveLink.sendAndLink(supabase, { phone: collab.phone, content: text, collaboratorId: collab.id, refType: 'event', refId: ev.id });
       const { error: upErr } = await supabase.from('event_reminders').update({ sent_at: new Date().toISOString() }).eq('id', r.id);
       if (upErr) {
         console.error(`[EventReminders] mark-sent err for ${String(r.id).slice(0,8)}:`, upErr.message);
       } else {
         console.log(`[EventReminders] fired ${String(r.id).slice(0,8)} "${ev.title.slice(0,40)}" → ${collab.phone.slice(-4)}`);
       }
-      await supabase.from('conversation_history').insert({
-        collaborator_id: collab.id,
-        direction: 'outbound',
-        message_type: 'text',
-        content: text,
-      });
     } catch (err) {
       console.error(`[EventReminders] send err for ${String(r.id).slice(0,8)}:`, err.message);
     }

@@ -4,6 +4,7 @@
 
 const axios = require('axios');
 const config = require('../config');
+const { extractSentMessageId } = require('./sent-message-id');
 
 const api = axios.create({
   baseURL: config.uazapi.url,
@@ -390,4 +391,4 @@ async function sendReaction(phone, messageId, emoji) {
   }
 }
 
-module.exports = { sendMessage, sendButtons, sendList, sendMedia, setTyping, sendReaction, sendVoice, isAudioMessage, isImageMessage, isDocumentMessage, isVideoMessage, extractText, extractPhone, extractName, extractFileName, extractMessageId, extractQuotedMessage, isIgnorable, getData };
+module.exports = { sendMessage, sendButtons, sendList, sendMedia, setTyping, sendReaction, sendVoice, isAudioMessage, isImageMessage, isDocumentMessage, isVideoMessage, extractText, extractPhone, extractName, extractFileName, extractMessageId, extractQuotedMessage, extractSentMessageId, isIgnorable, getData };

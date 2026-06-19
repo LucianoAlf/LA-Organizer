@@ -47,6 +47,13 @@ function pickInstanceTarget(rows) {
   return instances[0] || null;
 }
 
+// Dado candidatos por título, acha o MOLDE da série (recurrence_rule != null). Pura.
+// Usado por ENCERRAR SÉRIE (ação deliberada): aí sim a gente quer o molde, não a instância.
+function resolveSeriesTemplate(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  return list.find((r) => r && r.recurrence_rule != null) || null;
+}
+
 // ── Dedup de PACOTE (anti-churn do <<TASK_GROUP>>) ──────────────────────────────
 // O LLM reemite `create` quando a pessoa "ajusta" um pacote que já existe ("coloca a
 // Anne também", "muda o lembrete"). Sem dedup, cada reemissão criava uma GERAÇÃO inteira
@@ -244,6 +251,26 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
           await supabase.from('tasks').update({ status: 'cancelled' }).eq('parent_task_id', target.id).neq('status', 'done');
         }
         cancelled.push({ id: target.id, title: target.title });
+      } else if (a.action === 'reschedule') {
+        // Editar PRAZO/lembrete de tarefa do grupo. Mira a INSTÂNCIA visível (nunca o molde).
+        const title = (a.title || '').trim();
+        if (!title) { failed.push({ action: a, why: 'title_missing' }); continue; }
+        const nd = typeof a.new_due_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(a.new_due_date) ? a.new_due_date : null;
+        let nr = null;
+        if (typeof a.new_remind_at === 'string' && a.new_remind_at.trim()) {
+          const d = new Date(a.new_remind_at.trim()); if (!Number.isNaN(d.getTime())) nr = d.toISOString();
+        }
+        if (!nd && !nr) { failed.push({ action: a, why: 'reschedule_no_date' }); continue; }
+        const { data: found } = await supabase.from('tasks')
+          .select('id, title, recurrence_rule').eq('assigned_group_id', groupId)
+          .neq('status', 'done').neq('status', 'cancelled').ilike('title', title)
+          .order('due_date', { ascending: true }).limit(5);
+        const target = pickInstanceTarget(found);
+        if (!target) { failed.push({ action: a, why: 'not_found_in_pool' }); continue; }
+        const patch = {}; if (nd) patch.due_date = nd; if (nr) patch.remind_at = nr;
+        const { data: upd } = await supabase.from('tasks').update(patch).eq('id', target.id).select('id, title').maybeSingle();
+        if (upd) updated.push({ ...upd, changed: patch });
+        else failed.push({ action: a, why: 'race_lost' });
       } else {
         failed.push({ action: a, why: 'unsupported_action' });
       }
@@ -255,7 +282,35 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
   return { created, updated, completed, cancelled, failed };
 }
 
+// Encerra a SÉRIE (ação deliberada, à parte da rotina): cancela o molde + as instâncias
+// não-done (corrente + futuras). Reversível (soft) via reviveSeries. Done preservado (histórico).
+// Molde cancelado → materializeAll (Balde A) já pula molde cancelado, então PARA de gerar.
+async function endSeries({ supabase, templateId }) {
+  await supabase.from('tasks').update({ status: 'cancelled' }).eq('id', templateId);
+  await supabase.from('tasks').update({ status: 'cancelled' }).eq('recurrence_parent_id', templateId).neq('status', 'done');
+  return { ended: true, id: templateId };
+}
+
+// Religa a série: reativa o molde CANCELADO (por título) + re-materializa (materializeSeries,
+// NÃO materializeAll — mesmo helper do dedup-recur). Inverso do endSeries. Direto (constructivo).
+async function reviveSeries({ supabase, groupId, title }) {
+  const { data: hit } = await supabase.from('tasks')
+    .select('id, title, recurrence_rule, status').eq('assigned_group_id', groupId)
+    .eq('status', 'cancelled').ilike('title', String(title || '').trim())
+    .order('created_at', { ascending: false }).limit(5);
+  const tpl = (hit || []).find((r) => r && r.recurrence_rule != null);
+  if (!tpl) return { revived: false, reason: 'not_found' };
+  await supabase.from('tasks').update({ status: 'pending' }).eq('id', tpl.id);
+  try {
+    const { materializeSeries } = require('./recurrence-engine');
+    const { data: full } = await supabase.from('tasks').select('*').eq('id', tpl.id).maybeSingle();
+    if (full && full.recurrence_rule) await materializeSeries('tasks', full);
+  } catch (e) { console.warn('[GroupChat] revive re-materialize:', e.message); }
+  return { revived: true, id: tpl.id, title: tpl.title };
+}
+
 module.exports = {
   applyGroupChatTaskActions, titleSimilarity, pickInstanceTarget,
   findDuplicatePackage, resolveVisibleInstance, filterNewSubtasks,
+  resolveSeriesTemplate, endSeries, reviveSeries,
 };

@@ -9,6 +9,15 @@ $workDir = "C:\la-deploy-work"
 $srcRoot = "D:\la-organizer\_remote"
 $repoUrl = "https://github.com/LucianoAlf/LA-Organizer.git"
 
+# 0. HOLD de deploy — se existe .deploy-hold na raiz do projeto, NAO commita/pusha/deploya.
+#    O Alf cria esse arquivo pra reter o deploy automatico (ex.: feature aguardando OK).
+#    Removendo o arquivo, o deploy automatico volta ao normal no proximo turno.
+$holdFile = Join-Path (Split-Path $srcRoot -Parent) ".deploy-hold"
+if (Test-Path $holdFile) {
+    Write-Output "=== DEPLOY EM HOLD (.deploy-hold presente) -- nada commitado/pushado/deployado ==="
+    exit 0
+}
+
 # 1. Clone inicial ou reset para origin/main se ja existe
 if (-not (Test-Path (Join-Path $workDir ".git"))) {
     git clone $repoUrl $workDir --quiet 2>$null

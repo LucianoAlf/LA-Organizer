@@ -8400,6 +8400,43 @@ async function processMessage(phone, text, raw = {}) {
     console.warn('[Fatura] intercept B err:', e.message);
   }
 
+  // ---- LOTE D (REPLY-QUOTE-PROATIVO): reply-quote a um lembrete → ancora o alvo por id ----
+  // O proativo gravou whatsapp_message_id + ref em conversation_history (proactive-link).
+  // Se a msg cita (reply-quote) um proativo conhecido, resolvemos a tarefa/evento por
+  // stanzaID EXATO e injetamos contexto ANCORADO pro LLM emitir o <<TASK_UPDATE>> no id
+  // certo (sem chutar alvo). Não escreve datas (recorrência intocada). Fail-safe: erro ou
+  // alvo não-resolvido → segue o fluxo normal (scaffold textual + LLM), comportamento atual.
+  try {
+    const { resolveReplyTarget, buildReplyRefCtxHint } = require('./services/reply-ref');
+    const _q = whatsapp.extractQuotedMessage(raw);
+    const _quotedId = _q && _q.id ? _q.id : null;
+    if (_quotedId) {
+      const { data: _linkRow } = await supabase.from('conversation_history')
+        .select('ref_type, ref_id')
+        .eq('whatsapp_message_id', _quotedId)
+        .not('ref_id', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (_linkRow && _linkRow.ref_id) {
+        const _table = _linkRow.ref_type === 'event' ? 'events' : 'tasks';
+        const { data: _obj } = await supabase.from(_table)
+          .select('id, status, title')
+          .eq('id', _linkRow.ref_id)
+          .maybeSingle();
+        const _target = resolveReplyTarget({ quotedId: _quotedId, row: _linkRow, object: _obj });
+        if (_target) {
+          text = String(text || '') + buildReplyRefCtxHint(_target);
+          console.log(`[ReplyRef] alvo ancorado ${_target.refType}=${String(_target.refId).slice(0, 8)} phone=${_phoneTail}`);
+        } else {
+          console.log(`[ReplyRef] quote casou linha mas alvo nao-ancoravel (morto/sumiu) phone=${_phoneTail}`);
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[ReplyRef] interceptor err:', e.message);
+  }
+
   // ---- Sprint 30.3 — Pending Intents: auto-resolve quando user confirma ----
   // Se TOM perguntou "Crio?" turnos atrás (intent aberta) e o user agora
   // respondeu "sim/ok/pode/cria", injeta contexto extra no `text` pra forçar
