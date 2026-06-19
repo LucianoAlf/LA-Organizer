@@ -301,6 +301,11 @@ async function reviveSeries({ supabase, groupId, title }) {
   const tpl = (hit || []).find((r) => r && r.recurrence_rule != null);
   if (!tpl) return { revived: false, reason: 'not_found' };
   await supabase.from('tasks').update({ status: 'pending' }).eq('id', tpl.id);
+  // Reativa as instâncias FUTURAS que o endSeries cancelou. Crítico: materializeSeries deduplica
+  // por due_date INCLUINDO canceladas → sem este un-cancel, religar não traz as ocorrências de volta.
+  const todayYmd = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+  await supabase.from('tasks').update({ status: 'pending' })
+    .eq('recurrence_parent_id', tpl.id).eq('status', 'cancelled').gte('due_date', todayYmd);
   try {
     const { materializeSeries } = require('./recurrence-engine');
     const { data: full } = await supabase.from('tasks').select('*').eq('id', tpl.id).maybeSingle();
