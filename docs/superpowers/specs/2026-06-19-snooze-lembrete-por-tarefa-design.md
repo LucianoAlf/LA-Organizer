@@ -1,7 +1,7 @@
 # Snooze / silêncio de lembrete POR TAREFA — design
 
 - **Data:** 2026-06-19
-- **Status:** SPEC (aguarda OK / brainstorm do Alf — **não implementar**)
+- **Status:** SPEC — **decisões fechadas no brainstorm 19/06** (§9). Pronta para virar plano. Implementação/deploy **gated por HOLD** (`.deploy-hold`).
 - **Origem:** Item #5 do audit 15/06 (ver `project_audit_0615_lotes`)
 - **Caso-âncora:** Jereh — pediu "só me lembra às 15h" / "silêncio até as 15h" para **uma** tarefa, e o TOM continuou mandando lembrete ANTES das 15h.
 
@@ -189,7 +189,7 @@ Nova action **`snooze_reminders`** dentro do marker existente `<<TASK_UPDATE>>`:
 2. **BRT sempre:** resolver "às Xh"/"amanhã" em America/Sao_Paulo; pós-meia-noite usa dia civil (AMANHA-POS-MEIA-NOITE; `project_localymd_utc_shift`).
 3. **Idempotência:** 2ª chamada igual = no-op (rows `< piso` já consumidos; ensure-one vê o row `>= piso` e não duplica).
 4. **Não colidir com REMINDER-STALE-PAST:** o row do ensure-one tem `remind_at = not_before` (futuro) > `created_at` → o guard de staleness não o mata. (Garantido por `not_before > now`.)
-5. **Tarefa de grupo** (`assigned_group_id`): a action opera por `task_id` (vale para a grade do grupo, que faz fan-out). Autorização = membro do grupo. Decidir no brainstorm se "silenciar tarefa do grupo" some para **todos** ou se é por-pessoa (hoje a grade é uma só, compartilhada → some para todos).
+5. **Tarefa de grupo** (`assigned_group_id`): a action opera por `task_id` (vale para a grade do grupo, que faz fan-out). Autorização = membro do grupo. **DECIDIDO:** silencia para **todos** os membros (a grade é uma só, compartilhada). Sem grade por-membro no v1.
 6. **Não é reschedule:** `snooze_reminders` **não** altera `due_date`/`due_time` nem conclui a tarefa. Se o usuário quer mudar o prazo, isso é `reschedule` (action separada).
 7. **One-shot já disparado** (`reminded_at` preenchido): nada a silenciar; TOM responde que o lembrete já foi.
 8. **Sem hora e sem "tudo"** ("me lembra mais tarde"): **fora do escopo v1** — TOM pede a hora (não usar `active-window` aqui; YAGNI). Reavaliar depois.
@@ -206,14 +206,14 @@ Nova action **`snooze_reminders`** dentro do marker existente `<<TASK_UPDATE>>`:
 
 ---
 
-## 9. Pontos para o brainstorm do Alf decidir
+## 9. Decisões fechadas (brainstorm 19/06)
 
-1. **Nome da action/campo:** `snooze_reminders` + `not_before` está bom, ou prefere `mute_before`/`reminders_floor`?
-2. **`clear` = `sent_at=now()` (consome, mantém histórico) vs `DELETE` (limpa de vez)?** Recomendo `sent_at` (espelha o código atual e preserva auditoria).
-3. **Tarefa de grupo:** silenciar some para **todos** os membros (grade única) ou por-pessoa? (Hoje a grade é compartilhada.)
-4. **Modo "silenciar tudo"** (`clear_all`): incluir no v1 ou só o piso com hora?
-5. **Escopo do one-shot** (`tasks.remind_at`): cobrir no v1 (recomendo) ou só a grade `task_reminders`?
-6. **Semântica de "só às Xh":** tratar como **piso** (limpa antes, mantém a grade depois — recomendo, é o menos destrutivo) ou como **exclusivo** (exatamente 1 lembrete em X, limpando também os posteriores)? "para de me lembrar antes das Xh" é inequivocamente piso; "só às Xh" é o ambíguo.
+1. **Naming:** action `snooze_reminders`, campo do piso `not_before`. (Reversível; bati o martelo.)
+2. **Semântica de "só às Xh" = PISO** (não exclusivo): limpa só os lembretes **anteriores** ao piso e **mantém** a grade que já existia depois. "Para de me lembrar antes das Xh" e "só às Xh" convergem para o mesmo comportamento. Não apaga lembretes posteriores.
+3. **Clear = `sent_at = now()`** (consome sem enviar), **nunca `DELETE`** — espelha o padrão atual do código e preserva auditoria.
+4. **Tarefa de grupo: vale para TODOS** os membros. A grade é uma só (1 row → fan-out); silenciar afeta o grupo inteiro. Sem grade por-membro no v1.
+5. **Escopo do v1 = COMPLETO:** grade `task_reminders` + one-shot `tasks.remind_at` + modo `clear_all` ("não me lembra mais dessa tarefa").
+6. **Pendente (não-bloqueante), só para "me lembra mais tarde" sem hora:** continua fora do v1 (TOM pede a hora; sem `active-window`). Ver §7.8.
 
 ---
 
