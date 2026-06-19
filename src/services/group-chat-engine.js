@@ -8,7 +8,7 @@
 // Isso garante a quebra de linha/hierarquia (não depende de markdown) e dá a riqueza visual.
 const ai = require('../ai/provider');
 const { buildGroupChatPrompt, loadGroupChatSoul } = require('./group-chat-prompt');
-const { applyGroupChatTaskActions } = require('./group-chat-tasks');
+const { applyGroupChatTaskActions, findDuplicatePackage, resolveVisibleInstance, filterNewSubtasks } = require('./group-chat-tasks');
 const { createTaskGroup, addSubtasksToGroup } = require('./task-groups');
 const { buildGroupReport } = require('./group-report-builder');
 const groupNotes = require('./group-notes');
@@ -125,13 +125,34 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
       try {
         if (payload.action === 'create') {
           const subtasks = (payload.subtasks || []).map((s) => ({ title: s.title, day: s.day, dueDate: s.due_date, remindAt: s.remind_at }));
-          const r = await createTaskGroup({
-            supabase, groupId, createdBy: senderCollabId,
-            input: { title: payload.title, recurrence: payload.recurrence === 'monthly' ? 'monthly' : null,
-              groupDay: payload.group_day, weekendAdjust: payload.weekend_adjust, subtasks },
-          });
-          actions.push({ kind: 'task', status: 'ok', label: payload.title, detail: `pacote · ${r.childIds.length} ${r.childIds.length === 1 ? 'item' : 'itens'}` });
-          console.log(`[GroupChat] task_group create grupo=${groupId}: "${payload.title}" filhas=${r.childIds.length}`);
+          // Anti-churn (RECUR-PACKAGE-CHURN): se já existe pacote ativo de título parecido,
+          // NÃO duplica — mergeia só os itens novos no pacote visível (espelha o dedup de tarefa-única).
+          const { data: mothers } = await supabase.from('tasks')
+            .select('id, title, recurrence_rule, recurrence_parent_id, due_date')
+            .eq('assigned_group_id', groupId).eq('is_group', true)
+            .not('status', 'in', '("done","cancelled")');
+          const dup = findDuplicatePackage(mothers, payload.title);
+          if (dup) {
+            const instance = resolveVisibleInstance(mothers, dup);
+            const { data: kids } = await supabase.from('tasks')
+              .select('title').eq('parent_task_id', instance.id).neq('status', 'cancelled');
+            const novos = filterNewSubtasks((kids || []).map((k) => k.title), subtasks);
+            if (novos.length) {
+              const r = await addSubtasksToGroup({ supabase, groupId: instance.id, subtasks: novos });
+              actions.push({ kind: 'task', status: 'ok', label: payload.title, detail: `pacote já existia · +${r.added.length} ${r.added.length === 1 ? 'item' : 'itens'}` });
+            } else {
+              actions.push({ kind: 'task', status: 'ok', label: payload.title, detail: 'pacote já existe (nada novo a adicionar)' });
+            }
+            console.log(`[GroupChat] task_group DEDUP grupo=${groupId}: "${payload.title}" → mergeado (instância ${String(instance.id).slice(0, 8)}, +${novos.length})`);
+          } else {
+            const r = await createTaskGroup({
+              supabase, groupId, createdBy: senderCollabId,
+              input: { title: payload.title, recurrence: payload.recurrence === 'monthly' ? 'monthly' : null,
+                groupDay: payload.group_day, weekendAdjust: payload.weekend_adjust, subtasks },
+            });
+            actions.push({ kind: 'task', status: 'ok', label: payload.title, detail: `pacote · ${r.childIds.length} ${r.childIds.length === 1 ? 'item' : 'itens'}` });
+            console.log(`[GroupChat] task_group create grupo=${groupId}: "${payload.title}" filhas=${r.childIds.length}`);
+          }
         } else {
           const { data: mom } = await supabase.from('tasks')
             .select('id').eq('assigned_group_id', groupId).eq('is_group', true)

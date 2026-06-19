@@ -4,7 +4,7 @@
 // e registra inserts/updates (necessário p/ testar o cancel, que é await terminal).
 const assert = require('node:assert');
 const { test } = require('node:test');
-const { applyGroupChatTaskActions, titleSimilarity, pickInstanceTarget } = require('./group-chat-tasks');
+const { applyGroupChatTaskActions, titleSimilarity, pickInstanceTarget, findDuplicatePackage, resolveVisibleInstance, filterNewSubtasks } = require('./group-chat-tasks');
 
 function makeDb({ tasks = [], events = [] } = {}) {
   function builder() {
@@ -170,4 +170,37 @@ test('complete NUNCA conclui o molde recorrente — mira a instância', async ()
   assert.ok(events.find((e) => e.kind === 'update' && e.id === 'inst' && e.patch.status === 'done'), 'instância concluída');
   assert.strictEqual(tpl.status, 'pending', 'molde não concluído');
   assert.strictEqual((r.completed || [])[0] && r.completed[0].id, 'inst');
+});
+
+// ── RECUR-PACKAGE-CHURN (anti-duplicação de pacote no <<TASK_GROUP>>) ──
+test('findDuplicatePackage: acha pacote ativo ~igual; ignora pacote distinto', () => {
+  const mothers = [
+    { id: 'tpl', title: 'Conciliação de Cartões', recurrence_rule: 'FREQ=MONTHLY', recurrence_parent_id: null, due_date: '2026-06-01' },
+    { id: 'inst', title: 'Conciliação de Cartões', recurrence_rule: null, recurrence_parent_id: 'tpl', due_date: '2026-06-01' },
+    { id: 'outro', title: 'Conciliação Bancária (Mês Anterior)', recurrence_rule: null, recurrence_parent_id: null, due_date: '2026-06-01' },
+  ];
+  assert.ok(findDuplicatePackage(mothers, 'Conciliação de Cartões'));
+  assert.strictEqual(findDuplicatePackage(mothers, 'Planilha do financeiro do mês'), null);
+  assert.strictEqual(findDuplicatePackage([], 'Qualquer'), null);
+});
+
+test('resolveVisibleInstance: molde OU instância qualquer → SEMPRE o ciclo corrente (menor due_date)', () => {
+  const tpl = { id: 'tpl', recurrence_rule: 'FREQ=MONTHLY', recurrence_parent_id: null, due_date: '2026-06-01' };
+  const jun = { id: 'jun', recurrence_rule: null, recurrence_parent_id: 'tpl', due_date: '2026-06-01' };
+  const jul = { id: 'jul', recurrence_rule: null, recurrence_parent_id: 'tpl', due_date: '2026-07-01' };
+  const mothers = [tpl, jul, jun];
+  assert.strictEqual(resolveVisibleInstance(mothers, tpl).id, 'jun'); // matchou molde → jun
+  assert.strictEqual(resolveVisibleInstance(mothers, jul).id, 'jun'); // matchou jul → ainda jun (determinístico)
+  assert.strictEqual(resolveVisibleInstance(mothers, jun).id, 'jun');
+  const simples = { id: 's', recurrence_rule: null, recurrence_parent_id: null };
+  assert.strictEqual(resolveVisibleInstance([simples], simples).id, 's');
+});
+
+test('filterNewSubtasks: só os que ainda não existem como filha', () => {
+  const existing = ['Cartão 8641 (Recreio)', 'Cartão 2270 (EMLA)'];
+  const subs = [{ title: 'Cartão 8641 (Recreio)' }, { title: 'Cartão 1074 (Kids CG)' }];
+  const novos = filterNewSubtasks(existing, subs);
+  assert.strictEqual(novos.length, 1);
+  assert.strictEqual(novos[0].title, 'Cartão 1074 (Kids CG)');
+  assert.strictEqual(filterNewSubtasks(existing, []).length, 0);
 });

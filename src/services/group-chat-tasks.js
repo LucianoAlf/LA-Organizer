@@ -47,6 +47,49 @@ function pickInstanceTarget(rows) {
   return instances[0] || null;
 }
 
+// ── Dedup de PACOTE (anti-churn do <<TASK_GROUP>>) ──────────────────────────────
+// O LLM reemite `create` quando a pessoa "ajusta" um pacote que já existe ("coloca a
+// Anne também", "muda o lembrete"). Sem dedup, cada reemissão criava uma GERAÇÃO inteira
+// nova (3x "Conciliação de Cartões" no banco — caso Rose). Estes helpers (puros) deixam o
+// engine MERGEAR só os itens novos no pacote visível em vez de duplicar.
+
+// Pacote-mãe ativo mais parecido (>= threshold) com o título novo, ou null.
+function findDuplicatePackage(mothers, newTitle, threshold = SIM_THRESHOLD) {
+  const tok = _titleTokens(newTitle);
+  if (!tok.size) return null;
+  let best = null, bestSim = 0;
+  for (const m of mothers || []) {
+    const sim = titleSimilarity(tok, _titleTokens(m && m.title));
+    if (sim > bestSim) { bestSim = sim; best = m; }
+  }
+  return bestSim >= threshold ? best : null;
+}
+
+// Resolve a INSTÂNCIA visível onde mergear: match já-instância → ela mesma; molde
+// recorrente → instância ativa do ciclo corrente (menor due_date); pacote simples → ele.
+function resolveVisibleInstance(mothers, dup) {
+  if (!dup) return null;
+  // template da série: o próprio (se for molde) ou o pai (se for instância).
+  const tplId = dup.recurrence_rule ? dup.id : dup.recurrence_parent_id;
+  if (!tplId) return dup; // pacote simples (não-recorrente)
+  // SEMPRE o ciclo corrente (menor due_date) — determinístico, não depende de qual
+  // mãe o findDuplicatePackage casou (template ou instância de qualquer mês).
+  const insts = (mothers || []).filter((m) => m && m.recurrence_parent_id === tplId);
+  insts.sort((a, b) => String(a.due_date || '').localeCompare(String(b.due_date || '')));
+  return insts[0] || dup; // edge: molde sem instância materializada
+}
+
+// Subtarefas do create que NÃO existem como filha (por título parecido) — evita
+// re-adicionar cartões que já estão no pacote.
+function filterNewSubtasks(existingChildTitles, subtasks, threshold = SIM_THRESHOLD) {
+  const existing = (existingChildTitles || []).map((t) => _titleTokens(t));
+  return (subtasks || []).filter((s) => {
+    const tok = _titleTokens(s && s.title);
+    if (!tok.size) return false;
+    return !existing.some((et) => titleSimilarity(tok, et) >= threshold);
+  });
+}
+
 async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, actions }) {
   const created = [];
   const updated = [];
@@ -212,4 +255,7 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
   return { created, updated, completed, cancelled, failed };
 }
 
-module.exports = { applyGroupChatTaskActions, titleSimilarity, pickInstanceTarget };
+module.exports = {
+  applyGroupChatTaskActions, titleSimilarity, pickInstanceTarget,
+  findDuplicatePackage, resolveVisibleInstance, filterNewSubtasks,
+};
