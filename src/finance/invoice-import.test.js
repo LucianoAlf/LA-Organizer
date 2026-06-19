@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { parseInvoiceBlock, normalizeItems, buildInvoicePreview, detectInvoiceReply, looksLikeInvoiceText, allItemsRefund, refundCompetencia } = require('./invoice-import');
+const { parseInvoiceBlock, normalizeItems, buildInvoicePreview, detectInvoiceReply, looksLikeInvoiceText, allItemsRefund, refundCompetencia, normInvoiceDate } = require('./invoice-import');
 
 test('allItemsRefund: lista 100% estornos → true; mistura ou compras → false (regressão Rose)', () => {
   assert.equal(allItemsRefund([{ descricao: 'Estorno Pg *Lac', valor: -16.58 }, { descricao: 'Estorno Amazonmktplc', valor: -34.76 }]), true);
@@ -162,4 +162,48 @@ test('normalizeItems mantém estorno/devolução como crédito NEGATIVO, mas pag
   assert.equal(dev.valor, -34.76);
   assert.ok(!items.some((i) => /Pagamento/i.test(i.descricao)), 'pagamento de fatura fica fora');
   assert.equal(items.length, 3);
+});
+
+test('normInvoiceDate: "DD/MM" sem ano assume o ano de referência', () => {
+  assert.equal(normInvoiceDate('19/05', 2026), '2026-05-19');
+});
+
+test('normInvoiceDate: corrige ano-chute do Gemini (2024 → ano corrente)', () => {
+  assert.equal(normInvoiceDate('2024-05-19', 2026), '2026-05-19');
+  assert.equal(normInvoiceDate('2024-07-15', 2026), '2026-07-15'); // vencimento "fatura de JULHO" (Rose 15/06)
+});
+
+test('normInvoiceDate: preserva ano plausível (refYear ± 1 — virada de ano)', () => {
+  assert.equal(normInvoiceDate('2025-12-28', 2026), '2025-12-28');
+  assert.equal(normInvoiceDate('2026-01-03', 2026), '2026-01-03');
+});
+
+test('normInvoiceDate: sem refYear NÃO mexe (retrocompat) e null vira null', () => {
+  assert.equal(normInvoiceDate('2024-05-19'), '2024-05-19');
+  assert.equal(normInvoiceDate(null, 2026), null);
+});
+
+test('normalizeItems com refYear corrige o ano das compras (Rose 15/06: 2024 → 2026)', () => {
+  const items = normalizeItems([
+    { descricao: 'Bebe do Papai', valor: 132.45, data: '2024-05-19' },
+    { descricao: 'Amazon', valor: 27.12, data: '19/05' },
+  ], 2026);
+  assert.equal(items[0].data, '2026-05-19');
+  assert.equal(items[1].data, '2026-05-19');
+});
+
+test('parseInvoiceBlock com refYear corrige vencimento E datas dos itens (caso Rose Latam PASS)', () => {
+  const raw = '[FATURA_JSON]' + JSON.stringify({
+    emissor: 'Latam PASS', vencimento: '2024-07-15',
+    itens: [
+      { descricao: 'Bebe do Papai', valor: 132.45, data: '2024-05-19' },
+      { descricao: 'Cancelamento blw - Estorno', valor: -83.90, data: '2024-05-24' },
+    ],
+  }) + '[/FATURA_JSON]';
+  const r = parseInvoiceBlock(raw, 2026);
+  assert.equal(r.invoice.vencimento, '2026-07-15');                 // competência derivada → julho/2026
+  assert.equal(r.invoice.itens[0].data, '2026-05-19');
+  const est = r.invoice.itens.find((i) => /Estorno/i.test(i.descricao));
+  assert.equal(est.data, '2026-05-24');
+  assert.equal(est.valor, -83.90);                                  // estorno segue crédito negativo
 });

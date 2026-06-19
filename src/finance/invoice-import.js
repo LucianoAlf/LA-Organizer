@@ -1,7 +1,7 @@
 // src/finance/invoice-import.js — lógica PURA de import de fatura (sem I/O).
 const BLOCK_RE = /\[FATURA_JSON\]\s*([\s\S]*?)\s*\[\/FATURA_JSON\]/i;
 
-function parseInvoiceBlock(text) {
+function parseInvoiceBlock(text, refYear) {
   if (!text || typeof text !== 'string') return { found: false, cleanText: text || '' };
   const m = BLOCK_RE.exec(text);
   if (!m) return { found: false, cleanText: text };
@@ -10,7 +10,7 @@ function parseInvoiceBlock(text) {
   try { json = JSON.parse(m[1].trim()); }
   catch { return { found: false, malformed: true, cleanText }; }
   if (!json || !Array.isArray(json.itens)) return { found: false, malformed: true, cleanText };
-  const itens = normalizeItems(json.itens);
+  const itens = normalizeItems(json.itens, refYear);
   // total = SOMA dos itens que SERÃO lançados (após filtrar saldo rolado/pagamentos). O total
   // declarado (json.total) inclui meta-linhas filtradas → mostrava R$16.645 com a lista somando
   // ~R$6.640 (Alf 14/06, OFX). O número exibido tem que bater com a lista.
@@ -20,7 +20,7 @@ function parseInvoiceBlock(text) {
     cleanText,
     invoice: {
       emissor: String(json.emissor || '').trim(),
-      vencimento: json.vencimento || null,
+      vencimento: normInvoiceDate(json.vencimento, refYear) || null,
       total,
       itens,
     },
@@ -90,7 +90,18 @@ function refundCompetencia(rawDate, closingDay, today) {
   return _competenciaFor(d, closingDay);
 }
 
-function normalizeItems(itens) {
+// Normaliza a data de UM item/vencimento da fatura pro formato 'YYYY-MM-DD', corrigindo o
+// ano-chute do Gemini (ele crava 2024 quando a data vem "DD/MM" sem ano → compras e competência
+// iam parar em 2024 e sumiam da fatura do ano corrente; caso Rose 15/06: "lança na fatura de
+// JULHO" virou julho/2024). Sem refYear (chamadas legadas/testes antigos) NÃO mexe — retrocompat.
+function normInvoiceDate(raw, refYear) {
+  if (!raw) return raw || null;
+  if (!Number.isFinite(refYear)) return raw;           // sem ano de referência → comportamento atual
+  const d = parseRefundDate(raw, refYear);
+  return d ? d.toISOString().slice(0, 10) : raw;        // não-parseável → preserva o cru (não regride)
+}
+
+function normalizeItems(itens, refYear) {
   if (!Array.isArray(itens)) return [];
   return itens
     .map((it) => {
@@ -100,7 +111,7 @@ function normalizeItems(itens) {
       if (isRefundLine(descricao) && valor > 0) valor = -valor;
       return {
         descricao, valor,
-        data: it.data || it.date || null,
+        data: normInvoiceDate(it.data || it.date || null, refYear),
         parcela_atual: Number(it.parcela_atual) || 1,
         parcela_total: Number(it.parcela_total) || 1,
       };
@@ -158,4 +169,4 @@ function looksLikeInvoiceText(text) {
   return valueMatches.length >= 4;
 }
 
-module.exports = { parseInvoiceBlock, normalizeItems, buildInvoicePreview, detectInvoiceReply, looksLikeInvoiceText, isPurchasableLine, isRefundLine, allItemsRefund, refundCompetencia, parseRefundDate };
+module.exports = { parseInvoiceBlock, normalizeItems, buildInvoicePreview, detectInvoiceReply, looksLikeInvoiceText, isPurchasableLine, isRefundLine, allItemsRefund, refundCompetencia, parseRefundDate, normInvoiceDate };

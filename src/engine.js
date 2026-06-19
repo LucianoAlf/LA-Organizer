@@ -6987,7 +6987,7 @@ async function commitRefundList(cid, invoice) {
     if (!valor) continue;
     const desc = String(it.descricao || it.description || 'Estorno');
     const finalDesc = /estorn|devolu|reembol/i.test(desc) ? desc : `Estorno ${desc}`;
-    const _date = it.data || it.date || null;
+    const _date = invoiceImport.normInvoiceDate(it.data || it.date || null, _today.getUTCFullYear());
     let _comp = null;
     try { _comp = invoiceImport.refundCompetencia(_date, card.closing_day, _today); } catch (e) { _comp = null; }
     await financeService.insertCardPurchase(cid, card, {
@@ -8286,6 +8286,11 @@ async function processMessage(phone, text, raw = {}) {
     console.warn('[TaskQuery] err:', e.message);
   }
 
+  // Ano de referência (SP) p/ corrigir o ano-chute do Gemini nas datas da fatura (compras/estorno/
+  // vencimento). Sem isso "19/05" sem ano virava 2024 e o lançamento sumia da fatura do ano corrente
+  // (Rose 15/06: "lança na fatura de JULHO" caiu em julho/2024). Ver invoice-import.normInvoiceDate.
+  const _refYear = Number(new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }).slice(0, 4)) || undefined;
+
   // === Intercept A0: fatura colada como TEXTO (não PDF) → estrutura via Gemini e injeta [FATURA_JSON] ===
   // Rose 14/06: mandou a fatura como texto; sem isso caía no LLM-puro, que narrava "lancei/missão
   // cumprida" SEM emitir markers (nada lançava), lia "dos 40" como R$40 e largava itens (24 de 40).
@@ -8294,6 +8299,10 @@ async function processMessage(phone, text, raw = {}) {
     if (!invoiceImport.parseInvoiceBlock(text).found && invoiceImport.looksLikeInvoiceText(text)) {
       const _struct = await gemini.analyzeInvoiceText(text);
       if (_struct && _struct.ok && _struct.isInvoice && _struct.invoice && (_struct.invoice.itens || []).length > 0) {
+        // Corrige o ano-chute do Gemini ANTES de rotear: o estorno-lista (commitRefundList) consome
+        // estas datas direto, sem passar pelo parseInvoiceBlock do Intercept A.
+        _struct.invoice.vencimento = invoiceImport.normInvoiceDate(_struct.invoice.vencimento, _refYear);
+        _struct.invoice.itens = _struct.invoice.itens.map((it) => ({ ...it, data: invoiceImport.normInvoiceDate(it.data || it.date || null, _refYear) }));
         // Lista 100% estornos → card_refund determinístico (não import-compras, não LLM). Regressão Rose 14/06.
         if (invoiceImport.allItemsRefund(_struct.invoice.itens)) {
           const _refundReply = await commitRefundList(collab.id, _struct.invoice);
@@ -8315,7 +8324,7 @@ async function processMessage(phone, text, raw = {}) {
 
   // === Intercept A: proposta de import de fatura (texto tem [FATURA_JSON]) ===
   try {
-    const _invParsed = invoiceImport.parseInvoiceBlock(text);
+    const _invParsed = invoiceImport.parseInvoiceBlock(text, _refYear);
     if (_invParsed.found && _invParsed.invoice && _invParsed.invoice.itens.length > 0) {
       const _inv = _invParsed.invoice;
       const _cards = await financeService.findCard(collab.id, _inv.emissor);
