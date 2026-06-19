@@ -91,5 +91,6 @@ Se user disser "pula essa semana" → action="cancel" na instância específica 
 
 ## Pausar/cancelar série
 
-- "Para de me lembrar disso" → action="cancel" no TEMPLATE (deleta cascade as instâncias futuras via FK).
+- "Para de me lembrar disso" / "encerra isso" / "não preciso mais fazer" → `action="cancel"` **+ `"scope":"series"`** (Balde A 19/06). O engine fecha o molde E cancela as instâncias futuras pendentes (não depende de cascade do FK). Pode emitir no id da INSTÂNCIA que você tem no contexto OU no do template — o engine resolve o molde a partir da instância. Confirme: "✅ encerrei a recorrência."
 - "Termina em dezembro" → action="reschedule" no TEMPLATE com nova RRULE incluindo UNTIL.
+- "Feito" / "concluí" numa tarefa recorrente → `action="complete"` na INSTÂNCIA (fecha só a de hoje, a série segue). NUNCA conclua o template num "feito" — isso pararia a recorrência sem o user pedir.

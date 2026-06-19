@@ -4170,6 +4170,7 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
             continue;
           }
         } else {
+          const { updateAffected } = require('./utils/task-update-result');
           const rP = await supabase
             .from('tasks')
             .update({
@@ -4178,8 +4179,18 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
               completed_by: collaborator.id,
             })
             .eq('id', t.id)
-            .eq('assigned_to', collaborator.id);
+            .eq('assigned_to', collaborator.id)
+            .select('id');
           error = rP.error;
+          // Balde A (audit 19/06): anti-"concluí mentiroso". 0 linhas afetadas (id não bate,
+          // assigned_to divergente, drift de collaborator.id) NÃO é sucesso — antes o engine
+          // dizia "concluí!" com a tarefa ainda pending (caso Fabi). Reporta honesto.
+          if (!error && !updateAffected(rP)) {
+            failMessages.push(`Não consegui fechar *${t.title}* — pode ter mudado de responsável ou de lugar. Me confirma qual era?`);
+            console.warn(`[Task] complete NO-OP id=${a.id} by ${last4} — 0 linhas afetadas`);
+            failCount++;
+            continue;
+          }
         }
         if (error) {
           console.error('[Task] complete err:', error.message);
@@ -4298,8 +4309,34 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
           continue;
         }
         const { data: fullTaskCan } = await supabase
-          .from('tasks').select('id, title, created_by, assigned_to')
+          .from('tasks').select('id, title, created_by, assigned_to, recurrence_rule, recurrence_parent_id')
           .eq('id', tCan.id).maybeSingle();
+        // Balde A (audit 19/06): encerrar a SÉRIE quando o user diz "para de me lembrar /
+        // encerra isso / não preciso mais" (a skill emite scope:"series"). Fecha o molde +
+        // cancela instâncias FUTURAS pendentes — comportamento normal a pedido do usuário
+        // (NÃO é limpeza de backlog/Balde B). Sem scope = cancela só esta tarefa (default).
+        if (a.scope === 'series' && fullTaskCan) {
+          const templateId = fullTaskCan.recurrence_rule != null
+            ? fullTaskCan.id
+            : fullTaskCan.recurrence_parent_id;
+          if (templateId) {
+            const _todayYmd = todaySaoPaulo();
+            const ownerId = fullTaskCan.assigned_to || collaborator.id;
+            try {
+              const rTpl = await supabase.from('tasks')
+                .update({ status: 'cancelled' })
+                .eq('id', templateId).eq('assigned_to', ownerId)
+                .not('status', 'in', '("done","cancelled")').select('id');
+              const rKids = await supabase.from('tasks')
+                .update({ status: 'cancelled' })
+                .eq('recurrence_parent_id', templateId).eq('assigned_to', ownerId)
+                .gte('due_date', _todayYmd)
+                .not('status', 'in', '("done","cancelled")').select('id');
+              const n = (rTpl.data ? rTpl.data.length : 0) + (rKids.data ? rKids.data.length : 0);
+              console.log(`[Task] cancel SERIES template=${String(templateId).slice(0, 8)} → ${n} linha(s) by ${last4}`);
+            } catch (eSer) { console.warn('[Task] cancel SERIES err:', eSer.message); }
+          }
+        }
         const { error: errCan } = await supabase
           .from('tasks')
           .update({ status: 'cancelled' })
@@ -10936,7 +10973,13 @@ async function sendRitual(collaboratorId, ritualType, opts = {}) {
   let _closingItems = [];
   if (ritualKey === 'fechamento') {
     try {
-      _closingItems = buildClosingItems(ctx && ctx.workTasks, { today: todaySaoPaulo() });
+      // Balde A (audit 19/06): o fechamento é do DIA — não cobra tarefa de amanhã (caso
+      // Quintela). Mantém atrasadas (due < hoje) + hoje; corta futuras (due > hoje). Sem
+      // due_date entra (tarefa sem prazo pode ser fechada). O dedup por série já veio do ctx.
+      const _todayYmd = todaySaoPaulo();
+      const _closingPool = (ctx && Array.isArray(ctx.workTasks) ? ctx.workTasks : [])
+        .filter((t) => !t.due_date || String(t.due_date) <= _todayYmd);
+      _closingItems = buildClosingItems(_closingPool, { today: _todayYmd });
     } catch (e) { console.warn('[Closing] buildClosingItems err:', e.message); }
     if (_closingItems.length) {
       const lista = _closingItems.map((it) => `${it.index}. ${it.title}`).join('\n');

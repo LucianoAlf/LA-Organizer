@@ -367,6 +367,10 @@ async function materializeAll() {
       .not('recurrence_rule', 'is', null)
       .is('recurrence_parent_id', null)
       .eq('data_classification', 'real')
+      // Balde A (audit 19/06): molde concluído/cancelado NÃO gera mais instância. Antes,
+      // sem este filtro, um template `done` (caso Gabi) seguia parindo cópia `pending` toda
+      // madrugada → a tarefa "voltava" mesmo depois de fechada.
+      .not('status', 'in', '("done","cancelled")')
       .limit(500);
     if (error) {
       console.error(`[recurrence] templates query err table=${table}:`, error.message);

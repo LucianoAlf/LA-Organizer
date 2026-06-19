@@ -5296,14 +5296,19 @@ async function checkTaskCheckins(now) {
 
     if (await alreadySent(c.id, ritualType, ymd)) continue;
 
-    const { data: tasks } = await supabase
+    const { data: tasksRaw } = await supabase
       .from('tasks')
-      .select('title, context, due_date')
+      .select('title, context, due_date, recurrence_parent_id, recurrence_rule')
       .eq('assigned_to', c.id)
       .lte('due_date', next7)
       .not('status', 'in', '(done,cancelled)')
       .order('due_date', { ascending: true })
       .limit(20);
+
+    // Balde A (audit 19/06): dedup por série — antes a MESMA tarefa recorrente aparecia N
+    // vezes no check (prova read-only Gabi: 6 bullets → 1). Helper puro testado.
+    const { dedupRecurringSeries } = require('../utils/recurring-dedup');
+    const tasks = dedupRecurringSeries(tasksRaw);
 
     if (!tasks || !tasks.length) {
       await logRitualEvent(c.id, ritualType, 'skipped', 'no_pending_tasks', ymd);

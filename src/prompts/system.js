@@ -1390,7 +1390,7 @@ async function fetchCollaboratorContext(collaborator) {
   const today = todaySaoPaulo();
   const next7days = (() => { const d = new Date(today + 'T15:00:00.000Z'); d.setDate(d.getDate() + 7); return d.toISOString().slice(0, 10); })();
   const past7days = (() => { const d = new Date(today + 'T15:00:00.000Z'); d.setDate(d.getDate() - 7); return d.toISOString().slice(0, 10); })();
-  const TASK_COLS = 'id, title, description, status, priority, eisenhower_quadrant, due_date, context, remind_at, project_id, projects(name), parent_task_id, is_group';
+  const TASK_COLS = 'id, title, description, status, priority, eisenhower_quadrant, due_date, context, remind_at, project_id, projects(name), parent_task_id, is_group, recurrence_rule, recurrence_parent_id';
 
   const isLeadership = collaborator.role === 'director' || collaborator.role === 'coordinator' ||
     collaborator.role === 'manager' || collaborator.role === 'leader';
@@ -1687,12 +1687,17 @@ async function fetchCollaboratorContext(collaborator) {
     for (const g of (templateGroups || [])) templateGroupIds.add(g.id);
   } catch (_) { /* não-fatal */ }
 
-  const personalTasks = (personalRes.data || []).filter(
+  // Balde A (audit 19/06): dedup por série — instâncias da mesma recorrência colapsam numa
+  // só. Antes, as ~22 cópias materializadas (horizonte 30d) viravam 22 linhas no briefing/
+  // fechamento (a mesma tarefa repetida). Dedup ANTES do slice(max_daily) pra não desperdiçar
+  // as 3 vagas com duplicatas. Função pura, testada em utils/recurring-dedup.test.js.
+  const { dedupRecurringSeries } = require('../utils/recurring-dedup');
+  const personalTasks = dedupRecurringSeries((personalRes.data || []).filter(
     (t) => !(t.is_group && t.recurrence_rule != null) && !templateGroupIds.has(t.parent_task_id)
-  );
-  const workRaw = (workRes.data || []).filter(
+  ));
+  const workRaw = dedupRecurringSeries((workRes.data || []).filter(
     (t) => !(t.is_group && t.recurrence_rule != null) && !templateGroupIds.has(t.parent_task_id)
-  );
+  ));
 
   // Fix (2026-05-15): tasks done com due_date >= hoje — permite TOM responder
   // "o que eu tinha pra amanhã?" mesmo após marcar como feito.
