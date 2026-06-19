@@ -87,7 +87,23 @@ git -C $workDir push origin main 2>$null
 $changed = git -C $workDir diff HEAD~1 --name-only 2>$null
 $needsVPS = $changed | Where-Object { $_ -match "^(src/|skills/|migrations/)" }
 
-if ($needsVPS) {
+# 6.1 GOVERNANCA — modo HOLD (licao 19/06, Balde A recorrencia).
+#     Se a flag existe, o ENGINE (src/skills/migrations) NAO sobe pra VPS sozinho.
+#     Commit+push (versionamento + web/ via Vercel) continuam; so o deploy do TOM
+#     fica RETIDO ate OK explicito. Pra liberar: apague a flag e rode
+#     scripts\deploy-tom.ps1. Motivo: o auto-deploy ja subiu backend antes do OK
+#     do Alf/Alfredo (Balde A) — producao nunca mais muda sem aprovacao.
+$holdFlag = "D:\la-organizer\.deploy-hold"
+
+if ($needsVPS -and (Test-Path $holdFlag)) {
+    Write-Output "=================================================================="
+    Write-Output "  [HOLD ATIVO] backend NAO deployado na VPS (flag: $holdFlag)"
+    Write-Output "  Backend commitado+pushado, MAS RETIDO do engine TOM:"
+    $needsVPS | ForEach-Object { Write-Output "    - $_" }
+    Write-Output "  Pra deployar: remova a flag e rode scripts\deploy-tom.ps1"
+    Write-Output "=================================================================="
+}
+elseif ($needsVPS) {
     # Sprint 26 — fetch + reset --hard origin/main em vez de git pull.
     # Diferença crítica: reset --hard SÓ TOCA arquivos tracked. Untracked
     # (.env, .claude-tom/, node_modules/) ficam intactos. Nunca mais arrastar
