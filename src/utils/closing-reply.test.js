@@ -226,3 +226,28 @@ test('batchCompleteNeedsConfirm: 1 tarefa só → false (não é lote)', () => {
 test('batchCompleteNeedsConfirm: inbound vazio + lote → true (defensivo)', () => {
   assert.strictEqual(batchCompleteNeedsConfirm({ completedTitles: ['A B C', 'D E F'], inboundText: '' }), true);
 });
+
+// ---------------------------------------------------------------------------
+// futureDoneItems — guarda (b): dos items 'done', separa os de due FUTURA p/ o
+// interceptor NÃO fechar tarefa de amanhã no fechamento de hoje (caso Quintela).
+// ---------------------------------------------------------------------------
+const { futureDoneItems } = require('./closing-reply');
+const ITEMS = [
+  { index: 1, type: 'task', id: 'a', title: 'Hoje' },
+  { index: 2, type: 'task', id: 'b', title: 'Amanhã' },
+];
+
+test('futureDoneItems: done com due futura é separado; due hoje/passado não', () => {
+  const out = futureDoneItems(ITEMS, ['done', 'done'], { a: '2026-06-18', b: '2026-06-19' }, '2026-06-18');
+  assert.deepStrictEqual(out.map((i) => i.id), ['b']);
+});
+test('futureDoneItems: só considera done (progress/none ignorados)', () => {
+  assert.deepStrictEqual(futureDoneItems(ITEMS, ['progress', 'none'], { a: '2026-06-19', b: '2026-06-19' }, '2026-06-18'), []);
+});
+test('futureDoneItems: sem due_date não é futura (fecha normal)', () => {
+  assert.deepStrictEqual(futureDoneItems([{ index: 1, type: 'task', id: 'a', title: 'x' }], ['done'], { a: null }, '2026-06-18'), []);
+});
+test('futureDoneItems: due com timestamp futuro também separa', () => {
+  const out = futureDoneItems([{ index: 1, type: 'task', id: 'a', title: 'x' }], ['done'], { a: '2026-06-20T13:00:00Z' }, '2026-06-18');
+  assert.deepStrictEqual(out.map((i) => i.id), ['a']);
+});
