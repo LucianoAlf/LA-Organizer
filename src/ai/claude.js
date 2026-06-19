@@ -116,9 +116,42 @@ function buildArgs(userPrompt, sysPromptFile) {
   ];
 }
 
+// Lê o expiresAt do CANON e decide pool vs canon. Se não conseguir ler → 'canon' (seguro).
+function getValidToken() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(CLAUDE_HOME, '.credentials.json'), 'utf8'));
+    const expiresAt = raw.claudeAiOauth?.expiresAt || 0;
+    return decideRefreshMode(expiresAt, Date.now(), REFRESH_SLACK_MS);
+  } catch (_) {
+    return 'canon';
+  }
+}
+
+// Caminho paralelo (flag ON). Token em folga → worker do pool; token perto de
+// expirar → serializa no CANON (canonLock) e deixa o CLI refrescar por carona.
+async function _chatParallel(systemPrompt, messages, enqueuedAt) {
+  if (!_pool) ensureWorkerHomes();
+  if (getValidToken() === 'canon') {
+    const job = _canonLock.then(() => _chatInner(systemPrompt, messages, enqueuedAt, CLAUDE_USER_HOME));
+    _canonLock = job.catch(() => {});
+    return job;
+  }
+  const slot = await _pool.acquire();
+  try {
+    syncCredsToWorker(slot.home);
+    return await _chatInner(systemPrompt, messages, enqueuedAt, slot.home);
+  } finally {
+    _pool.release(slot);
+  }
+}
+
 // Wrapper público: enfileira na _claudeQueue pra serializar acesso ao .claude.json.
 async function chat(systemPrompt, messages, maxTokens) {
   const enqueuedAt = Date.now();
+  if (PARALLEL_ENABLED) {
+    return _chatParallel(systemPrompt, messages, enqueuedAt);
+  }
+  // Caminho serial (flag OFF) — idêntico ao de hoje.
   const job = _claudeQueue.then(() => _chatInner(systemPrompt, messages, enqueuedAt));
   // Mantém a cadeia viva mesmo se este job rejeitar (catch silencioso só pra fila).
   _claudeQueue = job.catch(() => {});
@@ -176,7 +209,7 @@ async function _chatInner(systemPrompt, messages, enqueuedAt, home = CLAUDE_USER
       // carregamento de CLAUDE.md (o CLI sobe pelos ancestrais do cwd — um subdir de
       // /opt/LA-Organizer não resolveria). sysprompt e tmp são absolutos; tools/MCP já
       // estão off → o cwd não importa pra mais nada.
-      env: buildEnv(),
+      env: buildEnv(home),
       cwd: os.tmpdir(),
     });
 
@@ -330,7 +363,7 @@ function stripModelHtml(raw) {
 }
 
 // Spawn + parse → { rawResult, meta }. SEM sanitizer. Mesma mecânica do _chatInner.
-function _spawnRaw(systemPrompt, userPrompt) {
+function _spawnRaw(systemPrompt, userPrompt, home = CLAUDE_USER_HOME) {
   const tmpFile = path.join(os.tmpdir(), `tom-fmt-${process.pid}-${Date.now()}-${_tmpCounter++}.txt`);
   try {
     fs.writeFileSync(tmpFile, systemPrompt, 'utf8');
@@ -342,7 +375,7 @@ function _spawnRaw(systemPrompt, userPrompt) {
   return new Promise((resolve, reject) => {
     const cleanup = () => { try { fs.unlinkSync(tmpFile); } catch (_) {} };
     const args = buildArgs(userPrompt, tmpFile);
-    const child = spawn(CLAUDE_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'], env: buildEnv(), cwd: os.tmpdir() });
+    const child = spawn(CLAUDE_BIN, args, { stdio: ['ignore', 'pipe', 'pipe'], env: buildEnv(home), cwd: os.tmpdir() });
     let stdout = '';
     let stderr = '';
     let settled = false;
@@ -389,12 +422,27 @@ function _spawnRaw(systemPrompt, userPrompt) {
 
 // chatRaw(systemPrompt, userPrompt) → { text, provider, meta }. Enfileira igual ao chat().
 async function chatRaw(systemPrompt, userPrompt) {
-  const job = _claudeQueue.then(() => _spawnRaw(systemPrompt, userPrompt));
-  _claudeQueue = job.catch(() => {});
+  let job;
+  if (PARALLEL_ENABLED) {
+    if (!_pool) ensureWorkerHomes();
+    if (getValidToken() === 'canon') {
+      job = _canonLock.then(() => _spawnRaw(systemPrompt, userPrompt, CLAUDE_USER_HOME));
+      _canonLock = job.catch(() => {});
+    } else {
+      job = (async () => {
+        const slot = await _pool.acquire();
+        try { syncCredsToWorker(slot.home); return await _spawnRaw(systemPrompt, userPrompt, slot.home); }
+        finally { _pool.release(slot); }
+      })();
+    }
+  } else {
+    job = _claudeQueue.then(() => _spawnRaw(systemPrompt, userPrompt));
+    _claudeQueue = job.catch(() => {});
+  }
   const { rawResult, meta } = await job;
   const text = stripModelHtml(rawResult);
   if (!text) { const e = new Error('Claude chatRaw vazio'); e.kind = 'empty'; e.provider = 'claude'; throw e; }
   return { text, provider: 'claude', meta };
 }
 
-module.exports = { chat, chatRaw, buildArgs, stripModelHtml };
+module.exports = { chat, chatRaw, buildArgs, stripModelHtml, ensureWorkerHomes, getValidToken };
