@@ -59,21 +59,27 @@ async function postTomText(supabase, groupId, content) {
 
 async function processGroupChatMessage({ supabase, groupId, senderCollabId, text }) {
   // ── PRÉ-PASSO: confirmação determinística de ação destrutiva pendente (roda ANTES do LLM) ──
-  // Um "sim"/"não" seco do MESMO remetente resolve a exclusão pendente (não confia no LLM threading).
+  // Um "sim"/"não" seco do MESMO remetente resolve a pendência (apagar ficha OU encerrar série).
+  // Determinístico: NÃO confia no LLM pro threading "sim/não" (lição dos rituais de fechamento).
   try {
     const { data: pend } = await supabase.from('group_chat_pending_confirms')
       .select('*').eq('group_id', groupId).eq('sender_collab_id', senderCollabId)
-      .eq('op', 'delete_note').gt('expires_at', new Date().toISOString()).maybeSingle();
+      .in('op', ['delete_note', 'end_series']).gt('expires_at', new Date().toISOString()).maybeSingle();
     if (pend) {
       const verdict = groupNotes.decideConfirm(pend, text);
       if (verdict === 'execute') {
-        await groupNotes.softDeleteGroupNoteById({ supabase, noteId: pend.target_id });
         await supabase.from('group_chat_pending_confirms').delete().eq('id', pend.id);
+        if (pend.op === 'end_series') {
+          await endSeries({ supabase, templateId: pend.target_id });
+          return await postTomText(supabase, groupId, `Encerrei a série *${pend.summary}* — não gera mais tarefa nova. Pra voltar é só pedir "religa a série ${pend.summary}". ✅`);
+        }
+        await groupNotes.softDeleteGroupNoteById({ supabase, noteId: pend.target_id });
         return await postTomText(supabase, groupId, `Apaguei a ficha *${pend.summary}* — tá na lixeira. É só pedir "restaura a ficha ${pend.summary}" que eu trago de volta. 🗑️`);
       }
       if (verdict === 'cancel') {
         await supabase.from('group_chat_pending_confirms').delete().eq('id', pend.id);
-        return await postTomText(supabase, groupId, `Ok, não apaguei a ficha *${pend.summary}*. 👍`);
+        const msg = pend.op === 'end_series' ? `Ok, mantive a série *${pend.summary}* rodando. 👍` : `Ok, não apaguei a ficha *${pend.summary}*. 👍`;
+        return await postTomText(supabase, groupId, msg);
       }
       // 'ignore' → segue o fluxo normal (a pendência expira sozinha em ~10min)
     }
@@ -206,6 +212,43 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
         console.error('[GroupChat] TASK_GROUP erro:', e.message);
         actions.push({ kind: 'task', status: 'fail', label: payload.title || payload.group || 'Pacote', detail: 'não consegui montar o pacote' });
       }
+    }
+  }
+
+  // ─── CICLO DE SÉRIE RECORRENTE (encerrar / religar) ───────────────────────
+  // <<TASK_SERIES>>{action:end|revive, title}<<END>> — group-only. 'end' CONFIRMA (pré-passo);
+  // 'revive' é direto. NÃO passa pelo validateTaskAction do engine (blast radius zero na recorrência).
+  const tsMatch = reply.match(/<<TASK_SERIES>>([\s\S]*?)<<END>>/i);
+  if (tsMatch) {
+    stripBlock(/<<TASK_SERIES>>[\s\S]*?<<END>>/i);
+    let ps = null; try { ps = JSON.parse(tsMatch[1].trim()); } catch (_) { ps = null; }
+    if (!ps || (ps.action !== 'end' && ps.action !== 'revive')) {
+      actions.push({ kind: 'task', status: 'fail', label: 'Série', detail: 'marker malformado' });
+    } else if (ps.action === 'end') {
+      try {
+        const { data: hit } = await supabase.from('tasks')
+          .select('id, title, recurrence_rule, recurrence_parent_id')
+          .eq('assigned_group_id', groupId).neq('status', 'cancelled')
+          .ilike('title', String(ps.title || '').trim()).limit(5);
+        const tpl = resolveSeriesTemplate(hit);
+        const templateId = tpl ? tpl.id : (((hit || []).find((r) => r.recurrence_parent_id) || {}).recurrence_parent_id || null);
+        if (!templateId) {
+          actions.push({ kind: 'task', status: 'fail', label: ps.title || 'Série', detail: 'não achei essa série recorrente' });
+        } else {
+          const { data: t } = await supabase.from('tasks').select('id, title').eq('id', templateId).maybeSingle();
+          const summary = (t && t.title) || ps.title;
+          const expires = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+          await supabase.from('group_chat_pending_confirms')
+            .upsert({ group_id: groupId, sender_collab_id: senderCollabId, op: 'end_series', target_id: templateId, summary, expires_at: expires }, { onConflict: 'group_id,sender_collab_id,op' });
+          actions.push({ kind: 'task', status: 'pending', label: summary, detail: '❓ confirmar encerramento da série' });
+          console.log(`[GroupChat] task_series end PENDENTE grupo=${groupId}: "${summary}"`);
+        }
+      } catch (e) { console.error('[GroupChat] TASK_SERIES end:', e.message); actions.push({ kind: 'task', status: 'fail', label: ps.title || 'Série', detail: 'não consegui montar' }); }
+    } else {
+      try {
+        const r = await reviveSeries({ supabase, groupId, title: ps.title });
+        actions.push({ kind: 'task', status: r.revived ? 'ok' : 'fail', label: ps.title, detail: r.revived ? '♻️ série religada' : 'não achei essa série encerrada' });
+      } catch (e) { console.error('[GroupChat] TASK_SERIES revive:', e.message); actions.push({ kind: 'task', status: 'fail', label: ps.title || 'Série', detail: 'não consegui religar' }); }
     }
   }
 
@@ -408,7 +451,8 @@ function buildTomContent(rawReply, actions) {
   // escreveu prosa — senão o bridge-out (que tira o bloco ACTIONS) espelharia VAZIO no WhatsApp.
   if (!content) {
     const pend = acts.find((a) => a && a.status === 'pending');
-    if (pend) content = `Confirma que é pra apagar a ficha *${pend.label}*? Responde "sim" que eu mando pra lixeira (dá pra restaurar depois). 🗑️`;
+    if (pend && pend.kind === 'task') content = `Confirma que é pra encerrar a série *${pend.label}*? Responde "sim" que ela para de gerar tarefa nova (dá pra religar depois). ✅`;
+    else if (pend) content = `Confirma que é pra apagar a ficha *${pend.label}*? Responde "sim" que eu mando pra lixeira (dá pra restaurar depois). 🗑️`;
   }
   if (acts.length) content = (content ? content + '\n' : '') + ACTIONS_DELIM + JSON.stringify(acts);
   return content.trim() || null;
