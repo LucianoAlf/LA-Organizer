@@ -262,7 +262,23 @@ Comparar o hash antes/depois de um ciclo natural de refresh do CANON. Hash mudou
 
 ---
 
-## 12. Fora de escopo / decisões adiadas
+## 12. Resultados da Fase 0 — executada em 2026-06-19 (Alf presente)
+
+Ambiente: VPS, CLI 2.1.143, token com folga 5,2h→4,7h durante os testes. CANON conferido por hash **antes/depois de cada experimento** — inalterado em 100% das medições (`refreshToken` jq-r=`2326376d…`, jq-j=`86c9ad81…`; `.claude.json` 29.245 B válido; `expiresAt` `1781906408875` constante). Salvaguarda extra adotada na execução: cred copiada pros workers em **`chmod 444`** (impede fisicamente o worker de refrescar/rotacionar).
+
+| Exp | O que | Resultado bruto | Hipótese |
+|---|---|---|---|
+| 1 | Backup do CANON | `.bak.1781887636` (471 B + 29.245 B) | — |
+| 2 | Auth em HOME isolado (cred 444) | `is_error:false`, `result:"OK"`, 1,77 s; worker criou `.claude.json` próprio (25,8 KB) | **H1 ✅** (não refresca c/ folga) · **H2 ✅** (basta `.credentials.json`) |
+| 3 | K=2 paralelo, 20 rodadas (40 spawns) | 20/20 OK, zero corrupção, CANON intacto por rodada | **H3 ✅** |
+| 4 | Latência serial vs pool K=2, N=20 | serial p50 **5557 ms** / pool p50 **2809 ms** → **1,98× no p50** (p95 7911→3946; max 8913→4494) | **H4 ✅** |
+| 5 | Rotação passiva | baseline gravado; aguardando refresh natural (~`expiresAt`, 21h30) | pendente |
+
+**Nota — backups internos de 50 B nos workers** (`/tmp/tomtest-w*/.claude/backups/.claude.json.backup.*`): cada worker teve **exatamente 1**, com conteúdo `{"firstStartTime":"…"}`. É o `.claude.json` **recém-criado** (só o 1º campo), salvo pelo mecanismo backup-antes-de-escrever do CLI **antes** de popular o arquivo (que chega a 26 KB, 15 chaves, válido). **Não é corrupção:** o arquivo cresce 50 B→26 KB e nunca regride; é o **oposto** do bug Sprint 26 (lá um `.claude.json` de 29 KB *regredia* pra ~50 B por escrita concorrente no HOME compartilhado, perdendo dados reais). Os backups do CANON seguem todos ~29 KB. Único por worker, não recorrente, não intercalado com tamanhos grandes.
+
+**Gate A:** H1–H4 satisfeitas com **K=2**; falta só a classificação do Exp 5 (confirmatória, não bloqueante — o design já é robusto a rotação). **A implementação (Fase 1) aguarda nova aprovação do Alf.**
+
+## 13. Fora de escopo / decisões adiadas
 
 - Paralelismo dentro do próprio refresh (manter serial — é raro).
 - Migração para `ANTHROPIC_API_KEY`/Bedrock/Vertex.

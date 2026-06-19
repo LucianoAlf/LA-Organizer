@@ -4,7 +4,7 @@
 // e registra inserts/updates (necessário p/ testar o cancel, que é await terminal).
 const assert = require('node:assert');
 const { test } = require('node:test');
-const { applyGroupChatTaskActions, titleSimilarity } = require('./group-chat-tasks');
+const { applyGroupChatTaskActions, titleSimilarity, pickInstanceTarget } = require('./group-chat-tasks');
 
 function makeDb({ tasks = [], events = [] } = {}) {
   function builder() {
@@ -14,6 +14,7 @@ function makeDb({ tasks = [], events = [] } = {}) {
         if (st.filters.assigned_group_id && t.assigned_group_id !== st.filters.assigned_group_id) return false;
         if (st.filters.id && t.id !== st.filters.id) return false;
         if (st.filters.recurrence_parent_id && t.recurrence_parent_id !== st.filters.recurrence_parent_id) return false;
+        if (st.filters.parent_task_id && t.parent_task_id !== st.filters.parent_task_id) return false;
         if (st.filters.neq_status && t.status === st.filters.neq_status) return false;
         if (st.filters.ilike_title && String(t.title).toLowerCase() !== st.filters.ilike_title) return false;
         return true;
@@ -36,6 +37,7 @@ function makeDb({ tasks = [], events = [] } = {}) {
       gte() { return b; },
       ilike(c, v) { st.filters['ilike_' + c] = String(v).toLowerCase(); return b; },
       is() { return b; },
+      order() { return b; },
       limit() { return b; },
       update(patch) { st.op = 'update'; st.patch = patch; return b; },
       insert(row) { st.op = 'insert'; st.row = row; return b; },
@@ -128,5 +130,44 @@ test('B: cancel não pega tarefa de outro grupo', async () => {
     actions: [{ action: 'cancel', title: 'Outra' }],
   });
   assert.strictEqual((r.cancelled || []).length, 0);
-  assert.ok(r.failed.some((f) => f.why === 'not_found_or_too_old'));
+  assert.ok(r.failed.some((f) => f.why === 'not_found_in_group'));
+});
+
+// ── CARD-RECUR-TEMPLATE-KILL (caso Conciliação de Cartões/Rose 17/06) ──
+// Cancelar/concluir por título NÃO pode acertar o MOLDE recorrente, senão a série
+// morre de vez (materializeAll pula molde cancelado/concluído → nunca regenera).
+
+test('pickInstanceTarget: protege o molde — nunca retorna template (recurrence_rule)', () => {
+  const tpl = { id: 't', recurrence_rule: 'FREQ=MONTHLY;BYMONTHDAY=1' };
+  const inst = { id: 'i', recurrence_rule: null };
+  assert.strictEqual(pickInstanceTarget([tpl, inst]).id, 'i');
+  assert.strictEqual(pickInstanceTarget([inst, tpl]).id, 'i');
+  assert.strictEqual(pickInstanceTarget([tpl]), null); // só o molde → não opera (não mata a série)
+  assert.strictEqual(pickInstanceTarget([]), null);
+});
+
+test('cancel NUNCA mata o molde recorrente — mira a instância visível', async () => {
+  const events = [];
+  const tpl = G({ id: 'tpl', title: 'Conciliação de Cartões', is_group: true, recurrence_rule: 'FREQ=MONTHLY;BYMONTHDAY=1' });
+  const inst = G({ id: 'inst', title: 'Conciliação de Cartões', is_group: true, recurrence_parent_id: 'tpl' });
+  const r = await applyGroupChatTaskActions({
+    supabase: makeDb({ tasks: [tpl, inst], events }), groupId: 'g1', senderCollabId: 'c1',
+    actions: [{ action: 'cancel', title: 'Conciliação de Cartões' }],
+  });
+  assert.ok(events.find((e) => e.kind === 'update' && e.id === 'inst' && e.patch.status === 'cancelled'), 'instância cancelada');
+  assert.strictEqual(tpl.status, 'pending', 'MOLDE segue vivo → série não morre');
+  assert.strictEqual((r.cancelled || [])[0] && r.cancelled[0].id, 'inst');
+});
+
+test('complete NUNCA conclui o molde recorrente — mira a instância', async () => {
+  const events = [];
+  const tpl = G({ id: 'tpl', title: 'Planilha mensal', recurrence_rule: 'FREQ=MONTHLY;BYMONTHDAY=5' });
+  const inst = G({ id: 'inst', title: 'Planilha mensal', recurrence_parent_id: 'tpl' });
+  const r = await applyGroupChatTaskActions({
+    supabase: makeDb({ tasks: [tpl, inst], events }), groupId: 'g1', senderCollabId: 'c1',
+    actions: [{ action: 'complete', title: 'Planilha mensal' }],
+  });
+  assert.ok(events.find((e) => e.kind === 'update' && e.id === 'inst' && e.patch.status === 'done'), 'instância concluída');
+  assert.strictEqual(tpl.status, 'pending', 'molde não concluído');
+  assert.strictEqual((r.completed || [])[0] && r.completed[0].id, 'inst');
 });
