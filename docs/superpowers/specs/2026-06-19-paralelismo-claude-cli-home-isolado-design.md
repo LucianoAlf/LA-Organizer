@@ -123,7 +123,7 @@ getValidToken()  ── lê expiresAt do CANON/.claude/.credentials.json
 
 - **H1:** worker com token em folga **não** refresca (não reescreve o `.credentials.json`). → Exp 2.
 - **H2:** worker autentica só com `.credentials.json` (sem precisar do `.claude.json` do CANON); se precisar, copiamos um `.claude.json` mínimo. → Exp 2.
-- **H3:** K spawns em HOMEs isolados **não** corrompem nenhum arquivo. → Exp 3.
+- **H3:** K=2 spawns em HOMEs isolados **não** corrompem nenhum arquivo (nem do worker, nem do CANON). → Exp 3.
 - **H4:** há ganho de latência mensurável sob concorrência. → Exp 4.
 - **H5:** classificar se o `refreshToken` **rotaciona** no refresh natural. (Design já é robusto a rotação; isto é confirmação.) → Exp 5.
 - **H6:** `claude auth status` é read-only (não dispara refresh). → Exp 2 (observação).
@@ -172,14 +172,20 @@ ssh tom 'cp -a <backup> /opt/LA-Organizer/.claude-tom/.claude/.credentials.json'
 
 ---
 
-## 7. Roteiro de experimentos — **Fase 0** (aprovado; só `/tmp` + leitura do CANON)
+## 7. Roteiro de experimentos — **Fase 0** (aprovado; só `/tmp` + cópia das credenciais do CANON)
 
-Regras da Fase 0: **só leem o CANON (cópia), nunca escrevem nele**; rodam com o token em **folga grande** (logo após um refresh, ~2–3h de validade) para que o CLI de teste não refresque; **não** forçam rotação; **não** tocam o fluxo do WhatsApp; **não** reiniciam o PM2.
+> **Risco honesto:** estes experimentos **não tocam o fluxo real do WhatsApp**, mas **não são "zero risco"** — copiar o `.credentials.json` para um HOME de teste carrega o **`refreshToken` real**; se o CLI de teste decidir refrescar, pode disparar rotação e afetar a auth real no servidor. Risco **baixo**, não nulo. (Sem efeito na auth de fato, porque não rodam o CLI: Exp 1, que só faz `cp` de backup, e Exp 5, que só lê + hasheia.)
 
-### Exp 1 — Backup do CANON (5 s, zero risco)
+**Gate de `expiresAt` (obrigatório antes de Exp 2/3/4):** ler o `expiresAt` do CANON e **só rodar se houver > 2 h de folga**. Se faltar menos, **aguardar o CANON refrescar naturalmente** e só então testar. Com > 2 h de folga o CLI de teste não refresca → qualquer mudança no `refreshToken` do CANON denuncia que um worker disparou rotação.
+
+**Protocolo por rodada (Exp 2/3/4):** registrar `sha256(refreshToken do CANON)` **antes e depois** de cada rodada. Igual = CANON intacto, nenhum worker rotacionou. Diferente (com folga > 2 h) = **alerta**, parar tudo.
+
+**Proibições nesta fase:** nenhum deploy, nenhum `scp` pro fluxo real, nenhum `pm2 restart`, nenhum código novo no engine, nenhuma rotação forçada com a credencial real.
+
+### Exp 1 — Backup do CANON (só `cp` local; não roda o CLI, sem efeito na auth)
 Copiar `.credentials.json` (e `.claude.json`) para `.bak.<ts>` na VPS (ver §6.4). Rede de segurança.
 
-### Exp 2 — HOME de teste: auth fora do `.claude-tom` (não toca produção)
+### Exp 2 — HOME de teste: auth fora do `.claude-tom` (baixo risco — carrega o refreshToken real)
 ```bash
 ssh tom '
 TS=$(date +%s); D=/tmp/tomtest-w0
@@ -194,15 +200,15 @@ echo; md5sum $D/.claude/.credentials.json      # DEPOIS (mudou = refrescou)
 ls -la $D $D/.claude
 '
 ```
-**Observar:** autenticou? (`is_error`/`result`). O md5 da credencial mudou? (H1) O CLI exigiu `.claude.json`? (H2 — repetir o teste **sem** copiar nada além do credentials). `auth status` num HOME de teste muda a credencial? (H6)
+**Observar:** autenticou? (`is_error`/`result`). O md5 da credencial **do worker** mudou? (H1) O CLI exigiu `.claude.json`? (H2 — o teste já roda **sem** copiar nada além do credentials). `auth status` num HOME de teste muda a credencial? (H6). **Prova do CANON:** `sha256(refreshToken do CANON)` antes e depois — deve ficar **igual** (CANON intocado).
 
-### Exp 3 — K spawns paralelos em HOMEs de teste (não toca produção)
-Criar `/tmp/tomtest-w0..w{K-1}` com cópia das credenciais; disparar K `claude -p` simultâneos; repetir **≥20 rodadas** com K ∈ {2,3,4}. Após cada rodada, validar que **todo** `.claude.json`/`.credentials.json` dos workers de teste continua sendo JSON válido e com tamanho coerente (não "50 bytes"), e que todas as respostas vieram. → prova de H3 / requisito #2.
+### Exp 3 — K=2 spawns paralelos em HOMEs de teste (baixo risco)
+Criar `/tmp/tomtest-w0..w1` com cópia das credenciais; disparar **K=2** `claude -p` simultâneos; repetir **≥20 rodadas**. Após cada rodada: (a) validar que **todo** `.claude.json`/`.credentials.json` dos workers continua JSON válido e com tamanho coerente (não "50 bytes") e que todas as respostas vieram; (b) registrar `sha256(refreshToken do CANON)` **antes/depois** (deve ficar igual). → prova de H3 / requisito #2. **K=3/4 fica como experimento posterior, fora do Gate A** (o rollout inicial é K=2).
 
-### Exp 4 — Latência: pool vs serial (não toca produção)
+### Exp 4 — Latência: pool vs serial (baixo risco)
 Cronometrar o wall-clock de K mensagens simultâneas (a) pela fila serial (baseline, 1 HOME) e (b) pelo pool (K HOMEs). Reportar p50/p95 e o fator de melhora. Baseline conhecido: floor do CLI ~2.4s, prod 8–12s. → requisito #3.
 
-### Exp 5 — Rotação do refresh token, **passiva** (zero risco)
+### Exp 5 — Rotação do refresh token, **passiva** (só leitura + hash; não roda o CLI)
 ```bash
 # snapshot do HASH (nunca o valor cru) do refreshToken do CANON, antes e depois de ~3h
 ssh tom 'jq -r ".claudeAiOauth.refreshToken" \
@@ -231,7 +237,7 @@ Comparar o hash antes/depois de um ciclo natural de refresh do CANON. Hash mudou
 
 ## 9. Rollback (por fase)
 
-- **Fase 0 (experimentos):** nada em produção para reverter. `rm -rf /tmp/tomtest-*`. Se (improvável) algo tocou o CANON, restaurar `.credentials.json` do backup (Exp 1).
+- **Fase 0 (experimentos):** não altera o fluxo real. Reverter = `rm -rf /tmp/tomtest-*` + apagar os `.bak`. Se (improvável) um worker rotacionou o token (hash do refreshToken do CANON mudou), restaurar `.credentials.json` do backup (Exp 1) ou re-logar (§6.1).
 - **Fase 1 (código atrás da flag OFF):** comportamento idêntico ao de hoje (flag OFF). Reverter código = re-`scp` da versão anterior de `claude.js` (guardar cópia antes de editar).
 - **Fase 2 (flag ON):** reverter = `TOM_CLAUDE_PARALLEL=0` no `.env` + `pm2 restart tom` (segundos, **sem deploy de código**). Se a auth quebrou: `claude auth login --claudeai` no CANON (§6.1) + restart.
 
@@ -239,7 +245,7 @@ Comparar o hash antes/depois de um ciclo natural de refresh do CANON. Hash mudou
 
 ## 10. Critérios de aprovação (gates)
 
-- **Gate A — experimentos → código:** Exp 2 autentica fora do `.claude-tom` **e** worker não refresca com folga (H1 ok); Exp 3 com **zero** corrupção em ≥20 rodadas (K=2..4); Exp 4 mostra ganho de latência mensurável sob concorrência; Exp 5 classifica a rotação (sim/não).
+- **Gate A — experimentos → código:** Exp 2 autentica fora do `.claude-tom`, worker não refresca com folga (H1 ok) **e** `sha256(refreshToken do CANON)` inalterado; Exp 3 com **zero** corrupção em ≥20 rodadas **com K=2** (suficiente — o rollout inicial é K=2; **K=3/4 não é gate**) **e** refreshToken do CANON inalterado em todas as rodadas; Exp 4 mostra ganho de latência mensurável sob concorrência; Exp 5 classifica a rotação (sim/não).
 - **Gate B — código atrás da flag OFF:** Gate A ok **+** esta spec revisada pelo Alf **+** procedimento de re-login (§6) validado (Alf confirma que consegue completar o `auth login`).
 - **Gate C — ligar a flag em produção:** Gate B ok **+** Alf presente **+** backup do CANON feito **+** canário `auth status --json` verde **+** plano de reversão (§9) à mão. Registrar resultado em `tom_known_issues` (`AI-TIMEOUT-120S-QUEUE-STALL`).
 
@@ -249,7 +255,7 @@ Comparar o hash antes/depois de um ciclo natural de refresh do CANON. Hash mudou
 
 | Fase | O que | Toca produção? |
 |---|---|---|
-| **0** | Experimentos (§7) em `/tmp` + leitura do CANON | Não |
+| **0** | Experimentos (§7) em `/tmp` + cópia das credenciais | Não toca o fluxo real; carrega refreshToken real (baixo risco) |
 | **1** | Implementar §5.2 atrás da flag (default OFF) + testes unitários; deploy com flag OFF (comportamento idêntico) | Deploy do código, mas comportamento inalterado |
 | **2** | Ligar `TOM_CLAUDE_PARALLEL=1` com Alf presente; observar `pm2 logs` por ≥1 ciclo de refresh (~3h) | Sim (reversível por flag) |
 | **3** | Subir K se estável; registrar em `tom_known_issues` | Sim |
