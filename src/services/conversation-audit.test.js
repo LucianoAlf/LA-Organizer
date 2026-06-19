@@ -130,3 +130,49 @@ test('upsertFinding: assinatura inédita → insere novo', async () => {
   assert.strictEqual(r, 'inserted');
   assert.strictEqual(calls.inserts.length, 1);
 });
+
+// ── resolveIncidentAt (evidence-anchored) ───────────────────────────
+const { resolveIncidentAt } = require('./conversation-audit');
+
+// fakeSb p/ conversation_history: select→eq→gte→order→limit resolve {data}.
+function fakeConvSb(rows) {
+  const b = {
+    from() { return this; }, select() { return this; }, eq() { return this; },
+    gte() { return this; }, order() { return this; }, limit() { return Promise.resolve({ data: rows, error: null }); },
+  };
+  return b;
+}
+
+test('resolveIncidentAt: evidence casa com mensagem → high + created_at da msg', async () => {
+  const sb = fakeConvSb([
+    { created_at: '2026-06-09T10:00:00Z', content: 'oi tom', media_extracted_text: null },
+    { created_at: '2026-06-09T14:30:00Z', content: 'TOM não consigo salvar o gasto agora', media_extracted_text: null },
+  ]);
+  const out = await resolveIncidentAt(sb, 'c1', 'TOM: não consigo salvar o gasto agora', null, '2026-06-08T00:00:00Z');
+  assert.strictEqual(out.incident_confidence, 'high');
+  assert.strictEqual(out.incident_at, '2026-06-09T14:30:00Z');
+});
+test('resolveIncidentAt: sem casar mas com occurredAt → low', async () => {
+  const sb = fakeConvSb([{ created_at: '2026-06-09T10:00:00Z', content: 'nada a ver', media_extracted_text: null }]);
+  const out = await resolveIncidentAt(sb, 'c1', 'evidência inexistente xyz', '2026-06-09T23:59:00Z', '2026-06-08T00:00:00Z');
+  assert.strictEqual(out.incident_confidence, 'low');
+  assert.strictEqual(out.incident_at, '2026-06-09T23:59:00Z');
+});
+test('resolveIncidentAt: sem casar e sem occurredAt → none', async () => {
+  const sb = fakeConvSb([]);
+  const out = await resolveIncidentAt(sb, 'c1', 'qualquer', null, '2026-06-08T00:00:00Z');
+  assert.strictEqual(out.incident_confidence, 'none');
+  assert.strictEqual(out.incident_at, null);
+});
+
+test('upsertFinding: inserção grava incident_at e incident_confidence', async () => {
+  const calls = { inserts: [], updates: [] };
+  const sb = fakeSb([], calls); // sem finding prévio → insere
+  await upsertFinding(sb, { id: 'c1' }, {
+    category: 'confabulation', severity: 'alto', summary: 's3', evidence: 'e',
+    occurred_at: '2026-06-09T23:00:00Z', incident_at: '2026-06-09T14:30:00Z', incident_confidence: 'high',
+  });
+  assert.strictEqual(calls.inserts.length, 1);
+  assert.strictEqual(calls.inserts[0].incident_at, '2026-06-09T14:30:00Z');
+  assert.strictEqual(calls.inserts[0].incident_confidence, 'high');
+});

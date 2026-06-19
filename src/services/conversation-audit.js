@@ -79,18 +79,24 @@ async function loadConversation(sb, collaboratorId, hours = 24) {
     .map(m => `${m.direction === 'inbound' ? 'USUÁRIO' : 'TOM'}: ${String(m.content || m.media_extracted_text || '').slice(0, 1600)}`)
     .join('\n')
     .slice(0, 24000);
-  return { text, lastAt };
+  return { text, lastAt, sinceIso };
 }
 
 /** Analisa a conversa de um colaborador. Retorna Finding[]. NUNCA lança. */
 async function auditConversation(sb, chat, collaborator, hours = 24) {
   try {
-    const { text: convo, lastAt } = await loadConversation(sb, collaborator.id, hours);
+    const { text: convo, lastAt, sinceIso } = await loadConversation(sb, collaborator.id, hours);
     if (convo.length < 80) return []; // conversa fina demais
     const { buildAuditMessages } = require('../prompts/conversation-audit-prompt');
     const { system, messages } = buildAuditMessages(convo);
     const r = await chat(system, messages, 1200);
-    return parseFindings(r && r.text, lastAt);
+    const findings = parseFindings(r && r.text, lastAt);
+    for (const f of findings) {
+      const inc = await resolveIncidentAt(sb, collaborator.id, f.evidence, f.occurred_at, sinceIso);
+      f.incident_at = inc.incident_at;
+      f.incident_confidence = inc.incident_confidence;
+    }
+    return findings;
   } catch (err) {
     console.error(`[ConvAudit] erro p/ ${collaborator.full_name}:`, err.message);
     return [];
@@ -169,6 +175,8 @@ async function upsertFinding(sb, collaborator, finding) {
       summary: finding.summary,
       evidence: finding.evidence,
       occurred_at: finding.occurred_at,
+      incident_at: finding.incident_at || null,
+      incident_confidence: finding.incident_confidence || 'none',
       signature: sig,
       status: 'novo',
     });
@@ -179,8 +187,40 @@ async function upsertFinding(sb, collaborator, finding) {
   }
 }
 
+/** Pega o trecho mais distintivo do evidence p/ ancorar na conversa.
+ * Remove rótulos USUÁRIO:/TOM:, escolhe a linha mais longa, colapsa espaço, 100 chars. */
+function pickProbe(evidence) {
+  const lines = String(evidence == null ? '' : evidence)
+    .split(/\n+/)
+    .map(l => l.replace(/^\s*(USU[ÁA]RIO|TOM)\s*:\s*/i, '').replace(/\s+/g, ' ').trim())
+    .filter(l => l.length >= 12);
+  if (!lines.length) return '';
+  return lines.sort((a, b) => b.length - a.length)[0].slice(0, 100).toLowerCase();
+}
+
+/** Tempo real do incidente: acha a mensagem da conversa que contém o trecho do
+ * evidence e usa o created_at dela. Fallback: occurredAt (proxy de janela). */
+async function resolveIncidentAt(sb, collaboratorId, evidence, occurredAt, sinceIso) {
+  const probe = pickProbe(evidence);
+  if (probe) {
+    const { data } = await sb.from('conversation_history')
+      .select('created_at, content, media_extracted_text')
+      .eq('collaborator_id', collaboratorId)
+      .gte('created_at', sinceIso)
+      .order('created_at', { ascending: false })
+      .limit(60);
+    const hit = (data || []).find(m => {
+      const hay = `${m.content || ''} ${m.media_extracted_text || ''}`.toLowerCase();
+      return hay.includes(probe);
+    });
+    if (hit) return { incident_at: hit.created_at, incident_confidence: 'high' };
+  }
+  if (occurredAt) return { incident_at: occurredAt, incident_confidence: 'low' };
+  return { incident_at: null, incident_confidence: 'none' };
+}
+
 module.exports = {
   normalizeSummary, signatureFor, parseFindings, rankFindings,
-  loadConversation, auditConversation, upsertFinding,
+  loadConversation, auditConversation, upsertFinding, resolveIncidentAt,
   CLOSED_STATUSES, SEV_RANK,
 };

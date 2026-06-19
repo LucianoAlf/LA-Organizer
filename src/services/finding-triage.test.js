@@ -54,3 +54,47 @@ test('parseMatches: normaliza matched_code "null" textual e confidence ausente',
   assert.strictEqual(out[0].matched_code, null);
   assert.strictEqual(out[0].confidence, 0);
 });
+
+// ── triageOpenFindings (orquestração) ───────────────────────────────
+const { triageOpenFindings } = require('./finding-triage');
+
+// fakeSb por-tabela: select de tom_audit_findings (janela) e tom_known_issues (candidatos);
+// update registra o auto_triage gravado.
+function fakeTriageSb(byTable, calls) {
+  let tbl = null;
+  const b = {
+    from(t) { tbl = t; return this; },
+    select() { return this; }, in() { return this; }, gte() { return this; },
+    eq() { return this; }, order() { return this; },
+    update(p) { calls.updates.push(p); return this; },
+    limit() { return Promise.resolve({ data: byTable[tbl] || [], error: null }); },
+    then(res) { res({ data: byTable[tbl] || [], error: null }); },
+  };
+  return b;
+}
+
+test('triageOpenFindings: suprime finding pré-fix e marca regressão por reincidência', async () => {
+  const calls = { updates: [] };
+  const sb = fakeTriageSb({
+    tom_audit_findings: [
+      { id: 'f1', category: 'confabulation', summary: 'salvar falhou', evidence: 'TOM: não salvei',
+        incident_at: '2026-06-05T00:00:00Z', incident_confidence: 'high', last_seen: '2026-06-05T00:00:00Z' },
+      { id: 'f2', category: 'confabulation', summary: 'salvar falhou de novo', evidence: 'TOM: não salvei',
+        incident_at: '2026-06-05T00:00:00Z', incident_confidence: 'high', last_seen: '2026-06-15T00:00:00Z' },
+    ],
+    tom_known_issues: [
+      { codigo: 'BUG-1', titulo: 'salvar falhava', area: 'marker', causa_raiz: 'x', fix_resumo: 'y',
+        status: 'corrigido', corrigido_em: '2026-06-10T00:00:00Z' },
+    ],
+  }, calls);
+  const chat = async () => ({ text: '{"matches":[' +
+    '{"finding_id":"f1","matched_code":"BUG-1","confidence":0.95,"reason":"mesma causa"},' +
+    '{"finding_id":"f2","matched_code":"BUG-1","confidence":0.95,"reason":"mesma causa"}]}' });
+
+  const out = await triageOpenFindings(sb, chat, { nowIso: '2026-06-19T00:00:00Z' });
+  assert.strictEqual(out.suppressed, 1);
+  assert.strictEqual(out.regressions, 1);
+  const decisions = calls.updates.map(u => u.auto_triage && u.auto_triage.decision).filter(Boolean);
+  assert.ok(decisions.includes('suppress'));
+  assert.ok(decisions.includes('regression'));
+});

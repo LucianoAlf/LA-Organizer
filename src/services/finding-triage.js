@@ -56,7 +56,68 @@ function parseMatches(raw) {
     }));
 }
 
+const { buildMatchMessages } = require('../prompts/finding-triage-prompt');
+
+function isoDaysAgo(nowIso, days) {
+  return new Date(Date.parse(nowIso) - days * 86400 * 1000).toISOString();
+}
+
+/** Casa os findings da janela com known-issues corrigidos e grava auto_triage.
+ * sb/chat injetados. NUNCA lança (degrada para no-op). Retorna sumário. */
+async function triageOpenFindings(sb, chat, opts = {}) {
+  const out = { decided: 0, suppressed: 0, regressions: 0, kept: 0 };
+  try {
+    const nowIso = opts.nowIso || new Date().toISOString();
+    const windowIso = isoDaysAgo(nowIso, opts.windowDays || WINDOW_DAYS);
+    const kiSinceIso = isoDaysAgo(nowIso, opts.kiLookbackDays || KI_LOOKBACK_DAYS);
+
+    const { data: findings } = await sb.from('tom_audit_findings')
+      .select('id, category, summary, evidence, incident_at, incident_confidence, last_seen')
+      .in('status', ['novo', 'confirmado'])
+      .gte('last_seen', windowIso);
+    const open = findings || [];
+    if (!open.length) return out;
+
+    const { data: kis } = await sb.from('tom_known_issues')
+      .select('codigo, titulo, area, causa_raiz, fix_resumo, status, corrigido_em')
+      .eq('status', 'corrigido')
+      .gte('corrigido_em', kiSinceIso);
+    const known = kis || [];
+    const byCode = {};
+    for (const k of known) byCode[k.codigo] = k;
+
+    let matchById = {};
+    if (known.length) {
+      const { system, messages } = buildMatchMessages(open, known);
+      const r = await chat(system, messages, 1500);
+      for (const mm of parseMatches(r && r.text)) matchById[mm.finding_id] = mm;
+    }
+
+    for (const f of open) {
+      const mm = matchById[f.id];
+      const ki = mm && mm.matched_code ? byCode[mm.matched_code] : null;
+      const match = ki ? { ...ki, confidence: mm.confidence } : null;
+      const verdict = decideTriage(f, match, opts);
+      const auto_triage = {
+        decision: verdict.decision,
+        matched_code: verdict.matched_code,
+        match_confidence: mm ? mm.confidence : null,
+        reason: verdict.reason,
+        decided_at: nowIso,
+      };
+      await sb.from('tom_audit_findings').update({ auto_triage }).eq('id', f.id);
+      out.decided++;
+      if (verdict.decision === 'suppress') out.suppressed++;
+      else if (verdict.decision === 'regression') out.regressions++;
+      else out.kept++;
+    }
+  } catch (err) {
+    console.error('[FindingTriage] erro:', err.message);
+  }
+  return out;
+}
+
 module.exports = {
   WINDOW_DAYS, KI_LOOKBACK_DAYS, MATCH_MIN_CONFIDENCE, MARGIN_MS,
-  decideTriage, parseMatches,
+  decideTriage, parseMatches, triageOpenFindings,
 };

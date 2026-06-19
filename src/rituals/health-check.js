@@ -497,35 +497,39 @@ const CONV_CAT_LABEL = {
   frustration: 'frustração',
   proactive_overreach: 'cobrança indevida',
 };
-async function checkConversationQuality() {
-  const { data, error } = await supabase
-    .from('tom_audit_findings')
-    .select('category, severity, summary, occurrences, collaborator_id, collaborators:collaborator_id(full_name)')
-    .in('status', ['novo', 'confirmado'])
-    .order('occurrences', { ascending: false })
-    .limit(200);
-  if (error) throw error;
-  const findings = data || [];
-  if (findings.length === 0) {
-    return { status: 'ok', detail: '🗣️ 0 falhas nas conversas (24h)' };
-  }
-  // Lista HONESTA e COMPLETA (Alf 09/06): agrupa por pessoa e lista TODOS os
-  // findings — sem corte "…+N". Compactar escondia justamente o que importa pra
-  // auditar (caso 09/06). Continuação do fix AUDIT-CONV-RUIDO-AMOSTRAGEM.
+// Pura: recebe findings JÁ filtrados por janela + a contagem de inativos.
+// Separa suprimidos (auto_triage.decision==='suppress'), destaca regressões e
+// monta o corpo com os "keep". NÃO toca DB. Exportada p/ teste.
+function formatConvQuality(findings, opts = {}) {
+  const inactiveCount = opts.inactiveCount || 0;
   const SEV_EMOJI = { alto: '🔴', medio: '🟠', baixo: '🟡' };
   const SEV_RANK = { alto: 0, medio: 1, baixo: 2 };
-  const sevRk = f => (SEV_RANK[f.severity] != null ? SEV_RANK[f.severity] : 1);
-  const bySeverity = {};
-  for (const f of findings) bySeverity[f.severity] = (bySeverity[f.severity] || 0) + 1;
-  const nameById = {};
-  for (const f of findings) nameById[f.collaborator_id] = f.collaborators?.full_name?.split(' ')[0] || '—';
-  // Agrupa por pessoa
-  const groups = {};
-  for (const f of findings) {
-    const pid = f.collaborator_id || 'unknown';
-    (groups[pid] = groups[pid] || []).push(f);
+  const dec = f => (f.auto_triage && f.auto_triage.decision) || 'keep';
+  const suppressed = findings.filter(f => dec(f) === 'suppress');
+  const regressions = findings.filter(f => dec(f) === 'regression');
+  const body = findings.filter(f => dec(f) === 'keep');
+
+  const counts = [];
+  if (inactiveCount) counts.push(`🗃️ ${inactiveCount} inativos (>${opts.windowDays || 7}d sem reincidência)`);
+  if (suppressed.length) {
+    const codes = [...new Set(suppressed.map(f => f.auto_triage.matched_code).filter(Boolean))];
+    counts.push(`🔇 ${suppressed.length} já-corrigidos${codes.length ? ' (' + codes.join(', ') + ')' : ''}`);
   }
-  // Ordena pessoas pelo PIOR severity, depois por nº de findings
+  const countLine = counts.length ? `\n${counts.join(' · ')}` : '';
+
+  if (!body.length && !regressions.length) {
+    return { status: 'ok', detail: `🗣️ 0 falhas pra revisar${countLine}` };
+  }
+
+  const sevRk = f => (SEV_RANK[f.severity] != null ? SEV_RANK[f.severity] : 1);
+  const regLines = regressions
+    .sort((a, b) => sevRk(a) - sevRk(b))
+    .map(f => `  • 🔁 REGRESSÃO [${f.auto_triage.matched_code || '?'}] ${String(f.summary).slice(0, 120)}`);
+
+  const groups = {};
+  for (const f of body) (groups[f.collaborator_id || 'unknown'] = groups[f.collaborator_id || 'unknown'] || []).push(f);
+  const nameById = {};
+  for (const f of body) nameById[f.collaborator_id] = f.collaborators?.full_name?.split(' ')[0] || '—';
   const worstOf = arr => Math.min(...arr.map(sevRk));
   const orderedPids = Object.keys(groups).sort((a, b) => {
     const d = worstOf(groups[a]) - worstOf(groups[b]);
@@ -540,15 +544,42 @@ async function checkConversationQuality() {
     });
     return `*${nameById[pid] || '—'}* (${arr.length}):\n${lines.join('\n')}`;
   });
-  const sevLine = ['alto', 'medio', 'baixo'].filter(s => bySeverity[s]).map(s => `${bySeverity[s]} ${s}`).join(' · ');
-  const samples = findings.map(f => ({
-    category: f.category, severity: f.severity, summary: f.summary, occurrences: f.occurrences,
-  }));
+
+  const total = body.length + regressions.length;
+  const head = regLines.length ? `🚨 ${regLines.length} regressão(ões):\n${regLines.join('\n')}\n\n` : '';
   return {
     status: 'warning',
-    detail: `🗣️ ${findings.length} falha(s) de conversa pra revisar (${sevLine}):\n${blocks.join('\n\n')}`,
-    samples,
+    detail: `🗣️ ${total} falha(s) pra revisar:${countLine}\n${head}${blocks.join('\n\n')}`.trim(),
   };
+}
+
+async function checkConversationQuality() {
+  const { WINDOW_DAYS } = require('../services/finding-triage');
+  const windowIso = isoHoursAgo(WINDOW_DAYS * 24);
+  // findings abertos da JANELA (atividade recente) + veredito de auto-triagem
+  const { data, error } = await supabase
+    .from('tom_audit_findings')
+    .select('id, category, severity, summary, occurrences, collaborator_id, auto_triage, collaborators:collaborator_id(full_name)')
+    .in('status', ['novo', 'confirmado'])
+    .gte('last_seen', windowIso)
+    .order('occurrences', { ascending: false })
+    .limit(200);
+  if (error) throw error;
+  // contagem de inativos (abertos, fora da janela) — só número, não polui o corpo
+  const { count: inactiveCount } = await supabase
+    .from('tom_audit_findings')
+    .select('id', { count: 'exact', head: true })
+    .in('status', ['novo', 'confirmado'])
+    .lt('last_seen', windowIso);
+  return formatConvQuality(data || [], { inactiveCount: inactiveCount || 0, windowDays: WINDOW_DAYS });
+}
+
+// CHECK — Auto-triagem dos findings de conversa (grava auto_triage; roda ANTES do conversation_quality).
+async function checkFindingTriage() {
+  const { triageOpenFindings } = require('../services/finding-triage');
+  const { chat } = require('../ai/provider');
+  const r = await triageOpenFindings(supabase, chat);
+  return { status: 'ok', detail: `🧭 triagem: ${r.suppressed} já-corrigidos · ${r.regressions} regressão(ões) · ${r.kept} mantidos` };
 }
 
 const ALL_CHECKS = [
@@ -565,6 +596,7 @@ const ALL_CHECKS = [
   ['recurring_errors',       checkRecurringErrors],
   ['known_issues_regression', checkKnownIssuesRegression],
   ['provider_health',        checkProviderHealth],
+  ['finding_triage',         checkFindingTriage],
   ['conversation_quality',   checkConversationQuality],
 ];
 
@@ -615,4 +647,4 @@ if (require.main === module) {
   }).catch(e => { console.error(e); process.exit(1); });
 }
 
-module.exports = { runHealthCheck, checkProviderHealth };
+module.exports = { runHealthCheck, checkProviderHealth, formatConvQuality };
