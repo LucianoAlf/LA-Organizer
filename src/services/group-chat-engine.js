@@ -264,9 +264,19 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
     } else {
       try {
         if (p.action === 'create') {
-          await groupNotes.createGroupNote({ supabase, groupId, createdBy: senderCollabId, note: { title: p.title, type: p.type, category: p.category, tags: p.tags, fields: p.fields, body: p.body } });
-          actions.push({ kind: 'note', status: 'ok', label: p.title, detail: '📒 anotação do grupo' });
-          console.log(`[GroupChat] group_note create grupo=${groupId}: "${p.title}"`);
+          let body = p.body;
+          if (p.from_doc) {
+            // Parte 3-B: body DETERMINÍSTICO = texto organizado do doc financeiro recém-lido
+            // (NÃO o do LLM, que truncaria os itens). Busca a última msg com o prefixo do doc.
+            const { data: doc } = await supabase.from('group_chat_messages')
+              .select('media_extracted_text').eq('group_id', groupId)
+              .like('media_extracted_text', '[FATURA/EXTRATO]%')
+              .order('created_at', { ascending: false }).limit(1).maybeSingle();
+            if (doc && doc.media_extracted_text) body = doc.media_extracted_text.replace(/^\[FATURA\/EXTRATO\]\s*/, '');
+          }
+          await groupNotes.createGroupNote({ supabase, groupId, createdBy: senderCollabId, note: { title: p.title, type: p.type, category: p.category, tags: p.tags, fields: p.fields, body } });
+          actions.push({ kind: 'note', status: 'ok', label: p.title, detail: p.from_doc ? '📄 fatura/extrato salvo organizado' : '📒 anotação do grupo' });
+          console.log(`[GroupChat] group_note create grupo=${groupId}: "${p.title}"${p.from_doc ? ' (from_doc)' : ''}`);
         } else if (p.action === 'append') {
           const r = await groupNotes.appendGroupNote({ supabase, groupId, updatedBy: senderCollabId, title: p.title, body: p.body });
           actions.push({ kind: 'note', status: r.appended ? 'ok' : 'fail', label: p.title, detail: r.appended ? '📒 atualizada' : 'não achei essa anotação' });

@@ -7915,7 +7915,7 @@ async function processMessage(phone, text, raw = {}) {
     // CLOSING-INTERCEPTOR-OVERCAPTURE (audit 15/06): o gate puro decide se o atalho pode
     // disparar (fechamento de HOJE + não é reply-quote a outra coisa + sem intent mais
     // fresca). Fail-safe: !fire → não short-circuita, segue o fluxo normal (comportamento atual).
-    const { shouldClosingInterceptorFire } = require('./utils/closing-reply');
+    const { shouldClosingInterceptorFire, futureDoneItems } = require('./utils/closing-reply');
     const closingCandidate = _openIntents.find((i) =>
       i.kind === 'confirmation' && i.payload && i.payload.closing &&
       Array.isArray(i.payload.closing.items) && i.payload.closing.items.length);
@@ -7935,10 +7935,24 @@ async function processMessage(phone, text, raw = {}) {
         const completed = [];
         const progressItems = [];
         const noneItems = [];
+        const futureItems = []; // (b) due futura → NÃO fecha no fechamento de hoje (caso Quintela)
+        // Busca due_date das tasks ancoradas p/ a guarda de futura — defense-in-depth do filtro
+        // do builder (rede de segurança: o interceptor nunca fecha tarefa de amanhã).
+        const _closingTaskIds = items.filter((it) => it.type === 'task').map((it) => it.id);
+        const _dueById = {};
+        if (_closingTaskIds.length) {
+          try {
+            const { data: _dueRows } = await supabase.from('tasks').select('id, due_date').in('id', _closingTaskIds);
+            for (const _r of (_dueRows || [])) _dueById[_r.id] = _r.due_date;
+          } catch (_dErr) { console.warn('[Closing] due lookup err:', _dErr.message); }
+        }
+        const _futureSet = new Set(futureDoneItems(items, parsed.statuses, _dueById, todaySaoPaulo()).map((it) => it.id));
         for (let k = 0; k < items.length; k++) {
           const it = items[k];
           const st = parsed.statuses[k];
           if (st === 'done') {
+            // (b) tarefa de due futura NÃO é fechada hoje — mantém aberta e avisa (caso Quintela).
+            if (it.type === 'task' && _futureSet.has(it.id)) { futureItems.push(it); continue; }
             let ok = false;
             try {
               if (it.type === 'event') {
@@ -7970,11 +7984,17 @@ async function processMessage(phone, text, raw = {}) {
         if (completed.length) parts.push(`✅ Fechei: ${completed.map((c) => `*${c.title}*`).join(', ')}`);
         if (progressItems.length) parts.push(`⏳ Em andamento: ${progressItems.map((c) => `*${c.title}*`).join(', ')}`);
         if (noneItems.length) parts.push(`⭕ Faltou: ${noneItems.map((c) => `*${c.title}*`).join(', ')}`);
+        if (futureItems.length) parts.push(`📅 É de amanhã, deixei aberta: ${futureItems.map((c) => `*${c.title}*`).join(', ')}`);
+        const _dayTotal = items.length - futureItems.length; // futuras não contam no fechamento de hoje
         parts.push('');
-        parts.push(mkBar(completed.length, items.length));
-        if (completed.length === items.length) parts.push('\nDia fechado, mandou bem! 💪');
-        else if (!completed.length) parts.push('\nMe diz: o que travou hoje?');
-        else parts.push('\nBora fechar o resto amanhã.');
+        if (_dayTotal > 0) {
+          parts.push(mkBar(completed.length, _dayTotal));
+          if (completed.length === _dayTotal) parts.push('\nDia fechado, mandou bem! 💪');
+          else if (!completed.length) parts.push('\nMe diz: o que travou hoje?');
+          else parts.push('\nBora fechar o resto amanhã.');
+        } else {
+          parts.push('Essas são de amanhã — nada pra fechar hoje. 👍');
+        }
         const reply = parts.join('\n');
 
         try {

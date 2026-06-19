@@ -195,4 +195,26 @@ function batchCompleteNeedsConfirm(args = {}) {
   return !referenced;
 }
 
-module.exports = { buildClosingItems, parseClosingReply, shouldClosingInterceptorFire, batchCompleteNeedsConfirm, _brtDay: brtDay };
+/**
+ * Guarda (b) (caso Quintela, audit 19/06): dos items marcados 'done', devolve os de due
+ * FUTURA (due > hoje BRT). O interceptor de fechamento NÃO deve fechar tarefa de amanhã no
+ * fechamento de hoje — defense-in-depth do filtro do builder. Pura. Só tarefas (eventos à parte).
+ * @param {Array<{type,id,title}>} items
+ * @param {Array<'done'|'progress'|'none'>} statuses
+ * @param {Object<string,string>} dueById  — id → due_date
+ * @param {string} today  — YYYY-MM-DD (BRT)
+ * @returns {Array} subconjunto de items que NÃO devem ser fechados hoje
+ */
+function futureDoneItems(items, statuses, dueById, today) {
+  const out = [];
+  const list = Array.isArray(items) ? items : [];
+  for (let k = 0; k < list.length; k++) {
+    const it = list[k];
+    if (!it || it.type !== 'task' || (statuses && statuses[k]) !== 'done') continue;
+    const due = brtDay(dueById ? dueById[it.id] : null);
+    if (due && today && due > today) out.push(it);
+  }
+  return out;
+}
+
+module.exports = { buildClosingItems, parseClosingReply, shouldClosingInterceptorFire, batchCompleteNeedsConfirm, futureDoneItems, _brtDay: brtDay };

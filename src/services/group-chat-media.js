@@ -21,6 +21,12 @@ const { URL } = require('url');
 const vision = require('./vision');
 const audio = require('./audio');
 const gemini = require('./gemini');
+const statementParse = require('../finance/statement-parse');
+const { formatFinancialDoc } = require('../finance/group-doc-format');
+
+// Marca um documento financeiro lido (fatura/extrato) no media_extracted_text → o engine
+// oferece salvar nas anotações e usa este texto como BODY determinístico da ficha (Parte 3-B).
+const DOC_FIN_PREFIX = '[FATURA/EXTRATO]';
 
 /**
  * Baixa um buffer de uma URL pública (http ou https).
@@ -110,20 +116,40 @@ async function extractMediaText({ supabase, message }) {
       const text = await audio.whisperTranscribe(buf, filename, mime, { prompt, language: 'pt' });
       if (text && text.trim()) extracted = text;
     } else if (message.kind === 'pdf') {
-      // PDF/documento: Gemini lê o conteúdo (igual ao 1:1 webhook.pdfToText) → fim do "não recebi o PDF".
-      // Plain PDF → texto. Fatura estruturada / OFX / PDF criptografado = Parte 3-B (offer→ficha).
       const buf = await fetchBuffer(url);
       if (!buf || !buf.length) return null;
-      const result = await gemini.analyzeMedia(buf, message.media_mime || 'application/pdf', message.content || '');
-      if (result && result.ok && result.text) extracted = result.text;
+      // ── Parte 3-B: fatura/extrato → conteúdo ESTRUTURADO e CATEGORIZADO (vira ficha sob oferta) ──
+      let invoice = null;
+      try {
+        const fname = String(message.media_filename || '');
+        const headTxt = buf.slice(0, 1200).toString('utf8');
+        if (/\.(ofx|csv)$/i.test(fname) || /<OFX>|OFXHEADER|<STMTTRN>/i.test(headTxt)) {
+          // OFX/CSV: parser determinístico (igual ao 1:1) → invoice categorizável.
+          const s = statementParse.statementToInvoice({ filename: fname, text: buf.toString('utf8') });
+          invoice = (s && s.invoice && Array.isArray(s.invoice.itens) && s.invoice.itens.length) ? s.invoice : null;
+        } else {
+          // PDF: Gemini detecta fatura estruturada.
+          const inv = await gemini.analyzeInvoice(buf, message.content || '');
+          invoice = (inv && inv.ok && inv.isInvoice && inv.invoice && Array.isArray(inv.invoice.itens) && inv.invoice.itens.length) ? inv.invoice : null;
+        }
+      } catch (e) { console.warn(`[GroupChat] parse fatura/extrato falhou msg=${message.id}: ${e.message}`); }
+      if (invoice) {
+        extracted = `${DOC_FIN_PREFIX}\n${formatFinancialDoc(invoice)}`;
+      } else {
+        // PDF comum (não-fatura): Gemini lê o texto (3-A).
+        const result = await gemini.analyzeMedia(buf, message.media_mime || 'application/pdf', message.content || '');
+        if (result && result.ok && result.text) extracted = result.text;
+      }
     } else {
       // demais kinds: sem extração
       return null;
     }
 
     if (extracted && typeof extracted === 'string' && extracted.trim()) {
+      // Doc financeiro pode ter muitos itens → cap maior (preserva itens p/ a ficha). Comum = 4000.
+      const cap = extracted.startsWith(DOC_FIN_PREFIX) ? 15000 : 4000;
       await supabase.from('group_chat_messages')
-        .update({ media_extracted_text: extracted.trim().slice(0, 4000) })
+        .update({ media_extracted_text: extracted.trim().slice(0, cap) })
         .eq('id', message.id);
       return extracted.trim();
     }
