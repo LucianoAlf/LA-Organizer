@@ -11,7 +11,7 @@
 //  - Recuperação: se um restart matou o processamento no meio (claim feito, resposta perdida),
 //    a varredura detecta a mensagem de membro órfã (última, sem resposta) e a re-libera pro poll.
 
-const { detectEngageTrigger, detectDisengageTrigger, isEngaged } = require('../services/group-chat-triggers');
+const { detectDisengageTrigger, isEngaged, isVocativeTom, isAddressedToTom, AWAIT_WINDOW_MS } = require('../services/group-chat-triggers');
 const { processGroupChatMessage } = require('../services/group-chat-engine');
 const { extractMediaText } = require('../services/group-chat-media');
 const { processGroupChatClosing } = require('../services/group-chat-closing');
@@ -26,6 +26,27 @@ const ORPHAN_MIN_S = 25;       // idade mínima da msg de membro órfã antes de
 let _ticking = false;
 const _recovered = new Map();  // id -> ts (evita re-recuperar a mesma msg infinitamente)
 setInterval(() => { const cut = Date.now() - 60 * 60 * 1000; for (const [k, t] of _recovered) if (t < cut) _recovered.delete(k); }, 60 * 60 * 1000);
+
+// "O TOM está esperando uma resposta?" — sinal barato (sem IA) pra deixar passar um "sim"/"R$ 320"
+// sem precisar repetir o nome. Degrada gracioso: na dúvida, retorna false (silêncio).
+async function computeTomAwaiting(supabase, groupId) {
+  // (1) confirmação estruturada pendente (apagar ficha / encerrar série).
+  try {
+    const { data: pend } = await supabase.from('group_chat_pending_confirms')
+      .select('id').eq('group_id', groupId).gt('expires_at', new Date().toISOString()).limit(1);
+    if (pend && pend.length) return true;
+  } catch (_) { /* segue */ }
+  // (2) última fala do TOM foi pergunta livre ("...?") dentro da janela.
+  try {
+    const cutoff = Date.now() - AWAIT_WINDOW_MS;
+    const { data: tomMsgs } = await supabase.from('group_chat_messages')
+      .select('content, created_at').eq('group_id', groupId).eq('role', 'tom').eq('kind', 'text')
+      .order('created_at', { ascending: false }).limit(1);
+    const last = (tomMsgs || [])[0];
+    if (last && new Date(last.created_at).getTime() >= cutoff && String(last.content || '').trim().endsWith('?')) return true;
+  } catch (_) { /* segue */ }
+  return false;
+}
 
 async function processOne(supabase, msg) {
   // Claim atômico: só processa quem marcar tom_seen_at de NULL (evita 2 processos pegarem a mesma).
@@ -48,20 +69,27 @@ async function processOne(supabase, msg) {
     .select('tom_chat_engaged_at, wa_group_jid').eq('id', msg.group_id).maybeSingle();
   const engaged = isEngaged(group?.tom_chat_engaged_at, new Date());
 
-  let shouldRun = false, clearAfter = false;
-  if (engaged && detectDisengageTrigger(text)) { shouldRun = true; clearAfter = true; }
-  else if (engaged) { shouldRun = true; }
-  else if (detectEngageTrigger(text)) {
-    shouldRun = true;
-    // Engaja: marca INÍCIO da sessão (não desliza) e reabre pra um novo fechamento.
-    await supabase.from('work_groups')
-      .update({ tom_chat_engaged_at: new Date().toISOString(), tom_chat_closed_session_at: null })
-      .eq('id', msg.group_id);
-  }
-  if (!shouldRun) return; // silêncio — já memorizado
+  // ── Pré-filtro determinístico (SEM IA): o TOM ouve tudo, mas só RESPONDE quando endereçado.
+  const vocative = isVocativeTom(text);
+  // reply entra no fast-follow (precisa de coluna + bridge-in); no v1 é sempre false.
+  const tomAwaiting = vocative ? false : await computeTomAwaiting(supabase, msg.group_id);
+  const addressed = isAddressedToTom({ text, isReplyToTom: false, tomAwaiting });
 
-  // "Tom escrevendo…" no grupo do WhatsApp enquanto o engine pensa (espelho linkado).
-  // Fire-and-forget; a presença encerra quando o bridge-out posta a resposta.
+  let shouldRun = false, clearAfter = false;
+  if (addressed && detectDisengageTrigger(text)) {
+    shouldRun = true; clearAfter = true;           // "valeu Tom" → responde e fecha a sessão
+  } else if (addressed) {
+    shouldRun = true;
+    if (!engaged) {
+      // Abre a sessão (início, não desliza) só quando ENDEREÇADO — pro card de fechamento/memória.
+      await supabase.from('work_groups')
+        .update({ tom_chat_engaged_at: new Date().toISOString(), tom_chat_closed_session_at: null })
+        .eq('id', msg.group_id);
+    }
+  }
+  if (!shouldRun) return; // SILÊNCIO real: nada de "escrevendo…", nada de chamada de IA
+
+  // "Tom escrevendo…" só AGORA — quando já sabemos que ele vai responder (fim do "escreve e some").
   if (group?.wa_group_jid) sendGroupTyping(group.wa_group_jid);
 
   await processGroupChatMessage({ supabase, groupId: msg.group_id, senderCollabId, text });
@@ -131,4 +159,4 @@ function startGroupChatWatcher(supabaseMain) {
   return timer;
 }
 
-module.exports = { startGroupChatWatcher, tick };
+module.exports = { startGroupChatWatcher, tick, computeTomAwaiting };

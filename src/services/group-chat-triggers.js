@@ -48,10 +48,8 @@ function isAddressedToTom({ text, isReplyToTom = false, tomAwaiting = false } = 
 const DISENGAGE_RE = /\btom\b/i;
 const FAREWELL_RE = /(?:^|[\s,!?])(?:valeu+|obrigad[ao]s?|tchau|at[eé]|fechou|brigad[ao])(?:[\s,!?.]|$)/i;
 
-function detectEngageTrigger(text) {
-  if (!text || typeof text !== 'string') return false;
-  return ENGAGE_RE.test(text);
-}
+// Compat: o gatilho de engajamento agora é o vocativo (mais estrito — não acorda em "o Tom").
+const detectEngageTrigger = isVocativeTom;
 
 function detectDisengageTrigger(text) {
   if (!text || typeof text !== 'string') return false;
@@ -70,4 +68,7 @@ function isEngaged(engagedAt, now = new Date(), maxHours = ENGAGE_MAX_HOURS) {
   return now.getTime() - t < maxHours * 60 * 60 * 1000;
 }
 
-module.exports = { detectEngageTrigger, detectDisengageTrigger, isEngaged, ENGAGE_WINDOW_MIN, ENGAGE_MAX_HOURS };
+module.exports = {
+  detectEngageTrigger, detectDisengageTrigger, isEngaged, isVocativeTom, isAddressedToTom,
+  VOCATIVE_STOPWORDS, AWAIT_WINDOW_MS, ENGAGE_WINDOW_MIN, ENGAGE_MAX_HOURS,
+};
