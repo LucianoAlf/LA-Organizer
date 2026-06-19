@@ -36,6 +36,17 @@ function titleSimilarity(a, b) {
   return inter / (A.size + B.size - inter);
 }
 
+// Dado os candidatos casados por título (mãe-instância e/ou molde recorrente),
+// retorna a INSTÂNCIA a operar — NUNCA o molde (recurrence_rule != null). Cancelar
+// ou concluir o molde mata a série inteira: o materializador (materializeAll) pula
+// molde cancelado/concluído, então nunca mais regenera (caso Conciliação de Cartões/
+// Rose 17/06). Rotina sempre mira a instância visível; parar a série é ação à parte.
+function pickInstanceTarget(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  const instances = list.filter((r) => r && r.recurrence_rule == null);
+  return instances[0] || null;
+}
+
 async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, actions }) {
   const created = [];
   const updated = [];
@@ -143,14 +154,17 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
         const title = (a.title || '').trim();
         if (!title) { failed.push({ action: a, why: 'title_missing' }); continue; }
         // Resolve por título dentro do pool do grupo, ainda não concluída.
+        // Protege a série: conclui a INSTÂNCIA visível, NUNCA o molde recorrente
+        // (concluir o molde mata a série — materializeAll não regenera molde done).
         const { data: found } = await supabase
           .from('tasks')
-          .select('id, title')
+          .select('id, title, recurrence_rule')
           .eq('assigned_group_id', groupId)
           .neq('status', 'done')
           .ilike('title', title)
-          .limit(1);
-        const target = (found || [])[0];
+          .order('due_date', { ascending: true })
+          .limit(5);
+        const target = pickInstanceTarget(found);
         if (!target) { failed.push({ action: a, why: 'not_found_in_pool' }); continue; }
         // Anti-corrida: só marca se ainda não estava done.
         const patch = { status: 'done', completed_at: new Date().toISOString(), completed_by: senderCollabId };
@@ -170,14 +184,17 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
         if (!title) { failed.push({ action: a, why: 'title_missing' }); continue; }
         const { data: hit } = await supabase
           .from('tasks')
-          .select('id, title, is_group')
+          .select('id, title, is_group, recurrence_rule')
           .eq('assigned_group_id', groupId)
           .neq('status', 'done')
           .neq('status', 'cancelled')
           .ilike('title', title)
           .order('created_at', { ascending: false })
-          .limit(1);
-        const target = (hit || [])[0];
+          .limit(5);
+        // Protege a série recorrente: cancela a INSTÂNCIA visível, NUNCA o molde.
+        // Cancelar o template mata a série inteira — materializeAll pula molde
+        // cancelado, então nunca mais regenera (caso Conciliação de Cartões/Rose 17/06).
+        const target = pickInstanceTarget(hit);
         if (!target) { failed.push({ action: a, why: 'not_found_in_group' }); continue; }
         await supabase.from('tasks').update({ status: 'cancelled' }).eq('id', target.id);
         if (target.is_group) {
@@ -195,4 +212,4 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
   return { created, updated, completed, cancelled, failed };
 }
 
-module.exports = { applyGroupChatTaskActions, titleSimilarity };
+module.exports = { applyGroupChatTaskActions, titleSimilarity, pickInstanceTarget };
