@@ -42,6 +42,16 @@ function isAddressedToTom({ text, isReplyToTom = false, tomAwaiting = false } = 
   return isVocativeTom(text) || !!isReplyToTom || !!tomAwaiting;
 }
 
+// Recuperação de órfã: SÓ mensagem de membro RECLAMADA (tom_seen_at) mas NÃO concluída (tom_done_at)
+// — ou seja, processamento morreu no meio (restart). O silêncio intencional do TOM agora marca
+// tom_done_at, então NÃO é recuperado — mata o loop "recupera→escrevendo→silêncio→recupera".
+function shouldRecoverOrphan(last, ageMs, { orphanMinMs, idleMaxMs, alreadyRecovered } = {}) {
+  if (!last || last.role !== 'member') return false;
+  if (!last.tom_seen_at || last.tom_done_at) return false; // não reclamada, ou já concluída
+  if (alreadyRecovered) return false;
+  return ageMs >= orphanMinMs && ageMs < idleMaxMs;
+}
+
 // Despedida dirigida ao TOM: precisa do nome "tom" E de um termo de fechamento na mesma msg.
 // Nota: \b NÃO funciona após vogal acentuada no JS (ex: "até" com \b no final falha).
 // Usamos anchor de espaço/pontuação nos dois lados em vez de \b para os termos de despedida.
@@ -69,6 +79,6 @@ function isEngaged(engagedAt, now = new Date(), maxHours = ENGAGE_MAX_HOURS) {
 }
 
 module.exports = {
-  detectEngageTrigger, detectDisengageTrigger, isEngaged, isVocativeTom, isAddressedToTom,
+  detectEngageTrigger, detectDisengageTrigger, isEngaged, isVocativeTom, isAddressedToTom, shouldRecoverOrphan,
   VOCATIVE_STOPWORDS, AWAIT_WINDOW_MS, ENGAGE_WINDOW_MIN, ENGAGE_MAX_HOURS,
 };

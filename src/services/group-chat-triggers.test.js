@@ -1,7 +1,7 @@
 // src/services/group-chat-triggers.test.js
 const assert = require('node:assert');
 const { test } = require('node:test');
-const { detectEngageTrigger, detectDisengageTrigger, isEngaged, isVocativeTom, isAddressedToTom } = require('./group-chat-triggers');
+const { detectEngageTrigger, detectDisengageTrigger, isEngaged, isVocativeTom, isAddressedToTom, shouldRecoverOrphan } = require('./group-chat-triggers');
 
 test('engage: menção direta aciona', () => {
   assert.equal(detectEngageTrigger('fala tom, cria uma tarefa'), true);
@@ -58,4 +58,16 @@ test('isAddressedToTom: vocativo OU reply OU awaiting → true; nada → false',
   assert.equal(isAddressedToTom({ text: 'sim', tomAwaiting: true }), true);
   assert.equal(isAddressedToTom({ text: 'depois eu vejo isso' }), false);
   assert.equal(isAddressedToTom({ text: 'o Tom já respondeu' }), false);
+});
+
+test('shouldRecoverOrphan: só recupera membro RECLAMADO mas NÃO concluído (restart); silêncio intencional não', () => {
+  const base = { role: 'member', tom_seen_at: '2026-06-19T23:00:00Z', tom_done_at: null };
+  const opt = { orphanMinMs: 25000, idleMaxMs: 480000, alreadyRecovered: false };
+  assert.equal(shouldRecoverOrphan(base, 30000, opt), true);                                            // reclamado+não concluído na janela → recupera
+  assert.equal(shouldRecoverOrphan({ ...base, tom_done_at: '2026-06-19T23:00:05Z' }, 30000, opt), false); // CONCLUÍDO (TOM ficou calado de propósito) → NÃO
+  assert.equal(shouldRecoverOrphan({ ...base, tom_seen_at: null }, 30000, opt), false);                 // nunca reclamado → o poll cuida
+  assert.equal(shouldRecoverOrphan({ ...base, role: 'tom' }, 30000, opt), false);                       // mensagem do próprio TOM → NÃO
+  assert.equal(shouldRecoverOrphan(base, 10000, opt), false);                                           // jovem demais
+  assert.equal(shouldRecoverOrphan(base, 30000, { ...opt, alreadyRecovered: true }), false);            // já recuperado nesta vida
+  assert.equal(shouldRecoverOrphan(null, 30000, opt), false);
 });

@@ -11,7 +11,7 @@
 //  - Recuperação: se um restart matou o processamento no meio (claim feito, resposta perdida),
 //    a varredura detecta a mensagem de membro órfã (última, sem resposta) e a re-libera pro poll.
 
-const { detectDisengageTrigger, isEngaged, isVocativeTom, isAddressedToTom, AWAIT_WINDOW_MS } = require('../services/group-chat-triggers');
+const { detectDisengageTrigger, isEngaged, isVocativeTom, isAddressedToTom, shouldRecoverOrphan, AWAIT_WINDOW_MS } = require('../services/group-chat-triggers');
 const { processGroupChatMessage } = require('../services/group-chat-engine');
 const { extractMediaText } = require('../services/group-chat-media');
 const { processGroupChatClosing } = require('../services/group-chat-closing');
@@ -87,7 +87,11 @@ async function processOne(supabase, msg) {
         .eq('id', msg.group_id);
     }
   }
-  if (!shouldRun) return; // SILÊNCIO real: nada de "escrevendo…", nada de chamada de IA
+  if (!shouldRun) {
+    // Marca como TRATADA (silêncio intencional) pra recuperação de órfã NÃO re-disparar processamento.
+    await supabase.from('group_chat_messages').update({ tom_done_at: new Date().toISOString() }).eq('id', msg.id);
+    return; // SILÊNCIO real: nada de "escrevendo…", nada de chamada de IA
+  }
 
   // "Tom escrevendo…" só AGORA — quando já sabemos que ele vai responder (fim do "escreve e some").
   if (group?.wa_group_jid) sendGroupTyping(group.wa_group_jid);
@@ -98,6 +102,9 @@ async function processOne(supabase, msg) {
     await supabase.from('work_groups').update({ tom_chat_engaged_at: null }).eq('id', msg.group_id);
     console.log(`[GroupChat] desengajado do grupo ${msg.group_id}`);
   }
+
+  // Tratamento concluído → marca tom_done_at (a recuperação de órfã não toca em msg concluída).
+  await supabase.from('group_chat_messages').update({ tom_done_at: new Date().toISOString() }).eq('id', msg.id);
 }
 
 // Varredura por grupo engajado: recupera mensagem órfã OU fecha a sessão por ociosidade.
@@ -108,15 +115,15 @@ async function sweepEngaged(supabase) {
   for (const g of groups || []) {
     try {
       const { data: lastArr } = await supabase.from('group_chat_messages')
-        .select('id, role, sender_id, content, kind, media_url, created_at')
+        .select('id, role, sender_id, content, kind, media_url, created_at, tom_seen_at, tom_done_at')
         .eq('group_id', g.id).order('created_at', { ascending: false }).limit(1);
       const last = (lastArr || [])[0];
       const lastMs = last ? new Date(last.created_at).getTime() : new Date(g.tom_chat_engaged_at).getTime();
       const ageMs = Date.now() - lastMs;
 
-      // 1) Recuperação: última mensagem é de MEMBRO, sem resposta, idade entre ORPHAN_MIN e IDLE.
-      //    Provável resposta perdida num restart → re-libera pro poll reprocessar (uma vez).
-      if (last && last.role === 'member' && ageMs >= ORPHAN_MIN_S * 1000 && ageMs < IDLE_MIN * 60 * 1000 && !_recovered.has(last.id)) {
+      // 1) Recuperação: SÓ msg de membro RECLAMADA mas NÃO concluída (tom_done_at null) = restart matou
+      //    o processamento. Silêncio intencional do TOM marca tom_done_at → NÃO é recuperado (sem loop).
+      if (last && shouldRecoverOrphan(last, ageMs, { orphanMinMs: ORPHAN_MIN_S * 1000, idleMaxMs: IDLE_MIN * 60 * 1000, alreadyRecovered: _recovered.has(last.id) })) {
         _recovered.set(last.id, Date.now());
         await supabase.from('group_chat_messages').update({ tom_seen_at: null }).eq('id', last.id);
         console.log(`[GroupChat] recuperando mensagem órfã ${last.id} (resposta perdida)`);
