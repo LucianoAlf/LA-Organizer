@@ -1,9 +1,12 @@
 # Lote D — Reply-quote a um proativo "largado" (vínculo mensagem-de-saída → tarefa)
 
-> **Status: DESIGN / SPEC.** Não implementar. HOLD de deploy ativo. Esta spec é o
-> "Lote D" já nomeado em `2026-06-15-lote-a-pedido-largado-design.md` (item #8 do
-> audit 15/06: *"#8 / reply-quote a proativos (→ Lote D)"*). A implementação exige
-> novo OK do Alf (vizinhança da recorrência sob observação — ver §10).
+> **Status: EM IMPLEMENTAÇÃO (19/06).** HOLD liberado pelo Alf; Balde A destravado.
+> Esta spec é o "Lote D" já nomeado em `2026-06-15-lote-a-pedido-largado-design.md`
+> (item #8 do audit 15/06: *"#8 / reply-quote a proativos (→ Lote D)"*).
+> **Ajuste verificado no banco:** a coluna `whatsapp_message_id` já existe em
+> `conversation_history` (era "ID externo UAZAPI", nunca escrita pelo código) —
+> **reusada**; a migration adiciona só `ref_type`+`ref_id`. Onde a spec disser
+> `wa_message_id`, ler `whatsapp_message_id`.
 
 ## 1. Problema
 

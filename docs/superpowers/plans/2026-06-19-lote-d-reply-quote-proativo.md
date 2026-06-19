@@ -62,16 +62,16 @@ fallback textual atual.
 -- LOTE D (REPLY-QUOTE-PROATIVO, spec 2026-06-19)
 -- Vincula uma mensagem proativa de saída (lembrete) ao objeto que a originou, para que
 -- um reply-quote a esse lembrete resolva o alvo por id EXATO (stanzaID do WhatsApp).
--- Não-destrutivo: 3 colunas nullable + índice parcial. Sem CHECK (evita drift código↔DB,
+-- A coluna whatsapp_message_id JÁ existe (ID externo UAZAPI) — só faltam ref_type/ref_id.
+-- Não-destrutivo: 2 colunas nullable + índice parcial. Sem CHECK (evita drift código↔DB,
 -- lição FIN-INVOICE-INTENT-KIND-CONSTRAINT). Linhas antigas seguem válidas.
 ALTER TABLE public.conversation_history
-  ADD COLUMN IF NOT EXISTS wa_message_id text,
-  ADD COLUMN IF NOT EXISTS ref_type      text,   -- 'task' | 'event'
-  ADD COLUMN IF NOT EXISTS ref_id        uuid;
+  ADD COLUMN IF NOT EXISTS ref_type text,   -- 'task' | 'event'
+  ADD COLUMN IF NOT EXISTS ref_id   uuid;
 
-CREATE INDEX IF NOT EXISTS conversation_history_wa_message_id_idx
-  ON public.conversation_history (wa_message_id)
-  WHERE wa_message_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS conversation_history_whatsapp_message_id_idx
+  ON public.conversation_history (whatsapp_message_id)
+  WHERE whatsapp_message_id IS NOT NULL;
 ```
 
 - [ ] **Step 2: Validar a sintaxe SQL (sem aplicar — HOLD)**
