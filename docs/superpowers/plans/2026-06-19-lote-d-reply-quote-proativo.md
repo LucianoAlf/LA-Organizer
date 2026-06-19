@@ -2,9 +2,15 @@
 
 > **Para workers agênticos:** SUB-SKILL OBRIGATÓRIA: use `superpowers:subagent-driven-development` (recomendado) ou `superpowers:executing-plans` para implementar task-a-task. Os passos usam checkbox (`- [ ]`).
 
-> ⛔ **HOLD ATIVO — NÃO EXECUTAR SEM OK DO ALF.** A recorrência (Balde A) está sob
-> observação e a Task 7 toca `dispatcher.js` (mesmo arquivo). **Nada** aqui é
-> deployado/aplicado em produção até o Alf liberar. Implementação local só após OK.
+> ✅ **HOLD LIBERADO pelo Alf (19/06).** Em implementação; Balde A destravado.
+>
+> **AJUSTE pós-aprovação (verificado no banco):** a coluna `whatsapp_message_id` JÁ
+> existe em `conversation_history` (documentada como "ID externo UAZAPI", nunca escrita
+> pelo código) — **reusá-la** em vez de criar `wa_message_id`. A migration passa a
+> adicionar só `ref_type`+`ref_id`. Onde o plano disser `wa_message_id`, ler
+> `whatsapp_message_id`. Protocolo de bugs consultado: sem regressão (interceptor roda
+> após short-circuits, não abre intent → evita GUARD-CONFIRM-LOOP; reusa reschedule por
+> marker → TASK-RESCHED-ONESHOT; restringe ao id concreto → evita RECUR-TEMPLATE-DUP).
 
 **Goal:** Quando o usuário responde (reply-quote) a um lembrete proativo do TOM pedindo
 "muda pra amanhã / me lembra amanhã", resolver a tarefa-alvo por id exato (sem o LLM

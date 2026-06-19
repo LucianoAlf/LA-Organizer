@@ -53,4 +53,70 @@ function shiftTaskRemindAt(oldDueDate, newDueDate, remindAtIso) {
   return new Date(remMs + deltaDays * 86400000).toISOString();
 }
 
-module.exports = { shiftRemindersByReschedule, shiftTaskRemindAt };
+/**
+ * Snooze/silêncio de lembrete POR TAREFA (item #5 audit 15/06, caso Jereh).
+ * Função PURA: dado o conjunto de lembretes pendentes de UMA tarefa e um piso de horário
+ * (notBefore), decide o que silenciar, se precisa garantir 1 lembrete no piso, e como
+ * ajustar o remind_at one-shot da própria task. Semântica = PISO: limpa só o ANTERIOR ao
+ * piso; mantém a grade posterior. Sem I/O — o caller aplica o plano.
+ *
+ * @param {Object} p
+ * @param {Array<{id:string,remind_at:string,label?:string}>} p.pendingRows — task_reminders com sent_at IS NULL
+ * @param {string|null} p.taskRemindAt   — tasks.remind_at (one-shot) ou null
+ * @param {string|null} p.taskRemindedAt — tasks.reminded_at ou null (preenchido = one-shot já disparou)
+ * @param {string|null} p.notBefore      — piso ISO 8601 com timezone (null quando clearAll)
+ * @param {boolean} p.clearAll           — true = silenciar TODOS os pendentes (sem ensure-one)
+ * @param {number} p.nowMs               — Date.now() do caller (injetado p/ função ficar pura)
+ * @returns {{consumeReminderIds:string[], insertReminder:{remind_at:string,label:string|null}|null, taskPatch:{remind_at:string|null}|null}}
+ */
+function planReminderFloor({ pendingRows, taskRemindAt, taskRemindedAt, notBefore, clearAll, nowMs }) {
+  const rows = Array.isArray(pendingRows) ? pendingRows : [];
+  const out = { consumeReminderIds: [], insertReminder: null, taskPatch: null };
+
+  // Modo "silenciar tudo": consome todos os pendentes e remove o lembrete one-shot
+  // (se ainda não disparou). Sem ensure-one.
+  if (clearAll || !notBefore) {
+    out.consumeReminderIds = rows.map((r) => r.id);
+    if (taskRemindAt && !taskRemindedAt) out.taskPatch = { remind_at: null };
+    return out;
+  }
+
+  const floorMs = Date.parse(notBefore);
+  if (!Number.isFinite(floorMs)) return out; // piso inválido → no-op defensivo
+
+  // 1) PISO na grade: consome os rows ANTERIORES ao piso; mantém os >= piso.
+  let coveredAtOrAfter = false;
+  let labelForInsert = null;
+  for (const r of rows) {
+    const rm = Date.parse(r && r.remind_at);
+    if (!Number.isFinite(rm)) continue;
+    if (rm < floorMs) {
+      out.consumeReminderIds.push(r.id);
+      if (labelForInsert === null && typeof r.label === 'string' && r.label) labelForInsert = r.label;
+    } else {
+      coveredAtOrAfter = true;
+    }
+  }
+
+  // 2) PISO no one-shot (tasks.remind_at): se anterior ao piso e ainda não disparou,
+  //    move pro piso (vira a cobertura). Se já é >= piso, só marca como coberto.
+  if (taskRemindAt && !taskRemindedAt) {
+    const trm = Date.parse(taskRemindAt);
+    if (Number.isFinite(trm)) {
+      if (trm < floorMs) { out.taskPatch = { remind_at: notBefore }; coveredAtOrAfter = true; }
+      else coveredAtOrAfter = true;
+    }
+  }
+
+  // 3) ENSURE-ONE: só quando ALGO da grade foi silenciado e nada restou cobrindo o piso,
+  //    e o piso é FUTURO. Não inventa lembrete do zero (task sem lembrete → "me lembra às X"
+  //    é create/reschedule, não snooze). Nunca cria no passado (evita REMINDER-STALE-PAST).
+  const silencedGrid = out.consumeReminderIds.length > 0;
+  if (silencedGrid && !coveredAtOrAfter && floorMs > nowMs) {
+    out.insertReminder = { remind_at: notBefore, label: labelForInsert };
+  }
+
+  return out;
+}
+
+module.exports = { shiftRemindersByReschedule, shiftTaskRemindAt, planReminderFloor };

@@ -18,7 +18,7 @@ const OpenAI = require('openai');
 const openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const inventarioService = require('./services/inventario-service');
 const { hasTrailingQuestion, isInfoGatheringReply } = require('./services/reply-classify');
-const { shiftRemindersByReschedule, shiftTaskRemindAt } = require('./services/reschedule-reminders');
+const { shiftRemindersByReschedule, shiftTaskRemindAt, planReminderFloor } = require('./services/reschedule-reminders');
 const { buildEventReminderRows } = require('./services/event-reminders');
 const { matchRowsByShortId } = require('./services/short-id-match');
 const { getActiveWindow } = require('./services/active-window');
@@ -143,6 +143,7 @@ const SHORT_ID_RE = /^([a-f0-9]{4,12}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-
 const VALID_TASK_ACTIONS = new Set([
   'complete', 'cancel', 'reschedule', 'create', 'delegate',
   'extension_request', 'extension_decision', 'governance_reassign',
+  'snooze_reminders',
 ]);
 const VALID_COACHING = ['light', 'normal', 'hard'];
 const VALID_EVENT_MODALITIES = new Set(['online', 'presencial', 'hibrido']);
@@ -3418,6 +3419,15 @@ function validateTaskAction(a) {
     const hasName = typeof a.to_name === 'string' && a.to_name.trim();
     const hasPhone = typeof a.to_phone === 'string' && a.to_phone.trim();
     if (!hasName && !hasPhone) return 'recipient_missing';
+  } else if (a.action === 'snooze_reminders') {
+    // Snooze/silêncio de lembrete POR TAREFA (item #5 audit 15/06). Aceita id OU title
+    // (resolução em applyTaskActions, igual reschedule). Exige not_before (piso ISO com
+    // timezone) OU clear_all=true ("não me lembra mais dessa tarefa").
+    const hasId = typeof a.id === 'string' && SHORT_ID_RE.test(a.id);
+    const hasTitle = typeof a.title === 'string' && a.title.trim().length > 0;
+    if (!hasId && !hasTitle) return 'bad_id';
+    const clearAll = a.clear_all === true || a.clear_all === 'true';
+    if (!clearAll && !isValidRemindAt(a.not_before)) return 'snooze_needs_not_before_or_clear_all';
   }
   // Sprint 29.4 — recurrence_rule (opcional em create, ignorado em outras actions)
   if (a.recurrence_rule !== undefined && a.recurrence_rule !== null && a.recurrence_rule !== '') {
@@ -4494,6 +4504,83 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
           } catch (e) { /* não-fatal */ }
           okCount++;
         }
+      } else if (a.action === 'snooze_reminders') {
+        // SNOOZE/silêncio de lembrete POR TAREFA (item #5 audit 15/06, caso Jereh).
+        // NÃO altera prazo nem conclui a tarefa — só reorganiza os lembretes.
+        let t = null;
+        if (!a.id && a.title) {
+          const like = `%${String(a.title).slice(0, 60)}%`;
+          // (a) tarefa onde o remetente é assignee ou criador (igual reschedule)
+          const { data: own } = await supabase
+            .from('tasks')
+            .select('id, title, status, assigned_to, created_by, assigned_group_id')
+            .or(`assigned_to.eq.${collaborator.id},created_by.eq.${collaborator.id}`)
+            .ilike('title', like)
+            .not('status', 'in', '("done","cancelled")')
+            .order('created_at', { ascending: false }).limit(1).maybeSingle();
+          if (own) {
+            t = own;
+          } else {
+            // (b) tarefa de GRUPO do qual o remetente é membro (decisão 19/06: snooze de
+            //     grupo vale pra todos — a grade é compartilhada). groupIdsOfCollaborator
+            //     restringe à membership, então é a própria autorização.
+            const wg = require('./services/work-groups');
+            const gids = await wg.groupIdsOfCollaborator(supabase, collaborator.id);
+            if (gids && gids.length) {
+              const { data: grp } = await supabase
+                .from('tasks')
+                .select('id, title, status, assigned_to, created_by, assigned_group_id')
+                .in('assigned_group_id', gids)
+                .ilike('title', like)
+                .not('status', 'in', '("done","cancelled")')
+                .order('created_at', { ascending: false }).limit(1).maybeSingle();
+              if (grp) t = grp;
+            }
+          }
+          if (t) {
+            a.id = t.id.replace(/-/g, '').slice(0, 8);
+          } else {
+            console.warn(`[Task] snooze title-lookup failed: "${a.title}" not found for ${last4}`);
+            failMessages.push(`Não achei a tarefa _"${String(a.title).slice(0, 60)}"_ pra ajustar os lembretes. Me diz o nome certinho?`);
+            failCount++;
+            continue;
+          }
+        } else {
+          t = await resolveTaskByShortId(collaborator.id, a.id);
+        }
+        if (!t) {
+          console.warn(`[Task] snooze REJECTED id=${a.id} (not owned by ${last4} or not found)`);
+          failCount++;
+          continue;
+        }
+        // Dados frescos do one-shot da própria task + grade pendente.
+        const { data: curSnz } = await supabase
+          .from('tasks').select('remind_at, reminded_at').eq('id', t.id).maybeSingle();
+        const { data: pendSnz } = await supabase
+          .from('task_reminders').select('id, remind_at, label').eq('task_id', t.id).is('sent_at', null);
+        const clearAllSnz = a.clear_all === true || a.clear_all === 'true';
+        const planSnz = planReminderFloor({
+          pendingRows: pendSnz || [],
+          taskRemindAt: curSnz ? curSnz.remind_at : null,
+          taskRemindedAt: curSnz ? curSnz.reminded_at : null,
+          notBefore: typeof a.not_before === 'string' ? a.not_before : null,
+          clearAll: clearAllSnz,
+          nowMs: Date.now(),
+        });
+        const nowIsoSnz = new Date().toISOString();
+        if (planSnz.consumeReminderIds.length) {
+          await supabase.from('task_reminders').update({ sent_at: nowIsoSnz }).in('id', planSnz.consumeReminderIds);
+        }
+        if (planSnz.insertReminder) {
+          await supabase.from('task_reminders').insert({
+            task_id: t.id, remind_at: planSnz.insertReminder.remind_at, label: planSnz.insertReminder.label,
+          });
+        }
+        if (planSnz.taskPatch) {
+          await supabase.from('tasks').update(planSnz.taskPatch).eq('id', t.id);
+        }
+        console.log(`[Task] snooze_reminders task=${String(t.id).slice(0, 8)} consumed=${planSnz.consumeReminderIds.length} inserted=${planSnz.insertReminder ? 1 : 0} patch=${planSnz.taskPatch ? 'y' : 'n'} clearAll=${clearAllSnz} not_before=${a.not_before || '(all)'}`);
+        okCount++;
       } else if (a.action === 'create') {
         if (!a.title || typeof a.title !== 'string' || !a.title.trim()) {
           failCount++;

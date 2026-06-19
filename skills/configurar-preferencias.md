@@ -16,6 +16,8 @@ description: Skill para atualizar preferências do usuário (horários de rituai
 - "só me manda mensagem a partir das 11h", "não me chama antes das 9h" → quiet_hours recorrente
 - "tira/desliga o check do meio-dia", "para de me lembrar das tarefas às Xh", "esses check-ins são desnecessários" → `task_checkin_times`
 
+> ⚠️ Isto é a grade GLOBAL de check-ins de horário do dia (vale pra todas as tarefas). Silenciar **UMA tarefa específica** ("só me lembra às 15h _dessa_ tarefa", "para de me lembrar _dessa_ tarefa") **não** é preferência — é a action `snooze_reminders` do `<<TASK_UPDATE>>` (ver skill checklist-tarefas).
+
 ## Regras de ouro
 - **NÃO crie campos novos.** Só os 15 abaixo.
 - Confirme com o user antes de salvar quando a mudança for grande (intensidade, max_daily_tasks, DND longo).

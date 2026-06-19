@@ -11,6 +11,7 @@ export interface GroupNote {
   title: string; body: string; fields: NoteField[]; pinned: boolean;
   sort_order: number; color: string | null; icon: string | null;
   created_by: string | null; updated_by: string | null; created_at: string; updated_at: string;
+  deleted_at?: string | null;
 }
 
 // Campos comuns às fichas (grupo OU pessoal) — o que os componentes de apresentação usam.
@@ -171,7 +172,7 @@ export function bodyToHtml(body: string): string {
 // ── I/O ──
 export async function loadGroupNotes(groupId: string): Promise<GroupNote[]> {
   const { data, error } = await supabase.from('group_notes')
-    .select('*').eq('group_id', groupId)
+    .select('*').eq('group_id', groupId).is('deleted_at', null)
     .order('pinned', { ascending: false }).order('sort_order', { ascending: true }).order('created_at', { ascending: false });
   if (error) throw error;
   return (data ?? []).map((n) => ({
@@ -200,7 +201,8 @@ export async function reorderGroupNotes(updates: Array<{ id: string; sort_order:
   if (err?.error) throw err.error;
 }
 export async function deleteGroupNote(id: string): Promise<void> {
-  const { error } = await supabase.from('group_notes').delete().eq('id', id);
+  // Soft-delete (lixeira): some das listas, mas é recuperável (TOM "restaura a ficha X"). Faxina após 30d.
+  const { error } = await supabase.from('group_notes').update({ deleted_at: new Date().toISOString() }).eq('id', id);
   if (error) throw error;
 }
 export async function togglePin(id: string, pinned: boolean): Promise<void> {

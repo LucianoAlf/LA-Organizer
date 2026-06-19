@@ -48,12 +48,46 @@ async function loadContext(supabase, groupId, senderCollabId) {
   return { group, members, pool, history, senderName: displayName(senderRow), collab: senderRow || null };
 }
 
+// Insere uma mensagem de texto do TOM no chat do grupo (mesmo caminho do fluxo normal → bridge-out espelha).
+async function postTomText(supabase, groupId, content) {
+  const { data, error } = await supabase.from('group_chat_messages')
+    .insert({ group_id: groupId, sender_id: null, role: 'tom', kind: 'text', content, channel: 'app' })
+    .select('id').single();
+  if (error) { console.error(`[GroupChat] falha ao postar texto TOM: ${error.message}`); return null; }
+  return data;
+}
+
 async function processGroupChatMessage({ supabase, groupId, senderCollabId, text }) {
+  // ── PRÉ-PASSO: confirmação determinística de ação destrutiva pendente (roda ANTES do LLM) ──
+  // Um "sim"/"não" seco do MESMO remetente resolve a exclusão pendente (não confia no LLM threading).
+  try {
+    const { data: pend } = await supabase.from('group_chat_pending_confirms')
+      .select('*').eq('group_id', groupId).eq('sender_collab_id', senderCollabId)
+      .eq('op', 'delete_note').gt('expires_at', new Date().toISOString()).maybeSingle();
+    if (pend) {
+      const verdict = groupNotes.decideConfirm(pend, text);
+      if (verdict === 'execute') {
+        await groupNotes.softDeleteGroupNoteById({ supabase, noteId: pend.target_id });
+        await supabase.from('group_chat_pending_confirms').delete().eq('id', pend.id);
+        return await postTomText(supabase, groupId, `Apaguei a ficha *${pend.summary}* — tá na lixeira. É só pedir "restaura a ficha ${pend.summary}" que eu trago de volta. 🗑️`);
+      }
+      if (verdict === 'cancel') {
+        await supabase.from('group_chat_pending_confirms').delete().eq('id', pend.id);
+        return await postTomText(supabase, groupId, `Ok, não apaguei a ficha *${pend.summary}*. 👍`);
+      }
+      // 'ignore' → segue o fluxo normal (a pendência expira sozinha em ~10min)
+    }
+  } catch (e) { console.error('[GroupChat] pré-passo confirm:', e.message); }
+
   const ctx = await loadContext(supabase, groupId, senderCollabId);
   if (!ctx.group) { console.warn(`[GroupChat] grupo ${groupId} não encontrado`); return null; }
 
   let notesCtx = '';
   try { notesCtx = await groupNotes.groupNotesContext({ supabase, groupId }); } catch (_) { notesCtx = ''; }
+
+  // Leitura sob demanda: se a mensagem cita uma ficha, injeta o CONTEÚDO dela (senha mascarada) —
+  // assim o TOM nunca diz "não consigo mostrar" pra ficha que existe (GROUPCHAT-NOTES-CRUD).
+  try { const fetchCtx = await groupNotes.noteFetchContext({ supabase, groupId, text }); if (fetchCtx) notesCtx = `${notesCtx}\n\n${fetchCtx}`; } catch (_) { /* degrada gracioso */ }
 
   // Senha sob demanda: se a mensagem pede credencial, acha a ficha que casa, decifra e injeta só ela.
   let credCtx = '';
@@ -181,7 +215,8 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
   if (gnMatch) {
     stripBlock(/<<GROUP_NOTE>>[\s\S]*?<<END>>/i);
     let p = null; try { p = JSON.parse(gnMatch[1].trim()); } catch (_) { p = null; }
-    if (!p || (p.action !== 'create' && p.action !== 'append')) {
+    const GN_ACTIONS = ['create', 'append', 'update', 'delete', 'restore'];
+    if (!p || !GN_ACTIONS.includes(p.action)) {
       actions.push({ kind: 'note', status: 'fail', label: 'Anotação', detail: 'marker malformado' });
     } else {
       try {
@@ -189,11 +224,30 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
           await groupNotes.createGroupNote({ supabase, groupId, createdBy: senderCollabId, note: { title: p.title, type: p.type, category: p.category, tags: p.tags, fields: p.fields, body: p.body } });
           actions.push({ kind: 'note', status: 'ok', label: p.title, detail: '📒 anotação do grupo' });
           console.log(`[GroupChat] group_note create grupo=${groupId}: "${p.title}"`);
-        } else {
+        } else if (p.action === 'append') {
           const r = await groupNotes.appendGroupNote({ supabase, groupId, updatedBy: senderCollabId, title: p.title, body: p.body });
           actions.push({ kind: 'note', status: r.appended ? 'ok' : 'fail', label: p.title, detail: r.appended ? '📒 atualizada' : 'não achei essa anotação' });
+        } else if (p.action === 'update') {
+          const patch = { new_title: p.new_title, type: p.type, tags: p.tags, body: p.body, set_fields: p.set_fields, upsert_field: p.upsert_field, remove_field: p.remove_field };
+          const r = await groupNotes.updateGroupNote({ supabase, groupId, updatedBy: senderCollabId, title: p.title, patch });
+          actions.push({ kind: 'note', status: r.updated ? 'ok' : 'fail', label: p.title, detail: r.updated ? '✏️ ficha atualizada' : 'não achei essa ficha' });
+        } else if (p.action === 'delete') {
+          // Não apaga na hora: grava pendência e pede confirmação (o pré-passo executa o soft-delete).
+          const hit = await groupNotes.resolveNoteByTitle({ supabase, groupId, title: p.title });
+          if (!hit) {
+            actions.push({ kind: 'note', status: 'fail', label: p.title || 'Ficha', detail: 'não achei essa ficha' });
+          } else {
+            const expires = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+            await supabase.from('group_chat_pending_confirms')
+              .upsert({ group_id: groupId, sender_collab_id: senderCollabId, op: 'delete_note', target_id: hit.id, summary: hit.title, expires_at: expires }, { onConflict: 'group_id,sender_collab_id,op' });
+            actions.push({ kind: 'note', status: 'pending', label: hit.title, detail: '❓ confirma a exclusão?' });
+            console.log(`[GroupChat] group_note delete PENDENTE grupo=${groupId}: "${hit.title}"`);
+          }
+        } else if (p.action === 'restore') {
+          const r = await groupNotes.restoreGroupNote({ supabase, groupId, title: p.title });
+          actions.push({ kind: 'note', status: r.restored ? 'ok' : 'fail', label: p.title, detail: r.restored ? '♻️ restaurada da lixeira' : 'não achei essa ficha na lixeira' });
         }
-      } catch (e) { console.error('[GroupChat] GROUP_NOTE:', e.message); actions.push({ kind: 'note', status: 'fail', label: p.title || 'Anotação', detail: 'não consegui salvar' }); }
+      } catch (e) { console.error('[GroupChat] GROUP_NOTE:', e.message); actions.push({ kind: 'note', status: 'fail', label: (p && p.title) || 'Anotação', detail: 'não consegui salvar' }); }
     }
   }
 
@@ -350,6 +404,12 @@ function buildTomContent(rawReply, actions) {
     prose = `Opa, tentei mas não consegui concluir agora — ${motivos}. Dá uma conferida ou me explica de outro jeito que eu tento de novo. 🙏`;
   }
   let content = prose.trim();
+  // Pendência de confirmação (ex.: apagar ficha): garante uma pergunta CLARA mesmo se o LLM não
+  // escreveu prosa — senão o bridge-out (que tira o bloco ACTIONS) espelharia VAZIO no WhatsApp.
+  if (!content) {
+    const pend = acts.find((a) => a && a.status === 'pending');
+    if (pend) content = `Confirma que é pra apagar a ficha *${pend.label}*? Responde "sim" que eu mando pra lixeira (dá pra restaurar depois). 🗑️`;
+  }
   if (acts.length) content = (content ? content + '\n' : '') + ACTIONS_DELIM + JSON.stringify(acts);
   return content.trim() || null;
 }
