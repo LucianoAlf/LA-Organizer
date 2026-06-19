@@ -92,8 +92,9 @@ ${histText}
 - Estrutura obrigatória (com emoji no título de cada bloco pra dar HIERARQUIA visual):
   1. <h3>📋 Resumo da sessão</h3> seguido de <ul> com 2 a 4 <li> CURTOS — UMA ideia por item.
      NUNCA um parágrafo corrido/denso: quebre em itens curtos e escaneáveis.
-  2. <h3>✅ Em aberto</h3> seguido de <ul><li>...</li></ul> — o que ficou pendente
-     (se nada, <p>(nenhuma pendência identificada)</p>).
+  2. (opcional) <h3>🔖 Pendências da conversa</h3> — só loose ends CONVERSACIONAIS (ex.: "Rose
+     aguarda acesso à nota X"). NUNCA liste tarefas/prazos do grupo aqui — o sistema anexa a
+     lista REAL de tarefas em aberto automaticamente. Se não houver, OMITA este bloco.
   3. <p><em>Quer transformar algum item em tarefa? É só me chamar. 👋</em></p>
 - FORMATAÇÃO É OBRIGATÓRIA: cada item em sua própria linha (<li>), frases curtas, sem
   blocão de texto. O leitor tem que bater o olho e entender — nada de maçaroca.
@@ -119,13 +120,32 @@ ${histText}
       return;
     }
 
+    // Aterra o "Em aberto" na tabela VIVA (não deixa a IA inventar — achado do print 17/06):
+    // anexa a lista REAL de tarefas abertas do grupo (mesma fonte do pool/relatório).
+    let openBlock = '';
+    try {
+      const { queryGroupTasks } = require('./group-report-builder');
+      const open = await queryGroupTasks(supabase, group.id);
+      if (open.length) {
+        const items = open.slice(0, 12).map((t) => {
+          const d = t.due_date ? `${t.due_date.slice(8, 10)}/${t.due_date.slice(5, 7)} — ` : '';
+          const resp = t.responsavel ? ` (${t.responsavel})` : '';
+          return `<li>${d}${String(t.title || '').replace(/[<>&]/g, '')}${resp}</li>`;
+        }).join('');
+        openBlock = `<h3>✅ Em aberto (tarefas do grupo)</h3><ul>${items}</ul>`;
+      } else {
+        openBlock = '<h3>✅ Em aberto</h3><p>Nenhuma tarefa aberta no grupo. 🎉</p>';
+      }
+    } catch (e) { console.error(`[GroupChat][closing] open tasks grupo=${group.id}:`, e.message); }
+    const finalHtml = cardHtml + openBlock;
+
     // ── Inserir card de fechamento (kind='report') ────────────────────────────
     const { error: insertErr } = await supabase.from('group_chat_messages').insert({
       group_id: group.id,
       sender_id: null,
       role: 'tom',
       kind: 'report',
-      content: cardHtml,
+      content: finalHtml,
       channel: 'app',
     });
     if (insertErr) {
@@ -135,7 +155,7 @@ ${histText}
 
     // ── Atualizar tom_chat_memory (resumo rolante, limite ~3000 chars) ────────
     const separator = group.tom_chat_memory ? '\n\n---\n\n' : '';
-    const rawMemory = (group.tom_chat_memory || '') + separator + cardHtml;
+    const rawMemory = (group.tom_chat_memory || '') + separator + finalHtml;
     // Trunca pelo início mantendo os últimos MEMORY_LIMIT chars (memória mais recente ganha).
     const newMemory = rawMemory.length > MEMORY_LIMIT
       ? rawMemory.slice(rawMemory.length - MEMORY_LIMIT)
