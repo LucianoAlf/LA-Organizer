@@ -966,3 +966,15 @@ VALUES ('AUDIT-PRECISION-WINDOW-MATCH',
 **Placeholders:** nenhum "TBD/TODO"; todo passo de código tem código real. Único ponto que exige verificação em runtime (não placeholder, mas confirmação): o nome do provider de IA reusado na Task 9 — explicitamente marcado para confirmar contra `dispatcher.js` antes de codar.
 
 **Consistência de tipos/nomes:** `decideTriage`/`parseMatches`/`triageOpenFindings`/`resolveIncidentAt`/`formatConvQuality`/`buildMatchMessages` usados com a mesma assinatura em todas as tasks; `auto_triage` com os mesmos campos em Task 1, 7 e 8; `WINDOW_DAYS` importado de `finding-triage.js` em Task 8/9 (fonte única).
+
+---
+
+## Notas de execução (19/06) — código implementado
+
+Tasks 1–10 (código) executadas inline com TDD. **38 testes verdes** (`finding-triage` 12, `conversation-audit` 20, `conv-quality-format` 4, `finding-triage-prompt` 2). Produção (Task 11) **RETIDA pelo HOLD**.
+
+Duas divergências do plano original, ambas melhorias:
+1. **`formatConvQuality` foi extraída para `src/rituals/conv-quality-format.js`** (módulo próprio + `CONV_CAT_LABEL`), em vez de viver em `health-check.js`. Motivo: `health-check.js` importa `../supabase/client` no topo, que **só existe na VPS** (`project_local_vps_desync`) → não dá pra `require` local → a função pura ficaria intestável. Segue o padrão `group-report-builder.js` do projeto. `checkConversationQuality` importa de `./conv-quality-format`; teste em `conv-quality-format.test.js`.
+2. **`checkFindingTriage` reusa `require('../ai/provider').chat`** (o mesmo `aiChat` que o Dream injeta — confirmado em `dispatcher.js:24`), em vez do `_audit-chat` hipotético do plano.
+
+Verificação local de `health-check.js` é por `node --check` (não `require`, por causa do supabase só-na-VPS). Validação E2E real roda na VPS na fase de produção.

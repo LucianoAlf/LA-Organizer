@@ -167,8 +167,18 @@ async function queryGroupTasks(supabase, groupId) {
   })));
 }
 
-// v1: notes e op_checklists NÃO têm vínculo de grupo no schema. Retornam vazio (degrada gracioso).
-async function queryGroupNotes(_supabase, _groupId) { return []; }
+// Fichas do grupo (não-deletadas) com quem mexeu por último — pra auditoria/listagem.
+async function queryGroupNotes(supabase, groupId) {
+  const { data } = await supabase.from('group_notes')
+    .select('title, type, updated_at, updater:collaborators!group_notes_updated_by_fkey(preferred_name, full_name)')
+    .eq('group_id', groupId).is('deleted_at', null)
+    .order('updated_at', { ascending: false });
+  return (data || []).map((n) => ({
+    title: n.title, type: n.type, updated_at: n.updated_at,
+    quem: n.updater?.preferred_name || n.updater?.full_name || null,
+  }));
+}
+// op_checklists ainda NÃO têm vínculo de grupo no schema → stub (degrada gracioso).
 async function queryGroupChecklists(_supabase, _groupId) { return []; }
 
 // Monta o relatório em blocos por urgência. scope ∈ agenda|tarefas|tudo (agenda = sem bloco
