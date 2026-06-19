@@ -84,6 +84,16 @@ function parseClosingReply(userText, count) {
   const t = userText.toLowerCase().trim();
   if (!t || t.length > 200) return { matched: false, statuses };
 
+  // ALIGN (caso Quintela 18/06, irmão de CLOSING-INTERCEPTOR-OVERCAPTURE): "tudo/todas"
+  // COM ressalva (exceção/parcial/futuro) é AMBÍGUO p/ o parser → cai no LLM (fail-safe),
+  // que entende a nuance. Ex: "fiz tudo, o de amanhã resolvo amanhã", "fiz tudo menos a 2".
+  // Cirúrgico: só dispara quando a msg menciona "tudo/todas" E há qualificador — "só a 1"
+  // (sem "tudo") e "fiz tudo" puro seguem determinísticos.
+  if (/\b(tudo|todas?|td|geral)\b/.test(t)
+      && /\b(menos|exceto|fora|tirando|apenas|s[óo]|amanh[ãa]|depois|outro\s+dia|resolv\w+|deix\w+|fica(?:m)?\s+pra|de\s+hoje|de\s+hj|ainda)\b/.test(t)) {
+    return { matched: false, statuses };
+  }
+
   // 1) Globais "tudo" → todos done.
   if (
     /\b(fiz|fechei|conclu[ií]\w*|terminei|finalizei|consegui|deu\s+tudo)\s+(tudo|todas?|td|geral)\b/.test(t) ||

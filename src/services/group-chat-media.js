@@ -20,6 +20,7 @@ const http = require('http');
 const { URL } = require('url');
 const vision = require('./vision');
 const audio = require('./audio');
+const gemini = require('./gemini');
 
 /**
  * Baixa um buffer de uma URL pública (http ou https).
@@ -108,8 +109,15 @@ async function extractMediaText({ supabase, message }) {
       } catch (_) { prompt = undefined; }
       const text = await audio.whisperTranscribe(buf, filename, mime, { prompt, language: 'pt' });
       if (text && text.trim()) extracted = text;
+    } else if (message.kind === 'pdf') {
+      // PDF/documento: Gemini lê o conteúdo (igual ao 1:1 webhook.pdfToText) → fim do "não recebi o PDF".
+      // Plain PDF → texto. Fatura estruturada / OFX / PDF criptografado = Parte 3-B (offer→ficha).
+      const buf = await fetchBuffer(url);
+      if (!buf || !buf.length) return null;
+      const result = await gemini.analyzeMedia(buf, message.media_mime || 'application/pdf', message.content || '');
+      if (result && result.ok && result.text) extracted = result.text;
     } else {
-      // pdf e demais: sem extração automática nesta fase (Vision/Whisper não leem PDF)
+      // demais kinds: sem extração
       return null;
     }
 

@@ -76,6 +76,19 @@ test('parseClosingReply: "tudo certo" → todos done', () => {
   assert.deepStrictEqual(parseClosingReply('tudo certo', 2).statuses, ['done', 'done']);
 });
 
+// Caso Quintela 18/06 (irmão de CLOSING-INTERCEPTOR-OVERCAPTURE): "fiz tudo" com ressalva
+// de futuro/exceção NÃO crava todas done — cai no LLM (matched:false), que entende a nuance.
+test('parseClosingReply: "fiz tudo, o de amanhã resolvo amanhã" → NÃO casa (cai no LLM)', () => {
+  assert.strictEqual(parseClosingReply('Eu fiz tudo oras.. de hj fiz tudo, o de amanhã resolvo amanhã', 2).matched, false);
+});
+test('parseClosingReply: "fiz tudo menos a 2" → NÃO casa (exceção → LLM)', () => {
+  assert.strictEqual(parseClosingReply('fiz tudo menos a 2', 3).matched, false);
+});
+test('parseClosingReply: guard não vaza — "fiz tudo" puro e "só a 1" seguem determinísticos', () => {
+  assert.deepStrictEqual(parseClosingReply('fiz tudo', 3).statuses, ['done', 'done', 'done']);
+  assert.deepStrictEqual(parseClosingReply('só a 1', 3).statuses, ['done', 'none', 'none']);
+});
+
 test('parseClosingReply: "só a 1" → 1 done, resto none', () => {
   assert.deepStrictEqual(parseClosingReply('só a 1', 3).statuses, ['done', 'none', 'none']);
 });
