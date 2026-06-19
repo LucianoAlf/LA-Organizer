@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { createGroupNote, appendGroupNote, groupNotesContext, htmlToPlain, renderNoteContent, pickType, renderTypesBlock, looksLikeCredentialRequest, scoreNoteMatch, buildCredentialBlock } = require('./group-notes');
+const { createGroupNote, appendGroupNote, groupNotesContext, htmlToPlain, renderNoteContent, pickType, renderTypesBlock, looksLikeCredentialRequest, scoreNoteMatch, buildCredentialBlock, noteFetchContext, updateGroupNote, softDeleteGroupNote, softDeleteGroupNoteById, restoreGroupNote, resolveNoteByTitle, decideConfirm, maskSecretFields } = require('./group-notes');
 
 function fakeDb({ notes = [] } = {}) {
   const ev = [];
@@ -8,7 +8,9 @@ function fakeDb({ notes = [] } = {}) {
     const st = { filters: {}, op: 'select' };
     function resolve() {
       let rows = notes.filter((n) => (!st.filters.group_id || n.group_id === st.filters.group_id)
-        && (!st.filters.ilike_title || n.title.toLowerCase() === st.filters.ilike_title));
+        && (!st.filters.ilike_title || n.title.toLowerCase() === st.filters.ilike_title)
+        && (!st.filters.id || n.id === st.filters.id)
+        && (!('is_deleted_at' in st.filters) || n.deleted_at == null));
       if (st.op === 'insert') { const row = { id: `n${notes.length + 1}`, ...st.row }; notes.push(row); ev.push(['insert', row]); return Promise.resolve({ data: { id: row.id }, error: null }); }
       if (st.op === 'update') { rows.forEach((r) => { Object.assign(r, st.patch); ev.push(['update', r.id, st.patch]); }); return Promise.resolve({ data: rows, error: null }); }
       return Promise.resolve({ data: rows, error: null });
@@ -16,6 +18,7 @@ function fakeDb({ notes = [] } = {}) {
     const q = {
       select() { return q; }, eq(c, v) { st.filters[c] = v; return q; }, neq() { return q; },
       order() { return q; }, ilike(c, v) { st.filters['ilike_' + c] = String(v).toLowerCase(); return q; }, limit() { return q; },
+      is(c, v) { st.filters['is_' + c] = v; return q; },
       insert(row) { st.op = 'insert'; st.row = row; return q; }, update(p) { st.op = 'update'; st.patch = p; return q; },
       single() { return resolve().then((r) => ({ data: r.data, error: null })); },
       maybeSingle() { return resolve().then((r) => ({ data: (r.data || [])[0] || null, error: null })); },
@@ -137,4 +140,107 @@ test('buildCredentialBlock: formata e instrui; vazio→""', () => {
   const b = buildCredentialBlock([{ title: 'Cartão Santander', type: 'cartao', fields: [{ label: 'Senha', value: '1234' }] }]);
   assert.ok(b.includes('Cartão Santander') && b.includes('Senha: 1234'));
   assert.ok(/n[ãa]o despeje/i.test(b));
+});
+
+// ── Parte 1 Grupo-CRUD: leitura sob demanda + edit + delete/restore + confirmação ──
+
+test('noteFetchContext mascara secret e injeta a ficha pedida', async () => {
+  const notes = [
+    { id: 'n1', group_id: 'g1', title: 'Acesso Zoho', type: 'acesso', tags: [], body: '', deleted_at: null,
+      fields: [{ label: 'Login', value: 'a@b' }, { label: 'Senha', value: 'segredo123', secret: true }] },
+    { id: 'n2', group_id: 'g1', title: 'Reunião Mensal', type: 'reuniao', tags: [], body: 'ata', deleted_at: null, fields: [] },
+  ];
+  const { sb } = fakeDb({ notes });
+  const ctx = await noteFetchContext({ supabase: sb, groupId: 'g1', text: 'tom, me manda a ficha do acesso zoho' });
+  assert.ok(ctx.includes('Acesso Zoho'));
+  assert.ok(ctx.includes('Login: a@b'));
+  assert.ok(ctx.includes('••••'));            // senha mascarada
+  assert.ok(!ctx.includes('segredo123'));     // valor real não vaza
+  assert.ok(!ctx.includes('Reunião Mensal')); // ficha que não casa fica fora
+});
+
+test('noteFetchContext vazio quando nada casa', async () => {
+  const notes = [{ id: 'n1', group_id: 'g1', title: 'Reunião', type: 'reuniao', tags: [], fields: [], body: '', deleted_at: null }];
+  const { sb } = fakeDb({ notes });
+  const ctx = await noteFetchContext({ supabase: sb, groupId: 'g1', text: 'me manda a ficha do santander' });
+  assert.strictEqual(ctx, '');
+});
+
+test('noteFetchContext ignora ficha deletada', async () => {
+  const notes = [{ id: 'n1', group_id: 'g1', title: 'Acesso Zoho', type: 'acesso', tags: [], fields: [], body: 'corpo', deleted_at: '2026-01-01' }];
+  const { sb } = fakeDb({ notes });
+  const ctx = await noteFetchContext({ supabase: sb, groupId: 'g1', text: 'manda a ficha do zoho' });
+  assert.strictEqual(ctx, '');
+});
+
+test('resolveNoteByTitle ignora deletada por padrão', async () => {
+  const notes = [
+    { id: 'n1', group_id: 'g1', title: 'Dup', deleted_at: '2026-01-01', fields: [], tags: [] },
+    { id: 'n2', group_id: 'g1', title: 'Dup', deleted_at: null, fields: [], tags: [] },
+  ];
+  const { sb } = fakeDb({ notes });
+  const hit = await resolveNoteByTitle({ supabase: sb, groupId: 'g1', title: 'Dup' });
+  assert.strictEqual(hit.id, 'n2');
+});
+
+test('updateGroupNote preserva secret cifrado quando valor vem mascarado', async () => {
+  const notes = [{ id: 'n1', group_id: 'g1', title: 'Acesso X', type: 'acesso', tags: [], body: '', deleted_at: null,
+    fields: [{ label: 'Login', value: 'a@b' }, { label: 'Senha', value: 'enc:v1:ABC', secret: true, kind: 'password' }] }];
+  const { sb, ev } = fakeDb({ notes });
+  const r = await updateGroupNote({ supabase: sb, groupId: 'g1', updatedBy: 'u1', title: 'Acesso X',
+    patch: { upsert_field: { label: 'Senha', value: '••••', secret: true, kind: 'password' } } });
+  assert.strictEqual(r.updated, true);
+  const up = ev.find((e) => e[0] === 'update');
+  const senha = up[2].fields.find((f) => f.label === 'Senha');
+  assert.strictEqual(senha.value, 'enc:v1:ABC');   // cifrado preservado
+});
+
+test('updateGroupNote upsert_field adiciona campo novo por label', async () => {
+  const notes = [{ id: 'n1', group_id: 'g1', title: 'Conta Z', deleted_at: null, fields: [{ label: 'Banco', value: 'X' }], tags: [] }];
+  const { sb, ev } = fakeDb({ notes });
+  await updateGroupNote({ supabase: sb, groupId: 'g1', updatedBy: 'u1', title: 'Conta Z', patch: { upsert_field: { label: 'Agência', value: '001' } } });
+  const up = ev.find((e) => e[0] === 'update');
+  assert.ok(up[2].fields.some((f) => f.label === 'Agência' && f.value === '001'));
+  assert.ok(up[2].fields.some((f) => f.label === 'Banco'));   // mantém o existente
+});
+
+test('updateGroupNote: título inexistente → not_found', async () => {
+  const { sb } = fakeDb({ notes: [] });
+  const r = await updateGroupNote({ supabase: sb, groupId: 'g1', updatedBy: 'u1', title: 'Nada', patch: { body: 'x' } });
+  assert.strictEqual(r.updated, false);
+  assert.strictEqual(r.reason, 'not_found');
+});
+
+test('softDeleteGroupNote seta deleted_at; restoreGroupNote limpa', async () => {
+  const notes = [{ id: 'n1', group_id: 'g1', title: 'Ficha Y', deleted_at: null, fields: [], tags: [] }];
+  const { sb } = fakeDb({ notes });
+  const d = await softDeleteGroupNote({ supabase: sb, groupId: 'g1', title: 'Ficha Y' });
+  assert.strictEqual(d.deleted, true);
+  assert.ok(notes[0].deleted_at);
+  const r = await restoreGroupNote({ supabase: sb, groupId: 'g1', title: 'Ficha Y' });
+  assert.strictEqual(r.restored, true);
+  assert.strictEqual(notes[0].deleted_at, null);
+});
+
+test('softDeleteGroupNoteById marca por id', async () => {
+  const notes = [{ id: 'n1', group_id: 'g1', title: 'Z', deleted_at: null, fields: [], tags: [] }];
+  const { sb } = fakeDb({ notes });
+  await softDeleteGroupNoteById({ supabase: sb, noteId: 'n1' });
+  assert.ok(notes[0].deleted_at);
+});
+
+test('decideConfirm: sim→execute, não→cancel, outro→ignore, sem pendência→ignore', () => {
+  const p = { id: 'p1' };
+  assert.strictEqual(decideConfirm(p, 'sim'), 'execute');
+  assert.strictEqual(decideConfirm(p, 'pode apagar'), 'execute');
+  assert.strictEqual(decideConfirm(p, 'não'), 'cancel');
+  assert.strictEqual(decideConfirm(p, 'que horas são?'), 'ignore');
+  assert.strictEqual(decideConfirm(null, 'sim'), 'ignore');
+});
+
+test('maskSecretFields troca valor secreto por ••••, mantém o resto', () => {
+  const n = { fields: [{ label: 'Login', value: 'a@b' }, { label: 'Senha', value: 'x', secret: true }] };
+  const m = maskSecretFields(n);
+  assert.strictEqual(m.fields[0].value, 'a@b');
+  assert.strictEqual(m.fields[1].value, '••••');
 });
