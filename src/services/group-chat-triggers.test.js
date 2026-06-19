@@ -1,7 +1,7 @@
 // src/services/group-chat-triggers.test.js
 const assert = require('node:assert');
 const { test } = require('node:test');
-const { detectEngageTrigger, detectDisengageTrigger, isEngaged } = require('./group-chat-triggers');
+const { detectEngageTrigger, detectDisengageTrigger, isEngaged, isVocativeTom, isAddressedToTom } = require('./group-chat-triggers');
 
 test('engage: menção direta aciona', () => {
   assert.equal(detectEngageTrigger('fala tom, cria uma tarefa'), true);
@@ -40,4 +40,22 @@ test('isEngaged: sessão aberta enquanto engaged_at setado (cap 12h)', () => {
   assert.equal(isEngaged('2026-06-11T23:00:00Z', now), false);  // 13h — trava de segurança
   assert.equal(isEngaged(null, now), false);
   assert.equal(isEngaged(undefined, now), false);
+});
+
+test('isVocativeTom: acorda em chamado direto (vocativo)', () => {
+  ['Tom, faz isso', '@tom', 'fala tom', 'Ei Tom', 'bom dia Tom!', 'Tom?', 'TOM', 'e aí tom, beleza?'].forEach((t) =>
+    assert.equal(isVocativeTom(t), true, `devia acordar: ${t}`));
+});
+
+test('isVocativeTom: NÃO acorda em menção SOBRE ele nem em substring', () => {
+  ['o Tom já leu', 'manda pro Tom', 'falar com o Tom', 'do Tom', 'isso é automático', 'a árvore tombou', 'fantom da ópera', '', null].forEach((t) =>
+    assert.equal(isVocativeTom(t), false, `NÃO devia acordar: ${t}`));
+});
+
+test('isAddressedToTom: vocativo OU reply OU awaiting → true; nada → false', () => {
+  assert.equal(isAddressedToTom({ text: 'Tom, status?' }), true);
+  assert.equal(isAddressedToTom({ text: 'kkk que isso', isReplyToTom: true }), true);
+  assert.equal(isAddressedToTom({ text: 'sim', tomAwaiting: true }), true);
+  assert.equal(isAddressedToTom({ text: 'depois eu vejo isso' }), false);
+  assert.equal(isAddressedToTom({ text: 'o Tom já respondeu' }), false);
 });

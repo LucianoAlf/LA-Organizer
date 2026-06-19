@@ -6,7 +6,41 @@ const ENGAGE_WINDOW_MIN = 8;
 
 // Menção direta ao TOM. `tom` é ASCII → \btom\b é seguro (não casa "automático"/"tombou").
 // Cobre "@tom", "fala tom", "tom,", "tom?" e o nome isolado.
-const ENGAGE_RE = /(^|[\s,!?@])tom\b/i;
+const VOCATIVE_STOPWORDS = new Set([
+  'o', 'a', 'os', 'as', 'do', 'da', 'dos', 'das', 'pro', 'pra', 'pros', 'pras',
+  'ao', 'aos', 'com', 'de', 'no', 'na', 'nos', 'nas', 'um', 'uma',
+]);
+
+// Janela em que uma resposta a uma PERGUNTA do TOM conta sem precisar repetir o nome.
+const AWAIT_WINDOW_MS = 3 * 60 * 1000;
+
+// Normaliza um token pra a-z minúsculo sem acento/pontuação (p/ comparar no stoplist).
+function _normToken(tok) {
+  return String(tok || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z]/g, '');
+}
+
+// "Tom" como CHAMADO DIRETO (vocativo), não menção sobre ele.
+// Acorda: "@tom"; "Tom" no início; "Tom" precedido de palavra fora do stoplist ("fala tom", "bom dia Tom").
+// NÃO acorda: "o Tom", "pro Tom", "com o Tom" (sobre ele); nem substring ("automático", "tombou", "fantom").
+function isVocativeTom(text) {
+  if (!text || typeof text !== 'string') return false;
+  const lower = text.toLowerCase();
+  if (/@tom\b/.test(lower)) return true;                  // @tom é sempre chamado
+  const words = lower.split(/[^a-zà-ú@]+/i).filter(Boolean);
+  for (let i = 0; i < words.length; i++) {
+    if (_normToken(words[i]) !== 'tom') continue;
+    if (i === 0) return true;                             // "Tom ..." no início
+    if (!VOCATIVE_STOPWORDS.has(_normToken(words[i - 1]))) return true; // precedido de não-stopword
+    // precedido de artigo/preposição → menção sobre ele; segue procurando outra ocorrência
+  }
+  return false;
+}
+
+// Endereçamento: o TOM só fala se for vocativo, reply à msg dele, ou se ele estava esperando.
+// (isReplyToTom entra no fast-follow; no v1 vem sempre false do watcher.)
+function isAddressedToTom({ text, isReplyToTom = false, tomAwaiting = false } = {}) {
+  return isVocativeTom(text) || !!isReplyToTom || !!tomAwaiting;
+}
 
 // Despedida dirigida ao TOM: precisa do nome "tom" E de um termo de fechamento na mesma msg.
 // Nota: \b NÃO funciona após vogal acentuada no JS (ex: "até" com \b no final falha).
