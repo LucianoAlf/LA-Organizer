@@ -35,6 +35,15 @@ const CLAUDE_PATH = process.env.PATH || '/usr/local/sbin:/usr/local/bin:/usr/sbi
 // Override via CLAUDE_TIMEOUT_MS.
 const CLAUDE_TIMEOUT_MS = Number(process.env.CLAUDE_TIMEOUT_MS) || 45000;
 
+// Paralelismo (Fase 1, default OFF). Com a flag ≠ '1' tudo cai no caminho serial.
+const { createSemaphore, decideRefreshMode, workerHomePath, needsCredSync } = require('./claude-pool');
+const PARALLEL_ENABLED = process.env.TOM_CLAUDE_PARALLEL === '1';
+const POOL_SIZE = Math.max(1, Number(process.env.TOM_CLAUDE_POOL_SIZE) || 2);
+const REFRESH_SLACK_MS = Number(process.env.TOM_CLAUDE_REFRESH_SLACK_MS) || 1800000; // 30 min
+const WORKER_HOMES = Array.from({ length: POOL_SIZE }, (_, i) => workerHomePath(CLAUDE_USER_HOME, i));
+let _pool = null;        // semáforo, criado em ensureWorkerHomes()
+let _canonLock = Promise.resolve(); // mutex SÓ para o refresh-no-CANON
+
 // Sprint 26 — Mutex serializa chamadas ao CLI pra impedir race no .claude.json.
 // Causa-raiz: dois `claude -p` em paralelo abriam o mesmo arquivo de config e
 // o último a fechar truncava (virava 50 bytes). Backups corrompidos em
@@ -43,16 +52,47 @@ const CLAUDE_TIMEOUT_MS = Number(process.env.CLAUDE_TIMEOUT_MS) || 45000;
 // mas elimina o corrompimento e o "TOM ficou mudo" subsequente.
 let _claudeQueue = Promise.resolve();
 
-function buildEnv() {
+function buildEnv(home = CLAUDE_USER_HOME) {
   const env = {
-    HOME: CLAUDE_USER_HOME,
+    HOME: home,
     PATH: CLAUDE_PATH,
-    CLAUDE_HOME,
+    CLAUDE_HOME: path.join(home, '.claude'),
     LANG: process.env.LANG || 'C.UTF-8',
   };
   if (process.env.ANTHROPIC_API_KEY) env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
   if (process.env.CLAUDE_CODE_OAUTH_TOKEN) env.CLAUDE_CODE_OAUTH_TOKEN = process.env.CLAUDE_CODE_OAUTH_TOKEN;
   return env;
+}
+
+// Copia o .credentials.json fresco do CANON → worker, só se o do worker estiver
+// ausente/mais velho. NÃO copia .claude.json (cada worker tem o seu, descartável).
+function syncCredsToWorker(workerHome) {
+  const src = path.join(CLAUDE_HOME, '.credentials.json');
+  const dstDir = path.join(workerHome, '.claude');
+  const dst = path.join(dstDir, '.credentials.json');
+  try {
+    const srcMtime = fs.statSync(src).mtimeMs;
+    let dstMtime = null;
+    try { dstMtime = fs.statSync(dst).mtimeMs; } catch (_) { dstMtime = null; }
+    if (needsCredSync(srcMtime, dstMtime)) {
+      fs.mkdirSync(dstDir, { recursive: true });
+      fs.copyFileSync(src, dst);
+      try { fs.chmodSync(dst, 0o600); } catch (_) {}
+    }
+  } catch (e) {
+    console.warn(`[Pool] syncCredsToWorker(${workerHome}) falhou: ${e.message}`);
+  }
+}
+
+// Boot: cria os K worker HOMEs, faz a 1ª cópia das credenciais e monta o semáforo.
+// Idempotente. Só roda quando o paralelismo está ligado.
+function ensureWorkerHomes() {
+  for (const home of WORKER_HOMES) {
+    fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+    syncCredsToWorker(home);
+  }
+  _pool = createSemaphore(WORKER_HOMES);
+  console.log(`[Pool] ${WORKER_HOMES.length} worker HOMEs prontos (K=${POOL_SIZE})`);
 }
 
 /**
@@ -85,7 +125,7 @@ async function chat(systemPrompt, messages, maxTokens) {
   return job;
 }
 
-async function _chatInner(systemPrompt, messages, enqueuedAt) {
+async function _chatInner(systemPrompt, messages, enqueuedAt, home = CLAUDE_USER_HOME) {
   const startedAt = Date.now();
   const queueWaitMs = enqueuedAt ? (startedAt - enqueuedAt) : 0;
   const lastUser = messages.filter(m => m.role === 'user').pop()?.content || '';
