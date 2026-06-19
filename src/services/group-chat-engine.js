@@ -8,7 +8,7 @@
 // Isso garante a quebra de linha/hierarquia (não depende de markdown) e dá a riqueza visual.
 const ai = require('../ai/provider');
 const { buildGroupChatPrompt, loadGroupChatSoul } = require('./group-chat-prompt');
-const { applyGroupChatTaskActions, findDuplicatePackage, resolveVisibleInstance, filterNewSubtasks } = require('./group-chat-tasks');
+const { applyGroupChatTaskActions, findDuplicatePackage, resolveVisibleInstance, filterNewSubtasks, endSeries, resolveSeriesTemplate, reviveSeries } = require('./group-chat-tasks');
 const { createTaskGroup, addSubtasksToGroup } = require('./task-groups');
 const { buildGroupReport } = require('./group-report-builder');
 const groupNotes = require('./group-notes');
