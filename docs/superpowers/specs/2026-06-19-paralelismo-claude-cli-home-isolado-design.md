@@ -272,11 +272,11 @@ Ambiente: VPS, CLI 2.1.143, token com folga 5,2h→4,7h durante os testes. CANON
 | 2 | Auth em HOME isolado (cred 444) | `is_error:false`, `result:"OK"`, 1,77 s; worker criou `.claude.json` próprio (25,8 KB) | **H1 ✅** (não refresca c/ folga) · **H2 ✅** (basta `.credentials.json`) |
 | 3 | K=2 paralelo, 20 rodadas (40 spawns) | 20/20 OK, zero corrupção, CANON intacto por rodada | **H3 ✅** |
 | 4 | Latência serial vs pool K=2, N=20 | serial p50 **5557 ms** / pool p50 **2809 ms** → **1,98× no p50** (p95 7911→3946; max 8913→4494) | **H4 ✅** |
-| 5 | Rotação passiva | baseline gravado; aguardando refresh natural (~`expiresAt`, 21h30) | pendente |
+| 5 | Rotação passiva | refresh natural 19/06 22:00 UTC: `refreshToken` `86c9ad81`→`86c8dc9d`, `accessToken` renovou | **✅ ROTACIONA — refresh central validado** |
 
 **Nota — backups internos de 50 B nos workers** (`/tmp/tomtest-w*/.claude/backups/.claude.json.backup.*`): cada worker teve **exatamente 1**, com conteúdo `{"firstStartTime":"…"}`. É o `.claude.json` **recém-criado** (só o 1º campo), salvo pelo mecanismo backup-antes-de-escrever do CLI **antes** de popular o arquivo (que chega a 26 KB, 15 chaves, válido). **Não é corrupção:** o arquivo cresce 50 B→26 KB e nunca regride; é o **oposto** do bug Sprint 26 (lá um `.claude.json` de 29 KB *regredia* pra ~50 B por escrita concorrente no HOME compartilhado, perdendo dados reais). Os backups do CANON seguem todos ~29 KB. Único por worker, não recorrente, não intercalado com tamanhos grandes.
 
-**Gate A:** H1–H4 satisfeitas com **K=2**; falta só a classificação do Exp 5 (confirmatória, não bloqueante — o design já é robusto a rotação). **A implementação (Fase 1) aguarda nova aprovação do Alf.**
+**Gate A:** H1–H4 satisfeitas com **K=2**. **Exp 5 FECHADO (20/06): o `refreshToken` ROTACIONA** (one-time-use) — o que torna o refresh central **obrigatório** (a opção "pool cada um refresca" teria quebrado a cada vencimento). **Fase 1 implementada e Fase 2 LIGADA em produção (19-20/06):** `TOM_CLAUDE_PARALLEL=1`, fila serial eliminada (4–5 ms vs ~1.400 ms da 2ª no serial), e o 1º ciclo de refresh em produção foi confirmado (os workers receberam o token rotacionado via `syncCredsToWorker`, sem ficar com token morto). Rollback por flag (`=0` + `pm2 restart`).
 
 ## 13. Fora de escopo / decisões adiadas
 
