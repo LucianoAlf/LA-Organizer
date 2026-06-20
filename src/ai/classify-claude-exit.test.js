@@ -62,3 +62,32 @@ test('robustez: args nulos não quebram', () => {
   const r = classifyClaudeExit(1, null, null);
   assert.strictEqual(r.kind, 'exit');
 });
+
+// AUTH (Sentinela, 20/06) — token OAuth morto/401 deve sair como exit_auth.
+test('auth: "Invalid API key · Please run /login"', () => {
+  const r = classifyClaudeExit(1, 'Invalid API key · Please run /login', '');
+  assert.strictEqual(r.kind, 'exit_auth');
+});
+
+test('auth: authentication_error / OAuth token expired no stdout JSON', () => {
+  const stdout = JSON.stringify({ type: 'error', error: { type: 'authentication_error', message: 'OAuth token has expired' } });
+  const r = classifyClaudeExit(1, stdout, '');
+  assert.strictEqual(r.kind, 'exit_auth');
+});
+
+test('auth: HTTP 401 "Invalid authentication credentials" (frase do incidente 20/06)', () => {
+  const r = classifyClaudeExit(1, 'API Error: 401 Invalid authentication credentials', '');
+  assert.strictEqual(r.kind, 'exit_auth');
+});
+
+test('auth: Unauthorized no stderr', () => {
+  const r = classifyClaudeExit(1, '', 'Unauthorized');
+  assert.strictEqual(r.kind, 'exit_auth');
+});
+
+test('auth NÃO captura overloaded/rate-limit (precedência correta)', () => {
+  assert.strictEqual(classifyClaudeExit(1, '429 Too Many Requests rate_limit_error', '').kind, 'exit_rate_limit');
+  assert.strictEqual(classifyClaudeExit(1, 'overloaded_error 529', '').kind, 'exit_overloaded');
+  // invalid_request_error (400) não é auth
+  assert.strictEqual(classifyClaudeExit(1, 'invalid_request_error: bad param', '').kind, 'exit');
+});

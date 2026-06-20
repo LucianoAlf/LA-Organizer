@@ -3521,6 +3521,16 @@ async function run(opts = {}) {
     await mondayScorecard.tick();
   } catch (err) { console.error('[Scorecard] outer err:', err.message); }
 
+  // Sentinela do Claude (20/06) — avisa o dono no WhatsApp se o login do Claude cair
+  // (incidente: ~13h degradado no Codex sem ninguém ver). Barato: só sonda em
+  // silêncio/suspeita; tráfego real do Claude já dispensa o canário.
+  try {
+    const { runClaudeSentinel } = require('./claude-sentinel');
+    const claude = require('../ai/claude');
+    const { sendMessage } = require('../services/whatsapp');
+    await runClaudeSentinel({ supabase, claudeChat: claude.chat, sendMessage, now: new Date() });
+  } catch (err) { console.error('[Sentinel] outer err:', err.message); }
+
   // Sprint 23 — dispatch de listas pessoais recorrentes
   // Roda só ao redor das 00:30 BRT (uma vez por dia, mesma janela do recurrence-materializer)
   if (now.hour === 0 && now.minute <= 45) {

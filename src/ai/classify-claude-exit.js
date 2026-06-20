@@ -30,7 +30,12 @@ function classifyClaudeExit(code, stdout, stderr) {
   const probe = `${stdout || ''} ${stderr || ''}`.toLowerCase();
 
   let kind = 'exit';
-  if (/rate_limit_error|rate[ _-]?limit|too many requests|\b429\b/.test(probe)) {
+  // AUTH primeiro (mais específico + acionável): token OAuth morto/expirado/revogado, 401,
+  // "please run /login". Não se cura sozinho → a Sentinela paga o dono na hora (re-login).
+  // Incidente 20/06: refresh token morreu → 401 das 09h às 22h, TOM ~13h no Codex sem alerta.
+  if (/\b401\b|invalid[ _-]?authentication|authentication_error|\bunauthorized\b|oauth[^a-z]{0,12}(?:token)?[^a-z]{0,12}(?:expired|revoked|invalid)|token (?:expired|revoked|has expired)|invalid api key|invalid bearer|not (?:logged in|authenticated)|please (?:run )?\/?login|run \/login|login (?:expired|required)|credentials? (?:expired|invalid|revoked)/.test(probe)) {
+    kind = 'exit_auth';
+  } else if (/rate_limit_error|rate[ _-]?limit|too many requests|\b429\b/.test(probe)) {
     kind = 'exit_rate_limit';
   } else if (/overloaded_error|overloaded|\b529\b/.test(probe)) {
     kind = 'exit_overloaded';
