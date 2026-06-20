@@ -2555,15 +2555,31 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
       await logRitualEvent(ceo.id, 'ceo_team_unclosed_tasks', 'error', error.message, ymdRef);
       continue;
     }
-    if (!stale || stale.length === 0) {
-      await logRitualEvent(ceo.id, 'ceo_team_unclosed_tasks', 'skipped', 'none_found', ymdRef);
+    // Done-twin guard (estende GROUPREPORT-DONE-TWIN-OVERDUE à Visão da empresa): esconde a
+    // pendente cuja série já tem gêmea CONCLUÍDA no MESMO título+due (sobra de churn de
+    // recorrência — o trabalho foi feito na outra linha). Caso cartões 20/06 (12/06 done →
+    // duplicata pending de 12/06 aparecia como "8d atrasada"). Busca só as done que casam.
+    let staleOpen = stale || [];
+    if (staleOpen.length) {
+      const { dropOpenWithDoneTwin } = require('../services/group-report-builder');
+      const dueSet = [...new Set(staleOpen.map((t) => t.due_date).filter(Boolean))];
+      const titleSet = [...new Set(staleOpen.map((t) => t.title).filter(Boolean))];
+      if (dueSet.length && titleSet.length) {
+        const { data: doneTwins } = await supabase
+          .from('tasks').select('title, due_date, status')
+          .eq('status', 'done').in('title', titleSet).in('due_date', dueSet);
+        staleOpen = dropOpenWithDoneTwin([...staleOpen, ...(doneTwins || [])]);
+      }
+    }
+    if (!staleOpen || staleOpen.length === 0) {
+      await logRitualEvent(ceo.id, 'ceo_team_unclosed_tasks', 'skipped', 'none_found_after_donetwin', ymdRef);
       if (opts.returnText) return { text: '', staleIds: [] };
       continue;
     }
 
     // Task 4 — digest do líder filtra pela posse: cada tarefa só aparece para quem
     // é viewer dela (governanceViewerIdsOf = delegador ou, se NULL, gerente da unidade).
-    let scoped = stale;
+    let scoped = staleOpen;
     if (opts.leaderId) {
       scoped = stale.filter((t) =>
         governanceViewerIdsOf(t, collabById.get(t.assigned_to), allCollabs).includes(opts.leaderId),
