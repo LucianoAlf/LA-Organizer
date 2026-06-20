@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { windowBounds, dueFlag, categorize, splitTasks, dedupeTasks, dropOpenWithDoneTwin, renderReportHtml, buildGroupReport } = require('./group-report-builder');
+const { windowBounds, dueFlag, categorize, splitTasks, dedupeTasks, dropOpenWithDoneTwin, shapeOpenTasks, queryGroupTasks, renderReportHtml, buildGroupReport } = require('./group-report-builder');
 
 // 12/06/2026 é uma SEXTA. now = 2026-06-12 15:00 BRT = 18:00Z.
 const NOW = new Date('2026-06-12T18:00:00Z');
@@ -206,6 +206,40 @@ test('buildGroupReport: tarefa lançada retroativa (criada após o prazo) NÃO v
   assert.ok(html.includes('Atrasada real'));   // criada antes do prazo → aparece
   assert.ok(!html.includes('Retroativa'));      // lançada já vencida → some
   assert.match(html, /🔴 Atrasadas · 1/);
+});
+
+// ── shapeOpenTasks + queryGroupTasks: o card de FECHAMENTO usa queryGroupTasks DIRETO (sem
+//    passar pelo categorize do buildGroupReport). A retroativa tem que sair JÁ aqui, senão
+//    vira fantasma no card "Em aberto" (caso Rose 20/06, GROUPCHAT-CLOSING-RETRO-PHANTOM).
+test('shapeOpenTasks: exclui RETROATIVA (criada após vencimento) — fantasma Conciliação 01/06', () => {
+  const today = '2026-06-20';
+  const out = shapeOpenTasks([
+    { title: 'Conciliação de Cartões', due_date: '2026-06-01', status: 'pending', created_at: '2026-06-13T10:00:00Z', creator: { preferred_name: 'Rose' } },
+    { title: 'Boleto X', due_date: '2026-06-10', status: 'pending', created_at: '2026-05-30T10:00:00Z', creator: { preferred_name: 'Rose' } }, // atraso real (criada antes)
+    { title: 'Cartão 1074', due_date: '2026-06-25', status: 'pending', created_at: '2026-06-13T10:00:00Z', creator: { preferred_name: 'Rose' } }, // futura
+  ], today).map((t) => t.title);
+  assert.ok(!out.includes('Conciliação de Cartões')); // retroativa some
+  assert.deepEqual(out.sort(), ['Boleto X', 'Cartão 1074']);
+});
+
+test('shapeOpenTasks: pendente-gêmea-de-concluída some (churn) + dedup exato', () => {
+  const out = shapeOpenTasks([
+    { title: 'Cartão 8516', due_date: '2026-06-17', status: 'done', created_at: '2026-06-10T10:00:00Z' },
+    { title: 'Cartão 8516', due_date: '2026-06-17', status: 'pending', created_at: '2026-06-10T10:00:00Z' }, // gêmea da done → some
+    { title: 'Cartão 9999', due_date: '2026-06-19', status: 'pending', created_at: '2026-06-10T10:00:00Z' },
+    { title: 'Cartão 9999', due_date: '2026-06-19', status: 'pending', created_at: '2026-06-10T10:00:00Z' }, // dup exata → 1 só
+  ], '2026-06-20').map((t) => t.title);
+  assert.deepEqual(out, ['Cartão 9999']);
+});
+
+test('queryGroupTasks: card de fechamento NÃO recebe retroativa (regressão GROUPCHAT-CLOSING-RETRO-PHANTOM)', async () => {
+  const sb = fakeSupabase([
+    { title: 'Conciliação de Cartões', due_date: '2026-06-01', status: 'pending', created_at: '2026-06-13T10:00:00Z', creator: { preferred_name: 'Rose' } },
+    { title: 'Cartão 1074 (Kids CG)', due_date: '2026-06-25', status: 'pending', created_at: '2026-06-13T10:00:00Z', creator: { preferred_name: 'Rose' } },
+  ]);
+  const titles = (await queryGroupTasks(sb, 'g1', new Date('2026-06-20T12:00:00-03:00'))).map((t) => t.title);
+  assert.ok(!titles.includes('Conciliação de Cartões')); // fantasma fora
+  assert.ok(titles.includes('Cartão 1074 (Kids CG)'));    // legítima fica
 });
 
 test('buildGroupReport: diário (window=hoje) mostra só Atrasadas + Para hoje', async () => {

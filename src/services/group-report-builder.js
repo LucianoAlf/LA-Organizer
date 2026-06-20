@@ -159,10 +159,33 @@ function dropOpenWithDoneTwin(rows) {
     t.status !== 'done' && t.status !== 'cancelled' && !doneKeys.has(`${t.title}|${t.due_date || ''}`));
 }
 
-// Tarefas ABERTAS do grupo. Exclui done E cancelled (cancelada não é "atrasada"), esconde
-// os MOLDES de recorrência (recurrence_rule != null) — mostra só instâncias/tarefas normais —
-// e faz dedup defensivo contra instâncias gêmeas (materialização duplicada).
-async function queryGroupTasks(supabase, groupId) {
+// Modela linhas CRUAS de tarefa em itens de listagem ABERTOS aplicando TODOS os filtros que
+// QUALQUER lugar que mostra tarefa de grupo deve aplicar (regra: digest, card de fechamento e
+// pool do chat — todos idênticos):
+//   • done → dropOpenWithDoneTwin; cancelled já sai na query.
+//   • pendente-gêmea-de-concluída (sobra de churn de recorrência) → dropOpenWithDoneTwin.
+//   • RETROATIVA (criada DEPOIS do vencimento, ex.: "Conciliação 01/06" criada 13/06) → some.
+//     ANTES isso só rodava no buildGroupReport (digest da manhã, via categorize); o card de
+//     fechamento chamava queryGroupTasks DIRETO e mostrava a retroativa como "Em aberto"
+//     (tarefa fantasma — caso Rose 20/06, GROUPCHAT-CLOSING-RETRO-PHANTOM).
+//   • dedup defensivo de gêmeas exatas (materialização duplicada).
+function shapeOpenTasks(rows, todayYmd) {
+  return dedupeTasks(
+    dropOpenWithDoneTwin(rows || [])
+      .map((t) => ({
+        title: t.title,
+        due_date: t.due_date,
+        created_ymd: t.created_at ? spYmd(new Date(t.created_at)) : null,
+        responsavel: t.creator?.preferred_name || t.creator?.full_name || null,
+      }))
+      .filter((t) => categorize(t.due_date, todayYmd, t.created_ymd) !== 'retroativa'),
+  );
+}
+
+// Tarefas ABERTAS do grupo. Esconde os MOLDES de recorrência (recurrence_rule != null) já na
+// query; o resto dos filtros (done-twin, retroativa, dedup) é shapeOpenTasks — fonte única.
+// `now` permite "hoje" determinístico (testes/relatório passam o seu; default = agora).
+async function queryGroupTasks(supabase, groupId, now = new Date()) {
   const { data } = await supabase.from('tasks')
     .select('id, title, due_date, status, created_by, created_at, ' +
             'creator:collaborators!tasks_created_by_fkey(preferred_name, full_name)')
@@ -170,13 +193,7 @@ async function queryGroupTasks(supabase, groupId) {
     .neq('status', 'cancelled')
     .is('recurrence_rule', null)
     .order('due_date', { ascending: true, nullsFirst: false });
-  // dropOpenWithDoneTwin tira as concluídas E as pendentes-gêmeas-de-concluída (sobra de churn).
-  return dedupeTasks(dropOpenWithDoneTwin(data || []).map((t) => ({
-    title: t.title,
-    due_date: t.due_date,
-    created_ymd: t.created_at ? spYmd(new Date(t.created_at)) : null,
-    responsavel: t.creator?.preferred_name || t.creator?.full_name || null,
-  })));
+  return shapeOpenTasks(data || [], spYmd(now));
 }
 
 // Fichas do grupo (não-deletadas) com quem mexeu por último — pra auditoria/listagem.
@@ -202,7 +219,7 @@ async function buildGroupReport({ supabase, groupId, scope = 'tudo', window = 'm
   const groupName = g?.name || 'grupo';
 
   let tasks = [];
-  try { tasks = await queryGroupTasks(supabase, groupId); } catch (e) { console.error('[Report] tasks err:', e.message); }
+  try { tasks = await queryGroupTasks(supabase, groupId, now); } catch (e) { console.error('[Report] tasks err:', e.message); }
 
   // Cobrança de atrasadas (B2 overdue): bloco único, short-circuit se vazio.
   if (onlyOverdue) {
@@ -237,6 +254,6 @@ async function buildGroupReport({ supabase, groupId, scope = 'tudo', window = 'm
 
 module.exports = {
   windowBounds, dueFlag, categorize, catsForWindow, spYmd, addDaysYmd, splitTasks, dedupeTasks, dropOpenWithDoneTwin,
-  renderReportHtml, queryGroupTasks, queryGroupNotes, queryGroupChecklists,
+  renderReportHtml, shapeOpenTasks, queryGroupTasks, queryGroupNotes, queryGroupChecklists,
   taskLine, taskLineItem, buildGroupReport, CATEGORIES,
 };
