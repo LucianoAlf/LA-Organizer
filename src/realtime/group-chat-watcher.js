@@ -11,7 +11,7 @@
 //  - Recuperação: se um restart matou o processamento no meio (claim feito, resposta perdida),
 //    a varredura detecta a mensagem de membro órfã (última, sem resposta) e a re-libera pro poll.
 
-const { detectDisengageTrigger, isEngaged, isVocativeTom, isAddressedToTom, shouldRecoverOrphan, AWAIT_WINDOW_MS } = require('../services/group-chat-triggers');
+const { detectDisengageTrigger, isEngaged, isVocativeTom, decideGroupReply, shouldRecoverOrphan, AWAIT_WINDOW_MS } = require('../services/group-chat-triggers');
 const { processGroupChatMessage } = require('../services/group-chat-engine');
 const { extractMediaText } = require('../services/group-chat-media');
 const { processGroupChatClosing } = require('../services/group-chat-closing');
@@ -69,31 +69,27 @@ async function processOne(supabase, msg) {
     .select('tom_chat_engaged_at, wa_group_jid').eq('id', msg.group_id).maybeSingle();
   const engaged = isEngaged(group?.tom_chat_engaged_at, new Date());
 
-  // ── Pré-filtro determinístico (SEM IA): o TOM ouve tudo, mas só RESPONDE quando endereçado.
+  // ── Modelo JANELA (Alf 20/06): vocativo ABRE a janela; enquanto aberta o TOM responde à conversa
+  // sem precisar repetir o nome; "valeu Tom"/ociosidade (~8min, sweepEngaged) fecham. Pré-filtro
+  // determinístico (sem IA): janela fechada + sem chamado → silêncio real.
   const vocative = isVocativeTom(text);
-  // reply entra no fast-follow (precisa de coluna + bridge-in); no v1 é sempre false.
-  const tomAwaiting = vocative ? false : await computeTomAwaiting(supabase, msg.group_id);
-  const addressed = isAddressedToTom({ text, isReplyToTom: false, tomAwaiting });
+  const isFarewell = detectDisengageTrigger(text);
+  const tomAwaiting = (engaged || vocative) ? false : await computeTomAwaiting(supabase, msg.group_id);
+  const { shouldRun, clearAfter, opensWindow } = decideGroupReply({ engaged, vocative, isFarewell, tomAwaiting });
 
-  let shouldRun = false, clearAfter = false;
-  if (addressed && detectDisengageTrigger(text)) {
-    shouldRun = true; clearAfter = true;           // "valeu Tom" → responde e fecha a sessão
-  } else if (addressed) {
-    shouldRun = true;
-    if (!engaged) {
-      // Abre a sessão (início, não desliza) só quando ENDEREÇADO — pro card de fechamento/memória.
-      await supabase.from('work_groups')
-        .update({ tom_chat_engaged_at: new Date().toISOString(), tom_chat_closed_session_at: null })
-        .eq('id', msg.group_id);
-    }
-  }
   if (!shouldRun) {
-    // Marca como TRATADA (silêncio intencional) pra recuperação de órfã NÃO re-disparar processamento.
+    // Marca como TRATADA (silêncio intencional) pra recuperação de órfã NÃO re-disparar.
     await supabase.from('group_chat_messages').update({ tom_done_at: new Date().toISOString() }).eq('id', msg.id);
-    return; // SILÊNCIO real: nada de "escrevendo…", nada de chamada de IA
+    return; // janela fechada e ninguém chamou → silêncio real
+  }
+  if (opensWindow) {
+    // Abre a janela (início da sessão, não desliza) — fica ativa até "valeu Tom" ou ~8 min de silêncio.
+    await supabase.from('work_groups')
+      .update({ tom_chat_engaged_at: new Date().toISOString(), tom_chat_closed_session_at: null })
+      .eq('id', msg.group_id);
   }
 
-  // "Tom escrevendo…" só AGORA — quando já sabemos que ele vai responder (fim do "escreve e some").
+  // "Tom escrevendo…" só quando já sabemos que ele vai responder (fim do "escreve e some").
   if (group?.wa_group_jid) sendGroupTyping(group.wa_group_jid);
 
   await processGroupChatMessage({ supabase, groupId: msg.group_id, senderCollabId, text });

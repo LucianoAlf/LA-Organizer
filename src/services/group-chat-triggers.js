@@ -52,6 +52,17 @@ function shouldRecoverOrphan(last, ageMs, { orphanMinMs, idleMaxMs, alreadyRecov
   return ageMs >= orphanMinMs && ageMs < idleMaxMs;
 }
 
+// Modelo JANELA (decisão do Alf 20/06). engaged = janela aberta. ABERTA → responde a TUDO
+// (back-and-forth sem repetir o nome). FECHADA → abre por vocativo OU por estar respondendo a uma
+// pergunta do TOM. "valeu Tom" (isFarewell) responde e FECHA. Papo com janela fechada e sem chamado
+// → silêncio. (Substitui o modelo estrito "endereçar a cada msg".)
+function decideGroupReply({ engaged, vocative, isFarewell, tomAwaiting } = {}) {
+  if (engaged) return { shouldRun: true, clearAfter: !!isFarewell, opensWindow: false };
+  if (vocative) return { shouldRun: true, clearAfter: !!isFarewell, opensWindow: !isFarewell };
+  if (tomAwaiting) return { shouldRun: true, clearAfter: false, opensWindow: true };
+  return { shouldRun: false, clearAfter: false, opensWindow: false };
+}
+
 // Despedida dirigida ao TOM: precisa do nome "tom" E de um termo de fechamento na mesma msg.
 // Nota: \b NÃO funciona após vogal acentuada no JS (ex: "até" com \b no final falha).
 // Usamos anchor de espaço/pontuação nos dois lados em vez de \b para os termos de despedida.
@@ -79,6 +90,6 @@ function isEngaged(engagedAt, now = new Date(), maxHours = ENGAGE_MAX_HOURS) {
 }
 
 module.exports = {
-  detectEngageTrigger, detectDisengageTrigger, isEngaged, isVocativeTom, isAddressedToTom, shouldRecoverOrphan,
+  detectEngageTrigger, detectDisengageTrigger, isEngaged, isVocativeTom, isAddressedToTom, shouldRecoverOrphan, decideGroupReply,
   VOCATIVE_STOPWORDS, AWAIT_WINDOW_MS, ENGAGE_WINDOW_MIN, ENGAGE_MAX_HOURS,
 };

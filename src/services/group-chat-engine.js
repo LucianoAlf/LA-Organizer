@@ -10,7 +10,7 @@ const ai = require('../ai/provider');
 const { buildGroupChatPrompt, loadGroupChatSoul } = require('./group-chat-prompt');
 const { applyGroupChatTaskActions, findDuplicatePackage, resolveVisibleInstance, filterNewSubtasks, endSeries, resolveSeriesTemplate, reviveSeries } = require('./group-chat-tasks');
 const { createTaskGroup, addSubtasksToGroup } = require('./task-groups');
-const { buildGroupReport } = require('./group-report-builder');
+const { buildGroupReport, dropOpenWithDoneTwin, categorize, spYmd } = require('./group-report-builder');
 const groupNotes = require('./group-notes');
 const { buildBrtDateAnchor } = require('../utils/dates');
 
@@ -29,16 +29,21 @@ async function loadContext(supabase, groupId, senderCollabId) {
     // Pool = SÓ tarefa REAL ativa (igual ao builder determinístico): exclui done/cancelled e os
     // moldes de recorrência. Sem isso o LLM via tarefa cancelada como "pendente" e cobrava/concluía
     // tarefa fantasma (GROUPCHAT-PHANTOM-POOL, caso Rose/Conciliação 15/06).
-    supabase.from('tasks').select('title, status, due_date')
+    supabase.from('tasks').select('title, status, due_date, created_at')
       .eq('assigned_group_id', groupId)
-      .neq('status', 'done').neq('status', 'cancelled').is('recurrence_rule', null)
-      .order('created_at', { ascending: false }).limit(POOL_LIMIT),
+      .neq('status', 'cancelled').is('recurrence_rule', null)
+      .order('created_at', { ascending: false }).limit(POOL_LIMIT * 2),
     supabase.from('group_chat_messages').select('role, content, media_extracted_text, sender_id, created_at, sender:collaborators!group_chat_messages_sender_id_fkey(full_name, preferred_name)').eq('group_id', groupId).order('created_at', { ascending: false }).limit(HISTORY_LIMIT),
     supabase.from('collaborators').select('*').eq('id', senderCollabId).maybeSingle(),
   ]);
 
   const members = (memberRows || []).map((m) => ({ name: displayName(m.collaborators) }));
-  const pool = poolRows || [];
+  // Pool alinhado ao digest: tira gêmea-done (sobra de churn) e RETROATIVA (criada já vencida) —
+  // senão o LLM via tarefa retroativa/duplicada como "atrasada" e cobrava (GROUPREPORT-DONE-TWIN-OVERDUE).
+  const poolToday = spYmd(new Date());
+  const pool = dropOpenWithDoneTwin(poolRows || [])
+    .filter((t) => categorize(t.due_date, poolToday, t.created_at ? spYmd(new Date(t.created_at)) : null) !== 'retroativa')
+    .slice(0, POOL_LIMIT);
   const history = (histRows || []).reverse().map((m) => ({
     who: m.role === 'tom' ? 'TOM' : displayName(m.sender),
     role: m.role,

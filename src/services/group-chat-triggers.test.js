@@ -1,7 +1,7 @@
 // src/services/group-chat-triggers.test.js
 const assert = require('node:assert');
 const { test } = require('node:test');
-const { detectEngageTrigger, detectDisengageTrigger, isEngaged, isVocativeTom, isAddressedToTom, shouldRecoverOrphan } = require('./group-chat-triggers');
+const { detectEngageTrigger, detectDisengageTrigger, isEngaged, isVocativeTom, isAddressedToTom, shouldRecoverOrphan, decideGroupReply } = require('./group-chat-triggers');
 
 test('engage: menção direta aciona', () => {
   assert.equal(detectEngageTrigger('fala tom, cria uma tarefa'), true);
@@ -70,4 +70,25 @@ test('shouldRecoverOrphan: só recupera membro RECLAMADO mas NÃO concluído (re
   assert.equal(shouldRecoverOrphan(base, 10000, opt), false);                                           // jovem demais
   assert.equal(shouldRecoverOrphan(base, 30000, { ...opt, alreadyRecovered: true }), false);            // já recuperado nesta vida
   assert.equal(shouldRecoverOrphan(null, 30000, opt), false);
+});
+
+test('decideGroupReply (modelo JANELA): aberta responde a tudo; fechada abre por vocativo/awaiting; "valeu Tom" fecha', () => {
+  // janela ABERTA → responde mesmo sem vocativo (back-and-forth, fim do "tem que repetir Tom")
+  assert.deepEqual(decideGroupReply({ engaged: true, vocative: false, isFarewell: false, tomAwaiting: false }),
+    { shouldRun: true, clearAfter: false, opensWindow: false });
+  // aberta + "valeu Tom" → responde e FECHA
+  assert.deepEqual(decideGroupReply({ engaged: true, vocative: false, isFarewell: true, tomAwaiting: false }),
+    { shouldRun: true, clearAfter: true, opensWindow: false });
+  // fechada + vocativo → ABRE a janela e responde
+  assert.deepEqual(decideGroupReply({ engaged: false, vocative: true, isFarewell: false, tomAwaiting: false }),
+    { shouldRun: true, clearAfter: false, opensWindow: true });
+  // fechada + "valeu Tom" (sem janela) → responde, não abre
+  assert.deepEqual(decideGroupReply({ engaged: false, vocative: true, isFarewell: true, tomAwaiting: false }),
+    { shouldRun: true, clearAfter: true, opensWindow: false });
+  // fechada + respondendo pergunta do TOM → abre
+  assert.deepEqual(decideGroupReply({ engaged: false, vocative: false, isFarewell: false, tomAwaiting: true }),
+    { shouldRun: true, clearAfter: false, opensWindow: true });
+  // fechada + papo paralelo (sem chamado) → SILÊNCIO
+  assert.deepEqual(decideGroupReply({ engaged: false, vocative: false, isFarewell: false, tomAwaiting: false }),
+    { shouldRun: false, clearAfter: false, opensWindow: false });
 });
