@@ -2894,13 +2894,40 @@ async function buildScorecardDigestSection(now) {
     const allCollabs = await loadCollabsWithEdges(supabase);
     const hasTeam = (leaderId) =>
       (allCollabs || []).some((c) => c.id !== leaderId && resolveLeaderIdsOf(c, allCollabs).includes(leaderId));
-    const sc = rows
-      .filter((r) => r.collaborators && !r.collaborators.is_ceo && hasTeam(r.leader_id))
-      .map((r) => ({
-        leader_name: r.collaborators.full_name,
-        closure_rate: r.closure_rate, tasks_overdue: r.tasks_overdue,
-        tasks_stuck: r.tasks_stuck, tasks_closed: r.tasks_closed, delta_closure: null,
-      }));
+    const shown = rows.filter((r) => r.collaborators && !r.collaborators.is_ceo && hasTeam(r.leader_id));
+
+    // Atras AO VIVO — NÃO o snapshot semanal de leader_scorecards (congela 5-7d até a próxima
+    // segunda; caso Krissya 1≠4 / Rafinha 2≠0, 20/06). Conta as pendentes de trabalho vencidas
+    // de cada pessoa AGORA, já tirando done-twins (mesmo guard do GOVDIGEST-DONE-TWIN-OVERDUE).
+    // O % de fechamento segue da semana passada (é uma taxa semanal — isso está correto).
+    const today = nowSaoPaulo().ymd;
+    const leaderIds = shown.map((r) => r.leader_id);
+    const liveOverdue = {};
+    if (leaderIds.length) {
+      const { data: pend } = await supabase
+        .from('tasks').select('title, due_date, assigned_to, status')
+        .eq('context', 'work').eq('data_classification', 'real').eq('status', 'pending')
+        .lt('due_date', today).in('assigned_to', leaderIds);
+      let open = pend || [];
+      if (open.length) {
+        const { dropOpenWithDoneTwin } = require('../services/group-report-builder');
+        const dueSet = [...new Set(open.map((t) => t.due_date).filter(Boolean))];
+        const titleSet = [...new Set(open.map((t) => t.title).filter(Boolean))];
+        if (dueSet.length && titleSet.length) {
+          const { data: doneTwins } = await supabase
+            .from('tasks').select('title, due_date, status')
+            .eq('status', 'done').in('title', titleSet).in('due_date', dueSet);
+          open = dropOpenWithDoneTwin([...open, ...(doneTwins || [])]);
+        }
+        for (const t of open) liveOverdue[t.assigned_to] = (liveOverdue[t.assigned_to] || 0) + 1;
+      }
+    }
+    const sc = shown.map((r) => ({
+      leader_name: r.collaborators.full_name,
+      closure_rate: r.closure_rate,
+      tasks_overdue: liveOverdue[r.leader_id] || 0,   // AO VIVO (era r.tasks_overdue = snapshot semanal)
+      tasks_stuck: r.tasks_stuck, tasks_closed: r.tasks_closed, delta_closure: null,
+    }));
     return formatScorecardSection(sc);
   } catch (e) { console.error('[GovDigest] scorecard section err:', e.message); return ''; }
 }
