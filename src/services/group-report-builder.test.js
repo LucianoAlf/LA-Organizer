@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { windowBounds, dueFlag, categorize, splitTasks, dedupeTasks, renderReportHtml, buildGroupReport } = require('./group-report-builder');
+const { windowBounds, dueFlag, categorize, splitTasks, dedupeTasks, dropOpenWithDoneTwin, renderReportHtml, buildGroupReport } = require('./group-report-builder');
 
 // 12/06/2026 é uma SEXTA. now = 2026-06-12 15:00 BRT = 18:00Z.
 const NOW = new Date('2026-06-12T18:00:00Z');
@@ -52,6 +52,31 @@ test('dedupeTasks remove gêmeas (mesmo título+data+responsável), mantém dias
     { title: 'Barra', due_date: '2026-06-17', responsavel: 'Rose' },       // outro título → fica
   ]);
   assert.equal(r.length, 3);
+});
+
+test('dropOpenWithDoneTwin: pendente com gêmea CONCLUÍDA (mesmo título+due) some (sobra de churn); só-cancelada fica', () => {
+  const rows = [
+    { title: 'Cartão 8516 (Barra)', due_date: '2026-06-12', status: 'pending' },
+    { title: 'Cartão 8516 (Barra)', due_date: '2026-06-12', status: 'done' },      // gêmea concluída → suprime a pendente
+    { title: 'Cartão 8641 (Recreio)', due_date: '2026-06-17', status: 'pending' },  // sem gêmea done → fica
+    { title: 'Boleto Y', due_date: '2026-06-10', status: 'pending' },               // só tem gêmea CANCELADA → fica
+    { title: 'Boleto Y', due_date: '2026-06-10', status: 'cancelled' },
+  ];
+  const out = dropOpenWithDoneTwin(rows).map((t) => t.title);
+  assert.deepEqual(out, ['Cartão 8641 (Recreio)', 'Boleto Y']);
+});
+
+test('buildGroupReport: pendente com gêmea concluída NÃO conta como atrasada (caso Cartões da Rose)', async () => {
+  const sb = fakeSupabase([
+    { title: 'Cartão 8641 (Recreio)', due_date: '2026-06-17', status: 'pending', creator: { preferred_name: 'Rose' } },
+    { title: 'Cartão 8641 (Recreio)', due_date: '2026-06-17', status: 'done', creator: { preferred_name: 'Rose' } },
+  ]);
+  const { html, isEmpty } = await buildGroupReport({
+    supabase: sb, groupId: 'g1', scope: 'tarefas', onlyOverdue: true,
+    heading: '⏰ atrasadas', now: new Date('2026-06-20T12:00:00-03:00'),
+  });
+  assert.strictEqual(isEmpty, true);            // trabalho feito na gêmea done → zero atrasada
+  assert.ok(!html.includes('Cartão 8641'));
 });
 
 test('splitTasks separa com prazo (ordenado) e sem prazo', () => {

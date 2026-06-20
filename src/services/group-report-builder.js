@@ -147,6 +147,18 @@ function dedupeTasks(tasks) {
   });
 }
 
+// Pendente com GÊMEA concluída (mesmo título+due) = sobra de churn de recorrência (o trabalho
+// foi feito na OUTRA linha) → não é atraso de verdade. Cancelada NÃO suprime (a pendente pode
+// ser a real ainda aberta). Recebe linhas cruas {status,title,due_date}; devolve só as ABERTAS.
+function dropOpenWithDoneTwin(rows) {
+  const doneKeys = new Set();
+  for (const t of (rows || [])) {
+    if (t.status === 'done') doneKeys.add(`${t.title}|${t.due_date || ''}`);
+  }
+  return (rows || []).filter((t) =>
+    t.status !== 'done' && t.status !== 'cancelled' && !doneKeys.has(`${t.title}|${t.due_date || ''}`));
+}
+
 // Tarefas ABERTAS do grupo. Exclui done E cancelled (cancelada não é "atrasada"), esconde
 // os MOLDES de recorrência (recurrence_rule != null) — mostra só instâncias/tarefas normais —
 // e faz dedup defensivo contra instâncias gêmeas (materialização duplicada).
@@ -155,11 +167,11 @@ async function queryGroupTasks(supabase, groupId) {
     .select('id, title, due_date, status, created_by, created_at, ' +
             'creator:collaborators!tasks_created_by_fkey(preferred_name, full_name)')
     .eq('assigned_group_id', groupId)
-    .neq('status', 'done')
     .neq('status', 'cancelled')
     .is('recurrence_rule', null)
     .order('due_date', { ascending: true, nullsFirst: false });
-  return dedupeTasks((data || []).map((t) => ({
+  // dropOpenWithDoneTwin tira as concluídas E as pendentes-gêmeas-de-concluída (sobra de churn).
+  return dedupeTasks(dropOpenWithDoneTwin(data || []).map((t) => ({
     title: t.title,
     due_date: t.due_date,
     created_ymd: t.created_at ? spYmd(new Date(t.created_at)) : null,
@@ -224,7 +236,7 @@ async function buildGroupReport({ supabase, groupId, scope = 'tudo', window = 'm
 }
 
 module.exports = {
-  windowBounds, dueFlag, categorize, catsForWindow, spYmd, addDaysYmd, splitTasks, dedupeTasks,
+  windowBounds, dueFlag, categorize, catsForWindow, spYmd, addDaysYmd, splitTasks, dedupeTasks, dropOpenWithDoneTwin,
   renderReportHtml, queryGroupTasks, queryGroupNotes, queryGroupChecklists,
   taskLine, taskLineItem, buildGroupReport, CATEGORIES,
 };
