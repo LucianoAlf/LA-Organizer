@@ -525,6 +525,41 @@ async function checkFindingTriage() {
   return { status: 'ok', detail: `🧭 triagem: ${r.suppressed} já-corrigidos · ${r.regressions} regressão(ões) · ${r.kept} mantidos` };
 }
 
+// ─────────────────────────────────────────────────────────────────
+// CHECK — Churn de pacote de grupo (B, 20/06): containers (is_group) DUPLICADOS
+// visíveis no mês pro mesmo (grupo, título). Rede de segurança do RECUR-PACKAGE-CHURN —
+// o motor parou de duplicar em 13/06; se voltar, isto flagra no MESMO dia (antes da Rose).
+// ─────────────────────────────────────────────────────────────────
+async function checkGroupPackageChurn() {
+  const { findDuplicatePackages } = require('./package-churn');
+  const ym = todayBrt().slice(0, 7);
+  const { data, error } = await supabase
+    .from('tasks')
+    .select('assigned_group_id, title, status, due_date')
+    .eq('is_group', true)
+    .is('recurrence_rule', null)            // só instâncias (template não renderiza)
+    .neq('status', 'cancelled')
+    .eq('data_classification', 'real')
+    .not('assigned_group_id', 'is', null);
+  if (error) throw error;
+  const rows = (data || []).map((r) => ({
+    group_id: r.assigned_group_id, title: r.title, status: r.status, due_date: r.due_date,
+  }));
+  const dups = findDuplicatePackages(rows, ym);
+  if (!dups.length) return { status: 'ok', detail: 'Nenhum pacote de grupo duplicado no mês' };
+  // Nomes dos grupos flagrados (query leve só pros ids afetados).
+  let nameById = new Map();
+  try {
+    const ids = [...new Set(dups.map((d) => d.group_id))];
+    const { data: gs } = await supabase.from('work_groups').select('id, name').in('id', ids);
+    nameById = new Map((gs || []).map((g) => [g.id, g.name]));
+  } catch (_) { /* nome é nice-to-have */ }
+  const list = dups.slice(0, 6)
+    .map((d) => `${nameById.get(d.group_id) || String(d.group_id).slice(0, 8)}: "${d.title}" ×${d.count}`)
+    .join('; ');
+  return { status: 'warning', detail: `🧩 ${dups.length} pacote(s) de grupo duplicado(s) no mês (churn de recorrência): ${list}` };
+}
+
 const ALL_CHECKS = [
   ['dream_recent',           checkDreamRecent],
   ['weekly_summary',         checkWeeklySummary],
@@ -538,6 +573,7 @@ const ALL_CHECKS = [
   ['events_without_reminders', checkEventsWithoutReminders],
   ['recurring_errors',       checkRecurringErrors],
   ['known_issues_regression', checkKnownIssuesRegression],
+  ['group_package_churn',    checkGroupPackageChurn],
   ['provider_health',        checkProviderHealth],
   ['finding_triage',         checkFindingTriage],
   ['conversation_quality',   checkConversationQuality],
@@ -590,4 +626,4 @@ if (require.main === module) {
   }).catch(e => { console.error(e); process.exit(1); });
 }
 
-module.exports = { runHealthCheck, checkProviderHealth };
+module.exports = { runHealthCheck, checkProviderHealth, checkGroupPackageChurn };
