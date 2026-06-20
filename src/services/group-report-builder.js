@@ -170,8 +170,12 @@ function dropOpenWithDoneTwin(rows) {
 //     (tarefa fantasma — caso Rose 20/06, GROUPCHAT-CLOSING-RETRO-PHANTOM).
 //   • dedup defensivo de gêmeas exatas (materialização duplicada).
 function shapeOpenTasks(rows, todayYmd) {
+  // Container de PACOTE (is_group) NÃO é tarefa — é uma pasta. Listá-lo na lista plana fazia o
+  // "Conciliação de Cartões 01/0X" virar tarefa fantasma dia-1 (caso Rose). As tarefas reais são
+  // os FILHOS (cartões) + avulsas. No desktop o pacote aparece à parte (fetchPackages).
+  const tasksOnly = (rows || []).filter((t) => t.is_group !== true);
   return dedupeTasks(
-    dropOpenWithDoneTwin(rows || [])
+    dropOpenWithDoneTwin(tasksOnly)
       .map((t) => ({
         title: t.title,
         due_date: t.due_date,
@@ -187,7 +191,7 @@ function shapeOpenTasks(rows, todayYmd) {
 // `now` permite "hoje" determinístico (testes/relatório passam o seu; default = agora).
 async function queryGroupTasks(supabase, groupId, now = new Date()) {
   const { data } = await supabase.from('tasks')
-    .select('id, title, due_date, status, created_by, created_at, ' +
+    .select('id, title, due_date, status, is_group, created_by, created_at, ' +
             'creator:collaborators!tasks_created_by_fkey(preferred_name, full_name)')
     .eq('assigned_group_id', groupId)
     .neq('status', 'cancelled')

@@ -29,7 +29,7 @@ async function loadContext(supabase, groupId, senderCollabId) {
     // Pool = SÓ tarefa REAL ativa (igual ao builder determinístico): exclui done/cancelled e os
     // moldes de recorrência. Sem isso o LLM via tarefa cancelada como "pendente" e cobrava/concluía
     // tarefa fantasma (GROUPCHAT-PHANTOM-POOL, caso Rose/Conciliação 15/06).
-    supabase.from('tasks').select('title, status, due_date, created_at')
+    supabase.from('tasks').select('title, status, due_date, created_at, is_group')
       .eq('assigned_group_id', groupId)
       .neq('status', 'cancelled').is('recurrence_rule', null)
       .order('created_at', { ascending: false }).limit(POOL_LIMIT * 2),
@@ -41,7 +41,8 @@ async function loadContext(supabase, groupId, senderCollabId) {
   // Pool alinhado ao digest: tira gêmea-done (sobra de churn) e RETROATIVA (criada já vencida) —
   // senão o LLM via tarefa retroativa/duplicada como "atrasada" e cobrava (GROUPREPORT-DONE-TWIN-OVERDUE).
   const poolToday = spYmd(new Date());
-  const pool = dropOpenWithDoneTwin(poolRows || [])
+  // is_group=true = container de pacote (pasta), não tarefa → fora do pool (senão vira fantasma dia-1).
+  const pool = dropOpenWithDoneTwin((poolRows || []).filter((t) => t.is_group !== true))
     .filter((t) => categorize(t.due_date, poolToday, t.created_at ? spYmd(new Date(t.created_at)) : null) !== 'retroativa')
     .slice(0, POOL_LIMIT);
   const history = (histRows || []).reverse().map((m) => ({

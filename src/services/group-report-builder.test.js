@@ -222,6 +222,16 @@ test('shapeOpenTasks: exclui RETROATIVA (criada após vencimento) — fantasma C
   assert.deepEqual(out.sort(), ['Boleto X', 'Cartão 1074']);
 });
 
+test('shapeOpenTasks: exclui CONTAINER de pacote (is_group) — não vira tarefa fantasma dia-1', () => {
+  const out = shapeOpenTasks([
+    { title: 'Conciliação de Cartões', due_date: '2026-07-01', status: 'pending', is_group: true, created_at: '2026-06-01T10:00:00Z' }, // container → FORA
+    { title: 'Cartão 1074', due_date: '2026-06-25', status: 'pending', is_group: false, created_at: '2026-06-13T10:00:00Z' },           // filho → fica
+    { title: 'Tarefa avulsa', due_date: '2026-06-22', status: 'pending', created_at: '2026-06-13T10:00:00Z' },                           // sem is_group → fica
+  ], '2026-06-20').map((t) => t.title);
+  assert.ok(!out.includes('Conciliação de Cartões'));
+  assert.deepEqual(out.sort(), ['Cartão 1074', 'Tarefa avulsa']);
+});
+
 test('shapeOpenTasks: pendente-gêmea-de-concluída some (churn) + dedup exato', () => {
   const out = shapeOpenTasks([
     { title: 'Cartão 8516', due_date: '2026-06-17', status: 'done', created_at: '2026-06-10T10:00:00Z' },
