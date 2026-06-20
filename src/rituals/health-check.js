@@ -491,10 +491,14 @@ async function checkProviderHealth() {
 // ─────────────────────────────────────────────────────────────────
 // CONV_CAT_LABEL + formatConvQuality (puros) → ./conv-quality-format (testável isolado).
 
+// Janela do RELATÓRIO DO DIA: só os achados vistos na última rodada (~24h). A detecção
+// do Dream já varre 24h de conversa; 20h isola a rodada de hoje sem reimprimir a de ontem
+// (a borda de 24h colheria a rodada anterior). ANTES era WINDOW_DAYS*24 = 7 dias → a mesma
+// falha reaparecia por 7 manhãs seguidas (regressão AUDIT-REPORT-7D-WINDOW, 19→20/06).
 async function checkConversationQuality() {
-  const { WINDOW_DAYS } = require('../services/finding-triage');
+  const REPORT_WINDOW_HOURS = 20;
   const { formatConvQuality } = require('./conv-quality-format');
-  const windowIso = isoHoursAgo(WINDOW_DAYS * 24);
+  const windowIso = isoHoursAgo(REPORT_WINDOW_HOURS);
   // findings abertos da JANELA (atividade recente) + veredito de auto-triagem
   const { data, error } = await supabase
     .from('tom_audit_findings')
@@ -510,7 +514,7 @@ async function checkConversationQuality() {
     .select('id', { count: 'exact', head: true })
     .in('status', ['novo', 'confirmado'])
     .lt('last_seen', windowIso);
-  return formatConvQuality(data || [], { inactiveCount: inactiveCount || 0, windowDays: WINDOW_DAYS });
+  return formatConvQuality(data || [], { inactiveCount: inactiveCount || 0 });
 }
 
 // CHECK — Auto-triagem dos findings de conversa (grava auto_triage; roda ANTES do conversation_quality).

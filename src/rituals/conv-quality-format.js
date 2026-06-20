@@ -26,7 +26,7 @@ function formatConvQuality(findings, opts = {}) {
   const body = findings.filter(f => dec(f) === 'keep');
 
   const counts = [];
-  if (inactiveCount) counts.push(`🗃️ ${inactiveCount} inativos (>${opts.windowDays || 7}d sem reincidência)`);
+  if (inactiveCount) counts.push(`🗃️ ${inactiveCount} abertos de dias anteriores (painel)`);
   if (suppressed.length) {
     const codes = [...new Set(suppressed.map(f => f.auto_triage.matched_code).filter(Boolean))];
     counts.push(`🔇 ${suppressed.length} já-corrigidos${codes.length ? ' (' + codes.join(', ') + ')' : ''}`);

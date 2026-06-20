@@ -24,9 +24,10 @@ test('formatConvQuality: regressão aparece em destaque', () => {
   assert.match(r.detail, /REGRESS/i);
   assert.match(r.detail, /BUG-9/);
 });
-test('formatConvQuality: inativos contam mas não poluem corpo', () => {
+test('formatConvQuality: anteriores abertos contam mas não poluem corpo', () => {
   const r = formatConvQuality([base({ id: 'a' })], { inactiveCount: 40 });
-  assert.match(r.detail, /40 inativ/i);
+  assert.match(r.detail, /40 abertos de dias anteriores/i);
+  assert.match(r.detail, /1 falha/);   // corpo segue com só 1
 });
 test('formatConvQuality: tudo suprimido/inativo → status ok', () => {
   const r = formatConvQuality([
