@@ -1,12 +1,15 @@
 const { spawn } = require('child_process');
+const os = require('os');
+const { buildUserPrompt } = require('./prompt');
+const { sanitizeOutput } = require('./sanitize');
 // LATÊNCIA (15/06): Codex é a REDE de segurança (só roda quando o Claude falha/hang).
 // 120s→60s pra manter o TETO total em ~120s (Claude 60s + Codex 60s) e não deixar
 // o usuário "escrevendo a vida toda". Override via CODEX_TIMEOUT_MS.
 const CODEX_TIMEOUT_MS = Number(process.env.CODEX_TIMEOUT_MS) || 60000;
 
 async function chat(systemPrompt, messages /*, maxTokens */) {
-  const lastUser = messages.filter(m => m.role === 'user').pop()?.content || '';
-  const prompt = 'System: ' + systemPrompt + '\n\nUser: ' + lastUser;
+  const userPrompt = buildUserPrompt(messages);
+  const prompt = 'System: ' + systemPrompt + '\n\nUser: ' + userPrompt;
   return new Promise((resolve, reject) => {
     const reject_ = (kind, msg) => {
       const e = new Error(msg);
@@ -30,7 +33,7 @@ async function chat(systemPrompt, messages /*, maxTokens */) {
       '-c', 'model_reasoning_effort=medium',
       '--skip-git-repo-check',
       '-',
-    ], { env: process.env, stdio: ['pipe', 'pipe', 'pipe'] });
+    ], { env: process.env, stdio: ['pipe', 'pipe', 'pipe'], cwd: os.tmpdir() });
     proc.stdin.write(prompt);
     proc.stdin.end();
     let out = '', err = '';
@@ -47,7 +50,11 @@ async function chat(systemPrompt, messages /*, maxTokens */) {
       settled = true;
       clearTimeout(killTimer);
       if (code !== 0) return reject_('exit', `Codex saiu com código ${code}. stderr: ${err.trim().slice(0, 300) || '(vazio)'}`);
-      const text = out.trim();
+      // Sanitiza ANTES do empty-check: se o Codex respondeu só cerca de código,
+      // o sanitizer esvazia → vira reject('empty') em vez de mandar vazio (espelha claude.js).
+      const text = sanitizeOutput(out);
+      const sanitizedDelta = out.length - text.length;
+      if (sanitizedDelta > 0) console.warn(`[Codex] sanitizer stripped ${sanitizedDelta} chars`);
       if (!text) return reject_('empty', 'Codex retornou vazio.');
       resolve({ text, provider: 'openai' });
     });
