@@ -28,6 +28,13 @@ const pendingIntents = require('./services/pending-intents');
 const approvalsService = require('./services/approvals');
 const noteMarker = require('./services/note-marker');
 const notesService = require('./services/notes');
+const { jaroWinkler, normalizeForSim } = require('./services/text-similarity');
+const { findDuplicateNote } = require('./services/note-dedup');
+// NOTE-DEDUP: bypass de re-tentativa. Se o usuário insistir ("cria outra mesmo") logo após
+// um bloqueio, a 2ª tentativa do MESMO título passa. Em memória (espelha pendingDupTasks);
+// no pior caso de restart, o usuário leva 1 aviso "já existe?" a mais. TTL curto.
+const recentNoteDupBlocks = new Map(); // key: `${collabId}|${normTitle}` -> ts
+const NOTE_DEDUP_BYPASS_MS = 5 * 60 * 1000;
 const workGroups = require('./services/work-groups');
 const { detectApprovalReply, stripReplyScaffold } = require('./events/detect-approval-reply');
 const { isFutureCompletion } = require('./utils/complete-guards');
@@ -6388,48 +6395,8 @@ async function buildActiveCoordinationContext(collab) {
 // Helpers puros de detecção. Fail-open: exceptions são capturadas pelos callers.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Jaro-Winkler similarity — retorna 0..1.
- * Implementação pura, sem dependência npm. Ideal para títulos curtos.
- */
-function jaroWinkler(s1, s2) {
-  if (s1 === s2) return 1.0;
-  const len1 = s1.length, len2 = s2.length;
-  if (!len1 || !len2) return 0.0;
-  const matchDist = Math.max(Math.floor(Math.max(len1, len2) / 2) - 1, 0);
-  const s1Matches = new Array(len1).fill(false);
-  const s2Matches = new Array(len2).fill(false);
-  let matches = 0, transpositions = 0;
-  for (let i = 0; i < len1; i++) {
-    const lo = Math.max(0, i - matchDist);
-    const hi = Math.min(i + matchDist + 1, len2);
-    for (let j = lo; j < hi; j++) {
-      if (s2Matches[j] || s1[i] !== s2[j]) continue;
-      s1Matches[i] = s2Matches[j] = true;
-      matches++;
-      break;
-    }
-  }
-  if (!matches) return 0.0;
-  let k = 0;
-  for (let i = 0; i < len1; i++) {
-    if (!s1Matches[i]) continue;
-    while (!s2Matches[k]) k++;
-    if (s1[i] !== s2[k]) transpositions++;
-    k++;
-  }
-  const jaro = (matches / len1 + matches / len2 + (matches - transpositions / 2) / matches) / 3;
-  let prefix = 0;
-  for (let i = 0; i < Math.min(4, Math.min(len1, len2)); i++) {
-    if (s1[i] === s2[i]) prefix++; else break;
-  }
-  return jaro + prefix * 0.1 * (1 - jaro);
-}
-
-/** Normaliza string para comparação: lowercase, remove pontuação, trim. */
-function normalizeForSim(s) {
-  return String(s || '').toLowerCase().replace(/[^a-záàãâéêíóôõúüç\s]/g, '').replace(/\s+/g, ' ').trim();
-}
+// jaroWinkler + normalizeForSim foram extraídos p/ src/services/text-similarity.js
+// (compartilhados com o dedup de NOTA — note-dedup.js). Importados no topo deste arquivo.
 
 /**
  * Sprint 18 — detecta conflitos temporais antes de criar evento.
@@ -9555,33 +9522,58 @@ async function processMessage(phone, text, raw = {}) {
       reply = (baseN ? baseN + '\n\n' : '') + '_⚠️ não consegui salvar a anotação — me manda de novo?_';
     } else if (parsedNote) {
       const a = parsedNote.action;
-      let res;
-      let shareNotice = '';
-      try {
-        if (a.action === 'create' || a.action === 'share') {
-          const { ids, unresolved } = await notesService.resolveShareNames(supabase, a.share_with || []);
-          if (unresolved.length) {
-            shareNotice = `\n\n_⚠️ não achei "${unresolved.join('", "')}" pra compartilhar — confere o nome?_`;
-          }
-          if (a.action === 'create') {
-            res = await notesService.createNote(supabase, collab.id, { title: a.title, body: a.body, source: 'tom', sharedWith: ids });
-          } else {
-            res = await notesService.shareNote(supabase, collab.id, a.note, ids);
-          }
-        } else {
-          res = await notesService.appendToNote(supabase, collab.id, a.note, a.body);
+      let dupBlocked = false;
+
+      // NOTE-DEDUP trava (provider-agnóstica): não duplicar nota que já existe.
+      if (a.action === 'create') {
+        let dup = null;
+        try { dup = await findDuplicateNote(supabase, collab.id, { title: a.title, body: a.body }); }
+        catch (eDup) { console.warn('[NoteDedup] non-fatal:', eDup.message); }
+        const dupKey = `${collab.id}|${normalizeForSim(a.title)}`;
+        const fresh = recentNoteDupBlocks.get(dupKey);
+        const nowMs = Date.now();
+        if (dup && !(fresh && nowMs - fresh < NOTE_DEDUP_BYPASS_MS)) {
+          dupBlocked = true;
+          recentNoteDupBlocks.set(dupKey, nowMs); // arma o bypass p/ re-tentativa
+          await logMarker(collab.id, 'NOTE_ACTION', 'skipped', `dup:${String(dup.note.id).slice(0, 8)} t=${dup.titleSim.toFixed(2)} b=${dup.bodyOverlap.toFixed(2)}`, null);
+          const baseN = (parsedNote.cleanText || '').trim();
+          const corpo = String(dup.note.body || '').slice(0, 500);
+          reply = (baseN ? baseN + '\n\n' : '') +
+            `📋 Essa anotação já existe: *${dup.note.title}*\n\n${corpo}\n\nQuer que eu *adicione* os itens novos nela? Responde "anexa" que eu coloco lá.`;
+        } else if (dup && fresh) {
+          recentNoteDupBlocks.delete(dupKey); // re-tentativa confirmada → segue e cria
         }
-      } catch (eNote) {
-        res = { ok: false, error: eNote.message };
       }
-      await logMarker(collab.id, 'NOTE_ACTION', res.ok ? 'executed' : 'rejected', `${a.action}:${res.ok ? 'ok' : String(res.error).slice(0, 120)}`, null);
-      let baseN = parsedNote.cleanText || '';
-      if (!res.ok) {
-        baseN = (baseN ? baseN + '\n\n' : '') + (res.error === 'note_not_found'
-          ? '_não achei essa anotação. Me diz o título que eu procuro._'
-          : '_⚠️ não consegui salvar a anotação agora — tenta de novo?_');
+
+      if (!dupBlocked) {
+        let res;
+        let shareNotice = '';
+        try {
+          if (a.action === 'create' || a.action === 'share') {
+            const { ids, unresolved } = await notesService.resolveShareNames(supabase, a.share_with || []);
+            if (unresolved.length) {
+              shareNotice = `\n\n_⚠️ não achei "${unresolved.join('", "')}" pra compartilhar — confere o nome?_`;
+            }
+            if (a.action === 'create') {
+              res = await notesService.createNote(supabase, collab.id, { title: a.title, body: a.body, source: 'tom', sharedWith: ids });
+            } else {
+              res = await notesService.shareNote(supabase, collab.id, a.note, ids);
+            }
+          } else {
+            res = await notesService.appendToNote(supabase, collab.id, a.note, a.body);
+          }
+        } catch (eNote) {
+          res = { ok: false, error: eNote.message };
+        }
+        await logMarker(collab.id, 'NOTE_ACTION', res.ok ? 'executed' : 'rejected', `${a.action}:${res.ok ? 'ok' : String(res.error).slice(0, 120)}`, null);
+        let baseN = parsedNote.cleanText || '';
+        if (!res.ok) {
+          baseN = (baseN ? baseN + '\n\n' : '') + (res.error === 'note_not_found'
+            ? '_não achei essa anotação. Me diz o título que eu procuro._'
+            : '_⚠️ não consegui salvar a anotação agora — tenta de novo?_');
+        }
+        reply = (baseN || reply) + shareNotice;
       }
-      reply = (baseN || reply) + shareNotice;
     }
   }
 
