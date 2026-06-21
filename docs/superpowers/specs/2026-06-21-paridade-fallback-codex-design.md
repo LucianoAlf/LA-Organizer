@@ -37,7 +37,7 @@ Unidades isoladas e testáveis. Princípio: **o que é compartilhado vira um hel
 `buildUserPrompt(messages) → string`. Copiado **verbatim** da lógica do `claude.js:164-173`: `lastUser = messages.filter(role==='user').pop()`, `history = messages.slice(0,-1).map("Usuário: "/"TOM: ").join("\n")`, e o embrulho `"Conversa recente:\n{history}\n\nMensagem atual do usuário:\n{lastUser}"` (ou só `lastUser` quando não há histórico). **Sutileza preservada:** `slice(0,-1)` (histórico) e `.pop()` do último user podem desalinhar se a última msg do array não for do user — o comportamento já é esse hoje no `claude.js`; copiamos idêntico e **documentamos** (consertar seria mudar o primário, fora de escopo).
 
 ### 2. `src/ai/sanitize.js` (novo — função pura compartilhada)
-`sanitizeOutput(text) → string`. Encapsula a cadeia de `.replace` que hoje vive inline no `claude.js` (regras 1-6, ~276-320). Sem I/O, string → string. Retorna **só a string**; quem chama calcula o delta pra observabilidade (ver unit 4).
+`sanitizeOutput(text) → string`. Encapsula a cadeia de `.replace` que hoje vive inline no `claude.js` (regras 1-6, ~276-320). Sem I/O, string → string. **Inclui o `.trim()` final** (retorna a string 100% limpa, pós-trim — idêntico ao `text` de hoje em `claude.js:321`); quem chama calcula `delta = rawResult.length - limpo.length`, que bate **exatamente** com o `sanitized_chars` atual (sem regressão no sensor).
 
 ### 3. `src/ai/openai.js` (a paridade)
 - **Input:** usar `buildUserPrompt(messages)` no lugar do `lastUser` solitário. System prompt continua indo como hoje.
@@ -66,7 +66,7 @@ engine → provider.chat(systemPrompt, messages)
 
 - **TDD do `sanitize.js`** (`node --test`): vazamentos removidos (cerca de código, narração EN "Now let me update…", e por garantia `ssh tom`/`service_role`) e texto legítimo do TOM + markers **intactos**.
 - **TDD do `prompt.js`**: com histórico vira "Conversa recente: …"; sem histórico, só a mensagem; ordem e rótulos ("Usuário:"/"TOM:") idênticos ao claude.js de hoje.
-- **Teste de fixação do `claude.js`**: a saída de `sanitizeOutput` + `buildUserPrompt` reproduz o comportamento atual (primário inalterado).
+- **Teste de fixação (golden-master) do `claude.js`**: capturar **antes** de tocar o código — rodar o sanitizer atual sobre um corpus de inputs conhecidos e snapshotar a saída; depois de extrair os helpers, assertar saída **idêntica**. É a rede pra refatorar o primário com segurança.
 - **E2E com harness versionado** (`_remote/scripts/compare-models-batch.js`, roda só na VPS com `node --env-file=.env`, HOME isolado em `/tmp`, NÃO toca o CANON): rodar os 10 casos com o `openai.js` novo e confirmar (a) Codex agora enxerga o histórico, (b) nenhuma resposta legítima cortada pelo sanitizer, (c) **medir duplicação ativamente** (re-executa ação já feita?) e documentar.
 - **Sanidade:** `node --check` nos arquivos tocados.
 

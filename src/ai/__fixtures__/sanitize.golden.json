@@ -1,0 +1,34 @@
+[
+  {
+    "input": "✅ Fechado, Fabi! Já dei baixa.\n\n<<TASK_UPDATE>>\n[{\"action\":\"complete\",\"id\":\"abc\"}]\n<<END>>",
+    "output": "✅ Fechado, Fabi! Já dei baixa.\n\n<<TASK_UPDATE>>\n[{\"action\":\"complete\",\"id\":\"abc\"}]\n<<END>>"
+  },
+  {
+    "input": "Now let me update the task list\nTarefa criada! 👽",
+    "output": "Tarefa criada! 👽"
+  },
+  {
+    "input": "Para reiniciar rode ssh tom \"pm2 restart tom\" no servidor.",
+    "output": ""
+  },
+  {
+    "input": "Olha o código:\n```\nservice_role key aqui\n```\nPronto!",
+    "output": "Olha o código:\n\nPronto!"
+  },
+  {
+    "input": "Vou salvar isso na memória local pra lembrar depois.",
+    "output": ""
+  },
+  {
+    "input": "<invoke name=\"x\"><parameter name=\"y\">z</parameter></invoke>Resposta real.",
+    "output": "Resposta real."
+  },
+  {
+    "input": "Bom dia! 👽 Tudo certo por aqui, sem novidades.",
+    "output": "Bom dia! 👽 Tudo certo por aqui, sem novidades."
+  },
+  {
+    "input": "Texto\n\n\n\ncom muitas quebras.",
+    "output": "Texto\n\ncom muitas quebras."
+  }
+]

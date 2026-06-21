@@ -17,6 +17,8 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const { classifyClaudeExit } = require('./classify-claude-exit');
+const { buildUserPrompt } = require('./prompt');
+const { sanitizeOutput } = require('./sanitize');
 
 const CLAUDE_BIN = process.env.CLAUDE_BIN || '/usr/bin/claude';
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'sonnet';  // alias do CLI → Sonnet 4.6 atual
@@ -161,16 +163,7 @@ async function chat(systemPrompt, messages, maxTokens) {
 async function _chatInner(systemPrompt, messages, enqueuedAt, home = CLAUDE_USER_HOME) {
   const startedAt = Date.now();
   const queueWaitMs = enqueuedAt ? (startedAt - enqueuedAt) : 0;
-  const lastUser = messages.filter(m => m.role === 'user').pop()?.content || '';
-
-  // Histórico recente como contexto na mensagem do usuário (para Claude ver o turno anterior).
-  const history = messages
-    .slice(0, -1)
-    .map(m => (m.role === 'user' ? 'Usuário: ' : 'TOM: ') + m.content)
-    .join('\n');
-  const userPrompt = history
-    ? `Conversa recente:\n${history}\n\nMensagem atual do usuário:\n${lastUser}`
-    : lastUser;
+  const userPrompt = buildUserPrompt(messages);
 
   // Anti-E2BIG: grava o system prompt (~90KB) num arquivo temp e passa por
   // --append-system-prompt-file, tirando o gigante do argv (estourava ARG_MAX).
@@ -273,52 +266,9 @@ async function _chatInner(systemPrompt, messages, enqueuedAt, home = CLAUDE_USER
       // dentro de `result` (ex.: <parameter ...>...</parameter>, <tool_result>)
       // mesmo com --tools "" e diretiva de prompt. Strip agressivo no provider
       // — antes de chegar no engine. Não cresce regex do anti-leak no engine.
-      const sanitized = rawResult
-        // 1) Tags XML/HTML de tool_use que o modelo embute mesmo com --tools ""
-        .replace(/<tool_(call|use|name|result)[\s\S]*?<\/tool_\1>/gi, '')
-        .replace(/<\/?tool_(call|use|name|result)\b[^>]*>/gi, '')
-        .replace(/<function_call[\s\S]*?<\/function_call>/gi, '')
-        .replace(/<\/?function_call\b[^>]*>/gi, '')
-        .replace(/<parameters?[\s\S]*?<\/parameters?>/gi, '')
-        .replace(/<\/?parameters?\b[^>]*>/gi, '')
-        // Sprint 11.5 hotfix — bloquear <details>/<summary> que Claude usa
-        // pra exibir "feedback memory" ou meta-estrutura interna. Caso real
-        // 29/04 13:55: TOM emitiu literal `<details><summary>feedback memory
-        // </summary>Vou salvar esse feedback...</details>` no WhatsApp.
-        .replace(/<details[\s\S]*?<\/details>/gi, '')
-        .replace(/<\/?details\b[^>]*>/gi, '')
-        .replace(/<summary[\s\S]*?<\/summary>/gi, '')
-        .replace(/<\/?summary\b[^>]*>/gi, '')
-        // GROUPCHAT-INFRA-LEAK (caso Rose 12/06): tags de tool-call que o Claude CLI
-        // emite ao tentar agir como agente de terminal (mesmo com --tools ""). Esqueleto
-        // XML interno — NUNCA vai pro usuário. Remove o bloco invoke inteiro e as tags soltas.
-        .replace(/<(?:antml:)?invoke\b[\s\S]*?<\/(?:antml:)?invoke>/gi, '')
-        .replace(/<\/?(?:antml:)?(?:function_calls|invoke|parameter)\b[^>]*>/gi, '')
-        // Linhas residuais de "feedback memory" / "memory hint" (caso textual)
-        .replace(/^.*\b(?:feedback\s+memory|memory\s+hint|saving\s+feedback)\b.*$/gim, '')
-        // 2) Linhas de narração em inglês (Claude é treinado em EN; quando tenta
-        // usar tool, narra em EN mesmo se contexto é PT). Matar a linha inteira.
-        .replace(/^.*\b(Based on|Now let me|Let me (?:update|read|write|check|create|save|run|verify|now)|I.ll (?:update|read|write|check|create|save|run|now)|I need to (?:update|read|write|check|create|save|run))\b.*$/gim, '')
-        // 3) Linhas que referenciam filesystem do Claude CLI (memória, projects, paths)
-        .replace(/^.*\b(MEMORY\.md|memory\/[\w-]+\.md|\/root\/\.claude|\.claude\/projects|\/opt\/LA-Organizer\/(?!docs\b))\b.*$/gim, '')
-        // 4) "Vou salvar isso na memória" / "Saving to memory" — promessa falsa de tool.
-        //    EN-LEAK-SANITIZER (caso Rose 10/06): "Saving the audio preference to local
-        //    memory." escapava porque a regra exigia "saving to memory" contíguo. Agora
-        //    qualquer linha com sav(e|ing|ando)…memór(ia|y) na MESMA linha cai inteira.
-        .replace(/^.*\b(?:vou\s+salvar\s+isso\s+na\s+mem[óo]ria|salvando\s+na\s+mem[óo]ria|saving\s+to\s+memory)\b.*$/gim, '')
-        .replace(/^.*\bsav(?:e[ds]?|ing)\b.*\bmemor(?:y|ies|[óo]ria)\b.*$/gim, '')
-        .replace(/^.*\bsalv(?:o|a|ei|ando)\b.*\bmem[óo]ria\s+local\b.*$/gim, '')
-        // 5) GROUPCHAT-INFRA-LEAK (caso Rose 12/06): o LLM cuspia comandos de shell e
-        //    paths de infra (lidos do CLAUDE.md do projeto) no chat de grupo. Defesa em
-        //    profundidade — o assistente de negócio NUNCA manda bloco de código nem
-        //    comando de terminal. Remove cercas de código inteiras e linhas com
-        //    comando/infra. A regra (3) antiga só pegava /opt/LA-Organizer COM barra
-        //    final → "(/opt/LA-Organizer)" e "/mnt/d/..." escapavam.
-        .replace(/```[\s\S]*?```/g, '')
-        .replace(/^.*(?:\bssh\s+tom\b|\bscp\b|\bpm2\b|cat\s+\.env|grep\s+SUPABASE|setup-vps-key|connection\s+string|service_role|\/mnt\/[a-z]\/|\/opt\/LA-Organizer|\bsudo\s|\bnpm\s+run\b|node\s+--).*$/gim, '')
-        // 6) Limpa linhas em branco múltiplas resultantes
-        .replace(/\n{3,}/g, '\n\n');
-      const text = sanitized.trim();
+      // Sanitização (tool-tags, narração EN, cercas, infra, "salvar na memória")
+      // extraída pra src/ai/sanitize.js — compartilhada com o fallback Codex.
+      const text = sanitizeOutput(rawResult);
       const sanitizedDelta = rawResult.length - text.length;
       if (sanitizedDelta > 0) {
         console.warn(`[Claude] sanitizer stripped ${sanitizedDelta} chars (tool tags/narração) — raw result had tool_use embed`);
