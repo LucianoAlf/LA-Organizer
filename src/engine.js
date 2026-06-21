@@ -8519,6 +8519,28 @@ async function processMessage(phone, text, raw = {}) {
           return;
         }
         // escrita falhou → segue fluxo normal (LLM vê a intent e tenta pelo marker)
+      } else if (userConfirm === 'yes' && Array.isArray(target.payload?.batch_complete) && target.payload.batch_complete.length) {
+        // BATCH-COMPLETE-CONFIRM-NOOP (Fabi 20/06): confirmação de fechamento em LOTE.
+        // A intent {batch_complete:[short_ids]} (aberta em applyTaskActions A2) era
+        // resolvida 'confirmed' mas NUNCA executava — payload sem `anchor` pula o
+        // executor de 1 tarefa (acima) e `batch_complete` não está no hasConcrete (o
+        // branch do LLM abaixo proíbe marker). Espelha o executor ancorado: conclui
+        // DIRETO, sem LLM (robusto sob fallback). Retorna cedo → NÃO toca hasConcrete
+        // → RECUR-TEMPLATE-DUP intacto. resolveTaskByShortId escopa por colaborador.
+        const { executeBatchComplete } = require('./utils/batch-complete');
+        const { okCount, okTitles, total } = await executeBatchComplete({
+          supabase, resolveTaskByShortId, collaboratorId: collab.id,
+          ids: target.payload.batch_complete, now: new Date().toISOString(),
+        });
+        if (okCount > 0) {
+          await pendingIntents.resolveIntent(target.id, 'confirmed', `batch complete (engine) ${okCount}/${total}`);
+          const lista = okTitles.length ? okTitles.map((t) => `*${t}*`).join(', ') : `${okCount} tarefa${okCount > 1 ? 's' : ''}`;
+          const msgBc = okCount === total ? `✅ Concluí: ${lista}.` : `✅ Concluí ${okCount} de ${total}: ${lista}.`;
+          try { await whatsapp.sendMessage(phone, msgBc); await logConversation(collab.id, 'outbound', msgBc); } catch (_) { /* já persistiu */ }
+          console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (batch_complete_${okCount}/${total})`);
+          return;
+        }
+        // nenhuma concluída (ids stale) → segue fluxo normal (LLM vê a intent)
       } else if (userConfirm === 'yes') {
         _pendingIntentToResolve = { intent: target, resolution: 'confirmed' };
         // Injeta contexto inline pra LLM saber o que confirmar.
