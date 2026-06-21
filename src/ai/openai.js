@@ -53,7 +53,9 @@ async function chat(systemPrompt, messages /*, maxTokens */) {
       // Sanitiza ANTES do empty-check: se o Codex respondeu só cerca de código,
       // o sanitizer esvazia → vira reject('empty') em vez de mandar vazio (espelha claude.js).
       const text = sanitizeOutput(out);
-      const sanitizedDelta = out.length - text.length;
+      // delta sobre out.trim() (não out) pra o \n final do codex não contar como
+      // "stripped" → o sensor só dispara em remoção real (anti cry-wolf).
+      const sanitizedDelta = out.trim().length - text.length;
       if (sanitizedDelta > 0) console.warn(`[Codex] sanitizer stripped ${sanitizedDelta} chars`);
       if (!text) return reject_('empty', 'Codex retornou vazio.');
       resolve({ text, provider: 'openai' });
