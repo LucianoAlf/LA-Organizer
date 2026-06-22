@@ -6,6 +6,7 @@ import { CustomSelect } from '../../../components/CustomSelect';
 import { DateInput } from '../../../components/DateInput';
 import { AdaptiveSheet } from '../../../components/AdaptiveSheet';
 import { writeErrorMsg } from '../../../lib/lareport-mutations';
+import { normalizeQuantidade, normalizeAlertaDias } from '../../../lib/inventario-form';
 
 interface Props {
   open: boolean;
@@ -39,7 +40,7 @@ export function ItemSheet({ open, onClose, onSubmit, item, defaultSalaId, defaul
     if (!form.nome || !form.categoria || !form.unidade_id) { setErro('Nome, Categoria e Unidade são obrigatórios'); return; }
     setSaving(true); setErro(null);
     try {
-      await onSubmit(form);
+      await onSubmit({ ...form, quantidade: normalizeQuantidade(form.quantidade), alerta_revisao_dias: normalizeAlertaDias(form.alerta_revisao_dias) });
       onClose();
     } catch (e: any) {
       setErro(writeErrorMsg(e));
@@ -67,8 +68,13 @@ export function ItemSheet({ open, onClose, onSubmit, item, defaultSalaId, defaul
           <div className="grid grid-cols-2 gap-2">
             <input className="bg-bg-app border border-border rounded-md p-2" placeholder="Marca" value={form.marca || ''} onChange={e => setForm({ ...form, marca: e.target.value })} />
             <input className="bg-bg-app border border-border rounded-md p-2" placeholder="Modelo" value={form.modelo || ''} onChange={e => setForm({ ...form, modelo: e.target.value })} />
+          </div>
+          <div className="grid grid-cols-2 gap-2 items-end">
             <input className="bg-bg-app border border-border rounded-md p-2" placeholder="Núm. Série" value={form.numero_serie || ''} onChange={e => setForm({ ...form, numero_serie: e.target.value })} />
-            <input type="number" className="bg-bg-app border border-border rounded-md p-2" placeholder="Qtd" value={form.quantidade} onChange={e => setForm({ ...form, quantidade: parseInt(e.target.value) || 1 })} />
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] uppercase tracking-wide text-fg-muted font-semibold">Quantidade</span>
+              <input type="number" min={1} inputMode="numeric" className="bg-bg-app border border-border rounded-md p-2 w-full" placeholder="Quantidade" value={form.quantidade} onChange={e => setForm({ ...form, quantidade: e.target.value })} />
+            </label>
           </div>
         </section>
 
@@ -108,7 +114,7 @@ export function ItemSheet({ open, onClose, onSubmit, item, defaultSalaId, defaul
               ]}
             />
             <DateInput value={form.proxima_revisao ?? ''} onChange={(v) => setForm({ ...form, proxima_revisao: v || null })} />
-            <input type="number" className="bg-bg-app border border-border rounded-md p-2" placeholder="Alerta dias" value={form.alerta_revisao_dias} onChange={e => setForm({ ...form, alerta_revisao_dias: parseInt(e.target.value) || 30 })} />
+            <input type="number" min={0} inputMode="numeric" className="bg-bg-app border border-border rounded-md p-2" placeholder="Alerta dias" value={form.alerta_revisao_dias} onChange={e => setForm({ ...form, alerta_revisao_dias: e.target.value })} />
           </div>
         </section>
 
