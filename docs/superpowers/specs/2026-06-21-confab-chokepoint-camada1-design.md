@@ -34,11 +34,11 @@ UM chokepoint determinístico: **antes de enviar (voz OU texto), se a fala afirm
 ### O gate (a decisão precisa) — **verbo de conclusão, NÃO ✅ sozinho**
 Rebaixa SE: `nothingPersisted && !infoGathering && !awaitingConfirm && hasCompletionClaim(reply)`.
 
-`hasCompletionClaim(reply)` = a fala contém um **verbo de conclusão** (criou/registrou/concluiu/**confirmou**/**lançou**/...). **NÃO** dispara no ✅ decorativo sozinho ("✅ Boa, tá tudo certo?") — isso protege a voz do TOM em conversa normal. Aterrado na Ana: o sinal dela é "confirmadas" (verbo), não a flag actionable.
+`hasCompletionClaim(reply)` = alguma LINHA faz afirmação de conclusão: verbo de conclusão **no início da linha**, OU **✅ na linha JUNTO com** um verbo de conclusão na linha, OU totalizador (todas/tudo) + verbo. **NÃO** dispara no ✅ decorativo sozinho ("✅ Boa, tá tudo certo?") — protege a voz do TOM. Aterrado na Ana: "✅ ...confirmadas" = ✅ + verbo no fim da linha → pega pelo ramo **✅+verbo** (o de início-de-linha sozinho perderia ela).
 
 ### Mudanças na lib `src/lib/optimistic-confirm.js`
 1. **Estender `COMPLETION_CORE`** com os verbos que aparecem nas confabs reais e faltavam: `confirmad[oa]s?|confirmei`, `lan[çc]ad[oa]s?|lancei`, `adicionad[oa]s?|adicionei`, `inserid[oa]s?`. (Só passado/particípio — seguro; presente/futuro/gerúndio continuam fora.)
-2. **Novo `hasCompletionClaim(text)`** — usa `COMPLETION_ANCHORED`/`COMPLETION_ANYWHERE` (verbos), **sem** a regra do ✅-sozinho. É o gate.
+2. **Novo `hasCompletionClaim(text)`** — por linha: `COMPLETION_ANCHORED` (verbo no início) **OU** (✅ na linha E `COMPLETION_ANYWHERE` na linha) **OU** (`TOTALIZER` + `COMPLETION_ANYWHERE`). **Sem** a regra do ✅-sozinho. Alinhado ao `_isOptimisticLine`: quando o gate dispara, `sanitizeOptimisticConfirm('failed')` de fato remove a linha (evita rebaixar com aviso sem remover nada).
 3. **Novo `enforceNoMarkerHonesty(reply, { nothingPersisted, infoGathering, awaitingConfirm })`** — puro:
    ```
    se !reply || !nothingPersisted || infoGathering || awaitingConfirm → retorna reply (não mexe)
