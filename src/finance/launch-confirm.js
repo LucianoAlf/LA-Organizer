@@ -6,6 +6,14 @@
 
 const BRL = (v) => Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+// Data legível pra montagem: YYYY-MM-DD → dd/mm; ausente → "hoje" (o engine grava hoje).
+// Mostrar a data deixa o usuário CONFERIR antes de confirmar (ex.: "gastei ... de ontem").
+function fmtDate(d) {
+  if (!d) return 'hoje';
+  const m = String(d).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[3]}/${m[2]}` : String(d);
+}
+
 function srcLabel(source) {
   if (!source) return '';
   if (source.kind === 'card') return `💳 ${source.name}`;
@@ -21,7 +29,7 @@ function buildLaunchPreview(items) {
     const parc = t.installments && t.installments >= 2 ? ` em ${t.installments}x` : '';
     const sign = t.type === 'income' ? '+' : '';
     const cat = t.category ? ` · ${t.category}` : '';
-    return `• ${t.description || '(sem descrição)'} — ${sign}R$ ${BRL(t.amount)}${parc}${cat}`;
+    return `• ${t.description || '(sem descrição)'} — ${sign}R$ ${BRL(t.amount)}${parc}${cat} · ${fmtDate(t.date)}`;
   });
   const sources = [...new Set(items.map((it) => srcLabel(it.source)).filter(Boolean))];
   const onlyIncome = items.every((it) => (it.txn || {}).type === 'income');

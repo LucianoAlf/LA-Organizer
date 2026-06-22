@@ -36,6 +36,14 @@ test('preview: receita usa sinal +', () => {
   assert.match(out, /\+R\$\s?1\.000,00/);
 });
 
+test('preview: mostra a data dd/mm quando informada', () => {
+  assert.match(buildLaunchPreview([cardItem({ date: '2026-06-21' })]), /21\/06/);
+});
+
+test('preview: sem data → "hoje"', () => {
+  assert.match(buildLaunchPreview([cardItem({ date: undefined })]), /hoje/);
+});
+
 test('preview: lista vazia → null', () => {
   assert.strictEqual(buildLaunchPreview([]), null);
 });

@@ -189,7 +189,7 @@ function detectUserConfirmation(userText, opts = {}) {
   if (NO_RE.test(t)) return 'no';
 
   // Afirmativas
-  const YES_RE = /^(sim\b|s[i]m\b|ok\b|okay\b|pode\b|cria\b|cri[ae]m?\b|manda\b|manda\s+ver|fechou\b|fechado\b|beleza\b|blz\b|isso\b|isso\s+mesmo|claro\b|t[áa]\b|t[áa]\s+certo|vai\b(?!\s+dar)|vai\s+(?:criando|criar|fazendo)|bora\b|perfeito\b|exato\b|👍)/;
+  const YES_RE = /^(sim\b|s[i]m\b|ok\b|okay\b|pode\b|cria\b|cri[ae]m?\b|manda\b|manda\s+ver|fechou\b|fechado\b|beleza\b|blz\b|isso\b|isso\s+mesmo|claro\b|t[áa]\b|t[áa]\s+certo|vai\b(?!\s+dar)|vai\s+(?:criando|criar|fazendo)|bora\b|perfeito\b|exato\b|confirmad[oa]\b|confirmo\b|confirma\b|confirmar\b|confirmei\b|👍)/;
   if (YES_RE.test(t)) return 'yes';
   // "vai criando aí"
   if (/vai\s+criando\s+a[íi]?/i.test(userText)) return 'yes';

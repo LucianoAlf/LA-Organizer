@@ -5508,8 +5508,14 @@ function parseHabitMarker(text) {
     // `habit_slug` caía em bad_habit_id. Agora aceita ambos.
     if (a && typeof a === 'object') {
       if (a.action === 'create' && !a.name && typeof a.title === 'string') a.name = a.title;
-      if (a.action === 'log' && !a.habit_id && !a.habit_name && typeof a.habit_slug === 'string') {
-        a.habit_name = a.habit_slug.replace(/[-_]+/g, ' ').trim();
+      // log/query_progress/delete identificam o hábito por habit_id|habit_name; o TOM às
+      // vezes manda `habit_slug` ou `title` (igual faz em tasks/eventos). Normaliza ambos.
+      // (B3 Ana — 22/06: faltava o fallback `title`→habit_name no log; o marker da dose da
+      // Alice era rejeitado por bad_habit_id e virava confabulação "✅ doses confirmadas".)
+      if ((a.action === 'log' || a.action === 'query_progress' || a.action === 'delete')
+          && !a.habit_id && !a.habit_name) {
+        if (typeof a.habit_slug === 'string') a.habit_name = a.habit_slug.replace(/[-_]+/g, ' ').trim();
+        else if (typeof a.title === 'string') a.habit_name = a.title;
       }
     }
     const why = validateHabitAction(a);
@@ -7856,7 +7862,11 @@ async function processMessage(phone, text, raw = {}) {
       // determinístico, sem LLM). Dormante até o dispatch abrir intents form:launch_confirm.
       if (finOpen.payload && finOpen.payload.form === 'launch_confirm') {
         const conf = pendingIntents.detectUserConfirmation(String(text || ''));
-        if (conf === 'yes') {
+        // Confirmação GENEROSA: a montagem pede "sim", mas o user diz "confirmado", "pode lançar"…
+        // FIN-CONFIRM-WORD-NARROW (Alf 22/06: "Confirmado" vazou pro LLM e nada gravou).
+        const _lcConf = String(text || '').toLowerCase().trim();
+        const _launchYes = conf === 'yes' || (_lcConf.length <= 40 && /\b(lan[çc]a|lan[çc]ar|pode\s+lan[çc]ar|manda\s+lan[çc]ar|confirmad[oa]|confirmo|confirma)\b/.test(_lcConf));
+        if (_launchYes) {
           const acts = Array.isArray(finOpen.payload.actions) ? finOpen.payload.actions : [];
           const replies = [];
           for (const a of acts) {
