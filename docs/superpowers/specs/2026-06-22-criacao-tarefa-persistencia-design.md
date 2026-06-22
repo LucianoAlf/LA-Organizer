@@ -41,14 +41,15 @@ Para enunciado claro de tarefa(s) — inclusive planejamento por áudio — o TO
 
 Sem portão "tá certo?" antes. Campo opcional ausente (ex.: motivo da ida à Barra): **cria com o que tem e pergunta depois** — nunca segura a criação por campo opcional. É mudança de **sequência** (age → confirma), não de tom. Local: guidance de skill (arquivo exato no plano — provável skill de tarefas/planejamento + `soul/AGENTS.md`).
 
-### Parte 2 — A GARANTIA: rede determinística "fala = persistência"
-Defense-in-depth, **100% aditiva**, dispara só no caso de falha (afirmou criação **e** nenhum marker rodou no turno):
+### Parte 2 — A GARANTIA: rede determinística "fala = persistência OU honestidade"
+Defense-in-depth, **100% aditiva**, dispara só no caso de falha (afirmou criação **e** nenhum marker de tarefa rodou no turno):
 
-1. **Detector mais esperto.** O radar de "ação sem marker" (`engine.js ~10798–10846`) hoje não reconhece linguagem de criação/organização ("anotei", "criei", "deixei marcado", "agendei", "organizada", "te cobro"). Ampliar o reconhecimento para essas formas. O gate "só dispara se NENHUM marker rodou" protege a criação legítima de virar falso-positivo (não reabre o C1).
-2. **Auto-retry força o marker.** Quando (afirmou ∧ sem marker), aciona a máquina de auto-retry que **já existe** (Sprint 28.2 — chamada dedicada que persiste o marker), agora cobrindo as formas ampliadas. A tarefa nasce de verdade.
-3. **Se ainda assim não nascer → honestidade.** Reescreve a resposta para honesta ("não consegui registrar agora — me manda de novo?"), espelhando `sanitizeOptimisticConfirm`. NUNCA deixa sair "criei" sem lastro.
+1. **Detector mais esperto.** O radar de "ação sem marker" (`engine.js ~10791–10846`) hoje não reconhece linguagem de criação/organização ("anotei", "criei", "deixei marcado", "agendei", "organizada", "te cobro"). Ampliar via helper puro novo `looksLikeCreationClaim(text)`. O gate "só dispara se NENHUM marker rodou" protege a criação legítima de virar falso-positivo (não reabre o C1).
+2. **Reescrita honesta (NÃO auto-criar).** Quando (afirmou criação ∧ sem marker de tarefa no turno), o engine **substitui a prosa otimista por uma honesta** ANTES do envio ("opa, não cheguei a registrar — me confirma os itens que eu marco certinho"), espelhando `sanitizeOptimisticConfirm`. NUNCA deixa sair "criei" sem lastro.
 
-**Resultado garantido:** ou a tarefa nasce (retry), ou o TOM fala a verdade. Fim do "criei" silencioso — para Dai, Rose, todo mundo.
+> **Descoberta no plano (22/06):** o auto-retry existente (Sprint 28.2, `engine.js ~10848`) é **deliberadamente anti-criação** — bloqueia `create` sem `remind_at` (guard anti-tarefa-fantasma de 01/06). Então "auto-retry força o marker" **não vale para criação**. Por isso a Parte 2 é **reescrita honesta**, não auto-criação. **Decisão do Alf (22/06): opção A** — criar-na-hora (Parte 1) faz a tarefa nascer; a rede honesta cobre o resíduo sem reabrir o risco de fantasma.
+
+**Resultado garantido:** ou a tarefa nasce na Parte 1, ou o TOM **admite honestamente** que não registrou e pede reconfirmação — NUNCA um "criei" silencioso falso. Vale para Dai, Rose, todo mundo.
 
 ## 5. Componentes afetados
 - `src/engine.js`: detector `actionable_intent` (~10798–10846) — ampliar reconhecimento; auto-retry (~10848+) — cobrir formas ampliadas; honest-rewrite no caminho sem-marker.
