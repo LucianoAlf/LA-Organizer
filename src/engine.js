@@ -7087,6 +7087,39 @@ async function stageLaunches(cid, actions, userText) {
   return { items, actions: pinned, allClean: ok && items.length === actions.length };
 }
 
+// Camada 2 (pay_invoice): resolve a fatura pra CONFIRMAÇÃO determinística — espelha o
+// handler pay_invoice SEM pagar, e acha a tarefa de lembrete pra fechar junto. NÃO paga.
+// Retorna null → cai no fluxo atual (handler pergunta o cartão / avisa "fatura zerada").
+async function stagePayInvoice(cid, params) {
+  const cards = await financeService.findCard(cid, (params && params.card) || '');
+  if (cards.length !== 1) return null;
+  const card = cards[0];
+  const comp = (params && params.competencia) || financeService.currentCompetencia(card);
+  const inv = await financeService.cardInvoice(cid, card.id, comp);
+  if (!(inv.total > 0)) return null;
+  const amount = Number(params && params.amount) > 0 ? Number(params.amount) : inv.remaining;
+  if (!(amount > 0)) return null;
+  let fromName = null;
+  if (params && params.from_account) {
+    const accs = (await financeService.listAccounts(cid)).filter((a) => String(a.name).toLowerCase().includes(String(params.from_account).toLowerCase()));
+    if (accs.length === 1) fromName = accs[0].name;
+  }
+  let close_tasks = []; let taskTitles = [];
+  try {
+    const tok = String(card.name || '').toLowerCase().split(/\s+/)[0];
+    const { data: ts } = await supabase.from('tasks')
+      .select('id, title').eq('assigned_to', cid).eq('status', 'pending').ilike('title', '%fatura%');
+    const linked = (ts || []).filter((t) => tok && String(t.title || '').toLowerCase().includes(tok));
+    close_tasks = linked.map((t) => t.id);
+    taskTitles = linked.map((t) => t.title);
+  } catch (e) { console.warn('[PayInvoiceStage] task lookup err:', e.message); }
+  return {
+    action: { action: 'pay_invoice', params: { card: card.name, competencia: comp, amount, from_account: fromName || (params && params.from_account) } },
+    close_tasks,
+    display: { cardName: card.name, amount, competencia: comp, fromName, taskTitles },
+  };
+}
+
 async function handleFinanceAction(collab, action, params, outcome = {}) {
   const cid = collab.id;
   const p = normalizeParams(params || {});

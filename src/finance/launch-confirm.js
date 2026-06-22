@@ -40,4 +40,21 @@ function buildLaunchPreview(items) {
   return `${head}\n${lines.join('\n')}${srcLine}\n\nConfirma que mando? (responde *sim* ou me corrige)`;
 }
 
-module.exports = { buildLaunchPreview };
+const MESES = ['', 'janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+function fmtComp(c) {
+  const m = String(c || '').match(/^(\d{4})-(\d{2})/);
+  return m ? `${MESES[Number(m[2])] || m[2]}/${m[1]}` : String(c || '');
+}
+
+// Montagem de PAGAMENTO de fatura de cartão (pay_invoice). Inclui a tarefa de lembrete
+// que será fechada junto, pra o usuário conferir antes de confirmar. PURO.
+function buildPayInvoicePreview({ cardName, amount, competencia, fromName, taskTitles } = {}) {
+  if (!cardName || !(Number(amount) > 0)) return null;
+  const comp = fmtComp(competencia);
+  const from = fromName ? ` — saindo da *${fromName}*` : '';
+  const tasks = Array.isArray(taskTitles) && taskTitles.length
+    ? `\nE fecho a tarefa *${taskTitles.join('*, *')}*.` : '';
+  return `Vou pagar a fatura do *${cardName}* — R$ ${BRL(amount)}${comp ? ` (${comp})` : ''}${from}.${tasks}\n\nConfirma que mando? (responde *sim* ou me corrige)`;
+}
+
+module.exports = { buildLaunchPreview, buildPayInvoicePreview };
