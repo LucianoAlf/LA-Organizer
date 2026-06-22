@@ -46,3 +46,19 @@ test('enforce NÃO mexe: awaitingConfirm', () => {
   const t = '✅ Confirmado, crio as duas?';
   assert.strictEqual(enforceNoMarkerHonesty(t, { nothingPersisted: true, infoGathering: false, awaitingConfirm: true }), t);
 });
+
+// PLANNING-CONFIRM-NO-CREATE (caso Dai 21/06) — claim de planejamento sem marker.
+test('enforce: caso Dai — "Semana organizada / te cobro" rebaixa (planejamento sem marker)', () => {
+  const dai = 'Show, Dai! Semana do canto organizada então:\n\n• Campo Grande — terça\n• Recreio — quinta\n\nTe cobro conforme for chegando.';
+  const out = enforceNoMarkerHonesty(dai, PERSIST_NO);
+  assert.ok(/n[ãa]o consegui registrar/i.test(out), 'devia ter aviso honesto: ' + out);
+});
+test('hasCompletionClaim: pega claim de planejamento (organizada / te cobro conforme / organizei)', () => {
+  assert.strictEqual(hasCompletionClaim('Semana do canto organizada então:'), true);
+  assert.strictEqual(hasCompletionClaim('Te cobro conforme for chegando.'), true);
+  assert.strictEqual(hasCompletionClaim('Organizei sua semana.'), true);
+});
+test('enforce NÃO mexe: "te cobro segunda" (reschedule, sem conforme/quando)', () => {
+  const t = 'Beleza, te cobro segunda!';
+  assert.strictEqual(enforceNoMarkerHonesty(t, PERSIST_NO), t);
+});

@@ -9,14 +9,17 @@ $workDir = "C:\la-deploy-work"
 $srcRoot = "D:\la-organizer\_remote"
 $repoUrl = "https://github.com/LucianoAlf/LA-Organizer.git"
 
-# 0. HOLD de deploy — se existe .deploy-hold na raiz do projeto, NAO commita/pusha/deploya.
-#    O Alf cria esse arquivo pra reter o deploy automatico (ex.: feature aguardando OK).
-#    Removendo o arquivo, o deploy automatico volta ao normal no proximo turno.
-$holdFile = Join-Path (Split-Path $srcRoot -Parent) ".deploy-hold"
-if (Test-Path $holdFile) {
-    Write-Output "=== DEPLOY EM HOLD (.deploy-hold presente) -- nada commitado/pushado/deployado ==="
-    exit 0
-}
+# 0. (REMOVIDO 2026-06-22) Antigo HOLD via arquivo-sentinela .deploy-hold.
+#    Por que saiu: os planos do fluxo Superpowers criavam .deploy-hold antes de editar
+#    src/ e removiam no fim. Quando a sessao era interrompida/compactada no meio, o
+#    cleanup nao rodava, o arquivo ficava ORFAO e BLOQUEAVA SILENCIOSAMENTE os deploys
+#    do Alf — que apagava o arquivo, mas o proximo plano recriava (recorrencia infinita).
+#    Protecao mid-task agora vem de: nunca encerrar o turno com src/ quebrado (node --check)
+#    + scp explicito do que precisa subir na hora. Se um dia precisar de pausa MANUAL de
+#    deploy, construir um switch que os chats nao consigam orfanar (NAO um arquivo solto).
+#    Sentinela defensiva: se um .deploy-hold orfao reaparecer, apaga e segue (nunca bloqueia).
+$staleHold = Join-Path (Split-Path $srcRoot -Parent) ".deploy-hold"
+if (Test-Path $staleHold) { Remove-Item $staleHold -Force -ErrorAction SilentlyContinue }
 
 # 1. Clone inicial ou reset para origin/main se ja existe
 if (-not (Test-Path (Join-Path $workDir ".git"))) {

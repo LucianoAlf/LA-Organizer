@@ -43,6 +43,12 @@ const TOTALIZER_RE = /\b(todas|todos|tudo)\b/i;
 // Confirmações de recorrência ("você recebe o lembrete", "todo dia 5").
 const RECUR_RE = /(voc[êe]\s+recebe\s+o\s+lembrete|^todo\s+dia\s+\d+)/i;
 
+// PLANNING-CONFIRM-NO-CREATE (22/06) — claim de PLANEJAMENTO/organização que implica
+// persistência mas escapa do COMPLETION_CORE: "semana/agenda organizada", "organizei",
+// "te cobro/lembro/aviso conforme/quando/nos dias". Caso Dai 21/06. Dispara em qualquer
+// posição da linha (o fraseado vem no meio: "Semana do canto organizada então:").
+const PLANNING_CLAIM_RE = /\borganiz(?:ei|ad[oa]s?)\b|\bte\s+(?:cobro|lembro|aviso)\s+(?:conforme|quando|à\s+medida|nos?\s+dias?|cada)\b|\bvou\s+(?:te\s+)?(?:cobrando|lembrando|acompanhando)\b/i;
+
 function _stripLeadingEmoji(line) {
   return String(line).replace(SUCCESS_EMOJI_GLOBAL, '').replace(LEADING_MARKUP, '').trimStart();
 }
@@ -59,6 +65,8 @@ function _isOptimisticLine(line) {
   // posição. Sem o totalizador NÃO casa (evita stripar menção a estado alheio,
   // ex.: "Comprar enfeite já tava marcado").
   if (TOTALIZER_RE.test(t) && COMPLETION_ANYWHERE.test(t)) return true;
+  // PLANNING-CONFIRM-NO-CREATE: claim de planejamento ("semana organizada", "te cobro conforme").
+  if (PLANNING_CLAIM_RE.test(t)) return true;
   return false;
 }
 
@@ -120,6 +128,7 @@ function _isCompletionClaimLine(line) {
   if (COMPLETION_ANCHORED.test(noEmoji)) return true;
   if (SUCCESS_EMOJI_RE.test(t) && COMPLETION_ANYWHERE.test(t)) return true;
   if (TOTALIZER_RE.test(t) && COMPLETION_ANYWHERE.test(t)) return true;
+  if (PLANNING_CLAIM_RE.test(t)) return true;   // PLANNING-CONFIRM-NO-CREATE (caso Dai)
   return false;
 }
 function hasCompletionClaim(text) {
