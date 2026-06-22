@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { buildLaunchPreview } = require('./launch-confirm');
+const { buildLaunchPreview, buildPayInvoicePreview } = require('./launch-confirm');
 
 const cardItem = (over = {}) => ({
   op: 'card_purchase',
@@ -46,4 +46,24 @@ test('preview: sem data → "hoje"', () => {
 
 test('preview: lista vazia → null', () => {
   assert.strictEqual(buildLaunchPreview([]), null);
+});
+
+test('pay-invoice preview: cartão, valor, competência, conta e tarefa', () => {
+  const out = buildPayInvoicePreview({ cardName: 'Nubank', amount: 6295.54, competencia: '2026-06-01', fromName: 'Itaú', taskTitles: ['Pagar fatura Nubank'] });
+  assert.match(out, /Nubank/);
+  assert.match(out, /6\.295,54/);
+  assert.match(out, /junho\/2026/);
+  assert.match(out, /Itaú/);
+  assert.match(out, /Pagar fatura Nubank/);
+  assert.match(out, /sim/i);
+});
+
+test('pay-invoice preview: sem conta e sem tarefa', () => {
+  const out = buildPayInvoicePreview({ cardName: 'C6', amount: 100, competencia: '2026-07-01' });
+  assert.doesNotMatch(out, /saindo da/);
+  assert.doesNotMatch(out, /fecho a tarefa/i);
+});
+
+test('pay-invoice preview: valor zero → null', () => {
+  assert.strictEqual(buildPayInvoicePreview({ cardName: 'X', amount: 0 }), null);
 });

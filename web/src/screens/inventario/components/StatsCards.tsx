@@ -1,9 +1,10 @@
 import { useAccess } from '../../../hooks/useAccess';
 import { useInventarioStats } from '../../../hooks/useInventarioStats';
+import type { InventarioStatusTipo } from '../../../lib/inventario-status';
 
-interface Props { unidadeId?: string; onAtencaoClick?: () => void; }
+interface Props { unidadeId?: string; onCardClick?: (tipo: InventarioStatusTipo) => void; }
 
-export function StatsCards({ unidadeId, onAtencaoClick }: Props) {
+export function StatsCards({ unidadeId, onCardClick }: Props) {
   const { data } = useInventarioStats(unidadeId);
   const valorAccess = useAccess('valor_patrimonial');
   if (!data) return null;
@@ -21,8 +22,8 @@ export function StatsCards({ unidadeId, onAtencaoClick }: Props) {
     <div className={`grid ${cols} gap-2`}>
       <Card label="Total itens" value={data.total} />
       {valorAccess.allowed && <Card label="Valor total" value={`R$ ${data.valor.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`} tone="tom" />}
-      <Card label="Em manutenção" value={data.manutencao} tone="warn" />
-      <Card label="Atenção" value={data.atencao} tone="danger" onClick={data.atencao > 0 ? onAtencaoClick : undefined} />
+      <Card label="Em manutenção" value={data.manutencao} tone="warn" onClick={data.manutencao > 0 && onCardClick ? () => onCardClick('manutencao') : undefined} />
+      <Card label="Atenção" value={data.atencao} tone="danger" onClick={data.atencao > 0 && onCardClick ? () => onCardClick('atencao') : undefined} />
     </div>
   );
 }

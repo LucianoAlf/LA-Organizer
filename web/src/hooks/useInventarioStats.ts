@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { laReportClient } from '../lib/lareport-client';
 import { useAccess } from './useAccess';
+import { aplicaFiltroStatus } from '../lib/inventario-status';
 
 export function useInventarioStats(unidadeId?: string) {
   const access = useAccess('inventario');
@@ -18,13 +19,11 @@ export function useInventarioStats(unidadeId?: string) {
         return q;
       };
 
-      const limit30d = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
-
       const [totalRes, valorRes, manutRes, atencaoRes] = await Promise.all([
         applyFilters(laReportClient.from('inventario').select('id', { count: 'exact', head: true }).eq('ativo', true)),
         applyFilters(laReportClient.from('inventario').select('valor_compra').eq('ativo', true)),
-        applyFilters(laReportClient.from('inventario').select('id', { count: 'exact', head: true }).eq('status', 'manutencao')),
-        applyFilters(laReportClient.from('inventario').select('id', { count: 'exact', head: true }).lte('proxima_revisao', limit30d)),
+        aplicaFiltroStatus(applyFilters(laReportClient.from('inventario').select('id', { count: 'exact', head: true })), 'manutencao'),
+        aplicaFiltroStatus(applyFilters(laReportClient.from('inventario').select('id', { count: 'exact', head: true })), 'atencao'),
       ]);
 
       const valorTotal = (valorRes.data || []).reduce((s: number, r: any) => s + (Number(r.valor_compra) || 0), 0);

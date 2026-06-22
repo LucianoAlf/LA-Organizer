@@ -7,6 +7,7 @@ export function useInventarioMutations(salaId?: number | null) {
     qc.invalidateQueries({ queryKey: ['lareport', 'sala', salaId] });
     qc.invalidateQueries({ queryKey: ['lareport', 'salas'] });
     qc.invalidateQueries({ queryKey: ['lareport', 'stats'] });
+    qc.invalidateQueries({ queryKey: ['lareport', 'por-status'] });
   };
   return {
     create: useMutation({ mutationFn: createItem, onSuccess: invalidate }),

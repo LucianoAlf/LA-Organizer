@@ -8,6 +8,8 @@ import { EmptyState } from '../../components/EmptyState';
 import { useReportUnidades, useReportSalas, useReportLoja } from '../../hooks/useLaReport';
 import { SalaCardMedio } from './components/SalaCardMedio';
 import { StatsCards } from './components/StatsCards';
+import { ItemListSheet } from './components/ItemListSheet';
+import type { InventarioStatusTipo } from '../../lib/inventario-status';
 import { useAccess } from '../../hooks/useAccess';
 import { useRealtimeSalas } from '../../hooks/useRealtimeSalas';
 import { laReportClient } from '../../lib/lareport-client';
@@ -16,6 +18,7 @@ export function InventarioListaPage() {
   const navigate = useNavigate();
   const { data: unidades = [], isLoading: lU } = useReportUnidades();
   const [unidadeId, setUnidadeId] = useState<string>('');
+  const [drillTipo, setDrillTipo] = useState<InventarioStatusTipo | null>(null);
 
   useEffect(() => {
     if (!unidadeId && unidades.length > 0) {
@@ -67,7 +70,7 @@ export function InventarioListaPage() {
         onChange={setUnidadeId}
       />
 
-      <StatsCards unidadeId={unidadeId} onAtencaoClick={() => navigate(`/inventario/atencao?unit=${unidadeId}`)} />
+      <StatsCards unidadeId={unidadeId} onCardClick={setDrillTipo} />
 
 <div className="flex items-center gap-sm">
         <h3 className="text-body-sm text-fg-muted font-semibold uppercase tracking-wide">Salas ({salas.length})</h3>
@@ -85,6 +88,8 @@ export function InventarioListaPage() {
           ))}
         </div>
       )}
+
+      <ItemListSheet open={!!drillTipo} tipo={drillTipo} unidadeId={unidadeId} onClose={() => setDrillTipo(null)} />
     </div>
   );
 }
