@@ -30,13 +30,14 @@ Dois furos estruturais sob uma família de **6+ correções** já feitas (`AUDIT
 ### 3.1 Fluxo canônico de lançamento (`engine.js`)
 - **Handler `FINANCE_ACTION` (`~7432`/`~7464`):** de *insere-agora* → *estagia*. Resolve a fonte (cartão/conta), monta preview determinístico, abre intent `finance_source` com `form:'launch_confirm'` e **payload completo** (`{op, txn:{amount, installments, category, description, date, competencia}, card_id|account_id, import_key pré-gerado}`). **A reply é o preview determinístico** — descarta a prosa otimista do LLM pra essa ação (espelha `GROUPCHAT-TOM-MENTE-NA-FALHA`).
 - **Consumidor determinístico do "sim"** (irmão do consumidor `finance_source` em `~7804`, roda antes do LLM e dá `return`): lê o payload, insere via `insertCardPurchase` (parcelado/cartão, já espalha N competências) ou `insertTransaction` (carteira), `resolveIntent('confirmed')`, e emite confirmação honesta determinística. **Sem LLM** → imune a timeout do provider.
+- **Interlock com a Camada 1 (crítico):** o turno de PREVIEW não persiste nada (`nothingPersisted=true`). Pra Camada 1 NÃO rebaixar o preview (que é pergunta, não claim), o staging DEVE setar `_metrics.awaiting_user_confirm=true` (e o preview é frase interrogativa, sem verbo de conclusão → `hasCompletionClaim=false`). No turno do "sim", o "✅ lançado" só é emitido DEPOIS do insert, setando `marker_emitted`/persistência → `nothingPersisted=false` → o ✅ verdadeiro passa intacto.
 
 ### 3.2 Resolução de fonte (carteira × cartão)
 - O preview declara a fonte resolvida e pede confirmação. Ambígua/ausente → pergunta qual.
 - Sem carteira cadastrada (caso Juliana) → orienta cadastrar (comportamento mantido — decisão Alf 19/06: gasto avulso segue exigindo carteira).
 
-### 3.3 Trava anti-confabulação global (Parte 2 — rede de segurança)
-- `ACTIONABLE_NO_MARKER` passa a **AGIR**, conservador: claim cristalino de sucesso + input acionável + **zero persistência no turno** → rebaixa **só a frase mentirosa** pra correção honesta curta (não reescreve a mensagem toda, não muda a voz do TOM). Reusa os supressores existentes (info-gathering/decline/pergunta) pra não dar falso-positivo. Estende `src/lib/optimistic-confirm.js` pro caso "nenhum marker".
+### 3.3 Trava anti-confabulação global (Parte 2) — ✅ JÁ ENTREGUE (Camada 1)
+**Descoberto na investigação 22/06:** o chokepoint universal **já existe e está plugado** — `enforceNoMarkerHonesty`/`hasCompletionClaim` em `src/lib/optimistic-confirm.js`, chamado em `engine.js:11014` (CONFAB-NOMARKER-CHOKEPOINT, design `2026-06-21-confab-chokepoint-camada1-design.md`). Roda antes do envio (voz+texto), cobre todos os domínios, e tem teste com o caso EXATO da Rose (`optimistic-confirm.camada1.test.js`: `'✅ Lançado nas parcelas jul/ago/set'` + `nothingPersisted` → rebaixa). **NÃO reconstruir.** Esta correção é a **Camada 2 (financeiro)** que aquele design explicitamente deixou como "próximo passo" (executor determinístico de confirmação). A Camada 1 é a rede de segurança desta.
 
 ### 3.4 Módulo puro novo (TDD) — `src/finance/launch-confirm.js`
 - `buildLaunchPayload(parsed)` → payload normalizado (sinal por tipo, competência, import_key).
@@ -79,6 +80,7 @@ msg → LLM extrai campos → FINANCE_ACTION (PROPOSTA, nunca insere)
 - Estorno/refund e import de fatura (já determinísticos) — não mexer agora.
 - Carteira obrigatória pra gasto avulso — **mantido** (decisão Alf 19/06).
 - **Voz/tom/tamanho das respostas do TOM — INTOCADOS (sagrado).** Só mexe na MECÂNICA de execução, na honestidade factual, e em tornar a confirmação sempre-presente. O estilo da montagem é o que o TOM já faz.
+- **Camada 1 (gate universal de honestidade) — JÁ ENTREGUE por outro chat (`engine.js:11014`). NÃO reconstruir.** Esta spec é só a Camada 2 financeira. Coordenação: o chat de criação-de-tarefa (`2026-06-22-criacao-tarefa-persistencia-design.md`) faz a Camada 2 de TAREFA e mantém dinheiro como confirm-antes — coerente com esta.
 
 ## 9. Guardrails
 - `collaborator_id` sempre do remetente, nunca do LLM. Engine escreve via `service_role`.
