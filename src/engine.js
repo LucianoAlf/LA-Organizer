@@ -38,7 +38,7 @@ const NOTE_DEDUP_BYPASS_MS = 5 * 60 * 1000;
 const workGroups = require('./services/work-groups');
 const { detectApprovalReply, stripReplyScaffold } = require('./events/detect-approval-reply');
 const { isFutureCompletion } = require('./utils/complete-guards');
-const { sanitizeOptimisticConfirm, hasOptimisticConfirm } = require('./lib/optimistic-confirm');
+const { sanitizeOptimisticConfirm, hasOptimisticConfirm, enforceNoMarkerHonesty } = require('./lib/optimistic-confirm');
 const { classifyDupChoice } = require('./lib/dup-choice');
 const { buildClosingItems, parseClosingReply } = require('./utils/closing-reply');
 const { buildCoordinationResponseNotification, safeResponseSummary } = require('./services/coordination-notify');
@@ -11010,6 +11010,18 @@ Output AGORA, apenas o marker:`;
   } catch (e) {
     console.warn('[PendingIntents] hook err:', e.message);
   }
+
+  // CONFAB-NOMARKER-CHOKEPOINT (Camada 1) — trava universal de honestidade.
+  // Se a fala afirma conclusão (✅+verbo / verbo no início) mas NADA persistiu neste
+  // turno (nem o auto-retry), rebaixa pra honesta. Único lugar; cobre os ~14 handlers.
+  // Roda antes da voz E do texto. Não toca ✅ decorativo (gate verbo-baseado).
+  try {
+    reply = enforceNoMarkerHonesty(reply, {
+      nothingPersisted: !_metrics.marker_emitted && !_metrics.auto_retry_succeeded,
+      infoGathering: !!_replyIsInfoGathering,
+      awaitingConfirm: !!_metrics.awaiting_user_confirm,
+    });
+  } catch (e) { console.warn('[ConfabGuard] non-fatal:', e.message); }
 
   // ---- Sprint 28 — TOM Voice (TTS via ElevenLabs)
   // Decide se manda áudio em vez de (ou junto com) texto. Gates em

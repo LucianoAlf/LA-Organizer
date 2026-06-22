@@ -31,7 +31,8 @@ const COMPLETION_CORE =
   'guardad[oa]s?|guardei|reagendad[oa]s?|reagendei|atualizad[oa]s?|atualizei|' +
   'conclu[ií]d[oa]s?|conclu[ií]|fechad[oa]s?|fechei|resolvid[oa]s?|resolvi|' +
   'finalizad[oa]s?|finalizei|encerrad[oa]s?|encerrei|movid[oa]s?|movi|' +
-  'cancelad[oa]s?|cancelei|pront[oa]|prontinh[oa]|feit[oa])\\b';
+  'cancelad[oa]s?|cancelei|confirmad[oa]s?|confirmei|lan[çc]ad[oa]s?|lancei|' +
+  'adicionad[oa]s?|adicionei|inserid[oa]s?|pront[oa]|prontinh[oa]|feit[oa])\\b';
 
 const COMPLETION_ANCHORED = new RegExp('^[\\s*_~>•\\-–—"\']*' + COMPLETION_CORE, 'i');
 const COMPLETION_ANYWHERE = new RegExp('\\b' + COMPLETION_CORE, 'i');
@@ -109,4 +110,32 @@ function sanitizeOptimisticConfirm(text, outcome) {
   return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
-module.exports = { sanitizeOptimisticConfirm, hasOptimisticConfirm };
+// hasCompletionClaim — gate do chokepoint Camada 1 (CONFAB-NOMARKER-CHOKEPOINT).
+// Por linha: verbo de conclusão NO INÍCIO, OU ✅ na linha JUNTO com verbo em qualquer
+// posição, OU totalizador + verbo. NÃO dispara no ✅ decorativo sozinho (protege a voz).
+function _isCompletionClaimLine(line) {
+  const t = String(line).trim();
+  if (!t) return false;
+  const noEmoji = _stripLeadingEmoji(t);
+  if (COMPLETION_ANCHORED.test(noEmoji)) return true;
+  if (SUCCESS_EMOJI_RE.test(t) && COMPLETION_ANYWHERE.test(t)) return true;
+  if (TOTALIZER_RE.test(t) && COMPLETION_ANYWHERE.test(t)) return true;
+  return false;
+}
+function hasCompletionClaim(text) {
+  if (!text) return false;
+  return String(text).split('\n').some(_isCompletionClaimLine);
+}
+
+// enforceNoMarkerHonesty — Camada 1: se a fala afirma conclusão mas NADA persistiu no
+// turno, rebaixa pra honesta. PURO. Sinais vêm do engine (nunca adivinhados do texto).
+const NO_MARKER_HONEST_NOTE = '_⚠️ Na real não consegui registrar isso agora — me manda de novo, por favor._';
+function enforceNoMarkerHonesty(reply, opts) {
+  const o = opts || {};
+  if (!reply || !o.nothingPersisted || o.infoGathering || o.awaitingConfirm) return reply;
+  if (!hasCompletionClaim(reply)) return reply;
+  const cleaned = sanitizeOptimisticConfirm(reply, 'failed');
+  return cleaned ? cleaned + '\n\n' + NO_MARKER_HONEST_NOTE : NO_MARKER_HONEST_NOTE;
+}
+
+module.exports = { sanitizeOptimisticConfirm, hasOptimisticConfirm, hasCompletionClaim, enforceNoMarkerHonesty };
