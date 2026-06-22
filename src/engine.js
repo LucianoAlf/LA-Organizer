@@ -10575,6 +10575,42 @@ async function processMessage(phone, text, raw = {}) {
     const finParsed = parseFinanceMarkers(reply);
     if (finParsed.actions.length > 0) {
       _finActionRan = true;
+      // Camada 2 (sempre-confirmar, FIN-CONFIRM-CONFAB-NOOP): tenta estagiar os lançamentos
+      // (register_transaction/card_purchase) numa ÚNICA montagem de confirmação. Só estagia se
+      // TODOS resolverem a fonte limpo; senão cai no fluxo ATUAL (insere/pergunta como antes).
+      const _LAUNCH = new Set(['register_transaction', 'card_purchase']);
+      let _staged = null;
+      if (finParsed.actions.some((a) => _LAUNCH.has(a.action))) {
+        try { _staged = await stageLaunches(collab.id, finParsed.actions.filter((a) => _LAUNCH.has(a.action)), text); }
+        catch (e) { console.warn('[LaunchStage] err:', e.message); _staged = null; }
+      }
+      if (_staged && _staged.allClean && _staged.items.length) {
+        // Só os lançamentos viram montagem; NÃO-lançamentos (query/budget/etc.) rodam normal.
+        const _otherReplies = [];
+        for (const a of finParsed.actions.filter((x) => !_LAUNCH.has(x.action))) {
+          try {
+            const _o = { persisted: false };
+            const _r = await handleFinanceAction(collab, a.action, a.params, _o);
+            const _res = (FIN_WRITE.has(a.action) && !_o.persisted) ? 'skipped' : 'executed';
+            await logMarker(collab.id, 'FINANCE_ACTION', _res, a.action, null);
+            if (_r && _r.trim()) _otherReplies.push(_r.trim());
+          } catch (err) {
+            await logMarker(collab.id, 'FINANCE_ACTION', 'rejected', `error:${err.message}`, null);
+            _otherReplies.push('Deu ruim num item — tenta de novo?');
+          }
+        }
+        const _preview = launchConfirm.buildLaunchPreview(_staged.items);
+        const _intentId = await pendingIntents.openIntent(collab.id, 'finance_source', { form: 'launch_confirm', actions: _staged.actions }, _preview);
+        if (!_intentId) {
+          // openIntent falhou (ex.: drift de CHECK) → honesto, NUNCA finge que estagiou.
+          await logMarker(collab.id, 'FINANCE_ACTION', 'rejected', 'launch_confirm_intent_null', null);
+          reply = 'Opa, não consegui preparar a confirmação aqui — me manda de novo, por favor 🙏';
+        } else {
+          _metrics.awaiting_user_confirm = true; // Camada 1 não rebaixa a montagem (é pergunta)
+          await logMarker(collab.id, 'FINANCE_ACTION', 'skipped', `staged_launch:${_staged.items.length}`, null);
+          reply = [..._otherReplies, _preview].filter(Boolean).join('\n\n');
+        }
+      } else {
       // Despacha CADA marker (lista de gastos numa msg só) e concatena as confirmações.
       const finReplies = [];
       for (const a of finParsed.actions) {
@@ -10613,6 +10649,7 @@ async function processMessage(phone, text, raw = {}) {
           : `⚠️ Registrei o que deu, mas ${finParsed.malformed} itens vieram embolados e não entraram. Me manda de novo só esses?`);
       }
       reply = finReplies.length ? finReplies.join('\n\n') : (finParsed.cleanText || reply);
+      }
     } else if (finParsed.malformed > 0) {
       console.warn('[Finance] WARN: malformed marker');
       await logMarker(collab.id, 'FINANCE_ACTION', 'rejected', 'schema_invalid', reply);

@@ -665,4 +665,4 @@ if (require.main === module) {
   }).catch(e => { console.error(e); process.exit(1); });
 }
 
-module.exports = { runHealthCheck, checkProviderHealth, checkGroupPackageChurn, checkUncoveredGroups };
+module.exports = { runHealthCheck, checkProviderHealth, checkGroupPackageChurn, checkUncoveredGroups, checkOverdueTasks };

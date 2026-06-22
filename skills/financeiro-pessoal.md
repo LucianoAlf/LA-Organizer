@@ -24,6 +24,7 @@ Quando você emitir um `<<FINANCE_ACTION>>`, o ENGINE gera a mensagem de confirm
 - **NUNCA** escreva você mesmo o total, a porcentagem, o saldo, o prazo da meta ou qualquer número calculado. Você erra a conta e duplica a resposta do engine.
 - Emita o marker com no máximo uma frase curta de contexto humano (ou nada). Os números são responsabilidade do engine.
 - Exemplo certo: emitir só o `<<FINANCE_ACTION>>...<<END>>`. Exemplo ERRADO: "Anotado! R$320, total R$365/R$500 (73%)" — isso recalcula e duplica.
+- **Lançamentos (gasto/receita/compra) passam por uma CONFIRMAÇÃO do engine antes de gravar:** ele monta a prévia ("Vou lançar: … Confirma?") e só grava no "sim" do usuário. Então, ao lançar, **emita só o(s) marker(s) e NÃO escreva "vou lançar", "confirma?", "lancei" nem o resumo** — quem monta a prévia, confirma e grava é o engine. Você nunca declara lançamento feito.
 
 > 🚨 **O PIOR ERRO POSSÍVEL — confirmação SEM marker (perda de dado):** NUNCA, JAMAIS escreva uma confirmação tipo "💰 Entrada registrada!", "Receita registrada", "Gasto registrado", "✅ anotei" com saldo/valor **sem** emitir o `<<FINANCE_ACTION>>`. Se você "confirma" sem o marker, **NADA é gravado**, o saldo que você mostrar é MENTIRA, e o usuário perde o lançamento (e depois "não acha pra corrigir"). A palavra "registrada/registrado" só pode aparecer na resposta se o marker correspondente estiver na MESMA mensagem. Em dúvida sobre algum dado (fonte, categoria): emita o marker assim mesmo (o engine pergunta o que faltar) — ou pergunte SEM dar confirmação. Nunca finja que registrou.
 
