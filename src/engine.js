@@ -54,6 +54,7 @@ const statementParse = require('./finance/statement-parse');
 const spendingAnomaly = require('./finance/spending-anomaly');
 const proactiveMsg = require('./finance/proactive-messages');
 const { reconcileInstallments } = require('./finance/parse-installments');
+const launchConfirm = require('./finance/launch-confirm');
 const gemini = require('./services/gemini');
 const { splitBulkIdenticalCreates } = require('./task-guardrail');
 const selic = require('./services/selic');
@@ -7032,6 +7033,54 @@ async function writeCashTransaction(cid, { type, category, amount, description, 
 }
 
 // SEGURANCA (spec §6.2): cid SEMPRE = collab.id (remetente resolvido server-side). NUNCA params.collaborator_id.
+// Camada 2 (sempre-confirmar): resolve a fonte de CADA lançamento e devolve itens p/ a
+// montagem + os {action,params} PINADOS (fonte fixada por nome exato) p/ execução
+// determinística no "sim". NÃO insere nada. allClean=false → o turno cai no fluxo atual.
+async function stageLaunches(cid, actions, userText) {
+  const items = []; const pinned = []; let ok = true;
+  const catsFor = async () => {
+    const _cats = await financeService.listCategorySlugs(cid).catch(() => []);
+    return new Set(_cats.filter((r) => r.collaborator_id).map((r) => r.slug));
+  };
+  for (const a of actions) {
+    const p = { ...(a.params || {}) };
+    if (a.action === 'card_purchase') {
+      const rec = reconcileInstallments(p.installments, userText);
+      if (rec.corrected) p.installments = rec.installments;
+      const amount = Number(p.amount);
+      if (!amount || amount <= 0) { ok = false; break; }
+      const cards = await financeService.findCard(cid, p.card || '');
+      if (cards.length !== 1) { ok = false; break; }            // ambíguo/não-achou → fluxo atual
+      const card = cards[0];
+      const category = safeCategory(p.category, p.description, 'expense', await catsFor());
+      pinned.push({ action: 'card_purchase', params: { ...p, card: card.name, category } });
+      items.push({ op: 'card_purchase', source: { kind: 'card', id: card.id, name: card.name },
+        txn: { type: 'expense', amount, description: p.description, category, installments: parseInt(p.installments || 1, 10), date: p.date } });
+    } else { // register_transaction
+      const type = p.type || 'expense';
+      const amount = Number(p.amount);
+      if (!amount || amount <= 0) { ok = false; break; }
+      const category = safeCategory(p.category, p.description, type, await catsFor());
+      const srcName = p.account_name || p.account || p.carteira || p.conta || p.card;
+      const srcMethod = p.method || p.metodo || p.via || '';
+      const src = srcName ? await financeService.resolveSource(cid, srcName, { type, method: srcMethod }) : { kind: 'none' };
+      let source = null; const pin = { ...p, category };
+      if (src.kind === 'ambiguous') { ok = false; break; }       // cartão×conta → fluxo atual (binary)
+      else if (src.kind === 'card' && type === 'expense') { source = { kind: 'card', id: src.card.id, name: src.card.name }; pin.account_name = src.card.name; }
+      else if (src.kind === 'account') { source = { kind: 'account', id: src.account.id, name: src.account.name }; pin.account_name = src.account.name; }
+      else {
+        const primary = await financeService.findPrimaryAccount(cid);
+        if (!primary) { ok = false; break; }                     // 0/multi-sem-principal → fluxo atual
+        source = { kind: 'account', id: primary.id, name: primary.name }; pin.account_name = primary.name;
+      }
+      pinned.push({ action: 'register_transaction', params: pin });
+      items.push({ op: source.kind === 'card' ? 'card_purchase' : 'cash', source,
+        txn: { type, amount, description: p.description, category, installments: parseInt(p.installments || 1, 10), date: p.date } });
+    }
+  }
+  return { items, actions: pinned, allClean: ok && items.length === actions.length };
+}
+
 async function handleFinanceAction(collab, action, params, outcome = {}) {
   const cid = collab.id;
   const p = normalizeParams(params || {});
@@ -7803,6 +7852,42 @@ async function processMessage(phone, text, raw = {}) {
     const { matchSourceReply } = require('./finance/source-match');
     const finOpen = _openIntents.find((i) => i.kind === 'finance_source' && withinConfirmWindow(i.asked_at, 15));
     if (finOpen) {
+      // Camada 2: lançamento aguardando confirmação ("sim" → executa os handlers ATUAIS,
+      // determinístico, sem LLM). Dormante até o dispatch abrir intents form:launch_confirm.
+      if (finOpen.payload && finOpen.payload.form === 'launch_confirm') {
+        const conf = pendingIntents.detectUserConfirmation(String(text || ''));
+        if (conf === 'yes') {
+          const acts = Array.isArray(finOpen.payload.actions) ? finOpen.payload.actions : [];
+          const replies = [];
+          for (const a of acts) {
+            try {
+              const _o = { persisted: false };
+              const r = await handleFinanceAction(collab, a.action, a.params, _o); // handler ATUAL insere
+              if (r && r.trim()) replies.push(r.trim());
+            } catch (e) {
+              console.error('[LaunchConfirm] exec err:', e.message);
+              replies.push('⚠️ Um item não entrou — me manda de novo só ele?');
+            }
+          }
+          await pendingIntents.resolveIntent(finOpen.id, 'confirmed', `launch_confirm:${acts.length}`);
+          const out = replies.length ? replies.join('\n\n') : '✅ Lançado!';
+          try {
+            await whatsapp.sendMessage(phone, out);
+            await logConversation(collab.id, 'outbound', out);
+            await logMarker(collab.id, 'FINANCE_ACTION', 'executed', `launch_confirm:${acts.length}`, null);
+          } catch (e) { console.warn('[LaunchConfirm] post err:', e.message); }
+          console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (launch_confirm_resolved)`);
+          return;
+        }
+        if (conf === 'no') {
+          await pendingIntents.resolveIntent(finOpen.id, 'denied', 'launch_confirm denied');
+          const out = 'Beleza, não lancei nada. Quando quiser é só mandar de novo 👍';
+          try { await whatsapp.sendMessage(phone, out); await logConversation(collab.id, 'outbound', out); } catch (e) { console.warn('[LaunchConfirm] deny post err:', e.message); }
+          console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (launch_confirm_denied)`);
+          return;
+        }
+        // conf === null → não é sim/não claro (correção/conteúdo) → cai no LLM (re-propõe).
+      }
       if (finOpen.payload && finOpen.payload.form === 'txn_pick') {
         const pick = matchSourceReply(String(text || ''), { form: 'list', candidates: finOpen.payload.candidates });
         if (pick) {

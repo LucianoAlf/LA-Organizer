@@ -143,8 +143,9 @@ async function checkOverdueTasks() {
   const { data: overdue, error } = await supabase
     .from('tasks')
     .select('id, assigned_to, due_date')
-    .gte('due_date', oldest)
-    .lt('due_date', today)
+    .not('assigned_to', 'is', null)        // só tarefas com dono individual: é o universo que o
+    .gte('due_date', oldest)               // chaser checkOverdueAlerts realmente cobre. Tarefa de
+    .lt('due_date', today)                 // grupo tem trilha própria (ver checkUncoveredGroups).
     .not('status', 'in', '(done,cancelled)');
   if (error) throw error;
   if (!overdue || overdue.length === 0) return { status: 'ok', detail: 'Nenhuma task vencida na janela de cobrança (1-5d)' };
@@ -560,11 +561,49 @@ async function checkGroupPackageChurn() {
   return { status: 'warning', detail: `🧩 ${dups.length} pacote(s) de grupo duplicado(s) no mês (churn de recorrência): ${list}` };
 }
 
+// ─────────────────────────────────────────────────────────────────
+// CHECK — Grupos com atrasada e cobrança (preset 'overdue') desligada
+// ─────────────────────────────────────────────────────────────────
+// Espelha checkOverdueTasks no eixo de GRUPO. Tarefa de grupo é cobrada por
+// dispatchGroupReports (preset 'overdue'), não pelo chaser individual — então o
+// check individual NÃO deve contá-la (ver filtro em checkOverdueTasks) e este
+// check vigia grupos descobertos. Reusa queryGroupTasks (fonte única: retroativa,
+// done-twin, molde e dedup já tratados) p/ não reintroduzir GROUPREPORT-DONE-TWIN-OVERDUE.
+async function checkUncoveredGroups() {
+  const { queryGroupTasks } = require('../services/group-report-builder');
+  const { summarizeUncoveredGroups } = require('../services/uncovered-groups');
+  const today = todayBrt();
+  const { data: groups, error: gErr } = await supabase.from('work_groups').select('id, name');
+  if (gErr) throw gErr;
+  if (!groups || !groups.length) return { status: 'ok', detail: 'Nenhum grupo cadastrado' };
+  const { data: settings, error: sErr } = await supabase
+    .from('group_notification_settings')
+    .select('group_id').eq('preset', 'overdue').eq('enabled', true);
+  if (sErr) throw sErr;
+  const coveredGroupIds = new Set((settings || []).map((s) => s.group_id));
+  // Só consulta tarefas dos grupos NÃO cobertos (candidatos a descoberto).
+  const tasksByGroup = new Map();
+  for (const g of groups) {
+    if (coveredGroupIds.has(g.id)) continue;
+    try {
+      const tasks = await queryGroupTasks(supabase, g.id);
+      tasksByGroup.set(g.id, tasks || []);
+    } catch (e) {
+      console.error(`[uncovered_groups] queryGroupTasks ${String(g.id).slice(0, 8)}:`, e.message);
+    }
+  }
+  const { count, groups: flagged } = summarizeUncoveredGroups({ groups, coveredGroupIds, tasksByGroup, today });
+  if (count === 0) return { status: 'ok', detail: 'Nenhum grupo com atrasada descoberta' };
+  const list = flagged.slice(0, 6).map((g) => `${g.name} (${g.overdue})`).join(', ');
+  return { status: 'warning', detail: `🔴 ${count} grupo(s) com atrasada e cobrança desligada: ${list}` };
+}
+
 const ALL_CHECKS = [
   ['dream_recent',           checkDreamRecent],
   ['weekly_summary',         checkWeeklySummary],
   ['memories_embedding',     checkMemoriesEmbedding],
   ['overdue_tasks',          checkOverdueTasks],
+  ['uncovered_groups',       checkUncoveredGroups],
   ['rejected_markers',       checkRejectedMarkers],
   ['actionable_no_marker',   checkActionableNoMarker],
   ['unknown_markers',        checkUnknownMarkers],
@@ -626,4 +665,4 @@ if (require.main === module) {
   }).catch(e => { console.error(e); process.exit(1); });
 }
 
-module.exports = { runHealthCheck, checkProviderHealth, checkGroupPackageChurn };
+module.exports = { runHealthCheck, checkProviderHealth, checkGroupPackageChurn, checkUncoveredGroups };
