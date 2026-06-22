@@ -7912,8 +7912,21 @@ async function processMessage(phone, text, raw = {}) {
               replies.push('⚠️ Um item não entrou — me manda de novo só ele?');
             }
           }
+          // Camada 2 (pay_invoice): fecha as tarefas de lembrete pinadas no staging
+          // (determinístico, escopo do dono — nunca fecha tarefa de outro). FIN-PAYINVOICE-CONFAB-NOOP.
+          const _closeIds = Array.isArray(finOpen.payload.close_tasks) ? finOpen.payload.close_tasks : [];
+          let _closedN = 0;
+          for (const _tid of _closeIds) {
+            try {
+              const { error: _ce } = await supabase.from('tasks')
+                .update({ status: 'done', completed_at: new Date().toISOString(), completed_by: collab.id })
+                .eq('id', _tid).eq('assigned_to', collab.id).eq('status', 'pending');
+              if (!_ce) _closedN++;
+            } catch (e) { console.warn('[LaunchConfirm] close task err:', e.message); }
+          }
           await pendingIntents.resolveIntent(finOpen.id, 'confirmed', `launch_confirm:${acts.length}`);
-          const out = replies.length ? replies.join('\n\n') : '✅ Lançado!';
+          let out = replies.length ? replies.join('\n\n') : '✅ Lançado!';
+          if (_closedN > 0) out += `\n📌 ${_closedN === 1 ? 'Tarefa de lembrete fechada' : `${_closedN} tarefas de lembrete fechadas`}.`;
           try {
             await whatsapp.sendMessage(phone, out);
             await logConversation(collab.id, 'outbound', out);
@@ -10618,6 +10631,26 @@ async function processMessage(phone, text, raw = {}) {
     const finParsed = parseFinanceMarkers(reply);
     if (finParsed.actions.length > 0) {
       _finActionRan = true;
+      // Camada 2 — pay_invoice (pagar fatura SEMPRE confirmado, FIN-PAYINVOICE-CONFAB-NOOP):
+      // um pay_invoice sozinho → monta a confirmação e abre intent; o "Sim" paga + fecha a tarefa.
+      const _payActs = finParsed.actions.filter((a) => a.action === 'pay_invoice');
+      let _payStaged = null;
+      if (_payActs.length === 1 && finParsed.actions.length === 1) {
+        try { _payStaged = await stagePayInvoice(collab.id, _payActs[0].params || {}); }
+        catch (e) { console.warn('[PayInvoiceStage] err:', e.message); _payStaged = null; }
+      }
+      if (_payStaged) {
+        const _pv = launchConfirm.buildPayInvoicePreview(_payStaged.display);
+        const _pid = _pv ? await pendingIntents.openIntent(collab.id, 'finance_source', { form: 'launch_confirm', actions: [_payStaged.action], close_tasks: _payStaged.close_tasks }, _pv) : null;
+        if (!_pid) {
+          await logMarker(collab.id, 'FINANCE_ACTION', 'rejected', 'pay_invoice_intent_null', null);
+          reply = 'Opa, não consegui preparar a confirmação do pagamento — me manda de novo, por favor 🙏';
+        } else {
+          _metrics.awaiting_user_confirm = true; // Camada 1 não rebaixa a montagem (é pergunta)
+          await logMarker(collab.id, 'FINANCE_ACTION', 'skipped', 'staged_pay_invoice', null);
+          reply = _pv;
+        }
+      } else {
       // Camada 2 (sempre-confirmar, FIN-CONFIRM-CONFAB-NOOP): tenta estagiar os lançamentos
       // (register_transaction/card_purchase) numa ÚNICA montagem de confirmação. Só estagia se
       // TODOS resolverem a fonte limpo; senão cai no fluxo ATUAL (insere/pergunta como antes).
@@ -10692,6 +10725,7 @@ async function processMessage(phone, text, raw = {}) {
           : `⚠️ Registrei o que deu, mas ${finParsed.malformed} itens vieram embolados e não entraram. Me manda de novo só esses?`);
       }
       reply = finReplies.length ? finReplies.join('\n\n') : (finParsed.cleanText || reply);
+      }
       }
     } else if (finParsed.malformed > 0) {
       console.warn('[Finance] WARN: malformed marker');
