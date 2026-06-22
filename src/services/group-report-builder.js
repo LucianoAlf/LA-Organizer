@@ -186,18 +186,25 @@ function shapeOpenTasks(rows, todayYmd) {
   );
 }
 
-// Tarefas ABERTAS do grupo. Esconde os MOLDES de recorrência (recurrence_rule != null) já na
-// query; o resto dos filtros (done-twin, retroativa, dedup) é shapeOpenTasks — fonte única.
-// `now` permite "hoje" determinístico (testes/relatório passam o seu; default = agora).
+// Tarefas ABERTAS do grupo. Esconde: (a) a subtarefa-do-MOLDE de pacote (parent = container
+// template) via filterVisibleGroupTasks — o MESMO helper do contexto do TOM (system.js) e do PWA;
+// (b) qualquer molde de recorrência (recurrence_rule != null — template avulso E container) via
+// filtro JS (preserva o comportamento do antigo .is(rule,null)). Sem (a), a subtarefa-do-molde
+// vazava junto com a do ciclo → tarefa em DOBRO quando um reschedule separava as datas
+// (GROUPREPORT-MOLDE-CICLO-TWIN, Venc 20 da Rose). O resto (done-twin, retroativa, dedup, container
+// de ciclo is_group) é shapeOpenTasks — fonte única. A query traz os containers (sem .is(rule,null))
+// pra o helper montar o set de templates. `now` = "hoje" determinístico (default = agora).
 async function queryGroupTasks(supabase, groupId, now = new Date()) {
+  const { filterVisibleGroupTasks } = require('../utils/group-task-visibility');
   const { data } = await supabase.from('tasks')
-    .select('id, title, due_date, status, is_group, created_by, created_at, ' +
+    .select('id, title, due_date, status, is_group, recurrence_rule, recurrence_parent_id, parent_task_id, ' +
+            'created_by, created_at, ' +
             'creator:collaborators!tasks_created_by_fkey(preferred_name, full_name)')
     .eq('assigned_group_id', groupId)
     .neq('status', 'cancelled')
-    .is('recurrence_rule', null)
     .order('due_date', { ascending: true, nullsFirst: false });
-  return shapeOpenTasks(data || [], spYmd(now));
+  const visible = filterVisibleGroupTasks(data || []).filter((t) => t.recurrence_rule == null);
+  return shapeOpenTasks(visible, spYmd(now));
 }
 
 // Fichas do grupo (não-deletadas) com quem mexeu por último — pra auditoria/listagem.

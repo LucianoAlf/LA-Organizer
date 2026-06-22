@@ -44,7 +44,12 @@ function titleSimilarity(a, b) {
 function pickInstanceTarget(rows) {
   const list = Array.isArray(rows) ? rows : [];
   const instances = list.filter((r) => r && r.recurrence_rule == null);
-  return instances[0] || null;
+  // GROUPREPORT-MOLDE-CICLO-TWIN: num pacote, molde e ciclo são ambos rule=null. O ciclo (ocorrência
+  // VISÍVEL) tem recurrence_parent_id preenchido; o molde (blueprint escondido) tem null. Rotina
+  // (cancel/complete/reschedule) deve mirar o CICLO — foi o que descasou a Venc 20 da Rose (moveu o
+  // molde escondido). Fallback: tarefa simples/one-off (sem ciclo) usa a própria linha.
+  const cyclic = instances.filter((r) => r.recurrence_parent_id != null);
+  return cyclic[0] || instances[0] || null;
 }
 
 // Dado candidatos por título, acha o MOLDE da série (recurrence_rule != null). Pura.

@@ -146,6 +146,18 @@ test('pickInstanceTarget: protege o molde — nunca retorna template (recurrence
   assert.strictEqual(pickInstanceTarget([]), null);
 });
 
+test('pickInstanceTarget: prefere a subtarefa-do-CICLO (recurrence_parent_id) à do MOLDE — GROUPREPORT-MOLDE-CICLO-TWIN', () => {
+  // Num pacote, molde e ciclo são ambos rule=null. O ciclo tem recurrence_parent_id preenchido;
+  // o molde (blueprint) tem null. Cancel/complete/reschedule devem mirar o CICLO (a ocorrência
+  // visível), não o molde — foi o que descasou a Venc 20 da Rose (moveu o molde escondido).
+  const molde = { id: 'molde', recurrence_rule: null, recurrence_parent_id: null };
+  const ciclo = { id: 'ciclo', recurrence_rule: null, recurrence_parent_id: 'molde' };
+  assert.strictEqual(pickInstanceTarget([molde, ciclo]).id, 'ciclo');
+  assert.strictEqual(pickInstanceTarget([ciclo, molde]).id, 'ciclo'); // ordem não importa
+  // one-off (sem ciclo) NÃO regride: usa a própria linha
+  assert.strictEqual(pickInstanceTarget([{ id: 'one', recurrence_rule: null, recurrence_parent_id: null }]).id, 'one');
+});
+
 test('cancel NUNCA mata o molde recorrente — mira a instância visível', async () => {
   const events = [];
   const tpl = G({ id: 'tpl', title: 'Conciliação de Cartões', is_group: true, recurrence_rule: 'FREQ=MONTHLY;BYMONTHDAY=1' });

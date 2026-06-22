@@ -267,3 +267,19 @@ test('buildGroupReport: diário (window=hoje) mostra só Atrasadas + Para hoje',
   assert.ok(!/Esta semana/.test(html));
   assert.ok(!html.includes('Semana C'));
 });
+
+// ── GROUPREPORT-MOLDE-CICLO-TWIN (Modelo B): o relatório deve esconder a subtarefa-do-MOLDE
+//    (parent = container template) e mostrar só a subtarefa-do-CICLO — igual ao app/contexto do
+//    TOM (filterVisibleGroupTasks). Sem isso, molde@D + ciclo@D' (datas diferentes após reschedule)
+//    escapam do dedup(título|data) e a tarefa aparece em DOBRO (caso Venc 20 da Rose 22/06).
+test('queryGroupTasks: esconde a subtarefa-do-MOLDE, mostra só a do CICLO (Venc 20 uma vez)', async () => {
+  const sb = fakeSupabase([
+    { id: 'tpl', title: 'Venc 20', is_group: true, recurrence_rule: 'FREQ=MONTHLY;BYMONTHDAY=21', recurrence_parent_id: null, parent_task_id: null, status: 'pending', due_date: '2026-06-21' },
+    { id: 'molde', title: 'Venc 20', is_group: false, recurrence_rule: null, recurrence_parent_id: null, parent_task_id: 'tpl', status: 'pending', due_date: '2026-06-21', created_at: '2026-06-21T03:00:00Z', creator: { preferred_name: 'Rose' } },
+    { id: 'cycleC', title: 'Venc 20', is_group: true, recurrence_rule: null, recurrence_parent_id: 'tpl', parent_task_id: null, status: 'pending', due_date: '2026-06-21' },
+    { id: 'ciclo', title: 'Venc 20', is_group: false, recurrence_rule: null, recurrence_parent_id: 'molde', parent_task_id: 'cycleC', status: 'pending', due_date: '2026-06-22', created_at: '2026-06-21T03:00:00Z', creator: { preferred_name: 'Rose' } },
+  ]);
+  const out = await queryGroupTasks(sb, 'g1', new Date('2026-06-22T12:00:00-03:00'));
+  assert.strictEqual(out.length, 1);                 // uma só (molde escondido, containers escondidos)
+  assert.strictEqual(out[0].due_date, '2026-06-22'); // a do ciclo (a visível), não a do molde (21)
+});
