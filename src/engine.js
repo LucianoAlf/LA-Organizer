@@ -40,7 +40,7 @@ const { detectApprovalReply, stripReplyScaffold } = require('./events/detect-app
 const { isFutureCompletion } = require('./utils/complete-guards');
 const { sanitizeOptimisticConfirm, hasOptimisticConfirm, enforceNoMarkerHonesty } = require('./lib/optimistic-confirm');
 const { enforceNoSyncExcuse } = require('./lib/sync-excuse-guard');
-const { classifyDupChoice } = require('./lib/dup-choice');
+const { classifyDupChoice, pickFreshDupBypassIntent } = require('./lib/dup-choice');
 const { buildClosingItems, parseClosingReply } = require('./utils/closing-reply');
 const { buildCoordinationResponseNotification, safeResponseSummary } = require('./services/coordination-notify');
 const { isContextQuietField, validateContextQuietField } = require('./services/prefs-quiet-context');
@@ -6734,10 +6734,9 @@ async function tryDupBypass(collab, text) {
   if (!hasEv && !hasTk) {
     try {
       const _dbIntents = await pendingIntents.listOpenIntents(collab.id);
-      const _dbDup = _dbIntents.find(i =>
-        i.kind === 'task_creation' && i.payload?._dup_bypass === true &&
-        Array.isArray(i.payload?.drafts) && i.payload.drafts.length > 0
-      );
+      // Só recupera dup RECENTE (≤10min, espelha o EXP_MS do Map). Uma dup deixada aberta
+      // horas antes NÃO deve capturar uma resposta nova (DUP-BYPASS-STALE-BIND, Arthur 23/06).
+      const _dbDup = pickFreshDupBypassIntent(_dbIntents);
       if (_dbDup) {
         pendingTk = { task: _dbDup.payload.drafts[0], timestamp: Date.now(), _intentId: _dbDup.id };
         hasTk = true;

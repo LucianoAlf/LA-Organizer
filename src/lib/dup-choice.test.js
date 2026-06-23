@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { classifyDupChoice } = require('./dup-choice');
+const { classifyDupChoice, pickFreshDupBypassIntent } = require('./dup-choice');
 
 // dígitos (comportamento legado preservado)
 test('dígito puro 1/2/3', () => {
@@ -56,4 +56,38 @@ test('null: frase longa não é tratada como escolha NL', () => {
   // mensagem comprida (descrição de nova tarefa) não deve casar mesmo contendo "nova"
   const longo = 'cria uma tarefa nova pra mim de comprar material de limpeza e organizar o estoque da sala';
   assert.strictEqual(classifyDupChoice(longo), null);
+});
+
+// ── pickFreshDupBypassIntent (DUP-BYPASS-STALE-BIND, Arthur 23/06) ──
+const dupIntent = (over = {}) => ({
+  id: 'i1', kind: 'task_creation', asked_at: new Date().toISOString(),
+  payload: { _dup_bypass: true, drafts: [{ title: 'X' }] }, ...over,
+});
+
+test('pickFreshDupBypassIntent: dup recente → retorna a intent', () => {
+  const i = dupIntent();
+  assert.strictEqual(pickFreshDupBypassIntent([i]), i);
+});
+
+test('pickFreshDupBypassIntent: dup stale (5h) → null (caso Arthur)', () => {
+  const stale = dupIntent({ asked_at: new Date(Date.now() - 5 * 3600 * 1000).toISOString() });
+  assert.strictEqual(pickFreshDupBypassIntent([stale]), null);
+});
+
+test('pickFreshDupBypassIntent: ignora sem _dup_bypass / sem drafts / outro kind / sem asked_at', () => {
+  assert.strictEqual(pickFreshDupBypassIntent([{ kind: 'task_creation', asked_at: new Date().toISOString(), payload: {} }]), null);
+  assert.strictEqual(pickFreshDupBypassIntent([dupIntent({ payload: { _dup_bypass: true, drafts: [] } })]), null);
+  assert.strictEqual(pickFreshDupBypassIntent([dupIntent({ kind: 'confirmation' })]), null);
+  assert.strictEqual(pickFreshDupBypassIntent([dupIntent({ asked_at: null })]), null);
+});
+
+test('pickFreshDupBypassIntent: pega a fresca ignorando a stale', () => {
+  const stale = dupIntent({ id: 'old', asked_at: new Date(Date.now() - 3 * 3600 * 1000).toISOString() });
+  const fresh = dupIntent({ id: 'new', asked_at: new Date().toISOString() });
+  assert.strictEqual(pickFreshDupBypassIntent([stale, fresh]).id, 'new');
+});
+
+test('pickFreshDupBypassIntent: lista vazia / não-array → null', () => {
+  assert.strictEqual(pickFreshDupBypassIntent([]), null);
+  assert.strictEqual(pickFreshDupBypassIntent(null), null);
 });

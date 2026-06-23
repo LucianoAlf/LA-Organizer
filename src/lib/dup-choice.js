@@ -47,4 +47,28 @@ function classifyDupChoice(text) {
   return null;
 }
 
-module.exports = { classifyDupChoice };
+// DUP-BYPASS-STALE-BIND (Arthur 23/06): o DB fallback do tryDupBypass (engine) recuperava
+// QUALQUER intent _dup_bypass aberta (listOpenIntents filtra só por DEFAULT_EXPIRY_HOURS),
+// então uma dup deixada aberta horas antes capturava uma resposta nova ("essas duas são a
+// mesma coisa") + classifyDupChoice casava "mesma" → "já anotado como [tarefa stale]. Nada
+// mudou". O Map em memória já expira em 10min (EXP_MS); o DB fallback passa a respeitar a
+// MESMA janela: recupera só dup RECENTE (propósito = sobreviver restart do pm2, que é rápido).
+const DUP_BYPASS_MAX_AGE_MS = 10 * 60 * 1000;
+
+function pickFreshDupBypassIntent(intents, opts = {}) {
+  const nowMs = opts.nowMs != null ? opts.nowMs : Date.now();
+  const maxAgeMs = opts.maxAgeMs != null ? opts.maxAgeMs : DUP_BYPASS_MAX_AGE_MS;
+  if (!Array.isArray(intents)) return null;
+  for (const i of intents) {
+    if (!i || i.kind !== 'task_creation') continue;
+    const p = i.payload || {};
+    if (p._dup_bypass !== true) continue;
+    if (!Array.isArray(p.drafts) || p.drafts.length === 0) continue;
+    const ts = i.asked_at ? Date.parse(i.asked_at) : NaN;
+    if (Number.isNaN(ts) || nowMs - ts >= maxAgeMs) continue; // stale ou sem timestamp → ignora
+    return i; // listOpenIntents já vem ordenado desc por asked_at (mais recente primeiro)
+  }
+  return null;
+}
+
+module.exports = { classifyDupChoice, pickFreshDupBypassIntent, DUP_BYPASS_MAX_AGE_MS };
