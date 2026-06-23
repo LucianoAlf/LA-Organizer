@@ -5,6 +5,7 @@ const { decideTriage, MARGIN_MS } = require('./finding-triage');
 
 const fix = '2026-06-10T12:00:00Z';
 const hi = (incident_at, last_seen) => ({ incident_at, last_seen, incident_confidence: 'high' });
+const lo = (incident_at, last_seen) => ({ incident_at, last_seen, incident_confidence: 'low' });
 const m = (over = {}) => ({ codigo: 'BUG-1', status: 'corrigido', corrigido_em: fix, confidence: 0.9, ...over });
 
 test('decideTriage: sem match → keep', () => {
@@ -16,24 +17,35 @@ test('decideTriage: confiança do match abaixo do mínimo → keep', () => {
 test('decideTriage: known-issue não corrigido → keep', () => {
   assert.strictEqual(decideTriage(hi('2026-06-01T00:00:00Z', null), m({ status: 'aberto' })).decision, 'keep');
 });
-test('decideTriage: last_seen depois do fix → regression (vence supressão)', () => {
-  const f = hi('2026-06-01T00:00:00Z', '2026-06-15T00:00:00Z'); // incidente pré-fix, mas reincidiu
-  assert.strictEqual(decideTriage(f, m()).decision, 'regression');
+
+// ── O CORE: incident_at (ocorrência real) MANDA sobre last_seen (detecção) ──
+test('decideTriage: incident_at pré-fix vence last_seen pós-fix → suppress (não confunde detecção com ocorrência)', () => {
+  // Achado detectado DEPOIS do fix (last_seen), mas cujo incidente foi ANTES (incident_at high).
+  // Caso real 23/06: COORD/SYNC/INSTALLMENTS corrigidos de madrugada; incidentes na noite anterior.
+  const f = hi('2026-06-05T00:00:00Z', '2026-06-15T00:00:00Z');
+  assert.strictEqual(decideTriage(f, m()).decision, 'suppress');
 });
-test('decideTriage: incident_at confiável depois do fix → regression', () => {
-  assert.strictEqual(decideTriage(hi('2026-06-12T00:00:00Z', null), m()).decision, 'regression');
-});
-test('decideTriage: incident_at confiável e claramente pré-fix → suppress', () => {
+test('decideTriage: incident_at confiável claramente pré-fix → suppress', () => {
   assert.strictEqual(decideTriage(hi('2026-06-05T00:00:00Z', '2026-06-05T00:00:00Z'), m()).decision, 'suppress');
 });
-test('decideTriage: incident_confidence baixo → keep (na dúvida mostra)', () => {
-  const f = { incident_at: '2026-06-05T00:00:00Z', last_seen: '2026-06-05T00:00:00Z', incident_confidence: 'low' };
-  assert.strictEqual(decideTriage(f, m()).decision, 'keep');
+test('decideTriage: incident_at confiável bem depois do fix → regression', () => {
+  assert.strictEqual(decideTriage(hi('2026-06-12T00:00:00Z', null), m()).decision, 'regression');
 });
-test('decideTriage: incidente na margem antes do fix → keep (borda)', () => {
+test('decideTriage: incidente logo APÓS o fix (dentro da margem) → keep (lag de deploy ou borda)', () => {
+  const justAfter = new Date(Date.parse(fix) + MARGIN_MS / 2).toISOString();
+  assert.strictEqual(decideTriage(hi(justAfter, justAfter), m()).decision, 'keep');
+});
+test('decideTriage: incidente na margem ANTES do fix → suppress (pré-fix por definição)', () => {
   const justBefore = new Date(Date.parse(fix) - MARGIN_MS / 2).toISOString();
-  const f = hi(justBefore, justBefore);
-  assert.strictEqual(decideTriage(f, m()).decision, 'keep');
+  assert.strictEqual(decideTriage(hi(justBefore, justBefore), m()).decision, 'suppress');
+});
+
+// ── Fallback: sem incident_at confiável, usa last_seen (detecção) ──
+test('decideTriage: incident_confidence baixo + last_seen pré-fix → keep', () => {
+  assert.strictEqual(decideTriage(lo('2026-06-05T00:00:00Z', '2026-06-05T00:00:00Z'), m()).decision, 'keep');
+});
+test('decideTriage: incident_confidence baixo + last_seen bem pós-fix → regression (fallback)', () => {
+  assert.strictEqual(decideTriage(lo('2026-06-05T00:00:00Z', '2026-06-15T00:00:00Z'), m()).decision, 'regression');
 });
 
 // ── parseMatches ────────────────────────────────────────────────────
@@ -58,8 +70,6 @@ test('parseMatches: normaliza matched_code "null" textual e confidence ausente',
 // ── triageOpenFindings (orquestração) ───────────────────────────────
 const { triageOpenFindings } = require('./finding-triage');
 
-// fakeSb por-tabela: select de tom_audit_findings (janela) e tom_known_issues (candidatos);
-// update registra o auto_triage gravado.
 function fakeTriageSb(byTable, calls) {
   let tbl = null;
   const b = {
@@ -73,14 +83,16 @@ function fakeTriageSb(byTable, calls) {
   return b;
 }
 
-test('triageOpenFindings: suprime finding pré-fix e marca regressão por reincidência', async () => {
+test('triageOpenFindings: suprime pré-fix (mesmo detectado depois) e marca regressão por incidente pós-fix', async () => {
   const calls = { updates: [] };
   const sb = fakeTriageSb({
     tom_audit_findings: [
+      // f1: incidente pré-fix, detectado DEPOIS do fix → suppress (o caso de 23/06)
       { id: 'f1', category: 'confabulation', summary: 'salvar falhou', evidence: 'TOM: não salvei',
-        incident_at: '2026-06-05T00:00:00Z', incident_confidence: 'high', last_seen: '2026-06-05T00:00:00Z' },
-      { id: 'f2', category: 'confabulation', summary: 'salvar falhou de novo', evidence: 'TOM: não salvei',
         incident_at: '2026-06-05T00:00:00Z', incident_confidence: 'high', last_seen: '2026-06-15T00:00:00Z' },
+      // f2: incidente DEPOIS do fix → regressão real
+      { id: 'f2', category: 'confabulation', summary: 'salvar falhou de novo', evidence: 'TOM: não salvei',
+        incident_at: '2026-06-12T00:00:00Z', incident_confidence: 'high', last_seen: '2026-06-15T00:00:00Z' },
     ],
     tom_known_issues: [
       { codigo: 'BUG-1', titulo: 'salvar falhava', area: 'marker', causa_raiz: 'x', fix_resumo: 'y',

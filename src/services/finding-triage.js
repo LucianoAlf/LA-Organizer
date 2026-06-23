@@ -12,7 +12,11 @@ const KI_MAX = 40;          // teto de known-issues candidatos (corrigidos mais 
 const BATCH_FINDINGS = 20;  // findings por chamada ao LLM — prompt pequeno + resposta cabe em maxTokens
 
 /** Decide o destino de um finding casado com um known-issue. Pura: sem DB/LLM.
- * Ordem importa: regressão é avaliada ANTES de supressão (last_seen pós-fix vence). */
+ * A hora REAL do incidente (incident_at, evidence-anchored) MANDA quando confiável.
+ * last_seen é hora de DETECÇÃO, não de ocorrência: um achado detectado de manhã cujo
+ * incidente foi na noite anterior — antes de um fix de madrugada — é CAUDA, não regressão
+ * (bug AUDIT-REGRESSION-LASTSEEN, caso 23/06: COORD/SYNC/INSTALLMENTS). last_seen só
+ * decide no fallback (quando não temos incident_at confiável). */
 function decideTriage(finding, match, opts = {}) {
   const minConf = opts.minConfidence != null ? opts.minConfidence : MATCH_MIN_CONFIDENCE;
   const marginMs = opts.marginMs != null ? opts.marginMs : MARGIN_MS;
@@ -24,19 +28,27 @@ function decideTriage(finding, match, opts = {}) {
     return { decision: 'keep', matched_code: match.codigo, reason: 'known-issue não está corrigido' };
   }
   const tFix = Date.parse(match.corrigido_em);
-  const tLast = finding.last_seen ? Date.parse(finding.last_seen) : null;
-  if (tLast != null && tLast > tFix) {
-    return { decision: 'regression', matched_code: match.codigo, reason: 'reincidiu após corrigido_em (last_seen)' };
-  }
   const hiconf = finding.incident_confidence === 'high';
   const tInc = finding.incident_at ? Date.parse(finding.incident_at) : null;
-  if (hiconf && tInc != null && tInc > tFix) {
-    return { decision: 'regression', matched_code: match.codigo, reason: 'incident_at posterior ao corrigido_em' };
+
+  // Caminho confiável: a hora real do incidente decide (não a hora da detecção).
+  if (hiconf && tInc != null) {
+    if (tInc > tFix + marginMs) {
+      return { decision: 'regression', matched_code: match.codigo, reason: 'incident_at posterior ao corrigido_em' };
+    }
+    if (tInc < tFix) {
+      return { decision: 'suppress', matched_code: match.codigo, reason: 'já corrigido: incident_at anterior ao corrigido_em' };
+    }
+    // [tFix, tFix+margem]: incidente logo após o fix — lag de deploy ou regressão de borda. Mostra.
+    return { decision: 'keep', matched_code: match.codigo, reason: 'incidente logo após o fix — mostra por segurança' };
   }
-  if (hiconf && tInc != null && tInc < tFix - marginMs) {
-    return { decision: 'suppress', matched_code: match.codigo, reason: 'já corrigido: incident_at anterior ao corrigido_em' };
+
+  // Fallback (sem incident_at confiável): last_seen (detecção) bem após o fix sinaliza reincidência.
+  const tLast = finding.last_seen ? Date.parse(finding.last_seen) : null;
+  if (tLast != null && tLast > tFix + marginMs) {
+    return { decision: 'regression', matched_code: match.codigo, reason: 'reincidiu após corrigido_em (last_seen, sem incident_at)' };
   }
-  return { decision: 'keep', matched_code: match.codigo, reason: 'tempo do incidente incerto/borda — mostra por segurança' };
+  return { decision: 'keep', matched_code: match.codigo, reason: 'tempo do incidente incerto — mostra por segurança' };
 }
 
 /** Extrai o bloco {...} da saída do LLM e normaliza os matches. Nunca lança. */
