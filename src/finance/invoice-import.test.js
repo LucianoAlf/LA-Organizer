@@ -78,6 +78,15 @@ test('detectInvoiceReply roteia lançar / anotações / cancelar', () => {
   assert.equal(detectInvoiceReply('segue o lançamento dos 40'), 'commit_financeiro');
 });
 
+test('detectInvoiceReply NÃO commita pergunta nem correção (Rose 22/06 — FIN-INVOICE-COMMIT-ON-QUESTION)', () => {
+  // pergunta com "lançar" no MEIO da frase → NÃO é OK (o caso que lançou sem ela autorizar)
+  assert.equal(detectInvoiceReply('tem duas compras ai que são parceladas, você vai lançar em cada mês certinho? me explica'), null);
+  assert.equal(detectInvoiceReply('você vai lançar em cada mês?'), null);
+  // "lançar" no meio de frase / pedido de mudança → NÃO commita
+  assert.equal(detectInvoiceReply('antes de lançar muda a categoria'), null);
+  assert.equal(detectInvoiceReply('sim, mas muda a categoria do cheirin'), null);
+});
+
 test('looksLikeInvoiceText detecta fatura colada, ignora msg comum e lista crua', () => {
   const fatura = '📋 FATURA NUBANK — ROSE\nVencimento: 15/06/2026\nTotal a pagar: R$ 3.643,53\nCompras:\n1. 07/05 Shopee R$ 136,28\n2. 07/05 Kiwify R$ 6,92 parcela 1/10\n3. 07/05 Shein R$ 80,70\n4. 07/05 Lojas Riachuelo R$ 41,97';
   assert.equal(looksLikeInvoiceText(fatura), true);

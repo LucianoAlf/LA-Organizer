@@ -7044,6 +7044,9 @@ async function writeCashTransaction(cid, { type, category, amount, description, 
 // determinística no "sim". NÃO insere nada. allClean=false → o turno cai no fluxo atual.
 async function stageLaunches(cid, actions, userText) {
   const items = []; const pinned = []; let ok = true;
+  // Parcela só vaza em LISTA (um "3x" colado em vários itens). Só reconcilia parcela quando há UM
+  // cartão no turno; lista → confia no item-a-item do LLM. (Rose 22/06 FIN-INSTALLMENTS-LEAK-LIST)
+  const _onlyOneCard = actions.filter((a) => a.action === 'card_purchase').length === 1;
   const catsFor = async () => {
     const _cats = await financeService.listCategorySlugs(cid).catch(() => []);
     return new Set(_cats.filter((r) => r.collaborator_id).map((r) => r.slug));
@@ -7051,8 +7054,10 @@ async function stageLaunches(cid, actions, userText) {
   for (const a of actions) {
     const p = { ...(a.params || {}) };
     if (a.action === 'card_purchase') {
-      const rec = reconcileInstallments(p.installments, userText);
-      if (rec.corrected) p.installments = rec.installments;
+      if (_onlyOneCard) {
+        const rec = reconcileInstallments(p.installments, userText);
+        if (rec.corrected) p.installments = rec.installments;
+      }
       const amount = Number(p.amount);
       if (!amount || amount <= 0) { ok = false; break; }
       const cards = await financeService.findCard(cid, p.card || '');
@@ -10694,7 +10699,7 @@ async function processMessage(phone, text, raw = {}) {
           // REDE DE SEGURANÇA (parcela): o LLM às vezes lança "comprei em Nx" como 1x à vista.
           // Se o texto do usuário indica parcelas e o marker veio sem (ou com 1), corrige aqui —
           // determinístico, pega o caso mesmo quando o LLM erra a extração. (Rose 13/06)
-          if (a.action === 'card_purchase') {
+          if (a.action === 'card_purchase' && finParsed.actions.filter((x) => x.action === 'card_purchase').length === 1) {
             const _rec = reconcileInstallments(a.params && a.params.installments, text);
             if (_rec.corrected) {
               a.params = { ...(a.params || {}), installments: _rec.installments };

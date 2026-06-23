@@ -145,13 +145,20 @@ function buildInvoicePreview({ emissor, vencimento, total, cardName, itens, dupW
 const RE_COMMIT_FIN = /\b(lan[çc]ar?|lan[çc]a|pode lan[çc]ar|pode ir|bora|manda ver|manda|segue|confirmo?|confirma|isso|pode ser|sim|ok|beleza)\b/i;
 const RE_ANOTAR = /\b(anota[çc][õo]es?|anota|s[óo] salva|salva.*anota|guarda.*anota|nota)\b/i;
 const RE_CANCEL = /\b(cancela|cancelar|n[ãa]o|esquece|para)(?![a-zA-ZÀ-ú])|deixa pra l[áa]/i;
+// COMMIT só com AFIRMAÇÃO clara NO INÍCIO (não "lançar" no meio de frase). Caso Rose 22/06:
+// "você vai lançar em cada mês?" (PERGUNTA) commitava o import sem OK (FIN-INVOICE-COMMIT-ON-QUESTION).
+const RE_COMMIT_ANCHORED = /^(lan[çc]ar?|lan[çc]a\b|pode\s+lan[çc]ar|pode\s+ir|bora\b|manda(\s+ver)?\b|segue\b|confirmo?\b|confirmad[oa]\b|confirma\b|confirmar\b|isso\b|pode\s+ser|sim\b|ok\b|beleza\b|t[áa]\b|perfeito\b)/i;
+const RE_CORRECTION = /\b(muda|troca|corrig|errad|tira\b|remove|n[ãa]o\s+(é|e|era|foi))\b/i;
 
 function detectInvoiceReply(text) {
   const t = String(text || '').toLowerCase().trim();
   if (!t) return null;
   if (RE_CANCEL.test(t) && !RE_COMMIT_FIN.test(t)) return 'cancel';
   if (RE_ANOTAR.test(t)) return 'commit_anotacoes';
-  if (RE_COMMIT_FIN.test(t)) return 'commit_financeiro';
+  // Só commita afirmação curta, no início, sem "?" e sem palavra de correção.
+  const isQuestion = /\?/.test(t);
+  const wordCount = t.split(/\s+/).filter(Boolean).length;
+  if (RE_COMMIT_ANCHORED.test(t) && !isQuestion && !RE_CORRECTION.test(t) && wordCount <= 10) return 'commit_financeiro';
   return null;
 }
 
