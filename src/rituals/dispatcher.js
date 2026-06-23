@@ -5486,6 +5486,7 @@ async function checkHabitReminders() {
 }
 
 // ===== Sprint 11.1 Bloco D — Adherence nudge =====
+const { classifyAdherenceProjects } = require('../utils/adherence-projects');
 // Days between two YMD strings (YYYY-MM-DD), absolute, ignores timezone.
 function ymdDaysBetween(ymd1, ymd2) {
   const [y1, m1, d1] = ymd1.split('-').map(Number);
@@ -5521,39 +5522,27 @@ async function gatherAdherenceSignals(collabId, ymdToday) {
   if (pErr) console.error('[AdherenceNudge] projects query err:', pErr.message);
 
   let pausedProjects = [];
+  let readyProjects = [];
   if (activeProjects && activeProjects.length) {
     const projIds = activeProjects.map(p => p.id);
-    // Pega última atualização de task do collab por projeto.
+    // Pega última atualização + status das tasks do collab por projeto.
     const { data: collabTasks } = await supabase
       .from('tasks')
-      .select('project_id, updated_at')
+      .select('project_id, updated_at, status')
       .eq('assigned_to', collabId)
       .in('project_id', projIds);
-    const lastByProj = new Map();
-    for (const t of (collabTasks || [])) {
-      const cur = lastByProj.get(t.project_id);
-      if (!cur || cur < t.updated_at) lastByProj.set(t.project_id, t.updated_at);
-    }
-    for (const p of activeProjects) {
-      const last = lastByProj.get(p.id);
-      if (!last) continue; // collab não tem task nesse projeto — ignora
-      if (last < cutoffIso) {
-        const lastYmd = String(last).slice(0, 10);
-        const daysSince = ymdDaysBetween(ymdToday, lastYmd);
-        pausedProjects.push({ id: p.id, name: p.name, last_update: last, days_since: daysSince });
-      }
-    }
-    // Mais parado primeiro.
-    pausedProjects.sort((a, b) => b.days_since - a.days_since);
+    // Separa "parado" (ainda tem trabalho aberto) de "pronto pra fechar" (tudo concluído).
+    ({ pausedProjects, readyProjects } = classifyAdherenceProjects(activeProjects, collabTasks, cutoffIso, ymdToday));
   }
 
-  return { overdueTasks: overdueTasks || [], pausedProjects };
+  return { overdueTasks: overdueTasks || [], pausedProjects, readyProjects };
 }
 
 // Build deterministic adherence text. Returns null if no signal worth sending.
 function buildAdherenceText(collab, signals, ymdToday) {
   const { overdueTasks, pausedProjects } = signals;
-  const hasSignal = overdueTasks.length >= ADHERENCE_MIN_OVERDUE || pausedProjects.length >= 1;
+  const readyProjects = signals.readyProjects || [];
+  const hasSignal = overdueTasks.length >= ADHERENCE_MIN_OVERDUE || pausedProjects.length >= 1 || readyProjects.length >= 1;
   if (!hasSignal) return null;
 
   const nick = collab.full_name === 'Luciano Alf' ? 'Alf' : (collab.full_name || '').split(' ')[0] || 'amigo';
@@ -5582,7 +5571,21 @@ function buildAdherenceText(collab, signals, ymdToday) {
     lines.push('');
   }
 
-  lines.push('Reagenda? Cancela? Me diz o que rolou.');
+  if (readyProjects.length) {
+    lines.push('✅ *Tarefas feitas, falta fechar:*');
+    for (const p of readyProjects.slice(0, ADHERENCE_MAX_PROJECTS_LIST)) {
+      lines.push(`• *${p.name}* — suas tarefas já tão concluídas. Fecho? 🚀`);
+    }
+    lines.push('');
+  }
+
+  // "Reagenda? Cancela?" só faz sentido com atrasada/parado. Se SÓ há projeto pronto pra
+  // fechar, a pergunta "Fecho?" já está inline — fecha leve.
+  if (overdueTasks.length || pausedProjects.length) {
+    lines.push('Reagenda? Cancela? Me diz o que rolou.');
+  } else {
+    lines.push('Me diz aí! 👽');
+  }
   return lines.join('\n');
 }
 
