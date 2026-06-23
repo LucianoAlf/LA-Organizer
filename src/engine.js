@@ -39,6 +39,7 @@ const workGroups = require('./services/work-groups');
 const { detectApprovalReply, stripReplyScaffold } = require('./events/detect-approval-reply');
 const { isFutureCompletion } = require('./utils/complete-guards');
 const { sanitizeOptimisticConfirm, hasOptimisticConfirm, enforceNoMarkerHonesty } = require('./lib/optimistic-confirm');
+const { enforceNoSyncExcuse } = require('./lib/sync-excuse-guard');
 const { classifyDupChoice } = require('./lib/dup-choice');
 const { buildClosingItems, parseClosingReply } = require('./utils/closing-reply');
 const { buildCoordinationResponseNotification, safeResponseSummary } = require('./services/coordination-notify');
@@ -11226,6 +11227,15 @@ Output AGORA, apenas o marker:`;
       awaitingConfirm: !!_metrics.awaiting_user_confirm,
     });
   } catch (e) { console.warn('[ConfabGuard] non-fatal:', e.message); }
+
+  // SYNC-EXCUSE-CONFAB — rede determinística: remove "delay de sincronização"/desculpa
+  // técnica inventada pra justificar atrasada (banco é ao vivo; só fatura sincroniza).
+  // Roda junto da Camada 1 (antes da voz E do texto). Caso Matheus 22/06.
+  try {
+    const _beforeSync = reply;
+    reply = enforceNoSyncExcuse(reply);
+    if (reply !== _beforeSync) console.log('[SYNC_EXCUSE_STRIPPED] removeu desculpa de sincronização do reply');
+  } catch (e) { console.warn('[SyncExcuseGuard] non-fatal:', e.message); }
 
   // ---- Sprint 28 — TOM Voice (TTS via ElevenLabs)
   // Decide se manda áudio em vez de (ou junto com) texto. Gates em
