@@ -179,10 +179,21 @@ function detectUserConfirmation(userText, opts = {}) {
   if (typeof userText !== 'string') return null;
   const t = userText.toLowerCase().trim();
   if (!t || t.length > 200) return null;  // só pegamos respostas curtas
+  const _nWords = t.split(/\s+/).length;
+
+  // BATCH-CONFIRM-LONGPHRASE (Daiana 22/06): confirmação AFIRMATIVA que abre com afirmador
+  // inequívoco ("Sim, por favor. Pode fechar as 6 tarefas") é clara mesmo com cortesia/objeto.
+  // Aceita até 12 palavras DESDE QUE não haja ressalva/negação. A NEGAÇÃO segue restrita a
+  // ≤4 palavras (preserva F5/ALVO-FUTURO, caso Ana). Sem isso, a confirmação longa caía no LLM
+  // e o executeBatchComplete determinístico nunca disparava (all_failed sob fallback).
+  const STRONG_YES_OPEN = /^(sim|isso|claro|perfeito|exato|confirmo|confirmad[oa]|beleza|blz|okay|ok|t[áa]|bora)\b/;
+  const RESSALVA = /\b(n[aã]o|nao|nunca|jamais|mas|por[ée]m|depois|amanh[ãa]|espera|aguarda)\b|deixa\s+pra|s[óo]\s+que/;
+  if (_nWords > 4 && _nWords <= 12 && STRONG_YES_OPEN.test(t) && !RESSALVA.test(t)) return 'yes';
+
   // F5 (ALVO-FUTURO, auditoria 09/06) — confirmação/negação só em resposta ESSENCIALMENTE
   // curta (≤4 palavras). "Não foi a ADM, foi a de hoje, de governança" começa com "não"
   // mas é CONTEÚDO — negava às cegas uma intent não-relacionada (caso Ana 227b8689).
-  if (t.split(/\s+/).length > 4) return null;
+  if (_nWords > 4) return null;
 
   // Negativas primeiro (mais específicas pra evitar falso positivo)
   const NO_RE = /^(n[aã]o\b|nao\b|deixa\s+pra\s+l[aá]|esquece|cancela|n[aã]o\s+precisa|desconsidera|ainda\s+n[aã]o)/;

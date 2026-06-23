@@ -55,3 +55,22 @@ test('YES e NO clássicos inalterados', () => {
   assert.strictEqual(detectUserConfirmation('não'), 'no');
   assert.strictEqual(detectUserConfirmation('beleza'), 'yes');
 });
+
+// ── BATCH-CONFIRM-LONGPHRASE (Daiana 22/06): confirmação afirmativa estendida ──
+test('confirmação afirmativa longa que abre com afirmador forte, sem ressalva → yes', () => {
+  assert.strictEqual(detectUserConfirmation('Sim, por favor. Pode fechar as 6 tarefas'), 'yes');
+  assert.strictEqual(detectUserConfirmation('Sim, pode fechar todas elas por favor'), 'yes');
+  assert.strictEqual(detectUserConfirmation('claro, pode mandar ver agora mesmo'), 'yes');
+  assert.strictEqual(detectUserConfirmation('isso mesmo, pode seguir com tudo'), 'yes');
+});
+
+test('afirmação longa COM ressalva/negação NÃO confirma → null', () => {
+  assert.strictEqual(detectUserConfirmation('sim, mas só depois de amanhã à tarde'), null);
+  assert.strictEqual(detectUserConfirmation('sim, mas não as duas primeiras tarefas'), null);
+  assert.strictEqual(detectUserConfirmation('claro, deixa pra fazer isso mais tarde'), null);
+});
+
+test('afirmação longa que NÃO abre com afirmador forte → null (preserva F5)', () => {
+  assert.strictEqual(detectUserConfirmation('já tinha feito isso ontem de manhã cedo'), null);
+  assert.strictEqual(detectUserConfirmation('Não foi a ADM foi a de governança hoje'), null);
+});
