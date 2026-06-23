@@ -56,9 +56,9 @@ function extractVerbatim(inboundText) {
 
 /**
  * Monta a notificação ao requester ancorada na fala verbatim do recipient.
- * - Com verbatim: cita literalmente entre aspas; o resumo do LLM entra SEPARADO
- *   e rotulado ("como entendi: ..."), nunca fundido na fala. Resumo idêntico ao
- *   verbatim é omitido (sem redundância).
+ * - Com verbatim: cita SÓ a fala literal entre aspas. O resumo do LLM NÃO entra
+ *   (VERBATIM-RELAY-HARDENING 22/06) — era o vetor que punha tópico/compromisso na
+ *   boca da pessoa (Alf "sobre os aniversariantes"; Rafinha "vai dar um retorno").
  * - Sem verbatim: avisa que não conseguiu capturar o conteúdo. NUNCA cai no
  *   resumo livre — não pode atribuir fala a uma pessoa real sem registro
  *   verificável.
@@ -74,12 +74,13 @@ function buildCoordinationResponseNotification({ recipientFirstName, inboundText
     return `Boa! O ${name} respondeu (não consegui transcrever o conteúdo — dá uma olhada direto com ele/ela).`;
   }
 
-  let msg = `Boa! O ${name} respondeu:\n\n"${verbatim}"`;
-  const s = String(summary || '').trim();
-  if (s && s !== verbatim) {
-    msg += `\n\n_(como entendi: ${s})_`;
-  }
-  return msg;
+  // VERBATIM-RELAY-HARDENING (COORD-RESPONSE-WRONG-BIND, 22/06): relay SÓ a fala literal.
+  // O resumo do LLM (`summary`) NÃO entra mais na notificação — era o vetor que injetava
+  // tópico/compromisso que a pessoa não disse (caso Alf: "...sobre os aniversariantes";
+  // caso Rafinha: "...vai dar um retorno"). O requester recebe exatamente o que o recipient
+  // escreveu. `summary` fica no param só por compat de callers; é ignorado de propósito.
+  void summary;
+  return `Boa! O ${name} respondeu:\n\n"${verbatim}"`;
 }
 
 /**

@@ -23,11 +23,23 @@ test('resumo do LLM NÃO contamina a citação (drift "vai dar um retorno" fica 
   assert.ok(!quoted.includes('vai dar um retorno'), 'drift vazou pra dentro da citação');
 });
 
-test('resumo aparece separado e rotulado, nunca fundido na fala', () => {
+test('VERBATIM-RELAY-HARDENING: relay só a fala literal — NÃO anexa o resumo do LLM (22/06)', () => {
   const msg = buildCoordinationResponseNotification({
     recipientFirstName: 'Rafinha', inboundText: RAFINHA_VERBATIM, summary: RAFINHA_SUMMARY,
   });
-  assert.ok(msg.includes('como entendi:'), `resumo não rotulado/separado: ${msg}`);
+  assert.ok(msg.includes(`"${RAFINHA_VERBATIM}"`), 'verbatim deve estar citado');
+  assert.ok(!msg.includes('como entendi'), 'não deve mais anexar o gloss interpretativo');
+  assert.ok(!/vai dar um retorno/.test(msg), 'compromisso do resumo (que o user não disse) não pode vazar');
+});
+
+test('VERBATIM-RELAY-HARDENING: tópico inventado no summary NÃO vaza pro relay (caso Alf 22/06)', () => {
+  const msg = buildCoordinationResponseNotification({
+    recipientFirstName: 'Alf',
+    inboundText: 'a gente teve a reunião mas resolvemos nada',
+    summary: 'Não resolveram nada sobre os aniversariantes',
+  });
+  assert.ok(msg.includes('"a gente teve a reunião mas resolvemos nada"'), 'verbatim citado');
+  assert.ok(!/aniversariantes/i.test(msg), 'tópico que o user não disse vazou pro relay');
 });
 
 test('sem verbatim (mídia): NÃO cai no resumo livre — avisa que não capturou', () => {
