@@ -9058,7 +9058,28 @@ async function processMessage(phone, text, raw = {}) {
       .order('created_at', { ascending: false })
       .limit(3);
 
+    // COORD-RESPONSE-WRONG-BIND (Alf 22/06): recency gate. Se o TOM falou algo com o user
+    // DEPOIS de entregar o recado mais recente (ex.: um fechamento), a resposta do user
+    // provavelmente é pra ESSA msg mais nova, não pro recado velho — NÃO pressiona
+    // COORDINATION_RESPONSE (espelha shouldClosingInterceptorFire "não há intent mais fresca").
+    let _coordFresherPrompt = false;
     if (openRequests && openRequests.length > 0) {
+      try {
+        const { hasFresherOutboundAfterRequest } = require('./coordination/coord-recency');
+        const { data: _laterOut } = await supabase
+          .from('conversation_history')
+          .select('created_at')
+          .eq('collaborator_id', collab.id)
+          .eq('direction', 'outbound')
+          .gt('created_at', openRequests[0].created_at)
+          .order('created_at', { ascending: false })
+          .limit(5);
+        _coordFresherPrompt = hasFresherOutboundAfterRequest(openRequests[0].created_at, (_laterOut || []).map(r => r.created_at));
+        if (_coordFresherPrompt) console.log('[COORD] recado aberto, mas ha outbound mais novo (ex: fechamento) -> COORD_HINT suprimido (COORD-RESPONSE-WRONG-BIND)');
+      } catch (e) { console.warn('[COORD] recency gate err (segue sem suprimir):', e.message); }
+    }
+
+    if (openRequests && openRequests.length > 0 && !_coordFresherPrompt) {
       const requesterIds = [...new Set(openRequests.map(r => r.requester_id))];
       const { data: requesters } = await supabase
         .from('collaborators')
