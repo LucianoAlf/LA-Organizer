@@ -32,6 +32,12 @@ export async function materializeSeriesClient(
 ): Promise<MaterializeResult> {
   if (!template?.recurrence_rule || !template?.id) return { created: 0, skipped: 0 };
 
+  // CHOKEPOINT (RECUR-RESURRECT-CALLER-GUARD, caso Gabi 24/06): molde fechado NÃO materializa
+  // — espelho do backend src/services/recurrence-guard.js. Fecha a porta "editar série no app
+  // recria do molde done/cancelled" ("apago e volta"). Fail-open: sem status, não bloqueia.
+  const tplStatus = (template as { status?: string }).status;
+  if (tplStatus === 'done' || tplStatus === 'cancelled') return { created: 0, skipped: 0 };
+
   // Pega DTSTART baseado no campo de data do template
   const dtstart = table === 'tasks'
     ? new Date(String(template.due_date) + 'T12:00:00-03:00')

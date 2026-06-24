@@ -18,6 +18,7 @@ const { RRule, rrulestr } = require('rrule');
 const supabase = require('../supabase/client');
 const { shiftReminderToInstance } = require('./recurrence-time');
 const { childDueDateForCycle } = require('./task-group-dates');
+const { shouldMaterializeTemplate } = require('./recurrence-guard');
 
 const MATERIALIZE_HORIZON_DAYS = 30;
 const MAX_INSTANCES_PER_RUN = 50;
@@ -65,6 +66,11 @@ function nextOccurrences(rruleStr, dtstart, from, until, limit = 50) {
 async function materializeSeries(table, template) {
   if (!template?.recurrence_rule) return { created: 0, skipped: 0 };
   if (table !== 'tasks' && table !== 'events') return { created: 0, skipped: 0, error: 'bad_table' };
+  // CHOKEPOINT (RECUR-RESURRECT-CALLER-GUARD, caso Gabi/equipe 24/06): molde fechado NÃO
+  // materializa, venha de onde vier (cron, engine ao criar/mexer, grupo, revive). Antes o
+  // guard estava só no materializeAll → as outras portas recriavam do molde done/cancelled
+  // ("apago e volta"). Revive não quebra: reviveSeries reativa o molde p/ 'pending' ANTES.
+  if (!shouldMaterializeTemplate(template)) return { created: 0, skipped: 0, reason: 'closed_template' };
 
   const dtstart = table === 'tasks'
     ? new Date(String(template.due_date) + 'T12:00:00-03:00')
