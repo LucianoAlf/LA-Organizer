@@ -40,7 +40,7 @@ const { detectApprovalReply, stripReplyScaffold } = require('./events/detect-app
 const { isFutureCompletion } = require('./utils/complete-guards');
 const { sanitizeOptimisticConfirm, hasOptimisticConfirm, enforceNoMarkerHonesty } = require('./lib/optimistic-confirm');
 const { enforceNoSyncExcuse } = require('./lib/sync-excuse-guard');
-const { classifyDupChoice, pickFreshDupBypassIntent } = require('./lib/dup-choice');
+const { classifyDupChoice, pickFreshDupBypassIntent, pickDupBypassIntentForReply } = require('./lib/dup-choice');
 const { buildClosingItems, parseClosingReply } = require('./utils/closing-reply');
 const { buildCoordinationResponseNotification, safeResponseSummary } = require('./services/coordination-notify');
 const { isContextQuietField, validateContextQuietField } = require('./services/prefs-quiet-context');
@@ -6715,7 +6715,12 @@ async function tryHandleAnnouncementConfirmation(collab, text) {
 // Retorna { reply } se tratou direto (user respondeu 1/2/3 após dup bloqueado),
 // ou null se deve seguir fluxo normal (chamar LLM).
 async function tryDupBypass(collab, text) {
-  const lm = (text || '').trim();
+  // DUP-QUOTE-SCAFFOLD (Juliana 23/06): resposta por reply-quote do WhatsApp chega como
+  // "[O usuário está RESPONDENDO...: "<menu>"]\n<escolha>". Sem destrinchar, o texto >50ch
+  // (e não-iniciado por dígito) fazia classifyDupChoice retornar null → menu re-exibido.
+  // userText = a escolha real ("2"); quotedText = o menu citado (sinal de binding abaixo).
+  const { userText, quotedText } = stripReplyScaffold(String(text || ''));
+  const lm = (userText || '').trim();
   // Aceita dígito ("2", "2.", "2 - texto...") E linguagem natural ("são duas
   // tarefas diferentes" = 2, "é a mesma" = 1, "cancela" = 3). AUDIT-OPTIMISTIC-CONFIRM
   // caso Juliana: resposta NL não casava o regex antigo → caía no LLM → menu re-exibido.
@@ -6734,9 +6739,10 @@ async function tryDupBypass(collab, text) {
   if (!hasEv && !hasTk) {
     try {
       const _dbIntents = await pendingIntents.listOpenIntents(collab.id);
-      // Só recupera dup RECENTE (≤10min, espelha o EXP_MS do Map). Uma dup deixada aberta
-      // horas antes NÃO deve capturar uma resposta nova (DUP-BYPASS-STALE-BIND, Arthur 23/06).
-      const _dbDup = pickFreshDupBypassIntent(_dbIntents);
+      // Quote do menu de dup = binding inequívoco (casa por título, ignora idade — a resposta
+      // legítima pode demorar). Sem quote, recência ≤10min: dup velha não captura resposta nova
+      // (DUP-BYPASS-STALE-BIND, Arthur). DUP-QUOTE-SCAFFOLD (Juliana 23/06).
+      const _dbDup = pickDupBypassIntentForReply(_dbIntents, { quotedText });
       if (_dbDup) {
         pendingTk = { task: _dbDup.payload.drafts[0], timestamp: Date.now(), _intentId: _dbDup.id };
         hasTk = true;
