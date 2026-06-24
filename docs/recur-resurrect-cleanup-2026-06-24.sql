@@ -1,0 +1,24 @@
+-- RECUR-RESURRECT-CALLER-GUARD — limpeza de backlog 2026-06-24 (caso Gabi/equipe)
+-- Contexto: o guard "nao materializar molde fechado" estava so no materializeAll (cron).
+-- As outras portas (engine/PWA/grupo) recriavam instancias de molde JA done/cancelled.
+-- Fix de codigo: src/services/recurrence-guard.js (chokepoint) ligado em
+--   src/services/recurrence-engine.js (materializeSeries) e
+--   web/src/lib/materialize-recurrence.ts (materializeSeriesClient).
+--
+-- O QUE FOI CANCELADO (reversivel: status pending->cancelled):
+--   1) Instancias pending dos 2 moldes da Gabi (duplicata + espelho do Jereh):
+--        361163fc-42bf-403a-9460-f9d792c7cec1  (Gabi)
+--        8b0ca780-ee56-45f3-ba16-2482289a18bb  (Jereh, twin da delegacao)
+--   2) Instancias pending de TODOS os moldes com status='cancelled' (inequivoco),
+--      incluindo pacotes de grupo (filhas de molde cancelado sem recurrence_rule).
+-- NAO mexido: 163 instancias de molde DONE de outros (Daiana/Jhonatan/Clayton/Fefe/
+--      Ana/Krissya + sem-dono) — provavel serie legitima; drenam via guard.
+--
+-- REVERT (se alguem sentir falta — so reativa o que o guard agora protege de recriar):
+-- Gabi (caso ela tenha querido manter):
+--   update tasks set status='pending'
+--   where status='cancelled' and due_date >= current_date
+--     and recurrence_parent_id in (
+--       '361163fc-42bf-403a-9460-f9d792c7cec1','8b0ca780-ee56-45f3-ba16-2482289a18bb');
+-- Os ids exatos cancelados nesta operacao estao no transcript da sessao
+-- (RETURNING id das 2 queries de UPDATE, 2026-06-24).
