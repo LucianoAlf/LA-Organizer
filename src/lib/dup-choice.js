@@ -71,4 +71,31 @@ function pickFreshDupBypassIntent(intents, opts = {}) {
   return null;
 }
 
-module.exports = { classifyDupChoice, pickFreshDupBypassIntent, DUP_BYPASS_MAX_AGE_MS };
+// DUP-QUOTE-SCAFFOLD (Juliana 23/06): quando a resposta ao menu de dup vem por reply-quote
+// do WhatsApp, o quotedText É o próprio menu (cita o título do draft). Isso é binding
+// INEQUÍVOCO — o user apontou exatamente qual dup. Recupera por título mesmo que a janela
+// de recência já tenha expirado (a resposta legítima pode demorar: um ritual de fechamento
+// interrompeu a Juliana por 35min). SEM quote, mantém pickFreshDupBypassIntent (≤10min):
+// sem sinal explícito, intent velha NÃO pode capturar resposta nova (Arthur).
+const DUP_MENU_RE = /tarefa parecida|mesma situa[cç][aã]o|responde com o/i;
+
+function _isDupIntent(i) {
+  if (!i || i.kind !== 'task_creation') return false;
+  const p = i.payload || {};
+  return p._dup_bypass === true && Array.isArray(p.drafts) && p.drafts.length > 0;
+}
+
+function pickDupBypassIntentForReply(intents, opts = {}) {
+  if (!Array.isArray(intents)) return null;
+  const quotedText = opts.quotedText ? String(opts.quotedText) : '';
+  if (quotedText && DUP_MENU_RE.test(quotedText)) {
+    for (const i of intents) {
+      if (!_isDupIntent(i)) continue;
+      const title = i.payload.drafts[0] && i.payload.drafts[0].title;
+      if (title && quotedText.includes(title)) return i; // binding por título, ignora idade
+    }
+  }
+  return pickFreshDupBypassIntent(intents, opts);
+}
+
+module.exports = { classifyDupChoice, pickFreshDupBypassIntent, pickDupBypassIntentForReply, DUP_BYPASS_MAX_AGE_MS };

@@ -11243,7 +11243,11 @@ Output AGORA, apenas o marker:`;
   try {
     reply = enforceNoMarkerHonesty(reply, {
       nothingPersisted: !_metrics.marker_emitted && !_metrics.auto_retry_succeeded,
-      infoGathering: !!_replyIsInfoGathering,
+      // CONFAB-CHOKEPOINT-SCOPE (24/06): recomputa local. _replyIsInfoGathering é `const`
+      // do try da métrica (acima) — FORA de escopo aqui. Lê-la jogava ReferenceError 106x
+      // desde 22/06 13:03 (deploy do chokepoint) e o catch abaixo engolia → a Camada 1
+      // anti-confabulação NUNCA rodou em produção. Mesmas funções de módulo (reply-classify).
+      infoGathering: hasTrailingQuestion(reply) || isInfoGatheringReply(reply),
       awaitingConfirm: !!_metrics.awaiting_user_confirm,
     });
   } catch (e) { console.warn('[ConfabGuard] non-fatal:', e.message); }

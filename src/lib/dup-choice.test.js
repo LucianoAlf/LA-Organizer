@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { classifyDupChoice, pickFreshDupBypassIntent } = require('./dup-choice');
+const { classifyDupChoice, pickFreshDupBypassIntent, pickDupBypassIntentForReply } = require('./dup-choice');
 
 // dígitos (comportamento legado preservado)
 test('dígito puro 1/2/3', () => {
@@ -90,4 +90,47 @@ test('pickFreshDupBypassIntent: pega a fresca ignorando a stale', () => {
 test('pickFreshDupBypassIntent: lista vazia / não-array → null', () => {
   assert.strictEqual(pickFreshDupBypassIntent([]), null);
   assert.strictEqual(pickFreshDupBypassIntent(null), null);
+});
+
+// ── pickDupBypassIntentForReply (DUP-QUOTE-SCAFFOLD, Juliana 23/06) ──
+// Resposta ao menu via reply-quote = binding inequívoco: casa por título e ignora a idade.
+// Sem quote, mantém a recência ≤10min (DUP-BYPASS-STALE-BIND, Arthur).
+const menuQuote = (title) =>
+  `Achei uma tarefa parecida já criada:\n_"Conversar com a Lohana"_\n\nA nova seria:\n_"${title}"_\n\nResponde com o **número**:\n\n1️⃣ *Mesma situação* — já tá coberta.`;
+
+test('pickDupBypassIntentForReply: quote do menu casa título → recupera mesmo stale 35min (Juliana)', () => {
+  const stale = dupIntent({
+    asked_at: new Date(Date.now() - 35 * 60 * 1000).toISOString(),
+    payload: { _dup_bypass: true, drafts: [{ title: 'Conversar com Caio e Kaio sobre atrasos' }] },
+  });
+  const got = pickDupBypassIntentForReply([stale], { quotedText: menuQuote('Conversar com Caio e Kaio sobre atrasos') });
+  assert.strictEqual(got, stale);
+});
+
+test('pickDupBypassIntentForReply: SEM quote + stale 5h → null (Arthur preservado)', () => {
+  const stale = dupIntent({ asked_at: new Date(Date.now() - 5 * 3600 * 1000).toISOString() });
+  assert.strictEqual(pickDupBypassIntentForReply([stale], { quotedText: null }), null);
+});
+
+test('pickDupBypassIntentForReply: SEM quote + fresca → recupera (recência ≤10min)', () => {
+  const fresh = dupIntent();
+  assert.strictEqual(pickDupBypassIntentForReply([fresh], { quotedText: null }), fresh);
+});
+
+test('pickDupBypassIntentForReply: quote do menu mas título NÃO casa → cai na recência (stale→null)', () => {
+  const stale = dupIntent({
+    asked_at: new Date(Date.now() - 35 * 60 * 1000).toISOString(),
+    payload: { _dup_bypass: true, drafts: [{ title: 'Outra tarefa qualquer' }] },
+  });
+  assert.strictEqual(pickDupBypassIntentForReply([stale], { quotedText: menuQuote('Conversar com Caio e Kaio') }), null);
+});
+
+test('pickDupBypassIntentForReply: quote que NÃO é menu de dup → cai na recência', () => {
+  const stale = dupIntent({ asked_at: new Date(Date.now() - 35 * 60 * 1000).toISOString() });
+  assert.strictEqual(pickDupBypassIntentForReply([stale], { quotedText: 'oi tom, tudo certo por ai?' }), null);
+});
+
+test('pickDupBypassIntentForReply: quote do menu + fresca também recupera', () => {
+  const fresh = dupIntent({ payload: { _dup_bypass: true, drafts: [{ title: 'Tarefa Z' }] } });
+  assert.strictEqual(pickDupBypassIntentForReply([fresh], { quotedText: menuQuote('Tarefa Z') }), fresh);
 });
