@@ -171,7 +171,9 @@ async function fetchDelegatedTasks(collabId: string, viewDate: string, isToday: 
     .select(baseSelect)
     .eq('created_by', collabId)
     .neq('assigned_to', collabId)
-    .neq('status', 'cancelled');
+    .neq('status', 'cancelled')
+    // Subtarefas/checklist (2026-06-26): filhas (parent_task_id) ficam fora da lista de delegadas.
+    .is('parent_task_id', null);
   if (isToday) {
     q = q.or(`due_date.eq.${viewDate},and(due_date.lt.${viewDate},status.not.in.(done,cancelled))`);
   } else {
@@ -197,6 +199,7 @@ async function fetchDelegatedTasks(collabId: string, viewDate: string, isToday: 
     .eq('created_by', collabId)
     .neq('assigned_to', collabId)
     .eq('status', 'done')
+    .is('parent_task_id', null)
     .gte('completed_at', startUtc)
     .lt('completed_at', endUtc);
   if (doneErr) throw doneErr;

@@ -89,19 +89,24 @@ export function useAgendaTasks(params: { from: Date; to: Date; filters: AgendaFi
           .gte('due_date', fromYmd)
           .lte('due_date', toYmd)
           .order('due_date', { ascending: true }),
-        supabase.from('tasks').select('id').eq('is_group', true).not('recurrence_rule', 'is', null),
+        // Subtarefas/checklist (2026-06-26): TODAS as mães-grupo (com recurrence_rule) pra separar
+        // filha-de-grupo (mostra flat) de filha-de-tarefa-pessoal/delegada (esconde).
+        supabase.from('tasks').select('id, recurrence_rule').eq('is_group', true),
       ]);
       if (error) throw error;
-      return { rows: data ?? [], tplMotherIds: ((tplMothers ?? []) as Array<{ id: string }>).map(r => r.id) };
+      const gm = (tplMothers ?? []) as Array<{ id: string; recurrence_rule: string | null }>;
+      return { rows: data ?? [], tplMotherIds: gm.filter(r => r.recurrence_rule != null).map(r => r.id), groupMotherIds: gm.map(r => r.id) };
     },
   });
 
   const tasks = useMemo<TaskForPanel[]>(() => {
     if (!data || !collaboratorId) return [];
     const tplMotherIds = new Set(data.tplMotherIds);
+    const groupMotherIds = new Set(data.groupMotherIds);
     const mapped: TaskForPanel[] = (data.rows as any[])
-      // Filha de mãe-TEMPLATE de grupo recorrente é estrutura, não ocorrência — fica fora.
-      .filter(t => !(t.parent_task_id && tplMotherIds.has(t.parent_task_id)))
+      // Filha de grupo-INSTÂNCIA mostra flat (caso Rose 10/06). Fica FORA: filha de mãe-TEMPLATE
+      // (estrutura) E filha de tarefa NÃO-grupo (checklist pessoal/delegada — 2026-06-26).
+      .filter(t => !t.parent_task_id || (groupMotherIds.has(t.parent_task_id) && !tplMotherIds.has(t.parent_task_id)))
       .map(t => {
       const isDelegated = t.created_by === collaboratorId && !!t.assigned_to && t.assigned_to !== collaboratorId;
       return {
