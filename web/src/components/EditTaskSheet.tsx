@@ -23,6 +23,7 @@ import { showToast } from './Toast';
 import { RecurrencePicker } from './RecurrencePicker';
 import { RecurrenceScopeDialog } from './RecurrenceScopeDialog';
 import { editTaskSeries, type TaskPatch } from '../lib/editTaskSeries';
+import { TaskChecklistSection } from './TaskChecklistSection';
 import type { Task, TaskContext } from '../types';
 
 interface Props {
@@ -298,6 +299,25 @@ export function EditTaskSheet({ open, task, onClose, onTransform, canDelegate }:
                 })}
               </div>
             </fieldset>
+          )}
+
+          {/* Subtarefas/checklist (2026-06-26) — gerenciar itens direto no "Editar tarefa",
+              que é onde o Alf naturalmente vai pra mexer na tarefa. Só pra tarefa-MÃE:
+              subtarefa (parent_task_id) e grupo (is_group) ficam de fora — 1 nível só.
+              TaskChecklistSection não tem mais <form> aninhado, então é seguro neste <form>. */}
+          {!task.parent_task_id && !task.is_group && (
+            <div className="rounded-md border border-border bg-bg-elevated p-3">
+              <TaskChecklistSection
+                parent={{
+                  id: task.id,
+                  context: task.context,
+                  assigned_to: task.assigned_to ?? null,
+                  assigned_group_id: task.assigned_group_id ?? null,
+                }}
+                meId={collaborator?.id}
+                editable
+              />
+            </div>
           )}
 
           <div>

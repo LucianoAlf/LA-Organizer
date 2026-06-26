@@ -20,6 +20,11 @@ export function TaskChecklistSection({ parent, meId, editable = false }: {
     meId,
   });
 
+  const submitNovo = () => {
+    const t = novo.trim();
+    if (t) { addItem.mutate(t); setNovo(''); }
+  };
+
   // Sem itens e não-editável (ex.: delegador olhando uma tarefa sem checklist) → não polui o read-view.
   if (items.length === 0 && !editable) return null;
 
@@ -63,24 +68,28 @@ export function TaskChecklistSection({ parent, meId, editable = false }: {
         {items.length === 0 && <div className="text-body-sm text-fg-muted italic">Sem itens ainda.</div>}
       </div>
       {editable && (
-        <form
-          className="mt-2 flex items-center gap-sm"
-          onSubmit={(e) => { e.preventDefault(); const t = novo.trim(); if (t) { addItem.mutate(t); setNovo(''); } }}
-        >
+        // 2026-06-26 — SEM <form> aninhado: este componente também é usado dentro do
+        // EditTaskSheet (que já é um <form>), e <form> dentro de <form> é HTML inválido +
+        // faz o "Add"/Enter submeterem o form de edição (salvava a tarefa e fechava o sheet).
+        // Enter e botão chamam submitNovo direto; o botão é type="button" pra NUNCA submeter
+        // um form ancestral.
+        <div className="mt-2 flex items-center gap-sm">
           <input
             value={novo}
             onChange={(e) => setNovo(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submitNovo(); } }}
             placeholder="Adicionar item…"
             className="flex-1 bg-bg-surface border border-border rounded-md p-2 text-fg text-body-md focus:outline-none focus:border-tom"
           />
           <button
-            type="submit"
+            type="button"
             disabled={!novo.trim() || addItem.isPending}
+            onClick={submitNovo}
             className="shrink-0 text-tom text-body-md font-medium disabled:opacity-40 focus-ring rounded px-1"
           >
             Add
           </button>
-        </form>
+        </div>
       )}
     </div>
   );
