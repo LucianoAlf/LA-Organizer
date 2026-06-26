@@ -2,7 +2,7 @@ import { useState, useEffect, FormEvent } from 'react';
 import { RecurrencePicker } from './RecurrencePicker';
 import { materializeSeriesClient } from '../lib/materialize-recurrence';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ListTodo, CalendarClock, UserPlus, FolderKanban } from 'lucide-react';
+import { ListTodo, CalendarClock, UserPlus, FolderKanban, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { todaySP } from '../utils/date';
@@ -86,6 +86,9 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
   const [taskQuadrant, setTaskQuadrant] = useState<number | null>(null);
   // Sprint 22.31 — Delegada: a quem atribuir (collaborator id). Quando kind='delegated'.
   const [delegateTo, setDelegateTo] = useState<string>('');
+  // Checklist (subtarefas) na criação de Tarefa/Delegar (2026-06-26). A mãe ainda não
+  // existe, então os itens ficam locais e viram filhas (parent_task_id) após salvar.
+  const [checklistDraft, setChecklistDraft] = useState<string[]>([]);
 
   // Grupo (2026-06-09)
   const [groupMonthly, setGroupMonthly] = useState(true);
@@ -143,6 +146,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
       setTaskReminderTimes([]);
       setTaskQuadrant(null);
       setDelegateTo('');
+      setChecklistDraft([]);
       setCategoryId(''); // late-load effect abaixo seta o default quando categorias carregam
       setCreatingCat(false);
       setNewCatLabel('');
@@ -239,6 +243,28 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
         const { error: re } = await supabase.from('task_reminders').insert(rows);
         if (re) console.warn('[QuickCreate] task_reminders insert err:', re.message);
       }
+      // Checklist (subtarefas) na criação — filhas via parent_task_id, herdando dono/contexto.
+      // Recorrência: NÃO cria filhas (ficariam no template invisível; limitação conhecida).
+      const parentId = data?.id as string | undefined;
+      const checklistItems = (parentId && !recurrenceRule)
+        ? checklistDraft.map(s => s.trim()).filter(Boolean)
+        : [];
+      if (parentId && checklistItems.length > 0) {
+        const childRows = checklistItems.map((t, i) => ({
+          title: t.slice(0, 200),
+          parent_task_id: parentId,
+          is_group: false,
+          status: 'pending',
+          context: gid ? 'work' : taskCtx,
+          assigned_to: gid ? null : collab.id,
+          assigned_group_id: gid,
+          created_by: collab.id,
+          sort_position: i + 1,
+          source: 'manual',
+        }));
+        const { error: ce } = await supabase.from('tasks').insert(childRows);
+        if (ce) console.warn('[QuickCreate] checklist children insert err:', ce.message);
+      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['tasks'] });
@@ -287,6 +313,27 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
         }));
         const { error: re } = await supabase.from('task_reminders').insert(rows);
         if (re) console.warn('[QuickCreate] task_reminders insert err:', re.message);
+      }
+      // Checklist (subtarefas) na delegação — filhas herdam o assignee (a pessoa delegada).
+      // Recorrência: NÃO cria filhas (ficariam no template invisível; limitação conhecida).
+      const checklistItems = !recurrenceRule
+        ? checklistDraft.map(s => s.trim()).filter(Boolean)
+        : [];
+      if (checklistItems.length > 0) {
+        const childRows = checklistItems.map((t, i) => ({
+          title: t.slice(0, 200),
+          parent_task_id: data.id as string,
+          is_group: false,
+          status: 'pending',
+          context: 'work',
+          assigned_to: delegateTo,
+          assigned_group_id: null,
+          created_by: collab.id,
+          sort_position: i + 1,
+          source: 'manual',
+        }));
+        const { error: ce } = await supabase.from('tasks').insert(childRows);
+        if (ce) console.warn('[QuickCreate delegated] checklist children insert err:', ce.message);
       }
       // Sprint 22.34j — awaited + toast feedback.
       const r = await notifyTaskDelegated(data.id as string);
@@ -757,6 +804,11 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
                   : 'Você definiu manualmente · TOM respeita.'}
               </div>
             </div>
+
+            {/* Checklist (subtarefas) na criação — escondido quando recorrente (limitação conhecida). */}
+            {!recurrenceRule && (
+              <ChecklistDraftField items={checklistDraft} onChange={setChecklistDraft} />
+            )}
           </>
         ) : kind === 'delegated' ? (
           <>
@@ -817,6 +869,11 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
               </div>
               <EisenhowerPicker value={taskQuadrant} onChange={setTaskQuadrant} />
             </div>
+
+            {/* Checklist (subtarefas) na delegação — escondido quando recorrente (limitação conhecida). */}
+            {!recurrenceRule && (
+              <ChecklistDraftField items={checklistDraft} onChange={setChecklistDraft} />
+            )}
           </>
         ) : kind === 'group' ? (
           <>
@@ -1227,6 +1284,68 @@ function GroupChildEditor({
             </button>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// Checklist (subtarefas) na CRIAÇÃO (2026-06-26): a tarefa-mãe ainda não existe, então
+// os itens ficam em estado LOCAL (string[]) e viram filhas (parent_task_id) logo após a
+// mãe salvar (createTask/createDelegated). UI espelha o TaskChecklistSection do read-view.
+// Botão type="button" + Enter com preventDefault: seguro dentro do <form> do "Novo".
+function ChecklistDraftField({ items, onChange }: { items: string[]; onChange: (next: string[]) => void }) {
+  const [novo, setNovo] = useState('');
+  const add = () => {
+    const t = novo.trim();
+    if (!t) return;
+    onChange([...items, t]);
+    setNovo('');
+  };
+  return (
+    <div>
+      <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5 flex items-center gap-2">
+        <span>Checklist</span>
+        <span className="text-[10px] normal-case tracking-normal text-fg-muted/70">opcional</span>
+        {items.length > 0 && (
+          <span className="text-fg-muted normal-case tracking-normal">{items.length} {items.length === 1 ? 'item' : 'itens'}</span>
+        )}
+      </div>
+      {items.length > 0 && (
+        <div className="space-y-1 mb-2">
+          {items.map((it, i) => (
+            <div key={i} className="flex items-start gap-sm">
+              <span className="inline-block h-4 w-4 mt-0.5 rounded-full border-2 border-fg-muted shrink-0" aria-hidden />
+              <span className="flex-1 min-w-0 text-body-md text-fg break-words">{it}</span>
+              <button
+                type="button"
+                aria-label="Remover item"
+                title="Remover"
+                onClick={() => onChange(items.filter((_, j) => j !== i))}
+                className="shrink-0 mt-0.5 text-fg-muted hover:text-danger focus-ring rounded"
+              >
+                <X size={15} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="flex items-center gap-sm">
+        <input
+          value={novo}
+          onChange={(e) => setNovo(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } }}
+          placeholder="Adicionar item…"
+          maxLength={200}
+          className="flex-1 bg-bg-surface border border-border rounded-md p-2 text-fg text-body-md focus:outline-none focus:border-tom"
+        />
+        <button
+          type="button"
+          disabled={!novo.trim()}
+          onClick={add}
+          className="shrink-0 text-tom text-body-md font-medium disabled:opacity-40 focus-ring rounded px-1"
+        >
+          Add
+        </button>
       </div>
     </div>
   );
