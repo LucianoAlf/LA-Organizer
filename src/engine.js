@@ -27,6 +27,7 @@ const announcementsService = require('./services/announcements');
 const pendingIntents = require('./services/pending-intents');
 const approvalsService = require('./services/approvals');
 const noteMarker = require('./services/note-marker');
+const verbatimNote = require('./services/verbatim-note');
 const notesService = require('./services/notes');
 const { jaroWinkler, normalizeForSim } = require('./services/text-similarity');
 const { findDuplicateNote } = require('./services/note-dedup');
@@ -9910,7 +9911,30 @@ async function processMessage(phone, text, raw = {}) {
               shareNotice = `\n\n_⚠️ não achei "${unresolved.join('", "')}" pra compartilhar — confere o nome?_`;
             }
             if (a.action === 'create') {
-              res = await notesService.createNote(supabase, collab.id, { title: a.title, body: a.body, source: 'tom', sharedWith: ids });
+              // VERBATIM (2026-06-26, NOTE-SAVE-VERBATIM): se o usuário mandou guardar conteúdo
+              // que JÁ EXISTE (colado na msg ou referenciado), reconcilia o body pro TEXTO-FONTE
+              // ORIGINAL inteiro — o LLM trunca texto longo ao "copiar" (caso fechamento Alf 24/06).
+              // Determinístico: acha a fonte na conversa e usa verbatim. Fallback pro body do LLM.
+              let bodyToSave = a.body;
+              if (a.verbatim) {
+                const candidates = [inboundVerbatimText];
+                try {
+                  const { data: _hist } = await supabase.from('conversation_history')
+                    .select('content').eq('collaborator_id', collab.id)
+                    .order('created_at', { ascending: false }).limit(8);
+                  for (const h of (_hist || [])) if (h && h.content) candidates.push(h.content);
+                } catch (eH) { console.warn('[Note verbatim] hist err:', eH.message); }
+                const src = verbatimNote.pickVerbatimSource(a.body, candidates);
+                if (src) {
+                  const stripped = verbatimNote.stripSaveCommand(src.text);
+                  if (stripped && stripped.length >= 20) {
+                    const srcLabel = src.index === 0 ? 'current' : 'history';
+                    console.log(`[Note] verbatim src=${srcLabel} idx${src.index} score=${src.score.toFixed(2)} len ${String(a.body || '').length}->${stripped.length}`);
+                    bodyToSave = stripped;
+                  }
+                }
+              }
+              res = await notesService.createNote(supabase, collab.id, { title: a.title, body: bodyToSave, source: 'tom', sharedWith: ids });
             } else {
               res = await notesService.shareNote(supabase, collab.id, a.note, ids);
             }

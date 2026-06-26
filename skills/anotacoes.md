@@ -21,10 +21,11 @@ Se só anunciou ("quero criar uma anotação"), pergunte o conteúdo primeiro.
 
 ```
 <<NOTE_ACTION>>
-{"action":"create","title":"<título curto>","body":"<texto VERBATIM da pessoa, preservando as linhas>","share_with":["<Nome>"]}
+{"action":"create","title":"<título curto>","body":"<texto da pessoa, preservando as linhas>","verbatim":true,"share_with":["<Nome>"]}
 <<END>>
 ```
 
+- **`verbatim:true` quando o conteúdo JÁ EXISTE** — a pessoa colou um bloco OU pediu pra guardar algo que ela/você já mandou ("guarda isso", "salva o fechamento que você me mandou", "anota aquele relatório"). Copie o conteúdo no `body` do seu jeito; o sistema reconcilia pro **texto-fonte ORIGINAL inteiro** (mesmo que você corte uma linha sem querer ao copiar, nada se perde). Nota curta ditada na hora ("anota: comprar leite") → **sem** `verbatim` (não há fonte pra reconciliar).
 - **body = texto da pessoa SEM reescrever** (pode corrigir erro óbvio de transcrição de áudio). Preserve quebras de linha e bullets.
 - `share_with` SÓ se a pessoa pediu; use **NOMES** (o sistema valida contra o cadastro — NUNCA invente nome nem id).
 - Resposta após emitir: curta e concreta — *"✅ Anotado! Tá em **Anotações** no app — e dá pra virar tarefas por lá."* Sem jargão (nada de "marker", "sistema", "banco").

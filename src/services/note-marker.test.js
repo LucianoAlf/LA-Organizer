@@ -67,3 +67,16 @@ test('alias: "body" tem prioridade sobre "content" se ambos vierem (sem regress�
 test('alias: create sem body E sem content = malformed (preserva guarda)', () => {
   assert.equal(parseNoteActionMarker('<<NOTE_ACTION>>{"action":"create","title":"x","content":""}<<END>>').malformed, true);
 });
+
+// VERBATIM (2026-06-26) — flag pro engine reconciliar o body pro texto-fonte original (anti-truncação).
+test('verbatim:true passa pro action', () => {
+  const r = parseNoteActionMarker('<<NOTE_ACTION>>{"action":"create","title":"Fech","body":"linha","verbatim":true}<<END>>');
+  assert.equal(r.malformed, false);
+  assert.equal(r.action.verbatim, true);
+});
+
+test('verbatim ausente = false (sem regressão; caminho LLM body de hoje)', () => {
+  const r = parseNoteActionMarker('<<NOTE_ACTION>>{"action":"create","title":"x","body":"y"}<<END>>');
+  assert.equal(r.malformed, false);
+  assert.equal(r.action.verbatim, false);
+});

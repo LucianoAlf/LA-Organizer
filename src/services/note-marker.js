@@ -27,7 +27,9 @@ function parseNoteActionMarker(text) {
                 : typeof p.content === 'string' ? p.content : '').trim();
     if (!body) return { malformed: true, cleanText };
     const title = (typeof p.title === 'string' && p.title.trim()) || body.split('\n')[0].slice(0, 120);
-    return { malformed: false, cleanText, action: { action, title, body, share_with: p.share_with || [] } };
+    // verbatim (2026-06-26): o usuário pediu pra guardar um conteúdo que JÁ EXISTE (colado/
+    // referenciado). O engine reconcilia o body pro texto-fonte ORIGINAL (anti-truncação do LLM).
+    return { malformed: false, cleanText, action: { action, title, body, verbatim: p.verbatim === true, share_with: p.share_with || [] } };
   }
   if (action === 'append') {
     // NOTE-MARKER-CONTENT-BODY-ALIAS: mesmo alias content→body do create (mesma exposição ao drift).
