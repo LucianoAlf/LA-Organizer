@@ -1,7 +1,7 @@
 // web/src/screens/grupos/GroupTaskSheet.tsx
 // Edição de tarefa do POOL (spec 2026-06-10) — primeiro CRUD de task de grupo do app.
 // readOnly: não-membro (gestor) visualiza sem salvar — nunca falhar em silêncio.
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AdaptiveSheet } from '../../components/AdaptiveSheet';
 import { Button } from '../../components/Button';
 import { Field } from '../../components/Field';
@@ -32,6 +32,7 @@ export function GroupTaskSheet({ open, task, groupName, readOnly, onClose, onSav
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [saving, setSaving] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const descRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (open && task) {
@@ -40,6 +41,14 @@ export function GroupTaskSheet({ open, task, groupName, readOnly, onClose, onSav
       setMins([]); setConfirmCancel(false);
     }
   }, [open, task?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Descrição auto-cresce com o conteúdo (até um teto, depois rola) — não corta texto longo.
+  useEffect(() => {
+    const el = descRef.current;
+    if (!el || !open) return;
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 320) + 'px';
+  }, [description, open]);
 
   const pendingExisting = useMemo(() =>
     (task?.task_reminders ?? []).filter(r => !r.sent_at).length, [task]);
@@ -101,8 +110,8 @@ export function GroupTaskSheet({ open, task, groupName, readOnly, onClose, onSav
             className="w-full bg-bg-surface border border-border rounded-md p-2 text-fg focus:outline-none focus:border-tom disabled:opacity-60" />
         </Field>
         <Field label="Descrição" sub="opcional">
-          <textarea value={description} disabled={readOnly} onChange={e => setDescription(e.target.value)} rows={3} maxLength={2000}
-            className="w-full bg-bg-surface border border-border rounded-md p-2 text-fg focus:outline-none focus:border-tom resize-y disabled:opacity-60" />
+          <textarea ref={descRef} value={description} disabled={readOnly} onChange={e => setDescription(e.target.value)} rows={4} maxLength={2000}
+            className="w-full bg-bg-surface border border-border rounded-md p-2 text-fg focus:outline-none focus:border-tom resize-y disabled:opacity-60 overflow-y-auto" />
         </Field>
         {/* DateInput/TimeInput não têm prop disabled — readOnly bloqueia via pointer-events. */}
         <div className={`flex gap-sm ${readOnly ? 'pointer-events-none opacity-60' : ''}`}>

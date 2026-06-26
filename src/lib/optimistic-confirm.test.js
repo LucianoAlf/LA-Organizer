@@ -41,6 +41,20 @@ test('failed: "✅ Os dois fechados." é removido (bonus EVENT_UPDATE)', () => {
   assert.strictEqual(sanitizeOptimisticConfirm('✅ Os dois fechados.', 'failed'), '');
 });
 
+// NOTE-ACTION-CONFAB-NOPROSE (25/06) — os 3 ramos de falha do NOTE_ACTION
+// (malformed / dup-skip / res.ok=false) passam o cleanText por sanitize('failed').
+// Ancora o caso real do Alf (24/06): NOTE schema_invalid não pode sair com "Anotado!".
+test('failed: caso NOTE Alf — "Anotado!" removido, gerúndio/intenção preservados', () => {
+  const cleanText = 'Claro, Alf! Salvando nas suas anotações.\n\nAnotado! Agora me conta o resto.';
+  const out = sanitizeOptimisticConfirm(cleanText, 'failed');
+  assert.ok(!/Anotado!/.test(out), 'não pode sobrar "Anotado!"');
+  assert.strictEqual(out, 'Claro, Alf! Salvando nas suas anotações.');
+});
+
+test('failed: NOTE dup-skip — linha única toda otimista vira vazio', () => {
+  assert.strictEqual(sanitizeOptimisticConfirm('Claro! Anotado! ✅', 'failed'), '');
+});
+
 // ─────────────────────────────────────────────────────────────────────────
 // outcome = 'partial' (parte persistiu): rebaixa totalizador absoluto
 // ─────────────────────────────────────────────────────────────────────────

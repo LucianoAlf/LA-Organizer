@@ -2,14 +2,15 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Fab } from '../../components/Fab';
 import { Tabs } from '../../components/Tabs';
-import { useBills, useCategoryLookup, useClosedUnpaidInvoices, useInvoicesByCompetencia, useFinanceiroAuth } from '../../hooks/useFinanceiro';
+import { useBills, useBillOverrides, useCategoryLookup, useClosedUnpaidInvoices, useInvoicesByCompetencia, useFinanceiroAuth } from '../../hooks/useFinanceiro';
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
-import { deriveBillStatus, groupExpenseBillsByStatus } from '../../lib/financeiro';
+import { deriveBillStatus, groupExpenseBillsByStatus, resolveBillsForMonth } from '../../lib/financeiro';
 import type { BillStatus, PfBill } from '../../lib/financeiro';
 import { mesDaCompetencia, type ClosedInvoice } from '../../lib/cartoes';
 import { BillSheet } from './components/BillSheet';
 import { PagarContaSheet } from './components/PagarContaSheet';
 import { PagarFaturaSheet } from './components/PagarFaturaSheet';
+import { AjustarValorMesSheet } from './components/AjustarValorMesSheet';
 
 function brl(n: number) {
   return n.toLocaleString('pt-BR', { maximumFractionDigits: 0 });
@@ -122,8 +123,14 @@ function FaturasSection({ invoices, onPay }: { invoices: ClosedInvoice[]; onPay:
   );
 }
 
-// Lista somente-leitura usada na PREVISÃO de outro mês (sem status/ação — é projeção).
-function PrevisaoSection({ title, items }: { title: string; items: { key: string; emoji: string; name: string; sub: string; amount: number }[] }) {
+// Lista de PREVISÃO de um mês. As contas (onAdjust) viram clicáveis pra ajustar o valor SÓ daquele
+// mês (override). Faturas de cartão (sem onAdjust) seguem só-leitura — são derivadas das compras.
+function PrevisaoSection({ title, items, adjustedIds, onAdjust }: {
+  title: string;
+  items: { key: string; emoji: string; name: string; sub: string; amount: number }[];
+  adjustedIds?: Set<string>;
+  onAdjust?: (billId: string) => void;
+}) {
   if (items.length === 0) return null;
   const total = items.reduce((s, i) => s + i.amount, 0);
   return (
@@ -133,18 +140,41 @@ function PrevisaoSection({ title, items }: { title: string; items: { key: string
         <span className="text-body-sm text-fg-muted tabular-nums">{items.length} · R$ {brl(total)}</span>
       </header>
       <ul className="divide-y divide-border">
-        {items.map((it) => (
-          <li key={it.key} className="px-md py-2.5 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3 min-w-0">
-              <span aria-hidden className="text-base shrink-0">{it.emoji}</span>
-              <div className="min-w-0">
-                <div className="text-body-md text-fg truncate">{it.name}</div>
-                <div className="text-body-sm text-fg-muted tabular-nums">{it.sub}</div>
+        {items.map((it) => {
+          const ajustado = !!adjustedIds?.has(it.key);
+          const body = (
+            <>
+              <div className="flex items-center gap-3 min-w-0">
+                <span aria-hidden className="text-base shrink-0">{it.emoji}</span>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-body-md text-fg truncate">{it.name}</span>
+                    {ajustado && (
+                      <span className="inline-flex items-center text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border bg-tom/10 text-tom border-tom/30">ajustado</span>
+                    )}
+                  </div>
+                  <div className="text-body-sm text-fg-muted tabular-nums">{it.sub}</div>
+                </div>
               </div>
-            </div>
-            <span className="text-body-md tabular-nums font-semibold text-fg">R$ {brl(it.amount)}</span>
-          </li>
-        ))}
+              <span className="text-body-md tabular-nums font-semibold text-fg">R$ {brl(it.amount)}</span>
+            </>
+          );
+          return onAdjust ? (
+            <li key={it.key}>
+              <button
+                type="button"
+                onClick={() => onAdjust(it.key)}
+                className="w-full px-md py-2.5 flex items-center justify-between gap-3 text-left hover:bg-bg-elevated focus-ring"
+              >
+                {body}
+              </button>
+            </li>
+          ) : (
+            <li key={it.key} className="px-md py-2.5 flex items-center justify-between gap-3">
+              {body}
+            </li>
+          );
+        })}
       </ul>
     </section>
   );
@@ -171,9 +201,12 @@ function BillSection({ title, bills, onPay, onEdit }: {
   );
 }
 
+// Referência estável p/ o fallback de overrides (evita recomputar os useMemo a cada render).
+const EMPTY_OVERRIDES: Record<string, { amount: number }> = {};
+
 export function ContasFixasPage() {
   const cid = useFinanceiroAuth();
-  useRealtimeFinance(['pf_bills', 'pf_transactions', 'pf_card_payments'], cid);
+  useRealtimeFinance(['pf_bills', 'pf_transactions', 'pf_card_payments', 'pf_bill_overrides'], cid);
 
   const monthNow = localYm();
   const [monthYear, setMonthYear] = useState(monthNow);
@@ -182,6 +215,9 @@ export function ContasFixasPage() {
   const billsQ = useBills();
   const invoicesQ = useClosedUnpaidInvoices();
   const prevInvoicesQ = useInvoicesByCompetencia(isCurrentMonth ? undefined : ymToCompetencia(monthYear));
+  // Overrides de valor da competência EXIBIDA (mês corrente OU o navegado). 0 overrides => valor base.
+  const overridesQ = useBillOverrides(ymToCompetencia(monthYear));
+  const overrides = overridesQ.data ?? EMPTY_OVERRIDES;
   const catLookup = useCategoryLookup();
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
@@ -189,14 +225,24 @@ export function ContasFixasPage() {
   const [payingBill, setPayingBill] = useState<PfBill | null>(null);
   const [payingInvoice, setPayingInvoice] = useState<{ cardId: string; competencia: string } | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>('todas');
+  const [adjusting, setAdjusting] = useState<{ bill: PfBill; override: number | null } | null>(null);
+  // ids com override no mês exibido (pra badge "ajustado").
+  const adjustedIds = useMemo(() => new Set(Object.keys(overrides)), [overrides]);
+  function onAdjust(billId: string) {
+    const bill = (billsQ.data ?? []).find((b) => b.id === billId); // bill CRUA = valor base
+    if (!bill) return;
+    const ov = overrides[billId];
+    setAdjusting({ bill, override: ov ? Number(ov.amount) : null });
+  }
 
   const { groups, aReceber } = useMemo(() => {
-    const list = billsQ.data ?? [];
+    // Resolve o valor de cada conta pela competência exibida (override ?? base) numa fonte só.
+    const list = resolveBillsForMonth(billsQ.data ?? [], overrides);
     return {
       groups: groupExpenseBillsByStatus(list),
       aReceber: list.filter((b) => b.type === 'income'),
     };
-  }, [billsQ.data]);
+  }, [billsQ.data, overrides]);
 
   const faturas = invoicesQ.data ?? [];
   const faturasTotal = faturas.reduce((s, i) => s + i.remaining, 0);
@@ -204,9 +250,10 @@ export function ContasFixasPage() {
   // Previsão de OUTRO mês: contas que se aplicam (recorrentes + únicas que vencem nele)
   // + faturas daquela competência. Total = bruto do mês (planejamento).
   const billsDoMes = useMemo(() => {
-    const list = (billsQ.data ?? []).filter((b) => b.type === 'expense');
-    return list.filter((b) => b.recurrence === 'monthly' || (b.recurrence === 'once' && (b.due_date ?? '').slice(0, 7) === monthYear));
-  }, [billsQ.data, monthYear]);
+    const list = (billsQ.data ?? []).filter((b) => b.type === 'expense')
+      .filter((b) => b.recurrence === 'monthly' || (b.recurrence === 'once' && (b.due_date ?? '').slice(0, 7) === monthYear));
+    return resolveBillsForMonth(list, overrides);
+  }, [billsQ.data, monthYear, overrides]);
   const faturasDoMes = prevInvoicesQ.data ?? [];
   const totalPrevisto = billsDoMes.reduce((s, b) => s + Number(b.amount), 0) + faturasDoMes.reduce((s, f) => s + f.total, 0);
 
@@ -260,6 +307,8 @@ export function ContasFixasPage() {
           <PrevisaoSection
             title="Contas do mês"
             items={billsDoMes.map((b) => ({ key: b.id, emoji: catLookup.emoji(b.category), name: b.name, sub: `Dia ${b.due_day}`, amount: Number(b.amount) }))}
+            adjustedIds={adjustedIds}
+            onAdjust={onAdjust}
           />
           <PrevisaoSection
             title="💳 Faturas de cartão"
@@ -334,6 +383,16 @@ export function ContasFixasPage() {
         cardId={payingInvoice?.cardId ?? ''}
         competencia={payingInvoice?.competencia}
         onClose={() => setPayingInvoice(null)}
+      />
+      {/* Sheet ajustar valor previsto do mês (override) — só na previsão (meses futuros) */}
+      <AjustarValorMesSheet
+        open={!!adjusting}
+        bill={adjusting?.bill ?? null}
+        baseAmount={adjusting ? Number(adjusting.bill.amount) : 0}
+        currentOverride={adjusting?.override ?? null}
+        competencia={ymToCompetencia(monthYear)}
+        mesLabel={ymLabel(monthYear)}
+        onClose={() => setAdjusting(null)}
       />
 
       <Fab label="Nova conta" ariaLabel="Cadastrar conta fixa" onClick={() => setCreating(true)} />

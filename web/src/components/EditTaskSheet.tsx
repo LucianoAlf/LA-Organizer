@@ -245,6 +245,19 @@ export function EditTaskSheet({ open, task, onClose, onTransform, canDelegate }:
             />
           </label>
 
+          {/* Descrição/instrução read-only — tarefa de grupo/delegada traz aluno + o que
+              fazer. Antes só aparecia no desktop/workspace; o membro no celular via só o
+              título. Read-only de propósito (decisão Alf 25/06); o texto inteiro aparece
+              (quebras preservadas, rola se for longo). */}
+          {task.description && task.description.trim() && (
+            <div className="rounded-md border border-border bg-bg-elevated p-3">
+              <div className="text-label uppercase tracking-wide text-fg-muted mb-1">Descrição</div>
+              <div className="text-body-md text-fg whitespace-pre-wrap break-words max-h-64 overflow-y-auto">
+                {task.description}
+              </div>
+            </div>
+          )}
+
           {/* Sprint 22.31 — em delegadas (assigned_to != self), mostra "Delegada
               para X" read-only e esconde toggle Trabalho/Pessoal (delegada e
               sempre work — privacidade). */}

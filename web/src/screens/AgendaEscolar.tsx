@@ -230,6 +230,13 @@ export function AgendaEscolar() {
         .update({ status: 'cancelled' })
         .eq('source_event_id', eventId)
         .in('status', ['scheduled', 'sending']);
+      // Cascata (Alf 24/06): cancelar o show cancela as tarefas de preparo (school_event_id),
+      // senão viram órfãs e o dispatcher segue cobrando. Preserva done (histórico).
+      await supabase
+        .from('tasks')
+        .update({ status: 'cancelled' })
+        .eq('school_event_id', eventId)
+        .not('status', 'in', '("done","cancelled")');
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['agenda-escolar'] });
@@ -243,6 +250,14 @@ export function AgendaEscolar() {
   const deleteMutation = useMutation({
     mutationFn: async (eventId: string) => {
       await supabase.rpc('set_config', { key: 'app.current_user_id', value: collaborator!.id });
+      // Cascata ANTES do delete: o FK tasks.school_event_id é ON DELETE SET NULL → sem isto as
+      // tarefas de preparo viram órfãs (school_event_id=null) e vazam pros lembretes
+      // operacional/pessoal. Cancela enquanto o vínculo existe. Preserva done.
+      await supabase
+        .from('tasks')
+        .update({ status: 'cancelled' })
+        .eq('school_event_id', eventId)
+        .not('status', 'in', '("done","cancelled")');
       const { error } = await supabase.from('school_events').delete().eq('id', eventId);
       if (error) throw error;
     },

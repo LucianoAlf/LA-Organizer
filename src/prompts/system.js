@@ -542,12 +542,10 @@ function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events
     if (workGroupsCtx.myGroupTasks && workGroupsCtx.myGroupTasks.length) {
       const today = todaySaoPaulo();
       lines.push('', '**Tarefas abertas dos SEUS grupos (você também pode concluir):**');
-      workGroupsCtx.myGroupTasks.forEach((t) => {
-        const g = workGroupsCtx.groups.find((x) => x.id === t.assigned_group_id);
-        const sid = String(t.id || '').slice(0, 8);
-        const due = t.due_date ? ` — ${formatRelativeDate(t.due_date, today) || t.due_date}` : '';
-        lines.push(`• [id=${sid}] 👥[${g ? g.name : 'grupo'}] ${t.title}${due}`);
-      });
+      const { buildGroupPoolLines } = require('../utils/group-task-relay');
+      for (const ln of buildGroupPoolLines(workGroupsCtx.myGroupTasks, workGroupsCtx.groups, today, formatRelativeDate)) {
+        lines.push(ln);
+      }
     }
   }
 
@@ -1759,7 +1757,7 @@ async function fetchCollaboratorContext(collaborator) {
       // filhas-template (paridade com o PWA fetchGroupsForDay), senão o TOM conta o ciclo
       // de grupo em dobro (template + instância). Busca com margem e filtra pós-fetch.
       const { data: gt } = await supabase.from('tasks')
-        .select('id, title, due_date, status, assigned_group_id, is_group, recurrence_rule, parent_task_id')
+        .select('id, title, description, due_date, status, assigned_group_id, is_group, recurrence_rule, parent_task_id, created_by, creator:collaborators!tasks_created_by_fkey(preferred_name, full_name)')
         .in('assigned_group_id', myGids)
         .eq('status', 'pending')
         .order('due_date', { ascending: true, nullsFirst: false })
@@ -2738,15 +2736,24 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   // - briefing_trabalho / fechamento → only work (fallback manual)
   // - briefing_diario (Sprint 11.1) → BOTH personal + work, em seções separadas no template
   const rt = collaborator && collaborator._ritualType;
+  // BRIEFING-FUTURE-TASK-AS-TODAY (26/06): o briefing é "do dia" — corta tarefa futura (> amanhã)
+  // que o LLM listava como hoje (caso Matheus: "Falar com a Bia" due 29/06, +4d). cutoff = AMANHÃ
+  // preserva o ⏳ "vence amanhã" documentado na skill rituais-diarios. addDaysYmd é fuso-safe
+  // (não reintroduz o shift das 21h BRT). O FECHAMENTO NÃO entra aqui: cutoff dele = hoje, já
+  // filtrado em engine.buildClosingItems pelo MESMO predicado isVisibleForDay.
+  const { isVisibleForDay, addDaysYmd } = require('../lib/day-visibility');
+  const _briefCutoff = addDaysYmd(todaySaoPaulo(), 1);
+  const _briefVis = (t) => isVisibleForDay(t, _briefCutoff);
   let tasksForCtx = ctx.todayTasks;
   if (rt === 'briefing_pessoal') {
-    tasksForCtx = { personal: ctx.personalTasks, work: [] };
-  } else if (rt === 'briefing_trabalho' || rt === 'fechamento' ||
-             rt === 'daily_closing') {
-    tasksForCtx = { personal: [], work: ctx.workTasks };
+    tasksForCtx = { personal: (ctx.personalTasks || []).filter(_briefVis), work: [] };
+  } else if (rt === 'briefing_trabalho') {
+    tasksForCtx = { personal: [], work: (ctx.workTasks || []).filter(_briefVis) };
+  } else if (rt === 'fechamento' || rt === 'daily_closing') {
+    tasksForCtx = { personal: [], work: ctx.workTasks }; // fechamento: cutoff=hoje, filtrado no engine
   } else if (rt === 'briefing_diario' || rt === 'daily_briefing') {
-    // Unificado: passa AMBAS as listas; a skill renderiza seções *PESSOAL* e *TRABALHO*.
-    tasksForCtx = { personal: ctx.personalTasks, work: ctx.workTasks };
+    // Unificado (cutoff=amanhã): AMBAS as listas; a skill renderiza seções *PESSOAL* e *TRABALHO*.
+    tasksForCtx = { personal: (ctx.personalTasks || []).filter(_briefVis), work: (ctx.workTasks || []).filter(_briefVis) };
   }
 
   // Append pending decisions (extension requests) to the context block when present.

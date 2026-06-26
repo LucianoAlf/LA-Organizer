@@ -32,11 +32,12 @@ export async function materializeSeriesClient(
 ): Promise<MaterializeResult> {
   if (!template?.recurrence_rule || !template?.id) return { created: 0, skipped: 0 };
 
-  // CHOKEPOINT (RECUR-RESURRECT-CALLER-GUARD, caso Gabi 24/06): molde fechado NÃO materializa
-  // — espelho do backend src/services/recurrence-guard.js. Fecha a porta "editar série no app
-  // recria do molde done/cancelled" ("apago e volta"). Fail-open: sem status, não bloqueia.
-  const tplStatus = (template as { status?: string }).status;
-  if (tplStatus === 'done' || tplStatus === 'cancelled') return { created: 0, skipped: 0 };
+  // CHOKEPOINT (espelho do backend src/services/recurrence-guard.js). FATIA 2 (flip): bloqueia
+  // por SÉRIE ENCERRADA (series_ended_at), NÃO por status da ocorrência — concluir a 1ª
+  // ocorrência (done) não congela mais a série. Fail-open (trava C): undefined (coluna ausente)
+  // ou null → materializa. editTaskSeries traz series_ended_at no SELECT.
+  const ended = (template as { series_ended_at?: string | null }).series_ended_at;
+  if (ended) return { created: 0, skipped: 0 };
 
   // Pega DTSTART baseado no campo de data do template
   const dtstart = table === 'tasks'
@@ -180,6 +181,7 @@ function cloneTemplate(
   delete row.followup_sent_at;
   delete row.reminded_at;
   delete row.delegated_at;
+  delete row.series_ended_at; // FATIA 2: instância nunca herda o ciclo de vida da série (do molde)
 
   // Instância: aponta pra template, NÃO carrega rrule
   row.recurrence_rule = null;

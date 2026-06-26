@@ -92,6 +92,15 @@ export function useBillPayments(billId: string | undefined) {
     enabled: !!cid && !!billId,
   });
 }
+// Overrides de valor por mês (competência YYYY-MM-01), mapa por bill_id. Fatia 1: só leitura.
+export function useBillOverrides(competencia: string | undefined) {
+  const cid = useFinanceiroAuth();
+  return useQuery({
+    queryKey: [...KEY, 'billOverrides', cid, competencia],
+    queryFn: () => fin.listBillOverrides(cid!, competencia!),
+    enabled: !!cid && !!competencia,
+  });
+}
 export function useGoals() {
   const cid = useFinanceiroAuth();
   return useQuery({
@@ -284,6 +293,12 @@ export const useUpdateBill            = () => useFinMutation(
 );
 export const useDeactivateBill        = () => useFinMutation(
   (cid, id: string) => fin.deactivateBill(cid, id)
+);
+export const useSetBillOverride = () => useFinMutation(
+  (cid, args: { billId: string; competencia: string; amount: number }) => fin.setBillOverride(cid, args.billId, args.competencia, args.amount)
+);
+export const useDeleteBillOverride = () => useFinMutation(
+  (cid, args: { billId: string; competencia: string }) => fin.deleteBillOverride(cid, args.billId, args.competencia)
 );
 export const useDeleteTransactionGroup = () => useFinMutation(
   (cid, purchaseGroup: string) => fin.deleteTransactionGroup(cid, purchaseGroup)

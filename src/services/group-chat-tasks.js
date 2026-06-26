@@ -291,7 +291,8 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
 // não-done (corrente + futuras). Reversível (soft) via reviveSeries. Done preservado (histórico).
 // Molde cancelado → materializeAll (Balde A) já pula molde cancelado, então PARA de gerar.
 async function endSeries({ supabase, templateId }) {
-  await supabase.from('tasks').update({ status: 'cancelled' }).eq('id', templateId);
+  // FATIA 2: series_ended_at é o que de fato PARA a série pós-flip (o guard novo ignora status).
+  await supabase.from('tasks').update({ status: 'cancelled', series_ended_at: new Date().toISOString() }).eq('id', templateId);
   await supabase.from('tasks').update({ status: 'cancelled' }).eq('recurrence_parent_id', templateId).neq('status', 'done');
   return { ended: true, id: templateId };
 }
@@ -299,13 +300,18 @@ async function endSeries({ supabase, templateId }) {
 // Religa a série: reativa o molde CANCELADO (por título) + re-materializa (materializeSeries,
 // NÃO materializeAll — mesmo helper do dedup-recur). Inverso do endSeries. Direto (constructivo).
 async function reviveSeries({ supabase, groupId, title }) {
+  // Só o MOLDE (recurrence_rule != null). Sem este filtro, séries densas (N instâncias
+  // canceladas com o MESMO título após o clone) enchiam o limit(5) de instâncias e o molde
+  // ficava fora do top-5 por created_at → reviveSeries falhava com not_found (achado E2E Fatia 2).
   const { data: hit } = await supabase.from('tasks')
     .select('id, title, recurrence_rule, status').eq('assigned_group_id', groupId)
-    .eq('status', 'cancelled').ilike('title', String(title || '').trim())
+    .eq('status', 'cancelled').not('recurrence_rule', 'is', null).ilike('title', String(title || '').trim())
     .order('created_at', { ascending: false }).limit(5);
   const tpl = (hit || []).find((r) => r && r.recurrence_rule != null);
   if (!tpl) return { revived: false, reason: 'not_found' };
-  await supabase.from('tasks').update({ status: 'pending' }).eq('id', tpl.id);
+  // FATIA 2: limpar series_ended_at é o que RELIGA a série pós-flip (status=pending sozinho
+  // não basta — o guard novo keia series_ended_at). Inverso do endSeries.
+  await supabase.from('tasks').update({ status: 'pending', series_ended_at: null }).eq('id', tpl.id);
   // Reativa as instâncias FUTURAS que o endSeries cancelou. Crítico: materializeSeries deduplica
   // por due_date INCLUINDO canceladas → sem este un-cancel, religar não traz as ocorrências de volta.
   const todayYmd = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());

@@ -14,20 +14,24 @@
 // materializeSeriesClient (PWA, espelho em TS) chamam esta regra ANTES de gerar.
 // Assim as 4 portas ficam trancadas por construção — não uma a uma.
 //
-// Fail-open: só bloqueia status EXPLICITAMENTE done/cancelled. Sem status (caller passa
-// objeto mínimo) NÃO bloqueia — preserva o comportamento atual e não quebra fluxo legítimo.
-// Revive funciona porque reviveSeries reativa o molde pra 'pending' ANTES de materializar.
-
-const CLOSED_STATUSES = new Set(['done', 'cancelled']);
+// FATIA 2 (24/06 — flip do ciclo de vida): a decisão passou a depender de SE A SÉRIE
+// FOI ENCERRADA (`series_ended_at`), NÃO do status da ocorrência. Concluir a 1ª
+// ocorrência (status=done) NÃO encerra mais a série — mata a dor #1 ("concluí e
+// congelou") sem ressuscitar nada. Só "encerrar série" (engine scope:'series' /
+// grupo endSeries) seta series_ended_at; reviveSeries limpa.
+//
+// Fail-open (trava C): só bloqueia quando series_ended_at está EXPLICITamente preenchido.
+// Coluna ausente no SELECT (undefined) ou null → materializa (preserva comportamento,
+// evita ressurreição-por-omissão). TODO caller de materializeSeries traz series_ended_at
+// (callers backend usam select('*'); PWA editTaskSeries inclui a coluna).
 
 /**
- * @param {{status?: string}|null|undefined} template  row do molde recorrente
- * @returns {boolean} true = pode materializar; false = molde fechado, não materializa
+ * @param {{series_ended_at?: string|null}|null|undefined} template  row do molde recorrente
+ * @returns {boolean} true = pode materializar (série ativa); false = série encerrada
  */
 function shouldMaterializeTemplate(template) {
-  const status = template && template.status;
-  if (typeof status !== 'string') return true; // fail-open
-  return !CLOSED_STATUSES.has(status);
+  // series_ended_at preenchido = encerrada → false. null/undefined = ativa → true.
+  return !(template && template.series_ended_at);
 }
 
-module.exports = { shouldMaterializeTemplate, CLOSED_STATUSES };
+module.exports = { shouldMaterializeTemplate };

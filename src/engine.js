@@ -39,6 +39,8 @@ const workGroups = require('./services/work-groups');
 const { detectApprovalReply, stripReplyScaffold } = require('./events/detect-approval-reply');
 const { isFutureCompletion } = require('./utils/complete-guards');
 const { sanitizeOptimisticConfirm, hasOptimisticConfirm, enforceNoMarkerHonesty } = require('./lib/optimistic-confirm');
+const { validateDndWindow, DND_MAX_MS } = require('./lib/dnd-window');
+const { isVisibleForDay } = require('./lib/day-visibility');
 const { enforceNoSyncExcuse } = require('./lib/sync-excuse-guard');
 const { classifyDupChoice, pickFreshDupBypassIntent, pickDupBypassIntentForReply } = require('./lib/dup-choice');
 const { buildClosingItems, parseClosingReply } = require('./utils/closing-reply');
@@ -56,6 +58,9 @@ const spendingAnomaly = require('./finance/spending-anomaly');
 const proactiveMsg = require('./finance/proactive-messages');
 const { reconcileInstallments } = require('./finance/parse-installments');
 const launchConfirm = require('./finance/launch-confirm');
+const invoiceReceipt = require('./finance/invoice-receipt');
+const { resolveFinanceCapability, EDIT_WINDOW_HOURS } = require('./finance/finance-capability');
+const { buildHonestRedirect } = require('./finance/finance-honest-redirect');
 const gemini = require('./services/gemini');
 const { splitBulkIdenticalCreates } = require('./task-guardrail');
 const selic = require('./services/selic');
@@ -1418,6 +1423,15 @@ async function applySchoolEventAction(collaborator, parsed) {
       .update({ status: 'cancelled', updated_at: new Date().toISOString() })
       .eq('source_event_id', evId)
       .in('status', ['scheduled', 'sending']);
+    // Cascata (SCHOOLEVENT-CANCEL-ORPHAN-TASKS, 3º caminho — TOM cancela o show via WhatsApp):
+    // cancelar o show cancela as tarefas de PREPARO (school_event_id), senão viram órfãs e o
+    // bom-dia/overdue seguem cobrando ensaio/repertório/divulgar (a rede do dispatcher só silencia
+    // o lembrete T-1). Espelha a PWA (AgendaEscolar.tsx). Preserva done (histórico).
+    await supabase
+      .from('tasks')
+      .update({ status: 'cancelled' })
+      .eq('school_event_id', evId)
+      .not('status', 'in', '("done","cancelled")');
     return { ok: true, action: 'cancelled', event_id: evId };
   }
 
@@ -3327,29 +3341,14 @@ function parseDndMarker(text) {
   if (payload.clear === true || payload.until === null) {
     return { clear: true, cleanText, malformed: false };
   }
-  // SET variant: until must be a valid future ISO timestamp
-  if (typeof payload.until !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(payload.until)) {
-    logSchemaErr('DND_SET', ['until:bad_iso'], payload);
+  // SET variant: valida via validateDndWindow (compartilhado com applyDnd + rota do PREFS).
+  const v = validateDndWindow(payload.until, payload.reason);
+  if (!v.ok) {
+    logSchemaErr('DND_SET', ['until:' + v.code], payload);
     return { malformed: true, cleanText };
   }
-  const untilMs = Date.parse(payload.until);
-  if (Number.isNaN(untilMs)) {
-    logSchemaErr('DND_SET', ['until:unparseable'], payload);
-    return { malformed: true, cleanText };
-  }
-  if (untilMs <= Date.now() + 60_000) {
-    logSchemaErr('DND_SET', ['until:not_future'], payload);
-    return { malformed: true, cleanText };
-  }
-  // Cap at 24h to prevent accidental indefinite silence
-  const MAX_MS = 24 * 60 * 60 * 1000;
-  let untilFinal = payload.until;
-  if (untilMs - Date.now() > MAX_MS) {
-    untilFinal = new Date(Date.now() + MAX_MS).toISOString();
-    logSchemaErr('DND_SET', ['until:capped_to_24h'], payload);
-  }
-  const reason = typeof payload.reason === 'string' ? payload.reason.trim().slice(0, 80) : null;
-  return { until: untilFinal, reason, cleanText, malformed: false };
+  if (v.capped) logSchemaErr('DND_SET', ['until:capped_to_24h'], payload);
+  return { until: v.until, reason: v.reason, cleanText, malformed: false };
 }
 
 // Returns null if valid, else a string code describing why the action was rejected.
@@ -3507,16 +3506,21 @@ async function findCollaboratorByName(name) {
 }
 
 async function findCollaboratorByPhone(phone) {
-  const cleaned = String(phone || '').replace(/\D/g, '');
-  if (!cleaned) return null;
+  // PHONE-9DIGIT-LOOKUP (Vitória 24/06): casa com/sem o 9º dígito (JID BR varia).
+  const { brPhoneVariants, digitsOnly } = require('./utils/phone');
+  const variants = brPhoneVariants(phone);
+  if (!variants.length) return null;
   const { data } = await supabase
     .from('collaborators')
     // Hotfix pós-Sprint20: idem findCollaboratorByName — campos completos.
     // Sprint 23.6: bio + preferred_name para system prompt.
     .select('id, full_name, phone, is_active, role, unit, onboarding_completed, pedagogical_role, function_role, function_title, bio, preferred_name, has_coord_permissions')
-    .eq('phone', cleaned)
-    .maybeSingle();
-  return data;
+    .in('phone', variants);
+  if (!data || !data.length) return null;
+  if (data.length === 1) return data[0];
+  // múltiplos (raro): prefere o match exato da forma recebida
+  const exact = digitsOnly(phone);
+  return data.find((c) => digitsOnly(c.phone) === exact) || data[0];
 }
 
 // Normaliza sinônimos coloquiais de departamento para group_key canônico da tabela governance_leaders.
@@ -3853,6 +3857,7 @@ function parsePrefsMarker(text) {
   }
   const update = {};
   const dropped = [];
+  let dnd = null; // PREFS-DND-ROUTE: do_not_disturb_until roteado pro DND (cap 24h via validateDndWindow)
   for (const [k, v] of Object.entries(parsed)) {
     if (PREFS_TIME_FIELDS.has(k)) {
       if (v === null && (k === 'briefing_time' || k === 'closing_time')) {
@@ -3883,12 +3888,16 @@ function parsePrefsMarker(text) {
     } else if (k === 'coaching_intensity') {
       if (PREFS_INTENSITY_VALUES.has(v)) update.coaching_intensity = v;
       else dropped.push(`${k}:invalid`);
-    } else if (k === 'do_not_disturb_until' || k === 'do_not_disturb_reason') {
-      // Pausa temporária (DND) NÃO entra por PREFS_UPDATE — tem marker dedicado
-      // e validado (<<DND_SET>>, cap de 24h). Esse path setava do_not_disturb_until
-      // sem cap nem validação de futuro (bug: Jhonatan ficou pausado até julho).
-      // Fechado: TOM deve usar <<DND_SET>> pra pausar. Logado em dropped p/ observabilidade.
-      dropped.push(`${k}:use_DND_SET_marker_instead`);
+    } else if (k === 'do_not_disturb_until') {
+      // PREFS-DND-ROUTE (26/06, caso Jhonatan): o LLM às vezes emite do_not_disturb_until no
+      // PREFS_UPDATE em vez do <<DND_SET>> dedicado. Antes era dropado → update vazio →
+      // schema_invalid → confab "fico quieto". Agora ROTA pro DND COM a mesma validação
+      // (validateDndWindow: futuro + cap 24h) — o cap impede o bug antigo "pausado até julho".
+      const r = validateDndWindow(v, parsed.do_not_disturb_reason);
+      if (r.ok) dnd = { until: r.until, reason: r.reason };
+      else dropped.push(`${k}:${r.code}`);
+    } else if (k === 'do_not_disturb_reason') {
+      // consumido junto com do_not_disturb_until (acima) — não dropa sozinho nem é unknown_field
     } else if (k === 'quiet_days') {
       // Array de ints 0-6 (0=domingo, 6=sábado). Vazio = limpar.
       if (Array.isArray(v) && v.every(n => Number.isInteger(n) && n >= 0 && n <= 6)) {
@@ -3921,8 +3930,8 @@ function parsePrefsMarker(text) {
     }
   }
   if (dropped.length) logSchemaErr('PREFS_UPDATE', dropped, parsed);
-  if (Object.keys(update).length === 0) return { malformed: true, cleanText };
-  return { update, cleanText, malformed: false };
+  if (Object.keys(update).length === 0 && !dnd) return { malformed: true, cleanText };
+  return { update, dnd, cleanText, malformed: false };
 }
 
 async function applyPrefsUpdate(collab, update) {
@@ -4339,20 +4348,14 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
             ? fullTaskCan.id
             : fullTaskCan.recurrence_parent_id;
           if (templateId) {
-            const _todayYmd = todaySaoPaulo();
             const ownerId = fullTaskCan.assigned_to || collaborator.id;
             try {
-              const rTpl = await supabase.from('tasks')
-                .update({ status: 'cancelled' })
-                .eq('id', templateId).eq('assigned_to', ownerId)
-                .not('status', 'in', '("done","cancelled")').select('id');
-              const rKids = await supabase.from('tasks')
-                .update({ status: 'cancelled' })
-                .eq('recurrence_parent_id', templateId).eq('assigned_to', ownerId)
-                .gte('due_date', _todayYmd)
-                .not('status', 'in', '("done","cancelled")').select('id');
-              const n = (rTpl.data ? rTpl.data.length : 0) + (rKids.data ? rKids.data.length : 0);
-              console.log(`[Task] cancel SERIES template=${String(templateId).slice(0, 8)} → ${n} linha(s) by ${last4}`);
+              // FATIA 2: encerrar série = setar series_ended_at (o que de fato PARA a série
+              // pós-flip; o guard novo ignora status) + cancelar ocorrência aberta + futuras.
+              // Extraído p/ recurrence-engine.endSeries1on1 (testável + acoplado ao flip).
+              const { endSeries1on1 } = require('./services/recurrence-engine');
+              const rSer = await endSeries1on1({ supabase, templateId, ownerId });
+              console.log(`[Task] cancel SERIES template=${String(templateId).slice(0, 8)} → ${rSer.cancelled} linha(s) + series_ended_at by ${last4}`);
             } catch (eSer) { console.warn('[Task] cancel SERIES err:', eSer.message); }
           }
         }
@@ -4851,6 +4854,40 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
         } catch (dErr) {
           // Non-fatal: dedupe failure não pode bloquear criação. Loga e segue.
           console.error('[Task] dedupe check err (non-fatal):', dErr.message);
+        }
+        // RAIZ 1 / Fatia 4 — dedup-on-create do MOLDE recorrente 1:1 (RECUR-TEMPLATE-DUP-ON-CREATE).
+        // A delegação 1:1 numa rajada criava 2 moldes idênticos ("quadruplicou" Gabi/Jereh): o dedup de
+        // molde só existia no grupo (findDuplicatePackage). Aqui, ANTES do insert, se a tarefa é um molde
+        // recorrente 1:1, busca os moldes ATIVOS do MESMO dono e reusa o existente em vez de criar o 2º.
+        // Owner-scoped (assigned_to). Degrade-safe: qualquer falha na busca → segue e insere (nunca trava
+        // a criação). Só 1:1 (grupo tem o seu caminho); não toca materialize/flip.
+        if (insertRow.recurrence_rule && !assignedGroup && assignedTo) {
+          try {
+            const { findDuplicateRecurrenceTemplate } = require('./utils/recur-template-dedup');
+            const { data: _activeTpls, error: _tplErr } = await supabase
+              .from('tasks')
+              .select('id, title, recurrence_rule, recurrence_parent_id, series_ended_at, status')
+              .eq('assigned_to', assignedTo)
+              .not('recurrence_rule', 'is', null)
+              .is('recurrence_parent_id', null)
+              .is('series_ended_at', null)
+              .neq('status', 'cancelled');
+            if (_tplErr) throw _tplErr;
+            const _dupTpl = findDuplicateRecurrenceTemplate(_activeTpls || [], {
+              title: insertRow.title, recurrence_rule: insertRow.recurrence_rule,
+            });
+            if (_dupTpl) {
+              console.warn(`[Task] RECUR_TEMPLATE_DEDUP reuse=${String(_dupTpl.id).slice(0, 8)} "${insertRow.title.slice(0, 40)}" owner=${last4} (molde recorrente já ativo)`);
+              // Prosa HONESTA (não confabula "criei") — espelha o padrão "já tinha sido feita, não precisou"
+              // (failMessages substitui o texto otimista do LLM no caminho single).
+              failMessages.push(`✋ Você já tem *${_dupTpl.title}* recorrente ativa — não criei outra igual (reusei a que já existe).`);
+              failCount++;
+              continue;
+            }
+          } catch (_rtdErr) {
+            // Degrade-safe: dedup de molde NUNCA trava a criação. Loga e segue pro insert normal.
+            console.warn('[Task] recur-template dedup err (non-fatal):', _rtdErr.message);
+          }
         }
         const { data, error } = await supabase
           .from('tasks')
@@ -5937,9 +5974,17 @@ async function applyHabitActions(collaborator, actions, userText = '') {
 // Apply DND marker — persists do_not_disturb_until + reason on user_preferences.
 // `parsed` shape: either { until, reason } (set) or { clear: true } (clear).
 async function applyDnd(collaborator, parsed) {
+  // Trava A (defense-in-depth, revisor 26/06): clampa a 24h NO SINK, independente do caller
+  // (parseDndMarker, rota do PREFS, ou futuro caller). "pausado até julho" vira estruturalmente
+  // impossível — não depende de todo caller lembrar de validar.
+  let _until = parsed.until;
+  if (!parsed.clear && typeof _until === 'string') {
+    const ms = Date.parse(_until);
+    if (!Number.isNaN(ms) && ms - Date.now() > DND_MAX_MS) _until = new Date(Date.now() + DND_MAX_MS).toISOString();
+  }
   const update = parsed.clear
     ? { do_not_disturb_until: null, do_not_disturb_reason: null }
-    : { do_not_disturb_until: parsed.until, do_not_disturb_reason: parsed.reason };
+    : { do_not_disturb_until: _until, do_not_disturb_reason: parsed.reason };
   const { error } = await supabase
     .from('user_preferences')
     .update(update)
@@ -5949,7 +5994,7 @@ async function applyDnd(collaborator, parsed) {
     return false;
   }
   if (parsed.clear) console.log(`[DND] cleared for ${String(collaborator.phone).slice(-4)}`);
-  else console.log(`[DND] set ${parsed.until} for ${String(collaborator.phone).slice(-4)}${parsed.reason ? ' (' + parsed.reason + ')' : ''}`);
+  else console.log(`[DND] set ${_until} for ${String(collaborator.phone).slice(-4)}${parsed.reason ? ' (' + parsed.reason + ')' : ''}`);
   return true;
 }
 
@@ -6844,7 +6889,7 @@ async function tryDupBypass(collab, text) {
 
 // ---- Sprint 27 — Financas Pessoais: marker <<FINANCE_ACTION>> + dispatcher ----
 const FINANCE_ACTIONS = [
-  'register_transaction', 'register_bill', 'pay_bill', 'delete_bill', 'query_fixed_bills', 'query_bills_to_pay', 'query_checkup', 'query_month_analysis', 'create_goal',
+  'register_transaction', 'register_bill', 'pay_bill', 'delete_bill', 'set_bill_amount', 'query_fixed_bills', 'query_bills_to_pay', 'query_checkup', 'query_month_analysis', 'create_goal',
   'update_goal', 'edit_goal', 'delete_goal', 'set_budget', 'query_summary', 'query_budget', 'query_goal', 'query_accounts', 'create_account', 'edit_account',
   'simulate_interest',
   // cartão de crédito + transferência
@@ -7264,7 +7309,7 @@ async function handleFinanceAction(collab, action, params, outcome = {}) {
     }
     case 'delete_transaction': {
       const { resolveTxnTarget } = require('./finance/txn-target');
-      const recent = await financeService.listRecentTransactions(cid, { hours: 2, limit: 10 });
+      const recent = await financeService.listRecentTransactions(cid, { hours: EDIT_WINDOW_HOURS, limit: 10 });
       if (!recent.length) return 'Não achei lançamento recente pra apagar — pra coisas mais antigas, edita lá no app 🙂';
       const r = resolveTxnTarget(String(params.which || params.ref || ''), recent);
       if (r.kind === 'none') return 'Não achei qual lançamento. Diz o valor ou o nome (ex: "a do mercado").';
@@ -7284,7 +7329,7 @@ async function handleFinanceAction(collab, action, params, outcome = {}) {
     }
     case 'edit_transaction': {
       const { resolveTxnTarget } = require('./finance/txn-target');
-      const recent = await financeService.listRecentTransactions(cid, { hours: 2, limit: 10 });
+      const recent = await financeService.listRecentTransactions(cid, { hours: EDIT_WINDOW_HOURS, limit: 10 });
       if (!recent.length) return 'Não achei lançamento recente pra corrigir — pra coisas mais antigas, edita no app 🙂';
       const r = resolveTxnTarget(String(params.which || params.ref || ''), recent);
       if (r.kind !== 'one') return 'Qual lançamento? Diz o valor ou o nome (ex: "a do mercado").';
@@ -7370,6 +7415,9 @@ async function handleFinanceAction(collab, action, params, outcome = {}) {
       });
       outcome.persisted = true; // Fatia C
       const quando = recurrence === 'once' ? `vence ${b.due_date}` : `todo dia ${b.due_day}`;
+      // Prosa HONESTA (Raiz 3): createBill deduplica conta fixa monthly (find-or-upsert). Quando a
+      // conta já existia, foi ATUALIZADA, não criada — não confabular "cadastrei" sobre um update.
+      if (b.updated) return `✅ Atualizei a conta fixa *${b.name}* que já tava cadastrada (R$${b.amount}, ${quando}).`;
       return `✅ Conta cadastrada: ${b.name} (R$${b.amount}, ${quando}).`;
     }
     case 'delete_bill': {
@@ -7383,13 +7431,43 @@ async function handleFinanceAction(collab, action, params, outcome = {}) {
       outcome.persisted = true;
       return `🗑️ Conta fixa *${bill.name}* removida.`;
     }
+    case 'set_bill_amount': {
+      // Ajusta o valor PREVISTO de uma conta fixa num MÊS específico (override mensal). NÃO muda o base.
+      const cands = await financeService.findBills(cid, params.bill_name || params.name || '');
+      if (cands.length === 0) return 'Não achei conta fixa com esse nome pra ajustar. 🤔';
+      if (cands.length > 1) return 'Achei mais de uma: ' + cands.map((c, i) => `${i + 1}) ${c.name}`).join(', ') + '. Qual delas?';
+      const bill = cands[0];
+      const _comp = require('./finance/bill-month').parseBillMonth(params.month || params.competencia || params.mes || params.month_year, todaySaoPaulo());
+      if (!_comp) { outcome.persisted = false; return `Pra ajustar a *${bill.name}* me diz o mês (ex.: "agosto" ou "2026-08"). 👽`; }
+      const _MES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+      const _mesLabel = `${_MES[Number(_comp.slice(5, 7)) - 1]} de ${_comp.slice(0, 4)}`;
+      const _base = Number(bill.amount);
+      const _remove = params.remove === true || params.clear === true || params.reset === true || (params.amount != null && Number(params.amount) <= 0);
+      if (_remove) {
+        await financeService.deleteBillOverride(cid, bill.id, _comp);
+        outcome.persisted = true;
+        return `✅ Tirei o ajuste da *${bill.name}* em ${_mesLabel} — esse mês volta pro valor padrão (${financeFmt.money(_base)}).`;
+      }
+      const _amt = Number(params.amount);
+      if (!Number.isFinite(_amt) || _amt <= 0) { outcome.persisted = false; return `Pra ajustar a *${bill.name}* em ${_mesLabel} me diz o novo valor (ex.: "R$ 350"). 👽`; }
+      await financeService.setBillOverride(cid, bill.id, _comp, _amt);
+      outcome.persisted = true;
+      return `✅ Ajustei a *${bill.name}* pra ${financeFmt.money(_amt)} *só em ${_mesLabel}* — os outros meses seguem no valor padrão (${financeFmt.money(_base)}).`;
+    }
     case 'pay_bill': {
       const cands = await financeService.findBills(cid, params.bill_name || params.name || '');
       if (cands.length === 0) return 'Não achei conta com esse nome.';
       if (cands.length > 1) return 'Achei mais de uma: ' + cands.map((c, i) => `${i + 1}) ${c.name}`).join(', ') + '. Qual delas?';
       const bill = cands[0];
       const date = p.date || undefined;
-      const amount = (p.amount != null && Number(p.amount) > 0) ? Number(p.amount) : Number(bill.amount);
+      // Valor previsto do MÊS CORRENTE: override (>0) > base (feature override mensal). findBills traz id.
+      let _previstoMes = Number(bill.amount);
+      try {
+        const _comp = todaySaoPaulo().slice(0, 7) + '-01';
+        const _ov = await financeService.billOverridesForMonth(cid, _comp);
+        _previstoMes = require('./utils/bill-amount').resolveBillAmount(bill, _ov[bill.id]);
+      } catch (_e) { /* degrade-safe: cai no valor base */ }
+      const amount = (p.amount != null && Number(p.amount) > 0) ? Number(p.amount) : _previstoMes;
       const srcName = params.account_name || params.account || params.carteira || params.conta || params.card || p.account_name;
       const srcMethod = params.method || params.metodo || params.via || p.method || '';
       const src = srcName ? await financeService.resolveSource(cid, srcName, { type: bill.type, method: srcMethod }) : { kind: 'none' };
@@ -7422,8 +7500,8 @@ async function handleFinanceAction(collab, action, params, outcome = {}) {
       // Quitação = HOJE, desacoplado de `date` (data do lançamento/fatura — pode mirar mês
       // passado). Senão a conta fica eternamente "atrasada". FIN-PAYBILL-DATE-COUPLING.
       await financeService.markBillPaid(cid, bill);
-      if (Math.round(amount * 100) !== Math.round(Number(bill.amount) * 100)) {
-        reply += `\n_(previu ${financeFmt.money(Number(bill.amount))} · pagou ${financeFmt.money(amount)})_`;
+      if (Math.round(amount * 100) !== Math.round(_previstoMes * 100)) {
+        reply += `\n_(previu ${financeFmt.money(_previstoMes)} · pagou ${financeFmt.money(amount)})_`;
       }
       return reply;
     }
@@ -8286,12 +8364,33 @@ async function processMessage(phone, text, raw = {}) {
   // O LLM às vezes fabrica "corrigido" ou nega a capacidade. Quando o padrão é claro E há
   // transação recente, o ENGINE executa direto via handleFinanceAction — sem depender do LLM.
   try {
-    const { detectCorrection } = require('./finance/detect-correction');
+    const { detectCorrection, detectFinanceEditIntent } = require('./finance/detect-correction');
     const corr = detectCorrection(String(text || ''));
-    if (corr) {
-      const recent = await financeService.listRecentTransactions(collab.id, { hours: 2, limit: 1 });
-      if (recent.length) {
-        const action = corr.op === 'delete' ? 'delete_transaction' : 'edit_transaction';
+    // Gate do REDIRECT = intent LOOSE (não precisa do alvo); EXECUTE = corr COMPLETO.
+    const editIntent = corr ? { op: corr.op } : detectFinanceEditIntent(String(text || ''));
+    if (editIntent) {
+      const action = editIntent.op === 'delete' ? 'delete_transaction' : 'edit_transaction';
+      const recent = await financeService.listRecentTransactions(collab.id, { hours: EDIT_WINDOW_HOURS, limit: 10 });
+      if (!recent.length) {
+        // CAMINHO 2 / FATIA 1 (F1.3a): fora da janela → o ENGINE escreve a linha honesta (Modelo α),
+        // NÃO cai no LLM. Vale pro corr completo E pro intent loose ("altera o valor de ontem",
+        // "corrige a cat da semana passada") — não precisa do alvo pra dizer "tá fora, edita no app".
+        const verdict = resolveFinanceCapability({ action, params: {} }, { candidates: [] });
+        const honest = buildHonestRedirect(verdict);
+        try {
+          await whatsapp.sendMessage(phone, honest);
+          await logConversation(collab.id, 'outbound', honest);
+        } catch (postErr) {
+          console.warn(`[Correction] honest-redirect post err (${action}):`, postErr.message);
+        }
+        // Velocímetro UNIFICADO (review 24/06): TODA linha da curva mora em marker_type='CHOKEPOINT'
+        // (sentido no reason) — senão `where marker_type='CHOKEPOINT'` perde a maioria das linhas.
+        await logMarker(collab.id, 'CHOKEPOINT', 'redirected', `redirect:finance:${editIntent.op}`, '');
+        console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (correction_redirect_${editIntent.op})`);
+        return;
+      }
+      // recent.length>0 + extração COMPLETA → o handler resolve (one/many/none) como hoje.
+      if (corr) {
         const params = corr.op === 'delete'
           ? { which: corr.ref }
           : { which: '', amount: corr.amount, category: corr.category };
@@ -8317,9 +8416,8 @@ async function processMessage(phone, text, raw = {}) {
           console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (correction_${corr.op})`);
           return;
         }
-        // reply vazio (alvo não resolvido) → segue pro LLM.
       }
-      // sem transação recente → não é correção de finança; segue pro LLM.
+      // intent loose SEM extração completa, DENTRO da janela → precisa do alvo/valor → cai no LLM (clarifica).
     }
   } catch (e) {
     console.warn('[Correction] consumer err:', e.message);
@@ -8409,6 +8507,37 @@ async function processMessage(phone, text, raw = {}) {
   // vencimento). Sem isso "19/05" sem ano virava 2024 e o lançamento sumia da fatura do ano corrente
   // (Rose 15/06: "lança na fatura de JULHO" caiu em julho/2024). Ver invoice-import.normInvoiceDate.
   const _refYear = Number(new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }).slice(0, 4)) || undefined;
+
+  // === Intercept comprovante: COMPROVANTE de PAGAMENTO de fatura (imagem) → motor pay_invoice ===
+  // FIN-RECEIPT-CONFIRM-NOOP (Alf 22/06): o comprovante de fatura virava PERGUNTA passiva do LLM
+  // ("fecho a tarefa e marco como paga?") → intent confirmation SEM actions → o "Sim" auto-resolvia
+  // 'confirmed' mas NÃO executava (tarefa seguia pending, fatura não baixava). Aqui o engine
+  // reconhece o comprovante DETERMINISTICAMENTE e monta a confirmação do pay_invoice (MESMA máquina
+  // do marker: stagePayInvoice → buildPayInvoicePreview → intent), sem depender do LLM re-emitir.
+  // O "Sim" cai no consumidor pay_invoice existente (paga + fecha a tarefa). O detector exclui
+  // [FATURA_JSON] (import de compras), Pix e gasto comum — só comprovante de fatura de CARTÃO.
+  try {
+    const _rcpt = invoiceReceipt.detectInvoicePaymentReceipt(text);
+    if (_rcpt) {
+      const _stg = await stagePayInvoice(collab.id, { card: _rcpt.cardHint, amount: _rcpt.amount });
+      if (_stg) {
+        const _pv = launchConfirm.buildPayInvoicePreview(_stg.display);
+        const _pid = _pv ? await pendingIntents.openIntent(collab.id, 'finance_source', { form: 'launch_confirm', actions: [_stg.action], close_tasks: _stg.close_tasks }, _pv) : null;
+        if (_pid) {
+          await logMarker(collab.id, 'FINANCE_ACTION', 'skipped', 'staged_pay_invoice:receipt', null);
+          await whatsapp.sendMessage(phone, _pv);
+          await logConversation(collab.id, 'outbound', _pv);
+          console.log(`[Engine] comprovante de fatura: cartão="${_rcpt.cardHint}" valor=${_rcpt.amount} → pay_invoice staged (intent ${String(_pid).slice(0,8)})`);
+          return;
+        }
+      }
+      // Detectou o comprovante mas NÃO estagiou (cartão não casou / sem fatura aberta) → deixa o LLM
+      // pedir o cartão (não retorna). Registra o miss pra observabilidade.
+      console.warn(`[Engine] comprovante detectado, stage falhou: cartão="${_rcpt.cardHint}" valor=${_rcpt.amount}`);
+    }
+  } catch (e) {
+    console.warn('[Fatura] intercept comprovante err:', e.message);
+  }
 
   // === Intercept A0: fatura colada como TEXTO (não PDF) → estrutura via Gemini e injeta [FATURA_JSON] ===
   // Rose 14/06: mandou a fatura como texto; sem isso caía no LLM-puro, que narrava "lancei/missão
@@ -9443,12 +9572,27 @@ async function processMessage(phone, text, raw = {}) {
         reply = (baseM ? baseM + '\n\n' : '') + '_⚠️ não consegui aplicar essa configuração agora — me diz de novo o que você quer mudar?_';
       }
     } else if (parsedPrefs) {
-      const { okCount, failCount } = await applyPrefsUpdate(collab, parsedPrefs.update);
-      const result = okCount > 0 ? 'executed' : 'rejected';
-      const reason = okCount > 0 ? `ok=${okCount} fail=${failCount}` : `all_failed:${failCount}`;
-      await logMarker(collab.id, 'PREFS_UPDATE', result, reason, null);
+      // PREFS-DND-ROUTE: aplica o DND roteado (com cap, via applyDnd) ANTES do resto.
+      let dndOk = false;
+      if (parsedPrefs.dnd) {
+        dndOk = await applyDnd(collab, parsedPrefs.dnd);
+        await logMarker(collab.id, 'DND_SET', dndOk ? 'executed' : 'rejected',
+          dndOk ? `until=${parsedPrefs.dnd.until} (via PREFS)` : 'persist_error', null);
+      }
+      const hasPrefsFields = Object.keys(parsedPrefs.update || {}).length > 0;
+      let okCount = 0, failCount = 0;
+      if (hasPrefsFields) {
+        ({ okCount, failCount } = await applyPrefsUpdate(collab, parsedPrefs.update));
+        const result = okCount > 0 ? 'executed' : 'rejected';
+        const reason = okCount > 0 ? `ok=${okCount} fail=${failCount}` : `all_failed:${failCount}`;
+        await logMarker(collab.id, 'PREFS_UPDATE', result, reason, null);
+      }
+      // Trava B (revisor 26/06): quando SÓ tinha DND (update vazio), NÃO loga
+      // PREFS_UPDATE rejected all_failed:0 — isso recriaria o sinal schema_invalid/all_failed
+      // que o auditor caça e o caso voltaria como falso-positivo recorrente. O sucesso já
+      // foi logado em DND_SET acima.
       let base = parsedPrefs.cleanText || '';
-      if (failCount > 0 && okCount === 0) {
+      if (hasPrefsFields && failCount > 0 && okCount === 0 && !dndOk) {
         base = (base ? base + '\n\n' : '') + '_não consegui salvar a configuração agora — tenta de novo em instantes_';
       }
       reply = base || reply;
@@ -9691,7 +9835,7 @@ async function processMessage(phone, text, raw = {}) {
       console.warn('[Note] WARN: malformed marker, dropping block');
       await logMarker(collab.id, 'NOTE_ACTION', 'rejected', 'schema_invalid', reply);
       // fala = persistência: nunca deixar o "Anotado!" sair com o bloco rejeitado.
-      const baseN = (parsedNote.cleanText || '').trim();
+      const baseN = sanitizeOptimisticConfirm((parsedNote.cleanText || '').trim(), 'failed'); // NOTE-ACTION-CONFAB-NOPROSE: tira "Anotado!" otimista quando nada persistiu
       reply = (baseN ? baseN + '\n\n' : '') + '_⚠️ não consegui salvar a anotação — me manda de novo?_';
     } else if (parsedNote) {
       const a = parsedNote.action;
@@ -9709,7 +9853,7 @@ async function processMessage(phone, text, raw = {}) {
           dupBlocked = true;
           recentNoteDupBlocks.set(dupKey, nowMs); // arma o bypass p/ re-tentativa
           await logMarker(collab.id, 'NOTE_ACTION', 'skipped', `dup:${String(dup.note.id).slice(0, 8)} t=${dup.titleSim.toFixed(2)} b=${dup.bodyOverlap.toFixed(2)}`, null);
-          const baseN = (parsedNote.cleanText || '').trim();
+          const baseN = sanitizeOptimisticConfirm((parsedNote.cleanText || '').trim(), 'failed'); // NOTE-ACTION-CONFAB-NOPROSE: tira "Anotado!" otimista quando nada persistiu
           const corpo = String(dup.note.body || '').slice(0, 500);
           reply = (baseN ? baseN + '\n\n' : '') +
             `📋 Essa anotação já existe: *${dup.note.title}*\n\n${corpo}\n\nQuer que eu *adicione* os itens novos nela? Responde "anexa" que eu coloco lá.`;
@@ -9741,6 +9885,7 @@ async function processMessage(phone, text, raw = {}) {
         await logMarker(collab.id, 'NOTE_ACTION', res.ok ? 'executed' : 'rejected', `${a.action}:${res.ok ? 'ok' : String(res.error).slice(0, 120)}`, null);
         let baseN = parsedNote.cleanText || '';
         if (!res.ok) {
+          baseN = sanitizeOptimisticConfirm(baseN, 'failed'); // NOTE-ACTION-CONFAB-NOPROSE (ramo 3 — res.ok=false)
           baseN = (baseN ? baseN + '\n\n' : '') + (res.error === 'note_not_found'
             ? '_não achei essa anotação. Me diz o título que eu procuro._'
             : '_⚠️ não consegui salvar a anotação agora — tenta de novo?_');
@@ -10655,7 +10800,7 @@ async function processMessage(phone, text, raw = {}) {
   // não persistiu (pediu fonte / "não achei" / coaching). query_* sempre 'executed'.
   const FIN_WRITE = new Set([
     'register_transaction', 'card_purchase', 'card_refund', 'delete_transaction', 'edit_transaction',
-    'register_bill', 'delete_bill', 'pay_bill', 'create_goal', 'update_goal', 'edit_goal', 'delete_goal',
+    'register_bill', 'delete_bill', 'set_bill_amount', 'pay_bill', 'create_goal', 'update_goal', 'edit_goal', 'delete_goal',
     'set_budget', 'create_account', 'edit_account', 'create_card', 'pay_invoice', 'transfer',
     'reconcile_resolve',
   ]);
@@ -10775,13 +10920,27 @@ async function processMessage(phone, text, raw = {}) {
   if (!_finActionRan && typeof reply === 'string') {
     try {
       const { detectRegisterIntent, looksLikeFinanceConfirmation } = require('./finance/detect-register-intent');
-      if (looksLikeFinanceConfirmation(reply)) {
+      const { detectDefeatism } = require('./finance/derrotismo-detect');
+      const { detectCorrection } = require('./finance/detect-correction');
+      const _isConfab = looksLikeFinanceConfirmation(reply);
+      // CAMINHO 2 / FATIA 1 (F1.3b): intercepta também a RECUSA do LLM (derrotismo), não só o
+      // fake-sucesso (confab). Gate de finança = skill ativa (skill_active setado no 9124;
+      // _metrics.actionable_intent só existe no 11073, DEPOIS daqui). A recusa NUNCA vai ao user.
+      const _defPhrase = detectDefeatism(reply, {}).phrase;
+      const _defeatFinance = !!_defPhrase && _metrics.skill_active === 'financeiro-pessoal';
+      if (_isConfab || _defeatFinance) {
         const _origMsg = String(inboundVerbatimText || text || '');
         const _det = detectRegisterIntent(_origMsg, { typeHint: reply });
-        console.warn(`[Finance] ANTI-FABRICAÇÃO: confirmação sem marker (det=${_det ? _det.type + '/' + _det.amount : 'null'}) phone=${_phoneTail}`);
-        await logMarker(collab.id, 'FINANCE_ACTION', 'rejected', 'fabricated_no_marker', reply);
-        const _askAgain = 'Opa! Quase anotei, mas me perdi 😅 Me confirma rapidinho numa frase: *quanto* foi, se é *entrada ou saída*, e de onde saiu/entrou. Ex: _"entrou 300 no Nubank — show"_.';
-        if (_det) {
+        if (_isConfab) console.warn(`[Finance] ANTI-FABRICAÇÃO: confirmação sem marker (det=${_det ? _det.type + '/' + _det.amount : 'null'}) phone=${_phoneTail}`);
+        else console.warn(`[Finance] DERROTISMO interceptado (skill=finance, det=${_det ? 'create' : 'null'}) phone=${_phoneTail}`);
+        await logMarker(collab.id, 'FINANCE_ACTION', 'rejected', _isConfab ? 'fabricated_no_marker' : 'defeatism_intercepted', String(reply).slice(0, 200));
+        // Velocímetro UNIFICADO (review 24/06): a "fire" da rede mora SEMPRE em marker_type='CHOKEPOINT'
+        // (sentido no reason) — senão `where marker_type='CHOKEPOINT'` perde a maioria das linhas da curva.
+        try { await logMarker(collab.id, 'CHOKEPOINT', 'redirected', (_isConfab ? 'confab' : 'defeatism') + ':finance', String(reply).slice(0, 120)); } catch (_) {}
+        const _askAgain = 'Opa, deixa eu te ajudar com isso — me manda numa frase só: o que lançar/mudar, *quanto* e *de onde* (ex: _"gastei 12 no lanche, débito"_). Se forem vários, manda um de cada vez que eu vou anotando. 👍';
+        if (_det && _isConfab) {
+          // CONFAB (LLM narrou "sucesso" sem marker): re-registra DIRETO (anti-fabricação original — o
+          // user JÁ viu "sucesso", re-registrar casa a expectativa). MUST-FIX #A segura o chokepoint.
           const _params = { type: _det.type, amount: _det.amount, description: _det.description };
           if (_det.account_name) _params.account_name = _det.account_name;
           if (_det.method) _params.method = _det.method;
@@ -10789,19 +10948,72 @@ async function processMessage(phone, text, raw = {}) {
             const _real = await handleFinanceAction(collab, 'register_transaction', _params);
             reply = (_real && _real.trim()) ? _real : _askAgain;
             if (_real && _real.trim()) {
+              // MUST-FIX #A: re-registro REAL sem marker → sinalizar persistência, senão o chokepoint
+              // (nothingPersisted=!marker_emitted) rebaixa o "registrada!" REAL pra "não consegui" = confab INVERSO.
+              _metrics.marker_emitted = 'FINANCE_ACTION(anti_fabric)';
               await logMarker(collab.id, 'FINANCE_ACTION', 'executed', `register_transaction(anti_fabric:${_det.type})`, null);
-              console.log(`[Finance] ANTI-FABRICAÇÃO: re-registrado deterministicamente (${_det.type} ${_det.amount}) phone=${_phoneTail}`);
+              console.log(`[Finance] re-registrado deterministicamente (${_det.type} ${_det.amount}) phone=${_phoneTail}`);
             }
           } catch (_e) {
-            console.error('[Finance] ANTI-FABRICAÇÃO re-registro err:', _e.message);
+            console.error('[Finance] re-registro err:', _e.message);
             reply = _askAgain;
+          }
+        } else if (_det) {
+          // CLOSURE 2 (review 24/06): DERROTISMO (LLM recusou) → NÃO grava direto (bypassaria "sempre
+          // confirmar"). ESTAGIA pelo launch_confirm → "Vou lançar... Confirma?". Mata o confab-inverso
+          // por CONSTRUÇÃO (montagem é pergunta → awaiting_confirm → chokepoint não dispara) + protege
+          // misparse (o user confere o que a extração entendeu antes de gravar).
+          const _params = { type: _det.type, amount: _det.amount, description: _det.description };
+          if (_det.account_name) _params.account_name = _det.account_name;
+          if (_det.method) _params.method = _det.method;
+          let _staged = null;
+          try { _staged = await stageLaunches(collab.id, [{ action: 'register_transaction', params: _params }], _origMsg); }
+          catch (_e) { console.warn('[F1.3b stage] err:', _e.message); }
+          if (_staged && _staged.allClean && _staged.items.length) {
+            const _preview = launchConfirm.buildLaunchPreview(_staged.items);
+            const _iid = await pendingIntents.openIntent(collab.id, 'finance_source', { form: 'launch_confirm', actions: _staged.actions }, _preview);
+            if (_iid) {
+              _metrics.awaiting_user_confirm = true; // montagem é pergunta → chokepoint não rebaixa
+              await logMarker(collab.id, 'FINANCE_ACTION', 'skipped', 'staged_launch:1(derrotismo)', null);
+              reply = _preview;
+            } else {
+              reply = _askAgain; // openIntent falhou → honesto, nunca finge
+            }
+          } else {
+            reply = _askAgain; // fonte não resolveu limpo → pede honesto (não grava direto, não mente)
+          }
+        } else if (_defeatFinance) {
+          // Recusou num turno de finança e não dá pra extrair create → correção honesta (edit/delete)
+          // ou pedido honesto. NUNCA a mentira "não existe comando".
+          const _corr = detectCorrection(_origMsg);
+          if (_corr) {
+            const _act = _corr.op === 'delete' ? 'delete_transaction' : 'edit_transaction';
+            const _recent = await financeService.listRecentTransactions(collab.id, { hours: EDIT_WINDOW_HOURS, limit: 10 });
+            const _v = resolveFinanceCapability({ action: _act, params: { which: _corr.ref || '' } }, { candidates: _recent });
+            if (_v.reachable) {
+              const _p2 = _corr.op === 'delete' ? { which: _corr.ref } : { which: _corr.ref || '', amount: _corr.amount, category: _corr.category };
+              const _r2 = await handleFinanceAction(collab, _act, _p2);
+              if (_r2 && _r2.trim()) {
+                reply = _r2;
+                _metrics.marker_emitted = 'FINANCE_ACTION(derrotismo_corr)'; // MUST-FIX #A
+                await logMarker(collab.id, 'FINANCE_ACTION', 'executed', `derrotismo_corr:${_act}`, null);
+              } else {
+                reply = _askAgain;
+              }
+            } else {
+              reply = buildHonestRedirect(_v);
+              await logMarker(collab.id, 'FINANCE_ACTION', 'redirected', `derrotismo_redirect:${_v.reason}`, null);
+            }
+          } else {
+            reply = _askAgain;
+            await logMarker(collab.id, 'FINANCE_ACTION', 'redirected', 'derrotismo_askhonest', null);
           }
         } else {
           reply = _askAgain;
         }
       }
     } catch (_e) {
-      console.warn('[Finance] ANTI-FABRICAÇÃO guard err (silent):', _e.message);
+      console.warn('[Finance] ANTI-FABRICAÇÃO/derrotismo guard err (silent):', _e.message);
     }
   }
 
@@ -11246,17 +11458,85 @@ Output AGORA, apenas o marker:`;
   // Se a fala afirma conclusão (✅+verbo / verbo no início) mas NADA persistiu neste
   // turno (nem o auto-retry), rebaixa pra honesta. Único lugar; cobre os ~14 handlers.
   // Roda antes da voz E do texto. Não toca ✅ decorativo (gate verbo-baseado).
+  //
+  // CAMINHO 2 / FATIA 0 — o chokepoint vira VELOCÍMETRO: mede o disparo (linha confab) e o
+  // catch ALERTA (não engole), pra a trava nunca mais morrer calada (CONFAB-CHOKEPOINT-SCOPE,
+  // ReferenceError de escopo, 106x silencioso). Métrica cabe no schema real de marker_logs:
+  // result∈CHECK('executed','rejected','skipped','redirected','fallback') → 'redirected' (a
+  // trava redirecionou a fala falsa pra honesta); marker_type='CHOKEPOINT'; reason='confab:<dom>'.
+  const _domainOf = (m) => {
+    const em = String((m && m.marker_emitted) || '');
+    if (/FINANCE/i.test(em)) return 'finance';
+    if (/TASK|CHECKLIST/i.test(em)) return 'task';
+    if (/EVENT/i.test(em)) return 'event';
+    if (/HABIT/i.test(em)) return 'habit';
+    if (/COORDINATION|RSVP/i.test(em)) return 'coordination';
+    return 'unknown';
+  };
   try {
-    reply = enforceNoMarkerHonesty(reply, {
+    const _hon = enforceNoMarkerHonesty(reply, {
       nothingPersisted: !_metrics.marker_emitted && !_metrics.auto_retry_succeeded,
-      // CONFAB-CHOKEPOINT-SCOPE (24/06): recomputa local. _replyIsInfoGathering é `const`
-      // do try da métrica (acima) — FORA de escopo aqui. Lê-la jogava ReferenceError 106x
-      // desde 22/06 13:03 (deploy do chokepoint) e o catch abaixo engolia → a Camada 1
-      // anti-confabulação NUNCA rodou em produção. Mesmas funções de módulo (reply-classify).
+      // CONFAB-CHOKEPOINT-SCOPE (24/06): recomputa local (não ler _replyIsInfoGathering — `const`
+      // de outro try, fora de escopo → ReferenceError). Mesmas funções de módulo (reply-classify).
       infoGathering: hasTrailingQuestion(reply) || isInfoGatheringReply(reply),
       awaitingConfirm: !!_metrics.awaiting_user_confirm,
-    });
-  } catch (e) { console.warn('[ConfabGuard] non-fatal:', e.message); }
+    }, { meta: true });
+    reply = _hon.reply;
+    if (_hon.fired) {
+      try { await logMarker(collab.id, 'CHOKEPOINT', 'redirected', `confab:${_domainOf(_metrics)}`, String(reply).slice(0, 200)); } catch (_) {}
+    }
+  } catch (e) {
+    // Liveness (Fatia 0): NUNCA engolir. Trava quebrada (ex.: ReferenceError) vira métrica
+    // guard_error + erro no log — não silêncio. É o que faltou no CONFAB-CHOKEPOINT-SCOPE.
+    console.error('[ConfabGuard] FALHOU (trava pode estar morta):', e.message, e.stack);
+    try { await logMarker(collab.id, 'CHOKEPOINT', 'rejected', `guard_error:${String(e.message).slice(0, 80)}`, null); } catch (_) {}
+  }
+
+  // CAMINHO 2 / FATIA 0 — velocímetro do DERROTISMO (linha SEPARADA do confab; provisório,
+  // vira preciso na Fatia 1 com o resolver). Só MEDE aqui (não altera o reply). result='skipped'
+  // (detectou, não agiu nesta fatia); reason='derrotismo_suspect:<dom>'.
+  try {
+    if (reply && typeof reply === 'string') {
+      const { detectDefeatism } = require('./finance/derrotismo-detect');
+      const _def = detectDefeatism(reply, { actionableIntent: !!_metrics.actionable_intent, markerEmitted: !!_metrics.marker_emitted });
+      if (_def.suspect) {
+        try { await logMarker(collab.id, 'CHOKEPOINT', 'skipped', `derrotismo_suspect:${_domainOf(_metrics)}`, String(_def.phrase || '').slice(0, 120)); } catch (_) {}
+      }
+    }
+  } catch (e) { console.warn('[DerrotismoWatch] non-fatal:', e.message); }
+
+  // CONFAB-PARTIAL-LEAK (Fase 0, 26/06) — VELOCÍMETRO de confab de FALHA PARCIAL.
+  // Só OBSERVA (não toca o reply). A Camada 1 (chokepoint) é BINÁRIA (dispara só se NADA
+  // persistiu no turno); a falha PARCIAL — um marker rejeitado coexistindo com outro
+  // executado — escapa dela. Mecanismo: reusa a janela-de-turno já provada do bloco de
+  // métrica (collaborator_id + _t0-1000ms) pra ler os markers DO TURNO com result. Gate
+  // ESTRUTURAL puro (sem léxico — o detector de confab erra "fico quieto", design §4).
+  // Escreve numa tabela DESCARTÁVEL (confab_partial_observations), FORA do marker_logs:
+  // sidesteppa o CHECK de result (sem 'observed') e o evaluate_known_issues (que varre
+  // marker_logs sem filtrar result). Olho humano lê a reply inteira e julga o vazamento.
+  // DROPAR este bloco + a tabela ao fechar o gate de 14 dias (design §6).
+  try {
+    const { detectPartialConfab } = require('./lib/confab-partial-observe');
+    const _sinceTurn = new Date(_t0 - 1000).toISOString();
+    const { data: _turnMarkers } = await supabase
+      .from('marker_logs')
+      .select('marker_type, result')
+      .eq('collaborator_id', collab.id)
+      .gte('created_at', _sinceTurn);
+    const _hit = detectPartialConfab(_turnMarkers || []);
+    if (_hit) {
+      console.warn(`[ConfabPartial] OBSERVED rej=${_hit.rejected.join(',')} exec=${_hit.executed.join(',')} reply="${String(reply || '').slice(0, 200).replace(/\n/g, ' ')}"`);
+      try {
+        await supabase.from('confab_partial_observations').insert({
+          collaborator_id: collab.id,
+          reply: String(reply || ''),
+          rejected_types: _hit.rejected,
+          executed_types: _hit.executed,
+          reason: `rej:${_hit.rejected.join(',')}|exec:${_hit.executed.join(',')}`,
+        });
+      } catch (e) { console.warn('[ConfabPartial] insert non-fatal:', e.message); }
+    }
+  } catch (e) { console.warn('[ConfabPartialWatch] non-fatal:', e.message); }
 
   // SYNC-EXCUSE-CONFAB — rede determinística: remove "delay de sincronização"/desculpa
   // técnica inventada pra justificar atrasada (banco é ao vivo; só fatura sincroniza).
@@ -11401,7 +11681,7 @@ async function sendRitual(collaboratorId, ritualType, opts = {}) {
       // due_date entra (tarefa sem prazo pode ser fechada). O dedup por série já veio do ctx.
       const _todayYmd = todaySaoPaulo();
       const _closingPool = (ctx && Array.isArray(ctx.workTasks) ? ctx.workTasks : [])
-        .filter((t) => !t.due_date || String(t.due_date) <= _todayYmd);
+        .filter((t) => isVisibleForDay(t, _todayYmd)); // BRIEFING-FUTURE-TASK-AS-TODAY: predicado único (cutoff=hoje no fechamento)
       _closingItems = buildClosingItems(_closingPool, { today: _todayYmd });
     } catch (e) { console.warn('[Closing] buildClosingItems err:', e.message); }
     if (_closingItems.length) {
@@ -12970,7 +13250,7 @@ async function applyMonthlyPlan(collaborator, plan) {
   return { id: created?.id, action: 'created' };
 }
 
-module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamSummary, buildWeeklyRetrospective, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseEventUpdateMarker, parseWeeklyPlanMarker, parseHabitMarker, parseDndMarker, parseDataClassifyMarker, applyDataClassify, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, applyHabitActions, applyDnd, getDndState, consolidateMemoryFor, decayExpiredMemories, generateWeeklySummaryFor, updateCollaboratorProfile, looksLikeMemory, resolveTaskByShortId, applyEventUpdates, applyRsvp, applyPersonalListActions, applyAnnouncementAction, parseAnnouncementApprovalMarker, applyAnnouncementApproval, applyCoordinationRequestAction, parseCoordinationResponseMarker, applyCoordinationResponseAction, computeProgress, getRitualIntroDecision, countRecentRelaysToRecipient, buildRelayLimitHint, parseMonthlyPlanMarker, applyMonthlyPlan, handleFinanceAction, parseFinanceMarkers,
+module.exports = { processMessage, sendRitual, sendCoordinatorReport, buildTeamSummary, buildWeeklyRetrospective, parseOnboardingMarker, persistOnboarding, parseMemoryMarker, parseProjectMarker, parseTaskUpdateMarker, parseEventUpdateMarker, parseWeeklyPlanMarker, parseHabitMarker, parseDndMarker, parsePrefsMarker, parseDataClassifyMarker, applyDataClassify, persistMemoryRows, persistProject, applyTaskActions, applyWeeklyPlan, applyHabitActions, applyDnd, getDndState, consolidateMemoryFor, decayExpiredMemories, generateWeeklySummaryFor, updateCollaboratorProfile, looksLikeMemory, resolveTaskByShortId, applyEventUpdates, applyRsvp, applyPersonalListActions, applyAnnouncementAction, parseAnnouncementApprovalMarker, applyAnnouncementApproval, applyCoordinationRequestAction, parseCoordinationResponseMarker, applyCoordinationResponseAction, computeProgress, getRitualIntroDecision, countRecentRelaysToRecipient, buildRelayLimitHint, parseMonthlyPlanMarker, applyMonthlyPlan, handleFinanceAction, parseFinanceMarkers,
   // Fase 3 chat de grupo — parsers/appliers de trabalho reusados no chat (auditados send-free;
   // applyEventActions gateia o único send via opts.suppressNotify). WhatsApp inalterado.
   parseEventCreateMarker, applyEventActions, parseCheckpointBatchMarker, applyCheckpointBatch,

@@ -25,6 +25,7 @@ import { showToast } from '../../components/Toast';
 import { QuickCreateSheet } from '../../components/QuickCreateSheet';
 import { TaskGroupSheet } from '../../components/TaskGroupSheet';
 import { GroupTaskSheet } from './GroupTaskSheet';
+import { TaskDetailSheet } from '../../components/TaskDetailSheet';
 import type { Task } from '../../types';
 
 const first = (name: string | null | undefined) => (name ?? '').split(' ')[0];
@@ -101,6 +102,7 @@ export function GrupoWorkspace() {
   const [createOpen, setCreateOpen] = useState(false);
   const [createKind, setCreateKind] = useState<'task' | 'group'>('task');
   const [editing, setEditing] = useState<PoolTaskRow | null>(null);
+  const [reading, setReading] = useState<PoolTaskRow | null>(null);
   const [openPkgId, setOpenPkgId] = useState<string | null>(null);
   const [rowBusy, setRowBusy] = useState<string | null>(null);
   const [childBusy, setChildBusy] = useState<string | null>(null);
@@ -329,7 +331,7 @@ export function GrupoWorkspace() {
           <SectionLabel danger>🔴 Atrasadas</SectionLabel>
           <div className={`${surfaceCls} border-danger/35`}>
             {buckets.overdue.map(t => (
-              <PoolRow key={t.id} t={t as PoolTaskRow} today={today} busy={rowBusy === t.id} onToggle={onToggle} onOpen={setEditing} />
+              <PoolRow key={t.id} t={t as PoolTaskRow} today={today} busy={rowBusy === t.id} onToggle={onToggle} onOpen={setReading} />
             ))}
           </div>
         </section>
@@ -341,7 +343,7 @@ export function GrupoWorkspace() {
           <SectionLabel>⏰ Vence em breve</SectionLabel>
           <div className={`${surfaceCls} border-border`}>
             {buckets.dueSoon.map(t => (
-              <PoolRow key={t.id} t={t as PoolTaskRow} today={today} busy={rowBusy === t.id} onToggle={onToggle} onOpen={setEditing} />
+              <PoolRow key={t.id} t={t as PoolTaskRow} today={today} busy={rowBusy === t.id} onToggle={onToggle} onOpen={setReading} />
             ))}
           </div>
         </section>
@@ -410,7 +412,7 @@ export function GrupoWorkspace() {
           <SectionLabel>📅 Mais pra frente{buckets.later.some(t => !t.due_date) ? ' · sem prazo' : ''}</SectionLabel>
           <div className={`${surfaceCls} border-border`}>
             {buckets.later.map(t => (
-              <PoolRow key={t.id} t={t as PoolTaskRow} today={today} busy={rowBusy === t.id} onToggle={onToggle} onOpen={setEditing} />
+              <PoolRow key={t.id} t={t as PoolTaskRow} today={today} busy={rowBusy === t.id} onToggle={onToggle} onOpen={setReading} />
             ))}
           </div>
         </section>
@@ -422,7 +424,7 @@ export function GrupoWorkspace() {
           <SectionLabel>✅ Feitas recentemente</SectionLabel>
           <div className={`${surfaceCls} border-border opacity-85`}>
             {buckets.doneRecent.map(t => (
-              <PoolRow key={t.id} t={t as PoolTaskRow} today={today} busy={rowBusy === t.id} onToggle={onToggle} onOpen={setEditing} />
+              <PoolRow key={t.id} t={t as PoolTaskRow} today={today} busy={rowBusy === t.id} onToggle={onToggle} onOpen={setReading} />
             ))}
           </div>
         </section>
@@ -453,6 +455,26 @@ export function GrupoWorkspace() {
         onCancelTask={id => ws.cancelTask.mutateAsync(id)}
         onReopen={t => void onToggle(t, false)}
       />
+      {reading && (() => {
+        const r = reading;
+        const isDone = r.status === 'done';
+        return (
+          <TaskDetailSheet
+            open
+            onClose={() => setReading(null)}
+            title={r.title}
+            metaLine={`👥 ${group.name}${r.creator_name ? ` · criada por ${first(r.creator_name)}` : ''}`}
+            description={r.description}
+            isDone={isDone}
+            canComplete={!isDone && isMember}
+            completing={rowBusy === r.id}
+            doneByLine={isDone && r.completed_by_name ? `concluída por ${first(r.completed_by_name)}` : undefined}
+            onComplete={isMember ? () => { void onToggle(r, true); setReading(null); } : undefined}
+            onReopen={isDone && isMember ? () => { void onToggle(r, false); setReading(null); } : undefined}
+            onEdit={isMember ? () => { setEditing(r); setReading(null); } : undefined}
+          />
+        );
+      })()}
       <TaskGroupSheet
         open={Boolean(openPkgId)}
         groupId={openPkgId}

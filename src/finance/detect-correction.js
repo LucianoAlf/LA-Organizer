@@ -37,13 +37,13 @@ const RE_HAS_DIGIT    = /\d/;
 
 // EDIT AMOUNT — correction verb at start of normalized text
 // Covers: era | na verdade (era|foi|e) | corrige[r] [pra] | ajusta[r] [pra] | muda[r] o valor [pra]
-const RE_EDIT_VERB = /^(era|na verdade\s+(era|foi|e)\s*|corrige(r)?\s*(pra\s*)?|ajusta(r)?\s*(pra\s*)?|muda(r)?\s+o\s+valor\s*(pra\s*)?)/;
+const RE_EDIT_VERB = /^(era|na verdade\s+(era|foi|e)\s*|corrige(r)?\s*(pra\s*)?|ajusta(r)?\s*(pra\s*)?|(muda|altera)(r)?\s+o\s+valor\s*(pra\s*)?)/;
 
 // Number extraction: optional "R$" then digits with optional thousands-dot and comma-decimal
 const RE_NUMBER = /(R\$\s*)?([\d.]+,\d+|\d+)/;
 
 // EDIT CATEGORY — change verb + "categoria" keyword
-const RE_CAT_VERB = /\b(muda(r)?|troca(r)?|poe|coloca(r)?|classifica(r)?)\b/;
+const RE_CAT_VERB = /\b(muda(r)?|troca(r)?|poe|coloca(r)?|classifica(r)?|corrig\w*|alter\w*|ajust\w*)\b/;
 const RE_CAT_WORD = /\bcategoria\b/;
 
 // Extract word after "pra"/"para"
@@ -116,4 +116,21 @@ function detectCorrection(rawText) {
   return null;
 }
 
-module.exports = { detectCorrection };
+// ── detectFinanceEditIntent — intenção LOOSE de mexer numa TRANSAÇÃO (p/ o redirect honesto) ──
+// Mais ampla que detectCorrection (que exige extração COMPLETA do alvo pra EXECUTAR). Aqui só
+// reconhecemos "o usuário quer editar/apagar um LANÇAMENTO" — pro engine decidir o redirect honesto
+// quando está FORA da janela (não precisa do alvo). Exige substantivo de TRANSAÇÃO (não "meta"/
+// "conta"/"valor" sozinho) + verbo de edição/exclusão → evita falso-positivo. (Caminho 2 / Fatia 1)
+const RE_TXN_NOUN_LOOSE = /\b(lancamento|lancamentos|gasto|gastos|despesa|despesas|compra|compras|transacao|transacoes)\b/;
+const RE_DELETE_LOOSE = /\b(exclui\w*|apaga\w*|deleta\w*|remov\w*)\b/;
+const RE_EDIT_LOOSE = /\b(era|corrig\w*|ajust\w*|alter\w*|muda\w*|troca\w*|edita\w*|p[õo]e|coloca\w*|classific\w*)\b/;
+function detectFinanceEditIntent(rawText) {
+  if (typeof rawText !== 'string' || rawText.trim() === '') return null;
+  const norm = normalize(rawText);
+  if (!RE_TXN_NOUN_LOOSE.test(norm)) return null;     // precisa referenciar uma TRANSAÇÃO
+  if (RE_DELETE_LOOSE.test(norm)) return { op: 'delete' };
+  if (RE_EDIT_LOOSE.test(norm)) return { op: 'edit' };
+  return null;
+}
+
+module.exports = { detectCorrection, detectFinanceEditIntent };

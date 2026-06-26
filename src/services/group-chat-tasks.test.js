@@ -17,6 +17,7 @@ function makeDb({ tasks = [], events = [] } = {}) {
         if (st.filters.parent_task_id && t.parent_task_id !== st.filters.parent_task_id) return false;
         if (st.filters.neq_status && t.status === st.filters.neq_status) return false;
         if (st.filters.ilike_title && String(t.title).toLowerCase() !== st.filters.ilike_title) return false;
+        if (st.filters.notnull_recurrence_rule && (t.recurrence_rule === null || t.recurrence_rule === undefined)) return false;
         return true;
       });
       if (st.op === 'update') {
@@ -37,6 +38,7 @@ function makeDb({ tasks = [], events = [] } = {}) {
       gte() { return b; },
       ilike(c, v) { st.filters['ilike_' + c] = String(v).toLowerCase(); return b; },
       is() { return b; },
+      not(c, op, v) { if (op === 'is' && v === null) st.filters['notnull_' + c] = true; return b; },
       order() { return b; },
       limit() { return b; },
       update(patch) { st.op = 'update'; st.patch = patch; return b; },

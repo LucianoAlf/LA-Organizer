@@ -62,8 +62,12 @@ export async function editTaskSeries(
       }
       // Sprint 26 pattern — .select('id') + checagem de linha pra pegar silent
       // fail de RLS (update sem erro mas que afeta 0 linhas).
+      // FATIA 3 (ciclo de vida): desligar (newRule===null) ENCERRA a série → series_ended_at=now()
+      // (cinto-e-suspensório: o rule=null já para o materializeAll via filtro rule IS NOT NULL,
+      // mas o guard passa a concordar). Re-ativar com regra nova LIMPA series_ended_at (volta a gerar).
+      const seriesEndedAt = newRule === null ? new Date().toISOString() : null;
       const { data: upRows, error: upErr } = await supabase.from('tasks')
-        .update({ recurrence_rule: newRule }).eq('id', plan.seriesId).select('id');
+        .update({ recurrence_rule: newRule, series_ended_at: seriesEndedAt }).eq('id', plan.seriesId).select('id');
       if (upErr) throw new Error(`template rule update: ${upErr.message}`);
       if (!upRows || upRows.length === 0) {
         throw new Error(`template rule update afetou 0 linhas (RLS bloqueou? id=${plan.seriesId})`);
@@ -84,7 +88,7 @@ export async function editTaskSeries(
       }
       if (plan.rematerialize && newRule) {
         const { data: tpl, error: tErr } = await supabase.from('tasks')
-          .select('id, recurrence_rule, due_date').eq('id', plan.seriesId).single();
+          .select('id, recurrence_rule, due_date, series_ended_at').eq('id', plan.seriesId).single();
         if (tErr) throw new Error(`reload template: ${tErr.message}`);
         if (tpl) {
           const r = await materializeSeriesClient('tasks', tpl as { id: string; recurrence_rule: string; due_date: string });

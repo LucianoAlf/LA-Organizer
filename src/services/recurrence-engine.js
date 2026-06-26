@@ -318,6 +318,9 @@ function _cloneTemplate(table, template, occurrenceDate) {
   delete row.followup_sent_at;
   delete row.reminded_at;
   delete row.delegated_at;
+  // FATIA 2: series_ended_at é do MOLDE (ciclo de vida da série). Instância NUNCA herda —
+  // senão um clone de série encerrada nasceria já "encerrado" e poluiria queries do ciclo.
+  delete row.series_ended_at;
 
   // Marca como INSTÂNCIA (não template)
   row.recurrence_rule = null;
@@ -373,10 +376,12 @@ async function materializeAll() {
       .not('recurrence_rule', 'is', null)
       .is('recurrence_parent_id', null)
       .eq('data_classification', 'real')
-      // Balde A (audit 19/06): molde concluído/cancelado NÃO gera mais instância. Antes,
-      // sem este filtro, um template `done` (caso Gabi) seguia parindo cópia `pending` toda
-      // madrugada → a tarefa "voltava" mesmo depois de fechada.
-      .not('status', 'in', '("done","cancelled")')
+      // FATIA 2 (24/06 — flip do ciclo de vida): gera só SÉRIE ATIVA (series_ended_at IS NULL),
+      // não mais por status da ocorrência. Concluir a 1ª ocorrência (status=done) NÃO congela
+      // a série. "Encerrar série" (scope:'series'/endSeries) seta series_ended_at → para aqui.
+      // MANTÉM recurrence_rule IS NOT NULL + data_classification (gate: se a regra cair, tarefa
+      // não-recorrente vazaria).
+      .is('series_ended_at', null)
       .limit(500);
     if (error) {
       console.error(`[recurrence] templates query err table=${table}:`, error.message);
@@ -399,4 +404,43 @@ async function materializeAll() {
   return totals;
 }
 
-module.exports = { parseRule, nextOccurrences, materializeSeries, materializeAll, shiftReminderToInstance, buildGroupChildRow };
+/**
+ * FATIA 2 — Encerrar a SÉRIE 1:1 (a pedido: "para de me lembrar / encerra isso").
+ * Extraído do bloco inline do engine (engine.js scope:'series') p/ ser testável e
+ * acoplado ao flip: setar series_ended_at é o que de fato PARA a série pós-flip
+ * (antes era o status='cancelled', que o guard novo ignora).
+ *
+ * Faz 3 escritas, owner-scoped:
+ *  1) series_ended_at = now() no MOLDE (lifecycle) — idempotente (só se ainda null),
+ *     INDEPENDENTE do status (uma ocorrência concluída [done] também pode ser encerrada).
+ *  2) cancela a ocorrência-molde SE ainda aberta (preserva done = histórico).
+ *  3) cancela TODAS as instâncias não-done (passado + futuro).
+ *
+ * FATIA 3: cancela TUDO não-done (uniformizado com o grupo endSeries), não só futuras.
+ * "para de me lembrar / não preciso mais" deve matar o overdue passado também — senão
+ * o atraso vira nag fantasma de uma série já encerrada. Cancel é soft (reversível via revive).
+ *
+ * @param {{supabase:Object, templateId:string, ownerId:string}} args
+ * @returns {Promise<{ended:boolean, templateId:string, cancelled:number}>}
+ */
+async function endSeries1on1({ supabase, templateId, ownerId }) {
+  const nowIso = new Date().toISOString();
+  // 1) lifecycle: encerra a série (idempotente; qualquer status da ocorrência)
+  await supabase.from('tasks')
+    .update({ series_ended_at: nowIso })
+    .eq('id', templateId).eq('assigned_to', ownerId).is('series_ended_at', null);
+  // 2) cancela a ocorrência-molde se ainda aberta (não mexe em done)
+  const rTpl = await supabase.from('tasks')
+    .update({ status: 'cancelled' })
+    .eq('id', templateId).eq('assigned_to', ownerId)
+    .not('status', 'in', '("done","cancelled")').select('id');
+  // 3) cancela TODAS as instâncias não-done (passado + futuro)
+  const rKids = await supabase.from('tasks')
+    .update({ status: 'cancelled' })
+    .eq('recurrence_parent_id', templateId).eq('assigned_to', ownerId)
+    .not('status', 'in', '("done","cancelled")').select('id');
+  const cancelled = (rTpl.data ? rTpl.data.length : 0) + (rKids.data ? rKids.data.length : 0);
+  return { ended: true, templateId, cancelled };
+}
+
+module.exports = { parseRule, nextOccurrences, materializeSeries, materializeAll, endSeries1on1, shiftReminderToInstance, buildGroupChildRow };

@@ -44,6 +44,10 @@ const ALIASES = {
   // Excluir conta fixa → delete_bill
   remove_bill: 'delete_bill', deactivate_bill: 'delete_bill', cancel_bill: 'delete_bill',
   delete_fixed_bill: 'delete_bill', remove_fixed_bill: 'delete_bill', deletar_conta: 'delete_bill',
+  // Ajustar valor PREVISTO de conta fixa num mês (override mensal) → set_bill_amount
+  adjust_bill: 'set_bill_amount', set_bill_month: 'set_bill_amount', update_bill_amount: 'set_bill_amount',
+  override_bill: 'set_bill_amount', bill_override: 'set_bill_amount', set_bill_value: 'set_bill_amount',
+  adjust_bill_amount: 'set_bill_amount', ajustar_conta: 'set_bill_amount', edit_bill_amount: 'set_bill_amount',
   // Estorno/devolução/reembolso de cartão → card_refund (Rose 14/06: "estornar" virava apagar/loop)
   estorno: 'card_refund', estornar: 'card_refund', estorno_cartao: 'card_refund',
   card_credit: 'card_refund', credit_card_refund: 'card_refund', refund: 'card_refund',

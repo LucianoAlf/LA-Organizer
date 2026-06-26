@@ -6,9 +6,9 @@ import { Button } from '../../../components/Button';
 import { ComboBox } from '../../../components/ComboBox';
 import { DateInput } from '../../../components/DateInput';
 import { Field } from '../../../components/Field';
-import { useAccounts, useCards, usePayBill } from '../../../hooks/useFinanceiro';
+import { useAccounts, useBillOverrides, useCards, usePayBill } from '../../../hooks/useFinanceiro';
 import { parsePayMethod } from '../../../lib/payMethod';
-import type { PfBill } from '../../../lib/financeiro';
+import { resolveBillAmount, type PfBill } from '../../../lib/financeiro';
 
 function todayYmd() {
   const d = new Date();
@@ -21,6 +21,10 @@ export function PagarContaSheet({ open, onClose, bill }: { open: boolean; onClos
   const accountsQ = useAccounts();
   const cardsQ = useCards();
   const payMut = usePayBill();
+  // Override de valor do MÊS CORRENTE (feature override mensal): vira o valor sugerido no pagamento.
+  const compCorrente = todayYmd().slice(0, 7) + '-01';
+  const overridesQ = useBillOverrides(compCorrente);
+  const override = bill ? overridesQ.data?.[bill.id] : undefined;
   const [amountText, setAmountText] = useState('');
   const [method, setMethod] = useState('none');
   const [date, setDate] = useState(todayYmd());
@@ -28,11 +32,12 @@ export function PagarContaSheet({ open, onClose, bill }: { open: boolean; onClos
 
   useEffect(() => {
     if (!open || !bill) return;
-    setAmountText(String(bill.amount));
+    setAmountText(String(resolveBillAmount(bill, override))); // previsto do mês: override > base
     setMethod('none');
     setDate(todayYmd());
     setError(null);
-  }, [open, bill]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, bill, override]);
 
   const methodOptions = useMemo(() => {
     const accounts = accountsQ.data ?? [];
@@ -56,7 +61,7 @@ export function PagarContaSheet({ open, onClose, bill }: { open: boolean; onClos
   if (!bill) return null;
 
   const amount = Number(amountText.replace(',', '.'));
-  const previsto = Number(bill.amount);
+  const previsto = resolveBillAmount(bill, override);
   const variou = isFinite(amount) && Math.round(amount * 100) !== Math.round(previsto * 100);
 
   async function submit() {

@@ -20,14 +20,21 @@ function parseNoteActionMarker(text) {
     return { malformed: true, cleanText };
   }
   if (action === 'create') {
-    const body = typeof p.body === 'string' ? p.body.trim() : '';
+    // NOTE-MARKER-CONTENT-BODY-ALIAS (25/06): o LLM às vezes emite "content" em vez de
+    // "body" (nome super comum de corpo de nota), sobretudo em notas longas/estruturadas
+    // (fechamento financeiro do Alf). Aceita os dois — provider-agnóstico, mata a classe.
+    const body = (typeof p.body === 'string' ? p.body
+                : typeof p.content === 'string' ? p.content : '').trim();
     if (!body) return { malformed: true, cleanText };
     const title = (typeof p.title === 'string' && p.title.trim()) || body.split('\n')[0].slice(0, 120);
     return { malformed: false, cleanText, action: { action, title, body, share_with: p.share_with || [] } };
   }
   if (action === 'append') {
-    if (typeof p.body !== 'string' || !p.body.trim() || !p.note) return { malformed: true, cleanText };
-    return { malformed: false, cleanText, action: { action, note: String(p.note), body: p.body.trim() } };
+    // NOTE-MARKER-CONTENT-BODY-ALIAS: mesmo alias content→body do create (mesma exposição ao drift).
+    const appendBody = (typeof p.body === 'string' ? p.body
+                      : typeof p.content === 'string' ? p.content : '').trim();
+    if (!appendBody || !p.note) return { malformed: true, cleanText };
+    return { malformed: false, cleanText, action: { action, note: String(p.note), body: appendBody } };
   }
   // share
   if (!p.note || !Array.isArray(p.share_with) || p.share_with.length === 0) return { malformed: true, cleanText };

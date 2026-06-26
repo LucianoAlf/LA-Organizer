@@ -41,3 +41,29 @@ test('create sem title usa primeira linha do body (cap 120)', () => {
 test('create sem body = malformed', () => {
   assert.equal(parseNoteActionMarker('<<NOTE_ACTION>>{"action":"create","title":"x"}<<END>>').malformed, true);
 });
+
+// NOTE-MARKER-CONTENT-BODY-ALIAS (25/06) — o LLM às vezes emite "content" em vez de "body"
+// (nome super comum de corpo de nota), sobretudo em notas longas/estruturadas (fechamento
+// financeiro do Alf). Aceitar os dois mata a classe (provider-agnóstico).
+test('alias: create com "content" em vez de "body" parseia (caso Alf 25/06)', () => {
+  const r = parseNoteActionMarker('Salvando!\n<<NOTE_ACTION>>{"action":"create","title":"Fechamento","content":"## Fechamento\\n29 movimentos"}<<END>>');
+  assert.equal(r.malformed, false);
+  assert.equal(r.action.body, '## Fechamento\n29 movimentos');
+  assert.equal(r.action.title, 'Fechamento');
+});
+
+test('alias: append com "content" em vez de "body" parseia', () => {
+  const r = parseNoteActionMarker('<<NOTE_ACTION>>{"action":"append","note":"latest","content":"item novo"}<<END>>');
+  assert.equal(r.malformed, false);
+  assert.equal(r.action.body, 'item novo');
+});
+
+test('alias: "body" tem prioridade sobre "content" se ambos vierem (sem regressão)', () => {
+  const r = parseNoteActionMarker('<<NOTE_ACTION>>{"action":"create","title":"x","body":"do body","content":"do content"}<<END>>');
+  assert.equal(r.malformed, false);
+  assert.equal(r.action.body, 'do body');
+});
+
+test('alias: create sem body E sem content = malformed (preserva guarda)', () => {
+  assert.equal(parseNoteActionMarker('<<NOTE_ACTION>>{"action":"create","title":"x","content":""}<<END>>').malformed, true);
+});

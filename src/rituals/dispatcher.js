@@ -1063,7 +1063,7 @@ async function remindGroupTasks(now = new Date()) {
 
   const { data: tasks, error } = await supabase
     .from('tasks')
-    .select('id, title, due_date, assigned_group_id, group:work_groups!tasks_assigned_group_id_fkey(name)')
+    .select('id, title, description, due_date, assigned_group_id, created_by, creator:collaborators!tasks_created_by_fkey(preferred_name, full_name), group:work_groups!tasks_assigned_group_id_fkey(name)')
     .not('assigned_group_id', 'is', null)
     .is('reminded_at', null)
     .in('status', ['pending', 'in_progress'])
@@ -1077,7 +1077,9 @@ async function remindGroupTasks(now = new Date()) {
     try { members = await wg.membersWithPhones(supabase, task.assigned_group_id); }
     catch (e) { console.warn('[remindGroupTasks] members err:', e.message); }
     const gName = task.group ? task.group.name : 'grupo';
-    const msg = `⏰ Lembrete do grupo *${gName}*: *${task.title}* vence amanhã. Qualquer pessoa do grupo pode concluir — quem pegar, avisa por aqui. 😉`;
+    const { groupAuthorDescSuffix, firstNameOf } = require('../utils/group-task-relay');
+    const msg = `⏰ Lembrete do grupo *${gName}*: *${task.title}* vence amanhã. Qualquer pessoa do grupo pode concluir — quem pegar, avisa por aqui. 😉`
+      + groupAuthorDescSuffix({ creatorFirstName: firstNameOf(task.creator), description: task.description });
     let sent = 0;
     for (const m of members) {
       const q = await isQuietNow(m.collaborator_id, nowSaoPaulo(), 'work');
@@ -1096,6 +1098,7 @@ async function remindGroupTasks(now = new Date()) {
 // Sprint 14 Fatia 2 — lembretes T-1 para tasks de evento
 async function remindEventTasks(now = new Date()) {
   const whatsapp = require('../services/whatsapp');
+  const { isEventTaskActive } = require('./event-task-active');
   const nowIso = now.toISOString();
 
   const { data: tasks, error } = await supabase
@@ -1103,7 +1106,7 @@ async function remindEventTasks(now = new Date()) {
     .select(`
       id, title, assigned_to, school_event_id,
       collaborator:assigned_to ( id, phone, full_name, user_preferences(*) ),
-      event:school_event_id ( title )
+      event:school_event_id ( title, status )
     `)
     .not('school_event_id', 'is', null)
     .is('assigned_group_id', null) // tasks de GRUPO têm fan-out próprio (remindGroupTasks)
@@ -1117,7 +1120,13 @@ async function remindEventTasks(now = new Date()) {
   }
   if (!tasks || tasks.length === 0) return;
 
-  for (const task of tasks) {
+  // Anti-órfão (Alf 24/06): NÃO cobra tarefa de preparo cujo school_event foi CANCELADO/sumiu.
+  // O caminho de cancelar o show (PWA AgendaEscolar / TOM) cascateia o cancel pras tarefas;
+  // esta rede pega órfãs pré-fix ou de qualquer caminho que escape da cascata.
+  const liveTasks = tasks.filter(isEventTaskActive);
+  if (liveTasks.length === 0) return;
+
+  for (const task of liveTasks) {
     const phone = task.collaborator?.phone;
     if (!phone) {
       // Marca como notificado mesmo sem phone — evita reprocessamento infinito
@@ -4978,7 +4987,7 @@ async function checkTaskReminders() {
   const nowIso = new Date().toISOString();
   const { data: due, error } = await supabase
     .from('task_reminders')
-    .select('id, task_id, remind_at, label, created_at, tasks(id, title, assigned_to, assigned_group_id, status, due_date, due_time)')
+    .select('id, task_id, remind_at, label, created_at, tasks(id, title, description, assigned_to, assigned_group_id, status, due_date, due_time, created_by, creator:collaborators!tasks_created_by_fkey(preferred_name, full_name))')
     .is('sent_at', null)
     .lte('remind_at', nowIso)
     .limit(50);
@@ -5001,10 +5010,10 @@ async function checkTaskReminders() {
       try {
         const wg = require('../services/work-groups');
         const members = await wg.membersWithPhones(supabase, t.assigned_group_id);
-        const labelG = r.label ? `${r.label}: ` : 'Lembrete: ';
+        const { buildGroupTaskReminderText, firstNameOf } = require('../utils/group-task-relay');
         const dayG = relativeDayFromYmd(t.due_date);
         const whenG = [dayG, (t.due_time || '').slice(0, 5)].filter(Boolean).join(' ');
-        const textG = `⏰ ${labelG}*${t.title}* (grupo)${whenG ? ` — ${whenG}` : ''}`;
+        const textG = buildGroupTaskReminderText({ label: r.label, title: t.title, when: whenG, creatorFirstName: firstNameOf(t.creator), description: t.description });
         let sentG = 0;
         for (const m of members) {
           const qM = await isQuietNow(m.collaborator_id, nowSaoPaulo(), 'work', { defaultNightGate: false });
@@ -5087,7 +5096,7 @@ async function checkReminders() {
   const cooldownCutoff = new Date(Date.now() - 6 * 3600_000).toISOString();
   const { data: due, error } = await supabase
     .from('tasks')
-    .select('id, title, assigned_to, assigned_group_id, remind_at, status, context, reminded_at, due_date')
+    .select('id, title, description, assigned_to, assigned_group_id, remind_at, status, context, reminded_at, due_date, created_by, creator:collaborators!tasks_created_by_fkey(preferred_name, full_name)')
     .not('remind_at', 'is', null)
     .lte('remind_at', nowIso)
     .not('status', 'in', '(done,cancelled)')
@@ -5115,7 +5124,9 @@ async function checkReminders() {
         const wg = require('../services/work-groups');
         const whatsapp = require('../services/whatsapp'); // escopo local (função pode não ter o require)
         const members = await wg.membersWithPhones(supabase, t.assigned_group_id);
-        const textG = `🔔 *Lembrete (grupo):* ${t.title} — quem puder, pega essa.`;
+        const { groupAuthorDescSuffix, firstNameOf } = require('../utils/group-task-relay');
+        const textG = `🔔 *Lembrete (grupo):* ${t.title} — quem puder, pega essa.`
+          + groupAuthorDescSuffix({ creatorFirstName: firstNameOf(t.creator), description: t.description });
         let sentG = 0;
         for (const m of members) {
           const qM = await isQuietNow(m.collaborator_id, nowSaoPaulo(), 'work', { defaultNightGate: false });

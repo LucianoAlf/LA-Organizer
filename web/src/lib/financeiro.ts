@@ -29,6 +29,10 @@ export interface PfBill {
   type: PfBillType; status: 'pending' | 'paid' | 'overdue'; last_paid_at: string | null;
   recurrence: 'monthly' | 'once'; due_date: string | null;
 }
+// Override de valor de uma conta fixa para um mês específico (pf_bill_overrides).
+export interface PfBillOverride {
+  id: string; bill_id: string; competencia: string; amount: number;
+}
 export interface PfGoal {
   id: string; name: string; target_amount: number; current_amount: number;
   monthly_contribution: number | null; deadline: string | null; icon: string | null;
@@ -372,6 +376,51 @@ export async function listBills(collaboratorId: string) {
   if (error) throw error;
   return (data as PfBill[]) ?? [];
 }
+
+// FONTE DE VERDADE ÚNICA do valor da conta num mês (paridade com src/utils/bill-amount.js):
+// override válido (>0) tem prioridade sobre o amount base. 0 overrides => sempre o base (zero-regressão).
+function posNum(v: unknown): number | null {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+export function resolveBillAmount(bill: { amount: number | string }, override?: { amount: number | string } | null): number {
+  const ov = override ? posNum(override.amount) : null;
+  if (ov != null) return ov;
+  return Number(bill?.amount) || 0;
+}
+// Aplica overrides (mapa por bill.id) numa lista; só copia onde o valor muda (memo-friendly), sem mutar.
+export function resolveBillsForMonth<T extends { id: string; amount: number }>(
+  bills: T[], overridesByBillId: Record<string, { amount: number | string }>,
+): T[] {
+  const map = overridesByBillId || {};
+  return (bills ?? []).map((b) => {
+    const amount = resolveBillAmount(b, map[b.id]);
+    return amount === Number(b.amount) ? b : { ...b, amount };
+  });
+}
+// Overrides de um mês (competência YYYY-MM-01), como mapa por bill_id. Fatia 1: só leitura.
+export async function listBillOverrides(collaboratorId: string, competencia: string): Promise<Record<string, PfBillOverride>> {
+  const { data, error } = await supabase.from('pf_bill_overrides')
+    .select('id, bill_id, competencia, amount')
+    .eq('collaborator_id', collaboratorId).eq('competencia', competencia);
+  if (error) throw error;
+  const map: Record<string, PfBillOverride> = {};
+  for (const o of (data as PfBillOverride[]) ?? []) map[o.bill_id] = o;
+  return map;
+}
+// Cria/atualiza o override de uma conta num mês (upsert por bill_id+competencia). Fatia 2.
+// O trigger pf_bill_overrides_set_owner deriva o collaborator_id do dono da conta (segurança).
+export async function setBillOverride(collaboratorId: string, billId: string, competencia: string, amount: number): Promise<void> {
+  const { error } = await supabase.from('pf_bill_overrides')
+    .upsert({ collaborator_id: collaboratorId, bill_id: billId, competencia, amount }, { onConflict: 'bill_id,competencia' });
+  if (error) throw error;
+}
+// Remove o override (a conta volta ao valor base naquele mês).
+export async function deleteBillOverride(collaboratorId: string, billId: string, competencia: string): Promise<void> {
+  const { error } = await supabase.from('pf_bill_overrides')
+    .delete().eq('collaborator_id', collaboratorId).eq('bill_id', billId).eq('competencia', competencia);
+  if (error) throw error;
+}
 export async function createBill(collaboratorId: string, input: { name: string; amount: number; due_day?: number; category: PfCategory; type?: PfBillType; remind_days_before?: number; recurrence?: 'monthly' | 'once'; due_date?: string | null }) {
   const recurrence = input.recurrence === 'once' ? 'once' : 'monthly';
   const row: Record<string, unknown> = {
@@ -387,7 +436,16 @@ export async function createBill(collaboratorId: string, input: { name: string; 
     row.due_day = input.due_day;
   }
   const { data, error } = await supabase.from('pf_bills').insert(row).select().single();
-  if (error) throw error;
+  if (error) {
+    // Raiz 3 (backstop universal): o índice parcial pf_bills_active_monthly_uq morde 23505 ao
+    // tentar 2ª conta fixa MENSAL ativa de mesmo nome. No app NÃO fazemos update silencioso
+    // (sobrescreveria valor sem o usuário ver) — bloqueamos com mensagem clara. (No TOM/chat o
+    // createBill faz find-or-upsert + avisa; aqui o form manda editar a existente.)
+    if (error.code === '23505' || /duplicate key|unique constraint|pf_bills_active_monthly_uq/i.test(error.message || '')) {
+      throw new Error(`Você já tem uma conta fixa ativa chamada "${input.name}". Edite a existente em vez de criar outra.`);
+    }
+    throw error;
+  }
   return data;
 }
 // YMD local (BRT) — NUNCA toISOString().slice(0,10) (desloca o dia após 21h BRT). Ver utils/date.

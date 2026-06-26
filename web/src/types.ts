@@ -147,6 +147,8 @@ export interface Task {
   // Sprint 22.5 — origem da task (mostra ícone se ≠ manual) + nome do assignee (delegadas)
   source?: string | null;
   assignee?: { full_name: string } | null;
+  // 2026-06-25 — autor (created_by) pra view de leitura (TaskDetailSheet): "Delegada por / criada por".
+  creator?: { preferred_name?: string | null; full_name?: string | null } | null;
   // Sprint 23 — recorrência. recurrence_rule no template (série-mãe); recurrence_parent_id
   // nas ocorrências materializadas (aponta pro template).
   recurrence_rule?: string | null;

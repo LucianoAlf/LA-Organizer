@@ -38,6 +38,10 @@ export interface TaskForPanel {
   // Grupos de TRABALHO — pool por equipe (2026-06-10)
   assigned_group_id?: string | null;
   work_group_name?: string | null;
+  // 2026-06-25 — leitura de tarefa (TaskDetailSheet): autoria pra "Delegada por / criada por".
+  created_by?: string | null;
+  assigned_to?: string | null;
+  creator_name?: string | null;
 }
 
 // Sprint Agenda Desktop — tasks no range [from,to]. Espelha padrão de
@@ -73,7 +77,7 @@ export function useAgendaTasks(params: { from: Date; to: Date; filters: AgendaFi
       const [{ data, error }, { data: tplMothers }] = await Promise.all([
         supabase
           .from('tasks')
-          .select('id, title, description, context, status, scheduled_date, due_date, due_time, assigned_to, created_by, eisenhower_quadrant, remind_at, source, created_at, recurrence_rule, recurrence_parent_id, project_id, parent_task_id, is_group, assigned_group_id, work_group:work_groups!tasks_assigned_group_id_fkey(name)')
+          .select('id, title, description, context, status, scheduled_date, due_date, due_time, assigned_to, created_by, eisenhower_quadrant, remind_at, source, created_at, recurrence_rule, recurrence_parent_id, project_id, parent_task_id, is_group, assigned_group_id, work_group:work_groups!tasks_assigned_group_id_fkey(name), creator:collaborators!tasks_created_by_fkey(preferred_name, full_name)')
           .or(vis.join(','))
           .neq('status', 'cancelled')
           // Sprint 29.1 — esconde teste/arquivado
@@ -121,6 +125,9 @@ export function useAgendaTasks(params: { from: Date; to: Date; filters: AgendaFi
         parent_task_id: t.parent_task_id ?? null,
         assigned_group_id: t.assigned_group_id ?? null,
         work_group_name: t.work_group?.name ?? null,
+        created_by: t.created_by ?? null,
+        assigned_to: t.assigned_to ?? null,
+        creator_name: t.creator?.preferred_name ?? t.creator?.full_name ?? null,
       };
     });
     return mapped.filter(t => {

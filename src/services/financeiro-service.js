@@ -260,20 +260,60 @@ async function createBill(collaboratorId, { name, amount, due_day, category, typ
     if (!due_date) throw new Error('conta única exige due_date');
     row.due_date = due_date;
     row.due_day = Number(due_date.slice(8, 10)); // dia da data cheia (satisfaz NOT NULL)
-  } else {
-    // DUE_DAY-NULL (Rose 14/06): conta fixa recorrente sem dia estourava NOT NULL no insert.
-    // Rede final — valida aqui (o handler já pede o dia antes via bill_ask_day). Erro tratável.
-    const dd = Number(due_day);
-    if (!Number.isInteger(dd) || dd < 1 || dd > 31) {
-      const e = new Error('conta fixa recorrente exige due_day válido (1-31)');
-      e.code = 'BILL_NO_DUE_DAY';
-      throw e;
-    }
-    row.due_day = dd;
+    // 'once' é ISENTO de dedup: cada conta única é um evento próprio (IPVA, matrícula...).
+    const { data, error } = await supabase.from('pf_bills').insert(row).select().single();
+    if (error) throw error;
+    return { ...data, updated: false };
   }
+  // DUE_DAY-NULL (Rose 14/06): conta fixa recorrente sem dia estourava NOT NULL no insert.
+  // Rede final — valida aqui (o handler já pede o dia antes via bill_ask_day). Erro tratável.
+  const dd = Number(due_day);
+  if (!Number.isInteger(dd) || dd < 1 || dd > 31) {
+    const e = new Error('conta fixa recorrente exige due_day válido (1-31)');
+    e.code = 'BILL_NO_DUE_DAY';
+    throw e;
+  }
+  row.due_day = dd;
+
+  // BACKSTOP anti-duplicata (Raiz 3): o dedup vivia SÓ na app e vazava (LLM/UTC/re-import) → a 2ª
+  // conta fixa nascia e vivia. createBill vira find-or-upsert: 1 ativa monthly por nome normalizado
+  // (lower+trim) — o MESMO predicado do índice parcial pf_bills_active_monthly_uq (F2, o backstop do banco).
+  const existing = await findActiveMonthlyBillByName(collaboratorId, name);
+  if (existing) return updateExistingBill(collaboratorId, existing, row);
+
   const { data, error } = await supabase.from('pf_bills').insert(row).select().single();
+  if (!error) return { ...data, updated: false };
+
+  // 23505 = o índice (F2) mordeu numa corrida/leak que furou o find (2 inserts concorrentes ou
+  // re-import simultâneo). Grácil: re-find + UPDATE; NUNCA propaga o erro pro chamador, senão o LLM
+  // vira derrotista "não consigo cadastrar, vai no app" (FIN-BILL-DEFEATIST-APP). 'once' nunca cai aqui.
+  if (isUniqueViolation(error)) {
+    const dup = await findActiveMonthlyBillByName(collaboratorId, name);
+    if (dup) return updateExistingBill(collaboratorId, dup, row);
+  }
+  throw error;
+}
+// Conta fixa ATIVA monthly por nome normalizado (lower+trim) — paridade EXATA com o predicado do
+// índice pf_bills_active_monthly_uq. Busca os candidatos e filtra em JS pra casar o lower(trim()).
+async function findActiveMonthlyBillByName(collaboratorId, name) {
+  const norm = String(name || '').trim().toLowerCase();
+  const { data, error } = await supabase.from('pf_bills')
+    .select('id, name, amount, due_day, category, type, recurrence, remind_days_before, is_active')
+    .eq('collaborator_id', collaboratorId).eq('is_active', true).eq('recurrence', 'monthly');
   if (error) throw error;
-  return data;
+  return (data || []).find((b) => String(b.name || '').trim().toLowerCase() === norm) || null;
+}
+// UPDATE in-place da existente (amount/due_day/category/remind_days_before). pf_bills NÃO tem
+// updated_at → o patch não toca essa coluna. Retorna a bill mesclada + updated:true (prosa honesta).
+async function updateExistingBill(collaboratorId, existing, row) {
+  const patch = { amount: row.amount, due_day: row.due_day, category: row.category, remind_days_before: row.remind_days_before };
+  const { error } = await supabase.from('pf_bills')
+    .update(patch).eq('id', existing.id).eq('collaborator_id', collaboratorId);
+  if (error) throw error;
+  return { ...existing, ...patch, updated: true };
+}
+function isUniqueViolation(error) {
+  return !!error && (error.code === '23505' || /duplicate key|unique constraint|23505/i.test(String(error.message || '')));
 }
 async function findBills(collaboratorId, billName) {
   const { data, error } = await supabase.from('pf_bills')
@@ -394,6 +434,39 @@ async function deactivateGoal(collaboratorId, goalId) {
 
 // ---- Queries para rituais (Fase B) ----
 
+// Competência corrente (YYYY-MM-01) p/ resolver o override de valor do mês (feature override mensal).
+// monthBounds usa UTC; no fim do mês após 21h BRT pode adiantar 1 dia — efeito só no override do dia 1.
+function currentBillCompetencia() { return monthBounds().monthYear + '-01'; }
+// Overrides de valor de um mês (mapa por bill_id). Service_role: filtra collaborator_id explícito.
+async function billOverridesForMonth(collaboratorId, competencia) {
+  const { data, error } = await supabase.from('pf_bill_overrides')
+    .select('bill_id, amount').eq('collaborator_id', collaboratorId).eq('competencia', competencia);
+  if (error) throw error;
+  const map = {};
+  for (const o of data || []) map[o.bill_id] = o;
+  return map;
+}
+// Cria/atualiza o override de valor de uma conta num mês (upsert). O trigger deriva collaborator_id
+// do dono da conta. Usado pela edição via TOM (set_bill_amount).
+async function setBillOverride(collaboratorId, billId, competencia, amount) {
+  const { error } = await supabase.from('pf_bill_overrides')
+    .upsert({ collaborator_id: collaboratorId, bill_id: billId, competencia, amount }, { onConflict: 'bill_id,competencia' });
+  if (error) throw error;
+}
+// Remove o override (a conta volta ao valor base naquele mês).
+async function deleteBillOverride(collaboratorId, billId, competencia) {
+  const { error } = await supabase.from('pf_bill_overrides')
+    .delete().eq('collaborator_id', collaboratorId).eq('bill_id', billId).eq('competencia', competencia);
+  if (error) throw error;
+}
+// Resolve o amount de cada conta pelo override do MÊS CORRENTE (override>0 > base). Mesma fonte de
+// verdade do PWA (src/utils/bill-amount.js). 0 overrides => base (zero-regressão).
+async function _withMonthOverride(collaboratorId, bills) {
+  const { resolveBillAmount } = require('../utils/bill-amount');
+  const ov = await billOverridesForMonth(collaboratorId, currentBillCompetencia());
+  return (bills || []).map((b) => ({ ...b, amount: resolveBillAmount(b, ov[b.id]) }));
+}
+
 // Contas a vencer nos proximos `days` dias OU atrasadas (venceram este mes e nao pagas).
 // status derivado de last_paid_at (D6). EDGE: conta com due_day no comeco do mes seguinte
 // (ex: hoje=30, due_day=2) nao entra como "a vencer" deste ciclo — aceitavel no v1.
@@ -405,21 +478,22 @@ async function billsDueWithin(collaboratorId, days = 5) {
   const horizonStr = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + days)).toISOString().slice(0, 10);
   const { start } = monthBounds();
   const { data, error } = await supabase.from('pf_bills')
-    .select('name, amount, due_day, due_date, recurrence, type, last_paid_at, category')
+    .select('id, name, amount, due_day, due_date, recurrence, type, last_paid_at, category')
     .eq('collaborator_id', collaboratorId).eq('is_active', true);
   if (error) throw error;
   const ctx = { dom, todayStr, horizonStr, monthStart: start };
-  return (data || []).filter((b) => isBillDue(b, ctx));
+  const due = (data || []).filter((b) => isBillDue(b, ctx));
+  return _withMonthOverride(collaboratorId, due); // valor do mês corrente (override > base)
 }
 
 // Todas as contas fixas ativas (sem filtro de vencimento) — pra action query_bills.
 // O recorte ("a pagar dia X" / "em aberto") é feito na lógica pura bills-query.js.
 async function listActiveBills(collaboratorId) {
   const { data, error } = await supabase.from('pf_bills')
-    .select('name, amount, due_day, due_date, recurrence, type, last_paid_at, category')
+    .select('id, name, amount, due_day, due_date, recurrence, type, last_paid_at, category')
     .eq('collaborator_id', collaboratorId).eq('is_active', true);
   if (error) throw error;
-  return data || [];
+  return _withMonthOverride(collaboratorId, data || []); // valor do mês corrente (override > base)
 }
 
 // Faturas de cartão EM ABERTO (competência corrente, com saldo a pagar) — pra entrar no "a pagar".
@@ -804,7 +878,7 @@ module.exports = {
   createBill, findBills, deactivateBill, payBill, markBillPaid,
   createGoal, findGoal, listGoals,
   addGoalContribution, listGoalContributions, deleteGoalContribution, updateGoal, deactivateGoal,
-  billsDueWithin, listActiveBills, pendingCardInvoices, monthlyReport, monthCategoryBreakdown, collaboratorsWithActivity, collaboratorsForFinanceRitual,
+  billsDueWithin, listActiveBills, billOverridesForMonth, setBillOverride, deleteBillOverride, pendingCardInvoices, monthlyReport, monthCategoryBreakdown, collaboratorsWithActivity, collaboratorsForFinanceRitual,
   collaboratorsWithActiveBills,
   // cartão
   competenciaFor, addMonthsToCompetencia, currentCompetencia,

@@ -22,6 +22,9 @@ import { toggleChildWithCascade } from '../lib/taskGroups';
 import { useAgendaFilters } from './agenda/hooks/useAgendaFilters';
 import { useAgendaEvents, type EventForGrid } from './agenda/hooks/useAgendaEvents';
 import { useAgendaTasks, type TaskForPanel } from './agenda/hooks/useAgendaTasks';
+import { useCollaboratorNames } from './agenda/hooks/useCollaboratorNames';
+import { TaskDetailSheet } from '../components/TaskDetailSheet';
+import { taskDetailMeta } from '../lib/taskDetail';
 
 // Toast fallback — projeto não tem sonner/react-hot-toast instalado.
 // Aceitável para dev (single-user). Produção: instalar sonner e trocar.
@@ -89,6 +92,8 @@ export function AgendaDesktop() {
   const [quickCreate, setQuickCreate] = useState<{ open: boolean; dueDate?: string }>({ open: false });
   const [editingEvent, setEditingEvent] = useState<EventForGrid | null>(null);
   const [editingTask, setEditingTask] = useState<TaskForPanel | null>(null);
+  const [readingTask, setReadingTask] = useState<TaskForPanel | null>(null);
+  const names = useCollaboratorNames();
   const [delegateTask, setDelegateTask] = useState<TaskForPanel | null>(null);
   const [convertTask, setConvertTask] = useState<TaskForPanel | null>(null);
   const [openGroupId, setOpenGroupId] = useState<string | null>(null);
@@ -298,7 +303,7 @@ export function AgendaDesktop() {
             habitsDay={[]}
             habitsWeek={[]}
             groups={groups}
-            onTaskClick={(t) => setEditingTask(t)}
+            onTaskClick={(t) => setReadingTask(t)}
             onToggleTaskDone={(t) =>
               updateTask.mutate({
                 id: t.id,
@@ -414,6 +419,32 @@ export function AgendaDesktop() {
         onDelegate={(t) => { setEditingTask(null); setDelegateTask(t); }}
         canDelegate={canDelegate}
       />
+
+      {readingTask && (() => {
+        const rt = readingTask;
+        const meta = taskDetailMeta({
+          meId: collabId ?? null,
+          assigned_to: rt.assigned_to ?? null,
+          created_by: rt.created_by ?? null,
+          assigned_group_id: rt.assigned_group_id ?? null,
+          creatorName: rt.creator_name ?? null,
+          assigneeName: names.firstName(rt.delegated_to) ?? null,
+          groupName: rt.work_group_name ?? null,
+        });
+        const isDone = rt.status === 'done';
+        return (
+          <TaskDetailSheet
+            open
+            onClose={() => setReadingTask(null)}
+            title={rt.title}
+            metaLine={meta.label}
+            description={rt.description}
+            isRecurring={Boolean(rt.recurrence_rule || rt.recurrence_parent_id)}
+            isDone={isDone}
+            onEdit={() => { setReadingTask(null); setEditingTask(rt); }}
+          />
+        );
+      })()}
 
       <DelegateTaskSheet open={Boolean(delegateTask)} task={delegateTask} onClose={() => setDelegateTask(null)} />
       <ConvertToEventSheet open={Boolean(convertTask)} task={convertTask} onClose={() => setConvertTask(null)} />

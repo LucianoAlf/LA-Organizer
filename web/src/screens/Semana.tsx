@@ -18,6 +18,8 @@ import { TaskGroupSheet } from '../components/TaskGroupSheet';
 import { Fab } from '../components/Fab';
 import { QuickCreateSheet } from '../components/QuickCreateSheet';
 import { EditTaskSheet } from '../components/EditTaskSheet';
+import { TaskDetailSheet } from '../components/TaskDetailSheet';
+import { taskDetailMeta } from '../lib/taskDetail';
 import { EditEventSheet } from '../components/EditEventSheet';
 import { Tabs } from '../components/Tabs';
 import { DateNavHeader } from '../components/DateNavHeader';
@@ -42,7 +44,7 @@ async function fetchWeekTasks(collabId: string, start: string, end: string, grou
   if (groupIds.length > 0) vis.push(`assigned_group_id.in.(${groupIds.join(',')})`);
   const { data, error } = await supabase
     .from('tasks')
-    .select('id, title, status, context, priority, category, due_date, due_time, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, recurrence_rule, recurrence_parent_id, parent_task_id, is_group, assigned_group_id, work_group:work_groups!tasks_assigned_group_id_fkey(name), projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(id, full_name), task_reminders(remind_at, sent_at)')
+    .select('id, title, description, status, context, priority, category, due_date, due_time, scheduled_date, remind_at, eisenhower_quadrant, project_id, assigned_to, created_by, recurrence_rule, recurrence_parent_id, parent_task_id, is_group, assigned_group_id, work_group:work_groups!tasks_assigned_group_id_fkey(name), projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(id, full_name), creator:collaborators!tasks_created_by_fkey(preferred_name, full_name), task_reminders(remind_at, sent_at)')
     .or(vis.join(','))
     .neq('status', 'cancelled')
     .is('parent_task_id', null)
@@ -117,6 +119,7 @@ export function Semana() {
   const isCurrentWeek = days.includes(today);
   const [createOpen, setCreateOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [readingTask, setReadingTask] = useState<WeekTask | null>(null);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
   // Sprint 22.34m — tabs Trabalho/Pessoal/Delegadas espelhando Hoje.
   type SemanaTab = TaskContext | 'delegated';
@@ -407,9 +410,9 @@ export function Semana() {
                               {(() => { const remHM = earliestReminderHM(t); return !isDone && !isCancelled ? (
                                 <button
                                   type="button"
-                                  onClick={() => setEditingTask(t)}
+                                  onClick={() => setReadingTask(t)}
                                   className="flex-1 min-w-0 text-left rounded-sm hover:bg-bg-elevated px-1 -mx-1 focus-ring"
-                                  title="Editar tarefa"
+                                  title="Ver tarefa"
                                 >
                                   <div className="text-body-sm text-fg flex items-baseline gap-1.5">
                                     {qcCls && (
@@ -469,6 +472,33 @@ export function Semana() {
       <Fab onClick={() => setCreateOpen(true)} label="Novo" ariaLabel="Criar novo item" />
       <QuickCreateSheet open={createOpen} onClose={() => setCreateOpen(false)} defaultDueDate={today} />
       <EditTaskSheet open={Boolean(editingTask)} task={editingTask} onClose={() => setEditingTask(null)} onTransform={tt.onEditSheetTransform} canDelegate={tt.canDelegateAny} />
+      {readingTask && (() => {
+        const rt = readingTask;
+        const meta = taskDetailMeta({
+          meId: collaborator?.id ?? null,
+          assigned_to: rt.assigned_to ?? null,
+          created_by: rt.created_by ?? null,
+          assigned_group_id: rt.assigned_group_id ?? null,
+          creatorName: rt.creator?.preferred_name ?? rt.creator?.full_name ?? null,
+          assigneeName: rt.assignee?.full_name ?? null,
+          groupName: (rt as Task & { work_group?: { name?: string } | null }).work_group?.name ?? null,
+        });
+        const isDone = rt.status === 'done';
+        return (
+          <TaskDetailSheet
+            open
+            onClose={() => setReadingTask(null)}
+            title={rt.title}
+            metaLine={meta.label}
+            description={rt.description}
+            isRecurring={Boolean(rt.recurrence_rule || rt.recurrence_parent_id)}
+            isDone={isDone}
+            canComplete={!isDone}
+            onComplete={() => { toggleTask.mutate(rt); setReadingTask(null); }}
+            onEdit={() => { setEditingTask(rt); setReadingTask(null); }}
+          />
+        );
+      })()}
       <EditEventSheet open={Boolean(editingEvent)} event={editingEvent} onClose={() => setEditingEvent(null)} />
       <TaskGroupSheet
         open={Boolean(openGroupId)}

@@ -33,6 +33,8 @@ import { Fab } from '../components/Fab';
 import { QuickCreateSheet } from '../components/QuickCreateSheet';
 import { EditEventSheet } from '../components/EditEventSheet';
 import { EditTaskSheet } from '../components/EditTaskSheet';
+import { TaskDetailSheet } from '../components/TaskDetailSheet';
+import { taskDetailMeta } from '../lib/taskDetail';
 import { RescheduleSheet } from '../components/RescheduleSheet';
 import type { Task, TaskContext, CalendarEvent, ActionType } from '../types';
 import { ACTION_TYPE_LABELS, ACTION_TYPE_VISUAL } from '../types';
@@ -90,7 +92,7 @@ async function fetchTasksToday(collabId: string, viewDate: string, isToday: bool
   // Grupos de tarefas (2026-06-09): parent_task_id/is_group adicionados ao select;
   // filhas e mães ficam fora das listas soltas (entram pelo TaskGroupCard).
   // Grupos de TRABALHO (2026-06-10): work_group embed pro badge 👥 + pool nas listas.
-  const baseSelect = 'id, title, status, context, priority, category, action_type, source, due_date, due_time, scheduled_date, remind_at, eisenhower_quadrant, sort_position, project_id, assigned_to, assigned_group_id, created_by, completed_at, recurrence_rule, recurrence_parent_id, parent_task_id, is_group, projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(full_name), work_group:work_groups!tasks_assigned_group_id_fkey(name), task_reminders(remind_at, sent_at)';
+  const baseSelect = 'id, title, description, status, context, priority, category, action_type, source, due_date, due_time, scheduled_date, remind_at, eisenhower_quadrant, sort_position, project_id, assigned_to, assigned_group_id, created_by, completed_at, recurrence_rule, recurrence_parent_id, parent_task_id, is_group, projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(full_name), creator:collaborators!tasks_created_by_fkey(preferred_name, full_name), work_group:work_groups!tasks_assigned_group_id_fkey(name), task_reminders(remind_at, sent_at)';
 
   let q = supabase
     .from('tasks')
@@ -162,7 +164,7 @@ async function fetchTasksToday(collabId: string, viewDate: string, isToday: bool
 }
 
 async function fetchDelegatedTasks(collabId: string, viewDate: string, isToday: boolean): Promise<Task[]> {
-  const baseSelect = 'id, title, status, context, priority, category, action_type, source, due_date, due_time, scheduled_date, remind_at, eisenhower_quadrant, sort_position, project_id, assigned_to, created_by, completed_at, recurrence_rule, recurrence_parent_id, projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(full_name), task_reminders(remind_at, sent_at)';
+  const baseSelect = 'id, title, description, status, context, priority, category, action_type, source, due_date, due_time, scheduled_date, remind_at, eisenhower_quadrant, sort_position, project_id, assigned_to, created_by, completed_at, recurrence_rule, recurrence_parent_id, projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(full_name), creator:collaborators!tasks_created_by_fkey(preferred_name, full_name), task_reminders(remind_at, sent_at)';
 
   let q = supabase
     .from('tasks')
@@ -216,6 +218,7 @@ export function Hoje() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [readingTask, setReadingTask] = useState<Task | null>(null);
   const [reschedulingTask, setReschedulingTask] = useState<Task | null>(null);
   const [doneOpen, setDoneOpen] = useState(false);
 
@@ -706,6 +709,7 @@ export function Hoje() {
               </div>
               <SortableTaskList
                 tasks={overdue4plus}
+                onOpen={setReadingTask}
                 onToggle={(task) => toggleTask.mutate(task)}
                 onEdit={setEditingTask}
                 onReschedule={setReschedulingTask}
@@ -726,6 +730,7 @@ export function Hoje() {
               </div>
               <SortableTaskList
                 tasks={overdue23d}
+                onOpen={setReadingTask}
                 onToggle={(task) => toggleTask.mutate(task)}
                 onEdit={setEditingTask}
                 onReschedule={setReschedulingTask}
@@ -746,6 +751,7 @@ export function Hoje() {
               </div>
               <SortableTaskList
                 tasks={overdue1d}
+                onOpen={setReadingTask}
                 onToggle={(task) => toggleTask.mutate(task)}
                 onEdit={setEditingTask}
                 onReschedule={setReschedulingTask}
@@ -765,6 +771,7 @@ export function Hoje() {
               </div>
               <SortableTaskList
                 tasks={dueToday}
+                onOpen={setReadingTask}
                 onToggle={(task) => toggleTask.mutate(task)}
                 onEdit={setEditingTask}
                 onReschedule={setReschedulingTask}
@@ -799,6 +806,7 @@ export function Hoje() {
                   onDelete={(task) => deleteTask.mutate(task)}
                   onTransformToEvent={tt.canConvert(t) ? tt.openConvert : undefined}
                   onDelegate={tt.canDelegate(t) ? tt.openDelegate : undefined}
+                  onOpen={setReadingTask}
                 />
               ))}
             </section>
@@ -822,6 +830,33 @@ export function Hoje() {
       <EditEventSheet open={Boolean(editingEvent)} event={editingEvent} onClose={() => setEditingEvent(null)} />
       <RescheduleSheet open={Boolean(reschedulingTask)} task={reschedulingTask} onClose={() => setReschedulingTask(null)} />
       <EditTaskSheet open={Boolean(editingTask)} task={editingTask} onClose={() => setEditingTask(null)} onTransform={tt.onEditSheetTransform} canDelegate={tt.canDelegateAny} />
+      {readingTask && (() => {
+        const rt = readingTask;
+        const meta = taskDetailMeta({
+          meId: collaborator?.id ?? null,
+          assigned_to: rt.assigned_to ?? null,
+          created_by: rt.created_by ?? null,
+          assigned_group_id: rt.assigned_group_id ?? null,
+          creatorName: rt.creator?.preferred_name ?? rt.creator?.full_name ?? null,
+          assigneeName: rt.assignee?.full_name ?? null,
+          groupName: (rt as Task & { work_group?: { name?: string } | null }).work_group?.name ?? null,
+        });
+        const isDone = rt.status === 'done';
+        return (
+          <TaskDetailSheet
+            open
+            onClose={() => setReadingTask(null)}
+            title={rt.title}
+            metaLine={meta.label}
+            description={rt.description}
+            isRecurring={Boolean(rt.recurrence_rule || rt.recurrence_parent_id)}
+            isDone={isDone}
+            canComplete={!isDone}
+            onComplete={() => { toggleTask.mutate(rt); setReadingTask(null); }}
+            onEdit={() => { setEditingTask(rt); setReadingTask(null); }}
+          />
+        );
+      })()}
       {/* Grupos de tarefas (2026-06-09): sheet de detalhe do grupo. */}
       <TaskGroupSheet
         open={Boolean(openGroupId)}
@@ -845,6 +880,7 @@ function SortableTaskList({
   onReorder,
   onTransformToEvent,
   onDelegate,
+  onOpen,
   canConvert,
   canDelegate,
 }: {
@@ -856,6 +892,7 @@ function SortableTaskList({
   onReorder: (orderedIds: string[]) => void;
   onTransformToEvent?: (task: Task) => void;
   onDelegate?: (task: Task) => void;
+  onOpen?: (task: Task) => void;
   canConvert?: (task: Task) => boolean;
   canDelegate?: (task: Task) => boolean;
 }) {
@@ -885,6 +922,7 @@ function SortableTaskList({
               onDelete={onDelete}
               onTransformToEvent={canConvert?.(t) ? onTransformToEvent : undefined}
               onDelegate={canDelegate?.(t) ? onDelegate : undefined}
+              onOpen={onOpen}
             />
           ))}
         </div>
@@ -901,6 +939,7 @@ function SortableTaskItem({
   onDelete,
   onTransformToEvent,
   onDelegate,
+  onOpen,
 }: {
   task: Task;
   onToggle: (task: Task) => void;
@@ -909,6 +948,7 @@ function SortableTaskItem({
   onDelete: (task: Task) => void;
   onTransformToEvent?: (task: Task) => void;
   onDelegate?: (task: Task) => void;
+  onOpen?: (task: Task) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: task.id,
@@ -931,6 +971,7 @@ function SortableTaskItem({
       isDragging={isDragging}
       onTransformToEvent={onTransformToEvent}
       onDelegate={onDelegate}
+      onOpen={onOpen}
     />
   );
 }

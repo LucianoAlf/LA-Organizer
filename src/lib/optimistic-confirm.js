@@ -138,13 +138,18 @@ function hasCompletionClaim(text) {
 
 // enforceNoMarkerHonesty — Camada 1: se a fala afirma conclusão mas NADA persistiu no
 // turno, rebaixa pra honesta. PURO. Sinais vêm do engine (nunca adivinhados do texto).
+// Caminho 2 / Fatia 0 — modo VELOCÍMETRO: com opts2.meta===true retorna {reply, fired, sense}
+// pra o engine medir os disparos (curva da doença). SEM meta → retorna string (retrocompat).
 const NO_MARKER_HONEST_NOTE = '_⚠️ Na real não consegui registrar isso agora — me manda de novo, por favor._';
-function enforceNoMarkerHonesty(reply, opts) {
+function enforceNoMarkerHonesty(reply, opts, opts2) {
   const o = opts || {};
-  if (!reply || !o.nothingPersisted || o.infoGathering || o.awaitingConfirm) return reply;
-  if (!hasCompletionClaim(reply)) return reply;
+  const meta = !!(opts2 && opts2.meta);
+  const wrap = (r, fired) => (meta ? { reply: r, fired, sense: 'confab' } : r);
+  if (!reply || !o.nothingPersisted || o.infoGathering || o.awaitingConfirm) return wrap(reply, false);
+  if (!hasCompletionClaim(reply)) return wrap(reply, false);
   const cleaned = sanitizeOptimisticConfirm(reply, 'failed');
-  return cleaned ? cleaned + '\n\n' + NO_MARKER_HONEST_NOTE : NO_MARKER_HONEST_NOTE;
+  const out = cleaned ? cleaned + '\n\n' + NO_MARKER_HONEST_NOTE : NO_MARKER_HONEST_NOTE;
+  return wrap(out, true);
 }
 
 module.exports = { sanitizeOptimisticConfirm, hasOptimisticConfirm, hasCompletionClaim, enforceNoMarkerHonesty };

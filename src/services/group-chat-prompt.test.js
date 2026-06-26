@@ -1,7 +1,7 @@
 // src/services/group-chat-prompt.test.js
 const assert = require('node:assert');
 const { test } = require('node:test');
-const { buildGroupChatPrompt } = require('./group-chat-prompt');
+const { buildGroupChatPrompt, fmtPoolLine } = require('./group-chat-prompt');
 
 const base = {
   soulText: 'Eu sou o TOM.',
@@ -90,4 +90,20 @@ test('instrui a NÃO duplicar tarefa em correção (atualiza no lugar)', () => {
   const p = buildGroupChatPrompt(base);
   assert.match(p, /NUNCA duplique/);
   assert.match(p, /ATUALIZA no lugar/);
+});
+
+test('fmtPoolLine: criador + descrição viram sufixo "criada por" e linha ↳', () => {
+  const line = fmtPoolLine({ title: 'Ligar para aluno', status: 'pending', due_date: '2026-06-25', description: 'Aluno: Leandro\nAssunto: trancamento', creator: { full_name: 'Vitoria Souza' } });
+  assert.match(line, /^- Ligar para aluno — pendente \(prazo 2026-06-25\) · criada por Vitoria/);
+  assert.match(line, /\n {2}↳ Aluno: Leandro Assunto: trancamento/);
+});
+
+test('fmtPoolLine: sem criador/descrição mantém formato antigo de 1 linha (anti-regressão)', () => {
+  const line = fmtPoolLine({ title: 'Fechar caixa', status: 'pending', due_date: '2026-06-13' });
+  assert.strictEqual(line, '- Fechar caixa — pendente (prazo 2026-06-13)');
+});
+
+test('fmtPoolLine: descrição longa é truncada com reticências', () => {
+  const line = fmtPoolLine({ title: 'X', status: 'pending', due_date: null, description: 'y'.repeat(300) });
+  assert.match(line, /↳ y+…$/);
 });

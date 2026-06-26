@@ -62,3 +62,22 @@ test('enforce NÃO mexe: "te cobro segunda" (reschedule, sem conforme/quando)', 
   const t = 'Beleza, te cobro segunda!';
   assert.strictEqual(enforceNoMarkerHonesty(t, PERSIST_NO), t);
 });
+
+// Caminho 2 / Fatia 0 — modo meta (velocímetro): retorna {reply, fired, sense}.
+test('meta: sinaliza fired+sense=confab quando rebaixa', () => {
+  const out = enforceNoMarkerHonesty('✅ Lançado nas parcelas jul/ago/set', PERSIST_NO, { meta: true });
+  assert.strictEqual(out.fired, true);
+  assert.strictEqual(out.sense, 'confab');
+  assert.ok(typeof out.reply === 'string' && /n[ãa]o consegui registrar/i.test(out.reply), out.reply);
+});
+test('meta: fired=false quando algo persistiu', () => {
+  const out = enforceNoMarkerHonesty('✅ Tarefa criada!', { nothingPersisted: false }, { meta: true });
+  assert.strictEqual(out.fired, false);
+  assert.strictEqual(out.reply, '✅ Tarefa criada!');
+});
+test('meta: fired=false em ✅ decorativo (protege a voz)', () => {
+  assert.strictEqual(enforceNoMarkerHonesty('✅ Boa! Tá tudo certo?', PERSIST_NO, { meta: true }).fired, false);
+});
+test('retrocompat: sem meta retorna string (não objeto)', () => {
+  assert.strictEqual(typeof enforceNoMarkerHonesty('✅ Lançado', PERSIST_NO), 'string');
+});

@@ -29,7 +29,7 @@ async function loadContext(supabase, groupId, senderCollabId) {
     // Pool = SÓ tarefa REAL ativa (igual ao builder determinístico): exclui done/cancelled e os
     // moldes de recorrência. Sem isso o LLM via tarefa cancelada como "pendente" e cobrava/concluía
     // tarefa fantasma (GROUPCHAT-PHANTOM-POOL, caso Rose/Conciliação 15/06).
-    supabase.from('tasks').select('title, status, due_date, created_at, is_group')
+    supabase.from('tasks').select('title, status, due_date, created_at, is_group, description, created_by, creator:collaborators!tasks_created_by_fkey(preferred_name, full_name)')
       .eq('assigned_group_id', groupId)
       .neq('status', 'cancelled').is('recurrence_rule', null)
       .order('created_at', { ascending: false }).limit(POOL_LIMIT * 2),

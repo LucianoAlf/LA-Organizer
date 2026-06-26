@@ -37,6 +37,9 @@ interface Props {
   onTransformToEvent?: (task: Task) => void;
   /** Delegar a alguém (abre DelegateTaskSheet no parent). Só passar quando o user pode delegar a tarefa. */
   onDelegate?: (task: Task) => void;
+  /** 2026-06-25 — tocar o corpo do card abre a view de LEITURA (TaskDetailSheet). Aditivo:
+      sem onOpen, o card não é clicável (zero regressão nas telas que não passam). */
+  onOpen?: (task: Task) => void;
   /** Sprint 22.29 — Sortable props (passadas pelo wrapper SortableTaskItem). */
   sortableRef?: (node: HTMLElement | null) => void;
   sortableStyle?: React.CSSProperties;
@@ -114,7 +117,7 @@ function fmtSuffix(rel: string, dayIso: string): string {
 }
 
 export function TaskRow({
-  task, onToggle, readOnly, onEdit, onReschedule, onDelete, onTransformToEvent, onDelegate,
+  task, onToggle, readOnly, onEdit, onReschedule, onDelete, onTransformToEvent, onDelegate, onOpen,
   sortableRef, sortableStyle, sortableAttributes, sortableListeners, isDragging,
 }: Props) {
   const { tone, label } = statusOf(task);
@@ -176,7 +179,13 @@ export function TaskRow({
         />
       )}
 
-      <div className="min-w-0 flex-1">
+      <div
+        className={['min-w-0 flex-1', onOpen ? 'cursor-pointer' : ''].join(' ')}
+        onClick={onOpen ? () => onOpen(task) : undefined}
+        role={onOpen ? 'button' : undefined}
+        tabIndex={onOpen ? 0 : undefined}
+        onKeyDown={onOpen ? (e) => { if (e.key === 'Enter') { e.preventDefault(); onOpen(task); } } : undefined}
+      >
         {/* Linha 1 — titulo (card-title pra hierarquia) */}
         <div className={['flex items-start gap-2', isDone ? 'line-through' : ''].join(' ')}>
           <span className="text-body-md font-medium min-w-0 flex-1 break-words leading-snug">
