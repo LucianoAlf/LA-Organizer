@@ -4912,6 +4912,18 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
           if (rErr) console.error('[Task] reminders insert err:', rErr.message);
           else attachedReminders = rows.length;
         }
+        // Subtarefas/checklist (2026-06-26): create com subtasks:[...] → cria as filhas (helper
+        // LITE; herda context/assigned do pai). Best-effort: o pai já persistiu, falha das filhas
+        // não derruba o create nem inventa "checklist criado".
+        let _subCreated = 0;
+        if (taskId && Array.isArray(a.subtasks) && a.subtasks.length) {
+          try {
+            const { createSubtasks } = require('./services/subtasks');
+            const _sr = await createSubtasks({ supabase, parentId: taskId, texts: a.subtasks, parent: insertRow, createdBy: collaborator.id });
+            _subCreated = _sr.created;
+            console.log(`[Task] create +${_subCreated} subtarefa(s) em ${String(taskId).slice(0, 8)}`);
+          } catch (_se) { console.warn('[Task] subtasks insert err (non-fatal):', _se.message); }
+        }
         const sufx = insertRow.remind_at ? ` remind_at=${insertRow.remind_at}`
           : reminders.length ? ` due=${insertRow.due_date} reminders=${attachedReminders}`
           : ` due=${insertRow.due_date}`;

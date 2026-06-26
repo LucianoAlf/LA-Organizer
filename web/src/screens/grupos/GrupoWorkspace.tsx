@@ -26,6 +26,7 @@ import { QuickCreateSheet } from '../../components/QuickCreateSheet';
 import { TaskGroupSheet } from '../../components/TaskGroupSheet';
 import { GroupTaskSheet } from './GroupTaskSheet';
 import { TaskDetailSheet } from '../../components/TaskDetailSheet';
+import { TaskChecklistSection } from '../../components/TaskChecklistSection';
 import type { Task } from '../../types';
 
 const first = (name: string | null | undefined) => (name ?? '').split(' ')[0];
@@ -472,6 +473,7 @@ export function GrupoWorkspace() {
             onComplete={isMember ? () => { void onToggle(r, true); setReading(null); } : undefined}
             onReopen={isDone && isMember ? () => { void onToggle(r, false); setReading(null); } : undefined}
             onEdit={isMember ? () => { setEditing(r); setReading(null); } : undefined}
+            checklist={<TaskChecklistSection parent={{ id: r.id, context: 'work', assigned_to: null, assigned_group_id: groupId }} meId={meuId} editable={isMember} />}
           />
         );
       })()}

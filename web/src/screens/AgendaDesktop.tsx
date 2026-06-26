@@ -24,6 +24,7 @@ import { useAgendaEvents, type EventForGrid } from './agenda/hooks/useAgendaEven
 import { useAgendaTasks, type TaskForPanel } from './agenda/hooks/useAgendaTasks';
 import { useCollaboratorNames } from './agenda/hooks/useCollaboratorNames';
 import { TaskDetailSheet } from '../components/TaskDetailSheet';
+import { TaskChecklistSection } from '../components/TaskChecklistSection';
 import { taskDetailMeta } from '../lib/taskDetail';
 
 // Toast fallback — projeto não tem sonner/react-hot-toast instalado.
@@ -442,6 +443,7 @@ export function AgendaDesktop() {
             isRecurring={Boolean(rt.recurrence_rule || rt.recurrence_parent_id)}
             isDone={isDone}
             onEdit={() => { setReadingTask(null); setEditingTask(rt); }}
+            checklist={<TaskChecklistSection parent={{ id: rt.id, context: rt.context, assigned_to: rt.assigned_to ?? null, assigned_group_id: rt.assigned_group_id ?? null }} meId={collabId} editable />}
           />
         );
       })()}

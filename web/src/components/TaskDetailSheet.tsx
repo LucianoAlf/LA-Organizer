@@ -26,11 +26,13 @@ interface TaskDetailSheetProps {
   onComplete?: () => void;
   onReopen?: () => void;
   onEdit?: () => void;
+  /** Subtarefas/checklist (2026-06-26): seção renderizada pelo caller (TaskChecklistSection). */
+  checklist?: ReactNode;
 }
 
 export function TaskDetailSheet({
   open, onClose, title, metaLine, description, dueLabel, statusTone = 'neutral', statusLabel,
-  doneByLine, isRecurring, canComplete, isDone, completing, onComplete, onReopen, onEdit,
+  doneByLine, isRecurring, canComplete, isDone, completing, onComplete, onReopen, onEdit, checklist,
 }: TaskDetailSheetProps) {
   const desc = (description ?? '').trim();
   return (
@@ -54,6 +56,7 @@ export function TaskDetailSheet({
             ? <div className="text-body-md text-fg whitespace-pre-wrap break-words">{desc}</div>
             : <div className="text-body-sm text-fg-muted italic">Sem descrição.</div>}
         </div>
+        {checklist}
         <div className="flex items-center gap-sm pt-sm border-t border-border">
           {canComplete && !isDone && onComplete && (
             <Button variant="primary" size="md" loading={completing} onClick={onComplete}>Concluir</Button>

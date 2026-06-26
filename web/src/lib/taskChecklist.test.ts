@@ -37,9 +37,12 @@ describe('checklistProgress', () => {
 });
 
 describe('canCheckItem', () => {
-  it('só o responsável marca', () => {
+  it('só o responsável marca (pessoal/delegada)', () => {
     expect(canCheckItem({ assigned_to: 'u1', meId: 'u1' })).toBe(true);
     expect(canCheckItem({ assigned_to: 'u1', meId: 'u2' })).toBe(false);
     expect(canCheckItem({ assigned_to: null, meId: 'u1' })).toBe(false);
+  });
+  it('tarefa de grupo: qualquer membro marca', () => {
+    expect(canCheckItem({ assigned_to: null, assigned_group_id: 'g1', meId: 'u9' })).toBe(true);
   });
 });

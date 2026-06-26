@@ -34,6 +34,7 @@ import { QuickCreateSheet } from '../components/QuickCreateSheet';
 import { EditEventSheet } from '../components/EditEventSheet';
 import { EditTaskSheet } from '../components/EditTaskSheet';
 import { TaskDetailSheet } from '../components/TaskDetailSheet';
+import { TaskChecklistSection } from '../components/TaskChecklistSection';
 import { taskDetailMeta } from '../lib/taskDetail';
 import { RescheduleSheet } from '../components/RescheduleSheet';
 import type { Task, TaskContext, CalendarEvent, ActionType } from '../types';
@@ -857,6 +858,7 @@ export function Hoje() {
             canComplete={!isDone}
             onComplete={() => { toggleTask.mutate(rt); setReadingTask(null); }}
             onEdit={() => { setEditingTask(rt); setReadingTask(null); }}
+            checklist={<TaskChecklistSection parent={{ id: rt.id, context: rt.context, assigned_to: rt.assigned_to ?? null, assigned_group_id: rt.assigned_group_id ?? null }} meId={collaborator?.id} editable />}
           />
         );
       })()}

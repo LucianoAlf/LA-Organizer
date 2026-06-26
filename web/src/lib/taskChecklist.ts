@@ -24,8 +24,11 @@ export function checklistProgress(children: { status?: string | null }[]) {
   return { done: counted.filter((c) => c.status === 'done').length, total: counted.length };
 }
 
-// Permissão de marcar um item: só o RESPONSÁVEL pela tarefa (espelha "só o assignee marca como feita"
-// das delegadas). O delegador (criador) vê o progresso mas não marca os itens do outro.
-export function canCheckItem(args: { assigned_to?: string | null; meId?: string | null }): boolean {
+// Permissão de marcar um item:
+//  - tarefa de GRUPO (assigned_group_id) → qualquer membro marca (igual ao pool do grupo);
+//  - pessoal/delegada → só o RESPONSÁVEL (assigned_to), espelhando "só o assignee marca como feita".
+// O delegador (criador) vê o progresso e edita a LISTA, mas não MARCA os itens do liderado.
+export function canCheckItem(args: { assigned_to?: string | null; assigned_group_id?: string | null; meId?: string | null }): boolean {
+  if (args.assigned_group_id) return true;
   return !!args.meId && args.meId === args.assigned_to;
 }
