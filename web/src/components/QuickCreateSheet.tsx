@@ -451,6 +451,22 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
         const { error: re } = await supabase.from('event_reminders').insert(reminderRows);
         if (re) console.warn('[QuickCreate] event_reminders insert err:', re.message);
       }
+      // Checklist (pauta) do compromisso — itens em event_checklist_items após o evento existir.
+      // Recorrência: NÃO cria (ficaria no template invisível; igual à tarefa).
+      const eventChecklist = (inserted?.id && !recurrenceRule)
+        ? checklistDraft.map(s => s.trim()).filter(Boolean)
+        : [];
+      if (inserted?.id && eventChecklist.length > 0) {
+        const clRows = eventChecklist.map((t, i) => ({
+          event_id: inserted.id as string,
+          title: t.slice(0, 200),
+          done: false,
+          sort_position: i + 1,
+          created_by: collab.id,
+        }));
+        const { error: ce } = await supabase.from('event_checklist_items').insert(clRows);
+        if (ce) console.warn('[QuickCreate] event checklist insert err:', ce.message);
+      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['events'] });
@@ -1149,6 +1165,11 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
               value={eventReminderTimes}
               onChange={setEventReminderTimes}
             />
+
+            {/* Checklist (pauta) do compromisso — escondido quando recorrente (limitação conhecida). */}
+            {!recurrenceRule && (
+              <ChecklistDraftField items={checklistDraft} onChange={setChecklistDraft} />
+            )}
           </>
         )}
 

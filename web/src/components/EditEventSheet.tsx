@@ -11,6 +11,7 @@ import { RemindersField } from './RemindersField';
 import { ParticipantsPicker } from './ParticipantsPicker';
 import { useEventCategories } from '../hooks/useEventCategories';
 import { notifyEventInvites } from '../lib/tomEngine';
+import { EventChecklistSection } from './EventChecklistSection';
 import type { CalendarEvent } from '../types';
 
 interface Props {
@@ -451,6 +452,14 @@ export function EditEventSheet({ open, event, onClose }: Props) {
               </div>
             )}
           </div>
+
+          {/* Checklist (pauta) do compromisso — pauta/preparação. Editável só pelo dono do
+              evento; participantes/coordenação veem read-only. Marcar NÃO conclui o evento. */}
+          <EventChecklistSection
+            eventId={event.id}
+            meId={collaborator?.id}
+            editable={(event as { collaborator_id?: string | null }).collaborator_id === collaborator?.id}
+          />
 
           {update.error && (
             <p role="alert" className="text-body-sm text-danger">

@@ -6,6 +6,8 @@ import { TimeInput } from '../../../components/TimeInput';
 import { CustomSelect } from '../../../components/CustomSelect';
 import { Button } from '../../../components/Button';
 import { RemindersField } from '../../../components/RemindersField';
+import { EventChecklistSection } from '../../../components/EventChecklistSection';
+import { useAuth } from '../../../contexts/AuthContext';
 import { useReminders } from '../hooks/useReminders';
 import type { EventForGrid } from '../hooks/useAgendaEvents';
 
@@ -25,6 +27,7 @@ export interface EventEditDrawerProps {
 
 export function EventEditDrawer(p: EventEditDrawerProps) {
   const ev = p.event;
+  const { collaborator } = useAuth();
   const [form, setForm] = useState<EventForGrid | null>(ev);
   const [reminderTimes, setReminderTimes] = useState<string[]>([]);
   const reminders = useReminders('event', ev?.id);
@@ -195,6 +198,13 @@ export function EventEditDrawer(p: EventEditDrawerProps) {
           })()}
           value={reminderTimes}
           onChange={setReminderTimes}
+        />
+
+        {/* Checklist (pauta) do compromisso — editável só pelo dono do evento. */}
+        <EventChecklistSection
+          eventId={ev.id}
+          meId={collaborator?.id}
+          editable={(form as { collaborator_id?: string | null }).collaborator_id === collaborator?.id}
         />
 
         <div className="text-[10px] text-fg-muted pt-2 border-t border-border">

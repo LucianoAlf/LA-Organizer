@@ -2574,6 +2574,32 @@ async function applyEventActions(collaborator, events, opts = {}) {
       } catch (rErr) {
         console.warn('[Event] reminders attach failed:', rErr.message);
       }
+      // Checklist (pauta) do compromisso — TOM pode passar checklist:["item1","item2"].
+      // Best-effort: NUNCA derruba a criação do evento. Defensivo a malformado (não-array =
+      // ignora; itens não-string = filtra). Recorrência: NÃO cria (ficaria no template
+      // invisível, igual ao PWA/tarefa). created_by = remetente real.
+      try {
+        const eventId = data && data.id;
+        if (eventId && !row.recurrence_rule && Array.isArray(e.checklist)) {
+          const clRows = e.checklist
+            .map(t => (typeof t === 'string' ? t.trim() : ''))
+            .filter(Boolean)
+            .map((title, i) => ({
+              event_id: eventId,
+              title: title.slice(0, 200),
+              done: false,
+              sort_position: i + 1,
+              created_by: collaborator.id,
+            }));
+          if (clRows.length > 0) {
+            const { error: clErr } = await supabase.from('event_checklist_items').insert(clRows);
+            if (clErr) console.error('[Event] checklist err:', clErr.message);
+            else console.log(`[Event] +${clRows.length} checklist item(s) for event ${String(eventId).slice(0,8)}`);
+          }
+        }
+      } catch (clErr) {
+        console.warn('[Event] checklist attach failed:', clErr.message);
+      }
       okCount++;
     } catch (err) {
       console.error('[Event] throw err:', err.message);

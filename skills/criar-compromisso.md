@@ -181,8 +181,11 @@ O user pode ter categorias pessoais próprias (academia, terapia…). Se a fala 
 | `meeting_url` | string | não | só online/hibrido |
 | `description` | string | não | observações |
 | `reminders_minutes_before` | int[] | não | minutos ANTES do start. Ex: `[15,60,1440]`. `0` = na hora. |
+| `checklist` | string[] | não | pauta/preparação do compromisso. Ex: `["Levar contrato","Preparar slides"]`. |
 
 **Lembretes:** quando o user pede ("me lembra 1h antes", "15min antes e na hora"), inclua `reminders_minutes_before` com os minutos. Sem pedido → não inclua. Confirme: `⏰ Lembretes: 1 dia antes · 1h antes`.
+
+**Checklist (pauta):** quando o user descreve itens a preparar/cobrir ("reunião com pauta: X, Y, Z", "monta a reunião com checklist: ..."), inclua `checklist` com os itens. É **pauta/preparação**, NÃO conclui o evento. Anti-confab: só diga "com checklist de N itens" se você DE FATO emitiu os N no marker; nunca invente.
 
 ### Respostas canônicas
 

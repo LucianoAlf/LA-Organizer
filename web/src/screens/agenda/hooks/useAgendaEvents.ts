@@ -6,6 +6,7 @@ import type { AgendaFilters } from './useAgendaFilters';
 
 export interface EventForGrid {
   id: string;
+  collaborator_id?: string | null;
   title: string;
   description?: string | null;
   start_at: string;
@@ -24,7 +25,7 @@ export interface EventForGrid {
 }
 
 const EVENT_SELECT = `
-  id, title, description, start_at, end_at, context, category, modality,
+  id, collaborator_id, title, description, start_at, end_at, context, category, modality,
   location_text, meeting_url, status, project_id, source,
   eisenhower_quadrant, remind_at,
   event_categories!category_id ( slug, label, color )
