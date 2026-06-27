@@ -10112,6 +10112,11 @@ async function processMessage(phone, text, raw = {}) {
       _invLeadText = reply.replace(/<<INVENTORY_ACTION>>[\s\S]*?<<END>>/gi, '').replace(/`{3,}/g, '').trim();
       const _invReplies = [];
       let _hasSalaPending = false;
+      // INVENTORY-CONFAB-INVERSO-NOMARKER (27/06) — conta ações que PERSISTIRAM de fato (não
+      // dup / pergunta de sala / aprovação-pendente). Se >0, loga UM INVENTORY_ACTION executed no
+      // fim (espelha SHOP_ACTION) → auditor enxerga o inventário + marker_emitted via query 11355
+      // → o chokepoint não rebaixa cadastro real (inverse-confab, primo do #1).
+      let _invPersisted = 0;
       for (const _invMatch of _allInvMatches) {
         reply = '';
         let payload;
@@ -10333,6 +10338,7 @@ async function processMessage(phone, text, raw = {}) {
                       }
                     }
                     reply = (reply ? reply + '\n\n' : '') + `✅ Item adicionado: ${item.nome}${item.codigo_patrimonio ? ` (${item.codigo_patrimonio})` : ''}${_fotoMsg}`;
+                    _invPersisted++;
                     }
                     }
                   }
@@ -10359,6 +10365,7 @@ async function processMessage(phone, text, raw = {}) {
                       nota_fiscal: p.nota_fiscal, motivo: p.motivo,
                     }, userName);
                     reply = (reply ? reply + '\n\n' : '') + `✅ Estoque atualizado. Saldo agora: ${res.saldo_apos} un.`;
+                    _invPersisted++;
                   }
                 }
               }
@@ -10406,6 +10413,7 @@ async function processMessage(phone, text, raw = {}) {
                       item_id: itemId, tipo: p.tipo, sala_destino_id: destinoId, motivo: p.motivo || `via TOM por ${userName}`,
                     }, userName);
                     reply = (reply ? reply + '\n\n' : '') + `✅ Movimentação registrada.`;
+                    _invPersisted++;
                   }
                 }
               }
@@ -10431,6 +10439,7 @@ async function processMessage(phone, text, raw = {}) {
                       fornecedor_servico: p.fornecedor_servico,
                     }, userName);
                     reply = (reply ? reply + '\n\n' : '') + `🔧 Manutenção registrada.`;
+                    _invPersisted++;
                   } else {
                     const _maintApprover = await approvalsService.resolveApproverFor(supabase, collab.id);
                     if (!_maintApprover) {
@@ -10440,6 +10449,7 @@ async function processMessage(phone, text, raw = {}) {
                         fornecedor_servico: p.fornecedor_servico,
                       }, userName);
                       reply = (reply ? reply + '\n\n' : '') + `🔧 Manutenção registrada.`;
+                      _invPersisted++;
                     } else {
                       const _maintToken = `MANUT-${require('crypto').randomBytes(2).toString('hex').toUpperCase()}`;
                       await approvalsService.openMaintenanceApproval(supabase, {
@@ -10486,7 +10496,7 @@ async function processMessage(phone, text, raw = {}) {
                   patch.updated_at = new Date().toISOString();
                   const { data: upd, error } = await laReportClient.from('inventario').update(patch).eq('id', itemId).select('id, nome, quantidade, condicao, status').single();
                   if (error) reply = (reply ? reply + '\n\n' : '') + `Erro ao atualizar: ${error.message}`;
-                  else reply = (reply ? reply + '\n\n' : '') + `✏️ Atualizado: ${upd.nome} → qtd ${upd.quantidade}, cond ${upd.condicao}, status ${upd.status}`;
+                  else { reply = (reply ? reply + '\n\n' : '') + `✏️ Atualizado: ${upd.nome} → qtd ${upd.quantidade}, cond ${upd.condicao}, status ${upd.status}`; _invPersisted++; }
                 }
               }
             } else if (payload.action === 'delete_item') {
@@ -10509,7 +10519,7 @@ async function processMessage(phone, text, raw = {}) {
                   .update({ status: 'baixa', ativo: false, observacoes: obs, updated_at: new Date().toISOString() })
                   .eq('id', itemId).select('id, nome').single();
                 if (error) reply = (reply ? reply + '\n\n' : '') + `Erro na baixa: ${error.message}`;
-                else reply = (reply ? reply + '\n\n' : '') + `🗑️ Baixado: ${del.nome}`;
+                else { reply = (reply ? reply + '\n\n' : '') + `🗑️ Baixado: ${del.nome}`; _invPersisted++; }
               }
             } else if (payload.action === 'ver') {
               const nome = p && p.nome ? p.nome : payload.nome;
@@ -10599,6 +10609,12 @@ async function processMessage(phone, text, raw = {}) {
         if (reply && reply.includes('qual *unidade* e *sala*')) _hasSalaPending = true;
         _invReplies.push(reply);
       }  // close for loop de markers
+      // INVENTORY-CONFAB-INVERSO-NOMARKER (27/06) — loga UM marker honesto se ALGO persistiu no
+      // turno (espelha SHOP_ACTION 10629). NÃO seta _metrics.marker_emitted à mão (a query 11355
+      // sobrescreve) — só o log no banco, ANTES da query, conta. Falhas já viram rejected (#3-A).
+      if (_invPersisted > 0) {
+        try { await logMarker(collab.id, 'INVENTORY_ACTION', 'executed', `persisted:${_invPersisted}`, null); } catch (_) {}
+      }
       // Combinar: pergunta de sala suprime qualquer mensagem de sucesso anterior
       if (_hasSalaPending) {
         reply = _invReplies.filter(r => r && r.includes('qual *unidade* e *sala*')).join('\n\n');
@@ -11539,6 +11555,7 @@ Output AGORA, apenas o marker:`;
   const _domainOf = (m) => {
     const em = String((m && m.marker_emitted) || '');
     if (/FINANCE/i.test(em)) return 'finance';
+    if (/INVENTORY|SHOP/i.test(em)) return 'inventory';
     if (/TASK|CHECKLIST/i.test(em)) return 'task';
     if (/EVENT/i.test(em)) return 'event';
     if (/HABIT/i.test(em)) return 'habit';
