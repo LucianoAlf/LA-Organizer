@@ -8406,9 +8406,15 @@ async function processMessage(phone, text, raw = {}) {
   // transação recente, o ENGINE executa direto via handleFinanceAction — sem depender do LLM.
   try {
     const { detectCorrection, detectFinanceEditIntent } = require('./finance/detect-correction');
-    const corr = detectCorrection(String(text || ''));
+    // FINEDIT-QUOTE-SCAFFOLD-MISROUTE (27/06) — roda os detectores só na FALA REAL da pessoa,
+    // NÃO no scaffold do reply-quote. Caso Rafinha: "Coloca o prazo até final de julho" (prazo de
+    // TAREFA) respondendo a um card com "Compra..." → "compra" da CITAÇÃO casava RE_TXN_NOUN_LOOSE
+    // → finance-edit redirect curto-circuitava o handler de tarefa. Família DUP-QUOTE-SCAFFOLD.
+    // NÃO muta `text` (o contexto do LLM lá embaixo ainda pode querer a citação).
+    const _uTxt = stripReplyScaffold(String(text || '')).userText;
+    const corr = detectCorrection(_uTxt);
     // Gate do REDIRECT = intent LOOSE (não precisa do alvo); EXECUTE = corr COMPLETO.
-    const editIntent = corr ? { op: corr.op } : detectFinanceEditIntent(String(text || ''));
+    const editIntent = corr ? { op: corr.op } : detectFinanceEditIntent(_uTxt);
     if (editIntent) {
       const action = editIntent.op === 'delete' ? 'delete_transaction' : 'edit_transaction';
       const recent = await financeService.listRecentTransactions(collab.id, { hours: EDIT_WINDOW_HOURS, limit: 10 });
