@@ -44,6 +44,7 @@ const { validateDndWindow, DND_MAX_MS } = require('./lib/dnd-window');
 const { isVisibleForDay } = require('./lib/day-visibility');
 const { classifyAutoRetry } = require('./lib/auto-retry-outcome');
 const { friendlyInventoryError } = require('./lib/inventory-error-message');
+const { decideTaskDoneFromQuote } = require('./services/taskdone-quote');
 const { enforceNoSyncExcuse } = require('./lib/sync-excuse-guard');
 const { classifyDupChoice, pickFreshDupBypassIntent, pickDupBypassIntentForReply } = require('./lib/dup-choice');
 const { buildClosingItems, parseClosingReply } = require('./utils/closing-reply');
@@ -8750,6 +8751,26 @@ async function processMessage(phone, text, raw = {}) {
           .maybeSingle();
         const _target = resolveReplyTarget({ quotedId: _quotedId, row: _linkRow, object: _obj });
         if (_target) {
+          // TASKDONE-QUOTE-REMINDER-NOOP (27/06) — reply-quote a lembrete de TAREFA + "feito" →
+          // conclui DETERMINÍSTICO (não depende do LLM, que falhou sob fallback Codex; a tarefa do
+          // Arthur ficou pending). Owner-scoped (assigned_to=collab.id) + status vivo → idempotente;
+          // não-dono / já mudou → rowcount 0 → segue o fluxo normal (ctx-hint + LLM). Loga
+          // TASK_UPDATE executed (seta marker_emitted → chokepoint não rebaixa).
+          const _td = decideTaskDoneFromQuote({ rawText: text, target: _target });
+          if (_td) {
+            const { data: _doneRow } = await supabase.from('tasks')
+              .update({ status: 'done', completed_at: new Date().toISOString(), completed_by: collab.id })
+              .eq('id', _td.refId).eq('assigned_to', collab.id).in('status', ['pending', 'in_progress'])
+              .select('id, title').maybeSingle();
+            if (_doneRow) {
+              const _doneReply = `✅ Concluí: ${_doneRow.title || _td.title}`;
+              try { await logMarker(collab.id, 'TASK_UPDATE', 'executed', `taskdone_quote:${String(_td.refId).slice(0, 8)}`, null); } catch (_) {}
+              await whatsapp.sendMessage(phone, _doneReply);
+              await logConversation(collab.id, 'outbound', _doneReply);
+              console.log(`[ReplyRef] TASKDONE deterministico ${String(_td.refId).slice(0, 8)} phone=${_phoneTail}`);
+              return;
+            }
+          }
           text = String(text || '') + buildReplyRefCtxHint(_target);
           console.log(`[ReplyRef] alvo ancorado ${_target.refType}=${String(_target.refId).slice(0, 8)} phone=${_phoneTail}`);
         } else {
