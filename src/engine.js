@@ -42,6 +42,7 @@ const { isFutureCompletion } = require('./utils/complete-guards');
 const { sanitizeOptimisticConfirm, hasOptimisticConfirm, enforceNoMarkerHonesty } = require('./lib/optimistic-confirm');
 const { validateDndWindow, DND_MAX_MS } = require('./lib/dnd-window');
 const { isVisibleForDay } = require('./lib/day-visibility');
+const { classifyAutoRetry } = require('./lib/auto-retry-outcome');
 const { enforceNoSyncExcuse } = require('./lib/sync-excuse-guard');
 const { classifyDupChoice, pickFreshDupBypassIntent, pickDupBypassIntentForReply } = require('./lib/dup-choice');
 const { buildClosingItems, parseClosingReply } = require('./utils/closing-reply');
@@ -11439,19 +11440,17 @@ Output AGORA, apenas o marker:`;
                   // títulos alucinados logava "executed actions:4" mesmo quando todas
                   // falharam — escondia o problema do health-check.
                   const retryResult = await applyTaskActions(collab, safeActions) || { okCount: 0, failCount: safeActions.length };
-                  const ok = retryResult.okCount || 0;
-                  const fail = retryResult.failCount || 0;
-                  if (ok > 0) {
-                    console.log(`[Engine] AUTO_RETRY_OK — marker=TASK_UPDATE ok=${ok} fail=${fail}`);
-                    await logMarker(collab.id, 'TASK_UPDATE_AUTO_RETRY',
-                      fail > 0 ? 'partial' : 'executed',
-                      `ok=${ok} fail=${fail}`, retryText.slice(0, 500));
-                    _metrics.auto_retry_succeeded = true;
-                  } else {
-                    console.warn(`[Engine] AUTO_RETRY_ALL_FAILED — fail=${fail}`);
-                    await logMarker(collab.id, 'TASK_UPDATE_AUTO_RETRY', 'rejected',
-                      `all_failed:${fail}`, retryText.slice(0, 500));
-                  }
+                  // CONFAB-INVERSO-AUTORETRY-DUP (27/06) — classifica o resultado. Se o
+                  // `create` do retry falha porque é dup (a tarefa JÁ EXISTE), isso PROVA
+                  // que o estado desejado está presente → conta como persistido, senão o
+                  // chokepoint rebaixa uma verdade ("tá fechado" → "não consegui"). Caso Ana.
+                  // Só dup prova existência; outras falhas seguem rejeitando (lib testada).
+                  const _cls = classifyAutoRetry(retryResult);
+                  await logMarker(collab.id, 'TASK_UPDATE_AUTO_RETRY', _cls.status, _cls.reason, retryText.slice(0, 500));
+                  if (_cls.persisted) _metrics.auto_retry_succeeded = true;
+                  if (_cls.status === 'rejected') console.warn(`[Engine] AUTO_RETRY_ALL_FAILED — ${_cls.reason}`);
+                  else if (_cls.status === 'skipped') console.log(`[Engine] AUTO_RETRY_DUP_EXISTS — ${_cls.reason}`);
+                  else console.log(`[Engine] AUTO_RETRY_OK — marker=TASK_UPDATE ${_cls.reason}`);
                   }
                 } catch (applyErr) {
                   console.warn(`[Engine] AUTO_RETRY_APPLY_FAILED — ${applyErr.message}`);
