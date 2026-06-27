@@ -43,6 +43,7 @@ const { sanitizeOptimisticConfirm, hasOptimisticConfirm, enforceNoMarkerHonesty 
 const { validateDndWindow, DND_MAX_MS } = require('./lib/dnd-window');
 const { isVisibleForDay } = require('./lib/day-visibility');
 const { classifyAutoRetry } = require('./lib/auto-retry-outcome');
+const { friendlyInventoryError } = require('./lib/inventory-error-message');
 const { enforceNoSyncExcuse } = require('./lib/sync-excuse-guard');
 const { classifyDupChoice, pickFreshDupBypassIntent, pickDupBypassIntentForReply } = require('./lib/dup-choice');
 const { buildClosingItems, parseClosingReply } = require('./utils/closing-reply');
@@ -10203,7 +10204,11 @@ async function processMessage(phone, text, raw = {}) {
         const baseCheck = inventarioValidators.validateAction(payload);
         if (!baseCheck.ok) {
           console.warn('[InventoryAction] validateAction failed:', baseCheck.errors);
-          _invReplies.push(`Pedido inválido: ${baseCheck.errors.join(', ')}`);
+          // INVENTORY-RAW-ERROR-LEAK (27/06) — mensagem amigável em vez de jargão do validador
+          // ("action_invalida: upsert_room"). + loga marker da rejeição (antes o inventário
+          // não logava NADA → cego pro auditor). Caso Dai 26/06.
+          _invReplies.push(friendlyInventoryError(baseCheck.errors));
+          await logMarker(collab.id, 'INVENTORY_ACTION', 'rejected', `${payload.action}:${baseCheck.errors.join(',')}`.slice(0, 90), null);
           continue;
         }
         {
@@ -10230,7 +10235,7 @@ async function processMessage(phone, text, raw = {}) {
           try {
             if (payload.action === 'add_item') {
               const vc = inventarioValidators.validateAddItem(p);
-              if (!vc.ok) { reply = (reply ? reply + '\n\n' : '') + `Faltam dados: ${vc.errors.join(', ')}`; }
+              if (!vc.ok) { reply = (reply ? reply + '\n\n' : '') + friendlyInventoryError(vc.errors); await logMarker(collab.id, 'INVENTORY_ACTION', 'rejected', `${payload.action}:${vc.errors.join(',')}`.slice(0, 90), null); }
               else {
                 let unidadeId = await resolverUnidadeId(p.unidade_nome);
                 // Se faltou unidade, tenta inferir pela sala (busca sala — se única, pega unidade dela)
@@ -10329,7 +10334,7 @@ async function processMessage(phone, text, raw = {}) {
               }
             } else if (payload.action === 'shop_movement') {
               const vc = inventarioValidators.validateShopMovement(p);
-              if (!vc.ok) { reply = (reply ? reply + '\n\n' : '') + `Faltam dados: ${vc.errors.join(', ')}`; }
+              if (!vc.ok) { reply = (reply ? reply + '\n\n' : '') + friendlyInventoryError(vc.errors); await logMarker(collab.id, 'INVENTORY_ACTION', 'rejected', `${payload.action}:${vc.errors.join(',')}`.slice(0, 90), null); }
               else {
                 const unidadeId = await resolverUnidadeId(p.unidade_nome);
                 if (!unidadeId) { reply = (reply ? reply + '\n\n' : '') + `Unidade "${p.unidade_nome}" não encontrada.`; }
@@ -10366,7 +10371,7 @@ async function processMessage(phone, text, raw = {}) {
                 || p.from_room || p.from_location || p.source_room || p.source_location);
               if (!p.tipo || !inventarioValidators.VALID_MOV_TIPOS.includes(p.tipo)) p.tipo = 'transferencia';
               const vc = inventarioValidators.validateMoveItem(p);
-              if (!vc.ok) { reply = (reply ? reply + '\n\n' : '') + `Faltam dados: ${vc.errors.join(', ')}`; }
+              if (!vc.ok) { reply = (reply ? reply + '\n\n' : '') + friendlyInventoryError(vc.errors); await logMarker(collab.id, 'INVENTORY_ACTION', 'rejected', `${payload.action}:${vc.errors.join(',')}`.slice(0, 90), null); }
               else {
                 let itemId = p.item_id;
                 if (!itemId && p.item_nome) {
@@ -10400,7 +10405,7 @@ async function processMessage(phone, text, raw = {}) {
               }
             } else if (payload.action === 'maintenance') {
               const vc = inventarioValidators.validateMaintenance(p);
-              if (!vc.ok) { reply = (reply ? reply + '\n\n' : '') + `Faltam dados: ${vc.errors.join(', ')}`; }
+              if (!vc.ok) { reply = (reply ? reply + '\n\n' : '') + friendlyInventoryError(vc.errors); await logMarker(collab.id, 'INVENTORY_ACTION', 'rejected', `${payload.action}:${vc.errors.join(',')}`.slice(0, 90), null); }
               else {
                 let itemId = p.item_id;
                 let _maintItemNome = p.item_nome || null;
