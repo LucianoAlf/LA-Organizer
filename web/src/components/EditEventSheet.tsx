@@ -8,6 +8,7 @@ import { CustomSelect } from './CustomSelect';
 import { DateTimeInput } from './DateTimeInput';
 import { EisenhowerPicker } from './EisenhowerPicker';
 import { RemindersField } from './RemindersField';
+import { shiftLocalReminderTimes } from '../lib/reminderShift';
 import { ParticipantsPicker } from './ParticipantsPicker';
 import { useEventCategories } from '../hooks/useEventCategories';
 import { notifyEventInvites } from '../lib/tomEngine';
@@ -120,6 +121,9 @@ export function EditEventSheet({ open, event, onClose }: Props) {
         .from('event_reminders')
         .select('id, remind_at')
         .eq('event_id', event.id)
+        // EVENT-RESCHED-REMINDER-PWA — só PENDENTES: ao reagendar, não deslocamos/ressuscitamos
+        // lembrete já enviado (sent_at != null fica como histórico, igual o engine).
+        .is('sent_at', null)
         .order('remind_at', { ascending: true });
       if (error) return [];
       return (data ?? []) as Array<{ id: string; remind_at: string }>;
@@ -166,6 +170,14 @@ export function EditEventSheet({ open, event, onClose }: Props) {
       onClose();
     },
   });
+
+  // EVENT-RESCHED-REMINDER-PWA — ao reagendar (mudar o início), os lembretes
+  // acompanham o novo horário pelo mesmo delta (offset-preserving), espelhando o
+  // engine. WYSIWYG: o usuário vê os lembretes andarem junto; o save persiste o diff.
+  const onStartChange = (next: string) => {
+    setReminderTimes(prev => shiftLocalReminderTimes(prev, startAt, next));
+    setStartAt(next);
+  };
 
   const onSave = (e: FormEvent) => {
     e.preventDefault();
@@ -354,7 +366,7 @@ export function EditEventSheet({ open, event, onClose }: Props) {
           <div className="space-y-md">
             <div>
               <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Início</div>
-              <DateTimeInput value={startAt} onChange={setStartAt} />
+              <DateTimeInput value={startAt} onChange={onStartChange} />
             </div>
             <div>
               <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Fim</div>

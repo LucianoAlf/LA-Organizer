@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
+import { shiftReminderRowsByReschedule } from '../lib/reminderShift';
 import { useAuth } from '../contexts/AuthContext';
 import { localYmd, todaySP } from '../utils/date';
 
@@ -244,13 +245,27 @@ export function AgendaDesktop() {
   }, []);
 
   const onEventDrop = useCallback(async (ev: EventForGrid, newStart: Date) => {
+    const oldStartIso = ev.start_at;
     const durationMs = new Date(ev.end_at).getTime() - new Date(ev.start_at).getTime();
+    const newStartIso = newStart.toISOString();
     const patch: Partial<EventForGrid> = {
-      start_at: newStart.toISOString(),
+      start_at: newStartIso,
       end_at: new Date(newStart.getTime() + durationMs).toISOString(),
     };
     try {
       await updateEvent.mutateAsync({ id: ev.id, patch });
+      // EVENT-RESCHED-REMINDER-PWA — drag move: lembretes PENDENTES acompanham o novo
+      // início (offset-preserving, igual o engine; sent_at != null fica como histórico).
+      try {
+        const { data: rems } = await supabase
+          .from('event_reminders').select('id, remind_at')
+          .eq('event_id', ev.id).is('sent_at', null);
+        for (const s of shiftReminderRowsByReschedule(rems ?? [], oldStartIso, newStartIso)) {
+          await supabase.from('event_reminders').update({ remind_at: s.remind_at }).eq('id', s.id);
+        }
+      } catch (e) {
+        console.warn('[AgendaDesktop] reminder shift on drop err:', e);
+      }
     } catch {
       toast.error('Não foi possível atualizar o evento. Tente de novo.');
     }

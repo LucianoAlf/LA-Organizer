@@ -35,7 +35,11 @@ function fkFor(kind: Kind): 'event_id' | 'task_id' {
   return kind === 'event' ? 'event_id' : 'task_id';
 }
 
-export function useReminders(kind: Kind, entityId: string | null | undefined) {
+export function useReminders(kind: Kind, entityId: string | null | undefined, opts?: { pendingOnly?: boolean }) {
+  // pendingOnly (usado só pelo EventEditDrawer): opera apenas em lembretes não-enviados,
+  // espelhando o engine (event_reminders sent_at IS NULL). Task (sem o flag) mantém o
+  // comportamento antigo; o re-fire de task é blindado pelo guard de staleness do dispatcher.
+  const pendingOnly = opts?.pendingOnly ?? false;
   const qc = useQueryClient();
   const table = tableFor(kind);
   const fk = fkFor(kind);
@@ -55,16 +59,18 @@ export function useReminders(kind: Kind, entityId: string | null | undefined) {
   });
 
   /** Lista de datetime-local pra alimentar o RemindersField. */
-  const localTimes: string[] = (data ?? []).map(r => isoToLocal(r.remind_at));
+  const localTimes: string[] = (data ?? [])
+    .filter(r => !pendingOnly || r.sent_at == null)
+    .map(r => isoToLocal(r.remind_at));
 
   /** Sincroniza: deleta todos + insere novos. */
   async function sync(newLocalTimes: string[]) {
     if (!entityId) return;
-    // 1. Delete all existing
-    const { error: delErr } = await supabase
-      .from(table)
-      .delete()
-      .eq(fk, entityId);
+    // 1. Delete existing. Com pendingOnly (event), deleta SÓ os não-enviados, preservando
+    //    o histórico (sent_at != null) — espelha o engine. Sem o flag (task), DELETE-all.
+    let delQuery = supabase.from(table).delete().eq(fk, entityId);
+    if (pendingOnly) delQuery = delQuery.is('sent_at', null);
+    const { error: delErr } = await delQuery;
     if (delErr) throw delErr;
     // 2. Insert new (se houver)
     if (newLocalTimes.length > 0) {

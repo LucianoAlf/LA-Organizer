@@ -9,6 +9,7 @@ import { RemindersField } from '../../../components/RemindersField';
 import { EventChecklistSection } from '../../../components/EventChecklistSection';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useReminders } from '../hooks/useReminders';
+import { shiftLocalReminderTimes } from '../../../lib/reminderShift';
 import type { EventForGrid } from '../hooks/useAgendaEvents';
 
 const CATEGORIES = [
@@ -30,7 +31,7 @@ export function EventEditDrawer(p: EventEditDrawerProps) {
   const { collaborator } = useAuth();
   const [form, setForm] = useState<EventForGrid | null>(ev);
   const [reminderTimes, setReminderTimes] = useState<string[]>([]);
-  const reminders = useReminders('event', ev?.id);
+  const reminders = useReminders('event', ev?.id, { pendingOnly: true });
 
   useEffect(() => { setForm(ev); /* eslint-disable-next-line */ }, [ev?.id]);
   // Sincroniza lembretes do servidor quando o evento muda ou data chega.
@@ -59,7 +60,10 @@ export function EventEditDrawer(p: EventEditDrawerProps) {
 
   const setStart = (date: string, time: string) => {
     const d = new Date(`${date}T${time}:00`);
-    setForm({ ...form, start_at: d.toISOString() });
+    const newIso = d.toISOString();
+    // EVENT-RESCHED-REMINDER-PWA — lembretes acompanham o novo início (offset-preserving).
+    setReminderTimes(prev => shiftLocalReminderTimes(prev, toSpLocal(form.start_at), toSpLocal(newIso)));
+    setForm({ ...form, start_at: newIso });
   };
   const setEnd = (date: string, time: string) => {
     const d = new Date(`${date}T${time}:00`);
@@ -192,10 +196,7 @@ export function EventEditDrawer(p: EventEditDrawerProps) {
             Persistência: event_reminders table via useReminders('event', ev.id).
             TOM dispatcher já lê event_reminders e envia WhatsApp marcando sent_at. */}
         <RemindersField
-          referenceDateTime={(() => {
-            const sp = new Date(new Date(form.start_at).getTime() - 3 * 3600_000);
-            return sp.toISOString().slice(0, 16);
-          })()}
+          referenceDateTime={toSpLocal(form.start_at)}
           value={reminderTimes}
           onChange={setReminderTimes}
         />
@@ -215,6 +216,11 @@ export function EventEditDrawer(p: EventEditDrawerProps) {
       </div>
     </DetailDrawer>
   );
+}
+
+/** ISO → datetime-local SP "YYYY-MM-DDTHH:MM" (-03:00 fixo, sem DST no Brasil). */
+function toSpLocal(iso: string): string {
+  return new Date(new Date(iso).getTime() - 3 * 3600_000).toISOString().slice(0, 16);
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
