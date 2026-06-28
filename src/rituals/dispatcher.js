@@ -3402,6 +3402,8 @@ async function autoArchiveStale(now = new Date()) {
       .from('tasks').select('id, title')
       .eq('status', 'pending')
       .eq('data_classification', 'real')
+      .not('is_group', 'is', true)   // nunca arquivar CONTAINER de pacote — arquivar some o pacote inteiro do workspace (fetchPackages exige real). Caso Conciliação de Cartões, Alf+Rose 28/06
+      .is('recurrence_rule', null)   // nem MOLDE de recorrência — arquivar mata a série inteira
       .not('staleness_check_sent_at', 'is', null)
       .lt('staleness_check_sent_at', cutoff)
       .limit(200);
