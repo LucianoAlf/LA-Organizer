@@ -162,6 +162,7 @@ const VALID_TASK_ACTIONS = new Set([
   'complete', 'cancel', 'reschedule', 'create', 'delegate',
   'extension_request', 'extension_decision', 'governance_reassign',
   'snooze_reminders',
+  'mark-item', 'mark_item', // Checklist ativo (2026-06-28): marca sub-item (filha via parent_task_id)
 ]);
 const VALID_COACHING = ['light', 'normal', 'hard'];
 const VALID_EVENT_MODALITIES = new Set(['online', 'presencial', 'hibrido']);
@@ -3401,6 +3402,7 @@ function validateTaskAction(a) {
   // sem precisar refinar prompt — se o Claude variar o naming, a gente acolhe.
   if (a && typeof a === 'object') {
     if (typeof a.task_id === 'string' && !a.id) a.id = a.task_id;
+    if (a.action === 'mark_item') a.action = 'mark-item'; // canoniza underscore→hífen (checklist ativo)
     if (typeof a.due_date === 'string' && !a.new_due_date && a.action === 'reschedule') {
       a.new_due_date = a.due_date;
     }
@@ -3475,6 +3477,15 @@ function validateTaskAction(a) {
     if (!hasId && !hasTitle) return 'bad_id';
     const clearAll = a.clear_all === true || a.clear_all === 'true';
     if (!clearAll && !isValidRemindAt(a.not_before)) return 'snooze_needs_not_before_or_clear_all';
+  } else if (a.action === 'mark-item') {
+    // Checklist ativo (2026-06-28): marca/desmarca um sub-item (filha via parent_task_id).
+    // Exige parent_id (short-id) + (item_id short-id OU item_title). done opcional (default true).
+    // Resolução do item e posse (a mãe tem de ser do remetente) são feitas no handler.
+    const hasParent = typeof a.parent_id === 'string' && SHORT_ID_RE.test(a.parent_id);
+    if (!hasParent) return 'bad_parent_id';
+    const hasItemId = typeof a.item_id === 'string' && SHORT_ID_RE.test(a.item_id);
+    const hasItemTitle = typeof a.item_title === 'string' && a.item_title.trim().length > 0;
+    if (!hasItemId && !hasItemTitle) return 'mark_item_needs_item';
   }
   // Sprint 29.4 — recurrence_rule (opcional em create, ignorado em outras actions)
   if (a.recurrence_rule !== undefined && a.recurrence_rule !== null && a.recurrence_rule !== '') {
@@ -4631,6 +4642,93 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
           await supabase.from('tasks').update(planSnz.taskPatch).eq('id', t.id);
         }
         console.log(`[Task] snooze_reminders task=${String(t.id).slice(0, 8)} consumed=${planSnz.consumeReminderIds.length} inserted=${planSnz.insertReminder ? 1 : 0} patch=${planSnz.taskPatch ? 'y' : 'n'} clearAll=${clearAllSnz} not_before=${a.not_before || '(all)'}`);
+        okCount++;
+      } else if (a.action === 'mark-item') {
+        // Checklist ativo (2026-06-28) — o remetente marca/desmarca um sub-item (filha via
+        // parent_task_id) falando com o TOM ("já liguei pro aluno"). A mãe é resolvida como tarefa
+        // DO PRÓPRIO remetente (resolveTaskByShortId restringe assigned_to + grupos dele): anti-confab
+        // de posse — só mexe no checklist de tarefa que é dele. Cascade reusa notifyTaskCreatorOfAction.
+        const parentMI = await resolveTaskByShortId(collaborator.id, a.parent_id);
+        if (!parentMI) {
+          console.warn(`[Task] mark-item REJECTED parent=${a.parent_id} (não é do ${last4} ou não achado)`);
+          failCount++;
+          continue;
+        }
+        const { data: kidsMI } = await supabase
+          .from('tasks')
+          .select('id, title, status, sort_position')
+          .eq('parent_task_id', parentMI.id)
+          .neq('status', 'cancelled')
+          .order('sort_position', { ascending: true, nullsFirst: true });
+        const childrenMI = kidsMI || [];
+        if (!childrenMI.length) {
+          console.warn(`[Task] mark-item: mãe ${String(parentMI.id).slice(0, 8)} sem filhas (checklist vazio)`);
+          failCount++;
+          continue;
+        }
+        // Resolve a filha-alvo: item_id (short-id) tem prioridade; senão por título (anti-confab).
+        let targetMI = null;
+        if (a.item_id) {
+          const mmMI = matchRowsByShortId(childrenMI, a.item_id);
+          if (mmMI.length === 1) targetMI = mmMI[0];
+        }
+        if (!targetMI && a.item_title) {
+          const { resolveChildByTitle } = require('./services/checklist-resolve');
+          targetMI = resolveChildByTitle(childrenMI, a.item_title);
+        }
+        if (!targetMI) {
+          console.warn(`[Task] mark-item: item não resolvido (parent=${String(parentMI.id).slice(0, 8)} item_id=${a.item_id || ''} title="${String(a.item_title || '').slice(0, 40)}")`);
+          failCount++;
+          continue;
+        }
+        const markDoneMI = a.done !== false; // default true
+        const nowIsoMI = new Date().toISOString();
+        // Marca a filha — anti-confab: confirma rowcount via select.
+        const { data: updKidMI } = await supabase
+          .from('tasks')
+          .update({
+            status: markDoneMI ? 'done' : 'pending',
+            completed_at: markDoneMI ? nowIsoMI : null,
+            completed_by: markDoneMI ? collaborator.id : null,
+          })
+          .eq('id', targetMI.id)
+          .select('id')
+          .maybeSingle();
+        if (!updKidMI) {
+          console.warn(`[Task] mark-item: update da filha ${String(targetMI.id).slice(0, 8)} não pegou`);
+          failCount++;
+          continue;
+        }
+        console.log(`[Task] mark-item ${markDoneMI ? 'done' : 'reopen'} "${String(targetMI.title).slice(0, 40)}" parent=${String(parentMI.id).slice(0, 8)} by ${last4}`);
+        // Cascade: projeta o novo estado das filhas e decide a mãe.
+        const { shouldAutocompleteParent } = require('./services/checklist-render');
+        const projectedMI = childrenMI.map((c) => (c.id === targetMI.id ? { ...c, status: markDoneMI ? 'done' : 'pending' } : c));
+        if (markDoneMI && shouldAutocompleteParent(projectedMI)) {
+          // conclui a mãe — anti-confab: só notifica se o UPDATE realmente fechou (neq done + rowcount).
+          const { data: parentDoneMI } = await supabase
+            .from('tasks')
+            .update({ status: 'done', completed_at: nowIsoMI, completed_by: collaborator.id })
+            .eq('id', parentMI.id)
+            .neq('status', 'done')
+            .select('id, title, created_by, assigned_to')
+            .maybeSingle();
+          if (parentDoneMI) {
+            // avisa o delegador (guard interno created_by!==assigned_to protege checklist pessoal)
+            await notifyTaskCreatorOfAction(parentDoneMI, collaborator, 'complete');
+            groupNotices.push(`✅ Com esse, *${String(parentDoneMI.title || '').slice(0, 60)}* fechou completo — todos os itens.`);
+            console.log(`[Task] mark-item cascade → mãe "${String(parentDoneMI.title || '').slice(0, 40)}" concluída (avisa delegador)`);
+          }
+        } else if (!markDoneMI) {
+          // desmarcou: se a mãe estava concluída, reabre (sem notificar ninguém).
+          const { data: reopenedMI } = await supabase
+            .from('tasks')
+            .update({ status: 'pending', completed_at: null, completed_by: null })
+            .eq('id', parentMI.id)
+            .eq('status', 'done')
+            .select('id')
+            .maybeSingle();
+          if (reopenedMI) console.log(`[Task] mark-item reopen mãe ${String(parentMI.id).slice(0, 8)} (item desmarcado)`);
+        }
         okCount++;
       } else if (a.action === 'create') {
         if (!a.title || typeof a.title !== 'string' || !a.title.trim()) {

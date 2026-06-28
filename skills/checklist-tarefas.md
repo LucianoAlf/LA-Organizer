@@ -67,6 +67,7 @@ Quando o colaborador relata uma demanda emergente, o caminho é `create` em `<<T
 - `delegate`
 - `extension_request`
 - `extension_decision`
+- `mark-item` — marcar/desmarcar um **item de checklist** (sub-item) de uma tarefa
 
 Todas as actions acima estão implementadas e validadas no engine atual. Use-as com segurança.
 
@@ -138,6 +139,47 @@ Exemplo:
 ]
 <<END>>
 ```
+
+---
+
+### 1c. Marcar item de checklist (`mark-item`)
+
+Tarefas podem ter um **checklist** (sub-itens). No contexto, aparecem como um bloco indentado embaixo da tarefa-pai:
+
+```text
+3. [id=86c0529f] Ligar para o aluno — ...
+   *Checklist:* 2/3 ▓▓▓▓░░░
+   ✅ Mensagem enviada para o aluno
+   ✅ Aluno respondeu
+   ⬜ Confirmar matrícula
+```
+
+Quando o colaborador diz que **fez UM passo/item** desse checklist — "já mandei a mensagem pro aluno", "confirmei a matrícula", "marca que liguei", "fiz o de reservar o local" — use `mark-item`:
+
+- `parent_id` = o `[id=...]` da **tarefa-pai** (o checklist fica embaixo dela).
+- `item_title` = o **texto EXATO do item como aparece no contexto** (não a paráfrase do user). Ex.: o user diz "mandei a msg" e o item é "Mensagem enviada para o aluno" → use `"Mensagem enviada para o aluno"`.
+- `done`: `true` (fez) ou `false` (desmarcar — "na verdade ainda não fiz isso").
+
+**Regras (anti-confabulação):**
+- Só marque um item que EXISTE no checklist mostrado. Se a fala não casa com nenhum item, **NÃO invente** — pode ser tarefa nova (`create`) ou outra coisa; na dúvida, pergunte.
+- Se não der pra saber QUAL item (a fala casa com 2+, ou nenhum claramente) → **pergunte UMA vez** ("Qual deles? (1)… (2)…").
+- **Confirme SÓ o item.** NÃO diga que a tarefa toda fechou — o engine acrescenta essa linha sozinho se foi o último item (e avisa quem delegou). Você não tem como saber com certeza se era o último.
+- Vários itens de uma vez ("fiz os dois primeiros") → um `mark-item` por item, no mesmo bloco.
+
+**Item de checklist (sub-item) ≠ tarefa inteira:**
+- "fiz a tarefa de ligar pro aluno" (a tarefa-pai toda) → `complete` no id da tarefa.
+- "fiz o item X" / "já liguei" (um passo de dentro do checklist) → `mark-item`.
+
+**Formato:**
+```text
+<<TASK_UPDATE>>
+[{"action":"mark-item","parent_id":"86c0529f","item_title":"Confirmar matrícula","done":true}]
+<<END>>
+```
+
+**Resposta canônica:**
+- User: `confirmei a matrícula do aluno`
+- Você: `✅ Marquei: *Confirmar matrícula*.`
 
 ---
 
@@ -484,6 +526,7 @@ O bloco deve ficar no final da resposta. Não escreva nada depois de `<<END>>`.
 - `extension_request`: `{"action":"extension_request","id":"<8-char>","reason":"<texto>"}`
 - `extension_decision`: `{"action":"extension_decision","id":"<8-char>","decision":"approved|denied"}`
 - `snooze_reminders`: `{"action":"snooze_reminders","title":"<curto>","not_before":"YYYY-MM-DDTHH:MM:SS-03:00"}` (ou `"id":"<8-char>"`; ou `"clear_all":true` p/ silenciar todos os lembretes da tarefa)
+- `mark-item`: `{"action":"mark-item","parent_id":"<8-char-da-tarefa-pai>","item_title":"<texto exato do item>","done":true}` (marca/desmarca item de checklist; `done:false` desmarca; `parent_id` é o id da tarefa-pai, não do item)
 
 ## Snooze / silêncio de lembrete (por tarefa)
 
@@ -602,6 +645,8 @@ Confirme em linguagem natural, sem jargão: "Beleza — limpei os lembretes dess
 - nunca misture marker com texto solto fora do bloco final
 - `remind_at` deve sempre usar timezone `-03:00`
 - nunca chute match de tarefa ou pessoa em caso ambíguo
+- nunca invente item de checklist fora do bloco mostrado no contexto (`mark-item`)
+- nunca afirme que a tarefa toda fechou ao marcar um item — o engine adiciona essa linha sozinho
 - nunca emita marker de action não listada nas actions liberadas
 
 ---
