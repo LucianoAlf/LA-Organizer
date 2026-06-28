@@ -5053,10 +5053,25 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
         // LITE; herda context/assigned do pai). Best-effort: o pai já persistiu, falha das filhas
         // não derruba o create nem inventa "checklist criado".
         let _subCreated = 0;
-        if (taskId && Array.isArray(a.subtasks) && a.subtasks.length) {
+        let _subTexts = (Array.isArray(a.subtasks) ? a.subtasks : []).map((s) => String(s || '').trim()).filter(Boolean);
+        // Backstop determinístico anti-confab (CHECKLIST-CREATE-CONFAB, 28/06): se o LLM NÃO emitiu
+        // subtasks mas o user pediu "com os itens: A, B, C", deriva da fala — senão o TOM diria
+        // "criei N itens" sem criar (confab). Só com 1 create no lote (a lista é de UMA tarefa).
+        if (taskId && !_subTexts.length && opts && opts.inboundText
+            && actions.filter((x) => x && x.action === 'create').length === 1) {
+          try {
+            const { parseInlineChecklist } = require('./services/checklist-parse');
+            const _derived = parseInlineChecklist(opts.inboundText);
+            if (_derived.length) {
+              _subTexts = _derived;
+              console.log(`[Task] checklist backstop: derivei ${_derived.length} item(ns) da fala (LLM nao emitiu subtasks)`);
+            }
+          } catch (_pe) { /* non-fatal */ }
+        }
+        if (taskId && _subTexts.length) {
           try {
             const { createSubtasks } = require('./services/subtasks');
-            const _sr = await createSubtasks({ supabase, parentId: taskId, texts: a.subtasks, parent: insertRow, createdBy: collaborator.id });
+            const _sr = await createSubtasks({ supabase, parentId: taskId, texts: _subTexts, parent: insertRow, createdBy: collaborator.id });
             _subCreated = _sr.created;
             console.log(`[Task] create +${_subCreated} subtarefa(s) em ${String(taskId).slice(0, 8)}`);
           } catch (_se) { console.warn('[Task] subtasks insert err (non-fatal):', _se.message); }
