@@ -801,6 +801,67 @@ router.post('/internal/task-updated', requireInternalSecret, async (req, res) =>
   return res.json({ status: 'ok', sent: 1 });
 });
 
+// Checklist ativo (2026-06-28): o PWA concluiu a tarefa-PAI (última filha do checklist marcada)
+// → avisa o DELEGADOR (created_by) + confirma pro EXECUTOR. Anti-confab: só notifica se o BANCO
+// confirmar status='done' (se o update do app não persistiu, NÃO confabula). Replica a lógica de
+// notifyTaskCreatorOfAction (engine.js) aqui pra evitar dependência circular engine↔internal-api.
+// Body: { task_id, actor_id? }.
+router.post('/internal/subtask-parent-complete', requireInternalSecret, async (req, res) => {
+  const taskId = String(req.body?.task_id || '').trim();
+  const actorId = req.body?.actor_id ? String(req.body.actor_id).trim() : null;
+  if (!taskId) return res.status(400).json({ error: 'missing_task_id' });
+  const logMk = (result, reason) => supabase.from('marker_logs').insert({
+    marker_type: 'SUBTASK_PARENT_COMPLETE', result, reason: String(reason).slice(0, 200),
+    raw_excerpt: `subtask-complete:${taskId}`,
+  }).then(() => {}, () => {});
+  try {
+    const { data: task } = await supabase
+      .from('tasks')
+      .select('id, title, status, created_by, assigned_to')
+      .eq('id', taskId).single();
+    // Anti-confab: só avisa se o pai está REALMENTE done no banco.
+    if (!task || task.status !== 'done') {
+      logMk('skipped', !task ? 'not_found' : `not_done:${task.status}`);
+      return res.json({ status: 'not_done' });
+    }
+    // Só delegada (created_by != assigned_to) gera aviso ao delegador.
+    if (!task.created_by || !task.assigned_to || task.created_by === task.assigned_to) {
+      logMk('skipped', 'not_delegated');
+      return res.json({ status: 'not_delegated' });
+    }
+    const actId = actorId || task.assigned_to;
+    const [{ data: creator }, { data: actor }] = await Promise.all([
+      supabase.from('collaborators').select('id, full_name, preferred_name, phone, is_active').eq('id', task.created_by).single(),
+      supabase.from('collaborators').select('id, full_name, preferred_name, phone').eq('id', actId).single(),
+    ]);
+    const titleShort = String(task.title || '').slice(0, 80);
+    let sent = 0;
+    // 1) Delegador (created_by) — mesmo texto do notifyTaskCreatorOfAction('complete').
+    if (creator && creator.is_active && creator.phone) {
+      const creatorName = creator.preferred_name || (creator.full_name || '').split(' ')[0];
+      const actorName = (actor && (actor.preferred_name || (actor.full_name || '').split(' ')[0])) || 'alguém';
+      const msg = `✅ ${creatorName}, o ${actorName} concluiu a tarefa que você pediu:\n_"${titleShort}"_`;
+      whatsapp.sendMessage(creator.phone, msg).catch(e => console.error(`[InternalAPI] subtask-complete creator WA err: ${e.message}`));
+      await supabase.from('conversation_history').insert({
+        collaborator_id: creator.id, direction: 'outbound', message_type: 'text', content: msg,
+      }).then(() => {}, () => {});
+      sent++;
+    }
+    // 2) Executor (D2) — confirma a conclusão.
+    if (actor && actor.phone) {
+      whatsapp.sendMessage(actor.phone, `✅ você fechou: ${titleShort} (todos os itens)`)
+        .catch(e => console.error(`[InternalAPI] subtask-complete actor WA err: ${e.message}`));
+      sent++;
+    }
+    logMk('executed', `creator+actor sent=${sent}`);
+    console.log(`[InternalAPI] subtask-parent-complete ${taskId} → sent=${sent}`);
+    return res.json({ status: 'ok', sent });
+  } catch (err) {
+    console.error('[InternalAPI] subtask-parent-complete err:', err.message);
+    return res.status(500).json({ error: 'internal_error', message: err.message });
+  }
+});
+
 // Dashboard de time — botão "Cobrar agora": cobrança MANUAL disparada pelo líder/CEO. Manda
 // WhatsApp IMEDIATO pro responsável da tarefa, em nome de quem clicou. Transacional (ação do
 // líder, não job proativo) → envia na hora, sem gate de quiet-hours (mesma classe do task-delegated).

@@ -464,9 +464,13 @@ function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events
         const truncated = desc.length > 240 ? desc.slice(0, 240) + '…' : desc;
         lines.push(`   ↳ ${truncated}`);
       }
+      // Checklist (subtarefas) — progresso indentado abaixo da tarefa. Executor vê sem nome.
+      const _cb = renderChecklistBlock(t._checklist || []);
+      if (_cb) _cb.split('\n').forEach((l) => lines.push(`   ${l}`));
     });
   };
 
+  const { renderChecklistBlock } = require('../services/checklist-render');
   if (tasks && (tasks.personal || tasks.work)) {
     const personal = tasks.personal || [];
     const work = tasks.work || [];
@@ -653,6 +657,9 @@ function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events
       const due = t.due_date ? ` — vence ${formatRelativeDate(t.due_date, today) || t.due_date}` : '';
       const status = t.status ? ` — ${t.status}` : '';
       lines.push(`• ${assignee}: "${t.title}"${due}${status}`);
+      // Checklist do executor (subtarefas) — delegador vê o progresso com o nome de quem executa.
+      const _cb = renderChecklistBlock(t._checklist || [], { assigneeName: assignee });
+      if (_cb) _cb.split('\n').forEach((l) => lines.push(`  ${l}`));
     });
   }
 
@@ -1776,6 +1783,33 @@ async function fetchCollaboratorContext(collaborator) {
     : 3;
   const workTasks = workRaw.slice(0, Math.max(1, Math.min(20, maxDaily)));
 
+  // Checklist (subtarefas via parent_task_id) — anexa as filhas aos pais que o briefing
+  // renderiza (tarefas próprias + delegadas), pra compor o bloco de progresso. Batch 1x;
+  // o topo continua escondendo as filhas (este attach NÃO as solta na lista). Não-fatal.
+  try {
+    const _briefingParents = [
+      ...(personalTasks || []),
+      ...(workTasks || []),
+      ...((delegatedRes && delegatedRes.data) || []),
+    ];
+    const _pids = [...new Set(_briefingParents.map((t) => t && t.id).filter(Boolean))];
+    if (_pids.length) {
+      const { data: _kids } = await supabase
+        .from('tasks')
+        .select('parent_task_id, title, status, sort_position')
+        .in('parent_task_id', _pids)
+        .neq('status', 'cancelled');
+      const _byParent = new Map();
+      for (const k of (_kids || [])) {
+        const a = _byParent.get(k.parent_task_id) || [];
+        a.push(k); _byParent.set(k.parent_task_id, a);
+      }
+      for (const t of _briefingParents) {
+        if (t && _byParent.has(t.id)) t._checklist = _byParent.get(t.id);
+      }
+    }
+  } catch (_e) { /* não-fatal: sem bloco de checklist, briefing segue normal */ }
+
   const ctx = {
     profile: profileRes.data || null,
     criticalMemories: critRes.data || [],
@@ -2779,7 +2813,10 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   const _reminderHour = (opts && Number.isInteger(opts.reminderDefaultHour)) ? opts.reminderDefaultHour : 9;
   const _reminderHourLabel = `${String(_reminderHour).padStart(2, '0')}h`;
   const reminderDefaultBlock = `\n\n**⏰ Horário-padrão de lembrete:** quando ${nameFor(collaborator)} pedir um lembrete dando o DIA mas SEM a HORA ("me lembra amanhã/sexta"), use ${_reminderHourLabel} e AFIRME ("fechou, te lembro às ${_reminderHourLabel} — quer outra hora?"); NÃO pergunte que horas (perguntar trava a conversa). Vale só p/ lembrete/tarefa — compromisso com terceiros (reunião/aula/mentoria) sem hora continua pedindo a hora.`;
-  const baseCtx = buildContext(collaborator, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx, ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || [], ctx.teamTodayChecklists || [], ctx.teamExpectedTemplates || [], ctx.schoolEvents || [], ctx.eventTypes || [], ctx.doneFutureTasks || [], monthlyCtxBlock, ctx.orgChart || [], ctx.criticalMemories || [], ctx.preferenceMemories || [], ctx.weeklySummary || null, ctx.recentContextMemories || [], ctx.openTasksNoDue || [], ctx.recentNotes || [], ctx.workGroupsCtx || { groups: [], myGroupTasks: [] }) + reminderDefaultBlock;
+  // Checklist ativo (2026-06-28): o bloco *Checklist* já vem pronto e determinístico no contexto;
+  // o TOM só precisa reproduzi-lo fielmente (não muda a VOZ, só preserva o DADO).
+  const checklistVerbatimBlock = `\n\n**📋 Blocos de checklist:** quando uma tarefa trouxer um bloco \`*Checklist* …\` (com a barra ▓░ e os itens ✅/⬜) no contexto, REPRODUZA-O VERBATIM — mesma barra, mesmos itens, mesma ordem. NÃO resuma, NÃO reescreva, NÃO invente itens.`;
+  const baseCtx = buildContext(collaborator, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx, ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || [], ctx.teamTodayChecklists || [], ctx.teamExpectedTemplates || [], ctx.schoolEvents || [], ctx.eventTypes || [], ctx.doneFutureTasks || [], monthlyCtxBlock, ctx.orgChart || [], ctx.criticalMemories || [], ctx.preferenceMemories || [], ctx.weeklySummary || null, ctx.recentContextMemories || [], ctx.openTasksNoDue || [], ctx.recentNotes || [], ctx.workGroupsCtx || { groups: [], myGroupTasks: [] }) + reminderDefaultBlock + checklistVerbatimBlock;
 
   // Histórico completo dos últimos 7 dias — agrupado por dia
   let pastEventsBlock = '';

@@ -36,6 +36,14 @@ export function TaskChecklistSection({ parent, meId, editable = false }: {
           <span className="text-fg-muted normal-case tracking-normal">{progress.done}/{progress.total}</span>
         )}
       </div>
+      {progress.total > 0 && (
+        <div className="h-1.5 w-full rounded-full bg-bg-elevated overflow-hidden mb-2" aria-hidden>
+          <div
+            className="h-full bg-tom transition-all"
+            style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }}
+          />
+        </div>
+      )}
       <div className="space-y-1">
         {items.map((it) => {
           const done = it.status === 'done';

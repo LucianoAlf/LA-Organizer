@@ -250,3 +250,27 @@ export async function notifyProjectRejected(projectId: string, reason?: string):
     return { ok: false, reason: msg };
   }
 }
+
+// Checklist ativo (2026-06-28) — o PWA concluiu a tarefa-PAI (última filha do checklist marcada).
+// Backend avisa o delegador (created_by) + confirma pro executor; só notifica se o pai está done
+// no banco (anti-confab). Fire-and-forget: a UI já atualizou; a notificação é best-effort.
+export async function notifySubtaskParentComplete(
+  parentId: string,
+  actorId?: string | null,
+): Promise<NotifyResult> {
+  if (!INTERNAL_SECRET) return { ok: false, reason: 'no_secret' };
+  try {
+    const r = await fetch(`${TOM_BASE}/internal/subtask-parent-complete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-secret': INTERNAL_SECRET },
+      body: JSON.stringify({ task_id: parentId, actor_id: actorId ?? null }),
+    });
+    if (!r.ok) return { ok: false, reason: `http_${r.status}` };
+    const json = await r.json().catch(() => ({}));
+    return { ok: true, status: r.status, sent: typeof json.sent === 'number' ? json.sent : undefined };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn(`[tomEngine] subtask-parent-complete notify falhou: ${msg}`);
+    return { ok: false, reason: msg };
+  }
+}

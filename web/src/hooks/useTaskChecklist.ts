@@ -2,7 +2,8 @@
 // Reusa o primitivo do grupo: sub-item = task filha que herda context/assigned do pai.
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase, supabaseConfigured } from '../lib/supabase';
-import { checklistProgress } from '../lib/taskChecklist';
+import { checklistProgress, shouldAutocompleteParent } from '../lib/taskChecklist';
+import { notifySubtaskParentComplete } from '../lib/tomEngine';
 
 export interface ChecklistParent {
   id: string;
@@ -75,6 +76,20 @@ export function useTaskChecklist(parent: ChecklistParent | null, meId: string | 
         completed_by: done ? (meId ?? null) : null,
       }).eq('id', id);
       if (error) throw error;
+      // Cascade (checklist ativo): se TODAS as filhas ficaram done → conclui o pai sozinho e
+      // avisa o delegador via ponte (/internal). Se desmarcar de 100% → reabre o pai SEM avisar.
+      if (!parent) return;
+      const projected = items.map((i) => (i.id === id ? { ...i, status: done ? 'done' : 'pending' } : i));
+      if (done && shouldAutocompleteParent(projected)) {
+        await supabase.from('tasks').update({
+          status: 'done', completed_at: new Date().toISOString(), completed_by: meId ?? null,
+        }).eq('id', parent.id);
+        try { await notifySubtaskParentComplete(parent.id, meId ?? null); } catch { /* best-effort */ }
+      } else if (!done) {
+        await supabase.from('tasks').update({
+          status: 'pending', completed_at: null, completed_by: null,
+        }).eq('id', parent.id).eq('status', 'done');
+      }
     },
     onSuccess: invalidate,
   });

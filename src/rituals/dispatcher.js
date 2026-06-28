@@ -4759,6 +4759,21 @@ async function checkOverdueAlerts(ymdToday) {
   }
 
   const whatsapp = require('../services/whatsapp');
+  const { renderChecklistBlock } = require('../services/checklist-render');
+  // Checklist (subtarefas via parent_task_id) das atrasadas — batch load 1x (não N queries);
+  // o bloco de progresso entra na cobrança byte-exato. Não-fatal: sem checklist segue a cobrança base.
+  const kidsByParent = new Map();
+  try {
+    const { data: allKids } = await supabase
+      .from('tasks')
+      .select('parent_task_id, title, status, sort_position')
+      .in('parent_task_id', tasks.map(t => t.id))
+      .neq('status', 'cancelled');
+    for (const k of (allKids || [])) {
+      const arr = kidsByParent.get(k.parent_task_id) || [];
+      arr.push(k); kidsByParent.set(k.parent_task_id, arr);
+    }
+  } catch (_e) { /* não-fatal */ }
   let sent = 0;
   for (const t of tasks) {
     const collab = byId.get(t.assigned_to);
@@ -4779,7 +4794,10 @@ async function checkOverdueAlerts(ymdToday) {
       continue;
     }
     const n = daysLate(t.due_date);
-    const text = buildOverdueText(t.title, n, false);
+    let text = buildOverdueText(t.title, n, false);
+    // Progresso do checklist (se houver) — executor vê sem nome. Byte-exato (texto determinístico).
+    const _checklistBlock = renderChecklistBlock(kidsByParent.get(t.id) || []);
+    if (_checklistBlock) text += `\n\n${_checklistBlock}`;
     // CLAIM ATÔMICO antes de enviar — mesmo padrão de checkDeadlineAlerts. O índice
     // único parcial notifications_alert_daily_uq garante 1 alerta de atraso por
     // tarefa por dia, imune a race/lag/restart. Se o envio falhar depois do claim,
