@@ -7,7 +7,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { shiftRemindersByReschedule, shiftTaskRemindAt } = require('./reschedule-reminders');
+const { shiftRemindersByReschedule, shiftTaskRemindAt, planRescheduleReminders } = require('./reschedule-reminders');
 
 test('caso Bia 03/06: reschedule 06-03 13:30 → 06-08 13:00 desloca o lembrete T-15 junto', () => {
   const out = shiftRemindersByReschedule(
@@ -94,4 +94,56 @@ test('delta zero (mesmo due) → null', () => {
 test('datas inválidas → null', () => {
   assert.strictEqual(shiftTaskRemindAt('lixo', '2026-06-06', '2026-05-29T18:00:00.000Z'), null);
   assert.strictEqual(shiftTaskRemindAt('2026-06-01', '2026-06-06', 'nope'), null);
+});
+
+// ── planRescheduleReminders (EVENT-RESCHED-REMINDER-NOREGEN 28/06) ──────────────
+// O reschedule só deslocava rows sent_at IS NULL. Se a única row já tinha DISPARADO
+// (ou não havia row), o evento reagendado ficava SEM lembrete pendente (caso ADM:
+// row T-15 fired 06-24 → reschedule 07-01 → 0 pendente). O plano garante ≥1 pendente.
+test('reschedule COM lembrete pendente → desloca, sem inserir default', () => {
+  const out = planRescheduleReminders({
+    unsentRows: [{ id: 'r1', remind_at: '2026-06-03T13:15:00-03:00' }],
+    oldStartIso: '2026-06-03T13:30:00-03:00',
+    newStartIso: '2026-06-08T13:00:00-03:00',
+    eventId: 'e1',
+  });
+  assert.strictEqual(out.shifts.length, 1);
+  assert.strictEqual(out.shifts[0].remind_at, '2026-06-08T15:45:00.000Z');
+  assert.deepStrictEqual(out.inserts, []);
+});
+
+test('caso ADM: 0 pendente (única row já disparou) → 1 default T-15 do novo start', () => {
+  const out = planRescheduleReminders({
+    unsentRows: [],
+    oldStartIso: '2026-06-24T14:00:00-03:00',
+    newStartIso: '2026-07-01T14:00:00-03:00',
+    eventId: 'adm1',
+  });
+  assert.deepStrictEqual(out.shifts, []);
+  assert.strictEqual(out.inserts.length, 1);
+  assert.strictEqual(out.inserts[0].event_id, 'adm1');
+  // 14:00 BRT − 15min = 13:45 BRT = 16:45Z
+  assert.strictEqual(out.inserts[0].remind_at, '2026-07-01T16:45:00.000Z');
+});
+
+test('EDGE: delta-zero COM rows pendentes → NÃO inventa default (hadUnsent manda, não shifts)', () => {
+  const same = '2026-07-01T14:00:00-03:00';
+  const out = planRescheduleReminders({
+    unsentRows: [{ id: 'r1', remind_at: '2026-07-01T13:45:00-03:00' }],
+    oldStartIso: same, newStartIso: same, eventId: 'e1',
+  });
+  assert.deepStrictEqual(out.shifts, []); // delta 0 → shift vazio
+  assert.deepStrictEqual(out.inserts, []); // mas tinha pendente → não insere default
+});
+
+test('0 pendente + newStart inválido → sem insert (defensivo)', () => {
+  const out = planRescheduleReminders({ unsentRows: [], oldStartIso: '2026-06-24T14:00:00-03:00', newStartIso: 'lixo', eventId: 'e1' });
+  assert.deepStrictEqual(out.inserts, []);
+});
+
+test('0 pendente + defaultMin custom (60) → T-60 do novo start', () => {
+  const out = planRescheduleReminders({
+    unsentRows: [], oldStartIso: '2026-06-24T14:00:00-03:00', newStartIso: '2026-07-01T14:00:00-03:00', eventId: 'e1', defaultMin: 60,
+  });
+  assert.strictEqual(out.inserts[0].remind_at, '2026-07-01T16:00:00.000Z'); // 14:00 BRT − 60 = 13:00 BRT = 16:00Z
 });

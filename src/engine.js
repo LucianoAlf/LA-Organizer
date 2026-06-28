@@ -18,7 +18,7 @@ const OpenAI = require('openai');
 const openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const inventarioService = require('./services/inventario-service');
 const { hasTrailingQuestion, isInfoGatheringReply } = require('./services/reply-classify');
-const { shiftRemindersByReschedule, shiftTaskRemindAt, planReminderFloor } = require('./services/reschedule-reminders');
+const { shiftRemindersByReschedule, shiftTaskRemindAt, planReminderFloor, planRescheduleReminders } = require('./services/reschedule-reminders');
 const { buildEventReminderRows } = require('./services/event-reminders');
 const { matchRowsByShortId } = require('./services/short-id-match');
 const { getActiveWindow } = require('./services/active-window');
@@ -3263,11 +3263,20 @@ async function applyEventUpdates(collaborator, actions) {
             .select('id, remind_at')
             .eq('event_id', ev.id)
             .is('sent_at', null);
-          const shifted = shiftRemindersByReschedule(rems || [], ev.start_at, a.new_start_at);
-          for (const s of shifted) {
+          // EVENT-RESCHED-REMINDER-NOREGEN (28/06): além de deslocar os pendentes, GARANTE 1
+          // lembrete default quando 0 pendente (a única row já tinha disparado antes do reschedule
+          // → evento ficaria mudo). O firing é na tabela event_reminders, não na coluna remind_at.
+          const { shifts, inserts } = planRescheduleReminders({
+            unsentRows: rems || [], oldStartIso: ev.start_at, newStartIso: a.new_start_at, eventId: ev.id,
+          });
+          for (const s of shifts) {
             await supabase.from('event_reminders').update({ remind_at: s.remind_at }).eq('id', s.id);
           }
-          if (shifted.length) console.log(`[Event] reschedule: ${shifted.length} lembrete(s) deslocado(s) p/ ${String(ev.id).slice(0, 8)}`);
+          if (inserts.length) {
+            const { error: insErr } = await supabase.from('event_reminders').insert(inserts);
+            if (insErr) console.error('[Event] reschedule ensure-pending insert err:', insErr.message);
+          }
+          if (shifts.length || inserts.length) console.log(`[Event] reschedule: ${shifts.length} deslocado(s) + ${inserts.length} default p/ ${String(ev.id).slice(0, 8)}`);
         } catch (e) {
           console.warn('[Event] reschedule reminders resync falhou (não-fatal):', e.message);
         }

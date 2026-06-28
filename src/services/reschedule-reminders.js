@@ -119,4 +119,38 @@ function planReminderFloor({ pendingRows, taskRemindAt, taskRemindedAt, notBefor
   return out;
 }
 
-module.exports = { shiftRemindersByReschedule, shiftTaskRemindAt, planReminderFloor };
+/**
+ * EVENT-RESCHED-REMINDER-NOREGEN (28/06, caso Reunião ADM) — plano COMPLETO do reschedule
+ * de evento. O `shiftRemindersByReschedule` sozinho só desloca lembretes NÃO-enviados; se o
+ * único lembrete do evento JÁ disparou (sent_at != null) antes do reschedule, ou se não havia
+ * lembrete nenhum, o evento reagendado ficava SEM lembrete pendente (o `checkEventReminders`
+ * dispara na tabela event_reminders, não na coluna events.remind_at). Aqui, quando NÃO há row
+ * pendente, garantimos UMA row default (T-`defaultMin` do novo start) — espelha o default do
+ * CREATE (engine.js applyEventActions T-15min). PURA: o caller aplica shifts (update) + inserts.
+ *
+ * @param {Object} p
+ * @param {Array<{id:string, remind_at:string}>} p.unsentRows — event_reminders com sent_at IS NULL
+ * @param {string} p.oldStartIso — start_at ANTES do reschedule
+ * @param {string} p.newStartIso — start_at DEPOIS do reschedule
+ * @param {string} p.eventId     — id do evento (FK do default a inserir)
+ * @param {number} [p.defaultMin=15] — minutos antes do start pro lembrete default
+ * @returns {{shifts:Array<{id:string,remind_at:string}>, inserts:Array<{event_id:string,remind_at:string}>}}
+ */
+function planRescheduleReminders({ unsentRows, oldStartIso, newStartIso, eventId, defaultMin = 15 }) {
+  const rows = Array.isArray(unsentRows) ? unsentRows : [];
+  const shifts = shiftRemindersByReschedule(rows, oldStartIso, newStartIso);
+  let inserts = [];
+  // ENSURE-PENDING: só inventa default quando NÃO havia NENHUMA row pendente. O gate é
+  // `rows.length` (não `shifts.length`) — reschedule pra mesmo horário (delta 0) zera os shifts
+  // mas NÃO deve criar um lembrete duplicado se já existe pendente.
+  if (rows.length === 0 && eventId) {
+    const newMs = Date.parse(newStartIso);
+    const mins = Number(defaultMin);
+    if (Number.isFinite(newMs) && Number.isFinite(mins) && mins >= 0) {
+      inserts = [{ event_id: eventId, remind_at: new Date(newMs - mins * 60_000).toISOString() }];
+    }
+  }
+  return { shifts, inserts };
+}
+
+module.exports = { shiftRemindersByReschedule, shiftTaskRemindAt, planReminderFloor, planRescheduleReminders };

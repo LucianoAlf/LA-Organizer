@@ -4102,7 +4102,8 @@ async function run(opts = {}) {
     console.error('[Dispatcher] checkTaskReminders erro:', err.message);
   }
 
-  // Sprint 22.50 — lembretes de events (events.remind_at). Marca remind_sent_at.
+  // Sprint 22.50 — lembretes de events: checkEventReminders dispara na TABELA event_reminders
+  // (marca event_reminders.sent_at). A coluna events.remind_at é só DISPLAY do PWA; events.remind_sent_at é morta.
   try {
     await checkEventReminders();
   } catch (err) {
