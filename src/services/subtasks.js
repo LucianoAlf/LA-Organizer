@@ -26,7 +26,8 @@ async function createSubtasks({ supabase, parentId, texts, parent, createdBy }) 
     assigned_group_id: parent.assigned_group_id ?? null,
     created_by: createdBy ?? null,
     sort_position: i + 1,
-    source: 'whatsapp',
+    source: 'manual', // SUBTASK-SOURCE-INVALID (28/06): tasks_source_check NÃO aceita 'whatsapp'
+                      // → insert falhava (engolido por catch não-fatal) e o checklist criado pelo TOM sumia calado.
   }));
 
   const { data, error } = await supabase.from('tasks').insert(rows).select('id');
