@@ -11,7 +11,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useRealtimeSync } from '../hooks/useRealtimeSync';
 
 const FOCUSED_FLOW_PATHS = ['/projetos/novo'];
-const AGENDA_PATHS = ['/hoje', '/semana'];
+const AGENDA_PATHS = ['/hoje', '/semana', '/mes'];
 
 function isFocusedFlow(pathname: string): boolean {
   return FOCUSED_FLOW_PATHS.some(p => pathname === p || pathname.startsWith(p + '/'));

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { fetchGroupsForDay, toggleChildWithCascade } from '../lib/taskGroups';
 import { TaskGroupCard } from '../components/TaskGroupCard';
@@ -231,7 +232,11 @@ export function Hoje() {
 
   const realToday = todaySP();
   // Sprint 22.49 — viewDate navegavel: chevrons + date picker no header.
-  const [viewDate, setViewDate] = useState(realToday);
+  const [searchParams] = useSearchParams();
+  const [viewDate, setViewDate] = useState(() => {
+    const d = searchParams.get('date');
+    return d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : realToday;
+  });
   const today = viewDate;
   const isViewingToday = viewDate === realToday;
 

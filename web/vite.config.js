@@ -113,14 +113,65 @@ export default defineConfig(function (_a) {
             }
         });
     }); };
+    // Proxy local de /internal/* → VPS (dev + preview). Em produção quem faz isso é o
+    // rewrite do vercel.json. Encaminha o x-internal-secret que o PWA já manda (fallback no env).
+    var internalProxyHandler = function (req, res, next) { return __awaiter(void 0, void 0, void 0, function () {
+        var url, method, secret, fetchInit, body, upstream, text, e_2, msg;
+        return __generator(this, function (_a) {
+            switch (_a.label) {
+                case 0:
+                    if (!req.url || !req.url.startsWith('/internal/'))
+                        return [2 /*return*/, next()];
+                    url = "".concat(TOM_API_BASE).concat(req.url);
+                    method = req.method || 'GET';
+                    _a.label = 1;
+                case 1:
+                    _a.trys.push([1, 6, , 7]);
+                    secret = String(req.headers['x-internal-secret'] || TOM_INTERNAL_SECRET);
+                    fetchInit = {
+                        method: method,
+                        headers: __assign({ 'x-internal-secret': secret }, (req.headers['content-type'] ? { 'Content-Type': String(req.headers['content-type']) } : {})),
+                    };
+                    if (!(method !== 'GET' && method !== 'HEAD')) return [3 /*break*/, 3];
+                    return [4 /*yield*/, readBody(req)];
+                case 2:
+                    body = _a.sent();
+                    if (body.length)
+                        fetchInit.body = body.toString('utf8');
+                    _a.label = 3;
+                case 3: return [4 /*yield*/, fetch(url, fetchInit)];
+                case 4:
+                    upstream = _a.sent();
+                    return [4 /*yield*/, upstream.text()];
+                case 5:
+                    text = _a.sent();
+                    res.statusCode = upstream.status;
+                    res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/json');
+                    res.end(text);
+                    return [3 /*break*/, 7];
+                case 6:
+                    e_2 = _a.sent();
+                    msg = e_2 instanceof Error ? e_2.message : String(e_2);
+                    res.statusCode = 502;
+                    res.setHeader('Content-Type', 'application/json');
+                    res.end(JSON.stringify({ ok: false, error: 'upstream_failed', detail: msg }));
+                    return [3 /*break*/, 7];
+                case 7: return [2 /*return*/];
+            }
+        });
+    }); };
     var lareportProxyPlugin = function () { return ({
         name: 'lareport-local-proxy',
         configureServer: function (server) {
+            if (TOM_API_BASE)
+                server.middlewares.use(internalProxyHandler);
             if (!TOM_API_BASE || !TOM_INTERNAL_SECRET)
                 return;
             server.middlewares.use(proxyHandler);
         },
         configurePreviewServer: function (server) {
+            if (TOM_API_BASE)
+                server.middlewares.use(internalProxyHandler);
             if (!TOM_API_BASE || !TOM_INTERNAL_SECRET)
                 return;
             server.middlewares.use(proxyHandler);

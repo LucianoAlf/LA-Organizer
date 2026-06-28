@@ -32,7 +32,8 @@ export function Mes() {
   const { tasks } = useAgendaTasks({ from, to, filters: ALL_FILTERS });
   const { events } = useAgendaEvents({ from, to, filters: ALL_FILTERS });
 
-  const monthLabel = viewMonth.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+  const monthLabelRaw = viewMonth.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+  const monthLabel = monthLabelRaw.charAt(0).toUpperCase() + monthLabelRaw.slice(1);
   const now = new Date();
   const isCurMonth = now.getFullYear() === viewMonth.getFullYear() && now.getMonth() === viewMonth.getMonth();
   const stepMonth = (delta: number) => setViewMonth(m => new Date(m.getFullYear(), m.getMonth() + delta, 1));
@@ -43,7 +44,7 @@ export function Mes() {
         <button type="button" onClick={() => stepMonth(-1)} aria-label="Mês anterior" className="h-8 w-8 grid place-items-center rounded-full text-fg-muted hover:bg-bg-elevated focus-ring">
           <ChevronLeft size={18} />
         </button>
-        <span className="flex-1 text-center text-body-md text-fg capitalize">{monthLabel}</span>
+        <span className="flex-1 text-center text-body-md text-fg">{monthLabel}</span>
         <button type="button" onClick={() => stepMonth(1)} aria-label="Próximo mês" className="h-8 w-8 grid place-items-center rounded-full text-fg-muted hover:bg-bg-elevated focus-ring">
           <ChevronRight size={18} />
         </button>

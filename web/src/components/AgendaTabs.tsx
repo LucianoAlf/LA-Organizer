@@ -9,8 +9,8 @@ import { NavLink, useLocation } from 'react-router-dom';
 // vira preguiça, mais rápido vira corte.
 export function AgendaTabs() {
   const location = useLocation();
-  const isSemana = location.pathname.startsWith('/semana');
-  const activeIdx = isSemana ? 1 : 0;
+  const path = location.pathname;
+  const activeIdx = path.startsWith('/mes') ? 2 : path.startsWith('/semana') ? 1 : 0;
 
   const labelCls = (active: boolean) =>
     [
@@ -20,21 +20,22 @@ export function AgendaTabs() {
     ].join(' ');
 
   return (
-    <div className="relative grid grid-cols-2 p-1 rounded-md bg-bg-elevated border border-border">
+    <div className="relative grid grid-cols-3 p-1 rounded-md bg-bg-elevated border border-border">
       {/* Indicador deslizante */}
       <span
         aria-hidden
         className="absolute top-1 bottom-1 rounded-md bg-tom shadow-sm"
         style={{
           left: '0.25rem',
-          width: 'calc(50% - 0.25rem)',
+          width: 'calc(33.333% - 0.1667rem)',
           transform: `translateX(${activeIdx * 100}%)`,
           transition: 'transform 400ms cubic-bezier(0.32, 0.72, 0, 1)',
           willChange: 'transform',
         }}
       />
-      <NavLink to="/hoje" end className={() => labelCls(!isSemana)}>Dia</NavLink>
-      <NavLink to="/semana" className={() => labelCls(isSemana)}>Semana</NavLink>
+      <NavLink to="/hoje" end className={() => labelCls(activeIdx === 0)}>Dia</NavLink>
+      <NavLink to="/semana" className={() => labelCls(activeIdx === 1)}>Semana</NavLink>
+      <NavLink to="/mes" className={() => labelCls(activeIdx === 2)}>Mês</NavLink>
     </div>
   );
 }

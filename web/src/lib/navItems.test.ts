@@ -27,7 +27,7 @@ test('catálogo inclui exatamente os 4 slugs default (sem when)', () => {
 test('/hoje preserva label "Agenda" + matchPaths corretos', () => {
   const hoje = NAV_CATALOG.find((i) => i.slug === '/hoje')!;
   expect(hoje.label).toBe('Agenda');
-  expect(hoje.matchPaths).toEqual(['/hoje', '/semana']);
+  expect(hoje.matchPaths).toEqual(['/hoje', '/semana', '/mes']);
 });
 
 test('director vê TODO o catálogo (limite máximo do gating)', () => {

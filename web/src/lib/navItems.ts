@@ -33,7 +33,7 @@ export interface NavCatalogItem {
 // Transcrição verbatim de SidebarV2:60-110. Não inventar paths nem gating.
 export const NAV_CATALOG: NavCatalogItem[] = [
   // Principal (sempre disponível)
-  { slug: '/hoje',          label: 'Agenda',          Icon: CalendarDays,    matchPaths: ['/hoje', '/semana'] },
+  { slug: '/hoje',          label: 'Agenda',          Icon: CalendarDays,    matchPaths: ['/hoje', '/semana', '/mes'] },
   { slug: '/projetos',      label: 'Projetos',        Icon: Rocket },
   { slug: '/checklists',    label: 'Checklists',      Icon: ClipboardCheck },
   { slug: '/habitos',       label: 'Hábitos',         Icon: Sparkles },
