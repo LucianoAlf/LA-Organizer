@@ -15,6 +15,7 @@ const fs = require('fs');
 const path = require('path');
 const supabase = require('../supabase/client');
 const { isQuietNow } = require('../services/quiet-hours');
+const { selectEventsWithoutReminder } = require('./event-reminder-audit');
 
 const ERROR_LOG_PATH = '/opt/LA-Organizer/logs/tom-error.log';
 const WARN_THRESHOLDS = {
@@ -344,29 +345,39 @@ async function checkStaleProfiles() {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// CHECK 9 — Eventos próximos 48h sem lembrete
+// CHECK 9 — Eventos próximos (7d) sem lembrete PENDENTE
+// AUDIT-CHECK9-PENDING (28/06): antes contava event_reminders TOTAL (incluía sent) → cego a
+// evento futuro cuja única row já disparou (reschedule-orphan, EVENT-RESCHED-REMINDER-*). Agora
+// conta PENDENTE (sent_at IS NULL) + janela 7d + regra de lead >24h (selectEventsWithoutReminder,
+// evita FP do lembrete do dia já enviado). Exclui templates de recorrência e data_classification
+// != real (espelha a visibilidade do PWA — não flagueia o que o usuário nem vê).
 // ─────────────────────────────────────────────────────────────────
 async function checkEventsWithoutReminders() {
-  const nowIso = new Date().toISOString();
-  const in48h = new Date(Date.now() + 48 * 3600_000).toISOString();
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const in7d = new Date(nowMs + 7 * 24 * 3600_000).toISOString();
   const { data: events, error } = await supabase
     .from('events')
     .select('id, title, start_at')
+    .eq('data_classification', 'real')
+    .or('recurrence_rule.is.null,recurrence_parent_id.not.is.null') // exclui TEMPLATES (hidden)
     .gte('start_at', nowIso)
-    .lte('start_at', in48h)
+    .lte('start_at', in7d)
     .neq('status', 'cancelled');
   if (error) throw error;
-  if (!events || events.length === 0) return { status: 'ok', detail: 'Sem eventos nas próximas 48h' };
-  const noReminder = [];
+  if (!events || events.length === 0) return { status: 'ok', detail: 'Sem eventos nos próximos 7 dias' };
+  const withCounts = [];
   for (const ev of events) {
     const { count } = await supabase
       .from('event_reminders')
       .select('id', { count: 'exact', head: true })
-      .eq('event_id', ev.id);
-    if (!count || count === 0) noReminder.push(ev.title);
+      .eq('event_id', ev.id)
+      .is('sent_at', null); // PENDENTE, não total
+    withCounts.push({ title: ev.title, start_at: ev.start_at, pendingCount: count || 0 });
   }
-  if (noReminder.length === 0) return { status: 'ok', detail: `${events.length} eventos próximos, todos com lembrete` };
-  return { status: 'warning', detail: `${noReminder.length}/${events.length} eventos próximos sem lembrete: ${noReminder.slice(0, 3).join(', ')}` };
+  const noReminder = selectEventsWithoutReminder(withCounts, nowMs);
+  if (noReminder.length === 0) return { status: 'ok', detail: `${events.length} eventos próximos, todos com lembrete pendente` };
+  return { status: 'warning', detail: `${noReminder.length}/${events.length} eventos sem lembrete pendente: ${noReminder.slice(0, 3).join(', ')}` };
 }
 
 // ─────────────────────────────────────────────────────────────────
