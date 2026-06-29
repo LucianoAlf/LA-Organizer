@@ -22,6 +22,7 @@ import { todaySP } from '../utils/date';
 import { useSortableSensors } from '../lib/sortableSensors';
 import { fetchEventsForDay } from '../lib/events';
 import { TaskRow } from '../components/TaskRow';
+import { filterNoPrazo } from '../lib/agendaSemPrazo';
 import { EventRow } from '../components/EventRow';
 import { StatCard } from '../components/StatCard';
 import { Tabs } from '../components/Tabs';
@@ -211,6 +212,25 @@ async function fetchDelegatedTasks(collabId: string, viewDate: string, isToday: 
   return rows.concat(extras);
 }
 
+// Tarefas SEM prazo (due_date NULL) abertas — fonte ISOLADA pra seção "📝 Sem prazo".
+// NOPRAZO-TASK-INVISIBLE-PWA: fetchTasksToday/Delegated filtram por data e excluem due_date null,
+// então tarefa sem prazo sumia da agenda. Aqui buscamos SÓ as sem-prazo, sem tocar nas queries de data.
+async function fetchNoPrazoTasks(collabId: string): Promise<Task[]> {
+  const baseSelect = 'id, title, description, status, context, priority, category, action_type, source, due_date, due_time, scheduled_date, remind_at, eisenhower_quadrant, sort_position, project_id, assigned_to, assigned_group_id, created_by, completed_at, recurrence_rule, recurrence_parent_id, parent_task_id, is_group, projects(name, category), assignee:collaborators!tasks_assigned_to_fkey(full_name), creator:collaborators!tasks_created_by_fkey(preferred_name, full_name), work_group:work_groups!tasks_assigned_group_id_fkey(name), task_reminders(remind_at, sent_at)';
+  const { data, error } = await supabase
+    .from('tasks')
+    .select(baseSelect)
+    .eq('assigned_to', collabId)
+    .is('due_date', null)
+    .is('parent_task_id', null)
+    .eq('is_group', false)
+    .not('status', 'in', '(done,cancelled)')
+    .order('sort_position', { ascending: true, nullsFirst: false })
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as unknown as Task[];
+}
+
 type TabKey = TaskContext | 'delegated';
 
 export function Hoje() {
@@ -253,6 +273,13 @@ export function Hoje() {
   const { data: delegated = [], isLoading: dLoading } = useQuery({
     queryKey: ['tasks', 'delegated', collaborator?.id, viewDate],
     queryFn: () => collaborator ? fetchDelegatedTasks(collaborator.id, viewDate, isViewingToday) : Promise.resolve([]),
+    enabled: Boolean(collaborator?.id && supabaseConfigured),
+  });
+
+  // Tarefas SEM prazo (NOPRAZO fix) — fonte isolada pra seção "📝 Sem prazo" (independe do dia visualizado).
+  const { data: noPrazoTasks = [] } = useQuery({
+    queryKey: ['tasks', 'noprazo', collaborator?.id],
+    queryFn: () => collaborator ? fetchNoPrazoTasks(collaborator.id) : Promise.resolve([]),
     enabled: Boolean(collaborator?.id && supabaseConfigured),
   });
 
@@ -509,6 +536,9 @@ export function Hoje() {
   const overdue23d = overdue.filter(t => { const n = daysOverdue(t); return n >= 2 && n <= 3; });
   const overdue4plus = overdue.filter(t => daysOverdue(t) >= 4);
   const done = todayList.filter(t => t.status === 'done');
+  // Seção "📝 Sem prazo" — só nas abas próprias (work/personal); delegada fica fora por ora.
+  // Fonte isolada (noPrazoTasks), filtro único (filterNoPrazo) compartilhado com o desktop.
+  const noPrazo = tab === 'delegated' ? [] : filterNoPrazo(noPrazoTasks, tab);
 
   // Sprint 26 — só mostra skeleton no carregamento INICIAL (sem dados cacheados).
   // Antes: qualquer invalidate (incl. toggle de task) virava isLoading=true momentaneamente
@@ -517,7 +547,7 @@ export function Hoje() {
   const isInitialLoad = (tLoading || eLoading || dLoading)
     && todayList.length === 0
     && todayEvents.length === 0;
-  const hasNothing = todayList.length === 0 && todayEvents.length === 0;
+  const hasNothing = todayList.length === 0 && todayEvents.length === 0 && noPrazo.length === 0;
 
   const dateLabel = isViewingToday
     ? `Hoje · ${dowShort(viewDate)} ${brShort(viewDate)}`
@@ -780,6 +810,27 @@ export function Hoje() {
               </div>
               <SortableTaskList
                 tasks={dueToday}
+                onOpen={setReadingTask}
+                onToggle={(task) => toggleTask.mutate(task)}
+                onEdit={setEditingTask}
+                onReschedule={setReschedulingTask}
+                onDelete={(task) => deleteTask.mutate(task)}
+                onReorder={(ids) => reorderTasks.mutate(ids)}
+                onTransformToEvent={tt.openConvert}
+                onDelegate={tt.openDelegate}
+                canConvert={tt.canConvert}
+                canDelegate={tt.canDelegate}
+              />
+            </section>
+          )}
+          {noPrazo.length > 0 && (
+            <section className="space-y-sm">
+              <div className="px-1 text-label uppercase tracking-wide text-fg-muted flex items-center gap-1">
+                <span>📝</span>
+                <span>Sem prazo ({noPrazo.length})</span>
+              </div>
+              <SortableTaskList
+                tasks={noPrazo}
                 onOpen={setReadingTask}
                 onToggle={(task) => toggleTask.mutate(task)}
                 onEdit={setEditingTask}
