@@ -190,6 +190,17 @@ function detectUserConfirmation(userText, opts = {}) {
   const RESSALVA = /\b(n[aã]o|nao|nunca|jamais|mas|por[ée]m|depois|amanh[ãa]|espera|aguarda)\b|deixa\s+pra|s[óo]\s+que/;
   if (_nWords > 4 && _nWords <= 12 && STRONG_YES_OPEN.test(t) && !RESSALVA.test(t)) return 'yes';
 
+  // BATCH-CONFIRM-IMPERATIVE-NUM (Rose/2088 28/06): com intent de complete/batch ABERTA
+  // (allowDone), uma confirmação por CONCLUSÃO mais longa — "1 e 2 já foram feitas",
+  // "conclui as 3 que já fiz" — também confirma, desde que sem ressalva/negação. Gated em
+  // allowDone: SEM intent aberta NÃO entra (p/ "finalizei o projeto ontem" solto não
+  // auto-concluir). Negação F5/Ana segue restrita a ≤4 palavras abaixo.
+  const DONE_ANYWHERE = /\b(conclu[ií]|finaliz(?:ei|ou|ad[oa])|feit[oa]s?|fiz|prontas?|terminei|resolvi|fechei|encerr[ei])/;
+  // HESITA: fala QUEBRADA/correção ("Conclui .. esqueci de colocar aqui") tem done-verb mas
+  // NÃO é confirmação — reticências/"esqueci"/"pera"/"aliás" = segunda intenção. Exclui.
+  const HESITA = /\besqueci\b|\besquece\b|\bpera[íi]?\b|\bperai\b|\bal[ií]as\b|\.\./;
+  if (opts.allowDone && _nWords > 4 && _nWords <= 12 && DONE_ANYWHERE.test(t) && !RESSALVA.test(t) && !HESITA.test(t)) return 'yes';
+
   // F5 (ALVO-FUTURO, auditoria 09/06) — confirmação/negação só em resposta ESSENCIALMENTE
   // curta (≤4 palavras). "Não foi a ADM, foi a de hoje, de governança" começa com "não"
   // mas é CONTEÚDO — negava às cegas uma intent não-relacionada (caso Ana 227b8689).

@@ -74,3 +74,22 @@ test('afirmação longa que NÃO abre com afirmador forte → null (preserva F5)
   assert.strictEqual(detectUserConfirmation('já tinha feito isso ontem de manhã cedo'), null);
   assert.strictEqual(detectUserConfirmation('Não foi a ADM foi a de governança hoje'), null);
 });
+
+// ── BATCH-CONFIRM-IMPERATIVE-NUM (Rose/2088 28/06): confirmação imperativa/numérica de batch ──
+// "Conclui as 3" (3p, DONE_RE) e "1 e 2 já foram feitas" (5p, DONE_ANYWHERE) só confirmam
+// COM intent aberta (allowDone). Sem intent, conclusão solta NÃO auto-confirma.
+test('COM intent aberta (allowDone): imperativo/numérico de conclusão → yes', () => {
+  assert.strictEqual(detectUserConfirmation('Conclui as 3', { allowDone: true }), 'yes');
+  assert.strictEqual(detectUserConfirmation('1 e 2 já foram feitas', { allowDone: true }), 'yes');
+  assert.strictEqual(detectUserConfirmation('finalizei dia 23', { allowDone: true }), 'yes');
+  assert.strictEqual(detectUserConfirmation('pode fechar as 3 que já fiz', { allowDone: true }), 'yes');
+});
+test('SEM intent aberta: conclusão longa/imperativa solta NÃO auto-confirma → null', () => {
+  assert.strictEqual(detectUserConfirmation('finalizei o projeto ontem'), null);
+  assert.strictEqual(detectUserConfirmation('1 e 2 já foram feitas'), null);
+  assert.strictEqual(detectUserConfirmation('Conclui as 3'), null);
+});
+test('negação na confirmação de batch → no/null (nunca auto-conclui)', () => {
+  assert.strictEqual(detectUserConfirmation('não, deixa as 3'), 'no');
+  assert.strictEqual(detectUserConfirmation('não, as 3 ainda não foram feitas', { allowDone: true }), null);
+});

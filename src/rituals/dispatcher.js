@@ -4145,16 +4145,22 @@ async function run(opts = {}) {
   // CTA da principal); a cobrança individual vem à tarde e só pra quem NÃO mexeu (o filtro
   // updated_at < 6h já pula quem reagendou/concluiu de manhã). Separa os dois toques no tempo.
   // Override com --force-alerts pra testes/manual.
+  // Atraso (cobrança pós-prazo) — janela da tarde 13-19h (inalterado).
   if (opts['force-alerts'] || (now.hour >= 13 && now.hour < 19)) {
-    try {
-      await checkDeadlineAlerts(now.ymd);
-    } catch (err) {
-      console.error('[Dispatcher] checkDeadlineAlerts erro:', err.message);
-    }
     try {
       await checkOverdueAlerts(now.ymd);
     } catch (err) {
       console.error('[Dispatcher] checkOverdueAlerts erro:', err.message);
+    }
+  }
+  // Véspera (D-1) — FIM DO DIA ~18h. #antecedencia (Fabi 29/06): UM toque noturno só,
+  // gated por reminder_lead, consolidando remindOperational/PersonalTasks (09h) +
+  // checkDeadlineAlerts (tarde). O claim atômico garante 1x/dia/tarefa.
+  if (opts['force-alerts'] || now.hour === 18) {
+    try {
+      await checkDeadlineAlerts(now.ymd);
+    } catch (err) {
+      console.error('[Dispatcher] checkDeadlineAlerts erro:', err.message);
     }
   }
 
@@ -4192,19 +4198,9 @@ async function run(opts = {}) {
     console.error('[Dispatcher] remindEventTasks erro:', err.message);
   }
 
-  // Sprint 22.X — lembretes T-1 de tasks operacionais (department_id != null)
-  try {
-    await remindOperationalTasks(new Date());
-  } catch (err) {
-    console.error('[Dispatcher] remindOperationalTasks erro:', err.message);
-  }
-
-  // Sprint 23.9 — lembretes T-1 de tasks pessoais avulsas (sem dept/project/event)
-  try {
-    await remindPersonalTasks(new Date());
-  } catch (err) {
-    console.error('[Dispatcher] remindPersonalTasks erro:', err.message);
-  }
+  // #antecedencia (Fabi 29/06): remindOperationalTasks (09h) + remindPersonalTasks (09h)
+  // APOSENTADOS — a véspera D-1 agora é UM toque noturno (~18h) via checkDeadlineAlerts,
+  // gated por reminder_lead. Funções mantidas no arquivo (não-chamadas) por histórico.
 
   // Grupos de trabalho — lembretes T-1 de tasks de GRUPO (fan-out pra membros)
   try {
@@ -4538,9 +4534,10 @@ async function checkDeadlineAlerts(ymdToday) {
   const cooldownCutoff = new Date(Date.now() - 6 * 3600 * 1000).toISOString();
   const { data: tasks, error } = await supabase
     .from('tasks')
-    .select('id, title, assigned_to, due_date, status, updated_at')
+    .select('id, title, assigned_to, due_date, status, updated_at, department_id')
     .eq('due_date', tomorrow)
     .not('status', 'in', '(done,cancelled)')
+    .is('assigned_group_id', null) // #antecedencia: grupo tem fluxo próprio (remindGroupTasks)
     .lt('updated_at', cooldownCutoff)
     .limit(200);
   if (error) {
@@ -4559,12 +4556,14 @@ async function checkDeadlineAlerts(ymdToday) {
   const byId = new Map((collabs || []).map(c => [c.id, c]));
 
   const whatsapp = require('../services/whatsapp');
+  const { shouldRemindEve, normalizeLead } = require('./reminder-lead');
   let sent = 0;
   for (const t of tasks) {
     const collab = byId.get(t.assigned_to);
     if (!collab || !collab.phone) continue;
-    const pref = collab.user_preferences && collab.user_preferences.notify_deadline_alerts;
-    if (pref === false) continue; // user opted out
+    // #antecedencia (Fabi 29/06): gate pela preferência reminder_lead (substitui o toggle
+    // binário notify_deadline_alerts). same_day → não recebe a véspera.
+    if (!shouldRemindEve(normalizeLead(collab.user_preferences && collab.user_preferences.reminder_lead))) continue;
     const dnd = await getDndState(collab.id);
     if (dnd.active) {
       await logRitualEvent(collab.id, 'alerta_prazo', 'skipped', `dnd_active until=${dnd.until}`, ymdToday);
@@ -4576,7 +4575,10 @@ async function checkDeadlineAlerts(ymdToday) {
       continue;
     }
     const nick = collab.full_name === 'Luciano Alf' ? 'Alf' : (collab.full_name || '').split(' ')[0] || 'amigo';
-    const text = `⏳ ${nick}, lembrete: *${t.title}* vence amanhã. Tá encaminhado?`;
+    // #antecedencia: preserva os 2 tons existentes — operacional (com dept) vs pessoal (leve).
+    const text = t.department_id
+      ? `⏰ ${nick}, lembrete: *${t.title}* vence amanhã. Tudo certo da sua parte?`
+      : `📌 ${nick}, amanhã está marcado: *${t.title}*. Se rolar antes ou quiser remarcar, é só me dizer.`;
     // CLAIM ATÔMICO antes de enviar: o índice único parcial
     // notifications_alert_daily_uq (collab,type,ref,alert_day) garante que só UMA
     // execução vence o claim por dia. Imune a tick-a-cada-minuto, lag de DB,

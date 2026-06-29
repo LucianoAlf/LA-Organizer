@@ -9,7 +9,9 @@ description: Skill para atualizar preferências do usuário (horários de rituai
 - "muda meu briefing pra X horas", "passa o briefing pessoal pra 7h"
 - "fecha o dia mais cedo", "fechamento às 18h"
 - "planejamento da semana no domingo às 19h"
-- "tira os alertas de prazo", "desliga aviso de atraso"
+- "me lembra só no dia", "para de me lembrar antes do dia", "não me avisa na véspera" → `reminder_lead`: `same_day`
+- "me lembra todo dia até o prazo", "pode antecipar" → `reminder_lead`: `daily`
+- "desliga aviso de atraso" → `notify_overdue_alerts`
 - "pausa o TOM por 2 horas", "fica em silêncio até amanhã", "pausa até sexta"
 - "quero foco em 3 tarefas só por dia"
 - "intensidade leve / normal / dura"
@@ -45,7 +47,7 @@ description: Skill para atualizar preferências do usuário (horários de rituai
 | `monthly_closing_time` | string `"HH:MM"` | fechamento mensal (última sexta do mês) |
 | `max_daily_tasks` | int `1-20` | tarefas máximas no briefing — força foco |
 | `coaching_intensity` | `"light"` / `"normal"` / `"hard"` | como TOM cobra |
-| `notify_deadline_alerts` | bool | alertas D-1 |
+| `reminder_lead` | `"same_day"` / `"eve_and_day"` / `"daily"` | antecedência do lembrete de tarefa com prazo: só no dia / véspera+dia (padrão) / todos os dias |
 | `notify_overdue_alerts` | bool | alertas de atraso |
 | `notify_team_summary` | bool | resumo do time (só liderança) |
 | `do_not_disturb_until` | ISO timestamp ou `null` | pausa TOM até essa hora; `null` despausa |
@@ -82,6 +84,16 @@ description: Skill para atualizar preferências do usuário (horários de rituai
 { "notify_overdue_alerts": false }
 <<END>>
 ```
+
+### Antecedência de lembrete (caso Fabi)
+**User:** "me lembra só no dia, não fica me avisando antes"
+**TOM:** ✅ Beleza — só te lembro no dia do prazo, sem antecipar.
+```
+<<PREFS_UPDATE>>
+{ "reminder_lead": "same_day" }
+<<END>>
+```
+Mapa: "só no dia"→`same_day` · "véspera e no dia"/"volta ao normal"→`eve_and_day` · "me lembra todo dia"→`daily`.
 
 ### Intensidade
 **User:** "tô precisando de cobrança mais dura"

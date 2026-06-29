@@ -37,7 +37,14 @@ const _INFO_GATHERING_RE = /\b(?:me\s+(?:manda|mande|envia|envie|diz|diga|passa|
 // "Se confirmar" vêm no MEIO e a frase termina em ponto, então escapavam → falso positivo
 // no radar ACTIONABLE_NO_MARKER. Detecta o condicional "se confirmar/ok/aprovar/topar" e
 // a pergunta de confirmação em qualquer posição.
-const _CONFIRM_SEEKING_RE = /\bse\s+(?:voc[êe]\s+)?(?:confirmar|confirma|ok|aprovar|topar|fechar)\b|\b(?:certo|confirma|confirmo|confirmar)\s*\?/i;
+//
+// #1B (BATCH-CONFIRM família, caso Rose 28/06 22:47) — a 2ª alternativa só pegava a
+// palavra-confirm COLADA no "?" ("certo?"). "Tá certo ISSO?" tem palavra entre "certo" e
+// "?" → escapava → chokepoint false-fire num preview. Fix: aceita até ~15 chars (sem "?"
+// nem quebra de linha) entre a palavra-confirm e o "?". O limite de 15 mantém narrow:
+// claim real + pergunta não-confirmatória longe ("✅ Fechei tudo. Mais alguma coisa?")
+// NÃO casa → o chokepoint segue disparando no confab.
+const _CONFIRM_SEEKING_RE = /\bse\s+(?:voc[êe]\s+)?(?:confirmar|confirma|ok|aprovar|topar|fechar)\b|\b(?:certo|confirma|confirmo|confirmar)\b[^?\n]{0,15}\?/i;
 
 /**
  * A reply pede um insumo ao user pra prosseguir (convite/futuro) OU pede confirmação

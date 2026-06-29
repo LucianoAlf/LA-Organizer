@@ -30,6 +30,34 @@ test('isInfoGatheringReply: "Criei a tarefa e marquei pra amanhã." → false (a
 });
 
 // ─────────────────────────────────────────────────────────────────
+// #1B (BATCH-CONFIRM família) — caso Rose 28/06 22:47. TOM PERGUNTA antes de agir
+// ("Tá certo isso? Fecho as três.") mas o "?" tem palavra no MEIO ("certo ISSO?") e a
+// frase termina em ".", então escapava de hasTrailingQuestion E do _CONFIRM_SEEKING_RE
+// (que só pegava "certo?"/"confirma?" colado no "?") → chokepoint false-fire ("não
+// consegui registrar" colado num preview). Fix: palavra-de-confirmação + até ~15 chars + "?".
+// ─────────────────────────────────────────────────────────────────
+test('isInfoGatheringReply: caso Rose — "Tá certo isso? Fecho as três." (certo + palavra + ?) → true', () => {
+  assert.strictEqual(isInfoGatheringReply('Entendi do áudio:\n\nTá certo isso? Fecho as três.'), true);
+});
+test('isInfoGatheringReply: "Confirma isso aí?" (confirma + palavra + ?) → true', () => {
+  assert.strictEqual(isInfoGatheringReply('Beleza! Confirma isso aí? Aí eu fecho.'), true);
+});
+// CONTROLE NEGATIVO (anti over-match do fix #1B): claim real + pergunta NÃO-confirmatória
+// ("Quer que eu...?") NÃO pode virar info-gathering POR CAUSA da palavra-confirm ausente.
+// (Obs.: o gate completo do chokepoint tb tem hasTrailingQuestion, que é outra história e
+// pré-existe — aqui isolamos a contribuição do _CONFIRM_SEEKING_RE.)
+test('isInfoGatheringReply: claim + "Quer que eu avise o time?" (sem palavra-confirm) → false', () => {
+  assert.strictEqual(isInfoGatheringReply('✅ Fechei as 3 tarefas! Quer que eu avise o time?'), false);
+});
+test('isInfoGatheringReply: confab puro "✅ Fechei as 3 tarefas!" → false', () => {
+  assert.strictEqual(isInfoGatheringReply('✅ Fechei as 3 tarefas!'), false);
+});
+// Guard de over-match: palavra-confirm LONGE do "?" com claim no meio NÃO casa (15-char bound).
+test('isInfoGatheringReply: "Tá certo, criei tudo e lancei as parcelas. Mais alguma coisa?" → false', () => {
+  assert.strictEqual(isInfoGatheringReply('Tá certo, criei tudo e lancei as parcelas. Mais alguma coisa?'), false);
+});
+
+// ─────────────────────────────────────────────────────────────────
 // hasTrailingQuestion — pergunta É info-gathering mesmo com lixo após o "?"
 // ─────────────────────────────────────────────────────────────────
 test('hasTrailingQuestion: pergunta terminando em ")" (caso Anne 03:27)', () => {

@@ -3254,6 +3254,37 @@ async function applyEventUpdates(collaborator, actions) {
       }
       console.log(`[Event] ${a.action} ${a.id} by ${last4}${a.action === 'reschedule' ? ` to ${a.new_start_at.slice(0, 16)}` : ''}`);
       okCount++;
+      // #2D1 (EVENT-COMPLETE-MULTI-INSTANCE, caso Leo "Entre Teclas" 26+27) — ao COMPLETAR um
+      // evento PASSADO, fecha junto os HOMÔNIMOS abertos do mesmo dono na janela ±3d (helper
+      // puro, escopo apertado p/ não pegar recorrência semanal). Faz o "dá baixa nos dois"
+      // acontecer DE VERDADE — e, com o #2D2, a contagem da prosa passa a bater (okCount sobe).
+      if (a.action === 'complete' && !ev.fromParticipant && ev.start_at) {
+        try {
+          const { pickHomonymSiblingsToComplete } = require('./lib/event-homonyms');
+          const baseMs = Date.parse(ev.start_at);
+          const since = new Date(baseMs - 4 * 86400000).toISOString();
+          const until = new Date(baseMs + 4 * 86400000).toISOString();
+          const { data: cands } = await supabase
+            .from('events')
+            .select('id, title, status, start_at')
+            .eq('collaborator_id', collaborator.id)
+            .eq('title', ev.title)
+            .gte('start_at', since).lte('start_at', until)
+            .limit(20);
+          const sibIds = pickHomonymSiblingsToComplete(ev, cands || [], Date.now());
+          if (sibIds.length) {
+            const { error: sibErr } = await supabase
+              .from('events').update({ status: 'done' })
+              .in('id', sibIds).eq('collaborator_id', collaborator.id);
+            if (!sibErr) {
+              okCount += sibIds.length;
+              console.log(`[Event] complete fan-out: +${sibIds.length} homônimo(s) de "${ev.title}"`);
+            } else {
+              console.warn('[Event] homônimo fan-out update err:', sibErr.message);
+            }
+          }
+        } catch (e) { console.warn('[Event] homônimo fan-out falhou (não-fatal):', e.message); }
+      }
       // Sprint 31.12 — reschedule precisa MOVER os lembretes junto. Antes só mudava
       // start_at e os event_reminders velhos disparavam no horário antigo (caso
       // Matheus/Bia 03/06: evento foi pra segunda, lembrete tocou hoje).
@@ -3969,6 +4000,12 @@ function parsePrefsMarker(text) {
       if (Array.isArray(v) && v.every((s) => typeof s === 'string' && HHMM_RE.test(s))) {
         update.task_checkin_times = v.map((s) => (s.length === 5 ? s + ':00' : s));
       } else dropped.push(`${k}:bad_time_array`);
+    } else if (k === 'reminder_lead') {
+      // #antecedencia (Fabi 29/06): antecedência de lembrete de tarefa com prazo.
+      // same_day = só no dia; eve_and_day = véspera + dia (padrão); daily = todos os dias.
+      // O usuário PODE configurar pelo chat ("me lembra só no dia") — não é ritual fixo.
+      if (['same_day', 'eve_and_day', 'daily'].includes(v)) update.reminder_lead = v;
+      else dropped.push(`${k}:invalid`);
     } else if (isContextQuietField(k)) {
       // Silêncio POR CONTEXTO (work/personal) — fonte de verdade do PWA.
       // O TOM pergunta o contexto antes de emitir; aqui só validamos.
@@ -4146,7 +4183,9 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
         if (batchCompleteNeedsConfirm({ completedTitles: titles, inboundText: opts.inboundText })) {
           const lista = titles.map((t) => `*${t}*`).join(', ');
           const plural = titles.length > 1;
-          failMessages.push(`Você quer que eu feche ${titles.length} tarefa${plural ? 's' : ''} (${lista})? Não vi você citar ela${plural ? 's' : ''} na mensagem.`);
+          // BATCH-CONFIRM-MSG-CONTRADIZ (Rose/2088 28/06): a msg antiga dizia "Não vi você citar
+          // elas na mensagem" enquanto LISTAVA os nomes — contradição que confundia. Pergunta limpa.
+          failMessages.push(`Confirma o fechamento ${plural ? `destas ${titles.length} tarefas` : 'desta tarefa'}: ${lista}?`);
           try {
             await pendingIntents.openIntent(collaborator.id, 'confirmation',
               { batch_complete: completes.map((c) => c.id).filter(Boolean) },
@@ -8923,7 +8962,11 @@ async function processMessage(phone, text, raw = {}) {
       // ANCORADA de complete — a pergunta foi "confirma que já foi feito?".
       const _anchoredComplete = !!(target && target.payload && target.payload.anchor
         && target.payload.anchor.id && target.payload.action === 'complete');
-      const userConfirm = pendingIntents.detectUserConfirmation(_confirmText, { allowDone: _anchoredComplete });
+      // BATCH-CONFIRM-IMPERATIVE-NUM (Rose/2088 28/06): intent de fechamento em LOTE também
+      // é contexto de complete — "Conclui as 3" / "1 e 2 já foram feitas" devem confirmar
+      // (sem isso só "Sim" pelado disparava o executeBatchComplete; a Rose loopou e o 2088 dropou).
+      const _batchComplete = !!(target && Array.isArray(target.payload?.batch_complete) && target.payload.batch_complete.length);
+      const userConfirm = pendingIntents.detectUserConfirmation(_confirmText, { allowDone: _anchoredComplete || _batchComplete });
       // Janela de confirmação: um "sim/não" cru só resolve a intent se ela foi
       // perguntada há pouco (~20min). Fora disso NÃO resolve e NÃO apaga — a intent
       // segue aberta pro fluxo natural/expiração. (Bug: "sim" pra criar meta
@@ -10012,6 +10055,17 @@ async function processMessage(phone, text, raw = {}) {
         base = (evFailMessages && evFailMessages.length)
           ? evFailMessages.join('\n')
           : (() => { const b = sanitizeOptimisticConfirm(base, 'failed'); return (b ? b + '\n\n' : '') + '_não consegui atualizar o compromisso, me confirma o que você quer?_'; })();
+      } else if (okCount > 0) {
+        // #2D2 (CONFAB-COUNT, caso Leo 28/06) — a prosa do LLM pode exagerar a contagem
+        // ("nos dois eventos") enquanto só N persistiram (ok=N). O chokepoint é BINÁRIO
+        // (algo persistiu → não dispara); este guard PURO rebaixa o número inline + nota
+        // honesta. Conservador: só numeral explícito + verbo de ação + claimed>persisted.
+        const { enforceCountHonesty } = require('./lib/count-honesty');
+        const _ch = enforceCountHonesty(base, { domain: 'event', persistedCount: okCount, meta: true });
+        if (_ch.fired) {
+          base = _ch.reply;
+          try { await logMarker(collab.id, 'COUNT_HONESTY', 'redirected', `event:claimed=${_ch.claimed} ok=${okCount}`, String(base).slice(0, 160)); } catch (_) {}
+        }
       }
       reply = base || reply;
     }

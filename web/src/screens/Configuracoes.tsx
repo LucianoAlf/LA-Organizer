@@ -26,6 +26,7 @@ interface Prefs {
   max_daily_tasks: number;
   coaching_intensity: 'light' | 'normal' | 'hard';
   notify_deadline_alerts: boolean;
+  reminder_lead: 'same_day' | 'eve_and_day' | 'daily';
   notify_overdue_alerts: boolean;
   notify_team_summary: boolean;
   do_not_disturb_until: string | null;
@@ -134,6 +135,7 @@ export function Configuracoes() {
         quiet_days_personal: Array.isArray(data.quiet_days_personal) ? data.quiet_days_personal : [],
         quiet_weekends_work: !!data.quiet_weekends_work,
         quiet_weekends_personal: !!data.quiet_weekends_personal,
+        reminder_lead: data.reminder_lead || 'eve_and_day',
       };
       setForm(next);
       // Baseline: serializa o estado inicial pra detectar "houve mudança real"
@@ -202,6 +204,7 @@ export function Configuracoes() {
           max_daily_tasks: p.max_daily_tasks,
           coaching_intensity: p.coaching_intensity,
           notify_deadline_alerts: p.notify_deadline_alerts,
+          reminder_lead: p.reminder_lead,
           notify_overdue_alerts: p.notify_overdue_alerts,
           notify_team_summary: p.notify_team_summary,
           // NÃO ordenar: o save é recarregado nas linhas indexadas por posição;
@@ -536,9 +539,18 @@ export function Configuracoes() {
 
         {/* Notificações */}
         <Section title="Notificações">
-          <Toggle label="Alertas de prazo (D-1)" hint="Te avisa um dia antes de vencer"
-            value={form.notify_deadline_alerts}
-            onChange={v => setForm({ ...form, notify_deadline_alerts: v })} />
+          <Field label="Antecedência de lembrete" hint="Quando o TOM te lembra de tarefa com prazo">
+            <CustomSelect
+              value={form.reminder_lead}
+              options={[
+                { value: 'same_day', label: 'Só no dia' },
+                { value: 'eve_and_day', label: 'Véspera + dia' },
+                { value: 'daily', label: 'Todos os dias' },
+              ]}
+              onChange={(v) => setForm({ ...form, reminder_lead: v as 'same_day' | 'eve_and_day' | 'daily' })}
+              size="sm"
+            />
+          </Field>
           <Toggle label="Alertas de atraso" hint="Cobra quando passou do prazo"
             value={form.notify_overdue_alerts}
             onChange={v => setForm({ ...form, notify_overdue_alerts: v })} />

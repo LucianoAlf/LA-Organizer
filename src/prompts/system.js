@@ -2776,7 +2776,15 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   // (não reintroduz o shift das 21h BRT). O FECHAMENTO NÃO entra aqui: cutoff dele = hoje, já
   // filtrado em engine.buildClosingItems pelo MESMO predicado isVisibleForDay.
   const { isVisibleForDay, addDaysYmd } = require('../lib/day-visibility');
-  const _briefCutoff = addDaysYmd(todaySaoPaulo(), 1);
+  // #antecedencia (Fabi 29/06): só reminder_lead='daily' antecipa "vence amanhã" no briefing;
+  // 'eve_and_day'/'same_day' → cutoff=hoje (briefing só hoje+atrasadas; a véspera vem ~18h).
+  const { briefingCutoffYmd, normalizeLead } = require('../rituals/reminder-lead');
+  const _todayYmdBrief = todaySaoPaulo();
+  const _briefCutoff = briefingCutoffYmd(
+    normalizeLead(prefsRes.data && prefsRes.data.reminder_lead),
+    _todayYmdBrief,
+    addDaysYmd(_todayYmdBrief, 1),
+  );
   const _briefVis = (t) => isVisibleForDay(t, _briefCutoff);
   let tasksForCtx = ctx.todayTasks;
   if (rt === 'briefing_pessoal') {
