@@ -31,7 +31,8 @@ export function useNoPrazoTasks(): TaskForPanel[] {
         .is('parent_task_id', null)
         .eq('is_group', false)
         .eq('data_classification', 'real')
-        .not('status', 'in', '(done,cancelled)');
+        .neq('status', 'done')
+        .neq('status', 'cancelled');
       if (error) throw error;
       return data ?? [];
     },

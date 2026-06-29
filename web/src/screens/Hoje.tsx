@@ -224,7 +224,8 @@ async function fetchNoPrazoTasks(collabId: string): Promise<Task[]> {
     .is('due_date', null)
     .is('parent_task_id', null)
     .eq('is_group', false)
-    .not('status', 'in', '(done,cancelled)')
+    .neq('status', 'done')
+    .neq('status', 'cancelled')
     .order('sort_position', { ascending: true, nullsFirst: false })
     .order('created_at', { ascending: true });
   if (error) throw error;
@@ -539,7 +540,6 @@ export function Hoje() {
   // Seção "📝 Sem prazo" — só nas abas próprias (work/personal); delegada fica fora por ora.
   // Fonte isolada (noPrazoTasks), filtro único (filterNoPrazo) compartilhado com o desktop.
   const noPrazo = tab === 'delegated' ? [] : filterNoPrazo(noPrazoTasks, tab);
-
   // Sprint 26 — só mostra skeleton no carregamento INICIAL (sem dados cacheados).
   // Antes: qualquer invalidate (incl. toggle de task) virava isLoading=true momentaneamente
   // e a UI piscava o skeleton, "engolindo" a lista. Agora, se já temos dados em mãos,
@@ -710,7 +710,7 @@ export function Hoje() {
             action={<Button variant="secondary" onClick={() => qc.invalidateQueries({ queryKey: ['tasks'] })}>Tentar de novo</Button>}
           />
         </section>
-      ) : todayList.length === 0 ? (
+      ) : (todayList.length === 0 && noPrazo.length === 0) ? (
         <section className="surface p-md">
           {hasNothing ? (
             <EmptyState
