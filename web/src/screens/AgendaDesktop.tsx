@@ -23,6 +23,7 @@ import { toggleChildWithCascade } from '../lib/taskGroups';
 import { useAgendaFilters } from './agenda/hooks/useAgendaFilters';
 import { useAgendaEvents, type EventForGrid } from './agenda/hooks/useAgendaEvents';
 import { useAgendaTasks, type TaskForPanel } from './agenda/hooks/useAgendaTasks';
+import { useNoPrazoTasks } from './agenda/hooks/useNoPrazoTasks';
 import { useCollaboratorNames } from './agenda/hooks/useCollaboratorNames';
 import { TaskDetailSheet } from '../components/TaskDetailSheet';
 import { TaskChecklistSection } from '../components/TaskChecklistSection';
@@ -144,6 +145,13 @@ export function AgendaDesktop() {
     if (currentContext === 'delegated') return tasks.filter(t => t.delegated_to != null);
     return tasks.filter(t => t.context === currentContext);
   }, [tasks, currentContext]);
+
+  // NOPRAZO-TASK-INVISIBLE-PWA — tarefas sem prazo (fonte isolada), filtradas pelo MESMO currentContext.
+  const noPrazoAll = useNoPrazoTasks();
+  const noPrazoFiltered = useMemo(() => {
+    if (currentContext === 'delegated') return noPrazoAll.filter(t => t.delegated_to != null);
+    return noPrazoAll.filter(t => t.context === currentContext);
+  }, [noPrazoAll, currentContext]);
 
   const eventsFiltered = useMemo(() => {
     if (currentContext === 'delegated') return [];
@@ -315,6 +323,7 @@ export function AgendaDesktop() {
             weekStart={startOfWeek(currentDate)}
             monthDate={miniMonth}
             tasks={tasksFiltered}
+            noPrazo={noPrazoFiltered}
             events={eventsFiltered}
             habitsDay={[]}
             habitsWeek={[]}

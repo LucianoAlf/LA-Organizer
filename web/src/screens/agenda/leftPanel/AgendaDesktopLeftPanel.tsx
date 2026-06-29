@@ -29,6 +29,7 @@ interface Props {
   groups?: (TaskForPanel & { subtasks?: TaskForPanel[] })[];
   onOpenGroup?: (groupId: string) => void;
   onToggleGroupChild?: (child: TaskForPanel, done: boolean) => void;
+  noPrazo?: TaskForPanel[];
 }
 
 export function AgendaDesktopLeftPanel(p: Props) {
@@ -48,6 +49,7 @@ export function AgendaDesktopLeftPanel(p: Props) {
           groups={p.groups}
           onOpenGroup={p.onOpenGroup}
           onToggleGroupChild={p.onToggleGroupChild}
+          noPrazo={p.noPrazo}
         />
       )}
       {p.view === 'week' && (

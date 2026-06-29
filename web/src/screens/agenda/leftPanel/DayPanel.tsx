@@ -30,6 +30,8 @@ interface Props {
   groups?: (TaskForPanel & { subtasks?: TaskForPanel[] })[];
   onOpenGroup?: (groupId: string) => void;
   onToggleGroupChild?: (child: TaskForPanel, done: boolean) => void;
+  // NOPRAZO fix — tarefas abertas sem prazo (fonte isolada via useNoPrazoTasks).
+  noPrazo?: TaskForPanel[];
 }
 
 function classifyOverdue(dueIso: string, todayIso: string): 'plus4' | 'd2_3' | 'd1' | 'today' | 'future' {
@@ -312,7 +314,24 @@ export function DayPanel(p: Props) {
             </>
           )}
 
-          {pending.length === 0 && (
+          {/* Sem prazo (NOPRAZO-TASK-INVISIBLE-PWA) — tarefas abertas sem data, fonte isolada */}
+          {(p.noPrazo?.length ?? 0) > 0 && (
+            <>
+              <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-fg-muted font-semibold px-1 pt-2 pb-1">
+                <span>📝</span><span>Sem prazo</span>
+              </div>
+              {p.noPrazo!.map(t => (
+                <CompactTaskRow
+                  key={t.id}
+                  task={t}
+                  onToggle={() => p.onToggleTaskDone(t)}
+                  onClick={() => p.onTaskClick(t)}
+                />
+              ))}
+            </>
+          )}
+
+          {pending.length === 0 && (p.noPrazo?.length ?? 0) === 0 && (
             <p className="text-body-sm text-fg-muted px-1 py-2">Nenhuma tarefa pendente.</p>
           )}
         </CollapsibleSection>
