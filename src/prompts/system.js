@@ -2782,7 +2782,7 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   const { briefingCutoffYmd, normalizeLead } = require('../rituals/reminder-lead');
   const _todayYmdBrief = todaySaoPaulo();
   const _briefCutoff = briefingCutoffYmd(
-    normalizeLead(prefsRes.data && prefsRes.data.reminder_lead),
+    normalizeLead(ctx.prefs && ctx.prefs.reminder_lead),
     _todayYmdBrief,
     addDaysYmd(_todayYmdBrief, 1),
   );
