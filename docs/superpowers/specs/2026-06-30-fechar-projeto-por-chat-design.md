@@ -104,10 +104,13 @@ Funções puras (recebem dados já buscados; testáveis sem Supabase):
 ### 3. `src/services/project-status-exec.js` (NOVO, thin — toca Supabase)
 
 - `applyProjectStatusChange(collab, { projectId, newStatus }) -> { ok, project?, reason? }`
-  - **Re-checa**: projeto existe e ainda está em status vivo (idempotência contra "sim"
-    duplo / corrida); autoridade (re-resolve dono/líder). Se já fechado/cancelado →
-    `{ ok:false, reason:'already_closed' }`.
-  - `update({ status: newStatus }).eq('id', projectId)`.
+  - **Re-checa idempotência/corrida**: lê o projeto; se já não estiver em status vivo →
+    `{ ok:false, reason:'already_closed' }`. A **autoridade já foi garantida** no gate de
+    confirmação e é **carregada pela posse da intent** — só o colaborador dono da intent
+    resolve a própria intent (`listOpenIntents(collab.id)`). O service fica thin e não
+    re-resolve `leader-routing`.
+  - `update({ status: newStatus }).eq('id', projectId).in('status', [...vivos])` (guarda de
+    corrida: só muda se ainda vivo).
   - Loga marker `PROJECT_STATUS` executed (`name:<nome> status:<novo>`).
   - **Determinístico** — chamado no "sim", nunca por marker do LLM.
 
