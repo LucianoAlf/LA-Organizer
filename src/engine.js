@@ -41,6 +41,7 @@ const { detectApprovalReply, stripReplyScaffold } = require('./events/detect-app
 const { detectExplicitDayIntent } = require('./utils/temporal-intent');
 const { isFutureCompletion } = require('./utils/complete-guards');
 const { sanitizeOptimisticConfirm, hasOptimisticConfirm, enforceNoMarkerHonesty } = require('./lib/optimistic-confirm');
+const { buildIntegrityReply } = require('./lib/integrity-reply');
 const { validateDndWindow, DND_MAX_MS } = require('./lib/dnd-window');
 const { isVisibleForDay } = require('./lib/day-visibility');
 const { classifyAutoRetry } = require('./lib/auto-retry-outcome');
@@ -9803,13 +9804,19 @@ async function processMessage(phone, text, raw = {}) {
         // Sprint 31 — NÃO engole a resposta inteira da descarga: preserva o que o
         // TOM resolveu/perguntou nos OUTROS itens (cleanText) e ANEXA o aviso de
         // duplicata no fim. Antes, sobrescrever apagava todos os demais itens do turno.
+        // PETERSON-INTEGRITY-HIDES-OKCOUNT (auditoria 30/06): o soft-dup é acumulado SEM
+        // abortar o lote — as OUTRAS okCount tarefas persistiram. Antes o ramo assumia
+        // "nada persistiu" (sanitize 'failed' + só o menu de dedup), escondendo as criadas
+        // do usuário E do marker_log (Peterson: 5 criadas sumiram). Agora loga as criadas
+        // e o reply reflete okCount via buildIntegrityReply.
+        if (okCount > 0) {
+          await logMarker(collab.id, 'TASK_UPDATE', 'executed', `ok=${okCount} fail=${failCount} (held_dup)`, null);
+        }
         {
           const _dupQ = _buildIntegrityConfirmText(integrityPayload);
-          // AUDIT-OPTIMISTIC-CONFIRM (caso Juliana): integrity bloqueou = NADA persistiu.
-          // Rebaixa o "✅ <título>" otimista (o strip antigo só pegava VERBO após o emoji,
-          // deixava "✅ *Conversar com a Dai*" passar contradizendo o menu logo abaixo).
-          const _prev = sanitizeOptimisticConfirm((parsedTask.cleanText || '').trim(), 'failed');
-          reply = _prev ? `${_prev}\n\n${_dupQ}` : _dupQ;
+          // AUDIT-OPTIMISTIC-CONFIRM (caso Juliana, okCount=0): rebaixa o "✅ <título>"
+          // otimista. PETERSON (okCount>0): preserva o legítimo + footer determinístico.
+          reply = buildIntegrityReply(parsedTask.cleanText, _dupQ, okCount);
           // Sprint 31.10 — ESTE turno terminou pedindo confirmação de duplicata
           // (1/2/3). O detector ACTIONABLE_NO_MARKER lê esse flag e NÃO acusa:
           // pedir confirmação ≠ deixar de persistir (era falso positivo de C1).
@@ -10064,11 +10071,17 @@ async function processMessage(phone, text, raw = {}) {
         console.warn(`[IntegrityCheck] EVENT_CREATE blocked by ${iType} (${iSeverity}) — "${String(integrityPayload.candidateTitle).slice(0,40)}"`);
         // Sprint 31 — NÃO engole a resposta inteira: preserva o que o TOM já
         // resolveu/perguntou (parsedEv.cleanText) e ANEXA o aviso de duplicata.
+        // PETERSON-INTEGRITY-HIDES-OKCOUNT (gêmeo de evento, preventivo — sem incidente
+        // observado, mas mesmo padrão do caminho TASK): se o lote criou eventos e segurou
+        // um dup, as criadas não podem sumir. Loga as criadas e reflete okCount no reply.
+        if (okCount > 0) {
+          await logMarker(collab.id, 'EVENT_CREATE', 'executed', `ok=${okCount} fail=${failCount} (held_dup)`, null);
+        }
         {
           const _dupQ = _buildIntegrityConfirmText(integrityPayload);
-          // AUDIT-OPTIMISTIC-CONFIRM: integrity bloqueou = nada persistiu → rebaixa o ✅.
-          const _prev = sanitizeOptimisticConfirm((parsedEv.cleanText || '').trim(), 'failed');
-          reply = _prev ? `${_prev}\n\n${_dupQ}` : _dupQ;
+          // AUDIT-OPTIMISTIC-CONFIRM (okCount=0): rebaixa o ✅. okCount>0: preserva + footer.
+          reply = buildIntegrityReply(parsedEv.cleanText, _dupQ, okCount,
+            { sing: 'evento já registrado', plur: 'eventos já registrados' });
           // Sprint 31.10 — mesmo flag do caminho TASK: turno pediu confirmação de
           // duplicata, não é ACTIONABLE_NO_MARKER.
           _metrics.awaiting_user_confirm = true;

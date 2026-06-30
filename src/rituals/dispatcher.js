@@ -92,9 +92,8 @@ const PERSONAL_BRIEFING_DEFAULT = '07:00';
 // >=2 tarefas atrasadas OU >=1 projeto parado. Senão, fica em silêncio.
 const ADHERENCE_NUDGE_TIME = '19:00';
 const ADHERENCE_PAUSE_HOURS = 48;
-const ADHERENCE_MIN_OVERDUE = 2;
-const ADHERENCE_MAX_OVERDUE_LIST = 5;
-const ADHERENCE_MAX_PROJECTS_LIST = 5;
+// ADHERENCE_MIN_OVERDUE/MAX_OVERDUE_LIST/MAX_PROJECTS_LIST moveram pra ./adherence-text
+// (junto do buildAdherenceText extraído).
 
 // Insere um evento estruturado em ritual_logs. Falhas de log nunca derrubam o tick.
 async function logRitualEvent(collaboratorId, type, status, detail = null, refDate = null) {
@@ -5641,55 +5640,8 @@ async function gatherAdherenceSignals(collabId, ymdToday) {
 }
 
 // Build deterministic adherence text. Returns null if no signal worth sending.
-function buildAdherenceText(collab, signals, ymdToday) {
-  const { overdueTasks, pausedProjects } = signals;
-  const readyProjects = signals.readyProjects || [];
-  const hasSignal = overdueTasks.length >= ADHERENCE_MIN_OVERDUE || pausedProjects.length >= 1 || readyProjects.length >= 1;
-  if (!hasSignal) return null;
-
-  const nick = collab.full_name === 'Luciano Alf' ? 'Alf' : (collab.full_name || '').split(' ')[0] || 'amigo';
-  const lines = [`${nick}, balanço de aderência... 🌒`, ''];
-
-  if (overdueTasks.length) {
-    lines.push('⏰ *Atrasadas:*');
-    for (const t of overdueTasks.slice(0, ADHERENCE_MAX_OVERDUE_LIST)) {
-      const days = ymdDaysBetween(ymdToday, t.due_date);
-      const lateLabel = days === 0 ? 'vencia hoje'
-        : days === 1 ? 'vencia ontem'
-        : `vencia há ${days}d`;
-      lines.push(`• *${t.title}* (${lateLabel})`);
-    }
-    if (overdueTasks.length > ADHERENCE_MAX_OVERDUE_LIST) {
-      lines.push(`_...e mais ${overdueTasks.length - ADHERENCE_MAX_OVERDUE_LIST}_`);
-    }
-    lines.push('');
-  }
-
-  if (pausedProjects.length) {
-    lines.push('📁 *Projetos parados:*');
-    for (const p of pausedProjects.slice(0, ADHERENCE_MAX_PROJECTS_LIST)) {
-      lines.push(`• *${p.name}* — sem mexer há ${p.days_since}d`);
-    }
-    lines.push('');
-  }
-
-  if (readyProjects.length) {
-    lines.push('✅ *Tarefas feitas, falta fechar:*');
-    for (const p of readyProjects.slice(0, ADHERENCE_MAX_PROJECTS_LIST)) {
-      lines.push(`• *${p.name}* — suas tarefas já tão concluídas. Fecho? 🚀`);
-    }
-    lines.push('');
-  }
-
-  // "Reagenda? Cancela?" só faz sentido com atrasada/parado. Se SÓ há projeto pronto pra
-  // fechar, a pergunta "Fecho?" já está inline — fecha leve.
-  if (overdueTasks.length || pausedProjects.length) {
-    lines.push('Reagenda? Cancela? Me diz o que rolou.');
-  } else {
-    lines.push('Me diz aí! 👽');
-  }
-  return lines.join('\n');
-}
+// buildAdherenceText extraído pra ./adherence-text (módulo PURO, testável sem supabase).
+const { buildAdherenceText } = require('./adherence-text');
 
 // Adherence nudge — runs at 19:00 weekdays. Determinístico, idempotente, opt-out via
 // notify_overdue_alerts=false. Threshold conservador pra não virar alarme ambulante.
@@ -5903,4 +5855,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { run, dispatchChecklists, dispatchPersonalRecurrentes, dispatchAnnouncements, remindUnconfirmedAnnouncements, notifyCoordinators, remindEventTasks, remindOperationalTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined, isFirstMondayOfMonth, isLastFridayOfMonth, listLeadership, checkMonthlyPlanning, checkMonthlyClosing, dispatchMonthlyAgenda, expirarReservasVencidas, ceoTeamUnclosedEventsReport, ceoTeamUnclosedTasksReport, perLeaderUnclosedTasksReport, sendGovernanceDigest, buildScorecardDigestSection, sendLeaderGovernanceDigest };
+module.exports = { run, dispatchChecklists, dispatchPersonalRecurrentes, dispatchAnnouncements, remindUnconfirmedAnnouncements, notifyCoordinators, remindEventTasks, remindOperationalTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined, isFirstMondayOfMonth, isLastFridayOfMonth, listLeadership, checkMonthlyPlanning, checkMonthlyClosing, dispatchMonthlyAgenda, expirarReservasVencidas, ceoTeamUnclosedEventsReport, ceoTeamUnclosedTasksReport, perLeaderUnclosedTasksReport, sendGovernanceDigest, buildScorecardDigestSection, sendLeaderGovernanceDigest, buildAdherenceText };
