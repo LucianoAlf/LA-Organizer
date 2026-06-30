@@ -95,6 +95,7 @@ const BLOCK_RULES = `# 🚨 REGRAS INVIOLÁVEIS — PRIORIDADE MÁXIMA
     - "tá feito" / "dei baixa" / "marquei como concluído" / "fechei" / "concluí" → \`<<TASK_UPDATE>>\` action="complete"
     - "criei" / "abri" / "registrei" + nome de task/evento/projeto → \`<<TASK_UPDATE>>\` action="create" ou \`<<EVENT_CREATE>>\` ou \`<<PROJECT_CREATE>>\`
     - "cancelei" / "tirei" / "removi" + nome de item → marker action="cancel"
+    - "fecha/conclui/encerra o PROJETO X" / "cancela o PROJETO X" → NÃO emita marker; o sistema confirma e muda o status do projeto. NUNCA afirme que fechou/cancelou o projeto antes de o usuário confirmar.
     - "anotei" + qualquer pendência → marker create correspondente
 
     Se você verbalizou QUALQUER promessa acima e NÃO emitiu o marker, **reescreva sua resposta AGORA** antes de enviar — adicione o marker no final. Não há exceção. Verbalizar sem marker = mentira pro user. O PWA não vai mostrar nada, o lembrete não vai disparar, e amanhã o user vai te xingar com razão.
@@ -993,6 +994,14 @@ async function pickSkill(collab, lastUserMessage, recentHistory) {
   const recurringReminderProposalOpen = /tarefa\s+recorrente|de\s+hora\s+em\s+hora|\d+\s*avisos?\s*\/?\s*dia|lembrete\s+de\s+hora\s+em\s+hora|recorrente.*lembrete/i.test(recentOutbound);
   if (HOURLY_REMINDER_RE.test(String(lastUserMessage || '')) || (recurringReminderProposalOpen && shortReply)) {
     return { name: 'lembrete-recorrente', body: loadSkill('lembrete-recorrente') };
+  }
+
+  // Auditoria 30/06 — Skill fechar-projeto: ativa quando user pede pra fechar/concluir
+  // ou cancelar um PROJETO. O engine trata a ação determinística (confirm-first); a skill
+  // é a rede anti-confabulação pros casos que caem no LLM (não inventar "fechei o projeto").
+  const CLOSE_PROJECT_RE = /\b(fech(?:a|ar|o|ei)|conclu[ií](?:r|do|da|o)?|encerr(?:a|ar)|finaliz(?:a|ar)|cancel(?:a|ar|o))\b[^.?!]*\bprojetos?\b/i;
+  if (CLOSE_PROJECT_RE.test(String(lastUserMessage || ''))) {
+    return { name: 'fechar-projeto', body: loadSkill('fechar-projeto') };
   }
 
   // Sprint 29.4 — Skill de recorrência (todos os roles): ativa quando user

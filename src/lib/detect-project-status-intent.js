@@ -37,13 +37,16 @@ function detectProjectStatusIntent(rawText) {
   const action = hasCancel ? 'cancel' : 'complete'; // cancel é mais específico → precedência
 
   const q = quotedText || null;
-  // Via 1: token "projeto" presente na fala real
+  // Via 1: token "projeto" presente na fala real (intenção EXPLÍCITA — pode consumir o turno
+  // mesmo que não ache o projeto, pois o usuário citou "projeto" de propósito).
   if (PROJECT_RE.test(text)) {
-    return { action, nameHint: _extractNameAfterProjeto(text), quotedText: q };
+    return { action, nameHint: _extractNameAfterProjeto(text), quotedText: q, viaProjectToken: true };
   }
-  // Via 2: reply-bare (verbo + scaffold, sem token projeto) → resolve por quote depois
+  // Via 2: reply-bare (verbo + scaffold, sem token projeto) → resolve por quote depois.
+  // viaProjectToken=false: se não casar um projeto, o engine NÃO consome o turno (cai no LLM),
+  // pra "fecha isso" respondendo a uma TAREFA não virar "não achei um projeto".
   if (q != null) {
-    return { action, nameHint: null, quotedText: q };
+    return { action, nameHint: null, quotedText: q, viaProjectToken: false };
   }
   // Sem token projeto e sem reply → null (colisão com complete de tarefa)
   return null;

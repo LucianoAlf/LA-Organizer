@@ -5,12 +5,12 @@ const { detectProjectStatusIntent } = require('./detect-project-status-intent');
 
 test('via explícita: "fecha o projeto Marketing" → complete + nameHint', () => {
   assert.deepStrictEqual(detectProjectStatusIntent('fecha o projeto Marketing'),
-    { action: 'complete', nameHint: 'Marketing', quotedText: null });
+    { action: 'complete', nameHint: 'Marketing', quotedText: null, viaProjectToken: true });
 });
 
 test('via explícita: "cancela o projeto Vendas Q1" → cancel + nameHint', () => {
   assert.deepStrictEqual(detectProjectStatusIntent('cancela o projeto Vendas Q1'),
-    { action: 'cancel', nameHint: 'Vendas Q1', quotedText: null });
+    { action: 'cancel', nameHint: 'Vendas Q1', quotedText: null, viaProjectToken: true });
 });
 
 test('"conclui o projeto X" e "encerra o projeto X" também disparam complete', () => {
@@ -36,6 +36,7 @@ test('via reply-bare: "pode fechar" com scaffold → complete, nameHint null, qu
   const r = detectProjectStatusIntent(raw);
   assert.strictEqual(r.action, 'complete');
   assert.strictEqual(r.nameHint, null);
+  assert.strictEqual(r.viaProjectToken, false);
   assert.match(r.quotedText, /Marketing/);
 });
 
@@ -44,6 +45,7 @@ test('reply-scaffold com token projeto: lê fala real, não a citação', () => 
   const r = detectProjectStatusIntent(raw);
   assert.strictEqual(r.action, 'complete');
   assert.strictEqual(r.nameHint, 'Lançamento');
+  assert.strictEqual(r.viaProjectToken, true);
 });
 
 test('NEGATIVO: "pode fechar" SEM scaffold → null (sem âncora de contexto)', () => {

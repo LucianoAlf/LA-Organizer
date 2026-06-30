@@ -38,6 +38,9 @@ const recentNoteDupBlocks = new Map(); // key: `${collabId}|${normTitle}` -> ts
 const NOTE_DEDUP_BYPASS_MS = 5 * 60 * 1000;
 const workGroups = require('./services/work-groups');
 const { detectApprovalReply, stripReplyScaffold } = require('./events/detect-approval-reply');
+const { detectProjectStatusIntent } = require('./lib/detect-project-status-intent');
+const projectStatusLib = require('./lib/project-status');
+const { applyProjectStatusChange } = require('./services/project-status-exec');
 const { detectExplicitDayIntent } = require('./utils/temporal-intent');
 const { isFutureCompletion } = require('./utils/complete-guards');
 const { sanitizeOptimisticConfirm, hasOptimisticConfirm, enforceNoMarkerHonesty } = require('./lib/optimistic-confirm');
@@ -8616,6 +8619,103 @@ async function processMessage(phone, text, raw = {}) {
     }
   } catch (e) {
     console.warn('[Approval-bare] consumer err:', e.message);
+  }
+
+  // ---- Fechar/cancelar PROJETO por chat (determinístico, pré-LLM) ----
+  // KRISSYA-PROJECT-CLOSE-NO-HANDLER (auditoria 30/06). Confirm-first + executor determinístico
+  // (família FIN-CONFIRM-CONFAB-NOOP): o "sim" dispara applyProjectStatusChange, o LLM NÃO
+  // re-emite marker. (a) resolve confirmação de projeto JÁ aberta; (b) detecta nova intenção.
+  // Tudo gated por anchor.type==='project' / token "projeto" — não toca task/event nem PROJECT_*.
+  try {
+    // (a) "sim"/"não" de uma confirmação de projeto já aberta (posse da intent = autoridade)
+    const _projIntent = _openIntents.find((i) =>
+      i.kind === 'confirmation' && i.payload && i.payload.anchor
+      && i.payload.anchor.type === 'project' && withinConfirmWindow(i.asked_at, 60));
+    if (_projIntent) {
+      const _yn = pendingIntents.detectUserConfirmation(stripReplyScaffold(String(text || '')).userText);
+      if (_yn === 'no') {
+        await pendingIntents.resolveIntent(_projIntent.id, 'denied', 'project status change denied');
+        const out = 'Beleza, deixei como tá. 👍';
+        try { await whatsapp.sendMessage(phone, out); await logConversation(collab.id, 'outbound', out); } catch (e) { console.warn('[ProjStatus] deny post err:', e.message); }
+        console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (project_status_denied)`);
+        return;
+      }
+      if (_yn === 'yes') {
+        const _a = _projIntent.payload.anchor;
+        const _newStatus = projectStatusLib.STATUS_BY_ACTION[_projIntent.payload.action];
+        const r = await applyProjectStatusChange(collab, { projectId: _a.id, newStatus: _newStatus });
+        await pendingIntents.resolveAnchoredIntents(collab.id, _a.id, 'confirmed', 'project status change');
+        let out;
+        if (r.ok) {
+          const _summary = { total: _projIntent.payload.open_total || 0, byPerson: [] };
+          out = projectStatusLib.buildStatusResult({ name: _a.title }, _projIntent.payload.action, _summary);
+          await logMarker(collab.id, 'PROJECT_STATUS', 'executed', `name:${_a.title} status:${_newStatus}`, null);
+        } else if (r.reason === 'already_closed') {
+          out = `O projeto *${_a.title}* já tava ${_projIntent.payload.action === 'cancel' ? 'cancelado' : 'fechado'}. 👍`;
+        } else {
+          out = '_Tentei mudar o status do projeto mas deu ruim — tenta de novo daqui a pouco?_';
+          await logMarker(collab.id, 'PROJECT_STATUS', 'rejected', r.reason || 'unknown', null);
+        }
+        try { await whatsapp.sendMessage(phone, out); await logConversation(collab.id, 'outbound', out); } catch (e) { console.warn('[ProjStatus] confirm post err:', e.message); }
+        console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (project_status_${r.ok ? 'applied' : 'failed'})`);
+        return;
+      }
+      // _yn === null → não é sim/não claro → segue (não consome o turno)
+    }
+
+    // (b) nova intenção "fecha/cancela o projeto X"
+    const _psIntent = detectProjectStatusIntent(String(text || ''));
+    if (_psIntent) {
+      let _aliveQ = supabase.from('projects')
+        .select('id, name, status, created_by')
+        .in('status', [...projectStatusLib.ALIVE_STATUSES]);
+      // não-coord só resolve os PRÓPRIOS projetos (autoridade = criador). Coord resolve qualquer.
+      if (!hasCoordLevel(collab)) _aliveQ = _aliveQ.eq('created_by', collab.id);
+      const { data: _aliveRaw } = await _aliveQ;
+      const _res = projectStatusLib.resolveProjectByName(_aliveRaw || [], _psIntent.nameHint, _psIntent.quotedText);
+
+      let out = null;
+      if (_res.status === 'none') {
+        // via reply-bare (sem token "projeto") que não casou projeto → NÃO consome o turno
+        // (ex.: "fecha isso" respondendo a uma tarefa). Cai no LLM.
+        if (_psIntent.viaProjectToken) {
+          out = 'Não achei um projeto com esse nome aberto pra você. Qual é o nome certinho?';
+        }
+      } else if (_res.status === 'ambiguous') {
+        const _names = _res.candidates.map((c) => `*${c.name}*`).join(' ou ');
+        out = `Tenho mais de um: ${_names}. Qual deles?`;
+      } else {
+        const _project = _res.project;
+        const _authorized = projectStatusLib.canChangeStatus(collab, _project, []) || hasCoordLevel(collab);
+        if (!_authorized) {
+          out = 'Esse projeto não é seu pra fechar — só quem criou ou lidera pode. Quer que eu avise alguém?';
+        } else {
+          // Busca TODAS as tarefas do projeto; summarizeOpenWork filtra done/cancelled
+          // (evita depender da sintaxe do .not(in) — falha dela daria sub-contagem silenciosa).
+          const { data: _openRaw } = await supabase.from('tasks')
+            .select('status, assignee:collaborators!tasks_assigned_to_fkey(full_name)')
+            .eq('project_id', _project.id);
+          const _openTasks = (_openRaw || []).map((t) => ({
+            status: t.status,
+            assignee_name: t.assignee && t.assignee.full_name ? t.assignee.full_name.split(' ')[0] : 'sem responsável',
+          }));
+          const _summary = projectStatusLib.summarizeOpenWork(_openTasks);
+          out = projectStatusLib.buildStatusConfirm(_project, _psIntent.action, _summary);
+          await pendingIntents.openIntent(collab.id, 'confirmation', {
+            anchor: { type: 'project', id: _project.id, title: _project.name },
+            action: _psIntent.action,
+            open_total: _summary.total,
+          }, out);
+        }
+      }
+      if (out) {
+        try { await whatsapp.sendMessage(phone, out); await logConversation(collab.id, 'outbound', out); } catch (e) { console.warn('[ProjStatus] detect post err:', e.message); }
+        console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (project_status_${_res.status})`);
+        return;
+      }
+    }
+  } catch (e) {
+    console.warn('[ProjStatus] consumer err:', e.message);
   }
 
   // ---- Correção/exclusão determinística (pré-LLM): "era 25" / "muda a categoria pra lazer" / "apaga a de 30" ----
