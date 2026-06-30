@@ -104,6 +104,26 @@ export async function notifyTaskDelegated(taskId: string): Promise<NotifyResult>
   }
 }
 
+// #em-copia (Fabi 29/06) — avisa cada pessoa posta em cópia (entrada). Fire-and-forget.
+export async function notifyWatchersAdded(taskId: string, watcherIds: string[]): Promise<NotifyResult> {
+  if (!INTERNAL_SECRET) return { ok: false, reason: 'no_secret' };
+  if (!watcherIds.length) return { ok: true, status: 200, sent: 0 };
+  try {
+    const r = await fetch(`${TOM_BASE}/internal/watchers-added`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-secret': INTERNAL_SECRET },
+      body: JSON.stringify({ task_id: taskId, watcher_ids: watcherIds }),
+    });
+    if (!r.ok) return { ok: false, reason: `http_${r.status}` };
+    const json = await r.json().catch(() => ({}));
+    return { ok: true, status: r.status, sent: typeof json.sent === 'number' ? json.sent : undefined };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn(`[tomEngine] watchers-added notify falhou: ${msg}`);
+    return { ok: false, reason: msg };
+  }
+}
+
 // Dashboard de time — botão "Cobrar agora": TOM dá um toque IMEDIATO no responsável da
 // tarefa, em nome de quem clicou. sent=false quando não havia pra quem mandar (sem zap/inativo
 // ou tarefa sem responsável); reason explica.

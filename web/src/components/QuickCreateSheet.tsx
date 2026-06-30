@@ -18,7 +18,8 @@ import { ParticipantsPicker } from './ParticipantsPicker';
 import { RemindersField } from './RemindersField';
 import { useEventCategories } from '../hooks/useEventCategories';
 import { useWorkGroups } from '../hooks/useWorkGroups';
-import { notifyTaskDelegated, notifyEventInvites } from '../lib/tomEngine';
+import { notifyTaskDelegated, notifyEventInvites, notifyWatchersAdded } from '../lib/tomEngine';
+import { WatchersPicker } from './WatchersPicker';
 import { showToast } from './Toast';
 import {
   MODALITY_LABELS,
@@ -86,6 +87,8 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
   const [taskQuadrant, setTaskQuadrant] = useState<number | null>(null);
   // Sprint 22.31 — Delegada: a quem atribuir (collaborator id). Quando kind='delegated'.
   const [delegateTo, setDelegateTo] = useState<string>('');
+  // #em-copia (Fabi 29/06): pessoas em cópia da delegação (acompanham/cobram, não concluem).
+  const [ccIds, setCcIds] = useState<string[]>([]);
   // Checklist (subtarefas) na criação de Tarefa/Delegar (2026-06-26). A mãe ainda não
   // existe, então os itens ficam locais e viram filhas (parent_task_id) após salvar.
   const [checklistDraft, setChecklistDraft] = useState<string[]>([]);
@@ -146,6 +149,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
       setTaskReminderTimes([]);
       setTaskQuadrant(null);
       setDelegateTo('');
+      setCcIds([]);
       setChecklistDraft([]);
       setCategoryId(''); // late-load effect abaixo seta o default quando categorias carregam
       setCreatingCat(false);
@@ -334,6 +338,13 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
         }));
         const { error: ce } = await supabase.from('tasks').insert(childRows);
         if (ce) console.warn('[QuickCreate delegated] checklist children insert err:', ce.message);
+      }
+      // #em-copia: insere os watchers (em cópia) e avisa cada um.
+      if (ccIds.length && data?.id) {
+        const wRows = ccIds.map(cid => ({ task_id: data.id as string, collaborator_id: cid, added_by: collab.id }));
+        const { error: we } = await supabase.from('task_watchers').insert(wRows);
+        if (we) console.warn('[QuickCreate delegated] task_watchers insert err:', we.message);
+        else void notifyWatchersAdded(data.id as string, ccIds);
       }
       // Sprint 22.34j — awaited + toast feedback.
       const r = await notifyTaskDelegated(data.id as string);
@@ -843,6 +854,17 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
               <div className="text-body-sm text-fg-muted mt-1.5">
                 Tarefa de trabalho · vai aparecer na aba "Delegadas" sua e em "Trabalho" da pessoa.
               </div>
+            </div>
+
+            <div>
+              <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Em cópia (opcional)</div>
+              <WatchersPicker
+                value={ccIds}
+                onChange={setCcIds}
+                excludeIds={[delegateTo, collaborator?.id ?? ''].filter(Boolean)}
+                enabled={open}
+              />
+              <div className="text-body-sm text-fg-muted mt-1.5">Acompanham e cobram junto — não precisam concluir.</div>
             </div>
 
             <div>

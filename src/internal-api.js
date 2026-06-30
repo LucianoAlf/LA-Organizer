@@ -730,6 +730,51 @@ router.post('/internal/task-delegated', requireInternalSecret, async (req, res) 
   return res.json({ status: 'ok', key: dedupeKey });
 });
 
+// #em-copia (Fabi 29/06): avisa cada pessoa recém-posta em cópia de uma tarefa.
+// PWA envia { task_id, watcher_ids } após inserir em task_watchers. Idempotente por (task, watcher).
+router.post('/internal/watchers-added', requireInternalSecret, async (req, res) => {
+  const taskId = String(req.body?.task_id || '').trim();
+  const watcherIds = Array.isArray(req.body?.watcher_ids) ? req.body.watcher_ids.map(String) : [];
+  if (!taskId || !watcherIds.length) return res.status(400).json({ error: 'missing_task_or_watchers' });
+
+  const { data: task } = await supabase
+    .from('tasks').select('id, title, due_date, created_by, assigned_to').eq('id', taskId).single();
+  if (!task) return res.status(404).json({ error: 'task_not_found' });
+
+  const { data: execColl } = await supabase
+    .from('collaborators').select('full_name').eq('id', task.assigned_to).maybeSingle();
+  const execFirst = (execColl?.full_name || '').split(' ')[0] || 'a pessoa';
+
+  const { data: ws } = await supabase
+    .from('collaborators').select('id, full_name, phone, is_active').in('id', watcherIds);
+  function fmtDay(ymd) { if (!ymd) return null; const [, m, d] = ymd.split('-'); return `${d}/${m}`; }
+  const dayStr = fmtDay(task.due_date);
+  let sent = 0;
+  for (const w of (ws || [])) {
+    if (!w.phone || !w.is_active) continue;
+    const dedupeKey = `watchers-added:${taskId}:${w.id}`;
+    const { data: prior } = await supabase
+      .from('marker_logs').select('id').eq('marker_type', 'WATCHER_ADDED').eq('raw_excerpt', dedupeKey).limit(1);
+    if (prior && prior.length) continue;
+    const body =
+      `👀 Você entrou em *cópia* de uma tarefa de *${execFirst}*:\n\n*${task.title}*` +
+      (dayStr ? `\n\nPrazo: ${dayStr}.` : '') +
+      `\n\nVocê acompanha e pode cobrar — não precisa concluir. Vou te lembrar junto com ${execFirst}.`;
+    try {
+      await whatsapp.sendMessage(w.phone, body);
+      await supabase.from('conversation_history').insert({
+        collaborator_id: w.id, direction: 'outbound', message_type: 'text', content: body,
+      });
+      sent++;
+    } catch (e) { console.error(`[InternalAPI] watchers-added WA err ${w.id}: ${e.message}`); }
+    await supabase.from('marker_logs').insert({
+      marker_type: 'WATCHER_ADDED', result: 'executed', reason: `cc ${w.full_name}`, raw_excerpt: dedupeKey,
+    });
+  }
+  console.log(`[InternalAPI] watchers-added ${taskId} → ${sent}/${watcherIds.length}`);
+  return res.json({ status: 'ok', sent });
+});
+
 // Sprint 22.34m — atualização de tarefa delegada → avisa o assignee.
 // Disparado pelo PWA quando user editou/reagendou tarefa criada por ele
 // e atribuída a outro colab. Sem idempotência: cada update real notifica.

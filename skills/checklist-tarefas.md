@@ -382,6 +382,8 @@ Use `<<COORDINATION_REQUEST>>` mode=`relay_assisted` (parafraseado) ou `relay_li
 |---|---|
 | "já fiz", "concluí", "feito" | `TASK_UPDATE` action=`complete` |
 | "passa pro X", "delega pra X" | `TASK_UPDATE` action=`delegate` + `to_name: X` (engine transfere assigned_to) |
+| "delega pra X e põe Y em cópia", "manda cópia pro gerente" | `TASK_UPDATE` action=`delegate` + `to_name: X` + `cc: ["Y"]` (Y acompanha/cobra, não executa) |
+| "põe o Y em cópia nessa tarefa" (já existe) | `TASK_UPDATE` action=`add_watchers` + `id` + `cc: ["Y"]` |
 | "isso é responsa do X", "é do X, não meu" | `TASK_UPDATE` action=`cancel` (pra task original) + `TASK_UPDATE` action=`create` + `to_name: X` (nova pra quem é responsável) |
 | "cancela", "ignora" | `TASK_UPDATE` action=`cancel` |
 | "remarca pra X", "fica pra outro dia" | `TASK_UPDATE` action=`reschedule` + `new_due_date` |
@@ -523,6 +525,8 @@ O bloco deve ficar no final da resposta. Não escreva nada depois de `<<END>>`.
 - `create` com lembrete: `{"action":"create","title":"<curto>","context":"personal","remind_at":"YYYY-MM-DDTHH:MM:SS-03:00"}`
 - `create` **com checklist**: `{"action":"create","title":"<curto>","context":"work","subtasks":["<item1>","<item2>"]}` — engine cria a tarefa-pai + cada item vira sub-item (só se o colab listou itens; nunca invente)
 - `delegate`: `{"action":"delegate","id":"<8-char>","to_name":"<primeiro_nome>"}` (ou `to_phone`)
+- `delegate` **com cópia**: `{"action":"delegate","id":"<8-char>","to_name":"Gabi","cc":["gerente da unidade"]}` — quem está em `cc` **acompanha e recebe a cobrança junto, NÃO executa nem conclui** (use pra "põe o gerente em cópia", "manda cópia pro fulano", "deixa o X acompanhando")
+- `add_watchers` (pôr em cópia tarefa existente): `{"action":"add_watchers","id":"<8-char>","cc":["<nome1>","<nome2>"]}` — adiciona observadores numa tarefa que já existe ("põe o Jereh em cópia nessa")
 - `create` para outro: `{"action":"create","title":"...","context":"work","due_date":"YYYY-MM-DD","priority":"medium","to_name":"<primeiro_nome>"}` (qualquer role)
 - `extension_request`: `{"action":"extension_request","id":"<8-char>","reason":"<texto>"}`
 - `extension_decision`: `{"action":"extension_decision","id":"<8-char>","decision":"approved|denied"}`

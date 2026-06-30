@@ -37,6 +37,7 @@ import { EditEventSheet } from '../components/EditEventSheet';
 import { EditTaskSheet } from '../components/EditTaskSheet';
 import { TaskDetailSheet } from '../components/TaskDetailSheet';
 import { TaskChecklistSection } from '../components/TaskChecklistSection';
+import { WatchedTasksSection } from '../components/WatchedTasksSection';
 import { taskDetailMeta } from '../lib/taskDetail';
 import { RescheduleSheet } from '../components/RescheduleSheet';
 import type { Task, TaskContext, CalendarEvent, ActionType } from '../types';
@@ -873,6 +874,9 @@ export function Hoje() {
           )}
         </div>
       )}
+
+      {/* #em-copia (Fabi 29/06): tarefas em que estou em cópia (acompanho/cobro). Auto-some se vazio. */}
+      <WatchedTasksSection />
 
       </div>
 

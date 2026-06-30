@@ -5413,6 +5413,27 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
           failCount++;
           continue;
         }
+        // #em-copia (Fabi 29/06): campo opcional cc = nomes/telefones a pôr em cópia
+        // (acompanham e cobram, não executam). Resolve e insere em task_watchers.
+        if (Array.isArray(a.cc) && a.cc.length) {
+          const ccResolved = [];
+          for (const entry of a.cc) {
+            let c = null;
+            if (typeof entry === 'string' && /\d{8,}/.test(entry)) {
+              c = await findCollaboratorByPhone(entry);
+            } else {
+              const _r = await resolveCollaboratorByName(String(entry), { requester: collaborator });
+              c = _r.status === 'resolved' ? _r.collaborator : null;
+            }
+            if (c && c.is_active && c.id !== recipient.id && c.id !== collaborator.id) ccResolved.push(c.id);
+          }
+          if (ccResolved.length) {
+            await supabase.from('task_watchers').upsert(
+              [...new Set(ccResolved)].map(cid => ({ task_id: t.id, collaborator_id: cid, added_by: collaborator.id })),
+              { onConflict: 'task_id,collaborator_id', ignoreDuplicates: true },
+            );
+          }
+        }
         // Notify recipient via WhatsApp (best-effort — DB transition already committed).
         const delegatorName = nameForCollab(collaborator);
         const dueLabel = t.due_date ? ` (prazo ${formatBRDate(t.due_date)})` : '';
@@ -5445,6 +5466,38 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
           await logAgentNote(t.id, `Delegada de ${nameForCollab(collaborator)} para ${recipient.full_name}`, collaborator.id);
           okCount++;
         }
+      } else if (a.action === 'add_watchers') {
+        // #em-copia (Fabi 29/06): "põe o Jereh em cópia nessa tarefa". Resolve a tarefa
+        // (própria) + watchers; insere em task_watchers e avisa cada um (entrada em cópia).
+        const t = await resolveTaskByShortId(collaborator.id, a.id);
+        if (!t) { failCount++; continue; }
+        const entries = Array.isArray(a.cc) ? a.cc : (Array.isArray(a.to_names) ? a.to_names : []);
+        const ccResolved = [];
+        for (const entry of entries) {
+          let c = null;
+          if (typeof entry === 'string' && /\d{8,}/.test(entry)) c = await findCollaboratorByPhone(entry);
+          else { const _r = await resolveCollaboratorByName(String(entry), { requester: collaborator }); c = _r.status === 'resolved' ? _r.collaborator : null; }
+          if (c && c.is_active && c.id !== t.assigned_to && c.id !== collaborator.id) ccResolved.push(c.id);
+        }
+        if (!ccResolved.length) { failCount++; continue; }
+        const ids = [...new Set(ccResolved)];
+        await supabase.from('task_watchers').upsert(
+          ids.map(cid => ({ task_id: t.id, collaborator_id: cid, added_by: collaborator.id })),
+          { onConflict: 'task_id,collaborator_id', ignoreDuplicates: true },
+        );
+        const { data: ws } = await supabase.from('collaborators').select('id, phone, full_name, is_active').in('id', ids);
+        const execColl = await supabase.from('collaborators').select('full_name').eq('id', t.assigned_to).maybeSingle();
+        const execFirst = (execColl.data?.full_name || '').split(' ')[0] || 'a pessoa';
+        for (const w of (ws || [])) {
+          if (!w.phone || !w.is_active) continue;
+          const body = `👀 Você entrou em *cópia* de *${t.title}* (de ${execFirst}). Acompanha e pode cobrar — não precisa concluir.`;
+          try {
+            await whatsapp.sendMessage(w.phone, body);
+            await supabase.from('conversation_history').insert({ collaborator_id: w.id, direction: 'outbound', message_type: 'text', content: body });
+          } catch (e) { console.error('[Task] add_watchers WA err:', e.message); }
+        }
+        console.log(`[Task] add_watchers ${a.id} → ${ids.length} em cópia`);
+        okCount++;
       } else if (a.action === 'governance_reassign') {
         // Sub-fase 2 — Re-delegação de cobrança por voz.
         // Muda governance_owner_id (quem COBRA) sem tocar assigned_to (quem EXECUTA).

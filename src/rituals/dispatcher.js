@@ -4529,6 +4529,65 @@ async function isChronicallySilent(collaboratorId, ymdToday) {
   return days.size >= 3; // cobrado nos 3 dias anteriores sem responder → backoff
 }
 
+// #em-copia (Fabi 29/06): dispara a cobrança pros observadores (task_watchers) de UMA tarefa.
+// Reusa o claim atômico de `notifications` (uq por collaborator_id → não colide com a executora).
+// notifType: 'deadline_alert' | 'overdue_alert'. kind passado pro texto.
+async function fanoutWatcherAlerts(task, executorFullName, notifType, kind, ymdToday) {
+  const { data: watchers } = await supabase
+    .from('task_watchers')
+    .select('collaborator_id')
+    .eq('task_id', task.id);
+  if (!watchers || !watchers.length) return 0;
+  const wIds = [...new Set(watchers.map(w => w.collaborator_id))].filter(id => id !== task.assigned_to);
+  if (!wIds.length) return 0;
+  const { data: wCollabs } = await supabase
+    .from('collaborators')
+    .select('id, phone, full_name, is_active, user_preferences(*)')
+    .in('id', wIds).eq('is_active', true);
+  const whatsapp = require('../services/whatsapp');
+  const { buildWatcherReminderText } = require('../services/watcher-cobranca');
+  const execFirst = (executorFullName || '').split(' ')[0] || 'a pessoa';
+  let sent = 0;
+  for (const w of (wCollabs || [])) {
+    if (!w.phone) continue;
+    const dnd = await getDndState(w.id);
+    if (dnd.active) { await logRitualEvent(w.id, 'cobranca_copia', 'skipped', `dnd:${String(task.id).slice(0,8)}`, ymdToday); continue; }
+    const q = await isQuietNow(w.user_preferences, nowSaoPaulo());
+    if (q.quiet) { await logRitualEvent(w.id, 'cobranca_copia', 'skipped', q.reason, ymdToday); continue; }
+    // CLAIM ATÔMICO por observador (mesmo índice uq; collaborator_id distinto = linha distinta).
+    const { data: claim, error: claimErr } = await supabase.from('notifications').insert({
+      collaborator_id: w.id,
+      notification_type: notifType,
+      title: `[cópia] ${task.title}`,
+      body: '(em cópia)',
+      reference_type: 'task',
+      reference_id: task.id,
+      channel: 'whatsapp',
+      status: 'sent',
+      sent_at: new Date().toISOString(),
+      alert_day: ymdToday,
+    }).select('id').single();
+    if (claimErr) {
+      const reason = (claimErr.code === '23505' ? 'ja_copia:' : `claim_err(${claimErr.code}):`) + String(task.id).slice(0,8);
+      await logRitualEvent(w.id, 'cobranca_copia', 'skipped', reason, ymdToday);
+      continue;
+    }
+    const text = buildWatcherReminderText(execFirst, task.title, kind);
+    try {
+      await whatsapp.sendMessage(w.phone, text);
+      await supabase.from('conversation_history').insert({
+        collaborator_id: w.id, direction: 'outbound', message_type: 'text', content: text,
+      });
+      await logRitualEvent(w.id, 'cobranca_copia', 'sent', `task:${String(task.id).slice(0,8)}`, ymdToday);
+      sent++;
+    } catch (err) {
+      if (claim && claim.id) await supabase.from('notifications').delete().eq('id', claim.id);
+      await logRitualEvent(w.id, 'cobranca_copia', 'error', `${String(task.id).slice(0,8)}:${err.message}`, ymdToday);
+    }
+  }
+  return sent;
+}
+
 async function checkDeadlineAlerts(ymdToday) {
   const tomorrow = ymdOffset(ymdToday, 1);
   const cooldownCutoff = new Date(Date.now() - 6 * 3600 * 1000).toISOString();
@@ -4630,6 +4689,10 @@ async function checkDeadlineAlerts(ymdToday) {
       } catch (e) { /* não-fatal */ }
       await logRitualEvent(collab.id, 'alerta_prazo', 'sent', `task:${String(t.id).slice(0,8)}`, ymdToday);
       sent++;
+      // #em-copia: cobra os observadores junto com a executora (mesma rodada de véspera).
+      try {
+        await fanoutWatcherAlerts(t, collab.full_name, 'deadline_alert', 'deadline', ymdToday);
+      } catch (e) { console.error('[DeadlineAlert] watcher fanout err:', e.message); }
     } catch (err) {
       // Envio falhou DEPOIS do claim → rollback pra re-tentar no próximo tick
       // (sem flood: só re-tenta após falha real de envio, não em todo tick).
@@ -4883,6 +4946,11 @@ async function checkOverdueAlerts(ymdToday) {
       });
       await logRitualEvent(collab.id, 'alerta_atraso', 'sent', `task:${String(t.id).slice(0,8)} late=${n}d`, ymdToday);
       sent++;
+      // #em-copia: cobra os observadores junto, com tom escalado pela idade do atraso.
+      try {
+        const ckind = n === 1 ? 'overdue1' : (n <= 3 ? 'overdueN' : 'overdueOld');
+        await fanoutWatcherAlerts(t, collab.full_name, 'overdue_alert', ckind, ymdToday);
+      } catch (e) { console.error('[OverdueAlert] watcher fanout err:', e.message); }
     } catch (err) {
       console.error(`[OverdueAlert] send err for ${String(t.id).slice(0,8)}:`, err.message);
       await logRitualEvent(collab.id, 'alerta_atraso', 'error', `${String(t.id).slice(0,8)}:${err.message}`, ymdToday);
