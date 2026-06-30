@@ -76,3 +76,53 @@ test('_claimedCount: extrai numeral por extenso e dígito', () => {
   assert.strictEqual(_claimedCount('ambas as reuniões', 'event').count, 2);
   assert.strictEqual(_claimedCount('os eventos', 'event'), null);
 });
+
+// ── #2D2-b — confab de contagem no FECHAMENTO EM LOTE DE TAREFAS (Fabi 30/06) ──
+const { enforceTaskCountHonesty, _claimedTaskDone } = require('./count-honesty');
+
+test('Fabi: "As 3 fechadas, Fabi!" + ok=2 → rebaixa pra "2 de 3 fechadas" + nota', () => {
+  const reply = 'As 3 fechadas, Fabi!\n\n• *Feedback 1ª aula Recreio*\n• *Pesquisa barra*\n• *Pesquisa 1ª aula — Mateus*';
+  const r = enforceTaskCountHonesty(reply, { okCount: 2, meta: true });
+  assert.strictEqual(r.fired, true, JSON.stringify(r));
+  assert.strictEqual(r.claimed, 3);
+  assert.match(r.reply, /2 de 3 fechadas, Fabi!/);
+  assert.match(r.reply, /Falei em 3 mas só 2 fechou de verdade/);
+  assert.ok(!/As 3 fechadas/.test(r.reply), 'o título mentiroso "As 3 fechadas" tem que sumir');
+});
+
+test('numeral por extenso: "as duas concluídas" + ok=1 → "1 de 2 concluídas"', () => {
+  const r = enforceTaskCountHonesty('Prontinho, as duas concluídas!', { okCount: 1, meta: true });
+  assert.strictEqual(r.fired, true);
+  assert.match(r.reply, /1 de 2 concluídas/);
+});
+
+// ── NÃO DISPARA (controles negativos) ────────────────────────────────────────
+test('não exagerou: "As 3 fechadas" + ok=3 → no-op', () => {
+  assert.strictEqual(enforceTaskCountHonesty('As 3 fechadas, Fabi!', { okCount: 3, meta: true }).fired, false);
+});
+test('razão já honesta: "2 de 3 fechadas" → no-op (não re-rebaixa)', () => {
+  assert.strictEqual(enforceTaskCountHonesty('2 de 3 fechadas!', { okCount: 2, meta: true }).fired, false);
+});
+test('"1 fechada" não é exagero de lote → no-op', () => {
+  assert.strictEqual(enforceTaskCountHonesty('1 fechada, beleza!', { okCount: 0, meta: true }).fired, false);
+});
+test('número sem particípio de conclusão não dispara ("3 alunos")', () => {
+  assert.strictEqual(enforceTaskCountHonesty('Avisei os 3 alunos da Barra', { okCount: 1, meta: true }).fired, false);
+});
+test('okCount ausente → no-op (defensivo)', () => {
+  assert.strictEqual(enforceTaskCountHonesty('As 3 fechadas!', { meta: true }).fired, false);
+});
+test('retrocompat: sem meta retorna string', () => {
+  assert.strictEqual(typeof enforceTaskCountHonesty('As 3 fechadas!', { okCount: 1 }), 'string');
+});
+test('entradas inválidas não quebram', () => {
+  for (const v of [null, undefined, '', '   ']) {
+    assert.strictEqual(enforceTaskCountHonesty(v, { okCount: 1, meta: true }).fired, false);
+  }
+});
+test('_claimedTaskDone unitário', () => {
+  assert.strictEqual(_claimedTaskDone('As 3 fechadas').count, 3);
+  assert.strictEqual(_claimedTaskDone('as duas concluídas').count, 2);
+  assert.strictEqual(_claimedTaskDone('1 fechada'), null);
+  assert.strictEqual(_claimedTaskDone('os 3 alunos'), null);
+});

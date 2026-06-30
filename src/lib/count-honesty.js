@@ -104,4 +104,62 @@ function enforceCountHonesty(reply, opts) {
   return wrap(`${fixed}\n\n${note}`, true, claim.count);
 }
 
-module.exports = { enforceCountHonesty, _claimedCount };
+// ───────────────────────────────────────────────────────────────────────────
+// #2D2-b — CONFAB DE CONTAGEM no FECHAMENTO EM LOTE DE TAREFAS (auditoria 30/06,
+// caso Fabi 29/06 17:50): o usuário mandou fechar 3 tarefas; 1 era futura (due
+// 30/06) e o guard de conclusão-futura barrou → ok=2 fail=1. O LLM já tinha escrito
+// "As 3 fechadas, Fabi!" + 3 bullets, e o engine anexou o rodapé honesto "_Registrei
+// 2 de 3_". Resultado: mensagem AUTO-CONTRADITÓRIA (título diz 3, rodapé diz 2).
+//
+// O sanitizeOptimisticConfirm('partial') NÃO pega "As 3 fechadas": não tem emoji na
+// linha, o particípio não está no início (COMPLETION_ANCHORED falha) e o dígito "3"
+// não é um totalizador ("todas/todos/tudo"). Ponto cego: CONTAGEM NUMÉRICA EXPLÍCITA
+// + particípio de conclusão fora do início de linha.
+//
+// Este guard é PURO e CONSERVADOR (voz sagrada): só dispara quando a prosa tem uma
+// contagem EXPLÍCITA (dígito/numeral, com artigo opcional) colada a um PARTICÍPIO de
+// conclusão, E essa contagem > o que de fato fechou (okCount). Rebaixa INLINE pra
+// razão honesta ("As 3 fechadas" → "2 de 3 fechadas") mantendo a gramática, e
+// substitui o rodapé genérico por uma nota única.
+
+const TASK_DONE_PARTICIPLE =
+  '(?:fechad|conclu[ií]d|feit|finalizad|resolvid|atualizad|reagendad|registrad|criad|marcad|cancelad|encerrad|movid|salvad|guardad|lan[çc]ad|adicionad)[oa]s';
+
+// Acha a 1ª contagem explícita "(as|os)? N <particípio>" com N>1. Retorna {count, phrase, participle} ou null.
+function _claimedTaskDone(reply) {
+  const numAlt = Object.keys(NUM).join('|');
+  // "N de M <particípio>" já é razão honesta — não exagera. Skip.
+  const honestRatio = new RegExp(`\\b(?:\\d+|${numAlt})\\s+de\\s+(?:\\d+|${numAlt})\\s+${TASK_DONE_PARTICIPLE}\\b`, 'i');
+  if (honestRatio.test(reply)) return null;
+  const re = new RegExp(`(?:\\b(?:as|os|[àa]s|aos)\\s+)?(\\d+|${numAlt})\\s+(${TASK_DONE_PARTICIPLE})\\b`, 'i');
+  const m = reply.match(re);
+  if (!m) return null;
+  const tok = m[1].toLowerCase();
+  const n = _isDigit(tok) ? parseInt(tok, 10) : NUM[tok];
+  if (!Number.isFinite(n) || n < 2) return null; // "1 fechada" não é exagero de lote
+  return { count: n, phrase: m[0], participle: m[2] };
+}
+
+// enforceTaskCountHonesty(reply, { okCount, meta? })
+//   - sem meta: retorna string (reply original ou rebaixado).
+//   - meta:true: retorna { reply, fired, claimed, persisted }.
+// persisted = okCount (o que de fato fechou no lote). Dispara só se claimed > persisted.
+function enforceTaskCountHonesty(reply, opts) {
+  const o = opts || {};
+  const persisted = Number(o.okCount);
+  const meta = !!o.meta;
+  const wrap = (r, fired, claimed) => (meta ? { reply: r, fired, claimed: claimed || null, persisted } : r);
+  if (!reply || typeof reply !== 'string') return wrap(reply, false);
+  if (!Number.isFinite(persisted) || persisted < 0) return wrap(reply, false);
+
+  const claim = _claimedTaskDone(reply);
+  if (!claim) return wrap(reply, false);
+  if (claim.count <= persisted) return wrap(reply, false); // não exagerou
+
+  const honest = `${persisted} de ${claim.count} ${claim.participle}`;
+  const fixed = reply.replace(claim.phrase, honest);
+  const note = `_⚠️ Falei em ${claim.count} mas só ${persisted} fechou de verdade — me confirma quais faltam pra eu acertar._`;
+  return wrap(`${fixed}\n\n${note}`, true, claim.count);
+}
+
+module.exports = { enforceCountHonesty, _claimedCount, enforceTaskCountHonesty, _claimedTaskDone };

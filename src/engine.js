@@ -38,6 +38,7 @@ const recentNoteDupBlocks = new Map(); // key: `${collabId}|${normTitle}` -> ts
 const NOTE_DEDUP_BYPASS_MS = 5 * 60 * 1000;
 const workGroups = require('./services/work-groups');
 const { detectApprovalReply, stripReplyScaffold } = require('./events/detect-approval-reply');
+const { detectExplicitDayIntent } = require('./utils/temporal-intent');
 const { isFutureCompletion } = require('./utils/complete-guards');
 const { sanitizeOptimisticConfirm, hasOptimisticConfirm, enforceNoMarkerHonesty } = require('./lib/optimistic-confirm');
 const { validateDndWindow, DND_MAX_MS } = require('./lib/dnd-window');
@@ -9736,13 +9737,15 @@ async function processMessage(phone, text, raw = {}) {
       // em vez de 29/04). Engine valida texto do user e força a data certa
       // antes de persistir. Defesa de modelo.
       try {
-        const userTextLC = String(text || '').toLowerCase();
         // \b final após "ã" (não-ASCII) falha sem flag unicode → "amanhã" nunca
         // casava. Quando o user dizia "hoje" (de passagem) + "amanhã" (intenção),
         // só "hoje" pegava e o auto-align forçava a data errada pra hoje. Caso
         // Union Suites 02/06: Claude emitiu 03/06 certo, align jogou pra 02/06.
-        const wantsTomorrow = /\bamanh[ãa]/.test(userTextLC);
-        const wantsToday = /\b(hoje)\b/.test(userTextLC) && !wantsTomorrow;
+        // AUTO-ALIGN-QUOTE-CONTAMINATION (Ana 30/06): a detecção lê a FALA REAL
+        // (stripReplyScaffold), nunca o scaffold de reply-quote — senão o "hoje"
+        // da cobrança citada ("Resolve hoje ou reagenda?") clobbera um reschedule
+        // explícito pra 05/07 de volta pra hoje (confab pós-marker).
+        const { wantsTomorrow, wantsToday } = detectExplicitDayIntent(text);
         // Sprint 28 — auto-align SÓ quando há 1 action no marker. Em batch
         // (vários itens), o user disse "hoje/amanhã" sobre UMA das tasks, e o
         // auto-align estava sobrescrevendo as datas das OUTRAS (caso Bass Night
@@ -9833,7 +9836,17 @@ async function processMessage(phone, text, raw = {}) {
           // "tudo certo" quando parte falhou. Princípio: fala = persistência.
           // AUDIT-OPTIMISTIC-CONFIRM (caso Anne): rebaixa "fechei todas" → "a maioria".
           base = sanitizeOptimisticConfirm(base, 'partial');
-          base = (base ? base + '\n\n' : '') + `_⚠️ Registrei ${okCount} de ${okCount + failCount}. Algumas falharam — me chama se algo ficar faltando._`;
+          // #2D2-b (Fabi 30/06): "As 3 fechadas" + ok=2 escapava do sanitize (dígito não
+          // é totalizador, particípio fora do início). Rebaixa INLINE pra razão honesta
+          // ("2 de 3 fechadas") com nota própria — senão o título contradiz o rodapé.
+          const { enforceTaskCountHonesty } = require('./lib/count-honesty');
+          const _tc = enforceTaskCountHonesty(base, { okCount, meta: true });
+          if (_tc.fired) {
+            base = _tc.reply;
+            await logMarker(collab.id, 'COUNT_HONESTY', 'redirected', `task claimed=${_tc.claimed} persisted=${okCount}`, null);
+          } else {
+            base = (base ? base + '\n\n' : '') + `_⚠️ Registrei ${okCount} de ${okCount + failCount}. Algumas falharam — me chama se algo ficar faltando._`;
+          }
         }
         // Cascata de grupo — só no caminho de sucesso (okCount > 0).
         if (groupNotices && groupNotices.length > 0 && okCount > 0) {
