@@ -2629,6 +2629,19 @@ async function buildHistoricalContext(collabId, ritualType) {
 }
 
 async function buildSystemPrompt(collaborator, opts = {}) {
+  // 🗺️ O Mapa (Fase 1) — loadout minimal (papo/saudação): monta SÓ a voz (regras+identidade),
+  // dropando o ctxBlock pesado, o pickSkill, o embedding (~1500ms) e os apêndices. Isso ataca
+  // o afogamento do pedido e o cache frio. MANTÉM fetchCollaboratorContext pra devolver um ctx
+  // ÍNTEGRO: o engine lê ctx.notifications.length / ctx.recentMessages logo depois (stub parcial
+  // = crash). Pular os 24 queries é Fase 2 (contexto preguiçoso, exige contrato de ctx). O ramo
+  // full abaixo permanece 100% intacto. Gated por TOM_MAPA no engine. Ver ADR mapa-intencao.
+  if (opts.loadout && opts.loadout.contextBlocks === 'minimal') {
+    const ctx = await fetchCollaboratorContext(collaborator);
+    const systemPrompt = [BLOCK_RULES, BLOCK_IDENTITY].join('\n\n---\n\n');
+    opts.activeSkill = 'none';
+    console.log(`[Prompt] size: ${systemPrompt.length} chars (loadout: minimal, history: ${(ctx.recentMessages || []).length})`);
+    return { systemPrompt, ctx };
+  }
   const lastUserMessage = opts.lastUserMessage || '';
   // Janela Temporal Mensal: ativa por keyword ou nos últimos 7 dias do mês.
   const _monthlyKeywordRe = /\b(esse\s+m[eê]s|este\s+m[eê]s|no\s+m[eê]s|do\s+m[eê]s|m[eê]s\s+atual|m[eê]s\s+passado|ao\s+longo\s+do\s+m[eê]s|mensal|balan[çc]o|resumo\s+do\s+m[eê]s|como\s+(?:foi|est[áa]|fui|estou)\s+(?:esse|este|o)\s+m[eê]s|o\s+que\s+fiz\s+esse\s+m[eê]s|produtividade|meta\s+do\s+m[eê]s)\b/i;

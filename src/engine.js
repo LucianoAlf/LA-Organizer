@@ -74,6 +74,8 @@ const gemini = require('./services/gemini');
 const { splitBulkIdenticalCreates } = require('./task-guardrail');
 const selic = require('./services/selic');
 const audioDecompose = require('./services/audio-decompose');
+const { classifyIntent } = require('./prompts/intent-map'); // 🗺️ O Mapa (Fase 1)
+const TOM_MAPA = process.env.TOM_MAPA === '1';
 
 const SKILLS_DIR = path.join(__dirname, '..', 'skills');
 
@@ -8206,7 +8208,14 @@ async function processMessage(phone, text, raw = {}) {
   // que o LLM principal não precise extrair sozinho competindo contra o timeout.
   // Causa-raiz: caso Peterson — áudio com 6+ demandas virava ACTIONABLE_NO_MARKER
   // porque a chamada única não dava conta de transcrever+decidir+emitir tudo.
-  const _decompose = await audioDecompose.decomposeIfLarge(text);
+  // 🗺️ O Mapa (Fase 1) — classifica a intenção ANTES do decompositor. conversational + flag ON →
+  // pula o decompositor e (em :9640) monta prompt minimal. Gated por TOM_MAPA; default = hoje byte a byte.
+  const _mapa = TOM_MAPA ? classifyIntent(text, []) : { intent: 'operational', loadout: null };
+  const _isConv = _mapa.intent === 'conversational';
+  if (TOM_MAPA) console.log(`[Mapa] intent=${_mapa.intent} phone=${_phoneTail}`);
+  const _decompose = _isConv
+    ? { decomposed: false, reason: 'conversational_skip' }
+    : await audioDecompose.decomposeIfLarge(text);
   _metrics.decompose_triggered = _decompose.decomposed;
   _metrics.decompose_items_count = _decompose.decomposed ? _decompose.items.length : null;
   _metrics.decompose_latency_ms = _decompose.latencyMs || null;
@@ -9637,6 +9646,10 @@ async function processMessage(phone, text, raw = {}) {
   // Horário-padrão de lembrete: janela ativa aprendida do uso (cold-start 09h). Degrada gracioso — nunca lança.
   const _activeWin = await getActiveWindow(supabase, collab.id, new Date());
   const _promptOpts = { lastUserMessage: text, coordHint, coordContext, reminderDefaultHour: _activeWin.hour };
+  // 🗺️ O Mapa (Fase 1) — seta o loadout no PRÓPRIO _promptOpts (não spread: buildSystemPrompt
+  // grava opts.activeSkill como out-param, lido em :9641 — cópia perderia a telemetria da skill).
+  // null (flag off/operational) → buildSystemPrompt ignora e faz o de hoje byte a byte.
+  _promptOpts.loadout = _mapa.loadout;
   let { systemPrompt, ctx } = await buildSystemPrompt(collab, _promptOpts);
   _metrics.skill_active = _promptOpts.activeSkill || 'none'; // Fatia J: telemetria da skill ativa (era coluna morta)
   const _tt = ctx.todayTasks || {};
