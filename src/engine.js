@@ -11085,9 +11085,15 @@ async function processMessage(phone, text, raw = {}) {
       // LLM afirma envio ("avisei/mandei/repassei..."), troca por aviso honesto —
       // o recipient NUNCA recebeu. Caso Daiana 05/06 ("📨 Avisei a Anne" + rejeição).
       let baseCoord = parsedCoord.cleanText || reply;
-      const optimisticCoordPattern = /\b(avis(ei|ado|ada|amos)|mand(ei|ado|ada|ando|amos)|repass(ei|ado|ada|ando|amos)|encaminh(ei|ado|ada|ando|amos)|envi(ei|ado|ada|ados|adas)|transmit(i|ido)|comuniqu(ei|ado|ada)|j[áa]\s+(mandei|avisei|enviei|repassei))\b/i;
-      if (optimisticCoordPattern.test(baseCoord)) {
-        baseCoord += '\n\n_⚠️ Tive um problema técnico e não consegui enviar o recado — ninguém foi avisado ainda. Me passa de novo pra quem e o quê você quer mandar?_';
+      // COORD-SEND-CONFAB-STRIP (Ana 30/06): antes só ANEXAVA o aviso honesto, mas
+      // deixava a prosa otimista ("📨 Avisado! Mandando pro grupo agora") → contradição
+      // intra-mensagem. Agora REMOVE as linhas de falso-envio (espelha sanitizeOptimisticConfirm
+      // dos ramos TASK/EVENT) e SÓ então anexa o honesto. claimsSent é o gate.
+      const { stripOptimisticSendLines, claimsSent } = require('./lib/coord-send-honesty');
+      if (claimsSent(baseCoord)) {
+        const stripped = stripOptimisticSendLines(baseCoord);
+        const DISCLAIMER = '_⚠️ Tive um problema técnico e não consegui enviar o recado — ninguém foi avisado ainda. Me passa de novo pra quem e o quê você quer mandar?_';
+        baseCoord = stripped ? `${stripped}\n\n${DISCLAIMER}` : DISCLAIMER;
       }
       reply = baseCoord;
     } else if (parsedCoord && parsedCoord.items) {
@@ -11899,9 +11905,14 @@ Output AGORA, apenas o marker:`;
         // NÃO abre genérica por cima — openIntent supersede same-kind e matava a
         // âncora 0,4s depois de criada (o "sim" seguinte ficava sem id pra completar
         // e o LLM re-emitia o complete → a guarda re-perguntava → loop infinito).
-        const anchoredFresh = await pendingIntents.hasFreshAnchoredIntent(collab.id, 2);
+        // INTENT-CLOBBER-BATCH-COMPLETE (Fabi 30/06): idem pro fechamento em LOTE do
+        // A2 ({batch_complete:[ids]}). Essa intent NÃO tem `anchor`, então o guard só
+        // de âncora não a via → a genérica a atropelava → "Sim" caía no LLM →
+        // chokepoint "não consegui" sobre tarefa JÁ feita. hasFreshDeterministicIntent
+        // cobre `anchor` E `batch_complete`.
+        const anchoredFresh = await pendingIntents.hasFreshDeterministicIntent(collab.id, 2);
         if (anchoredFresh) {
-          console.log('[PendingIntents] skip generic open — anchored intent fresh (guard turn)');
+          console.log('[PendingIntents] skip generic open — deterministic-executor intent fresh (guard turn)');
         } else {
           // Payload mínimo: salva o user_text e a reply pra recuperação no próximo turno.
           // O LLM lê isso no hook inicial e gera o marker certo.

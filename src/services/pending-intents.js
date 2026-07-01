@@ -11,6 +11,7 @@
 //   - confirmation:    { action_summary, details? }
 
 const supabase = require('../supabase/client');
+const { intentCarriesDeterministicExecutor } = require('../lib/intent-executor');
 
 const VALID_KINDS = new Set(['task_creation','event_creation','approval_pending','confirmation','finance_source','invoice_import']);
 const VALID_RESOLUTIONS = new Set(['confirmed','denied','expired','superseded']);
@@ -257,6 +258,32 @@ async function hasFreshAnchoredIntent(collaboratorId, minutes = 2) {
 }
 
 /**
+ * INTENT-CLOBBER-BATCH-COMPLETE (Fabi 30/06) — generaliza hasFreshAnchoredIntent.
+ * Há intent de confirmação ABERTA (asked_at < `minutes`) que carrega um EXECUTOR
+ * DETERMINÍSTICO no payload — `anchor` (guarda temporal) OU `batch_complete`
+ * (fechamento em lote do A2)? Se sim, o registrador genérico de fim-de-turno NÃO
+ * abre intent genérica por cima (supersede same-kind matava o executor: o "Sim"
+ * seguinte caía no LLM e confabulava "não consegui" sobre tarefa já concluída).
+ * Predicado PURO isolado em lib/intent-executor.js (testável sem DB).
+ */
+async function hasFreshDeterministicIntent(collaboratorId, minutes = 2) {
+  if (!collaboratorId) return false;
+  try {
+    const sinceIso = new Date(Date.now() - minutes * 60 * 1000).toISOString();
+    const { data, error } = await supabase
+      .from('pending_intents')
+      .select('payload')
+      .eq('collaborator_id', collaboratorId)
+      .eq('kind', 'confirmation')
+      .is('resolved_at', null)
+      .gte('asked_at', sinceIso)
+      .limit(20);
+    if (error) { console.warn('[PendingIntents] hasFreshDeterministicIntent err:', error.message); return false; }
+    return (data || []).some((r) => intentCarriesDeterministicExecutor(r && r.payload));
+  } catch (e) { console.warn('[PendingIntents] hasFreshDeterministicIntent err:', e.message); return false; }
+}
+
+/**
  * A guarda JÁ perguntou sobre ESTE item (anchor.id) há menos de `minutes`?
  * Conta qualquer resolution exceto 'denied' (a âncora pode ter sido superseded —
  * o que importa é que o usuário FOI perguntado e não negou). Se sim, o complete
@@ -312,6 +339,7 @@ module.exports = {
   detectConfirmationQuestion,
   detectUserConfirmation,
   hasFreshAnchoredIntent,
+  hasFreshDeterministicIntent,
   wasAnchorAskedRecently,
   resolveAnchoredIntents,
 };
