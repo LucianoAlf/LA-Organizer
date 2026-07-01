@@ -37,9 +37,19 @@ function workerHomePath(canonHome, i) {
   return `${canonHome}-w${i}`;
 }
 
+// Keep-alive: no modo paralelo o CANON fica sub-exercitado (só é tocado nos
+// minutos de slack antes de expirar). Se o token vencer numa janela sem tráfego
+// (madrugada), morre — e `claude -p` NÃO refresca token já expirado → TOM cai
+// 100% no fallback. Este predicado diz quando disparar um refresh PROATIVO do
+// CANON (antes de expirar): token dentro da margem OU validade desconhecida.
+function shouldRefreshCanon(expiresAt, now, marginMs) {
+  if (!expiresAt || expiresAt <= 0) return true;
+  return (expiresAt - now) < marginMs;
+}
+
 function needsCredSync(srcMtimeMs, dstMtimeMs) {
   if (dstMtimeMs == null) return true;
   return dstMtimeMs < srcMtimeMs;
 }
 
-module.exports = { createSemaphore, decideRefreshMode, workerHomePath, needsCredSync };
+module.exports = { createSemaphore, decideRefreshMode, workerHomePath, needsCredSync, shouldRefreshCanon };

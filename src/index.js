@@ -33,6 +33,9 @@ const server = app.listen(config.port, '127.0.0.1', () => {
   startRealtime((phone, msg) => whatsapp.sendMessage(phone, msg), supabase);
   // Fase 2 — TOM engaja no chat de grupo (poll de role='member', responde role='tom')
   startGroupChatWatcher(supabase);
+  // Fase 2 (keep-alive) — só faz efeito com TOM_CLAUDE_PARALLEL=1; evita o CANON
+  // morrer em janela sem tráfego (regressão 20/06). No-op no serial.
+  try { require('./ai/claude').startCanonKeepAlive(); } catch (e) { console.warn('[Pool] startCanonKeepAlive falhou:', e.message); }
   console.log('✅ TOM pronto. Aguardando mensagens...');
   // Sinaliza ready pro PM2 (ecosystem.config.js usa wait_ready:true)
   if (typeof process.send === 'function') process.send('ready');

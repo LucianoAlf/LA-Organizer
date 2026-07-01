@@ -38,11 +38,21 @@ const CLAUDE_PATH = process.env.PATH || '/usr/local/sbin:/usr/local/bin:/usr/sbi
 const CLAUDE_TIMEOUT_MS = Number(process.env.CLAUDE_TIMEOUT_MS) || 45000;
 
 // Paralelismo (Fase 1, default OFF). Com a flag ≠ '1' tudo cai no caminho serial.
-const { createSemaphore, decideRefreshMode, workerHomePath, needsCredSync } = require('./claude-pool');
+const { createSemaphore, decideRefreshMode, workerHomePath, needsCredSync, shouldRefreshCanon } = require('./claude-pool');
 const PARALLEL_ENABLED = process.env.TOM_CLAUDE_PARALLEL === '1';
 const POOL_SIZE = Math.max(1, Number(process.env.TOM_CLAUDE_POOL_SIZE) || 2);
 const REFRESH_SLACK_MS = Number(process.env.TOM_CLAUDE_REFRESH_SLACK_MS) || 1800000; // 30 min
 const WORKER_HOMES = Array.from({ length: POOL_SIZE }, (_, i) => workerHomePath(CLAUDE_USER_HOME, i));
+
+// Keep-alive do CANON (REGRESSÃO 20/06 + re-tentativa 01/07): no modo paralelo o
+// CANON só é tocado nos 30min de slack antes de expirar; sem tráfego nessa janela
+// (madrugada) o token MORRE e `claude -p` não ressuscita token expirado → 100%
+// fallback. Este timer refresca o CANON PROATIVAMENTE (margem 60min > slack 30min),
+// enfileirado no _canonLock (nunca corre com chamadas canon-mode do engine). Roda
+// SÓ no processo do engine (chamado no index.js), nunca no dispatcher (cron efêmero).
+const KEEPALIVE_INTERVAL_MS = Number(process.env.TOM_CANON_KEEPALIVE_INTERVAL_MS) || 10 * 60 * 1000; // 10 min
+const KEEPALIVE_MARGIN_MS = Number(process.env.TOM_CANON_KEEPALIVE_MARGIN_MS) || 60 * 60 * 1000; // 60 min
+const KEEPALIVE_TIMEOUT_MS = Number(process.env.TOM_CANON_KEEPALIVE_TIMEOUT_MS) || 30000;
 let _pool = null;        // semáforo, criado em ensureWorkerHomes()
 let _canonLock = Promise.resolve(); // mutex SÓ para o refresh-no-CANON
 
@@ -145,6 +155,69 @@ async function _chatParallel(systemPrompt, messages, enqueuedAt) {
   } finally {
     _pool.release(slot);
   }
+}
+
+// ---- Keep-alive do CANON (só no processo do engine, com paralelo ON) ----
+let _keepAliveInFlight = false;
+let _keepAliveTimer = null;
+
+// Lê o expiresAt do token do CANON (0 se não conseguir ler).
+function _readCanonExpiresAt() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(CLAUDE_HOME, '.credentials.json'), 'utf8'));
+    return (raw.claudeAiOauth && raw.claudeAiOauth.expiresAt) || 0;
+  } catch (_) { return 0; }
+}
+
+// Chamada MÍNIMA no CANON só pra forçar o refresh-por-carona do CLI (antes de expirar).
+function _spawnCanonKeepAlive() {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (ok, info) => { if (done) return; done = true; resolve({ ok, info }); };
+    let child;
+    try {
+      child = spawn(CLAUDE_BIN, ['-p', 'ping', '--model', CLAUDE_MODEL, '--output-format', 'json',
+        '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--tools', ''],
+      { stdio: ['ignore', 'ignore', 'ignore'], env: buildEnv(CLAUDE_USER_HOME), cwd: os.tmpdir() });
+    } catch (e) { return finish(false, 'spawn:' + e.message); }
+    const t = setTimeout(() => { try { child.kill('SIGKILL'); } catch (_) {} finish(false, 'timeout'); }, KEEPALIVE_TIMEOUT_MS);
+    child.on('error', (e) => { clearTimeout(t); finish(false, 'err:' + e.message); });
+    child.on('close', (code) => { clearTimeout(t); finish(code === 0, 'exit=' + code); });
+  });
+}
+
+// 1 tick: se o token do CANON está dentro da margem, refresca AGORA (enfileirado no
+// _canonLock, nunca corre com canon-mode do engine). Guard anti-reentrada.
+async function _canonKeepAliveTick() {
+  if (_keepAliveInFlight) return;
+  const expiresAt = _readCanonExpiresAt();
+  if (!shouldRefreshCanon(expiresAt, Date.now(), KEEPALIVE_MARGIN_MS)) return;
+  _keepAliveInFlight = true;
+  const minsBefore = expiresAt ? Math.round((expiresAt - Date.now()) / 60000) : null;
+  const job = _canonLock.then(() => _spawnCanonKeepAlive());
+  _canonLock = job.catch(() => {});
+  try {
+    const r = await job;
+    const after = _readCanonExpiresAt();
+    const minsAfter = after ? Math.round((after - Date.now()) / 60000) : null;
+    console.log(`[Pool] keep-alive CANON: ${r.ok ? 'OK' : 'FALHOU'} (${r.info}); expiresAt ${minsBefore}min -> ${minsAfter}min`);
+  } catch (e) {
+    console.warn('[Pool] keep-alive CANON erro:', e.message);
+  } finally {
+    _keepAliveInFlight = false;
+  }
+}
+
+// Liga o timer. Só no engine (index.js) e só com paralelo ON — no serial toda msg
+// já exercita o CANON. unref() pra não segurar o shutdown.
+function startCanonKeepAlive() {
+  if (!PARALLEL_ENABLED) return;
+  if (_keepAliveTimer) return;
+  _keepAliveTimer = setInterval(() => { _canonKeepAliveTick().catch(() => {}); }, KEEPALIVE_INTERVAL_MS);
+  if (_keepAliveTimer.unref) _keepAliveTimer.unref();
+  console.log(`[Pool] keep-alive CANON ativo (check ${Math.round(KEEPALIVE_INTERVAL_MS / 60000)}min, margem ${Math.round(KEEPALIVE_MARGIN_MS / 60000)}min)`);
+  // Kick imediato: se já está dentro da margem no boot, refresca agora (não espera 1 ciclo).
+  _canonKeepAliveTick().catch(() => {});
 }
 
 // Wrapper público: enfileira na _claudeQueue pra serializar acesso ao .claude.json.
@@ -395,4 +468,4 @@ async function chatRaw(systemPrompt, userPrompt) {
   return { text, provider: 'claude', meta };
 }
 
-module.exports = { chat, chatRaw, buildArgs, stripModelHtml, ensureWorkerHomes, getValidToken };
+module.exports = { chat, chatRaw, buildArgs, stripModelHtml, ensureWorkerHomes, getValidToken, startCanonKeepAlive };
