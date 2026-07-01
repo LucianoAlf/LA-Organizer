@@ -2312,12 +2312,21 @@ async function applyEventActions(collaborator, events, opts = {}) {
       const bypassIntegrity = e.bypass_integrity === true;
       let temporalResult = { hardConflicts: [], softConflicts: [] };
       let dupResult      = { probable: [], possible: [] };
+      // EVENT-DEDUP-TONAME-FALSEBLOCK (audit 01/07): o dedup checa a agenda do CRIADOR (collab.id).
+      // Num broadcast "avisa os 8 e marca na agenda deles", TOM emite N EVENT_CREATE com to_name
+      // diferente — mesmo título+data. O 1º cria; os demais batem NELE (agenda do criador) e viram
+      // held_dup → os destinatários ficam SEM evento (caso Reunião Time Gestão: 8 bloqueados). Evento
+      // DIRIGIDO (to_name/to_phone) vai pra OUTRA agenda: o dedup do criador não se aplica. (Checar a
+      // agenda do destinatário é Fase 2; aqui destravamos o broadcast legítimo — o temporal do criador
+      // segue rodando.)
+      const _directedEvent = !!(e.to_name || e.to_phone);
+      const _runDup = !bypassIntegrity && !_directedEvent;
       try {
         const detectors = [detectTemporalConflict(collaborator, e)];
-        if (!bypassIntegrity) detectors.push(detectDuplicateSemanticEvent(collaborator, e));
+        if (_runDup) detectors.push(detectDuplicateSemanticEvent(collaborator, e));
         const results = await Promise.all(detectors);
         temporalResult = results[0];
-        if (!bypassIntegrity) dupResult = results[1];
+        if (_runDup) dupResult = results[1];
       } catch (detErr) {
         console.warn('[IntegrityCheck] event detectors err (non-fatal):', detErr.message);
       }
@@ -11089,6 +11098,7 @@ async function processMessage(phone, text, raw = {}) {
   // Sprint 16 → revisão 26/05 — <<COORDINATION_REQUEST>>: processa TODOS os
   // markers (antes só o primeiro). Caso real: broadcast pra 4 pessoas em 1 turn.
   {
+    const { stripOptimisticSendLines, claimsSent, enforceSendHonesty } = require('./lib/coord-send-honesty');
     const parsedCoord = parseCoordinationRequestMarker(reply);
     if (parsedCoord && parsedCoord.malformed) {
       console.warn('[CoordinationRequest] WARN: all markers malformed, dropping block', parsedCoord.reasons);
@@ -11101,8 +11111,7 @@ async function processMessage(phone, text, raw = {}) {
       // COORD-SEND-CONFAB-STRIP (Ana 30/06): antes só ANEXAVA o aviso honesto, mas
       // deixava a prosa otimista ("📨 Avisado! Mandando pro grupo agora") → contradição
       // intra-mensagem. Agora REMOVE as linhas de falso-envio (espelha sanitizeOptimisticConfirm
-      // dos ramos TASK/EVENT) e SÓ então anexa o honesto. claimsSent é o gate.
-      const { stripOptimisticSendLines, claimsSent } = require('./lib/coord-send-honesty');
+      // dos ramos TASK/EVENT) e SÓ então anexa o honesto. claimsSent é o gate. (require hoistado no topo do bloco)
       if (claimsSent(baseCoord)) {
         const stripped = stripOptimisticSendLines(baseCoord);
         const DISCLAIMER = '_⚠️ Tive um problema técnico e não consegui enviar o recado — ninguém foi avisado ainda. Me passa de novo pra quem e o quê você quer mandar?_';
@@ -11141,6 +11150,18 @@ async function processMessage(phone, text, raw = {}) {
         } else if (failCount > 0) {
           reply = (reply || '') + `\n\n⚠️ Não consegui enviar pra: ${failedRecipients.join(', ')}.`;
         }
+      }
+    } else if (claimsSent(reply)) {
+      // SEND-CLAIM-NOMARKER (audit 01/07, Reunião Time Gestão): NENHUM <<COORDINATION_REQUEST>>
+      // foi emitido, mas a fala afirma ter avisado/convidado pessoas ("mandando o convite pra
+      // cada um dos 8") → confab (nada despachado). O strip de coord-send-honesty vivia SÓ nos
+      // ramos acima; o chokepoint Camada 1 é BINÁRIO (o EVENT_CREATE que persistiu faz
+      // nothingPersisted=false, então ele não rebaixa). Aqui: tira a linha de falso-envio + aviso honesto.
+      const _sh = enforceSendHonesty(reply, { isQuestion: hasTrailingQuestion(reply) || isInfoGatheringReply(reply) });
+      if (_sh.fired) {
+        reply = _sh.reply;
+        console.log(`[SendHonesty] SEND-CLAIM-NOMARKER phone=${_phoneTail} → rebaixado (afirmou envio sem coord marker)`);
+        try { await logMarker(collab.id, 'CHOKEPOINT', 'redirected', 'confab:coordination:nosend', String(reply).slice(0, 120)); } catch (_) {}
       }
     }
   }
@@ -11722,7 +11743,9 @@ async function processMessage(phone, text, raw = {}) {
     // - "lembrete às X" / "te aviso às X" → cron/remind
     // - "reagendei pra X" / "marquei pra X" → reschedule
     // - "registrar/registrei/anotando/criando/adicionando/crio as/juntando/no pacote/na lista" → create operacional
-    const REPLY_PROMISE_RE = /(?:lembrete|lembro|te\s+(?:aviso|cobro|lembro))\s+(?:hoje\s+|amanh[aã]\s+|j[aá]\s+|de\s+novo\s+|mais\s+tarde\s+)?(?:[aà]s?\s+|nas?\s+)?\d{1,2}\s*[h:]|(?:reagendei|reagendo|reagendado|reagendamento|marquei\s+(?:pra|para)|agendei\s+(?:pra|para)|coloquei\s+(?:pra|para)|movi\s+(?:pra|para))\s+(?:hoje|amanh[aã]|segunda|terça|quarta|quinta|sexta|sábado|domingo|próxima|semana\s+que\s+vem|\d{1,2}\/\d{1,2})|\b(?:registr(?:ar|ei|ando|o)|anot(?:ar|ei|ando|ado)|adicion(?:ar|ei|ando|ado|o)|juntando|criando|criei|vou\s+criar|crio\s+as?|colocando\s+(?:na|no)\s+(?:lista|pacote|fila)|(?:t[oô]|estou)\s+(?:adicionando|registrando|anotando|criando)|adicionando\s+ao\s+pacote)\b/i;
+    // PROMISE-NOMARKER-DOWNGRADE (01/07): a RE mudou pra src/lib/promise-honesty.js (fonte única —
+    // o MESMO vocabulário que dispara o retry decide o rebaixamento quando o retry não persiste).
+    const { REPLY_PROMISE_RE, downgradeEmptyPromise } = require('./lib/promise-honesty');
     const inputActionable = ACTIONABLE_RE.test(String(text || ''));
     let replyHasPromise = REPLY_PROMISE_RE.test(String(reply || ''));
     // Bug 01/06 (Esfera/Grava?): pergunta de confirmação é SEMPRE info-gathering,
@@ -11889,6 +11912,21 @@ Output AGORA, apenas o marker:`;
             }
           } catch (retryErr) {
             console.warn(`[Engine] AUTO_RETRY_ERR — ${retryErr.message}`);
+          }
+          // PROMISE-NOMARKER-DOWNGRADE (audit 01/07, Reunião Time Gestão): chegamos aqui com
+          // (a) intenção acionável, (b) ZERO markers executados no turno, (c) reply PROMETENDO
+          // ação (replyHasPromise) e (d) auto-retry NÃO persistiu → promessa comprovadamente
+          // vazia (caso Codex pós-timeout: "Vou criar na agenda e disparar pros 8"). Rebaixa:
+          // tira a linha da promessa + aviso honesto (lição Ana 30/06: anexar sem remover =
+          // contradição). AUTO_RETRY_DUP_EXISTS seta auto_retry_succeeded (estado desejado já
+          // existe) → NÃO rebaixa (lição 27/06, confab inverso).
+          if (!_metrics.auto_retry_succeeded) {
+            const _pd = downgradeEmptyPromise(reply);
+            if (_pd.fired) {
+              reply = _pd.reply;
+              console.log(`[PromiseHonesty] PROMISE-NOMARKER phone=${_phoneTail} → rebaixado (promessa sem persistência)`);
+              try { await logMarker(collab.id, 'CHOKEPOINT', 'redirected', 'confab:promise_nomarker', String(reply).slice(0, 120)); } catch (_) {}
+            }
           }
         }
       }

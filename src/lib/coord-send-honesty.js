@@ -16,7 +16,11 @@
 
 // Verbo/particípio/gerúndio de "enviar recado". Cobre o passado ("avisei"), o
 // particípio decorativo ("Avisado!") e o gerúndio de falsa-ação ("Mandando agora").
-const SEND_CLAIM_RE = /\b(avis(?:ei|ado|ada|amos|ando)|mand(?:ei|ado|ada|ando|amos)|repass(?:ei|ado|ada|ando|amos|ei)|encaminh(?:ei|ado|ada|ando|amos)|envi(?:ei|ado|ada|ados|adas|ando)|transmit(?:i|ido|indo)|comuniqu(?:ei|ado|ada)|j[áa]\s+(?:mandei|avisei|enviei|repassei))\b/i;
+// Inclui plural/passiva ("os convites já foram mandados" — audit 01/07 2ª evidência): as
+// formas participiais ganham ados|adas. comuniqu NÃO ganha ados (o módulo "comunicados" usa
+// o radical "comunic", não "comuniqu" — mas não arriscar). "convidados"/"avise" seguem FORA
+// (substantivo e subjuntivo de pedido, respectivamente — cobertos pelos testes de CONTROLE).
+const SEND_CLAIM_RE = /\b(avis(?:ei|ado|ada|ados|adas|amos|ando)|mand(?:ei|ado|ada|ados|adas|ando|amos)|repass(?:ei|ado|ada|ados|adas|ando|amos)|encaminh(?:ei|ado|ada|ados|adas|ando|amos)|envi(?:ei|ado|ada|ados|adas|ando)|transmit(?:i|ido|ida|idos|idas|indo)|comuniqu(?:ei|ado|ada)|j[áa]\s+(?:mandei|avisei|enviei|repassei))\b/i;
 
 function stripOptimisticSendLines(text) {
   const s = String(text || '');
@@ -35,4 +39,21 @@ function claimsSent(text) {
   return SEND_CLAIM_RE.test(String(text || ''));
 }
 
-module.exports = { stripOptimisticSendLines, claimsSent, SEND_CLAIM_RE };
+// SEND-CLAIM-NOMARKER (audit 01/07, Reunião Time Gestão): a fala afirma ter avisado/convidado
+// pessoas ("mandando o convite pra cada um dos 8") mas NENHUM <<COORDINATION_REQUEST>> foi
+// emitido — o strip de coord-send-honesty vivia só DENTRO dos ramos que parseiam o marker, e o
+// chokepoint Camada 1 é BINÁRIO (o EVENT_CREATE que persistiu faz nothingPersisted=false). O
+// engine chama isto SÓ no ramo sem-coord-marker; aqui a decisão é pura: se afirma envio e não é
+// pergunta/rascunho, tira a(s) linha(s) de falso-envio e anexa o aviso honesto. { reply, fired }.
+const SEND_NOMARKER_DISCLAIMER =
+  '_⚠️ Sendo sincero: eu ainda NÃO avisei ninguém — nenhuma mensagem chegou a ser enviada. Se quiser, me diz pra quem mandar que eu passo o recado._';
+
+function enforceSendHonesty(text, opts = {}) {
+  const { isQuestion = false } = opts;
+  const s = String(text || '');
+  if (isQuestion || !claimsSent(s)) return { reply: s, fired: false };
+  const stripped = stripOptimisticSendLines(s);
+  return { reply: stripped ? `${stripped}\n\n${SEND_NOMARKER_DISCLAIMER}` : SEND_NOMARKER_DISCLAIMER, fired: true };
+}
+
+module.exports = { stripOptimisticSendLines, claimsSent, enforceSendHonesty, SEND_CLAIM_RE, SEND_NOMARKER_DISCLAIMER };

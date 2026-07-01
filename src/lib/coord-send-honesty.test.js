@@ -2,7 +2,7 @@
 // COORD-SEND-CONFAB-STRIP (Ana 30/06) — rodar: node --test src/lib/coord-send-honesty.test.js
 const test = require('node:test');
 const assert = require('node:assert');
-const { stripOptimisticSendLines, claimsSent } = require('./coord-send-honesty');
+const { stripOptimisticSendLines, claimsSent, enforceSendHonesty } = require('./coord-send-honesty');
 
 test('Ana: "📨 Avisado! Mandando pro grupo ADM GERAL agora." é removido por inteiro', () => {
   const out = stripOptimisticSendLines('📨 Avisado! Mandando pro grupo ADM GERAL agora.');
@@ -50,4 +50,65 @@ test('CONTROLE: texto vazio/nulo é seguro', () => {
   assert.strictEqual(stripOptimisticSendLines(''), '');
   assert.strictEqual(stripOptimisticSendLines(null), '');
   assert.strictEqual(claimsSent(null), false);
+});
+
+// ── enforceSendHonesty (SEND-CLAIM-NOMARKER, audit 01/07 Reunião Time Gestão) ────────
+// Confab "avisar sem marker": a fala afirma envio a pessoas mas NENHUM COORDINATION_REQUEST
+// foi emitido (o engine só chama isto no ramo sem-coord-marker). Rebaixa: strip + aviso honesto.
+
+test('Reunião Time Gestão: "mandando o convite pra cada um dos 8" (sem coord marker) → rebaixado', () => {
+  const r = enforceSendHonesty('Beleza, Alf! Criando o compromisso e mandando o convite pra cada um dos 8.', { isQuestion: false });
+  assert.strictEqual(r.fired, true, 'a afirmação de envio sem marker tem que ser pega');
+  assert.ok(!/mandando o convite/i.test(r.reply), 'a falsa afirmação de envio some');
+  assert.match(r.reply, /N[ÃA]O avisei/i, 'entra o aviso honesto ("NÃO avisei ninguém")');
+});
+
+test('enforceSendHonesty: sem afirmação de envio → não age (reply intacto)', () => {
+  const r = enforceSendHonesty('Beleza, tá tudo certo por aqui!', {});
+  assert.strictEqual(r.fired, false);
+  assert.strictEqual(r.reply, 'Beleza, tá tudo certo por aqui!');
+});
+
+test('enforceSendHonesty: pergunta não dispara (respeita isQuestion)', () => {
+  const r = enforceSendHonesty('Mandei o convite, quer que eu confirme com cada um?', { isQuestion: true });
+  assert.strictEqual(r.fired, false, 'pergunta/rascunho não é rebaixada');
+});
+
+test('enforceSendHonesty: preserva a linha verdadeira, tira só a de envio + aviso honesto', () => {
+  const r = enforceSendHonesty('✅ Reunião criada pra sexta 9h!\nMandando o convite pra todos os 8.', {});
+  assert.strictEqual(r.fired, true);
+  assert.match(r.reply, /Reunião criada pra sexta/, 'o que é verdade (evento criado) permanece');
+  assert.ok(!/Mandando o convite/i.test(r.reply), 'a linha de falso-envio some');
+  assert.match(r.reply, /N[ÃA]O avisei/i);
+});
+
+test('enforceSendHonesty: reply 100% falso-envio vira só o aviso honesto', () => {
+  const r = enforceSendHonesty('Avisei todo mundo agora!', {});
+  assert.strictEqual(r.fired, true);
+  assert.match(r.reply, /N[ÃA]O avisei/i);
+});
+
+// ── Regex gap (audit 01/07, 2ª evidência): passiva/plural "já foram mandados" ──────────
+test('confab passiva/plural é send-claim: "já foram mandados/enviados/avisados"', () => {
+  assert.strictEqual(claimsSent('Os convites pros 8 já foram mandados nessa correção anterior.'), true, 'mandados');
+  assert.strictEqual(claimsSent('Os convites já foram enviados.'), true, 'enviados');
+  assert.strictEqual(claimsSent('Todos já foram avisados.'), true, 'avisados');
+  assert.strictEqual(claimsSent('Os recados foram repassados.'), true, 'repassados');
+  assert.strictEqual(claimsSent('Os convites foram encaminhados.'), true, 'encaminhados');
+});
+
+test('enforceSendHonesty pega a confab "os convites já foram mandados na correção anterior"', () => {
+  const r = enforceSendHonesty('Show, fechado — sexta 03/07 9h já tá valendo. Os convites pros 8 já foram mandados nessa correção anterior, então não vou reenviar de novo pra não duplicar.', {});
+  assert.strictEqual(r.fired, true);
+  assert.ok(!/já foram mandados/i.test(r.reply), 'a linha do falso "já foram mandados" some');
+  assert.match(r.reply, /N[ÃA]O avisei/i);
+});
+
+test('CONTROLE: "convidados" (as pessoas) NÃO é send-claim', () => {
+  assert.strictEqual(claimsSent('A reunião tem 8 convidados.'), false, '"convidados" é substantivo, não envio');
+  assert.strictEqual(claimsSent('Confirmei com os convidados?'), false);
+});
+
+test('CONTROLE: "comunicados" (o módulo) NÃO é send-claim', () => {
+  assert.strictEqual(claimsSent('Você tem 3 comunicados pendentes de aprovação.'), false);
 });
