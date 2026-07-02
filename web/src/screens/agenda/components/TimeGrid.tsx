@@ -22,8 +22,8 @@ const CFG: GridConfig = { startHour: START_HOUR, hourHeight: HOUR_HEIGHT, snapMi
 export interface TimeGridProps {
   days: Date[];
   events: EventForGrid[];
-  /** Tarefas do range — renderizadas na faixa "dia todo" no topo (não têm bloco de horário).
-   *  Paridade com o Mês: a grade por horário mostrava só compromissos (caso Yuri). */
+  /** Tarefas do range. Com `due_time` → bloco na grade no horário (caso Yuri: "coloco a
+   *  hora e não aparece"). Sem horário → faixa "dia todo" no topo. */
   tasks?: TaskForPanel[];
   onSlotClick: (date: Date) => void;
   onEventClick: (event: EventForGrid) => void;
@@ -31,6 +31,9 @@ export interface TimeGridProps {
   onEventResize: (event: EventForGrid, newDurationMs: number) => void;
   onTaskClick?: (task: TaskForPanel) => void;
 }
+
+// Item laneável unificado: evento OU tarefa-com-hora (mesma grade, sem sobreposição).
+type LaneItem = { id: string; start_at: string; end_at: string; ev?: EventForGrid; task?: TaskForPanel };
 
 function DroppableDay({ day, children }: { day: Date; children: React.ReactNode }) {
   const { setNodeRef } = useDroppable({
@@ -51,8 +54,7 @@ export function TimeGrid(p: TimeGridProps) {
   const [activeDrag, setActiveDrag] = useState<EventForGrid | null>(null);
 
   const todayYmd = todaySP();
-  // Tarefas por dia (YYYY-MM-DD local) — a faixa "dia todo". Tarefa sem due_date fica de fora
-  // (ela aparece na fonte "sem prazo" do painel, não na grade datada).
+  // Tarefas datadas por dia (YYYY-MM-DD local). Sem due_date fica de fora (fonte "sem prazo").
   const tasksByDay = useMemo(() => {
     const m = new Map<string, TaskForPanel[]>();
     for (const t of p.tasks ?? []) {
@@ -63,8 +65,9 @@ export function TimeGrid(p: TimeGridProps) {
     }
     return m;
   }, [p.tasks]);
-  const anyTasks = useMemo(
-    () => p.days.some(d => (tasksByDay.get(localYmd(d))?.length ?? 0) > 0),
+  // A faixa "dia todo" só mostra tarefas SEM horário (as com horário viram bloco na grade).
+  const anyAllDayTasks = useMemo(
+    () => p.days.some(d => (tasksByDay.get(localYmd(d)) ?? []).some(t => !t.due_time)),
     [p.days, tasksByDay],
   );
 
@@ -125,14 +128,13 @@ export function TimeGrid(p: TimeGridProps) {
         </div>
       )}
 
-      {/* Faixa "dia todo" — TAREFAS datadas (a grade por horário é só de compromissos).
-          Alinhada com as colunas: gutter + 1 célula flex-1 por dia. */}
-      {anyTasks && (
+      {/* Faixa "dia todo" — só tarefas SEM horário (as com hora aparecem na grade, no horário). */}
+      {anyAllDayTasks && (
         <div className="flex shrink-0 border-b border-border bg-bg-surface">
           <div style={{ width: GUTTER_W }} className="shrink-0 text-[9px] uppercase tracking-wider text-fg-muted text-right pr-2 pt-1 select-none">tarefas</div>
           {p.days.map((day) => {
             const ymd = localYmd(day);
-            const dayTasks = tasksByDay.get(ymd) ?? [];
+            const dayTasks = (tasksByDay.get(ymd) ?? []).filter(t => !t.due_time);
             const cap = 3;
             const vis = dayTasks.slice(0, cap);
             const overflow = dayTasks.length - vis.length;
@@ -146,7 +148,7 @@ export function TimeGrid(p: TimeGridProps) {
                     className={['text-[10px] leading-tight rounded px-1 truncate text-left focus-ring', CHIP_TONE_CLASS[taskChipTone(t, todayYmd)]].join(' ')}
                     onClick={() => p.onTaskClick?.(t)}
                   >
-                    {t.due_time ? `${t.due_time.slice(0, 5)} ` : ''}{t.title}
+                    {t.title}
                   </button>
                 ))}
                 {overflow > 0 && <span className="text-[9px] text-fg-muted pl-0.5">+{overflow} tarefa{overflow > 1 ? 's' : ''}</span>}
@@ -168,8 +170,19 @@ export function TimeGrid(p: TimeGridProps) {
           </div>
 
           {p.days.map((day) => {
+            const ymd = localYmd(day);
             const dayEvents = p.events.filter(e => isSameDay(new Date(e.start_at), day));
-            const laned = computeLanes(dayEvents);
+            const dayTimedTasks = (tasksByDay.get(ymd) ?? []).filter(t => t.due_time);
+            // Eventos + tarefas-com-hora no MESMO laning → não se sobrepõem.
+            const items: LaneItem[] = [
+              ...dayEvents.map((e): LaneItem => ({ id: `e-${e.id}`, start_at: e.start_at, end_at: e.end_at, ev: e })),
+              ...dayTimedTasks.map((t): LaneItem => {
+                const startLocal = `${ymd}T${t.due_time!.slice(0, 5)}:00`;
+                const endLocal = new Date(new Date(startLocal).getTime() + 30 * 60000).toISOString();
+                return { id: `t-${t.id}`, start_at: startLocal, end_at: endLocal, task: t };
+              }),
+            ];
+            const laned = computeLanes(items);
             return (
               <DroppableDay key={day.toISOString()} day={day}>
                 {Array.from({ length: (END_HOUR - START_HOUR + 1) * 2 }, (_, i) => {
@@ -190,22 +203,45 @@ export function TimeGrid(p: TimeGridProps) {
                     style={{ top: timeToY(now, CFG) }} />
                 )}
 
-                {laned.map((ev) => {
-                  const start = new Date(ev.start_at);
-                  const end = new Date(ev.end_at);
-                  const top = timeToY(start, CFG);
-                  const height = Math.max(24, timeToY(end, CFG) - top);
-                  const width = 100 / ev.totalLanes;
-                  const left = ev.lane * width;
+                {laned.map((it) => {
+                  const width = 100 / it.totalLanes;
+                  const left = it.lane * width;
+                  if (it.ev) {
+                    const ev = it.ev;
+                    const top = timeToY(new Date(ev.start_at), CFG);
+                    const height = Math.max(24, timeToY(new Date(ev.end_at), CFG) - top);
+                    return (
+                      <EventBlock
+                        key={it.id}
+                        event={ev}
+                        top={top} height={height} width={width} left={left}
+                        hourHeight={HOUR_HEIGHT} snapMinutes={SNAP_MIN}
+                        onClick={p.onEventClick}
+                        onResize={p.onEventResize}
+                      />
+                    );
+                  }
+                  const t = it.task!;
+                  const top = Math.max(0, timeToY(new Date(it.start_at), CFG));
+                  const height = Math.max(22, timeToY(new Date(it.end_at), CFG) - top);
+                  const isDone = t.status === 'done';
                   return (
-                    <EventBlock
-                      key={ev.id}
-                      event={ev as EventForGrid}
-                      top={top} height={height} width={width} left={left}
-                      hourHeight={HOUR_HEIGHT} snapMinutes={SNAP_MIN}
-                      onClick={p.onEventClick}
-                      onResize={p.onEventResize}
-                    />
+                    <button
+                      key={it.id}
+                      type="button"
+                      title={t.title}
+                      className={[
+                        'absolute rounded-md px-1.5 py-0.5 text-left overflow-hidden focus-ring border-l-[3px] border-dashed border-tom',
+                        CHIP_TONE_CLASS[taskChipTone(t, todayYmd)],
+                      ].join(' ')}
+                      style={{ top, height, left: `${left}%`, width: `${width}%` }}
+                      onClick={(e) => { e.stopPropagation(); p.onTaskClick?.(t); }}
+                    >
+                      <div className={['text-[11px] font-medium truncate', isDone ? 'line-through' : ''].join(' ')}>
+                        <span className="tabular-nums opacity-80 mr-1">{t.due_time!.slice(0, 5)}</span>
+                        ☐ {t.title}
+                      </div>
+                    </button>
                   );
                 })}
               </DroppableDay>
