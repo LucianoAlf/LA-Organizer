@@ -231,6 +231,10 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
         context: gid ? 'work' : taskCtx,
         priority: 'medium',
         due_date: due,
+        // Bug Yuri 02/07 (QUICKCREATE-DUE-TIME-DROP): a hora escolhida só virava
+        // remind_at; due_time ficava null → tarefa caía na faixa "dia todo" da grade
+        // (nunca no horário). O editar (TaskEditDrawer) já gravava; criar não. Paridade.
+        due_time: taskTime || null,
         remind_at: remindAt,
         eisenhower_quadrant: taskQuadrant,
         // Sprint 29.4 — recorrência opcional (vira TEMPLATE)
@@ -302,6 +306,9 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
         context: 'work',
         priority: 'medium',
         due_date: due,
+        // Bug Yuri 02/07 (QUICKCREATE-DUE-TIME-DROP): grava a hora na tarefa delegada
+        // (mesma paridade criar↔editar; sem isso a delegada nunca aparece na grade).
+        due_time: taskTime || null,
         remind_at: remindAt,
         eisenhower_quadrant: taskQuadrant,
         // Sprint 29.4 — delegada com recorrência também vira template
