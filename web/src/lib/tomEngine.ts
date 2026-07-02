@@ -124,6 +124,45 @@ export async function notifyWatchersAdded(taskId: string, watcherIds: string[]):
   }
 }
 
+// Volta da delegação (2026-07-02) — conclusão pelo app de tarefa delegada notifica o
+// delegador + em-cópia (+ devolutiva opcional). Fire-and-forget (molde do task-delegated).
+export async function notifyTaskCompleteReturn(taskId: string, actorId: string, note?: string | null): Promise<NotifyResult> {
+  if (!INTERNAL_SECRET) return { ok: false, reason: 'no_secret' };
+  try {
+    const r = await fetch(`${TOM_BASE}/internal/task-complete-return`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-secret': INTERNAL_SECRET },
+      body: JSON.stringify({ task_id: taskId, actor_id: actorId, note: note ?? null }),
+    });
+    if (!r.ok) return { ok: false, reason: `http_${r.status}` };
+    const json = await r.json().catch(() => ({}));
+    return { ok: true, status: r.status, sent: typeof json.sent === 'number' ? json.sent : undefined };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn(`[tomEngine] task-complete-return falhou: ${msg}`);
+    return { ok: false, reason: msg };
+  }
+}
+
+// Devolutiva avulsa (executor ou em-cópia) pelo app → círculo da tarefa (menos o autor).
+export async function sendTaskReturn(taskId: string, authorId: string, note: string): Promise<NotifyResult> {
+  if (!INTERNAL_SECRET) return { ok: false, reason: 'no_secret' };
+  try {
+    const r = await fetch(`${TOM_BASE}/internal/task-return`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-secret': INTERNAL_SECRET },
+      body: JSON.stringify({ task_id: taskId, author_id: authorId, note }),
+    });
+    if (!r.ok) return { ok: false, reason: `http_${r.status}` };
+    const json = await r.json().catch(() => ({}));
+    return { ok: true, status: r.status, sent: typeof json.sent === 'number' ? json.sent : undefined };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn(`[tomEngine] task-return falhou: ${msg}`);
+    return { ok: false, reason: msg };
+  }
+}
+
 // Dashboard de time — botão "Cobrar agora": TOM dá um toque IMEDIATO no responsável da
 // tarefa, em nome de quem clicou. sent=false quando não havia pra quem mandar (sem zap/inativo
 // ou tarefa sem responsável); reason explica.

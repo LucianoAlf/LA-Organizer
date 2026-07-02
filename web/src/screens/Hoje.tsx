@@ -37,8 +37,10 @@ import { EditEventSheet } from '../components/EditEventSheet';
 import { EditTaskSheet } from '../components/EditTaskSheet';
 import { TaskDetailSheet } from '../components/TaskDetailSheet';
 import { TaskChecklistSection } from '../components/TaskChecklistSection';
+import { TaskReturnSection } from '../components/TaskReturnSection';
 import { WatchedTasksSection } from '../components/WatchedTasksSection';
 import { taskDetailMeta } from '../lib/taskDetail';
+import { notifyTaskCompleteReturn } from '../lib/tomEngine';
 import { RescheduleSheet } from '../components/RescheduleSheet';
 import type { Task, TaskContext, CalendarEvent, ActionType } from '../types';
 import { ACTION_TYPE_LABELS, ACTION_TYPE_VISUAL } from '../types';
@@ -906,6 +908,10 @@ export function Hoje() {
           groupName: (rt as Task & { work_group?: { name?: string } | null }).work_group?.name ?? null,
         });
         const isDone = rt.status === 'done';
+        // Devolutiva da delegação (2026-07-02): meta.kind já resolve "delegada"
+        // (nas duas direções, e exclui grupo). Só então mostra a devolutiva + nota.
+        const meId = collaborator?.id ?? null;
+        const isDelegated = meta.kind === 'delegated';
         return (
           <TaskDetailSheet
             open
@@ -916,9 +922,11 @@ export function Hoje() {
             isRecurring={Boolean(rt.recurrence_rule || rt.recurrence_parent_id)}
             isDone={isDone}
             canComplete={!isDone}
-            onComplete={() => { toggleTask.mutate(rt); setReadingTask(null); }}
+            allowCompletionNote={isDelegated}
+            onComplete={(note) => { toggleTask.mutate(rt); setReadingTask(null); if (isDelegated && meId) void notifyTaskCompleteReturn(rt.id, meId, note); }}
             onEdit={() => { setEditingTask(rt); setReadingTask(null); }}
             checklist={<TaskChecklistSection parent={{ id: rt.id, context: rt.context, assigned_to: rt.assigned_to ?? null, assigned_group_id: rt.assigned_group_id ?? null }} meId={collaborator?.id} editable />}
+            returns={meId && isDelegated ? <TaskReturnSection taskId={rt.id} meId={meId} /> : undefined}
           />
         );
       })()}

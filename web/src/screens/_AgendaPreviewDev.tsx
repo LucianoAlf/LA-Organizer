@@ -161,9 +161,9 @@ export default function AgendaPreviewDev() {
               onEventDrop={() => {}} onEventResize={() => {}} />
           )}
           {view === 'month' && (
-            <MonthView monthDate={miniMonth} events={MOCK_EVENTS}
+            <MonthView monthDate={miniMonth} events={MOCK_EVENTS} tasks={[]}
               onDayClick={(d) => { setCurrentDate(d); setView('day'); }}
-              onEventClick={() => {}} />
+              onEventClick={() => {}} onTaskClick={() => {}} />
           )}
         </AgendaShell>
       </div>

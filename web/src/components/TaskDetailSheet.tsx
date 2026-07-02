@@ -3,7 +3,7 @@
 // equipe). Aqui a descrição aparece INTEIRA (whitespace-pre-wrap, sem teto de altura),
 // e a edição fica atrás do botão "Editar". Apresentacional: o caller passa props
 // normalizadas (3 superfícies: agenda mobile, agenda desktop, workspace de grupo).
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Repeat } from 'lucide-react';
 import { AdaptiveSheet } from './AdaptiveSheet';
 import { Button } from './Button';
@@ -23,18 +23,27 @@ interface TaskDetailSheetProps {
   canComplete?: boolean;
   isDone?: boolean;
   completing?: boolean;
-  onComplete?: () => void;
+  /** Devolutiva da delegação (2026-07-02): onComplete recebe uma nota opcional (recado
+   *  pra quem delegou). Callers antigos com `() => ...` ignoram o arg — retrocompatível. */
+  onComplete?: (note?: string) => void;
   onReopen?: () => void;
   onEdit?: () => void;
+  /** Mostra o campo opcional "recado pra quem delegou" acima do Concluir (só tarefa delegada). */
+  allowCompletionNote?: boolean;
   /** Subtarefas/checklist (2026-06-26): seção renderizada pelo caller (TaskChecklistSection). */
   checklist?: ReactNode;
+  /** Devolutiva (2026-07-02): ação "deixar devolutiva" — caller passa <TaskReturnSection/>. */
+  returns?: ReactNode;
 }
 
 export function TaskDetailSheet({
   open, onClose, title, metaLine, description, dueLabel, statusTone = 'neutral', statusLabel,
-  doneByLine, isRecurring, canComplete, isDone, completing, onComplete, onReopen, onEdit, checklist,
+  doneByLine, isRecurring, canComplete, isDone, completing, onComplete, onReopen, onEdit,
+  allowCompletionNote, checklist, returns,
 }: TaskDetailSheetProps) {
   const desc = (description ?? '').trim();
+  const [note, setNote] = useState('');
+  const showNote = Boolean(allowCompletionNote && canComplete && !isDone && onComplete);
   return (
     <AdaptiveSheet open={open} onClose={onClose} title="Tarefa" size="md">
       <div className="space-y-md">
@@ -57,9 +66,23 @@ export function TaskDetailSheet({
             : <div className="text-body-sm text-fg-muted italic">Sem descrição.</div>}
         </div>
         {checklist}
+        {returns}
+        {showNote && (
+          <div>
+            <div className="text-label uppercase tracking-wide text-fg-muted mb-1">Recado pra quem delegou (opcional)</div>
+            <textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              rows={2}
+              maxLength={2000}
+              placeholder="Ex: feito — falei com a mãe do aluno."
+              className="w-full bg-bg-surface border border-border rounded-md p-2 text-fg text-body-md focus:outline-none focus:border-tom resize-none"
+            />
+          </div>
+        )}
         <div className="flex items-center gap-sm pt-sm border-t border-border">
           {canComplete && !isDone && onComplete && (
-            <Button variant="primary" size="md" loading={completing} onClick={onComplete}>Concluir</Button>
+            <Button variant="primary" size="md" loading={completing} onClick={() => onComplete(note.trim() || undefined)}>Concluir</Button>
           )}
           {isDone && onReopen && (
             <Button variant="secondary" size="md" onClick={onReopen}>Reabrir</Button>

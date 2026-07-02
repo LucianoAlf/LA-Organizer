@@ -13,8 +13,10 @@ import { EditTaskSheet } from '../../../components/EditTaskSheet';
 import { RescheduleSheet } from '../../../components/RescheduleSheet';
 import { TaskDetailSheet } from '../../../components/TaskDetailSheet';
 import { TaskChecklistSection } from '../../../components/TaskChecklistSection';
+import { TaskReturnSection } from '../../../components/TaskReturnSection';
 import { EmptyState } from '../../../components/EmptyState';
 import { taskDetailMeta } from '../../../lib/taskDetail';
+import { notifyTaskCompleteReturn } from '../../../lib/tomEngine';
 import { CalendarClock, ListTodo } from 'lucide-react';
 import type { Task, CalendarEvent } from '../../../types';
 
@@ -152,6 +154,9 @@ export function DayBoard({ ymd }: { ymd: string }) {
           groupName: (rt as Task & { work_group?: { name?: string } | null }).work_group?.name ?? null,
         });
         const isDone = rt.status === 'done';
+        // Devolutiva da delegação (2026-07-02): meta.kind resolve "delegada" (2 direções, exclui grupo).
+        const meId = collaborator?.id ?? null;
+        const isDelegated = meta.kind === 'delegated';
         return (
           <TaskDetailSheet
             open
@@ -162,9 +167,11 @@ export function DayBoard({ ymd }: { ymd: string }) {
             isRecurring={Boolean(rt.recurrence_rule || rt.recurrence_parent_id)}
             isDone={isDone}
             canComplete={!isDone}
-            onComplete={() => { toggleTask.mutate(rt); setReadingTask(null); }}
+            allowCompletionNote={isDelegated}
+            onComplete={(note) => { toggleTask.mutate(rt); setReadingTask(null); if (isDelegated && meId) void notifyTaskCompleteReturn(rt.id, meId, note); }}
             onEdit={() => { setEditingTask(rt); setReadingTask(null); }}
             checklist={<TaskChecklistSection parent={{ id: rt.id, context: rt.context, assigned_to: rt.assigned_to ?? null, assigned_group_id: rt.assigned_group_id ?? null }} meId={collaborator?.id} editable />}
+            returns={meId && isDelegated ? <TaskReturnSection taskId={rt.id} meId={meId} /> : undefined}
           />
         );
       })()}

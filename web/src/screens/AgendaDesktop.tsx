@@ -27,6 +27,7 @@ import { useNoPrazoTasks } from './agenda/hooks/useNoPrazoTasks';
 import { useCollaboratorNames } from './agenda/hooks/useCollaboratorNames';
 import { TaskDetailSheet } from '../components/TaskDetailSheet';
 import { TaskChecklistSection } from '../components/TaskChecklistSection';
+import { TaskReturnSection } from '../components/TaskReturnSection';
 import { taskDetailMeta } from '../lib/taskDetail';
 
 // Toast fallback — projeto não tem sonner/react-hot-toast instalado.
@@ -382,8 +383,10 @@ export function AgendaDesktop() {
           <MonthView
             monthDate={miniMonth}
             events={events}
+            tasks={tasks}
             onDayClick={(d) => { setDate(d); setView('day'); }}
             onEventClick={setEditingEvent}
+            onTaskClick={(t) => setReadingTask(t)}
           />
         )}
       </AgendaShell>
@@ -457,6 +460,10 @@ export function AgendaDesktop() {
           groupName: rt.work_group_name ?? null,
         });
         const isDone = rt.status === 'done';
+        // Devolutiva da delegação (2026-07-02): sheet desktop é read-only (sem Concluir),
+        // então só o slot de devolutiva avulsa. meta.kind resolve "delegada" (exclui grupo).
+        const meId = collabId ?? null;
+        const isDelegated = meta.kind === 'delegated';
         return (
           <TaskDetailSheet
             open
@@ -468,6 +475,7 @@ export function AgendaDesktop() {
             isDone={isDone}
             onEdit={() => { setReadingTask(null); setEditingTask(rt); }}
             checklist={<TaskChecklistSection parent={{ id: rt.id, context: rt.context, assigned_to: rt.assigned_to ?? null, assigned_group_id: rt.assigned_group_id ?? null }} meId={collabId} editable />}
+            returns={meId && isDelegated ? <TaskReturnSection taskId={rt.id} meId={meId} /> : undefined}
           />
         );
       })()}
