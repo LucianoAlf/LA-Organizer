@@ -15,6 +15,14 @@ test('agradecimento/reação curta → conversational', () => {
   }
 });
 
+test('vocativo puro / reação pura (núcleo vazio) → conversational', () => {
+  // MAPA-VOCATIVE-BARE-MISROUTE: só o nome do bot ("Tom") ou só emoji esvazia o coreText.
+  // Sem verbo (ACTION_RE) nem pergunta de dado (DATA_Q_RE), já garantidos antes → é abertura/reação.
+  for (const s of ['Tom', 'Tom!', 'Tom?', 'Tom...', '👍', '❤️', 'Tom 👋']) {
+    assert.strictEqual(classifyIntent(s, []).intent, 'conversational', s);
+  }
+});
+
 test('verbo de ação → operational', () => {
   for (const s of ['cria uma tarefa pra amanhã', 'fecha o projeto X', 'me lembra às 15h',
     'reagenda pra sexta', 'delega isso pro Yuri', 'manda pro grupo', 'lista os nomes numerados']) {

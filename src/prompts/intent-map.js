@@ -38,6 +38,11 @@ function classifyIntent(rawText, recentHistory) { // eslint-disable-line no-unus
   if (/RESPONDENDO a /i.test(raw)) return op; // reply-quote (mensagem OU mídia): o quote importa
   if (ACTION_RE.test(text) || DATA_Q_RE.test(text)) return op;
   const core = coreText(text);
+  // Núcleo vazio = só vocativo ("Tom") ou reação pura ("👍"): ACTION_RE/DATA_Q_RE já foram
+  // testados acima, então não há verbo nem pergunta de dado — é abertura/reação, não tarefa.
+  if (!core && text.length <= 120) {
+    return { intent: 'conversational', loadout: LOADOUTS.conversational };
+  }
   if ((GREETING_RE.test(core) || ACK_RE.test(core)) && text.length <= 120) {
     return { intent: 'conversational', loadout: LOADOUTS.conversational };
   }
