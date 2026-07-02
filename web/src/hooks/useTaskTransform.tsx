@@ -4,7 +4,7 @@
 // e passa openDelegate/openConvert ao TaskRow e onTransform ao EditTaskSheet.
 import { useState, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { hasCoordLevel } from '../lib/permissions';
+import { canDelegateOwnTask } from '../lib/delegatePermission';
 import { DelegateTaskSheet } from '../components/DelegateTaskSheet';
 import { ConvertToEventSheet } from '../components/ConvertToEventSheet';
 import type { Task } from '../types';
@@ -16,13 +16,10 @@ export function useTaskTransform() {
 
   const isActive = (t: Task) => t.status !== 'done' && t.status !== 'cancelled' && t.status !== 'delegated';
 
-  // canDelegate: tem nível de coord E a tarefa está atribuída a você (espelha o guard
-  // de posse do engine — re-delegar tarefa de terceiro está fora do escopo do v1).
-  const canDelegate = useCallback((t: Task): boolean => {
-    if (!collaborator || !hasCoordLevel(collaborator)) return false;
-    if (!isActive(t)) return false;
-    return t.assigned_to === collaborator.id;
-  }, [collaborator]);
+  // canDelegate: alinhado com a CRIAÇÃO (2026-07-02, caso Gabi) — qualquer colaborador
+  // delega a PRÓPRIA tarefa ativa; não exige mais coord-level (a criação nunca exigiu).
+  // A posse é a trava: o UPDATE do DelegateTaskSheet filtra assigned_to = você.
+  const canDelegate = useCallback((t: Task): boolean => canDelegateOwnTask(collaborator?.id, t), [collaborator]);
 
   // canConvert: qualquer um pode converter a PRÓPRIA tarefa em compromisso.
   const canConvert = useCallback((t: Task): boolean => {
@@ -50,6 +47,6 @@ export function useTaskTransform() {
     canDelegate,
     canConvert,
     onEditSheetTransform,
-    canDelegateAny: collaborator ? hasCoordLevel(collaborator) : false,
+    canDelegateAny: Boolean(collaborator),
   };
 }

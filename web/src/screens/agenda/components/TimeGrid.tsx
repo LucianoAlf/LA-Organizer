@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   DndContext, DragOverlay, KeyboardSensor, PointerSensor,
   useDroppable, useSensor, useSensors,
@@ -7,6 +7,9 @@ import {
 import { computeLanes, timeToY, yToTime, type GridConfig } from '../lib/timeGrid';
 import { EventBlock } from './EventBlock';
 import type { EventForGrid } from '../hooks/useAgendaEvents';
+import type { TaskForPanel } from '../hooks/useAgendaTasks';
+import { taskChipTone, CHIP_TONE_CLASS } from '../../../lib/monthChips';
+import { localYmd, todaySP } from '../../../utils/date';
 
 const HOUR_HEIGHT = 64;
 const START_HOUR = 6;
@@ -19,10 +22,14 @@ const CFG: GridConfig = { startHour: START_HOUR, hourHeight: HOUR_HEIGHT, snapMi
 export interface TimeGridProps {
   days: Date[];
   events: EventForGrid[];
+  /** Tarefas do range — renderizadas na faixa "dia todo" no topo (não têm bloco de horário).
+   *  Paridade com o Mês: a grade por horário mostrava só compromissos (caso Yuri). */
+  tasks?: TaskForPanel[];
   onSlotClick: (date: Date) => void;
   onEventClick: (event: EventForGrid) => void;
   onEventDrop: (event: EventForGrid, newStart: Date) => void;
   onEventResize: (event: EventForGrid, newDurationMs: number) => void;
+  onTaskClick?: (task: TaskForPanel) => void;
 }
 
 function DroppableDay({ day, children }: { day: Date; children: React.ReactNode }) {
@@ -42,6 +49,24 @@ export function TimeGrid(p: TimeGridProps) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const [now, setNow] = useState(new Date());
   const [activeDrag, setActiveDrag] = useState<EventForGrid | null>(null);
+
+  const todayYmd = todaySP();
+  // Tarefas por dia (YYYY-MM-DD local) — a faixa "dia todo". Tarefa sem due_date fica de fora
+  // (ela aparece na fonte "sem prazo" do painel, não na grade datada).
+  const tasksByDay = useMemo(() => {
+    const m = new Map<string, TaskForPanel[]>();
+    for (const t of p.tasks ?? []) {
+      const ymd = (t.due_date ?? '').slice(0, 10);
+      if (!ymd) continue;
+      const list = m.get(ymd);
+      if (list) list.push(t); else m.set(ymd, [t]);
+    }
+    return m;
+  }, [p.tasks]);
+  const anyTasks = useMemo(
+    () => p.days.some(d => (tasksByDay.get(localYmd(d))?.length ?? 0) > 0),
+    [p.days, tasksByDay],
+  );
 
   useEffect(() => {
     if (!scrollerRef.current) return;
@@ -97,6 +122,37 @@ export function TimeGrid(p: TimeGridProps) {
               {`${d.toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '').toUpperCase()} · ${d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}`}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Faixa "dia todo" — TAREFAS datadas (a grade por horário é só de compromissos).
+          Alinhada com as colunas: gutter + 1 célula flex-1 por dia. */}
+      {anyTasks && (
+        <div className="flex shrink-0 border-b border-border bg-bg-surface">
+          <div style={{ width: GUTTER_W }} className="shrink-0 text-[9px] uppercase tracking-wider text-fg-muted text-right pr-2 pt-1 select-none">tarefas</div>
+          {p.days.map((day) => {
+            const ymd = localYmd(day);
+            const dayTasks = tasksByDay.get(ymd) ?? [];
+            const cap = 3;
+            const vis = dayTasks.slice(0, cap);
+            const overflow = dayTasks.length - vis.length;
+            return (
+              <div key={ymd} className="flex-1 min-w-0 border-l border-border/30 p-1 flex flex-col gap-0.5">
+                {vis.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    title={t.title}
+                    className={['text-[10px] leading-tight rounded px-1 truncate text-left focus-ring', CHIP_TONE_CLASS[taskChipTone(t, todayYmd)]].join(' ')}
+                    onClick={() => p.onTaskClick?.(t)}
+                  >
+                    {t.due_time ? `${t.due_time.slice(0, 5)} ` : ''}{t.title}
+                  </button>
+                ))}
+                {overflow > 0 && <span className="text-[9px] text-fg-muted pl-0.5">+{overflow} tarefa{overflow > 1 ? 's' : ''}</span>}
+              </div>
+            );
+          })}
         </div>
       )}
 

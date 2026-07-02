@@ -18,7 +18,6 @@ import { TaskEditDrawer } from './agenda/components/TaskEditDrawer';
 import { TaskGroupSheet } from '../components/TaskGroupSheet';
 import { DelegateTaskSheet } from '../components/DelegateTaskSheet';
 import { ConvertToEventSheet } from '../components/ConvertToEventSheet';
-import { hasCoordLevel } from '../lib/permissions';
 import { toggleChildWithCascade } from '../lib/taskGroups';
 import { useAgendaFilters } from './agenda/hooks/useAgendaFilters';
 import { useAgendaEvents, type EventForGrid } from './agenda/hooks/useAgendaEvents';
@@ -101,7 +100,9 @@ export function AgendaDesktop() {
   const [delegateTask, setDelegateTask] = useState<TaskForPanel | null>(null);
   const [convertTask, setConvertTask] = useState<TaskForPanel | null>(null);
   const [openGroupId, setOpenGroupId] = useState<string | null>(null);
-  const canDelegate = collaborator ? hasCoordLevel(collaborator) : false;
+  // Delegar tarefa existente alinhado com a criação (2026-07-02, caso Gabi): qualquer
+  // colaborador delega a PRÓPRIA tarefa (a posse é travada no UPDATE). Sem coord-level.
+  const canDelegate = Boolean(collaborator);
 
   const { from, to } = useMemo(() => {
     if (view === 'day') return { from: startOfDay(currentDate), to: endOfDay(currentDate) };
@@ -363,20 +364,24 @@ export function AgendaDesktop() {
           <DayView
             date={currentDate}
             events={events}
+            tasks={tasks}
             onSlotClick={(d) => setQuickCreate({ open: true, dueDate: localYmd(d) })}
             onEventClick={setEditingEvent}
             onEventDrop={onEventDrop}
             onEventResize={onEventResize}
+            onTaskClick={(t) => setReadingTask(t)}
           />
         )}
         {view === 'week' && (
           <WeekView
             weekStart={startOfWeek(currentDate)}
             events={events}
+            tasks={tasks}
             onSlotClick={(d) => setQuickCreate({ open: true, dueDate: localYmd(d) })}
             onEventClick={setEditingEvent}
             onEventDrop={onEventDrop}
             onEventResize={onEventResize}
+            onTaskClick={(t) => setReadingTask(t)}
           />
         )}
         {view === 'month' && (

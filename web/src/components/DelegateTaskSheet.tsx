@@ -2,14 +2,13 @@
 // Delega uma tarefa existente a um membro da equipe. Client-side: UPDATE da task
 // + notifyTaskDelegated (TOM manda WhatsApp). Picker restrito à equipe do líder.
 import { useEffect, useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { AdaptiveSheet } from './AdaptiveSheet';
 import { Button } from './Button';
 import { CustomSelect } from './CustomSelect';
 import { DateInput } from './DateInput';
-import { useDelegableMembers } from '../hooks/useDelegableMembers';
 import { notifyTaskDelegated, notifyWatchersAdded } from '../lib/tomEngine';
 import { WatchersPicker } from './WatchersPicker';
 import { useTaskWatchers, useReplaceWatchers } from '../hooks/useTaskWatchers';
@@ -21,7 +20,24 @@ interface Props { open: boolean; task: TransformableTask | null; onClose: () => 
 export function DelegateTaskSheet({ open, task, onClose }: Props) {
   const { collaborator } = useAuth();
   const qc = useQueryClient();
-  const membersQ = useDelegableMembers(open);
+  // Alinhado com a CRIAÇÃO (2026-07-02, caso Gabi): a lista é TODOS os colaboradores
+  // ativos (menos você) — mesma query da QuickCreateSheet (cache compartilhado) —, não
+  // a equipe de governança. Assim qualquer um delega pra qualquer colega, como na criação.
+  const membersQ = useQuery({
+    queryKey: ['collaborators-active', collaborator?.id],
+    enabled: open && Boolean(collaborator?.id),
+    staleTime: 5 * 60_000,
+    queryFn: async (): Promise<Array<{ id: string; full_name: string; role: string }>> => {
+      const { data, error } = await supabase
+        .from('collaborators')
+        .select('id, full_name, role')
+        .eq('is_active', true)
+        .order('full_name', { ascending: true });
+      if (error) return [];
+      return ((data ?? []) as Array<{ id: string; full_name: string; role: string }>)
+        .filter(c => c.id !== collaborator?.id);
+    },
+  });
   const watchersQ = useTaskWatchers(task?.id ?? null, open);
   const replaceWatchers = useReplaceWatchers();
 
