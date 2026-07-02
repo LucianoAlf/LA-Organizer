@@ -5382,6 +5382,24 @@ async function checkEventReminders() {
       } else {
         console.log(`[EventReminders] fired ${String(r.id).slice(0,8)} "${ev.title.slice(0,40)}" → ${collab.phone.slice(-4)}`);
       }
+      // 👥 F4 — Reunião de grupo: lembra também os participantes CONFIRMADOS (aprovado Alf 01/07).
+      // Respeita DND/quiet de cada um; fan-out não-fatal (nunca quebra o lembrete do dono).
+      try {
+        const { data: _parts } = await supabase.from('event_participants')
+          .select('collaborator_id').eq('event_id', ev.id).eq('status', 'confirmed');
+        const _partIds = (_parts || []).map(p => p.collaborator_id).filter(id => id && id !== ev.collaborator_id);
+        if (_partIds.length) {
+          const { data: _pcs } = await supabase.from('collaborators')
+            .select('id, phone, full_name, is_active').in('id', _partIds);
+          for (const pc of (_pcs || [])) {
+            if (!pc.is_active || !pc.phone) continue;
+            if ((await getDndState(pc.id)).active) continue;
+            if ((await isQuietNow(pc.id, nowSaoPaulo())).quiet) continue;
+            await proactiveLink.sendAndLink(supabase, { phone: pc.phone, content: text, collaboratorId: pc.id, refType: 'event', refId: ev.id });
+            console.log(`[EventReminders] participante lembrado ${pc.phone.slice(-4)} event=${String(ev.id).slice(0,8)}`);
+          }
+        }
+      } catch (pErr) { console.warn('[EventReminders] participant fanout err (non-fatal):', pErr.message); }
     } catch (err) {
       console.error(`[EventReminders] send err for ${String(r.id).slice(0,8)}:`, err.message);
     }

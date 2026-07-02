@@ -2554,6 +2554,40 @@ async function applyEventActions(collaborator, events, opts = {}) {
           console.warn(`[Event] notify build err (silent): ${notifErr.message}`);
         }
       }
+      // 👥 Reunião de grupo (F1) — attendees: 1 evento (agenda do criador) + N participantes.
+      // NÃO usa to_name (o evento fica com o criador); os convidados viram event_participants.
+      // Resolve nomes, insere (status=invited) e convida cada um. Nome não resolvido/ambíguo →
+      // só loga (o skill de grupo confirma a lista antes de criar). Ver spec reuniao-grupo.
+      if (data?.id && Array.isArray(e.attendees) && e.attendees.length > 0) {
+        try {
+          const { resolveAttendees } = require('./lib/resolve-attendees');
+          const { resolved, unresolved } = await resolveAttendees(
+            e.attendees,
+            (nm) => resolveCollaboratorByName(nm, { requester: collaborator })
+          );
+          let invited = 0;
+          for (const { collaborator: part } of resolved) {
+            if (!part || part.id === collaborator.id || part.is_active === false) continue;
+            const { error: partErr } = await supabase.from('event_participants').insert({
+              event_id: data.id, collaborator_id: part.id, status: 'invited',
+              invited_by: collaborator.id, invited_at: new Date().toISOString(),
+            });
+            if (partErr) { console.warn(`[Event] attendee insert err ${String(part.id).slice(0, 8)}: ${partErr.message}`); continue; }
+            invited++;
+            if (!opts.suppressNotify && part.phone) {
+              const senderName = (collaborator.preferred_name || collaborator.full_name || '').split(' ')[0];
+              const whenStr = (() => { try { const d = safeDate(e.start_at); return d ? d.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' }) : e.start_at; } catch { return e.start_at; } })();
+              const locPart = e.location_text ? `\n📍 ${String(e.location_text).slice(0, 80)}` : '';
+              const inviteMsg = `📅 *${senderName}* te convidou pra um compromisso:\n\n*${row.title}*\n🗓️ ${whenStr}${locPart}\n\nConfirma presença? Responde *"vou"* ou *"não posso"*.`;
+              whatsapp.sendMessage(part.phone, inviteMsg).catch(err => console.error(`[Event] attendee invite err: ${err.message}`));
+              await logConversation(part.id, 'outbound', `[convite de ${senderName}: ${row.title}]`);
+            }
+          }
+          console.log(`[Event] attendees event=${String(data.id).slice(0, 8)}: ${invited} convidados${unresolved.length ? `, ${unresolved.length} não resolvidos (${unresolved.join(', ')})` : ''}`);
+        } catch (attErr) {
+          console.warn('[Event] attendees branch err (non-fatal):', attErr.message);
+        }
+      }
       // Sprint 22.50b — TOM pode passar reminders_minutes_before:[15, 60, 1440]
       // ou reminders:[ISO,...] pra criar lembretes vinculados.
       try {
@@ -11716,6 +11750,19 @@ async function processMessage(phone, text, raw = {}) {
         _metrics.leak_blocked = true;
         _metrics.leak_match = String(leakMatch[0]).slice(0, 100);
       }
+      // 2b) MECHANISM-LEAK (regra 16) — vocabulário interno em PROSA ("o marker vai de verdade",
+      // "com bypass_integrity", <<EVENT_CREATE>>, to_name...) que o STACK_LEAK_RE não cobre. Rede
+      // SEPARADA (não crescer aquele regex), line-level: tira só a linha do mecanismo, preserva o
+      // card. Se esvaziar tudo, o fallback (3) abaixo cobre. Caso Reunião Time Gestão 01/07.
+      try {
+        const { stripMechanismLeak } = require('./lib/mechanism-leak');
+        const _ml = stripMechanismLeak(reply);
+        if (_ml.fired) {
+          console.warn(`[Engine] MECHANISM_LEAK stripped — reply="${reply.slice(0, 120)}"`);
+          try { await logMarker(collab.id, 'LEAK_BLOCKED', 'rejected', 'mechanism_word', reply.slice(0, 500)); } catch (_) {}
+          reply = _ml.reply;
+        }
+      } catch (mlErr) { console.warn('[Engine] mechanism-leak guard err (non-fatal):', mlErr.message); }
       // 3) Se reply ficou vazio depois da limpeza, fallback genérico.
       // Sprint 28: EXCETO quando TOM emitiu só <<REACT>>emoji<<END>> — aí
       // reply vazio é intencional (só a reação será enviada), sem fallback.
