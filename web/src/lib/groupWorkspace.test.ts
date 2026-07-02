@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { bucketizeGroupTasks, doneWhenLabel, packageInMonth, addDaysYmd, type PoolTask, type PoolTaskStatus } from './groupWorkspace';
+import {
+  bucketizeGroupTasks, doneWhenLabel, packageInMonth, addDaysYmd,
+  collapseRecurringSeries, recurrenceLabel,
+  type PoolTask, type PoolTaskStatus,
+} from './groupWorkspace';
 
 // Ensure PoolTaskStatus is used (type-check only)
 type _CheckStatus = PoolTaskStatus;
@@ -76,4 +80,91 @@ describe('packageInMonth (ym=2026-06)', () => {
 
 describe('addDaysYmd', () => {
   it('soma atravessando o mês', () => expect(addDaysYmd('2026-06-28', 7)).toBe('2026-07-05'));
+});
+
+describe('collapseRecurringSeries (hoje=2026-07-02)', () => {
+  const today = '2026-07-02';
+
+  it('tarefas não-recorrentes passam intactas (ordem preservada)', () => {
+    const rows = [t({ id: 'a', due_date: '2026-07-03' }), t({ id: 'b', due_date: '2026-07-05' })];
+    const out = collapseRecurringSeries(rows, today);
+    expect(out.map(x => x.id)).toEqual(['a', 'b']);
+    expect(out.every(x => x.recurrence_series_size === undefined)).toBe(true);
+  });
+
+  it('série diária (template + instâncias) colapsa em 1 = próxima ocorrência', () => {
+    const rows = [
+      t({ id: 'tmpl', status: 'done', due_date: '2026-06-25', recurrence_rule: 'FREQ=DAILY', series_rule: 'FREQ=DAILY' }),
+      t({ id: 'i1', due_date: '2026-07-01', status: 'done', completed_at: '2026-07-01T12:00:00Z', recurrence_parent_id: 'tmpl', series_rule: 'FREQ=DAILY' }),
+      t({ id: 'i2', due_date: '2026-07-03', recurrence_parent_id: 'tmpl', series_rule: 'FREQ=DAILY' }),
+      t({ id: 'i3', due_date: '2026-07-04', recurrence_parent_id: 'tmpl', series_rule: 'FREQ=DAILY' }),
+    ];
+    const out = collapseRecurringSeries(rows, today);
+    expect(out.length).toBe(1);
+    expect(out[0].id).toBe('i2');                    // próxima aberta >= hoje
+    expect(out[0].recurrence_series_size).toBe(4);   // 4 dobradas
+    expect(out[0].series_rule).toBe('FREQ=DAILY');
+  });
+
+  it('série toda concluída colapsa na done mais recente', () => {
+    const rows = [
+      t({ id: 'x', status: 'done', due_date: '2026-06-30', completed_at: '2026-06-30T10:00:00Z', recurrence_parent_id: 'p' }),
+      t({ id: 'y', status: 'done', due_date: '2026-07-01', completed_at: '2026-07-01T10:00:00Z', recurrence_parent_id: 'p' }),
+    ];
+    const out = collapseRecurringSeries(rows, today);
+    expect(out.length).toBe(1);
+    expect(out[0].id).toBe('y');
+  });
+
+  it('duas séries distintas NÃO se fundem', () => {
+    const rows = [
+      t({ id: 'a1', due_date: '2026-07-03', recurrence_parent_id: 'A', series_rule: 'FREQ=DAILY' }),
+      t({ id: 'a2', due_date: '2026-07-04', recurrence_parent_id: 'A', series_rule: 'FREQ=DAILY' }),
+      t({ id: 'b1', due_date: '2026-07-03', recurrence_parent_id: 'B', series_rule: 'FREQ=WEEKLY;BYDAY=TH' }),
+    ];
+    const out = collapseRecurringSeries(rows, today);
+    expect(out.length).toBe(2);
+    expect(out.map(x => x.recurrence_parent_id).sort()).toEqual(['A', 'B']);
+  });
+
+  it('só atrasadas: pega a mais recente (maior due)', () => {
+    const rows = [
+      t({ id: 'o1', due_date: '2026-06-20', recurrence_parent_id: 'P', series_rule: 'FREQ=DAILY' }),
+      t({ id: 'o2', due_date: '2026-06-28', recurrence_parent_id: 'P', series_rule: 'FREQ=DAILY' }),
+    ];
+    const out = collapseRecurringSeries(rows, today);
+    expect(out.length).toBe(1);
+    expect(out[0].id).toBe('o2');
+  });
+
+  it('colapso + bucketize: série diária aparece 1× em vence-em-breve', () => {
+    const rows = [
+      t({ id: 'plain', due_date: '2026-07-03' }),
+      ...Array.from({ length: 30 }, (_, i) =>
+        t({ id: `d${i}`, due_date: addDaysYmd('2026-07-03', i), recurrence_parent_id: 'S', series_rule: 'FREQ=DAILY' })),
+    ];
+    const collapsed = collapseRecurringSeries(rows, today);
+    expect(collapsed.length).toBe(2); // 1 plain + 1 série
+    const b = bucketizeGroupTasks(collapsed, today);
+    const total = b.overdue.length + b.dueSoon.length + b.later.length;
+    expect(total).toBe(2);
+  });
+});
+
+describe('recurrenceLabel', () => {
+  it('mapeia frequências comuns', () => {
+    expect(recurrenceLabel('FREQ=DAILY')).toBe('diária');
+    expect(recurrenceLabel('FREQ=WEEKLY;BYDAY=MO')).toBe('semanal');
+    expect(recurrenceLabel('FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR')).toBe('dias úteis');
+    expect(recurrenceLabel('FREQ=MONTHLY;BYMONTHDAY=1')).toBe('mensal');
+    expect(recurrenceLabel('FREQ=YEARLY;BYMONTH=6;BYMONTHDAY=1')).toBe('anual');
+  });
+  it('intervalo > 1', () => {
+    expect(recurrenceLabel('FREQ=DAILY;INTERVAL=2')).toBe('a cada 2d');
+    expect(recurrenceLabel('FREQ=MONTHLY;INTERVAL=3;BYMONTHDAY=1')).toBe('a cada 3m');
+  });
+  it('null/vazio → null', () => {
+    expect(recurrenceLabel(null)).toBeNull();
+    expect(recurrenceLabel('')).toBeNull();
+  });
 });

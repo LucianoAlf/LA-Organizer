@@ -64,11 +64,19 @@ function buildClosingItems(workTasks = [], opts = {}) {
 // segmento que segue um número tiver QUALQUER um destes, o item NÃO é 'done'.
 const PROGRESS_RE = /(em\s+andamento|andament|andando|fazendo|comec(?:ei|ando|ei\s)|metade|parcial|quase|faltou|faltando|pendente|ainda\s+n[ãa]o|n[ãa]o\s+(?:fiz|deu|consegui|terminei|acabei|rolou)|n[ãa]o\b)/;
 
+// CLOSING-CANCEL-IGNORED (Yuri 01/07): "3 NÃO pode cancelar" no fechamento era
+// classificado como 'progress' (o "não" do PROGRESS_RE) e o pedido de CANCELAR era
+// dropado em silêncio — o TOM respondia "⏳ Em andamento" e a tarefa seguia pending.
+// Cancel tem PRIORIDADE sobre progress no segmento (quem pede cancelar não quer
+// "em andamento"). O engine aplica status='cancelled' no id ancorado.
+const CANCEL_RE = /\bcancel\w*/;
+
 /**
  * Mapeia a resposta do usuário ao fechamento numerado para um status por item.
- * statuses[i] ∈ 'done' | 'progress' | 'none':
+ * statuses[i] ∈ 'done' | 'progress' | 'cancel' | 'none':
  *   - 'done'     → concluído (engine aplica complete no id ancorado)
  *   - 'progress' → mencionado mas não concluído (em andamento / negado)
+ *   - 'cancel'   → pediu cancelamento ("3 pode cancelar") — engine cancela o id ancorado
  *   - 'none'     → não mencionado / não fez
  * matched=false → não parece resposta de fechamento; segue o fluxo normal (LLM).
  *
@@ -122,7 +130,9 @@ function parseClosingReply(userText, count) {
       const start = nums[i].idx;
       const end = i + 1 < nums.length ? nums[i + 1].idx : t.length;
       const seg = t.slice(start, end);
-      statuses[nums[i].val - 1] = PROGRESS_RE.test(seg) ? 'progress' : 'done';
+      // CLOSING-CANCEL-IGNORED: cancel vence progress ("3 NÃO pode cancelar" = cancela).
+      statuses[nums[i].val - 1] = CANCEL_RE.test(seg) ? 'cancel'
+        : (PROGRESS_RE.test(seg) ? 'progress' : 'done');
     }
     return { matched: true, statuses };
   }

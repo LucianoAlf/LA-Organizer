@@ -1,6 +1,7 @@
 import { useState, useEffect, FormEvent } from 'react';
 import { RecurrencePicker } from './RecurrencePicker';
 import { materializeSeriesClient } from '../lib/materialize-recurrence';
+import { shouldWarnUnboundedRecurrence, type RecurrenceWarning } from '../lib/recurrenceGuard';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ListTodo, CalendarClock, UserPlus, FolderKanban, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
@@ -123,6 +124,9 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
   const [pendingConflict, setPendingConflict] = useState<Array<{ id: string; title: string; range: string }> | null>(null);
   // Sprint 29.4 — recorrência opcional (RRULE iCalendar)
   const [recurrenceRule, setRecurrenceRule] = useState<string | null>(null);
+  // Guardrail anti-footgun (2026-07-02): recorrência sem-fim que floda o horizonte
+  // pede confirmação antes de criar (caso Vitória: FREQ=DAILY → 30 cópias).
+  const [pendingRecurrenceWarn, setPendingRecurrenceWarn] = useState<RecurrenceWarning | null>(null);
 
   // Sincroniza default de categoria quando lista carrega tardiamente.
   useEffect(() => {
@@ -140,6 +144,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
       setKind(defaultKind ?? 'task');
       setTitle('');
       setRecurrenceRule(null);
+      setPendingRecurrenceWarn(null);
       setDescription('');
       setTaskCtx('work');
       setTaskGroupMode(Boolean(defaultGroupId));
@@ -569,6 +574,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
     e.preventDefault();
     setError(null);
     setPendingConflict(null);
+    setPendingRecurrenceWarn(null);
     if (!title.trim()) {
       setError('Coloca um título.');
       return;
@@ -578,6 +584,8 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
         setError('Coloca uma data válida (DD/MM/AAAA).');
         return;
       }
+      const warn = shouldWarnUnboundedRecurrence(recurrenceRule, due);
+      if (warn) { setPendingRecurrenceWarn(warn); return; }
       createTask.mutate();
     } else if (kind === 'delegated') {
       if (!delegateTo) {
@@ -588,6 +596,8 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
         setError('Coloca uma data válida (DD/MM/AAAA).');
         return;
       }
+      const warn = shouldWarnUnboundedRecurrence(recurrenceRule, due);
+      if (warn) { setPendingRecurrenceWarn(warn); return; }
       createDelegated.mutate();
     } else if (kind === 'group') {
       if (groupChildren.length === 0) { setError('Adiciona pelo menos uma subtarefa.'); return; }
@@ -609,6 +619,9 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
         setError('Coloca fim válido (data + hora).');
         return;
       }
+      // Guardrail (2026-07-02): recorrência sem-fim que floda? confirma antes.
+      const warn = shouldWarnUnboundedRecurrence(recurrenceRule, startAt.slice(0, 10));
+      if (warn) { setPendingRecurrenceWarn(warn); return; }
       // Sprint 22.34i — checa conflito antes de criar.
       const startIso = `${startAt}:00-03:00`;
       const endIso = `${endAt}:00-03:00`;
@@ -626,6 +639,22 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
   const onConfirmConflict = () => {
     setPendingConflict(null);
     createEvent.mutate();
+  };
+
+  // Guardrail (2026-07-02): "criar mesmo assim" após o aviso de recorrência sem-fim.
+  // Retoma o fluxo normal do kind (evento ainda passa pelo check de conflito).
+  const onConfirmRecurrence = () => {
+    setPendingRecurrenceWarn(null);
+    if (kind === 'task') { createTask.mutate(); return; }
+    if (kind === 'delegated') { createDelegated.mutate(); return; }
+    if (kind === 'event') {
+      const startIso = `${startAt}:00-03:00`;
+      const endIso = `${endAt}:00-03:00`;
+      checkEventConflict(startIso, endIso).then(conflicts => {
+        if (conflicts.length > 0) setPendingConflict(conflicts);
+        else createEvent.mutate();
+      });
+    }
   };
 
   const submitting = createTask.isPending || createEvent.isPending || createDelegated.isPending || createGroupMut.isPending;
@@ -1201,6 +1230,21 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
           </p>
         )}
 
+        {/* Guardrail (2026-07-02) — recorrência sem fim que floda o horizonte. */}
+        {pendingRecurrenceWarn && (
+          <div className="rounded-md border border-warning bg-warning/10 p-3 space-y-2" role="alert">
+            <div className="text-body-sm font-semibold text-warning">
+              ⚠ Recorrência sem fim
+            </div>
+            <div className="text-body-sm text-fg">
+              Isso vai criar <strong>~{pendingRecurrenceWarn.count} {pendingRecurrenceWarn.count === 1 ? 'tarefa' : 'tarefas'}</strong> nos próximos 30 dias ({pendingRecurrenceWarn.cadence}) — e continua gerando, sem parar.
+            </div>
+            <div className="text-body-sm text-fg-muted pt-1">
+              Se é pra fazer só uma vez, volta e escolhe <strong>"Não repete"</strong> na Repetição.
+            </div>
+          </div>
+        )}
+
         {/* Sprint 22.34i — banner de conflito de horário. */}
         {pendingConflict && pendingConflict.length > 0 && (
           <div className="rounded-md border border-warning bg-warning/10 p-3 space-y-2" role="alert">
@@ -1222,7 +1266,16 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
         )}
 
         <div className="flex items-center gap-md pt-2">
-          {pendingConflict && pendingConflict.length > 0 ? (
+          {pendingRecurrenceWarn ? (
+            <>
+              <Button type="button" variant="secondary" onClick={() => setPendingRecurrenceWarn(null)}>
+                Voltar e ajustar
+              </Button>
+              <Button type="button" loading={submitting} fullWidth onClick={onConfirmRecurrence}>
+                Criar mesmo assim
+              </Button>
+            </>
+          ) : pendingConflict && pendingConflict.length > 0 ? (
             <>
               <Button type="button" variant="secondary" onClick={() => setPendingConflict(null)}>
                 Voltar e ajustar

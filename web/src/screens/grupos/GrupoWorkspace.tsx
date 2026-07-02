@@ -11,7 +11,7 @@ import { useGroupWorkspace, type PoolTaskRow } from '../../hooks/useGroupWorkspa
 import { useGroupChat } from '../../hooks/useGroupChat';
 import { unreadCount } from '../../lib/groupChat';
 import { GroupChatDrawer } from './chat/GroupChatDrawer';
-import { doneWhenLabel } from '../../lib/groupWorkspace';
+import { doneWhenLabel, recurrenceLabel } from '../../lib/groupWorkspace';
 import { toggleChildWithCascade } from '../../lib/taskGroups';
 import { todaySP, brShort } from '../../utils/date';
 import { StatCard } from '../../components/StatCard';
@@ -58,6 +58,7 @@ function PoolRow({ t, today, busy, onToggle, onOpen }: {
 }) {
   const done = t.status === 'done';
   const overdue = !done && Boolean(t.due_date && t.due_date < today);
+  const cadence = recurrenceLabel(t.series_rule);
 
   let badge: ReactNode = null;
   if (done && t.completed_at) {
@@ -72,22 +73,35 @@ function PoolRow({ t, today, busy, onToggle, onOpen }: {
     else badge = <Badge tone="warning">{brShort(t.due_date)}</Badge>;
   }
 
+  // Meta (cadência + autor) numa linha própria. Antes o autor era `max-md:hidden`
+  // → invisível no MOBILE, e o Jhonatan não sabia quem criou. Agora sempre legível,
+  // e o badge 🔁 deixa claro que é UMA série recorrente (não N duplicatas).
+  const showCreator = !done && Boolean(t.creator_name);
+  const hasMeta = Boolean(cadence) || showCreator;
+
   return (
-    <div className="flex items-center gap-sm px-md py-sm border-b border-border last:border-b-0">
+    <div className="flex items-start gap-sm px-md py-sm border-b border-border last:border-b-0">
       <TaskCheckbox done={done} overdue={overdue} disabled={busy} onClick={() => onToggle(t, !done)} />
-      <button
-        type="button"
-        onClick={() => onOpen(t)}
-        className={`flex-1 min-w-0 text-left text-body-md truncate focus-ring rounded-sm ${
-          done ? 'line-through text-fg-muted' : 'text-fg'
-        }`}
-      >
-        {t.title}
-      </button>
-      {badge}
-      {!done && t.creator_name && (
-        <span className="text-body-sm text-fg-muted whitespace-nowrap max-md:hidden">por {first(t.creator_name)}</span>
-      )}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-sm">
+          <button
+            type="button"
+            onClick={() => onOpen(t)}
+            className={`flex-1 min-w-0 text-left text-body-md truncate focus-ring rounded-sm ${
+              done ? 'line-through text-fg-muted' : 'text-fg'
+            }`}
+          >
+            {t.title}
+          </button>
+          {badge}
+        </div>
+        {hasMeta && (
+          <div className="flex items-center gap-xs mt-0.5 flex-wrap text-body-sm text-fg-muted">
+            {cadence && <Badge tone="neutral">🔁 {cadence}</Badge>}
+            {showCreator && <span className="whitespace-nowrap">por {first(t.creator_name)}</span>}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

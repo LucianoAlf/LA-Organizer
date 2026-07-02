@@ -125,3 +125,22 @@ test('entradas vazias/nulas retornam false sem lançar', () => {
     assert.strictEqual(isInfoGatheringReply(v), false);
   }
 });
+
+// ── CHOKEPOINT-FALSEFIRE-RESPONDE-SIM-NAO (Luciano 02/07 09:43) ──────────────
+test('caso real: "Adicionar Matheus ... e enviar o convite? Responde *sim* ou *não*." é confirm-seeking', () => {
+  const s = 'Adicionar *Matheus Felipe* à reunião *Reunião Time Gestão* (03/07/2026, 09:00) e enviar o convite? Responde *sim* ou *não*.';
+  assert.strictEqual(isInfoGatheringReply(s), true, 'pergunta de confirmação sem "?" trailing não pode virar confab');
+});
+
+test('"Me responde sim ou não" (sem asteriscos) também casa', () => {
+  assert.strictEqual(isInfoGatheringReply('Confirmo o cancelamento? Me responde sim ou não por favor.'), true);
+});
+
+test('CONTROLE: "Respondendo sua pergunta: sim, fechei tudo" NÃO é confirm-seeking (claim real)', () => {
+  assert.strictEqual(isInfoGatheringReply('Respondendo sua pergunta: sim, fechei tudo hoje cedo.'), false,
+    '"respondendo" não casa \brespond[ae]\b — o chokepoint segue livre pra agir no confab');
+});
+
+test('CONTROLE: "sim" e "não" longe de "responde" (>30 chars) não casam', () => {
+  assert.strictEqual(isInfoGatheringReply('Ele respondeu a mensagem ontem de tarde bem rápido e disse que talvez sim'), false);
+});

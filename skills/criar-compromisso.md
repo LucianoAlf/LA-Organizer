@@ -289,7 +289,9 @@ Quando alguém recebeu convite (via `to_name` ou `/internal/event-invites`) e re
 | reagendar | "remarca pra quinta 15h", "muda o ensaio pra sexta" | `reschedule` |
 | cancelar | "cancela a reunião com Juliana", "não vai rolar" | `cancel` |
 | concluir | **AFIRMAÇÃO** explícita: "fechei o ensaio", "rolou sim", "foi tudo certo", "fizemos a reunião" (NUNCA uma pergunta) | `complete` |
-| editar | "muda o título pra X", "põe o link da call", "foi online não presencial", "inclui o Alf" | `update` |
+| editar | "muda o título pra X", "põe o link da call", "foi online não presencial" | `update` |
+| adicionar participante | "põe a Marina na reunião", "inclui o Alf no compromisso", "chama também o Yuri" | `add_participants` |
+| remover participante | "tira o Pedro da reunião", "remove a Ana do compromisso" | `remove_participants` |
 
 ### ⚠️ Confirmação retroativa emite marker — MAS confirmação ≠ pergunta ≠ "o horário passou"
 
@@ -327,8 +329,10 @@ Se a frase menciona N eventos confirmados, o marker tem N items:
 | `cancel` | `id` |
 | `complete` | `id` |
 | `update` | `id` + ≥1 de: `title`, `description` (ou `notes`), `location_text`, `meeting_url`, `modality` |
+| `add_participants` | `id` + `names` (array de NOMES; ex.: `["Marina","Yuri"]`) |
+| `remove_participants` | `id` + `names` (array de NOMES) |
 
-Pra **adicionar participante** não há campo separado: edite `title` ou `description` com o nome. Modalidade só aceita `online`/`presencial`/`hibrido`. Os compromissos aparecem no contexto com `[id=ab12cd34]` — use o id curto; em ambiguidade pergunte UMA vez.
+Pra **adicionar/remover participante** de uma reunião existente use `add_participants`/`remove_participants` com `names` (nomes, nunca ids). Exemplo: `[{"action":"add_participants","id":"ab12cd34","names":["Marina"]}]`. ⚠️ O engine SEMPRE confirma antes ("Adicionar X à reunião Y? sim/não") — então **NUNCA diga que já adicionou/removeu no mesmo turno**; descreva o que vai fazer e espere o "sim". Se não reconhecer um nome, pergunte antes. Modalidade só aceita `online`/`presencial`/`hibrido`. Os compromissos aparecem no contexto com `[id=ab12cd34]` — use o id curto; em ambiguidade pergunte UMA vez.
 
 ### Veto — update
 - nunca sem `id`; `reschedule` exige `new_start_at` E `new_end_at` (mantenha a duração original se o user não disser); `update` exige ≥1 campo editável (senão pergunte o que mudar); nunca misture `<<EVENT_CREATE>>` e `<<EVENT_UPDATE>>` na mesma resposta.

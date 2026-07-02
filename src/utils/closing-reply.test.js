@@ -251,3 +251,25 @@ test('futureDoneItems: due com timestamp futuro também separa', () => {
   const out = futureDoneItems([{ index: 1, type: 'task', id: 'a', title: 'x' }], ['done'], { a: '2026-06-20T13:00:00Z' }, '2026-06-18');
   assert.deepStrictEqual(out.map((i) => i.id), ['a']);
 });
+
+// ── CLOSING-CANCEL-IGNORED (Yuri 01/07) ─────────────────────────────────────
+test('Yuri: "1 SIM 2 SIM 3 NÃO pode cancelar" → done, done, CANCEL (não progress)', () => {
+  const r = parseClosingReply('1 SIM\n2 SIM\n3 NÃO pode cancelar', 3);
+  assert.strictEqual(r.matched, true);
+  assert.deepStrictEqual(r.statuses, ['done', 'done', 'cancel']);
+});
+
+test('cancel direto: "3 cancela" → cancel', () => {
+  const r = parseClosingReply('1 e 2 feitas, 3 cancela', 3);
+  assert.deepStrictEqual(r.statuses, ['done', 'done', 'cancel']);
+});
+
+test('CONTROLE: "3 não fiz" segue progress (sem cancelar nada)', () => {
+  const r = parseClosingReply('1 sim, 3 não fiz', 3);
+  assert.deepStrictEqual(r.statuses, ['done', 'none', 'progress']);
+});
+
+test('CONTROLE: "pode cancelar tudo" sem número NÃO casa (cai no LLM, fail-safe)', () => {
+  const r = parseClosingReply('pode cancelar tudo', 3);
+  assert.strictEqual(r.matched, false);
+});

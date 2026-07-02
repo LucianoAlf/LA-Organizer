@@ -6,11 +6,16 @@ import { useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { todaySP } from '../utils/date';
-import { addDaysYmd, bucketizeGroupTasks, packageInMonth, type PoolTask } from '../lib/groupWorkspace';
+import { addDaysYmd, bucketizeGroupTasks, collapseRecurringSeries, packageInMonth, type PoolTask } from '../lib/groupWorkspace';
 import type { Task } from '../types';
 
 const POOL_SELECT =
   'id, title, description, status, due_date, due_time, completed_at, created_by, ' +
+  // Recorrência (2026-07-02): instância traz recurrence_parent_id; template traz
+  // recurrence_rule; o embed do pai dá a regra pra badge quando o representante é
+  // uma instância (que não carrega o rule).
+  'recurrence_parent_id, recurrence_rule, ' +
+  'recurrence_parent:tasks!tasks_recurrence_parent_id_fkey(recurrence_rule), ' +
   'creator:collaborators!tasks_created_by_fkey(full_name), ' +
   'done_by:collaborators!tasks_completed_by_fkey(full_name), ' +
   'task_reminders(id, remind_at, sent_at)';
@@ -39,6 +44,8 @@ async function fetchPool(groupId: string, todayYmd: string): Promise<PoolTaskRow
     ...r,
     creator_name: r.creator?.full_name ?? null,
     completed_by_name: r.done_by?.full_name ?? null,
+    // Regra resolvida (própria do template ou do pai) pra rotular a cadência no badge.
+    series_rule: r.recurrence_rule ?? r.recurrence_parent?.recurrence_rule ?? null,
   }));
 }
 
@@ -82,13 +89,17 @@ export function useGroupWorkspace(groupId: string | undefined, collabId: string 
     queryFn: () => fetchPackages(groupId!, today),
   });
 
-  const buckets = useMemo(() => bucketizeGroupTasks(pool.data ?? [], today), [pool.data, today]);
+  // Recorrência (2026-07-02): colapsa cada série numa linha ANTES de bucketizar e
+  // contar — senão uma tarefa diária de grupo (30 instâncias) infla abertas/feitas
+  // e entope o pool (caso Vitória/ADM CG).
+  const collapsed = useMemo(() => collapseRecurringSeries(pool.data ?? [], today), [pool.data, today]);
+  const buckets = useMemo(() => bucketizeGroupTasks(collapsed, today), [collapsed, today]);
   const stats = useMemo(() => ({
     abertas: buckets.overdue.length + buckets.dueSoon.length + buckets.later.length,
     venceEmBreve: buckets.dueSoon.length,
     atrasadas: buckets.overdue.length,
-    feitasNoMes: (pool.data ?? []).filter(t => t.status === 'done').length,
-  }), [buckets, pool.data]);
+    feitasNoMes: collapsed.filter(t => t.status === 'done').length,
+  }), [buckets, collapsed]);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['group-workspace'] });
@@ -161,7 +172,11 @@ export function useGroupWorkspace(groupId: string | undefined, collabId: string 
 // Lista /grupos: counts por grupo (1 query leve agregada em JS).
 export interface GroupCounts { abertas: number; atrasadas: number; venceEmBreve: number; feitasNoMes: number; totalMes: number; }
 
-type OverviewRow = { id: string; assigned_group_id: string; status: string; due_date: string | null; completed_at: string | null };
+type OverviewRow = {
+  id: string; assigned_group_id: string; status: string;
+  due_date: string | null; completed_at: string | null;
+  recurrence_parent_id?: string | null; recurrence_rule?: string | null;
+};
 
 export function useGroupsOverview(groupIds: string[]) {
   const today = todaySP();
@@ -171,7 +186,7 @@ export function useGroupsOverview(groupIds: string[]) {
     queryFn: async (): Promise<Record<string, GroupCounts>> => {
       const { data, error } = await supabase
         .from('tasks')
-        .select('id, assigned_group_id, status, due_date, completed_at, is_group, parent_task_id')
+        .select('id, assigned_group_id, status, due_date, completed_at, is_group, parent_task_id, recurrence_parent_id, recurrence_rule')
         .in('assigned_group_id', groupIds)
         .eq('is_group', false)
         .is('parent_task_id', null)
@@ -182,7 +197,8 @@ export function useGroupsOverview(groupIds: string[]) {
       const horizon = addDaysYmd(today, 7);
       const out: Record<string, GroupCounts> = {};
       for (const gid of groupIds) out[gid] = { abertas: 0, atrasadas: 0, venceEmBreve: 0, feitasNoMes: 0, totalMes: 0 };
-      for (const t of (data ?? []) as OverviewRow[]) {
+      // Colapsa séries recorrentes (mesma regra do pool) pra não inflar as contagens.
+      for (const t of collapseRecurringSeries((data ?? []) as OverviewRow[], today)) {
         const c = out[t.assigned_group_id]; if (!c) continue;
         if (t.status === 'done') { if ((t.completed_at ?? '') >= monthStart) c.feitasNoMes++; continue; }
         c.abertas++;

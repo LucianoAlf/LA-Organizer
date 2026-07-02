@@ -10,6 +10,14 @@ export interface PoolTask {
   status: PoolTaskStatus; due_date: string | null; due_time: string | null;
   completed_at: string | null; created_by: string | null;
   creator_name: string | null; completed_by_name: string | null;
+  // Recorrência (2026-07-02): colapso de série no pool + badge de cadência.
+  // Instância traz recurrence_parent_id; template traz recurrence_rule; series_rule
+  // é o rule RESOLVIDO (próprio ou do pai, via embed) pra rotular o badge.
+  // recurrence_series_size é anotado pelo colapso (quantas ocorrências viraram 1 linha).
+  recurrence_parent_id?: string | null;
+  recurrence_rule?: string | null;
+  series_rule?: string | null;
+  recurrence_series_size?: number;
 }
 
 export interface PoolBuckets {
@@ -65,4 +73,87 @@ export function packageInMonth(m: { status: string; due_date: string | null }, y
   // done SEM due_date fica fora — sem ancora de mês, só o ciclo aberto interessa.
   if (m.status !== 'done' && (!m.due_date || m.due_date.slice(0, 7) < ym)) return true;
   return false;
+}
+
+// ————— Recorrência no pool do grupo (2026-07-02) —————
+// PORQUÊ: uma tarefa recorrente de GRUPO materializa 1 instância por ciclo
+// (FREQ=DAILY → ~30 linhas). O pool nunca foi pensado pra isso e inundava a tela
+// (caso Vitória/ADM CG: 30× "Ligar para aluno" = ~todas as "abertas" do grupo).
+// Aqui colapsamos cada SÉRIE numa linha só — a ocorrência que o time deve olhar
+// agora — com o rule resolvido pra badge de cadência.
+
+export interface RecurringLike {
+  id: string;
+  status: string;
+  due_date: string | null;
+  completed_at: string | null;
+  recurrence_parent_id?: string | null;
+  recurrence_rule?: string | null;
+  series_rule?: string | null;
+}
+
+/** Chave da série: pai (instância) ou o próprio id (template). null = não-recorrente. */
+function seriesKey(t: RecurringLike): string | null {
+  if (t.recurrence_parent_id) return t.recurrence_parent_id;
+  if (t.recurrence_rule || t.series_rule) return t.id;
+  return null;
+}
+
+const isOpenStatus = (s: string) => s !== 'done' && s !== 'cancelled';
+
+/** Representante da série: a ocorrência que o time deve olhar AGORA.
+ *  1) aberta com prazo >= hoje, a mais próxima (menor due);
+ *  2) senão, aberta atrasada mais recente (maior due; sem prazo por último);
+ *  3) senão (nada aberto), a done mais recente. */
+function pickRepresentative<T extends RecurringLike>(members: T[], todayYmd: string): T | null {
+  const open = members.filter((m) => isOpenStatus(m.status));
+  if (open.length > 0) {
+    const upcoming = open
+      .filter((m) => m.due_date && m.due_date >= todayYmd)
+      .sort((a, b) => (a.due_date ?? '').localeCompare(b.due_date ?? ''));
+    if (upcoming.length > 0) return upcoming[0];
+    const overdue = open
+      .filter((m) => m.due_date)
+      .sort((a, b) => (b.due_date ?? '').localeCompare(a.due_date ?? ''));
+    return overdue[0] ?? open[0];
+  }
+  const done = members
+    .filter((m) => m.status === 'done' && m.completed_at)
+    .sort((a, b) => (b.completed_at ?? '').localeCompare(a.completed_at ?? ''));
+  return done[0] ?? null;
+}
+
+/** Colapsa séries recorrentes numa linha (o representante). Não-recorrentes passam
+ *  intactas (mantendo ordem). Anota recurrence_series_size no representante. Preserva
+ *  o tipo T (usável no pool E no overside de contagem). Não muta a entrada. */
+export function collapseRecurringSeries<T extends RecurringLike>(rows: T[], todayYmd: string): T[] {
+  const groups = new Map<string, T[]>();
+  const out: T[] = [];
+  for (const r of rows) {
+    const key = seriesKey(r);
+    if (key == null) { out.push(r); continue; }
+    const g = groups.get(key);
+    if (g) g.push(r); else groups.set(key, [r]);
+  }
+  for (const members of groups.values()) {
+    const rep = pickRepresentative(members, todayYmd);
+    if (rep) out.push({ ...rep, recurrence_series_size: members.length });
+  }
+  return out;
+}
+
+/** RRULE → rótulo curto de cadência pro badge ("diária", "semanal", "mensal"…). */
+export function recurrenceLabel(rule: string | null | undefined): string | null {
+  if (!rule) return null;
+  const r = rule.toUpperCase();
+  const freq = /FREQ=([A-Z]+)/.exec(r)?.[1];
+  const interval = Number(/INTERVAL=(\d+)/.exec(r)?.[1] ?? '1');
+  switch (freq) {
+    case 'DAILY':   return interval > 1 ? `a cada ${interval}d` : 'diária';
+    case 'WEEKLY':  return /BYDAY=MO,TU,WE,TH,FR/.test(r) ? 'dias úteis'
+                         : interval > 1 ? `a cada ${interval}sem` : 'semanal';
+    case 'MONTHLY': return interval > 1 ? `a cada ${interval}m` : 'mensal';
+    case 'YEARLY':  return 'anual';
+    default:        return 'recorrente';
+  }
 }

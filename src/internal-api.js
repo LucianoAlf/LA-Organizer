@@ -907,6 +907,45 @@ router.post('/internal/subtask-parent-complete', requireInternalSecret, async (r
   }
 });
 
+// Volta da delegação (2026-07-02) — conclusão pelo APP de uma tarefa delegada: avisa o
+// delegador + quem está em cópia (+ devolutiva opcional). Anti-confab no helper (re-lê done
+// no banco). Body: { task_id, actor_id, note? }.
+router.post('/internal/task-complete-return', requireInternalSecret, async (req, res) => {
+  const taskId = String(req.body?.task_id || '').trim();
+  const actorId = req.body?.actor_id ? String(req.body.actor_id).trim() : null;
+  const note = req.body?.note ? String(req.body.note) : null;
+  if (!taskId) return res.status(400).json({ error: 'missing_task_id' });
+  try {
+    const taskReturn = require('./services/task-return');
+    const whatsapp = require('./services/whatsapp');
+    await taskReturn.saveReturnComment({ supabase, taskId, authorId: actorId, note });
+    const { sent } = await taskReturn.notifyTaskReturn({ supabase, whatsapp, taskId, actorId, kind: 'completion', note });
+    return res.json({ status: 'ok', sent });
+  } catch (err) {
+    console.error('[InternalAPI] task-complete-return err:', err.message);
+    return res.status(500).json({ error: 'internal_error', message: err.message });
+  }
+});
+
+// Devolutiva AVULSA (executor OU em-cópia, a qualquer momento) pelo APP → círculo da tarefa
+// (menos o autor). Body: { task_id, author_id, note }.
+router.post('/internal/task-return', requireInternalSecret, async (req, res) => {
+  const taskId = String(req.body?.task_id || '').trim();
+  const authorId = req.body?.author_id ? String(req.body.author_id).trim() : null;
+  const note = req.body?.note ? String(req.body.note) : null;
+  if (!taskId || !note || !note.trim()) return res.status(400).json({ error: 'missing_fields' });
+  try {
+    const taskReturn = require('./services/task-return');
+    const whatsapp = require('./services/whatsapp');
+    await taskReturn.saveReturnComment({ supabase, taskId, authorId, note });
+    const { sent } = await taskReturn.notifyTaskReturn({ supabase, whatsapp, taskId, actorId: authorId, kind: 'return', note });
+    return res.json({ status: 'ok', sent });
+  } catch (err) {
+    console.error('[InternalAPI] task-return err:', err.message);
+    return res.status(500).json({ error: 'internal_error', message: err.message });
+  }
+});
+
 // Dashboard de time — botão "Cobrar agora": cobrança MANUAL disparada pelo líder/CEO. Manda
 // WhatsApp IMEDIATO pro responsável da tarefa, em nome de quem clicou. Transacional (ação do
 // líder, não job proativo) → envia na hora, sem gate de quiet-hours (mesma classe do task-delegated).

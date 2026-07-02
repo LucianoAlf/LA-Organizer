@@ -29,6 +29,7 @@ const approvalsService = require('./services/approvals');
 const noteMarker = require('./services/note-marker');
 const verbatimNote = require('./services/verbatim-note');
 const notesService = require('./services/notes');
+const taskReturn = require('./services/task-return');
 const { jaroWinkler, normalizeForSim } = require('./services/text-similarity');
 const { findDuplicateNote } = require('./services/note-dedup');
 // NOTE-DEDUP: bypass de re-tentativa. Se o usuário insistir ("cria outra mesmo") logo após
@@ -168,7 +169,7 @@ const SHORT_ID_RE = /^([a-f0-9]{4,12}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-
 const VALID_TASK_ACTIONS = new Set([
   'complete', 'cancel', 'reschedule', 'create', 'delegate',
   'extension_request', 'extension_decision', 'governance_reassign',
-  'snooze_reminders',
+  'snooze_reminders', 'return',
   'mark-item', 'mark_item', // Checklist ativo (2026-06-28): marca sub-item (filha via parent_task_id)
 ]);
 const VALID_COACHING = ['light', 'normal', 'hard'];
@@ -181,7 +182,7 @@ const pendingDupEvents = new Map(); // collabId → { event, timestamp }
 const pendingDupTasks  = new Map(); // collabId → { task, timestamp }
 // Sprint 22.26 — VALID_EVENT_CATEGORIES era set fixo; agora a validacao acontece
 // em runtime via lookupEventCategoryBySlug (tabela event_categories). Removido.
-const VALID_EVENT_UPDATE_ACTIONS = new Set(['reschedule', 'cancel', 'complete', 'update']);
+const VALID_EVENT_UPDATE_ACTIONS = new Set(['reschedule', 'cancel', 'complete', 'update', 'add_participants', 'remove_participants']);
 // Sprint 31.15 (Quintela/Luciano 03/06) — verbos naturais de RSVP que o LLM emite no lugar
 // do canônico action:rsvp. Em vez de rejeitar (action:invalid → "Sim, confirmo" virava
 // confabulação "presença confirmada"), são roteados pro applyRsvp (lookup GLOBAL do evento,
@@ -2260,6 +2261,12 @@ function parseEventCreateMarker(text) {
   // TOM às vezes emite esse schema errado; converte em vez de rejeitar.
   for (const item of items) {
     if (item && typeof item === 'object') {
+      // BYPASS-INTEGRITY-LLM-FREE (Luciano 02/07 00:09): o LLM emitiu bypass_integrity:true
+      // por conta própria ("dessa vez o marker vai com bypass_integrity") e furou a trava de
+      // duplicata → evento duplicado criado por cima dos existentes. O bypass é PRIVILÉGIO do
+      // fluxo determinístico 1/2/3 (DupBypass ~7222 injeta o flag PÓS-parse, no objeto JS —
+      // não passa por aqui). Vindo do JSON do marker, é dropado sempre.
+      if ('bypass_integrity' in item) delete item.bypass_integrity;
       if ((!item.start_at || !ISO_DATETIME_RE.test(item.start_at)) && item.event_date && item.start_time) {
         const base = String(item.event_date).slice(0, 10); // YYYY-MM-DD
         const st = String(item.start_time).padStart(5, '0'); // HH:MM
@@ -2561,11 +2568,13 @@ async function applyEventActions(collaborator, events, opts = {}) {
       if (data?.id && Array.isArray(e.attendees) && e.attendees.length > 0) {
         try {
           const { resolveAttendees } = require('./lib/resolve-attendees');
+          const { enqueueOutbound } = require('./lib/outbound-queue');
           const { resolved, unresolved } = await resolveAttendees(
             e.attendees,
             (nm) => resolveCollaboratorByName(nm, { requester: collaborator })
           );
           let invited = 0;
+          const inviteRows = [];
           for (const { collaborator: part } of resolved) {
             if (!part || part.id === collaborator.id || part.is_active === false) continue;
             const { error: partErr } = await supabase.from('event_participants').insert({
@@ -2579,11 +2588,13 @@ async function applyEventActions(collaborator, events, opts = {}) {
               const whenStr = (() => { try { const d = safeDate(e.start_at); return d ? d.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' }) : e.start_at; } catch { return e.start_at; } })();
               const locPart = e.location_text ? `\n📍 ${String(e.location_text).slice(0, 80)}` : '';
               const inviteMsg = `📅 *${senderName}* te convidou pra um compromisso:\n\n*${row.title}*\n🗓️ ${whenStr}${locPart}\n\nConfirma presença? Responde *"vou"* ou *"não posso"*.`;
-              whatsapp.sendMessage(part.phone, inviteMsg).catch(err => console.error(`[Event] attendee invite err: ${err.message}`));
+              // Fila durável (anti-ban): em vez de disparar os N convites juntos, enfileira espaçado.
+              inviteRows.push({ phone: part.phone, body: inviteMsg, meta: { collaborator_id: part.id, kind: 'event_invite', event_id: data.id, sender_name: senderName } });
               await logConversation(part.id, 'outbound', `[convite de ${senderName}: ${row.title}]`);
             }
           }
-          console.log(`[Event] attendees event=${String(data.id).slice(0, 8)}: ${invited} convidados${unresolved.length ? `, ${unresolved.length} não resolvidos (${unresolved.join(', ')})` : ''}`);
+          if (inviteRows.length) await enqueueOutbound(supabase, inviteRows, {});
+          console.log(`[Event] attendees event=${String(data.id).slice(0, 8)}: ${invited} convidados${unresolved.length ? `, ${unresolved.length} não resolvidos (${unresolved.join(', ')})` : ''} (${inviteRows.length} convites enfileirados)`);
         } catch (attErr) {
           console.warn('[Event] attendees branch err (non-fatal):', attErr.message);
         }
@@ -2700,6 +2711,10 @@ function validateEventUpdateAction(a) {
     const hasReminders = Array.isArray(a.reminders_minutes_before);
     if (!hasField && !hasReminders) return 'update:no_editable_field';
     if (typeof a.modality === 'string' && a.modality.trim() && !VALID_EVENT_MODALITIES.has(a.modality)) return 'modality:invalid';
+  }
+  if (a.action === 'add_participants' || a.action === 'remove_participants') {
+    // 02/07 — edição de participantes por chat. Exige lista de nomes não-vazia.
+    if (!Array.isArray(a.names) || !a.names.some((n) => typeof n === 'string' && n.trim())) return 'names:invalid';
   }
   return null;
 }
@@ -3220,6 +3235,8 @@ async function applyPersonalListActions(collab, actions) {
 
 async function applyEventUpdates(collaborator, actions) {
   let okCount = 0, failCount = 0;
+  let awaitingConfirm = false; // 02/07 — turno é pergunta/relato de participant-edit → o caller
+                               // seta _metrics.awaiting_user_confirm (senão ACTIONABLE_NO_MARKER rebaixa)
   const failMessages = []; // F5 — perguntas/avisos da guarda temporal sobem pro caller
   const last4 = String(collaborator.phone || '').slice(-4);
   for (const a of actions) {
@@ -3242,6 +3259,65 @@ async function applyEventUpdates(collaborator, actions) {
         console.warn(`[Event] ${a.action} REJECTED — participante só pode completar, não ${a.action} id=${a.id}`);
         failCount++;
         continue;
+      }
+      // 02/07 — add/remove participantes: CONFIRM-FIRST. NÃO aplica aqui; resolve nomes,
+      // planeja o diff idempotente e ABRE intent 'confirmation' (payload.participant_edit).
+      // O executor determinístico roda só no "sim" (closing-interceptor). Espelha o guard de
+      // complete-futuro: failCount++ + pergunta em failMessages (o caller mostra a pergunta e
+      // descarta a prosa otimista do LLM). NUNCA diz "adicionei" antes do sim.
+      if (a.action === 'add_participants' || a.action === 'remove_participants') {
+        const op = a.action === 'add_participants' ? 'add' : 'remove';
+        // O turno é 100% desta rede (pergunta de confirmação, relato de noop, ou erro honesto):
+        // nunca é "ação sem marker" — suprime o ACTIONABLE_NO_MARKER que rebaixaria a pergunta.
+        awaitingConfirm = true;
+        try {
+          const { resolveAttendees } = require('./lib/resolve-attendees');
+          const { planParticipantEdit } = require('./lib/participant-edit');
+          const { resolved, unresolved } = await resolveAttendees(
+            a.names, (nm) => resolveCollaboratorByName(nm, { requester: collaborator })
+          );
+          const resolvedIds = resolved.map((r) => r.collaborator && r.collaborator.id).filter(Boolean);
+          const nameById = new Map(resolved.map((r) => [
+            r.collaborator && r.collaborator.id,
+            (r.collaborator && (r.collaborator.preferred_name || r.collaborator.full_name)) || r.name,
+          ]));
+          const { data: existing } = await supabase.from('event_participants')
+            .select('collaborator_id').eq('event_id', ev.id);
+          const existingIds = (existing || []).map((x) => x.collaborator_id);
+          const plan = planParticipantEdit({ op, resolvedIds, existingIds, organizerId: collaborator.id });
+          const targetIds = op === 'add' ? plan.toAdd : plan.toRemove;
+          if (!targetIds.length) {
+            // nada real a fazer → reporta honesto (não-resolvido / noop / rejeitado), sem abrir confirm.
+            const parts = [];
+            if (unresolved.length) parts.push(`não achei: ${unresolved.join(', ')}`);
+            if (plan.rejected.length) parts.push(op === 'remove' ? 'você é o organizador, não dá pra se remover' : 'você já é o dono do evento');
+            if (plan.noops.length) parts.push(op === 'add' ? 'já estava(m) na lista' : 'não estava(m) na lista');
+            failMessages.push(`Sobre *${ev.title}*: ${parts.join('; ') || 'nada a mudar'}.`);
+            failCount++;
+            continue;
+          }
+          const nomes = targetIds.map((id) => nameById.get(id) || 'alguém');
+          const quando = ev.start_at ? new Date(ev.start_at).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' }) : '';
+          const verbo = op === 'add' ? 'Adicionar' : 'Remover';
+          const prep = op === 'add' ? 'à' : 'da';
+          const tail = op === 'add' ? ' e enviar o convite' : '';
+          const q = `${verbo} *${nomes.join(', ')}* ${prep} reunião *${ev.title}*${quando ? ` (${quando})` : ''}${tail}? Responde *sim* ou *não*.`;
+          // SEM anchor.type='event' de propósito: isola do guard de complete-futuro (que chaveia
+          // por anchor-id do evento) — um "sim" daqui nunca autoriza um complete. Consumer keia por
+          // payload.participant_edit.
+          await pendingIntents.openIntent(collaborator.id, 'confirmation',
+            { participant_edit: { event_id: ev.id, op, ids: targetIds, names: nomes, title: ev.title } },
+            q);
+          failMessages.push(q);
+          failCount++;
+          console.log(`[Event] ${a.action} PROPOSTO id=${String(ev.id).slice(0, 8)} → ${targetIds.length} alvo(s), aguardando "sim"`);
+          continue;
+        } catch (peErr) {
+          console.warn('[Event] participant-edit propose err (não-fatal):', peErr.message);
+          failMessages.push(`Tive um problema pra ${op === 'add' ? 'adicionar' : 'remover'} participante(s) em *${ev.title}*. Tenta de novo?`);
+          failCount++;
+          continue;
+        }
       }
       let patch = {};
       // Sprint 31.x — edição de lembrete do evento (reminders_minutes_before). É um array,
@@ -3363,6 +3439,38 @@ async function applyEventUpdates(collaborator, actions) {
           console.warn('[Event] reschedule reminders resync falhou (não-fatal):', e.message);
         }
       }
+      // 02/07 — reschedule AVISA todos os convidados (invited+confirmed+tentative, exclui
+      // declined e o próprio organizador). Via fila durável (anti-ban). Só o dono reagenda,
+      // então isto só dispara quando ev tem participantes de verdade.
+      if (a.action === 'reschedule') {
+        try {
+          const { enqueueOutbound } = require('./lib/outbound-queue');
+          const { data: parts } = await supabase
+            .from('event_participants')
+            .select('collaborator_id, status')
+            .eq('event_id', ev.id)
+            .in('status', ['invited', 'confirmed', 'tentative']);
+          const partIds = (parts || []).map((p) => p.collaborator_id).filter((id) => id && id !== collaborator.id);
+          if (partIds.length) {
+            const { data: cols } = await supabase
+              .from('collaborators')
+              .select('id, phone, is_active')
+              .in('id', partIds);
+            const senderName = (collaborator.preferred_name || collaborator.full_name || '').split(' ')[0];
+            const whenStr = (() => { try { const d = safeDate(a.new_start_at); return d ? d.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' }) : a.new_start_at; } catch { return a.new_start_at; } })();
+            const rows = [];
+            for (const c of (cols || [])) {
+              if (!c.phone || c.is_active === false) continue;
+              const body = `📅 A reunião *${ev.title}* foi remarcada por *${senderName}*: agora *${whenStr}*.`;
+              rows.push({ phone: c.phone, body, meta: { collaborator_id: c.id, kind: 'event_reschedule', event_id: ev.id, sender_name: senderName } });
+            }
+            if (rows.length) {
+              await enqueueOutbound(supabase, rows, {});
+              console.log(`[Event] reschedule fan-out: ${rows.length} avisos enfileirados p/ ${String(ev.id).slice(0, 8)}`);
+            }
+          }
+        } catch (e) { console.warn('[Event] reschedule fan-out falhou (não-fatal):', e.message); }
+      }
       // Sprint 31.x — edição de lembrete: substitui os event_reminders NÃO-ENVIADOS pelo
       // novo conjunto computado de reminders_minutes_before (relativo ao start_at atual).
       // [] = remover todos os pendentes. Os já enviados (sent_at != null) ficam como
@@ -3397,7 +3505,7 @@ async function applyEventUpdates(collaborator, actions) {
       failCount++;
     }
   }
-  return { okCount, failCount, failMessages };
+  return { okCount, failCount, failMessages, awaitingConfirm };
 }
 
 // Parse <<WEEKLY_PLAN>>{...}<<END>> — weekly planning marker.
@@ -3558,6 +3666,13 @@ function validateTaskAction(a) {
     if (!hasId && !hasTitle) return 'bad_id';
     const clearAll = a.clear_all === true || a.clear_all === 'true';
     if (!clearAll && !isValidRemindAt(a.not_before)) return 'snooze_needs_not_before_or_clear_all';
+  } else if (a.action === 'return') {
+    // Devolutiva avulsa (A2, 2026-07-02): retorno numa tarefa delegada, SEM concluir.
+    // Aceita id OU title (resolvido no handler entre tarefas que executo/acompanho) + note.
+    const hasId = typeof a.id === 'string' && SHORT_ID_RE.test(a.id);
+    const hasTitle = typeof a.title === 'string' && a.title.trim().length > 0;
+    if (!hasId && !hasTitle) return 'bad_id';
+    if (typeof a.note !== 'string' || !a.note.trim()) return 'note_missing';
   } else if (a.action === 'mark-item') {
     // Checklist ativo (2026-06-28): marca/desmarca um sub-item (filha via parent_task_id).
     // Exige parent_id (short-id) + (item_id short-id OU item_title). done opcional (default true).
@@ -4425,7 +4540,9 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
             }
           } catch (e) { /* não-fatal */ }
           await logAgentNote(t.id, `Concluída por ${nameForCollab(collaborator)}`, collaborator.id);
-          await notifyTaskCreatorOfAction(fullTask, collaborator, 'complete');
+          // Volta da delegação (2026-07-02): conclusão pelo zap avisa delegador + em-cópia + devolutiva opcional (a.note).
+          await taskReturn.saveReturnComment({ supabase, taskId: t.id, authorId: collaborator.id, note: a.note });
+          await taskReturn.notifyTaskReturn({ supabase, whatsapp, taskId: t.id, actorId: collaborator.id, kind: 'completion', note: a.note ?? null });
           // Sprint 31.1 — fecha pending_followups dessa task
           try {
             const pendingFollowups = require('./services/pending-followups');
@@ -4447,6 +4564,60 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
             }
           } catch (e) { /* não-fatal */ }
           okCount++;
+        }
+      } else if (a.action === 'return') {
+        // Volta da delegação (A2, 2026-07-02): devolutiva avulsa pelo zap. Executor OU
+        // em-cópia manda um retorno → chega pra quem delegou + o círculo (menos o autor).
+        // NÃO conclui. Espelha o botão "Deixar devolutiva" do app. O pool só tem tarefas
+        // que EU executo ou acompanho → estar no pool já É a autorização (executor|watcher).
+        // Anti-confab: se não achar / não for delegada, NÃO finge que mandou.
+        const rnote = String(a.note || '').trim();
+        if (!rnote) { failCount++; continue; }
+        const { data: mineOpen } = await supabase
+          .from('tasks').select('id, title, assigned_to')
+          .eq('assigned_to', collaborator.id)
+          .not('status', 'in', '("done","cancelled")').limit(500);
+        const { data: wRows } = await supabase
+          .from('task_watchers').select('task_id').eq('collaborator_id', collaborator.id);
+        const rWatchedIds = (wRows || []).map((w) => w.task_id).filter(Boolean);
+        let rWatchedOpen = [];
+        if (rWatchedIds.length) {
+          const { data: wt } = await supabase
+            .from('tasks').select('id, title, assigned_to')
+            .in('id', rWatchedIds)
+            .not('status', 'in', '("done","cancelled")').limit(500);
+          rWatchedOpen = wt || [];
+        }
+        const rPool = new Map();
+        for (const rt of [...(mineOpen || []), ...rWatchedOpen]) rPool.set(rt.id, rt);
+        let rTarget = null;
+        if (a.id && SHORT_ID_RE.test(a.id)) {
+          const rPref = String(a.id).replace(/-/g, '').toLowerCase();
+          for (const rt of rPool.values()) {
+            if (String(rt.id).replace(/-/g, '').toLowerCase().startsWith(rPref)) { rTarget = rt; break; }
+          }
+        }
+        if (!rTarget && typeof a.title === 'string' && a.title.trim()) {
+          const rQ = a.title.trim().toLowerCase().slice(0, 60);
+          for (const rt of rPool.values()) {
+            if (String(rt.title || '').toLowerCase().includes(rQ)) { rTarget = rt; break; }
+          }
+        }
+        if (!rTarget) {
+          failMessages.push('Não achei uma tarefa delegada (tua ou em cópia) pra deixar a devolutiva. Me diz qual é?');
+          console.warn(`[Task] return: task não resolvida id=${a.id || '-'} title="${a.title || ''}" for ${last4}`);
+          failCount++;
+          continue;
+        }
+        await taskReturn.saveReturnComment({ supabase, taskId: rTarget.id, authorId: collaborator.id, note: rnote });
+        const rRet = await taskReturn.notifyTaskReturn({ supabase, whatsapp, taskId: rTarget.id, actorId: collaborator.id, kind: 'return', note: rnote });
+        if (rRet && rRet.sent > 0) {
+          console.log(`[Task] return OK task=${String(rTarget.id).slice(0, 8)} by ${last4} sent=${rRet.sent}`);
+          okCount++;
+        } else {
+          failMessages.push(`Não consegui repassar a devolutiva de *${rTarget.title}* — isso só vale em tarefa delegada (responsável e quem delegou diferentes).`);
+          console.warn(`[Task] return NO-OP task=${String(rTarget.id).slice(0, 8)} by ${last4}`);
+          failCount++;
         }
       } else if (a.action === 'cancel') {
         // Sprint 31 — handler cancel (title-lookup igual complete/reschedule)
@@ -8445,6 +8616,7 @@ async function processMessage(phone, text, raw = {}) {
         const completed = [];
         const progressItems = [];
         const noneItems = [];
+        const cancelledItems = []; // CLOSING-CANCEL-IGNORED (Yuri 01/07): "3 pode cancelar" cancela de verdade
         const futureItems = []; // (b) due futura → NÃO fecha no fechamento de hoje (caso Quintela)
         // Busca due_date das tasks ancoradas p/ a guarda de futura — defense-in-depth do filtro
         // do builder (rede de segurança: o interceptor nunca fecha tarefa de amanhã).
@@ -8476,6 +8648,20 @@ async function processMessage(phone, text, raw = {}) {
               }
             } catch (cEx) { console.warn('[Closing] complete err:', cEx.message); }
             if (ok) completed.push(it); else noneItems.push(it); // falhou a escrita → não mente "feito"
+          } else if (st === 'cancel') {
+            // CLOSING-CANCEL-IGNORED (Yuri 01/07): pedido explícito de cancelar no fechamento.
+            // Antes caía em 'progress' e o cancel era dropado em silêncio (tarefa seguia pending).
+            let okC = false;
+            try {
+              if (it.type === 'task') {
+                const { error } = await supabase.from('tasks').update({ status: 'cancelled' }).eq('id', it.id);
+                okC = !error;
+              } else {
+                const { error } = await supabase.from('events').update({ status: 'cancelled' }).eq('id', it.id);
+                okC = !error;
+              }
+            } catch (cEx) { console.warn('[Closing] cancel err:', cEx.message); }
+            if (okC) cancelledItems.push(it); else noneItems.push(it); // falhou → não mente "cancelei"
           } else if (st === 'progress') {
             progressItems.push(it);
           } else {
@@ -8492,10 +8678,12 @@ async function processMessage(phone, text, raw = {}) {
         };
         const parts = [`Fechamento, ${nick} 👽`, ''];
         if (completed.length) parts.push(`✅ Fechei: ${completed.map((c) => `*${c.title}*`).join(', ')}`);
+        if (cancelledItems.length) parts.push(`❌ Cancelei: ${cancelledItems.map((c) => `*${c.title}*`).join(', ')}`);
         if (progressItems.length) parts.push(`⏳ Em andamento: ${progressItems.map((c) => `*${c.title}*`).join(', ')}`);
         if (noneItems.length) parts.push(`⭕ Faltou: ${noneItems.map((c) => `*${c.title}*`).join(', ')}`);
         if (futureItems.length) parts.push(`📅 É de amanhã, deixei aberta: ${futureItems.map((c) => `*${c.title}*`).join(', ')}`);
-        const _dayTotal = items.length - futureItems.length; // futuras não contam no fechamento de hoje
+        // futuras E canceladas fora do denominador (cancelada não é "faltou" nem "feita")
+        const _dayTotal = items.length - futureItems.length - cancelledItems.length;
         parts.push('');
         if (_dayTotal > 0) {
           parts.push(mkBar(completed.length, _dayTotal));
@@ -8674,6 +8862,83 @@ async function processMessage(phone, text, raw = {}) {
   }
 
   // ---- Fechar/cancelar PROJETO por chat (determinístico, pré-LLM) ----
+  // 02/07 — ADD/REMOVE PARTICIPANTE: confirm-first + executor determinístico (família
+  // FIN-CONFIRM-CONFAB-NOOP). O "sim" aplica no event_participants; o LLM NÃO re-emite marker.
+  // Keia em payload.participant_edit (sem anchor → não colide com nenhum outro consumer).
+  try {
+    const _peIntent = _openIntents.find((i) =>
+      i.kind === 'confirmation' && i.payload && i.payload.participant_edit
+      && withinConfirmWindow(i.asked_at, 60));
+    if (_peIntent) {
+      const _yn = pendingIntents.detectUserConfirmation(stripReplyScaffold(String(text || '')).userText);
+      if (_yn === 'no') {
+        await pendingIntents.resolveIntent(_peIntent.id, 'denied', 'participant_edit denied');
+        const out = 'Beleza, deixei a lista como tá. 👍';
+        try { await whatsapp.sendMessage(phone, out); await logConversation(collab.id, 'outbound', out); } catch (e) { console.warn('[ParticipantEdit] deny post err:', e.message); }
+        console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (participant_edit_denied)`);
+        return;
+      }
+      if (_yn === 'yes') {
+        const pe = _peIntent.payload.participant_edit;
+        const evId = pe.event_id;
+        let okN = 0, failN = 0;
+        try {
+          if (pe.op === 'add') {
+            const { enqueueOutbound } = require('./lib/outbound-queue');
+            const { data: evRow } = await supabase.from('events')
+              .select('id, title, start_at, location_text').eq('id', evId).single();
+            const senderName = (collab.preferred_name || collab.full_name || '').split(' ')[0];
+            const inviteRows = [];
+            for (const cid of pe.ids) {
+              const { error: insErr } = await supabase.from('event_participants').insert({
+                event_id: evId, collaborator_id: cid, status: 'invited',
+                invited_by: collab.id, invited_at: new Date().toISOString(),
+              });
+              if (insErr) { console.warn(`[ParticipantEdit] insert err ${String(cid).slice(0, 8)}: ${insErr.message}`); failN++; continue; }
+              okN++;
+              const { data: c } = await supabase.from('collaborators').select('phone, is_active').eq('id', cid).single();
+              if (c && c.phone && c.is_active !== false && evRow) {
+                const whenStr = (() => { try { const d = safeDate(evRow.start_at); return d ? d.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', dateStyle: 'short', timeStyle: 'short' }) : evRow.start_at; } catch { return evRow.start_at; } })();
+                const locPart = evRow.location_text ? `\n📍 ${String(evRow.location_text).slice(0, 80)}` : '';
+                const body = `📅 *${senderName}* te convidou pra um compromisso:\n\n*${evRow.title}*\n🗓️ ${whenStr}${locPart}\n\nConfirma presença? Responde *"vou"* ou *"não posso"*.`;
+                inviteRows.push({ phone: c.phone, body, meta: { collaborator_id: cid, kind: 'event_invite', event_id: evId, sender_name: senderName } });
+                await logConversation(cid, 'outbound', `[convite de ${senderName}: ${evRow.title}]`);
+              }
+            }
+            if (inviteRows.length) await enqueueOutbound(supabase, inviteRows, {});
+          } else { // remove — silencioso (o convidado só some da agenda dele)
+            const { error: delErr } = await supabase.from('event_participants')
+              .delete().eq('event_id', evId).in('collaborator_id', pe.ids);
+            if (delErr) { console.warn('[ParticipantEdit] delete err:', delErr.message); failN = pe.ids.length; }
+            else okN = pe.ids.length;
+          }
+        } catch (exErr) {
+          console.error('[ParticipantEdit] executor err:', exErr.message);
+        }
+        await pendingIntents.resolveIntent(_peIntent.id, 'confirmed', `participant_edit ${pe.op} ok=${okN} fail=${failN}`);
+        const nomes = (pe.names || []).join(', ');
+        let out;
+        if (okN > 0 && failN === 0) {
+          out = pe.op === 'add'
+            ? `✅ Adicionei *${nomes}* à reunião — ${okN === 1 ? 'convite na fila' : 'convites na fila'}.`
+            : `✅ Removi *${nomes}* da reunião.`;
+        } else if (okN > 0) {
+          out = `Consegui ${pe.op === 'add' ? 'adicionar' : 'remover'} ${okN}, mas ${failN} deu erro. Quer tentar de novo os que faltaram?`;
+        } else {
+          out = `_Não consegui ${pe.op === 'add' ? 'adicionar' : 'remover'} agora — tenta de novo daqui a pouco?_`;
+        }
+        try {
+          await whatsapp.sendMessage(phone, out);
+          await logConversation(collab.id, 'outbound', out);
+          await logMarker(collab.id, 'EVENT_UPDATE', okN > 0 ? 'executed' : 'rejected', `participant_${pe.op} ok=${okN} fail=${failN}`, null);
+        } catch (e) { console.warn('[ParticipantEdit] confirm post err:', e.message); }
+        console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (participant_edit_${pe.op}_ok${okN})`);
+        return;
+      }
+      // _yn === null → não é sim/não claro → segue (não consome o turno)
+    }
+  } catch (e) { console.warn('[ParticipantEdit] consumer err:', e.message); }
+
   // KRISSYA-PROJECT-CLOSE-NO-HANDLER (auditoria 30/06). Confirm-first + executor determinístico
   // (família FIN-CONFIRM-CONFAB-NOOP): o "sim" dispara applyProjectStatusChange, o LLM NÃO
   // re-emite marker. (a) resolve confirmação de projeto JÁ aberta; (b) detecta nova intenção.
@@ -10277,7 +10542,10 @@ async function processMessage(phone, text, raw = {}) {
       }
       reply = baseEU;
     } else if (parsedEU) {
-      const { okCount, failCount, failMessages: evFailMessages } = await applyEventUpdates(collab, parsedEU.actions);
+      const { okCount, failCount, failMessages: evFailMessages, awaitingConfirm: evAwaitingConfirm } = await applyEventUpdates(collab, parsedEU.actions);
+      // participant-edit (add/remove) abriu pergunta de confirmação / relatou noop → não é
+      // ACTIONABLE_NO_MARKER (senão o guard rebaixaria a pergunta pra "não foi executada").
+      if (evAwaitingConfirm) _metrics.awaiting_user_confirm = true;
       console.log(`[Event] update batch: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
       const result = okCount > 0 ? 'executed' : 'rejected';
       const reason = okCount > 0 ? `ok=${okCount} fail=${failCount}` : `all_failed:${failCount}`;
@@ -10300,6 +10568,14 @@ async function processMessage(phone, text, raw = {}) {
         if (_ch.fired) {
           base = _ch.reply;
           try { await logMarker(collab.id, 'COUNT_HONESTY', 'redirected', `event:claimed=${_ch.claimed} ok=${okCount}`, String(base).slice(0, 160)); } catch (_) {}
+        }
+        // 02/07 — LOTE MISTO (ok + pergunta pendente): failMessages carrega a PERGUNTA de
+        // confirmação (participant-edit / guarda temporal). O branch acima só mostrava as
+        // failMessages com okCount===0, então "corrige modalidade + adiciona Matheus" aplicava
+        // a modalidade e ENGOLIA a pergunta (intent ficava aberta e o user nem sabia do "sim").
+        // Pergunta com intent aberta NUNCA pode sumir — anexa ao final da prosa.
+        if (evFailMessages && evFailMessages.length) {
+          base = (base ? base + '\n\n' : '') + evFailMessages.join('\n');
         }
       }
       reply = base || reply;
@@ -11664,6 +11940,19 @@ async function processMessage(phone, text, raw = {}) {
         console.warn(`[Engine] UNKNOWN_MARKER_STRIPPED — names=[${matchNames.join(',')}] sample="${sample}"`);
         await logMarker(collab.id, 'UNKNOWN_MARKER_STRIPPED', 'rejected',
           `names:${matchNames.slice(0, 5).join(',')} delta:${before.length - reply.length}`, before);
+        // UNKNOWN-MARKER-STRIPPED-SILENT-PARTIAL (Fefê 01/07): se o que foi removido era
+        // marker CONHECIDO (ex: TASK_UPDATE malformado sem <<END>>), trabalho real foi
+        // perdido — a prosa do LLM ("Reagendando as 3 ✅") vira mentira parcial que o
+        // chokepoint não pega (algo persistiu). Anexa aviso honesto pedindo pra repetir.
+        // Alucinação pura (TASK_CREATE etc.) segue stripada em silêncio.
+        try {
+          const { detectKnownMarkerLoss, PARTIAL_LOSS_DISCLAIMER } = require('./lib/known-marker-partial');
+          const _loss = detectKnownMarkerLoss(matchNames);
+          if (_loss.lost && reply) {
+            reply = `${reply}\n\n${PARTIAL_LOSS_DISCLAIMER}`;
+            console.warn(`[Engine] KNOWN_MARKER_LOSS — ${_loss.known.join(',')} malformado(s) removido(s), aviso honesto anexado`);
+          }
+        } catch (_) { /* aviso é best-effort, nunca quebra o fluxo */ }
         // Se reply ficou vazio, fallback genérico (modelo só emitiu marker errado).
         if (!reply) reply = '_recebi sua mensagem mas tive um problema pra responder. Tenta de novo?_';
       }

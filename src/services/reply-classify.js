@@ -44,7 +44,14 @@ const _INFO_GATHERING_RE = /\b(?:me\s+(?:manda|mande|envia|envie|diz|diga|passa|
 // nem quebra de linha) entre a palavra-confirm e o "?". O limite de 15 mantém narrow:
 // claim real + pergunta não-confirmatória longe ("✅ Fechei tudo. Mais alguma coisa?")
 // NÃO casa → o chokepoint segue disparando no confab.
-const _CONFIRM_SEEKING_RE = /\bse\s+(?:voc[êe]\s+)?(?:confirmar|confirma|ok|aprovar|topar|fechar)\b|\b(?:certo|confirma|confirmo|confirmar)\b[^?\n]{0,15}\?/i;
+//
+// CHOKEPOINT-FALSEFIRE-RESPONDE-SIM-NAO (Luciano 02/07 09:43) — a pergunta de confirmação
+// do participant_add termina em "Responde *sim* ou *não*." SEM "?" no fim. Nem
+// hasTrailingQuestion nem as 2 alternativas acima pegavam → o chokepoint tratou como
+// confab e SUBSTITUIU a pergunta por "problema técnico ... nada entrou na agenda" (matou
+// o fluxo; Alf repetiu 2x). A 3ª alternativa reconhece o imperativo "responde/responda …
+// sim/não" como confirm-seeking. (\brespond[ae]\b não casa "respondendo" — o \b barra.)
+const _CONFIRM_SEEKING_RE = /\bse\s+(?:voc[êe]\s+)?(?:confirmar|confirma|ok|aprovar|topar|fechar)\b|\b(?:certo|confirma|confirmo|confirmar)\b[^?\n]{0,15}\?|\brespond[ae]\b[^?\n]{0,30}\b(?:sim|n[ãa]o)\b/i;
 
 /**
  * A reply pede um insumo ao user pra prosseguir (convite/futuro) OU pede confirmação

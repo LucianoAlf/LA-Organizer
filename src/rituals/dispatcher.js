@@ -1872,6 +1872,67 @@ async function dispatchAnnouncements(now = new Date()) {
   await handleCancellations(whatsapp);
 }
 
+// ── Fila de envio DURÁVEL genérica (outbound_queue) — 02/07 ───────────────────
+// Dreno anti-ban: envia as msgs vencidas (scheduled_at<=now), espaçadas, respeitando
+// quiet-hours do destinatário. Retry com backoff até max_attempts. Persistente: sobrevive
+// a restart do pm2 (linhas 'pending' voltam no próximo tick). Ver src/lib/outbound-queue.js.
+async function drainOutboundQueue(now = new Date()) {
+  const whatsapp = require('../services/whatsapp');
+  const nowIso = now instanceof Date ? now.toISOString() : new Date().toISOString();
+  const MAX_PER_TICK = 8;
+  const DELAY_MIN_MS = 3000;
+  const DELAY_MAX_MS = 6000;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  const { data: rows, error } = await supabase
+    .from('outbound_queue')
+    .select('id, phone, body, meta, attempts, max_attempts')
+    .eq('status', 'pending')
+    .lte('scheduled_at', nowIso)
+    .order('scheduled_at', { ascending: true })
+    .limit(MAX_PER_TICK);
+  if (error) { console.error('[OutboundQueue] drain query err:', error.message); return; }
+  if (!rows || !rows.length) return;
+
+  let sent = 0, deferred = 0, failed = 0;
+  for (const row of rows) {
+    // Quiet-hours do destinatário (contexto work: convite/aviso de agenda). Silêncio → adia
+    // +20min (não consome tentativa; re-checa no próximo tick até sair do silêncio).
+    const cid = row.meta && row.meta.collaborator_id;
+    if (cid) {
+      try {
+        const q = await isQuietNow(cid, nowSaoPaulo(), 'work');
+        if (q && q.quiet) {
+          await supabase.from('outbound_queue')
+            .update({ scheduled_at: new Date(now.getTime() + 20 * 60 * 1000).toISOString() })
+            .eq('id', row.id);
+          deferred++;
+          continue;
+        }
+      } catch (qe) { console.warn('[OutboundQueue] quiet check err (segue enviando):', qe.message); }
+    }
+    try {
+      await whatsapp.sendMessage(row.phone, row.body);
+      await supabase.from('outbound_queue')
+        .update({ status: 'sent', sent_at: new Date().toISOString() })
+        .eq('id', row.id);
+      sent++;
+      console.log(`[OutboundQueue] sent ${String(row.id).slice(0, 8)} → ${String(row.phone).slice(-4)} (${(row.meta && row.meta.kind) || 'msg'})`);
+    } catch (err) {
+      const attempts = (row.attempts || 0) + 1;
+      const max = row.max_attempts || 3;
+      const upd = attempts >= max
+        ? { status: 'failed', attempts, last_error: String(err.message).slice(0, 200) }
+        : { attempts, last_error: String(err.message).slice(0, 200), scheduled_at: new Date(now.getTime() + 2 * 60 * 1000).toISOString() };
+      await supabase.from('outbound_queue').update(upd).eq('id', row.id);
+      if (attempts >= max) failed++;
+      console.error(`[OutboundQueue] send err ${String(row.id).slice(0, 8)} (try ${attempts}/${max}):`, err.message);
+    }
+    await sleep(DELAY_MIN_MS + Math.floor(Math.random() * (DELAY_MAX_MS - DELAY_MIN_MS)));
+  }
+  if (sent || deferred || failed) console.log(`[OutboundQueue] tick: ${sent} enviadas, ${deferred} adiadas(quiet), ${failed} falhas`);
+}
+
 // Sprint 22.X — Comunicados Fatia 1: lembrete pra quem recebeu e não confirmou
 // após 6h. Idempotente via reminder_sent_at no announcement_jobs.
 async function remindUnconfirmedAnnouncements(now = new Date()) {
@@ -4329,6 +4390,13 @@ async function run(opts = {}) {
     console.error('[Dispatcher] dispatchAnnouncements erro:', err.message);
   }
 
+  // Fila de envio durável (convites de reunião, avisos de reschedule) — anti-ban, 02/07
+  try {
+    await drainOutboundQueue(new Date());
+  } catch (err) {
+    console.error('[Dispatcher] drainOutboundQueue erro:', err.message);
+  }
+
   // Sprint Agenda v2 — dispatch automático do resumo mensal da agenda escolar
   // (dia 1 do mês às 09:00 BRT, pra toda equipe). Idempotente via header do body.
   try {
@@ -5873,4 +5941,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { run, dispatchChecklists, dispatchPersonalRecurrentes, dispatchAnnouncements, remindUnconfirmedAnnouncements, notifyCoordinators, remindEventTasks, remindOperationalTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined, isFirstMondayOfMonth, isLastFridayOfMonth, listLeadership, checkMonthlyPlanning, checkMonthlyClosing, dispatchMonthlyAgenda, expirarReservasVencidas, ceoTeamUnclosedEventsReport, ceoTeamUnclosedTasksReport, perLeaderUnclosedTasksReport, sendGovernanceDigest, buildScorecardDigestSection, sendLeaderGovernanceDigest, buildAdherenceText };
+module.exports = { run, drainOutboundQueue, dispatchChecklists, dispatchPersonalRecurrentes, dispatchAnnouncements, remindUnconfirmedAnnouncements, notifyCoordinators, remindEventTasks, remindOperationalTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined, isFirstMondayOfMonth, isLastFridayOfMonth, listLeadership, checkMonthlyPlanning, checkMonthlyClosing, dispatchMonthlyAgenda, expirarReservasVencidas, ceoTeamUnclosedEventsReport, ceoTeamUnclosedTasksReport, perLeaderUnclosedTasksReport, sendGovernanceDigest, buildScorecardDigestSection, sendLeaderGovernanceDigest, buildAdherenceText };

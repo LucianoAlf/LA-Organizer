@@ -92,7 +92,8 @@ const BLOCK_RULES = `# 🚨 REGRAS INVIOLÁVEIS — PRIORIDADE MÁXIMA
     **🚨 CHECKLIST FINAL OBRIGATÓRIA antes de enviar resposta:** releia seu texto. Se contém QUALQUER uma dessas frases, o marker correspondente PRECISA estar na resposta:
     - "lembrete às X" / "lembro às X" / "te aviso às X" / "te cobro às X" / "vou te lembrar" / "vou cobrar" / "te lembro" → \`<<TASK_UPDATE>>\` action="reschedule" ou "create" com \`remind_at\` ISO completo (ex: \`"2026-05-27T15:00:00-03:00"\`)
     - "marquei pra hoje/amanhã/segunda" / "agendei pra" / "coloquei pra" / "reagendei pra" / "movi pra" → \`<<TASK_UPDATE>>\` com \`due_date\` (e \`remind_at\` se mencionou horário) OU \`<<EVENT_UPDATE>>\` action="reschedule"
-    - "tá feito" / "dei baixa" / "marquei como concluído" / "fechei" / "concluí" → \`<<TASK_UPDATE>>\` action="complete"
+    - "tá feito" / "dei baixa" / "marquei como concluído" / "fechei" / "concluí" → \`<<TASK_UPDATE>>\` action="complete" (opcional: \`note\` = recado curto pra quem delegou, ex.: "concluí X, já falei com a mãe")
+    - "manda/deixa uma devolutiva" / "avisa quem me passou" / "dá um retorno pra quem delegou" — numa tarefa DELEGADA que você executa ou acompanha EM CÓPIA, SEM concluir → \`<<TASK_UPDATE>>\` action="return" com \`id\` (ou \`title\`) + \`note\` (o texto do retorno). Como avisa OUTRAS pessoas (quem delegou + em cópia), vale a Regra 71: pergunte "mando a devolutiva pra Fulano? confirma?" e só emita o marker após o "sim". NÃO conclui a tarefa.
     - "criei" / "abri" / "registrei" + nome de task/evento/projeto → \`<<TASK_UPDATE>>\` action="create" ou \`<<EVENT_CREATE>>\` ou \`<<PROJECT_CREATE>>\`
     - "cancelei" / "tirei" / "removi" + nome de item → marker action="cancel"
     - "fecha/conclui/encerra o PROJETO X" / "cancela o PROJETO X" → NÃO emita marker; o sistema confirma e muda o status do projeto. NUNCA afirme que fechou/cancelou o projeto antes de o usuário confirmar.

@@ -26,6 +26,14 @@ test('nomes de campo interno (to_name/attendees) somem', () => {
   assert.strictEqual(stripMechanismLeak('Passei os attendees no evento.').fired, true);
 });
 
+test('caso real 02/07: "o engine confirmar" some, o resto fica', () => {
+  const s = 'Dois ajustes na *Reunião Time Gestão*:\n· Modalidade corrigida → online\n· Matheus sendo adicionado — convite sai quando o engine confirmar';
+  const r = stripMechanismLeak(s);
+  assert.strictEqual(r.fired, true);
+  assert.ok(!/engine/i.test(r.reply), 'sem "engine"');
+  assert.match(r.reply, /Modalidade corrigida/, 'a linha boa permanece');
+});
+
 test('CONTROLE: "marquei"/"marcador"/"esquema"/"engenharia" NÃO disparam (sem falso-positivo)', () => {
   for (const s of ['✅ Marquei a reunião!', 'Coloquei no marcador de tarefas', 'Fiz um esquema pra você', 'Falei com a engenharia sobre isso']) {
     assert.strictEqual(stripMechanismLeak(s).fired, false, s);
