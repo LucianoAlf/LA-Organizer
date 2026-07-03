@@ -1,5 +1,7 @@
 .ssh/
 scripts/setup-vps-key.sh
+.mcp.json
+node_modules/
 
 # Sprint 22.26c — git credential manager (Windows) cria esse dir durante clone.
 # Nao tem nada a ver com o repo; entrava no commit por engano.

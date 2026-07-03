@@ -1,8 +1,15 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import CodeMirror from '@uiw/react-codemirror';
+import { markdown } from '@codemirror/lang-markdown';
+import { oneDark } from '@codemirror/theme-one-dark';
+import { EditorView } from '@codemirror/view';
 import {
   Plus, X, Eye, EyeOff, Pencil, Copy, Check, AlertCircle, Search, Trash2,
-  ShieldCheck, CheckCircle2, AlertTriangle, AlertOctagon, MinusCircle,
+  ShieldCheck, CheckCircle2, AlertTriangle, AlertOctagon, MinusCircle, Maximize2, Minimize2,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { LoadingState } from '../components/LoadingState';
@@ -14,6 +21,89 @@ export type Categoria = 'whatsapp' | 'api_key' | 'token' | 'vps' | 'social' | 'e
 export type Status = 'ok' | 'atencao' | 'critico';
 type Campo = { label: string; valor: string; sensivel: boolean };
 
+// ── Observações: callouts coloridos por convenção (estilo Obsidian) ──
+// Sintaxe: "> [!nota] texto", "> [!atencao] texto", "> [!critico] texto"
+type CalloutKind = 'nota' | 'atencao' | 'critico';
+type ObsSegment = { kind: CalloutKind | 'plain'; text: string };
+
+const CALLOUT_STYLES: Record<CalloutKind, { cls: string; Icon: typeof AlertCircle; label: string }> = {
+  nota:     { cls: 'bg-blue-500/10 border-blue-500/30 text-blue-300',       Icon: AlertCircle,   label: 'Nota' },
+  atencao:  { cls: 'bg-yellow-500/10 border-yellow-500/30 text-yellow-300', Icon: AlertTriangle, label: 'Atenção' },
+  critico:  { cls: 'bg-red-500/10 border-red-500/30 text-red-300',         Icon: AlertOctagon,  label: 'Crítico' },
+};
+
+function parseCalloutSegments(raw: string): ObsSegment[] {
+  const lines = raw.split('\n');
+  const segments: ObsSegment[] = [];
+  const calloutStart = /^>\s*\[!(nota|atencao|critico)\]\s?(.*)$/i;
+  let plainBuf: string[] = [];
+  const flushPlain = () => {
+    if (plainBuf.length) { segments.push({ kind: 'plain', text: plainBuf.join('\n') }); plainBuf = []; }
+  };
+  let i = 0;
+  while (i < lines.length) {
+    const m = lines[i].match(calloutStart);
+    if (m) {
+      flushPlain();
+      const kind = m[1].toLowerCase() as CalloutKind;
+      const bodyLines = [m[2]];
+      i++;
+      while (i < lines.length && /^>\s?/.test(lines[i])) {
+        bodyLines.push(lines[i].replace(/^>\s?/, ''));
+        i++;
+      }
+      segments.push({ kind, text: bodyLines.join('\n').trim() });
+      continue;
+    }
+    plainBuf.push(lines[i]);
+    i++;
+  }
+  flushPlain();
+  return segments;
+}
+
+function CalloutBox({ kind, children }: { kind: CalloutKind; children: ReactNode }) {
+  const { cls, Icon, label } = CALLOUT_STYLES[kind];
+  return (
+    <div className={`flex gap-2 border-l-2 rounded-md px-3 py-2 ${cls}`}>
+      <Icon size={14} className="shrink-0 mt-0.5" />
+      <div className="min-w-0 [&_p]:m-0 [&_a]:text-tom [&_a]:underline [&_strong]:font-semibold">
+        <div className="text-[11px] font-semibold uppercase tracking-wide mb-0.5">{label}</div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function ObservacoesPreview({ text }: { text: string }) {
+  if (!text.trim()) return <p className="text-[13px] text-fg-muted italic">Nenhuma observação.</p>;
+  const segments = parseCalloutSegments(text);
+  return (
+    <div className="space-y-2 text-[13px] text-fg leading-relaxed
+      [&_p]:m-0
+      [&_a]:text-tom [&_a]:underline
+      [&_strong]:font-semibold [&_em]:italic
+      [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:space-y-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:space-y-1
+      [&_h1]:text-[30px] [&_h1]:font-bold [&_h1]:mt-4 [&_h1]:mb-2 [&_h1]:leading-tight [&_h1]:tracking-tight
+      [&_h2]:text-[22px] [&_h2]:font-bold [&_h2]:mt-4 [&_h2]:mb-1.5
+      [&_h3]:text-[17px] [&_h3]:font-semibold [&_h3]:mt-3 [&_h3]:mb-1
+      [&_h4]:text-[13px] [&_h4]:font-semibold [&_h4]:uppercase [&_h4]:tracking-wide [&_h4]:text-fg-muted
+      [&_hr]:border-border [&_hr]:my-3
+      [&_code]:bg-bg-elevated [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-[12px] [&_code]:font-mono
+      [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_blockquote]:text-fg-muted
+      [&_table]:w-full [&_table]:text-[12px] [&_th]:text-left [&_th]:font-semibold [&_th]:border-b [&_th]:border-border [&_th]:px-2 [&_th]:py-1 [&_td]:border-b [&_td]:border-border/50 [&_td]:px-2 [&_td]:py-1">
+      {segments.map((seg, i) => seg.kind === 'plain'
+        ? (seg.text.trim() ? <ReactMarkdown key={i} remarkPlugins={[remarkGfm]}>{seg.text}</ReactMarkdown> : null)
+        : (
+          <CalloutBox key={i} kind={seg.kind}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{seg.text}</ReactMarkdown>
+          </CalloutBox>
+        )
+      )}
+    </div>
+  );
+}
+
 export type CredRow = {
   id: string;
   nome: string;
@@ -23,6 +113,8 @@ export type CredRow = {
   responsavel: string | null;
   campos_count: number;
   status: Status;
+  campos: Campo[] | null;
+  observacoes: string | null;
 };
 
 type CredFull = CredRow & { campos: Campo[]; url_ref: string | null; observacoes: string | null };
@@ -118,11 +210,21 @@ export function GovernancaPage() {
   const [observacoes, setObservacoes] = useState('');
   const [campos,      setCampos]      = useState<Campo[]>([]);
   const [campoRev,    setCampoRev]    = useState<Set<number>>(new Set());
+  const [obsMode,     setObsMode]     = useState<'edit' | 'preview'>('edit');
+  const [obsExpanded, setObsExpanded] = useState(false);
 
   useEffect(() => {
     document.body.style.overflow = drawerOpen ? 'hidden' : '';
     return () => { document.body.style.overflow = ''; };
   }, [drawerOpen]);
+
+  // Esc fecha o modo expandido das observações
+  useEffect(() => {
+    if (!obsExpanded) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setObsExpanded(false); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [obsExpanded]);
 
   // ── List query ──────────────────────────────────────────
   const { data, isLoading, error } = useQuery({
@@ -130,7 +232,7 @@ export function GovernancaPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('governance_credentials')
-        .select('id, nome, categoria, servico, projeto, responsavel, campos_count, status')
+        .select('id, nome, categoria, servico, projeto, responsavel, campos_count, status, campos, observacoes')
         .order('categoria').order('nome');
       if (error) throw error;
       return data as CredRow[];
@@ -220,6 +322,7 @@ export function GovernancaPage() {
     setServico(''); setProjeto(''); setResponsavel('');
     setUrlRef(''); setObservacoes(''); setCampos([]);
     setCampoRev(new Set());
+    setObsMode('edit'); setObsExpanded(false);
     setDrawerMode('create');
   }
 
@@ -235,6 +338,7 @@ export function GovernancaPage() {
     setObservacoes('');
     setCampos([]);
     setCampoRev(new Set());
+    setObsMode('preview'); setObsExpanded(false);
     setSelectedId(row.id);
     setDrawerMode('detail');
   }
@@ -304,7 +408,14 @@ export function GovernancaPage() {
     if (filter !== 'todos' && c.categoria !== filter) return false;
     if (search) {
       const q = search.toLowerCase();
-      if (!c.nome.toLowerCase().includes(q) && !(c.servico ?? '').toLowerCase().includes(q)) return false;
+      const matches =
+        c.nome.toLowerCase().includes(q) ||
+        (c.servico ?? '').toLowerCase().includes(q) ||
+        (c.projeto ?? '').toLowerCase().includes(q) ||
+        (c.responsavel ?? '').toLowerCase().includes(q) ||
+        (c.observacoes ?? '').toLowerCase().includes(q) ||
+        (c.campos ?? []).some(campo => campo.label.toLowerCase().includes(q));
+      if (!matches) return false;
     }
     return true;
   });
@@ -340,7 +451,7 @@ export function GovernancaPage() {
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg-muted pointer-events-none" />
             <input
               type="search"
-              placeholder="Buscar por nome ou serviço..."
+              placeholder="Buscar por nome, serviço, projeto, responsável..."
               value={search}
               onChange={e => setSearch(e.target.value)}
               className="w-full h-9 bg-bg-elevated border border-border rounded-lg pl-9 pr-3 text-[13px] text-fg placeholder:text-fg-muted focus-ring outline-none"
@@ -673,16 +784,110 @@ export function GovernancaPage() {
 
             {/* Observações */}
             <div className="flex flex-col gap-1">
-              <label className="text-[11px] font-semibold uppercase tracking-wider text-fg-muted">Observações</label>
-              <textarea
-                value={observacoes} onChange={e => setObservacoes(e.target.value)}
-                placeholder="Notas adicionais, contexto, alertas…"
-                rows={3}
-                className="w-full bg-bg-elevated border border-border rounded-lg px-3 py-2 text-[13px] text-fg placeholder:text-fg-muted focus-ring outline-none resize-none"
-              />
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-fg-muted">Observações</label>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setObsMode(m => m === 'edit' ? 'preview' : 'edit')}
+                    className="text-[11px] font-medium text-fg-muted hover:text-fg px-2 py-1 rounded-md hover:bg-bg-elevated focus-ring"
+                  >
+                    {obsMode === 'edit' ? 'Preview' : 'Editar'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setObsMode('preview'); setObsExpanded(true); }}
+                    aria-label="Expandir observações"
+                    title="Expandir"
+                    className="h-6 w-6 grid place-items-center rounded-md hover:bg-bg-elevated focus-ring text-fg-muted"
+                  >
+                    <Maximize2 size={13} />
+                  </button>
+                </div>
+              </div>
+
+              {obsMode === 'edit' ? (
+                <textarea
+                  value={observacoes} onChange={e => setObservacoes(e.target.value)}
+                  placeholder="Notas adicionais, contexto, alertas… (markdown: **negrito**, listas, links; > [!nota]/[!atencao]/[!critico] para destaque colorido)"
+                  rows={4}
+                  className="w-full min-h-[96px] max-h-[420px] bg-bg-elevated border border-border rounded-lg px-3 py-2.5 text-[13px] leading-relaxed text-fg placeholder:text-fg-muted focus-ring outline-none resize-y"
+                />
+              ) : (
+                <div
+                  onClick={() => setObsMode('edit')}
+                  className="w-full min-h-[96px] max-h-[420px] resize-y overflow-y-auto bg-bg-elevated border border-border rounded-lg px-3 py-2.5 cursor-text"
+                >
+                  <ObservacoesPreview text={observacoes} />
+                </div>
+              )}
+              <p className="text-[10px] text-fg-muted/70">Arraste o canto inferior direito para aumentar o campo.</p>
             </div>
 
           </form>
+        )}
+
+        {/* Observações — modo expandido (tela cheia). Portal p/ document.body:
+            o drawer tem transform, que confina position:fixed ao próprio drawer. */}
+        {obsExpanded && createPortal(
+          <div className="fixed inset-0 z-[60] flex flex-col bg-bg-app animate-[fadein_150ms_ease-out]">
+            {/* Header */}
+            <div className="h-14 shrink-0 flex items-center gap-3 px-5 border-b border-border">
+              <h3 className="text-[15px] font-bold text-fg truncate">Observações — {nome || 'Credencial'}</h3>
+
+              {/* Abas Editar / Preview (estilo GitHub) */}
+              <div className="flex-1 flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setObsMode('preview')}
+                  className={`text-[13px] font-medium px-3 py-1.5 rounded-md transition-colors ${obsMode === 'preview' ? 'bg-bg-elevated text-fg' : 'text-fg-muted hover:text-fg hover:bg-bg-elevated/50'}`}
+                >
+                  Preview
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setObsMode('edit')}
+                  className={`text-[13px] font-medium px-3 py-1.5 rounded-md transition-colors ${obsMode === 'edit' ? 'bg-bg-elevated text-fg' : 'text-fg-muted hover:text-fg hover:bg-bg-elevated/50'}`}
+                >
+                  Editar
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setObsExpanded(false)}
+                aria-label="Fechar"
+                title="Fechar (Esc)"
+                className="h-9 w-9 grid place-items-center rounded-lg bg-bg-elevated border border-border text-fg-muted hover:text-fg transition-colors"
+              >
+                <Minimize2 size={16} />
+              </button>
+            </div>
+
+            {/* Body — um painel por vez conforme a aba ativa */}
+            <div className="flex-1 min-h-0 overflow-hidden">
+              {obsMode === 'edit' ? (
+                <CodeMirror
+                  value={observacoes}
+                  onChange={setObservacoes}
+                  theme={oneDark}
+                  extensions={[markdown(), EditorView.lineWrapping]}
+                  placeholder="Notas adicionais, contexto, alertas… (markdown: # título, **negrito**, listas, links; > [!nota]/[!atencao]/[!critico] para destaque colorido)"
+                  height="100%"
+                  style={{ height: '100%' }}
+                  className="cm-obs h-full text-[14px]"
+                  basicSetup={{ lineNumbers: true, foldGutter: false, highlightActiveLine: true }}
+                />
+              ) : (
+                <div className="h-full overflow-y-auto px-6 py-5">
+                  <div className="max-w-3xl mx-auto">
+                    <ObservacoesPreview text={observacoes} />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>,
+          document.body
         )}
 
         {/* Footer */}
