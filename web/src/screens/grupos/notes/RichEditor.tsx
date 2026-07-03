@@ -20,10 +20,15 @@ const IA_ACTIONS: { key: FormatAction; label: string; Icon: LucideIcon }[] = [
   { key: 'tone', label: 'Deixar mais claro', Icon: Feather },
 ];
 
+// Conjunto CURADO de emojis úteis (status/marcação) — pedido da Juliana 02/07.
+// Espelha o padrão da paleta de cores (popover na toolbar), sem virar teclado gigante.
+const NOTE_EMOJIS = ['✅', '❌', '⚠️', '🚫', '❓', '⭐', '📌', '🔴', '🟢', '🟡', '🔵', '➡️', '💡', '📅', '🔔', '👍', '👎', '🔥', '✏️', '📎'];
+
 // Editor visual (TipTap) do corpo livre da ficha + botão "✨ Formatar com o TOM".
 export function RichEditor({ valueHtml, onChange }: { valueHtml: string; onChange: (html: string) => void }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [colorOpen, setColorOpen] = useState(false);
+  const [emojiOpen, setEmojiOpen] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState('');
   const [preview, setPreview] = useState<{ before: string; after: string } | null>(null);
@@ -47,18 +52,19 @@ export function RichEditor({ valueHtml, onChange }: { valueHtml: string; onChang
   // Padrão "click-outside": só anexa o listener enquanto algum está aberto.
   // pointerdown cobre mouse + toque (PWA) num único evento.
   useEffect(() => {
-    if (!linkOpen && !colorOpen && !menuOpen) return;
+    if (!linkOpen && !colorOpen && !menuOpen && !emojiOpen) return;
     function onDocPointerDown(e: PointerEvent) {
       if (toolbarRef.current && !toolbarRef.current.contains(e.target as Node)) {
         setLinkOpen(false);
         setColorOpen(false);
+        setEmojiOpen(false);
         setMenuOpen(false);
         setInstrOpen(false);
       }
     }
     document.addEventListener('pointerdown', onDocPointerDown);
     return () => document.removeEventListener('pointerdown', onDocPointerDown);
-  }, [linkOpen, colorOpen, menuOpen]);
+  }, [linkOpen, colorOpen, menuOpen, emojiOpen]);
 
   const editor = useEditor({
     extensions: [StarterKit, TextStyle, Color, Link.configure({ openOnClick: false })],
@@ -66,7 +72,9 @@ export function RichEditor({ valueHtml, onChange }: { valueHtml: string; onChang
     onUpdate: ({ editor }) => onChange(editor.getHTML()),
     editorProps: {
       attributes: {
-        class: 'focus:outline-none min-h-[160px] text-body-sm text-fg leading-relaxed [&_h2]:text-body-lg [&_h2]:font-semibold [&_ul]:list-disc [&_ul]:pl-5 [&_a]:text-tom [&_strong]:text-fg',
+        // [&_p]:min-h — preserva linha em branco (parágrafo vazio) com altura de 1 linha,
+        // pra bater com o display (bug Juliana 02/07: linha pulada sumia ao salvar).
+        class: 'focus:outline-none min-h-[160px] text-body-sm text-fg leading-relaxed [&_p]:min-h-[1.4em] [&_h2]:text-body-lg [&_h2]:font-semibold [&_ul]:list-disc [&_ul]:pl-5 [&_a]:text-tom [&_strong]:text-fg',
       },
     },
   });
@@ -138,14 +146,19 @@ export function RichEditor({ valueHtml, onChange }: { valueHtml: string; onChang
   const btn = (active: boolean) =>
     `grid place-items-center w-8 h-8 rounded-md border shrink-0 focus-ring ${active ? 'border-tom text-tom' : 'border-border text-fg-muted hover:text-fg'}`;
 
+  // Impede que o clique na toolbar roube o foco e COLAPSE a seleção do editor antes
+  // do comando rodar (bug clássico de contenteditable; endurece cor/emoji na seleção).
+  const preventSel = (e: { preventDefault: () => void }) => e.preventDefault();
+
   return (
     <div className="border border-border rounded-md">
       <div ref={toolbarRef} className="flex items-center gap-1 flex-wrap p-1.5 border-b border-border bg-bg-surface relative">
-        <button type="button" aria-label="Negrito" className={btn(editor.isActive('bold'))} onClick={() => editor.chain().focus().toggleBold().run()}><Bold size={15} /></button>
-        <button type="button" aria-label="Itálico" className={btn(editor.isActive('italic'))} onClick={() => editor.chain().focus().toggleItalic().run()}><Italic size={15} /></button>
-        <button type="button" aria-label="Título" className={btn(editor.isActive('heading', { level: 2 }))} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}><Heading2 size={15} /></button>
-        <button type="button" aria-label="Lista" className={btn(editor.isActive('bulletList'))} onClick={() => editor.chain().focus().toggleBulletList().run()}><List size={15} /></button>
-        <button type="button" aria-label="Cor do texto" className={btn(colorOpen)} onClick={() => { setLinkOpen(false); setMenuOpen(false); setColorOpen((o) => !o); }}><Palette size={15} /></button>
+        <button type="button" aria-label="Negrito" className={btn(editor.isActive('bold'))} onMouseDown={preventSel} onClick={() => editor.chain().focus().toggleBold().run()}><Bold size={15} /></button>
+        <button type="button" aria-label="Itálico" className={btn(editor.isActive('italic'))} onMouseDown={preventSel} onClick={() => editor.chain().focus().toggleItalic().run()}><Italic size={15} /></button>
+        <button type="button" aria-label="Título" className={btn(editor.isActive('heading', { level: 2 }))} onMouseDown={preventSel} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}><Heading2 size={15} /></button>
+        <button type="button" aria-label="Lista" className={btn(editor.isActive('bulletList'))} onMouseDown={preventSel} onClick={() => editor.chain().focus().toggleBulletList().run()}><List size={15} /></button>
+        <button type="button" aria-label="Cor do texto" className={btn(colorOpen)} onMouseDown={preventSel} onClick={() => { setLinkOpen(false); setMenuOpen(false); setEmojiOpen(false); setColorOpen((o) => !o); }}><Palette size={15} /></button>
+        <button type="button" aria-label="Emoji" className={btn(emojiOpen)} onMouseDown={preventSel} onClick={() => { setLinkOpen(false); setMenuOpen(false); setColorOpen(false); setEmojiOpen((o) => !o); }}><Smile size={15} /></button>
         <div className="relative">
           <button type="button" aria-label="Link" className={btn(editor.isActive('link') || linkOpen)} onClick={openLink}><Link2 size={15} /></button>
           {linkOpen && (
@@ -211,9 +224,17 @@ export function RichEditor({ valueHtml, onChange }: { valueHtml: string; onChang
         {colorOpen && (
           <div className="absolute left-0 top-full mt-1 z-30 flex flex-wrap items-center gap-xs p-2 bg-bg-elevated border border-border rounded-md shadow-lg w-60">
             {NOTE_COLORS.map((c) => (
-              <button key={c} type="button" aria-label={`Cor do texto ${c}`} onClick={() => { ensureSelection(); editor.chain().focus().setColor(c).run(); setColorOpen(false); }} className="w-6 h-6 rounded-full focus-ring shrink-0" style={{ background: c }} />
+              <button key={c} type="button" aria-label={`Cor do texto ${c}`} onMouseDown={preventSel} onClick={() => { ensureSelection(); editor.chain().focus().setColor(c).run(); setColorOpen(false); }} className="w-6 h-6 rounded-full focus-ring shrink-0" style={{ background: c }} />
             ))}
-            <button type="button" onClick={() => { editor.chain().focus().unsetColor().run(); setColorOpen(false); }} className="text-caption text-fg-muted px-2">limpar</button>
+            <button type="button" onMouseDown={preventSel} onClick={() => { editor.chain().focus().unsetColor().run(); setColorOpen(false); }} className="text-caption text-fg-muted px-2">limpar</button>
+          </div>
+        )}
+
+        {emojiOpen && (
+          <div className="absolute left-0 top-full mt-1 z-30 flex flex-wrap items-center gap-1 p-2 bg-bg-elevated border border-border rounded-md shadow-lg w-64">
+            {NOTE_EMOJIS.map((em) => (
+              <button key={em} type="button" aria-label={`Inserir ${em}`} onMouseDown={preventSel} onClick={() => { editor.chain().focus().insertContent(em).run(); setEmojiOpen(false); }} className="w-8 h-8 grid place-items-center rounded-md hover:bg-bg-surface text-lg leading-none focus-ring shrink-0">{em}</button>
+            ))}
           </div>
         )}
       </div>

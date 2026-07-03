@@ -86,7 +86,7 @@ export function NotaDetalhe({ note, idx, onEdit, onBack, onDeleted }: Props) {
           {bodyHtml && (
             <div className="mb-lg">
               <div className="text-label uppercase tracking-wide text-fg-muted mb-xs">Anotações livres</div>
-              <div className="text-body-md text-fg-muted leading-relaxed [&_h1]:text-h3 [&_h2]:text-body-lg [&_h2]:font-semibold [&_h2]:text-fg [&_ul]:list-disc [&_ul]:pl-5 [&_a]:text-tom [&_code]:bg-bg-elevated [&_code]:px-1 [&_code]:rounded [&_strong]:text-fg" dangerouslySetInnerHTML={{ __html: bodyHtml }} />
+              <div className="text-body-md text-fg-muted leading-relaxed [&_p]:min-h-[1.4em] [&_h1]:text-h3 [&_h2]:text-body-lg [&_h2]:font-semibold [&_h2]:text-fg [&_ul]:list-disc [&_ul]:pl-5 [&_a]:text-tom [&_code]:bg-bg-elevated [&_code]:px-1 [&_code]:rounded [&_strong]:text-fg" dangerouslySetInnerHTML={{ __html: bodyHtml }} />
             </div>
           )}
           {isOwner && lines.some((l) => l.actionable && !linkedLines.has(l.lineNo)) && (
