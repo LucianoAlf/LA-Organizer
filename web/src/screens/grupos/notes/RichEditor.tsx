@@ -22,7 +22,7 @@ const IA_ACTIONS: { key: FormatAction; label: string; Icon: LucideIcon }[] = [
 
 // Conjunto CURADO de emojis úteis (status/marcação) — pedido da Juliana 02/07.
 // Espelha o padrão da paleta de cores (popover na toolbar), sem virar teclado gigante.
-const NOTE_EMOJIS = ['✅', '❌', '⚠️', '🚫', '❓', '⭐', '📌', '🔴', '🟢', '🟡', '🔵', '➡️', '💡', '📅', '🔔', '👍', '👎', '🔥', '✏️', '📎'];
+const NOTE_EMOJIS = ['✅', '❌', '⚠️', '🚫', '❓', '⭐', '📌', '🎯', '🔴', '🟢', '🟡', '🔵', '➡️', '💡', '📅', '🔔', '👍', '👎', '🔥', '✏️', '📝', '📎'];
 
 // Editor visual (TipTap) do corpo livre da ficha + botão "✨ Formatar com o TOM".
 export function RichEditor({ valueHtml, onChange }: { valueHtml: string; onChange: (html: string) => void }) {
