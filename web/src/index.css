@@ -175,16 +175,3 @@
   30%            { opacity: 1;    transform: translateY(-3px); }
 }
 
-/* ── Fade-in (overlay fullscreen) ────────────────────────────────────── */
-@keyframes fadein {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-
-/* ── CodeMirror editor de Observações (markdown highlight, tela cheia) ── */
-.cm-obs, .cm-obs .cm-editor { height: 100%; }
-.cm-obs .cm-editor { background: transparent; }
-.cm-obs .cm-scroller { padding: 12px 8px; font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; }
-.cm-obs .cm-gutters { background: transparent; border-right: 1px solid rgb(var(--border)); }
-.cm-obs .cm-focused { outline: none; }
-
