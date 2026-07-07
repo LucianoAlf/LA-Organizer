@@ -5468,11 +5468,13 @@ async function checkEventReminders() {
       } else {
         console.log(`[EventReminders] fired ${String(r.id).slice(0,8)} "${ev.title.slice(0,40)}" → ${collab.phone.slice(-4)}`);
       }
-      // 👥 F4 — Reunião de grupo: lembra também os participantes CONFIRMADOS (aprovado Alf 01/07).
-      // Respeita DND/quiet de cada um; fan-out não-fatal (nunca quebra o lembrete do dono).
+      // 👥 F4 — Reunião de grupo: lembra também os participantes (aprovado Alf 01/07).
+      // confirmed + invited (quem não respondeu precisa do lembrete AINDA MAIS — caso L.A Culture
+      // 07/07: Yuri/Jereh 'invited' ficariam sem o 14h30 que o card prometeu "pra todos").
+      // declined fica fora. Respeita DND/quiet de cada um; fan-out não-fatal (nunca quebra o dono).
       try {
         const { data: _parts } = await supabase.from('event_participants')
-          .select('collaborator_id').eq('event_id', ev.id).eq('status', 'confirmed');
+          .select('collaborator_id').eq('event_id', ev.id).in('status', ['confirmed', 'invited']);
         const _partIds = (_parts || []).map(p => p.collaborator_id).filter(id => id && id !== ev.collaborator_id);
         if (_partIds.length) {
           const { data: _pcs } = await supabase.from('collaborators')
