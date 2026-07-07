@@ -11,11 +11,12 @@ import type { Task } from '../types';
 
 const POOL_SELECT =
   'id, title, description, status, due_date, due_time, completed_at, created_by, ' +
-  // Recorrência (2026-07-02): instância traz recurrence_parent_id; template traz
-  // recurrence_rule; o embed do pai dá a regra pra badge quando o representante é
-  // uma instância (que não carrega o rule).
+  // Recorrência (2026-07-02): campos pro colapso de série. A regra do PAI (badge de
+  // cadência) vem por 2ª query batelada no fetchPool — NUNCA por embed self-join:
+  // hint por constraint dá PGRST200 (schema cache não resolve a self-FK → HTTP 400,
+  // pool inteiro caía: caso Rose 06/07) e hint por coluna resolve pro lado ERRADO
+  // (filhas, array). GROUPPOOL-SELFJOIN-EMBED-400.
   'recurrence_parent_id, recurrence_rule, ' +
-  'recurrence_parent:tasks!tasks_recurrence_parent_id_fkey(recurrence_rule), ' +
   'creator:collaborators!tasks_created_by_fkey(full_name), ' +
   'done_by:collaborators!tasks_completed_by_fkey(full_name), ' +
   'task_reminders(id, remind_at, sent_at)';
@@ -40,12 +41,26 @@ async function fetchPool(groupId: string, todayYmd: string): Promise<PoolTaskRow
     .or(`status.neq.done,and(status.eq.done,completed_at.gte.${monthStartUtcIso(todayYmd)})`)
     .order('due_date', { ascending: true });
   if (error) throw error;
-  return ((data ?? []) as any[]).map(r => ({
+  const rows = (data ?? []) as any[];
+  // Regra da série pro badge: busca batelada dos templates-pai (ver nota no POOL_SELECT).
+  // Se a RLS esconder algum pai, o badge daquela série só não aparece — nada quebra.
+  const parentIds = [...new Set(rows.map(r => r.recurrence_parent_id).filter(Boolean))] as string[];
+  const ruleById = new Map<string, string | null>();
+  if (parentIds.length > 0) {
+    const { data: parents } = await supabase
+      .from('tasks')
+      .select('id, recurrence_rule')
+      .in('id', parentIds);
+    for (const p of (parents ?? []) as Array<{ id: string; recurrence_rule: string | null }>) {
+      ruleById.set(p.id, p.recurrence_rule);
+    }
+  }
+  return rows.map(r => ({
     ...r,
     creator_name: r.creator?.full_name ?? null,
     completed_by_name: r.done_by?.full_name ?? null,
     // Regra resolvida (própria do template ou do pai) pra rotular a cadência no badge.
-    series_rule: r.recurrence_rule ?? r.recurrence_parent?.recurrence_rule ?? null,
+    series_rule: r.recurrence_rule ?? (r.recurrence_parent_id ? ruleById.get(r.recurrence_parent_id) ?? null : null),
   }));
 }
 

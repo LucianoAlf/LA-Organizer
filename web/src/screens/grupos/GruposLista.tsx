@@ -26,16 +26,24 @@ export function GruposLista() {
   const myIds = useMyGroupIds();
   const roster = useCollabRoster();
   const canManage = role === 'director' || role === 'coordinator' || role === 'manager';
-  // Criar grupo liberado pra TODO colaborador (decisão do Alf 15/06). canManage segue valendo
-  // só pra VISIBILIDADE (gestão vê todos os grupos; membro vê só os seus).
+  // Criar grupo liberado pra TODO colaborador (decisão do Alf 15/06).
   const canCreate = Boolean(collaborator);
+  // Visibilidade (pedido Rose/Alf 06/07): TODO MUNDO vê por padrão só os grupos que
+  // participa ou lidera — "mais clean". Antes canManage (incl. manager, caso da Rose)
+  // via a lista inteira. Gestão não perde nada: toggle "Ver todos" abaixo da lista.
+  const [showAll, setShowAll] = useState(false);
 
-  const visible = useMemo(() => {
+  const mine = useMemo(() => {
     const all = list.data ?? [];
-    if (canManage) return all;
-    const mine = new Set(myIds.data ?? []);
-    return all.filter(g => mine.has(g.id) || g.leader_id === meuId);
-  }, [list.data, myIds.data, canManage, meuId]);
+    const my = new Set(myIds.data ?? []);
+    return all.filter(g => my.has(g.id) || g.leader_id === meuId);
+  }, [list.data, myIds.data, meuId]);
+
+  const visible = useMemo(
+    () => (canManage && showAll ? (list.data ?? []) : mine),
+    [canManage, showAll, list.data, mine],
+  );
+  const hiddenCount = (list.data ?? []).length - mine.length;
 
   const groupIds = useMemo(() => visible.map(g => g.id), [visible]);
   const counts = useGroupsOverview(groupIds);
@@ -109,9 +117,15 @@ export function GruposLista() {
 
       {visible.length === 0 ? (
         <EmptyState
-          title={canManage ? 'Nenhum grupo ainda' : 'Você ainda não está em nenhum grupo'}
-          description={canManage ? 'Cria o primeiro — ex.: Financeiro.' : 'Crie o seu ou peça pro seu líder te adicionar.'}
-          action={canCreate ? (
+          title="Você ainda não está em nenhum grupo"
+          description={canManage && hiddenCount > 0
+            ? 'Você não participa de nenhum grupo — mas pode ver os existentes pela gestão.'
+            : 'Crie o seu ou peça pro seu líder te adicionar.'}
+          action={canManage && hiddenCount > 0 ? (
+            <Button variant="secondary" size="md" onClick={() => setShowAll(true)}>
+              Ver todos os {hiddenCount} grupos (gestão)
+            </Button>
+          ) : canCreate ? (
             <Button variant="primary" size="md" onClick={() => { setLider(collaborator?.id ?? ''); setNovoOpen(true); }}>
               + Novo grupo
             </Button>
@@ -159,6 +173,19 @@ export function GruposLista() {
             );
           })}
         </ul>
+      )}
+
+      {/* Gestão: acesso aos grupos que não participa, sem poluir o default (Rose 06/07). */}
+      {canManage && hiddenCount > 0 && (
+        <div className="text-center">
+          <button
+            type="button"
+            onClick={() => setShowAll(v => !v)}
+            className="text-body-sm text-fg-muted hover:text-fg underline underline-offset-2 focus-ring rounded-sm"
+          >
+            {showAll ? 'Mostrar só os meus grupos' : `Ver todos os grupos (gestão) · +${hiddenCount}`}
+          </button>
+        </div>
       )}
 
       <BottomSheet open={novoOpen} onClose={() => { setNovoOpen(false); setNome(''); setMembros([]); setLider(collaborator?.id ?? ''); }} title="Novo grupo de trabalho">
