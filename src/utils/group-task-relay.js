@@ -16,9 +16,25 @@ function truncDesc(text, max) {
   return d.length > max ? d.slice(0, max) + '…' : d;
 }
 
+// Normaliza pra comparação de contenção (lower + colapsa espaço).
+function _normCmp(s) { return String(s || '').toLowerCase().replace(/\s+/g, ' ').trim(); }
+
+// Prefixo "Pacote: " quando a tarefa é filha de um PACOTE (parent_task_id → container is_group).
+// COMPARTILHADO por todas as superfícies que listam tarefa de grupo (digest/card via
+// group-report-builder.taskLineItem; pool 1:1 via buildGroupPoolLines; pool do chat via
+// group-chat-prompt.fmtPoolLine) — fonte única, sem divergência (GROUPREPORT-PACKAGE-TITLE-MISSING).
+// Guard: se o título já cita o pacote, não duplica ("Venc 20: Venc 20").
+function packagePrefix(packageTitle, title) {
+  if (!packageTitle) return '';
+  if (_normCmp(title).includes(_normCmp(packageTitle))) return '';
+  return `${packageTitle}: `;
+}
+
 // Espelha o padrão do renderTaskList (system.js:462) p/ as tarefas de pool do membro.
 // fmtDate(dueYmd, today) injetado (formatRelativeDate) p/ manter puro.
-function buildGroupPoolLines(tasks, groups, today, fmtDate) {
+// parentTitleById (opcional): Map id→título dos containers de pacote, pra prefixar o nome do
+// pacote na filha ("Depósito de Cheques: Venc 05..."). Ausente → sem prefixo (regressão preservada).
+function buildGroupPoolLines(tasks, groups, today, fmtDate, parentTitleById) {
   const out = [];
   const list = Array.isArray(tasks) ? tasks : [];
   const gs = Array.isArray(groups) ? groups : [];
@@ -29,7 +45,8 @@ function buildGroupPoolLines(tasks, groups, today, fmtDate) {
     const due = t.due_date ? ` — ${(fmtDate && fmtDate(t.due_date, today)) || t.due_date}` : '';
     const cn = firstNameOf(t.creator);
     const by = cn ? ` · criada por ${cn}` : '';
-    out.push(`• [id=${sid}] 👥[${g ? g.name : 'grupo'}] ${t.title}${due}${by}`);
+    const pkg = packagePrefix(parentTitleById && t.parent_task_id && parentTitleById.get(t.parent_task_id), t.title);
+    out.push(`• [id=${sid}] 👥[${g ? g.name : 'grupo'}] ${pkg}${t.title}${due}${by}`);
     const desc = truncDesc(t.description, 240);
     if (desc) out.push(`   ↳ ${desc}`);
   }
@@ -51,10 +68,12 @@ function groupAuthorDescSuffix({ creatorFirstName, description, max = 200 } = {}
 }
 
 // 1ª linha = formato atual (intocado p/ não regredir o que já funciona) + sufixo autor/descrição.
-function buildGroupTaskReminderText({ label, title, when, creatorFirstName, description } = {}) {
+// packageTitle (filha de pacote) → prefixo "Pacote: " dentro do bold (GROUPREPORT-PACKAGE-TITLE-MISSING).
+function buildGroupTaskReminderText({ label, title, when, creatorFirstName, description, packageTitle } = {}) {
   const lab = label ? `${label}: ` : 'Lembrete: ';
-  const head = `⏰ ${lab}*${title}* (grupo)${when ? ` — ${when}` : ''}`;
+  const pkg = packagePrefix(packageTitle, title);
+  const head = `⏰ ${lab}*${pkg}${title}* (grupo)${when ? ` — ${when}` : ''}`;
   return head + groupAuthorDescSuffix({ creatorFirstName, description });
 }
 
-module.exports = { buildGroupPoolLines, buildGroupTaskReminderText, groupAuthorDescSuffix, firstNameOf, truncDesc };
+module.exports = { buildGroupPoolLines, buildGroupTaskReminderText, groupAuthorDescSuffix, firstNameOf, truncDesc, packagePrefix };

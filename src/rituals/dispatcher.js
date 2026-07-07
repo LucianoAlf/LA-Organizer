@@ -1050,6 +1050,20 @@ async function handleCancellations(whatsapp) {
 // fan-out pra TODOS os membros (decisão de brainstorm: lembrete pra todos;
 // escalação só pra líder). Janela 09:00-09:10 BRT, idempotente via reminded_at.
 // Cobre QUALQUER task de grupo (as 3 funções T-1 por pessoa excluem grupo).
+// Resolve título do PACOTE pai (parent_task_id → container is_group) p/ prefixar o nome nos
+// lembretes de grupo ("Depósito de Cheques: Venc 05..."). Batch (1 query), defensivo: erro OU
+// nenhum parent → Map vazio (lembrete sai sem pacote, NUNCA quebra). GROUPREPORT-PACKAGE-TITLE-MISSING.
+async function fetchPackageTitles(parentIds) {
+  const uniq = [...new Set((parentIds || []).filter(Boolean))];
+  const map = new Map();
+  if (!uniq.length) return map;
+  try {
+    const { data } = await supabase.from('tasks').select('id, title').in('id', uniq);
+    for (const p of (data || [])) map.set(p.id, p.title);
+  } catch (e) { console.warn('[reminder] fetchPackageTitles err:', e.message); }
+  return map;
+}
+
 async function remindGroupTasks(now = new Date()) {
   const whatsapp = require('../services/whatsapp');
   const wg = require('../services/work-groups');
@@ -1062,7 +1076,7 @@ async function remindGroupTasks(now = new Date()) {
 
   const { data: tasks, error } = await supabase
     .from('tasks')
-    .select('id, title, description, due_date, assigned_group_id, created_by, creator:collaborators!tasks_created_by_fkey(preferred_name, full_name), group:work_groups!tasks_assigned_group_id_fkey(name)')
+    .select('id, title, description, due_date, assigned_group_id, parent_task_id, created_by, creator:collaborators!tasks_created_by_fkey(preferred_name, full_name), group:work_groups!tasks_assigned_group_id_fkey(name)')
     .not('assigned_group_id', 'is', null)
     .is('reminded_at', null)
     .in('status', ['pending', 'in_progress'])
@@ -1070,14 +1084,16 @@ async function remindGroupTasks(now = new Date()) {
   if (error) { console.error('[remindGroupTasks] query err:', error.message); return; }
   if (!tasks || !tasks.length) return;
 
+  const pkgMap = await fetchPackageTitles(tasks.map((t) => t.parent_task_id));
   const nowIso = now.toISOString();
   for (const task of tasks) {
     let members = [];
     try { members = await wg.membersWithPhones(supabase, task.assigned_group_id); }
     catch (e) { console.warn('[remindGroupTasks] members err:', e.message); }
     const gName = task.group ? task.group.name : 'grupo';
-    const { groupAuthorDescSuffix, firstNameOf } = require('../utils/group-task-relay');
-    const msg = `⏰ Lembrete do grupo *${gName}*: *${task.title}* vence amanhã. Qualquer pessoa do grupo pode concluir — quem pegar, avisa por aqui. 😉`
+    const { groupAuthorDescSuffix, firstNameOf, packagePrefix } = require('../utils/group-task-relay');
+    const pkg = packagePrefix(pkgMap.get(task.parent_task_id), task.title);
+    const msg = `⏰ Lembrete do grupo *${gName}*: *${pkg}${task.title}* vence amanhã. Qualquer pessoa do grupo pode concluir — quem pegar, avisa por aqui. 😉`
       + groupAuthorDescSuffix({ creatorFirstName: firstNameOf(task.creator), description: task.description });
     let sent = 0;
     for (const m of members) {

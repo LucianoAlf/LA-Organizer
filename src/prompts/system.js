@@ -550,7 +550,7 @@ function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events
       const today = todaySaoPaulo();
       lines.push('', '**Tarefas abertas dos SEUS grupos (você também pode concluir):**');
       const { buildGroupPoolLines } = require('../utils/group-task-relay');
-      for (const ln of buildGroupPoolLines(workGroupsCtx.myGroupTasks, workGroupsCtx.groups, today, formatRelativeDate)) {
+      for (const ln of buildGroupPoolLines(workGroupsCtx.myGroupTasks, workGroupsCtx.groups, today, formatRelativeDate, workGroupsCtx.parentTitleById)) {
         lines.push(ln);
       }
     }
@@ -1779,6 +1779,7 @@ async function fetchCollaboratorContext(collaborator) {
     const { filterVisibleGroupTasks } = require('../utils/group-task-visibility');
     const groups = await wg.loadActiveGroups(supabase);
     let myGroupTasks = [];
+    const parentTitleById = new Map(); // id→título dos containers de pacote → prefixo "Pacote: " no pool
     const myGids = groups.filter((g) => wg.isMember(g, id)).map((g) => g.id);
     if (myGids.length) {
       // GROUP-RECUR-TEMPLATE-VISIBLE-TO-TOM (caso Rose 12/06): a query precisa de
@@ -1791,9 +1792,12 @@ async function fetchCollaboratorContext(collaborator) {
         .eq('status', 'pending')
         .order('due_date', { ascending: true, nullsFirst: false })
         .limit(24);
+      // Map id→título dos containers de pacote (is_group) do result CRU → prefixa "Pacote:" na filha
+      // (GROUPREPORT-PACKAGE-TITLE-MISSING). Container vem no mesmo fetch, sem query extra.
+      for (const t of (gt || [])) { if (t.is_group === true && t.id) parentTitleById.set(t.id, t.title); }
       myGroupTasks = filterVisibleGroupTasks(gt || []).slice(0, 12);
     }
-    workGroupsCtx = { groups, myGroupTasks };
+    workGroupsCtx = { groups, myGroupTasks, parentTitleById };
   } catch (_) { /* sem grupos no contexto */ }
 
   // 📋 Modelos de checklist do time (Jonathan 06/07) — nomes+itens pro TOM aplicar em

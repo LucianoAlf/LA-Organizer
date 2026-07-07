@@ -3,11 +3,12 @@
 // buildGroupChatPrompt: formatação PURA (recebe soul + contexto). loadGroupChatSoul: thin I/O.
 const fs = require('fs');
 const path = require('path');
-const { firstNameOf, truncDesc } = require('../utils/group-task-relay');
+const { firstNameOf, truncDesc, packagePrefix } = require('../utils/group-task-relay');
 
 // 1ª linha = formato atual (intocado p/ não regredir o pool). Acrescenta "· criada por X" e,
 // quando há descrição, uma 2ª linha "↳ ...". Sem criador/descrição, devolve idêntico ao antigo.
 // Mesmo padrão do 1:1 (buildGroupPoolLines) e do lembrete — dado de autoria/descrição em todo canal.
+// packageTitle (quando a tarefa é filha de pacote) → prefixo "Pacote: " (GROUPREPORT-PACKAGE-TITLE-MISSING).
 function fmtPoolLine(t) {
   const status = t.status === 'done' ? '✓ concluída' : 'pendente';
   const due = t.due_date ? ` (prazo ${t.due_date})` : '';
@@ -15,7 +16,8 @@ function fmtPoolLine(t) {
   const by = cn ? ` · criada por ${cn}` : '';
   const desc = truncDesc(t.description, 240);
   const descLine = desc ? `\n  ↳ ${desc}` : '';
-  return `- ${t.title} — ${status}${due}${by}${descLine}`;
+  const pkg = packagePrefix(t.packageTitle, t.title);
+  return `- ${pkg}${t.title} — ${status}${due}${by}${descLine}`;
 }
 
 function fmtHistoryLine(m) {

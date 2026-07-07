@@ -4,6 +4,8 @@
 // 2019), offset literal -03:00 (sem toISOString().slice). Agrupa por URGÊNCIA em blocos
 // (Atrasadas / Para hoje / Esta semana / Mais pra frente / Sem prazo) separados por <hr>.
 
+const { packagePrefix } = require('../utils/group-task-relay'); // fonte única do prefixo "Pacote: "
+
 const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
   'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
 
@@ -97,19 +99,6 @@ function splitTasks(tasks) {
 
 function esc(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-// Normaliza pra comparação de contenção (lower + colapsa espaço).
-function _normCmp(s) { return String(s || '').toLowerCase().replace(/\s+/g, ' ').trim(); }
-
-// Prefixo "Pacote: " quando a tarefa é filha de um PACOTE (parent_task_id → container is_group).
-// Sem isso, "Venc 05 (prazo dia 06)" ia pro digest sem dizer de qual pacote ("Depósito de Cheques")
-// — ilegível (caso Financeiro/Alf 07/07, GROUPREPORT-PACKAGE-TITLE-MISSING). Guard: se o próprio
-// título já cita o pacote, não duplica ("Venc 20: Venc 20").
-function packagePrefix(packageTitle, title) {
-  if (!packageTitle) return '';
-  if (_normCmp(title).includes(_normCmp(packageTitle))) return '';
-  return `${packageTitle}: `;
 }
 
 // Linha de tarefa SEM flag de urgência (o bloco já diz a categoria): "12/06 — Pacote: Título (Resp)".

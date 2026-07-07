@@ -29,7 +29,7 @@ async function loadContext(supabase, groupId, senderCollabId) {
     // Pool = SÓ tarefa REAL ativa (igual ao builder determinístico): exclui done/cancelled e os
     // moldes de recorrência. Sem isso o LLM via tarefa cancelada como "pendente" e cobrava/concluía
     // tarefa fantasma (GROUPCHAT-PHANTOM-POOL, caso Rose/Conciliação 15/06).
-    supabase.from('tasks').select('title, status, due_date, created_at, is_group, description, created_by, creator:collaborators!tasks_created_by_fkey(preferred_name, full_name)')
+    supabase.from('tasks').select('id, title, status, due_date, created_at, is_group, parent_task_id, description, created_by, creator:collaborators!tasks_created_by_fkey(preferred_name, full_name)')
       .eq('assigned_group_id', groupId)
       .neq('status', 'cancelled').is('recurrence_rule', null)
       .order('created_at', { ascending: false }).limit(POOL_LIMIT * 2),
@@ -41,10 +41,15 @@ async function loadContext(supabase, groupId, senderCollabId) {
   // Pool alinhado ao digest: tira gêmea-done (sobra de churn) e RETROATIVA (criada já vencida) —
   // senão o LLM via tarefa retroativa/duplicada como "atrasada" e cobrava (GROUPREPORT-DONE-TWIN-OVERDUE).
   const poolToday = spYmd(new Date());
+  // Map id→título dos containers de pacote (is_group) do result CRU → packageTitle na filha, pro
+  // TOM ver "Depósito de Cheques: Venc 05" no contexto (GROUPREPORT-PACKAGE-TITLE-MISSING).
+  const poolParentTitleById = new Map();
+  for (const t of (poolRows || [])) { if (t.is_group === true && t.id) poolParentTitleById.set(t.id, t.title); }
   // is_group=true = container de pacote (pasta), não tarefa → fora do pool (senão vira fantasma dia-1).
   const pool = dropOpenWithDoneTwin((poolRows || []).filter((t) => t.is_group !== true))
     .filter((t) => categorize(t.due_date, poolToday, t.created_at ? spYmd(new Date(t.created_at)) : null) !== 'retroativa')
-    .slice(0, POOL_LIMIT);
+    .slice(0, POOL_LIMIT)
+    .map((t) => ({ ...t, packageTitle: (t.parent_task_id && poolParentTitleById.get(t.parent_task_id)) || null }));
   const history = (histRows || []).reverse().map((m) => ({
     who: m.role === 'tom' ? 'TOM' : displayName(m.sender),
     role: m.role,

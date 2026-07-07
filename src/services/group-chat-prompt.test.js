@@ -107,3 +107,13 @@ test('fmtPoolLine: descrição longa é truncada com reticências', () => {
   const line = fmtPoolLine({ title: 'X', status: 'pending', due_date: null, description: 'y'.repeat(300) });
   assert.match(line, /↳ y+…$/);
 });
+
+test('fmtPoolLine: prefixa o PACOTE quando t.packageTitle (GROUPREPORT-PACKAGE-TITLE-MISSING)', () => {
+  const line = fmtPoolLine({ title: 'Venc 05 (prazo dia 06)', status: 'pending', due_date: '2026-07-06', packageTitle: 'Depósito de Cheques' });
+  assert.match(line, /^- Depósito de Cheques: Venc 05 \(prazo dia 06\) — pendente/);
+});
+
+test('fmtPoolLine: sem packageTitle não muda (regressão)', () => {
+  const line = fmtPoolLine({ title: 'Fechar caixa', status: 'pending', due_date: '2026-06-13' });
+  assert.strictEqual(line, '- Fechar caixa — pendente (prazo 2026-06-13)');
+});

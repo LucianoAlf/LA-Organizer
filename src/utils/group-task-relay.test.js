@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { buildGroupPoolLines, buildGroupTaskReminderText, groupAuthorDescSuffix, firstNameOf, truncDesc } = require('./group-task-relay');
+const { buildGroupPoolLines, buildGroupTaskReminderText, groupAuthorDescSuffix, firstNameOf, truncDesc, packagePrefix } = require('./group-task-relay');
 
 const fmt = (ymd) => (ymd === '2026-06-25' ? 'hoje' : ymd);
 
@@ -43,6 +43,13 @@ test('lembrete: sem descrição nem criador = formato atual intacto', () => {
   assert.strictEqual(txt, '⏰ Lembrete: *X* (grupo) — hoje');
 });
 
+test('lembrete: packageTitle prefixa o pacote dentro do bold; sem ele fica intacto (regressão)', () => {
+  const comPkg = buildGroupTaskReminderText({ label: null, title: 'Venc 05 (prazo dia 06)', when: 'amanhã', packageTitle: 'Depósito de Cheques' });
+  assert.strictEqual(comPkg, '⏰ Lembrete: *Depósito de Cheques: Venc 05 (prazo dia 06)* (grupo) — amanhã');
+  const semPkg = buildGroupTaskReminderText({ label: null, title: 'X', when: 'hoje' });
+  assert.strictEqual(semPkg, '⏰ Lembrete: *X* (grupo) — hoje');
+});
+
 test('groupAuthorDescSuffix: vazio quando sem autor nem descrição', () => {
   assert.strictEqual(groupAuthorDescSuffix({ creatorFirstName: '', description: '' }), '');
   assert.strictEqual(groupAuthorDescSuffix(), '');
@@ -57,4 +64,26 @@ test('lembrete: descrição longa ganha "abre no app"', () => {
   const txt = buildGroupTaskReminderText({ label: 'Bom dia', title: 'X', when: '', creatorFirstName: 'Vi', description: 'y'.repeat(250) });
   assert.match(txt, /abre no app pra ver tudo/);
   assert.match(txt, /^⏰ Bom dia: \*X\* \(grupo\)/);
+});
+
+// ── packagePrefix (compartilhado com group-report-builder) — GROUPREPORT-PACKAGE-TITLE-MISSING ──
+test('packagePrefix: retorna "Pacote: " quando há título; guard anti-redundância; vazio sem pacote', () => {
+  assert.strictEqual(packagePrefix('Depósito de Cheques', 'Venc 05 (prazo dia 06)'), 'Depósito de Cheques: ');
+  assert.strictEqual(packagePrefix('Venc 20', 'Venc 20'), '');       // já cita → não vira "X: X"
+  assert.strictEqual(packagePrefix(null, 'Boleto X'), '');           // sem pacote
+  assert.strictEqual(packagePrefix('', 'Boleto X'), '');
+});
+
+test('pool: prefixa o PACOTE pai quando parentTitleById resolve o parent_task_id', () => {
+  const tasks = [{ id: 'filha01', title: 'Venc 05 (prazo dia 06)', due_date: '2026-07-06', assigned_group_id: 'g1', parent_task_id: 'cont1', creator: { preferred_name: 'Rose' } }];
+  const parents = new Map([['cont1', 'Depósito de Cheques']]);
+  const lines = buildGroupPoolLines(tasks, [{ id: 'g1', name: 'Financeiro' }], '2026-07-06', (y) => y, parents);
+  assert.match(lines[0], /👥\[Financeiro\] Depósito de Cheques: Venc 05 \(prazo dia 06\)/);
+});
+
+test('pool: SEM parentTitleById → sem prefixo (regressão — chamadores antigos)', () => {
+  const tasks = [{ id: 'filha01', title: 'Venc 05 (prazo dia 06)', assigned_group_id: 'g1', parent_task_id: 'cont1' }];
+  const lines = buildGroupPoolLines(tasks, [{ id: 'g1', name: 'Financeiro' }], '2026-07-06', (y) => y);
+  assert.match(lines[0], /👥\[Financeiro\] Venc 05 \(prazo dia 06\)/);
+  assert.doesNotMatch(lines[0], /:/);
 });
