@@ -1,11 +1,13 @@
 // src/prompts/skill-cap.js
 // Fatia A — teto de tamanho das skills. ANTES: system.js cortava TODA skill em 8192
 // chars (slice) EM SILÊNCIO, perdendo o final (regras NUNCA, actions, edge cases) de
-// 6 skills core. Agora: teto generoso (32KB cobre todas as atuais; maior=23.5KB) e,
-// se algum dia cortar de verdade, GRITA no log — nunca mais silencioso. Função pura.
+// 6 skills core. Agora: teto generoso e, se algum dia cortar de verdade, GRITA no
+// log — nunca mais silencioso. Função pura.
+// 07/07: 32768 → 40960. checklist-tarefas chegou a 34.5k e o corte comeu os vetos
+// finais + a seção "Checklists Operacionais Diários" inteira (o WARN pegou).
 'use strict';
 
-const SKILL_MAX_CHARS = 32768;
+const SKILL_MAX_CHARS = 40960;
 
 /**
  * Devolve a skill inteira se couber no teto; senão corta E loga aviso explícito.

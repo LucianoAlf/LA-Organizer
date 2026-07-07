@@ -2465,6 +2465,10 @@ async function applyEventActions(collaborator, events, opts = {}) {
       if (typeof e.recurrence_rule === 'string' && e.recurrence_rule.trim()) {
         row.recurrence_rule = e.recurrence_rule.trim().replace(/^RRULE:/i, '');
       }
+      // MARKER-NO-EISENHOWER-FIELD (Alf 07/07) — quadrant opcional (1-4) no marker.
+      // Fora do range/não-numérico: ignora silencioso (evento salva sem prioridade).
+      const evQuad = Number(e.quadrant);
+      if (Number.isInteger(evQuad) && evQuad >= 1 && evQuad <= 4) row.eisenhower_quadrant = evQuad;
       // Sprint 29.2 — related_to_collaborator_id pra eventos 1:1.
       // TOM pode passar explícito (skill criar-compromisso atualizada) OU
       // engine infere do título: "1:1 com X", "conversa com X", "alinhamento com X".
@@ -2709,7 +2713,9 @@ function validateEventUpdateAction(a) {
     // ARRAY (minutos antes do início; [] = remover), não string, então tem check próprio.
     // Antes era rejeitado como no_editable_field (caso Rose/ADM 09/06, evento 6778d729).
     const hasReminders = Array.isArray(a.reminders_minutes_before);
-    if (!hasField && !hasReminders) return 'update:no_editable_field';
+    // MARKER-NO-EISENHOWER-FIELD (Alf 07/07) — quadrant (1-4) também é campo editável.
+    const hasQuadrant = Number.isInteger(Number(a.quadrant)) && Number(a.quadrant) >= 1 && Number(a.quadrant) <= 4;
+    if (!hasField && !hasReminders && !hasQuadrant) return 'update:no_editable_field';
     if (typeof a.modality === 'string' && a.modality.trim() && !VALID_EVENT_MODALITIES.has(a.modality)) return 'modality:invalid';
   }
   if (a.action === 'add_participants' || a.action === 'remove_participants') {
@@ -3362,6 +3368,9 @@ async function applyEventUpdates(collaborator, actions) {
         if (typeof a.location_text === 'string' && a.location_text.trim()) patch.location_text = a.location_text.trim().slice(0, 200);
         if (typeof a.meeting_url === 'string' && a.meeting_url.trim()) patch.meeting_url = a.meeting_url.trim().slice(0, 500);
         if (typeof a.modality === 'string' && VALID_EVENT_MODALITIES.has(a.modality)) patch.modality = a.modality;
+        // MARKER-NO-EISENHOWER-FIELD (Alf 07/07) — "marca como importante" vira quadrant.
+        const upQuad = Number(a.quadrant);
+        if (Number.isInteger(upQuad) && upQuad >= 1 && upQuad <= 4) patch.eisenhower_quadrant = upQuad;
         // edição só-de-lembrete é válida mesmo sem metadados no patch.
         if (Object.keys(patch).length === 0 && !remindersEdit) { failCount++; continue; }
       }
@@ -5124,6 +5133,9 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
         if (typeof a.recurrence_rule === 'string' && a.recurrence_rule.trim()) {
           insertRow.recurrence_rule = a.recurrence_rule.trim().replace(/^RRULE:/i, '');
         }
+        // MARKER-NO-EISENHOWER-FIELD (Alf 07/07) — quadrant opcional (1-4) no create.
+        const taskQuad = Number(a.quadrant);
+        if (Number.isInteger(taskQuad) && taskQuad >= 1 && taskQuad <= 4) insertRow.eisenhower_quadrant = taskQuad;
         // Sprint 15 F2 — optional operational layer fields
         if (typeof a.description === 'string' && a.description.trim()) {
           insertRow.description = a.description.trim().slice(0, 2000);

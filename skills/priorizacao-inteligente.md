@@ -110,6 +110,8 @@ Sempre que a skill culminar na criação de tarefa (via `checklist-tarefas`), o 
 
 **Regras finais:** emitir o valor mais específico (`call` antes de `task`, `project` antes de `task`); em dúvida → `task` (default conservador); `now` é raro (resolve-agora vira ação imediata, não task — só registre se o user pedir); NUNCA invente valor fora dos 6 (engine rejeita); NUNCA escreva `action_type=call` no texto do WhatsApp — o campo é só pro engine/app.
 
+**Campo `quadrant` (junto do `action_type`):** a etapa 3 do motor (urgência×importância) também sai no marker quando você tem a leitura: urgente+importante→`1` · importante+não-urgente→`2` · urgente+pouco-importante→`3` · nem-nem→`4`. Declaração explícita do user SEMPRE vence a sua classificação. Sem leitura confiável → omita (não chute). Vale pra `TASK_UPDATE create` e `EVENT_CREATE`. No texto do WhatsApp: linguagem humana ("isso aqui vem primeiro", "marquei como importante"), nunca o número/teoria.
+
 ## Veto
 - Não burocratizar coisa simples; não transformar tudo em tarefa nem toda conversa em reunião.
 - Não usar linguagem de framework com o usuário.

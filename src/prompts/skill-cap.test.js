@@ -4,8 +4,8 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const { capSkill, SKILL_MAX_CHARS } = require('./skill-cap');
 
-test('teto é 32768 (cobre todas as skills atuais com folga)', () => {
-  assert.strictEqual(SKILL_MAX_CHARS, 32768);
+test('teto é 40960 (checklist-tarefas passou de 32k em 07/07 e estava sendo TRUNCADA)', () => {
+  assert.strictEqual(SKILL_MAX_CHARS, 40960);
 });
 
 test('conteúdo ≤ teto volta INTEIRO (não corta mais nas skills reais)', () => {
@@ -18,9 +18,14 @@ test('conteúdo no limiar antigo (8192-23475) volta inteiro, não cortado em 819
   assert.strictEqual(capSkill(s, 'checklist-tarefas').length, 23475);
 });
 
+test('checklist-tarefas atual (34.5k) volta INTEIRA — o caso real de 07/07', () => {
+  const s = 'd'.repeat(34518);
+  assert.strictEqual(capSkill(s, 'checklist-tarefas').length, 34518);
+});
+
 test('conteúdo > teto corta no teto (rede de proteção)', () => {
-  const s = 'c'.repeat(40000);
-  assert.strictEqual(capSkill(s, 'gigante').length, 32768);
+  const s = 'c'.repeat(50000);
+  assert.strictEqual(capSkill(s, 'gigante').length, 40960);
 });
 
 test('null/undefined/vazio → "" sem quebrar', () => {
