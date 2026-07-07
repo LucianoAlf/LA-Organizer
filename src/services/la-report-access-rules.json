@@ -60,7 +60,7 @@
     "whatsapp_prof":     { "all": true },
     "aderencia_emusys":  { "roles": ["director","coordinator"], "function_roles": ["farmer"], "unit_filter": true, "manager_unit": true, "pedagogico": true, "professor_seus_unidades": true },
     "salas":             { "roles": ["director","coordinator","manager"], "function_roles": ["ops_tecnicas","farmer","tech"], "pedagogico": true, "professor_seus_unidades": true },
-    "inventario":        { "roles": ["director","coordinator"], "function_roles": ["ops_tecnicas","farmer","tech"], "unit_filter": true, "manager_unit": true, "pedagogico": true, "professor_seus_unidades": true },
+    "inventario":        { "all": true },
     "movimentacoes":     { "roles": ["director","coordinator"], "function_roles": ["ops_tecnicas","farmer","tech"], "unit_filter": true, "manager_unit": true },
     "loja_produtos":     { "roles": ["director"], "function_roles": ["ops_tecnicas","farmer","backoffice_fin"], "unit_filter": true, "manager_unit": true },
     "loja_vendas":       { "roles": ["director"], "function_roles": ["ops_tecnicas","farmer","backoffice_fin"], "unit_filter": true, "manager_unit": true }
