@@ -58,3 +58,40 @@ test('bare com token projeto sem nome → nameHint null (resolve por quote depoi
   assert.strictEqual(r.action, 'complete');
   assert.strictEqual(r.nameHint, null);
 });
+
+// ————— Via 3: "tirar/remover do sistema" (KRISSYA-PROJECT-SYSTEM-REMOVE-NO-TOKEN, 07/07) —————
+
+test('Krissya REAL: "L.A teclas concluido, pode tirar do sistema" → complete + nome antes do verbo', () => {
+  assert.deepStrictEqual(detectProjectStatusIntent('L.A teclas concluido, pode tirar do sistema'),
+    { action: 'complete', nameHint: 'L.A teclas', quotedText: null, viaProjectToken: false });
+});
+
+test('via 3 com nome DEPOIS do verbo: "pode tirar o LA Teclas do sistema" → cancel (remoção pura)', () => {
+  assert.deepStrictEqual(detectProjectStatusIntent('pode tirar o LA Teclas do sistema'),
+    { action: 'cancel', nameHint: 'LA Teclas', quotedText: null, viaProjectToken: false });
+});
+
+test('via 3: "remove a Copa do Mundo do app" → cancel + nome', () => {
+  const r = detectProjectStatusIntent('remove a Copa do Mundo do app');
+  assert.strictEqual(r.action, 'cancel');
+  assert.strictEqual(r.nameHint, 'Copa do Mundo');
+  assert.strictEqual(r.viaProjectToken, false);
+});
+
+test('via 3 NÃO rouba a via 1: "remove o projeto LA Teclas do sistema" segue viaProjectToken=true', () => {
+  const r = detectProjectStatusIntent('remove o projeto LA Teclas do sistema');
+  assert.strictEqual(r.viaProjectToken, true);
+});
+
+test('NEGATIVO via 3: remover sem "do sistema/app" → null (como hoje)', () => {
+  assert.strictEqual(detectProjectStatusIntent('tira o leite da lista'), null);
+  assert.strictEqual(detectProjectStatusIntent('remove essa tarefa aí'), null);
+});
+
+test('NEGATIVO via 3: conclusão sem pedido de remoção → null (como hoje)', () => {
+  assert.strictEqual(detectProjectStatusIntent('L.A teclas concluido'), null);
+});
+
+test('NEGATIVO via 3: pergunta não é comando', () => {
+  assert.strictEqual(detectProjectStatusIntent('tiro o LA Teclas do sistema?'), null);
+});

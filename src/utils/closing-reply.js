@@ -62,7 +62,13 @@ function buildClosingItems(workTasks = [], opts = {}) {
 
 // Sinais de "não concluído" num segmento (em andamento / negação / parcial). Se o
 // segmento que segue um número tiver QUALQUER um destes, o item NÃO é 'done'.
-const PROGRESS_RE = /(em\s+andamento|andament|andando|fazendo|comec(?:ei|ando|ei\s)|metade|parcial|quase|faltou|faltando|pendente|ainda\s+n[ãa]o|n[ãa]o\s+(?:fiz|deu|consegui|terminei|acabei|rolou)|n[ãa]o\b)/;
+// CLOSING-PARTIAL-TOPICS-DONE (Quintela 06/07): "3. Feito alguns topicos da tarefa"
+// era lido como done (o "feito" afirmava conclusão e nada sinalizava parcialidade) →
+// o TOM fechou o item que estava PELA METADE (confab de conclusão). Sinais de
+// PARCIALIDADE ("alguns/algumas/parte/nem tudo") agora contam como progress. Política
+// conservadora: na dúvida entre done e parcial, NÃO fecha (o usuário confirma depois;
+// fechar errado some do radar — pior).
+const PROGRESS_RE = /(em\s+andamento|andament|andando|fazendo|comec(?:ei|ando|ei\s)|metade|parcial|\bparte\b|algun[s]?\b|alguma[s]?\b|nem\s+tudo|quase|faltou|faltando|pendente|ainda\s+n[ãa]o|n[ãa]o\s+(?:fiz|deu|consegui|terminei|acabei|rolou)|n[ãa]o\b)/;
 
 // CLOSING-CANCEL-IGNORED (Yuri 01/07): "3 NÃO pode cancelar" no fechamento era
 // classificado como 'progress' (o "não" do PROGRESS_RE) e o pedido de CANCELAR era

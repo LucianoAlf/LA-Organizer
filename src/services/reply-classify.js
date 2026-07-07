@@ -29,7 +29,13 @@ function hasTrailingQuestion(reply) {
 
 // TOM está PEDINDO ao user que mande/diga algo pra ele poder agir — ou seja, ainda
 // NÃO agiu (não há o que persistir neste turno). Não confundir com "já registrei".
-const _INFO_GATHERING_RE = /\b(?:me\s+(?:manda|mande|envia|envie|diz|diga|passa|passe)|vai\s+(?:mandando|listando))\b/i;
+// CHOKEPOINT-FALSEFIRE-CAPABILITY-ANSWER (Rose 06/07): "Sim! *Pode mandar* o OFX que eu
+// leio, mostro a prévia e te pergunto se quer registrar" é resposta de CAPACIDADE (TOM
+// pede o insumo pra agir DEPOIS) — mas escapava do gate (não tinha "me manda") e o verbo
+// futuro "leio/registro" disparava promise_nomarker → o chokepoint destruiu a resposta boa
+// com "problema técnico, nada entrou na agenda". "(pode) mandar/enviar/passar" = pedido de
+// insumo, não promessa concluída.
+const _INFO_GATHERING_RE = /\b(?:me\s+(?:manda|mande|envia|envie|diz|diga|passa|passe)|vai\s+(?:mandando|listando)|(?:pode|podes|pode\s+me)\s+(?:mandar|manda|enviar|envia|passar|passa))\b/i;
 
 // Sprint 31.19 (caso Dai 05/06) — TOM PEDINDO CONFIRMAÇÃO antes de agir ("Certo? Se
 // confirmar, fecho...") NÃO é promessa quebrada — é o comportamento CERTO (perguntar →

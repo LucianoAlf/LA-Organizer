@@ -115,3 +115,16 @@ test('STATUS_BY_ACTION', () => {
   assert.strictEqual(STATUS_BY_ACTION.complete, 'completed');
   assert.strictEqual(STATUS_BY_ACTION.cancel, 'cancelled');
 });
+
+// KRISSYA-PROJECT-SYSTEM-REMOVE-NO-TOKEN (07/07): pontuação não pode impedir o match.
+test('resolve tolera pontuação: "L.A teclas" casa projeto "LA Teclas"', () => {
+  const projs = [{ id: 'p9', name: 'LA Teclas', status: 'active' }];
+  const r = resolveProjectByName(projs, 'L.A teclas', null);
+  assert.strictEqual(r.status, 'match');
+  assert.strictEqual(r.project.id, 'p9');
+});
+
+test('resolve tolera hífen: "Vendas Q1" casa "Vendas-Q1"', () => {
+  const projs = [{ id: 'p10', name: 'Vendas-Q1', status: 'active' }];
+  assert.strictEqual(resolveProjectByName(projs, 'Vendas Q1', null).status, 'match');
+});

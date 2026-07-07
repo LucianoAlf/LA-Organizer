@@ -273,3 +273,19 @@ test('CONTROLE: "pode cancelar tudo" sem número NÃO casa (cai no LLM, fail-saf
   const r = parseClosingReply('pode cancelar tudo', 3);
   assert.strictEqual(r.matched, false);
 });
+
+// ── CLOSING-PARTIAL-TOPICS-DONE (Quintela 06/07) ────────────────────────────
+test('Quintela: "3. Feito alguns topicos da tarefa" → progress (NÃO fecha item parcial)', () => {
+  const r = parseClosingReply('3. Feito alguns topicos da tarefa', 3);
+  assert.strictEqual(r.matched, true);
+  assert.strictEqual(r.statuses[2], 'progress', 'conclusão parcial não pode virar done');
+});
+test('parcialidade: "1 feito, 2 fiz parte" → done, progress', () => {
+  assert.deepStrictEqual(parseClosingReply('1 feito, 2 fiz parte', 2).statuses, ['done', 'progress']);
+});
+test('CONTROLE: "1 e 2 feito, 3 feito" segue tudo done (sem sinal de parcialidade)', () => {
+  assert.deepStrictEqual(parseClosingReply('1 e 2 feito, 3 feito', 3).statuses, ['done', 'done', 'done']);
+});
+test('CONTROLE: "fiz tudo" puro segue done global', () => {
+  assert.deepStrictEqual(parseClosingReply('fiz tudo', 3).statuses, ['done', 'done', 'done']);
+});

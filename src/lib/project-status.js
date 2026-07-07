@@ -9,7 +9,14 @@ const STATUS_BY_ACTION = { complete: 'completed', cancel: 'cancelled' };
 function _norm(s) {
   return String(s || '')
     .normalize('NFD').replace(/[̀-ͯ]/g, '')
-    .toLowerCase().replace(/\s+/g, ' ').trim();
+    .toLowerCase()
+    // KRISSYA-PROJECT-SYSTEM-REMOVE-NO-TOKEN (07/07): "L.A teclas" tem que casar
+    // "LA Teclas" — pontos/apóstrofos somem; hífen vira espaço ("Vendas-Q1"="Vendas Q1").
+    // Aplicado nos DOIS lados (hint e nome), então colisão nova só geraria 'ambiguous'
+    // (que pergunta ao usuário — seguro).
+    .replace(/['’.]/g, '')
+    .replace(/[-–—]/g, ' ')
+    .replace(/\s+/g, ' ').trim();
 }
 const _cand = (p) => ({ id: p.id, name: p.name });
 

@@ -144,3 +144,15 @@ test('CONTROLE: "Respondendo sua pergunta: sim, fechei tudo" NÃO é confirm-see
 test('CONTROLE: "sim" e "não" longe de "responde" (>30 chars) não casam', () => {
   assert.strictEqual(isInfoGatheringReply('Ele respondeu a mensagem ontem de tarde bem rápido e disse que talvez sim'), false);
 });
+
+// ── CHOKEPOINT-FALSEFIRE-CAPABILITY-ANSWER (Rose 06/07) ─────────────────────
+test('Rose: "Sim! Pode mandar o OFX que eu leio, mostro a prévia..." é info-gathering', () => {
+  const s = 'Sim! Pode mandar o OFX que eu leio, mostro a prévia dos lançamentos e te pergunto se quer registrar. Manda aí.';
+  assert.strictEqual(isInfoGatheringReply(s), true, 'resposta de capacidade (pede insumo) não pode virar promise_nomarker');
+});
+test('"pode me enviar o arquivo" também casa', () => {
+  assert.strictEqual(isInfoGatheringReply('Claro, pode me enviar o arquivo que eu processo.'), true);
+});
+test('CONTROLE: "✅ Registrei o lançamento" NÃO é info-gathering (confab real segue pego)', () => {
+  assert.strictEqual(isInfoGatheringReply('✅ Registrei o lançamento no valor de R$ 100.'), false);
+});
