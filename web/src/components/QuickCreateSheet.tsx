@@ -21,6 +21,7 @@ import { useEventCategories } from '../hooks/useEventCategories';
 import { useWorkGroups } from '../hooks/useWorkGroups';
 import { notifyTaskDelegated, notifyEventInvites, notifyWatchersAdded } from '../lib/tomEngine';
 import { WatchersPicker } from './WatchersPicker';
+import { ChecklistTemplatePicker } from './ChecklistTemplatePicker';
 import { showToast } from './Toast';
 import {
   MODALITY_LABELS,
@@ -868,9 +869,13 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
               </div>
             </div>
 
-            {/* Checklist (subtarefas) na criação — escondido quando recorrente (limitação conhecida). */}
+            {/* Checklist (subtarefas) na criação — escondido quando recorrente (limitação conhecida).
+                Modelos do time (Jonathan 06/07): picker aplica itens; "salvar como modelo" persiste. */}
             {!recurrenceRule && (
-              <ChecklistDraftField items={checklistDraft} onChange={setChecklistDraft} />
+              <div>
+                <ChecklistTemplatePicker items={checklistDraft} onChange={setChecklistDraft} />
+                <ChecklistDraftField items={checklistDraft} onChange={setChecklistDraft} />
+              </div>
             )}
           </>
         ) : kind === 'delegated' ? (
@@ -944,9 +949,13 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
               <EisenhowerPicker value={taskQuadrant} onChange={setTaskQuadrant} />
             </div>
 
-            {/* Checklist (subtarefas) na delegação — escondido quando recorrente (limitação conhecida). */}
+            {/* Checklist (subtarefas) na delegação — escondido quando recorrente (limitação conhecida).
+                Modelos do time (Jonathan 06/07): mesmo par da aba Tarefa. */}
             {!recurrenceRule && (
-              <ChecklistDraftField items={checklistDraft} onChange={setChecklistDraft} />
+              <div>
+                <ChecklistTemplatePicker items={checklistDraft} onChange={setChecklistDraft} />
+                <ChecklistDraftField items={checklistDraft} onChange={setChecklistDraft} />
+              </div>
             )}
           </>
         ) : kind === 'group' ? (

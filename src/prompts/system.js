@@ -266,7 +266,7 @@ function nameFor(collab) {
 // Sprint 22.36 Fatia 2 — Adicionado: delegatedTasks (tarefas que ESTE user atribuiu
 // pra outros), todayChecklists (checklists operacionais de hoje com %).
 // Antes ficavam fora do contexto e TOM dizia "não tenho esse dato" no relatório.
-function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events, delegatedTasks, todayChecklists, teamAdherence, personalChecklists, teamTodayChecklists, teamExpectedTemplates, schoolEvents = [], eventTypes = [], doneFutureTasks = [], monthlyCtxBlock = null, orgChart = [], criticalMemories = [], preferenceMemories = [], weeklySummary = null, recentContextMemories = [], openTasksNoDue = [], recentNotes = [], workGroupsCtx = { groups: [], myGroupTasks: [] }) {
+function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events, delegatedTasks, todayChecklists, teamAdherence, personalChecklists, teamTodayChecklists, teamExpectedTemplates, schoolEvents = [], eventTypes = [], doneFutureTasks = [], monthlyCtxBlock = null, orgChart = [], criticalMemories = [], preferenceMemories = [], weeklySummary = null, recentContextMemories = [], openTasksNoDue = [], recentNotes = [], workGroupsCtx = { groups: [], myGroupTasks: [] }, checklistTemplates = []) {
   const nickname = nameFor(collab);
   const lines = ['# 📌 CONTEXTO DESTA INTERAÇÃO', ''];
   const { ROLE_LABELS: ROLE_LABELS_PT } = require('../lib/roles');
@@ -663,6 +663,17 @@ function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events
       // Checklist do executor (subtarefas) — delegador vê o progresso com o nome de quem executa.
       const _cb = renderChecklistBlock(t._checklist || [], { assigneeName: assignee });
       if (_cb) _cb.split('\n').forEach((l) => lines.push(`  ${l}`));
+    });
+  }
+
+  // Modelos de checklist do time (demanda Jonathan 06/07): quando o usuário pedir
+  // "com o checklist/modelo de X" ao criar/delegar tarefa, o TOM emite subtasks:[...]
+  // copiando os itens EXATAMENTE (o engine já materializa as filhas no create).
+  if (checklistTemplates && checklistTemplates.length) {
+    lines.push('', '**Modelos de checklist do time** — se o usuário pedir "com o checklist/modelo de X" ao criar ou delegar tarefa, inclua no marker: subtasks:[...] copiando os itens EXATAMENTE como listados (sem parafrasear, sem omitir, sem acrescentar):');
+    checklistTemplates.forEach((t) => {
+      const items = Array.isArray(t.items) ? t.items : [];
+      lines.push(`• ${t.name}: ${JSON.stringify(items)}`);
     });
   }
 
@@ -1785,6 +1796,15 @@ async function fetchCollaboratorContext(collaborator) {
     workGroupsCtx = { groups, myGroupTasks };
   } catch (_) { /* sem grupos no contexto */ }
 
+  // 📋 Modelos de checklist do time (Jonathan 06/07) — nomes+itens pro TOM aplicar em
+  // subtasks:[...] quando pedirem "com o checklist de X". Não bloqueia se falhar.
+  let checklistTemplatesCtx = [];
+  try {
+    const { data: _ct } = await supabase
+      .from('checklist_templates').select('name, items').order('name');
+    checklistTemplatesCtx = _ct || [];
+  } catch (_) { /* sem modelos no contexto */ }
+
   // Sprint 22.X — respeita max_daily_tasks (default 3) limitando o briefing de
   // trabalho. Hoje sem cap, TOM lista 12+ tasks e quebra o foco. User-side a
   // pref já existia mas nada limitava. Preferência default 3 reflete princípio
@@ -1835,6 +1855,7 @@ async function fetchCollaboratorContext(collaborator) {
     openTasksNoDue,
     recentNotes,
     workGroupsCtx,
+    checklistTemplates: checklistTemplatesCtx,
     activeProjects,
     notifications: notificationsRes.data || [],
     recentMessages: (historyRes.data || []).reverse(),
@@ -2848,7 +2869,7 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   // Checklist ativo (2026-06-28): o bloco *Checklist* já vem pronto e determinístico no contexto;
   // o TOM só precisa reproduzi-lo fielmente (não muda a VOZ, só preserva o DADO).
   const checklistVerbatimBlock = `\n\n**📋 Blocos de checklist:** quando uma tarefa trouxer um bloco \`*Checklist* …\` (com a barra ▓░ e os itens ✅/⬜) no contexto, REPRODUZA-O VERBATIM — mesma barra, mesmos itens, mesma ordem. NÃO resuma, NÃO reescreva, NÃO invente itens.`;
-  const baseCtx = buildContext(collaborator, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx, ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || [], ctx.teamTodayChecklists || [], ctx.teamExpectedTemplates || [], ctx.schoolEvents || [], ctx.eventTypes || [], ctx.doneFutureTasks || [], monthlyCtxBlock, ctx.orgChart || [], ctx.criticalMemories || [], ctx.preferenceMemories || [], ctx.weeklySummary || null, ctx.recentContextMemories || [], ctx.openTasksNoDue || [], ctx.recentNotes || [], ctx.workGroupsCtx || { groups: [], myGroupTasks: [] }) + reminderDefaultBlock + checklistVerbatimBlock;
+  const baseCtx = buildContext(collaborator, ctx.prefs, tasksForCtx, ctx.activeProjects, lastMsgAge, habitsForCtx, eventsForCtx, ctx.delegatedTasks || [], ctx.todayChecklists || [], ctx.teamAdherence || [], ctx.personalChecklists || [], ctx.teamTodayChecklists || [], ctx.teamExpectedTemplates || [], ctx.schoolEvents || [], ctx.eventTypes || [], ctx.doneFutureTasks || [], monthlyCtxBlock, ctx.orgChart || [], ctx.criticalMemories || [], ctx.preferenceMemories || [], ctx.weeklySummary || null, ctx.recentContextMemories || [], ctx.openTasksNoDue || [], ctx.recentNotes || [], ctx.workGroupsCtx || { groups: [], myGroupTasks: [] }, ctx.checklistTemplates || []) + reminderDefaultBlock + checklistVerbatimBlock;
 
   // Histórico completo dos últimos 7 dias — agrupado por dia
   let pastEventsBlock = '';
