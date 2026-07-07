@@ -5161,7 +5161,7 @@ async function checkTaskReminders() {
   const nowIso = new Date().toISOString();
   const { data: due, error } = await supabase
     .from('task_reminders')
-    .select('id, task_id, remind_at, label, created_at, tasks(id, title, description, assigned_to, assigned_group_id, status, due_date, due_time, created_by, creator:collaborators!tasks_created_by_fkey(preferred_name, full_name))')
+    .select('id, task_id, remind_at, label, created_at, tasks(id, title, description, assigned_to, assigned_group_id, parent_task_id, status, due_date, due_time, created_by, creator:collaborators!tasks_created_by_fkey(preferred_name, full_name))')
     .is('sent_at', null)
     .lte('remind_at', nowIso)
     .limit(50);
@@ -5170,6 +5170,8 @@ async function checkTaskReminders() {
     return;
   }
   if (!due || !due.length) return;
+  // Título do pacote pai p/ os lembretes de tarefa de GRUPO que são filhas de pacote (batch, defensivo).
+  const pkgMap = await fetchPackageTitles(due.map((r) => r.tasks?.parent_task_id));
   const ids = [...new Set(due.map(r => r.tasks?.assigned_to).filter(Boolean))];
   if (!ids.length) return;
   const { data: collabs } = await supabase
@@ -5187,7 +5189,7 @@ async function checkTaskReminders() {
         const { buildGroupTaskReminderText, firstNameOf } = require('../utils/group-task-relay');
         const dayG = relativeDayFromYmd(t.due_date);
         const whenG = [dayG, (t.due_time || '').slice(0, 5)].filter(Boolean).join(' ');
-        const textG = buildGroupTaskReminderText({ label: r.label, title: t.title, when: whenG, creatorFirstName: firstNameOf(t.creator), description: t.description });
+        const textG = buildGroupTaskReminderText({ label: r.label, title: t.title, when: whenG, creatorFirstName: firstNameOf(t.creator), description: t.description, packageTitle: pkgMap.get(t.parent_task_id) });
         let sentG = 0;
         for (const m of members) {
           const qM = await isQuietNow(m.collaborator_id, nowSaoPaulo(), 'work', { defaultNightGate: false });
