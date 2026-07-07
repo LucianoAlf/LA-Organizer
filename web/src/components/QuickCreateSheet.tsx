@@ -23,6 +23,8 @@ import { visibleWorkGroups } from '../lib/workGroupAccess';
 import { notifyTaskDelegated, notifyEventInvites, notifyWatchersAdded } from '../lib/tomEngine';
 import { WatchersPicker } from './WatchersPicker';
 import { ChecklistTemplatePicker } from './ChecklistTemplatePicker';
+import { TaskTemplatePicker } from './TaskTemplatePicker';
+import { formPatchFromPayload, type TaskTemplate } from '../lib/taskTemplates';
 import { showToast } from './Toast';
 import {
   MODALITY_LABELS,
@@ -754,6 +756,65 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
     </fieldset>
   ) : null;
 
+  // "Meus modelos" (Jonathan 07/07) — snapshot cru da aba ativa. A whitelist da
+  // lib (payloadFromSnapshot) é quem garante que data/recorrência NÃO entram.
+  function buildSnapshot(): Record<string, unknown> {
+    if (kind === 'task') return { title, description, ctx: taskCtx, group_mode: taskGroupMode, group_id: taskGroupId || null, time: taskTime || null, reminders: taskReminderTimes, quadrant: taskQuadrant, checklist: checklistDraft };
+    if (kind === 'delegated') return { title, description, ctx: taskCtx, delegate_to: delegateTo || null, cc_ids: ccIds, time: taskTime || null, reminders: taskReminderTimes, quadrant: taskQuadrant, checklist: checklistDraft };
+    if (kind === 'event') return { title, description, category_id: categoryId || null, start_time: startAt.slice(11, 16), end_time: endAt.slice(11, 16), modality, location_text: locationText, meeting_url: meetingUrl, quadrant: eventQuadrant, reminders: eventReminderTimes, participant_ids: participantIds };
+    return { title, description, group_id: taskGroupId || null, monthly: groupMonthly, due_day: groupDueDay, children: groupChildren };
+  }
+
+  // Aplica modelo: preenche o formulário e NADA mais (o usuário revisa e clica
+  // Criar). Campos fora do payload voltam ao default; a DATA nunca é tocada.
+  function applyTemplate(t: TaskTemplate) {
+    const collabIds = new Set(collaborators.map(c => c.id));
+    // Query de colabs ainda não resolveu (abriu a aba e aplicou na hora): não
+    // valida — melhor manter o id salvo do que dropar com falso "saiu do time".
+    if (collaborators.length === 0) {
+      for (const id of [t.payload.delegate_to, ...(Array.isArray(t.payload.cc_ids) ? t.payload.cc_ids : []), ...(Array.isArray(t.payload.participant_ids) ? t.payload.participant_ids : [])]) {
+        if (typeof id === 'string') collabIds.add(id);
+      }
+    }
+    const { patch, warnings } = formPatchFromPayload(t.kind, t.payload, {
+      collabIds,
+      categoryIds: new Set(eventCategories.categories.map(c => c.id)),
+      groupIds: new Set(visibleGroups.map(g => g.id)),
+    });
+    setTitle((patch.title as string) ?? '');
+    setDescription((patch.description as string) ?? '');
+    if (t.kind === 'task' || t.kind === 'delegated') {
+      setTaskCtx((patch.ctx as TaskContext) ?? 'work');
+      setTaskTime((patch.time as string) ?? '');
+      setTaskReminderTimes((patch.reminders as string[]) ?? []);
+      setTaskQuadrant((patch.quadrant as number) ?? null);
+      setChecklistDraft((patch.checklist as string[]) ?? []);
+      if (t.kind === 'task') {
+        setTaskGroupMode(Boolean(patch.group_mode && patch.group_id));
+        setTaskGroupId((patch.group_id as string) ?? '');
+      } else {
+        setDelegateTo((patch.delegate_to as string) ?? '');
+        setCcIds((patch.cc_ids as string[]) ?? []);
+      }
+    } else if (t.kind === 'event') {
+      setCategoryId((patch.category_id as string) ?? defaultCategoryId);
+      if (typeof patch.start_time === 'string') setStartAt(`${today}T${patch.start_time}`);
+      if (typeof patch.end_time === 'string') setEndAt(`${today}T${patch.end_time}`);
+      setModality((patch.modality as EventModality) ?? 'presencial');
+      setLocationText((patch.location_text as string) ?? '');
+      setMeetingUrl((patch.meeting_url as string) ?? '');
+      setEventQuadrant((patch.quadrant as number) ?? null);
+      setEventReminderTimes((patch.reminders as string[]) ?? []);
+      setParticipantIds((patch.participant_ids as string[]) ?? []);
+    } else {
+      setTaskGroupId((patch.group_id as string) ?? '');
+      setGroupMonthly((patch.monthly as boolean) ?? true);
+      setGroupDueDay((patch.due_day as string) ?? '');
+      setGroupChildren((patch.children as Array<{ title: string; day: string; time: string; reminders: number[] }>) ?? []);
+    }
+    if (warnings.length > 0) showToast({ kind: 'info', title: 'Modelo aplicado com ajustes', msg: warnings.join(' ') });
+  }
+
   return (
     <AdaptiveSheet open={open} onClose={onClose} title="Novo" size="sm">
       {/* Kind selector */}
@@ -763,6 +824,9 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
         <KindButton active={kind === 'delegated'} onClick={() => setKind('delegated')} icon={<UserPlus size={18} />} label="Delegar" hint="pra alguém" />
         <KindButton active={kind === 'group'} onClick={() => setKind('group')} icon={<FolderKanban size={18} />} label="Grupo" hint="subtarefas" />
       </div>
+
+      {/* Meus modelos (pessoais, filtrados pela aba ativa) — Jonathan 07/07 */}
+      <TaskTemplatePicker kind={kind} getSnapshot={buildSnapshot} onPick={applyTemplate} />
 
       <form onSubmit={onSubmit} className="space-y-md">
         {/* Title — both */}
