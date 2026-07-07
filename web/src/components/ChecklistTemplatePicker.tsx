@@ -66,25 +66,15 @@ export function ChecklistTemplatePicker({ items, onChange }: { items: string[]; 
         )}
       </div>
       {savingName !== null && (
-        // Bloco destacado + microcopy (feedback Alf 07/07): o nome do MODELO
-        // ≠ título/itens. Aqui o modelo guarda só a LISTA de itens do checklist.
-        <div className="mt-2 rounded-lg border border-tom/40 bg-bg-elevated p-3 space-y-2">
-          <div>
-            <div className="text-body-sm font-medium text-fg">Salvar checklist como modelo</div>
-            <div className="text-caption text-fg-muted">
-              Guarda estes itens pra reusar. Este nome é o atalho no menu — o modelo fica visível pro time todo.
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <input value={savingName} onChange={(e) => setSavingName(e.target.value)} maxLength={80} autoFocus
-              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); salvarModelo.mutate(); } if (e.key === 'Escape') setSavingName(null); }}
-              placeholder="Nome do atalho (ex.: ADM — Experimental)"
-              className="flex-1 bg-bg-surface border border-border rounded-md p-2 text-fg text-body-sm focus:outline-none focus:border-tom" />
-            <button type="button" disabled={salvarModelo.isPending} onClick={() => salvarModelo.mutate()}
-              className="shrink-0 text-body-sm text-black bg-tom font-medium px-3 py-1.5 rounded-md disabled:opacity-40 focus-ring">Salvar</button>
-            <button type="button" onClick={() => setSavingName(null)}
-              className="shrink-0 text-body-sm text-fg-muted focus-ring rounded px-1">Cancelar</button>
-          </div>
+        <div className="flex items-center gap-2 mt-2">
+          <input value={savingName} onChange={(e) => setSavingName(e.target.value)} maxLength={80} autoFocus
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); salvarModelo.mutate(); } if (e.key === 'Escape') setSavingName(null); }}
+            placeholder="Nome do modelo (ex.: ADM — Experimental)"
+            className="flex-1 bg-bg-surface border border-border rounded-md p-2 text-fg text-body-sm focus:outline-none focus:border-tom" />
+          <button type="button" disabled={salvarModelo.isPending} onClick={() => salvarModelo.mutate()}
+            className="shrink-0 text-body-sm text-black bg-tom font-medium px-3 py-1.5 rounded-md disabled:opacity-40 focus-ring">Salvar</button>
+          <button type="button" onClick={() => setSavingName(null)}
+            className="shrink-0 text-body-sm text-fg-muted focus-ring rounded px-1">Cancelar</button>
         </div>
       )}
       <ChecklistTemplatesSheet open={manageOpen} onClose={() => setManageOpen(false)} />

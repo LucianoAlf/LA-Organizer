@@ -1,8 +1,13 @@
-// Picker "Meus modelos…" do QuickCreateSheet — logo abaixo das 4 abas, filtrado
-// pela aba ativa. Aplicar NUNCA cria nada: só preenche o formulário (o usuário
-// revisa e clica Criar). Modelos pessoais, RLS só-dono. Demanda Jonathan ADM 07/07.
+// "Meus modelos" do QuickCreateSheet — demanda Jonathan ADM 07/07.
+// UX (feedback Alf 07/07): CARREGAR e SALVAR são momentos diferentes do fluxo,
+// então vivem em lugares diferentes. O select fica no topo (escolhe o modelo
+// ANTES de preencher); o "salvar como modelo" fica no rodapé, junto do Criar
+// (salva DEPOIS de preencher) e abre um mini-sheet próprio pro nome — nada se
+// intromete entre os campos do formulário. Aplicar NUNCA cria nada.
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { AdaptiveSheet } from './AdaptiveSheet';
+import { Button } from './Button';
 import { CustomSelect } from './CustomSelect';
 import { showToast } from './Toast';
 import { useAuth } from '../contexts/AuthContext';
@@ -15,23 +20,53 @@ import {
 
 const MANAGE = '__manage__';
 
-interface Props {
+export function TaskTemplatePicker({ kind, getSnapshot, onPick }: {
   kind: TemplateKind;
   getSnapshot: () => Record<string, unknown>;
   onPick: (t: TaskTemplate) => void;
-}
-
-export function TaskTemplatePicker({ kind, getSnapshot, onPick }: Props) {
-  const { collaborator } = useAuth();
-  const qc = useQueryClient();
+}) {
   const templates = useQuery({ queryKey: ['task-templates'], queryFn: listMyTemplates, staleTime: 5 * 60_000 });
   const doKind = (templates.data ?? []).filter((t) => t.kind === kind);
   const [manageOpen, setManageOpen] = useState(false);
-  const [savingName, setSavingName] = useState<string | null>(null); // null = fechado
 
-  const salvarModelo = useMutation({
+  return (
+    <div className="mb-md max-w-[280px]">
+      <CustomSelect
+        value=""
+        placeholder="Meus modelos…"
+        size="sm"
+        options={[
+          ...doKind.map((t) => ({
+            value: t.id, label: t.name,
+            sublabel: typeof t.payload.title === 'string' ? t.payload.title : undefined,
+          })),
+          { value: MANAGE, label: '⚙️ Gerenciar meus modelos…', sublabel: doKind.length === 0 ? 'nenhum modelo seu nesta aba ainda' : 'renomear / atualizar / excluir' },
+        ]}
+        onChange={(v) => {
+          if (v === MANAGE) { setManageOpen(true); return; }
+          const t = doKind.find((x) => x.id === v);
+          if (t) onPick(t);
+        }}
+      />
+      <TaskTemplatesSheet open={manageOpen} onClose={() => setManageOpen(false)} activeKind={kind} getSnapshot={getSnapshot} />
+    </div>
+  );
+}
+
+// Link do rodapé (acima do Criar) + mini-sheet de nome. Fica junto do botão de
+// ação porque age sobre o FORMULÁRIO INTEIRO, não sobre um campo.
+export function SaveAsTemplateLink({ kind, getSnapshot }: {
+  kind: TemplateKind;
+  getSnapshot: () => Record<string, unknown>;
+}) {
+  const { collaborator } = useAuth();
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState('');
+
+  const salvar = useMutation({
     mutationFn: async () => {
-      const n = normalizeTemplateName(savingName ?? '');
+      const n = normalizeTemplateName(name);
       if (!n) throw new Error('nome_invalido');
       const payload = payloadFromSnapshot(kind, getSnapshot());
       if (isSnapshotEmpty(payload)) throw new Error('form_vazio');
@@ -39,8 +74,8 @@ export function TaskTemplatePicker({ kind, getSnapshot, onPick }: Props) {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['task-templates'] });
-      setSavingName(null);
-      showToast({ kind: 'success', title: 'Modelo salvo — só você vê.' });
+      setOpen(false);
+      showToast({ kind: 'success', title: 'Modelo salvo — só você vê.', msg: 'Fica no menu "Meus modelos…" desta aba.' });
     },
     onError: (e: Error) => showToast({
       kind: 'error',
@@ -51,57 +86,30 @@ export function TaskTemplatePicker({ kind, getSnapshot, onPick }: Props) {
   });
 
   return (
-    <div className="mb-3">
-      <div className="flex items-center gap-2 flex-wrap">
-        <div className="flex-1 min-w-[180px] max-w-[280px]">
-          <CustomSelect
-            value=""
-            placeholder="Meus modelos…"
-            size="sm"
-            options={[
-              ...doKind.map((t) => ({
-                value: t.id, label: t.name,
-                sublabel: typeof t.payload.title === 'string' ? t.payload.title : undefined,
-              })),
-              { value: MANAGE, label: '⚙️ Gerenciar meus modelos…', sublabel: doKind.length === 0 ? 'nenhum modelo seu nesta aba ainda' : 'renomear / atualizar / excluir' },
-            ]}
-            onChange={(v) => {
-              if (v === MANAGE) { setManageOpen(true); return; }
-              const t = doKind.find((x) => x.id === v);
-              if (t) onPick(t);
-            }}
-          />
-        </div>
-        {savingName === null && (
-          <button type="button" onClick={() => setSavingName('')}
-            className="text-body-sm text-tom underline underline-offset-2 focus-ring rounded">
-            salvar como modelo
-          </button>
-        )}
+    <>
+      <div className="flex justify-end">
+        <button type="button" onClick={() => { setName(''); setOpen(true); }}
+          className="text-body-sm text-fg-muted hover:text-tom underline underline-offset-2 focus-ring rounded">
+          salvar como modelo
+        </button>
       </div>
-      {savingName !== null && (
-        // Bloco destacado + microcopy: sem isso o input de nome do MODELO cola no
-        // campo TÍTULO e vira a mesma coisa aos olhos do usuário (feedback Alf 07/07).
-        <div className="mt-2 rounded-lg border border-tom/40 bg-bg-elevated p-3 space-y-2">
-          <div>
-            <div className="text-body-sm font-medium text-fg">Salvar como modelo</div>
-            <div className="text-caption text-fg-muted">
-              Guarda este formulário pra reusar depois. Este nome é o atalho no menu “Meus modelos” — não é o título da tarefa.
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <input value={savingName} onChange={(e) => setSavingName(e.target.value)} maxLength={80} autoFocus
-              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); salvarModelo.mutate(); } if (e.key === 'Escape') setSavingName(null); }}
-              placeholder="Nome do atalho (ex.: Contato Lead Kids)"
-              className="flex-1 bg-bg-surface border border-border rounded-md p-2 text-fg text-body-sm focus:outline-none focus:border-tom" />
-            <button type="button" disabled={salvarModelo.isPending} onClick={() => salvarModelo.mutate()}
-              className="shrink-0 text-body-sm text-black bg-tom font-medium px-3 py-1.5 rounded-md disabled:opacity-40 focus-ring">Salvar</button>
-            <button type="button" onClick={() => setSavingName(null)}
-              className="shrink-0 text-body-sm text-fg-muted focus-ring rounded px-1">Cancelar</button>
+      <AdaptiveSheet open={open} onClose={() => setOpen(false)} title="Salvar como modelo" size="sm">
+        <div className="space-y-3">
+          <p className="text-body-sm text-fg-muted">
+            Guarda o formulário preenchido como atalho no menu "Meus modelos…". Só você vê.
+          </p>
+          <input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} autoFocus
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); salvar.mutate(); } }}
+            placeholder="Nome do atalho (ex.: Contato Lead Kids)"
+            className="w-full bg-bg-surface border border-border rounded-md p-2 text-fg text-body-md focus:outline-none focus:border-tom" />
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="ghost" size="md" onClick={() => setOpen(false)}>Cancelar</Button>
+            <Button variant="primary" size="md" disabled={salvar.isPending} onClick={() => salvar.mutate()}>
+              {salvar.isPending ? 'Salvando…' : 'Salvar'}
+            </Button>
           </div>
         </div>
-      )}
-      <TaskTemplatesSheet open={manageOpen} onClose={() => setManageOpen(false)} activeKind={kind} getSnapshot={getSnapshot} />
-    </div>
+      </AdaptiveSheet>
+    </>
   );
 }

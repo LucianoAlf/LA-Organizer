@@ -23,7 +23,7 @@ import { visibleWorkGroups } from '../lib/workGroupAccess';
 import { notifyTaskDelegated, notifyEventInvites, notifyWatchersAdded } from '../lib/tomEngine';
 import { WatchersPicker } from './WatchersPicker';
 import { ChecklistTemplatePicker } from './ChecklistTemplatePicker';
-import { TaskTemplatePicker } from './TaskTemplatePicker';
+import { TaskTemplatePicker, SaveAsTemplateLink } from './TaskTemplatePicker';
 import { formPatchFromPayload, type TaskTemplate } from '../lib/taskTemplates';
 import { showToast } from './Toast';
 import {
@@ -1356,6 +1356,9 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
           </div>
         )}
 
+        {/* Salvar age sobre o formulário INTEIRO → mora junto do Criar, não no
+            meio dos campos (feedback UX Alf 07/07). */}
+        <SaveAsTemplateLink kind={kind} getSnapshot={buildSnapshot} />
         <div className="flex items-center gap-md pt-2">
           {pendingRecurrenceWarn ? (
             <>
