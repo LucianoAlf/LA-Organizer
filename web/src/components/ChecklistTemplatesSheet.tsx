@@ -1,14 +1,18 @@
 // Gestão de Modelos de Checklist (CRUD completo) — abre de dentro do QuickCreateSheet
 // ("Gerenciar modelos…"). Team-shared; editar/excluir só criador ou coordenação
 // (canManageTemplate espelha a RLS). Demanda Jonathan ADM 06/07.
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Pencil, Trash2, X, ArrowUp, ArrowDown } from 'lucide-react';
+import { DndContext, closestCenter, type DragEndEvent } from '@dnd-kit/core';
+import { SortableContext, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable';
+import { Plus, Pencil, Trash2 } from 'lucide-react';
 import { AdaptiveSheet } from './AdaptiveSheet';
 import { Button } from './Button';
 import { ConfirmDialog } from './ConfirmDialog';
+import { ChecklistItemEditRow } from './ChecklistItemEditRow';
 import { showToast } from './Toast';
 import { useAuth } from '../contexts/AuthContext';
+import { useSortableSensors } from '../lib/sortableSensors';
 import {
   listTemplates, createTemplate, updateTemplate, deleteTemplate,
   normalizeTemplateName, canManageTemplate, isDupName, type ChecklistTemplate,
@@ -24,16 +28,21 @@ export function ChecklistTemplatesSheet({ open, onClose }: { open: boolean; onCl
   // null = listagem; 'new' = criando; ChecklistTemplate = editando
   const [editing, setEditing] = useState<'new' | ChecklistTemplate | null>(null);
   const [name, setName] = useState('');
-  const [items, setItems] = useState<string[]>([]);
+  // Linhas com uid estável (_lk) pro SortableContext — mesmo padrão do ChecklistTemplateSheet
+  // (op_checklists): DnD por grip handle, sem setinhas.
+  const [items, setItems] = useState<Array<{ _lk: string; text: string }>>([]);
   const [novoItem, setNovoItem] = useState('');
   const [confirmDel, setConfirmDel] = useState<ChecklistTemplate | null>(null);
+  const lkSeq = useRef(0);
+  const nextLk = () => `lk-${++lkSeq.current}`;
+  const sensors = useSortableSensors();
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['checklist-templates'] });
   const salvar = useMutation({
     mutationFn: async () => {
       const n = normalizeTemplateName(name);
       if (!n) throw new Error('nome_invalido');
-      const list = items.map((s) => s.trim()).filter(Boolean);
+      const list = items.map((r) => r.text.trim()).filter(Boolean);
       if (list.length === 0) throw new Error('sem_itens');
       if (editing === 'new') await createTemplate(n, list, collaborator!.id);
       else if (editing) await updateTemplate(editing.id, { name: n, items: list });
@@ -55,14 +64,20 @@ export function ChecklistTemplatesSheet({ open, onClose }: { open: boolean; onCl
   function abrirEdicao(t: 'new' | ChecklistTemplate) {
     setEditing(t);
     setName(t === 'new' ? '' : t.name);
-    setItems(t === 'new' ? [] : [...t.items]);
+    setItems(t === 'new' ? [] : t.items.map((text) => ({ _lk: nextLk(), text })));
     setNovoItem('');
   }
-  const addItem = () => { const s = novoItem.trim(); if (!s) return; setItems((p) => [...p, s]); setNovoItem(''); };
-  const move = (i: number, d: -1 | 1) => setItems((p) => {
-    const j = i + d; if (j < 0 || j >= p.length) return p;
-    const n = [...p]; [n[i], n[j]] = [n[j], n[i]]; return n;
-  });
+  const addItem = () => { const s = novoItem.trim(); if (!s) return; setItems((p) => [...p, { _lk: nextLk(), text: s }]); setNovoItem(''); };
+  function handleDragEnd(e: DragEndEvent) {
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+    setItems((prev) => {
+      const oldIdx = prev.findIndex((r) => r._lk === active.id);
+      const newIdx = prev.findIndex((r) => r._lk === over.id);
+      if (oldIdx < 0 || newIdx < 0) return prev;
+      return arrayMove(prev, oldIdx, newIdx);
+    });
+  }
 
   return (
     <AdaptiveSheet open={open} onClose={onClose} title="Modelos de checklist" size="sm">
@@ -97,20 +112,23 @@ export function ChecklistTemplatesSheet({ open, onClose }: { open: boolean; onCl
               placeholder="Ex.: ADM — Aula Experimental" autoFocus className={inputCls} />
           </label>
           <div>
-            <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Itens (na ordem)</div>
-            <div className="space-y-1 mb-2">
-              {items.map((it, i) => (
-                <div key={i} className="flex items-center gap-1.5">
-                  <span className="flex-1 min-w-0 text-body-md text-fg break-words">{it}</span>
-                  <button type="button" aria-label="Subir" onClick={() => move(i, -1)} disabled={i === 0}
-                    className="p-1 text-fg-muted hover:text-fg disabled:opacity-30 focus-ring rounded"><ArrowUp size={14} /></button>
-                  <button type="button" aria-label="Descer" onClick={() => move(i, 1)} disabled={i === items.length - 1}
-                    className="p-1 text-fg-muted hover:text-fg disabled:opacity-30 focus-ring rounded"><ArrowDown size={14} /></button>
-                  <button type="button" aria-label="Remover item" onClick={() => setItems((p) => p.filter((_, j) => j !== i))}
-                    className="p-1 text-fg-muted hover:text-danger focus-ring rounded"><X size={14} /></button>
+            <div className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Itens (arrasta ⋮⋮ pra ordenar)</div>
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+              <SortableContext items={items.map((r) => r._lk)} strategy={verticalListSortingStrategy}>
+                <div className="space-y-0.5 mb-2">
+                  {items.map((r, i) => (
+                    <ChecklistItemEditRow
+                      key={r._lk}
+                      uid={r._lk}
+                      description={r.text}
+                      index={i + 1}
+                      onChange={(v) => setItems((p) => p.map((x) => (x._lk === r._lk ? { ...x, text: v } : x)))}
+                      onDelete={() => setItems((p) => p.filter((x) => x._lk !== r._lk))}
+                    />
+                  ))}
                 </div>
-              ))}
-            </div>
+              </SortableContext>
+            </DndContext>
             <div className="flex items-center gap-2">
               <input value={novoItem} onChange={(e) => setNovoItem(e.target.value)} maxLength={200}
                 onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addItem(); } }}
