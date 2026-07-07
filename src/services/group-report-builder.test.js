@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { windowBounds, dueFlag, categorize, splitTasks, dedupeTasks, dropOpenWithDoneTwin, shapeOpenTasks, queryGroupTasks, renderReportHtml, buildGroupReport } = require('./group-report-builder');
+const { windowBounds, dueFlag, categorize, splitTasks, dedupeTasks, dropOpenWithDoneTwin, shapeOpenTasks, queryGroupTasks, renderReportHtml, buildGroupReport, taskLineItem } = require('./group-report-builder');
 
 // 12/06/2026 é uma SEXTA. now = 2026-06-12 15:00 BRT = 18:00Z.
 const NOW = new Date('2026-06-12T18:00:00Z');
@@ -282,4 +282,53 @@ test('queryGroupTasks: esconde a subtarefa-do-MOLDE, mostra só a do CICLO (Venc
   const out = await queryGroupTasks(sb, 'g1', new Date('2026-06-22T12:00:00-03:00'));
   assert.strictEqual(out.length, 1);                 // uma só (molde escondido, containers escondidos)
   assert.strictEqual(out[0].due_date, '2026-06-22'); // a do ciclo (a visível), não a do molde (21)
+});
+
+// ── Título do PACOTE na linha (GROUPREPORT-PACKAGE-TITLE-MISSING, caso Financeiro/Alf 07/07) ──
+//    A filha de um pacote (parent_task_id → container is_group) ia pro digest e pro card de
+//    fechamento como só "Venc 05 (prazo dia 06)" — ilegível ("prazo dia 06" de quê?). O pai
+//    "Depósito de Cheques" existe no MESMO result set (mesmo assigned_group_id) → resolvido por
+//    Map, sem query extra, e prefixado na linha: "Depósito de Cheques: Venc 05 (prazo dia 06)".
+test('taskLineItem: prefixa o título do PACOTE quando há packageTitle', () => {
+  assert.strictEqual(
+    taskLineItem({ due_date: '2026-07-06', title: 'Venc 05 (prazo dia 06)', responsavel: 'Rose', packageTitle: 'Depósito de Cheques' }),
+    '06/07 — Depósito de Cheques: Venc 05 (prazo dia 06) (Rose)');
+});
+test('taskLineItem: SEM packageTitle não muda (regressão — tarefa avulsa)', () => {
+  assert.strictEqual(
+    taskLineItem({ due_date: '2026-07-06', title: 'Boleto X', responsavel: 'Rose' }),
+    '06/07 — Boleto X (Rose)');
+});
+test('taskLineItem: guard anti-redundância — title que já cita o pacote não vira "X: X"', () => {
+  assert.strictEqual(
+    taskLineItem({ due_date: '2026-06-21', title: 'Venc 20', responsavel: 'Rose', packageTitle: 'Venc 20' }),
+    '21/06 — Venc 20 (Rose)');
+});
+test('shapeOpenTasks: propaga packageTitle da filha via Map de containers (parent_task_id)', () => {
+  const parents = new Map([['cont-1', 'Depósito de Cheques']]);
+  const out = shapeOpenTasks([
+    { title: 'Venc 05 (prazo dia 06)', due_date: '2026-07-06', status: 'pending', is_group: false, parent_task_id: 'cont-1', created_at: '2026-07-01T10:00:00Z', creator: { preferred_name: 'Rose' } },
+    { title: 'Tarefa avulsa', due_date: '2026-07-06', status: 'pending', created_at: '2026-07-01T10:00:00Z' }, // sem pai → null
+  ], '2026-07-06', parents);
+  const venc = out.find((t) => t.title.startsWith('Venc 05'));
+  const avulsa = out.find((t) => t.title === 'Tarefa avulsa');
+  assert.strictEqual(venc.packageTitle, 'Depósito de Cheques');
+  assert.strictEqual(avulsa.packageTitle, null);
+});
+test('shapeOpenTasks: sem Map de containers → packageTitle null (regressão — chamadores antigos)', () => {
+  const out = shapeOpenTasks([
+    { title: 'Venc 05 (prazo dia 06)', due_date: '2026-07-06', status: 'pending', parent_task_id: 'cont-1', created_at: '2026-07-01T10:00:00Z' },
+  ], '2026-07-06');
+  assert.strictEqual(out[0].packageTitle, null);
+});
+test('queryGroupTasks: resolve o título do PACOTE pai (container is_group) na filha visível', async () => {
+  const sb = fakeSupabase([
+    { id: 'cont-jul', title: 'Depósito de Cheques', due_date: '2026-07-06', status: 'pending', is_group: true, recurrence_rule: null, recurrence_parent_id: 'tpl', parent_task_id: null, created_at: '2026-07-01T09:00:00Z' },
+    { id: 'filha', title: 'Venc 05 (prazo dia 06)', due_date: '2026-07-06', status: 'pending', is_group: false, recurrence_rule: null, recurrence_parent_id: null, parent_task_id: 'cont-jul', created_at: '2026-07-01T09:00:00Z', creator: { preferred_name: 'Rose' } },
+  ]);
+  const out = await queryGroupTasks(sb, 'g1', new Date('2026-07-10T12:00:00-03:00'));
+  const venc = out.find((t) => t.title.startsWith('Venc 05'));
+  assert.ok(venc, 'a filha visível deve estar na lista');
+  assert.strictEqual(venc.packageTitle, 'Depósito de Cheques');
+  assert.strictEqual(venc.responsavel, 'Rose');
 });

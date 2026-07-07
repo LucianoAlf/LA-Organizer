@@ -99,12 +99,26 @@ function esc(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-// Linha de tarefa SEM flag de urgência (o bloco já diz a categoria): "12/06 — Título (Resp)".
-// Sem prazo → "Título (Resp)".
+// Normaliza pra comparação de contenção (lower + colapsa espaço).
+function _normCmp(s) { return String(s || '').toLowerCase().replace(/\s+/g, ' ').trim(); }
+
+// Prefixo "Pacote: " quando a tarefa é filha de um PACOTE (parent_task_id → container is_group).
+// Sem isso, "Venc 05 (prazo dia 06)" ia pro digest sem dizer de qual pacote ("Depósito de Cheques")
+// — ilegível (caso Financeiro/Alf 07/07, GROUPREPORT-PACKAGE-TITLE-MISSING). Guard: se o próprio
+// título já cita o pacote, não duplica ("Venc 20: Venc 20").
+function packagePrefix(packageTitle, title) {
+  if (!packageTitle) return '';
+  if (_normCmp(title).includes(_normCmp(packageTitle))) return '';
+  return `${packageTitle}: `;
+}
+
+// Linha de tarefa SEM flag de urgência (o bloco já diz a categoria): "12/06 — Pacote: Título (Resp)".
+// Sem pacote → "12/06 — Título (Resp)"; sem prazo → "Título (Resp)".
 function taskLineItem(t) {
   const d = t.due_date ? `${t.due_date.slice(8, 10)}/${t.due_date.slice(5, 7)}` : '';
   const resp = t.responsavel ? ` (${t.responsavel})` : '';
-  return `${d ? d + ' — ' : ''}${t.title}${resp}`;
+  const pkg = packagePrefix(t.packageTitle, t.title);
+  return `${d ? d + ' — ' : ''}${pkg}${t.title}${resp}`;
 }
 
 // Linha COM flag (legado — exportado/testes).
@@ -169,7 +183,10 @@ function dropOpenWithDoneTwin(rows) {
 //     fechamento chamava queryGroupTasks DIRETO e mostrava a retroativa como "Em aberto"
 //     (tarefa fantasma — caso Rose 20/06, GROUPCHAT-CLOSING-RETRO-PHANTOM).
 //   • dedup defensivo de gêmeas exatas (materialização duplicada).
-function shapeOpenTasks(rows, todayYmd) {
+// parentTitleById (opcional): Map id→título dos containers de pacote, pra resolver o nome do pacote
+// na filha (parent_task_id) e exibir "Depósito de Cheques: Venc 05...". Ausente → packageTitle null
+// (chamadores antigos preservados).
+function shapeOpenTasks(rows, todayYmd, parentTitleById) {
   // Container de PACOTE (is_group) NÃO é tarefa — é uma pasta. Listá-lo na lista plana fazia o
   // "Conciliação de Cartões 01/0X" virar tarefa fantasma dia-1 (caso Rose). As tarefas reais são
   // os FILHOS (cartões) + avulsas. No desktop o pacote aparece à parte (fetchPackages).
@@ -181,6 +198,7 @@ function shapeOpenTasks(rows, todayYmd) {
         due_date: t.due_date,
         created_ymd: t.created_at ? spYmd(new Date(t.created_at)) : null,
         responsavel: t.creator?.preferred_name || t.creator?.full_name || null,
+        packageTitle: (parentTitleById && t.parent_task_id && parentTitleById.get(t.parent_task_id)) || null,
       }))
       .filter((t) => categorize(t.due_date, todayYmd, t.created_ymd) !== 'retroativa'),
   );
@@ -203,8 +221,15 @@ async function queryGroupTasks(supabase, groupId, now = new Date()) {
     .eq('assigned_group_id', groupId)
     .neq('status', 'cancelled')
     .order('due_date', { ascending: true, nullsFirst: false });
+  // Map id→título dos CONTAINERS de pacote (is_group) — resolve o nome do pacote na filha
+  // (parent_task_id) SEM query extra: o container vem no MESMO result set (mesmo assigned_group_id,
+  // status != cancelled). Montado do data CRU, antes de o container sair no filtro is_group.
+  const parentTitleById = new Map();
+  for (const t of (data || [])) {
+    if (t.is_group === true && t.id) parentTitleById.set(t.id, t.title);
+  }
   const visible = filterVisibleGroupTasks(data || []).filter((t) => t.recurrence_rule == null);
-  return shapeOpenTasks(visible, spYmd(now));
+  return shapeOpenTasks(visible, spYmd(now), parentTitleById);
 }
 
 // Fichas do grupo (não-deletadas) com quem mexeu por último — pra auditoria/listagem.

@@ -124,14 +124,14 @@ ${histText}
     // anexa a lista REAL de tarefas abertas do grupo (mesma fonte do pool/relatório).
     let openBlock = '';
     try {
-      const { queryGroupTasks } = require('./group-report-builder');
+      const { queryGroupTasks, taskLineItem } = require('./group-report-builder');
       const open = await queryGroupTasks(supabase, group.id);
       if (open.length) {
-        const items = open.slice(0, 12).map((t) => {
-          const d = t.due_date ? `${t.due_date.slice(8, 10)}/${t.due_date.slice(5, 7)} — ` : '';
-          const resp = t.responsavel ? ` (${t.responsavel})` : '';
-          return `<li>${d}${String(t.title || '').replace(/[<>&]/g, '')}${resp}</li>`;
-        }).join('');
+        // Mesma linha do digest (fonte única taskLineItem) → inclui o "Pacote: " da filha
+        // (GROUPREPORT-PACKAGE-TITLE-MISSING). Escapa < > & do texto final.
+        const items = open.slice(0, 12).map((t) =>
+          `<li>${String(taskLineItem(t)).replace(/[<>&]/g, '')}</li>`,
+        ).join('');
         openBlock = `<h3>✅ Em aberto (tarefas do grupo)</h3><ul>${items}</ul>`;
       } else {
         openBlock = '<h3>✅ Em aberto</h3><p>Nenhuma tarefa aberta no grupo. 🎉</p>';
