@@ -7,6 +7,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ChevronLeft, Plus, Settings, MessageSquare, NotebookText } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useWorkGroups, useMyGroupIds } from '../../hooks/useWorkGroups';
+import { canSeeGroup, canConfigureGroup } from '../../lib/workGroupAccess';
 import { useGroupWorkspace, type PoolTaskRow } from '../../hooks/useGroupWorkspace';
 import { useGroupChat } from '../../hooks/useGroupChat';
 import { unreadCount } from '../../lib/groupChat';
@@ -203,11 +204,13 @@ export function GrupoWorkspace() {
     );
   }
 
+  // Acesso (Alf 06/07): regra única em lib/workGroupAccess — coordinator/manager sem
+  // vínculo NÃO entram nem por link direto; só director, membro, líder ou criador.
   const isMember = Boolean(groupId && (myIds.data ?? []).includes(groupId));
-  const canManage =
-    role === 'director' || role === 'coordinator' || role === 'manager' || group.leader_id === meuId;
+  const accessCtx = { role, meuId, myGroupIds: new Set(myIds.data ?? []) };
+  const canManage = canConfigureGroup(group, accessCtx);
 
-  if (!isMember && !canManage) {
+  if (!canSeeGroup(group, accessCtx)) {
     return (
       <div className="space-y-lg w-full pb-2xl">
         <EmptyState

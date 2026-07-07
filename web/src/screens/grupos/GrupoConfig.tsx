@@ -6,6 +6,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ChevronLeft, Settings } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useWorkGroups, useMyGroupIds } from '../../hooks/useWorkGroups';
+import { canConfigureGroup } from '../../lib/workGroupAccess';
 import { Button } from '../../components/Button';
 import { EmptyState } from '../../components/EmptyState';
 import { LoadingState } from '../../components/LoadingState';
@@ -28,7 +29,8 @@ export function GrupoConfig() {
     return <div className="space-y-lg w-full pb-2xl"><EmptyState title="Grupo não encontrado" description="Esse grupo não existe ou foi desativado." action={backToGroups} /></div>;
   }
 
-  const canManage = role === 'director' || role === 'coordinator' || role === 'manager' || group.leader_id === meuId;
+  // Regra única (lib/workGroupAccess): só director, líder ou criador configuram.
+  const canManage = canConfigureGroup(group, { role, meuId, myGroupIds: new Set(myIds.data ?? []) });
   if (!canManage) {
     return (
       <div className="space-y-lg w-full pb-2xl">

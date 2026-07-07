@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useWorkGroups, useMyGroupIds, type WorkGroup } from '../../hooks/useWorkGroups';
+import { visibleWorkGroups, isGroupAdmin } from '../../lib/workGroupAccess';
 import { useGroupsOverview } from '../../hooks/useGroupWorkspace';
 import { useCollabRoster } from '../../hooks/useNotes';
 import { Badge } from '../../components/Badge';
@@ -27,17 +28,14 @@ export function GruposLista() {
   const roster = useCollabRoster();
   // Criar grupo liberado pra TODO colaborador (decisão do Alf 15/06).
   const canCreate = Boolean(collaborator);
-  // Visibilidade (Alf 06/07): ADMIN (director) vê TODOS os grupos, direto. Qualquer
-  // outro papel — manager/coordinator incluídos (caso Rose) — vê APENAS os grupos em
-  // que participa ou lidera. Sem toggle: quem não está no grupo não vê o grupo.
-  const isAdmin = role === 'director';
+  // Visibilidade (Alf 06/07): regra única em lib/workGroupAccess — só director vê
+  // todos; o resto vê apenas membro/líder/criador. Sem toggle.
+  const isAdmin = isGroupAdmin(role);
 
-  const visible = useMemo(() => {
-    const all = list.data ?? [];
-    if (isAdmin) return all;
-    const my = new Set(myIds.data ?? []);
-    return all.filter(g => my.has(g.id) || g.leader_id === meuId);
-  }, [list.data, myIds.data, isAdmin, meuId]);
+  const visible = useMemo(
+    () => visibleWorkGroups(list.data ?? [], { role, meuId, myGroupIds: new Set(myIds.data ?? []) }),
+    [list.data, myIds.data, role, meuId],
+  );
 
   const groupIds = useMemo(() => visible.map(g => g.id), [visible]);
   const counts = useGroupsOverview(groupIds);

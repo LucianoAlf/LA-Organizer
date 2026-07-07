@@ -9,6 +9,7 @@ import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } 
 import { CSS } from '@dnd-kit/utilities';
 import { useAuth } from '../../contexts/AuthContext';
 import { useWorkGroups, useMyGroupIds } from '../../hooks/useWorkGroups';
+import { canSeeGroup } from '../../lib/workGroupAccess';
 import { useGroupNotes } from '../../hooks/useGroupNotes';
 import { useGroupNoteTypes } from '../../hooks/useGroupNoteTypes';
 import { useSortableSensors } from '../../lib/sortableSensors';
@@ -85,9 +86,9 @@ export function GrupoAnotacoes() {
   const backBtn = <Button variant="secondary" size="md" onClick={() => navigate('/grupos')}><ChevronLeft size={14} /> Voltar pros grupos</Button>;
   if (!group) return <div className="space-y-lg w-full pb-2xl"><EmptyState title="Grupo não encontrado" description="Esse grupo não existe ou foi desativado." action={backBtn} /></div>;
 
+  // Regra única (lib/workGroupAccess): coordinator/manager sem vínculo não veem.
   const isMember = Boolean(groupId && (myIds.data ?? []).includes(groupId));
-  const canManage = role === 'director' || role === 'coordinator' || role === 'manager' || group.leader_id === meuId;
-  if (!isMember && !canManage) {
+  if (!canSeeGroup(group, { role, meuId, myGroupIds: new Set(myIds.data ?? []) })) {
     return <div className="space-y-lg w-full pb-2xl"><EmptyState title="Você não está neste grupo" description="Pede pro líder te adicionar pra ver as anotações." action={backBtn} /></div>;
   }
 

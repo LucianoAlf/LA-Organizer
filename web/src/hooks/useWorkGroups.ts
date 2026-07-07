@@ -14,6 +14,7 @@ export interface WorkGroup {
   name: string;
   slug: string;
   leader_id: string;
+  created_by: string | null;
   active: boolean;
   members: WorkGroupMember[];
 }
@@ -32,7 +33,8 @@ export function useWorkGroups() {
     queryKey: ['work-groups'],
     queryFn: async (): Promise<WorkGroup[]> => {
       const [{ data: groups, error }, { data: members }] = await Promise.all([
-        supabase.from('work_groups').select('id, name, slug, leader_id, active').eq('active', true).order('name'),
+        // created_by entra na regra de visibilidade (workGroupAccess): criador vê o próprio grupo.
+        supabase.from('work_groups').select('id, name, slug, leader_id, created_by, active').eq('active', true).order('name'),
         // FK explícita obrigatória: a tabela tem 2 FKs pra collaborators (collaborator_id e added_by).
         supabase.from('work_group_members').select('group_id, collaborator_id, collaborator:collaborators!work_group_members_collaborator_id_fkey(full_name)'),
       ]);

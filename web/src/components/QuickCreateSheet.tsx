@@ -1,4 +1,4 @@
-import { useState, useEffect, FormEvent } from 'react';
+import { useState, useEffect, useMemo, FormEvent } from 'react';
 import { RecurrencePicker } from './RecurrencePicker';
 import { materializeSeriesClient } from '../lib/materialize-recurrence';
 import { shouldWarnUnboundedRecurrence, type RecurrenceWarning } from '../lib/recurrenceGuard';
@@ -18,7 +18,8 @@ import { EisenhowerPicker } from './EisenhowerPicker';
 import { ParticipantsPicker } from './ParticipantsPicker';
 import { RemindersField } from './RemindersField';
 import { useEventCategories } from '../hooks/useEventCategories';
-import { useWorkGroups } from '../hooks/useWorkGroups';
+import { useWorkGroups, useMyGroupIds } from '../hooks/useWorkGroups';
+import { visibleWorkGroups } from '../lib/workGroupAccess';
 import { notifyTaskDelegated, notifyEventInvites, notifyWatchersAdded } from '../lib/tomEngine';
 import { WatchersPicker } from './WatchersPicker';
 import { ChecklistTemplatePicker } from './ChecklistTemplatePicker';
@@ -58,7 +59,7 @@ const GROUP_REMINDER_PRESETS = [
 ] as const;
 
 export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, defaultGroupId }: Props) {
-  const { collaborator, ensureSession } = useAuth();
+  const { collaborator, ensureSession, role } = useAuth();
   const qc = useQueryClient();
   const today = defaultDueDate || todaySP();
 
@@ -77,6 +78,16 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
   const [taskGroupMode, setTaskGroupMode] = useState(false);
   const [taskGroupId, setTaskGroupId] = useState<string>('');
   const workGroups = useWorkGroups();
+  const myGroupIds = useMyGroupIds();
+  // Picker de grupo segue a regra única de visibilidade (lib/workGroupAccess, Alf
+  // 06/07): cada um só cria tarefa pros grupos que VÊ (membro/líder/criador);
+  // director vê todos. Antes qualquer um via a lista inteira aqui.
+  const visibleGroups = useMemo(
+    () => visibleWorkGroups(workGroups.list.data ?? [], {
+      role, meuId: collaborator?.id, myGroupIds: new Set(myGroupIds.data ?? []),
+    }),
+    [workGroups.list.data, myGroupIds.data, role, collaborator?.id],
+  );
   const [due, setDue] = useState(today);
   // Sprint 22.27 — hora opcional pra Tarefa. Quando preenchida, vira `remind_at`
   // (NAO compromisso). Comportamento: lembrete em horario X, sem bloquear agenda.
@@ -690,7 +701,7 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
 
   // Grupos de trabalho (2026-06-10): fieldset Responsável (Eu | 👥 Grupo) compartilhado
   // entre as abas Tarefa e Grupo — pool por equipe como dono.
-  const responsavelFieldset = taskCtx === 'work' && (workGroups.list.data ?? []).length > 0 ? (
+  const responsavelFieldset = taskCtx === 'work' && visibleGroups.length > 0 ? (
     <fieldset>
       <legend className="text-label uppercase tracking-wide text-fg-muted mb-1.5">Responsável</legend>
       <div role="radiogroup" className="grid grid-cols-2 gap-2">
@@ -707,8 +718,8 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
               aria-checked={active}
               onClick={() => {
                 setTaskGroupMode(o.v);
-                if (o.v && !taskGroupId && (workGroups.list.data ?? []).length === 1) {
-                  setTaskGroupId(workGroups.list.data![0].id);
+                if (o.v && !taskGroupId && visibleGroups.length === 1) {
+                  setTaskGroupId(visibleGroups[0].id);
                 }
               }}
               className={[
@@ -725,12 +736,12 @@ export function QuickCreateSheet({ open, onClose, defaultDueDate, defaultKind, d
         <div className="mt-2 space-y-1.5">
           <CustomSelect
             value={taskGroupId}
-            options={(workGroups.list.data ?? []).map(g => ({ value: g.id, label: g.name }))}
+            options={visibleGroups.map(g => ({ value: g.id, label: g.name }))}
             onChange={(v) => setTaskGroupId(String(v))}
             placeholder="Escolhe o grupo…"
           />
           {taskGroupId && (() => {
-            const g = (workGroups.list.data ?? []).find(x => x.id === taskGroupId);
+            const g = visibleGroups.find(x => x.id === taskGroupId);
             if (!g) return null;
             return (
               <div className="text-body-sm text-fg-muted">
