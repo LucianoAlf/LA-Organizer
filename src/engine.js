@@ -1621,9 +1621,12 @@ function parseCoordinationResponseMarker(text) {
     return { malformed: true, cleanText };
   }
   if (!parsed || typeof parsed !== 'object') return { malformed: true, cleanText };
-  if (!parsed.request_id || typeof parsed.request_id !== 'string' ||
-      !/^[0-9a-f-]{36}$/.test(parsed.request_id.trim())) {
-    logSchemaErr('COORDINATION_RESPONSE', ['request_id:invalid_uuid'], parsed);
+  // Audit 08/07 (Jereh): aceita SHORT-ID (4-12 hex) OU UUID completo — o LLM devolve
+  // o short-id de 8 hex que enxerga no histórico (ex.: "9d08f967"). A resolução
+  // short→linha real acontece no executor (matchRowsByShortId, escopo recipient+sent).
+  const { isValidCoordRequestId } = require('./coordination/coord-request-id');
+  if (!isValidCoordRequestId(parsed.request_id)) {
+    logSchemaErr('COORDINATION_RESPONSE', ['request_id:invalid_id'], parsed);
     return { malformed: true, cleanText };
   }
   if (!parsed.response_summary || typeof parsed.response_summary !== 'string') {
@@ -1639,16 +1642,32 @@ function parseCoordinationResponseMarker(text) {
 
 // Sprint 16 — Processa resposta: UPDATE status='responded', notifica requester.
 async function applyCoordinationResponseAction(collab, parsed, inboundText) {
-  const { data: req, error: fetchErr } = await supabase
+  // Audit 08/07 (Jereh): request_id pode vir SHORT-ID (8 hex). Busca os recados
+  // 'sent' abertos deste recipient e resolve por prefixo (matchRowsByShortId),
+  // ordenado por mais recente → desempata ambiguidade. Antes: .eq('id', ...) exigia
+  // UUID exato, então o short-id do LLM nunca casava e a resposta era descartada.
+  const { resolveCoordRequest } = require('./coordination/coord-request-id');
+  const { data: candRows, error: fetchErr } = await supabase
     .from('coordination_requests')
     .select('id, requester_id, recipient_id, mode, message_body, status')
-    .eq('id', parsed.request_id)
     .eq('recipient_id', collab.id)
     .eq('status', 'sent')
-    .maybeSingle();
+    .order('created_at', { ascending: false });
+
+  const resolution = (!fetchErr && Array.isArray(candRows))
+    ? resolveCoordRequest(candRows, parsed.request_id)
+    : { status: 'none' };
+  // Parecer catraca 08/07: short-id ambíguo (N>1 recados abertos) → NÃO chuta o
+  // mais recente; rejeita e cai no fluxo de "não encontrei" (evita notificar o
+  // requester errado em silêncio).
+  if (resolution.status === 'ambiguous') {
+    console.warn('[CoordinationResponse] ambiguous short_id:', String(parsed.request_id).slice(0, 8), 'matches=', resolution.matches.length);
+    return { ok: false, reason: 'ambiguous_short_id' };
+  }
+  const req = resolution.req || null;
 
   if (fetchErr || !req) {
-    console.warn('[CoordinationResponse] request not found or not sent:', parsed.request_id.slice(0, 8));
+    console.warn('[CoordinationResponse] request not found or not sent:', String(parsed.request_id).slice(0, 8));
     return { ok: false, reason: 'request_not_found' };
   }
 
@@ -3674,7 +3693,10 @@ function validateTaskAction(a) {
     const hasTitle = typeof a.title === 'string' && a.title.trim().length > 0;
     if (!hasId && !hasTitle) return 'bad_id';
     const clearAll = a.clear_all === true || a.clear_all === 'true';
-    if (!clearAll && !isValidRemindAt(a.not_before)) return 'snooze_needs_not_before_or_clear_all';
+    // Audit 08/07 (Matheus B): aceita until/snooze_until como alias de not_before (o LLM
+    // erra o nome do campo). Mesma família dos aliases já tolerados no engine.
+    const { snoozeNotBefore } = require('./utils/snooze-fields');
+    if (!clearAll && !isValidRemindAt(snoozeNotBefore(a))) return 'snooze_needs_not_before_or_clear_all';
   } else if (a.action === 'return') {
     // Devolutiva avulsa (A2, 2026-07-02): retorno numa tarefa delegada, SEM concluir.
     // Aceita id OU title (resolvido no handler entre tarefas que executo/acompanho) + note.
@@ -4890,11 +4912,14 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
         const { data: pendSnz } = await supabase
           .from('task_reminders').select('id, remind_at, label').eq('task_id', t.id).is('sent_at', null);
         const clearAllSnz = a.clear_all === true || a.clear_all === 'true';
+        // Audit 08/07 (Matheus B): until/snooze_until como alias de not_before.
+        const { snoozeNotBefore } = require('./utils/snooze-fields');
+        const notBeforeSnz = snoozeNotBefore(a) || null;
         const planSnz = planReminderFloor({
           pendingRows: pendSnz || [],
           taskRemindAt: curSnz ? curSnz.remind_at : null,
           taskRemindedAt: curSnz ? curSnz.reminded_at : null,
-          notBefore: typeof a.not_before === 'string' ? a.not_before : null,
+          notBefore: notBeforeSnz,
           clearAll: clearAllSnz,
           nowMs: Date.now(),
         });
@@ -4910,7 +4935,7 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
         if (planSnz.taskPatch) {
           await supabase.from('tasks').update(planSnz.taskPatch).eq('id', t.id);
         }
-        console.log(`[Task] snooze_reminders task=${String(t.id).slice(0, 8)} consumed=${planSnz.consumeReminderIds.length} inserted=${planSnz.insertReminder ? 1 : 0} patch=${planSnz.taskPatch ? 'y' : 'n'} clearAll=${clearAllSnz} not_before=${a.not_before || '(all)'}`);
+        console.log(`[Task] snooze_reminders task=${String(t.id).slice(0, 8)} consumed=${planSnz.consumeReminderIds.length} inserted=${planSnz.insertReminder ? 1 : 0} patch=${planSnz.taskPatch ? 'y' : 'n'} clearAll=${clearAllSnz} not_before=${notBeforeSnz || '(all)'}`);
         okCount++;
       } else if (a.action === 'mark-item') {
         // Checklist ativo (2026-06-28) — o remetente marca/desmarca um sub-item (filha via
@@ -5196,6 +5221,37 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
           });
           if (_taskDupResult.probable.length > 0) {
             const _d = _taskDupResult.probable[0];
+            // Audit 08/07 (Ana 🔴): se o conflito é uma tarefa que o PRÓPRIO remetente
+            // criou há poucos minutos (re-emit na mesma rajada/conversa), NÃO pergunta
+            // "1/2/3" — pula silencioso e conta ok (como o dedupe defensivo de 60s, porém
+            // semântico). Evita a cascata de perguntas que fez a Ana desistir. Janela
+            // env-tunável (TOM_SELF_RECENT_CONFLICT_MS, default 5min). TRADEOFF documentado
+            // em utils/self-recent-conflict.js (fuzzy pode casar distinta quase-idêntica).
+            const { isSelfRecentConflict, buildSelfRecentSkipReason } = require('./utils/self-recent-conflict');
+            const _selfRecentMs = Number(process.env.TOM_SELF_RECENT_CONFLICT_MS) || 5 * 60 * 1000;
+            const _nowMs = Date.now();
+            const _selfRecent = _taskDupResult.probable.find(p => isSelfRecentConflict(p, collaborator.id, _nowMs, _selfRecentMs));
+            if (_selfRecent) {
+              const _skipReason = buildSelfRecentSkipReason({
+                existingId: _selfRecent.id,
+                ageMs: _nowMs - new Date(_selfRecent.created_at).getTime(),
+                score: _selfRecent._score,
+              });
+              console.warn(`[IntegrityCheck] SELF_RECENT_SKIP "${a.title.trim().slice(0,40)}" ~ ${_skipReason} (mesmo autor <${Math.round(_selfRecentMs/60000)}min) — não pergunta 1/2/3`);
+              // Observabilidade (audit 08/07, catraca): persiste o skip em marker_logs pra a
+              // auditoria das 7h contar reincidência e flagrar perda real do TRADEOFF fuzzy (o
+              // console.warn é invisível ao auditor, que lê marker_logs). result='skipped' é
+              // CHECK-válido e é o MESMO padrão do dedupe de notas (NOTE_ACTION 'skipped').
+              // logMarker já tem try/catch interno E não re-lança; envolvo de novo pra o log
+              // JAMAIS quebrar a criação (KI audit 24/06 — guard que morre silencioso vira regressão).
+              try {
+                await logMarker(collaborator.id, 'TASK_CREATE', 'skipped', _skipReason, a);
+              } catch (_logErr) {
+                console.error('[IntegrityCheck] SELF_RECENT_SKIP logMarker throw:', _logErr.message);
+              }
+              okCount++;
+              continue;
+            }
             console.warn(`[IntegrityCheck] DUP_TASK score=${_d._score.toFixed(2)} "${a.title.trim().slice(0,40)}" ~ "${String(_d.title).slice(0,40)}" (${_d.status})`);
             // Sprint 23.5 — persiste task pendente para bypass engine-side quando user responder "2"
             // Sprint 31.4 Bug-B fix: armazena insertRow validado (não action bruto do LLM)
@@ -7116,7 +7172,7 @@ async function detectDuplicateSemanticTask(collab, candidate) {
     const cutoff = new Date(Date.now() - 30 * 24 * 3600_000).toISOString();
     const { data: openTasks, error } = await supabase
       .from('tasks')
-      .select('id, title, description, assigned_to, department_id, request_type_id, context, status, created_at, due_date')
+      .select('id, title, description, assigned_to, created_by, department_id, request_type_id, context, status, created_at, due_date')
       .eq('assigned_to', candidate.assigned_to || collab.id)
       .not('status', 'in', '("done","cancelled")')
       .gte('created_at', cutoff)

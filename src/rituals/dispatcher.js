@@ -5511,7 +5511,10 @@ async function checkTaskCheckins(now) {
 
   const tzFmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' });
   const today = tzFmt.format(new Date());
-  const next7 = (() => { const d = new Date(today + 'T15:00:00.000Z'); d.setDate(d.getDate() + 7); return d.toISOString().slice(0, 10); })();
+  // Audit 08/07 (Matheus A): antes next7 = today+7 → o check cobrava tarefa que vence
+  // em até 7 dias (reagendada pro FUTURO). Agora só HOJE + ATRASADAS. Muda comportamento
+  // de ritual que afeta TODOS → Alf valida no gate de deploy.
+  const { isDueForCheckin } = require('./checkin-window');
   const whatsapp = require('../services/whatsapp');
 
   for (const c of (collabs || [])) {
@@ -5533,7 +5536,7 @@ async function checkTaskCheckins(now) {
       .from('tasks')
       .select('title, context, due_date, recurrence_parent_id, recurrence_rule')
       .eq('assigned_to', c.id)
-      .lte('due_date', next7)
+      .lte('due_date', today)
       .not('status', 'in', '(done,cancelled)')
       .order('due_date', { ascending: true })
       .limit(20);
@@ -5541,7 +5544,9 @@ async function checkTaskCheckins(now) {
     // Balde A (audit 19/06): dedup por série — antes a MESMA tarefa recorrente aparecia N
     // vezes no check (prova read-only Gabi: 6 bullets → 1). Helper puro testado.
     const { dedupRecurringSeries } = require('../utils/recurring-dedup');
-    const tasks = dedupRecurringSeries(tasksRaw);
+    // Janela do check = HOJE + ATRASADAS (due <= today). Guarda cliente reforça o bound
+    // do servidor e trava regressão se alguém reabrir a janela (Matheus A).
+    const tasks = dedupRecurringSeries(tasksRaw).filter(t => isDueForCheckin(t.due_date, today));
 
     if (!tasks || !tasks.length) {
       await logRitualEvent(c.id, ritualType, 'skipped', 'no_pending_tasks', ymd);
