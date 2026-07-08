@@ -12,6 +12,7 @@ import { fetchGroupLeaders, addGroupLeader, removeGroupLeader } from '../lib/gov
 
 const GLOBAL_GROUPS = [
   { key: 'pedagogico',      label: 'Pedagógico' },
+  { key: 'sonoramente',     label: 'Sonoramente' },
   { key: 'comercial',       label: 'Comercial' },
   { key: 'marketing',       label: 'Marketing' },
   { key: 'financeiro',      label: 'Financeiro' },

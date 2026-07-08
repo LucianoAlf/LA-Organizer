@@ -59,6 +59,7 @@ export const JOB_TITLES: string[] = FUNCTION_TITLES.collaborator;
  */
 export const FUNCTION_ROLE_OPTIONS = [
   { value: 'pedagogico',      label: 'Pedagógico' },
+  { value: 'sonoramente',     label: 'Sonoramente' },
   { value: 'comercial',       label: 'Comercial' },
   { value: 'marketing',       label: 'Marketing' },
   { value: 'financeiro',      label: 'Financeiro' },
