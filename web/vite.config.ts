@@ -107,7 +107,10 @@ export default defineConfig(({ mode }) => {
       react(),
       lareportProxyPlugin(),
       VitePWA({
-        registerType: 'autoUpdate',
+        // 'prompt' (não 'autoUpdate'): o PWAUpdatePrompt escuta onNeedRefresh e mostra
+        // "Nova versão — Atualizar agora". Com 'autoUpdate' o onNeedRefresh NUNCA dispara
+        // (SW-STALE-AUTOUPDATE-VS-PROMPT, 07/07: prompt existia mas config contradizia).
+        registerType: 'prompt',
         includeAssets: ['favicon.svg', 'icon-192.png', 'icon-512.png', 'og-image.png'],
         manifest: {
           name: 'LA Organizer',
@@ -128,7 +131,10 @@ export default defineConfig(({ mode }) => {
         },
         workbox: {
           cleanupOutdatedCaches: true,
-          skipWaiting: true,
+          // skipWaiting FALSE p/ o modo 'prompt': o SW novo fica em "waiting" (dispara
+          // onNeedRefresh → o prompt aparece). O clique em "Atualizar agora" chama
+          // updateServiceWorker(true) que faz o skipWaiting sob demanda + reload.
+          skipWaiting: false,
           clientsClaim: true,
           runtimeCaching: [
             {
