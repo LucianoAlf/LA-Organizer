@@ -4,7 +4,7 @@
 // e registra inserts/updates (necessário p/ testar o cancel, que é await terminal).
 const assert = require('node:assert');
 const { test } = require('node:test');
-const { applyGroupChatTaskActions, titleSimilarity, pickInstanceTarget, findDuplicatePackage, resolveVisibleInstance, filterNewSubtasks, resolveSeriesTemplate, endSeries, reviveSeries } = require('./group-chat-tasks');
+const { applyGroupChatTaskActions, titleSimilarity, pickInstanceTarget, findDuplicatePackage, resolveVisibleInstance, filterNewSubtasks, resolveSeriesTemplate, endSeries, reviveSeries, matchPoolByPhrase } = require('./group-chat-tasks');
 
 function makeDb({ tasks = [], events = [] } = {}) {
   function builder() {
@@ -267,4 +267,46 @@ test('reviveSeries: sem molde cancelado casando → not_found (sem mutação)', 
   assert.strictEqual(r.revived, false);
   assert.strictEqual(r.reason, 'not_found');
   assert.strictEqual(events.length, 0);
+});
+
+// ── GROUPCHAT-COMPLETE-COMPOSITE-LABEL-NOMATCH (caso Rose/Financeiro 08/07) ──
+// A pessoa cola o LABEL do relatório ("{Pacote}: {Filha} ({Resp})"); o resolvedor casava
+// `.ilike(title)` EXATO → nenhum title cru bate → "não achei essa tarefa no grupo". O fallback
+// por containment resolve pra FILHA (a mais específica contida na frase), sem tocar o pacote.
+
+test('matchPoolByPhrase: label composto do relatório resolve pra FILHA (containment), não o pacote', () => {
+  const pool = [
+    { id: 'pkg', title: 'Depósito de Cheques', recurrence_rule: null, recurrence_parent_id: 'master', due_date: '2026-07-06' },
+    { id: 'cj', title: 'Venc 05 (prazo dia 06)', recurrence_rule: null, recurrence_parent_id: 'blue', due_date: '2026-07-06' },
+    { id: 'ca', title: 'Venc 05 (prazo dia 06)', recurrence_rule: null, recurrence_parent_id: 'blue', due_date: '2026-08-06' },
+    { id: 'outra', title: 'Venc 10 (prazo dia 11)', recurrence_rule: null, recurrence_parent_id: 'blue', due_date: '2026-07-11' },
+  ];
+  const m = matchPoolByPhrase(pool, 'Depósito de Cheques: Venc 05 (prazo dia 06) (Rose)');
+  assert.deepStrictEqual(m.map((r) => r.id), ['cj', 'ca'], 'filhas Venc 05 (top spec), por due asc');
+  assert.strictEqual(pickInstanceTarget(m).id, 'cj', 'ciclo visível mais antigo aberto = julho');
+});
+
+test('matchPoolByPhrase: exato tem prioridade; sem falso-positivo quando falta token', () => {
+  const pool = [
+    { id: 'a', title: 'Pagar aluguel', due_date: '2026-07-01' },
+    { id: 'b', title: 'Conciliação de Cartões', due_date: '2026-07-02' },
+  ];
+  assert.deepStrictEqual(matchPoolByPhrase(pool, 'pagar ALUGUEL').map((r) => r.id), ['a'], 'exato normalizado (caixa)');
+  assert.strictEqual(matchPoolByPhrase(pool, 'conclui a conciliação').length, 0, 'token "cartoes" ausente → não casa');
+  assert.strictEqual(matchPoolByPhrase([], 'x').length, 0);
+  assert.strictEqual(matchPoolByPhrase(pool, '').length, 0);
+});
+
+test('complete: label composto do relatório conclui a FILHA (fallback) — não o pacote — caso Rose', async () => {
+  const events = [];
+  const pkg = G({ id: 'pkg', title: 'Depósito de Cheques', is_group: true, recurrence_parent_id: 'master', due_date: '2026-07-06' });
+  const child = G({ id: 'cj', title: 'Venc 05 (prazo dia 06)', recurrence_parent_id: 'blue', due_date: '2026-07-06' });
+  const r = await applyGroupChatTaskActions({
+    supabase: makeDb({ tasks: [pkg, child], events }), groupId: 'g1', senderCollabId: 'c1',
+    actions: [{ action: 'complete', title: 'Depósito de Cheques: Venc 05 (prazo dia 06) (Rose)' }],
+  });
+  assert.ok(events.find((e) => e.kind === 'update' && e.id === 'cj' && e.patch.status === 'done'), 'filha concluída');
+  assert.strictEqual((r.completed || [])[0] && r.completed[0].id, 'cj');
+  assert.strictEqual(pkg.status, 'pending', 'pacote NÃO concluído por engano');
+  assert.strictEqual((r.failed || []).length, 0, 'sem not_found');
 });

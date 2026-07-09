@@ -36,6 +36,45 @@ function titleSimilarity(a, b) {
   return inter / (A.size + B.size - inter);
 }
 
+// Normaliza título p/ comparação exata tolerante: minúsculo, sem acento, pontuação→espaço, colapsa.
+function _normTitle(s) {
+  return String(s || '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+// Resolve tarefas do POOL a partir de uma FRASE que pode ser o LABEL DECORADO do relatório
+// ("{Pacote}: {Filha} ({Responsável})") — audit 08/07 GROUPCHAT-COMPLETE-COMPOSITE-LABEL-NOMATCH:
+// os handlers casam `.ilike(title)` EXATO; quando a pessoa cola o label, nenhum `title` cru bate
+// → not_found (a Rose colou "Depósito de Cheques: Venc 05 (prazo dia 06) (Rose)"; a filha real é
+// "Venc 05 (prazo dia 06)"). Aqui: (1) exato normalizado (tolera acento/caixa que o ilike perde);
+// se nada, (2) CONTAINMENT — tarefa cujos tokens do título estão TODOS na frase (título ⊆ colado),
+// preferindo a MAIS específica (mais tokens = a filha sobre o pacote). Empatadas no top saem por
+// due_date asc (o pickInstanceTarget escolhe o ciclo visível mais antigo aberto). Pura; nunca lança.
+function matchPoolByPhrase(pool, phrase) {
+  const rows = (Array.isArray(pool) ? pool : []).filter((r) => r && r.title);
+  const pn = _normTitle(phrase);
+  if (!pn) return [];
+  const byDue = (a, b) => String(a.due_date || '').localeCompare(String(b.due_date || ''));
+  const exact = rows.filter((r) => _normTitle(r.title) === pn).sort(byDue);
+  if (exact.length) return exact;
+  const ptoks = _titleTokens(phrase);
+  if (!ptoks.size) return [];
+  const scored = [];
+  for (const r of rows) {
+    const ttoks = _titleTokens(r.title);
+    if (!ttoks.size) continue;
+    let inter = 0;
+    for (const t of ttoks) if (ptoks.has(t)) inter++;
+    if (inter === ttoks.size) scored.push({ r, spec: ttoks.size }); // título inteiramente contido na frase
+  }
+  if (!scored.length) return [];
+  const top = Math.max(...scored.map((s) => s.spec));
+  return scored.filter((s) => s.spec === top).map((s) => s.r).sort(byDue);
+}
+
 // Dado os candidatos casados por título (mãe-instância e/ou molde recorrente),
 // retorna a INSTÂNCIA a operar — NUNCA o molde (recurrence_rule != null). Cancelar
 // ou concluir o molde mata a série inteira: o materializador (materializeAll) pula
@@ -100,6 +139,20 @@ function filterNewSubtasks(existingChildTitles, subtasks, threshold = SIM_THRESH
     if (!tok.size) return false;
     return !existing.some((et) => titleSimilarity(tok, et) >= threshold);
   });
+}
+
+// Fallback IO do resolvedor: busca o pool ABERTO do grupo e casa por FRASE (matchPoolByPhrase),
+// mirando o ciclo visível (pickInstanceTarget). Só roda quando o `.ilike` EXATO não achou — em
+// geral porque a pessoa colou o label decorado do relatório. Degrada pra null; nunca lança.
+async function _resolveByPhraseFallback({ supabase, groupId, phrase, excludeCancelled = false }) {
+  try {
+    let q = supabase.from('tasks')
+      .select('id, title, recurrence_rule, recurrence_parent_id, due_date, is_group')
+      .eq('assigned_group_id', groupId).neq('status', 'done');
+    if (excludeCancelled) q = q.neq('status', 'cancelled');
+    const { data: pool } = await q.limit(200);
+    return pickInstanceTarget(matchPoolByPhrase(pool, phrase));
+  } catch (_) { return null; }
 }
 
 async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, actions }) {
@@ -219,7 +272,10 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
           .ilike('title', title)
           .order('due_date', { ascending: true })
           .limit(5);
-        const target = pickInstanceTarget(found);
+        let target = pickInstanceTarget(found);
+        // Fallback (GROUPCHAT-COMPLETE-COMPOSITE-LABEL-NOMATCH): a pessoa colou o label do
+        // relatório ("{Pacote}: {Filha} ({Resp})") → o ilike exato não bate no title cru.
+        if (!target) target = await _resolveByPhraseFallback({ supabase, groupId, phrase: title });
         if (!target) { failed.push({ action: a, why: 'not_found_in_pool' }); continue; }
         // Anti-corrida: só marca se ainda não estava done.
         const patch = { status: 'done', completed_at: new Date().toISOString(), completed_by: senderCollabId };
@@ -249,7 +305,8 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
         // Protege a série recorrente: cancela a INSTÂNCIA visível, NUNCA o molde.
         // Cancelar o template mata a série inteira — materializeAll pula molde
         // cancelado, então nunca mais regenera (caso Conciliação de Cartões/Rose 17/06).
-        const target = pickInstanceTarget(hit);
+        let target = pickInstanceTarget(hit);
+        if (!target) target = await _resolveByPhraseFallback({ supabase, groupId, phrase: title, excludeCancelled: true });
         if (!target) { failed.push({ action: a, why: 'not_found_in_group' }); continue; }
         await supabase.from('tasks').update({ status: 'cancelled' }).eq('id', target.id);
         if (target.is_group) {
@@ -270,7 +327,8 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
           .select('id, title, recurrence_rule').eq('assigned_group_id', groupId)
           .neq('status', 'done').neq('status', 'cancelled').ilike('title', title)
           .order('due_date', { ascending: true }).limit(5);
-        const target = pickInstanceTarget(found);
+        let target = pickInstanceTarget(found);
+        if (!target) target = await _resolveByPhraseFallback({ supabase, groupId, phrase: title, excludeCancelled: true });
         if (!target) { failed.push({ action: a, why: 'not_found_in_pool' }); continue; }
         const patch = {}; if (nd) patch.due_date = nd; if (nr) patch.remind_at = nr;
         const { data: upd } = await supabase.from('tasks').update(patch).eq('id', target.id).select('id, title').maybeSingle();
@@ -327,6 +385,6 @@ async function reviveSeries({ supabase, groupId, title }) {
 
 module.exports = {
   applyGroupChatTaskActions, titleSimilarity, pickInstanceTarget,
-  findDuplicatePackage, resolveVisibleInstance, filterNewSubtasks,
+  findDuplicatePackage, resolveVisibleInstance, filterNewSubtasks, matchPoolByPhrase,
   resolveSeriesTemplate, endSeries, reviveSeries,
 };
