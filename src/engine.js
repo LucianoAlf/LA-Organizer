@@ -54,6 +54,7 @@ const { decideTaskDoneFromQuote } = require('./services/taskdone-quote');
 const { enforceNoSyncExcuse } = require('./lib/sync-excuse-guard');
 const { classifyDupChoice, pickFreshDupBypassIntent, pickDupBypassIntentForReply } = require('./lib/dup-choice');
 const { buildClosingItems, parseClosingReply } = require('./utils/closing-reply');
+const { normalizeHabitAliases } = require('./utils/habit-field-alias');
 const { buildCoordinationResponseNotification, safeResponseSummary } = require('./services/coordination-notify');
 const { isContextQuietField, validateContextQuietField } = require('./services/prefs-quiet-context');
 const pendingInventoryPhoto = require('./services/pending-inventory-photo');
@@ -6086,21 +6087,12 @@ function parseHabitMarker(text) {
   const dropped = [];
   for (let i = 0; i < rawActions.length; i++) {
     const a = rawActions[i];
-    // Sprint 31.6 (B3) — normaliza aliases que TOM emite (consistente com tasks/events,
-    // que usam `title`). Antes: create com `title` caía em name_missing; log com
-    // `habit_slug` caía em bad_habit_id. Agora aceita ambos.
-    if (a && typeof a === 'object') {
-      if (a.action === 'create' && !a.name && typeof a.title === 'string') a.name = a.title;
-      // log/query_progress/delete identificam o hábito por habit_id|habit_name; o TOM às
-      // vezes manda `habit_slug` ou `title` (igual faz em tasks/eventos). Normaliza ambos.
-      // (B3 Ana — 22/06: faltava o fallback `title`→habit_name no log; o marker da dose da
-      // Alice era rejeitado por bad_habit_id e virava confabulação "✅ doses confirmadas".)
-      if ((a.action === 'log' || a.action === 'query_progress' || a.action === 'delete')
-          && !a.habit_id && !a.habit_name) {
-        if (typeof a.habit_slug === 'string') a.habit_name = a.habit_slug.replace(/[-_]+/g, ' ').trim();
-        else if (typeof a.title === 'string') a.habit_name = a.title;
-      }
-    }
+    // Sprint 31.6 (B3) — normaliza aliases que TOM emite (consistente com tasks/events).
+    // Lógica extraída pra utils/habit-field-alias.js (puro, TDD) no audit 08/07:
+    // HABIT-FIELD-ALIAS-HABIT (Ana Paula 21:09) — o LLM emitiu log com o campo `habit`
+    // ("Ir para academia"/"Usar bombinha Asma Alice") → schema_invalid; o alias novo
+    // entra na MESMA família (habit_slug/title, B3 Ana 22/06). Comportamento idêntico.
+    normalizeHabitAliases(a);
     const why = validateHabitAction(a);
     if (why) { dropped.push(`action[${i}]:${why}`); continue; }
     valid.push(a);
@@ -8669,8 +8661,21 @@ async function processMessage(phone, text, raw = {}) {
       i.kind === 'confirmation' && i.payload && i.payload.closing &&
       Array.isArray(i.payload.closing.items) && i.payload.closing.items.length);
     const _replyParsed = stripReplyScaffold(String(text || ''));
+    // CLOSING-FRESHER-OUTBOUND-BIND (Quintela 08/07): última outbound do TOM pro gate —
+    // se o TOM mandou OUTRA mensagem depois da pergunta do fechamento (ex.: balanço de
+    // aderência 19:19), a resposta numerada pode ser pra ELA → o gate solta pro LLM.
+    // Query 1-row SÓ quando há fechamento aberto (raro); falha → null (comportamento atual).
+    let _lastOutboundAt = null;
+    if (closingCandidate) {
+      try {
+        const { data: _lo } = await supabase.from('conversation_history')
+          .select('created_at').eq('collaborator_id', collab.id).eq('direction', 'outbound')
+          .order('created_at', { ascending: false }).limit(1);
+        _lastOutboundAt = _lo && _lo[0] ? _lo[0].created_at : null;
+      } catch (_loErr) { console.warn('[Closing] last outbound lookup err:', _loErr.message); }
+    }
     const _closingGate = closingCandidate
-      ? shouldClosingInterceptorFire({ closingIntent: closingCandidate, openIntents: _openIntents, replyParsed: _replyParsed, now: new Date() })
+      ? shouldClosingInterceptorFire({ closingIntent: closingCandidate, openIntents: _openIntents, replyParsed: _replyParsed, now: new Date(), lastOutboundAt: _lastOutboundAt })
       : { fire: false, reason: 'no_candidate' };
     if (closingCandidate && !_closingGate.fire) {
       console.log(`[Closing] gate skip (${_closingGate.reason}) phone=${_phoneTail}`);
@@ -10314,7 +10319,13 @@ async function processMessage(phone, text, raw = {}) {
       } else {
         const result = okCount > 0 ? 'executed' : 'rejected';
         const reason = okCount > 0 ? `ok=${okCount} fail=${failCount}` : `all_failed:${failCount}`;
-        await logMarker(collab.id, 'TASK_UPDATE', result, reason, null);
+        // TASKUPDATE-REJECTED-RAW-NULL (Leo 08/07): all_failed:2 sem raw + log esparso =
+        // auditoria cega ao payload (impossível saber QUAIS alvos falharam e por quê).
+        // Nas rejeições grava as actions no raw (logMarker trunca em 500) + failMessages.
+        await logMarker(collab.id, 'TASK_UPDATE', result, reason,
+          result === 'rejected'
+            ? { actions: parsedTask.actions, fails: (failMessages || []).slice(0, 3) }
+            : null);
         let base = parsedTask.cleanText || '';
         if (failCount > 0 && okCount === 0) {
           // Sprint 31.6 (E2) — se há msg específica (ex: tarefa de outro dono), usa ela

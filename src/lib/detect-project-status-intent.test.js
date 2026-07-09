@@ -95,3 +95,27 @@ test('NEGATIVO via 3: conclusão sem pedido de remoção → null (como hoje)', 
 test('NEGATIVO via 3: pergunta não é comando', () => {
   assert.strictEqual(detectProjectStatusIntent('tiro o LA Teclas do sistema?'), null);
 });
+
+// ── PROJECT-INTENT-TRANSCRIPT-HIJACK (Luciano 08/07) ─────────────────────────
+// Transcrição de reunião colada no chat (multi-linha, centenas de chars) continha
+// "projeto"+verbo de fechar em falas → Via 1 consumia o turno e respondia "Não achei
+// um projeto com esse nome" em 0.8s. Comando real é CURTO: texto longo → null (LLM).
+test('transcrição de reunião colada NÃO é comando de status de projeto', () => {
+  const raw = 'jul. 8, 2026\nReunião em 8 de jul. de 2026 às 09:00 GMT-03:00 - Transcrição\n00:00:19\n\n'
+    + 'Luciano Alf: Oi, oi, pessoal. Bom dia.\nVitor Moreira: Bom dia,\n'
+    + 'Luciano Alf: Vamos fechar o cronograma do projeto novo da Benj hoje.\n'
+    + 'Fabíola Moreira: Pera aí que eu já vou resolver o áudio.\n'
+    + 'Vitor Moreira: Acho que dá pra concluir essa fase do projeto até sexta.\n'
+    + 'Luciano Alf: Fechou. Depois a gente alinha o resto com a equipe.\n';
+  assert.strictEqual(detectProjectStatusIntent(raw), null);
+});
+
+test('texto de 1 linha porém quilométrico NÃO é comando (guarda de tamanho)', () => {
+  const raw = 'fechar o projeto ' + 'da reunião de alinhamento sobre o cronograma novo '.repeat(8);
+  assert.strictEqual(detectProjectStatusIntent(raw), null);
+});
+
+test('CONTROLE: comando curto segue detectando após a guarda', () => {
+  assert.deepStrictEqual(detectProjectStatusIntent('fecha o projeto Marketing'),
+    { action: 'complete', nameHint: 'Marketing', quotedText: null, viaProjectToken: true });
+});

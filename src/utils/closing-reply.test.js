@@ -289,3 +289,68 @@ test('CONTROLE: "1 e 2 feito, 3 feito" segue tudo done (sem sinal de parcialidad
 test('CONTROLE: "fiz tudo" puro segue done global', () => {
   assert.deepStrictEqual(parseClosingReply('fiz tudo', 3).statuses, ['done', 'done', 'done']);
 });
+
+// ── CLOSING-ANNOTATED-DEFAULT-DONE (Quintela 08/07) ─────────────────────────
+// 3ª semana da MESMA família (cancel 02/07, parcial 07/07, reschedule 08/07): o default
+// do segmento anotado era 'done' — qualquer verbo não-previsto fechava o item. Política
+// INVERTIDA: anotação que não casa NENHUM sinal conhecido → matched:false (LLM decide
+// com o contexto). Menção nua ("1 e 2") segue done — é o formato pedido pelo ritual.
+
+test('Quintela 08/07 REAL: "1. Remarcar para sábado..." → matched:false (LLM)', () => {
+  const raw = '1. Remarcar para sábado \n2. ⁠processo postergado até sexta 17/07\n3. ⁠feito\n4. ⁠feito';
+  const r = parseClosingReply(raw, 3);
+  assert.strictEqual(r.matched, false, 'reschedule/postergação não pode virar done');
+});
+
+test('reschedule isolado: "1 remarquei pra sábado" → matched:false', () => {
+  assert.strictEqual(parseClosingReply('1 remarquei pra sábado', 2).matched, false);
+});
+
+test('postergação isolada: "2 postergado até sexta" → matched:false', () => {
+  assert.strictEqual(parseClosingReply('2 postergado até sexta', 3).matched, false);
+});
+
+test('anotação aleatória: "1 comprei o material" → matched:false (antes: done errado)', () => {
+  assert.strictEqual(parseClosingReply('1 comprei o material', 2).matched, false);
+});
+
+test('word joiner do WhatsApp: "3. \\u2060feito" segue done', () => {
+  const r = parseClosingReply('3. ⁠feito', 3);
+  assert.strictEqual(r.matched, true);
+  assert.strictEqual(r.statuses[2], 'done');
+});
+
+test('CONTROLE pós-inversão: "1 SIM" e "2 ok" seguem done (afirmação explícita)', () => {
+  assert.deepStrictEqual(parseClosingReply('1 sim, 2 ok', 2).statuses, ['done', 'done']);
+});
+
+// ── CLOSING-FRESHER-OUTBOUND-BIND (Quintela 08/07, parte B) ─────────────────
+// Entre o fechamento (19:04, lista de 3) e a resposta (19:20) o TOM mandou o BALANÇO de
+// aderência (19:19, lista de 4 SEM número). A resposta numerada era pro balanço, mas o
+// interceptor mapeou na lista do fechamento. Gate novo: última outbound mais fresca que a
+// pergunta (+90s de tolerância pra própria pergunta do ritual) → fail-safe LLM.
+
+test('fresher_outbound: TOM mandou outra msg depois do fechamento → NÃO captura', () => {
+  const r = shouldClosingInterceptorFire({
+    closingIntent: mkClosing('2026-06-15T11:00:00Z'),
+    openIntents: [], replyParsed: { userText: '1. remarcar\n2. feito' },
+    now: NOW_FIRE, lastOutboundAt: '2026-06-15T11:15:00Z',
+  });
+  assert.deepStrictEqual([r.fire, r.reason], [false, 'fresher_outbound']);
+});
+
+test('fresher_outbound: outbound é a PRÓPRIA pergunta (segundos depois) → captura normal', () => {
+  const r = shouldClosingInterceptorFire({
+    closingIntent: mkClosing('2026-06-15T11:00:00Z'),
+    openIntents: [], replyParsed: { userText: '1 e 2' },
+    now: NOW_FIRE, lastOutboundAt: '2026-06-15T11:00:30Z',
+  });
+  assert.strictEqual(r.fire, true);
+});
+
+test('fresher_outbound: sem lastOutboundAt (null/ausente/inválido) → comportamento atual', () => {
+  const base = { closingIntent: mkClosing('2026-06-15T11:00:00Z'), openIntents: [], replyParsed: { userText: '1' }, now: NOW_FIRE };
+  assert.strictEqual(shouldClosingInterceptorFire({ ...base }).fire, true);
+  assert.strictEqual(shouldClosingInterceptorFire({ ...base, lastOutboundAt: null }).fire, true);
+  assert.strictEqual(shouldClosingInterceptorFire({ ...base, lastOutboundAt: 'lixo' }).fire, true);
+});

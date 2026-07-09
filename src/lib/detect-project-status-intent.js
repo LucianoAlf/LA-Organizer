@@ -65,6 +65,11 @@ function detectProjectStatusIntent(rawText) {
   const { userText, quotedText } = stripReplyScaffold(String(rawText || ''));
   const text = (userText || '').trim();
   if (!text) return null;
+  // PROJECT-INTENT-TRANSCRIPT-HIJACK (Luciano 08/07): transcrição de reunião colada no
+  // chat (multi-linha, centenas de chars) continha "projeto"+"fechar" em falas → a Via 1
+  // consumia o turno e respondia "Não achei um projeto com esse nome" em 0.8s. Comando
+  // real é CURTO e direto (1-2 linhas): texto longo/muitas linhas → null (cai no LLM).
+  if (text.length > 280 || (text.match(/\n/g) || []).length >= 5) return null;
   if (/\?\s*$/.test(text)) return null; // pergunta não é comando (lição EVENT-CONFAB)
 
   const hasCancel = CANCEL_RE.test(text);

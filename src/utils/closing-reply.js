@@ -77,6 +77,14 @@ const PROGRESS_RE = /(em\s+andamento|andament|andando|fazendo|comec(?:ei|ando|ei
 // "em andamento"). O engine aplica status='cancelled' no id ancorado.
 const CANCEL_RE = /\bcancel\w*/;
 
+// CLOSING-ANNOTATED-DEFAULT-DONE (Quintela 08/07): afirmação EXPLÍCITA de conclusão num
+// segmento anotado. Sem \b nas raízes acentuáveis (\b em JS é ASCII — lição audit 28/06)
+// e tolerante ao word-joiner U+2060 que o WhatsApp injeta em listas ("2. ⁠feito").
+const DONE_EXPLICIT_RE = /(feit\w*|\bfiz\b|fech\w*|conclu\w*|pront\w*|resolvid\w*|finaliz\w*|termin\w*|entreg\w*|consegui|\bfoi\b|\bsim\b|\bok\b|check|done|✅|👍)/i;
+
+// Tokens que NÃO contam como anotação (conectivos/artigos): "1 e a 2" segue menção nua.
+const CONNECTOR_TOKENS = new Set(['e', 'a', 'o', 'as', 'os', 'da', 'de', 'do', 'das', 'dos', 'já', 'ja', 'tb', 'tbm', 'também', 'tambem']);
+
 /**
  * Mapeia a resposta do usuário ao fechamento numerado para um status por item.
  * statuses[i] ∈ 'done' | 'progress' | 'cancel' | 'none':
@@ -123,22 +131,40 @@ function parseClosingReply(userText, count) {
   }
 
   // 3) Numerado: coleta números válidos (1..n) e classifica pelo segmento até o
-  //    próximo número. Default 'done'; vira 'progress' se houver sinal de não-conclusão.
+  //    próximo número válido.
+  //    CLOSING-ANNOTATED-DEFAULT-DONE (Quintela 08/07): o default era 'done' — segmento
+  //    com ANOTAÇÃO não-reconhecida ("1. Remarcar para sábado", "2. processo postergado
+  //    até sexta 17/07") FECHAVA o item. 3ª semana da MESMA família (cancel 02/07,
+  //    parcial 07/07, reschedule 08/07): cada verbo novo virava done. Política INVERTIDA:
+  //    menção NUA ("1 e 2", "só a 1") segue done (é o formato pedido pelo ritual: "me diz
+  //    quais fez"); anotação só fecha com afirmação EXPLÍCITA (feito/sim/ok/...); anotação
+  //    que não casa NENHUM sinal → matched:false — a mensagem INTEIRA cai no LLM, que vê
+  //    o contexto (inclusive lista concorrente, ex. balanço de aderência) e tem as âncoras
+  //    no prompt. Mata a classe: qualquer verbo futuro desconhecido NUNCA mais fecha item.
   const nums = [];
   const re = /\d+/g;
   let m;
   while ((m = re.exec(t)) !== null) {
     const val = parseInt(m[0], 10);
-    if (val >= 1 && val <= n) nums.push({ val, idx: m.index });
+    if (val >= 1 && val <= n) nums.push({ val, idx: m.index, len: m[0].length });
   }
   if (nums.length) {
     for (let i = 0; i < nums.length; i++) {
       const start = nums[i].idx;
       const end = i + 1 < nums.length ? nums[i + 1].idx : t.length;
       const seg = t.slice(start, end);
-      // CLOSING-CANCEL-IGNORED: cancel vence progress ("3 NÃO pode cancelar" = cancela).
-      statuses[nums[i].val - 1] = CANCEL_RE.test(seg) ? 'cancel'
-        : (PROGRESS_RE.test(seg) ? 'progress' : 'done');
+      // anotação = o que sobra do segmento sem o número, pontuação leve e conectivos
+      const ann = seg.slice(nums[i].len)
+        .split(/[\s.()\-–—:,;!]+/)
+        .filter((w) => w && !CONNECTOR_TOKENS.has(w))
+        .join(' ');
+      let st;
+      if (!ann) st = 'done';                           // menção nua: "1 e 2", "só a 1"
+      else if (CANCEL_RE.test(ann)) st = 'cancel';      // prioridade (Yuri 01/07)
+      else if (PROGRESS_RE.test(ann)) st = 'progress';  // inclui parcialidade (06/07)
+      else if (DONE_EXPLICIT_RE.test(ann)) st = 'done'; // afirmação explícita
+      else return { matched: false, statuses: new Array(Math.max(0, n)).fill('none') };
+      statuses[nums[i].val - 1] = st;
     }
     return { matched: true, statuses };
   }
@@ -167,11 +193,11 @@ function parseClosingReply(userText, count) {
  *   • reply_quote_elsewhere — você citou OUTRA mensagem, não o fechamento (Juliana/Yuri).
  *   • fresher_intent   — há uma intent aberta mais recente que o fechamento.
  *
- * @param {{closingIntent:object, openIntents?:object[], replyParsed?:{userText?:string,quotedText?:string}, now?:Date}} args
+ * @param {{closingIntent:object, openIntents?:object[], replyParsed?:{userText?:string,quotedText?:string}, now?:Date, lastOutboundAt?:string}} args
  * @returns {{fire:boolean, reason:string}}
  */
 function shouldClosingInterceptorFire(args = {}) {
-  const { closingIntent, openIntents = [], replyParsed = {}, now = new Date() } = args;
+  const { closingIntent, openIntents = [], replyParsed = {}, now = new Date(), lastOutboundAt = null } = args;
   if (!closingIntent || !closingIntent.payload || !closingIntent.payload.closing) return { fire: false, reason: 'no_closing' };
   const items = closingIntent.payload.closing.items;
   if (!Array.isArray(items) || items.length === 0) return { fire: false, reason: 'no_items' };
@@ -189,6 +215,18 @@ function shouldClosingInterceptorFire(args = {}) {
   const hasFresher = (openIntents || []).some((i) =>
     i && i.id !== closingIntent.id && i.asked_at && new Date(i.asked_at).getTime() > closingAt);
   if (hasFresher) return { fire: false, reason: 'fresher_intent' };
+  // (fresher outbound) CLOSING-FRESHER-OUTBOUND-BIND (Quintela 08/07): o TOM mandou OUTRA
+  // mensagem DEPOIS da pergunta do fechamento (o balanço de aderência 19:19 entrou entre o
+  // fechamento 19:04 e a resposta 19:20 — a resposta numerada era pro BALANÇO de 4 itens,
+  // e o interceptor mapeou na lista de 3 do fechamento). Se a última outbound é mais
+  // fresca que a pergunta (+90s de tolerância pra própria mensagem/sticker do ritual),
+  // a resposta pode ser pra ELA → fail-safe: LLM decide com o contexto completo.
+  if (lastOutboundAt) {
+    const lastOut = new Date(lastOutboundAt).getTime();
+    if (Number.isFinite(lastOut) && Number.isFinite(closingAt) && lastOut > closingAt + 90 * 1000) {
+      return { fire: false, reason: 'fresher_outbound' };
+    }
+  }
   return { fire: true, reason: 'ok' };
 }
 
