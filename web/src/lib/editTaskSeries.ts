@@ -26,6 +26,21 @@ export async function editTaskSeries(
   const hasPatch = Object.keys(patch).length > 0;
 
   try {
+    // RECUR-EDIT-DUEDATE-DROP (Alf 09/07): due_date é POR-OCORRÊNCIA — cada ocorrência
+    // da série tem a SUA data (a regra dita o dia). A data editada (anchor.due_date já
+    // vem com o valor novo) grava SEMPRE só na âncora, nunca em massa nas futuras
+    // (senão empilharia todas no mesmo dia). Antes: o patch de série não levava due_date
+    // e o TaskPatch nem aceitava → mudar a data de tarefa recorrente não persistia
+    // (atingia dono E assignee; não era RLS). .select p/ pegar silent-fail de RLS.
+    {
+      const { data: dRows, error: dErr } = await supabase.from('tasks')
+        .update({ due_date: anchor.due_date }).eq('id', anchor.id).select('id');
+      if (dErr) throw new Error(`anchor due_date: ${dErr.message}`);
+      if (!dRows || dRows.length === 0) {
+        throw new Error(`anchor due_date afetou 0 linhas (RLS bloqueou? id=${anchor.id})`);
+      }
+    }
+
     if (plan.scopeOnlyThis) {
       if (hasPatch) {
         const { error } = await supabase.from('tasks')
