@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { Clock, ListTodo, Flame, CheckCheck, AlertTriangle, AlarmClock, Pin } from 'lucide-react';
 import { StatCard } from '../../../components/StatCard';
+import { WatchedTasksSection } from '../../../components/WatchedTasksSection';
 import { CompactEventRow } from './rows/CompactEventRow';
 import { CompactTaskRow } from './rows/CompactTaskRow';
 import { GroupRow } from './rows/GroupRow';
@@ -335,6 +336,11 @@ export function DayPanel(p: Props) {
             <p className="text-body-sm text-fg-muted px-1 py-2">Nenhuma tarefa pendente.</p>
           )}
         </CollapsibleSection>
+
+        {/* Em cópia · acompanhando (2026-07-10) — tarefas onde sou watcher. Paridade com o
+            mobile (Hoje.tsx). Auto-contida: retorna null quando não há cópias. Desktop-only
+            (DayPanel só monta no AgendaDesktopLeftPanel, max-md:hidden). */}
+        <WatchedTasksSection />
 
         {/* Concluídas */}
         {done.length > 0 && (
