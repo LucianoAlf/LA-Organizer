@@ -1,0 +1,29 @@
+'use strict';
+// coord-confirm.js — rede determinística de confirmação de coordenação (Fabi 10/07).
+//
+// Espelha o staging do financeiro (FIN-CONFIRM): o engine ESTAGIA o COORDINATION_REQUEST e
+// confirma antes de enviar; o "sim" (handler pré-LLM) despacha via applyCoordinationRequestAction
+// (executor existente, engine.js:1836) — sem depender do LLM re-emitir o marker (que
+// confabulou no caso Fabi: "avisei" sem enviar). Ver spec/plan 2026-07-10-coordenacao-confirm.
+//
+// Helpers PUROS (sem I/O) → testáveis isolados; pending-intents/engine quebram local.
+
+// shouldStageCoordination — FAIL-SAFE: estagiar é o DEFAULT. Todo COORDINATION_REQUEST em
+// escopo (toca outra pessoa) DEVE confirmar antes de enviar. NUNCA "envia direto por
+// omissão" (fail-OPEN = envio cego sem confirmação = proibido). O parser já rejeita mode
+// fora do escopo (schema_invalid), mas este helper NÃO depende disso — retorna true pra
+// qualquer lista não-vazia; só uma exceção FUTURA explicitamente segura retornaria false.
+function shouldStageCoordination(items, _opts = {}) {
+  return Array.isArray(items) && items.length > 0;
+}
+
+// buildCoordinationConfirmPreview — FALLBACK da pergunta quando o LLM não escreveu prosa
+// (cleanText vazio). O caminho normal usa a prosa do LLM (voz intacta); este é a rede.
+function buildCoordinationConfirmPreview(items) {
+  const list = (Array.isArray(items) ? items : []).filter((i) => i && i.recipient_name);
+  if (!list.length) return 'Confirma que eu mando esse recado?';
+  if (list.length === 1) return `Aviso o ${list[0].recipient_name}? Confirma?`;
+  return `Aviso ${list.length} pessoas (${list.map((i) => i.recipient_name).join(', ')})? Confirma?`;
+}
+
+module.exports = { shouldStageCoordination, buildCoordinationConfirmPreview };

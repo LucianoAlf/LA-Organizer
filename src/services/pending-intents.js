@@ -12,6 +12,9 @@
 
 const supabase = require('../supabase/client');
 const { intentCarriesDeterministicExecutor } = require('../lib/intent-executor');
+// detectUserConfirmation extraída pra módulo PURO (testável isolado — este arquivo requer
+// supabase/client e não roda em node --test). CONFIRM-SHORTYES-S-UNRECOGNIZED (Clayton 09/07).
+const { detectUserConfirmation } = require('./user-confirmation');
 
 const VALID_KINDS = new Set(['task_creation','event_creation','approval_pending','confirmation','finance_source','invoice_import']);
 const VALID_RESOLUTIONS = new Set(['confirmed','denied','expired','superseded']);
@@ -170,63 +173,11 @@ function detectConfirmationQuestion(reply) {
   return null;
 }
 
-/**
- * Heurística leve: detecta se a mensagem do user é uma CONFIRMAÇÃO afirmativa
- * curta ("sim", "ok", "pode", "cria", "manda ver", "fechou", "vai criando")
- * ou negativa ("não", "deixa pra lá", "esquece").
- * Retorna 'yes' | 'no' | null.
- */
-function detectUserConfirmation(userText, opts = {}) {
-  if (typeof userText !== 'string') return null;
-  const t = userText.toLowerCase().trim();
-  if (!t || t.length > 200) return null;  // só pegamos respostas curtas
-  const _nWords = t.split(/\s+/).length;
-
-  // BATCH-CONFIRM-LONGPHRASE (Daiana 22/06): confirmação AFIRMATIVA que abre com afirmador
-  // inequívoco ("Sim, por favor. Pode fechar as 6 tarefas") é clara mesmo com cortesia/objeto.
-  // Aceita até 12 palavras DESDE QUE não haja ressalva/negação. A NEGAÇÃO segue restrita a
-  // ≤4 palavras (preserva F5/ALVO-FUTURO, caso Ana). Sem isso, a confirmação longa caía no LLM
-  // e o executeBatchComplete determinístico nunca disparava (all_failed sob fallback).
-  const STRONG_YES_OPEN = /^(sim|isso|claro|perfeito|exato|confirmo|confirmad[oa]|beleza|blz|okay|ok|t[áa]|bora)\b/;
-  const RESSALVA = /\b(n[aã]o|nao|nunca|jamais|mas|por[ée]m|depois|amanh[ãa]|espera|aguarda)\b|deixa\s+pra|s[óo]\s+que/;
-  if (_nWords > 4 && _nWords <= 12 && STRONG_YES_OPEN.test(t) && !RESSALVA.test(t)) return 'yes';
-
-  // BATCH-CONFIRM-IMPERATIVE-NUM (Rose/2088 28/06): com intent de complete/batch ABERTA
-  // (allowDone), uma confirmação por CONCLUSÃO mais longa — "1 e 2 já foram feitas",
-  // "conclui as 3 que já fiz" — também confirma, desde que sem ressalva/negação. Gated em
-  // allowDone: SEM intent aberta NÃO entra (p/ "finalizei o projeto ontem" solto não
-  // auto-concluir). Negação F5/Ana segue restrita a ≤4 palavras abaixo.
-  const DONE_ANYWHERE = /\b(conclu[ií]|finaliz(?:ei|ou|ad[oa])|feit[oa]s?|fiz|prontas?|terminei|resolvi|fechei|encerr[ei])/;
-  // HESITA: fala QUEBRADA/correção ("Conclui .. esqueci de colocar aqui") tem done-verb mas
-  // NÃO é confirmação — reticências/"esqueci"/"pera"/"aliás" = segunda intenção. Exclui.
-  const HESITA = /\besqueci\b|\besquece\b|\bpera[íi]?\b|\bperai\b|\bal[ií]as\b|\.\./;
-  if (opts.allowDone && _nWords > 4 && _nWords <= 12 && DONE_ANYWHERE.test(t) && !RESSALVA.test(t) && !HESITA.test(t)) return 'yes';
-
-  // F5 (ALVO-FUTURO, auditoria 09/06) — confirmação/negação só em resposta ESSENCIALMENTE
-  // curta (≤4 palavras). "Não foi a ADM, foi a de hoje, de governança" começa com "não"
-  // mas é CONTEÚDO — negava às cegas uma intent não-relacionada (caso Ana 227b8689).
-  if (_nWords > 4) return null;
-
-  // Negativas primeiro (mais específicas pra evitar falso positivo)
-  const NO_RE = /^(n[aã]o\b|nao\b|deixa\s+pra\s+l[aá]|esquece|cancela|n[aã]o\s+precisa|desconsidera|ainda\s+n[aã]o)/;
-  if (NO_RE.test(t)) return 'no';
-
-  // Afirmativas
-  const YES_RE = /^(sim\b|s[i]m\b|ok\b|okay\b|pode\b|cria\b|cri[ae]m?\b|manda\b|manda\s+ver|fechou\b|fechado\b|beleza\b|blz\b|isso\b|isso\s+mesmo|claro\b|t[áa]\b|t[áa]\s+certo|vai\b(?!\s+dar)|vai\s+(?:criando|criar|fazendo)|bora\b|perfeito\b|exato\b|confirmad[oa]\b|confirmo\b|confirma\b|confirmar\b|confirmei\b|👍)/;
-  if (YES_RE.test(t)) return 'yes';
-  // "vai criando aí"
-  if (/vai\s+criando\s+a[íi]?/i.test(userText)) return 'yes';
-  // GUARD-CONFIRM-LOOP (Matheus 10/06): vocabulário de CONCLUSÃO ("já conclui",
-  // "já foi feito", "feito", "fiz") — SÓ quando o chamador indica intent ancorada
-  // de complete (opts.allowDone): a pergunta foi "confirma que já foi feito?" e
-  // essas são as respostas literais. NUNCA entra no YES genérico — "feito" solto
-  // confirmaria intent não-relacionada (família de risco do "aprovado"/APROVACAO-SEM-FUNIL).
-  if (opts.allowDone) {
-    const DONE_RE = /^(j[áa]\s+)?(foi\s+|t[áa]\s+|est[áa]\s+)?(conclu[ií](?:d[oa])?|fiz\b|feit[oa]\b|finalizei|finalizad[oa]|terminei|terminad[oa]|pront[oa]\b|resolvi\b|resolvid[oa]|fechei\b)/;
-    if (DONE_RE.test(t)) return 'yes';
-  }
-  return null;
-}
+// detectUserConfirmation: extraída pra ./user-confirmation.js (módulo PURO, testável
+// isolado — este arquivo faz require('../supabase/client'), VPS-only). Importada no topo
+// e re-exportada abaixo. Comportamento idêntico + fix CONFIRM-SHORTYES-S-UNRECOGNIZED
+// (Clayton 09/07: "s"/"ss" agora confirmam). Todos os KIs embutidos (BATCH-CONFIRM-*,
+// F5/ALVO-FUTURO, GUARD-CONFIRM-LOOP) preservados e cobertos por user-confirmation.test.js.
 
 /* ----------------------------------------------------------------------
  * GUARD-CONFIRM-LOOP (10/06) — helpers de intent ANCORADA (payload.anchor).

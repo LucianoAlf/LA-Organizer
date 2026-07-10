@@ -9567,6 +9567,27 @@ async function processMessage(phone, text, raw = {}) {
           return;
         }
         // nenhuma concluída (ids stale) → segue fluxo normal (LLM vê a intent)
+      } else if (userConfirm === 'yes' && Array.isArray(target.payload?.coordination?.items) && target.payload.coordination.items.length) {
+        // COORD-CONFIRM-NOOP (Fabi 10/07): confirmação de recado/aviso. Executa determinístico
+        // (applyCoordinationRequestAction), sem depender do LLM re-emitir. Espelha o executor
+        // ancorado/batch. Retorna cedo → o LLM NÃO é chamado no 2º turno (sem re-estágio/loop).
+        const _items = target.payload.coordination.items;
+        let _okC = 0; const _fail = [];
+        for (const _it of _items) {
+          try {
+            const _r = await applyCoordinationRequestAction(collab, _it);
+            await logMarker(collab.id, 'COORDINATION_REQUEST', _r.ok ? 'executed' : 'rejected', `${_it.recipient_name}:${_r.reason}`, null);
+            if (_r.ok) _okC++; else _fail.push(_r.replyText || `${_it.recipient_name} (${_r.reason})`);
+          } catch (e) { console.warn('[CoordConfirm] exec err:', e.message); _fail.push(`${_it.recipient_name} (erro)`); }
+        }
+        await pendingIntents.resolveIntent(target.id, 'confirmed', `coord confirm (engine) ${_okC}/${_items.length}`);
+        let _outC;
+        if (_okC === _items.length) _outC = _okC === 1 ? '📨 Recado enviado!' : `📨 ${_okC} recados enviados!`;
+        else if (_okC > 0) _outC = `📨 Enviei ${_okC} de ${_items.length}. Não consegui: ${_fail.join('; ')}.`;
+        else _outC = _fail.length === 1 ? _fail[0] : `Não consegui enviar: ${_fail.join('; ')}.`;
+        try { await whatsapp.sendMessage(phone, _outC); await logConversation(collab.id, 'outbound', _outC); } catch (_) { /* já persistiu */ }
+        console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (coord_confirm_${_okC}/${_items.length})`);
+        return;
       } else if (userConfirm === 'yes') {
         _pendingIntentToResolve = { intent: target, resolution: 'confirmed' };
         // Injeta contexto inline pra LLM saber o que confirmar.
@@ -11508,36 +11529,43 @@ async function processMessage(phone, text, raw = {}) {
       }
       reply = baseCoord;
     } else if (parsedCoord && parsedCoord.items) {
-      let okCount = 0, failCount = 0;
-      const failedRecipients = [];
-      const failedResults = [];
-      for (const item of parsedCoord.items) {
-        const result = await applyCoordinationRequestAction(collab, item);
-        await logMarker(
-          collab.id,
-          'COORDINATION_REQUEST',
-          result.ok ? 'executed' : 'rejected',
-          `${item.recipient_name}:${result.reason}`,
-          null
-        );
-        if (result.ok) okCount++;
-        else { failCount++; failedRecipients.push(`${item.recipient_name} (${result.reason})`); failedResults.push(result); }
-      }
-      if (okCount > 0) coordRequestHandledThisTurn = true;
-      if (parsedCoord.items.length > 1) {
-        console.log(`[CoordinationRequest] batch: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
-      }
-      // Limpa texto da resposta e, se houver falhas, expõe pro user (não esconde).
-      reply = parsedCoord.cleanText || reply;
-      // Sprint 31.6 (B5) — superficia falha mesmo com 1 destinatário (antes só >1).
-      // Caso real "avisa a Diana": Diana não cadastrada → TOM dizia "Mandando agora" e
-      // o erro era engolido. Agora: 1 destinatário usa a msg específica do handler
-      // (sabe distinguir não-encontrado / sem-alçada / etc); vários, lista resumida.
-      if (failCount > 0) {
-        if (parsedCoord.items.length === 1 && okCount === 0 && failedResults[0]?.replyText) {
-          reply = failedResults[0].replyText; // substitui o texto otimista do LLM
-        } else if (failCount > 0) {
-          reply = (reply || '') + `\n\n⚠️ Não consegui enviar pra: ${failedRecipients.join(', ')}.`;
+      // Audit 10/07 (Fabi) — COORD-CONFIRM-NOOP: rede determinística de confirmação.
+      // Em vez de enviar direto, ESTAGIA o payload e pergunta; o "sim" (handler pré-LLM
+      // ~9548) despacha via applyCoordinationRequestAction. Fail-safe: shouldStageCoordination
+      // default=true → NUNCA envia sem confirmar. A pergunta é a prosa do LLM (voz intacta),
+      // fallback = buildCoordinationConfirmPreview. Espelha o staging do financeiro.
+      const { shouldStageCoordination, buildCoordinationConfirmPreview } = require('./coordination/coord-confirm');
+      if (shouldStageCoordination(parsedCoord.items)) {
+        const _preview = (parsedCoord.cleanText && parsedCoord.cleanText.trim())
+          ? parsedCoord.cleanText.trim()
+          : buildCoordinationConfirmPreview(parsedCoord.items);
+        const _cid = await pendingIntents.openIntent(
+          collab.id, 'confirmation', { coordination: { items: parsedCoord.items } }, _preview);
+        if (!_cid) {
+          await logMarker(collab.id, 'COORDINATION_REQUEST', 'rejected', 'coord_confirm_intent_null', null);
+          reply = 'Opa, não consegui preparar o envio do recado — me manda de novo, por favor 🙏';
+        } else {
+          _metrics.awaiting_user_confirm = true;
+          await logMarker(collab.id, 'COORDINATION_REQUEST', 'skipped', `staged_coord:${parsedCoord.items.length}`, null);
+          reply = _preview;
+        }
+      } else {
+        // Fail-safe: envio-direto só existiria numa exceção FUTURA de shouldStageCoordination
+        // (default é sempre estagiar). Mantém o comportamento antigo (loop de envio).
+        let okCount = 0, failCount = 0;
+        const failedRecipients = [];
+        const failedResults = [];
+        for (const item of parsedCoord.items) {
+          const result = await applyCoordinationRequestAction(collab, item);
+          await logMarker(collab.id, 'COORDINATION_REQUEST', result.ok ? 'executed' : 'rejected', `${item.recipient_name}:${result.reason}`, null);
+          if (result.ok) okCount++;
+          else { failCount++; failedRecipients.push(`${item.recipient_name} (${result.reason})`); failedResults.push(result); }
+        }
+        if (okCount > 0) coordRequestHandledThisTurn = true;
+        reply = parsedCoord.cleanText || reply;
+        if (failCount > 0) {
+          if (parsedCoord.items.length === 1 && okCount === 0 && failedResults[0]?.replyText) reply = failedResults[0].replyText;
+          else reply = (reply || '') + `\n\n⚠️ Não consegui enviar pra: ${failedRecipients.join(', ')}.`;
         }
       }
     } else if (claimsSent(reply)) {
