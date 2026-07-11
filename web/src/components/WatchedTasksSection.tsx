@@ -30,6 +30,9 @@ export function WatchedTasksSection() {
               <div className="text-body-sm text-fg-muted">
                 {t.executor_name ? `${t.executor_name} · ` : ''}{fmtDay(t.due_date)} · em cópia
               </div>
+              {t.description && (
+                <p className="text-body-sm text-fg-muted whitespace-pre-wrap mt-1">{t.description}</p>
+              )}
             </div>
             {meId && <TaskReturnSection taskId={t.id} meId={meId} />}
           </li>

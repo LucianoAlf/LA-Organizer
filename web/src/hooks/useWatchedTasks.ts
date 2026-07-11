@@ -6,7 +6,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 
 export interface WatchedTask {
-  id: string; title: string; due_date: string | null;
+  id: string; title: string; description: string | null; due_date: string | null;
   status: string; assigned_to: string | null; executor_name: string | null;
 }
 
@@ -25,13 +25,13 @@ export function useWatchedTasks(enabled: boolean) {
       if (!ids.length) return [];
       const { data, error } = await supabase
         .from('tasks')
-        .select('id, title, due_date, status, assigned_to, executor:collaborators!tasks_assigned_to_fkey(preferred_name, full_name)')
+        .select('id, title, description, due_date, status, assigned_to, executor:collaborators!tasks_assigned_to_fkey(preferred_name, full_name)')
         .in('id', ids)
         .not('status', 'in', '(done,cancelled)')
         .order('due_date', { ascending: true });
       if (error) throw error;
       return (data ?? []).map((t: any) => ({
-        id: t.id, title: t.title, due_date: t.due_date, status: t.status,
+        id: t.id, title: t.title, description: t.description ?? null, due_date: t.due_date, status: t.status,
         assigned_to: t.assigned_to,
         executor_name: t.executor?.preferred_name ?? t.executor?.full_name ?? null,
       }));
