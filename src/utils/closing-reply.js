@@ -152,7 +152,13 @@ function parseClosingReply(userText, count) {
     for (let i = 0; i < nums.length; i++) {
       const start = nums[i].idx;
       const end = i + 1 < nums.length ? nums[i + 1].idx : t.length;
-      const seg = t.slice(start, end);
+      // CLOSING-SEGMENT-ORPHAN-BLEED (Yuri 10/07): o segmento do ÚLTIMO número ia até o fim
+      // da string e ENGOLIA uma LINHA ÓRFÃ de outro assunto ("3 - Sim\n\nrec Kaio NÃO foi
+      // possivel" → o "não" da órfã fazia o item virar progress em vez de done). Corta na
+      // quebra de PARÁGRAFO (\n\n = mudança de assunto); a anotação legítima vem antes do \n\n.
+      const _rawSeg = t.slice(start, end);
+      const _para = _rawSeg.indexOf('\n\n');
+      const seg = _para > 0 ? _rawSeg.slice(0, _para) : _rawSeg;
       // anotação = o que sobra do segmento sem o número, pontuação leve e conectivos
       const ann = seg.slice(nums[i].len)
         .split(/[\s.()\-–—:,;!]+/)

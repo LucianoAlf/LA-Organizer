@@ -9525,18 +9525,28 @@ async function processMessage(phone, text, raw = {}) {
         // F5 (ALVO-FUTURO): intent ANCORADA (a guarda temporal abriu com o id certo) —
         // o ENGINE aplica o complete direto no item ancorado, sem LLM (sem chute de alvo).
         const anc = target.payload.anchor;
+        // CONFIRM-ANCHOR-WRONGBIND (Ana 10/07): frase-longa que NÃO menciona o anchor
+        // (título/número/tudo) não amarra — "Bombonha Alice - feito" não é sobre "Falar com a
+        // Fefê". Fail-safe: na dúvida cai no LLM (que trata o log de hábito). Curto confirma.
+        const { confirmationBindOk } = require('./utils/confirm-bind');
+        const _bindOk = confirmationBindOk(_confirmText, anc.title);
+        if (!_bindOk) {
+          console.log(`[PendingIntents] anchor bind SKIP "${String(anc.title || '').slice(0, 30)}" — msg não cita o anchor (frase-longa) phone=${_phoneTail}`);
+        }
         let okAnc = false;
-        try {
-          if (anc.type === 'task') {
-            const { error: ancErr } = await supabase.from('tasks')
-              .update({ status: 'done', completed_at: new Date().toISOString(), completed_by: collab.id })
-              .eq('id', anc.id);
-            okAnc = !ancErr;
-          } else if (anc.type === 'event') {
-            const { error: ancErr } = await supabase.from('events').update({ status: 'done' }).eq('id', anc.id);
-            okAnc = !ancErr;
-          }
-        } catch (ancEx) { console.warn('[PendingIntents] anchored complete err:', ancEx.message); }
+        if (_bindOk) {
+          try {
+            if (anc.type === 'task') {
+              const { error: ancErr } = await supabase.from('tasks')
+                .update({ status: 'done', completed_at: new Date().toISOString(), completed_by: collab.id })
+                .eq('id', anc.id);
+              okAnc = !ancErr;
+            } else if (anc.type === 'event') {
+              const { error: ancErr } = await supabase.from('events').update({ status: 'done' }).eq('id', anc.id);
+              okAnc = !ancErr;
+            }
+          } catch (ancEx) { console.warn('[PendingIntents] anchored complete err:', ancEx.message); }
+        }
         if (okAnc) {
           await pendingIntents.resolveIntent(target.id, 'confirmed', 'anchored complete (engine)');
           const msgAnc = `✅ *${anc.title || 'Item'}* concluído.`;
@@ -9544,7 +9554,7 @@ async function processMessage(phone, text, raw = {}) {
           console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (anchored_complete_${anc.type})`);
           return;
         }
-        // escrita falhou → segue fluxo normal (LLM vê a intent e tenta pelo marker)
+        // bind-skip OU escrita falhou → segue fluxo normal (LLM vê a intent e tenta pelo marker)
       } else if (userConfirm === 'yes' && Array.isArray(target.payload?.batch_complete) && target.payload.batch_complete.length) {
         // BATCH-COMPLETE-CONFIRM-NOOP (Fabi 20/06): confirmação de fechamento em LOTE.
         // A intent {batch_complete:[short_ids]} (aberta em applyTaskActions A2) era
@@ -11534,11 +11544,13 @@ async function processMessage(phone, text, raw = {}) {
       // ~9548) despacha via applyCoordinationRequestAction. Fail-safe: shouldStageCoordination
       // default=true → NUNCA envia sem confirmar. A pergunta é a prosa do LLM (voz intacta),
       // fallback = buildCoordinationConfirmPreview. Espelha o staging do financeiro.
-      const { shouldStageCoordination, buildCoordinationConfirmPreview } = require('./coordination/coord-confirm');
+      const { shouldStageCoordination, buildCoordinationConfirmPreview, resolveStageConfirmPrompt } = require('./coordination/coord-confirm');
       if (shouldStageCoordination(parsedCoord.items)) {
-        const _preview = (parsedCoord.cleanText && parsedCoord.cleanText.trim())
-          ? parsedCoord.cleanText.trim()
-          : buildCoordinationConfirmPreview(parsedCoord.items);
+        // COORD-CONFIRM-STAGE-PROSE-CONFAB (Fabi 11/07): a prosa de estágio é GARANTIDA pergunta.
+        // Se o LLM afirmou envio ("Mandando agora ✅") em vez de perguntar, o user achava que já
+        // foi e nunca dava "sim" → recado estagiado, nunca enviado. resolveStageConfirmPrompt troca
+        // afirmação-de-envio pela pergunta determinística; preserva a prosa do LLM quando é pergunta.
+        const _preview = resolveStageConfirmPrompt(parsedCoord.cleanText, parsedCoord.items);
         const _cid = await pendingIntents.openIntent(
           collab.id, 'confirmation', { coordination: { items: parsedCoord.items } }, _preview);
         if (!_cid) {

@@ -19,7 +19,14 @@ function intentCarriesDeterministicExecutor(payload) {
   if (!payload || typeof payload !== 'object') return false;
   const hasAnchor = payload.anchor != null;
   const hasBatch = Array.isArray(payload.batch_complete) && payload.batch_complete.length > 0;
-  return !!(hasAnchor || hasBatch);
+  // COORD-CONFIRM-INTENT-CLOBBER (Fabi 11/07): a rede de coordenação estagia
+  // {coordination:{items}} e executa no "sim" via applyCoordinationRequestAction — mesmo
+  // tipo de executor determinístico. Sem cobri-lo aqui, o registrador genérico de fim-de-turno
+  // superseçava o intent coord ~0,3s depois → o "sim" caía no LLM → re-estagiava → LOOP
+  // (caso Fabi 11/07: "Confirma/Confirmo/Sim avisa" re-perguntava "Aviso o Luciano? Confirma?").
+  const hasCoord = payload.coordination
+    && Array.isArray(payload.coordination.items) && payload.coordination.items.length > 0;
+  return !!(hasAnchor || hasBatch || hasCoord);
 }
 
 module.exports = { intentCarriesDeterministicExecutor };

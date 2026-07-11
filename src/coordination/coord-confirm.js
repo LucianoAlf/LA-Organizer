@@ -26,4 +26,21 @@ function buildCoordinationConfirmPreview(items) {
   return `Aviso ${list.length} pessoas (${list.map((i) => i.recipient_name).join(', ')})? Confirma?`;
 }
 
-module.exports = { shouldStageCoordination, buildCoordinationConfirmPreview };
+// resolveStageConfirmPrompt — COORD-CONFIRM-STAGE-PROSE-CONFAB (Fabi 11/07). A prosa mostrada
+// AO ESTAGIAR é MECÂNICA (instrui o user a dar o "sim"), NÃO criatividade do LLM. Se o LLM
+// escreveu uma AFIRMAÇÃO DE ENVIO ("Mandando agora ✅", "Avisei") em vez da pergunta, o user
+// acha que já foi feito e nunca confirma → o recado fica estagiado e NUNCA sai (Fabi→Luciano
+// 11/07). Usa a prosa do LLM SÓ se for pergunta de confirmação limpa; senão, a determinística.
+function isSafeConfirmPrompt(t) {
+  const low = t.toLowerCase();
+  // Sinal de envio consumado/em-curso desqualifica (é o bug): "Mandando/Avisei/Enviei/✅".
+  if (/mandando|enviando|enviei|mandei|avisei|avisad|avisando|encaminh|repass|✅|👍/.test(low)) return false;
+  // E tem que SOAR como pergunta de confirmação.
+  return /confirma/.test(low) || /\?\s*$/.test(t);
+}
+function resolveStageConfirmPrompt(cleanText, items) {
+  const t = (typeof cleanText === 'string' ? cleanText : '').trim();
+  return (t && isSafeConfirmPrompt(t)) ? t : buildCoordinationConfirmPreview(items);
+}
+
+module.exports = { shouldStageCoordination, buildCoordinationConfirmPreview, resolveStageConfirmPrompt };

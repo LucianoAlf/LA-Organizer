@@ -354,3 +354,18 @@ test('fresher_outbound: sem lastOutboundAt (null/ausente/inválido) → comporta
   assert.strictEqual(shouldClosingInterceptorFire({ ...base, lastOutboundAt: null }).fire, true);
   assert.strictEqual(shouldClosingInterceptorFire({ ...base, lastOutboundAt: 'lixo' }).fire, true);
 });
+
+// ── CLOSING-SEGMENT-ORPHAN-BLEED (Yuri 10/07) ───────────────────────────────
+// O segmento do ÚLTIMO número ia até o fim da string e ENGOLIA uma LINHA ÓRFÃ de outro
+// assunto ("3 - Sim\n\nrec Kaio NÃO foi possivel") — o "não" da órfã fazia o item 3 (Sim)
+// virar progress em vez de done. Corte na quebra de PARÁGRAFO (\n\n = mudança de assunto).
+test('Yuri 10/07 REAL: linha órfã "rec Kaio não..." após \\n\\n NÃO contamina o item 3 (Sim=done)', () => {
+  const raw = '1 não, reagendei \n2 - não, um pouco por vez\n3 - Sim\n\nrec Kaio não foi possivel reagendei tb';
+  assert.deepStrictEqual(parseClosingReply(raw, 3).statuses, ['progress', 'progress', 'done']);
+});
+test('órfã com "não" após \\n\\n não rebaixa o último item', () => {
+  assert.deepStrictEqual(parseClosingReply('1 feito\n\nobs: não deu tempo do resto', 1).statuses, ['done']);
+});
+test('CONTROLE: sem \\n\\n nada muda — "1 feito, 2 feito, 3 em andamento"', () => {
+  assert.deepStrictEqual(parseClosingReply('1 feito, 2 feito, 3 em andamento', 3).statuses, ['done', 'done', 'progress']);
+});

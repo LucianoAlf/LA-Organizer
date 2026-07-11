@@ -47,3 +47,20 @@ test('payload nulo/indefinido/não-objeto é seguro (false)', () => {
 test('payload de finance_source (source hint) NÃO é executor de fechamento', () => {
   assert.strictEqual(intentCarriesDeterministicExecutor({ card: 'nubank', amount: 100 }), false);
 });
+
+// COORD-CONFIRM-INTENT-CLOBBER (Fabi 11/07): a rede de coordenação é o 3º executor determinístico.
+test('COORD (Fabi 11/07): intent com coordination.items é executor determinístico (não pode ser clobrada)', () => {
+  assert.strictEqual(
+    intentCarriesDeterministicExecutor({ coordination: { items: [{ recipient_name: 'Luciano', mode: 'relay_assisted' }] } }),
+    true
+  );
+});
+
+test('coordination.items VAZIO não conta', () => {
+  assert.strictEqual(intentCarriesDeterministicExecutor({ coordination: { items: [] } }), false);
+});
+
+test('coordination sem items / items não-array não conta', () => {
+  assert.strictEqual(intentCarriesDeterministicExecutor({ coordination: {} }), false);
+  assert.strictEqual(intentCarriesDeterministicExecutor({ coordination: { items: 'x' } }), false);
+});

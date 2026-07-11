@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { shouldStageCoordination, buildCoordinationConfirmPreview } = require('./coord-confirm');
+const { shouldStageCoordination, buildCoordinationConfirmPreview, resolveStageConfirmPrompt } = require('./coord-confirm');
 
 // ── shouldStageCoordination — FAIL-SAFE (guarda-corpo #1 da catraca) ─────────
 test('fail-safe: item com mode válido → estagia', () => {
@@ -33,4 +33,34 @@ test('preview defensivo: sem recipient válido → pergunta genérica (nunca vaz
   assert.strictEqual(buildCoordinationConfirmPreview([]), 'Confirma que eu mando esse recado?');
   assert.strictEqual(buildCoordinationConfirmPreview([{}]), 'Confirma que eu mando esse recado?');
   assert.strictEqual(buildCoordinationConfirmPreview(null), 'Confirma que eu mando esse recado?');
+});
+
+// ── resolveStageConfirmPrompt — a prosa de ESTÁGIO é MECÂNICA, não do LLM ──────
+// COORD-CONFIRM-STAGE-PROSE-CONFAB (Fabi 11/07): o LLM emitia o marker (estagia) mas escrevia
+// "Mandando agora ✅" em vez de "Confirma?" → user achava que foi feito, nunca dava "sim", o
+// recado ficava estagiado e NUNCA saía. A prosa que pede o "sim" tem que ser GARANTIDA.
+const ST_ITEMS = [{ recipient_name: 'Luciano', mode: 'relay_assisted', message_body: 'x' }];
+
+test('afirmação de envio ("Mandando agora pro Luciano") → troca pela pergunta determinística', () => {
+  assert.strictEqual(resolveStageConfirmPrompt('Mandando agora pro Luciano.', ST_ITEMS), 'Aviso o Luciano? Confirma?');
+});
+test('afirmação com ✅ ("Mandando agora, Fabi. ✅") → troca pela pergunta', () => {
+  assert.strictEqual(resolveStageConfirmPrompt('Mandando agora, Fabi. ✅', ST_ITEMS), 'Aviso o Luciano? Confirma?');
+});
+test('avisei/mandei/enviei/avisado/repassei → troca pela pergunta', () => {
+  for (const s of ['Avisei o Luciano.', 'Já mandei pro Luciano', 'Enviei agora', 'Recado avisado!', 'Repassei pro Luciano ✅']) {
+    assert.strictEqual(resolveStageConfirmPrompt(s, ST_ITEMS), 'Aviso o Luciano? Confirma?');
+  }
+});
+test('pergunta de confirmação legítima do LLM é PRESERVADA (voz intacta)', () => {
+  assert.strictEqual(resolveStageConfirmPrompt('Aviso o Luciano que você viu? Confirma?', ST_ITEMS), 'Aviso o Luciano que você viu? Confirma?');
+  assert.strictEqual(resolveStageConfirmPrompt('Quer que eu avise o Luciano?', ST_ITEMS), 'Quer que eu avise o Luciano?');
+});
+test('cleanText vazio/null/branco → pergunta determinística', () => {
+  assert.strictEqual(resolveStageConfirmPrompt('', ST_ITEMS), 'Aviso o Luciano? Confirma?');
+  assert.strictEqual(resolveStageConfirmPrompt(null, ST_ITEMS), 'Aviso o Luciano? Confirma?');
+  assert.strictEqual(resolveStageConfirmPrompt('   ', ST_ITEMS), 'Aviso o Luciano? Confirma?');
+});
+test('prosa dúbia sem "?" nem "confirma" → fail-safe pra pergunta determinística', () => {
+  assert.strictEqual(resolveStageConfirmPrompt('Beleza então', ST_ITEMS), 'Aviso o Luciano? Confirma?');
 });
