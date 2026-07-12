@@ -11,21 +11,17 @@ import {
 } from '../../hooks/useFinanceiro';
 import { useFinanceiroAuth } from '../../hooks/useFinanceiro';
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
-import { currentCompetencia, nextDueLabel, type PfCard } from '../../lib/cartoes';
+import { currentCompetencia, currentCycleSummary, type PfCard } from '../../lib/cartoes';
 
 const fmtBRL = (v: number) =>
   'R$ ' + Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-function daysUntil(day: number): number {
-  const today = new Date();
-  const dom = today.getUTCDate();
-  return day >= dom ? day - dom : day; // aprox; só pra "fecha em Xd"
-}
 
 function CardTile({ card }: { card: PfCard }) {
   const navigate = useNavigate();
   const usage = useCardUsage(card);
   const invoice = useCardInvoice(card.id, currentCompetencia(card));
+  // vence/fecha da fatura ABERTA — MESMA competência do valor acima e do detalhe (fonte única).
+  const cycle = currentCycleSummary(card);
   const pct = usage.data ? Math.round(usage.data.pct * 100) : 0;
   const color = card.color || '#820ad1';
   return (
@@ -39,7 +35,7 @@ function CardTile({ card }: { card: PfCard }) {
           <span className="w-8 h-8 rounded-md flex items-center justify-center text-sm" style={{ background: color }}>💳</span>
           <div>
             <div className="font-semibold text-fg">{card.name}</div>
-            <div className="text-label text-fg-muted">vence {nextDueLabel(card.due_day)} · fecha em {daysUntil(card.closing_day)}d</div>
+            <div className="text-label text-fg-muted">vence {cycle.dueLabel} · fecha em {cycle.closesInDays}d</div>
           </div>
         </div>
         <span className="text-label px-2 py-0.5 rounded-full bg-bg-elevated text-fg-muted">{pct}%</span>

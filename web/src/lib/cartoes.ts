@@ -34,8 +34,10 @@ export function mesDaCompetencia(comp: string): string {
   return MES[parseInt(comp.slice(5, 7), 10) - 1] ?? '';
 }
 
-// Próximo vencimento (DD/MM) a partir de hoje, dado o dia de vencimento do cartão (data local,
-// sem UTC shift). Resolve "vence dia 6 — mas é 6 de junho ou julho?" mostrando a data cheia.
+// Próximo vencimento (DD/MM) a partir de hoje, dado SÓ o dia de vencimento do cartão (data local).
+// ⚠️ NÃO usar pro vencimento da fatura de cartão: ignora o dia de FECHAMENTO → mostra o mês errado
+// quando a fatura do mês já fechou (bug Rose 12/07). Pro tile/fatura use currentCycleSummary /
+// dueLabelForCompetencia (que respeitam o fechamento). Mantido só p/ contexto sem ciclo de fatura.
 export function nextDueLabel(dueDay: number, today = new Date()): string {
   const d = today.getDate();
   const due = new Date(today.getFullYear(), d <= dueDay ? today.getMonth() : today.getMonth() + 1, dueDay);
@@ -54,6 +56,30 @@ export function dueDateForCompetencia(comp: string, closingDay: number, dueDay: 
 export function dueLabelForCompetencia(comp: string, closingDay: number, dueDay: number): string {
   const due = dueDateForCompetencia(comp, closingDay, dueDay);
   return `${String(due.getUTCDate()).padStart(2, '0')}/${String(due.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+// Dias corridos até o PRÓXIMO fechamento (o fechamento da fatura ABERTA). Hoje ≤ dia de
+// fechamento → fecha neste mês; senão no mês seguinte. UTC-safe (contagem em dias inteiros).
+export function daysUntilClosing(closingDay: number, today = new Date()): number {
+  const y = today.getUTCFullYear(), m = today.getUTCMonth(), d = today.getUTCDate();
+  const nextClose = Date.UTC(y, d <= closingDay ? m : m + 1, closingDay);
+  const start = Date.UTC(y, m, d);
+  return Math.round((nextClose - start) / 86400000);
+}
+
+// Resumo do ciclo da fatura ABERTA (corrente) do cartão — pro tile da lista de cartões.
+// FONTE ÚNICA: deriva da competência corrente (competenciaFor, que respeita o fechamento),
+// IGUAL ao detalhe (CartaoDetalhePage). Evita o mislabel "vence no mês errado" quando a fatura
+// do mês já fechou (fecha dia 7, hoje dia 12 → a fatura aberta é a do mês seguinte).
+export function currentCycleSummary(
+  card: Pick<PfCard, 'closing_day' | 'due_day'>,
+  today = new Date(),
+): { dueLabel: string; closesInDays: number } {
+  const comp = competenciaFor(today, card.closing_day);
+  return {
+    dueLabel: dueLabelForCompetencia(comp, card.closing_day, card.due_day),
+    closesInDays: daysUntilClosing(card.closing_day, today),
+  };
 }
 
 export function addMonthsToCompetencia(compStr: string, n: number): string {
