@@ -82,6 +82,30 @@ export function currentCycleSummary(
   };
 }
 
+// Fatura "atual" a EXIBIR no cartão = a que você paga a SEGUIR. Entre as faturas FECHADAS não pagas
+// (competência < a aberta, remaining>0) pega a MAIS RECENTE (vencimento mais próximo); sem nenhuma,
+// mostra a fatura ABERTA (currentCompetencia). Corrige o tile mostrar a aberta VAZIA (agosto R$0)
+// enquanto a fechada (julho R$943,70, vence 14/07) é a real que você deve (Rose 12/07). FONTE ÚNICA
+// pro tile e pro detalhe — os dois têm que concordar. closedUnpaid = faturas fechadas DESTE cartão.
+export function cardTileSummary(
+  card: Pick<PfCard, 'closing_day' | 'due_day'>,
+  closedUnpaid: { competencia: string; remaining: number }[],
+  today = new Date(),
+): { competencia: string; dueLabel: string; statusLabel: string; isClosed: boolean } {
+  const openComp = competenciaFor(today, card.closing_day);
+  const closed = (closedUnpaid || [])
+    .filter((i) => i.competencia < openComp && Number(i.remaining) > 0.005)
+    .sort((a, b) => (a.competencia < b.competencia ? 1 : -1)); // mais recente primeiro
+  const comp = closed.length ? closed[0].competencia : openComp;
+  const isClosed = comp !== openComp;
+  return {
+    competencia: comp,
+    dueLabel: dueLabelForCompetencia(comp, card.closing_day, card.due_day),
+    statusLabel: isClosed ? 'fatura fechada' : `fecha em ${daysUntilClosing(card.closing_day, today)}d`,
+    isClosed,
+  };
+}
+
 export function addMonthsToCompetencia(compStr: string, n: number): string {
   const d = new Date(compStr + 'T00:00:00Z');
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + n, 1)).toISOString().slice(0, 10);

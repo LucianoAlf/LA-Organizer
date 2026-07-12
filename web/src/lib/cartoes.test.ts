@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   currentCycleSummary, daysUntilClosing,
-  dueLabelForCompetencia, competenciaFor,
+  dueLabelForCompetencia, competenciaFor, cardTileSummary,
 } from './cartoes';
 
 // UTC puro pra bater com competenciaFor/dueDateForCompetencia (getters UTC).
@@ -48,5 +48,44 @@ describe('currentCycleSummary — ciclo da fatura ABERTA (tile da lista)', () =>
     const r = currentCycleSummary({ closing_day: 4, due_day: 11 }, utc(2026, 7, 12));
     expect(r.dueLabel).toBe('11/08');
     expect(r.closesInDays).toBe(23); // 12 jul → 4 ago
+  });
+});
+
+describe('cardTileSummary — "fatura atual" = a que você paga a seguir', () => {
+  // BUG Rose 12/07: Nubank Rose só tem a fatura de JULHO (R$943,70, vence 14/07, não paga). A aberta
+  // é agosto (vazia). O tile mostrava agosto R$0 ("fatura atual") contradizendo "10% usado". Deve
+  // mostrar a FECHADA não paga (julho) — o que ela realmente deve.
+  it('fatura fechada não paga (julho) tem prioridade sobre a aberta vazia (agosto)', () => {
+    const r = cardTileSummary(
+      { closing_day: 7, due_day: 14 },
+      [{ competencia: '2026-07-01', remaining: 943.70 }],
+      utc(2026, 7, 12),
+    );
+    expect(r.competencia).toBe('2026-07-01'); // julho, NÃO agosto
+    expect(r.dueLabel).toBe('14/07');
+    expect(r.isClosed).toBe(true);
+    expect(r.statusLabel).toBe('fatura fechada');
+  });
+
+  it('sem fatura fechada devendo → mostra a aberta (comportamento normal)', () => {
+    const r = cardTileSummary({ closing_day: 7, due_day: 14 }, [], utc(2026, 7, 12));
+    expect(r.competencia).toBe('2026-08-01'); // aberta
+    expect(r.dueLabel).toBe('14/08');
+    expect(r.isClosed).toBe(false);
+    expect(r.statusLabel).toBe('fecha em 26d');
+  });
+
+  it('fatura fechada já paga (remaining 0) é ignorada → aberta', () => {
+    const r = cardTileSummary({ closing_day: 7, due_day: 14 }, [{ competencia: '2026-07-01', remaining: 0 }], utc(2026, 7, 12));
+    expect(r.competencia).toBe('2026-08-01');
+  });
+
+  it('duas fechadas devendo → a mais recente (vencimento mais próximo)', () => {
+    const r = cardTileSummary(
+      { closing_day: 7, due_day: 14 },
+      [{ competencia: '2026-06-01', remaining: 100 }, { competencia: '2026-07-01', remaining: 200 }],
+      utc(2026, 7, 12),
+    );
+    expect(r.competencia).toBe('2026-07-01'); // julho, não junho
   });
 });

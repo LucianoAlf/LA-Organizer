@@ -8,10 +8,10 @@ import { CustomSelect } from '../../components/CustomSelect';
 import { Button } from '../../components/Button';
 import {
   useCards, useCardUsage, useCardInvoice, useAccounts, useFinanceiroAuth,
-  useCreateCardPurchase, useDeactivateCard, useDeleteTransaction, useCancelInvoicePayment,
+  useCreateCardPurchase, useDeactivateCard, useDeleteTransaction, useCancelInvoicePayment, useClosedUnpaidInvoices,
 } from '../../hooks/useFinanceiro';
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
-import { addMonthsToCompetencia, currentCompetencia, dueLabelForCompetencia, mesDaCompetencia, type CardInvoiceItem } from '../../lib/cartoes';
+import { addMonthsToCompetencia, currentCompetencia, dueLabelForCompetencia, mesDaCompetencia, cardTileSummary, type CardInvoiceItem } from '../../lib/cartoes';
 import type { PfTransaction } from '../../lib/financeiro';
 import { CartaoSheet } from './components/CartaoSheet';
 import { PagarFaturaSheet } from './components/PagarFaturaSheet';
@@ -109,9 +109,13 @@ export function CartaoDetalhePage() {
   const cardsQ = useCards();
   const card = cardsQ.data?.find((c) => c.id === id);
   const usage = useCardUsage(card);
-  // Navegação entre competências: offset em meses a partir da fatura corrente.
+  // Navegação entre competências: offset em meses a partir da fatura ATUAL a pagar.
   const [compOffset, setCompOffset] = useState(0);
-  const baseComp = card ? currentCompetencia(card) : undefined;
+  // baseComp = a fatura que você paga a seguir (fechada não paga > aberta vazia) — MESMA fonte do
+  // tile (cardTileSummary), pra o detalhe abrir na fatura que a lista mostra (Rose 12/07).
+  const closedQ = useClosedUnpaidInvoices();
+  const myClosed = (closedQ.data ?? []).filter((i) => i.card.id === id).map((i) => ({ competencia: i.competencia, remaining: i.remaining }));
+  const baseComp = card ? cardTileSummary(card, myClosed).competencia : undefined;
   const comp = baseComp ? addMonthsToCompetencia(baseComp, compOffset) : undefined;
   const inv = useCardInvoice(id, comp);
   const [paying, setPaying] = useState(false);
@@ -263,7 +267,9 @@ export function CartaoDetalhePage() {
         </Button>
       )}
 
-      {compOffset === 0 && (
+      {/* "Ajustar fatura" só na fatura ABERTA (o ajuste lança na competência corrente); some ao
+          ver a fechada (evita ajustar agosto vendo julho). */}
+      {comp && comp === currentCompetencia(card) && (
         <Button variant="secondary" fullWidth onClick={() => setAjustando(true)}>
           Ajustar fatura
         </Button>

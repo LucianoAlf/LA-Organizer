@@ -7,21 +7,22 @@ import { Button } from '../../components/Button';
 import { Fab } from '../../components/Fab';
 import { CartaoSheet } from './components/CartaoSheet';
 import {
-  useCards, useCardUsage, useCardInvoice,
+  useCards, useCardUsage, useCardInvoice, useClosedUnpaidInvoices,
 } from '../../hooks/useFinanceiro';
 import { useFinanceiroAuth } from '../../hooks/useFinanceiro';
 import { useRealtimeFinance } from '../../hooks/useRealtimeFinance';
-import { currentCompetencia, currentCycleSummary, type PfCard } from '../../lib/cartoes';
+import { cardTileSummary, type PfCard } from '../../lib/cartoes';
 
 const fmtBRL = (v: number) =>
   'R$ ' + Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-function CardTile({ card }: { card: PfCard }) {
+function CardTile({ card, closedUnpaid }: { card: PfCard; closedUnpaid: { competencia: string; remaining: number }[] }) {
   const navigate = useNavigate();
   const usage = useCardUsage(card);
-  const invoice = useCardInvoice(card.id, currentCompetencia(card));
-  // vence/fecha da fatura ABERTA — MESMA competência do valor acima e do detalhe (fonte única).
-  const cycle = currentCycleSummary(card);
+  // "Fatura atual" = a que você paga a SEGUIR: a fechada não paga tem prioridade sobre a aberta
+  // vazia. MESMA competência do valor, do rótulo e do detalhe (fonte única — cardTileSummary).
+  const summary = cardTileSummary(card, closedUnpaid);
+  const invoice = useCardInvoice(card.id, summary.competencia);
   const pct = usage.data ? Math.round(usage.data.pct * 100) : 0;
   const color = card.color || '#820ad1';
   return (
@@ -35,7 +36,7 @@ function CardTile({ card }: { card: PfCard }) {
           <span className="w-8 h-8 rounded-md flex items-center justify-center text-sm" style={{ background: color }}>💳</span>
           <div>
             <div className="font-semibold text-fg">{card.name}</div>
-            <div className="text-label text-fg-muted">vence {cycle.dueLabel} · fecha em {cycle.closesInDays}d</div>
+            <div className="text-label text-fg-muted">vence {summary.dueLabel} · {summary.statusLabel}</div>
           </div>
         </div>
         <span className="text-label px-2 py-0.5 rounded-full bg-bg-elevated text-fg-muted">{pct}%</span>
@@ -57,6 +58,7 @@ export function CartoesPage() {
   const cid = useFinanceiroAuth();
   useRealtimeFinance(['pf_cards', 'pf_card_payments', 'pf_transactions'], cid);
   const cardsQ = useCards();
+  const closedQ = useClosedUnpaidInvoices();
   const [creating, setCreating] = useState(false);
 
   return (
@@ -78,7 +80,13 @@ export function CartoesPage() {
 
       {cardsQ.data && cardsQ.data.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-md">
-          {cardsQ.data.map((c) => <CardTile key={c.id} card={c} />)}
+          {cardsQ.data.map((c) => (
+            <CardTile
+              key={c.id}
+              card={c}
+              closedUnpaid={(closedQ.data ?? []).filter((i) => i.card.id === c.id).map((i) => ({ competencia: i.competencia, remaining: i.remaining }))}
+            />
+          ))}
         </div>
       )}
 
