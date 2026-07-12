@@ -57,4 +57,32 @@ function buildPayInvoicePreview({ cardName, amount, competencia, fromName, taskT
   return `Vou pagar a fatura do *${cardName}* — R$ ${BRL(amount)}${comp ? ` (${comp})` : ''}${from}.${tasks}\n\nConfirma que mando? (responde *sim* ou me corrige)`;
 }
 
-module.exports = { buildLaunchPreview, buildPayInvoicePreview };
+// Decide se a resposta do usuário CONFIRMA o lançamento estagiado (intent form:launch_confirm).
+// `conf` = veredito genérico do detectUserConfirmation ('yes'|'no'|null). GENEROSA com afirmação
+// ("pode lançar", "manda lançar", "confirmado") MAS trava NEGAÇÃO: "Não lança" casava só o verbo
+// "lança" e lançava contra o "não" (Rose 11/07 23:40 — 11 itens gravados sem OK). Reintrodução do
+// FIN-INVOICE-COMMIT-ON-QUESTION no caminho novo do launch_confirm. Regra de ouro: na dúvida entre
+// lançar e não, NÃO lança. Retorna 'yes' (lança) | 'no' (nega/desiste) | null (ambíguo → LLM re-propõe).
+const _LAUNCH_NEG = /\bn[ãa]o\b|\bnao\b|\bnem\b|\bnunca\b|\bjamais\b|\bespera\b|\bpera[íi]?\b|\bcancela|\besquec|deixa\s+pra/;
+const _LAUNCH_VERB = /\b(lan[çc]a|lan[çc]ar|pode\s+lan[çc]ar|manda\s+lan[çc]ar|confirmad[oa]|confirmo|confirma)\b/;
+function detectLaunchConfirm(text, conf) {
+  const s = String(text || '').toLowerCase().trim();
+  if (conf === 'no' || _LAUNCH_NEG.test(s)) return 'no';    // negação NUNCA lança
+  if (conf === 'yes') return 'yes';
+  if (s.length <= 40 && _LAUNCH_VERB.test(s)) return 'yes';  // afirmação generosa curta
+  return null;                                               // ambíguo → cai no LLM (re-propõe)
+}
+
+// DESFAZER o lote recém-lançado ("apaga tudo"/"desfaz"/"cancela o lançamento"). Só dispara com
+// uma intent undo_launch ABERTA (o engine gateia + escopa os ids do lote), então pode ser generoso
+// com as frases de "desfazer tudo" sem casar apagar item específico ("apaga o uber" → fluxo normal).
+// Rose 11/07 23:44: "Apaga tudo" caiu no LLM e morreu sob timeout/fallback. Agora é determinístico.
+function detectUndoLaunch(text) {
+  const s = String(text || '').toLowerCase().trim();
+  if (s.length > 60 || /\bn[ãa]o\b/.test(s)) return false;              // frase longa/negada → não é undo
+  if (/\b(desfaz|desfazer|desfa[çc]a)\b/.test(s)) return true;          // "desfaz" já implica o lote todo
+  return /\b(apaga|apagar|exclui|excluir|deleta|deletar|cancela|cancelar|tira|tirar|remove|remover)\b/.test(s)
+      && /\b(tudo|todas?|todos|isso|esses|essas|geral|lan[çc]amento|lote|o\s+que\s+(voc[êe]\s+)?lan[çc]ou)\b/.test(s);
+}
+
+module.exports = { buildLaunchPreview, buildPayInvoicePreview, detectLaunchConfirm, detectUndoLaunch };

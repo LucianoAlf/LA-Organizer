@@ -7582,6 +7582,7 @@ async function recordCardPurchase(cid, card, { amount, description, category, in
   const _preHist = await financeService.merchantSpendHistory(cid, description).catch(() => []);
   const rows = await financeService.insertCardPurchase(cid, card, { category: cat, amount: Number(amount), description, transaction_date: date, installments: inst, bill_id });
   outcome.persisted = true; // Fatia C: marca persistência real (compra no cartão gravada)
+  outcome.ids = (rows || []).map((r) => r && r.id).filter(Boolean); // p/ desfazer determinístico (undo_launch)
   const usage = await financeService.cardUsage(cid, card);
   let reply = financeFmt.txnRegistered(card, { description, amount: Number(amount), category: cat, installments: inst, competencia: rows[0].competencia }, usage);
   const al = await financeService.checkAndMarkLimitAlert(cid, card);
@@ -7599,6 +7600,7 @@ async function writeCashTransaction(cid, { type, category, amount, description, 
   const _preHist = type === 'expense' ? await financeService.merchantSpendHistory(cid, description).catch(() => []) : [];
   const _txn = await financeService.insertTransaction(cid, { type, category, amount, description, transaction_date: date, account_id: account.id, bill_id });
   outcome.persisted = true; // Fatia C: marca persistência real (transação de caixa gravada)
+  outcome.ids = _txn && _txn.id ? [_txn.id] : []; // p/ desfazer determinístico (undo_launch)
   console.log(`[Finance] txn ${_txn && _txn.id ? _txn.id.slice(0,8) : '?'} registrada cid=${String(cid).slice(0,8)}`);
 
   let budgetBlock = null;
@@ -8179,6 +8181,7 @@ async function handleFinanceAction(collab, action, params, outcome = {}) {
         competencia: params.competencia, // "põe na fatura de maio" → override explícito (engine ignora se vazio/inválido)
       });
       outcome.persisted = true; // Fatia C
+      outcome.ids = (rows || []).map((r) => r && r.id).filter(Boolean); // p/ desfazer determinístico (undo_launch)
       const usage = await financeService.cardUsage(cid, card);
       let reply = financeFmt.txnRegistered(card, {
         description: params.description, amount, category, installments, competencia: rows[0].competencia,
@@ -8516,29 +8519,52 @@ async function processMessage(phone, text, raw = {}) {
   try { _openIntents = await pendingIntents.listOpenIntents(collab.id, { limit: 3 }); }
   catch (e) { console.warn('[PendingIntents] list err:', e.message); }
 
+  // ---- DESFAZER determinístico do último lançamento ("apaga tudo"/"desfaz") ----
+  // Rose 11/07 23:44: "Apaga tudo" caiu no LLM e morreu sob timeout/fallback → ela apagou manual.
+  // Aqui o engine apaga EXATAMENTE os ids do lote recém-lançado (intent undo_launch), sem LLM.
+  try {
+    const _undoOpen = _openIntents.find((i) => i.kind === 'finance_source' && i.payload && i.payload.form === 'undo_launch' && withinConfirmWindow(i.asked_at, 15));
+    if (_undoOpen && launchConfirm.detectUndoLaunch(String(text || ''))) {
+      const _ids = Array.isArray(_undoOpen.payload.txn_ids) ? _undoOpen.payload.txn_ids : [];
+      let _n = 0;
+      for (const _id of _ids) { try { await financeService.deleteTransaction(collab.id, _id); _n++; } catch (e) { console.warn('[UndoLaunch] del err:', e.message); } }
+      await pendingIntents.resolveIntent(_undoOpen.id, 'confirmed', `undo_launch:${_n}`);
+      const _out = _n ? `🗑️ Desfiz o lançamento — apaguei ${_n === 1 ? 'o item' : `os ${_n} itens`}. Saldo reajustado.` : 'Não achei o lançamento pra desfazer (já pode ter saído).';
+      try { await whatsapp.sendMessage(phone, _out); await logConversation(collab.id, 'outbound', _out); await logMarker(collab.id, 'FINANCE_ACTION', 'executed', `undo_launch:${_n}`, null); } catch (e) { console.warn('[UndoLaunch] post err:', e.message); }
+      console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (undo_launch_resolved)`);
+      return;
+    }
+  } catch (e) { console.warn('[UndoLaunch] consumer err:', e.message); }
+
   // ---- Fonte obrigatória: resolução determinística do pending finance_source ----
   // Se TOM perguntou "saiu de qual conta?" (intent finance_source aberta) e o user
   // respondeu uma fonte ("2"/"nubank"/"dinheiro"/"cartão"), o ENGINE grava a
   // transação pendente sem passar pelo LLM (não fabrica, não perde no fallback).
   try {
     const { matchSourceReply } = require('./finance/source-match');
-    const finOpen = _openIntents.find((i) => i.kind === 'finance_source' && withinConfirmWindow(i.asked_at, 15));
+    // Prefere a intent ACIONÁVEL (launch_confirm/txn_pick/fonte) sobre a janela de undo_launch,
+    // pra um "sim" a um novo lançamento não ser sombreado pelo undo do lançamento anterior.
+    const _finCands = _openIntents.filter((i) => i.kind === 'finance_source' && withinConfirmWindow(i.asked_at, 15));
+    const finOpen = _finCands.find((i) => !(i.payload && i.payload.form === 'undo_launch')) || _finCands[0];
     if (finOpen) {
       // Camada 2: lançamento aguardando confirmação ("sim" → executa os handlers ATUAIS,
       // determinístico, sem LLM). Dormante até o dispatch abrir intents form:launch_confirm.
       if (finOpen.payload && finOpen.payload.form === 'launch_confirm') {
         const conf = pendingIntents.detectUserConfirmation(String(text || ''));
-        // Confirmação GENEROSA: a montagem pede "sim", mas o user diz "confirmado", "pode lançar"…
-        // FIN-CONFIRM-WORD-NARROW (Alf 22/06: "Confirmado" vazou pro LLM e nada gravou).
-        const _lcConf = String(text || '').toLowerCase().trim();
-        const _launchYes = conf === 'yes' || (_lcConf.length <= 40 && /\b(lan[çc]a|lan[çc]ar|pode\s+lan[çc]ar|manda\s+lan[çc]ar|confirmad[oa]|confirmo|confirma)\b/.test(_lcConf));
-        if (_launchYes) {
+        // Confirmação GENEROSA (aceita "confirmado"/"pode lançar" — FIN-CONFIRM-WORD-NARROW, Alf 22/06)
+        // MAS trava NEGAÇÃO: "Não lança" casava só o verbo "lança" e lançava contra o "não" (Rose
+        // 11/07 23:40 → 11 itens gravados sem OK). detectLaunchConfirm resolve yes/no/null com guarda
+        // de negação (TDD). Regra de ouro: na dúvida entre lançar e não, NÃO lança.
+        const _launchDecision = launchConfirm.detectLaunchConfirm(String(text || ''), conf);
+        if (_launchDecision === 'yes') {
           const acts = Array.isArray(finOpen.payload.actions) ? finOpen.payload.actions : [];
           const replies = [];
+          const _launchedIds = []; // ids gravados neste lote → habilitam o "apaga tudo/desfaz" determinístico
           for (const a of acts) {
             try {
               const _o = { persisted: false };
               const r = await handleFinanceAction(collab, a.action, a.params, _o); // handler ATUAL insere
+              if (Array.isArray(_o.ids)) _launchedIds.push(..._o.ids);
               if (r && r.trim()) replies.push(r.trim());
             } catch (e) {
               console.error('[LaunchConfirm] exec err:', e.message);
@@ -8558,6 +8584,12 @@ async function processMessage(phone, text, raw = {}) {
             } catch (e) { console.warn('[LaunchConfirm] close task err:', e.message); }
           }
           await pendingIntents.resolveIntent(finOpen.id, 'confirmed', `launch_confirm:${acts.length}`);
+          // Abre a janela de DESFAZER: guarda os ids do lote pra um "apaga tudo/desfaz" determinístico
+          // (sobrevive a timeout/fallback — Rose 11/07 "Apaga tudo" morreu no LLM).
+          if (_launchedIds.length) {
+            try { await pendingIntents.openIntent(collab.id, 'finance_source', { form: 'undo_launch', txn_ids: _launchedIds }, '(lançamento recém-feito — "apaga tudo" desfaz)'); }
+            catch (e) { console.warn('[UndoLaunch] open err:', e.message); }
+          }
           let out = replies.length ? replies.join('\n\n') : '✅ Lançado!';
           if (_closedN > 0) out += `\n📌 ${_closedN === 1 ? 'Tarefa de lembrete fechada' : `${_closedN} tarefas de lembrete fechadas`}.`;
           try {
@@ -8568,14 +8600,14 @@ async function processMessage(phone, text, raw = {}) {
           console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (launch_confirm_resolved)`);
           return;
         }
-        if (conf === 'no') {
+        if (_launchDecision === 'no') {
           await pendingIntents.resolveIntent(finOpen.id, 'denied', 'launch_confirm denied');
           const out = 'Beleza, não lancei nada. Quando quiser é só mandar de novo 👍';
           try { await whatsapp.sendMessage(phone, out); await logConversation(collab.id, 'outbound', out); } catch (e) { console.warn('[LaunchConfirm] deny post err:', e.message); }
           console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (launch_confirm_denied)`);
           return;
         }
-        // conf === null → não é sim/não claro (correção/conteúdo) → cai no LLM (re-propõe).
+        // _launchDecision === null → não é sim/não claro (correção/conteúdo) → cai no LLM (re-propõe).
       }
       if (finOpen.payload && finOpen.payload.form === 'txn_pick') {
         const pick = matchSourceReply(String(text || ''), { form: 'list', candidates: finOpen.payload.candidates });
