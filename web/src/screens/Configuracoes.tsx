@@ -14,6 +14,7 @@ import { TimeInput } from '../components/TimeInput';
 import { DateInput } from '../components/DateInput';
 import { showToast } from '../components/Toast';
 import { NavCustomizer } from '../components/NavCustomizer';
+import { BuildStamp } from '../components/BuildStamp';
 
 interface Prefs {
   briefing_time: string;
@@ -785,6 +786,8 @@ export function Configuracoes() {
         }
         .input:focus { outline: none; box-shadow: 0 0 0 2px rgb(var(--bg-app)), 0 0 0 4px #A3BE50; }
       `}</style>
+
+      <BuildStamp />
     </div>
   );
 }

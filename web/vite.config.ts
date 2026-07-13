@@ -8,6 +8,16 @@ export default defineConfig(({ mode }) => {
   const TOM_API_BASE = env.TOM_API_BASE || '';
   const TOM_INTERNAL_SECRET = env.TOM_INTERNAL_SECRET || '';
 
+  // Selo de versão (build stamp): injeta versão + short SHA + timestamp no bundle
+  // via `define` (substituição literal em build-time), pra dar pra bater o olho em
+  // Configurações e saber em que build o usuário está ("novo ou velho?").
+  //  - versão: npm_package_version (o build SEMPRE roda via `npm run build`)
+  //  - SHA:    VERCEL_GIT_COMMIT_SHA em produção (Vercel injeta); local = 'dev'
+  //  - build:  timestamp do momento do build (muda o hash do chunk a cada deploy — é o ponto)
+  const __pkgVersion = process.env.npm_package_version || '0.0.0';
+  const __buildSha = (process.env.VERCEL_GIT_COMMIT_SHA || '').slice(0, 7) || 'dev';
+  const __buildTime = new Date().toISOString();
+
   // Custom plugin: middleware que emula a serverless function /api/lareport/* localmente.
   // Em vez de usar proxy config do vite (que não tava interceptando), faço HTTP request
   // direto pra TOM e devolvo a resposta. Equivalente ao web/api/lareport/[...path].ts.
@@ -169,6 +179,11 @@ export default defineConfig(({ mode }) => {
         devOptions: { enabled: false },
       }),
     ],
+    define: {
+      __APP_VERSION__: JSON.stringify(__pkgVersion),
+      __BUILD_SHA__: JSON.stringify(__buildSha),
+      __BUILD_TIME__: JSON.stringify(__buildTime),
+    },
     server: { port: 5173, host: true },
     preview: {
       port: 4173,
