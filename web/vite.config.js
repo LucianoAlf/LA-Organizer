@@ -211,7 +211,29 @@ export default defineConfig(function (_a) {
                     // updateServiceWorker(true) que faz o skipWaiting sob demanda + reload.
                     skipWaiting: false,
                     clientsClaim: true,
+                    // DOCUMENTO SEMPRE FRESCO (mata o "corrige e não muda"): a navegação vai NetworkFirst —
+                    // um reload/reabrir busca o HTML novo → puxa os bundles novos SOZINHO, sem esperar o clique
+                    // no banner. Pra isso o index.html NÃO entra no precache (senão o precache serviria '/'
+                    // cache-first) e o navigateFallback (nav-route cache-first do precache) fica desligado.
+                    // Offline: cai no cache do último load (html-shell). O banner (skipWaiting sob demanda)
+                    // segue existindo pra atualizar NO MEIO da sessão sem perder estado.
+                    navigateFallback: '',
+                    globIgnores: ['**/index.html'],
                     runtimeCaching: [
+                        {
+                            // Navegação (document) → NetworkFirst com fallback offline no cache.
+                            urlPattern: function (_a) {
+                                var request = _a.request;
+                                return request.mode === 'navigate';
+                            },
+                            handler: 'NetworkFirst',
+                            options: {
+                                cacheName: 'html-shell',
+                                networkTimeoutSeconds: 3,
+                                expiration: { maxEntries: 4, maxAgeSeconds: 60 * 60 * 24 * 7 },
+                                cacheableResponse: { statuses: [200] },
+                            },
+                        },
                         {
                             urlPattern: /^https:\/\/fonts\.(?:googleapis|gstatic)\.com\/.*/i,
                             handler: 'CacheFirst',
