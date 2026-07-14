@@ -37,7 +37,14 @@ function buildLaunchPreview(items) {
     ? (onlyIncome ? 'Vou registrar essa entrada:' : 'Vou lançar:')
     : 'Vou lançar:';
   const srcLine = sources.length === 1 ? `\nFonte: *${sources[0]}*` : '';
-  return `${head}\n${lines.join('\n')}${srcLine}\n\nConfirma que mando? (responde *sim* ou me corrige)`;
+  // Em qual FATURA cai (Rose 14/07 perguntou e a montagem não dizia). Só quando os itens de
+  // cartão convergem numa competência única — misto fica sem linha (não inventar resumo errado).
+  const cardItems = items.filter((it) => it.op === 'card_purchase');
+  const cardComps = [...new Set(cardItems.map((it) => (it.txn || {}).competencia).filter(Boolean))];
+  const parc = cardItems.some((it) => ((it.txn || {}).installments || 1) >= 2);
+  const compLine = cardItems.length && cardComps.length === 1 && cardItems.every((it) => (it.txn || {}).competencia)
+    ? `\nFatura: *${fmtComp(cardComps[0])}*${parc ? ' (1ª parcela)' : ''}` : '';
+  return `${head}\n${lines.join('\n')}${srcLine}${compLine}\n\nConfirma que mando? (responde *sim* ou me corrige)`;
 }
 
 const MESES = ['', 'janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
@@ -65,8 +72,16 @@ function buildPayInvoicePreview({ cardName, amount, competencia, fromName, taskT
 // lançar e não, NÃO lança. Retorna 'yes' (lança) | 'no' (nega/desiste) | null (ambíguo → LLM re-propõe).
 const _LAUNCH_NEG = /\bn[ãa]o\b|\bnao\b|\bnem\b|\bnunca\b|\bjamais\b|\bespera\b|\bpera[íi]?\b|\bcancela|\besquec|deixa\s+pra/;
 const _LAUNCH_VERB = /\b(lan[çc]a|lan[çc]ar|pode\s+lan[çc]ar|manda\s+lan[çc]ar|confirmad[oa]|confirmo|confirma)\b/;
+// Pergunta NUNCA decide (nem lança nem desiste): "Tom, você vai lançar em qual fatura?" tem 37
+// chars e o verbo "lançar" → caía no ramo generoso e LANÇAVA sem OK (Rose 14/07 15:59 — caso-irmão
+// do FIN-INVOICE-COMMIT-ON-QUESTION). "?" em qualquer lugar OU palavra interrogativa → null (o LLM
+// responde a dúvida e a intent continua aberta esperando o "sim"). "como" fica FORA da lista:
+// "lança como outros" é consentimento (Rose 11/07 23:33), não pergunta. Lookahead em vez de \b no
+// fim porque \b em JS é ASCII e quebra após acento ("cadê" — lição audit 28/06).
+const _LAUNCH_QUESTION = /\?|(^|\s)(qual|quais|quando|onde|aonde|quem|cad[êe]|por\s?qu[eê]|pra\s?qu[eê])(?=$|[\s?!.,;])/;
 function detectLaunchConfirm(text, conf) {
   const s = String(text || '').toLowerCase().trim();
+  if (_LAUNCH_QUESTION.test(s)) return null;                 // pergunta → LLM responde, não decide
   if (conf === 'no' || _LAUNCH_NEG.test(s)) return 'no';    // negação NUNCA lança
   if (conf === 'yes') return 'yes';
   if (s.length <= 40 && _LAUNCH_VERB.test(s)) return 'yes';  // afirmação generosa curta

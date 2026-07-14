@@ -52,6 +52,24 @@ test('preview: lista vazia → null', () => {
   assert.strictEqual(buildLaunchPreview([]), null);
 });
 
+// Rose 14/07: a montagem não dizia EM QUAL FATURA ia cair — ela perguntou e o gate atropelou.
+// Cartão com txn.competencia → linha "Fatura: *mês/ano*" (o engine computa espelhando insertCardPurchase).
+test('preview: cartão mostra a FATURA (competência) quando informada', () => {
+  const out = buildLaunchPreview([cardItem({ competencia: '2026-08-01' })]);
+  assert.match(out, /Fatura: \*agosto\/2026\*/);
+});
+test('preview: parcelado marca 1ª parcela na fatura', () => {
+  const out = buildLaunchPreview([cardItem({ installments: 3, competencia: '2026-08-01' })]);
+  assert.match(out, /agosto\/2026\* \(1ª parcela\)/);
+});
+test('preview: sem competência → sem linha de fatura (compat)', () => {
+  assert.doesNotMatch(buildLaunchPreview([cardItem()]), /Fatura:/);
+});
+test('preview: competências mistas → não inventa linha única', () => {
+  const out = buildLaunchPreview([cardItem({ competencia: '2026-08-01' }), cardItem({ competencia: '2026-09-01', description: 'Polo' })]);
+  assert.doesNotMatch(out, /Fatura:/);
+});
+
 test('pay-invoice preview: cartão, valor, competência, conta e tarefa', () => {
   const out = buildPayInvoicePreview({ cardName: 'Nubank', amount: 6295.54, competencia: '2026-06-01', fromName: 'Itaú', taskTitles: ['Pagar fatura Nubank'] });
   assert.match(out, /Nubank/);
@@ -101,6 +119,25 @@ test('ambíguo/correção (sem sim/não claro e sem verbo) → null (cai no LLM)
 });
 test('contrato puro: conf="no" nunca vira yes mesmo com o verbo "lança"', () => {
   assert.strictEqual(detectLaunchConfirm('lança isso', 'no'), 'no');
+});
+
+// BUG Rose 14/07 15:59: "Tom, você vai lançar em qual fatura?" (37 chars, verbo "lançar")
+// casou _LAUNCH_VERB e devolveu 'yes' → 2 itens gravados SEM OK. Pergunta NUNCA decide
+// (nem lança nem desiste): "?" ou palavra interrogativa → null (LLM responde, intent aberta).
+// Caso-irmão do FIN-INVOICE-COMMIT-ON-QUESTION (Rose 22/06) no caminho launch_confirm.
+test('PERGUNTA nunca lança — "Tom, você vai lançar em qual fatura?" (Rose 14/07)', () => {
+  assert.strictEqual(decide('Tom, você vai lançar em qual fatura?'), null);
+});
+test('PERGUNTA: variações interrogativas não decidem', () => {
+  assert.strictEqual(decide('vai lançar em qual fatura'), null); // sem "?" — token interrogativo
+  assert.strictEqual(decide('lança?'), null);
+  assert.strictEqual(decide('confirma?'), null);
+  assert.strictEqual(decide('sim?'), null);                      // na dúvida NÃO lança
+  assert.strictEqual(decide('fatura de agosto né Tom?'), null);  // 15:57 — já era null, cravar
+});
+test('PERGUNTA: "qualquer" não é "qual" (boundary) e consentimento com "como" segue lançando', () => {
+  assert.strictEqual(decide('lança em qualquer categoria'), 'yes'); // "qual" dentro de "qualquer" não trava
+  assert.strictEqual(decide('lança como outros'), 'yes');           // Rose 23:33 (consentiu) — regressão
 });
 
 // ── detectUndoLaunch — DESFAZER o lote recém-lançado ("apaga tudo") ──

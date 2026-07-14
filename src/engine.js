@@ -7634,6 +7634,16 @@ async function stageLaunches(cid, actions, userText) {
     const _cats = await financeService.listCategorySlugs(cid).catch(() => []);
     return new Set(_cats.filter((r) => r.collaborator_id).map((r) => r.slug));
   };
+  // Competência da FATURA pra prévia (Rose 14/07: "vai lançar em qual fatura?" — a montagem não
+  // dizia). Espelha o insert: override explícito (params.competencia, só existe no card_purchase)
+  // vence; senão data+fechamento em UTC, igual insertCardPurchase. Data inválida → hoje (o insert
+  // quebraria de qualquer jeito; aqui a prévia não pode quebrar).
+  const _previewComp = (card, dateStr, compOverride) => {
+    const m = String(compOverride || '').match(/^(\d{4})-(\d{2})/);
+    if (m) return `${m[1]}-${m[2]}-01`;
+    const base = /^\d{4}-\d{2}-\d{2}/.test(String(dateStr || '')) ? new Date(String(dateStr).slice(0, 10) + 'T00:00:00Z') : new Date();
+    return financeService.competenciaFor(base, card.closing_day);
+  };
   for (const a of actions) {
     const p = { ...(a.params || {}) };
     if (a.action === 'card_purchase') {
@@ -7649,7 +7659,7 @@ async function stageLaunches(cid, actions, userText) {
       const category = safeCategory(p.category, p.description, 'expense', await catsFor());
       pinned.push({ action: 'card_purchase', params: { ...p, card: card.name, category } });
       items.push({ op: 'card_purchase', source: { kind: 'card', id: card.id, name: card.name },
-        txn: { type: 'expense', amount, description: p.description, category, installments: parseInt(p.installments || 1, 10), date: p.date } });
+        txn: { type: 'expense', amount, description: p.description, category, installments: parseInt(p.installments || 1, 10), date: p.date, competencia: _previewComp(card, p.date, p.competencia) } });
     } else { // register_transaction
       const type = p.type || 'expense';
       const amount = Number(p.amount);
@@ -7668,8 +7678,9 @@ async function stageLaunches(cid, actions, userText) {
         source = { kind: 'account', id: primary.id, name: primary.name }; pin.account_name = primary.name;
       }
       pinned.push({ action: 'register_transaction', params: pin });
+      // recordCardPurchase NÃO recebe competencia → o espelho aqui é só data+fechamento (sem override).
       items.push({ op: source.kind === 'card' ? 'card_purchase' : 'cash', source,
-        txn: { type, amount, description: p.description, category, installments: parseInt(p.installments || 1, 10), date: p.date } });
+        txn: { type, amount, description: p.description, category, installments: parseInt(p.installments || 1, 10), date: p.date, ...(source.kind === 'card' ? { competencia: _previewComp(src.card, p.date) } : {}) } });
     }
   }
   return { items, actions: pinned, allClean: ok && items.length === actions.length };
