@@ -9418,9 +9418,20 @@ async function processMessage(phone, text, raw = {}) {
           return;
         }
         if (_decision === 'commit_financeiro') {
-          const _cards = await financeService.findCard(collab.id, _pay.emissor);
-          const _card = (_cards || []).find((c) => c.id === _pay.card_id) || (_cards || [])[0];
-          if (!_card) { await whatsapp.sendMessage(phone, 'Não achei mais o cartão dessa fatura. Me diz qual é?'); return; }
+          // NUNCA chutar o cartão (Rose 14/07: emissor "Itaú" casava 3 cartões → lançou 59 no
+          // Itaú Matheus em vez do Latam PASS). pickInvoiceCard resolve por card_id confirmado >
+          // fala do usuário > emissor; se ambíguo/não-achado, PERGUNTA em vez de adivinhar.
+          const { pickInvoiceCard } = require('./finance/pick-invoice-card');
+          const _allCards = await financeService.listCards(collab.id);
+          const _pick = pickInvoiceCard({ emissor: _pay.emissor, userText: text, cards: _allCards, cardIdHint: _pay.card_id });
+          if (_pick.status !== 'resolved') {
+            const _cand = (_pick.candidates && _pick.candidates.length ? _pick.candidates : _allCards).map((c) => c.name);
+            // Orienta a responder JÁ com o cartão ("lança no X") — aí o commit + o pick resolvem
+            // no mesmo turno (pickInvoiceCard lê o nome da fala), sem depender de estado entre turnos.
+            await whatsapp.sendMessage(phone, `Antes de lançar — de qual cartão é essa fatura? Responde tipo *lança no ${_cand[0]}* que eu mando no certo. Tenho: *${_cand.join('*, *')}*.`);
+            return; // intent segue aberta
+          }
+          const _card = _pick.card;
           // Fatura importada = UMA competência (a do vencimento do PDF). Sem isso, cada item
           // era recolocado por data de compra (closing_day do cadastro) e a fatura se partia em
           // 2 meses (caso Alf 14/06: 6 compras foram pra julho). O vencimento do PDF manda.

@@ -149,10 +149,18 @@ const RE_CANCEL = /\b(cancela|cancelar|n[ãa]o|esquece|para)(?![a-zA-ZÀ-ú])|de
 // "você vai lançar em cada mês?" (PERGUNTA) commitava o import sem OK (FIN-INVOICE-COMMIT-ON-QUESTION).
 const RE_COMMIT_ANCHORED = /^(lan[çc]ar?|lan[çc]a\b|pode\s+lan[çc]ar|pode\s+ir|bora\b|manda(\s+ver)?\b|segue\b|confirmo?\b|confirmad[oa]\b|confirma\b|confirmar\b|isso\b|pode\s+ser|sim\b|ok\b|beleza\b|t[áa]\b|perfeito\b)/i;
 const RE_CORRECTION = /\b(muda|troca|corrig|errad|tira\b|remove|n[ãa]o\s+(é|e|era|foi))\b/i;
+// PEDIDO DE VER ≠ COMMIT (Rose 14/07): "me passa/mostra só o que falta lançar" começa com
+// "Sim" (anchored) mas é pedido de VISUALIZAÇÃO — quer VER o que falta antes, não lançar. O
+// "lançar" ali é complemento ("o que falta lançar"), não ordem. Regra de ouro: na dúvida entre
+// lançar e ver, NÃO lança (espelha o "na dúvida não fecha"). Cai no LLM, que mostra/pergunta.
+const RE_VIEW_REQUEST = /\bo\s+que\s+(falta|faltam|j[áa])\b|\bquais?\s+(falta|faltam)\b|\bme\s+(passa|mostra|manda|envia|diz)\b|\bquero\s+ver\b|\bdeixa\s+ver\b/i;
 
 function detectInvoiceReply(text) {
   const t = String(text || '').toLowerCase().trim();
   if (!t) return null;
+  // Pedido de ver (mostrar o que falta/já-tem) NUNCA commita nem cancela — mesmo começando com
+  // "Sim" ou contendo "não" ("o que falta pra NÃO duplicar" não é cancelamento). Cai no LLM.
+  if (RE_VIEW_REQUEST.test(t)) return null;
   if (RE_CANCEL.test(t) && !RE_COMMIT_FIN.test(t)) return 'cancel';
   if (RE_ANOTAR.test(t)) return 'commit_anotacoes';
   // Só commita afirmação curta, no início, sem "?" e sem palavra de correção.

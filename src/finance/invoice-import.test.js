@@ -10,6 +10,30 @@ test('allItemsRefund: lista 100% estornos → true; mistura ou compras → false
   assert.equal(allItemsRefund([]), false);
 });
 
+// ── detectInvoiceReply: PEDIDO DE VER ≠ COMMIT (Rose 14/07 22:08) ──────────────
+// "Sim, me passa só o que falta lançar" começava com "Sim" (RE_COMMIT_ANCHORED),
+// ≤10 palavras, sem "?" → commitou 59 itens SEM OK. Mas "me passa/mostra o que falta"
+// é pedido de VISUALIZAÇÃO (a opção-a que o próprio TOM ofereceu), não ordem de lançar.
+// Regra de ouro (finance): na dúvida entre lançar e ver, NÃO lança.
+test('NÃO commita quando é pedido de VER — "Sim, me passa só o que falta lançar" (o bug da Rose)', () => {
+  assert.strictEqual(detectInvoiceReply('Sim, me passa só o que falta lançar'), null);
+  assert.strictEqual(detectInvoiceReply('me mostra o que falta'), null);
+  assert.strictEqual(detectInvoiceReply('quero ver o que já tá lançado'), null);
+  assert.strictEqual(detectInvoiceReply('só o que falta pra não duplicar'), null);
+  assert.strictEqual(detectInvoiceReply('me passa o que falta antes'), null);
+});
+test('AINDA commita quando é ordem clara de lançar (sem pedido de ver)', () => {
+  assert.strictEqual(detectInvoiceReply('lançar'), 'commit_financeiro');
+  assert.strictEqual(detectInvoiceReply('pode lançar'), 'commit_financeiro');
+  assert.strictEqual(detectInvoiceReply('isso, pode lançar tudo'), 'commit_financeiro');
+  assert.strictEqual(detectInvoiceReply('sim'), 'commit_financeiro');
+  assert.strictEqual(detectInvoiceReply('confirma'), 'commit_financeiro');
+});
+test('cancelar e anotações intactos', () => {
+  assert.strictEqual(detectInvoiceReply('cancela'), 'cancel');
+  assert.strictEqual(detectInvoiceReply('só nas anotações'), 'commit_anotacoes');
+});
+
 test('parseInvoiceBlock extrai o JSON e limpa o texto', () => {
   const raw = '[FATURA_JSON]{"emissor":"Nubank","vencimento":"2026-06-15","total":3643.53,"itens":[{"descricao":"Shopee","valor":136.28,"data":"2026-05-07","parcela_atual":12,"parcela_total":12}]}[/FATURA_JSON]\nResumo legível aqui.';
   const r = parseInvoiceBlock(raw);
