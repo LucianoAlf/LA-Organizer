@@ -56,7 +56,7 @@ async function loadContext(supabase, groupId, senderCollabId) {
     content: m.media_extracted_text ? `${m.content || ''} [mídia: ${m.media_extracted_text}]`.trim() : (m.content || ''),
   }));
 
-  return { group, members, pool, history, senderName: displayName(senderRow), collab: senderRow || null };
+  return { group, members, pool, poolToday, history, senderName: displayName(senderRow), collab: senderRow || null };
 }
 
 // Insere uma mensagem de texto do TOM no chat do grupo (mesmo caminho do fluxo normal → bridge-out espelha).
@@ -115,6 +115,7 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
     groupName: ctx.group.name,
     members: ctx.members,
     pool: ctx.pool,
+    today: ctx.poolToday, // GROUPCHAT-POOL-DATE-NO-RELLABEL: pré-computa o dia relativo no pool (paridade 1:1)
     history: ctx.history,
     senderName: ctx.senderName,
     longTermMemory: ctx.group.tom_chat_memory,

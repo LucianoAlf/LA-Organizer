@@ -4,14 +4,18 @@
 const fs = require('fs');
 const path = require('path');
 const { firstNameOf, truncDesc, packagePrefix } = require('../utils/group-task-relay');
+const { formatRelativeDate } = require('../utils/dates');
 
 // 1ª linha = formato atual (intocado p/ não regredir o pool). Acrescenta "· criada por X" e,
 // quando há descrição, uma 2ª linha "↳ ...". Sem criador/descrição, devolve idêntico ao antigo.
 // Mesmo padrão do 1:1 (buildGroupPoolLines) e do lembrete — dado de autoria/descrição em todo canal.
 // packageTitle (quando a tarefa é filha de pacote) → prefixo "Pacote: " (GROUPREPORT-PACKAGE-TITLE-MISSING).
-function fmtPoolLine(t) {
+function fmtPoolLine(t, todayYmd) {
   const status = t.status === 'done' ? '✓ concluída' : 'pendente';
-  const due = t.due_date ? ` (prazo ${t.due_date})` : '';
+  // GROUPCHAT-POOL-DATE-NO-RELLABEL (Rose 13/07): pré-computa o dia relativo (paridade com o 1:1)
+  // pra o LLM NUNCA recalcular data crua e escorregar (+1). Sem todayYmd → fallback pra ISO (back-compat).
+  const dueLabel = t.due_date ? (formatRelativeDate(t.due_date, todayYmd) || t.due_date) : '';
+  const due = dueLabel ? ` (prazo ${dueLabel})` : '';
   const cn = firstNameOf(t.creator);
   const by = cn ? ` · criada por ${cn}` : '';
   const desc = truncDesc(t.description, 240);
@@ -25,9 +29,9 @@ function fmtHistoryLine(m) {
   return `${who}: ${m.content || ''}`;
 }
 
-function buildGroupChatPrompt({ soulText, groupName, members, pool, history, senderName, longTermMemory, notesContext, credentialContext, dateAnchor }) {
+function buildGroupChatPrompt({ soulText, groupName, members, pool, history, senderName, longTermMemory, notesContext, credentialContext, dateAnchor, today }) {
   const memberNames = (members || []).map((m) => m.name).filter(Boolean).join(', ') || '—';
-  const poolBlock = (pool || []).length ? (pool || []).map(fmtPoolLine).join('\n') : '(nenhuma tarefa ainda)';
+  const poolBlock = (pool || []).length ? (pool || []).map((t) => fmtPoolLine(t, today)).join('\n') : '(nenhuma tarefa ainda)';
   const histBlock = (history || []).length ? (history || []).map(fmtHistoryLine).join('\n') : '(sem histórico)';
   const memoryBlock = longTermMemory ? longTermMemory : '(ainda construindo)';
   // Âncora de data SEMPRE presente — sem ela o LLM erra "segunda-feira" → data (BUG weekday).

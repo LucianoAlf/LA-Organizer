@@ -117,3 +117,21 @@ test('fmtPoolLine: sem packageTitle não muda (regressão)', () => {
   const line = fmtPoolLine({ title: 'Fechar caixa', status: 'pending', due_date: '2026-06-13' });
   assert.strictEqual(line, '- Fechar caixa — pendente (prazo 2026-06-13)');
 });
+
+// GROUPCHAT-POOL-DATE-NO-RELLABEL (Rose 13/07, grupo Financeiro): o pool do grupo ia
+// pro LLM com a due_date CRUA (sem dia-relativo pré-computado), então o LLM calculava
+// "amanhã/terça" e escorregava (+1). Paridade com o 1:1 (formatRelativeDate + REGRA DE OURO).
+test('fmtPoolLine: com today, mostra o dia RELATIVO pré-computado, não a ISO crua (Rose 13/07)', () => {
+  // hoje=13/07 (seg); vence 15/07 (qua) = em 2 dias. NUNCA "amanhã".
+  const line = fmtPoolLine({ title: 'Venc 10', status: 'pending', due_date: '2026-07-15' }, '2026-07-13');
+  assert.match(line, /qua/);               // weekday correto de 15/07
+  assert.match(line, /em 2d/);             // relativo correto (não "amanhã")
+  assert.doesNotMatch(line, /2026-07-15/); // não vaza a ISO crua pro LLM
+});
+
+test('buildGroupChatPrompt: passa o today pro pool (rótulo relativo, não a ISO crua)', () => {
+  // hoje=12/06 (sex); vence 15/06 (seg) = em 3 dias.
+  const p = buildGroupChatPrompt({ ...base, today: '2026-06-12', pool: [{ title: 'Fechar caixa', status: 'pending', due_date: '2026-06-15' }] });
+  assert.match(p, /em 3d/);
+  assert.doesNotMatch(p, /prazo 2026-06-15/);
+});
