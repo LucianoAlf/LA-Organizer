@@ -112,3 +112,43 @@ test('CONTROLE: "convidados" (as pessoas) NÃO é send-claim', () => {
 test('CONTROLE: "comunicados" (o módulo) NÃO é send-claim', () => {
   assert.strictEqual(claimsSent('Você tem 3 comunicados pendentes de aprovação.'), false);
 });
+
+// ── FALSO-FIRE FINANCE (Rose 14/07 18:00): "cartão LATAM PASS" no fluxo de fatura → o LLM
+// respondeu a lista organizada (1743 tok), o guard casou "mandando/enviado" (sentido FINANCEIRO:
+// lançar na fatura / o PDF que ELA enviou), TODAS as linhas caíram e a Rose recebeu SÓ o
+// disclaimer de coordenação ("não avisei ninguém — me diz pra quem mandar") num papo de fatura.
+// Regra: mand*/envi* (genéricos) só são send-claim COM contexto de recado na MESMA linha;
+// avis*/repass*/encaminh*/comuniqu*/transmit* (inequívocos de recado) seguem disparando sozinhos.
+test('ROSE 14/07: "mandar/enviar" em contexto de FATURA não é send-claim', () => {
+  assert.strictEqual(claimsSent('Perfeito! Mandando tudo pra fatura de julho do LATAM PASS.'), false);
+  assert.strictEqual(claimsSent('Organizei com base no PDF enviado — 62 itens da fatura.'), false);
+  assert.strictEqual(claimsSent('Os 62 itens foram enviados pra fatura de julho do cartão.'), false);
+  assert.strictEqual(claimsSent('Lista montada com a fatura que você mandou. Enviado pro seu financeiro.'), false);
+});
+test('ROSE 14/07 (integração): resposta de fatura passa INTACTA', () => {
+  const s = '💳 *Latam PASS · fatura de julho*\n1. 03/06 IFD*PIZZAS · R$ 87,79\nMandando os 62 itens pra fatura de julho.';
+  const r = enforceSendHonesty(s, { isQuestion: false });
+  assert.strictEqual(r.fired, false, 'sem contexto de recado, não dispara');
+  assert.strictEqual(r.reply, s);
+});
+test('regressão: coordenação REAL segue disparando (mand/envi COM contexto de recado)', () => {
+  assert.strictEqual(claimsSent('Mandando o recado pra ela agora.'), true);
+  assert.strictEqual(claimsSent('Enviei a mensagem no grupo.'), true);
+  assert.strictEqual(claimsSent('Mandei o convite pra equipe.'), true);
+  assert.strictEqual(claimsSent('Avisei que a fatura fechou.'), true, 'avisar é inequívoco, dispara sozinho');
+});
+
+// ── CINTO: reply LONGO que ficaria 100% destruído = overreach de regex → NÃO dispara.
+// O guard nunca pode destruir mais do que salva (a lista real da Rose virou só disclaimer).
+// Claim real de coordenação é curto (1-2 linhas) ou vem DENTRO de um reply maior (strip parcial).
+test('cinto: reply longo 100% "matcheado" não vira disclaimer-only', () => {
+  const long = ('Avisei o grupo sobre o recado de novo.\n').repeat(8).trim(); // >160 chars, todas as linhas casam
+  const r = enforceSendHonesty(long, { isQuestion: false });
+  assert.strictEqual(r.fired, false, 'destruição total de reply longo = falso-positivo presumido');
+  assert.strictEqual(r.reply, long);
+});
+test('cinto NÃO protege claim curto: "Avisei todo mundo agora!" segue rebaixado', () => {
+  const r = enforceSendHonesty('Avisei todo mundo agora!', {});
+  assert.strictEqual(r.fired, true);
+  assert.match(r.reply, /N[ÃA]O avisei/i);
+});

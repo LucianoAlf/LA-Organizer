@@ -20,7 +20,26 @@
 // formas participiais ganham ados|adas. comuniqu NÃO ganha ados (o módulo "comunicados" usa
 // o radical "comunic", não "comuniqu" — mas não arriscar). "convidados"/"avise" seguem FORA
 // (substantivo e subjuntivo de pedido, respectivamente — cobertos pelos testes de CONTROLE).
-const SEND_CLAIM_RE = /\b(avis(?:ei|ado|ada|ados|adas|amos|ando)|mand(?:ei|ado|ada|ados|adas|ando|amos)|repass(?:ei|ado|ada|ados|adas|ando|amos)|encaminh(?:ei|ado|ada|ados|adas|ando|amos)|envi(?:ei|ado|ada|ados|adas|ando)|transmit(?:i|ido|ida|idos|idas|indo)|comuniqu(?:ei|ado|ada)|j[áa]\s+(?:mandei|avisei|enviei|repassei))\b/i;
+// Verbos INEQUÍVOCOS de recado — afirmam envio sozinhos, em qualquer contexto: avisar/
+// repassar/encaminhar/transmitir/comunicar não têm sentido financeiro.
+const SEND_STRONG_RE = /\b(avis(?:ei|ado|ada|ados|adas|amos|ando)|repass(?:ei|ado|ada|ados|adas|ando|amos)|encaminh(?:ei|ado|ada|ados|adas|ando|amos)|transmit(?:i|ido|ida|idos|idas|indo)|comuniqu(?:ei|ado|ada))\b/i;
+
+// FALSO-FIRE FINANCE (Rose 14/07 18:00): mandar/enviar servem TANTO pra recado QUANTO pra
+// "lançar na fatura / o PDF que você enviou". No fluxo de fatura o guard casava "mandando/
+// enviado" e DESTRUÍA a lista inteira, cuspindo o disclaimer de recado num papo de cartão.
+// Verbo ambíguo só conta como envio-de-recado COM um token de recado na MESMA linha E SEM
+// contexto financeiro forte.
+const SEND_WEAK_RE = /\b(mand(?:ei|ado|ada|ados|adas|ando|amos)|envi(?:ei|ado|ada|ados|adas|ando)|j[áa]\s+(?:mandei|enviei|repassei))\b/i;
+const RECADO_CTX_RE = /\b(recado|mensagem|msg|convites?|aviso|zap|whats?app|wpp|(?:no|pro)\s+grupo|pra\s+(?:ela|ele|eles|elas|voc[êe]s?|galera|equipe|turma|time|todos?|cada\s+um))\b/i;
+const FIN_CTX_RE = /\b(fatura|cart[ãa]o|financeiro|lan[çc]a\w*|extrato|pdf|planilha|itens?|compras?|lista)\b/i;
+
+// Uma LINHA afirma envio-DE-RECADO? Mesma decisão pro gate (claimsSent) e pro strip.
+function lineIsSendClaim(line) {
+  const s = String(line || '');
+  if (SEND_STRONG_RE.test(s)) return true;                                  // avisar/repassar... sozinho
+  if (SEND_WEAK_RE.test(s) && RECADO_CTX_RE.test(s) && !FIN_CTX_RE.test(s)) return true; // mandar/enviar só c/ recado
+  return false;
+}
 
 function stripOptimisticSendLines(text) {
   const s = String(text || '');
@@ -29,14 +48,14 @@ function stripOptimisticSendLines(text) {
     .split('\n')
     .filter((line) => {
       if (!line.trim()) return false; // colapsa linhas em branco órfãs
-      return !SEND_CLAIM_RE.test(line);
+      return !lineIsSendClaim(line);
     });
   return kept.join('\n').trim();
 }
 
-// Há alguma afirmação de envio no texto? (gate — só sanitiza/anexa quando mente.)
+// Há alguma afirmação de envio-de-recado no texto? (gate — só sanitiza/anexa quando mente.)
 function claimsSent(text) {
-  return SEND_CLAIM_RE.test(String(text || ''));
+  return String(text || '').split('\n').some(lineIsSendClaim);
 }
 
 // SEND-CLAIM-NOMARKER (audit 01/07, Reunião Time Gestão): a fala afirma ter avisado/convidado
@@ -53,7 +72,11 @@ function enforceSendHonesty(text, opts = {}) {
   const s = String(text || '');
   if (isQuestion || !claimsSent(s)) return { reply: s, fired: false };
   const stripped = stripOptimisticSendLines(s);
+  // CINTO (Rose 14/07): se o strip removeria TUDO de um reply LONGO, é overreach de regex —
+  // uma resposta legítima longa não é 100% linhas de envio. Claim real é curto (1-2 linhas) OU
+  // vem DENTRO de um reply maior (aí o strip preserva o resto). Nunca destruir mais do que salva.
+  if (!stripped && s.length > 160) return { reply: s, fired: false };
   return { reply: stripped ? `${stripped}\n\n${SEND_NOMARKER_DISCLAIMER}` : SEND_NOMARKER_DISCLAIMER, fired: true };
 }
 
-module.exports = { stripOptimisticSendLines, claimsSent, enforceSendHonesty, SEND_CLAIM_RE, SEND_NOMARKER_DISCLAIMER };
+module.exports = { stripOptimisticSendLines, claimsSent, enforceSendHonesty, lineIsSendClaim, SEND_STRONG_RE, SEND_WEAK_RE, SEND_NOMARKER_DISCLAIMER };
