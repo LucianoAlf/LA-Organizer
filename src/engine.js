@@ -1562,17 +1562,10 @@ function parseCoordinationRequestMarker(text) {
     }
     // BUG-5 (11/06): normaliza aliases de campos e mode antes da validação.
     // LLM varia: recipient/to/name em vez de recipient_name; relay/literal em vez de relay_literal, etc.
-    parsed.recipient_name = parsed.recipient_name || parsed.recipient || parsed.to || parsed.name;
-    parsed.message_body   = parsed.message_body   || parsed.message  || parsed.body || parsed.content || parsed.text;
-    if (parsed.mode) {
-      const _modeAliases = {
-        relay: 'relay_literal', literal: 'relay_literal',
-        assisted: 'relay_assisted',
-        'follow-up': 'followup', follow_up: 'followup', follow: 'followup',
-      };
-      const _modeKey = String(parsed.mode).toLowerCase();
-      if (_modeAliases[_modeKey]) parsed.mode = _modeAliases[_modeKey];
-    }
+    // COORD-REQUEST-TONAME-ALIAS (14/07): + to_name (destinatário) — dominava 100% das rejeições
+    // de julho (John, Anne…). Bloco extraído p/ helper puro coordination/coord-alias.js (TDD).
+    const { normalizeCoordinationFields } = require('./coordination/coord-alias');
+    normalizeCoordinationFields(parsed);
     if (!parsed.recipient_name || typeof parsed.recipient_name !== 'string') {
       logSchemaErr('COORDINATION_REQUEST', [`marker[${i}]:recipient_name:missing`], parsed);
       malformedReasons.push(`marker[${i}]:recipient_name`);
