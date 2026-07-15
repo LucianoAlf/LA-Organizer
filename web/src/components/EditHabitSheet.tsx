@@ -9,6 +9,7 @@ import { supabase } from '../lib/supabase';
 import { AdaptiveSheet } from './AdaptiveSheet';
 import { Button } from './Button';
 import { TimeInput } from './TimeInput';
+import { errorText } from '../lib/errorText';
 
 interface Habit {
   id: string;
@@ -211,7 +212,12 @@ export function EditHabitSheet({ open, habit, onClose }: Props) {
       qc.invalidateQueries({ queryKey: ['habit-detail'] });
       onClose();
     },
-    onError: (e) => setError(e instanceof Error ? e.message : String(e)),
+    onError: (e) => {
+      // Detalhe cru (ex.: PostgrestError) vai pro console; usuário vê mensagem legível.
+      // Antes: String(e) num objeto Supabase renderizava "[object Object]" (bug Arthur 15/07).
+      console.error('[EditHabitSheet] falha ao salvar hábito:', e);
+      setError(errorText(e, 'Não consegui salvar o hábito. Tenta de novo?'));
+    },
   });
 
   function onSubmit(e: FormEvent) {
