@@ -49,12 +49,23 @@ const RECUR_RE = /(voc[êe]\s+recebe\s+o\s+lembrete|^todo\s+dia\s+\d+)/i;
 // posição da linha (o fraseado vem no meio: "Semana do canto organizada então:").
 const PLANNING_CLAIM_RE = /\borganiz(?:ei|ad[oa]s?)\b|\bte\s+(?:cobro|lembro|aviso)\s+(?:conforme|quando|à\s+medida|nos?\s+dias?|cada)\b|\bvou\s+(?:te\s+)?(?:cobrando|lembrando|acompanhando)\b/i;
 
+// REDE 1 (audit 15/07, caso Matheus RESCHEDULE-CONFIRM-NOOP) — afirmações FRACAS de
+// conclusão: "Fechou" (3ª pessoa, fora do COMPLETION_CORE), "Combinado", "Beleza", "Show".
+// São ubíquas em banter, então SÓ contam como claim quando o ENGINE sinaliza
+// pendingActionRecent (a última virada do TOM foi pergunta-de-confirmação de ação). O eixo é
+// de ESTADO (nothingPersisted + recência), NUNCA actionable_intent — este é falso justamente
+// no turno-alvo ("Isso"→"Fechou": inputActionable=false E replyHasPromise=false, engine.js:12294)
+// e é circular (depende do mesmo detector que a Rede 1 estende).
+const WEAK_COMPLETION_RE = /\b(fechou|combinad[oa]s?|beleza|show)\b/i;
+
 function _stripLeadingEmoji(line) {
   return String(line).replace(SUCCESS_EMOJI_GLOBAL, '').replace(LEADING_MARKUP, '').trimStart();
 }
 
 // Uma linha é "otimista" quando afirma que a ação foi concluída.
-function _isOptimisticLine(line) {
+// includeWeak: também trata afirmações FRACAS ("Fechou/Combinado/Beleza/Show") como otimistas
+// — só ligado pelo enforceNoMarkerHonesty quando o eixo de estado já autorizou (Rede 1).
+function _isOptimisticLine(line, includeWeak) {
   const t = String(line).trim();
   if (!t) return false;
   if (SUCCESS_EMOJI_RE.test(t)) return true;
@@ -67,6 +78,7 @@ function _isOptimisticLine(line) {
   if (TOTALIZER_RE.test(t) && COMPLETION_ANYWHERE.test(t)) return true;
   // PLANNING-CONFIRM-NO-CREATE: claim de planejamento ("semana organizada", "te cobro conforme").
   if (PLANNING_CLAIM_RE.test(t)) return true;
+  if (includeWeak && WEAK_COMPLETION_RE.test(noEmoji)) return true;
   return false;
 }
 
@@ -87,14 +99,15 @@ function hasOptimisticConfirm(text) {
   return String(text).split('\n').some(_isOptimisticLine);
 }
 
-function sanitizeOptimisticConfirm(text, outcome) {
+function sanitizeOptimisticConfirm(text, outcome, opts) {
   if (!text) return '';
   if (outcome !== 'failed' && outcome !== 'partial') return String(text);
+  const includeWeak = !!(opts && opts.includeWeak);
 
   const out = [];
   for (const line of String(text).split('\n')) {
     if (!line.trim()) { out.push(line); continue; }
-    if (!_isOptimisticLine(line)) { out.push(line); continue; }
+    if (!_isOptimisticLine(line, includeWeak)) { out.push(line); continue; }
 
     if (outcome === 'failed') {
       // Nada persistiu → a confirmação é falsa: remove a linha inteira.
@@ -136,6 +149,19 @@ function hasCompletionClaim(text) {
   return String(text).split('\n').some(_isCompletionClaimLine);
 }
 
+// hasWeakCompletionClaim — camada FRACA da Rede 1: "Fechou/Combinado/Beleza/Show" em
+// qualquer linha. Sozinha NÃO basta pra rebaixar — o enforceNoMarkerHonesty só a usa sob
+// pendingActionRecent (eixo de estado). Ver WEAK_COMPLETION_RE.
+function _isWeakCompletionClaimLine(line) {
+  const t = String(line).trim();
+  if (!t) return false;
+  return WEAK_COMPLETION_RE.test(_stripLeadingEmoji(t));
+}
+function hasWeakCompletionClaim(text) {
+  if (!text) return false;
+  return String(text).split('\n').some(_isWeakCompletionClaimLine);
+}
+
 // enforceNoMarkerHonesty — Camada 1: se a fala afirma conclusão mas NADA persistiu no
 // turno, rebaixa pra honesta. PURO. Sinais vêm do engine (nunca adivinhados do texto).
 // Caminho 2 / Fatia 0 — modo VELOCÍMETRO: com opts2.meta===true retorna {reply, fired, sense}
@@ -146,10 +172,14 @@ function enforceNoMarkerHonesty(reply, opts, opts2) {
   const meta = !!(opts2 && opts2.meta);
   const wrap = (r, fired) => (meta ? { reply: r, fired, sense: 'confab' } : r);
   if (!reply || !o.nothingPersisted || o.infoGathering || o.awaitingConfirm) return wrap(reply, false);
-  if (!hasCompletionClaim(reply)) return wrap(reply, false);
-  const cleaned = sanitizeOptimisticConfirm(reply, 'failed');
+  // Forte (particípio/1ª pessoa) dispara sempre — tuning de meses, não mexo. Fraca ("Fechou")
+  // só sob pendingActionRecent (eixo de ESTADO): fecha o NOOP do Matheus sem falso-fire de banter.
+  const strong = hasCompletionClaim(reply);
+  const weak = !strong && !!o.pendingActionRecent && hasWeakCompletionClaim(reply);
+  if (!strong && !weak) return wrap(reply, false);
+  const cleaned = sanitizeOptimisticConfirm(reply, 'failed', { includeWeak: weak });
   const out = cleaned ? cleaned + '\n\n' + NO_MARKER_HONEST_NOTE : NO_MARKER_HONEST_NOTE;
   return wrap(out, true);
 }
 
-module.exports = { sanitizeOptimisticConfirm, hasOptimisticConfirm, hasCompletionClaim, enforceNoMarkerHonesty };
+module.exports = { sanitizeOptimisticConfirm, hasOptimisticConfirm, hasCompletionClaim, hasWeakCompletionClaim, enforceNoMarkerHonesty };

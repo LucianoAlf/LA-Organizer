@@ -118,4 +118,15 @@ function buildBrtDateAnchor(now = new Date()) {
   ].join('\n');
 }
 
-module.exports = { safeIsoDate, safeDate, formatRelativeDate, withinConfirmWindow, FRESH_WINDOW_MIN, buildBrtDateAnchor };
+// todayYmdSP — 'YYYY-MM-DD' de HOJE em America/Sao_Paulo, via Intl (NUNCA toISOString().slice,
+// robusto ao shift UTC pós-21h — LOCALYMD-UTC-SHIFT). now injetável p/ teste.
+// Usado pelo staged-reschedule (i) p/ a guarda de data-no-passado no partition.
+function todayYmdSP(now = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(now);
+  const get = (k) => (parts.find((p) => p.type === k) || {}).value;
+  return `${get('year')}-${get('month')}-${get('day')}`;
+}
+
+module.exports = { safeIsoDate, safeDate, formatRelativeDate, withinConfirmWindow, FRESH_WINDOW_MIN, buildBrtDateAnchor, todayYmdSP };

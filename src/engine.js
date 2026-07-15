@@ -10,7 +10,7 @@ const whatsapp = require('./services/whatsapp');
 const metricsService = require('./services/metrics');
 const ai = require('./ai/provider');
 const { buildSystemPrompt, formatMessages } = require('./prompts/system');
-const { safeIsoDate, safeDate, withinConfirmWindow } = require('./utils/dates');
+const { safeIsoDate, safeDate, withinConfirmWindow, todayYmdSP } = require('./utils/dates');
 const { extractMediaAnalysis } = require('./utils/media-context');
 const { hasCoordLevel, isDirector, canCreateForOther } = require('./utils/roles');
 const supabase = require('./supabase/client');
@@ -44,7 +44,8 @@ const projectStatusLib = require('./lib/project-status');
 const { applyProjectStatusChange } = require('./services/project-status-exec');
 const { detectExplicitDayIntent } = require('./utils/temporal-intent');
 const { isFutureCompletion } = require('./utils/complete-guards');
-const { sanitizeOptimisticConfirm, hasOptimisticConfirm, enforceNoMarkerHonesty } = require('./lib/optimistic-confirm');
+const { sanitizeOptimisticConfirm, hasOptimisticConfirm, enforceNoMarkerHonesty, hasCompletionClaim, hasWeakCompletionClaim } = require('./lib/optimistic-confirm');
+const { isActionConfirmQuestion } = require('./lib/confirm-question');
 const { buildIntegrityReply } = require('./lib/integrity-reply');
 const { validateDndWindow, DND_MAX_MS } = require('./lib/dnd-window');
 const { isVisibleForDay } = require('./lib/day-visibility');
@@ -8540,6 +8541,41 @@ async function processMessage(phone, text, raw = {}) {
     }
   } catch (e) { console.warn('[UndoLaunch] consumer err:', e.message); }
 
+  // ---- RESUME staged reschedule ("isso" → aplica o payload já-resolvido, sem LLM) ----
+  // TASK-RESCHEDULE-CONFIRM-NOOP (Matheus 15/07): a proposta estagiou um pending_intent
+  // reschedule_confirm (ver ~10307). Aqui o "isso"/"sim" aplica as actions guardadas via
+  // applyTaskActions e resolve a intent — determinístico, sobrevive a timeout/fallback.
+  // detectUserConfirmation retorna 'yes'|'no'|null e é seguro contra negação (NO_RE pega
+  // "não" primeiro; F5 barra frase-conteúdo). Sem allowDone (pergunta yes/no simples, não
+  // complete-âncora). TTL 15min (paridade com finance launch_confirm).
+  try {
+    const _rsOpen = _openIntents.find((i) => i.kind === 'reschedule_confirm' && withinConfirmWindow(i.asked_at, 15));
+    if (_rsOpen) {
+      const _yn = pendingIntents.detectUserConfirmation(String(text || ''));
+      if (_yn === 'yes') {
+        const _acts = (_rsOpen.payload && Array.isArray(_rsOpen.payload.actions)) ? _rsOpen.payload.actions : [];
+        const _res = _acts.length ? await applyTaskActions(collab, _acts, { inboundText: text }) : { okCount: 0, failCount: 0 };
+        await pendingIntents.resolveIntent(_rsOpen.id, 'confirmed', `resumed_reschedule:${_acts.length}`);
+        let _out;
+        if (_res.okCount > 0 && !_res.failCount) _out = `✅ Reagendei ${_res.okCount === 1 ? 'a tarefa' : `as ${_res.okCount} tarefas`}.`;
+        else if (_res.okCount > 0) _out = `Reagendei ${_res.okCount}, mas ${_res.failCount} não ${_res.failCount === 1 ? 'foi' : 'foram'}. Me passa de novo ${_res.failCount === 1 ? 'a que faltou' : 'as que faltaram'}?`;
+        else _out = '_Não consegui reagendar agora. Me passa de novo?_';
+        try {
+          await whatsapp.sendMessage(phone, _out);
+          await logConversation(collab.id, 'outbound', _out);
+          await logMarker(collab.id, 'TASK_UPDATE', _res.okCount ? 'executed' : 'rejected', `resumed_reschedule ok=${_res.okCount} fail=${_res.failCount}`, null);
+        } catch (e) { console.warn('[RescheduleResume] post err:', e.message); }
+        console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (reschedule_confirm_resolved)`);
+        return;
+      }
+      if (_yn === 'no') {
+        await pendingIntents.resolveIntent(_rsOpen.id, 'denied', 'reschedule_confirm denied');
+        // NÃO return: deixa o LLM tratar a emenda ("não, quarta") re-propondo (re-estagia).
+      }
+      // _yn === null → não age (conteúdo/ambíguo); intent segue aberta até TTL/expire.
+    }
+  } catch (e) { console.warn('[RescheduleResume] consumer err:', e.message); }
+
   // ---- Fonte obrigatória: resolução determinística do pending finance_source ----
   // Se TOM perguntou "saiu de qual conta?" (intent finance_source aberta) e o user
   // respondeu uma fonte ("2"/"nubank"/"dinheiro"/"cartão"), o ENGINE grava a
@@ -10303,6 +10339,37 @@ async function processMessage(phone, text, raw = {}) {
         base += (base ? '\n\n' : '') + '_⚠️ Tive um problema técnico ao gravar isso. Não confirmei nada no banco — me passa de novo o que você quer registrar?_';
       }
       reply = base;
+    } else if (parsedTask && Array.isArray(parsedTask.actions) && parsedTask.actions.length > 0
+        && parsedTask.actions.every((a) => a.action === 'reschedule' && a.confirm === true)) {
+      // (i) STAGED RESCHEDULE — TASK-RESCHEDULE-CONFIRM-NOOP (Matheus 15/07): o LLM propôs e
+      // perguntou ("Confirma?") mas o reschedule NÃO tinha staging determinístico → dependia
+      // do LLM re-emitir o marker no "isso" (não reemitia) → NOOP silencioso. Aqui, quando
+      // TODAS as actions são reschedule com confirm:true (F1: flag PER-action, não há envelope
+      // batch), o engine resolve as datas AGORA, abre um pending_intent reschedule_confirm com o
+      // payload já-resolvido + preview inline, e NÃO executa. O "isso" retoma (região ~8543).
+      // Espelha staged_launch (finance). confirm:true de menos = comportamento atual (executa);
+      // de mais = fricção (pede "isso") — Rede 1 é o teto de dano se o LLM não emitir a flag.
+      try {
+        const { partitionResolved, buildReschedulePreview } = require('./tasks/reschedule-stage');
+        const { resolved, ambiguous } = partitionResolved(parsedTask.actions, { todayYmd: todayYmdSP() });
+        const _ids = [...resolved, ...ambiguous].map((a) => a.id).filter(Boolean);
+        let _titleById = {};
+        if (_ids.length) {
+          const { data: _trows } = await supabase.from('tasks').select('id,title').in('id', _ids);
+          _titleById = Object.fromEntries((_trows || []).map((r) => [r.id, r.title]));
+        }
+        const _preview = buildReschedulePreview(resolved, ambiguous, _titleById);
+        await pendingIntents.openIntent(collab.id, 'reschedule_confirm', { actions: resolved, ambiguous }, _preview);
+        await logMarker(collab.id, 'TASK_UPDATE', 'skipped', `staged_reschedule:${resolved.length}`, null);
+        reply = _preview;                       // NÃO executa o apply; sem return → cai no send normal
+        _metrics.awaiting_user_confirm = true;  // turno = pergunta → ACTIONABLE_NO_MARKER não acusa (idem 10396)
+      } catch (e) {
+        // Falha inesperada (ex.: openIntent lançou) → NÃO deixa o marker cru vazar: mostra a
+        // prosa do LLM (cleanText, que já pergunta "Confirma?"). Sem staging → se o user disser
+        // "isso" o resume não acha intent → Rede 1 pega o "Fechou" NOOP downstream.
+        console.error('[StagedReschedule] err (fallback cleanText):', e.message);
+        reply = parsedTask.cleanText || reply;
+      }
     } else if (parsedTask) {
       // Sprint 10.1 hotfix: alignment de datas. A âncora temporal no system
       // prompt não basta — Claude erra "amanhã" em frases complexas
@@ -12502,9 +12569,27 @@ Output AGORA, apenas o marker:`;
     if (/COORDINATION|RSVP/i.test(em)) return 'coordination';
     return 'unknown';
   };
+  // REDE 1 §7 (audit 15/07, caso Matheus) — recência de ação pendente p/ a camada FRACA do
+  // chokepoint. Boundary por _t0 (mesma janela-de-turno provada em _sinceTurn abaixo): busca a
+  // ÚLTIMA virada outbound ANTES deste turno — nunca o "Fechou" atual — e pergunta se foi uma
+  // confirm-question de ação. Só paga o fetch quando há claim FRACO sem persistência (evita I/O).
+  // NÃO gated por actionable_intent (falso no turno "Isso"→"Fechou" + circular — anti-padrão Task 4).
+  let _pendingActionRecent = false;
+  try {
+    const _np = !_metrics.marker_emitted && !_metrics.auto_retry_succeeded;
+    if (_np && hasWeakCompletionClaim(reply) && !hasCompletionClaim(reply)) {
+      const _turnStartIso = new Date(_t0 - 1000).toISOString();
+      const { data: _lt } = await supabase.from('conversation_history')
+        .select('content').eq('collaborator_id', collab.id).eq('direction', 'outbound')
+        .lt('created_at', _turnStartIso)
+        .order('created_at', { ascending: false }).limit(1).maybeSingle();
+      _pendingActionRecent = isActionConfirmQuestion(_lt && _lt.content);
+    }
+  } catch (_) {}
   try {
     const _hon = enforceNoMarkerHonesty(reply, {
       nothingPersisted: !_metrics.marker_emitted && !_metrics.auto_retry_succeeded,
+      pendingActionRecent: _pendingActionRecent,
       // CONFAB-CHOKEPOINT-SCOPE (24/06): recomputa local (não ler _replyIsInfoGathering — `const`
       // de outro try, fora de escopo → ReferenceError). Mesmas funções de módulo (reply-classify).
       infoGathering: hasTrailingQuestion(reply) || isInfoGatheringReply(reply),
