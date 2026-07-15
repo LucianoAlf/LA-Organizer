@@ -1,5 +1,8 @@
 # TOM Guards Fase 1 (piloto financeiro) — Plano de Implementação
 
+> ## ⛔ NÃO EXECUTAR — PLANO ENCERRADO (15/07)
+> Piloto **refutado pela própria investigação** (Task 0 confirmou a premissa mas revelou que o financeiro já é estado-gateado). Ver o bloco de encerramento na spec: `docs/superpowers/specs/2026-07-15-tom-guards-fase1-piloto-financeiro-design.md`. Resumo: Tasks 2-3 = no-op (detectores já gateados por intent, `engine.js:9404`/`8553`); Task 1 = infra sem consumidor; Task 4 = reprovada (regressiva + conceitualmente furada). Único deliverable que ficou: a **Task 0** (premissa confirmada) e o **baseline verde** (80/80). Nenhuma linha foi pra produção. A Fase 1 só reabre com falso-positivo de guard **global** documentado. Registro durável: `[[project_guards_fase1_turnstate_review]]`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax.
 
 **Goal:** Converter os guards do fluxo financeiro de confirmação de decisão-por-regex-de-texto para decisão-por-estado-do-turno + gate de domínio, matando na raiz a classe de bug que gerou os 4 incidentes de 14/07.

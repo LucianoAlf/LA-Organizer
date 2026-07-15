@@ -1,5 +1,14 @@
 # TOM Guards — Fase 1 (piloto): estado do turno no fluxo financeiro
 
+> ## ⛔ ENCERRADO — PILOTO REFUTADO PELA PRÓPRIA INVESTIGAÇÃO (15/07)
+> **Não executar este plano.** Ao furar a premissa no código (Task 0), o fluxo financeiro se revelou **já estado-gateado**: os detectores só rodam sob a intent aberta (`engine.js:9404` invoice, `engine.js:8553` launch), e a proposta já vive no `payload`. Consequência: as Tasks 2-3 seriam **no-op** (o gate de estado já existe), a Task 1 (`finance-turn-state.js`) ficaria **sem consumidor** (infra morta), e a Task 4 (gate de turno no `enforceSendHonesty`) foi **reprovada pela catraca** — regressiva (silencia verbo-forte em turno financeiro) e conceitualmente furada (`hasCoordSignal=marker` nunca pega confab, que é *sem* marker).
+>
+> **Leitura que fica:** os 4 bugs de 14/07 **não** foram "guard cego decidindo por texto" — foram **regras incompletas** dentro de detectores já no lugar certo (faltavam guarda-de-pergunta, guarda-de-ver, FIN_CTX, não-chutar-cartão), todas fechadas em 14/07 no eixo certo. O financeiro já está estável.
+>
+> **A tese "estado > texto" segue válida** — mas o alvo dela é um guard **global cego ao domínio**, não o financeiro. A Fase 1 só REABRE com um **falso-positivo real de guard global documentado** no banco (não por antecipação — seria "infra pela infra" num endereço novo). O chokepoint `enforceNoMarkerHonesty` já decide parte por estado (`nothingPersisted:!marker_emitted`), então nem é óbvio que ele é o próximo paciente.
+>
+> **Janela de aceite herdada (trava 3):** reincidência-ZERO da classe no fluxo financeiro em `tom_known_issues`/`marker_logs`, **15/07 → ~29/07**. O código morreu; a medição fica. Ver `[[project_guards_fase1_turnstate_review]]`.
+
 **Data:** 2026-07-15
 **Contexto:** `docs/tom-estabilidade-fase0-inventario-guards.md` (Fase 0 — inventário)
 **Escopo:** piloto vertical. Converter os guards do **fluxo financeiro de confirmação** de decisão-por-regex-de-texto para decisão-por-**estado do turno** + **gate de domínio**. Não toca os outros guards nem o chokepoint global.

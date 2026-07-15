@@ -1,5 +1,8 @@
 # TOM — Fase 0: Inventário dos Guards (diagnóstico de estabilidade)
 
+> ## ⚠️ ATUALIZAÇÃO 15/07 — o piloto financeiro que este doc recomendava foi REFUTADO
+> A recomendação abaixo (Fase 1 = converter os guards do fluxo financeiro texto→estado) **não se sustentou na investigação**: o fluxo financeiro **já decide por estado** (a intent É o gate — os detectores só rodam sob ela, `engine.js:9404`/`8553`). Os 4 bugs de 14/07 foram **regras incompletas** em detectores já no lugar certo (guarda-de-pergunta, guarda-de-ver, FIN_CTX, não-chutar-cartão), fechadas em 14/07. O diagnóstico geral (consertar > migrar; guards texto vs estado) **continua sólido** — mas o alvo da tese é um guard **global cego ao domínio** (ex.: `enforceNoMarkerHonesty`), **não o financeiro**. A Fase 1 só reabre com um falso-positivo de guard global documentado. Detalhes: `docs/superpowers/specs/2026-07-15-tom-guards-fase1-piloto-financeiro-design.md` (bloco de encerramento) + `[[project_guards_fase1_turnstate_review]]`.
+
 **Data:** 2026-07-14
 **Pergunta que motivou:** "quebra todo dia, nunca 100% — migrar pra plataforma pronta (Openclaw/Hermes) ou consertar o TOM?"
 **Método:** categorizar todo bug histórico (`tom_known_issues`) + classificar cada guard por *como decide* (texto vs estado) e *escopo* (global vs domínio) + mapear os call-sites no `engine.js`.
