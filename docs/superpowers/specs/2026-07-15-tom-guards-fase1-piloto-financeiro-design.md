@@ -49,9 +49,12 @@ financeTurnState(openIntents, markerRows) -> {
 - `detectLaunchConfirm(text, conf, turnState)` — quando `pendingAction === 'launch'`, idem: negação e pergunta nunca lançam; afirmação contra a proposta lança.
 - **Compatibilidade:** `turnState` ausente ou de outro domínio → comportamento atual (assinatura com parâmetro opcional; os testes de hoje continuam válidos).
 
-### 3. Gate de domínio no guard que vazou
+### 3. Gate de domínio no guard que vazou — por SINAL de coordenação, não por domínio binário
 
-- `enforceSendHonesty(text, { turnState, isQuestion })` — se `turnState.domain === 'finance'`, **não age** (o "mandando/enviado" é financeiro, não recado). Senão, comportamento atual (o split strong/weak + `FIN_CTX` já entregue em 14/07 permanece como segunda linha).
+⚠️ **Trava de reviewer (catraca, 15/07):** o gate NÃO pode ser "turno é financeiro → cala o guard de recado". Um turno que seja financeiro **E** contenha um recado real teria a confab de envio silenciada → falso-**negativo** (mentira passa), que é **pior** que o falso-positivo de hoje. Isso recriaria, invertida, a própria classe que a spec mata.
+
+- `enforceSendHonesty(text, { turnState, isQuestion })` — o gate **afirma** (roda quando há sinal), não nega por domínio. O guard **age** quando há **sinal de coordenação no turno**: um marker `COORDINATION_REQUEST` emitido (mesmo rejeitado) ou detecção de recado. **Sem** sinal de coordenação **e** com ação financeira no turno → o "mandando/enviado" é financeiro → não age. Ou seja: o `turnState` decide *se o verbo-de-envio tem sujeito de recado*, não *se existe uma intent financeira em algum lugar*.
+- O split strong/weak + `FIN_CTX` por-linha (14/07) permanece como **segunda linha** — o gate de domínio é a primeira, o léxico por-linha a segunda.
 
 ### 4. Engine monta o `turnState` uma vez
 
@@ -70,6 +73,15 @@ Logo após ler as intents abertas e os markers do turno, o engine chama `finance
 - `financeTurnState` lança (payload estranho) → `try/catch` no engine → comportamento atual. Fail-safe.
 - Múltiplas intents abertas → prioriza a financeira mais recente (a proposta ativa).
 
+## Task 0 — furar a premissa-mãe ANTES de codar (trava de reviewer)
+
+A spec inteira apoia em "o estado do turno já existe e o engine já lê (intents + markers)". **Isso é hipótese até ser confirmado no código.** A Task 0 do plano, antes de qualquer linha de produção, prova lendo `engine.js`:
+
+- **Onde cada guard dispara vs. onde o dado existe.** `enforceSendHonesty` roda no **pré-envio** (resposta já redigida) — nesse ponto os markers do turno já rodaram (existem), e as intents foram lidas na entrada. Os detectores financeiros (`detectInvoiceReply`/`detectLaunchConfirm`) rodam nos intercepts, ainda mais cedo. Confirmar que `turnState` pode ser montado e estar disponível **em cada um desses pontos** — se a ordem não fechar (ex.: markers do turno não acessíveis no pré-envio), o piloto morre na origem e o plano para aqui.
+- **Os `kind`/`form` reais** das intents financeiras (`finance_source`/`invoice_import`, seus `form`/`stage`) — cravados do código, não supostos.
+
+Saída da Task 0: um parágrafo "premissa confirmada / premissa furada" com as linhas exatas do engine. Só depois disso o helper puro é escrito.
+
 ## Testes
 
 - **TDD** em cada detector convertido, com fixtures de `turnState` (proposta + texto do usuário).
@@ -84,6 +96,13 @@ Logo após ler as intents abertas e os markers do turno, o engine chama `finance
 - Telemetria/painel de métrica (o critério de sucesso é ausência de reincidência, não um número instrumentado).
 - Unificar os detectores num único `detectUserIntent` (é a tentação da Abordagem B; o piloto prova o padrão primeiro).
 
+## Portão de aceite (trava de reviewer)
+
+Teste verde **não é prova** (lição-mãe). O piloto só é declarado bom quando:
+1. Os **4 casos-regressão** de 14/07 verdes e permanentes.
+2. **Smoke real na VPS** (repro Rose dos 4 fluxos) + **olho no banco** (o estado gravado confere).
+3. **Reincidência ZERO da classe no fluxo financeiro por ~2 semanas**, medida em `tom_known_issues` / `marker_logs` — não um número instrumentado (telemetria fica fora do piloto).
+
 ## Sucesso do piloto
 
-O fluxo financeiro de confirmação para de gerar bug dessa classe, provado por: (a) os 4 casos-regressão verdes e permanentes; (b) smoke real na VPS; (c) o padrão `estado + gate de domínio` documentado como molde reutilizável pras próximas fases.
+O fluxo financeiro de confirmação para de gerar bug dessa classe, provado pelo portão de aceite acima, e o padrão `estado + gate por sinal de domínio` fica documentado como molde reutilizável pras próximas fases (chokepoint global, outros guards).
