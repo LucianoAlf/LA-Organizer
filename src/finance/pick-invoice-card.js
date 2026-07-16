@@ -28,19 +28,27 @@ function pickInvoiceCard({ emissor, userText, cards, cardIdHint } = {}) {
   const list = (cards || []).map((c) => ({ ...c, _n: _norm(c.name) }));
   if (!list.length) return { status: 'notfound', candidates: [] };
 
-  // 1) card_id já confirmado numa desambiguação anterior
-  if (cardIdHint) {
-    const byId = list.find((c) => c.id === cardIdHint);
-    if (byId) return { status: 'resolved', card: byId, via: 'id' };
-  }
+  const hinted = cardIdHint ? list.find((c) => c.id === cardIdHint) : null;
 
-  // 2) a FALA do usuário nomeia o cartão (vence o emissor do PDF)
+  // 1) a FALA do usuário nomeia o cartão — vence o emissor do PDF E o cardIdHint.
+  // Rose 16/07 01:57: o hint valia mais que a fala, e o hint era um CHUTE (o Intercept A
+  // gravava findCard(emissor)[0] na intent sem desambiguar). Ela corrigiu "é o cartão LATAM
+  // PASS", o hint chutado (Itaú Matheus) ganhou e 58 itens foram pro cartão errado. A fala é
+  // a intenção real e é a mais recente: manda nela.
   const ut = _norm(userText);
   if (ut) {
     const named = list.filter((c) => _mentions(ut, c._n));
     if (named.length === 1) return { status: 'resolved', card: named[0], via: 'user' };
-    if (named.length > 1) return { status: 'ambiguous', candidates: named, via: 'user' };
+    if (named.length > 1) {
+      // Fala ambígua ("cartão Itaú" casa 2): o hint desempata SÓ se for um dos citados.
+      // Hint fora do que o usuário falou está contraditado por ele — aí pergunta.
+      if (hinted && named.some((c) => c.id === hinted.id)) return { status: 'resolved', card: hinted, via: 'id' };
+      return { status: 'ambiguous', candidates: named, via: 'user' };
+    }
   }
+
+  // 2) card_id da intent (a fala não nomeou cartão nenhum — ex.: "sim")
+  if (hinted) return { status: 'resolved', card: hinted, via: 'id' };
 
   // 3) emissor do PDF
   const em = _norm(emissor);

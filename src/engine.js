@@ -9444,10 +9444,18 @@ async function processMessage(phone, text, raw = {}) {
     const _invParsed = invoiceImport.parseInvoiceBlock(text, _refYear);
     if (_invParsed.found && _invParsed.invoice && _invParsed.invoice.itens.length > 0) {
       const _inv = _invParsed.invoice;
-      const _cards = await financeService.findCard(collab.id, _inv.emissor);
-      const _card = (_cards && _cards.length) ? _cards[0] : null;
+      // NUNCA chutar o cartão na ABERTURA da intent. Aqui era findCard(emissor)[0]: "Itaú" casa
+      // 3 cartões da Rose e o [0] gravou "Itaú Matheus" no payload como se fosse fato. 3 min
+      // depois ela corrigiu ("é o LATAM PASS"), mas o chute já estava na intent e o "sim" lançou
+      // 58 itens no cartão errado (16/07 01:57). O pickInvoiceCard do commit (Intercept B) não
+      // salvou porque ele CONFIA no card_id da intent — logo, chute não pode entrar no payload:
+      // ou resolve de verdade, ou fica null e pergunta.
+      const { pickInvoiceCard: _pickCardA } = require('./finance/pick-invoice-card');
+      const _allCardsA = await financeService.listCards(collab.id);
+      const _pickA = _pickCardA({ emissor: _inv.emissor, userText: text, cards: _allCardsA });
+      const _card = _pickA.status === 'resolved' ? _pickA.card : null;
       const _fmtTot = Number(_inv.total || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
-      if (!_card) {
+      if (!_card && !(_allCardsA || []).length) {
         await whatsapp.sendMessage(phone, `📄 Li ${_inv.itens.length} compras (total R$ ${_fmtTot}), mas não identifiquei o cartão "${_inv.emissor}" nos seus cadastrados. Me diz de qual cartão é essa fatura (ou cadastra ele) que aí eu lanço.`);
         return;
       }
@@ -9455,21 +9463,32 @@ async function processMessage(phone, text, raw = {}) {
       const _catRows = await financeService.listCategorySlugs(collab.id).catch(() => []);
       const _extraSlugs = new Set((_catRows || []).filter((r) => r.collaborator_id).map((r) => r.slug));
       const _itensCat = _inv.itens.map((it) => ({ ...it, categoria: safeCategory(it.descricao, it.descricao, 'expense', _extraSlugs) }));
-      const _preview = invoiceImport.buildInvoicePreview({
-        emissor: _inv.emissor, vencimento: _inv.vencimento, total: _inv.total,
-        cardName: _card.name, itens: _itensCat, dupWarning: null,
-      });
       const _invIntentId = await pendingIntents.openIntent(collab.id, 'invoice_import',
-        { stage: 'awaiting_confirm', card_id: _card.id, card_name: _card.name, emissor: _inv.emissor,
-          vencimento: _inv.vencimento, total: _inv.total, itens: _itensCat }, 'lançar fatura?');
+        { stage: 'awaiting_confirm', card_id: _card ? _card.id : null, card_name: _card ? _card.name : null,
+          emissor: _inv.emissor, vencimento: _inv.vencimento, total: _inv.total, itens: _itensCat },
+        _card ? 'lançar fatura?' : 'de qual cartão é a fatura?');
       // Defense-in-depth: se o intent NÃO persistiu (ex.: constraint/erro de insert), o "lançar"
       // do próximo turno não terá nada pra casar (Intercept B) e cai no LLM derrotista. Falha
       // silenciosa escondeu esse bug por semanas (Alf/Rose 14/06). Loga ALTO e não promete confirmar.
       if (!_invIntentId) {
         console.error('[Fatura] CRÍTICO: openIntent invoice_import retornou null — confirmação NÃO vai funcionar. Checar pending_intents_kind_check / erro de insert.');
-        await whatsapp.sendMessage(phone, `📄 Li ${_inv.itens.length} compras da fatura *${_card.name}* (total R$ ${_fmtTot}), mas tive um problema técnico pra abrir a confirmação aqui. Já avisei o time — tenta de novo daqui a pouco ou lança pelo app em Finanças → Cartões.`);
+        await whatsapp.sendMessage(phone, `📄 Li ${_inv.itens.length} compras da fatura ${_card ? `*${_card.name}* ` : ''}(total R$ ${_fmtTot}), mas tive um problema técnico pra abrir a confirmação aqui. Já avisei o time — tenta de novo daqui a pouco ou lança pelo app em Finanças → Cartões.`);
         return;
       }
+      if (!_card) {
+        // Cartão ambíguo/não-achado: a fatura NÃO se perde — a intent fica aberta SEM card_id e o
+        // Intercept B resolve pela fala ("lança no Latam PASS") no próximo turno. Lista TODOS os
+        // cartões: filtrar pelos que casam o emissor esconderia a resposta certa (o Latam PASS é
+        // Itaú mas não tem "Itaú" no nome — foi exatamente o cartão que a Rose queria).
+        const _nomesA = (_allCardsA || []).map((c) => c.name);
+        console.log(`[Fatura] cartão não resolvido na abertura (${_pickA.status}, emissor="${_inv.emissor}") → perguntando, intent sem card_id`);
+        await whatsapp.sendMessage(phone, `📄 Li ${_inv.itens.length} compras da fatura *${_inv.emissor || 'importada'}* (total R$ ${_fmtTot}) — mas não sei de qual cartão ela é, então não vou chutar.\n\nTenho: *${_nomesA.join('*, *')}*.\nResponde tipo *lança no ${_nomesA[0]}* que eu te mando a prévia pra conferir.`);
+        return;
+      }
+      const _preview = invoiceImport.buildInvoicePreview({
+        emissor: _inv.emissor, vencimento: _inv.vencimento, total: _inv.total,
+        cardName: _card.name, itens: _itensCat, dupWarning: null,
+      });
       await whatsapp.sendMessage(phone, _preview);
       return;
     }
@@ -9482,6 +9501,35 @@ async function processMessage(phone, text, raw = {}) {
     const _invIntent = (_openIntents || []).find((i) => i.kind === 'invoice_import' && i.payload && i.payload.stage === 'awaiting_confirm');
     if (_invIntent) {
       const _decision = invoiceImport.detectInvoiceReply(text);
+      // === Correção de cartão com a fatura já aberta (Rose 16/07 01:54) ===
+      // Ela disse "Tom, é o cartão LATAM PASS. É para lançar somente o que falta. Lembra?" — o
+      // detector devolve null (tem "?", e pergunta nunca commita: certo), então a correção NÃO
+      // tinha para onde ir: virou prosa do LLM ("vou mandar a prévia agora") enquanto a intent
+      // errada seguia viva, e o "sim" seguinte caiu nela. Aqui a correção ganha executor: se a
+      // fala nomeia UM cartão diferente do alvo atual, supersede a intent e re-manda a prévia no
+      // cartão certo. Só roda quando o detector NÃO decidiu — nunca atropela commit/cancel.
+      if (!_decision) {
+        const { pickInvoiceCard: _pickCardC } = require('./finance/pick-invoice-card');
+        const _allCardsC = await financeService.listCards(collab.id);
+        const _namedC = _pickCardC({ userText: text, cards: _allCardsC });
+        if (_namedC.status === 'resolved' && _namedC.via === 'user' && _namedC.card.id !== _invIntent.payload.card_id) {
+          const _payC = _invIntent.payload;
+          await pendingIntents.resolveIntent(_invIntent.id, 'superseded', `usuário corrigiu o cartão → ${_namedC.card.name}`);
+          const _newIntentId = await pendingIntents.openIntent(collab.id, 'invoice_import',
+            { ..._payC, stage: 'awaiting_confirm', card_id: _namedC.card.id, card_name: _namedC.card.name }, 'lançar fatura?');
+          if (!_newIntentId) {
+            console.error('[Fatura] CRÍTICO: openIntent (correção de cartão) retornou null — a intent antiga já foi superseded.');
+            await whatsapp.sendMessage(phone, `Entendi que é o *${_namedC.card.name}*, mas tive um problema técnico pra reabrir a confirmação. Me manda a fatura de novo, por favor.`);
+            return;
+          }
+          console.log(`[Fatura] cartão corrigido pela fala: ${_payC.card_name || '(sem cartão)'} → ${_namedC.card.name}`);
+          await whatsapp.sendMessage(phone, invoiceImport.buildInvoicePreview({
+            emissor: _payC.emissor, vencimento: _payC.vencimento, total: _payC.total,
+            cardName: _namedC.card.name, itens: _payC.itens, dupWarning: null,
+          }));
+          return;
+        }
+      }
       if (_decision) {
         const _pay = _invIntent.payload;
         if (_decision === 'cancel') {
