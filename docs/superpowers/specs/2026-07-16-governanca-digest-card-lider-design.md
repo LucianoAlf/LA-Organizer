@@ -201,8 +201,10 @@ assembleDigest({ header, sections, footer })   ← JÁ EXISTE, não muda
  *                              done-twin e por "cobrada nas últimas 24h".
  *                              Campos: id, title, due_date, assigned_to,
  *                                      governance_owner_id, coordination_request_count
- * @param {Array} opts.events   compromissos passados sem devolutiva.
- *                              Campos: id, title, starts_at, owner_id
+ * @param {Array} opts.events   compromissos passados sem devolutiva (tabela `events`).
+ *                              Campos REAIS: id, title, start_at, end_at, collaborator_id.
+ *                              ⚠️ é `collaborator_id` (NÃO `owner_id`) e `start_at` (NÃO `starts_at`).
+ *                              + `whenLabel` já formatado pelo dispatcher (a pura não formata TZ).
  * @param {Array} opts.collabs  saída de loadCollabsWithEdges (com explicit_leader_ids
  *                              e group_leader_ids anexados)
  * @param {Map<string,Object>} opts.scorecards  leader_id → { closure_rate, tasks_closed } da
