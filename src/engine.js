@@ -9734,9 +9734,16 @@ async function processMessage(phone, text, raw = {}) {
         // payload, e SÓ sobre esses itens.
         const _p = target.payload || {};
         const hasConcrete = !!(_p.draft || _p.drafts || _p.anchor || _p.task_id || _p.event_id || _p.items);
+        // AUDIT 16/07 (confab-noop sweep, caso Alf/HR-V): o ramo !hasConcrete mandava
+        // "apenas confirme em texto e feche o assunto" — que é a RECEITA DA CONFABULAÇÃO:
+        // proíbe agir E manda confirmar, então o LLM obedece e responde "✅ Criado!" sem
+        // nada ter sido gravado (foi exatamente isso no HR-V, e explica as 34 CHOKEPOINT
+        // confab:unknown em 30 dias). A proibição de emitir marker é MANTIDA (sem ela o LLM
+        // inventa alvos — caso Conciliação/Rose 10/06, motivo original deste ramo); o que
+        // muda é proibir também a AFIRMAÇÃO falsa e dar a saída honesta.
         const markerRule = hasConcrete
           ? 'Emita o marker apropriado APENAS para os itens do payload acima (ex: <<TASK_UPDATE>> com action=create para cada draft). NÃO crie, edite ou reagende NENHUM item que não esteja no payload.'
-          : 'O payload NÃO tem item concreto (sem draft/ids) — apenas confirme em texto e feche o assunto. NÃO emita marker nenhum; NÃO toque em tasks/eventos existentes.';
+          : 'O payload NÃO tem item concreto (sem draft/ids): você NÃO consegue executar isso agora. NÃO emita marker nenhum e NÃO toque em tasks/eventos existentes. E NÃO afirme que fez — nada foi gravado, então dizer "criei/registrei/marquei/deleguei/avisei/despachei" seria MENTIRA. Em UMA linha curta e natural, assuma que não conseguiu registrar e peça pra pessoa repetir o pedido com os detalhes.';
         const ctxHint = `\n\n[CONTEXTO INTERNO — não verbalize ao usuário]\nVocê tinha aberto uma intent (${target.kind}) com a pergunta: "${(target.question_text || '').slice(0, 200)}".\nPayload pendente: ${payloadStr}\nO usuário CONFIRMOU. ${markerRule}`;
         text = String(text || '') + ctxHint;
         console.log(`[PendingIntents] auto-resolve YES — intent=${target.id.slice(0,8)} kind=${target.kind}`);

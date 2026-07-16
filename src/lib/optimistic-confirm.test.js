@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { sanitizeOptimisticConfirm, hasOptimisticConfirm, hasWeakCompletionClaim, enforceNoMarkerHonesty } = require('./optimistic-confirm');
+const { sanitizeOptimisticConfirm, hasOptimisticConfirm, hasCompletionClaim, hasWeakCompletionClaim } = require('./optimistic-confirm');
 
 // ─────────────────────────────────────────────────────────────────────────
 // outcome = 'failed' (nada persistiu): rebaixa/remove TODA confirmação otimista
@@ -121,82 +121,73 @@ test('outcome desconhecido = não mexe', () => {
   assert.strictEqual(sanitizeOptimisticConfirm('✅ Criado!', 'ok'), '✅ Criado!');
 });
 
-// ─────────────────────────────────────────────────────────────────────────
-// REDE 1 — camada FRACA de conclusão ("Fechou/Combinado/Beleza"), gated por
-// ESTADO (nothingPersisted + pendingActionRecent), NUNCA por actionable_intent.
-// Caso Matheus 14/07 (RESCHEDULE-CONFIRM-NOOP): user "Isso" → TOM "✅ Fechou" sem
-// persistir → o gate forte perdia "Fechou" (3ª pessoa) → NOOP silencioso de 11h.
-// actionable_intent é FALSO nesse turno (engine.js:12294: inputActionable("Isso")=false,
-// replyHasPromise("Fechou")=false) → gate morto + circular. Eixo certo = nothingPersisted.
-// ─────────────────────────────────────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// AUDIT 16/07 (confab-noop sweep) — o backstop tinha buracos nas frases CANÔNICAS
+// que as próprias skills mandam o TOM dizer: "Delegado pro X", "Excluí o hábito",
+// "Comunicado despachado ✓" passavam inteiras (nenhum verbo no COMPLETION_CORE).
+// Superfícies afetadas: delegate/cancel de tarefa, HABIT delete, ANNOUNCEMENT.
+// ---------------------------------------------------------------------------
 
-test('hasWeakCompletionClaim: detecta afirmações casuais de conclusão', () => {
-  assert.strictEqual(hasWeakCompletionClaim('✅ Fechou, Matheus! Bora focar no que tem pra hoje.'), true);
-  assert.strictEqual(hasWeakCompletionClaim('Combinado!'), true);
-  assert.strictEqual(hasWeakCompletionClaim('Beleza, tá feito.'), true);
+test('AUDIT-16/07: "Delegado pro Arthur!" é claim (skill de delegação)', () => {
+  assert.strictEqual(hasCompletionClaim('Delegado pro Arthur!'), true);
 });
-test('hasWeakCompletionClaim: false em texto neutro / pergunta', () => {
-  assert.strictEqual(hasWeakCompletionClaim('Qual horário você prefere?'), false);
-  assert.strictEqual(hasWeakCompletionClaim('Vou criar isso já já.'), false);
+test('AUDIT-16/07: "Deleguei pro Rafinha." é claim', () => {
+  assert.strictEqual(hasCompletionClaim('Deleguei pro Rafinha.'), true);
 });
-
-test('(a) "Fechou ✅" sem persist APÓS confirm-question → fira honesto', () => {
-  const r = enforceNoMarkerHonesty(
-    '✅ Fechou, Matheus! Bora focar no que tem pra hoje.',
-    { nothingPersisted: true, pendingActionRecent: true, infoGathering: false, awaitingConfirm: false },
-    { meta: true },
-  );
-  assert.strictEqual(r.fired, true, 'deve firar');
-  assert.ok(/não consegui registrar/i.test(r.reply), 'anexa aviso honesto');
-  assert.ok(!/Fechou/.test(r.reply), 'remove o falso "Fechou"');
+test('AUDIT-16/07: "Excluí o *Ler*." é claim (habit delete)', () => {
+  assert.strictEqual(hasCompletionClaim('Excluí o *Ler*.'), true);
 });
-
-test('(b) "Fechou, valeu!" banter (sem ação pendente) → NÃO fira (protege Rose)', () => {
-  const r = enforceNoMarkerHonesty(
-    '✅ Fechou, valeu!',
-    { nothingPersisted: true, pendingActionRecent: false, infoGathering: false, awaitingConfirm: false },
-    { meta: true },
-  );
-  assert.strictEqual(r.fired, false, 'banter não pode firar');
-  assert.strictEqual(r.reply, '✅ Fechou, valeu!', 'reply intacto');
+test('AUDIT-16/07: "Apaguei o hábito *Ler*." é claim', () => {
+  assert.strictEqual(hasCompletionClaim('Apaguei o hábito *Ler*.'), true);
+});
+test('AUDIT-16/07: "Avisei o Rafinha sobre a sala." é claim', () => {
+  assert.strictEqual(hasCompletionClaim('Avisei o Rafinha sobre a sala.'), true);
+});
+test('AUDIT-16/07: "Comunicado despachado. ✓" é claim (✓ U+2713 + verbo)', () => {
+  assert.strictEqual(hasCompletionClaim('Comunicado despachado. ✓'), true);
+});
+test('AUDIT-16/07: "Despachei o comunicado pra coordenação." é claim', () => {
+  assert.strictEqual(hasCompletionClaim('Despachei o comunicado pra coordenação.'), true);
 });
 
-test('(c) "Fechou ✅" COM marker persistido → NÃO fira (agendou de verdade)', () => {
-  const r = enforceNoMarkerHonesty(
-    '✅ Fechou, Matheus!',
-    { nothingPersisted: false, pendingActionRecent: true, infoGathering: false, awaitingConfirm: false },
-    { meta: true },
-  );
-  assert.strictEqual(r.fired, false, 'algo persistiu → não rebaixa');
+// --- ANTI-FALSO-FIRE: o custo de errar aqui é colar "não consegui registrar" numa
+// mensagem legítima (ver SENDHONESTY-FALSEFIRE-FINANCE, Rose 14/07). Futuro/intenção
+// e relato de terceiro NUNCA podem virar claim.
+test('AUDIT-16/07 anti-FP: futuro "Vou delegar pro Arthur" NÃO é claim', () => {
+  assert.strictEqual(hasCompletionClaim('Vou delegar pro Arthur.'), false);
+});
+test('AUDIT-16/07 anti-FP: "te aviso depois" NÃO é claim', () => {
+  assert.strictEqual(hasCompletionClaim('Beleza, te aviso depois.'), false);
+});
+test('AUDIT-16/07 anti-FP: "Vou excluir?" (pergunta) NÃO é claim', () => {
+  assert.strictEqual(hasCompletionClaim('Quer que eu exclua o hábito Ler?'), false);
+});
+test('AUDIT-16/07 anti-FP: ✓ decorativo em lista SEM verbo NÃO é claim', () => {
+  assert.strictEqual(hasCompletionClaim('• Reunião com Juliana ✓\n• Panorama do Matheus ✓'), false);
+});
+test('AUDIT-16/07 anti-FP: "enviado" segue FORA do core (falso-fire financeiro histórico)', () => {
+  assert.strictEqual(hasCompletionClaim('O boleto foi enviado pelo banco.'), false);
+});
+test('AUDIT-16/07 anti-FP: menção a estado alheio no meio da linha NÃO é claim', () => {
+  assert.strictEqual(hasCompletionClaim('A tarefa do Rafinha já tava delegada antes.'), false);
 });
 
-test('(d) verbo FORTE intocado — fira mesmo sem pendingActionRecent (zero-regressão)', () => {
-  const r = enforceNoMarkerHonesty(
-    '✅ Reagendei tudo pra amanhã.',
-    { nothingPersisted: true, pendingActionRecent: false, infoGathering: false, awaitingConfirm: false },
-    { meta: true },
-  );
-  assert.strictEqual(r.fired, true, 'verbo forte não depende do gate de recência');
+// AUDIT 16/07 — BUG PRÉ-EXISTENTE: `\b` do JS é ASCII, então verbo terminado em vogal
+// ACENTUADA ("Concluí", "Excluí") nunca casava o gate → a claim mais óbvia de todas
+// ("Concluí a tarefa") escapava do chokepoint desde sempre. Mesma classe do
+// CONFIRM-SHORTYES-TA-ACCENT-BOUNDARY (audit 28/06). Fix: lookahead unicode (?![\p{L}]).
+test('AUDIT-16/07 acento: "Concluí a tarefa." é claim (\b ASCII quebrava)', () => {
+  assert.strictEqual(hasCompletionClaim('Concluí a tarefa.'), true);
 });
-
-test('weak sem ✅ ("Fechou, Matheus!") + estado → fira e remove a linha', () => {
-  const r = enforceNoMarkerHonesty(
-    'Fechou, Matheus!',
-    { nothingPersisted: true, pendingActionRecent: true, infoGathering: false, awaitingConfirm: false },
-    { meta: true },
-  );
-  assert.strictEqual(r.fired, true);
-  assert.ok(!/Fechou/.test(r.reply), 'weak line removida mesmo sem emoji');
+test('AUDIT-16/07 acento: "Concluí." é claim', () => {
+  assert.strictEqual(hasCompletionClaim('Concluí.'), true);
 });
-
-test('weak NÃO fira quando infoGathering/awaitingConfirm (gate nativo do chokepoint)', () => {
-  const base = { nothingPersisted: true, pendingActionRecent: true };
-  assert.strictEqual(enforceNoMarkerHonesty('✅ Fechou!', { ...base, infoGathering: true }, { meta: true }).fired, false);
-  assert.strictEqual(enforceNoMarkerHonesty('✅ Fechou!', { ...base, awaitingConfirm: true }, { meta: true }).fired, false);
+test('AUDIT-16/07 acento: "Concluído!" segue claim (não regride)', () => {
+  assert.strictEqual(hasCompletionClaim('Concluído!'), true);
 });
-
-test('zero-regressão: hasOptimisticConfirm segue false em "Beleza, crio separado."', () => {
-  assert.strictEqual(hasOptimisticConfirm('Beleza, crio separado.'), false);
-  // sanitize default (sem includeWeak) não pode stripar "Beleza" (papo)
-  assert.strictEqual(sanitizeOptimisticConfirm('Beleza, crio separado.', 'failed'), 'Beleza, crio separado.');
+test('AUDIT-16/07 acento anti-FP: "Concluímos?" (pergunta) NÃO é claim', () => {
+  assert.strictEqual(hasCompletionClaim('Concluímos isso ontem?'), false);
+});
+test('AUDIT-16/07 acento anti-FP: verbo no MEIO de palavra não casa', () => {
+  assert.strictEqual(hasCompletionClaim('Recriado do zero pelo time.'), false);
 });

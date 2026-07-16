@@ -14,9 +14,12 @@
 //               e remove confirmações puras sem quantificador.
 //   qualquer outro valor → no-op (defensivo; sucesso real nunca passa por aqui).
 
-// ✅ ☑ ✔ 🆗 🎉 👍 🙌 — emojis que sinalizam "feito".
-const SUCCESS_EMOJI_RE = /[✅☑✔\u{1F197}\u{1F389}\u{1F44D}\u{1F64C}]/u;
-const SUCCESS_EMOJI_GLOBAL = /[✅☑✔\u{1F197}\u{1F389}\u{1F44D}\u{1F64C}]️?\s?/gu;
+// ✅ ☑ ✔ ✓ 🆗 🎉 👍 🙌 — emojis que sinalizam "feito".
+// ✓ (U+2713) entrou no audit 16/07: é DIFERENTE de ✔ (U+2714) e a skill de comunicados
+// usa justamente ele ("Comunicado despachado. ✓") — sem ele, essa claim não tinha emoji
+// nem verbo-no-início, então escapava inteira do gate.
+const SUCCESS_EMOJI_RE = /[✅☑✔✓\u{1F197}\u{1F389}\u{1F44D}\u{1F64C}]/u;
+const SUCCESS_EMOJI_GLOBAL = /[✅☑✔✓\u{1F197}\u{1F389}\u{1F44D}\u{1F64C}]️?\s?/gu;
 
 // Markup de início de linha (negrito/itálico/bullet/citação) a ignorar.
 const LEADING_MARKUP = /^[\s*_~>•\-–—"']+/;
@@ -32,10 +35,29 @@ const COMPLETION_CORE =
   'conclu[ií]d[oa]s?|conclu[ií]|fechad[oa]s?|fechei|resolvid[oa]s?|resolvi|' +
   'finalizad[oa]s?|finalizei|encerrad[oa]s?|encerrei|movid[oa]s?|movi|' +
   'cancelad[oa]s?|cancelei|confirmad[oa]s?|confirmei|lan[çc]ad[oa]s?|lancei|' +
-  'adicionad[oa]s?|adicionei|inserid[oa]s?|pront[oa]|prontinh[oa]|feit[oa])\\b';
+  'adicionad[oa]s?|adicionei|inserid[oa]s?|' +
+  // AUDIT 16/07 (confab-noop sweep): verbos das frases CANÔNICAS das skills que
+  // escapavam do gate — delegate/cancel de tarefa ("Delegado pro X"), HABIT delete
+  // ("Excluí o *Ler*"), ANNOUNCEMENT ("Comunicado despachado ✓"), coordenação
+  // ("Avisei o Rafinha"). Particípio/1ª pessoa apenas: futuro/subjuntivo ("vou delegar",
+  // "exclua?") NÃO casa, e forma longa vem antes da curta pro \b não quebrar.
+  // DELIBERADAMENTE FORA: "enviad*" — ambíguo demais em PT ("boleto foi enviado pelo
+  // banco") e já causou falso-fire em contexto financeiro (SENDHONESTY-FALSEFIRE-FINANCE,
+  // Rose 14/07). A claim "Comunicado enviado pra aprovação" fica descoberta de propósito;
+  // o fix dela é o staging determinístico, não afrouxar este gate.
+  'despachad[oa]s?|despachei|exclu[ií]d[oa]s?|exclu[ií]|apagad[oa]s?|apaguei|' +
+  'delegad[oa]s?|deleguei|avisad[oa]s?|avisei|' +
+  'pront[oa]|prontinh[oa]|feit[oa])';
 
-const COMPLETION_ANCHORED = new RegExp('^[\\s*_~>•\\-–—"\']*' + COMPLETION_CORE, 'i');
-const COMPLETION_ANYWHERE = new RegExp('\\b' + COMPLETION_CORE, 'i');
+// Fronteira FINAL ASCII-safe. Antes era `\b`, que em JS é ASCII: verbo terminado em vogal
+// ACENTUADA não fazia boundary contra espaço/pontuação → "Concluí a tarefa." (a claim mais
+// óbvia que existe) NUNCA disparou o chokepoint, nem "Excluí o *Ler*.". Bug PRÉ-EXISTENTE
+// achado no audit 16/07; mesma classe do CONFIRM-SHORTYES-TA-ACCENT-BOUNDARY (28/06).
+// `(?![\p{L}])` + flag `u` = "não seguido de letra" (unicode-aware), preservando o veto a
+// casar no meio de palavra ("Recriado" não vira claim).
+const COMPLETION_END = '(?![\\p{L}])';
+const COMPLETION_ANCHORED = new RegExp('^[\\s*_~>•\\-–—"\']*' + COMPLETION_CORE + COMPLETION_END, 'iu');
+const COMPLETION_ANYWHERE = new RegExp('\\b' + COMPLETION_CORE + COMPLETION_END, 'iu');
 
 // Totalizador absoluto.
 const TOTALIZER_RE = /\b(todas|todos|tudo)\b/i;
