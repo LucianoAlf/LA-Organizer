@@ -83,6 +83,33 @@ export function GestaoEquipeDetalhe() {
     enabled: isDirector,
   });
 
+  // Digest de governança desta pessoa (governance_prefs). Sem linha = LIGADO (default do
+  // dispatcher: getGovernancePrefs devolve digest_enabled:true quando não acha linha).
+  // Escrever na pref de OUTRA pessoa exige a policy gov_prefs_director (a gov_prefs_self
+  // só cobre a própria linha) — sem ela isto gravaria 0 linhas em silêncio.
+  const { data: digestEnabled = true, refetch: refetchDigest } = useQuery({
+    queryKey: ['gov-prefs', id],
+    queryFn: async () => {
+      const { data } = await supabase.from('governance_prefs')
+        .select('digest_enabled').eq('collaborator_id', id!).maybeSingle();
+      return data ? Boolean(data.digest_enabled) : true;
+    },
+    enabled: Boolean(isDirector && id),
+  });
+  const [savingDigest, setSavingDigest] = useState(false);
+  const toggleDigest = async (next: boolean) => {
+    if (!id) return;
+    setSavingDigest(true);
+    const { error } = await supabase.from('governance_prefs').upsert({
+      collaborator_id: id,
+      digest_enabled: next,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'collaborator_id' });
+    setSavingDigest(false);
+    if (error) { alert(`Não consegui salvar: ${error.message}`); return; }
+    await refetchDigest();
+  };
+
   useEffect(() => {
     if (collab) {
       setFullName(collab.full_name);
@@ -399,6 +426,48 @@ export function GestaoEquipeDetalhe() {
               <p className="text-body-sm text-fg-muted pt-1">
                 Pra trocar quem esta pessoa reporta, use os chips acima. Pra adicionar alguém que reporta a ela, abra a página dessa pessoa e marque esta no “Reporta a”.
               </p>
+            </div>
+
+            <div className="space-y-md pt-2 border-t border-border">
+              <label className="text-body-sm text-fg-muted">Relatório diário de governança (WhatsApp)</label>
+              <p className="text-body-sm text-fg-muted">
+                Só chega pra quem tem gente reportando a ela — e só quando o time tem algo em aberto. Desliga pra quem ainda não está cobrando time.
+              </p>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={digestEnabled}
+                disabled={savingDigest}
+                onClick={() => toggleDigest(!digestEnabled)}
+                className="w-full flex items-center justify-between gap-3 rounded-lg bg-bg-elevated border border-border p-3 text-left disabled:opacity-50 hover:border-fg-muted transition-colors focus-ring"
+              >
+                <span className="min-w-0">
+                  <span className="block text-body-md text-fg">
+                    {digestEnabled ? 'Recebendo o relatório' : 'Não recebe o relatório'}
+                  </span>
+                  <span className="block text-body-sm text-fg-muted">
+                    {savingDigest
+                      ? 'Salvando…'
+                      : digestEnabled
+                        ? `${previewMembers.length ? `Chega quando ${previewMembers.length === 1 ? 'a pessoa que reporta a ela tiver' : 'quem reporta a ela tiver'} algo em aberto` : 'Hoje ninguém reporta a ela — na prática não chega nada'}`
+                        : 'Desligado — o TOM não manda o digest pra ela'}
+                  </span>
+                </span>
+                <span
+                  aria-hidden
+                  className={[
+                    'shrink-0 w-11 h-6 rounded-full p-0.5 transition-colors',
+                    digestEnabled ? 'bg-tom' : 'bg-border',
+                  ].join(' ')}
+                >
+                  <span
+                    className={[
+                      'block w-5 h-5 rounded-full bg-white transition-transform',
+                      digestEnabled ? 'translate-x-5' : 'translate-x-0',
+                    ].join(' ')}
+                  />
+                </span>
+              </button>
             </div>
           </section>
         )}
