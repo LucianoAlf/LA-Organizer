@@ -95,7 +95,7 @@ async function triageOpenFindings(sb, chat, opts = {}) {
     // Known-issues corrigidos: mais recentes primeiro, teto KI_MAX. Fix antigo raramente
     // casa com finding ainda ativo, e mandar TODOS (centenas) estourava o arg do CLI (E2BIG).
     const { data: kis } = await sb.from('tom_known_issues')
-      .select('codigo, titulo, area, causa_raiz, status, corrigido_em')
+      .select('codigo, titulo, area, causa_raiz, sinal_padrao, status, corrigido_em')
       .eq('status', 'corrigido')
       .gte('corrigido_em', kiSinceIso)
       .order('corrigido_em', { ascending: false })

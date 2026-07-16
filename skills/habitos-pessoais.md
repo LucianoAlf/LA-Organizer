@@ -26,10 +26,10 @@ Engine valida pós-criação — se você disse "8h20" no chat mas o marker não
 **Regras concretas:**
 
 - Se o texto menciona **um horário** (ex: "7h30", "8h", "21:00", "às 14h"), inclua `reminder_time` no marker desse hábito (formato `"HH:MM"`).
-- Se o texto menciona **dias específicos da semana** (ex: "terça, quinta e sexta", "seg/qua/sex"), use `frequency: "weekly"` + `custom_days: ["tuesday","thursday","friday"]` (nomes em inglês, lowercase). NUNCA use `frequency: "weekly"` sem `custom_days` — o dispatcher fica sem saber em que dia disparar.
+- Se o texto menciona **dias específicos da semana** (ex: "terça, quinta e sexta", "seg/qua/sex"), use `frequency: "custom_days"` + `custom_days` como **inteiros**, onde **1=segunda, 2=terça, 3=quarta, 4=quinta, 5=sexta, 6=sábado, 7=domingo**. Ex.: "ter/qui/sex" → `"frequency":"custom_days","custom_days":[2,4,5]`. NUNCA use dias como texto (`"tuesday"`) nem `custom_days` vazio — o dispatcher precisa dos **inteiros** pra saber em que dia disparar.
 - Se o texto menciona apenas "todo dia", use `frequency: "daily"` (sem custom_days).
 - Se o texto menciona "dias úteis", use `frequency: "weekdays"`.
-- Se o texto menciona "fim de semana", use `frequency: "weekends"`.
+- Se o texto menciona "fim de semana", use `frequency: "custom_days"` + `custom_days: [6,7]` (sábado e domingo).
 - Se NÃO foi mencionado horário, NÃO invente — deixa `reminder_time` fora do payload e diga ao user que sem horário não vai chegar lembrete.
 
 **Veto adicional:**
@@ -153,10 +153,10 @@ User: "criar afirmações positivas"
 ### Schema do action `create`
 - `action`: `"create"` (obrigatório)
 - `name`: string não vazia (obrigatório)
-- `frequency`: `"daily"` | `"weekdays"` | `"weekly"` | `"custom"` (default daily)
+- `frequency`: `"daily"` | `"weekdays"` | `"weekly"` | `"custom_days"` (default daily). Use `"custom_days"` para dias específicos da semana.
 - `reminders`: **array** de strings HH:MM — múltiplos horários por dia (Sprint 22.55). Ex: `["08:00","12:00","15:00","18:00"]`. Use sempre que possível.
 - `reminder_time`: HH:MM (legado — usa só se for 1 horário e não quiser passar array). Se passar `reminders`, ignore esse campo.
-- `custom_days`: array de strings — só se frequency="custom" (opcional)
+- `custom_days`: array de **inteiros** (1=segunda .. 7=domingo) — obrigatório quando frequency="custom_days"
 - `icon`: emoji (opcional — engine usa default 💪 ou puxa do template)
 - `notify_whatsapp`: boolean (default true)
 
