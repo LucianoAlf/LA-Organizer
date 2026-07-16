@@ -9744,6 +9744,19 @@ async function processMessage(phone, text, raw = {}) {
         const markerRule = hasConcrete
           ? 'Emita o marker apropriado APENAS para os itens do payload acima (ex: <<TASK_UPDATE>> com action=create para cada draft). NÃO crie, edite ou reagende NENHUM item que não esteja no payload.'
           : 'O payload NÃO tem item concreto (sem draft/ids): você NÃO consegue executar isso agora. NÃO emita marker nenhum e NÃO toque em tasks/eventos existentes. E NÃO afirme que fez — nada foi gravado, então dizer "criei/registrei/marquei/deleguei/avisei/despachei" seria MENTIRA. Em UMA linha curta e natural, assuma que não conseguiu registrar e peça pra pessoa repetir o pedido com os detalhes.';
+        // VELOCÍMETRO do confab-noop (audit 16/07). Sem isto a decisão de estagiar (ou não)
+        // cada superfície seria por TEORIA: quando a Camada 1 funciona, o TOM avisa honesto
+        // SEM o chokepoint disparar — ou seja, o caso não aparece em NENHUM log e some da
+        // medição. Este marker conta as confirmações que chegaram SEM payload executável e
+        // guarda a pergunta (que identifica a superfície), pra priorizar o staging por dado.
+        // Cruzamento: CONFIRM_NOEXEC alto + CHOKEPOINT confab:unknown baixo = Camada 1 pegou
+        // (dano virou fricção); ambos altos = o LLM ainda mente e o staging é urgente.
+        if (!hasConcrete) {
+          try {
+            await logMarker(collab.id, 'CONFIRM_NOEXEC', 'skipped', `kind=${target.kind}`,
+              String(target.question_text || '').slice(0, 200));
+          } catch (_) { /* telemetria nunca quebra o turno */ }
+        }
         const ctxHint = `\n\n[CONTEXTO INTERNO — não verbalize ao usuário]\nVocê tinha aberto uma intent (${target.kind}) com a pergunta: "${(target.question_text || '').slice(0, 200)}".\nPayload pendente: ${payloadStr}\nO usuário CONFIRMOU. ${markerRule}`;
         text = String(text || '') + ctxHint;
         console.log(`[PendingIntents] auto-resolve YES — intent=${target.id.slice(0,8)} kind=${target.kind}`);
