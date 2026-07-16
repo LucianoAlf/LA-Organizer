@@ -16,7 +16,13 @@ const { intentCarriesDeterministicExecutor } = require('../lib/intent-executor')
 // supabase/client e não roda em node --test). CONFIRM-SHORTYES-S-UNRECOGNIZED (Clayton 09/07).
 const { detectUserConfirmation } = require('./user-confirmation');
 
-const VALID_KINDS = new Set(['task_creation','event_creation','approval_pending','confirmation','finance_source','invoice_import']);
+// TRAP A TEM DUAS PORTAS: o kind precisa estar no CHECK do banco (pending_intents_kind_check)
+// E aqui — openIntent LANÇA `invalid kind` se faltar nesta whitelist. Em 15/07 o
+// reschedule_confirm entrou só no CHECK: o staging caía no catch do ramo, o apply era pulado
+// (o ramo já tinha interceptado o else-if) e o reagendamento virava NOOP — pior que o bug que
+// ele conserta. Ninguém foi atingido (o LLM não chegou a emitir a flag). Ao adicionar um
+// executor determinístico novo, mexer NAS DUAS.
+const VALID_KINDS = new Set(['task_creation','event_creation','approval_pending','confirmation','finance_source','invoice_import','reschedule_confirm','event_create_confirm']);
 const VALID_RESOLUTIONS = new Set(['confirmed','denied','expired','superseded']);
 const DEFAULT_EXPIRY_HOURS = 24;
 

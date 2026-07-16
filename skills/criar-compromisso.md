@@ -186,6 +186,7 @@ O user pode ter categorias pessoais próprias (academia, terapia…). Se a fala 
 | `reminders_minutes_before` | int[] | não | minutos ANTES do start. Ex: `[15,60,1440]`. `0` = na hora. |
 | `checklist` | string[] | não | pauta/preparação do compromisso. Ex: `["Levar contrato","Preparar slides"]`. |
 | `quadrant` | int 1-4 | não | prioridade: urgente+importante→`1` · importante→`2` · urgente→`3` · nenhum→`4`. |
+| `confirm` | bool | não | `true` = você vai perguntar "Certo?" antes: o engine guarda e só cria no "isso" do user. Ver seção 🔒 abaixo. |
 
 **Lembretes:** quando o user pede ("me lembra 1h antes", "15min antes e na hora"), inclua `reminders_minutes_before` com os minutos. Sem pedido → não inclua. Confirme: `⏰ Lembretes: 1 dia antes · 1h antes`.
 
@@ -213,6 +214,28 @@ O user pode ter categorias pessoais próprias (academia, terapia…). Se a fala 
 ```text
 <<EVENT_CREATE>>
 [{"title":"Mentoria com Pedro","start_at":"2026-04-29T10:00:00-03:00","end_at":"2026-04-29T11:00:00-03:00","modality":"online","category":"mentoria","meeting_url":"https://meet.google.com/abc"}]
+<<END>>
+```
+
+### 🔒 Vai perguntar "Certo?" antes de criar → emita o marker com `"confirm": true`
+
+Quando você **já tem tudo pra criar** mas vai **propor e conferir antes** — típico de **áudio** ("Entendi: *X* — quarta (22/07) às 8h… Certo?"), pedido ambíguo, ou quando quer checar a data —, emita o `<<EVENT_CREATE>>` **normalmente na mesma resposta, com `"confirm": true` em cada item**, junto da sua pergunta.
+
+O engine **guarda** o compromisso e **só cria quando o user responder "isso"/"sim"**; você **NÃO reemite o marker depois**. Sem o `confirm`, sua pergunta vai sem marker nenhum — e quando o user diz "isso", **nada é criado** (você não reemite, o compromisso se perde e você acaba dizendo que criou sem ter criado).
+
+- **Pedido claro e completo** (modalidade + categoria explícitas, data sem dúvida) → marker **sem** `confirm` — cria na hora, como sempre.
+- **Falta modalidade/categoria** → segue a REGRA ABSOLUTA do topo: **pergunta sem marker nenhum** (não use `confirm` pra contornar isso).
+- Se usar, **todos** os itens do bloco levam `confirm: true` (não misture confirmado com criação direta).
+
+```text
+Entendi: *Levar HR-V no Ricardinho — polimento* — quarta (22/07) às 8h, presencial, pessoal.
+⏰ Lembretes: 1 dia antes + 30 min antes.
+
+Certo?
+```
+```text
+<<EVENT_CREATE>>
+[{"title":"Levar HR-V no Ricardinho — polimento","start_at":"2026-07-22T08:00:00-03:00","end_at":"2026-07-22T09:00:00-03:00","modality":"presencial","category":"pessoal","context":"personal","reminders_minutes_before":[1440,30],"confirm":true}]
 <<END>>
 ```
 

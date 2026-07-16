@@ -56,6 +56,7 @@ const { enforceNoSyncExcuse } = require('./lib/sync-excuse-guard');
 const { classifyDupChoice, pickFreshDupBypassIntent, pickDupBypassIntentForReply } = require('./lib/dup-choice');
 const { buildClosingItems, parseClosingReply } = require('./utils/closing-reply');
 const { normalizeHabitAliases } = require('./utils/habit-field-alias');
+const { normalizeHabitFrequency } = require('./utils/habit-frequency');
 const { buildCoordinationResponseNotification, safeResponseSummary } = require('./services/coordination-notify');
 const { isContextQuietField, validateContextQuietField } = require('./services/prefs-quiet-context');
 const pendingInventoryPhoto = require('./services/pending-inventory-photo');
@@ -6059,7 +6060,9 @@ async function persistProject(collaborator, p) {
 
 // ---------- HABIT marker + handler ----------
 
-const VALID_HABIT_FREQUENCIES = new Set(['daily', 'weekdays', 'weekly', 'custom']);
+// custom_days = dialeto canônico (inteiros ISO 1..7); 'custom' mantido só p/ back-compat
+// (normalizeHabitFrequency já converte 'custom'→'custom_days' antes da validação).
+const VALID_HABIT_FREQUENCIES = new Set(['daily', 'weekdays', 'weekly', 'custom', 'custom_days']);
 const HABIT_TIME_RE = /^([01]?\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
 
 // Parse <<HABIT_ACTION>>[...]<<END>> — array (ou objeto) de ações.
@@ -6087,6 +6090,11 @@ function parseHabitMarker(text) {
     // ("Ir para academia"/"Usar bombinha Asma Alice") → schema_invalid; o alias novo
     // entra na MESMA família (habit_slug/title, B3 Ana 22/06). Comportamento idêntico.
     normalizeHabitAliases(a);
+    // HABIT-CREATE-FREQ-CUSTOM-DAYS (Arthur 15/07): canoniza frequency/dias ANTES de
+    // validar/persistir. weekly+dias-string e "weekends" → custom_days + inteiros ISO,
+    // que é o que o dispatcher (checkHabitReminders) e o PWA já falam. Sem isso, hábito
+    // de dias-específicos criado pelo TOM gravava strings → map(Number)=NaN → nunca disparava.
+    normalizeHabitFrequency(a);
     const why = validateHabitAction(a);
     if (why) { dropped.push(`action[${i}]:${why}`); continue; }
     valid.push(a);
@@ -8576,6 +8584,41 @@ async function processMessage(phone, text, raw = {}) {
     }
   } catch (e) { console.warn('[RescheduleResume] consumer err:', e.message); }
 
+  // ---- RESUME staged EVENT_CREATE ("isso" → cria o compromisso guardado, sem LLM) ----
+  // EVENT-CREATE-CONFIRM-NOOP (Alf 16/07): a proposta estagiou a ação em event_create_confirm
+  // (ver ~10715). Aqui o "isso"/"sim" cria via applyEventActions — determinístico, sobrevive a
+  // timeout/fallback do LLM. detectUserConfirmation é 'yes'|'no'|null e trava negação.
+  // TTL 15min (paridade com finance/reschedule).
+  try {
+    const _ecOpen = _openIntents.find((i) => i.kind === 'event_create_confirm' && withinConfirmWindow(i.asked_at, 15));
+    if (_ecOpen) {
+      const _yn = pendingIntents.detectUserConfirmation(String(text || ''));
+      if (_yn === 'yes') {
+        const _evs = (_ecOpen.payload && Array.isArray(_ecOpen.payload.events)) ? _ecOpen.payload.events : [];
+        const _res = _evs.length ? await applyEventActions(collab, _evs) : { okCount: 0, failCount: 0 };
+        await pendingIntents.resolveIntent(_ecOpen.id, 'confirmed', `resumed_event_create:${_evs.length}`);
+        let _out;
+        if (_res.okCount > 0 && !_res.failCount) _out = _res.okCount === 1 ? '✅ Marquei o compromisso.' : `✅ Marquei os ${_res.okCount} compromissos.`;
+        else if (_res.okCount > 0) _out = `Marquei ${_res.okCount}, mas ${_res.failCount} não ${_res.failCount === 1 ? 'entrou' : 'entraram'}. Me manda de novo ${_res.failCount === 1 ? 'o que faltou' : 'os que faltaram'}?`;
+        else if (_res.integrityPayload) _out = '_Parece que já existe um compromisso parecido na agenda — dá uma conferida?_';
+        else _out = '_Não consegui marcar agora. Me manda de novo?_';
+        try {
+          await whatsapp.sendMessage(phone, _out);
+          await logConversation(collab.id, 'outbound', _out);
+          await logMarker(collab.id, 'EVENT_CREATE', _res.okCount ? 'executed' : 'rejected',
+            `resumed_event_create ok=${_res.okCount} fail=${_res.failCount}`, null);
+        } catch (e) { console.warn('[EventCreateResume] post err:', e.message); }
+        console.log(`[Engine] processMessage DONE phone=${_phoneTail} in=${Date.now()-_t0}ms (event_create_confirm_resolved)`);
+        return;
+      }
+      if (_yn === 'no') {
+        await pendingIntents.resolveIntent(_ecOpen.id, 'denied', 'event_create_confirm denied');
+        // NÃO return: o LLM trata a emenda ("não, quinta") e re-propõe (re-estagia).
+      }
+      // _yn === null → não age; intent segue aberta até TTL/expire.
+    }
+  } catch (e) { console.warn('[EventCreateResume] consumer err:', e.message); }
+
   // ---- Fonte obrigatória: resolução determinística do pending finance_source ----
   // Se TOM perguntou "saiu de qual conta?" (intent finance_source aberta) e o user
   // respondeu uma fonte ("2"/"nubank"/"dinheiro"/"cartão"), o ENGINE grava a
@@ -10364,10 +10407,15 @@ async function processMessage(phone, text, raw = {}) {
         reply = _preview;                       // NÃO executa o apply; sem return → cai no send normal
         _metrics.awaiting_user_confirm = true;  // turno = pergunta → ACTIONABLE_NO_MARKER não acusa (idem 10396)
       } catch (e) {
-        // Falha inesperada (ex.: openIntent lançou) → NÃO deixa o marker cru vazar: mostra a
-        // prosa do LLM (cleanText, que já pergunta "Confirma?"). Sem staging → se o user disser
-        // "isso" o resume não acha intent → Rede 1 pega o "Fechou" NOOP downstream.
-        console.error('[StagedReschedule] err (fallback cleanText):', e.message);
+        // FAIL-SAFE: se o staging falhar (ex.: openIntent lançou), EXECUTA direto — nunca
+        // deixa virar NOOP. Este ramo já interceptou o `else if (parsedTask)` que faria o
+        // apply, então só mostrar cleanText perderia o reagendamento em silêncio — pior que
+        // o bug que este staging conserta (foi o que o kind fora do VALID_KINDS quase causou,
+        // 16/07). Degradar = comportamento ANTIGO (executa na hora), não sumiço.
+        console.error('[StagedReschedule] err — executando direto (fail-safe):', e.message);
+        const { okCount, failCount } = await applyTaskActions(collab, parsedTask.actions, { inboundText: text });
+        await logMarker(collab.id, 'TASK_UPDATE', okCount > 0 ? 'executed' : 'rejected',
+          `stage_failed_fallback ok=${okCount} fail=${failCount}`, null);
         reply = parsedTask.cleanText || reply;
       }
     } else if (parsedTask) {
@@ -10704,6 +10752,32 @@ async function processMessage(phone, text, raw = {}) {
         baseEv += (baseEv ? '\n\n' : '') + '_⚠️ Tive um problema técnico ao gravar o(s) compromisso(s). Não confirmei nada no banco — me passa de novo?_';
       }
       reply = baseEv;
+    } else if (parsedEv && Array.isArray(parsedEv.events) && parsedEv.events.length > 0
+        && parsedEv.events.every((e) => e && e.confirm === true)) {
+      // (i) STAGED EVENT_CREATE — EVENT-CREATE-CONFIRM-NOOP (Alf 16/07): o TOM propôs o
+      // compromisso ("Entendi: ... Certo?"), o "Isso" chegou, e o LLM NÃO re-emitiu o marker
+      // → nada persistiu (o chokepoint pegou a mentira "✅ Criado!"). O intent `confirmation`
+      // genérico guarda só TEXTO (last_tom_reply/last_user_text) — não há AÇÃO pra executar,
+      // só dá pra pedir ao LLM que re-emita. Aqui, quando TODOS os itens vêm com confirm:true,
+      // o engine guarda a ação ESTRUTURADA num intent event_create_confirm e NÃO cria; o
+      // "isso" retoma determinístico (~8544). Espelha staged_launch/reschedule_confirm.
+      // NÃO sobrescreve a prosa do TOM: ele responde em áudio (audio_reciprocity) e a narração
+      // dele já traz título/data/hora — preview do engine por cima quebraria a voz.
+      try {
+        const _evs = parsedEv.events.map((e) => { const o = { ...e }; delete o.confirm; return o; });
+        await pendingIntents.openIntent(collab.id, 'event_create_confirm', { events: _evs },
+          String(parsedEv.cleanText || reply).slice(0, 500));
+        await logMarker(collab.id, 'EVENT_CREATE', 'skipped', `staged_event_create:${_evs.length}`, null);
+        reply = parsedEv.cleanText || reply;   // prosa do TOM (já pergunta "Certo?"); sem return
+        _metrics.awaiting_user_confirm = true; // turno = pergunta → ACTIONABLE_NO_MARKER não acusa
+      } catch (e) {
+        // FAIL-SAFE: staging quebrou → cria AGORA (comportamento antigo). Nunca vira NOOP.
+        console.error('[StagedEventCreate] err — criando direto (fail-safe):', e.message);
+        const { okCount, failCount } = await applyEventActions(collab, parsedEv.events);
+        await logMarker(collab.id, 'EVENT_CREATE', okCount > 0 ? 'executed' : 'rejected',
+          `stage_failed_fallback ok=${okCount} fail=${failCount}`, null);
+        reply = parsedEv.cleanText || reply;
+      }
     } else if (parsedEv && parsedEv.events && parsedEv.events.length > 0) {
       const { okCount, failCount, integrityPayload } = await applyEventActions(collab, parsedEv.events);
       console.log(`[Event] batch done: ${okCount} ok, ${failCount} fail (collab ${String(collab.phone).slice(-4)})`);
