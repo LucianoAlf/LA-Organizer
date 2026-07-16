@@ -12761,38 +12761,21 @@ Output AGORA, apenas o marker:`;
     }
   } catch (e) { console.warn('[DerrotismoWatch] non-fatal:', e.message); }
 
-  // CONFAB-PARTIAL-LEAK (Fase 0, 26/06) — VELOCÍMETRO de confab de FALHA PARCIAL.
-  // Só OBSERVA (não toca o reply). A Camada 1 (chokepoint) é BINÁRIA (dispara só se NADA
-  // persistiu no turno); a falha PARCIAL — um marker rejeitado coexistindo com outro
-  // executado — escapa dela. Mecanismo: reusa a janela-de-turno já provada do bloco de
-  // métrica (collaborator_id + _t0-1000ms) pra ler os markers DO TURNO com result. Gate
-  // ESTRUTURAL puro (sem léxico — o detector de confab erra "fico quieto", design §4).
-  // Escreve numa tabela DESCARTÁVEL (confab_partial_observations), FORA do marker_logs:
-  // sidesteppa o CHECK de result (sem 'observed') e o evaluate_known_issues (que varre
-  // marker_logs sem filtrar result). Olho humano lê a reply inteira e julga o vazamento.
-  // DROPAR este bloco + a tabela ao fechar o gate de 14 dias (design §6).
-  try {
-    const { detectPartialConfab } = require('./lib/confab-partial-observe');
-    const _sinceTurn = new Date(_t0 - 1000).toISOString();
-    const { data: _turnMarkers } = await supabase
-      .from('marker_logs')
-      .select('marker_type, result')
-      .eq('collaborator_id', collab.id)
-      .gte('created_at', _sinceTurn);
-    const _hit = detectPartialConfab(_turnMarkers || []);
-    if (_hit) {
-      console.warn(`[ConfabPartial] OBSERVED rej=${_hit.rejected.join(',')} exec=${_hit.executed.join(',')} reply="${String(reply || '').slice(0, 200).replace(/\n/g, ' ')}"`);
-      try {
-        await supabase.from('confab_partial_observations').insert({
-          collaborator_id: collab.id,
-          reply: String(reply || ''),
-          rejected_types: _hit.rejected,
-          executed_types: _hit.executed,
-          reason: `rej:${_hit.rejected.join(',')}|exec:${_hit.executed.join(',')}`,
-        });
-      } catch (e) { console.warn('[ConfabPartial] insert non-fatal:', e.message); }
-    }
-  } catch (e) { console.warn('[ConfabPartialWatch] non-fatal:', e.message); }
+  // CONFAB-PARTIAL-LEAK (Fase 0) — instrumento OBSERVE-ONLY REMOVIDO em 16/07, gate fechado.
+  // Rodou 26/06→16/07 (20 dias) e observou 6 coexistências rejeitado×executado:
+  //   5 FALSOS POSITIVOS (reply pedia dado / perguntava / já trazia disclaimer honesto /
+  //   descrevia o marker EXECUTADO) → precisão ~17%, puro ruído.
+  //   1 VAZAMENTO GENUÍNO (Yuri 14/07 01:40: "John vai receber o lembrete de dar check" —
+  //   TASK_UPDATE executou e o John recebeu SÓ a notificação da tarefa; o recado era o
+  //   COORDINATION_REQUEST, rejected schema_invalid). MAS a causa disso era o
+  //   COORD-REQUEST-TONAME-ALIAS (parser não lia to_name), corrigido 12h depois, em
+  //   14/07 14:06 — e desde o fix: ZERO observações. Ou seja, o único vazamento tinha
+  //   causa conhecida e já eliminada; a Fase 1 (léxico por domínio) seria especulativa,
+  //   contra precision-first. Decisão: fechar "observada, desnecessária" (OK do Alf 16/07).
+  // A tabela confab_partial_observations foi MANTIDA (6 linhas, custo zero) como evidência
+  // da decisão — dropar é irreversível e não ganha nada. Se a falha parcial voltar a vazar
+  // (rejeitado + executado no mesmo turno, com o reply afirmando o rejeitado), o caminho é
+  // reabrir a Fase 1 com alvo estreito, não ressuscitar este observador de 17% de precisão.
 
   // SYNC-EXCUSE-CONFAB — rede determinística: remove "delay de sincronização"/desculpa
   // técnica inventada pra justificar atrasada (banco é ao vivo; só fatura sincroniza).
