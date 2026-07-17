@@ -125,7 +125,11 @@ function brl(n) {
   return Number(n || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function buildInvoicePreview({ emissor, vencimento, total, cardName, itens, dupWarning }) {
+// `unknowns` (opcional): [{ label, count, total, sugestao }] das lojas que o TOM não soube
+// classificar, agrupadas por groupUnknowns. Quando presente, insere o bloco "Me confirma"
+// ENTRE o Total e o rodapé. Ausente/vazio → prévia byte a byte igual à de hoje (a lista de
+// itens NÃO muda; ela já imprime a categoria por item na linha 133). Rose 16-17/07.
+function buildInvoicePreview({ emissor, vencimento, total, cardName, itens, dupWarning, unknowns }) {
   const head = `📄 *Fatura ${emissor || ''}*${vencimento ? ` · vence ${vencimento.slice(8, 10)}/${vencimento.slice(5, 7)}` : ''}`;
   const linhas = itens.map((it, i) => {
     const parc = it.parcela_total > 1 ? ` · ${it.parcela_atual}/${it.parcela_total}` : '';
@@ -137,6 +141,12 @@ function buildInvoicePreview({ emissor, vencimento, total, cardName, itens, dupW
     head, '', linhas.join('\n'), '',
     `Total: R$ ${brl(total || somaItens)} · ${itens.length} lançamentos`,
   ];
+  if (unknowns && unknowns.length) {
+    const perg = unknowns.map((u, i) =>
+      `${i + 1}. *${u.label}* — ${u.count}× · R$ ${brl(u.total)} → _${u.sugestao || 'outros'}_?`);
+    partes.push('', '*Me confirma essas categorias* (ou só responde *lançar*):', perg.join('\n'),
+      'Se algo estiver errado, corrige: _"1 é pedágio"_.');
+  }
   if (dupWarning) partes.push('', dupWarning);
   partes.push('', `Lanço essas compras no *${cardName}*? Responde *lançar*, *anotações* (só salvar) ou *cancelar*.`);
   return partes.join('\n');

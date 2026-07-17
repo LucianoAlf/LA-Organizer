@@ -9462,10 +9462,25 @@ async function processMessage(phone, text, raw = {}) {
       // safeCategory real = (cat, description, type, extraSlugs); carrega slugs custom do user (paridade c/ recordCardPurchase).
       const _catRows = await financeService.listCategorySlugs(collab.id).catch(() => []);
       const _extraSlugs = new Set((_catRows || []).filter((r) => r.collaborator_id).map((r) => r.slug));
-      const _itensCat = _inv.itens.map((it) => ({ ...it, categoria: safeCategory(it.descricao, it.descricao, 'expense', _extraSlugs) }));
+      // Cascata de categoria (Rose 16-17/07 — 30% caía em "outros"): learned (memória do user) >
+      // rules (merchant-category) > gemini (it.categoria do PDF) > outros. Lê a memória UMA vez;
+      // se a query falhar, learned vazio → comportamento de hoje (nunca pior).
+      const { resolveItemCategory, groupUnknowns } = require('./finance/categorize-invoice');
+      const _validSlugs = new Set([...pfValidSlugs('expense'), ..._extraSlugs]);
+      const _learned = new Map();
+      try {
+        const { data: _mem } = await supabase.from('pf_category_memory')
+          .select('merchant_key, category').eq('collaborator_id', collab.id);
+        (_mem || []).forEach((r) => _learned.set(r.merchant_key, r.category));
+      } catch (e) { console.warn('[Fatura] pf_category_memory read err:', e.message); }
+      const _itensCat = _inv.itens.map((it) => {
+        const _res = resolveItemCategory({ descricao: it.descricao, tipo: 'expense', geminiHint: it.categoria, learned: _learned, validSlugs: _validSlugs });
+        return { ...it, categoria: _res.slug, _catSource: _res.source };
+      });
+      const _unknowns = groupUnknowns(_itensCat);
       const _invIntentId = await pendingIntents.openIntent(collab.id, 'invoice_import',
         { stage: 'awaiting_confirm', card_id: _card ? _card.id : null, card_name: _card ? _card.name : null,
-          emissor: _inv.emissor, vencimento: _inv.vencimento, total: _inv.total, itens: _itensCat },
+          emissor: _inv.emissor, vencimento: _inv.vencimento, total: _inv.total, itens: _itensCat, _unknowns },
         _card ? 'lançar fatura?' : 'de qual cartão é a fatura?');
       // Defense-in-depth: se o intent NÃO persistiu (ex.: constraint/erro de insert), o "lançar"
       // do próximo turno não terá nada pra casar (Intercept B) e cai no LLM derrotista. Falha
@@ -9490,7 +9505,7 @@ async function processMessage(phone, text, raw = {}) {
       }
       const _preview = invoiceImport.buildInvoicePreview({
         emissor: _inv.emissor, vencimento: _inv.vencimento, total: _inv.total,
-        cardName: _card.name, itens: _itensCat, dupWarning: null,
+        cardName: _card.name, itens: _itensCat, dupWarning: null, unknowns: _unknowns,
       });
       await whatsapp.sendMessage(phone, _preview);
       return;
@@ -9534,7 +9549,49 @@ async function processMessage(phone, text, raw = {}) {
           console.log(`[Fatura] cartão definido pela fala: ${_payC.card_name || '(sem cartão)'} → ${_namedC.card.name} (decision=${_decision || 'null'}) → prévia, sem commit`);
           await whatsapp.sendMessage(phone, invoiceImport.buildInvoicePreview({
             emissor: _payC.emissor, vencimento: _payC.vencimento, total: _payC.total,
-            cardName: _namedC.card.name, itens: _payC.itens, dupWarning: null,
+            cardName: _namedC.card.name, itens: _payC.itens, dupWarning: null, unknowns: _payC._unknowns,
+          }));
+          return;
+        }
+      }
+      // === Correção de CATEGORIA ("1 é pedágio", "ConectCar é transporte") ===
+      // Aprende (upsert pf_category_memory por pessoa) → re-resolve o lote com a memória nova →
+      // RE-MANDA A PRÉVIA (nunca commita: ninguém confirma prévia que não viu). Só age em correção
+      // EXPLÍCITA; senão null e o fluxo segue pro commit/cancel. Aprende SÓ aqui, nunca no "sim".
+      {
+        const { detectCategoryCorrections } = require('./finance/categorize-invoice');
+        const _pay = _invIntent.payload;
+        const _validSlugsB = new Set(pfValidSlugs('expense'));
+        const _fixes = detectCategoryCorrections(text, _pay._unknowns, _pay.itens, _validSlugsB);
+        if (_fixes && _fixes.length) {
+          const { merchantKey, resolveItemCategory, groupUnknowns } = require('./finance/categorize-invoice');
+          // aprende cada correção
+          for (const _f of _fixes) {
+            try {
+              await supabase.from('pf_category_memory').upsert(
+                { collaborator_id: collab.id, merchant_key: _f.merchantKey, category: _f.slug, updated_at: new Date().toISOString() },
+                { onConflict: 'collaborator_id,merchant_key' });
+              console.log(`[Fatura] aprendeu: ${_f.merchantKey} → ${_f.slug}`);
+            } catch (e) { console.error('[Fatura] upsert memória err:', e.message); }
+          }
+          // re-resolve o lote inteiro com a memória nova (a correção pega TODOS os itens da loja)
+          const _learnedB = new Map(_fixes.map((f) => [f.merchantKey, f.slug]));
+          const _itensRe = _pay.itens.map((it) => {
+            const _res = resolveItemCategory({ descricao: it.descricao, tipo: 'expense', geminiHint: it.categoria, learned: _learnedB, validSlugs: _validSlugsB });
+            return { ...it, categoria: _res.slug, _catSource: _res.source };
+          });
+          const _unknownsRe = groupUnknowns(_itensRe);
+          await pendingIntents.resolveIntent(_invIntent.id, 'superseded', `correção de categoria: ${_fixes.map((f) => f.merchantKey + '→' + f.slug).join(', ')}`);
+          const _reId = await pendingIntents.openIntent(collab.id, 'invoice_import',
+            { ..._pay, stage: 'awaiting_confirm', itens: _itensRe, _unknowns: _unknownsRe }, 'lançar fatura?');
+          if (!_reId) {
+            console.error('[Fatura] CRÍTICO: openIntent (correção de categoria) retornou null — intent antiga já superseded.');
+            await whatsapp.sendMessage(phone, 'Anotei a categoria, mas tive um problema técnico pra reabrir a confirmação. Me manda a fatura de novo, por favor.');
+            return;
+          }
+          await whatsapp.sendMessage(phone, invoiceImport.buildInvoicePreview({
+            emissor: _pay.emissor, vencimento: _pay.vencimento, total: _pay.total,
+            cardName: _pay.card_name || _pay.emissor, itens: _itensRe, dupWarning: null, unknowns: _unknownsRe,
           }));
           return;
         }

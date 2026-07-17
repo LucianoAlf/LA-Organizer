@@ -239,8 +239,9 @@ async function analyzeInvoice(buffer, caption = '') {
   if (!buffer || !buffer.length) return { ok: false, reason: 'empty_buffer' };
   const prompt = [
     'Analise este PDF. Se for uma FATURA DE CARTÃO DE CRÉDITO ou extrato, retorne SOMENTE um JSON válido (sem markdown, sem cercas) no formato:',
-    '{"isInvoice":true,"emissor":"<banco/cartão>","vencimento":"YYYY-MM-DD","total":<number>,"itens":[{"descricao":"<loja>","valor":<number>,"data":"YYYY-MM-DD","parcela_atual":<int>,"parcela_total":<int>}]}',
+    '{"isInvoice":true,"emissor":"<banco/cartão>","vencimento":"YYYY-MM-DD","total":<number>,"itens":[{"descricao":"<loja>","valor":<number>,"data":"YYYY-MM-DD","parcela_atual":<int>,"parcela_total":<int>,"categoria":"<slug ou null>"}]}',
     'Liste TODAS as transações, uma a uma, sem resumir nem omitir, até a última. valor em número (ponto decimal). Compra à vista = parcela_atual:1, parcela_total:1.',
+    'Para "categoria", use SOMENTE um destes slugs: alimentacao, assinaturas, beleza, combustivel, compras, contas_consumo, educacao, esportes, estacionamento, farmacia, filhos, impostos, lazer, mercado, moradia, pets, presentes, restaurante, saude, seguros, tecnologia, transporte, vestuario, viagens. NA DÚVIDA use null — melhor vazio que errado.',
     'Se NÃO for fatura/extrato, retorne {"isInvoice":false}.',
     caption ? `Legenda do usuário: "${caption}".` : '',
   ].join('\n');
@@ -264,8 +265,9 @@ async function analyzeInvoiceText(invoiceText) {
   if (!invoiceText || !String(invoiceText).trim()) return { ok: false, reason: 'empty' };
   const prompt = [
     'O texto a seguir é uma FATURA DE CARTÃO colada pelo usuário. Retorne SOMENTE um JSON válido (sem markdown, sem cercas) no formato:',
-    '{"isInvoice":true,"emissor":"<banco/cartão>","vencimento":"YYYY-MM-DD","total":<number>,"itens":[{"descricao":"<loja>","valor":<number>,"data":"YYYY-MM-DD","parcela_atual":<int>,"parcela_total":<int>}]}',
+    '{"isInvoice":true,"emissor":"<banco/cartão>","vencimento":"YYYY-MM-DD","total":<number>,"itens":[{"descricao":"<loja>","valor":<number>,"data":"YYYY-MM-DD","parcela_atual":<int>,"parcela_total":<int>,"categoria":"<slug ou null>"}]}',
     'Liste TODAS as transações, uma a uma, sem resumir nem omitir, até a última. valor em número (ponto decimal, ex 136.28). Compra à vista = parcela_atual:1, parcela_total:1. Se a data do item não tiver ano, use o ano do vencimento.',
+    'Para "categoria", use SOMENTE um destes slugs: alimentacao, assinaturas, beleza, combustivel, compras, contas_consumo, educacao, esportes, estacionamento, farmacia, filhos, impostos, lazer, mercado, moradia, pets, presentes, restaurante, saude, seguros, tecnologia, transporte, vestuario, viagens. NA DÚVIDA use null — melhor vazio que errado.',
     'Se NÃO for uma fatura de cartão, retorne {"isInvoice":false}.',
   ].join('\n');
   try {

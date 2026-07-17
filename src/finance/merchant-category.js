@@ -37,16 +37,24 @@ const MERCHANT_RULES = [
   { slug: 'mercado', re: /carrefour/ },
   { slug: 'mercado', re: /pao de acucar|paodeacucar/ },
   { slug: 'mercado', re: /\bassai\b|makro|sams\s?club|st marche|zaffari|comper/ },
+  // redes reais das faturas da Rose (17/07): prezunic, cencosud (extra/gbarbosa), guanabara, mundial, hortifruti, zona sul
+  { slug: 'mercado', re: /prezunic|cencosud|guanabara|mundial|super\s?prix|hortifruti|zona\s?sul|princesa|super\s?market/ },
   // --- farmácia (sem "drogaria/farmacia" no nome) ---
   { slug: 'farmacia', re: /drogasil|panvel|ultrafarma|pague\s?menos|venancio|pacheco/ },
+  { slug: 'farmacia', re: /cityfarma|farmalife|drogaria|drogasmil|farma\s?conde/ },
   // --- combustível (sem "posto" no nome) ---
   { slug: 'combustivel', re: /ipiranga|petrobras|br\s?mania|brmania|ale\s?combust/ },
-  // --- transporte (uber/99 já são keyword) ---
+  { slug: 'combustivel', re: /abastec|\bshell\b|texaco|posto\b/ },
+  // --- transporte (uber/99 já são keyword; pedágio/vale via tag) ---
   { slug: 'transporte', re: /cabify|indriver|in\s?driver/ },
+  { slug: 'transporte', re: /conectcar|sem\s?parar|semparar|veloe|move\s?mais|ultrapass|c6\s?tag|taggy/ },
+  // --- estacionamento ---
+  { slug: 'estacionamento', re: /global\s?park|estapar|multipark|parking|estacion|zona\s?azul/ },
   // --- restaurante (sentado, redes conhecidas) ---
   { slug: 'restaurante', re: /outback|coco\s?bambu|madero|fogo\s?de\s?chao/ },
   // --- alimentação (fast food + delivery; ifood/rappi já são keyword) ---
   { slug: 'alimentacao', re: /mc\s?donalds?|mcdonald|burger\s?king|\bbobs\b|subway|\bkfc\b|habibs|giraffas|spoleto|starbucks|china\s?in\s?box|divino\s?fogao|ze\s?delivery|zedelivery|\bdaki\b/ },
+  { slug: 'alimentacao', re: /rei\s?do\s?mate|kopenhagen|cacau\s?show|cheirin|spoleto/ },
 ];
 
 // categorizeMerchant(desc, type) → slug | null. Merchant é DESPESA: income nunca casa.
