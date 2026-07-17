@@ -15,21 +15,38 @@ const gemini = require('./services/gemini');
 const statementParse = require('./finance/statement-parse');
 const pdfCrypt = require('./finance/pdf-crypt');
 const pendingPdf = require('./services/pending-pdf');
+const boletoParse = require('./finance/boleto-parse');
 
-// PDF → texto pro engine: extrai fatura estruturada (Gemini) ou conteúdo cru. null se não leu.
+// PDF → texto pro engine: extrai boleto/fatura estruturada (Gemini) ou conteúdo cru. null se não leu.
 async function pdfToText(buf, mime, caption) {
+  const captionLine = caption ? `Legenda enviada pelo usuário: "${caption}"\n` : '';
+  // Lê o texto cru UMA vez — serve pra detectar boleto E como fallback (evita chamar 2×).
+  const cru = await gemini.analyzeMedia(buf, mime || 'application/pdf', caption);
+
+  // BOLETO primeiro (Alf 17/07): sem isto, o boleto caía no analyzeInvoice e virava "fatura de
+  // cartão de 1 item" → pedia o cartão. Testa a assinatura de boleto (linha digitável +
+  // vocabulário) no texto cru; se for, extrai estruturado. FAIL-SAFE: qualquer erro na extração
+  // NÃO cai no fluxo de cartão — segue pro analyzeInvoice como qualquer PDF.
+  try {
+    if (cru.ok && boletoParse.looksLikeBoleto(cru.text)) {
+      const b = await gemini.analyzeBoleto(buf, caption);
+      if (b.ok && b.isBoleto && b.boleto) {
+        console.log(`[Webhook] boleto detectado: ${b.boleto.beneficiario || '?'} R$ ${b.boleto.valor}`);
+        return `[BOLETO_JSON]${JSON.stringify(b.boleto)}[/BOLETO_JSON]\n${captionLine}Boleto ${b.boleto.beneficiario || ''} · R$ ${Number(b.boleto.valor || 0).toFixed(2)}`;
+      }
+    }
+  } catch (e) { console.warn('[Webhook] rota boleto err (sigo pra fatura):', e.message); }
+
   const inv = await gemini.analyzeInvoice(buf, caption);
   if (inv.ok && inv.isInvoice && inv.invoice.itens.length > 0) {
-    const captionLine = caption ? `Legenda enviada pelo usuário: "${caption}"\n` : '';
     const resumo = `Fatura ${inv.invoice.emissor || ''} · ${inv.invoice.itens.length} compras · total R$ ${Number(inv.invoice.total || 0).toFixed(2)}`;
     console.log(`[Webhook] fatura detectada: ${inv.invoice.itens.length} itens, emissor=${inv.invoice.emissor || '?'}`);
     return `[FATURA_JSON]${JSON.stringify(inv.invoice)}[/FATURA_JSON]\n${captionLine}${resumo}`;
   }
-  const r = await gemini.analyzeMedia(buf, mime || 'application/pdf', caption);
-  if (r.ok) {
-    const captionLine = caption ? `Legenda enviada pelo usuário: "${caption}"\n` : '';
-    console.log(`[Webhook] PDF analyzed (${r.text.length} chars)`);
-    return `[O usuário ACABOU DE ENVIAR um PDF agora — primeira vez vendo este arquivo. Conteúdo extraído:]\n${captionLine}${r.text}`;
+  // fallback: texto cru já lido no topo (não relê).
+  if (cru.ok) {
+    console.log(`[Webhook] PDF analyzed (${cru.text.length} chars)`);
+    return `[O usuário ACABOU DE ENVIAR um PDF agora — primeira vez vendo este arquivo. Conteúdo extraído:]\n${captionLine}${cru.text}`;
   }
   return null;
 }

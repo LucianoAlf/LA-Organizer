@@ -282,8 +282,35 @@ async function analyzeInvoiceText(invoiceText) {
   }
 }
 
+// Extrai um BOLETO bancário/arrecadação de um PDF (conta a pagar com linha digitável), NÃO
+// fatura de cartão. Alf 17/07: boleto caía no analyzeInvoice e virava "fatura de 1 item".
+// Espelha analyzeInvoice: mesmo callGenerateContent, mesmo clean de markdown.
+async function analyzeBoleto(buffer, caption = '') {
+  if (!GEMINI_API_KEY) return { ok: false, reason: 'no_provider' };
+  if (!buffer || !buffer.length) return { ok: false, reason: 'empty_buffer' };
+  const prompt = [
+    'Analise este PDF. Se for um BOLETO bancário ou de arrecadação (conta a pagar com linha digitável / código de barras), retorne SOMENTE um JSON válido (sem markdown, sem cercas) no formato:',
+    '{"isBoleto":true,"beneficiario":"<quem recebe>","valor":<number total a pagar>,"vencimento":"YYYY-MM-DD","linha_digitavel":"<a linha digitável EXATA, só dígitos e pontos como impressos>","descricao":"<o que é, ex: seguro do carro>"}',
+    'A linha digitável é a sequência de ~47-48 dígitos no topo do boleto. Copie-a EXATAMENTE como impressa. Se tiver QUALQUER dúvida sobre um único dígito, retorne "linha_digitavel":"" (string vazia) — melhor vazio que errado.',
+    'valor = o valor total a pagar, em número com ponto decimal (ex: 995.93).',
+    'Se NÃO for boleto (ex: fatura de cartão de crédito, recibo, nota fiscal), retorne {"isBoleto":false}.',
+    caption ? `Legenda do usuário: "${caption}".` : '',
+  ].join('\n');
+  try {
+    const mediaPart = { inlineData: { mimeType: 'application/pdf', data: buffer.toString('base64') } };
+    const raw = await callGenerateContent(mediaPart, prompt);
+    const clean = raw.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
+    const json = JSON.parse(clean);
+    if (!json.isBoleto) return { ok: true, isBoleto: false };
+    return { ok: true, isBoleto: true, boleto: json };
+  } catch (err) {
+    console.error('[Gemini] analyzeBoleto err:', err.message);
+    return { ok: false, reason: 'gemini_error', error: err.message };
+  }
+}
+
 function isProviderConfigured() {
   return Boolean(GEMINI_API_KEY);
 }
 
-module.exports = { analyzeMedia, analyzeInvoice, analyzeInvoiceText, isProviderConfigured };
+module.exports = { analyzeMedia, analyzeInvoice, analyzeInvoiceText, analyzeBoleto, isProviderConfigured };

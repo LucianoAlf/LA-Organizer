@@ -9408,6 +9408,36 @@ async function processMessage(phone, text, raw = {}) {
     console.warn('[Fatura] intercept comprovante err:', e.message);
   }
 
+  // === Intercept BOLETO: PDF de boleto (texto tem [BOLETO_JSON]) → conta a pagar (pf_bills) ===
+  // Alf 17/07: boleto caía no fluxo de fatura de cartão (webhook chamava analyzeInvoice em todo
+  // PDF). Aqui vira pf_bills com a linha digitável VALIDADA. NUNCA promete o código sem o dígito
+  // verificador bater (pagamento errado). Abre intent bill_from_boleto; a resposta (recorrência +
+  // conta) confirma e chama createBill.
+  try {
+    const _bMatch = text.match(/\[BOLETO_JSON\]([\s\S]*?)\[\/BOLETO_JSON\]/);
+    if (_bMatch) {
+      const boletoParse = require('./finance/boleto-parse');
+      const { buildBoletoPreview } = require('./finance/boleto-preview');
+      const _b = JSON.parse(_bMatch[1]);
+      const _linha = boletoParse.extractLinhaDigitavel(_b.linha_digitavel || '') || boletoParse.extractLinhaDigitavel(text);
+      const _val = _linha ? boletoParse.validateLinhaDigitavel(_linha) : { valid: false };
+      const _barcodeOk = !!(_linha && _val.valid);
+      const _intentId = await pendingIntents.openIntent(collab.id, 'bill_from_boleto',
+        { stage: 'awaiting_confirm', beneficiario: _b.beneficiario, valor: _b.valor, vencimento: _b.vencimento,
+          barcode: _barcodeOk ? _linha : null, descricao: _b.descricao || _b.beneficiario }, 'criar conta do boleto?');
+      if (!_intentId) {
+        console.error('[Boleto] openIntent retornou null — confirmação não vai funcionar.');
+        await whatsapp.sendMessage(phone, `🧾 Li o boleto (R$ ${Number(_b.valor || 0).toFixed(2)}), mas tive um problema técnico pra abrir a confirmação. Tenta de novo ou cadastra em Finanças → Contas.`);
+        return;
+      }
+      console.log(`[Boleto] intent aberta: ${_b.beneficiario || '?'} R$ ${_b.valor} barcode_ok=${_barcodeOk}`);
+      await whatsapp.sendMessage(phone, buildBoletoPreview({
+        beneficiario: _b.beneficiario, valor: _b.valor, vencimento: _b.vencimento, barcodeOk: _barcodeOk,
+      }));
+      return;
+    }
+  } catch (e) { console.warn('[Boleto] intercept err:', e.message); }
+
   // === Intercept A0: fatura colada como TEXTO (não PDF) → estrutura via Gemini e injeta [FATURA_JSON] ===
   // Rose 14/06: mandou a fatura como texto; sem isso caía no LLM-puro, que narrava "lancei/missão
   // cumprida" SEM emitir markers (nada lançava), lia "dos 40" como R$40 e largava itens (24 de 40).
@@ -9513,6 +9543,46 @@ async function processMessage(phone, text, raw = {}) {
   } catch (e) {
     console.warn('[Fatura] intercept A err:', e.message);
   }
+
+  // === Resposta ao preview de BOLETO (intent bill_from_boleto aberta) → createBill ===
+  // Alf 17/07. A resposta define recorrência ("repete" = mensal; senão única) e confirma. NÃO
+  // move dinheiro — só cria a conta a pagar. O lembrete de vencimento (bill-due) já cobre single+
+  // atrasada e inclui a linha digitável quando bill.barcode (ritual-messages).
+  try {
+    const _boletoIntent = (_openIntents || []).find((i) => i.kind === 'bill_from_boleto' && i.payload && i.payload.stage === 'awaiting_confirm');
+    if (_boletoIntent) {
+      const _p = _boletoIntent.payload;
+      const _low = text.toLowerCase();
+      if (/\b(cancela|deixa|esquece|n[ãa]o precisa|nao precisa)\b/.test(_low)) {
+        await pendingIntents.resolveIntent(_boletoIntent.id, 'denied', 'user cancelou boleto');
+        await whatsapp.sendMessage(phone, 'Beleza, não criei a conta. 👍');
+        return;
+      }
+      const _repete = /\b(repete|todo\s*m[êe]s|mensal|recorrente|fixa|fixo)\b/.test(_low);
+      const _recurrence = _repete ? 'monthly' : 'once';
+      const _vencOk = /^\d{4}-\d{2}-\d{2}/.test(_p.vencimento || '');
+      await pendingIntents.resolveIntent(_boletoIntent.id, 'confirmed', `boleto→conta (${_recurrence})`);
+      try {
+        await financeService.createBill(collab.id, {
+          name: _p.descricao || _p.beneficiario, amount: _p.valor,
+          category: 'moradia', type: 'expense',
+          recurrence: _recurrence,
+          due_date: _recurrence === 'once' && _vencOk ? _p.vencimento : null,
+          due_day: _recurrence === 'monthly' && _vencOk ? Number(_p.vencimento.slice(8, 10)) : undefined,
+          barcode: _p.barcode || null,
+        });
+      } catch (be) {
+        console.error('[Boleto] createBill err:', be.message);
+        await whatsapp.sendMessage(phone, `Entendi, mas tive um problema técnico pra criar a conta (${be.code || be.message}). Tenta cadastrar em Finanças → Contas.`);
+        return;
+      }
+      const _dm = _vencOk ? `${_p.vencimento.slice(8, 10)}/${_p.vencimento.slice(5, 7)}` : '?';
+      const _quando = _recurrence === 'once' ? `dia ${_dm}` : `todo dia ${_vencOk ? _p.vencimento.slice(8, 10) : '?'}`;
+      console.log(`[Boleto] conta criada: ${_p.descricao || _p.beneficiario} ${_recurrence} venc=${_dm} barcode=${!!_p.barcode}`);
+      await whatsapp.sendMessage(phone, `✅ Criei a conta *${_p.descricao || _p.beneficiario}* (R$ ${Number(_p.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}), ${_recurrence === 'once' ? 'única' : 'mensal'}, vencendo ${_quando}. Te lembro no dia${_p.barcode ? ' com o código pra copiar' : ''}. 👍`);
+      return;
+    }
+  } catch (e) { console.warn('[Boleto] resposta err:', e.message); }
 
   // === Intercept B: resposta ao preview de fatura (intent invoice_import aberta) ===
   try {

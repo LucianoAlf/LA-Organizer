@@ -39,11 +39,18 @@ function buildMonthlyFinance({ nome, receitas, despesas, goals = [], bills = [],
 }
 
 // Lembrete de conta (diario 8h) — modes: previo | dia | atrasada (PRD §6.2).
+// Boleto (Alf 17/07): quando bill.barcode existe, anexa a linha digitável formatada pra copiar
+// (nos modes 'dia' e 'atrasada' — é quando o Alf vai de fato pagar). formatLinhaDigitavel é puro.
 function buildBillReminder({ nome, bill, mode, dias }) {
   const v = `R$${brl(bill.amount)}`;
+  let cod = '';
+  if (bill.barcode && (mode === 'dia' || mode === 'atrasada')) {
+    const { formatLinhaDigitavel } = require('./boleto-parse');
+    cod = `\n\nCódigo pra copiar:\n\`${formatLinhaDigitavel(bill.barcode)}\``;
+  }
   if (mode === 'previo') return `💰 ${nome}, lembrete: ${bill.name} (${v}) vence em ${dias} dias (dia ${bill.due_day}).`;
-  if (mode === 'dia') return `💰 Hoje vence: ${bill.name} (${v}). Já pagou? Responde "paguei ${bill.name}" pra eu marcar.`;
-  return `⚠️ ${bill.name} (${v}) venceu dia ${bill.due_day} e tá pendente. Resolve isso hoje se puder!`;
+  if (mode === 'dia') return `💰 Hoje vence: ${bill.name} (${v}). Já pagou? Responde "paguei ${bill.name}" pra eu marcar.${cod}`;
+  return `⚠️ ${bill.name} (${v}) venceu dia ${bill.due_day} e tá pendente. Resolve isso hoje se puder!${cod}`;
 }
 
 // Relatorio mensal (dia 1, mes anterior).

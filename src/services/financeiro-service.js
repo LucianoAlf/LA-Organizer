@@ -254,8 +254,9 @@ async function queryBudget(collaboratorId) {
 }
 
 // ---- Contas fixas (status derivado de last_paid_at, D6) ----
-async function createBill(collaboratorId, { name, amount, due_day, category, type = 'expense', remind_days_before = 2, recurrence = 'monthly', due_date = null }) {
+async function createBill(collaboratorId, { name, amount, due_day, category, type = 'expense', remind_days_before = 2, recurrence = 'monthly', due_date = null, barcode = null }) {
   const row = { collaborator_id: collaboratorId, name, amount, category, type, remind_days_before, recurrence };
+  if (barcode) row.barcode = barcode; // linha digitável do boleto (só-dígitos); origem boleto-parse
   if (recurrence === 'once') {
     if (!due_date) throw new Error('conta única exige due_date');
     row.due_date = due_date;
