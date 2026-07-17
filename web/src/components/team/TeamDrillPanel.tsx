@@ -9,7 +9,7 @@ import { Users, AlertTriangle, CalendarClock, ChevronRight } from 'lucide-react'
 import type { TeamSnapshot, TeamCollab } from '../../lib/team-snapshot';
 import type { LeaderScorecard } from '../../hooks/useLeaderScorecards';
 import { membersOf } from '../../lib/team-routing';
-import { classifyScorecard, BUCKET_META } from '../../lib/scorecard-classify';
+import { classifyScorecard, BUCKET_META, pctOf } from '../../lib/scorecard-classify';
 import { EmptyState } from '../EmptyState';
 
 interface Props {
@@ -78,15 +78,17 @@ export function TeamDrillPanel({ leaderId, allCollabs, snapshot, scorecards }: P
 
         {sc ? (
           <div className="flex flex-wrap items-center gap-x-md gap-y-1 text-body-sm">
-            <span className="tabular-nums">
-              <span className="text-fg font-semibold">{Math.round((sc.closure_rate ?? 0) * 100)}%</span>
-              <span className="text-fg-muted"> fechamento</span>
-            </span>
+            {pctOf(sc.closure_rate) !== null && (
+              <span className="tabular-nums">
+                <span className="text-fg font-semibold">{pctOf(sc.closure_rate)}%</span>
+                <span className="text-fg-muted"> fechamento (time + próprias)</span>
+              </span>
+            )}
             <span className="tabular-nums">
               <span className={sc.tasks_overdue ? 'text-danger font-semibold' : 'text-fg-muted'}>
                 {sc.tasks_overdue}
               </span>
-              <span className="text-fg-muted"> atrasadas</span>
+              <span className="text-fg-muted"> atrasadas no conjunto</span>
             </span>
             {sc.tasks_stuck > 0 && (
               <span className="tabular-nums">

@@ -235,3 +235,45 @@ test('governanceViewerIdsOf(solta) === resolveLeaderIdsOf(dono) p/ TODOS (sem di
     assert.deepStrictEqual(viewers, leaders, `${c.full_name}: viewers(${viewers}) != líderes(${leaders})`);
   }
 });
+
+// ── Determinismo (§3.2) ─────────────────────────────────────────────────────
+// O loader real (governance-edges.js) não tem ORDER BY em NENHUMA query: a ordem que
+// o Postgres devolve é a ordem física do heap e muda sozinha após UPDATE/VACUUM. O
+// digest pendura o card inteiro no 1º líder da lista — sem desempate, o bloco do
+// Peterson pula da Juliana pro Quintela sozinho. Estes testes NÃO podem sortear.
+test('DETERMINISMO: ordem de group_leaders não muda o líder principal do Peterson', () => {
+  const GL_ASC = [
+    { group_key: 'pedagogico', unit: 'all', leader_id: 'juliana' },
+    { group_key: 'pedagogico', unit: 'all', leader_id: 'quintela' },
+  ];
+  const GL_DESC = [...GL_ASC].reverse();
+  const mk = (groupLeaders, collabs) => {
+    const p = { ...PETERSON, group_leader_ids: groupLeaderIdsFor(PETERSON, groupLeaders) };
+    return resolveLeaderIdsOf(p, collabs);
+  };
+  assert.deepStrictEqual(mk(GL_ASC, ALL), mk(GL_DESC, ALL), 'ordem de governance_leaders vazou');
+  assert.strictEqual(mk(GL_DESC, ALL)[0], 'juliana', 'principal = Juliana (alfabético)');
+});
+
+test('DETERMINISMO: com 2 gerentes na MESMA unidade, a ordem de allCollabs não escolhe o principal', () => {
+  // Tier 1 (gerente-da-unidade) é o ÚNICO tier cuja ordem vem de iterar allCollabs — os
+  // demais (grupo, aresta explícita) ordenam por group_leader_ids/explicit_leader_ids.
+  // Pra expor o vazamento precisa de EMPATE DENTRO do tier 1 (2+ gerentes na mesma
+  // unidade); hoje cada unidade real na ALL compartilhada tem 1 gerente só (Krissya na
+  // Barra), então essa fixture é LOCAL — não entra na ALL, que os outros 34 testes
+  // (ex.: "Arthur → Krissya") assumem ter só ela como gerente.
+  const AMANDA = { id: 'amanda', full_name: 'Amanda', role: 'manager', function_role: null, unit: 'barra', is_ceo: false, is_active: true };
+  const LOCAL = [CEO, KRISSYA, AMANDA, ARTHUR];
+  const arthur = { ...ARTHUR, group_leader_ids: [], explicit_leader_ids: [] };
+  const a = resolveLeaderIdsOf(arthur, LOCAL);
+  const b = resolveLeaderIdsOf(arthur, [...LOCAL].reverse());
+  assert.deepStrictEqual(a, b, 'ordem de allCollabs vazou pro líder principal');
+  assert.strictEqual(a[0], 'amanda', 'principal deve ser Amanda (alfabético: Amanda < Krissya)');
+});
+
+test('DETERMINISMO: prioridade ENTRE tiers sobrevive ao desempate (Leo: unidade antes de grupo)', () => {
+  // Leo é pedagogico + barra. Tier 1 (gerente da unidade = Krissya) tem que vir ANTES
+  // do tier 2 (grupo = Juliana/Quintela), mesmo com 'Juliana' < 'Krissya' no alfabeto.
+  const leo = { ...LEO, group_leader_ids: groupLeaderIdsFor(LEO, GROUP_LEADERS) };
+  assert.strictEqual(resolveLeaderIdsOf(leo, ALL)[0], 'krissya', 'tier 1 perdeu pro alfabeto');
+});

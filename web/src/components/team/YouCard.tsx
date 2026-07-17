@@ -5,7 +5,7 @@
 // Tom motivacional, mas honesto — sem scorecard ainda → card neutro.
 import { Award } from 'lucide-react';
 import type { LeaderScorecard } from '../../hooks/useLeaderScorecards';
-import { classifyScorecard, BUCKET_META } from '../../lib/scorecard-classify';
+import { classifyScorecard, BUCKET_META, pctOf } from '../../lib/scorecard-classify';
 
 interface Props {
   scorecard: LeaderScorecard | null;
@@ -32,7 +32,9 @@ export function YouCard({ scorecard, name }: Props) {
     );
   }
 
-  const pct = Math.round((scorecard.closure_rate ?? 0) * 100);
+  // Sem nota (denominador 0: nada fechado, nada atrasado) NÃO é 0% — 0% seria dizer à
+  // própria pessoa avaliada, no card dela, o oposto da verdade. Ver pctOf.
+  const pct = pctOf(scorecard.closure_rate);
   const badge = badgeFor(scorecard);
   const dot = BUCKET_META[classifyScorecard(scorecard)].dot;
 
@@ -44,8 +46,14 @@ export function YouCard({ scorecard, name }: Props) {
 
       <div className="flex items-center gap-md">
         <span className="h-3 w-3 rounded-full shrink-0" style={{ backgroundColor: dot }} aria-hidden />
-        <span className="text-screen-title font-black text-fg tabular-nums leading-none">{pct}%</span>
-        <span className="text-body-sm text-fg-muted">fechamento</span>
+        {pct === null ? (
+          <span className="text-body-sm text-fg-muted">Sem nota esta semana</span>
+        ) : (
+          <>
+            <span className="text-screen-title font-black text-fg tabular-nums leading-none">{pct}%</span>
+            <span className="text-body-sm text-fg-muted">fechamento</span>
+          </>
+        )}
         <span className="ml-auto inline-flex items-center gap-1 rounded-full border border-tom/30 bg-tom/10 px-2.5 py-1 text-body-sm text-fg-secondary">
           <span aria-hidden>{badge.emoji}</span> {badge.label}
         </span>

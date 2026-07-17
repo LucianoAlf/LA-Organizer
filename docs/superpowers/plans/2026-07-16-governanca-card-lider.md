@@ -13,14 +13,17 @@
 ## Global Constraints
 
 - **`.deploy-hold` fica em `D:\la-organizer\.deploy-hold`** — o diretório **PAI** de `_remote`, **não** dentro dele. `auto-deploy.ps1:19` faz `Join-Path (Split-Path $srcRoot -Parent) ".deploy-hold"`. Criar em `_remote/.deploy-hold` gera um arquivo **inerte** e o deploy dispara mesmo assim.
-- **NÃO commitar entre tasks** (`_remote/CLAUDE.md` → Commits). Trabalha tudo local; **1 commit bundle** na Task 8.
+- **NÃO commitar entre tasks** (`_remote/CLAUDE.md` → Commits). Trabalha tudo local; **1 commit bundle** na Task 9. `_remote` **não é um git repo** — não rode `git` dentro dele.
 - **Guard de `null` obrigatório:** `closurePct !== null` antes de qualquer `<`. `null < 60` é `true` em JS.
 - **Os DOIS relógios (§7.1):** `%` = SEMANAL (vem do scorecard). Contagem / `overdue` / `stuck` / `noTasks` = AO VIVO (contado de `tasks`). Nunca misturar.
 - **Zero migration.** Nenhum campo novo. `closure_rate` já aceita `null` (sem `NOT NULL`).
 - **Voz do TOM é sagrada.** Nada toca `soul/` nem `skills/`. O único texto de LLM é o `💡`, que já existe e **não muda de prompt**.
 - **Deploy cirúrgico (Task 8):** só os hunks deste plano, sobre cópia FRESCA da VPS; `node --check`; `md5` VPS==local **antes** do `pm2 restart`.
 - **Nunca `.sort()` em array recebido por parâmetro** — sempre sobre cópia (`[...arr]`, ou o array novo que `.map()`/`.filter()` já devolvem).
-- **Baseline que não pode quebrar:** `node --test src/services/leader-routing.test.js` = **34 passando** hoje.
+- **Comando da suíte é `node --test 'src/**/*.test.js'`** — **`node --test src/` NÃO funciona**: o node v24 local trata o diretório como um teste só (`tests 1 / pass 0 / fail 1`) e dá falso-vermelho permanente. (VPS roda node v20; local v24.)
+- **Baseline local (medido 16/07): `pass 1826 / fail 3`.** As 3 (`engine.guardrail.test.js`, `system-loadout.test.js`, `pending-intents-detect.test.js`) falham por **AMBIENTE, não por código**: `src/supabase/` e `.env` são gitignored (têm chaves) e não existem no local. São **pré-existentes** — o que importa é **não virarem 4**.
+- **Nada que faça `require` de banco roda LOCAL.** Sem `src/supabase/client.js` e sem `.env`, `require('./src/rituals/dispatcher')` morre em `Cannot find module '../supabase/client'`. Todo smoke/dry-run roda **na VPS**.
+- **Baseline do arquivo tocado na Task 1:** `node --test src/services/leader-routing.test.js` = **34 passando** antes, 37 depois.
 - Todos os comandos rodam a partir de `D:\la-organizer\_remote` (git-bash: `cd /d/la-organizer/_remote`).
 
 ## File Structure
@@ -33,9 +36,11 @@
 | `src/rituals/leader-cards.test.js` | **NOVO.** TDD dos 11 casos da §10. | 2,3,4 |
 | `src/services/scorecard-builder.js` | computa/persiste `leader_scorecards`. **Muda** escopo + `null`. | 5 |
 | `src/rituals/dispatcher.js` | I/O + orquestração do digest. **Perde** o `ceoBucket` e os 4 blocos. | 6 |
-| `web/src/lib/scorecard-classify.ts` | PORT da régua de cor pro PWA. **Muda** junto (§7.2). | 7 |
-| `web/src/lib/scorecard-classify.test.ts` | paridade JS↔TS. | 7 |
-| `web/src/components/team/TeamDrillPanel.tsx` | painel do time. **Muda** só o cabeçalho. | 7 |
+| `web/src/lib/scorecard-classify.ts` | PORT da régua de cor pro PWA. **Muda** junto (§7.2). | 8 |
+| `web/src/lib/scorecard-classify.test.ts` | paridade JS↔TS. | 8 |
+| `web/src/components/team/TeamDrillPanel.tsx` | painel do time. **Muda** só o cabeçalho. | 8 |
+| `web/src/hooks/useLeaderScorecards.ts` | tipo `closure_rate` vira `number \| null`. | 8 |
+| `web/src/components/team/LeaderSemaphoreRow.tsx` | `?? 0` imprimia "0%" pra quem não tem nota. | 8 |
 
 ---
 
@@ -514,11 +519,17 @@ test('GUARD DE NULL: sem nota mas COM pendência ao vivo → não usa o % pra de
     classifyCard({ closurePct: null, overdueLive: 2, stuckLive: 0, closedLastWeek: 0 }), '🟡');
 });
 
-test('100% DE ZERO: líder com conjunto vazio não imprime % (closurePct null) e fica 🟢', () => {
-  const { cards } = build([]);
-  const rose = cards.find((c) => c.leader.id === 'clayton');
-  assert.strictEqual(rose.closurePct, null);
-  assert.strictEqual(rose.dot, '🟢');
+test('100% DE ZERO: líder com conjunto vazio vai pro ritmo — não vira card 🟢-100%', () => {
+  // Atenção: com a §7.6 o 🟢 SAI de `cards`. Procurar o Clayton em `cards` aqui daria
+  // undefined. É o caso Rose (🟢 100% liderando 4 pessoas, sem ter fechado nada).
+  const { cards, ritmo } = build([]);
+  assert.ok(ritmo.some((r) => r.id === 'clayton'), 'líder limpo não entrou no ritmo');
+  assert.strictEqual(cards.some((c) => c.leader.id === 'clayton'), false, '🟢 vazou pros cards');
+});
+
+test('SEM NOTA: líder COM pendência e sem scorecard tem closurePct null (nunca 100%)', () => {
+  const { cards } = build([task('a', 'daiana', '2026-07-15')]);
+  assert.strictEqual(cards.find((c) => c.leader.id === 'clayton').closurePct, null);
 });
 
 test('LÍDER AFOGADO: 8 próprias e time limpo → 🔴 (o buraco da opção A recusada)', () => {
@@ -569,7 +580,7 @@ test('QUEM APARECE: 🟢 sai de cards e entra em ritmo', () => {
 cd /d/la-organizer/_remote && node --test src/rituals/leader-cards.test.js 2>&1 | tail -8
 ```
 
-Esperado: `fail 8` — `classifyCard is not a function` e `dot` vindo `null`.
+Esperado: `fail 9` — `classifyCard is not a function` e `dot` vindo `null`.
 
 - [ ] **Step 3: Implementar a régua**
 
@@ -640,7 +651,7 @@ module.exports = { buildLeaderCards, classifyCard, daysBetweenYmd, FUNCTION_LABE
 cd /d/la-organizer/_remote && node --test src/rituals/leader-cards.test.js 2>&1 | tail -8
 ```
 
-Esperado: `pass 17` / `fail 0`.
+Esperado: `pass 18` / `fail 0` (9 da Task 2 + 9 desta).
 
 **Atenção:** o teste de CONSERVAÇÃO da Task 2 varre só `cards`. Agora que 🟢 sai de `cards`, um líder 🟢 com tarefa é impossível por construção (`overdueLive >= 1` → no mínimo 🟡), então a conservação continua válida. Se ele quebrar, **a régua está errada**, não o teste.
 
@@ -665,11 +676,13 @@ Append em `src/rituals/leader-cards.test.js`:
 const { renderLeaderCard } = require('./leader-cards');
 
 test('RENDER: cabeçalho traz dot, nome, % e a quebra time/dele', () => {
-  const sc = new Map([['clayton', { closure_rate: 0.4, tasks_closed: 2 }]]);
+  // 70% → midPct (70 < 85) e overdueLive=2 (< 3) → 🟡. Com 40% seria 🔴 (badPct),
+  // então o % da fixture precisa casar com a régua da Task 3 — não é decorativo.
+  const sc = new Map([['clayton', { closure_rate: 0.7, tasks_closed: 2 }]]);
   const tasks = [task('a', 'daiana', '2026-07-15'), task('b', 'clayton', '2026-07-16')];
   const { cards } = build(tasks, { scorecards: sc });
   const txt = renderLeaderCard(cards.find((c) => c.leader.id === 'clayton'));
-  assert.match(txt, /^🟡 \*Clayton\* — 40% · 2 pendências$/m);
+  assert.match(txt, /^🟡 \*Clayton\* — 70% · 2 pendências$/m);
   assert.match(txt, /^_1 do time · 1 dele_$/m);
 });
 
@@ -805,7 +818,7 @@ module.exports = { buildLeaderCards, classifyCard, renderLeaderCard, renderUnass
 cd /d/la-organizer/_remote && node --test src/rituals/leader-cards.test.js 2>&1 | tail -8
 ```
 
-Esperado: `pass 23` / `fail 0`.
+Esperado: `pass 24` / `fail 0` (18 anteriores + 6 desta).
 
 ---
 
@@ -1084,10 +1097,12 @@ Esperado: `SINTAXE OK` e `ZERO ÓRFÃS`.
 - [ ] **Step 3: Rodar a suíte inteira do backend**
 
 ```bash
-cd /d/la-organizer/_remote && node --test src/ 2>&1 | tail -8
+cd /d/la-organizer/_remote && node --test 'src/**/*.test.js' 2>&1 | grep -aE "(tests|pass|fail) [0-9]+"
 ```
 
-Esperado: `fail 0`. Qualquer teste que quebrar aqui é regressão real — **pare e investigue**, não ajuste o teste.
+Esperado: **`fail 3`** — é o baseline, não sucesso parcial. As 3 (`engine.guardrail`, `system-loadout`, `pending-intents-detect`) falham por falta de `.env`/`src/supabase` no local, que são gitignored. **Se virar 4, é regressão real — pare e investigue**, nunca ajuste o teste pra passar.
+
+⚠️ **NÃO use `node --test src/`** — o node v24 trata o diretório como um teste e devolve `fail 1` sempre.
 
 ---
 
@@ -1212,10 +1227,10 @@ grep -n "eventsSec\|scorecardSec" src/rituals/dispatcher.js
 Esperado: `SINTAXE OK`. O grep **não pode** achar `eventsSec`/`scorecardSec` dentro de `sendGovernanceDigest` — se achar, a seção velha sobreviveu e a decisão #4 não embarcou.
 
 ```bash
-cd /d/la-organizer/_remote && node --test src/ 2>&1 | tail -6
+cd /d/la-organizer/_remote && node --test 'src/**/*.test.js' 2>&1 | grep -aE "(tests|pass|fail) [0-9]+"
 ```
 
-Esperado: `fail 0`.
+Esperado: **`fail 3`** (o baseline pré-existente). Virou 4 → regressão real, pare.
 
 ---
 
@@ -1383,55 +1398,21 @@ Esperado: vitest `fail 0`, `tsc` sem saída (0 erros), build OK.
 - Consumes: tudo das Tasks 1-8.
 - Produces: produção rodando o card por líder; hold removido.
 
-- [ ] **Step 1: Dry-run contra o dado REAL**
+- [ ] **Step 1: Subir o código pra VPS — SEM restart**
 
-O `sendGovernanceDigest` tem `opts.dryRun` — monta e **retorna sem enviar**. Ninguém recebe nada.
+⚠️ **O dry-run NÃO roda local.** `src/supabase/client.js` e `.env` são gitignored (têm chaves) e não existem no `_remote` local — `require('./src/rituals/dispatcher')` morre em `Cannot find module '../supabase/client'`. O dry-run roda **na VPS**, e por isso o código sobe ANTES dele.
 
-```bash
-cd /d/la-organizer/_remote && node -e "
-require('dotenv').config();
-const d = require('./src/rituals/dispatcher');
-d.sendGovernanceDigest(new Date(), { dryRun: true, force: true })
-  .then(r => console.log(JSON.stringify(r, null, 2)))
-  .catch(e => { console.error('ERR', e); process.exit(1); });
-" 2>&1 | head -80
-```
+**Subir arquivo não muda produção:** o pm2 carregou o código em memória no boot; o processo rodando só vê o disco novo no `restart`. A ordem certa é scp → check → dry-run → md5 → restart.
 
-**Conferir na saída, item por item:**
-1. A Juliana aparece 🔴 com o Peterson e as 9 atrasadas dele — **é o caso que hoje falha**.
-2. O Clayton aparece com a Daiana no time **e** as 4 próprias no bloco "Dele".
-3. Ninguém tem `100%` sem ter fechado nada.
-4. Nenhuma pessoa aparece em dois cards (varrer os nomes).
-5. `parts` = 1 ou 2. Se for 3+, o corte da §7.5 não está segurando — **pare e ajuste antes do deploy**.
-
-- [ ] **Step 2: Contar as tarefas — conservação em produção**
-
-O teste unitário prova a conservação nas fixtures. Isto prova no dado real:
-
-```bash
-cd /d/la-organizer/_remote && node -e "
-require('dotenv').config();
-const sb = require('./src/supabase/client');
-sb.from('tasks').select('id', { count: 'exact', head: true })
-  .eq('context','work').eq('data_classification','real').eq('status','pending')
-  .lt('due_date', new Date().toISOString().slice(0,10))
-  .then(r => console.log('atrasadas no banco:', r.count));
-"
-```
-
-Somar os `· N` de todos os cards + o "Direto com você" da saída do Step 1. A soma **não pode ser maior** que o total do banco (duplicata) — pode ser menor, pelo filtro de "cobradas nas últimas 24h", que é comportamento de hoje e é intencional.
-
-- [ ] **Step 3: Deploy cirúrgico sobre cópia FRESCA**
-
-O `_remote/src` local pode ter divergido da VPS (outro chat). Nunca sobrescrever a VPS às cegas.
+Antes de sobrescrever, conferir se outro chat mexeu (o `_remote` local pode ter divergido):
 
 ```bash
 cd /d/la-organizer/_remote && for f in src/services/leader-routing.js src/rituals/leader-cards.js \
   src/services/scorecard-builder.js src/rituals/dispatcher.js src/rituals/monday-scorecard.js; do
-  ssh tom "md5sum /opt/LA-Organizer/$f 2>/dev/null || echo 'AUSENTE $f'"; done
+  echo "--- $f"; md5sum "$f" 2>/dev/null; ssh tom "md5sum /opt/LA-Organizer/$f 2>/dev/null || echo 'AUSENTE (ok se for leader-cards.js, que é novo)'"; done
 ```
 
-Para cada arquivo **que este plano NÃO criou** (`leader-cards.js` é novo): se o md5 da VPS não bater com o md5 do arquivo **antes** das minhas mudanças, outro chat mexeu — **pare** e refaça os hunks sobre a cópia fresca da VPS.
+Para cada arquivo **que este plano não criou**: se o md5 da VPS não bater com o que o arquivo tinha **antes** das suas mudanças, outro chat editou — **pare** e refaça os hunks sobre a cópia fresca da VPS. Só então:
 
 ```bash
 cd /d/la-organizer/_remote && for f in src/services/leader-routing.js src/rituals/leader-cards.js \
@@ -1442,7 +1423,48 @@ ssh tom "cd /opt/LA-Organizer && for f in src/services/leader-routing.js src/rit
   node --check \$f && echo \"OK \$f\"; done"
 ```
 
-Esperado: `OK` nos 5.
+Esperado: `OK` nos 5. **A janela entre o scp e o restart é o único momento de risco** (um `require()` preguiçoso dentro de função pode pegar arquivo novo em processo velho) — não demore aqui.
+
+- [ ] **Step 2: Dry-run NA VPS contra o dado REAL**
+
+`opts.dryRun` monta e **retorna sem enviar** — ninguém recebe nada. Roda num processo separado, que carrega o código novo sem tocar no pm2:
+
+```bash
+ssh tom "cd /opt/LA-Organizer && node -e \"
+require('dotenv').config();
+const d = require('./src/rituals/dispatcher');
+d.sendGovernanceDigest(new Date(), { dryRun: true, force: true })
+  .then(r => console.log(JSON.stringify(r, null, 2)))
+  .catch(e => { console.error('ERR', e.message); process.exit(1); });
+\"" 2>&1 | head -80
+```
+
+**Conferir na saída, item por item:**
+1. A Juliana aparece 🔴 com o Peterson e as 9 atrasadas dele — **é o caso que hoje falha**.
+2. O Clayton aparece com a Daiana no time **e** as 4 próprias no bloco "Dele".
+3. Ninguém tem `100%` sem ter fechado nada.
+4. Nenhuma pessoa aparece em dois cards (varrer os nomes).
+5. `parts` = 1 ou 2. Se for 3+, o corte da §7.5 não está segurando — **pare e ajuste antes do deploy**.
+
+- [ ] **Step 3: Contar as tarefas — conservação no dado REAL**
+
+O teste unitário prova a conservação nas fixtures. Isto prova em produção. Roda na VPS (o local não tem `src/supabase/client.js`):
+
+```bash
+ssh tom "cd /opt/LA-Organizer && node -e \"
+require('dotenv').config();
+const sb = require('./src/supabase/client');
+const hoje = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+sb.from('tasks').select('id', { count: 'exact', head: true })
+  .eq('context','work').eq('data_classification','real').eq('status','pending')
+  .lt('due_date', hoje)
+  .then(r => console.log('atrasadas no banco:', r.count, '| hoje(SP):', hoje));
+\""
+```
+
+⚠️ `sv-SE` + `timeZone` dá o YMD de São Paulo. **Nunca `toISOString().slice(0,10)`** — depois das 21h BRT ele devolve o dia seguinte em UTC e a contagem sai errada.
+
+Somar os `· N` de todos os cards + o "Direto com você" da saída do Step 2. A soma **não pode ser MAIOR** que o total do banco — maior significa duplicata (uma pessoa em 2 cards). Menor é esperado: o filtro de "cobradas nas últimas 24h" esconde algumas, e isso é comportamento de hoje, intencional.
 
 - [ ] **Step 4: md5 VPS == local ANTES do restart**
 
@@ -1467,15 +1489,40 @@ Esperado: boot sem exceção. O log REAL do TOM é `/opt/LA-Organizer/logs/` —
 ssh tom "tail -30 /opt/LA-Organizer/logs/*.log 2>/dev/null | grep -i 'error\|leader-cards\|GovDigest' | tail -10"
 ```
 
-- [ ] **Step 6: Remover o hold e commitar o bundle**
+- [ ] **Step 6: 🔴 CHECAR O CHAT CONCORRENTE — antes de remover o hold**
 
-O hold sai **por último**. Enquanto ele existir, o Stop hook não commita nada (`auto-deploy.ps1:20-23` → `exit 0`).
+**Este passo não é burocracia: em 16/07 20:xx havia outro chat (Financeiro, dono do `engine.js`) com
+`engine.js` editado LOCAL e NÃO deployado** (local `0c4a9913` × VPS `43cb0ac1`).
+
+O Stop hook **não commita só os seus arquivos**: ele robocopia o `_remote/` **inteiro** → commit →
+push → VPS `git fetch + reset --hard origin/main` + `pm2 restart`. Remover o hold com trabalho de
+terceiro pela metade na árvore **deploya o trabalho dele junto** e reinicia o TOM.
+
+```bash
+cd /d/la-organizer/_remote && for f in src/engine.js src/prompts/system.js; do
+  echo "--- $f"; md5sum "$f"; ssh tom "md5sum /opt/LA-Organizer/$f"; done
+find src web/src -newermt "-3 hours" -type f \( -name "*.js" -o -name "*.ts" -o -name "*.tsx" \) 2>/dev/null | grep -v node_modules
+```
+
+Se aparecer arquivo **que não é deste plano** com local ≠ VPS: **NÃO remova o hold.** Ou o dono
+daquele arquivo termina e faz o deploy cirúrgico dele, ou o Alf decide. Os arquivos deste plano são:
+`leader-routing.js`, `leader-cards.js`, `leader-cards.test.js`, `leader-routing.test.js`,
+`scorecard-builder.js`, `dispatcher.js`, `monday-scorecard.js` e os 5 do `web/`.
+
+**Este plano já está em produção via scp cirúrgico (Steps 1-5) — o hold só bloqueia o commit, não
+o deploy.** Ou seja: dá pra deixar o hold de pé sem perder nada do que foi entregue. Não force.
+
+- [ ] **Step 7: Remover o hold e commitar o bundle**
+
+Só depois do Step 6 dar limpo. O hold sai **por último** — enquanto existir, o Stop hook não commita
+nada (`auto-deploy.ps1:20-23` → `exit 0`).
 
 ```bash
 rm /d/la-organizer/.deploy-hold && ls /d/la-organizer/.deploy-hold 2>&1 | head -1
 ```
 
-Esperado: `No such file or directory`. Encerrar o turno: o Stop hook commita `_remote/` (inclusive `web/`), pusha, e a Vercel builda o PWA em ~2min.
+Esperado: `No such file or directory`. Encerrar o turno: o Stop hook commita `_remote/` (inclusive
+`web/`), pusha, e a Vercel builda o PWA em ~2min.
 
 - [ ] **Step 7: Registrar o known-issue**
 

@@ -2372,6 +2372,21 @@ async function checkOverdueWorkEvents(now = new Date()) {
   }
 }
 
+// Fase 7 — "ontem 14h" (1d) | "seg 10h" (<=7d) | "12/07 10h" (>7d). Sempre America/Sao_Paulo.
+// `sv-SE` devolve YYYY-MM-DD já convertido pro fuso — NUNCA toISOString().slice(0,10),
+// que desloca o dia depois das 21h BRT. Usado só pelo modo returnData (card por líder).
+function _evWhenLabel(startAtIso, sp) {
+  const { daysBetweenYmd } = require('./leader-cards');
+  const d = new Date(startAtIso);
+  const tz = { timeZone: 'America/Sao_Paulo' };
+  const hhmm = d.toLocaleTimeString('pt-BR', { ...tz, hour: '2-digit', minute: '2-digit' })
+    .replace(':00', 'h').replace(':', 'h');
+  const dias = daysBetweenYmd(sp.ymd, d.toLocaleDateString('sv-SE', tz));
+  if (dias === 1) return `ontem ${hhmm}`;
+  if (dias <= 7) return `${d.toLocaleDateString('pt-BR', { ...tz, weekday: 'short' }).replace('.', '')} ${hhmm}`;
+  return `${d.toLocaleDateString('pt-BR', { ...tz, day: '2-digit', month: '2-digit' })} ${hhmm}`;
+}
+
 async function ceoTeamUnclosedEventsReport(now = new Date(), opts = {}) {
   const sp = nowSaoPaulo();
   // returnText (modo seção do digest) ignora o portão de horário — quem agenda é o orquestrador.
@@ -2394,8 +2409,13 @@ async function ceoTeamUnclosedEventsReport(now = new Date(), opts = {}) {
     if (!opts.returnText && !opts.force && await alreadySent(ceo.id, 'ceo_team_unclosed_events', ymdRef)) continue;
 
     // Quiet-hours gate (work): silêncio = DEFER ANTES de qualquer side-effect/marca de enviado.
-    // Em returnText (modo seção do digest / dry-run) não aplica — quem decide envio é o orquestrador.
-    const _qCeoEv = opts.returnText ? { quiet: false } : await isQuietNow(ceo.id, nowSaoPaulo(), 'work');
+    // Em returnText (modo seção do digest / dry-run) e em returnData (Fase 7 — card por líder
+    // busca só os dados crus, sem enviar nada) não aplica — nenhum dos dois manda mensagem;
+    // quem decide envio é sempre o orquestrador. Sem incluir returnData aqui, um `force:true`
+    // sozinho NÃO bypassa este gate (só o de horário/alreadySent) — a chamada dependeria do
+    // quiet-hours do CEO que calhar de vir 1º no SELECT, devolvendo [] silenciosamente mesmo
+    // com eventos reais no banco.
+    const _qCeoEv = (opts.returnText || opts.returnData) ? { quiet: false } : await isQuietNow(ceo.id, nowSaoPaulo(), 'work');
     if (_qCeoEv.quiet) { continue; }
 
     // Eventos do TIME passados sem fechamento — NÃO filtra por dono
@@ -2438,6 +2458,25 @@ async function ceoTeamUnclosedEventsReport(now = new Date(), opts = {}) {
     if (filteredStale.length === 0) {
       await logRitualEvent(ceo.id, 'ceo_team_unclosed_events', 'skipped', `all_recently_asked total=${allStale.length}`, ymdRef);
       continue;
+    }
+
+    // Fase 7 — modo DADO: o card por líder agrupa compromisso JUNTO da tarefa, na linha
+    // da pessoa (decisão do Alf 16/07: "tudo no card do líder"). Devolve as linhas cruas;
+    // quem agrupa é buildLeaderCards. Reaproveita esta query — não duplica.
+    // end_at/staleness_check_sent_at crus (além dos 4 campos do card): ceoTeamUnclosedTasksReport
+    // precisa deles pra computar QUAIS destes eventos são candidatos ao staleness-check (5+d sem
+    // pergunta) — o MESMO efeito colateral que o modo returnText já fazia. autoArchiveStale
+    // (22h BRT) lê staleness_check_sent_at pra arquivar sozinho; sem isto, dobrar o card matava
+    // o arquivamento automático dos compromissos em silêncio (nenhum teste local pega isso).
+    if (opts.returnData) {
+      return filteredStale.map((ev) => ({
+        id: ev.id,
+        title: ev.title,
+        collaborator_id: ev.collaborator_id,   // ⚠️ NÃO é owner_id
+        whenLabel: _evWhenLabel(ev.start_at, sp),
+        end_at: ev.end_at,
+        staleness_check_sent_at: ev.staleness_check_sent_at,
+      }));
     }
 
     // Sprint 23.12 — Resolve líder responsável por evento e agrupa por líder
@@ -2700,123 +2739,117 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
       continue;
     }
 
-    // Separa por idade: 3+ dias = bucket CEO; resto agrupa por líder.
-    const ceoBucket = [];
-    const byLeader = {};
-    for (const t of filteredStale) {
-      const days = daysOverdue(t.due_date);
-      if (days >= 3) {
-        ceoBucket.push({ ...t, days });
-        continue;
-      }
-      // GovLeader — líder = líder do DONO da tarefa (1º não-CEO). Tarefas cujo
-      // único líder é o próprio CEO caem em '__unassigned__' (= direto com você).
-      // groupByOwner (digest do líder): agrupa pela PESSOA dona, não pelo sub-líder.
-      const owner = collabById.get(t.assigned_to);
-      const leader = opts.groupByOwner
-        ? (owner || null)
-        : (resolveLeadersOf(owner, allCollabs).find((l) => !l.is_ceo) || null);
-      const key = leader?.id || '__unassigned__';
-      if (!byLeader[key]) byLeader[key] = { leader, items: [] };
-      byLeader[key].items.push({ ...t, days });
+    // Fase 7 — CARD POR LÍDER. Morre o `days >= 3 → ceoBucket` (a tarefa velha perdia
+    // o líder: quanto pior, menos estrutura) e morrem os 4 blocos que organizavam as
+    // MESMAS tarefas em 4 eixos que não conversam (idade / pessoa+LLM / cobrança /
+    // staleness). Um eixo: o líder. opts.groupByOwner fica sem efeito aqui — buildLeaderCards
+    // já resolve dono→líder sozinha (mesma fonte de verdade do `hasTeam`); segue vivo
+    // no report de EVENTOS (ceoTeamUnclosedEventsReport), que esta task não toca.
+    const { buildLeaderCards, renderLeaderCard, renderUnassigned } = require('./leader-cards');
+
+    const scMap = new Map();
+    const { data: scLatest } = await supabase
+      .from('leader_scorecards').select('week_start')
+      .order('week_start', { ascending: false }).limit(1).maybeSingle();
+    if (scLatest && scLatest.week_start) {
+      const { data: scRows } = await supabase
+        .from('leader_scorecards').select('leader_id, closure_rate, tasks_closed')
+        .eq('week_start', scLatest.week_start);
+      for (const r of (scRows || [])) scMap.set(r.leader_id, r);
     }
 
-    const CATEGORY_LABELS = {
-      la_music: 'LA Music', mentoria: 'Mentoria', pedagogico: 'Pedagógico',
-      operacional: 'Operacional', operational: 'Operacional', comercial: 'Comercial',
-      acolhimento: 'Acolhimento', marketing: 'Marketing', sem_categoria: 'Sem categoria',
-    };
-    const fmtItem = (t) => {
-      const owner = t.collaborators?.full_name?.split(' ')[0] || '—';
-      const stuckMark = (t.coordination_request_count || 0) >= 3 ? ' 🔒' : '';
-      return `  • _${String(t.title).slice(0, 55)}_ — ${t.days}d (${owner})${stuckMark}`;
-    };
-
-    const lines = [];
-    if (ceoBucket.length > 0) {
-      lines.push(`🚨 *Pra você decidir — ${ceoBucket.length} tarefa${ceoBucket.length > 1 ? 's' : ''} com 3+ dias*`);
-      for (const t of ceoBucket.slice(0, 8)) lines.push(fmtItem(t));
-      if (ceoBucket.length > 8) lines.push(`  _+${ceoBucket.length - 8} outras_`);
-      lines.push('');
+    // Fase 7 — compromissos entram no card, mesma linha da pessoa (decisão do Alf 16/07:
+    // "tudo no card do líder"). opts.withEvents/withScorecard honram os toggles por pessoa
+    // (show_compromissos/show_scorecard) sem seção própria — ver sendGovernanceDigest.
+    // Path do líder (opts.leaderId): sendLeaderGovernanceDigest JÁ busca e renderiza os
+    // compromissos numa seção própria, ESCOPADA (scopeIds/groupByOwner) — mexer nisso está
+    // fora de escopo (spec §9 "não pode virar primário" / §11). Buscar aqui de novo, sem
+    // scopeIds, vazaria eventos da EMPRESA INTEIRA pro card de UM líder só (buildSingleLeaderCard
+    // não filtra por time — confia que o chamador já escopou). Por isso só busca quando NÃO
+    // há leaderId, a mesma condição que já decide forLeaderId logo abaixo.
+    const fiveDaysAgoEv = new Date(now.getTime() - 5 * 24 * 3600_000).toISOString();
+    let evData = [];
+    let evStaleIds = [];
+    if (!opts.leaderId && opts.withEvents !== false) {
+      evData = (await ceoTeamUnclosedEventsReport(now, {
+        returnData: true, force: true, ...(opts.scopeIds ? { scopeIds: opts.scopeIds } : {}),
+      })) || [];
+      // Mesmo efeito colateral que o modo returnText já fazia pros compromissos: 5+d sem
+      // pergunta vira candidato a staleness-check. sendGovernanceDigest marca
+      // staleness_check_sent_at DEPOIS do envio confirmado (ver eventStaleIds no retorno
+      // de returnText, logo abaixo).
+      evStaleIds = evData
+        .filter((e) => e.end_at < fiveDaysAgoEv && !e.staleness_check_sent_at)
+        .map((e) => e.id);
     }
-    const sortedKeys = Object.keys(byLeader).sort((a, b) => {
-      if (a === '__unassigned__') return 1;
-      if (b === '__unassigned__') return -1;
-      return 0;
+
+    // Hotfix pós-Task 6 — opts.leaderId presente (digest do líder) passa forLeaderId
+    // pro buildLeaderCards montar o card ÚNICO do destinatário, com o time dentro.
+    // Sem isto o card saía roteado pelo líder-PRINCIPAL de cada dono (ex.: Peterson →
+    // Juliana), e o Quintela recebia um card da Juliana na PRÓPRIA mensagem dele
+    // ("Seu time, Quintela" com o card errado dentro). Ausente (CEO) → comportamento
+    // de sempre (N cards por líder-principal, ver comentário 6 linhas acima).
+    const built = buildLeaderCards({
+      tasks: filteredStale,
+      events: evData,
+      collabs: allCollabs,
+      scorecards: opts.withScorecard === false ? new Map() : scMap,  // sem scorecard → closurePct null → sem %
+      today: sp.ymd,
+      ...(opts.leaderId ? { forLeaderId: opts.leaderId } : {}),
     });
-    for (const key of sortedKeys) {
-      const { leader, items } = byLeader[key];
-      if (lines.length > 0) lines.push('─────────────────────');
-      const label = leader
-        ? `⚠️ *${leader.full_name.split(' ')[0]} — ${items.length} tarefa${items.length > 1 ? 's' : ''}*`
-        : `❓ *Direto com você — ${items.length} tarefa${items.length > 1 ? 's' : ''}*`;
-      lines.push(label);
-      for (const t of items.slice(0, 5)) lines.push(fmtItem(t));
-      if (items.length > 5) lines.push(`  _+${items.length - 5} outras_`);
-      lines.push('');
-    }
 
-    const hiddenNote = hiddenCount > 0
-      ? `\n\n_${hiddenCount} já cobrad${hiddenCount > 1 ? 'as' : 'a'} do dono nas últimas 24h — não listad${hiddenCount > 1 ? 'as' : 'a'} aqui._`
-      : '';
-
-    // Sprint 29.1 — staleness check: tasks 5+ dias parados sem TOM ter perguntado.
-    const toStaleCheck = filteredStale.filter(t =>
-      (t.days >= 5 || daysOverdue(t.due_date) >= 5) && !t.staleness_check_sent_at
-    );
-    let staleCheckBlock = '';
-    if (toStaleCheck.length > 0) {
-      const top3 = toStaleCheck.slice(0, 3).map(t =>
-        `  • _${String(t.title).slice(0, 50)}_`
-      ).join('\n');
-      staleCheckBlock = `\n\n─────────────────────\n⏳ *${toStaleCheck.length} tarefa${toStaleCheck.length > 1 ? 's' : ''} parada${toStaleCheck.length > 1 ? 's' : ''} 5+ dias — já rolou?*\n${top3}${toStaleCheck.length > 3 ? `\n  _+${toStaleCheck.length - 3} outras_` : ''}\n_Sem resposta até amanhã → arquivo automático_`;
-      // Fatia G fase 2 (bug fix): marcação de staleness movida p/ DEPOIS do envio
-      // confirmado (era antes → falha de envio escondia as tarefas do report de amanhã).
-    }
-
-    // Sprint 29.1 — diagnóstico inteligente por DONO (não por líder).
-    // Pessoas com 3+ pendências ganham análise via LLM (sumário+hipótese+recomendação).
-    const byOwner = new Map();
-    for (const t of filteredStale) {
-      const ownerName = t.collaborators?.full_name?.split(' ')[0] || 'Sem dono';
-      if (!byOwner.has(ownerName)) byOwner.set(ownerName, []);
-      byOwner.get(ownerName).push({ ...t, daysOverdue: daysOverdue(t.due_date) });
-    }
+    // §4 — a função é PURA: o 💡 do LLM é injetado DEPOIS, na estrutura já montada.
+    // Mesma regra de hoje (3+ pendências por PESSOA) e mesmo prompt — a voz não muda.
     const { analyzePersonBacklog } = require('../services/governance-analyzer');
-    const diagnostics = [];
-    for (const [ownerName, ownerItems] of byOwner.entries()) {
-      if (ownerItems.length >= 3) {
+    for (const card of built.cards) {
+      for (const b of card.people) {
+        if (b.count < 3) continue;
         try {
-          const diag = await analyzePersonBacklog({ ownerName, items: ownerItems });
-          if (diag) diagnostics.push(diag);
+          // DEFEITO 3 (dry-run 17/07) — category/coordRequests REAIS, não `null`/3-ou-0
+          // fixos: a query ~L.2664 SEMPRE trouxe `category` e `coordination_request_count`
+          // reais; jogar isso fora fazia o 💡 dizer "sem categoria" mesmo quando a task TEM
+          // categoria. leader-cards.js carrega os dois no item — só repassa aqui.
+          b.diagnostic = await analyzePersonBacklog({
+            ownerName: b.person.name,
+            items: [...b.novo, ...b.arrastando].map((i) => ({
+              title: i.title, daysOverdue: i.days, category: i.category,
+              coordination_request_count: i.coordRequests,
+            })),
+          });
         } catch (e) { /* nunca quebra ritual */ }
       }
     }
-    const diagnosticsBlock = diagnostics.length > 0
-      ? `\n\n${diagnostics.join('\n\n')}`
-      : '';
 
-    // Sprint 29.1 — também sinaliza tasks com 3+ cobranças sem efeito.
-    const stuckTasks = filteredStale.filter(t => (t.coordination_request_count || 0) >= 3);
-    const stuckBlock = stuckTasks.length > 0
-      ? `\n\n⚠️ _${stuckTasks.length} task(s) com 3+ cobranças sem efeito — repetir mais não vai resolver. Considera mudar de tática (1:1, ligar, redistribuir)._`
-      : '';
+    const corpo = [
+      ...built.cards.map(renderLeaderCard),
+      renderUnassigned(built.unassigned),
+      built.ritmo.length ? `🟢 _No ritmo: ${built.ritmo.map((r) => r.name).join(' · ')}_` : '',
+    ].filter(Boolean).join('\n───────────────────\n');
+
+    // Sprint 29.1 — staleness check: tasks 5+ dias parados sem TOM ter perguntado. O
+    // TEXTO saiu (era o 4º bloco de ruído); o EFEITO COLATERAL fica — toStaleCheck
+    // alimenta staleIds e a marcação staleness_check_sent_at DEPOIS do envio confirmado.
+    const toStaleCheck = filteredStale.filter(t =>
+      (t.days >= 5 || daysOverdue(t.due_date) >= 5) && !t.staleness_check_sent_at
+    );
 
     const dateLabelT = new Date(now).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: 'short' });
     const hiddenSuffixT = hiddenCount > 0 ? ` · ${hiddenCount} já cobrada${hiddenCount > 1 ? 's' : ''} hoje` : '';
-    const stuckSection = stuckTasks.length > 0 ? `\n\n_⚠️ ${stuckTasks.length} task${stuckTasks.length > 1 ? 's' : ''} com 3+ cobranças — cobrar mais não resolve. Considera 1:1, ligar ou redistribuir._` : '';
-    const diagSection = diagnosticsBlock ? `\n\n─────────────────────\n🔍 *Diagnóstico*\n${diagnosticsBlock.trim()}` : '';
 
-    // Fase 6a — modo SEÇÃO p/ o digest único: retorna a seção rica VERBATIM
-    // (lista + 🔍 diagnóstico + ⚠️ stuck + ⏳ staleness) sem banners/rodapé próprios.
+    // Fase 6a — modo SEÇÃO p/ o digest único: retorna a seção rica VERBATIM sem
+    // banners/rodapé próprios. Fase 7 — a seção agora É os cards por líder: 1 eixo,
+    // não mais 4 blocos organizando as mesmas tarefas por idade/pessoa+LLM/cobrança/staleness.
     if (opts.returnText) {
+      const quantos = built.cards.length;
       return {
-        text: `📋 *Tarefas atrasadas*\n_${filteredStale.length} tarefa${filteredStale.length > 1 ? 's' : ''}${hiddenSuffixT}_\n\n${lines.join('\n').trim()}${diagSection}${stuckSection}${staleCheckBlock}`,
+        text: `_${quantos === 1 ? '1 líder precisa' : `${quantos} líderes precisam`} de você_\n\n${corpo}`,
         staleIds: toStaleCheck.map(t => t.id),
+        eventStaleIds: evStaleIds,
       };
     }
 
-    const msg = `📋 *Governança — Tarefas atrasadas*\n_${dateLabelT} · ${filteredStale.length} tarefa${filteredStale.length > 1 ? 's' : ''}_\n━━━━━━━━━━━━━━━━━━━━━\n\n${lines.join('\n').trim()}${diagSection}${stuckSection}${staleCheckBlock}\n\n━━━━━━━━━━━━━━━━━━━━━\n_${filteredStale.length} atrasada${filteredStale.length > 1 ? 's' : ''}${hiddenSuffixT}. Pra cobrar: "cobra [nome] sobre [tarefa]"_`;
+    const _nT = filteredStale.length;
+    const msg = `📋 *Governança — quem precisa de você*\n_${dateLabelT} · ${_nT} ${_nT === 1 ? 'atrasada' : 'atrasadas'}${hiddenSuffixT}_\n━━━━━━━━━━━━━━━━━━━━━\n\n${corpo}\n\n━━━━━━━━━━━━━━━━━━━━━\n_Pra cobrar: "cobra [nome] sobre [tarefa]"_`;
 
     // Fatia G fase 2: claim atômico antes de enviar (1/CEO/dia → claim-safe).
     const claim = await claimRitualSend(supabase, ceo.id, 'ceo_team_unclosed_tasks', ymdRef);
@@ -2835,7 +2868,7 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
         if (staleTaskErr) console.error(`[CEOTasksReport] staleness mark FAILED: ${staleTaskErr.message}`);
         else console.log(`[CEOTasksReport] staleness marcou ${toStaleCheck.length} task(s)`);
       }
-      console.log(`[CEOTasksReport] sent ${scoped.length} (${ceoBucket.length} CEO direto) → ${String(ceo.phone).slice(-4)}`);
+      console.log(`[CEOTasksReport] sent ${scoped.length} (${built.cards.length} card(s)) → ${String(ceo.phone).slice(-4)}`);
     } catch (err) {
       console.error(`[CEOTasksReport] send err ${String(ceo.phone).slice(-4)}:`, err.message);
       if (isTransientRitualError(err)) await rollbackRitualClaim(supabase, claim.id);
@@ -3042,19 +3075,27 @@ async function sendGovernanceDigest(now = new Date(), opts = {}) {
       if (!prefs.digest_enabled) continue;
       if (currentSlot(sp) !== timeToSlot(prefs.send_time || '09:00')) continue;
     }
-    const scorecardSec = prefs.show_scorecard ? await buildScorecardDigestSection(now) : '';
-    const eventsR = prefs.show_compromissos ? await ceoTeamUnclosedEventsReport(now, { returnText: true }) : null;
-    const tasksR = prefs.show_tarefas ? await ceoTeamUnclosedTasksReport(now, { returnText: true }) : null;
-    const eventsSec = (eventsR && eventsR.text) || '';
-    const tasksSec = (tasksR && tasksR.text) || '';
-    if (!scorecardSec && !eventsSec && !tasksSec) continue;
+    // Fase 7 — UMA seção. O scorecard virou o CABEÇALHO de cada card e os compromissos
+    // entraram na linha da pessoa. As 3 seções fatiavam a MESMA pessoa em lugares
+    // diferentes (Daiana em 2, Clayton num terceiro) — era isso que lia como desorganizado.
+    // Os toggles por pessoa seguem valendo, agora pelas ENTRADAS do card:
+    //   show_compromissos=false → events: []  ·  show_scorecard=false → sem % no cabeçalho
+    const tasksR = prefs.show_tarefas
+      ? await ceoTeamUnclosedTasksReport(now, {
+          returnText: true,
+          withEvents: prefs.show_compromissos,
+          withScorecard: prefs.show_scorecard,
+        })
+      : null;
+    const cardsSec = (tasksR && tasksR.text) || '';
+    if (!cardsSec) continue;
 
     const dateLabel = new Date(now).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: 'short' });
     const header = `🌅 *Governança · ${dateLabel}*\n_Visão da empresa_`;
     const footer = `_Abre a dashboard 📊 · pra cobrar: "cobra [nome] sobre [tarefa]"_`;
     const { messages, parts } = assembleDigest({
       header,
-      sections: [{ text: scorecardSec }, { text: eventsSec }, { text: tasksSec }],
+      sections: [{ text: cardsSec }],
       footer,
     });
 
@@ -3066,10 +3107,12 @@ async function sendGovernanceDigest(now = new Date(), opts = {}) {
     if (!claim.won) { if (!claim.duplicate) console.error(`[GovDigest] claim_err(${claim.code})`); continue; }
     try {
       for (const m of messages) await whatsapp.sendMessage(ceo.phone, m);
-      // Fase 6a — marca ⏳ staleness DEPOIS do envio confirmado, preservando o
-      // fluxo "sem resposta até amanhã → arquivo automático" que o relatório antigo fazia.
-      const evStale = (eventsR && eventsR.staleIds) || [];
+      // Fase 7 — staleness DEPOIS do envio confirmado (mesmo padrão de sempre). tasksR
+      // agora carrega os dois lados (tarefas + compromissos — ver eventStaleIds em
+      // ceoTeamUnclosedTasksReport): sem isto o autoArchiveStale (22h) parava de arquivar
+      // compromissos sozinho, porque staleness_check_sent_at nunca seria marcado nesta rota.
       const tkStale = (tasksR && tasksR.staleIds) || [];
+      const evStale = (tasksR && tasksR.eventStaleIds) || [];
       if (evStale.length) await supabase.from('events').update({ staleness_check_sent_at: now.toISOString() }).in('id', evStale);
       if (tkStale.length) await supabase.from('tasks').update({ staleness_check_sent_at: now.toISOString() }).in('id', tkStale);
       console.log(`[GovDigest] sent ${parts} part(s) → ${String(ceo.phone).slice(-4)}`);
@@ -3141,7 +3184,7 @@ async function sendLeaderGovernanceDigest(now = new Date(), opts = {}) {
     const eventsR = prefs.show_compromissos ? await ceoTeamUnclosedEventsReport(now, { returnText: true, scopeIds: teamIds, groupByOwner: true }) : null;
     // Fase 2 (fatiamento por delegação): tarefas filtram pela POSSE (governanceViewerIdsOf),
     // não pelo time inteiro. Passa leaderId (scopeIds é ignorado quando há leaderId).
-    const tasksR = prefs.show_tarefas ? await ceoTeamUnclosedTasksReport(now, { returnText: true, leaderId, groupByOwner: true }) : null;
+    const tasksR = prefs.show_tarefas ? await ceoTeamUnclosedTasksReport(now, { returnText: true, leaderId }) : null;
     const eventsSec = (eventsR && eventsR.text) || '';
     const tasksSec = (tasksR && tasksR.text) || '';
 

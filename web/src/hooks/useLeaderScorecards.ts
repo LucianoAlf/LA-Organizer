@@ -8,7 +8,7 @@ import { supabase, supabaseConfigured } from '../lib/supabase';
 export interface LeaderScorecard {
   leader_id: string;
   week_start: string;
-  closure_rate: number;
+  closure_rate: number | null;
   tasks_closed: number;
   tasks_overdue: number;
   tasks_stuck: number;

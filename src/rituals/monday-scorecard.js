@@ -10,6 +10,7 @@ const supabase = require('../supabase/client');
 const whatsapp = require('../services/whatsapp');
 const builder = require('../services/scorecard-builder');
 const { isQuietNow, nowBrtParts } = require('../services/quiet-hours');
+const { loadCollabsWithEdges } = require('../services/governance-edges');
 
 const RITUAL_TYPE_DIR = 'monday_scorecard_director';
 const RITUAL_TYPE_LEADER = 'monday_scorecard_leader';
@@ -34,9 +35,15 @@ async function generateAllScorecards(weekStart, weekEnd) {
   const eligible = (candidates || []).filter(isLeaderRole);
   const results = [];
 
+  // Carregado UMA VEZ antes do loop — dentro dele seria 1 query por líder. Sem isto
+  // (allCollabs undefined), resolveLeadersOf(c, []) devolve [] pra todo mundo, scope
+  // vira [leaderId] pra todos e o comportamento antigo volta CALADO (testes verdes,
+  // mudança inteira virando no-op — o passo silencioso do Step 3).
+  const allCollabs = await loadCollabsWithEdges(supabase);
+
   for (const leader of eligible) {
     try {
-      const metrics = await builder.computeScorecard(leader.id, weekStart, weekEnd);
+      const metrics = await builder.computeScorecard(leader.id, weekStart, weekEnd, allCollabs);
       const delta = await builder.computeDelta(leader.id, weekStart, metrics);
       const insights = await builder.generateInsight(leader, metrics, delta);
       const scorecardId = await builder.persistScorecard(leader.id, weekStart, weekEnd, metrics, delta, insights);

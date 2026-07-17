@@ -3,7 +3,7 @@
 // e abre o time dele no painel de drill à direita.
 import { ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import type { LeaderScorecard } from '../../hooks/useLeaderScorecards';
-import { classifyScorecard, BUCKET_META } from '../../lib/scorecard-classify';
+import { classifyScorecard, BUCKET_META, pctOf } from '../../lib/scorecard-classify';
 
 interface Props {
   sc: LeaderScorecard;
@@ -28,7 +28,7 @@ function closureDelta(sc: LeaderScorecard): number | null {
 export function LeaderSemaphoreRow({ sc, selected, onSelect }: Props) {
   const bucket = classifyScorecard(sc);
   const meta = BUCKET_META[bucket];
-  const pct = Math.round((sc.closure_rate ?? 0) * 100);
+  const pct = pctOf(sc.closure_rate);
   const delta = closureDelta(sc);
   const deltaPct = delta != null ? Math.round(delta * 100) : null;
 
@@ -51,7 +51,9 @@ export function LeaderSemaphoreRow({ sc, selected, onSelect }: Props) {
       />
       <span className="font-semibold text-fg shrink-0 w-24 truncate">{firstName(sc)}</span>
 
-      <span className="tabular-nums text-fg-secondary shrink-0 w-12 text-right">{pct}%</span>
+      <span className="tabular-nums text-fg-secondary shrink-0 w-12 text-right">
+        {pct === null ? '—' : `${pct}%`}
+      </span>
 
       {sc.tasks_overdue > 0 ? (
         <span className="tabular-nums text-danger text-body-sm shrink-0">{sc.tasks_overdue} atr.</span>

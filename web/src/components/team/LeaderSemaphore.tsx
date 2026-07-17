@@ -6,7 +6,9 @@
 import { useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import type { LeaderScorecard } from '../../hooks/useLeaderScorecards';
-import { classifyScorecard, BUCKET_META, type ScoreBucket } from '../../lib/scorecard-classify';
+import {
+  classifyScorecard, BUCKET_META, byRateNoScoreLast, byClosedThenName, type ScoreBucket,
+} from '../../lib/scorecard-classify';
 import { LeaderSemaphoreRow } from './LeaderSemaphoreRow';
 
 interface Props {
@@ -22,7 +24,17 @@ export function LeaderSemaphore({ scorecards, selected, onSelect }: Props) {
 
   const buckets: Record<ScoreBucket, LeaderScorecard[]> = { atencao: [], olhar: [], ritmo: [] };
   for (const sc of scorecards) buckets[classifyScorecard(sc)].push(sc);
-  buckets.atencao.sort((a, b) => (a.closure_rate ?? 0) - (b.closure_rate ?? 0));
+  // Os TRÊS baldes ordenam — paridade com scorecard-render.js:89-95 (lado Node). Ordenar
+  // só um seria o pior dos mundos: meio determinístico faz o próximo leitor achar que está
+  // tudo ordenado. Sem sort, a ordem de entrada é a ordem FÍSICA do heap do Postgres (o
+  // loader não tem ORDER BY em query nenhuma) e muda sozinha após UPDATE/VACUUM.
+  // `.sort()` seguro: os 3 são arrays NOVOS (montados no push acima), não o prop.
+  // Em atencao/olhar o comparator manda "sem nota" pro fim em vez de empatá-lo com 0% real
+  // — um líder sem nota entra nesses baldes pela via `tasks_overdue`/`tasks_stuck` (nunca
+  // por badPct, que o guard de null barra), então os dois convivem MESMO ali.
+  buckets.atencao.sort(byRateNoScoreLast);
+  buckets.olhar.sort(byRateNoScoreLast);
+  buckets.ritmo.sort(byClosedThenName);
 
   if (scorecards.length === 0) {
     return (

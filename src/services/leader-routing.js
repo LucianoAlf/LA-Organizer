@@ -23,6 +23,14 @@
 const UNITS = new Set(['barra', 'campo_grande', 'recreio']);
 const LEADER_ROLES = new Set(['manager', 'coordinator', 'director']);
 
+// Desempate DETERMINÍSTICO dentro de cada tier. O loader (governance-edges.js) não tem
+// ORDER BY em nenhuma query → a ordem do Postgres é a do heap e muda após UPDATE/VACUUM.
+// Sem isto o "líder principal" (1º da lista) troca sozinho e o card do digest muda de dono.
+// NÃO mexe na prioridade ENTRE tiers — essa segue sendo a ordem de inserção no Map.
+const byNameThenId = (a, b) =>
+  String(a.full_name || '').localeCompare(String(b.full_name || ''), 'pt-BR') ||
+  String(a.id).localeCompare(String(b.id));
+
 /**
  * @param {object} collab  colaborador dono da tarefa (precisa de id, role, function_role, unit, explicit_leader_ids)
  * @param {object[]} allCollabs  todos os colaboradores (pra achar os líderes)
@@ -51,33 +59,25 @@ function resolveLeadersOf(collab, allCollabs) {
   if (!isSelfLeader) {
     // 1) lotado numa unidade → gerente da unidade (líder "de chão" principal)
     if (UNITS.has(unit)) {
-      for (const c of active) {
-        if (c.role === 'manager' && c.unit === unit) add(c);
-      }
+      for (const c of active.filter((c) => c.role === 'manager' && c.unit === unit).sort(byNameThenId)) add(c);
     }
     // 2) líderes do grupo vêm da tabela governance_leaders (group+unit), anexados no load
     // como group_leader_ids via groupLeaderIdsFor. Desacoplado do nível de acesso (uma
     // farmer pode liderar farmers da unidade dela sem ser gerente).
-    for (const lid of (Array.isArray(collab.group_leader_ids) ? collab.group_leader_ids : [])) {
-      const L = byId.get(lid);
-      if (L) add(L);
-    }
+    const groupIds = Array.isArray(collab.group_leader_ids) ? collab.group_leader_ids : [];
+    for (const L of groupIds.map((lid) => byId.get(lid)).filter(Boolean).sort(byNameThenId)) add(L);
   }
 
   // 4) override manual (matriz editável, governance_edges) — soma sem dominar a ordem.
   // O CEO PODE ser líder explícito (opt-in do Diretor: "Ana reporta a mim e à Rose").
   // As regras AUTOMÁTICAS (1-2) nunca adicionam o CEO; o ENVIO do digest por-líder
   // também o pula (dispatcher ~L.2610/2797), pois ele já tem o report completo.
-  for (const lid of (Array.isArray(collab.explicit_leader_ids) ? collab.explicit_leader_ids : [])) {
-    const L = byId.get(lid);
-    if (L) add(L);
-  }
+  const explicitIds = Array.isArray(collab.explicit_leader_ids) ? collab.explicit_leader_ids : [];
+  for (const L of explicitIds.map((lid) => byId.get(lid)).filter(Boolean).sort(byNameThenId)) add(L);
 
   // 5) fallback: ninguém resolveu (órfão ou ele-mesmo líder) → CEO
   if (leaders.size === 0) {
-    for (const c of active) {
-      if (c.is_ceo) add(c);
-    }
+    for (const c of active.filter((c) => c.is_ceo).sort(byNameThenId)) add(c);
   }
 
   return Array.from(leaders.values());

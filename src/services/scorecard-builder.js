@@ -13,7 +13,15 @@
 //   - insights: 1 frase gerada por LLM (max 18 palavras)
 
 const supabase = require('../supabase/client');
-const ai = require('../ai/provider');
+const { resolveLeadersOf } = require('./leader-routing');
+// Funções PURAS de renderização vivem em scorecard-render.js (sem require de banco —
+// permite testar sem src/supabase/client, que é gitignored e não existe local).
+// Re-exportadas abaixo pra nenhum caller (monday-scorecard.js) precisar mudar.
+const { renderForDirector, renderForLeader, pctOf, CATEGORY_LABELS } = require('./scorecard-render');
+// Mesmo motivo: deltas + insight 💡 não dependem de banco (só de ai/provider) e ficaram
+// intestáveis presos aqui. `generateInsight` é re-exportado; `diffMetrics` alimenta o
+// computeDelta abaixo (a QUERY da semana anterior é que precisa ficar neste módulo).
+const { diffMetrics, generateInsight } = require('./scorecard-metrics');
 
 /**
  * Range YYYY-MM-DD da SEMANA ANTERIOR (segunda a domingo) à data dada.
@@ -36,17 +44,32 @@ function lastWeekRange(now = new Date()) {
 }
 
 /**
- * Computa as 5 métricas pra UM líder em UMA semana.
+ * Computa as métricas pra UM líder em UMA semana, no escopo do CONJUNTO:
+ * o líder + as pessoas de quem ele é o líder PRINCIPAL (§3.3 da spec 16/07).
+ *
+ * Antes media `assigned_to = leaderId` — só o líder como EXECUTOR. O time nunca entrava
+ * na conta: as 9 atrasadas do Peterson (collaborator) não pintavam a Juliana, que é a
+ * líder dele. Era a informação que faltava no digest inteiro.
  */
-async function computeScorecard(leaderId, weekStart, weekEnd) {
+async function computeScorecard(leaderId, weekStart, weekEnd, allCollabs) {
   const weekStartIso = `${weekStart}T00:00:00-03:00`;
   const weekEndIso   = `${weekEnd}T23:59:59-03:00`;
+
+  // Conjunto = ele + quem tem ele como líder PRINCIPAL (1º não-CEO). O principal é
+  // determinístico desde o desempate por tier em leader-routing.js.
+  const list = Array.isArray(allCollabs) ? allCollabs : [];
+  const scope = [leaderId];
+  for (const c of list) {
+    if (c.id === leaderId) continue;
+    const principal = resolveLeadersOf(c, list).find((l) => !l.is_ceo);
+    if (principal && principal.id === leaderId) scope.push(c.id);
+  }
 
   // 1. Fechadas na semana (qualquer task fechada com completed_at dentro)
   const { data: closed } = await supabase
     .from('tasks')
     .select('id, title, category')
-    .eq('assigned_to', leaderId)
+    .in('assigned_to', scope)
     .eq('status', 'done')
     .gte('completed_at', weekStartIso)
     .lte('completed_at', weekEndIso);
@@ -55,7 +78,7 @@ async function computeScorecard(leaderId, weekStart, weekEnd) {
   const { data: open } = await supabase
     .from('tasks')
     .select('id, title, due_date, category, coordination_request_count, status')
-    .eq('assigned_to', leaderId)
+    .in('assigned_to', scope)
     .eq('data_classification', 'real')
     .in('status', ['pending', 'in_progress', 'awaiting_confirmation']);
 
@@ -65,10 +88,11 @@ async function computeScorecard(leaderId, weekStart, weekEnd) {
   // 4. Stuck: 3+ cobranças sem efeito
   const stuck = (open || []).filter(t => (t.coordination_request_count || 0) >= 3);
 
-  // 5. Closure rate
+  // 5. Closure rate — §7.3: sem denominador NÃO é 100%, é SEM NOTA. `? 1.0` fazia a
+  // Rose aparecer 🟢 100% liderando 4 pessoas e sem ter fechado nada.
   const closedCount = closed?.length || 0;
   const denominator = closedCount + overdue.length;
-  const closure_rate = denominator === 0 ? 1.0 : closedCount / denominator;
+  const closure_rate = denominator === 0 ? null : closedCount / denominator;
 
   // 6. Top bottlenecks (categorias dominantes em overdue+stuck)
   const catCounts = {};
@@ -85,7 +109,7 @@ async function computeScorecard(leaderId, weekStart, weekEnd) {
     tasks_closed: closedCount,
     tasks_overdue: overdue.length,
     tasks_stuck: stuck.length,
-    closure_rate: Math.round(closure_rate * 100) / 100,
+    closure_rate: closure_rate === null ? null : Math.round(closure_rate * 100) / 100,
     top_bottlenecks,
   };
 }
@@ -107,41 +131,7 @@ async function computeDelta(leaderId, weekStart, currentMetrics) {
 
   if (!prevSc) return { is_first_week: true };
 
-  return {
-    closure_rate_delta: Math.round((currentMetrics.closure_rate - prevSc.closure_rate) * 100) / 100,
-    closed_delta: currentMetrics.tasks_closed - prevSc.tasks_closed,
-    overdue_delta: currentMetrics.tasks_overdue - prevSc.tasks_overdue,
-    stuck_delta: currentMetrics.tasks_stuck - prevSc.tasks_stuck,
-  };
-}
-
-/**
- * Gera 1 frase de insight via LLM. Fallback determinístico em caso de falha.
- */
-async function generateInsight(leader, metrics, delta) {
-  const closurePct = Math.round(metrics.closure_rate * 100);
-  const deltaTxt = delta.is_first_week
-    ? '(primeira semana)'
-    : `(${delta.closure_rate_delta >= 0 ? '+' : ''}${Math.round(delta.closure_rate_delta * 100)}pp vs anterior)`;
-
-  const sys = `Você é analista de operações. Gere UMA frase em PT-BR (max 18 palavras) que resume o desempenho semanal e indica tendência. SEM emoji. SEM aspas. SEM começar com "Resumo". Direto ao ponto.`;
-  const userMsg = `Líder: ${leader.full_name}
-Fechamento: ${closurePct}% ${deltaTxt}
-Fechou: ${metrics.tasks_closed} | Atrasadas: ${metrics.tasks_overdue} | Travadas 3+: ${metrics.tasks_stuck}
-Bottleneck principal: ${metrics.top_bottlenecks[0]?.category || 'nenhum claro'}`;
-
-  try {
-    const r = await ai.chat(sys, [{ role: 'user', content: userMsg }]);
-    const txt = String(r?.text || r?.reply || r?.content || '').trim();
-    if (txt && txt.length > 8 && txt.length < 250) return txt;
-  } catch (err) {
-    console.warn('[scorecard-builder] insight LLM err:', err.message);
-  }
-  // Fallback
-  if (metrics.tasks_stuck >= 3) return `Travamentos crônicos em ${metrics.tasks_stuck} itens — recomendo 1:1 dirigido.`;
-  if (closurePct >= 80) return `Semana sólida (${closurePct}% fechamento). Manter o ritmo.`;
-  if (closurePct < 50) return `Fechamento baixo (${closurePct}%) — investigar carga ou bloqueios.`;
-  return `Fechamento razoável (${closurePct}%). ${metrics.tasks_overdue} atrasadas pra destravar.`;
+  return diffMetrics(currentMetrics, prevSc);
 }
 
 /**
@@ -170,162 +160,6 @@ async function persistScorecard(leaderId, weekStart, weekEnd, metrics, delta, in
     return null;
   }
   return data?.id || null;
-}
-
-const CATEGORY_LABELS = {
-  la_music: 'LA Music', mentoria: 'Mentoria', pedagogico: 'Pedagógico',
-  operacional: 'Operacional', operational: 'Operacional', comercial: 'Comercial',
-  acolhimento: 'Acolhimento', marketing: 'Marketing', sem_categoria: 'Sem categoria',
-  pessoal: 'Pessoal',
-};
-
-/**
- * Renderiza versão CONSOLIDADA pro director — hierarquia CEO-first.
- * CEO deve conseguir escanear em <10s: quem precisa de ação vs quem está bem.
- *
- * Classificação:
- *   🔴 Atenção: closure < 60% OU 3+ atrasadas OU 2+ travadas (precisa ter tarefas)
- *   🟡 Olhar:   closure < 85% OU 1+ atrasadas (precisa ter tarefas)
- *   🟢 Ritmo:   todos os demais (incluindo sem tarefas registradas)
- */
-function renderForDirector(scorecards, leadersById) {
-  if (!scorecards || scorecards.length === 0) return null;
-
-  const SEP  = '─────────────────────';
-  const SEP2 = '━━━━━━━━━━━━━━━━━━━━━';
-
-  // Classificar cada líder por urgência
-  const atencao = [], olhar = [], ritmo = [];
-  for (const sc of scorecards) {
-    const leader = leadersById.get(sc.leader_id);
-    if (!leader) continue;
-    const hasNoTasks = sc.tasks_closed === 0 && sc.tasks_overdue === 0 && sc.tasks_stuck === 0;
-    if (!hasNoTasks && (sc.closure_rate < 0.60 || sc.tasks_overdue >= 3 || sc.tasks_stuck >= 2)) {
-      atencao.push({ sc, leader });
-    } else if (!hasNoTasks && (sc.closure_rate < 0.85 || sc.tasks_overdue >= 1)) {
-      olhar.push({ sc, leader });
-    } else {
-      ritmo.push({ sc, leader });
-    }
-  }
-
-  // Ordena grupos: pior primeiro em atenção/olhar, mais tarefas primeiro em ritmo
-  atencao.sort((a, b) => a.sc.closure_rate - b.sc.closure_rate);
-  olhar.sort((a, b) => a.sc.closure_rate - b.sc.closure_rate);
-  ritmo.sort((a, b) => b.sc.tasks_closed - a.sc.tasks_closed);
-
-  const _name = l => (l.preferred_name || l.full_name || '').split(' ')[0];
-
-  const lines = [];
-  lines.push('📊 *Scorecard semanal — seus líderes*');
-  lines.push(SEP2);
-  lines.push('');
-
-  // --- 🔴 ATENÇÃO ---
-  if (atencao.length > 0) {
-    lines.push(`🔴 *Atenção — ${atencao.length} líder${atencao.length > 1 ? 'es' : ''}*`);
-    for (const { sc, leader } of atencao) {
-      const pct = Math.round(sc.closure_rate * 100);
-      const bot = sc.top_bottlenecks?.[0];
-      const botTxt = bot ? ` • ${CATEGORY_LABELS[bot.category] || bot.category}` : '';
-      const stuck = sc.tasks_stuck >= 2 ? ` • ${sc.tasks_stuck} travadas 3+` : '';
-      lines.push(`• *${_name(leader)}* — ${pct}% fechamento, ${sc.tasks_overdue} atrasada${sc.tasks_overdue !== 1 ? 's' : ''}${stuck}${botTxt}`);
-      if (sc.insights) lines.push(`  _${sc.insights}_`);
-    }
-    lines.push('');
-  }
-
-  // --- 🟡 OLHAR ---
-  if (olhar.length > 0) {
-    lines.push(SEP);
-    lines.push(`🟡 *Olhar de perto — ${olhar.length} líder${olhar.length > 1 ? 'es' : ''}*`);
-    for (const { sc, leader } of olhar) {
-      const pct = Math.round(sc.closure_rate * 100);
-      const bot = sc.top_bottlenecks?.[0];
-      const botTxt = bot ? ` • ${CATEGORY_LABELS[bot.category] || bot.category}` : '';
-      lines.push(`• *${_name(leader)}* — ${pct}%, ${sc.tasks_overdue} atrasada${sc.tasks_overdue !== 1 ? 's' : ''}${botTxt}`);
-    }
-    lines.push('');
-  }
-
-  // --- 🟢 NO RITMO ---
-  lines.push(SEP);
-  const ritmoLabel = `🟢 *No ritmo — ${ritmo.length} líder${ritmo.length > 1 ? 'es' : ''}*`;
-  lines.push(ritmoLabel);
-
-  // Destaca quem mais fechou; colapsa o resto numa linha
-  const comTarefas = ritmo.filter(r => r.sc.tasks_closed > 0).slice(0, 5);
-  const resto = ritmo.length - comTarefas.length;
-  if (comTarefas.length > 0) {
-    const inline = comTarefas.map(r => `${_name(r.leader)} ${r.sc.tasks_closed}✅`).join(' · ');
-    lines.push(inline + (resto > 0 ? ` · _+${resto} estáveis_` : ''));
-  } else if (ritmo.length > 0) {
-    lines.push(ritmo.map(r => _name(r.leader)).join(', '));
-  }
-
-  lines.push('');
-  lines.push(SEP2);
-  lines.push('_Versão individual de cada líder: enviada às 9h_');
-
-  return lines.join('\n').trim();
-}
-
-/**
- * Renderiza versão INDIVIDUAL pro próprio líder (sem comparar com outros).
- */
-function renderForLeader(scorecard, leader) {
-  const firstName = (leader.preferred_name || leader.full_name || '').split(' ')[0];
-  const hasNoTasks = scorecard.tasks_closed === 0 && scorecard.tasks_overdue === 0 && scorecard.tasks_stuck === 0;
-  const pct = Math.round(scorecard.closure_rate * 100);
-  const SEP = '─────────────────────';
-
-  const lines = [`📊 *Sua semana, ${firstName}*`, SEP, ''];
-
-  if (hasNoTasks) {
-    lines.push('Nenhuma tarefa registrada esta semana.');
-    lines.push('_Quer começar a registrar? É só me mandar o que tá no seu radar._');
-    return lines.join('\n');
-  }
-
-  // Métricas principais
-  lines.push(`✅ *${scorecard.tasks_closed}* fechada${scorecard.tasks_closed !== 1 ? 's' : ''} — *${pct}% de fechamento*`);
-  if (scorecard.tasks_overdue > 0) {
-    lines.push(`⚠️ *${scorecard.tasks_overdue}* ainda abert${scorecard.tasks_overdue !== 1 ? 'as' : 'a'}/atrasada${scorecard.tasks_overdue !== 1 ? 's' : ''}`);
-  }
-  if (scorecard.tasks_stuck > 0) {
-    lines.push(`🔒 *${scorecard.tasks_stuck}* travada${scorecard.tasks_stuck !== 1 ? 's' : ''} com 3+ cobranças — vamos destravar?`);
-  }
-
-  // Bottleneck
-  if (scorecard.top_bottlenecks?.[0]) {
-    const b = scorecard.top_bottlenecks[0];
-    lines.push('');
-    lines.push(`🎯 Padrão: *${CATEGORY_LABELS[b.category] || b.category}* concentrou ${b.count} pendência${b.count !== 1 ? 's' : ''}.`);
-  }
-
-  // Delta vs semana anterior
-  const delta = scorecard.delta_vs_prev || {};
-  if (!delta.is_first_week && delta.closure_rate_delta != null) {
-    lines.push('');
-    if (delta.closure_rate_delta >= 0.10) {
-      lines.push(`📈 Semana melhor que a anterior (+${Math.round(delta.closure_rate_delta * 100)}pp). Bora manter!`);
-    } else if (delta.closure_rate_delta <= -0.10) {
-      lines.push(`📉 ${Math.round(Math.abs(delta.closure_rate_delta * 100))}pp abaixo da semana anterior. Me chama se precisar destravar.`);
-    } else {
-      lines.push(`➡️ Estável vs semana anterior.`);
-    }
-  }
-
-  // Insight LLM (apenas se existir e for diferente do óbvio)
-  if (scorecard.insights && !scorecard.delta_vs_prev?.is_first_week) {
-    lines.push('');
-    lines.push(`_${scorecard.insights}_`);
-  }
-
-  lines.push('');
-  lines.push(SEP);
-  lines.push('_Quer conversar sobre essa semana? Me chama._');
-  return lines.join('\n');
 }
 
 module.exports = {
