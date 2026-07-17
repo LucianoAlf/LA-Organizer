@@ -9562,10 +9562,13 @@ async function processMessage(phone, text, raw = {}) {
       const _recurrence = _repete ? 'monthly' : 'once';
       const _vencOk = /^\d{4}-\d{2}-\d{2}/.test(_p.vencimento || '');
       await pendingIntents.resolveIntent(_boletoIntent.id, 'confirmed', `boleto→conta (${_recurrence})`);
+      // Categoriza pelo beneficiário + descrição (HDI SEGUROS / "seguro do carro" → seguros).
+      // safeCategory casa as keywords do categories.data.js; fallback 'outros' (não chuta 'moradia').
+      const _boletoCat = safeCategory(null, `${_p.beneficiario || ''} ${_p.descricao || ''}`.trim(), 'expense');
       try {
         await financeService.createBill(collab.id, {
           name: _p.descricao || _p.beneficiario, amount: _p.valor,
-          category: 'moradia', type: 'expense',
+          category: _boletoCat || 'outros', type: 'expense',
           recurrence: _recurrence,
           due_date: _recurrence === 'once' && _vencOk ? _p.vencimento : null,
           due_day: _recurrence === 'monthly' && _vencOk ? Number(_p.vencimento.slice(8, 10)) : undefined,

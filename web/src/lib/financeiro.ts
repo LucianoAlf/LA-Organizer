@@ -373,7 +373,7 @@ export function groupExpenseBillsByStatus(bills: PfBill[], today = new Date()): 
 
 export async function listBills(collaboratorId: string) {
   const { data, error } = await supabase.from('pf_bills')
-    .select('id, name, amount, due_day, category, type, status, last_paid_at, recurrence, due_date')
+    .select('id, name, amount, due_day, category, type, status, last_paid_at, recurrence, due_date, payment_method, barcode, pix_key')
     .eq('collaborator_id', collaboratorId).eq('is_active', true).order('due_day');
   if (error) throw error;
   return (data as PfBill[]) ?? [];
