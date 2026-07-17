@@ -61,4 +61,22 @@ function pickInvoiceCard({ emissor, userText, cards, cardIdHint } = {}) {
   return { status: 'notfound', candidates: list };
 }
 
-module.exports = { pickInvoiceCard };
+// A fala do usuário deve RE-ESTAGIAR a prévia no cartão nomeado, em vez de commitar?
+//
+// Regra: NINGUÉM CONFIRMA UMA PRÉVIA QUE NÃO VIU. Quando a fala nomeia um cartão diferente
+// do alvo atual da intent (inclusive quando ainda não há alvo), o usuário está DESAMBIGUANDO
+// — ele nunca viu a prévia desse cartão, logo não pode ter confirmado ela.
+//
+// Rose 16/07 21:27: a mensagem de desambiguação promete "Responde tipo *lança no X* que eu te
+// mando a prévia pra conferir", mas detectInvoiceReply("lança no X") == 'commit_financeiro' e
+// o lançamento saía DIRETO, sem prévia. Ela digitou exatamente o que o TOM mandou digitar e
+// levou o lançamento na cara — o TOM mentiu na própria instrução que deu.
+//
+// cancel e commit_anotacoes MANDAM (nunca viram re-estágio, mesmo nomeando cartão).
+function shouldRestageCard({ decision, pick, currentCardId } = {}) {
+  if (decision && decision !== 'commit_financeiro') return false;
+  if (!pick || pick.status !== 'resolved' || pick.via !== 'user') return false;
+  return pick.card.id !== (currentCardId || null);
+}
+
+module.exports = { pickInvoiceCard, shouldRestageCard };

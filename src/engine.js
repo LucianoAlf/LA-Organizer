@@ -9482,7 +9482,10 @@ async function processMessage(phone, text, raw = {}) {
         // Itaú mas não tem "Itaú" no nome — foi exatamente o cartão que a Rose queria).
         const _nomesA = (_allCardsA || []).map((c) => c.name);
         console.log(`[Fatura] cartão não resolvido na abertura (${_pickA.status}, emissor="${_inv.emissor}") → perguntando, intent sem card_id`);
-        await whatsapp.sendMessage(phone, `📄 Li ${_inv.itens.length} compras da fatura *${_inv.emissor || 'importada'}* (total R$ ${_fmtTot}) — mas não sei de qual cartão ela é, então não vou chutar.\n\nTenho: *${_nomesA.join('*, *')}*.\nResponde tipo *lança no ${_nomesA[0]}* que eu te mando a prévia pra conferir.`);
+        // Emissor pode vir vazio OU literalmente "desconhecido" do Gemini — nos dois casos o
+        // nome sai da frase (Rose 16/07 21:26 leu "fatura *desconhecido*", parece defeito).
+        const _emiA = (_inv.emissor && !/desconhecid|indefinid|^n\/?a$/i.test(_inv.emissor)) ? ` *${_inv.emissor}*` : '';
+        await whatsapp.sendMessage(phone, `📄 Li ${_inv.itens.length} compras da fatura${_emiA} (total R$ ${_fmtTot}) — mas não sei de qual cartão ela é, então não vou chutar.\n\nTenho: *${_nomesA.join('*, *')}*.\nResponde tipo *lança no ${_nomesA[0]}* que eu te mando a prévia pra conferir.`);
         return;
       }
       const _preview = invoiceImport.buildInvoicePreview({
@@ -9501,28 +9504,34 @@ async function processMessage(phone, text, raw = {}) {
     const _invIntent = (_openIntents || []).find((i) => i.kind === 'invoice_import' && i.payload && i.payload.stage === 'awaiting_confirm');
     if (_invIntent) {
       const _decision = invoiceImport.detectInvoiceReply(text);
-      // === Correção de cartão com a fatura já aberta (Rose 16/07 01:54) ===
-      // Ela disse "Tom, é o cartão LATAM PASS. É para lançar somente o que falta. Lembra?" — o
-      // detector devolve null (tem "?", e pergunta nunca commita: certo), então a correção NÃO
-      // tinha para onde ir: virou prosa do LLM ("vou mandar a prévia agora") enquanto a intent
-      // errada seguia viva, e o "sim" seguinte caiu nela. Aqui a correção ganha executor: se a
-      // fala nomeia UM cartão diferente do alvo atual, supersede a intent e re-manda a prévia no
-      // cartão certo. Só roda quando o detector NÃO decidiu — nunca atropela commit/cancel.
-      if (!_decision) {
-        const { pickInvoiceCard: _pickCardC } = require('./finance/pick-invoice-card');
+      // === A fala nomeia um cartão → DESAMBIGUA e manda a prévia (nunca commita direto) ===
+      // NINGUÉM CONFIRMA UMA PRÉVIA QUE NÃO VIU. Dois casos reais, ambos da Rose em 16/07:
+      //  01:54 — "Tom, é o cartão LATAM PASS. É para lançar somente o que falta. Lembra?" → o
+      //    detector devolve null (tem "?", e pergunta nunca commita: certo), e a correção não
+      //    tinha para onde ir: virou prosa do LLM enquanto a intent errada seguia viva, e o
+      //    "sim" seguinte caiu nela.
+      //  21:27 — "lança no Cartão MP Matheus" → o detector lê 'commit_financeiro' e lançava
+      //    DIRETO, sem prévia. Mas a mensagem de desambiguação promete, com estas palavras,
+      //    "Responde tipo *lança no X* que eu te mando a prévia pra conferir": ela digitou
+      //    exatamente o que o TOM mandou digitar e levou o lançamento na cara. O TOM mentiu na
+      //    própria instrução que deu.
+      // Por isso o gate é o CARTÃO, não a decisão: nomear cartão != alvo atual (inclusive
+      // quando não há alvo) é DESAMBIGUAR. shouldRestageCard decide; cancel/anotações mandam.
+      {
+        const { pickInvoiceCard: _pickCardC, shouldRestageCard } = require('./finance/pick-invoice-card');
         const _allCardsC = await financeService.listCards(collab.id);
         const _namedC = _pickCardC({ userText: text, cards: _allCardsC });
-        if (_namedC.status === 'resolved' && _namedC.via === 'user' && _namedC.card.id !== _invIntent.payload.card_id) {
+        if (shouldRestageCard({ decision: _decision, pick: _namedC, currentCardId: _invIntent.payload.card_id })) {
           const _payC = _invIntent.payload;
-          await pendingIntents.resolveIntent(_invIntent.id, 'superseded', `usuário corrigiu o cartão → ${_namedC.card.name}`);
+          await pendingIntents.resolveIntent(_invIntent.id, 'superseded', `usuário nomeou o cartão → ${_namedC.card.name}`);
           const _newIntentId = await pendingIntents.openIntent(collab.id, 'invoice_import',
             { ..._payC, stage: 'awaiting_confirm', card_id: _namedC.card.id, card_name: _namedC.card.name }, 'lançar fatura?');
           if (!_newIntentId) {
-            console.error('[Fatura] CRÍTICO: openIntent (correção de cartão) retornou null — a intent antiga já foi superseded.');
+            console.error('[Fatura] CRÍTICO: openIntent (desambiguação de cartão) retornou null — a intent antiga já foi superseded.');
             await whatsapp.sendMessage(phone, `Entendi que é o *${_namedC.card.name}*, mas tive um problema técnico pra reabrir a confirmação. Me manda a fatura de novo, por favor.`);
             return;
           }
-          console.log(`[Fatura] cartão corrigido pela fala: ${_payC.card_name || '(sem cartão)'} → ${_namedC.card.name}`);
+          console.log(`[Fatura] cartão definido pela fala: ${_payC.card_name || '(sem cartão)'} → ${_namedC.card.name} (decision=${_decision || 'null'}) → prévia, sem commit`);
           await whatsapp.sendMessage(phone, invoiceImport.buildInvoicePreview({
             emissor: _payC.emissor, vencimento: _payC.vencimento, total: _payC.total,
             cardName: _namedC.card.name, itens: _payC.itens, dupWarning: null,

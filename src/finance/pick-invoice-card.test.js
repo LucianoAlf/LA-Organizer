@@ -107,3 +107,56 @@ test('fala cita DOIS cartões e o hint não é nenhum → ambíguo (hint contrad
   assert.strictEqual(r.status, 'ambiguous');
   assert.strictEqual(r.candidates.length, 2);
 });
+
+// === Regressão Rose 16/07 21:27 (FIN-INVOICE-PREVIEW-PROMISED-BUT-COMMITTED) ===
+// A msg de desambiguação promete: "Responde tipo *lança no X* que eu te mando a prévia pra
+// conferir." Mas detectInvoiceReply("lança no X") == 'commit_financeiro' → lançava DIRETO,
+// sem prévia. Ela escreveu exatamente o que o TOM mandou escrever e levou o lançamento na
+// cara. Regra: ninguém confirma uma prévia que não viu — nomear cartão é DESAMBIGUAR.
+const { shouldRestageCard } = require('./pick-invoice-card');
+
+// Cartões reais da Rose no print de 16/07 21:26
+const ROSE_MP = [
+  { id: 'inter', name: 'Cartão Inter Matheus' },
+  { id: 'matheus', name: 'Cartão Itaú Matheus' },
+  { id: 'rose', name: 'Cartão Itaú Rose' },
+  { id: 'mercpago', name: 'Cartão Mercado Pago' },
+  { id: 'mp', name: 'Cartão MP Matheus' },
+  { id: 'nubank', name: 'Cartão Nubank' },
+  { id: 'latam', name: 'Latam PASS' },
+];
+
+test('BUG 21:27: "lança no X" com intent SEM cartão → re-estagia (prévia), não commita', () => {
+  const pick = pickInvoiceCard({ userText: 'lança no Cartão MP Matheus', cards: ROSE_MP });
+  assert.strictEqual(shouldRestageCard({ decision: 'commit_financeiro', pick, currentCardId: null }), true);
+});
+
+test('"sim" (não nomeia cartão) com prévia já vista → commita normalmente', () => {
+  const pick = pickInvoiceCard({ userText: 'sim', cards: ROSE_MP, cardIdHint: 'mp' });
+  assert.strictEqual(shouldRestageCard({ decision: 'commit_financeiro', pick, currentCardId: 'mp' }), false);
+});
+
+test('"lança no X" com a prévia DO X já na tela → commita (ele viu e confirmou)', () => {
+  const pick = pickInvoiceCard({ userText: 'lança no Cartão MP Matheus', cards: ROSE_MP, cardIdHint: 'mp' });
+  assert.strictEqual(shouldRestageCard({ decision: 'commit_financeiro', pick, currentCardId: 'mp' }), false);
+});
+
+test('viu prévia do Nubank e diz "lança no MP Matheus" → re-estagia no MP (troca de alvo)', () => {
+  const pick = pickInvoiceCard({ userText: 'lança no Cartão MP Matheus', cards: ROSE_MP, cardIdHint: 'nubank' });
+  assert.strictEqual(shouldRestageCard({ decision: 'commit_financeiro', pick, currentCardId: 'nubank' }), true);
+});
+
+test('cancel VENCE mesmo nomeando cartão ("cancela, era do Nubank")', () => {
+  const pick = pickInvoiceCard({ userText: 'cancela, era do Cartão Nubank', cards: ROSE_MP });
+  assert.strictEqual(shouldRestageCard({ decision: 'cancel', pick, currentCardId: null }), false);
+});
+
+test('commit_anotacoes VENCE (não vira re-estágio)', () => {
+  const pick = pickInvoiceCard({ userText: 'salva nas anotações o Cartão Nubank', cards: ROSE_MP });
+  assert.strictEqual(shouldRestageCard({ decision: 'commit_anotacoes', pick, currentCardId: null }), false);
+});
+
+test('fala sem cartão e sem decisão → nada a re-estagiar', () => {
+  const pick = pickInvoiceCard({ userText: 'blz', cards: ROSE_MP });
+  assert.strictEqual(shouldRestageCard({ decision: null, pick, currentCardId: null }), false);
+});
