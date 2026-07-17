@@ -24,10 +24,12 @@ export interface PfTransaction {
   purchase_group?: string | null;
   is_adjustment?: boolean; // true = acerto de caixa; conta no saldo, mas fora dos relatórios
 }
+export type PfPaymentMethod = 'boleto' | 'pix' | 'outro';
 export interface PfBill {
   id: string; name: string; amount: number; due_day: number; category: PfCategory;
   type: PfBillType; status: 'pending' | 'paid' | 'overdue'; last_paid_at: string | null;
   recurrence: 'monthly' | 'once'; due_date: string | null;
+  payment_method?: PfPaymentMethod | null; barcode?: string | null; pix_key?: string | null;
 }
 // Override de valor de uma conta fixa para um mês específico (pf_bill_overrides).
 export interface PfBillOverride {
@@ -421,13 +423,16 @@ export async function deleteBillOverride(collaboratorId: string, billId: string,
     .delete().eq('collaborator_id', collaboratorId).eq('bill_id', billId).eq('competencia', competencia);
   if (error) throw error;
 }
-export async function createBill(collaboratorId: string, input: { name: string; amount: number; due_day?: number; category: PfCategory; type?: PfBillType; remind_days_before?: number; recurrence?: 'monthly' | 'once'; due_date?: string | null }) {
+export async function createBill(collaboratorId: string, input: { name: string; amount: number; due_day?: number; category: PfCategory; type?: PfBillType; remind_days_before?: number; recurrence?: 'monthly' | 'once'; due_date?: string | null; payment_method?: PfPaymentMethod | null; barcode?: string | null; pix_key?: string | null }) {
   const recurrence = input.recurrence === 'once' ? 'once' : 'monthly';
   const row: Record<string, unknown> = {
     collaborator_id: collaboratorId, name: input.name, amount: input.amount,
     category: input.category, type: input.type ?? 'expense',
     remind_days_before: input.remind_days_before ?? 2, recurrence,
   };
+  if (input.payment_method !== undefined) row.payment_method = input.payment_method;
+  if (input.barcode !== undefined) row.barcode = input.barcode;
+  if (input.pix_key !== undefined) row.pix_key = input.pix_key;
   if (recurrence === 'once') {
     if (!input.due_date) throw new Error('Conta única exige data de vencimento.');
     row.due_date = input.due_date;
@@ -485,9 +490,10 @@ export async function payBill(
   if (error) throw error;
 }
 
-export async function updateBill(collaboratorId: string, id: string, patch: { name?: string; amount?: number; due_day?: number; category?: PfCategory; type?: PfBillType; remind_days_before?: number; recurrence?: 'monthly' | 'once'; due_date?: string | null }) {
+export async function updateBill(collaboratorId: string, id: string, patch: { name?: string; amount?: number; due_day?: number; category?: PfCategory; type?: PfBillType; remind_days_before?: number; recurrence?: 'monthly' | 'once'; due_date?: string | null; payment_method?: PfPaymentMethod | null; barcode?: string | null; pix_key?: string | null }) {
   const allowed: Record<string, unknown> = {};
-  for (const k of ['name', 'amount', 'due_day', 'category', 'type', 'remind_days_before', 'recurrence', 'due_date'] as const) {
+  // whitelist: chave NOVA precisa entrar aqui OU é descartada em silêncio (paridade de payload).
+  for (const k of ['name', 'amount', 'due_day', 'category', 'type', 'remind_days_before', 'recurrence', 'due_date', 'payment_method', 'barcode', 'pix_key'] as const) {
     if (patch[k] !== undefined) allowed[k] = patch[k];
   }
   const { data, error } = await supabase.from('pf_bills')

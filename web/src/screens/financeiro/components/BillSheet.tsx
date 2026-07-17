@@ -4,6 +4,7 @@ import { Button } from '../../../components/Button';
 import { CustomSelect } from '../../../components/CustomSelect';
 import { DateInput } from '../../../components/DateInput';
 import { Field } from '../../../components/Field';
+import { CopyButton } from '../../../components/CopyButton';
 import { useAccounts, useBillPayments, useCards, useCategories, useCreateBill, useDeactivateBill, useUpdateBill } from '../../../hooks/useFinanceiro';
 import type { PfBill, PfBillType, PfCategory } from '../../../lib/financeiro';
 
@@ -77,6 +78,8 @@ export function BillSheet({ open, onClose, initial }: BillSheetProps) {
   const [dueDay, setDueDay] = useState<string>('10');
   const [dueDate, setDueDate] = useState<string>('');
   const [category, setCategory] = useState<PfCategory>('moradia');
+  const [paymentMethod, setPaymentMethod] = useState<'boleto' | 'pix' | 'outro' | ''>('');
+  const [payCode, setPayCode] = useState(''); // código de barras OU chave PIX, conforme a forma
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -89,6 +92,9 @@ export function BillSheet({ open, onClose, initial }: BillSheetProps) {
     setDueDay(initial?.due_day != null ? String(initial.due_day) : '10');
     setDueDate(rec === 'once' ? (initial?.due_date ?? '') : todayYmd());
     setCategory(initial?.category ?? 'moradia');
+    const pm = initial?.payment_method ?? '';
+    setPaymentMethod(pm);
+    setPayCode(pm === 'pix' ? (initial?.pix_key ?? '') : pm === 'boleto' ? (initial?.barcode ?? '') : '');
     setError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initial]);
@@ -97,6 +103,18 @@ export function BillSheet({ open, onClose, initial }: BillSheetProps) {
     setType(next);
     if (next === 'expense' && !expenseCats.find((o) => o.value === category)) setCategory('moradia');
     if (next === 'income' && !incomeCats.find((o) => o.value === category)) setCategory('salario');
+  }
+
+  // Monta os campos de forma de pagamento conforme a forma escolhida (só despesa).
+  // boleto → barcode; pix → pix_key; outro/vazio → limpa os dois. Uma forma por conta.
+  function payFields() {
+    if (type !== 'expense' || !paymentMethod) return { payment_method: null, barcode: null, pix_key: null };
+    const code = payCode.trim() || null;
+    return {
+      payment_method: paymentMethod,
+      barcode: paymentMethod === 'boleto' ? code : null,
+      pix_key: paymentMethod === 'pix' ? code : null,
+    };
   }
 
   async function submit() {
@@ -108,11 +126,11 @@ export function BillSheet({ open, onClose, initial }: BillSheetProps) {
       if (recurrence === 'monthly') {
         const dd = Number(dueDay);
         if (!Number.isInteger(dd) || dd < 1 || dd > 31) return setError('Dia precisa ser entre 1 e 31.');
-        await createMut.mutateAsync({ name: name.trim(), amount, due_day: dd, due_date: null, recurrence: 'monthly', category, type });
+        await createMut.mutateAsync({ name: name.trim(), amount, due_day: dd, due_date: null, recurrence: 'monthly', category, type, ...payFields() });
       } else {
         if (!dueDate) return setError('Informe a data de vencimento.');
         const dd = Number(dueDate.slice(8, 10));
-        await createMut.mutateAsync({ name: name.trim(), amount, recurrence: 'once', due_date: dueDate, due_day: dd, category, type });
+        await createMut.mutateAsync({ name: name.trim(), amount, recurrence: 'once', due_date: dueDate, due_day: dd, category, type, ...payFields() });
       }
       onClose();
     } catch (e) {
@@ -130,11 +148,11 @@ export function BillSheet({ open, onClose, initial }: BillSheetProps) {
       if (recurrence === 'monthly') {
         const dd = Number(dueDay);
         if (!Number.isInteger(dd) || dd < 1 || dd > 31) return setError('Dia precisa ser entre 1 e 31.');
-        await updateMut.mutateAsync({ id: initial.id, patch: { name: name.trim(), amount, due_day: dd, due_date: null, recurrence: 'monthly', category, type } });
+        await updateMut.mutateAsync({ id: initial.id, patch: { name: name.trim(), amount, due_day: dd, due_date: null, recurrence: 'monthly', category, type, ...payFields() } });
       } else {
         if (!dueDate) return setError('Informe a data de vencimento.');
         const dd = Number(dueDate.slice(8, 10));
-        await updateMut.mutateAsync({ id: initial.id, patch: { name: name.trim(), amount, recurrence: 'once', due_date: dueDate, due_day: dd, category, type } });
+        await updateMut.mutateAsync({ id: initial.id, patch: { name: name.trim(), amount, recurrence: 'once', due_date: dueDate, due_day: dd, category, type, ...payFields() } });
       }
       onClose();
     } catch (e) {
@@ -239,6 +257,36 @@ export function BillSheet({ open, onClose, initial }: BillSheetProps) {
             <CustomSelect value={category} options={categoryOptions} onChange={(v) => setCategory(v as PfCategory)} />
           </Field>
         </div>
+
+        {type === 'expense' && (
+          <Field label="Forma de pagamento">
+            <CustomSelect
+              value={paymentMethod || 'nenhum'}
+              options={[
+                { value: 'nenhum', label: '— não definido —' },
+                { value: 'boleto', label: '💳 Boleto (código de barras)' },
+                { value: 'pix', label: '⚡ PIX (chave)' },
+                { value: 'outro', label: '🔁 Outro (débito, etc.)' },
+              ]}
+              onChange={(v) => { setPaymentMethod(v === 'nenhum' ? '' : (v as 'boleto' | 'pix' | 'outro')); }}
+            />
+          </Field>
+        )}
+
+        {type === 'expense' && (paymentMethod === 'boleto' || paymentMethod === 'pix') && (
+          <Field label={paymentMethod === 'boleto' ? 'Código de barras' : 'Chave PIX'} sub={paymentMethod === 'boleto' ? 'A linha digitável do boleto.' : 'Chave PIX ou o "copia e cola".'}>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={payCode}
+                onChange={(e) => setPayCode(e.target.value)}
+                placeholder={paymentMethod === 'boleto' ? '00000.00000 00000.000000 …' : 'email, CPF, telefone ou copia-e-cola'}
+                className="w-full bg-bg-surface border border-border rounded-md p-2 text-fg focus:outline-none focus:border-tom"
+              />
+              {payCode.trim() && <CopyButton value={payCode.trim()} />}
+            </div>
+          </Field>
+        )}
 
         {error && <p className="text-body-sm text-danger">{error}</p>}
 

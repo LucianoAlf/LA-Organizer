@@ -44,9 +44,19 @@ function buildMonthlyFinance({ nome, receitas, despesas, goals = [], bills = [],
 function buildBillReminder({ nome, bill, mode, dias }) {
   const v = `R$${brl(bill.amount)}`;
   let cod = '';
-  if (bill.barcode && (mode === 'dia' || mode === 'atrasada')) {
-    const { formatLinhaDigitavel } = require('./boleto-parse');
-    cod = `\n\nCódigo pra copiar:\n\`${formatLinhaDigitavel(bill.barcode)}\``;
+  // Decide pela FORMA de pagamento (payment_method), não por "qual campo está preenchido".
+  // Conta antiga sem payment_method mas com barcode: o backfill setou payment_method='boleto'.
+  if (mode === 'dia' || mode === 'atrasada') {
+    if (bill.payment_method === 'boleto' && bill.barcode) {
+      const { formatLinhaDigitavel } = require('./boleto-parse');
+      cod = `\n\nCódigo pra copiar:\n\`${formatLinhaDigitavel(bill.barcode)}\``;
+    } else if (bill.payment_method === 'pix' && bill.pix_key) {
+      cod = `\n\nPIX pra copiar:\n\`${bill.pix_key}\``;
+    } else if (!bill.payment_method && bill.barcode) {
+      // compat: conta com barcode mas sem forma (antes do backfill) → trata como boleto
+      const { formatLinhaDigitavel } = require('./boleto-parse');
+      cod = `\n\nCódigo pra copiar:\n\`${formatLinhaDigitavel(bill.barcode)}\``;
+    }
   }
   if (mode === 'previo') return `💰 ${nome}, lembrete: ${bill.name} (${v}) vence em ${dias} dias (dia ${bill.due_day}).`;
   if (mode === 'dia') return `💰 Hoje vence: ${bill.name} (${v}). Já pagou? Responde "paguei ${bill.name}" pra eu marcar.${cod}`;

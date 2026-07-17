@@ -254,9 +254,11 @@ async function queryBudget(collaboratorId) {
 }
 
 // ---- Contas fixas (status derivado de last_paid_at, D6) ----
-async function createBill(collaboratorId, { name, amount, due_day, category, type = 'expense', remind_days_before = 2, recurrence = 'monthly', due_date = null, barcode = null }) {
+async function createBill(collaboratorId, { name, amount, due_day, category, type = 'expense', remind_days_before = 2, recurrence = 'monthly', due_date = null, barcode = null, payment_method = null, pix_key = null }) {
   const row = { collaborator_id: collaboratorId, name, amount, category, type, remind_days_before, recurrence };
   if (barcode) row.barcode = barcode; // linha digitável do boleto (só-dígitos); origem boleto-parse
+  if (payment_method) row.payment_method = payment_method; // boleto | pix | outro
+  if (pix_key) row.pix_key = pix_key;
   if (recurrence === 'once') {
     if (!due_date) throw new Error('conta única exige due_date');
     row.due_date = due_date;
@@ -323,6 +325,27 @@ async function findBills(collaboratorId, billName) {
     .ilike('name', `%${billName}%`);
   if (error) throw error;
   return data || [];
+}
+// Grava a forma de pagamento numa conta existente (PIX/boleto). Alf 17/07: "a chave pix da
+// conta X é Y". Alvo = a conta mais recente sem forma OU a nomeada. Retorna a bill ou null.
+// billNameHint null → pega a conta a pagar mais recente ainda SEM payment_method (o caso do
+// boleto recém-criado que o Alf completa com o PIX no turno seguinte).
+async function setBillPaymentMethod(collaboratorId, { billNameHint = null, payment_method, pix_key = null, barcode = null }) {
+  let q = supabase.from('pf_bills').select('id, name, payment_method, barcode, pix_key')
+    .eq('collaborator_id', collaboratorId).eq('is_active', true).eq('type', 'expense');
+  if (billNameHint) q = q.ilike('name', `%${billNameHint}%`);
+  else q = q.is('payment_method', null);
+  const { data, error } = await q.order('created_at', { ascending: false }).limit(1);
+  if (error) throw error;
+  const bill = (data || [])[0];
+  if (!bill) return null;
+  const patch = { payment_method };
+  if (pix_key) patch.pix_key = pix_key;
+  if (barcode) patch.barcode = barcode;
+  const { error: uerr } = await supabase.from('pf_bills')
+    .update(patch).eq('id', bill.id).eq('collaborator_id', collaboratorId);
+  if (uerr) throw uerr;
+  return { ...bill, ...patch };
 }
 // Remove (desativa) uma conta fixa. Soft-delete (is_active=false) — pf_bills não tem updated_at.
 async function deactivateBill(collaboratorId, billId) {
@@ -876,7 +899,7 @@ module.exports = {
   listRecentTransactions, queryTransactions, queryPeriodReport,
   monthCategoryTotal, querySummary,
   setBudget, getBudget, queryBudget,
-  createBill, findBills, deactivateBill, payBill, markBillPaid,
+  createBill, findBills, deactivateBill, payBill, markBillPaid, setBillPaymentMethod,
   createGoal, findGoal, listGoals,
   addGoalContribution, listGoalContributions, deleteGoalContribution, updateGoal, deactivateGoal,
   billsDueWithin, listActiveBills, billOverridesForMonth, setBillOverride, deleteBillOverride, pendingCardInvoices, monthlyReport, monthCategoryBreakdown, collaboratorsWithActivity, collaboratorsForFinanceRitual,

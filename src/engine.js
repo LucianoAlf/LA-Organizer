@@ -9570,6 +9570,7 @@ async function processMessage(phone, text, raw = {}) {
           due_date: _recurrence === 'once' && _vencOk ? _p.vencimento : null,
           due_day: _recurrence === 'monthly' && _vencOk ? Number(_p.vencimento.slice(8, 10)) : undefined,
           barcode: _p.barcode || null,
+          payment_method: 'boleto',
         });
       } catch (be) {
         console.error('[Boleto] createBill err:', be.message);
@@ -9583,6 +9584,36 @@ async function processMessage(phone, text, raw = {}) {
       return;
     }
   } catch (e) { console.warn('[Boleto] resposta err:', e.message); }
+
+  // === Intercept PIX: "copia e cola" colado OU "a chave pix da conta X é Y" → grava forma pix ===
+  // Alf 17/07. Completa uma conta a pagar com a chave PIX. Copia-e-cola (BR Code) é VALIDADO por
+  // CRC16 — adulterado reprova (não grava chave errada). Chave crua (email/CPF) não valida → grava
+  // como veio. Alvo: a conta nomeada ("da HDI") OU a mais recente ainda sem forma (o boleto que o
+  // Alf acabou de criar e completa com o PIX). NÃO move dinheiro.
+  try {
+    const pixParse = require('./finance/pix-parse');
+    const _cola = pixParse.extractPixCopiaECola(text);
+    const _chave = _cola || pixParse.extractPixKeyFromText(text);
+    if (_chave) {
+      if (_cola && !pixParse.validatePixBRCode(_cola).valid) {
+        await whatsapp.sendMessage(phone, '⚠️ Esse PIX copia-e-cola não conferiu (o código de verificação não bateu — pode ter vindo cortado). Manda de novo, por favor?');
+        return;
+      }
+      // nome da conta na fala: "da HDI", "conta HDI", "do seguro" — pega a palavra após "conta"/"da"/"do"
+      const _hint = (text.match(/\b(?:conta|d[aeo])\s+(?:conta\s+)?([A-Za-zÀ-ú][\wÀ-ú .-]{2,40})/i) || [])[1] || null;
+      const _upd = await financeService.setBillPaymentMethod(collab.id, {
+        billNameHint: _hint ? _hint.trim().replace(/\s+(é|e|pra|para|no|na)\b.*$/i, '').trim() : null,
+        payment_method: 'pix', pix_key: _chave,
+      });
+      if (_upd) {
+        console.log(`[PIX] chave gravada na conta "${_upd.name}": ${_cola ? 'copia-e-cola(CRC ok)' : 'chave crua'}`);
+        await whatsapp.sendMessage(phone, `✅ Guardei a chave PIX na conta *${_upd.name}*. No dia do vencimento eu te mando ela pra copiar. 👍`);
+        return;
+      }
+      // não achou conta-alvo → não inventa; deixa o LLM seguir (pode ser papo solto sobre pix)
+      console.log('[PIX] chave detectada mas nenhuma conta-alvo — seguindo pro LLM');
+    }
+  } catch (e) { console.warn('[PIX] intercept err:', e.message); }
 
   // === Intercept B: resposta ao preview de fatura (intent invoice_import aberta) ===
   try {
