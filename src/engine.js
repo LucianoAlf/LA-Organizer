@@ -9424,7 +9424,8 @@ async function processMessage(phone, text, raw = {}) {
       const _barcodeOk = !!(_linha && _val.valid);
       const _intentId = await pendingIntents.openIntent(collab.id, 'bill_from_boleto',
         { stage: 'awaiting_confirm', beneficiario: _b.beneficiario, valor: _b.valor, vencimento: _b.vencimento,
-          barcode: _barcodeOk ? _linha : null, descricao: _b.descricao || _b.beneficiario }, 'criar conta do boleto?');
+          barcode: _barcodeOk ? _linha : null, descricao: _b.descricao || _b.beneficiario,
+          veiculo: _b.veiculo || null }, 'criar conta do boleto?');
       if (!_intentId) {
         console.error('[Boleto] openIntent retornou null — confirmação não vai funcionar.');
         await whatsapp.sendMessage(phone, `🧾 Li o boleto (R$ ${Number(_b.valor || 0).toFixed(2)}), mas tive um problema técnico pra abrir a confirmação. Tenta de novo ou cadastra em Finanças → Contas.`);
@@ -9565,9 +9566,13 @@ async function processMessage(phone, text, raw = {}) {
       // Categoriza pelo beneficiário + descrição (HDI SEGUROS / "seguro do carro" → seguros).
       // safeCategory casa as keywords do categories.data.js; fallback 'outros' (não chuta 'moradia').
       const _boletoCat = safeCategory(null, `${_p.beneficiario || ''} ${_p.descricao || ''}`.trim(), 'expense');
+      // Nome LIMPO: "Seguro <carro>" quando o veículo veio impresso no boleto; seguro sem
+      // veículo → "Seguro do carro"/"Seguro <segurador>"; nunca o número da apólice (guard).
+      const { buildBoletoName } = require('./finance/boleto-name');
+      const _boletoNome = buildBoletoName({ beneficiario: _p.beneficiario, descricao: _p.descricao, veiculo: _p.veiculo });
       try {
         await financeService.createBill(collab.id, {
-          name: _p.descricao || _p.beneficiario, amount: _p.valor,
+          name: _boletoNome, amount: _p.valor,
           category: _boletoCat || 'outros', type: 'expense',
           recurrence: _recurrence,
           due_date: _recurrence === 'once' && _vencOk ? _p.vencimento : null,
@@ -9582,8 +9587,8 @@ async function processMessage(phone, text, raw = {}) {
       }
       const _dm = _vencOk ? `${_p.vencimento.slice(8, 10)}/${_p.vencimento.slice(5, 7)}` : '?';
       const _quando = _recurrence === 'once' ? `dia ${_dm}` : `todo dia ${_vencOk ? _p.vencimento.slice(8, 10) : '?'}`;
-      console.log(`[Boleto] conta criada: ${_p.descricao || _p.beneficiario} ${_recurrence} venc=${_dm} barcode=${!!_p.barcode}`);
-      await whatsapp.sendMessage(phone, `✅ Criei a conta *${_p.descricao || _p.beneficiario}* (R$ ${Number(_p.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}), ${_recurrence === 'once' ? 'única' : 'mensal'}, vencendo ${_quando}. Te lembro no dia${_p.barcode ? ' com o código pra copiar' : ''}. 👍`);
+      console.log(`[Boleto] conta criada: ${_boletoNome} ${_recurrence} venc=${_dm} barcode=${!!_p.barcode} veiculo=${_p.veiculo || '-'}`);
+      await whatsapp.sendMessage(phone, `✅ Criei a conta *${_boletoNome}* (R$ ${Number(_p.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}), ${_recurrence === 'once' ? 'única' : 'mensal'}, vencendo ${_quando}. Te lembro no dia${_p.barcode ? ' com o código pra copiar' : ''}. 👍`);
       return;
     }
   } catch (e) { console.warn('[Boleto] resposta err:', e.message); }

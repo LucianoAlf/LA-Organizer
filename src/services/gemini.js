@@ -290,9 +290,10 @@ async function analyzeBoleto(buffer, caption = '') {
   if (!buffer || !buffer.length) return { ok: false, reason: 'empty_buffer' };
   const prompt = [
     'Analise este PDF. Se for um BOLETO bancário ou de arrecadação (conta a pagar com linha digitável / código de barras), retorne SOMENTE um JSON válido (sem markdown, sem cercas) no formato:',
-    '{"isBoleto":true,"beneficiario":"<quem recebe>","valor":<number total a pagar>,"vencimento":"YYYY-MM-DD","linha_digitavel":"<a linha digitável EXATA, só dígitos e pontos como impressos>","descricao":"<o que é, ex: seguro do carro>"}',
+    '{"isBoleto":true,"beneficiario":"<quem recebe>","valor":<number total a pagar>,"vencimento":"YYYY-MM-DD","linha_digitavel":"<a linha digitável EXATA, só dígitos e pontos como impressos>","descricao":"<o que é, ex: seguro do carro>","veiculo":"<marca/modelo do carro, ou null>"}',
     'A linha digitável é a sequência de ~47-48 dígitos no topo do boleto. Copie-a EXATAMENTE como impressa. Se tiver QUALQUER dúvida sobre um único dígito, retorne "linha_digitavel":"" (string vazia) — melhor vazio que errado.',
     'valor = o valor total a pagar, em número com ponto decimal (ex: 995.93).',
+    'veiculo: preencha SOMENTE se for seguro de automóvel E a marca/modelo estiver LITERALMENTE escrita no documento (ex: "BYD Dolphin", "Honda Civic"). Se o veículo não estiver escrito, ou não for seguro de carro, retorne "veiculo":null. NUNCA adivinhe nem infira o veículo pelo nome da seguradora — melhor null que um carro errado.',
     'Se NÃO for boleto (ex: fatura de cartão de crédito, recibo, nota fiscal), retorne {"isBoleto":false}.',
     caption ? `Legenda do usuário: "${caption}".` : '',
   ].join('\n');
