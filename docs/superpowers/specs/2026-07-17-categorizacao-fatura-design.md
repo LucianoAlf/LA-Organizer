@@ -103,9 +103,12 @@ O schema ganha `"categoria":"<slug ou null>"` por item, com a lista de slugs vá
 
 > ⚠️ **O schema está em DOIS lugares:** `gemini.js:242` (PDF) e `gemini.js:267` (texto colado). Alterar **os dois**. Esta é a armadilha [[project_trap_a_duas_portas]] / "varrer os writers" que causou os 2 bugs desta semana (`FIN-INVOICE-CARD-GUESSED-AT-INTENT-OPEN`). O plano confirma por `grep`, não de cabeça.
 
-### 4. `src/finance/invoice-import.js` — a prévia mostra categoria
+### 4. `src/finance/invoice-import.js` — só o bloco novo
 
-`buildInvoicePreview` ganha o resumo por categoria + o bloco "Me confirma N coisas". **Parâmetro opcional: ausente → prévia de hoje, byte a byte** (os testes atuais seguem válidos).
+`buildInvoicePreview` **não muda a lista** — ela já imprime `${it.categoria || 'outros'}` por item (linha 133) e continua igual. Ganha **um parâmetro opcional** `unknowns` que, quando presente e não-vazio, insere o bloco *"Me confirma N coisas"* **entre o Total e o rodapé**.
+
+- `unknowns` ausente/vazio → **prévia byte a byte igual à de hoje**. Os testes atuais seguem válidos sem edição — essa é a trava de zero-regressão do formato.
+- O rodapé (`Responde *lançar*, *anotações* ou *cancelar*`) fica **intocado** e continua sendo a última linha.
 
 ### 5. `src/engine.js` — liga os fios (Intercept A e B)
 
@@ -125,31 +128,51 @@ PDF → Gemini (itens + categoria)
    → "1 é pedágio"         → upsert memória → re-resolve → PRÉVIA de novo
 ```
 
-## O texto (validado pelo Alf, 17/07)
+## O texto — ADITIVO, a lista NÃO muda (Alf, 17/07)
 
-Números do bloco de perguntas = **os "outros" REAIS da Rose** (`pf_transactions`, julho/2026). O resumo por categoria é ilustrativo.
+⚠️ **Correção de rota:** a primeira versão desta spec trocava as 58 linhas por um resumo. **Vetado** — mexer no tamanho/jeito do TOM é decisão do Alf ([[feedback_tom_comportamento_sagrado]]), e a Rose **nunca reclamou do tamanho**: reclamou de "outros". Descoberta ao ler o código: `buildInvoicePreview` (`invoice-import.js:133`) **já imprime a categoria por item** — `${it.categoria || 'outros'}`. Ela estava lendo 58 linhas escritas "· outros". O formato está certo; o **valor** é que estava errado.
 
+**A lista continua exatamente como é.** Só muda o que sai depois do "·" — e ganha um bloco no fim.
+
+**Hoje:**
 ```
-📄 Fatura *Latam PASS* · venc. 10/07 · *58 compras* · R$ 6.008,04
+📄 *Fatura Itaú* · vence 10/07
 
-*Já classifiquei:*
-🛒 Mercado — 4 · R$ 1.034,29
-🍽 Restaurante — 7 · R$ 487,63
-💊 Farmácia — 3 · R$ 188,33
-🛍 Compras — 12 · R$ 640,88
-_(+6 categorias · 21 itens)_
+1. 15/06 · MP*CONECTCAR · R$ 4,00 · outros
+2. 25/06 · Prezunic · R$ 259,85 · outros
+3. 20/05 · AMAZON MARKETP · R$ 27,12 · 2/3 · compras
+...
+Total: R$ 6.008,04 · 58 lançamentos
 
-*Me confirma 3 coisas* (respondendo o número):
+Lanço essas compras no *Latam PASS*? Responde *lançar*, *anotações* (só salvar) ou *cancelar*.
+```
+
+**Depois** (mesmas linhas, categoria certa, + o bloco novo):
+```
+📄 *Fatura Itaú* · vence 10/07
+
+1. 15/06 · MP*CONECTCAR · R$ 4,00 · transporte     ← era "outros"
+2. 25/06 · Prezunic · R$ 259,85 · mercado          ← era "outros"
+3. 20/05 · AMAZON MARKETP · R$ 27,12 · 2/3 · compras
+...
+Total: R$ 6.008,04 · 58 lançamentos
+
+*Me confirma 3 coisas* (ou só responde *lançar*):
 1. *ConectCar* — 10× · R$ 135,05 → _transporte_?
 2. *Abastec* — 2× · R$ 200,00 → _combustível_?
 3. *LUCASDONAS* — 1× · R$ 500,00 → _compras_?
+Se algo estiver errado, corrige: _"1 é pedágio"_, _"o 3 é lazer"_.
 
-Responde *sim* que eu lanço tudo assim. Ou corrige: _"1 é pedágio"_, _"o 3 é lazer"_.
+Lanço essas compras no *Latam PASS*? Responde *lançar*, *anotações* (só salvar) ou *cancelar*.
 ```
 
-Repare a ordem: **ConectCar vem primeiro por repetir 10×**, não por valor (é o menor dos três). É o critério `count DESC` em ação — a pergunta que resolve mais itens vem na frente.
+Números do bloco = **os "outros" REAIS da Rose** (`pf_transactions`, julho/2026), não ilustrativos.
 
-Mantém a voz do TOM ([[feedback_tom_comportamento_sagrado]]): é a prévia de hoje com categoria adicionada.
+Repare a ordem: **ConectCar vem primeiro por repetir 10×**, sendo o *menor valor* dos três. É o `count DESC` em ação — a pergunta que resolve mais itens vem na frente.
+
+**Consequência boa e barata:** com a categoria certa, as 58 linhas **voltam a ter serventia sozinhas** (ela confere item a item, como já fazia). Hoje são 58× "outros" = ruído. O fix da cascata melhora a prévia sem tocar no formato.
+
+**Zero-regressão de formato:** o rodapé (`Responde *lançar*, *anotações* ou *cancelar*`) e a numeração das linhas continuam idênticos — os testes atuais de `buildInvoicePreview` seguem válidos sem edição.
 
 ## Bordas (zero-regressão)
 
