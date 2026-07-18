@@ -50,6 +50,9 @@ const { getStaleWorkEvents } = require('../services/open-pendencies');
 const { claimRitualSend, rollbackRitualClaim, isTransientRitualError } = require('./ritual-claim');
 // B2 — rituais proativos do grupo (bom dia/semanal/mensal/atrasadas → card no chat).
 const { dispatchGroupReports } = require('./group-reports');
+// Fase 8 (18/07) — escada de cobrança por dias ÚTEIS: líder a partir de 3d, CEO a
+// partir de 6d. Usado em ceoTeamUnclosedTasksReport (gate do filteredStale).
+const { businessDaysOverdue } = require('../utils/dates');
 
 const RITUAL_BY_DIRECTIVE = {
   briefing_pessoal: 'personal_briefing',
@@ -2715,25 +2718,15 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
       continue;
     }
 
-    // Esconde tasks 1-5d que JÁ foram cobradas individualmente do dono nas
-    // últimas 24h via checkOverdueAlerts. Só sobem pro CEO: 6+d OU sem cobrança
-    // recente. (checkOverdueAlerts só cobra individual até 5d; após isso é só
-    // o CEO que age.)
+    // Fase 8 — ESCADA POR DIAS ÚTEIS (§2/§3 spec 18/07). Cada nível só recebe quando o
+    // atraso vira problema DELE: líder a partir de 3 dias úteis, CEO a partir de 6. O
+    // `|| !cobradas24h` antigo deixava tarefa de 1 dia vazar pro CEO (a cobrança individual
+    // ainda não tinha rodado) — era o ruído que o Alf reclamou (18/07). Dias ÚTEIS pulam
+    // domingo (a LA dá aula sábado). A EXIBIÇÃO ("7d") segue corrida no leader-cards — só o
+    // GATE mudou. A cobrança da pessoa (checkOverdueAlerts, 1-5d) é o degrau 1-2 e não muda.
     const totalCount = scoped.length;
-    const ids = scoped.map(t => t.id);
-    const cutoff24h = new Date(now.getTime() - 24 * 3600_000).toISOString();
-    const { data: notified } = await supabase
-      .from('notifications')
-      .select('reference_id')
-      .in('reference_id', ids)
-      .in('notification_type', ['overdue_alert', 'deadline_alert'])
-      .gte('sent_at', cutoff24h);
-    const cobradas24h = new Set((notified || []).map(n => n.reference_id));
-    const filteredStale = scoped.filter(t => {
-      const days = daysOverdue(t.due_date);
-      return days >= 6 || !cobradas24h.has(t.id);
-    });
-    const hiddenCount = totalCount - filteredStale.length;
+    const limiarDias = opts.leaderId ? 3 : 6;
+    const filteredStale = scoped.filter(t => businessDaysOverdue(t.due_date, sp.ymd) >= limiarDias);
     if (filteredStale.length === 0) {
       await logRitualEvent(ceo.id, 'ceo_team_unclosed_tasks', 'skipped', `all_recently_asked total=${totalCount}`, ymdRef);
       continue;
@@ -2834,7 +2827,6 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
     );
 
     const dateLabelT = new Date(now).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: 'short' });
-    const hiddenSuffixT = hiddenCount > 0 ? ` · ${hiddenCount} já cobrada${hiddenCount > 1 ? 's' : ''} hoje` : '';
 
     // Fase 6a — modo SEÇÃO p/ o digest único: retorna a seção rica VERBATIM sem
     // banners/rodapé próprios. Fase 7 — a seção agora É os cards por líder: 1 eixo,
@@ -2849,7 +2841,7 @@ async function ceoTeamUnclosedTasksReport(now = new Date(), opts = {}) {
     }
 
     const _nT = filteredStale.length;
-    const msg = `📋 *Governança — quem precisa de você*\n_${dateLabelT} · ${_nT} ${_nT === 1 ? 'atrasada' : 'atrasadas'}${hiddenSuffixT}_\n━━━━━━━━━━━━━━━━━━━━━\n\n${corpo}\n\n━━━━━━━━━━━━━━━━━━━━━\n_Pra cobrar: "cobra [nome] sobre [tarefa]"_`;
+    const msg = `📋 *Governança — quem precisa de você*\n_${dateLabelT} · ${_nT} ${_nT === 1 ? 'atrasada' : 'atrasadas'}_\n━━━━━━━━━━━━━━━━━━━━━\n\n${corpo}\n\n━━━━━━━━━━━━━━━━━━━━━\n_Pra cobrar: "cobra [nome] sobre [tarefa]"_`;
 
     // Fatia G fase 2: claim atômico antes de enviar (1/CEO/dia → claim-safe).
     const claim = await claimRitualSend(supabase, ceo.id, 'ceo_team_unclosed_tasks', ymdRef);

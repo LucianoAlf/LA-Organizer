@@ -31,3 +31,36 @@ test('withinConfirmWindow: asked_at ausente/invalido → false (conservador)', (
   assert.strictEqual(withinConfirmWindow(undefined, 20), false);
   assert.strictEqual(withinConfirmWindow('lixo', 20), false);
 });
+
+// ── businessDaysOverdue (§7/§9) — dias ÚTEIS de atraso, domingo não conta ────
+const { businessDaysOverdue } = require('./dates');
+
+test('businessDaysOverdue: não atrasada → 0', () => {
+  assert.strictEqual(businessDaysOverdue('2026-07-17', '2026-07-17'), 0); // hoje == vencimento
+  assert.strictEqual(businessDaysOverdue('2026-07-17', '2026-07-16'), 0); // hoje ANTES do vencimento
+});
+
+test('businessDaysOverdue: vence sexta → sáb=1, dom=1, seg=2, ter=3, qua=4', () => {
+  const sex = '2026-07-17';
+  assert.strictEqual(businessDaysOverdue(sex, '2026-07-18'), 1); // sábado CONTA
+  assert.strictEqual(businessDaysOverdue(sex, '2026-07-19'), 1); // domingo NÃO conta (segue 1)
+  assert.strictEqual(businessDaysOverdue(sex, '2026-07-20'), 2); // segunda
+  assert.strictEqual(businessDaysOverdue(sex, '2026-07-21'), 3); // terça → entra no líder
+  assert.strictEqual(businessDaysOverdue(sex, '2026-07-22'), 4); // quarta
+});
+
+test('businessDaysOverdue: vence sábado, hoje domingo → 0 (§9 caso 4)', () => {
+  // o único dia decorrido é domingo, que não é útil. Segunda vira 1.
+  assert.strictEqual(businessDaysOverdue('2026-07-18', '2026-07-19'), 0); // sáb→dom
+  assert.strictEqual(businessDaysOverdue('2026-07-18', '2026-07-20'), 1); // sáb→seg
+});
+
+test('businessDaysOverdue: intervalo com 2 domingos = corridos − 2', () => {
+  // sex 17/07 → sex 31/07 = 14 dias corridos, 2 domingos (19 e 26) no meio → 12 úteis
+  assert.strictEqual(businessDaysOverdue('2026-07-17', '2026-07-31'), 12);
+});
+
+test('businessDaysOverdue: limiar 6 úteis — vence sexta cai no CEO 8 dias corridos depois', () => {
+  // sex 17 → seg 27 = 10 corridos, domingos 19+26 = 2 → 8 úteis (>= 6, entra no CEO)
+  assert.strictEqual(businessDaysOverdue('2026-07-17', '2026-07-27'), 8);
+});

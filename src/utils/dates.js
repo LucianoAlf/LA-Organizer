@@ -129,4 +129,27 @@ function todayYmdSP(now = new Date()) {
   return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
-module.exports = { safeIsoDate, safeDate, formatRelativeDate, withinConfirmWindow, FRESH_WINDOW_MIN, buildBrtDateAnchor, todayYmdSP };
+/**
+ * Dias ÚTEIS de atraso — quantos dias úteis (domingo excluído) decorreram DESDE o
+ * vencimento até hoje. Sábado CONTA (a LA dá aula sábado); só domingo é pulado.
+ * Determinístico: weekday via Date.UTC sobre componentes YMD, sem fuso.
+ *   businessDaysOverdue('2026-07-17'(sex), '2026-07-21'(ter)) === 3
+ * @param {string} dueYmd   'YYYY-MM-DD'
+ * @param {string} todayYmd 'YYYY-MM-DD'
+ * @returns {number} 0 se today <= due; senão nº de dias úteis decorridos.
+ */
+function businessDaysOverdue(dueYmd, todayYmd) {
+  const [dy, dm, dd] = String(dueYmd).split('-').map(Number);
+  const [ty, tm, td] = String(todayYmd).split('-').map(Number);
+  const due = Date.UTC(dy, dm - 1, dd);
+  const today = Date.UTC(ty, tm - 1, td);
+  if (today <= due) return 0;
+  let uteis = 0;
+  // Conta cada dia APÓS o vencimento até hoje (inclusive); domingo (getUTCDay===0) não soma.
+  for (let t = due + 86400000; t <= today; t += 86400000) {
+    if (new Date(t).getUTCDay() !== 0) uteis += 1;
+  }
+  return uteis;
+}
+
+module.exports = { safeIsoDate, safeDate, formatRelativeDate, withinConfirmWindow, FRESH_WINDOW_MIN, buildBrtDateAnchor, todayYmdSP, businessDaysOverdue };
