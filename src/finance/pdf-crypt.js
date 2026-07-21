@@ -17,6 +17,9 @@ function isEncryptedPdf(buffer) {
 function extractPassword(text) {
   if (!text) return null;
   const t = String(text).trim();
+  // Negação: "não tem senha", "sem senha X", "não possui senha" — o usuário está dizendo que
+  // NÃO há senha, não fornecendo uma. Sem isto, "não tem senha tom" capturava "tom" (Rose 17/07).
+  if (/(?:n[ãa]o\s+(?:tem|h[áa]|possui|precisa\s+de)|sem)\s+senha/i.test(t)) return null;
   const m = /(?:senha|password|pwd|pass|c[óo]digo)\s*(?:é|e|:|=|->|-)?\s*([^\s]{3,40})/i.exec(t);
   if (m) return m[1].replace(/[.,;:)]+$/, '');
   // mensagem curta sem espaço com cara de token (4–40 chars alfanum/símbolos comuns de senha)

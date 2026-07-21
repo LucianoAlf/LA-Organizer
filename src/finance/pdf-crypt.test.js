@@ -30,3 +30,12 @@ test('extractPassword: frase comum / vazio → null (não trata como senha)', ()
   assert.equal(extractPassword(''), null);
   assert.equal(extractPassword(null), null);
 });
+
+test('extractPassword: negação "(não tem|sem) senha ..." → null (não captura a palavra seguinte)', () => {
+  // Caso Rose: ela respondeu "Nao tem senha tom" e o extractPassword pescava "tom" como senha.
+  assert.equal(extractPassword('Nao tem senha tom'), null);
+  assert.equal(extractPassword('não tem senha'), null);
+  assert.equal(extractPassword('esse pdf não tem senha nenhuma'), null);
+  assert.equal(extractPassword('sem senha aqui'), null);
+  assert.equal(extractPassword('não possui senha'), null);
+});

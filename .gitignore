@@ -6,3 +6,16 @@ node_modules/
 # Sprint 22.26c — git credential manager (Windows) cria esse dir durante clone.
 # Nao tem nada a ver com o repo; entrava no commit por engano.
 system-commandline-sentinel-files/
+
+# ── Migração p/ clone git (21/07) — scratch/local que NUNCA foi deployado.
+# O hook antigo copiava só dirs específicas (src/skills/web/migrations/docs/scripts);
+# o clone com `git add -A` precisa ignorar explicitamente o resto pra não varrer lixo.
+/e2e-*.js
+/tmp_*.js
+/test/
+web/.claude/
+.superpowers/
+
+# Migrations do Supabase são aplicadas via MCP, não versionadas hoje (status quo — o
+# hook antigo não as deployava). Versioná-las é decisão separada; por ora ficam fora.
+/supabase/migrations/
