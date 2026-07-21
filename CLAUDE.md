@@ -40,13 +40,14 @@ Se retornar `VPS OK`, está pronto. Se der erro, reportar antes de continuar.
 ## ⚡ DEPLOY É AUTOMÁTICO — NÃO PRECISA FAZER NADA
 
 ### 🤖 Auto-deploy hook (Stop hook em settings.local.json)
-**Toda vez que Claude termina o turno**, o `scripts/auto-deploy.ps1` roda
-automaticamente e:
-1. Commita TUDO que mudou em `D:\la-organizer\_remote\` (inclusive `web/`)
-2. Faz `git push origin main`
-3. Vercel pega o push e deploya `web/` em ~2min
+**`_remote/` É um clone git de `origin/main`.** Toda vez que Claude termina o turno, o `scripts/auto-deploy.ps1` roda e:
+1. Se `.deploy-hold` (raiz) existe e tem <2h → não faz nada (hold de concorrência; órfão >2h auto-expira).
+2. `git add -A` no `_remote/` (o `.gitignore` protege scratch/local: `e2e-*.js`, `tmp_*`, `test/`, `supabase/migrations/`).
+3. Trava de silêncio (quiet hours) — bloqueia se houver envio proativo sem gate.
+4. Commita, `git rebase origin/main` (incorpora o outro chat — nunca clobra), e `git push origin main`.
+5. Se `src/`/`skills/`/`migrations/` mudou → VPS `git fetch + reset --hard origin/main + pm2 restart tom`. Vercel deploya `web/` no push.
 
-**Só edite os arquivos em `_remote/` e termine o turno.** O hook faz o resto.
+**Rode `git status` no `_remote/` pra ver exatamente o que vai subir.** Não existe mais `C:\la-deploy-work` nem robocopy.
 
 ### TOM engine (`src/` ou `skills/`) — SCP imediato (não espera o turno)
 Quando precisa atualizar o TOM AGORA (sem esperar o auto-deploy + git pull no VPS), SCP direto:
@@ -62,9 +63,9 @@ ssh tom "pm2 restart tom"
 - Preview PWA: já roda em `localhost:4173` (web-preview)
 
 ### Nunca usar
-- ❌ `git clone https://...` em `/tmp/deploy-*` pra deploy (auto-deploy já cuida)
+- ❌ `git clone` em `/tmp/deploy-*` pra deploy — o `_remote/` JÁ é o clone git; commita/pusha direto dele
 - ❌ `bash scripts/push-and-deploy.sh` (substituído pelo Stop hook)
-- ❌ `git init` em `_remote` (`D:\la-organizer\_remote` NÃO é um git repo)
+- ❌ commitar scratch/local (`e2e-*.js`, `tmp_*`, `test/`, `supabase/migrations/`) — o `.gitignore` já exclui
 
 **NÃO pedir autorização para SCP, restart pm2 ou aplicar migrations no Supabase.**
 A única ação que precisa de OK explícito é **deletar dados em produção**.
