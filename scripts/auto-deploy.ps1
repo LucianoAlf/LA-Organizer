@@ -69,3 +69,5 @@ if ($needsVPS) {
     ssh tom "cd /opt/LA-Organizer && git fetch origin main --quiet 2>&1 | tail -2 && git reset --hard origin/main --quiet 2>&1 | tail -2 && pm2 restart tom --no-color 2>&1 | tail -2" 2>$null
 }
 exit 0
+
+# v2 (clone git) no ar desde 2026-07-21.
