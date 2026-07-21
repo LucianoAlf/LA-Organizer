@@ -27,7 +27,7 @@ const DEFAULTS = {
   ownerPhone: '5521981278047',   // Alf (dono) — override por TOM_OWNER_ALERT_PHONE
   lookbackMin: 12,               // janela p/ "houve sucesso real do Claude?"
   transientMin: 30,              // só paga instabilidade se durar isso
-  reloginCmd: 'ssh -t tom "HOME=/opt/LA-Organizer/.claude-tom claude auth login --claudeai"',
+  reloginCmd: 'ssh -t tom "bash /opt/LA-Organizer/scripts/tom-relogin.sh"',
 };
 
 function _cfg(env = {}) {
@@ -97,8 +97,9 @@ function buildSentinelMessage({ pageType, sinceIso, reloginCmd } = {}) {
       '🔴 *TOM — Claude caiu (login)*',
       `Desde ~${_hhmm(sinceIso)} o Claude tá recusando autenticação. O TOM continua respondendo, mas *degradado no Codex* (fallback).`,
       '',
-      'Pra voltar ao normal é só re-logar (1 comando no terminal):',
+      'Pra voltar ao normal é só re-logar (o script faz backup + verifica sozinho):',
       reloginCmd || DEFAULTS.reloginCmd,
+      '(se já estiver dentro do box: bash /opt/LA-Organizer/scripts/tom-relogin.sh)',
     ].join('\n');
   }
   if (pageType === 'transient') {

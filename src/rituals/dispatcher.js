@@ -3653,6 +3653,15 @@ async function run(opts = {}) {
     await runClaudeSentinel({ supabase, claudeChat: claude.chat, sendMessage, now: new Date() });
   } catch (err) { console.error('[Sentinel] outer err:', err.message); }
 
+  // Lembrete proativo de re-login (21/07) — cutuca o dono se o carimbo do último
+  // re-login passa de ~25d, 1x/dia em horário comercial. Preditivo (evita a queda
+  // de madrugada), complementa a Sentinela reativa acima. Estado em marker files.
+  try {
+    const { runReloginReminder } = require('./claude-relogin-reminder');
+    const { sendMessage } = require('../services/whatsapp');
+    await runReloginReminder({ sendMessage, now: new Date() });
+  } catch (err) { console.error('[ReloginReminder] outer err:', err.message); }
+
   // Sprint 23 — dispatch de listas pessoais recorrentes
   // Roda só ao redor das 00:30 BRT (uma vez por dia, mesma janela do recurrence-materializer)
   if (now.hour === 0 && now.minute <= 45) {

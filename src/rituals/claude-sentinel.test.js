@@ -110,3 +110,18 @@ test('robustez: probe undefined → noop', () => {
   const d = decideSentinel({ probe: undefined, openIncident: null, nowMs: NOW, transientMs: TRANSIENT_MS });
   assert.strictEqual(d.action, 'noop');
 });
+
+test('auth message aponta pro wrapper tom-relogin.sh e mostra forma de-dentro-do-box', () => {
+  const msg = buildSentinelMessage({
+    pageType: 'auth',
+    sinceIso: '2026-07-21T03:50:00Z',
+    reloginCmd: 'ssh -t tom "/opt/LA-Organizer/scripts/tom-relogin.sh"',
+  });
+  assert.ok(msg.includes('/opt/LA-Organizer/scripts/tom-relogin.sh'));
+  assert.ok(msg.includes('se já estiver dentro do box'));
+});
+
+test('DEFAULTS.reloginCmd (sem override) usa `bash` — protege o comando contra o reset do +x no deploy', () => {
+  const msg = buildSentinelMessage({ pageType: 'auth', sinceIso: '2026-07-21T03:50:00Z' });
+  assert.ok(msg.includes('bash /opt/LA-Organizer/scripts/tom-relogin.sh'));
+});
