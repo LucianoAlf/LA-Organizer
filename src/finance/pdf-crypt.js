@@ -55,4 +55,36 @@ function decryptPdf(buffer, senha) {
   });
 }
 
-module.exports = { isEncryptedPdf, extractPassword, decryptPdf };
+// Tenta abrir um PDF /Encrypt com senha de usuário VAZIA. Caso MUITO comum: extratos (Mercado
+// Pago, bancos) vêm com /Encrypt só de DONO/permissões (sem imprimir/copiar) mas senha de
+// usuário vazia — abrem em qualquer leitor sem pedir nada. O isEncryptedPdf (grep /Encrypt) não
+// distingue isso de senha real, então antes de PEDIR senha a gente tenta a vazia; qpdf --decrypt
+// sem senha resolve E tira as restrições pro Gemini ler. Retorna { ok, buffer } quando abre, ou
+// { ok:false, reason:'needs_password' } quando exige senha de usuário de verdade. I/O. (Rose 17/07)
+function decryptEmptyPassword(buffer) {
+  return new Promise((resolve) => {
+    if (!buffer || !buffer.length) return resolve({ ok: false, reason: 'empty_input' });
+    const tmp = os.tmpdir();
+    const id = crypto.randomBytes(6).toString('hex');
+    const inF = path.join(tmp, `pdfempty-in-${id}.pdf`);
+    const outF = path.join(tmp, `pdfempty-out-${id}.pdf`);
+    try { fs.writeFileSync(inF, buffer); } catch (e) { return resolve({ ok: false, reason: 'write_fail' }); }
+    const cleanup = () => { try { fs.unlinkSync(inF); } catch (_) {} try { fs.unlinkSync(outF); } catch (_) {} };
+    // --password= (vazia): owner-only encryption decifra; senha de usuário real falha (sem out).
+    execFile('qpdf', ['--password=', '--decrypt', inF, outF], { timeout: 20000 }, () => {
+      let result;
+      try {
+        if (fs.existsSync(outF)) {
+          const out = fs.readFileSync(outF);
+          result = out && out.length ? { ok: true, buffer: out } : { ok: false, reason: 'empty_output' };
+        } else {
+          result = { ok: false, reason: 'needs_password' };
+        }
+      } catch (e) { result = { ok: false, reason: 'read_fail' }; }
+      cleanup();
+      resolve(result);
+    });
+  });
+}
+
+module.exports = { isEncryptedPdf, extractPassword, decryptPdf, decryptEmptyPassword };

@@ -365,16 +365,25 @@ async function processWebhookBody(body) {
       // ---- PDF: se protegido por SENHA, decifra antes (qpdf); depois análise via Gemini. ----
       else if (isPdf) {
         if (pdfCrypt.isEncryptedPdf(buf)) {
-          // tenta a senha do caption; senão guarda o PDF e pede (a senha costuma vir separada). Rose 14/06.
-          let okBuf = null;
-          const senhaCaption = pdfCrypt.extractPassword(caption);
-          if (senhaCaption) { const dec = await pdfCrypt.decryptPdf(buf, senhaCaption); if (dec.ok) okBuf = dec.buffer; }
-          if (!okBuf) {
-            pendingPdf.put(phone, { buffer: buf, mime, fileName });
-            whatsapp.sendMessage(phone, '🔒 Esse PDF tá protegido por senha. Me manda a senha (pode ser só o número) que eu abro e leio certinho.').catch(() => {});
-            return;
+          // 1) MUITAS vezes o /Encrypt é só de DONO/permissões e a senha de usuário é VAZIA (extrato
+          //    Mercado Pago/banco abre em qualquer leitor sem pedir nada). Tenta a vazia ANTES de pedir
+          //    senha — senão o TOM inventava "tem senha" num PDF que abre normal (Rose 17/07).
+          const semSenha = await pdfCrypt.decryptEmptyPassword(buf);
+          if (semSenha.ok) {
+            buf = semSenha.buffer; // abriu sem senha (restrições removidas); segue e lê
+          } else {
+            // 2) Precisa de senha de usuário DE VERDADE: tenta a do caption; senão guarda o PDF e pede
+            //    (a senha costuma vir em mensagem separada). Rose 14/06.
+            let okBuf = null;
+            const senhaCaption = pdfCrypt.extractPassword(caption);
+            if (senhaCaption) { const dec = await pdfCrypt.decryptPdf(buf, senhaCaption); if (dec.ok) okBuf = dec.buffer; }
+            if (!okBuf) {
+              pendingPdf.put(phone, { buffer: buf, mime, fileName });
+              whatsapp.sendMessage(phone, '🔒 Esse PDF tá protegido por senha. Me manda a senha (pode ser só o número) que eu abro e leio certinho.').catch(() => {});
+              return;
+            }
+            buf = okBuf; // segue com o PDF aberto
           }
-          buf = okBuf; // segue com o PDF aberto
         }
         const t = await pdfToText(buf, mime, caption);
         if (t) { text = t; }
