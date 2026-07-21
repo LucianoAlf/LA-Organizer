@@ -1,76 +1,32 @@
-# auto-deploy.ps1
-# Chamado automaticamente pelo Stop hook do Claude Code.
-# Detecta mudancas em _remote vs repositorio, faz commit+push no GitHub
-# e restart na VPS se arquivos de backend foram alterados.
-
+# auto-deploy.ps1 (v2 — _remote e clone git; sem robocopy/la-deploy-work)
+# Stop hook: commita/pusha o _remote DIRETO e reseta a VPS.
 $ErrorActionPreference = "SilentlyContinue"
-
-$workDir = "C:\la-deploy-work"
 $srcRoot = "D:\la-organizer\_remote"
-$repoUrl = "https://github.com/LucianoAlf/LA-Organizer.git"
 
-# 0. HOLD de deploy — se existe .deploy-hold na raiz do projeto, NAO commita/pusha/deploya.
-#    RESTAURADO 2026-06-22: a remocao (mesma data) foi REVERTIDA porque o HOLD tem papel
-#    REAL — proteger edicao CONCORRENTE (varios chats no MESMO _remote local). Sem ele, um
-#    turno encerrando enquanto outro chat edita o engine.js empacota trabalho pela METADE
-#    em producao + reinicia o TOM. Remover o arquivo religa o deploy no proximo turno.
-#    TODO (com OK do Alf): trocar por HOLD auto-expiravel (TTL) p/ um orfao nao bloquear
-#    pra sempre (a dor original do Alf) — mas SEM perder esta protecao de concorrencia.
+# 0. HOLD com TTL — bloqueia deploy concorrente; orfao (>2h) auto-expira.
 $holdFile = Join-Path (Split-Path $srcRoot -Parent) ".deploy-hold"
+$holdTtlHours = 2
 if (Test-Path $holdFile) {
-    Write-Output "=== DEPLOY EM HOLD (.deploy-hold presente) -- nada commitado/pushado/deployado ==="
+    $age = (Get-Date) - (Get-Item $holdFile).LastWriteTime
+    if ($age.TotalHours -lt $holdTtlHours) {
+        Write-Output "=== DEPLOY EM HOLD (.deploy-hold, $([int]$age.TotalMinutes)min < ${holdTtlHours}h) ==="
+        exit 0
+    }
+    Write-Output "=== HOLD ORFAO ($([int]$age.TotalHours)h >= ${holdTtlHours}h) -- apagando e seguindo ==="
+    Remove-Item $holdFile -Force 2>$null
+}
+
+# 1. _remote TEM que ser clone git.
+if (-not (Test-Path (Join-Path $srcRoot ".git"))) {
+    Write-Output "=== ERRO: _remote nao e clone git (cutover nao feito). Abortando. ==="
     exit 0
 }
 
-# 1. Clone inicial ou reset para origin/main se ja existe
-if (-not (Test-Path (Join-Path $workDir ".git"))) {
-    git clone $repoUrl $workDir --quiet 2>$null
-    if ($LASTEXITCODE -ne 0) { exit 0 }
-} else {
-    git -C $workDir fetch origin main --quiet 2>$null
-    git -C $workDir reset --hard origin/main --quiet 2>$null
-}
+# 2. Stage tudo (o .gitignore protege scratch/local).
+git -C $srcRoot add -A 2>$null
 
-# 2. Sincronizar diretorios de _remote para o clone.
-#    /E (sem deletar) para a maioria: src/skills/etc. podem ter arquivos so-no-repo/VPS
-#    (ver project_local_vps_desync, ex.: src/supabase/client.js) que NAO devem sumir.
-#    /MIR (espelha delecoes) SO para web/src: e 100% fonte-de-verdade local e e o que o
-#    `tsc -b` da Vercel compila — sem /MIR, arquivo deletado local fica orfao no repo e
-#    quebra o build (caso GROUPCHAT-GROUP-NOTES-V2 / DEPLOY-ORPHAN-TSC). Seguro porque o
-#    web/src local compila sozinho: nada local depende de arquivo so-no-repo.
-$dirs = @("web/src", "web/public", "web/api", "skills", "src", "migrations", "docs", "scripts")
-$mirrorDirs = @("web/src")
-
-foreach ($d in $dirs) {
-    $src = Join-Path $srcRoot ($d -replace "/", "\")
-    $dst = Join-Path $workDir ($d -replace "/", "\")
-    if (Test-Path $src) {
-        $mode = if ($mirrorDirs -contains $d) { "/MIR" } else { "/E" }
-        robocopy $src $dst $mode /XD node_modules .git dist /NFL /NDL /NJH /NJS /nc /ns /np 2>$null | Out-Null
-    }
-}
-
-# Arquivos raiz do web/ (vite.config.ts, package.json, tsconfig, etc.)
-$webRootFiles = Get-ChildItem (Join-Path $srcRoot "web") -File -ErrorAction SilentlyContinue
-foreach ($f in $webRootFiles) {
-    Copy-Item $f.FullName (Join-Path $workDir "web\$($f.Name)") -Force 2>$null
-}
-
-# Sprint 26 — package.json + package-lock.json do TOM (raiz) versionados.
-# Antes ficavam apenas no VPS; se o servidor caía, dependências viravam
-# adivinhação. Agora sobem junto e auto-recovery via `npm install` funciona.
-$tomRootFiles = @("package.json", "package-lock.json", "ecosystem.config.js")
-foreach ($name in $tomRootFiles) {
-    $src = Join-Path $srcRoot $name
-    if (Test-Path $src) {
-        Copy-Item $src (Join-Path $workDir $name) -Force 2>$null
-    }
-}
-
-# 2.5 TRAVA DE SILENCIO (anti-regressao quiet hours) — bloqueia o deploy se algum
-#     envio proativo em src/ ficou sem gate de silencio. Exit 2 = violacao (bloqueia);
-#     0 = limpo; 1/outros = erro interno do guard -> fail-open (nao bloqueia deploy).
-$guard = Join-Path $workDir "scripts\check-quiet-gates.js"
+# 3. TRAVA DE SILENCIO (quiet hours) — exit 2 = violacao (bloqueia); 1/erro = fail-open.
+$guard = Join-Path $srcRoot "scripts\check-quiet-gates.js"
 $nodeExe = Get-Command node -ErrorAction SilentlyContinue
 if ($nodeExe -and (Test-Path $guard)) {
     $guardOut = & node $guard 2>&1 | Out-String
@@ -81,32 +37,35 @@ if ($nodeExe -and (Test-Path $guard)) {
     }
 }
 
-# 3. Nada mudou -> sai sem fazer nada
-$status = git -C $workDir status --porcelain 2>$null
-if ([string]::IsNullOrWhiteSpace($status)) { exit 0 }
+# 4. Nada staged -> sai.
+git -C $srcRoot diff --cached --quiet 2>$null
+if ($LASTEXITCODE -eq 0) { exit 0 }
 
-# 4. Commit
+# 5. Commit.
 $ts = Get-Date -Format "yyyy-MM-dd HH:mm"
-git -C $workDir add -A 2>$null
-git -C $workDir commit -m "Auto-deploy $ts
+git -C $srcRoot commit -m "Auto-deploy $ts
 
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>" 2>$null
+Co-Authored-By: Claude <noreply@anthropic.com>" 2>$null
 if ($LASTEXITCODE -ne 0) { exit 0 }
 
-# 5. Push para GitHub (Vercel auto-deploya web/ em ~2min)
-git -C $workDir push origin main 2>$null
-
-# 6. VPS restart apenas se arquivos de backend mudaram
-$changed = git -C $workDir diff HEAD~1 --name-only 2>$null
-$needsVPS = $changed | Where-Object { $_ -match "^(src/|skills/|migrations/)" }
-
-if ($needsVPS) {
-    # Sprint 26 — fetch + reset --hard origin/main em vez de git pull.
-    # Diferença crítica: reset --hard SÓ TOCA arquivos tracked. Untracked
-    # (.env, .claude-tom/, node_modules/) ficam intactos. Nunca mais arrastar
-    # com -u por engano. Pull com merge conflict virava intervenção manual
-    # com stash -u (que apagou .env em 18/05).
-    ssh tom "cd /opt/LA-Organizer && git fetch origin main --quiet 2>&1 | tail -2 && git reset --hard origin/main --quiet 2>&1 | tail -2 && pm2 restart tom --no-color 2>&1 | tail -2" 2>$null
+# 6. Incorpora o que o outro chat ja empurrou ANTES do push (nunca clobra).
+$beforeSha = git -C $srcRoot rev-parse origin/main 2>$null
+git -C $srcRoot fetch origin main --quiet 2>$null
+git -C $srcRoot rebase origin/main 2>$null
+if ($LASTEXITCODE -ne 0) {
+    git -C $srcRoot rebase --abort 2>$null
+    Set-Content -Path $holdFile -Value "HOLD auto: rebase-conflito no deploy $ts -- resolver a mao (git status em _remote)." -Encoding utf8
+    Write-Output "=== DEPLOY ABORTADO: rebase-conflito com origin/main. Hold recriado. Resolver manualmente. ==="
+    exit 0
 }
 
+# 7. Push.
+git -C $srcRoot push origin main 2>$null
+
+# 8. VPS reset + restart se backend (src/skills/migrations) mudou.
+$changed = git -C $srcRoot diff --name-only $beforeSha HEAD 2>$null
+$needsVPS = $changed | Where-Object { $_ -match "^(src/|skills/|migrations/)" }
+if ($needsVPS) {
+    ssh tom "cd /opt/LA-Organizer && git fetch origin main --quiet 2>&1 | tail -2 && git reset --hard origin/main --quiet 2>&1 | tail -2 && pm2 restart tom --no-color 2>&1 | tail -2" 2>$null
+}
 exit 0
