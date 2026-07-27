@@ -71,6 +71,18 @@ const RECUR_RE = /(voc[êe]\s+recebe\s+o\s+lembrete|^todo\s+dia\s+\d+)/i;
 // posição da linha (o fraseado vem no meio: "Semana do canto organizada então:").
 const PLANNING_CLAIM_RE = /\borganiz(?:ei|ad[oa]s?)\b|\bte\s+(?:cobro|lembro|aviso)\s+(?:conforme|quando|à\s+medida|nos?\s+dias?|cada)\b|\bvou\s+(?:te\s+)?(?:cobrando|lembrando|acompanhando)\b/i;
 
+// MOVE-CLAIM (27/07, caso Rose GROUPTASK-MOVE-TO-GROUP-CONFAB) — claim de MOVIMENTAÇÃO
+// entre listas ("movendo as 3 pro grupo") e o ESTADO RESULTANTE ("agora estão no
+// *Financeiro*"). Escapava por DOIS buracos somados: (a) o COMPLETION_CORE tem "movi/
+// movido" mas o COMPLETION_ANCHORED exige o verbo NO INÍCIO da linha, e a frase real veio
+// com ele no meio e em GERÚNDIO ("Beleza, movendo as 3..."); (b) o estado resultante não
+// tem verbo de conclusão nenhum. Dispara em qualquer posição (igual PLANNING_CLAIM_RE).
+// Gerúndio entra AQUI (contra o princípio geral "gerúndio = intenção") porque este gate só
+// roda quando o engine JÁ SABE que nada persistiu (outcome failed/partial) — ali "estou
+// movendo" é tão falso quanto "movi". NÃO casa subjuntivo/infinitivo ("mova", "mover"):
+// a PERGUNTA "quer que eu mova?" é legítima e precisa sobreviver.
+const MOVE_CLAIM_RE = /\bmov(?:endo|i|id[oa]s?|o)(?![\p{L}])|\btransfer(?:indo|i|id[oa]s?|o)(?![\p{L}])|\bagora\s+(?:est[áaã]o?|s[ãa]o|ficou|ficaram)\s+(?:n[oa]s?|em|d[oa]s?)(?![\p{L}])/iu;
+
 // REDE 1 (audit 15/07, caso Matheus RESCHEDULE-CONFIRM-NOOP) — afirmações FRACAS de
 // conclusão: "Fechou" (3ª pessoa, fora do COMPLETION_CORE), "Combinado", "Beleza", "Show".
 // São ubíquas em banter, então SÓ contam como claim quando o ENGINE sinaliza
@@ -100,6 +112,8 @@ function _isOptimisticLine(line, includeWeak) {
   if (TOTALIZER_RE.test(t) && COMPLETION_ANYWHERE.test(t)) return true;
   // PLANNING-CONFIRM-NO-CREATE: claim de planejamento ("semana organizada", "te cobro conforme").
   if (PLANNING_CLAIM_RE.test(t)) return true;
+  // MOVE-CLAIM: "movendo as 3 pro grupo" / "agora estão no *Financeiro*" (caso Rose 26/07).
+  if (MOVE_CLAIM_RE.test(t)) return true;
   if (includeWeak && WEAK_COMPLETION_RE.test(noEmoji)) return true;
   return false;
 }

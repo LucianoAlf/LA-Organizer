@@ -11,6 +11,32 @@ test('failed: "✅ Criado!" sozinho vira vazio (caso Fefê)', () => {
   assert.strictEqual(sanitizeOptimisticConfirm('✅ Criado!', 'failed'), '');
 });
 
+// GROUPTASK-MOVE-TO-GROUP-CONFAB (caso Rose 26/07): claim de MOVIMENTAÇÃO escapava.
+// O COMPLETION_CORE tem "movi/movido" mas exige o verbo NO INÍCIO da linha — a frase
+// real veio com o verbo no meio e em gerúndio ("Beleza, movendo as 3 pro grupo!"), e o
+// ESTADO RESULTANTE ("Agora estão no *Financeiro*") não tem verbo de conclusão nenhum.
+// Resultado: marker rejeitado, aviso anexado embaixo, e a mentira sobreviveu acima dele.
+test('failed: claim de movimentação some — "movendo as 3 pro grupo" (caso Rose 26/07)', () => {
+  const real = 'Beleza, movendo as 3 pro grupo!\n\nAgora estão no *Financeiro* — qualquer membro do grupo pode concluir.';
+  const out = sanitizeOptimisticConfirm(real, 'failed');
+  assert.ok(!/movendo/i.test(out), 'a promessa "movendo" não pode sobreviver');
+  assert.ok(!/Agora est[ãa]o\s+no/i.test(out), 'o estado resultante não pode sobreviver');
+});
+
+test('failed: "Transferi pro grupo" também some', () => {
+  assert.strictEqual(sanitizeOptimisticConfirm('Transferi pro grupo Financeiro.', 'failed'), '');
+});
+
+test('failed: PERGUNTA "quer que eu mova pro grupo?" NÃO é claim (sobrevive)', () => {
+  const q = 'Quer que eu mova pro grupo *Financeiro* pra qualquer membro poder concluir?';
+  assert.strictEqual(sanitizeOptimisticConfirm(q, 'failed'), q);
+});
+
+test('failed: estado PRÉ-EXISTENTE sem "agora" sobrevive (anti falso-positivo)', () => {
+  const s = 'A tarefa está no grupo Financeiro desde ontem.';
+  assert.strictEqual(sanitizeOptimisticConfirm(s, 'failed'), s);
+});
+
 test('failed: linha com emoji no meio é removida, pergunta preservada', () => {
   const out = sanitizeOptimisticConfirm('Boa! ✅ Criado!\n\nQuer que eu te lembre depois?', 'failed');
   assert.strictEqual(out, 'Quer que eu te lembre depois?');
