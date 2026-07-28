@@ -99,7 +99,17 @@ A lista de markers válidos em `src/prompts/system.js:81` vai para o LLM **em to
 
 ## 4. Plano de correção — uma feature por vez
 
-Ordenado por **uso × falha × risco**, do mais barato/mais eficaz para o mais caro. Cada item é independente e testável.
+> ### ⚠️ DECISÃO DO ALF (27/07), DEPOIS DE LER ESTA AUDITORIA — LEIA ANTES DA TABELA
+>
+> **A lista abaixo NÃO deve ser executada como uma fila de correções pontuais.** O Alf recusou explicitamente essa estratégia: *"a gente vai fazer mais um microajuste, aí mais um detalhezinho... 'isso aqui é barato, mexe na raiz' — e continua quebrando. Assim não vai resolver."*
+>
+> **Ele está certo, e o próprio dado desta auditoria sustenta isso:** 391 known-issues corrigidos, famílias inteiras reincidindo em 5–7 semanas distintas, e um monolito de 14.671 linhas com **zero testes internos** que produz defeito novo na mesma velocidade em que se conserta o antigo. Corrigir sintoma num arquivo sem rede de teste é reiniciar o ciclo.
+>
+> **O que vale:** refatoração **grande, fatiada, uma funcionalidade por vez**, com etapas definidas e teste nascendo junto com a fatia. Os itens abaixo passam a ser **INSUMO** — o inventário de defeitos que cada fatia deve resolver **dentro dela**, não remendos avulsos aplicados antes.
+>
+> **Débito conhecido enquanto a refatoração não chega:** os itens 1 e 2 (prompt ensinando ações inexistentes; TOM desistindo calado com tarefas homônimas) seguem ativos em produção. Estão registrados, não esquecidos.
+
+Ordenado por **uso × falha × risco** — como inventário de defeitos, não como fila de execução:
 
 | Ordem | Correção | Por quê agora | Risco |
 |---|---|---|---|

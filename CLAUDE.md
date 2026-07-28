@@ -4,6 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # LA Organizer — Instruções para Claude Code
 
+## 🧊 ESTADO ATUAL (27/07/2026) — LEIA ANTES DE PROPOR QUALQUER COISA
+
+**1. FEATURE FREEZE.** Decisão do Alf (com Hugo e Alfredo): **nenhuma feature nova no TOM**. Pedido de feature (dele ou do time) → **dizer NÃO** e apontar o caminho que já existe (app/grupo). Só conserto e refatoração.
+
+**2. NADA DE MICROAJUSTE.** O Alf recusou explicitamente a estratégia de correções pontuais ("é barato, mexe na raiz") — 391 known-issues corrigidos e o sistema segue instável. O caminho é **refatoração grande, fatiada, uma funcionalidade por vez, com etapas definidas**. O `engine.js` (14.671 linhas, `processMessage` com 4.587, zero testes internos) é o alvo central.
+
+**3. AUDITORIA COMPLETA FEITA EM 27/07 — NÃO REFAZER, LER:**
+👉 **`docs/auditoria/README.md`** (ponto de entrada) → síntese, dados de produção, e 3 auditorias de código (engine / skills+soul / caminho da mensagem).
+Achados-chave: a ação mais usada (`TASK_UPDATE`, 411 usos/mês) falha 14% por **não identificar de qual tarefa se fala** (60% das pendentes têm título duplicado); o prompt ensina 3 ações que **não existem** no código (`DND_UPDATE`, `approve`, `deny`); envio final sem `try/catch` + 51 `catch` vazios; 18 das 64 skills nunca são carregadas. O **financeiro é a área mais confiável** (1,3% de falha) por ter executor determinístico — **é o modelo a copiar**.
+
+**4. Possível agente novo (Hermes), em paralelo**, com Alfredo como revisor/contraponto. Migração começaria pelas funcionalidades de maior uso comprovado.
+
+---
+
 ## ⚡ PERMISSÕES CONFIRMADAS — NUNCA PEDIR NOVAMENTE
 
 Todas essas permissões já estão no settings.json/settings.local.json:
