@@ -56,7 +56,15 @@ const COMPLETION_CORE =
 // `(?![\p{L}])` + flag `u` = "não seguido de letra" (unicode-aware), preservando o veto a
 // casar no meio de palavra ("Recriado" não vira claim).
 const COMPLETION_END = '(?![\\p{L}])';
-const COMPLETION_ANCHORED = new RegExp('^[\\s*_~>•\\-–—"\']*' + COMPLETION_CORE + COMPLETION_END, 'iu');
+// FORMA-CONECTIVO (29/07, caso Valcílio — regressão pega pela auditoria das 7h): o verbo
+// ESTAVA no vocabulário ("criei"), mas a linha começa com conectivo — "E criei a visita do
+// Valcílio também:" — e o ANCHORED só tolerava markup/emoji antes do verbo. **Uma conjunção
+// derrubava o gate inteiro**, e a afirmação sobreviveu ACIMA do "_não consegui registrar_".
+// É o buraco de FORMA nº1 (ver project_confab_chokepoint): ampliar vocabulário não resolve
+// forma. Tolera até 2 conectivos curtos; NÃO afrouxa o resto (COMPLETION_CORE segue só
+// particípio/1ª pessoa passado, e COMPLETION_END segue barrando meio-de-palavra).
+const LEAD_CONNECTIVE = '(?:(?:e|mas|j[áa]|tamb[ée]m|a[íi]|ent[ãa]o|pronto|prontinho|beleza|blz|ok|show|opa)[\\s,]+){0,2}';
+const COMPLETION_ANCHORED = new RegExp('^[\\s*_~>•\\-–—"\']*' + LEAD_CONNECTIVE + COMPLETION_CORE + COMPLETION_END, 'iu');
 const COMPLETION_ANYWHERE = new RegExp('\\b' + COMPLETION_CORE + COMPLETION_END, 'iu');
 
 // Totalizador absoluto.

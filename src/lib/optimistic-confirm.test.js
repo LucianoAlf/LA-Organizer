@@ -23,6 +23,29 @@ test('failed: claim de movimentação some — "movendo as 3 pro grupo" (caso Ro
   assert.ok(!/Agora est[ãa]o\s+no/i.test(out), 'o estado resultante não pode sobreviver');
 });
 
+// FORMA-CONECTIVO (regressão detectada pela auditoria 29/07, caso Valcílio): o verbo
+// ESTÁ no vocabulário ("criei"), mas a linha começa com conectivo ("E criei a visita...").
+// O COMPLETION_ANCHORED só tolerava markup/emoji antes do verbo — uma conjunção derrubava
+// o gate inteiro e a afirmação sobreviveu ACIMA do aviso "não consegui registrar agora".
+test('failed: conectivo antes do verbo não salva a mentira — "E criei a visita" (Valcílio 28/07)', () => {
+  const real = 'E criei a visita do Valcílio também:\n📅 *Visita Valcílio — ar condicionado*\n\n_não consegui registrar agora. Me passa de novo?_';
+  const out = sanitizeOptimisticConfirm(real, 'failed');
+  assert.ok(!/criei a visita/i.test(out), 'a afirmação "E criei" não pode sobreviver');
+});
+
+test('failed: outros conectivos comuns também são cobertos', () => {
+  assert.strictEqual(sanitizeOptimisticConfirm('Já registrei aqui!', 'failed'), '');
+  assert.strictEqual(sanitizeOptimisticConfirm('Também agendei pra sexta.', 'failed'), '');
+  assert.strictEqual(sanitizeOptimisticConfirm('Pronto, criei a tarefa.', 'failed'), '');
+});
+
+test('failed: ANTI falso-positivo — verbo no meio de palavra ou de outra frase sobrevive', () => {
+  const s1 = 'Recriado o vínculo? Me confirma.';
+  assert.strictEqual(sanitizeOptimisticConfirm(s1, 'failed'), s1);
+  const s2 = 'Quando você quiser, eu crio a tarefa.';
+  assert.strictEqual(sanitizeOptimisticConfirm(s2, 'failed'), s2);
+});
+
 test('failed: "Transferi pro grupo" também some', () => {
   assert.strictEqual(sanitizeOptimisticConfirm('Transferi pro grupo Financeiro.', 'failed'), '');
 });
