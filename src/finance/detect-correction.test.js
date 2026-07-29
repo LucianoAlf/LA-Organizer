@@ -1,6 +1,40 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { detectCorrection } = require('./detect-correction');
+const { detectCorrection, detectFinanceEditIntent } = require('./detect-correction');
+
+// ── FINEDIT-TRANSCRIPT-HIJACK (caso Alf 28/07) ────────────────────────────────
+// Áudio de 1min sobre COMPRAR iluminação foi sequestrado pelo redirect de edição de
+// lançamento: "finalizar a compra da iluminação" casou RE_TXN_NOUN_LOOSE e "estamos
+// colocando a marcenaria" casou RE_EDIT_LOOSE (coloca\w*). Resposta determinística em
+// 1 SEGUNDO ("esse lançamento tá fora das ~2h"), sem passar pelo LLM. Mesmo padrão do
+// PROJECT-INTENT-TRANSCRIPT-HIJACK (09/07) e do FINEDIT-QUOTE-SCAFFOLD-MISROUTE (27/06).
+const AUDIO_ALF_2807 = `[áudio transcrito] Então é o seguinte, o Sonoramente é o nosso núcleo de inclusão que vai atender os nossos alunos autistas, entendeu? Enfim, é um centro de musicoterapia, a gente tá chamando de núcleo de inclusão, mas é um centro de musicoterapia e tá na reta final, estamos colocando a marcenaria, é um espaço dentro da LA Unidade Campo Grande, sacou? E aí a parte de iluminação, são fitas de LED, são lâmpadas para dentro da sala, entendeu? Que a gente precisa colocar, tem os móveis, os instrumentos, enfim, tem muita coisa, mas a parte de iluminação eu acho que é o que destrava agora, entendeu?
+
+>>> Demandas detectadas pelo decompositor (processe TODAS, uma por uma):
+1. Revisar o projeto do Sonoramente para levantar a quantidade de lâmpadas por sala e finalizar a compra da iluminação.`;
+
+test('transcrição longa NÃO é intenção de editar lançamento (caso Alf 28/07)', () => {
+  assert.strictEqual(detectFinanceEditIntent(AUDIO_ALF_2807), null);
+});
+
+test('texto longo genérico com "compra" + verbo comum não dispara', () => {
+  const longo = 'Preciso te explicar uma coisa. ' + 'A gente vai colocar os móveis novos na sala e depois fazer a compra do material. '.repeat(4);
+  assert.ok(longo.length > 280);
+  assert.strictEqual(detectFinanceEditIntent(longo), null);
+});
+
+test('NÃO-REGRESSÃO: comando curto de edição continua detectado', () => {
+  assert.deepStrictEqual(detectFinanceEditIntent('muda a categoria daquela compra'), { op: 'edit' });
+  assert.deepStrictEqual(detectFinanceEditIntent('corrige o valor do lancamento'), { op: 'edit' });
+});
+
+test('NÃO-REGRESSÃO: comando curto de exclusão continua detectado', () => {
+  assert.deepStrictEqual(detectFinanceEditIntent('apaga aquele lancamento'), { op: 'delete' });
+});
+
+test('NÃO-REGRESSÃO: texto sem substantivo de transação segue null', () => {
+  assert.strictEqual(detectFinanceEditIntent('coloca o prazo pra sexta'), null);
+});
 
 test('era <num> → edit amount', () => {
   assert.deepStrictEqual(detectCorrection('era 25'), { op: 'edit', amount: 25 });

@@ -124,8 +124,22 @@ function detectCorrection(rawText) {
 const RE_TXN_NOUN_LOOSE = /\b(lancamento|lancamentos|gasto|gastos|despesa|despesas|compra|compras|transacao|transacoes)\b/;
 const RE_DELETE_LOOSE = /\b(exclui\w*|apaga\w*|deleta\w*|remov\w*)\b/;
 const RE_EDIT_LOOSE = /\b(era|corrig\w*|ajust\w*|alter\w*|muda\w*|troca\w*|edita\w*|p[õo]e|coloca\w*|classific\w*)\b/;
+// FINEDIT-TRANSCRIPT-HIJACK (caso Alf 28/07) — comando de edição de lançamento é CURTO
+// ("corrige pra 30", "muda a categoria daquela compra"). Transcrição de áudio, desabafo ou
+// briefing NÃO é comando — mas casa por acidente, porque "compra" é ambíguo em PT (lançamento
+// financeiro vs. ato de comprar algo) e os verbos do RE_EDIT_LOOSE são banais ("coloca*",
+// "muda*", "troca*", "era"). Caso real: áudio de 1min sobre COMPRAR iluminação p/ o Sonoramente
+// ("finalizar a compra" + "estamos colocando a marcenaria") virou "esse lançamento tá fora das
+// ~2h que consigo editar" em 1 SEGUNDO — resposta determinística, sem passar pelo LLM.
+// Mesmo guard do PROJECT-INTENT-TRANSCRIPT-HIJACK (09/07); 3ª vez que este detector sequestra
+// turno alheio (ver também FINEDIT-QUOTE-SCAFFOLD-MISROUTE, 27/06).
+const CMD_MAX_CHARS = 280;
+const CMD_MAX_LINHAS = 5;
+
 function detectFinanceEditIntent(rawText) {
   if (typeof rawText !== 'string' || rawText.trim() === '') return null;
+  const _t = rawText.trim();
+  if (_t.length > CMD_MAX_CHARS || _t.split('\n').length >= CMD_MAX_LINHAS) return null;
   const norm = normalize(rawText);
   if (!RE_TXN_NOUN_LOOSE.test(norm)) return null;     // precisa referenciar uma TRANSAÇÃO
   if (RE_DELETE_LOOSE.test(norm)) return { op: 'delete' };
