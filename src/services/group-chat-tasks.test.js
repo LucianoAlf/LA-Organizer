@@ -310,3 +310,59 @@ test('complete: label composto do relatório conclui a FILHA (fallback) — não
   assert.strictEqual(pkg.status, 'pending', 'pacote NÃO concluído por engano');
   assert.strictEqual((r.failed || []).length, 0, 'sem not_found');
 });
+
+// ── GROUPCHAT-CREATE-COMPOSITE-LABEL-DUP (caso Rose 31/07) ────────────────────
+// A Rose pediu "remaneja essa tarefa pra hoje, sempre último dia do mês". O relatório
+// mostra a filha do pacote com o prefixo ("Repasses de Cartões - Maquininha: CG"), mas no
+// banco ela se chama só "CG". O dedup do create (pool de 24h + similaridade de tokens) não
+// reconheceu → criou 3 tarefas NOVAS soltas com recurrence_rule, deixou as filhas em 30/07,
+// e as novas sumiram do relatório (o builder esconde molde). Ficaram 6 onde deviam ser 3.
+const { _resolvePackageChildByLabel } = require('./group-chat-tasks');
+
+function _fakeSb(rows) {
+  const chain = {
+    select: () => chain, eq: () => chain, neq: () => chain,
+    limit: async () => ({ data: rows }),
+  };
+  return { from: () => chain };
+}
+const GID = 'grupo-1';
+const CENARIO_REAL = [
+  { id: 'cont', title: 'Repasses de Cartões - Maquininha', is_group: true, parent_task_id: null, recurrence_rule: null, due_date: '2026-07-30' },
+  { id: 'f-cg', title: 'CG', is_group: false, parent_task_id: 'cont', recurrence_rule: null, due_date: '2026-07-30' },
+  { id: 'f-barra', title: 'Barra', is_group: false, parent_task_id: 'cont', recurrence_rule: null, due_date: '2026-07-30' },
+];
+
+test('label composto do pacote resolve na FILHA real (caso Rose 31/07)', async () => {
+  const alvo = await _resolvePackageChildByLabel({
+    supabase: _fakeSb(CENARIO_REAL), groupId: GID,
+    label: 'Repasses de Cartões - Maquininha: CG',
+  });
+  assert.ok(alvo, 'devia achar a filha');
+  assert.strictEqual(alvo.id, 'f-cg');
+});
+
+test('ANTI falso-positivo: título novo que só CONTÉM o nome da filha NÃO casa', async () => {
+  const alvo = await _resolvePackageChildByLabel({
+    supabase: _fakeSb(CENARIO_REAL), groupId: GID,
+    label: 'Comprar cadeiras: CG',   // prefixo NÃO é container do grupo
+  });
+  assert.strictEqual(alvo, null);
+});
+
+test('sem dois-pontos não tenta resolver como label de pacote', async () => {
+  const alvo = await _resolvePackageChildByLabel({
+    supabase: _fakeSb(CENARIO_REAL), groupId: GID, label: 'Comprar lâmpadas',
+  });
+  assert.strictEqual(alvo, null);
+});
+
+test('nunca mira o MOLDE da série (só instância visível)', async () => {
+  const comMolde = CENARIO_REAL.concat([
+    { id: 'molde', title: 'CG', is_group: false, parent_task_id: 'cont', recurrence_rule: 'FREQ=MONTHLY', due_date: '2026-07-30' },
+  ]);
+  const alvo = await _resolvePackageChildByLabel({
+    supabase: _fakeSb(comMolde), groupId: GID, label: 'Repasses de Cartões - Maquininha: CG',
+  });
+  assert.strictEqual(alvo.id, 'f-cg', 'tem que pegar a instância, nunca o molde');
+});

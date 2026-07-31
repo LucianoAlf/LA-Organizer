@@ -155,6 +155,35 @@ async function _resolveByPhraseFallback({ supabase, groupId, phrase, excludeCanc
   } catch (_) { return null; }
 }
 
+// GROUPCHAT-CREATE-COMPOSITE-LABEL-DUP (31/07, caso Rose) — resolve o LABEL COMPOSTO
+// "Pacote: Filha" na FILHA real do pacote. O relatório do grupo renderiza a filha com o
+// prefixo do pacote ("Repasses de Cartões - Maquininha: CG"), mas no banco ela se chama só
+// "CG" — então o LLM age pelo label que leu e o dedup do create não reconhece. Somado à
+// janela de 24h do dedup (a filha nasceu no dia 1º, materializada pela recorrência), pedir
+// "remaneja" acabava CRIANDO duplicata em vez de editar.
+// PRECISÃO DE PROPÓSITO (não usa o containment genérico do matchPoolByPhrase): exige que o
+// prefixo seja um CONTAINER is_group existente E o sufixo seja FILHA dele. Sem isso, criar
+// "Comprar cadeiras CG" casaria com a tarefa "CG" e viraria update — falso-positivo pior
+// que o bug. Nunca mira molde (pickInstanceTarget + recurrence_rule == null).
+async function _resolvePackageChildByLabel({ supabase, groupId, label }) {
+  try {
+    const i = String(label || '').indexOf(':');
+    if (i < 1) return null;
+    const pkg = _normTitle(label.slice(0, i));
+    const child = _normTitle(label.slice(i + 1));
+    if (!pkg || !child) return null;
+    const { data } = await supabase.from('tasks')
+      .select('id, title, due_date, parent_task_id, is_group, recurrence_rule, recurrence_parent_id')
+      .eq('assigned_group_id', groupId).neq('status', 'done').neq('status', 'cancelled').limit(300);
+    const rows = data || [];
+    const containers = new Set(rows.filter((r) => r.is_group === true && _normTitle(r.title) === pkg).map((r) => r.id));
+    if (!containers.size) return null;
+    const filhas = rows.filter((r) => r.parent_task_id && containers.has(r.parent_task_id)
+      && _normTitle(r.title) === child && r.recurrence_rule == null);
+    return pickInstanceTarget(filhas);
+  } catch (_) { return null; }
+}
+
 async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, actions }) {
   const created = [];
   const updated = [];
@@ -202,7 +231,14 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
           ? a.recurrence_rule.trim().replace(/^RRULE:/i, '') : null;
 
         // ── Dedup: já existe tarefa quase-igual recente? Atualiza no lugar. ──
-        const dup = findDuplicate(title);
+        let dup = findDuplicate(title);
+        // O dedup acima só enxerga o pool de 24h e compara por tokens — não reconhece a
+        // filha de pacote pelo LABEL COMPOSTO que o relatório exibe. Ver
+        // _resolvePackageChildByLabel (GROUPCHAT-CREATE-COMPOSITE-LABEL-DUP).
+        if (!dup) {
+          const _child = await _resolvePackageChildByLabel({ supabase, groupId, label: title });
+          if (_child) dup = { id: _child.id, title: _child.title, due_date: _child.due_date };
+        }
         // (A) Recorrente: correção do mesmo assunto recente ("ajusta o lembrete dos Depósitos")
         // ATUALIZA a RRULE/due/remind da série existente e re-materializa, em vez de criar
         // outra série quase-idêntica (caso Rose 12/06). Caso GROUPCHAT-TASK-DUP-WEEKDAY estendido.
@@ -386,5 +422,5 @@ async function reviveSeries({ supabase, groupId, title }) {
 module.exports = {
   applyGroupChatTaskActions, titleSimilarity, pickInstanceTarget,
   findDuplicatePackage, resolveVisibleInstance, filterNewSubtasks, matchPoolByPhrase,
-  resolveSeriesTemplate, endSeries, reviveSeries,
+  resolveSeriesTemplate, endSeries, reviveSeries, _resolvePackageChildByLabel,
 };
