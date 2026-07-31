@@ -488,6 +488,7 @@ function friendlyTaskFail(why) {
     title_missing: 'me diz qual tarefa exatamente',
     race_lost: 'alguém mexeu nela ao mesmo tempo, tenta de novo',
     unsupported_action: 'essa ação eu ainda não faço por aqui',
+    package_recurrence_unsupported: 'a data eu ajustei, mas mudar a recorrência de um pacote eu não faço por aqui — dá pra ajustar no app',
   };
   return MAP[why] || 'não consegui registrar';
 }

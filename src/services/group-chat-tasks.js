@@ -201,6 +201,11 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
       .select('id, title, due_date')
       .eq('assigned_group_id', groupId)
       .neq('status', 'done')
+      // CANCELADA não é candidata a dedup (31/07): o pool só excluía 'done', então uma tarefa
+      // cancelada recente casava e recebia o patch — o TOM dizia "ajustei" e o usuário não via
+      // NADA (cancelada não aparece em lugar nenhum) = NOOP silencioso. Achado ao testar o fix
+      // do label composto contra o banco real: ele resolveu na duplicata cancelada minutos antes.
+      .neq('status', 'cancelled')
       .gte('created_at', sinceISO);
     candidates = (data || []).map((t) => ({ id: t.id, title: t.title, due_date: t.due_date, tokens: _titleTokens(t.title) }));
   } catch (_) { candidates = []; }
@@ -235,9 +240,26 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
         // O dedup acima só enxerga o pool de 24h e compara por tokens — não reconhece a
         // filha de pacote pelo LABEL COMPOSTO que o relatório exibe. Ver
         // _resolvePackageChildByLabel (GROUPCHAT-CREATE-COMPOSITE-LABEL-DUP).
+        let _dupIsPackageChild = false;
         if (!dup) {
           const _child = await _resolvePackageChildByLabel({ supabase, groupId, label: title });
-          if (_child) dup = { id: _child.id, title: _child.title, due_date: _child.due_date };
+          if (_child) { dup = { id: _child.id, title: _child.title, due_date: _child.due_date }; _dupIsPackageChild = true; }
+        }
+        // Filha de pacote NÃO pode receber recurrence_rule: quem manda na cadência do pacote é
+        // o molde-mãe (container template). Gravar a regra na filha a transforma em MOLDE e ela
+        // SOME do relatório do grupo (o builder filtra recurrence_rule != null) — que é
+        // exatamente o sintoma que a Rose viu em 31/07. Remaneja a data (isso funciona) e
+        // devolve o aviso honesto de que a cadência do pacote não se ajusta por aqui.
+        if (dup && _dupIsPackageChild && recur) {
+          const patch = {};
+          if (wantsDue && wantsDue !== dup.due_date) patch.due_date = wantsDue;
+          if (remindISO) patch.remind_at = remindISO;
+          if (Object.keys(patch).length) {
+            const { data: upd } = await supabase.from('tasks').update(patch).eq('id', dup.id).select('id, title').maybeSingle();
+            if (upd) updated.push({ ...upd, changed: patch });
+          }
+          failed.push({ action: a, why: 'package_recurrence_unsupported' });
+          continue;
         }
         // (A) Recorrente: correção do mesmo assunto recente ("ajusta o lembrete dos Depósitos")
         // ATUALIZA a RRULE/due/remind da série existente e re-materializa, em vez de criar
