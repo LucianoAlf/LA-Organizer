@@ -210,6 +210,24 @@ function hasWeakCompletionClaim(text) {
 // turno, rebaixa pra honesta. PURO. Sinais vêm do engine (nunca adivinhados do texto).
 // Caminho 2 / Fatia 0 — modo VELOCÍMETRO: com opts2.meta===true retorna {reply, fired, sense}
 // pra o engine medir os disparos (curva da doença). SEM meta → retorna string (retrocompat).
+// CHOKEPOINT-PROGRESS-FALSEFIRE (01/08, caso Alf) — o usuário respondeu à cobrança com um
+// STATUS DE PROGRESSO ("To fazendo, Tom"). Isso NÃO pede ação nenhuma: não havia o que
+// persistir, então `nothingPersisted` é o estado CORRETO, não um sintoma. Como a cobrança
+// ("Resolve hoje ou reagenda?") ligou o pendingActionRecent, a camada FRACA leu a cordialidade
+// do TOM ("Beleza, fico no aguardo") como confirmação-sem-ação e SUBSTITUIU a resposta inteira
+// pela nota de erro — o que chegou no WhatsApp foi só o "⚠️ não consegui registrar".
+// Gate só da camada FRACA: claim FORTE ("Concluí!") segue disparando, progresso ou não.
+// VETO: se a fala também PEDE ação ("tô fazendo, marca como concluída"), não vale como
+// progresso puro — aí o guard tem que continuar valendo.
+const PROGRESS_STATUS_RE = /\b(?:t[oôõ]|estou)\s+(?:fazendo|vendo|resolvendo|terminando|acabando|trabalhando|nisso|nessa)\b|\bvou\s+(?:fazer|ver|resolver|terminar)\b|\bfazendo\s+(?:agora|isso)\b|\bem\s+andamento\b/iu;
+const ACTION_REQUEST_RE = /\b(?:marca|marque|conclui|conclua|finaliza|encerra|cancela|reagenda|remarca|adia|cria|criar|apaga|exclui|deleta|muda|troca)\w*\b/iu;
+function isProgressStatusReply(text) {
+  const t = String(text || '').trim();
+  if (!t) return false;
+  if (ACTION_REQUEST_RE.test(t)) return false;
+  return PROGRESS_STATUS_RE.test(t);
+}
+
 const NO_MARKER_HONEST_NOTE = '_⚠️ Na real não consegui registrar isso agora — me manda de novo, por favor._';
 function enforceNoMarkerHonesty(reply, opts, opts2) {
   const o = opts || {};
@@ -219,11 +237,11 @@ function enforceNoMarkerHonesty(reply, opts, opts2) {
   // Forte (particípio/1ª pessoa) dispara sempre — tuning de meses, não mexo. Fraca ("Fechou")
   // só sob pendingActionRecent (eixo de ESTADO): fecha o NOOP do Matheus sem falso-fire de banter.
   const strong = hasCompletionClaim(reply);
-  const weak = !strong && !!o.pendingActionRecent && hasWeakCompletionClaim(reply);
+  const weak = !strong && !!o.pendingActionRecent && !o.userProgressStatus && hasWeakCompletionClaim(reply);
   if (!strong && !weak) return wrap(reply, false);
   const cleaned = sanitizeOptimisticConfirm(reply, 'failed', { includeWeak: weak });
   const out = cleaned ? cleaned + '\n\n' + NO_MARKER_HONEST_NOTE : NO_MARKER_HONEST_NOTE;
   return wrap(out, true);
 }
 
-module.exports = { sanitizeOptimisticConfirm, hasOptimisticConfirm, hasCompletionClaim, hasWeakCompletionClaim, enforceNoMarkerHonesty };
+module.exports = { sanitizeOptimisticConfirm, hasOptimisticConfirm, hasCompletionClaim, hasWeakCompletionClaim, enforceNoMarkerHonesty, isProgressStatusReply };

@@ -44,7 +44,7 @@ const projectStatusLib = require('./lib/project-status');
 const { applyProjectStatusChange } = require('./services/project-status-exec');
 const { detectExplicitDayIntent } = require('./utils/temporal-intent');
 const { isFutureCompletion } = require('./utils/complete-guards');
-const { sanitizeOptimisticConfirm, hasOptimisticConfirm, enforceNoMarkerHonesty, hasCompletionClaim, hasWeakCompletionClaim } = require('./lib/optimistic-confirm');
+const { sanitizeOptimisticConfirm, hasOptimisticConfirm, enforceNoMarkerHonesty, hasCompletionClaim, hasWeakCompletionClaim, isProgressStatusReply } = require('./lib/optimistic-confirm');
 const { isActionConfirmQuestion } = require('./lib/confirm-question');
 const { buildIntegrityReply } = require('./lib/integrity-reply');
 const { validateDndWindow, DND_MAX_MS } = require('./lib/dnd-window');
@@ -12911,6 +12911,12 @@ Output AGORA, apenas o marker:`;
       // de outro try, fora de escopo → ReferenceError). Mesmas funções de módulo (reply-classify).
       infoGathering: hasTrailingQuestion(reply) || isInfoGatheringReply(reply),
       awaitingConfirm: !!_metrics.awaiting_user_confirm,
+      // CHOKEPOINT-PROGRESS-FALSEFIRE (01/08, caso Alf): "To fazendo, Tom" respondendo à
+      // cobrança é STATUS, não confirmação de ação — não há o que persistir, então a camada
+      // FRACA não pode ler a cordialidade do TOM como mentira. stripReplyScaffold é obrigatório:
+      // a resposta vem com a citação da própria cobrança ("Resolve hoje ou reagenda?") embutida,
+      // e sem limpar o regex leria o texto do TOM em vez da fala da pessoa.
+      userProgressStatus: isProgressStatusReply(stripReplyScaffold(String(text || '')).userText),
     }, { meta: true });
     reply = _hon.reply;
     if (_hon.fired) {

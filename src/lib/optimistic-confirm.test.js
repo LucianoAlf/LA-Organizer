@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { sanitizeOptimisticConfirm, hasOptimisticConfirm, hasCompletionClaim, hasWeakCompletionClaim } = require('./optimistic-confirm');
+const { sanitizeOptimisticConfirm, hasOptimisticConfirm, hasCompletionClaim, hasWeakCompletionClaim, enforceNoMarkerHonesty, isProgressStatusReply } = require('./optimistic-confirm');
 
 // ─────────────────────────────────────────────────────────────────────────
 // outcome = 'failed' (nada persistiu): rebaixa/remove TODA confirmação otimista
@@ -44,6 +44,39 @@ test('failed: ANTI falso-positivo — verbo no meio de palavra ou de outra frase
   assert.strictEqual(sanitizeOptimisticConfirm(s1, 'failed'), s1);
   const s2 = 'Quando você quiser, eu crio a tarefa.';
   assert.strictEqual(sanitizeOptimisticConfirm(s2, 'failed'), s2);
+});
+
+// CHOKEPOINT-PROGRESS-FALSEFIRE (caso Alf 01/08): a cobrança das 13h perguntou "Resolve hoje
+// ou reagenda?", o Alf respondeu "To fazendo, Tom" (PROGRESSO — não pede ação nenhuma), o TOM
+// respondeu com cordialidade e o guard SUBSTITUIU a resposta inteira pela nota de erro. O que
+// chegou no WhatsApp foi só "_⚠️ Na real não consegui registrar isso agora_". O guard assumiu
+// que "nada persistiu" = "deveria ter persistido" — mas não havia o que persistir.
+test('progresso do usuário ("tô fazendo") NÃO dispara a camada fraca (caso Alf 01/08)', () => {
+  const r = enforceNoMarkerHonesty('Beleza, Alf! Fico no aguardo então.', {
+    nothingPersisted: true, pendingActionRecent: true, userProgressStatus: true,
+  });
+  assert.strictEqual(r, 'Beleza, Alf! Fico no aguardo então.', 'resposta tem que sobreviver intacta');
+});
+
+test('NÃO-REGRESSÃO: sem progresso, a camada fraca segue disparando (caso Matheus)', () => {
+  const r = enforceNoMarkerHonesty('Fechou!', { nothingPersisted: true, pendingActionRecent: true });
+  assert.ok(/não consegui registrar/i.test(r), 'o NOOP do "Fechou" tem que continuar pego');
+});
+
+test('NÃO-REGRESSÃO: claim FORTE dispara mesmo com progresso do usuário', () => {
+  const r = enforceNoMarkerHonesty('Concluí a tarefa!', {
+    nothingPersisted: true, userProgressStatus: true,
+  });
+  assert.ok(/não consegui registrar/i.test(r), 'afirmar conclusão sem persistir é mentira, progresso ou não');
+});
+
+test('isProgressStatusReply: reconhece progresso e ignora conclusão/pedido', () => {
+  assert.strictEqual(isProgressStatusReply('To fazendo, Tom'), true);
+  assert.strictEqual(isProgressStatusReply('tô vendo isso agora'), true);
+  assert.strictEqual(isProgressStatusReply('vou fazer hoje'), true);
+  assert.strictEqual(isProgressStatusReply('já fiz'), false);            // conclusão
+  assert.strictEqual(isProgressStatusReply('tô fazendo, marca como concluída'), false); // pede ação
+  assert.strictEqual(isProgressStatusReply('reagenda pra amanhã'), false);
 });
 
 test('failed: "Transferi pro grupo" também some', () => {
