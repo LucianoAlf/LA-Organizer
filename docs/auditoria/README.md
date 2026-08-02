@@ -1,6 +1,8 @@
 # 📌 AUDITORIA DO TOM (27/07/2026) — PONTO DE ENTRADA
 
 > **Se você é um chat/agente novo neste projeto: comece por aqui antes de propor qualquer mudança no TOM.**
+>
+> 👤 **Alfredo (auditor cruzado):** seu briefing é o **[Briefing Alfredo — 02/08](2026-08-02-briefing-alfredo.md)** (papéis, regras do jogo e o plano da fatia Agenda). Leia este README depois dele.
 
 ## Decisão vigente (Alf, 27/07/2026)
 
