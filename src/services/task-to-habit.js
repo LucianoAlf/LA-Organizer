@@ -122,14 +122,26 @@ async function convertTaskToHabit({ supabase, collaboratorId, taskTitle, taskId,
   const time = asked || fromTask || DEFAULT_TIME;
   const timeWasDefaulted = !asked && !fromTask;
 
+  // 4.5) MEDIÇÃO ANTES — número, não impressão. Vai no retorno e no log.
+  const before = await measure(supabase, collaboratorId, target.id);
+
   // 5) Hábito: reusar o de mesmo nome em vez de duplicar. O Arthur já tinha um hábito
   //    equivalente vivo ao lado da tarefa — duplicar daria dois lembretes do mesmo.
+  //
+  // ATOMICIDADE (contraponto do Alfredo, 02/08 — procede). O Supabase REST não dá
+  // transação multi-statement, e `endSeries1on1` NÃO checa erro em nenhum dos 3 updates:
+  // retorna {ended:true} incondicionalmente. Confiar nesse retorno era anunciar "encerrei
+  // N tarefas" sem prova — a confabulação que passamos meses caçando, agora escrita por mim.
+  // Como não há transação, a garantia é: escreve → RELÊ o banco → se não bateu, DESFAZ o que
+  // este serviço criou e reporta. `undo` só guarda o que foi criado AQUI: hábito preexistente
+  // reusado não é meu para apagar.
+  const undo = { habitId: null, reminderId: null, habitPrev: null };
   let habitRow = null;
   let reusedHabit = false;
   try {
     const { data: hs } = await supabase
       .from('habits')
-      .select('id, name, frequency, custom_days, is_active')
+      .select('id, name, frequency, custom_days, is_active, notify_whatsapp')
       .eq('collaborator_id', collaboratorId)
       .eq('is_active', true)
       .limit(200);
@@ -137,6 +149,18 @@ async function convertTaskToHabit({ supabase, collaboratorId, taskTitle, taskId,
     habitRow = (hs || []).find((h) => normTitle(h.name) === wanted) || null;
     reusedHabit = !!habitRow;
   } catch (_) { /* sem hábito prévio → cria */ }
+
+  // 5.1) Hábito reusado com aviso DESLIGADO: religar é o próprio pedido da pessoa
+  //      ("quero ser lembrado"). Sem isso ela ficaria sem cobrança E sem aviso — pior que
+  //      antes. O estado anterior vai pro undo: se a conversão abortar, ele volta como era.
+  let habitReactivated = false;
+  if (habitRow && habitRow.notify_whatsapp === false) {
+    undo.habitPrev = { id: habitRow.id, notify_whatsapp: habitRow.notify_whatsapp };
+    const { error: upErr } = await supabase.from('habits')
+      .update({ notify_whatsapp: true }).eq('id', habitRow.id);
+    if (upErr) return { ok: false, reason: 'habit_not_verified', detail: `religar aviso: ${upErr.message}`, before };
+    habitReactivated = true;
+  }
 
   if (!habitRow) {
     const { data: created, error: cErr } = await supabase
@@ -159,6 +183,7 @@ async function convertTaskToHabit({ supabase, collaboratorId, taskTitle, taskId,
       .single();
     if (cErr || !created) return { ok: false, reason: 'db_error', detail: cErr ? cErr.message : 'habit insert vazio' };
     habitRow = created;
+    undo.habitId = created.id;
   }
 
   // 6) Lembrete no horário — habit_reminders é o que o dispatcher realmente lê.
@@ -171,17 +196,53 @@ async function convertTaskToHabit({ supabase, collaboratorId, taskTitle, taskId,
       .limit(50);
     const has = (existing || []).some((r) => String(r.time || '').slice(0, 5) === time);
     if (!has) {
-      const { error: rErr } = await supabase.from('habit_reminders').insert([{ habit_id: habitRow.id, time }]);
-      if (rErr) return { ok: false, reason: 'reminder_failed', detail: rErr.message, habit: { id: habitRow.id } };
+      const { data: rIns, error: rErr } = await supabase
+        .from('habit_reminders').insert([{ habit_id: habitRow.id, time }]).select('id');
+      if (rErr) {
+        const rb = await rollback(supabase, undo);
+        return { ok: false, reason: 'reminder_failed', detail: rErr.message, rolledBack: rb, before };
+      }
       reminderCreated = true;
+      undo.reminderId = (rIns && rIns[0] && rIns[0].id) || null;
     }
   } catch (err) {
-    return { ok: false, reason: 'reminder_failed', detail: err.message, habit: { id: habitRow.id } };
+    const rb = await rollback(supabase, undo);
+    return { ok: false, reason: 'reminder_failed', detail: err.message, rolledBack: rb, before };
   }
 
-  // 7) Só agora a série morre — depois que o lembrete existe de fato. A ordem importa:
-  //    se invertesse e o hábito falhasse, a pessoa ficaria sem tarefa E sem lembrete.
+  // 7) VERIFICA o lado do lembrete relendo o banco. O insert pode "passar" e o
+  //    CHECK/RLS derrubar a linha — sem esta releitura, hábito mudo vira sucesso.
+  const habitOk = await verifyHabitSide(supabase, habitRow.id, time);
+  if (!habitOk.ok) {
+    const rb = await rollback(supabase, undo);
+    return { ok: false, reason: 'habit_not_verified', detail: habitOk.detail, rolledBack: rb, before };
+  }
+
+  // 8) Só agora a série morre — depois que o lembrete existe DE FATO (verificado).
+  //    Invertido, uma falha deixaria a pessoa sem tarefa E sem lembrete.
   const ended = await endSeries1on1({ supabase, templateId: target.id, ownerId: collaboratorId });
+
+  // 9) VERIFICA o encerramento relendo o banco — endSeries1on1 devolve {ended:true} mesmo
+  //    quando os updates falham. Se a série não morreu, DESFAZ o lado do lembrete: melhor
+  //    voltar ao estado inicial (cobrando, como antes) do que deixar meio convertido —
+  //    cobrando E lembrando ao mesmo tempo, com o TOM anunciando que resolveu.
+  const after = await measure(supabase, collaboratorId, target.id);
+  if (!after.seriesEnded || after.serieAberta > 0) {
+    const rb = await rollback(supabase, undo);
+    return {
+      ok: false,
+      reason: 'series_end_failed',
+      detail: `series_ended_at=${after.seriesEnded ? 'ok' : 'null'} instancias_abertas=${after.serieAberta}`,
+      rolledBack: rb,
+      template: { id: target.id, title: target.title },
+      before,
+      after,
+    };
+  }
+
+  console.log(`[TaskToHabit] convertido tpl=${String(target.id).slice(0, 8)} habit=${String(habitRow.id).slice(0, 8)} ` +
+    `freq=${sched.frequency}${sched.custom_days ? JSON.stringify(sched.custom_days) : ''}@${time} ` +
+    `reusado=${reusedHabit} | serie_aberta ${before.serieAberta}→${after.serieAberta} | total_cobravel ${before.totalAberto}→${after.totalAberto}`);
 
   return {
     ok: true,
@@ -197,7 +258,80 @@ async function convertTaskToHabit({ supabase, collaboratorId, taskTitle, taskId,
     reusedHabit,
     reminderCreated,
     timeWasDefaulted,
+    before,
+    after,
   };
+}
+
+/** Fotografia numérica do escopo da operação — antes e depois, para comparar. */
+async function measure(supabase, collaboratorId, templateId) {
+  const out = { serieAberta: 0, totalAberto: 0, seriesEnded: false };
+  try {
+    const { data: tpl } = await supabase.from('tasks')
+      .select('id, series_ended_at').eq('id', templateId).maybeSingle();
+    out.seriesEnded = !!(tpl && tpl.series_ended_at);
+    // Instâncias da série ainda cobráveis (+ o próprio molde, se aberto).
+    const { data: kids } = await supabase.from('tasks')
+      .select('id').eq('recurrence_parent_id', templateId).eq('assigned_to', collaboratorId)
+      .not('status', 'in', '("done","cancelled")');
+    const { data: self } = await supabase.from('tasks')
+      .select('id').eq('id', templateId).eq('assigned_to', collaboratorId)
+      .not('status', 'in', '("done","cancelled")');
+    out.serieAberta = (kids || []).length + (self || []).length;
+    const { data: all } = await supabase.from('tasks')
+      .select('id').eq('assigned_to', collaboratorId).not('status', 'in', '("done","cancelled")');
+    out.totalAberto = (all || []).length;
+  } catch (_) { /* medição é diagnóstico, nunca derruba a operação */ }
+  return out;
+}
+
+/** Relê o banco e confirma que o lembrete existe DE VERDADE no horário certo. */
+async function verifyHabitSide(supabase, habitId, time) {
+  try {
+    const { data: h } = await supabase.from('habits')
+      .select('id, is_active, notify_whatsapp').eq('id', habitId).maybeSingle();
+    if (!h) return { ok: false, detail: 'hábito não encontrado após criar' };
+    if (!h.is_active || !h.notify_whatsapp) return { ok: false, detail: 'hábito inativo ou sem notificação' };
+    const { data: rem } = await supabase.from('habit_reminders')
+      .select('id, time').eq('habit_id', habitId);
+    const hit = (rem || []).some((r) => String(r.time || '').slice(0, 5) === time);
+    if (!hit) return { ok: false, detail: `nenhum lembrete gravado às ${time}` };
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, detail: err.message };
+  }
+}
+
+/**
+ * Desfaz SÓ o que este serviço criou nesta chamada. Hábito reusado (preexistente) e
+ * lembrete que já estava lá não são tocados. Retorna o que conseguiu desfazer e o que
+ * sobrou — resíduo é reportado, nunca engolido.
+ */
+async function rollback(supabase, undo) {
+  const done = [];
+  const residue = [];
+  try {
+    if (undo.reminderId) {
+      const { error } = await supabase.from('habit_reminders').delete().eq('id', undo.reminderId);
+      if (error) residue.push(`habit_reminders:${undo.reminderId}`); else done.push('lembrete');
+    }
+    if (undo.habitId) {
+      // limpa lembretes filhos antes (FK) — o hábito é novo, então são todos deste serviço
+      await supabase.from('habit_reminders').delete().eq('habit_id', undo.habitId);
+      const { error } = await supabase.from('habits').delete().eq('id', undo.habitId);
+      if (error) residue.push(`habits:${undo.habitId}`); else done.push('hábito');
+    }
+    if (undo.habitPrev) {
+      // hábito preexistente que este serviço religou: volta ao estado que a pessoa tinha
+      const { error } = await supabase.from('habits')
+        .update({ notify_whatsapp: undo.habitPrev.notify_whatsapp }).eq('id', undo.habitPrev.id);
+      if (error) residue.push(`habits.notify:${undo.habitPrev.id}`); else done.push('aviso do hábito');
+    }
+  } catch (err) {
+    residue.push(`erro:${err.message}`);
+  }
+  if (residue.length) console.error(`[TaskToHabit] ROLLBACK INCOMPLETO — resíduo: ${residue.join(', ')}`);
+  return { undone: done, residue };
 }
 
 const DOW_ABBR = { 1: 'seg', 2: 'ter', 3: 'qua', 4: 'qui', 5: 'sex', 6: 'sáb', 7: 'dom' };
@@ -254,6 +388,17 @@ function renderConversionResult(r) {
       return '_essa rotina não é diária nem semanal, e lembrete recorrente só faz esses dois — essa eu não consigo converter._';
     case 'missing_target':
       return '_me diz qual rotina você quer que vire lembrete._';
+    // Falhas de meio-caminho: dizer o que ficou de pé, não só "deu erro". Se sobrou
+    // resíduo do rollback, a pessoa precisa saber que existe algo estranho lá.
+    case 'series_end_failed': {
+      const sujo = r.rolledBack && r.rolledBack.residue && r.rolledBack.residue.length;
+      return sujo
+        ? '_criei o lembrete mas não consegui encerrar a tarefa antiga, e a limpeza também falhou — pode ser que você receba os dois hoje. Já estou de olho nisso._'
+        : '_criei o lembrete mas não consegui encerrar a tarefa antiga, então desfiz pra não te deixar com os dois. Está tudo como antes — tenta de novo em instantes?_';
+    }
+    case 'reminder_failed':
+    case 'habit_not_verified':
+      return '_não consegui criar o lembrete agora, então não mexi na tua rotina — ela segue como estava. Tenta de novo em instantes?_';
     default:
       return '_não consegui fazer essa conversão agora — tenta de novo em instantes._';
   }

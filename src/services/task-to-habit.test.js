@@ -55,7 +55,12 @@ test('describeSchedule traduz o que está no banco', () => {
   assert.strictEqual(describeSchedule('custom_days', null), '');
 });
 
-function makeDb({ tasks = [], habits = [], reminders = [], events = [] } = {}) {
+// `fail` injeta falha por (tabela, operação):
+//   {tasks: 'update'}        → update em tasks não tem efeito e devolve erro
+//   {tasks: 'update_silent'} → update NÃO tem efeito mas devolve sucesso (o caso REAL:
+//                              endSeries1on1 não checa erro, então falha silenciosa é
+//                              indistinguível de sucesso pra quem confia no retorno)
+function makeDb({ tasks = [], habits = [], reminders = [], events = [], fail = {} } = {}) {
   const store = { tasks, habits, habit_reminders: reminders };
   let seq = 0;
   function builder(tableName) {
@@ -73,8 +78,22 @@ function makeDb({ tasks = [], habits = [], reminders = [], events = [] } = {}) {
     }
     function resolve() {
       const rows = rowsOf().filter(match);
+      const modo = fail[tableName];
+      if (modo && (modo === st.op || modo === `${st.op}_silent`)) {
+        events.push({ kind: 'blocked', table: tableName, op: st.op });
+        return Promise.resolve(modo.endsWith('_silent')
+          ? { data: [], error: null }                                   // mente: diz que foi
+          : { data: null, error: { message: `falha simulada em ${tableName}.${st.op}` } });
+      }
       if (st.op === 'update') {
         rows.forEach((r) => { Object.assign(r, st.patch); events.push({ kind: 'update', table: tableName, id: r.id, patch: st.patch }); });
+        return Promise.resolve({ data: rows.map((r) => ({ id: r.id })), error: null });
+      }
+      if (st.op === 'delete') {
+        const ids = new Set(rows.map((r) => r.id));
+        const arr = rowsOf();
+        for (let i = arr.length - 1; i >= 0; i--) if (ids.has(arr[i].id)) arr.splice(i, 1);
+        events.push({ kind: 'delete', table: tableName, ids: [...ids] });
         return Promise.resolve({ data: rows.map((r) => ({ id: r.id })), error: null });
       }
       if (st.op === 'insert') {
@@ -104,6 +123,7 @@ function makeDb({ tasks = [], habits = [], reminders = [], events = [] } = {}) {
       limit() { return b; },
       update(patch) { st.op = 'update'; st.patch = patch; return b; },
       insert(row) { st.op = 'insert'; st.row = row; return b; },
+      delete() { st.op = 'delete'; return b; },
       maybeSingle() { return resolve().then((r) => ({ data: (r.data || [])[0] || null, error: null })); },
       single() { return resolve().then((r) => ({ data: (r.data || [])[0] || null, error: null })); },
       then(res, rej) { return resolve().then(res, rej); },
@@ -186,7 +206,7 @@ test('WEEKLY sem BYDAY ancora no dia da semana do due_date (2026-08-03 = segunda
 test('hábito com o mesmo nome é REUSADO, não duplicado', async () => {
   const events = [];
   const tasks = [T({ id: 'tpl', title: 'Mensagem de aniversário', recurrence_rule: 'FREQ=DAILY' })];
-  const habits = [{ id: 'h-old', collaborator_id: OWNER, name: 'Mensagem de Aniversário', is_active: true, frequency: 'daily', custom_days: null }];
+  const habits = [{ id: 'h-old', collaborator_id: OWNER, name: 'Mensagem de Aniversário', is_active: true, notify_whatsapp: true, frequency: 'daily', custom_days: null }];
   const r = await convertTaskToHabit({ supabase: makeDb({ tasks, habits, events }), collaboratorId: OWNER, taskTitle: 'Mensagem de aniversário', reminderTime: '10:00' });
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.reusedHabit, true);
@@ -198,7 +218,7 @@ test('hábito com o mesmo nome é REUSADO, não duplicado', async () => {
 test('lembrete no mesmo horário não é duplicado', async () => {
   const events = [];
   const tasks = [T({ id: 'tpl', title: 'Alongar', recurrence_rule: 'FREQ=DAILY' })];
-  const habits = [{ id: 'h-old', collaborator_id: OWNER, name: 'Alongar', is_active: true }];
+  const habits = [{ id: 'h-old', collaborator_id: OWNER, name: 'Alongar', is_active: true, notify_whatsapp: true }];
   const reminders = [{ id: 'r1', habit_id: 'h-old', time: '10:00' }];
   const r = await convertTaskToHabit({ supabase: makeDb({ tasks, habits, reminders, events }), collaboratorId: OWNER, taskTitle: 'Alongar', reminderTime: '10:00' });
   assert.strictEqual(r.ok, true);
@@ -264,6 +284,110 @@ test('sem alvo informado → missing_target', async () => {
   const r = await convertTaskToHabit({ supabase: makeDb({}), collaboratorId: OWNER });
   assert.strictEqual(r.ok, false);
   assert.strictEqual(r.reason, 'missing_target');
+});
+
+// ---------- ATOMICIDADE (contraponto do Alfredo, 02/08) ----------
+// Sem transação no Supabase REST, a garantia tem que ser: escreve → relê → se não bateu,
+// desfaz o que criou. O cenário perigoso não é o erro barulhento: é o encerramento que
+// FALHA EM SILÊNCIO (endSeries1on1 devolve {ended:true} sem checar erro nenhum).
+
+test('encerramento falha em SILÊNCIO → desfaz o lembrete e volta ao estado inicial', async () => {
+  const events = [];
+  const tasks = [
+    T({ id: 'tpl', title: 'Conferir caixa', recurrence_rule: 'FREQ=DAILY' }),
+    T({ id: 'i1', title: 'Conferir caixa', recurrence_parent_id: 'tpl' }),
+  ];
+  const r = await convertTaskToHabit({
+    supabase: makeDb({ tasks, events, fail: { tasks: 'update_silent' } }),
+    collaboratorId: OWNER, taskTitle: 'Conferir caixa', reminderTime: '09:00',
+  });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.reason, 'series_end_failed');
+  // nada de estado meio convertido: hábito e lembrete que ELE criou não existem mais
+  assert.deepStrictEqual(r.rolledBack.residue, []);
+  assert.strictEqual(r.rolledBack.undone.includes('hábito'), true);
+  // e a rotina segue exatamente como estava — ainda cobrando, nada perdido
+  assert.strictEqual(tasks.find((t) => t.id === 'tpl').series_ended_at, null);
+  assert.strictEqual(tasks.find((t) => t.id === 'i1').status, 'pending');
+});
+
+test('depois do rollback o banco não tem hábito nem lembrete órfão', async () => {
+  const events = [];
+  const habits = []; const reminders = [];
+  const tasks = [T({ id: 'tpl', title: 'Conferir caixa', recurrence_rule: 'FREQ=DAILY' })];
+  await convertTaskToHabit({
+    supabase: makeDb({ tasks, habits, reminders, events, fail: { tasks: 'update_silent' } }),
+    collaboratorId: OWNER, taskTitle: 'Conferir caixa',
+  });
+  assert.strictEqual(habits.length, 0, 'sobrou hábito órfão');
+  assert.strictEqual(reminders.length, 0, 'sobrou lembrete órfão');
+});
+
+test('hábito REUSADO não é apagado no rollback — não é meu pra apagar', async () => {
+  const events = [];
+  const tasks = [T({ id: 'tpl', title: 'Alongar', recurrence_rule: 'FREQ=DAILY' })];
+  const habits = [{ id: 'h-old', collaborator_id: OWNER, name: 'Alongar', is_active: true, notify_whatsapp: true }];
+  const reminders = [{ id: 'r-old', habit_id: 'h-old', time: '07:00' }];
+  const r = await convertTaskToHabit({
+    supabase: makeDb({ tasks, habits, reminders, events, fail: { tasks: 'update_silent' } }),
+    collaboratorId: OWNER, taskTitle: 'Alongar', reminderTime: '09:00',
+  });
+  assert.strictEqual(r.reason, 'series_end_failed');
+  assert.strictEqual(habits.length, 1, 'apagou hábito que já existia');
+  assert.strictEqual(habits[0].id, 'h-old');
+  // o lembrete PREEXISTENTE fica; só o que este serviço criou (09:00) sai
+  assert.deepStrictEqual(reminders.map((x) => x.time), ['07:00']);
+});
+
+test('lembrete falha → hábito recém-criado é removido e a rotina não é tocada', async () => {
+  const events = [];
+  const habits = [];
+  const tasks = [T({ id: 'tpl', title: 'Conferir caixa', recurrence_rule: 'FREQ=DAILY' })];
+  const r = await convertTaskToHabit({
+    supabase: makeDb({ tasks, habits, events, fail: { habit_reminders: 'insert' } }),
+    collaboratorId: OWNER, taskTitle: 'Conferir caixa',
+  });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.reason, 'reminder_failed');
+  assert.strictEqual(habits.length, 0, 'hábito mudo ficou no banco');
+  assert.strictEqual(tasks[0].series_ended_at, null, 'mexeu na rotina mesmo sem lembrete');
+});
+
+test('rollback que também falha reporta RESÍDUO em vez de engolir', async () => {
+  const events = [];
+  const tasks = [T({ id: 'tpl', title: 'Conferir caixa', recurrence_rule: 'FREQ=DAILY' })];
+  const r = await convertTaskToHabit({
+    supabase: makeDb({ tasks, events, fail: { tasks: 'update_silent', habits: 'delete' } }),
+    collaboratorId: OWNER, taskTitle: 'Conferir caixa',
+  });
+  assert.strictEqual(r.reason, 'series_end_failed');
+  assert.ok(r.rolledBack.residue.length > 0, 'resíduo foi engolido');
+  // e o texto avisa a pessoa em vez de dizer que está tudo certo
+  assert.ok(renderConversionResult(r).includes('os dois hoje'));
+});
+
+test('sucesso carrega a medição antes/depois', async () => {
+  const tasks = [
+    T({ id: 'tpl', title: 'Conferir caixa', recurrence_rule: 'FREQ=DAILY' }),
+    T({ id: 'i1', title: 'Conferir caixa', recurrence_parent_id: 'tpl' }),
+    T({ id: 'i2', title: 'Conferir caixa', recurrence_parent_id: 'tpl' }),
+    T({ id: 'outra', title: 'Tarefa avulsa de outra coisa' }),
+  ];
+  const r = await convertTaskToHabit({ supabase: makeDb({ tasks }), collaboratorId: OWNER, taskTitle: 'Conferir caixa' });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.before.serieAberta, 3);   // molde + 2 instâncias
+  assert.strictEqual(r.after.serieAberta, 0);
+  assert.strictEqual(r.before.totalAberto, 4);
+  assert.strictEqual(r.after.totalAberto, 1);    // a avulsa continua, não é escopo
+  assert.strictEqual(r.after.seriesEnded, true);
+});
+
+test('texto de falha nunca afirma conversão', () => {
+  for (const reason of ['series_end_failed', 'reminder_failed', 'habit_not_verified']) {
+    const s = renderConversionResult({ ok: false, reason, rolledBack: { undone: [], residue: [] } });
+    assert.ok(!/virou lembrete/i.test(s), `"${reason}" afirmou conversão`);
+    assert.ok(!/não te cobro mais/i.test(s), `"${reason}" prometeu parar de cobrar`);
+  }
 });
 
 // ---------- resolução por id e por título aproximado ----------

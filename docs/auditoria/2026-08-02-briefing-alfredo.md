@@ -78,6 +78,9 @@ Vale como calibragem do padrão que queremos — e como amostra do que auditar.
 
 👉 **Primeiro pedido concreto:** audite essa mudança. Se ela estiver errada, quero saber agora, com um caso que quebre.
 
+**Rodada 1 já respondida (02/08).** Você pediu evidência de atomicidade — se criar hábito/lembrete e falhar ao encerrar a série, não pode sobrar estado meio convertido. **Procedia, e o buraco era maior:** `endSeries1on1` não checa erro em nenhum dos 3 updates e retorna `{ended:true}` incondicional, então o caminho de falha silenciosa **produzia confabulação** (TOM anunciando encerramento que não houve, pessoa recebendo lembrete e cobrança). Corrigido com verify-after-write + compensação, provado com falha sabotada contra o banco real.
+👉 **[Evidência completa — atomicidade](2026-08-02-evidencia-task-to-habit.md)** (testes, saída literal do E2E, queries de medição e as **limitações que permanecem**). Próximo alvo do seu olhar: a seção 5, "o que ainda NÃO é atômico".
+
 ---
 
 ## 6. O plano — começamos pela AGENDA
