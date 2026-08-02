@@ -75,8 +75,24 @@ async function loadConversation(sb, collaboratorId, hours = 24) {
   const rows = data || [];
   // lastAt: created_at da última msg da janela — vira fallback de occurred_at dos findings.
   const lastAt = rows.length ? rows[rows.length - 1].created_at : null;
+  // AUDIT-RELATIVE-DATE-BLIND (02/08, caso Rafinha): o transcript ia SEM nenhuma marca de
+  // tempo, então o auditor julgava "hoje/amanhã" contra o dia em que ELE roda (D+1), não
+  // contra o dia da conversa. Sábado 01/08 o Rafinha disse "vai ser amanhã", o TOM reagendou
+  // certo pra domingo 02/08 — e o auditor, rodando no domingo, acusou "TOM confirmou com a
+  // data de hoje". Falso-positivo que vira alarme no relatório do dono. Prefixo [DD/MM (Dia)
+  // HH:MM] por linha resolve e ainda dá noção de intervalo entre as falas.
+  const _stamp = (iso) => {
+    try {
+      const f = new Intl.DateTimeFormat('pt-BR', {
+        timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit',
+        weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+      }).formatToParts(new Date(iso));
+      const g = (t) => (f.find((p) => p.type === t) || {}).value || '';
+      return `${g('day')}/${g('month')} (${g('weekday').replace('.', '')}) ${g('hour')}:${g('minute')}`;
+    } catch (_) { return ''; }
+  };
   const text = rows
-    .map(m => `${m.direction === 'inbound' ? 'USUÁRIO' : 'TOM'}: ${String(m.content || m.media_extracted_text || '').slice(0, 1600)}`)
+    .map(m => `[${_stamp(m.created_at)}] ${m.direction === 'inbound' ? 'USUÁRIO' : 'TOM'}: ${String(m.content || m.media_extracted_text || '').slice(0, 1600)}`)
     .join('\n')
     .slice(0, 24000);
   return { text, lastAt, sinceIso };
