@@ -10892,6 +10892,70 @@ async function processMessage(phone, text, raw = {}) {
     }
   }
 
+  // 2.61) <<TASK_TO_HABIT>> — tarefa recorrente vira LEMBRETE recorrente (hábito).
+  //
+  // Arthur (02/08): "para de ser tarefa e vira lembrete, senão ele esquece". Tarefa é a
+  // entidade que COBRA — num dia ele levou briefing + 5 cobranças de atraso + lembrete T-1
+  // + fechamento do dia + balanço de aderência sobre 2 rotinas que ele já fazia. Hábito
+  // (habits + habit_reminders) só lembra: dispara no horário, respeita DND/quiet hours e
+  // não tem nenhuma superfície de cobrança. As duas entidades já existiam — faltava a ponte.
+  // Sem ponte o LLM improvisava: negava a capacidade, ou criava o hábito e deixava a tarefa
+  // viva cobrando em paralelo (o estado REAL em que o Arthur estava).
+  //
+  // Divisão de trabalho: o LLM INTERPRETA ("não quero ser cobrado disso, só lembrado") e diz
+  // QUAL rotina. Achar o molde, traduzir a RRULE pro calendário do hábito, o horário e o
+  // encerramento da série são determinísticos no serviço — mesmo desenho do executor do
+  // financeiro (1,3% de falha vs 14% do resto). Falhou em qualquer decisão → não mexe em nada.
+  {
+    const reT2H = /<<TASK_TO_HABIT>>\s*([\s\S]*?)\s*<<END>>/i;
+    const mT2H = reply.match(reT2H);
+    if (mT2H) {
+      const cleanT2H = reply.replace(reT2H, '').trim();
+      const last4T2H = String(collab.phone || '').slice(-4);
+      let parsedT2H = null;
+      try {
+        parsedT2H = JSON.parse(mT2H[1].trim());
+      } catch (err) {
+        await logMarker(collab.id, 'TASK_TO_HABIT', 'rejected', 'invalid_json: ' + err.message, mT2H[1]);
+        parsedT2H = null;
+      }
+      if (!parsedT2H) {
+        // Nada persistiu → o texto não pode afirmar que virou lembrete.
+        reply = (sanitizeOptimisticConfirm(cleanT2H, 'failed') || '').trim()
+          || '_não consegui fazer essa conversão agora — me repete qual rotina?_';
+      } else {
+        const { convertTaskToHabit, renderConversionResult } = require('./services/task-to-habit');
+        const itemsT2H = (Array.isArray(parsedT2H) ? parsedT2H : [parsedT2H]).slice(0, 5);
+        const footersT2H = [];
+        let okT2H = 0;
+        for (const it of itemsT2H) {
+          if (!it || typeof it !== 'object') continue;
+          let r;
+          try {
+            r = await convertTaskToHabit({
+              supabase,
+              collaboratorId: collab.id,
+              taskTitle: typeof it.task_title === 'string' ? it.task_title : null,
+              taskId: typeof it.task_id === 'string' ? it.task_id : null,
+              reminderTime: typeof it.reminder_time === 'string' ? it.reminder_time : null,
+            });
+          } catch (err) {
+            console.error('[TaskToHabit] throw:', err.message);
+            r = { ok: false, reason: 'db_error', detail: err.message };
+          }
+          if (r && r.ok) okT2H++;
+          footersT2H.push(renderConversionResult(r));
+          console.log(`[TaskToHabit] ${r && r.ok ? 'ok' : 'fail:' + (r && r.reason)} "${String(it.task_title || it.task_id || '').slice(0, 40)}" by ${last4T2H}`);
+        }
+        await logMarker(collab.id, 'TASK_TO_HABIT', okT2H > 0 ? 'executed' : 'rejected',
+          okT2H > 0 ? `ok=${okT2H}/${itemsT2H.length}` : `all_failed:${itemsT2H.length}`, null);
+        const baseT2H = okT2H > 0 ? cleanT2H : (sanitizeOptimisticConfirm(cleanT2H, 'failed') || '');
+        const footT2H = footersT2H.filter(Boolean).join('\n');
+        reply = [String(baseT2H).trim(), footT2H].filter(Boolean).join('\n\n') || reply;
+      }
+    }
+  }
+
   // 2.62) Sprint 22.38 — <<PERSONAL_LIST_ACTION>> — listas pessoais do user.
   // Actions: create | add_item | toggle_item | rename | archive
   {
