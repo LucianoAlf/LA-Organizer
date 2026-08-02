@@ -369,3 +369,26 @@ test('órfã com "não" após \\n\\n não rebaixa o último item', () => {
 test('CONTROLE: sem \\n\\n nada muda — "1 feito, 2 feito, 3 em andamento"', () => {
   assert.deepStrictEqual(parseClosingReply('1 feito, 2 feito, 3 em andamento', 3).statuses, ['done', 'done', 'progress']);
 });
+
+// BATCH-CONFIRM-DUP-TITLES (caso Arthur 01/08) — a lista de confirmação repetia o mesmo
+// título N vezes (instâncias diárias da recorrência), e o Arthur não tinha como saber o que
+// estava confirmando: "*Mensagem de feliz aniversário*, *Verificar presenças do dia anterior*,
+// *Mensagem de aniversário*, *Verificar presenças do dia anterior*, ...".
+const { formatBatchTitles } = require('./closing-reply');
+
+test('agrupa títulos repetidos com contagem (caso Arthur)', () => {
+  const real = ['Mensagem de feliz aniversário', 'Verificar presenças do dia anterior',
+    'Mensagem de aniversário', 'Verificar presenças do dia anterior',
+    'Mensagem de feliz aniversário', 'Verificar presenças do dia anterior'];
+  assert.strictEqual(formatBatchTitles(real),
+    '*Mensagem de feliz aniversário* (2×), *Verificar presenças do dia anterior* (3×), *Mensagem de aniversário*');
+});
+
+test('títulos únicos ficam iguais (sem contagem)', () => {
+  assert.strictEqual(formatBatchTitles(['Pagar contas', 'Ligar pro fornecedor']),
+    '*Pagar contas*, *Ligar pro fornecedor*');
+});
+
+test('preserva ordem de primeira aparição e ignora vazios', () => {
+  assert.strictEqual(formatBatchTitles(['B', '', 'A', 'B', null]), '*B* (2×), *A*');
+});

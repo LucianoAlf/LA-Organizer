@@ -4363,7 +4363,7 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
   // caminho de mensagem do usuário (opts.inboundText presente); AUTO_RETRY não passa → pula.
   if (opts && opts.inboundText) {
     try {
-      const { batchCompleteNeedsConfirm } = require('./utils/closing-reply');
+      const { batchCompleteNeedsConfirm, formatBatchTitles } = require('./utils/closing-reply');
       const completes = actions.filter((a) => a && a.action === 'complete');
       if (completes.length >= 2) {
         const titles = [];
@@ -4373,7 +4373,9 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
           if (tt && tt.title) titles.push(tt.title);
         }
         if (batchCompleteNeedsConfirm({ completedTitles: titles, inboundText: opts.inboundText })) {
-          const lista = titles.map((t) => `*${t}*`).join(', ');
+          // Agrupa títulos repetidos ("X (3×)") — instâncias de recorrência têm o mesmo nome
+          // e a lista virava "X, Y, Z, Y, X, Y" (BATCH-CONFIRM-DUP-TITLES, caso Arthur 01/08).
+          const lista = formatBatchTitles(titles);
           const plural = titles.length > 1;
           // BATCH-CONFIRM-MSG-CONTRADIZ (Rose/2088 28/06): a msg antiga dizia "Não vi você citar
           // elas na mensagem" enquanto LISTAVA os nomes — contradição que confundia. Pergunta limpa.

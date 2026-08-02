@@ -277,4 +277,24 @@ function futureDoneItems(items, statuses, dueById, today) {
   return out;
 }
 
-module.exports = { buildClosingItems, parseClosingReply, shouldClosingInterceptorFire, batchCompleteNeedsConfirm, futureDoneItems, _brtDay: brtDay };
+// BATCH-CONFIRM-DUP-TITLES (02/08, caso Arthur) — instâncias de uma recorrência têm o MESMO
+// título (uma por dia), então a pergunta de confirmação saía assim:
+//   "Confirma o fechamento destas 6 tarefas: *Mensagem de feliz aniversário*, *Verificar
+//    presenças do dia anterior*, *Mensagem de aniversário*, *Verificar presenças do dia
+//    anterior*, *Mensagem de feliz aniversário*, *Verificar presenças do dia anterior*?"
+// A pessoa não tem como saber o que está confirmando — parece bug, e é o sintoma visível da
+// raiz nº1 (identidade de tarefa). Agrupa repetidos com contagem, preservando a ORDEM de
+// primeira aparição. Sem query nova: opera só sobre os títulos que o chamador já tem.
+function formatBatchTitles(titles) {
+  const counts = new Map();
+  for (const t of (Array.isArray(titles) ? titles : [])) {
+    const k = String(t || '').trim();
+    if (!k) continue;
+    counts.set(k, (counts.get(k) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([t, n]) => (n > 1 ? `*${t}* (${n}×)` : `*${t}*`))
+    .join(', ');
+}
+
+module.exports = { buildClosingItems, parseClosingReply, shouldClosingInterceptorFire, batchCompleteNeedsConfirm, futureDoneItems, formatBatchTitles, _brtDay: brtDay };
