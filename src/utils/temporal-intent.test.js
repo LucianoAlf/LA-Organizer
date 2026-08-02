@@ -51,3 +51,29 @@ test('reply-quote LEGÍTIMO: "hoje" na fala real (não na citação) ainda conta
   const txt = '[O usuário está RESPONDENDO a esta mensagem anterior: "Quer reagendar?"]\npode deixar pra hoje mesmo';
   assert.deepStrictEqual(detectExplicitDayIntent(txt), { wantsToday: true, wantsTomorrow: false });
 });
+
+// AUTOALIGN-EXPLANATORY-DAY (caso Rose 01/08) — "amanhã" numa oração EXPLICATIVA não é
+// destino. Ela escreveu: "Tom muda essa tarefa pra segunda pfvr, amanhã é domingo, n trabalho".
+// O TOM entendeu certo e emitiu reschedule pra SEGUNDA (03/08); o auto-align viu a palavra
+// "amanhã" e sobrescreveu pra 02/08 — DOMINGO, o dia que ela acabara de dizer que não trabalha.
+// Log do turno: TASK_DATE_AUTO_ALIGNED count=2 target=2026-08-02.
+test('caso Rose: "amanhã é domingo" é explicação, não destino', () => {
+  const r = detectExplicitDayIntent('Tom muda essa tarefa pra segunda pfvr, amanhã é domingo, n trabalho');
+  assert.strictEqual(r.wantsTomorrow, false);
+  assert.strictEqual(r.wantsToday, false);
+});
+
+test('dia da semana nomeado vence "amanhã/hoje" solto (destino concorrente)', () => {
+  assert.strictEqual(detectExplicitDayIntent('passa pra sexta, hoje não dá').wantsToday, false);
+  assert.strictEqual(detectExplicitDayIntent('deixa pro dia 12, amanhã tô fora').wantsTomorrow, false);
+});
+
+test('NÃO-REGRESSÃO: pedido direto de amanhã/hoje continua valendo', () => {
+  assert.strictEqual(detectExplicitDayIntent('Amanhã preciso pagar o boleto, me lembra 8h30?').wantsTomorrow, true);
+  assert.strictEqual(detectExplicitDayIntent('muda pra amanhã').wantsTomorrow, true);
+  assert.strictEqual(detectExplicitDayIntent('faz isso hoje ainda').wantsToday, true);
+});
+
+test('NÃO-REGRESSÃO: "hoje é" explicativo não força hoje', () => {
+  assert.strictEqual(detectExplicitDayIntent('hoje é feriado, joga pra quarta').wantsToday, false);
+});
