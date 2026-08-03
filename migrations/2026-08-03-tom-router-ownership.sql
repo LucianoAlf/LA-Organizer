@@ -42,6 +42,11 @@ create table public.tom_message_ownership (
   status                text        not null default 'claimed'
                         check (status in ('claimed','processing','completed','failed')),
   lease_until           timestamptz,
+  -- R4-1 (fencing token): `owner` não distingue TENTATIVAS. Um worker do mesmo v2 que
+  -- travou (GC pause, rede) pode acordar depois do lease vencer, quando outro worker já
+  -- retomou, e renovar/fechar como se ainda fosse o dono — dois workers agindo. Cada
+  -- posse recebe um token; heartbeat e finish exigem o token ATUAL. Token velho não age.
+  lease_token           uuid,
   attempts              int         not null default 0,
   phone                 text,
   collaborator_id       uuid        references public.collaborators(id) on delete set null,
@@ -96,6 +101,10 @@ create table public.tom_flow_ownership (
   phase               text        not null default 'canary' check (phase in ('canary','draining','retired')),
   -- true = é ESTE fluxo que prende a conversa (só um por conversa)
   interactive         boolean     not null default true,
+  -- R4-3 (TTL): sem prazo, um v2 que caia antes de `retired` prende a conversa PARA
+  -- SEMPRE — a pessoa nunca mais é atendida pelo v1 naquele chat. Fluxo interativo tem
+  -- validade; expirado é expropriado por quem precisar da conversa.
+  interactive_until   timestamptz,
   opened_by_wa_id     text,
   opened_at           timestamptz not null default now(),
   closed_at           timestamptz,
@@ -158,6 +167,36 @@ alter table public.tom_operations enable row level security;
 comment on column public.tom_operations.verified is
   'Releitura do banco confirmou o efeito. NULL = não verificado — nunca tratar como sucesso.';
 
+-- -------------------------------------------------------------------------------------
+-- 3.1 tom_operation_steps — R4-2: idempotência POR ETAPA.
+--
+-- Retomar "pelo mesmo dono" não é seguro se o worker já tinha mutado a entidade antes de
+-- cair: a retomada reexecutaria às cegas. Cada passo com efeito é reivindicado ANTES de
+-- agir; se a retomada vê 'done', não repete e reaproveita o resultado guardado.
+--
+-- Fica aqui, e não nas RPCs de ação, de propósito: é infraestrutura genérica de
+-- idempotência. As RPCs de negócio (E2.0) vão usá-la em vez de reinventar cada uma.
+-- -------------------------------------------------------------------------------------
+create table public.tom_operation_steps (
+  id            uuid primary key default gen_random_uuid(),
+  operation_id  uuid        not null references public.tom_operations(operation_id) on delete cascade,
+  step_key      text        not null,
+  status        text        not null default 'in_progress' check (status in ('in_progress','done','failed')),
+  result        jsonb,
+  error         text,
+  started_at    timestamptz not null default now(),
+  finished_at   timestamptz
+);
+
+-- Um passo por operação. É esta constraint que faz o begin ser idempotente sob corrida.
+create unique index tom_operation_steps_uq
+  on public.tom_operation_steps (operation_id, step_key);
+
+alter table public.tom_operation_steps enable row level security;
+
+comment on table public.tom_operation_steps is
+  'Reivindicação de passo com efeito. Retomada após crash consulta aqui em vez de reexecutar.';
+
 -- =====================================================================================
 -- RPCs de OWNERSHIP.
 -- As RPCs de AÇÃO de negócio (tom_v2_apply_reminder_action / tom_v2_verify_operation)
@@ -185,7 +224,7 @@ create function public.tom_route_claim_inbound(
   p_reason          text default null,
   p_conflict        text default null,
   p_lease_seconds   int  default 300
-) returns table (outcome text, owner text, operation_id uuid)
+) returns table (outcome text, owner text, operation_id uuid, lease_token uuid, steps_done int)
 language plpgsql
 security definer
 set search_path = public
@@ -194,22 +233,25 @@ declare
   v_op      uuid;
   v_row     public.tom_message_ownership%rowtype;
   v_ins     boolean := false;
+  v_token   uuid;
+  v_steps   int := 0;
 begin
   if p_wa_message_id is null or p_wa_message_id = '' then
-    return query select 'invalid'::text, null::text, null::uuid;
+    return query select 'invalid'::text, null::text, null::uuid, null::uuid, 0;
     return;
   end if;
 
-  v_op := gen_random_uuid();
+  v_op    := gen_random_uuid();
+  v_token := gen_random_uuid();
 
   -- R3-A2: o RETURNING é o que distingue quem inseriu. Sem ele, o perdedor da corrida
   -- também recebia "novo" e processava a mesma mensagem.
   insert into public.tom_message_ownership
-    (wa_message_id, direction, owner, status, lease_until, attempts, phone, collaborator_id,
+    (wa_message_id, direction, owner, status, lease_until, lease_token, attempts, phone, collaborator_id,
      conversation_key, quoted_wa_message_id, route_reason, route_conflict, operation_id)
   values
     (p_wa_message_id, 'inbound', p_owner, 'claimed',
-     now() + make_interval(secs => greatest(p_lease_seconds, 1)), 1, p_phone, p_collaborator,
+     now() + make_interval(secs => greatest(p_lease_seconds, 1)), v_token, 1, p_phone, p_collaborator,
      p_conversation, p_quoted, p_reason, p_conflict, v_op)
   on conflict (wa_message_id) do nothing
   returning true into v_ins;
@@ -218,7 +260,7 @@ begin
     -- a operação nasce na MESMA transação do claim: não existe claim sem trilha.
     insert into public.tom_operations (operation_id, inbound_wa_message_id, owner, collaborator_id, conversation_key)
     values (v_op, p_wa_message_id, p_owner, p_collaborator, p_conversation);
-    return query select 'claimed'::text, p_owner, v_op;
+    return query select 'claimed'::text, p_owner, v_op, v_token, 0;
     return;
   end if;
 
@@ -226,42 +268,51 @@ begin
   select * into v_row from public.tom_message_ownership
    where wa_message_id = p_wa_message_id for update;
 
+  -- R4-2: quantos passos com efeito já fecharam. A retomada precisa saber onde parou,
+  -- em vez de reexecutar às cegas.
+  select count(*) into v_steps from public.tom_operation_steps s
+   where s.operation_id = v_row.operation_id and s.status = 'done';
+
   if v_row.status = 'completed' then
-    return query select 'already_completed'::text, v_row.owner, v_row.operation_id;
+    return query select 'already_completed'::text, v_row.owner, v_row.operation_id, null::uuid, v_steps;
     return;
   end if;
 
   -- lease ainda válido → outro processo está no meio do trabalho
   if v_row.lease_until is not null and v_row.lease_until > now() then
-    return query select 'in_progress_elsewhere'::text, v_row.owner, v_row.operation_id;
+    return query select 'in_progress_elsewhere'::text, v_row.owner, v_row.operation_id, null::uuid, v_steps;
     return;
   end if;
 
   -- R3-A3: lease vencido sem conclusão = crash. Retomável — mas só pelo MESMO dono,
   -- senão o outro runtime executaria o que já pode ter tido efeito parcial.
   if v_row.owner is distinct from p_owner then
-    return query select 'owned_by_other'::text, v_row.owner, v_row.operation_id;
+    return query select 'owned_by_other'::text, v_row.owner, v_row.operation_id, null::uuid, v_steps;
     return;
   end if;
 
+  -- R4-1: nova posse = TOKEN NOVO. O worker anterior, se voltar, não age mais.
   update public.tom_message_ownership
      set status      = 'claimed',
          lease_until = now() + make_interval(secs => greatest(p_lease_seconds, 1)),
+         lease_token = v_token,
          attempts    = attempts + 1
    where wa_message_id = p_wa_message_id;
 
-  return query select 'resumed'::text, v_row.owner, v_row.operation_id;
+  return query select 'resumed'::text, v_row.owner, v_row.operation_id, v_token, v_steps;
 end;
 $$;
 
 comment on function public.tom_route_claim_inbound(text,text,text,uuid,text,text,text,text,int) is
   'Reivindica inbound com lease. Só outcome claimed/resumed autoriza processar. claim != recibo.';
 
--- Renova o lease de um trabalho longo (evita que outro runtime retome no meio).
+-- Renova o lease de um trabalho longo. R4-1: exige o TOKEN da posse atual — sem isso,
+-- um worker zumbi do mesmo runtime renovaria por cima de quem retomou.
 create function public.tom_route_heartbeat(
   p_wa_message_id text,
   p_owner         text,
-  p_lease_seconds int default 300
+  p_lease_seconds int  default 300,
+  p_lease_token   uuid default null
 ) returns boolean
 language plpgsql
 security definer
@@ -274,18 +325,24 @@ begin
          status      = 'processing'
    where wa_message_id = p_wa_message_id
      and owner  = p_owner
-     and status in ('claimed','processing');
+     and status in ('claimed','processing')
+     and lease_token is not distinct from p_lease_token;
   get diagnostics v_n = row_count;
   return v_n > 0;
 end;
 $$;
 
+comment on function public.tom_route_heartbeat(text,text,int,uuid) is
+  'Renova o lease. Só com o token da posse atual: worker zumbi não estende posse alheia.';
+
 -- Fecha o inbound. SÓ depois disso o dedupe pode suprimir reprocessamento.
+-- R4-1: também exige o token — worker velho não pode declarar concluído o que não fez.
 create function public.tom_route_finish_inbound(
   p_wa_message_id text,
   p_owner         text,
   p_status        text default 'completed',
-  p_error         text default null
+  p_error         text default null,
+  p_lease_token   uuid default null
 ) returns boolean
 language plpgsql
 security definer
@@ -303,13 +360,82 @@ begin
          -- 'failed' solta o lease de propósito: pode ser retomado pelo mesmo dono.
          lease_until = case when p_status = 'completed' then null else now() end
    where wa_message_id = p_wa_message_id
-     and owner = p_owner;
+     and owner = p_owner
+     and lease_token is not distinct from p_lease_token;
   get diagnostics v_n = row_count;
   return v_n > 0;
 end;
 $$;
 
-comment on function public.tom_route_finish_inbound(text,text,text,text) is
+-- -------------------------------------------------------------------------------------
+-- R4-2 — passos idempotentes. Antes de QUALQUER mutação com efeito, o worker reivindica
+-- o passo; se a resposta for 'done', a retomada não repete e reusa o resultado.
+-- outcome: 'new' (pode executar) | 'in_progress' (alguém está/estava nele) | 'done'
+-- -------------------------------------------------------------------------------------
+create function public.tom_operation_step_begin(
+  p_operation_id uuid,
+  p_step_key     text
+) returns table (outcome text, result jsonb)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_ins boolean := false;
+  v_row public.tom_operation_steps%rowtype;
+begin
+  insert into public.tom_operation_steps (operation_id, step_key)
+  values (p_operation_id, p_step_key)
+  on conflict (operation_id, step_key) do nothing
+  returning true into v_ins;
+
+  if coalesce(v_ins, false) then
+    return query select 'new'::text, null::jsonb;
+    return;
+  end if;
+
+  select * into v_row from public.tom_operation_steps s
+   where s.operation_id = p_operation_id and s.step_key = p_step_key;
+
+  if v_row.status = 'done' then
+    return query select 'done'::text, v_row.result;
+  else
+    -- 'in_progress' inclui o passo que ficou aberto num crash. Quem retoma decide:
+    -- verificar o efeito no banco e fechar, ou refazer se comprovadamente não ocorreu.
+    return query select 'in_progress'::text, v_row.result;
+  end if;
+end;
+$$;
+
+create function public.tom_operation_step_finish(
+  p_operation_id uuid,
+  p_step_key     text,
+  p_result       jsonb default null,
+  p_status       text  default 'done',
+  p_error        text  default null
+) returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare v_n int;
+begin
+  if p_status not in ('done','failed') then
+    raise exception 'status inválido: %', p_status;
+  end if;
+  update public.tom_operation_steps
+     set status = p_status, result = p_result, error = p_error, finished_at = now()
+   where tom_operation_steps.operation_id = p_operation_id
+     and tom_operation_steps.step_key = p_step_key;
+  get diagnostics v_n = row_count;
+  return v_n > 0;
+end;
+$$;
+
+comment on function public.tom_operation_step_begin(uuid,text) is
+  'Reivindica passo com efeito. outcome=done → NÃO reexecutar; use o result guardado.';
+
+comment on function public.tom_route_finish_inbound(text,text,text,text,uuid) is
   'completed = recibo; failed devolve a mensagem para retentativa do MESMO dono.';
 
 -- -------------------------------------------------------------------------------------
@@ -368,14 +494,15 @@ $$;
 -- fluxo — abre propriedade de entidade/conversa
 -- -------------------------------------------------------------------------------------
 create function public.tom_flow_open(
-  p_conversation  text,
-  p_entity_type   text,
-  p_entity_id     uuid,
-  p_owner         text,
-  p_collaborator  uuid    default null,
-  p_interactive   boolean default true,
-  p_opened_by     text    default null,
-  p_note          text    default null
+  p_conversation             text,
+  p_entity_type              text,
+  p_entity_id                uuid,
+  p_owner                    text,
+  p_collaborator             uuid    default null,
+  p_interactive              boolean default true,
+  p_opened_by                text    default null,
+  p_note                     text    default null,
+  p_interactive_ttl_seconds  int     default 3600
 ) returns uuid
 language plpgsql
 security definer
@@ -383,17 +510,61 @@ set search_path = public
 as $$
 declare v_id uuid;
 begin
+  -- R4-3: expropria fluxo interativo EXPIRADO desta conversa antes de tentar abrir.
+  -- Sem isso, um v2 que caiu antes de 'retired' prenderia a conversa para sempre e a
+  -- pessoa nunca mais seria atendida naquele chat.
+  if p_interactive then
+    update public.tom_flow_ownership
+       set phase     = 'retired',
+           closed_at = now(),
+           note      = coalesce(note || ' | ', '') || 'expired_ttl'
+     where conversation_key = p_conversation
+       and closed_at is null
+       and interactive
+       and interactive_until is not null
+       and interactive_until <= now();
+  end if;
+
   insert into public.tom_flow_ownership
-    (conversation_key, entity_type, entity_id, owner, collaborator_id, interactive, opened_by_wa_id, note)
+    (conversation_key, entity_type, entity_id, owner, collaborator_id, interactive,
+     interactive_until, opened_by_wa_id, note)
   values
-    (p_conversation, p_entity_type, p_entity_id, p_owner, p_collaborator, p_interactive, p_opened_by, p_note)
+    (p_conversation, p_entity_type, p_entity_id, p_owner, p_collaborator, p_interactive,
+     case when p_interactive then now() + make_interval(secs => greatest(p_interactive_ttl_seconds, 1)) end,
+     p_opened_by, p_note)
   on conflict do nothing
   returning id into v_id;
-  -- null = já há dono ativo para a entidade OU já há fluxo interativo nessa conversa.
+  -- null = já há dono ativo para a entidade OU já há fluxo interativo VIVO nessa conversa.
   -- O chamador NÃO deve prosseguir.
   return v_id;
 end;
 $$;
+
+-- Renova o TTL enquanto o dono está vivo e conversando. Sem isso o TTL viraria um
+-- limite de duração da conversa, não uma proteção contra dono morto.
+create function public.tom_flow_touch(
+  p_conversation            text,
+  p_interactive_ttl_seconds int default 3600
+) returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare v_n int;
+begin
+  update public.tom_flow_ownership
+     set interactive_until = now() + make_interval(secs => greatest(p_interactive_ttl_seconds, 1))
+   where conversation_key = p_conversation
+     and closed_at is null
+     and interactive
+     and (interactive_until is null or interactive_until > now());
+  get diagnostics v_n = row_count;
+  return v_n > 0;
+end;
+$$;
+
+comment on function public.tom_flow_touch(text,int) is
+  'Renova o TTL do fluxo vivo. Não ressuscita expirado — esse já foi expropriado.';
 
 -- R3-B2: máquina de estados de verdade. canary → draining → retired, só para frente.
 create function public.tom_flow_set_phase(
@@ -445,25 +616,33 @@ comment on function public.tom_flow_set_phase(text,uuid,text) is
 -- anon poderia reivindicar mensagem, registrar outbound, abrir fluxo ou drenar ownership.
 -- Assinaturas completas de propósito: REVOKE por nome não pega sobrecarga.
 -- =====================================================================================
-revoke all on function public.tom_route_claim_inbound(text,text,text,uuid,text,text,text,text,int) from public, anon, authenticated;
-revoke all on function public.tom_route_heartbeat(text,text,int)                                    from public, anon, authenticated;
-revoke all on function public.tom_route_finish_inbound(text,text,text,text)                         from public, anon, authenticated;
-revoke all on function public.tom_record_outbound(text,text,text,uuid,text,text,uuid,uuid)          from public, anon, authenticated;
-revoke all on function public.tom_flow_open(text,text,uuid,text,uuid,boolean,text,text)             from public, anon, authenticated;
-revoke all on function public.tom_flow_set_phase(text,uuid,text)                                    from public, anon, authenticated;
+revoke all on function public.tom_route_claim_inbound(text,text,text,uuid,text,text,text,text,int)   from public, anon, authenticated;
+revoke all on function public.tom_route_heartbeat(text,text,int,uuid)                                 from public, anon, authenticated;
+revoke all on function public.tom_route_finish_inbound(text,text,text,text,uuid)                      from public, anon, authenticated;
+revoke all on function public.tom_record_outbound(text,text,text,uuid,text,text,uuid,uuid)            from public, anon, authenticated;
+revoke all on function public.tom_flow_open(text,text,uuid,text,uuid,boolean,text,text,int)           from public, anon, authenticated;
+revoke all on function public.tom_flow_touch(text,int)                                                from public, anon, authenticated;
+revoke all on function public.tom_flow_set_phase(text,uuid,text)                                      from public, anon, authenticated;
+revoke all on function public.tom_operation_step_begin(uuid,text)                                     from public, anon, authenticated;
+revoke all on function public.tom_operation_step_finish(uuid,text,jsonb,text,text)                    from public, anon, authenticated;
 
 grant execute on function public.tom_route_claim_inbound(text,text,text,uuid,text,text,text,text,int) to service_role;
-grant execute on function public.tom_route_heartbeat(text,text,int)                                    to service_role;
-grant execute on function public.tom_route_finish_inbound(text,text,text,text)                         to service_role;
-grant execute on function public.tom_record_outbound(text,text,text,uuid,text,text,uuid,uuid)          to service_role;
-grant execute on function public.tom_flow_open(text,text,uuid,text,uuid,boolean,text,text)             to service_role;
-grant execute on function public.tom_flow_set_phase(text,uuid,text)                                    to service_role;
+grant execute on function public.tom_route_heartbeat(text,text,int,uuid)                              to service_role;
+grant execute on function public.tom_route_finish_inbound(text,text,text,text,uuid)                   to service_role;
+grant execute on function public.tom_record_outbound(text,text,text,uuid,text,text,uuid,uuid)         to service_role;
+grant execute on function public.tom_flow_open(text,text,uuid,text,uuid,boolean,text,text,int)        to service_role;
+grant execute on function public.tom_flow_touch(text,int)                                             to service_role;
+grant execute on function public.tom_flow_set_phase(text,uuid,text)                                   to service_role;
+grant execute on function public.tom_operation_step_begin(uuid,text)                                  to service_role;
+grant execute on function public.tom_operation_step_finish(uuid,text,jsonb,text,text)                 to service_role;
 
 -- As tabelas também: RLS sem policy já bloqueia, mas negar o privilégio é a barreira
 -- que não depende de ninguém lembrar de não criar uma policy permissiva depois.
-revoke all on table public.tom_message_ownership, public.tom_flow_ownership, public.tom_operations
+revoke all on table public.tom_message_ownership, public.tom_flow_ownership,
+                    public.tom_operations, public.tom_operation_steps
   from public, anon, authenticated;
-grant select, insert, update on table public.tom_message_ownership, public.tom_flow_ownership, public.tom_operations
+grant select, insert, update on table public.tom_message_ownership, public.tom_flow_ownership,
+                                      public.tom_operations, public.tom_operation_steps
   to service_role;
 
 commit;

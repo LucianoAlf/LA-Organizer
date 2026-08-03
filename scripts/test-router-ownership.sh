@@ -35,8 +35,15 @@ if ! sed "s/public\./$SCHEMA./g" "$MIG" | psql "$DATABASE_URL" -v ON_ERROR_STOP=
 fi
 
 echo "=== testes de privilégio, corrida, lease/crash e fluxo ==="
-psql "$DATABASE_URL" -f "$TESTS" -q -P pager=off
+# Um bloco DO que aborta não registra os testes dele em _res — e o resumo sairia verde
+# com asserções que nunca rodaram (falso verde observado na primeira execução da rodada 4).
+# Por isso o stderr é capturado e QUALQUER erro derruba a prova.
+TESTLOG=$(mktemp)
+psql "$DATABASE_URL" -f "$TESTS" -q -P pager=off 2>&1 | tee "$TESTLOG"
+SQL_ERRORS=$(grep -c '^psql:.*ERROR:' "$TESTLOG" || true)
+rm -f "$TESTLOG"
 RES=$(psql_q -c "select count(*) filter (where not ok) from $SCHEMA._res;" 2>/dev/null || echo "erro")
+echo "erros SQL durante os testes: $SQL_ERRORS (esperado 0)"
 
 echo
 echo "=== corrida REAL: 8 conexões simultâneas no mesmo inbound ==="
@@ -61,7 +68,7 @@ psql_q -c "drop schema if exists $SCHEMA cascade;" >/dev/null
 LEFT=$(psql_q -c "select count(*) from information_schema.schemata where schema_name='$SCHEMA';")
 echo "schema restante: $LEFT (esperado 0)"
 
-if [ "$RES" = "0" ] && [ "$RACE_OK" = "1" ] && [ "$LEFT" = "0" ]; then
+if [ "$RES" = "0" ] && [ "$RACE_OK" = "1" ] && [ "$LEFT" = "0" ] && [ "$SQL_ERRORS" = "0" ]; then
   echo; echo "=== TODAS AS CHECAGENS PASSARAM ==="; exit 0
 fi
-echo; echo "=== FALHAS: asserções=$RES corrida_ok=$RACE_OK schema_restante=$LEFT ==="; exit 1
+echo; echo "=== FALHAS: asserções=$RES corrida_ok=$RACE_OK schema_restante=$LEFT erros_sql=$SQL_ERRORS ==="; exit 1

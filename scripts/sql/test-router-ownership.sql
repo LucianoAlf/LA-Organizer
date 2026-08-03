@@ -17,11 +17,14 @@ insert into _res (label, ok, detail)
 select 'A1 anon NÃO executa ' || f, not has_function_privilege('anon', f, 'EXECUTE'), f
 from unnest(array[
   'tom_router_test.tom_route_claim_inbound(text,text,text,uuid,text,text,text,text,int)',
-  'tom_router_test.tom_route_heartbeat(text,text,int)',
-  'tom_router_test.tom_route_finish_inbound(text,text,text,text)',
+  'tom_router_test.tom_route_heartbeat(text,text,int,uuid)',
+  'tom_router_test.tom_route_finish_inbound(text,text,text,text,uuid)',
   'tom_router_test.tom_record_outbound(text,text,text,uuid,text,text,uuid,uuid)',
-  'tom_router_test.tom_flow_open(text,text,uuid,text,uuid,boolean,text,text)',
-  'tom_router_test.tom_flow_set_phase(text,uuid,text)'
+  'tom_router_test.tom_flow_open(text,text,uuid,text,uuid,boolean,text,text,int)',
+  'tom_router_test.tom_flow_touch(text,int)',
+  'tom_router_test.tom_flow_set_phase(text,uuid,text)',
+  'tom_router_test.tom_operation_step_begin(uuid,text)',
+  'tom_router_test.tom_operation_step_finish(uuid,text,jsonb,text,text)'
 ]) f;
 
 insert into _res (label, ok, detail)
@@ -44,14 +47,14 @@ from unnest(array[
 insert into _res (label, ok, detail)
 select 'A1 anon sem ' || p || ' em ' || t,
        not has_table_privilege('anon', t, p), t || '/' || p
-from unnest(array['tom_router_test.tom_message_ownership','tom_router_test.tom_flow_ownership','tom_router_test.tom_operations']) t,
+from unnest(array['tom_router_test.tom_message_ownership','tom_router_test.tom_flow_ownership','tom_router_test.tom_operations','tom_router_test.tom_operation_steps']) t,
      unnest(array['SELECT','INSERT','UPDATE','DELETE']) p;
 
 -- RLS ligada nas três
 insert into _res (label, ok, detail)
 select 'A1 RLS ligada em ' || relname, relrowsecurity, relname
 from pg_class where relnamespace = 'tom_router_test'::regnamespace
-  and relname in ('tom_message_ownership','tom_flow_ownership','tom_operations');
+  and relname in ('tom_message_ownership','tom_flow_ownership','tom_operations','tom_operation_steps');
 
 -- ============================ R3-A2 — claim e corrida ============================
 do $$
@@ -99,14 +102,16 @@ begin
     ('A3 outro dono NÃO retoma', r.outcome = 'owned_by_other', r.outcome);
 
   -- recibo: só depois de completed o dedupe suprime
-  perform tom_route_finish_inbound('wa-A3-crash','v1','completed');
+  perform tom_route_finish_inbound('wa-A3-crash','v1','completed', null,
+    (select lease_token from tom_message_ownership where wa_message_id='wa-A3-crash'));
   select * into r from tom_route_claim_inbound('wa-A3-crash','v1');
   insert into _res (label, ok, detail) values
     ('A3 concluído vira already_completed', r.outcome = 'already_completed', r.outcome);
 
   -- failed devolve para retentativa do mesmo dono
   perform tom_route_claim_inbound('wa-A3-fail','v1');
-  perform tom_route_finish_inbound('wa-A3-fail','v1','failed','erro simulado');
+  perform tom_route_finish_inbound('wa-A3-fail','v1','failed','erro simulado',
+    (select lease_token from tom_message_ownership where wa_message_id='wa-A3-fail'));
   select * into r from tom_route_claim_inbound('wa-A3-fail','v1');
   insert into _res (label, ok, detail) values
     ('A3 failed é retomável', r.outcome = 'resumed', r.outcome);
@@ -114,12 +119,14 @@ begin
   -- heartbeat segura o lease de trabalho longo
   perform tom_route_claim_inbound('wa-A3-hb','v1', p_lease_seconds => 1);
   insert into _res (label, ok, detail)
-  select 'A3 heartbeat renova e marca processing', tom_route_heartbeat('wa-A3-hb','v1',600), null;
+  select 'A3 heartbeat renova e marca processing',
+         tom_route_heartbeat('wa-A3-hb','v1',600,(select lease_token from tom_message_ownership where wa_message_id='wa-A3-hb')), null;
   insert into _res (label, ok, detail)
   select 'A3 heartbeat empurrou o lease', lease_until > now() + interval '5 minutes', lease_until::text
     from tom_message_ownership where wa_message_id = 'wa-A3-hb';
   insert into _res (label, ok, detail)
-  select 'A3 heartbeat de outro dono não pega', not tom_route_heartbeat('wa-A3-hb','v2',600), null;
+  select 'A3 heartbeat de outro dono não pega',
+         not tom_route_heartbeat('wa-A3-hb','v2',600,(select lease_token from tom_message_ownership where wa_message_id='wa-A3-hb')), null;
 
   -- id vazio não vira linha
   select * into r from tom_route_claim_inbound('','v1');
@@ -204,6 +211,125 @@ begin
   -- conversa liberada depois do retired
   insert into _res (label, ok, detail)
   select 'B2 conversa liberada após retired', tom_flow_open('conv-fase@s.whatsapp.net','task',gen_random_uuid(),'v1') is not null, null;
+end $$;
+
+-- ==================== R4-1 — fencing token (posse por tentativa) ====================
+-- Worker antigo do MESMO runtime pode voltar depois do lease vencer (GC pause, rede) e
+-- continuar agindo. `owner` não distingue tentativas: só um token por posse resolve.
+do $$
+declare r1 record; r2 record; ok boolean;
+begin
+  select * into r1 from tom_route_claim_inbound('wa-R4-fence','v2');
+  insert into _res (label, ok, detail) values ('R4-1 claim devolve lease_token', r1.lease_token is not null, r1.lease_token::text);
+
+  -- lease vence; OUTRO worker do mesmo v2 retoma
+  update tom_message_ownership set lease_until = now() - interval '1 minute' where wa_message_id='wa-R4-fence';
+  select * into r2 from tom_route_claim_inbound('wa-R4-fence','v2');
+  insert into _res (label, ok, detail) values
+    ('R4-1 retomada gera token NOVO', r2.lease_token is distinct from r1.lease_token, r2.lease_token::text);
+
+  -- o worker VELHO acorda e tenta renovar com o token antigo
+  ok := tom_route_heartbeat('wa-R4-fence','v2',600, r1.lease_token);
+  insert into _res (label, ok, detail) values ('R4-1 heartbeat com token VELHO é rejeitado', not ok, null);
+
+  ok := tom_route_heartbeat('wa-R4-fence','v2',600, r2.lease_token);
+  insert into _res (label, ok, detail) values ('R4-1 heartbeat com token atual funciona', ok, null);
+
+  -- e o velho também não pode fechar a mensagem
+  ok := tom_route_finish_inbound('wa-R4-fence','v2','completed',null, r1.lease_token);
+  insert into _res (label, ok, detail) values ('R4-1 finish com token VELHO é rejeitado', not ok, null);
+
+  insert into _res (label, ok, detail)
+  select 'R4-1 mensagem NÃO foi fechada pelo worker velho', status <> 'completed', status
+    from tom_message_ownership where wa_message_id='wa-R4-fence';
+
+  ok := tom_route_finish_inbound('wa-R4-fence','v2','completed',null, r2.lease_token);
+  insert into _res (label, ok, detail) values ('R4-1 finish com token atual funciona', ok, null);
+end $$;
+
+-- ==================== R4-2 — idempotência por etapa ====================
+-- Retomar "pelo mesmo dono" não pode reexecutar mutação já feita antes do crash.
+-- Cada passo com efeito é reivindicado ANTES de agir; retomada vê 'done' e não repete.
+do $$
+declare r record; op uuid; s record;
+begin
+  select * into r from tom_route_claim_inbound('wa-R4-step','v2');
+  op := r.operation_id;
+
+  select * into s from tom_operation_step_begin(op, 'concluir_tarefa');
+  insert into _res (label, ok, detail) values ('R4-2 primeiro begin = new', s.outcome='new', s.outcome);
+
+  -- ... aqui o worker mutaria a entidade e cairia ANTES de fechar o passo
+  select * into s from tom_operation_step_begin(op, 'concluir_tarefa');
+  insert into _res (label, ok, detail) values
+    ('R4-2 passo em andamento não vira new de novo', s.outcome='in_progress', s.outcome);
+
+  perform tom_operation_step_finish(op, 'concluir_tarefa', '{"task":"ok"}'::jsonb);
+
+  select * into s from tom_operation_step_begin(op, 'concluir_tarefa');
+  insert into _res (label, ok, detail) values
+    ('R4-2 passo concluído devolve done', s.outcome='done', s.outcome),
+    ('R4-2 done devolve o resultado guardado', s.result->>'task' = 'ok', s.result::text);
+
+  -- passos diferentes são independentes
+  select * into s from tom_operation_step_begin(op, 'enviar_resposta');
+  insert into _res (label, ok, detail) values ('R4-2 outro passo é independente', s.outcome='new', s.outcome);
+
+  insert into _res (label, ok, detail)
+  select 'R4-2 nunca duplica linha de passo', count(*)=1, count(*)::text
+    from tom_operation_steps where operation_id=op and step_key='concluir_tarefa';
+
+  -- retomada depois do crash: o claim informa quantos passos já fecharam
+  update tom_message_ownership set lease_until = now() - interval '1 minute' where wa_message_id='wa-R4-step';
+  select * into r from tom_route_claim_inbound('wa-R4-step','v2');
+  insert into _res (label, ok, detail) values
+    ('R4-2 retomada informa passos concluídos', r.steps_done = 1, r.steps_done::text),
+    ('R4-2 retomada mantém a MESMA operação', r.operation_id = op, r.operation_id::text);
+end $$;
+
+-- ==================== R4-3 — TTL do fluxo interativo ====================
+-- Se o v2 cair antes de retired, a conversa não pode ficar presa nele para sempre.
+do $$
+declare a uuid; b uuid; ent1 uuid := gen_random_uuid(); ent2 uuid := gen_random_uuid(); r record;
+begin
+  a := tom_flow_open('conv-ttl@s.whatsapp.net','task',ent1,'v2', p_interactive_ttl_seconds => 3600);
+  insert into _res (label, ok, detail) values ('R4-3 abre fluxo com TTL', a is not null, a::text);
+
+  insert into _res (label, ok, detail)
+  select 'R4-3 TTL gravado no futuro', interactive_until > now(), interactive_until::text
+    from tom_flow_ownership where id = a;
+
+  -- enquanto vivo, continua prendendo a conversa
+  b := tom_flow_open('conv-ttl@s.whatsapp.net','task',ent2,'v2');
+  insert into _res (label, ok, detail) values ('R4-3 fluxo vivo ainda bloqueia outro interativo', b is null, b::text);
+
+  -- v2 caiu: TTL vence
+  update tom_flow_ownership set interactive_until = now() - interval '1 minute' where id = a;
+
+  insert into _res (label, ok, detail)
+  select 'R4-3 fluxo expirado não conta como interativo ativo', count(*) = 0, count(*)::text
+    from tom_flow_ownership
+   where conversation_key='conv-ttl@s.whatsapp.net' and closed_at is null and interactive
+     and (interactive_until is null or interactive_until > now());
+
+  -- e a conversa é liberada: abrir novo expropria o expirado
+  b := tom_flow_open('conv-ttl@s.whatsapp.net','task',ent2,'v2');
+  insert into _res (label, ok, detail) values ('R4-3 conversa liberada após TTL vencer', b is not null, b::text);
+
+  insert into _res (label, ok, detail)
+  select 'R4-3 expirado foi aposentado com motivo', phase='retired' and note like '%expired%', coalesce(note,'(sem note)')
+    from tom_flow_ownership where id = a;
+
+  -- touch renova enquanto o dono está vivo
+  insert into _res (label, ok, detail)
+  select 'R4-3 touch renova o TTL', tom_flow_touch('conv-ttl@s.whatsapp.net', 7200), null;
+  insert into _res (label, ok, detail)
+  select 'R4-3 TTL renovado empurrou o vencimento', interactive_until > now() + interval '90 minutes', interactive_until::text
+    from tom_flow_ownership where id = b;
+
+  -- touch em conversa sem fluxo não inventa nada
+  insert into _res (label, ok, detail)
+  select 'R4-3 touch sem fluxo devolve false', not tom_flow_touch('conversa-inexistente@s.whatsapp.net', 3600), null;
 end $$;
 
 -- ============================ resultado ============================
