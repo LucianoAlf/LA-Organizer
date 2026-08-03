@@ -539,16 +539,15 @@ create function public.tom_operation_step_verify(
   p_effect_confirmed boolean,
   p_result           jsonb default null,
   p_lease_token      uuid  default null
-) returns boolean
+) returns table (ok boolean, reason text)
 language plpgsql
 security definer
 set search_path = public
 as $$
-declare v_n int;
+declare v_row public.tom_operation_steps%rowtype; v_n int;
 begin
-  -- R8: trava a linha de ownership ANTES de validar. Sem isso, a posse podia mudar
-  -- entre a checagem e a escrita do passo. clock_timestamp() porque now() nao avanca
-  -- enquanto se espera no lock.
+  -- R8: trava a linha de ownership ANTES de validar; clock_timestamp() porque now() nao
+  -- avanca enquanto se espera no lock.
   perform 1 from public.tom_message_ownership m
    where m.operation_id = p_operation_id for update;
 
@@ -560,28 +559,60 @@ begin
        and m.lease_until is not null
        and m.lease_until > clock_timestamp()
   ) then
-    return false;
+    return query select false, 'stale_lease'::text;
+    return;
+  end if;
+
+  select * into v_row from public.tom_operation_steps st
+   where st.operation_id = p_operation_id and st.step_key = p_step_key
+   for update;
+
+  if v_row.id is null then
+    return query select false, 'not_found'::text;
+    return;
+  end if;
+
+  if v_row.status <> 'in_progress' then
+    return query select false, 'already_resolved'::text;
+    return;
+  end if;
+
+  -- R9-1: verify existe para destravar passo ABANDONADO por crash — passo aberto por
+  -- posse ANTERIOR. Aplicado a um passo da posse ATUAL, ele viraria o oposto do que
+  -- promete: com effect_confirmed=false apagaria um passo AINDA EM VOO, e o begin
+  -- seguinte devolveria 'new' — repetindo uma mutacao que talvez esteja acontecendo
+  -- neste instante. Passo da propria posse se fecha por step_finish, nao por verify.
+  if v_row.opened_by_token is not distinct from p_lease_token then
+    return query select false, 'not_orphan'::text;
+    return;
   end if;
 
   if p_effect_confirmed then
+    -- a releitura do worker confirmou que a mutacao ocorreu: fecha sem reexecutar
     update public.tom_operation_steps
        set status = 'done', result = p_result, finished_at = now(), opened_by_token = p_lease_token
      where tom_operation_steps.operation_id = p_operation_id
        and tom_operation_steps.step_key = p_step_key
-       and tom_operation_steps.status <> 'done';
+       and tom_operation_steps.status = 'in_progress';
   else
+    -- nao ocorreu: libera para nova execucao
     delete from public.tom_operation_steps
      where tom_operation_steps.operation_id = p_operation_id
        and tom_operation_steps.step_key = p_step_key
-       and tom_operation_steps.status <> 'done';
+       and tom_operation_steps.status = 'in_progress';
   end if;
   get diagnostics v_n = row_count;
-  return v_n > 0;
+  if v_n = 0 then
+    return query select false, 'lost_race'::text;
+    return;
+  end if;
+
+  return query select true, 'ok'::text;
 end;
 $$;
 
 comment on function public.tom_operation_step_verify(uuid,text,boolean,jsonb,uuid) is
-  'Resolve passo orfao de crash. O worker RELE o banco e diz se o efeito ocorreu.';
+  'Resolve passo ORFAO (aberto por posse anterior). O worker rele o banco e diz se o efeito ocorreu.';
 
 create function public.tom_operation_step_finish(
   p_operation_id uuid,
@@ -763,7 +794,7 @@ begin
        and closed_at is null
        and interactive
        and interactive_until is not null
-       and interactive_until <= now();
+       and interactive_until <= clock_timestamp();
   end if;
 
   insert into public.tom_flow_ownership
@@ -771,7 +802,7 @@ begin
      interactive_until, opened_by_wa_id, note)
   values
     (p_conversation, p_entity_type, p_entity_id, p_owner, p_collaborator, p_interactive,
-     case when p_interactive then now() + make_interval(secs => greatest(p_interactive_ttl_seconds, 1)) end,
+     case when p_interactive then clock_timestamp() + make_interval(secs => greatest(p_interactive_ttl_seconds, 1)) end,
      p_opened_by, p_note)
   on conflict do nothing
   returning tom_flow_ownership.id, tom_flow_ownership.flow_token into v_id, v_tok;
@@ -813,31 +844,52 @@ create function public.tom_flow_touch(
   p_interactive_ttl_seconds int  default 3600,
   p_owner                   text default null,
   p_flow_token              uuid default null
-) returns boolean
+) returns table (ok boolean, reason text)
 language plpgsql
 security definer
 set search_path = public
 as $$
-declare v_n int;
+declare v_f public.tom_flow_ownership%rowtype; v_n int;
 begin
+  -- R9-2: mesma classe temporal da R8, agora no fluxo. Se o touch comeca antes do prazo,
+  -- espera no lock e o prazo passa nesse meio tempo, o now() congelado da transacao ainda
+  -- veria o TTL vivo — e o fluxo expirado seria RESSUSCITADO, prendendo a conversa no v2.
+  select * into v_f from public.tom_flow_ownership f
+   where f.conversation_key = p_conversation
+     and f.closed_at is null
+     and f.interactive
+   for update;
+
+  if v_f.id is null then
+    return query select false, 'not_found'::text;
+    return;
+  end if;
+  if v_f.owner is distinct from p_owner or v_f.flow_token is distinct from p_flow_token then
+    return query select false, 'not_owner'::text;
+    return;
+  end if;
+  if v_f.interactive_until is not null and v_f.interactive_until <= clock_timestamp() then
+    -- expirado nao se renova: quem quiser a conversa abre fluxo novo (e expropria este)
+    return query select false, 'expired'::text;
+    return;
+  end if;
+
   update public.tom_flow_ownership
-     set interactive_until = now() + make_interval(secs => greatest(p_interactive_ttl_seconds, 1))
-   where conversation_key = p_conversation
-     and closed_at is null
-     and interactive
-     and (interactive_until is null or interactive_until > now())
-     -- R5-3: so o dono da posse mantem o fluxo vivo. Worker velho nao segura conversa.
-     and owner = p_owner
-     and flow_token is not distinct from p_flow_token;
+     set interactive_until = clock_timestamp() + make_interval(secs => greatest(p_interactive_ttl_seconds, 1))
+   where id = v_f.id;
   get diagnostics v_n = row_count;
-  return v_n > 0;
+  if v_n = 0 then
+    return query select false, 'lost_race'::text;
+    return;
+  end if;
+
+  return query select true, 'ok'::text;
 end;
 $$;
 
 comment on function public.tom_flow_touch(text,int,text,uuid) is
-  'Renova o TTL do fluxo vivo. Não ressuscita expirado — esse já foi expropriado.';
+  'Renova o TTL do fluxo vivo, sob trava e relogio real. Nao ressuscita expirado.';
 
--- R3-B2: máquina de estados de verdade. canary → draining → retired, só para frente.
 create function public.tom_flow_set_phase(
   p_entity_type text,
   p_entity_id   uuid,

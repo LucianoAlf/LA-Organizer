@@ -327,14 +327,14 @@ begin
 
   -- touch renova enquanto o dono está vivo
   insert into _res (label, ok, detail)
-  select 'R4-3 touch renova o TTL', tom_flow_touch('conv-ttl@s.whatsapp.net', 7200, 'v2', tok), null;
+  select 'R4-3 touch renova o TTL', (select ok from tom_flow_touch('conv-ttl@s.whatsapp.net', 7200, 'v2', tok)), null;
   insert into _res (label, ok, detail)
   select 'R4-3 TTL renovado empurrou o vencimento', interactive_until > now() + interval '90 minutes', interactive_until::text
     from tom_flow_ownership where id = b;
 
   -- touch em conversa sem fluxo não inventa nada
   insert into _res (label, ok, detail)
-  select 'R4-3 touch sem fluxo devolve false', not tom_flow_touch('conversa-inexistente@s.whatsapp.net', 3600, 'v2', tok), null;
+  select 'R4-3 touch sem fluxo devolve false', (select ok from tom_flow_touch('conversa-inexistente@s.whatsapp.net', 3600, 'v2', tok)) = false, null;
 end $$;
 
 -- ============ R5-1 — o token precisa cercar TODA escrita com efeito ============
@@ -411,7 +411,7 @@ begin
   -- caminho A: releitura CONFIRMA que a mutação ocorreu → fecha sem reexecutar
   insert into _res (label, ok, detail)
   select 'R5-2 verify confirmado fecha o passo',
-         tom_operation_step_verify(r2.operation_id,'concluir', true, '{"via":"releitura"}'::jsonb, r2.lease_token), null;
+         (select ok from tom_operation_step_verify(r2.operation_id,'concluir', true, '{"via":"releitura"}'::jsonb, r2.lease_token)), null;
   select * into s from tom_operation_step_begin(r2.operation_id,'concluir', r2.lease_token);
   insert into _res (label, ok, detail) values
     ('R5-2 após confirmar, passo é done (não reexecuta)', s.outcome='done', s.outcome),
@@ -429,7 +429,7 @@ begin
 
   insert into _res (label, ok, detail)
   select 'R5-2 verify negado libera reexecução',
-         tom_operation_step_verify(r2.operation_id,'concluir', false, null, r2.lease_token), null;
+         (select ok from tom_operation_step_verify(r2.operation_id,'concluir', false, null, r2.lease_token)), null;
   select * into s from tom_operation_step_begin(r2.operation_id,'concluir', r2.lease_token);
   insert into _res (label, ok, detail) values
     ('R5-2 após negar, pode executar de novo', s.outcome='new', s.outcome);
@@ -437,7 +437,7 @@ begin
   -- verify com token velho não resolve nada
   insert into _res (label, ok, detail)
   select 'R5-2 verify com token velho é rejeitado',
-         not tom_operation_step_verify(r2.operation_id,'concluir', true, null, r1.lease_token), null;
+         (select ok from tom_operation_step_verify(r2.operation_id,'concluir', true, null, r1.lease_token)) = false, null;
 end $$;
 
 -- ============ R5-3 — consulta única de fluxo ativo com TTL + touch cercado ============
@@ -457,13 +457,13 @@ begin
   -- token velho não mantém o fluxo vivo
   insert into _res (label, ok, detail)
   select 'R5-3 touch com token errado é rejeitado',
-         not tom_flow_touch('conv-R5@s.whatsapp.net', 7200, 'v2', gen_random_uuid()), null;
+         (select ok from tom_flow_touch('conv-R5@s.whatsapp.net', 7200, 'v2', gen_random_uuid())) = false, null;
   insert into _res (label, ok, detail)
   select 'R5-3 touch de outro owner é rejeitado',
-         not tom_flow_touch('conv-R5@s.whatsapp.net', 7200, 'v1', f.flow_token), null;
+         (select ok from tom_flow_touch('conv-R5@s.whatsapp.net', 7200, 'v1', f.flow_token)) = false, null;
   insert into _res (label, ok, detail)
   select 'R5-3 touch com owner+token corretos funciona',
-         tom_flow_touch('conv-R5@s.whatsapp.net', 7200, 'v2', f.flow_token), null;
+         (select ok from tom_flow_touch('conv-R5@s.whatsapp.net', 7200, 'v2', f.flow_token)), null;
 
   -- TTL vencido: a consulta única marca expirado e NÃO devolve dono para rotear
   update tom_flow_ownership set interactive_until = now() - interval '1 minute' where id = f.id;
@@ -546,7 +546,7 @@ begin
   -- caminho legítimo: resolver o passo e SÓ ENTÃO fechar
   insert into _res (label, ok, detail)
   select 'R6-2 verify resolve o passo',
-         tom_operation_step_verify(r2.operation_id,'mutar', true, '{"via":"releitura"}'::jsonb, r2.lease_token), null;
+         (select ok from tom_operation_step_verify(r2.operation_id,'mutar', true, '{"via":"releitura"}'::jsonb, r2.lease_token)), null;
   select * into f from tom_route_finish_inbound('wa-R6-bypass','v2','completed',null, r2.lease_token);
   insert into _res (label, ok, detail) values
     ('R6-2 com tudo resolvido, finish passa', f.ok = true, coalesce(f.reason,'(sem reason)'));
@@ -673,6 +673,88 @@ begin
   insert into _res (label, ok, detail) values
     ('R7-2 begin continua devolvendo done com o result certo',
      s.outcome='done' and s.result->>'primeiro'='true', s.outcome);
+end $$;
+
+-- ============ R9 — verify so resolve ORFAO; nunca passo em voo ============
+-- step_verify existe para destravar passo abandonado por crash. Se ele tambem apagar
+-- passo aberto pela posse ATUAL, vira o oposto: o begin seguinte devolve 'new' e a
+-- mutacao que ainda estava em voo pode ser repetida.
+do $$
+declare r record; v record; s record;
+begin
+  select * into r from tom_route_claim_inbound('wa-R9-voo','v2');
+  perform tom_operation_step_begin(r.operation_id,'mutar', r.lease_token);   -- posse ATUAL
+
+  select * into v from tom_operation_step_verify(r.operation_id,'mutar', false, null, r.lease_token);
+  insert into _res (label, ok, detail) values
+    ('R9-1 verify(false) NAO apaga passo da posse atual', v.ok = false, coalesce(v.reason,'(sem reason)')),
+    ('R9-1 motivo e not_orphan', v.reason = 'not_orphan', coalesce(v.reason,'(sem reason)'));
+
+  insert into _res (label, ok, detail)
+  select 'R9-1 passo em voo continua existindo', count(*) = 1, count(*)::text
+    from tom_operation_steps where operation_id=r.operation_id and step_key='mutar';
+
+  select * into s from tom_operation_step_begin(r.operation_id,'mutar', r.lease_token);
+  insert into _res (label, ok, detail) values
+    ('R9-1 begin NAO devolve new (nao repete a mutacao)', s.outcome <> 'new', s.outcome),
+    ('R9-1 begin devolve in_progress_active', s.outcome = 'in_progress_active', s.outcome);
+
+  -- verify(true) tambem nao pode fechar passo em voo por atalho
+  select * into v from tom_operation_step_verify(r.operation_id,'mutar', true, '{"x":1}'::jsonb, r.lease_token);
+  insert into _res (label, ok, detail) values
+    ('R9-1 verify(true) tambem exige orfao', v.ok = false, coalesce(v.reason,'(sem reason)'));
+end $$;
+
+do $$
+declare r1 record; r2 record; v record; s record;
+begin
+  -- orfao de verdade: passo aberto por posse ANTERIOR
+  select * into r1 from tom_route_claim_inbound('wa-R9-orfao','v2');
+  perform tom_operation_step_begin(r1.operation_id,'mutar', r1.lease_token);
+  update tom_message_ownership set lease_until = clock_timestamp() - interval '1 minute'
+   where wa_message_id='wa-R9-orfao';
+  select * into r2 from tom_route_claim_inbound('wa-R9-orfao','v2');
+
+  select * into v from tom_operation_step_verify(r2.operation_id,'mutar', false, null, r2.lease_token);
+  insert into _res (label, ok, detail) values
+    ('R9-1 orfao REAL continua sendo resolvivel', v.ok = true, coalesce(v.reason,'(sem reason)'));
+
+  select * into s from tom_operation_step_begin(r2.operation_id,'mutar', r2.lease_token);
+  insert into _res (label, ok, detail) values
+    ('R9-1 apos negar o orfao, pode executar de novo', s.outcome='new', s.outcome);
+
+  -- passo ja resolvido nao se re-resolve
+  perform tom_operation_step_finish(r2.operation_id,'mutar','{"ok":1}'::jsonb,'done',null, r2.lease_token);
+  select * into v from tom_operation_step_verify(r2.operation_id,'mutar', true, '{"outro":1}'::jsonb, r2.lease_token);
+  insert into _res (label, ok, detail) values
+    ('R9-1 verify em passo done = already_resolved', v.reason='already_resolved', coalesce(v.reason,'(sem reason)'));
+
+  insert into _res (label, ok, detail)
+  select 'R9-1 recibo do passo preservado', result->>'ok' = '1', result::text
+    from tom_operation_steps where operation_id=r2.operation_id and step_key='mutar';
+end $$;
+
+-- ============ R9-2 — TTL do fluxo com relogio real ============
+do $$
+declare f record; t record; ent uuid := gen_random_uuid();
+begin
+  select * into f from tom_flow_open('conv-R9@s.whatsapp.net','task',ent,'v2', p_interactive_ttl_seconds => 3600);
+
+  select * into t from tom_flow_touch('conv-R9@s.whatsapp.net', 7200, 'v2', f.flow_token);
+  insert into _res (label, ok, detail) values ('R9-2 touch de fluxo vivo funciona', t.ok = true, coalesce(t.reason,'(sem reason)'));
+
+  -- expirado nao se renova nem com owner e token certos
+  update tom_flow_ownership set interactive_until = clock_timestamp() - interval '1 minute' where id = f.id;
+  select * into t from tom_flow_touch('conv-R9@s.whatsapp.net', 7200, 'v2', f.flow_token);
+  insert into _res (label, ok, detail) values
+    ('R9-2 touch NAO ressuscita fluxo expirado', t.ok = false, coalesce(t.reason,'(sem reason)'));
+
+  insert into _res (label, ok, detail)
+  select 'R9-2 TTL continua no passado', interactive_until < clock_timestamp(), interactive_until::text
+    from tom_flow_ownership where id = f.id;
+
+  select * into t from tom_flow_touch('conv-R9-inexistente@s.whatsapp.net', 3600, 'v2', f.flow_token);
+  insert into _res (label, ok, detail) values ('R9-2 touch sem fluxo = not_found', t.reason='not_found', coalesce(t.reason,'(sem reason)'));
 end $$;
 
 -- ============================ resultado ============================
