@@ -108,6 +108,15 @@ esperar_bg() {
 
 echo "=== schema descartável: $SCHEMA ==="
 sql "recriar schema" "drop schema if exists $SCHEMA cascade; create schema $SCHEMA;" || exit 1
+
+# (rodada 14) O schema descartável NÃO herda as DEFAULT PRIVILEGES que o Supabase mantém
+# em `public`: lá, `alter default privileges ... grant all on tables to anon,
+# authenticated, service_role` faz TODA tabela nova nascer com ALL para os três roles.
+# Sem espelhar isso aqui, o teste R5-4 media um banco que não existe — passava porque o
+# schema temporário nasce limpo, não porque a migration revogava. Foi assim que o
+# `service_role` chegou a `public` com INSERT/UPDATE, contrariando o R5-4 declarado.
+sql "espelhar default privileges de public" \
+  "alter default privileges in schema $SCHEMA grant all on tables to anon, authenticated, service_role;" || exit 1
 sql "stub collaborators" "create table $SCHEMA.collaborators (id uuid primary key default gen_random_uuid());" || exit 1
 
 MUT_SED="s/public\./$SCHEMA./g"

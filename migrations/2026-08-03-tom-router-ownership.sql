@@ -989,9 +989,15 @@ grant execute on function public.tom_operation_step_finish(uuid,text,jsonb,text,
 
 -- As tabelas também: RLS sem policy já bloqueia, mas negar o privilégio é a barreira
 -- que não depende de ninguém lembrar de não criar uma policy permissiva depois.
+-- service_role ENTRA no revoke (corrigido em 03/08, ver 2026-08-03b): o Supabase mantém
+-- `alter default privileges in schema public grant all on tables to anon, authenticated,
+-- service_role`, então TODA tabela nova em public nasce com ALL para os três. Sem revogar
+-- do service_role, o `grant select` abaixo era decorativo — o ALL do default continuava
+-- valendo. O schema descartável não tem essa default ACL, e por isso a asserção R5-4
+-- passava lá: media um banco que não existe. O runner agora espelha as default privileges.
 revoke all on table public.tom_message_ownership, public.tom_flow_ownership,
                     public.tom_operations, public.tom_operation_steps
-  from public, anon, authenticated;
+  from public, anon, authenticated, service_role;
 -- R5-4 (governanca): SELECT apenas. Com INSERT/UPDATE direto, o runtime contornaria
 -- token, lease e maquina de estados — as barreiras viram sugestao. As RPCs sao
 -- SECURITY DEFINER: escrevem sem depender do privilegio de quem chama.
