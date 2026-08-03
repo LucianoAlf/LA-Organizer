@@ -28,6 +28,15 @@ function runInTurn(ctx, fn) {
   return als.run(ctx || {}, fn);
 }
 
+// Entra no turno para o RESTO da execução atual, sem exigir um callback.
+// Existe por um motivo concreto: no webhook, os fallbacks de mídia ("não consegui baixar
+// o áudio", "esse PDF tem senha") respondem ANTES de a mensagem chegar na fila. Envolver
+// as ~300 linhas do handler num callback só para abrir o turno seria reindentar o
+// caminho de entrada inteiro — muito diff, muito risco, nenhum ganho sobre isto.
+function enterTurn(ctx) {
+  als.enterWith(ctx || {});
+}
+
 function currentTurn() {
   const s = als.getStore();
   return s && s.waMessageId ? s : null;
@@ -86,4 +95,4 @@ async function afterSend({ supabase, sentId, phone = null, collaboratorId = null
   }
 }
 
-module.exports = { runInTurn, currentTurn, decideSend, beforeSend, afterSend };
+module.exports = { runInTurn, enterTurn, currentTurn, decideSend, beforeSend, afterSend };

@@ -38,34 +38,17 @@ async function sendMessage(phone, text) {
   // QA log — capped at 200 chars to avoid log spam, helps catch leaks in pm2 logs.
   console.log('[OUT]', String(text || '').substring(0, 200));
 
-  // ---- FRONTEIRA DE SAÍDA DO TURNO (Fatia 3, item 4) ----
-  // Dentro de um turno claimado, nenhuma saída nasce fora do dono vencedor. Cobre os 82
-  // call sites que respondem ao remetente e os 24 que avisam terceiros SEM tocar em
-  // nenhum deles — inclusive os early-returns de ramo, que um helper por call site
-  // deixaria de fora em silêncio. Fora de turno (ritual/proativo) não consulta nada.
-  const _gate = await turnClaim.beforeSend({ supabase: _sb() });
-  if (!_gate.send) {
-    console.warn(`[Turno] NÃO enviou pra ${String(phone).slice(-4)}: ${_gate.reason} — outro worker assumiu este turno`);
-    return null;
-  }
-  if (_gate.degraded) console.warn(`[Turno] lease não verificável (${_gate.reason}) — enviando assim mesmo`);
-
   let lastErr;
   for (let attempt = 0; attempt <= SEND_RETRIES; attempt++) {
     try {
-      const response = await api.post('/send/text', {
+      const r = await _postEnviar('/send/text', {
         number: phone,
         text: text,
         readchat: true,
-      });
+      }, { phone, tipo: 'texto' });
+      if (r.bloqueado) return null;
       console.log(`[WhatsApp] Mensagem enviada pra ${phone.slice(-4)}${attempt ? ` (tentativa ${attempt + 1})` : ''}`);
-      // Já entregue: registrar é contabilidade, nunca reenvia nem lança.
-      try {
-        await turnClaim.afterSend({
-          supabase: _sb(), sentId: extractSentMessageId(response.data), phone,
-        });
-      } catch (e) { console.warn('[Turno] registro do outbound falhou (não reenvia):', e.message); }
-      return response.data;
+      return r.data;
     } catch (err) {
       lastErr = err;
       const status = (err.response && err.response.status) || 'none';
@@ -87,7 +70,7 @@ async function sendMessage(phone, text) {
  */
 async function sendButtons(phone, text, buttons, footer = '') {
   try {
-    const response = await api.post('/send/menu', {
+    const r = await _postEnviar('/send/menu', {
       number: phone,
       type: 'button',
       text: text,
@@ -95,8 +78,9 @@ async function sendButtons(phone, text, buttons, footer = '') {
       footerText: footer,
       delay: 2000,
       readchat: true,
-    });
-    return response.data;
+    }, { phone, tipo: 'botões' });
+    if (r.bloqueado) return null;
+    return r.data;
   } catch (err) {
     // Fallback: manda como texto normal se botões falharem
     console.warn('[WhatsApp] Botões falharam, enviando como texto');
@@ -110,7 +94,7 @@ async function sendButtons(phone, text, buttons, footer = '') {
  */
 async function sendList(phone, text, items, buttonText = 'Ver opções') {
   try {
-    const response = await api.post('/send/menu', {
+    const r = await _postEnviar('/send/menu', {
       number: phone,
       type: 'list',
       text: text,
@@ -118,8 +102,9 @@ async function sendList(phone, text, items, buttonText = 'Ver opções') {
       listButton: buttonText,
       delay: 2000,
       readchat: true,
-    });
-    return response.data;
+    }, { phone, tipo: 'lista' });
+    if (r.bloqueado) return null;
+    return r.data;
   } catch (err) {
     console.warn('[WhatsApp] Lista falhou, enviando como texto');
     const fallbackText = `${text}\n\n${items.map((item, i) => `${i + 1}. ${item}`).join('\n')}`;
@@ -198,9 +183,10 @@ async function sendMedia(phone, { url, type, caption = '', filename = '', mimety
     };
     if (filename) payload.docName = filename;
     if (mimetype) payload.mimetype = mimetype;
-    const response = await api.post('/send/media', payload);
+    const r = await _postEnviar('/send/media', payload, { phone, tipo: `mídia:${type}` });
+    if (r.bloqueado) return null;
     console.log(`[WhatsApp] mídia (${type}) enviada pra ${phone.slice(-4)}`);
-    return response.data;
+    return r.data;
   } catch (err) {
     console.error(`[WhatsApp] sendMedia erro pra ${phone}: ${err.message}`);
     throw err;
@@ -224,6 +210,42 @@ function _sb() {
     try { _sbCache = require('../supabase/client'); } catch (_) { _sbCache = null; }
   }
   return _sbCache;
+}
+
+// =====================================================================================
+// PONTO ÚNICO DE SAÍDA — a fronteira do turno mora AQUI, no transporte, não em uma
+// função específica.
+//
+// A primeira versão desta fatia colocou o gate dentro do sendMessage e eu afirmei que
+// cobria "todo outbound do turno". Não cobria: existem SETE api.post neste arquivo, e o
+// gate pegava um. Voz, sticker, mídia, menu e reação saíam sem validar lease e sem
+// registrar no ledger. Descer o gate para o POST fecha a classe inteira, inclusive
+// qualquer rota de envio que venha a ser escrita depois.
+//
+// FORA daqui, de propósito: /message/presence (o "digitando"). Não é mensagem, não tem
+// id, não é citável nem roteável — bloquear produziria só um efeito visual sem
+// contrapartida no contrato.
+//
+// `api` é injetável para que o teste prove o bloqueio ANTES do POST, sem rede.
+async function _postEnviar(rota, payload, { phone, tipo = 'mensagem', api: apiOverride, config, supabase: sbOverride } = {}) {
+  const cli = apiOverride || api;
+  const sb = sbOverride || _sb();
+  const gate = await turnClaim.beforeSend({ supabase: sb });
+  if (!gate.send) {
+    console.warn(`[Turno] NÃO enviou ${tipo} pra ${String(phone).slice(-4)}: ${gate.reason} — outro worker assumiu este turno`);
+    return { bloqueado: true, data: null };
+  }
+  if (gate.degraded) {
+    console.warn(`[Turno] lease não verificável (${gate.reason}) — enviando ${tipo} assim mesmo`);
+  }
+  const response = config ? await cli.post(rota, payload, config) : await cli.post(rota, payload);
+  // Já entregue: registrar é contabilidade. Nunca reenvia, nunca lança.
+  try {
+    await turnClaim.afterSend({ supabase: sb, sentId: extractSentMessageId(response.data), phone });
+  } catch (e) {
+    console.warn('[Turno] registro do outbound falhou (não reenvia):', e.message);
+  }
+  return { bloqueado: false, data: response.data };
 }
 
 /**
@@ -357,15 +379,16 @@ async function sendVoice(phone, audioBuffer) {
       throw new Error('audioBuffer inválido ou muito pequeno');
     }
     const base64 = audioBuffer.toString('base64');
-    const response = await api.post('/send/media', {
+    const r = await _postEnviar('/send/media', {
       number: phone,
       type: 'ptt',
       file: base64,
       mimetype: 'audio/mpeg',
       readchat: true,
-    }, { timeout: 30000 });
+    }, { phone, tipo: 'voz', config: { timeout: 30000 } });
+    if (r.bloqueado) return null;
     console.log(`[WhatsApp] PTT enviado pra ${String(phone).slice(-4)} (${audioBuffer.length} bytes)`);
-    return response.data;
+    return r.data;
   } catch (err) {
     console.error(`[WhatsApp] sendVoice falhou pra ${phone}: ${err.message}`);
     throw err;
@@ -387,17 +410,21 @@ async function sendReaction(phone, messageId, emoji) {
       return null;
     }
     const number = String(phone).includes('@') ? phone : `${phone}@s.whatsapp.net`;
-    const response = await api.post('/message/react', {
+    const r = await _postEnviar('/message/react', {
       number,
       text: String(emoji),
       id: String(messageId),
-    });
+    }, { phone, tipo: 'reação' });
+    if (r.bloqueado) return null;
     console.log(`[WhatsApp] reação ${emoji} enviada pra ${String(phone).slice(-4)} (msgId=${String(messageId).slice(0,12)})`);
-    return response.data;
+    return r.data;
   } catch (err) {
     console.warn(`[WhatsApp] sendReaction falhou: ${err.message}`);
     return null;
   }
 }
 
-module.exports = { sendMessage, sendButtons, sendList, sendMedia, setTyping, sendReaction, sendVoice, isAudioMessage, isImageMessage, isDocumentMessage, isVideoMessage, extractText, extractPhone, extractName, extractFileName, extractMessageId, extractQuotedMessage, extractSentMessageId, isIgnorable, getData };
+module.exports = { sendMessage, sendButtons, sendList, sendMedia, setTyping, sendReaction, sendVoice, isAudioMessage, isImageMessage, isDocumentMessage, isVideoMessage, extractText, extractPhone, extractName, extractFileName, extractMessageId, extractQuotedMessage, extractSentMessageId, isIgnorable, getData,
+  // exportado para o teste de TRANSPORTE: prova que o bloqueio acontece antes do POST,
+  // com um cliente injetado, sem rede.
+  _postEnviar };

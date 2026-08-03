@@ -211,6 +211,34 @@ async function processWebhookBody(body) {
       return;
     }
 
+    // ================== O TURNO ABRE AQUI, NÃO NA FILA ==================
+    // Os fallbacks de mídia ("não consegui baixar o áudio", "esse PDF tem senha",
+    // "recebi sua imagem mas...") respondem ANTES de a mensagem chegar em processMessage.
+    // Com o claim só no callback da fila, essas 13 saídas escapavam do gate — furo
+    // apontado pelo Alfredo depois de eu afirmar que a fronteira estava fechada.
+    //
+    // enterTurn (e não runInTurn) porque envolver as ~300 linhas seguintes num callback
+    // seria reindentar o caminho de entrada inteiro, com todo o risco disso e nenhum
+    // ganho: enterWith cobre o resto desta execução e tudo que ela aguardar.
+    let _waId = null;
+    try { _waId = whatsapp.extractMessageId(body); } catch (_) { _waId = null; }
+    const _claim = await inboundClaim.claimInbound({
+      supabase, enabled: CLAIM_ON, waMessageId: _waId, phone,
+    });
+    if (!_claim.proceed) {
+      console.log(`[Claim] SKIP phone=...${String(phone).slice(-4)} motivo=${_claim.reason} id=...${String(_waId).slice(-8)}`);
+      return;
+    }
+    if (_claim.degraded) {
+      console.warn(`[Claim] degradado (${_claim.reason}${_claim.detail ? ': ' + _claim.detail : ''}) — processa assim mesmo`);
+    }
+    const _turno = { waMessageId: _waId, leaseToken: _claim.leaseToken, operationId: _claim.operationId };
+    turnClaim.enterTurn(_turno);
+    // Nota: se a mensagem morrer num early-return de mídia (PDF com senha, download
+    // falho), o claim fica aberto e vence pelo lease (300s). Preferi isso a espalhar
+    // finish por 13 pontos de saída: enquanto vence, um replay da MESMA mensagem é
+    // pulado, que é o comportamento correto.
+
     // ---- Audio handling: try transcription, fall back gracefully ----
     if ((!text || typeof text !== 'string') && whatsapp.isAudioMessage(body)) {
       console.log(`[Webhook] audio detected from ${phone.slice(-4)} — attempting transcription`);
@@ -485,33 +513,11 @@ async function processWebhookBody(body) {
         console.log(`[Webhook] buffer flush phone=${phone.slice(-4)} items=${items.length} combinedLen=${combinedText.length}`);
       }
       queue.enqueue(phone, () => shutdown.withTracking(async () => {
-        // ---- Fatia 3: claim ANTES de processar ----
-        // Fica AQUI, e não dentro do engine, por dois motivos: este é o único ponto por
-        // onde passam tanto a mensagem nova quanto o REPLAY de restart (handleIncoming é
-        // reusado por replayPending), e daqui o claim cobre todos os early-returns do
-        // processMessage de graça.
-        // decideClaim é fail-open: só três recibos explícitos calam o TOM.
-        let _waId = null;
-        try { _waId = whatsapp.extractMessageId(latestRaw); } catch (_) { _waId = null; }
-        const _claim = await inboundClaim.claimInbound({
-          supabase, enabled: CLAIM_ON, waMessageId: _waId, phone,
-        });
-        if (!_claim.proceed) {
-          console.log(`[Claim] SKIP phone=...${String(phone).slice(-4)} motivo=${_claim.reason} id=...${String(_waId).slice(-8)}`);
-          for (const it of items) inFlightBodies.delete(it.raw);
-          return;
-        }
-        if (_claim.degraded) {
-          console.warn(`[Claim] degradado (${_claim.reason}${_claim.detail ? ': ' + _claim.detail : ''}) — processa assim mesmo`);
-        }
+        // O claim já foi feito lá em cima, antes dos fallbacks de mídia. Aqui só
+        // REENTRAMOS no turno: este callback roda mais tarde, num contexto assíncrono
+        // próprio da fila, e não herda o enterTurn de quem enfileirou.
         try {
-          // Abre o TURNO: daqui pra dentro, todo whatsapp.sendMessage — resposta final,
-          // early-return de ramo ou aviso a terceiro — valida a lease antes de sair e
-          // registra o outbound amarrado a esta operação. Ver services/turn-claim.js.
-          await turnClaim.runInTurn(
-            { waMessageId: _waId, leaseToken: _claim.leaseToken, operationId: _claim.operationId },
-            () => processMessage(phone, combinedText, latestRaw),
-          );
+          await turnClaim.runInTurn(_turno, () => processMessage(phone, combinedText, latestRaw));
         } finally {
           // Fecha o claim: é o que faz o replay reconhecer `already_completed` depois.
           // Nunca lança — no pior caso a linha vence por lease em vez de fechar limpo.
