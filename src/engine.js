@@ -8531,7 +8531,16 @@ async function processMessage(phone, text, raw = {}) {
   }
   _metrics.collaborator_id = collab.id;
   console.log('[Engine] Mensagem de', collab.full_name);
-  await logConversation(collab.id, 'inbound', text);
+  // Fatia 3 do router — id da mensagem RECEBIDA. Até aqui `inbound_com_id` era ZERO no
+  // banco inteiro: sem o id não existe como saber "essa mensagem eu já processei", que é
+  // o que impede o replay de restart de responder duas vezes.
+  // Não muda leitura nenhuma: o reply-quote (engine ~9800) filtra `ref_id not null` e
+  // inbound nasce sem ref_id — varri os leitores antes de gravar.
+  // Quando o webhook agrupa mensagens seguidas (buffer flush), `raw` é a ÚLTIMA do lote:
+  // o id gravado identifica o lote pela última fala, não por todas.
+  let _inboundWaId = null;
+  try { _inboundWaId = whatsapp.extractMessageId(raw); } catch (_) { _inboundWaId = null; }
+  await logConversation(collab.id, 'inbound', text, _inboundWaId);
 
   // ---- Pending intents: lê UMA vez por mensagem (compartilhado finance_source + Sprint 30.3) ----
   let _openIntents = [];

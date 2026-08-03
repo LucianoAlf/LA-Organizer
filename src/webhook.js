@@ -16,6 +16,13 @@ const statementParse = require('./finance/statement-parse');
 const pdfCrypt = require('./finance/pdf-crypt');
 const pendingPdf = require('./services/pending-pdf');
 const boletoParse = require('./finance/boleto-parse');
+const inboundClaim = require('./services/inbound-claim');
+
+// Fatia 3 do router — claim de inbound. DESLIGADO por padrão: liga com
+// TOM_ROUTER_CLAIM=1 no .env. Reversível sem deploy, porque o modo de falha desta
+// feature é o TOM ficar mudo, e nesse caso o caminho mais rápido de volta tem que ser
+// desligar, não corrigir código.
+const CLAIM_ON = process.env.TOM_ROUTER_CLAIM === '1';
 
 // PDF → texto pro engine: extrai boleto/fatura estruturada (Gemini) ou conteúdo cru. null se não leu.
 async function pdfToText(buf, mime, caption) {
@@ -477,9 +484,36 @@ async function processWebhookBody(body) {
         console.log(`[Webhook] buffer flush phone=${phone.slice(-4)} items=${items.length} combinedLen=${combinedText.length}`);
       }
       queue.enqueue(phone, () => shutdown.withTracking(async () => {
+        // ---- Fatia 3: claim ANTES de processar ----
+        // Fica AQUI, e não dentro do engine, por dois motivos: este é o único ponto por
+        // onde passam tanto a mensagem nova quanto o REPLAY de restart (handleIncoming é
+        // reusado por replayPending), e daqui o claim cobre todos os early-returns do
+        // processMessage de graça.
+        // decideClaim é fail-open: só três recibos explícitos calam o TOM.
+        let _waId = null;
+        try { _waId = whatsapp.extractMessageId(latestRaw); } catch (_) { _waId = null; }
+        const _claim = await inboundClaim.claimInbound({
+          supabase, enabled: CLAIM_ON, waMessageId: _waId, phone,
+        });
+        if (!_claim.proceed) {
+          console.log(`[Claim] SKIP phone=...${String(phone).slice(-4)} motivo=${_claim.reason} id=...${String(_waId).slice(-8)}`);
+          for (const it of items) inFlightBodies.delete(it.raw);
+          return;
+        }
+        if (_claim.degraded) {
+          console.warn(`[Claim] degradado (${_claim.reason}${_claim.detail ? ': ' + _claim.detail : ''}) — processa assim mesmo`);
+        }
         try {
           await processMessage(phone, combinedText, latestRaw);
         } finally {
+          // Fecha o claim: é o que faz o replay reconhecer `already_completed` depois.
+          // Nunca lança — no pior caso a linha vence por lease em vez de fechar limpo.
+          const _fin = await inboundClaim.finishInbound({
+            supabase, enabled: CLAIM_ON, waMessageId: _waId, leaseToken: _claim.leaseToken,
+          });
+          if (CLAIM_ON && !_fin.ok && _fin.code !== 'no_lease') {
+            console.warn(`[Claim] finish não confirmou: ${_fin.code}${_fin.detail ? ' — ' + _fin.detail : ''}`);
+          }
           // Concluiu (ou falhou no app, não em restart): não precisa de replay.
           for (const it of items) inFlightBodies.delete(it.raw);
         }

@@ -192,15 +192,9 @@ async function sendMedia(phone, { url, type, caption = '', filename = '', mimety
  * Normaliza o payload — suporta formato novo UAZAPI (EventType + messages[])
  * e formato antigo (event + data).
  */
-function getData(body) {
-  // New format: array (enriched lean payload from curl tests)
-  if (body?.EventType && body?.messages?.length > 0) return body.messages[0];
-  // New format: singular message object (real UAZAPI delivery)
-  if (body?.EventType && body?.message) return body.message;
-  // Old format
-  if (body?.data) return body.data;
-  return body;
-}
+// getData e extractMessageId vivem em ./inbound-message-id (funções PURAS, testáveis sem
+// env). Reexportadas abaixo — nenhum call site mudou.
+const { getData, extractMessageId } = require('./inbound-message-id');
 
 /**
  * Extrai texto de um webhook UAZAPI
@@ -272,21 +266,6 @@ function isIgnorable(body) {
  * Extrai o ID da mensagem do user (necessário pra reagir a ela).
  * Casa formatos antigos (data.id) e novos (message.id, message.key.id).
  */
-function extractMessageId(body) {
-  const m = getData(body);
-  if (!m || typeof m !== 'object') return null;
-  const candidates = [
-    m.id,
-    m.messageid,
-    m.message_id,
-    m.key && m.key.id,
-    body && body.id,
-  ];
-  for (const c of candidates) {
-    if (typeof c === 'string' && c.length >= 4) return c;
-  }
-  return null;
-}
 
 /**
  * Sprint 28 — Extrai mensagem citada (reply) do payload UAZAPI.
