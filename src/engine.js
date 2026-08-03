@@ -7,6 +7,10 @@ const crypto = require('crypto');
 const collaboratorService = require('./services/collaborator');
 const collabResolver = require('./services/collaborator-resolver');
 const whatsapp = require('./services/whatsapp');
+// Fatia 2 do router: a UAZAPI devolve o id da mensagem enviada, mas 86% dos outbounds
+// saíam sem ele — e sem id a resposta do TOM não é citável nem roteável.
+const { extractSentMessageId } = require('./services/sent-message-id');
+const { recordOutboundV1 } = require('./services/outbound-record');
 const metricsService = require('./services/metrics');
 const ai = require('./ai/provider');
 const { buildSystemPrompt, formatMessages } = require('./prompts/system');
@@ -13101,8 +13105,35 @@ Output AGORA, apenas o marker:`;
   }
 
   if (reply && reply.trim() && !_voiceSent) {
-    await whatsapp.sendMessage(phone, reply);
-    await logConversation(collab.id, 'outbound', reply);
+    const _sent = await whatsapp.sendMessage(phone, reply);
+
+    // ===================== FRONTEIRA DE ENTREGA =====================
+    // Daqui pra baixo a mensagem JÁ ESTÁ no WhatsApp do colaborador. Nada nesta seção
+    // pode lançar, reenviar ou pedir retry: registro faltando é problema de
+    // contabilidade; mensagem duplicada é dano visível pra pessoa. Toda falha após a
+    // entrega vira telemetria e o turno segue.
+    let _waId = null;
+    try { _waId = extractSentMessageId(_sent); } catch (_) { _waId = null; }
+
+    try {
+      await logConversation(collab.id, 'outbound', reply, _waId);
+    } catch (e) {
+      console.error('[Outbound] histórico falhou APÓS entrega (NÃO reenvia):', e.message);
+    }
+
+    try {
+      const _rec = await recordOutboundV1({
+        supabase, waMessageId: _waId, phone, collaboratorId: collab.id,
+      });
+      if (!_rec.ok) {
+        // Recibo ruim não é silêncio: vira marker medível. `no_wa_id` é o caso que esta
+        // fatia existe para zerar — se ele continuar aparecendo, a captura não pegou.
+        await logMarker(collab.id, 'OUTBOUND_LEDGER', 'rejected',
+          `${_rec.code}${_rec.detail ? ':' + _rec.detail : ''}`.slice(0, 120), null);
+      }
+    } catch (e) {
+      console.error('[Outbound] ledger falhou APÓS entrega (NÃO reenvia):', e.message);
+    }
   } else if (_reactionsToSend && _reactionsToSend.length && !_voiceSent) {
     console.log(`[Engine] reply vazio pós-REACT — só reação enviada (${_reactionsToSend[0]})`);
     await logConversation(collab.id, 'outbound', `[reação: ${_reactionsToSend[0]}]`);
@@ -13255,13 +13286,18 @@ function brtDateOf(isoStr) {
   return fmt.format(new Date(isoStr));
 }
 
-async function logConversation(collaboratorId, direction, content) {
+// waMessageId (opcional): id real da mensagem no WhatsApp. Nos outbounds ele é o que
+// torna a resposta CITÁVEL — o reply-quote procura o outbound por esse id exato
+// (engine.js ~9800). Parâmetro opcional de propósito: os 100+ call sites que não passam
+// continuam idênticos ao que eram.
+async function logConversation(collaboratorId, direction, content, waMessageId = null) {
   const row = {
     collaborator_id: collaboratorId,
     direction,
     message_type: 'text',
     content,
   };
+  if (waMessageId) row.whatsapp_message_id = waMessageId;
   // MEDIA-IMG-CONTEXT-LOST (Rose 11/06): a análise de imagem/vídeo/PDF é injetada no
   // `content` da inbound pelo webhook, mas `media_extracted_text` ficava NULL — então a
   // análise sumia quando a msg saía da janela de 5 do contexto reconstruído. Persiste a
