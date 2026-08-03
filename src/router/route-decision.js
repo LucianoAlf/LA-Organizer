@@ -45,11 +45,17 @@ function normOwner(v) {
 }
 
 /**
+ * R3-B3 (Alfredo, rodada 3): `canaryOpen` foi REMOVIDO. A auditoria provou por exaustão
+ * que ele não alterava nenhuma das 64 decisões — coerente com o desenho (o router nunca
+ * abre v2 por texto livre), mas um parâmetro que parece controle de canário e não controla
+ * nada é pior que a ausência dele: alguém confiaria naquele botão num rollback. Abrir
+ * fluxo v2 é decisão de quem CRIA a entidade do canário, e mora em `tom_flow_open`.
+ *
  * @param {object} facts fatos já lidos do ledger pelo adapter
  * @param {'v1'|'v2'|null} facts.quotedOwner dono da mensagem citada
- * @param {'v1'|'v2'|null} facts.flowOwner dono do fluxo aberto para este chat
- * @param {'canary'|'draining'|'retired'|null} facts.flowPhase fase do fluxo aberto
- * @param {boolean} facts.canaryOpen o canário aceita ABRIR fluxo novo?
+ * @param {'v1'|'v2'|null} facts.flowOwner dono do fluxo INTERATIVO ativo desta conversa
+ *   (um só, garantido pelo índice único parcial em tom_flow_ownership — R3-A4)
+ * @param {'canary'|'draining'|'retired'|null} facts.flowPhase fase do fluxo
  * @returns {{owner:'v1'|'v2', reason:string, conflict?:string}}
  */
 function decideRoute(facts) {

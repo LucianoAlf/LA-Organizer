@@ -10,7 +10,6 @@ const F = (extra) => ({
   quotedOwner: null,      // dono do wa_message_id citado ('v1' | 'v2' | null)
   flowOwner: null,        // dono do fluxo aberto pra esse chat ('v1' | 'v2' | null)
   flowPhase: null,        // 'canary' | 'draining' | 'retired' | null
-  canaryOpen: true,       // aceita ABRIR novo fluxo v2?
   ...extra,
 });
 
@@ -21,8 +20,8 @@ test('sem nenhum sinal, vai pro v1 (o legado é o default, não o novo)', () => 
   assert.strictEqual(r.reason, ROUTE_REASONS.DEFAULT_V1);
 });
 
-test('canário desligado e sem fluxo aberto: tudo v1', () => {
-  assert.strictEqual(decideRoute(F({ canaryOpen: false })).owner, 'v1');
+test('sem sinal, nem um fluxo retired muda o default', () => {
+  assert.strictEqual(decideRoute(F({ flowOwner: 'v2', flowPhase: 'retired' })).owner, 'v1');
 });
 
 // ---------- quote: o sinal mais específico ----------
@@ -38,10 +37,8 @@ test('citação de mensagem do v2 → v2', () => {
   assert.strictEqual(r.reason, ROUTE_REASONS.QUOTE_V2);
 });
 
-test('citação de mensagem do v2 vale MESMO com o canário fechado (drenagem)', () => {
-  // fechar o canário impede ABRIR fluxo novo; não pode sequestrar fluxo em andamento,
-  // senão a resposta da pessoa cai num runtime que não sabe da operação.
-  const r = decideRoute(F({ quotedOwner: 'v2', canaryOpen: false }));
+test('citação de mensagem do v2 vale mesmo em drenagem (rollback não sequestra conversa)', () => {
+  const r = decideRoute(F({ quotedOwner: 'v2', flowOwner: 'v2', flowPhase: 'draining' }));
   assert.strictEqual(r.owner, 'v2');
 });
 
@@ -53,7 +50,7 @@ test('fluxo v2 aberto, sem citação → v2', () => {
 });
 
 test('fluxo v2 em DRENAGEM continua no v2 (rollback não abandona operação em andamento)', () => {
-  const r = decideRoute(F({ flowOwner: 'v2', flowPhase: 'draining', canaryOpen: false }));
+  const r = decideRoute(F({ flowOwner: 'v2', flowPhase: 'draining' }));
   assert.strictEqual(r.owner, 'v2');
 });
 
@@ -106,17 +103,22 @@ test('toda combinação possível devolve exatamente um dono válido e um motivo
   for (const q of vals) {
     for (const f of vals) {
       for (const fase of fases) {
-        for (const aberto of [true, false]) {
-          const r = decideRoute({ quotedOwner: q, flowOwner: f, flowPhase: fase, canaryOpen: aberto });
-          assert.ok(r && (r.owner === 'v1' || r.owner === 'v2'), `owner inválido em ${q}/${f}/${fase}/${aberto}`);
-          assert.ok(typeof r.reason === 'string' && r.reason.length > 0);
-          assert.ok(Object.values(ROUTE_REASONS).includes(r.reason), `motivo fora do enum: ${r.reason}`);
-          n++;
-        }
+        const r = decideRoute({ quotedOwner: q, flowOwner: f, flowPhase: fase });
+        assert.ok(r && (r.owner === 'v1' || r.owner === 'v2'), `owner inválido em ${q}/${f}/${fase}`);
+        assert.ok(typeof r.reason === 'string' && r.reason.length > 0);
+        assert.ok(Object.values(ROUTE_REASONS).includes(r.reason), `motivo fora do enum: ${r.reason}`);
+        n++;
       }
     }
   }
-  assert.strictEqual(n, 4 * 4 * 4 * 2);
+  assert.strictEqual(n, 4 * 4 * 4);
+});
+
+test('R3-B3: parâmetro morto não volta — a assinatura só tem sinais que decidem', () => {
+  // canaryOpen alterava 0 das 64 decisões. Se alguém reintroduzir, este teste cai.
+  const base = JSON.stringify(decideRoute(F({ quotedOwner: 'v2' })));
+  assert.strictEqual(JSON.stringify(decideRoute({ quotedOwner: 'v2', canaryOpen: false })), base);
+  assert.strictEqual(JSON.stringify(decideRoute({ quotedOwner: 'v2', canaryOpen: true })), base);
 });
 
 test('é determinístico: mesma entrada, mesma saída, sempre', () => {

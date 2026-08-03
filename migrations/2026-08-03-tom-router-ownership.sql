@@ -1,271 +1,469 @@
 -- =====================================================================================
 -- TOM v1/v2 — ledger de propriedade (roteamento entre runtimes)
--- Data: 03/08/2026 · Origem: auditoria de viabilidade Hermes+UAZAPI (Alfredo)
+-- Data: 03/08/2026 · Origem: auditoria de viabilidade + rodada 3 (Alfredo)
 --
--- NÃO APLICADA. Escrita para auditoria antes do deploy, conforme o processo acordado.
+-- NÃO APLICADA em produção. Escrita para auditoria; validada em schema descartável.
 --
 -- Por que estas tabelas existem: dois agentes no MESMO número de WhatsApp precisam de um
 -- dono por mensagem e por entidade. Sem isso, um reply não sabe quem deve responder e
 -- dois dispatchers podem cobrar a mesma tarefa.
 --
--- Por que NÃO reaproveitar `conversation_history`: é o histórico do v1, já tem exceções,
--- e o writer da resposta normal descarta o ID devolvido pela UAZAPI — medido em
--- 4.288 outbounds sem `whatsapp_message_id` nos últimos 30 dias (contra 1.119 com ID,
--- todos do caminho proativo). Um ledger de governança não pode nascer com 79% de buracos.
+-- Por que NÃO reaproveitar `conversation_history`: é o histórico do v1 e o writer da
+-- resposta normal descarta o ID devolvido pela UAZAPI — 4.288 outbounds sem
+-- `whatsapp_message_id` nos últimos 30 dias contra 1.119 com ID (só o caminho proativo).
+-- Um ledger de governança não pode nascer com ~79% de buracos.
 --
--- Acesso: só service_role (os runtimes). RLS habilitada SEM policy permissiva — sem
--- policy, anon/authenticated não leem nada; service_role ignora RLS por definição.
+-- RODADA 3 — os quatro bloqueios corrigidos aqui:
+--   R3-A1  EXECUTE das RPCs revogado de PUBLIC/anon/authenticated (o default do banco
+--          concede a todos: as 5 funções SECURITY DEFINER que já existem hoje estão
+--          abertas para anon — verificado com has_function_privilege).
+--   R3-A2  Claim distingue QUEM INSERIU: o perdedor da corrida nunca recebe "novo".
+--   R3-A3  Claim ≠ concluído. Estados + lease: crash depois do claim é RETOMÁVEL, e só
+--          'completed' suprime reprocessamento. A operação nasce na MESMA transação.
+--   R3-A4  `conversation_key` + no máximo um fluxo interativo ativo por conversa, para
+--          o adapter obter UM flowOwner determinístico (grupos incluídos).
+--
+-- Transação explícita e sem IF NOT EXISTS (R3-B4): os objetos não existem: falhar cedo
+-- é mais seguro do que seguir sobre schema parcialmente diferente.
 -- =====================================================================================
 
+begin;
+
 -- -------------------------------------------------------------------------------------
--- 1. tom_message_ownership — de quem é cada mensagem do WhatsApp
---    Serve para (a) rotear o reply de volta ao dono e (b) dedupe PERSISTENTE de inbound.
---    O dedupe atual do v1 é memória local com teto de 1.000 e morre no restart
---    (src/services/dedupe.js), então não serve como contrato entre dois runtimes.
+-- 1. tom_message_ownership — dono e CICLO DE VIDA de cada mensagem do WhatsApp
 -- -------------------------------------------------------------------------------------
-create table if not exists public.tom_message_ownership (
+create table public.tom_message_ownership (
   id                    uuid primary key default gen_random_uuid(),
   wa_message_id         text        not null,
   direction             text        not null check (direction in ('inbound','outbound')),
   owner                 text        not null check (owner in ('v1','v2')),
+  -- R3-A3: "reivindiquei" não é "terminei". Só 'completed' suprime reprocessamento.
+  -- inbound nasce 'claimed'; outbound já nasce 'completed' (não há o que processar).
+  status                text        not null default 'claimed'
+                        check (status in ('claimed','processing','completed','failed')),
+  lease_until           timestamptz,
+  attempts              int         not null default 0,
   phone                 text,
   collaborator_id       uuid        references public.collaborators(id) on delete set null,
+  conversation_key      text,
   quoted_wa_message_id  text,
   entity_type           text        check (entity_type is null or entity_type in ('task','event','habit','reminder','bill','note')),
   entity_id             uuid,
   operation_id          uuid,
   route_reason          text,
-  route_conflict        text,        -- quote e fluxo discordaram; telemetria, não erro
-  created_at            timestamptz not null default now()
+  route_conflict        text,
+  last_error            text,
+  created_at            timestamptz not null default now(),
+  finished_at           timestamptz
 );
 
--- Um ID de mensagem tem UM dono. É esta constraint que sustenta tanto o roteamento por
--- quote quanto o dedupe de inbound — sem ela, o ledger vira sugestão.
-create unique index if not exists tom_message_ownership_wa_id_uq
+-- Um ID de mensagem tem UM dono. Sustenta o roteamento por quote e o dedupe de inbound.
+create unique index tom_message_ownership_wa_id_uq
   on public.tom_message_ownership (wa_message_id);
-
-create index if not exists tom_message_ownership_quoted_idx
+create index tom_message_ownership_quoted_idx
   on public.tom_message_ownership (quoted_wa_message_id) where quoted_wa_message_id is not null;
-create index if not exists tom_message_ownership_entity_idx
+create index tom_message_ownership_entity_idx
   on public.tom_message_ownership (entity_type, entity_id) where entity_id is not null;
-create index if not exists tom_message_ownership_collab_idx
-  on public.tom_message_ownership (collaborator_id, created_at desc);
+-- claims vivos/abandonados: alvo do recuperador
+create index tom_message_ownership_open_idx
+  on public.tom_message_ownership (lease_until) where status in ('claimed','processing');
 
 alter table public.tom_message_ownership enable row level security;
 
 comment on table  public.tom_message_ownership is
-  'Dono (v1/v2) de cada mensagem WhatsApp. Roteia reply e deduplica inbound entre runtimes.';
-comment on column public.tom_message_ownership.route_conflict is
-  'Quote e fluxo aberto discordaram na rota. Não bloqueia; existe para não virar bug invisível.';
+  'Dono (v1/v2) e ciclo de vida de cada mensagem WhatsApp. Roteia reply e deduplica inbound.';
+comment on column public.tom_message_ownership.status is
+  'claimed→processing→completed|failed. Só completed suprime reprocessamento: claim não é recibo.';
+comment on column public.tom_message_ownership.lease_until is
+  'Enquanto válido, ninguém mais processa. Vencido sem completed = crash → retomável.';
 
 -- -------------------------------------------------------------------------------------
--- 2. tom_flow_ownership — de quem é cada ENTIDADE de negócio
---    O v1 continua dono de tudo que já existe. O v2 nasce dono só do que ele criar no
---    canário. É isto que impede dois dispatchers de cobrarem a mesma tarefa: nenhum
---    runtime pode agendar/mutar entidade cujo dono ativo é o outro.
+-- 2. tom_flow_ownership — dono de cada ENTIDADE e da CONVERSA
+--    R3-A4: sem chave de conversa o adapter não conseguia transformar "vários fluxos
+--    ativos" em UM flowOwner — em grupo, rotearia para o dono errado. `conversation_key`
+--    é o remoteJid canônico da UAZAPI (1:1 ou grupo).
 -- -------------------------------------------------------------------------------------
-create table if not exists public.tom_flow_ownership (
-  id              uuid primary key default gen_random_uuid(),
-  entity_type     text        not null check (entity_type in ('task','event','habit','reminder','bill','note')),
-  entity_id       uuid        not null,
-  collaborator_id uuid        references public.collaborators(id) on delete cascade,
-  owner           text        not null check (owner in ('v1','v2')),
-  -- canary  = fluxo vivo, aceita novas interações
-  -- draining= rollback acionado: não abre nada novo, mas o que já começou termina aqui
-  -- retired = encerrado; não prende mais a conversa
-  phase           text        not null default 'canary' check (phase in ('canary','draining','retired')),
-  opened_at       timestamptz not null default now(),
-  closed_at       timestamptz,
-  note            text
+create table public.tom_flow_ownership (
+  id                  uuid        primary key default gen_random_uuid(),
+  conversation_key    text        not null,
+  entity_type         text        not null check (entity_type in ('task','event','habit','reminder','bill','note')),
+  entity_id           uuid        not null,
+  collaborator_id     uuid        references public.collaborators(id) on delete cascade,
+  owner               text        not null check (owner in ('v1','v2')),
+  -- canary   = fluxo vivo, aceita novas interações
+  -- draining = rollback: não abre nada novo, mas o que começou termina aqui
+  -- retired  = encerrado; não prende mais a conversa
+  phase               text        not null default 'canary' check (phase in ('canary','draining','retired')),
+  -- true = é ESTE fluxo que prende a conversa (só um por conversa)
+  interactive         boolean     not null default true,
+  opened_by_wa_id     text,
+  opened_at           timestamptz not null default now(),
+  closed_at           timestamptz,
+  note                text
 );
 
--- Uma entidade tem NO MÁXIMO UM dono ativo. Parcial porque histórico fechado pode repetir.
-create unique index if not exists tom_flow_ownership_active_uq
+-- Uma entidade tem NO MÁXIMO UM dono ativo.
+create unique index tom_flow_ownership_entity_active_uq
   on public.tom_flow_ownership (entity_type, entity_id) where closed_at is null;
 
-create index if not exists tom_flow_ownership_collab_idx
-  on public.tom_flow_ownership (collaborator_id) where closed_at is null;
+-- R3-A4: NO MÁXIMO UM fluxo interativo ativo por conversa. É esta constraint — e não uma
+-- consulta "último fluxo do colaborador" — que torna o flowOwner determinístico.
+create unique index tom_flow_ownership_conversation_active_uq
+  on public.tom_flow_ownership (conversation_key) where closed_at is null and interactive;
+
+create index tom_flow_ownership_conv_idx
+  on public.tom_flow_ownership (conversation_key) where closed_at is null;
 
 alter table public.tom_flow_ownership enable row level security;
 
-comment on table public.tom_flow_ownership is
-  'Dono (v1/v2) de cada entidade de negócio. Impede dois runtimes de mutarem/cobrarem a mesma coisa.';
+comment on column public.tom_flow_ownership.conversation_key is
+  'remoteJid canônico (1:1 ou grupo). Unidade de fluxo — evita rotear conversa de grupo pelo dono errado.';
+comment on column public.tom_flow_ownership.interactive is
+  'Só um fluxo interativo ativo por conversa. Entidades não-interativas coexistem sem prender a conversa.';
 
 -- -------------------------------------------------------------------------------------
 -- 3. tom_operations — trilha intenção → mutação → releitura → recibo
---    Substitui "o marker foi emitido" como prova de que algo aconteceu. É a base do E0
---    (telemetria por operação, não contagem de executed/rejected).
 -- -------------------------------------------------------------------------------------
-create table if not exists public.tom_operations (
+create table public.tom_operations (
   operation_id           uuid primary key default gen_random_uuid(),
   inbound_wa_message_id  text        not null,
   owner                  text        not null check (owner in ('v1','v2')),
   collaborator_id        uuid        references public.collaborators(id) on delete set null,
+  conversation_key       text,
   action                 text        check (action is null or action in ('done','in_progress','reschedule','cancel','clarify')),
   entity_type            text,
   entity_id              uuid,
   state_before           jsonb,
   state_after            jsonb,
-  verified               boolean,     -- releitura confirmou o efeito? null = não verificado
+  verified               boolean,
   verification_detail    text,
   sent_text              text,
+  sent_wa_message_id     text,
   error                  text,
+  attempt                int         not null default 1,
   created_at             timestamptz not null default now(),
   finished_at            timestamptz
 );
 
--- Um inbound gera UMA operação. É o que impede executar duas vezes o mesmo pedido —
--- inclusive entre runtimes e através de restart, ao contrário do dedupe em memória.
-create unique index if not exists tom_operations_inbound_uq
+-- Um inbound gera UMA operação — inclusive entre runtimes e através de restart.
+create unique index tom_operations_inbound_uq
   on public.tom_operations (inbound_wa_message_id);
-
-create index if not exists tom_operations_entity_idx
+create index tom_operations_entity_idx
   on public.tom_operations (entity_type, entity_id) where entity_id is not null;
-create index if not exists tom_operations_open_idx
+create index tom_operations_open_idx
   on public.tom_operations (collaborator_id, created_at desc) where finished_at is null;
 
 alter table public.tom_operations enable row level security;
 
-comment on table public.tom_operations is
-  'Uma linha por pedido processado: intenção, alvo, estado antes/depois, verificação e recibo.';
 comment on column public.tom_operations.verified is
   'Releitura do banco confirmou o efeito. NULL = não verificado — nunca tratar como sucesso.';
 
--- -------------------------------------------------------------------------------------
--- RPCs de OWNERSHIP (infraestrutura de roteamento).
+-- =====================================================================================
+-- RPCs de OWNERSHIP.
 -- As RPCs de AÇÃO de negócio (tom_v2_apply_reminder_action / tom_v2_verify_operation)
--- NÃO entram aqui de propósito: elas dependem do contrato de ciclo de vida (E2.0). Uma
--- RPC de ação escrita hoje herdaria a mesma mentira de `endSeries1on1`, que devolve
--- {ended:true} sem checar erro. Ver a spec, seção "Contraponto 2".
--- -------------------------------------------------------------------------------------
+-- ficam FORA de propósito: dependem do contrato de ciclo de vida (E2.0). Escritas hoje,
+-- herdariam a mesma mentira de `endSeries1on1`, que devolve {ended:true} sem checar erro.
+-- =====================================================================================
 
--- Registra o inbound e devolve se ele JÁ tinha sido processado. Idempotente por
--- wa_message_id: a segunda chamada não cria linha e informa o dono da primeira.
-create or replace function public.tom_route_claim_inbound(
-  p_wa_message_id text,
-  p_owner         text,
-  p_phone         text default null,
-  p_collaborator  uuid default null,
-  p_quoted        text default null,
-  p_reason        text default null,
-  p_conflict      text default null
-) returns table (already_seen boolean, owner text)
+-- -------------------------------------------------------------------------------------
+-- claim de inbound — R3-A2 (corrida) + R3-A3 (lease/crash), numa transação só.
+--
+-- outcome:
+--   'claimed'               reivindiquei agora; PODE processar
+--   'resumed'               claim anterior do MESMO dono venceu sem concluir; PODE processar
+--   'in_progress_elsewhere' outro runtime está processando com lease válido; NÃO processar
+--   'already_completed'     já concluído; NÃO processar (dedupe de verdade)
+--   'owned_by_other'        claim vencido, mas de OUTRO dono; NÃO processar sem decisão humana
+-- -------------------------------------------------------------------------------------
+create function public.tom_route_claim_inbound(
+  p_wa_message_id   text,
+  p_owner           text,
+  p_phone           text default null,
+  p_collaborator    uuid default null,
+  p_conversation    text default null,
+  p_quoted          text default null,
+  p_reason          text default null,
+  p_conflict        text default null,
+  p_lease_seconds   int  default 300
+) returns table (outcome text, owner text, operation_id uuid)
 language plpgsql
 security definer
 set search_path = public
 as $$
 declare
-  v_existing text;
+  v_op      uuid;
+  v_row     public.tom_message_ownership%rowtype;
+  v_ins     boolean := false;
 begin
-  select m.owner into v_existing
-    from public.tom_message_ownership m
-   where m.wa_message_id = p_wa_message_id;
-
-  if v_existing is not null then
-    return query select true, v_existing;
+  if p_wa_message_id is null or p_wa_message_id = '' then
+    return query select 'invalid'::text, null::text, null::uuid;
     return;
   end if;
 
+  v_op := gen_random_uuid();
+
+  -- R3-A2: o RETURNING é o que distingue quem inseriu. Sem ele, o perdedor da corrida
+  -- também recebia "novo" e processava a mesma mensagem.
   insert into public.tom_message_ownership
-    (wa_message_id, direction, owner, phone, collaborator_id, quoted_wa_message_id, route_reason, route_conflict)
+    (wa_message_id, direction, owner, status, lease_until, attempts, phone, collaborator_id,
+     conversation_key, quoted_wa_message_id, route_reason, route_conflict, operation_id)
   values
-    (p_wa_message_id, 'inbound', p_owner, p_phone, p_collaborator, p_quoted, p_reason, p_conflict)
-  on conflict (wa_message_id) do nothing;
+    (p_wa_message_id, 'inbound', p_owner, 'claimed',
+     now() + make_interval(secs => greatest(p_lease_seconds, 1)), 1, p_phone, p_collaborator,
+     p_conversation, p_quoted, p_reason, p_conflict, v_op)
+  on conflict (wa_message_id) do nothing
+  returning true into v_ins;
 
-  -- corrida: outro processo inseriu entre o select e o insert → devolve o dono vencedor
-  select m.owner into v_existing
-    from public.tom_message_ownership m
-   where m.wa_message_id = p_wa_message_id;
-
-  return query select false, coalesce(v_existing, p_owner);
-end;
-$$;
-
-comment on function public.tom_route_claim_inbound is
-  'Reivindica um inbound para um runtime. already_seen=true → outro já processou; não responder de novo.';
-
--- Grava o ID de saída devolvido pela UAZAPI, tornando a mensagem respondível/roteável.
-create or replace function public.tom_record_outbound(
-  p_wa_message_id text,
-  p_owner         text,
-  p_phone         text default null,
-  p_collaborator  uuid default null,
-  p_entity_type   text default null,
-  p_entity_id     uuid default null,
-  p_operation_id  uuid default null
-) returns uuid
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  v_id uuid;
-begin
-  if p_wa_message_id is null or p_wa_message_id = '' then
-    return null;  -- sem ID não há o que rotear; não inventa linha
+  if coalesce(v_ins, false) then
+    -- a operação nasce na MESMA transação do claim: não existe claim sem trilha.
+    insert into public.tom_operations (operation_id, inbound_wa_message_id, owner, collaborator_id, conversation_key)
+    values (v_op, p_wa_message_id, p_owner, p_collaborator, p_conversation);
+    return query select 'claimed'::text, p_owner, v_op;
+    return;
   end if;
 
-  insert into public.tom_message_ownership
-    (wa_message_id, direction, owner, phone, collaborator_id, entity_type, entity_id, operation_id)
-  values
-    (p_wa_message_id, 'outbound', p_owner, p_phone, p_collaborator, p_entity_type, p_entity_id, p_operation_id)
-  on conflict (wa_message_id) do nothing
-  returning id into v_id;
+  -- não inseri: alguém chegou antes (ou é retentativa). Trava a linha para decidir.
+  select * into v_row from public.tom_message_ownership
+   where wa_message_id = p_wa_message_id for update;
 
-  return v_id;
+  if v_row.status = 'completed' then
+    return query select 'already_completed'::text, v_row.owner, v_row.operation_id;
+    return;
+  end if;
+
+  -- lease ainda válido → outro processo está no meio do trabalho
+  if v_row.lease_until is not null and v_row.lease_until > now() then
+    return query select 'in_progress_elsewhere'::text, v_row.owner, v_row.operation_id;
+    return;
+  end if;
+
+  -- R3-A3: lease vencido sem conclusão = crash. Retomável — mas só pelo MESMO dono,
+  -- senão o outro runtime executaria o que já pode ter tido efeito parcial.
+  if v_row.owner is distinct from p_owner then
+    return query select 'owned_by_other'::text, v_row.owner, v_row.operation_id;
+    return;
+  end if;
+
+  update public.tom_message_ownership
+     set status      = 'claimed',
+         lease_until = now() + make_interval(secs => greatest(p_lease_seconds, 1)),
+         attempts    = attempts + 1
+   where wa_message_id = p_wa_message_id;
+
+  return query select 'resumed'::text, v_row.owner, v_row.operation_id;
 end;
 $$;
 
-comment on function public.tom_record_outbound is
-  'Registra o ID devolvido pela UAZAPI. Sem isso, a resposta não pode ser citada e roteada de volta.';
+comment on function public.tom_route_claim_inbound(text,text,text,uuid,text,text,text,text,int) is
+  'Reivindica inbound com lease. Só outcome claimed/resumed autoriza processar. claim != recibo.';
 
--- Abre a propriedade de uma entidade para um runtime. Falha se já houver dono ativo —
--- a exclusividade vem do índice único parcial, não de checagem na aplicação.
-create or replace function public.tom_flow_open(
-  p_entity_type   text,
-  p_entity_id     uuid,
+-- Renova o lease de um trabalho longo (evita que outro runtime retome no meio).
+create function public.tom_route_heartbeat(
+  p_wa_message_id text,
   p_owner         text,
-  p_collaborator  uuid default null,
-  p_note          text default null
-) returns uuid
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  v_id uuid;
-begin
-  insert into public.tom_flow_ownership (entity_type, entity_id, owner, collaborator_id, note)
-  values (p_entity_type, p_entity_id, p_owner, p_collaborator, p_note)
-  on conflict do nothing
-  returning id into v_id;
-  return v_id;  -- null = já tinha dono ativo; o chamador NÃO deve prosseguir
-end;
-$$;
-
--- Muda a fase do fluxo (rollback = 'draining') ou encerra a propriedade.
-create or replace function public.tom_flow_set_phase(
-  p_entity_type text,
-  p_entity_id   uuid,
-  p_phase       text
+  p_lease_seconds int default 300
 ) returns boolean
 language plpgsql
 security definer
 set search_path = public
 as $$
-declare
-  v_n int;
+declare v_n int;
 begin
-  update public.tom_flow_ownership
-     set phase     = p_phase,
-         closed_at = case when p_phase = 'retired' then now() else closed_at end
-   where entity_type = p_entity_type
-     and entity_id   = p_entity_id
-     and closed_at is null;
+  update public.tom_message_ownership
+     set lease_until = now() + make_interval(secs => greatest(p_lease_seconds, 1)),
+         status      = 'processing'
+   where wa_message_id = p_wa_message_id
+     and owner  = p_owner
+     and status in ('claimed','processing');
   get diagnostics v_n = row_count;
   return v_n > 0;
 end;
 $$;
 
-comment on function public.tom_flow_set_phase is
-  'draining = rollback: não abre nada novo, mas a operação em andamento termina no dono atual.';
+-- Fecha o inbound. SÓ depois disso o dedupe pode suprimir reprocessamento.
+create function public.tom_route_finish_inbound(
+  p_wa_message_id text,
+  p_owner         text,
+  p_status        text default 'completed',
+  p_error         text default null
+) returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare v_n int;
+begin
+  if p_status not in ('completed','failed') then
+    raise exception 'status inválido: %', p_status;
+  end if;
+  update public.tom_message_ownership
+     set status      = p_status,
+         finished_at = now(),
+         last_error  = p_error,
+         -- 'failed' solta o lease de propósito: pode ser retomado pelo mesmo dono.
+         lease_until = case when p_status = 'completed' then null else now() end
+   where wa_message_id = p_wa_message_id
+     and owner = p_owner;
+  get diagnostics v_n = row_count;
+  return v_n > 0;
+end;
+$$;
+
+comment on function public.tom_route_finish_inbound(text,text,text,text) is
+  'completed = recibo; failed devolve a mensagem para retentativa do MESMO dono.';
+
+-- -------------------------------------------------------------------------------------
+-- outbound — R3-B1: resultado tipado. Colisão silenciosa aqui esconderia justamente o
+-- caso perigoso (mesmo wa_message_id com outro dono).
+-- outcome: 'inserted' | 'already_recorded_same' | 'ownership_conflict' | 'missing_message_id'
+-- -------------------------------------------------------------------------------------
+create function public.tom_record_outbound(
+  p_wa_message_id text,
+  p_owner         text,
+  p_phone         text default null,
+  p_collaborator  uuid default null,
+  p_conversation  text default null,
+  p_entity_type   text default null,
+  p_entity_id     uuid default null,
+  p_operation_id  uuid default null
+) returns table (outcome text, id uuid)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_id  uuid;
+  v_row public.tom_message_ownership%rowtype;
+begin
+  if p_wa_message_id is null or p_wa_message_id = '' then
+    -- sem ID a resposta não é citável: quem chamou precisa saber, não receber null mudo.
+    return query select 'missing_message_id'::text, null::uuid;
+    return;
+  end if;
+
+  insert into public.tom_message_ownership
+    (wa_message_id, direction, owner, status, phone, collaborator_id, conversation_key,
+     entity_type, entity_id, operation_id, finished_at)
+  values
+    (p_wa_message_id, 'outbound', p_owner, 'completed', p_phone, p_collaborator, p_conversation,
+     p_entity_type, p_entity_id, p_operation_id, now())
+  on conflict (wa_message_id) do nothing
+  returning tom_message_ownership.id into v_id;
+
+  if v_id is not null then
+    return query select 'inserted'::text, v_id;
+    return;
+  end if;
+
+  select * into v_row from public.tom_message_ownership where wa_message_id = p_wa_message_id;
+  if v_row.owner is distinct from p_owner or v_row.direction is distinct from 'outbound' then
+    return query select 'ownership_conflict'::text, v_row.id;
+  else
+    return query select 'already_recorded_same'::text, v_row.id;
+  end if;
+end;
+$$;
+
+-- -------------------------------------------------------------------------------------
+-- fluxo — abre propriedade de entidade/conversa
+-- -------------------------------------------------------------------------------------
+create function public.tom_flow_open(
+  p_conversation  text,
+  p_entity_type   text,
+  p_entity_id     uuid,
+  p_owner         text,
+  p_collaborator  uuid    default null,
+  p_interactive   boolean default true,
+  p_opened_by     text    default null,
+  p_note          text    default null
+) returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare v_id uuid;
+begin
+  insert into public.tom_flow_ownership
+    (conversation_key, entity_type, entity_id, owner, collaborator_id, interactive, opened_by_wa_id, note)
+  values
+    (p_conversation, p_entity_type, p_entity_id, p_owner, p_collaborator, p_interactive, p_opened_by, p_note)
+  on conflict do nothing
+  returning id into v_id;
+  -- null = já há dono ativo para a entidade OU já há fluxo interativo nessa conversa.
+  -- O chamador NÃO deve prosseguir.
+  return v_id;
+end;
+$$;
+
+-- R3-B2: máquina de estados de verdade. canary → draining → retired, só para frente.
+create function public.tom_flow_set_phase(
+  p_entity_type text,
+  p_entity_id   uuid,
+  p_phase       text
+) returns table (outcome text, previous_phase text)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare v_prev text;
+begin
+  select phase into v_prev from public.tom_flow_ownership
+   where entity_type = p_entity_type and entity_id = p_entity_id and closed_at is null
+   for update;
+
+  if v_prev is null then
+    return query select 'not_found'::text, null::text;
+    return;
+  end if;
+  if v_prev = p_phase then
+    return query select 'unchanged'::text, v_prev;
+    return;
+  end if;
+  -- reabrir um canário drenado é decisão administrativa, não UPDATE genérico.
+  if not ((v_prev = 'canary' and p_phase in ('draining','retired'))
+       or (v_prev = 'draining' and p_phase = 'retired')) then
+    return query select 'illegal_transition'::text, v_prev;
+    return;
+  end if;
+
+  update public.tom_flow_ownership
+     set phase     = p_phase,
+         closed_at = case when p_phase = 'retired' then now() else closed_at end
+   where entity_type = p_entity_type and entity_id = p_entity_id and closed_at is null;
+
+  return query select 'ok'::text, v_prev;
+end;
+$$;
+
+comment on function public.tom_flow_set_phase(text,uuid,text) is
+  'Só avança: canary→draining→retired. Reabrir canário é operação administrativa própria.';
+
+-- =====================================================================================
+-- R3-A1 — PRIVILÉGIOS. O default do banco concede EXECUTE a PUBLIC (portanto a anon e
+-- authenticated): as 5 funções SECURITY DEFINER que já existem hoje estão abertas —
+-- verificado com has_function_privilege. Sem estes REVOKE, qualquer chamador com JWT
+-- anon poderia reivindicar mensagem, registrar outbound, abrir fluxo ou drenar ownership.
+-- Assinaturas completas de propósito: REVOKE por nome não pega sobrecarga.
+-- =====================================================================================
+revoke all on function public.tom_route_claim_inbound(text,text,text,uuid,text,text,text,text,int) from public, anon, authenticated;
+revoke all on function public.tom_route_heartbeat(text,text,int)                                    from public, anon, authenticated;
+revoke all on function public.tom_route_finish_inbound(text,text,text,text)                         from public, anon, authenticated;
+revoke all on function public.tom_record_outbound(text,text,text,uuid,text,text,uuid,uuid)          from public, anon, authenticated;
+revoke all on function public.tom_flow_open(text,text,uuid,text,uuid,boolean,text,text)             from public, anon, authenticated;
+revoke all on function public.tom_flow_set_phase(text,uuid,text)                                    from public, anon, authenticated;
+
+grant execute on function public.tom_route_claim_inbound(text,text,text,uuid,text,text,text,text,int) to service_role;
+grant execute on function public.tom_route_heartbeat(text,text,int)                                    to service_role;
+grant execute on function public.tom_route_finish_inbound(text,text,text,text)                         to service_role;
+grant execute on function public.tom_record_outbound(text,text,text,uuid,text,text,uuid,uuid)          to service_role;
+grant execute on function public.tom_flow_open(text,text,uuid,text,uuid,boolean,text,text)             to service_role;
+grant execute on function public.tom_flow_set_phase(text,uuid,text)                                    to service_role;
+
+-- As tabelas também: RLS sem policy já bloqueia, mas negar o privilégio é a barreira
+-- que não depende de ninguém lembrar de não criar uma policy permissiva depois.
+revoke all on table public.tom_message_ownership, public.tom_flow_ownership, public.tom_operations
+  from public, anon, authenticated;
+grant select, insert, update on table public.tom_message_ownership, public.tom_flow_ownership, public.tom_operations
+  to service_role;
+
+commit;
