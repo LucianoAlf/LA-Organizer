@@ -785,6 +785,21 @@ begin
   -- R4-3: expropria fluxo interativo EXPIRADO desta conversa antes de tentar abrir.
   -- Sem isso, um v2 que caiu antes de 'retired' prenderia a conversa para sempre e a
   -- pessoa nunca mais seria atendida naquele chat.
+  --
+  -- R10 (achado do teste concorrente): o UPDATE de expropriacao faz o SCAN antes de
+  -- esperar lock nenhum. Se no instante do scan o TTL ainda estava vivo, a linha nem
+  -- entra no conjunto a atualizar — o UPDATE afeta zero linhas e NAO espera. Quem espera
+  -- e o INSERT seguinte, que ja encontra o indice unico ocupado e devolve null: a
+  -- conversa fica presa mesmo com o TTL vencido. Relogio certo nao resolve isso; o que
+  -- resolve e TRAVAR primeiro e so entao avaliar o prazo.
+  if p_interactive then
+    perform 1 from public.tom_flow_ownership f
+     where f.conversation_key = p_conversation
+       and f.closed_at is null
+       and f.interactive
+     for update;
+  end if;
+
   if p_interactive then
     update public.tom_flow_ownership
        set phase     = 'retired',
