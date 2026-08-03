@@ -19,3 +19,6 @@ web/.claude/
 # Migrations do Supabase são aplicadas via MCP, não versionadas hoje (status quo — o
 # hook antigo não as deployava). Versioná-las é decisão separada; por ora ficam fora.
 /supabase/migrations/
+
+# Cópia temporária que scripts/selftest-mutante.sh gera para sabotar o runner.
+/scripts/.selftest-runner.sh

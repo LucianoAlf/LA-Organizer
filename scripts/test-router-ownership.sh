@@ -13,7 +13,10 @@
 #   * stderr vai para arquivo próprio, nunca se mistura ao valor comparado;
 #   * as asserções exigem o recibo EXATO (false/stale_lease), não "não deu true";
 #   * falha de processo em background entra no resultado via wait;
-#   * trap garante o drop do schema mesmo se o script morrer no meio.
+#   * trap garante o drop do schema mesmo se o script morrer no meio;
+#   * (rodada 13) no mutante, EXIT=0 exige as falhas NOMEADAS de MUT_ESPERADAS e
+#     NENHUMA falha fora dessa lista — "alguma coisa falhou" se autoaprovava.
+#     O autoteste do próprio veredito está em scripts/selftest-mutante.sh.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -22,13 +25,33 @@ MIG="$ROOT/migrations/2026-08-03-tom-router-ownership.sql"
 TESTS="$ROOT/scripts/sql/test-router-ownership.sql"
 TMPD="$(mktemp -d)"
 FAILED=0
+FAIL_KEYS=""   # uma chave por linha; é o que o veredito do mutante confere nome a nome
+
+# As asserções que a mutação clock_timestamp()->now() TEM de derrubar. A chave é o
+# próprio label impresso — sem indireção: se alguém renomear o label, o mutante reprova
+# por "faltando" e obriga a atualizar conscientemente.
+MUT_ESPERADAS=(
+  "C2 touch com TTL cruzando a espera"
+  "C2 TTL revivido"
+  "C3 open com TTL vencido durante a espera"
+  "C4 step_finish com lease vencendo na espera"
+  "C4 status do passo"
+)
 
 if [ -z "${DATABASE_URL:-}" ]; then
   DATABASE_URL="$(grep -E '^DATABASE_URL=' "$ROOT/.env" | head -1 | cut -d= -f2- | tr -d '"'"'"'')"
 fi
 [ -n "$DATABASE_URL" ] || { echo "DATABASE_URL ausente"; exit 1; }
 
-fail() { echo "  FALHOU: $*"; FAILED=1; }
+# fail <chave> <mensagem...> — TODA falha carrega uma chave estável. Sem isso o modo
+# mutante só sabia que "alguma coisa falhou": falha de ambiente, de cleanup ou de outro
+# cenário se autoaprovava como "detectou o bug".
+fail() {
+  local k="$1"; shift
+  echo "  FALHOU[$k]: $*"
+  FAILED=1
+  FAIL_KEYS="${FAIL_KEYS}${k}"$'\n'
+}
 
 # Rede de segurança: o schema descartável some mesmo se o script morrer no meio — e se
 # NÃO sair, isso vira falha explícita. Resíduo silencioso no banco de produção é
@@ -52,7 +75,7 @@ sql() {
   local desc="$1" q="$2" rc
   SQL_OUT="$(psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -qAt -c "$q" 2>"$TMPD/err")"; rc=$?
   if [ $rc -ne 0 ]; then
-    fail "$desc — psql saiu com $rc: $(head -2 "$TMPD/err" | tr '\n' ' ')"
+    fail "sql:$desc" "psql saiu com $rc: $(head -2 "$TMPD/err" | tr '\n' ' ')"
     SQL_OUT=""
     return 1
   fi
@@ -65,7 +88,7 @@ assert_eq() {
   if [ "$obtido" = "$esperado" ]; then
     echo "  OK   $label = $obtido"
   else
-    fail "$label: esperado '$esperado', obtido '$obtido'"
+    fail "$label" "esperado '$esperado', obtido '$obtido'"
   fi
 }
 
@@ -80,7 +103,7 @@ segurar_linha() {
 esperar_bg() {
   local pid="$1" desc="$2" rc
   wait "$pid"; rc=$?
-  [ $rc -eq 0 ] || fail "$desc — conexão de apoio saiu com $rc: $(head -2 "$TMPD/bg.err" | tr '\n' ' ')"
+  [ $rc -eq 0 ] || fail "bg:$desc" "conexão de apoio saiu com $rc: $(head -2 "$TMPD/bg.err" | tr '\n' ' ')"
 }
 
 echo "=== schema descartável: $SCHEMA ==="
@@ -112,7 +135,7 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$TESTS" -q -P pager=off \
   >"$TMPD/tests.out" 2>"$TMPD/tests.err"; TESTS_RC=$?
 cat "$TMPD/tests.out"
 if [ $TESTS_RC -ne 0 ]; then
-  fail "suíte SQL saiu com $TESTS_RC: $(head -3 "$TMPD/tests.err" | tr '\n' ' ')"
+  fail "suíte SQL" "saiu com $TESTS_RC: $(head -3 "$TMPD/tests.err" | tr '\n' ' ')"
 else
   echo "  OK   suíte SQL executou até o fim (exit 0)"
 fi
@@ -124,7 +147,7 @@ sql "total de asserções" "select count(*) from $SCHEMA._res;" && {
   if [ "${SQL_OUT:-0}" -ge 181 ] 2>/dev/null; then
     echo "  OK   asserções executadas = $SQL_OUT (piso 181)"
   else
-    fail "cobertura caiu: $SQL_OUT asserções (piso 181)"
+    fail "cobertura" "caiu para $SQL_OUT asserções (piso 181)"
   fi
 }
 
@@ -139,7 +162,7 @@ for _ in $(seq 1 8); do
   PIDS+=($!)
 done
 for pid in "${PIDS[@]}"; do
-  wait "$pid" || fail "corrida de 8: uma conexão saiu com erro — $(head -2 "$TMPD/race.err" | tr '\n' ' ')"
+  wait "$pid" || fail "corrida de 8" "uma conexão saiu com erro — $(head -2 "$TMPD/race.err" | tr '\n' ' ')"
 done
 sql "linhas do inbound" "select count(*) from $SCHEMA.tom_message_ownership where wa_message_id='$WA';" && \
   assert_eq "1" "$SQL_OUT" "linhas de ownership para o mesmo inbound"
@@ -269,18 +292,40 @@ sql "C4 passo" "select status from $SCHEMA.tom_operation_steps where operation_i
 echo
 echo "=== limpeza ==="
 # drop explicito aqui para que o resultado entre no veredito; o trap repete como rede.
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -qAt -c "drop schema if exists $SCHEMA cascade;" >/dev/null 2>"$TMPD/drop.err"   || fail "drop do schema falhou: $(head -2 "$TMPD/drop.err" | tr '
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -qAt -c "drop schema if exists $SCHEMA cascade;" >/dev/null 2>"$TMPD/drop.err"   || fail "drop do schema" "falhou: $(head -2 "$TMPD/drop.err" | tr '
 ' ' ')"
 LEFT="$(psql "$DATABASE_URL" -qAt -c "select count(*) from information_schema.schemata where schema_name='$SCHEMA';" 2>/dev/null)" || LEFT="erro"
 assert_eq "0" "$LEFT" "schema restante"
 
 echo
+# --- VEREDITO ---
 if [ "${MUTATE:-0}" = "1" ]; then
-  # No mutante, sucesso é DETECTAR: os cenários concorrentes têm de falhar.
-  if [ "$FAILED" = "1" ]; then
-    echo "=== MUTANTE: os testes DETECTARAM o bug (as falhas acima são o resultado esperado) ==="; exit 0
+  # No mutante, sucesso é DETECTAR **a mutação certa**. "Alguma coisa falhou" não servia:
+  # falha de ambiente, de cleanup ou de outro cenário se autoaprovava como detecção.
+  # Contrato: cada chave de MUT_ESPERADAS tem de falhar, e nenhuma outra pode falhar.
+  n_falt=0
+  for k in "${MUT_ESPERADAS[@]}"; do
+    if printf '%s' "$FAIL_KEYS" | grep -Fxq -- "$k"; then
+      echo "  DETECTOU: $k"
+    else
+      echo "  NÃO DETECTOU: $k"; n_falt=$((n_falt+1))
+    fi
+  done
+  n_inesp=0
+  while IFS= read -r k; do
+    [ -n "$k" ] || continue
+    prevista=0
+    for e in "${MUT_ESPERADAS[@]}"; do [ "$k" = "$e" ] && { prevista=1; break; }; done
+    if [ "$prevista" = "0" ]; then
+      echo "  FALHA INESPERADA: $k"; n_inesp=$((n_inesp+1))
+    fi
+  done <<< "$FAIL_KEYS"
+  echo "  sensíveis ao relógio detectadas: $(( ${#MUT_ESPERADAS[@]} - n_falt ))/${#MUT_ESPERADAS[@]} · falhas inesperadas: $n_inesp"
+
+  if [ "$n_falt" = "0" ] && [ "$n_inesp" = "0" ]; then
+    echo "=== MUTANTE: os testes DETECTARAM exatamente a mutação do relógio ==="; exit 0
   fi
-  echo "=== MUTANTE: PROBLEMA — nada falhou; os testes não detectam a versão vulnerável ==="; exit 1
+  echo "=== MUTANTE: PROBLEMA — prova inespecífica (não detectou=$n_falt inesperadas=$n_inesp) ==="; exit 1
 fi
 
 if [ "$FAILED" = "0" ]; then
