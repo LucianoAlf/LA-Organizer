@@ -10,7 +10,6 @@ const whatsapp = require('./services/whatsapp');
 // Fatia 2 do router: a UAZAPI devolve o id da mensagem enviada, mas 86% dos outbounds
 // saíam sem ele — e sem id a resposta do TOM não é citável nem roteável.
 const { extractSentMessageId } = require('./services/sent-message-id');
-const { recordOutboundV1 } = require('./services/outbound-record');
 const metricsService = require('./services/metrics');
 const ai = require('./ai/provider');
 const { buildSystemPrompt, formatMessages } = require('./prompts/system');
@@ -13130,19 +13129,10 @@ Output AGORA, apenas o marker:`;
       console.error('[Outbound] histórico falhou APÓS entrega (NÃO reenvia):', e.message);
     }
 
-    try {
-      const _rec = await recordOutboundV1({
-        supabase, waMessageId: _waId, phone, collaboratorId: collab.id,
-      });
-      if (!_rec.ok) {
-        // Recibo ruim não é silêncio: vira marker medível. `no_wa_id` é o caso que esta
-        // fatia existe para zerar — se ele continuar aparecendo, a captura não pegou.
-        await logMarker(collab.id, 'OUTBOUND_LEDGER', 'rejected',
-          `${_rec.code}${_rec.detail ? ':' + _rec.detail : ''}`.slice(0, 120), null);
-      }
-    } catch (e) {
-      console.error('[Outbound] ledger falhou APÓS entrega (NÃO reenvia):', e.message);
-    }
+    // O registro no ledger saiu daqui: agora acontece dentro do whatsapp.sendMessage,
+    // que é o ponto por onde passam TODAS as saídas — inclusive os early-returns de ramo
+    // e os avisos a terceiros, que este bloco (só o reply final) nunca alcançaria.
+    // Fonte única: ver services/turn-claim.js.
   } else if (_reactionsToSend && _reactionsToSend.length && !_voiceSent) {
     console.log(`[Engine] reply vazio pós-REACT — só reação enviada (${_reactionsToSend[0]})`);
     await logConversation(collab.id, 'outbound', `[reação: ${_reactionsToSend[0]}]`);

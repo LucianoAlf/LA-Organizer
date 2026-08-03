@@ -41,9 +41,14 @@ function _outcomeDe(data) {
   return null;
 }
 
+// operationId/leaseToken: amarram este outbound ao claim vencedor do turno (4º item da
+// régua da Fatia 3). Com operação, a própria RPC exige a posse atual — o worker que
+// perdeu a lease não consegue registrar saída, e saída registrada é o que vira alvo de
+// reply roteável. Fora de turno (proativo/ritual) vão nulos: não há dono a exigir.
 async function recordOutboundV1({
   supabase, waMessageId, phone = null, collaboratorId = null,
   conversationKey = null, entityType = null, entityId = null,
+  operationId = null, leaseToken = null,
 } = {}) {
   // Sem id não há o que registrar — e não se gasta round-trip no banco por nada.
   if (!waMessageId) return classifyOutboundRecord({ waMessageId: null });
@@ -60,6 +65,8 @@ async function recordOutboundV1({
       p_conversation: conversationKey || phone || null,
       p_entity_type: entityType || null,
       p_entity_id: entityId || null,
+      p_operation_id: operationId || null,
+      p_lease_token: leaseToken || null,
     });
     if (res && res.error) error = res.error;
     else outcome = _outcomeDe(res && res.data);

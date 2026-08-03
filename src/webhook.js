@@ -17,6 +17,7 @@ const pdfCrypt = require('./finance/pdf-crypt');
 const pendingPdf = require('./services/pending-pdf');
 const boletoParse = require('./finance/boleto-parse');
 const inboundClaim = require('./services/inbound-claim');
+const turnClaim = require('./services/turn-claim');
 
 // Fatia 3 do router — claim de inbound. DESLIGADO por padrão: liga com
 // TOM_ROUTER_CLAIM=1 no .env. Reversível sem deploy, porque o modo de falha desta
@@ -504,7 +505,13 @@ async function processWebhookBody(body) {
           console.warn(`[Claim] degradado (${_claim.reason}${_claim.detail ? ': ' + _claim.detail : ''}) — processa assim mesmo`);
         }
         try {
-          await processMessage(phone, combinedText, latestRaw);
+          // Abre o TURNO: daqui pra dentro, todo whatsapp.sendMessage — resposta final,
+          // early-return de ramo ou aviso a terceiro — valida a lease antes de sair e
+          // registra o outbound amarrado a esta operação. Ver services/turn-claim.js.
+          await turnClaim.runInTurn(
+            { waMessageId: _waId, leaseToken: _claim.leaseToken, operationId: _claim.operationId },
+            () => processMessage(phone, combinedText, latestRaw),
+          );
         } finally {
           // Fecha o claim: é o que faz o replay reconhecer `already_completed` depois.
           // Nunca lança — no pior caso a linha vence por lease em vez de fechar limpo.

@@ -37,6 +37,19 @@ function isRetriableSendError(err) {
 async function sendMessage(phone, text) {
   // QA log — capped at 200 chars to avoid log spam, helps catch leaks in pm2 logs.
   console.log('[OUT]', String(text || '').substring(0, 200));
+
+  // ---- FRONTEIRA DE SAÍDA DO TURNO (Fatia 3, item 4) ----
+  // Dentro de um turno claimado, nenhuma saída nasce fora do dono vencedor. Cobre os 82
+  // call sites que respondem ao remetente e os 24 que avisam terceiros SEM tocar em
+  // nenhum deles — inclusive os early-returns de ramo, que um helper por call site
+  // deixaria de fora em silêncio. Fora de turno (ritual/proativo) não consulta nada.
+  const _gate = await turnClaim.beforeSend({ supabase: _sb() });
+  if (!_gate.send) {
+    console.warn(`[Turno] NÃO enviou pra ${String(phone).slice(-4)}: ${_gate.reason} — outro worker assumiu este turno`);
+    return null;
+  }
+  if (_gate.degraded) console.warn(`[Turno] lease não verificável (${_gate.reason}) — enviando assim mesmo`);
+
   let lastErr;
   for (let attempt = 0; attempt <= SEND_RETRIES; attempt++) {
     try {
@@ -46,6 +59,12 @@ async function sendMessage(phone, text) {
         readchat: true,
       });
       console.log(`[WhatsApp] Mensagem enviada pra ${phone.slice(-4)}${attempt ? ` (tentativa ${attempt + 1})` : ''}`);
+      // Já entregue: registrar é contabilidade, nunca reenvia nem lança.
+      try {
+        await turnClaim.afterSend({
+          supabase: _sb(), sentId: extractSentMessageId(response.data), phone,
+        });
+      } catch (e) { console.warn('[Turno] registro do outbound falhou (não reenvia):', e.message); }
       return response.data;
     } catch (err) {
       lastErr = err;
@@ -195,6 +214,17 @@ async function sendMedia(phone, { url, type, caption = '', filename = '', mimety
 // getData e extractMessageId vivem em ./inbound-message-id (funções PURAS, testáveis sem
 // env). Reexportadas abaixo — nenhum call site mudou.
 const { getData, extractMessageId } = require('./inbound-message-id');
+const turnClaim = require('./turn-claim');
+
+// O cliente do banco é resolvido tarde: whatsapp.js é a camada de transporte e não deve
+// carregar o supabase no require (quebraria os testes puros que só importam o extrator).
+let _sbCache;
+function _sb() {
+  if (_sbCache === undefined) {
+    try { _sbCache = require('../supabase/client'); } catch (_) { _sbCache = null; }
+  }
+  return _sbCache;
+}
 
 /**
  * Extrai texto de um webhook UAZAPI
