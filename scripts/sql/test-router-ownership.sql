@@ -104,9 +104,11 @@ begin
   insert into _res (label, ok, detail) values
     ('A3 outro dono NÃO retoma', r.outcome = 'owned_by_other', r.outcome);
 
-  -- recibo: só depois de completed o dedupe suprime
-  perform tom_route_finish_inbound('wa-A3-crash','v1','completed', null,
-    (select lease_token from tom_message_ownership where wa_message_id='wa-A3-crash'));
+  -- recibo: só depois de completed o dedupe suprime.
+  -- (R7-1) o lease foi vencido de proposito acima, entao a posse precisa ser
+  -- reivindicada antes de declarar desfecho — quem perdeu o prazo nao fecha.
+  select * into r from tom_route_claim_inbound('wa-A3-crash','v1');
+  perform tom_route_finish_inbound('wa-A3-crash','v1','completed', null, r.lease_token);
   select * into r from tom_route_claim_inbound('wa-A3-crash','v1');
   insert into _res (label, ok, detail) values
     ('A3 concluído vira already_completed', r.outcome = 'already_completed', r.outcome);
@@ -123,13 +125,13 @@ begin
   perform tom_route_claim_inbound('wa-A3-hb','v1', p_lease_seconds => 1);
   insert into _res (label, ok, detail)
   select 'A3 heartbeat renova e marca processing',
-         tom_route_heartbeat('wa-A3-hb','v1',600,(select lease_token from tom_message_ownership where wa_message_id='wa-A3-hb')), null;
+         (select ok from tom_route_heartbeat('wa-A3-hb','v1',600,(select lease_token from tom_message_ownership where wa_message_id='wa-A3-hb'))), null;
   insert into _res (label, ok, detail)
   select 'A3 heartbeat empurrou o lease', lease_until > now() + interval '5 minutes', lease_until::text
     from tom_message_ownership where wa_message_id = 'wa-A3-hb';
   insert into _res (label, ok, detail)
   select 'A3 heartbeat de outro dono não pega',
-         not tom_route_heartbeat('wa-A3-hb','v2',600,(select lease_token from tom_message_ownership where wa_message_id='wa-A3-hb')), null;
+         (select ok from tom_route_heartbeat('wa-A3-hb','v2',600,(select lease_token from tom_message_ownership where wa_message_id='wa-A3-hb'))) = false, null;
 
   -- id vazio não vira linha
   select * into r from tom_route_claim_inbound('','v1');
@@ -232,10 +234,10 @@ begin
     ('R4-1 retomada gera token NOVO', r2.lease_token is distinct from r1.lease_token, r2.lease_token::text);
 
   -- o worker VELHO acorda e tenta renovar com o token antigo
-  ok := tom_route_heartbeat('wa-R4-fence','v2',600, r1.lease_token);
+  select h.ok into ok from tom_route_heartbeat('wa-R4-fence','v2',600, r1.lease_token) h;
   insert into _res (label, ok, detail) values ('R4-1 heartbeat com token VELHO é rejeitado', not ok, null);
 
-  ok := tom_route_heartbeat('wa-R4-fence','v2',600, r2.lease_token);
+  select h.ok into ok from tom_route_heartbeat('wa-R4-fence','v2',600, r2.lease_token) h;
   insert into _res (label, ok, detail) values ('R4-1 heartbeat com token atual funciona', ok, null);
 
   -- e o velho também não pode fechar a mensagem
@@ -584,6 +586,93 @@ begin
   select * into f from tom_route_finish_inbound('wa-R6-normal','v2','completed',null, gen_random_uuid());
   insert into _res (label, ok, detail) values
     ('R6-2 token errado continua rejeitado', f.ok = false, coalesce(f.reason,'(sem reason)'));
+end $$;
+
+-- ============ R7 — lease vencido nao ressuscita; recibo nao se sobrescreve ============
+-- O lease so vale se o proprio dono tambem for barrado quando o prazo acaba. Se ele
+-- pode renovar depois de vencido, o prazo nunca existiu de verdade.
+
+do $$
+declare r1 record; r2 record; h record; f record;
+begin
+  select * into r1 from tom_route_claim_inbound('wa-R7-lease','v2');
+
+  -- worker travou e o prazo venceu; NINGUEM retomou ainda (o token ainda e o dele)
+  update tom_message_ownership set lease_until = now() - interval '1 minute'
+   where wa_message_id='wa-R7-lease';
+
+  select * into h from tom_route_heartbeat('wa-R7-lease','v2',600, r1.lease_token);
+  insert into _res (label, ok, detail) values
+    ('R7-1 heartbeat com lease VENCIDO nao renova', h.ok = false, coalesce(h.reason,'(sem reason)'));
+
+  insert into _res (label, ok, detail)
+  select 'R7-1 lease continua no passado (nada foi escrito)', lease_until < now(), lease_until::text
+    from tom_message_ownership where wa_message_id='wa-R7-lease';
+
+  select * into f from tom_route_finish_inbound('wa-R7-lease','v2','completed',null, r1.lease_token);
+  insert into _res (label, ok, detail) values
+    ('R7-1 completed com lease VENCIDO e rejeitado', f.ok = false, coalesce(f.reason,'(sem reason)'));
+
+  insert into _res (label, ok, detail)
+  select 'R7-1 mensagem NAO ficou completed', status <> 'completed', status
+    from tom_message_ownership where wa_message_id='wa-R7-lease';
+
+  -- failed tambem exige posse viva: quem perdeu o prazo nao decide o desfecho
+  select * into f from tom_route_finish_inbound('wa-R7-lease','v2','failed','x', r1.lease_token);
+  insert into _res (label, ok, detail) values
+    ('R7-1 failed com lease VENCIDO tambem e rejeitado', f.ok = false, coalesce(f.reason,'(sem reason)'));
+
+  -- o caminho correto: reivindicar de novo, o que gera token NOVO
+  select * into r2 from tom_route_claim_inbound('wa-R7-lease','v2');
+  insert into _res (label, ok, detail) values
+    ('R7-1 claim devolve a posse com token novo', r2.outcome='resumed' and r2.lease_token is distinct from r1.lease_token, r2.outcome);
+
+  select * into h from tom_route_heartbeat('wa-R7-lease','v2',600, r2.lease_token);
+  insert into _res (label, ok, detail) values
+    ('R7-1 com a posse renovada, heartbeat volta a funcionar', h.ok = true, coalesce(h.reason,'(sem reason)'));
+
+  select * into f from tom_route_finish_inbound('wa-R7-lease','v2','completed',null, r2.lease_token);
+  insert into _res (label, ok, detail) values
+    ('R7-1 e o fechamento passa', f.ok = true, coalesce(f.reason,'(sem reason)'));
+
+  -- ja concluida: nem o token certo reabre
+  select * into h from tom_route_heartbeat('wa-R7-lease','v2',600, r2.lease_token);
+  insert into _res (label, ok, detail) values
+    ('R7-1 heartbeat nao ressuscita mensagem concluida', h.ok = false, coalesce(h.reason,'(sem reason)'));
+end $$;
+
+do $$
+declare r record; f record; s record;
+begin
+  -- R7-2: fechar o mesmo passo duas vezes nao pode sobrescrever o recibo
+  select * into r from tom_route_claim_inbound('wa-R7-dup','v2');
+  perform tom_operation_step_begin(r.operation_id,'mutar', r.lease_token);
+
+  select * into f from tom_operation_step_finish(r.operation_id,'mutar','{"primeiro":true}'::jsonb,'done',null, r.lease_token);
+  insert into _res (label, ok, detail) values ('R7-2 primeiro finish grava', f.ok = true, coalesce(f.reason,'(sem reason)'));
+
+  select * into f from tom_operation_step_finish(r.operation_id,'mutar','{"segundo":true}'::jsonb,'done',null, r.lease_token);
+  insert into _res (label, ok, detail) values
+    ('R7-2 segundo finish devolve already_resolved', f.ok = false and f.reason='already_resolved', coalesce(f.reason,'(sem reason)'));
+
+  insert into _res (label, ok, detail)
+  select 'R7-2 recibo original preservado', result->>'primeiro' = 'true', result::text
+    from tom_operation_steps where operation_id=r.operation_id and step_key='mutar';
+
+  -- nem para 'failed' por cima de um done
+  select * into f from tom_operation_step_finish(r.operation_id,'mutar',null,'failed','erro tardio', r.lease_token);
+  insert into _res (label, ok, detail) values
+    ('R7-2 nao rebaixa done para failed', f.ok = false, coalesce(f.reason,'(sem reason)'));
+
+  insert into _res (label, ok, detail)
+  select 'R7-2 status permanece done', status='done', status
+    from tom_operation_steps where operation_id=r.operation_id and step_key='mutar';
+
+  -- e o begin seguinte continua vendo done (idempotencia intacta)
+  select * into s from tom_operation_step_begin(r.operation_id,'mutar', r.lease_token);
+  insert into _res (label, ok, detail) values
+    ('R7-2 begin continua devolvendo done com o result certo',
+     s.outcome='done' and s.result->>'primeiro'='true', s.outcome);
 end $$;
 
 -- ============================ resultado ============================

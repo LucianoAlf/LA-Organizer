@@ -318,30 +318,38 @@ create function public.tom_route_heartbeat(
   p_owner         text,
   p_lease_seconds int  default 300,
   p_lease_token   uuid default null
-) returns boolean
+) returns table (ok boolean, reason text)
 language plpgsql
 security definer
 set search_path = public
 as $$
 declare v_n int;
 begin
+  -- R7-1: o lease so vale se o PROPRIO dono tambem for barrado quando o prazo acaba.
+  -- Antes, um worker que travou, perdeu o prazo e acordou antes de outro retomar
+  -- renovava o proprio lease — o prazo nunca existia de verdade. Renovar e privilegio
+  -- de quem AINDA tem a posse; quem perdeu, reivindica de novo (e ganha token novo).
   update public.tom_message_ownership
      set lease_until = now() + make_interval(secs => greatest(p_lease_seconds, 1)),
          status      = 'processing'
    where wa_message_id = p_wa_message_id
      and owner  = p_owner
      and status in ('claimed','processing')
-     and lease_token is not distinct from p_lease_token;
+     and lease_token is not distinct from p_lease_token
+     and lease_until is not null
+     and lease_until > now();
   get diagnostics v_n = row_count;
-  return v_n > 0;
+  if v_n > 0 then
+    return query select true, 'ok'::text;
+  else
+    return query select false, 'stale_lease'::text;
+  end if;
 end;
 $$;
 
 comment on function public.tom_route_heartbeat(text,text,int,uuid) is
-  'Renova o lease. Só com o token da posse atual: worker zumbi não estende posse alheia.';
+  'Renova o lease. Exige posse ATUAL e lease VIVO: prazo vencido nao se auto-renova.';
 
--- Fecha o inbound. SÓ depois disso o dedupe pode suprimir reprocessamento.
--- R4-1: também exige o token — worker velho não pode declarar concluído o que não fez.
 create function public.tom_route_finish_inbound(
   p_wa_message_id text,
   p_owner         text,
@@ -369,10 +377,18 @@ begin
     return;
   end if;
 
-  -- R6-2 (bypass): 'completed' e RECIBO — e recibo suprime retry. Com passo aberto, o
-  -- efeito ficou pela metade e ninguem mais volta nessa mensagem: a pessoa fica sem
-  -- resposta e sem rastro. 'failed' segue permitido de proposito: e justamente o caminho
-  -- de devolver a mensagem para retentativa quando algo ficou incompleto.
+  -- R7-1: quem perdeu o prazo nao decide o desfecho — nem 'completed' nem 'failed'.
+  -- Outro worker pode ja ter retomado; declarar desfecho aqui sobrescreveria trabalho
+  -- alheio. O caminho e reivindicar de novo.
+  if v_m.status not in ('claimed','processing')
+     or v_m.lease_until is null or v_m.lease_until <= now() then
+    return query select false, 'stale_lease'::text;
+    return;
+  end if;
+
+  -- R6-2: 'completed' e RECIBO — e recibo suprime retry. Com passo aberto, o efeito
+  -- ficou pela metade e ninguem mais volta nessa mensagem: a pessoa fica sem resposta e
+  -- sem rastro. 'failed' segue permitido: e o caminho de devolver para retentativa.
   if p_status = 'completed' and exists (
     select 1 from public.tom_operation_steps st
      where st.operation_id = v_m.operation_id
@@ -397,7 +413,7 @@ end;
 $$;
 
 comment on function public.tom_route_finish_inbound(text,text,text,text,uuid) is
-  'completed = recibo, e SO com todos os passos resolvidos; failed devolve para retentativa.';
+  'completed = recibo, com posse viva e todos os passos resolvidos; failed devolve para retentativa.';
 
 create function public.tom_route_assert_lease(
   p_wa_message_id text,
@@ -570,10 +586,20 @@ begin
     return;
   end if;
 
+  -- R7-2: passo ja resolvido nao se reescreve. Uma segunda chamada sobrescrevia o
+  -- recibo — inclusive rebaixando um 'done' para 'failed' e apagando o result que a
+  -- retomada usaria para NAO reexecutar. Idempotencia que perde a memoria nao e
+  -- idempotencia.
+  if v_row.status <> 'in_progress' then
+    return query select false, 'already_resolved'::text;
+    return;
+  end if;
+
   update public.tom_operation_steps
      set status = p_status, result = p_result, error = p_error, finished_at = now()
    where tom_operation_steps.operation_id = p_operation_id
-     and tom_operation_steps.step_key = p_step_key;
+     and tom_operation_steps.step_key = p_step_key
+     and tom_operation_steps.status = 'in_progress';
 
   return query select true, 'ok'::text;
 end;
