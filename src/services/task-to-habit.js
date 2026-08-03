@@ -135,7 +135,7 @@ async function convertTaskToHabit({ supabase, collaboratorId, taskTitle, taskId,
   // Como não há transação, a garantia é: escreve → RELÊ o banco → se não bateu, DESFAZ o que
   // este serviço criou e reporta. `undo` só guarda o que foi criado AQUI: hábito preexistente
   // reusado não é meu para apagar.
-  const undo = { habitId: null, reminderId: null, habitPrev: null };
+  const undo = { habitId: null, reminderId: null, habitPrev: null, reminderReactivatedId: null };
   let habitRow = null;
   let reusedHabit = false;
   try {
@@ -149,6 +149,23 @@ async function convertTaskToHabit({ supabase, collaboratorId, taskTitle, taskId,
     habitRow = (hs || []).find((h) => normTitle(h.name) === wanted) || null;
     reusedHabit = !!habitRow;
   } catch (_) { /* sem hábito prévio → cria */ }
+
+  // 5.05) A3 (Alfredo, 03/08): reusar por NOME sem olhar o calendário era desvio de produto
+  //       e confabulação. Tarefa semanal de segunda + hábito diário de mesmo nome: o serviço
+  //       encerrava a tarefa, mantinha o hábito diário e anunciava "toda segunda" — um
+  //       calendário que não existe em lugar nenhum. Calendários diferentes agora são
+  //       CONFLITO: não converte, não encerra nada, mostra os dois e devolve a decisão.
+  if (habitRow && !schedulesEquivalent(habitRow, sched)) {
+    return {
+      ok: false,
+      reason: 'habit_conflict',
+      template: { id: target.id, title: target.title },
+      habitSchedule: { frequency: habitRow.frequency, custom_days: habitRow.custom_days },
+      taskSchedule: { frequency: sched.frequency, custom_days: sched.custom_days },
+      habit: { id: habitRow.id, name: habitRow.name },
+      before,
+    };
+  }
 
   // 5.1) Hábito reusado com aviso DESLIGADO: religar é o próprio pedido da pessoa
   //      ("quero ser lembrado"). Sem isso ela ficaria sem cobrança E sem aviso — pior que
@@ -186,16 +203,34 @@ async function convertTaskToHabit({ supabase, collaboratorId, taskTitle, taskId,
     undo.habitId = created.id;
   }
 
-  // 6) Lembrete no horário — habit_reminders é o que o dispatcher realmente lê.
+  // 6) Lembrete no horário — habit_reminders é o que o dispatcher realmente lê, e ele
+  //    filtra `is_active = true`.
+  //
+  //    A2 (Alfredo, 03/08): a busca comparava só (id, time), sem `is_active`. Uma linha
+  //    INATIVA no mesmo horário bloqueava o insert E passava na verificação — série
+  //    encerrada, TOM anunciando sucesso, e ninguém lembrado, porque o dispatcher ignora
+  //    linha inativa. Agora: ativa no horário → nada a fazer; inativa → REATIVA (não há
+  //    unique em (habit_id,time), então inserir criaria duplicata silenciosa); nenhuma → cria.
   let reminderCreated = false;
   try {
     const { data: existing } = await supabase
       .from('habit_reminders')
-      .select('id, time')
+      .select('id, time, is_active')
       .eq('habit_id', habitRow.id)
       .limit(50);
-    const has = (existing || []).some((r) => String(r.time || '').slice(0, 5) === time);
-    if (!has) {
+    const noHorario = (existing || []).filter((r) => String(r.time || '').slice(0, 5) === time);
+    const ativo = noHorario.find((r) => r.is_active !== false);
+    const inativo = noHorario.find((r) => r.is_active === false);
+    if (!ativo && inativo) {
+      const { error: reErr } = await supabase.from('habit_reminders')
+        .update({ is_active: true }).eq('id', inativo.id);
+      if (reErr) {
+        const rb = await rollback(supabase, undo);
+        return { ok: false, reason: 'reminder_failed', detail: `reativar: ${reErr.message}`, rolledBack: rb, before };
+      }
+      undo.reminderReactivatedId = inativo.id;
+      reminderCreated = true;
+    } else if (!ativo) {
       const { data: rIns, error: rErr } = await supabase
         .from('habit_reminders').insert([{ habit_id: habitRow.id, time }]).select('id');
       if (rErr) {
@@ -226,7 +261,24 @@ async function convertTaskToHabit({ supabase, collaboratorId, taskTitle, taskId,
   //    quando os updates falham. Se a série não morreu, DESFAZ o lado do lembrete: melhor
   //    voltar ao estado inicial (cobrando, como antes) do que deixar meio convertido —
   //    cobrando E lembrando ao mesmo tempo, com o TOM anunciando que resolveu.
-  const after = await measure(supabase, collaboratorId, target.id);
+  //    A1: "não consegui ler" ≠ "não funcionou". Uma retentativa e, se ainda assim não der
+  //    para saber, NÃO se destrói nada — o estado fica como está (no pior caso lembrando e
+  //    cobrando, que é recuperável) e o texto diz que não deu para confirmar.
+  let after = await measure(supabase, collaboratorId, target.id);
+  if (!after.ok) after = await measure(supabase, collaboratorId, target.id);
+  if (!after.ok) {
+    console.error(`[TaskToHabit] VERIFICAÇÃO INDISPONÍVEL tpl=${String(target.id).slice(0, 8)} ` +
+      `habit=${String(habitRow.id).slice(0, 8)} — encerramento não confirmado, NADA foi desfeito`);
+    return {
+      ok: false,
+      reason: 'verification_unavailable',
+      detail: 'não foi possível reler o estado da série após o encerramento',
+      rolledBack: { undone: [], residue: [] },
+      habit: { id: habitRow.id, name: habitRow.name || target.title },
+      template: { id: target.id, title: target.title },
+      before,
+    };
+  }
   if (!after.seriesEnded || after.serieAberta > 0) {
     const rb = await rollback(supabase, undo);
     return {
@@ -249,8 +301,11 @@ async function convertTaskToHabit({ supabase, collaboratorId, taskTitle, taskId,
     habit: {
       id: habitRow.id,
       name: habitRow.name || target.title,
-      frequency: sched.frequency,
-      custom_days: sched.custom_days,
+      // A3: o calendário reportado é o do HÁBITO REUSADO quando existe — é ele que dispara.
+      // Só o hábito criado agora tem o calendário derivado da RRULE. Descrever a tarefa em
+      // vez do que está salvo era anunciar um calendário inexistente.
+      frequency: reusedHabit && habitRow.frequency ? habitRow.frequency : sched.frequency,
+      custom_days: reusedHabit && habitRow.frequency ? (habitRow.custom_days || null) : sched.custom_days,
       time,
     },
     template: { id: target.id, title: target.title },
@@ -263,26 +318,68 @@ async function convertTaskToHabit({ supabase, collaboratorId, taskTitle, taskId,
   };
 }
 
-/** Fotografia numérica do escopo da operação — antes e depois, para comparar. */
+/**
+ * Fotografia numérica do escopo da operação — antes e depois.
+ *
+ * A1 (Alfredo, 03/08): esta função ENGOLIA qualquer falha e devolvia
+ * `{seriesEnded:false, serieAberta:0}` — indistinguível de "encerramento não funcionou".
+ * Pior: o supabase-js não LANÇA em erro de query, devolve `{data:null, error}`; como o
+ * `error` era ignorado, `(kids||[]).length` virava 0 sem nem passar pelo catch. Uma
+ * leitura caída depois de um encerramento BEM-SUCEDIDO levava ao rollback do hábito —
+ * a pessoa ficava sem cobrança E sem lembrete. Pior que o estado inicial.
+ *
+ * Agora a medição é honesta: `ok:false` significa "não sei", e quem chama trata "não sei"
+ * como diferente de "falhou". Nunca se destrói estado com base em leitura indisponível.
+ */
 async function measure(supabase, collaboratorId, templateId) {
-  const out = { serieAberta: 0, totalAberto: 0, seriesEnded: false };
+  const out = { ok: false, serieAberta: 0, totalAberto: 0, seriesEnded: false };
   try {
-    const { data: tpl } = await supabase.from('tasks')
+    const tplR = await supabase.from('tasks')
       .select('id, series_ended_at').eq('id', templateId).maybeSingle();
-    out.seriesEnded = !!(tpl && tpl.series_ended_at);
+    if (tplR.error) return out;
+    out.seriesEnded = !!(tplR.data && tplR.data.series_ended_at);
     // Instâncias da série ainda cobráveis (+ o próprio molde, se aberto).
-    const { data: kids } = await supabase.from('tasks')
+    const kidsR = await supabase.from('tasks')
       .select('id').eq('recurrence_parent_id', templateId).eq('assigned_to', collaboratorId)
       .not('status', 'in', '("done","cancelled")');
-    const { data: self } = await supabase.from('tasks')
+    if (kidsR.error) return out;
+    const selfR = await supabase.from('tasks')
       .select('id').eq('id', templateId).eq('assigned_to', collaboratorId)
       .not('status', 'in', '("done","cancelled")');
-    out.serieAberta = (kids || []).length + (self || []).length;
-    const { data: all } = await supabase.from('tasks')
+    if (selfR.error) return out;
+    out.serieAberta = (kidsR.data || []).length + (selfR.data || []).length;
+    const allR = await supabase.from('tasks')
       .select('id').eq('assigned_to', collaboratorId).not('status', 'in', '("done","cancelled")');
-    out.totalAberto = (all || []).length;
-  } catch (_) { /* medição é diagnóstico, nunca derruba a operação */ }
+    if (allR.error) return out;
+    out.totalAberto = (allR.data || []).length;
+    out.ok = true;
+  } catch (_) { return out; }
   return out;
+}
+
+/**
+ * Canoniza um calendário (de hábito ou de RRULE traduzida) num CONJUNTO de dias ISO,
+ * para comparar dialetos diferentes que significam a mesma coisa: 'weekdays' e
+ * 'weekly'+[1..5] são o mesmo calendário; 'daily' e custom_days [1..7] também.
+ */
+function scheduleDaySet(frequency, customDays) {
+  const f = String(frequency || '').toLowerCase();
+  if (f === 'daily') return [1, 2, 3, 4, 5, 6, 7];
+  if (f === 'weekdays') return [1, 2, 3, 4, 5];
+  const days = Array.isArray(customDays)
+    ? [...new Set(customDays.map(Number).filter((d) => d >= 1 && d <= 7))].sort((a, b) => a - b)
+    : [];
+  if (days.length) return days;
+  // 'weekly' sem dias cai na segunda — é o que o inSchedule() do dispatcher faz.
+  if (f === 'weekly' || f === 'custom' || f === 'custom_days') return [1];
+  return [];
+}
+
+/** Dois calendários disparam nos mesmos dias? (A3) */
+function schedulesEquivalent(a, b) {
+  const sa = scheduleDaySet(a && a.frequency, a && a.custom_days);
+  const sb = scheduleDaySet(b && b.frequency, b && b.custom_days);
+  return sa.length > 0 && sa.length === sb.length && sa.every((d, i) => d === sb[i]);
 }
 
 /** Relê o banco e confirma que o lembrete existe DE VERDADE no horário certo. */
@@ -293,9 +390,10 @@ async function verifyHabitSide(supabase, habitId, time) {
     if (!h) return { ok: false, detail: 'hábito não encontrado após criar' };
     if (!h.is_active || !h.notify_whatsapp) return { ok: false, detail: 'hábito inativo ou sem notificação' };
     const { data: rem } = await supabase.from('habit_reminders')
-      .select('id, time').eq('habit_id', habitId);
-    const hit = (rem || []).some((r) => String(r.time || '').slice(0, 5) === time);
-    if (!hit) return { ok: false, detail: `nenhum lembrete gravado às ${time}` };
+      .select('id, time, is_active').eq('habit_id', habitId);
+    // A2: só conta lembrete ATIVO — é o único que o dispatcher dispara.
+    const hit = (rem || []).some((r) => String(r.time || '').slice(0, 5) === time && r.is_active !== false);
+    if (!hit) return { ok: false, detail: `nenhum lembrete ATIVO gravado às ${time}` };
     return { ok: true };
   } catch (err) {
     return { ok: false, detail: err.message };
@@ -314,6 +412,13 @@ async function rollback(supabase, undo) {
     if (undo.reminderId) {
       const { error } = await supabase.from('habit_reminders').delete().eq('id', undo.reminderId);
       if (error) residue.push(`habit_reminders:${undo.reminderId}`); else done.push('lembrete');
+    }
+    if (undo.reminderReactivatedId) {
+      // A2: lembrete que já existia e este serviço religou — volta a inativo, como estava
+      const { error } = await supabase.from('habit_reminders')
+        .update({ is_active: false }).eq('id', undo.reminderReactivatedId);
+      if (error) residue.push(`habit_reminders.is_active:${undo.reminderReactivatedId}`);
+      else done.push('lembrete reativado');
     }
     if (undo.habitId) {
       // limpa lembretes filhos antes (FK) — o hábito é novo, então são todos deste serviço
@@ -399,6 +504,16 @@ function renderConversionResult(r) {
     case 'reminder_failed':
     case 'habit_not_verified':
       return '_não consegui criar o lembrete agora, então não mexi na tua rotina — ela segue como estava. Tenta de novo em instantes?_';
+    // A1: escrevi, mas não consegui reler pra confirmar. Não afirmar sucesso e não
+    // prometer desfeito — dizer exatamente o que sei e o que não sei.
+    case 'verification_unavailable':
+      return '_criei o lembrete, mas não consegui confirmar se a tarefa antiga foi encerrada — pode ser que hoje você receba as duas coisas. Não desfiz nada; me chama que eu confiro._';
+    // A3: dois calendários diferentes com o mesmo nome. Quem decide é a pessoa.
+    case 'habit_conflict': {
+      const doHabito = describeSchedule(r.habitSchedule && r.habitSchedule.frequency, r.habitSchedule && r.habitSchedule.custom_days);
+      const daTarefa = describeSchedule(r.taskSchedule && r.taskSchedule.frequency, r.taskSchedule && r.taskSchedule.custom_days);
+      return `_você já tem um lembrete *${(r.habit && r.habit.name) || ''}* que toca ${doHabito}, e essa rotina é ${daTarefa}. Não quis mexer sem te perguntar: mantenho o lembrete como está e encerro a tarefa, ou ajusto o lembrete pra ${daTarefa}?_`;
+    }
     default:
       return '_não consegui fazer essa conversão agora — tenta de novo em instantes._';
   }
