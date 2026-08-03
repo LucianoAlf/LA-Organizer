@@ -94,7 +94,10 @@ async function finishInbound({ supabase, enabled = false, waMessageId = null, le
       p_wa_message_id: waMessageId,
       p_owner: 'v1',
       p_status: status,
-      p_reason: reason || null,
+      // p_error, NÃO p_reason: escrevi p_reason, o teste com dublê aceitou, e só a
+      // produção reclamou ("Could not find the function"). scripts/verificar-rpc-params.js
+      // passou a conferir isso contra pg_proc.
+      p_error: reason || null,
       p_lease_token: leaseToken,
     });
     if (res && res.error) return { ok: false, code: 'db_error', detail: String(res.error.message || '').slice(0, 120) };

@@ -135,6 +135,11 @@ test('finish marca completed com o token do claim', async () => {
   assert.equal(sb.chamadas[0].fn, 'tom_route_finish_inbound');
   assert.equal(sb.chamadas[0].params.p_status, 'completed');
   assert.equal(sb.chamadas[0].params.p_lease_token, 'tok-9');
+  // O nome do parâmetro é p_error. Este assert trava a digitação; o contrato de verdade
+  // (a função existir com esses nomes) quem confere é scripts/verificar-rpc-params.js —
+  // dublê nenhum pega isso, foi assim que 'p_reason' chegou em produção.
+  assert.ok('p_error' in sb.chamadas[0].params, 'finish deve mandar p_error');
+  assert.ok(!('p_reason' in sb.chamadas[0].params), 'p_reason não existe na função real');
 });
 
 test('finish sem token não chama o banco (claim não venceu, nada a fechar)', async () => {
