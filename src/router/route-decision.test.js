@@ -59,6 +59,34 @@ test('fluxo marcado retired não segura mais nada → v1', () => {
   assert.strictEqual(r.owner, 'v1');
 });
 
+// ---------- R5-3: TTL vencido não prende a conversa ----------
+test('R5-3 fluxo v2 com TTL vencido NÃO segura a conversa → v1', () => {
+  // sem isto, um v2 que caiu antes de retired prenderia a pessoa naquele chat para sempre
+  const r = decideRoute(F({ flowOwner: 'v2', flowPhase: 'canary', flowExpired: true }));
+  assert.strictEqual(r.owner, 'v1');
+  assert.strictEqual(r.reason, ROUTE_REASONS.DEFAULT_V1);
+});
+
+test('R5-3 TTL vencido não invalida a CITAÇÃO — quote continua mandando', () => {
+  // o fluxo morreu, mas a mensagem citada tem dono e a entidade dele também
+  const r = decideRoute(F({ quotedOwner: 'v2', flowOwner: 'v2', flowPhase: 'canary', flowExpired: true }));
+  assert.strictEqual(r.owner, 'v2');
+  assert.strictEqual(r.reason, ROUTE_REASONS.QUOTE_V2);
+});
+
+test('R5-3 fluxo expirado não gera conflito falso (ele nem prende)', () => {
+  const r = decideRoute(F({ quotedOwner: 'v1', flowOwner: 'v2', flowExpired: true }));
+  assert.strictEqual(r.owner, 'v1');
+  assert.strictEqual(r.conflict, undefined);
+});
+
+test('R5-3 só `true` expira — valor ausente ou sujo mantém o fluxo prendendo', () => {
+  for (const v of [undefined, null, false, 0, '', 'true', 1]) {
+    const r = decideRoute({ flowOwner: 'v2', flowPhase: 'canary', flowExpired: v });
+    assert.strictEqual(r.owner, 'v2', `flowExpired=${JSON.stringify(v)} soltou o fluxo indevidamente`);
+  }
+});
+
 // ---------- conflito: quote x fluxo ----------
 test('citação do v1 com fluxo v2 aberto: manda pro v1 e REGISTRA o conflito', () => {
   // A citação identifica a ENTIDADE, e quem pode mutar é o dono dela. Mandar pro v2
@@ -103,15 +131,17 @@ test('toda combinação possível devolve exatamente um dono válido e um motivo
   for (const q of vals) {
     for (const f of vals) {
       for (const fase of fases) {
-        const r = decideRoute({ quotedOwner: q, flowOwner: f, flowPhase: fase });
-        assert.ok(r && (r.owner === 'v1' || r.owner === 'v2'), `owner inválido em ${q}/${f}/${fase}`);
-        assert.ok(typeof r.reason === 'string' && r.reason.length > 0);
-        assert.ok(Object.values(ROUTE_REASONS).includes(r.reason), `motivo fora do enum: ${r.reason}`);
-        n++;
+        for (const exp of [undefined, true, false, 'lixo']) {
+          const r = decideRoute({ quotedOwner: q, flowOwner: f, flowPhase: fase, flowExpired: exp });
+          assert.ok(r && (r.owner === 'v1' || r.owner === 'v2'), `owner inválido em ${q}/${f}/${fase}/${exp}`);
+          assert.ok(typeof r.reason === 'string' && r.reason.length > 0);
+          assert.ok(Object.values(ROUTE_REASONS).includes(r.reason), `motivo fora do enum: ${r.reason}`);
+          n++;
+        }
       }
     }
   }
-  assert.strictEqual(n, 4 * 4 * 4);
+  assert.strictEqual(n, 4 * 4 * 4 * 4);
 });
 
 test('R3-B3: parâmetro morto não volta — a assinatura só tem sinais que decidem', () => {

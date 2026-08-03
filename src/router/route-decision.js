@@ -62,9 +62,14 @@ function decideRoute(facts) {
   const f = (facts && typeof facts === 'object') ? facts : {};
   const quoted = normOwner(f.quotedOwner);
   const flowRaw = normOwner(f.flowOwner);
+  // R5-3: fluxo com TTL vencido NÃO prende, mesmo que a linha ainda esteja aberta. A
+  // consulta `tom_flow_active_for_conversation` já devolve owner nulo nesse caso; esta
+  // checagem é a segunda barreira, para o dia em que alguém ler a tabela crua. O TTL é
+  // avaliado no banco (que tem o relógio) e chega aqui como fato — o router segue puro.
+  const expired = f.flowExpired === true;
   // fluxo só prende se estiver numa fase que prende. Sem fase declarada, assume 'canary'
   // (fluxo aberto pelo adapter sem fase é fluxo vivo) — 'retired' solta.
-  const flow = flowRaw && HOLDING_PHASES.has(f.flowPhase == null ? 'canary' : f.flowPhase)
+  const flow = (!expired && flowRaw && HOLDING_PHASES.has(f.flowPhase == null ? 'canary' : f.flowPhase))
     ? flowRaw : null;
 
   // conflito = os dois sinais existem e discordam. Registrado sempre, decida quem decidir.

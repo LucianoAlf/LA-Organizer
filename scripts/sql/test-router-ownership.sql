@@ -19,28 +19,31 @@ from unnest(array[
   'tom_router_test.tom_route_claim_inbound(text,text,text,uuid,text,text,text,text,int)',
   'tom_router_test.tom_route_heartbeat(text,text,int,uuid)',
   'tom_router_test.tom_route_finish_inbound(text,text,text,text,uuid)',
-  'tom_router_test.tom_record_outbound(text,text,text,uuid,text,text,uuid,uuid)',
+  'tom_router_test.tom_record_outbound(text,text,text,uuid,text,text,uuid,uuid,uuid)',
   'tom_router_test.tom_flow_open(text,text,uuid,text,uuid,boolean,text,text,int)',
-  'tom_router_test.tom_flow_touch(text,int)',
-  'tom_router_test.tom_flow_set_phase(text,uuid,text)',
-  'tom_router_test.tom_operation_step_begin(uuid,text)',
-  'tom_router_test.tom_operation_step_finish(uuid,text,jsonb,text,text)'
+  'tom_router_test.tom_flow_touch(text,int,text,uuid)',
+  'tom_router_test.tom_flow_set_phase(text,uuid,text,uuid)',
+  'tom_router_test.tom_operation_step_begin(uuid,text,uuid)',
+  'tom_router_test.tom_operation_step_finish(uuid,text,jsonb,text,text,uuid)',
+  'tom_router_test.tom_operation_step_verify(uuid,text,boolean,jsonb,uuid)',
+  'tom_router_test.tom_route_assert_lease(text,text,uuid)',
+  'tom_router_test.tom_flow_active_for_conversation(text)'
 ]) f;
 
 insert into _res (label, ok, detail)
 select 'A1 authenticated NÃO executa ' || f, not has_function_privilege('authenticated', f, 'EXECUTE'), f
 from unnest(array[
   'tom_router_test.tom_route_claim_inbound(text,text,text,uuid,text,text,text,text,int)',
-  'tom_router_test.tom_record_outbound(text,text,text,uuid,text,text,uuid,uuid)',
-  'tom_router_test.tom_flow_set_phase(text,uuid,text)'
+  'tom_router_test.tom_record_outbound(text,text,text,uuid,text,text,uuid,uuid,uuid)',
+  'tom_router_test.tom_flow_set_phase(text,uuid,text,uuid)'
 ]) f;
 
 insert into _res (label, ok, detail)
 select 'A1 service_role EXECUTA ' || f, has_function_privilege('service_role', f, 'EXECUTE'), f
 from unnest(array[
   'tom_router_test.tom_route_claim_inbound(text,text,text,uuid,text,text,text,text,int)',
-  'tom_router_test.tom_record_outbound(text,text,text,uuid,text,text,uuid,uuid)',
-  'tom_router_test.tom_flow_set_phase(text,uuid,text)'
+  'tom_router_test.tom_record_outbound(text,text,text,uuid,text,text,uuid,uuid,uuid)',
+  'tom_router_test.tom_flow_set_phase(text,uuid,text,uuid)'
 ]) f;
 
 -- tabelas: anon não lê nem escreve
@@ -158,25 +161,25 @@ end $$;
 do $$
 declare a uuid; b uuid; c uuid; d uuid; e1 uuid := gen_random_uuid(); e2 uuid := gen_random_uuid();
 begin
-  a := tom_flow_open('5521999@s.whatsapp.net','task',e1,'v2');
+  select id into a from tom_flow_open('5521999@s.whatsapp.net','task',e1,'v2');
   insert into _res (label, ok, detail) values ('A4 abre fluxo interativo', a is not null, a::text);
 
   -- segundo interativo NA MESMA conversa (outra entidade) tem que ser recusado:
   -- é o que dá ao adapter UM flowOwner determinístico
-  b := tom_flow_open('5521999@s.whatsapp.net','task',e2,'v2');
+  select id into b from tom_flow_open('5521999@s.whatsapp.net','task',e2,'v2');
   insert into _res (label, ok, detail) values ('A4 segundo interativo na mesma conversa é recusado', b is null, b::text);
 
   -- não-interativo coexiste (entidade com dono, sem prender a conversa)
-  c := tom_flow_open('5521999@s.whatsapp.net','task',e2,'v2', p_interactive => false);
+  select id into c from tom_flow_open('5521999@s.whatsapp.net','task',e2,'v2', p_interactive => false);
   insert into _res (label, ok, detail) values ('A4 não-interativo coexiste', c is not null, c::text);
 
   -- mesma entidade duas vezes = recusado
-  d := tom_flow_open('outra-conversa@g.us','task',e1,'v1');
+  select id into d from tom_flow_open('outra-conversa@g.us','task',e1,'v1');
   insert into _res (label, ok, detail) values ('A4 entidade já com dono é recusada', d is null, d::text);
 
   -- grupo é conversa própria
   insert into _res (label, ok, detail)
-  select 'A4 grupo abre fluxo próprio', tom_flow_open('120363@g.us','task',gen_random_uuid(),'v2') is not null, null;
+  select 'A4 grupo abre fluxo próprio', (select id from tom_flow_open('120363@g.us','task',gen_random_uuid(),'v2')) is not null, null;
 
   insert into _res (label, ok, detail)
   select 'A4 um interativo ativo por conversa', count(*) = 1, count(*)::text
@@ -185,32 +188,32 @@ end $$;
 
 -- ============================ R3-B2 — transições de fase ============================
 do $$
-declare r record; ent uuid := gen_random_uuid();
+declare r record; ent uuid := gen_random_uuid(); tok uuid;
 begin
-  perform tom_flow_open('conv-fase@s.whatsapp.net','task',ent,'v2');
+  select flow_token into tok from tom_flow_open('conv-fase@s.whatsapp.net','task',ent,'v2');
 
-  select * into r from tom_flow_set_phase('task',ent,'draining');
+  select * into r from tom_flow_set_phase('task',ent,'draining', tok);
   insert into _res (label, ok, detail) values ('B2 canary→draining permitido', r.outcome='ok', r.outcome);
 
-  select * into r from tom_flow_set_phase('task',ent,'canary');
+  select * into r from tom_flow_set_phase('task',ent,'canary', tok);
   insert into _res (label, ok, detail) values ('B2 draining→canary BLOQUEADO', r.outcome='illegal_transition', r.outcome);
 
-  select * into r from tom_flow_set_phase('task',ent,'draining');
+  select * into r from tom_flow_set_phase('task',ent,'draining', tok);
   insert into _res (label, ok, detail) values ('B2 mesma fase = unchanged', r.outcome='unchanged', r.outcome);
 
-  select * into r from tom_flow_set_phase('task',ent,'retired');
+  select * into r from tom_flow_set_phase('task',ent,'retired', tok);
   insert into _res (label, ok, detail) values ('B2 draining→retired permitido', r.outcome='ok', r.outcome);
 
   insert into _res (label, ok, detail)
   select 'B2 retired fecha o fluxo', closed_at is not null, closed_at::text
     from tom_flow_ownership where entity_type='task' and entity_id=ent;
 
-  select * into r from tom_flow_set_phase('task',ent,'draining');
+  select * into r from tom_flow_set_phase('task',ent,'draining', tok);
   insert into _res (label, ok, detail) values ('B2 fluxo fechado não aceita fase', r.outcome='not_found', r.outcome);
 
   -- conversa liberada depois do retired
   insert into _res (label, ok, detail)
-  select 'B2 conversa liberada após retired', tom_flow_open('conv-fase@s.whatsapp.net','task',gen_random_uuid(),'v1') is not null, null;
+  select 'B2 conversa liberada após retired', (select id from tom_flow_open('conv-fase@s.whatsapp.net','task',gen_random_uuid(),'v1')) is not null, null;
 end $$;
 
 -- ==================== R4-1 — fencing token (posse por tentativa) ====================
@@ -256,23 +259,23 @@ begin
   select * into r from tom_route_claim_inbound('wa-R4-step','v2');
   op := r.operation_id;
 
-  select * into s from tom_operation_step_begin(op, 'concluir_tarefa');
+  select * into s from tom_operation_step_begin(op, 'concluir_tarefa', r.lease_token);
   insert into _res (label, ok, detail) values ('R4-2 primeiro begin = new', s.outcome='new', s.outcome);
 
   -- ... aqui o worker mutaria a entidade e cairia ANTES de fechar o passo
-  select * into s from tom_operation_step_begin(op, 'concluir_tarefa');
+  select * into s from tom_operation_step_begin(op, 'concluir_tarefa', r.lease_token);
   insert into _res (label, ok, detail) values
-    ('R4-2 passo em andamento não vira new de novo', s.outcome='in_progress', s.outcome);
+    ('R4-2 mesmo worker rechamando = in_progress_active', s.outcome='in_progress_active', s.outcome);
 
-  perform tom_operation_step_finish(op, 'concluir_tarefa', '{"task":"ok"}'::jsonb);
+  perform tom_operation_step_finish(op, 'concluir_tarefa', '{"task":"ok"}'::jsonb, 'done', null, r.lease_token);
 
-  select * into s from tom_operation_step_begin(op, 'concluir_tarefa');
+  select * into s from tom_operation_step_begin(op, 'concluir_tarefa', r.lease_token);
   insert into _res (label, ok, detail) values
     ('R4-2 passo concluído devolve done', s.outcome='done', s.outcome),
     ('R4-2 done devolve o resultado guardado', s.result->>'task' = 'ok', s.result::text);
 
   -- passos diferentes são independentes
-  select * into s from tom_operation_step_begin(op, 'enviar_resposta');
+  select * into s from tom_operation_step_begin(op, 'enviar_resposta', r.lease_token);
   insert into _res (label, ok, detail) values ('R4-2 outro passo é independente', s.outcome='new', s.outcome);
 
   insert into _res (label, ok, detail)
@@ -290,9 +293,9 @@ end $$;
 -- ==================== R4-3 — TTL do fluxo interativo ====================
 -- Se o v2 cair antes de retired, a conversa não pode ficar presa nele para sempre.
 do $$
-declare a uuid; b uuid; ent1 uuid := gen_random_uuid(); ent2 uuid := gen_random_uuid(); r record;
+declare a uuid; b uuid; ent1 uuid := gen_random_uuid(); ent2 uuid := gen_random_uuid(); r record; tok uuid;
 begin
-  a := tom_flow_open('conv-ttl@s.whatsapp.net','task',ent1,'v2', p_interactive_ttl_seconds => 3600);
+  select id, flow_token into a, tok from tom_flow_open('conv-ttl@s.whatsapp.net','task',ent1,'v2', p_interactive_ttl_seconds => 3600);
   insert into _res (label, ok, detail) values ('R4-3 abre fluxo com TTL', a is not null, a::text);
 
   insert into _res (label, ok, detail)
@@ -300,7 +303,7 @@ begin
     from tom_flow_ownership where id = a;
 
   -- enquanto vivo, continua prendendo a conversa
-  b := tom_flow_open('conv-ttl@s.whatsapp.net','task',ent2,'v2');
+  select id into b from tom_flow_open('conv-ttl@s.whatsapp.net','task',ent2,'v2');
   insert into _res (label, ok, detail) values ('R4-3 fluxo vivo ainda bloqueia outro interativo', b is null, b::text);
 
   -- v2 caiu: TTL vence
@@ -313,7 +316,7 @@ begin
      and (interactive_until is null or interactive_until > now());
 
   -- e a conversa é liberada: abrir novo expropria o expirado
-  b := tom_flow_open('conv-ttl@s.whatsapp.net','task',ent2,'v2');
+  select id, flow_token into b, tok from tom_flow_open('conv-ttl@s.whatsapp.net','task',ent2,'v2');
   insert into _res (label, ok, detail) values ('R4-3 conversa liberada após TTL vencer', b is not null, b::text);
 
   insert into _res (label, ok, detail)
@@ -322,14 +325,179 @@ begin
 
   -- touch renova enquanto o dono está vivo
   insert into _res (label, ok, detail)
-  select 'R4-3 touch renova o TTL', tom_flow_touch('conv-ttl@s.whatsapp.net', 7200), null;
+  select 'R4-3 touch renova o TTL', tom_flow_touch('conv-ttl@s.whatsapp.net', 7200, 'v2', tok), null;
   insert into _res (label, ok, detail)
   select 'R4-3 TTL renovado empurrou o vencimento', interactive_until > now() + interval '90 minutes', interactive_until::text
     from tom_flow_ownership where id = b;
 
   -- touch em conversa sem fluxo não inventa nada
   insert into _res (label, ok, detail)
-  select 'R4-3 touch sem fluxo devolve false', not tom_flow_touch('conversa-inexistente@s.whatsapp.net', 3600), null;
+  select 'R4-3 touch sem fluxo devolve false', not tom_flow_touch('conversa-inexistente@s.whatsapp.net', 3600, 'v2', tok), null;
+end $$;
+
+-- ============ R5-1 — o token precisa cercar TODA escrita com efeito ============
+-- Fencing só em heartbeat/finish deixava o worker velho marcar passo como done e
+-- registrar saída. O passo é o que AUTORIZA a mutação: sem token ali, o token não serve.
+do $$
+declare r1 record; r2 record; s record; o record;
+begin
+  select * into r1 from tom_route_claim_inbound('wa-R5-tok','v2');
+  update tom_message_ownership set lease_until = now() - interval '1 minute' where wa_message_id='wa-R5-tok';
+  select * into r2 from tom_route_claim_inbound('wa-R5-tok','v2');   -- outro worker retoma
+
+  -- worker VELHO tenta reivindicar passo
+  select * into s from tom_operation_step_begin(r1.operation_id,'mutar_tarefa', r1.lease_token);
+  insert into _res (label, ok, detail) values
+    ('R5-1 step_begin com token velho = stale_lease', s.outcome='stale_lease', s.outcome);
+
+  insert into _res (label, ok, detail)
+  select 'R5-1 token velho NÃO criou linha de passo', count(*)=0, count(*)::text
+    from tom_operation_steps where operation_id=r1.operation_id and step_key='mutar_tarefa';
+
+  -- worker ATUAL consegue
+  select * into s from tom_operation_step_begin(r2.operation_id,'mutar_tarefa', r2.lease_token);
+  insert into _res (label, ok, detail) values ('R5-1 token atual funciona', s.outcome='new', s.outcome);
+
+  -- worker VELHO tenta FECHAR o passo do atual
+  insert into _res (label, ok, detail)
+  select 'R5-1 step_finish com token velho é rejeitado',
+         not tom_operation_step_finish(r2.operation_id,'mutar_tarefa','{}'::jsonb,'done',null, r1.lease_token), null;
+
+  insert into _res (label, ok, detail)
+  select 'R5-1 passo continua aberto após tentativa do velho', status='in_progress', status
+    from tom_operation_steps where operation_id=r2.operation_id and step_key='mutar_tarefa';
+
+  -- outbound com operação: token velho não registra
+  select * into o from tom_record_outbound('wa-R5-out','v2', p_operation_id => r2.operation_id, p_lease_token => r1.lease_token);
+  insert into _res (label, ok, detail) values
+    ('R5-1 record_outbound com token velho = stale_lease', o.outcome='stale_lease', o.outcome);
+
+  select * into o from tom_record_outbound('wa-R5-out','v2', p_operation_id => r2.operation_id, p_lease_token => r2.lease_token);
+  insert into _res (label, ok, detail) values ('R5-1 record_outbound com token atual grava', o.outcome='inserted', o.outcome);
+
+  -- assert_lease: o worker checa a posse ANTES de enviar
+  insert into _res (label, ok, detail)
+  select 'R5-1 assert_lease rejeita token velho', not tom_route_assert_lease('wa-R5-tok','v2', r1.lease_token), null;
+  insert into _res (label, ok, detail)
+  select 'R5-1 assert_lease aceita token atual', tom_route_assert_lease('wa-R5-tok','v2', r2.lease_token), null;
+end $$;
+
+-- ============ R5-2 — o caso perigoso: mutação gravada + crash antes do recibo ============
+-- Antes, `in_progress` só "avisava para verificar". Aviso não é barreira: quem retoma
+-- precisa RESOLVER o passo (confirmando o efeito ou negando) antes de poder agir.
+do $$
+declare r1 record; r2 record; s record;
+begin
+  select * into r1 from tom_route_claim_inbound('wa-R5-crash','v2');
+  select * into s  from tom_operation_step_begin(r1.operation_id,'concluir', r1.lease_token);
+  -- ... o worker MUTOU a entidade aqui e caiu ANTES do step_finish ...
+
+  update tom_message_ownership set lease_until = now() - interval '1 minute' where wa_message_id='wa-R5-crash';
+  select * into r2 from tom_route_claim_inbound('wa-R5-crash','v2');
+  insert into _res (label, ok, detail) values ('R5-2 retomada após crash', r2.outcome='resumed', r2.outcome);
+
+  -- quem retoma NÃO recebe autorização para executar
+  select * into s from tom_operation_step_begin(r2.operation_id,'concluir', r2.lease_token);
+  insert into _res (label, ok, detail) values
+    ('R5-2 passo órfão exige verificação (não é new)', s.outcome='needs_verification', s.outcome);
+
+  -- e continua exigindo enquanto não for resolvido — o aviso não "passa" na segunda vez
+  select * into s from tom_operation_step_begin(r2.operation_id,'concluir', r2.lease_token);
+  insert into _res (label, ok, detail) values
+    ('R5-2 sem resolver, continua bloqueado', s.outcome='needs_verification', s.outcome);
+
+  -- caminho A: releitura CONFIRMA que a mutação ocorreu → fecha sem reexecutar
+  insert into _res (label, ok, detail)
+  select 'R5-2 verify confirmado fecha o passo',
+         tom_operation_step_verify(r2.operation_id,'concluir', true, '{"via":"releitura"}'::jsonb, r2.lease_token), null;
+  select * into s from tom_operation_step_begin(r2.operation_id,'concluir', r2.lease_token);
+  insert into _res (label, ok, detail) values
+    ('R5-2 após confirmar, passo é done (não reexecuta)', s.outcome='done', s.outcome),
+    ('R5-2 resultado da verificação preservado', s.result->>'via'='releitura', s.result::text);
+end $$;
+
+do $$
+declare r1 record; r2 record; s record;
+begin
+  -- caminho B: releitura NEGA a mutação → libera para executar de novo
+  select * into r1 from tom_route_claim_inbound('wa-R5-crash2','v2');
+  perform tom_operation_step_begin(r1.operation_id,'concluir', r1.lease_token);
+  update tom_message_ownership set lease_until = now() - interval '1 minute' where wa_message_id='wa-R5-crash2';
+  select * into r2 from tom_route_claim_inbound('wa-R5-crash2','v2');
+
+  insert into _res (label, ok, detail)
+  select 'R5-2 verify negado libera reexecução',
+         tom_operation_step_verify(r2.operation_id,'concluir', false, null, r2.lease_token), null;
+  select * into s from tom_operation_step_begin(r2.operation_id,'concluir', r2.lease_token);
+  insert into _res (label, ok, detail) values
+    ('R5-2 após negar, pode executar de novo', s.outcome='new', s.outcome);
+
+  -- verify com token velho não resolve nada
+  insert into _res (label, ok, detail)
+  select 'R5-2 verify com token velho é rejeitado',
+         not tom_operation_step_verify(r2.operation_id,'concluir', true, null, r1.lease_token), null;
+end $$;
+
+-- ============ R5-3 — consulta única de fluxo ativo com TTL + touch cercado ============
+do $$
+declare f record; g record; ent uuid := gen_random_uuid();
+begin
+  select * into f from tom_flow_open('conv-R5@s.whatsapp.net','task',ent,'v2', p_interactive_ttl_seconds => 3600);
+  insert into _res (label, ok, detail) values
+    ('R5-3 open devolve id e flow_token', f.id is not null and f.flow_token is not null, f.flow_token::text);
+
+  -- a consulta ÚNICA que o adapter usa: já aplica TTL e devolve no máximo uma linha
+  select * into g from tom_flow_active_for_conversation('conv-R5@s.whatsapp.net');
+  insert into _res (label, ok, detail) values
+    ('R5-3 consulta única devolve o dono', g.owner='v2', coalesce(g.owner,'(nulo)')),
+    ('R5-3 consulta única diz que não expirou', g.expired = false, g.expired::text);
+
+  -- token velho não mantém o fluxo vivo
+  insert into _res (label, ok, detail)
+  select 'R5-3 touch com token errado é rejeitado',
+         not tom_flow_touch('conv-R5@s.whatsapp.net', 7200, 'v2', gen_random_uuid()), null;
+  insert into _res (label, ok, detail)
+  select 'R5-3 touch de outro owner é rejeitado',
+         not tom_flow_touch('conv-R5@s.whatsapp.net', 7200, 'v1', f.flow_token), null;
+  insert into _res (label, ok, detail)
+  select 'R5-3 touch com owner+token corretos funciona',
+         tom_flow_touch('conv-R5@s.whatsapp.net', 7200, 'v2', f.flow_token), null;
+
+  -- TTL vencido: a consulta única marca expirado e NÃO devolve dono para rotear
+  update tom_flow_ownership set interactive_until = now() - interval '1 minute' where id = f.id;
+  select * into g from tom_flow_active_for_conversation('conv-R5@s.whatsapp.net');
+  insert into _res (label, ok, detail) values
+    ('R5-3 expirado não devolve owner p/ rota', g.owner is null, coalesce(g.owner,'(nulo)')),
+    ('R5-3 expirado é sinalizado', g.expired = true, g.expired::text);
+
+  -- set_phase também exige token
+  insert into _res (label, ok, detail)
+  select 'R5-3 set_phase com token errado é rejeitado',
+         (select outcome from tom_flow_set_phase('task',ent,'draining', gen_random_uuid())) = 'stale_token', null;
+end $$;
+
+-- ============ R5-4 — governança: escrita só pelas RPCs ============
+-- service_role com INSERT/UPDATE direto contorna token, lease e máquina de estados.
+-- As RPCs são SECURITY DEFINER: escrevem sem precisar do privilégio do chamador.
+insert into _res (label, ok, detail)
+select 'R5-4 service_role SEM ' || p || ' direto em ' || t,
+       not has_table_privilege('service_role', t, p), t || '/' || p
+from unnest(array['tom_router_test.tom_message_ownership','tom_router_test.tom_flow_ownership',
+                  'tom_router_test.tom_operations','tom_router_test.tom_operation_steps']) t,
+     unnest(array['INSERT','UPDATE','DELETE']) p;
+
+insert into _res (label, ok, detail)
+select 'R5-4 service_role mantém SELECT em ' || t, has_table_privilege('service_role', t, 'SELECT'), t
+from unnest(array['tom_router_test.tom_message_ownership','tom_router_test.tom_flow_ownership',
+                  'tom_router_test.tom_operations','tom_router_test.tom_operation_steps']) t;
+
+-- e as RPCs continuam escrevendo mesmo sem o privilégio direto
+do $$
+declare r record;
+begin
+  select * into r from tom_route_claim_inbound('wa-R5-gov','v1');
+  insert into _res (label, ok, detail) values
+    ('R5-4 RPC ainda escreve (SECURITY DEFINER)', r.outcome='claimed', r.outcome);
 end $$;
 
 -- ============================ resultado ============================
