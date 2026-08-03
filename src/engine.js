@@ -10938,6 +10938,13 @@ async function processMessage(phone, text, raw = {}) {
               taskTitle: typeof it.task_title === 'string' ? it.task_title : null,
               taskId: typeof it.task_id === 'string' ? it.task_id : null,
               reminderTime: typeof it.reminder_time === 'string' ? it.reminder_time : null,
+              // A3/rodada 2 (Alfredo): quando já existe lembrete de mesmo nome com OUTRO
+              // calendário, o serviço devolve a pergunta em vez de escolher sozinho. A
+              // resposta da pessoa volta aqui como on_conflict — é o que faz a pergunta
+              // ter execução. Sem isso a conversa entra em loop honesto: pergunta que
+              // nunca resolve. Valor fora do enum é ignorado (volta a perguntar).
+              onConflict: (it.on_conflict === 'keep_habit' || it.on_conflict === 'adjust_habit')
+                ? it.on_conflict : null,
             });
           } catch (err) {
             console.error('[TaskToHabit] throw:', err.message);

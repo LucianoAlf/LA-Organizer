@@ -193,6 +193,63 @@ async function cenario4() {
   check('texto mostra os DOIS calendários', /todo dia/.test(txt) && /toda segunda/.test(txt));
 }
 
+async function cenario5() {
+  console.log('\n[5] A3/rodada 2 — o conflito precisa RESOLVER na resposta seguinte');
+  // keep_habit: a pessoa quer o lembrete como está
+  const tk = `${PREFIX} keep`;
+  const tplK = await novaSerie(tk, 'FREQ=WEEKLY;BYDAY=MO');
+  const hk = await novoHabito(tk, 'daily', null, { time: '09:00', is_active: true });
+  const rk = await convertTaskToHabit({ supabase: sb, collaboratorId: ADMIN, taskTitle: tk, onConflict: 'keep_habit' });
+  const { data: hkAfter } = await sb.from('habits').select('frequency, custom_days').eq('id', hk).single();
+  const ek = await estadoSerie(tplK);
+  console.log('  keep_habit → ' + renderConversionResult(rk));
+  check('keep_habit converteu', rk.ok === true, rk.reason);
+  check('keep_habit NÃO mexeu no calendário do lembrete', hkAfter.frequency === 'daily' && hkAfter.custom_days === null);
+  check('keep_habit encerrou a série', ek.encerrada === true && ek.abertas === 0);
+  check('keep_habit descreve o calendário mantido', /todo dia/.test(renderConversionResult(rk)));
+
+  // adjust_habit: a pessoa quer o lembrete no calendário da rotina
+  const ta = `${PREFIX} adjust`;
+  const tplA = await novaSerie(ta, 'FREQ=WEEKLY;BYDAY=MO');
+  const ha = await novoHabito(ta, 'daily', null, { time: '09:00', is_active: true });
+  const ra = await convertTaskToHabit({ supabase: sb, collaboratorId: ADMIN, taskTitle: ta, onConflict: 'adjust_habit' });
+  const { data: haAfter } = await sb.from('habits').select('frequency, custom_days').eq('id', ha).single();
+  const ea = await estadoSerie(tplA);
+  console.log('  adjust_habit → ' + renderConversionResult(ra));
+  check('adjust_habit converteu', ra.ok === true, ra.reason);
+  check('adjust_habit alinhou o calendário', haAfter.frequency === 'custom_days' && JSON.stringify(haAfter.custom_days) === '[1]',
+    `${haAfter.frequency} ${JSON.stringify(haAfter.custom_days)}`);
+  check('adjust_habit encerrou a série', ea.encerrada === true && ea.abertas === 0);
+
+  // adjust que aborta depois: calendário volta ao original
+  const tr = `${PREFIX} adjrb`;
+  const tplR = await novaSerie(tr, 'FREQ=WEEKLY;BYDAY=MO');
+  const hr = await novoHabito(tr, 'daily', null, { time: '09:00', is_active: true });
+  const rr = await convertTaskToHabit({ supabase: semEncerrar(sb), collaboratorId: ADMIN, taskTitle: tr, onConflict: 'adjust_habit' });
+  const { data: hrAfter } = await sb.from('habits').select('frequency, custom_days').eq('id', hr).single();
+  const er = await estadoSerie(tplR);
+  check('ajuste abortado NÃO deixa calendário alterado', hrAfter.frequency === 'daily' && hrAfter.custom_days === null,
+    `${hrAfter.frequency} ${JSON.stringify(hrAfter.custom_days)}`);
+  check('ajuste abortado não encerra a série', er.encerrada === false, rr.reason);
+}
+
+async function cenario6() {
+  console.log('\n[6] C3 — frequência que o dispatcher não dispara (custom)');
+  const titulo = `${PREFIX} c3`;
+  const tpl = await novaSerie(titulo, 'FREQ=DAILY');
+  const hid = await novoHabito(titulo, 'custom', [1, 2, 3, 4, 5, 6, 7], { time: '09:00', is_active: true });
+  const r = await convertTaskToHabit({ supabase: sb, collaboratorId: ADMIN, taskTitle: titulo });
+  const depois = await estadoSerie(tpl);
+  console.log('  ' + renderConversionResult(r));
+  check('não trocou a tarefa por um lembrete morto', r.ok === false && r.reason === 'habit_conflict', r.reason);
+  check('série intacta', depois.encerrada === false);
+  check('texto não oferece "manter" (seria manter algo que não toca)', !/mantenho o lembrete como está/.test(renderConversionResult(r)));
+  // e o ajuste conserta
+  const r2 = await convertTaskToHabit({ supabase: sb, collaboratorId: ADMIN, taskTitle: titulo, onConflict: 'adjust_habit' });
+  const { data: hAfter } = await sb.from('habits').select('frequency').eq('id', hid).single();
+  check('adjust_habit consertou a frequência morta', r2.ok === true && hAfter.frequency === 'daily', `${r2.reason} ${hAfter.frequency}`);
+}
+
 async function cleanup() {
   console.log('\n--- limpeza ---');
   const ids = [...new Set(criadas.habits)];
@@ -213,6 +270,8 @@ async function cleanup() {
     await cenario2();
     await cenario3();
     await cenario4();
+    await cenario5();
+    await cenario6();
   } catch (e) {
     console.error('ERRO:', e.message);
     falhas++;

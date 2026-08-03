@@ -72,7 +72,7 @@ function isoDowOfYmd(ymd) {
  * @param {string} [p.reminderTime] horário pedido ('HH:MM')
  * @returns {Promise<object>} {ok, reason?, habit?, template?, cancelled?, reusedHabit?, timeWasDefaulted?, candidates?}
  */
-async function convertTaskToHabit({ supabase, collaboratorId, taskTitle, taskId, reminderTime } = {}) {
+async function convertTaskToHabit({ supabase, collaboratorId, taskTitle, taskId, reminderTime, onConflict } = {}) {
   if (!supabase || !collaboratorId) return { ok: false, reason: 'missing_target' };
   const wantTitle = normTitle(taskTitle);
   if (!taskId && !wantTitle) return { ok: false, reason: 'missing_target' };
@@ -135,36 +135,71 @@ async function convertTaskToHabit({ supabase, collaboratorId, taskTitle, taskId,
   // Como não há transação, a garantia é: escreve → RELÊ o banco → se não bateu, DESFAZ o que
   // este serviço criou e reporta. `undo` só guarda o que foi criado AQUI: hábito preexistente
   // reusado não é meu para apagar.
-  const undo = { habitId: null, reminderId: null, habitPrev: null, reminderReactivatedId: null };
+  const undo = { habitId: null, reminderId: null, habitPrev: null, reminderReactivatedId: null, habitSchedPrev: null };
+  //
+  //    C2 (Alfredo, rodada 2): esta leitura engolia o erro e seguia com habitRow=null —
+  //    "não consegui ler" virava "não existe", e o serviço criava um hábito NOVO por cima
+  //    de um que já existia. Erro transitório (rede/RLS) produziria duplicata permanente,
+  //    e não há unique em habits(collaborator_id,name) pra segurar. Erro aqui aborta.
   let habitRow = null;
   let reusedHabit = false;
-  try {
-    const { data: hs } = await supabase
-      .from('habits')
-      .select('id, name, frequency, custom_days, is_active, notify_whatsapp')
-      .eq('collaborator_id', collaboratorId)
-      .eq('is_active', true)
-      .limit(200);
+  {
+    let hs = null;
+    try {
+      const res = await supabase
+        .from('habits')
+        .select('id, name, frequency, custom_days, is_active, notify_whatsapp')
+        .eq('collaborator_id', collaboratorId)
+        .eq('is_active', true)
+        .limit(200);
+      if (res.error) return { ok: false, reason: 'db_error', detail: `ler hábitos: ${res.error.message}`, before };
+      hs = res.data;
+    } catch (err) {
+      return { ok: false, reason: 'db_error', detail: `ler hábitos: ${err.message}`, before };
+    }
     const wanted = normTitle(target.title);
     habitRow = (hs || []).find((h) => normTitle(h.name) === wanted) || null;
     reusedHabit = !!habitRow;
-  } catch (_) { /* sem hábito prévio → cria */ }
+  }
 
   // 5.05) A3 (Alfredo, 03/08): reusar por NOME sem olhar o calendário era desvio de produto
   //       e confabulação. Tarefa semanal de segunda + hábito diário de mesmo nome: o serviço
   //       encerrava a tarefa, mantinha o hábito diário e anunciava "toda segunda" — um
   //       calendário que não existe em lugar nenhum. Calendários diferentes agora são
   //       CONFLITO: não converte, não encerra nada, mostra os dois e devolve a decisão.
-  if (habitRow && !schedulesEquivalent(habitRow, sched)) {
-    return {
-      ok: false,
-      reason: 'habit_conflict',
-      template: { id: target.id, title: target.title },
-      habitSchedule: { frequency: habitRow.frequency, custom_days: habitRow.custom_days },
-      taskSchedule: { frequency: sched.frequency, custom_days: sched.custom_days },
-      habit: { id: habitRow.id, name: habitRow.name },
-      before,
-    };
+  //
+  //       Rodada 2: a pergunta precisava de EXECUÇÃO do outro lado. Perguntar "mantenho ou
+  //       ajusto?" sem handler é loop honesto — não corrompe dado, mas nunca resolve, e
+  //       repete a armadilha de FIN-MSG-PROMETE-PREVIA (mensagem que ensina comando é
+  //       contrato). `onConflict` é esse contrato: a resposta da pessoa volta como marker.
+  //
+  //       C3: o CHECK do banco aceita frequency='custom', mas o inSchedule() do dispatcher
+  //       só trata daily/weekdays/weekly/custom_days — 'custom' cai no `return false` e o
+  //       lembrete NUNCA toca. Reusar um hábito assim seria encerrar a tarefa em troca de
+  //       um lembrete morto, então isso também é conflito (e `adjust_habit` conserta).
+  const habitDispatchable = !habitRow || isDispatchableFrequency(habitRow.frequency);
+  if (habitRow && (!habitDispatchable || !schedulesEquivalent(habitRow, sched))) {
+    if (onConflict === 'adjust_habit') {
+      undo.habitSchedPrev = { id: habitRow.id, frequency: habitRow.frequency, custom_days: habitRow.custom_days };
+      const { error: adjErr } = await supabase.from('habits')
+        .update({ frequency: sched.frequency, custom_days: sched.custom_days }).eq('id', habitRow.id);
+      if (adjErr) return { ok: false, reason: 'db_error', detail: `ajustar calendário: ${adjErr.message}`, before };
+      habitRow = { ...habitRow, frequency: sched.frequency, custom_days: sched.custom_days };
+    } else if (onConflict !== 'keep_habit' || !habitDispatchable) {
+      // 'keep_habit' não é oferecido quando o calendário atual não dispara — manter um
+      // lembrete morto e encerrar a tarefa deixaria a pessoa sem nada.
+      return {
+        ok: false,
+        reason: 'habit_conflict',
+        template: { id: target.id, title: target.title },
+        habitSchedule: { frequency: habitRow.frequency, custom_days: habitRow.custom_days },
+        taskSchedule: { frequency: sched.frequency, custom_days: sched.custom_days },
+        habitDispatchable,
+        habit: { id: habitRow.id, name: habitRow.name },
+        before,
+      };
+    }
+    // 'keep_habit' com calendário disparável: segue sem tocar no hábito.
   }
 
   // 5.1) Hábito reusado com aviso DESLIGADO: religar é o próprio pedido da pessoa
@@ -292,20 +327,25 @@ async function convertTaskToHabit({ supabase, collaboratorId, taskTitle, taskId,
     };
   }
 
+  // A3: o calendário EFETIVO é o do hábito quando ele é reusado — é ele que dispara. Só o
+  // hábito criado agora tem o calendário derivado da RRULE. Uma fonte só para o texto E
+  // para o log: com `sched` no log, um `keep_habit` registrava o calendário da TAREFA
+  // enquanto o lembrete tocava no do hábito — observabilidade contando outra história.
+  const efetivo = (reusedHabit && habitRow.frequency)
+    ? { frequency: habitRow.frequency, custom_days: habitRow.custom_days || null }
+    : { frequency: sched.frequency, custom_days: sched.custom_days };
+
   console.log(`[TaskToHabit] convertido tpl=${String(target.id).slice(0, 8)} habit=${String(habitRow.id).slice(0, 8)} ` +
-    `freq=${sched.frequency}${sched.custom_days ? JSON.stringify(sched.custom_days) : ''}@${time} ` +
-    `reusado=${reusedHabit} | serie_aberta ${before.serieAberta}→${after.serieAberta} | total_cobravel ${before.totalAberto}→${after.totalAberto}`);
+    `freq=${efetivo.frequency}${efetivo.custom_days ? JSON.stringify(efetivo.custom_days) : ''}@${time} ` +
+    `reusado=${reusedHabit}${onConflict ? ` on_conflict=${onConflict}` : ''} | ${formatMeasureDelta(before, after)}`);
 
   return {
     ok: true,
     habit: {
       id: habitRow.id,
       name: habitRow.name || target.title,
-      // A3: o calendário reportado é o do HÁBITO REUSADO quando existe — é ele que dispara.
-      // Só o hábito criado agora tem o calendário derivado da RRULE. Descrever a tarefa em
-      // vez do que está salvo era anunciar um calendário inexistente.
-      frequency: reusedHabit && habitRow.frequency ? habitRow.frequency : sched.frequency,
-      custom_days: reusedHabit && habitRow.frequency ? (habitRow.custom_days || null) : sched.custom_days,
+      frequency: efetivo.frequency,
+      custom_days: efetivo.custom_days,
       time,
     },
     template: { id: target.id, title: target.title },
@@ -375,6 +415,23 @@ function scheduleDaySet(frequency, customDays) {
   return [];
 }
 
+// C3: frequências que o inSchedule() do dispatcher realmente trata. O CHECK do banco
+// aceita 'custom' também, mas o dispatcher cai no `return false` — hábito com essa
+// frequência é lembrete morto. Esta lista é o contrato REAL, não o do banco.
+const DISPATCHABLE_FREQUENCIES = new Set(['daily', 'weekdays', 'weekly', 'custom_days']);
+
+/** O dispatcher consegue disparar essa frequência? (C3) */
+function isDispatchableFrequency(freq) {
+  return DISPATCHABLE_FREQUENCIES.has(String(freq || '').toLowerCase());
+}
+
+/** Formata a medição pro log sem transformar "não medi" em zero. (C1) */
+function formatMeasureDelta(before, after) {
+  const n = (m) => (m && m.ok ? m.serieAberta : '?');
+  const t = (m) => (m && m.ok ? m.totalAberto : '?');
+  return `serie_aberta ${n(before)}→${n(after)} | total_cobravel ${t(before)}→${t(after)}`;
+}
+
 /** Dois calendários disparam nos mesmos dias? (A3) */
 function schedulesEquivalent(a, b) {
   const sa = scheduleDaySet(a && a.frequency, a && a.custom_days);
@@ -425,6 +482,14 @@ async function rollback(supabase, undo) {
       await supabase.from('habit_reminders').delete().eq('habit_id', undo.habitId);
       const { error } = await supabase.from('habits').delete().eq('id', undo.habitId);
       if (error) residue.push(`habits:${undo.habitId}`); else done.push('hábito');
+    }
+    if (undo.habitSchedPrev) {
+      // A3/rodada 2: calendário do hábito que este serviço ajustou — volta ao original
+      const { error } = await supabase.from('habits')
+        .update({ frequency: undo.habitSchedPrev.frequency, custom_days: undo.habitSchedPrev.custom_days })
+        .eq('id', undo.habitSchedPrev.id);
+      if (error) residue.push(`habits.schedule:${undo.habitSchedPrev.id}`);
+      else done.push('calendário do hábito');
     }
     if (undo.habitPrev) {
       // hábito preexistente que este serviço religou: volta ao estado que a pessoa tinha
@@ -512,7 +577,13 @@ function renderConversionResult(r) {
     case 'habit_conflict': {
       const doHabito = describeSchedule(r.habitSchedule && r.habitSchedule.frequency, r.habitSchedule && r.habitSchedule.custom_days);
       const daTarefa = describeSchedule(r.taskSchedule && r.taskSchedule.frequency, r.taskSchedule && r.taskSchedule.custom_days);
-      return `_você já tem um lembrete *${(r.habit && r.habit.name) || ''}* que toca ${doHabito}, e essa rotina é ${daTarefa}. Não quis mexer sem te perguntar: mantenho o lembrete como está e encerro a tarefa, ou ajusto o lembrete pra ${daTarefa}?_`;
+      const nome = (r.habit && r.habit.name) || '';
+      // C3: calendário que o dispatcher não dispara — "manter" não é saída, seria trocar a
+      // tarefa por um lembrete morto. Aqui só existe uma opção honesta.
+      if (r.habitDispatchable === false) {
+        return `_você já tem um lembrete *${nome}*, mas ele está com uma configuração que não chega a tocar. Quer que eu ajuste ele pra ${daTarefa} e encerre a tarefa?_`;
+      }
+      return `_você já tem um lembrete *${nome}* que toca ${doHabito}, e essa rotina é ${daTarefa}. Não quis mexer sem te perguntar: mantenho o lembrete como está e encerro a tarefa, ou ajusto o lembrete pra ${daTarefa}?_`;
     }
     default:
       return '_não consegui fazer essa conversão agora — tenta de novo em instantes._';
@@ -521,5 +592,6 @@ function renderConversionResult(r) {
 
 module.exports = {
   convertTaskToHabit, normalizeHabitTime, normTitle, isoDowOfYmd,
-  describeSchedule, renderConversionResult, DEFAULT_TIME,
+  describeSchedule, renderConversionResult, formatMeasureDelta, isDispatchableFrequency,
+  schedulesEquivalent, DEFAULT_TIME,
 };

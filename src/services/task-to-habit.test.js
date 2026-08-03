@@ -502,6 +502,115 @@ test('A3 — no reuso, o texto usa o calendário DO HÁBITO (o que está salvo),
   assert.ok(/de seg a sex/.test(renderConversionResult(r)));
 });
 
+// ================= AUDITORIA CRUZADA — Alfredo, rodada 2 (03/08) =================
+
+// ---------- A3 (reaberto): a pergunta precisa ter execução do outro lado ----------
+// "mantenho como está ou ajusto?" sem handler = loop honesto: não estraga dado, mas nunca
+// resolve. Mesma armadilha do FIN-MSG-PROMETE-PREVIA: mensagem que ensina comando É
+// contrato. Ou a escolha executa, ou a pergunta não pode ser feita.
+test('A3.1 — on_conflict "keep_habit": mantém o calendário do lembrete e encerra a série', async () => {
+  const tasks = [
+    T({ id: 'tpl', title: 'Revisar agenda', recurrence_rule: 'FREQ=WEEKLY;BYDAY=MO' }),
+    T({ id: 'i1', title: 'Revisar agenda', recurrence_parent_id: 'tpl' }),
+  ];
+  const habits = [{ id: 'h1', collaborator_id: OWNER, name: 'Revisar agenda', is_active: true, notify_whatsapp: true, frequency: 'daily', custom_days: null }];
+  const r = await convertTaskToHabit({
+    supabase: makeDb({ tasks, habits }), collaboratorId: OWNER, taskTitle: 'Revisar agenda', onConflict: 'keep_habit',
+  });
+  assert.strictEqual(r.ok, true, r.reason);
+  assert.strictEqual(habits[0].frequency, 'daily', 'mexeu no hábito que a pessoa mandou manter');
+  assert.strictEqual(tasks[0].series_ended_at != null, true, 'não encerrou a série');
+  assert.strictEqual(r.habit.frequency, 'daily');
+  assert.ok(/todo dia/.test(renderConversionResult(r)), 'texto não descreve o calendário mantido');
+});
+
+test('A3.2 — on_conflict "adjust_habit": alinha o lembrete ao calendário da rotina', async () => {
+  const tasks = [T({ id: 'tpl', title: 'Revisar agenda', recurrence_rule: 'FREQ=WEEKLY;BYDAY=MO' })];
+  const habits = [{ id: 'h1', collaborator_id: OWNER, name: 'Revisar agenda', is_active: true, notify_whatsapp: true, frequency: 'daily', custom_days: null }];
+  const r = await convertTaskToHabit({
+    supabase: makeDb({ tasks, habits }), collaboratorId: OWNER, taskTitle: 'Revisar agenda', onConflict: 'adjust_habit',
+  });
+  assert.strictEqual(r.ok, true, r.reason);
+  assert.strictEqual(habits[0].frequency, 'custom_days');
+  assert.deepStrictEqual(habits[0].custom_days, [1]);
+  assert.ok(/toda segunda/.test(renderConversionResult(r)));
+});
+
+test('A3.3 — ajuste que aborta depois devolve o calendário original do hábito', async () => {
+  const tasks = [T({ id: 'tpl', title: 'Revisar agenda', recurrence_rule: 'FREQ=WEEKLY;BYDAY=MO' })];
+  const habits = [{ id: 'h1', collaborator_id: OWNER, name: 'Revisar agenda', is_active: true, notify_whatsapp: true, frequency: 'daily', custom_days: null }];
+  const r = await convertTaskToHabit({
+    supabase: makeDb({ tasks, habits, fail: { tasks: 'update_silent' } }),
+    collaboratorId: OWNER, taskTitle: 'Revisar agenda', onConflict: 'adjust_habit',
+  });
+  assert.strictEqual(r.reason, 'series_end_failed');
+  assert.strictEqual(habits[0].frequency, 'daily', 'deixou o calendário alterado sem converter');
+  assert.strictEqual(habits[0].custom_days, null);
+});
+
+test('A3.4 — a pergunta do conflito nomeia exatamente as duas saídas que existem', () => {
+  const s = renderConversionResult({
+    ok: false, reason: 'habit_conflict',
+    habit: { name: 'Revisar agenda' },
+    habitSchedule: { frequency: 'daily', custom_days: null },
+    taskSchedule: { frequency: 'custom_days', custom_days: [1] },
+  });
+  assert.ok(/mantenho|manter/i.test(s) && /ajusto|ajustar/i.test(s), 'não oferece as duas saídas');
+});
+
+// ---------- C1: medição indisponível não pode se passar por 0 ----------
+test('C1 — before que não pôde ser medido não vira "0→0"', async () => {
+  const tasks = [T({ id: 'tpl', title: 'Conferir caixa', recurrence_rule: 'FREQ=DAILY' })];
+  const r = await convertTaskToHabit({ supabase: makeDb({ tasks }), collaboratorId: OWNER, taskTitle: 'Conferir caixa' });
+  assert.strictEqual(r.ok, true, r.reason);
+  assert.strictEqual(r.before.ok, true, 'medição boa precisa se declarar boa');
+  assert.strictEqual(r.after.ok, true);
+});
+
+// ---------- C2: erro de leitura do hábito ≠ "não existe" ----------
+test('C2 — falha ao ler hábitos NÃO cria hábito novo (evita duplicata sob erro transitório)', async () => {
+  const habits = [{ id: 'h1', collaborator_id: OWNER, name: 'Alongar', is_active: true, notify_whatsapp: true, frequency: 'daily', custom_days: null }];
+  const tasks = [T({ id: 'tpl', title: 'Alongar', recurrence_rule: 'FREQ=DAILY' })];
+  const r = await convertTaskToHabit({
+    supabase: makeDb({ tasks, habits, fail: { habits: 'select' } }),
+    collaboratorId: OWNER, taskTitle: 'Alongar',
+  });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.reason, 'db_error');
+  assert.strictEqual(habits.length, 1, 'duplicou o hábito por causa de erro de leitura');
+  assert.strictEqual(tasks[0].series_ended_at, null);
+});
+
+// ---------- C3: frequência que o dispatcher não dispara ----------
+// O CHECK do banco aceita 'custom', mas o inSchedule() do dispatcher só trata
+// daily/weekdays/weekly/custom_days — 'custom' cai no return false e NUNCA toca.
+test('C3 — não reusa hábito com frequência que o dispatcher ignora', async () => {
+  const tasks = [T({ id: 'tpl', title: 'Alongar', recurrence_rule: 'FREQ=DAILY' })];
+  const habits = [{ id: 'h1', collaborator_id: OWNER, name: 'Alongar', is_active: true, notify_whatsapp: true, frequency: 'custom', custom_days: [1, 2, 3, 4, 5, 6, 7] }];
+  const r = await convertTaskToHabit({ supabase: makeDb({ tasks, habits }), collaboratorId: OWNER, taskTitle: 'Alongar' });
+  assert.strictEqual(r.ok, false, 'reusou um lembrete que nunca dispara');
+  assert.strictEqual(r.reason, 'habit_conflict');
+  assert.strictEqual(tasks[0].series_ended_at, null);
+});
+
+test('C3 — adjust_habit conserta a frequência morta em vez de deixá-la lá', async () => {
+  const tasks = [T({ id: 'tpl', title: 'Alongar', recurrence_rule: 'FREQ=DAILY' })];
+  const habits = [{ id: 'h1', collaborator_id: OWNER, name: 'Alongar', is_active: true, notify_whatsapp: true, frequency: 'custom', custom_days: [1, 2, 3, 4, 5, 6, 7] }];
+  const r = await convertTaskToHabit({
+    supabase: makeDb({ tasks, habits }), collaboratorId: OWNER, taskTitle: 'Alongar', onConflict: 'adjust_habit',
+  });
+  assert.strictEqual(r.ok, true, r.reason);
+  assert.strictEqual(habits[0].frequency, 'daily', 'deixou frequência que o dispatcher ignora');
+});
+
+test('C3 — nunca cria hábito com frequência fora do que o dispatcher dispara', async () => {
+  const habits = [];
+  const tasks = [T({ id: 'tpl', title: 'Nova rotina', recurrence_rule: 'FREQ=WEEKLY;BYDAY=SA' })];
+  const r = await convertTaskToHabit({ supabase: makeDb({ tasks, habits }), collaboratorId: OWNER, taskTitle: 'Nova rotina' });
+  assert.strictEqual(r.ok, true, r.reason);
+  assert.ok(['daily', 'weekdays', 'weekly', 'custom_days'].includes(habits[0].frequency), habits[0].frequency);
+});
+
 // ---------- resolução por id e por título aproximado ----------
 test('resolve por task_id quando o título vem diferente', async () => {
   const tasks = [T({ id: 'tpl-123', title: 'Verificar presenças do dia anterior', recurrence_rule: 'FREQ=DAILY' })];
