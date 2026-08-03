@@ -63,12 +63,45 @@ RACE_OK=1
 [ "$OPS" = "1" ] || RACE_OK=0
 
 echo
+echo "=== R8: check-then-write sob concorrência REAL (duas conexões) ==="
+# O teste sequencial não alcança este bug: ele mora na janela entre validar e escrever.
+# Aqui a conexão A trava a linha e, enquanto B está no meio da função, muda a posse.
+# Com lock + revalidação + row_count, B precisa recusar. Sem, B escreve zero linhas e
+# ainda devolve ok=true — o recibo mais perigoso que existe: falso e silencioso.
+WA8="wa-r8-$$"
+TOK=$(psql_q -c "set search_path=$SCHEMA,public; select lease_token from tom_route_claim_inbound('$WA8','v2');")
+
+# A: segura a linha por 2s e então entrega a posse a outro worker (token novo)
+psql "$DATABASE_URL" -qAt -c "set search_path=$SCHEMA,public;
+  begin;
+  select 1 from tom_message_ownership where wa_message_id='$WA8' for update;
+  select pg_sleep(2);
+  update tom_message_ownership
+     set lease_token = gen_random_uuid(), lease_until = now() + interval '5 minutes'
+   where wa_message_id='$WA8';
+  commit;" >/dev/null 2>&1 &
+A_PID=$!
+sleep 0.5
+
+# B: worker antigo tenta fechar com o token que ERA dele
+B_OUT=$(psql "$DATABASE_URL" -qAt -c "set search_path=$SCHEMA,public;
+  select ok::text || '/' || reason from tom_route_finish_inbound('$WA8','v2','completed',null,'$TOK'::uuid);" 2>&1)
+wait $A_PID
+
+FINAL=$(psql_q -c "select status from $SCHEMA.tom_message_ownership where wa_message_id='$WA8';")
+echo "worker antigo recebeu: $B_OUT (esperado false/...)"
+echo "status final da mensagem: $FINAL (esperado != completed)"
+RACE2_OK=1
+case "$B_OUT" in true/*) RACE2_OK=0 ;; esac
+[ "$FINAL" != "completed" ] || RACE2_OK=0
+
+echo
 echo "=== limpeza ==="
 psql_q -c "drop schema if exists $SCHEMA cascade;" >/dev/null
 LEFT=$(psql_q -c "select count(*) from information_schema.schemata where schema_name='$SCHEMA';")
 echo "schema restante: $LEFT (esperado 0)"
 
-if [ "$RES" = "0" ] && [ "$RACE_OK" = "1" ] && [ "$LEFT" = "0" ] && [ "$SQL_ERRORS" = "0" ]; then
+if [ "$RES" = "0" ] && [ "$RACE_OK" = "1" ] && [ "${RACE2_OK:-0}" = "1" ] && [ "$LEFT" = "0" ] && [ "$SQL_ERRORS" = "0" ]; then
   echo; echo "=== TODAS AS CHECAGENS PASSARAM ==="; exit 0
 fi
-echo; echo "=== FALHAS: asserções=$RES corrida_ok=$RACE_OK schema_restante=$LEFT erros_sql=$SQL_ERRORS ==="; exit 1
+echo; echo "=== FALHAS: asserções=$RES corrida_ok=$RACE_OK check_then_write_ok=${RACE2_OK:-0} schema_restante=$LEFT erros_sql=$SQL_ERRORS ==="; exit 1

@@ -256,7 +256,7 @@ begin
      conversation_key, quoted_wa_message_id, route_reason, route_conflict, operation_id)
   values
     (p_wa_message_id, 'inbound', p_owner, 'claimed',
-     now() + make_interval(secs => greatest(p_lease_seconds, 1)), v_token, 1, p_phone, p_collaborator,
+     clock_timestamp() + make_interval(secs => greatest(p_lease_seconds, 1)), v_token, 1, p_phone, p_collaborator,
      p_conversation, p_quoted, p_reason, p_conflict, v_op)
   on conflict (wa_message_id) do nothing
   returning true into v_ins;
@@ -284,7 +284,7 @@ begin
   end if;
 
   -- lease ainda válido → outro processo está no meio do trabalho
-  if v_row.lease_until is not null and v_row.lease_until > now() then
+  if v_row.lease_until is not null and v_row.lease_until > clock_timestamp() then
     return query select 'in_progress_elsewhere'::text, v_row.owner, v_row.operation_id, null::uuid, v_steps;
     return;
   end if;
@@ -299,7 +299,7 @@ begin
   -- R4-1: nova posse = TOKEN NOVO. O worker anterior, se voltar, não age mais.
   update public.tom_message_ownership
      set status      = 'claimed',
-         lease_until = now() + make_interval(secs => greatest(p_lease_seconds, 1)),
+         lease_until = clock_timestamp() + make_interval(secs => greatest(p_lease_seconds, 1)),
          lease_token = v_token,
          attempts    = attempts + 1
    where wa_message_id = p_wa_message_id;
@@ -323,32 +323,50 @@ language plpgsql
 security definer
 set search_path = public
 as $$
-declare v_n int;
+declare v_m public.tom_message_ownership%rowtype; v_n int;
 begin
-  -- R7-1: o lease so vale se o PROPRIO dono tambem for barrado quando o prazo acaba.
-  -- Antes, um worker que travou, perdeu o prazo e acordou antes de outro retomar
-  -- renovava o proprio lease — o prazo nunca existia de verdade. Renovar e privilegio
-  -- de quem AINDA tem a posse; quem perdeu, reivindica de novo (e ganha token novo).
+-- R8 (concorrencia): validar e depois escrever, sem trava, e uma janela aberta. Entre a
+-- leitura e o UPDATE outro worker retoma a posse; o UPDATE do antigo afeta ZERO linhas e
+-- a funcao ainda devolvia sucesso — recibo falso e silencioso, o pior tipo.
+-- Tres travas juntas: (1) SELECT ... FOR UPDATE serializa a linha de ownership;
+-- (2) a revalidacao usa clock_timestamp(), porque now() e o instante de INICIO da
+-- transacao e nao avanca enquanto se espera no lock — um lease vencido pareceria vivo;
+-- (3) o resultado do UPDATE e conferido por row_count: zero linha nunca vira 'ok'.
+  select * into v_m from public.tom_message_ownership m
+   where m.wa_message_id = p_wa_message_id
+   for update;
+
+  if v_m.id is null then
+    return query select false, 'not_found'::text;
+    return;
+  end if;
+
+  -- R7-1: renovar e privilegio de quem AINDA tem a posse; prazo vencido nao se auto-renova.
+  if v_m.owner is distinct from p_owner
+     or v_m.lease_token is distinct from p_lease_token
+     or v_m.status not in ('claimed','processing')
+     or v_m.lease_until is null
+     or v_m.lease_until <= clock_timestamp() then
+    return query select false, 'stale_lease'::text;
+    return;
+  end if;
+
   update public.tom_message_ownership
-     set lease_until = now() + make_interval(secs => greatest(p_lease_seconds, 1)),
+     set lease_until = clock_timestamp() + make_interval(secs => greatest(p_lease_seconds, 1)),
          status      = 'processing'
    where wa_message_id = p_wa_message_id
-     and owner  = p_owner
-     and status in ('claimed','processing')
-     and lease_token is not distinct from p_lease_token
-     and lease_until is not null
-     and lease_until > now();
+     and lease_token is not distinct from p_lease_token;
   get diagnostics v_n = row_count;
-  if v_n > 0 then
-    return query select true, 'ok'::text;
-  else
-    return query select false, 'stale_lease'::text;
+  if v_n = 0 then
+    return query select false, 'lost_race'::text;
+    return;
   end if;
+  return query select true, 'ok'::text;
 end;
 $$;
 
 comment on function public.tom_route_heartbeat(text,text,int,uuid) is
-  'Renova o lease. Exige posse ATUAL e lease VIVO: prazo vencido nao se auto-renova.';
+  'Renova o lease. Exige posse ATUAL e lease VIVO, sob trava de linha.';
 
 create function public.tom_route_finish_inbound(
   p_wa_message_id text,
@@ -361,34 +379,40 @@ language plpgsql
 security definer
 set search_path = public
 as $$
-declare v_m public.tom_message_ownership%rowtype;
+declare v_m public.tom_message_ownership%rowtype; v_n int;
 begin
   if p_status not in ('completed','failed') then
     raise exception 'status invalido: %', p_status;
   end if;
 
+-- R8 (concorrencia): validar e depois escrever, sem trava, e uma janela aberta. Entre a
+-- leitura e o UPDATE outro worker retoma a posse; o UPDATE do antigo afeta ZERO linhas e
+-- a funcao ainda devolvia sucesso — recibo falso e silencioso, o pior tipo.
+-- Tres travas juntas: (1) SELECT ... FOR UPDATE serializa a linha de ownership;
+-- (2) a revalidacao usa clock_timestamp(), porque now() e o instante de INICIO da
+-- transacao e nao avanca enquanto se espera no lock — um lease vencido pareceria vivo;
+-- (3) o resultado do UPDATE e conferido por row_count: zero linha nunca vira 'ok'.
   select * into v_m from public.tom_message_ownership m
    where m.wa_message_id = p_wa_message_id
-     and m.owner = p_owner
-     and m.lease_token is not distinct from p_lease_token;
+   for update;
 
-  if v_m.id is null then
+  if v_m.id is null or v_m.owner is distinct from p_owner
+     or v_m.lease_token is distinct from p_lease_token then
     return query select false, 'stale_token'::text;
     return;
   end if;
 
   -- R7-1: quem perdeu o prazo nao decide o desfecho — nem 'completed' nem 'failed'.
-  -- Outro worker pode ja ter retomado; declarar desfecho aqui sobrescreveria trabalho
-  -- alheio. O caminho e reivindicar de novo.
   if v_m.status not in ('claimed','processing')
-     or v_m.lease_until is null or v_m.lease_until <= now() then
+     or v_m.lease_until is null
+     or v_m.lease_until <= clock_timestamp() then
     return query select false, 'stale_lease'::text;
     return;
   end if;
 
   -- R6-2: 'completed' e RECIBO — e recibo suprime retry. Com passo aberto, o efeito
-  -- ficou pela metade e ninguem mais volta nessa mensagem: a pessoa fica sem resposta e
-  -- sem rastro. 'failed' segue permitido: e o caminho de devolver para retentativa.
+  -- ficou pela metade e ninguem mais volta nessa mensagem. Agora sob a trava, entao
+  -- ninguem consegue abrir passo entre esta checagem e a escrita.
   if p_status = 'completed' and exists (
     select 1 from public.tom_operation_steps st
      where st.operation_id = v_m.operation_id
@@ -403,17 +427,21 @@ begin
          finished_at = now(),
          last_error  = p_error,
          -- 'failed' solta o lease de proposito: pode ser retomado pelo mesmo dono.
-         lease_until = case when p_status = 'completed' then null else now() end
+         lease_until = case when p_status = 'completed' then null else clock_timestamp() end
    where wa_message_id = p_wa_message_id
-     and owner = p_owner
      and lease_token is not distinct from p_lease_token;
+  get diagnostics v_n = row_count;
+  if v_n = 0 then
+    return query select false, 'lost_race'::text;
+    return;
+  end if;
 
   return query select true, 'ok'::text;
 end;
 $$;
 
 comment on function public.tom_route_finish_inbound(text,text,text,text,uuid) is
-  'completed = recibo, com posse viva e todos os passos resolvidos; failed devolve para retentativa.';
+  'completed = recibo, sob trava, com posse viva e passos resolvidos; failed devolve para retentativa.';
 
 create function public.tom_route_assert_lease(
   p_wa_message_id text,
@@ -430,7 +458,8 @@ as $$
        and m.owner = p_owner
        and m.lease_token is not distinct from p_lease_token
        and m.status in ('claimed','processing')
-       and (m.lease_until is null or m.lease_until > now())
+       and m.lease_until is not null
+       and m.lease_until > clock_timestamp()
   );
 $$;
 
@@ -454,12 +483,19 @@ declare
 begin
   -- R5-1: o PASSO e o que autoriza a mutacao. Fencing so em heartbeat/finish deixava o
   -- worker velho abrir e fechar passo — ou seja, agir — depois de perder a posse.
+  -- R8: trava a linha de ownership ANTES de validar. Sem isso, a posse podia mudar
+  -- entre a checagem e a escrita do passo. clock_timestamp() porque now() nao avanca
+  -- enquanto se espera no lock.
+  perform 1 from public.tom_message_ownership m
+   where m.operation_id = p_operation_id for update;
+
   if not exists (
     select 1 from public.tom_message_ownership m
      where m.operation_id = p_operation_id
        and m.lease_token is not distinct from p_lease_token
        and m.status in ('claimed','processing')
-       and (m.lease_until is null or m.lease_until > now())
+       and m.lease_until is not null
+       and m.lease_until > clock_timestamp()
   ) then
     return query select 'stale_lease'::text, null::jsonb;
     return;
@@ -510,12 +546,19 @@ set search_path = public
 as $$
 declare v_n int;
 begin
+  -- R8: trava a linha de ownership ANTES de validar. Sem isso, a posse podia mudar
+  -- entre a checagem e a escrita do passo. clock_timestamp() porque now() nao avanca
+  -- enquanto se espera no lock.
+  perform 1 from public.tom_message_ownership m
+   where m.operation_id = p_operation_id for update;
+
   if not exists (
     select 1 from public.tom_message_ownership m
      where m.operation_id = p_operation_id
        and m.lease_token is not distinct from p_lease_token
        and m.status in ('claimed','processing')
-       and (m.lease_until is null or m.lease_until > now())
+       and m.lease_until is not null
+       and m.lease_until > clock_timestamp()
   ) then
     return false;
   end if;
@@ -552,19 +595,26 @@ language plpgsql
 security definer
 set search_path = public
 as $$
-declare v_row public.tom_operation_steps%rowtype;
+declare v_row public.tom_operation_steps%rowtype; v_n int;
 begin
   if p_status not in ('done','failed') then
     raise exception 'status invalido: %', p_status;
   end if;
 
   -- R5-1: fechar passo e declarar efeito. Exige a posse atual.
+  -- R8: trava a linha de ownership ANTES de validar. Sem isso, a posse podia mudar
+  -- entre a checagem e a escrita do passo. clock_timestamp() porque now() nao avanca
+  -- enquanto se espera no lock.
+  perform 1 from public.tom_message_ownership m
+   where m.operation_id = p_operation_id for update;
+
   if not exists (
     select 1 from public.tom_message_ownership m
      where m.operation_id = p_operation_id
        and m.lease_token is not distinct from p_lease_token
        and m.status in ('claimed','processing')
-       and (m.lease_until is null or m.lease_until > now())
+       and m.lease_until is not null
+       and m.lease_until > clock_timestamp()
   ) then
     return query select false, 'stale_lease'::text;
     return;
@@ -600,6 +650,11 @@ begin
    where tom_operation_steps.operation_id = p_operation_id
      and tom_operation_steps.step_key = p_step_key
      and tom_operation_steps.status = 'in_progress';
+  get diagnostics v_n = row_count;
+  if v_n = 0 then
+    return query select false, 'lost_race'::text;
+    return;
+  end if;
 
   return query select true, 'ok'::text;
 end;
@@ -636,12 +691,18 @@ begin
   -- R5-1: quando o outbound pertence a uma operacao, exige a posse atual. Sem isto, o
   -- worker que perdeu a lease ainda registrava saida — e saida registrada vira alvo de
   -- reply roteavel, ou seja, o zumbi entrava de volta no fluxo.
+  if p_operation_id is not null then
+    perform 1 from public.tom_message_ownership m
+     where m.operation_id = p_operation_id for update;
+  end if;
+
   if p_operation_id is not null and not exists (
     select 1 from public.tom_message_ownership m
      where m.operation_id = p_operation_id
        and m.lease_token is not distinct from p_lease_token
        and m.status in ('claimed','processing')
-       and (m.lease_until is null or m.lease_until > now())
+       and m.lease_until is not null
+       and m.lease_until > clock_timestamp()
   ) then
     return query select 'stale_lease'::text, null::uuid;
     return;
@@ -731,10 +792,10 @@ security definer
 set search_path = public
 as $$
   select f.id,
-         case when f.interactive_until is not null and f.interactive_until <= now()
+         case when f.interactive_until is not null and f.interactive_until <= clock_timestamp()
               then null else f.owner end,
          f.phase,
-         (f.interactive_until is not null and f.interactive_until <= now())
+         (f.interactive_until is not null and f.interactive_until <= clock_timestamp())
     from public.tom_flow_ownership f
    where f.conversation_key = p_conversation
      and f.closed_at is null
