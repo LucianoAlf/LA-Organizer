@@ -30,11 +30,20 @@ fi
 
 fail() { echo "  FALHOU: $*"; FAILED=1; }
 
+# Rede de segurança: o schema descartável some mesmo se o script morrer no meio — e se
+# NÃO sair, isso vira falha explícita. Resíduo silencioso no banco de produção é
+# justamente o que a promessa "descartável" não pode quebrar.
 limpar() {
+  local code=$? left
   psql "$DATABASE_URL" -qAt -c "drop schema if exists $SCHEMA cascade;" >/dev/null 2>&1
+  left="$(psql "$DATABASE_URL" -qAt -c "select count(*) from information_schema.schemata where schema_name='$SCHEMA';" 2>/dev/null)" || left="?"
+  if [ "$left" != "0" ]; then
+    echo "  ATENÇÃO: schema '$SCHEMA' NÃO foi removido (restante=$left) — resíduo no banco"
+    code=1
+  fi
   rm -rf "$TMPD"
+  exit $code
 }
-# o schema descartável some mesmo se isto aqui explodir no meio
 trap limpar EXIT
 
 # Roda SQL exigindo sucesso. Resultado em $SQL_OUT; erro derruba o cenário.
@@ -92,14 +101,32 @@ fi
 
 echo "=== testes de privilégio, corrida, lease/crash e fluxo ==="
 # Um bloco DO que aborta não registra os testes dele em _res — e o resumo sairia verde
-# com asserções que nunca rodaram (falso verde da rodada 4). Qualquer ERROR derruba.
-psql "$DATABASE_URL" -f "$TESTS" -q -P pager=off >"$TMPD/tests.out" 2>&1
+# com asserções que nunca rodaram (falso verde da rodada 4).
+#
+# RODADA 12: esta chamada era a última que ainda decidia por INTERPRETAÇÃO DE TEXTO
+# (grep '^psql:.*ERROR:') em vez de sucesso verificável — dependia do formato exato da
+# mensagem e do idioma/versão do psql, e deixava o processo terminar sem contrato. Agora
+# é igual a todas as outras: ON_ERROR_STOP=1, stderr em arquivo próprio, exit code
+# conferido. O _res continua existindo, mas para asserção LÓGICA, não para saber se rodou.
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$TESTS" -q -P pager=off \
+  >"$TMPD/tests.out" 2>"$TMPD/tests.err"; TESTS_RC=$?
 cat "$TMPD/tests.out"
-SQL_ERRORS=$(grep -c '^psql:.*ERROR:' "$TMPD/tests.out" || true)
-echo "erros SQL durante os testes: $SQL_ERRORS (esperado 0)"
-[ "$SQL_ERRORS" = "0" ] || fail "houve $SQL_ERRORS erro(s) de SQL nos blocos de teste"
+if [ $TESTS_RC -ne 0 ]; then
+  fail "suíte SQL saiu com $TESTS_RC: $(head -3 "$TMPD/tests.err" | tr '\n' ' ')"
+else
+  echo "  OK   suíte SQL executou até o fim (exit 0)"
+fi
 sql "contar falhas" "select count(*) filter (where not ok) from $SCHEMA._res;" && \
   assert_eq "0" "$SQL_OUT" "asserções falhas"
+# Piso de cobertura: com ON_ERROR_STOP a suíte aborta em erro (e o rc acima pega), mas
+# um bloco comentado por engano cairia calado. O total nunca deve DIMINUIR.
+sql "total de asserções" "select count(*) from $SCHEMA._res;" && {
+  if [ "${SQL_OUT:-0}" -ge 181 ] 2>/dev/null; then
+    echo "  OK   asserções executadas = $SQL_OUT (piso 181)"
+  else
+    fail "cobertura caiu: $SQL_OUT asserções (piso 181)"
+  fi
+}
 
 echo
 echo "=== corrida REAL: 8 conexões simultâneas no mesmo inbound ==="
@@ -241,8 +268,10 @@ sql "C4 passo" "select status from $SCHEMA.tom_operation_steps where operation_i
 
 echo
 echo "=== limpeza ==="
-psql "$DATABASE_URL" -qAt -c "drop schema if exists $SCHEMA cascade;" >/dev/null 2>&1
-LEFT=$(psql "$DATABASE_URL" -qAt -c "select count(*) from information_schema.schemata where schema_name='$SCHEMA';" 2>/dev/null || echo "erro")
+# drop explicito aqui para que o resultado entre no veredito; o trap repete como rede.
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -qAt -c "drop schema if exists $SCHEMA cascade;" >/dev/null 2>"$TMPD/drop.err"   || fail "drop do schema falhou: $(head -2 "$TMPD/drop.err" | tr '
+' ' ')"
+LEFT="$(psql "$DATABASE_URL" -qAt -c "select count(*) from information_schema.schemata where schema_name='$SCHEMA';" 2>/dev/null)" || LEFT="erro"
 assert_eq "0" "$LEFT" "schema restante"
 
 echo
