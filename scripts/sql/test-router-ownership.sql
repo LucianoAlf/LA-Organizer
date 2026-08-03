@@ -239,14 +239,14 @@ begin
   insert into _res (label, ok, detail) values ('R4-1 heartbeat com token atual funciona', ok, null);
 
   -- e o velho também não pode fechar a mensagem
-  ok := tom_route_finish_inbound('wa-R4-fence','v2','completed',null, r1.lease_token);
+  select f.ok into ok from tom_route_finish_inbound('wa-R4-fence','v2','completed',null, r1.lease_token) f;
   insert into _res (label, ok, detail) values ('R4-1 finish com token VELHO é rejeitado', not ok, null);
 
   insert into _res (label, ok, detail)
   select 'R4-1 mensagem NÃO foi fechada pelo worker velho', status <> 'completed', status
     from tom_message_ownership where wa_message_id='wa-R4-fence';
 
-  ok := tom_route_finish_inbound('wa-R4-fence','v2','completed',null, r2.lease_token);
+  select f.ok into ok from tom_route_finish_inbound('wa-R4-fence','v2','completed',null, r2.lease_token) f;
   insert into _res (label, ok, detail) values ('R4-1 finish com token atual funciona', ok, null);
 end $$;
 
@@ -361,7 +361,7 @@ begin
   -- worker VELHO tenta FECHAR o passo do atual
   insert into _res (label, ok, detail)
   select 'R5-1 step_finish com token velho é rejeitado',
-         not tom_operation_step_finish(r2.operation_id,'mutar_tarefa','{}'::jsonb,'done',null, r1.lease_token), null;
+         (select ok from tom_operation_step_finish(r2.operation_id,'mutar_tarefa','{}'::jsonb,'done',null, r1.lease_token)) = false, null;
 
   insert into _res (label, ok, detail)
   select 'R5-1 passo continua aberto após tentativa do velho', status='in_progress', status
@@ -498,6 +498,92 @@ begin
   select * into r from tom_route_claim_inbound('wa-R5-gov','v1');
   insert into _res (label, ok, detail) values
     ('R5-4 RPC ainda escreve (SECURITY DEFINER)', r.outcome='claimed', r.outcome);
+end $$;
+
+-- ============ R6 — os dois bypasses do protocolo de recuperação ============
+-- needs_verification só vale se NÃO houver caminho para contorná-lo. Duas portas
+-- ficaram abertas: fechar o passo alheio, e fechar o inbound com passo pendente.
+
+do $$
+declare r1 record; r2 record; s record; f record;
+begin
+  -- crash com passo órfão
+  select * into r1 from tom_route_claim_inbound('wa-R6-bypass','v2');
+  perform tom_operation_step_begin(r1.operation_id,'mutar', r1.lease_token);
+  update tom_message_ownership set lease_until = now() - interval '1 minute' where wa_message_id='wa-R6-bypass';
+  select * into r2 from tom_route_claim_inbound('wa-R6-bypass','v2');   -- retomado, token NOVO
+
+  -- BYPASS 1: pular o verify e fechar o passo direto com o token novo
+  select * into f from tom_operation_step_finish(r2.operation_id,'mutar','{"x":1}'::jsonb,'done',null, r2.lease_token);
+  insert into _res (label, ok, detail) values
+    ('R6-1 step_finish NÃO fecha passo aberto por outra posse', f.ok = false, coalesce(f.reason,'(sem reason)'));
+
+  insert into _res (label, ok, detail)
+  select 'R6-1 passo órfão continua in_progress', status='in_progress', status
+    from tom_operation_steps where operation_id=r2.operation_id and step_key='mutar';
+
+  select * into s from tom_operation_step_begin(r2.operation_id,'mutar', r2.lease_token);
+  insert into _res (label, ok, detail) values
+    ('R6-1 e continua exigindo verificação', s.outcome='needs_verification', s.outcome);
+
+  -- BYPASS 2: marcar o inbound como concluído com passo pendente
+  select * into f from tom_route_finish_inbound('wa-R6-bypass','v2','completed',null, r2.lease_token);
+  insert into _res (label, ok, detail) values
+    ('R6-2 finish_inbound(completed) bloqueia com passo pendente', f.ok = false, coalesce(f.reason,'(sem reason)'));
+
+  insert into _res (label, ok, detail)
+  select 'R6-2 inbound NÃO ficou completed', status <> 'completed', status
+    from tom_message_ownership where wa_message_id='wa-R6-bypass';
+
+  -- e o retry continua possível (a pessoa não fica sem resposta)
+  update tom_message_ownership set lease_until = now() - interval '1 minute' where wa_message_id='wa-R6-bypass';
+  select * into r2 from tom_route_claim_inbound('wa-R6-bypass','v2');
+  insert into _res (label, ok, detail) values
+    ('R6-2 mensagem segue retomável', r2.outcome='resumed', r2.outcome);
+
+  -- caminho legítimo: resolver o passo e SÓ ENTÃO fechar
+  insert into _res (label, ok, detail)
+  select 'R6-2 verify resolve o passo',
+         tom_operation_step_verify(r2.operation_id,'mutar', true, '{"via":"releitura"}'::jsonb, r2.lease_token), null;
+  select * into f from tom_route_finish_inbound('wa-R6-bypass','v2','completed',null, r2.lease_token);
+  insert into _res (label, ok, detail) values
+    ('R6-2 com tudo resolvido, finish passa', f.ok = true, coalesce(f.reason,'(sem reason)'));
+end $$;
+
+do $$
+declare r record; f record;
+begin
+  -- 'failed' NÃO pode ser bloqueado por passo pendente: é justamente o caminho de
+  -- devolver a mensagem para retentativa quando algo ficou pela metade.
+  select * into r from tom_route_claim_inbound('wa-R6-failed','v2');
+  perform tom_operation_step_begin(r.operation_id,'mutar', r.lease_token);
+  select * into f from tom_route_finish_inbound('wa-R6-failed','v2','failed','erro no meio', r.lease_token);
+  insert into _res (label, ok, detail) values
+    ('R6-2 failed com passo pendente é PERMITIDO', f.ok = true, coalesce(f.reason,'(sem reason)'));
+
+  select * into r from tom_route_claim_inbound('wa-R6-failed','v2');
+  insert into _res (label, ok, detail) values
+    ('R6-2 e a mensagem volta retomável', r.outcome='resumed', r.outcome);
+end $$;
+
+do $$
+declare r record; f record;
+begin
+  -- caminho normal, sem crash: quem abriu fecha
+  select * into r from tom_route_claim_inbound('wa-R6-normal','v2');
+  perform tom_operation_step_begin(r.operation_id,'mutar', r.lease_token);
+  select * into f from tom_operation_step_finish(r.operation_id,'mutar','{"ok":true}'::jsonb,'done',null, r.lease_token);
+  insert into _res (label, ok, detail) values
+    ('R6-1 quem ABRIU o passo fecha normalmente', f.ok = true, coalesce(f.reason,'(sem reason)'));
+
+  select * into f from tom_route_finish_inbound('wa-R6-normal','v2','completed',null, r.lease_token);
+  insert into _res (label, ok, detail) values
+    ('R6-2 sem passo pendente, finish passa', f.ok = true, coalesce(f.reason,'(sem reason)'));
+
+  -- token velho não fecha nem com passo em ordem
+  select * into f from tom_route_finish_inbound('wa-R6-normal','v2','completed',null, gen_random_uuid());
+  insert into _res (label, ok, detail) values
+    ('R6-2 token errado continua rejeitado', f.ok = false, coalesce(f.reason,'(sem reason)'));
 end $$;
 
 -- ============================ resultado ============================

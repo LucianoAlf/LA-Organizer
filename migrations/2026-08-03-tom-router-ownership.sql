@@ -348,33 +348,57 @@ create function public.tom_route_finish_inbound(
   p_status        text default 'completed',
   p_error         text default null,
   p_lease_token   uuid default null
-) returns boolean
+) returns table (ok boolean, reason text)
 language plpgsql
 security definer
 set search_path = public
 as $$
-declare v_n int;
+declare v_m public.tom_message_ownership%rowtype;
 begin
   if p_status not in ('completed','failed') then
-    raise exception 'status inválido: %', p_status;
+    raise exception 'status invalido: %', p_status;
   end if;
+
+  select * into v_m from public.tom_message_ownership m
+   where m.wa_message_id = p_wa_message_id
+     and m.owner = p_owner
+     and m.lease_token is not distinct from p_lease_token;
+
+  if v_m.id is null then
+    return query select false, 'stale_token'::text;
+    return;
+  end if;
+
+  -- R6-2 (bypass): 'completed' e RECIBO — e recibo suprime retry. Com passo aberto, o
+  -- efeito ficou pela metade e ninguem mais volta nessa mensagem: a pessoa fica sem
+  -- resposta e sem rastro. 'failed' segue permitido de proposito: e justamente o caminho
+  -- de devolver a mensagem para retentativa quando algo ficou incompleto.
+  if p_status = 'completed' and exists (
+    select 1 from public.tom_operation_steps st
+     where st.operation_id = v_m.operation_id
+       and st.status = 'in_progress'
+  ) then
+    return query select false, 'open_steps'::text;
+    return;
+  end if;
+
   update public.tom_message_ownership
      set status      = p_status,
          finished_at = now(),
          last_error  = p_error,
-         -- 'failed' solta o lease de propósito: pode ser retomado pelo mesmo dono.
+         -- 'failed' solta o lease de proposito: pode ser retomado pelo mesmo dono.
          lease_until = case when p_status = 'completed' then null else now() end
    where wa_message_id = p_wa_message_id
      and owner = p_owner
      and lease_token is not distinct from p_lease_token;
-  get diagnostics v_n = row_count;
-  return v_n > 0;
+
+  return query select true, 'ok'::text;
 end;
 $$;
 
--- R5-1: o worker chama isto IMEDIATAMENTE antes de enviar qualquer coisa ao WhatsApp.
--- Nao elimina a janela entre checar e enviar, mas transforma "worker zumbi manda
--- mensagem" de silencioso em detectavel.
+comment on function public.tom_route_finish_inbound(text,text,text,text,uuid) is
+  'completed = recibo, e SO com todos os passos resolvidos; failed devolve para retentativa.';
+
 create function public.tom_route_assert_lease(
   p_wa_message_id text,
   p_owner         text,
@@ -507,16 +531,17 @@ create function public.tom_operation_step_finish(
   p_status       text  default 'done',
   p_error        text  default null,
   p_lease_token  uuid  default null
-) returns boolean
+) returns table (ok boolean, reason text)
 language plpgsql
 security definer
 set search_path = public
 as $$
-declare v_n int;
+declare v_row public.tom_operation_steps%rowtype;
 begin
   if p_status not in ('done','failed') then
-    raise exception 'status inválido: %', p_status;
+    raise exception 'status invalido: %', p_status;
   end if;
+
   -- R5-1: fechar passo e declarar efeito. Exige a posse atual.
   if not exists (
     select 1 from public.tom_message_ownership m
@@ -525,28 +550,38 @@ begin
        and m.status in ('claimed','processing')
        and (m.lease_until is null or m.lease_until > now())
   ) then
-    return false;
+    return query select false, 'stale_lease'::text;
+    return;
   end if;
+
+  select * into v_row from public.tom_operation_steps st
+   where st.operation_id = p_operation_id and st.step_key = p_step_key;
+
+  if v_row.id is null then
+    return query select false, 'not_found'::text;
+    return;
+  end if;
+
+  -- R6-1 (bypass): ter a posse ATUAL nao autoriza fechar passo que OUTRA posse abriu.
+  -- Sem isto, o worker retomado pulava needs_verification e marcava done sem provar
+  -- nada — a barreira de recuperacao virava opcional para quem soubesse o atalho.
+  if v_row.opened_by_token is distinct from p_lease_token then
+    return query select false, 'not_step_owner'::text;
+    return;
+  end if;
+
   update public.tom_operation_steps
      set status = p_status, result = p_result, error = p_error, finished_at = now()
    where tom_operation_steps.operation_id = p_operation_id
      and tom_operation_steps.step_key = p_step_key;
-  get diagnostics v_n = row_count;
-  return v_n > 0;
+
+  return query select true, 'ok'::text;
 end;
 $$;
 
-comment on function public.tom_operation_step_begin(uuid,text,uuid) is
-  'Reivindica passo com efeito. outcome=done → NÃO reexecutar; use o result guardado.';
+comment on function public.tom_operation_step_finish(uuid,text,jsonb,text,text,uuid) is
+  'Fecha passo. So quem ABRIU (mesmo token) fecha; orfao de crash passa por step_verify.';
 
-comment on function public.tom_route_finish_inbound(text,text,text,text,uuid) is
-  'completed = recibo; failed devolve a mensagem para retentativa do MESMO dono.';
-
--- -------------------------------------------------------------------------------------
--- outbound — R3-B1: resultado tipado. Colisão silenciosa aqui esconderia justamente o
--- caso perigoso (mesmo wa_message_id com outro dono).
--- outcome: 'inserted' | 'already_recorded_same' | 'ownership_conflict' | 'missing_message_id'
--- -------------------------------------------------------------------------------------
 create function public.tom_record_outbound(
   p_wa_message_id text,
   p_owner         text,
