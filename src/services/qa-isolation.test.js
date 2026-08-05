@@ -86,3 +86,57 @@ test('as quatro fronteiras concordam sobre o mesmo alvo', () => {
     assert.equal(entraEmGovernanca(alvo), true);
   }
 });
+
+// ---- Fronteira 5: o TURNO nasce marcado (achado de 05/08) ----
+// A trava de saída age sobre o MODO do turno, não sobre o destino. Só que nada marcava o
+// turno do WEBHOOK: `enterTurn` recebia { waMessageId, leaseToken, operationId } e ponto.
+// Resultado — no cenário A, a resposta conversacional do TOM saía com `turn.qa` undefined,
+// a trava devolvia `sem_replay` e o envio ia para o transporte. Nada vazou porque o
+// laboratório aponta a UAZAPI para um sink morto; isso é rede do laboratório, não trava de
+// código, e era exatamente o que eu tinha afirmado estar fechado.
+const { contextoDeTurno } = require('./qa-isolation');
+
+test('remetente da faixa reservada abre turno de QA com o run da execução', () => {
+  const ctx = contextoDeTurno('5500000000001', { runId: 'piso-abc' });
+  assert.equal(ctx.qa, true, 'turno do webhook não nasce marcado: a resposta escapa da trava');
+  assert.equal(ctx.runId, 'piso-abc');
+});
+
+test('sem run declarado o turno ainda é QA — marcar o modo é o que segura o envio', () => {
+  assert.equal(contextoDeTurno('5500000000009').qa, true);
+  assert.equal(contextoDeTurno('5500000000009').runId, null);
+});
+
+test('[produção] pessoa real não abre turno de QA em hipótese nenhuma', () => {
+  for (const p of ['5521999998888', '552199999888', '5500', '', null, undefined, '5510000000001']) {
+    assert.deepEqual(contextoDeTurno(p, { runId: 'x' }), {}, `virou QA: ${p}`);
+  }
+});
+
+// ---- Fronteira 6: ESCOPO DA VARREDURA (achado de 05/08, rodando o cenário A) ----
+// O cobrador varre `tasks` inteira por `remind_at <= agora`. Com o relógio adiantado pelo
+// laboratório, ele selecionou 24 lembretes de PESSOAS REAIS e tentou mandar. A trava de
+// saída barrou os 24 (fail-closed, 0 POST, nenhum reminded_at escrito) — funcionou em
+// combate. Mas depender só dela é depender da última porta: o certo é o laboratório nem
+// selecionar linha de gente. Sem isto, o `.limit(50)` do cobrador também estoura com dado
+// real e a tarefa do cenário pode nem entrar na página — verde por sorte.
+const { idsDePerfisQA } = require('./qa-isolation');
+
+test('escopo de varredura em replay devolve só os perfis da faixa reservada', async () => {
+  const sb = { from: () => ({ select: async () => ({ data: [
+    { id: 'qa1', phone: '5500000000001' },
+    { id: 'real', phone: '5521968060404' },
+    { id: 'qa2', phone: '5500000000002' },
+  ], error: null }) }) };
+  assert.deepEqual(await idsDePerfisQA(sb), ['qa1', 'qa2']);
+});
+
+test('sem perfil de QA a varredura fica VAZIA, não irrestrita — fail-closed', async () => {
+  const sb = { from: () => ({ select: async () => ({ data: [{ id: 'real', phone: '5521968060404' }], error: null }) }) };
+  assert.deepEqual(await idsDePerfisQA(sb), []);
+});
+
+test('banco fora do ar devolve lista vazia — em replay, calar é o lado seguro', async () => {
+  const sb = { from: () => ({ select: async () => { throw new Error('sem conexão'); } }) };
+  assert.deepEqual(await idsDePerfisQA(sb), []);
+});

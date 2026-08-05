@@ -39,6 +39,13 @@ export TOM_QA_PHONES="${TOM_QA_PHONES:-5500000000001,5500000000002,5500000000003
 export TOM_QA_EVIDENCE_FILE="${TOM_QA_EVIDENCE_FILE:-$TMPD/evidencia.jsonl}"
 export PORT_LAB="$PORTA"
 
+# O run é gerado AQUI porque dois processos precisam concordar sobre ele: o servidor abre o
+# turno conversacional (é lá que a fala do TOM nasce) e o cenário roda o cron. Run gerado
+# dentro do cenário deixaria a fala do TOM órfã — foi assim que o laboratório ficou sem
+# enxergar o que ele disse.
+export TOM_QA_RUN_ID="${CENARIO}-$(date +%s)-$$"
+echo "=== run: $TOM_QA_RUN_ID ==="
+
 echo "=== instância efêmera na $PORTA (QA=${TOM_QA_PHONES%%,*}...) ==="
 (
   export PORT="$PORTA"

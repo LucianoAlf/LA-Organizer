@@ -18,6 +18,7 @@ const pendingPdf = require('./services/pending-pdf');
 const boletoParse = require('./finance/boleto-parse');
 const inboundClaim = require('./services/inbound-claim');
 const turnClaim = require('./services/turn-claim');
+const qaIsolation = require('./services/qa-isolation');
 
 // Fatia 3 do router — claim de inbound. DESLIGADO por padrão: liga com
 // TOM_ROUTER_CLAIM=1 no .env. Reversível sem deploy, porque o modo de falha desta
@@ -251,7 +252,15 @@ async function processWebhookBody(body) {
     if (_claim.degraded) {
       console.warn(`[Claim] degradado (${_claim.reason}${_claim.detail ? ': ' + _claim.detail : ''}) — processa assim mesmo`);
     }
-    const _turno = { waMessageId: _waId, leaseToken: _claim.leaseToken, operationId: _claim.operationId };
+    // O turno de REPLAY nasce marcado aqui. A trava de saída decide pelo MODO do turno, e
+    // sem esta marcação a resposta conversacional inteira sai como se fosse produção — foi
+    // o furo do cenário A (05/08): nada vazou só porque o laboratório aponta a UAZAPI para
+    // um sink morto, o que é rede do laboratório, não trava de código.
+    // Em produção é no-op: nenhum telefone real cai na faixa reservada 5500…
+    const _turno = {
+      waMessageId: _waId, leaseToken: _claim.leaseToken, operationId: _claim.operationId,
+      ...qaIsolation.contextoDeTurno(phone, { runId: process.env.TOM_QA_RUN_ID || null }),
+    };
     turnClaim.enterTurn(_turno);
     // Nota: se a mensagem morrer num early-return de mídia (PDF com senha, download
     // falho), o claim fica aberto e vence pelo lease (300s). Preferi isso a espalhar

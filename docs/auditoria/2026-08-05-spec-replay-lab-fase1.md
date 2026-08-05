@@ -405,3 +405,67 @@ enquanto a falha-fechada não estiver provada nas seis rotas, nenhuma injeção 
 | autenticação do webhook | `webhook.js` → `verifyWebhookSignature` | pronta, modo permissive |
 | colaborador de fachada | `Admin` / `00000000000` | existe — **não será usado**, perfis QA são dedicados |
 | catálogo de incidentes | `tom_audit_findings` (76 casos classificados) | pronto para virar cenário |
+
+---
+
+# Achados de EXECUÇÃO (05/08, depois do carimbo da v3)
+
+A spec foi carimbada no papel. Rodar derrubou duas afirmações dela — as duas minhas.
+
+## 1. O turno do webhook nunca nascia marcado como QA
+`REPLAY-TURNO-WEBHOOK-SEM-MARCA-QA`
+
+A trava de saída decide pelo **modo do turno** (`turn.qa`) — foi assim que a redesenhei
+depois de o Alfredo apontar que decidir por destino deixaria "recado a terceiro" vazar. Só
+que nada marcava o turno: o `enterTurn` do `webhook.js` montava
+`{ waMessageId, leaseToken, operationId }` e ponto.
+
+Consequência: em replay, **toda a resposta conversacional** era avaliada como produção
+(`motivo: sem_replay`) e seguia para o transporte. Nada vazou porque o laboratório aponta
+`UAZAPI_URL` para um sink morto — isso é rede do laboratório, **não é a trava de código**
+que eu afirmei estar fechada na Fatia 3.
+
+Efeito secundário, e o que me fez achar: a fala do TOM não gerava evidência nenhuma. Eu
+tinha reportado isso como "o histórico não registrou"; a causa era uma camada antes.
+
+**Fix:** `qaIsolation.contextoDeTurno(phone)` → `{ qa: true, runId }` para remetente na
+faixa reservada `5500…`, espalhado no turno **antes** dos fallbacks de mídia (são 13 saídas
+que respondem antes da fila). Em produção é no-op: nenhum telefone real cai na faixa.
+
+## 2. O cobrador, com o relógio adiantado, varre o mundo real
+`REPLAY-SWEEP-SEM-ESCOPO-VARRE-PRODUCAO`
+
+Primeira execução do cenário A com o cobrador certo: **24 lembretes de pessoas reais**
+selecionados e tentados. A trava barrou os 24 — fail-closed, 0 POST, nenhum `reminded_at`
+escrito, 0 fan-out de grupo. Funcionou em combate, e é a melhor evidência que temos de que
+ela vale o que custou.
+
+Mas depender só dela é depender da última porta. E tem um segundo efeito, pior porque é
+silencioso: o `.limit(50)` do sweep, com dado real de produção, pode empurrar a tarefa da
+fixture para fora da página — **verde por sorte**.
+
+**Fix:** `qaIsolation.idsDePerfisQA()` restringe `assigned_to` aos perfis da faixa quando o
+turno é QA. Fail-closed: sem perfil ou banco fora, lista vazia (varredura vazia, não
+irrestrita). Implementação única — sweep novo usa esta, não reimplementa.
+
+## 3. Correções no próprio cenário (falso-verde e falso-vermelho meus)
+
+| O que | Era | Virou |
+|---|---|---|
+| Handler do cron | `remindOperationalTasks` — filtra `due_date = amanhã`, nem lê `remind_at`. "Não cobrou antes" passava por **vacuidade** | `checkReminders`, o único com `.lte('remind_at', …)`; exportado e com relógio injetável |
+| Datas | `'2026-08-05'`/`'2026-08-06'` cravadas. O piso compara a nova data com o relógio de parede: passada a meia-noite o cenário muda de significado sozinho | relativas ao hoje real, em BRT; o dia da semana do pedido é derivado do alvo |
+| Piso | `remind_at === '…T12:00:00.000Z'` — reprovou um piso **correto**: o Postgres devolve `+00:00` | comparação por instante (`Date.parse`) |
+| Contador do cron | delta global de evidências — contou os 24 bloqueios de gente real como "cobrou" | só evidência cujo texto contém o `run_id` (o título da fixture carrega) |
+| Fixture limpa | só `tasks` | + `notifications` da tarefa + `conversation_history` do run (senão a rep N lê a conversa da rep N-1 e a taxa mede contaminação) |
+
+## Estado
+
+**Cenário A: 8/8 verificações, N=2, duas execuções.**
+
+Prova de reversão (`shiftTaskRemindAt` com a guarda desligada, md5 conferido antes e
+depois): `piso_exato` cai, `cron_calado_antes` cai, `cobrou_no_alvo` cai — cobra no
+primeiro tick e depois fica mudo no dia combinado. É a assinatura exata do incidente.
+`due_virou_alvo` e `fala_confere` **continuam verdes**: o prazo anda e o TOM diz a coisa
+certa enquanto o sistema faz a errada. Um teste de conversa sozinho não pegaria isso.
+
+Bateria oficial N=20 em execução.

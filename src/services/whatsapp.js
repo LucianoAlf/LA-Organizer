@@ -231,6 +231,26 @@ function _sb() {
 // id, não é citável nem roteável — bloquear produziria só um efeito visual sem
 // contrapartida no contrato.
 //
+// ---- CAPTURA DA FALA (Replay Lab, 05/08) ----
+// Um laboratório que só confere o banco prova que o TOM AGIU, não o que ele DISSE — e
+// metade dos casos do diagnóstico de 04/08 é sobre a fala ("anotado" sem ter anotado).
+// Ler `conversation_history` não serve: o outbound é escrito por ~20 call sites, cada um
+// decidindo por conta própria se grava, e o que faltar lá vira silêncio indistinguível de
+// "não falou". Aqui é o ponto único por onde toda fala passa.
+//
+// Todas as rotas de fala põem o texto humano no MESMO campo: /send/text e /send/menu em
+// `text`, /send/media usa `text` como legenda, /message/react manda o emoji em `text`.
+// Voz (ptt) não tem texto — e o certo é registrar null, não fabricar fala.
+const LIMITE_TEXTO_QA = 4000;
+
+function textoDoOutbound(payload) {
+  const bruto = payload && typeof payload.text === 'string' ? payload.text : null;
+  if (bruto === null || bruto.trim() === '') return null;
+  if (bruto.length <= LIMITE_TEXTO_QA) return bruto;
+  // Truncar em silêncio seria mentir sobre a fala: a marca diz quanto ficou de fora.
+  return `${bruto.slice(0, LIMITE_TEXTO_QA)}…[+${bruto.length - LIMITE_TEXTO_QA}]`;
+}
+
 // `api` é injetável para que o teste prove o bloqueio ANTES do POST, sem rede.
 async function _postEnviar(rota, payload, { phone, tipo = 'mensagem', api: apiOverride, config, supabase: sbOverride } = {}) {
   const cli = apiOverride || api;
@@ -250,6 +270,7 @@ async function _postEnviar(rota, payload, { phone, tipo = 'mensagem', api: apiOv
     const ev = turnClaim.registrarEvidenciaQA({
       evento: 'destino_proibido', rota, tipo,
       numero: _dest.numero, detalhe: _dest.detalhe, runId: turno.runId || null,
+      texto: textoDoOutbound(payload),
     });
     const msg = `[ReplayLab] destino proibido em replay: ${_dest.numero} (${_dest.detalhe}) rota=${rota}`;
     console.error(msg);
@@ -266,6 +287,7 @@ async function _postEnviar(rota, payload, { phone, tipo = 'mensagem', api: apiOv
     const ev = turnClaim.registrarEvidenciaQA({
       evento: 'outbound_suppressed', rota, tipo,
       numero: _dest.numero, runId: turno.runId || null, idSintetico,
+      texto: textoDoOutbound(payload),
     });
     console.log(`[ReplayLab] outbound_suppressed rota=${rota} tipo=${tipo} destino=${_dest.numero} run=${turno.runId || '-'}`);
     return { bloqueado: true, suprimido: true, qaEvidencia: ev, data: { id: idSintetico } };
@@ -468,4 +490,6 @@ async function sendReaction(phone, messageId, emoji) {
 module.exports = { sendMessage, sendButtons, sendList, sendMedia, setTyping, sendReaction, sendVoice, isAudioMessage, isImageMessage, isDocumentMessage, isVideoMessage, extractText, extractPhone, extractName, extractFileName, extractMessageId, extractQuotedMessage, extractSentMessageId, isIgnorable, getData,
   // exportado para o teste de TRANSPORTE: prova que o bloqueio acontece antes do POST,
   // com um cliente injetado, sem rede.
-  _postEnviar };
+  _postEnviar,
+  // captura da fala no Replay Lab — puro, testável isolado.
+  textoDoOutbound, LIMITE_TEXTO_QA };

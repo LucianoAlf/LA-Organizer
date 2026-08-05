@@ -66,8 +66,38 @@ function entraEmGovernanca(alvo) {
   return !ehQA(alvo);
 }
 
+// Turno: a trava de saída age sobre o MODO do turno, não sobre o destino — então o turno
+// precisa NASCER marcado, no webhook, antes de qualquer resposta. Sem isto a resposta
+// conversacional inteira escapa da trava (achado de 05/08 no cenário A).
+//
+// Só a FAIXA reservada marca, de propósito: o nome `[QA]` só é conhecido depois de
+// consultar o banco, e a marcação precisa acontecer antes dos fallbacks de mídia, que
+// respondem sem passar por lá. Em produção nenhum telefone cai na faixa — no-op.
+function contextoDeTurno(phone, { runId = null } = {}) {
+  if (!ehTelefoneQA(phone)) return {};
+  return { qa: true, runId: runId || null };
+}
+
+// Escopo de VARREDURA em replay. Os cobradores varrem a tabela inteira por data; com o
+// relógio adiantado pelo laboratório, eles selecionam o mundo real. Isto devolve os perfis
+// que um sweep pode enxergar durante um replay — e devolve VAZIO em qualquer dúvida
+// (nenhum perfil, banco fora do ar), porque em replay calar é o lado seguro.
+//
+// Implementação única de propósito: cada sweep que ganhar o guard usa ESTA função. Guard
+// duplicado é como a regra do lembrete acabou existindo no snooze e faltando no
+// reagendamento — a divergência aparece meses depois, num incidente.
+async function idsDePerfisQA(supabase) {
+  try {
+    const { data, error } = await supabase.from('collaborators').select('id, phone');
+    if (error || !data) return [];
+    return data.filter(c => ehTelefoneQA(c.phone)).map(c => c.id);
+  } catch (_) {
+    return [];
+  }
+}
+
 module.exports = {
   ehQA, ehTelefoneQA, ehNomeQA,
-  permiteGrupo, permiteDelegacao, contaNasMetricas, entraEmGovernanca,
-  FAIXA_QA, PREFIXO_NOME_QA,
+  permiteGrupo, permiteDelegacao, contaNasMetricas, entraEmGovernanca, contextoDeTurno,
+  idsDePerfisQA, FAIXA_QA, PREFIXO_NOME_QA,
 };

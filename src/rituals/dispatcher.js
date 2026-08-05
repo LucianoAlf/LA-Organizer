@@ -17,6 +17,8 @@ process.chdir(path.join(__dirname, '..', '..'));
 loadDotEnv(path.join(process.cwd(), '.env'));
 
 const supabase = require('../supabase/client');
+const turnClaim = require('../services/turn-claim');       // modo do turno (replay x produção)
+const qaIsolation = require('../services/qa-isolation');   // escopo de varredura em replay
 const proactiveLink = require('../services/proactive-link'); // LOTE D: vínculo proativo→tarefa
 const announcementsService = require('../services/announcements');
 const { sendRitual, sendCoordinatorReport, getDndState, consolidateMemoryFor, decayExpiredMemories, generateWeeklySummaryFor, getRitualIntroDecision } = require('../engine');
@@ -135,14 +137,17 @@ function loadDotEnv(file) {
 }
 
 // Retorna { hour, minute, dow, ymd } em America/Sao_Paulo.
-function nowSaoPaulo() {
+// `quando` existe para o Replay Lab dirigir o relógio: sem ele, um cenário rodado às 20h
+// cai no quiet-gate noturno e a verificação vira falso-vermelho por hora do dia.
+// Produção chama sem argumento — comportamento idêntico ao de antes.
+function nowSaoPaulo(quando = new Date()) {
   const fmt = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/Sao_Paulo',
     year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit',
     hour12: false, weekday: 'short',
   });
-  const parts = fmt.formatToParts(new Date()).reduce((acc, p) => {
+  const parts = fmt.formatToParts(quando).reduce((acc, p) => {
     acc[p.type] = p.value;
     return acc;
   }, {});
@@ -5309,19 +5314,35 @@ async function checkTaskReminders() {
 // Sprint 11.1: emoji semântico por context (👉 personal / 🔔 work) + título em *negrito*.
 // Sem ⏰: o cron já dispara na hora certa, repetir o horário no texto é redundante.
 // Format: "👉 *Lembrete:* {title}" (personal) | "🔔 *Lembrete:* {title}" (work)
-async function checkReminders() {
-  const nowIso = new Date().toISOString();
+// ESTE é o cobrador do incidente Matheus (04/08): o único handler que seleciona por
+// `remind_at <= agora`. Os primos `remindOperationalTasks`/`remindPersonalTasks` filtram
+// por `due_date = amanhã` e não olham `remind_at` — dirigir um deles num teste dá verde
+// por vacuidade, que foi exatamente o erro da primeira versão do cenário A.
+//
+// `now` e `supabase` são injetáveis para o Replay Lab poder perguntar "e na quinta, ele
+// cobra?" sem esperar até quinta. Produção chama sem argumento: nada muda.
+async function checkReminders(now = new Date(), { supabase: sb = supabase } = {}) {
+  const nowIso = now.toISOString();
   // Cooldown 6h: independente de status, não dispara 2x na mesma janela.
   // Defesa contra task voltar pra pending por bug/race (ocorreu 23/05 com Carol).
-  const cooldownCutoff = new Date(Date.now() - 6 * 3600_000).toISOString();
-  const { data: due, error } = await supabase
+  const cooldownCutoff = new Date(now.getTime() - 6 * 3600_000).toISOString();
+  let consulta = sb
     .from('tasks')
     .select('id, title, description, assigned_to, assigned_group_id, remind_at, status, context, reminded_at, due_date, created_by, creator:collaborators!tasks_created_by_fkey(preferred_name, full_name)')
     .not('remind_at', 'is', null)
     .lte('remind_at', nowIso)
     .not('status', 'in', '(done,cancelled)')
-    .is('reminded_at', null)   // Evita re-disparo: padrão igual a remindEventTasks/Operational/Personal.
-    .limit(50);
+    .is('reminded_at', null);  // Evita re-disparo: padrão igual a remindEventTasks/Operational/Personal.
+  // ESCOPO EM REPLAY. Rodando o cenário A em 05/08, este sweep — com o relógio adiantado
+  // pelo laboratório — selecionou 24 lembretes de PESSOAS REAIS e tentou mandar. A trava de
+  // saída barrou os 24, mas depender dela é depender da última porta: aqui o laboratório
+  // nem seleciona linha de gente. Também protege o `.limit(50)`, que com dado real de
+  // produção pode empurrar a tarefa do cenário para fora da página — verde por sorte.
+  const _turnoAtual = turnClaim.currentTurn();
+  if (_turnoAtual && _turnoAtual.qa === true) {
+    consulta = consulta.in('assigned_to', await qaIsolation.idsDePerfisQA(sb));
+  }
+  const { data: due, error } = await consulta.limit(50);
   if (error) {
     console.error('[Reminders] query err:', error.message);
     return;
@@ -5331,7 +5352,7 @@ async function checkReminders() {
 
   // Resolve phones in batch.
   const ids = [...new Set(due.map(t => t.assigned_to).filter(Boolean))];
-  const { data: collabs } = await supabase
+  const { data: collabs } = await sb
     .from('collaborators').select('id, phone, full_name, is_active').in('id', ids);
   const byId = new Map((collabs || []).map(c => [c.id, c]));
 
@@ -5343,20 +5364,20 @@ async function checkReminders() {
       try {
         const wg = require('../services/work-groups');
         const whatsapp = require('../services/whatsapp'); // escopo local (função pode não ter o require)
-        const members = await wg.membersWithPhones(supabase, t.assigned_group_id);
+        const members = await wg.membersWithPhones(sb, t.assigned_group_id);
         const { groupAuthorDescSuffix, firstNameOf } = require('../utils/group-task-relay');
         const textG = `🔔 *Lembrete (grupo):* ${t.title} — quem puder, pega essa.`
           + groupAuthorDescSuffix({ creatorFirstName: firstNameOf(t.creator), description: t.description });
         let sentG = 0;
         for (const m of members) {
-          const qM = await isQuietNow(m.collaborator_id, nowSaoPaulo(), 'work', { defaultNightGate: false });
+          const qM = await isQuietNow(m.collaborator_id, nowSaoPaulo(now), 'work', { defaultNightGate: false });
           if (qM.quiet) continue;
           try {
-            await proactiveLink.sendAndLink(supabase, { phone: m.phone, content: textG, collaboratorId: m.collaborator_id, refType: 'task', refId: t.id });
+            await proactiveLink.sendAndLink(sb, { phone: m.phone, content: textG, collaboratorId: m.collaborator_id, refType: 'task', refId: t.id });
             sentG++;
           } catch (eS) { console.error('[Reminders] group send err:', eS.message); }
         }
-        await supabase.from('tasks').update({ reminded_at: new Date().toISOString() }).eq('id', t.id);
+        await sb.from('tasks').update({ reminded_at: nowIso }).eq('id', t.id);
         console.log(`[Reminders] group fan-out task=${String(t.id).slice(0,8)} sent=${sentG}/${members.length}`);
       } catch (eG) { console.error('[Reminders] group branch err:', eG.message); }
       continue;
@@ -5374,13 +5395,13 @@ async function checkReminders() {
     const ctxR = t.context === 'personal' ? 'personal' : 'work';
     // defaultNightGate:false — remind_at foi escolhido pelo próprio user (pedido
     // explícito > janela noturna default, que vale só pra proativos do sistema).
-    const qR = await isQuietNow(collab.id, nowSaoPaulo(), ctxR, { defaultNightGate: false });
+    const qR = await isQuietNow(collab.id, nowSaoPaulo(now), ctxR, { defaultNightGate: false });
     if (qR.quiet) {
       console.log(`[Reminders] defer ${String(t.id).slice(0,8)} — quiet ${ctxR} (${qR.reason})`);
       continue; // não marca reminded_at; volta no próximo tick fora do quiet
     }
     // Cooldown 6h independente de status (defesa contra reaberturas silenciosas).
-    const { data: recent } = await supabase
+    const { data: recent } = await sb
       .from('notifications')
       .select('id')
       .eq('reference_id', t.id)
@@ -5396,16 +5417,16 @@ async function checkReminders() {
     const reminderEmoji = t.context === 'personal' ? '👉' : '🔔';
     const text = `${reminderEmoji} *Lembrete:* ${t.title}`;
     try {
-      await proactiveLink.sendAndLink(supabase, { phone: collab.phone, content: text, collaboratorId: collab.id, refType: 'task', refId: t.id });
+      await proactiveLink.sendAndLink(sb, { phone: collab.phone, content: text, collaboratorId: collab.id, refType: 'task', refId: t.id });
       // Marca reminded_at IMEDIATAMENTE após envio — previne re-disparo mesmo se
       // o mark-done falhar (padrão de remindEventTasks / remindOperationalTasks).
-      await supabase.from('tasks').update({ reminded_at: nowIso }).eq('id', t.id);
+      await sb.from('tasks').update({ reminded_at: nowIso }).eq('id', t.id);
       // Sprint 31.13 (Yuri/Kinho 30/05) — só auto-concluir se for lembrete ONE-SHOT puro
       // (SEM due_date). Task com due_date é um afazer real: o lembrete CUTUCA, mas NÃO
       // conclui — senão vira "concluída sem confirmação" (mesma classe do AC-COMPLETE).
       // reminded_at já foi gravado acima, então não re-dispara de qualquer forma.
       if (!t.due_date) {
-        const { error: upErr } = await supabase.from('tasks').update({
+        const { error: upErr } = await sb.from('tasks').update({
           status: 'done',
           completed_at: nowIso,
           completed_by: collab.id,
@@ -5419,7 +5440,7 @@ async function checkReminders() {
         console.log(`[Reminders] fired ${String(t.id).slice(0,8)} "${t.title.slice(0,40)}" → ${collab.phone.slice(-4)} (mantida pending — tem prazo, não one-shot)`);
       }
       // Registra no notifications pra cooldown e auditoria de cobranças.
-      await supabase.from('notifications').insert({
+      await sb.from('notifications').insert({
         collaborator_id: collab.id,
         notification_type: 'task_reminder',
         title: `Lembrete: ${t.title}`,
@@ -5428,7 +5449,7 @@ async function checkReminders() {
         reference_id: t.id,
         channel: 'whatsapp',
         status: 'sent',
-        sent_at: new Date().toISOString(),
+        sent_at: nowIso,
       });
     } catch (err) {
       console.error(`[Reminders] send err for ${String(t.id).slice(0,8)}:`, err.message);
@@ -6010,4 +6031,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { run, drainOutboundQueue, dispatchChecklists, dispatchPersonalRecurrentes, dispatchAnnouncements, remindUnconfirmedAnnouncements, notifyCoordinators, remindEventTasks, remindOperationalTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined, isFirstMondayOfMonth, isLastFridayOfMonth, listLeadership, checkMonthlyPlanning, checkMonthlyClosing, dispatchMonthlyAgenda, expirarReservasVencidas, ceoTeamUnclosedEventsReport, ceoTeamUnclosedTasksReport, perLeaderUnclosedTasksReport, sendGovernanceDigest, buildScorecardDigestSection, sendLeaderGovernanceDigest, buildAdherenceText };
+module.exports = { run, checkReminders, drainOutboundQueue, dispatchChecklists, dispatchPersonalRecurrentes, dispatchAnnouncements, remindUnconfirmedAnnouncements, notifyCoordinators, remindEventTasks, remindOperationalTasks, checkDepartmentOperational, checkChecklistConsequences, checkCoordinationTimeouts, parseOnboardingMarker: undefined, isFirstMondayOfMonth, isLastFridayOfMonth, listLeadership, checkMonthlyPlanning, checkMonthlyClosing, dispatchMonthlyAgenda, expirarReservasVencidas, ceoTeamUnclosedEventsReport, ceoTeamUnclosedTasksReport, perLeaderUnclosedTasksReport, sendGovernanceDigest, buildScorecardDigestSection, sendLeaderGovernanceDigest, buildAdherenceText };
