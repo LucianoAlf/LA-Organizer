@@ -237,3 +237,26 @@ test('TAREFA: remind_at futuro segue o delta em dias, sem recalcular', () => {
 test('TAREFA: delta zero continua sendo no-op', () => {
   assert.strictEqual(shiftTaskRemindAt('2026-08-06', '2026-08-06', '2026-06-20T12:00:00Z', AGORA), null);
 });
+
+// ── Crivo do Alfredo (05/08): tarefa SEM remind_at não pode ganhar lembrete ────
+// O piso corrige quem existe e está vencido. Não pode INVENTAR lembrete pra tarefa que
+// nunca teve — isso viraria cobrança nova onde a pessoa não pediu nenhuma.
+test('tarefa SEM remind_at: reagendar não cria lembrete nenhum', () => {
+  assert.strictEqual(shiftTaskRemindAt('2026-08-04', '2026-08-06', null, AGORA), null);
+  assert.strictEqual(shiftTaskRemindAt('2026-08-04', '2026-08-06', undefined, AGORA), null);
+  assert.strictEqual(shiftTaskRemindAt('2026-08-04', '2026-08-06', '', AGORA), null);
+});
+
+test('tarefa sem due ANTIGO: sem delta calculável, não inventa horário', () => {
+  assert.strictEqual(shiftTaskRemindAt(null, '2026-08-06', '2026-06-20T12:00:00Z', AGORA), null);
+});
+
+// O piso é sobre a NOVA DATA ser futura — e não sobre "agora". Este par prova a
+// diferença: mesmo lembrete vencido, mesma hora de referência, novas datas opostas.
+test('piso olha a NOVA DATA: futura → recalcula; passada → mantém o delta', () => {
+  const vencido = '2026-06-20T12:00:00Z';
+  const paraFrente = shiftTaskRemindAt('2026-08-04', '2026-08-06', vencido, AGORA);
+  const paraTras   = shiftTaskRemindAt('2026-08-04', '2026-06-25', vencido, AGORA);
+  assert.strictEqual(paraFrente, '2026-08-06T12:00:00.000Z');   // protegido
+  assert.ok(Date.parse(paraTras) < AGORA, 'retroativo não pode virar lembrete futuro');
+});
