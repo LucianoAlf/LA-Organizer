@@ -10,6 +10,7 @@ const whatsapp = require('./services/whatsapp');
 // Fatia 2 do router: a UAZAPI devolve o id da mensagem enviada, mas 86% dos outbounds
 // saíam sem ele — e sem id a resposta do TOM não é citável nem roteável.
 const { extractSentMessageId } = require('./services/sent-message-id');
+const { extrairConteudoMemoria } = require('./services/memory-fields');
 const metricsService = require('./services/metrics');
 const ai = require('./ai/provider');
 const { buildSystemPrompt, formatMessages } = require('./prompts/system');
@@ -302,19 +303,17 @@ function parseMemoryMarker(text) {
   const dropped = [];
   for (let i = 0; i < rawRows.length; i++) {
     const r = rawRows[i];
-    // Aceita `text` ou `value` como sinônimos de `content` (TOM às vezes usa esses nomes).
-    const contentVal = (typeof r.content === 'string' && r.content.trim())
-      ? r.content
-      : (typeof r.text === 'string' && r.text.trim())
-        ? r.text
-        : (typeof r.value === 'string' && r.value.trim())
-          ? r.value
-          : null;
-    if (!r || !contentVal) {
-      dropped.push(`row[${i}]:missing_content`);
+    // Sinônimos aceitos e instrumentação em services/memory-fields.js. `body` entrou em
+    // 05/08 (caso Matheus): o TOM escrevia o texto nele, o parser recusava, e a pessoa
+    // repetia a instrução três vezes achando que o TOM não entendia.
+    const memCampo = extrairConteudoMemoria(r);
+    if (!memCampo.ok) {
+      // O motivo agora NOMEIA as chaves que vieram — sem isso, cada campo novo custa
+      // uma investigação no banco pra descobrir o que o modelo mandou.
+      dropped.push(`row[${i}]:${memCampo.motivo}`);
       continue;
     }
-    r.content = contentVal; // normaliza pro campo canônico
+    r.content = memCampo.content; // normaliza pro campo canônico
     validRows.push(r);
   }
   if (dropped.length) logSchemaErr('MEMORY_SAVE', dropped, parsed);
