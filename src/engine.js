@@ -5620,6 +5620,20 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
         }
         if (approved) {
           const update = { due_date: a.new_due_date };
+          // PISO DO LEMBRETE (caso Matheus, 04/08/2026) — este ramo mudava o prazo e
+          // deixava o remind_at exatamente onde estava. Um lembrete já vencido sobrevive
+          // à aprovação e o cron ("remind_at <= agora?") cobra na varredura seguinte:
+          // a pessoa ganha prazo novo e é cobrada como se não tivesse.
+          // O ajuste existia só no ramo de reagendamento por marker (~4796).
+          const { data: curExt } = await supabase
+            .from('tasks').select('due_date, remind_at').eq('id', candidate.id).maybeSingle();
+          if (curExt && curExt.remind_at) {
+            const shiftedExt = shiftTaskRemindAt(curExt.due_date, a.new_due_date, curExt.remind_at);
+            if (shiftedExt) {
+              update.remind_at = shiftedExt;
+              update.reminded_at = null; // re-arma pra tocar no horário novo
+            }
+          }
           // If task was overdue, reset status to pending.
           await supabase.from('tasks').update(update).eq('id', candidate.id);
         }

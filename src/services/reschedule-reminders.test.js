@@ -147,3 +147,93 @@ test('0 pendente + defaultMin custom (60) → T-60 do novo start', () => {
   });
   assert.strictEqual(out.inserts[0].remind_at, '2026-07-01T16:00:00.000Z'); // 14:00 BRT − 60 = 13:00 BRT = 16:00Z
 });
+
+// ── PISO no reagendamento (caso Matheus, 04/08/2026) ───────────────────────────
+// A tarefa do Inventário tinha remind_at de 20/06 preso no passado. Reagendada para
+// quinta (06/08), o deslocamento por delta manteve o lembrete 42 dias atrás — e o cron,
+// que só pergunta "remind_at <= agora?", cobrou na mesma varredura. O usuário foi cobrado
+// ANTES da data que ele mesmo combinou, três vezes, e se irritou com razão.
+//
+// planReminderFloor já resolvia isso, mas só era usada no ramo de SNOOZE. A regra existia
+// e não tinha sido levada para o ramo irmão.
+const AGORA = Date.parse('2026-08-04T10:00:00-03:00');
+
+test('lembrete LEGADO vencido + reagendamento pro futuro → NÃO pode ficar no passado', () => {
+  const out = planRescheduleReminders({
+    unsentRows: [{ id: 'r_legado', remind_at: '2026-06-20T09:00:00-03:00' }], // 45 dias atrás
+    oldStartIso: '2026-08-04T09:00:00-03:00',
+    newStartIso: '2026-08-06T09:00:00-03:00',   // quinta
+    eventId: 'inv1',
+    nowMs: AGORA,
+  });
+  assert.strictEqual(out.shifts.length, 1);
+  const quando = Date.parse(out.shifts[0].remind_at);
+  assert.ok(quando > AGORA, `lembrete ficou no passado: ${out.shifts[0].remind_at}`);
+  // e cai perto da NOVA data, não num ponto arbitrário
+  assert.ok(quando <= Date.parse('2026-08-06T09:00:00-03:00'), 'lembrete depois do próprio prazo');
+});
+
+test('lembrete normal (futuro) segue o delta, sem recalcular', () => {
+  const out = planRescheduleReminders({
+    unsentRows: [{ id: 'r1', remind_at: '2026-08-05T08:45:00-03:00' }],
+    oldStartIso: '2026-08-05T09:00:00-03:00',
+    newStartIso: '2026-08-07T09:00:00-03:00',
+    eventId: 'e1',
+    nowMs: AGORA,
+  });
+  // +2 dias exatos: preserva a antecedência de 15min que o usuário tinha
+  assert.strictEqual(out.shifts[0].remind_at, '2026-08-07T11:45:00.000Z');
+});
+
+test('vários lembretes: só os vencidos são recalculados', () => {
+  const out = planRescheduleReminders({
+    unsentRows: [
+      { id: 'velho', remind_at: '2026-06-20T09:00:00-03:00' },
+      { id: 'ok',    remind_at: '2026-08-05T08:45:00-03:00' },
+    ],
+    oldStartIso: '2026-08-05T09:00:00-03:00',
+    newStartIso: '2026-08-07T09:00:00-03:00',
+    eventId: 'e1',
+    nowMs: AGORA,
+  });
+  assert.strictEqual(out.shifts.length, 2);
+  for (const s of out.shifts) assert.ok(Date.parse(s.remind_at) > AGORA, `${s.id} no passado`);
+  assert.strictEqual(out.shifts.find(s => s.id === 'ok').remind_at, '2026-08-07T11:45:00.000Z');
+});
+
+test('reagendou pra daqui a pouco: lembrete colado no prazo é legítimo, não vira futuro artificial', () => {
+  const out = planRescheduleReminders({
+    unsentRows: [{ id: 'velho', remind_at: '2026-06-20T09:00:00-03:00' }],
+    oldStartIso: '2026-08-01T09:00:00-03:00',
+    newStartIso: '2026-08-04T10:05:00-03:00',   // 5 min depois de AGORA
+    eventId: 'e1',
+    nowMs: AGORA,
+  });
+  // T-15 do novo start cairia ANTES de agora; aceita-se, porque o prazo é já —
+  // o que não se aceita é o lembrete de 45 dias atrás sobreviver.
+  const quando = Date.parse(out.shifts[0].remind_at);
+  assert.ok(quando >= Date.parse('2026-08-04T09:50:00-03:00'), 'recalculou pro passado remoto de novo');
+});
+
+// ── PISO no caminho de TAREFA (o que de fato cobrou o Matheus) ─────────────────
+// Prova no banco: "Finalizar inventário de musicalização" ficou com due=2026-08-06
+// (quinta, correto) e remind_at=20/06 09:00 — 45 dias no passado. reminded_at=04/08 09:35:
+// cobrado dois dias ANTES do prazo combinado.
+// planRescheduleReminders (acima) só atende EVENTOS; tarefa vai por shiftTaskRemindAt.
+// Corrigir só um dos irmãos deixaria o caso real de pé.
+test('TAREFA: remind_at legado vencido vai para a NOVA data, preservando a hora', () => {
+  const novo = shiftTaskRemindAt('2026-08-04', '2026-08-06', '2026-06-20T12:00:00Z', AGORA);
+  assert.ok(novo, 'devolveu null — o lembrete vencido ficaria como está');
+  assert.ok(Date.parse(novo) > AGORA, `continuou no passado: ${novo}`);
+  // 09:00 BRT (12:00Z) preservado, agora no dia 06/08
+  assert.strictEqual(novo, '2026-08-06T12:00:00.000Z');
+});
+
+test('TAREFA: remind_at futuro segue o delta em dias, sem recalcular', () => {
+  const novo = shiftTaskRemindAt('2026-08-05', '2026-08-07', '2026-08-05T12:00:00Z', AGORA);
+  assert.strictEqual(novo, '2026-08-07T12:00:00.000Z');
+});
+
+test('TAREFA: delta zero continua sendo no-op', () => {
+  assert.strictEqual(shiftTaskRemindAt('2026-08-06', '2026-08-06', '2026-06-20T12:00:00Z', AGORA), null);
+});

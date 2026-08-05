@@ -41,7 +41,7 @@ function shiftRemindersByReschedule(reminders, oldStartIso, newStartIso) {
  * @param {string} remindAtIso — remind_at atual (ISO) ou null
  * @returns {string|null} novo remind_at (ISO UTC), ou null se não há o que deslocar
  */
-function shiftTaskRemindAt(oldDueDate, newDueDate, remindAtIso) {
+function shiftTaskRemindAt(oldDueDate, newDueDate, remindAtIso, nowMs) {
   if (!oldDueDate || !newDueDate || !remindAtIso) return null;
   // Datas date-only viram meia-noite UTC — delta em dias inteiros é exato.
   const oldMs = Date.parse(`${oldDueDate}T00:00:00Z`);
@@ -50,7 +50,25 @@ function shiftTaskRemindAt(oldDueDate, newDueDate, remindAtIso) {
   if (!Number.isFinite(oldMs) || !Number.isFinite(newMs) || !Number.isFinite(remMs)) return null;
   const deltaDays = Math.round((newMs - oldMs) / 86400000);
   if (deltaDays === 0) return null;
-  return new Date(remMs + deltaDays * 86400000).toISOString();
+  const deslocado = remMs + deltaDays * 86400000;
+
+  // PISO (caso Matheus, 04/08/2026) — o delta preserva a defasagem. "Finalizar inventário
+  // de musicalização" tinha remind_at de 20/06 e due reagendada para 06/08: deslocar +2
+  // dias deixaria o lembrete em 22/06, ainda no passado, e o cron ("remind_at <= agora?")
+  // cobra na varredura seguinte — dois dias ANTES do prazo que a pessoa combinou.
+  //
+  // Quem cairia no passado é levado para a NOVA data mantendo a HORA que a pessoa tinha
+  // (09:00 continua 09:00). Quem já estava no futuro segue o delta, intocado.
+  // A guarda é sobre a NOVA data, não sobre o lembrete: reagendar para o PASSADO
+  // (registrar algo retroativo) é legítimo e não deve ganhar lembrete futuro artificial.
+  // O piso só protege quem foi remarcado para frente.
+  const agora = Number.isFinite(nowMs) ? nowMs : Date.now();
+  if (deslocado <= agora && newMs > agora) {
+    const diaDoRemind = new Date(remMs).toISOString().slice(0, 10);
+    const horaNoDia = remMs - Date.parse(`${diaDoRemind}T00:00:00Z`);
+    return new Date(newMs + horaNoDia).toISOString();
+  }
+  return new Date(deslocado).toISOString();
 }
 
 /**
@@ -136,9 +154,33 @@ function planReminderFloor({ pendingRows, taskRemindAt, taskRemindedAt, notBefor
  * @param {number} [p.defaultMin=15] — minutos antes do start pro lembrete default
  * @returns {{shifts:Array<{id:string,remind_at:string}>, inserts:Array<{event_id:string,remind_at:string}>}}
  */
-function planRescheduleReminders({ unsentRows, oldStartIso, newStartIso, eventId, defaultMin = 15 }) {
+function planRescheduleReminders({ unsentRows, oldStartIso, newStartIso, eventId, defaultMin = 15, nowMs }) {
   const rows = Array.isArray(unsentRows) ? unsentRows : [];
+  const agora = Number.isFinite(nowMs) ? nowMs : Date.now();
   const shifts = shiftRemindersByReschedule(rows, oldStartIso, newStartIso);
+
+  // PISO (caso Matheus, 04/08/2026) — deslocar por delta preserva a defasagem: um
+  // remind_at 45 dias vencido, movido +2 dias, continua 43 dias no passado, e o cron
+  // ("remind_at <= agora?") cobra na varredura seguinte. O usuário foi cobrado ANTES do
+  // prazo que ele mesmo combinou.
+  //
+  // A regra já existia em planReminderFloor, usada só no ramo de SNOOZE. Aqui ela vira o
+  // mínimo necessário: quem cairia no passado é recalculado para a NOVA data, com a mesma
+  // antecedência padrão. Quem já estava no futuro mantém o delta — a antecedência que a
+  // pessoa escolheu é preservada.
+  const newMs = Date.parse(newStartIso);
+  const mins = Number(defaultMin);
+  const alvoPadrao = (Number.isFinite(newMs) && Number.isFinite(mins) && mins >= 0)
+    ? newMs - mins * 60_000
+    : null;
+  // Mesma guarda do caminho de tarefa: só protege remarcação para FRENTE. Reagendar um
+  // evento para o passado é legítimo e não deve ganhar lembrete futuro inventado.
+  if (alvoPadrao != null && newMs > agora) {
+    for (const s of shifts) {
+      if (Date.parse(s.remind_at) <= agora) s.remind_at = new Date(alvoPadrao).toISOString();
+    }
+  }
+
   let inserts = [];
   // ENSURE-PENDING: só inventa default quando NÃO havia NENHUMA row pendente. O gate é
   // `rows.length` (não `shifts.length`) — reschedule pra mesmo horário (delta 0) zera os shifts
