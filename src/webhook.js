@@ -99,7 +99,20 @@ shutdown.registerDrainHook(async () => {
 function verifyWebhookSignature(req) {
   const secret = process.env.WEBHOOK_SECRET || '';
   const headerName = (process.env.WEBHOOK_SIG_HEADER || 'x-webhook-signature').toLowerCase();
-  const enforce = String(process.env.WEBHOOK_HMAC_ENFORCE || '').toLowerCase() === 'true';
+  // WEBHOOK_HMAC_ONLY — recusa url_token e static_header, exigindo HMAC do rawBody.
+  //
+  // POR QUE UMA FLAG NOVA E NÃO ENDURECER O `strict`: o comentário logo abaixo diz que a
+  // UAZAPI autentica por token na URL. Se `strict` passasse a recusar url_token, no dia em
+  // que alguém ligasse WEBHOOK_HMAC_ENFORCE=true o TOM pararia de receber mensagem do
+  // WhatsApp inteiro — trocaríamos um furo de auditoria por uma queda total.
+  //
+  // Serve ao Replay Lab, que sobe uma instância efêmera com esta flag para provar o
+  // verificador REAL contra os casos negativos. Default false: produção intocada.
+  //
+  // Fica registrado como questão aberta que o modo hoje chamado `strict` aceita
+  // url_token e static_header — quem liga a flag achando que exigiu HMAC, não exigiu.
+  const hmacOnly = String(process.env.WEBHOOK_HMAC_ONLY || '').toLowerCase() === 'true';
+  const enforce = hmacOnly || String(process.env.WEBHOOK_HMAC_ENFORCE || '').toLowerCase() === 'true';
 
   if (!secret) return { mode: 'disabled', ok: true };
 
@@ -107,6 +120,10 @@ function verifyWebhookSignature(req) {
   //    customizados. Token vai na URL configurada no painel UAZAPI.
   //    Constant-time comparison contra o secret.
   const urlToken = req.params && typeof req.params.token === 'string' ? req.params.token : '';
+  if (urlToken && hmacOnly) {
+    // Mesmo com o token CORRETO: em HMAC_ONLY o método não vale.
+    return { mode: 'strict', ok: false, method: 'url_token', reason: 'hmac_only_recusa_url_token' };
+  }
   if (urlToken) {
     try {
       const secretBuf = Buffer.from(secret);
@@ -129,7 +146,9 @@ function verifyWebhookSignature(req) {
   try {
     const secretBuf = Buffer.from(secret);
     const providedBuf = Buffer.from(provided);
-    if (secretBuf.length === providedBuf.length &&
+    // Em HMAC_ONLY o secret literal no header não é aceito — cai direto no HMAC abaixo,
+    // que vai reprovar por `malformed` (o secret não é hex de 64) ou por `mismatch`.
+    if (!hmacOnly && secretBuf.length === providedBuf.length &&
         crypto.timingSafeEqual(secretBuf, providedBuf)) {
       return { mode: enforce ? 'strict' : 'permissive', ok: true, method: 'static_header' };
     }
