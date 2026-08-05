@@ -113,20 +113,55 @@ o teste ficaria verde sem exercitar HMAC nenhum. O laboratório assina sempre pe
 e a assinatura é sobre **os bytes exatos enviados** — o injetor serializa uma vez e assina
 aquele buffer, nunca reserializa.
 
-### Testes negativos, obrigatórios e em `strict`
+### Achado de segurança: **`strict` não é estrito**
 
-Assinatura válida não prova autenticação — prova que o caminho feliz funciona. Com
-`WEBHOOK_HMAC_ENFORCE=true`:
+Auditando para escrever esta seção: com `WEBHOOK_HMAC_ENFORCE=true`, tanto `url_token`
+quanto `static_header` retornam `ok: true` — o handler só devolve 401 quando
+`mode === 'strict' && !sig.ok`. Ou seja, **hoje o modo "strict" aceita o secret literal no
+header e o token na URL**. Quem ligar a flag achando que exigiu HMAC, não exigiu.
 
-| caso | esperado |
-|---|---|
-| sem header de assinatura | **401** (`missing_header`) |
-| assinatura inválida (hex trocado) | **401** (`mismatch`) |
-| assinatura de outro corpo (replay de body diferente) | **401** |
-| header com o secret literal | **rejeitado pelo laboratório**, mesmo que o TOM aceite — se passar, o teste não está provando HMAC |
-| assinatura correta | **200** e mensagem processada |
+A v1 desta spec dizia que o laboratório rejeitaria esses casos "mesmo que o TOM aceite".
+**Isso estava errado e o Alfredo tem razão:** seria o teste maquiando um furo do produto. A
+prova tem que ser o **status HTTP real**.
 
-Os quatro primeiros são **absolutos**: uma passagem indevida reprova a bateria inteira.
+### Por que NÃO vou "corrigir o strict" — e o que faço no lugar
+
+O próprio comentário do `webhook.js` diz: *"URL token (**UAZAPI atual**):
+`/webhook/<WEBHOOK_SECRET>`"*. **A UAZAPI autentica por token na URL.** Se eu mudar `strict`
+para recusar `url_token`, no dia em que alguém ligar `WEBHOOK_HMAC_ENFORCE=true` o TOM
+**para de receber mensagens do WhatsApp inteiro** — troco um furo de auditoria por uma
+queda total.
+
+Uso então a alternativa que o próprio Alfredo ofereceu: **modo HMAC-only explícito**.
+
+```
+WEBHOOK_HMAC_ONLY=true   # novo, default false — recusa url_token e static_header
+```
+
+E ele **não roda em produção**: os testes de autenticação sobem uma **instância efêmera do
+TOM real** — mesmo código, mesmo verificador, `PORT=3199`, com a flag ligada e sem a UAZAPI
+apontando para ela. Nenhuma janela em que a entrada de produção fique exposta ou quebrada.
+
+### Testes negativos — status HTTP real, não validação do injetor
+
+Contra a instância efêmera, `WEBHOOK_HMAC_ONLY=true`:
+
+| caso | esperado | tipo |
+|---|---|---|
+| sem header de assinatura | **401** | absoluto |
+| HMAC inválido (hex trocado) | **401** | absoluto |
+| HMAC de **outro corpo** (mesma chave, body diferente) | **401** | absoluto |
+| **secret literal no header** (`static_header`) | **401** | absoluto |
+| **token na URL** (`url_token`) | **401** | absoluto |
+| HMAC válido do `rawBody` | **200** + mensagem processada | absoluto |
+
+Todos absolutos: **uma passagem indevida reprova a bateria inteira**. E o veredito é o
+código de status devolvido pelo TOM — o injetor não julga nada.
+
+**Nota para a Fase 2:** o achado de que `strict` aceita url_token/static_header fica
+registrado como questão aberta de segurança do produto, independente do laboratório. Decidir
+se `strict` deveria ser renomeado ou endurecido é assunto do Alf, não desta spec — e exige
+antes confirmar por qual método a UAZAPI está autenticando hoje.
 
 **Consequência aceita explicitamente:** injetar exige a porta 3100. O laboratório roda **de
 dentro da VPS** (`localhost:3100`). Nada de expor porta.
@@ -302,6 +337,20 @@ A penúltima linha importa: não basta "não enviou". Se o cobrador **selecionou
 só não enviou por causa da trava de QA, o bug continua lá — o teste ficaria verde por causa
 do laboratório, não do conserto.
 
+**O handler roda DENTRO do contexto de replay** (segundo ajuste da última auditoria). O cron
+é disparado pelo laboratório, não pelo webhook, então ele não herda contexto nenhum: sem
+isso, o envio legítimo de quinta sairia **fora** da trava de replay — e iria para a UAZAPI de
+verdade. Portanto:
+
+```
+runInTurn({ run_id, qa: true }, () => remindOperationalTasks(quintaAs09h))
+```
+
+E não basta envolver: **o cenário prova que o contexto chegou ao `_postEnviar`**. O envio de
+quinta tem que aparecer como `outbound_suppressed` **carregando o `run_id`** na evidência. Se
+vier sem `run_id`, o teste reprova mesmo que nada tenha vazado — porque significa que a trava
+não estava lá, e da próxima vez pode não segurar.
+
 **Este cenário tem que FALHAR com `4dd0e206` revertido — incluindo a parte do cron.** Se
 passar com o código antigo, o cenário não modela o incidente, e o problema é o laboratório.
 
@@ -335,7 +384,8 @@ passar com o código antigo, o cenário não modela o incidente, e o problema é
    fora da faixa — com a cobertura das 6 rotas + fallback de mídia. **Antes dela, nada
    roda**: é ela que impede o laboratório de mandar mensagem para gente real;
 3. guards de isolamento (grupo, delegação, governança, métricas), cada um com teste;
-4. injetor com HMAC do rawBody + fixture capturado + **os 4 testes negativos em `strict`**;
+4. `WEBHOOK_HMAC_ONLY` (default false) + injetor com HMAC do rawBody + fixture capturado +
+   **os 5 testes negativos contra a instância efêmera, provados por status HTTP real**;
 5. cenário A (piso + **cron real com relógio controlado**) e prova de que falha com
    `4dd0e206` revertido;
 6. cenário B (`body`) e a mesma prova com `0b7c576d`;
