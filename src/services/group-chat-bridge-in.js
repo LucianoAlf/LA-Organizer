@@ -3,6 +3,8 @@
 // GRUPO LINKADO (work_groups.wa_group_jid). Insere em group_chat_messages como role='member',
 // channel='whatsapp' — o watcher (Fase 3) aciona o TOM normalmente.
 
+const qaIsolation = require('./qa-isolation');
+
 // Normaliza o payload p/ o MESMO objeto que o whatsapp.getData() usa. O formato real da
 // UAZAPI entrega { EventType, message:{...} } — NÃO body.data. Cobre os dois (e o
 // formato {data:{...}} dos testes puros). Mantido local pra não puxar config/axios.
@@ -138,6 +140,16 @@ async function maybeHandleGroupMessage(supabase, body, helpers) {
     if (!isGroupMessage(body)) return { handled: false };
     const data = getData(body) || {};
     if (data.fromMe === true) return { handled: true }; // eco do bot — ignora
+
+    // ---- Isolamento do Replay Lab (spec 05/08, fronteira do grupo) ----
+    // Perfil de QA nunca participa de chat de grupo: uma mensagem de cenário espelhada
+    // num grupo real apareceria na frente do time. Grupo tem caminho próprio e fica
+    // fora da Fase 1 — o guard garante isso por CÓDIGO, não por combinado.
+    const _remetenteQA = extractSenderPhone(body);
+    if (_remetenteQA && !qaIsolation.permiteGrupo(_remetenteQA)) {
+      console.warn(`[QA] mensagem de perfil de teste em grupo — descartada (${_remetenteQA})`);
+      return { handled: true };
+    }
     const jid = extractGroupJid(body);
     if (!jid) return { handled: false };
 

@@ -6,6 +6,7 @@
 // Funções recebem `sb` (supabase) e `chat` (provider) injetados → fáceis de testar.
 'use strict';
 const crypto = require('crypto');
+const qaIsolation = require('./qa-isolation');
 
 const VALID_CATEGORIES = new Set([
   'confabulation', 'wrong_refusal', 'media_fail', 'dropped_request', 'frustration',
@@ -162,6 +163,14 @@ function rankFindings(findings, opts = {}) {
 /** Grava 1 finding com dedupe por assinatura. Triado/fechado NÃO re-surge. NUNCA lança. */
 async function upsertFinding(sb, collaborator, finding) {
   try {
+    // ---- Isolamento do Replay Lab (spec 05/08, fronteira das métricas) ----
+    // Os cenários do laboratório geram exatamente os sintomas que este detector procura.
+    // Sem este guard, cada bateria injeta falha FABRICADA em tom_audit_findings — e a
+    // base que usamos para priorizar passaria a contar teste como incidente real.
+    // Seria eu contaminando o próprio diagnóstico que orientou este trabalho.
+    if (!qaIsolation.contaNasMetricas(collaborator)) {
+      return 'ignorado_qa';
+    }
     const sig = signatureFor(finding.category, collaborator.id, finding.summary);
     const { data: rows } = await sb.from('tom_audit_findings')
       .select('id, occurrences, status')

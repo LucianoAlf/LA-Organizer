@@ -75,3 +75,25 @@ test('extractSenderPhone tira só dígitos do participante', () => {
   assert.equal(extractSenderPhone({ data: { sender: '5521999998888@s.whatsapp.net' } }), '5521999998888');
   assert.equal(extractSenderPhone({ data: { sender: '' } }), null);
 });
+
+const { maybeHandleGroupMessage } = require('./group-chat-bridge-in');
+
+// ── Guard de isolamento do Replay Lab (spec 05/08) ────────────────────────────
+// Prova o guard LIGADO, não a decisão pura (essa está em qa-isolation.test.js).
+// Um cenário de QA espelhado num grupo real apareceria na frente do time.
+test('mensagem de grupo vinda de perfil QA é descartada sem tocar o banco', async () => {
+  let tocou = false;
+  const sbEspiao = { from: () => { tocou = true; return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null }) }) }) }; } };
+  const body = { EventType: 'messages', message: { isGroup: true, chatid: '123@g.us', sender: '5500000000001@s.whatsapp.net', text: 'cenario de teste' } };
+  const r = await maybeHandleGroupMessage(sbEspiao, body, { extractMessageId: () => 'X1' });
+  assert.strictEqual(r.handled, true, 'QA em grupo tem que ser consumido e parar aqui');
+  assert.strictEqual(tocou, false, 'guard deixou a mensagem de QA chegar no banco');
+});
+
+test('mensagem de grupo de pessoa real segue o fluxo normal (guard não afeta produção)', async () => {
+  let consultou = false;
+  const sb = { from: () => { consultou = true; return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null }) }) }) }; } };
+  const body = { EventType: 'messages', message: { isGroup: true, chatid: '123@g.us', sender: '5521999998888@s.whatsapp.net', text: 'oi time' } };
+  await maybeHandleGroupMessage(sb, body, { extractMessageId: () => 'X2' });
+  assert.strictEqual(consultou, true, 'o guard bloqueou mensagem de pessoa real');
+});
