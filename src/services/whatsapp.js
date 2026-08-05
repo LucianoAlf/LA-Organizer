@@ -243,27 +243,32 @@ async function _postEnviar(rota, payload, { phone, tipo = 'mensagem', api: apiOv
     turn: turnClaim.currentTurn(), phone, listaQA: _listaQA(),
   });
   if (_dest.abortar) {
-    // Falha FECHADA: aborta o turno em vez de arriscar entrega indevida. A evidência é
-    // gravada antes de lançar — o laboratório detecta pelo registro, não pela exceção
-    // (algum `catch` do engine pode engoli-la).
+    // Falha FECHADA. A evidência é PERSISTIDA aqui — memória + JSONL — antes do throw.
+    // Não pode depender de alguém dar catch: os 51 `catch` vazios do engine engoliriam,
+    // e aí teríamos um vazamento evitado sem registro nenhum de que quase aconteceu.
+    const turno = turnClaim.currentTurn() || {};
+    const ev = turnClaim.registrarEvidenciaQA({
+      evento: 'destino_proibido', rota, tipo,
+      numero: _dest.numero, detalhe: _dest.detalhe, runId: turno.runId || null,
+    });
     const msg = `[ReplayLab] destino proibido em replay: ${_dest.numero} (${_dest.detalhe}) rota=${rota}`;
     console.error(msg);
     const err = new Error(msg);
     err.code = 'QA_DESTINO_PROIBIDO';
-    err.qaEvidencia = { evento: 'destino_proibido', rota, tipo, numero: _dest.numero, detalhe: _dest.detalhe };
+    err.qaEvidencia = ev;
     throw err;
   }
   if (_dest.suprimir) {
     const turno = turnClaim.currentTurn() || {};
     const idSintetico = `QA-SUPPRESSED-${turno.runId || 'sem-run'}-${Date.now()}`;
+    // O recibo carrega o run_id: é assim que o cenário prova que o contexto de replay
+    // chegou até aqui. Recibo sem run_id reprova, mesmo que nada tenha vazado.
+    const ev = turnClaim.registrarEvidenciaQA({
+      evento: 'outbound_suppressed', rota, tipo,
+      numero: _dest.numero, runId: turno.runId || null, idSintetico,
+    });
     console.log(`[ReplayLab] outbound_suppressed rota=${rota} tipo=${tipo} destino=${_dest.numero} run=${turno.runId || '-'}`);
-    return {
-      bloqueado: true, suprimido: true,
-      // O recibo carrega o run_id: é assim que o cenário prova que o contexto de replay
-      // chegou até aqui. Recibo sem run_id reprova, mesmo que nada tenha vazado.
-      qaEvidencia: { evento: 'outbound_suppressed', rota, tipo, numero: _dest.numero, runId: turno.runId || null },
-      data: { id: idSintetico },
-    };
+    return { bloqueado: true, suprimido: true, qaEvidencia: ev, data: { id: idSintetico } };
   }
 
   const gate = await turnClaim.beforeSend({ supabase: sb });

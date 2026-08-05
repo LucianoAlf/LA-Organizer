@@ -158,6 +158,56 @@ for (const r of ROTAS) {
   });
 }
 
+// A trava tem que REGISTRAR sozinha, não confiar em quem der catch. O engine tem 51
+// catch vazios: um vazamento evitado sem registro é um quase-acidente que ninguém fica
+// sabendo. Estes dois testes chamam _postEnviar e NÃO leem o objeto da exceção.
+const { evidenciasQA, limparEvidenciasQA } = require('./turn-claim');
+
+test('evidência de destino proibido é PERSISTIDA, mesmo se ninguém olhar a exceção', async () => {
+  const t = transporteFake();
+  limparEvidenciasQA();
+  await comQA(async () => {
+    await runInTurn({ waMessageId: 'W', qa: true, runId: 'run-ev1' }, async () => {
+      try { await _postEnviar('/send/text', {}, { phone: PESSOA_REAL, api: t, supabase: sbLease(true) }); }
+      catch (_) { /* engolido de propósito: simula os catch vazios do engine */ }
+    });
+  });
+  const evs = evidenciasQA('run-ev1');
+  assert.equal(evs.length, 1, 'quase-vazamento não deixou rastro');
+  assert.equal(evs[0].evento, 'destino_proibido');
+  assert.equal(evs[0].numero, PESSOA_REAL);
+  assert.ok(evs[0].ts, 'evidência sem timestamp');
+});
+
+test('evidência vai para o JSONL em disco quando TOM_QA_EVIDENCE_FILE está setado', async () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const arq = path.join(os.tmpdir(), `qa-ev-${process.pid}.jsonl`);
+  try { fs.unlinkSync(arq); } catch (_) {}
+  const antes = process.env.TOM_QA_EVIDENCE_FILE;
+  process.env.TOM_QA_EVIDENCE_FILE = arq;
+  try {
+    const t = transporteFake();
+    limparEvidenciasQA();
+    await comQA(async () => {
+      await runInTurn({ waMessageId: 'W', qa: true, runId: 'run-ev2' }, async () => {
+        const ok = await _postEnviar('/send/text', {}, { phone: QA_PHONE, api: t, supabase: sbLease(true) });
+        assert.equal(ok.suprimido, true);
+        try { await _postEnviar('/send/text', {}, { phone: PESSOA_REAL, api: t, supabase: sbLease(true) }); }
+        catch (_) {}
+      });
+    });
+    const linhas = fs.readFileSync(arq, 'utf8').trim().split('\n').map(JSON.parse);
+    assert.equal(linhas.length, 2, 'JSONL não recebeu os dois eventos');
+    assert.deepEqual(linhas.map(l => l.evento).sort(), ['destino_proibido', 'outbound_suppressed']);
+    assert.ok(linhas.every(l => l.runId === 'run-ev2'), 'evento sem run_id no arquivo');
+  } finally {
+    if (antes === undefined) delete process.env.TOM_QA_EVIDENCE_FILE; else process.env.TOM_QA_EVIDENCE_FILE = antes;
+    try { fs.unlinkSync(arq); } catch (_) {}
+  }
+});
+
 test('[produção] fora de replay, envio para pessoa real segue normal — nada mudou', async () => {
   const t = transporteFake();
   const sb = sbLease(true);

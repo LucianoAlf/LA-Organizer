@@ -116,6 +116,38 @@ async function afterSend({ supabase, sentId, phone = null, collaboratorId = null
 // DDD 00 não existe no Brasil: nenhum número real cai aqui.
 const FAIXA_QA = /^5500\d{9}$/;
 
+// ---- EVIDÊNCIA PERSISTIDA ----
+// A v1 desta trava dizia, em comentário, que a evidência era "gravada antes de lançar".
+// Não era: ficava só no objeto da exceção, dependendo de alguém dar catch e registrar.
+// Comentário que promete o que o código não faz é o mesmo defeito que passei a sessão
+// caçando — só que meu. Agora a trava grava por conta própria, antes de qualquer throw:
+// em memória (o runner lê) e, se TOM_QA_EVIDENCE_FILE estiver setado, em JSONL na hora.
+const _evidenciasQA = [];
+
+function registrarEvidenciaQA(ev) {
+  const reg = { ts: new Date().toISOString(), ...(ev || {}) };
+  _evidenciasQA.push(reg);
+  const arquivo = process.env.TOM_QA_EVIDENCE_FILE;
+  if (arquivo) {
+    // Síncrono de propósito: uma evidência perdida por processo morrendo logo depois é
+    // exatamente o caso que ela existe para registrar. Só roda em replay.
+    try {
+      require('node:fs').appendFileSync(arquivo, JSON.stringify(reg) + '\n');
+    } catch (e) {
+      console.error('[ReplayLab] NÃO consegui gravar evidência em disco:', e.message);
+    }
+  }
+  return reg;
+}
+
+function evidenciasQA(runId) {
+  return runId ? _evidenciasQA.filter(e => e.runId === runId) : _evidenciasQA.slice();
+}
+
+function limparEvidenciasQA() {
+  _evidenciasQA.length = 0;
+}
+
 function _soDigitos(v) {
   return String(v == null ? '' : v).replace(/\D/g, '');
 }
@@ -141,4 +173,4 @@ function decideDestinoQA({ turn = null, phone = null, listaQA = [] } = {}) {
 }
 
 module.exports = { runInTurn, enterTurn, currentTurn, decideSend, beforeSend, afterSend,
-  decideDestinoQA, FAIXA_QA };
+  decideDestinoQA, FAIXA_QA, registrarEvidenciaQA, evidenciasQA, limparEvidenciasQA };
