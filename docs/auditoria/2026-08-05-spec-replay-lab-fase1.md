@@ -94,18 +94,42 @@ Os perfis são criados por script versionado (`INSERT` idempotente), com nome pr
 
 ## 5. Autenticação — a trava 1
 
-O webhook aceita dois métodos (`verifyWebhookSignature`): **token na URL**
-(`/webhook/<WEBHOOK_SECRET>`) e **HMAC no header** (`X-Webhook-Signature: sha256=<hex>`).
-`WEBHOOK_SECRET` já existe na VPS; `WEBHOOK_AUTH_MODE` está ausente, então hoje o modo é
-**permissive** (aceita e loga, não rejeita).
+**Correção da v1 desta spec.** Eu tinha escrito `WEBHOOK_AUTH_MODE` e "dois métodos". Fui
+conferir o verificador, como o Alfredo exigiu, e as duas coisas estavam erradas. O que
+`verifyWebhookSignature` faz de fato, em ordem:
 
-**O laboratório usa HMAC de header, sempre** — mesmo que o modo seja permissive. Motivo: o
-teste tem que exercitar o caminho autenticado de verdade. Se um dia ligarmos `strict`, a
-suíte continua passando; se ela dependesse do modo frouxo, o `strict` a quebraria toda.
+| ordem | método | como valida |
+|---|---|---|
+| 1 | `url_token` | `/webhook/<token>` comparado ao `WEBHOOK_SECRET` (`timingSafeEqual`) |
+| 2 | `static_header` | header **igual ao secret literal** — não é HMAC nenhum |
+| 3 | `hmac` | `sha256=<hex64>`, HMAC-SHA256 do **rawBody em bytes** |
 
-**Uma consequência que precisa ser aceita explicitamente:** injetar no webhook exige que a
-porta 3100 aceite a conexão. O laboratório roda **de dentro da VPS** (`localhost:3100`), não
-de fora. Nada de expor porta.
+- variável de enforcement: **`WEBHOOK_HMAC_ENFORCE=true`** → `strict` (hoje ausente ⇒ `permissive`);
+- header configurável por `WEBHOOK_SIG_HEADER` (default `x-webhook-signature`);
+- exige `req.rawBody` como Buffer não-vazio, senão `no_raw_body`.
+
+**A armadilha que isso revela:** mandar o secret literal no header **passa pelo método 2** e
+o teste ficaria verde sem exercitar HMAC nenhum. O laboratório assina sempre pelo método 3,
+e a assinatura é sobre **os bytes exatos enviados** — o injetor serializa uma vez e assina
+aquele buffer, nunca reserializa.
+
+### Testes negativos, obrigatórios e em `strict`
+
+Assinatura válida não prova autenticação — prova que o caminho feliz funciona. Com
+`WEBHOOK_HMAC_ENFORCE=true`:
+
+| caso | esperado |
+|---|---|
+| sem header de assinatura | **401** (`missing_header`) |
+| assinatura inválida (hex trocado) | **401** (`mismatch`) |
+| assinatura de outro corpo (replay de body diferente) | **401** |
+| header com o secret literal | **rejeitado pelo laboratório**, mesmo que o TOM aceite — se passar, o teste não está provando HMAC |
+| assinatura correta | **200** e mensagem processada |
+
+Os quatro primeiros são **absolutos**: uma passagem indevida reprova a bateria inteira.
+
+**Consequência aceita explicitamente:** injetar exige a porta 3100. O laboratório roda **de
+dentro da VPS** (`localhost:3100`). Nada de expor porta.
 
 ---
 
@@ -128,20 +152,48 @@ UAZAPI *manda*.
 
 ## 7. Isolamento — travas 2, 3 e 4
 
-### 7.1 Nenhum outbound sai para fora (trava 2)
+### 7.1 Nenhum outbound sai para fora (trava 2) — **redesenhada**
 
-O bloqueio mora no **ponto único de saída** que já existe: `_postEnviar`, em
-`services/whatsapp.js` — criado ontem na Fatia 3 do router, por onde passam texto, menu,
-mídia, voz e reação. Se o destinatário está em `TOM_QA_PHONES`, **não posta na UAZAPI**:
-grava o que teria enviado e devolve um id sintético.
+**A v1 desta spec tinha um furo grave, apontado pelo Alfredo.** Eu havia escrito: "se o
+destinatário está em `TOM_QA_PHONES`, não posta". Isso suprime o destino **que já é QA** — e
+deixa passar exatamente o caso perigoso: durante um replay, o TOM decide **avisar um
+terceiro** (delegação, "avisa a Gabi", notificação de coordenação). Esse destino não está na
+lista, a trava não age, e **a mensagem chega numa pessoa real**.
 
-Isso resolve também a cobrança: o cron pode disparar de verdade para o perfil QA — que é
-justamente o que queremos exercitar, já que cobrança indevida é um dos bugs — **sem que
-nenhuma mensagem saia**.
+Não é hipótese: "recado a terceiro não encaminhado" é um dos padrões dos 76 casos — ou seja,
+é um cenário que eu **quero** testar, e ele vazaria por construção.
 
-**Guarda dupla, porque uma trava só não basta quando o custo do erro é mandar mensagem para
-o time inteiro:** além da lista, o envio confere se o número é da faixa reservada. Se um dia
-alguém puser um telefone real em `TOM_QA_PHONES`, o segundo teste barra.
+**Desenho correto — a trava é sobre o MODO, não sobre o destino:**
+
+```
+se existe execução de replay ativa (run_id no contexto do turno):
+    destino ∈ faixa QA reservada  → suprime, registra outbound_suppressed, id sintético
+    qualquer outro destino        → FALHA FECHADA: não posta, aborta o cenário,
+                                     grava evidência `destino_proibido` com o número
+senão (produção normal):
+    comportamento atual, intocado
+```
+
+O contexto de execução usa o **`AsyncLocalStorage` que já existe** em
+`services/turn-claim.js`, com um campo a mais para o `run_id`. Nenhuma estrutura nova.
+
+**Onde mora:** `_postEnviar`, o ponto único criado na Fatia 3. Mas — e isto é o item 3 da
+auditoria — *"ponto único" só vale se a prova cobrir os caminhos*. Cobertura obrigatória,
+uma asserção por rota:
+
+| rota | verificação |
+|---|---|
+| texto (`/send/text`) | 0 chamadas UAZAPI, `outbound_suppressed` gravado |
+| menu botão + lista (`/send/menu`) | idem, nas duas variantes |
+| mídia/sticker (`/send/media`) | idem |
+| voz/ptt (`/send/media` type=ptt) | idem |
+| reação (`/message/react`) | idem |
+| **fallback de mídia** (webhook, antes do turno) | idem — é o caminho que escapou do gate na Fatia 3 |
+
+E o par negativo em cada uma: **destino fora da faixa ⇒ falha fechada**, nunca envio.
+
+Com isso o cron pode disparar de verdade contra o perfil QA — que é o que queremos, já que
+cobrança indevida é um dos bugs — sem que nada saia.
 
 ### 7.2 QA fora das métricas (trava 3)
 
@@ -153,6 +205,19 @@ Exclusão em três lugares, todos pela mesma lista: gravação de findings, agre
 auditoria diária e `marker_logs` das métricas de saúde. Os `marker_logs` **continuam sendo
 gravados** (o laboratório precisa deles como evidência) — só saem das agregações.
 
+**Isolamento é guard testado, não convenção** (item 4 da auditoria). Criar o perfil com nome
+`[QA]` não impede nada — é etiqueta. Cada fronteira ganha um guard com teste próprio:
+
+| fronteira | guard | teste |
+|---|---|---|
+| chat de grupo | perfil QA não entra em `work_group_members` nem é aceito por `group-chat-bridge-in` | tentar adicionar ⇒ recusa |
+| delegação | tarefa de QA não pode ser delegada a não-QA, nem o inverso | tentativa cruzada ⇒ recusa |
+| governança | QA fora de `governance_edges` e dos digests de liderança | digest não menciona QA |
+| métricas | findings/agregações ignoram QA | rodar bateria ⇒ contagem de produção inalterada |
+
+O último é o mais importante e o mais fácil de esquecer: **rodar uma bateria inteira e
+provar que os números de produção não se moveram.**
+
 ### 7.3 Concorrência e correlação (trava 4)
 
 Cada bateria tem um `run_id` (ULID). Todo artefato — inbound sintético, marker, outbound,
@@ -161,9 +226,24 @@ finding — carrega esse id, via prefixo no `wa_message_id` (`QA-<run_id>-<n>`).
 Concorrência limitada a **4** (um por perfil). Não é limitação técnica: é a fila por
 telefone. Mais perfis = mais paralelo, e a spec não fixa o teto em quatro para sempre.
 
-**Limpeza:** ao fim da bateria, remove-se **apenas** o que tem o prefixo do `run_id`. Nunca
-um `delete` por colaborador ou por data — se o filtro do `run_id` falhar, o comando não
-apaga nada em vez de apagar demais.
+**Cada repetição começa de fixture limpa** (item 5 da auditoria). Sem isso, a repetição 7
+herda estado da 6 — e a taxa mede contaminação, não comportamento. Antes de cada `rep`: o
+estado do perfil é reconstruído do zero (tarefas, lembretes, memórias, intents pendentes).
+
+**Timeout e estado terminal explícitos.** Toda execução termina em um destes, sempre gravado:
+
+`ok` · `falhou_aceite` · `timeout` · `erro_infra` · `abortado_destino_proibido`
+
+Sem terminal explícito, uma execução que trava vira ausência no relatório — e ausência é
+lida como "não aconteceu" quando na verdade é "não sabemos". Timeout default: **120s** por
+repetição (o `processMessage` já foi visto em 19s; 6× de margem).
+
+**Limpeza em `finally`, e fail-closed** — vale também quando a bateria morre no meio:
+
+- remove **apenas** o que casa com o prefixo do `run_id`;
+- se o filtro do `run_id` vier vazio ou malformado, **não apaga nada** e sai com erro
+  gritando resíduo — nunca um `delete` por colaborador ou por data;
+- resíduo não removido é reportado no relatório, não silenciado.
 
 ---
 
@@ -197,11 +277,33 @@ melhor descobrir isso agora, com dois bugs pequenos, do que na spec da trilha 1.
 
 1. cria tarefa no perfil QA com `due_date` de ontem e `remind_at` 45 dias atrás;
 2. injeta *"passa essa pra quinta"*;
-3. **aceite:** `due_date` = quinta em ≥19/20; `remind_at > agora` em **20/20** (determinístico,
-   é o piso); nenhum lembrete disparado antes da nova data em **20/20**.
+3. **roda o cobrador de verdade, com relógio controlado** — item 2 da auditoria.
 
-**Este cenário tem que FALHAR se eu reverter o commit `4dd0e206`.** Se passar com o código
-antigo, o cenário não modela o incidente — e aí o problema é o laboratório, não o TOM.
+O ponto dele é exato: conferir `remind_at` prova o campo, não o cobrador. O que cobrou o
+Matheus foi o cron, e é ele que precisa ficar calado. Isso é factível sem gambiarra porque
+os handlers **já recebem o instante como parâmetro**: `remindOperationalTasks(now)` e
+`remindPersonalTasks(now)` em `rituals/dispatcher.js`.
+
+> Nota de implementação: `remindOperationalTasks` está no `module.exports`;
+> `remindPersonalTasks` e `remindGroupTasks` **não estão**. Exportar é pré-requisito do
+> cenário — mudança de uma linha, sem efeito em produção.
+
+**Aceite:**
+
+| verificação | piso | tipo |
+|---|---|---|
+| `due_date` = quinta | ≥19/20 | estatístico (depende do LLM) |
+| `remind_at > agora` | 20/20 | absoluto |
+| cron rodado em qua 09:00, ter 18:00, qua 23:59 → **0 seleção** | 20/20 | absoluto |
+| cron nesses instantes → **0 tentativa de envio** (nem suprimida) | 20/20 | absoluto |
+| cron rodado na quinta → **1 envio** | 20/20 | absoluto |
+
+A penúltima linha importa: não basta "não enviou". Se o cobrador **selecionou** a tarefa e
+só não enviou por causa da trava de QA, o bug continua lá — o teste ficaria verde por causa
+do laboratório, não do conserto.
+
+**Este cenário tem que FALHAR com `4dd0e206` revertido — incluindo a parte do cron.** Se
+passar com o código antigo, o cenário não modela o incidente, e o problema é o laboratório.
 
 ### Cenário B — `MEMORY_SAVE.body` (caso Matheus, segunda parte)
 
@@ -229,14 +331,18 @@ antigo, o cenário não modela o incidente — e aí o problema é o laboratóri
 ## 11. Ordem de implementação
 
 1. perfis QA + script idempotente de criação;
-2. trava de envio no `_postEnviar` + guarda de faixa (a mais crítica: antes dela, nada roda);
-3. injetor com HMAC + fixture capturado;
-4. cenário A (piso) e prova de que ele falha com o fix revertido;
-5. cenário B (`body`) e a mesma prova;
-6. exclusão das métricas;
-7. relatório com taxa.
+2. **trava de envio por MODO** no `_postEnviar` — allowlist estrita, fail-closed em destino
+   fora da faixa — com a cobertura das 6 rotas + fallback de mídia. **Antes dela, nada
+   roda**: é ela que impede o laboratório de mandar mensagem para gente real;
+3. guards de isolamento (grupo, delegação, governança, métricas), cada um com teste;
+4. injetor com HMAC do rawBody + fixture capturado + **os 4 testes negativos em `strict`**;
+5. cenário A (piso + **cron real com relógio controlado**) e prova de que falha com
+   `4dd0e206` revertido;
+6. cenário B (`body`) e a mesma prova com `0b7c576d`;
+7. relatório com taxa, evidência crua e resíduo declarado.
 
-O passo 4 é o marco: **até ele, não sabemos se o laboratório serve.**
+O passo 5 é o marco: **até ele, não sabemos se o laboratório serve.** E o passo 2 é o portão:
+enquanto a falha-fechada não estiver provada nas seis rotas, nenhuma injeção acontece.
 
 ---
 
