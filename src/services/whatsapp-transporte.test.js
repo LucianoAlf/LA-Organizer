@@ -108,6 +108,66 @@ test('banco fora do ar posta assim mesmo (mudo é pior que duplicado)', async ()
   assert.equal(t.posts.length, 1);
 });
 
+// =====================================================================================
+// TRAVA DE SAÍDA DO REPLAY LAB — cobertura por ROTA (spec 05/08, item 3 da auditoria)
+//
+// "Ponto único" só vale se a prova cobrir as portas. Na Fatia 3 eu afirmei que o gate
+// cobria todo outbound e cobria UMA das sete rotas. Aqui cada rota é verificada nos dois
+// lados: destino QA suprime; destino real ABORTA sem postar.
+// =====================================================================================
+const QA_PHONE = '5500000000001';
+const PESSOA_REAL = '5521999998888';
+
+function comQA(fn) {
+  const antes = process.env.TOM_QA_PHONES;
+  process.env.TOM_QA_PHONES = QA_PHONE;
+  return Promise.resolve(fn()).finally(() => {
+    if (antes === undefined) delete process.env.TOM_QA_PHONES; else process.env.TOM_QA_PHONES = antes;
+  });
+}
+
+for (const r of ROTAS) {
+  test(`[replay] ${r.nome}: destino QA é suprimido, 0 POST, recibo com run_id`, async () => {
+    const t = transporteFake();
+    const sb = sbLease(true);
+    await comQA(async () => {
+      await runInTurn({ waMessageId: 'WA1', leaseToken: 'tok', qa: true, runId: 'run-42' }, async () => {
+        const out = await _postEnviar(r.rota, r.payload, { phone: QA_PHONE, api: t, supabase: sb });
+        assert.equal(out.suprimido, true, `${r.nome} não foi suprimido`);
+        // o recibo prova que o contexto de replay chegou até o transporte
+        assert.equal(out.qaEvidencia.evento, 'outbound_suppressed');
+        assert.equal(out.qaEvidencia.runId, 'run-42', 'recibo sem run_id: a trava não estava no contexto');
+      });
+    });
+    assert.equal(t.posts.length, 0, `${r.nome}: POSTOU em replay`);
+  });
+
+  test(`[replay] ${r.nome}: destino de PESSOA REAL falha fechada, 0 POST`, async () => {
+    const t = transporteFake();
+    const sb = sbLease(true);
+    await comQA(async () => {
+      await runInTurn({ waMessageId: 'WA1', leaseToken: 'tok', qa: true, runId: 'run-42' }, async () => {
+        await assert.rejects(
+          () => _postEnviar(r.rota, r.payload, { phone: PESSOA_REAL, api: t, supabase: sb }),
+          (e) => e.code === 'QA_DESTINO_PROIBIDO' && e.qaEvidencia.evento === 'destino_proibido',
+          `${r.nome}: deixou passar destino real`,
+        );
+      });
+    });
+    assert.equal(t.posts.length, 0, `${r.nome}: VAZOU POST para pessoa real`);
+  });
+}
+
+test('[produção] fora de replay, envio para pessoa real segue normal — nada mudou', async () => {
+  const t = transporteFake();
+  const sb = sbLease(true);
+  await comQA(async () => {
+    const out = await _postEnviar('/send/text', { number: PESSOA_REAL }, { phone: PESSOA_REAL, api: t, supabase: sb });
+    assert.equal(out.bloqueado, false);
+  });
+  assert.equal(t.posts.length, 1, 'a trava de QA não pode afetar produção');
+});
+
 test('o config extra (timeout da voz) chega no transporte', async () => {
   const t = transporteFake();
   const sb = sbLease(true);

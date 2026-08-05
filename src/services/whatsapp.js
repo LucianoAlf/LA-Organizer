@@ -204,6 +204,11 @@ const turnClaim = require('./turn-claim');
 
 // O cliente do banco é resolvido tarde: whatsapp.js é a camada de transporte e não deve
 // carregar o supabase no require (quebraria os testes puros que só importam o extrator).
+// Lista de perfis QA. Vazia em produção ⇒ a trava de replay nunca age.
+function _listaQA() {
+  return String(process.env.TOM_QA_PHONES || '').split(',').map(s => s.trim()).filter(Boolean);
+}
+
 let _sbCache;
 function _sb() {
   if (_sbCache === undefined) {
@@ -230,6 +235,37 @@ function _sb() {
 async function _postEnviar(rota, payload, { phone, tipo = 'mensagem', api: apiOverride, config, supabase: sbOverride } = {}) {
   const cli = apiOverride || api;
   const sb = sbOverride || _sb();
+
+  // ---- TRAVA DE SAÍDA DO REPLAY LAB (spec 05/08) ----
+  // Vem ANTES de tudo: em replay, nenhuma mensagem pode alcançar pessoa real. Fora de
+  // replay é no-op — `turn.qa` nunca é true em produção.
+  const _dest = turnClaim.decideDestinoQA({
+    turn: turnClaim.currentTurn(), phone, listaQA: _listaQA(),
+  });
+  if (_dest.abortar) {
+    // Falha FECHADA: aborta o turno em vez de arriscar entrega indevida. A evidência é
+    // gravada antes de lançar — o laboratório detecta pelo registro, não pela exceção
+    // (algum `catch` do engine pode engoli-la).
+    const msg = `[ReplayLab] destino proibido em replay: ${_dest.numero} (${_dest.detalhe}) rota=${rota}`;
+    console.error(msg);
+    const err = new Error(msg);
+    err.code = 'QA_DESTINO_PROIBIDO';
+    err.qaEvidencia = { evento: 'destino_proibido', rota, tipo, numero: _dest.numero, detalhe: _dest.detalhe };
+    throw err;
+  }
+  if (_dest.suprimir) {
+    const turno = turnClaim.currentTurn() || {};
+    const idSintetico = `QA-SUPPRESSED-${turno.runId || 'sem-run'}-${Date.now()}`;
+    console.log(`[ReplayLab] outbound_suppressed rota=${rota} tipo=${tipo} destino=${_dest.numero} run=${turno.runId || '-'}`);
+    return {
+      bloqueado: true, suprimido: true,
+      // O recibo carrega o run_id: é assim que o cenário prova que o contexto de replay
+      // chegou até aqui. Recibo sem run_id reprova, mesmo que nada tenha vazado.
+      qaEvidencia: { evento: 'outbound_suppressed', rota, tipo, numero: _dest.numero, runId: turno.runId || null },
+      data: { id: idSintetico },
+    };
+  }
+
   const gate = await turnClaim.beforeSend({ supabase: sb });
   if (!gate.send) {
     console.warn(`[Turno] NÃO enviou ${tipo} pra ${String(phone).slice(-4)}: ${gate.reason} — outro worker assumiu este turno`);

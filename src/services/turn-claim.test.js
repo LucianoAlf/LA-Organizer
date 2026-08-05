@@ -168,3 +168,74 @@ test('beforeSend e afterSend nunca lançam', async () => {
     await afterSend({ supabase: sb, sentId: 'X1', phone: '55' });  // não lança
   });
 });
+
+// =====================================================================================
+// TRAVA DE SAÍDA DO REPLAY LAB (spec 05/08, passo 2 — o portão)
+//
+// A v1 da spec suprimia quando o DESTINO já era QA. O Alfredo achou o furo: num replay o
+// TOM decide avisar um TERCEIRO (delegação, "avisa a Gabi") — destino fora da lista, a
+// trava não age, e a mensagem chega numa pessoa REAL. E "recado a terceiro" é um dos
+// padrões que o laboratório existe para testar: vazaria por construção.
+//
+// A trava é sobre o MODO, não sobre o destino:
+//   fora de replay        → envia (produção intocada)
+//   replay + destino QA   → suprime
+//   replay + destino fora → FALHA FECHADA, nunca envia
+// =====================================================================================
+const { decideDestinoQA } = require('./turn-claim');
+const LISTA = ['5500000000001', '5500000000002'];
+
+test('fora de replay: envia normal — produção não muda', () => {
+  const d = decideDestinoQA({ turn: null, phone: '5521999998888', listaQA: LISTA });
+  assert.equal(d.permitido, true);
+  assert.equal(d.motivo, 'sem_replay');
+});
+
+test('turno normal (sem qa) não ativa a trava', () => {
+  const d = decideDestinoQA({ turn: { waMessageId: 'W', qa: false }, phone: '5521999998888', listaQA: LISTA });
+  assert.equal(d.permitido, true);
+});
+
+test('replay + destino QA: suprime e não envia', () => {
+  const d = decideDestinoQA({ turn: { qa: true, runId: 'r1' }, phone: '5500000000001', listaQA: LISTA });
+  assert.equal(d.permitido, false);
+  assert.equal(d.suprimir, true);
+  assert.equal(d.abortar, false);
+});
+
+test('replay + TERCEIRO real: FALHA FECHADA — o furo que o Alfredo achou', () => {
+  const d = decideDestinoQA({ turn: { qa: true, runId: 'r1' }, phone: '5521999998888', listaQA: LISTA });
+  assert.equal(d.permitido, false);
+  assert.equal(d.suprimir, false);
+  assert.equal(d.abortar, true, 'destino real durante replay TEM que abortar');
+  assert.equal(d.motivo, 'destino_proibido');
+});
+
+test('GUARDA DUPLA: telefone real na lista QA ainda é barrado pela faixa', () => {
+  // se alguém puser um número de gente em TOM_QA_PHONES, a faixa reservada segura
+  const d = decideDestinoQA({ turn: { qa: true }, phone: '5521999998888', listaQA: ['5521999998888'] });
+  assert.equal(d.abortar, true, 'lista sozinha não pode liberar número fora da faixa');
+});
+
+test('faixa reservada sem estar na lista também aborta (as duas condições, não uma)', () => {
+  const d = decideDestinoQA({ turn: { qa: true }, phone: '5500000000009', listaQA: LISTA });
+  assert.equal(d.abortar, true);
+});
+
+test('formato do telefone não burla a trava (máscara, +, sufixo do WhatsApp)', () => {
+  for (const p of ['+55 (21) 99999-8888', '5521999998888@s.whatsapp.net', ' 5521999998888 ']) {
+    assert.equal(decideDestinoQA({ turn: { qa: true }, phone: p, listaQA: LISTA }).abortar, true, p);
+  }
+  for (const p of ['+55 00 00000-0001', '5500000000001@s.whatsapp.net']) {
+    assert.equal(decideDestinoQA({ turn: { qa: true }, phone: p, listaQA: LISTA }).suprimir, true, p);
+  }
+});
+
+test('destino vazio/nulo em replay aborta (não vira "sem destino, tudo bem")', () => {
+  assert.equal(decideDestinoQA({ turn: { qa: true }, phone: null, listaQA: LISTA }).abortar, true);
+  assert.equal(decideDestinoQA({ turn: { qa: true }, phone: '', listaQA: LISTA }).abortar, true);
+});
+
+test('lista QA vazia em replay: aborta tudo — nada sai por engano', () => {
+  assert.equal(decideDestinoQA({ turn: { qa: true }, phone: '5500000000001', listaQA: [] }).abortar, true);
+});

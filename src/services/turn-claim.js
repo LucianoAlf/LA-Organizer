@@ -95,4 +95,50 @@ async function afterSend({ supabase, sentId, phone = null, collaboratorId = null
   }
 }
 
-module.exports = { runInTurn, enterTurn, currentTurn, decideSend, beforeSend, afterSend };
+// =====================================================================================
+// TRAVA DE SAÍDA DO REPLAY LAB — a mais crítica do laboratório.
+//
+// A primeira versão da spec suprimia o envio quando o DESTINO já era um perfil de QA.
+// Isso deixava passar o caso perigoso: durante um replay, o TOM decide avisar um
+// TERCEIRO (delegação, "avisa a Gabi", notificação de coordenação). Esse destino não
+// está na lista de QA — a trava não agiria e a mensagem chegaria numa PESSOA REAL.
+// E "recado a terceiro não encaminhado" é um dos padrões que o laboratório existe para
+// testar: vazaria por construção, no primeiro cenário que importasse.
+//
+// Por isso a trava é sobre o MODO, não sobre o destino. Em replay, só a faixa reservada
+// pode receber; qualquer outro destino é falha fechada, com evidência.
+//
+// GUARDA DUPLA: exige estar na lista E na faixa reservada. Se alguém puser um telefone
+// de gente em TOM_QA_PHONES, a faixa segura — uma trava só não basta quando o custo do
+// erro é mandar mensagem para o time inteiro.
+// =====================================================================================
+
+// DDD 00 não existe no Brasil: nenhum número real cai aqui.
+const FAIXA_QA = /^5500\d{9}$/;
+
+function _soDigitos(v) {
+  return String(v == null ? '' : v).replace(/\D/g, '');
+}
+
+function decideDestinoQA({ turn = null, phone = null, listaQA = [] } = {}) {
+  // Fora de replay o comportamento de produção não muda em nada.
+  if (!turn || turn.qa !== true) {
+    return { permitido: true, suprimir: false, abortar: false, motivo: 'sem_replay' };
+  }
+  const num = _soDigitos(phone);
+  const lista = (listaQA || []).map(_soDigitos).filter(Boolean);
+  const naLista = num && lista.includes(num);
+  const naFaixa = FAIXA_QA.test(num);
+  if (naLista && naFaixa) {
+    return { permitido: false, suprimir: true, abortar: false, motivo: 'qa_suprimido', numero: num };
+  }
+  // Tudo o mais — terceiro real, número vazio, lista mal configurada — é falha fechada.
+  return {
+    permitido: false, suprimir: false, abortar: true, motivo: 'destino_proibido',
+    numero: num || '(vazio)',
+    detalhe: !num ? 'sem destino' : (!naFaixa ? 'fora da faixa reservada' : 'fora da lista QA'),
+  };
+}
+
+module.exports = { runInTurn, enterTurn, currentTurn, decideSend, beforeSend, afterSend,
+  decideDestinoQA, FAIXA_QA };
