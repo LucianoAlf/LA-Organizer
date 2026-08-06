@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   bucketizeGroupTasks, doneWhenLabel, packageInMonth, addDaysYmd,
   collapseRecurringSeries, collapseOpenSeries, recurrenceLabel,
-  packageCountUnits, computeGroupStats, groupCountsFromRows,
+  packageCountUnits, computeGroupStats, groupCountsFromRows, missingEditorFields,
   type PoolTask, type PoolTaskStatus,
 } from './groupWorkspace';
 
@@ -363,5 +363,36 @@ describe('recurrenceLabel', () => {
   it('null/vazio → null', () => {
     expect(recurrenceLabel(null)).toBeNull();
     expect(recurrenceLabel('')).toBeNull();
+  });
+});
+
+// Editar a subtarefa do pacote na tela de Grupos (Rose 06/08). O GroupTaskSheet GRAVA
+// title/description/due_date/due_time — abrir ele com um objeto que não trouxe algum
+// desses campos SALVA null por cima e apaga o dado. A filha que o TaskGroupSheet tem em
+// mãos vem do GROUP_SELECT, que não traz `description`: por isso o handler busca a linha
+// completa antes de abrir, e usa esta função como trava (falha fechada).
+describe('missingEditorFields', () => {
+  const filhaDoPacote = {                       // GROUP_SELECT de lib/taskGroups.ts
+    id: 'k1', title: 'Conferir caixa', status: 'pending',
+    due_date: '2026-08-10', due_time: null, sort_position: 0,
+    parent_task_id: 'm1', recurrence_parent_id: null, completed_at: null,
+  };
+  const linhaDoPool = {                          // POOL_SELECT de useGroupWorkspace.ts
+    ...filhaDoPacote, description: 'conferir com a Rose', created_by: 'c1',
+    creator_name: 'Rose', completed_by_name: null, task_reminders: [],
+  };
+
+  it('a filha do pacote NÃO serve pro editor — falta description', () => {
+    expect(missingEditorFields(filhaDoPacote)).toEqual(['description']);
+  });
+  it('a linha completa do pool serve', () => {
+    expect(missingEditorFields(linhaDoPool)).toEqual([]);
+  });
+  it('description null é campo PRESENTE (null é valor, ausência é que apaga)', () => {
+    expect(missingEditorFields({ ...linhaDoPool, description: null })).toEqual([]);
+  });
+  it('acusa todos os que faltam, não só o primeiro', () => {
+    expect(missingEditorFields({ id: 'x' }).sort())
+      .toEqual(['description', 'due_date', 'due_time', 'title']);
   });
 });

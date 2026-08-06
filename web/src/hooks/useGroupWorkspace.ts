@@ -64,6 +64,28 @@ async function fetchPool(groupId: string, todayYmd: string): Promise<PoolTaskRow
   }));
 }
 
+/**
+ * Uma linha do pool por id, com o MESMO shape do fetchPool (Rose 06/08).
+ *
+ * Serve pra abrir o editor a partir de uma tela que só tem a versão ENXUTA da tarefa —
+ * a filha do pacote vem do GROUP_SELECT (lib/taskGroups.ts), que não traz `description`,
+ * e o GroupTaskSheet grava esse campo: abrir com ela apagaria a descrição no save.
+ * O fetchPool não resolve porque filtra `parent_task_id is null`, e subtarefa tem pai.
+ *
+ * `series_rule` fica de fora de propósito: é rótulo do badge do pool, o editor não usa.
+ */
+export async function fetchGroupTaskRow(id: string): Promise<PoolTaskRow | null> {
+  const { data, error } = await supabase.from('tasks').select(POOL_SELECT).eq('id', id).maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  const r = data as any;
+  return {
+    ...r,
+    creator_name: r.creator?.full_name ?? null,
+    completed_by_name: r.done_by?.full_name ?? null,
+  };
+}
+
 // Pacotes: mães is_group do grupo com filhas — espelha o GROUP_SELECT de lib/taskGroups.
 const PKG_SELECT =
   'id, title, status, context, due_date, due_time, is_group, recurrence_rule, recurrence_parent_id, ' +

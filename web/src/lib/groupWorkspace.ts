@@ -250,6 +250,24 @@ export function groupCountsFromRows(
 }
 
 /** RRULE → rótulo curto de cadência pro badge ("diária", "semanal", "mensal"…). */
+/** Campos que o GroupTaskSheet GRAVA ao salvar (ver save() lá). */
+export const EDITOR_WRITES = ['title', 'description', 'due_date', 'due_time'] as const;
+
+/**
+ * Campos que faltam numa linha pra ela poder abrir o editor de tarefa do grupo.
+ *
+ * O editor inicializa o form a partir do objeto recebido e grava TODOS os campos de
+ * `EDITOR_WRITES` no save. Se um campo não veio na linha, o form nasce vazio e o save
+ * escreve null por cima — apaga dado que o usuário nunca viu. A filha do pacote vem do
+ * GROUP_SELECT (sem `description`), por isso o handler busca a linha completa antes de
+ * abrir e usa isto como trava: faltou campo, não abre.
+ *
+ * Ausência (`!(f in row)`) é o que importa — `description: null` é valor legítimo.
+ */
+export function missingEditorFields(row: Record<string, unknown>): string[] {
+  return EDITOR_WRITES.filter(f => !(f in row));
+}
+
 export function recurrenceLabel(rule: string | null | undefined): string | null {
   if (!rule) return null;
   const r = rule.toUpperCase();

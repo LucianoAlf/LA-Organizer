@@ -55,12 +55,25 @@ function SortableChildRow({ child, onToggle, onEdit, onDelete }: {
         <GripVertical size={14} />
       </button>
       <TaskCheckbox done={isDone} size="sm" onClick={() => onToggle(!isDone)} />
-      <button type="button" onClick={onEdit} className="min-w-0 flex-1 text-left focus-ring rounded-sm">
-        <span className={['text-body-sm', isDone ? 'line-through text-fg-muted' : 'text-fg'].join(' ')}>{child.title}</span>
+      {/* Rose 06/08: o nome já abria a edição, mas nada indicava isso — e o prazo era texto
+          morto. Agora os dois levam ao editor e mostram que dá pra tocar (pontilhado). */}
+      <button type="button" onClick={onEdit} disabled={!onEdit}
+        className={['min-w-0 flex-1 text-left focus-ring rounded-sm', onEdit ? 'hover:text-tom' : 'cursor-default'].join(' ')}>
+        <span className={[
+          'text-body-sm',
+          isDone ? 'line-through text-fg-muted' : 'text-fg',
+          onEdit ? 'underline decoration-dotted underline-offset-2' : '',
+        ].join(' ')}>{child.title}</span>
       </button>
-      <span className="text-body-sm text-fg-muted tabular-nums shrink-0">
+      <button type="button" onClick={onEdit} disabled={!onEdit}
+        aria-label={onEdit ? `Editar prazo de ${child.title}` : undefined}
+        className={[
+          // py-2/-my-2: engorda o alvo de toque no celular SEM mudar a altura da linha.
+          'text-body-sm text-fg-muted tabular-nums shrink-0 focus-ring rounded-sm py-2 -my-2',
+          onEdit ? 'underline decoration-dotted underline-offset-2 hover:text-tom' : 'cursor-default',
+        ].join(' ')}>
         {child.due_date ? `dia ${Number(child.due_date.slice(8, 10))}` : 'sem prazo'}{hm ? ` · 🕐 ${hm}` : ''}
-      </span>
+      </button>
       <button type="button" onClick={onDelete} aria-label="Remover subtarefa"
         className="p-1 text-fg-muted hover:text-danger focus-ring rounded-sm">✕</button>
     </div>

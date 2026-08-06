@@ -8,11 +8,11 @@ import { ChevronLeft, Plus, Settings, MessageSquare, NotebookText } from 'lucide
 import { useAuth } from '../../contexts/AuthContext';
 import { useWorkGroups, useMyGroupIds } from '../../hooks/useWorkGroups';
 import { canSeeGroup, canConfigureGroup } from '../../lib/workGroupAccess';
-import { useGroupWorkspace, type PoolTaskRow } from '../../hooks/useGroupWorkspace';
+import { useGroupWorkspace, fetchGroupTaskRow, type PoolTaskRow } from '../../hooks/useGroupWorkspace';
 import { useGroupChat } from '../../hooks/useGroupChat';
 import { unreadCount } from '../../lib/groupChat';
 import { GroupChatDrawer } from './chat/GroupChatDrawer';
-import { doneWhenLabel, recurrenceLabel } from '../../lib/groupWorkspace';
+import { doneWhenLabel, recurrenceLabel, missingEditorFields } from '../../lib/groupWorkspace';
 import { toggleChildWithCascade } from '../../lib/taskGroups';
 import { todaySP, brShort } from '../../utils/date';
 import { StatCard } from '../../components/StatCard';
@@ -150,6 +150,36 @@ export function GrupoWorkspace() {
       }
     } finally {
       setRowBusy(null);
+    }
+  }
+
+  /**
+   * Editar a SUBTAREFA do pacote (Rose 06/08: "não consigo editar o prazo das subtarefas").
+   *
+   * A filha que o TaskGroupSheet entrega vem do GROUP_SELECT — enxuta, sem `description`.
+   * O GroupTaskSheet grava esse campo, então abrir com ela apagaria a descrição no save.
+   * Por isso: busca a linha COMPLETA e só abre se ela cobrir tudo que o editor grava.
+   * Falha fechada — melhor não abrir do que abrir um editor que come dado.
+   */
+  async function abrirEdicaoDaFilha(k: Task) {
+    setChildBusy(k.id);
+    try {
+      const row = await fetchGroupTaskRow(k.id);
+      if (!row) {
+        showToast({ kind: 'error', title: 'Não achei essa subtarefa', msg: 'Fecha e abre o pacote pra atualizar.' });
+        return;
+      }
+      const faltando = missingEditorFields(row as unknown as Record<string, unknown>);
+      if (faltando.length > 0) {
+        showToast({ kind: 'error', title: 'Não consegui abrir a edição', msg: `Faltou: ${faltando.join(', ')}.` });
+        return;
+      }
+      setOpenPkgId(null);   // fecha o pacote antes (mesmo padrão de Hoje/Agenda)
+      setEditing(row);
+    } catch {
+      showToast({ kind: 'error', title: 'Não consegui abrir a subtarefa' });
+    } finally {
+      setChildBusy(null);
     }
   }
 
@@ -501,6 +531,7 @@ export function GrupoWorkspace() {
           setOpenPkgId(null);
           ws.invalidate();
         }}
+        onEditChild={isMember ? (child) => { void abrirEdicaoDaFilha(child); } : undefined}
       />
       </div>{/* fim da coluna de conteúdo */}
 
