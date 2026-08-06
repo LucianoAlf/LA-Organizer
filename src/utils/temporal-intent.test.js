@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { detectExplicitDayIntent } = require('./temporal-intent');
+const { detectExplicitDayIntent, resolveExplicitWeekdayDate, dowFromYmd } = require('./temporal-intent');
 const { stripReplyScaffold } = require('../events/detect-approval-reply');
 
 // Caso real Ana (29/06 13:01): reply-quote a uma cobrança que diz "Resolve hoje
@@ -76,4 +76,46 @@ test('NÃO-REGRESSÃO: pedido direto de amanhã/hoje continua valendo', () => {
 
 test('NÃO-REGRESSÃO: "hoje é" explicativo não força hoje', () => {
   assert.strictEqual(detectExplicitDayIntent('hoje é feriado, joga pra quarta').wantsToday, false);
+});
+
+test('replay lab 06/08: "pra sábado" resolve determinístico para 08/08, não domingo', () => {
+  const resolved = resolveExplicitWeekdayDate('passa essa do inventário pra sábado', { baseYmd: '2026-08-06' });
+  assert.strictEqual(resolved, '2026-08-08');
+  assert.strictEqual(dowFromYmd(resolved), 6);
+  assert.strictEqual(dowFromYmd('2026-08-09'), 0, 'controle: 09/08/2026 é domingo');
+});
+
+test('weekday resolver aceita acento ausente', () => {
+  assert.strictEqual(resolveExplicitWeekdayDate('joga pra sabado', { baseYmd: '2026-08-06' }), '2026-08-08');
+  assert.strictEqual(resolveExplicitWeekdayDate('muda pra terca-feira', { baseYmd: '2026-08-06' }), '2026-08-11');
+});
+
+test('weekday resolver não briga com data numérica explícita nem frase ambígua', () => {
+  assert.strictEqual(resolveExplicitWeekdayDate('joga pra sábado 15/08', { baseYmd: '2026-08-06' }), null);
+  assert.strictEqual(resolveExplicitWeekdayDate('entre sábado e domingo eu vejo', { baseYmd: '2026-08-06' }), null);
+});
+
+// ── Buracos de ABSTENÇÃO (catraca, 06/08) ─────────────────────────────────────
+// O guard roda DEPOIS do marker e é determinístico, então ele ganha sempre. Isso
+// inverte o risco: onde ele erra, ele atropela um marker que estava certo. Os dois
+// casos abaixo estavam vivos em produção — o conjunto de abstenção cobria data
+// numérica e dois-dias, mas não estes.
+test('"próxima sexta" / "sexta que vem" ABSTÊM — o guard não sabe resolver semana seguinte', () => {
+  // Numa quinta 06/08 o guard devolvia 07/08 (amanhã!) para um pedido de semana que vem.
+  for (const t of ['passa pra próxima sexta', 'passa pra sexta que vem', 'joga pra proxima segunda',
+                   'deixa pra semana que vem na terça']) {
+    assert.strictEqual(resolveExplicitWeekdayDate(t, { baseYmd: '2026-08-06' }), null, t);
+  }
+});
+
+test('dia da semana IGUAL ao de hoje ABSTÉM — "pra quinta" numa quinta não é hoje', () => {
+  // Devolvia o próprio dia: reagendar para hoje é no-op na melhor hipótese, e sobrescreve
+  // o marker do LLM que provavelmente resolveu para a semana seguinte.
+  assert.strictEqual(resolveExplicitWeekdayDate('passa essa pra quinta', { baseYmd: '2026-08-06' }), null);
+  assert.strictEqual(resolveExplicitWeekdayDate('remarca pra segunda', { baseYmd: '2026-08-03' }), null);
+});
+
+test('o caso do Alfredo (06/08 → sábado) continua resolvendo — a abstenção não pode comer o fix', () => {
+  assert.strictEqual(resolveExplicitWeekdayDate('passa essa do inventário pra sábado', { baseYmd: '2026-08-06' }), '2026-08-08');
+  assert.strictEqual(resolveExplicitWeekdayDate('muda pra terca-feira', { baseYmd: '2026-08-06' }), '2026-08-11');
 });

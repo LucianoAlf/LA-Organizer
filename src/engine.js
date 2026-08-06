@@ -46,7 +46,7 @@ const { detectApprovalReply, stripReplyScaffold } = require('./events/detect-app
 const { detectProjectStatusIntent } = require('./lib/detect-project-status-intent');
 const projectStatusLib = require('./lib/project-status');
 const { applyProjectStatusChange } = require('./services/project-status-exec');
-const { detectExplicitDayIntent } = require('./utils/temporal-intent');
+const { detectExplicitDayIntent, resolveExplicitWeekdayDate } = require('./utils/temporal-intent');
 const { isFutureCompletion } = require('./utils/complete-guards');
 const { sanitizeOptimisticConfirm, hasOptimisticConfirm, enforceNoMarkerHonesty, hasCompletionClaim, hasWeakCompletionClaim, isProgressStatusReply } = require('./lib/optimistic-confirm');
 const { isActionConfirmQuestion } = require('./lib/confirm-question');
@@ -4770,6 +4770,23 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
           console.warn(`[Task] reschedule REJECTED id=${a.id} (not owned by ${last4} or not found)`);
           failCount++;
           continue;
+        }
+        // REPLAY-LAB-WEEKDAY-GUARD (06/08, cenario-piso rep 5): o LLM respondeu
+        // "sábado (08/08)", mas o marker veio com new_due_date=2026-08-09. Antes o
+        // executor aceitava o marker e criava confabulação: fala uma data, grava outra.
+        // Se a fala real nomeia UM dia da semana sem data numérica, o executor resolve
+        // determinístico em BRT e corrige o marker antes de tocar no banco.
+        if (opts && opts.inboundText && a.new_due_date) {
+          const resolvedWeekdayDate = resolveExplicitWeekdayDate(opts.inboundText, { baseYmd: todayYmdSP() });
+          if (resolvedWeekdayDate && a.new_due_date !== resolvedWeekdayDate) {
+            const originalDueDate = a.new_due_date;
+            a.new_due_date = resolvedWeekdayDate;
+            console.warn(`[Task] reschedule weekday override: marker=${originalDueDate} inbound=${resolvedWeekdayDate}`);
+            try {
+              await logMarker(collaborator.id, 'TASK_DATE_AUTO_ALIGNED', 'executed',
+                `weekday_override ${originalDueDate}->${resolvedWeekdayDate}`, null);
+            } catch (e) { /* não-fatal */ }
+          }
         }
         // Sprint 31 — new_due_date OU new_remind_at (pelo menos um)
         const update = {};

@@ -31,6 +31,44 @@ const { stripReplyScaffold } = require('../events/detect-approval-reply');
 // pior, que é gravar a data que a pessoa acabou de RECUSAR.
 const EXPLANATORY_DAY_RE = /\b(?:amanh[ãa]|hoje)\s+(?:é|eh|e|foi|ser[áa]|vai\s+ser|t[áa]|est[áa]|seria)\b/u;
 const COMPETING_DAY_RE = /\b(?:segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo)(?:[-\s]feira)?\b|\bdia\s+\d{1,2}\b|\b\d{1,2}\/\d{1,2}\b|\bpr[óo]xim[ao]\s+(?:semana|m[êe]s)\b/u;
+const EXPLICIT_NUMERIC_DATE_RE = /\b(?:\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}(?:\/\d{2,4})?|\bdia\s+\d{1,2})\b/u;
+// "próxima sexta", "sexta que vem", "semana que vem": deslocam para a semana seguinte,
+// que este resolvedor não modela. Detectar para ABSTER, não para tentar resolver.
+const WEEK_SHIFT_RE = /\bpr[óo]xim[ao]\b|\bque\s+vem\b|\bseguinte\b/u;
+const WEEKDAY_RE = /\b(domingo|segunda(?:-feira)?|ter[çc]a(?:-feira)?|quarta(?:-feira)?|quinta(?:-feira)?|sexta(?:-feira)?|s[áa]bado)\b/gu;
+const WEEKDAY_TO_DOW = {
+  domingo: 0,
+  segunda: 1,
+  'segunda-feira': 1,
+  terca: 2,
+  'terca-feira': 2,
+  terça: 2,
+  'terça-feira': 2,
+  quarta: 3,
+  'quarta-feira': 3,
+  quinta: 4,
+  'quinta-feira': 4,
+  sexta: 5,
+  'sexta-feira': 5,
+  sabado: 6,
+  'sabado-feira': 6,
+  sábado: 6,
+  'sábado-feira': 6,
+};
+
+function addDaysYmd(ymd, days) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(ymd || ''))) return null;
+  const d = new Date(`${ymd}T15:00:00.000Z`);
+  if (Number.isNaN(d.getTime())) return null;
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function dowFromYmd(ymd) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(ymd || ''))) return null;
+  const d = new Date(`${ymd}T15:00:00.000Z`);
+  return Number.isNaN(d.getTime()) ? null : d.getUTCDay();
+}
 
 function detectExplicitDayIntent(rawText) {
   const userTextLC = stripReplyScaffold(String(rawText || '')).userText.toLowerCase();
@@ -42,4 +80,29 @@ function detectExplicitDayIntent(rawText) {
   return { wantsToday, wantsTomorrow };
 }
 
-module.exports = { detectExplicitDayIntent };
+function resolveExplicitWeekdayDate(rawText, { baseYmd } = {}) {
+  const userTextLC = stripReplyScaffold(String(rawText || '')).userText.toLowerCase();
+  if (!baseYmd || EXPLICIT_NUMERIC_DATE_RE.test(userTextLC)) return null;
+  // Semana seguinte está FORA do que este resolvedor sabe fazer. Sem esta abstenção,
+  // "passa pra próxima sexta" numa quinta devolvia a sexta de AMANHÃ — e como o guard
+  // roda depois do marker e é determinístico, ele atropelava o marker que acertou.
+  if (WEEK_SHIFT_RE.test(userTextLC)) return null;
+
+  const matches = [...userTextLC.matchAll(WEEKDAY_RE)].map((m) => m[1]);
+  const unique = [...new Set(matches.map((m) => String(m).normalize('NFD').replace(/\p{Diacritic}/gu, '')))];
+  if (unique.length !== 1) return null;
+
+  const targetDow = WEEKDAY_TO_DOW[unique[0]];
+  const baseDow = dowFromYmd(baseYmd);
+  if (targetDow == null || baseDow == null) return null;
+
+  const delta = (targetDow - baseDow + 7) % 7;
+  // delta 0 = a pessoa nomeou o dia de HOJE. Num reagendamento isso nunca é o que ela
+  // quer (mover para hoje é no-op), e o mais provável é a semana seguinte — que este
+  // resolvedor não sabe decidir. Abster deixa o marker do LLM valer, que é o
+  // comportamento de antes do guard: não piora nada, só não força.
+  if (delta === 0) return null;
+  return addDaysYmd(baseYmd, delta);
+}
+
+module.exports = { detectExplicitDayIntent, resolveExplicitWeekdayDate, dowFromYmd };
