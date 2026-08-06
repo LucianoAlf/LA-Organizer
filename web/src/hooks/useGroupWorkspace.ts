@@ -6,7 +6,7 @@ import { useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { todaySP } from '../utils/date';
-import { addDaysYmd, bucketizeGroupTasks, collapseRecurringSeries, packageInMonth, type PoolTask } from '../lib/groupWorkspace';
+import { bucketizeGroupTasks, collapseOpenSeries, computeGroupStats, groupCountsFromRows, packageInMonth, type PoolTask } from '../lib/groupWorkspace';
 import type { Task } from '../types';
 
 const POOL_SELECT =
@@ -105,16 +105,17 @@ export function useGroupWorkspace(groupId: string | undefined, collabId: string 
   });
 
   // Recorrência (2026-07-02): colapsa cada série numa linha ANTES de bucketizar e
-  // contar — senão uma tarefa diária de grupo (30 instâncias) infla abertas/feitas
-  // e entope o pool (caso Vitória/ADM CG).
-  const collapsed = useMemo(() => collapseRecurringSeries(pool.data ?? [], today), [pool.data, today]);
+  // contar — senão uma tarefa diária de grupo (30 instâncias) infla abertas
+  // e entope o pool (caso Vitória/ADM CG). Só as ABERTAS colapsam: colapsar as
+  // concluídas apagava "Feitas no mês" (ver collapseOpenSeries — caso Rose 05/08).
+  const collapsed = useMemo(() => collapseOpenSeries(pool.data ?? [], today), [pool.data, today]);
   const buckets = useMemo(() => bucketizeGroupTasks(collapsed, today), [collapsed, today]);
-  const stats = useMemo(() => ({
-    abertas: buckets.overdue.length + buckets.dueSoon.length + buckets.later.length,
-    venceEmBreve: buckets.dueSoon.length,
-    atrasadas: buckets.overdue.length,
-    feitasNoMes: collapsed.filter(t => t.status === 'done').length,
-  }), [buckets, collapsed]);
+  // Stats: pool + PACOTES do painel do mês (contados pelas filhas). Regra única em
+  // lib/groupWorkspace — a lista /grupos usa a MESMA, senão as telas se contradizem.
+  const stats = useMemo(
+    () => computeGroupStats(pool.data ?? [], packages.data ?? [], today, monthStartUtcIso(today)),
+    [pool.data, packages.data, today],
+  );
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['group-workspace'] });
@@ -190,6 +191,7 @@ export interface GroupCounts { abertas: number; atrasadas: number; venceEmBreve:
 type OverviewRow = {
   id: string; assigned_group_id: string; status: string;
   due_date: string | null; completed_at: string | null;
+  is_group?: boolean; parent_task_id?: string | null;
   recurrence_parent_id?: string | null; recurrence_rule?: string | null;
 };
 
@@ -199,28 +201,22 @@ export function useGroupsOverview(groupIds: string[]) {
     queryKey: ['groups-overview', [...groupIds].sort().join(','), today],
     enabled: groupIds.length > 0,
     queryFn: async (): Promise<Record<string, GroupCounts>> => {
+      // Traz pool + mães de pacote + filhas (antes filtrava is_group/parent no SQL e
+      // os pacotes ficavam invisíveis nos badges). O recorte por tipo é feito em JS
+      // pra rodar EXATAMENTE a mesma regra do workspace.
       const { data, error } = await supabase
         .from('tasks')
         .select('id, assigned_group_id, status, due_date, completed_at, is_group, parent_task_id, recurrence_parent_id, recurrence_rule')
         .in('assigned_group_id', groupIds)
-        .eq('is_group', false)
-        .is('parent_task_id', null)
         .neq('status', 'cancelled')
         .eq('data_classification', 'real');
       if (error) throw error;
-      const monthStart = monthStartUtcIso(today);
-      const horizon = addDaysYmd(today, 7);
+      const counts = groupCountsFromRows((data ?? []) as OverviewRow[], groupIds, today, monthStartUtcIso(today));
       const out: Record<string, GroupCounts> = {};
-      for (const gid of groupIds) out[gid] = { abertas: 0, atrasadas: 0, venceEmBreve: 0, feitasNoMes: 0, totalMes: 0 };
-      // Colapsa séries recorrentes (mesma regra do pool) pra não inflar as contagens.
-      for (const t of collapseRecurringSeries((data ?? []) as OverviewRow[], today)) {
-        const c = out[t.assigned_group_id]; if (!c) continue;
-        if (t.status === 'done') { if ((t.completed_at ?? '') >= monthStart) c.feitasNoMes++; continue; }
-        c.abertas++;
-        if (t.due_date && t.due_date < today) c.atrasadas++;
-        else if (t.due_date && t.due_date <= horizon) c.venceEmBreve++;
+      for (const gid of groupIds) {
+        const s = counts[gid];
+        out[gid] = { ...s, totalMes: s.feitasNoMes + s.abertas };
       }
-      for (const gid of groupIds) out[gid].totalMes = out[gid].feitasNoMes + out[gid].abertas;
       return out;
     },
   });

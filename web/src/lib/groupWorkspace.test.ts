@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   bucketizeGroupTasks, doneWhenLabel, packageInMonth, addDaysYmd,
-  collapseRecurringSeries, recurrenceLabel,
+  collapseRecurringSeries, collapseOpenSeries, recurrenceLabel,
+  packageCountUnits, computeGroupStats, groupCountsFromRows,
   type PoolTask, type PoolTaskStatus,
 } from './groupWorkspace';
 
@@ -148,6 +149,202 @@ describe('collapseRecurringSeries (hoje=2026-07-02)', () => {
     const b = bucketizeGroupTasks(collapsed, today);
     const total = b.overdue.length + b.dueSoon.length + b.later.length;
     expect(total).toBe(2);
+  });
+});
+
+// REGRESSÃO 02/07 → 05/08 (caso Rose, grupo Financeiro): o colapso de série passou
+// a valer também pras CONCLUÍDAS. Como o representante da série é a próxima ocorrência
+// ABERTA, toda conclusão sumia — "Feitas no mês" ficava estruturalmente 0 pra tarefa
+// recorrente (e o engine SEMPRE materializa a próxima ao concluir).
+describe('collapseOpenSeries — só as abertas colapsam (hoje=2026-08-05)', () => {
+  const today = '2026-08-05';
+
+  it('série com ocorrência concluída no mês + próxima aberta: a concluída NÃO some', () => {
+    const rows = [
+      t({ id: 'feita', status: 'done', due_date: '2026-08-01', completed_at: '2026-08-03T12:18:53Z', recurrence_parent_id: 'S' }),
+      t({ id: 'proxima', due_date: '2026-09-01', recurrence_parent_id: 'S' }),
+    ];
+    const out = collapseOpenSeries(rows, today);
+    expect(out.filter(x => x.status === 'done').map(x => x.id)).toEqual(['feita']);
+    expect(bucketizeGroupTasks(out, today).doneRecent.map(x => x.id)).toEqual(['feita']);
+  });
+
+  it('anti-flood preservado: 30 ocorrências ABERTAS da mesma série = 1 linha', () => {
+    const rows = Array.from({ length: 30 }, (_, i) =>
+      t({ id: `d${i}`, due_date: addDaysYmd('2026-08-06', i), recurrence_parent_id: 'S', series_rule: 'FREQ=DAILY' }));
+    const out = collapseOpenSeries(rows, today);
+    expect(out.length).toBe(1);
+    expect(out[0].recurrence_series_size).toBe(30);
+  });
+
+  it('N conclusões da MESMA série contam N (ocorrência é fato, não série)', () => {
+    const rows = [
+      t({ id: 'f1', status: 'done', due_date: '2026-08-01', completed_at: '2026-08-01T10:00:00Z', recurrence_parent_id: 'S' }),
+      t({ id: 'f2', status: 'done', due_date: '2026-08-02', completed_at: '2026-08-02T10:00:00Z', recurrence_parent_id: 'S' }),
+      t({ id: 'f3', status: 'done', due_date: '2026-08-03', completed_at: '2026-08-03T10:00:00Z', recurrence_parent_id: 'S' }),
+    ];
+    expect(collapseOpenSeries(rows, today).filter(x => x.status === 'done').length).toBe(3);
+  });
+
+  it('não-recorrentes passam intactas e a ordem das abertas é preservada', () => {
+    const rows = [t({ id: 'a', due_date: '2026-08-07' }), t({ id: 'b', due_date: '2026-08-09' })];
+    expect(collapseOpenSeries(rows, today).map(x => x.id)).toEqual(['a', 'b']);
+  });
+
+  // Dado REAL do pool do grupo Financeiro em 05/08/2026 (9 linhas, todas de série).
+  it('pool real do Financeiro: 6 abertas e 3 feitas (a tela mostrava 0 feitas)', () => {
+    const rows = [
+      t({ id: 'f1', status: 'done', due_date: '2026-08-01', completed_at: '2026-08-03T12:18:53Z', recurrence_parent_id: 'P1' }),
+      t({ id: 'f2', status: 'done', due_date: '2026-08-03', completed_at: '2026-08-04T00:58:33Z', recurrence_parent_id: 'P2' }),
+      t({ id: 'f3', status: 'done', due_date: '2026-08-03', completed_at: '2026-08-04T00:51:08Z', recurrence_parent_id: 'P3' }),
+      t({ id: 'a1', due_date: '2026-08-31', recurrence_parent_id: 'P4' }),
+      t({ id: 'a2', due_date: '2026-08-31', recurrence_parent_id: 'P5' }),
+      t({ id: 'a3', due_date: '2026-08-31', recurrence_parent_id: 'P6' }),
+      t({ id: 'a4', due_date: '2026-09-01', recurrence_parent_id: 'P1' }),
+      t({ id: 'a5', due_date: '2026-09-02', recurrence_parent_id: 'P2' }),
+      t({ id: 'a6', due_date: '2026-09-03', recurrence_parent_id: 'P3' }),
+    ];
+    const out = collapseOpenSeries(rows, today);
+    const b = bucketizeGroupTasks(out, today);
+    expect(b.overdue.length + b.dueSoon.length + b.later.length).toBe(6); // abertas
+    expect(out.filter(x => x.status === 'done').length).toBe(3);          // feitas no mês
+    expect(b.doneRecent.length).toBe(3);                                  // seção "Feitas recentemente"
+  });
+});
+
+// Decisão Alf 05/08: os contadores passam a enxergar os PACOTES mensais contando as
+// FILHAS (o trabalho real, cada uma com prazo próprio), nunca mãe + filhas junto.
+describe('packageCountUnits', () => {
+  it('pacote COM filhas: conta as filhas e ignora a mãe (sem dobra)', () => {
+    const u = packageCountUnits([{
+      status: 'pending', due_date: '2026-08-06', completed_at: null,
+      subtasks: [
+        { status: 'pending', due_date: '2026-08-06', completed_at: null },
+        { status: 'done', due_date: '2026-08-09', completed_at: '2026-08-09T10:00:00Z' },
+      ],
+    }]);
+    expect(u.length).toBe(2);
+    expect(u.map(x => x.due_date)).toEqual(['2026-08-06', '2026-08-09']);
+  });
+
+  it('pacote SEM filhas: conta a própria mãe como 1 unidade', () => {
+    const u = packageCountUnits([{ status: 'pending', due_date: '2026-09-01', completed_at: null, subtasks: [] }]);
+    expect(u.length).toBe(1);
+    expect(u[0].due_date).toBe('2026-09-01');
+  });
+
+  it('mãe concluída com filhas PENDENTES: as filhas seguem contando como abertas', () => {
+    const u = packageCountUnits([{
+      status: 'done', due_date: '2026-08-01', completed_at: '2026-08-03T12:00:00Z',
+      subtasks: [{ status: 'pending', due_date: '2026-08-12', completed_at: null }],
+    }]);
+    expect(u.length).toBe(1);
+    expect(u[0].status).toBe('pending');
+  });
+});
+
+describe('computeGroupStats — pool + pacotes (hoje=2026-08-05)', () => {
+  const today = '2026-08-05';
+  const monthStart = '2026-08-01T03:00:00.000Z';
+
+  it('sem pacotes, é só o pool', () => {
+    const s = computeGroupStats(
+      [{ id: 'a', status: 'pending', due_date: '2026-08-07', completed_at: null }], [], today, monthStart);
+    expect(s).toEqual({ abertas: 1, venceEmBreve: 1, atrasadas: 0, feitasNoMes: 0 });
+  });
+
+  it('conclusão de mês ANTERIOR não conta em feitasNoMes', () => {
+    const s = computeGroupStats(
+      [{ id: 'a', status: 'done', due_date: '2026-07-30', completed_at: '2026-07-30T10:00:00Z' }], [], today, monthStart);
+    expect(s.feitasNoMes).toBe(0);
+  });
+
+  // Estado REAL do grupo Financeiro em 05/08/2026 (banco, 9 linhas de pool + 4 pacotes).
+  it('grupo Financeiro 05/08: 19 abertas / 5 vence em breve / 0 atrasadas / 6 feitas', () => {
+    const pool = [
+      { id: 'f1', status: 'done', due_date: '2026-08-01', completed_at: '2026-08-03T12:18:53Z', recurrence_parent_id: 'P1' },
+      { id: 'f2', status: 'done', due_date: '2026-08-03', completed_at: '2026-08-04T00:58:33Z', recurrence_parent_id: 'P2' },
+      { id: 'f3', status: 'done', due_date: '2026-08-03', completed_at: '2026-08-04T00:51:08Z', recurrence_parent_id: 'P3' },
+      { id: 'a1', status: 'pending', due_date: '2026-08-31', completed_at: null, recurrence_parent_id: 'P4' },
+      { id: 'a2', status: 'pending', due_date: '2026-08-31', completed_at: null, recurrence_parent_id: 'P5' },
+      { id: 'a3', status: 'pending', due_date: '2026-08-31', completed_at: null, recurrence_parent_id: 'P6' },
+      { id: 'a4', status: 'pending', due_date: '2026-09-01', completed_at: null, recurrence_parent_id: 'P1' },
+      { id: 'a5', status: 'pending', due_date: '2026-09-02', completed_at: null, recurrence_parent_id: 'P2' },
+      { id: 'a6', status: 'pending', due_date: '2026-09-03', completed_at: null, recurrence_parent_id: 'P3' },
+    ];
+    const kid = (status: string, due: string, done?: string) =>
+      ({ status, due_date: due, completed_at: done ?? null });
+    const pkgs = [
+      // Cashbacks (mãe done 01/08) — 3 filhas concluídas hoje
+      { status: 'done', due_date: '2026-08-01', completed_at: '2026-08-05T23:14:21Z', subtasks: [
+        kid('done', '2026-08-03', '2026-08-05T23:14:21Z'),
+        kid('done', '2026-08-03', '2026-08-05T23:09:04Z'),
+        kid('done', '2026-08-03', '2026-08-05T23:09:05Z')] },
+      // Conciliação (mãe done 01/08) — 6 filhas PENDENTES, 2 delas vencendo 12/08
+      { status: 'done', due_date: '2026-08-01', completed_at: '2026-08-03T12:18:52Z', subtasks: [
+        kid('pending', '2026-08-12'), kid('pending', '2026-08-12'), kid('pending', '2026-08-17'),
+        kid('pending', '2026-08-25'), kid('pending', '2026-08-25'), kid('pending', '2026-08-27')] },
+      // Depósito de Cheques (mãe pending 06/08) — 4 filhas, 3 vencendo <= 12/08
+      { status: 'pending', due_date: '2026-08-06', completed_at: null, subtasks: [
+        kid('pending', '2026-08-06'), kid('pending', '2026-08-09'),
+        kid('pending', '2026-08-12'), kid('pending', '2026-08-21')] },
+      // Repasses Maquininha (mãe pending 31/08) — 3 filhas em 30/08
+      { status: 'pending', due_date: '2026-08-31', completed_at: null, subtasks: [
+        kid('pending', '2026-08-30'), kid('pending', '2026-08-30'), kid('pending', '2026-08-30')] },
+    ];
+    expect(computeGroupStats(pool, pkgs, today, monthStart)).toEqual({
+      abertas: 19,       // 6 do pool (séries colapsadas) + 13 filhas abertas
+      venceEmBreve: 5,   // 0 do pool + 5 filhas ate 12/08
+      atrasadas: 0,
+      feitasNoMes: 6,    // 3 do pool + 3 filhas do Cashbacks
+    });
+  });
+});
+
+describe('groupCountsFromRows — lista /grupos usa a MESMA regra do workspace', () => {
+  const today = '2026-08-05';
+  const monthStart = '2026-08-01T03:00:00.000Z';
+  const G = 'g1';
+  const row = (p: Record<string, unknown>) => ({
+    id: String(p.id), assigned_group_id: G, status: 'pending', due_date: null, completed_at: null, ...p,
+  } as Parameters<typeof groupCountsFromRows>[0][number]);
+
+  it('separa pool / mãe de pacote / filha e não conta mãe+filha em dobro', () => {
+    const rows = [
+      row({ id: 'pool1', due_date: '2026-08-07' }),                                  // pool: vence em breve
+      row({ id: 'mae', is_group: true, due_date: '2026-08-06' }),                     // pacote do mês
+      row({ id: 'k1', parent_task_id: 'mae', due_date: '2026-08-06' }),               // filha: vence em breve
+      row({ id: 'k2', parent_task_id: 'mae', due_date: '2026-08-25' }),               // filha: mais pra frente
+      row({ id: 'k3', parent_task_id: 'mae', status: 'done', completed_at: '2026-08-04T10:00:00Z' }),
+    ];
+    expect(groupCountsFromRows(rows, [G], today, monthStart)[G])
+      .toEqual({ abertas: 3, venceEmBreve: 2, atrasadas: 0, feitasNoMes: 1 }); // mãe NÃO entra
+  });
+
+  it('mãe-TEMPLATE (recurrence_rule) e pacote de outro mês ficam de fora', () => {
+    const rows = [
+      row({ id: 'tmpl', is_group: true, recurrence_rule: 'FREQ=MONTHLY', due_date: '2026-08-01' }),
+      row({ id: 'ktmpl', parent_task_id: 'tmpl', due_date: '2026-08-08' }),
+      row({ id: 'setembro', is_group: true, due_date: '2026-09-01' }),
+      row({ id: 'kset', parent_task_id: 'setembro', due_date: '2026-09-02' }),
+    ];
+    expect(groupCountsFromRows(rows, [G], today, monthStart)[G])
+      .toEqual({ abertas: 0, venceEmBreve: 0, atrasadas: 0, feitasNoMes: 0 });
+  });
+
+  it('grupo sem nenhuma linha volta zerado (não quebra)', () => {
+    expect(groupCountsFromRows([], ['vazio'], today, monthStart).vazio)
+      .toEqual({ abertas: 0, venceEmBreve: 0, atrasadas: 0, feitasNoMes: 0 });
+  });
+
+  it('não vaza linha de um grupo pro outro', () => {
+    const rows = [
+      row({ id: 'a', due_date: '2026-08-07' }),
+      row({ id: 'b', assigned_group_id: 'g2', due_date: '2026-08-07' }),
+    ];
+    const r = groupCountsFromRows(rows, [G, 'g2'], today, monthStart);
+    expect(r[G].abertas).toBe(1);
+    expect(r.g2.abertas).toBe(1);
   });
 });
 

@@ -142,6 +142,113 @@ export function collapseRecurringSeries<T extends RecurringLike>(rows: T[], toda
   return out;
 }
 
+/** Colapso do pool pra EXIBIÇÃO/CONTAGEM: só as ABERTAS colapsam.
+ *
+ *  PORQUÊ (regressão 02/07, achada no caso Rose 05/08): o colapso rodava sobre a
+ *  lista INTEIRA. Como o representante da série é a próxima ocorrência ABERTA
+ *  (pickRepresentative), toda ocorrência CONCLUÍDA era descartada — e o engine
+ *  materializa a próxima assim que você conclui. Resultado: "Feitas no mês" e a
+ *  seção "Feitas recentemente" ficavam estruturalmente ZERO pra qualquer tarefa
+ *  recorrente de grupo. No grupo Financeiro: 3 conclusões em agosto, contador 0.
+ *
+ *  Anti-flood (caso Vitória/ADM CG) continua valendo onde ele importa: a lista de
+ *  ABERTAS. Conclusão é FATO do mês — concluir 3× conta 3, nunca 1. */
+export function collapseOpenSeries<T extends RecurringLike>(rows: T[], todayYmd: string): T[] {
+  const open: T[] = [];
+  const others: T[] = []; // concluídas (e qualquer outro status) passam inteiras
+  for (const r of rows) (isOpenStatus(r.status) ? open : others).push(r);
+  return [...collapseRecurringSeries(open, todayYmd), ...others];
+}
+
+// ————— Contadores do grupo: pool + PACOTES (decisão Alf 05/08) —————
+// Até aqui a faixa de stats só enxergava o pool avulso. Grupo que trabalha por
+// PACOTE mensal (Financeiro) via tudo zerado: 13 filhas abertas e 1 pacote vencendo
+// no dia seguinte não entravam em nenhum contador. Caso Rose 05/08.
+
+export interface CountUnit { status: string; due_date: string | null; completed_at: string | null; }
+
+export interface PackageLike {
+  status: string; due_date: string | null; completed_at?: string | null;
+  subtasks?: Array<{ status: string; due_date: string | null; completed_at?: string | null }> | null;
+}
+
+/** Unidades contáveis de um pacote: as FILHAS (o trabalho real — cada uma tem prazo
+ *  próprio, que é o que o time cobra). Pacote SEM filhas conta como 1 (a própria mãe).
+ *  NUNCA mãe + filhas juntas: seria dobra. Mãe concluída com filha pendente segue
+ *  contando a filha — esconder daria "pacote fechado" com trabalho aberto por baixo. */
+export function packageCountUnits(pkgs: PackageLike[]): CountUnit[] {
+  const out: CountUnit[] = [];
+  for (const p of pkgs) {
+    const kids = p.subtasks ?? [];
+    if (kids.length > 0) {
+      for (const k of kids) out.push({ status: k.status, due_date: k.due_date, completed_at: k.completed_at ?? null });
+    } else {
+      out.push({ status: p.status, due_date: p.due_date, completed_at: p.completed_at ?? null });
+    }
+  }
+  return out;
+}
+
+export interface GroupStats { abertas: number; venceEmBreve: number; atrasadas: number; feitasNoMes: number; }
+
+/** Faixa de stats do grupo — regra ÚNICA pro workspace e pra lista /grupos (senão as
+ *  duas telas se contradizem). Pool: séries abertas colapsam (anti-flood), conclusões
+ *  contam CRUAS. Pacotes: contam pelas filhas. `pkgs` deve ser só o que a tela mostra
+ *  (painel do mês) — contador que soma o que não está na tela vira a próxima queixa. */
+export function computeGroupStats(
+  poolRows: RecurringLike[],
+  pkgs: PackageLike[],
+  todayYmd: string,
+  monthStartIso: string,
+): GroupStats {
+  const horizon = addDaysYmd(todayYmd, 7);
+  const pkgUnits = packageCountUnits(pkgs);
+  const open = [...collapseOpenSeries(poolRows, todayYmd), ...pkgUnits].filter(u => isOpenStatus(u.status));
+  const doneNoMes = [...poolRows, ...pkgUnits]
+    .filter(u => u.status === 'done' && (u.completed_at ?? '') >= monthStartIso);
+  return {
+    abertas: open.length,
+    venceEmBreve: open.filter(u => u.due_date && u.due_date >= todayYmd && u.due_date <= horizon).length,
+    atrasadas: open.filter(u => u.due_date && u.due_date < todayYmd).length,
+    feitasNoMes: doneNoMes.length,
+  };
+}
+
+/** Linha crua de tarefa de grupo (pool, mãe de pacote ou filha) pro recorte da lista. */
+export interface GroupRowLike extends RecurringLike {
+  assigned_group_id: string;
+  is_group?: boolean | null;
+  parent_task_id?: string | null;
+}
+
+/** Recorta linhas cruas (pool + mães + filhas) por grupo e devolve os contadores —
+ *  MESMA regra do workspace. Existe pra lista /grupos, que busca tudo numa query só. */
+export function groupCountsFromRows(
+  rows: GroupRowLike[],
+  groupIds: string[],
+  todayYmd: string,
+  monthStartIso: string,
+): Record<string, GroupStats> {
+  const ym = todayYmd.slice(0, 7);
+  const kidsByParent = new Map<string, GroupRowLike[]>();
+  for (const r of rows) {
+    if (!r.parent_task_id) continue;
+    const g = kidsByParent.get(r.parent_task_id);
+    if (g) g.push(r); else kidsByParent.set(r.parent_task_id, [r]);
+  }
+  const out: Record<string, GroupStats> = {};
+  for (const gid of groupIds) {
+    const mine = rows.filter(r => r.assigned_group_id === gid);
+    const pool = mine.filter(r => !r.is_group && !r.parent_task_id);
+    // Pacotes: mesmo recorte do fetchPackages (sem mãe-TEMPLATE) + painel do mês.
+    const pkgs = mine
+      .filter(r => r.is_group && !r.recurrence_rule && packageInMonth(r, ym))
+      .map(m => ({ ...m, subtasks: kidsByParent.get(m.id) ?? [] }));
+    out[gid] = computeGroupStats(pool, pkgs, todayYmd, monthStartIso);
+  }
+  return out;
+}
+
 /** RRULE → rótulo curto de cadência pro badge ("diária", "semanal", "mensal"…). */
 export function recurrenceLabel(rule: string | null | undefined): string | null {
   if (!rule) return null;
