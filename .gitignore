@@ -12,6 +12,11 @@ system-commandline-sentinel-files/
 # o clone com `git add -A` precisa ignorar explicitamente o resto pra não varrer lixo.
 /e2e-*.js
 /tmp_*.js
+# Scratch `tmp_*` em QUALQUER dir/extensão (05/08): o padrão acima é ancorado na raiz
+# e só .js, então um `web/src/lib/tmp_diag_*.test.ts` escapava e o `git add -A` do
+# auto-deploy commitava sonda alheia marcada "não commitar". Nenhum tracked casa
+# `tmp_*` (o `e2e-*` continua ancorado — esse TEM rastreados em scripts/).
+tmp_*
 /test/
 web/.claude/
 .superpowers/

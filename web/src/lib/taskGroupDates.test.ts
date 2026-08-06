@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { childDueDateForCycle, cycleLabel, dayOfMonthToYmd } from './taskGroupDates'
+import { childDueDateForCycle, cycleLabel, dayOfMonthToYmd, withMonthDayAnchor } from './taskGroupDates'
 
 describe('childDueDateForCycle', () => {
   it('preserva o dia-do-mês da filha no mês do ciclo (caso Rose)', () => {
@@ -22,6 +22,31 @@ describe('dayOfMonthToYmd', () => {
   })
   it('clamp: dia 31 em junho → 30', () => {
     expect(dayOfMonthToYmd(31, '2026-06-09')).toBe('2026-06-30')
+  })
+})
+
+// Editar o prazo do grupo com escopo "esta e as futuras" precisa reancorar a RRULE
+// do template — senão o próximo ciclo nasce no dia VELHO e a edição "reverte sozinha"
+// (materializeSeriesClient usa template.recurrence_rule pra gerar as ocorrências).
+describe('withMonthDayAnchor', () => {
+  it('troca o BYMONTHDAY preservando o resto da regra', () => {
+    expect(withMonthDayAnchor('FREQ=MONTHLY;BYMONTHDAY=10', 20)).toBe('FREQ=MONTHLY;BYMONTHDAY=20')
+    expect(withMonthDayAnchor('FREQ=MONTHLY;INTERVAL=1;BYMONTHDAY=5', 28))
+      .toBe('FREQ=MONTHLY;INTERVAL=1;BYMONTHDAY=28')
+  })
+  it('acrescenta a âncora quando a regra não tem BYMONTHDAY', () => {
+    expect(withMonthDayAnchor('FREQ=MONTHLY', 15)).toBe('FREQ=MONTHLY;BYMONTHDAY=15')
+  })
+  it('aceita a chave em minúscula e o prefixo RRULE:', () => {
+    expect(withMonthDayAnchor('RRULE:FREQ=MONTHLY;bymonthday=3', 9)).toBe('RRULE:FREQ=MONTHLY;BYMONTHDAY=9')
+  })
+  it('regra ausente → null (não inventa recorrência)', () => {
+    expect(withMonthDayAnchor(null, 12)).toBeNull()
+    expect(withMonthDayAnchor('', 12)).toBeNull()
+  })
+  it('dia fora de 1-31 → devolve a regra intacta', () => {
+    expect(withMonthDayAnchor('FREQ=MONTHLY;BYMONTHDAY=10', 0)).toBe('FREQ=MONTHLY;BYMONTHDAY=10')
+    expect(withMonthDayAnchor('FREQ=MONTHLY;BYMONTHDAY=10', 32)).toBe('FREQ=MONTHLY;BYMONTHDAY=10')
   })
 })
 

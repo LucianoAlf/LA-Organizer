@@ -24,6 +24,22 @@ export function childDueDateForCycle(childTemplateDueYmd: string, motherInstance
   return dayOfMonthToYmd(childDay, motherInstanceDueYmd)
 }
 
+/**
+ * Reancora o BYMONTHDAY de uma RRULE mensal (preserva o resto da regra).
+ * Só-PWA (não tem espelho no backend): serve pra editar o prazo do grupo com
+ * escopo "esta e as futuras" — sem trocar a âncora, o próximo ciclo renasceria
+ * no dia velho e a edição pareceria "reverter sozinha".
+ * Regra ausente ou dia fora de 1-31 → não inventa nada.
+ */
+export function withMonthDayAnchor(rule: string | null | undefined, day: number): string | null {
+  if (!rule) return null
+  if (!Number.isInteger(day) || day < 1 || day > 31) return rule
+  const anchor = `BYMONTHDAY=${day}`
+  return /BYMONTHDAY=\d+/i.test(rule)
+    ? rule.replace(/BYMONTHDAY=\d+/i, anchor)
+    : `${rule};${anchor}`
+}
+
 /** Label do ciclo pro card ("junho"). */
 export function cycleLabel(motherInstanceDueYmd: string): string {
   const [y, m] = motherInstanceDueYmd.split('-').map(Number)

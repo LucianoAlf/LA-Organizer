@@ -9,6 +9,8 @@ import { CSS } from '@dnd-kit/utilities';
 import { useSortableSensors } from '../lib/sortableSensors';
 import { AdaptiveSheet } from './AdaptiveSheet';
 import { Button } from './Button';
+import { DateInput } from './DateInput';
+import { DayOfMonthInput } from './DayOfMonthInput';
 import { TaskCheckbox } from './TaskCheckbox';
 import { ConfirmDialog } from './ConfirmDialog';
 import { RecurrenceScopeDialog } from './RecurrenceScopeDialog';
@@ -17,8 +19,10 @@ import { showToast } from './Toast';
 import {
   fetchGroup, toggleChildWithCascade, completeGroupCascade,
   addSubtask, removeSubtask, reorderSubtasks, cycleLabel,
-  renameGroup, deleteGroup,
+  renameGroup, deleteGroup, setGroupDueDate,
 } from '../lib/taskGroups';
+import { dayOfMonthToYmd } from '../lib/taskGroupDates';
+import { todaySP } from '../utils/date';
 import type { Task } from '../types';
 
 interface Props {
@@ -72,10 +76,13 @@ export function TaskGroupSheet({ open, groupId, onClose, onEditChild }: Props) {
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newDay, setNewDay] = useState('');
-  const [scopeFor, setScopeFor] = useState<'add' | 'remove' | 'rename' | 'delete' | null>(null);
+  const [scopeFor, setScopeFor] = useState<'add' | 'remove' | 'rename' | 'delete' | 'due' | null>(null);
   // Renomear grupo
   const [renamingGroup, setRenamingGroup] = useState(false);
   const [groupRenameValue, setGroupRenameValue] = useState('');
+  // Editar prazo do grupo (Rose 05/08). Draft: YMD no grupo simples, dia 1-31 no mensal.
+  const [editingDue, setEditingDue] = useState(false);
+  const [dueDraft, setDueDraft] = useState('');
   // Confirmar apagar grupo (não-recorrente)
   const [confirmDeleteGroup, setConfirmDeleteGroup] = useState(false);
 
@@ -95,7 +102,7 @@ export function TaskGroupSheet({ open, groupId, onClose, onEditChild }: Props) {
     if (!open) {
       setNewTitle(''); setNewDay(''); setScopeFor(null); setPendingRemove(null);
       setConfirmRemove(false); setRenamingGroup(false); setGroupRenameValue('');
-      setConfirmDeleteGroup(false);
+      setConfirmDeleteGroup(false); setEditingDue(false); setDueDraft('');
     }
   }, [open]);
 
@@ -140,6 +147,14 @@ export function TaskGroupSheet({ open, groupId, onClose, onEditChild }: Props) {
       showToast({ kind: 'success', title: 'Grupo renomeado.' });
     },
   });
+  const dueMut = useMutation({
+    mutationFn: (scope: 'only_this' | 'this_and_future') => setGroupDueDate(group!, computeNewDue(), scope),
+    onSuccess: () => {
+      setEditingDue(false); setDueDraft('');
+      invalidate();
+      showToast({ kind: 'success', title: 'Prazo do grupo atualizado.' });
+    },
+  });
   const deleteGroupMut = useMutation({
     mutationFn: (scope: 'only_this' | 'this_and_future') => deleteGroup(group!, scope),
     onSuccess: () => {
@@ -167,6 +182,35 @@ export function TaskGroupSheet({ open, groupId, onClose, onEditChild }: Props) {
     if (!newTitle.trim() || !group) return;
     if (isRecurrentInstance) setScopeFor('add');
     else addMut.mutate('only_this');
+  }
+
+  /** Prazo do grupo: mensal = dia dentro do mês do ciclo (clamp em mês curto); simples = YMD. */
+  function computeNewDue(): string | null {
+    if (!group) return null;
+    if (!isRecurrentInstance) return dueDraft || null;
+    if (!dueDraft) return null;
+    return dayOfMonthToYmd(Number(dueDraft), group.due_date ?? todaySP());
+  }
+
+  function openDueEditor() {
+    if (!group) return;
+    setDueDraft(
+      group.due_date
+        ? (isRecurrentInstance ? String(Number(group.due_date.slice(8, 10))) : group.due_date)
+        : ''
+    );
+    setEditingDue(true);
+  }
+
+  function submitDue() {
+    if (!group) return;
+    // Mensal: o due da mãe É a âncora do ciclo — esvaziar quebraria o card. Simples: pode ficar sem prazo.
+    if (isRecurrentInstance) {
+      if (!dueDraft) return;
+      setScopeFor('due');
+    } else {
+      dueMut.mutate('only_this');
+    }
   }
 
   function submitRemove(child: Task) {
@@ -268,7 +312,50 @@ export function TaskGroupSheet({ open, groupId, onClose, onEditChild }: Props) {
           </div>
 
           <div className="border-t border-border pt-3 space-y-2 text-body-sm text-fg-muted">
-            {group.due_date && <div>📅 Prazo do grupo: dia {Number(group.due_date.slice(8, 10))}</div>}
+            {/* Prazo do grupo — editável (Rose 05/08: "não consigo editar dps de criado") */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <span>📅 Prazo do grupo:</span>
+              <button
+                type="button"
+                onClick={openDueEditor}
+                className="text-fg underline decoration-dotted underline-offset-2 hover:text-tom focus-ring rounded-sm"
+              >
+                {!group.due_date
+                  ? 'sem prazo'
+                  : isRecurrentInstance
+                    ? `dia ${Number(group.due_date.slice(8, 10))}`
+                    : group.due_date.split('-').reverse().join('/')}
+              </button>
+            </div>
+
+            {editingDue && (
+              <div className="rounded-md border border-border p-3 space-y-2 bg-bg-elevated/50">
+                <p className="text-body-sm text-fg-muted font-medium">Editar prazo do grupo</p>
+                {isRecurrentInstance ? (
+                  <DayOfMonthInput value={dueDraft} onChange={setDueDraft} placeholder="dia (1-31)" />
+                ) : (
+                  <DateInput value={dueDraft} onChange={setDueDraft} />
+                )}
+                <p className="text-body-sm text-fg-muted">
+                  {isRecurrentInstance
+                    ? `Dia do ciclo${group.due_date ? ` de ${cycleLabel(group.due_date)}` : ''}. Cada subtarefa mantém o prazo dela.`
+                    : 'Cada subtarefa mantém o prazo dela.'}
+                </p>
+                <div className="flex gap-2 flex-wrap">
+                  <Button size="sm" variant="secondary" onClick={() => { setEditingDue(false); setDueDraft(''); }}>
+                    Cancelar
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={dueMut.isPending || (isRecurrentInstance && !dueDraft)}
+                    onClick={submitDue}
+                  >
+                    Salvar
+                  </Button>
+                </div>
+              </div>
+            )}
+
             <div>🔁 Repetição: {isRecurrentInstance ? 'Mensal' : 'Não repete'}</div>
             <div>💬 TOM lembra cada subtarefa no prazo dela · <span className="text-tom">ativo</span></div>
           </div>
@@ -331,6 +418,7 @@ export function TaskGroupSheet({ open, groupId, onClose, onEditChild }: Props) {
           if (scopeFor === 'add') addMut.mutate(scope);
           if (scopeFor === 'remove' && pendingRemove) removeMut.mutate({ child: pendingRemove, scope });
           if (scopeFor === 'rename') renameMut.mutate({ title: groupRenameValue, scope });
+          if (scopeFor === 'due') dueMut.mutate(scope);
           if (scopeFor === 'delete') deleteGroupMut.mutate(scope);
           setScopeFor(null); setPendingRemove(null);
         }}

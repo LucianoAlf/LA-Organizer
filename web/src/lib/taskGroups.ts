@@ -3,7 +3,7 @@
 // cascata de conclusão e edição estrutural com escopo. Client-side, RLS atual.
 import { supabase } from './supabase';
 import { todaySP } from '../utils/date';
-import { dayOfMonthToYmd, childDueDateForCycle, cycleLabel } from './taskGroupDates';
+import { dayOfMonthToYmd, childDueDateForCycle, cycleLabel, withMonthDayAnchor } from './taskGroupDates';
 import { materializeSeriesClient } from './materialize-recurrence';
 import type { Task } from '../types';
 
@@ -284,6 +284,52 @@ export async function renameGroup(group: Task, newTitle: string, scope: 'only_th
   if (error) throw error;
   if (scope === 'this_and_future' && group.recurrence_parent_id) {
     await supabase.from('tasks').update({ title }).eq('id', group.recurrence_parent_id);
+  }
+}
+
+/**
+ * Edita o PRAZO do grupo (pedido Rose 05/08: não havia onde clicar depois de criado).
+ *
+ * `due_date` é coluna da MÃE-container — não é agregado das filhas. Então salvar
+ * altera 1 registro: a mãe. **As filhas NÃO são tocadas** — cada uma tem prazo
+ * próprio (dia do mês configurado na criação) e se edita pelo EditTaskSheet dela.
+ *
+ * 'this_and_future' (só recorrente) reancora a série: template (due_date +
+ * BYMONTHDAY da RRULE) e as instâncias FUTURAS já materializadas, cada uma no
+ * próprio mês. Sem isso o próximo ciclo renasceria no dia velho.
+ */
+export async function setGroupDueDate(
+  group: Task, newDue: string | null, scope: 'only_this' | 'this_and_future',
+): Promise<void> {
+  const prevDue = group.due_date ?? null;
+  const { error } = await supabase.from('tasks').update({ due_date: newDue }).eq('id', group.id);
+  if (error) throw error;
+  if (scope !== 'this_and_future' || !group.recurrence_parent_id || !newDue) return;
+
+  const day = Number(newDue.slice(8, 10));
+  const { data: tpl } = await supabase.from('tasks')
+    .select('id, due_date, recurrence_rule').eq('id', group.recurrence_parent_id).single();
+  if (!tpl) return;
+  const patch: Record<string, unknown> = {};
+  if (tpl.due_date) patch.due_date = dayOfMonthToYmd(day, String(tpl.due_date));
+  const rule = withMonthDayAnchor(tpl.recurrence_rule as string | null, day);
+  if (rule) patch.recurrence_rule = rule;
+  if (Object.keys(patch).length) {
+    await supabase.from('tasks').update(patch).eq('id', group.recurrence_parent_id);
+  }
+
+  // Ciclos futuros JÁ materializados: reancora cada um no próprio mês (o dia muda,
+  // o mês do ciclo não). Atrasados/passados ficam como estão.
+  const { data: futureInstances } = await supabase
+    .from('tasks').select('id, due_date')
+    .eq('recurrence_parent_id', group.recurrence_parent_id)
+    .neq('id', group.id)
+    .neq('status', 'done')
+    .gt('due_date', prevDue ?? newDue);
+  for (const inst of futureInstances ?? []) {
+    if (!inst.due_date) continue;
+    await supabase.from('tasks')
+      .update({ due_date: dayOfMonthToYmd(day, String(inst.due_date)) }).eq('id', inst.id);
   }
 }
 
