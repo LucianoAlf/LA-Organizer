@@ -1785,7 +1785,7 @@ async function fetchCollaboratorContext(collaborator) {
   let workGroupsCtx = { groups: [], myGroupTasks: [] };
   try {
     const wg = require('../services/work-groups');
-    const { filterVisibleGroupTasks } = require('../utils/group-task-visibility');
+    const { filterVisibleGroupTasks, dropPackageContainers } = require('../utils/group-task-visibility');
     const groups = await wg.loadActiveGroups(supabase);
     let myGroupTasks = [];
     const parentTitleById = new Map(); // id→título dos containers de pacote → prefixo "Pacote: " no pool
@@ -1804,7 +1804,14 @@ async function fetchCollaboratorContext(collaborator) {
       // Map id→título dos containers de pacote (is_group) do result CRU → prefixa "Pacote:" na filha
       // (GROUPREPORT-PACKAGE-TITLE-MISSING). Container vem no mesmo fetch, sem query extra.
       for (const t of (gt || [])) { if (t.is_group === true && t.id) parentTitleById.set(t.id, t.title); }
-      myGroupTasks = filterVisibleGroupTasks(gt || []).slice(0, 12);
+      // GROUPPKG-CONTAINER-COMPLETABLE-1TO1 (caso Rose 03/08): o container do pacote é
+      // PASTA, não tarefa — e este bloco é anunciado ao TOM como "você também pode
+      // concluir". Com due_date do dia 1 (BYMONTHDAY=1) e filhas vencendo no meio do mês,
+      // ele aparecia como atrasada fantasma; concluí-lo fecha a pasta e deixa os 6 cartões
+      // abertos. group-chat-engine.js e shapeOpenTasks já excluíam desde 20/06
+      // (GROUPPKG-CONTAINER-PHANTOM-FLATLIST); o chat 1:1 tinha ficado fora da varredura.
+      // O map parentTitleById acima é montado do CRU, então a filha segue exibindo "Pacote: X".
+      myGroupTasks = dropPackageContainers(filterVisibleGroupTasks(gt || [])).slice(0, 12);
     }
     workGroupsCtx = { groups, myGroupTasks, parentTitleById };
   } catch (_) { /* sem grupos no contexto */ }

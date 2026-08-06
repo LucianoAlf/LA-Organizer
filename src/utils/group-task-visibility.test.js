@@ -10,7 +10,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { filterVisibleGroupTasks, isRecurringTemplate } = require('./group-task-visibility');
+const { filterVisibleGroupTasks, isRecurringTemplate, dropPackageContainers } = require('./group-task-visibility');
 
 test('isRecurringTemplate: só is_group + recurrence_rule', () => {
   assert.strictEqual(isRecurringTemplate({ is_group: true, recurrence_rule: 'FREQ=MONTHLY;BYMONTHDAY=1' }), true);
@@ -67,5 +67,61 @@ test('não muta o array de entrada', () => {
   const input = ROSE.slice();
   const len = input.length;
   filterVisibleGroupTasks(input);
+  assert.strictEqual(input.length, len);
+});
+
+// ---------------------------------------------------------------------------
+// GROUPPKG-CONTAINER-COMPLETABLE-1TO1 (caso Rose 03/08/2026)
+//
+// O container do pacote (is_group=true, recurrence_rule=null) é uma PASTA, não
+// tarefa. Os readers do chat de GRUPO (group-chat-engine.js) e do digest
+// (group-report-builder.js shapeOpenTasks) já o excluem desde 20/06
+// (GROUPPKG-CONTAINER-PHANTOM-FLATLIST). O reader do chat 1:1
+// (prompts/system.js → myGroupTasks) ficou de fora da varredura.
+//
+// Consequência real: o container "Conciliação de Cartões" (due 01/08, herdada do
+// BYMONTHDAY=1) entrou no bloco "Tarefas abertas dos SEUS grupos (você também
+// pode concluir)" com id. O TOM listou como atrasada, a Rose confirmou "foram
+// feitas sim" e o engine fechou a PASTA — as 6 filhas (due 12–27/08, trabalho
+// que nem tinha vencido) ficaram pending. Fantasma dia-1, igual ao de 20/06.
+// ---------------------------------------------------------------------------
+const PACOTE_AGOSTO = [
+  // container do ciclo de agosto — due dia 1 (BYMONTHDAY=1), sem recurrence_rule
+  { id: '2fbbe3b6', title: 'Conciliação de Cartões', is_group: true, recurrence_rule: null, parent_task_id: null, due_date: '2026-08-01' },
+  // as 6 filhas reais, que vencem DEPOIS do container
+  { id: 'k8516', title: 'Cartão 8516 (Barra)', is_group: false, recurrence_rule: null, parent_task_id: '2fbbe3b6', due_date: '2026-08-12' },
+  { id: 'k2270', title: 'Cartão 2270 (EMLA)', is_group: false, recurrence_rule: null, parent_task_id: '2fbbe3b6', due_date: '2026-08-12' },
+  { id: 'k8641', title: 'Cartão 8641 (Recreio)', is_group: false, recurrence_rule: null, parent_task_id: '2fbbe3b6', due_date: '2026-08-17' },
+  { id: 'k8434', title: 'Cartão 8434 (Kids CG)', is_group: false, recurrence_rule: null, parent_task_id: '2fbbe3b6', due_date: '2026-08-25' },
+  { id: 'k1074', title: 'Cartão 1074 (Kids CG)', is_group: false, recurrence_rule: null, parent_task_id: '2fbbe3b6', due_date: '2026-08-25' },
+  { id: 'kmp', title: 'Cartão Mercado Pago (Barra)', is_group: false, recurrence_rule: null, parent_task_id: '2fbbe3b6', due_date: '2026-08-27' },
+  // tarefa avulsa do mesmo grupo — tem de continuar visível
+  { id: 'avulsa', title: 'Dar baixa no prolabore', is_group: false, recurrence_rule: null, parent_task_id: null, due_date: '2026-08-01' },
+];
+
+test('caso Rose 03/08: container do pacote NÃO é tarefa — sai do pool do TOM', () => {
+  const ids = dropPackageContainers(PACOTE_AGOSTO).map((t) => t.id);
+  assert.ok(!ids.includes('2fbbe3b6'), 'container is_group não pode chegar ao TOM como tarefa concluível');
+  // as 6 filhas e a avulsa continuam — o trabalho real não some
+  assert.deepStrictEqual(ids, ['k8516', 'k2270', 'k8641', 'k8434', 'k1074', 'kmp', 'avulsa']);
+});
+
+test('composição com filterVisibleGroupTasks: some template E container, ficam as filhas', () => {
+  const ids = dropPackageContainers(filterVisibleGroupTasks(ROSE)).map((t) => t.id);
+  assert.deepStrictEqual(ids, ['kid_inst']);
+});
+
+test('dropPackageContainers: avulsas e filhas passam; entrada inválida → []', () => {
+  const avulsas = [{ id: 'x', is_group: false }, { id: 'y' }];
+  assert.deepStrictEqual(dropPackageContainers(avulsas).map((t) => t.id), ['x', 'y']);
+  assert.deepStrictEqual(dropPackageContainers([]), []);
+  assert.deepStrictEqual(dropPackageContainers(null), []);
+  assert.deepStrictEqual(dropPackageContainers(undefined), []);
+});
+
+test('dropPackageContainers não muta a entrada', () => {
+  const input = PACOTE_AGOSTO.slice();
+  const len = input.length;
+  dropPackageContainers(input);
   assert.strictEqual(input.length, len);
 });

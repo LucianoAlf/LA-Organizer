@@ -28,4 +28,24 @@ function filterVisibleGroupTasks(tasks) {
   return arr.filter((t) => t && !isRecurringTemplate(t) && !templateIds.has(t.parent_task_id));
 }
 
-module.exports = { filterVisibleGroupTasks, isRecurringTemplate };
+/**
+ * Remove os CONTAINERS de pacote (is_group=true) de uma lista de tarefas de grupo.
+ * GROUPPKG-CONTAINER-COMPLETABLE-1TO1 (caso Rose 03/08/2026).
+ *
+ * PORQUÊ separado de filterVisibleGroupTasks: aquele esconde só o TEMPLATE recorrente
+ * e, por contrato (teste "grupo SEM recorrência passa inteiro"), MANTÉM a mãe-instância
+ * — o digest usa isso pra resolver o nome do pacote. Aqui a regra é a outra, já aplicada
+ * em group-chat-engine.js e em group-report-builder.js/shapeOpenTasks desde 20/06
+ * (GROUPPKG-CONTAINER-PHANTOM-FLATLIST): container é PASTA, não tarefa. Ele herda
+ * due_date do dia 1 (BYMONTHDAY=1) enquanto as filhas vencem no meio do mês, então
+ * listá-lo cria uma "atrasada" fantasma que, ao ser concluída, fecha a pasta e deixa o
+ * trabalho aberto. Compõe com filterVisibleGroupTasks; não muta a entrada.
+ *
+ * @param {Array<{is_group?:boolean}>} tasks
+ * @returns {Array}
+ */
+function dropPackageContainers(tasks) {
+  return (Array.isArray(tasks) ? tasks : []).filter((t) => t && t.is_group !== true);
+}
+
+module.exports = { filterVisibleGroupTasks, isRecurringTemplate, dropPackageContainers };
