@@ -366,3 +366,45 @@ test('nunca mira o MOLDE da série (só instância visível)', async () => {
   });
   assert.strictEqual(alvo.id, 'f-cg', 'tem que pegar a instância, nunca o molde');
 });
+
+// ── GROUPPKG-CONTAINER-COMPLETABLE-GROUP (05/08) ──────────────────────────────
+// Mesmo dano do caso Rose (03/08), por OUTRA porta. Aquele veio pelo chat 1:1, onde o
+// container era listado no prompt; fechei o reader. Este resolve por TÍTULO direto na
+// tabela, então o filtro do pool não protege: "conclui a Conciliação de Cartões" no
+// grupo fecha a PASTA e deixa os 6 cartões abertos por dentro. Na varredura de 05/08,
+// as 14 pastas abertas do banco tinham assigned_group_id — todas alcançáveis.
+test('complete por título NÃO fecha o container do pacote — fecha pasta e deixa filha aberta', async () => {
+  const events = [];
+  const pasta = G({ id: 'pasta', title: 'Conciliação de Cartões', is_group: true });
+  const filha = G({ id: 'filha', title: 'Cartão MP Barra', parent_task_id: 'pasta' });
+  const r = await applyGroupChatTaskActions({
+    supabase: makeDb({ tasks: [pasta, filha], events }), groupId: 'g1', senderCollabId: 'c1',
+    actions: [{ action: 'complete', title: 'Conciliação de Cartões' }],
+  });
+  assert.strictEqual(pasta.status, 'pending', 'fechou a PASTA — a filha continua aberta por dentro');
+  assert.ok(!events.find((e) => e.kind === 'update' && e.id === 'pasta' && e.patch.status === 'done'));
+  assert.ok((r.failed || []).some((f) => f.why === 'not_found_in_pool'),
+    'tem que falhar honesto ("não achei essa tarefa no grupo"), não em silêncio');
+});
+
+test('complete da FILHA segue funcionando — o guard não pode calar o caminho normal', async () => {
+  const events = [];
+  const pasta = G({ id: 'pasta', title: 'Conciliação de Cartões', is_group: true });
+  const filha = G({ id: 'filha', title: 'Cartão MP Barra', parent_task_id: 'pasta' });
+  const r = await applyGroupChatTaskActions({
+    supabase: makeDb({ tasks: [pasta, filha], events }), groupId: 'g1', senderCollabId: 'c1',
+    actions: [{ action: 'complete', title: 'Cartão MP Barra' }],
+  });
+  assert.strictEqual((r.completed || [])[0] && r.completed[0].id, 'filha');
+});
+
+test('RESCHEDULE do container CONTINUA valendo — mover o prazo do pacote é legítimo', async () => {
+  const events = [];
+  const pasta = G({ id: 'pasta', title: 'Conciliação de Cartões', is_group: true });
+  const r = await applyGroupChatTaskActions({
+    supabase: makeDb({ tasks: [pasta], events }), groupId: 'g1', senderCollabId: 'c1',
+    actions: [{ action: 'reschedule', title: 'Conciliação de Cartões', new_due_date: '2026-08-20' }],
+  });
+  assert.strictEqual((r.updated || [])[0] && r.updated[0].id, 'pasta',
+    'o guard vazou pro reschedule e quebrou a edição de prazo do pacote');
+});

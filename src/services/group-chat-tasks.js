@@ -324,16 +324,31 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
         // (concluir o molde mata a série — materializeAll não regenera molde done).
         const { data: found } = await supabase
           .from('tasks')
-          .select('id, title, recurrence_rule')
+          .select('id, title, recurrence_rule, is_group')
           .eq('assigned_group_id', groupId)
           .neq('status', 'done')
           .ilike('title', title)
           .order('due_date', { ascending: true })
           .limit(5);
-        let target = pickInstanceTarget(found);
+        // GROUPPKG-CONTAINER-COMPLETABLE-GROUP (05/08): container de pacote é PASTA, não
+        // tarefa. Concluí-lo fecha a pasta e deixa as filhas abertas por dentro — o mesmo
+        // dano do caso Rose (03/08) por outra porta. Aquela veio pelo chat 1:1, onde o
+        // container era listado no prompt; esta resolve por título DIRETO na tabela, então
+        // o filtro do pool não protege. Filtro em JS (e não .neq no builder) porque `neq`
+        // sobre booleano descartaria linha com is_group NULL junto — e é o mesmo formato
+        // usado em group-chat-engine.js e group-report-builder.js.
+        //
+        // Vale só para o COMPLETE. O reschedule logo abaixo continua alcançando container
+        // de propósito: mover o prazo do pacote é operação legítima (é o que o PWA faz).
+        const semContainer = (t) => !!t && t.is_group !== true;
+        let target = pickInstanceTarget((found || []).filter(semContainer));
         // Fallback (GROUPCHAT-COMPLETE-COMPOSITE-LABEL-NOMATCH): a pessoa colou o label do
         // relatório ("{Pacote}: {Filha} ({Resp})") → o ilike exato não bate no title cru.
-        if (!target) target = await _resolveByPhraseFallback({ supabase, groupId, phrase: title });
+        // O fallback é compartilhado com o reschedule, então o guard fica aqui, no ramo.
+        if (!target) {
+          const viaFrase = await _resolveByPhraseFallback({ supabase, groupId, phrase: title });
+          target = semContainer(viaFrase) ? viaFrase : null;
+        }
         if (!target) { failed.push({ action: a, why: 'not_found_in_pool' }); continue; }
         // Anti-corrida: só marca se ainda não estava done.
         const patch = { status: 'done', completed_at: new Date().toISOString(), completed_by: senderCollabId };
