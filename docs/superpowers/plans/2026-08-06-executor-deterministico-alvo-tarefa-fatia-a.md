@@ -24,7 +24,15 @@ Valem para TODAS as tarefas:
 - **Ambiguidade real não muda de comportamento** nesta fatia: mantém `created_at desc` e loga.
 - **Voz do TOM intocada.** Nada em `soul/`, nada em `skills/`, nenhuma prosa nova.
 - **Zero-regressão.** Baseline da suíte: `pass 2262 / fail 3` (os 3 são por `SUPABASE_URL` ausente ao carregar 3 arquivos; não são regressão). Rodar `node --test "src/**/*.test.js"`.
-- **`.deploy-hold` na raiz (`D:\la-organizer\.deploy-hold`) ANTES de editar `src/`.** Há outros chats na mesma árvore e o hook faz `git add -A`. Remover só quando a árvore estiver limpa.
+- **`.deploy-hold` ANTES de editar `src/`** — mas **confira o path do seu ambiente**, não copie o daqui. O hook (`scripts/auto-deploy.ps1`) deriva assim:
+  ```powershell
+  $srcRoot  = "D:\la-organizer\_remote"                              # CRAVADO no script
+  $holdFile = Join-Path (Split-Path $srcRoot -Parent) ".deploy-hold" # → D:\la-organizer\.deploy-hold
+  ```
+  **O hook só roda nesta máquina Windows** (é Stop hook desta sessão, com path absoluto). Quem
+  executar do **LAHQ ou direto na VPS não tem hold para colocar** — lá o auto-deploy não existe.
+  O risco naquele ambiente é o oposto e é pior: o patch fica só em `/opt/LA-Organizer` e o
+  próximo `git reset --hard origin/main` o apaga em silêncio. **Ali a trava é commitar, não segurar.**
 - **Commitar.** Patch que vive só em `/opt/LA-Organizer` é apagado pelo próximo `git reset --hard origin/main`, em silêncio. Aconteceu em 06/08.
 - **Data local** por `todayYmdSP()` de `src/utils/dates.js` ou `Intl` com `America/Sao_Paulo`. **Nunca** `toISOString().slice(0,10)` — depois das 21h BRT o UTC já virou o dia.
 - **Timestamp do banco** compara por `Date.parse`, nunca como string: o Postgres devolve `+00:00` e o JS escreve `.000Z` para o mesmo instante.
@@ -323,7 +331,39 @@ node --test "src/**/*.test.js" 2>&1 | grep -E "^ℹ (tests|pass|fail)"
 ```
 Esperado: `pass 2272 / fail 3` (2262 do baseline + 10 da Task 1).
 
-- [ ] **Passo 3: commit**
+- [ ] **Passo 3: PREFLIGHT — provar que a linha entra no banco (trava do Alfredo)**
+
+Não basta ler o schema. `logMarker` engole erro de insert (`if (error) console.error`), então
+uma constraint violada faz o log rico morrer **em silêncio** e a Fatia B nasce cega. A prova é
+inserir de verdade.
+
+Já conferido em 06/08, e o resultado mudou o plano:
+
+- `marker_logs.marker_type` — **sem CHECK**, aceita `TASK_TARGET_AMBIGUOUS`. ✅
+- `marker_logs.result` — **TEM CHECK**: `['executed','rejected','skipped','redirected','fallback']`.
+  A primeira versão deste plano usava `'observed'`, que **teria falhado calado**. Corrigido para `'fallback'`.
+- `raw_excerpt` é `text` **sem limite** no banco — o corte de 500 era só no JS.
+
+Rodar contra o banco real (Supabase MCP ou psql), com um colaborador válido:
+
+```sql
+insert into marker_logs (collaborator_id, marker_type, result, reason, raw_excerpt)
+values (
+  (select id from collaborators limit 1),
+  'TASK_TARGET_AMBIGUOUS', 'fallback', 'preflight',
+  repeat('x', 4000)
+)
+returning id, marker_type, result, length(raw_excerpt) as chars;
+```
+
+Esperado: **1 linha, `chars = 4000`**. Se o insert falhar, ou se `chars` vier menor que 4000,
+**pare** — o payload não cabe e a Task 3 precisa de outro destino antes de seguir.
+
+A linha de preflight fica no banco de propósito (é evidência, e `marker_logs` é tabela de log).
+Ela é identificável por `reason = 'preflight'` — **as consultas de medição da Task 7 já
+excluem**, e é por isso que elas filtram `reason <> 'preflight'`.
+
+- [ ] **Passo 4: commit**
 
 ```bash
 git add src/engine.js
@@ -385,7 +425,11 @@ async function _logAlvoAmbiguo(handler, tituloPedido, collaboratorId, candidatos
       vencedor_serie: comData[0] ? comData[0].id : null,
     };
     console.warn(`[TaskTarget] ambiguo handler=${handler} n=${candidatos.length} motivo=linhagens_distintas pedido="${String(tituloPedido).slice(0, 60)}" legado=${String(payload.vencedor_legado).slice(0, 8)}`);
-    await logMarker(collaboratorId, 'TASK_TARGET_AMBIGUOUS', 'observed', handler, payload, { rawLimit: 4000 });
+    // `result` tem CHECK no banco: só ['executed','rejected','skipped','redirected','fallback'].
+    // Qualquer outro valor viola a constraint, e `logMarker` NÃO lança — só faz console.error.
+    // O log rico morreria em silêncio, que é exatamente o que esta instrumentação existe para
+    // evitar. 'fallback' é o valor honesto: a Fatia A caiu no comportamento legado.
+    await logMarker(collaboratorId, 'TASK_TARGET_AMBIGUOUS', 'fallback', handler, payload, { rawLimit: 4000 });
   } catch (e) {
     console.error('[TaskTarget] falha ao logar ambiguidade:', e.message);
   }
@@ -797,14 +841,16 @@ rm -f /d/la-organizer/.deploy-hold
 -- Quantas vezes a regra de série agiu, e quantas ficou ambíguo
 select marker_type, reason as handler, count(*)
 from marker_logs
-where marker_type = 'TASK_TARGET_AMBIGUOUS' and created_at > now() - interval '7 days'
+where marker_type = 'TASK_TARGET_AMBIGUOUS' and reason <> 'preflight'
+  and created_at > now() - interval '7 days'
 group by 1,2 order by 3 desc;
 
 -- O número que decide a Fatia B: com que frequência o legado escolheria diferente da série
 select count(*) filter (where (raw_excerpt::jsonb->>'vencedor_legado') is distinct from (raw_excerpt::jsonb->>'vencedor_serie')) as legado_teria_errado,
        count(*) as ambiguos_total
 from marker_logs
-where marker_type = 'TASK_TARGET_AMBIGUOUS' and created_at > now() - interval '7 days';
+where marker_type = 'TASK_TARGET_AMBIGUOUS' and reason <> 'preflight'
+  and created_at > now() - interval '7 days';
 ```
 
 E a métrica que justifica a trilha inteira — `dropped_request` antes x depois:
