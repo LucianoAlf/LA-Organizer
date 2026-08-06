@@ -188,7 +188,7 @@ O `limit(100)` é folga sobre o maior grupo real (42). **Quando o resultado atin
 |---|---|
 | `exato` | Executa na tarefa devolvida. |
 | `nenhum` | Caminho de "não achei" que já existe hoje, incluindo a mensagem de "é de outra pessoa". |
-| `ambiguo` | **Mantém o comportamento de hoje** — escolhe por `created_at desc` entre os candidatos — e loga. Não pergunta, não recusa, não muda prosa. Perguntar é Fatia B. |
+| `ambiguo` | **Mantém o comportamento de hoje** — escolhe por `created_at desc` entre os candidatos — e loga com o payload completo da seção 7.5. Não pergunta, não recusa, não muda prosa. Perguntar é Fatia B. |
 
 A linha do `ambiguo` é deliberada: a Fatia A não pode piorar nem melhorar os 7%, só medi-los.
 Assim a diferença observada no cenário B é atribuível à regra de série, e não a uma segunda
@@ -263,9 +263,43 @@ exatamente assim que o cenário A passou por vacuidade na primeira versão (diri
 
 ### 7.5 Instrumentação que dimensiona a Fatia B
 
-Todo retorno `ambiguo` loga `[TaskTarget] ambiguo motivo=<…> n=<…>` e registra marker
-`TASK_TARGET_AMBIGUOUS`. Depois de uma semana em produção, a frequência real substitui a
-estimativa de 7% deste retrato — a Fatia B nasce dimensionada por tráfego, não por snapshot.
+**Exigência do Alfredo, e ele está certo: log pobre faz a Fatia B nascer cega.** Contar
+ocorrências diz *quanto*; não diz *o quê*, e é o *o quê* que desenha o desempate.
+
+Todo retorno `ambiguo` grava marker `TASK_TARGET_AMBIGUOUS` com este payload — todos os campos
+obrigatórios:
+
+```json
+{
+  "handler": "complete | cancel | reschedule",
+  "titulo_pedido": "<a.title cru do marker, sem truncar>",
+  "collaborator_id": "<uuid>",
+  "n": 3,
+  "motivo": "linhagens_distintas | serie_sem_data",
+  "candidatos": [
+    { "id": "<uuid>", "title": "<título real>", "due_date": "2026-08-12",
+      "serie": "<uuid|null>", "created_at": "2026-08-01T12:00:00Z" }
+  ],
+  "linhagens": ["<uuid>", null],
+  "vencedor_legado": "<uuid — quem o created_at desc escolheria>",
+  "vencedor_serie": "<uuid|null — quem a regra escolheria se a linhagem fosse única>"
+}
+```
+
+Dois campos merecem justificativa:
+
+- **`vencedor_legado`** — sem ele não dá para saber, depois, quantas vezes o comportamento
+  mantido nesta fatia acertou por acaso. É o que transforma "7% ambíguo" em "X% ambíguo e
+  errado", que é o número que justifica (ou não) o custo da Fatia B.
+- **`candidatos[].title` além de `titulo_pedido`** — a diferença entre o que a pessoa falou e o
+  que está gravado é o material bruto para desenhar o desempate. Só o título pedido não mostra
+  se os candidatos diferem por sufixo, por unidade, por responsável.
+
+Linha de log legível acompanha o marker, para leitura no `tail`:
+`[TaskTarget] ambiguo handler=<…> n=<…> motivo=<…> pedido="<…>" legado=<id8>`
+
+Depois de uma semana em produção, a frequência e a **forma** reais substituem a estimativa de
+7% deste retrato — a Fatia B nasce dimensionada por tráfego, não por snapshot.
 
 ---
 
@@ -315,7 +349,7 @@ Nada disso entra na Fatia A.
 | Escopo | Só identificação do alvo; confirmação/execução intocadas |
 | Handlers | `complete`, `cancel`, `reschedule` — os três |
 | Regra | Mesma série → ciclo corrente (menor `due_date`) |
-| Ambiguidade real | Fatia A não resolve: mantém hoje + loga; Fatia B depois |
+| Ambiguidade real | Fatia A não resolve: mantém hoje + loga **rico** (7.5); Fatia B depois |
 | Desempate | Só sinais exatos (Fatia B); nada de heurística |
 | Módulo | `src/lib/task-target.js`, puro, compõe `reply-ref` |
 | Flag | `TOM_TASK_TARGET_SERIES`, desligada por padrão |
