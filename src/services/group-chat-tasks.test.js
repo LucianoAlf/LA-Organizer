@@ -16,8 +16,18 @@ function makeDb({ tasks = [], events = [] } = {}) {
         if (st.filters.recurrence_parent_id && t.recurrence_parent_id !== st.filters.recurrence_parent_id) return false;
         if (st.filters.parent_task_id && t.parent_task_id !== st.filters.parent_task_id) return false;
         if (st.filters.neq_status && t.status === st.filters.neq_status) return false;
-        if (st.filters.ilike_title && String(t.title).toLowerCase() !== st.filters.ilike_title) return false;
+        // `ilike` do Postgres trata % como curinga. O dublê comparava igualdade exata e
+        // ignorava o %, então um teste de busca PARCIAL passaria/falharia por motivo errado.
+        if (st.filters.ilike_title) {
+          const alvo = String(t.title).toLowerCase();
+          const p = st.filters.ilike_title;
+          const ok = p.includes('%')
+            ? new RegExp(`^${p.split('%').map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`).test(alvo)
+            : alvo === p;
+          if (!ok) return false;
+        }
         if (st.filters.notnull_recurrence_rule && (t.recurrence_rule === null || t.recurrence_rule === undefined)) return false;
+        if (st.filters.isnull_recurrence_parent_id && t.recurrence_parent_id != null) return false;
         return true;
       });
       if (st.op === 'update') {
@@ -37,7 +47,7 @@ function makeDb({ tasks = [], events = [] } = {}) {
       neq(c, v) { st.filters['neq_' + c] = v; return b; },
       gte() { return b; },
       ilike(c, v) { st.filters['ilike_' + c] = String(v).toLowerCase(); return b; },
-      is() { return b; },
+      is(c, v) { if (v === null) st.filters['isnull_' + c] = true; return b; },
       not(c, op, v) { if (op === 'is' && v === null) st.filters['notnull_' + c] = true; return b; },
       order() { return b; },
       limit() { return b; },
@@ -460,4 +470,39 @@ test('tarefa simples (sem recorrência) não materializa nada — caminho normal
   });
   assert.ok(!events.find((e) => e.kind === 'insert'));
   assert.strictEqual(t.status, 'done');
+});
+
+// Rose 06/08 22h53, DEPOIS do primeiro fix: "tom, relatório pode concluir" ainda falhou.
+// Motivo: a materialização só disparava quando o `ilike` EXATO já tinha achado o molde. Se o
+// LLM emite um apelido curto, `found` vem vazio e nada acontece. O `matchPoolByPhrase` também
+// não salva: ele exige o título CONTIDO na frase ("Relatório Mensal Financeiro (Grupo)" ⊄
+// "relatório"), que é a direção oposta da que a pessoa fala.
+test('apelido curto acha o MOLDE por busca parcial e conclui o ciclo (caso "relatório")', async () => {
+  const events = [];
+  const molde = G({ id: 'tpl', title: 'Relatório Mensal Financeiro (Grupo)', due_date: '2026-08-05',
+                    recurrence_rule: 'FREQ=MONTHLY;BYMONTHDAY=5', recurrence_parent_id: null });
+  const outra = G({ id: 'z', title: 'Faturamento Mensal', due_date: '2026-08-06',
+                    recurrence_rule: 'FREQ=MONTHLY;BYMONTHDAY=6', recurrence_parent_id: null });
+  const r = await applyGroupChatTaskActions({
+    supabase: makeDb({ tasks: [molde, outra], events }), groupId: 'g1', senderCollabId: 'c1',
+    actions: [{ action: 'complete', title: 'relatório' }],
+  });
+  assert.strictEqual(molde.status, 'pending', 'MOLDE mudou de status — a série morre');
+  const ins = events.find((e) => e.kind === 'insert');
+  assert.ok(ins, 'apelido curto não achou o molde');
+  assert.strictEqual(ins.row.recurrence_parent_id, 'tpl');
+  assert.strictEqual(ins.row.status, 'done');
+  assert.strictEqual((r.completed || []).length, 1);
+});
+
+test('apelido AMBÍGUO entre dois moldes falha honesto — não escolhe no chute', async () => {
+  const events = [];
+  const a = G({ id: 't1', title: 'Relatório Mensal Financeiro', due_date: '2026-08-05', recurrence_rule: 'FREQ=MONTHLY', recurrence_parent_id: null });
+  const b = G({ id: 't2', title: 'Relatório Mensal de Caixa', due_date: '2026-08-05', recurrence_rule: 'FREQ=MONTHLY', recurrence_parent_id: null });
+  const r = await applyGroupChatTaskActions({
+    supabase: makeDb({ tasks: [a, b], events }), groupId: 'g1', senderCollabId: 'c1',
+    actions: [{ action: 'complete', title: 'relatório mensal' }],
+  });
+  assert.ok(!events.find((e) => e.kind === 'insert'), 'materializou com dois candidatos');
+  assert.ok((r.failed || []).some((f) => f.why === 'not_found_in_pool'));
 });

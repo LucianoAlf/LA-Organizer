@@ -360,7 +360,27 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
         // é ele que gera os meses seguintes. A instância done na mesma data também faz o molde
         // sumir do pool sozinho, via dropOpenWithDoneTwin (casa por título|due_date).
         if (!target) {
-          const _tpl = resolveSeriesTemplate((found || []).filter(semContainer));
+          let _tpl = resolveSeriesTemplate((found || []).filter(semContainer));
+          // O `ilike` exato acima só acha quando o LLM emite o título inteiro. A pessoa fala
+          // apelido ("relatório"), e o matchPoolByPhrase também não salva: ele exige o título
+          // CONTIDO na frase, que é a direção oposta da que se fala. Aqui a busca é PARCIAL e
+          // restrita a MOLDE — e só resolve se houver exatamente UM. Dois ou mais: falha
+          // honesta, sem escolher no chute.
+          if (!_tpl) {
+            const { data: _tpls } = await supabase.from('tasks')
+              .select('id, title, due_date, recurrence_rule, recurrence_parent_id, is_group, remind_at, description, assigned_group_id, created_by, data_classification, context, priority')
+              .eq('assigned_group_id', groupId)
+              .not('status', 'in', '("done","cancelled")')
+              .not('recurrence_rule', 'is', null)
+              .is('recurrence_parent_id', null)
+              .ilike('title', `%${String(title).slice(0, 60)}%`)
+              .limit(5);
+            const _cands = (_tpls || []).filter(semContainer);
+            if (_cands.length === 1) _tpl = _cands[0];
+            else if (_cands.length > 1) {
+              console.warn(`[GroupChat] apelido "${String(title).slice(0, 40)}" casou com ${_cands.length} moldes — falha honesta em vez de chute`);
+            }
+          }
           if (_tpl && _tpl.due_date) {
             try {
               const { _cloneTemplate } = require('./recurrence-engine');

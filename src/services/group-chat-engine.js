@@ -179,7 +179,12 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
       (cancelled || []).forEach((t) => actions.push({ kind: 'task', status: 'ok', label: t.title, detail: '🗑️ cancelada' }));
       // Falha: mostra o MOTIVO amigável (antes era sempre genérico → membro não entendia o porquê).
       if ((failed || []).length && !created.length && !(updated || []).length && !completed.length && !(cancelled || []).length) {
-        actions.push({ kind: 'task', status: 'fail', label: 'Tarefa', detail: friendlyTaskFail((failed[0] || {}).why) });
+        // O label era o literal 'Tarefa', então a pessoa lia "Tarefa: não achei essa tarefa no
+        // grupo" e ninguém — nem ela, nem nós no log — descobria QUAL nome ele tentou. Mostrar o
+        // título pedido é o que transforma "não achei" em algo que dá pra conferir na hora.
+        const _pedido = ((failed[0] || {}).action || {}).title;
+        actions.push({ kind: 'task', status: 'fail', label: _pedido ? `"${String(_pedido).slice(0, 60)}"` : 'Tarefa', detail: friendlyTaskFail((failed[0] || {}).why) });
+        console.warn(`[GroupChat] task FAIL grupo=${groupId} pedido="${String(_pedido || '').slice(0, 60)}" why=${(failed[0] || {}).why}`);
       }
       console.log(`[GroupChat] task grupo=${groupId}: created=${created.length} updated=${(updated || []).length} completed=${completed.length} cancelled=${(cancelled || []).length} failed=${(failed || []).length}`);
     } else if (parsed && parsed.malformed) {
