@@ -349,6 +349,37 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
           const viaFrase = await _resolveByPhraseFallback({ supabase, groupId, phrase: title });
           target = semContainer(viaFrase) ? viaFrase : null;
         }
+        // GROUPCHAT-COMPLETE-TEMPLATE-ONLY-CYCLE (Rose 06/08): mensal que ainda não gerou
+        // instância. O ciclo corrente É O PRÓPRIO MOLDE — o materializeSeries semeia a data do
+        // molde como já existente, de propósito, pra não duplicar. E pickInstanceTarget descarta
+        // molde, também de propósito, porque concluir molde MATA a série (materializeAll não
+        // regenera molde done). Entre as duas regras corretas, ninguém conclui o ciclo corrente:
+        // a Rose ouviu "não achei essa tarefa no grupo" sobre trabalho que estava na tela dela.
+        //
+        // Saída: materializa a ocorrência como instância JÁ CONCLUÍDA. O molde não é tocado —
+        // é ele que gera os meses seguintes. A instância done na mesma data também faz o molde
+        // sumir do pool sozinho, via dropOpenWithDoneTwin (casa por título|due_date).
+        if (!target) {
+          const _tpl = resolveSeriesTemplate((found || []).filter(semContainer));
+          if (_tpl && _tpl.due_date) {
+            try {
+              const { _cloneTemplate } = require('./recurrence-engine');
+              const linha = _cloneTemplate('tasks', _tpl, new Date(`${_tpl.due_date}T12:00:00Z`));
+              linha.status = 'done';
+              linha.completed_at = new Date().toISOString();
+              linha.completed_by = senderCollabId;
+              const { data: nova, error: eIns } = await supabase.from('tasks').insert(linha).select('id, title').maybeSingle();
+              if (eIns) throw new Error(eIns.message);
+              if (nova) {
+                completed.push(nova);
+                console.log(`[GroupChat] ciclo corrente do molde ${String(_tpl.id).slice(0, 8)} materializado JÁ concluído (${_tpl.due_date}) — molde intacto`);
+                continue;
+              }
+            } catch (eMat) {
+              console.error('[GroupChat] falha ao materializar ciclo corrente:', eMat.message);
+            }
+          }
+        }
         if (!target) { failed.push({ action: a, why: 'not_found_in_pool' }); continue; }
         // Anti-corrida: só marca se ainda não estava done.
         const patch = { status: 'done', completed_at: new Date().toISOString(), completed_by: senderCollabId };

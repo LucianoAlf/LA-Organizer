@@ -408,3 +408,56 @@ test('RESCHEDULE do container CONTINUA valendo — mover o prazo do pacote é le
   assert.strictEqual((r.updated || [])[0] && r.updated[0].id, 'pasta',
     'o guard vazou pro reschedule e quebrou a edição de prazo do pacote');
 });
+
+// ── GROUPCHAT-COMPLETE-TEMPLATE-ONLY-CYCLE (Rose 06/08, 22h) ─────────────────
+// "relatório mensal feito" falhava com not_found_in_pool. Raiz: quando a mensal ainda não
+// gerou instância, o ciclo corrente É O PRÓPRIO MOLDE — o materializeSeries semeia a data do
+// molde como já existente, de propósito, pra não duplicar (recurrence-engine ~108). E o
+// pickInstanceTarget descarta molde, também de propósito, porque concluir molde MATA a série
+// (materializeAll não regenera molde done). Resultado: ninguém conclui o ciclo corrente.
+//
+// Fix: materializa a ocorrência do molde como instância JÁ CONCLUÍDA. O molde nunca muda de
+// status — é ele que gera os meses seguintes.
+test('conclui mensal que só tem MOLDE: cria instância done e NÃO toca no status do molde', async () => {
+  const events = [];
+  const molde = G({ id: 'tpl', title: 'Relatório Mensal Financeiro (Grupo)', due_date: '2026-08-05',
+                    recurrence_rule: 'FREQ=MONTHLY;BYMONTHDAY=5', recurrence_parent_id: null });
+  const r = await applyGroupChatTaskActions({
+    supabase: makeDb({ tasks: [molde], events }), groupId: 'g1', senderCollabId: 'c1',
+    actions: [{ action: 'complete', title: 'Relatório Mensal Financeiro (Grupo)' }],
+  });
+  assert.strictEqual(molde.status, 'pending', 'MOLDE mudou de status — a série morre');
+  const ins = events.find((e) => e.kind === 'insert');
+  assert.ok(ins, 'não materializou a ocorrência');
+  assert.strictEqual(ins.row.recurrence_parent_id, 'tpl');
+  assert.strictEqual(ins.row.recurrence_rule, null, 'a instância nasceu como molde');
+  assert.strictEqual(ins.row.due_date, '2026-08-05', 'instância fora da data do ciclo corrente');
+  assert.strictEqual(ins.row.status, 'done');
+  assert.strictEqual((r.completed || []).length, 1);
+});
+
+test('se a instância JÁ existe, conclui ela e não materializa nada', async () => {
+  const events = [];
+  const molde = G({ id: 'tpl', title: 'Faturamento Mensal', due_date: '2026-08-06',
+                    recurrence_rule: 'FREQ=MONTHLY;BYMONTHDAY=6', recurrence_parent_id: null });
+  const inst = G({ id: 'inst', title: 'Faturamento Mensal', due_date: '2026-08-06', recurrence_parent_id: 'tpl' });
+  const r = await applyGroupChatTaskActions({
+    supabase: makeDb({ tasks: [molde, inst], events }), groupId: 'g1', senderCollabId: 'c1',
+    actions: [{ action: 'complete', title: 'Faturamento Mensal' }],
+  });
+  assert.ok(!events.find((e) => e.kind === 'insert'), 'materializou duplicata tendo instância');
+  assert.strictEqual(inst.status, 'done');
+  assert.strictEqual(molde.status, 'pending');
+  assert.strictEqual((r.completed || [])[0].id, 'inst');
+});
+
+test('tarefa simples (sem recorrência) não materializa nada — caminho normal intacto', async () => {
+  const events = [];
+  const t = G({ id: 'x', title: 'Pagar boleto', due_date: '2026-08-06' });
+  await applyGroupChatTaskActions({
+    supabase: makeDb({ tasks: [t], events }), groupId: 'g1', senderCollabId: 'c1',
+    actions: [{ action: 'complete', title: 'Pagar boleto' }],
+  });
+  assert.ok(!events.find((e) => e.kind === 'insert'));
+  assert.strictEqual(t.status, 'done');
+});

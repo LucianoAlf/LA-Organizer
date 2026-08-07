@@ -443,4 +443,8 @@ async function endSeries1on1({ supabase, templateId, ownerId }) {
   return { ended: true, templateId, cancelled };
 }
 
-module.exports = { parseRule, nextOccurrences, materializeSeries, materializeAll, endSeries1on1, shiftReminderToInstance, buildGroupChildRow };
+module.exports = { parseRule, nextOccurrences, materializeSeries, materializeAll, endSeries1on1, shiftReminderToInstance, buildGroupChildRow,
+  // Exportado para o chat de grupo materializar a ocorrência CORRENTE de uma mensal que ainda
+  // só existe como molde (GROUPCHAT-COMPLETE-TEMPLATE-ONLY-CYCLE). Uma implementação só: montar
+  // a linha da instância em dois lugares é como as regras divergem e o bug volta pelo outro lado.
+  _cloneTemplate };
