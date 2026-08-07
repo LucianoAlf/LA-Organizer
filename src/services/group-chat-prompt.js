@@ -37,6 +37,17 @@ function buildGroupChatPrompt({ soulText, groupName, members, pool, history, sen
   // Âncora de data SEMPRE presente — sem ela o LLM erra "segunda-feira" → data (BUG weekday).
   const dateBlock = dateAnchor ? `\n## Hoje (âncora temporal — leia ANTES de gerar qualquer due_date/remind_at/start_at)\n${dateAnchor}\n` : '';
 
+  // GROUPCHAT-DATE-SELF-POISONING (Rose 06/08): a âncora acima está certa, mas fica ANTES do
+  // histórico — e o histórico carrega as falas antigas do próprio TOM. Ele errou a data uma
+  // vez, a frase virou linha no chat, e desde então ele relê e repete: no dump do prompt real
+  // eram QUATRO afirmações de "hoje (07/08)" contra uma âncora de 06/08, e as erradas mais
+  // recentes. Reancorar depois do histórico é o que devolve a última palavra ao fato.
+  const _wd = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+  const _hojeWd = today ? _wd[new Date(`${today}T12:00:00Z`).getUTCDay()] : null;
+  const reancoraBlock = today
+    ? `\n## RE-ANCORAGEM DE DATA (vale mais que qualquer data dita acima)\nHoje é **${today}** (${_hojeWd}). Se alguma mensagem do histórico acima — INCLUSIVE SUA — afirmar outra data para "hoje", ela está ERRADA: fala antiga não vira fato. Nunca repita a data de uma fala anterior; use sempre esta linha.\n`
+    : '';
+
   return `${soulText}
 
 # VOCÊ ESTÁ NO CHAT DO GRUPO "${groupName}"
@@ -60,7 +71,7 @@ A lista acima é a ÚNICA verdade sobre tarefas do grupo. Se ela diz "(nenhuma t
 
 ## Conversa recente (memória do chat — do mais antigo ao mais novo)
 ${histBlock}
-
+${reancoraBlock}
 ## Como agir (você está ENGAJADO agora)
 - O grupo "${groupName}" é semântico: use o tema dele como contexto do que faz sentido criar aqui.
 - Você é FACILITADOR, não só executor: conduza, sugira e ENSINE ("é só me falar 'cria projeto X' que eu monto"). Se a equipe parece travada, ofereça o próximo passo.

@@ -135,3 +135,45 @@ test('buildGroupChatPrompt: passa o today pro pool (rótulo relativo, não a ISO
   assert.match(p, /em 3d/);
   assert.doesNotMatch(p, /prazo 2026-06-15/);
 });
+
+// ── GROUPCHAT-DATE-SELF-POISONING (Rose 06/08) ───────────────────────────────
+// A Rose cravou o padrão: "o dia do tom vai até 21h... ele conta que é dia 7 já". Fui atrás
+// achando deslocamento de UTC. NÃO era: a âncora e o pool entregam 06/08 corretamente.
+//
+// O que acontece é pior e mais simples: o TOM errou UMA vez, a fala virou linha no histórico
+// do grupo, e o histórico volta no prompt de toda rodada seguinte. Dump do prompt real às 23h:
+//   L10  quinta 06/08 (HOJE)              <- âncora, correta
+//   L53  TOM: Com base na lista de hoje (07/08):     <- ele, errado, ontem
+//   L118 TOM: Rose, aqui o que a lista mostra hoje (07/08):
+// Quatro afirmações erradas e MAIS RECENTES contra uma âncora antiga. Ele copia a si mesmo.
+//
+// Fix: reancorar a data DEPOIS do histórico, dizendo que fala antiga não é fato.
+const { buildGroupChatPrompt: _bp } = require('./group-chat-prompt');
+
+const _base = {
+  soulText: 'SOUL', groupName: 'Financeiro', members: [{ name: 'Rose' }], senderName: 'Rose',
+  pool: [], today: '2026-08-06', longTermMemory: null, notesContext: '', credentialContext: '',
+  dateAnchor: '**Data/hora agora (BRT):** 2026-08-06 22:03 (quinta)',
+  history: [{ who: 'TOM', role: 'tom', content: 'Com base na lista de hoje (07/08): nenhuma!' }],
+};
+
+test('a data é REANCORADA depois do historico — senao a fala velha do TOM ganha por recencia', () => {
+  const p = _bp(_base);
+  const iHist = p.indexOf('Conversa recente');
+  const iReanc = p.lastIndexOf('2026-08-06');
+  assert.ok(iHist > 0, 'nao achei o bloco de historico');
+  assert.ok(iReanc > iHist, 'a ultima afirmacao de data no prompt ainda vem ANTES do historico');
+});
+
+test('a reancoragem diz explicitamente que data no historico NAO e fato', () => {
+  const p = _bp(_base);
+  const depois = p.slice(p.indexOf('Conversa recente'));
+  assert.match(depois, /hist[oó]rico/i);
+  assert.match(depois, /2026-08-06|06\/08/);
+});
+
+test('sem `today` o prompt nao inventa reancoragem (degrada silencioso)', () => {
+  const p = _bp({ ..._base, today: null });
+  const depois = p.slice(p.indexOf('Conversa recente'));
+  assert.ok(!/RE-ANCORAGEM/i.test(depois), 'inventou bloco de data sem ter a data');
+});
