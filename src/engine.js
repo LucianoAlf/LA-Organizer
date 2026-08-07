@@ -218,10 +218,19 @@ function logSchemaErr(marker, errors, raw) {
 }
 
 // Insere uma linha em marker_logs (observabilidade). Falha de log NUNCA derruba o pipeline.
-async function logMarker(collaboratorId, markerType, result, reason = null, raw = null) {
+//
+// `rawLimit` existe para o payload de TASK_TARGET_AMBIGUOUS (Fatia A do alvo de tarefa), que
+// precisa carregar a lista de candidatos para desenhar a Fatia B. Em 500 chars ele chegaria
+// cortado no meio do JSON — o que é pior do que não gravar, porque parece dado e não é. A
+// coluna `marker_logs.raw_excerpt` é `text` SEM limite no banco: o corte sempre foi só aqui.
+//
+// ATENÇÃO para quem for chamar: `result` tem CHECK no banco e só aceita
+// ['executed','rejected','skipped','redirected','fallback']. Qualquer outro valor viola a
+// constraint e esta função NÃO lança — só faz console.error. A linha some em silêncio.
+async function logMarker(collaboratorId, markerType, result, reason = null, raw = null, { rawLimit = 500 } = {}) {
   try {
     let excerpt = null;
-    if (raw) excerpt = typeof raw === 'string' ? raw.slice(0, 500) : JSON.stringify(raw).slice(0, 500);
+    if (raw) excerpt = typeof raw === 'string' ? raw.slice(0, rawLimit) : JSON.stringify(raw).slice(0, rawLimit);
     const { error } = await supabase.from('marker_logs').insert({
       collaborator_id: collaboratorId,
       marker_type: markerType,
