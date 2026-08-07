@@ -3902,14 +3902,11 @@ async function run(opts = {}) {
   if (opts.force === 'health_report' ||
       (slotNow >= _hrSlot && slotNow < _hrCutoff)) {
     try {
-      const { data: sentToday } = await supabase.from('ritual_logs')
-        .select('id').eq('ritual_type', 'health_report').eq('reference_date', now.ymd)
-        .eq('status', 'sent').limit(1);
-      if (opts.force !== 'health_report' && sentToday && sentToday.length > 0) {
-        // já entregue hoje — silencioso (não loga a cada tick da janela pra não poluir)
-      } else {
-        await sendHealthReport(now.ymd);
-      }
+      // Dedupe agora é POR DESTINATÁRIO, dentro de sendHealthReport (07/08: 2º
+      // destinatário adicionado — o gate antigo checava "existe algum sent hoje?"
+      // sem olhar de quem, então falha de 1 destinatário nunca era retentada
+      // enquanto o outro já tivesse recebido).
+      await sendHealthReport(now.ymd, opts.force === 'health_report');
     } catch (err) {
       console.error('[Dispatcher] health-report erro (retenta no próximo tick até 11h):', err.message);
     }
@@ -5973,7 +5970,8 @@ function formatHealthReport(run) {
   return `${head}\n\n${lines.join('\n')}${anmSamplesBlock}${okCount}${footer}`;
 }
 
-async function sendHealthReport(refYmd = null) {
+async function sendHealthReport(refYmd = null, force = false) {
+  const ymd = refYmd || nowSaoPaulo().ymd;
   // 1. Pega último run (últimas 24h)
   const cutoff = new Date(Date.now() - 24 * 3600_000).toISOString();
   let { data: runs, error } = await supabase
@@ -5990,34 +5988,45 @@ async function sendHealthReport(refYmd = null) {
     const { runHealthCheck } = require('./health-check');
     run = await runHealthCheck();
   }
-  // 2. Acha o destinatário do relatório.
-  // Hardcoded: Luciano (owner do sistema). Anne tem role=director mas é dona
-  // da escola, não admin do TOM — não deve receber relatórios técnicos.
+  // 2. Acha os destinatários do relatório.
+  // Hardcoded: Luciano (owner do sistema) + Hugo (07/08). Anne tem role=director
+  // mas é dona da escola, não admin do TOM — não deve receber relatórios técnicos.
   // TODO(roadmap): adicionar coluna `is_system_admin` em collaborators.
   const { data: directors, error: dErr } = await supabase
     .from('collaborators')
     .select('id, full_name, phone')
     .eq('role', 'director')
     .eq('is_active', true)
-    .ilike('full_name', 'Luciano%')
-    .limit(1);
+    .or('full_name.ilike.Luciano%,full_name.ilike.Hugo%');
   if (dErr) throw dErr;
-  const director = directors && directors[0];
-  if (!director || !director.phone) {
-    console.warn('[health-report] director sem phone — relatório não enviado');
+  if (!directors || !directors.length) {
+    console.warn('[health-report] nenhum director encontrado — relatório não enviado');
     return;
   }
-  // 3. Formata + envia
   const msg = formatHealthReport(run);
   const whatsapp = require('../services/whatsapp');
-  // quiet-exempt: relatório admin de saúde do sistema para o próprio dono (Luciano).
-  await whatsapp.sendMessage(director.phone, msg);
-  console.log(`[health-report] enviado pra ${director.full_name} (${String(director.phone).slice(-4)})`);
-  // Idempotência: marca em ritual_logs pra dispatcher não reenviar no próximo tick.
-  try {
-    await logRitualEvent(director.id, 'health_report', 'sent', `summary=${JSON.stringify(run.summary)}`, refYmd);
-  } catch (e) {
-    console.warn('[health-report] log err:', e.message);
+  // 3. Envia por destinatário — dedupe individual (07/08: 2º destinatário
+  // adicionado; se um envio falha, os demais já enviados não bloqueiam retry
+  // dele nos próximos ticks da janela 07:00-11:00).
+  for (const director of directors) {
+    if (!director.phone) {
+      console.warn(`[health-report] ${director.full_name} sem phone — pulado`);
+      continue;
+    }
+    if (!force) {
+      const { data: already } = await supabase.from('ritual_logs')
+        .select('id').eq('collaborator_id', director.id).eq('ritual_type', 'health_report')
+        .eq('reference_date', ymd).eq('status', 'sent').limit(1);
+      if (already && already.length > 0) continue; // já entregue hoje pra esse destinatário
+    }
+    try {
+      // quiet-exempt: relatório admin de saúde do sistema pros donos do TOM.
+      await whatsapp.sendMessage(director.phone, msg);
+      console.log(`[health-report] enviado pra ${director.full_name} (${String(director.phone).slice(-4)})`);
+      await logRitualEvent(director.id, 'health_report', 'sent', `summary=${JSON.stringify(run.summary)}`, ymd);
+    } catch (e) {
+      console.error(`[health-report] falha ao enviar pra ${director.full_name}:`, e.message);
+    }
   }
 }
 
