@@ -4451,15 +4451,37 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
       if (a.action === 'complete') {
         // Sprint 31 — title-lookup (mesmo padrão de reschedule)
         if (!a.id && a.title) {
-          const { data: byTitleC } = await supabase
+          // Fatia A do alvo de tarefa: "conclui a Presença Emusys" marcava a instância de
+          // SETEMBRO como feita e deixava a de agosto, atrasada, aberta — e o TOM ainda
+          // afirmava "✅ concluí". O `.limit(1)` por `created_at desc` fingia certeza onde
+          // havia várias instâncias da mesma série. Escopo deste handler é SÓ o responsável
+          // (`assigned_to`), diferente do reschedule — preservado de propósito.
+          const _SERIE_ON_C = process.env.TOM_TASK_TARGET_SERIES === '1';
+          const _qC = supabase
             .from('tasks')
-            .select('id')
+            .select('id, title, due_date, recurrence_rule, recurrence_parent_id, created_at')
             .eq('assigned_to', collaborator.id)
             .ilike('title', `%${String(a.title).slice(0, 60)}%`)
-            .not('status', 'in', '("done","cancelled")')
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
+            .not('status', 'in', '("done","cancelled")');
+          const { data: _candsC } = _SERIE_ON_C
+            ? await _qC.order('due_date', { ascending: true, nullsFirst: false }).limit(100)
+            : await _qC.order('created_at', { ascending: false }).limit(1);
+          if (_SERIE_ON_C && _candsC && _candsC.length === 100) {
+            console.warn(`[TaskTarget] cap atingido handler=complete pedido="${String(a.title).slice(0, 60)}"`);
+          }
+          let byTitleC = null;
+          if (!_SERIE_ON_C) {
+            byTitleC = (_candsC && _candsC[0]) || null;
+          } else {
+            const _rC = resolveTaskTarget({ candidatos: _candsC || [] });
+            if (_rC.modo === 'exato') {
+              byTitleC = _rC.tarefa;
+              if (_rC.motivo === 'serie') console.log(`[TaskTarget] serie handler=complete n=${(_candsC || []).length} → ${String(byTitleC.id).slice(0, 8)} due=${byTitleC.due_date}`);
+            } else if (_rC.modo === 'ambiguo') {
+              await _logAlvoAmbiguo('complete', a.title, collaborator.id, _rC.candidatos);
+              byTitleC = _rC.candidatos.slice().sort((x, y) => (Date.parse(y.created_at) || 0) - (Date.parse(x.created_at) || 0))[0] || null;
+            }
+          }
           if (byTitleC) {
             a.id = byTitleC.id.replace(/-/g, '').slice(0, 8);
             console.log(`[Task] complete title-lookup: "${a.title}" → id=${a.id}`);
