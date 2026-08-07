@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { firstNameOf, truncDesc, packagePrefix } = require('../utils/group-task-relay');
 const { formatRelativeDate } = require('../utils/dates');
+const { neutralizaDataAfirmada } = require('../utils/date-claim');
 
 // 1ª linha = formato atual (intocado p/ não regredir o pool). Acrescenta "· criada por X" e,
 // quando há descrição, uma 2ª linha "↳ ...". Sem criador/descrição, devolve idêntico ao antigo.
@@ -24,16 +25,26 @@ function fmtPoolLine(t, todayYmd) {
   return `- ${pkg}${t.title} — ${status}${due}${by}${descLine}`;
 }
 
+// GROUPCHAT-DATE-SELF-POISONING (Rose 06/08): fala ANTIGA do TOM entra sem o carimbo de data.
+// Medido: 11 das 26 falas dele que afirmam "hoje DD/MM" estavam erradas (42%), sempre em rajada
+// — ele erra uma vez, a frase vira linha no chat e ele relê e repete a sessão inteira. Pedir no
+// prompt que ele ignore não bastou (ele contradisse até o "(HOJE)" explícito do pool), então
+// aqui a data simplesmente não é reapresentada: a âncora vira a única fonte de "hoje".
+// Fala de PESSOA fica intacta — é dado do que o humano disse, não se adultera.
 function fmtHistoryLine(m) {
   const who = m.role === 'tom' ? 'TOM' : (m.who || 'alguém');
-  return `${who}: ${m.content || ''}`;
+  const content = m.role === 'tom' ? neutralizaDataAfirmada(m.content) : (m.content || '');
+  return `${who}: ${content}`;
 }
 
 function buildGroupChatPrompt({ soulText, groupName, members, pool, history, senderName, longTermMemory, notesContext, credentialContext, dateAnchor, today }) {
   const memberNames = (members || []).map((m) => m.name).filter(Boolean).join(', ') || '—';
   const poolBlock = (pool || []).length ? (pool || []).map((t) => fmtPoolLine(t, today)).join('\n') : '(nenhuma tarefa ainda)';
   const histBlock = (history || []).length ? (history || []).map(fmtHistoryLine).join('\n') : '(sem histórico)';
-  const memoryBlock = longTermMemory ? longTermMemory : '(ainda construindo)';
+  // A memória é um resumo ROLANTE que nunca expira — o grupo Financeiro tinha gravado
+  // "TOM se confundiu com a data — Rose corrigiu: hoje é 06/08". Um fato DATADO guardado como
+  // permanente: sem isso, ele afirmaria "hoje é 06/08" em setembro.
+  const memoryBlock = longTermMemory ? neutralizaDataAfirmada(longTermMemory) : '(ainda construindo)';
   // Âncora de data SEMPRE presente — sem ela o LLM erra "segunda-feira" → data (BUG weekday).
   const dateBlock = dateAnchor ? `\n## Hoje (âncora temporal — leia ANTES de gerar qualquer due_date/remind_at/start_at)\n${dateAnchor}\n` : '';
 
@@ -57,6 +68,7 @@ Quem acabou de falar com você: ${senderName}.
 ${dateBlock}
 
 ## Memória de longo prazo deste grupo
+(resumos de sessões ANTERIORES, já encerradas — qualquer "hoje/ontem/amanhã" aqui se refere ao dia daquela sessão passada, NUNCA a agora)
 ${memoryBlock}
 ${notesContext ? `\n${notesContext}\n` : ''}
 ${credentialContext ? `\n${credentialContext}\n` : ''}

@@ -1,0 +1,59 @@
+// src/utils/date-claim.js
+// GROUPCHAT-DATE-SELF-POISONING (Rose 06/08) — o TOM afirmava a data errada e se auto-envenenava.
+//
+// Medição retroativa nas falas dele no chat de grupo: 26 afirmam "hoje DD/MM", 11 estão erradas
+// (42%) — e sempre em RAJADA (5 seguidas em 20/06, 3 em 06/08). Os desvios foram +2 às 19h e
+// -1 às 10h, o que DESCARTA fuso horário (UTC só produz +1, e só depois das 21h). O que sustenta
+// a rajada é a realimentação: a fala errada vira linha no histórico e no resumo de longo prazo,
+// e volta no prompt da rodada seguinte. Prova: o pool entregou "prazo 06/08 qui (HOJE)" e ele
+// escreveu "prazo era ontem, 06/08" — contradisse o rótulo explícito da casa.
+//
+// Este módulo é PURO. neutralizaDataAfirmada tira o carimbo de data do que ENTRA no prompt
+// (falas antigas dele + memória de longo prazo), para a âncora ficar sendo a única fonte de
+// "hoje". detectaDataAfirmadaErrada é o velocímetro do que SAI — mede, não maquia: uma resposta
+// nascida de data errada tem a aritmética toda contaminada ("2 dias" de atraso) e não é
+// salvável por regex.
+
+// `\b` em JS é ASCII: `\bamanhã\b` NÃO casa (o "ã" não é word char). Daí os lookarounds \p{L}.
+// Só liga quando a data está GRUDADA no rótulo — separada apenas por espaço, "é", pontuação
+// leve ou tag HTML (a memória de longo prazo é HTML). "pra hoje? Vence 12/08" não casa.
+const RE_DATA_AFIRMADA = /(?<![\p{L}])(hoje|ontem|amanhã|amanha)(?![\p{L}])[ \t]*(?:é|eh)?[ \t]*[,:–—-]?[ \t]*(?:<[a-z/][^>]{0,24}>)*[ \t]*(\()?[ \t]*(\d{1,2})\/(\d{1,2})(?:\/\d{2,4})?(?:[ \t]*(\)))?/giu;
+
+const DELTA = { hoje: 0, ontem: -1, amanhã: 1, amanha: 1 };
+
+// Aritmética de calendário em UTC a partir de uma string YMD já resolvida em BRT: não há
+// conversão de fuso aqui, logo não há como deslocar o dia (LOCALYMD-UTC-SHIFT).
+function _desloca(hojeYmd, delta) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(hojeYmd || ''));
+  if (!m) return null;
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  d.setUTCDate(d.getUTCDate() + delta);
+  return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+// Remove o "DD/MM" que ele gruda em hoje/ontem/amanhã, preservando o resto da frase.
+// Só devolve o ")" quando ele não fazia par com um "(" consumido — senão sobra parêntese órfão.
+function neutralizaDataAfirmada(texto) {
+  if (!texto) return '';
+  return String(texto).replace(RE_DATA_AFIRMADA, (_m, rotulo, abre, _dd, _mm, fecha) => (
+    fecha && !abre ? `${rotulo}${fecha}` : rotulo
+  ));
+}
+
+// Velocímetro: lista as afirmações de data que discordam do calendário real.
+function detectaDataAfirmadaErrada(texto, hojeYmd) {
+  if (!texto || !hojeYmd) return [];
+  const achados = [];
+  const re = new RegExp(RE_DATA_AFIRMADA.source, RE_DATA_AFIRMADA.flags);
+  let m;
+  while ((m = re.exec(String(texto)))) {
+    const rotulo = m[1].toLowerCase();
+    const esperado = _desloca(hojeYmd, DELTA[rotulo]);
+    if (!esperado) continue;
+    const disse = `${m[3].padStart(2, '0')}/${m[4].padStart(2, '0')}`;
+    if (disse !== esperado) achados.push({ rotulo, disse, esperado });
+  }
+  return achados;
+}
+
+module.exports = { neutralizaDataAfirmada, detectaDataAfirmadaErrada };

@@ -7,6 +7,8 @@
 
 const ai = require('../ai/provider');
 const { loadGroupChatSoul } = require('./group-chat-prompt');
+const { buildBrtDateAnchor } = require('../utils/dates');
+const { neutralizaDataAfirmada } = require('../utils/date-claim');
 
 // Limite do resumo rolante em caracteres.
 const MEMORY_LIMIT = 3000;
@@ -67,17 +69,26 @@ async function processGroupChatClosing({ supabase, group }) {
     const histText = rows
       .map((m) => {
         const who = m.role === 'tom' ? 'TOM' : ((m.sender?.preferred_name || m.sender?.full_name || '').split(' ')[0] || 'alguém');
-        return `${who}: ${(m.content || '').replace('‹‹ACTIONS››', ' [ações: ')}`;
+        const raw = (m.content || '').replace('‹‹ACTIONS››', ' [ações: ');
+        // GROUPCHAT-DATE-SELF-POISONING: mesma regra do prompt do chat — a data que ELE afirmou
+        // não pode virar insumo do resumo, senão o erro do dia é gravado como memória permanente.
+        return `${who}: ${m.role === 'tom' ? neutralizaDataAfirmada(raw) : raw}`;
       })
       .join('\n') || '(sem mensagens nesta sessão)';
 
     // ── Montar prompt de fechamento ───────────────────────────────────────────
     const soulText = loadGroupChatSoul();
     const previousMemory = group.tom_chat_memory
-      ? `\n\n## Memória anterior do grupo (longo prazo)\n${group.tom_chat_memory}`
+      ? `\n\n## Memória anterior do grupo (longo prazo)\n${neutralizaDataAfirmada(group.tom_chat_memory)}`
       : '';
 
+    // Este prompt gravava a memória PERMANENTE do grupo sem nunca saber que dia era hoje.
+    // Resultado real: "TOM se confundiu com a data — Rose corrigiu: hoje é 06/08" ficou salvo
+    // como fato do grupo, e voltaria em toda rodada futura afirmando um dia que já passou.
     const systemPrompt = `${soulText}${previousMemory}
+
+## Hoje (âncora temporal)
+${buildBrtDateAnchor()}
 
 # TAREFA: RESUMO DE FECHAMENTO DE SESSÃO — grupo "${group.name}"
 
@@ -100,6 +111,7 @@ ${histText}
   blocão de texto. O leitor tem que bater o olho e entender — nada de maçaroca.
 - Seja conciso: o card inteiro não deve passar de 250 palavras.
 - Tom: leve, direto, sem jargão corporativo.
+- NADA DE DATA CONGELADA: este card vira memória PERMANENTE do grupo. NUNCA escreva qual é o dia de hoje ("hoje é 06/08"), nem registre que houve confusão de data — isso volta em toda conversa futura afirmando um dia que já passou. Use "hoje/ontem" só quando o item for atemporal; prazo de tarefa, escreva a data crua.
 - ANTI-CONFABULAÇÃO: NUNCA afirme que o sistema "não tem" uma funcionalidade. O sistema TEM recorrência (tarefas/eventos), lembretes, projetos, checklists e anotações. Se a conversa antiga sugeriu o contrário, NÃO repita esse erro no resumo.`;
 
     // ── Chamar IA ─────────────────────────────────────────────────────────────

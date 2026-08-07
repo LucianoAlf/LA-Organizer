@@ -177,3 +177,40 @@ test('sem `today` o prompt nao inventa reancoragem (degrada silencioso)', () => 
   const depois = p.slice(p.indexOf('Conversa recente'));
   assert.ok(!/RE-ANCORAGEM/i.test(depois), 'inventou bloco de data sem ter a data');
 });
+
+// ── GROUPCHAT-DATE-SELF-POISONING (Rose 06/08) ────────────────────────────────
+// Medição retroativa: 11 das 26 falas dele que afirmam "hoje DD/MM" estavam erradas (42%),
+// sempre em rajada. A âncora no topo estava CERTA nas três vezes — o que venceu foi a fala
+// antiga dele, relida no histórico e no resumo de longo prazo. O prompt não pode reapresentar
+// esse carimbo de data como se fosse fato.
+const { neutralizaDataAfirmada: _neutraliza } = require('../utils/date-claim');
+
+test('fala ANTIGA do TOM entra no prompt sem o carimbo de data', () => {
+  const p = buildGroupChatPrompt({
+    soulText: 'S', groupName: 'G', members: [{ name: 'Rose' }], pool: [],
+    history: [{ role: 'tom', who: 'TOM', content: 'Com base na lista de hoje (07/08): nada por aqui.' }],
+    senderName: 'Rose', today: '2026-08-06',
+  });
+  assert.ok(p.includes('Com base na lista de hoje: nada por aqui.'), 'a frase tem que sobreviver sem a data');
+  assert.ok(!p.includes('07/08'), 'a data errada da fala antiga NÃO pode reaparecer no prompt');
+});
+
+test('fala de PESSOA entra intacta — não adulteramos o que o humano disse', () => {
+  const p = buildGroupChatPrompt({
+    soulText: 'S', groupName: 'G', members: [{ name: 'Rose' }], pool: [],
+    history: [{ role: 'member', who: 'Rose', content: 'Tom, hoje é 06/08, presta atenção' }],
+    senderName: 'Rose', today: '2026-08-06',
+  });
+  assert.ok(p.includes('Tom, hoje é 06/08, presta atenção'), 'fala humana é dado, não se mexe');
+});
+
+test('memória de longo prazo entra sem data congelada e avisada como sessão PASSADA', () => {
+  // Texto REAL de work_groups.tom_chat_memory do grupo Financeiro.
+  const p = buildGroupChatPrompt({
+    soulText: 'S', groupName: 'G', members: [{ name: 'Rose' }], pool: [], history: [],
+    senderName: 'Rose', today: '2026-08-06',
+    longTermMemory: '<li>TOM se confundiu com a data — Rose corrigiu: hoje é <strong>06/08</strong></li>',
+  });
+  assert.ok(!/hoje é <strong>06\/08/.test(p), 'fato datado não pode virar verdade permanente');
+  assert.ok(/sess(ões|ão) (anterior|passad)/i.test(p), 'o bloco precisa se declarar como passado');
+});

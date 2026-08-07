@@ -11,6 +11,7 @@ const { buildGroupChatPrompt, loadGroupChatSoul } = require('./group-chat-prompt
 const { applyGroupChatTaskActions, findDuplicatePackage, resolveVisibleInstance, filterNewSubtasks, endSeries, resolveSeriesTemplate, reviveSeries } = require('./group-chat-tasks');
 const { createTaskGroup, addSubtasksToGroup } = require('./task-groups');
 const { buildGroupReport, dropOpenWithDoneTwin, categorize, spYmd } = require('./group-report-builder');
+const { detectaDataAfirmadaErrada } = require('../utils/date-claim');
 const { ehMoldeRecorrente, escondeMoldeComInstancia } = require('../utils/group-task-visibility');
 const groupNotes = require('./group-notes');
 const { buildBrtDateAnchor } = require('../utils/dates');
@@ -156,6 +157,20 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
   }
 
   let reply = response.text || '';
+
+  // Velocímetro GROUPCHAT-DATE-SELF-POISONING: as entradas já entram sem carimbo de data, mas
+  // o nascimento do erro (a 1ª fala errada de cada rajada) é alucinação e nenhuma limpeza de
+  // entrada garante zero. Aqui só MEDIMOS. Corrigir a string seria maquiagem: quando ele parte
+  // da data errada, a aritmética inteira sai contaminada ("prazo era ontem, 06/08 (1 dia)") e
+  // trocar o número esconderia o defeito em vez de expô-lo.
+  try {
+    const erradas = detectaDataAfirmadaErrada(reply, ctx.poolToday);
+    if (erradas.length) {
+      const detalhe = erradas.map((e) => `${e.rotulo}=${e.disse} (era ${e.esperado})`).join(', ');
+      console.warn(`[GroupChat][DATE-CLAIM] grupo=${groupId} hoje=${ctx.poolToday} afirmou: ${detalhe}`);
+    }
+  } catch (_) { /* velocímetro nunca derruba a resposta */ }
+
   const actions = []; // { kind, status, label, detail } → render rico no MessageBubble
   const collab = ctx.collab;
   const engine = require('../engine'); // lazy: engine já carregado no processo; evita ciclo na carga
