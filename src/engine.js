@@ -4722,15 +4722,34 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
       } else if (a.action === 'cancel') {
         // Sprint 31 — handler cancel (title-lookup igual complete/reschedule)
         if (!a.id && a.title) {
-          const { data: byTitleCan } = await supabase
+          // Terceira porta do mesmo defeito. Deixar 1 dos 3 handlers sem a regra é a armadilha
+          // recorrente da casa: regra presente em N leitores e ausente no N+1.
+          const _SERIE_ON_X = process.env.TOM_TASK_TARGET_SERIES === '1';
+          const _qX = supabase
             .from('tasks')
-            .select('id')
+            .select('id, title, due_date, recurrence_rule, recurrence_parent_id, created_at')
             .eq('assigned_to', collaborator.id)
             .ilike('title', `%${String(a.title).slice(0, 60)}%`)
-            .not('status', 'in', '("done","cancelled")')
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
+            .not('status', 'in', '("done","cancelled")');
+          const { data: _candsX } = _SERIE_ON_X
+            ? await _qX.order('due_date', { ascending: true, nullsFirst: false }).limit(100)
+            : await _qX.order('created_at', { ascending: false }).limit(1);
+          if (_SERIE_ON_X && _candsX && _candsX.length === 100) {
+            console.warn(`[TaskTarget] cap atingido handler=cancel pedido="${String(a.title).slice(0, 60)}"`);
+          }
+          let byTitleCan = null;
+          if (!_SERIE_ON_X) {
+            byTitleCan = (_candsX && _candsX[0]) || null;
+          } else {
+            const _rX = resolveTaskTarget({ candidatos: _candsX || [] });
+            if (_rX.modo === 'exato') {
+              byTitleCan = _rX.tarefa;
+              if (_rX.motivo === 'serie') console.log(`[TaskTarget] serie handler=cancel n=${(_candsX || []).length} → ${String(byTitleCan.id).slice(0, 8)} due=${byTitleCan.due_date}`);
+            } else if (_rX.modo === 'ambiguo') {
+              await _logAlvoAmbiguo('cancel', a.title, collaborator.id, _rX.candidatos);
+              byTitleCan = _rX.candidatos.slice().sort((x, y) => (Date.parse(y.created_at) || 0) - (Date.parse(x.created_at) || 0))[0] || null;
+            }
+          }
           if (byTitleCan) {
             a.id = byTitleCan.id.replace(/-/g, '').slice(0, 8);
             console.log(`[Task] cancel title-lookup: "${a.title}" → id=${a.id}`);
