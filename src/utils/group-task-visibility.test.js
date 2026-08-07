@@ -125,3 +125,54 @@ test('dropPackageContainers não muta a entrada', () => {
   dropPackageContainers(input);
   assert.strictEqual(input.length, len);
 });
+
+// ── GROUPCHAT-POOL-RECUR-TEMPLATE-INVISIBLE (caso Rose 06/08, 21h57) ──────────
+// A Rose criou duas tarefas mensais de grupo ("Relatório Mensal Financeiro", venc. dia 5;
+// "Faturamento Mensal", venc. dia 6). Elas aparecem no app e o TOM jurou que não existiam:
+// "não tá na lista de tarefas do grupo — pode nunca ter sido criado aqui". Depois falhou ao
+// concluir ("não achei essa tarefa no grupo").
+//
+// Duas causas somadas, as duas no caminho do pool:
+//  1. a query fazia `.is('recurrence_rule', null)` — molde recorrente NUNCA entrava. A regra
+//     existe desde 12/06 para o TOM não ver molde E instância e cobrar em dobro; só que ela
+//     disparava mesmo quando NÃO HÁ instância, e aí esconde trabalho em vez de duplicata.
+//     Nestes dois casos o materializeAll roda a cada 5min e cria zero: o ciclo corrente É o
+//     próprio molde.
+//  2. `categorize` marca como 'retroativa' (e some) toda tarefa criada DEPOIS do vencimento.
+//     Num molde, `due_date` é a âncora do ciclo (BYMONTHDAY=5), não data de cadastro atrasado.
+const { ehMoldeRecorrente, escondeMoldeComInstancia } = require('./group-task-visibility');
+
+const molde = (id, extra = {}) => ({ id, recurrence_rule: 'FREQ=MONTHLY;BYMONTHDAY=5', recurrence_parent_id: null, ...extra });
+const instancia = (id, pai) => ({ id, recurrence_rule: null, recurrence_parent_id: pai });
+const avulsa = (id) => ({ id, recurrence_rule: null, recurrence_parent_id: null });
+
+test('ehMoldeRecorrente: regra preenchida + sem pai = molde', () => {
+  assert.equal(ehMoldeRecorrente(molde('m')), true);
+  assert.equal(ehMoldeRecorrente(instancia('i', 'm')), false, 'instancia nao e molde');
+  assert.equal(ehMoldeRecorrente(avulsa('a')), false);
+  assert.equal(ehMoldeRecorrente(null), false);
+});
+
+test('molde SEM instancia viva APARECE — era o buraco: trabalho real invisivel', () => {
+  const r = escondeMoldeComInstancia([molde('relatorio'), avulsa('outra')], new Set());
+  assert.deepEqual(r.map((t) => t.id), ['relatorio', 'outra']);
+});
+
+test('molde COM instancia viva continua ESCONDIDO — nao reintroduz a duplicata de 12/06', () => {
+  const r = escondeMoldeComInstancia([molde('m'), instancia('i', 'm')], new Set(['m']));
+  assert.deepEqual(r.map((t) => t.id), ['i'], 'o molde vazou junto com a instancia');
+});
+
+test('o conjunto de ids vem do BANCO, nao da pagina buscada', () => {
+  // Se a instancia existir mas ficar fora do limite da pagina, decidir pela pagina
+  // reintroduziria a duplicata. Por isso a funcao recebe o conjunto pronto.
+  const r = escondeMoldeComInstancia([molde('m')], new Set(['m']));
+  assert.deepEqual(r, [], 'decidiu pela pagina em vez do conjunto recebido');
+});
+
+test('nao mexe em tarefa nao-recorrente, e nao muta a entrada', () => {
+  const entrada = [avulsa('a'), instancia('i', 'x')];
+  const r = escondeMoldeComInstancia(entrada, new Set(['x']));
+  assert.deepEqual(r.map((t) => t.id), ['a', 'i']);
+  assert.equal(entrada.length, 2);
+});

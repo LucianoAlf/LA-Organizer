@@ -11,6 +11,7 @@ const { buildGroupChatPrompt, loadGroupChatSoul } = require('./group-chat-prompt
 const { applyGroupChatTaskActions, findDuplicatePackage, resolveVisibleInstance, filterNewSubtasks, endSeries, resolveSeriesTemplate, reviveSeries } = require('./group-chat-tasks');
 const { createTaskGroup, addSubtasksToGroup } = require('./task-groups');
 const { buildGroupReport, dropOpenWithDoneTwin, categorize, spYmd } = require('./group-report-builder');
+const { ehMoldeRecorrente, escondeMoldeComInstancia } = require('../utils/group-task-visibility');
 const groupNotes = require('./group-notes');
 const { buildBrtDateAnchor } = require('../utils/dates');
 
@@ -29,9 +30,14 @@ async function loadContext(supabase, groupId, senderCollabId) {
     // Pool = SÓ tarefa REAL ativa (igual ao builder determinístico): exclui done/cancelled e os
     // moldes de recorrência. Sem isso o LLM via tarefa cancelada como "pendente" e cobrava/concluía
     // tarefa fantasma (GROUPCHAT-PHANTOM-POOL, caso Rose/Conciliação 15/06).
-    supabase.from('tasks').select('id, title, status, due_date, created_at, is_group, parent_task_id, description, created_by, creator:collaborators!tasks_created_by_fkey(preferred_name, full_name)')
+    // GROUPCHAT-POOL-RECUR-TEMPLATE-INVISIBLE (Rose 06/08): o `.is('recurrence_rule', null)`
+    // que ficava aqui excluía TODO molde recorrente. A regra existe desde 12/06 para o TOM não
+    // ver molde E instância e cobrar em dobro — mas disparava também quando NÃO HÁ instância,
+    // e aí escondia trabalho real. Agora o molde vem, e quem some é só o que tem instância viva
+    // (decidido abaixo, com consulta ao banco).
+    supabase.from('tasks').select('id, title, status, due_date, created_at, is_group, parent_task_id, description, created_by, recurrence_rule, recurrence_parent_id, creator:collaborators!tasks_created_by_fkey(preferred_name, full_name)')
       .eq('assigned_group_id', groupId)
-      .neq('status', 'cancelled').is('recurrence_rule', null)
+      .neq('status', 'cancelled')
       .order('created_at', { ascending: false }).limit(POOL_LIMIT * 2),
     supabase.from('group_chat_messages').select('role, content, media_extracted_text, sender_id, created_at, sender:collaborators!group_chat_messages_sender_id_fkey(full_name, preferred_name)').eq('group_id', groupId).order('created_at', { ascending: false }).limit(HISTORY_LIMIT),
     supabase.from('collaborators').select('*').eq('id', senderCollabId).maybeSingle(),
@@ -46,8 +52,25 @@ async function loadContext(supabase, groupId, senderCollabId) {
   const poolParentTitleById = new Map();
   for (const t of (poolRows || [])) { if (t.is_group === true && t.id) poolParentTitleById.set(t.id, t.title); }
   // is_group=true = container de pacote (pasta), não tarefa → fora do pool (senão vira fantasma dia-1).
-  const pool = dropOpenWithDoneTwin((poolRows || []).filter((t) => t.is_group !== true))
-    .filter((t) => categorize(t.due_date, poolToday, t.created_at ? spYmd(new Date(t.created_at)) : null) !== 'retroativa')
+  // Quais moldes desta página JÁ têm instância viva? Vai ao BANCO de propósito: se a instância
+  // existir mas cair fora do limite da página, decidir pela página reintroduziria a duplicata
+  // de 12/06. Sem molde na página, nem consulta.
+  const _moldes = (poolRows || []).filter(ehMoldeRecorrente).map((t) => t.id);
+  let _comInstancia = new Set();
+  if (_moldes.length) {
+    const { data: _inst } = await supabase.from('tasks')
+      .select('recurrence_parent_id')
+      .in('recurrence_parent_id', _moldes)
+      .not('status', 'in', '("done","cancelled")');
+    _comInstancia = new Set((_inst || []).map((r) => String(r.recurrence_parent_id)));
+  }
+  const pool = escondeMoldeComInstancia(
+    dropOpenWithDoneTwin((poolRows || []).filter((t) => t.is_group !== true)), _comInstancia)
+    // `retroativa` = criada DEPOIS de vencer, logo não é atraso de ninguém. Num MOLDE isso não
+    // vale: o due_date é a âncora do ciclo (BYMONTHDAY=5), não data de cadastro atrasado — foi
+    // o que sumiu com o "Relatório Mensal Financeiro" (venc. 05, criado 06) da Rose.
+    .filter((t) => ehMoldeRecorrente(t)
+      || categorize(t.due_date, poolToday, t.created_at ? spYmd(new Date(t.created_at)) : null) !== 'retroativa')
     .slice(0, POOL_LIMIT)
     .map((t) => ({ ...t, packageTitle: (t.parent_task_id && poolParentTitleById.get(t.parent_task_id)) || null }));
   const history = (histRows || []).reverse().map((m) => ({

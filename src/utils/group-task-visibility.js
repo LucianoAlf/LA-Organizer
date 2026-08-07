@@ -48,4 +48,33 @@ function dropPackageContainers(tasks) {
   return (Array.isArray(tasks) ? tasks : []).filter((t) => t && t.is_group !== true);
 }
 
-module.exports = { filterVisibleGroupTasks, isRecurringTemplate, dropPackageContainers };
+// ── GROUPCHAT-POOL-RECUR-TEMPLATE-INVISIBLE (caso Rose 06/08) ────────────────────────
+// Molde recorrente = tem regra e não tem pai. Note que é DIFERENTE de isRecurringTemplate
+// acima, que exige `is_group` (mãe-template de PACOTE). Uma tarefa mensal simples de grupo
+// tem is_group=false e não era coberta por aquela regra — nem precisava, porque a query do
+// pool a eliminava antes, com `.is('recurrence_rule', null)`.
+function ehMoldeRecorrente(t) {
+  return !!(t && t.recurrence_rule != null && !t.recurrence_parent_id);
+}
+
+/**
+ * Esconde o molde recorrente APENAS quando ele já tem instância viva — que é o caso que a
+ * regra de 12/06 existe para resolver (TOM via molde + instância e cobrava em dobro).
+ * Sem instância, o molde É a ocorrência corrente e precisa aparecer: escondê-lo fez a Rose
+ * ouvir "essa tarefa não existe no grupo" sobre trabalho que estava na tela dela.
+ *
+ * `idsComInstanciaViva` vem de consulta ao BANCO, não da página buscada: se a instância
+ * existir mas cair fora do limite da página, decidir pela página reintroduz a duplicata.
+ *
+ * @param {Array} tasks
+ * @param {Set<string>} idsComInstanciaViva
+ * @returns {Array} nova lista; não muta a entrada
+ */
+function escondeMoldeComInstancia(tasks, idsComInstanciaViva) {
+  const ids = idsComInstanciaViva instanceof Set ? idsComInstanciaViva : new Set(idsComInstanciaViva || []);
+  return (Array.isArray(tasks) ? tasks : [])
+    .filter((t) => t && !(ehMoldeRecorrente(t) && ids.has(String(t.id))));
+}
+
+module.exports = { filterVisibleGroupTasks, isRecurringTemplate, dropPackageContainers,
+  ehMoldeRecorrente, escondeMoldeComInstancia };
