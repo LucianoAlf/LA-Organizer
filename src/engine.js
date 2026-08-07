@@ -47,6 +47,7 @@ const { detectProjectStatusIntent } = require('./lib/detect-project-status-inten
 const projectStatusLib = require('./lib/project-status');
 const { applyProjectStatusChange } = require('./services/project-status-exec');
 const { detectExplicitDayIntent, resolveExplicitWeekdayDate } = require('./utils/temporal-intent');
+const { resolveTaskTarget, serieDe } = require('./lib/task-target');
 const { isFutureCompletion } = require('./utils/complete-guards');
 const { sanitizeOptimisticConfirm, hasOptimisticConfirm, enforceNoMarkerHonesty, hasCompletionClaim, hasWeakCompletionClaim, isProgressStatusReply } = require('./lib/optimistic-confirm');
 const { isActionConfirmQuestion } = require('./lib/confirm-question');
@@ -241,6 +242,43 @@ async function logMarker(collaboratorId, markerType, result, reason = null, raw 
     if (error) console.error(`[marker_logs] insert err type=${markerType} result=${result}:`, error.message);
   } catch (err) {
     console.error('[marker_logs] throw err:', err.message);
+  }
+}
+
+// Ambiguidade real (linhagens distintas) NÃO é resolvida na Fatia A — mantém o comportamento
+// legado e registra. O payload precisa ser rico: contar ocorrência diz QUANTO, não diz O QUE, e
+// é o o-que que desenha o desempate da Fatia B. `vencedor_legado` é o campo que depois
+// transforma "7% ambíguo" em "X% ambíguo E ERRADO" — sem ele não dá para saber quantas vezes o
+// comportamento mantido aqui acertou por acaso.
+async function _logAlvoAmbiguo(handler, tituloPedido, collaboratorId, candidatos) {
+  try {
+    const porLegado = candidatos.slice().sort((a, b) => (Date.parse(b.created_at) || 0) - (Date.parse(a.created_at) || 0));
+    const comData = candidatos.filter((t) => t.due_date)
+      .sort((a, b) => (a.due_date < b.due_date ? -1 : a.due_date > b.due_date ? 1 : 0));
+    const payload = {
+      handler,
+      titulo_pedido: String(tituloPedido || ''),
+      collaborator_id: collaboratorId,
+      n: candidatos.length,
+      motivo: 'linhagens_distintas',
+      // Cap de 10 na LISTA (o `n` acima continua exato). Grupos ambíguos reais medidos em 06/08
+      // têm ~3 candidatos; 10 é folga. Sem cap, uma série de 42 geraria 6 KB por linha de log.
+      candidatos: candidatos.slice(0, 10).map((t) => ({
+        id: t.id, title: t.title, due_date: t.due_date,
+        serie: serieDe(t), created_at: t.created_at,
+      })),
+      linhagens: [...new Set(candidatos.map(serieDe))],
+      vencedor_legado: porLegado[0] ? porLegado[0].id : null,
+      vencedor_serie: comData[0] ? comData[0].id : null,
+    };
+    console.warn(`[TaskTarget] ambiguo handler=${handler} n=${candidatos.length} motivo=linhagens_distintas pedido="${String(tituloPedido).slice(0, 60)}" legado=${String(payload.vencedor_legado).slice(0, 8)}`);
+    // `result` tem CHECK no banco: só ['executed','rejected','skipped','redirected','fallback'].
+    // Qualquer outro valor viola a constraint, e `logMarker` NÃO lança — só faz console.error.
+    // O log rico morreria em silêncio, que é exatamente o que esta instrumentação existe para
+    // evitar. 'fallback' é o valor honesto: a Fatia A caiu no comportamento legado.
+    await logMarker(collaboratorId, 'TASK_TARGET_AMBIGUOUS', 'fallback', handler, payload, { rawLimit: 4000 });
+  } catch (e) {
+    console.error('[TaskTarget] falha ao logar ambiguidade:', e.message);
   }
 }
 
@@ -4741,15 +4779,36 @@ async function applyTaskActions(collaborator, actions, opts = {}) {
         // quis remarcar — antes o lookup só via assigned_to e falhava silencioso.
         let t = null;
         if (!a.id && a.title) {
-          const { data: byTitle } = await supabase
+          // FATIA A: busca TODOS os candidatos (o `.limit(1)` escondia a pluralidade) e deixa a
+          // decisão para o módulo puro. O `ilike` fica — o bug é o limit(1) fingindo certeza,
+          // não o LIKE, que é o que dá recall para fala humana incompleta.
+          const _SERIE_ON = process.env.TOM_TASK_TARGET_SERIES === '1';
+          const _q = supabase
             .from('tasks')
-            .select('id, title, status, due_date, assigned_to, created_by')
+            .select('id, title, status, due_date, assigned_to, created_by, recurrence_rule, recurrence_parent_id, created_at')
             .or(`assigned_to.eq.${collaborator.id},created_by.eq.${collaborator.id}`)
             .ilike('title', `%${String(a.title).slice(0, 60)}%`)
-            .not('status', 'in', '("done","cancelled")')
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
+            .not('status', 'in', '("done","cancelled")');
+          const { data: _cands } = _SERIE_ON
+            ? await _q.order('due_date', { ascending: true, nullsFirst: false }).limit(100)
+            : await _q.order('created_at', { ascending: false }).limit(1);
+          if (_SERIE_ON && _cands && _cands.length === 100) {
+            console.warn(`[TaskTarget] cap atingido handler=reschedule pedido="${String(a.title).slice(0, 60)}" — teto silencioso vira falso-verde`);
+          }
+          let byTitle = null;
+          if (!_SERIE_ON) {
+            byTitle = (_cands && _cands[0]) || null;
+          } else {
+            const _r = resolveTaskTarget({ candidatos: _cands || [] });
+            if (_r.modo === 'exato') {
+              byTitle = _r.tarefa;
+              if (_r.motivo === 'serie') console.log(`[TaskTarget] serie handler=reschedule n=${(_cands || []).length} → ${String(byTitle.id).slice(0, 8)} due=${byTitle.due_date}`);
+            } else if (_r.modo === 'ambiguo') {
+              // Fatia A não resolve ambiguidade real: mantém o legado e registra.
+              await _logAlvoAmbiguo('reschedule', a.title, collaborator.id, _r.candidatos);
+              byTitle = _r.candidatos.slice().sort((x, y) => (Date.parse(y.created_at) || 0) - (Date.parse(x.created_at) || 0))[0] || null;
+            }
+          }
           if (byTitle) {
             t = byTitle;
             a.id = byTitle.id.replace(/-/g, '').slice(0, 8);
