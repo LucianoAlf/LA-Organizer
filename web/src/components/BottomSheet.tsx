@@ -6,13 +6,15 @@ interface Props {
   onClose: () => void;
   title: string;
   children: ReactNode;
+  /** Override the desktop max-width (default 'md:max-w-md'). */
+  widthClass?: string;
 }
 
 /**
  * Mobile-first bottom sheet. Slides up from the bottom on small screens,
  * centers on desktop. Backdrop click + Esc close. Body scroll locked while open.
  */
-export function BottomSheet({ open, onClose, title, children }: Props) {
+export function BottomSheet({ open, onClose, title, children, widthClass = 'md:max-w-md' }: Props) {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -45,7 +47,7 @@ export function BottomSheet({ open, onClose, title, children }: Props) {
       {/* sheet */}
       <div
         className={[
-          'relative w-full md:max-w-md bg-bg-surface border border-border',
+          `relative w-full ${widthClass} bg-bg-surface border border-border`,
           'rounded-t-lg md:rounded-lg shadow-soft',
           'max-h-[88vh] overflow-y-auto',
           'animate-[slideup_220ms_cubic-bezier(0.2,0.8,0.2,1)]',
