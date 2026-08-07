@@ -28,7 +28,7 @@ A tabela `governance_credentials` guarda esses links — mas guarda também senh
 alter table governance_credentials
   add column visivel_tom boolean not null default false;
 
-create or replace function get_team_links()
+create or replace function get_credenciais_publicas()
 returns table (nome text, url_ref text)
 language sql stable
 as $$
@@ -40,25 +40,25 @@ as $$
   order by nome;
 $$;
 
-revoke execute on function get_team_links() from anon, authenticated;
+revoke execute on function get_credenciais_publicas() from anon, authenticated;
 ```
 
 O `revoke` é obrigatório: a anon key do Supabase está no bundle público do PWA. Sem ele, qualquer pessoa na internet poderia chamar a RPC e enumerar os sistemas internos da escola. Apenas a `service_role` (usada pelo TOM) executa.
 
 `default false` garante que as 40+ credenciais existentes permanecem invisíveis sem nenhuma ação.
 
-### 2. Serviço — `src/services/team-links.js`
+### 2. Serviço — `src/services/credenciais-publicas.js`
 
-- `getTeamLinks()` chama `supabase.rpc('get_team_links')`.
+- `getCredenciaisPublicas()` chama `supabase.rpc('get_credenciais_publicas')`.
 - Cache em memória, TTL 30min, seguindo o padrão de `src/services/audio.js:36-52` (`_namesCache`).
 - Em erro: loga warning e retorna o cache stale, ou `[]` se nunca populou. Nunca lança — falha de link não pode derrubar o pipeline da mensagem.
 - Cap de 30 itens ao renderizar.
 
-### 3. Marker — `<<PEDIR_LINKS>>`
+### 3. Marker — `<<PEDIR_CREDENCIAIS>>`
 
 Instrução fixa no system prompt (~50 tokens):
 
-> Se o colaborador pedir o link, endereço ou acesso de algum sistema e você não tiver essa informação, responda apenas `<<PEDIR_LINKS>><<END>>` e mais nada. A lista será fornecida e você responderá em seguida.
+> Se o colaborador pedir o link, endereço ou acesso de algum sistema e você não tiver essa informação, responda apenas `<<PEDIR_CREDENCIAIS>><<END>>` e mais nada. A lista será fornecida e você responderá em seguida.
 
 Marker sem payload — o modelo não escolhe o que buscar, apenas sinaliza que precisa da lista.
 
@@ -68,13 +68,13 @@ Precedente: `src/engine.js:12963` já faz `ai.chat()` numa segunda passada (auto
 
 Fluxo:
 
-1. Resposta do modelo chega. Engine detecta `<<PEDIR_LINKS>>`.
-2. Chama `getTeamLinks()`.
+1. Resposta do modelo chega. Engine detecta `<<PEDIR_CREDENCIAIS>>`.
+2. Chama `getCredenciaisPublicas()`.
 3. Monta prompt curto: lista + pergunta original do colaborador + instrução de resposta seletiva.
-4. Segunda chamada ao modelo. **Nessa chamada, a instrução do `<<PEDIR_LINKS>>` não é incluída** — guard anti-loop.
+4. Segunda chamada ao modelo. **Nessa chamada, a instrução do `<<PEDIR_CREDENCIAIS>>` não é incluída** — guard anti-loop.
 5. Resposta final vai pro WhatsApp. O marker é removido do texto antes do envio.
 
-**Guard anti-loop (obrigatório):** a segunda chamada nunca pode disparar uma terceira. Se a resposta da segunda passada contiver `<<PEDIR_LINKS>>`, o marker é apenas removido do texto e a resposta segue como está. Máximo de uma re-chamada por mensagem, sempre.
+**Guard anti-loop (obrigatório):** a segunda chamada nunca pode disparar uma terceira. Se a resposta da segunda passada contiver `<<PEDIR_CREDENCIAIS>>`, o marker é apenas removido do texto e a resposta segue como está. Máximo de uma re-chamada por mensagem, sempre.
 
 **Instrução de resposta seletiva:** responder apenas o link perguntado. Listar todos somente se pedirem explicitamente quais sistemas existem.
 
@@ -86,7 +86,7 @@ Fluxo:
 
 ## Riscos conhecidos
 
-**O TOM esquece de emitir markers.** É uma falha medida deste agente — o check `actionable_no_marker` do health report diário existe precisamente para monitorar isso ("promessas sem persistência"). Se ele esquecer o `<<PEDIR_LINKS>>`, responderá que não sabe em vez de buscar. Mitigação: instrução explícita no prompt; observar em produção.
+**O TOM esquece de emitir markers.** É uma falha medida deste agente — o check `actionable_no_marker` do health report diário existe precisamente para monitorar isso ("promessas sem persistência"). Se ele esquecer o `<<PEDIR_CREDENCIAIS>>`, responderá que não sabe em vez de buscar. Mitigação: instrução explícita no prompt; observar em produção.
 
 **Latência dobra nos turnos com marker.** De 8-12s para ~16-24s. Aceitável para um caso de uso pontual.
 
@@ -100,10 +100,10 @@ Fluxo:
 
 ## Critérios de aceite
 
-1. `get_team_links()` retorna apenas linhas com `visivel_tom = true`, `status = 'ok'` e `url_ref` não nulo — e apenas as colunas `nome` e `url_ref`.
+1. `get_credenciais_publicas()` retorna apenas linhas com `visivel_tom = true`, `status = 'ok'` e `url_ref` não nulo — e apenas as colunas `nome` e `url_ref`.
 2. `revoke` verificado: chamada da RPC com a anon key é negada.
 3. Pergunta direta ("qual o link da anamnese?") retorna o link correto, sem listar os demais.
 4. Pergunta sem relação com links não dispara segunda chamada.
-5. Resposta da segunda passada contendo `<<PEDIR_LINKS>>` não gera terceira chamada.
+5. Resposta da segunda passada contendo `<<PEDIR_CREDENCIAIS>>` não gera terceira chamada.
 6. RPC indisponível não impede a mensagem de ser respondida e enviada.
 7. Nenhuma credencial com `visivel_tom = false` aparece em nenhum caminho.

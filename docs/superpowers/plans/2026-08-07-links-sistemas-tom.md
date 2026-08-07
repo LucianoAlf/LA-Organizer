@@ -4,7 +4,7 @@
 
 **Goal:** Permitir que o TOM responda o link de um sistema interno quando um colaborador perguntar, sem nunca expor qualquer outro dado da tabela `governance_credentials`.
 
-**Architecture:** Uma coluna booleana marca quais credenciais são "links públicos". Uma RPC SQL expõe apenas `nome` e `url_ref` dessas linhas — o contrato de colunas vive no schema, não em JS. O modelo decide semanticamente quando precisa da lista emitindo o marker `<<PEDIR_LINKS>>`; o engine detecta, busca via RPC (com cache de 30min) e faz uma segunda chamada ao modelo com a lista. Nenhuma tool nativa ou MCP é reativada.
+**Architecture:** Uma coluna booleana marca quais credenciais são "links públicos". Uma RPC SQL expõe apenas `nome` e `url_ref` dessas linhas — o contrato de colunas vive no schema, não em JS. O modelo decide semanticamente quando precisa da lista emitindo o marker `<<PEDIR_CREDENCIAIS>>`; o engine detecta, busca via RPC (com cache de 30min) e faz uma segunda chamada ao modelo com a lista. Nenhuma tool nativa ou MCP é reativada.
 
 **Tech Stack:** Node.js (CommonJS), Supabase JS client (service_role), PostgreSQL, `node:test` + `node --test` para testes.
 
@@ -24,11 +24,11 @@
 
 | Arquivo | Responsabilidade |
 |---|---|
-| `supabase/migrations/<ts>_team_links_rpc.sql` (criar) | Coluna `visivel_tom`, RPC `get_team_links()`, `revoke` da anon key |
-| `src/services/team-links.js` (criar) | Busca via RPC + cache 30min + degradação. Única porta de acesso ao dado. |
-| `src/services/team-links.test.js` (criar) | Testes de cache, degradação e formatação |
-| `src/lib/pedir-links.js` (criar) | Detecção do marker e formatação do bloco. Módulo puro, sem I/O — testável. |
-| `src/lib/pedir-links.test.js` (criar) | Testes do parser e do formatador |
+| `supabase/migrations/<ts>_team_links_rpc.sql` (criar) | Coluna `visivel_tom`, RPC `get_credenciais_publicas()`, `revoke` da anon key |
+| `src/services/credenciais-publicas.js` (criar) | Busca via RPC + cache 30min + degradação. Única porta de acesso ao dado. |
+| `src/services/credenciais-publicas.test.js` (criar) | Testes de cache, degradação e formatação |
+| `src/lib/pedir-credenciais.js` (criar) | Detecção do marker e formatação do bloco. Módulo puro, sem I/O — testável. |
+| `src/lib/pedir-credenciais.test.js` (criar) | Testes do parser e do formatador |
 | `src/prompts/system.js` (modificar, ~linha 3067) | Instrução do marker no system prompt |
 | `src/engine.js` (modificar, linha 10647) | Two-pass: detectar marker, buscar, re-chamar o modelo |
 
@@ -38,12 +38,16 @@
 
 ### Task 1: Migration — coluna, RPC e revoke
 
+> **CONCLUÍDA** em `bc4ec381`, antes do rename da RPC. Foi aplicada com o nome
+> `get_team_links()`; a Task 1b renomeia para `get_credenciais_publicas()`.
+> O texto abaixo já reflete o nome final.
+
 **Files:**
 - Create: `supabase/migrations/20260807_team_links_rpc.sql`
 
 **Interfaces:**
 - Consumes: nada
-- Produces: RPC `get_team_links()` retornando `table (nome text, url_ref text)`; coluna `governance_credentials.visivel_tom boolean not null default false`
+- Produces: RPC `get_credenciais_publicas()` retornando `table (nome text, url_ref text)`; coluna `governance_credentials.visivel_tom boolean not null default false`
 
 - [ ] **Step 1: Escrever a migration**
 
@@ -56,11 +60,11 @@ alter table governance_credentials
   add column if not exists visivel_tom boolean not null default false;
 
 comment on column governance_credentials.visivel_tom is
-  'Se true, nome e url_ref desta linha podem ser lidos pelo TOM via get_team_links(). Nunca expõe campos/observacoes/senhas.';
+  'Se true, nome e url_ref desta linha podem ser lidos pelo TOM via get_credenciais_publicas(). Nunca expõe campos/observacoes/senhas.';
 
 -- Contrato de colunas no schema: ampliar o que vaza exige reescrever esta
 -- função via migration (mudança versionada e visível), não uma linha de .select() em JS.
-create or replace function get_team_links()
+create or replace function get_credenciais_publicas()
 returns table (nome text, url_ref text)
 language sql
 stable
@@ -75,10 +79,10 @@ $$;
 
 -- A anon key do Supabase está no bundle público do PWA. Sem este revoke,
 -- qualquer pessoa na internet poderia enumerar os sistemas internos da escola.
-revoke execute on function get_team_links() from public;
-revoke execute on function get_team_links() from anon;
-revoke execute on function get_team_links() from authenticated;
-grant execute on function get_team_links() to service_role;
+revoke execute on function get_credenciais_publicas() from public;
+revoke execute on function get_credenciais_publicas() from anon;
+revoke execute on function get_credenciais_publicas() from authenticated;
+grant execute on function get_credenciais_publicas() to service_role;
 ```
 
 - [ ] **Step 2: Aplicar a migration**
@@ -89,7 +93,7 @@ Aplicar via MCP do Supabase (`apply_migration`, projeto `cesnbnrynvxvgdhfmaua`),
 
 Rodar via MCP `execute_sql`:
 ```sql
-select * from get_team_links();
+select * from get_credenciais_publicas();
 ```
 Esperado: **0 linhas**. Se retornar qualquer linha, o `default false` falhou — parar e investigar antes de seguir.
 
@@ -98,16 +102,16 @@ Esperado: **0 linhas**. Se retornar qualquer linha, o `default false` falhou —
 ```sql
 select p.proname, pg_get_function_result(p.oid) as result_type
 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-where p.proname = 'get_team_links' and n.nspname = 'public';
+where p.proname = 'get_credenciais_publicas' and n.nspname = 'public';
 ```
 Esperado: `result_type` = `TABLE(nome text, url_ref text)`.
 
 - [ ] **Step 5: Verificar o revoke**
 
 ```sql
-select has_function_privilege('anon', 'get_team_links()', 'EXECUTE') as anon_pode,
-       has_function_privilege('authenticated', 'get_team_links()', 'EXECUTE') as auth_pode,
-       has_function_privilege('service_role', 'get_team_links()', 'EXECUTE') as service_pode;
+select has_function_privilege('anon', 'get_credenciais_publicas()', 'EXECUTE') as anon_pode,
+       has_function_privilege('authenticated', 'get_credenciais_publicas()', 'EXECUTE') as auth_pode,
+       has_function_privilege('service_role', 'get_credenciais_publicas()', 'EXECUTE') as service_pode;
 ```
 Esperado: `anon_pode = false`, `auth_pode = false`, `service_pode = true`.
 Se `anon_pode` vier `true`, **parar** — é o vazamento que o spec previu.
@@ -116,7 +120,61 @@ Se `anon_pode` vier `true`, **parar** — é o vazamento que o spec previu.
 
 ```bash
 git add supabase/migrations/20260807_team_links_rpc.sql
-git commit -m "feat(team-links): coluna visivel_tom + RPC get_team_links com revoke da anon key"
+git commit -m "feat(credenciais-publicas): coluna visivel_tom + RPC get_credenciais_publicas com revoke da anon key"
+```
+
+---
+
+### Task 1b: Renomear a RPC para `get_credenciais_publicas`
+
+Decisão do usuário durante a execução: `get_team_links` sugeria uma tabela de links, mas a fonte é `governance_credentials` — o link é apenas o campo exposto. O marker também foi renomeado (`<<PEDIR_LINKS>>` → `<<PEDIR_CREDENCIAIS>>`), o que só afeta as Tasks 2, 4 e 5, cujo texto já está atualizado.
+
+**Files:**
+- Create: `supabase/migrations/20260807b_rename_rpc_credenciais_publicas.sql`
+
+**Interfaces:**
+- Consumes: RPC `get_team_links()` (Task 1)
+- Produces: RPC `get_credenciais_publicas()` com o mesmo contrato `table (nome text, url_ref text)` e os mesmos privilégios
+
+- [ ] **Step 1: Escrever a migration de rename**
+
+Criar `supabase/migrations/20260807b_rename_rpc_credenciais_publicas.sql`:
+
+```sql
+-- Rename: a fonte é governance_credentials, não uma tabela de "links".
+-- ALTER FUNCTION ... RENAME preserva os privilégios (o revoke de anon
+-- continua valendo), mas o Step 3 verifica isso explicitamente.
+alter function get_team_links() rename to get_credenciais_publicas;
+
+comment on column governance_credentials.visivel_tom is
+  'Se true, nome e url_ref desta linha podem ser lidos pelo TOM via get_credenciais_publicas(). Nunca expõe campos/observacoes/senhas.';
+```
+
+- [ ] **Step 2: Aplicar via MCP**
+
+Aplicar via MCP do Supabase (`apply_migration`, projeto `cesnbnrynvxvgdhfmaua`), nome `rename_rpc_credenciais_publicas`.
+
+- [ ] **Step 3: Verificar nome, contrato e privilégios de uma vez**
+
+```sql
+select p.proname,
+       pg_get_function_result(p.oid) as result_type,
+       has_function_privilege('anon', p.oid, 'EXECUTE') as anon_pode,
+       has_function_privilege('authenticated', p.oid, 'EXECUTE') as auth_pode,
+       has_function_privilege('service_role', p.oid, 'EXECUTE') as service_pode
+from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+where p.proname in ('get_team_links', 'get_credenciais_publicas') and n.nspname = 'public';
+```
+
+Esperado: exatamente **1 linha**, com `proname = get_credenciais_publicas`, `result_type = TABLE(nome text, url_ref text)`, `anon_pode = false`, `auth_pode = false`, `service_pode = true`.
+
+Se `get_team_links` ainda aparecer, o rename não pegou. Se `anon_pode = true`, o rename perdeu os privilégios — reaplicar os `revoke` do Step 1 da Task 1 com o nome novo antes de seguir.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add -f supabase/migrations/20260807b_rename_rpc_credenciais_publicas.sql
+git commit -m "refactor(credenciais-publicas): renomeia RPC get_team_links para get_credenciais_publicas"
 ```
 
 ---
@@ -124,47 +182,47 @@ git commit -m "feat(team-links): coluna visivel_tom + RPC get_team_links com rev
 ### Task 2: Módulo puro — parser do marker e formatador do bloco
 
 **Files:**
-- Create: `src/lib/pedir-links.js`
-- Test: `src/lib/pedir-links.test.js`
+- Create: `src/lib/pedir-credenciais.js`
+- Test: `src/lib/pedir-credenciais.test.js`
 
 **Interfaces:**
 - Consumes: nada (módulo puro, sem I/O)
 - Produces:
-  - `hasPedirLinksMarker(text: string): boolean`
-  - `stripPedirLinksMarker(text: string): string`
-  - `formatLinksBlock(links: Array<{nome: string, url_ref: string}>): string`
-  - `MAX_LINKS: number` (= 30)
+  - `hasPedirCredenciaisMarker(text: string): boolean`
+  - `stripPedirCredenciaisMarker(text: string): string`
+  - `formatCredenciaisBlock(links: Array<{nome: string, url_ref: string}>): string`
+  - `MAX_CREDENCIAIS: number` (= 30)
 
 - [ ] **Step 1: Escrever os testes que falham**
 
-Criar `src/lib/pedir-links.test.js`:
+Criar `src/lib/pedir-credenciais.test.js`:
 
 ```js
 const test = require('node:test');
 const assert = require('node:assert');
-const { hasPedirLinksMarker, stripPedirLinksMarker, formatLinksBlock, MAX_LINKS } = require('./pedir-links');
+const { hasPedirCredenciaisMarker, stripPedirCredenciaisMarker, formatCredenciaisBlock, MAX_CREDENCIAIS } = require('./pedir-credenciais');
 
-test('hasPedirLinksMarker: detecta o marker com e sem END', () => {
-  assert.equal(hasPedirLinksMarker('<<PEDIR_LINKS>><<END>>'), true);
-  assert.equal(hasPedirLinksMarker('texto antes <<PEDIR_LINKS>> depois'), true);
-  assert.equal(hasPedirLinksMarker('<<pedir_links>>'), true, 'case-insensitive');
+test('hasPedirCredenciaisMarker: detecta o marker com e sem END', () => {
+  assert.equal(hasPedirCredenciaisMarker('<<PEDIR_CREDENCIAIS>><<END>>'), true);
+  assert.equal(hasPedirCredenciaisMarker('texto antes <<PEDIR_CREDENCIAIS>> depois'), true);
+  assert.equal(hasPedirCredenciaisMarker('<<pedir_credenciais>>'), true, 'case-insensitive');
 });
 
-test('hasPedirLinksMarker: não confunde com outros markers', () => {
-  assert.equal(hasPedirLinksMarker('<<TASK_UPDATE>>[]<<END>>'), false);
-  assert.equal(hasPedirLinksMarker('me manda o link da anamnese'), false);
-  assert.equal(hasPedirLinksMarker(''), false);
-  assert.equal(hasPedirLinksMarker(null), false);
+test('hasPedirCredenciaisMarker: não confunde com outros markers', () => {
+  assert.equal(hasPedirCredenciaisMarker('<<TASK_UPDATE>>[]<<END>>'), false);
+  assert.equal(hasPedirCredenciaisMarker('me manda o link da anamnese'), false);
+  assert.equal(hasPedirCredenciaisMarker(''), false);
+  assert.equal(hasPedirCredenciaisMarker(null), false);
 });
 
-test('stripPedirLinksMarker: remove marker e normaliza espaços', () => {
-  assert.equal(stripPedirLinksMarker('<<PEDIR_LINKS>><<END>>'), '');
-  assert.equal(stripPedirLinksMarker('oi <<PEDIR_LINKS>><<END>> tudo bem'), 'oi  tudo bem'.replace(/\s+/g, ' ').trim());
-  assert.equal(stripPedirLinksMarker(null), '');
+test('stripPedirCredenciaisMarker: remove marker e normaliza espaços', () => {
+  assert.equal(stripPedirCredenciaisMarker('<<PEDIR_CREDENCIAIS>><<END>>'), '');
+  assert.equal(stripPedirCredenciaisMarker('oi <<PEDIR_CREDENCIAIS>><<END>> tudo bem'), 'oi  tudo bem'.replace(/\s+/g, ' ').trim());
+  assert.equal(stripPedirCredenciaisMarker(null), '');
 });
 
-test('formatLinksBlock: renderiza nome e url', () => {
-  const out = formatLinksBlock([
+test('formatCredenciaisBlock: renderiza nome e url', () => {
+  const out = formatCredenciaisBlock([
     { nome: 'Anamnese de alunos', url_ref: 'https://a.app/' },
     { nome: 'Chatwoot', url_ref: 'https://b.com' },
   ]);
@@ -172,20 +230,20 @@ test('formatLinksBlock: renderiza nome e url', () => {
   assert.match(out, /Chatwoot: https:\/\/b\.com/);
 });
 
-test('formatLinksBlock: lista vazia devolve string vazia', () => {
-  assert.equal(formatLinksBlock([]), '');
-  assert.equal(formatLinksBlock(null), '');
+test('formatCredenciaisBlock: lista vazia devolve string vazia', () => {
+  assert.equal(formatCredenciaisBlock([]), '');
+  assert.equal(formatCredenciaisBlock(null), '');
 });
 
-test('formatLinksBlock: aplica cap de MAX_LINKS', () => {
-  const many = Array.from({ length: MAX_LINKS + 10 }, (_, i) => ({ nome: `S${i}`, url_ref: `https://x/${i}` }));
-  const out = formatLinksBlock(many);
+test('formatCredenciaisBlock: aplica cap de MAX_CREDENCIAIS', () => {
+  const many = Array.from({ length: MAX_CREDENCIAIS + 10 }, (_, i) => ({ nome: `S${i}`, url_ref: `https://x/${i}` }));
+  const out = formatCredenciaisBlock(many);
   const linhas = out.split('\n').filter(l => l.startsWith('- '));
-  assert.equal(linhas.length, MAX_LINKS);
+  assert.equal(linhas.length, MAX_CREDENCIAIS);
 });
 
-test('formatLinksBlock: ignora linha sem url', () => {
-  const out = formatLinksBlock([{ nome: 'Sem url', url_ref: null }, { nome: 'Ok', url_ref: 'https://ok' }]);
+test('formatCredenciaisBlock: ignora linha sem url', () => {
+  const out = formatCredenciaisBlock([{ nome: 'Sem url', url_ref: null }, { nome: 'Ok', url_ref: 'https://ok' }]);
   assert.doesNotMatch(out, /Sem url/);
   assert.match(out, /Ok: https:\/\/ok/);
 });
@@ -193,62 +251,62 @@ test('formatLinksBlock: ignora linha sem url', () => {
 
 - [ ] **Step 2: Rodar os testes e confirmar que falham**
 
-Run: `node --test src/lib/pedir-links.test.js`
-Expected: FAIL — `Cannot find module './pedir-links'`
+Run: `node --test src/lib/pedir-credenciais.test.js`
+Expected: FAIL — `Cannot find module './pedir-credenciais'`
 
 - [ ] **Step 3: Implementar o módulo**
 
-Criar `src/lib/pedir-links.js`:
+Criar `src/lib/pedir-credenciais.js`:
 
 ```js
-// Marker <<PEDIR_LINKS>> — o modelo sinaliza que precisa da lista de links de
+// Marker <<PEDIR_CREDENCIAIS>> — o modelo sinaliza que precisa da lista de links de
 // sistemas. Módulo PURO (sem I/O) pra ser testável sem tocar no Supabase.
 // O engine faz o two-pass; aqui só detecção, limpeza e formatação.
 
-const MAX_LINKS = 30;
+const MAX_CREDENCIAIS = 30;
 
 // Aceita com ou sem <<END>> — o modelo às vezes omite o fechamento.
-const PEDIR_LINKS_RE = /<<PEDIR_LINKS>>(?:\s*<<END>>)?/i;
-const PEDIR_LINKS_RE_G = /<<PEDIR_LINKS>>(?:\s*<<END>>)?/gi;
+const PEDIR_CREDENCIAIS_RE = /<<PEDIR_CREDENCIAIS>>(?:\s*<<END>>)?/i;
+const PEDIR_CREDENCIAIS_RE_G = /<<PEDIR_CREDENCIAIS>>(?:\s*<<END>>)?/gi;
 
-function hasPedirLinksMarker(text) {
+function hasPedirCredenciaisMarker(text) {
   if (!text || typeof text !== 'string') return false;
-  return PEDIR_LINKS_RE.test(text);
+  return PEDIR_CREDENCIAIS_RE.test(text);
 }
 
-function stripPedirLinksMarker(text) {
+function stripPedirCredenciaisMarker(text) {
   if (!text || typeof text !== 'string') return '';
-  return text.replace(PEDIR_LINKS_RE_G, ' ').replace(/\s+/g, ' ').trim();
+  return text.replace(PEDIR_CREDENCIAIS_RE_G, ' ').replace(/\s+/g, ' ').trim();
 }
 
-function formatLinksBlock(links) {
+function formatCredenciaisBlock(links) {
   if (!Array.isArray(links) || !links.length) return '';
   const linhas = links
     .filter(l => l && l.nome && l.url_ref)
-    .slice(0, MAX_LINKS)
+    .slice(0, MAX_CREDENCIAIS)
     .map(l => `- ${l.nome}: ${l.url_ref}`);
   if (!linhas.length) return '';
   return `**Links dos sistemas do time:**\n${linhas.join('\n')}`;
 }
 
-module.exports = { hasPedirLinksMarker, stripPedirLinksMarker, formatLinksBlock, MAX_LINKS };
+module.exports = { hasPedirCredenciaisMarker, stripPedirCredenciaisMarker, formatCredenciaisBlock, MAX_CREDENCIAIS };
 ```
 
 - [ ] **Step 4: Rodar os testes e confirmar que passam**
 
-Run: `node --test src/lib/pedir-links.test.js`
+Run: `node --test src/lib/pedir-credenciais.test.js`
 Expected: PASS — 6 testes.
 
 - [ ] **Step 5: Validar sintaxe**
 
-Run: `node --check src/lib/pedir-links.js`
+Run: `node --check src/lib/pedir-credenciais.js`
 Expected: sem saída (sucesso).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/lib/pedir-links.js src/lib/pedir-links.test.js
-git commit -m "feat(team-links): modulo puro do marker PEDIR_LINKS (parser + formatador)"
+git add src/lib/pedir-credenciais.js src/lib/pedir-credenciais.test.js
+git commit -m "feat(credenciais-publicas): modulo puro do marker PEDIR_CREDENCIAIS (parser + formatador)"
 ```
 
 ---
@@ -256,19 +314,19 @@ git commit -m "feat(team-links): modulo puro do marker PEDIR_LINKS (parser + for
 ### Task 3: Serviço — busca via RPC com cache
 
 **Files:**
-- Create: `src/services/team-links.js`
-- Test: `src/services/team-links.test.js`
+- Create: `src/services/credenciais-publicas.js`
+- Test: `src/services/credenciais-publicas.test.js`
 
 **Interfaces:**
-- Consumes: RPC `get_team_links()` (Task 1)
+- Consumes: RPC `get_credenciais_publicas()` (Task 1)
 - Produces:
-  - `getTeamLinks(): Promise<Array<{nome: string, url_ref: string}>>`
+  - `getCredenciaisPublicas(): Promise<Array<{nome: string, url_ref: string}>>`
   - `_resetCache(): void` (usado só em teste)
   - `CACHE_TTL_MS: number` (= 1800000)
 
 - [ ] **Step 1: Escrever os testes que falham**
 
-Criar `src/services/team-links.test.js`. O módulo faz `require('../supabase/client')` de forma **lazy** (dentro da função), então o teste injeta um fake antes da primeira chamada via `require.cache`:
+Criar `src/services/credenciais-publicas.test.js`. O módulo faz `require('../supabase/client')` de forma **lazy** (dentro da função), então o teste injeta um fake antes da primeira chamada via `require.cache`:
 
 ```js
 const test = require('node:test');
@@ -285,38 +343,38 @@ require.cache[clientPath] = {
   },
 };
 
-const { getTeamLinks, _resetCache, CACHE_TTL_MS } = require('./team-links');
+const { getCredenciaisPublicas, _resetCache, CACHE_TTL_MS } = require('./credenciais-publicas');
 
-test('getTeamLinks: retorna as linhas da RPC', async () => {
+test('getCredenciaisPublicas: retorna as linhas da RPC', async () => {
   _resetCache(); rpcCalls = 0;
   rpcImpl = async () => ({ data: [{ nome: 'Anamnese', url_ref: 'https://a' }], error: null });
-  const out = await getTeamLinks();
+  const out = await getCredenciaisPublicas();
   assert.deepEqual(out, [{ nome: 'Anamnese', url_ref: 'https://a' }]);
   assert.equal(rpcCalls, 1);
 });
 
-test('getTeamLinks: segunda chamada usa cache (nao bate na RPC)', async () => {
+test('getCredenciaisPublicas: segunda chamada usa cache (nao bate na RPC)', async () => {
   _resetCache(); rpcCalls = 0;
   rpcImpl = async () => ({ data: [{ nome: 'X', url_ref: 'https://x' }], error: null });
-  await getTeamLinks();
-  await getTeamLinks();
+  await getCredenciaisPublicas();
+  await getCredenciaisPublicas();
   assert.equal(rpcCalls, 1, 'RPC chamada uma unica vez dentro do TTL');
 });
 
-test('getTeamLinks: erro da RPC nao lanca — devolve []', async () => {
+test('getCredenciaisPublicas: erro da RPC nao lanca — devolve []', async () => {
   _resetCache(); rpcCalls = 0;
   rpcImpl = async () => ({ data: null, error: { message: 'boom' } });
-  const out = await getTeamLinks();
+  const out = await getCredenciaisPublicas();
   assert.deepEqual(out, []);
 });
 
-test('getTeamLinks: excecao da RPC nao lanca — devolve cache stale', async () => {
+test('getCredenciaisPublicas: excecao da RPC nao lanca — devolve cache stale', async () => {
   _resetCache();
   rpcImpl = async () => ({ data: [{ nome: 'Velho', url_ref: 'https://v' }], error: null });
-  await getTeamLinks();                       // popula cache
+  await getCredenciaisPublicas();                       // popula cache
   rpcImpl = async () => { throw new Error('rede caiu'); };
   _resetCache({ keepData: true });            // expira o ts, mantem os dados
-  const out = await getTeamLinks();
+  const out = await getCredenciaisPublicas();
   assert.deepEqual(out, [{ nome: 'Velho', url_ref: 'https://v' }], 'stale em vez de vazio');
 });
 
@@ -327,16 +385,16 @@ test('CACHE_TTL_MS: 30 minutos', () => {
 
 - [ ] **Step 2: Rodar os testes e confirmar que falham**
 
-Run: `node --test src/services/team-links.test.js`
-Expected: FAIL — `Cannot find module './team-links'`
+Run: `node --test src/services/credenciais-publicas.test.js`
+Expected: FAIL — `Cannot find module './credenciais-publicas'`
 
 - [ ] **Step 3: Implementar o serviço**
 
-Criar `src/services/team-links.js`. Segue o padrão de cache de `src/services/audio.js:36-52`:
+Criar `src/services/credenciais-publicas.js`. Segue o padrão de cache de `src/services/audio.js:36-52`:
 
 ```js
 // Links de sistemas do time — única porta de acesso ao dado.
-// Lê via RPC get_team_links(), que expõe SOMENTE nome e url_ref de linhas
+// Lê via RPC get_credenciais_publicas(), que expõe SOMENTE nome e url_ref de linhas
 // marcadas visivel_tom=true. Nunca montar query direta em governance_credentials
 // aqui: o contrato de colunas mora no schema (migration 20260807_team_links_rpc).
 
@@ -347,44 +405,44 @@ function _resetCache(opts = {}) {
   _cache = { ts: 0, links: opts.keepData ? _cache.links : [] };
 }
 
-async function getTeamLinks() {
+async function getCredenciaisPublicas() {
   if (_cache.links.length && (Date.now() - _cache.ts) < CACHE_TTL_MS) {
     return _cache.links;
   }
   try {
     const supabase = require('../supabase/client'); // lazy: evita init no load (testes)
-    const { data, error } = await supabase.rpc('get_team_links');
+    const { data, error } = await supabase.rpc('get_credenciais_publicas');
     if (error) {
-      console.warn('[TeamLinks] RPC erro:', error.message);
+      console.warn('[CredenciaisPublicas] RPC erro:', error.message);
       return _cache.links; // stale (ou [] se nunca populou)
     }
     const links = (data || []).filter(l => l && l.nome && l.url_ref);
     _cache = { ts: Date.now(), links };
     return links;
   } catch (e) {
-    console.warn('[TeamLinks] fetch falhou:', e.message);
+    console.warn('[CredenciaisPublicas] fetch falhou:', e.message);
     return _cache.links; // nunca lança — link não pode derrubar a mensagem
   }
 }
 
-module.exports = { getTeamLinks, _resetCache, CACHE_TTL_MS };
+module.exports = { getCredenciaisPublicas, _resetCache, CACHE_TTL_MS };
 ```
 
 - [ ] **Step 4: Rodar os testes e confirmar que passam**
 
-Run: `node --test src/services/team-links.test.js`
+Run: `node --test src/services/credenciais-publicas.test.js`
 Expected: PASS — 5 testes.
 
 - [ ] **Step 5: Validar sintaxe**
 
-Run: `node --check src/services/team-links.js`
+Run: `node --check src/services/credenciais-publicas.js`
 Expected: sem saída.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/services/team-links.js src/services/team-links.test.js
-git commit -m "feat(team-links): servico de busca via RPC com cache de 30min"
+git add src/services/credenciais-publicas.js src/services/credenciais-publicas.test.js
+git commit -m "feat(credenciais-publicas): servico de busca via RPC com cache de 30min"
 ```
 
 ---
@@ -395,12 +453,12 @@ git commit -m "feat(team-links): servico de busca via RPC com cache de 30min"
 - Modify: `src/engine.js:10647` (logo após `let reply = response.text;`)
 
 **Interfaces:**
-- Consumes: `hasPedirLinksMarker`, `stripPedirLinksMarker`, `formatLinksBlock` (Task 2); `getTeamLinks` (Task 3); `ai.chat` (já importado como `ai` na linha 15)
+- Consumes: `hasPedirCredenciaisMarker`, `stripPedirCredenciaisMarker`, `formatCredenciaisBlock` (Task 2); `getCredenciaisPublicas` (Task 3); `ai.chat` (já importado como `ai` na linha 15)
 - Produces: nada para tasks seguintes
 
 **Por que exatamente na linha 10647:** substituir `reply` logo após a primeira resposta faz todo o resto do pipeline (parsers de marker, `UNKNOWN_MARKER_STRIPPED` da linha 12697, anti-leak guard, envio) rodar normalmente sobre a resposta final. Inserir depois dos parsers quebraria essa garantia.
 
-**Guard anti-loop:** o prompt da segunda passada **não** contém a instrução do `<<PEDIR_LINKS>>`, então o modelo não tem motivo para reemiti-lo. Se ainda assim reemitir, o `UNKNOWN_MARKER_STRIPPED` (linha 12697) já remove o marker do texto — nenhuma terceira chamada acontece, porque esta lógica roda uma única vez, sem laço.
+**Guard anti-loop:** o prompt da segunda passada **não** contém a instrução do `<<PEDIR_CREDENCIAIS>>`, então o modelo não tem motivo para reemiti-lo. Se ainda assim reemitir, o `UNKNOWN_MARKER_STRIPPED` (linha 12697) já remove o marker do texto — nenhuma terceira chamada acontece, porque esta lógica roda uma única vez, sem laço.
 
 - [ ] **Step 1: Ler o contexto atual antes de editar**
 
@@ -412,7 +470,7 @@ Confirmar que a linha 10647 é `  let reply = response.text;`. Se o número mudo
 Logo **depois** de `let reply = response.text;`, inserir:
 
 ```js
-  // TWO-PASS <<PEDIR_LINKS>> (07/08) — o modelo decide semanticamente que precisa
+  // TWO-PASS <<PEDIR_CREDENCIAIS>> (07/08) — o modelo decide semanticamente que precisa
   // dos links de sistemas e emite o marker; buscamos e re-perguntamos com a lista.
   // É tool-calling dentro do protocolo de markers: --tools/MCP seguem desligados
   // (hardening do Sprint 7, incidente 28/04). Roda ANTES dos parsers pra que a
@@ -420,23 +478,23 @@ Logo **depois** de `let reply = response.text;`, inserir:
   // Anti-loop: a 2ª chamada não recebe a instrução do marker, e não há laço —
   // se o modelo reemitir mesmo assim, UNKNOWN_MARKER_STRIPPED limpa o texto.
   try {
-    const { hasPedirLinksMarker, stripPedirLinksMarker, formatLinksBlock } = require('./lib/pedir-links');
-    if (hasPedirLinksMarker(reply)) {
-      const { getTeamLinks } = require('./services/team-links');
-      const links = await getTeamLinks();
-      const bloco = formatLinksBlock(links);
-      console.log(`[PedirLinks] marker detectado — ${links.length} link(s) disponivel(is)`);
-      await logMarker(collab.id, 'PEDIR_LINKS', links.length ? 'applied' : 'rejected',
+    const { hasPedirCredenciaisMarker, stripPedirCredenciaisMarker, formatCredenciaisBlock } = require('./lib/pedir-credenciais');
+    if (hasPedirCredenciaisMarker(reply)) {
+      const { getCredenciaisPublicas } = require('./services/credenciais-publicas');
+      const links = await getCredenciaisPublicas();
+      const bloco = formatCredenciaisBlock(links);
+      console.log(`[PedirCredenciais] marker detectado — ${links.length} link(s) disponivel(is)`);
+      await logMarker(collab.id, 'PEDIR_CREDENCIAIS', links.length ? 'applied' : 'rejected',
         `links:${links.length}`, null);
       if (!bloco) {
         reply = 'Não tenho nenhum sistema cadastrado com link por aqui ainda.';
       } else {
-        const linksSys = `${bloco}\n\nO colaborador perguntou sobre acesso a algum desses sistemas. `
+        const credSys = `${bloco}\n\nO colaborador perguntou sobre acesso a algum desses sistemas. `
           + `Responda em português, de forma curta e natural, APENAS o link que ele pediu. `
           + `Só liste todos se ele tiver pedido explicitamente a lista completa. `
           + `Não mencione banco de dados, tabela ou qualquer detalhe técnico interno. `
           + `Não emita nenhum marker nesta resposta.`;
-        const segunda = await ai.chat(linksSys, msgs);
+        const segunda = await ai.chat(credSys, msgs);
         const textoSegundo = String(segunda?.text || '').trim();
         reply = textoSegundo || bloco;
       }
@@ -444,7 +502,7 @@ Logo **depois** de `let reply = response.text;`, inserir:
   } catch (e) {
     // Nunca derruba a mensagem: se o two-pass falhar, segue com o reply original
     // (o marker sobrando será removido pelo UNKNOWN_MARKER_STRIPPED adiante).
-    console.warn('[PedirLinks] two-pass falhou:', e.message);
+    console.warn('[PedirCredenciais] two-pass falhou:', e.message);
   }
 ```
 
@@ -462,7 +520,7 @@ Expected: PASS em todos. Se algo quebrar, é regressão desta task — corrigir 
 
 ```bash
 git add src/engine.js
-git commit -m "feat(team-links): two-pass do marker PEDIR_LINKS no engine"
+git commit -m "feat(credenciais-publicas): two-pass do marker PEDIR_CREDENCIAIS no engine"
 ```
 
 ---
@@ -474,7 +532,7 @@ git commit -m "feat(team-links): two-pass do marker PEDIR_LINKS no engine"
 
 **Interfaces:**
 - Consumes: nada
-- Produces: instrução que faz o modelo emitir `<<PEDIR_LINKS>>` (consumida pela Task 4)
+- Produces: instrução que faz o modelo emitir `<<PEDIR_CREDENCIAIS>>` (consumida pela Task 4)
 
 - [ ] **Step 1: Localizar o ponto de inserção**
 
@@ -486,7 +544,7 @@ A inserção vai imediatamente **depois** dessa linha de comentário.
 ```js
   // Links de sistemas (07/08) — o modelo decide quando precisa da lista.
   // O engine detecta o marker e faz a 2ª chamada já com os links (two-pass).
-  systemPrompt += `\n\n---\n\n# 🔗 LINKS DE SISTEMAS\n\nQuando o colaborador pedir o **link, endereço, site ou acesso** de algum sistema interno (ex: anamnese, CRM, chatwoot, relatórios, ERP) e você não tiver essa informação no contexto acima, responda **apenas** com:\n\n<<PEDIR_LINKS>><<END>>\n\nNada além disso — sem texto antes ou depois. A lista será fornecida e você responderá em seguida.\n\nNÃO use esse marker para outros assuntos (tarefas, agenda, financeiro). NÃO invente URLs em hipótese alguma: se não tiver o link, use o marker.`;
+  systemPrompt += `\n\n---\n\n# 🔗 LINKS DE SISTEMAS\n\nQuando o colaborador pedir o **link, endereço, site ou acesso** de algum sistema interno (ex: anamnese, CRM, chatwoot, relatórios, ERP) e você não tiver essa informação no contexto acima, responda **apenas** com:\n\n<<PEDIR_CREDENCIAIS>><<END>>\n\nNada além disso — sem texto antes ou depois. A lista será fornecida e você responderá em seguida.\n\nIMPORTANTE — apesar do nome, esse marker devolve **somente o nome do sistema e o endereço (URL)**. Ele NUNCA devolve senha, login, token ou chave de API, e você NUNCA tem acesso a esses dados. Se pedirem senha ou login de algum sistema, responda que isso não fica com você e oriente a procurar o responsável — nunca use esse marker para isso.\n\nNÃO use esse marker para outros assuntos (tarefas, agenda, financeiro). NÃO invente URLs em hipótese alguma: se não tiver o link, use o marker.`;
 ```
 
 - [ ] **Step 3: Validar sintaxe**
@@ -498,7 +556,7 @@ Expected: sem saída.
 
 ```bash
 git add src/prompts/system.js
-git commit -m "feat(team-links): instrucao do marker PEDIR_LINKS no system prompt"
+git commit -m "feat(credenciais-publicas): instrucao do marker PEDIR_CREDENCIAIS no system prompt"
 ```
 
 ---
@@ -530,7 +588,7 @@ Esperado: exatamente **3 linhas**. Se vier número diferente, os nomes divergira
 - [ ] **Step 2: Verificar que a RPC devolve só essas três**
 
 ```sql
-select * from get_team_links();
+select * from get_credenciais_publicas();
 ```
 Esperado: 3 linhas, apenas com `nome` e `url_ref`.
 
@@ -549,9 +607,9 @@ Esperado: `0`. Qualquer valor acima de zero significa que uma credencial com cam
 ```bash
 scp src/engine.js root@89.116.73.186:/opt/LA-Organizer/src/engine.js
 scp src/prompts/system.js root@89.116.73.186:/opt/LA-Organizer/src/prompts/system.js
-scp src/lib/pedir-links.js root@89.116.73.186:/opt/LA-Organizer/src/lib/pedir-links.js
-scp src/services/team-links.js root@89.116.73.186:/opt/LA-Organizer/src/services/team-links.js
-ssh root@89.116.73.186 "cd /opt/LA-Organizer && node --check src/engine.js && node --check src/prompts/system.js && node --check src/lib/pedir-links.js && node --check src/services/team-links.js && pm2 restart tom"
+scp src/lib/pedir-credenciais.js root@89.116.73.186:/opt/LA-Organizer/src/lib/pedir-credenciais.js
+scp src/services/credenciais-publicas.js root@89.116.73.186:/opt/LA-Organizer/src/services/credenciais-publicas.js
+ssh root@89.116.73.186 "cd /opt/LA-Organizer && node --check src/engine.js && node --check src/prompts/system.js && node --check src/lib/pedir-credenciais.js && node --check src/services/credenciais-publicas.js && pm2 restart tom"
 ```
 
 Nota: o alias `tom` do `~/.ssh/config` pode não estar configurado neste ambiente — usar o IP direto como acima.
@@ -564,21 +622,21 @@ Esperado: responde com `https://anamnese-la-music.vercel.app/` e **não** lista 
 
 Verificar nos logs:
 ```bash
-ssh root@89.116.73.186 "pm2 logs tom --lines 80 --nostream | grep -i 'PedirLinks\|UNKNOWN_MARKER'"
+ssh root@89.116.73.186 "pm2 logs tom --lines 80 --nostream | grep -i 'PedirCredenciais\|UNKNOWN_MARKER'"
 ```
-Esperado: linha `[PedirLinks] marker detectado — 3 link(s) disponivel(is)`, e **nenhum** `UNKNOWN_MARKER_STRIPPED` com `PEDIR_LINKS`.
+Esperado: linha `[PedirCredenciais] marker detectado — 3 link(s) disponivel(is)`, e **nenhum** `UNKNOWN_MARKER_STRIPPED` com `PEDIR_CREDENCIAIS`.
 
 - [ ] **Step 6: Teste de não-regressão conversacional**
 
 Pedir ao usuário que mande algo sem relação: **"o que eu tenho pra hoje?"**
 
-Esperado: responde as tarefas normalmente, e os logs **não** mostram `[PedirLinks]` (sem segunda chamada, sem latência extra).
+Esperado: responde as tarefas normalmente, e os logs **não** mostram `[PedirCredenciais]` (sem segunda chamada, sem latência extra).
 
 - [ ] **Step 7: Commit e push final**
 
 ```bash
 git add -A
-git commit -m "feat(team-links): cadastro inicial dos 3 sistemas + deploy"
+git commit -m "feat(credenciais-publicas): cadastro inicial dos 3 sistemas + deploy"
 git push origin main
 ```
 
@@ -586,10 +644,10 @@ git push origin main
 
 Acrescentar seção em `daily-notes/2026-08-07.md` (não sobrescrever o que já está lá) com: o que foi implementado, os resultados dos testes E2E dos Steps 5 e 6, e a pendência de observação abaixo.
 
-**👁️ OBSERVAR:** o TOM tem falha conhecida de **não emitir markers** quando deveria (é o check `actionable_no_marker` do health report diário). Se ele esquecer o `<<PEDIR_LINKS>>`, vai responder que não sabe o link em vez de buscar.
-- **Sinal de sucesso:** perguntas sobre link resultam em `[PedirLinks] marker detectado` nos logs.
-- **Sinal de fracasso:** TOM responde "não tenho essa informação" para pergunta clara sobre link, sem log de `[PedirLinks]`.
-- **Query pronta:** `select created_at, status, detail from marker_logs where marker_type = 'PEDIR_LINKS' order by created_at desc limit 20;`
+**👁️ OBSERVAR:** o TOM tem falha conhecida de **não emitir markers** quando deveria (é o check `actionable_no_marker` do health report diário). Se ele esquecer o `<<PEDIR_CREDENCIAIS>>`, vai responder que não sabe o link em vez de buscar.
+- **Sinal de sucesso:** perguntas sobre link resultam em `[PedirCredenciais] marker detectado` nos logs.
+- **Sinal de fracasso:** TOM responde "não tenho essa informação" para pergunta clara sobre link, sem log de `[PedirCredenciais]`.
+- **Query pronta:** `select created_at, status, detail from marker_logs where marker_type = 'PEDIR_CREDENCIAIS' order by created_at desc limit 20;`
 - **Concluir após:** no mínimo 5 perguntas reais sobre links. Não decidir com 1 ou 2.
 
 ---
@@ -606,7 +664,7 @@ Acrescentar seção em `daily-notes/2026-08-07.md` (não sobrescrever o que já 
 | Serviço com cache 30min | 3 |
 | Degradação sem lançar | 3 (Steps 1, 3) |
 | Cap de 30 itens | 2 |
-| Marker `<<PEDIR_LINKS>>` | 2, 5 |
+| Marker `<<PEDIR_CREDENCIAIS>>` | 2, 5 |
 | Two-pass no engine | 4 |
 | Guard anti-loop | 4 (sem laço + prompt da 2ª passada sem a instrução + `UNKNOWN_MARKER_STRIPPED`) |
 | Resposta seletiva (só o link pedido) | 4 (prompt da 2ª passada), verificado em 6 Step 5 |
@@ -614,6 +672,6 @@ Acrescentar seção em `daily-notes/2026-08-07.md` (não sobrescrever o que já 
 | Cadastro das 3 linhas | 6 Step 1 |
 | Critério "nenhuma credencial com flag false aparece" | 6 Steps 2, 3 |
 
-**Consistência de tipos:** `getTeamLinks()` devolve `Array<{nome, url_ref}>`, que é exatamente o que `formatLinksBlock()` consome (Task 2 define, Task 4 usa). `hasPedirLinksMarker`/`stripPedirLinksMarker`/`formatLinksBlock` têm os mesmos nomes na definição (Task 2) e no uso (Task 4).
+**Consistência de tipos:** `getCredenciaisPublicas()` devolve `Array<{nome, url_ref}>`, que é exatamente o que `formatCredenciaisBlock()` consome (Task 2 define, Task 4 usa). `hasPedirCredenciaisMarker`/`stripPedirCredenciaisMarker`/`formatCredenciaisBlock` têm os mesmos nomes na definição (Task 2) e no uso (Task 4).
 
-**Nota:** `stripPedirLinksMarker` é exportado e testado, mas o engine não o usa no caminho feliz — a resposta da segunda passada substitui o `reply` inteiro. Ele fica disponível como utilitário e é coberto pelo `UNKNOWN_MARKER_STRIPPED` no caminho de falha. Mantido de propósito, não é sobra acidental.
+**Nota:** `stripPedirCredenciaisMarker` é exportado e testado, mas o engine não o usa no caminho feliz — a resposta da segunda passada substitui o `reply` inteiro. Ele fica disponível como utilitário e é coberto pelo `UNKNOWN_MARKER_STRIPPED` no caminho de falha. Mantido de propósito, não é sobra acidental.
