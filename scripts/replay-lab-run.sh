@@ -38,6 +38,10 @@ export WEBHOOK_SECRET="replay-lab-$(date +%s)-$$"
 export TOM_QA_PHONES="${TOM_QA_PHONES:-5500000000001,5500000000002,5500000000003,5500000000004}"
 export TOM_QA_EVIDENCE_FILE="${TOM_QA_EVIDENCE_FILE:-$TMPD/evidencia.jsonl}"
 export PORT_LAB="$PORTA"
+# O cenário precisa PROVAR que exercitou o caminho que diz medir, e esse rastro sai no
+# stdout do servidor (outro processo). Sem isto o cenário B passou verde com a flag
+# desligada: ele nunca tocou no title-lookup e ninguém percebeu.
+export TOM_QA_LAB_LOG="$TMPD/lab.log"
 
 # O run é gerado AQUI porque dois processos precisam concordar sobre ele: o servidor abre o
 # turno conversacional (é lá que a fala do TOM nasce) e o cenário roda o cron. Run gerado
