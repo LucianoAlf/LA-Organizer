@@ -13,14 +13,14 @@ irmãos, e só valem quando você precisar deles:
 
 ## PRÓXIMO PASSO (é só isto)
 
-**Medir a F3 e o sanitizador em ~15/08** (detalhe no fim desta seção) — e, fora isso, a fila
-está sem nada grande e comprovado. Os candidatos restantes são pequenos ou não medidos:
-3 findings de "data errada no reagendamento" vivos, 3 de proativo em dia de descanso
-(**checar antes se o DND por dia da semana já existe** — a Ana Paula pergunta como
-configurar, o que é a assinatura de `project_tom_nega_capacidade`), e o Dreams (03h),
-que **nunca foi olhado** e o Alf sinalizou.
+**Auditar o Dreams (03h)** — única área grande que nunca foi olhada, e o Alf sinalizou que
+tem bastante coisa lá. Depois dele vem o **🤖 agente de governança** (seção própria abaixo,
+pedido explícito para não esquecer).
 
-Recomendação: **auditar o Dreams**, que é a única área grande ainda desconhecida.
+Fora esses dois, a fila não tem nada grande e comprovado: sobraram 3 findings de data errada
+no reagendamento, 3 de proativo em dia de descanso (**checar antes se o DND por dia da semana
+já existe** — a Ana Paula pergunta como configurar, assinatura de
+`project_tom_nega_capacidade`) e as medições de 15/08.
 
 ### O que a varredura do `schema_invalid` ensinou (08/08)
 
@@ -42,6 +42,47 @@ segurar skill no fluxo multi-turno) não se justificam em 4 casos/mês — reava
 
 ⚠️ **Cinco vezes em 08/08 a raiz registrada não sobreviveu ao dado.** Trate raiz escrita como
 hipótese, inclusive a que você acabou de escrever. E **date antes de somar**.
+
+---
+
+## 🤖 AGENTE DE GOVERNANÇA — NÃO ESQUECER (pedido explícito do Alf, 08/08)
+
+**Vem logo depois do Dreams.** O Alf pediu para isto ficar registrado de forma que não se
+perca: *"a gente não pode esquecer disso jamais"*.
+
+**O que é:** um agente que roda sobre a auditoria (a das 07h e a do Dream das 03h), consulta
+`tom_audit_findings` e `tom_known_issues`, olha o histórico — o que já foi corrigido, o que é
+regressão, o que está se repetindo — e **já gera o ajuste**, com autonomia, exceto quando a
+decisão for de negócio.
+
+**Decidido pelo Alf:** autonomia para corrigir sozinho; parar só em decisão de negócio; "o
+grande lance é não ficar parando". Modelo: o mais capaz disponível (ele falou em Opus; hoje o
+topo é **Opus 5** — vale confirmar na hora de montar). O TOM roda em Sonnet e continua assim.
+
+**Em aberto — precisa da decisão do Alf:**
+1. **Entrega.** Hoje o relatório das 07h vai **só pro director Luciano** (hardcoded, apesar de
+   existirem 4 `director`: Admin, Anne Susan, Hugo, Luciano). O **Hugo já existe como
+   `director` ativo com WhatsApp** — não precisa cadastrar ninguém.
+   → *Recomendação:* mandar 1:1 pro Alf e pro Hugo, com lista explícita (não "todos os
+   directors", senão a Anne Susan recebe relatório técnico). 1:1 em vez de grupo porque o TOM
+   no grupo usa modelo-janela (vocativo abre, ~8min fecha) e cada um responde/age no seu.
+2. **O que ele faz sozinho vs o que propõe.** Sugestão: corrige e deploya o que for
+   reversível e provado (fix + teste de reversão verde); **propõe** o que mexe em voz do TOM,
+   dado de produção de terceiro, ou capacidade nova.
+3. **Frequência e gatilho:** depois do audit das 07h? Ou contínuo?
+4. **Onde ele registra:** KI em `tom_known_issues` é o caminho natural — já é o formato.
+
+**GUARDRAILS — e estes não são teóricos, são as lições que custaram caro HOJE:**
+- **Date antes de somar.** Total histórico não é problema vivo (242 `schema_invalid` → 4).
+- **O resumo do finding não é a fala da pessoa.** Puxar o literal de `conversation_history`.
+- **Raiz escrita é hipótese** — inclusive a que ele mesmo acabou de escrever. Em 08/08 a raiz
+  registrada caiu **cinco vezes**.
+- **Prova de reversão obrigatória:** rodar o cenário contra o código ANTES do fix; se não
+  reproduzir, não mede nada.
+- **Checar a data do fix antes de tratar finding como vivo** — duas famílias inteiras de hoje
+  já estavam mortas por fixes de um dia antes do incidente.
+- **Contar falha no `tom-error.log`**, não no `tom-out.log`.
+- **Nunca fechar KI por teste verde** — só com prova viva em produção.
 
 ### Mapa das famílias (varredura de 08/08, os 38 findings dos últimos 14 dias)
 
@@ -110,15 +151,16 @@ Confabulação **−85%**. `dropped_request` caiu só 56% e virou a categoria **
 ## FILA (em ordem)
 
 1. **Auditar o Dreams** (03h) — única área grande nunca olhada; o Alf sinalizou.
-2. **Medir a F3 + o sanitizador** por volta de 15/08 — ver acima.
-3. **3 findings de data errada no reagendamento** ainda vivos ("amanhã" resolvido errado).
-4. **3 de proativo em dia de descanso** — checar se o DND por dia já existe ANTES de codar.
-5. **Medir a Fatia A** (fecha a Task 7) — ligada em 08/08 15:25 UTC. Olhar
+2. **🤖 AGENTE DE GOVERNANÇA** — seção própria acima. Pedido explícito do Alf: não esquecer.
+3. **Medir a F3 + o sanitizador** por volta de 15/08 — ver acima.
+4. **3 findings de data errada no reagendamento** ainda vivos ("amanhã" resolvido errado).
+5. **3 de proativo em dia de descanso** — checar se o DND por dia já existe ANTES de codar.
+6. **Medir a Fatia A** (fecha a Task 7) — ligada em 08/08 15:25 UTC. Olhar
    `[TaskTarget] serie` nos logs e `TASK_TARGET_AMBIGUOUS` em `marker_logs`.
-6. **Crons de governança** — paridade git↔produção; `[GroupChat][DATE-CLAIM]` > 0; molde
+7. **Crons de governança** — paridade git↔produção; `[GroupChat][DATE-CLAIM]` > 0; molde
    recorrente virando `cancelled`.
-7. **Segunda seção no relatório das 07h**: "o que foi feito e o que reincidiu".
-8. Menores: `CONFAB-WRITE-DATE-NO-RELLABEL` (data no 1:1, não tocado); rotacionar token da
+8. **Segunda seção no relatório das 07h**: "o que foi feito e o que reincidiu".
+9. Menores: `CONFAB-WRITE-DATE-NO-RELLABEL` (data no 1:1, não tocado); rotacionar token da
    Hostinger; confirmação ao cancelar tarefa recorrente (é UI, esbarra no freeze).
 
 ---
