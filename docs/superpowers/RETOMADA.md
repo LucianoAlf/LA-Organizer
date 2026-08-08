@@ -13,9 +13,41 @@ irmãos, e só valem quando você precisar deles:
 
 ## PRÓXIMO PASSO (é só isto)
 
-**3 findings de proativo em dia de descanso.** **Checar antes se o DND por dia da semana já
-existe** — a Ana Paula pergunta como configurar, assinatura de `project_tom_nega_capacidade`.
-Depois, as medições de 15/08.
+**Tarefa que VENCE em dia não-útil** (3 findings, família nova — ver abaixo). Depois, as
+medições de 15/08.
+
+### ✅ PROATIVO EM DIA DE DESCANSO — NADA A CODAR (08/08)
+
+Eram "3 findings"; abertos, eram **14**. Investiguei os 14 e **nenhum precisa de código**.
+Checar antes de codar valeu o dia inteiro aqui.
+
+**Família A — "não me mande no domingo" (3): já existe e já funciona.**
+`user_preferences` tem `quiet_days`, `quiet_days_work/personal`, `quiet_weekends` e janelas
+`quiet_start/end_time`; `isQuietNow` gateia **~60 pontos** de envio, e há um
+`quiet-gate-guard.test.js` que **bloqueia o deploy** de envio proativo sem gate.
+Melhor: **o TOM configura sozinho.** A Ana perguntou "como faço pra você não me mandar
+mensagem domingo?" às 19:02 de 26/07 — e há dois `PREFS_UPDATE` *executed* em `marker_logs`
+às **19:03 e 19:04**. Prefs hoje: `quiet_days_work=[0]`. Idem Gabi (27/07) e Matheus (14/07).
+
+**Família B — "não me cobre antes do vencimento" (6, o Matheus reclamou 4×): já corrigido.**
+A raiz não era `reminder_lead` nem antecedência — era o **`remind_at` congelado sobrevivendo
+ao reschedule**. Provado no banco: "Finalizar inventário de musicalização" com
+`due_date=06/08` e `remind_at=20/06` (45 dias no passado), `reminded_at=04/08 09:35` — o cron
+cobrou **2 minutos** depois de o TOM reagendar pra quinta. Corrigido em **05/08**
+(`4dd0e206`, piso no `shiftTaskRemindAt`, com teste), um dia depois do incidente. Hoje:
+**0 tarefas** em estado de disparo indevido.
+
+⚠️ **Duas vezes hoje eu "achei o bug" e o código já tinha o conserto** — o shift de
+`remind_at` no reschedule (30/05) e depois o piso (05/08). Nos dois casos o comentário no
+código já citava o caso pelo nome. **Antes de escrever o fix, grepe o caso no código: aqui a
+chance de já existir é alta.**
+
+**Família C — RECLASSIFICADA, segue aberta (3):** Rose 01/08, Clayton 19/07, Kailane 21/06.
+O resumo dizia "proatividade em dia de descanso", mas o literal é outra coisa: *"muda essa
+tarefa pra segunda pfvr, amanhã é domingo, n trabalho"*, *"hoje é domingo, marcar para
+segunda feira"*. **Não é sobre receber mensagem — é sobre a tarefa VENCER em dia não-útil**,
+e `quiet_days` não cobre isso. Antes de codar: checar se o agendamento já sabe pular dia
+não-útil, e se `quiet_days` pode ser lido como calendário de trabalho.
 
 ### ✅ DATA ERRADA NO REAGENDAMENTO — FECHADO (08/08 22:30 UTC)
 
@@ -365,7 +397,10 @@ Confabulação **−85%**. `dropped_request` caiu só 56% e virou a categoria **
 
 ## FILA (em ordem)
 
-1. **3 findings de proativo em dia de descanso** — checar se o DND por dia já existe ANTES de codar.
+1. **Tarefa que VENCE em dia não-útil** (3 findings, família C acima). Checar ANTES de codar:
+   (a) o agendamento já sabe pular dia não-útil? (b) `quiet_days` serve como calendário de
+   trabalho da pessoa, ou precisa de campo próprio? Só 9 de 39 têm `quiet_days_work` — usar
+   como fonte de "dia útil" silenciaria 30 pessoas sem elas terem pedido.
 3. **Medir a F3 + o sanitizador** por volta de 15/08 — ver acima. Junto: (a) conferir se o
    digest das 07:30 chegou nos dias em que houve achado; (b) contar `AUTO_RETRY_DATE_POISON`
    em `marker_logs` — se aparecer, o guard está pegando envenenamento de verdade; se ficar
