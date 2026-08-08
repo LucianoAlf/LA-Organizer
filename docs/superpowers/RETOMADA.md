@@ -13,16 +13,45 @@ irmãos, e só valem quando você precisar deles:
 
 ## PRÓXIMO PASSO (é só isto)
 
-**Varrer os 209 findings `medio`/`baixo`** que nunca foram olhados — agrupando por FAMÍLIA,
-não por severidade.
+**Família "pedido ignorado no meio de outro" — 6 casos, a maior viva.**
 
-É o filão comprovado: os 4 KIs fechados em 08/08 estavam **todos** em findings `medio`, e
-ficaram meses invisíveis porque a fila era triada por severidade. Severidade mede o caso, a
-família mede a causa. Método que funcionou hoje: agrupar por sintoma → puxar o **literal** de
-`conversation_history` → rodar o caso contra o código real → só então decidir a raiz.
+Padrão: a pessoa manda **dois pedidos numa mensagem** e o TOM atende um e dropa o outro.
+Quintela 03/08 (pediu tarefa pra quarta + fechamento → só o fechamento), Arthur 01/08
+(pediu virar lembrete + fechar → só fechou), Rose 31/07, Alf 28/07, Rafinha 27/07,
+Rafinha 04/08 (baixa da Caixa STANER ficou de fora da lista).
+
+Hipótese a testar **antes de codar**: o marker sai com uma ação só, ou saem duas e uma falha?
+`marker_logs` do turno responde — se só uma ação foi emitida, é prompt/parse; se duas e uma
+falhou, é apply. **Não assuma.**
 
 ⚠️ Três vezes seguidas em 08/08 a raiz registrada não era a raiz real. Trate raiz escrita
-como hipótese.
+como hipótese, sempre.
+
+### Mapa das famílias (varredura de 08/08, os 38 findings dos últimos 14 dias)
+
+| família | casos | estado |
+|---|---|---|
+| Confirmação não executa / repete pergunta | 7 | ✅ fechada 08/08 |
+| Afirma e desmente na mesma mensagem | 3 | ✅ fechada 08/08 |
+| Data errada no reagendamento | 5 | ⚠️ 2 fechados (weekday-offby), 3 vivos — "amanhã" resolvido errado |
+| **Pedido ignorado no meio de outro** | **6** | ❌ **próximo** |
+| Cobrança indevida | 8 | ⚠️ ver abaixo |
+| Financeiro / extrato incompleto | 3 | ❌ não tocada |
+
+"Cobrança indevida" se desfez ao ser aberta, e vale registrar por quê: 2 casos eram tarefa
+recorrente que devia ser hábito (**a ponte `<<TASK_TO_HABIT>>` entrou em 02/08 e os
+incidentes são de 01/08** — já mortos); 1 era o cancelamento de série (KI
+`EVENT-CANCEL-SERIE-SO-INSTANCIA`, dado da Ana Paula corrigido à mão, código não vale sob
+freeze: 1 série no banco inteiro, 3 pedidos em 60 dias); sobram 3 de **proativo em dia de
+descanso/férias** (Rose, Ana Paula, Gabi) — e a Ana Paula literalmente **pergunta como
+configurar**, então checar se o DND por dia da semana já existe antes de tratar como falta
+(família `project_tom_nega_capacidade`).
+
+Os 171 findings com mais de 14 dias não foram varridos — a maioria deve estar morta por fix
+posterior. Vale cruzar por `incident_at` antes de olhar um por um.
+
+Os 14 findings das famílias fechadas hoje ganharam `promoted_code`, mas **seguem `novo` de
+propósito**: fix no ar não é prova viva. Fecham na medição de 15/08.
 
 **No radar, com data (não bloqueia):** medir a F3 por volta de **15/08** — `CONFIRM_NOEXEC`
 deve cair e `CONFIRM_CREATE_ALLOWED` aparecer; cruzar com `tasks` criadas logo após o marker
@@ -50,6 +79,7 @@ Fechado em 08/08:
 | **"Siim" e "Todas feitas" não confirmavam** (2 KIs) | 08/08 18:17 UTC |
 | **F3: criação liberada sem payload executável** (`TASK-CONFIRM-DONE-NOOP` fechado) | 08/08 18:57 UTC |
 | **Afirmação + desmentido na mesma msg** (`TOM-AFIRMA-DEPOIS-DESMENTE` fechado) | 08/08 19:09 UTC |
+| Varredura dos `medio`/`baixo` por família + 14 findings amarrados | 08/08 19:30 UTC |
 
 Governança: auditoria auditada, migration de reverificação aplicada, fila `alto` triada
 (21 → 13 fechados, 4 vivos, 4 aguardando), 3 famílias viraram KI rastreável.
@@ -61,7 +91,7 @@ Confabulação **−85%**. `dropped_request` caiu só 56% e virou a categoria **
 
 ## FILA (em ordem)
 
-1. **209 findings `medio`/`baixo`** por família (acima).
+1. **Família "pedido ignorado no meio de outro"** (acima). 6 casos.
 2. **Medir a F3 + o sanitizador** por volta de 15/08 — ver acima.
 3. **Medir a Fatia A** (fecha a Task 7) — ligada em 08/08 15:25 UTC. Olhar
    `[TaskTarget] serie` nos logs e `TASK_TARGET_AMBIGUOUS` em `marker_logs`.
