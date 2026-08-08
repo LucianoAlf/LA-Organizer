@@ -13,10 +13,33 @@ irmãos, e só valem quando você precisar deles:
 
 ## PRÓXIMO PASSO (é só isto)
 
-**`MEMORY_SAVE schema_invalid`** — é a causa de 3 dos 5 alertas que sobraram no
-`ACTIONABLE_NO_MARKER` (seção abaixo), e o usuário sente: o TOM diz "anotado e salvo" e a
-memória é recusada. Família do KI aberto `MARKER-SCHEMA-DRIFT-SKILL-AUSENTE`. Pegar o payload
-real recusado em `marker_logs` ANTES de teorizar sobre o parser. Depois: medições de 15/08.
+**As medições de 15/08** (lista no item 3 da fila). Não há bug aberto com sinal vivo no
+momento — os quatro alvos que persegui em 08/08 já tinham conserto no código.
+
+### ✅ `MEMORY_SAVE schema_invalid` — JÁ ESTAVA CORRIGIDO (08/08)
+
+Peguei os payloads REAIS recusados em `marker_logs` (Matheus `type/title/body` 04/08;
+Quintela `type/name/description/body` 04/07) e rodei contra o parser ATUAL: **os 3 passam.**
+O sinônimo `body` entrou em `memory-fields.js` em 05/08 — um dia depois do incidente.
+
+📉 **A família inteira zerou:** `schema_invalid` teve **24 ocorrências em 30 dias** (8 tipos
+de marker) e **0 desde 05/08**, última em 04/08 14:22. Os fixes de normalização da semana
+(`memory-fields` body, `weekly-plan-normalize`, `coord-alias`) resolveram junto.
+
+**KI `MARKER-SCHEMA-DRIFT-SKILL-AUSENTE` NÃO foi fechado** — anotei a medição nele e deixei
+aberto. 4 dias de zero não é prova: com base de ~0,8/dia, zero em 4 dias tem ~4% de chance de
+ser acaso. Sugestivo, não conclusivo. **Confirmar em 15/08 antes de marcar corrigido.**
+
+⚠️⚠️ **A LIÇÃO DO DIA — QUATRO VEZES seguidas o conserto já existia no código:**
+1. reschedule não movia `remind_at` → existia desde 30/05
+2. o piso do lembrete vencido → `4dd0e206`, 05/08, **citando o caso pelo nome no comentário**
+3. DND por dia da semana → `quiet_days` existe, `isQuietNow` gateia ~60 pontos
+4. `MEMORY_SAVE schema_invalid` → sinônimo `body`, 05/08
+
+Em três dos quatro, o comentário no código **já nomeava o caso que eu estava investigando**.
+**Antes de escrever qualquer fix aqui: `grep` o nome da pessoa, a data do incidente e o
+marker no `src/`.** O custo de não fazer isso hoje foi horas de investigação; o de fazer é
+uma chamada de grep.
 
 ### ✅ `ACTIONABLE_NO_MARKER`: ruído cortado em 69%, e o alerta agora diz a CAUSA (08/08)
 
