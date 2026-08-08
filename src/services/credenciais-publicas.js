@@ -21,7 +21,9 @@ async function getCredenciaisPublicas() {
       console.warn('[CredenciaisPublicas] RPC erro:', error.message);
       return _cache.links; // stale (ou [] se nunca populou)
     }
-    const links = (data || []).filter(l => l && l.nome && l.url_ref);
+    const links = (data || [])
+      .filter(l => l && l.nome && l.url_ref)
+      .map(l => ({ nome: l.nome, url_ref: l.url_ref }));
     _cache = { ts: Date.now(), links };
     return links;
   } catch (e) {

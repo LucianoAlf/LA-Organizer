@@ -10654,17 +10654,18 @@ async function processMessage(phone, text, raw = {}) {
   // Anti-loop: a 2ª chamada não recebe a instrução do marker, e não há laço —
   // se o modelo reemitir mesmo assim, UNKNOWN_MARKER_STRIPPED limpa o texto.
   try {
-    const { hasPedirCredenciaisMarker, stripPedirCredenciaisMarker, formatCredenciaisBlock } = require('./lib/pedir-credenciais');
+    const { hasPedirCredenciaisMarker, formatCredenciaisBlock } = require('./lib/pedir-credenciais');
     if (hasPedirCredenciaisMarker(reply)) {
       const { getCredenciaisPublicas } = require('./services/credenciais-publicas');
       const links = await getCredenciaisPublicas();
       const bloco = formatCredenciaisBlock(links);
       console.log(`[PedirCredenciais] marker detectado — ${links.length} link(s) disponivel(is)`);
-      await logMarker(collab.id, 'PEDIR_CREDENCIAIS', links.length ? 'applied' : 'rejected',
+      await logMarker(collab.id, 'PEDIR_CREDENCIAIS', links.length ? 'executed' : 'rejected',
         `links:${links.length}`, null);
       if (!bloco) {
         reply = 'Não tenho nenhum sistema cadastrado com link por aqui ainda.';
       } else {
+        reply = bloco;
         const credSys = `${bloco}\n\nO colaborador perguntou sobre acesso a algum desses sistemas. `
           + `Responda em português, de forma curta e natural, APENAS o link que ele pediu. `
           + `Só liste todos se ele tiver pedido explicitamente a lista completa. `
