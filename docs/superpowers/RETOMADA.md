@@ -13,14 +13,48 @@ irmãos, e só valem quando você precisar deles:
 
 ## PRÓXIMO PASSO (é só isto)
 
-**Digest automático dos findings no grupo.** O canal de ops **já está no ar** e funciona sob
-demanda (seção do agente abaixo). O que falta é o TOM levar os achados **sem ninguém pedir**:
-hoje `auditConversation` roda no Dream, grava em `tom_audit_findings` e ninguém vê — foi isso
-que deixou 209 findings parados.
+**3 findings de data errada no reagendamento** ("amanhã" resolvido errado). Depois: 3 de
+proativo em dia de descanso (**checar antes se o DND por dia da semana já existe** — a Ana
+Paula pergunta como configurar, assinatura de `project_tom_nega_capacidade`) e as medições
+de 15/08.
 
-Depois dele: 3 findings de data errada no reagendamento, 3 de proativo em dia de descanso
-(**checar antes se o DND por dia da semana já existe** — a Ana Paula pergunta como
-configurar, assinatura de `project_tom_nega_capacidade`) e as medições de 15/08.
+### ✅ DIGEST PROATIVO — NO AR (08/08 22:05 UTC)
+
+O TOM leva os achados ao grupo **sem ninguém pedir**, todo dia às **07:30 BRT** (depois da
+triagem das 5h, então `auto_triage` já separa regressão de achado novo). Janela de retry até
+11h; idempotência em `ritual_logs` (`ritual_type='ops_digest'`, âncora = primeiro da
+allowlist). Kill switch: `TOM_OPS_DIGEST=0` desliga só o automático e mantém o sob demanda.
+
+**É determinístico — SQL + template, sem LLM.** Um alarme diário que erra a contagem uma vez
+deixa de ser lido, e aí se perde o canal inteiro. Para aprofundar existe o agente Opus 5 no
+mesmo grupo, sob demanda.
+
+- `src/services/ops-digest.js` + 31 testes. Regressão vai pro topo e **nunca** é cortada pelo
+  teto de 5 itens; o que sobra é anunciado ("+6 não listados"), nunca truncado calado.
+- Provado ponta a ponta: mensagem no grupo + `ritual_logs`, e 2ª rodada devolveu
+  `já entregue hoje` sem duplicar.
+
+⚠️ **O que medir em ~15/08:** se o digest disser "nada novo" muitos dias seguidos, **não
+assuma que é dia limpo** — confira `[ConvAudit]` em `logs/rituals.log` entre duas marcas de
+`[Dream] concluído`. Em 08/08 o dia era limpo de verdade (0 achados, 0 falhas), mas essa é
+exatamente a forma que um falso-verde tomaria.
+
+### ✅ FORMATO DE ENTREGA NO GRUPO (08/08)
+
+O Alf reclamou de "maçaroca de texto" antes de existir maçaroca — e estava certo pelo motivo
+errado do meu lado. **Minha hipótese (markdown) estava errada:** rodei o agente na VPS com um
+pedido real e a saída não tinha `##`, `**` nem tabela. Tinha **2165 caracteres de parágrafo
+corrido, sem hierarquia e sem um emoji**. O problema é densidade, não sintaxe.
+
+- **`docs/ops/FORMATO-GRUPO.md`** — as regras de entrega (estrutura, emoji, teto de linhas,
+  exemplo bom e exemplo ruim). Lido a cada pedido e colado no briefing: **editar o arquivo
+  muda a resposta na hora, sem deploy**. Dá pra pedir a mudança ao próprio TOM no grupo.
+  Fica fora de `skills/` de propósito — o loader varre aquele diretório e isso não pode
+  vazar pro TOM que fala com o time.
+- **`src/utils/wa-format.js`** + 18 testes — rede determinística: converte markdown pro que o
+  WhatsApp entende e divide em mensagens de ~1200 chars. **Divide em vez de truncar**: num
+  relatório de auditoria a conclusão fica no fim. Bloco ``` é preservado byte a byte, senão
+  corromperia a evidência que o agente está mostrando.
 
 ### Auditoria do Dreams (08/08) — o ritual está saudável; o que ele PRODUZ tinha um furo
 
@@ -297,9 +331,12 @@ Confabulação **−85%**. `dropped_request` caiu só 56% e virou a categoria **
 
 ## FILA (em ordem)
 
-1. **Digest automático dos findings no grupo** (acima). O canal de ops já está no ar.
-3. **Medir a F3 + o sanitizador** por volta de 15/08 — ver acima.
-4. **3 findings de data errada no reagendamento** ainda vivos ("amanhã" resolvido errado).
+1. **3 findings de data errada no reagendamento** ainda vivos ("amanhã" resolvido errado).
+   O agente já apontou um caso com prova no banco: "Calendários das escolas" ficou com
+   `due_date` 2026-08-07 quando o pedido de quarta 05/08 dizia "amanhã" (= 06/08). O fix de
+   08/08 é de dia-da-semana relativo ("terça que vem"), **não cobre "amanhã"**.
+3. **Medir a F3 + o sanitizador** por volta de 15/08 — ver acima. Junto: conferir se o digest
+   das 07:30 chegou nos dias em que houve achado.
 5. **3 de proativo em dia de descanso** — checar se o DND por dia já existe ANTES de codar.
 6. **Medir a Fatia A** (fecha a Task 7) — ligada em 08/08 15:25 UTC. Olhar
    `[TaskTarget] serie` nos logs e `TASK_TARGET_AMBIGUOUS` em `marker_logs`.

@@ -83,6 +83,7 @@ const PENDING_APPROVAL_REMINDER_TIMES = ['09:00', '15:00'];  // 2x/dia
 const DAILY_DREAM_TIME = '03:00';               // Every day — "sonhar": consolidar memórias das últimas 24h
 const HEALTH_CHECK_TIME = '05:00';              // Every day — auditoria do sistema (após Dream das 3h)
 const HEALTH_REPORT_TIME = '07:00';             // Every day — envia relatório do health check pro director (Luciano)
+const OPS_DIGEST_TIME = '07:30';                // Every day — achados da auditoria no grupo de ops (após triagem das 5h)
 const LA_EDUCA_LEMBRETES_TIME = '09:00';        // Monday only — lembretes semanais do LA EDUCA
 const LEADER_ENGAGEMENT_TIME = '08:00';         // Monday only — relatório CEO de engajamento dos líderes
 const CHECKPOINT_DEADLINE_TIME = '09:00';       // Every day — lembretes de prazo de checkpoint de projeto (D-3/D-1/D0/D+1)
@@ -3682,7 +3683,7 @@ async function run(opts = {}) {
   // Modo forçado: ignora time check e dispara o ritual pedido pra cada collab filtrado.
   // Exceções: 'aderencia'/'aderencia_diaria' são determinísticos (sem LLM/sendRitual);
   // caem no gancho condicional adiante e são tratados por checkAdherenceNudge.
-  if (opts.force && opts.force !== 'aderencia' && opts.force !== 'aderencia_diaria' && opts.force !== 'consolidacao_memoria' && opts.force !== 'dream' && opts.force !== 'pending_approvals' && opts.force !== 'healthcheck' && opts.force !== 'health_report' && opts.force !== 'la_educa_lembretes') {
+  if (opts.force && opts.force !== 'aderencia' && opts.force !== 'aderencia_diaria' && opts.force !== 'consolidacao_memoria' && opts.force !== 'dream' && opts.force !== 'pending_approvals' && opts.force !== 'healthcheck' && opts.force !== 'health_report' && opts.force !== 'ops_digest' && opts.force !== 'la_educa_lembretes') {
     const ritualType = RITUAL_BY_DIRECTIVE[opts.force];
     if (!ritualType) {
       console.error(`[Dispatcher] force inválido: ${opts.force}`);
@@ -3909,6 +3910,35 @@ async function run(opts = {}) {
       await sendHealthReport(now.ymd, opts.force === 'health_report');
     } catch (err) {
       console.error('[Dispatcher] health-report erro (retenta no próximo tick até 11h):', err.message);
+    }
+  }
+
+  // Digest da auditoria no grupo de ops — 07:30 BRT, depois da triagem das 5h (health-check),
+  // então `auto_triage` já está preenchido e dá pra separar regressão de achado novo.
+  // Fecha o buraco que deixou 209 achados parados: auditConversation gravava em
+  // tom_audit_findings e ninguém abria a tabela.
+  // DETERMINÍSTICO (SQL + template, sem LLM): um alarme diário que erra a contagem uma vez
+  // deixa de ser lido, e aí se perde o canal inteiro. O agente Opus 5 do grupo continua
+  // disponível pra aprofundar sob demanda.
+  // Janela de retry até 11h pelo mesmo motivo do health report: UAZAPI hibernada devolve 503.
+  const _odSlot = timeToSlot(OPS_DIGEST_TIME);   // 450 (07:30)
+  const _odCutoff = timeToSlot('11:00');         // 660 — desiste por hoje, sem spam
+  if (opts.force === 'ops_digest' || (slotNow >= _odSlot && slotNow < _odCutoff)) {
+    try {
+      const { enviarOpsDigest } = require('../services/ops-digest');
+      const { postOpsResult } = require('../services/group-chat-engine');
+      const _odGrupo = (process.env.TOM_OPS_GROUP_ID || '').trim();
+      if (_odGrupo) {
+        const r = await enviarOpsDigest(supabase, {
+          ymd: now.ymd,
+          force: opts.force === 'ops_digest',
+          // quiet-exempt: canal de engenharia do Alf e do Hugo, não é envio a colaborador.
+          postar: (txt) => postOpsResult(supabase, _odGrupo, txt),
+        });
+        if (r.enviado) console.log(`[OpsDigest] enviado: ${r.achados} achado(s), ${r.suprimidos} suprimido(s)`);
+      }
+    } catch (err) {
+      console.error('[OpsDigest] erro (retenta no próximo tick até 11h):', err.message);
     }
   }
 

@@ -84,3 +84,22 @@ test('briefing carrega quem pediu e os limites', () => {
   assert.match(b, /tom_known_issues/);
   assert.match(b, /tom-error\.log/);
 });
+
+// As regras de entrega vivem num .md editável sem deploy. Se o caminho quebrar, o agente
+// volta a despejar parede de texto no WhatsApp sem nada falhar — daí o teste.
+const FORMATO = require('path').join(__dirname, '../../docs/ops/FORMATO-GRUPO.md');
+
+test('briefing embute as regras de formato do grupo', () => {
+  const m = carregar({ ...LIGADO, TOM_OPS_FORMATO: FORMATO });
+  const b = m.buildBriefing('Alf');
+  assert.match(b, /at[ée] 15 linhas/i);
+  assert.match(b, /Exemplo bom/);
+  assert.ok(b.length > 2000, `briefing curto demais (${b.length}) — o .md não entrou`);
+});
+
+test('arquivo de formato ausente não derruba o briefing', () => {
+  const m = carregar({ ...LIGADO, TOM_OPS_FORMATO: '/caminho/que/nao/existe.md' });
+  const b = m.buildBriefing('Alf');
+  assert.match(b, /Alf/);
+  assert.match(b, /N[ÃA]O apague dado de produ[çc][ãa]o/i);
+});

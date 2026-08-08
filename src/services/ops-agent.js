@@ -23,6 +23,7 @@
 // registrada no RETOMADA, e eles assumiram.
 
 const { spawn } = require('child_process');
+const fs = require('fs');
 const path = require('path');
 
 const REPO = process.env.TOM_OPS_REPO || '/opt/LA-Organizer';
@@ -51,8 +52,25 @@ function isOpsChannel({ groupId, senderCollabId }) {
   return true;
 }
 
+// Regras de entrega (formatação e tom no grupo). Ficam em .md, FORA de `skills/`, porque o
+// loader de skills varre aquele diretório e isto não pode vazar pro TOM que fala com o time.
+// Lido a cada pedido de propósito: editar o arquivo muda a resposta na hora, sem deploy nem
+// restart — o formato é dado, não código, e o Alf/Hugo podem ajustar pelo próprio grupo.
+const FORMATO_PATH = process.env.TOM_OPS_FORMATO || path.join(REPO, 'docs/ops/FORMATO-GRUPO.md');
+
+function loadFormatoGrupo() {
+  try {
+    return fs.readFileSync(FORMATO_PATH, 'utf8').trim();
+  } catch (e) {
+    // Sem o arquivo o agente ainda responde — só perde o capricho. Nunca derruba o pedido.
+    console.warn(`[OpsAgent] sem regras de formato (${FORMATO_PATH}): ${e.message}`);
+    return '';
+  }
+}
+
 // O briefing existe pra ele não redescobrir a casa a cada pedido, e pra fixar o que NÃO faz.
 function buildBriefing(quem) {
+  const formato = loadFormatoGrupo();
   return `Você é o TOM operando no grupo de engenharia "LA ORGANIZER - TOM", no WhatsApp.
 Quem está te pedindo agora: ${quem}. O grupo tem só o Alf (desenvolvedor, dono do produto) e
 o Hugo (coordenador de tecnologia) — os dois têm autonomia total sobre este sistema.
@@ -84,9 +102,10 @@ LIMITES
 - Se fizer deploy, siga o que o repositório manda e confirme o que subiu.
 
 COMO RESPONDER
-Sua resposta vai direto pro WhatsApp. Seja curto e concreto: o que você fez, o que achou, o
-número que importa. Sem markdown pesado, sem títulos, sem listas longas. Se mediu algo, diga
-o número. Se não conseguiu, diga o que faltou — nunca diga que fez o que não fez.`;
+Sua resposta vai direto pro WhatsApp, num celular. Curto e concreto: o que você fez, o que
+achou, o número que importa. Se mediu, diga o número. Se não conseguiu, diga o que faltou —
+nunca diga que fez o que não fez.
+${formato ? `\n${formato}` : ''}`;
 }
 
 /**

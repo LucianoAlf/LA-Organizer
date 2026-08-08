@@ -16,6 +16,7 @@ const { ehMoldeRecorrente, escondeMoldeComInstancia } = require('../utils/group-
 const groupNotes = require('./group-notes');
 const { buildBrtDateAnchor } = require('../utils/dates');
 const opsAgent = require('./ops-agent');
+const { paraWhatsApp, dividirParaWhatsApp } = require('../utils/wa-format');
 
 const HISTORY_LIMIT = 30;
 const POOL_LIMIT = 30;
@@ -93,6 +94,20 @@ async function postTomText(supabase, groupId, content) {
   return data;
 }
 
+// Resultado do agente de ops → grupo. Passa pelo sanitizador (markdown não renderiza no
+// WhatsApp) e sai em mensagens de tamanho legível, em série pra não embaralhar a ordem no
+// espelho. Divide em vez de truncar: num relatório de auditoria a conclusão fica no fim.
+async function postOpsResult(supabase, groupId, texto) {
+  const partes = dividirParaWhatsApp(paraWhatsApp(texto));
+  if (!partes.length) {
+    return postTomText(supabase, groupId, 'Terminei, mas voltei sem texto nenhum — isso é bug meu. Pede de novo?');
+  }
+  let ultimo = null;
+  for (const parte of partes) ultimo = await postTomText(supabase, groupId, parte);
+  if (partes.length > 1) console.log(`[OpsAgent] resposta em ${partes.length} mensagens`);
+  return ultimo;
+}
+
 async function processGroupChatMessage({ supabase, groupId, senderCollabId, text }) {
   // ── CANAL DE OPS (grupo LA ORGANIZER - TOM) ────────────────────────────────────────────
   // Neste grupo o TOM não é assistente: é o agente de engenharia do Alf e do Hugo, com
@@ -113,7 +128,7 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
     // curto: segurar o turno até o fim penduraria a fila inteira. Então confirma na hora e
     // devolve o resultado quando terminar, num segundo post.
     opsAgent.runOpsAgent(text, { quem })
-      .then((r) => postTomText(supabase, groupId, r.text))
+      .then((r) => postOpsResult(supabase, groupId, r.text))
       .catch((e) => postTomText(supabase, groupId, `Quebrei no meio disso aqui: ${e.message}`))
       .catch((e) => console.error('[OpsAgent] falha ao postar resultado:', e.message));
 
@@ -564,4 +579,4 @@ function friendlyTaskFail(why) {
   return MAP[why] || 'não consegui registrar';
 }
 
-module.exports = { processGroupChatMessage, loadContext, ACTIONS_DELIM, buildTomContent, friendlyTaskFail };
+module.exports = { processGroupChatMessage, loadContext, ACTIONS_DELIM, buildTomContent, friendlyTaskFail, postOpsResult };
