@@ -14,10 +14,25 @@
 // nascida de data errada tem a aritmética toda contaminada ("2 dias" de atraso) e não é
 // salvável por regex.
 
+// Dia-da-semana opcional entre o "(" e a data: "amanhã (sex 07/08)". Caso do Alf, 05/08 —
+// era quarta, "amanhã" = 06/08, e ele escreveu 07/08; o auto-retry então gravou 07/08 na
+// tarefa. O detector passava batido porque só aceitava a data colada no rótulo. Pior: este é
+// o formato que o TOM MAIS produz, porque é o da TABELA DE DATAS do prompt ("sex 07/08") —
+// o formato mais provável era exatamente o único cego.
+// Lista fechada de propósito, não `\p{L}+`: com palavra livre, "amanhã (confirmar 07/08)"
+// casaria e a neutralização engoliria o "confirmar", quebrando a frase.
+// Grupo NÃO-capturante — os índices 1..5 são lidos por posição no neutraliza.
+const _DIA_SEMANA = String.raw`(?:(?:seg|ter|qua|qui|sex|s[áa]b|dom)[\p{L}-]*\.?[ \t]+)?`;
+
 // `\b` em JS é ASCII: `\bamanhã\b` NÃO casa (o "ã" não é word char). Daí os lookarounds \p{L}.
 // Só liga quando a data está GRUDADA no rótulo — separada apenas por espaço, "é", pontuação
-// leve ou tag HTML (a memória de longo prazo é HTML). "pra hoje? Vence 12/08" não casa.
-const RE_DATA_AFIRMADA = /(?<![\p{L}])(hoje|ontem|amanhã|amanha)(?![\p{L}])[ \t]*(?:é|eh)?[ \t]*[,:–—-]?[ \t]*(?:<[a-z/][^>]{0,24}>)*[ \t]*(\()?[ \t]*(\d{1,2})\/(\d{1,2})(?:\/\d{2,4})?(?:[ \t]*(\)))?/giu;
+// leve, tag HTML (a memória de longo prazo é HTML) ou dia-da-semana. "pra hoje? Vence 12/08"
+// não casa.
+const RE_DATA_AFIRMADA = new RegExp(
+  String.raw`(?<![\p{L}])(hoje|ontem|amanhã|amanha)(?![\p{L}])[ \t]*(?:é|eh)?[ \t]*[,:–—-]?[ \t]*(?:<[a-z/][^>]{0,24}>)*[ \t]*(\()?[ \t]*`
+  + _DIA_SEMANA
+  + String.raw`(\d{1,2})\/(\d{1,2})(?:\/\d{2,4})?(?:[ \t]*(\)))?`,
+  'giu');
 
 const DELTA = { hoje: 0, ontem: -1, amanhã: 1, amanha: 1 };
 

@@ -63,6 +63,67 @@ test('detecta o caso real da Rose: ele contradiz o proprio rotulo do pool', () =
   assert.equal(achados[0].esperado, '05/08');
 });
 
+// CASO REAL DO ALF (05/08 22:13) — quarta, "amanhã" era 06/08 e ele escreveu "(sex 07/08)".
+// O detector passava batido porque só aceitava a data colada no rótulo: "(07/08)" pegava,
+// "(sex 07/08)" não. E o dia-da-semana no parêntese é justamente o formato que o TOM copia
+// da TABELA DE DATAS do prompt — ou seja, o formato mais provável era o único cego.
+test('pega dia-da-semana dentro do parenteses (formato da tabela de datas)', () => {
+  const achados = detectaDataAfirmadaErrada(
+    'Os calendários das escolas — reagendei pra amanhã (sex 07/08) e coloquei lembrete ao meio-dia.',
+    '2026-08-05');
+  assert.equal(achados.length, 1);
+  assert.equal(achados[0].rotulo, 'amanhã');
+  assert.equal(achados[0].disse, '07/08');
+  assert.equal(achados[0].esperado, '06/08');
+});
+
+test('aceita o dia-da-semana abreviado, por extenso e com -feira', () => {
+  for (const dia of ['sex', 'sex.', 'sexta', 'sexta-feira', 'qui', 'sáb', 'sab', 'dom', 'seg', 'ter', 'qua']) {
+    const achados = detectaDataAfirmadaErrada(`reagendei pra amanhã (${dia} 07/08)`, '2026-08-05');
+    assert.equal(achados.length, 1, `nao pegou com "${dia}"`);
+    assert.equal(achados[0].esperado, '06/08');
+  }
+});
+
+test('dia-da-semana no parenteses NAO acusa quando a data esta certa', () => {
+  assert.deepEqual(detectaDataAfirmadaErrada('reagendei pra amanhã (qui 06/08)', '2026-08-05'), []);
+  assert.deepEqual(detectaDataAfirmadaErrada('a lista de hoje (qua 05/08)', '2026-08-05'), []);
+});
+
+test('neutraliza tambem some com o dia-da-semana, sem deixar parentese orfao', () => {
+  assert.equal(neutralizaDataAfirmada('reagendei pra amanhã (sex 07/08) e pronto'),
+    'reagendei pra amanhã e pronto');
+  assert.equal(neutralizaDataAfirmada('lista de hoje (qua 05/08):'), 'lista de hoje:');
+});
+
+// Palavra que não é dia-da-semana continua barrando o casamento: sem isso, "amanhã (confirmar
+// 07/08)" viraria "amanhã" e a frase perderia sentido ao ser neutralizada.
+test('palavra qualquer no parenteses nao é tratada como dia-da-semana', () => {
+  assert.deepEqual(detectaDataAfirmadaErrada('amanhã (confirmar 07/08)', '2026-08-05'), []);
+  const t = 'amanhã (confirmar 07/08)';
+  assert.equal(neutralizaDataAfirmada(t), t);
+});
+
+// O fluxo que o guard do auto-retry executa (engine.js, AUTO_RETRY_DATE_POISON). O mini-prompt
+// do retry é um conversor texto→marker: se a data errada sobrevive no texto, ela vira due_date.
+// Depois de neutralizar, sobra "amanhã" — e a âncora do próprio mini-prompt resolve certo.
+test('fluxo do auto-retry: reply envenenado vira reply que a ancora resolve (caso Alf)', () => {
+  const reply = 'Os calendários das escolas — reagendei pra amanhã (sex 07/08) e coloquei lembrete ao meio-dia.';
+  const HOJE = '2026-08-05'; // quarta — amanhã era 06/08
+
+  assert.equal(detectaDataAfirmadaErrada(reply, HOJE).length, 1, 'o guard precisa acusar');
+
+  const limpo = neutralizaDataAfirmada(reply);
+  assert.ok(!limpo.includes('07/08'), `data errada chegaria ao conversor: ${limpo}`);
+  assert.ok(/amanhã/.test(limpo), 'o termo relativo tem que sobrar pra âncora resolver');
+  assert.ok(/lembrete ao meio-dia/.test(limpo), 'o resto da promessa não pode ser perdido');
+});
+
+test('reply com data CERTA passa intacto — o guard não age à toa', () => {
+  const reply = 'reagendei pra amanhã (qui 06/08) e coloquei lembrete ao meio-dia.';
+  assert.deepEqual(detectaDataAfirmadaErrada(reply, '2026-08-05'), []);
+});
+
 test('texto vazio ou nulo nao quebra', () => {
   assert.equal(neutralizaDataAfirmada(null), '');
   assert.equal(neutralizaDataAfirmada(''), '');

@@ -62,6 +62,7 @@ const { classifyDupChoice, pickFreshDupBypassIntent, pickDupBypassIntentForReply
 const { buildClosingItems, parseClosingReply } = require('./utils/closing-reply');
 const { normalizeHabitAliases } = require('./utils/habit-field-alias');
 const { normalizeHabitFrequency } = require('./utils/habit-frequency');
+const { detectaDataAfirmadaErrada, neutralizaDataAfirmada } = require('./utils/date-claim');
 const { buildCoordinationResponseNotification, safeResponseSummary } = require('./services/coordination-notify');
 const { isContextQuietField, validateContextQuietField } = require('./services/prefs-quiet-context');
 const pendingInventoryPhoto = require('./services/pending-inventory-photo');
@@ -12996,6 +12997,24 @@ async function processMessage(phone, text, raw = {}) {
               d.setUTCDate(d.getUTCDate() + 1);
               return d.toISOString().slice(0,10);
             })();
+            // ANTI-ENVENENAMENTO DO RETRY (caso Alf, 05/08 22:13)
+            // Este mini-prompt é um conversor texto→marker: a fala do TOM é a fonte de verdade
+            // dele. Quando essa fala traz data ERRADA, o retry a persiste — foi assim que
+            // "reagendei pra amanhã (sex 07/08)" numa QUARTA gravou due_date=07/08 na tarefa,
+            // com o contexto abaixo dizendo, corretamente, que amanhã era 06/08. O texto
+            // explícito ganhou da âncora.
+            // Só age quando o detector acusa divergência real: com a data certa, nada muda —
+            // e "amanhã" sozinho o LLM resolve pela âncora que já está aqui.
+            const _datasErradas = detectaDataAfirmadaErrada(reply, todayBrt);
+            const _replyParaRetry = _datasErradas.length
+              ? neutralizaDataAfirmada(String(reply || ''))
+              : String(reply || '');
+            if (_datasErradas.length) {
+              const _det = _datasErradas.map((d) => `${d.rotulo}=${d.disse}(era ${d.esperado})`).join(', ');
+              console.warn(`[Engine] AUTO_RETRY_DATE_POISON — neutralizei antes do retry: ${_det}`);
+              await logMarker(collab.id, 'AUTO_RETRY_DATE_POISON', 'rejected', _det, String(reply || '').slice(0, 300));
+            }
+
             const miniSys = `Você é um conversor mecânico texto→marker. Sua única saída é UM marker JSON, sem nenhum texto fora dele.
 
 Contexto:
@@ -13003,7 +13022,7 @@ Contexto:
 - Data amanhã (BRT): ${tomorrowBrt}
 - Colaborador: ${collab.full_name || '?'} (role=${collab.role || '?'})
 - User disse: "${String(text || '').slice(0, 500)}"
-- TOM respondeu verbalizando promessa: "${String(reply || '').slice(0, 900)}"
+- TOM respondeu verbalizando promessa: "${_replyParaRetry.slice(0, 900)}"
 
 TOM verbalizou um LEMBRETE COM HORÁRIO mas esqueceu de emitir o marker. Sua tarefa: emitir o marker SÓ se houver um horário/data explícito na promessa.
 

@@ -13,10 +13,44 @@ irmãos, e só valem quando você precisar deles:
 
 ## PRÓXIMO PASSO (é só isto)
 
-**3 findings de data errada no reagendamento** ("amanhã" resolvido errado). Depois: 3 de
-proativo em dia de descanso (**checar antes se o DND por dia da semana já existe** — a Ana
-Paula pergunta como configurar, assinatura de `project_tom_nega_capacidade`) e as medições
-de 15/08.
+**3 findings de proativo em dia de descanso.** **Checar antes se o DND por dia da semana já
+existe** — a Ana Paula pergunta como configurar, assinatura de `project_tom_nega_capacidade`.
+Depois, as medições de 15/08.
+
+### ✅ DATA ERRADA NO REAGENDAMENTO — FECHADO (08/08 22:30 UTC)
+
+Eram 3 findings. **2 refutados no literal, 1 real** — e a raiz não era nenhuma das suspeitas
+óbvias (nem fuso, nem o fluxo principal).
+
+- **Rafinha 01/08 — REFUTADO.** O literal diz "Reagendado pra amanhã! Igreja Bangu —
+  **domingo 02/08**". Sábado + 1 = domingo 02/08: o TOM acertou. Errado estava o *resumo* do
+  auditor. (De novo: `project_finding_resumo_nao_e_literal`.)
+- **Anne Susan 05/08 — REFUTADO como data.** Ela pediu "me lembra no dia 7", ele entendeu
+  "amanhã" — compreensão de áudio, não aritmética; na correção acertou "dia 7 (sexta)".
+- **Alf 05/08 — REAL.** Virou `AUTO-RETRY-DATE-POISON-FROM-REPLY`, corrigido.
+
+**A raiz:** o TOM narrou "reagendei pra amanhã (sex 07/08)" numa quarta; o
+`ACTIONABLE_NO_MARKER` viu texto acionável sem marker e disparou o `TASK_UPDATE_AUTO_RETRY`,
+que **gravou 07/08 na tarefa**. O mini-prompt do retry é um conversor texto→marker: a fala do
+TOM é a fonte de verdade dele, e a data explícita no texto ganhou da âncora — que estava
+certa ali dentro.
+
+⚠️ **A LIÇÃO QUE CUSTOU 8 TENTATIVAS EM BRANCO: reproduza com a ENTRADA REAL DO TURNO, não
+com o pedido original da conversa.** Eu alimentava o áudio completo ("...colocar pra
+amanhã...") e o modelo acertava 4/4 — parecia que o bug não existia. No turno do retry o
+texto do usuário era só **"O q?"** (está no `reason` do `marker_logs`). Sem termo temporal no
+pedido, o modelo copia a data do reply: **2 erros em 4**. Depois do fix, 0/4.
+
+🔑 **O achado de maior alcance foi de graça, no meio do caminho:** `detectaDataAfirmadaErrada`
+(`utils/date-claim`, no ar desde 06/08) era **cego** ao formato `amanhã (sex 07/08)` — só
+pegava `(07/08)`. E o dia-da-semana no parêntese é o formato que o TOM **mais** produz,
+porque é o da TABELA DE DATAS do prompt. *O formato mais provável era o único cego.* Isso
+valia também pro **chat de grupo**, que já usava o detector e onde a taxa medida é 42%.
+
+📏 **Medição do 1:1 (45 dias):** "amanhã (DD/MM)" em 37 falas, **1 errada de verdade**. Meu
+primeiro número foi 6 — os outros 5 caíram ao abrir o literal (o regex casava `07/20` dentro
+de "Fechar folha 07/**2026**", e "Semana (**25/07**–31/07)" depois de "hoje"). **Grep de data
+com janela de N caracteres infla; datar e abrir o literal desinfla.**
 
 ### ✅ DIGEST PROATIVO — NO AR (08/08 22:05 UTC)
 
@@ -331,12 +365,11 @@ Confabulação **−85%**. `dropped_request` caiu só 56% e virou a categoria **
 
 ## FILA (em ordem)
 
-1. **3 findings de data errada no reagendamento** ainda vivos ("amanhã" resolvido errado).
-   O agente já apontou um caso com prova no banco: "Calendários das escolas" ficou com
-   `due_date` 2026-08-07 quando o pedido de quarta 05/08 dizia "amanhã" (= 06/08). O fix de
-   08/08 é de dia-da-semana relativo ("terça que vem"), **não cobre "amanhã"**.
-3. **Medir a F3 + o sanitizador** por volta de 15/08 — ver acima. Junto: conferir se o digest
-   das 07:30 chegou nos dias em que houve achado.
+1. **3 findings de proativo em dia de descanso** — checar se o DND por dia já existe ANTES de codar.
+3. **Medir a F3 + o sanitizador** por volta de 15/08 — ver acima. Junto: (a) conferir se o
+   digest das 07:30 chegou nos dias em que houve achado; (b) contar `AUTO_RETRY_DATE_POISON`
+   em `marker_logs` — se aparecer, o guard está pegando envenenamento de verdade; se ficar
+   zero, ou o TOM parou de errar data ou o auto-retry (9 em 45 dias) simplesmente não rodou.
 5. **3 de proativo em dia de descanso** — checar se o DND por dia já existe ANTES de codar.
 6. **Medir a Fatia A** (fecha a Task 7) — ligada em 08/08 15:25 UTC. Olhar
    `[TaskTarget] serie` nos logs e `TASK_TARGET_AMBIGUOUS` em `marker_logs`.
