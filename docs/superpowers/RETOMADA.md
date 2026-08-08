@@ -13,8 +13,41 @@ irmãos, e só valem quando você precisar deles:
 
 ## PRÓXIMO PASSO (é só isto)
 
-**Tarefa que VENCE em dia não-útil** (3 findings, família nova — ver abaixo). Depois, as
-medições de 15/08.
+**Precisão do `ACTIONABLE_NO_MARKER`** — hoje é ~100% falso positivo e polui o relatório
+das 07h todo dia. Ver abaixo. Depois, as medições de 15/08.
+
+### 🔍 `ACTIONABLE_NO_MARKER`: 18 alertas em 14 dias, ZERO reais (08/08)
+
+Eu tinha recomendado atacar a família "confirmou e não fez" **por causa deste número**: 18
+ocorrências em 14 dias, a última na manhã de hoje — o sinal mais vivo do sistema. Abri os 18
+literais e **nenhum é "prometeu e não fez"**:
+
+| o que era de verdade | quantos |
+|---|---|
+| conversa, listagem ou pergunta do TOM ("A frota chegou, Alf! 🛸") | ~11 |
+| memória gravada certo, só não via marker de tarefa (Matheus, 3×) | 3 |
+| recuperado pelo auto-retry no mesmo turno (Alf, Arthur) | 2 |
+| ação já executada no turno anterior (Jereh, Rose) | 2 |
+
+O caso do Matheus é o mais instrutivo: ele pediu *"Salva isso na tua memória aí"*, o TOM
+respondeu *"Anotado e salvo"* às **10:02** — e `collaborator_memory` tem a regra gravada,
+`is_active=true`, às **10:02**. O detector só olha marker de tarefa; memória e prefs passam
+por fora e viram falso alarme.
+
+**Por que isso importa e não é só métrica:** `checkActionableNoMarker` é check dedicado do
+health-check e o dispatcher **sempre mostra as amostras** no relatório das 07h — Alf e Hugo
+recebem esse ruído diariamente. Alarme que erra sempre deixa de ser lido, e aí o dia em que
+for real ninguém vê.
+
+⚠️ **TERCEIRA VEZ NO MESMO DIA que um número grande morre no literal:** 242 `schema_invalid`
+→ 4; 6 erros de data → 1; 18 `ACTIONABLE_NO_MARKER` → 0. **Nesta casa, contagem de marcador
+é hipótese até abrir os literais** — inclusive quando é ela que está sustentando a minha
+própria recomendação (foi o caso aqui).
+
+**Onde mexer:** `checkActionableNoMarker` (health-check.js:256) já filtra "benignos em JS".
+O filtro precisa aprender: (a) resposta que é listagem/pergunta não é promessa; (b) se houve
+`MEMORY`/`PREFS_UPDATE` no mesmo turno, a ação ACONTECEU; (c) se o auto-retry recuperou,
+não é falha. Antes de mexer, medir a taxa atual pra ter baseline.
 
 ### ✅ PROATIVO EM DIA DE DESCANSO — NADA A CODAR (08/08)
 
