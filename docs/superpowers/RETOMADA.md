@@ -13,8 +13,10 @@ irmãos, e só valem quando você precisar deles:
 
 ## PRÓXIMO PASSO (é só isto)
 
-**🤖 O agente de governança** (seção própria abaixo — pedido explícito do Alf). O Dreams foi
-auditado em 08/08; resultado logo abaixo.
+**Digest automático dos findings no grupo.** O canal de ops **já está no ar** e funciona sob
+demanda (seção do agente abaixo). O que falta é o TOM levar os achados **sem ninguém pedir**:
+hoje `auditConversation` roda no Dream, grava em `tom_audit_findings` e ninguém vê — foi isso
+que deixou 209 findings parados.
 
 Depois dele: 3 findings de data errada no reagendamento, 3 de proativo em dia de descanso
 (**checar antes se o DND por dia da semana já existe** — a Ana Paula pergunta como
@@ -154,7 +156,45 @@ precisa nascer com:
 - **trilha de auditoria**: quem pediu, o que rodou, resultado;
 - **kill switch por env var**, no padrão das outras flags.
 
-### Plano em 3 fases (a ordem importa: entrega valor antes de ganhar poder)
+### ✅ FASE "PODER TOTAL" — NO AR (08/08 21:30 UTC)
+
+O Alf recusou o faseamento — ele é desenvolvedor, o Hugo é coordenador de tecnologia, e os
+dois assumem a responsabilidade. Liberado de uma vez.
+
+**`src/services/ops-agent.js`** roda o CLI `claude` na VPS com ferramentas habilitadas
+(`Bash Read Write Edit Grep Glob WebFetch`) e `cwd` no repositório. Isso dá, de fato: git,
+shell na VPS e banco (script node sobre `src/supabase/client`, service_role). Modelo
+**`claude-opus-5`** (o alias `opus` resolve pra 4.7 — tem que ser o ID completo).
+
+**Caminho SEPARADO do `ai/claude.js`**, que segue com `--tools ''`: o TOM que fala com ~30
+pessoas não pode executar nada, e spawns distintos garantem que mexer aqui não vaze pra lá.
+
+**Gate de duas condições, em código:** `group_id` é o de ops **E** `sender_id` está na
+allowlist. Prompt não é controle de acesso — pedido de terceiro colado no grupo não vira
+comando, porque quem manda é o `senderCollabId` que o bridge resolveu. Fail-closed em tudo.
+
+Env na VPS (backup do `.env` feito antes): `TOM_OPS_ENABLED=1`,
+`TOM_OPS_GROUP_ID=b3bd198a-…`, `TOM_OPS_ALLOWLIST=<alf>,<hugo>`,
+`TOM_OPS_MODEL=claude-opus-5`. **Kill switch: `TOM_OPS_ENABLED=0` + restart.**
+
+Resposta é assíncrona: confirma na hora e entrega depois, porque o watcher do grupo é poll
+curto e segurar o turno penduraria a fila.
+
+⚠️ **Pegadinha da VPS:** `--permission-mode bypassPermissions` é **recusado pelo CLI rodando
+como root**, e a VPS é root. O acesso vem de allowlist explícita de ferramentas
+(`--allowedTools`), que não exige bypass. Testado: `permission_denials: []`.
+
+**Provado na VPS, num pedido só:** hash do último commit (`9a8af1d`), 9 KIs abertos **lidos
+do banco**, uptime 116d. 23s, **US$ 0,27** — custo por pedido é real, uma auditoria grande
+vai custar mais.
+
+**Ainda não feito:** o digest automático dos findings (abaixo). Hoje o canal é sob demanda —
+eles pedem, ele faz.
+
+### Plano em 3 fases — SUPERADO pelo acima, mantido só pelo que sobrou
+
+A Fase 2 (gate) e a Fase 3 (correção) saíram juntas em 08/08. **Sobrou a Fase 1**, que é a
+única que ainda agrega: o digest automático.
 
 **FASE 1 — ENTREGAR (próximo passo, sem risco).** Digest diário dos findings novos no grupo,
 logo depois do Dream. Hoje ninguém vê o que a auditoria acha; só isso já resolve o problema
@@ -245,6 +285,7 @@ Fechado em 08/08:
 | **Recado morto por `mode` inválido/ausente** (coordenação) | 08/08 19:57 UTC |
 | Dreams auditado (execução 37/37 ok) + **memória relativa sem data no 1:1** | 08/08 20:45 UTC |
 | Grupo `LA ORGANIZER - TOM` ligado e testado nos dois sentidos | 08/08 21:05 UTC |
+| **Canal de ops NO AR** — TOM com git+banco+VPS em Opus 5, gate de 2 condições | 08/08 21:30 UTC |
 
 Governança: auditoria auditada, migration de reverificação aplicada, fila `alto` triada
 (21 → 13 fechados, 4 vivos, 4 aguardando), 3 famílias viraram KI rastreável.
@@ -256,7 +297,7 @@ Confabulação **−85%**. `dropped_request` caiu só 56% e virou a categoria **
 
 ## FILA (em ordem)
 
-1. **🤖 AGENTE DE GOVERNANÇA** — seção própria acima. Pedido explícito do Alf: não esquecer.
+1. **Digest automático dos findings no grupo** (acima). O canal de ops já está no ar.
 3. **Medir a F3 + o sanitizador** por volta de 15/08 — ver acima.
 4. **3 findings de data errada no reagendamento** ainda vivos ("amanhã" resolvido errado).
 5. **3 de proativo em dia de descanso** — checar se o DND por dia já existe ANTES de codar.
