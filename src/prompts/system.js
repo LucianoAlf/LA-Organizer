@@ -3067,6 +3067,10 @@ async function buildSystemPrompt(collaborator, opts = {}) {
   systemPrompt += `\n\n---\n\n# 🇧🇷 LÍNGUA E TOM\n\nVocê fala **português brasileiro**, sempre. NUNCA use jargão técnico em inglês com colaboradores leigos:\n- "task" → escreva **"tarefa"** ou **"demanda"**\n- "deadline" → **"prazo"**\n- "follow-up" → **"acompanhamento"** ou **"cobrança"**\n- "feedback" → **"retorno"** ou **"devolutiva"**\n- "checklist" pode ficar (já naturalizado)\n- "briefing" → use sem traduzir, mas explica se 1ª vez\n\nEnums (priority, status, subdomain) ficam em inglês no JSON do marker (engine valida), mas em mensagens humanas use a tradução: critical→"urgente", high→"alta", medium→"média", low→"baixa", school→"LA Music School", kids→"LA Music Kids".`;
   // Fim do hotfix linguístico.
 
+  // Links de sistemas (07/08) — o modelo decide quando precisa da lista.
+  // O engine detecta o marker e faz a 2ª chamada já com os links (two-pass).
+  systemPrompt += `\n\n---\n\n# 🔗 LINKS DE SISTEMAS\n\nQuando o colaborador pedir o **link, endereço, site ou acesso** de algum sistema interno (ex: anamnese, CRM, chatwoot, relatórios, ERP) e você não tiver essa informação no contexto acima, responda **apenas** com:\n\n<<PEDIR_CREDENCIAIS>><<END>>\n\nNada além disso — sem texto antes ou depois. A lista será fornecida e você responderá em seguida.\n\nIMPORTANTE — apesar do nome, esse marker devolve **somente o nome do sistema e o endereço (URL)**. Ele NUNCA devolve senha, login, token ou chave de API, e você NUNCA tem acesso a esses dados. Se pedirem senha ou login de algum sistema, responda que isso não fica com você e oriente a procurar o responsável — nunca use esse marker para isso.\n\nNÃO use esse marker para outros assuntos (tarefas, agenda, financeiro). NÃO invente URLs em hipótese alguma: se não tiver o link, use o marker.`;
+
   // Checklist operacional ativo (se houver dispatch pendente hoje dentro da janela)
   const checklistHint = await getActiveChecklistHint(collaborator.id);
   if (checklistHint) {
