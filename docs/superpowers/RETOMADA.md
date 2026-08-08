@@ -13,28 +13,24 @@ irmãos, e só valem quando você precisar deles:
 
 ## PRÓXIMO PASSO (é só isto)
 
-**Implementar o `complete_confirm`** — KI `TASK-CONFIRM-DONE-NOOP`, 8 ocorrências em 10 dias,
-a dor de maior volume hoje.
+**Investigar a F3 do `TASK-CONFIRM-DONE-NOOP`** — o que sobrou dele depois de 08/08.
 
-**Raiz já confirmada:** não existe intent de confirmação de CONCLUSÃO. `VALID_KINDS` em
-`src/services/pending-intents.js:25` tem `task_creation`, `event_creation`,
-`reschedule_confirm`, `event_create_confirm`… e nenhum para concluir. Quando o TOM pergunta
-"posso dar baixa?" e a pessoa diz "Sim rolou", a execução depende do **LLM re-emitir o marker**
-— e ele não re-emite. Por isso ele repete a pergunta e a tarefa segue cobrando.
+São os casos em que o TOM diz **"não consegui dar baixa agora"** ou **"tive um problema
+técnico"** (Rafinha 17/07 e 23/07, Peterson 22/07). Ali o marker FOI emitido e o **apply
+falhou** — é outra coisa, e a raiz nunca foi investigada.
 
-**Caminho (espelhar o `reschedule_confirm`, que já resolveu isso no reagendamento):**
-1. Detector que abre o intent quando o TOM pergunta se pode concluir.
-2. `openIntent(collab.id, 'complete_confirm', { actions })` com as tarefas **já resolvidas** —
-   molde em `engine.js` ~10837.
-3. Resolução determinística no início do `processMessage`, junto do bloco de
-   `reschedule_confirm` em `engine.js` ~8713 (janela `withinConfirmWindow` de 15 min;
-   "sim" aplica, "não" resolve como `denied`).
+**Caminho:** achar o ramo que emite essas duas frases literais e **contar os motivos de
+falha, todos** (lição do audit 25/06: contar TODOS os ramos de falha, não parar no primeiro).
 
-⚠️ **DUAS PORTAS:** kind novo entra em `VALID_KINDS` **e** no CHECK da tabela no banco. Só no
-banco → `openIntent` **lança**, cai no catch do ramo e o apply é pulado **em silêncio**. Já
-aconteceu com o próprio `reschedule_confirm` (comentário em `pending-intents.js:21`).
+⚠️ **NÃO comece por `complete_confirm`/`reschedule_confirm` — não é a raiz.** A entrada
+anterior deste arquivo mandava implementar um `complete_confirm` e estava **errada**: a intent
+já existe (`kind confirmation` + `payload.batch_complete`) e o executor determinístico também
+(`executeBatchComplete`, `engine.js` ~10060) — ele já rodou com sucesso 22 vezes. O que
+faltava era **reconhecer a resposta**, e isso foi corrigido em 08/08.
 
-Verificar também se `TASK-RESCHEDULE-CONFIRM-NOOP` (aberto) não é a mesma raiz.
+Se um dia precisar mesmo de um kind novo: ⚠️ **DUAS PORTAS** — entra em `VALID_KINDS`
+(`pending-intents.js:25`) **e** no CHECK da tabela. Só no banco → `openIntent` **lança**, cai
+no catch do ramo e o apply é pulado **em silêncio**.
 
 ---
 
@@ -53,6 +49,7 @@ Fechado em 08/08:
 | Auto-deploy morto há 5 dias | `860295aa` |
 | Cascata de pacote no reschedule (caso Rose) | `9c4a4694` |
 | "terça que vem" caindo na abstenção | `00ff628a` |
+| **"Siim" e "Todas feitas" não confirmavam** (2 KIs) | 08/08 18:17 UTC |
 
 Governança: auditoria auditada, migration de reverificação aplicada, fila `alto` triada
 (21 → 13 fechados, 4 vivos, 4 aguardando), 3 famílias viraram KI rastreável.
@@ -64,7 +61,7 @@ Confabulação **−85%**. `dropped_request` caiu só 56% e virou a categoria **
 
 ## FILA (em ordem)
 
-1. **`TASK-CONFIRM-DONE-NOOP`** — implementar (acima). 8 casos.
+1. **`TASK-CONFIRM-DONE-NOOP` — só a F3** (acima). 3 casos; F1 e F2 fechadas em 08/08.
 2. **`TOM-AFIRMA-DEPOIS-DESMENTE`** — 5 casos. O chokepoint de honestidade dispara DEPOIS da
    afirmação; as duas frases convivem e a pessoa não sabe em qual acreditar. Provável caminho:
    sanitizar a afirmação ANTES do envio quando o marker não foi aplicado.
@@ -85,6 +82,14 @@ Confabulação **−85%**. `dropped_request` caiu só 56% e virou a categoria **
 - **Prova de reversão sempre.** Rodar o teste contra o código ANTES do fix: se não reproduzir o
   bug, o teste não mede nada. Foi assim que o cenário B passou verde sem tocar na linha que
   dizia testar.
+- **O resumo do finding NÃO é a fala da pessoa.** O finding da Vitoria dizia `USUÁRIO:
+  "Confirmado"` — ela escreveu **"Siim"**. Um dá `yes` no detector, o outro dava `null`, e a
+  diferença era o bug inteiro. Puxar sempre o literal de `conversation_history` antes de
+  concluir qualquer coisa sobre o que o usuário disse.
+- **Raiz escrita num KI é hipótese até alguém ir ao banco.** A raiz que eu havia registrado
+  em `TASK-CONFIRM-DONE-NOOP` ("falta um `complete_confirm`") estava errada — a intent e o
+  executor já existiam. Rodar o caso contra o código real custa minutos e evita construir
+  a coisa errada.
 - **`incident_at`, nunca `created_at`**, ao comparar finding com data de fix.
 - **Agrupar por família antes de priorizar por severidade.** Severidade mede o caso, não a
   frequência da causa — as 3 famílias eram todas `medio` e por isso invisíveis.

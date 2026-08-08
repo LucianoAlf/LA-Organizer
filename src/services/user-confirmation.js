@@ -13,10 +13,32 @@
 // Confirma?". Fix: `s+\b` reconhece "s"/"ss"/"sss". Gated pelo contexto (só há confirmação
 // quando há intent aberta) → risco de falso-positivo mínimo; `\b` barra "saldo"/"sexta".
 
+// CONFIRM-ELONGATION-BLIND (Vitoria 27/07) — alongar letra é a forma NORMAL de escrever
+// no WhatsApp, e QUALQUER alongamento zerava a detecção: "Siim", "okk", "beleeza", "issso"
+// e até "Nãoo" davam null. No caso medido, a intent com batch_complete[9] estava aberta e
+// os 9 short-ids resolviam 9/9 — só o "Siim" impediu o executor determinístico de rodar;
+// o LLM re-emitiu, o guard A2 re-perguntou, e as 9 tarefas seguiram `pending` por 12 dias.
+//
+// Duas variantes porque colapsar sempre até 1 letra QUEBRA tokens de dupla legítima
+// ("issso" → "iso" não casaria `isso`, mas → "isso" casa). Aplicadas em CASCATA e só
+// quando a leitura literal deu null: nenhum resultado existente muda de valor, então é
+// zero-regressão por construção — o colapso só transforma "não reconheci" em resposta.
+const collapseTo2 = (t) => t.replace(/(\p{L})\1{2,}/gu, '$1$1');
+const collapseTo1 = (t) => t.replace(/(\p{L})\1+/gu, '$1');
+
 function detectUserConfirmation(userText, opts = {}) {
   if (typeof userText !== 'string') return null;
   const t = userText.toLowerCase().trim();
   if (!t || t.length > 200) return null;  // só pegamos respostas curtas
+  // Literal primeiro; só depois as formas desalongadas (ver collapseTo2/collapseTo1).
+  for (const cand of [t, collapseTo2(t), collapseTo1(t)]) {
+    const r = classify(cand, opts);
+    if (r) return r;
+  }
+  return null;
+}
+
+function classify(t, opts = {}) {
   const _nWords = t.split(/\s+/).length;
 
   // BATCH-CONFIRM-LONGPHRASE (Daiana 22/06): confirmação AFIRMATIVA que abre com afirmador
@@ -57,15 +79,24 @@ function detectUserConfirmation(userText, opts = {}) {
   const YES_RE = /^(sim\b|s[i]m\b|s+\b|ok\b|okay\b|pode\b|cria\b|cri[ae]m?\b|manda\b|manda\s+ver|fechou\b|fechado\b|beleza\b|blz\b|isso\b|isso\s+mesmo|claro\b|t[áa](?=$|[\s.,!?;:)])|t[áa]\s+certo|vai\b(?!\s+dar)|vai\s+(?:criando|criar|fazendo)|bora\b|perfeito\b|exato\b|confirmad[oa]\b|confirmo\b|confirma\b|confirmar\b|confirmei\b|👍)/;
   if (YES_RE.test(t)) return 'yes';
   // "vai criando aí"
-  if (/vai\s+criando\s+a[íi]?/i.test(userText)) return 'yes';
+  if (/vai\s+criando\s+a[íi]?/i.test(t)) return 'yes';
   // GUARD-CONFIRM-LOOP (Matheus 10/06): vocabulário de CONCLUSÃO ("já conclui",
   // "já foi feito", "feito", "fiz") — SÓ quando o chamador indica intent ancorada
   // de complete (opts.allowDone): a pergunta foi "confirma que já foi feito?" e
   // essas são as respostas literais. NUNCA entra no YES genérico — "feito" solto
   // confirmaria intent não-relacionada (família de risco do "aprovado"/APROVACAO-SEM-FUNIL).
   if (opts.allowDone) {
-    const DONE_RE = /^(j[áa]\s+)?(foi\s+|t[áa]\s+|est[áa]\s+)?(conclu[ií](?:d[oa])?|fiz\b|feit[oa]\b|finalizei|finalizad[oa]|terminei|terminad[oa]|pront[oa]\b|resolvi\b|resolvid[oa]|fechei\b)/;
+    // CONFIRM-QUANTIFIER-BLIND (Yuri 28/07): o DONE_RE é ancorado em `^`, então o verbo de
+    // conclusão precisava vir PRIMEIRO — "já fiz todas" casava, "Todas feitas" não. E
+    // "todas feitas" é a resposta mais natural a "das suas 3 coisas: 1… 2… 3… fez?".
+    // QUANT entra como prefixo OPCIONAL (nada que casava antes deixa de casar) e os
+    // particípios ganham plural, que só existe junto do quantificador ("feitas", "prontas").
+    const QUANT = String.raw`(?:tudo|todas|todos|toda|tds|td)\s+(?:as?\s+)?(?:\d+\s+)?`;
+    const DONE_RE = new RegExp(String.raw`^(?:${QUANT})?(j[áa]\s+)?(foi\s+|t[áa]\s+|est[áa]\s+)?(conclu[ií](?:d[oa]s?)?|fiz\b|feit[oa]s?\b|finalizei|finalizad[oa]s?|terminei|terminad[oa]s?|pront[oa]s?\b|resolvi\b|resolvid[oa]s?|fechei\b)`);
     if (DONE_RE.test(t)) return 'yes';
+    // "todas já foram" / "tudo foi" — auxiliar SOZINHO só confirma atrás do quantificador,
+    // senão "foi ele" viraria confirmação.
+    if (new RegExp(String.raw`^(?:${QUANT})(j[áa]\s+)?(?:foram|foi)\b`).test(t)) return 'yes';
   }
   return null;
 }
