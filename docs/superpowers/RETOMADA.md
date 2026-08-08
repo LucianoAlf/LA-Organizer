@@ -90,16 +90,14 @@ o relatório das 07h pra lá, montar o gate/allowlist, e **conferir `work_group_
 dois** — `sender_id` NULL deixa o TOM mudo para aquele membro específico, sem erro nenhum
 (`project_groupchat_sender_id_null_silent`).
 
-⚠️ **O que muda no desenho por causa do "tudo liberado"** — e no grupo o gate tem DUAS
-condições, não uma: `group_id` é o de governança **E** `sender_id` está na allowlist. Só
-"é membro do grupo" não basta — quem for adicionado um dia herdaria o servidor. (levantado em 08/08; o Alf decidiu
+⚠️ **O que muda no desenho por causa do "tudo liberado"** (levantado em 08/08; o Alf decidiu
 seguir, e a mitigação é de desenho, não de custo): hoje o TOM identifica pessoa por
 `collaborators.phone` — isso é **identificação, não autenticação**. Com poder de rodar
-correção e deploy, quem tiver o WhatsApp tem o servidor e o banco. Então o canal privilegiado
+correção e deploy, quem tiver o WhatsApp tem o servidor e o banco. O canal privilegiado
 precisa nascer com:
-- **allowlist dos 2 números verificada NO ENGINE**, nunca no prompt (prompt não é controle de
-  acesso);
-- válida **só no 1:1** desses números — nunca em grupo;
+- **gate de DUAS condições, no engine e nunca no prompt** (prompt não é controle de acesso):
+  `group_id` é o de governança **E** `sender_id` está na allowlist. Só "é membro do grupo"
+  não basta — quem for adicionado um dia herdaria o servidor;
 - **nunca acionável por conteúdo repassado**: mensagem citada, encaminhada ou de terceiro não
   vira comando (o TOM lê ~30 pessoas; sem isso, qualquer uma escreve comando por tabela);
 - **deletar dado de produção segue exigindo OK explícito** — já é a regra da casa;
