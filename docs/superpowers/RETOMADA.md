@@ -59,17 +59,40 @@ decisão for de negócio.
 grande lance é não ficar parando". Modelo: o mais capaz disponível (ele falou em Opus; hoje o
 topo é **Opus 5** — vale confirmar na hora de montar). O TOM roda em Sonnet e continua assim.
 
-**DECIDIDO PELO ALF EM 08/08 — é mais que relatório, é canal de comando.**
-Não é só o agente *avisando*: é o **TOM 1:1 com o Alf e com o Hugo, com tudo liberado**, os
-dois podendo **pedir correção e pedir auditoria pelo WhatsApp** em vez de abrir o Claude.
-"Todos os acessos" para os dois. Entrega 1:1 (não grupo).
+**DECIDIDO PELO ALF EM 08/08 — é mais que relatório, é canal de comando, e vive num GRUPO.**
+Não é só o agente *avisando*: o Alf e o Hugo vão **pedir correção e pedir auditoria pelo
+WhatsApp**, com tudo liberado, em vez de abrir o Claude.
+
+**Grupo: `LA ORGANIZER - TOM`** (Alf + Hugo + TOM). O Alf descartou o 1:1 e a razão é boa: ele
+usa o TOM 1:1 no dia a dia (reunião, financeiro) e misturar embola dois papéis — além de
+espalhar poder de engenharia no canal pessoal dele. No grupo o poder fica num lugar só e
+auditável. O relatório das 07h passa a ir pra lá, e o 1:1 dele volta a ser só assistente.
+O Alf fica no grupo (não dá pra deixar só com o Hugo: o ponto de parada do agente é
+"decisão de negócio", e quem decide é ele).
+
+**MODELO-JANELA: MANTER como está** — eu sugeri abrir exceção pro grupo de governança e o Alf
+recusou, com razão melhor que a minha: se o TOM responde sempre, ele atropela os dois quando
+estiverem decidindo entre si. Chama por vocativo, ele entra; despedida ou 8 min de silêncio,
+ele sai. **Já funciona hoje, sem código:** `detectDisengageTrigger` fecha a janela quando a
+mensagem tem "tom" + termo de despedida. A frase que o Alf quer usar —
+*"valeu, Tom, dá uma segurada aí"* — **já fecha** (testado). `valeu`/`obrigado`/`tchau`/
+`até`/`fechou` funcionam; só "Tom, para" ou "Tom sai" NÃO fecham (sem termo de despedida).
+Se incomodar, é uma linha no `FAREWELL_RE` — não fazer sem necessidade.
 
 Base prática já verificada: o **Hugo já é `director` ativo com WhatsApp** (final 1223) — não
 precisa cadastrar ninguém. Mas o relatório das 07h hoje é **hardcoded só pro Luciano**, e
 existem 4 `director` (Admin, Anne Susan, Hugo, Luciano): tem que ser **lista explícita**,
 senão a Anne Susan passa a receber relatório técnico.
 
-⚠️ **O que muda no desenho por causa do "tudo liberado"** (levantado em 08/08; o Alf decidiu
+**PENDENTE DO ALF:** criar o grupo no WhatsApp com os dois + o TOM (o app espelha via
+`group-chat-bridge`; o número do TOM precisa estar no grupo do WhatsApp). Feito isso: apontar
+o relatório das 07h pra lá, montar o gate/allowlist, e **conferir `work_group_members` dos
+dois** — `sender_id` NULL deixa o TOM mudo para aquele membro específico, sem erro nenhum
+(`project_groupchat_sender_id_null_silent`).
+
+⚠️ **O que muda no desenho por causa do "tudo liberado"** — e no grupo o gate tem DUAS
+condições, não uma: `group_id` é o de governança **E** `sender_id` está na allowlist. Só
+"é membro do grupo" não basta — quem for adicionado um dia herdaria o servidor. (levantado em 08/08; o Alf decidiu
 seguir, e a mitigação é de desenho, não de custo): hoje o TOM identifica pessoa por
 `collaborators.phone` — isso é **identificação, não autenticação**. Com poder de rodar
 correção e deploy, quem tiver o WhatsApp tem o servidor e o banco. Então o canal privilegiado
