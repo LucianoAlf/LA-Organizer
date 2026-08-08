@@ -211,3 +211,36 @@ Os **10 vivos são TODOS `dropped_request`**:
 história: lançar fatura no cartão errado, lançar sem prévia, lançar depois de "não lança",
 apagar a compra errada. Há KIs de financeiro registrados — o próximo passo é cruzar um a um e
 descobrir se são KI já corrigido que reincidiu, ou raiz que nunca foi atacada.
+
+
+### 3ª passada — o financeiro da Rose estava MORTO, não vivo
+
+A 2ª passada apontou "Rose/financeiro" como a dor viva. **Estava errado, e o erro era do meu
+critério** (qualquer `dropped_request` da mesma pessoa contava como reincidência, juntando
+assuntos diferentes).
+
+Refeito com `incident_at` (quando aconteceu) em vez de `created_at` (quando a auditoria rodou) —
+distinção que a casa já tinha aprendido a duras penas:
+
+| incidente | fix correspondente | data do fix |
+|---|---|---|
+| 22/06 (2×) | `FIN-INSTALLMENTS-LEAK-LIST` | 23/06 |
+| 12/07 | `FIN-LAUNCH-CONFIRM-NEGATION-IGNORED` | 12/07 |
+| 16/07 | `FIN-INVOICE-CARD-GUESSED-AT-INTENT-OPEN` | 16/07 |
+| 17/07 | `FIN-INVOICE-PREVIEW-PROMISED-BUT-COMMITTED` | 17/07 |
+| 21/07 | `FIN-PDF-OWNER-ONLY-FALSE-PASSWORD` | 21/07 |
+
+Cada incidente tem fix no mesmo dia ou no seguinte, e **nenhum caso novo da família (cartão
+errado / sem prévia / contra "não lança") depois de 21/07 — 18 dias limpos.** Os 6 foram
+fechados com `promoted_code` apontando o KI.
+
+**Placar final da fila `alto`: 21 → 13 fechados · 4 vivos · 4 aguardando maturidade.**
+
+Os 4 vivos restantes: Ana (2), Leo (1), Matheus (1) — todos `dropped_request`, nenhum financeiro.
+
+### Lição de método (vale para o agente de governança)
+
+O critério de reincidência por `categoria + pessoa` **infla os vivos**. Serve como primeiro
+filtro barato, mas **não pode fechar nem manter aberto sozinho**: só depois de cruzar
+`incident_at` com `corrigido_em` do KI a conclusão vira confiável. Um agente autônomo que parasse
+na 2ª passada teria reaberto uma frente já morta e gasto o dia nela.
