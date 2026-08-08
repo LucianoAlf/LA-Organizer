@@ -13,20 +13,22 @@ irmãos, e só valem quando você precisar deles:
 
 ## PRÓXIMO PASSO (é só isto)
 
-**`TOM-AFIRMA-DEPOIS-DESMENTE`** — 5 casos (Rose, Krissya, Rafinha, Ana), último em 06/08.
+**Varrer os 209 findings `medio`/`baixo`** que nunca foram olhados — agrupando por FAMÍLIA,
+não por severidade.
 
-O chokepoint de honestidade dispara **depois** da afirmação, então as duas frases convivem no
-mesmo texto e a pessoa não sabe em qual acreditar. Não é o guard falhando — é ele chegando
-tarde. Caminho provável: **sanitizar a afirmação antes do envio** quando o marker não foi
-aplicado, em vez de anexar o desmentido embaixo. Já existe `sanitizeOptimisticConfirm`
-(usado em `engine.js` ~10813) — ver se dá pra reusar no chokepoint.
+É o filão comprovado: os 4 KIs fechados em 08/08 estavam **todos** em findings `medio`, e
+ficaram meses invisíveis porque a fila era triada por severidade. Severidade mede o caso, a
+família mede a causa. Método que funcionou hoje: agrupar por sintoma → puxar o **literal** de
+`conversation_history` → rodar o caso contra o código real → só então decidir a raiz.
 
-⚠️ **Antes de codar, puxe o literal de `conversation_history`.** Duas vezes seguidas em 08/08
-a raiz registrada não era a raiz real.
+⚠️ Três vezes seguidas em 08/08 a raiz registrada não era a raiz real. Trate raiz escrita
+como hipótese.
 
-**Também no radar (não bloqueia):** medir a F3 por volta de **15/08** — `CONFIRM_NOEXEC` deve
-cair e `CONFIRM_CREATE_ALLOWED` aparecer; cruzar com `tasks` criadas logo após o marker pra
-confirmar que nada duplicou. Rollback é `TOM_CONFIRM_CREATE_GATE=0`.
+**No radar, com data (não bloqueia):** medir a F3 por volta de **15/08** — `CONFIRM_NOEXEC`
+deve cair e `CONFIRM_CREATE_ALLOWED` aparecer; cruzar com `tasks` criadas logo após o marker
+pra confirmar que nada duplicou. Rollback é `TOM_CONFIRM_CREATE_GATE=0`. Junto, checar se
+voltou alguma outbound com verbo de conclusão + "não consegui registrar" (seria forma nova
+escapando do sanitizador).
 
 ---
 
@@ -47,6 +49,7 @@ Fechado em 08/08:
 | "terça que vem" caindo na abstenção | `00ff628a` |
 | **"Siim" e "Todas feitas" não confirmavam** (2 KIs) | 08/08 18:17 UTC |
 | **F3: criação liberada sem payload executável** (`TASK-CONFIRM-DONE-NOOP` fechado) | 08/08 18:57 UTC |
+| **Afirmação + desmentido na mesma msg** (`TOM-AFIRMA-DEPOIS-DESMENTE` fechado) | 08/08 19:09 UTC |
 
 Governança: auditoria auditada, migration de reverificação aplicada, fila `alto` triada
 (21 → 13 fechados, 4 vivos, 4 aguardando), 3 famílias viraram KI rastreável.
@@ -58,12 +61,11 @@ Confabulação **−85%**. `dropped_request` caiu só 56% e virou a categoria **
 
 ## FILA (em ordem)
 
-1. **`TOM-AFIRMA-DEPOIS-DESMENTE`** (acima). 5 casos.
-2. **Medir a F3** por volta de 15/08 — ver acima.
+1. **209 findings `medio`/`baixo`** por família (acima).
+2. **Medir a F3 + o sanitizador** por volta de 15/08 — ver acima.
 3. **Medir a Fatia A** (fecha a Task 7) — ligada em 08/08 15:25 UTC. Olhar
    `[TaskTarget] serie` nos logs e `TASK_TARGET_AMBIGUOUS` em `marker_logs`.
-4. **209 findings `medio`/`baixo`** nunca olhados — encolhem muito com o cruzamento automático.
-5. **Auditar o Dreams** (03h) — o Alf sinalizou que tem bastante coisa lá. Nunca olhado.
+4. **Auditar o Dreams** (03h) — o Alf sinalizou que tem bastante coisa lá. Nunca olhado.
 6. **Crons de governança** — paridade git↔produção; `[GroupChat][DATE-CLAIM]` > 0; molde
    recorrente virando `cancelled`.
 7. **Segunda seção no relatório das 07h**: "o que foi feito e o que reincidiu".
@@ -88,6 +90,10 @@ Confabulação **−85%**. `dropped_request` caiu só 56% e virou a categoria **
 - **`console.warn`/`error` vão pro `tom-error.log`, não pro `tom-out.log`.** Contei os 5 ramos
   de falha do `complete` no out.log e deu **zero em todos** — falso-zero. No error.log eram
   158 (76 do guard de data futura, 55 do A2). Contar falha sempre nos DOIS arquivos.
+- **Exceção aberta num caso costuma valer para a família toda.** O gerúndio foi liberado no
+  `MOVE_CLAIM` em 27/07 com a razão certa ("este gate só roda quando já sabemos que nada
+  persistiu") e ninguém generalizou — dois meses depois o mesmo buraco reapareceu em
+  "Fechando a tarefa dela". Ao abrir exceção, perguntar de quantos casos ela vale.
 - **`incident_at`, nunca `created_at`**, ao comparar finding com data de fix.
 - **Agrupar por família antes de priorizar por severidade.** Severidade mede o caso, não a
   frequência da causa — as 3 famílias eram todas `medio` e por isso invisíveis.
