@@ -13,32 +13,35 @@ irmãos, e só valem quando você precisar deles:
 
 ## PRÓXIMO PASSO (é só isto)
 
-**A raiz do `schema_invalid`** — KI `MARKER-SCHEMA-DRIFT-SKILL-AUSENTE`. É a **maior causa de
-pedido perdido em silêncio** que existe hoje: 242 casos históricos em 16 tipos de marker,
-**24 nos últimos 30 dias** — mais que qualquer família de finding.
+**Medir a F3 e o sanitizador em ~15/08** (detalhe no fim desta seção) — e, fora isso, a fila
+está sem nada grande e comprovado. Os candidatos restantes são pequenos ou não medidos:
+3 findings de "data errada no reagendamento" vivos, 3 de proativo em dia de descanso
+(**checar antes se o DND por dia da semana já existe** — a Ana Paula pergunta como
+configurar, o que é a assinatura de `project_tom_nega_capacidade`), e o Dreams (03h),
+que **nunca foi olhado** e o Alf sinalizou.
 
-Não é JSON quebrado. O LLM emite JSON bem formado com **campo/valor fora da whitelist**,
-porque o marker sai num turno em que a skill que define o schema **não está carregada**.
-Provado no caso Quintela 03/08 cruzando `marker_logs` com o log do prompt: skill certa às
-19:24:29, `criar-recorrencia` às 19:25:03, marker inventado às 19:25:21. E `schema_invalid`
-**não tem retry** — o auto-retry (`engine.js` ~13000) só cobre "verbalizou promessa e não
-emitiu marker".
+Recomendação: **auditar o Dreams**, que é a única área grande ainda desconhecida.
 
-**MEÇA ANTES DE ESCOLHER O CAMINHO:** quebrar os 24 casos de 30 dias por
-`(marker_type, campo que faltou)` usando `marker_logs.raw_excerpt`. Se a maioria for
-skill-ausente em fluxo multi-turno, o caminho (b) resolve mais; se for vocabulário divergente
-espalhado, o (a) resolve mais.
+### O que a varredura do `schema_invalid` ensinou (08/08)
 
-- **(a) retry para `schema_invalid`**, espelhando o auto-retry que já existe, reemitindo com
-  a skill DONA do marker carregada. Precisa de um mapa marker→skill, que hoje não existe.
-- **(b) segurar a skill** durante fluxo multi-turno — mexe no seletor de loadout, território
-  do Mapa (`TOM_MAPA`), risco maior.
+Achei 242 casos e escrevi num KI que era "a maior causa de pedido perdido". **Estava errado,
+e o erro era meu, de uma hora antes.** Datando o `tom-error.log` por mês: maio 63, junho 59,
+julho 23, agosto 8 — e dos 8 de agosto, 4 já estavam mortos. **O vivo era 4.** Somei
+histórico sem datar, que é exatamente o que a regra do `incident_at` manda não fazer.
 
-O `WEEKLY_PLAN` já foi tratado como sintoma em 08/08 (normalizador tolerante, mesmo remédio
-do `MEMORY_SAVE` em 05/08). Os outros 15 tipos seguem descobertos.
+O mecanismo é real e vale guardar: o LLM emite JSON **bem formado** com campo/valor fora da
+whitelist — `to_name` vs `recipient_name`, `message` vs `message_body`, `items`/`days` vs
+`goals`+`distribution`, `body` vs `content`, `mode:"direct"`. E `schema_invalid` **não tem
+retry** (o auto-retry só cobre "verbalizou promessa e não emitiu marker").
 
-⚠️ Quatro vezes em 08/08 a raiz registrada não era a raiz real. Trate raiz escrita como
-hipótese, sempre — e cruze `marker_logs` com o log do prompt antes de culpar o LLM.
+**O padrão que resolve:** toda vez que alguém aceita o sinônimo, aquele tipo some da lista.
+`to_name` (14/07) zerou `recipient_name:missing` — o último caso é do próprio dia. `body`
+(05/08) zerou o `MEMORY_SAVE`. Hoje, `WEEKLY_PLAN` e `mode`. **Aceitar o sinônimo, não
+construir maquinário.** Os dois caminhos grandes que cheguei a propor (retry com skill dona;
+segurar skill no fluxo multi-turno) não se justificam em 4 casos/mês — reavaliar se subir.
+
+⚠️ **Cinco vezes em 08/08 a raiz registrada não sobreviveu ao dado.** Trate raiz escrita como
+hipótese, inclusive a que você acabou de escrever. E **date antes de somar**.
 
 ### Mapa das famílias (varredura de 08/08, os 38 findings dos últimos 14 dias)
 
@@ -93,7 +96,8 @@ Fechado em 08/08:
 | **F3: criação liberada sem payload executável** (`TASK-CONFIRM-DONE-NOOP` fechado) | 08/08 18:57 UTC |
 | **Afirmação + desmentido na mesma msg** (`TOM-AFIRMA-DEPOIS-DESMENTE` fechado) | 08/08 19:09 UTC |
 | Varredura dos `medio`/`baixo` por família + 14 findings amarrados | 08/08 19:30 UTC |
-| **`WEEKLY_PLAN` rejeitado por schema** (sintoma; raiz virou KI) | 08/08 19:43 UTC |
+| **`WEEKLY_PLAN` rejeitado por schema** | 08/08 19:43 UTC |
+| **Recado morto por `mode` inválido/ausente** (coordenação) | 08/08 19:57 UTC |
 
 Governança: auditoria auditada, migration de reverificação aplicada, fila `alto` triada
 (21 → 13 fechados, 4 vivos, 4 aguardando), 3 famílias viraram KI rastreável.
@@ -105,14 +109,12 @@ Confabulação **−85%**. `dropped_request` caiu só 56% e virou a categoria **
 
 ## FILA (em ordem)
 
-1. **Raiz do `schema_invalid`** (acima). 24 casos em 30 dias, 16 tipos de marker.
-2. **Família "pedido ignorado no meio de outro"** — 6 casos. ATENÇÃO: ao abrir os 6, pelo
-   menos 2 eram `schema_invalid` (Quintela) e 2 eram o guard A2 (`all_failed`, Arthur/Rose).
-   Reagrupar antes de tratar como família própria.
-3. **Medir a F3 + o sanitizador** por volta de 15/08 — ver acima.
-4. **Medir a Fatia A** (fecha a Task 7) — ligada em 08/08 15:25 UTC. Olhar
+1. **Auditar o Dreams** (03h) — única área grande nunca olhada; o Alf sinalizou.
+2. **Medir a F3 + o sanitizador** por volta de 15/08 — ver acima.
+3. **3 findings de data errada no reagendamento** ainda vivos ("amanhã" resolvido errado).
+4. **3 de proativo em dia de descanso** — checar se o DND por dia já existe ANTES de codar.
+5. **Medir a Fatia A** (fecha a Task 7) — ligada em 08/08 15:25 UTC. Olhar
    `[TaskTarget] serie` nos logs e `TASK_TARGET_AMBIGUOUS` em `marker_logs`.
-5. **Auditar o Dreams** (03h) — o Alf sinalizou que tem bastante coisa lá. Nunca olhado.
 6. **Crons de governança** — paridade git↔produção; `[GroupChat][DATE-CLAIM]` > 0; molde
    recorrente virando `cancelled`.
 7. **Segunda seção no relatório das 07h**: "o que foi feito e o que reincidiu".
@@ -141,6 +143,9 @@ Confabulação **−85%**. `dropped_request` caiu só 56% e virou a categoria **
   `MOVE_CLAIM` em 27/07 com a razão certa ("este gate só roda quando já sabemos que nada
   persistiu") e ninguém generalizou — dois meses depois o mesmo buraco reapareceu em
   "Fechando a tarefa dela". Ao abrir exceção, perguntar de quantos casos ela vale.
+- **DATE ANTES DE SOMAR.** Achei 242 `schema_invalid` e escrevi que era "a maior causa de
+  pedido perdido". Datado por mês: maio 63 → agosto 8, e metade dos de agosto já morta. O
+  vivo era **4**. Um total histórico sem recorte de data mede o passado, não o problema.
 - **`incident_at`, nunca `created_at`**, ao comparar finding com data de fix.
 - **Agrupar por família antes de priorizar por severidade.** Severidade mede o caso, não a
   frequência da causa — as 3 famílias eram todas `medio` e por isso invisíveis.
