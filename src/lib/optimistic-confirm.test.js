@@ -33,6 +33,48 @@ test('failed: conectivo antes do verbo não salva a mentira — "E criei a visit
   assert.ok(!/criei a visita/i.test(out), 'a afirmação "E criei" não pode sobreviver');
 });
 
+// TOM-AFIRMA-DEPOIS-DESMENTE (Rose 06/08 e Krissya 05/08) — dois buracos de FORMA que
+// sobraram depois do fix do Valcílio. Nos dois a mensagem que chegou no WhatsApp foi a
+// afirmação EM CIMA e o desmentido EMBAIXO, no mesmo texto:
+//   "Entendido — Gabi entregou a lista. Fechando a tarefa dela.\n\n_não consegui registrar_"
+//   "Fechou, reagendei pra amanhã.\n\n_não consegui registrar_"
+// A pessoa lê as duas frases e não sabe em qual acreditar.
+test('failed: GERÚNDIO de conclusão não sobrevive — "Fechando a tarefa dela" (Rose 06/08)', () => {
+  const real = 'Entendido — Gabi entregou a lista. Fechando a tarefa dela.';
+  const out = sanitizeOptimisticConfirm(real, 'failed');
+  assert.ok(!/fechando/i.test(out), 'o gerúndio "Fechando" não pode sobreviver');
+});
+
+test('failed: 1ª pessoa no MEIO da linha não sobrevive — "Fechou, reagendei" (Krissya 05/08)', () => {
+  const real = 'Fechou, reagendei pra amanhã.';
+  const out = sanitizeOptimisticConfirm(real, 'failed');
+  assert.ok(!/reagendei/i.test(out), 'a afirmação "reagendei" não pode sobreviver');
+});
+
+test('failed: mais formas das duas famílias', () => {
+  for (const s of ['Fechando as duas.', 'Show, criei aqui pra você.',
+                   'Beleza — já marquei tudo então.', 'Agendando pra sexta.']) {
+    assert.strictEqual(sanitizeOptimisticConfirm(s, 'failed'), '', `"${s}" deveria sumir`);
+  }
+});
+
+// O texto HONESTO e as perguntas legítimas têm que sobreviver — se o sanitizador comer a
+// nota de erro ou a pergunta, o TOM fica mudo (foi o que houve no caso Alf 01/08, quando o
+// guard substituiu a resposta inteira pela nota de erro).
+test('ANTI falso-positivo: nota honesta, negação e pergunta sobrevivem', () => {
+  const preservar = [
+    '_não consegui registrar agora. Me passa de novo?_',
+    'Não reagendei nada ainda.',
+    'Ainda não fechei essa.',
+    'Quer que eu vá fechando as pendências?',
+    'Comprar enfeite já tava marcado',
+    'Quando você quiser, eu crio a tarefa.',
+  ];
+  for (const s of preservar) {
+    assert.strictEqual(sanitizeOptimisticConfirm(s, 'failed'), s, `"${s}" tem que sobreviver`);
+  }
+});
+
 test('failed: outros conectivos comuns também são cobertos', () => {
   assert.strictEqual(sanitizeOptimisticConfirm('Já registrei aqui!', 'failed'), '');
   assert.strictEqual(sanitizeOptimisticConfirm('Também agendei pra sexta.', 'failed'), '');
@@ -126,11 +168,20 @@ test('failed: "✅ Os dois fechados." é removido (bonus EVENT_UPDATE)', () => {
 // NOTE-ACTION-CONFAB-NOPROSE (25/06) — os 3 ramos de falha do NOTE_ACTION
 // (malformed / dup-skip / res.ok=false) passam o cleanText por sanitize('failed').
 // Ancora o caso real do Alf (24/06): NOTE schema_invalid não pode sair com "Anotado!".
-test('failed: caso NOTE Alf — "Anotado!" removido, gerúndio/intenção preservados', () => {
+// EXPECTATIVA ALTERADA EM 08/08, DE PROPÓSITO — antes este teste exigia que o gerúndio
+// SOBREVIVESSE ("Salvando nas suas anotações"), pela premissa da época de que gerúndio é
+// intenção, não conclusão. Essa premissa já tinha sido derrubada em 27/07 pelo MOVE_CLAIM_RE,
+// com a razão certa: este sanitizador SÓ roda quando o engine já sabe que nada persistiu, e
+// aí "estou salvando" é tão falso quanto "salvei" — nada está sendo salvo. O caso Rose 06/08
+// ("Fechando a tarefa dela." + "_não consegui registrar_" na mesma mensagem) provou em
+// produção. O que o teste ancorava de essencial — "Anotado!" não pode sobreviver — segue
+// valendo; o que mudou é que a promessa em gerúndio também não sobrevive.
+test('failed: caso NOTE Alf — "Anotado!" E o gerúndio somem (nada foi salvo)', () => {
   const cleanText = 'Claro, Alf! Salvando nas suas anotações.\n\nAnotado! Agora me conta o resto.';
   const out = sanitizeOptimisticConfirm(cleanText, 'failed');
   assert.ok(!/Anotado!/.test(out), 'não pode sobrar "Anotado!"');
-  assert.strictEqual(out, 'Claro, Alf! Salvando nas suas anotações.');
+  assert.ok(!/Salvando/i.test(out), 'a promessa em gerúndio também é falsa aqui');
+  assert.strictEqual(out, '');
 });
 
 test('failed: NOTE dup-skip — linha única toda otimista vira vazio', () => {

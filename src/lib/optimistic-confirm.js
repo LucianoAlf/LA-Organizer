@@ -91,6 +91,40 @@ const PLANNING_CLAIM_RE = /\borganiz(?:ei|ad[oa]s?)\b|\bte\s+(?:cobro|lembro|avi
 // a PERGUNTA "quer que eu mova?" é legítima e precisa sobreviver.
 const MOVE_CLAIM_RE = /\bmov(?:endo|i|id[oa]s?|o)(?![\p{L}])|\btransfer(?:indo|i|id[oa]s?|o)(?![\p{L}])|\bagora\s+(?:est[áaã]o?|s[ãa]o|ficou|ficaram)\s+(?:n[oa]s?|em|d[oa]s?)(?![\p{L}])/iu;
 
+// TOM-AFIRMA-DEPOIS-DESMENTE (Rose 06/08, Krissya 05/08) — dois buracos de FORMA que
+// sobraram depois do fix do Valcílio. Nos dois casos a afirmação ficou EM CIMA e o
+// "_não consegui registrar_" EMBAIXO, no mesmo texto, e a pessoa não sabe em qual acreditar.
+//
+// (a) GERÚNDIO. "Fechando a tarefa dela." O princípio geral do módulo é que gerúndio é
+//     INTENÇÃO, não conclusão — mas esse princípio não vale aqui, e o MOVE_CLAIM_RE já
+//     tinha aberto a exceção com a justificativa certa: este gate só roda quando o engine
+//     JÁ SABE que nada persistiu, e nesse ponto "estou fechando" é tão falso quanto
+//     "fechei". O que valia pra mover vale pra todos os verbos.
+//
+// (b) 1ª PESSOA NO MEIO DA LINHA. "Fechou, reagendei pra amanhã." O verbo está no
+//     vocabulário, mas o ANCHORED exige início e "Fechou," não é conectivo; sem emoji e
+//     sem totalizador, nada pegava. Restringir a 1ª PESSOA é o que torna isso seguro: o
+//     particípio pode descrever estado alheio ("Comprar enfeite já tava marcado" — e esse
+//     precisa sobreviver), mas "reagendei" é sempre o TOM dizendo que ele fez.
+const COMPLETION_GERUND_RE = new RegExp('\\b(?:criando|registrando|anotando|agendando|marcando|salvando|'
+  + 'guardando|reagendando|atualizando|concluindo|fechando|resolvendo|finalizando|encerrando|'
+  + 'cancelando|confirmando|lan[çc]ando|adicionando|despachando|excluindo|apagando|delegando|avisando)'
+  + '(?![\\p{L}])', 'iu');
+const FIRST_PERSON_DONE_RE = new RegExp('\\b(?:criei|registrei|anotei|agendei|marquei|salvei|guardei|'
+  + 'reagendei|atualizei|conclu[ií]|fechei|resolvi|finalizei|encerrei|movi|cancelei|confirmei|lancei|'
+  + 'adicionei|despachei|exclu[ií]|apaguei|deleguei|avisei|organizei)(?![\\p{L}])', 'iu');
+
+// A negação inverte o sentido: "Não reagendei nada ainda" é honesto e PRECISA sobreviver —
+// removê-lo deixaria o TOM mudo (foi o que houve no caso Alf 01/08, quando o guard comeu a
+// resposta inteira). Olha só a vizinhança imediata ANTES do verbo, não a linha toda, senão
+// "Fechei, mas não avisei" perderia a parte que é mentira.
+const _NEG_ANTES_RE = /\b(?:n[ãa]o|nem)\s+(?:[\p{L}]+\s+)?$/iu;
+function _claimSemNegacao(texto, re) {
+  const m = re.exec(texto);
+  if (!m) return false;
+  return !_NEG_ANTES_RE.test(texto.slice(Math.max(0, m.index - 18), m.index));
+}
+
 // REDE 1 (audit 15/07, caso Matheus RESCHEDULE-CONFIRM-NOOP) — afirmações FRACAS de
 // conclusão: "Fechou" (3ª pessoa, fora do COMPLETION_CORE), "Combinado", "Beleza", "Show".
 // São ubíquas em banter, então SÓ contam como claim quando o ENGINE sinaliza
@@ -122,6 +156,14 @@ function _isOptimisticLine(line, includeWeak) {
   if (PLANNING_CLAIM_RE.test(t)) return true;
   // MOVE-CLAIM: "movendo as 3 pro grupo" / "agora estão no *Financeiro*" (caso Rose 26/07).
   if (MOVE_CLAIM_RE.test(t)) return true;
+  // TOM-AFIRMA-DEPOIS-DESMENTE (b): 1ª pessoa em QUALQUER posição — "Fechou, reagendei pra
+  // amanhã" (Krissya 05/08). Só 1ª pessoa: particípio em qualquer posição comeria menção a
+  // estado alheio ("Comprar enfeite já tava marcado").
+  if (_claimSemNegacao(t, FIRST_PERSON_DONE_RE)) return true;
+  // TOM-AFIRMA-DEPOIS-DESMENTE (a): gerúndio de conclusão — "Fechando a tarefa dela"
+  // (Rose 06/08). Pergunta fica de fora: "Quer que eu vá fechando as pendências?" é
+  // legítima e some se o gate pegar (mesmo cuidado que o MOVE_CLAIM tem com "mova/mover").
+  if (!t.endsWith('?') && _claimSemNegacao(t, COMPLETION_GERUND_RE)) return true;
   if (includeWeak && WEAK_COMPLETION_RE.test(noEmoji)) return true;
   return false;
 }
