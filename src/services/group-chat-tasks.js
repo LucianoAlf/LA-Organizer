@@ -447,8 +447,11 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
           const d = new Date(a.new_remind_at.trim()); if (!Number.isNaN(d.getTime())) nr = d.toISOString();
         }
         if (!nd && !nr) { failed.push({ action: a, why: 'reschedule_no_date' }); continue; }
+        // `is_group` é obrigatório aqui: sem ele não há como saber que o alvo é um CONTAINER
+        // e a cascata abaixo nunca dispararia. (O dublê dos testes ignora a lista de colunas,
+        // então essa falta passaria verde na suíte e só apareceria em produção.)
         const { data: found } = await supabase.from('tasks')
-          .select('id, title, recurrence_rule').eq('assigned_group_id', groupId)
+          .select('id, title, recurrence_rule, is_group').eq('assigned_group_id', groupId)
           .neq('status', 'done').neq('status', 'cancelled').ilike('title', title)
           .order('due_date', { ascending: true }).limit(5);
         let target = pickInstanceTarget(found);
@@ -456,8 +459,17 @@ async function applyGroupChatTaskActions({ supabase, groupId, senderCollabId, ac
         if (!target) { failed.push({ action: a, why: 'not_found_in_pool' }); continue; }
         const patch = {}; if (nd) patch.due_date = nd; if (nr) patch.remind_at = nr;
         const { data: upd } = await supabase.from('tasks').update(patch).eq('id', target.id).select('id, title').maybeSingle();
-        if (upd) updated.push({ ...upd, changed: patch });
-        else failed.push({ action: a, why: 'race_lost' });
+        if (upd) {
+          // PACOTE É UMA UNIDADE (incidente Rose, 08/08 11:15). O `cancel` acima já descia
+          // para as filhas; aqui a mesma regra faltava. O TOM movia só o container e dizia
+          // "passei as três subtarefas" — elas ficavam no dia velho. Ela repetiu "ainda tá
+          // 30" três vezes e ele repetiu que tinha feito.
+          // `done` fica de fora (histórico não se remarca), igual ao cancel.
+          if (target.is_group) {
+            await supabase.from('tasks').update(patch).eq('parent_task_id', target.id).neq('status', 'done');
+          }
+          updated.push({ ...upd, changed: patch });
+        } else failed.push({ action: a, why: 'race_lost' });
       } else {
         failed.push({ action: a, why: 'unsupported_action' });
       }

@@ -506,3 +506,40 @@ test('apelido AMBÍGUO entre dois moldes falha honesto — não escolhe no chute
   assert.ok(!events.find((e) => e.kind === 'insert'), 'materializou com dois candidatos');
   assert.ok((r.failed || []).some((f) => f.why === 'not_found_in_pool'));
 });
+
+// ── Cascata do reschedule no PACOTE (incidente Rose, 08/08 11:15) ────────────
+// O cancel já descia para as filhas (`if (target.is_group)`); o reschedule não. Resultado:
+// o TOM movia o container e afirmava "passei as três subtarefas", enquanto elas ficavam no
+// dia velho. A Rose repetiu "ainda tá 30" três vezes e ele repetiu que tinha feito.
+test('reschedule de CONTAINER move as filhas junto (pacote é uma unidade)', async () => {
+  const events = [];
+  const tasks = [
+    G({ id: 'pkg', title: 'Repasses de Cartões - Maquininha', due_date: '2026-08-30', is_group: true }),
+    G({ id: 'f1', title: 'Barra', due_date: '2026-08-30', parent_task_id: 'pkg' }),
+    G({ id: 'f2', title: 'Recreio', due_date: '2026-08-30', parent_task_id: 'pkg' }),
+    G({ id: 'f3', title: 'CG', due_date: '2026-08-30', parent_task_id: 'pkg' }),
+  ];
+  const r = await applyGroupChatTaskActions({
+    supabase: makeDb({ tasks, events }), groupId: 'g1', senderCollabId: 'c1',
+    actions: [{ action: 'reschedule', title: 'Repasses de Cartões - Maquininha', new_due_date: '2026-08-31' }],
+  });
+  assert.equal(r.failed.length, 0, JSON.stringify(r.failed));
+  assert.equal(tasks.find((t) => t.id === 'pkg').due_date, '2026-08-31', 'o container tem que mover');
+  for (const id of ['f1', 'f2', 'f3']) {
+    assert.equal(tasks.find((t) => t.id === id).due_date, '2026-08-31', `a filha ${id} ficou pra trás`);
+  }
+});
+
+test('reschedule de tarefa COMUM não arrasta ninguém (anti-regressão)', async () => {
+  const events = [];
+  const tasks = [
+    G({ id: 's1', title: 'Faturamento Mensal', due_date: '2026-08-08' }),
+    G({ id: 's2', title: 'Outra coisa', due_date: '2026-08-08' }),
+  ];
+  await applyGroupChatTaskActions({
+    supabase: makeDb({ tasks, events }), groupId: 'g1', senderCollabId: 'c1',
+    actions: [{ action: 'reschedule', title: 'Faturamento Mensal', new_due_date: '2026-08-12' }],
+  });
+  assert.equal(tasks.find((t) => t.id === 's1').due_date, '2026-08-12');
+  assert.equal(tasks.find((t) => t.id === 's2').due_date, '2026-08-08', 'não podia encostar na outra');
+});
