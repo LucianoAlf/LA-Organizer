@@ -10646,6 +10646,41 @@ async function processMessage(phone, text, raw = {}) {
   }
   let reply = response.text;
 
+  // TWO-PASS <<PEDIR_CREDENCIAIS>> (07/08) — o modelo decide semanticamente que precisa
+  // dos links de sistemas e emite o marker; buscamos e re-perguntamos com a lista.
+  // É tool-calling dentro do protocolo de markers: --tools/MCP seguem desligados
+  // (hardening do Sprint 7, incidente 28/04). Roda ANTES dos parsers pra que a
+  // resposta final passe por todo o pipeline normal (strip, anti-leak, envio).
+  // Anti-loop: a 2ª chamada não recebe a instrução do marker, e não há laço —
+  // se o modelo reemitir mesmo assim, UNKNOWN_MARKER_STRIPPED limpa o texto.
+  try {
+    const { hasPedirCredenciaisMarker, stripPedirCredenciaisMarker, formatCredenciaisBlock } = require('./lib/pedir-credenciais');
+    if (hasPedirCredenciaisMarker(reply)) {
+      const { getCredenciaisPublicas } = require('./services/credenciais-publicas');
+      const links = await getCredenciaisPublicas();
+      const bloco = formatCredenciaisBlock(links);
+      console.log(`[PedirCredenciais] marker detectado — ${links.length} link(s) disponivel(is)`);
+      await logMarker(collab.id, 'PEDIR_CREDENCIAIS', links.length ? 'applied' : 'rejected',
+        `links:${links.length}`, null);
+      if (!bloco) {
+        reply = 'Não tenho nenhum sistema cadastrado com link por aqui ainda.';
+      } else {
+        const credSys = `${bloco}\n\nO colaborador perguntou sobre acesso a algum desses sistemas. `
+          + `Responda em português, de forma curta e natural, APENAS o link que ele pediu. `
+          + `Só liste todos se ele tiver pedido explicitamente a lista completa. `
+          + `Não mencione banco de dados, tabela ou qualquer detalhe técnico interno. `
+          + `Não emita nenhum marker nesta resposta.`;
+        const segunda = await ai.chat(credSys, msgs);
+        const textoSegundo = String(segunda?.text || '').trim();
+        reply = textoSegundo || bloco;
+      }
+    }
+  } catch (e) {
+    // Nunca derruba a mensagem: se o two-pass falhar, segue com o reply original
+    // (o marker sobrando será removido pelo UNKNOWN_MARKER_STRIPPED adiante).
+    console.warn('[PedirCredenciais] two-pass falhou:', e.message);
+  }
+
   // Ordem de strip: ONBOARDING → PROJECT → MEMORY (memória por último — não deve aparecer pro user em hipótese alguma).
 
   // 1) Onboarding (apenas quando ativo)
