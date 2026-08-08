@@ -59,18 +59,36 @@ decisão for de negócio.
 grande lance é não ficar parando". Modelo: o mais capaz disponível (ele falou em Opus; hoje o
 topo é **Opus 5** — vale confirmar na hora de montar). O TOM roda em Sonnet e continua assim.
 
-**Em aberto — precisa da decisão do Alf:**
-1. **Entrega.** Hoje o relatório das 07h vai **só pro director Luciano** (hardcoded, apesar de
-   existirem 4 `director`: Admin, Anne Susan, Hugo, Luciano). O **Hugo já existe como
-   `director` ativo com WhatsApp** — não precisa cadastrar ninguém.
-   → *Recomendação:* mandar 1:1 pro Alf e pro Hugo, com lista explícita (não "todos os
-   directors", senão a Anne Susan recebe relatório técnico). 1:1 em vez de grupo porque o TOM
-   no grupo usa modelo-janela (vocativo abre, ~8min fecha) e cada um responde/age no seu.
-2. **O que ele faz sozinho vs o que propõe.** Sugestão: corrige e deploya o que for
+**DECIDIDO PELO ALF EM 08/08 — é mais que relatório, é canal de comando.**
+Não é só o agente *avisando*: é o **TOM 1:1 com o Alf e com o Hugo, com tudo liberado**, os
+dois podendo **pedir correção e pedir auditoria pelo WhatsApp** em vez de abrir o Claude.
+"Todos os acessos" para os dois. Entrega 1:1 (não grupo).
+
+Base prática já verificada: o **Hugo já é `director` ativo com WhatsApp** (final 1223) — não
+precisa cadastrar ninguém. Mas o relatório das 07h hoje é **hardcoded só pro Luciano**, e
+existem 4 `director` (Admin, Anne Susan, Hugo, Luciano): tem que ser **lista explícita**,
+senão a Anne Susan passa a receber relatório técnico.
+
+⚠️ **O que muda no desenho por causa do "tudo liberado"** (levantado em 08/08; o Alf decidiu
+seguir, e a mitigação é de desenho, não de custo): hoje o TOM identifica pessoa por
+`collaborators.phone` — isso é **identificação, não autenticação**. Com poder de rodar
+correção e deploy, quem tiver o WhatsApp tem o servidor e o banco. Então o canal privilegiado
+precisa nascer com:
+- **allowlist dos 2 números verificada NO ENGINE**, nunca no prompt (prompt não é controle de
+  acesso);
+- válida **só no 1:1** desses números — nunca em grupo;
+- **nunca acionável por conteúdo repassado**: mensagem citada, encaminhada ou de terceiro não
+  vira comando (o TOM lê ~30 pessoas; sem isso, qualquer uma escreve comando por tabela);
+- **deletar dado de produção segue exigindo OK explícito** — já é a regra da casa;
+- **trilha de auditoria**: quem pediu, o que rodou, resultado;
+- **kill switch por env var**, no padrão das outras flags.
+
+**Ainda em aberto:**
+1. **O que ele faz sozinho vs o que propõe.** Sugestão: corrige e deploya o que for
    reversível e provado (fix + teste de reversão verde); **propõe** o que mexe em voz do TOM,
    dado de produção de terceiro, ou capacidade nova.
-3. **Frequência e gatilho:** depois do audit das 07h? Ou contínuo?
-4. **Onde ele registra:** KI em `tom_known_issues` é o caminho natural — já é o formato.
+2. **Frequência e gatilho:** depois do audit das 07h? Ou contínuo?
+3. **Onde ele registra:** KI em `tom_known_issues` é o caminho natural — já é o formato.
 
 **GUARDRAILS — e estes não são teóricos, são as lições que custaram caro HOJE:**
 - **Date antes de somar.** Total histórico não é problema vivo (242 `schema_invalid` → 4).
