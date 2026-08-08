@@ -15,6 +15,7 @@ const { detectaDataAfirmadaErrada } = require('../utils/date-claim');
 const { ehMoldeRecorrente, escondeMoldeComInstancia } = require('../utils/group-task-visibility');
 const groupNotes = require('./group-notes');
 const { buildBrtDateAnchor } = require('../utils/dates');
+const opsAgent = require('./ops-agent');
 
 const HISTORY_LIMIT = 30;
 const POOL_LIMIT = 30;
@@ -93,6 +94,33 @@ async function postTomText(supabase, groupId, content) {
 }
 
 async function processGroupChatMessage({ supabase, groupId, senderCollabId, text }) {
+  // ── CANAL DE OPS (grupo LA ORGANIZER - TOM) ────────────────────────────────────────────
+  // Neste grupo o TOM não é assistente: é o agente de engenharia do Alf e do Hugo, com
+  // ferramentas reais (Bash/Read/Write/Edit no repo, banco via script, git). Roda em Opus 5,
+  // caminho totalmente separado do `chat()` normal — que segue com `--tools ''`.
+  // O gate tem DUAS condições verificadas em código (grupo E remetente na allowlist), nunca
+  // no prompt: pedido escrito por terceiro e colado aqui não vira comando, porque quem manda
+  // é o senderCollabId que o bridge resolveu. Nasce atrás de TOM_OPS_ENABLED=1.
+  if (opsAgent.isOpsChannel({ groupId, senderCollabId })) {
+    let quem = 'alguém do grupo';
+    try {
+      const { data: c } = await supabase.from('collaborators')
+        .select('full_name, preferred_name').eq('id', senderCollabId).maybeSingle();
+      if (c) quem = c.preferred_name || c.full_name || quem;
+    } catch (_) { /* nome é cosmético */ }
+
+    // O agente pode levar minutos (auditoria, teste, deploy). O watcher do grupo é um poll
+    // curto: segurar o turno até o fim penduraria a fila inteira. Então confirma na hora e
+    // devolve o resultado quando terminar, num segundo post.
+    opsAgent.runOpsAgent(text, { quem })
+      .then((r) => postTomText(supabase, groupId, r.text))
+      .catch((e) => postTomText(supabase, groupId, `Quebrei no meio disso aqui: ${e.message}`))
+      .catch((e) => console.error('[OpsAgent] falha ao postar resultado:', e.message));
+
+    console.log(`[OpsAgent] pedido de ${quem}: "${String(text).slice(0, 80)}"`);
+    return await postTomText(supabase, groupId, '👽 Tô nisso — já te falo.');
+  }
+
   // ── PRÉ-PASSO: confirmação determinística de ação destrutiva pendente (roda ANTES do LLM) ──
   // Um "sim"/"não" seco do MESMO remetente resolve a pendência (apagar ficha OU encerrar série).
   // Determinístico: NÃO confia no LLM pro threading "sim/não" (lição dos rituais de fechamento).
