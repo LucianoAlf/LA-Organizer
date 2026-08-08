@@ -5982,7 +5982,10 @@ function formatHealthReport(run) {
         const when = s.created_at ? new Date(s.created_at).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) : '';
         const userText = String(s.reason || '').replace(/^text:/, '').slice(0, 100);
         const tomReply = String(s.raw_excerpt || '').slice(0, 100);
-        return `${i + 1}. *${name}* (${when})\n   _user:_ "${userText}"\n   _TOM:_ "${tomReply}"`;
+        // A causa (ex.: "MEMORY_SAVE (schema_invalid)") é o que transforma a amostra em algo
+        // que dá pra agir — sem ela sobra "o TOM prometeu e não fez", que não aponta pra lugar.
+        const causa = s.detalhe ? `\n   _falhou:_ ${s.detalhe}` : '';
+        return `${i + 1}. *${name}* (${when})\n   _user:_ "${userText}"\n   _TOM:_ "${tomReply}"${causa}`;
       }).join('\n')
     : '';
 

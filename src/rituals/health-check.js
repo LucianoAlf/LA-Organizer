@@ -16,6 +16,7 @@ const path = require('path');
 const supabase = require('../supabase/client');
 const { isQuietNow } = require('../services/quiet-hours');
 const { selectEventsWithoutReminder } = require('./event-reminder-audit');
+const { classificarActionable } = require('../lib/actionable-triage');
 
 const ERROR_LOG_PATH = '/opt/LA-Organizer/logs/tom-error.log';
 const WARN_THRESHOLDS = {
@@ -253,27 +254,67 @@ function _isBenignActionable(reasonOrText) {
   return false;
 }
 
+// Janela do "mesmo turno". Assimétrica de propósito: o alerta nasce logo que a resposta sai,
+// e a persistência (ou a recusa dela) vem depois — no caso Matheus a 3ª tentativa de
+// MEMORY_SAVE caiu 26s adiante.
+const ANM_JANELA_ANTES_MS = 20_000;
+const ANM_JANELA_DEPOIS_MS = 90_000;
+
 async function checkActionableNoMarker() {
-  // Carrega tudo das 24h e filtra benignos em JS (head:true não permitia inspecionar o texto).
-  const { data: rows, error } = await supabase
-    .from('marker_logs')
-    .select('created_at, reason, raw_excerpt, collaborator_id, collaborators:collaborator_id(full_name)')
-    .eq('marker_type', 'ACTIONABLE_NO_MARKER')
-    .eq('result', 'rejected')
-    .gte('created_at', isoHoursAgo(24))
-    .order('created_at', { ascending: false });
-  if (error) throw error;
-  const real = (rows || []).filter(r => !_isBenignActionable(r.reason || r.raw_excerpt || ''));
+  // Medido em 08/08 sobre 14 dias: 18 alertas, ~4 reais. O resto é conversa, listagem,
+  // pergunta e recuperação pelo auto-retry. Como este check vai TODO DIA pro WhatsApp do Alf
+  // e do Hugo, ruído nessa proporção faz o alerta parar de ser lido — e o dia em que for
+  // real ninguém vê. Classificar exige saber o que mais aconteceu NO TURNO, então carrega os
+  // dois conjuntos e cruza em memória.
+  const desdeIso = isoHoursAgo(24);
+  const [alertasRes, turnoRes] = await Promise.all([
+    supabase.from('marker_logs')
+      .select('created_at, reason, raw_excerpt, collaborator_id, collaborators:collaborator_id(full_name)')
+      .eq('marker_type', 'ACTIONABLE_NO_MARKER').eq('result', 'rejected')
+      .gte('created_at', desdeIso).order('created_at', { ascending: false }),
+    supabase.from('marker_logs')
+      .select('created_at, marker_type, result, reason, collaborator_id')
+      .neq('marker_type', 'ACTIONABLE_NO_MARKER')
+      .gte('created_at', new Date(Date.parse(desdeIso) - ANM_JANELA_ANTES_MS).toISOString())
+      .limit(3000),
+  ]);
+  if (alertasRes.error) throw alertasRes.error;
+
+  const porColab = new Map();
+  for (const m of (turnoRes.data || [])) {
+    const k = String(m.collaborator_id);
+    if (!porColab.has(k)) porColab.set(k, []);
+    porColab.get(k).push(m);
+  }
+
+  const real = [];
+  for (const r of (alertasRes.data || [])) {
+    const t = Date.parse(r.created_at);
+    const doTurno = (porColab.get(String(r.collaborator_id)) || []).filter((m) => {
+      const dt = Date.parse(m.created_at) - t;
+      return dt >= -ANM_JANELA_ANTES_MS && dt <= ANM_JANELA_DEPOIS_MS;
+    });
+    const v = classificarActionable(r.raw_excerpt, doTurno);
+    if (v.real) real.push({ ...r, motivo: v.motivo, detalhe: v.detalhe });
+  }
+
   const count = real.length;
   const samples = real.slice(0, 5);
+  const brutos = (alertasRes.data || []).length;
+  const sufixo = brutos > count ? ` (${brutos - count} ruído filtrado)` : '';
 
-  if (count === 0) return { status: 'ok', detail: '0 ACTIONABLE_NO_MARKER (TOM fiel ao banco)', samples };
+  if (count === 0) return { status: 'ok', detail: `0 ACTIONABLE_NO_MARKER${sufixo}`, samples };
+
+  // A causa no título é o que torna o alerta acionável: "MEMORY_SAVE (schema_invalid)" leva
+  // direto ao parser; "4 ACTIONABLE_NO_MARKER" não leva a lugar nenhum.
+  const causas = [...new Set(real.map((r) => r.detalhe).filter(Boolean))].slice(0, 3).join(', ');
+  const comCausa = causas ? ` — causa: ${causas}` : '';
   if (count <= WARN_THRESHOLDS.actionableNoMarker) {
-    return { status: 'ok', detail: `${count} ACTIONABLE_NO_MARKER nas últimas 24h (abaixo do threshold)`, samples };
+    return { status: 'ok', detail: `${count} ACTIONABLE_NO_MARKER em 24h${sufixo}${comCausa}`, samples };
   }
   return {
     status: 'warning',
-    detail: `${count} ACTIONABLE_NO_MARKER nas últimas 24h — TOM verbalizou ação SEM persistir (verificar amostras)`,
+    detail: `${count} ACTIONABLE_NO_MARKER em 24h${sufixo} — TOM verbalizou ação SEM persistir${comCausa}`,
     samples,
   };
 }

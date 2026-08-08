@@ -13,41 +13,49 @@ irmãos, e só valem quando você precisar deles:
 
 ## PRÓXIMO PASSO (é só isto)
 
-**Precisão do `ACTIONABLE_NO_MARKER`** — hoje é ~100% falso positivo e polui o relatório
-das 07h todo dia. Ver abaixo. Depois, as medições de 15/08.
+**`MEMORY_SAVE schema_invalid`** — é a causa de 3 dos 5 alertas que sobraram no
+`ACTIONABLE_NO_MARKER` (seção abaixo), e o usuário sente: o TOM diz "anotado e salvo" e a
+memória é recusada. Família do KI aberto `MARKER-SCHEMA-DRIFT-SKILL-AUSENTE`. Pegar o payload
+real recusado em `marker_logs` ANTES de teorizar sobre o parser. Depois: medições de 15/08.
 
-### 🔍 `ACTIONABLE_NO_MARKER`: 18 alertas em 14 dias, ZERO reais (08/08)
+### ✅ `ACTIONABLE_NO_MARKER`: ruído cortado em 69%, e o alerta agora diz a CAUSA (08/08)
 
-Eu tinha recomendado atacar a família "confirmou e não fez" **por causa deste número**: 18
-ocorrências em 14 dias, a última na manhã de hoje — o sinal mais vivo do sistema. Abri os 18
-literais e **nenhum é "prometeu e não fez"**:
+**Correção de uma análise minha, registrada aqui de propósito.** Eu tinha escrito neste
+arquivo que os 18 alertas eram "ZERO reais". **Errado — são ~4-5 reais**, e o erro foi de
+método: olhei se o dado existia no banco no FIM. Existia. Mas o `MEMORY_SAVE` do Matheus só
+entrou na **terceira** tentativa; as duas primeiras foram `rejected(schema_invalid)`, com
+`CHOKEPOINT confab:promise_nomarker` disparando junto.
 
-| o que era de verdade | quantos |
+🔑 **O estado final esconde a falha. Quem conta a verdade é o marker DO TURNO.** Ver o dado lá
+não prova que o caminho funcionou — prova que alguma tentativa funcionou, e o usuário sentiu
+as que não.
+
+**Composição real dos 18 (14 dias):**
+
+| classe | qtd |
 |---|---|
-| conversa, listagem ou pergunta do TOM ("A frota chegou, Alf! 🛸") | ~11 |
-| memória gravada certo, só não via marker de tarefa (Matheus, 3×) | 3 |
-| recuperado pelo auto-retry no mesmo turno (Alf, Arthur) | 2 |
-| ação já executada no turno anterior (Jereh, Rose) | 2 |
+| REAL — tentou e o marker foi **recusado** (`schema_invalid`, marker inexistente) | 4 |
+| recuperado pelo auto-retry no mesmo turno | 3 |
+| marker executado no turno | 1 |
+| conversa, listagem, pergunta ("A frota chegou, Alf! 🛸") | ~10 |
 
-O caso do Matheus é o mais instrutivo: ele pediu *"Salva isso na tua memória aí"*, o TOM
-respondeu *"Anotado e salvo"* às **10:02** — e `collaborator_memory` tem a regra gravada,
-`is_active=true`, às **10:02**. O detector só olha marker de tarefa; memória e prefs passam
-por fora e viram falso alarme.
+**O detector estava funcionando** — apontou `MEMORY_SAVE schema_invalid` e um
+`<<FINANCE_ENTRY>>` que o TOM inventou e o parser removeu (Rose 25/07). O problema era a
+proporção: 16 dos 18 chegavam ao relatório das 07h, todo dia, no WhatsApp do Alf e do Hugo.
 
-**Por que isso importa e não é só métrica:** `checkActionableNoMarker` é check dedicado do
-health-check e o dispatcher **sempre mostra as amostras** no relatório das 07h — Alf e Hugo
-recebem esse ruído diariamente. Alarme que erra sempre deixa de ser lido, e aí o dia em que
-for real ninguém vê.
+**Fix:** `src/lib/actionable-triage.js` (puro, 7 testes, fixture = os 18 casos REAIS do
+banco). Classifica pelo que aconteceu no turno: recusa de marker vem primeiro (é o mais
+grave e o único que já traz a causa), depois persistência, depois pergunta/listagem/conversa.
+Medido em produção sobre 14 dias: **16 → 5 reportados, 69% de ruído a menos**, e o que sobra
+sai com `MEMORY_SAVE (schema_invalid)` no título em vez de "o TOM prometeu e não fez".
 
-⚠️ **TERCEIRA VEZ NO MESMO DIA que um número grande morre no literal:** 242 `schema_invalid`
-→ 4; 6 erros de data → 1; 18 `ACTIONABLE_NO_MARKER` → 0. **Nesta casa, contagem de marcador
-é hipótese até abrir os literais** — inclusive quando é ela que está sustentando a minha
-própria recomendação (foi o caso aqui).
+⚠️ **Recusa tem prioridade sobre sucesso no mesmo turno** — no caso Matheus 10:01 houve um
+`executed` E um `rejected`. Se o sucesso mascarasse a recusa, a falha que a pessoa sentiu
+sumiria do relatório.
 
-**Onde mexer:** `checkActionableNoMarker` (health-check.js:256) já filtra "benignos em JS".
-O filtro precisa aprender: (a) resposta que é listagem/pergunta não é promessa; (b) se houve
-`MEMORY`/`PREFS_UPDATE` no mesmo turno, a ação ACONTECEU; (c) se o auto-retry recuperou,
-não é falha. Antes de mexer, medir a taxa atual pra ter baseline.
+**O que os 5 reais apontam** (próximo alvo natural): 3 são `MEMORY_SAVE schema_invalid` —
+família do KI aberto `MARKER-SCHEMA-DRIFT-SKILL-AUSENTE`; 1 é o TOM emitindo um marker que
+não existe (`FINANCE_ENTRY`).
 
 ### ✅ PROATIVO EM DIA DE DESCANSO — NADA A CODAR (08/08)
 
