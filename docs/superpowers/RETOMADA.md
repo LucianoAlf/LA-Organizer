@@ -104,10 +104,20 @@ mensagem tem "tom" + termo de despedida. A frase que o Alf quer usar —
 `até`/`fechou` funcionam; só "Tom, para" ou "Tom sai" NÃO fecham (sem termo de despedida).
 Se incomodar, é uma linha no `FAREWELL_RE` — não fazer sem necessidade.
 
-Base prática já verificada: o **Hugo já é `director` ativo com WhatsApp** (final 1223) — não
-precisa cadastrar ninguém. Mas o relatório das 07h hoje é **hardcoded só pro Luciano**, e
-existem 4 `director` (Admin, Anne Susan, Hugo, Luciano): tem que ser **lista explícita**,
-senão a Anne Susan passa a receber relatório técnico.
+**CORREÇÃO (08/08):** eu tinha escrito aqui que o relatório das 07h era "hardcoded só pro
+Luciano" — **errado**. Li o comentário da linha 85 do dispatcher, que está STALE, em vez da
+implementação. `sendHealthReport` (dispatcher.js ~5995) já filtra
+`full_name.ilike.Luciano%,full_name.ilike.Hugo%` desde 07/08, com o cuidado da Anne já
+comentado no código. **O Hugo recebeu pela primeira vez hoje (08/08)** — confirmado em
+`ritual_logs`. Não há nada a fazer nessa frente. (Família
+`project_agents_stale_operational`: comentário operacional mente, o código não.)
+
+⚠️ **O ACHADO QUE IMPORTA:** o relatório das 07h é do **health check** (saúde do sistema).
+Os **findings da auditoria de conversa não são entregues a ninguém** — o `auditConversation`
+roda junto do Dream (03h), grava em `tom_audit_findings` e para por aí. Não existe
+`ritual_type` de entrega (só `governance_digest`/`governance_digest_leader`, que são de
+tarefas). **É por isso que havia 209 findings `medio`/`baixo` nunca olhados**: a detecção
+funciona há meses e ninguém nunca viu o resultado.
 
 **✅ GRUPO CRIADO E LIGADO (08/08).** O Alf criou no WhatsApp; eu puxei o JID e liguei no app.
 - `wa_group_jid` = **`120363430040751385@g.us`**
@@ -120,9 +130,10 @@ senão a Anne Susan passa a receber relatório técnico.
   preenchido é o que o `group-chat-bridge-in` usa pra casar: `.eq('wa_group_jid', jid)`)
 - Mensagem de ativação enviada no grupo explicando como chamar e como dispensar
 
-**FALTA TESTAR (5 segundos, precisa de um humano):** alguém manda `Tom, tá me ouvindo?` no
-grupo. O envio de ativação saiu por `sendGroupText` direto, fora do pipeline — então o
-caminho de ENTRADA (webhook → bridge-in → engine) ainda não foi exercitado neste grupo.
+**✅ VIA COMPLETA TESTADA (08/08 21:05).** O Alf mandou `Coé Tom` e ele respondeu. Em
+`group_chat_messages`: a linha `member` veio com `sender_id` resolvido pro Luciano — a
+armadilha do NULL não pegou. (O `sender_id` NULL na linha `role='tom'` é o esperado: mensagem
+do TOM não tem colaborador remetente.)
 
 **O que AINDA NÃO existe** (e a mensagem de ativação diz isso ao grupo, pra não criar
 expectativa falsa): o poder de pedir auditoria e correção. Hoje o grupo funciona como
@@ -143,12 +154,27 @@ precisa nascer com:
 - **trilha de auditoria**: quem pediu, o que rodou, resultado;
 - **kill switch por env var**, no padrão das outras flags.
 
-**Ainda em aberto:**
+### Plano em 3 fases (a ordem importa: entrega valor antes de ganhar poder)
+
+**FASE 1 — ENTREGAR (próximo passo, sem risco).** Digest diário dos findings novos no grupo,
+logo depois do Dream. Hoje ninguém vê o que a auditoria acha; só isso já resolve o problema
+que deixou 209 findings parados. Não precisa de gate — é leitura. Deve trazer, por finding:
+categoria, pessoa, o **literal** do incidente, e se já existe KI com aquela assinatura
+(regressão vs novo). Cuidado medido hoje: **datar antes de somar** e **checar a data do fix**
+antes de chamar de vivo — sem isso o digest vira alarme falso, como os 242 que viraram 4.
+
+**FASE 2 — GATE.** Allowlist de duas condições (`group_id` + `sender_id`) no engine, para o
+grupo poder pedir auditoria sob demanda ("Tom, roda a auditoria de ontem"). Ainda sem
+escrever código sozinho.
+
+**FASE 3 — CORRIGIR.** O agente propõe e aplica, com os guardrails abaixo. Aqui é onde a
+autonomia entra de verdade, e onde o modelo mais capaz é necessário.
+
+**Ainda em aberto (decisão do Alf, e só bloqueia a Fase 3):**
 1. **O que ele faz sozinho vs o que propõe.** Sugestão: corrige e deploya o que for
    reversível e provado (fix + teste de reversão verde); **propõe** o que mexe em voz do TOM,
    dado de produção de terceiro, ou capacidade nova.
-2. **Frequência e gatilho:** depois do audit das 07h? Ou contínuo?
-3. **Onde ele registra:** KI em `tom_known_issues` é o caminho natural — já é o formato.
+2. **Onde ele registra:** KI em `tom_known_issues` é o caminho natural — já é o formato.
 
 **GUARDRAILS — e estes não são teóricos, são as lições que custaram caro HOJE:**
 - **Date antes de somar.** Total histórico não é problema vivo (242 `schema_invalid` → 4).
@@ -218,6 +244,7 @@ Fechado em 08/08:
 | **`WEEKLY_PLAN` rejeitado por schema** | 08/08 19:43 UTC |
 | **Recado morto por `mode` inválido/ausente** (coordenação) | 08/08 19:57 UTC |
 | Dreams auditado (execução 37/37 ok) + **memória relativa sem data no 1:1** | 08/08 20:45 UTC |
+| Grupo `LA ORGANIZER - TOM` ligado e testado nos dois sentidos | 08/08 21:05 UTC |
 
 Governança: auditoria auditada, migration de reverificação aplicada, fila `alto` triada
 (21 → 13 fechados, 4 vivos, 4 aguardando), 3 famílias viraram KI rastreável.
