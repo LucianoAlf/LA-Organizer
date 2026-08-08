@@ -13,24 +13,35 @@ irmãos, e só valem quando você precisar deles:
 
 ## PRÓXIMO PASSO (é só isto)
 
-**Investigar a F3 do `TASK-CONFIRM-DONE-NOOP`** — o que sobrou dele depois de 08/08.
+**Fazer a intent de confirmação nascer com o rascunho no payload.** F3 do
+`TASK-CONFIRM-DONE-NOOP`, já diagnosticada em 08/08 — falta implementar.
 
-São os casos em que o TOM diz **"não consegui dar baixa agora"** ou **"tive um problema
-técnico"** (Rafinha 17/07 e 23/07, Peterson 22/07). Ali o marker FOI emitido e o **apply
-falhou** — é outra coisa, e a raiz nunca foi investigada.
+**O que está acontecendo.** Quando a intent aberta não tem item concreto, o `markerRule` em
+`engine.js:10122` manda o TOM dizer que não conseguiu e pedir pra repetir. As frases
+"travei aqui" / "não consegui dar baixa" **não são bug nem confabulação** — são essa
+instrução funcionando (Camada 1 do audit 16/07: dano virou fricção).
 
-**Caminho:** achar o ramo que emite essas duas frases literais e **contar os motivos de
-falha, todos** (lição do audit 25/06: contar TODOS os ramos de falha, não parar no primeiro).
+**O problema é o payload chegar vazio.** Nos 15 casos medidos, o TOM tinha acabado de
+descrever a coisa na própria pergunta ("Entendi: lembrete amanhã às 11h — mandar mensagem pro
+Rômulo. Certo?") e gravou a intent **sem o rascunho**. A informação existia no turno. A
+confirmação do usuário era inequívoca em 100% deles ("Isso" ×6, "Sim", "Pode fechar") — o
+detector não tem culpa, e o fix de 08/08 não cobre nenhum destes.
 
-⚠️ **NÃO comece por `complete_confirm`/`reschedule_confirm` — não é a raiz.** A entrada
-anterior deste arquivo mandava implementar um `complete_confirm` e estava **errada**: a intent
-já existe (`kind confirmation` + `payload.batch_complete`) e o executor determinístico também
-(`executeBatchComplete`, `engine.js` ~10060) — ele já rodou com sucesso 22 vezes. O que
-faltava era **reconhecer a resposta**, e isso foi corrigido em 08/08.
+**Caminho:** encher o payload no registrador genérico de fim de turno. `hasConcrete`
+(`engine.js:10112`) já aceita `draft`/`drafts`, então isso destrava **todas** as superfícies
+de uma vez. Avaliar também incluir `batch_complete` na lista (custo baixo, tira o caso Alf
+22/07).
 
-Se um dia precisar mesmo de um kind novo: ⚠️ **DUAS PORTAS** — entra em `VALID_KINDS`
-(`pending-intents.js:25`) **e** no CHECK da tabela. Só no banco → `openIntent` **lança**, cai
-no catch do ramo e o apply é pulado **em silêncio**.
+⚠️ **Não afrouxe o gate.** A proibição de emitir marker sem item concreto existe pelo caso
+Conciliação/Rose 10/06 — o LLM escolhia alvos sozinho e reagendou 2 tarefas que ninguém
+pediu. O fix **enche o payload**, nunca libera o marker sem ele.
+
+**Por onde começar:** as 4 ocorrências de agosto são lembrete (2), coordenação (1) e criação
+de tarefa (1). Priorização completa por superfície está no `fix_resumo` do KI.
+
+⚠️ **Não crie um kind novo.** Já tentei uma vez a partir de raiz errada. Se algum dia for
+mesmo necessário: **DUAS PORTAS** — `VALID_KINDS` (`pending-intents.js:25`) **e** o CHECK da
+tabela; só no banco faz `openIntent` lançar e o apply ser pulado em silêncio.
 
 ---
 
@@ -61,7 +72,7 @@ Confabulação **−85%**. `dropped_request` caiu só 56% e virou a categoria **
 
 ## FILA (em ordem)
 
-1. **`TASK-CONFIRM-DONE-NOOP` — só a F3** (acima). 3 casos; F1 e F2 fechadas em 08/08.
+1. **`TASK-CONFIRM-DONE-NOOP` — F3, encher o payload** (acima). 15 casos, 8 pessoas; F1 e F2 fechadas em 08/08.
 2. **`TOM-AFIRMA-DEPOIS-DESMENTE`** — 5 casos. O chokepoint de honestidade dispara DEPOIS da
    afirmação; as duas frases convivem e a pessoa não sabe em qual acreditar. Provável caminho:
    sanitizar a afirmação ANTES do envio quando o marker não foi aplicado.
@@ -90,6 +101,9 @@ Confabulação **−85%**. `dropped_request` caiu só 56% e virou a categoria **
   em `TASK-CONFIRM-DONE-NOOP` ("falta um `complete_confirm`") estava errada — a intent e o
   executor já existiam. Rodar o caso contra o código real custa minutos e evita construir
   a coisa errada.
+- **`console.warn`/`error` vão pro `tom-error.log`, não pro `tom-out.log`.** Contei os 5 ramos
+  de falha do `complete` no out.log e deu **zero em todos** — falso-zero. No error.log eram
+  158 (76 do guard de data futura, 55 do A2). Contar falha sempre nos DOIS arquivos.
 - **`incident_at`, nunca `created_at`**, ao comparar finding com data de fix.
 - **Agrupar por família antes de priorizar por severidade.** Severidade mede o caso, não a
   frequência da causa — as 3 famílias eram todas `medio` e por isso invisíveis.
