@@ -7,6 +7,7 @@ const supabase = require('../supabase/client');
 const { checkAccess, DATA_LEVELS } = require('../services/la-report-access');
 const { hasCoordLevel } = require('../utils/roles');
 const { formatRelativeDate } = require('../utils/dates');
+const { carimbaMemoriaRelativa } = require('../utils/memory-date-stamp');
 const pendingIntentsSvc = require('../services/pending-intents');
 // Sprint 31.1 — rastro de cobranças (TOM perguntou "já fechou?") pra fechar
 // no marker com id exato em vez de adivinhar título.
@@ -393,14 +394,22 @@ function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events
     const nick = nameFor(collab);
     lines.push('', `## O que sei sobre ${nick}`);
 
+    // MEMORY-RELATIVE-DATE-ORPHAN (08/08): 31 memórias ATIVAS falam em "hoje/ontem/amanhã"
+    // ("Yuri planeja enviar vídeos pro Peterson amanhã", registrada em 28/07). Renderizadas
+    // sem data, o TOM lê "amanhã" semanas depois e resolve pro amanhã de HOJE — a mesma
+    // família do auto-envenenamento que o chat de grupo já trata e o 1:1 não tratava.
+    // Carimba só quem depende de quando foi dito (~7%); o resto passa intacto. O `created_at`
+    // já vinha no select destes dois blocos e só não estava sendo usado.
+    const _mem = (m) => carimbaMemoriaRelativa(m.content, m.created_at);
+
     if (criticalMemories && criticalMemories.length) {
       lines.push('', '**Crítico:**');
-      criticalMemories.forEach(m => lines.push(`• [${m.memory_type}] ${m.content}`));
+      criticalMemories.forEach(m => lines.push(`• [${m.memory_type}] ${_mem(m)}`));
     }
 
     if (preferenceMemories && preferenceMemories.length) {
       lines.push('', '**Preferências:**');
-      preferenceMemories.forEach(m => lines.push(`• ${m.content}`));
+      preferenceMemories.forEach(m => lines.push(`• ${_mem(m)}`));
     }
 
     if (weeklySummary && weeklySummary.summary) {
@@ -409,8 +418,11 @@ function buildContext(collab, prefs, tasks, projects, lastMsgAge, habits, events
     }
 
     if (recentContextMemories && recentContextMemories.length) {
+      // Este é o bloco que MAIS precisa do carimbo: 29 das 31 memórias com termo relativo são
+      // importance high/normal e chegam ao prompt só por aqui (busca semântica). O
+      // `created_at` passou a vir na RPC match_memories em 08/08 justamente pra isto.
       lines.push('', '**Contexto recente (relevante à mensagem atual):**');
-      recentContextMemories.forEach(m => lines.push(`• [${m.memory_type}] ${m.content}`));
+      recentContextMemories.forEach(m => lines.push(`• [${m.memory_type}] ${_mem(m)}`));
     }
   }
 
