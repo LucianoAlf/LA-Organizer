@@ -181,3 +181,33 @@ Estado da tabela: `21 reverificados` · `5 confirmados` · `16 inconclusivos` ·
 2. Os **209 médio/baixo** nunca olhados.
 3. Segunda seção no relatório das 07h: *"o que foi feito e o que reincidiu"*.
 4. **Dreams** (o "sonho", 03h) ainda não foi auditado — o Alf sinalizou que tem bastante coisa lá.
+
+
+### 2ª passada nos 16 — o teste de REINCIDÊNCIA
+
+Critério: houve finding posterior da mesma categoria **para a mesma pessoa**? (grosseiro, mas
+objetivo e contestável — está gravado em `verified_note`).
+
+| destino | n | regra |
+|---|---|---|
+| `resolvido` + `confirmado` | **2** | zero reincidência há mais de 20 dias |
+| segue `novo` + **`reincidiu`** | **10** | voltou a acontecer → problema **VIVO** |
+| segue `novo` + `inconclusivo` | **4** | zero reincidência, mas <20 dias — cedo para afirmar |
+
+**Placar da fila `alto`: 21 → 7 fechados, 10 vivos, 4 aguardando maturidade.**
+
+### Onde a dor viva se concentra
+
+Os **10 vivos são TODOS `dropped_request`**:
+
+| pessoa | n | mais recente |
+|---|---|---|
+| **Rose** | **6** | 21/07 |
+| Ana | 2 | 29/07 |
+| Leo | 1 | 19/06 |
+| Matheus | 1 | 15/07 |
+
+**O alvo seguinte é "pedido largado", e ele mora no financeiro da Rose.** Os 6 dela são a mesma
+história: lançar fatura no cartão errado, lançar sem prévia, lançar depois de "não lança",
+apagar a compra errada. Há KIs de financeiro registrados — o próximo passo é cruzar um a um e
+descobrir se são KI já corrigido que reincidiu, ou raiz que nunca foi atacada.
