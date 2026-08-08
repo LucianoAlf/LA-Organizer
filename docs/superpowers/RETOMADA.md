@@ -47,7 +47,7 @@ hipótese, sempre — e cruze `marker_logs` com o log do prompt antes de culpar 
 | Confirmação não executa / repete pergunta | 7 | ✅ fechada 08/08 |
 | Afirma e desmente na mesma mensagem | 3 | ✅ fechada 08/08 |
 | Data errada no reagendamento | 5 | ⚠️ 2 fechados (weekday-offby), 3 vivos — "amanhã" resolvido errado |
-| **Pedido ignorado no meio de outro** | **6** | ❌ **próximo** |
+| Pedido ignorado no meio de outro | 6 | ⚠️ não é família — ao abrir, 2 eram `schema_invalid` e 2 o guard A2 |
 | Cobrança indevida | 8 | ⚠️ ver abaixo |
 | Financeiro / extrato incompleto | 3 | ❌ não tocada |
 
