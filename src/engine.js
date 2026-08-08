@@ -3599,6 +3599,24 @@ function parseWeeklyPlanMarker(text) {
     logSchemaErr('WEEKLY_PLAN', ['not_object'], plan);
     return { malformed: true, cleanText };
   }
+  // WEEKLY-PLAN-SCHEMA-DRIFT (Quintela 03/08): o planejamento é MULTI-TURNO e a skill que
+  // documenta o schema sai do prompt antes de o marker ser emitido — às 19:24:29 a skill
+  // carregada era `planejamento-semanal`, às 19:25:03 já era `criar-recorrencia`, e o marker
+  // saiu às 19:25:21 com formato inventado ({days:{monday:…}}; na segunda tentativa,
+  // {items:[{day,title}]}). Os dois foram rejeitados e o plano morreu em silêncio — e
+  // `schema_invalid` não tem retry, o auto-retry do engine só cobre "não emitiu marker".
+  // Normaliza o que dá pra aproveitar antes de validar; sem dado suficiente devolve o payload
+  // original e a validação abaixo rejeita como sempre. Mesmo remédio que o MEMORY_SAVE
+  // recebeu em 05/08 (extrairConteudoMemoria aceita sinônimos) — defesa de modelo, não
+  // afrouxamento: o schema canônico continua sendo o único aceito daqui pra frente.
+  try {
+    const { normalizeWeeklyPlan } = require('./lib/weekly-plan-normalize');
+    const norm = normalizeWeeklyPlan(plan);
+    if (norm && norm !== plan) {
+      console.log(`[WeeklyPlan] payload normalizado (${Object.keys(plan).join(',')} → goals+distribution)`);
+      plan = norm;
+    }
+  } catch (e) { console.warn('[WeeklyPlan] normalize err:', e.message); }
   const errors = [];
   if (typeof plan.week_start !== 'string' || !ISO_DATE_RE.test(plan.week_start)) errors.push('week_start:invalid');
   if (!Array.isArray(plan.goals) || !plan.goals.length || plan.goals.length > 5) errors.push('goals:invalid_length');
