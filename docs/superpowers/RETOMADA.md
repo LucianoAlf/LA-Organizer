@@ -13,19 +13,32 @@ irmãos, e só valem quando você precisar deles:
 
 ## PRÓXIMO PASSO (é só isto)
 
-**Família "pedido ignorado no meio de outro" — 6 casos, a maior viva.**
+**A raiz do `schema_invalid`** — KI `MARKER-SCHEMA-DRIFT-SKILL-AUSENTE`. É a **maior causa de
+pedido perdido em silêncio** que existe hoje: 242 casos históricos em 16 tipos de marker,
+**24 nos últimos 30 dias** — mais que qualquer família de finding.
 
-Padrão: a pessoa manda **dois pedidos numa mensagem** e o TOM atende um e dropa o outro.
-Quintela 03/08 (pediu tarefa pra quarta + fechamento → só o fechamento), Arthur 01/08
-(pediu virar lembrete + fechar → só fechou), Rose 31/07, Alf 28/07, Rafinha 27/07,
-Rafinha 04/08 (baixa da Caixa STANER ficou de fora da lista).
+Não é JSON quebrado. O LLM emite JSON bem formado com **campo/valor fora da whitelist**,
+porque o marker sai num turno em que a skill que define o schema **não está carregada**.
+Provado no caso Quintela 03/08 cruzando `marker_logs` com o log do prompt: skill certa às
+19:24:29, `criar-recorrencia` às 19:25:03, marker inventado às 19:25:21. E `schema_invalid`
+**não tem retry** — o auto-retry (`engine.js` ~13000) só cobre "verbalizou promessa e não
+emitiu marker".
 
-Hipótese a testar **antes de codar**: o marker sai com uma ação só, ou saem duas e uma falha?
-`marker_logs` do turno responde — se só uma ação foi emitida, é prompt/parse; se duas e uma
-falhou, é apply. **Não assuma.**
+**MEÇA ANTES DE ESCOLHER O CAMINHO:** quebrar os 24 casos de 30 dias por
+`(marker_type, campo que faltou)` usando `marker_logs.raw_excerpt`. Se a maioria for
+skill-ausente em fluxo multi-turno, o caminho (b) resolve mais; se for vocabulário divergente
+espalhado, o (a) resolve mais.
 
-⚠️ Três vezes seguidas em 08/08 a raiz registrada não era a raiz real. Trate raiz escrita
-como hipótese, sempre.
+- **(a) retry para `schema_invalid`**, espelhando o auto-retry que já existe, reemitindo com
+  a skill DONA do marker carregada. Precisa de um mapa marker→skill, que hoje não existe.
+- **(b) segurar a skill** durante fluxo multi-turno — mexe no seletor de loadout, território
+  do Mapa (`TOM_MAPA`), risco maior.
+
+O `WEEKLY_PLAN` já foi tratado como sintoma em 08/08 (normalizador tolerante, mesmo remédio
+do `MEMORY_SAVE` em 05/08). Os outros 15 tipos seguem descobertos.
+
+⚠️ Quatro vezes em 08/08 a raiz registrada não era a raiz real. Trate raiz escrita como
+hipótese, sempre — e cruze `marker_logs` com o log do prompt antes de culpar o LLM.
 
 ### Mapa das famílias (varredura de 08/08, os 38 findings dos últimos 14 dias)
 
@@ -80,6 +93,7 @@ Fechado em 08/08:
 | **F3: criação liberada sem payload executável** (`TASK-CONFIRM-DONE-NOOP` fechado) | 08/08 18:57 UTC |
 | **Afirmação + desmentido na mesma msg** (`TOM-AFIRMA-DEPOIS-DESMENTE` fechado) | 08/08 19:09 UTC |
 | Varredura dos `medio`/`baixo` por família + 14 findings amarrados | 08/08 19:30 UTC |
+| **`WEEKLY_PLAN` rejeitado por schema** (sintoma; raiz virou KI) | 08/08 19:43 UTC |
 
 Governança: auditoria auditada, migration de reverificação aplicada, fila `alto` triada
 (21 → 13 fechados, 4 vivos, 4 aguardando), 3 famílias viraram KI rastreável.
@@ -91,15 +105,18 @@ Confabulação **−85%**. `dropped_request` caiu só 56% e virou a categoria **
 
 ## FILA (em ordem)
 
-1. **Família "pedido ignorado no meio de outro"** (acima). 6 casos.
-2. **Medir a F3 + o sanitizador** por volta de 15/08 — ver acima.
-3. **Medir a Fatia A** (fecha a Task 7) — ligada em 08/08 15:25 UTC. Olhar
+1. **Raiz do `schema_invalid`** (acima). 24 casos em 30 dias, 16 tipos de marker.
+2. **Família "pedido ignorado no meio de outro"** — 6 casos. ATENÇÃO: ao abrir os 6, pelo
+   menos 2 eram `schema_invalid` (Quintela) e 2 eram o guard A2 (`all_failed`, Arthur/Rose).
+   Reagrupar antes de tratar como família própria.
+3. **Medir a F3 + o sanitizador** por volta de 15/08 — ver acima.
+4. **Medir a Fatia A** (fecha a Task 7) — ligada em 08/08 15:25 UTC. Olhar
    `[TaskTarget] serie` nos logs e `TASK_TARGET_AMBIGUOUS` em `marker_logs`.
-4. **Auditar o Dreams** (03h) — o Alf sinalizou que tem bastante coisa lá. Nunca olhado.
-5. **Crons de governança** — paridade git↔produção; `[GroupChat][DATE-CLAIM]` > 0; molde
+5. **Auditar o Dreams** (03h) — o Alf sinalizou que tem bastante coisa lá. Nunca olhado.
+6. **Crons de governança** — paridade git↔produção; `[GroupChat][DATE-CLAIM]` > 0; molde
    recorrente virando `cancelled`.
-6. **Segunda seção no relatório das 07h**: "o que foi feito e o que reincidiu".
-7. Menores: `CONFAB-WRITE-DATE-NO-RELLABEL` (data no 1:1, não tocado); rotacionar token da
+7. **Segunda seção no relatório das 07h**: "o que foi feito e o que reincidiu".
+8. Menores: `CONFAB-WRITE-DATE-NO-RELLABEL` (data no 1:1, não tocado); rotacionar token da
    Hostinger; confirmação ao cancelar tarefa recorrente (é UI, esbarra no freeze).
 
 ---
