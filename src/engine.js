@@ -10117,9 +10117,27 @@ async function processMessage(phone, text, raw = {}) {
         // confab:unknown em 30 dias). A proibição de emitir marker é MANTIDA (sem ela o LLM
         // inventa alvos — caso Conciliação/Rose 10/06, motivo original deste ramo); o que
         // muda é proibir também a AFIRMAÇÃO falsa e dar a saída honesta.
+        // F3 de TASK-CONFIRM-DONE-NOOP (medida 08/08): a intent genérica de fim de turno
+        // nasce com {last_user_text, last_tom_reply} — campos que hasConcrete NÃO reconhece.
+        // Resultado: TODA intent genérica caía no ramo proibitivo, mesmo quando o TOM tinha
+        // acabado de descrever o item na própria pergunta ("Entendi: lembrete amanhã às 11h —
+        // mandar mensagem pro Rômulo. Certo?") e o usuário confirmou de forma inequívoca
+        // (15 casos, 8 pessoas, "Isso"/"Sim"/"Pode fechar" em 100% deles).
+        // O perigo que motivou a proibição é o LLM CHUTAR QUAL ITEM EXISTENTE tocar (caso
+        // Conciliação/Rose 10/06: reagendou 2 tarefas que ninguém pediu). Em proposta de
+        // CRIAÇÃO esse perigo não existe — não há alvo a chutar. O gate é puro e fail-closed
+        // (utils/confirm-create-gate.js, fixtures = as 15 perguntas reais).
+        // Flag de rollback: TOM_CONFIRM_CREATE_GATE=0 volta ao comportamento antigo sem
+        // deploy. Também é o que permite rodar o cenário de prova nos DOIS modos e mostrar
+        // a reversão (scripts/prova-confirm-create-gate.js).
+        const { podeLiberarCriacao } = require('./utils/confirm-create-gate');
+        const _gateOn = process.env.TOM_CONFIRM_CREATE_GATE !== '0';
+        const _liberaCriacao = _gateOn && !hasConcrete && podeLiberarCriacao(target.question_text);
         const markerRule = hasConcrete
           ? 'Emita o marker apropriado APENAS para os itens do payload acima (ex: <<TASK_UPDATE>> com action=create para cada draft). NÃO crie, edite ou reagende NENHUM item que não esteja no payload.'
-          : 'O payload NÃO tem item concreto (sem draft/ids): você NÃO consegue executar isso agora. NÃO emita marker nenhum e NÃO toque em tasks/eventos existentes. E NÃO afirme que fez — nada foi gravado, então dizer "criei/registrei/marquei/deleguei/avisei/despachei" seria MENTIRA. Em UMA linha curta e natural, assuma que não conseguiu registrar e peça pra pessoa repetir o pedido com os detalhes.';
+          : (_liberaCriacao
+            ? 'O payload não tem ids, MAS a pergunta acima é uma proposta de CRIAÇÃO que VOCÊ mesmo formulou e o usuário aprovou. Emita o marker de criação (action=create) reproduzindo EXATAMENTE os dados que você propôs ali — mesmo título, mesma data, mesma hora, mesma pessoa. NÃO invente nenhum dado que não esteja na sua proposta. E NÃO edite, reagende, conclua, delegue nem apague NENHUM item já existente.'
+            : 'O payload NÃO tem item concreto (sem draft/ids): você NÃO consegue executar isso agora. NÃO emita marker nenhum e NÃO toque em tasks/eventos existentes. E NÃO afirme que fez — nada foi gravado, então dizer "criei/registrei/marquei/deleguei/avisei/despachei" seria MENTIRA. Em UMA linha curta e natural, assuma que não conseguiu registrar e peça pra pessoa repetir o pedido com os detalhes.');
         // VELOCÍMETRO do confab-noop (audit 16/07). Sem isto a decisão de estagiar (ou não)
         // cada superfície seria por TEORIA: quando a Camada 1 funciona, o TOM avisa honesto
         // SEM o chokepoint disparar — ou seja, o caso não aparece em NENHUM log e some da
@@ -10129,7 +10147,14 @@ async function processMessage(phone, text, raw = {}) {
         // (dano virou fricção); ambos altos = o LLM ainda mente e o staging é urgente.
         if (!hasConcrete) {
           try {
-            await logMarker(collab.id, 'CONFIRM_NOEXEC', 'skipped', `kind=${target.kind}`,
+            // CONFIRM_NOEXEC segue contando SÓ o que continua bloqueado, pra série histórica
+            // (15 casos de 16/07 a 07/08) permanecer comparável e CAIR quando o gate pegar.
+            // O que o gate libera vai num tipo próprio — os dois somados reproduzem a série
+            // antiga, então dá pra ver a migração de um balde pro outro em vez de um sumiço.
+            await logMarker(collab.id,
+              _liberaCriacao ? 'CONFIRM_CREATE_ALLOWED' : 'CONFIRM_NOEXEC',
+              _liberaCriacao ? 'redirected' : 'skipped',
+              `kind=${target.kind}`,
               String(target.question_text || '').slice(0, 200));
           } catch (_) { /* telemetria nunca quebra o turno */ }
         }
