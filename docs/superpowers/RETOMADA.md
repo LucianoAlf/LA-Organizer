@@ -13,14 +13,39 @@ irmãos, e só valem quando você precisar deles:
 
 ## PRÓXIMO PASSO (é só isto)
 
-**Auditar o Dreams (03h)** — única área grande que nunca foi olhada, e o Alf sinalizou que
-tem bastante coisa lá. Depois dele vem o **🤖 agente de governança** (seção própria abaixo,
-pedido explícito para não esquecer).
+**🤖 O agente de governança** (seção própria abaixo — pedido explícito do Alf). O Dreams foi
+auditado em 08/08; resultado logo abaixo.
 
-Fora esses dois, a fila não tem nada grande e comprovado: sobraram 3 findings de data errada
-no reagendamento, 3 de proativo em dia de descanso (**checar antes se o DND por dia da semana
-já existe** — a Ana Paula pergunta como configurar, assinatura de
-`project_tom_nega_capacidade`) e as medições de 15/08.
+Depois dele: 3 findings de data errada no reagendamento, 3 de proativo em dia de descanso
+(**checar antes se o DND por dia da semana já existe** — a Ana Paula pergunta como
+configurar, assinatura de `project_tom_nega_capacidade`) e as medições de 15/08.
+
+### Auditoria do Dreams (08/08) — o ritual está saudável; o que ele PRODUZ tinha um furo
+
+**Execução: impecável.** 37/37 colaboradores por dia, zero erro em 21 dias
+(`ritual_logs` + `[Dream] concluído: 37/37`). Não precisa de nada.
+
+⚠️ **Terceiro arquivo de log:** o dispatcher roda por crontab e escreve em
+**`logs/rituals.log`** — não no `tom-out.log` nem no `tom-error.log`. Grepar `[Dream]` nos
+outros dois dá zero e parece que o ritual não roda.
+
+**O furo estava no produto, não no processo** — e só apareceu porque olhei o que o Dream
+*grava*, não se ele *rodou*: 31 memórias ativas falam em "hoje/ontem/amanhã" e o prompt do
+1:1 renderizava **sem data nenhuma**. Corrigido (`MEMORY-RELATIVE-DATE-ORPHAN`, KI próprio).
+Vale a lição: **o auto-envenenamento de data foi corrigido no grupo em 08/08 e ninguém
+verificou o 1:1** — mesma família, canal maior, ficou de fora. Ao fechar um caso, perguntar
+onde mais aquilo vive.
+
+**Dois achados menores, medidos e NÃO tratados (de propósito):**
+- **Maturidade não evolui:** 29 `beginner`, 8 `developing`, **zero** `proficient` ou
+  `advanced` — a escala tem 4 níveis e usa 2. Os 8 `developing` são de fato os usuários mais
+  pesados, então o sinal não é aleatório; mas ninguém nunca subiu. Ou o critério do LLM é
+  conservador demais, ou os dois níveis de cima são inalcançáveis. Baixo impacto (o campo
+  quase não é usado), custo de investigar > ganho hoje.
+- **Os 4 perfis `[QA] Replay` entram no Dream** (37 = 33 pessoas + 4 QA) e consomem LLM. Não
+  geram lixo (0 memórias, 0 findings), então é só desperdício pequeno — filtrar por
+  `full_name ilike '[QA]%'` resolveria em uma linha, mas não vale mexer no dispatcher por isso
+  agora.
 
 ### O que a varredura do `schema_invalid` ensinou (08/08)
 
@@ -178,6 +203,7 @@ Fechado em 08/08:
 | Varredura dos `medio`/`baixo` por família + 14 findings amarrados | 08/08 19:30 UTC |
 | **`WEEKLY_PLAN` rejeitado por schema** | 08/08 19:43 UTC |
 | **Recado morto por `mode` inválido/ausente** (coordenação) | 08/08 19:57 UTC |
+| Dreams auditado (execução 37/37 ok) + **memória relativa sem data no 1:1** | 08/08 20:45 UTC |
 
 Governança: auditoria auditada, migration de reverificação aplicada, fila `alto` triada
 (21 → 13 fechados, 4 vivos, 4 aguardando), 3 famílias viraram KI rastreável.
@@ -189,8 +215,7 @@ Confabulação **−85%**. `dropped_request` caiu só 56% e virou a categoria **
 
 ## FILA (em ordem)
 
-1. **Auditar o Dreams** (03h) — única área grande nunca olhada; o Alf sinalizou.
-2. **🤖 AGENTE DE GOVERNANÇA** — seção própria acima. Pedido explícito do Alf: não esquecer.
+1. **🤖 AGENTE DE GOVERNANÇA** — seção própria acima. Pedido explícito do Alf: não esquecer.
 3. **Medir a F3 + o sanitizador** por volta de 15/08 — ver acima.
 4. **3 findings de data errada no reagendamento** ainda vivos ("amanhã" resolvido errado).
 5. **3 de proativo em dia de descanso** — checar se o DND por dia já existe ANTES de codar.
@@ -220,6 +245,11 @@ Confabulação **−85%**. `dropped_request` caiu só 56% e virou a categoria **
 - **`console.warn`/`error` vão pro `tom-error.log`, não pro `tom-out.log`.** Contei os 5 ramos
   de falha do `complete` no out.log e deu **zero em todos** — falso-zero. No error.log eram
   158 (76 do guard de data futura, 55 do A2). Contar falha sempre nos DOIS arquivos.
+- **Ao fechar um caso, pergunte onde mais aquilo vive.** O auto-envenenamento de data foi
+  corrigido no chat de grupo em 08/08 e ninguém olhou o 1:1 — mesma família, canal maior
+  (~30 pessoas), ficou descoberto até a auditoria do Dreams no mesmo dia.
+- **Auditar um ritual é olhar o que ele PRODUZ, não só se rodou.** O Dream estava 37/37 há
+  semanas; o problema estava nas memórias que ele grava.
 - **Exceção aberta num caso costuma valer para a família toda.** O gerúndio foi liberado no
   `MOVE_CLAIM` em 27/07 com a razão certa ("este gate só roda quando já sabemos que nada
   persistiu") e ninguém generalizou — dois meses depois o mesmo buraco reapareceu em
