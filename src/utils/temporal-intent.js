@@ -83,10 +83,7 @@ function detectExplicitDayIntent(rawText) {
 function resolveExplicitWeekdayDate(rawText, { baseYmd } = {}) {
   const userTextLC = stripReplyScaffold(String(rawText || '')).userText.toLowerCase();
   if (!baseYmd || EXPLICIT_NUMERIC_DATE_RE.test(userTextLC)) return null;
-  // Semana seguinte está FORA do que este resolvedor sabe fazer. Sem esta abstenção,
-  // "passa pra próxima sexta" numa quinta devolvia a sexta de AMANHÃ — e como o guard
-  // roda depois do marker e é determinístico, ele atropelava o marker que acertou.
-  if (WEEK_SHIFT_RE.test(userTextLC)) return null;
+  const pedeSemanaSeguinte = WEEK_SHIFT_RE.test(userTextLC);
 
   const matches = [...userTextLC.matchAll(WEEKDAY_RE)].map((m) => m[1]);
   const unique = [...new Set(matches.map((m) => String(m).normalize('NFD').replace(/\p{Diacritic}/gu, '')))];
@@ -97,6 +94,20 @@ function resolveExplicitWeekdayDate(rawText, { baseYmd } = {}) {
   if (targetDow == null || baseDow == null) return null;
 
   const delta = (targetDow - baseDow + 7) % 7;
+
+  // TASK-RESCHEDULE-WEEKDAY-OFFBY: "próxima terça" / "terça que vem" caíam numa abstenção
+  // total e voltavam pro LLM, que erra o cálculo (4 casos medidos entre 01 e 06/08:
+  // "terça após 06/08 é 11/08, não 12/08").
+  //
+  // Mas "que vem" só é AMBÍGUO quando a próxima ocorrência ainda cai na MESMA semana da base
+  // — aí ela pode ser esta (delta) ou a de sete dias depois, e o resolvedor não tem como
+  // saber. Quando a próxima ocorrência JÁ cai na semana seguinte, "próxima terça" e "terça
+  // que vem" apontam para o MESMO dia: não há decisão a tomar, e abster era desperdiçar
+  // certeza. Semana começa no domingo (`baseDow` é 0 = domingo).
+  if (pedeSemanaSeguinte) {
+    const caiNaSemanaSeguinte = baseDow + delta >= 7;
+    if (!caiNaSemanaSeguinte) return null;   // ambiguidade real: deixa o marker do LLM valer
+  }
   // delta 0 = a pessoa nomeou o dia de HOJE. Num reagendamento isso nunca é o que ela
   // quer (mover para hoje é no-op), e o mais provável é a semana seguinte — que este
   // resolvedor não sabe decidir. Abster deixa o marker do LLM valer, que é o

@@ -100,12 +100,24 @@ test('weekday resolver não briga com data numérica explícita nem frase ambíg
 // inverte o risco: onde ele erra, ele atropela um marker que estava certo. Os dois
 // casos abaixo estavam vivos em produção — o conjunto de abstenção cobria data
 // numérica e dois-dias, mas não estes.
-test('"próxima sexta" / "sexta que vem" ABSTÊM — o guard não sabe resolver semana seguinte', () => {
+test('"próxima sexta" / "sexta que vem" ABSTÊM — a próxima sexta cai na MESMA semana', () => {
   // Numa quinta 06/08 o guard devolvia 07/08 (amanhã!) para um pedido de semana que vem.
-  for (const t of ['passa pra próxima sexta', 'passa pra sexta que vem', 'joga pra proxima segunda',
-                   'deixa pra semana que vem na terça']) {
+  // Aqui a ambiguidade é real: a próxima sexta (07/08) ainda é desta semana, então "sexta que
+  // vem" pode ser 07/08 ou 14/08 — e o resolvedor não tem como saber. Segue abstendo.
+  for (const t of ['passa pra próxima sexta', 'passa pra sexta que vem']) {
     assert.strictEqual(resolveExplicitWeekdayDate(t, { baseYmd: '2026-08-06' }), null, t);
   }
+});
+
+// ESTES DOIS SAÍRAM DO TESTE ACIMA em 08/08, e a mudança é deliberada.
+// O teste original mandava abster de TODO "próxima X" porque, na época, o guard não sabia
+// distinguir os casos. Sabe agora: quando a próxima ocorrência já cai na semana seguinte, as
+// duas leituras de "que vem" apontam para o MESMO dia e não há decisão a tomar. Abster ali
+// devolvia ao LLM um cálculo que ele erra — 4 casos medidos entre 01 e 06/08
+// (TASK-RESCHEDULE-WEEKDAY-OFFBY).
+test('semana seguinte SEM ambiguidade agora resolve (numa quinta, segunda e terça só existem lá)', () => {
+  assert.strictEqual(resolveExplicitWeekdayDate('joga pra proxima segunda', { baseYmd: '2026-08-06' }), '2026-08-10');
+  assert.strictEqual(resolveExplicitWeekdayDate('deixa pra semana que vem na terça', { baseYmd: '2026-08-06' }), '2026-08-11');
 });
 
 test('dia da semana IGUAL ao de hoje ABSTÉM — "pra quinta" numa quinta não é hoje', () => {
@@ -118,4 +130,25 @@ test('dia da semana IGUAL ao de hoje ABSTÉM — "pra quinta" numa quinta não �
 test('o caso do Alfredo (06/08 → sábado) continua resolvendo — a abstenção não pode comer o fix', () => {
   assert.strictEqual(resolveExplicitWeekdayDate('passa essa do inventário pra sábado', { baseYmd: '2026-08-06' }), '2026-08-08');
   assert.strictEqual(resolveExplicitWeekdayDate('muda pra terca-feira', { baseYmd: '2026-08-06' }), '2026-08-11');
+});
+
+// TASK-RESCHEDULE-WEEKDAY-OFFBY (findings de 01 a 06/08): "terça QUE VEM" caía na abstenção
+// do WEEK_SHIFT_RE e voltava pro LLM, que erra o cálculo. Mas "que vem" só é ambíguo quando a
+// próxima ocorrência ainda cai na MESMA semana da base. Quando ela já cai na semana seguinte,
+// "próxima terça" e "terça que vem" apontam para o MESMO dia — e aí não há o que decidir.
+test('semana-seguinte sem ambiguidade: "terça que vem" numa quinta resolve (as duas leituras coincidem)', () => {
+  // 06/08/2026 é quinta. A próxima terça é 11/08 e JÁ está na semana seguinte.
+  assert.equal(resolveExplicitWeekdayDate('passa pra próxima terça', { baseYmd: '2026-08-06' }), '2026-08-11');
+  assert.equal(resolveExplicitWeekdayDate('joga pra terça que vem', { baseYmd: '2026-08-06' }), '2026-08-11');
+});
+
+test('ambiguidade REAL continua abstendo: "quinta que vem" numa segunda', () => {
+  // 03/08 é segunda; a próxima quinta (06/08) está na MESMA semana. "Que vem" pode ser 06/08
+  // ou 13/08 — o resolvedor não tem como saber, então deixa o marker do LLM valer.
+  assert.equal(resolveExplicitWeekdayDate('passa pra quinta que vem', { baseYmd: '2026-08-03' }), null);
+});
+
+test('caso direto segue igual (anti-regressão do guard)', () => {
+  assert.equal(resolveExplicitWeekdayDate('passa pra terça', { baseYmd: '2026-08-06' }), '2026-08-11');
+  assert.equal(resolveExplicitWeekdayDate('reagenda pra quinta', { baseYmd: '2026-08-03' }), '2026-08-06');
 });
