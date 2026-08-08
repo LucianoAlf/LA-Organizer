@@ -85,6 +85,51 @@ test('briefing carrega quem pediu e os limites', () => {
   assert.match(b, /tom-error\.log/);
 });
 
+// PEDIDO PERDIDO NO RESTART (Alf, 08/08 19:29) — o pior sintoma possível: silêncio.
+// O CLI roda como processo FILHO do TOM. `pm2 restart` mata o pai, o filho morre junto e o
+// `.then()` que postaria a resposta nunca roda. Não há erro, não há log, não há aviso: a
+// pessoa fica olhando pro "Tô nisso" pra sempre. E o auto-deploy reinicia a CADA push, então
+// isto não é exceção — é o caminho comum.
+test('pedido em andamento fica registrado e some quando termina', () => {
+  const m = carregar(LIGADO);
+  assert.deepStrictEqual(m.pedidosEmAndamento(), []);
+  const id = m._registrarPedido('Alf', 'roda a auditoria');
+  assert.strictEqual(m.pedidosEmAndamento().length, 1);
+  assert.strictEqual(m.pedidosEmAndamento()[0].quem, 'Alf');
+  m._concluirPedido(id);
+  assert.deepStrictEqual(m.pedidosEmAndamento(), []);
+});
+
+test('sem pedido em andamento não há aviso — reinício limpo é silencioso', () => {
+  const m = carregar(LIGADO);
+  assert.strictEqual(m.textoDePedidosPerdidos(), null);
+});
+
+test('aviso nomeia quem pediu e diz o que fazer', () => {
+  const m = carregar(LIGADO);
+  m._registrarPedido('Hugo', 'me traz os erros de ontem do financeiro');
+  const t = m.textoDePedidosPerdidos();
+  assert.match(t, /Hugo/);
+  assert.match(t, /me traz os erros/);
+  assert.match(t, /manda de novo|pede de novo/i);
+  assert.ok(!t.includes('**'), 'markdown não renderiza no zap');
+});
+
+test('aviso cobre TODOS os pedidos perdidos, não só o primeiro', () => {
+  const m = carregar(LIGADO);
+  m._registrarPedido('Alf', 'primeiro pedido');
+  m._registrarPedido('Hugo', 'segundo pedido');
+  const t = m.textoDePedidosPerdidos();
+  assert.match(t, /primeiro pedido/);
+  assert.match(t, /segundo pedido/);
+});
+
+test('pedido muito longo é cortado no aviso', () => {
+  const m = carregar(LIGADO);
+  m._registrarPedido('Alf', 'x'.repeat(400));
+  assert.ok(m.textoDePedidosPerdidos().length < 400, 'aviso não pode virar parede');
+});
+
 // As regras de entrega vivem num .md editável sem deploy. Se o caminho quebrar, o agente
 // volta a despejar parede de texto no WhatsApp sem nada falhar — daí o teste.
 const FORMATO = require('path').join(__dirname, '../../docs/ops/FORMATO-GRUPO.md');

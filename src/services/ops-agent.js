@@ -108,12 +108,65 @@ nunca diga que fez o que não fez.
 ${formato ? `\n${formato}` : ''}`;
 }
 
+// ── PEDIDO PERDIDO NO RESTART ──────────────────────────────────────────────────────────────
+// Caso Alf, 08/08 19:29: pedido entrou, `pm2 restart` 61s depois (deploy meu), e o grupo
+// ficou com o "Tô nisso" pra sempre. O CLI é processo FILHO: mata-se o pai, o filho vai
+// junto e o `.then()` que postaria a resposta nunca roda — sem erro, sem log, sem aviso.
+// O auto-deploy reinicia a cada push, então isto é o caminho comum, não a exceção.
+//
+// Não uso `shutdown.trackStart()` de propósito: ele faria TODO deploy esperar 30s à toa
+// (o agente leva minutos, o timeout estoura e mata igual). O que resolve o pior sintoma —
+// o silêncio — é avisar antes de morrer, via drain hook, que roda sempre antes do exit.
+const _emAndamento = new Map();
+let _seqPedido = 0;
+
+function _registrarPedido(quem, pedido) {
+  const id = ++_seqPedido;
+  _emAndamento.set(id, { quem, pedido: String(pedido || ''), iniciadoEm: Date.now() });
+  return id;
+}
+function _concluirPedido(id) { _emAndamento.delete(id); }
+function pedidosEmAndamento() { return [..._emAndamento.values()]; }
+
+/** Texto do aviso, ou null quando não havia nada rodando (reinício limpo é silencioso). */
+function textoDePedidosPerdidos() {
+  const pend = pedidosEmAndamento();
+  if (!pend.length) return null;
+  const linhas = pend.map((p) => {
+    const trecho = p.pedido.length > 90 ? `${p.pedido.slice(0, 90).trimEnd()}…` : p.pedido;
+    return `• ${p.quem}: "${trecho}"`;
+  });
+  return `⚠️ Tive que reiniciar aqui no meio e perdi ${pend.length > 1 ? 'estes pedidos' : 'este pedido'}:\n`
+    + `${linhas.join('\n')}\n\nNão cheguei a terminar. Manda de novo que eu faço.`;
+}
+
+// O canal de postagem é injetado pelo group-chat-engine (que tem o supabase e o groupId).
+// Sem ele o hook degrada pra log — nunca derruba o shutdown.
+let _canalAviso = null;
+function configurarCanalAviso(fn) { _canalAviso = typeof fn === 'function' ? fn : null; }
+
+try {
+  require('./shutdown').registerDrainHook(async () => {
+    const texto = textoDePedidosPerdidos();
+    if (!texto) return;
+    console.warn(`[OpsAgent] reinício com ${pedidosEmAndamento().length} pedido(s) em andamento`);
+    if (!_canalAviso) return;
+    try { await _canalAviso(texto); } catch (e) { console.error('[OpsAgent] aviso falhou:', e.message); }
+  });
+} catch (e) {
+  console.warn('[OpsAgent] sem drain hook de shutdown:', e.message);
+}
+
 /**
  * Roda o pedido no CLI com ferramentas. Resolve com o texto final do agente.
  * Nunca lança: devolve `{ ok:false, text }` com mensagem já pronta pro grupo.
  */
 function runOpsAgent(pedido, { quem = 'alguém do grupo' } = {}) {
-  return new Promise((resolve) => {
+  const _idPedido = _registrarPedido(quem, pedido);
+  return new Promise((_resolveRaw) => {
+    // Baixa o pedido em QUALQUER saída (sucesso, erro, timeout) — um registro que vaza faria
+    // o próximo restart avisar sobre pedido que já tinha sido respondido.
+    const resolve = (v) => { _concluirPedido(_idPedido); _resolveRaw(v); };
     const args = [
       '-p', String(pedido || '').slice(0, 4000),
       '--model', OPS_MODEL,
@@ -160,4 +213,8 @@ function runOpsAgent(pedido, { quem = 'alguém do grupo' } = {}) {
   });
 }
 
-module.exports = { isOpsChannel, runOpsAgent, buildBriefing, OPS_GROUP_ID, OPS_ALLOWLIST, OPS_ENABLED };
+module.exports = {
+  isOpsChannel, runOpsAgent, buildBriefing, OPS_GROUP_ID, OPS_ALLOWLIST, OPS_ENABLED,
+  pedidosEmAndamento, textoDePedidosPerdidos, configurarCanalAviso,
+  _registrarPedido, _concluirPedido,   // expostos para o teste do registro
+};

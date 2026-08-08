@@ -94,6 +94,32 @@ async function postTomText(supabase, groupId, content) {
   return data;
 }
 
+// "Tom escrevendo…" enquanto o agente trabalha. O watcher já dispara UM `sendGroupTyping` ao
+// receber a mensagem, mas o `composing` do WhatsApp expira em ~25s e o agente leva minutos —
+// por isso a barrinha sumia e o grupo parecia morto (reclamação do Alf, 08/08).
+const TYPING_BATIDA_MS = 20000;
+const TYPING_TETO_MS = 12 * 60 * 1000;   // acima do timeout do agente: rede contra vazamento
+
+function iniciarTypingSustentado(supabase, groupId) {
+  let vivo = true;
+  let timer = null;
+  const parar = () => { vivo = false; if (timer) { clearInterval(timer); timer = null; } };
+  (async () => {
+    const { data: g } = await supabase.from('work_groups')
+      .select('wa_group_jid').eq('id', groupId).maybeSingle();
+    const jid = g && g.wa_group_jid;
+    if (!jid || !vivo) return;
+    const { sendGroupTyping } = require('./uazapi-groups');
+    const bater = () => { if (vivo) Promise.resolve(sendGroupTyping(jid)).catch(() => {}); };
+    bater();
+    timer = setInterval(bater, TYPING_BATIDA_MS);
+    // unref: um "digitando" pendente não pode segurar o shutdown do processo.
+    if (typeof timer.unref === 'function') timer.unref();
+    setTimeout(parar, TYPING_TETO_MS).unref?.();
+  })().catch(() => { /* cosmético: nunca derruba o pedido */ });
+  return parar;
+}
+
 // Resultado do agente de ops → grupo. Passa pelo sanitizador (markdown não renderiza no
 // WhatsApp) e sai em mensagens de tamanho legível, em série pra não embaralhar a ordem no
 // espelho. Divide em vez de truncar: num relatório de auditoria a conclusão fica no fim.
@@ -127,10 +153,16 @@ async function processGroupChatMessage({ supabase, groupId, senderCollabId, text
     // O agente pode levar minutos (auditoria, teste, deploy). O watcher do grupo é um poll
     // curto: segurar o turno até o fim penduraria a fila inteira. Então confirma na hora e
     // devolve o resultado quando terminar, num segundo post.
+    // Se o processo cair no meio (deploy = `pm2 restart`), o drain hook avisa por aqui em vez
+    // de deixar o grupo esperando um "Tô nisso" que nunca volta.
+    opsAgent.configurarCanalAviso((txt) => postTomText(supabase, groupId, txt));
+    const pararTyping = iniciarTypingSustentado(supabase, groupId);
+
     opsAgent.runOpsAgent(text, { quem })
       .then((r) => postOpsResult(supabase, groupId, r.text))
       .catch((e) => postTomText(supabase, groupId, `Quebrei no meio disso aqui: ${e.message}`))
-      .catch((e) => console.error('[OpsAgent] falha ao postar resultado:', e.message));
+      .catch((e) => console.error('[OpsAgent] falha ao postar resultado:', e.message))
+      .finally(pararTyping);
 
     console.log(`[OpsAgent] pedido de ${quem}: "${String(text).slice(0, 80)}"`);
     return await postTomText(supabase, groupId, '👽 Tô nisso — já te falo.');
