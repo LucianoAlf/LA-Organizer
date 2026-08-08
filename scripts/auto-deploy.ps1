@@ -37,36 +37,49 @@ if ($nodeExe -and (Test-Path $guard)) {
     }
 }
 
-# 4. Nada staged -> sai.
+# 4. Nada staged -> nao ha o que commitar, mas NAO sai: a VPS ainda pode estar atras.
+#    Este `exit 0` era o bug. Com dois chats commitando A MAO durante o turno, a arvore chega
+#    limpa aqui todo fim de turno, o hook saia, e a etapa 8 (a unica que atualiza a producao)
+#    nunca rodava. Resultado real: a VPS ficou 74 commits atras por 5 dias, e so nao virou
+#    incidente porque as pessoas lembravam de fazer `scp` a mao arquivo por arquivo.
 git -C $srcRoot diff --cached --quiet 2>$null
-if ($LASTEXITCODE -eq 0) { exit 0 }
+$temCommit = ($LASTEXITCODE -ne 0)
 
-# 5. Commit.
 $ts = Get-Date -Format "yyyy-MM-dd HH:mm"
-git -C $srcRoot commit -m "Auto-deploy $ts
+if ($temCommit) {
+    # 5. Commit.
+    git -C $srcRoot commit -m "Auto-deploy $ts
 
 Co-Authored-By: Claude <noreply@anthropic.com>" 2>$null
-if ($LASTEXITCODE -ne 0) { exit 0 }
 
-# 6. Incorpora o que o outro chat ja empurrou ANTES do push (nunca clobra).
-$beforeSha = git -C $srcRoot rev-parse origin/main 2>$null
-git -C $srcRoot fetch origin main --quiet 2>$null
-git -C $srcRoot rebase origin/main 2>$null
-if ($LASTEXITCODE -ne 0) {
-    git -C $srcRoot rebase --abort 2>$null
-    Set-Content -Path $holdFile -Value "HOLD auto: rebase-conflito no deploy $ts -- resolver a mao (git status em _remote)." -Encoding utf8
-    Write-Output "=== DEPLOY ABORTADO: rebase-conflito com origin/main. Hold recriado. Resolver manualmente. ==="
-    exit 0
+    # 6. Incorpora o que o outro chat ja empurrou ANTES do push (nunca clobra).
+    if ($LASTEXITCODE -eq 0) {
+        git -C $srcRoot fetch origin main --quiet 2>$null
+        git -C $srcRoot rebase origin/main 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            git -C $srcRoot rebase --abort 2>$null
+            Set-Content -Path $holdFile -Value "HOLD auto: rebase-conflito no deploy $ts -- resolver a mao (git status em _remote)." -Encoding utf8
+            Write-Output "=== DEPLOY ABORTADO: rebase-conflito com origin/main. Hold recriado. Resolver manualmente. ==="
+            exit 0
+        }
+        # 7. Push.
+        git -C $srcRoot push origin main 2>$null
+    }
 }
 
-# 7. Push.
-git -C $srcRoot push origin main 2>$null
-
-# 8. VPS reset + restart se backend (src/skills/migrations) mudou.
-$changed = git -C $srcRoot diff --name-only $beforeSha HEAD 2>$null
-$needsVPS = $changed | Where-Object { $_ -match "^(src/|skills/|migrations/)" }
-if ($needsVPS) {
-    ssh tom "cd /opt/LA-Organizer && git fetch origin main --quiet 2>&1 | tail -2 && git reset --hard origin/main --quiet 2>&1 | tail -2 && pm2 restart tom --no-color 2>&1 | tail -2" 2>$null
+# 8. Sincroniza a VPS pelo ESTADO DELA, nao pelo que este turno fez.
+#    O criterio antigo (`diff $beforeSha HEAD`) so via o commit do proprio turno: commit feito
+#    a mao, ou trabalho vindo do outro chat pelo rebase, nao disparavam deploy nenhum.
+$vpsAtras = (ssh tom "cd /opt/LA-Organizer && git fetch origin main --quiet 2>/dev/null; git rev-list --count HEAD..origin/main 2>/dev/null" 2>$null) -as [int]
+if ($vpsAtras -gt 0) {
+    # Restart so quando muda o que o processo carrega; doc/plano nao precisa derrubar o TOM.
+    $backend = (ssh tom "cd /opt/LA-Organizer && git diff --name-only HEAD origin/main 2>/dev/null | grep -cE '^(src/|skills/|migrations/)'" 2>$null) -as [int]
+    Write-Output "=== VPS estava $vpsAtras commit(s) atras -- sincronizando (backend: $backend arquivo(s)) ==="
+    if ($backend -gt 0) {
+        ssh tom "cd /opt/LA-Organizer && git reset --hard origin/main --quiet && pm2 restart tom --no-color 2>&1 | tail -2" 2>$null
+    } else {
+        ssh tom "cd /opt/LA-Organizer && git reset --hard origin/main --quiet" 2>$null
+    }
 }
 exit 0
 
