@@ -22,7 +22,7 @@ frente. Trocado por **ciclo corrente (menor `due_date`)**, atrás da flag `TOM_T
 | 5 | handler `cancel` | ✅ `b30801c1` |
 | 6 | cenário B do Replay Lab | ⚠️ **não entrega a prova** — ver abaixo |
 | 6b | prova determinística (substituta) | ✅ `a3eaf172` — **6/6** |
-| 7 | deploy gated + medição | ⛔ **PENDENTE — só falta ligar a flag** |
+| 7 | deploy gated + medição | 🟡 **flag LIGADA em 08/08 15:25 UTC — falta a MEDIÇÃO** |
 
 ### Por que a Task 6 não fechou
 O cenário via Replay Lab conversa com o LLM. Fora da janela do prompt (que injeta só prazos dos
@@ -41,12 +41,15 @@ reschedule  OFF → LEGADO     |  ON → CORRENTE      6/6 · resíduo 0
 
 O cenário B **continua útil** (tem check anti-vacuidade `executor_rodou`), mas **não é gate de deploy**.
 
-### Como ligar (o que falta)
-```bash
-ssh tom "cd /opt/LA-Organizer && echo 'TOM_TASK_TARGET_SERIES=1' >> .env && pm2 restart tom"
-```
-Reverter: tirar a linha e reiniciar. Medir depois pelos logs `[TaskTarget] serie` e
-`TASK_TARGET_AMBIGUOUS` em `marker_logs`.
+### Ligada — falta medir
+`TOM_TASK_TARGET_SERIES=1` no `.env` da VPS desde **08/08 15:25 UTC** (backup do `.env` feito).
+Reverter: tirar a linha e `pm2 restart tom` (10s).
+
+**A Task 7 só fecha com a medição**, não com o deploy. O que olhar, daqui a alguns dias:
+- `grep '\[TaskTarget\] serie' logs/` → quantas vezes o alvo mudou, e para qual `due`
+- `marker_logs` com `marker_type='TASK_TARGET_AMBIGUOUS'` → os casos de linhagem distinta,
+  que são o insumo da Fatia B (hoje ~10 grupos medidos, mantêm o legado)
+- `grep 'cap atingido'` → se alguma série passou de 100 candidatos
 
 ### Dimensão real (medida em produção, não estimada)
 - `919` ações de tarefa por **id** — não passam pelo lookup
@@ -63,7 +66,7 @@ atrasada aberta"*. **Errado.** O legado escolhe a mais distante, que é futura, 
 
 ---
 
-## 2. Infra de deploy — CORRIGIDO hoje
+## 2. Infra de deploy — CORRIGIDO e SINCRONIZADO
 
 `auto-deploy.ps1` saía em `exit 0` quando não tinha o que commitar. Como os dois chats commitam à
 mão durante o turno, a árvore chegava limpa e **a etapa que atualiza a VPS nunca rodava**.
@@ -74,9 +77,15 @@ VPS era exatamente esse commit. **A produção ficou 5 dias sem receber git.**
 Corrigido em `860295aa`: a sincronização passou a depender do **estado da VPS**
 (`git rev-list --count HEAD..origin/main`), não do que o turno commitou.
 
-**Estado:** `.deploy-hold` ATIVO de propósito — o primeiro sync sobe a feature de credenciais do
-Hugo, e isso é decisão dele. Na prática o sync mexe em ~4 arquivos: comparei os 332 de
-`src/`+`skills/` e 328 já estavam idênticos (mantidos à mão por scp).
+**Estado (08/08 15:24):** Hugo liberou, hold removido, VPS sincronizada — `0` commits atrás,
+`9c4a469`. O sync de 77 commits mexeu em **1 arquivo** em produção (`src/router/route-decision.js`)
+e para melhor: trouxe a barreira de TTL vencido (`flowExpired`), que impede fluxo expirado de
+prender a conversa. Todo o resto já estava idêntico.
+
+Paridade conferida por md5 nos 332 arquivos: **zero divergências reais** (uma acusação foi só
+CRLF na cópia local — o `git status` da VPS mente por índice velho e por fim de linha do `scp`).
+
+**O deploy automático voltou a funcionar.** Não depender mais de `scp` manual É a correção.
 
 ---
 
@@ -108,8 +117,17 @@ container com título curto ("Barra") — e ele pegou o conjunto errado.
 **Dado já corrigido à mão:** as 3 filhas movidas para 31/08; container e filhas agora no mesmo dia.
 As 3 soltas seguem canceladas (eram as duplicatas).
 
-**Código: NÃO corrigido.** É o próximo alvo, decisão do Alf: atacar a cascata container→filhas na
-raiz antes de retomar a Fatia A.
+**CORRIGIDO em `9c4a4694`** (KI `GROUPPKG-RESCHEDULE-NO-CASCADE`). O ramo `cancel` já descia para
+as filhas; o `reschedule` não tinha a regra, e o `select` nem trazia `is_group`.
+
+Prova end-to-end com LLM real, em grupo descartável `[QA]`, remetente na faixa 5500…, tudo sob
+`runInTurn({qa:true})` — nada encostou no grupo da Rose:
+- **ANTES: 2/2 reproduziram**, com o TOM dizendo *"Todos os três agora com prazo 31/08. Fechou!"*
+  e as filhas em `30/08,30/08,30/08`
+- **DEPOIS: 3/3 aprovado**, container e filhas juntos e a fala batendo com o banco
+
+Armadilha registrada: **o dublê dos testes ignora a lista de colunas do `select`** — a falta do
+`is_group` passaria VERDE na suíte e só apareceria em produção. Conferido à mão.
 
 Relacionado: `project_group_counters_colapso_pacotes`, `GROUPPKG-CONTAINER-COMPLETABLE-*`.
 
@@ -128,6 +146,24 @@ Relacionado: `project_group_counters_colapso_pacotes`, `GROUPPKG-CONTAINER-COMPL
 
 ## Ordem sugerida de retomada
 
-1. **Cascata container→filhas** (o que a Rose está sentindo hoje).
-2. **Ligar a flag** da Fatia A + medir — está pronto e provado, falta só o momento.
-3. Soltar o `.deploy-hold` quando o Hugo confirmar.
+1. **Medir a Fatia A** (fecha a Task 7). Alguns dias de log — é o único passo que falta lá.
+2. **Crons de governança** — ver seção 6.
+3. **Data no 1:1** (`CONFAB-WRITE-DATE-NO-RELLABEL`, caso Anne): o conserto de 07/08 foi só do
+   chat de grupo. O 1:1 tem o mesmo padrão e não foi tocado.
+
+## 6. Crons de governança (proposto em 08/08, não implementado)
+
+Todo defeito desta sessão era **silencioso** e só apareceu porque uma pessoa reclamou. Regra do
+desenho: **cron que só fala quando há problema** — silêncio = tudo bem. Dashboard que ninguém lê
+vira ruído, e ruído mata sinal.
+
+| # | Cron | Teria pego | Custo |
+|---|---|---|---|
+| 1 | Paridade git ↔ produção (VPS atrás? md5 dos 332?) | os 5 dias de deploy morto | baixo |
+| 2 | `[GroupChat][DATE-CLAIM]` > 0 nas últimas 24h | a data errada da Rose | baixo (detector já existe) |
+| 3 | Molde recorrente que virou `cancelled` | o Faturamento Mensal sumido | baixo |
+| 4 | Disse-que-fez × banco não mudou | a cascata do pacote | alto (é o mais valioso) |
+| 5 | `TASK_TARGET_AMBIGUOUS` acumulado | insumo da Fatia B | baixo |
+
+Começar por **1, 2 e 3** (baratos, dado já existe). O **4** é o que mais dói e o mais caro —
+merece desenho próprio, não improviso.
