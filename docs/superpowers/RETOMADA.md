@@ -109,11 +109,25 @@ precisa cadastrar ninguém. Mas o relatório das 07h hoje é **hardcoded só pro
 existem 4 `director` (Admin, Anne Susan, Hugo, Luciano): tem que ser **lista explícita**,
 senão a Anne Susan passa a receber relatório técnico.
 
-**PENDENTE DO ALF:** criar o grupo no WhatsApp com os dois + o TOM (o app espelha via
-`group-chat-bridge`; o número do TOM precisa estar no grupo do WhatsApp). Feito isso: apontar
-o relatório das 07h pra lá, montar o gate/allowlist, e **conferir `work_group_members` dos
-dois** — `sender_id` NULL deixa o TOM mudo para aquele membro específico, sem erro nenhum
-(`project_groupchat_sender_id_null_silent`).
+**✅ GRUPO CRIADO E LIGADO (08/08).** O Alf criou no WhatsApp; eu puxei o JID e liguei no app.
+- `wa_group_jid` = **`120363430040751385@g.us`**
+- `work_groups.id` = **`b3bd198a-c81a-40dc-addc-16838614cbae`** (slug `la-organizer-tom`)
+- Participantes no WhatsApp: 3 — TOM (`…3082`), Alf (`…8047`), Hugo (`…1223`)
+- `work_group_members`: Alf e Hugo inseridos e **conferidos** — os dois resolvem para
+  collaborator ativo, então a armadilha do `sender_id` NULL está prevenida
+  (`project_groupchat_sender_id_null_silent`)
+- Setup idêntico ao do grupo **Financeiro**, que funciona há 1806 mensagens (`wa_group_jid`
+  preenchido é o que o `group-chat-bridge-in` usa pra casar: `.eq('wa_group_jid', jid)`)
+- Mensagem de ativação enviada no grupo explicando como chamar e como dispensar
+
+**FALTA TESTAR (5 segundos, precisa de um humano):** alguém manda `Tom, tá me ouvindo?` no
+grupo. O envio de ativação saiu por `sendGroupText` direto, fora do pipeline — então o
+caminho de ENTRADA (webhook → bridge-in → engine) ainda não foi exercitado neste grupo.
+
+**O que AINDA NÃO existe** (e a mensagem de ativação diz isso ao grupo, pra não criar
+expectativa falsa): o poder de pedir auditoria e correção. Hoje o grupo funciona como
+qualquer grupo de trabalho. Falta o gate/allowlist, o relatório das 07h apontado pra cá, e o
+agente em si.
 
 ⚠️ **O que muda no desenho por causa do "tudo liberado"** (levantado em 08/08; o Alf decidiu
 seguir, e a mitigação é de desenho, não de custo): hoje o TOM identifica pessoa por
