@@ -129,3 +129,55 @@ nada sobre agente autônomo.
 
 Ordem sugerida: **3 → 1 → 4 → 2**. Atacar a fila primeiro dá o retrato real de quantos findings
 sobrevivem a uma triagem honesta — e esse número é que dimensiona o resto.
+
+
+---
+
+## 6. Primeira rodada do ciclo — executada em 08/08
+
+### O número que ninguém tinha: o trabalho ESTÁ funcionando
+
+Findings por semana, por categoria:
+
+```
+semana      confab  dropped  frustr  refusal   TOTAL
+2026-06-07     33      25      20        4       86
+2026-06-14      8      27      17        4       57
+2026-06-21     10      17      10        1       41
+2026-06-28      5      15       9        2       33
+2026-07-05      2      20       9        0       33
+2026-07-12      7      25       7        2       42
+2026-07-19      1      13       5        1       21
+2026-07-26      3      11       2        1       19
+2026-08-02      5      11       6        0       25
+```
+
+- **Total: −71%** (86 → 25 por semana)
+- **Confabulação: −85%** (33 → 5) — era a dor #1, deixou de ser
+- **Frustração: −70%** (20 → 6)
+- **`dropped_request`: −56%** — o mais teimoso, e agora **a categoria dominante** (11 de 25)
+
+**O próximo alvo mudou: é "pedido largado", não mais confabulação.**
+
+### Migration aplicada
+`tom_audit_findings` ganhou `verified_at`, `verified_result`
+(`confirmado`|`reincidiu`|`inconclusivo`, com CHECK) e `verified_note` (o critério, para poder
+ser contestado). A resolução continua morando em `tom_known_issues.fix_resumo` via
+`promoted_code` — não duplicada.
+
+### Triagem dos 21 `alto`
+
+| resultado | n | critério |
+|---|---|---|
+| `resolvido` + `confirmado` | **5** | confabulação anterior a 09/07; categoria caiu 85% e a assinatura não reincidiu em 30+ dias. Várias evidências mostram o chokepoint de honestidade já agindo (*"Sendo sincero: eu ainda NÃO avisei ninguém"*) |
+| segue `novo` + `inconclusivo` | **16** | olhados, **não** fechados. Fechar `dropped_request` agora seria falso-verde |
+
+Estado da tabela: `21 reverificados` · `5 confirmados` · `16 inconclusivos` · **`209 nunca olhados`**
+(os `medio`/`baixo`).
+
+### O que falta nesta frente
+1. Os **16 inconclusivos** precisam de investigação individual — vários são financeiro/Rose e
+   provavelmente já têm KI correspondente.
+2. Os **209 médio/baixo** nunca olhados.
+3. Segunda seção no relatório das 07h: *"o que foi feito e o que reincidiu"*.
+4. **Dreams** (o "sonho", 03h) ainda não foi auditado — o Alf sinalizou que tem bastante coisa lá.
