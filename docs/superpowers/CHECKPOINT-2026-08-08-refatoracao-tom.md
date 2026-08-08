@@ -151,7 +151,19 @@ Relacionado: `project_group_counters_colapso_pacotes`, `GROUPPKG-CONTAINER-COMPL
 3. **Data no 1:1** (`CONFAB-WRITE-DATE-NO-RELLABEL`, caso Anne): o conserto de 07/08 foi só do
    chat de grupo. O 1:1 tem o mesmo padrão e não foi tocado.
 
-## 6. Crons de governança (proposto em 08/08, não implementado)
+## 6. Governança — metodologia acordada em 08/08
+
+👉 **`docs/superpowers/GOVERNANCA-TOM-metodologia.md`** (documento próprio).
+
+Achado que muda a prioridade: **a auditoria das 07h funciona** (357 findings, 2,4% de falso
+positivo, roda todo dia). O que não funciona é a FILA — **230 findings (64%) nunca triados, 21
+deles severidade alta**, o mais antigo de 21/07. Ela já apontava o problema da Rose semanas
+antes de ela reclamar. Não falta instrumento; falta ciclo.
+
+Ordem acordada: **atacar a fila represada → migration de reverificação → 2ª seção no relatório
+das 07h → cron de paridade**.
+
+### Crons (a lista original, mantida como referência)
 
 Todo defeito desta sessão era **silencioso** e só apareceu porque uma pessoa reclamou. Regra do
 desenho: **cron que só fala quando há problema** — silêncio = tudo bem. Dashboard que ninguém lê
