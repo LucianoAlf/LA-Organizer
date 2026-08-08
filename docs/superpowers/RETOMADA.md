@@ -66,10 +66,10 @@ Confabulação **−85%**. `dropped_request` caiu só 56% e virou a categoria **
 3. **Medir a Fatia A** (fecha a Task 7) — ligada em 08/08 15:25 UTC. Olhar
    `[TaskTarget] serie` nos logs e `TASK_TARGET_AMBIGUOUS` em `marker_logs`.
 4. **Auditar o Dreams** (03h) — o Alf sinalizou que tem bastante coisa lá. Nunca olhado.
-6. **Crons de governança** — paridade git↔produção; `[GroupChat][DATE-CLAIM]` > 0; molde
+5. **Crons de governança** — paridade git↔produção; `[GroupChat][DATE-CLAIM]` > 0; molde
    recorrente virando `cancelled`.
-7. **Segunda seção no relatório das 07h**: "o que foi feito e o que reincidiu".
-8. Menores: `CONFAB-WRITE-DATE-NO-RELLABEL` (data no 1:1, não tocado); rotacionar token da
+6. **Segunda seção no relatório das 07h**: "o que foi feito e o que reincidiu".
+7. Menores: `CONFAB-WRITE-DATE-NO-RELLABEL` (data no 1:1, não tocado); rotacionar token da
    Hostinger; confirmação ao cancelar tarefa recorrente (é UI, esbarra no freeze).
 
 ---
