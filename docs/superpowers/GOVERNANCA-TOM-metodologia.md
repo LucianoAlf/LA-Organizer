@@ -244,3 +244,39 @@ O critério de reincidência por `categoria + pessoa` **infla os vivos**. Serve 
 filtro barato, mas **não pode fechar nem manter aberto sozinho**: só depois de cruzar
 `incident_at` com `corrigido_em` do KI a conclusão vira confiável. Um agente autônomo que parasse
 na 2ª passada teria reaberto uma frente já morta e gasto o dia nela.
+
+
+### 4ª passada — varredura por FAMÍLIA (e o iceberg que apareceu)
+
+Investigar os 4 vivos um a um levou a uma varredura por assunto (não por severidade) nos
+findings com `incident_at > 15/07`. Três famílias ativas, nenhuma delas visível quando se olha
+finding a finding:
+
+**A. "Usuário confirma que fez → TOM não dá baixa"** — ~8 casos entre 18 e 28/07
+Yuri (28/07, 9 tarefas), Vitoria (27/07), Clayton (24/07), Rafinha (23/07, *"Sim rolou"*),
+Peterson (22/07), Alf (22/07, 3 tarefas), Ana (19/07), Arthur (18/07).
+É a família `*-CONFIRM-NOOP` (já existem `COORD-CONFIRM-NOOP` e `FIN-CONFIRM-CONFAB-NOOP`
+corrigidos) — **mas na TAREFA ela segue viva**.
+
+**B. Reagendamento com DATA ERRADA** — 4 casos, e é a mais RECENTE (01→06/08)
+- Rafinha 06/08: *"terça após 06/08 é 11/08, não 12/08"*
+- Alf 06/08: pediu "amanhã" em 05/08 e o TOM indicou outro dia
+- Matheus 03/08: *"na linha de segunda 03/08, quinta-feira seria 06/08"*
+- Rafinha 01/08: pediu "amanhã" e o TOM confirmou com a data de HOJE
+
+Erro de **cálculo de dia-da-semana relativo**, não de fuso e não de auto-envenenamento.
+⚠️ **Verificar se é regressão de `src/utils/temporal-intent.js`** (`detectExplicitDayIntent` /
+`resolveExplicitWeekdayDate`), que foi mexido recentemente — as datas dos incidentes são
+posteriores. **Checar antes de atacar como bug novo.**
+
+**C. "Afirmou e, na mesma resposta, disse que não conseguiu"** — ~5 casos (Rose 06/08,
+Krissya 05/08, Rafinha 28/07, Rose 26/07, Ana 29/07). O chokepoint de honestidade dispara
+DEPOIS da afirmação, então o usuário lê as duas coisas e não sabe no que acreditar.
+
+### Por que isto importa para o método
+
+Nenhuma dessas famílias aparece olhando finding a finding: individualmente são todos `medio` e
+de pessoas diferentes. **Só o agrupamento por assunto mostra o padrão.** A severidade do finding
+mede o caso; ela não mede a frequência da causa.
+
+→ Regra para o agente: **agrupar por família antes de priorizar por severidade.**
