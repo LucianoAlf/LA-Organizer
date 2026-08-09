@@ -20,6 +20,7 @@
 - **Prova antes de afirmação:** nenhuma task é dada como concluída sem o comando de verificação ter sido executado e a saída conferida.
 - **Modelo:** primary da Maria hoje é `opencode-go/deepseek-v4-flash`. Não trocar.
 - **IDs fixos:** cron do laudo (gateway do Alfredo) = `a47a1c2b-51f9-4097-a85a-f8db87087809`. Projeto Supabase = `ubdvtjbitozhkuvvqkxj`. WhatsApp da Maria = `5521989784688`. WhatsApp do Alf = `5521981278047`.
+- **Sintaxe do CLI (corrigida na execução de 09/08):** `openclaw cron get <id>` **já devolve JSON e rejeita `--json`** com "OpenClaw does not recognize option". Só `cron list` aceita a flag. A versão anterior deste plano trazia `--json` no `get` e o Step 1 falhou por isso — o gate do snapshot pegou antes de qualquer mudança, que é o comportamento desejado.
 
 ---
 
@@ -66,7 +67,7 @@ rodar sob env controlado. Esta task vale porque é barata e imediata — não po
 
 ```bash
 ssh maria 'sudo mkdir -p /home/maria/.openclaw/workspace/backups/loop-maria-fase1 && \
-sudo env HOME=/root openclaw cron get a47a1c2b-51f9-4097-a85a-f8db87087809 --json \
+sudo env HOME=/root openclaw cron get a47a1c2b-51f9-4097-a85a-f8db87087809 \
   > /tmp/cron-antes.json && \
 sudo cp /tmp/cron-antes.json /home/maria/.openclaw/workspace/backups/loop-maria-fase1/cron-a47a1c2b-antes.json && \
 sudo wc -c /home/maria/.openclaw/workspace/backups/loop-maria-fase1/cron-a47a1c2b-antes.json'
@@ -104,7 +105,7 @@ ssh maria 'sudo env HOME=/root openclaw cron edit a47a1c2b-51f9-4097-a85a-f8db87
 - [ ] **Step 4: Verificar que a lista ficou exatamente a esperada**
 
 ```bash
-ssh maria 'sudo env HOME=/root openclaw cron get a47a1c2b-51f9-4097-a85a-f8db87087809 --json \
+ssh maria 'sudo env HOME=/root openclaw cron get a47a1c2b-51f9-4097-a85a-f8db87087809 \
   | python3 -c "import sys,json; d=json.load(sys.stdin); p=d.get(\"payload\",{}); print(\"tools:\",p.get(\"toolsAllow\")); print(\"isDefault:\",p.get(\"toolsAllowIsDefault\"))"'
 ```
 
@@ -131,7 +132,7 @@ Se aparecer `permission denied` para alguma ferramenta que a rotina precisa, adi
 O laudo forçado é entregue no Telegram do Alf (ainda não migramos). Confirme com o Alf que chegou, ou verifique o `lastDeliveryStatus`:
 
 ```bash
-ssh maria 'sudo env HOME=/root openclaw cron get a47a1c2b-51f9-4097-a85a-f8db87087809 --json \
+ssh maria 'sudo env HOME=/root openclaw cron get a47a1c2b-51f9-4097-a85a-f8db87087809 \
   | python3 -c "import sys,json; d=json.load(sys.stdin); s=d.get(\"state\",d); print(\"status:\",s.get(\"lastRunStatus\"),\"| entrega:\",s.get(\"lastDeliveryStatus\"),\"| diag:\",str(s.get(\"lastDiagnosticSummary\"))[:120])"'
 ```
 
@@ -271,7 +272,7 @@ Esperado: termina sem `ERRO:`. O backup foi restaurado em 09/08 (commit `c8cacaf
 O prompt das nove auditorias é conteúdo validado — copiar literalmente, não recriar:
 
 ```bash
-ssh maria 'sudo env HOME=/root openclaw cron get a47a1c2b-51f9-4097-a85a-f8db87087809 --json \
+ssh maria 'sudo env HOME=/root openclaw cron get a47a1c2b-51f9-4097-a85a-f8db87087809 \
   | python3 -c "import sys,json; print(json.load(sys.stdin)[\"payload\"][\"message\"])" \
   | sudo tee /home/maria/.openclaw/workspace/backups/loop-maria-fase1/laudo-payload.txt | wc -c'
 ```
@@ -455,9 +456,29 @@ ssh maria 'sudo -u maria openclaw cron add "maria-laudo-diario-v1a-own" \
   --disabled'
 ```
 
-Os dois `--command-env` vazios **anulam** as credenciais perigosas para este job: sem a
-connection string do LA Report e sem o `service_role`, o `exec` deixa de ser porta dos fundos.
-É aqui que o buraco declarado na Task 1 se fecha de verdade.
+⚠️ **Os dois `--command-env` vazios REDUZEM, não fecham — e dizer que fecham seria pior que o
+buraco.** Eles limpam a variável do ambiente do processo, mas o arquivo
+`/home/maria/.openclaw/private/maria.env` continua no disco e legível pelo usuário `maria`, que é
+quem roda o job. Com `exec`, um `. /home/maria/.openclaw/private/maria.env` devolve tudo — e este
+plano **ensina esse comando** no teste de fumaça da Task 2, além de o `enviar-whatsapp.py` ler o
+arquivo direto do disco. A trava seria desfeita pela ferramenta do próprio plano.
+
+Com `exec` ligado e o arquivo legível pelo mesmo usuário, **não existe contenção por manipulação
+de env.** Conter de verdade exige uma de duas coisas: a credencial não existir em lugar legível
+por esse processo, ou o job rodar sob outro usuário do SO.
+
+Mantenha os `--command-env` mesmo assim: custam nada e reduzem alcance acidental. Só não confunda
+redutor com fechadura — o buraco declarado na Task 1 **continua aberto** e se fecha na dívida
+abaixo.
+
+**Dívida com dono e prazo — DESCOBERTA em 09/08:** varredura no workspace da Maria
+(`bridges/`, `tools/`, `private-mcp/`, e o workspace inteiro fora de backups) encontrou **zero
+consumidores** de `MARIA_LAREPORT_RPC_DATABASE_URL`. A única ocorrência é o documento
+`docs/lareport/maria-lareport-rpc-contract-20260625.md`. Ou seja: **é uma connection string de
+produção parada num env de VPS compartilhada, alcançável por um agente com `exec`, sem ninguém
+usando.** Ação: remover a variável do `maria.env` (com backup) e **rotacionar a senha no LA
+Report** — a rotação se justifica pela exposição, independentemente de alguém ter usado. Precisa
+de OK do Alf porque a rotação afeta outro sistema.
 
 `--disabled`: nasce desligado, liga só depois de validado.
 
